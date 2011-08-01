@@ -46,15 +46,41 @@ stop_vmprobes(void);
 /*
  * Disables a running probe. When disabled, both pre- and post-handlers are 
  * ignored until the probe is enabled back.
- * To enable a probe, call enable_vmprobe() function below.
+ * Returns a value of 0 upon successful completion, or a value of -1 if the
+ * given handle is invalid.
+ * NOTE: To enable a probe, call enable_vmprobe() function below.
  */
 int
 disable_vmprobe(vmprobe_handle_t handle);
 
 /*
- * Enables a disabled probe.
+ * Enables an inactive probe.
+ * Returns a value of 0 upon successful completion, or a value of -1 if the
+ * given handle is invalid.
  */
 int
 enable_vmprobe(vmprobe_handle_t handle);
+
+/*
+ * Indicates whether a probe is enabled or not.
+ * Returns a non-zero value if the probe is active, a value of 0 if the 
+ * probe is inactive, or a value of -1 if the given handle is invalid.
+ */
+int
+vmprobe_enabled(vmprobe_handle_t handle);
+
+/*
+ * Returns the virtual address the a probe is targeting.
+ * If the given handle is invalid, the function returns a value of 0.
+ */
+unsigned long
+vmprobe_vaddr(vmprobe_handle_t handle);
+
+/*
+ * Returns the id of the domain that a probe is instrumenting.
+ * If the given handle is invalid, the function returns a value of 0.
+ */
+domid_t
+vmprobe_domid(vmprobe_handle_t handle);
 
 #endif /* _XEN_VMPROBES_H */

@@ -35,7 +35,6 @@ OBJECTS+= vmprobes/vmprobes.o
 
 # vmprobes test
 OBJECTS+= vmprobes_test.o
-
 TARGET:= vmprobes_test
 
 default: $(TARGET)

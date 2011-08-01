@@ -15,7 +15,9 @@
 #include "vmprobes.h"
 #include "private.h"
 
+#ifndef VMPROBE_MAX
 #define VMPROBE_MAX (1024)
+#endif
 
 #define __save_org_insn(probepoint)     (arch_save_org_insn(probepoint))
 #define __insert_breakpoint(probepoint) (arch_insert_breakpoint(probepoint))
@@ -355,9 +357,7 @@ handle_bphit(struct vmprobe_domain *domain, struct pt_regs *regs)
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
         if (!probe->disabled && probe->pre_handler)
-        {
-            probe->pre_handler(probe->handle, regs);
-        }
+            probe->disabled = probe->pre_handler(probe->handle, regs);
     }
 
     domain->sstep_probepoint = probepoint;
@@ -384,9 +384,7 @@ handle_sstep(struct vmprobe_domain *domain, struct pt_regs *regs)
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
         if (!probe->disabled && probe->post_handler)
-        {
-            probe->post_handler(probe->handle, regs);
-        }
+            probe->disabled = probe->post_handler(probe->handle, regs);
     }
 
     domain->sstep_probepoint = NULL;
@@ -681,6 +679,57 @@ enable_vmprobe(vmprobe_handle_t handle)
     
     probe->disabled = false;
     return 0;
+}
+
+int
+vmprobe_enabled(vmprobe_handle_t handle)
+{
+    struct vmprobe *probe;
+
+    probe = find_probe(handle);
+    if (!probe)
+        return -1;
+    
+    return (!probe->disabled);
+}
+
+unsigned long
+vmprobe_vaddr(vmprobe_handle_t handle)
+{
+    struct vmprobe *probe;
+    struct vmprobe_probepoint *probepoint;
+
+    probe = find_probe(handle);
+    if (!probe)
+        return 0;
+    
+    probepoint = probe->probepoint;
+    if (!probepoint)
+        return 0;
+
+    return (probepoint->vaddr);
+}
+
+domid_t
+vmprobe_domid(vmprobe_handle_t handle)
+{
+    struct vmprobe *probe;
+    struct vmprobe_probepoint *probepoint;
+    struct vmprobe_domain *domain;
+
+    probe = find_probe(handle);
+    if (!probe)
+        return 0;
+    
+    probepoint = probe->probepoint;
+    if (!probepoint)
+        return 0;
+
+    domain = probepoint->domain;
+    if (!domain)
+        return 0;
+
+    return domain->id;
 }
 
 #include "vmprobes_arch.c"
