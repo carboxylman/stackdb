@@ -26,7 +26,6 @@ arch_save_org_insn(struct vmprobe_probepoint *probepoint)
     memcpy(opcode, page + offset, BP_INSN_SIZE);
     
     munmap(page, xa_instance->page_size);
-    //printf("opcode saved: %x\n", probepoint->opcode);
     return 0;
 }
 
@@ -54,7 +53,6 @@ arch_insert_breakpoint(struct vmprobe_probepoint *probepoint)
     memcpy(page + offset, &breakpoint, BP_INSN_SIZE);
     
     munmap(page, xa_instance->page_size);
-    //printf("breakpoint inserted: %x\n", BREAKPOINT_INSTRUCTION);
     return 0;
 }
 
@@ -84,6 +82,5 @@ arch_remove_breakpoint(struct vmprobe_probepoint *probepoint)
     memcpy(page + offset, opcode, BP_INSN_SIZE);
     
     munmap(page, xa_instance->page_size);
-    //printf("opcode restored: %x\n", probepoint->opcode);
     return 0;
 }

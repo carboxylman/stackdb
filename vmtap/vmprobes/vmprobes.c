@@ -3,20 +3,31 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <signal.h>
 #include <unistd.h>
 
 #include <xenctrl.h>
+#include <xenaccess/xenaccess.h>
 
 #include "list.h"
 #include "cqueue.h"
 #include "vmprobes.h"
 #include "private.h"
 
-#ifndef VMPROBE_MAX
-#define VMPROBE_MAX (1024)
+#ifdef VMPROBE_DEBUG
+static inline
+void dbgprint(char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+}
+#else
+#define dbgprint(format, args...) ((void)0)
 #endif
 
 #define __save_org_insn(probepoint)     (arch_save_org_insn(probepoint))
@@ -49,6 +60,13 @@ only_probe_left(struct vmprobe *probe)
 }
 
 static inline bool
+only_probepoint_left(struct vmprobe_probepoint *probepoint)
+{
+    return ((probepoint->domain->probepoint_list.next == &probepoint->node) &&
+            (probepoint->domain->probepoint_list.prev == &probepoint->node));
+}
+
+static inline bool
 domain_paused(domid_t domid)
 {
     xc_dominfo_t dominfo;
@@ -65,32 +83,28 @@ get_vcpu(domid_t domid)
     return dominfo.max_vcpu_id;
 }
 
-static inline struct pt_regs *
-get_regs(struct pt_regs *regs, domid_t domid, vcpu_guest_context_t *ctx)
+static inline struct cpu_user_regs *
+get_regs(domid_t domid, vcpu_guest_context_t *ctx)
 {
     xc_vcpu_getcontext(xc_handle, domid, get_vcpu(domid), ctx);
-    SET_PT_REGS((*regs), ctx->user_regs);
-    return regs;
+    return &ctx->user_regs;
 }
 
 static inline void
-set_regs(const struct pt_regs *regs, domid_t domid, vcpu_guest_context_t *ctx)
+set_regs(domid_t domid, vcpu_guest_context_t *ctx)
 {
-    SET_XC_REGS(regs, ctx->user_regs);
     xc_vcpu_setcontext(xc_handle, domid, get_vcpu(domid), ctx);    
 }
 
+#ifdef VMPROBE_SIGNAL
 static void
 signal_handler(int sig)
 {
     vmprobe_handle_t handle;
 
     for (handle = 0; handle < VMPROBE_MAX; handle++)
-    {
-        if (probe_list[handle])
-            unregister_vmprobe(handle);
-    }
-    fprintf(stderr, "vmprobes forcefully unregistered\n");
+        unregister_vmprobe(handle);
+    fprintf(stderr, "probes forcefully unregistered\n");
     
     signal(sig, SIG_DFL);
     raise(sig);
@@ -114,6 +128,7 @@ signal_interrupt(void)
     if (signal(SIGTERM, signal_handler) == SIG_IGN)
         signal(SIGTERM, SIG_IGN);
 }
+#endif /* VMPROBE_SIGNAL */
 
 static int
 init_evtchn(evtchn_port_t *dbg_port)
@@ -144,14 +159,17 @@ static int
 set_debugging(domid_t domid, bool enable)
 {
     struct xen_domctl domctl;
-    
+    char errmsg[128];
+
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = domid;
     domctl.u.setdebugging.enable = enable;
     
     if (xc_domctl(xc_handle, &domctl))
     {
-        fprintf(stderr, "failed to turn domain %d to debugging mode\n", domid);
+        sprintf(errmsg, "failed to %s debugging in dom%d", 
+            (enable) ? "set" : "unset", domid);
+        perror(errmsg);
         return -1;
     }
     
@@ -173,23 +191,24 @@ add_probe(vmprobe_handler_t pre_handler,
           struct vmprobe_probepoint *probepoint)
 {
     struct vmprobe *probe;
-    vmprobe_handle_t handle;
+    vmprobe_handle_t handle = -1;
     
     if (cqueue_empty(&handle_queue))
     {
-        fprintf(stderr, "number of probes cannot exceed %d\n", VMPROBE_MAX);
+        fprintf(stderr, "total number of probes cannot exceed %d\n", 
+            VMPROBE_MAX);
         return NULL;
     }
 
-    /* obtain a handle from the queue */
-    cqueue_get(&handle_queue, &handle);
-    
     probe = (struct vmprobe *) malloc( sizeof(*probe) );
     if (!probe)
     {
-        perror("failed to add a new probe");
+        perror("failed to allocate a new probe");
         return NULL;
     }
+    
+    /* obtain a handle from the queue */
+    cqueue_get(&handle_queue, &handle);
     
     probe->handle = handle;
     probe->pre_handler = pre_handler;
@@ -200,7 +219,7 @@ add_probe(vmprobe_handler_t pre_handler,
     probe_list[handle] = probe;
     list_add_tail(&probe->node, &probepoint->probe_list);
     
-    //printf("probe %d added\n", probe->handle);
+    dbgprint("probe %d added\n", probe->handle);
     return probe;
 }
 
@@ -216,7 +235,7 @@ remove_probe(struct vmprobe *probe)
     cqueue_put(&handle_queue, handle);
     probe_list[handle] = NULL;
     
-    //printf("probe %d removed\n", probe->handle);
+    dbgprint("probe %d removed\n", probe->handle);
     free(probe);
 }
 
@@ -246,7 +265,7 @@ add_probepoint(unsigned long vaddr, struct vmprobe_domain *domain)
     probepoint = (struct vmprobe_probepoint *) malloc( sizeof(*probepoint) );
     if (!probepoint)
     {
-        perror("failed to add a new probe-point");
+        perror("failed to allocate a new probepoint");
         return NULL;
     }
     
@@ -259,7 +278,8 @@ add_probepoint(unsigned long vaddr, struct vmprobe_domain *domain)
     list_add(&probepoint->list, &probepoint_list);
     list_add(&probepoint->node, &domain->probepoint_list);
 
-    //printf("probepoint %lx added\n", probepoint->vaddr);
+    dbgprint("probepoint %lx:dom%d added\n", probepoint->vaddr,
+        probepoint->domain->id);
     return probepoint;
 }
 
@@ -269,7 +289,8 @@ remove_probepoint(struct vmprobe_probepoint *probepoint)
     list_del(&probepoint->node);
     list_del(&probepoint->list);
 
-    //printf("probepoint %lx removed\n", probepoint->vaddr);
+    dbgprint("probepoint %lx:dom%d removed\n", probepoint->vaddr,
+        probepoint->domain->id);
     free(probepoint);
 }
 
@@ -299,7 +320,7 @@ add_domain(domid_t domid)
     domain = (struct vmprobe_domain *) malloc( sizeof(*domain) );
     if (!domain)
     {
-        perror("failed to add a new domain");
+        perror("failed to allocate a new domain");
         return NULL;
     }
     
@@ -308,14 +329,7 @@ add_domain(domid_t domid)
     if (xa_init_vm_id_lax(domid, &domain->xa_instance) == XA_FAILURE)
     {
         free(domain);
-        fprintf(stderr, "failed to init xa instance for domain %d\n", domid);
-        return NULL;
-    }
-
-    if (set_debugging(domid, true) < 0)
-    {
-        free(domain);
-        fprintf(stderr, "failed to turn domain %d to debugging mode\n", domid);
+        fprintf(stderr, "failed to init xa instance for dom%d\n", domid);
         return NULL;
     }
 
@@ -325,7 +339,7 @@ add_domain(domid_t domid)
     
     list_add(&domain->list, &domain_list);
 
-    //printf("domain %d added\n", domain->id);
+    dbgprint("dom%d added\n", domain->id);
     return domain;
 }
 
@@ -334,15 +348,14 @@ remove_domain(struct vmprobe_domain *domain)
 {
     list_del(&domain->list);
 
-    set_debugging(domain->id, false);
     xa_destroy(&domain->xa_instance);
 
-    //printf("domain %d removed\n", domain->id);
+    dbgprint("dom%d removed\n", domain->id);
     free(domain);
 }
 
 static int
-handle_bphit(struct vmprobe_domain *domain, struct pt_regs *regs)
+handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 {
     struct vmprobe *probe;
     struct vmprobe_probepoint *probepoint;
@@ -351,48 +364,58 @@ handle_bphit(struct vmprobe_domain *domain, struct pt_regs *regs)
     if (!probepoint)
         return -1;
 
-    probepoint->state = VMPROBE_REMOVING;
-    //printf("bp-hit at %lx in domain %d\n", probepoint->vaddr, domain->id);
-       
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
         if (!probe->disabled && probe->pre_handler)
             probe->disabled = probe->pre_handler(probe->handle, regs);
     }
-
-    domain->sstep_probepoint = probepoint;
-
-    __remove_breakpoint(probepoint);
+    
     __reset_ip(regs);
-    __enter_singlestep(regs);
-
+    
+    /* restore the original instruction */
+    probepoint->state = VMPROBE_REMOVING;
+    __remove_breakpoint(probepoint);
+    dbgprint("bp removed at [%lx:dom%d]\n", probepoint->vaddr, domain->id);
     probepoint->state = VMPROBE_DISABLED;
+    
+    if (!interrupt)
+    {
+        /* turn singlestep mode on */
+        __enter_singlestep(regs);
+        dbgprint("sstep set in dom%d\n", domain->id);
+        domain->sstep_probepoint = probepoint;
+    }
+    
     return 0;
 }
 
 static void
-handle_sstep(struct vmprobe_domain *domain, struct pt_regs *regs)
+handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 {
     struct vmprobe *probe;
     struct vmprobe_probepoint *probepoint;
 
     probepoint = domain->sstep_probepoint;  
 
-    probepoint->state = VMPROBE_INSERTING;
-    //printf("sstep-hit at %lx in domain %d\n", probepoint->vaddr, domain->id);
-       
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
         if (!probe->disabled && probe->post_handler)
             probe->disabled = probe->post_handler(probe->handle, regs);
     }
 
-    domain->sstep_probepoint = NULL;
-
-    __insert_breakpoint(probepoint);
-    __leave_singlestep(regs);
-
-    probepoint->state = VMPROBE_BP_SET;
+    if (!interrupt)
+    {
+        /* inject a breakpoint for the next round */
+        probepoint->state = VMPROBE_INSERTING;
+        __insert_breakpoint(probepoint);
+        dbgprint("bp set at [%lx:dom%d]\n", probepoint->vaddr, domain->id);
+        probepoint->state = VMPROBE_BP_SET;
+    
+        /* turn singlestep mode off */
+        __leave_singlestep(regs);
+        dbgprint("sstep unset in dom%d\n", domain->id);
+        domain->sstep_probepoint = NULL;
+    }
 }
 
 static void
@@ -406,7 +429,7 @@ cleanup_vmprobes(void)
     xc_interface_close(xc_handle);
     xc_handle = -1;
 
-    //printf("vmprobes library cleaned up\n");
+    dbgprint("vmprobes uninitialized\n");
 }
 
 static int
@@ -416,8 +439,10 @@ init_vmprobes(void)
     
     if (xc_handle != -1)
         return -1; // xc interface already open
-    
+
+#ifdef VMPROBE_SIGNAL
     signal_interrupt();
+#endif
     
     xc_handle = xc_interface_open();
     if (xc_handle < 0)
@@ -435,7 +460,7 @@ init_vmprobes(void)
 
     if (!cqueue_init(&handle_queue, VMPROBE_MAX))
     {
-        perror("failed to init probe-handle queue");
+        perror("failed to init probe handle queue");
         cleanup_vmprobes();
         return -ENOMEM;
     }
@@ -444,8 +469,8 @@ init_vmprobes(void)
     for (handle = 0; handle < VMPROBE_MAX; handle++)
         cqueue_put(&handle_queue, handle);
 
-    interrupt = false;    
-    //printf("vmprobes library initialized\n");
+    interrupt = false;
+    dbgprint("vmprobes initialized\n");
     return 0;
 }
 
@@ -459,22 +484,28 @@ __register_vmprobe(struct vmprobe *probe)
     probepoint = probe->probepoint;
     domain = probepoint->domain;
     
+    /* turn debugging mode on */
+    ret = set_debugging(domain->id, true);
+    if (ret < 0)
+        return ret;
+    dbgprint("debugging set in dom%d\n", domain->id);
+
     if (probepoint->state == VMPROBE_DISABLED)
     {
         probepoint->state = VMPROBE_INSERTING;
-        xc_domain_pause(xc_handle, domain->id);
 
         /* backup the original instruction */
         ret = __save_org_insn(probepoint);
         if (ret < 0)
             return ret;
     
-        /* inject breakpoint at the probe-point */
+        /* inject a breakpoint at the probe-point */
         ret = __insert_breakpoint(probepoint);
         if (ret < 0)
             return ret;
+        dbgprint("bp set at [%lx:dom%d] for the first time\n", 
+            probepoint->vaddr, domain->id);
     
-        xc_domain_unpause(xc_handle, domain->id);
         probepoint->state = VMPROBE_BP_SET;
     }
     
@@ -487,6 +518,8 @@ __unregister_vmprobe(struct vmprobe *probe)
 {
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_domain *domain;
+    struct cpu_user_regs *regs;
+    vcpu_guest_context_t ctx;
     int ret;
     
     probepoint = probe->probepoint;
@@ -497,15 +530,35 @@ __unregister_vmprobe(struct vmprobe *probe)
         if (probepoint->state == VMPROBE_BP_SET)
         {
             probepoint->state = VMPROBE_REMOVING;
-            xc_domain_pause(xc_handle, domain->id);
-
+        
             /* restore the original instruction */
             ret = __remove_breakpoint(probepoint);
             if (ret < 0)
                 return ret;
+            dbgprint("bp removed at [%lx:dom%d] for the last time\n",
+                probepoint->vaddr, domain->id);
 
-            xc_domain_unpause(xc_handle, domain->id);
             probepoint->state = VMPROBE_DISABLED;
+        }
+
+        if (only_probepoint_left(probepoint))
+        {
+            if (domain->sstep_probepoint)
+            {
+                regs = get_regs(domain->id, &ctx);
+            
+                /* turn singlestep mode off */
+                __leave_singlestep(regs);
+                domain->sstep_probepoint = NULL;
+                dbgprint("sstep unset in dom%d for the last time\n", 
+                    domain->id);
+
+                set_regs(domain->id, &ctx);
+            }
+    
+            /* turn debugging mode off */
+            set_debugging(domain->id, false);
+            dbgprint("debugging unset in dom%d\n", domain->id);
         }
     }
 
@@ -556,12 +609,17 @@ register_vmprobe(domid_t domid,
     if (!probe)
         return -1;
         
+    xc_domain_pause(xc_handle, domain->id);
+    dbgprint("dom%d paused\n", domain->id);
     ret = __register_vmprobe(probe);
     if (ret < 0)
     {
+        xc_domain_unpause(xc_handle, domain->id);
         unregister_vmprobe(probe->handle);
         return ret;
     }
+    xc_domain_unpause(xc_handle, domain->id);
+    dbgprint("dom%d unpaused\n", domain->id);
     
     return probe->handle;
 }
@@ -580,9 +638,16 @@ unregister_vmprobe(vmprobe_handle_t handle)
     probepoint = probe->probepoint; 
     domain = probepoint->domain;
     
+    xc_domain_pause(xc_handle, domain->id);
+    dbgprint("dom%d paused\n", domain->id);
     ret = __unregister_vmprobe(probe);
     if (ret < 0)
+    {
+        xc_domain_unpause(xc_handle, domain->id);
         return ret;
+    }
+    xc_domain_unpause(xc_handle, domain->id);
+    dbgprint("dom%d unpaused\n", domain->id);
 
     remove_probe(probe);
     if (list_empty(&probepoint->probe_list))
@@ -607,8 +672,11 @@ run_vmprobes(void)
     evtchn_port_t port;
     struct timeval tv;
     fd_set inset;
+    struct cpu_user_regs *regs;
     vcpu_guest_context_t ctx;
-    struct pt_regs regs;
+
+    if (list_empty(&domain_list))
+        return;
 
     fd = xc_evtchn_fd(xce_handle);
 
@@ -631,15 +699,18 @@ run_vmprobes(void)
                     /* FIXME: domain paused - does this really mean a bp-hit? */
                     if (domain_paused(domain->id))
                     {
-                        get_regs(&regs, domain->id, &ctx);
+                        dbgprint("dom%d paused by %s\n", domain->id,
+                            (!domain->sstep_probepoint) ? "bphit" : "sstep");
+                        regs = get_regs(domain->id, &ctx);
                         
                         if (!domain->sstep_probepoint)
-                            handle_bphit(domain, &regs);
+                            handle_bphit(domain, regs);
                         else
-                            handle_sstep(domain, &regs);
+                            handle_sstep(domain, regs);
                         
-                        set_regs(&regs, domain->id, &ctx);
+                        set_regs(domain->id, &ctx);
                         xc_domain_unpause(xc_handle, domain->id);
+                        dbgprint("dom%d unpaused\n", domain->id);
                     }
                 }
             }

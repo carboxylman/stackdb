@@ -3,10 +3,10 @@
 
 #include <xenctrl.h>
 
-struct pt_regs;
+struct cpu_user_regs;
 
 typedef int vmprobe_handle_t;
-typedef int (*vmprobe_handler_t)(vmprobe_handle_t, struct pt_regs *);
+typedef int (*vmprobe_handler_t)(vmprobe_handle_t, struct cpu_user_regs *);
 
 /* 
  * Registers a probe at a given virtual address in a domain, with pre- and

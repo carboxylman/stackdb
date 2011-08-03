@@ -11,8 +11,7 @@ CONTENTS
 6. Probe Overhead
 7. VMprobes Example
 8. VMretprobes Example
-9. TODO
-10. Utah A3 Project Team
+9. Utah A3 Project Team
 
 1. Concepts: VMprobes, Return Probes
 
@@ -30,9 +29,7 @@ CONTENTS
 
 8. VMretprobes Example
 
-9. TODO
-
-10. Utah A3 Project Team
+9. Utah A3 Project Team
 
 The following people have made major contributions to VMprobes:
 Chung Hwan Kim - chunghwn@cs.utah.edu

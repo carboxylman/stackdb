@@ -1,9 +1,10 @@
 CC:= gcc
 
 CFLAGS:= -fPIC
-#CFLAGS+= -Wall
+CFLAGS+= -Wall
 CFLAGS+= -O2
 #CFLAGS+= -g
+CFLAGS+= -I./
 
 LFLAGS+= -lxenctrl
 LFLAGS+= -lxenstore
@@ -30,22 +31,24 @@ OBJECTS+= ../xenaccess/xa_util.o
 
 # vmprobes
 CFLAGS+= -D VMPROBE_i386
-CFLAGS+= -I./
+CFLAGS+= -D VMPROBE_SIGNAL
+#CFLAGS+= -D VMPROBE_DEBUG
 OBJECTS+= vmprobes.o
 
-# examples
-OBJECTS+= examples/vmprobebio.o
+# vmprobes examples
 EXAMPLES:= examples/vmprobebio
+EXAMPLES+= examples/vmprobeopen
 
-default: $(EXAMPLES)
+default: $(OBJECTS) $(EXAMPLES)
 	@echo "vmprobes compiled"
 
 %.o: %.c
-	$(CC) -c $(CFLAGS) -o $@ $<
+	@$(CC) -c $(CFLAGS) -o $@ $<
 
-examples/%: $(OBJECTS)
-	$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@
+examples/%: examples/%.c
+	@$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@ $<
 
 clean:
-	rm -f $(OBJECTS) $(EXAMPLES)
+	@#rm -f $(OBJECTS) $(EXAMPLES)
+	@rm -f vmprobes.o $(EXAMPLES)
 	@echo "vmprobes cleaned"

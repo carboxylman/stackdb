@@ -3,11 +3,13 @@
    Chung Hwan Kim
 */
 #include <stdio.h>
+#include <stdlib.h>
 #include <vmprobes.h>
 
 static int count;
 
-static int on_generic_make_request(vmprobe_handle_t vp, struct pt_regs *regs)
+static int on_generic_make_request(vmprobe_handle_t vp, 
+                                   struct cpu_user_regs *regs)
 {   
     printf("[%d] block io request in domain %d\n", ++count, vmprobe_domid(vp));
 	if (count == 10)
@@ -17,9 +19,16 @@ static int on_generic_make_request(vmprobe_handle_t vp, struct pt_regs *regs)
 
 int main(int argc, char *argv[])
 {
-    const domid_t domid = 2; // a3guest
-    const unsigned long vaddr = 0xc021f660; // generic_make_request()
+    domid_t domid = 1; // default guest domain
+    unsigned long vaddr = 0xc021f660; // default generic_make_request()
     vmprobe_handle_t vp;
+    
+	if (argc > 1)
+	{
+        domid = atoi(argv[1]);
+        if (argc > 2)
+		    vaddr = atoi(argv[2]);
+	}
     
     vp = register_vmprobe(domid, vaddr, on_generic_make_request, NULL);
     if (vp < 0)

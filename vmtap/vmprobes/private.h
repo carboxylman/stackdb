@@ -3,15 +3,22 @@
 
 #include <stdbool.h>
 
-//#define ENABLE_XEN // for XenAccess to support Xen hypervisor
+#include <xenctrl.h>
 #include <xenaccess/xenaccess.h>
 
+#include "list.h"
 #include "vmprobes.h"
 #include "vmprobes_arch.h"
 
+#ifndef VMPROBE_MAX
+#define VMPROBE_MAX (1024)
+#endif
+
 struct vmprobe_probepoint;
 
-/* vmprobe -- represents a single probe. */
+/* 
+ * vmprobe -- represents a single probe.
+ */
 struct vmprobe {
     /* A unique value that indicates this probe */
     vmprobe_handle_t handle;
@@ -90,7 +97,7 @@ struct vmprobe_domain {
 	struct vmprobe_probepoint *sstep_probepoint;
 
     /* XenAccess instance used to read/write domain's memory */
-    xa_instance_t xa_instance; /* TODO: get independent from xenaccess */
+    xa_instance_t xa_instance;
 };
 
 #endif /* _XEN_VMPROBES_PRIVATE_H */
