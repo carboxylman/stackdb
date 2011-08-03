@@ -1,9 +1,10 @@
 CC:= gcc
 
 CFLAGS:= -fPIC
-#CFLAGS+= -Wall
+CFLAGS+= -Wall
 CFLAGS+= -O2
 #CFLAGS+= -g
+CFLAGS+= -I./
 
 LFLAGS+= -lxenctrl
 LFLAGS+= -lxenstore
@@ -30,27 +31,28 @@ OBJECTS+= xenaccess/xa_util.o
 
 # vmprobes
 CFLAGS+= -D VMPROBE_i386
-CFLAGS+= -I./vmprobes/
+#CFLAGS+= -D VMPROBE_DEBUG
 OBJECTS+= vmprobes/vmprobes.o
 
-# vmprobes test
-OBJECTS+= vmprobes_test.o
-TARGET:= vmprobes_test
+# vmtap
+CFLAGS+= -D VMTAP_DEBUG
+OBJECTS+= vmtap.o
 
-default: $(TARGET)
+# vmtap examples
+EXAMPLES:= examples/vmtapopen
+
+default: $(OBJECTS) $(EXAMPLES)
+	@echo "vmtap compiled"
 
 %.o: %.c
-	$(CC) -c $(CFLAGS) -o $@ $<
+	@$(CC) -c $(CFLAGS) -o $@ $<
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@
-	@echo "vmprobes test compiled"
+examples/%: examples/%.c
+	@$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@ $<
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
-	@echo "vmprobes test cleaned"
-
-run:
-	@sudo ./$(TARGET)
-
-test: run
+	@#rm -f $(OBJECTS) $(TARGET)
+	@rm -f vmprobes/vmprobes.o
+	@rm -f vmtap.o
+	@rm -f $(EXAMPLES)
+	@echo "vmtap cleaned"

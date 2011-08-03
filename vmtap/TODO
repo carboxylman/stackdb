@@ -1,0 +1,14 @@
+wrap vmprobes with helper functions. helper functions include
+1) get_domain_info()
+2) read_memory()
+3) write_memory()
+4) syscall_arg()
+
+complete parse_probepoint().
+- make it support both domain name and id.
+
+write swig interfaces for vmtap.
+
+write a python disktop using vmtap.
+
+implement "debuginfo explorer" and integrate it with vmtap.

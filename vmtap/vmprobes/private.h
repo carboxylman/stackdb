@@ -10,10 +10,6 @@
 #include "vmprobes.h"
 #include "vmprobes_arch.h"
 
-#ifndef VMPROBE_MAX
-#define VMPROBE_MAX (1024)
-#endif
-
 struct vmprobe_probepoint;
 
 /* 

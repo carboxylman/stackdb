@@ -3,7 +3,9 @@
 
 #include <xenctrl.h>
 
-struct cpu_user_regs;
+#ifndef VMPROBE_MAX
+#define VMPROBE_MAX (1024)
+#endif
 
 typedef int vmprobe_handle_t;
 typedef int (*vmprobe_handler_t)(vmprobe_handle_t, struct cpu_user_regs *);
