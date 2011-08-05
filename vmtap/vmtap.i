@@ -26,14 +26,16 @@ vmtap_callback(int probe, void *pyhandler)
     
     /* get python function object */
     func = (PyObject *)pyhandler;
-
-    /* parse arguments */
-    arglist = Py_BuildValue("(i)", probe);
+    if (func)
+    {
+        /* parse arguments */
+        arglist = Py_BuildValue("(i)", probe);
     
-    /* call the user handler in python */
-    PyEval_CallObject(func, arglist);
+        /* call the user handler in python */
+        PyEval_CallObject(func, arglist);
 
-    Py_DECREF(arglist);
+        Py_DECREF(arglist);
+    }
 }
 
 /*

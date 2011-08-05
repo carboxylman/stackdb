@@ -48,7 +48,7 @@ static void
 signal_handler(int sig)
 {
     stop_vmprobes();
-    fprintf(stderr, "vmtap forcefully stopped\n");
+    dbgprint("vmtap forcefully stopped\n");
     signal(sig, SIG_DFL);
 }
 
@@ -314,7 +314,7 @@ __probe(const char *probepoint, vmtap_callback_t callback, void *pyhandler)
     unsigned long vaddr = 0;
     vmprobe_handle_t vp_handle;
 
-    if (!callback || !pyhandler)
+    if (!probepoint || !callback)
         return -1;
 
     if (getuid())
