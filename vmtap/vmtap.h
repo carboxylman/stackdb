@@ -2,20 +2,14 @@
 #define _XEN_VMTAP_H
 
 #include <stdbool.h>
+#include <xenctrl.h>
 #include <vmprobes/vmprobes.h>
 
 #ifndef VMTAP_PROBE_MAX
 #define VMTAP_PROBE_MAX (VMPROBE_MAX)
 #endif
 
-typedef void (*vmtap_handler_t)(int, void *);
-
-/*
- * Injects a probe at a given probe-point.
- * NOTE: read the file README for the details of probe-point specifications.
- */
-bool
-probe(const char *probepoint, vmtap_handler_t handler);
+typedef void (*vmtap_callback_t)(int, void *);
 
 /*
  * Starts all probes injected.
@@ -46,7 +40,7 @@ enable(int probe);
 /*
  * Returns the id of the instrumented guest domain.
  */
-int
+domid_t
 domid(int probe);
 
 /*

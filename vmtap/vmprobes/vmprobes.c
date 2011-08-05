@@ -208,7 +208,7 @@ add_probe(vmprobe_handler_t pre_handler,
     
     /* obtain a handle from the queue */
     cqueue_get(&handle_queue, &handle);
-    
+
     probe->handle = handle;
     probe->pre_handler = pre_handler;
     probe->post_handler = post_handler;
@@ -325,6 +325,7 @@ add_domain(domid_t domid)
     
     /* initialize a xenaccess instance */
     domain->xa_instance.pae = 1; // always set pae mode due to a xenaccess bug
+    domain->xa_instance.os_type = XA_OS_LINUX; // currently linux only
     if (xa_init_vm_id_lax(domid, &domain->xa_instance) == XA_FAILURE)
     {
         free(domain);
@@ -496,12 +497,18 @@ __register_vmprobe(struct vmprobe *probe)
         /* backup the original instruction */
         ret = __save_org_insn(probepoint);
         if (ret < 0)
+        {
+            probepoint->state = VMPROBE_DISABLED;
             return ret;
-    
+        }
+
         /* inject a breakpoint at the probe-point */
         ret = __insert_breakpoint(probepoint);
         if (ret < 0)
+        {
+            probepoint->state = VMPROBE_DISABLED;
             return ret;
+        }
         dbgprint("bp set at [%lx:dom%d] for the first time\n", 
             probepoint->vaddr, domain->id);
     
@@ -533,7 +540,10 @@ __unregister_vmprobe(struct vmprobe *probe)
             /* restore the original instruction */
             ret = __remove_breakpoint(probepoint);
             if (ret < 0)
+            {
+                probepoint->state = VMPROBE_BP_SET;
                 return ret;
+            }
             dbgprint("bp removed at [%lx:dom%d] for the last time\n",
                 probepoint->vaddr, domain->id);
 
@@ -574,6 +584,15 @@ register_vmprobe(domid_t domid,
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_domain *domain;
     int ret;
+
+    if (domid <= 0 || !vaddr || (!pre_handler && !post_handler))
+        return -1;
+    
+    if (domain_paused(domid))
+    {
+        fprintf(stderr, "dom%d currently paused\n", domid);
+        return -EPERM;
+    }
     
     /* initialize vmprobes library at the first probe registration attempt */
     if (list_empty(&domain_list))
@@ -582,12 +601,6 @@ register_vmprobe(domid_t domid,
             return ret;
     }
 
-    if (domain_paused(domid))
-    {
-        fprintf(stderr, "domain %d currently paused\n", domid);
-        return -EPERM;
-    }
-    
     domain = find_domain(domid);
     if (!domain)
     {
@@ -722,7 +735,13 @@ run_vmprobes(void)
 void
 stop_vmprobes(void)
 {
+    int fd;
+
     interrupt = true;
+
+    /* close the fd to make the select() in run_vmprobes() return */
+    fd = xc_evtchn_fd(xce_handle);
+    close(fd);
 }
 
 int

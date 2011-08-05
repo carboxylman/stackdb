@@ -12,11 +12,16 @@
 #include <xenctrl.h>
 #include <xs.h>
 #include <xenaccess/xenaccess.h>
+#include <xenaccess/xa_private.h>
 #include <vmprobes/vmprobes.h>
-#include <vmprobes/private.h>
+//#include <vmprobes/private.h>
 
 #include "vmtap.h"
 #include "private.h"
+
+#define VMTAP_DOMAIN_MAX (100)
+#define VMTAP_SYMBOL_MAX (100)
+#define VMTAP_SYSROW_MAX (200)
 
 #ifdef VMTAP_DEBUG
 static inline
@@ -32,20 +37,19 @@ void dbgprint(char *format, ...)
 #endif
 
 static struct vmtap_probe *probe_list[VMTAP_PROBE_MAX];
+static int probe_min, probe_max;
+
+static vmtap_callback_t vmtap_callback;
 
 static int xc = -1;
 static struct xs_handle *xs;
 
-static void cleanup_vmtap(void);
-
 static void
 signal_handler(int sig)
 {
-    cleanup_vmtap();
-    fprintf(stderr, "vmtap forcefully discarded\n");
-    
+    stop_vmprobes();
+    fprintf(stderr, "vmtap forcefully stopped\n");
     signal(sig, SIG_DFL);
-    raise(sig);
 }
 
 static void
@@ -80,7 +84,7 @@ static struct vmtap_probe *
 add_probe(char *domain, 
           char *symbol, 
           unsigned long offset,
-          vmtap_handler_t handler, 
+          void *pyhandler, 
           vmprobe_handle_t vp_handle)
 {
     struct vmtap_probe *probe;
@@ -96,11 +100,15 @@ add_probe(char *domain,
     probe->domain = domain;
     probe->symbol = symbol;
     probe->offset = offset;
-    probe->handler = handler;
+    probe->pyhandler = pyhandler;
     p = probe->vp_handle = vp_handle; /* vp_handle is used as vmtap probe id */
     probe->regs = NULL;
     
     probe_list[p] = probe;
+
+    /* optimize cleanup_vmtap() reducing number of iterations through probes */
+    if (probe_max < p) probe_max = p;
+    if (probe_min > p) probe_min = p;
     
     dbgprint("vmtap probe %d added\n", p);
     return probe;
@@ -125,214 +133,41 @@ vmtap_handler(vmprobe_handle_t vp_handle, struct cpu_user_regs *regs)
     struct vmtap_probe *probe;
     
     probe = find_probe(p);
-    assert(probe && probe->handler);
+    assert(vmtap_callback);
+    assert(probe);
+    assert(probe->pyhandler);
+
+    dbgprint("vmtap probe %d triggered at %s[+%x] in %s\n", p, probe->symbol,
+        probe->offset, probe->domain);
 
     /* save registers so that user can obtain the values in their handler */
     probe->regs = regs;
     
-    /* call user handler */
-    /* FIXME: pass python function object instead of NULL */
-    probe->handler(p, NULL);
+    /* call user handler in python */
+    vmtap_callback(p, probe->pyhandler);
     
     return 0;
 }
 
-static int
+static domid_t
 vmtap_domid(const char *domain)
 {
-    xs_transaction_t xt = XBT_NULL;
-    char **domains;
-    char *tmp, *idstr, *name;
-    unsigned int i, size = 0;
-    int domid = 0;
-
-    domains = xs_directory(xs, xt, "/local/domain", &size);
-    for (i = 0; i < size; i++)
-    {
-        tmp = malloc(100);
-        if (!tmp)
-        {
-            perror("failed to allocate memory for domain name");
-            return 0;
-        }
-        idstr = domains[i];
-        sprintf(tmp, "/local/domain/%s/name", idstr);
-        name = xs_read(xs, xt, tmp, NULL);
-
-        if (strncmp(domain, name, 100) == 0)
-        {
-            domid = atoi(idstr);
-            break;
-        }
-
-        if (name) free(name);
-        free(tmp);
-    }
-
-    if (domains) free(domains);
-    return domid;
-}
-
-static char *
-vmtap_dompath(int domid)
-{
-    xs_transaction_t xt = XBT_NULL;
-    char *tmp, *dompath;
-
-    tmp = malloc(100);
-    if (!tmp)
-    {
-        perror("failed to allocate memory for domain path");
-        return NULL;
-    }
-
-    memset(tmp, 0, 100);
-    sprintf(tmp, "/local/domain/%d/vm", domid);
-    dompath = xs_read(xs, xt, tmp, NULL);
-
-    free(tmp);
-
-    return dompath;
-}
-
-static char *
-vmtap_kernel(int domid)
-{
-    xs_transaction_t xt = XBT_NULL;
-    char *dompath, *kernel, *tmp;
-
-    dompath = vmtap_dompath(domid);
-    if (!dompath)
-        return NULL;
-
-    tmp = malloc(100);
-    if (!tmp)
-    {
-        perror("failed to allocate memory for kernel name");
-        return NULL;
-    }
-    memset(tmp, 0, 100);
-    sprintf(tmp, "%s/image/kernel", dompath);
-    kernel = xs_read(xs, xt, tmp, NULL);
-
-    free(tmp);
-    free(dompath);
-
-    return kernel;
-}
-
-static char *
-vmtap_sysmap(int domid)
-{
-    char *kernel, *sysmap;
-    unsigned int i, length;
-
-    kernel = vmtap_kernel(domid);
-    if (!kernel)
-        return NULL;
-    
-    if (strcmp(kernel, "/usr/lib/xen/boot/hvmloader") == 0)
-    {
-        /* we can't predict for hvm domains */
-        fprintf(stderr, "cannot predict the name of a hvm domain\n");
-        free(kernel);
-        return NULL;
-    }
-
-    /* replace 'vmlinuz' with 'System.map' */
-    length = strlen(kernel) + 4;
-    sysmap = malloc(length);
-    if (!sysmap)
-    {
-        perror("failed to allocate memory for system map");
-        free(kernel);
-        return NULL;
-    }
-    memset(sysmap, 0, length);
-    for (i = 0; i < length; i++)
-    {
-        if (strncmp(kernel + i, "vmlinu", 6) == 0)
-        {
-            strcat(sysmap, "System.map");
-            strcat(sysmap, kernel + i + 7);
-            break;
-        }
-        else
-            sysmap[i] = kernel[i];
-    }
-
-    free(kernel);
-   
-    return sysmap;
-}
-
-static bool
-vmtap_sysmap_row(FILE *f, char *row, const char *symbol, int position)
-{
-    char *token;
-    int curpos, position_copy;
-
-    while (fgets(row, 200, f))
-    {
-        /* find the correct token to check */
-        curpos = 0;
-        position_copy = position;
-        while (position_copy > 0 && curpos < 200)
-        {
-            if (isspace(row[curpos]))
-            {
-                while (isspace(row[curpos]))
-                {
-                    row[curpos] = '\0';
-                    curpos++;
-                }
-                position_copy--;
-                continue;
-            }
-            curpos++;
-        }
-
-        if (position_copy == 0)
-        {
-            token = row + curpos;
-            while (curpos < 200)
-            {
-                if (isspace(row[curpos]))
-                {
-                    row[curpos] = '\0';
-                    break;
-                }
-                curpos++;
-            }
-        }
-        else
-        {
-            /* some went wrong in the loop above */
-            memset(row, 0, 200);
-            return false;
-        }
-
-        /* check the token */
-        if (strncmp(token, symbol, 200) == 0)
-            return true;
-    }
-
-    return false;    
+    return (xa_get_domain_id((char *)domain));
 }
 
 static unsigned long
-vmtap_vaddr(int domid, const char *symbol, unsigned long offset)
+vmtap_vaddr(size_t domid, const char *symbol, unsigned long offset)
 {
     char *sysmap;
     FILE *f;
     char *row;
     unsigned long vaddr;
 
-    sysmap = vmtap_sysmap(domid);
+    sysmap = linux_predict_sysmap_name(domid);
     if (!sysmap)
         return 0;
     
-    row = malloc(200);
+    row = malloc(MAX_ROW_LENGTH);
     if (!row)
     {
         perror("failed to allocate memory for a symbol row");
@@ -351,24 +186,59 @@ vmtap_vaddr(int domid, const char *symbol, unsigned long offset)
 
     free(sysmap);
 
-    if (!vmtap_sysmap_row(f, row, symbol, 2))
+    if (get_symbol_row(f, row, (char *)symbol, 2) == XA_FAILURE)
         return 0;
 
     fclose(f);
 
     vaddr = strtoul(row, NULL, 16);
     
-	return (vaddr + offset);
+    return (vaddr + offset);
 }
 
 static bool
-parse_probepoint(char **domain, 
-                 char **symbol, 
-                 unsigned long *offset)
+__parse_probepoint(const char *probepoint, /* in */
+                   char *domain, /* out */
+                   char *symbol, /* out */
+                   unsigned long *offset) /* out */
 {
-    *domain = "a3guest";
-    *symbol = "sys_open";
+    /* FIXME: extract domain, symbol, and offset out of probepoint expression */
+    strcpy(domain, "a3guest");
+    strcpy(symbol, "sys_open");
     *offset = 0;
+
+    return true;
+}
+
+static bool
+parse_probepoint(const char *probepoint, /* in */
+                 char *domain, /* out */
+                 char *symbol, /* out */
+                 unsigned long *offset, /* out */
+                 domid_t *domid, /* out */
+                 unsigned long *vaddr) /* out */
+{
+    domid_t tmp_domid;
+    unsigned long tmp_vaddr;
+
+    if (!__parse_probepoint(probepoint, domain, symbol, offset))
+        return false;
+    dbgprint("probepoint \"%s\" parsed\n", probepoint);
+
+    /* convert domain name to id */
+    tmp_domid = vmtap_domid(domain);
+    if (!tmp_domid)
+        return false;
+    dbgprint("domid %d obtained from %s\n", tmp_domid, domain);
+    
+    /* convert symbol[+offset] to virtual address */
+    tmp_vaddr = vmtap_vaddr(tmp_domid, symbol, *offset);
+    if (!tmp_vaddr)
+        return false;
+    dbgprint("address %x obtained from %s[+%x]\n", tmp_vaddr, symbol, *offset);
+
+    *domid = tmp_domid;
+    *vaddr = tmp_vaddr;
     return true;
 }
 
@@ -376,31 +246,39 @@ static void
 cleanup_vmtap(void)
 {
     struct vmtap_probe *probe;
-    int i;
+    int p;
 
-    for (i = 0; i < VMTAP_PROBE_MAX; i++)
+    for (p = probe_min; p <= probe_max; p++)
     {
-        probe = probe_list[i];
+        probe = probe_list[p];
         if (probe)
         {
             /* unregister probes in vmprobes */
             unregister_vmprobe(probe->vp_handle);
             dbgprint("vmprobe %d unregistered\n", probe->vp_handle);
-			remove_probe(probe);
+            free(probe->domain);
+            free(probe->symbol);
+            remove_probe(probe);
         }
     }
 
-    xs_daemon_close(xs);
-    xs = NULL;
+    if (xs)
+    {
+        xs_daemon_close(xs);
+        xs = NULL;
+    }
 
-    xc_interface_close(xc);
-    xc = -1;
+    if (xc != -1)
+    {
+        xc_interface_close(xc);
+        xc = -1;
+    }
 
     dbgprint("vmtap uninitialized\n");
 }
 
 static bool
-init_vmtap(void)
+init_vmtap(vmtap_callback_t callback)
 {
     signal_interrupt();
 
@@ -419,52 +297,59 @@ init_vmtap(void)
         perror("failed to open xs domain");
         return false;
     }
+
+    vmtap_callback = callback;
     
     dbgprint("vmtap initialized\n");
     return true;
 }
 
 bool
-probe(const char *probepoint, vmtap_handler_t handler)
+__probe(const char *probepoint, vmtap_callback_t callback, void *pyhandler)
 {
     struct vmtap_probe *probe;
-    char *domain = NULL;
-    char *symbol = NULL;
+    char *domain, *symbol;
     unsigned long offset = 0;
-    int domid = 0;
+    domid_t domid = 0;
     unsigned long vaddr = 0;
     vmprobe_handle_t vp_handle;
 
+    if (!callback || !pyhandler)
+        return -1;
+
+    if (getuid())
+    {
+        fprintf(stderr, "vmtap needs a root access.\n");
+        return false;
+    }
+
     if (xc < 0)
     {
-        if (init_vmtap() < 0)
+        if (init_vmtap(callback) < 0)
             return false;
     }
     
-    /* parse the probepoint expression */
-    if (!parse_probepoint(&domain, &symbol, &offset))
+    domain = malloc(VMTAP_DOMAIN_MAX);
+    symbol = malloc(VMTAP_SYMBOL_MAX);
+    if (!domain || !symbol)
+    {
+        perror("failed to allocate memory for domain and symbol names");
         return false;
-    
-    domid = vmtap_domid(domain);
-    if (!domid)
-		return false;
-	dbgprint("domid %d obtained from %s\n", domid, domain);
-	
-	vaddr = vmtap_vaddr(domid, symbol, offset);
-	if (!vaddr)
-		return false;
-	dbgprint("address %x obtained from %s+%x\n", vaddr, symbol, offset);
+    }
+
+    /* parse the probepoint expression */
+    if (!parse_probepoint(probepoint, domain, symbol, &offset, &domid, &vaddr))
+        return false;
 
     /* register probe in vmprobes */
     vp_handle = register_vmprobe(domid, vaddr, vmtap_handler, NULL);
     if (vp_handle < 0)
         return false;
-   	dbgprint("vmprobe %d registered\n", vp_handle);
 
-    probe = add_probe(domain, symbol, offset, handler, vp_handle);
+    probe = add_probe(domain, symbol, offset, pyhandler, vp_handle);
     if (!probe)
         return false;
-
+    
     return true;
 }
 
@@ -514,7 +399,7 @@ enable(int p)
     return true;    
 }
 
-int
+domid_t
 domid(int p)
 {
     struct vmtap_probe *probe;

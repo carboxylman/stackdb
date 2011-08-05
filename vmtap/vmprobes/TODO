@@ -1,2 +1,3 @@
 Research about "tempoline" and write to access return values of syscalls.
+Automatically unregister probes in a domain destroyed using xenstore watcher.
 Exploit hash-tables for lists for better performance.

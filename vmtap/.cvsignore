@@ -2,4 +2,6 @@
 *.out
 *.so
 *.a
+*.pyc
+*_wrap.c
 tags

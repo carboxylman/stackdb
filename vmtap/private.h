@@ -10,23 +10,28 @@
  */
 struct vmtap_probe
 {
-	/* Domain name */
-	char *domain;	
+    /* Domain name */
+    char *domain;    
 
-	/* Symbol name */
-	char *symbol;
+    /* Symbol name */
+    char *symbol;
 
-	/* Offset from symbol to target address */
-	unsigned long offset;
+    /* Offset from symbol to target address */
+    unsigned long offset;
 
-	/* User handler */
-	vmtap_handler_t handler;
+    /* User handler in python */
+    void *pyhandler;
 
-	/* VMprobe handle (also used as an identifier to indicate this probe) */
-	vmprobe_handle_t vp_handle;
-	
-	/* Register values */
-	struct cpu_user_regs *regs;
+    /* VMprobe handle (also used as an identifier to indicate this probe) */
+    vmprobe_handle_t vp_handle;
+    
+    /* Register values */
+    struct cpu_user_regs *regs;
 };
+
+/* Internal function that does probe injection 
+   NOTE: Python user is supposed to call probe() instread of this function. */
+bool
+__probe(const char *probepoint, vmtap_callback_t callback, void *pyhandler);
 
 #endif /* _XEN_VMTAP_PRIVATE_H */

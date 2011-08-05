@@ -1,13 +1,15 @@
 wrap vmprobes with helper functions. helper functions include
-1) get_domain_info()
-2) read_memory()
-3) write_memory()
-4) syscall_arg()
+1) read_memory()
+2) write_memory()
+3) some functions to get domain info
+4) some functions to control domains
+
+write SWIG-related code to catch exceptions in python callback handlers.
 
 complete parse_probepoint().
 - make it support both domain name and id.
 
-write swig interfaces for vmtap.
+save memory by using another abstraction "vmtap_domain".
 
 write a python disktop using vmtap.
 

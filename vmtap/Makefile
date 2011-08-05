@@ -1,7 +1,12 @@
 CC:= gcc
+LD:= ld
+SWIG:= swig
+
+PYINCLUDE:= /usr/include/python2.5
+PYLIB:= /usr/lib/python2.5
 
 CFLAGS:= -fPIC
-CFLAGS+= -Wall
+#CFLAGS+= -Wall
 CFLAGS+= -O2
 #CFLAGS+= -g
 CFLAGS+= -I./
@@ -35,24 +40,38 @@ CFLAGS+= -D VMPROBE_i386
 OBJECTS+= vmprobes/vmprobes.o
 
 # vmtap
-CFLAGS+= -D VMTAP_DEBUG
+#CFLAGS+= -D VMTAP_DEBUG
+CFLAGS+= -I$(PYINCLUDE)
+LFLAGS+= -shared
+SFLAGS:= -python
+WRAPPER:= vmtap_wrap.c
 OBJECTS+= vmtap.o
+OBJECTS+= vmtap_wrap.o
+MODULE:= vmtap.py
+SHARED:= _vmtap.so
 
-# vmtap examples
-EXAMPLES:= examples/vmtapopen
-
-default: $(OBJECTS) $(EXAMPLES)
+default: $(WRAPPER) $(OBJECTS) $(SHARED)
 	@echo "vmtap compiled"
+
+%_wrap.c: %.i
+	@$(SWIG) $(SFLAGS) $<
 
 %.o: %.c
 	@$(CC) -c $(CFLAGS) -o $@ $<
 
-examples/%: examples/%.c
-	@$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@ $<
+%.so:
+	@$(LD) $(LFLAGS) $(OBJECTS) -o $@
 
 clean:
-	@#rm -f $(OBJECTS) $(TARGET)
-	@rm -f vmprobes/vmprobes.o
-	@rm -f vmtap.o
-	@rm -f $(EXAMPLES)
+	@rm -f $(WRAPPER) $(OBJECTS) $(MODULE)* $(SHARED)
 	@echo "vmtap cleaned"
+
+install:
+	@cp $(SHARED) $(PYLIB)
+	@cp $(MODULE) $(PYLIB)
+	@echo "vmtap installed"
+
+uninstall:
+	@rm -f $(PYLIB)/$(SHARED)
+	@rm -f $(PYLIB)/$(MODULE)
+	@echo "vmtap uninstalled"

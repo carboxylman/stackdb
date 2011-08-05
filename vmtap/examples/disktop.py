@@ -22,6 +22,5 @@ def on_time(p):
 
 vmtap.probe("a3guest.kernel.function(vfs_read).call", on_vfs_read_call)
 vmtap.probe("a3guest.kernel.function(vfs_write).return", on_vfs_write_return)
-vmtap.probe("timer.ms(5000)", on_time)
 
 vmtap.run()

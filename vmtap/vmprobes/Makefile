@@ -1,7 +1,7 @@
 CC:= gcc
 
 CFLAGS:= -fPIC
-CFLAGS+= -Wall
+#CFLAGS+= -Wall
 CFLAGS+= -O2
 #CFLAGS+= -g
 CFLAGS+= -I./
@@ -49,6 +49,5 @@ examples/%: examples/%.c
 	@$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@ $<
 
 clean:
-	@#rm -f $(OBJECTS) $(EXAMPLES)
-	@rm -f vmprobes.o $(EXAMPLES)
+	@rm -f $(OBJECTS) $(EXAMPLES)
 	@echo "vmprobes cleaned"

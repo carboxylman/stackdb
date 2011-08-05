@@ -167,7 +167,7 @@ int read_config_file (xa_instance_t *instance)
 
     /* Copy config info based on OS type */
     if(XA_OS_LINUX == instance->os_type){
-	    xa_dbprint("--reading in linux offsets from config file.\n");
+        xa_dbprint("--reading in linux offsets from config file.\n");
         if(entry->offsets.linux_offsets.tasks){
             instance->os.linux_instance.tasks_offset =
                  entry->offsets.linux_offsets.tasks;
@@ -194,7 +194,7 @@ int read_config_file (xa_instance_t *instance)
         }
     }
     else if (XA_OS_WINDOWS == instance->os_type){
-	    xa_dbprint("--reading in windows offsets from config file.\n");
+        xa_dbprint("--reading in windows offsets from config file.\n");
         if(entry->offsets.windows_offsets.tasks){
             instance->os.windows_instance.tasks_offset =
                 entry->offsets.windows_offsets.tasks;
@@ -294,8 +294,8 @@ int get_page_info_xen (xa_instance_t *instance)
         goto error_exit;
     }
     /* PAE Flag --> CR4, bit 5 == 0 --> pae disabled */
-	/* Patched by VMprobes */
-	if (!instance->pae)
+    /* Patched by VMprobes */
+    if (!instance->pae)
         instance->pae = xa_get_bit(ctxt.ctrlreg[4], 5);
     xa_dbprint("**set instance->pae = %d\n", instance->pae);
 
