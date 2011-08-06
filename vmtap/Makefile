@@ -6,9 +6,9 @@ PYINCLUDE:= /usr/include/python2.5
 PYLIB:= /usr/lib/python2.5
 
 CFLAGS:= -fPIC
-#CFLAGS+= -Wall
+CFLAGS+= -Wall
 CFLAGS+= -O2
-#CFLAGS+= -g
+CFLAGS+= -g
 CFLAGS+= -I./
 
 LFLAGS+= -lxenctrl

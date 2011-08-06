@@ -2,6 +2,7 @@
 #define _XEN_VMPROBES_H
 
 #include <xenctrl.h>
+#include <xenaccess/xenaccess.h>
 
 #ifndef VMPROBE_MAX
 #define VMPROBE_MAX (1024)
@@ -84,5 +85,14 @@ vmprobe_vaddr(vmprobe_handle_t handle);
  */
 domid_t
 vmprobe_domid(vmprobe_handle_t handle);
+
+/*
+ * Returns the pointer to a xenaccess instance that a probe belongs to.
+ * If the given handle is invalid, the function returns NULL.
+ * NOTE: This function is added to increase the performance of any future
+ * abstraction on top of vmprobes.
+ */
+xa_instance_t *
+vmprobe_xa_instance(vmprobe_handle_t handle);
 
 #endif /* _XEN_VMPROBES_H */

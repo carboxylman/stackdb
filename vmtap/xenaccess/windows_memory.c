@@ -257,7 +257,7 @@ error_exit:
 uint32_t windows_pid_to_pgd (xa_instance_t *instance, int pid)
 {
     unsigned char *memory = NULL;
-    uint32_t pgd = 0, ptr = 0, offset = 0;
+    uint32_t pgd = 0, offset = 0;
     int pdbase_offset = instance->os.windows_instance.pdbase_offset;
     int tasks_offset = instance->os.windows_instance.tasks_offset;
 

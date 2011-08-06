@@ -157,7 +157,7 @@ exit:
 uint32_t xa_get_domain_id (char *name)
 {
     char **domains = NULL;
-    int size = 0;
+    unsigned int size = 0;
     int i = 0;
     struct xs_handle *xsh = NULL;
     xs_transaction_t xth = XBT_NULL;
@@ -184,7 +184,6 @@ uint32_t xa_get_domain_id (char *name)
         if (nameCandidate) free(nameCandidate);
     }
 
-error_exit:
     if (domains) free(domains);
     if (xsh) xs_daemon_close(xsh);
     return domain_id;

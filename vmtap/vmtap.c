@@ -14,14 +14,12 @@
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
 #include <vmprobes/vmprobes.h>
-//#include <vmprobes/private.h>
 
 #include "vmtap.h"
 #include "private.h"
 
 #define VMTAP_DOMAIN_MAX (100)
 #define VMTAP_SYMBOL_MAX (100)
-#define VMTAP_SYSROW_MAX (200)
 
 #ifdef VMTAP_DEBUG
 static inline
@@ -45,10 +43,14 @@ static int xc = -1;
 static struct xs_handle *xs;
 
 static void
+cleanup_vmtap(void);
+
+static void
 signal_handler(int sig)
 {
     stop_vmprobes();
     dbgprint("vmtap forcefully stopped\n");
+    if (sig != SIGINT) cleanup_vmtap();
     signal(sig, SIG_DFL);
 }
 
@@ -102,6 +104,7 @@ add_probe(char *domain,
     probe->offset = offset;
     probe->pyhandler = pyhandler;
     p = probe->vp_handle = vp_handle; /* vp_handle is used as vmtap probe id */
+    probe->xa_instance = vmprobe_xa_instance(vp_handle);
     probe->regs = NULL;
     
     probe_list[p] = probe;
@@ -304,6 +307,40 @@ init_vmtap(vmtap_callback_t callback)
     return true;
 }
 
+static unsigned char *
+mmap_pages(struct vmtap_probe *probe, 
+           unsigned long vaddr, 
+           unsigned long size, 
+           unsigned long *offset,
+           int prot)
+{
+    xa_instance_t *xa_instance;
+    unsigned char *pages;
+    const int pid = 0; /* pid 0 indicates kernel - vmtap supports kernel only */
+
+    xa_instance = probe->xa_instance;
+    if (size < xa_instance->page_size)
+    {
+        pages = xa_access_user_va(xa_instance, vaddr, (unsigned int *)offset, 
+            pid, prot);
+    }
+    else
+    {
+        pages = xa_access_user_va_range(xa_instance, vaddr, size, 
+            (unsigned int *)offset, pid, prot);
+    }
+
+    if (!pages)
+    {
+        fprintf(stderr, "failed to map %ld bytes at [%lx:%s]\n", size, vaddr,
+            probe->domain);
+        return NULL;
+    }
+    
+    dbgprint("%ld bytes at [%lx:%s] mapped\n", size, vaddr, probe->domain);
+    return pages; /* munmap it later */
+}
+
 bool
 __probe(const char *probepoint, vmtap_callback_t callback, void *pyhandler)
 {
@@ -468,7 +505,7 @@ arg(int p, int n)
 }
 
 const char *
-argstr(int p, int n)
+arg_string(int p, int n)
 {
     struct vmtap_probe *probe;
 
@@ -478,4 +515,140 @@ argstr(int p, int n)
     // TODO:
 
     return NULL;    
+}
+
+char
+read_char(int p, unsigned long vaddr)
+{
+    struct vmtap_probe *probe;
+    xa_instance_t *xa_instance;
+    /* FIXME: size of char depends on the guest's architecture */
+    unsigned char *page;
+    unsigned long offset = 0;
+    const unsigned long size = sizeof(char);
+    float value;
+    
+	probe = find_probe(p);
+    assert(probe);
+
+    xa_instance = probe->xa_instance;
+    assert(xa_instance);
+
+    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    assert(page);
+
+    memcpy(&value, page + offset, size);
+    munmap(page, xa_instance->page_size);
+    
+    return value;
+}
+
+int
+read_int(int p, unsigned long vaddr)
+{
+    struct vmtap_probe *probe;
+    xa_instance_t *xa_instance;
+    /* FIXME: size of int depends on the guest's architecture */
+    unsigned char *page;
+    unsigned long offset = 0;
+    const unsigned long size = sizeof(int);
+    int value;
+    
+    probe = find_probe(p);
+    assert(probe);
+
+    xa_instance = probe->xa_instance;
+    assert(xa_instance);
+
+    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    assert(page);
+
+    memcpy(&value, page + offset, size);
+    munmap(page, xa_instance->page_size);
+
+    return value;
+}
+
+long
+read_long(int p, unsigned long vaddr)
+{
+    struct vmtap_probe *probe;
+    xa_instance_t *xa_instance;
+    /* FIXME: size of long depends on the guest's architecture */
+    unsigned char *page;
+    unsigned long offset = 0;
+    const unsigned long size = sizeof(long);
+    long value;
+
+    probe = find_probe(p);
+    assert(probe);
+
+    xa_instance = probe->xa_instance;
+    assert(xa_instance);
+
+    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    assert(page);
+
+    memcpy(&value, page + offset, size);
+    munmap(page, xa_instance->page_size);
+    
+    return value;
+}
+
+float
+read_float(int p, unsigned long vaddr)
+{
+    struct vmtap_probe *probe;
+    xa_instance_t *xa_instance;
+    /* FIXME: size of float depends on the guest's architecture */
+    unsigned char *page;
+    unsigned long offset = 0;
+    const unsigned long size = sizeof(float);
+    float value;
+    
+	probe = find_probe(p);
+    assert(probe);
+
+    xa_instance = probe->xa_instance;
+    assert(xa_instance);
+
+    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    assert(page);
+
+    memcpy(&value, page + offset, size);
+    munmap(page, xa_instance->page_size);
+    
+    return value;
+}
+
+double
+read_double(int p, unsigned long vaddr)
+{
+    struct vmtap_probe *probe;
+    xa_instance_t *xa_instance;
+    /* FIXME: size of double depends on the guest's architecture */
+    unsigned char *page;
+    unsigned long offset = 0;
+    const unsigned long size = sizeof(double);
+    float value;
+    
+	probe = find_probe(p);
+    assert(probe);
+
+    xa_instance = probe->xa_instance;
+    assert(xa_instance);
+
+    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    assert(page);
+
+    memcpy(&value, page + offset, size);
+    munmap(page, xa_instance->page_size);
+    
+    return value;
+}
+
+const char *
+read_string(int p, unsigned long vaddr)
+{
+    return NULL;
 }

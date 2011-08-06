@@ -598,7 +598,7 @@ void *xa_access_user_va_range (
         uint32_t addr = start + i*instance->page_size;
     
         if(!addr) {
-            printf("ERROR: address not in page table (%p)\n", addr);
+            printf("ERROR: address not in page table (%p)\n", (void *)addr);
             return NULL;
         }
 
@@ -645,7 +645,6 @@ void *xa_access_pa (
         int prot)
 {
     unsigned long pfn;
-    int i;
     
     /* page frame number = physical address >> PAGE_SHIFT */
     pfn = phys_address >> instance->page_shift;
@@ -664,7 +663,6 @@ void *xa_access_ma (
         int prot)
 {
     unsigned long mfn;
-    int i;
 
     /* machine frame number = machine address >> PAGE_SHIFT */
     mfn = mach_address >> instance->page_shift;
@@ -854,7 +852,6 @@ uint32_t xa_find_kernel_pd (xa_instance_t *instance)
     uint32_t address = 0;
     uint32_t offset = 0;
     int score = 0;
-    int max_score = 0;
     unsigned char *memory = NULL;
 
     /* this is used to hold a list of the candidate pages */

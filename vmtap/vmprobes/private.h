@@ -89,8 +89,11 @@ struct vmprobe_domain {
     /* List of probe-points in this domain */
     struct list_head probepoint_list;
 
-	/* The probepoint currently being single-stepped*/
-	struct vmprobe_probepoint *sstep_probepoint;
+    /* The original ip value before a breakpoint hit */
+    unsigned long org_ip;
+
+    /* The probepoint currently being single-stepped*/
+    struct vmprobe_probepoint *sstep_probepoint;
 
     /* XenAccess instance used to read/write domain's memory */
     xa_instance_t xa_instance;

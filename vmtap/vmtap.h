@@ -83,6 +83,42 @@ arg(int probe, int num);
  * "debuginfo explorer".
  */
 const char *
-argstr(int probe, int num);
+arg_string(int probe, int num);
+
+/*
+ * Reads a char value at a given address in the domain of a probe.
+ */
+char
+read_char(int probe, unsigned long address);
+
+/*
+ * Reads an integer value at a given address in the domain of a probe.
+ */
+int
+read_int(int probe, unsigned long address);
+
+/*
+ * Reads a long value at a given address in the domain of a probe.
+ */
+long
+read_long(int probe, unsigned long address);
+
+/*
+ * Reads a float value at a given address in the domain of a probe.
+ */
+float
+read_float(int probe, unsigned long address);
+
+/*
+ * Reads a double value at a given address in the domain of a probe.
+ */
+double
+read_double(int probe, unsigned long address);
+
+/*
+ * Reads a string value at a given address in the domain of a probe.
+ */
+const char *
+read_string(int probe, unsigned long address);
 
 #endif /* _XEN_VMTAP_H */

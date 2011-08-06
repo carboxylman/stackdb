@@ -289,7 +289,6 @@ int xa_check_pid_cache (xa_instance_t *instance, int pid, uint32_t *pgd)
         xa_dbprint("++PID Cache hit (%d --> 0x%.8x)\n", pid, *pgd);
     }
 
-exit:
     return ret;
 }
 

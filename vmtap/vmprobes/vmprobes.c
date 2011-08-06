@@ -277,7 +277,7 @@ add_probepoint(unsigned long vaddr, struct vmprobe_domain *domain)
     list_add(&probepoint->list, &probepoint_list);
     list_add(&probepoint->node, &domain->probepoint_list);
 
-    dbgprint("probepoint %lx:dom%d added\n", probepoint->vaddr,
+    dbgprint("probepoint [%lx:dom%d] added\n", probepoint->vaddr,
         probepoint->domain->id);
     return probepoint;
 }
@@ -288,7 +288,7 @@ remove_probepoint(struct vmprobe_probepoint *probepoint)
     list_del(&probepoint->node);
     list_del(&probepoint->list);
 
-    dbgprint("probepoint %lx:dom%d removed\n", probepoint->vaddr,
+    dbgprint("probepoint [%lx:dom%d] removed\n", probepoint->vaddr,
         probepoint->domain->id);
     free(probepoint);
 }
@@ -315,7 +315,7 @@ add_domain(domid_t domid)
     domain = find_domain(domid);
     if (domain)
         return NULL;
-    
+
     domain = (struct vmprobe_domain *) malloc( sizeof(*domain) );
     if (!domain)
     {
@@ -324,6 +324,7 @@ add_domain(domid_t domid)
     }
     
     /* initialize a xenaccess instance */
+    memset(&domain->xa_instance, 0, sizeof(xa_instance_t));
     domain->xa_instance.pae = 1; // always set pae mode due to a xenaccess bug
     domain->xa_instance.os_type = XA_OS_LINUX; // currently linux only
     if (xa_init_vm_id_lax(domid, &domain->xa_instance) == XA_FAILURE)
@@ -334,6 +335,7 @@ add_domain(domid_t domid)
     }
 
     domain->id = domid;
+    domain->org_ip = 0;
     domain->sstep_probepoint = NULL;
     INIT_LIST_HEAD(&domain->probepoint_list);
     
@@ -360,18 +362,23 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
     struct vmprobe *probe;
     struct vmprobe_probepoint *probepoint;
 
-    probepoint = find_probepoint(__get_org_ip(regs), domain);
+    /* save the original ip value in case something bad happens */
+    domain->org_ip = __get_org_ip(regs);
+
+    probepoint = find_probepoint(domain->org_ip, domain);
     if (!probepoint)
         return -1;
-
+    
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
         if (!probe->disabled && probe->pre_handler)
             probe->disabled = probe->pre_handler(probe->handle, regs);
     }
-    
+   
+    /* restore ip register */
     __reset_ip(regs);
-    
+    dbgprint("original ip %x restored in dom%d\n", regs->eip, domain->id);
+
     /* restore the original instruction */
     probepoint->state = VMPROBE_REMOVING;
     __remove_breakpoint(probepoint);
@@ -385,6 +392,9 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
         dbgprint("sstep set in dom%d\n", domain->id);
         domain->sstep_probepoint = probepoint;
     }
+
+    /* nothing bad has happened, so set it zero */
+    domain->org_ip = 0;
     
     return 0;
 }
@@ -549,25 +559,37 @@ __unregister_vmprobe(struct vmprobe *probe)
 
             probepoint->state = VMPROBE_DISABLED;
         }
-
+        
         if (only_probepoint_left(probepoint))
         {
+            regs = get_regs(domain->id, &ctx);
+
+            /* singlestep still on? */
             if (domain->sstep_probepoint)
             {
-                regs = get_regs(domain->id, &ctx);
-            
                 /* turn singlestep mode off */
                 __leave_singlestep(regs);
                 domain->sstep_probepoint = NULL;
                 dbgprint("sstep unset in dom%d for the last time\n", 
                     domain->id);
-
-                set_regs(domain->id, &ctx);
             }
     
+            /* ip register not restored yet? */
+            if (domain->org_ip)
+            {
+                /* restore ip register */
+                regs->eip = domain->org_ip;
+                dbgprint("original ip %x restored in dom%d for the last time\n",
+                    regs->eip, domain->id);
+                domain->org_ip = 0;
+            }
+        
+            set_regs(domain->id, &ctx);
+
             /* turn debugging mode off */
             set_debugging(domain->id, false);
-            dbgprint("debugging unset in dom%d\n", domain->id);
+            dbgprint("debugging unset in dom%d for the last time\n", 
+                domain->id);
         }
     }
 
@@ -712,9 +734,10 @@ run_vmprobes(void)
                     if (domain_paused(domain->id))
                     {
                         dbgprint("dom%d paused by %s\n", domain->id,
-                            (!domain->sstep_probepoint) ? "bphit" : "sstep");
+                            (!domain->sstep_probepoint) ? 
+                            "bp-hit" : "sstep-hit");
                         regs = get_regs(domain->id, &ctx);
-                        
+
                         if (!domain->sstep_probepoint)
                             handle_bphit(domain, regs);
                         else
@@ -819,6 +842,28 @@ vmprobe_domid(vmprobe_handle_t handle)
         return 0;
 
     return domain->id;
+}
+
+xa_instance_t *
+vmprobe_xa_instance(vmprobe_handle_t handle)
+{
+    struct vmprobe *probe;
+    struct vmprobe_probepoint *probepoint;
+    struct vmprobe_domain *domain;
+
+    probe = find_probe(handle);
+    if (!probe)
+        return NULL;
+    
+    probepoint = probe->probepoint;
+    if (!probepoint)
+        return NULL;
+
+    domain = probepoint->domain;
+    if (!domain)
+        return NULL;
+
+    return &domain->xa_instance;
 }
 
 #include "vmprobes_arch.c"

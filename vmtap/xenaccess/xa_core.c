@@ -50,7 +50,6 @@
 #include <xen/arch-x86/xen.h>
 #endif /* ENABLE_XEN */
 
-/* Patched by VMprobes */
 char *strndup(const char *s, size_t n);
 
 int get_memory_size (xa_instance_t *instance)
@@ -98,7 +97,6 @@ error_exit:
     return ret;
 }
 
-/* Patched by VMprobes */
 #if 0
 int read_config_file (xa_instance_t *instance)
 {
@@ -254,7 +252,6 @@ error_exit:
 int get_page_info_xen (xa_instance_t *instance)
 {
     int ret = XA_SUCCESS;
-    int i = 0, j = 0;
 #ifdef ENABLE_XEN
 #ifdef HAVE_CONTEXT_ANY
     vcpu_guest_context_any_t ctxt_any;
@@ -294,7 +291,6 @@ int get_page_info_xen (xa_instance_t *instance)
         goto error_exit;
     }
     /* PAE Flag --> CR4, bit 5 == 0 --> pae disabled */
-    /* Patched by VMprobes */
     if (!instance->pae)
         instance->pae = xa_get_bit(ctxt.ctrlreg[4], 5);
     xa_dbprint("**set instance->pae = %d\n", instance->pae);
@@ -413,8 +409,6 @@ void init_xen_version (xa_instance_t *instance)
 int helper_init (xa_instance_t *instance)
 {
     int ret = XA_SUCCESS;
-    uint32_t local_offset = 0;
-    unsigned char *memory = NULL;
 
     if (XA_MODE_XEN == instance->mode){
 #ifdef ENABLE_XEN
@@ -434,7 +428,6 @@ int helper_init (xa_instance_t *instance)
 #endif /* ENABLE_XEN */
     }
 
-/* Patched by VMprobes */
 #if 0
     /* read in configure file information */
     if (read_config_file(instance) == XA_FAILURE){

@@ -3,6 +3,7 @@
 
 #include <xenctrl.h>
 #include <vmprobes/vmprobes.h>
+#include <xenaccess/xenaccess.h>
 #include "vmtap.h"
 
 /*
@@ -24,13 +25,16 @@ struct vmtap_probe
 
     /* VMprobe handle (also used as an identifier to indicate this probe) */
     vmprobe_handle_t vp_handle;
+
+	/* XenAccess instance borrowed from domains in VMprobes */
+	xa_instance_t *xa_instance;
     
     /* Register values */
     struct cpu_user_regs *regs;
 };
 
 /* Internal function that does probe injection 
-   NOTE: Python user is supposed to call probe() instread of this function. */
+   NOTE: Python user is supposed to call probe() instead of this function. */
 bool
 __probe(const char *probepoint, vmtap_callback_t callback, void *pyhandler);
 
