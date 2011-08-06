@@ -528,7 +528,7 @@ read_char(int p, unsigned long vaddr)
     const unsigned long size = sizeof(char);
     float value;
     
-	probe = find_probe(p);
+    probe = find_probe(p);
     assert(probe);
 
     xa_instance = probe->xa_instance;
@@ -606,7 +606,7 @@ read_float(int p, unsigned long vaddr)
     const unsigned long size = sizeof(float);
     float value;
     
-	probe = find_probe(p);
+    probe = find_probe(p);
     assert(probe);
 
     xa_instance = probe->xa_instance;
@@ -632,7 +632,7 @@ read_double(int p, unsigned long vaddr)
     const unsigned long size = sizeof(double);
     float value;
     
-	probe = find_probe(p);
+    probe = find_probe(p);
     assert(probe);
 
     xa_instance = probe->xa_instance;

@@ -4,6 +4,7 @@ CFLAGS:= -fPIC
 #CFLAGS+= -Wall
 CFLAGS+= -O2
 #CFLAGS+= -g
+CFLAGS+= -I../
 CFLAGS+= -I./
 
 LFLAGS+= -lxenctrl
