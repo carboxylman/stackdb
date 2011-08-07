@@ -7,12 +7,10 @@ count = 0
 def on_sys_open(p):
     global count
     count += 1
-    print "[%d] %s() called in %s" % (count, vmtap.symbol(p), vmtap.domain(p))
-    print "- char: %c" % (vmtap.read_char(p, vmtap.address(p)))
-    print "- int: %d" % (vmtap.read_int(p, vmtap.address(p)))
-    print "- long: %ld" % (vmtap.read_long(p, vmtap.address(p)))
-    print "- float: %f" % (vmtap.read_float(p, vmtap.address(p)))
-    print "- double: %f" % (vmtap.read_double(p, vmtap.address(p)))
+    print "[%d] %s() called in %s" % (count, vmtap.symbol(p), vmtap.domain(p)) 
+    print "  -- filename: %s" % (vmtap.arg_string(p, 0))
+    print "  -- flags: %08x" % (vmtap.arg(p, 1))
+    print "  -- mode: %08x" % (vmtap.arg(p, 2))
 
 # Inject a probe by passing a probepoint expression and a callback handler
 vmtap.probe("a3guest.kernel.function(sys_open).call", on_sys_open)

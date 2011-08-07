@@ -69,7 +69,7 @@ offset(int probe);
 
 /*
  * Returns an argument of the instrumented system call.
- * To indicate which argument to obtain, pass a number starting from 0 as the
+ * To indicate which argument to obtain, pass a number starting from 0 for the
  * second argument of this function.
  */
 unsigned long

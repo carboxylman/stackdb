@@ -140,7 +140,7 @@ vmtap_handler(vmprobe_handle_t vp_handle, struct cpu_user_regs *regs)
     assert(probe);
     assert(probe->pyhandler);
 
-    dbgprint("vmtap probe %d triggered at %s[+%x] in %s\n", p, probe->symbol,
+    dbgprint("vmtap probe %d triggered at %s[+%lx] in %s\n", p, probe->symbol,
         probe->offset, probe->domain);
 
     /* save registers so that user can obtain the values in their handler */
@@ -238,7 +238,7 @@ parse_probepoint(const char *probepoint, /* in */
     tmp_vaddr = vmtap_vaddr(tmp_domid, symbol, *offset);
     if (!tmp_vaddr)
         return false;
-    dbgprint("address %x obtained from %s[+%x]\n", tmp_vaddr, symbol, *offset);
+    dbgprint("address %x obtained from %s[+%lx]\n", tmp_vaddr, symbol, *offset);
 
     *domid = tmp_domid;
     *vaddr = tmp_vaddr;
@@ -307,6 +307,71 @@ init_vmtap(vmtap_callback_t callback)
     return true;
 }
 
+static void *
+vmtap_access_user_va_range(xa_instance_t *xa_instance,
+                           unsigned long address,
+                           unsigned long size,
+                           unsigned long *offset,
+                           int pid,
+                           int prot)
+{
+    int xc_handle;
+    domid_t domid;
+    void *pages;
+    unsigned long i, page_size, page_shift, no_pages;
+    unsigned long start, vaddr, maddr;
+    unsigned long tmp_offset;
+    unsigned int cr3 = 0;
+    unsigned long mapped = 0; /* number of pages mapped */
+    const int kernel = !pid;
+
+    page_size = xa_instance->page_size;
+    page_shift = xa_instance->page_shift;
+    start = address & ~(page_size - 1);
+    tmp_offset = address - start;
+    no_pages = (size + tmp_offset) / page_size + 1;
+
+    /* cr3 register holds the page directory */
+    if (xa_current_cr3(xa_instance, &cr3) == XA_FAILURE)
+        return NULL;
+
+    xen_pfn_t *mfns = (xen_pfn_t *)malloc(sizeof(xen_pfn_t) * no_pages);
+    if (!mfns) return NULL;
+
+    for (i = 0; i < no_pages; i++)
+    {
+        /* virtual address for each page we will map */
+        vaddr = start + i * page_size;
+        if (!vaddr)
+        {
+            free(mfns);
+            return NULL;
+        }
+
+        /* machine address for each page */
+        maddr = xa_pagetable_lookup(xa_instance, cr3, vaddr, kernel);
+
+        if (maddr) mapped++;
+        else break; /* FIXME: map pages that are found only - is this okay? */
+
+        /* machine page frame number of each page */
+        mfns[i] = maddr >> page_shift;
+    }
+
+    xc_handle = xa_instance->m.xen.xc_handle;
+    domid = xa_instance->m.xen.domain_id;
+
+    pages = xc_map_foreign_pages(xc_handle, domid, prot, mfns, mapped);
+    if (!pages)
+    {
+        free(mfns);
+        return NULL;
+    }
+
+    *offset = tmp_offset;
+    return pages;
+}
+
 static unsigned char *
 mmap_pages(struct vmtap_probe *probe, 
            unsigned long vaddr, 
@@ -316,28 +381,30 @@ mmap_pages(struct vmtap_probe *probe,
 {
     xa_instance_t *xa_instance;
     unsigned char *pages;
+    unsigned long page_size, tmp_offset;
     const int pid = 0; /* pid 0 indicates kernel - vmtap supports kernel only */
 
     xa_instance = probe->xa_instance;
-    if (size < xa_instance->page_size)
+    page_size = xa_instance->page_size;
+    tmp_offset = vaddr - (vaddr & ~(page_size - 1));
+
+    if ((size - tmp_offset) < page_size)
     {
+        /* let xenaccess use its memory cache for small size */
         pages = xa_access_user_va(xa_instance, vaddr, (unsigned int *)offset, 
             pid, prot);
     }
     else
     {
-        pages = xa_access_user_va_range(xa_instance, vaddr, size, 
-            (unsigned int *)offset, pid, prot);
+        /* xenaccess can't map multiple pages properly, use our own function */
+        pages = vmtap_access_user_va_range(xa_instance, vaddr, size, offset, 
+            pid, prot);
     }
 
     if (!pages)
-    {
-        fprintf(stderr, "failed to map %ld bytes at [%lx:%s]\n", size, vaddr,
-            probe->domain);
         return NULL;
-    }
-    
-    dbgprint("%ld bytes at [%lx:%s] mapped\n", size, vaddr, probe->domain);
+
+    dbgprint("%ld bytes at %lx in %s mapped\n", size, vaddr, probe->domain);
     return pages; /* munmap it later */
 }
 
@@ -495,26 +562,35 @@ unsigned long
 arg(int p, int n)
 {
     struct vmtap_probe *probe;
+    struct cpu_user_regs *regs;
+    unsigned long arg;
 
     probe = find_probe(p);
     assert(probe);
 
-    // TODO:
+    regs = probe->regs;
+    assert(regs);
 
-    return 0;
+    switch (n)
+    {
+    case 0: arg = regs->ebx; break;
+    case 1: arg = regs->ecx; break;
+    case 2: arg = regs->edx; break;
+    /* FIXME: read values from the stack for more than three arguments */
+    default: assert(false);
+    }
+
+    dbgprint("arg%d from %s[+%lx] in %s obtained: %08lx\n", n, probe->symbol, 
+        probe->offset, probe->domain, arg);
+    return arg;
 }
 
 const char *
 arg_string(int p, int n)
 {
-    struct vmtap_probe *probe;
-
-    probe = find_probe(p);
-    assert(probe);
-
-    // TODO:
-
-    return NULL;    
+    unsigned long _arg = arg(p, n);
+    if (!_arg) return NULL;
+    return (read_string(p, _arg));
 }
 
 char
@@ -534,8 +610,9 @@ read_char(int p, unsigned long vaddr)
     xa_instance = probe->xa_instance;
     assert(xa_instance);
 
-    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
-    assert(page);
+    page = (unsigned char *)mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    if (!page)
+        return '\0';
 
     memcpy(&value, page + offset, size);
     munmap(page, xa_instance->page_size);
@@ -560,8 +637,9 @@ read_int(int p, unsigned long vaddr)
     xa_instance = probe->xa_instance;
     assert(xa_instance);
 
-    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
-    assert(page);
+    page = (unsigned char *)mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    if (!page)
+        return 0;
 
     memcpy(&value, page + offset, size);
     munmap(page, xa_instance->page_size);
@@ -586,8 +664,9 @@ read_long(int p, unsigned long vaddr)
     xa_instance = probe->xa_instance;
     assert(xa_instance);
 
-    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
-    assert(page);
+    page = (unsigned char *)mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    if (!page)
+        return 0;
 
     memcpy(&value, page + offset, size);
     munmap(page, xa_instance->page_size);
@@ -612,8 +691,9 @@ read_float(int p, unsigned long vaddr)
     xa_instance = probe->xa_instance;
     assert(xa_instance);
 
-    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
-    assert(page);
+    page = (unsigned char *)mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    if (!page)
+        return 0.0f;
 
     memcpy(&value, page + offset, size);
     munmap(page, xa_instance->page_size);
@@ -638,8 +718,9 @@ read_double(int p, unsigned long vaddr)
     xa_instance = probe->xa_instance;
     assert(xa_instance);
 
-    page = (unsigned char *) mmap_pages(probe, vaddr, size, &offset, PROT_READ);
-    assert(page);
+    page = (unsigned char *)mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+    if (!page)
+        return 0.0;
 
     memcpy(&value, page + offset, size);
     munmap(page, xa_instance->page_size);
@@ -650,5 +731,46 @@ read_double(int p, unsigned long vaddr)
 const char *
 read_string(int p, unsigned long vaddr)
 {
-    return NULL;
+    struct vmtap_probe *probe;
+    xa_instance_t *xa_instance;
+    char *pages;
+    unsigned long offset = 0;
+    unsigned long len, size = 0;
+    unsigned long inc_size, page_size, no_pages;
+    char *value;
+
+    probe = find_probe(p);
+    assert(probe);
+
+    xa_instance = probe->xa_instance;
+    assert(xa_instance);
+
+    page_size = xa_instance->page_size;
+
+    /* we will increase the mapping size by this much if the string is longer 
+       than we expect at first attempt. */
+    inc_size = (page_size - 1);
+
+    while (true)
+    {
+        size += inc_size;
+        
+        pages = (char *)mmap_pages(probe, vaddr, size, &offset, PROT_READ);
+        if (!pages)
+            return NULL;
+        
+        no_pages = size / page_size + 1;
+        
+        len = strnlen(pages + offset, size - offset);
+        if (len < (size - offset))
+            break;
+        
+        munmap(pages, no_pages * page_size);
+    }
+
+    /* FIXME: this way, there's no way to free the memory later. */
+    value = strdup(pages + offset);
+    munmap(pages, no_pages * page_size);
+    
+    return value;
 }

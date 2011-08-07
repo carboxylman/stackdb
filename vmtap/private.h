@@ -26,8 +26,8 @@ struct vmtap_probe
     /* VMprobe handle (also used as an identifier to indicate this probe) */
     vmprobe_handle_t vp_handle;
 
-	/* XenAccess instance borrowed from domains in VMprobes */
-	xa_instance_t *xa_instance;
+    /* XenAccess instance borrowed from domains in VMprobes */
+    xa_instance_t *xa_instance;
     
     /* Register values */
     struct cpu_user_regs *regs;
@@ -37,5 +37,16 @@ struct vmtap_probe
    NOTE: Python user is supposed to call probe() instead of this function. */
 bool
 __probe(const char *probepoint, vmtap_callback_t callback, void *pyhandler);
+
+/* Returns strlen(s), if that is less than maxlen, or maxlen if there is no 
+   '\0' character among the first maxlen characters pointed to by s. 
+   NOTE: old version of string.h does not expose this function. */
+static inline
+size_t strnlen(const char *s, size_t maxlen)
+{
+    size_t i;
+    for (i = 0; i < maxlen && s[i]; i++);
+    return i;
+}
 
 #endif /* _XEN_VMTAP_PRIVATE_H */
