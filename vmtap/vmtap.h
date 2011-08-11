@@ -11,6 +11,16 @@
 
 typedef void (*vmtap_callback_t)(int, void *);
 
+#ifdef SWIG
+/*
+ * Injects a probe at a given probe-point. A user handler (a Python function)
+ * is called whenever the probe is triggered.
+ * NOTE: Read the README file for details about probe-point specifications.
+ */
+bool
+probe(const char *probepoint, PyObject *pyhandler);
+#endif /* SWIG */
+
 /*
  * Starts all probes injected.
  * NOTE: this function does not return until stop() is called or Ctrl+C is 

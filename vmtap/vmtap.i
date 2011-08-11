@@ -2,6 +2,10 @@
 
 %{
 
+#ifndef SWIGPYTHON
+#error " High-level language other than Python not supported"
+#else /* SWIGPYTHON */
+
 #include "vmtap.h"
 
 /* Internal function that does probe injection. 
@@ -39,10 +43,11 @@ vmtap_callback(int probe, void *pyhandler)
 }
 
 /*
- * Injects a probe at a given probe-point.
+ * Injects a probe at a given probe-point. A user handler (a Python function)
+ * is called whenever the probe is triggered.
  * NOTE: Read the README file for details about probe-point specifications.
  */
-static bool
+bool
 probe(const char *probepoint, PyObject *pyhandler)
 {
     /* call the internal probe function */
@@ -51,7 +56,6 @@ probe(const char *probepoint, PyObject *pyhandler)
     return success;
 }
 
-%}
+#endif /* SWIGPYTHON */
 
-static bool
-probe(const char *probepoint, PyObject *pyhandler);
+%}
