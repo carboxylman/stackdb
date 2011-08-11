@@ -200,20 +200,6 @@ vmtap_vaddr(size_t domid, const char *symbol, unsigned long offset)
 }
 
 static bool
-__parse_probepoint(const char *probepoint, /* in */
-                   char *domain, /* out */
-                   char *symbol, /* out */
-                   unsigned long *offset) /* out */
-{
-    /* FIXME: extract domain, symbol, and offset out of probepoint expression */
-    strcpy(domain, "a3guest");
-    strcpy(symbol, "sys_open");
-    *offset = 0;
-
-    return true;
-}
-
-static bool
 parse_probepoint(const char *probepoint, /* in */
                  char *domain, /* out */
                  char *symbol, /* out */
@@ -224,16 +210,22 @@ parse_probepoint(const char *probepoint, /* in */
     domid_t tmp_domid;
     unsigned long tmp_vaddr;
 
-    if (!__parse_probepoint(probepoint, domain, symbol, offset))
+    if (!__parse_probepoint(probepoint, domain, symbol, offset, &tmp_domid))
         return false;
     dbgprint("probepoint \"%s\" parsed\n", probepoint);
+	if (tmp_domid) dbgprint(" - domain: dom%d\n", tmp_domid);
+	else dbgprint(" - domain: %s\n", domain);
+	dbgprint(" - symbol: %s[+%lx]\n", symbol, *offset);
 
-    /* convert domain name to id */
-    tmp_domid = vmtap_domid(domain);
-    if (!tmp_domid)
-        return false;
-    dbgprint("domid %d obtained from %s\n", tmp_domid, domain);
-    
+    if (tmp_domid == 0)
+    {
+        /* convert domain name to id */
+        tmp_domid = vmtap_domid(domain);
+        if (!tmp_domid)
+            return false;
+        dbgprint("domid %d obtained from %s\n", tmp_domid, domain);
+    }
+
     /* convert symbol[+offset] to virtual address */
     tmp_vaddr = vmtap_vaddr(tmp_domid, symbol, *offset);
     if (!tmp_vaddr)

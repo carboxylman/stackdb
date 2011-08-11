@@ -8,15 +8,18 @@ def on_sys_open(p):
     global count
     count += 1
     print "[%d] %s() called in %s" % (count, vmtap.symbol(p), vmtap.domain(p)) 
-    print "  -- filename: %s" % (vmtap.arg_string(p, 0))
-    print "  -- flags: %08x" % (vmtap.arg(p, 1))
-    print "  -- mode: %08x" % (vmtap.arg(p, 2))
+    print "  -- filename: %s" % (vmtap.arg_string(p,0))
+    print "  -- flags: %08x" % (vmtap.arg(p,1))
+    print "  -- mode: %08x" % (vmtap.arg(p,2))
 
 # Inject a probe by passing a probepoint expression and a callback handler
-vmtap.probe("a3guest.kernel.function(sys_open).call", on_sys_open)
+success = vmtap.probe("a3guest.kernel.function(sys_open)", on_sys_open)
 
-# Start trigerring all injected probes
-# This function returns when "vmtap.stop()" is called or "ctrl+c" is pressed.
-vmtap.run()
+if success:
+    print "probe injected"
 
-print "sys_open() called", count, "times"
+    # Start trigerring all injected probes
+    # This function returns when "vmtap.stop()" is called or "ctrl+c" is pressed
+    vmtap.run()
+
+    print "sys_open() called", count, "times"

@@ -38,6 +38,14 @@ struct vmtap_probe
 bool
 __probe(const char *probepoint, vmtap_callback_t callback, void *pyhandler);
 
+/* Internal function that parses a probepoint string using Flex */
+bool
+__parse_probepoint(const char *probepoint,
+                   char *domain,
+                   char *symbol,
+                   unsigned long *offset,
+                   domid_t *domid);
+
 /* Returns strlen(s), if that is less than maxlen, or maxlen if there is no 
    '\0' character among the first maxlen characters pointed to by s. 
    NOTE: old version of string.h does not expose this function. */

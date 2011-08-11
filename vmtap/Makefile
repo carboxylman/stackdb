@@ -1,6 +1,7 @@
 CC:= gcc
 LD:= ld
 SWIG:= swig
+LEX:= flex
 
 PYINCLUDE:= /usr/include/python2.5
 PYLIB:= /usr/lib/python2.5
@@ -45,16 +46,21 @@ CFLAGS+= -I$(PYINCLUDE)
 LFLAGS+= -shared
 SFLAGS:= -python
 WRAPPER:= vmtap_wrap.c
+PARSER:= vmtap_parse.yy.c
 OBJECTS+= vmtap.o
 OBJECTS+= vmtap_wrap.o
+OBJECTS+= vmtap_parse.yy.o
 MODULE:= vmtap.py
 SHARED:= _vmtap.so
 
-default: $(WRAPPER) $(OBJECTS) $(SHARED)
+default: $(WRAPPER) $(PARSER) $(OBJECTS) $(SHARED)
 	@echo "vmtap compiled"
 
 %_wrap.c: %.i
 	@$(SWIG) $(SFLAGS) $<
+
+%.yy.c: %.l
+	@$(LEX) -o $@ $<
 
 %.o: %.c
 	@$(CC) -c $(CFLAGS) -o $@ $<
@@ -63,7 +69,11 @@ default: $(WRAPPER) $(OBJECTS) $(SHARED)
 	@$(LD) $(LFLAGS) $(OBJECTS) -o $@
 
 clean:
-	@rm -f $(WRAPPER) $(OBJECTS) $(MODULE)* $(SHARED)
+	@$(RM) -f $(WRAPPER)
+	@$(RM) -f $(PARSER)
+	@$(RM) -f $(OBJECTS)
+	@$(RM) -f $(MODULE)*
+	@$(RM) -f $(SHARED)
 	@echo "vmtap cleaned"
 
 install:
@@ -72,6 +82,6 @@ install:
 	@echo "vmtap installed"
 
 uninstall:
-	@rm -f $(PYLIB)/$(SHARED)
-	@rm -f $(PYLIB)/$(MODULE)
+	@$(RM) -f $(PYLIB)/$(SHARED)
+	@$(RM) -f $(PYLIB)/$(MODULE)
 	@echo "vmtap uninstalled"

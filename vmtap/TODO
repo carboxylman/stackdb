@@ -1,13 +1,12 @@
 read_string() still seems to have a problem when it sometimes returns an empty string (""). 
 
+read_string() allocates memory for the string to return but there is no good way to free the memory later - fix this to avoid memory leaks.
+
 wrap vmprobes with helper functions. helper functions include
 1) some functions to get domain info
 2) some functions to control domains
 
 write SWIG-related code to catch exceptions in python callback handlers.
-
-complete parse_probepoint().
-- make it support both domain name and id.
 
 save memory by using another abstraction "vmtap_domain".
 
