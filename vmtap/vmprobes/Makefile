@@ -33,25 +33,27 @@ OBJECTS += ../xenaccess/xa_util.o
 # vmprobes
 CFLAGS += -D VMPROBE_i386
 CFLAGS += -D VMPROBE_SIGNAL
+CFLAGS += -D VMPROBE_BENCHMARK
 #CFLAGS += -D VMPROBE_DEBUG
 OBJECTS += vmprobes.o
 
 # vmprobes examples
 EXAMPLES := examples/vmprobebio
 EXAMPLES += examples/vmprobeopen
+EXAMPLES += examples/vmprobenull
 
 default:
-	@echo "compiling vmprobes"
+	@echo "compiling vmprobes (be patient)"
 	@$(MAKE) $(EXAMPLES)
 	@echo "vmprobes compiled"
 
 %.o: %.c
-	$(CC) -c $(CFLAGS) -o $@ $<
+	@$(CC) -c $(CFLAGS) -o $@ $<
 
 examples/%: examples/%.c $(OBJECTS)
-	$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@ $<
+	@$(CC) $(CFLAGS) $(LFLAGS) $(OBJECTS) -o $@ $<
 
 clean:
-	$(RM) -f $(OBJECTS)
-	$(RM) -f $(EXAMPLES)
+	@$(RM) -f $(OBJECTS)
+	@$(RM) -f $(EXAMPLES)
 	@echo "vmprobes cleaned"

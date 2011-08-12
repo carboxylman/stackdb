@@ -9,6 +9,7 @@
 #include "list.h"
 #include "vmprobes.h"
 #include "vmprobes_arch.h"
+#include "vmprobes_perf.h"
 
 struct vmprobe_probepoint;
 

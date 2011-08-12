@@ -55,36 +55,36 @@ MODBIN := vmtap.pyc
 TARGET := _vmtap.so
 
 default:
-	@echo "compiling vmtap..."
+	@echo "compiling vmtap... (be patient)"
 	@$(MAKE) $(TARGET)
 	@echo "vmtap compiled"
 
 %_wrap.c: %.i
-	$(SWIG) $(SFLAGS) $<
+	@$(SWIG) $(SFLAGS) $<
 
 %.yy.c: %.l
-	$(LEX) -o $@ $<
+	@$(LEX) -o $@ $<
 
 %.o: %.c
-	$(CC) -c $(CFLAGS) -o $@ $<
+	@$(CC) -c $(CFLAGS) -o $@ $<
 
 %.so: $(WRAPPER) $(PARSER) $(OBJECTS)
-	$(LD) $(LFLAGS) $(OBJECTS) -o $@
+	@$(LD) $(LFLAGS) $(OBJECTS) -o $@
 
 clean:
-	$(RM) -f $(WRAPPER)
-	$(RM) -f $(PARSER)
-	$(RM) -f $(OBJECTS)
-	$(RM) -f $(MODULE) $(MODBIN)
-	$(RM) -f $(TARGET)
+	@$(RM) -f $(WRAPPER)
+	@$(RM) -f $(PARSER)
+	@$(RM) -f $(OBJECTS)
+	@$(RM) -f $(MODULE) $(MODBIN)
+	@$(RM) -f $(TARGET)
 	@echo "vmtap cleaned"
 
 install:
-	cp $(TARGET) $(PYLIB)
-	cp $(MODULE) $(PYLIB)
+	@cp $(TARGET) $(PYLIB)
+	@cp $(MODULE) $(PYLIB)
 	@echo "vmtap installed"
 
 uninstall:
-	$(RM) -f $(PYLIB)/$(TARGET)
-	$(RM) -f $(PYLIB)/$(MODULE)
+	@$(RM) -f $(PYLIB)/$(TARGET)
+	@$(RM) -f $(PYLIB)/$(MODULE)
 	@echo "vmtap uninstalled"

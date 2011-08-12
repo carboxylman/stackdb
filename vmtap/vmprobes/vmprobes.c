@@ -101,10 +101,15 @@ signal_handler(int sig)
 {
     vmprobe_handle_t handle;
 
+    VMPROBE_PERF_STOP("vmprobes gets control back by interrupt");
+    VMPROBE_PERF_NEXT();
+
     for (handle = 0; handle < VMPROBE_MAX; handle++)
         unregister_vmprobe(handle);
-    fprintf(stderr, "probes forcefully unregistered\n");
+    dbgprint("probes forcefully unregistered\n");
     
+    VMPROBE_PERF_PRINT();
+
     signal(sig, SIG_DFL);
     raise(sig);
 }
@@ -369,28 +374,36 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
     if (!probepoint)
         return -1;
     
+    VMPROBE_PERF_START();
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
         if (!probe->disabled && probe->pre_handler)
             probe->disabled = probe->pre_handler(probe->handle, regs);
     }
+    VMPROBE_PERF_STOP("vmprobes executes pre-handlers");
    
     /* restore ip register */
+    VMPROBE_PERF_START();
     __reset_ip(regs);
     dbgprint("original ip %x restored in dom%d\n", regs->eip, domain->id);
+    VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
 
     /* restore the original instruction */
+    VMPROBE_PERF_START();
     probepoint->state = VMPROBE_REMOVING;
     __remove_breakpoint(probepoint);
     dbgprint("bp removed at [%lx:dom%d]\n", probepoint->vaddr, domain->id);
     probepoint->state = VMPROBE_DISABLED;
+    VMPROBE_PERF_STOP("vmprobes removes breakpoint in domU");
     
     if (!interrupt)
     {
         /* turn singlestep mode on */
+        VMPROBE_PERF_START();
         __enter_singlestep(regs);
         dbgprint("sstep set in dom%d\n", domain->id);
         domain->sstep_probepoint = probepoint;
+        VMPROBE_PERF_STOP("vmprobes sets singlestep in domU");
     }
 
     /* nothing bad has happened, so set it zero */
@@ -407,24 +420,32 @@ handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 
     probepoint = domain->sstep_probepoint;  
 
+    VMPROBE_PERF_START();
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
         if (!probe->disabled && probe->post_handler)
             probe->disabled = probe->post_handler(probe->handle, regs);
     }
+    VMPROBE_PERF_STOP("vmprobes executes post-handlers");
 
     if (!interrupt)
     {
+        /* turn singlestep mode off */
+        VMPROBE_PERF_START();
+        __leave_singlestep(regs);
+        dbgprint("sstep unset in dom%d\n", domain->id);
+        domain->sstep_probepoint = NULL;
+        VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
+        
+        VMPROBE_PERF_NEXT();
+
         /* inject a breakpoint for the next round */
+        VMPROBE_PERF_START();
         probepoint->state = VMPROBE_INSERTING;
         __insert_breakpoint(probepoint);
         dbgprint("bp set at [%lx:dom%d]\n", probepoint->vaddr, domain->id);
         probepoint->state = VMPROBE_BP_SET;
-    
-        /* turn singlestep mode off */
-        __leave_singlestep(regs);
-        dbgprint("sstep unset in dom%d\n", domain->id);
-        domain->sstep_probepoint = NULL;
+        VMPROBE_PERF_STOP("vmprobes injects breakpoint back in domU");    
     }
 }
 
@@ -454,6 +475,8 @@ init_vmprobes(void)
     signal_interrupt();
 #endif
     
+    VMPROBE_PERF_RESET();
+
     xc_handle = xc_interface_open();
     if (xc_handle < 0)
     {
@@ -495,13 +518,16 @@ __register_vmprobe(struct vmprobe *probe)
     domain = probepoint->domain;
     
     /* turn debugging mode on */
+    VMPROBE_PERF_START();
     ret = set_debugging(domain->id, true);
     if (ret < 0)
         return ret;
     dbgprint("debugging set in dom%d\n", domain->id);
+    VMPROBE_PERF_STOP("vmprobes sets debugging in domU");
 
     if (probepoint->state == VMPROBE_DISABLED)
     {
+        VMPROBE_PERF_START();
         probepoint->state = VMPROBE_INSERTING;
 
         /* backup the original instruction */
@@ -523,6 +549,7 @@ __register_vmprobe(struct vmprobe *probe)
             probepoint->vaddr, domain->id);
     
         probepoint->state = VMPROBE_BP_SET;
+        VMPROBE_PERF_STOP("vmprobes injects breakpoint in domU");
     }
     
     probe->disabled = false;
@@ -545,6 +572,7 @@ __unregister_vmprobe(struct vmprobe *probe)
     {
         if (probepoint->state == VMPROBE_BP_SET)
         {
+            VMPROBE_PERF_START();
             probepoint->state = VMPROBE_REMOVING;
         
             /* restore the original instruction */
@@ -558,38 +586,49 @@ __unregister_vmprobe(struct vmprobe *probe)
                 probepoint->vaddr, domain->id);
 
             probepoint->state = VMPROBE_DISABLED;
+            VMPROBE_PERF_STOP("vmprobes removes breakpoint in domU");
         }
         
         if (only_probepoint_left(probepoint))
         {
+            VMPROBE_PERF_START();
             regs = get_regs(domain->id, &ctx);
+            VMPROBE_PERF_STOP("vmprobes obtains registers from domU");
 
             /* singlestep still on? */
             if (domain->sstep_probepoint)
             {
                 /* turn singlestep mode off */
+                VMPROBE_PERF_START();
                 __leave_singlestep(regs);
                 domain->sstep_probepoint = NULL;
                 dbgprint("sstep unset in dom%d for the last time\n", 
                     domain->id);
+                VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
             }
     
             /* ip register not restored yet? */
             if (domain->org_ip)
             {
                 /* restore ip register */
+                VMPROBE_PERF_START();
                 regs->eip = domain->org_ip;
                 dbgprint("original ip %x restored in dom%d for the last time\n",
                     regs->eip, domain->id);
                 domain->org_ip = 0;
+                VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
             }
-        
+       
+               VMPROBE_PERF_START();
             set_regs(domain->id, &ctx);
+            VMPROBE_PERF_STOP("vmprobes sets registers in domU");
 
+            VMPROBE_PERF_START();
             /* turn debugging mode off */
             set_debugging(domain->id, false);
             dbgprint("debugging unset in dom%d for the last time\n", 
                 domain->id);
+            VMPROBE_PERF_STOP("vmprobes unsets debugging in domU");
         }
     }
 
@@ -607,7 +646,7 @@ register_vmprobe(domid_t domid,
     struct vmprobe_domain *domain;
     int ret;
 
-    if (domid <= 0 || !vaddr || (!pre_handler && !post_handler))
+    if (domid <= 0 || !vaddr)
         return -1;
     
     if (domain_paused(domid))
@@ -643,8 +682,10 @@ register_vmprobe(domid_t domid,
     if (!probe)
         return -1;
         
+    VMPROBE_PERF_START();
     xc_domain_pause(xc_handle, domain->id);
     dbgprint("dom%d paused\n", domain->id);
+    VMPROBE_PERF_STOP("vmprobes pauses domU");
     ret = __register_vmprobe(probe);
     if (ret < 0)
     {
@@ -652,9 +693,12 @@ register_vmprobe(domid_t domid,
         unregister_vmprobe(probe->handle);
         return ret;
     }
+    VMPROBE_PERF_START();
     xc_domain_unpause(xc_handle, domain->id);
     dbgprint("dom%d unpaused\n", domain->id);
+    VMPROBE_PERF_STOP("vmprobes unpauses domU");
     
+    VMPROBE_PERF_START();
     return probe->handle;
 }
 
@@ -672,16 +716,20 @@ unregister_vmprobe(vmprobe_handle_t handle)
     probepoint = probe->probepoint; 
     domain = probepoint->domain;
     
+    VMPROBE_PERF_START();
     xc_domain_pause(xc_handle, domain->id);
     dbgprint("dom%d paused\n", domain->id);
+    VMPROBE_PERF_STOP("vmprobes pauses domU");
     ret = __unregister_vmprobe(probe);
     if (ret < 0)
     {
         xc_domain_unpause(xc_handle, domain->id);
         return ret;
     }
+    VMPROBE_PERF_START();
     xc_domain_unpause(xc_handle, domain->id);
     dbgprint("dom%d unpaused\n", domain->id);
+    VMPROBE_PERF_STOP("vmprobes unpauses domU");
 
     remove_probe(probe);
     if (list_empty(&probepoint->probe_list))
@@ -701,7 +749,7 @@ unregister_vmprobe(vmprobe_handle_t handle)
 void
 run_vmprobes(void)
 {
-    struct vmprobe_domain *domain;
+    struct vmprobe_domain *domain = NULL;
     int fd;
     evtchn_port_t port;
     struct timeval tv;
@@ -736,16 +784,38 @@ run_vmprobes(void)
                         dbgprint("dom%d paused by %s\n", domain->id,
                             (!domain->sstep_probepoint) ? 
                             "bp-hit" : "sstep-hit");
+#ifdef VMPROBE_BENCHMARK
+                        if (domain->sstep_probepoint)
+                        {
+                            VMPROBE_PERF_STOP("vmprobes gets control back "
+                                "after sstep-hit");
+                        }
+                        else
+                        {
+                            VMPROBE_PERF_STOP("vmprobes gets control back "
+                                "after bp-hit");
+                        }
+#endif /* VMPROBE_BENCHMARK */
+                        VMPROBE_PERF_START();
                         regs = get_regs(domain->id, &ctx);
+                        VMPROBE_PERF_STOP("vmprobes obtains registers from "
+                            "domU");
 
                         if (!domain->sstep_probepoint)
                             handle_bphit(domain, regs);
                         else
                             handle_sstep(domain, regs);
                         
+                        VMPROBE_PERF_START();
                         set_regs(domain->id, &ctx);
+                        VMPROBE_PERF_STOP("vmprobes sets registers to domU");
+                        
+                        VMPROBE_PERF_START();
                         xc_domain_unpause(xc_handle, domain->id);
                         dbgprint("dom%d unpaused\n", domain->id);
+                        VMPROBE_PERF_STOP("vmprobes unpauses domU");
+        
+                        VMPROBE_PERF_START(); /* stops at bp-hit or sstep-hit */
                     }
                 }
             }
