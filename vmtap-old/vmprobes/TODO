@@ -1,0 +1,4 @@
+Unregister VMprobes and finish the loop when the guest is terminated.
+Make every functions save return value to errno.
+Extend VMprobes to support multiple probes.
+

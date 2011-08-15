@@ -1,0 +1,3 @@
+Build dependency:
+1) elfutils-devel
+2) xenaccess-0.5

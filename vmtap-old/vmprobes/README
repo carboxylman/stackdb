@@ -1,0 +1,148 @@
+File:   README
+Author: Chung Hwan Kim
+E-mail: chunghwn@cs.utah.edu
+
+
+1) Environment
+  
+  a) Create a "pc3000" Emulab node with the OS image: A3-XEN-3.1.4-FC8-v2.
+
+  b) Login to the created node.
+  
+  c) Install a guest domain "a3guest".
+    cd /proj/a3/tools
+    ./install-sda4-fc8.sh
+    ./install-lvm-fc8.sh
+    sudo xm create /local/sda4/vm-images/a3guest-fc8.conf
+  
+  d) Install XenAccess.
+    cd /proj/a3/vmi/xenaccess-0.5
+    ./configure
+    make
+    sudo make install
+    sudo /sbin/ldconfig
+    sudo cp /proj/a3/vmi/conf/xenaccess.conf /etc
+
+  e) Make sure that you have "/usr/local/lib" included in $LD_LIBRARY_PATH.
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
+  
+
+2) Install VMprobes.
+
+  a) Make a copy of the entire source code of VMprobes.
+    cd /tmp
+    cp -r /proj/a3/vmi/vmprobes ./
+    cd vmprobes
+
+  b) (Optional) Enable verbose messages if you want to monitor how VMprobes
+  works. By default, VMprobes does not print out any messages unless an error
+  occurs.
+    Uncomment the following in "Makefile": (line 11)
+    #CFLAGS += -D_VERBOSE
+    to ...
+    CFLAGS += -D_VERBOSE
+  
+  c) Compile and install VMprobes.
+    make
+    sudo make install
+    sudo /sbin/ldconfig
+
+  You can uninstall VMprobes later by running:  sudo make uninstall.
+
+
+3) Write your own probe.
+
+  The following instruction explains how to write a C program to monitor a
+  kernel function of a guest domain. The source code (vmprobebio.c) for the demo
+  can be found in "/proj/a3/vmi/vmprobebio/".
+
+  a) Create a new C file for your program - for example, "vmprobebio.c".
+  
+  b) Include "vmprobes.h" at the top of your program.
+    #include <vmprobes/vmprobes.h>
+
+  c) "struct vmprobe" represents a probe, and is defined in 
+  "/usr/local/include/vmprobes/vmprobes.h" as following:
+    struct vmprobe {
+      domid_t		domain_id;		// id of the guest domain to instrument
+      const char *	domain_name;	// allow user to indicate domain name
+      vmprobe_opcode_t *   addr;	// virtual address to instrument
+      const char *	symbol_name;	// allow user to indicate symbol name
+      uint32_t 		offset;			// offset into the symbol
+      vmprobe_pre_handler_t 	pre_handler;	// called before addr execution
+      vmprobe_post_handler_t 	post_handler;	// called after addr execution
+    };
+  
+    Create a instance of struct vmprobe and specify its fields in your program. 
+      static struct vmprobe vp = {
+        .domain_name = "a3guest", 
+        .symbol_name = "sys_open", 
+        .offset = 0x0, 
+        .pre_handler = pre_handler,
+        .post_handler = post_handler
+      };
+
+    This probe instruments the starting position (offset: 0x0) of the kernel
+    function "sys_open" for the domain "a3guest". During the instrumentation,
+    the user-defined function "pre_handler" will be invoked just before
+    sys_open() is called by the guest execution, and "post_handler" will be
+    invoked right after sys_open is called. Both pre_handler and post_handler
+    can be set to NULL in case you do not want to handle the events.
+
+  d) Write probe handlers. The function types for pre_handler and post_handler
+  are defined as following.
+    typedef int (*vmprobe_pre_handler_t) (struct vmprobe *, struct pt_regs *);
+    typedef int (*vmprobe_post_handler_t) (struct vmprobe *, struct pt_regs *, 
+      unsigned long flags);
+  
+    The pointer to your vmprobe instance and the current register values are
+    passed to the handlers so that you can (for example) monitor the arguments
+    or the return value of the kernel function - call dump_regs() in your
+    handlers to print out register values. You can also monitor the status of
+    the probe by examining "flags" argument passed to your post_handler. (For
+    more details, take a look at vmprobes.h)
+
+    The return value of the handlers decides when to finish the instrumentation.
+    The instrumentation ends when one of pre_handler and post_handler returns
+    non-zero value. VMprobes continues instrumentation when handlers return
+    zero.
+
+  e) Write the main function as following.
+    int main() {
+      register_vmprobe(&vp);
+      loop_vmprobe(&vp);
+      unregister_vmprobe(&vp);
+    }
+  
+    As the names of the functions suggest, 
+      register_vmprobe() - initializes and prepares for instrumentation given a
+        user-specified vmprobe instance,
+      loop_vmprobe() - starts instrumentation and continue until a user handler
+        returns non-zero, and
+      unregister_vmprobe() - finishes up instrumentation.
+
+  f) Instrumentation helper functions - use the functions in your probe
+  handlers.
+    read_vmprobe() - reads data from the specified location of the guest memory.
+    write_vmprobe() - writes data to the specified location of the guest memory.
+    dump_vmprobe() - dumps the specified vmprobe instance.
+    dump_regs() - dumps the specified registers.
+
+
+4) Run your probe.
+
+  a) Compile your code.
+    gcc vmprobebio.c -lvmprobes -lxenaccess -lxenctrl -o vmprobebio
+
+  b) Open another terminal and login to the guest VM.
+    sudo xm console a3guest
+    login:  root
+    password:  a3crash
+
+  c) Run the probe on the previous terminal.
+    sudo ./vmprobebio
+
+  d) Try whatever it is that calls sys_open() in the guest VM - for example, ls.
+
+  To abort the program before a user handler returns non-zero, press Ctrl+C.
+  VMprobes will automatically unregister your probe upon the signal.
