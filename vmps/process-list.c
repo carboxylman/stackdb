@@ -1,13 +1,41 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <sys/mman.h>
 #include <limits.h>
-#include <stdio.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
+#include "task-offset.h"
 
-#include "task-offset.c"
+int predict_ksyms(char *ksyms, const char *sysmap)
+{
+    int len, i;
+
+    /* replace 'System.map' with 'vmlinux-syms' */
+    len = strlen(sysmap);
+    memset(ksyms, 0, PATH_MAX);
+    for (i = 0; i < len; i++)
+    {
+        if (strncmp(sysmap + i, "System.map-", 11) == 0)
+        {
+			strncat(ksyms, sysmap, i);
+            strcat(ksyms, "vmlinux-syms-");
+            strcat(ksyms, sysmap + i + 11);
+            break;
+        }
+    }
+
+    if (ksyms[0] == '\0' || access(ksyms, R_OK) != 0)
+    {
+        fprintf(stderr, "couldn't find kernel symbol file after checking %s\n",
+            ksyms);
+        return -1;
+    }
+
+    return 0;
+}
 
 int main (int argc, char **argv)
 {
@@ -17,63 +45,78 @@ int main (int argc, char **argv)
     char *name = NULL;
     int pid = 0;
     int tasks_offset, pid_offset, name_offset;
-	char dom[128]; // = "a3guest";
-	char fsym[PATH_MAX]; // = "/boot/vmlinux-syms-2.6.18.8-xenU";
+    char domain[128];
+    char ksyms[PATH_MAX];
+	domid_t domid = 0;
+	int xc_handle = -1;
 
-	/* print out how to use if arguments are invalid. */
-	if (argc <= 2)
-	{
-		printf("usage: %s <domain name> <kernel symbol file>\n", argv[0]);
-		return 1;
-	}
-
-    /* this is the domain name that we are looking at */
-	strcpy(dom, argv[1]);
-
-	/* this is the kernel symbol file that we are using */
-	strcpy(fsym, argv[2]);
-
-    /* initialize the xen access library */
-    xai.pae = 1;
-	if (xa_init_vm_name_strict(dom, &xai) == XA_FAILURE)
-	{
-        perror("failed to init XenAccess library");
-        goto error_exit;
+    /* print out how to use if arguments are invalid. */
+    if (argc <= 1)
+    {
+        printf("usage: %s <domain name>\n", argv[0]);
+        return 1;
     }
 
-    //tasks_offset = xai.os.linux_instance.tasks_offset;
-    //name_offset = 108*4; /* pv, xen 3.0.4, linux 2.6.16 */
-    //pid_offset = xai.os.linux_instance.pid_offset;
+    if (getuid())
+    {
+        fprintf(stderr, "need a root access\n");
+        return 1;
+    }
+
+    /* this is the domain name that we are looking at */
+    strcpy(domain, argv[1]);
+
+    /* initialize the xen access library */
+    memset(&xai, 0, sizeof(xai));
+    xai.pae = 1;
+    xai.os_type = XA_OS_LINUX;
+    if (xa_init_vm_name_strict(domain, &xai) == XA_FAILURE)
+    {
+        perror("failed to init xa instance");
+        goto error_exit;
+    }
+	domid = xai.m.xen.domain_id;
+	xc_handle = xai.m.xen.xc_handle;
+    //printf("domain: %s (domid: %d)\n", domain, domid);
+
+    if (predict_ksyms(ksyms, xai.sysmap))
+    {
+        fprintf(stderr, "failed to predict kernel symbol path\n");
+        goto error_exit;
+    }
+    //printf("ksyms: %s\n", ksyms);
 
     /* init the offset values */
-	if (get_task_offsets(&tasks_offset, &name_offset, &pid_offset, fsym))
-	{
-		perror("failed to get offsets of task_struct members");
-		goto error_exit;
-	}
-	//printf("tasks: %d\n", tasks_offset);
-	//printf("name: %d\n", name_offset);
-	//printf("pid: %d\n", pid_offset);
+    if (get_task_offsets(&tasks_offset, &name_offset, &pid_offset, ksyms))
+    {
+        perror("failed to get offsets of task_struct members");
+        goto error_exit;
+    }
+    //printf("tasks offset: %d\n", tasks_offset);
+    //printf("name offset: %d\n", name_offset);
+    //printf("pid offset: %d\n", pid_offset);
+
+	xc_domain_pause(xc_handle, domid);
 
     /* get the head of the list */
     memory = xa_access_kernel_sym(&xai, "init_task", &offset, PROT_READ);
     if (!memory)
-	{
+    {
         perror("failed to get process list head");
         goto error_exit;
     }    
     memcpy(&next_process, memory + offset + tasks_offset, 4);
     list_head = next_process;
     munmap(memory, xai.page_size);
-	memory = NULL;
+    memory = NULL;
 
     /* walk the task list */
     while (1)
-	{
+    {
         /* follow the next pointer */
         memory = xa_access_kernel_va(&xai, next_process, &offset, PROT_READ);
         if (!memory)
-		{
+        {
             perror("failed to map memory for process list pointer");
             goto error_exit;
         }
@@ -102,7 +145,7 @@ int main (int argc, char **argv)
         
         printf("[%5d] %s\n", pid, name);
         munmap(memory, xai.page_size);
-		memory = NULL;
+        memory = NULL;
     }
 
 error_exit:
@@ -110,7 +153,9 @@ error_exit:
     /* sanity check to unmap shared pages */
     if (memory) munmap(memory, xai.page_size);
     
-	/* cleanup any memory associated with the XenAccess instance */
+	xc_domain_unpause(xc_handle, domid);
+	
+    /* cleanup any memory associated with the XenAccess instance */
     xa_destroy(&xai);
 
     return 0;

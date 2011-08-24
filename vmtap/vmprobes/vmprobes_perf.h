@@ -95,11 +95,14 @@ __perf_print()
         {
             perf = &__perf[r][s];
             cycle = perf->stop - perf->start;
-            printf("[%3ld] %8lld cycles (%8Lf ms): %s\n", (s+1), cycle,
-                __ctos(cycle) * 1000, perf->desc);
+            //printf("[%3ld] %8lld cycles (%8Lf ms): %s\n", (s+1), cycle,
+            //    __ctos(cycle) * 1000, perf->desc);
+            printf("[%3ld] <%lld - %lld> %8lld cycles (%8Lf ms): %s\n", (s+1), 
+                perf->start, perf->stop, cycle, __ctos(cycle) * 1000, 
+                perf->desc);
         }
-		cycle = __perf[r][s-1].stop - __perf[r][0].start;
-		printf("TOTAL: %7lld cycles (%8Lf ms)\n", cycle, __ctos(cycle) * 1000);
+        cycle = __perf[r][s-1].stop - __perf[r][0].start;
+        printf("TOTAL: %7lld cycles (%8Lf ms)\n", cycle, __ctos(cycle) * 1000);
         printf("---------------------------------------------------------------"
             "-----------------\n");
         printf("\n");

@@ -7,9 +7,6 @@ CFLAGS += -O2
 CFLAGS += -I../
 CFLAGS += -I./
 
-LFLAGS += -lxenctrl
-LFLAGS += -lxenstore
-
 # xenaccess
 CFLAGS += -D ENABLE_XEN
 OBJECTS := ../xenaccess/linux_core.o
@@ -38,6 +35,8 @@ CFLAGS += -D VMPROBE_BENCHMARK
 OBJECTS += vmprobes.o
 
 # vmprobes examples
+LFLAGS := -lxenctrl
+LFLAGS += -lxenstore
 EXAMPLES := examples/vmprobebio
 EXAMPLES += examples/vmprobeopen
 EXAMPLES += examples/vmprobenull

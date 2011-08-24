@@ -9,11 +9,8 @@ PYLIB := /usr/lib/python2.5
 CFLAGS := -fPIC
 CFLAGS += -Wall
 CFLAGS += -O2
-CFLAGS += -g
+#CFLAGS += -g
 CFLAGS += -I./
-
-LFLAGS += -lxenctrl
-LFLAGS += -lxenstore
 
 # xenaccess
 CFLAGS += -D ENABLE_XEN
@@ -43,7 +40,9 @@ OBJECTS += vmprobes/vmprobes.o
 # vmtap
 #CFLAGS += -D VMTAP_DEBUG
 CFLAGS += -I$(PYINCLUDE)
-LFLAGS += -shared
+LFLAGS := -shared
+LFLAGS += -lxenctrl
+LFLAGS += -lxenstore
 SFLAGS := -python
 WRAPPER := vmtap_wrap.c
 PARSER := vmtap_parse.yy.c
