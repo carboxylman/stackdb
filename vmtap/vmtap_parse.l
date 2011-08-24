@@ -13,7 +13,7 @@ bool yy_return;
 
 %}
 
-id        [A-Za-z_][A-Za-z_0-9]*
+id        [A-Za-z_][A-Za-z_0-9\-]*
 digit     [0-9]
 nzd       [1-9]
 hexdigit  {digit}|[A-Fa-f]
