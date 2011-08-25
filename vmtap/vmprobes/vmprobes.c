@@ -330,7 +330,6 @@ add_domain(domid_t domid)
     
     /* initialize a xenaccess instance */
     memset(&domain->xa_instance, 0, sizeof(xa_instance_t));
-    domain->xa_instance.pae = 1; // always set pae mode due to a xenaccess bug
     domain->xa_instance.os_type = XA_OS_LINUX; // currently linux only
     if (xa_init_vm_id_lax(domid, &domain->xa_instance) == XA_FAILURE)
     {
