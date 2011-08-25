@@ -68,7 +68,6 @@ int main (int argc, char **argv)
 
     /* initialize the xen access library */
     memset(&xai, 0, sizeof(xai));
-    xai.pae = 1;
     xai.os_type = XA_OS_LINUX;
     if (xa_init_vm_name_strict(domain, &xai) == XA_FAILURE)
     {

@@ -550,7 +550,7 @@ void *xa_access_user_va (
         xa_current_cr3(instance, &cr3);
         address = xa_pagetable_lookup(instance, cr3, virt_address, 1);
         if (!address){
-            printf("ERROR: address not in page table (0x%x)\n", virt_address);
+            //printf("ERROR: address not in page table (0x%x)\n", virt_address);
             return NULL;
         }
     }
@@ -565,7 +565,7 @@ void *xa_access_user_va (
         }
 
         if (!address){
-            printf("ERROR: address not in page table (0x%x)\n", virt_address);
+            //printf("ERROR: address not in page table (0x%x)\n", virt_address);
             return NULL;
         }
     }
