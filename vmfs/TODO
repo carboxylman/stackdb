@@ -1,3 +1,2 @@
-Make it print file names in full path.
-Print the socket and pipe numbers in a pretty way.
+Print file names with the file-system name - then it finally becomes the full path.
 Take command arguments to print open files for a certain process (pid, name).

@@ -599,7 +599,7 @@ static int process_request(int fd, const char *fname, Dwarf_Request *req)
 
 static int find_comp_unit(Dwarf_Off *from,
                           Dwarf_Off *to,
-						  const char *name,
+                          const char *name,
                           const char *fname)
 {
     int fd, ret;
@@ -631,7 +631,7 @@ static int find_comp_unit(Dwarf_Off *from,
 static int find_struct(Dwarf_Off *from, 
                        Dwarf_Off *to,
                        const char *name,
-					   const Dwarf_Off scope_from, 
+                       const Dwarf_Off scope_from, 
                        const Dwarf_Off scope_to, 
                        const char *fname)
 {
@@ -699,26 +699,26 @@ static int find_struct_member(unsigned int *offset,
 int get_task_offsets(int *tasks_offset,
                      int *name_offset,
                      int *pid_offset,
-					 int *files_offset,
+                     int *files_offset,
                      const char *fsym)
 {
     char *fields[] = {
         "tasks",
         "pid",
         "comm",    // name
-		"files",
+        "files",
     };
     int *offsets[4];
     offsets[0] = tasks_offset;
     offsets[1] = pid_offset;
     offsets[2] = name_offset;
-	offsets[3] = files_offset;
+    offsets[3] = files_offset;
     uint32_t i;
     int ret = 0;
     
     Dwarf_Off sched_from, sched_to;
     if ((ret = find_comp_unit(&sched_from, &sched_to, "sched.c", fsym)) 
-		!= EX_OK)
+        != EX_OK)
     {
         errx(-ret, "cannot find sched.c in %s", fsym);
         return ret;
@@ -727,7 +727,7 @@ int get_task_offsets(int *tasks_offset,
 
     Dwarf_Off task_from, task_to = 0;
     if ((ret = find_struct(&task_from, &task_to, "task_struct", sched_from, 
-		sched_to, fsym)) != EX_OK)
+        sched_to, fsym)) != EX_OK)
     {
         errx(-ret, "cannot find task_struct in %s", fsym);
         return ret;
@@ -752,225 +752,227 @@ int get_task_offsets(int *tasks_offset,
 
 int get_files_offsets(int *fdt_offset, const char *fsym)
 {
-	unsigned int offset = 0;
-	char *field = NULL;
-	int ret = 0;
+    unsigned int offset = 0;
+    char *field = NULL;
+    int ret = 0;
 
-	if (base_from == 0 || base_to == 0)
-	{
-    	if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
-			!= EX_OK)
-    	{
-        	errx(-ret, "cannot find base.c in %s", fsym);
-        	return ret;
-   		}
-    	//printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
-	}
+    if (base_from == 0 || base_to == 0)
+    {
+        if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
+            != EX_OK)
+        {
+            errx(-ret, "cannot find base.c in %s", fsym);
+            return ret;
+           }
+        //printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
+    }
 
     Dwarf_Off files_from, files_to = 0;
     if ((ret = find_struct(&files_from, &files_to, "files_struct", base_from, 
-		base_to, fsym)) != EX_OK)
+        base_to, fsym)) != EX_OK)
     {
         errx(-ret, "cannot find files_struct in %s", fsym);
         return ret;
     }
     //printf("files_struct found: 0x%06llx - 0x%06llx\n", files_from, files_to);
 
-	field = "fdt";
-	if ((ret = find_struct_member(&offset, field, files_from, files_to, 
-					fsym)) != EX_OK)
-	{
-		errx(-ret, "cannot fine files_struct->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*fdt_offset = offset;
+    field = "fdt";
+    if ((ret = find_struct_member(&offset, field, files_from, files_to, 
+                    fsym)) != EX_OK)
+    {
+        errx(-ret, "cannot fine files_struct->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *fdt_offset = offset;
 
-	return ret;
+    return ret;
 }
 
 int get_fdt_offsets(int *max_fds_offset, int *fd_offset, const char *fsym)
 {
-	unsigned int offset = 0;
-	char *field = NULL;
-	int ret = 0;
+    unsigned int offset = 0;
+    char *field = NULL;
+    int ret = 0;
 
-	if (base_from == 0 || base_to == 0)
-	{
-    	if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
-			!= EX_OK)
-    	{
-        	errx(-ret, "cannot find base.c in %s", fsym);
-        	return ret;
-   		}
-    	//printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
-	}
+    if (base_from == 0 || base_to == 0)
+    {
+        if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
+            != EX_OK)
+        {
+            errx(-ret, "cannot find base.c in %s", fsym);
+            return ret;
+           }
+        //printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
+    }
 
     Dwarf_Off fdt_from, fdt_to = 0;
     if ((ret = find_struct(&fdt_from, &fdt_to, "fdtable", base_from, 
-		base_to, fsym)) != EX_OK)
+        base_to, fsym)) != EX_OK)
     {
         errx(-ret, "cannot find fdtable in %s", fsym);
         return ret;
     }
     //printf("fdtable found: 0x%06llx - 0x%06llx\n", fdt_from, fdt_to);
 
-	field = "max_fds";
-	if ((ret = find_struct_member(&offset, field, fdt_from, fdt_to, fsym)) 
-		!= EX_OK)
-	{
-		errx(-ret, "cannot find fdtable->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*max_fds_offset = offset;
+    field = "max_fds";
+    if ((ret = find_struct_member(&offset, field, fdt_from, fdt_to, fsym)) 
+        != EX_OK)
+    {
+        errx(-ret, "cannot find fdtable->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *max_fds_offset = offset;
 
-	field = "fd";
-	if ((ret = find_struct_member(&offset, field, fdt_from, fdt_to, fsym)) 
-		!= EX_OK)
-	{
-		errx(-ret, "cannot find fdtable->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*fd_offset = offset;
+    field = "fd";
+    if ((ret = find_struct_member(&offset, field, fdt_from, fdt_to, fsym)) 
+        != EX_OK)
+    {
+        errx(-ret, "cannot find fdtable->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *fd_offset = offset;
 
-	return ret;
+    return ret;
 }
 
-int get_fd_offsets(int *f_dentry_offset, int *f_pos_offset, const char *fsym)
+int get_fd_offsets(int *f_dentry_offset, const char *fsym)
 {
-	unsigned int offset = 0;
-	char *field = NULL;
-	int ret = 0;
+    unsigned int offset = 0;
+    char *field = NULL;
+    int ret = 0;
 
-	if (base_from == 0 || base_to == 0)
-	{
-    	if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
-			!= EX_OK)
-    	{
-        	errx(-ret, "cannot find base.c in %s", fsym);
-        	return ret;
-   		}
-    	//printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
-	}
+    if (base_from == 0 || base_to == 0)
+    {
+        if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
+            != EX_OK)
+        {
+            errx(-ret, "cannot find base.c in %s", fsym);
+            return ret;
+           }
+        //printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
+    }
 
     Dwarf_Off fd_from, fd_to = 0;
     if ((ret = find_struct(&fd_from, &fd_to, "file", base_from, base_to, 
-		fsym)) != EX_OK)
+        fsym)) != EX_OK)
     {
         errx(-ret, "cannot find file in %s", fsym);
         return ret;
     }
     //printf("file found: 0x%06llx - 0x%06llx\n", fd_from, fd_to);
 
-	field = "f_dentry";
-	if ((ret = find_struct_member(&offset, field, fd_from, fd_to, fsym)) 
-		!= EX_OK)
-	{
-		errx(-ret, "cannot find file->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*f_dentry_offset = offset;
+    field = "f_dentry";
+    if ((ret = find_struct_member(&offset, field, fd_from, fd_to, fsym)) 
+        != EX_OK)
+    {
+        errx(-ret, "cannot find file->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *f_dentry_offset = offset;
 
-	field = "f_pos";
-	if ((ret = find_struct_member(&offset, field, fd_from, fd_to, fsym)) 
-		!= EX_OK)
-	{
-		errx(-ret, "cannot find file->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*f_pos_offset = offset;
-
-	return ret;
+    return ret;
 }
 
-int get_dentry_offsets(int *d_name_offset, const char *fsym)
+int get_dentry_offsets(int *d_parent_offset, 
+                       int *d_name_offset, 
+                       const char *fsym)
 {
-	unsigned int offset = 0;
-	char *field = NULL;
-	int ret = 0;
+    unsigned int offset = 0;
+    char *field = NULL;
+    int ret = 0;
 
-	if (base_from == 0 || base_to == 0)
-	{
-    	if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
-			!= EX_OK)
-    	{
-        	errx(-ret, "cannot find base.c in %s", fsym);
-        	return ret;
-   		}
-    	//printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
-	}
+    if (base_from == 0 || base_to == 0)
+    {
+        if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
+            != EX_OK)
+        {
+            errx(-ret, "cannot find base.c in %s", fsym);
+            return ret;
+           }
+        //printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
+    }
 
     Dwarf_Off dentry_from, dentry_to = 0;
     if ((ret = find_struct(&dentry_from, &dentry_to, "dentry", base_from, 
-		base_to, fsym)) != EX_OK)
+        base_to, fsym)) != EX_OK)
     {
         errx(-ret, "cannot find dentry in %s", fsym);
         return ret;
     }
     //printf("dentry found: 0x%06llx - 0x%06llx\n", dentry_from, dentry_to);
+    
+    field = "d_parent";
+    if ((ret = find_struct_member(&offset, field, dentry_from, dentry_to, 
+        fsym)) != EX_OK)
+    {
+        errx(-ret, "cannot find dentry->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *d_parent_offset = offset;
 
-	field = "d_name";
-	if ((ret = find_struct_member(&offset, field, dentry_from, dentry_to, 
-		fsym)) != EX_OK)
-	{
-		errx(-ret, "cannot find dentry->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*d_name_offset = offset;
+    field = "d_name";
+    if ((ret = find_struct_member(&offset, field, dentry_from, dentry_to, 
+        fsym)) != EX_OK)
+    {
+        errx(-ret, "cannot find dentry->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *d_name_offset = offset;
 
-	return ret;
+    return ret;
 }
 
 int get_qstr_offsets(int *len_offset, int *name_offset, const char *fsym)
 {
-	unsigned int offset = 0;
-	char *field = NULL;
-	int ret = 0;
+    unsigned int offset = 0;
+    char *field = NULL;
+    int ret = 0;
 
-	if (base_from == 0 || base_to == 0)
-	{
-    	if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
-			!= EX_OK)
-    	{
-        	errx(-ret, "cannot find base.c in %s", fsym);
-        	return ret;
-   		}
-    	//printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
-	}
+    if (base_from == 0 || base_to == 0)
+    {
+        if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
+            != EX_OK)
+        {
+            errx(-ret, "cannot find base.c in %s", fsym);
+            return ret;
+           }
+        //printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
+    }
 
     Dwarf_Off qstr_from, qstr_to = 0;
     if ((ret = find_struct(&qstr_from, &qstr_to, "qstr", base_from, 
-		base_to, fsym)) != EX_OK)
+        base_to, fsym)) != EX_OK)
     {
         errx(-ret, "cannot find qstr in %s", fsym);
         return ret;
     }
     //printf("qstr found: 0x%06llx - 0x%06llx\n", qstr_from, qstr_to);
 
-	field = "len";
-	if ((ret = find_struct_member(&offset, field, qstr_from, qstr_to, 
-		fsym)) != EX_OK)
-	{
-		errx(-ret, "cannot find qstr->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*len_offset = offset;
+    field = "len";
+    if ((ret = find_struct_member(&offset, field, qstr_from, qstr_to, 
+        fsym)) != EX_OK)
+    {
+        errx(-ret, "cannot find qstr->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *len_offset = offset;
 
-	field = "name";
-	if ((ret = find_struct_member(&offset, field, qstr_from, qstr_to, 
-		fsym)) != EX_OK)
-	{
-		errx(-ret, "cannot find qstr->%s", field);
-		return ret;
-	}
-	//printf("%s: 0x%x\n", field, offset);
-	*name_offset = offset;
+    field = "name";
+    if ((ret = find_struct_member(&offset, field, qstr_from, qstr_to, 
+        fsym)) != EX_OK)
+    {
+        errx(-ret, "cannot find qstr->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *name_offset = offset;
 
-	return ret;
+    return ret;
 }

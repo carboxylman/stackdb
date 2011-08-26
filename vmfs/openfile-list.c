@@ -9,8 +9,6 @@
 #include <xenaccess/xa_private.h>
 #include "offset.h"
 
-//#define _TEST
-
 int predict_ksyms(char *ksyms, const char *sysmap)
 {
     int len, i;
@@ -39,31 +37,90 @@ int predict_ksyms(char *ksyms, const char *sysmap)
     return 0;
 }
 
+int fill_parent_dir(char *buf, 
+                    uint32_t d_parent, 
+                    uint32_t d_parent_offset,
+                    uint32_t d_name_offset,
+                    uint32_t qlen_offset,
+                    uint32_t qname_offset,
+                    xa_instance_t *xai)
+{
+    unsigned char *dentry = NULL;
+    char *dname = NULL;
+    uint32_t offset = 0;
+    uint32_t len, name;
+    uint32_t d_old_parent;
+    int ret = 0;
+
+    if (d_parent == 0)
+        return 0;
+
+    dentry = xa_access_kernel_va(xai, d_parent, &offset, PROT_READ);
+    if (!dentry)
+    {
+        perror("failed to map memory for parent dentry");
+        return -1;
+    }
+    d_old_parent = d_parent;
+    memcpy(&d_parent, dentry + offset + d_parent_offset, 4);
+    memcpy(&len, dentry + offset + d_name_offset + qlen_offset, 4);
+    memcpy(&name, dentry + offset + d_name_offset + qname_offset, 4);
+
+    dname = xa_access_kernel_va(xai, name, &offset, PROT_READ);
+    if (!dname)
+    {
+        munmap(dentry, xai->page_size);
+        perror("failed to map memory for parent name");
+        return -1;
+    }
+
+    if (d_old_parent != d_parent)
+    {
+        ret = fill_parent_dir(buf, d_parent, d_parent_offset, d_name_offset,
+            qlen_offset, qname_offset, xai);
+    }
+    
+    memcpy(buf + ret, dname + offset, len);
+    ret += len;
+    if (buf[ret-1] != '/' && buf[ret-1] != ':')
+    {
+        buf[ret] = '/';
+        ret++;
+    }
+
+    munmap(dentry, xai->page_size);
+    munmap(dname, xai->page_size);
+    dentry = NULL;
+    dname = NULL;
+
+    return ret;
+}
+
 int main (int argc, char **argv)
 {
     xa_instance_t xai;
     unsigned char *task_struct = NULL;
-	unsigned char *files_struct = NULL;
-	unsigned char *fdtable = NULL;
-	uint32_t *fd_list = NULL;
-	unsigned char *file = NULL;
-	unsigned char *dentry = NULL;
+    unsigned char *files_struct = NULL;
+    unsigned char *fdtable = NULL;
+    uint32_t *fd_list = NULL;
+    unsigned char *file = NULL;
+    unsigned char *dentry = NULL;
     uint32_t offset, next_process, list_head;
-    uint32_t files, fdt, max_fds, fd, f_dentry, qlen, qname;
-	long long f_pos;
-    int pid = 0;
+    uint32_t files, fdt, max_fds, fd, f_dentry;
+    uint32_t d_parent, qlen, qname;
+    int doffset, pid = 0;
     char *name = NULL;
-	char *dname = NULL;
-	char dname_buf[PATH_MAX];
+    char *dname = NULL;
+    char dname_buf[PATH_MAX];
     int tasks_offset, pid_offset, name_offset;
-	int files_offset, fdt_offset, max_fds_offset, fd_offset;
-	int qlen_offset, qname_offset;
-	int f_dentry_offset, f_pos_offset, d_name_offset;
+    int files_offset, fdt_offset, max_fds_offset, fd_offset;
+    int f_dentry_offset, d_parent_offset, d_name_offset;
+    int qlen_offset, qname_offset;
     char domain[128];
     char ksyms[PATH_MAX];
     domid_t domid = 0;
     int xc_handle = -1;
-	int i;
+    int i;
 
     /* print out how to use if arguments are invalid. */
     if (argc <= 1)
@@ -116,45 +173,44 @@ int main (int argc, char **argv)
     //printf("pid offset: %d\n", pid_offset);
     //printf("files offset: %d\n", files_offset);
 
-	if (get_files_offsets(&fdt_offset, ksyms))
-	{
+    if (get_files_offsets(&fdt_offset, ksyms))
+    {
         perror("failed to get offsets of file_struct members");
         goto error_exit;
-	}
+    }
     //printf("files->fdt offset: %d\n", fdt_offset);
 
-	if (get_fdt_offsets(&max_fds_offset, &fd_offset, ksyms))
-	{
+    if (get_fdt_offsets(&max_fds_offset, &fd_offset, ksyms))
+    {
         perror("failed to get offsets of fdtable members");
         goto error_exit;
-	}
+    }
     //printf("files->fdt->max_fds offset: %d\n", max_fds_offset);
     //printf("files->fdt->fd offset: %d\n", fd_offset);
 
-	if (get_fd_offsets(&f_dentry_offset, &f_pos_offset, ksyms))
-	{
+    if (get_fd_offsets(&f_dentry_offset, ksyms))
+    {
         perror("failed to get offsets of file members");
         goto error_exit;
-	}
+    }
     //printf("files->fdt->fd->f_dentry offset: %d\n", f_dentry_offset);
-    //printf("files->fdt->fd->f_pos offset: %d\n", f_pos_offset);
 
-	if (get_dentry_offsets(&d_name_offset, ksyms))
-	{
+    if (get_dentry_offsets(&d_parent_offset, &d_name_offset, ksyms))
+    {
         perror("failed to get offsets of dentry members");
         goto error_exit;
-	}
+    }
+    //printf("files->fdt->fd->f_dentry->d_parent offset: %d\n", d_parent_offset);
     //printf("files->fdt->fd->f_dentry->d_name offset: %d\n", d_name_offset);
 
-	if (get_qstr_offsets(&qlen_offset, &qname_offset, ksyms))
-	{
+    if (get_qstr_offsets(&qlen_offset, &qname_offset, ksyms))
+    {
         perror("failed to get offsets of qstr members");
         goto error_exit;
-	}
+    }
     //printf("files->fdt->fd->f_dentry->d_name->len offset: %d\n", qlen_offset);
     //printf("files->fdt->fd->f_dentry->d_name->name offset: %d\n", qname_offset);
 
-#ifndef _TEST
     xc_domain_pause(xc_handle, domid);
 
     /* get the head of the list */
@@ -175,7 +231,7 @@ int main (int argc, char **argv)
     {
         /* follow the next pointer */
         task_struct = xa_access_kernel_va(&xai, next_process, &offset, 
-			PROT_READ);
+            PROT_READ);
         if (!task_struct)
         {
             perror("failed to map memory for task_struct");
@@ -211,84 +267,92 @@ int main (int argc, char **argv)
             perror("failed to map memory for files_struct");
             goto error_exit;
         }
-		memcpy(&fdt, files_struct + offset + fdt_offset, 4);
+        memcpy(&fdt, files_struct + offset + fdt_offset, 4);
 
-		fdtable = xa_access_kernel_va(&xai, fdt, &offset, PROT_READ);
-		if (!fdtable)
+        fdtable = xa_access_kernel_va(&xai, fdt, &offset, PROT_READ);
+        if (!fdtable)
         {
             perror("failed to map memory for fdtable");
             goto error_exit;
         }
-		memcpy(&max_fds, fdtable + offset + max_fds_offset, 4);
-		memcpy(&fd, fdtable + offset + fd_offset, 4);
+        memcpy(&max_fds, fdtable + offset + max_fds_offset, 4);
+        memcpy(&fd, fdtable + offset + fd_offset, 4);
         
-		fd_list = xa_access_kernel_va(&xai, fd, &offset, PROT_READ);
-		if (!fd_list)
+        fd_list = xa_access_kernel_va(&xai, fd, &offset, PROT_READ);
+        if (!fd_list)
         {
             perror("failed to map memory for fd_list");
             goto error_exit;
         }
-		fd_list = (uint32_t *)(((char *)fd_list) + offset);
+        fd_list = (uint32_t *)(((char *)fd_list) + offset);
 
-		for (i = 0; i < max_fds; i++)
-		{
-			if (fd_list[i])
-			{
-				file = xa_access_kernel_va(&xai, fd_list[i], &offset, 
-						PROT_READ);
-				if (!file)
-        		{
-            		perror("failed to map memory for file");
-            		goto error_exit;
-        		}
-				memcpy(&f_dentry, file + offset + f_dentry_offset, 4);
-				memcpy(&f_pos, file + offset + f_pos_offset, sizeof(long long));
-				
-				dentry = xa_access_kernel_va(&xai, f_dentry, &offset, 
-					PROT_READ);
-				if (!dentry)
-        		{
-            		perror("failed to map memory for dentry");
-            		goto error_exit;
-        		}
-				memcpy(&qlen, dentry + offset + d_name_offset + qlen_offset, 
-					4);
-				memcpy(&qname, dentry + offset + d_name_offset + qname_offset,
-					4);
+        for (i = 0; i < max_fds; i++)
+        {
+            if (fd_list[i])
+            {
+                file = xa_access_kernel_va(&xai, fd_list[i], &offset, 
+                        PROT_READ);
+                if (!file)
+                {
+                    perror("failed to map memory for file");
+                    goto error_exit;
+                }
+                memcpy(&f_dentry, file + offset + f_dentry_offset, 4);
+                
+                dentry = xa_access_kernel_va(&xai, f_dentry, &offset, 
+                    PROT_READ);
+                if (!dentry)
+                {
+                    perror("failed to map memory for dentry");
+                    goto error_exit;
+                }
+                memcpy(&d_parent, dentry + offset + d_parent_offset, 4);
+                memcpy(&qlen, dentry + offset + d_name_offset + qlen_offset, 
+                    4);
+                memcpy(&qname, dentry + offset + d_name_offset + qname_offset,
+                    4);
 
-				dname = xa_access_kernel_va(&xai, qname, &offset, PROT_READ);
-				if (!dname)
-        		{
-            		perror("failed to map memory for name");
-            		goto error_exit;
-        		}
-				memset(dname_buf, 0, PATH_MAX);
-				memcpy(dname_buf, dname + offset, qlen);
+                dname = xa_access_kernel_va(&xai, qname, &offset, PROT_READ);
+                if (!dname)
+                {
+                    perror("failed to map memory for name");
+                    goto error_exit;
+                }
+                memset(dname_buf, 0, PATH_MAX);
+                doffset = 0;
+                if (f_dentry != d_parent)
+                {
+                    doffset = fill_parent_dir(dname_buf, d_parent, 
+                        d_parent_offset, d_name_offset, qlen_offset, 
+                        qname_offset, &xai);
+                    if (doffset < 0)
+                        goto error_exit;
+                }
+                memcpy(dname_buf + doffset, dname + offset, qlen);
 
-				/* print the data obtained */
-        		printf("%5d %-16s %-4d %s\n", pid, name, i, dname_buf);
+                /* print the data obtained */
+                printf("%5d %-16s %-4d %s\n", pid, name, i, dname_buf);
 
-				munmap(file, xai.page_size);
-				munmap(dentry, xai.page_size);
-				munmap(dname, xai.page_size);
-				file = NULL;
-				dentry = NULL;
-				dname = NULL;
-			}
-		}
+                munmap(file, xai.page_size);
+                munmap(dentry, xai.page_size);
+                munmap(dname, xai.page_size);
+                file = NULL;
+                dentry = NULL;
+                dname = NULL;
+            }
+        }
 
-		munmap(task_struct, xai.page_size);
-		munmap(files_struct, xai.page_size);
-		munmap(fdtable, xai.page_size);
-		munmap(fd_list, xai.page_size);
+        munmap(task_struct, xai.page_size);
+        munmap(files_struct, xai.page_size);
+        munmap(fdtable, xai.page_size);
+        munmap(fd_list, xai.page_size);
         task_struct = NULL;
-		files_struct = NULL;
-		fdtable = NULL;
-		dentry = NULL;
+        files_struct = NULL;
+        fdtable = NULL;
+        dentry = NULL;
     }
-#endif
+
 error_exit:
-#ifndef _TEST
     /* sanity check to unmap shared pages */
     if (task_struct) munmap(task_struct, xai.page_size);
     if (files_struct) munmap(files_struct, xai.page_size);
@@ -299,7 +363,7 @@ error_exit:
     if (dname) munmap(dname, xai.page_size);
 
     xc_domain_unpause(xc_handle, domid);
-#endif    
+    
     /* cleanup any memory associated with the XenAccess instance */
     xa_destroy(&xai);
 
