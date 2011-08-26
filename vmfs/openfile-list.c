@@ -328,6 +328,8 @@ int main (int argc, char **argv)
                     goto error_exit;
                 }
                 vname += offset;
+				if (strcmp(vname, "none") == 0)
+				    vname = "/dev";
                 if (strcmp(vname, "devpts") == 0)
                     vname = "/dev/pts";
                 else if (vname[0] != '/' || strcmp(vname, "/dev/root") == 0)
