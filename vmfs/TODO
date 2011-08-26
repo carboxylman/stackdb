@@ -1,0 +1,3 @@
+Make it print file names in full path.
+Print the socket and pipe numbers in a pretty way.
+Take command arguments to print open files for a certain process (pid, name).
