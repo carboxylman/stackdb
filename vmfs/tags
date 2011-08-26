@@ -111,13 +111,14 @@ error_mode	xenaccess/xenaccess.h	/^    uint32_t error_mode;    \/**< XA_FAILHARD
 fhandle	xenaccess/xenaccess.h	/^            FILE *fhandle;       \/**< handle to the memory image file *\/$/;"	m	struct:xa_instance::__anon5::file
 file	xenaccess/xenaccess.h	/^        struct file{$/;"	s	union:xa_instance::__anon5
 file	xenaccess/xenaccess.h	/^        } file;$/;"	m	union:xa_instance::__anon5	typeref:struct:xa_instance::__anon5::file
+fill_parent_dir	openfile-list.c	/^int fill_parent_dir(char *buf, $/;"	f
 find_comp_unit	offset.c	/^static int find_comp_unit(Dwarf_Off *from,$/;"	f	file:
 find_no_debuginfo	offset.c	/^static int find_no_debuginfo(Dwfl_Module *mod __attribute__ ((unused)),$/;"	f	file:
 find_struct	offset.c	/^static int find_struct(Dwarf_Off *from, $/;"	f	file:
 find_struct_member	offset.c	/^static int find_struct_member(unsigned int *offset,$/;"	f	file:
 fpp	xenaccess/xa_private.h	51;"	d
-get_dentry_offsets	offset.c	/^int get_dentry_offsets(int *d_name_offset, const char *fsym)$/;"	f
-get_fd_offsets	offset.c	/^int get_fd_offsets(int *f_dentry_offset, int *f_pos_offset, const char *fsym)$/;"	f
+get_dentry_offsets	offset.c	/^int get_dentry_offsets(int *d_parent_offset, $/;"	f
+get_fd_offsets	offset.c	/^int get_fd_offsets(int *f_dentry_offset, int *f_vfsmnt_offset, const char *fsym)$/;"	f
 get_fdt_offsets	offset.c	/^int get_fdt_offsets(int *max_fds_offset, int *fd_offset, const char *fsym)$/;"	f
 get_files_offsets	offset.c	/^int get_files_offsets(int *fdt_offset, const char *fsym)$/;"	f
 get_kpgd_method1	xenaccess/windows_core.c	/^int get_kpgd_method1 (xa_instance_t *instance, uint32_t *sysproc)$/;"	f
@@ -147,6 +148,7 @@ get_transition_bit	xenaccess/xa_memory.c	/^int get_transition_bit(uint32_t entry
 get_uleb128	elfutils/memory-access.h	67;"	d
 get_uleb128_rest_return	elfutils/memory-access.h	75;"	d
 get_uleb128_step	elfutils/memory-access.h	61;"	d
+get_vfsmnt_offsets	offset.c	/^int get_vfsmnt_offsets(int *mnt_devname_offset, const char *fsym)$/;"	f
 helper_destroy	xenaccess/xa_core.c	/^int helper_destroy (xa_instance_t *instance)$/;"	f
 helper_init	xenaccess/xa_core.c	/^int helper_init (xa_instance_t *instance)$/;"	f
 helper_pfn_to_mfn	xenaccess/xa_memory.c	/^unsigned long helper_pfn_to_mfn (xa_instance_t *instance, unsigned long pfn)$/;"	f

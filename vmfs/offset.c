@@ -838,7 +838,7 @@ int get_fdt_offsets(int *max_fds_offset, int *fd_offset, const char *fsym)
     return ret;
 }
 
-int get_fd_offsets(int *f_dentry_offset, const char *fsym)
+int get_fd_offsets(int *f_dentry_offset, int *f_vfsmnt_offset, const char *fsym)
 {
     unsigned int offset = 0;
     char *field = NULL;
@@ -873,6 +873,16 @@ int get_fd_offsets(int *f_dentry_offset, const char *fsym)
     }
     //printf("%s: 0x%x\n", field, offset);
     *f_dentry_offset = offset;
+
+    field = "f_vfsmnt";
+    if ((ret = find_struct_member(&offset, field, fd_from, fd_to, fsym)) 
+        != EX_OK)
+    {
+        errx(-ret, "cannot find file->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *f_vfsmnt_offset = offset;
 
     return ret;
 }
@@ -925,6 +935,45 @@ int get_dentry_offsets(int *d_parent_offset,
     //printf("%s: 0x%x\n", field, offset);
     *d_name_offset = offset;
 
+    return ret;
+}
+
+int get_vfsmnt_offsets(int *mnt_devname_offset, const char *fsym)
+{
+    unsigned int offset = 0;
+    char *field = NULL;
+    int ret = 0;
+
+    if (base_from == 0 || base_to == 0)
+    {
+        if ((ret = find_comp_unit(&base_from, &base_to, "base.c", fsym)) 
+            != EX_OK)
+        {
+            errx(-ret, "cannot find base.c in %s", fsym);
+            return ret;
+           }
+        //printf("base.c found: 0x%06llx - 0x%06llx\n", base_from, base_to);    
+    }
+
+    Dwarf_Off vfsmount_from, vfsmount_to = 0;
+    if ((ret = find_struct(&vfsmount_from, &vfsmount_to, "vfsmount", base_from, 
+        base_to, fsym)) != EX_OK)
+    {
+        errx(-ret, "cannot find vfsmount in %s", fsym);
+        return ret;
+    }
+    //printf("vfsmount found: 0x%06llx - 0x%06llx\n", vfsmount_from, vfsmount_to);
+    
+    field = "mnt_devname";
+    if ((ret = find_struct_member(&offset, field, vfsmount_from, vfsmount_to, 
+        fsym)) != EX_OK)
+    {
+        errx(-ret, "cannot find vfsmount->%s", field);
+        return ret;
+    }
+    //printf("%s: 0x%x\n", field, offset);
+    *mnt_devname_offset = offset;
+    
     return ret;
 }
 

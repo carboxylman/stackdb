@@ -1,2 +1,1 @@
-Print file names with the file-system name - then it finally becomes the full path.
 Take command arguments to print open files for a certain process (pid, name).

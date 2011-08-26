@@ -105,17 +105,19 @@ int main (int argc, char **argv)
     uint32_t *fd_list = NULL;
     unsigned char *file = NULL;
     unsigned char *dentry = NULL;
+    unsigned char *vfsmount = NULL;
     uint32_t offset, next_process, list_head;
-    uint32_t files, fdt, max_fds, fd, f_dentry;
-    uint32_t d_parent, qlen, qname;
+    uint32_t files, fdt, max_fds, fd, f_dentry, f_vfsmnt;
+    uint32_t d_parent, mnt_devname, qlen, qname;
     int doffset, pid = 0;
     char *name = NULL;
     char *dname = NULL;
+    char *vname = NULL;
     char dname_buf[PATH_MAX];
     int tasks_offset, pid_offset, name_offset;
     int files_offset, fdt_offset, max_fds_offset, fd_offset;
-    int f_dentry_offset, d_parent_offset, d_name_offset;
-    int qlen_offset, qname_offset;
+    int f_dentry_offset, f_vfsmnt_offset, d_parent_offset, d_name_offset;
+    int mnt_devname_offset, qlen_offset, qname_offset;
     char domain[128];
     char ksyms[PATH_MAX];
     domid_t domid = 0;
@@ -140,7 +142,6 @@ int main (int argc, char **argv)
 
     /* initialize the xen access library */
     memset(&xai, 0, sizeof(xai));
-    xai.pae = 1;
     xai.os_type = XA_OS_LINUX;
     if (xa_init_vm_name_strict(domain, &xai) == XA_FAILURE)
     {
@@ -188,12 +189,13 @@ int main (int argc, char **argv)
     //printf("files->fdt->max_fds offset: %d\n", max_fds_offset);
     //printf("files->fdt->fd offset: %d\n", fd_offset);
 
-    if (get_fd_offsets(&f_dentry_offset, ksyms))
+    if (get_fd_offsets(&f_dentry_offset, &f_vfsmnt_offset, ksyms))
     {
         perror("failed to get offsets of file members");
         goto error_exit;
     }
     //printf("files->fdt->fd->f_dentry offset: %d\n", f_dentry_offset);
+    //printf("files->fdt->fd->f_vfsmnt offset: %d\n", f_vfsmnt_offset);
 
     if (get_dentry_offsets(&d_parent_offset, &d_name_offset, ksyms))
     {
@@ -203,6 +205,15 @@ int main (int argc, char **argv)
     //printf("files->fdt->fd->f_dentry->d_parent offset: %d\n", d_parent_offset);
     //printf("files->fdt->fd->f_dentry->d_name offset: %d\n", d_name_offset);
 
+    if (get_vfsmnt_offsets(&mnt_devname_offset, ksyms))
+    {
+        perror("failed to get offsets of vfsmount members");
+        goto error_exit;
+    }
+    //printf("files->fdt->fd->f_vfsmnt->mnt_devname offset: %d\n", 
+    //    mnt_devname_offset);
+
+    if (get_qstr_offsets(&qlen_offset, &qname_offset, ksyms))
     if (get_qstr_offsets(&qlen_offset, &qname_offset, ksyms))
     {
         perror("failed to get offsets of qstr members");
@@ -298,7 +309,30 @@ int main (int argc, char **argv)
                     goto error_exit;
                 }
                 memcpy(&f_dentry, file + offset + f_dentry_offset, 4);
-                
+                memcpy(&f_vfsmnt, file + offset + f_vfsmnt_offset, 4);
+
+                vfsmount = xa_access_kernel_va(&xai, f_vfsmnt, &offset,
+                    PROT_READ);
+                if (!vfsmount)
+                {
+                    perror("failed to mape memory for vfsmount");
+                    goto error_exit;
+                }
+                memcpy(&mnt_devname, vfsmount + offset + mnt_devname_offset, 4);
+
+                vname = xa_access_kernel_va(&xai, mnt_devname, &offset, 
+                    PROT_READ);
+                if (!vname)
+                {
+                    perror("failed to map memory for device name");
+                    goto error_exit;
+                }
+                vname += offset;
+                if (strcmp(vname, "devpts") == 0)
+                    vname = "/dev/pts";
+                else if (vname[0] != '/' || strcmp(vname, "/dev/root") == 0)
+                    vname = "";
+
                 dentry = xa_access_kernel_va(&xai, f_dentry, &offset, 
                     PROT_READ);
                 if (!dentry)
@@ -315,7 +349,7 @@ int main (int argc, char **argv)
                 dname = xa_access_kernel_va(&xai, qname, &offset, PROT_READ);
                 if (!dname)
                 {
-                    perror("failed to map memory for name");
+                    perror("failed to map memory for dentry name");
                     goto error_exit;
                 }
                 memset(dname_buf, 0, PATH_MAX);
@@ -331,12 +365,14 @@ int main (int argc, char **argv)
                 memcpy(dname_buf + doffset, dname + offset, qlen);
 
                 /* print the data obtained */
-                printf("%5d %-16s %-4d %s\n", pid, name, i, dname_buf);
+                printf("%5d %-16s %-4d %s%s\n", pid, name, i, vname, dname_buf);
 
                 munmap(file, xai.page_size);
+                munmap(vfsmount, xai.page_size);
                 munmap(dentry, xai.page_size);
                 munmap(dname, xai.page_size);
                 file = NULL;
+                vfsmount = NULL;
                 dentry = NULL;
                 dname = NULL;
             }
@@ -359,6 +395,7 @@ error_exit:
     if (fdtable) munmap(fdtable, xai.page_size);
     if (fd_list) munmap(fd_list, xai.page_size);
     if (file) munmap(file, xai.page_size);
+    if (vfsmount) munmap(vfsmount, xai.page_size);
     if (dentry) munmap(dentry, xai.page_size);
     if (dname) munmap(dname, xai.page_size);
 
