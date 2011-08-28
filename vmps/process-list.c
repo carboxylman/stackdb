@@ -7,7 +7,8 @@
 #include <unistd.h>
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
-#include "task-offset.h"
+#include "offset.h"
+#include "report.h"
 
 int predict_ksyms(char *ksyms, const char *sysmap)
 {
@@ -20,7 +21,7 @@ int predict_ksyms(char *ksyms, const char *sysmap)
     {
         if (strncmp(sysmap + i, "System.map-", 11) == 0)
         {
-			strncat(ksyms, sysmap, i);
+            strncat(ksyms, sysmap, i);
             strcat(ksyms, "vmlinux-syms-");
             strcat(ksyms, sysmap + i + 11);
             break;
@@ -47,40 +48,56 @@ int main (int argc, char **argv)
     int tasks_offset, pid_offset, name_offset;
     char domain[128];
     char ksyms[PATH_MAX];
-	domid_t domid = 0;
-	int xc_handle = -1;
+    domid_t domid = 0;
+    int xc_handle = -1;
+    int i, opt_report = 0;
+    char msg[128];
 
     /* print out how to use if arguments are invalid. */
-    if (argc <= 1)
+    if (argc <= 1 || strcmp(argv[1], "--help") == 0)
     {
-        printf("usage: %s <domain name>\n", argv[0]);
+        printf("Usage: %s [OPTION] <DOMAIN NAME>\n", argv[0]);
+        printf("  -r, --report     report process list to stats server\n");
+        printf("  --help           display this help and exit\n");
         return 1;
     }
 
     if (getuid())
     {
-        fprintf(stderr, "need a root access\n");
+        fprintf(stderr, "Must run as root\n");
         return 1;
     }
-
-    /* this is the domain name that we are looking at */
-    strcpy(domain, argv[1]);
+    
+    for (i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--report") == 0)
+        {
+            opt_report = 1;
+        }
+        else if (argv[i][0] != '-')
+        {
+            /* this is the domain name that we are looking at */
+            strcpy(domain, argv[i]);
+        }
+    }
 
     /* initialize the xen access library */
     memset(&xai, 0, sizeof(xai));
     xai.os_type = XA_OS_LINUX;
     if (xa_init_vm_name_strict(domain, &xai) == XA_FAILURE)
     {
-        perror("failed to init xa instance");
+        fprintf(stderr, "Failed to init xa instance"
+                " - Domain %s probably does not exist\n", domain);
         goto error_exit;
     }
-	domid = xai.m.xen.domain_id;
-	xc_handle = xai.m.xen.xc_handle;
+    domid = xai.m.xen.domain_id;
+    xc_handle = xai.m.xen.xc_handle;
     //printf("domain: %s (domid: %d)\n", domain, domid);
+    //printf("report %s\n", (opt_report) ? "enabled" : "disabled");
 
     if (predict_ksyms(ksyms, xai.sysmap))
     {
-        fprintf(stderr, "failed to predict kernel symbol path\n");
+        fprintf(stderr, "Failed to predict kernel symbol path\n");
         goto error_exit;
     }
     //printf("ksyms: %s\n", ksyms);
@@ -88,26 +105,34 @@ int main (int argc, char **argv)
     /* init the offset values */
     if (get_task_offsets(&tasks_offset, &name_offset, &pid_offset, ksyms))
     {
-        perror("failed to get offsets of task_struct members");
+        perror("Failed to get offsets of task_struct members");
         goto error_exit;
     }
     //printf("tasks offset: %d\n", tasks_offset);
     //printf("name offset: %d\n", name_offset);
     //printf("pid offset: %d\n", pid_offset);
 
-	xc_domain_pause(xc_handle, domid);
+    if (opt_report)
+    {
+        if (init_stats())
+            goto error_exit;
+    }
+
+    xc_domain_pause(xc_handle, domid);
 
     /* get the head of the list */
     memory = xa_access_kernel_sym(&xai, "init_task", &offset, PROT_READ);
     if (!memory)
     {
-        perror("failed to get process list head");
+        perror("Failed to get process list head");
         goto error_exit;
     }    
     memcpy(&next_process, memory + offset + tasks_offset, 4);
     list_head = next_process;
     munmap(memory, xai.page_size);
     memory = NULL;
+
+    printf("%5s %s\n", "PID", "CMD");
 
     /* walk the task list */
     while (1)
@@ -116,7 +141,7 @@ int main (int argc, char **argv)
         memory = xa_access_kernel_va(&xai, next_process, &offset, PROT_READ);
         if (!memory)
         {
-            perror("failed to map memory for process list pointer");
+            perror("Failed to map memory for process list pointer");
             goto error_exit;
         }
         memcpy(&next_process, memory + offset, 4);
@@ -142,18 +167,31 @@ int main (int argc, char **argv)
         if (pid < 0)
             continue;
         
-        printf("[%5d] %s\n", pid, name);
+        /* report the process info to the stats-server */
+        if (opt_report)
+        {
+            snprintf(msg, sizeof(msg), "%d:%s", pid, name);
+            report_event(msg);    
+        }
+        //else
+        {
+            printf("%5d %s\n", pid, name);
+        }
+
         munmap(memory, xai.page_size);
         memory = NULL;
     }
+
+    if (opt_report)
+        printf("List reported to stats server\n"); 
 
 error_exit:
 
     /* sanity check to unmap shared pages */
     if (memory) munmap(memory, xai.page_size);
     
-	xc_domain_unpause(xc_handle, domid);
-	
+    xc_domain_unpause(xc_handle, domid);
+    
     /* cleanup any memory associated with the XenAccess instance */
     xa_destroy(&xai);
 

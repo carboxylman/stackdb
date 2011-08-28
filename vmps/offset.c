@@ -17,7 +17,7 @@
 #include <elfutils/libeblP.h>
 #include <elfutils/memory-access.h>
 
-#include "task-offset.h"
+#include "offset.h"
 
 enum {
     DW_REQ_scope = 0x1,

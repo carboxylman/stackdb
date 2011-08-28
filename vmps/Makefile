@@ -32,7 +32,8 @@ LFLAGS += -lxenstore
 LFLAGS += -lebl
 LFLAGS += -lelf
 LFLAGS += -ldw
-OBJECTS += task-offset.o
+OBJECTS += offset.o
+OBJECTS += report.o
 OBJECTS += process-list.o
 TARGET := process-list
 
@@ -51,3 +52,6 @@ clean:
 	@$(RM) -f $(OBJECTS)
 	@$(RM) -f $(TARGET)
 	@echo "process-list cleaned"
+
+run:
+	sudo ./$(TARGET) --report a3-app
