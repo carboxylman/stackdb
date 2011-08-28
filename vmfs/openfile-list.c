@@ -127,7 +127,7 @@ int main (int argc, char **argv)
     /* print out how to use if arguments are invalid. */
     if (argc <= 1)
     {
-        printf("usage: %s <domain name>\n", argv[0]);
+        printf("usage: %s <DOMAIN NAME>\n", argv[0]);
         return 1;
     }
 
@@ -145,7 +145,8 @@ int main (int argc, char **argv)
     xai.os_type = XA_OS_LINUX;
     if (xa_init_vm_name_strict(domain, &xai) == XA_FAILURE)
     {
-        perror("failed to init xa instance");
+        fprintf(stderr, "Failed to init xa instance"
+                " - Domain %s probably does not exist\n", domain);
         goto error_exit;
     }
     domid = xai.m.xen.domain_id;
@@ -237,6 +238,7 @@ int main (int argc, char **argv)
     task_struct = NULL;
 
     printf("%5s %-16s %-4s %s\n", "PID", "CMD", "FD", "FILE");
+    
     /* walk the task list */
     while (1)
     {
@@ -328,8 +330,8 @@ int main (int argc, char **argv)
                     goto error_exit;
                 }
                 vname += offset;
-				if (strcmp(vname, "none") == 0)
-				    vname = "/dev";
+                if (strcmp(vname, "none") == 0)
+                    vname = "/dev";
                 if (strcmp(vname, "devpts") == 0)
                     vname = "/dev/pts";
                 else if (vname[0] != '/' || strcmp(vname, "/dev/root") == 0)

@@ -51,6 +51,3 @@ clean:
 	@$(RM) -f $(OBJECTS)
 	@$(RM) -f $(TARGET)
 	@echo "openfile-list cleaned"
-
-run:
-	sudo ./$(TARGET) a3guest
