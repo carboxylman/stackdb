@@ -263,7 +263,7 @@ int predict_ksyms(char *ksyms, const char *sysmap)
 
     if (ksyms[0] == '\0' || access(ksyms, R_OK) != 0)
     {
-        fprintf(stderr, "couldn't find kernel symbol file after checking %s\n",
+        fprintf(stderr, "Couldn't find kernel symbol file after checking %s\n",
             ksyms);
         return -1;
     }
