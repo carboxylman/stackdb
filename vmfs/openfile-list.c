@@ -7,94 +7,8 @@
 #include <unistd.h>
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
+#include "openfile-list.h"
 #include "offset.h"
-
-int predict_ksyms(char *ksyms, const char *sysmap)
-{
-    int len, i;
-
-    /* replace 'System.map' with 'vmlinux-syms' */
-    len = strlen(sysmap);
-    memset(ksyms, 0, PATH_MAX);
-    for (i = 0; i < len; i++)
-    {
-        if (strncmp(sysmap + i, "System.map-", 11) == 0)
-        {
-            strncat(ksyms, sysmap, i);
-            strcat(ksyms, "vmlinux-syms-");
-            strcat(ksyms, sysmap + i + 11);
-            break;
-        }
-    }
-
-    if (ksyms[0] == '\0' || access(ksyms, R_OK) != 0)
-    {
-        fprintf(stderr, "couldn't find kernel symbol file after checking %s\n",
-            ksyms);
-        return -1;
-    }
-
-    return 0;
-}
-
-int fill_parent_dir(char *buf, 
-                    uint32_t d_parent, 
-                    uint32_t d_parent_offset,
-                    uint32_t d_name_offset,
-                    uint32_t qlen_offset,
-                    uint32_t qname_offset,
-                    xa_instance_t *xai)
-{
-    unsigned char *dentry = NULL;
-    char *dname = NULL;
-    uint32_t offset = 0;
-    uint32_t len, name;
-    uint32_t d_old_parent;
-    int ret = 0;
-
-    if (d_parent == 0)
-        return 0;
-
-    dentry = xa_access_kernel_va(xai, d_parent, &offset, PROT_READ);
-    if (!dentry)
-    {
-        perror("failed to map memory for parent dentry");
-        return -1;
-    }
-    d_old_parent = d_parent;
-    memcpy(&d_parent, dentry + offset + d_parent_offset, 4);
-    memcpy(&len, dentry + offset + d_name_offset + qlen_offset, 4);
-    memcpy(&name, dentry + offset + d_name_offset + qname_offset, 4);
-
-    dname = xa_access_kernel_va(xai, name, &offset, PROT_READ);
-    if (!dname)
-    {
-        munmap(dentry, xai->page_size);
-        perror("failed to map memory for parent name");
-        return -1;
-    }
-
-    if (d_old_parent != d_parent)
-    {
-        ret = fill_parent_dir(buf, d_parent, d_parent_offset, d_name_offset,
-            qlen_offset, qname_offset, xai);
-    }
-    
-    memcpy(buf + ret, dname + offset, len);
-    ret += len;
-    if (buf[ret-1] != '/' && buf[ret-1] != ':')
-    {
-        buf[ret] = '/';
-        ret++;
-    }
-
-    munmap(dentry, xai->page_size);
-    munmap(dname, xai->page_size);
-    dentry = NULL;
-    dname = NULL;
-
-    return ret;
-}
 
 int main (int argc, char **argv)
 {
@@ -122,12 +36,18 @@ int main (int argc, char **argv)
     char ksyms[PATH_MAX];
     domid_t domid = 0;
     int xc_handle = -1;
-    int i;
+    int i, opt_pid = 0, opt_cmd = 0;
+    int the_pid;
+    char the_cmd[OPT_COMMAND_WIDTH+1];
 
     /* print out how to use if arguments are invalid. */
-    if (argc <= 1)
+    if (argc <= 1 || strcmp(argv[1], "--help") == 0)
     {
-        printf("usage: %s <DOMAIN NAME>\n", argv[0]);
+        printf("usage: %s [OPTION] <DOMAIN NAME>\n", argv[0]);
+        printf("  -p p             exclude(^)|select PID 'p'\n");
+        printf("  -c c             exclude(^)|select CMD 'c'  width (%d)\n",
+                OPT_COMMAND_WIDTH);
+        printf("  --help           display this help and exit\n");
         return 1;
     }
 
@@ -137,8 +57,26 @@ int main (int argc, char **argv)
         return 1;
     }
 
-    /* this is the domain name that we are looking at */
-    strcpy(domain, argv[1]);
+    for (i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "-p") == 0 && (i+1) < argc)
+        {
+            opt_pid = 1;
+            i++;
+            the_pid = atoi(argv[i]);
+        }
+        else if (strcmp(argv[i], "-c") == 0 && (i+1) < argc)
+        {
+            opt_cmd = 1;
+            i++;
+            strncpy(the_cmd, argv[i], OPT_COMMAND_WIDTH);
+        }
+        else if (argv[i][0] != '-')
+        {
+            /* this is the domain name that we are looking at */
+            strcpy(domain, argv[i]);
+        }
+    }
 
     /* initialize the xen access library */
     memset(&xai, 0, sizeof(xai));
@@ -155,7 +93,7 @@ int main (int argc, char **argv)
 
     if (predict_ksyms(ksyms, xai.sysmap))
     {
-        fprintf(stderr, "failed to predict kernel symbol path\n");
+        fprintf(stderr, "Failed to predict kernel symbol path\n");
         goto error_exit;
     }
     //printf("ksyms: %s\n", ksyms);
@@ -167,7 +105,7 @@ int main (int argc, char **argv)
                          &files_offset,
                          ksyms))
     {
-        perror("failed to get offsets of task_struct members");
+        perror("Failed to get offsets of task_struct members");
         goto error_exit;
     }
     //printf("tasks offset: %d\n", tasks_offset);
@@ -177,14 +115,14 @@ int main (int argc, char **argv)
 
     if (get_files_offsets(&fdt_offset, ksyms))
     {
-        perror("failed to get offsets of file_struct members");
+        perror("Failed to get offsets of file_struct members");
         goto error_exit;
     }
     //printf("files->fdt offset: %d\n", fdt_offset);
 
     if (get_fdt_offsets(&max_fds_offset, &fd_offset, ksyms))
     {
-        perror("failed to get offsets of fdtable members");
+        perror("Failed to get offsets of fdtable members");
         goto error_exit;
     }
     //printf("files->fdt->max_fds offset: %d\n", max_fds_offset);
@@ -192,7 +130,7 @@ int main (int argc, char **argv)
 
     if (get_fd_offsets(&f_dentry_offset, &f_vfsmnt_offset, ksyms))
     {
-        perror("failed to get offsets of file members");
+        perror("Failed to get offsets of file members");
         goto error_exit;
     }
     //printf("files->fdt->fd->f_dentry offset: %d\n", f_dentry_offset);
@@ -200,7 +138,7 @@ int main (int argc, char **argv)
 
     if (get_dentry_offsets(&d_parent_offset, &d_name_offset, ksyms))
     {
-        perror("failed to get offsets of dentry members");
+        perror("Failed to get offsets of dentry members");
         goto error_exit;
     }
     //printf("files->fdt->fd->f_dentry->d_parent offset: %d\n", d_parent_offset);
@@ -208,7 +146,7 @@ int main (int argc, char **argv)
 
     if (get_vfsmnt_offsets(&mnt_devname_offset, ksyms))
     {
-        perror("failed to get offsets of vfsmount members");
+        perror("Failed to get offsets of vfsmount members");
         goto error_exit;
     }
     //printf("files->fdt->fd->f_vfsmnt->mnt_devname offset: %d\n", 
@@ -217,7 +155,7 @@ int main (int argc, char **argv)
     if (get_qstr_offsets(&qlen_offset, &qname_offset, ksyms))
     if (get_qstr_offsets(&qlen_offset, &qname_offset, ksyms))
     {
-        perror("failed to get offsets of qstr members");
+        perror("Failed to get offsets of qstr members");
         goto error_exit;
     }
     //printf("files->fdt->fd->f_dentry->d_name->len offset: %d\n", qlen_offset);
@@ -229,7 +167,7 @@ int main (int argc, char **argv)
     task_struct = xa_access_kernel_sym(&xai, "init_task", &offset, PROT_READ);
     if (!task_struct)
     {
-        perror("failed to get process list head");
+        perror("Failed to get process list head");
         goto error_exit;
     }    
     memcpy(&next_process, task_struct + offset + tasks_offset, 4);
@@ -247,7 +185,7 @@ int main (int argc, char **argv)
             PROT_READ);
         if (!task_struct)
         {
-            perror("failed to map memory for task_struct");
+            perror("Failed to map memory for task_struct");
             goto error_exit;
         }
         memcpy(&next_process, task_struct + offset, 4);
@@ -277,7 +215,7 @@ int main (int argc, char **argv)
         files_struct = xa_access_kernel_va(&xai, files, &offset, PROT_READ);
         if (!files_struct)
         {
-            perror("failed to map memory for files_struct");
+            perror("Failed to map memory for files_struct");
             goto error_exit;
         }
         memcpy(&fdt, files_struct + offset + fdt_offset, 4);
@@ -285,7 +223,7 @@ int main (int argc, char **argv)
         fdtable = xa_access_kernel_va(&xai, fdt, &offset, PROT_READ);
         if (!fdtable)
         {
-            perror("failed to map memory for fdtable");
+            perror("Failed to map memory for fdtable");
             goto error_exit;
         }
         memcpy(&max_fds, fdtable + offset + max_fds_offset, 4);
@@ -294,7 +232,7 @@ int main (int argc, char **argv)
         fd_list = xa_access_kernel_va(&xai, fd, &offset, PROT_READ);
         if (!fd_list)
         {
-            perror("failed to map memory for fd_list");
+            perror("Failed to map memory for fd_list");
             goto error_exit;
         }
         fd_list = (uint32_t *)(((char *)fd_list) + offset);
@@ -307,7 +245,7 @@ int main (int argc, char **argv)
                         PROT_READ);
                 if (!file)
                 {
-                    perror("failed to map memory for file");
+                    perror("Failed to map memory for file");
                     goto error_exit;
                 }
                 memcpy(&f_dentry, file + offset + f_dentry_offset, 4);
@@ -317,7 +255,7 @@ int main (int argc, char **argv)
                     PROT_READ);
                 if (!vfsmount)
                 {
-                    perror("failed to mape memory for vfsmount");
+                    perror("Failed to mape memory for vfsmount");
                     goto error_exit;
                 }
                 memcpy(&mnt_devname, vfsmount + offset + mnt_devname_offset, 4);
@@ -326,7 +264,7 @@ int main (int argc, char **argv)
                     PROT_READ);
                 if (!vname)
                 {
-                    perror("failed to map memory for device name");
+                    perror("Failed to map memory for device name");
                     goto error_exit;
                 }
                 vname += offset;
@@ -341,7 +279,7 @@ int main (int argc, char **argv)
                     PROT_READ);
                 if (!dentry)
                 {
-                    perror("failed to map memory for dentry");
+                    perror("Failed to map memory for dentry");
                     goto error_exit;
                 }
                 memcpy(&d_parent, dentry + offset + d_parent_offset, 4);
@@ -353,7 +291,7 @@ int main (int argc, char **argv)
                 dname = xa_access_kernel_va(&xai, qname, &offset, PROT_READ);
                 if (!dname)
                 {
-                    perror("failed to map memory for dentry name");
+                    perror("Failed to map memory for dentry name");
                     goto error_exit;
                 }
                 memset(dname_buf, 0, PATH_MAX);
@@ -369,7 +307,13 @@ int main (int argc, char **argv)
                 memcpy(dname_buf + doffset, dname + offset, qlen);
 
                 /* print the data obtained */
-                printf("%5d %-16s %-4d %s%s\n", pid, name, i, vname, dname_buf);
+                if ((opt_pid && pid == the_pid) ||
+                        (opt_cmd && strncmp(name, the_cmd, OPT_COMMAND_WIDTH) 
+                         == 0) || (!opt_pid && !opt_cmd))
+                {
+                    printf("%5d %-16s %-4d %s%s\n", 
+                            pid, name, i, vname, dname_buf);
+                }
 
                 munmap(file, xai.page_size);
                 munmap(vfsmount, xai.page_size);
@@ -409,5 +353,92 @@ error_exit:
     xa_destroy(&xai);
 
     return 0;
+}
+
+int predict_ksyms(char *ksyms, const char *sysmap)
+{
+    int len, i;
+
+    /* replace 'System.map' with 'vmlinux-syms' */
+    len = strlen(sysmap);
+    memset(ksyms, 0, PATH_MAX);
+    for (i = 0; i < len; i++)
+    {
+        if (strncmp(sysmap + i, "System.map-", 11) == 0)
+        {
+            strncat(ksyms, sysmap, i);
+            strcat(ksyms, "vmlinux-syms-");
+            strcat(ksyms, sysmap + i + 11);
+            break;
+        }
+    }
+
+    if (ksyms[0] == '\0' || access(ksyms, R_OK) != 0)
+    {
+        fprintf(stderr, "Couldn't find kernel symbol file after checking %s\n",
+            ksyms);
+        return -1;
+    }
+
+    return 0;
+}
+
+int fill_parent_dir(char *buf, 
+                    uint32_t d_parent, 
+                    uint32_t d_parent_offset,
+                    uint32_t d_name_offset,
+                    uint32_t qlen_offset,
+                    uint32_t qname_offset,
+                    xa_instance_t *xai)
+{
+    unsigned char *dentry = NULL;
+    char *dname = NULL;
+    uint32_t offset = 0;
+    uint32_t len, name;
+    uint32_t d_old_parent;
+    int ret = 0;
+
+    if (d_parent == 0)
+        return 0;
+
+    dentry = xa_access_kernel_va(xai, d_parent, &offset, PROT_READ);
+    if (!dentry)
+    {
+        perror("Failed to map memory for parent dentry");
+        return -1;
+    }
+    d_old_parent = d_parent;
+    memcpy(&d_parent, dentry + offset + d_parent_offset, 4);
+    memcpy(&len, dentry + offset + d_name_offset + qlen_offset, 4);
+    memcpy(&name, dentry + offset + d_name_offset + qname_offset, 4);
+
+    dname = xa_access_kernel_va(xai, name, &offset, PROT_READ);
+    if (!dname)
+    {
+        munmap(dentry, xai->page_size);
+        perror("Failed to map memory for parent name");
+        return -1;
+    }
+
+    if (d_old_parent != d_parent)
+    {
+        ret = fill_parent_dir(buf, d_parent, d_parent_offset, d_name_offset,
+            qlen_offset, qname_offset, xai);
+    }
+    
+    memcpy(buf + ret, dname + offset, len);
+    ret += len;
+    if (buf[ret-1] != '/' && buf[ret-1] != ':')
+    {
+        buf[ret] = '/';
+        ret++;
+    }
+
+    munmap(dentry, xai->page_size);
+    munmap(dname, xai->page_size);
+    dentry = NULL;
+    dname = NULL;
+
+    return ret;
 }
 

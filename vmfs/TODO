@@ -1,1 +1,2 @@
-Take command arguments to print open files for a certain process (pid, name).
+Add a option '-r' for the tool to send open file list to stats server.
+Have the tool load a configuration file for the address of stats server and the evetn query key string.
