@@ -9,6 +9,7 @@
 #include <xenaccess/xa_private.h>
 #include "process-list.h"
 #include "offset.h"
+#include "conf.h"
 #include "list.h"
 #include "report.h"
 
@@ -57,6 +58,13 @@ int main (int argc, char **argv)
             /* this is the domain name that we are looking at */
             strcpy(domain, argv[i]);
         }
+    }
+
+	/* load the config file */
+    if (conf_parse(CONF_FILE_NAME, conf_handler, NULL) < 0)
+    {
+        fprintf(stderr, "Failed to load '%s'\n", CONF_FILE_NAME);
+        return 1;
     }
 
     /* initialize the xen access library */
@@ -191,7 +199,7 @@ int main (int argc, char **argv)
             fprintf(stderr, "Failed to report process list to stats server");
             goto error_exit;
         }
-        printf("* List reported to stats server\n"); 
+        printf("List reported to stats server\n"); 
     }
 
 error_exit:
@@ -217,6 +225,20 @@ error_exit:
     
     /* cleanup any memory associated with the XenAccess instance */
     xa_destroy(&xai);
+
+    return 0;
+}
+
+int conf_handler(void* user, 
+                 const char* section, 
+                 const char* name, 
+                 const char* value)
+{
+#define MATCH(s, n) strcasecmp(section, s) == 0 && strcasecmp(name, n) == 0
+    if (MATCH("report", "statsserver"))
+        strncpy(opt_statsserver, value, 128);
+    else if (MATCH("report", "querykey"))
+        strncpy(opt_querykey, value, 256);
 
     return 0;
 }

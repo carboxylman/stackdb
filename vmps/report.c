@@ -7,10 +7,10 @@
 #include <errno.h>
 #include "report.h"
 
-static struct sockaddr_in stats_sock;
-static char opt_statsserver[] = "127.0.0.1:8989";
-static char opt_querykey[] = "index.html?op=pub&type=event&event=";
+char opt_statsserver[128];
+char opt_querykey[256];
 
+static struct sockaddr_in stats_sock;
 /*
  * Open our connection to the stats server
  */

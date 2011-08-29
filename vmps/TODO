@@ -1,3 +1,0 @@
-Make the tool have a configuration file to specify:
-1) the address of the stats server, and
-2) the query string key to send an event.

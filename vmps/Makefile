@@ -34,6 +34,7 @@ LFLAGS += -lelf
 LFLAGS += -ldw
 OBJECTS += offset.o
 OBJECTS += report.o
+OBJECTS += conf.o
 OBJECTS += process-list.o
 TARGET := process-list
 
