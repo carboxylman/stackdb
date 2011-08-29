@@ -139,5 +139,7 @@ int report_event(const char *msg)
         rv = 1;
     }
 
+    free(statbuf);
+
     return rv;
 }

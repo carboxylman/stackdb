@@ -185,7 +185,7 @@ int main (int argc, char **argv)
             perror("Failed to allocate memory for user message");
             goto error_exit;
         }
-        sprintf(msg, "%d%%20processes%%20found%%20in%%20%s:%%20", 
+        sprintf(msg, "VMI:%%20%d%%20processes%%20found%%20in%%20%s%%20-%%20", 
             process_count, domain);
         list_for_each_entry(p, &process_list, list)
         {
