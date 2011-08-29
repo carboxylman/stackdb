@@ -52,6 +52,3 @@ clean:
 	@$(RM) -f $(OBJECTS)
 	@$(RM) -f $(TARGET)
 	@echo "process-list cleaned"
-
-run:
-	sudo ./$(TARGET) --report a3-app

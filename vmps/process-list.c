@@ -7,36 +7,13 @@
 #include <unistd.h>
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
+#include "process-list.h"
 #include "offset.h"
+#include "list.h"
 #include "report.h"
 
-int predict_ksyms(char *ksyms, const char *sysmap)
-{
-    int len, i;
-
-    /* replace 'System.map' with 'vmlinux-syms' */
-    len = strlen(sysmap);
-    memset(ksyms, 0, PATH_MAX);
-    for (i = 0; i < len; i++)
-    {
-        if (strncmp(sysmap + i, "System.map-", 11) == 0)
-        {
-            strncat(ksyms, sysmap, i);
-            strcat(ksyms, "vmlinux-syms-");
-            strcat(ksyms, sysmap + i + 11);
-            break;
-        }
-    }
-
-    if (ksyms[0] == '\0' || access(ksyms, R_OK) != 0)
-    {
-        fprintf(stderr, "couldn't find kernel symbol file after checking %s\n",
-            ksyms);
-        return -1;
-    }
-
-    return 0;
-}
+LIST_HEAD(process_list);
+int process_count = 0;
 
 int main (int argc, char **argv)
 {
@@ -51,7 +28,8 @@ int main (int argc, char **argv)
     domid_t domid = 0;
     int xc_handle = -1;
     int i, opt_report = 0;
-    char msg[128];
+    struct process *p = NULL, *old_p = NULL;
+    char *msg = NULL;
 
     /* print out how to use if arguments are invalid. */
     if (argc <= 1 || strcmp(argv[1], "--help") == 0)
@@ -131,7 +109,7 @@ int main (int argc, char **argv)
     list_head = next_process;
     munmap(memory, xai.page_size);
     memory = NULL;
-
+    
     printf("%5s %s\n", "PID", "CMD");
 
     /* walk the task list */
@@ -167,25 +145,70 @@ int main (int argc, char **argv)
         if (pid < 0)
             continue;
         
-        /* report the process info to the stats-server */
         if (opt_report)
         {
-            snprintf(msg, sizeof(msg), "%d:%s", pid, name);
-            report_event(msg);    
-        }
-        //else
-        {
-            printf("%5d %s\n", pid, name);
+            /* add process info to the linked list */
+            p = (struct process *) malloc( sizeof(struct process) );
+            if (!p)
+            {
+                perror("Failed to allocate memory for process info");
+                goto error_exit;
+            }
+            p->pid = pid;
+            strncpy(p->name, name, PROCESS_NAME_MAX);
+            list_add_tail(&p->list, &process_list);
+            process_count++;
         }
 
+        /* print out the process info. */
+        printf("%5d %s\n", pid, name);
+        
         munmap(memory, xai.page_size);
         memory = NULL;
     }
 
+    /* report all process info. to stats server */
     if (opt_report)
-        printf("List reported to stats server\n"); 
+    {
+        /* build a user message out of all process info. */
+        msg = (char *) malloc ( process_count * (PROCESS_NAME_MAX+128) + 512 );
+        if (!msg)
+        {
+            perror("Failed to allocate memory for user message");
+            goto error_exit;
+        }
+        sprintf(msg, "%d%%20processes%%20found%%20in%%20%s:%%20", 
+            process_count, domain);
+        list_for_each_entry(p, &process_list, list)
+        {
+            sprintf(msg + strlen(msg), "%s(%d),%%20", p->name, p->pid);
+        }
+        msg[strlen(msg)-4] = '\0';
+
+        /* report the message to stats server */
+        if (report_event(msg))
+        {
+            fprintf(stderr, "Failed to report process list to stats server");
+            goto error_exit;
+        }
+        printf("* List reported to stats server\n"); 
+    }
 
 error_exit:
+
+    if (opt_report)
+    {
+        /* delete the user mssage */
+        if (msg) free(msg);
+
+        /* delete all process info saved */
+        list_for_each_entry(p, &process_list, list)
+        {
+            if (old_p) free(old_p);
+            old_p = p;
+        }
+        if (old_p) free(old_p);
+    }
 
     /* sanity check to unmap shared pages */
     if (memory) munmap(memory, xai.page_size);
@@ -194,6 +217,34 @@ error_exit:
     
     /* cleanup any memory associated with the XenAccess instance */
     xa_destroy(&xai);
+
+    return 0;
+}
+
+int predict_ksyms(char *ksyms, const char *sysmap)
+{
+    int len, i;
+
+    /* replace 'System.map' with 'vmlinux-syms' */
+    len = strlen(sysmap);
+    memset(ksyms, 0, PATH_MAX);
+    for (i = 0; i < len; i++)
+    {
+        if (strncmp(sysmap + i, "System.map-", 11) == 0)
+        {
+            strncat(ksyms, sysmap, i);
+            strcat(ksyms, "vmlinux-syms-");
+            strcat(ksyms, sysmap + i + 11);
+            break;
+        }
+    }
+
+    if (ksyms[0] == '\0' || access(ksyms, R_OK) != 0)
+    {
+        fprintf(stderr, "couldn't find kernel symbol file after checking %s\n",
+            ksyms);
+        return -1;
+    }
 
     return 0;
 }

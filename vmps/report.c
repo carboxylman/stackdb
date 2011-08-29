@@ -116,13 +116,13 @@ int init_stats(void)
 
 int report_event(const char *msg)
 {
-    char statbuf[256];
+    char *statbuf = NULL;
     int sock, rv = 0;
 
-    snprintf(statbuf, sizeof statbuf,
-        "GET /%s%s HTTP/1.1\n"
+    statbuf = (char *) malloc( strlen(msg) + 256 );
+    if (!statbuf) return 1;
+    sprintf(statbuf, "GET /%s%s HTTP/1.1\n"
         "Host: a3\n\n", opt_querykey, msg);
-    //printf("querystr: %s\n", statbuf);
 
     sock = open_statsserver();
     if (sock >= 0)
