@@ -44,32 +44,40 @@ unsigned char *linux_get_taskstruct (
     int task_pid = 0;
     int pid_offset = instance->os.linux_instance.pid_offset;
     int tasks_offset = instance->os.linux_instance.tasks_offset;
+    int i = 0;
 
     /* first we need a pointer to this pid's task_struct */
-    next_process = instance->init_task;
+    next_process = instance->init_task + tasks_offset;
     list_head = next_process;
 
-    while (1){
-        memory = xa_access_kernel_va(instance, next_process, offset, PROT_READ);
+    while (++i) {
+	xa_dbprint("getting task_struct at (0x%x)\n",next_process);
+        memory = xa_access_kernel_va(instance, next_process,
+				     offset, PROT_READ);
         if (NULL == memory){
-            printf("ERROR: failed to get task list next pointer");
+            printf("ERROR: failed to get task_struct (%d)\n",i);
             goto error_exit;
         }
         memcpy(&next_process, memory + *offset, 4);
 
-        /* if we are back at the list head, we are done */
-        if (list_head == next_process){
-            goto error_exit;
-        }
-
         memcpy(&task_pid,
-               memory + *offset + pid_offset - tasks_offset,
+               memory + *offset + (pid_offset - tasks_offset),
                4
         );
         
         /* if pid matches, then we found what we want */
-        if (task_pid == pid){
+        if (task_pid == pid) {
+	    printf("linux_get_taskstruct: found pid %d!\n",pid);
             return memory;
+        }
+	else {
+	    xa_dbprint("checked pid %d\n",task_pid);
+	}
+
+        /* if we are back at the list head, we are done */
+        if (list_head == next_process) {
+            printf("ERROR: failed to get task_struct: back at init_task\n",i);
+            goto error_exit;
         }
         munmap(memory, instance->page_size);
     }
