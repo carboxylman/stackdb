@@ -29,8 +29,10 @@ default: $(OBJECTS)
 	@echo "xenaccess compiled"
 
 %.o: %.c
-	@$(CC) -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 clean:
-	@rm -f $(OBJECTS)
+	rm -f $(OBJECTS)
 	@echo "xenaccess cleaned"
+
+.SECONDARY:
