@@ -550,7 +550,7 @@ void *xa_access_user_va (
         xa_current_cr3(instance, &cr3);
         address = xa_pagetable_lookup(instance, cr3, virt_address, 1);
         if (!address){
-            //printf("ERROR: address not in page table (0x%x)\n", virt_address);
+            fprintf(stderr,"ERROR: address not in page table (0x%x)\n",virt_address);
             return NULL;
         }
     }
@@ -565,7 +565,7 @@ void *xa_access_user_va (
         }
 
         if (!address){
-            //printf("ERROR: address not in page table (0x%x)\n", virt_address);
+            fprintf(stderr,"ERROR: address not in page table (0x%x)\n",virt_address);
             return NULL;
         }
     }
@@ -585,11 +585,16 @@ void *xa_access_user_va_range (
         int prot)
 {
 #ifdef ENABLE_XEN
+    void *retval = NULL;
     int i;
+    unsigned long maddr;
 
     uint32_t num_pages = size / instance->page_size + 1;
 
     uint32_t pgd = pid ? xa_pid_to_pgd(instance, pid) : instance->kpgd;
+    if (!pid && !instance->kpgd) {
+	xa_current_cr3(instance, &pgd);
+    }
     xen_pfn_t* pfns = (xen_pfn_t*)malloc(sizeof(xen_pfn_t)*num_pages);
     
     uint32_t start = virt_address & ~(instance->page_size-1);
@@ -598,21 +603,29 @@ void *xa_access_user_va_range (
         uint32_t addr = start + i*instance->page_size;
     
         if(!addr) {
-            printf("ERROR: address not in page table (%p)\n", (void *)addr);
+            fprintf(stderr,"ERROR: address not in page table (%p)\n",(void *)addr);
+	    free(pfns);
             return NULL;
         }
 
         /* Physical page frame number of each page */
-        pfns[i] = xa_pagetable_lookup(
-            instance, pgd, addr, pid) >> instance->page_shift;
+        maddr = xa_pagetable_lookup(instance, pgd, addr, !pid);
+	if (!maddr) {
+	    fprintf(stderr,"ERROR: address not in page table (%p)!\n",addr);
+	    free(pfns);
+	    return NULL;
+	}
+	pfns[i] = maddr >> instance->page_shift;
     }
 
     *offset = virt_address - start;
 
-    return xc_map_foreign_pages(
+    retval = xc_map_foreign_pages(
         instance->m.xen.xc_handle,
         instance->m.xen.domain_id, prot, pfns, num_pages
     );
+    free(pfns);
+    return retval;
 #else
     return NULL;
 #endif /* ENABLE_XEN */
