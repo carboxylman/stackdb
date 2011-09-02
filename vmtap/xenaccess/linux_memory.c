@@ -67,7 +67,7 @@ unsigned char *linux_get_taskstruct (
         
         /* if pid matches, then we found what we want */
         if (task_pid == pid) {
-	    printf("linux_get_taskstruct: found pid %d!\n",pid);
+	    //printf("linux_get_taskstruct: found pid %d!\n",pid);
             return memory;
         }
 	else {
