@@ -409,7 +409,7 @@ int report_task_list(void)
         }
     }
 
-    if (opt_web || opt_log)
+    if (opt_log || opt_web)
     {
         if (gettimeofday(&now, NULL))
         {
@@ -424,6 +424,30 @@ int report_task_list(void)
             perror("Failed to allocate memory for user message");
             return 1;
         }
+    }
+
+    if (opt_log)
+    {
+        sprintf(msg, "[%u.%06u]\n"
+            "%-10s  %s (ID: %d)\n"
+            "%-10s  %d\n", 
+            (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
+            "Domain:", domain, domid, 
+            "Processes:", proc_count);
+        //sprintf(msg + strlen(msg), "%5s %s\n", "PID", "CMD");
+        list_for_each_entry(p, &proc_list, list)
+        {
+            sprintf(msg + strlen(msg), "%5d %s\n", p->pid, p->name);
+        }
+        strcat(msg, "\n");
+
+        /* write the message to log file */
+        fprintf(logfile, msg);
+        fflush(logfile);
+    }
+    
+    if (opt_web)
+    {
         sprintf(msg, "[%u.%06u] %d processes found in \"%s\" - ", 
             (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
             proc_count, domain);
@@ -432,19 +456,7 @@ int report_task_list(void)
             sprintf(msg + strlen(msg), "%s(%d), ", p->name, p->pid);
         }
         msg[strlen(msg)-2] = '\0';
-    }
 
-    if (opt_log)
-    {
-        /* write the message to log file */
-        fprintf(logfile, "%s\n", msg);
-        printf("[%u.%06u] %d processes reported to log file\n", 
-            (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
-            proc_count);
-    }
-    
-    if (opt_web)
-    {
         /* replace all spaces with "%20" */
         webmsg = str_replace(msg, " ", "%20");
         if (!webmsg)
@@ -459,9 +471,21 @@ int report_task_list(void)
             fprintf(stderr, "Failed to report process list to stats web server");
             goto error_exit;
         }
-        printf("[%u.%06u] %d processes reported to stats web server\n", 
+    }
+
+    if (opt_log || opt_web)
+    {
+        printf("[%u.%06u] %d processes reported to ", 
             (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
-            proc_count); 
+            proc_count);
+        if (opt_log)
+        {
+            printf("log file");
+            if (opt_web) printf(" and ");
+        }
+        if (opt_web)
+            printf("web server");
+        printf(".\n");
     }
     
     ret = 0;
