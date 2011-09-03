@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <assert.h>
@@ -18,6 +19,9 @@
 #include <elfutils/memory-access.h>
 
 #include "offset.h"
+
+char conf_sysmap[PATH_MAX];
+char conf_debuginfo[PATH_MAX];
 
 enum {
     DW_REQ_scope = 0x1,
@@ -692,10 +696,10 @@ static int find_task_member(unsigned int *offset,
     return EX_OK;
 }
 
-int get_task_offsets(int *tasks_offset,
-                     int *name_offset,
-                     int *pid_offset,
-                     const char *fsym)
+int offset_task_struct(int *tasks_offset,
+                       int *name_offset,
+                       int *pid_offset,
+                       const char *fsym)
 {
     char *fields[] = {
         "tasks",

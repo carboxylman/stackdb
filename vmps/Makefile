@@ -26,22 +26,23 @@ OBJECTS += xenaccess/xa_pretty_print.o
 OBJECTS += xenaccess/xa_symbols.o
 OBJECTS += xenaccess/xa_util.o
 
-# process-list
+# vmps
 LFLAGS := -lxenctrl
 LFLAGS += -lxenstore
 LFLAGS += -lebl
 LFLAGS += -lelf
 LFLAGS += -ldw
+OBJECTS += config.o
 OBJECTS += offset.o
-OBJECTS += report.o
-OBJECTS += conf.o
-OBJECTS += process-list.o
-TARGET := process-list
+OBJECTS += web.o
+OBJECTS += log.o
+OBJECTS += vmps.o
+TARGET := vmps
 
 default:
-	@echo "compiling process-list (be patient)"
+	@echo "compiling vmps (be patient)"
 	@$(MAKE) $(TARGET)
-	@echo "process-list compiled"
+	@echo "vmps compiled"
 
 %.o: %.c
 	@$(CC) -c $(CFLAGS) -o $@ $<
@@ -52,4 +53,4 @@ $(TARGET): $(OBJECTS)
 clean:
 	@$(RM) -f $(OBJECTS)
 	@$(RM) -f $(TARGET)
-	@echo "process-list cleaned"
+	@echo "vmps cleaned"

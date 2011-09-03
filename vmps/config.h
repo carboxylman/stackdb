@@ -1,5 +1,5 @@
-#ifndef __CONF_H__
-#define __CONF_H__
+#ifndef __CONFIG_H__
+#define __CONFIG_H__
 
 /* Make this header file easier to include in C++ code */
 #ifdef __cplusplus
@@ -20,27 +20,27 @@ extern "C" {
    Returns 0 on success, line number of first error on parse error (doesn't
    stop on first error), or -1 on file open error.
 */
-int conf_parse(const char* filename,
-              int (*handler)(void* user, const char* section,
-                             const char* name, const char* value),
-              void* user);
+int config_parse(const char* filename,
+                 int (*handler)(void* user, const char* section,
+                                const char* name, const char* value),
+                 void* user);
 
-/* Same as conf_parse(), but takes a FILE* instead of filename. This doesn't
+/* Same as config_parse(), but takes a FILE* instead of filename. This doesn't
    close the file when it's fconfshed -- the caller must do that. */
-int conf_parse_file(FILE* file,
-                   int (*handler)(void* user, const char* section,
-                                  const char* name, const char* value),
-                   void* user);
+int config_parse_file(FILE* file,
+                      int (*handler)(void* user, const char* section,
+                                     const char* name, const char* value),
+                      void* user);
 
 /* Nonzero to allow multi-line value parsing, in the style of Python's
-   ConfigParser. If allowed, conf_parse() will call the handler with the same
+   ConfigParser. If allowed, config_parse() will call the handler with the same
    name for each subsequent line parsed. */
-#ifndef CONF_ALLOW_MULTILINE
-#define CONF_ALLOW_MULTILINE 1
+#ifndef CONFIG_ALLOW_MULTILINE
+#define CONFIG_ALLOW_MULTILINE 1
 #endif
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* __CONF_H__ */
+#endif /* __CONFIG_H__ */

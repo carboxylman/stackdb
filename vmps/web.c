@@ -5,10 +5,10 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include "report.h"
+#include "web.h"
 
-char opt_statsserver[128];
-char opt_querykey[256];
+char conf_statsserver[128];
+char conf_querykey[256];
 
 static struct sockaddr_in stats_sock;
 /*
@@ -77,19 +77,19 @@ static int open_statsserver(void)
     return sock;
 }
 
-int init_stats(void)
+int web_init(void)
 {
     char *ip, *port;
     int fd;
 
-    if (opt_statsserver == NULL)
+    if (conf_statsserver == NULL)
         return 0;
 
-    ip = opt_statsserver;
+    ip = conf_statsserver;
     port = index(ip, ':');
     if (port == NULL || ip == port || port[1] == '\0') {
         fprintf(stderr, "could not parse statsserver '%s'\n",
-                opt_statsserver);
+                conf_statsserver);
         return 1;
     }
     *port++ = '\0';
@@ -104,25 +104,26 @@ int init_stats(void)
     fd = open_statsserver();
     if (fd < 0) {
         fprintf(stderr, "could not talk to statsserver at %s (%d)\n",
-                opt_statsserver, fd);
+                conf_statsserver, fd);
         return 1;
     }
     close(fd);
 
-    printf("Stats server at %s:%d\n",
+    printf("Stats web server at \"%s:%d\"\n",
             inet_ntoa(stats_sock.sin_addr), ntohs(stats_sock.sin_port));
     return 0;
 }
 
-int report_event(const char *msg)
+#define WEB_TAG ("VMI")
+int web_report(const char *msg)
 {
     char *statbuf = NULL;
     int sock, rv = 0;
 
     statbuf = (char *) malloc( strlen(msg) + 256 );
     if (!statbuf) return 1;
-    sprintf(statbuf, "GET /%s%s HTTP/1.1\n"
-        "Host: a3\n\n", opt_querykey, msg);
+    sprintf(statbuf, "GET /%s%s:%%20%s HTTP/1.1\n"
+        "Host: a3\n\n", conf_querykey, WEB_TAG, msg);
 
     sock = open_statsserver();
     if (sock >= 0)

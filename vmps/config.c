@@ -2,7 +2,7 @@
 #include <ctype.h>
 #include <string.h>
 
-#include "conf.h"
+#include "config.h"
 
 #define MAX_LINE 200
 #define MAX_SECTION 50
@@ -47,10 +47,10 @@ static char* strncpy0(char* dest, const char* src, size_t size)
 }
 
 /* See documentation in header file. */
-int conf_parse_file(FILE* file,
-                   int (*handler)(void*, const char*, const char*,
-                                  const char*),
-                   void* user)
+int config_parse_file(FILE* file,
+                      int (*handler)(void*, const char*, const char*,
+                                     const char*),
+                      void* user)
 {
     /* Uses a fair bit of stack (use heap instead if you need to) */
     char line[MAX_LINE];
@@ -69,7 +69,7 @@ int conf_parse_file(FILE* file,
         lineno++;
         start = lskip(rstrip(line));
 
-#if CONF_ALLOW_MULTILINE
+#if CONFIG_ALLOW_MULTILINE
         if (*prev_name && *start && start > line) {
             /* Non-black line with leading whitespace, treat as continuation
                of previous name's value (as per Python ConfigParser). */
@@ -125,9 +125,9 @@ int conf_parse_file(FILE* file,
 }
 
 /* See documentation in header file. */
-int conf_parse(const char* filename,
-              int (*handler)(void*, const char*, const char*, const char*),
-              void* user)
+int config_parse(const char* filename,
+                 int (*handler)(void*, const char*, const char*, const char*),
+                 void* user)
 {
     FILE* file;
     int error;
@@ -135,7 +135,7 @@ int conf_parse(const char* filename,
     file = fopen(filename, "r");
     if (!file)
         return -1;
-    error = conf_parse_file(file, handler, user);
+    error = config_parse_file(file, handler, user);
     fclose(file);
     return error;
 }
