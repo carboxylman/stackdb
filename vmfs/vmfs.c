@@ -145,7 +145,7 @@ void print_usage(const char *exec)
     printf("  -w, --web            report open file list(s) to stats web server\n");
     printf("  -l, --log            report open file list(s) to log file\n");
     printf("  -p, --pid <pid>      exclude(^)|select pid\n");
-    printf("  -c, --cmd <cmd>      exclude(^)|select cmd (compare width: %d)\n", 
+    printf("  -n, --cmd <cmd>      exclude(^)|select cmd (compare width: %d)\n", 
         CMD_WIDTH);
     printf("  -h, --help           display this help and exit\n");
     exit(1);
@@ -191,7 +191,7 @@ void get_options(int argc, char *argv[])
             if (the_pid == 0)
                 print_usage(argv[0]);
         }
-        else if ((strcmp(argv[i], "-c") == 0 || 
+        else if ((strcmp(argv[i], "-n") == 0 || 
                   strcmp(argv[i], "--cmd") == 0) &&
                  (i+1) < argc)
         {
@@ -401,28 +401,34 @@ int walk_task_list(void)
 
         name = (char *) (task_struct + offset + off_name - off_tasks);
         memcpy(&pid, task_struct + offset + off_pid - off_tasks, 4);
-        memcpy(&files, task_struct + offset + off_files - off_tasks, 4);
 
         /* trivial sanity check on data */
         if (pid < 0)
             continue;
         
-        /* add obtained process info to the linked list */
-        p = (struct proc *) malloc( sizeof(struct proc) );
-        if (!p)
+        if ((opt_pid && pid == the_pid) ||
+            (opt_cmd && strncmp(name, the_cmd, CMD_WIDTH) == 0) ||
+            (!opt_pid && !opt_cmd))
         {
-            perror("Failed to allocate memory for process info");
-            goto error_exit;
-        }
-        p->pid = pid;
-        strncpy(p->name, name, PNAME_MAX);
-        INIT_LIST_HEAD(&p->files);
-        p->file_count = 0;
-        list_add_tail(&p->list, &proc_list);
-        proc_count++;
+            memcpy(&files, task_struct + offset + off_files - off_tasks, 4);
+            
+            /* add obtained process info to the linked list */
+            p = (struct proc *) malloc( sizeof(struct proc) );
+            if (!p)
+            {
+                perror("Failed to allocate memory for process info");
+                goto error_exit;
+            }
+            p->pid = pid;
+            strncpy(p->name, name, PNAME_MAX);
+            INIT_LIST_HEAD(&p->files);
+            p->file_count = 0;
+            list_add_tail(&p->list, &proc_list);
+            proc_count++;
 
-        if (walk_file_list(p, files))
-            goto error_exit;
+            if (walk_file_list(p, files))
+                goto error_exit;
+        }
 
         munmap(task_struct, xa.page_size);
         task_struct = NULL;
