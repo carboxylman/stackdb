@@ -26,20 +26,23 @@ OBJECTS += xenaccess/xa_pretty_print.o
 OBJECTS += xenaccess/xa_symbols.o
 OBJECTS += xenaccess/xa_util.o
 
-# openfile-list
+# vmfs
 LFLAGS := -lxenctrl
 LFLAGS += -lxenstore
 LFLAGS += -lebl
 LFLAGS += -lelf
 LFLAGS += -ldw
+OBJECTS += config.o
 OBJECTS += offset.o
-OBJECTS += openfile-list.o
-TARGET := openfile-list
+OBJECTS += web.o
+OBJECTS += log.o
+OBJECTS += vmfs.o
+TARGET := vmfs
 
 default:
-	@echo "compiling openfile-list (be patient)"
+	@echo "compiling vmfs (be patient)"
 	@$(MAKE) $(TARGET)
-	@echo "openfile-list compiled"
+	@echo "vmfs compiled"
 
 %.o: %.c
 	@$(CC) -c $(CFLAGS) -o $@ $<
@@ -50,4 +53,4 @@ $(TARGET): $(OBJECTS)
 clean:
 	@$(RM) -f $(OBJECTS)
 	@$(RM) -f $(TARGET)
-	@echo "openfile-list cleaned"
+	@echo "vmfs cleaned"

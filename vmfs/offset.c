@@ -19,7 +19,11 @@
 
 #include "offset.h"
 
-Dwarf_Off base_from, base_to; /* avoid searching for "base.c" repeatedly */
+char conf_sysmap[PATH_MAX];
+char conf_debuginfo[PATH_MAX];
+
+/* this avoid searching for "base.c" repeatedly */
+static Dwarf_Off base_from, base_to;
 
 enum {
     DW_REQ_scope = 0x1,
@@ -696,11 +700,11 @@ static int find_struct_member(unsigned int *offset,
     return EX_OK;
 }
 
-int get_task_offsets(int *tasks_offset,
-                     int *name_offset,
-                     int *pid_offset,
-                     int *files_offset,
-                     const char *fsym)
+int offset_task_struct(int *tasks_offset,
+                       int *name_offset,
+                       int *pid_offset,
+                       int *files_offset,
+                       const char *fsym)
 {
     char *fields[] = {
         "tasks",
@@ -750,7 +754,7 @@ int get_task_offsets(int *tasks_offset,
     return ret;
 }
 
-int get_files_offsets(int *fdt_offset, const char *fsym)
+int offset_files_struct(int *fdt_offset, const char *fsym)
 {
     unsigned int offset = 0;
     char *field = NULL;
@@ -789,7 +793,7 @@ int get_files_offsets(int *fdt_offset, const char *fsym)
     return ret;
 }
 
-int get_fdt_offsets(int *max_fds_offset, int *fd_offset, const char *fsym)
+int offset_fdtable(int *max_fds_offset, int *fd_offset, const char *fsym)
 {
     unsigned int offset = 0;
     char *field = NULL;
@@ -838,7 +842,7 @@ int get_fdt_offsets(int *max_fds_offset, int *fd_offset, const char *fsym)
     return ret;
 }
 
-int get_fd_offsets(int *f_dentry_offset, int *f_vfsmnt_offset, const char *fsym)
+int offset_file(int *f_dentry_offset, int *f_vfsmnt_offset, const char *fsym)
 {
     unsigned int offset = 0;
     char *field = NULL;
@@ -887,9 +891,7 @@ int get_fd_offsets(int *f_dentry_offset, int *f_vfsmnt_offset, const char *fsym)
     return ret;
 }
 
-int get_dentry_offsets(int *d_parent_offset, 
-                       int *d_name_offset, 
-                       const char *fsym)
+int offset_dentry(int *d_parent_offset, int *d_name_offset, const char *fsym)
 {
     unsigned int offset = 0;
     char *field = NULL;
@@ -938,7 +940,7 @@ int get_dentry_offsets(int *d_parent_offset,
     return ret;
 }
 
-int get_vfsmnt_offsets(int *mnt_devname_offset, const char *fsym)
+int offset_vfsmount(int *mnt_devname_offset, const char *fsym)
 {
     unsigned int offset = 0;
     char *field = NULL;
@@ -977,7 +979,7 @@ int get_vfsmnt_offsets(int *mnt_devname_offset, const char *fsym)
     return ret;
 }
 
-int get_qstr_offsets(int *len_offset, int *name_offset, const char *fsym)
+int offset_qstr(int *len_offset, int *name_offset, const char *fsym)
 {
     unsigned int offset = 0;
     char *field = NULL;

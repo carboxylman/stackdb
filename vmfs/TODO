@@ -1,2 +1,1 @@
-Add a option '-r' for the tool to send open file list to stats server.
-Have the tool load a configuration file for the address of stats server and the evetn query key string.
+Add command line options to exclude all but the specified 'pid' or 'cmd' in the output list.
