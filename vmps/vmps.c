@@ -3,6 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -42,6 +43,7 @@ int opt_log;
 
 static void print_usage(const char *exec);
 static void get_options(int argc, char *argv[]);
+static void signal_interrupt(void);
 static int load_config(const char *config);
 static int init_xa(xa_instance_t *xa, const char *domain);
 static int predict_debuginfo(char *debuginfo, const char *sysmap);
@@ -68,7 +70,10 @@ int main (int argc, char *argv[])
         return 1;
 
     if (opt_daemon)
+    {
+        signal_interrupt();
         printf("Run in daemon mode at %d sec interval\n", interval);
+    }
 
     /* initialize reporting targets */
     if (opt_log)
@@ -495,4 +500,34 @@ error_exit:
     if (msg) free(msg);
 
     return ret;
+}
+
+static inline
+void signal_handler(int sig)
+{
+    xc_domain_unpause(xc_handle, domid);
+    xa_destroy(&xa);
+    log_cleanup();
+    //printf("vmps forcefully stopped\n");
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static
+void signal_interrupt(void)
+{
+    if (signal(SIGINT, signal_handler) == SIG_IGN)
+        signal(SIGINT, SIG_IGN);
+    if (signal(SIGABRT, signal_handler) == SIG_IGN)
+        signal(SIGABRT, SIG_IGN);
+    if (signal(SIGHUP, signal_handler) == SIG_IGN)
+        signal(SIGHUP, SIG_IGN);
+    if (signal(SIGILL, signal_handler) == SIG_IGN)
+        signal(SIGILL, SIG_IGN);
+    if (signal(SIGFPE, signal_handler) == SIG_IGN)
+        signal(SIGFPE, SIG_IGN);
+    if (signal(SIGSEGV, signal_handler) == SIG_IGN)
+        signal(SIGSEGV, SIG_IGN);
+    if (signal(SIGTERM, signal_handler) == SIG_IGN)
+        signal(SIGTERM, SIG_IGN);
 }

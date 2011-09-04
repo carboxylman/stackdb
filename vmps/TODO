@@ -1,1 +1,0 @@
-Catch common termination signals (SIGINT, SIGHUP, SIGTERM, ...) and do some cleanup operations.
