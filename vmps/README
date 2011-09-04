@@ -3,4 +3,4 @@ Build requirement:
 
 Read "vmps.conf" to modify configuration.
 
-Modify the value assigned to CONFIG_FILE macro to change the location of the configuration file. By default, the config file resides in the same location where the executable runs.
+Modify the value assigned to CONFIG_FILE macro in "vmps.h" to change the location of the configuration file. By default, the config file resides in the same location where the executable runs.

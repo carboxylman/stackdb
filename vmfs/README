@@ -1,2 +1,6 @@
 Build requirement:
 1) elfutils-devel
+
+Read "vmfs.conf" to modify configuration.
+
+Modify the value assigned to CONFIG_FILE macro in "vmfs.h" to change the location of the configuration file. By default, the config file resides in the same location where the executable runs.
