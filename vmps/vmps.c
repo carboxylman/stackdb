@@ -35,6 +35,7 @@ xa_instance_t xa;
 int xc_handle = -1;
 char debuginfo[PATH_MAX+1];
 int interval;
+struct timeval now;
 
 int off_tasks, off_pid, off_name;
 int opt_daemon, opt_log, opt_web, opt_console = 1; /* console on by default */
@@ -91,6 +92,7 @@ int main (int argc, char *argv[])
 
     /* list all tasks repeatedly with a time interval */
     do {
+        gettimeofday(&now, NULL);
         if (walk_task_list()) return 1;
         sleep(interval);
     } while (opt_daemon);
@@ -403,14 +405,7 @@ int report_task_list(void)
 {
     char *msg = NULL, *webmsg = NULL;
     struct proc *p = NULL;
-    struct timeval now;
     int ret = -1;
-
-    if (gettimeofday(&now, NULL))
-    {
-        perror("Failed to get current time");
-        return 1;
-    }
 
     if (opt_console)
     {
