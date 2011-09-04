@@ -51,8 +51,6 @@ static int report_task_list(void);
 
 int main (int argc, char *argv[])
 {
-    int ret;
-
     if (getuid() != 0)
     {
         fprintf(stderr, "Must run as root\n");
@@ -92,15 +90,10 @@ int main (int argc, char *argv[])
         goto error_exit;
 
     /* list all tasks repeatedly with a time interval */
-    do
-    {
-        xc_domain_pause(xc_handle, domid);
-        ret = walk_task_list();
-        xc_domain_unpause(xc_handle, domid);
-        if (ret != 0) return 1;
+    do {
+        if (walk_task_list()) return 1;
         sleep(interval);
-    } 
-    while (opt_daemon);
+    } while (opt_daemon);
 
 error_exit:
     xa_destroy(&xa);
@@ -293,6 +286,8 @@ int walk_task_list(void)
     munmap(memory, xa.page_size);
     memory = NULL;
     
+    xc_domain_pause(xc_handle, domid);
+    
     /* walk the task list */
     while (1)
     {
@@ -340,6 +335,8 @@ int walk_task_list(void)
         memory = NULL;
     }
 
+    xc_domain_unpause(xc_handle, domid);
+    
     /* report the list we figured out */
     if (report_task_list())
         goto error_exit;
