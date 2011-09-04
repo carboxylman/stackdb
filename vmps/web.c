@@ -7,8 +7,8 @@
 #include <errno.h>
 #include "web.h"
 
-char conf_statsserver[128];
-char conf_querykey[256];
+char conf_statsserver[STATS_MAX+1];
+char conf_querykey[QUERY_MAX+1];
 
 static struct sockaddr_in stats_sock;
 /*
@@ -114,16 +114,15 @@ int web_init(void)
     return 0;
 }
 
-#define WEB_TAG ("VMI")
 int web_report(const char *msg)
 {
     char *statbuf = NULL;
     int sock, rv = 0;
 
-    statbuf = (char *) malloc( strlen(msg) + 256 );
+    statbuf = (char *) malloc( strlen(msg) + QUERY_MAX + 128 );
     if (!statbuf) return 1;
     sprintf(statbuf, "GET /%s%s:%%20%s HTTP/1.1\n"
-        "Host: a3\n\n", conf_querykey, WEB_TAG, msg);
+        "Host: a3\n\n", conf_querykey, EVENT_TAG, msg);
 
     sock = open_statsserver();
     if (sock >= 0)

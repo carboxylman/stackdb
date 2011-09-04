@@ -23,7 +23,7 @@
 struct proc {
     struct list_head list;
     int pid;
-    char name[PNAME_MAX];
+    char name[PNAME_MAX+1];
 };
 
 LIST_HEAD(proc_list);
@@ -33,7 +33,7 @@ char domain[128];
 xa_instance_t xa;
 int xc_handle = -1;
 domid_t domid;
-char debuginfo[PATH_MAX];
+char debuginfo[PATH_MAX+1];
 int interval;
 
 int opt_daemon;
@@ -194,9 +194,9 @@ int config_handler(void* user,
     else if (MATCH("offset", "debuginfo"))
         strncpy(conf_debuginfo, value, PATH_MAX);
     else if (MATCH("web", "statsserver"))
-        strncpy(conf_statsserver, value, 128);
+        strncpy(conf_statsserver, value, STATS_MAX);
     else if (MATCH("web", "querykey"))
-        strncpy(conf_querykey, value, 256);
+        strncpy(conf_querykey, value, QUERY_MAX);
     else if (MATCH("log", "logfile"))
         strncpy(conf_logfile, value, PATH_MAX);
     return 0;
