@@ -508,18 +508,6 @@ error_exit:
     return ret;
 }
 
-static inline
-struct openfile *find_file(const char *dev, const char *name)
-{
-    struct openfile *f = NULL;
-    list_for_each_entry(f, &file_list, list)
-    {
-        if (strcmp(f->dev, dev) == 0 && strcmp(f->name, name) == 0)
-            return f;
-    }
-    return NULL;
-}
-
 static
 int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
 {
@@ -626,6 +614,18 @@ error_exit:
     if (filename) munmap(filename, xa.page_size);
 
     return ret;
+}
+
+static inline
+struct openfile *find_file(const char *dev, const char *name)
+{
+    struct openfile *f = NULL;
+    list_for_each_entry(f, &file_list, list)
+    {
+        if (strcmp(f->dev, dev) == 0 && strcmp(f->name, name) == 0)
+            return f;
+    }
+    return NULL;
 }
 
 static inline
