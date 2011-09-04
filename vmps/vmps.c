@@ -281,10 +281,6 @@ int walk_task_list(void)
     int pid = 0;
     int ret = -1;
 
-    /* reset global variables */
-    INIT_LIST_HEAD(&proc_list);
-    proc_count = 0;
-    
     /* get the head of the list */
     memory = xa_access_kernel_sym(&xa, "init_task", &offset, PROT_READ);
     if (!memory)
@@ -357,6 +353,8 @@ error_exit:
         old_p = p;
     }
     if (old_p) free(old_p);
+    INIT_LIST_HEAD(&proc_list);
+    proc_count = 0; 
 
     if (memory) munmap(memory, xa.page_size);
     
@@ -411,8 +409,24 @@ int report_task_list(void)
     struct timeval now;
     int ret = -1;
 
+    if (gettimeofday(&now, NULL))
+    {
+        perror("Failed to get current time");
+        return 1;
+    }
+
     if (opt_console)
     {
+        if (opt_daemon)
+        {
+            printf("\n"
+                    "[%u.%06u]\n"
+                    "%-10s  %s (ID: %d)\n"
+                    "%-10s  %d\n",
+                    (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
+                    "Domain:", domain, domid, 
+                    "Processes:", proc_count);
+        }
         printf("%5s %s\n", "PID", "CMD");
         list_for_each_entry(p, &proc_list, list)
         {
@@ -422,12 +436,6 @@ int report_task_list(void)
 
     if (opt_log || opt_web)
     {
-        if (gettimeofday(&now, NULL))
-        {
-            perror("Failed to get current time");
-            return 1;
-        }
-
         /* build a user message out of all process info. */
         msg = (char *) malloc ( proc_count * (PNAME_MAX+64) + 256 );
         if (!msg)
@@ -440,11 +448,11 @@ int report_task_list(void)
     if (opt_log)
     {
         sprintf(msg, "[%u.%06u]\n"
-            "%-10s  %s (ID: %d)\n"
-            "%-10s  %d\n", 
-            (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
-            "Domain:", domain, domid, 
-            "Processes:", proc_count);
+                "%-10s  %s (ID: %d)\n"
+                "%-10s  %d\n", 
+                (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
+                "Domain:", domain, domid, 
+                "Processes:", proc_count);
         //sprintf(msg + strlen(msg), "%5s %s\n", "PID", "CMD");
         list_for_each_entry(p, &proc_list, list)
         {
@@ -511,10 +519,20 @@ error_exit:
 static inline
 void signal_handler(int sig)
 {
+    struct proc *p = NULL, *old_p = NULL;
+
     xc_domain_unpause(xc_handle, domid);
+    
+    list_for_each_entry(p, &proc_list, list)
+    {
+        if (old_p) free(old_p);
+        old_p = p;
+    }
+    if (old_p) free(old_p);
+
     xa_destroy(&xa);
     log_cleanup();
-    //printf("vmps forcefully stopped\n");
+    
     signal(sig, SIG_DFL);
     raise(sig);
 }
