@@ -30,16 +30,14 @@ LIST_HEAD(proc_list);
 int proc_count;
 
 char domain[128];
+domid_t domid;
 xa_instance_t xa;
 int xc_handle = -1;
-domid_t domid;
 char debuginfo[PATH_MAX+1];
 int interval;
 
-int opt_daemon;
-int opt_console = 1; /* report to console by default */
-int opt_web;
-int opt_log;
+int off_tasks, off_pid, off_name;
+int opt_daemon, opt_log, opt_web, opt_console = 1; /* console on by default */
 
 static void print_usage(const char *exec);
 static void get_options(int argc, char *argv[]);
@@ -47,12 +45,12 @@ static void signal_interrupt(void);
 static int load_config(const char *config);
 static int init_xa(xa_instance_t *xa, const char *domain);
 static int predict_debuginfo(char *debuginfo, const char *sysmap);
-static int walk_task_list(int off_tasks, int off_name, int off_pid);
+static int find_offsets(void);
+static int walk_task_list(void);
 static int report_task_list(void);
 
 int main (int argc, char *argv[])
 {
-    int off_tasks, off_pid, off_name;
     int ret;
 
     if (getuid() != 0)
@@ -83,8 +81,6 @@ int main (int argc, char *argv[])
 
     if (init_xa(&xa, domain))
         return 1;
-    xc_handle = xa.m.xen.xc_handle;
-    domid = xa.m.xen.domain_id;
 
     /* do not predict debuginfo path if it is specified in config */
     if (predict_debuginfo(debuginfo, xa.sysmap))
@@ -92,17 +88,14 @@ int main (int argc, char *argv[])
 
     /* obtain the offsets of task_struct members 
        NOTE: this takes the longest time due to inefficient DWARF reading */
-    if (offset_task_struct(&off_tasks, &off_name, &off_pid, debuginfo))
-    {
-        perror("Failed to get offsets of task_struct members");
+    if (find_offsets())
         goto error_exit;
-    }
 
     /* list all tasks repeatedly with a time interval */
     do
     {
         xc_domain_pause(xc_handle, domid);
-        ret = walk_task_list(off_tasks, off_name, off_pid);
+        ret = walk_task_list();
         xc_domain_unpause(xc_handle, domid);
         if (ret != 0) return 1;
         sleep(interval);
@@ -226,6 +219,8 @@ int init_xa(xa_instance_t *xa, const char *domain)
                 " - Domain %s probably does not exist\n", domain);
         return -1;
     }
+    xc_handle = xa->m.xen.xc_handle;
+    domid = xa->m.xen.domain_id;
     return 0;
 }
 
@@ -265,8 +260,19 @@ int predict_debuginfo(char *debuginfo, const char *sysmap)
     return 0;
 }
 
+static
+int find_offsets(void)
+{
+    if (offset_task_struct(&off_tasks, &off_name, &off_pid, debuginfo))
+    {
+        perror("Failed to get offsets of task_struct members");
+        return -1;
+    }
+    return 0;
+}
+
 static 
-int walk_task_list(int off_tasks, int off_name, int off_pid)
+int walk_task_list(void)
 {
     unsigned char *memory = NULL;
     uint32_t offset, next_proc, list_head;
