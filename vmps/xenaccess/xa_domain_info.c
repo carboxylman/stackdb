@@ -173,7 +173,7 @@ uint32_t xa_get_domain_id (char *name)
         char *nameCandidate = xs_read(xsh, xth, tmp, NULL);
 
         // if name matches, then return number
-        if (strncmp(name, nameCandidate, 100) == 0){
+        if (nameCandidate && strncmp(name, nameCandidate, 100) == 0){
             int idNum = atoi(idStr);
             domain_id = (uint32_t) idNum;
             break;
