@@ -736,41 +736,7 @@ int report_file_list(void)
         }
     }
 
-    if (opt_log)
-    {
-        msg = (char *) malloc ( fd_count * (PNAME_MAX+PATH_MAX+128) + 512 );
-        if (!msg)
-        {
-            perror("Failed to allocate memory for log message");
-            return 1;
-        }
-
-        sprintf(msg, "[%u.%06u]\n"
-                "%-10s  %s (ID: %d)\n"
-                "%-10s  %d\n"
-                "%-10s  %d\n"
-                "%-10s  %d\n",
-                (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
-                "Domain:", domain, domid, 
-                "Files:", file_count, 
-                "FDs:", fd_count,
-                "Processes:", proc_count);
-        list_for_each_entry(p, &proc_list, list)
-        {
-            list_for_each_entry(f, &p->files, node)
-            {
-                sprintf(msg + strlen(msg), "%5d %-16s %-4d %s%s\n", 
-                        p->pid, p->name, f->fd, f->dev, f->name);
-            }
-        }
-        strcat(msg, "\n");
-
-        /* write the message to log file */
-        fprintf(logfile, msg);
-        fflush(logfile);
-    }
-    
-    if (opt_web)
+    if (opt_log || opt_web)
     {
         if (msg) free(msg);
         msg = (char *) malloc ( file_count * (PATH_MAX+128) + 
@@ -804,19 +770,28 @@ int report_file_list(void)
         }
         msg[strlen(msg)-2] = '\0';
 
-        /* replace all spaces with "%20" */
-        webmsg = str_replace(msg, " ", "%20");
-        if (!webmsg)
-        {
-            perror("Failed to allocate memory for web user message");
-            goto error_exit;
+        if (opt_log)
+          {
+            /* write the message to log file */
+            fprintf(logfile, "%s\n", msg);
+            fflush(logfile);
         }
-
-        /* report the message to stats server */
-        if (web_report(webmsg))
+        if (opt_web)
         {
-            fprintf(stderr, "Failed to report process list to stats web server");
-            goto error_exit;
+            /* replace all spaces with "%20" */
+            webmsg = str_replace(msg, " ", "%20");
+            if (!webmsg)
+            {
+                perror("Failed to allocate memory for web user message");
+                goto error_exit;
+            }
+
+            /* report the message to stats server */
+            if (web_report(webmsg))
+            {
+                fprintf(stderr, "Failed to report process list to stats web server");
+                goto error_exit;
+            }
         }
     }
 
