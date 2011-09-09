@@ -435,30 +435,7 @@ int report_task_list(void)
             perror("Failed to allocate memory for user message");
             return 1;
         }
-    }
-
-    if (opt_log)
-    {
-        sprintf(msg, "[%u.%06u]\n"
-                "%-10s  %s (ID: %d)\n"
-                "%-10s  %d\n", 
-                (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
-                "Domain:", domain, domid, 
-                "Processes:", proc_count);
-        //sprintf(msg + strlen(msg), "%5s %s\n", "PID", "CMD");
-        list_for_each_entry(p, &proc_list, list)
-        {
-            sprintf(msg + strlen(msg), "%5d %s\n", p->pid, p->name);
-        }
-        strcat(msg, "\n");
-
-        /* write the message to log file */
-        fprintf(logfile, msg);
-        fflush(logfile);
-    }
-    
-    if (opt_web)
-    {
+        
         sprintf(msg, "[%u.%06u] %d processes found in \"%s\" - ", 
             (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
             proc_count, domain);
@@ -468,24 +445,30 @@ int report_task_list(void)
         }
         msg[strlen(msg)-2] = '\0';
 
-        /* replace all spaces with "%20" */
-        webmsg = str_replace(msg, " ", "%20");
-        if (!webmsg)
+        if (opt_log)
         {
-            perror("Failed to allocate memory for web user message");
-            goto error_exit;
+            /* write the message to log file */
+            fprintf(logfile, "%s\n", msg);
+            fflush(logfile);
         }
-
-        /* report the message to stats server */
-        if (web_report(webmsg))
+        if (opt_web)
         {
-            fprintf(stderr, "Failed to report process list to stats web server");
-            goto error_exit;
-        }
-    }
+            /* replace all spaces with "%20" */
+            webmsg = str_replace(msg, " ", "%20");
+            if (!webmsg)
+            {
+                perror("Failed to allocate memory for web user message");
+                goto error_exit;
+            }
 
-    if (opt_log || opt_web)
-    {
+            /* report the message to stats server */
+            if (web_report(webmsg))
+            {
+                fprintf(stderr, "Failed to report process list to stats web server");
+                goto error_exit;
+            }
+        }
+        
         printf("[%u.%06u] %d processes reported to ", 
             (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
             proc_count);
