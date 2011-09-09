@@ -17,6 +17,17 @@
 #include "web.h"
 #include "log.h"
 
+/* domain info */
+struct domain {
+    struct list_head list;
+    char name[128];
+    domid_t domid;
+    xa_instance_t xa;
+    int xc;
+    struct list_head proc_list;
+    int proc_count;
+};
+
 #define PNAME_MAX (128)
 
 /* process info */
@@ -26,16 +37,11 @@ struct proc {
     char name[PNAME_MAX+1];
 };
 
-LIST_HEAD(proc_list);
-int proc_count;
+LIST_HEAD(domain_list);
 
-char domain[128];
-domid_t domid;
-xa_instance_t xa;
-int xc_handle = -1;
+char sysmap[PATH_MAX+1];
 char debuginfo[PATH_MAX+1];
 int interval;
-struct timeval now;
 
 int off_tasks, off_pid, off_name;
 int opt_daemon, opt_log, opt_web, opt_console = 1; /* console on by default */
@@ -47,11 +53,15 @@ static int load_config(const char *config);
 static int init_xa(xa_instance_t *xa, const char *domain);
 static int predict_debuginfo(char *debuginfo, const char *sysmap);
 static int find_offsets(void);
-static int walk_task_list(void);
-static int report_task_list(void);
+static int walk_task_list(struct domain *d);
+static int report_task_list(struct domain *d, struct timeval *now);
+static void clear_domain_list();
+static void clear_proc_list(struct list_head *proc_list);
 
 int main (int argc, char *argv[])
 {
+    struct domain *d;
+    
     if (getuid() != 0)
     {
         fprintf(stderr, "Must run as root\n");
@@ -78,11 +88,8 @@ int main (int argc, char *argv[])
     if (opt_web)
         if (web_init()) goto error_exit;
 
-    if (init_xa(&xa, domain))
-        return 1;
-
     /* do not predict debuginfo path if it is specified in config */
-    if (predict_debuginfo(debuginfo, xa.sysmap))
+    if (predict_debuginfo(debuginfo, sysmap))
         goto error_exit;
 
     /* obtain the offsets of task_struct members 
@@ -92,22 +99,23 @@ int main (int argc, char *argv[])
 
     /* list all tasks repeatedly with a time interval */
     do {
-        gettimeofday(&now, NULL);
-        if (walk_task_list()) return 1;
+        list_for_each_entry(d, &domain_list, list)
+        {
+            if (walk_task_list(d)) return 1;
+        }
         sleep(interval);
     } while (opt_daemon);
 
 error_exit:
-    xa_destroy(&xa);
     log_cleanup();
-
+    clear_domain_list();
     return 0;
 }
 
 static 
 void print_usage(const char *exec)
 {
-    printf("Usage: %s [OPTION] <DOMAIN NAME>\n", exec);
+    printf("Usage: %s [OPTION]... <DOMAIN NAME>...\n", exec);
     printf("options:\n");
     printf("  -d, --daemon <sec>   run in daemon mode with time interval sec\n");
     printf("  -c, --console        report process list(s) to console (default)\n");
@@ -120,8 +128,10 @@ void print_usage(const char *exec)
 static 
 void get_options(int argc, char *argv[])
 {
+    struct domain *d;
     int i, tmp_console = 0;
 
+    INIT_LIST_HEAD(&domain_list);
     for (i = 1; i < argc; i++)
     {
         if ((strcmp(argv[i], "-d") == 0 || 
@@ -144,22 +154,42 @@ void get_options(int argc, char *argv[])
             opt_web = 1;
         }
         else if (strcmp(argv[i], "-l") == 0 || 
-                 strcmp(argv[i], "--log") == 0)
+                strcmp(argv[i], "--log") == 0)
         {
             opt_log = 1;
         }
         else if (strcmp(argv[i], "-h") == 0 ||
-                 strcmp(argv[i], "--help") == 0)
+                strcmp(argv[i], "--help") == 0)
         {
             print_usage(argv[0]);
         }
         else if (argv[i][0] != '-')
         {
-            /* this is the domain name that we are looking at */
-            strcpy(domain, argv[i]);
+            /* this is one of the domains that we are looking at */
+            d = (struct domain *) malloc (sizeof (struct domain) );
+            if (!d)
+            {
+                perror("Failed to allocate memory for domain info");
+                clear_domain_list();
+                exit(1);
+            }
+            strcpy(d->name, argv[i]);
+            if (init_xa(&d->xa, d->name))
+            {
+                free(d);
+                clear_domain_list();
+                exit(1);
+            }
+            d->domid = d->xa.m.xen.domain_id;
+            d->xc = d->xa.m.xen.xc_handle;
+            if (strlen(sysmap) == 0) strcpy(sysmap, d->xa.sysmap);
+            INIT_LIST_HEAD(&d->proc_list);
+            d->proc_count = 0;
+            list_add_tail(&d->list, &domain_list);
         }
         else
         { 
+            clear_domain_list();
             print_usage(argv[0]);
         }
     }
@@ -168,6 +198,13 @@ void get_options(int argc, char *argv[])
        we are reporting to web server or log file */
     if ((opt_web || opt_log) && !tmp_console)
         opt_console = 0;
+
+    /* no domains found */
+    if (list_empty(&domain_list))
+    {
+        clear_domain_list();
+        print_usage(argv[0]);
+    }
 }
 
 static inline 
@@ -214,8 +251,6 @@ int init_xa(xa_instance_t *xa, const char *domain)
                 " - Domain %s probably does not exist\n", domain);
         return -1;
     }
-    xc_handle = xa->m.xen.xc_handle;
-    domid = xa->m.xen.domain_id;
     return 0;
 }
 
@@ -267,17 +302,50 @@ int find_offsets(void)
 }
 
 static 
-int walk_task_list(void)
+void clear_domain_list()
+{
+    struct domain *d, *old_d = NULL;
+    list_for_each_entry(d, &domain_list, list)
+    {
+        if (old_d) free(old_d);
+        old_d = d;
+        clear_proc_list(&d->proc_list);
+        xa_destroy(&d->xa);
+    }
+    if (old_d) free(old_d);
+    INIT_LIST_HEAD(&domain_list);
+}
+
+static 
+void clear_proc_list(struct list_head *proc_list)
+{
+    struct proc *p, *old_p = NULL;
+    list_for_each_entry(p, proc_list, list)
+    {
+        if (old_p) free(old_p);
+        old_p = p;
+    }
+    if (old_p) free(old_p);
+    INIT_LIST_HEAD(proc_list);
+}
+
+static 
+int walk_task_list(struct domain *d)
 {
     unsigned char *memory = NULL;
     uint32_t offset, next_proc, list_head;
-    struct proc *p = NULL, *old_p = NULL;
+    struct proc *p;
     char *name = NULL;
     int pid = 0;
     int ret = -1;
+    struct timeval now;
 
+    gettimeofday(&now, NULL);
+
+    /* FIXME: this shoud be done just one time and later all domains can share
+       next_proc. */
     /* get the head of the list */
-    memory = xa_access_kernel_sym(&xa, "init_task", &offset, PROT_READ);
+    memory = xa_access_kernel_sym(&d->xa, "init_task", &offset, PROT_READ);
     if (!memory)
     {
         perror("Failed to get process list head");
@@ -285,16 +353,16 @@ int walk_task_list(void)
     }    
     memcpy(&next_proc, memory + offset + off_tasks, 4);
     list_head = next_proc;
-    munmap(memory, xa.page_size);
+    munmap(memory, d->xa.page_size);
     memory = NULL;
     
-    xc_domain_pause(xc_handle, domid);
+    xc_domain_pause(d->xc, d->domid);
     
     /* walk the task list */
     while (1)
     {
         /* follow the next pointer */
-        memory = xa_access_kernel_va(&xa, next_proc, &offset, PROT_READ);
+        memory = xa_access_kernel_va(&d->xa, next_proc, &offset, PROT_READ);
         if (!memory)
         {
             perror("Failed to map memory for process list pointer");
@@ -330,33 +398,25 @@ int walk_task_list(void)
         }
         p->pid = pid;
         strncpy(p->name, name, PNAME_MAX);
-        list_add_tail(&p->list, &proc_list);
-        proc_count++;
+        list_add_tail(&p->list, &d->proc_list);
+        d->proc_count++;
 
-        munmap(memory, xa.page_size);
+        munmap(memory, d->xa.page_size);
         memory = NULL;
     }
 
-    xc_domain_unpause(xc_handle, domid);
+    xc_domain_unpause(d->xc, d->domid);
     
     /* report the list we figured out */
-    if (report_task_list())
+    if (report_task_list(d, &now))
         goto error_exit;
 
     ret = 0;
 
 error_exit:
-    list_for_each_entry(p, &proc_list, list)
-    {
-        if (old_p) free(old_p);
-        old_p = p;
-    }
-    if (old_p) free(old_p);
-    INIT_LIST_HEAD(&proc_list);
-    proc_count = 0; 
-
-    if (memory) munmap(memory, xa.page_size);
-    
+    clear_proc_list(&d->proc_list);
+    d->proc_count = 0; 
+    if (memory) munmap(memory, d->xa.page_size);    
     return ret;
 }
 
@@ -400,8 +460,20 @@ char *str_replace(const char *s, const char *old, const char *new)
     return ret;
 }
 
+static inline
+int first_domain(struct domain *d)
+{
+    return (domain_list.next == &d->list);
+}
+
+static inline 
+int single_domain(struct domain *d)
+{
+    return ((domain_list.next == &d->list) && (domain_list.prev == &d->list));
+}
+
 static
-int report_task_list(void)
+int report_task_list(struct domain *d, struct timeval *now)
 {
     char *msg = NULL, *webmsg = NULL;
     struct proc *p = NULL;
@@ -409,18 +481,21 @@ int report_task_list(void)
 
     if (opt_console)
     {
-        if (opt_daemon)
+        if (opt_daemon || !single_domain(d))
         {
-            printf("\n"
-                    "[%u.%06u]\n"
-                    "%-10s  %s (ID: %d)\n"
+            if (!first_domain(d)) printf("\n");
+            if (opt_daemon)
+            {
+                printf("[%u.%06u]\n",
+                        (unsigned int)now->tv_sec, (unsigned int)now->tv_usec);
+            }
+            printf("%-10s  %s (ID: %d)\n"
                     "%-10s  %d\n",
-                    (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
-                    "Domain:", domain, domid, 
-                    "Processes:", proc_count);
+                    "Domain:", d->name, d->domid, 
+                    "Processes:", d->proc_count);
         }
         printf("%5s %s\n", "PID", "CMD");
-        list_for_each_entry(p, &proc_list, list)
+        list_for_each_entry(p, &d->proc_list, list)
         {
             printf("%5d %s\n", p->pid, p->name);
         }
@@ -429,7 +504,7 @@ int report_task_list(void)
     if (opt_log || opt_web)
     {
         /* build a user message out of all process info. */
-        msg = (char *) malloc ( proc_count * (PNAME_MAX+64) + 256 );
+        msg = (char *) malloc ( d->proc_count * (PNAME_MAX+64) + 256 );
         if (!msg)
         {
             perror("Failed to allocate memory for user message");
@@ -437,9 +512,9 @@ int report_task_list(void)
         }
         
         sprintf(msg, "[%u.%06u] %d processes found in \"%s\" - ", 
-            (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
-            proc_count, domain);
-        list_for_each_entry(p, &proc_list, list)
+            (unsigned int)now->tv_sec, (unsigned int)now->tv_usec, 
+            d->proc_count, d->name);
+        list_for_each_entry(p, &d->proc_list, list)
         {
             sprintf(msg + strlen(msg), "%s(%d), ", p->name, p->pid);
         }
@@ -469,12 +544,12 @@ int report_task_list(void)
             }
         }
         
-        printf("[%u.%06u] %d processes reported to ", 
-            (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
-            proc_count);
+        printf("[%u.%06u] %d processes in \"%s\" reported to ", 
+            (unsigned int)now->tv_sec, (unsigned int)now->tv_usec, 
+            d->proc_count, d->name);
         if (opt_log)
         {
-            printf("log file");
+            printf("log");
             if (opt_web) printf(" and ");
         }
         if (opt_web)
@@ -494,18 +569,14 @@ error_exit:
 static inline
 void signal_handler(int sig)
 {
-    struct proc *p = NULL, *old_p = NULL;
+    struct domain *d;
 
-    xc_domain_unpause(xc_handle, domid);
-    
-    list_for_each_entry(p, &proc_list, list)
+    list_for_each_entry(d, &domain_list, list)
     {
-        if (old_p) free(old_p);
-        old_p = p;
+        xc_domain_unpause(d->xc, d->domid);
     }
-    if (old_p) free(old_p);
 
-    xa_destroy(&xa);
+    clear_domain_list();
     log_cleanup();
     
     signal(sig, SIG_DFL);
