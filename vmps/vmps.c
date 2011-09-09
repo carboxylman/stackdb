@@ -55,7 +55,7 @@ static int predict_debuginfo(char *debuginfo, const char *sysmap);
 static int find_offsets(void);
 static int walk_task_list(struct domain *d);
 static int report_task_list(struct domain *d, struct timeval *now);
-static void clear_domain_list();
+static void clear_domain_list(void);
 static void clear_proc_list(struct list_head *proc_list);
 
 int main (int argc, char *argv[])
@@ -161,6 +161,7 @@ void get_options(int argc, char *argv[])
         else if (strcmp(argv[i], "-h") == 0 ||
                 strcmp(argv[i], "--help") == 0)
         {
+            clear_domain_list();
             print_usage(argv[0]);
         }
         else if (argv[i][0] != '-')
@@ -302,7 +303,7 @@ int find_offsets(void)
 }
 
 static 
-void clear_domain_list()
+void clear_domain_list(void)
 {
     struct domain *d, *old_d = NULL;
     list_for_each_entry(d, &domain_list, list)
@@ -332,7 +333,7 @@ void clear_proc_list(struct list_head *proc_list)
 static 
 int walk_task_list(struct domain *d)
 {
-    unsigned char *memory = NULL;
+    unsigned char *task_struct = NULL;
     uint32_t offset, next_proc, list_head;
     struct proc *p;
     char *name = NULL;
@@ -345,16 +346,16 @@ int walk_task_list(struct domain *d)
     /* FIXME: this shoud be done just one time and later all domains can share
        next_proc. */
     /* get the head of the list */
-    memory = xa_access_kernel_sym(&d->xa, "init_task", &offset, PROT_READ);
-    if (!memory)
+    task_struct = xa_access_kernel_sym(&d->xa, "init_task", &offset, PROT_READ);
+    if (!task_struct)
     {
         perror("Failed to get process list head");
         return -1;
     }    
-    memcpy(&next_proc, memory + offset + off_tasks, 4);
+    memcpy(&next_proc, task_struct + offset + off_tasks, 4);
     list_head = next_proc;
-    munmap(memory, d->xa.page_size);
-    memory = NULL;
+    munmap(task_struct, d->xa.page_size);
+    task_struct = NULL;
     
     xc_domain_pause(d->xc, d->domid);
     
@@ -362,13 +363,13 @@ int walk_task_list(struct domain *d)
     while (1)
     {
         /* follow the next pointer */
-        memory = xa_access_kernel_va(&d->xa, next_proc, &offset, PROT_READ);
-        if (!memory)
+        task_struct = xa_access_kernel_va(&d->xa, next_proc, &offset, PROT_READ);
+        if (!task_struct)
         {
-            perror("Failed to map memory for process list pointer");
+            perror("Failed to map task_struct for process list pointer");
             goto error_exit;
         }
-        memcpy(&next_proc, memory + offset, 4);
+        memcpy(&next_proc, task_struct + offset, 4);
 
         /* if we are back at the list head, we are done */
         if (list_head == next_proc)
@@ -382,8 +383,8 @@ int walk_task_list(struct domain *d)
            code cleaner, if not more fragile.  In a real app, you'd
            want to do this a little more robust :-)  See
            include/linux/sched.h for mode details */
-        name = (char *) (memory + offset + off_name - off_tasks);
-        memcpy(&pid, memory + offset + off_pid - off_tasks, 4);
+        name = (char *) (task_struct + offset + off_name - off_tasks);
+        memcpy(&pid, task_struct + offset + off_pid - off_tasks, 4);
 
         /* trivial sanity check on data */
         if (pid < 0)
@@ -393,7 +394,7 @@ int walk_task_list(struct domain *d)
         p = (struct proc *) malloc( sizeof(struct proc) );
         if (!p)
         {
-            perror("Failed to allocate memory for process info");
+            perror("Failed to allocate task_struct for process info");
             goto error_exit;
         }
         p->pid = pid;
@@ -401,8 +402,8 @@ int walk_task_list(struct domain *d)
         list_add_tail(&p->list, &d->proc_list);
         d->proc_count++;
 
-        munmap(memory, d->xa.page_size);
-        memory = NULL;
+        munmap(task_struct, d->xa.page_size);
+        task_struct = NULL;
     }
 
     xc_domain_unpause(d->xc, d->domid);
@@ -416,7 +417,7 @@ int walk_task_list(struct domain *d)
 error_exit:
     clear_proc_list(&d->proc_list);
     d->proc_count = 0; 
-    if (memory) munmap(memory, d->xa.page_size);    
+    if (task_struct) munmap(task_struct, d->xa.page_size);    
     return ret;
 }
 
