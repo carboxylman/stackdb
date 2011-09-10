@@ -17,17 +17,32 @@
 #include "web.h"
 #include "log.h"
 
+/* domain info */
+struct domain {
+    struct list_head list;
+    char name[128];
+    domid_t domid;
+    xa_instance_t xa;
+    int xc;
+    struct list_head proc_list;
+    int proc_count;
+    struct list_head file_list;
+    int file_count;
+    int fd_count;
+};
+
 #define PNAME_MAX (128)
-#define DNAME_MAX (128)
 
 /* process info */
 struct proc {
     struct list_head list;
     int pid;
     char name[PNAME_MAX+1];
-    struct list_head files;
+    struct list_head file_list;
     int file_count;
 };
+
+#define DNAME_MAX (128)
 
 /* open file info */
 struct openfile {
@@ -38,20 +53,11 @@ struct openfile {
     char name[PATH_MAX+1];
 };
 
-LIST_HEAD(proc_list);
-int proc_count;
+LIST_HEAD(domain_list);
 
-LIST_HEAD(file_list);
-int file_count;
-int fd_count;
-
-char domain[128];
-domid_t domid;
-xa_instance_t xa;
-int xc_handle = -1;
+char sysmap[PATH_MAX+1];
 char debuginfo[PATH_MAX+1];
 int interval;
-struct timeval now;
 int the_pid;
 char the_cmd[CMD_WIDTH+1];
 
@@ -74,14 +80,20 @@ static int load_config(const char *config);
 static int init_xa(xa_instance_t *xa, const char *domain);
 static int predict_debuginfo(char *debuginfo, const char *sysmap);
 static int find_offsets(void);
-static int walk_task_list(void);
-static int walk_file_list(struct proc *p, uint32_t files);
-static int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds);
-static int fill_parent_dir(char *path, uint32_t parent);
-static int report_file_list(void);
+static int walk_task_list(struct domain *d);
+static int walk_file_list(struct domain *d, struct proc *p, uint32_t files);
+static int walk_fd_list(struct domain *d, struct proc *p, uint32_t *fd_list, 
+                        uint32_t max_fds);
+static int fill_parent_dir(struct domain *d, char *path, uint32_t parent);
+static int report_file_list(struct domain *d, struct timeval *now);
+static void clear_domain_list(void);
+static void clear_proc_list(struct list_head *proc_list);
+static void clear_file_list(struct list_head *file_list);
 
 int main (int argc, char *argv[])
 {
+    struct domain *d;
+
     if (getuid() != 0)
     {
         fprintf(stderr, "Must run as root\n");
@@ -108,11 +120,8 @@ int main (int argc, char *argv[])
     if (opt_web)
         if (web_init()) goto error_exit;
 
-    if (init_xa(&xa, domain))
-        return 1;
-
     /* do not predict debuginfo path if it is specified in config */
-    if (predict_debuginfo(debuginfo, xa.sysmap))
+    if (predict_debuginfo(debuginfo, sysmap))
         goto error_exit;
 
     /* obtain the offsets of task_struct members 
@@ -123,22 +132,23 @@ int main (int argc, char *argv[])
 
     /* list all tasks repeatedly with a time interval */
     do {
-        gettimeofday(&now, NULL);
-        if (walk_task_list()) return 1;
+        list_for_each_entry(d, &domain_list, list)
+        {
+            if (walk_task_list(d)) return 1;
+        }
         sleep(interval);
     } while (opt_daemon);
 
 error_exit:
-    xa_destroy(&xa);
     log_cleanup();
-
+    clear_domain_list();
     return 0;
 }
 
 static 
 void print_usage(const char *exec)
 {
-    printf("Usage: %s [OPTION] <DOMAIN NAME>\n", exec);
+    printf("Usage: %s [OPTION]... <DOMAIN NAME>...\n", exec);
     printf("options:\n");
     printf("  -d, --daemon <sec>   run in daemon mode with time interval sec\n");
     printf("  -c, --console        report open file list(s) to console (default)\n");
@@ -154,8 +164,10 @@ void print_usage(const char *exec)
 static 
 void get_options(int argc, char *argv[])
 {
+    struct domain *d;
     int i, tmp_console = 0;
 
+    INIT_LIST_HEAD(&domain_list);
     for (i = 1; i < argc; i++)
     {
         if ((strcmp(argv[i], "-d") == 0 || 
@@ -199,17 +211,41 @@ void get_options(int argc, char *argv[])
             strncpy(the_cmd, argv[++i], CMD_WIDTH);
         }
         else if (strcmp(argv[i], "-h") == 0 ||
-                 strcmp(argv[i], "--help") == 0)
+                strcmp(argv[i], "--help") == 0)
         {
+            clear_domain_list();
             print_usage(argv[0]);
         }
         else if (argv[i][0] != '-')
         {
-            /* this is the domain name that we are looking at */
-            strcpy(domain, argv[i]);
+            /* this is one of the domains that we are looking at */
+            d = (struct domain *) malloc (sizeof (struct domain) );
+            if (!d)
+            {
+                perror("Failed to allocate memory for domain info");
+                clear_domain_list();
+                exit(1);
+            }
+            strcpy(d->name, argv[i]);
+            if (init_xa(&d->xa, d->name))
+            {
+                free(d);
+                clear_domain_list();
+                exit(1);
+            }
+            d->domid = d->xa.m.xen.domain_id;
+            d->xc = d->xa.m.xen.xc_handle;
+            if (strlen(sysmap) == 0) strcpy(sysmap, d->xa.sysmap);
+            INIT_LIST_HEAD(&d->proc_list);
+            d->proc_count = 0;
+            INIT_LIST_HEAD(&d->file_list);
+            d->file_count = 0;
+            d->fd_count = 0;
+            list_add_tail(&d->list, &domain_list);
         }
         else
-        { 
+        {
+            clear_domain_list();
             print_usage(argv[0]);
         }
     }
@@ -218,6 +254,13 @@ void get_options(int argc, char *argv[])
        we are reporting to web server or log file */
     if ((opt_web || opt_log) && !tmp_console)
         opt_console = 0;
+    
+    /* no domains found */
+    if (list_empty(&domain_list))
+    {
+        clear_domain_list();
+        print_usage(argv[0]);
+    }
 }
 
 static inline 
@@ -264,8 +307,6 @@ int init_xa(xa_instance_t *xa, const char *domain)
                 " - Domain %s probably does not exist\n", domain);
         return -1;
     }
-    xc_handle = xa->m.xen.xc_handle;
-    domid = xa->m.xen.domain_id;
     return 0;
 }
 
@@ -357,20 +398,66 @@ int find_offsets(void)
     return 0;
 }
 
+static
+void clear_domain_list(void)
+{
+    struct domain *d, *old_d = NULL;
+    list_for_each_entry(d, &domain_list, list)
+    {
+        if (old_d) free(old_d);
+        old_d = d;
+        clear_proc_list(&d->proc_list);
+        xa_destroy(&d->xa);
+    }
+    if (old_d) free(old_d);
+    INIT_LIST_HEAD(&domain_list);
+}
+
+static
+void clear_proc_list(struct list_head *proc_list)
+{
+    struct proc *p, *old_p = NULL;
+    list_for_each_entry(p, proc_list, list)
+    {
+        if (old_p) free(old_p);
+        old_p = p;
+        clear_file_list(&p->file_list);
+    }
+    if (old_p) free(old_p);
+    INIT_LIST_HEAD(proc_list);
+}
+
+static
+void clear_file_list(struct list_head *file_list)
+{
+    struct openfile *f, *old_f = NULL;
+    list_for_each_entry(f, file_list, node)
+    {
+        if (old_f) free(old_f);
+        old_f = f;
+    }
+    if (old_f) free(old_f);
+    INIT_LIST_HEAD(file_list);
+}
+
 static 
-int walk_task_list(void)
+int walk_task_list(struct domain *d)
 {
     unsigned char *task_struct = NULL;
     uint32_t offset, next_proc, list_head;
-    struct proc *p = NULL, *old_p = NULL;
-    struct openfile *f = NULL, *old_f = NULL;
+    struct proc *p;
     char *name = NULL;
     int pid = 0;
     uint32_t files;
     int ret = -1;
+    struct timeval now;
 
+    gettimeofday(&now, NULL);
+
+    /* FIXME: this shoud be done just one time and later all domains can share
+       next_proc. */
     /* get the head of the list */
-    task_struct = xa_access_kernel_sym(&xa, "init_task", &offset, PROT_READ);
+    task_struct = xa_access_kernel_sym(&d->xa, "init_task", &offset, PROT_READ);
     if (!task_struct)
     {
         perror("Failed to get process list head");
@@ -378,16 +465,16 @@ int walk_task_list(void)
     }    
     memcpy(&next_proc, task_struct + offset + off_tasks, 4);
     list_head = next_proc;
-    munmap(task_struct, xa.page_size);
+    munmap(task_struct, d->xa.page_size);
     task_struct = NULL;
     
-    xc_domain_pause(xc_handle, domid);
+    xc_domain_pause(d->xc, d->domid);
 
     /* walk the task list */
     while (1)
     {
         /* follow the next pointer */
-        task_struct = xa_access_kernel_va(&xa, next_proc, &offset, PROT_READ);
+        task_struct = xa_access_kernel_va(&d->xa, next_proc, &offset, PROT_READ);
         if (!task_struct)
         {
             perror("Failed to map memory for task_struct");
@@ -421,54 +508,39 @@ int walk_task_list(void)
             }
             p->pid = pid;
             strncpy(p->name, name, PNAME_MAX);
-            INIT_LIST_HEAD(&p->files);
+            INIT_LIST_HEAD(&p->file_list);
             p->file_count = 0;
-            list_add_tail(&p->list, &proc_list);
-            proc_count++;
+            list_add_tail(&p->list, &d->proc_list);
+            d->proc_count++;
 
-            if (walk_file_list(p, files))
+            if (walk_file_list(d, p, files))
                 goto error_exit;
         }
 
-        munmap(task_struct, xa.page_size);
+        munmap(task_struct, d->xa.page_size);
         task_struct = NULL;
     }
 
-    xc_domain_unpause(xc_handle, domid);
+    xc_domain_unpause(d->xc, d->domid);
     
     /* report the list we figured out */
-    if (report_file_list())
+    if (report_file_list(d, &now))
         goto error_exit;
 
     ret = 0;
 
 error_exit:
-    list_for_each_entry(p, &proc_list, list)
-    {
-        if (old_p) free(old_p);
-        old_p = p;
-        old_f = NULL;
-        list_for_each_entry(f, &p->files, node)
-        {
-            if (old_f) free(old_f);
-            old_f = f;
-        }
-        if (old_f) free(old_f);
-    }
-    if (old_p) free(old_p);
-    INIT_LIST_HEAD(&proc_list);
-    INIT_LIST_HEAD(&file_list);
-    proc_count = 0;
-    file_count = 0;
-    fd_count = 0;
-
-    if (task_struct) munmap(task_struct, xa.page_size);
-    
+    clear_proc_list(&d->proc_list);
+    d->proc_count = 0;
+    INIT_LIST_HEAD(&d->file_list);
+    d->file_count = 0;
+    d->fd_count = 0;
+    if (task_struct) munmap(task_struct, d->xa.page_size); 
     return ret;
 }
 
 static 
-int walk_file_list(struct proc *p, uint32_t files)
+int walk_file_list(struct domain *d, struct proc *p, uint32_t files)
 {
     unsigned char *files_struct = NULL;
     unsigned char *fdtable = NULL;
@@ -476,7 +548,7 @@ int walk_file_list(struct proc *p, uint32_t files)
     uint32_t offset, fdt, max_fds, fd; 
     int ret = -1;
 
-    files_struct = xa_access_kernel_va(&xa, files, &offset, PROT_READ);
+    files_struct = xa_access_kernel_va(&d->xa, files, &offset, PROT_READ);
     if (!files_struct)
     {
         perror("Failed to map memory for files_struct");
@@ -484,7 +556,7 @@ int walk_file_list(struct proc *p, uint32_t files)
     }
     memcpy(&fdt, files_struct + offset + off_fdt, 4);
 
-    fdtable = xa_access_kernel_va(&xa, fdt, &offset, PROT_READ);
+    fdtable = xa_access_kernel_va(&d->xa, fdt, &offset, PROT_READ);
     if (!fdtable)
     {
         perror("Failed to map memory for fdtable");
@@ -493,7 +565,7 @@ int walk_file_list(struct proc *p, uint32_t files)
     memcpy(&max_fds, fdtable + offset + off_max_fds, 4);
     memcpy(&fd, fdtable + offset + off_fd, 4);
 
-    fd_list = xa_access_kernel_va(&xa, fd, &offset, PROT_READ);
+    fd_list = xa_access_kernel_va(&d->xa, fd, &offset, PROT_READ);
     if (!fd_list)
     {
         perror("Failed to map memory for fd_list");
@@ -501,21 +573,24 @@ int walk_file_list(struct proc *p, uint32_t files)
     }
     fd_list = (uint32_t *)(((char *)fd_list) + offset);
 
-    if (walk_fd_list(p, fd_list, max_fds))
+    if (walk_fd_list(d, p, fd_list, max_fds))
         goto error_exit;
     
     ret = 0;
 
 error_exit:
-    if (files_struct) munmap(files_struct, xa.page_size);
-    if (fdtable) munmap(fdtable, xa.page_size);
-    if (fd_list) munmap(fd_list, xa.page_size);
+    if (files_struct) munmap(files_struct, d->xa.page_size);
+    if (fdtable) munmap(fdtable, d->xa.page_size);
+    if (fd_list) munmap(fd_list, d->xa.page_size);
 
     return ret;
 }
 
 static
-int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
+int walk_fd_list(struct domain *d, 
+                 struct proc *p, 
+                 uint32_t *fd_list, 
+                 uint32_t max_fds)
 {
     unsigned char *file = NULL;
     unsigned char *vfsmount = NULL;
@@ -532,7 +607,7 @@ int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
     {
         if (fd_list[fd])
         {
-            file = xa_access_kernel_va(&xa, fd_list[fd], &offset, PROT_READ);
+            file = xa_access_kernel_va(&d->xa, fd_list[fd], &offset, PROT_READ);
             if (!file)
             {
                 perror("Failed to map memory for file");
@@ -542,7 +617,7 @@ int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
             memcpy(&f_dentry, file + offset + off_f_dentry, 4);
 
             /* read struct vfsmount to obtain device name */
-            vfsmount = xa_access_kernel_va(&xa, f_vfsmnt, &offset, PROT_READ);
+            vfsmount = xa_access_kernel_va(&d->xa, f_vfsmnt, &offset, PROT_READ);
             if (!vfsmount)
             {
                 perror("Failed to mape memory for vfsmount");
@@ -550,7 +625,7 @@ int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
             }
             memcpy(&mnt_devname, vfsmount + offset + off_mnt_devname, 4);
             
-            devname = xa_access_kernel_va(&xa, mnt_devname, &offset, PROT_READ);
+            devname = xa_access_kernel_va(&d->xa, mnt_devname, &offset, PROT_READ);
             if (!devname)
             {
                 perror("Failed to map memory for device name");
@@ -559,7 +634,7 @@ int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
             dev = (char *)devname + offset;
 
             /* read struct dentry to obtain file name */
-            dentry = xa_access_kernel_va(&xa, f_dentry, &offset, PROT_READ);
+            dentry = xa_access_kernel_va(&d->xa, f_dentry, &offset, PROT_READ);
             if (!dentry)
             {
                 perror("Failed to map memory for dentry");
@@ -569,7 +644,7 @@ int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
             memcpy(&qstr_len, dentry + offset + off_d_name + off_qstr_len, 4);
             memcpy(&qstr_name, dentry + offset + off_d_name + off_qstr_name, 4);
 
-            filename = xa_access_kernel_va(&xa, qstr_name, &offset, PROT_READ);
+            filename = xa_access_kernel_va(&d->xa, qstr_name, &offset, PROT_READ);
             if (!filename)
             {
                 perror("Failed to map memory for file name");
@@ -591,21 +666,21 @@ int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
             name_offset = 0;
             if (f_dentry != d_parent)
             {
-                name_offset = fill_parent_dir(f->name, d_parent);
+                name_offset = fill_parent_dir(d, f->name, d_parent);
                 if (name_offset < 0) goto error_exit;
             }
             memcpy(f->name + name_offset, name, qstr_len);
            
             /* add obtained file info to the linked list */
-            list_add_tail(&f->node, &p->files);
+            list_add_tail(&f->node, &p->file_list);
             p->file_count++;
-            fd_count++;
+            d->fd_count++;
 
-            munmap(file, xa.page_size);
-            munmap(vfsmount, xa.page_size);
-            munmap(devname, xa.page_size);
-            munmap(dentry, xa.page_size);
-            munmap(filename, xa.page_size);
+            munmap(file, d->xa.page_size);
+            munmap(vfsmount, d->xa.page_size);
+            munmap(devname, d->xa.page_size);
+            munmap(dentry, d->xa.page_size);
+            munmap(filename, d->xa.page_size);
             file = vfsmount = devname = dentry = filename = NULL;
         }
     }
@@ -613,20 +688,22 @@ int walk_fd_list(struct proc *p, uint32_t *fd_list, uint32_t max_fds)
     ret = 0;
 
 error_exit:
-    if (file) munmap(file, xa.page_size);
-    if (vfsmount) munmap(vfsmount, xa.page_size);
-    if (devname) munmap(devname, xa.page_size);
-    if (dentry) munmap(dentry, xa.page_size);
-    if (filename) munmap(filename, xa.page_size);
+    if (file) munmap(file, d->xa.page_size);
+    if (vfsmount) munmap(vfsmount, d->xa.page_size);
+    if (devname) munmap(devname, d->xa.page_size);
+    if (dentry) munmap(dentry, d->xa.page_size);
+    if (filename) munmap(filename, d->xa.page_size);
 
     return ret;
 }
 
 static inline
-struct openfile *find_file(const char *dev, const char *name)
+struct openfile *find_file(const char *dev, 
+                           const char *name, 
+                           struct list_head *file_list)
 {
     struct openfile *f = NULL;
-    list_for_each_entry(f, &file_list, list)
+    list_for_each_entry(f, file_list, list)
     {
         if (strcmp(f->dev, dev) == 0 && strcmp(f->name, name) == 0)
             return f;
@@ -674,8 +751,20 @@ char *str_replace(const char *s, const char *old, const char *new)
     return ret;
 }
 
+static inline
+int first_domain(struct domain *d)
+{
+    return (domain_list.next == &d->list);
+}
+
+static inline
+int single_domain(struct domain *d)
+{
+    return ((domain_list.next == &d->list) && (domain_list.prev == &d->list));
+}
+
 static
-int report_file_list(void)
+int report_file_list(struct domain *d, struct timeval *now)
 {
     char *msg = NULL, *webmsg = NULL;
     struct proc *p = NULL;
@@ -683,9 +772,9 @@ int report_file_list(void)
     int ret = -1;
 
     /* change device aliases to consistent names */
-    list_for_each_entry(p, &proc_list, list)
+    list_for_each_entry(p, &d->proc_list, list)
     {
-        list_for_each_entry(f, &p->files, node)
+        list_for_each_entry(f, &p->file_list, node)
         {
             if (strcmp(f->dev, "none") == 0)
                 strcpy(f->dev, "/dev");
@@ -697,38 +786,41 @@ int report_file_list(void)
     }
 
     /* build global file list to exclude overlapped file info */
-    list_for_each_entry(p, &proc_list, list)
+    list_for_each_entry(p, &d->proc_list, list)
     {
-        list_for_each_entry(f, &p->files, node)
+        list_for_each_entry(f, &p->file_list, node)
         {
-            if (find_file(f->dev, f->name) == NULL)
+            if (find_file(f->dev, f->name, &d->file_list) == NULL)
             {
-                list_add_tail(&f->list, &file_list);
-                file_count++;
+                list_add_tail(&f->list, &d->file_list);
+                d->file_count++;
             }
         }
     }
 
     if (opt_console)
     {
-        if (opt_daemon)
+        if (opt_daemon || !single_domain(d))
         {
-            printf("\n"
-                    "[%u.%06u]\n"
-                    "%-10s  %s (ID: %d)\n"
+            if (!first_domain(d)) printf("\n");
+            if (opt_daemon)
+            {
+                printf("[%u.%06u]\n",
+                        (unsigned int)now->tv_sec, (unsigned int)now->tv_usec);
+            }
+            printf("%-10s  %s (ID: %d)\n"
                     "%-10s  %d\n"
                     "%-10s  %d\n"
                     "%-10s  %d\n",
-                    (unsigned int)now.tv_sec, (unsigned int)now.tv_usec,
-                    "Domain:", domain, domid,
-                    "Files:", file_count, 
-                    "FDs:", fd_count,
-                    "Processes:", proc_count);
+                    "Domain:", d->name, d->domid,
+                    "Files:", d->file_count, 
+                    "FDs:", d->fd_count,
+                    "Processes:", d->proc_count);
         }
         printf("%5s %-16s %-4s %s\n", "PID", "CMD", "FD", "FILE");
-        list_for_each_entry(p, &proc_list, list)
+        list_for_each_entry(p, &d->proc_list, list)
         {
-            list_for_each_entry(f, &p->files, node)
+            list_for_each_entry(f, &p->file_list, node)
             {
                 printf("%5d %-16s %-4d %s%s\n", 
                         p->pid, p->name, f->fd, f->dev, f->name);
@@ -738,24 +830,24 @@ int report_file_list(void)
 
     if (opt_log || opt_web)
     {
-        if (msg) free(msg);
-        msg = (char *) malloc ( file_count * (PATH_MAX+128) + 
-            proc_count * (PNAME_MAX+128) + 256 );
+        /* build a user message out of all file info. */
+        msg = (char *) malloc ( d->file_count * (PATH_MAX+128) + 
+            d->proc_count * (PNAME_MAX+128) + 256 );
         if (!msg)
         {
-            perror("Failed to allocate memory for web report");
+            perror("Failed to allocate memory for user message");
             return 1;
         }
 
         sprintf(msg, "[%u.%06u] %d files found in \"%s\" - ", 
-            (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
-            file_count, domain);
-        list_for_each_entry(cf, &file_list, list)
+            (unsigned int)now->tv_sec, (unsigned int)now->tv_usec, 
+            d->file_count, d->name);
+        list_for_each_entry(cf, &d->file_list, list)
         {
             sprintf(msg + strlen(msg), "%s%s<-{", cf->dev, cf->name);
-            list_for_each_entry(p, &proc_list, list)
+            list_for_each_entry(p, &d->proc_list, list)
             {
-                list_for_each_entry(f, &p->files, node)
+                list_for_each_entry(f, &p->file_list, node)
                 {
                     if (strcmp(cf->dev, f->dev) == 0 && 
                         strcmp(cf->name, f->name) == 0)
@@ -771,7 +863,7 @@ int report_file_list(void)
         msg[strlen(msg)-2] = '\0';
 
         if (opt_log)
-          {
+        {
             /* write the message to log file */
             fprintf(logfile, "%s\n", msg);
             fflush(logfile);
@@ -793,16 +885,13 @@ int report_file_list(void)
                 goto error_exit;
             }
         }
-    }
 
-    if (opt_log || opt_web)
-    {
-        printf("[%u.%06u] %d files reported to ", 
-            (unsigned int)now.tv_sec, (unsigned int)now.tv_usec, 
-            file_count);
+        printf("[%u.%06u] %d files in \"%s\" reported to ", 
+            (unsigned int)now->tv_sec, (unsigned int)now->tv_usec, 
+            d->file_count, d->name);
         if (opt_log)
         {
-            printf("log file");
+            printf("log");
             if (opt_web) printf(" and ");
         }
         if (opt_web)
@@ -820,7 +909,7 @@ error_exit:
 }
 
 static 
-int fill_parent_dir(char *path, uint32_t parent)
+int fill_parent_dir(struct domain *d, char *path, uint32_t parent)
 {
     unsigned char *dentry = NULL;
     char *name = NULL;
@@ -830,7 +919,7 @@ int fill_parent_dir(char *path, uint32_t parent)
     if (parent == 0)
         return 0;
 
-    dentry = xa_access_kernel_va(&xa, parent, &offset, PROT_READ);
+    dentry = xa_access_kernel_va(&d->xa, parent, &offset, PROT_READ);
     if (!dentry)
     {
         perror("Failed to map memory for parent dentry");
@@ -841,50 +930,38 @@ int fill_parent_dir(char *path, uint32_t parent)
     memcpy(&qstr_len, dentry + offset + off_d_name + off_qstr_len, 4);
     memcpy(&qstr_name, dentry + offset + off_d_name + off_qstr_name, 4);
 
-    name = xa_access_kernel_va(&xa, qstr_name, &offset, PROT_READ);
+    name = xa_access_kernel_va(&d->xa, qstr_name, &offset, PROT_READ);
     if (!name)
     {
-        munmap(dentry, xa.page_size);
+        munmap(dentry, d->xa.page_size);
         perror("Failed to map memory for parent name");
         return -1;
     }
 
     if (old_parent != parent)
-        name_offset = fill_parent_dir(path, parent);
+        name_offset = fill_parent_dir(d, path, parent);
 
     memcpy(path + name_offset, name + offset, qstr_len);
     name_offset += qstr_len;
     if (path[name_offset-1] != '/' && path[name_offset-1] != ':')
         path[name_offset++] = '/';
 
-    munmap(dentry, xa.page_size);
-    munmap(name, xa.page_size);
+    munmap(dentry, d->xa.page_size);
+    munmap(name, d->xa.page_size);
     return name_offset;
 }
 
 static inline
 void signal_handler(int sig)
 {
-    struct proc *p = NULL, *old_p = NULL;
-    struct openfile *f = NULL, *old_f = NULL;
-    
-    xc_domain_unpause(xc_handle, domid);
-    
-    list_for_each_entry(p, &proc_list, list)
+    struct domain *d;
+
+    list_for_each_entry(d, &domain_list, list)
     {
-        if (old_p) free(old_p);
-        old_p = p;
-        old_f = NULL;
-        list_for_each_entry(f, &p->files, node)
-        {
-            if (old_f) free(old_f);
-            old_f = f;
-        }
-        if (old_f) free(old_f);
+        xc_domain_unpause(d->xc, d->domid);
     }
-    if (old_p) free(old_p);
     
-    xa_destroy(&xa);
+    clear_domain_list();
     log_cleanup();
     
     signal(sig, SIG_DFL);
