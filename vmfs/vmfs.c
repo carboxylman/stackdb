@@ -298,6 +298,7 @@ static
 int init_xa(xa_instance_t *xa, const char *domain)
 {
     memset(xa, 0, sizeof(*xa));
+    //xa->pae = 1;
     xa->os_type = XA_OS_LINUX; /* currently support linux only */
     if (strlen(conf_sysmap) > 0)
         xa->sysmap = conf_sysmap; /* use the sysmap file specified in config */

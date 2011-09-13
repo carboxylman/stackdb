@@ -14,6 +14,7 @@ CFLAGS += -I./
 
 # xenaccess
 CFLAGS += -D ENABLE_XEN
+#CFLAGS += -D XA_DEBUG
 OBJECTS := xenaccess/linux_core.o
 OBJECTS += xenaccess/linux_domain_info.o
 OBJECTS += xenaccess/linux_memory.o
