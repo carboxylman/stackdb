@@ -439,7 +439,7 @@ char *str_replace(const char *s, const char *old, const char *new)
         }
     }
 
-    ret = malloc(i + count * (newlen - oldlen));
+    ret = malloc(i + count * (newlen - oldlen) + 1);
     if (ret == NULL)
         return NULL;
 
