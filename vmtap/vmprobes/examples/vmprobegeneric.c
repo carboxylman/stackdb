@@ -17,11 +17,14 @@
 #include <netdb.h>
 
 #include "vmprobes.h"
+#include "list.h"
 
 struct argfilter {
     int dofilter;
     int syscallnum;
     int pid;
+    int ppid;
+    int ppid_search;
     int uid;
     int gid;
 
@@ -44,6 +47,8 @@ struct process_data {
     unsigned int egid;
     unsigned int sgid;
     unsigned int fsgid;
+    struct process_data *parent;
+    struct process_data *real_parent;
 };
 
 void usage(char *progname) {
@@ -78,6 +83,7 @@ int check_filter(int syscallnum,int argnum,char *argval,
     int pmatch = 0;
     int smatch = 0;
     int lpc;
+    struct process_data *parent;
 
     if (filter_ptr && *filter_ptr == NULL && argval) {
 	for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
@@ -96,6 +102,21 @@ int check_filter(int syscallnum,int argnum,char *argval,
 		    || argfilter_list[lpc]->uid == data->uid)) {
 		pmatch = 1;
 	    }
+	    if (pmatch && argfilter_list[lpc]->ppid_search) {
+		pmatch = 0;
+		parent = data->parent;
+		while (parent) {
+		    if (parent->pid == argfilter_list[lpc]->ppid) {
+			pmatch = 1;
+			break;
+		    }
+		    parent = parent->parent;
+		}
+	    }
+	    else if (pmatch 
+		     && !(argfilter_list[lpc]->ppid == -1 
+			  || argfilter_list[lpc]->ppid == data->ppid))
+		pmatch = 0;
 
 	    if (smatch && pmatch) {
 		*filter_ptr = argfilter_list[lpc];
@@ -389,8 +410,9 @@ void socket_args_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     }
 
     unsigned char *dbuf = \
-	vmprobe_get_data(handle,regs,*((unsigned long *)arg_data[arg]),
-			 socketcall_nargs[call],pid,NULL);
+	vmprobe_get_data(handle,regs,"socketcall_args",
+			 *((unsigned long *)arg_data[arg]),pid,
+			 socketcall_nargs[call],NULL);
     if (!dbuf) {
 	printf("(bad socketcall args!)\n");
 	return;
@@ -401,8 +423,8 @@ void socket_args_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 
     if (call == 2 || call == 3) {
 	dbuf = \
-	    vmprobe_get_data(handle,regs,a[1],
-			     sizeof(struct sockaddr),pid,NULL);
+	    vmprobe_get_data(handle,regs,"socketcall_arg1",a[1],pid,
+			     sizeof(struct sockaddr),NULL);
 	if (dbuf) {
 	    sas = sockaddr2str((struct sockaddr *)dbuf);
 	    free(dbuf);
@@ -709,48 +731,102 @@ struct syscall_info {
 #define SGID_OFFSET 360
 #define FSGID_OFFSET 364
 
+uint32_t init_task_addr = 0;
+
+void print_process_data(vmprobe_handle_t handle,
+			struct cpu_user_regs *regs,
+			struct process_data *data)
+{
+    fprintf(stdout,
+	    "pid=%d,ppid=%d,rppid=%d,tgid=%d,uid=%d,euid=%d,suid=%d," //fsuid=%d,
+	    "gid=%d,egid=%d,sgid=%d", //fsgid=%d",
+	    data->pid,data->ppid,data->real_ppid,data->tgid,
+	    data->uid,data->euid,data->suid,
+	    data->gid,data->egid,data->sgid);
+    fflush(stdout);
+    return;
+}
+
+void free_process_data(struct process_data *data)
+{
+    struct process_data *real_parent = data->real_parent;
+    struct process_data *parent = data->parent;
+
+    if (real_parent && real_parent != parent) 
+	free_process_data(real_parent);
+    if (parent)
+	free_process_data(parent);
+
+    free(data);
+}
+
 struct process_data *load_process_data(vmprobe_handle_t handle,
-				       struct cpu_user_regs *regs)
+				       struct cpu_user_regs *regs,
+				       unsigned long task_addr,
+				       int recurse)
 {
     struct process_data *data;
+    struct process_data *real_parent_data = NULL;
+    struct process_data *parent_data = NULL;
+    unsigned char *task_struct_buf;
+    unsigned long parent_addr;
+    unsigned long real_parent_addr;
 
-    unsigned long thread_info_ptr = current_thread_ptr(regs->esp);
-    unsigned char *task_struct_ptr_buf = \
-	vmprobe_get_data(handle,regs,thread_info_ptr,sizeof(unsigned long),0,NULL);
-    if (!task_struct_ptr_buf)
+    task_struct_buf = \
+	vmprobe_get_data(handle,regs,"task_struct",task_addr,0,
+			 TASK_STRUCT_SIZE,NULL);
+    if (!task_struct_buf)
 	return NULL;
-
-    unsigned char *task_struct_buf = \
-	vmprobe_get_data(handle,regs,*((unsigned long*)task_struct_ptr_buf),
-			 TASK_STRUCT_SIZE,0,NULL);
-    if (!task_struct_buf) {
-	free(task_struct_ptr_buf);
-	return NULL;
-    }
 
     data = (struct process_data *)malloc(sizeof(struct process_data));
     if (!data) {
 	free(task_struct_buf);
-	free(task_struct_ptr_buf);
 	return NULL;
     }
+    memset(data,0,sizeof(struct process_data));
 
     data->pid = *((unsigned int *)(task_struct_buf+PID_OFFSET));
 
-    unsigned long real_parent_addr = *((unsigned int *)(task_struct_buf+REAL_PARENT_OFFSET));
-    unsigned long parent_addr = *((unsigned int *)(task_struct_buf+PARENT_OFFSET));
+    // stop recursion if we hit init!
+    if (data->pid == 1)
+	recurse = 0;
 
-    if (real_parent_addr) {
-	unsigned char *real_parent_task_struct_buf = \
-	    vmprobe_get_data(handle,regs,real_parent_addr,
-			     TASK_STRUCT_SIZE,0,NULL);
-	if (real_parent_task_struct_buf) {
-	    data->real_ppid = *((int *)(real_parent_task_struct_buf+PID_OFFSET));
-	    free(real_parent_task_struct_buf);
+    real_parent_addr = *((unsigned int *)(task_struct_buf+REAL_PARENT_OFFSET));
+    parent_addr = *((unsigned int *)(task_struct_buf+PARENT_OFFSET));
+
+    if (parent_addr && recurse) {
+	parent_data = load_process_data(handle,regs,parent_addr,recurse - 1);
+	if (parent_data)
+	    data->ppid = parent_data->pid;
+	else 
+	    data->ppid = -1;
+	if (recurse)
+	    data->parent = parent_data;
+	else {
+	    data->parent = NULL;
+	    free(parent_data);
 	}
     }
+    else if (parent_addr == real_parent_addr) {
+    	data->real_ppid = data->ppid;
+    	data->real_parent = data->parent;
+    }
+    else if (real_parent_addr && recurse) {
+	real_parent_data = load_process_data(handle,regs,real_parent_addr,recurse - 1);
+	if (real_parent_data)
+	    data->real_ppid = real_parent_data->pid;
+	else 
+	    data->real_ppid = -1;
+	if (recurse)
+	    data->real_parent = real_parent_data;
+	else {
+	    data->real_parent = NULL;
+	    free(real_parent_data);
+	}
+    }
+    /*
     if (parent_addr) {
-	unsigned char *parent_task_struct_buf = \
+	parent_task_struct_buf = \
 	    vmprobe_get_data(handle,regs,parent_addr,
 			     TASK_STRUCT_SIZE,0,NULL);
 	if (parent_task_struct_buf) {
@@ -758,15 +834,7 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
 	    free(parent_task_struct_buf);
 	}
     }
-
-    if (!task_struct_buf) {
-	free(task_struct_ptr_buf);
-	return 0;
-    }
-    if (!task_struct_buf) {
-	free(task_struct_ptr_buf);
-	return 0;
-    }
+    */
 
     data->tgid = *((unsigned int *)(task_struct_buf+TGID_OFFSET));
     data->uid = *((unsigned int *)(task_struct_buf+UID_OFFSET));
@@ -779,22 +847,34 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
     data->fsgid = *((unsigned int *)(task_struct_buf+FSGID_OFFSET));
 
     free(task_struct_buf);
-    free(task_struct_ptr_buf);
+
+    if (1) {
+	fprintf(stdout,"    pstree: ");
+	print_process_data(handle,regs,data);
+	fprintf(stdout,"\n");
+	fflush(stdout);
+    }
 
     return data;
 }
 
-void print_process_data(vmprobe_handle_t handle,
-			struct cpu_user_regs *regs,
-			struct process_data *data)
+struct process_data *load_current_process_data(vmprobe_handle_t handle,
+					       struct cpu_user_regs *regs,
+					       int recurse)
 {
-    fprintf(stdout,
-	    "pid=%d,ppid=%d,rppid=%d,tgid=%d,uid=%d,euid=%d,suid=%d," //fsuid=%d,
-	    "gid=%d,egid=%d,sgid=%d", //fsgid=%d",
-	    data->pid,data->ppid,data->real_ppid,data->tgid,
-	    data->uid,data->euid,data->suid,
-	    data->gid,data->egid,data->sgid);
-    return;
+    struct process_data *data;
+    unsigned long thread_info_ptr = current_thread_ptr(regs->esp);
+    unsigned char *task_struct_ptr_buf = \
+	vmprobe_get_data(handle,regs,"current_thread_ptr",thread_info_ptr,0,
+			 sizeof(unsigned long),NULL);
+    if (!task_struct_ptr_buf)
+	return NULL;
+
+    data = load_process_data(handle,regs,*((unsigned long *)task_struct_ptr_buf),
+			     recurse);
+
+    free(task_struct_ptr_buf);
+    return data;
 }
 
 void fcntl_cmd_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
@@ -926,11 +1006,10 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     unsigned char *envi;
     int i = 0;
 
-    struct pt_regs *r = (struct pt_regs *)vmprobe_get_data(handle,regs,
-			    regs->esp+4,
-			    sizeof(struct pt_regs),
-			    0,
-			    NULL);
+    struct pt_regs *r = \
+	(struct pt_regs *)vmprobe_get_data(handle,regs,
+					   "pt_regs",regs->esp+4,0,
+					   sizeof(struct pt_regs),NULL);
 
     if (!r) 
 	return NULL;
@@ -938,7 +1017,7 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     arg_data[arg] = (unsigned char *)r;
 
     if (syscall == 11) { /* execve */
-	filename = vmprobe_get_data(handle,regs,r->ebx,0,pid,NULL);
+	filename = vmprobe_get_data(handle,regs,"syscall_ebx",r->ebx,pid,0,NULL);
 	if (filename) {
 	    check_filter(syscall,arg,(char *)filename,filter_ptr,data);
 	    free(filename);
@@ -946,19 +1025,16 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 
 	while (1) {
 	    argi_ptr = vmprobe_get_data(handle,regs,
+					"execve_argi_ptr",
 					r->ecx + i * sizeof(char *),
-					sizeof(char *),
-					pid,
-					NULL);
+					pid,sizeof(char *),NULL);
 	    if (argi_ptr == NULL || *argi_ptr == '\0') {
 		break;
 	    }
 	    argi_addr = *((unsigned long *)argi_ptr);
 	    argi = vmprobe_get_data(handle,regs,
-				    argi_addr,
-				    0,
-				    pid,
-				    NULL);
+				    "execve_argi",argi_addr,
+				    pid,0,NULL);
 	    if (argi) {
 		check_filter(syscall,arg,(char *)argi,filter_ptr,data);
 		free(argi);
@@ -969,10 +1045,9 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	i = 0;
 	while (1) {
 	    envi_ptr = vmprobe_get_data(handle,regs,
+					"execve_envi_ptr",
 					r->edx + i * sizeof(char *),
-					sizeof(char *),
-					pid,
-					NULL);
+					pid,sizeof(char *),NULL);
 	    if (envi_ptr == NULL || *envi_ptr == '\0') {
 		/* last arg of list, so break */
 		break;
@@ -980,10 +1055,8 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    envi_addr = *((unsigned long *)envi_ptr);
 	    free(envi_ptr);
 	    envi = vmprobe_get_data(handle,regs,
-				    envi_addr,
-				    0,
-				    pid,
-				    NULL);
+				    "execve_envi",envi_addr,
+				    pid,0,NULL);
 	    if (envi) {
 		check_filter(syscall,arg,(char *)envi,filter_ptr,data);
 		free(envi);
@@ -1022,20 +1095,26 @@ void process_ptregs_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    r->ebx,r->ecx,r->edx,r->esi,r->edi,r->eax,
 	    r->ebp,r->esp,r->eip,r->eflags,r->orig_eax,
 	    r->xds,r->xes,r->xcs,r->xss);
+    fflush(stdout);
 
     if (syscall == 11) { /* execve */
-	filename = vmprobe_get_data(handle,regs,(unsigned long)r->ebx,0,pid,NULL);
-	fprintf(stdout,"    filename: '%s' (0x%08ux)\n",filename,(unsigned int)regs->ebx);
+	filename = vmprobe_get_data(handle,regs,
+				    "execve_filename",(unsigned long)r->ebx,pid,
+				    0,NULL);
+	fprintf(stdout,"    filename: '%s' (0x%08x)\n",filename,(unsigned int)regs->ebx);
+	fflush(stdout);
 	if (filename)
 	    free(filename);
 
 	fprintf(stdout,"    argv: 0x%08lx\n",r->ecx);
 	fprintf(stdout,"      args: ");
+	fflush(stdout);
 	while (1) {
 	    argi_ptr = vmprobe_get_data(handle,regs,
+					"execve_argi_ptr",
 					(unsigned long)r->ecx + i * sizeof(char *),
-					sizeof(char *),
 					pid,
+					sizeof(char *),
 					NULL);
 	    if (argi_ptr == NULL || *argi_ptr == '\0') {
 		/* last arg of list, so break */
@@ -1043,9 +1122,10 @@ void process_ptregs_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    }
 	    argi_addr = *((unsigned long *)argi_ptr);
 	    argi = vmprobe_get_data(handle,regs,
+				    "execve_argi",
 				    argi_addr,
-				    0,
 				    pid,
+				    0,
 				    NULL);
 	    if (i > 0)
 		fprintf(stdout,",");
@@ -1056,17 +1136,20 @@ void process_ptregs_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    //fprintf(stdout," (0x%08x -> 0x%08x)",
 	    //    r->ecx + i * sizeof(char *),*((unsigned long *)argi_ptr));
 	    ++i;
+	    fflush(stdout);
 	}
 	fprintf(stdout,"\n");
 
 	fprintf(stdout,"    envp: 0x%08lx\n",r->edx);
 	fprintf(stdout,"      env: ");
+	fflush(stdout);
 	i = 0;
 	while (1) {
 	    envi_ptr = vmprobe_get_data(handle,regs,
+					"execve_envi_ptr",
 					(unsigned long)r->edx + i * sizeof(char *),
-					sizeof(char *),
 					pid,
+					sizeof(char *),
 					NULL);
 	    if (envi_ptr == NULL || *envi_ptr == '\0') {
 		/* last arg of list, so break */
@@ -1075,9 +1158,10 @@ void process_ptregs_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    envi_addr = *((unsigned long *)envi_ptr);
 	    free(envi_ptr);
 	    envi = vmprobe_get_data(handle,regs,
+				    "execve_envi",
 				    envi_addr,
-				    0,
 				    pid,
+				    0,
 				    NULL);
 	    if (i > 0)
 		fprintf(stdout,",");
@@ -1088,12 +1172,14 @@ void process_ptregs_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    //fprintf(stdout," (0x%08x -> 0x%08x)",
 	    //    r->ecx + i * sizeof(char *),*((unsigned long *)envi_ptr));
 	    ++i;
+	    fflush(stdout);
 	}
 	fprintf(stdout,"\n");
     }
     else if (syscall == 120) { /* clone */
 	// ebx=clone_flags,new_sp=ecx,parent_tidptr=edx,child_tidptr=edi
 	fprintf(stdout,"    clone_flags: 0x%08lx\n",r->ebx);
+	fflush(stdout);
     }
 
     return;
@@ -1756,13 +1842,12 @@ int web_init(void)
     ip = conf_statsserver;
     port = index(ip, ':');
     if (port == NULL || ip == port || port[1] == '\0') {
-        fprintf(stderr, "could not parse statsserver '%s'\n",
-                conf_statsserver);
+        error("could not parse statsserver '%s'\n",conf_statsserver);
         return 1;
     }
     *port++ = '\0';
     if (!inet_aton(ip, &stats_sock.sin_addr)) {
-        fprintf(stderr, "statsserver addr must be an IP address\n");
+        error("statsserver addr must be an IP address\n");
         return 1;
     }
     stats_sock.sin_port = htons(atoi(port));
@@ -1771,13 +1856,13 @@ int web_init(void)
     /* make sure we can talk to the server */
     fd = open_statsserver();
     if (fd < 0) {
-        fprintf(stderr, "could not talk to statsserver at %s (%d)\n",
+        error("could not talk to statsserver at %s (%d)\n",
                 conf_statsserver, fd);
         return 1;
     }
     close(fd);
 
-    printf("Stats web server at \"%s:%d\"\n",
+    fprintf(stderr,"Stats web server at \"%s:%d\"\n",
             inet_ntoa(stats_sock.sin_addr), ntohs(stats_sock.sin_port));
     return 0;
 }
@@ -1790,14 +1875,14 @@ int web_report(const char *msg)
     statbuf = (char *) malloc( strlen(msg) + QUERY_MAX + 128 );
     if (!statbuf) return 1;
     sprintf(statbuf, "GET /%s%s:%%20%s HTTP/1.1\n"
-        "Host: a3\n\n", conf_querykey, EVENT_TAG, msg);
+	    "Host: a3\n\n", conf_querykey, EVENT_TAG, msg);
 
     sock = open_statsserver();
     if (sock >= 0)
     {
         if (write(sock, statbuf, strlen(statbuf)+1) < 0) 
         {
-            fprintf(stderr, "Write to socket failed (%d)\n", errno);
+            error("write to socket failed (%d)\n", errno);
             rv = 1;
         }
         close(sock);
@@ -1838,11 +1923,11 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     case 4:
     case 5:
 	//argval = regs->edx;
-	data = vmprobe_get_data(handle,
-				regs,
+	data = vmprobe_get_data(handle,regs,
+				"syscall_argi",
 				regs->esp + 4 + j*4,
-				sizeof(unsigned long *),
 				0,
+				sizeof(unsigned long *),
 				NULL);
 	unsigned long edx_addr = *((unsigned long *)data);
 	free(data);
@@ -1850,6 +1935,7 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	break;
     default:
 	fprintf(stdout,"(XXX: loader ENOSUP)");
+	fflush(stdout);
 	arg_data[j] = NULL;
 	return NULL;
     }
@@ -1877,11 +1963,10 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     case SC_ARG_TYPE_STRING:
 	if (buflen && *buflen > 0) {
 	    arg_data[j] = malloc(sizeof(char *)*(*buflen+1));
-	    data = vmprobe_get_data(handle,
-				    regs,
-				    argval,
-				    *buflen,
+	    data = vmprobe_get_data(handle,regs,
+				    "syscall_argi_string",argval,
 				    pid,
+				    *buflen,
 				    arg_data[j]);
 	    if (!data) {
 		free(arg_data[j]);
@@ -1892,11 +1977,10 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    }
 	}
 	else {
-	    arg_data[j] = vmprobe_get_data(handle,
-					   regs,
-					   argval,
-					   sc_arg_type_len[mytype],
+	    arg_data[j] = vmprobe_get_data(handle,regs,
+					   "syscall_argi_string",argval,
 					   pid,
+					   sc_arg_type_len[mytype],
 					   NULL);
 	}
 
@@ -1913,16 +1997,16 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 						     pdata);
 	}
 	else if (sc_arg_type_len[mytype] > 0) {
-	    arg_data[j] = vmprobe_get_data(handle,
-					   regs,
-					   argval,
-					   sc_arg_type_len[mytype],
+	    arg_data[j] = vmprobe_get_data(handle,regs,
+					   "syscall_argi_default",argval,
 					   pid,
+					   sc_arg_type_len[mytype],
 					   NULL);
 	}
 	else {
 	    arg_data[j] = NULL;
 	    fprintf(stdout,"(%s: loader: unknown)\n",name);
+	    fflush(stdout);
 	}
 	break;
     }
@@ -1945,9 +2029,11 @@ void print_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	fprintf(stdout,"\n");
 	return;
     }
+    fflush(stdout);
 
     if (sctab[i].args[j].ap != NULL) {
 	sctab[i].args[j].ap(handle,regs,pid,i,j,arg_data,filter_ptr,data);
+	fflush(stdout);
     }
     else {
 	switch (mytype) {
@@ -1979,6 +2065,7 @@ void print_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    fprintf(stdout,"(printer: unknown)\n");
 	    break;
 	}
+	fflush(stdout);
     }
 
     return;
@@ -1998,14 +2085,15 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	return NULL;
     }
 
-    fprintf(stdout,"%s [dom%d 0x%lx] [",
+    fprintf(stdout,"%s [dom%d 0x%lx]\n",
 	    sctab[i].name,vmprobe_domid(handle),//sctab[i].addr,
 	    vmprobe_vaddr(handle));
+    fflush(stdout);
 
-    data = load_process_data(handle,regs);
-    print_process_data(handle,regs,data);
-
-    fprintf(stdout,"]\n");
+    data = load_current_process_data(handle,regs,-1);
+    //fprintf(stdout,"[");
+    //print_process_data(handle,regs,data);
+    //fprintf(stdout,"]\n");
 
     arg_data = (unsigned char **)malloc(sizeof(unsigned char *)*sctab[i].argc);
     for (j = 0; j < sctab[i].argc; ++j) {
@@ -2017,7 +2105,8 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	if (arg_data[j])
 	    free(arg_data[j]);
     }
-    free(data);
+
+    free_process_data(data);
     free(arg_data);
 
     return filter_ptr;
@@ -2080,19 +2169,21 @@ static int on_fn_pre(vmprobe_handle_t vp,
 
     if (filter) {
 	if (!filter->dofilter) {
-	    fprintf(stderr,
-		    " Filter (noadjust) matched: %d %d %s (%d %d %d)\n",
+	    fprintf(stdout," Filter (noadjust) matched: %d %d %s (%d %d (%d) %d %d)\n",
 		    filter->syscallnum,
 		    filter->argnum,
 		    filter->strfrag,
 		    filter->pid,
+		    filter->ppid,
+		    filter->ppid_search,
 		    filter->uid,
 		    filter->gid);
+	    fflush(stdout);
 
 	    if (send_a3_events) {
 		eventstrtmp = malloc(512);
 		if (!eventstrtmp) {
-		    fprintf(stderr,"ERROR: internal error 1 reporting match-abort-returning to A3 monitor!\n");
+		    error("internal error 1 reporting match-abort-returning to A3 monitor!\n");
 		    return 0;
 		}
 		snprintf(eventstrtmp,512,
@@ -2107,26 +2198,28 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    free(eventstr);
 		}
 		else {
-		    fprintf(stderr,"ERROR: internal error 2 reporting match-abort-returning to A3 monitor!\n");
+		    error("internal error 2 reporting match-abort-returning to A3 monitor!\n");
 		}
 		free(eventstrtmp);
 	    }
 	}
 	else {
-	    fprintf(stderr,
-		    " Filter (adjust) matched: %d %d %s (%d %d %d) -- returning %d!\n",
+	    fprintf(stdout," Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!\n",
 		    filter->syscallnum,
 		    filter->argnum,
 		    filter->strfrag,
 		    filter->pid,
+		    filter->ppid,
+		    filter->ppid_search,
 		    filter->uid,
 		    filter->gid,
 		    filter->retval);
+	    fflush(stdout);
 
 	    if (send_a3_events) {
 		eventstrtmp = malloc(512);
 		if (!eventstrtmp) {
-		    fprintf(stderr,"ERROR: internal error 1 reporting match-abort-returning to A3 monitor!\n");
+		    error("internal error 1 reporting match-abort-returning to A3 monitor!\n");
 		    return 0;
 		}
 		snprintf(eventstrtmp,512,
@@ -2142,7 +2235,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    free(eventstr);
 		}
 		else {
-		    fprintf(stderr,"ERROR: internal error 2 reporting match-abort-returning to A3 monitor!\n");
+		    error("internal error 2 reporting match-abort-returning to A3 monitor!\n");
 		}
 		free(eventstrtmp);
 	    }
@@ -2210,7 +2303,10 @@ int main(int argc, char *argv[])
 	    while (token = strtok_r((!token)?optarg:NULL,",",&saveptr)) {
 		if (syscall_list_alloclen == syscall_list_len) {
 		    syscall_list_alloclen += 10;
-		    realloc(syscall_list,sizeof(char *)*syscall_list_alloclen);
+		    if (!(syscall_list = realloc(syscall_list,sizeof(char *)*syscall_list_alloclen))) {
+			error("realloc: %s\n",strerror(errno));
+			exit(-6);
+		    }
 		}
 		syscall_list[syscall_list_len] = token;
 		++syscall_list_len;
@@ -2223,6 +2319,8 @@ int main(int argc, char *argv[])
 		filter = (struct argfilter *)malloc(sizeof(struct argfilter));
 		memset(filter,0,sizeof(struct argfilter));
 		filter->pid = -1;
+		filter->ppid = -1;
+		filter->ppid_search = 0;
 		filter->gid = -1;
 		filter->uid = -1;
 		filter->dofilter = 1;
@@ -2245,7 +2343,7 @@ int main(int argc, char *argv[])
 				break;
 			}
 			if (j == SYSCALL_MAX) {
-			    fprintf(stderr,"ERROR: no such syscall %s to filter on!\n",token2);
+			    error("no such syscall %s to filter on!\n",token2);
 			    exit(2);
 			}
 			filter->syscallnum = j;
@@ -2256,7 +2354,7 @@ int main(int argc, char *argv[])
 			    break;
 			}
 			if (filter->syscallnum == -1) {
-			    fprintf(stderr,"Cannot specify argname when syscallname is wildcard!\n");
+			    error("cannot specify argname when syscallname is wildcard!\n");
 			    exit(1);
 			}
 			for (j = 0; j < sctab[filter->syscallnum].argc; ++j) {
@@ -2264,7 +2362,7 @@ int main(int argc, char *argv[])
 				break;
 			}
 			if (j == sctab[filter->syscallnum].argc) {
-			    fprintf(stderr,"ERROR: no such syscall arg %s to filter on!\n",token2);
+			    error("no such syscall arg %s to filter on!\n",token2);
 			    exit(2);
 			}
 			filter->argnum = j;
@@ -2279,8 +2377,7 @@ int main(int argc, char *argv[])
 			filter->preg = (regex_t *)malloc(sizeof(regex_t));
 			if (rc = regcomp(filter->preg,token2,REG_EXTENDED)) {
 			    regerror(rc,filter->preg,errbuf,sizeof(errbuf));
-			    fprintf(stderr,"ERROR: regcomp(%s): %s\n",
-				    token2,errbuf);
+			    error("regcomp(%s): %s\n",token2,errbuf);
 			    exit(4);
 			}
 			break;
@@ -2291,12 +2388,25 @@ int main(int argc, char *argv[])
 			filter->pid = atoi(token2);
 			break;
 		    case 5:
-			filter->uid = atoi(token2);
+			if (*token2 == '^') {
+			    ++token2;
+			    filter->ppid_search = 1;
+			}
+			if (*token2 == '\0') {
+			    error("parent process search must have a parent pid!\n");
+			    filter->ppid = -1;
+			    filter->ppid_search = 0;
+			    break;
+			}
+			filter->ppid = atoi(token2);
 			break;
 		    case 6:
-			filter->gid = atoi(token2);
+			filter->uid = atoi(token2);
 			break;
 		    case 7:
+			filter->gid = atoi(token2);
+			break;
+		    case 8:
 			filter->dofilter = atoi(token2);
 			break;
 		    default:
@@ -2306,13 +2416,16 @@ int main(int argc, char *argv[])
 		}
 
 		if (i < 4) {
-		    fprintf(stderr,"Bad filter, aborting!\n");
+		    error("bad filter, aborting!\n");
 		    exit(1);
 		}
 
 		if (argfilter_list_alloclen == argfilter_list_len) {
 		    argfilter_list_alloclen += 10;
-		    realloc(argfilter_list,sizeof(struct argfilter *)*argfilter_list_alloclen);
+		    if (!(argfilter_list = realloc(argfilter_list,sizeof(struct argfilter *)*argfilter_list_alloclen))) {
+			error("realloc: %s\n",strerror(errno));
+			exit(-6);
+		    }
 		}
 		argfilter_list[argfilter_list_len] = filter;
 		++argfilter_list_len;
@@ -2335,13 +2448,13 @@ int main(int argc, char *argv[])
 	}
 
 	if (!domain_exists(domid)) {
-	    fprintf(stderr,"ERROR: no such domain id %d\n",domid);
+	    error("no such domain id %d\n",domid);
 	    exit(3);
 	}
     }
 
     if (send_a3_events && web_init()) {
-	fprintf(stderr,"Could not connect to A3 monitor!\n");
+	error("could not connect to A3 monitor!\n");
 	exit(-6);
     }
 
@@ -2351,19 +2464,22 @@ int main(int argc, char *argv[])
 
 	sysmapfh = fopen(sysmapfile,"r");
 	if (!sysmapfh) {
-	    fprintf(stderr,"ERROR: could not fopen %s: %s",
-		    optarg,strerror(errno));
+	    error("could not fopen %s: %s",optarg,strerror(errno));
 	    exit(2);
 	}
 
 	while ((rc = fscanf(sysmapfh,"%x %c %s255",&addr,&symtype,sym)) != EOF) {
 	    if (rc < 0) {
-		fprintf(stderr,"ERROR: while reading %s: fscanf: %s\n",
-			sysmapfile,strerror(errno));
+		error("while reading %s: fscanf: %s\n",
+		      sysmapfile,strerror(errno));
 		exit(5);
 	    }
 	    else if (rc != 3)
 		continue;
+	    else if (strcmp("init_task",sym) == 0) {
+		init_task_addr = addr;
+		continue;
+	    }
 
 	    for (i = 0; i < SYSCALL_MAX; ++i) {
 		if (sctab[i].num == 0)
@@ -2371,7 +2487,7 @@ int main(int argc, char *argv[])
 
 		if (!strcmp(sym,sctab[i].name)) {
 		    if (sctab[i].addr != addr) {
-			fprintf(stderr,"Updating %s address to 0x%x.\n",sym,addr);
+			debug(1,"updating %s address to 0x%x.\n",sym,addr);
 			sctab[i].addr = addr;
 		    }
 
@@ -2402,15 +2518,11 @@ int main(int argc, char *argv[])
 	vp = register_vmprobe(domid, sctab[i].addr, on_fn_pre, on_fn_post);
 	if (vp < 0)
 	{
-	    fprintf(stderr,
-		    "Failed to register probe for %s\n",
-		    sctab[i].name);
+	    error("failed to register probe for %s\n",sctab[i].name);
 	    return 1;
 	}
 	else {
-	   fprintf(stderr,
-		   "Registered probe for %s\n",
-		   sctab[i].name);
+	   fprintf(stderr,"Registered probe for %s\n",sctab[i].name);
 	}
     }
 
