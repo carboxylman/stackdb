@@ -36,6 +36,39 @@ struct vmprobe {
     bool disabled;
 };
 
+struct vmprobe_action {
+    vmprobe_action_handle_t handle;
+    vmprobe_action_type_t type;
+    vmprobe_action_whence_t whence;
+    union {
+	unsigned long retval;
+	struct {
+	    vmprobe_opcode_t **opcodes;
+	    uint32_t nr_opcodes;
+	    vmprobe_action_flag_t flags;
+	} code;
+	struct {
+	    uint8_t regnum;
+	    unsigned long regval;
+	} regmod;
+	struct {
+	    char *data;
+	    unsigned long len;
+	    unsigned long destaddr;
+	} memmod;
+    } detail;
+
+    unsigned long ss_dst_eip;
+
+    int executed_this_pass;
+
+    /* An action can only be attached to one vmprobe at a time. */
+    struct list_head node;
+
+    struct vmprobe *probe;
+};
+typedef struct vmprobe_action vmprobe_action_t;
+
 /*
  * vmprobe_probepoint_state -- various states of a probe-point
  */
@@ -44,6 +77,8 @@ enum vmprobe_probepoint_state {
     VMPROBE_BP_SET,     // breakpoint in place
     VMPROBE_REMOVING,   // domain quiescing prior to breakpoint removal
     VMPROBE_DISABLED,   // breakpoint removal completed
+    VMPROBE_ACTION_RUNNING, // executing an action
+    VMPROBE_ACTION_DONE, // finished an action
 };
 
 struct vmprobe_domain;
@@ -69,11 +104,24 @@ struct vmprobe_probepoint {
     /* Current state of this probe-point */
     enum vmprobe_probepoint_state state;
     
-    /* Saved opcode (which has been replaced with breakpoint) */
-    vmprobe_opcode_t opcode;
-    
     /* list of probes at this probe-point */
     struct list_head probe_list;
+
+    /* Lists of actions that may be executed at this probepoint. */
+    struct list_head action_list;
+
+    /* Currently executing action. */
+    struct vmprobe_action *action;
+    int action_obviates_orig;
+    int action_requires_sstep;
+    
+    /* Saved opcode (which has been replaced with breakpoint) */
+    uint8_t *breakpoint_saved_instr;
+    unsigned int breakpoint_saved_instr_len;
+
+    /* Saved instructions (which were replaced with action's code) */
+    uint8_t *saved_instr;
+    unsigned int saved_instr_len;
 };
 
 /*
