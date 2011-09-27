@@ -50,8 +50,9 @@
 #include <sys/mman.h>
 #include <errno.h>
 
-/* uncomment this to enable debug output */
-//#define XA_DEBUG
+#ifdef XA_DEBUG
+void xa_set_debug_level(int level);
+#endif
 
 /**
  * Mode indicating that we are monitoring a live Xen VM

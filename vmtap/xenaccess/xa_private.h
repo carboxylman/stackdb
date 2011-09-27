@@ -76,9 +76,12 @@ int xa_get_bit (unsigned long reg, int bit);
  * defined (usually in xenaccess.h) at compile time.
  */
 #ifndef XA_DEBUG
-#define xa_dbprint(format, args...) ((void)0)
+#define xa_dbprint(level,format, args...) ((void)0)
+#define xa_dbprint_plain(level,format, args...) ((void)0)
 #else
-void xa_dbprint(char *format, ...);
+void _xa_dbprint(int level,char *format, ...);
+#define xa_dbprint(level,format,...) _xa_dbprint(level,"XADEBUG: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__);
+#define xa_dbprint_plain(level,format,...) _xa_dbprint(level,format, ## __VA_ARGS__);
 #endif
 
 /*-------------------------------------
@@ -259,6 +262,8 @@ char *xa_get_kernel_name (int id);
  * @return 1 if domain is HVM. 0 otherwise.
  */
 int xa_ishvm (int id);
+
+char *xa_get_vmpath (int id);
 
 /**
  * Gets address of a symbol in domU virtual memory. It uses exports 

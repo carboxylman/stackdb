@@ -205,7 +205,7 @@ void *xa_map_page (xa_instance_t *instance, int prot, unsigned long frame_num)
         memory = xa_map_file_range(instance, prot, frame_num);
     }
     else{
-        xa_dbprint("BUG: invalid mode\n");
+        xa_dbprint(0,"BUG: invalid mode\n");
     }
 
     return memory;
@@ -261,10 +261,19 @@ void *xc_map_foreign_pages(int xc_handle, uint32_t dom, int prot,
 #ifndef XA_DEBUG
 /* Nothing */
 #else
-void xa_dbprint(char* format, ...) {
+static int xa_debug_level = -1;
+
+void xa_set_debug_level(int level) {
+    xa_debug_level = level;
+}
+
+void _xa_dbprint(int level,char* format, ...) {
     va_list args;
+    if (xa_debug_level < level)
+	return;
     va_start(args, format);
-    vfprintf(stdout, format, args);
+    vfprintf(stderr, format, args);
+    fflush(stderr);
     va_end(args);
 }
 #endif
