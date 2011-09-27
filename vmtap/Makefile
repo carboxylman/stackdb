@@ -9,12 +9,11 @@ PYLIB := /usr/lib/python2.5
 CFLAGS := -fPIC
 CFLAGS += -Wall
 CFLAGS += -O2
-#CFLAGS += -g
+CFLAGS += -g
 CFLAGS += -I./
 
 # xenaccess
-CFLAGS += -D ENABLE_XEN
-#CFLAGS += -D XA_DEBUG
+CFLAGS += -D ENABLE_XEN -D XA_DEBUG
 OBJECTS := xenaccess/linux_core.o
 OBJECTS += xenaccess/linux_domain_info.o
 OBJECTS += xenaccess/linux_memory.o
@@ -35,11 +34,12 @@ OBJECTS += xenaccess/xa_util.o
 
 # vmprobes
 CFLAGS += -D VMPROBE_i386
-#CFLAGS += -D VMPROBE_DEBUG
+CFLAGS += -D VMPROBE_DEBUG
+CFLAGS += -D VMPROBE_SIGNAL
 OBJECTS += vmprobes/vmprobes.o
 
 # vmtap
-#CFLAGS += -D VMTAP_DEBUG
+CFLAGS += -D VMTAP_DEBUG
 CFLAGS += -I$(PYINCLUDE)
 LFLAGS := -shared
 LFLAGS += -lxenctrl
@@ -56,27 +56,27 @@ TARGET := _vmtap.so
 
 default:
 	@echo "compiling vmtap... (be patient)"
-	@$(MAKE) $(TARGET)
+	$(MAKE) $(TARGET)
 	@echo "vmtap compiled"
 
 %_wrap.c: %.i
-	@$(SWIG) $(SFLAGS) $<
+	$(SWIG) $(SFLAGS) $<
 
 %.yy.c: %.l
-	@$(LEX) -o $@ $<
+	$(LEX) -o $@ $<
 
 %.o: %.c
-	@$(CC) -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 %.so: $(WRAPPER) $(PARSER) $(OBJECTS)
-	@$(LD) $(LFLAGS) $(OBJECTS) -o $@
+	$(LD) $(LFLAGS) $(OBJECTS) -o $@
 
 clean:
-	@$(RM) -f $(WRAPPER)
-	@$(RM) -f $(PARSER)
-	@$(RM) -f $(OBJECTS)
-	@$(RM) -f $(MODULE) $(MODBIN)
-	@$(RM) -f $(TARGET)
+	$(RM) -f $(WRAPPER)
+	$(RM) -f $(PARSER)
+	$(RM) -f $(OBJECTS)
+	$(RM) -f $(MODULE) $(MODBIN)
+	$(RM) -f $(TARGET)
 	@echo "vmtap cleaned"
 
 install:
@@ -85,6 +85,9 @@ install:
 	@echo "vmtap installed"
 
 uninstall:
-	@$(RM) -f $(PYLIB)/$(TARGET)
-	@$(RM) -f $(PYLIB)/$(MODULE)
+	$(RM) -f $(PYLIB)/$(TARGET)
+	$(RM) -f $(PYLIB)/$(MODULE)
 	@echo "vmtap uninstalled"
+
+.SECONDARY:
+
