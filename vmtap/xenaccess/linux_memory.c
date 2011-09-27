@@ -30,10 +30,15 @@
  */
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <xenctrl.h>
 #include "xa_private.h"
 
+#define THREAD_SIZE 8192
+#define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
 
 /* finds the task struct for a given pid */
 unsigned char *linux_get_taskstruct (
@@ -46,12 +51,59 @@ unsigned char *linux_get_taskstruct (
     int tasks_offset = instance->os.linux_instance.tasks_offset;
     int i = 0;
 
+#ifdef ENABLE_XEN
+    vcpu_guest_context_t ctx;
+    //xc_dominfo_t di;
+    unsigned long thread_info_ptr;
+    unsigned long thread_info_addr;
+    uint32_t loffset;
+
+    //xc_domain_getinfo(instance->m.xen.xc_handle,instance->m.xen.domain_id,1,&di);
+    if (xc_vcpu_getcontext(instance->m.xen.xc_handle,instance->m.xen.domain_id,
+			   0, // XXX: di.max_vcpu_id,
+			   &ctx) == 0) {
+	/* check the current thread first; see if it's our pid */
+	thread_info_ptr = current_thread_ptr(ctx.user_regs.esp);
+	memory = xa_access_kernel_va(instance, thread_info_ptr,
+				     &loffset, PROT_READ);
+	if (memory != NULL) {
+	    thread_info_addr = *((unsigned long *)(memory + loffset));
+	    munmap(memory, instance->page_size);
+
+	    memory = xa_access_kernel_va(instance, thread_info_addr + tasks_offset,
+					 &loffset, PROT_READ);
+	    if (memory != NULL) {
+		if (*((int *)(memory + loffset + (pid_offset - tasks_offset))) == pid) {
+		    xa_dbprint(0,"opt: pid %d == current thread (0x%x)\n",
+			       *((int *)(memory + loffset + (pid_offset - tasks_offset))),
+			       thread_info_addr);
+		    *offset = loffset;
+		    return memory;
+		}
+		
+		xa_dbprint(0,"opt: pid %d != current thread (0x%x)\n",
+			   *((int *)(memory + loffset + (pid_offset - tasks_offset))),
+			   thread_info_ptr);
+		munmap(memory, instance->page_size);
+	    }
+	    else 
+		xa_dbprint(0,"opt: could not access current thread at (0x%x)\n",
+			   thread_info_addr);
+	}
+	else 
+	    xa_dbprint(0,"opt: could not access current thread ptr at (0x%x)\n",
+		       thread_info_ptr);
+    }
+    else 
+	xa_dbprint(0,"opt: could not getcontext!\n");
+#endif
+
     /* first we need a pointer to this pid's task_struct */
     next_process = instance->init_task + tasks_offset;
     list_head = next_process;
 
     while (++i) {
-	xa_dbprint("getting task_struct at (0x%x)\n",next_process);
+	xa_dbprint(0,"getting task_struct at (0x%x)\n",next_process);
         memory = xa_access_kernel_va(instance, next_process,
 				     offset, PROT_READ);
         if (NULL == memory){
@@ -71,12 +123,12 @@ unsigned char *linux_get_taskstruct (
             return memory;
         }
 	else {
-	    xa_dbprint("checked pid %d\n",task_pid);
+	    xa_dbprint(0,"checked pid %d\n",task_pid);
 	}
 
         /* if we are back at the list head, we are done */
         if (list_head == next_process) {
-            printf("ERROR: failed to get task_struct: back at init_task\n",i);
+            printf("ERROR: failed to get task_struct: back at init_task\n");
             goto error_exit;
         }
         munmap(memory, instance->page_size);
@@ -108,6 +160,12 @@ uint32_t linux_pid_to_pgd (xa_instance_t *instance, int pid)
        grab the pgd value */
     memcpy(&ptr, memory + offset + mm_offset - tasks_offset, 4);
     munmap(memory, instance->page_size);
+
+    if (!ptr) {
+	xa_dbprint(0,"NULL mm_struct ptr for pid %d, must be kthread\n",pid);
+	return 0;
+    }
+
     xa_read_long_virt(instance, ptr + pgd_offset, 0, &pgd);
 
     /* update the cache with this new pid->pgd mapping */
