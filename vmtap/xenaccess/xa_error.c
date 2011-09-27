@@ -71,7 +71,7 @@ int xa_report_error (xa_instance_t *instance, int error, int error_type){
         }
     }
     else{
-        xa_dbprint("BUG: invalid mode\n");
+        xa_dbprint(0,"BUG: invalid mode\n");
         ret = XA_FAILURE;
     }
 

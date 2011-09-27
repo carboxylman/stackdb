@@ -52,7 +52,7 @@ int xa_check_cache_sym (xa_instance_t *instance,
             current->last_used = time(NULL);
             *mach_address = current->mach_address;
             ret = 1;
-            xa_dbprint("++Cache hit (%s --> 0x%.8x)\n",
+            xa_dbprint(0,"++Cache hit (%s --> 0x%.8x)\n",
                 symbol_name, *mach_address);
             goto exit;
         }
@@ -87,7 +87,7 @@ int xa_check_cache_virt (xa_instance_t *instance,
             *mach_address = (current->mach_address |
                 (virt_address & (instance->page_size - 1)));
             ret = 1;
-            xa_dbprint("++Cache hit (0x%.8x --> 0x%.8x, 0x%.8x)\n",
+            xa_dbprint(0,"++Cache hit (0x%.8x --> 0x%.8x, 0x%.8x)\n",
                 virt_address, *mach_address, current->mach_address);
             goto exit;
         }
@@ -128,7 +128,7 @@ int xa_update_cache (xa_instance_t *instance,
                     current->mach_address =
                         xa_translate_kv2p(instance, virt_address);
                 }
-                xa_dbprint("++Cache update (%s --> 0x%.8x)\n",
+                xa_dbprint(0,"++Cache update (%s --> 0x%.8x)\n",
                     symbol_name, current->mach_address);
                 goto exit;
             }
@@ -145,7 +145,7 @@ int xa_update_cache (xa_instance_t *instance,
                 current->last_used = time(NULL);
                 current->pid = pid;
                 current->mach_address = mlookup;
-                xa_dbprint("++Cache update (0x%.8x --> 0x%.8x)\n",
+                xa_dbprint(0,"++Cache update (0x%.8x --> 0x%.8x)\n",
                     vlookup, mlookup);
                 goto exit;
             }
@@ -213,14 +213,14 @@ int xa_update_cache (xa_instance_t *instance,
             new_entry->mach_address =
                 xa_translate_kv2p(instance, virt_address);
         }
-        xa_dbprint("++Cache set (%s --> 0x%.8x)\n",
+        xa_dbprint(0,"++Cache set (%s --> 0x%.8x)\n",
             symbol_name, new_entry->mach_address);
     }
     else{
         new_entry->symbol_name = strndup("", MAX_SYM_LEN);
         new_entry->virt_address = vlookup;
         new_entry->mach_address = mlookup;
-        xa_dbprint("++Cache set (0x%.8x --> 0x%.8x)\n", vlookup, mlookup);
+        xa_dbprint(0,"++Cache set (0x%.8x --> 0x%.8x)\n", vlookup, mlookup);
     }
     new_entry->pid = pid;
 
@@ -286,7 +286,7 @@ int xa_check_pid_cache (xa_instance_t *instance, int pid, uint32_t *pgd)
     if (search != NULL){
         *pgd = search->pgd;
         ret = 1;
-        xa_dbprint("++PID Cache hit (%d --> 0x%.8x)\n", pid, *pgd);
+        xa_dbprint(0,"++PID Cache hit (%d --> 0x%.8x)\n", pid, *pgd);
     }
 
     return ret;
@@ -312,7 +312,7 @@ int xa_update_pid_cache (xa_instance_t *instance, int pid, uint32_t pgd)
     search = xa_check_pid_cache_helper(instance, pid);
     if (search != NULL){
         search->pgd = pgd;
-        xa_dbprint("++PID Cache update (%d --> 0x%.8x)\n", pid, pgd);
+        xa_dbprint(0,"++PID Cache update (%d --> 0x%.8x)\n", pid, pgd);
         goto exit;
     }
 
@@ -360,7 +360,7 @@ int xa_update_pid_cache (xa_instance_t *instance, int pid, uint32_t pgd)
     new_entry->last_used = time(NULL);
     new_entry->pid = pid;
     new_entry->pgd = pgd;
-    xa_dbprint("++PID Cache set (%d --> 0x%.8x)\n", pid, pgd);
+    xa_dbprint(0,"++PID Cache set (%d --> 0x%.8x)\n", pid, pgd);
 
     /* add it to the end of the list */
     if (NULL != instance->pid_cache_tail){
