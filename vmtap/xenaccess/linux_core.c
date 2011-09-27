@@ -32,34 +32,43 @@
 int linux_init (xa_instance_t *instance)
 {
     int ret = XA_SUCCESS;
+    //#if 0
     unsigned char *memory = NULL;
     uint32_t local_offset = 0;
+    //#endif
 
     if (linux_system_map_symbol_to_address(
              instance, "swapper_pg_dir", &instance->kpgd) == XA_FAILURE){
-        printf("ERROR: failed to lookup 'swapper_pg_dir' address\n");
+        fprintf(stderr,"ERROR: failed to lookup 'swapper_pg_dir' address\n");
         ret = xa_report_error(instance, 0, XA_EMINOR);
         if (XA_FAILURE == ret) goto error_exit;
     }
-    xa_dbprint("--got vaddr for swapper_pg_dir (0x%.8x).\n", instance->kpgd);
+    xa_dbprint(0,"--got vaddr for swapper_pg_dir (0x%.8x).\n", instance->kpgd);
 
     if (!instance->hvm){
         instance->kpgd -= instance->page_offset;
         if (xa_read_long_phys(
                 instance, instance->kpgd, &(instance->kpgd)) == XA_FAILURE){
-            printf("ERROR: failed to get physical addr for kpgd\n");
+            fprintf(stderr,"ERROR: failed to get physical addr for kpgd\n");
             ret = xa_report_error(instance, 0, XA_EMINOR);
             if (XA_FAILURE == ret) goto error_exit;
         }
     }
-    xa_dbprint("**set instance->kpgd (0x%.8x).\n", instance->kpgd);
-//    printf("kpgd search --> 0x%.8x\n", xa_find_kernel_pd(instance));
+    xa_dbprint(0,"**set instance->kpgd (0x%.8x).\n", instance->kpgd);
 
+    if (linux_system_map_symbol_to_address(
+             instance, "init_task", &instance->init_task) == XA_FAILURE){
+        fprintf(stderr,"ERROR: failed to lookup 'init_task' address\n");
+        ret = xa_report_error(instance, 0, XA_EMINOR);
+        if (XA_FAILURE == ret) goto error_exit;
+    }
+
+#if 0
     memory = xa_access_kernel_sym(instance, "init_task", &local_offset, PROT_READ);
     if (NULL == memory){
-        xa_dbprint("--address lookup failure, switching PAE mode\n");
+        xa_dbprint(0,"--address lookup failure, switching PAE mode\n");
         instance->pae = !instance->pae;
-        xa_dbprint("**set instance->pae = %d\n", instance->pae);
+        xa_dbprint(0,"**set instance->pae = %d\n", instance->pae);
         memory = xa_access_kernel_sym(instance, "init_task", &local_offset, PROT_READ);
         if (NULL == memory){
             printf("ERROR: failed to get task list head 'init_task'\n");
@@ -71,8 +80,9 @@ int linux_init (xa_instance_t *instance)
     instance->init_task =
         *((uint32_t*)(memory + local_offset +
         instance->os.linux_instance.tasks_offset));
-    xa_dbprint("**set instance->init_task (0x%.8x).\n", instance->init_task);
     munmap(memory, instance->page_size);
+#endif
+    xa_dbprint(0,"**set instance->init_task (0x%.8x).\n", instance->init_task);
 
 error_exit:
     return ret;
