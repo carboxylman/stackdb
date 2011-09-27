@@ -77,7 +77,7 @@ int get_memory_size (xa_instance_t *instance)
             ret = XA_FAILURE;
             goto error_exit;
         }
-        xa_dbprint("**set instance->m.xen.size = %d\n", instance->m.xen.size);
+        xa_dbprint(0,"**set instance->m.xen.size = %d\n", instance->m.xen.size);
         if (xsh) xs_daemon_close(xsh);
 #endif /* ENABLE_XEN */
     }
@@ -90,7 +90,7 @@ int get_memory_size (xa_instance_t *instance)
             goto error_exit;
         }
         instance->m.file.size = (uint32_t) s.st_size;
-        xa_dbprint("**set instance->m.file.size = %d\n", instance->m.file.size);
+        xa_dbprint(0,"**set instance->m.file.size = %d\n", instance->m.file.size);
     }
 
 error_exit:
@@ -135,7 +135,7 @@ int read_config_file (xa_instance_t *instance)
             ret = XA_FAILURE;
             goto error_exit;
         }
-        xa_dbprint("--got domain name from id (%d ==> %s).\n",
+        xa_dbprint(0,"--got domain name from id (%d ==> %s).\n",
                     instance->m.xen.domain_id, instance->image_type);
 #endif /* ENABLE_XEN */
     }
@@ -149,7 +149,7 @@ int read_config_file (xa_instance_t *instance)
 
     /* copy the values from entry into instance struct */
     instance->sysmap = strdup(entry->sysmap);
-    xa_dbprint("--got sysmap from config (%s).\n", instance->sysmap);
+    xa_dbprint(0,"--got sysmap from config (%s).\n", instance->sysmap);
     
     if (strncmp(entry->ostype, "Linux", CONFIG_STR_LENGTH) == 0){
         instance->os_type = XA_OS_LINUX;
@@ -165,7 +165,7 @@ int read_config_file (xa_instance_t *instance)
 
     /* Copy config info based on OS type */
     if(XA_OS_LINUX == instance->os_type){
-        xa_dbprint("--reading in linux offsets from config file.\n");
+        xa_dbprint(0,"--reading in linux offsets from config file.\n");
         if(entry->offsets.linux_offsets.tasks){
             instance->os.linux_instance.tasks_offset =
                  entry->offsets.linux_offsets.tasks;
@@ -192,7 +192,7 @@ int read_config_file (xa_instance_t *instance)
         }
     }
     else if (XA_OS_WINDOWS == instance->os_type){
-        xa_dbprint("--reading in windows offsets from config file.\n");
+        xa_dbprint(0,"--reading in windows offsets from config file.\n");
         if(entry->offsets.windows_offsets.tasks){
             instance->os.windows_instance.tasks_offset =
                 entry->offsets.windows_offsets.tasks;
@@ -225,15 +225,15 @@ int read_config_file (xa_instance_t *instance)
     }
 
 #ifdef XA_DEBUG
-    xa_dbprint("--got ostype from config (%s).\n", entry->ostype);
+    xa_dbprint(0,"--got ostype from config (%s).\n", entry->ostype);
     if (instance->os_type == XA_OS_LINUX){
-        xa_dbprint("**set instance->os_type to Linux.\n");
+        xa_dbprint(0,"**set instance->os_type to Linux.\n");
     }
     else if (instance->os_type == XA_OS_WINDOWS){
-        xa_dbprint("**set instance->os_type to Windows.\n");
+        xa_dbprint(0,"**set instance->os_type to Windows.\n");
     }
     else{
-        xa_dbprint("**set instance->os_type to unknown.\n");
+        xa_dbprint(0,"**set instance->os_type to unknown.\n");
     }
 #endif
 
@@ -257,6 +257,10 @@ int get_page_info_xen (xa_instance_t *instance)
     vcpu_guest_context_any_t ctxt_any;
 #endif /* HAVE_CONTEXT_ANY */
     vcpu_guest_context_t ctxt;
+    struct xs_handle *xsh = NULL;
+    xs_transaction_t xth = XBT_NULL;
+    char buf[128];
+    char *xsres = NULL;
 
 #ifdef HAVE_CONTEXT_ANY
     if ((ret = xc_vcpu_getcontext(
@@ -293,15 +297,33 @@ int get_page_info_xen (xa_instance_t *instance)
     /* PAE Flag --> CR4, bit 5 == 0 --> pae disabled */
     if (!instance->pae)
         instance->pae = xa_get_bit(ctxt.ctrlreg[4], 5);
-    xa_dbprint("**set instance->pae = %d\n", instance->pae);
+
+    memset(buf, 0, sizeof(buf));
+    sprintf(buf, "/local/domain/%d/image/pae-mode",
+            instance->m.xen.domain_id);
+    xsh = xs_domain_open();
+    xsres = xs_read(xsh, xth, buf, NULL);
+    if (xsres) {
+	if (strcmp("yes",xsres) == 0)
+	    instance->pae = 1;
+	else 
+	    instance->pae = 0;
+	free(xsres);
+    }
+    else {
+	printf("ERROR: failed to get PAE setting for Xen domain, assuming 0.\n");
+	instance->pae = 0;
+    }
+    xs_daemon_close(xsh);
+    xa_dbprint(0,"**set instance->pae = %d\n", instance->pae);
 
     /* PSE Flag --> CR4, bit 4 == 0 --> pse disabled */
     instance->pse = xa_get_bit(ctxt.ctrlreg[4], 4);
-    xa_dbprint("**set instance->pse = %d\n", instance->pse);
+    xa_dbprint(0,"**set instance->pse = %d\n", instance->pse);
 
     /* testing to see CR3 value */
     instance->cr3 = ctxt.ctrlreg[3] & 0xFFFFF000;
-    xa_dbprint("**set instance->cr3 = 0x%.8x\n", instance->cr3);
+    xa_dbprint(0,"**set instance->cr3 = 0x%.8x\n", instance->cr3);
 #endif /* ENABLE_XEN */
 
 error_exit:
@@ -319,7 +341,7 @@ void init_page_offset (xa_instance_t *instance)
     else{
         instance->page_offset = 0;
     }
-    xa_dbprint("**set instance->page_offset = 0x%.8x\n", instance->page_offset);
+    xa_dbprint(0,"**set instance->page_offset = 0x%.8x\n", instance->page_offset);
 
     /* assume 4k pages for now, update when 4M page is found */
     instance->page_shift = 12;
@@ -342,12 +364,12 @@ void init_xen_version (xa_instance_t *instance)
     versions = xc_version(instance->m.xen.xc_handle, cmd0, NULL);
     major = versions >> 16;
     minor = versions & ((1 << 16) - 1);
-    xa_dbprint("--major = %d\n", major);
-    xa_dbprint("--minor = %d\n", minor);
+    xa_dbprint(0,"--major = %d\n", major);
+    xa_dbprint(0,"--minor = %d\n", minor);
 
     /* get the extra version */
     xc_version(instance->m.xen.xc_handle, cmd1, &extra);
-    xa_dbprint("--extra = %s\n", (char *) extra);
+    xa_dbprint(0,"--extra = %s\n", (char *) extra);
 
     /* put everything together for easy comparison testing */
     memset(versionStr, 0, VERSION_STR_LEN);
@@ -357,43 +379,43 @@ void init_xen_version (xa_instance_t *instance)
     instance->m.xen.xen_version = XA_XENVER_UNKNOWN;
     if (fnmatch("3.0.4*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_0_4;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.0.4\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.0.4\n");
     }
     else if (fnmatch("3.1.0*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_1_0;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.1.0\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.1.0\n");
     }
     else if (fnmatch("3.1.1*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_1_1;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.1.1\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.1.1\n");
     }
     else if (fnmatch("3.1.2*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_1_2;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.1.2\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.1.2\n");
     }
     else if (fnmatch("3.1.3*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_1_3;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.1.3\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.1.3\n");
     }
     else if (fnmatch("3.1.4*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_1_4;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.1.4\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.1.4\n");
     }
     else if (fnmatch("3.2.0*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_2_0;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.2.0\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.2.0\n");
     }
     else if (fnmatch("3.2.1*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_2_1;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.2.1\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.2.1\n");
     }
     else if (fnmatch("3.2.2*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_2_2;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.2.2\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.2.2\n");
     }
     else if (fnmatch("3.3.0*", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_3_0;
-        xa_dbprint("**set instance->m.xen.xen_version = 3.3.0\n");
+        xa_dbprint(0,"**set instance->m.xen.xen_version = 3.3.0\n");
     }
 
     if (instance->m.xen.xen_version == XA_XENVER_UNKNOWN){
@@ -421,7 +443,7 @@ int helper_init (xa_instance_t *instance)
             ret = xa_report_error(instance, 0, XA_ECRITICAL);
             if (XA_FAILURE == ret) goto error_exit;
         }
-        xa_dbprint("--got domain info.\n");
+        xa_dbprint(0,"--got domain info.\n");
 
         /* find the version of xen that we are running */
         init_xen_version(instance);
@@ -450,8 +472,9 @@ int helper_init (xa_instance_t *instance)
         /*TODO add memory layout discovery here for file */
         instance->hvm = 1; /* assume nonvirt image or hvm image for now */
         instance->pae = 0; /* assume no pae for now */
+	xa_dbprint(0,"**set instance->hvm true, instance->pae false.\n");
     }
-    xa_dbprint("--got memory layout.\n");
+    xa_dbprint(0,"--got memory layout.\n");
 
     /* setup the correct page offset size for the target OS */
     init_page_offset(instance);
@@ -462,10 +485,10 @@ int helper_init (xa_instance_t *instance)
         instance->hvm = xa_ishvm(instance->m.xen.domain_id);
 #ifdef XA_DEBUG
         if (instance->hvm){
-            xa_dbprint("**set instance->hvm to true (HVM).\n");
+            xa_dbprint(0,"**set instance->hvm to true (HVM).\n");
         }
         else{
-            xa_dbprint("**set instance->hvm to false (PV).\n");
+            xa_dbprint(0,"**set instance->hvm to false (PV).\n");
         }
 #endif /* XA_DEBUG */
 #endif /* ENABLE_XEN */
@@ -510,7 +533,7 @@ int helper_destroy (xa_instance_t *instance)
 /* common code for all init functions */
 void xa_init_common (xa_instance_t *instance)
 {
-    xa_dbprint("XenAccess Version 0.5\n");
+    xa_dbprint(0,"XenAccess Version 0.5\n");
     instance->cache_head = NULL;
     instance->cache_tail = NULL;
     instance->current_cache_size = 0;
@@ -526,9 +549,9 @@ int xa_init_vm_private
 #ifdef ENABLE_XEN
     int xc_handle;
     instance->mode = XA_MODE_XEN;
-    xa_dbprint("XenAccess Mode Xen\n");
+    xa_dbprint(0,"XenAccess Mode Xen\n");
     instance->error_mode = error_mode;
-    xa_dbprint("XenAccess Error Mode = %d\n", instance->error_mode);
+    xa_dbprint(0,"XenAccess Error Mode = %d\n", instance->error_mode);
 
     /* open handle to the libxc interface */
     if ((xc_handle = xc_interface_open()) == -1){
@@ -557,9 +580,9 @@ int xa_init_file_private (
 #define MAX_IMAGE_TYPE_LEN 256
     FILE *fhandle = NULL;
     instance->mode = XA_MODE_FILE;
-    xa_dbprint("XenAccess Mode File\n");
+    xa_dbprint(0,"XenAccess Mode File\n");
     instance->error_mode = error_mode;
-    xa_dbprint("XenAccess Error Mode = %d\n", instance->error_mode);
+    xa_dbprint(0,"XenAccess Error Mode = %d\n", instance->error_mode);
 
     /* open handle to memory file */
     if ((fhandle = fopen(filename, "rb")) == NULL){
@@ -578,13 +601,13 @@ int xa_init_file_private (
 int xa_init_vm_name_strict (char *domain_name, xa_instance_t *instance)
 {
     uint32_t domain_id = xa_get_domain_id(domain_name);
-    xa_dbprint("--got domid from name (%s --> %d)\n", domain_name, domain_id);
+    xa_dbprint(0,"--got domid from name (%s --> %d)\n", domain_name, domain_id);
     return xa_init_vm_private(domain_id, instance, XA_FAILHARD);
 }
 int xa_init_vm_name_lax (char *domain_name, xa_instance_t *instance)
 {
     uint32_t domain_id = xa_get_domain_id(domain_name);
-    xa_dbprint("--got domid from name (%s --> %d)\n", domain_name, domain_id);
+    xa_dbprint(0,"--got domid from name (%s --> %d)\n", domain_name, domain_id);
     return xa_init_vm_private(domain_id, instance, XA_FAILSOFT);
 }
 int xa_init_vm_id_strict (uint32_t domain_id, xa_instance_t *instance)
