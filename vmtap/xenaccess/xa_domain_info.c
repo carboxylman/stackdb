@@ -39,6 +39,7 @@
 #include <fnmatch.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <stdio.h>
 
 #ifdef ENABLE_XEN
@@ -162,28 +163,28 @@ uint32_t xa_get_domain_id (char *name)
     struct xs_handle *xsh = NULL;
     xs_transaction_t xth = XBT_NULL;
     uint32_t domain_id = 0;
+    char *tmp = malloc(256);
 
     xsh = xs_domain_open();
     domains = xs_directory(xsh, xth, "/local/domain", &size);
     for (i = 0; i < size; ++i){
         /* read in name */
-        char *tmp = malloc(100);
         char *idStr = domains[i];
-        sprintf(tmp, "/local/domain/%s/name", idStr);
+        snprintf(tmp, 256, "/local/domain/%s/name", idStr);
         char *nameCandidate = xs_read(xsh, xth, tmp, NULL);
 
         // if name matches, then return number
-        if (strncmp(name, nameCandidate, 100) == 0){
+        if (nameCandidate && strncmp(name, nameCandidate, 256) == 0){
             int idNum = atoi(idStr);
             domain_id = (uint32_t) idNum;
             break;
         }
 
         /* free memory as we go */
-        if (tmp) free(tmp);
         if (nameCandidate) free(nameCandidate);
     }
 
+    if (tmp) free(tmp);
     if (domains) free(domains);
     if (xsh) xs_daemon_close(xsh);
     return domain_id;
