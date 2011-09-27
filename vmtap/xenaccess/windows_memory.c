@@ -174,7 +174,7 @@ uint32_t get_ntoskrnl_base (xa_instance_t *instance)
 
         paddr += instance->page_size;
         if (paddr <= 0 || 0x40000000 <= paddr){
-            xa_dbprint("--get_ntoskrnl_base failed, switching to search\n");
+            xa_dbprint(0,"--get_ntoskrnl_base failed, switching to search\n");
             return bf_get_ntoskrnl_base(instance);
         }
     }
