@@ -3,10 +3,27 @@
 
 #include <stdint.h>
 
-typedef uint8_t vmprobe_opcode_t;
+#define MAX_I386_INSTR_LEN 17
 
-#define BREAKPOINT_INSTRUCTION (0xcc)
-#define BP_INSN_SIZE (1)
+struct vmprobe_opcode {
+    uint8_t bytes[MAX_I386_INSTR_LEN];
+    uint8_t len;
+};
+
+#define INSTR_BREAKPOINT     (0xcc)
+#define INSTR_BREAKPOINT_LEN 1
+#define INSTR_LEAVE      (0xc9)
+#define INSTR_RET        (0xc3)
+
+vmprobe_opcode_t BREAKPOINT = {
+    .bytes = { INSTR_BREAKPOINT },
+    .len = 1,
+};
+
+vmprobe_opcode_t RETURN = {
+    .bytes = { INSTR_RET },
+    .len = 1,
+};
 
 #define EF_TF (0x00000100)
 #define EF_IF (0x00000200)
@@ -17,13 +34,20 @@ typedef uint8_t vmprobe_opcode_t;
 struct vmprobe_probepoint;
 
 static int
-arch_save_org_insn(struct vmprobe_probepoint *probepoint);
-
-static int
 arch_insert_breakpoint(struct vmprobe_probepoint *probepoint);
 
 static int
 arch_remove_breakpoint(struct vmprobe_probepoint *probepoint);
+
+static int
+arch_insert_code(struct vmprobe_probepoint *probepoint,
+		 struct vmprobe_opcode **opcode_list,
+		 unsigned int opcode_list_len,
+		 uint8_t offset,
+		 uint8_t nosave);
+
+static int
+arch_remove_code(struct vmprobe_probepoint *probepoint);
 
 static inline void
 arch_enter_singlestep(struct cpu_user_regs *regs)
@@ -41,13 +65,13 @@ arch_leave_singlestep(struct cpu_user_regs *regs)
 static inline unsigned long 
 arch_get_org_ip(struct cpu_user_regs *regs)
 {
-    return (unsigned long)(regs->eip - BP_INSN_SIZE);
+    return (unsigned long)(regs->eip - BREAKPOINT.len);
 }
 
 static inline void 
 arch_reset_ip(struct cpu_user_regs *regs)
 {
-    regs->eip -= BP_INSN_SIZE;
+    regs->eip -= BREAKPOINT.len;
 }
 
 static inline unsigned long
