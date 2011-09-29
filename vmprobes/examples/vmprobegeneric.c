@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <signal.h>
 
 #include "vmprobes.h"
 #include "list.h"
@@ -305,7 +306,7 @@ struct itimerval {
 };
 #endif
 
-#if 1
+#if 0
 typedef struct siginfo {
     int si_signo;
     int si_errno;
@@ -314,25 +315,25 @@ typedef struct siginfo {
     // bunch of junk
     //void *_sifields;
 } siginfo_t;
+#endif
 
 /* Most things should be clean enough to redefine this at will, if care
    is taken to make libc match.  */
 
-#define _NSIG		64
-#define _NSIG_BPW	32
-#define _NSIG_WORDS	(_NSIG / _NSIG_BPW)
+#define L_NSIG		64
+#define L_NSIG_BPW	32
+#define L_NSIG_WORDS	(L_NSIG / L_NSIG_BPW)
 
 //typedef unsigned long old_sigset_t;		/* at least 32 bits */
 
 typedef struct {
-	unsigned long sig[_NSIG_WORDS];
+	unsigned long sig[L_NSIG_WORDS];
 } vsigset_t;
 int k_sigismember(vsigset_t *set, int _sig)
 {
     unsigned long sig = _sig - 1;
-    return 1 & (set->sig[sig / _NSIG_BPW] >> (sig % _NSIG_BPW));
+    return 1 & (set->sig[sig / L_NSIG_BPW] >> (sig % L_NSIG_BPW));
 }
-#endif
 
 void socket_call_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 			 int pid,int syscall,int arg,
@@ -2267,6 +2268,7 @@ char *url_encode(char *str) {
     return buf;
 }
 
+int dofilter = 1;
 int send_a3_events = 0;
 char *domainname;
 vmprobe_action_handle_t va;
@@ -2281,7 +2283,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 
     va = -1;
 
-    if (filter) {
+    if (dofilter && filter) {
 	if (!filter->dofilter) {
 	    fprintf(stdout," Filter (noadjust) matched: %d %d %s (%d %d (%d) %d %d)\n",
 		    filter->syscallnum,
@@ -2369,6 +2371,12 @@ static int on_fn_post(vmprobe_handle_t vp,
 	action_destroy(va);
 
     return 0;
+}
+
+void usrsighandle(int signo) {
+    dofilter = !dofilter;
+    fprintf(stderr,"Resetting global filtering to %d.\n",dofilter);
+    signal(SIGUSR1,usrsighandle);
 }
 
 int main(int argc, char *argv[])
@@ -2566,6 +2574,8 @@ int main(int argc, char *argv[])
 	    exit(3);
 	}
     }
+
+    signal(SIGUSR1,usrsighandle);
 
     if (send_a3_events && web_init()) {
 	error("could not connect to A3 monitor!\n");
