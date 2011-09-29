@@ -1,0 +1,57 @@
+#
+# Most of the configure-substitution magic is done here.
+# All the other makefiles in the NodeOS include
+# this fragment
+#
+
+# Need the PATH because the older autoconf does not support
+# AC_PATH_TOOL which is needed for cross-compilation to work.
+#export PATH	= @PATH@
+
+export CC       = @CC@
+export CPP	= @CPP@
+export CXX	= @CXX@
+export LD	= @CC@ ${CFLAGS}
+export STRIP    = @STRIP@
+export LD	= @LD@
+export RANLIB	= @RANLIB@
+export LIBTOOL  = @LIBTOOL@
+export AR	= @AR@
+export RM	= @RM@
+export CP	= @CP@
+export LN_S	= @LN_S@
+export MKDIR_P	= @MKDIR_P@
+export TAR	= @TAR@
+export YACC	= @YACC@
+export LEX	= @LEX@
+export SWIG	= @SWIG@
+
+prefix		= @prefix@
+exec_prefix	= @exec_prefix@
+
+CPPFLAGS	= @CPPFLAGS@
+CFLAGS	       += @CFLAGS@
+CXXFLAGS       += @CXXFLAGS@
+LDFLAGS		= @LDFLAGS@
+
+DESTDIR        ?= 
+INSTALL_TOPDIR	= $(DESTDIR)@prefix@
+INSTALL_DIR     = $(DESTDIR)@prefix@
+INSTALL_LIBDIR  = $(DESTDIR)@libdir@
+INSTALL_INCDIR  = $(DESTDIR)@incdir@
+INSTALL_BINDIR	= $(DESTDIR)@bindir@
+INSTALL_SBINDIR	= $(DESTDIR)@sbindir@
+INSTALL_LIBEXECDIR = $(DESTDIR)@libexecdir@
+INSTALL_ETCDIR  = $(DESTDIR)@sysconfdir@
+INSTALL_INCDIR  = $(DESTDIR)@includedir@
+INSTALL_RCDIR	= $(DESTDIR)@INSTALL_RCDIR@
+
+INSTALL		= @INSTALL@
+INSTALL_PROGRAM	= @INSTALL@ -m 755
+EXE 		= @EXEEXT@
+INSTALL_DATA	= @INSTALL@ -m 444
+SUDO		= @SUDO@
+
+#HAVE_ULXMLRPCPP	= @HAVE_ULXMLRPCPP@
+
+export SHELL = /bin/sh

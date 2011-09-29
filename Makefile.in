@@ -1,0 +1,43 @@
+SRCDIR		= @srcdir@
+OBJDIR		= .
+SUBDIR		= 
+TOP_SRCDIR      = @top_srcdir@
+
+include Makeconf
+
+SUBDIRS = xenaccess vmprobes 
+
+all: all-subdirs 
+
+install: install-subdirs
+
+# We use separate src and obj trees, so the traditional distclean to
+# clean "made" files from a mingled source-and-obj tree is unnecessary.
+# However, this may be useful if you mistakenly configure and make a src tree.
+clean:		clean-subdirs
+
+distclean:	distclean-subdirs
+	rm -rf Makeconf Makefile config.status config.cache config.log autom4te.cache
+	rm -f $(DISTCLEAN_FILES)
+#
+# Here's a different approch to recover from just configure problems.  It cleans
+# all files from an obj tree that have a corresponding .in file in the src tree.
+undo-configure:
+	find $SRCDIR -name '*.in' -a -not -name configure.in | \
+	    sed -e "s;$SRCDIR;$OBJDIR;" -e 's;[.]in$;;' | xargs rm -f
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+#
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+# By default, make any target by descending into subdirectories.
+%: %-subdirs ;
+
+.PHONY: install
+
+# Get rid of a bunch of nasty built-in implicit rules.
+.SUFFIXES:

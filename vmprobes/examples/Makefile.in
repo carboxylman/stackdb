@@ -1,0 +1,66 @@
+PACKAGE = vmprobes-examples
+VERSION = 0.1
+LIBVERSION = 0.1
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+OBJDIR		= ../..
+SUBDIR		= vmprobes/examples
+
+VMPROBES_A      = ../libvmprobes.a
+XENACCESS_A     = $(OBJDIR)/xenaccess/libxenaccess.a
+VMPROBES_SO     = ../libvmprobes.so
+XENACCESS_SO    = $(OBJDIR)/xenaccess/libxenaccess.so
+XENACCESS_INC   = $(TOP_SRCDIR)/
+
+include $(OBJDIR)/Makeconf
+
+CFLAGS := -Wall
+CFLAGS += -O2
+CFLAGS += -g
+CFLAGS += -D VMPROBE_i386 
+CFLAGS += -D VMPROBE_SIGNAL
+#CFLAGS += -D VMPROBE_BENCHMARK
+CFLAGS += -D VMPROBE_DEBUG
+CFLAGS += -I$(XENACCESS_INC) -I$(TOP_SRCDIR)/vmprobes -I./
+
+LDFLAGS := -lxenctrl -lxenstore -lc
+LDFLAGS_SHARED := -L$(OBJDIR)/xenaccess -lxenaccess -L../vmprobes -lvmprobes
+
+INST_BIN = vmprobebio vmprobeopen vmprobenull vmprobegeneric \
+	   vmprobebio-shared vmprobeopen-shared vmprobenull-shared vmprobegeneric-shared
+
+all:	$(INST_BIN)
+
+include $(TOP_SRCDIR)/Makerules
+
+vmprobegeneric: vmprobegeneric.c $(VMPROBES_A) $(XENACCESS_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+
+vmprobegeneric-shared: vmprobegeneric.c $(VMPROBES_SO) $(XENACCESS_SO)
+	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)
+
+vmprobebio: vmprobebio.c $(VMPROBES_A) $(XENACCESS_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+
+vmprobebio-shared: vmprobebio.c $(VMPROBES_SO) $(XENACCESS_SO)
+	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)
+
+vmprobeopen: vmprobeopen.c $(VMPROBES_A) $(XENACCESS_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+
+vmprobeopen-shared: vmprobeopen.c $(VMPROBES_SO) $(XENACCESS_SO)
+	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)
+
+vmprobenull: vmprobenull.c $(VMPROBES_A) $(XENACCESS_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+
+vmprobenull-shared: vmprobenull.c $(VMPROBES_SO) $(XENACCESS_SO)
+	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)
+
+install: def-install
+
+clean: 
+	$(RM) -f $(INST_BIN)
+
+.SECONDARY:
