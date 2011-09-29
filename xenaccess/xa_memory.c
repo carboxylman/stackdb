@@ -610,7 +610,7 @@ void *xa_access_user_va (
         xa_current_cr3(instance, &cr3);
         address = xa_pagetable_lookup(instance, cr3, virt_address, 1);
         if (!address){
-            fprintf(stderr,"ERROR: address (k) not in page table (0x%x)\n",virt_address);
+            xa_dbprint(0,"ERROR: address (k) not in page table (0x%x)\n",virt_address);
             return NULL;
         }
     }
@@ -633,7 +633,7 @@ void *xa_access_user_va (
         }
 
         if (!address){
-            fprintf(stderr,"ERROR: address (u) not in page table (0x%x)\n",virt_address);
+            xa_dbprint(0,"ERROR: address (u) not in page table (0x%x)\n",virt_address);
             return NULL;
         }
     }
@@ -678,7 +678,7 @@ void *xa_access_user_va_range (
         uint32_t addr = start + i*instance->page_size;
     
         if(!addr) {
-            fprintf(stderr,"ERROR: address (%d)v not in page table (%p)\n",pid,(void *)addr);
+            xa_dbprint(0,"ERROR: address (%d)v not in page table (%p)\n",pid,(void *)addr);
 	    free(pfns);
             return NULL;
         }
@@ -686,7 +686,7 @@ void *xa_access_user_va_range (
         /* Physical page frame number of each page */
         maddr = xa_pagetable_lookup(instance, pgd, addr, kernel);
 	if (!maddr) {
-	    fprintf(stderr,"ERROR: address (%d)m not in page table (%p)!\n",pid,(void *)addr);
+	    xa_dbprint(0,"ERROR: address (%d)m not in page table (%p)!\n",pid,(void *)addr);
 	    free(pfns);
 	    return NULL;
 	}
