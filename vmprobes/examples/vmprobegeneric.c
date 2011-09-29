@@ -2279,8 +2279,6 @@ static int on_fn_pre(vmprobe_handle_t vp,
     char *eventstr;
     char *eventstrtmp;
 
-    printf("arg_str = '%s'\n",arg_str);
-
     va = -1;
 
     if (filter) {
