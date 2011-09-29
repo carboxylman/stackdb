@@ -2280,12 +2280,16 @@ static int on_fn_pre(vmprobe_handle_t vp,
     struct argfilter *filter = handle_syscall(vp,regs,arg_str);
     char *eventstr;
     char *eventstrtmp;
+    char *gfilterstr = " (not filtering; globally off!)";
 
     va = -1;
 
-    if (dofilter && filter) {
+    if (filter) {
+	if (dofilter) 
+	    gfilterstr = "";
+
 	if (!filter->dofilter) {
-	    fprintf(stdout," Filter (noadjust) matched: %d %d %s (%d %d (%d) %d %d)\n",
+	    fprintf(stdout," Filter (noadjust) matched: %d %d %s (%d %d (%d) %d %d)%s\n",
 		    filter->syscallnum,
 		    filter->argnum,
 		    filter->strfrag,
@@ -2293,18 +2297,19 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    filter->ppid,
 		    filter->ppid_search,
 		    filter->uid,
-		    filter->gid);
+		    filter->gid,
+		    gfilterstr);
 	    fflush(stdout);
 
 	    if (send_a3_events) {
 		eventstrtmp = malloc(1024);
 		if (!eventstrtmp) {
-		    error("internal error 1 reporting match-abort-returning to A3 monitor!\n");
+		    error("internal error 1 reporting match-noadjust to A3 monitor!\n");
 		    return 0;
 		}
 		snprintf(eventstrtmp,1024,
-			 "%s: match-no-abort %s(%s)",
-			 domainname,
+			 "%s: match-no-abort%s %s(%s)",
+			 domainname,gfilterstr,
 			 sctab[filter->syscallnum].name,arg_str);
 
 		eventstr = url_encode(eventstrtmp);
@@ -2320,7 +2325,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    }
 	}
 	else {
-	    fprintf(stdout," Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!\n",
+	    fprintf(stdout," Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!%s\n",
 		    filter->syscallnum,
 		    filter->argnum,
 		    filter->strfrag,
@@ -2329,7 +2334,8 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    filter->ppid_search,
 		    filter->uid,
 		    filter->gid,
-		    filter->retval);
+		    filter->retval,
+		    gfilterstr);
 	    fflush(stdout);
 
 	    if (send_a3_events) {
@@ -2339,8 +2345,9 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    return 0;
 		}
 		snprintf(eventstrtmp,1024,
-			 "%s: match-abort-returning %d from %s(%s)",
+			 "%s: match-abort%s returning %d from %s(%s)",
 			 domainname,
+			 gfilterstr,
 			 filter->retval,
 			 sctab[filter->syscallnum].name,arg_str);
 
@@ -2356,8 +2363,10 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		free(eventstrtmp);
 	    }
 
-	    va = action_return(filter->retval);
-	    action_sched(vp,va,VMPROBE_ACTION_ONESHOT);
+	    if (dofilter) {
+		va = action_return(filter->retval);
+		action_sched(vp,va,VMPROBE_ACTION_ONESHOT);
+	    }
 	}
     }
 
