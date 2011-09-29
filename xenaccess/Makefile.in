@@ -1,37 +1,67 @@
-CC := gcc
+PACKAGE = xenaccess
+VERSION = 0.5
+LIBVERSION = 0.5
 
-CFLAGS := -fPIC
-CFLAGS += -Wall
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+OBJDIR		= ..
+SUBDIR		= xenaccess
+
+include $(OBJDIR)/Makeconf
+
+CFLAGS := -Wall -I.
 CFLAGS += -O2
 CFLAGS += -g
-CFLAGS += -I./
 
-# xenaccess
 CFLAGS += -D ENABLE_XEN -D XA_DEBUG
-OBJECTS := linux_core.o
-OBJECTS += linux_domain_info.o
-OBJECTS += linux_memory.o
-OBJECTS += linux_symbols.o
-OBJECTS += windows_core.o
-OBJECTS += windows_memory.o
-OBJECTS += windows_process.o
-OBJECTS += windows_symbols.o
-OBJECTS += xa_cache.o
-OBJECTS += xa_core.o
-OBJECTS += xa_domain_info.o
-OBJECTS += xa_error.o
-OBJECTS += xa_file.o
-OBJECTS += xa_memory.o
-OBJECTS += xa_pretty_print.o
-OBJECTS += xa_symbols.o
-OBJECTS += xa_util.o
 
-default: Makefile $(OBJECTS)
-	@echo "xenaccess compiled"
+HEADERS := xenaccess.h xa_private.h
 
-%.o: %.c
-	@$(CC) -c $(CFLAGS) -o $@ $<
+OBJECTS := linux_core.lo \
+           linux_domain_info.lo \
+           linux_memory.lo \
+           linux_symbols.lo \
+           windows_core.lo \
+           windows_memory.lo \
+           windows_process.lo \
+           windows_symbols.lo \
+           xa_cache.lo \
+           xa_core.lo \
+           xa_domain_info.lo \
+           xa_error.lo \
+           xa_file.lo \
+           xa_memory.lo \
+           xa_pretty_print.lo \
+           xa_symbols.lo \
+           xa_util.lo \
+
+LIBRARIES := libxenaccess.a libxenaccess.so.$(LIBVERSION)
+
+INST_INC = xenaccess.h
+INST_LIB = $(LIBRARIES)
+
+all:	$(LIBRARIES) libxenaccess.so
+
+include $(TOP_SRCDIR)/Makerules
+
+install: def-install
+	$(SUDO) $(CP) -fd libxenaccess.so $(DESTDIR)$(INSTALL_LIBDIR)/
+
+.c.lo:	$(HEADERS)
+	@$(LIBTOOL) --mode=compile ${CC} ${CFLAGS} -c $<
+
+libxenaccess.a:	$(OBJECTS)
+	@$(LIBTOOL) --mode=link $(CC) -o libxenaccess.a $(OBJECTS)
+
+libxenaccess.lo:	$(OBJECTS)
+	@$(LIBTOOL) --mode=link ${CC} ${LDFLAGS} -shared -o $@ $(OBJECTS)
+
+libxenaccess.so.$(LIBVERSION):	libxenaccess.lo
+	$(CP) -f libxenaccess.lo $@
+
+libxenaccess.so:	libxenaccess.so.$(LIBVERSION)
+	$(LN_S) $< $@
 
 clean:
-	@rm -f $(OBJECTS)
-	@echo "xenaccess cleaned"
+	$(RM) -f $(OBJECTS)
+	$(RM) -rf  $(LIBRARIES) *.o libxenaccess.lo .libs
