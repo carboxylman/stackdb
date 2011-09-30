@@ -3,12 +3,12 @@ CC := gcc
 CFLAGS := -fPIC
 CFLAGS += -Wall
 CFLAGS += -O2
-#CFLAGS += -g
+CFLAGS += -g
 CFLAGS += -I./
 
 # xenaccess
 CFLAGS += -D ENABLE_XEN
-#CFLAGS += -D XA_DEBUG
+CFLAGS += -D XA_DEBUG
 OBJECTS := xenaccess/linux_core.o
 OBJECTS += xenaccess/linux_domain_info.o
 OBJECTS += xenaccess/linux_memory.o
@@ -42,16 +42,16 @@ TARGET := vmps
 
 default:
 	@echo "compiling vmps (be patient)"
-	@$(MAKE) $(TARGET)
+	$(MAKE) $(TARGET)
 	@echo "vmps compiled"
 
 %.o: %.c
-	@$(CC) -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 $(TARGET): $(OBJECTS)
-	@$(CC) $(CFLAGS) $(OBJECTS) $(LFLAGS) -o $@
+	$(CC) $(CFLAGS) $(OBJECTS) $(LFLAGS) -o $@
 
 clean:
-	@$(RM) -f $(OBJECTS)
-	@$(RM) -f $(TARGET)
+	$(RM) -f $(OBJECTS)
+	$(RM) -f $(TARGET)
 	@echo "vmps cleaned"

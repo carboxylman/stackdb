@@ -165,7 +165,8 @@ AC_PROG_INSTALL
 esac]
 
 outfiles="$outfiles Makeconf Makefile \
-          xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile"
+          xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
+          vmfs/Makefile vmps/Makefile"
 
 #
 # Do this for easy distclean.
