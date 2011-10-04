@@ -1,57 +1,48 @@
-CC := gcc
+PACKAGE = vmps
+VERSION = 0.1
+LIBVERSION = 0.1
 
-CFLAGS := -fPIC
-CFLAGS += -Wall
+SRCDIR          = @srcdir@
+TOP_SRCDIR      = @top_srcdir@
+OBJDIR          = ..
+SUBDIR          = vmps
+
+XENACCESS_FLAGS = -D ENABLE_XEN -D XA_DEBUG
+XENACCESS_A     = $(OBJDIR)/xenaccess/libxenaccess.a
+XENACCESS_INC   = $(TOP_SRCDIR)/
+
+include $(OBJDIR)/Makeconf
+
+CFLAGS := -Wall
 CFLAGS += -O2
 CFLAGS += -g
-CFLAGS += -I./
+CFLAGS += $(XENACCESS_FLAGS) -I./ -I$(XENACCESS_INC)
 
-# xenaccess
-CFLAGS += -D ENABLE_XEN
-CFLAGS += -D XA_DEBUG
-OBJECTS := xenaccess/linux_core.o
-OBJECTS += xenaccess/linux_domain_info.o
-OBJECTS += xenaccess/linux_memory.o
-OBJECTS += xenaccess/linux_symbols.o
-OBJECTS += xenaccess/windows_core.o
-OBJECTS += xenaccess/windows_memory.o
-OBJECTS += xenaccess/windows_process.o
-OBJECTS += xenaccess/windows_symbols.o
-OBJECTS += xenaccess/xa_cache.o
-OBJECTS += xenaccess/xa_core.o
-OBJECTS += xenaccess/xa_domain_info.o
-OBJECTS += xenaccess/xa_error.o
-OBJECTS += xenaccess/xa_file.o
-OBJECTS += xenaccess/xa_memory.o
-OBJECTS += xenaccess/xa_pretty_print.o
-OBJECTS += xenaccess/xa_symbols.o
-OBJECTS += xenaccess/xa_util.o
+LDFLAGS := -lxenctrl -lxenstore
+LDFLAGS += -lebl -lelf -ldw
 
-# vmps
-LFLAGS := -lxenctrl
-LFLAGS += -lxenstore
-LFLAGS += -lebl
-LFLAGS += -lelf
-LFLAGS += -ldw
-OBJECTS += config.o
-OBJECTS += offset.o
-OBJECTS += web.o
-OBJECTS += log.o
-OBJECTS += vmps.o
-TARGET := vmps
+OBJECTS := config.lo offset.lo web.lo log.lo vmps.lo
 
-default:
-	@echo "compiling vmps (be patient)"
-	$(MAKE) $(TARGET)
-	@echo "vmps compiled"
+INST_BIN := vmps
 
-%.o: %.c
-	$(CC) -c $(CFLAGS) -o $@ $<
+all:    $(OBJECTS) $(INST_BIN)
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) $(OBJECTS) $(LFLAGS) -o $@
+# Get rid of a bunch of nasty built-in implicit rules.
+.SUFFIXES:
+
+include $(TOP_SRCDIR)/Makerules
+
+.c.lo:  $(HEADERS)
+	$(LIBTOOL) --mode=compile ${CC} ${CFLAGS} -c $<
+
+vmps: $(OBJECTS) $(XENACCESS_A)
+	$(LIBTOOL) --mode=link \
+	$(CC) $(CFLAGS) $(OBJECTS) $(XENACCESS_A) $(LDFLAGS) -o $@
+
+install: def-install
 
 clean:
-	$(RM) -f $(OBJECTS)
-	$(RM) -f $(TARGET)
-	@echo "vmps cleaned"
+	$(RM) -rf $(OBJECTS) *.o .libs
+	$(RM) -f $(INST_BIN)
+
+.SECONDARY:
