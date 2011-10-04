@@ -54,7 +54,7 @@ if test ! -d "$PYTHON_PATH/include"; then
     PYTHON_PATH=`dirname ${PYTHON_PATH}`
 fi
 PYTHON_INCLUDE="${PYTHON_PATH}/include/python${PYTHON_VERSION}"
-CPPFLAGS="${CPPFLAGS} -I${PYTHON_INCLUDE}"
+#CPPFLAGS="${CPPFLAGS} -I${PYTHON_INCLUDE}"
 AC_CHECK_HEADERS([Python.h],
 		 [],
 		 [AC_MSG_WARN("Cannot find Python.h in ${PYTHON_INCLUDE}")])
@@ -166,7 +166,7 @@ esac]
 
 outfiles="$outfiles Makeconf Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
-          vmfs/Makefile vmps/Makefile"
+          vmfs/Makefile vmps/Makefile vmtap/Makefile"
 
 #
 # Do this for easy distclean.

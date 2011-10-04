@@ -1,75 +1,52 @@
-CC := gcc
-LD := ld
-SWIG := swig
-LEX := flex
+PACKAGE = vmtap
+VERSION = 0.1
+LIBVERSION = 0.1
 
-PYINCLUDE := /usr/include/python2.5
-PYLIB := /usr/lib/python2.5
+SRCDIR          = @srcdir@
+TOP_SRCDIR      = @top_srcdir@
+SUBDIR          = vmtap
+OBJDIR          = @top_builddir@
 
-CFLAGS := -fPIC
-CFLAGS += -Wall
+include $(OBJDIR)/Makeconf
+
+CFLAGS := -Wall
 CFLAGS += -O2
 CFLAGS += -g
-CFLAGS += -I./
+CFLAGS += -I./ -I$(PYTHON_INCLUDE) -I$(XENACCESS_INC) -I$(VMPROBES_INC)
 
-# xenaccess
-CFLAGS += -D ENABLE_XEN -D XA_DEBUG
-OBJECTS := xenaccess/linux_core.o
-OBJECTS += xenaccess/linux_domain_info.o
-OBJECTS += xenaccess/linux_memory.o
-OBJECTS += xenaccess/linux_symbols.o
-OBJECTS += xenaccess/windows_core.o
-OBJECTS += xenaccess/windows_memory.o
-OBJECTS += xenaccess/windows_process.o
-OBJECTS += xenaccess/windows_symbols.o
-OBJECTS += xenaccess/xa_cache.o
-OBJECTS += xenaccess/xa_core.o
-OBJECTS += xenaccess/xa_domain_info.o
-OBJECTS += xenaccess/xa_error.o
-OBJECTS += xenaccess/xa_file.o
-OBJECTS += xenaccess/xa_memory.o
-OBJECTS += xenaccess/xa_pretty_print.o
-OBJECTS += xenaccess/xa_symbols.o
-OBJECTS += xenaccess/xa_util.o
-
-# vmprobes
-CFLAGS += -D VMPROBE_i386
-CFLAGS += -D VMPROBE_DEBUG
-CFLAGS += -D VMPROBE_SIGNAL
-OBJECTS += vmprobes/vmprobes.o
-
-# vmtap
 CFLAGS += -D VMTAP_DEBUG
-CFLAGS += -I$(PYINCLUDE)
-LFLAGS := -shared
-LFLAGS += -lxenctrl
-LFLAGS += -lxenstore
-SFLAGS := -python
+
+LDFLAGS += -lxenctrl -lxenstore -L$(VMPROBES_LIBDIR) -lvmprobes -L$(XENACCESS_LIBDIR) -lxenaccess
+
 WRAPPER := vmtap_wrap.c
 PARSER := vmtap_parse.yy.c
-OBJECTS += vmtap.o
-OBJECTS += vmtap_wrap.o
-OBJECTS += vmtap_parse.yy.o
+
+HEADERS := vmtap.h private.h
+OBJECTS := vmtap.lo vmtap_wrap.lo vmtap_parse.yy.lo
+
 MODULE := vmtap.py
 MODBIN := vmtap.pyc
 TARGET := _vmtap.so
 
-default:
-	@echo "compiling vmtap... (be patient)"
-	$(MAKE) $(TARGET)
-	@echo "vmtap compiled"
+INST_LIB = vmtap.py vmtap.pyc _vmtap.so
+
+all:	_vmtap.so 
+
+include $(TOP_SRCDIR)/Makerules
+
+.c.lo:	$(HEADERS)
+	@$(LIBTOOL) --mode=compile ${CC} ${CFLAGS} -c $<
 
 %_wrap.c: %.i
-	$(SWIG) $(SFLAGS) $<
+	$(SWIG) -python $<
 
-%.yy.c: %.l
+%.yy.c: %.l $(HEADERS)
 	$(LEX) -o $@ $<
 
-%.o: %.c
-	$(CC) -c $(CFLAGS) -o $@ $<
-
 %.so: $(WRAPPER) $(PARSER) $(OBJECTS)
-	$(LD) $(LFLAGS) $(OBJECTS) -o $@
+	$(LIBTOOL) --mode=link ${CC} -shared $(LDFLAGS) $(OBJECTS) -o $@
+
+install: def-install
 
 clean:
 	$(RM) -f $(WRAPPER)
@@ -77,17 +54,6 @@ clean:
 	$(RM) -f $(OBJECTS)
 	$(RM) -f $(MODULE) $(MODBIN)
 	$(RM) -f $(TARGET)
-	@echo "vmtap cleaned"
-
-install:
-	@cp $(TARGET) $(PYLIB)
-	@cp $(MODULE) $(PYLIB)
-	@echo "vmtap installed"
-
-uninstall:
-	$(RM) -f $(PYLIB)/$(TARGET)
-	$(RM) -f $(PYLIB)/$(MODULE)
-	@echo "vmtap uninstalled"
 
 .SECONDARY:
 
