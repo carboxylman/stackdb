@@ -2308,8 +2308,8 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    return 0;
 		}
 		snprintf(eventstrtmp,1024,
-			 "%s: match-no-abort%s %s(%s)",
-			 domainname,gfilterstr,
+			 "%s: MATCH: %s(%s)",
+			 domainname,
 			 sctab[filter->syscallnum].name,arg_str);
 
 		eventstr = url_encode(eventstrtmp);
@@ -2344,12 +2344,18 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    error("internal error 1 reporting match-abort-returning to A3 monitor!\n");
 		    return 0;
 		}
-		snprintf(eventstrtmp,1024,
-			 "%s: match-abort%s returning %d from %s(%s)",
-			 domainname,
-			 gfilterstr,
-			 filter->retval,
-			 sctab[filter->syscallnum].name,arg_str);
+
+		if (!dofilter) 
+		    snprintf(eventstrtmp,1024,
+			     "%s: ALLOW: %s(%s)",
+			     domainname,
+			     sctab[filter->syscallnum].name,arg_str);
+		else 
+		    snprintf(eventstrtmp,1024,
+			     "%s: ABORT: return %d: %s(%s)",
+			     domainname,
+			     filter->retval,
+			     sctab[filter->syscallnum].name,arg_str);
 
 		eventstr = url_encode(eventstrtmp);
 		//eventstr = eventstrtmp;
