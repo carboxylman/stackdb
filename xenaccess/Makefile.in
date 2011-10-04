@@ -4,8 +4,8 @@ LIBVERSION = 0.5
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-OBJDIR		= ..
 SUBDIR		= xenaccess
+OBJDIR		= @top_builddir@
 
 include $(OBJDIR)/Makeconf
 
@@ -64,4 +64,4 @@ libxenaccess.so:	libxenaccess.so.$(LIBVERSION)
 
 clean:
 	$(RM) -f $(OBJECTS)
-	$(RM) -rf  $(LIBRARIES) *.o libxenaccess.lo .libs
+	$(RM) -rf  $(LIBRARIES) *.o libxenaccess.lo libxenaccess.so .libs

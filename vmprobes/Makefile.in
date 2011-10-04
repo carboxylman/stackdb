@@ -4,12 +4,8 @@ LIBVERSION = 0.1
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-OBJDIR		= ..
 SUBDIR		= vmprobes
-
-XENACCESS_FLAGS = -D ENABLE_XEN -D XA_DEBUG
-XENACCESS_A     = $(OBJDIR)/xenaccess/libxenaccess.a
-XENACCESS_INC   = $(TOP_SRCDIR)/
+OBJDIR		= @top_builddir@
 
 SUBDIRS = examples
 
@@ -18,11 +14,7 @@ include $(OBJDIR)/Makeconf
 CFLAGS := -Wall
 CFLAGS += -O2
 CFLAGS += -g
-CFLAGS += $(XENACCESS_FLAGS)
-CFLAGS += -D VMPROBE_i386 
-CFLAGS += -D VMPROBE_SIGNAL
-#CFLAGS += -D VMPROBE_BENCHMARK
-CFLAGS += -D VMPROBE_DEBUG
+CFLAGS += $(XENACCESS_FLAGS) $(VMPROBES_FLAGS)
 CFLAGS += -I./ -I$(XENACCESS_INC)
 
 HEADERS := vmprobes.h private.h

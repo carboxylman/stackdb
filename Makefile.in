@@ -1,11 +1,11 @@
 SRCDIR		= @srcdir@
-OBJDIR		= .
-SUBDIR		= 
 TOP_SRCDIR      = @top_srcdir@
+SUBDIR		= 
+OBJDIR		= @top_builddir@
 
 include Makeconf
 
-SUBDIRS = xenaccess vmprobes 
+SUBDIRS = xenaccess vmprobes vmps vmfs vmtap
 
 all: all-subdirs 
 

@@ -4,12 +4,8 @@ LIBVERSION = 0.1
 
 SRCDIR          = @srcdir@
 TOP_SRCDIR      = @top_srcdir@
-OBJDIR          = ..
 SUBDIR          = vmps
-
-XENACCESS_FLAGS = -D ENABLE_XEN -D XA_DEBUG
-XENACCESS_A     = $(OBJDIR)/xenaccess/libxenaccess.a
-XENACCESS_INC   = $(TOP_SRCDIR)/
+OBJDIR		= @top_builddir@
 
 include $(OBJDIR)/Makeconf
 
