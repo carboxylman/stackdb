@@ -299,71 +299,6 @@ init_vmtap(vmtap_callback_t callback)
     return true;
 }
 
-static void *
-vmtap_access_user_va_range(xa_instance_t *xa_instance,
-                           unsigned long address,
-                           unsigned long size,
-                           unsigned long *offset,
-                           int pid,
-                           int prot)
-{
-    int xc_handle;
-    domid_t domid;
-    void *pages;
-    unsigned long i, page_size, page_shift, no_pages;
-    unsigned long start, vaddr, maddr;
-    unsigned long tmp_offset;
-    unsigned int cr3 = 0;
-    unsigned long mapped = 0; /* number of pages mapped */
-    const int kernel = !pid;
-
-    page_size = xa_instance->page_size;
-    page_shift = xa_instance->page_shift;
-    start = address & ~(page_size - 1);
-    tmp_offset = address - start;
-    no_pages = (size + tmp_offset) / page_size + 1;
-
-    /* cr3 register holds the page directory */
-    if (xa_current_cr3(xa_instance, &cr3) == XA_FAILURE)
-        return NULL;
-
-    xen_pfn_t *mfns = (xen_pfn_t *)malloc(sizeof(xen_pfn_t) * no_pages);
-    if (!mfns) return NULL;
-
-    for (i = 0; i < no_pages; i++)
-    {
-        /* virtual address for each page we will map */
-        vaddr = start + i * page_size;
-        if (!vaddr)
-        {
-            free(mfns);
-            return NULL;
-        }
-
-        /* machine address for each page */
-        maddr = xa_pagetable_lookup(xa_instance, cr3, vaddr, kernel);
-
-        if (maddr) mapped++;
-        else break; /* FIXME: map pages that are found only - is this okay? */
-
-        /* machine page frame number of each page */
-        mfns[i] = maddr >> page_shift;
-    }
-
-    xc_handle = xa_instance->m.xen.xc_handle;
-    domid = xa_instance->m.xen.domain_id;
-
-    pages = xc_map_foreign_pages(xc_handle, domid, prot, mfns, mapped);
-    if (!pages)
-    {
-        free(mfns);
-        return NULL;
-    }
-
-    *offset = tmp_offset;
-    return pages;
-}
-
 static unsigned char *
 mmap_pages(struct vmtap_probe *probe, 
            unsigned long vaddr, 
@@ -389,7 +324,7 @@ mmap_pages(struct vmtap_probe *probe,
     else
     {
         /* xenaccess can't map multiple pages properly, use our own function */
-        pages = vmtap_access_user_va_range(xa_instance, vaddr, size, offset, 
+        pages = xa_access_user_va_range(xa_instance, vaddr, size, offset, 
             pid, prot);
     }
 
