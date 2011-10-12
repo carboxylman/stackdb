@@ -28,7 +28,7 @@ MODULE := vmtap.py
 MODBIN := vmtap.pyc
 TARGET := _vmtap.so
 
-INST_LIB = vmtap.py vmtap.pyc _vmtap.so
+#INST_LIB = vmtap.py vmtap.pyc _vmtap.so
 
 all:	_vmtap.so 
 
@@ -47,13 +47,15 @@ include $(TOP_SRCDIR)/Makerules
 	$(LIBTOOL) --mode=link ${CC} -shared $(LDFLAGS) $(OBJECTS) -o $@
 
 install: def-install
+	$(INSTALL_DATA) _vmtap.so $(PYTHON_LIB)/site-packages/
+	$(INSTALL_PROGRAM) vmtap.py $(PYTHON_LIB)/site-packages/
+	$(INSTALL_DATA) vmtap.pyc $(PYTHON_LIB)/site-packages/
 
 clean:
 	$(RM) -f $(WRAPPER)
 	$(RM) -f $(PARSER)
-	$(RM) -f $(OBJECTS)
-	$(RM) -f $(MODULE) $(MODBIN)
-	$(RM) -f $(TARGET)
+	$(RM) -rf $(OBJECTS) .libs
+	$(RM) -f vmtap.py vmtap.pyc _vmtap.so
 
 .SECONDARY:
 

@@ -54,11 +54,13 @@ if test ! -d "$PYTHON_PATH/include"; then
     PYTHON_PATH=`dirname ${PYTHON_PATH}`
 fi
 PYTHON_INCLUDE="${PYTHON_PATH}/include/python${PYTHON_VERSION}"
+PYTHON_LIB="${PYTHON_PATH}/lib/python${PYTHON_VERSION}"
 #CPPFLAGS="${CPPFLAGS} -I${PYTHON_INCLUDE}"
 AC_CHECK_HEADERS([Python.h],
 		 [],
 		 [AC_MSG_WARN("Cannot find Python.h in ${PYTHON_INCLUDE}")])
 AC_SUBST(PYTHON_INCLUDE)
+AC_SUBST(PYTHON_LIB)
 # END Python detection.
 
 #
