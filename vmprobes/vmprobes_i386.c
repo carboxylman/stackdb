@@ -1,3 +1,4 @@
+#include "vmprobes.h"
 #include "vmprobes_i386.h"
 
 static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
@@ -19,6 +20,9 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
     for (i = 0; i < opcode_list_len; ++i) {
 	total += opcode_list[i]->len;
     }
+    
+    debug(0,"dom%d: replacing at 0x%08lx\n",
+	  domain->id,probepoint->vaddr);
     
     page = xa_access_kernel_va_range(xa_instance, 
                                      probepoint->vaddr, 
