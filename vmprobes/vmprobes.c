@@ -1414,6 +1414,9 @@ mmap_pages(xa_instance_t *xa_instance,
         pages = xa_access_user_va(xa_instance, vaddr, offset, 
 				  pid, prot);
 	if (!pages) {
+	    if (!pid)
+		return NULL;
+
 	    pages = xa_access_user_va(xa_instance, vaddr, offset, 
 				      0, prot);
 	    if (!pages)
@@ -1429,6 +1432,8 @@ mmap_pages(xa_instance_t *xa_instance,
 
 	if (!pages) { // && pid) {
 	    //return NULL;
+	    if (!pid)
+		return NULL;
 
 	    /* try kernel */
 	    pages = xa_access_user_va_range(xa_instance, vaddr, size, 
