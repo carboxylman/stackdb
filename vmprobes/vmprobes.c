@@ -175,6 +175,30 @@ init_evtchn(evtchn_port_t *dbg_port)
 }
 
 static int
+reinit_evtchn(evtchn_port_t *dbg_port)
+{
+    int evtchn;
+    int port;
+    
+    evtchn = xc_evtchn_open();
+    if (evtchn < 0)
+    {
+        perror("failed to open evtchn device");
+        return evtchn;
+    }
+    port = xc_evtchn_bind_virq(evtchn, VIRQ_DEBUGGER);
+    if (port < 0)
+    {
+        perror("warning: failed to bind debug virq port");
+    }
+    else {
+	*dbg_port = port;
+    }
+    
+    return evtchn;
+}
+
+static int
 set_debugging(domid_t domid, bool enable)
 {
     struct xen_domctl domctl;
@@ -797,6 +821,36 @@ init_vmprobes(void)
 }
 
 static int
+reinit_vmprobes(void)
+{
+    vmprobe_handle_t handle;
+    vmprobe_action_handle_t action_handle;
+    
+    if (xc_handle != -1)
+        return -1; // xc interface already open
+
+    VMPROBE_PERF_RESET();
+
+    xc_handle = xc_interface_open();
+    if (xc_handle < 0)
+    {
+        perror("failed to open xc interface");
+        return xc_handle;
+    }
+
+    xce_handle = init_evtchn(&dbg_port);
+    if (xce_handle < 0)
+    {
+        cleanup_vmprobes();
+        return xce_handle;
+    }
+
+    interrupt = false;
+    debug(0,"vmprobes reinitialized\n");
+    return 0;
+}
+
+static int
 __register_vmprobe(struct vmprobe *probe)
 {
     struct vmprobe_probepoint *probepoint;
@@ -1281,7 +1335,7 @@ run_vmprobes(void)
 }
 
 void
-stop_vmprobes(void)
+interrupt_vmprobes(void)
 {
     int fd;
 
@@ -1290,6 +1344,46 @@ stop_vmprobes(void)
     /* close the fd to make the select() in run_vmprobes() return */
     fd = xc_evtchn_fd(xce_handle);
     close(fd);
+}
+
+void
+stop_vmprobes(void)
+{
+    int fd;
+
+    interrupt = true;
+
+    xc_evtchn_unbind(xce_handle,(evtchn_port_t)dbg_port);
+    dbg_port = -1;
+    
+    xc_evtchn_close(xce_handle);
+    xce_handle = -1;
+    
+    xc_interface_close(xc_handle);
+    xc_handle = -1;
+
+    /* close the fd to make the select() in run_vmprobes() return */
+    //fd = xc_evtchn_fd(xce_handle);
+    //close(fd);
+
+    //xc_evtchn_close(xce_handle);
+    //xce_handle = -1;
+}
+
+int
+restart_vmprobes(void)
+{
+    interrupt = false;
+
+    // reopen event channel
+    //xce_handle = reinit_evtchn(&dbg_port);
+    //if (xce_handle < 0)
+    //{
+    //    return xce_handle;
+    //}
+    reinit_vmprobes();
+
+    return 0;
 }
 
 int

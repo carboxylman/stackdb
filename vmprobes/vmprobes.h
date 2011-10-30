@@ -140,11 +140,17 @@ unregister_vmprobe(vmprobe_handle_t handle);
 void
 run_vmprobes(void);
 
+void
+interrupt_vmprobes(void);
+
 /*
  * Stops all running probes.
  */
 void
 stop_vmprobes(void);
+
+int
+restart_vmprobes(void);
 
 /*
  * Disables a running probe. When disabled, both pre- and post-handlers are 
