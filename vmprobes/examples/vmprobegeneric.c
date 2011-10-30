@@ -36,7 +36,18 @@ struct argfilter {
     regex_t *preg;
     char *strfrag;
     int retval;
+    char *name;
 };
+
+void free_argfilter(struct argfilter *f) {
+    if (f->preg)
+	regfree(f->preg);
+    if (f->strfrag)
+	free(f->strfrag);
+    if (f->name)
+	free(f->name);
+    free(f);
+}
 
 struct process_data {
     unsigned int pid;
@@ -75,10 +86,6 @@ void usage(char *progname) {
 extern char *optarg;
 extern int optind, opterr, optopt;
 
-char **syscall_list;
-int syscall_list_len = 0;
-int syscall_list_alloclen = 10;
-
 struct argfilter **argfilter_list;
 int argfilter_list_len = 0;
 int argfilter_list_alloclen = 10;
@@ -93,10 +100,14 @@ int check_filter(int syscallnum,int argnum,char *argval,
 
     if (filter_ptr && *filter_ptr == NULL && argval) {
 	for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
+	    debug(0,"filter name=%s, process name=%s\n",argfilter_list[lpc]->name,data->name);
+	    
 	    if ((argfilter_list[lpc]->syscallnum == -1 || argfilter_list[lpc]->syscallnum == syscallnum)
 		&& (argfilter_list[lpc]->argnum == -1 || argfilter_list[lpc]->argnum == argnum)
 		&& (argfilter_list[lpc]->preg == NULL
-		    || !regexec(argfilter_list[lpc]->preg,argval,0,NULL,0))) {
+		    || !regexec(argfilter_list[lpc]->preg,argval,0,NULL,0))
+		&& (argfilter_list[lpc]->name == NULL 
+		    || strcmp(argfilter_list[lpc]->name,data->name) == 0)) {
 		smatch = 1;
 	    }
 
@@ -900,7 +911,6 @@ char *process_list_to_string(vmprobe_handle_t handle,
     int delimlen;
     int startpid;
     struct process_data *pdata;
-    struct process_data *ptmp;
     char *rdelim = delim;
     int i = 0;
     unsigned long next;
@@ -1103,6 +1113,7 @@ void ioctl_cmd_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 void exit_code_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       int pid,int syscall,int arg,
 		       unsigned char **arg_data,
+		       char *arg_str,char **arg_str_cur,
 		       struct argfilter **filter_ptr,
 		       struct process_data *data)
 {
@@ -2419,6 +2430,8 @@ int dofilter = 1;
 int send_a3_events = 0;
 char *domainname;
 vmprobe_action_handle_t va;
+char *configfile = NULL;
+int reloadconfigfile = 0;
 
 static int on_fn_pre(vmprobe_handle_t vp, 
 		     struct cpu_user_regs *regs)
@@ -2528,7 +2541,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 
 static int on_fn_post(vmprobe_handle_t vp, 
 		      struct cpu_user_regs *regs)
-{   
+{
     if (va != -1) 
 	action_destroy(va);
 
@@ -2539,6 +2552,292 @@ void usrsighandle(int signo) {
     dofilter = !dofilter;
     fprintf(stderr,"Resetting global filtering to %d.\n",dofilter);
     signal(SIGUSR1,usrsighandle);
+}
+
+void hupsighandle(int signo) {
+    reloadconfigfile = 1;
+    interrupt_vmprobes();
+    signal(SIGUSR2,hupsighandle);
+}
+
+int load_config_file(char *file,char ***new_function_list,int *new_function_list_len,
+		     struct argfilter ***new_argfilter_list,int *new_argfilter_list_len) {
+    char *buf;
+    char *bufptr;
+    char *tbuf;
+    int bufsiz = 128;
+    int rc = 0;
+    FILE *ffile;
+    char **flist = NULL;
+    int flist_alloclen = 8;
+    int flist_len = 0;
+    struct argfilter *filter = NULL;
+    struct argfilter **alist;
+    int alist_alloclen = 8;
+    int alist_len = 0;
+    char *saveptr, *token = NULL;
+    char *saveptr2, *token2 = NULL;
+    char errbuf[128];
+    int i = 0;
+    char *var = NULL, *val = NULL;
+
+    ffile = fopen(file,"r");
+    if (!ffile) {
+	fprintf(stderr,"ERROR: could not fopen filter file %s: %s\n",file,strerror(errno));
+	fflush(stderr);
+	return -1;
+    }
+
+    alist = (struct argfilter **)malloc(sizeof(struct argfilter *)*alist_alloclen);
+    flist = (char **)malloc(sizeof(char *)*flist_alloclen);
+
+    // read directives line by line.
+    buf = malloc(bufsiz);
+    while (1) {
+	rc = 0;
+	while (1) {
+	    errno = 0;
+	    tbuf = fgets(buf,bufsiz,ffile);
+	    if (tbuf && (rc += strlen(buf)) == (bufsiz-1) && buf[bufsiz-2] != '\n') {
+		// we filled up the buf; malloc more and keep going
+		tbuf = malloc(bufsiz+128);
+		memcpy(tbuf,buf,bufsiz);
+		free(buf);
+		buf = tbuf;
+	    }
+	    else if (tbuf && rc < bufsiz) {
+		// we have our line
+		break;
+	    }
+	    else if (errno) {
+		fprintf(stderr,"ERROR: fgets: %s (aborting filter file read)\n",strerror(errno));
+		fflush(stderr);
+		goto errout;
+	    }
+	    else {
+		// EOF
+		free(buf);
+		buf = NULL;
+		break;
+	    }
+	}
+
+	if (!buf)
+	    break;
+
+	debug(2,"read line %s",buf);
+
+	if (*buf == '#')
+	    continue;
+
+	if (buf[strlen(buf)-1] == '\n')
+	    buf[strlen(buf)-1] = '\0';
+
+	if (strncmp(buf,"Functions",strlen("Functions")) == 0) {
+	    bufptr = buf + 9;
+	    while (*bufptr == ' ' || *bufptr == '\t')
+		++bufptr;
+
+	    token = NULL;
+	    saveptr = NULL;
+	    while ((token = strtok_r((!token)?bufptr:NULL,",",&saveptr))) {
+		if (flist_alloclen == flist_len) {
+		    flist_alloclen += 8;
+		    if (!(flist = realloc(flist,sizeof(char *)*flist_alloclen))) {
+			fprintf(stderr,"ERROR: filter file format: realloc: %s\n",strerror(errno));
+			goto errout;
+		    }
+		}
+
+		flist[flist_len] = strdup(token);
+		++flist_len;
+		debug(2,"read function %s",token);
+	    }
+	}
+	else if (strncmp(buf,"Filter",strlen("Filter")) == 0) {
+	    bufptr = buf + 6;
+	    while (*bufptr == ' ' || *bufptr == '\t')
+		++bufptr;
+
+	    filter = (struct argfilter *)malloc(sizeof(struct argfilter));
+	    memset(filter,0,sizeof(struct argfilter));
+	    filter->pid = -1;
+	    filter->ppid = -1;
+	    filter->ppid_search = 0;
+	    filter->gid = -1;
+	    filter->uid = -1;
+	    filter->dofilter = 1;
+
+	    // parse the line into an argfilter struct!
+	    token = NULL;
+	    saveptr = NULL;
+	    while ((token = strtok_r((!token)?bufptr:NULL,",",&saveptr))) {
+		saveptr2 = NULL;
+		token2 = NULL;
+		i = 0;
+		while ((token2 = strtok_r((!token2)?token:NULL,"=",&saveptr2))) {
+		    //printf("f token2 %s\n",token2);
+		    switch (i) {
+		    case 0:
+			var = token2;
+			break;
+		    case 1:
+			val = token2;
+			break;
+		    default:
+			break;
+		    }
+		    ++i;
+		    if (i == 2)
+			break;
+		}
+		
+		if (*var == '\0' || *val == '\0') {
+		    fprintf(stderr,"ERROR: filter file format: var/val cannot be empty!\n");
+		    goto errout;
+		}
+
+		if (strcmp(var,"function") == 0) {
+		    if (*val == '*') {
+			filter->syscallnum = -1;
+			filter->argnum = -1;
+		    }
+		    else {
+			for (i = 0; i < SYSCALL_MAX; ++i) {
+			    if (//sctab[i].num != 0 
+				!strcmp(sctab[i].name,val))
+				break;
+			}
+			if (i == SYSCALL_MAX) {
+			    fprintf(stderr,"ERROR: filter file format: no such function %s to filter!\n",val);
+			    goto errout;
+			}
+			filter->syscallnum = i;
+		    }
+		}
+		else if (strcmp(var,"argname") == 0) {
+		    if (*val == '*') {
+			filter->argnum = -1;
+		    }
+		    else {
+			if (filter->syscallnum == -1) {
+			    fprintf(stderr,"ERROR: filter file format: cannot specify argname when function is wildcard!\n");
+			    goto errout;
+			}
+			for (i = 0; i < sctab[filter->syscallnum].argc; ++i) {
+			    if (!strcmp(sctab[filter->syscallnum].args[i].name,val))
+				break;
+			}
+			if (i == sctab[filter->syscallnum].argc) {
+			    fprintf(stderr,"ERROR: filter file format: no such function arg %s to filter on!\n",val);
+			    goto errout;
+			}
+			filter->argnum = i;
+		    }
+		}
+		else if (strcmp(var,"argval") == 0) {
+		    if (*val == '*') {
+			filter->preg = NULL;
+			filter->strfrag = strdup("*");
+		    }
+		    else {
+			filter->strfrag = strdup(val);
+			filter->preg = (regex_t *)malloc(sizeof(regex_t));
+			if ((rc = regcomp(filter->preg,val,REG_EXTENDED))) {
+			    regerror(rc,filter->preg,errbuf,sizeof(errbuf));
+			    fprintf(stderr,"ERROR: filter file format: regcomp(%s): %s\n",val,errbuf);
+			    goto errout;
+			}
+		    }
+		}
+		else if (strcmp(var,"retval") == 0) {
+		    filter->retval = atoi(val);
+		}
+		else if (strcmp(var,"pid") == 0) {
+		    filter->pid = atoi(val);
+		}
+		else if (strcmp(var,"ppid") == 0) {
+		    if (*val == '^') {
+			++val;
+			filter->ppid_search = 1;
+		    }
+		    if (*val == '\0') {
+			fprintf(stderr,"ERROR: filter file format: parent process search must have a parent pid!\n");
+			goto errout;
+		    }
+		    else {
+			filter->ppid = atoi(val);
+		    }
+		}
+		else if (strcmp(var,"uid") == 0) {
+		    filter->uid = atoi(val);
+		}
+		else if (strcmp(var,"gid") == 0) {
+		    filter->gid = atoi(val);
+		}
+		else if (strcmp(var,"apply") == 0) {
+		    filter->dofilter = atoi(val);
+		}
+		else if (strcmp(var,"name") == 0) {
+		    filter->name = strdup(val);
+		}
+	    }
+	    
+	    if (alist_alloclen == alist_len) {
+		alist_alloclen += 8;
+		if (!(alist = realloc(alist,sizeof(struct argfilter *)*alist_alloclen))) {
+		    fprintf(stderr,"ERROR: filter file format: realloc: %s\n",strerror(errno));
+		    goto errout;
+		}
+	    }
+	    alist[alist_len] = filter;
+	    ++alist_len;
+	    filter = NULL;
+	}
+	else {
+	    fprintf(stderr,"ERROR: unknown config directive!\n");
+	    goto errout;
+	}
+    }
+
+    // if successful, update args!
+    if (alist_len) {
+	struct argfilter **finalalist = (struct argfilter **)malloc(sizeof(struct argfilter *)*alist_len);
+	memcpy(finalalist,alist,alist_len*sizeof(struct argfilter *));
+	*new_argfilter_list = finalalist;
+    }
+    else {
+	*new_argfilter_list = NULL;
+    }
+    free(alist);
+    *new_argfilter_list_len = alist_len;
+
+    if (flist_len) {
+	char **finalflist = (char **)malloc(sizeof(char *)*flist_len);
+	memcpy(finalflist,flist,flist_len*sizeof(char *));
+	*new_function_list = finalflist;
+    }
+    else {
+	*new_function_list = NULL;
+    }
+    free(flist);
+    *new_function_list_len = flist_len;
+
+    return 0;
+
+ errout:
+    if (filter)
+	free_argfilter(filter);
+    for (i = 0; i < alist_len; ++i) {
+	free_argfilter(alist[i]);
+    }
+    free(alist);
+    for (i = 0; i < flist_len; ++i) {
+	free(flist[i]);
+    }
+    free(flist);
+
+    return -1;
 }
 
 int main(int argc, char *argv[])
@@ -2560,12 +2859,18 @@ int main(int argc, char *argv[])
     char symtype;
     char *progname = argv[0];
     int debug = -1;
+    char **syscall_list;
+    int syscall_list_len = 0;
+    int syscall_list_alloclen = 8;
 
     syscall_list = (char **)malloc(sizeof(char *)*syscall_list_alloclen);
     argfilter_list = (struct argfilter **)malloc(sizeof(struct argfilter *)*argfilter_list_alloclen);
 
-    while ((ch = getopt(argc, argv, "m:s:f:daw:u:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:s:f:daw:u:c:")) != -1) {
 	switch(ch) {
+	case 'c':
+	    configfile = optarg;
+	    break;
 	case 'a':
 	    send_a3_events = 1;
 	    break;
@@ -2584,7 +2889,7 @@ int main(int argc, char *argv[])
 	case 's':
 	    token = NULL;
 	    saveptr = NULL;
-	    while (token = strtok_r((!token)?optarg:NULL,",",&saveptr)) {
+	    while ((token = strtok_r((!token)?optarg:NULL,",",&saveptr))) {
 		if (syscall_list_alloclen == syscall_list_len) {
 		    syscall_list_alloclen += 10;
 		    if (!(syscall_list = realloc(syscall_list,sizeof(char *)*syscall_list_alloclen))) {
@@ -2592,14 +2897,14 @@ int main(int argc, char *argv[])
 			exit(-6);
 		    }
 		}
-		syscall_list[syscall_list_len] = token;
+		syscall_list[syscall_list_len] = strdup(token);
 		++syscall_list_len;
 	    }
 	    break;
 	case 'f':
 	    token = NULL;
 	    saveptr = NULL;
-	    while (token = strtok_r((!token)?optarg:NULL,",",&saveptr)) {
+	    while ((token = strtok_r((!token)?optarg:NULL,",",&saveptr))) {
 		filter = (struct argfilter *)malloc(sizeof(struct argfilter));
 		memset(filter,0,sizeof(struct argfilter));
 		filter->pid = -1;
@@ -2612,7 +2917,7 @@ int main(int argc, char *argv[])
 		saveptr2 = NULL;
 		token2 = NULL;
 		int i = 0;
-		while (token2 = strtok_r((!token2)?token:NULL,":",&saveptr2)) {
+		while ((token2 = strtok_r((!token2)?token:NULL,":",&saveptr2))) {
 		    //printf("f token2 %s\n",token2);
 		    switch (i) {
 		    case 0:
@@ -2659,7 +2964,7 @@ int main(int argc, char *argv[])
 			}
 			filter->strfrag = token2;
 			filter->preg = (regex_t *)malloc(sizeof(regex_t));
-			if (rc = regcomp(filter->preg,token2,REG_EXTENDED)) {
+			if ((rc = regcomp(filter->preg,token2,REG_EXTENDED))) {
 			    regerror(rc,filter->preg,errbuf,sizeof(errbuf));
 			    error("regcomp(%s): %s\n",token2,errbuf);
 			    exit(4);
@@ -2722,10 +3027,26 @@ int main(int argc, char *argv[])
     argc -= optind;
     argv += optind;
 
+    if (configfile && (syscall_list_len || argfilter_list_len)) {
+	fprintf(stderr,"ERROR: you cannot specify both a config file and syscalls/filters!\n");
+	exit(7);
+    }
+
+    if (configfile) {
+	if (load_config_file(configfile,&syscall_list,&syscall_list_len,
+			     &argfilter_list,&argfilter_list_len)) {
+	    fprintf(stderr,"ERROR: failed to load config file %s!\n",configfile);
+	    exit(8);
+	}
+	debug(2,"configfile: %d functions (0x%08x), %d filters (0x%08x).\n",
+	      syscall_list_len,syscall_list,argfilter_list_len,argfilter_list);
+	argfilter_list_alloclen = argfilter_list_len;
+    }
+
     domainname = argv[0];
     if (argc > 0) {
         domid = (domid_t)strtol(argv[0],&endptr,0);
-	if (!isdigit((int)(argv[0][0])) || *endptr == argv[0]) {
+	if (!isdigit((int)(argv[0][0])) || endptr == argv[0]) {
 	    fprintf(stderr,"Looking up domain %s... ",argv[0]);
 	    domid = domain_lookup(argv[0]);
 	    fprintf(stderr," %d.\n",domid);
@@ -2738,6 +3059,7 @@ int main(int argc, char *argv[])
     }
 
     signal(SIGUSR1,usrsighandle);
+    signal(SIGUSR2,hupsighandle);
 
     if (send_a3_events && web_init()) {
 	error("could not connect to A3 monitor!\n");
@@ -2780,13 +3102,14 @@ int main(int argc, char *argv[])
 		    // first match wins; there won't be more.
 		    break;
 		}
-	    }
-			
+	    }		
 	}
     }
 
-    memset(schandles,0,sizeof(vmprobe_handle_t) * SYSCALL_MAX);
-
+    //memset(schandles,0,sizeof(vmprobe_handle_t) * SYSCALL_MAX);
+    for (i = 0; i < SYSCALL_MAX; ++i) {
+	schandles[i] = -1;
+    }
     for (i = 0; i < SYSCALL_MAX; ++i) {
 	if (sctab[i].name == NULL)
 	    continue;
@@ -2802,24 +3125,96 @@ int main(int argc, char *argv[])
 	    continue;
 
 	vp = register_vmprobe(domid, sctab[i].addr, on_fn_pre, on_fn_post);
-	if (vp < 0)
-	{
+	if (vp < 0) {
 	    error("failed to register probe for %s\n",sctab[i].name);
 	    return 1;
 	}
 	else {
+	   schandles[i] = vp;
 	   fprintf(stderr,"Registered probe for %s\n",sctab[i].name);
-	   //schandles[i] = vp;
 	}
     }
 
-    run_vmprobes();
+    while (1) {
+	run_vmprobes();
+	if (reloadconfigfile) {
+	    fprintf(stderr,"Reloading config file.\n");
+	    struct argfilter **newalist;
+	    int newalistlen;
+	    char **newflist;
+	    int newflistlen;
 
-    for (i = 0; i < SYSCALL_MAX; ++i) {
-	if (schandles[i] == 0)
-	    continue;
+	    if (load_config_file(configfile,&newflist,&newflistlen,
+			     &newalist,&newalistlen)) {
+		fprintf(stderr,"ERROR: failed to load config file %s; not replacing current config!\n",configfile);
+		continue;
+	    }
 
-	unregister_vmprobe(schandles[i]);
+	    // unregister all probes
+	    for (i = 0; i < SYSCALL_MAX; ++i) {
+		if (schandles[i] == -1)
+		    continue;
+		unregister_vmprobe(schandles[i]);
+		schandles[i] = -1;
+		fprintf(stderr,"Unregistered probe for %s.\n",sctab[i].name);
+	    }
+
+	    // stop the library fully!
+	    stop_vmprobes();
+
+	    // free the function list
+	    for (j = 0; j < syscall_list_len; ++j) {
+		free(syscall_list[j]);
+	    }
+	    if (syscall_list)
+		free(syscall_list);
+
+	    // free the argfilter list
+	    for (j = 0; j < argfilter_list_len; ++j) {
+		free_argfilter(argfilter_list[j]);
+	    }
+	    if (argfilter_list)
+		free(argfilter_list);
+
+	    // replace the argfilter list
+	    argfilter_list = newalist;
+	    argfilter_list_len = newalistlen;
+
+	    // replace the function list
+	    syscall_list = newflist;
+	    syscall_list_len = newflistlen;
+
+	    // re-register probes
+	    for (i = 0; i < SYSCALL_MAX; ++i) {
+		if (sctab[i].name == NULL)
+		    continue;
+
+		found = 0;
+		for (j = 0; j < syscall_list_len; ++j) {
+		    if (!strcmp(sctab[i].name,syscall_list[j])) {
+			found = 1;
+			break;
+		    }
+		}
+		if (syscall_list_len && !found)
+		    continue;
+
+		vp = register_vmprobe(domid, sctab[i].addr, on_fn_pre, on_fn_post);
+		if (vp < 0) {
+		    error("failed to register probe for %s\n",sctab[i].name);
+		    return 1;
+		}
+		else {
+		    fprintf(stderr,"Registered probe for %s\n",sctab[i].name);
+		    schandles[i] = vp;
+		}
+	    }
+
+	    fprintf(stderr,"Reloaded config file successfully.\n");
+	    reloadconfigfile = 0;
+
+	    restart_vmprobes();
+	}
     }
 
     return 0;
