@@ -89,6 +89,8 @@ extern int optind, opterr, optopt;
 struct argfilter **argfilter_list;
 int argfilter_list_len = 0;
 int argfilter_list_alloclen = 10;
+char **ps_list = NULL;
+int ps_list_len = 0;
 
 int check_filter(int syscallnum,int argnum,char *argval,
 		 struct argfilter **filter_ptr,struct process_data *data)
@@ -914,6 +916,8 @@ char *process_list_to_string(vmprobe_handle_t handle,
     char *rdelim = delim;
     int i = 0;
     unsigned long next;
+    int j;
+    int found;
 
     if (!rdelim)
 	rdelim = "\n";
@@ -940,21 +944,32 @@ char *process_list_to_string(vmprobe_handle_t handle,
 	}
 	++i;
 
-	// tostring, then grab the next one!
-	len = snprintf(pbuf,sizeof(pbuf),"pid=%d,ppid=%d,name=%s%s",
-		       pdata->pid,pdata->ppid,pdata->name,delim);
-	if ((bufsiz - buflen) < (delimlen+len+1)) {
-	    tbuf = malloc(bufsiz+1024);
-	    memcpy(tbuf,buf,bufsiz);
-	    bufsiz += 1024;
-	    free(buf);
-	    buf = tbuf;
-	    tbuf = NULL;
-	    bufptr = buf + buflen;
+	found = 0;
+	for (j = 0; j < ps_list_len; ++j) {
+	    if (strcmp(pdata->name,ps_list[j]) == 0) {
+		found = 1;
+		break;
+	    }
 	}
-	memcpy(bufptr,pbuf,len);
-	bufptr += len;
-	buflen += len;
+	// if we are filtering what we report based on process name,
+	// don't report it unless it's in our list.
+	if (found || !ps_list_len) {
+	    // tostring, then grab the next one!
+	    len = snprintf(pbuf,sizeof(pbuf),"pid=%d,ppid=%d,name=%s%s",
+			   pdata->pid,pdata->ppid,pdata->name,delim);
+	    if ((bufsiz - buflen) < (delimlen+len+1)) {
+		tbuf = malloc(bufsiz+1024);
+		memcpy(tbuf,buf,bufsiz);
+		bufsiz += 1024;
+		free(buf);
+		buf = tbuf;
+		tbuf = NULL;
+		bufptr = buf + buflen;
+	    }
+	    memcpy(bufptr,pbuf,len);
+	    bufptr += len;
+	    buflen += len;
+	}
 
 	// grab the next one!
 	next = pdata->nextptr;
@@ -2561,7 +2576,8 @@ void hupsighandle(int signo) {
 }
 
 int load_config_file(char *file,char ***new_function_list,int *new_function_list_len,
-		     struct argfilter ***new_argfilter_list,int *new_argfilter_list_len) {
+		     struct argfilter ***new_argfilter_list,int *new_argfilter_list_len,
+		     char ***new_ps_list,int *new_ps_list_len) {
     char *buf;
     char *bufptr;
     char *tbuf;
@@ -2575,6 +2591,9 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
     struct argfilter **alist;
     int alist_alloclen = 8;
     int alist_len = 0;
+    char **pslist = NULL;
+    int pslist_alloclen = 8;
+    int pslist_len = 0;
     char *saveptr, *token = NULL;
     char *saveptr2, *token2 = NULL;
     char errbuf[128];
@@ -2590,6 +2609,7 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 
     alist = (struct argfilter **)malloc(sizeof(struct argfilter *)*alist_alloclen);
     flist = (char **)malloc(sizeof(char *)*flist_alloclen);
+    pslist = (char **)malloc(sizeof(char *)*pslist_alloclen);
 
     // read directives line by line.
     buf = malloc(bufsiz);
@@ -2651,7 +2671,28 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 
 		flist[flist_len] = strdup(token);
 		++flist_len;
-		debug(2,"read function %s",token);
+		debug(2,"read function %s\n",token);
+	    }
+	}
+	else if (strncmp(buf,"ProcessListNames",strlen("ProcessListNames")) == 0) {
+	    bufptr = buf + strlen("ProcessListNames");
+	    while (*bufptr == ' ' || *bufptr == '\t')
+		++bufptr;
+
+	    token = NULL;
+	    saveptr = NULL;
+	    while ((token = strtok_r((!token)?bufptr:NULL,",",&saveptr))) {
+		if (pslist_alloclen == pslist_len) {
+		    pslist_alloclen += 8;
+		    if (!(pslist = realloc(pslist,sizeof(char *)*pslist_alloclen))) {
+			fprintf(stderr,"ERROR: filter file format: realloc: %s\n",strerror(errno));
+			goto errout;
+		    }
+		}
+
+		pslist[pslist_len] = strdup(token);
+		++pslist_len;
+		debug(2,"read ps list name %s\n",token);
 	    }
 	}
 	else if (strncmp(buf,"Filter",strlen("Filter")) == 0) {
@@ -2823,6 +2864,17 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
     free(flist);
     *new_function_list_len = flist_len;
 
+    if (pslist_len) {
+	char **finalpslist = (char **)malloc(sizeof(char *)*pslist_len);
+	memcpy(finalpslist,pslist,pslist_len*sizeof(char *));
+	*new_ps_list = finalpslist;
+    }
+    else {
+	*new_ps_list = NULL;
+    }
+    free(pslist);
+    *new_ps_list_len = pslist_len;
+
     return 0;
 
  errout:
@@ -2836,6 +2888,10 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	free(flist[i]);
     }
     free(flist);
+    for (i = 0; i < pslist_len; ++i) {
+	free(pslist[i]);
+    }
+    free(pslist);
 
     return -1;
 }
@@ -3034,7 +3090,8 @@ int main(int argc, char *argv[])
 
     if (configfile) {
 	if (load_config_file(configfile,&syscall_list,&syscall_list_len,
-			     &argfilter_list,&argfilter_list_len)) {
+			     &argfilter_list,&argfilter_list_len,
+			     &ps_list,&ps_list_len)) {
 	    fprintf(stderr,"ERROR: failed to load config file %s!\n",configfile);
 	    exit(8);
 	}
@@ -3143,9 +3200,12 @@ int main(int argc, char *argv[])
 	    int newalistlen;
 	    char **newflist;
 	    int newflistlen;
+	    char **newpslist;
+	    int newpslistlen;
 
 	    if (load_config_file(configfile,&newflist,&newflistlen,
-			     &newalist,&newalistlen)) {
+				 &newalist,&newalistlen,
+				 &newpslist,&newpslistlen)) {
 		fprintf(stderr,"ERROR: failed to load config file %s; not replacing current config!\n",configfile);
 		continue;
 	    }
@@ -3183,6 +3243,10 @@ int main(int argc, char *argv[])
 	    // replace the function list
 	    syscall_list = newflist;
 	    syscall_list_len = newflistlen;
+
+	    // replace the process name list
+	    ps_list = newpslist;
+	    ps_list_len = newpslistlen;
 
 	    // re-register probes
 	    for (i = 0; i < SYSCALL_MAX; ++i) {
