@@ -166,6 +166,10 @@ uint32_t xa_get_domain_id (char *name)
     char *tmp = malloc(256);
 
     xsh = xs_domain_open();
+    if (!xsh) {
+	fprintf(stderr,"ERROR: failed to open xenstore!\n");
+	goto out;
+    }
     domains = xs_directory(xsh, xth, "/local/domain", &size);
     for (i = 0; i < size; ++i){
         /* read in name */
@@ -184,6 +188,7 @@ uint32_t xa_get_domain_id (char *name)
         if (nameCandidate) free(nameCandidate);
     }
 
+ out:
     if (tmp) free(tmp);
     if (domains) free(domains);
     if (xsh) xs_daemon_close(xsh);
