@@ -95,6 +95,7 @@ struct argfilter {
     char *strfrag;
     int retval;
     char *name;
+    int name_search;
 };
 
 void free_argfilter(struct argfilter *f) {
@@ -261,9 +262,7 @@ int check_filters(int syscall,int arg,
 	debug(0,"filter name=%s, process name=%s\n",argfilter_list[lpc]->name,pdata->name);
 	    
 	if ((argfilter_list[lpc]->syscallnum == -1 || argfilter_list[lpc]->syscallnum == syscall)
-	    && (argfilter_list[lpc]->argnum == -1 || argfilter_list[lpc]->argnum == arg)
-	    && (argfilter_list[lpc]->name == NULL 
-		|| strcmp(argfilter_list[lpc]->name,pdata->name) == 0)) {
+	    && (argfilter_list[lpc]->argnum == -1 || argfilter_list[lpc]->argnum == arg)) {
 	    smatch = 1;
 	}
 
@@ -302,6 +301,22 @@ int check_filters(int syscall,int arg,
 	else if (pmatch 
 		 && !(argfilter_list[lpc]->ppid == -1 
 		      || argfilter_list[lpc]->ppid == pdata->ppid))
+	    pmatch = 0;
+
+	if (pmatch && argfilter_list[lpc]->name_search) {
+	    pmatch = 0;
+	    parent = pdata->parent;
+	    while (parent) {
+		if (!strcmp(parent->name,argfilter_list[lpc]->name)) {
+		    pmatch = 1;
+		    break;
+		}
+		parent = parent->parent;
+	    }
+	}
+	else if (pmatch 
+		 && argfilter_list[lpc]->name != NULL 
+		 && strcmp(argfilter_list[lpc]->name,pdata->name))
 	    pmatch = 0;
 
 	if (smatch && pmatch) {
@@ -2616,7 +2631,8 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	    filter->ppid_search = 0;
 	    filter->gid = -1;
 	    filter->uid = -1;
-	    filter->dofilter = 1;
+	    filter->dofilter = 0;
+	    filter->name_search = 0;
 
 	    // parse the line into an argfilter struct!
 	    token = NULL;
@@ -2736,6 +2752,14 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		    filter->dofilter = atoi(val);
 		}
 		else if (strcmp(var,"name") == 0) {
+		    if (*val == '^') {
+			++val;
+			filter->name_search = 1;
+		    }
+		    if (*val == '\0') {
+			fprintf(stderr,"ERROR: filter file format: parent process search must have a parent name!\n");
+			goto errout;
+		    }
 		    filter->name = strdup(val);
 		}
 	    }
