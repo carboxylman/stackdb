@@ -256,7 +256,7 @@ int check_filters(int syscall,int arg,
     int smatch = 0;
     int lpc;
     struct process_data *parent;
-    char *argval;
+    char *argval = NULL;
 
     for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
 	debug(0,"filter name=%s, process name=%s\n",argfilter_list[lpc]->name,pdata->name);
@@ -267,7 +267,8 @@ int check_filters(int syscall,int arg,
 	}
 
 	if (smatch) {
-	    if (argfilter_list[lpc]->decoding > -1)
+	    if (argfilter_list[lpc]->decoding > -1
+		&& adata[arg]->decodings)
 		argval = adata[arg]->decodings[argfilter_list[lpc]->decoding];
 	    else
 		argval = adata[arg]->str;
@@ -3078,6 +3079,10 @@ int main(int argc, char *argv[])
 	if (!isdigit((int)(argv[0][0])) || endptr == argv[0]) {
 	    fprintf(stderr,"Looking up domain %s... ",argv[0]);
 	    domid = domain_lookup(argv[0]);
+	    if (domid == 0) {
+		fprintf(stderr,"not found!\n");
+		exit(1);
+	    }
 	    fprintf(stderr," %d.\n",domid);
 	}
 
