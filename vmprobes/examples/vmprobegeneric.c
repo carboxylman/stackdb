@@ -2226,6 +2226,37 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     return arg_data[j];
 }
 
+int dofilter = 1;
+int send_a3_events = 0;
+char *domainname;
+vmprobe_action_handle_t va;
+char *configfile = NULL;
+int reloadconfigfile = 0;
+
+char from_hex(char ch) {
+    return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
+}
+
+char to_hex(char code) {
+    static char hex[] = "0123456789abcdef";
+    return hex[code & 15];
+}
+
+char *url_encode(char *str) {
+    char *pstr = str, *buf = malloc(strlen(str) * 3 + 1), *pbuf = buf;
+    while (*pstr) {
+	if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~') 
+	    *pbuf++ = *pstr;
+	else if (*pstr == ' ') 
+	    *pbuf++ = '+';
+	else 
+	    *pbuf++ = '%', *pbuf++ = to_hex(*pstr >> 4), *pbuf++ = to_hex(*pstr & 15);
+	pstr++;
+    }
+    *pbuf = '\0';
+    return buf;
+}
+
 struct argfilter *handle_syscall(vmprobe_handle_t handle,
 				 struct cpu_user_regs *regs,
 				 char **psstr,char **funcstr,char **argstr)
@@ -2339,42 +2370,30 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	psliststr = process_list_to_string(handle,regs,"|");
 	printf("\nCurrent Process List:\n\n%s\n",psliststr);
 	fflush(stdout);
+
+	char *eventstrtmp = ssprintf("domain=%s type=pslist %s",
+				     domainname,psliststr);
+
+	if (send_a3_events) {
+	    char *eventstr = url_encode(eventstrtmp);
+	    if (eventstr) {
+		web_report(eventstr);
+		free(eventstr);
+	    }
+	    else {
+		error("internal error 2 reporting pslist to A3 monitor!\n");
+	    }
+	}	    
+	 
+	fprintf(stdout," (would send %s to A3)\n",eventstrtmp);
+
+	free(eventstrtmp);
+
 	free(psliststr);
     }
 
     return filter_ptr;
 }
-
-char from_hex(char ch) {
-    return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
-}
-
-char to_hex(char code) {
-    static char hex[] = "0123456789abcdef";
-    return hex[code & 15];
-}
-
-char *url_encode(char *str) {
-    char *pstr = str, *buf = malloc(strlen(str) * 3 + 1), *pbuf = buf;
-    while (*pstr) {
-	if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~') 
-	    *pbuf++ = *pstr;
-	else if (*pstr == ' ') 
-	    *pbuf++ = '+';
-	else 
-	    *pbuf++ = '%', *pbuf++ = to_hex(*pstr >> 4), *pbuf++ = to_hex(*pstr & 15);
-	pstr++;
-    }
-    *pbuf = '\0';
-    return buf;
-}
-
-int dofilter = 1;
-int send_a3_events = 0;
-char *domainname;
-vmprobe_action_handle_t va;
-char *configfile = NULL;
-int reloadconfigfile = 0;
 
 static int on_fn_pre(vmprobe_handle_t vp, 
 		     struct cpu_user_regs *regs)
