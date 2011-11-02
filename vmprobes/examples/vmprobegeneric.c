@@ -271,6 +271,8 @@ int check_filters(int syscall,int arg,
 		argval = adata[arg]->decodings[argfilter_list[lpc]->decoding];
 	    else
 		argval = adata[arg]->str;
+	    if (!argval)
+		argval = "";
 
 	    if (argfilter_list[lpc]->preg == NULL
 		|| !regexec(argfilter_list[lpc]->preg,argval,0,NULL,0))
@@ -1296,7 +1298,7 @@ void process_ptregs_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 				    "execve_argi",argi_addr,
 				    pid,0,NULL);
 	    if (!argi)
-		argi = "(null)";
+		argi = strdup("(null)");
 	    string_append(&buf,&bufsiz,&endptr,(char *)argi);
 	    string_append(&buf,&bufsiz,&endptr,",");
 	    if (argi)
@@ -2328,12 +2330,20 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     len = 0;
     for (j = 0; j < sctab[i].argc; ++j) {
 	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
-	len = len + 2 + strlen(sctab[i].args[j].name) + strlen(arg_data[j]->str);
+	len = len + 2 + strlen(sctab[i].args[j].name);
+	if (arg_data[j]->str)
+	    len = len + strlen(arg_data[j]->str);
+	else 
+	    len = len + 6;
 	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
 
 	for (k = 0; k < arg_data[j]->info->decodings_len; ++k) {
 	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
-	    len = len + 2 + strlen(sctab[i].args[j].decodings[k]) + strlen(arg_data[j]->decodings[k]);
+	    len = len + 2 + strlen(sctab[i].args[j].decodings[k]);
+	    if (arg_data[j]->decodings[k])
+		len = len + strlen(arg_data[j]->decodings[k]);
+	    else 
+		len = len + 6;
 	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
 	}
     }
@@ -2689,8 +2699,7 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		    }
 		    else {
 			for (i = 0; i < SYSCALL_MAX; ++i) {
-			    if (//sctab[i].num != 0 
-				!strcmp(sctab[i].name,val))
+			    if (sctab[i].name && !strcmp(sctab[i].name,val))
 				break;
 			}
 			if (i == SYSCALL_MAX) {
