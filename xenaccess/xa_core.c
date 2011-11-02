@@ -346,6 +346,7 @@ void init_page_offset (xa_instance_t *instance)
     /* assume 4k pages for now, update when 4M page is found */
     instance->page_shift = 12;
     instance->page_size = 1 << instance->page_shift;
+    xa_dbprint(0,"**set instance->page_size = 0x%.8x\n", instance->page_size);
 }
 
 void init_xen_version (xa_instance_t *instance)
