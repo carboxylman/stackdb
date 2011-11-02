@@ -416,6 +416,16 @@ int domain_init(domid_t domid,char *sysmapfile) {
 		break;
 	    }
 	}
+	    
+	if (!strcmp("swapper_pg_dir",sym)) {
+	    vmd = find_domain(domid);
+	    if (vmd->xa_instance.kpgd != addr) {
+		fprintf(stderr,"Updating kpgd address (to 0x%x)in xenaccess.\n",
+			addr);
+		vmd->xa_instance.kpgd = addr;
+		break;
+	    }
+	}
     }
 
     return 0;
@@ -1577,7 +1587,7 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	if (!pages)
 	    return NULL;
 
-	no_pages = length / page_size;
+	no_pages = length / page_size + 1;
 	if ((length + offset) > page_size) {
 	    ++no_pages;
 	}
