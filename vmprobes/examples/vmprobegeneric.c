@@ -940,7 +940,7 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
 	    free(parent_data);
 	}
     }
-    else if (parent_addr == real_parent_addr) {
+    if (parent_addr == real_parent_addr) {
     	data->real_ppid = data->ppid;
     	data->real_parent = data->parent;
     }
@@ -1026,7 +1026,7 @@ char *process_list_to_string(vmprobe_handle_t handle,
     bufptr = buf;
 
     // grab init task
-    pdata = load_process_data(handle,regs,init_task_addr,0,0);
+    pdata = load_process_data(handle,regs,init_task_addr,1,0);
 
     if (!pdata) {
 	fprintf(stderr,"ERROR: could not load init process data for ps list!\n");
@@ -1073,7 +1073,7 @@ char *process_list_to_string(vmprobe_handle_t handle,
 	// grab the next one!
 	next = pdata->nextptr;
 	free_process_data(pdata);
-	pdata = load_process_data(handle,regs,next,0,0);
+	pdata = load_process_data(handle,regs,next,1,0);
 
 	if (!pdata) {
 	    fprintf(stderr,"ERROR: could not load intermediate process data for ps list; returning what we have!\n");
