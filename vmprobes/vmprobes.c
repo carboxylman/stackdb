@@ -21,9 +21,9 @@
 
 static int vmprobes_debug_level = -1;
 
-void vmprobes_set_debug_level(int level)
+void vmprobes_set_debug_level(int level,int xa_level)
 {
-    xa_set_debug_level(level);
+    xa_set_debug_level(xa_level);
     vmprobes_debug_level = level;
 }
 
@@ -512,7 +512,7 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
      * still needing to run for this probepoint.
      */
     if (probepoint->state == VMPROBE_BP_SET) {
-	debug(0,"resetting action execution flags for new action pass\n");
+	debug(1,"resetting action execution flags for new action pass\n");
 	list_for_each_entry(action,&probepoint->action_list,node) {
 	    action->executed_this_pass = 0;
 	}
@@ -531,13 +531,13 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
 	/* XXX: check later if other kinds are "done" */
 	if (1 || probepoint->action->type == VMPROBE_ACTION_RETURN) {
 	    /* restore old code (i.e., the breakpoint and anything else) */
-	    debug(0,"action finished at [dom%d:%lx]; restoring code\n",
+	    debug(1,"action finished at [dom%d:%lx]; restoring code\n",
 		  probepoint->domain->id, probepoint->vaddr);
 	    __remove_code(probepoint);
 	    probepoint->state = VMPROBE_ACTION_DONE;
 	}
 	else {
-	    debug(0,"action single step continues at [dom%d:%lx]\n",
+	    debug(1,"action single step continues at [dom%d:%lx]\n",
 		  probepoint->domain->id, probepoint->vaddr);
 	    return 1;
 	}
@@ -586,7 +586,7 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
 	    /* put a ret in for the breakpoint, then single step */
 	    retop[0] = &RETURN;
 	    __insert_code(probepoint,retop,1);
-	    debug(0,"ret inserted at [dom%d:%lx]\n",
+	    debug(1,"ret inserted at [dom%d:%lx]\n",
 		  probepoint->domain->id, probepoint->vaddr);
 
 	    probepoint->action_obviates_orig = 1;
@@ -613,7 +613,7 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
     if (!probepoint)
         return -1;
 
-    debug(0,"bphit probepoint [dom%d:%lx]\n",domain->id,probepoint->vaddr);
+    debug(2,"bphit probepoint [dom%d:%lx]\n",domain->id,probepoint->vaddr);
 
     if (probepoint->state == VMPROBE_BP_SET) {
 	/* save the original ip value in case something bad happens */
@@ -635,7 +635,7 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 	/* restore ip register */
 	VMPROBE_PERF_START();
 	__reset_ip(regs);
-	debug(0,"original ip %x restored in dom%d\n", regs->eip, domain->id);
+	debug(2,"original ip %x restored in dom%d\n", regs->eip, domain->id);
 	VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
     }
 
@@ -651,14 +651,14 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 	/* restore ip register */
 	//VMPROBE_PERF_START();
 	//__reset_ip(regs);
-	//debug(0,"original ip %x restored in dom%d\n", regs->eip, domain->id);
+	//debug(2,"original ip %x restored in dom%d\n", regs->eip, domain->id);
 	//VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
 
 	/* restore the original instruction */
 	VMPROBE_PERF_START();
 	probepoint->state = VMPROBE_REMOVING;
 	__remove_breakpoint(probepoint);
-	debug(0,"bp removed at [dom%d:%lx]\n", domain->id, probepoint->vaddr);
+	debug(2,"bp removed at [dom%d:%lx]\n", domain->id, probepoint->vaddr);
 	probepoint->state = VMPROBE_DISABLED;
 	VMPROBE_PERF_STOP("vmprobes removes breakpoint in domU");
     }
@@ -670,7 +670,7 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
         /* turn singlestep mode on */
         VMPROBE_PERF_START();
         __enter_singlestep(regs);
-        debug(0,"single step set in dom%d\n", domain->id);
+        debug(2,"single step set in dom%d\n", domain->id);
         domain->sstep_probepoint = probepoint;
         VMPROBE_PERF_STOP("vmprobes sets singlestep in domU");
     }
@@ -694,11 +694,11 @@ handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
     probepoint = domain->sstep_probepoint;
 
     if (handle_actions(probepoint,regs)) {
-	debug(0,"found actions to handle\n");
+	debug(1,"found actions to handle\n");
 	if (!probepoint->action_requires_sstep) {
 	    VMPROBE_PERF_START();
 	    __leave_singlestep(regs);
-	    debug(0,"single step unset in dom%d during action handling\n",
+	    debug(2,"single step unset in dom%d during action handling\n",
 		  domain->id);
 	    domain->sstep_probepoint = NULL;
 	    VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
@@ -721,7 +721,7 @@ handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
         /* turn singlestep mode off */
         VMPROBE_PERF_START();
         __leave_singlestep(regs);
-        debug(0,"single step unset in dom%d\n", domain->id);
+        debug(2,"single step unset in dom%d\n", domain->id);
         domain->sstep_probepoint = NULL;
         VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
         
@@ -732,7 +732,7 @@ handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 	    VMPROBE_PERF_START();
 	    probepoint->state = VMPROBE_INSERTING;
 	    __insert_breakpoint(probepoint);
-	    debug(0,"bp set at [dom%d:%lx]\n", domain->id, probepoint->vaddr);
+	    debug(2,"bp set at [dom%d:%lx]\n", domain->id, probepoint->vaddr);
 	    probepoint->state = VMPROBE_BP_SET;
 	    VMPROBE_PERF_STOP("vmprobes injects breakpoint back in domU");
 	}
@@ -865,7 +865,7 @@ __register_vmprobe(struct vmprobe *probe)
     ret = set_debugging(domain->id, true);
     if (ret < 0)
         return ret;
-    debug(0,"debugging set in dom%d for probe %d registration\n",
+    debug(2,"debugging set in dom%d for probe %d registration\n",
 	  domain->id, probe->handle);
     VMPROBE_PERF_STOP("vmprobes sets debugging in domU");
 
@@ -882,7 +882,7 @@ __register_vmprobe(struct vmprobe *probe)
             probepoint->state = VMPROBE_DISABLED;
             return ret;
         }
-        debug(0,"bp set at [dom%d:%lx] for the first time\n", 
+        debug(2,"bp set at [dom%d:%lx] for the first time\n", 
 	      domain->id,probepoint->vaddr);
     
         probepoint->state = VMPROBE_BP_SET;
@@ -919,7 +919,7 @@ __unregister_vmprobe(struct vmprobe *probe)
                 probepoint->state = VMPROBE_BP_SET;
                 return ret;
             }
-            debug(0,"bp removed at [dom%d:%lx] for the last time\n",
+            debug(2,"bp removed at [dom%d:%lx] for the last time\n",
 		  domain->id, probepoint->vaddr);
 
             probepoint->state = VMPROBE_DISABLED;
@@ -939,7 +939,7 @@ __unregister_vmprobe(struct vmprobe *probe)
                 VMPROBE_PERF_START();
                 __leave_singlestep(regs);
                 domain->sstep_probepoint = NULL;
-                debug(0,"sstep unset in dom%d for the last time\n", 
+                debug(2,"sstep unset in dom%d for the last time\n", 
                     domain->id);
                 VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
             }
@@ -950,7 +950,7 @@ __unregister_vmprobe(struct vmprobe *probe)
                 /* restore ip register */
                 VMPROBE_PERF_START();
                 regs->eip = domain->org_ip;
-                debug(0,"original ip %x restored in dom%d for the last time\n",
+                debug(2,"original ip %x restored in dom%d for the last time\n",
                     regs->eip, domain->id);
                 domain->org_ip = 0;
                 VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
@@ -963,7 +963,7 @@ __unregister_vmprobe(struct vmprobe *probe)
             VMPROBE_PERF_START();
             /* turn debugging mode off */
             set_debugging(domain->id, false);
-            debug(0,"debugging unset in dom%d for the last time\n", 
+            debug(2,"debugging unset in dom%d for the last time\n", 
                 domain->id);
             VMPROBE_PERF_STOP("vmprobes unsets debugging in domU");
         }
@@ -1021,7 +1021,7 @@ register_vmprobe(domid_t domid,
         
     VMPROBE_PERF_START();
     xc_domain_pause(xc_handle, domain->id);
-    debug(0,"dom%d paused\n", domain->id);
+    debug(1,"dom%d paused\n", domain->id);
     VMPROBE_PERF_STOP("vmprobes pauses domU");
     ret = __register_vmprobe(probe);
     if (ret < 0)
@@ -1032,7 +1032,7 @@ register_vmprobe(domid_t domid,
     }
     VMPROBE_PERF_START();
     xc_domain_unpause(xc_handle, domain->id);
-    debug(0,"dom%d unpaused\n", domain->id);
+    debug(1,"dom%d unpaused\n", domain->id);
     VMPROBE_PERF_STOP("vmprobes unpauses domU");
     
     VMPROBE_PERF_START();
@@ -1055,7 +1055,7 @@ unregister_vmprobe(vmprobe_handle_t handle)
     
     VMPROBE_PERF_START();
     xc_domain_pause(xc_handle, domain->id);
-    debug(0,"dom%d paused\n", domain->id);
+    debug(1,"dom%d paused\n", domain->id);
     VMPROBE_PERF_STOP("vmprobes pauses domU");
     ret = __unregister_vmprobe(probe);
     if (ret < 0)
@@ -1065,7 +1065,7 @@ unregister_vmprobe(vmprobe_handle_t handle)
     }
     VMPROBE_PERF_START();
     xc_domain_unpause(xc_handle, domain->id);
-    debug(0,"dom%d unpaused\n", domain->id);
+    debug(1,"dom%d unpaused\n", domain->id);
     VMPROBE_PERF_STOP("vmprobes unpauses domU");
 
     remove_probe(probe);
@@ -1283,7 +1283,7 @@ run_vmprobes(void)
                     /* FIXME: domain paused - does this really mean a bp-hit? */
                     if (domain_paused(domain->id))
                     {
-                        debug(0,"dom%d paused by %s\n", domain->id,
+                        debug(1,"dom%d paused by %s\n", domain->id,
                             (!domain->sstep_probepoint) ? 
                             "bp-hit" : "sstep-hit");
 #ifdef VMPROBE_BENCHMARK
@@ -1321,7 +1321,7 @@ run_vmprobes(void)
 
 			VMPROBE_PERF_START();
 			xc_domain_unpause(xc_handle, domain->id);
-                        debug(0,"dom%d unpaused\n", domain->id);
+                        debug(1,"dom%d unpaused\n", domain->id);
                         VMPROBE_PERF_STOP("vmprobes unpauses domU");
         
                         VMPROBE_PERF_START(); /* stops at bp-hit or sstep-hit */
@@ -1538,7 +1538,7 @@ mmap_pages(xa_instance_t *xa_instance,
 	}
     }
 
-    debug(0,"%ld bytes at %lx mapped (%s)\n", size, vaddr,dstr);
+    debug(2,"%ld bytes at %lx mapped (%s)\n", size, vaddr,dstr);
     return pages; /* munmap it later */
 }
 
@@ -1563,7 +1563,7 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     assert(xa_instance);
     page_size = xa_instance->page_size;
 
-    debug(0,"loading %s: %d bytes at (addr=%08x,pid=%d)\n",
+    debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d)\n",
 	  name,target_length,addr,pid);
 
     /* if we know what length we need, just grab it */
@@ -1590,7 +1590,7 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	while (1) {
 	    size += inc_size;
 	    if (1 || size > page_size) 
-		debug(0,"increasing size to %d (name=%s,addr=%08x,pid=%d)\n",
+		debug(2,"increasing size to %d (name=%s,addr=%08x,pid=%d)\n",
 		      size,name,addr,pid);
 	    pages = (unsigned char *)mmap_pages(xa_instance,addr,
 						size,&offset,PROT_READ,pid);

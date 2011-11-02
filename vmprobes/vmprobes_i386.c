@@ -21,7 +21,7 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
 	total += opcode_list[i]->len;
     }
     
-    debug(0,"dom%d: replacing at 0x%08lx\n",
+    debug(2,"dom%d: replacing at 0x%08lx\n",
 	  domain->id,probepoint->vaddr);
     
     page = xa_access_kernel_va_range(xa_instance, 
@@ -38,7 +38,7 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
 	/* if they pass us raw memory, don't malloc */
 	if (*dst == NULL) {
 	    *dst = (uint8_t *)malloc(total);
-	    debug(0,"dom%d: malloc(%d) bytes to dst %x, *dst %x\n",
+	    debug(2,"dom%d: malloc(%d) bytes to dst %x, *dst %x\n",
 		  domain->id,total,(unsigned int)dst,(unsigned int)*dst);
 	    if (!*dst) {
 		munmap(page, xa_instance->page_size);
@@ -46,10 +46,10 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
 	    }
 	}
 
-	debug(0,"dom%d: %u opcodes to %lx with offset %u; total %d\n",
+	debug(2,"dom%d: %u opcodes to %lx with offset %u; total %d\n",
 	      domain->id,opcode_list_len,probepoint->vaddr,offset,total);
 
-	debug(0,"dom%d: saving %d bytes to dst %x from src page %x, offset %x\n",
+	debug(2,"dom%d: saving %d bytes to dst %x from src page %x, offset %x\n",
 	      domain->id,total,(unsigned int)*dst,(unsigned int)page,offset);
 
 	/* save */
@@ -90,7 +90,7 @@ static int __arch_restore_instr(struct vmprobe_probepoint *probepoint,
     if (!page)
         return -1;
 
-	debug(0,"dom%u: restoring %d bytes to %lx with offset %u\n",
+	debug(2,"dom%u: restoring %d bytes to %lx with offset %u\n",
 		 domain->id,*src_len,probepoint->vaddr,offset);
     
     memcpy(page + offset, *src, *src_len);

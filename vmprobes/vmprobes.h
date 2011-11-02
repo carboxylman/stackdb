@@ -47,7 +47,7 @@ typedef enum {
     VMPROBE_ACTION_FLAG_DOBREAKREPLACEATEND = 4,
 } vmprobe_action_flag_t;
 
-void vmprobes_set_debug_level(int level);
+void vmprobes_set_debug_level(int level,int xa_level);
 
 /* The opcode struct is arch-specific. */
 struct vmprobe_opcode;
