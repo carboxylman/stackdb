@@ -2302,7 +2302,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
 	for (k = 0; k < sctab[i].args[j].decodings_len; ++k) {
 	    debug(0,"rc = %d\n",rc);
-	    rc += sprintf((*argstr)+rc,"%s=%s ",
+	    rc += sprintf((*argstr)+rc,"%s=%s,",
 			  sctab[i].args[j].decodings[k],arg_data[j]->decodings[k]);
 	    debug(0,"rc = %d\n",rc);
 	}
