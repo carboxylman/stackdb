@@ -13,7 +13,7 @@ CFLAGS := -Wall -I.
 CFLAGS += -O2
 CFLAGS += -g
 
-CFLAGS += -D ENABLE_XEN -D XA_DEBUG
+CFLAGS += $(XENACCESS_FLAGS)
 
 HEADERS := xenaccess.h xa_private.h
 
