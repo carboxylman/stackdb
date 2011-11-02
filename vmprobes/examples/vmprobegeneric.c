@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <getopt.h>
@@ -23,6 +24,62 @@
 
 #define ARG_STR_LEN 1024
 
+typedef enum {
+    SC_ARG_TYPE_INT = 0,
+    SC_ARG_TYPE_PT_REGS,
+    SC_ARG_TYPE_STRING,
+    SC_ARG_TYPE_SIZE_T,
+    SC_ARG_TYPE_UINT,
+    SC_ARG_TYPE_PID_T,
+    SC_ARG_TYPE_OFF_T,
+    SC_ARG_TYPE_TIME_T,
+    SC_ARG_TYPE_LONG,
+    SC_ARG_TYPE_ULONG,
+    SC_ARG_TYPE_UID_T,
+    SC_ARG_TYPE_GID_T,
+    SC_ARG_TYPE_PTR,
+    SC_ARG_TYPE_TIMEVAL,
+    SC_ARG_TYPE_TIMEZONE,
+    SC_ARG_TYPE_ITIMERVAL,
+    SC_ARG_TYPE_TIMESPEC,
+    SC_ARG_TYPE_SIGSET_T,
+    SC_ARG_TYPE_SIGINFO_T,
+    SC_ARG_TYPE__MAX__,
+} sc_arg_type_t;
+
+struct argdata;
+struct argfilter;
+struct process_data;
+
+typedef void *(argloader_t)(vmprobe_handle_t,struct cpu_user_regs *,
+			    int,int,int,unsigned long,
+			    struct argdata **argdata,
+			    struct process_data *data);
+typedef void (argdecoder_t)(vmprobe_handle_t,struct cpu_user_regs *,
+			    int,int,int,
+			    struct argdata **argdata,
+			    struct process_data *data);
+
+struct syscall_arg_info {
+    int num;
+    char *name;
+    sc_arg_type_t type;
+    argdecoder_t *ad;
+    char **decodings;
+    int decodings_len;
+    argloader_t *al;
+    int len_arg_num;
+};
+
+struct syscall_info {
+    int num;
+    char *name;
+    unsigned long addr;
+    int argc;
+    struct syscall_arg_info args[6];
+    vmprobe_handle_t vp;
+};
+
 struct argfilter {
     int dofilter;
     int syscallnum;
@@ -33,6 +90,7 @@ struct argfilter {
     int gid;
 
     int argnum;
+    int decoding;
     regex_t *preg;
     char *strfrag;
     int retval;
@@ -48,6 +106,38 @@ void free_argfilter(struct argfilter *f) {
 	free(f->name);
     free(f);
 }
+
+struct argdata {
+    struct syscall_arg_info *info;
+    unsigned char *data;
+    char *str;
+    char **decodings;
+};
+
+void free_argdata(struct argdata *d) {
+    int i;
+
+    if (d->data) {
+	if (d->data == (unsigned char *)d->str)
+	    d->str = NULL;
+	free(d->data);
+    }
+    if (d->str)
+	free(d->str);
+    if (d->info->decodings_len) {
+	for (i = 0; i < d->info->decodings_len; ++i)
+	    free(d->decodings[i]);
+	free(d->decodings);
+    }
+    free(d);
+}
+
+void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		    int pid,int i,int j,
+		    struct argdata **arg_data,
+		    struct process_data *data);
+
+#define SYSCALL_MAX 294
 
 struct process_data {
     unsigned int pid;
@@ -83,6 +173,70 @@ void usage(char *progname) {
     exit(-1);
 }
 
+char *ssprintf(char *format,...) {
+    va_list args;
+    char *buf;
+    int bufsiz = 80;
+    char *tbuf;
+    int rc;
+
+    va_start(args,format);
+    while (1) {
+	buf = malloc(bufsiz);
+	rc = vsnprintf(buf,bufsiz,format,args);
+	if (rc >= bufsiz) {
+	    free(buf);
+	    bufsiz += 80;
+	}
+	else {
+	    tbuf = malloc(sizeof(char)*strlen(buf)+1);
+	    memcpy(tbuf,buf,strlen(buf)+1);
+	    free(buf);
+	    buf = tbuf;
+	    break;
+	}
+    }
+
+    va_end(args);
+
+    return buf;
+}
+
+void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
+    char *tbuf;
+    int len = strlen(str);
+    int oldlen = *endptr - *buf;
+    int remaining = *bufsiz - oldlen;
+
+    if (!*buf) {
+	debug(1,"alloc'ing %d init bytes\n",len+80);
+	*bufsiz = len + 80;
+	*buf = malloc(sizeof(char) * *bufsiz);
+	*endptr = *buf;
+	oldlen = *endptr - *buf;
+	remaining = *bufsiz - oldlen;
+    }
+
+    if ((len+1) > remaining) {
+	debug(1,"expanding buf by %d bytes\n",len+80);
+	tbuf = malloc(sizeof(char)*(*bufsiz + len + 80));
+	memcpy(tbuf,*buf,*bufsiz);
+	free(*buf);
+	*buf = tbuf;
+	*bufsiz = *bufsiz + len + 80;
+	*endptr = tbuf + oldlen;
+    }
+
+    memcpy(*endptr,str,len);
+    debug(1,"copied\n");
+    (*endptr)[len] = '\0';
+    debug(1,"terminated\n");
+    *endptr = *endptr + len;
+    debug(1,"endptr updated\n");
+
+    return;
+}
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
@@ -92,87 +246,87 @@ int argfilter_list_alloclen = 10;
 char **ps_list = NULL;
 int ps_list_len = 0;
 
-int check_filter(int syscallnum,int argnum,char *argval,
-		 struct argfilter **filter_ptr,struct process_data *data)
+int check_filters(int syscall,int arg,
+		  struct argdata **adata,
+		  struct process_data *pdata,
+		  struct argfilter **match)
 {
     int pmatch = 0;
     int smatch = 0;
     int lpc;
     struct process_data *parent;
+    char *argval;
 
-    if (filter_ptr && *filter_ptr == NULL && argval) {
-	for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
-	    debug(0,"filter name=%s, process name=%s\n",argfilter_list[lpc]->name,data->name);
+    for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
+	debug(0,"filter name=%s, process name=%s\n",argfilter_list[lpc]->name,pdata->name);
 	    
-	    if ((argfilter_list[lpc]->syscallnum == -1 || argfilter_list[lpc]->syscallnum == syscallnum)
-		&& (argfilter_list[lpc]->argnum == -1 || argfilter_list[lpc]->argnum == argnum)
-		&& (argfilter_list[lpc]->preg == NULL
-		    || !regexec(argfilter_list[lpc]->preg,argval,0,NULL,0))
-		&& (argfilter_list[lpc]->name == NULL 
-		    || strcmp(argfilter_list[lpc]->name,data->name) == 0)) {
+	if ((argfilter_list[lpc]->syscallnum == -1 || argfilter_list[lpc]->syscallnum == syscall)
+	    && (argfilter_list[lpc]->argnum == -1 || argfilter_list[lpc]->argnum == arg)
+	    && (argfilter_list[lpc]->name == NULL 
+		|| strcmp(argfilter_list[lpc]->name,pdata->name) == 0)) {
+	    smatch = 1;
+	}
+
+	if (smatch) {
+	    if (argfilter_list[lpc]->decoding > -1)
+		argval = adata[arg]->decodings[argfilter_list[lpc]->decoding];
+	    else
+		argval = adata[arg]->str;
+
+	    if (argfilter_list[lpc]->preg == NULL
+		|| !regexec(argfilter_list[lpc]->preg,argval,0,NULL,0))
 		smatch = 1;
-	    }
+	    else
+		smatch = 0;
+	}
 
-	    if ((argfilter_list[lpc]->pid == -1 
-		 || argfilter_list[lpc]->pid == data->pid)
-		&& (argfilter_list[lpc]->gid == -1 
-		    || argfilter_list[lpc]->gid == data->gid)
-		&& (argfilter_list[lpc]->uid == -1 
-		    || argfilter_list[lpc]->uid == data->uid)) {
-		pmatch = 1;
-	    }
-	    if (pmatch && argfilter_list[lpc]->ppid_search) {
-		pmatch = 0;
-		parent = data->parent;
-		while (parent) {
-		    if (parent->pid == argfilter_list[lpc]->ppid) {
-			pmatch = 1;
-			break;
-		    }
-		    parent = parent->parent;
+	if ((argfilter_list[lpc]->pid == -1 
+	     || argfilter_list[lpc]->pid == pdata->pid)
+	    && (argfilter_list[lpc]->gid == -1 
+		|| argfilter_list[lpc]->gid == pdata->gid)
+	    && (argfilter_list[lpc]->uid == -1 
+		|| argfilter_list[lpc]->uid == pdata->uid)) {
+	    pmatch = 1;
+	}
+	if (pmatch && argfilter_list[lpc]->ppid_search) {
+	    pmatch = 0;
+	    parent = pdata->parent;
+	    while (parent) {
+		if (parent->pid == argfilter_list[lpc]->ppid) {
+		    pmatch = 1;
+		    break;
 		}
+		parent = parent->parent;
 	    }
-	    else if (pmatch 
-		     && !(argfilter_list[lpc]->ppid == -1 
-			  || argfilter_list[lpc]->ppid == data->ppid))
-		pmatch = 0;
+	}
+	else if (pmatch 
+		 && !(argfilter_list[lpc]->ppid == -1 
+		      || argfilter_list[lpc]->ppid == pdata->ppid))
+	    pmatch = 0;
 
-	    if (smatch && pmatch) {
-		*filter_ptr = argfilter_list[lpc];
-		//printf("Filter match on %d %d %s (%d %d %d)\n",
-		//       argfilter_list[lpc]->syscallnum,
-		//       argfilter_list[lpc]->argnum,
-		//       argfilter_list[lpc]->strfrag,
-		//       argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
-		//       argfilter_list[lpc]->gid);
-		break;
-	    }
-	    else {
-		//printf("Filter no match on %d %d %s (%d %d %d)\n",
-		//       argfilter_list[lpc]->syscallnum,
-		//       argfilter_list[lpc]->argnum,
-		//       argfilter_list[lpc]->strfrag,
-		//       argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
-		//       argfilter_list[lpc]->gid);
-		smatch = pmatch = 0;
-	    }
+	if (smatch && pmatch) {
+	    *match = argfilter_list[lpc];
+	    //printf("Filter match on %d %d %s (%d %d %d)\n",
+	    //       argfilter_list[lpc]->syscallnum,
+	    //       argfilter_list[lpc]->argnum,
+	    //       argfilter_list[lpc]->strfrag,
+	    //       argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
+	    //       argfilter_list[lpc]->gid);
+	    break;
+	}
+	else {
+	    //printf("Filter no match on %d %d %s (%d %d %d)\n",
+	    //       argfilter_list[lpc]->syscallnum,
+	    //       argfilter_list[lpc]->argnum,
+	    //       argfilter_list[lpc]->strfrag,
+	    //       argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
+	    //       argfilter_list[lpc]->gid);
+	    smatch = pmatch = 0;
 	}
     }
 
     return (smatch && pmatch);
 }
-
-void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
-		    int pid,int i,int j,
-		    unsigned char **arg_data,
-		    struct argfilter **filter_ptr,
-		    struct process_data *data);
-void print_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
-		    int pid,int i,int j,
-		    unsigned char **arg_data,
-		    char *arg_str,char **arg_str_cur,
-		    struct argfilter **filter_ptr,
-		    struct process_data *data);
 
 typedef struct fcntlcmdent {
     int cmd;
@@ -351,19 +505,17 @@ int k_sigismember(vsigset_t *set, int _sig)
     return 1 & (set->sig[sig / L_NSIG_BPW] >> (sig % L_NSIG_BPW));
 }
 
-void socket_call_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void socket_call_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 			 int pid,int syscall,int arg,
-			 unsigned char **arg_data,
-			 char *arg_str,char **arg_str_cur,
-			 struct argfilter **filter_ptr,
+			 struct argdata **arg_data,
 			 struct process_data *data)
 {
-    int call = *((int *)arg_data[arg]);
+    int call = *((int *)(arg_data[arg]->data));
 
     if (call < sizeof(socksyscalls) / sizeof(char *))
-	printf("%s\n",socksyscalls[call]);
+	arg_data[arg]->decodings[0] = strdup(socksyscalls[call]);
     else
-	printf("(unknown socket syscall %d)\n",call);
+	arg_data[arg]->decodings[0] = strdup("unknown");
 
     return;
 }
@@ -405,11 +557,9 @@ char *sockaddr2str(struct sockaddr *sa)
     return buf;
 }
 
-void socket_args_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void socket_args_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 			 int pid,int syscall,int arg,
-			 unsigned char **arg_data,
-			 char *arg_str,char **arg_str_cur,
-			 struct argfilter **filter_ptr,
+			 struct argdata **arg_data,
 			 struct process_data *data)
 {
     unsigned long a[6];
@@ -418,25 +568,21 @@ void socket_args_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     char *domainname;
     char *typename;
     struct protoent *proto;
+    char *protoname;
 
-    if (!load_arg_data(handle,regs,pid,syscall,0,arg_data,filter_ptr,data)) {
-	printf("(error: no call num for socketcall!)\n");
-	return;
-    }
-
-    call = *((int *)arg_data[0]);
+    call = *((int *)(arg_data[0]->data));
 
     if (call < 1 || call >= sizeof(socksyscalls) / sizeof(char *)) {
-	printf("(unknown socket syscall %d)\n",call);
+	arg_data[arg]->decodings[0] = strdup("(unknown call)");
 	return;
     }
 
     unsigned char *dbuf = \
 	vmprobe_get_data(handle,regs,"socketcall_args",
-			 *((unsigned long *)arg_data[arg]),pid,
+			 *((unsigned long *)(arg_data[arg]->data)),pid,
 			 socketcall_nargs[call],NULL);
     if (!dbuf) {
-	printf("(bad socketcall args!)\n");
+	arg_data[arg]->decodings[0] = strdup("(bad socketcall args)");
 	return;
     }
 
@@ -474,13 +620,6 @@ void socket_args_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    break;
 	}
 
-	if (domainname) {
-	    printf("family = %s, ",domainname);
-	}
-	else {
-	    printf("family = (unknown %d), ",(int)a[0]);
-	}
-
 	switch ((int)a[1]) {
 	case SOCK_STREAM: typename = "SOCK_STREAM"; break;
 	case SOCK_DGRAM: typename = "SOCK_DGRAM"; break;
@@ -490,54 +629,48 @@ void socket_args_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    //case SOCK_DCCP: typename = "SOCK_DCCP"; break;
 	case SOCK_PACKET: typename = "SOCK_PACKET"; break;
 	default:
-	    typename = NULL;
+	    typename = "unknown";
 	    break;
 	}
 
-	if (typename) {
-	    printf("type = %s, ",typename);
-	}
-	else {
-	    printf("type = (unknown %d), ",(int)a[1]);
-	}
-
 	proto = getprotobynumber((int)a[2]);
-
-	if (proto) {
-	    printf("protocol = %s",proto->p_name);
-	}
-	else {
-	    printf("protocol = (unknown %d)",(int)a[2]);
-	}
+	if (!proto)
+	    protoname = "unknown";
+	else 
+	    protoname = proto->p_name;
 
 	if (call == 1) {
-	    printf("\n");
+	    arg_data[arg]->decodings[0] = ssprintf("family=%s,type=%s,protocol=%s",
+						   domainname,typename,protoname);
 	    break;
 	}
 
 	// do socketpair last arg
-	printf(", usockvec = %p\n",(void *)a[3]);
+	arg_data[arg]->decodings[0] = ssprintf("family=%s,type=%s,protocol=%s,usockvec=%p",
+					       domainname,typename,protoname,(void *)a[3]);
 	break;
     case 2:
-	printf("fd = %d, umyaddr = %s, addrlen = %d\n",(int)a[0],sas,(int)a[2]);
+	arg_data[arg]->decodings[0] = ssprintf("fd=%d,umyaddr=%s,addrlen=%d",
+					       (int)a[0],sas,(int)a[2]);
 	break;
     case 3:
-	printf("fd = %d, uservaddr = %s, addrlen = %d\n",(int)a[0],sas,(int)a[2]);
+	arg_data[arg]->decodings[0] = ssprintf("fd=%d,uservaddr=%s,addrlen=%d",
+					       (int)a[0],sas,(int)a[2]);
 	break;
     case 4:
-	printf("fd = %d, backlog = %d\n",(int)a[0],(int)a[1]);
+	arg_data[arg]->decodings[0] = ssprintf("fd=%d,backlog=%d",(int)a[0],(int)a[1]);
 	break;
     case 5:
-	printf("fd = %d, upeer_sockaddr = %p, upeer_addrlen = %p\n",
+	arg_data[arg]->decodings[0] = ssprintf("fd=%d,upeer_sockaddr=%p,upeer_addrlen=%p",
 	       (int)a[0],(void *)a[1],(void *)a[2]);
 	break;
     case 6:
     case 7:
-	printf("fd = %d, usockaddr = %p, usockaddr_len = %p\n",
+	arg_data[arg]->decodings[0] = ssprintf("fd=%d,usockaddr=%p,usockaddr_len= %p",
 	       (int)a[0],(void *)a[1],(void *)a[2]);
 	break;
     default:
-	printf("\n");
+	arg_data[arg]->decodings[0] = strdup("unknown");
 	break;
     }
 
@@ -547,128 +680,108 @@ void socket_args_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     return;
 }
 
-void sigset_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void sigset_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		    int pid,int syscall,int arg,
-		    unsigned char **arg_data,
-		    char *arg_str,char **arg_str_cur,
-		    struct argfilter **filter_ptr,
+		    struct argdata **arg_data,
 		    struct process_data *data)
 {
     vsigset_t *ss = (vsigset_t *)arg_data[arg];
     int i;
     int done = 0;
+    char *buf = NULL;
+    int bufsiz;
+    char *endptr;
 
     for (i = 1; i < sizeof(signals) / sizeof(int); ++i) {
 	if (k_sigismember(ss,i)) {
 	    if (done)
-		printf(" | ");
+		string_append(&buf,&bufsiz,&endptr," | ");
 	    else 
 		done = 1;
 
-	    printf("%s",signals[i]);
+	    string_append(&buf,&bufsiz,&endptr,signals[i]);
 	}
     }
-    printf("\n");
+    arg_data[arg]->decodings[0] = buf;
 
     return;
 }
 
-void siginfo_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void siginfo_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		     int pid,int syscall,int arg,
-		     unsigned char **arg_data,
-		     char *arg_str,char **arg_str_cur,
-		     struct argfilter **filter_ptr,
+		     struct argdata **arg_data,
 		     struct process_data *data)
 {
-    siginfo_t *si = (siginfo_t *)arg_data[arg];
+    siginfo_t *si = (siginfo_t *)(arg_data[arg]->data);
 
-    printf("{ .si_signo = %d, .si_errno = %d, si.si_code = %d\n",
-	   si->si_signo,si->si_errno,si->si_code);
+    arg_data[arg]->decodings[0] = ssprintf("{si_signo=%d,si_errno=%d,si_code=%d}",
+					   si->si_signo,si->si_errno,si->si_code);
 
     return;
 }
 
-void timespec_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void timespec_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		      int pid,int syscall,int arg,
-		      unsigned char **arg_data,
-		      char *arg_str,char **arg_str_cur,
-		      struct argfilter **filter_ptr,
+		      struct argdata **arg_data,
 		      struct process_data *data)
 {
-    struct timespec *tv = (struct timespec *)arg_data[arg];
+    struct timespec *tv = (struct timespec *)(arg_data[arg]->data);
 
-    printf("{ .tv_sec = %ld, .tv_nsec = %ld }\n",tv->tv_sec,tv->tv_nsec);
+    if (!tv) {
+	arg_data[arg]->decodings[0] = NULL;
+	return;
+    }
+
+    arg_data[arg]->decodings[0] = ssprintf("{tv_sec=%ld,tv_nsec=%ld}",
+					   tv->tv_sec,tv->tv_nsec);
 
     return;
 }
 
-void timeval_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void timeval_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		     int pid,int syscall,int arg,
-		     unsigned char **arg_data,
-		     char *arg_str,char **arg_str_cur,
-		     struct argfilter **filter_ptr,
+		     struct argdata **arg_data,
 		     struct process_data *data)
 {
-    struct timeval *tv = (struct timeval *)arg_data[arg];
+    struct timeval *tv = (struct timeval *)(arg_data[arg]->data);
 
-    printf("{ .tv_sec = %ld, .tv_usec = %ld }\n",tv->tv_sec,tv->tv_usec);
+    if (!tv) {
+	arg_data[arg]->decodings[0] = NULL;
+	return;
+    }
+
+    arg_data[arg]->decodings[0] = ssprintf("{tv_sec=%ld,tv_usec=%ld}",
+					   tv->tv_sec,tv->tv_usec);
 
     return;
 }
 
-void timezone_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void timezone_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		      int pid,int syscall,int arg,
-		      unsigned char **arg_data,
-		      char *arg_str,char **arg_str_cur,
-		      struct argfilter **filter_ptr,
+		      struct argdata **arg_data,
 		      struct process_data *data)
 {
     struct timezone *tz = (struct timezone *)arg_data[arg];
 
-    printf("{ .tz_minuteswest = %d, .tz_dsttime = %d }\n",
-	   tz->tz_minuteswest,tz->tz_dsttime);
+    arg_data[arg]->decodings[0] = ssprintf("{tz_minuteswest=%d,tz_dsttime=%d}",
+					   tz->tz_minuteswest,tz->tz_dsttime);
 
     return;
 }
 
-void itimerval_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void itimerval_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       int pid,int syscall,int arg,
-		       unsigned char **arg_data,
-		       char *arg_str,char **arg_str_cur,
-		       struct argfilter **filter_ptr,
+		       struct argdata **arg_data,
 		       struct process_data *data)
 {
-    struct itimerval *itv = (struct itimerval *)arg_data[arg];
+    struct itimerval *itv = (struct itimerval *)(arg_data[arg]->data);
 
-    printf("{ .it_interval = { .tv_sec = %ld, .tv_usec = %ld }, .it_value = { .tv_sec = %ld, .tv_usec = %ld } }\n",
-	   itv->it_interval.tv_sec,itv->it_interval.tv_usec,
-	   itv->it_value.tv_sec,itv->it_value.tv_usec);
+    arg_data[arg]->decodings[0] = ssprintf("{it_interval={tv_sec=%ld,tv_usec=%ld},it_value={tv_sec=%ld,tv_usec=%ld}}",
+					   itv->it_interval.tv_sec,itv->it_interval.tv_usec,
+					   itv->it_value.tv_sec,itv->it_value.tv_usec);
 
     return;
 }
-
-typedef enum {
-    SC_ARG_TYPE_INT = 0,
-    SC_ARG_TYPE_PT_REGS,
-    SC_ARG_TYPE_STRING,
-    SC_ARG_TYPE_SIZE_T,
-    SC_ARG_TYPE_UINT,
-    SC_ARG_TYPE_PID_T,
-    SC_ARG_TYPE_OFF_T,
-    SC_ARG_TYPE_TIME_T,
-    SC_ARG_TYPE_LONG,
-    SC_ARG_TYPE_ULONG,
-    SC_ARG_TYPE_UID_T,
-    SC_ARG_TYPE_GID_T,
-    SC_ARG_TYPE_PTR,
-    SC_ARG_TYPE_TIMEVAL,
-    SC_ARG_TYPE_TIMEZONE,
-    SC_ARG_TYPE_ITIMERVAL,
-    SC_ARG_TYPE_TIMESPEC,
-    SC_ARG_TYPE_SIGSET_T,
-    SC_ARG_TYPE_SIGINFO_T,
-    SC_ARG_TYPE__MAX__,
-} sc_arg_type_t;
 
 struct pt_regs {
         long ebx;
@@ -709,38 +822,6 @@ int sc_arg_type_len[SC_ARG_TYPE__MAX__] = {
     sizeof(vsigset_t),
     sizeof(siginfo_t),
 };
-
-typedef void *(argloader_t)(vmprobe_handle_t,struct cpu_user_regs *,
-			    int,int,int,unsigned long,
-			    unsigned char **arg_data,
-			    struct argfilter **filter_ptr,
-			    struct process_data *data);
-typedef void (argprinter_t)(vmprobe_handle_t,struct cpu_user_regs *,
-			    int,int,int,
-			    unsigned char **arg_data,
-			    char *arg_str,char **arg_str_cur,
-			    struct argfilter **filter_ptr,
-			    struct process_data *data);
-
-struct syscall_arg_info {
-    int num;
-    char *name;
-    sc_arg_type_t type;
-    argprinter_t *ap;
-    argloader_t *al;
-    int len_arg_num;
-};
-
-struct syscall_info {
-    int num;
-    char *name;
-    unsigned long addr;
-    int argc;
-    struct syscall_arg_info args[6];
-    vmprobe_handle_t vp;
-};
-
-#define SYSCALL_MAX 294
 
 #define THREAD_SIZE 8192
 #define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
@@ -1006,162 +1087,163 @@ struct process_data *load_current_process_data(vmprobe_handle_t handle,
     return data;
 }
 
-void fcntl_cmd_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void fcntl_cmd_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       int pid,int syscall,int arg,
-		       unsigned char **arg_data,
-		       char *arg_str,char **arg_str_cur,
-		       struct argfilter **filter_ptr,
+		       struct argdata **arg_data,
 		       struct process_data *data)
 {
-    int cmd = *((int *)arg_data[arg]);
+    int cmd = *((int *)(arg_data[arg]->data));
     int i;
     int didone = 0;
+    char *buf = NULL;
+    int bufsiz;
+    char *endptr;
 
-    printf("0x%08x ",cmd);
+    //printf("0x%08x ",cmd);
 
     for (i = 0; i < sizeof(fcntlcmds) / sizeof(fcntlcmdent_t); ++i) {
 	if (cmd & fcntlcmds[i].cmd) {
 	    if (didone)
-		printf(" | ");
+		string_append(&buf,&bufsiz,&endptr," | ");
 	    else 
 		didone = 1;
-	    printf("%s",fcntlcmds[i].name);
+
+	    string_append(&buf,&bufsiz,&endptr,fcntlcmds[i].name);
 	}
     }
-    printf("\n");
+    arg_data[arg]->decodings[0] = buf;
  
     return;
 }
 
-void file_mode_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void file_mode_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       int pid,int syscall,int arg,
-		       unsigned char **arg_data,
-		       char *arg_str,char **arg_str_cur,
-		       struct argfilter **filter_ptr,
+		       struct argdata **arg_data,
 		       struct process_data *data)
 {
-    unsigned long mode = *((unsigned long *)arg_data[arg]);
+    unsigned long mode = *((unsigned long *)(arg_data[arg]->data));
     int i;
     int didone = 0;
-
-    printf("0x%08lx ",mode);
+    char *buf = NULL;
+    int bufsiz;
+    char *endptr;
 
     for (i = 0; i < sizeof(filemodes) / sizeof(filemodeent_t); ++i) {
 	if (mode & filemodes[i].mode) {
 	    if (didone)
-		printf(" | ");
+		string_append(&buf,&bufsiz,&endptr," | ");
 	    else 
 		didone = 1;
-	    printf("%s",filemodes[i].name);
+	    string_append(&buf,&bufsiz,&endptr,filemodes[i].name);
 	}
     }
-    printf("\n");
+    arg_data[arg]->decodings[0] = buf;
  
     return;
 }
 
-void open_flags_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void open_flags_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 			int pid,int syscall,int arg,
-			unsigned char **arg_data,
-			char *arg_str,char **arg_str_cur,
-			struct argfilter **filter_ptr,
+			struct argdata **arg_data,
 			struct process_data *data)
 {
-    int flags = *((int *)arg_data[arg]);
+    int flags = *((int *)(arg_data[arg]->data));
     int i;
     int didone = 0;
-
-    printf("0x%08x ",flags);
+    char *buf = NULL;
+    int bufsiz;
+    char *endptr;
 
     for (i = 0; i < sizeof(openflags) / sizeof(openflagent_t); ++i) {
 	if (flags & openflags[i].flag) {
-	    if (didone)
-		printf(" | ");
-	    else 
+	    if (didone) {
+		string_append(&buf,&bufsiz,&endptr," | ");
+	    }
+	    else
 		didone = 1;
-	    printf("%s",openflags[i].name);
+
+	    string_append(&buf,&bufsiz,&endptr,openflags[i].name);
 	}
     }
-    printf("\n");
+    arg_data[arg]->decodings[0] = buf;
  
     return;
 }
 
-void signal_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void signal_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		    int pid,int syscall,int arg,
-		    unsigned char **arg_data,
-		    char *arg_str,char **arg_str_cur,
-		    struct argfilter **filter_ptr,
+		    struct argdata **arg_data,
 		    struct process_data *data)
 {
-    unsigned long signo = *((unsigned long *)arg_data[arg]);
+    unsigned long signo = *((unsigned long *)(arg_data[arg]->data));
 
     if (signo < 0 || signo >= sizeof(signals) / sizeof(int)) {
-	printf("%d (unknown signal)\n",(int)signo);
+	arg_data[arg]->decodings[0] = strdup("unknown");
+	return;
     }
-    printf("%s (%d)\n",signals[signo],(int)signo);
+    arg_data[arg]->decodings[0] = strdup(signals[signo]);
  
     return;
 }
 
-void ioctl_cmd_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void ioctl_cmd_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       int pid,int syscall,int arg,
-		       unsigned char **arg_data,
-		       char *arg_str,char **arg_str_cur,
-		       struct argfilter **filter_ptr,
+		       struct argdata **arg_data,
 		       struct process_data *data)
 {
     int i = 0;
-    unsigned long cmd = *((unsigned long *)arg_data[arg]);
+    unsigned long cmd = *((unsigned long *)(arg_data[arg]->data));
 
     for (i = 0; i < sizeof(ioctls); ++i) {
 	if (cmd == ioctls[i].num) {
-	    printf("%s\n",ioctls[i].name);
+	    arg_data[arg]->decodings[0] = strdup(ioctls[i].name);
 	    return;
 	}
     }
-    printf("0x%08lx (unknown ioctl)\n",cmd);
+    arg_data[arg]->decodings[0] = strdup("unknown");
  
     return;
 }
 
-void exit_code_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+void exit_code_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       int pid,int syscall,int arg,
-		       unsigned char **arg_data,
-		       char *arg_str,char **arg_str_cur,
-		       struct argfilter **filter_ptr,
+		       struct argdata **arg_data,
 		       struct process_data *data)
 {
-    long code = *((long *)arg_data[arg]);
+    long code = *((long *)(arg_data[arg]->data));
 
-    printf("0x%08lx",code);
+    //arg_data[arg]->str = ssprintf("0x%08lx",code);
 
     if (1) {
 	if (WIFEXITED(code)) {
-	    printf(" (exit clean %d)\n",WEXITSTATUS(code));
+	    arg_data[arg]->decodings[0] = strdup("exit");
+	    arg_data[arg]->decodings[1] = ssprintf("%d",WEXITSTATUS(code));
+	    arg_data[arg]->decodings[2] = strdup("");
 	}
 	else if (WIFSIGNALED(code)) {
 	    int signo = WTERMSIG(code);
 	    char *signame = "unknown";
+	    arg_data[arg]->decodings[0] = ssprintf("signal");
+	    arg_data[arg]->decodings[1] = strdup("");
 	    if (signo >= 0 && signo < sizeof(signals) / sizeof(int))
 		signame = signals[signo];
-	    printf(" (exit signal %s (%d))\n",signame,signo);
+	    arg_data[arg]->decodings[2] = strdup(signame);
 	}
 	else {
-	    printf(" (exit unknown!)\n");
+	    arg_data[arg]->decodings[0] = ssprintf("unknown");
+	    arg_data[arg]->decodings[1] = strdup("");
+	    arg_data[arg]->decodings[2] = strdup("");
 	}
     }
  
     return;
 }
 
-void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
-			    int pid,int syscall,int arg,unsigned long argval,
-			    unsigned char **arg_data,
-			    struct argfilter **filter_ptr,
+void process_ptregs_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+			    int pid,int syscall,int arg,
+			    struct argdata **arg_data,
 			    struct process_data *data)
 {
-    unsigned char *filename;
     unsigned char *argi_ptr;
     unsigned long argi_addr;
     unsigned char *argi;
@@ -1169,7 +1251,84 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     unsigned long envi_addr;
     unsigned char *envi;
     int i = 0;
+    char *buf = NULL;
+    int bufsiz = 0;
+    char *endptr = NULL;
 
+    struct pt_regs *r = (struct pt_regs *)(arg_data[arg]->data);
+
+    if (!r) 
+	return;
+
+    if (syscall == 11) { /* execve */
+	arg_data[arg]->decodings[0] = (char *)vmprobe_get_data(handle,regs,"syscall_ebx",r->ebx,pid,0,NULL);
+
+
+	string_append(&buf,&bufsiz,&endptr,"[");
+	while (1) {
+	    argi_ptr = vmprobe_get_data(handle,regs,
+					"execve_argi_ptr",
+					r->ecx + i * sizeof(char *),
+					pid,sizeof(char *),NULL);
+	    if (argi_ptr == NULL || *argi_ptr == '\0') {
+		if (argi_ptr)
+		    free(argi_ptr);
+		break;
+	    }
+	    argi_addr = *((unsigned long *)argi_ptr);
+	    free(argi_ptr);
+	    argi = vmprobe_get_data(handle,regs,
+				    "execve_argi",argi_addr,
+				    pid,0,NULL);
+	    if (!argi)
+		argi = "(null)";
+	    string_append(&buf,&bufsiz,&endptr,(char *)argi);
+	    string_append(&buf,&bufsiz,&endptr,",");
+	    if (argi)
+		free(argi);
+	    ++i;
+	}
+	string_append(&buf,&bufsiz,&endptr,"]");
+	arg_data[arg]->decodings[1] = buf;
+
+	i = 0;
+	buf = endptr = NULL;
+	bufsiz = 0;
+	string_append(&buf,&bufsiz,&endptr,"[");
+	while (1) {
+	    envi_ptr = vmprobe_get_data(handle,regs,
+					"execve_envi_ptr",
+					r->edx + i * sizeof(char *),
+					pid,sizeof(char *),NULL);
+	    if (envi_ptr == NULL || *envi_ptr == '\0') {
+		/* last arg of list, so break */
+		if (envi_ptr)
+		    free(envi_ptr);
+		break;
+	    }
+	    envi_addr = *((unsigned long *)envi_ptr);
+	    free(envi_ptr);
+	    envi = vmprobe_get_data(handle,regs,
+				    "execve_envi",envi_addr,
+				    pid,0,NULL);
+	    string_append(&buf,&bufsiz,&endptr,(char *)envi);
+	    string_append(&buf,&bufsiz,&endptr,",");
+	    if (envi)
+		free(envi);
+	    ++i;
+	}
+	string_append(&buf,&bufsiz,&endptr,"]");
+	arg_data[arg]->decodings[2] = buf;
+    }
+
+    return;
+}
+
+void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+			    int pid,int syscall,int arg,unsigned long argval,
+			    struct argdata **arg_data,
+			    struct process_data *data)
+{
     struct pt_regs *r = \
 	(struct pt_regs *)vmprobe_get_data(handle,regs,
 					   "pt_regs",regs->esp+4,0,
@@ -1178,284 +1337,42 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     if (!r) 
 	return NULL;
 
-    arg_data[arg] = (unsigned char *)r;
+    arg_data[arg]->data = (unsigned char *)r;
+    arg_data[arg]->str = ssprintf("{ebx=%08lx,ecx=%08lx,edx=%08lx,esi=%08lx,edi=%08lx,eax=%08lx,"
+				  "ebp=%08lx,esp=%08lx,eip=%08lx,eflags=%08lx,orig_eax=%08lx,"
+				  "xds=%08x,xes=%08x,xcs=%08x,xss=%08x}",
+				  r->ebx,r->ecx,r->edx,r->esi,r->edi,r->eax,
+				  r->ebp,r->esp,r->eip,r->eflags,r->orig_eax,
+				  r->xds,r->xes,r->xcs,r->xss);
 
-    if (syscall == 11) { /* execve */
-	filename = vmprobe_get_data(handle,regs,"syscall_ebx",r->ebx,pid,0,NULL);
-	if (filename) {
-	    check_filter(syscall,arg,(char *)filename,filter_ptr,data);
-	    free(filename);
-	}
-
-	while (1) {
-	    argi_ptr = vmprobe_get_data(handle,regs,
-					"execve_argi_ptr",
-					r->ecx + i * sizeof(char *),
-					pid,sizeof(char *),NULL);
-	    if (argi_ptr == NULL || *argi_ptr == '\0') {
-		break;
-	    }
-	    argi_addr = *((unsigned long *)argi_ptr);
-	    argi = vmprobe_get_data(handle,regs,
-				    "execve_argi",argi_addr,
-				    pid,0,NULL);
-	    if (argi) {
-		check_filter(syscall,arg,(char *)argi,filter_ptr,data);
-		free(argi);
-	    }
-	    ++i;
-	}
-
-	i = 0;
-	while (1) {
-	    envi_ptr = vmprobe_get_data(handle,regs,
-					"execve_envi_ptr",
-					r->edx + i * sizeof(char *),
-					pid,sizeof(char *),NULL);
-	    if (envi_ptr == NULL || *envi_ptr == '\0') {
-		/* last arg of list, so break */
-		break;
-	    }
-	    envi_addr = *((unsigned long *)envi_ptr);
-	    free(envi_ptr);
-	    envi = vmprobe_get_data(handle,regs,
-				    "execve_envi",envi_addr,
-				    pid,0,NULL);
-	    if (envi) {
-		check_filter(syscall,arg,(char *)envi,filter_ptr,data);
-		free(envi);
-	    }
-	    ++i;
-	}
-    }
-
-    return arg_data[arg];
-}
-void process_ptregs_printer(vmprobe_handle_t handle,struct cpu_user_regs *regs,
-			    int pid,int syscall,int arg,
-			    unsigned char **arg_data,
-			    char *arg_str,char **arg_str_cur,
-			    struct argfilter **filter_ptr,
-			    struct process_data *data)
-{
-    unsigned char *filename;
-    unsigned char *argi_ptr;
-    unsigned long argi_addr;
-    unsigned char *argi;
-    unsigned char *envi_ptr;
-    unsigned long envi_addr;
-    unsigned char *envi;
-    int i = 0;
-    int src = 0;
-
-    struct pt_regs *r = (struct pt_regs *)arg_data[arg];
-
-    if (!r) 
-	return;
-
-    /* first, just dump it */
-    fprintf(stdout,
-	    "  ebx=%08lx,ecx=%08lx,edx=%08lx,esi=%08lx,edi=%08lx,eax=%08lx\n"
-	    "          ebp=%08lx,esp=%08lx,eip=%08lx,eflags=%08lx,orig_eax=%08lx,\n"
-	    "          xds=%08x, xes=%08x, xcs=%08x, xss=%08x\n",
-	    r->ebx,r->ecx,r->edx,r->esi,r->edi,r->eax,
-	    r->ebp,r->esp,r->eip,r->eflags,r->orig_eax,
-	    r->xds,r->xes,r->xcs,r->xss);
-    fflush(stdout);
-
-    if (syscall == 11) { /* execve */
-	filename = vmprobe_get_data(handle,regs,
-				    "execve_filename",(unsigned long)r->ebx,pid,
-				    0,NULL);
-	fprintf(stdout,"    filename: '%s' (0x%08x)\n",filename,(unsigned int)regs->ebx);
-	fflush(stdout);
-	src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-		       "filename=%s, ",filename);
-	if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-	    *arg_str_cur = *arg_str_cur + src;
-	else {
-	    arg_str[ARG_STR_LEN - 1] = '\0';
-	    *arg_str_cur = arg_str + ARG_STR_LEN;
-	}
-	if (filename)
-	    free(filename);
-
-	fprintf(stdout,"    argv: 0x%08lx\n",r->ecx);
-	fprintf(stdout,"      args: ");
-	fflush(stdout);
-	while (1) {
-	    argi_ptr = vmprobe_get_data(handle,regs,
-					"execve_argi_ptr",
-					(unsigned long)r->ecx + i * sizeof(char *),
-					pid,
-					sizeof(char *),
-					NULL);
-	    if (argi_ptr == NULL || *argi_ptr == '\0') {
-		/* last arg of list, so break */
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       "), ");
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-		break;
-	    }
-	    argi_addr = *((unsigned long *)argi_ptr);
-	    argi = vmprobe_get_data(handle,regs,
-				    "execve_argi",
-				    argi_addr,
-				    pid,
-				    0,
-				    NULL);
-	    if (i == 0) {
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       "argv=(");
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-	    }
-	    else if (i > 0) {
-		fprintf(stdout,",");
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       ",");
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-	    }
-	    if (argi) {
-		fprintf(stdout,"'%s'",argi);
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       "'%s'",argi);
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-		free(argi);
-	    }
-	    //fprintf(stdout," (0x%08x -> 0x%08x)",
-	    //    r->ecx + i * sizeof(char *),*((unsigned long *)argi_ptr));
-	    ++i;
-	    fflush(stdout);
-	}
-	fprintf(stdout,"\n");
-
-	fprintf(stdout,"    envp: 0x%08lx\n",r->edx);
-	fprintf(stdout,"      env: ");
-	fflush(stdout);
-	i = 0;
-	while (1) {
-	    envi_ptr = vmprobe_get_data(handle,regs,
-					"execve_envi_ptr",
-					(unsigned long)r->edx + i * sizeof(char *),
-					pid,
-					sizeof(char *),
-					NULL);
-	    if (envi_ptr == NULL || *envi_ptr == '\0') {
-		/* last arg of list, so break */
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       ")");
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-		break;
-	    }
-	    envi_addr = *((unsigned long *)envi_ptr);
-	    free(envi_ptr);
-	    envi = vmprobe_get_data(handle,regs,
-				    "execve_envi",
-				    envi_addr,
-				    pid,
-				    0,
-				    NULL);
-	    if (i == 0) {
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       "envp(");
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-	    }
-	    else if (i > 0) {
-		fprintf(stdout,",");
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       ",");
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-	    }
-	    if (envi) {
-		fprintf(stdout,"'%s'",envi);
-		src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			       "'%s'",envi);
-		if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-		    *arg_str_cur = *arg_str_cur + src;
-		else {
-		    arg_str[ARG_STR_LEN - 1] = '\0';
-		    *arg_str_cur = arg_str + ARG_STR_LEN;
-		}
-		free(envi);
-	    }
-	    //fprintf(stdout," (0x%08x -> 0x%08x)",
-	    //    r->ecx + i * sizeof(char *),*((unsigned long *)envi_ptr));
-	    ++i;
-	    fflush(stdout);
-	}
-	fprintf(stdout,"\n");
-    }
-    else if (syscall == 120) { /* clone */
-	// ebx=clone_flags,new_sp=ecx,parent_tidptr=edx,child_tidptr=edi
-	fprintf(stdout,"    clone_flags: 0x%08lx\n",r->ebx);
-	fflush(stdout);
-	src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-		       "clone_flags=0x%08lx\n",r->ebx);
-	if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-	    *arg_str_cur = *arg_str_cur + src;
-	else {
-	    arg_str[ARG_STR_LEN - 1] = '\0';
-	    *arg_str_cur = arg_str + ARG_STR_LEN;
-	}
-    }
-
-    return;
+    return arg_data[arg]->data;
 }
 
 struct syscall_info sctab[SYSCALL_MAX] = { 
-    { 0, "do_exit", 0x0, 1, 
-      { { 1, "code", SC_ARG_TYPE_LONG, exit_code_printer } } },
+    { 0, "do_exit", 0x0, 1,
+      { { 1, "code", SC_ARG_TYPE_LONG, 
+	  exit_code_decoder, 
+	  (char *[]) { "code:cause","code:status","code:signal" },
+	  3 } } },
     { 1, "sys_exit", 0xc0121df0, 1,
-      { { 1, "error_code", SC_ARG_TYPE_INT } } },
+      { { 1, "error_code", SC_ARG_TYPE_INT, 
+	  exit_code_decoder, 
+	  (char *[]) { "error_code:cause","error_code:status","error_code:signal" },
+	  3 } } },
     { 2, "sys_fork", 0xc0102ef0, 1,
-      { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_printer, process_ptregs_loader } } },
+      { { 1, "regs", SC_ARG_TYPE_PT_REGS, NULL, NULL, 0, process_ptregs_loader } } },
     { 3, "sys_read", 0xc01658e0, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
-	{ 2, "buf", SC_ARG_TYPE_PTR, NULL },
+	{ 2, "buf", SC_ARG_TYPE_PTR },
 	{ 3, "count", SC_ARG_TYPE_INT } } },
     { 4, "sys_write", 0xc0165950, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
-	{ 2, "buf", SC_ARG_TYPE_STRING, NULL, NULL, 3 },
+	{ 2, "buf", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 3 },
 	{ 3, "count", SC_ARG_TYPE_INT } } },
     { 5, "sys_open", 0xc01633f0, 3,
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "flags", SC_ARG_TYPE_INT, open_flags_printer },
-	{ 3, "mode", SC_ARG_TYPE_INT, file_mode_printer } } },
+	{ 2, "flags", SC_ARG_TYPE_INT, open_flags_decoder,(char *[]) { "flags:flags" }, 1 },
+	{ 3, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 6, "sys_close", 0xc0164510, 1,
       { { 1, "fd", SC_ARG_TYPE_UINT } } },
     { 7, "sys_waitpid", 0xc0121340, 3,
@@ -1464,14 +1381,14 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 3, "options", SC_ARG_TYPE_INT } } },
     { 8, "sys_creat", 0xc0163420, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_printer } } },
+	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 9, "sys_link", 0xc0176eb0, 2, 
       { { 1, "oldname", SC_ARG_TYPE_STRING },
 	{ 2, "newname", SC_ARG_TYPE_STRING } } },
     { 10, "sys_unlink", 0xc01768e0, 1, 
       { { 1, "pathname", SC_ARG_TYPE_STRING } } },
     { 11, "sys_execve", 0xc01036e0, 1, 
-      { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_printer, process_ptregs_loader } } },
+      { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_decoder, (char *[]){ "regs:filename","regs:args","regs:env"}, 3, process_ptregs_loader } } },
     { 12, "sys_chdir", 0xc0164330, 1, 
       { { 1, "filename", SC_ARG_TYPE_STRING } } },
     { 13, "sys_time", 0xc0123200, 1,
@@ -1482,7 +1399,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 3, "dev", SC_ARG_TYPE_UINT } } },
     { 15, "sys_chmod", 0xc01638c0, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_printer } } },
+	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 0 },
     { 0 },
     { 18, "sys_stat", 0xc016f7f0, 2, 
@@ -1523,20 +1440,20 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 33, "sys_access", 0xc0163a40, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_printer } } },
+	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 34, "sys_nice", 0xc011a9a0, 1, 
       { { 1, "increment", SC_ARG_TYPE_INT } } },
     { 0 },
     { 36, "sys_sync", 0xc01677d0, 0 },
     { 37, "sys_kill", 0xc012c630, 2, 
       { { 1, "pid", SC_ARG_TYPE_INT },
-	{ 2, "sig", SC_ARG_TYPE_INT, signal_printer } } },
+	{ 2, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 } } },
     { 38, "sys_rename", 0xc0176630, 2, 
       { { 1, "oldname", SC_ARG_TYPE_STRING },
 	{ 2, "newname", SC_ARG_TYPE_STRING } } },
     { 39, "sys_mkdir", 0xc0176b30, 2, 
       { { 1, "pathname", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_printer } } },
+	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 40, "sys_rmdir", 0xc0176a20, 1, 
       { { 1, "pathname", SC_ARG_TYPE_STRING } } },
     { 41, "sys_dup", 0xc0177fe0, 1, 
@@ -1551,7 +1468,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 0 },
     { 48, "sys_signal", 0xc012a420, 2, 
-      { { 1, "sig", SC_ARG_TYPE_INT, signal_printer },
+      { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "handler", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
@@ -1563,11 +1480,11 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 54, "sys_ioctl", 0xc01788f0, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
-	{ 2, "cmd", SC_ARG_TYPE_UINT, ioctl_cmd_printer },
+	{ 2, "cmd", SC_ARG_TYPE_UINT, ioctl_cmd_decoder,(char *[]) { "cmd:cmd" }, 1 },
 	{ 3, "arg", SC_ARG_TYPE_ULONG } } },
     { 55, "sys_fcntl", 0xc0178570, 3,
       { { 1, "fd", SC_ARG_TYPE_INT },
-	{ 2, "cmd", SC_ARG_TYPE_UINT, fcntl_cmd_printer },
+	{ 2, "cmd", SC_ARG_TYPE_UINT, fcntl_cmd_decoder,(char *[]) { "cmd:cmd" }, 1 },
 	{ 3, "arg", SC_ARG_TYPE_ULONG } } },
     { 0 },
     { 57, "sys_setpgid", 0xc012ebb0, 2, 
@@ -1576,7 +1493,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 0 },
     { 60, "sys_umask", 0xc012e8d0, 1,
-      { { 1, "mask", SC_ARG_TYPE_INT, file_mode_printer } } },
+      { { 1, "mask", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mask:mask" }, 1 } } },
     { 61, "sys_chroot", 0xc0164460, 1, 
       { { 1, "filename", SC_ARG_TYPE_STRING } } },
     { 62, "sys_ustat", 0xc016bcf0, 2, 
@@ -1589,7 +1506,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 65, "sys_getpgrp", 0xc012ee10, 0 },
     { 66, "sys_setsid", 0xc012e460, 0, { } },
     { 67, "sys_sigaction", 0xc01045d0, 3, 
-      { { 1, "sig", SC_ARG_TYPE_INT, signal_printer },
+      { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "act", SC_ARG_TYPE_PTR },
 	{ 3, "oact", SC_ARG_TYPE_PTR } } },
     { 0 },
@@ -1603,7 +1520,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 73, "sys_sigpending", 0xc012a010, 1, 
       { { 1, "set", SC_ARG_TYPE_PTR } } },
     { 74, "sys_sethostname", 0xc012e130, 2, 
-      { { 1, "hostname", SC_ARG_TYPE_STRING, NULL, NULL, 2 },
+      { { 1, "hostname", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 2 },
 	{ 2, "len", SC_ARG_TYPE_INT } } },
     { 75, "sys_setrlimit", 0xc012e6a0, 2, 
       { { 1, "resource", SC_ARG_TYPE_UINT, },
@@ -1618,8 +1535,8 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "tv", SC_ARG_TYPE_PTR, },
 	{ 2, "tz", SC_ARG_TYPE_PTR } } },
     { 79, "sys_settimeofday", 0xc01238d0, 2, 
-      { { 1, "tv", SC_ARG_TYPE_TIMEVAL, timeval_printer },
-	{ 2, "tz", SC_ARG_TYPE_TIMEZONE, timezone_printer } } },
+      { { 1, "tv", SC_ARG_TYPE_TIMEVAL, timeval_decoder,(char *[]) { "tv:tv" }, 1 },
+	{ 2, "tz", SC_ARG_TYPE_TIMEZONE, timezone_decoder,(char *[]) { "tz:tz" }, 1 } } },
     { 0 },
     { 0 },
     { 0 },
@@ -1656,7 +1573,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 2, "length", SC_ARG_TYPE_ULONG } } },
     { 94, "sys_fchmod", 0xc0163580, 2, 
       { { 1, "fd", SC_ARG_TYPE_INT },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_printer } } },
+	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 0 },
     { 96, "sys_getpriority", 0xc012f040, 2,
       { { 1, "which", SC_ARG_TYPE_INT },
@@ -1677,15 +1594,15 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 2, "num", SC_ARG_TYPE_ULONG },
 	{ 3, "turn_on", SC_ARG_TYPE_INT } } },
     { 102, "sys_socketcall", 0xc028eaa0, 2,
-      { { 1, "call", SC_ARG_TYPE_INT, socket_call_printer },
-	{ 2, "args", SC_ARG_TYPE_ULONG, socket_args_printer } } },
+      { { 1, "call", SC_ARG_TYPE_INT, socket_call_decoder,(char *[]) { "call:call" }, 1 },
+	{ 2, "args", SC_ARG_TYPE_ULONG, socket_args_decoder,(char *[]) { "args:args" }, 1 } } },
     { 103, "sys_syslog", 0xc011f1e0, 3,
       { { 1, "type", SC_ARG_TYPE_INT },
-	{ 2, "buf", SC_ARG_TYPE_STRING, NULL, NULL, 3 },
+	{ 2, "buf", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 3 },
 	{ 3, "len", SC_ARG_TYPE_INT } } },
     { 104, "sys_setitimer", 0xc01229f0, 3,
       { { 1, "which", SC_ARG_TYPE_INT },
-	{ 2, "value", SC_ARG_TYPE_ITIMERVAL, itimerval_printer },
+	{ 2, "value", SC_ARG_TYPE_ITIMERVAL, itimerval_decoder,(char *[]) { "value:value" }, 1 },
 	{ 3, "ovalue", SC_ARG_TYPE_PTR } } },
     { 105, "sys_getitimer", 0xc0122e40, 2,
       { { 1, "which", SC_ARG_TYPE_INT },
@@ -1719,9 +1636,9 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       {	{ 1, "fd", SC_ARG_TYPE_UINT } } },
     { 119, "sys_sigreturn", 0xc01050f0, 0 },
     { 120, "sys_clone", 0xc0102eb0, 1, 
-      { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_printer, process_ptregs_loader } } },
+      { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_decoder,(char *[]) { "regs:flags" }, 1, process_ptregs_loader } } },
     { 121, "sys_setdomainname", 0xc012d630, 2, 
-      { { 1, "name", SC_ARG_TYPE_STRING, NULL, NULL, 2 },
+      { { 1, "name", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 2 },
 	{ 2, "len", SC_ARG_TYPE_INT } } },
     { 122, "sys_newuname", 0xc012d840, 1,
       { { 1, "name", SC_ARG_TYPE_PTR } } },
@@ -1733,7 +1650,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 3, "prot", SC_ARG_TYPE_ULONG } } },
     { 126, "sys_sigprocmask", 0xc012cd00, 3, 
       { { 1, "how", SC_ARG_TYPE_INT },
-	{ 2, "set", SC_ARG_TYPE_SIGSET_T, sigset_printer },
+	{ 2, "set", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 3, "oset", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 128, "sys_init_module", 0xc013d170, 3, 
@@ -1776,7 +1693,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 2, "inp", SC_ARG_TYPE_PTR },
 	{ 3, "outp", SC_ARG_TYPE_PTR },
 	{ 4, "exp", SC_ARG_TYPE_PTR },
-	{ 5, "tvp", SC_ARG_TYPE_TIMEVAL, timeval_printer } } },
+	{ 5, "tvp", SC_ARG_TYPE_TIMEVAL, timeval_decoder,(char *[]) { "tvp:tvp" }, 1 } } },
     { 143, "sys_flock", 0xc017cf00, 2, 
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "cmd", SC_ARG_TYPE_UINT } } },
@@ -1819,10 +1736,10 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "policy", SC_ARG_TYPE_INT } } },
     { 161, "sys_sched_rr_get_interval", 0xc011a440, 2, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
-	{ 2, "interval", SC_ARG_TYPE_TIMESPEC, timespec_printer } } },
+	{ 2, "interval", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "interval:interval" }, 1 } } },
     { 162, "sys_nanosleep", 0xc0137590, 2, 
-      { { 1, "rqtp", SC_ARG_TYPE_TIMESPEC, timespec_printer },
-	{ 2, "rmtp", SC_ARG_TYPE_TIMESPEC, timespec_printer } } },
+      { { 1, "rqtp", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "rqtp:rqtp" }, 1 },
+	{ 2, "rmtp", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "rmtp:rmtp" }, 1 } } },
     { 163, "sys_mremap", 0xc01573c0, 5, 
       { { 1, "addr", SC_ARG_TYPE_ULONG },
 	{ 2, "old_len", SC_ARG_TYPE_ULONG },
@@ -1844,29 +1761,29 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 173, "sys_rt_sigreturn", 0xc0104ee0, 1, 
       { { 1, "__unused", SC_ARG_TYPE_ULONG } } },
     { 174, "sys_rt_sigaction", 0xc012a470, 4, 
-      { { 1, "sig", SC_ARG_TYPE_INT, signal_printer },
+      { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "act", SC_ARG_TYPE_PTR },
 	{ 3, "oact", SC_ARG_TYPE_PTR },
 	{ 3, "sigsetsize", SC_ARG_TYPE_UINT } } },
     { 175, "sys_rt_sigprocmask", 0xc012cbd0, 4, 
       { { 1, "how", SC_ARG_TYPE_INT },
-	{ 2, "set", SC_ARG_TYPE_SIGSET_T, sigset_printer },
+	{ 2, "set", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 3, "oset", SC_ARG_TYPE_PTR },
 	{ 4, "sigsetsize", SC_ARG_TYPE_UINT } } },
     { 176, "sys_rt_sigpending", 0xc012a030, 2, 
-      { { 1, "set", SC_ARG_TYPE_SIGSET_T, sigset_printer },
+      { { 1, "set", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 2, "sigsetsize", SC_ARG_TYPE_UINT } } },
     { 177, "sys_rt_sigtimedwait", 0xc012ce50, 4, 
-      { { 1, "uthese", SC_ARG_TYPE_SIGSET_T, sigset_printer },
-	{ 2, "uinfo", SC_ARG_TYPE_SIGINFO_T, siginfo_printer },
-	{ 3, "uts", SC_ARG_TYPE_TIMESPEC, timespec_printer },
+      { { 1, "uthese", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
+	{ 2, "uinfo", SC_ARG_TYPE_SIGINFO_T, siginfo_decoder,(char *[]) { "uinfo:uinfo" }, 1 },
+	{ 3, "uts", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "uts:uts" }, 1 },
 	{ 4, "sigsetsize", SC_ARG_TYPE_UINT } } },
     { 178, "sys_rt_sigqueueinfo", 0xc012b7a0, 3, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
-	{ 2, "sig", SC_ARG_TYPE_INT, signal_printer },
-	{ 3, "uinfo", SC_ARG_TYPE_SIGINFO_T, siginfo_printer } } },
+	{ 2, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
+	{ 3, "uinfo", SC_ARG_TYPE_SIGINFO_T, siginfo_decoder,(char *[]) { "uinfo:uinfo" }, 1 } } },
     { 179, "sys_rt_sigsuspend", 0xc012c980, 2, 
-      { { 1, "unewset", SC_ARG_TYPE_SIGSET_T, sigset_printer },
+      { { 1, "unewset", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 2, "sigsetsize", SC_ARG_TYPE_UINT } } },
     { 180, "sys_pread64", 0xc01659c0, 0 },
     { 181, "sys_pwrite64", 0xc0165a40, 0 },
@@ -1879,7 +1796,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 0 },
     { 190, "sys_vfork", 0xc0102e70, 1, 
-      { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_printer, process_ptregs_loader } } },
+      { { 1, "regs", SC_ARG_TYPE_PT_REGS, NULL, NULL, 0, process_ptregs_loader } } },
     { 191, "sys_getrlimit", 0xc012f650, 0 },
     { 192, "sys_mmap2", 0xc010a360, 0 },
     { 193, "sys_truncate64", 0xc0163f80, 0 },
@@ -2152,11 +2069,10 @@ int web_report(const char *msg)
 
 void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		    int pid,int i,int j,
-		    unsigned char **arg_data,
-		    struct argfilter **filter_ptr,
+		    struct argdata **arg_data,
 		    struct process_data *pdata) {
     //char *syscallname = sctab[i].name;
-    char *name = sctab[i].args[j].name;
+    //char *name = sctab[i].args[j].name;
     sc_arg_type_t mytype = sctab[i].args[j].type;
     unsigned long argval;
     unsigned char *data = NULL;
@@ -2164,7 +2080,7 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     unsigned long *buflen = NULL;
 
     if (data_len_arg_num > 0) {
-	buflen = load_arg_data(handle,regs,pid,i,data_len_arg_num - 1,arg_data,filter_ptr,pdata);
+	buflen = load_arg_data(handle,regs,pid,i,data_len_arg_num - 1,arg_data,pdata);
     }
 
     switch (j)
@@ -2194,7 +2110,8 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     default:
 	fprintf(stdout,"(XXX: loader ENOSUP)");
 	fflush(stdout);
-	arg_data[j] = NULL;
+	arg_data[j]->data = NULL;
+	arg_data[j]->str = NULL;
 	return NULL;
     }
 
@@ -2210,66 +2127,83 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     case SC_ARG_TYPE_LONG:
     case SC_ARG_TYPE_ULONG:
     case SC_ARG_TYPE_PTR:
-	arg_data[j] = malloc(sizeof(unsigned long int));
-	memcpy(arg_data[j],(void *)&argval,sizeof(unsigned long int));
+	arg_data[j]->data = malloc(sizeof(unsigned long int));
+	memcpy(arg_data[j]->data,(void *)&argval,sizeof(unsigned long int));
+
+	if (mytype == SC_ARG_TYPE_INT || mytype == SC_ARG_TYPE_SIZE_T
+	    || mytype == SC_ARG_TYPE_PID_T || mytype == SC_ARG_TYPE_UID_T
+	    || mytype == SC_ARG_TYPE_GID_T || mytype == SC_ARG_TYPE_OFF_T
+	    || mytype == SC_ARG_TYPE_TIME_T) {
+	    arg_data[j]->str = ssprintf("%d",(int)arg_data[j]->data);
+	}
+	else if (mytype == SC_ARG_TYPE_UINT) {
+	    arg_data[j]->str = ssprintf("%du",(unsigned int)arg_data[j]->data);
+	}
+	else if (mytype == SC_ARG_TYPE_LONG) {
+	    arg_data[j]->str = ssprintf("%l",(int)arg_data[j]->data);
+	}
+	else if (mytype == SC_ARG_TYPE_ULONG) {
+	    arg_data[j]->str = ssprintf("%lu",(unsigned int)arg_data[j]->data);
+	}
+	else if (mytype == SC_ARG_TYPE_PTR) {
+	    arg_data[j]->str = ssprintf("0x%08x",(unsigned int)arg_data[j]->data);
+	}
 	break;
     case SC_ARG_TYPE_STRING:
 	if (!argval) {
-	    arg_data[j] = NULL;
+	    arg_data[j]->data = NULL;
+	    arg_data[j]->str = NULL;
 	    return NULL;
 	}
 
 	if (buflen && *buflen > 0) {
-	    arg_data[j] = malloc(sizeof(char *)*(*buflen+1));
+	    arg_data[j]->data = malloc(sizeof(char *)*(*buflen+1));
 	    data = vmprobe_get_data(handle,regs,
 				    "syscall_argi_string",argval,
 				    pid,
 				    *buflen,
-				    arg_data[j]);
+				    arg_data[j]->data);
 	    if (!data) {
-		free(arg_data[j]);
-		arg_data[j] = NULL;
+		free(arg_data[j]->data);
+		arg_data[j]->data = NULL;
 	    }
 	    else {
-		arg_data[j][*buflen] = '\0';
+		arg_data[j]->data[*buflen] = '\0';
 	    }
 	}
 	else {
-	    arg_data[j] = vmprobe_get_data(handle,regs,
+	    arg_data[j]->data = vmprobe_get_data(handle,regs,
 					   "syscall_argi_string",argval,
 					   pid,
 					   sc_arg_type_len[mytype],
 					   NULL);
 	}
-
-	// check the arg filters!
-	check_filter(i,j,(char *)arg_data[j],filter_ptr,pdata);
+	arg_data[j]->str = (char *)arg_data[j]->data;
 
 	break;
     default:
 	if (!argval) {
-	    arg_data[j] = NULL;
+	    arg_data[j]->data = NULL;
+	    arg_data[j]->str = NULL;
 	    return NULL;
 	}
 
 	if (sctab[i].args[j].al != NULL) {
-	    arg_data[j] = \
+	    arg_data[j]->data = \
 		(unsigned char *)sctab[i].args[j].al(handle,regs,pid,i,j,
-						     argval,arg_data,
-						     (filter_ptr && *filter_ptr == NULL) ? filter_ptr : NULL,
-						     pdata);
+						     argval,arg_data,pdata);
 	}
 	else if (sc_arg_type_len[mytype] > 0) {
-	    arg_data[j] = vmprobe_get_data(handle,regs,
-					   "syscall_argi_default",argval,
-					   pid,
-					   sc_arg_type_len[mytype],
-					   NULL);
+	    arg_data[j]->data = vmprobe_get_data(handle,regs,
+						 "syscall_argi_default",argval,
+						 pid,
+						 sc_arg_type_len[mytype],
+						 NULL);
+	    arg_data[j]->str = ssprintf("0x%08x",(void *)argval);
 	}
 	else {
-	    arg_data[j] = NULL;
-	    fprintf(stdout,"(%s: loader: unknown)\n",name);
-	    fflush(stdout);
+	    arg_data[j]->data = NULL;
+	    arg_data[j]->str = NULL;
 	}
 	break;
     }
@@ -2277,98 +2211,18 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     return arg_data[j];
 }
 
-void print_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
-		    int pid,int i,int j,
-		    unsigned char **arg_data,
-		    char *arg_str,char **arg_str_cur,
-		    struct argfilter **filter_ptr,
-		    struct process_data *data) {
-    char *name = sctab[i].args[j].name;
-    sc_arg_type_t mytype = sctab[i].args[j].type;
-    int src = 0;
-
-    /* print an arg */
-    fprintf(stdout,"  %s: ",name);
-
-    if (!arg_data[j]) {
-	fprintf(stdout,"<NODATA!!!>\n");
-	return;
-    }
-    fflush(stdout);
-
-    if (sctab[i].args[j].ap != NULL) {
-	sctab[i].args[j].ap(handle,regs,pid,i,j,arg_data,
-			    arg_str,arg_str_cur,filter_ptr,data);
-	fflush(stdout);
-    }
-    else {
-	switch (mytype) {
-	case SC_ARG_TYPE_INT:
-	case SC_ARG_TYPE_SIZE_T:
-	case SC_ARG_TYPE_PID_T:
-	case SC_ARG_TYPE_UID_T:
-	case SC_ARG_TYPE_GID_T:
-	case SC_ARG_TYPE_OFF_T:
-	case SC_ARG_TYPE_TIME_T:
-	    fprintf(stdout,"%d\n",*((int *)(arg_data[j])));
-	    src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			   "%d,",*((int *)(arg_data[j])));
-	    break;
-	case SC_ARG_TYPE_UINT:
-	    fprintf(stdout,"%u\n",*((unsigned int *)(arg_data[j])));
-	    src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			   "%u,",*((unsigned int *)(arg_data[j])));
-	    break;
-	case SC_ARG_TYPE_LONG:
-	    fprintf(stdout,"%ld\n",*((long *)(arg_data[j])));
-	    src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			   "%ld,",*((long *)(arg_data[j])));
-	    break;
-	case SC_ARG_TYPE_ULONG:
-	    fprintf(stdout,"%lu\n",*((unsigned long *)(arg_data[j])));
-	    src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			   "%lu,",*((unsigned long *)(arg_data[j])));
-	    break;
-	case SC_ARG_TYPE_PTR:
-	    fprintf(stdout,"%x\n",*((unsigned int *)(arg_data[j])));
-	    src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			   "%x,",*((unsigned int *)(arg_data[j])));
-	    break;
-	case SC_ARG_TYPE_STRING:
-	    fprintf(stdout,"'%s'\n",arg_data[j]);
-	    src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			   "'%s',",arg_data[j]);
-	    break;
-	default:
-	    fprintf(stdout,"(printer: unknown)\n");
-	    src = snprintf(*arg_str_cur,ARG_STR_LEN - (*arg_str_cur - arg_str),
-			   "(printer: unknown),");
-	    break;
-	}
-	if (src < ARG_STR_LEN - (*arg_str_cur - arg_str))
-	    *arg_str_cur = *arg_str_cur + src;
-	else {
-	    arg_str[ARG_STR_LEN - 1] = '\0';
-	    *arg_str_cur = arg_str + ARG_STR_LEN;
-	}
-	fflush(stdout);
-    }
-
-    return;
-}
-
 struct argfilter *handle_syscall(vmprobe_handle_t handle,
 				 struct cpu_user_regs *regs,
-				 char *arg_str)
+				 char **psstr,char **funcstr,char **argstr)
 {
     unsigned long addr = vmprobe_vaddr(handle);
     uint32_t i = regs->eax;
-    int j;
-    unsigned char **arg_data;
+    int j,k;
+    struct argdata **arg_data;
     struct argfilter *filter_ptr = NULL;
     struct process_data *data;
-    char **arg_str_cur = &arg_str;
-    char *psstr;
+    char *psliststr = NULL;
+    int len, rc;
 
     // hack to catch do_exit too!
     if (addr == sctab[0].addr) {
@@ -2390,28 +2244,87 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     //print_process_data(handle,regs,data);
     //fprintf(stdout,"]\n");
 
-    arg_data = (unsigned char **)malloc(sizeof(unsigned char *)*sctab[i].argc);
+    arg_data = (struct argdata **)malloc(sizeof(struct argdata *)*sctab[i].argc);
     for (j = 0; j < sctab[i].argc; ++j) {
-	arg_data[j] = load_arg_data(handle,regs,data->pid,i,j,arg_data,
-				    (!filter_ptr) ? &filter_ptr : NULL,data);
-	print_arg_data(handle,regs,data->pid,i,j,arg_data,
-		       arg_str,arg_str_cur,&filter_ptr,data);
-    }
-    for (j = 0; j < sctab[i].argc; ++j) {
-	if (arg_data[j])
-	    free(arg_data[j]);
+	arg_data[j] = (struct argdata *)malloc(sizeof(struct argdata));
+	arg_data[j]->info = &sctab[i].args[j];
+	arg_data[j]->data = NULL;
+	arg_data[j]->str = NULL;
+	if (sctab[i].args[j].decodings_len) {
+	    arg_data[j]->decodings = (char **)malloc(sizeof(char *)*sctab[i].args[j].decodings_len);
+	    memset(arg_data[j]->decodings,0,sizeof(char *)*sctab[i].args[j].decodings_len);
+	}
+	else
+	    arg_data[j]->decodings = NULL;
     }
 
+    for (j = 0; j < sctab[i].argc; ++j) {
+	arg_data[j] = load_arg_data(handle,regs,data->pid,i,j,arg_data,data);
+	if (sctab[i].args[j].ad)
+	    sctab[i].args[j].ad(handle,regs,data->pid,i,j,arg_data,data);
+	printf("  %s: %s\n",arg_data[j]->info->name,arg_data[j]->str);
+
+	for (k = 0; k < arg_data[j]->info->decodings_len; ++k) {
+	    printf("    %s: %s\n",
+		   arg_data[j]->info->decodings[k],
+		   arg_data[j]->decodings[k]);
+	}
+    }
+
+    for (j = 0; j < sctab[i].argc; ++j) {
+	if (check_filters(i,j,arg_data,data,&filter_ptr))
+	    break;
+    }
+
+    *psstr = ssprintf("pid=%d name=%s ppid=%d",data->pid,data->name,data->ppid);
+    *funcstr = strdup(sctab[i].name);
+
+    len = 0;
+    for (j = 0; j < sctab[i].argc; ++j) {
+	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
+	len = len + 2 + strlen(sctab[i].args[j].name) + strlen(arg_data[j]->str);
+	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
+
+	for (k = 0; k < arg_data[j]->info->decodings_len; ++k) {
+	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
+	    len = len + 2 + strlen(sctab[i].args[j].decodings[k]) + strlen(arg_data[j]->decodings[k]);
+	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
+	}
+    }
+
+    *argstr = malloc(len+1);
+
+    rc = 0;
+    for (j = 0; j < sctab[i].argc; ++j) {
+	debug(0,"rc = %d\n",rc);
+	rc += sprintf((*argstr)+rc,"%s=%s,",sctab[i].args[j].name,arg_data[j]->str);
+	debug(0,"rc = %d\n",rc);
+
+	for (k = 0; k < sctab[i].args[j].decodings_len; ++k) {
+	    debug(0,"rc = %d\n",rc);
+	    rc += sprintf((*argstr)+rc,"%s=%s ",
+			  sctab[i].args[j].decodings[k],arg_data[j]->decodings[k]);
+	    debug(0,"rc = %d\n",rc);
+	}
+    }
+    (*argstr)[len] = '\0';
+
+    for (j = 0; j < sctab[i].argc; ++j) {
+	if (arg_data[j])
+	    free_argdata(arg_data[j]);
+    }
     free_process_data(data);
     free(arg_data);
 
     if (!strcmp(sctab[i].name,"sys_execve")
 	|| !strcmp(sctab[i].name,"sys_waitpid")
-	|| !strcmp(sctab[i].name,"do_wait")) {
-	psstr = process_list_to_string(handle,regs,"|");
-	printf("\nCurrent Process List:\n\n%s\n",psstr);
+	|| !strcmp(sctab[i].name,"sys_fork")
+	|| !strcmp(sctab[i].name,"sys_vfork")
+	|| !strcmp(sctab[i].name,"sys_clone")) {
+	psliststr = process_list_to_string(handle,regs,"|");
+	printf("\nCurrent Process List:\n\n%s\n",psliststr);
 	fflush(stdout);
-	free(psstr);
+	free(psliststr);
     }
 
     return filter_ptr;
@@ -2450,9 +2363,11 @@ int reloadconfigfile = 0;
 
 static int on_fn_pre(vmprobe_handle_t vp, 
 		     struct cpu_user_regs *regs)
-{   
-    char arg_str[1024];
-    struct argfilter *filter = handle_syscall(vp,regs,arg_str);
+{
+    char *psstr = NULL;
+    char *funcstr = NULL;
+    char *argstr = NULL;
+    struct argfilter *filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr);
     char *eventstr;
     char *eventstrtmp;
     char *gfilterstr = " (not filtering; globally off!)";
@@ -2476,19 +2391,11 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    gfilterstr);
 	    fflush(stdout);
 
-	    if (send_a3_events) {
-		eventstrtmp = malloc(1024);
-		if (!eventstrtmp) {
-		    error("internal error 1 reporting match-noadjust to A3 monitor!\n");
-		    return 0;
-		}
-		snprintf(eventstrtmp,1024,
-			 "%s: MATCH: %s(%s)",
-			 domainname,
-			 sctab[filter->syscallnum].name,arg_str);
+	    eventstrtmp = ssprintf("domain=%s type=match %s %s(%s)",
+				   domainname,psstr,funcstr,argstr);
 
+	    if (send_a3_events) {
 		eventstr = url_encode(eventstrtmp);
-		//eventstr = eventstrtmp;
 		if (eventstr) {
 		    web_report(eventstr);
 		    free(eventstr);
@@ -2496,8 +2403,11 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		else {
 		    error("internal error 2 reporting match-abort-returning to A3 monitor!\n");
 		}
-		free(eventstrtmp);
 	    }
+	    
+	    fprintf(stdout," (would send %s to A3)\n",eventstrtmp);
+
+	    free(eventstrtmp);
 	}
 	else {
 	    fprintf(stdout," Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!%s\n",
@@ -2513,27 +2423,15 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		    gfilterstr);
 	    fflush(stdout);
 
+	    if (!dofilter) 
+		eventstrtmp = ssprintf("domain=%s type=would-abort retval=%d %s %s(%s)",
+				       domainname,filter->retval,psstr,funcstr,argstr);
+	    else 
+		eventstrtmp = ssprintf("domain=%s type=abort retval=%d %s %s(%s)",
+				       domainname,filter->retval,psstr,funcstr,argstr);
+
 	    if (send_a3_events) {
-		eventstrtmp = malloc(1024);
-		if (!eventstrtmp) {
-		    error("internal error 1 reporting match-abort-returning to A3 monitor!\n");
-		    return 0;
-		}
-
-		if (!dofilter) 
-		    snprintf(eventstrtmp,1024,
-			     "%s: ALLOW: %s(%s)",
-			     domainname,
-			     sctab[filter->syscallnum].name,arg_str);
-		else 
-		    snprintf(eventstrtmp,1024,
-			     "%s: ABORT: return %d: %s(%s)",
-			     domainname,
-			     filter->retval,
-			     sctab[filter->syscallnum].name,arg_str);
-
 		eventstr = url_encode(eventstrtmp);
-		//eventstr = eventstrtmp;
 		if (eventstr) {
 		    web_report(eventstr);
 		    free(eventstr);
@@ -2541,8 +2439,11 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		else {
 		    error("internal error 2 reporting match-abort-returning to A3 monitor!\n");
 		}
-		free(eventstrtmp);
 	    }
+	    
+	    fprintf(stdout," (would send %s to A3)\n",eventstrtmp);
+
+	    free(eventstrtmp);
 
 	    if (dofilter) {
 		va = action_return(filter->retval);
@@ -2550,6 +2451,13 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    }
 	}
     }
+
+    if (psstr)
+	free(psstr);
+    if (funcstr)
+	free(funcstr);
+    if (argstr)
+	free(argstr);
 
     return 0;
 }
@@ -2598,6 +2506,7 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
     char *saveptr2, *token2 = NULL;
     char errbuf[128];
     int i = 0;
+    int j;
     char *var = NULL, *val = NULL;
 
     ffile = fopen(file,"r");
@@ -2765,8 +2674,14 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 			    fprintf(stderr,"ERROR: filter file format: cannot specify argname when function is wildcard!\n");
 			    goto errout;
 			}
+			j = -1;
 			for (i = 0; i < sctab[filter->syscallnum].argc; ++i) {
 			    if (!strcmp(sctab[filter->syscallnum].args[i].name,val))
+				break;
+			    for (j = 0; j < sctab[filter->syscallnum].args[i].decodings_len; ++j)
+				if (!strcmp(sctab[filter->syscallnum].args[i].decodings[j],val))
+				    break;
+			    if (j > -1)
 				break;
 			}
 			if (i == sctab[filter->syscallnum].argc) {
@@ -2774,6 +2689,7 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 			    goto errout;
 			}
 			filter->argnum = i;
+			filter->decoding = j;
 		    }
 		}
 		else if (strcmp(var,"argval") == 0) {
@@ -2918,11 +2834,12 @@ int main(int argc, char *argv[])
     char **syscall_list;
     int syscall_list_len = 0;
     int syscall_list_alloclen = 8;
+    int xa_debug = -1;
 
     syscall_list = (char **)malloc(sizeof(char *)*syscall_list_alloclen);
     argfilter_list = (struct argfilter **)malloc(sizeof(struct argfilter *)*argfilter_list_alloclen);
 
-    while ((ch = getopt(argc, argv, "m:s:f:daw:u:c:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:s:f:daw:u:c:x")) != -1) {
 	switch(ch) {
 	case 'c':
 	    configfile = optarg;
@@ -2937,7 +2854,10 @@ int main(int argc, char *argv[])
 	    strncpy(conf_querykey,optarg,QUERY_MAX);
 	    break;
 	case 'd':
-	    vmprobes_set_debug_level(++debug);
+	    vmprobes_set_debug_level(++debug,xa_debug);
+	    break;
+	case 'x':
+	    vmprobes_set_debug_level(debug,++xa_debug);
 	    break;
 	case 'm':
 	    sysmapfile = optarg;
