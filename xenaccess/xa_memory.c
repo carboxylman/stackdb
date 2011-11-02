@@ -519,7 +519,8 @@ uint32_t xa_current_cr3 (xa_instance_t *instance, uint32_t *cr3)
                 0, /*TODO vcpu, assuming only 1 for now */
                 &ctxt)) != 0){
 #endif /* HAVE_CONTEXT_ANY */
-            printf("ERROR: failed to get context information.\n");
+	    const xc_error *e = xc_get_last_error();
+            printf("ERROR: failed to get context information: %d, %s.\n",e->code,e->message);
             ret = XA_FAILURE;
             goto error_exit;
         }
