@@ -60,7 +60,7 @@ export SHELL = /bin/sh
 #
 # XXX this stuff should be pkg-config'd or similar
 #
-XENACCESS_FLAGS = -D ENABLE_XEN -D XA_DEBUG
+XENACCESS_FLAGS = -D ENABLE_XEN -D XA_DEBUG -D HAVE_MAP_FOREIGN
 XENACCESS_LIBDIR= $(OBJDIR)/xenaccess
 XENACCESS_A     = $(XENACCESS_LIBDIR)/libxenaccess.a
 XENACCESS_SO    = $(XENACCESS_LIBDIR)/libxenaccess.so
