@@ -1512,7 +1512,7 @@ mmap_pages(xa_instance_t *xa_instance,
     page_size = xa_instance->page_size;
     tmp_offset = vaddr - (vaddr & ~(page_size - 1));
 
-    if (size > 0 && (size - tmp_offset) < page_size)
+    if (size > 0 && size < (page_size - tmp_offset))
     {
         /* let xenaccess use its memory cache for small size */
         pages = xa_access_user_va(xa_instance, vaddr, offset, 
@@ -1565,6 +1565,7 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     unsigned long length = target_length, size = 0;
     unsigned long inc_size, page_size, no_pages;
     unsigned char *retval = NULL;
+    unsigned long tmp_offset = addr - (addr & ~(page_size - 1));
     
     probe = find_probe(handle);
     assert(probe);
@@ -1587,18 +1588,21 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	if (!pages)
 	    return NULL;
 
-	no_pages = length / page_size + 1;
+	no_pages = length / page_size;
+	if (length % page_size)
+	    ++no_pages;
 	if ((length + offset) > page_size) {
 	    ++no_pages;
+	    debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d) overflowed onto next page\n",
+		  name,target_length,addr,pid);
 	}
     }
     else {
 	/* increase the mapping size by this much if the string is longer 
 	   than we expect at first attempt. */
-	inc_size = (page_size - 1);
+	inc_size = (page_size - tmp_offset);
 
 	while (1) {
-	    size += inc_size;
 	    if (1 || size > page_size) 
 		debug(2,"increasing size to %d (name=%s,addr=%08x,pid=%d)\n",
 		      size,name,addr,pid);
@@ -1613,6 +1617,7 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		break;
 	    }
 	    munmap(pages, no_pages * page_size);
+	    size += page_size;
 	}
     }
 
