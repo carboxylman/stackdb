@@ -653,14 +653,25 @@ void *xa_access_user_va_range (
         int pid,
         int prot)
 {
-    xa_dbprint(0,"va = %08x, pid = %d\n", virt_address, pid);
+    xa_dbprint(0,"va = %08x, pid = %d, size = %d\n", virt_address, pid, size);
 #ifdef ENABLE_XEN
     void *retval = NULL;
     int i;
     unsigned long maddr;
     int kernel = !pid;
+    int tmp_offset;
 
-    uint32_t num_pages = size / instance->page_size + 1;
+    uint32_t num_pages = size / instance->page_size;
+    uint32_t start = virt_address & ~(instance->page_size-1);
+    tmp_offset = virt_address - start;
+
+    // add a page if we weren't an exact multiple of the page size
+    if (size == 0 || size % instance->page_size)
+	++num_pages;
+    // if we still need more bytes because we started too far into the 
+    // first page, add another!
+    if (size > (num_pages * instance->page_size - tmp_offset))
+	++num_pages;
 
     uint32_t pgd = pid ? xa_pid_to_pgd(instance, pid) : instance->kpgd;
     if (pid && !pgd) {
@@ -672,8 +683,10 @@ void *xa_access_user_va_range (
 	xa_current_cr3(instance, &pgd);
     }
     xen_pfn_t* pfns = (xen_pfn_t*)malloc(sizeof(xen_pfn_t)*num_pages);
+
+    xa_dbprint(0,"va = %08x, pid = %d, size = %d, num_pages = %d, offset = %d\n",
+	       virt_address, pid, size, num_pages, tmp_offset);
     
-    uint32_t start = virt_address & ~(instance->page_size-1);
     for (i = 0; i < num_pages; i++){
         /* Virtual address for each page we will map */
         uint32_t addr = start + i*instance->page_size;
@@ -694,7 +707,7 @@ void *xa_access_user_va_range (
 	pfns[i] = maddr >> instance->page_shift;
     }
 
-    *offset = virt_address - start;
+    *offset = tmp_offset;
 
     retval = xc_map_foreign_pages(
         instance->m.xen.xc_handle,
