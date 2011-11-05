@@ -884,6 +884,24 @@ __register_vmprobe(struct vmprobe *probe)
         VMPROBE_PERF_START();
         probepoint->state = VMPROBE_INSERTING;
 
+	
+	int offset;
+	char *pages;
+	memset(probe->vbytes,0,64);
+	pages = xa_access_kernel_va_range(&domain->xa_instance, 
+					  probepoint->vaddr, 
+					  64, 
+					  &offset, 
+					  PROT_READ);
+	if (pages) {
+	    memcpy(probe->vbytes,pages+offset,64);
+
+	    if ((4096 - offset) < 64)
+		munmap(pages,8192);
+	    else
+		munmap(pages,4096);
+	}
+
         /* backup the original instruction */
         /* inject a breakpoint at the probe-point */
         ret = __insert_breakpoint(probepoint);
@@ -911,6 +929,9 @@ __unregister_vmprobe(struct vmprobe *probe)
     struct cpu_user_regs *regs;
     vcpu_guest_context_t ctx;
     int ret;
+    char *pages;
+    int i;
+    int offset;
     
     probepoint = probe->probepoint;
     domain = probepoint->domain;
@@ -921,6 +942,27 @@ __unregister_vmprobe(struct vmprobe *probe)
         {
             VMPROBE_PERF_START();
             probepoint->state = VMPROBE_REMOVING;
+
+	    pages = xa_access_kernel_va_range(&domain->xa_instance, 
+					      probepoint->vaddr, 
+					      64, 
+					      &offset, 
+					      PROT_READ);
+	    if (pages) {
+		for (i = 0; i < 16; ++i) {
+		    printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
+		}
+		printf("\n");
+		for (i = 0; i < 16; ++i) {
+		    printf(" %08x",*((unsigned int *)(pages + offset + i*4)));
+		}
+		printf("\n");
+
+		if ((4096 - offset) < 64)
+		    munmap(pages,8192);
+		else
+		    munmap(pages,4096);
+	    }
         
             /* restore the original instruction */
             ret = __remove_breakpoint(probepoint);
@@ -931,6 +973,27 @@ __unregister_vmprobe(struct vmprobe *probe)
             }
             debug(2,"bp removed at [dom%d:%lx] for the last time\n",
 		  domain->id, probepoint->vaddr);
+
+	    pages = xa_access_kernel_va_range(&domain->xa_instance, 
+					      probepoint->vaddr, 
+					      64, 
+					      &offset, 
+					      PROT_READ);
+	    if (pages) {
+		for (i = 0; i < 16; ++i) {
+		    printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
+		}
+		printf("\n");
+		for (i = 0; i < 16; ++i) {
+		    printf(" %08x",*((unsigned int *)(pages + offset + i*4)));
+		}
+		printf("\n");
+
+		if ((4096 - offset) < 64)
+		    munmap(pages,8192);
+		else
+		    munmap(pages,4096);
+	    }
 
             probepoint->state = VMPROBE_DISABLED;
             VMPROBE_PERF_STOP("vmprobes removes breakpoint in domU");
@@ -1563,19 +1626,21 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     unsigned char *pages;
     uint32_t offset = 0;
     unsigned long length = target_length, size = 0;
-    unsigned long inc_size, page_size, no_pages;
+    unsigned long page_size, no_pages;
     unsigned char *retval = NULL;
-    unsigned long tmp_offset = addr - (addr & ~(page_size - 1));
+    unsigned long tmp_offset;
     
     probe = find_probe(handle);
     assert(probe);
 
     xa_instance = vmprobe_xa_instance(handle);
     assert(xa_instance);
-    page_size = xa_instance->page_size;
 
-    debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d)\n",
-	  name,target_length,addr,pid);
+    page_size = xa_instance->page_size;
+    tmp_offset = addr - (addr & ~(page_size - 1));
+
+    debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d), offset = %d\n",
+	  name,target_length,addr,pid,tmp_offset);
 
     /* if we know what length we need, just grab it */
     if (length > 0) {
@@ -1600,7 +1665,7 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     else {
 	/* increase the mapping size by this much if the string is longer 
 	   than we expect at first attempt. */
-	inc_size = (page_size - tmp_offset);
+	size = (page_size - tmp_offset);
 
 	while (1) {
 	    if (1 || size > page_size) 
@@ -1612,7 +1677,7 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		return NULL;
 
 	    no_pages = size / page_size + 1;
-	    length = strnlen((const char *)(pages + offset), size - offset);
+	    length = strnlen((const char *)(pages + offset), size);
 	    if (length < (size - offset)) {
 		break;
 	    }
