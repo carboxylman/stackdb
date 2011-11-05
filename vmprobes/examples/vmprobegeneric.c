@@ -2260,6 +2260,8 @@ char *url_encode(char *str) {
     return buf;
 }
 
+int execcounter = 0;
+
 struct argfilter *handle_syscall(vmprobe_handle_t handle,
 				 struct cpu_user_regs *regs,
 				 char **psstr,char **funcstr,char **argstr)
@@ -2267,11 +2269,15 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     unsigned long addr = vmprobe_vaddr(handle);
     uint32_t i = regs->eax;
     int j,k;
-    struct argdata **arg_data;
+    struct argdata **adata;
     struct argfilter *filter_ptr = NULL;
     struct process_data *data;
     char *psliststr = NULL;
     int len, rc;
+
+    if (i == 11) {
+	++execcounter;
+    }
 
     // hack to catch do_exit too!
     if (addr == sctab[0].addr) {
@@ -2288,61 +2294,91 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	    addr);
     fflush(stdout);
 
-    data = load_current_process_data(handle,regs,-1);
-    //fprintf(stdout,"[");
-    //print_process_data(handle,regs,data);
-    //fprintf(stdout,"]\n");
+    adata = (struct argdata **)malloc(sizeof(struct argdata *)*sctab[i].argc);
+    memset(adata,0,sizeof(struct argdata *)*sctab[i].argc);
 
-    arg_data = (struct argdata **)malloc(sizeof(struct argdata *)*sctab[i].argc);
+    data = load_current_process_data(handle,regs,-1);
+
     for (j = 0; j < sctab[i].argc; ++j) {
-	arg_data[j] = (struct argdata *)malloc(sizeof(struct argdata));
-	arg_data[j]->info = &sctab[i].args[j];
-	arg_data[j]->data = NULL;
-	arg_data[j]->str = NULL;
+	adata[j] = (struct argdata *)malloc(sizeof(struct argdata));
+	memset(adata[j],0,sizeof(struct argdata));
+
+	adata[j]->info = &sctab[i].args[j];
+	adata[j]->data = NULL;
+	adata[j]->str = NULL;
+
 	if (sctab[i].args[j].decodings_len) {
-	    arg_data[j]->decodings = (char **)malloc(sizeof(char *)*sctab[i].args[j].decodings_len);
-	    memset(arg_data[j]->decodings,0,sizeof(char *)*sctab[i].args[j].decodings_len);
+	    adata[j]->decodings = (char **)malloc(sizeof(char *)*sctab[i].args[j].decodings_len);
+	    memset(adata[j]->decodings,0,sizeof(char *)*sctab[i].args[j].decodings_len);
+
+	    debug(0,"initialized mem for %d decodings for %s:%s\n",
+		  sctab[i].args[j].decodings_len,sctab[i].name,
+		  sctab[i].args[j].name);
 	}
 	else
-	    arg_data[j]->decodings = NULL;
+	    adata[j]->decodings = NULL;
     }
 
     for (j = 0; j < sctab[i].argc; ++j) {
-	arg_data[j] = load_arg_data(handle,regs,data->pid,i,j,arg_data,data);
-	if (sctab[i].args[j].ad)
-	    sctab[i].args[j].ad(handle,regs,data->pid,i,j,arg_data,data);
-	printf("  %s: %s\n",arg_data[j]->info->name,arg_data[j]->str);
+	adata[j] = load_arg_data(handle,regs,data->pid,i,j,adata,data);
+	debug(0,"loaded arg data for %s:%s\n",sctab[i].name,
+	      sctab[i].args[j].name);
+	if (sctab[i].args[j].ad) {
+	    sctab[i].args[j].ad(handle,regs,data->pid,i,j,adata,data);
+	    debug(0,"decoded mem for %d decodings for %s:%s\n",
+		  sctab[i].args[j].decodings_len,sctab[i].name,
+		  sctab[i].args[j].name);
+	}
 
-	for (k = 0; k < arg_data[j]->info->decodings_len; ++k) {
-	    printf("    %s: %s\n",
-		   arg_data[j]->info->decodings[k],
-		   arg_data[j]->decodings[k]);
+	debug(0,"about to print str 0x%08x for %s:%s (0x%08x, 0x%08x)\n",
+	      (unsigned int)(adata[j]->str),sctab[i].name,sctab[i].args[j].name,
+	      (unsigned int)(adata[j]->info), (unsigned int)(adata[j]->info ? adata[j]->info->name : 0));
+
+	printf("  %s: ",sctab[i].name);
+	fflush(stdout);
+	printf("%s\n",adata[j]->str);
+	fflush(stdout);
+
+	debug(0,"printed str for %s:%s\n",sctab[i].name,sctab[i].args[j].name);
+
+	for (k = 0; k < adata[j]->info->decodings_len; ++k) {
+	    if (adata[j]->decodings[k])
+		printf("    %s: %s\n",
+		       adata[j]->info->decodings[k],
+		       adata[j]->decodings[k]);
+	    else
+		printf("    %s: NULL\n",
+		       adata[j]->info->decodings[k]);
+	    fflush(stdout);
+	    debug(0,"printed decoding %d str for %s:%s\n",k,sctab[i].name,sctab[i].args[j].name);
 	}
     }
 
     for (j = 0; j < sctab[i].argc; ++j) {
-	if (check_filters(i,j,arg_data,data,&filter_ptr))
+	if (check_filters(i,j,adata,data,&filter_ptr))
 	    break;
     }
 
     *psstr = ssprintf("pid=%d name=%s ppid=%d",data->pid,data->name,data->ppid);
     *funcstr = strdup(sctab[i].name);
 
+    free_process_data(data);
+
     len = 0;
     for (j = 0; j < sctab[i].argc; ++j) {
 	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
 	len = len + 2 + strlen(sctab[i].args[j].name);
-	if (arg_data[j]->str)
-	    len = len + strlen(arg_data[j]->str);
+	if (adata[j]->str)
+	    len = len + strlen(adata[j]->str);
 	else 
 	    len = len + 6;
 	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
 
-	for (k = 0; k < arg_data[j]->info->decodings_len; ++k) {
+	for (k = 0; k < adata[j]->info->decodings_len; ++k) {
 	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
 	    len = len + 2 + strlen(sctab[i].args[j].decodings[k]);
-	    if (arg_data[j]->decodings[k])
-		len = len + strlen(arg_data[j]->decodings[k]);
+	    if (adata[j]->decodings[k])
+		len = len + strlen(adata[j]->decodings[k]);
 	    else 
 		len = len + 6;
 	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
@@ -2354,24 +2390,23 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     rc = 0;
     for (j = 0; j < sctab[i].argc; ++j) {
 	debug(0,"rc = %d\n",rc);
-	rc += sprintf((*argstr)+rc,"%s=%s,",sctab[i].args[j].name,arg_data[j]->str);
+	rc += sprintf((*argstr)+rc,"%s=%s,",sctab[i].args[j].name,adata[j]->str);
 	debug(0,"rc = %d\n",rc);
 
 	for (k = 0; k < sctab[i].args[j].decodings_len; ++k) {
 	    debug(0,"rc = %d\n",rc);
 	    rc += sprintf((*argstr)+rc,"%s=%s,",
-			  sctab[i].args[j].decodings[k],arg_data[j]->decodings[k]);
+			  sctab[i].args[j].decodings[k],adata[j]->decodings[k]);
 	    debug(0,"rc = %d\n",rc);
 	}
     }
     (*argstr)[len] = '\0';
 
     for (j = 0; j < sctab[i].argc; ++j) {
-	if (arg_data[j])
-	    free_argdata(arg_data[j]);
+	if (adata[j])
+	    free_argdata(adata[j]);
     }
-    free_process_data(data);
-    free(arg_data);
+    free(adata);
 
     if (!strcmp(sctab[i].name,"sys_execve")
 	|| !strcmp(sctab[i].name,"sys_waitpid")
@@ -3161,11 +3196,19 @@ int main(int argc, char *argv[])
 	vp = register_vmprobe(domid, sctab[i].addr, on_fn_pre, on_fn_post);
 	if (vp < 0) {
 	    error("failed to register probe for %s\n",sctab[i].name);
+	    for (j = i - 1; j > -1; --j) {
+		if (schandles[j] == -1)
+		    continue;
+		unregister_vmprobe(schandles[j]);
+		fprintf(stderr,"Unregistered probe %d for %s.\n",
+			schandles[j],sctab[j].name);
+		schandles[j] = -1;
+	    }
 	    return 1;
 	}
 	else {
 	   schandles[i] = vp;
-	   fprintf(stderr,"Registered probe for %s\n",sctab[i].name);
+	   fprintf(stderr,"Registered probe %d for %s\n",vp,sctab[i].name);
 	}
     }
 
