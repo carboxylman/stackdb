@@ -23,6 +23,8 @@ struct vmprobe {
     /* Link to the probe list in the parent domain */
     struct list_head node;
 
+    unsigned char vbytes[64];
+
     /* User handler to run before probe-point is executed */
     vmprobe_handler_t pre_handler;
 
