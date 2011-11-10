@@ -66,6 +66,15 @@ register_vmprobe(domid_t domid,
                  vmprobe_handler_t pre_handler,
                  vmprobe_handler_t post_handler);
 
+int
+register_vmprobe_batch(domid_t domid,
+		       unsigned long *vaddrlist,
+		       int listlen,
+		       vmprobe_handler_t pre_handler,
+		       vmprobe_handler_t post_handler,
+		       vmprobe_handle_t *handlelist,
+		       int onfail);
+
 int domain_exists(domid_t domid);
 
 domid_t domain_lookup(char *name);
@@ -132,6 +141,11 @@ void action_destroy(vmprobe_action_handle_t handle);
  */
 int
 unregister_vmprobe(vmprobe_handle_t handle);
+
+int
+unregister_vmprobe_batch(domid_t domid,
+			 vmprobe_handle_t *handlelist,
+			 int listlen);
 
 /*
  * Starts running the registered probes and wait until one of the probes stops.
