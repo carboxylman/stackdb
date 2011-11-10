@@ -127,8 +127,10 @@ void free_argdata(struct argdata *d) {
 	free(d->str);
     if (d->info->decodings_len) {
 	for (i = 0; i < d->info->decodings_len; ++i)
-	    free(d->decodings[i]);
-	free(d->decodings);
+	    if (d->decodings && d->decodings[i])
+		free(d->decodings[i]);
+	if (d->decodings)
+	    free(d->decodings);
     }
     free(d);
 }
@@ -138,7 +140,7 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		    struct argdata **arg_data,
 		    struct process_data *data);
 
-#define SYSCALL_MAX 294
+#define SYSCALL_MAX 303
 
 struct process_data {
     unsigned int pid;
@@ -157,6 +159,8 @@ struct process_data {
     struct process_data *real_parent;
     char *name;
     unsigned long nextptr;
+
+    struct list_head list;
 };
 
 void usage(char *progname) {
@@ -190,7 +194,7 @@ char *ssprintf(char *format,...) {
 	    bufsiz += 80;
 	}
 	else {
-	    tbuf = malloc(sizeof(char)*strlen(buf)+1);
+	    tbuf = malloc(sizeof(char)*(strlen(buf)+1));
 	    memcpy(tbuf,buf,strlen(buf)+1);
 	    free(buf);
 	    buf = tbuf;
@@ -205,9 +209,16 @@ char *ssprintf(char *format,...) {
 
 void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
     char *tbuf;
-    int len = strlen(str);
-    int oldlen = *endptr - *buf;
-    int remaining = *bufsiz - oldlen;
+    int len;
+    int oldlen;
+    int remaining;
+
+    if (!str)
+	return;
+
+    len = strlen(str);
+    oldlen = *endptr - *buf;
+    remaining = *bufsiz - oldlen;
 
     if (!*buf) {
 	debug(1,"alloc'ing %d init bytes\n",len+80);
@@ -937,7 +948,7 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
 	    data->parent = parent_data;
 	else {
 	    data->parent = NULL;
-	    free(parent_data);
+	    free_process_data(parent_data);
 	}
     }
     if (parent_addr == real_parent_addr) {
@@ -955,7 +966,7 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
 	    data->real_parent = real_parent_data;
 	else {
 	    data->real_parent = NULL;
-	    free(real_parent_data);
+	    free_process_data(real_parent_data);
 	}
     }
     /*
@@ -998,6 +1009,59 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
     return data;
 }
 
+LIST_HEAD(processes);
+
+int reload_process_list(vmprobe_handle_t handle,
+			struct cpu_user_regs *regs)
+{
+    struct process_data *pdata;
+    struct process_data *tmp_pdata;
+    unsigned long next;
+    int startpid;
+    int i = 0;
+
+    // blow away the old list
+    if (!list_empty(&processes)) {
+	list_for_each_entry_safe(pdata,tmp_pdata,&processes,list) {
+	    debug(1,"freeing %d %s\n",pdata->pid,pdata->name);
+	    list_del(&pdata->list);
+	    free_process_data(pdata);
+	}
+    }
+
+    // grab init task
+    pdata = load_process_data(handle,regs,init_task_addr,1,0);
+
+    if (!pdata) {
+	fprintf(stderr,"ERROR: could not load init process data for ps list!\n");
+	return -1;
+    }
+
+    startpid = pdata->pid;
+    while (1) {
+	// when we hit init the second time, break!
+	if (i && pdata->pid == startpid)
+	    break;
+	++i;
+
+	//INIT_LIST_HEAD(&pdata->list);
+	list_add_tail(&pdata->list,&processes);
+	debug(1,"adding %d\n",pdata->pid);
+
+	// grab the next one!
+	next = pdata->nextptr;
+	pdata = load_process_data(handle,regs,next,1,0);
+
+	if (!pdata) {
+	    fprintf(stderr,"ERROR: could not load intermediate process data for ps list; returning what we have!\n");
+	    fflush(stderr);
+	    return 1;
+	}
+    }
+
+    return 0;
+}
+
 char *process_list_to_string(vmprobe_handle_t handle,
 			     struct cpu_user_regs *regs,
 			     char *delim)
@@ -1010,13 +1074,10 @@ char *process_list_to_string(vmprobe_handle_t handle,
     char *tbuf;
     int len;
     int delimlen;
-    int startpid;
-    struct process_data *pdata;
     char *rdelim = delim;
-    int i = 0;
-    unsigned long next;
     int j;
     int found;
+    struct process_data *pdata;
 
     if (!rdelim)
 	rdelim = "\n";
@@ -1025,24 +1086,7 @@ char *process_list_to_string(vmprobe_handle_t handle,
     buf = malloc(bufsiz);
     bufptr = buf;
 
-    // grab init task
-    pdata = load_process_data(handle,regs,init_task_addr,1,0);
-
-    if (!pdata) {
-	fprintf(stderr,"ERROR: could not load init process data for ps list!\n");
-	free(buf);
-	return NULL;
-    }
-
-    startpid = pdata->pid;
-    while (1) {
-	// when we hit init the second time, break!
-	if (i && pdata->pid == startpid) {
-	    free_process_data(pdata);
-	    break;
-	}
-	++i;
-
+    list_for_each_entry(pdata,&processes,list) {
 	found = 0;
 	for (j = 0; j < ps_list_len; ++j) {
 	    if (strcmp(pdata->name,ps_list[j]) == 0) {
@@ -1053,6 +1097,8 @@ char *process_list_to_string(vmprobe_handle_t handle,
 	// if we are filtering what we report based on process name,
 	// don't report it unless it's in our list.
 	if (found || !ps_list_len) {
+	    debug(1,"adding to string: pid=%d,ppid=%d,name=%s\n",
+		  pdata->pid,pdata->ppid,pdata->name);
 	    // tostring, then grab the next one!
 	    len = snprintf(pbuf,sizeof(pbuf),"pid=%d,ppid=%d,name=%s%s",
 			   pdata->pid,pdata->ppid,pdata->name,delim);
@@ -1068,17 +1114,6 @@ char *process_list_to_string(vmprobe_handle_t handle,
 	    memcpy(bufptr,pbuf,len);
 	    bufptr += len;
 	    buflen += len;
-	}
-
-	// grab the next one!
-	next = pdata->nextptr;
-	free_process_data(pdata);
-	pdata = load_process_data(handle,regs,next,1,0);
-
-	if (!pdata) {
-	    fprintf(stderr,"ERROR: could not load intermediate process data for ps list; returning what we have!\n");
-	    fflush(stderr);
-	    break;
 	}
     }
     buf[buflen] = '\0';
@@ -1299,7 +1334,7 @@ void process_ptregs_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 				    "execve_argi",argi_addr,
 				    pid,0,NULL);
 	    if (!argi)
-		argi = strdup("(null)");
+		argi = (unsigned char *)strdup("(null)");
 	    string_append(&buf,&bufsiz,&endptr,(char *)argi);
 	    string_append(&buf,&bufsiz,&endptr,",");
 	    if (argi)
@@ -1329,6 +1364,8 @@ void process_ptregs_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    envi = vmprobe_get_data(handle,regs,
 				    "execve_envi",envi_addr,
 				    pid,0,NULL);
+	    if (!envi)
+		envi = (unsigned char *)strdup("(null)");
 	    string_append(&buf,&bufsiz,&endptr,(char *)envi);
 	    string_append(&buf,&bufsiz,&endptr,",");
 	    if (envi)
@@ -1367,11 +1404,7 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 }
 
 struct syscall_info sctab[SYSCALL_MAX] = { 
-    { 0, "do_exit", 0x0, 1,
-      { { 1, "code", SC_ARG_TYPE_LONG, 
-	  exit_code_decoder, 
-	  (char *[]) { "code:cause","code:status","code:signal" },
-	  3 } } },
+    { 0 },
     { 1, "sys_exit", 0xc0121df0, 1,
       { { 1, "error_code", SC_ARG_TYPE_INT, 
 	  exit_code_decoder, 
@@ -1941,9 +1974,24 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 291, "sys_inotify_init", 0xc0190840, 0 },
     { 292, "sys_inotify_add_watch", 0xc01909f0, 0 },
     { 293, "sys_inotify_rm_watch", 0xc0190360, 0 },
+    { 0 },
+    { 0 },
+    { 0 },
+    { 0 },
+    { 0 },
+    { 0 },
+    { 300, "do_exit", 0x0, 1,
+      { { 1, "code", SC_ARG_TYPE_LONG, 
+	  exit_code_decoder, 
+	  (char *[]) { "code:cause","code:status","code:signal" },
+	  3 } } },
+    { 301, "force_sig_info", 0x0, 1,
+      { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
+	{ 2, "info", SC_ARG_TYPE_PTR },
+	{ 3, "t", SC_ARG_TYPE_PTR },
+      } },
+    { 302, "sys_waitpid_RET", 0x0, 0 },
 };
-
-vmprobe_handle_t schandles[SYSCALL_MAX];
 
 #define STATS_MAX (128)
 #define QUERY_MAX (256)
@@ -1984,8 +2032,8 @@ static int open_statsserver(void)
 
             FD_ZERO(&fds);
             FD_SET(sock, &fds);
-            tv.tv_sec = 0;
-            tv.tv_usec = 500000;
+            tv.tv_sec = 5;
+            tv.tv_usec = 0;
             if (select(sock+1, NULL, &fds, NULL, &tv) != 1) {
                 close(sock);
                 return -4;
@@ -2104,7 +2152,9 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     switch (j)
     {
     case 0: 
-	if (i == 0)
+	if (i == 300)
+	    argval = regs->eax;
+	else if (i == 301)
 	    argval = regs->eax;
 	else
 	    argval = regs->ebx;
@@ -2261,6 +2311,9 @@ char *url_encode(char *str) {
 }
 
 int execcounter = 0;
+unsigned long waitpid_stat_addr = 0;
+	    
+struct argfilter segvfilter = { 0,0,-1,-1,0,-1,-1,0,0,NULL,NULL,0,NULL,0 };
 
 struct argfilter *handle_syscall(vmprobe_handle_t handle,
 				 struct cpu_user_regs *regs,
@@ -2280,14 +2333,82 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     }
 
     // hack to catch do_exit too!
-    if (addr == sctab[0].addr) {
-	i = 0;
+    if (addr == sctab[300].addr) {
+	i = 300;
+    }
+    else if (addr == sctab[301].addr) {
+	i = 301;
+    }
+    else if (addr == sctab[302].addr) {
+	// hack to catch waitpid return value!
+	int pid = (int)regs->eax;
+	char *pname;
+	int ppid;
+	struct process_data *tpdata;
+
+	if (pid <= 0)
+	    return NULL;
+
+	data = load_current_process_data(handle,regs,-1);
+
+	if (!data) {
+	    waitpid_stat_addr = 0;
+	    return NULL;
+	}
+
+	list_for_each_entry(tpdata,&processes,list) {
+	    if (tpdata->pid == pid) {
+		pname = tpdata->name;
+		ppid = tpdata->ppid;
+		break;
+	    }
+	}
+	if (tpdata->pid != pid) {
+	    pname = "";
+	    ppid = -1;
+	}
+
+	i = 302;
+
+	printf("loading sys_waitpid_RET stat_addr 0x%08lx\n",waitpid_stat_addr);
+
+	long code;
+	if (!vmprobe_get_data(handle,regs,"waitpid_data",waitpid_stat_addr,data->pid,
+			      sizeof(long),&code)) {
+	    free_process_data(data);
+	    return NULL;
+	}
+	
+	if (WIFEXITED(code)) {
+	    printf("\npid %d returned %d (%ld)!\n\n",pid,WEXITSTATUS(code),code);
+	}
+	else if (WIFSIGNALED(code)) {
+	    char *signame = "unknown";
+	    if (WTERMSIG(code) >= 0 && WTERMSIG(code) < sizeof(signals) / sizeof(int)) {
+		signame = signals[WTERMSIG(code)];
+	    }
+	    printf("\npid %d was signaled with %s (%ld)!\n\n",pid,signame,code);
+	    
+	    *psstr = ssprintf("pid=%d name=%s ppid=%d",pid,pname,ppid);
+	    *funcstr = strdup("do_exit");
+	    *argstr = ssprintf("code=,code:cause=signal,code:status=,code:signal=SIGSEGV,");
+
+	    free_process_data(data);
+	    
+	    return &segvfilter;
+	}
+
+	free_process_data(data);
+
+	return NULL;
     }
 
     if (i < 0 || i >= SYSCALL_MAX) {
 	fprintf(stderr,"ERROR: bad syscall number %u in eax!\n",i);
 	return NULL;
     }
+
+    reload_process_list(handle,regs);
 
     fprintf(stdout,"%s [dom%d 0x%lx]\n",
 	    sctab[i].name,vmprobe_domid(handle),//sctab[i].addr,
@@ -2334,7 +2455,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	      (unsigned int)(adata[j]->str),sctab[i].name,sctab[i].args[j].name,
 	      (unsigned int)(adata[j]->info), (unsigned int)(adata[j]->info ? adata[j]->info->name : 0));
 
-	printf("  %s: ",sctab[i].name);
+	printf("  %s: ",sctab[i].args[j].name);
 	fflush(stdout);
 	printf("%s\n",adata[j]->str);
 	fflush(stdout);
@@ -2352,6 +2473,13 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	    fflush(stdout);
 	    debug(0,"printed decoding %d str for %s:%s\n",k,sctab[i].name,sctab[i].args[j].name);
 	}
+    }
+
+    if (i == 7) {
+	waitpid_stat_addr = *((unsigned long *)(adata[1]->data));
+    }
+    else {
+	//waitpid_stat_addr = 0;
     }
 
     for (j = 0; j < sctab[i].argc; ++j) {
@@ -2903,7 +3031,6 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 int main(int argc, char *argv[])
 {
     domid_t domid = 1; // default guest domain
-    vmprobe_handle_t vp;
     int i,j,found;
     char ch;
     char *saveptr, *token = NULL;
@@ -2923,6 +3050,8 @@ int main(int argc, char *argv[])
     int syscall_list_len = 0;
     int syscall_list_alloclen = 8;
     int xa_debug = -1;
+    vmprobe_handle_t schandles[SYSCALL_MAX];
+    unsigned long vaddrlist[SYSCALL_MAX];
 
     syscall_list = (char **)malloc(sizeof(char *)*syscall_list_alloclen);
     argfilter_list = (struct argfilter **)malloc(sizeof(struct argfilter *)*argfilter_list_alloclen);
@@ -3137,7 +3266,7 @@ int main(int argc, char *argv[])
 
     // update symaddrs that we care about, if possible
     if (sysmapfile) {
-	domain_init(domid,sysmapfile);
+	//domain_init(domid,sysmapfile);
 
 	sysmapfh = fopen(sysmapfile,"r");
 	if (!sysmapfh) {
@@ -3162,23 +3291,29 @@ int main(int argc, char *argv[])
 		if (sctab[i].name == NULL)
 		    continue;
 
-		if (!strcmp(sym,sctab[i].name)) {
+		if (!strcmp(sym,sctab[i].name)
+		    || (!strcmp(sym,"sys_waitpid") && !strcmp(sctab[i].name,"sys_waitpid_RET"))) {
 		    if (sctab[i].addr != addr) {
-			debug(1,"updating %s address to 0x%x.\n",sym,addr);
+			debug(1,"updating %s address to 0x%x.\n",sctab[i].name,addr);
 			sctab[i].addr = addr;
 		    }
 
+		    if (!strcmp(sctab[i].name,"sys_waitpid_RET")) {
+			sctab[i].addr += 39;
+		    }
+
 		    // first match wins; there won't be more.
-		    break;
+		    //break;
 		}
 	    }		
 	}
     }
 
-    //memset(schandles,0,sizeof(vmprobe_handle_t) * SYSCALL_MAX);
     for (i = 0; i < SYSCALL_MAX; ++i) {
 	schandles[i] = -1;
+	vaddrlist[i] = 0;
     }
+
     for (i = 0; i < SYSCALL_MAX; ++i) {
 	if (sctab[i].name == NULL)
 	    continue;
@@ -3193,22 +3328,32 @@ int main(int argc, char *argv[])
 	if (syscall_list_len && !found)
 	    continue;
 
-	vp = register_vmprobe(domid, sctab[i].addr, on_fn_pre, on_fn_post);
-	if (vp < 0) {
-	    error("failed to register probe for %s\n",sctab[i].name);
-	    for (j = i - 1; j > -1; --j) {
-		if (schandles[j] == -1)
-		    continue;
-		unregister_vmprobe(schandles[j]);
-		fprintf(stderr,"Unregistered probe %d for %s.\n",
-			schandles[j],sctab[j].name);
-		schandles[j] = -1;
-	    }
-	    return 1;
+	//if (!strcmp(sctab[i].name,"sys_waitpid"))
+	//vaddrlist[302] = sctab[302].addr;
+
+	vaddrlist[i] = sctab[i].addr;
+    }
+    //vaddrlist[300] = 0;
+    //vaddrlist[301] = 0;
+
+    if ((rc = register_vmprobe_batch(domid,vaddrlist,SYSCALL_MAX,
+				     on_fn_pre,on_fn_post,
+				     schandles,1))) {
+	for (i = 0; i < SYSCALL_MAX; ++i) {
+	    if (vaddrlist[i] && schandles[i] == -1)
+		break;
 	}
-	else {
-	   schandles[i] = vp;
-	   fprintf(stderr,"Registered probe %d for %s\n",vp,sctab[i].name);
+	if (i == SYSCALL_MAX)
+	    error("Failed to register probes!\n");
+	else
+	    error("Failed to register probe for %s\n",sctab[i].name);
+	exit(-128);
+    }
+    else {
+	for (i = 0; i < SYSCALL_MAX; ++i) {
+	    if (vaddrlist[i] && schandles[i] > -1)
+		fprintf(stderr,"Registered probe %d for %s\n",
+			schandles[i],sctab[i].name);
 	}
     }
 
@@ -3231,12 +3376,18 @@ int main(int argc, char *argv[])
 	    }
 
 	    // unregister all probes
-	    for (i = 0; i < SYSCALL_MAX; ++i) {
-		if (schandles[i] == -1)
-		    continue;
-		unregister_vmprobe(schandles[i]);
-		schandles[i] = -1;
-		fprintf(stderr,"Unregistered probe for %s.\n",sctab[i].name);
+	    if ((rc = unregister_vmprobe_batch(domid,schandles,SYSCALL_MAX))) {
+		fprintf(stderr,"ERROR: failed to unregister some probes; bad!!\n");
+	    }
+	    else {
+		for (i = 0; i < SYSCALL_MAX; ++i) {
+		    vaddrlist[i] = 0;
+		    if (schandles[i] == -1)
+			continue;
+
+		    schandles[i] = -1;
+		    fprintf(stderr,"Unregistered probe for %s.\n",sctab[i].name);
+		}
 	    }
 
 	    // stop the library fully!
@@ -3283,14 +3434,32 @@ int main(int argc, char *argv[])
 		if (syscall_list_len && !found)
 		    continue;
 
-		vp = register_vmprobe(domid, sctab[i].addr, on_fn_pre, on_fn_post);
-		if (vp < 0) {
-		    error("failed to register probe for %s\n",sctab[i].name);
-		    return 1;
+		//if (!strcmp(sctab[i].name,"sys_waitpid"))
+		//vaddrlist[302] = sctab[302].addr;
+		
+		vaddrlist[i] = sctab[i].addr;
+	    }
+	    //vaddrlist[300] = 0;
+	    //vaddrlist[301] = 0;
+
+	    if ((rc = register_vmprobe_batch(domid,vaddrlist,SYSCALL_MAX,
+					     on_fn_pre,on_fn_post,
+					     schandles,1))) {
+		for (i = 0; i < SYSCALL_MAX; ++i) {
+		    if (vaddrlist[i] && schandles[i] == -1)
+			break;
 		}
-		else {
-		    fprintf(stderr,"Registered probe for %s\n",sctab[i].name);
-		    schandles[i] = vp;
+		if (i == SYSCALL_MAX)
+		    error("Failed to register probes!\n");
+		else
+		    error("Failed to register probe for %s\n",sctab[i].name);
+		exit(-128);
+	    }
+	    else {
+		for (i = 0; i < SYSCALL_MAX; ++i) {
+		    if (vaddrlist[i] && schandles[i] > -1)
+			fprintf(stderr,"Registered probe %d for %s\n",
+				schandles[i],sctab[i].name);
 		}
 	    }
 
