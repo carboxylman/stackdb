@@ -141,10 +141,11 @@ error_exit:
 
 /*TODO make sure that this returns a mach address */
 /* finds the address of the page global directory for a given pid */
-uint32_t linux_pid_to_pgd (xa_instance_t *instance, int pid)
+uint64_t linux_pid_to_pgd (xa_instance_t *instance, int pid)
 {
     unsigned char *memory = NULL;
-    uint32_t pgd = 0, ptr = 0, offset = 0;
+    uint64_t pgd = 0;
+    uint32_t ptr = 0, offset = 0;
     int mm_offset = instance->os.linux_instance.mm_offset;
     int tasks_offset = instance->os.linux_instance.tasks_offset;
     int pgd_offset = instance->os.linux_instance.pgd_offset;
@@ -166,7 +167,13 @@ uint32_t linux_pid_to_pgd (xa_instance_t *instance, int pid)
 	return 0;
     }
 
-    xa_read_long_virt(instance, ptr + pgd_offset, 0, &pgd);
+    if (instance->pae)
+	xa_read_long_long_virt(instance, ptr + pgd_offset, 0, &pgd);
+    else {
+	uint32_t tpgd = 0;
+	xa_read_long_virt(instance, ptr + pgd_offset, 0, &tpgd);
+	pgd = tpgd;
+    }
 
     /* update the cache with this new pid->pgd mapping */
     xa_update_pid_cache(instance, pid, pgd);
@@ -179,11 +186,11 @@ void *linux_access_kernel_symbol (
         xa_instance_t *instance, char *symbol, uint32_t *offset, int prot)
 {
     uint32_t virt_address;
-    uint32_t address;
+    uint64_t address;
 
     /* check the LRU cache */
     if (xa_check_cache_sym(instance, symbol, 0, &address)){
-        return xa_access_ma(instance, address, offset, PROT_READ);
+        return xa_access_ma64(instance, address, offset, PROT_READ);
     }
 
     /* get the virtual address of the symbol */

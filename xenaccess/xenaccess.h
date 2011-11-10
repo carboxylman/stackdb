@@ -167,7 +167,7 @@ struct xa_cache_entry{
     time_t last_used;
     char *symbol_name;
     uint32_t virt_address;
-    uint32_t mach_address;
+    uint64_t mach_address;
     int pid;
     struct xa_cache_entry *next;
     struct xa_cache_entry *prev;
@@ -177,7 +177,7 @@ typedef struct xa_cache_entry* xa_cache_entry_t;
 struct xa_pid_cache_entry{
     time_t last_used;
     int pid;
-    uint32_t pgd;
+    uint64_t pgd;
     struct xa_pid_cache_entry *next;
     struct xa_pid_cache_entry *prev;
 };
@@ -419,11 +419,11 @@ int xa_destroy (xa_instance_t *instance);
  */
 
 /**
- * Memory maps page in domU that contains given physical address.
+ * Memory maps page in domU that contains given 32-bit physical address.
  * The mapped memory is read-only.
  *
  * @param[in] instance Handle to xenaccess instance.
- * @param[in] phys_address Requested physical address.
+ * @param[in] phys_address Requested 32-bit physical address.
  * @param[out] offset Offset of the address in returned page.
  * @param[in] prot Desired memory protection (PROT_READ, PROT_WRITE, etc)
  *
@@ -434,11 +434,26 @@ void *xa_access_pa (
         uint32_t *offset, int prot);
 
 /**
- * Memory maps page in domU that contains given machine address. For more
- * info about machine, virtual and pseudo-physical page see xen dev docs.
+ * Memory maps page in domU that contains given 64-bit physical address.
+ * The mapped memory is read-only.
  *
  * @param[in] instance Handle to xenaccess instance.
- * @param[in] mach_address Requested machine address.
+ * @param[in] phys_address Requested 64-bit physical address.
+ * @param[out] offset Offset of the address in returned page.
+ * @param[in] prot Desired memory protection (PROT_READ, PROT_WRITE, etc)
+ *
+ * @return Address of a page copy that contains phys_address.
+ */
+void *xa_access_pa64 (
+        xa_instance_t *instance, uint64_t phys_address,
+        uint32_t *offset, int prot);
+
+/**
+ * Memory maps page in domU that contains given 32-bit machine address. For
+ * more info about machine, virtual and pseudo-physical page see xen dev docs.
+ *
+ * @param[in] instance Handle to xenaccess instance.
+ * @param[in] mach_address Requested 32-bit machine address.
  * @param[out] offset Offset of the address in returned page.
  * @param[in] prot Desired memory protection (PROT_READ, PROT_WRITE, etc)
  *
@@ -446,6 +461,21 @@ void *xa_access_pa (
  */
 void *xa_access_ma (
         xa_instance_t *instance, uint32_t mach_address,
+        uint32_t *offset, int prot);
+
+/**
+ * Memory maps page in domU that contains given 64-bit machine address. For
+ * more info about machine, virtual and pseudo-physical page see xen dev docs.
+ *
+ * @param[in] instance Handle to xenaccess instance.
+ * @param[in] mach_address Requested 64-bit machine address.
+ * @param[out] offset Offset of the address in returned page.
+ * @param[in] prot Desired memory protection (PROT_READ, PROT_WRITE, etc)
+ *
+ * @return Address of a page copy with content like mach_address.
+ */
+void *xa_access_ma64 (
+        xa_instance_t *instance, uint64_t mach_address,
         uint32_t *offset, int prot);
 
 /**
@@ -544,6 +574,16 @@ void *xa_access_user_va_range (
  */
 uint32_t xa_translate_kv2p(xa_instance_t *instance, uint32_t virt_address);
 
+/**
+ * Performs the translation from a kernel virtual address to a
+ * 64-bit physical address.
+ *
+ * @param[in] instance XenAccess instance
+ * @param[in] virt_address Desired kernel virtual address to translate
+ * @return 64-bit physical address, or zero on error
+ */
+uint64_t xa_translate_kv2p64(xa_instance_t *instance, uint32_t virt_address);
+
 /*---------------------------------------
  * Memory access functions from xa_util.c
  */
@@ -604,6 +644,17 @@ int xa_read_long_phys (
         xa_instance_t *instance, uint32_t paddr, uint32_t *value);
 
 /**
+ * Reads a long (32 bit) value from memory, given a 64-bit physical address.
+ *
+ * @param[in] instance XenAccess instance
+ * @param[in] paddr 64-bit physical address to read from
+ * @param[out] value The value read from memory
+ * @return XA_SUCCESS or XA_FAILURE
+ */
+int xa_read_long_phys64 (
+        xa_instance_t *instance, uint64_t paddr, uint32_t *value);
+
+/**
  * Reads a long long (64 bit) value from memory, given a physical address.
  *
  * @param[in] instance XenAccess instance
@@ -613,6 +664,17 @@ int xa_read_long_phys (
  */
 int xa_read_long_long_phys (
         xa_instance_t *instance, uint32_t paddr, uint64_t *value);
+
+/**
+ * Reads a long long (64 bit) value from memory, given a 64-bit physical address.
+ *
+ * @param[in] instance XenAccess instance
+ * @param[in] paddr 64-bit physical address to read from
+ * @param[out] value The value read from memory
+ * @return XA_SUCCESS or XA_FAILURE
+ */
+int xa_read_long_long_phys64 (
+        xa_instance_t *instance, uint64_t paddr, uint64_t *value);
 
 /**
  * Reads a long (32 bit) value from memory, given a machine address.
@@ -626,6 +688,17 @@ int xa_read_long_mach (
         xa_instance_t *instance, uint32_t maddr, uint32_t *value);
 
 /**
+ * Reads a long (32 bit) value from memory, given a 64-bit machine address.
+ *
+ * @param[in] instance XenAccess instance
+ * @param[in] maddr 64-bit machine address to read from
+ * @param[out] value The value read from memory
+ * @return XA_SUCCESS or XA_FAILURE
+ */
+int xa_read_long_mach64 (
+        xa_instance_t *instance, uint64_t maddr, uint32_t *value);
+
+/**
  * Reads a long long (64 bit) value from memory, given a machine address.
  *
  * @param[in] instance XenAccess instance
@@ -635,6 +708,17 @@ int xa_read_long_mach (
  */
 int xa_read_long_long_mach (
         xa_instance_t *instance, uint32_t maddr, uint64_t *value);
+
+/**
+ * Reads a long long (64 bit) value from memory, given a 64-bit machine address.
+ *
+ * @param[in] instance XenAccess instance
+ * @param[in] maddr 64-bit machine address to read from
+ * @param[out] value The value read from memory
+ * @return XA_SUCCESS or XA_FAILURE
+ */
+int xa_read_long_long_mach64 (
+        xa_instance_t *instance, uint64_t maddr, uint64_t *value);
 
 /**
  * Looks up the virtual address of an exported kernel symbol.

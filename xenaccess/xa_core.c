@@ -322,7 +322,7 @@ int get_page_info_xen (xa_instance_t *instance)
     xa_dbprint(0,"**set instance->pse = %d\n", instance->pse);
 
     /* testing to see CR3 value */
-    instance->cr3 = ctxt.ctrlreg[3] & 0xFFFFF000;
+    instance->cr3 = ctxt.ctrlreg[3];
     xa_dbprint(0,"**set instance->cr3 = 0x%.8x\n", instance->cr3);
 #endif /* ENABLE_XEN */
 

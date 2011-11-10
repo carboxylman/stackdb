@@ -32,10 +32,10 @@
 int linux_init (xa_instance_t *instance)
 {
     int ret = XA_SUCCESS;
-    //#if 0
+#if 0
     unsigned char *memory = NULL;
     uint32_t local_offset = 0;
-    //#endif
+#endif
 
     if (linux_system_map_symbol_to_address(
              instance, "swapper_pg_dir", &instance->kpgd) == XA_FAILURE){
@@ -46,9 +46,12 @@ int linux_init (xa_instance_t *instance)
     xa_dbprint(0,"--got vaddr for swapper_pg_dir (0x%.8x).\n", instance->kpgd);
 
     if (!instance->hvm){
-        instance->kpgd -= instance->page_offset;
-        if (xa_read_long_phys(
-                instance, instance->kpgd, &(instance->kpgd)) == XA_FAILURE){
+        //instance->kpgd -= instance->page_offset;
+	xa_dbprint(0,"**loading instance->kpgd from phys addr 0x%.8x\n",
+		   instance->kpgd - instance->page_offset);
+        if (xa_read_long_phys(instance, 
+			      instance->kpgd - instance->page_offset,
+			      &(instance->kpgd)) == XA_FAILURE) {
             fprintf(stderr,"ERROR: failed to get physical addr for kpgd\n");
             ret = xa_report_error(instance, 0, XA_EMINOR);
             if (XA_FAILURE == ret) goto error_exit;

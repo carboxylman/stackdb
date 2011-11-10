@@ -188,12 +188,12 @@ void *windows_access_kernel_symbol (
 {
     uint32_t virt_address;
     uint32_t phys_address;
-    uint32_t address;
+    uint64_t address;
     uint32_t rva;
 
     /* check the LRU cache */
     if (xa_check_cache_sym(instance, symbol, 0, &address)){
-        return xa_access_ma(instance, address, offset, PROT_READ);
+        return xa_access_ma64(instance, address, offset, PROT_READ);
     }
 
     /* get the RVA of the symbol */

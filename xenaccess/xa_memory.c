@@ -136,7 +136,14 @@ error_exit:
 
 void *xa_mmap_mfn (xa_instance_t *instance, int prot, unsigned long mfn)
 {
-//    xa_dbprint(0,"--MapMFN: Mapping mfn = 0x%.8x.\n", (unsigned int)mfn);
+#if 1
+    /* XXX hack for Utah */
+    if (mfn < 0 || mfn >= 0x300000) {
+	printf("WARNING: machine_addr %.8x out of range [%u-%u]!\n", (unsigned int)mfn, 0, 0x300000);
+	return NULL;
+    }
+#endif
+    //xa_dbprint(1,"--MapMFN: Mapping mfn = 0x%.8x.\n", (unsigned int)mfn);
     return xa_map_page(instance, prot, mfn);
 }
 
@@ -156,7 +163,7 @@ void *xa_mmap_pfn (xa_instance_t *instance, int prot, unsigned long pfn)
         return NULL;
     }
     else{
-//        xa_dbprint(0,"--MapPFN: Mapping mfn = %lu / pfn = %lu.\n", mfn, pfn);
+        xa_dbprint(0,"--MapPFN: Mapping mfn = %lu / pfn = %lu.\n", mfn, pfn);
         return xa_map_page(instance, prot, mfn);
     }
 }
@@ -170,23 +177,40 @@ int page_size_flag (unsigned long entry){
     return xa_get_bit(entry, 7);
 }
 
-/* page directory pointer table */
-uint32_t get_pdptb (uint32_t pdpr){
-    return pdpr & 0xFFFFFFE0;
+/* page directory pointer table (PAE only) */
+uint64_t get_pdptb (uint64_t pdpr){
+    /* "cr3" value passed in is actually a paddr (see xa_current_cr3) */
+    return (pdpr & 0x000FFFFFFFFFF000ULL);
 }
 
-uint32_t pdpi_index (uint32_t pdpi){
-    return (pdpi >> 30) * sizeof(uint64_t);
+/* XXX really returns an offset not an index */
+uint32_t pdpi_index (uint32_t vaddr){
+    return (vaddr >> 30) * sizeof(uint64_t);
 }
 
 uint64_t get_pdpi (
-        xa_instance_t *instance, uint32_t vaddr, uint32_t cr3, int k)
+        xa_instance_t *instance, uint32_t vaddr, uint64_t cr3, int k)
 {
     uint64_t value;
-    uint32_t pdpi_entry = get_pdptb(cr3) + pdpi_index(vaddr);
-    xa_dbprint(0,"--PTLookup: pdpi_entry = 0x%.8x\n", pdpi_entry);
+    static int first = 1;
+    uint64_t pdpi_entry = get_pdptb(cr3) + pdpi_index(vaddr);
+
+    if (first) {
+	    uint64_t o = get_pdptb(cr3);
+	    xa_dbprint(0, "pdptb@%.16llx:\n", o);
+	    xa_read_long_long_mach64(instance, o, &value);
+	    xa_dbprint(0, "  [0]: %.16llx\n", value);
+	    xa_read_long_long_mach64(instance, o+8, &value);
+	    xa_dbprint(0, "  [1]: %.16llx\n", value);
+	    xa_read_long_long_mach64(instance, o+16, &value);
+	    xa_dbprint(0, "  [2]: %.16llx\n", value);
+	    xa_read_long_long_mach64(instance, o+24, &value);
+	    xa_dbprint(0, "  [3]: %.16llx\n", value);
+	    first = 0;
+    }
+    xa_dbprint(0,"--PTLookup: k=%d, vaddr=%.8x, pdpi_entry = 0x%.16llx\n", k, vaddr, pdpi_entry);
     if (k){
-        xa_read_long_long_mach(instance, pdpi_entry, &value);
+        xa_read_long_long_mach64(instance, pdpi_entry, &value);
     }
     else{
         xa_read_long_long_virt(instance, pdpi_entry, 0, &value);
@@ -195,6 +219,7 @@ uint64_t get_pdpi (
 }
 
 /* page directory */
+/* XXX really returns an offset not an index */
 uint32_t pgd_index (xa_instance_t *instance, uint32_t address){
     if (!instance->pae){
         return (((address) >> 22) & 0x3FF) * sizeof(uint32_t);
@@ -209,7 +234,7 @@ uint32_t pdba_base_nopae (uint32_t pdpe){
 }
 
 uint64_t pdba_base_pae (uint64_t pdpe){
-    return pdpe & 0xFFFFFF000ULL;
+    return pdpe & 0x000FFFFFFFFFF000ULL;
 }
 
 uint32_t get_pgd_nopae (
@@ -231,9 +256,9 @@ uint64_t get_pgd_pae (
         xa_instance_t *instance, uint32_t vaddr, uint64_t pdpe, int k)
 {
     uint64_t value;
-    uint32_t pgd_entry = pdba_base_pae(pdpe) + pgd_index(instance, vaddr);
-    xa_dbprint(0,"--PTLookup: pgd_entry = 0x%.8x\n", pgd_entry);
-    xa_read_long_long_mach(instance, pgd_entry, &value);
+    uint64_t pgd_entry = pdba_base_pae(pdpe) + pgd_index(instance, vaddr);
+    xa_dbprint(0,"--PTLookup: vaddr=%.8x, pgd_entry = 0x%.16llx\n", vaddr, pgd_entry);
+    xa_read_long_long_mach64(instance, pgd_entry, &value);
     return value;
 }
 
@@ -252,7 +277,7 @@ uint32_t ptba_base_nopae (uint32_t pde){
 }
 
 uint64_t ptba_base_pae (uint64_t pde){
-    return pde & 0xFFFFFF000ULL;
+    return pde & 0x000FFFFFFFFFF000ULL;
 }
 
 uint32_t get_pte_nopae (xa_instance_t *instance, uint32_t vaddr, uint32_t pgd){
@@ -265,9 +290,9 @@ uint32_t get_pte_nopae (xa_instance_t *instance, uint32_t vaddr, uint32_t pgd){
 
 uint64_t get_pte_pae (xa_instance_t *instance, uint32_t vaddr, uint64_t pgd){
     uint64_t value;
-    uint32_t pte_entry = ptba_base_pae(pgd) + pte_index(instance, vaddr);
-    xa_dbprint(0,"--PTLookup: pte_entry = 0x%.8x\n", pte_entry);
-    xa_read_long_long_mach(instance, pte_entry, &value);
+    uint64_t pte_entry = ptba_base_pae(pgd) + pte_index(instance, vaddr);
+    xa_dbprint(0,"--PTLookup: vaddr=%.8x, pte_entry = 0x%.16llx\n", vaddr, pte_entry);
+    xa_read_long_long_mach64(instance, pte_entry, &value);
     return value;
 }
 
@@ -340,15 +365,14 @@ uint64_t get_paddr_pae (uint32_t vaddr, uint64_t pte){
     return pte_pfn_pae(pte) | (vaddr & 0xFFF);
 }
 
-uint32_t get_large_paddr (
-        xa_instance_t *instance, uint32_t vaddr, uint32_t pgd_entry)
+uint32_t get_large_paddr (uint32_t vaddr, uint32_t pgd_entry)
 {
-    if (!instance->pae){
-        return (pgd_entry & 0xFFC00000) | (vaddr & 0x3FFFFF);
-    }
-    else{
+    return (pgd_entry & 0xFFC00000) | (vaddr & 0x3FFFFF);
+}
+
+uint64_t get_large_paddr_pae (uint32_t vaddr, uint64_t pgd_entry)
+{
         return (pgd_entry & 0xFFE00000) | (vaddr & 0x1FFFFF);
-    }
 }
 
 /* "buffalo" routines
@@ -422,7 +446,7 @@ uint32_t v2p_nopae(xa_instance_t *instance, uint32_t cr3, uint32_t vaddr, int k)
         
     if (entry_present(pgd)){
         if (page_size_flag(pgd)){
-            paddr = get_large_paddr(instance, vaddr, pgd);
+            paddr = get_large_paddr(vaddr, pgd);
             xa_dbprint(0,"--PTLookup: 4MB page\n", pgd);
         }
         else{
@@ -445,29 +469,30 @@ uint32_t v2p_nopae(xa_instance_t *instance, uint32_t cr3, uint32_t vaddr, int k)
     return paddr;
 }
 
-uint32_t v2p_pae (xa_instance_t *instance, uint32_t cr3, uint32_t vaddr, int k)
+uint64_t v2p_pae (xa_instance_t *instance, uint64_t cr3, uint32_t vaddr, int k)
 {
-    uint32_t paddr = 0;
+    uint64_t paddr = 0;
     uint64_t pdpe, pgd, pte;
         
     xa_dbprint(0,"--PTLookup: lookup vaddr = 0x%.8x\n", vaddr);
-    xa_dbprint(0,"--PTLookup: cr3 = 0x%.8x\n", cr3);
+    xa_dbprint(0,"--PTLookup: cr3 = 0x%.16llx\n", cr3);
     pdpe = get_pdpi(instance, vaddr, cr3, k);
-    xa_dbprint(0,"--PTLookup: pdpe = 0x%.16x\n", pdpe);
+    xa_dbprint(0,"--PTLookup: pdpe = 0x%.16llx\n", pdpe);
     if (!entry_present(pdpe)){
         return paddr;
     }
     pgd = get_pgd_pae(instance, vaddr, pdpe, k);
-    xa_dbprint(0,"--PTLookup: pgd = 0x%.16x\n", pgd);
+    xa_dbprint(0,"--PTLookup: pgd = 0x%.16llx\n", pgd);
 
+    /* XXX assumes that bits are in the same place for 32- or 64-bit pgd */
     if (entry_present(pgd)){
         if (page_size_flag(pgd)){
-            paddr = get_large_paddr(instance, vaddr, pgd);
+            paddr = get_large_paddr_pae(vaddr, pgd);
             xa_dbprint(0,"--PTLookup: 2MB page\n");
         }
         else{
             pte = get_pte_pae(instance, vaddr, pgd);
-            xa_dbprint(0,"--PTLookup: pte = 0x%.16x (", pte);
+            xa_dbprint(0,"--PTLookup: pte = 0x%.16llx (", pte);
 	    pte_dumpflags_pae(pte);
 	    xa_dbprint_plain(0,")\n");
             if (entry_present(pte)){
@@ -479,22 +504,26 @@ uint32_t v2p_pae (xa_instance_t *instance, uint32_t cr3, uint32_t vaddr, int k)
     return paddr;
 }
 
-/* convert address to machine address via page tables */
-uint32_t xa_pagetable_lookup (
+/*
+ * Convert virtual address to machine address via page tables.
+ * XXX we do everything in 64-bit to avoid further proliferation of
+ * 32-bit and 64-bit versions of functions.
+ */
+uint64_t xa_pagetable_lookup (
             xa_instance_t *instance,
-            uint32_t cr3,
+            uint64_t cr3,
             uint32_t vaddr,
             int kernel)
 {
-    if (instance->pae){
+    if (instance->pae) {
         return v2p_pae(instance, cr3, vaddr, kernel);
     }
-    else{
-        return v2p_nopae(instance, cr3, vaddr, kernel);
+    else {
+        return (uint64_t)v2p_nopae(instance, (uint32_t)cr3, vaddr, kernel);
     }
 }
 
-uint32_t xa_current_cr3 (xa_instance_t *instance, uint32_t *cr3)
+uint32_t xa_current_cr3 (xa_instance_t *instance, uint64_t *cr3)
 {
     int ret = XA_SUCCESS;
 #ifdef ENABLE_XEN
@@ -525,10 +554,14 @@ uint32_t xa_current_cr3 (xa_instance_t *instance, uint32_t *cr3)
             goto error_exit;
         }
 #ifdef HAVE_CONTEXT_ANY
-        *cr3 = ctxt_any.c.ctrlreg[3] & 0xFFFFF000;
-#else
-        *cr3 = ctxt.ctrlreg[3] & 0xFFFFF000;
-#endif /* HAVE_CONTEXT_ANY */
+	ctxt = ctxt_any.c;
+#endif
+	if (ctxt.vm_assist & (1 << VMASST_TYPE_pae_extended_cr3)) {
+		*cr3 = (uint64_t)xen_cr3_to_pfn(ctxt.ctrlreg[3]) << 12;
+	} else {
+		*cr3 = ctxt.ctrlreg[3] & 0xFFFFF000;
+	}
+	//xa_dbprint(0,"returned: cr3reg=%.8x, ourcr3=%.16llx\n", ctxt.ctrlreg[3], *cr3);
 #endif /* ENABLE_XEN */
     }
     else if (XA_MODE_FILE == instance->mode){
@@ -542,7 +575,15 @@ error_exit:
 /* expose virtual to physical mapping via api call */
 uint32_t xa_translate_kv2p(xa_instance_t *instance, uint32_t virt_address)
 {
-    uint32_t cr3 = 0;
+    uint64_t cr3 = 0;
+    xa_current_cr3(instance, &cr3);
+    return (uint32_t)xa_pagetable_lookup(instance, cr3, virt_address, 1);
+}
+
+/* expose virtual to physical mapping via api call */
+uint64_t xa_translate_kv2p64(xa_instance_t *instance, uint32_t virt_address)
+{
+    uint64_t cr3 = 0;
     xa_current_cr3(instance, &cr3);
     return xa_pagetable_lookup(instance, cr3, virt_address, 1);
 }
@@ -564,13 +605,13 @@ void *xa_access_kernel_sym (
 
 /*TODO fix these functions to return machine address just like real CR3 */
 /* finds the address of the page global directory for a given pid */
-uint32_t xa_pid_to_pgd (xa_instance_t *instance, int pid)
+uint64_t xa_pid_to_pgd (xa_instance_t *instance, int pid)
 {
     xa_dbprint(1,"pid=%d\n", pid);
     /* first check the cache */
-    uint32_t pgd = 0;
+    uint64_t pgd = 0;
     if (xa_check_pid_cache(instance, pid, &pgd)){
-	xa_dbprint(1,"pgd=%08x\n", pgd);
+	xa_dbprint(1,"pgd=%.16llx\n", pgd);
         return pgd;
     }
 
@@ -582,7 +623,7 @@ uint32_t xa_pid_to_pgd (xa_instance_t *instance, int pid)
         pgd = windows_pid_to_pgd(instance, pid);
     }
 
-    xa_dbprint(1,"pgd=%08x\n", pgd);
+    xa_dbprint(1,"pgd=%.16llx\n", pgd);
     return pgd;
 }
 
@@ -593,13 +634,13 @@ void *xa_access_user_va (
         int pid,
         int prot)
 {
-    uint32_t address = 0;
+    uint64_t address = 0;
 
     xa_dbprint(0,"va = %08x, pid = %d\n", virt_address, pid);
 
     /* check the LRU cache */
     if (xa_check_cache_virt(instance, virt_address, pid, &address)){
-        return xa_access_ma(instance, address, offset, PROT_READ);
+        return xa_access_ma64(instance, address, offset, PROT_READ);
     }
 
     /* use kernel page tables */
@@ -607,7 +648,7 @@ void *xa_access_user_va (
       Figure out what this should be b/c there still may be a fixed
       mapping range between the page'd addresses and VIRT_START */
     if (!pid){
-        uint32_t cr3 = 0;
+        uint64_t cr3 = 0;
         xa_current_cr3(instance, &cr3);
         address = xa_pagetable_lookup(instance, cr3, virt_address, 1);
         if (!address){
@@ -618,15 +659,15 @@ void *xa_access_user_va (
 
     /* use user page tables */
     else{
-        uint32_t pgd = xa_pid_to_pgd(instance, pid);
+        uint64_t pgd = xa_pid_to_pgd(instance, pid);
 	int kernel = 0;
 	if (pgd) {
-	    xa_dbprint(0,"--UserVirt: pgd for pid=%d is 0x%.8x.\n", pid, pgd);
+	    xa_dbprint(0,"--UserVirt: pgd for pid=%d is 0x%.16llx.\n", pid, pgd);
 	}
 	else {
 	    kernel = 1;
 	    xa_current_cr3(instance, &pgd);
-	    xa_dbprint(0,"--UserVirt: pgd for pid=%d is 0; using kernel pgd 0x%.8x instead!\n", pid, pgd);
+	    xa_dbprint(0,"--UserVirt: pgd for pid=%d is 0; using kernel pgd 0x%.16llx instead!\n", pid, pgd);
 	}
 
         if (pgd){
@@ -641,7 +682,7 @@ void *xa_access_user_va (
 
     /* update cache and map the memory */
     xa_update_cache(instance, NULL, virt_address, pid, address);
-    return xa_access_ma(instance, address, offset, prot);
+    return xa_access_ma64(instance, address, offset, prot);
 }
 
 /*TODO find a way to support this in file mode */
@@ -657,7 +698,7 @@ void *xa_access_user_va_range (
 #ifdef ENABLE_XEN
     void *retval = NULL;
     int i;
-    unsigned long maddr;
+    uint64_t maddr;
     int kernel = !pid;
     int tmp_offset;
 
@@ -673,11 +714,11 @@ void *xa_access_user_va_range (
     if (size > (num_pages * instance->page_size - tmp_offset))
 	++num_pages;
 
-    uint32_t pgd = pid ? xa_pid_to_pgd(instance, pid) : instance->kpgd;
+    uint64_t pgd = pid ? xa_pid_to_pgd(instance, pid) : instance->kpgd;
     if (pid && !pgd) {
 	kernel = 1;
 	xa_current_cr3(instance, &pgd);
-	xa_dbprint(0,"--UserVirt: pgd for pid=%d is 0; using kernel pgd 0x%.8x instead!\n", pid, pgd);
+	xa_dbprint(0,"--UserVirt: pgd for pid=%d is 0; using kernel pgd 0x%.16llx instead!\n", pid, pgd);
     }
     else if (!pid && !instance->kpgd) {
 	xa_current_cr3(instance, &pgd);
@@ -771,6 +812,46 @@ void *xa_access_ma (
 
     /* get the offset */
     *offset = (instance->page_size-1) & mach_address;
+
+    /* access the memory */
+    return xa_mmap_mfn(instance, prot, mfn);
+}
+
+/*
+ * Access 64-bit phys and machine addrs.
+ * XXX assumes pfn still fits in 32 bits.
+ */
+void *xa_access_pa64 (
+        xa_instance_t *instance,
+        uint64_t phys_address,
+        uint32_t *offset,
+        int prot)
+{
+    unsigned long pfn;
+    
+    /* page frame number = physical address >> PAGE_SHIFT */
+    pfn = (unsigned long)(phys_address >> instance->page_shift);
+    
+    /* get the offset */
+    *offset = (uint32_t)((instance->page_size-1) & phys_address);
+    
+    /* access the memory */
+    return xa_mmap_pfn(instance, prot, pfn);
+}
+
+void *xa_access_ma64 (
+        xa_instance_t *instance,
+        uint64_t mach_address,
+        uint32_t *offset,
+        int prot)
+{
+    unsigned long mfn;
+
+    /* machine frame number = machine address >> PAGE_SHIFT */
+    mfn = (unsigned long)(mach_address >> instance->page_shift);
+
+    /* get the offset */
+    *offset = (uint32_t)((instance->page_size-1) & mach_address);
 
     /* access the memory */
     return xa_mmap_mfn(instance, prot, mfn);

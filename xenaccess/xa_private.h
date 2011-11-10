@@ -101,7 +101,7 @@ void _xa_dbprint(int level,char *format, ...);
 int xa_check_cache_sym (xa_instance_t *instance,
                         char *symbol_name,
                         int pid,
-                        uint32_t *mach_address);
+                        uint64_t *mach_address);
 
 /**
  * Check if a virt_address is in the LRU cache.
@@ -114,7 +114,7 @@ int xa_check_cache_sym (xa_instance_t *instance,
 int xa_check_cache_virt (xa_instance_t *instance,
                          uint32_t virt_address,
                          int pid,
-                         uint32_t *mach_address);
+                         uint64_t *mach_address);
 
 /**
  * Updates cache of guest symbols. Every symbol name has an 
@@ -131,7 +131,7 @@ int xa_update_cache (xa_instance_t *instance,
                      char *symbol_name,
                      uint32_t virt_address,
                      int pid,
-                     uint32_t mach_address);
+                     uint64_t mach_address);
 
 /**
  * Releases the cache.
@@ -141,8 +141,8 @@ int xa_update_cache (xa_instance_t *instance,
  */
 int xa_destroy_cache (xa_instance_t *instance);
 
-int xa_check_pid_cache (xa_instance_t *instance, int pid, uint32_t *pgd);
-int xa_update_pid_cache (xa_instance_t *instance, int pid, uint32_t pgd);
+int xa_check_pid_cache (xa_instance_t *instance, int pid, uint64_t *pgd);
+int xa_update_pid_cache (xa_instance_t *instance, int pid, uint64_t pgd);
 int xa_destroy_pid_cache (xa_instance_t *instance);
 
 /*--------------------------------------------
@@ -197,7 +197,7 @@ void *xa_mmap_mfn (xa_instance_t *instance, int prot, unsigned long mfn);
 void *xa_mmap_pfn (xa_instance_t *instance, int prot, unsigned long pfn);
 
 /**
- * Covert virtual address to machine address via page table lookup.
+ * Convert virtual address to 64-bit machine address via page table lookup.
  *
  * @param[in] instance Handle to xenaccess instance.
  * @param[in] pgd Page directory to use for this lookup.
@@ -206,8 +206,8 @@ void *xa_mmap_pfn (xa_instance_t *instance, int prot, unsigned long pfn);
  *
  * @return Machine address resulting from page table lookup.
  */
-uint32_t xa_pagetable_lookup (
-            xa_instance_t *instance, uint32_t pgd,
+uint64_t xa_pagetable_lookup (
+            xa_instance_t *instance, uint64_t pgd,
             uint32_t virt_address, int kernel);
 
 /**
@@ -218,7 +218,7 @@ uint32_t xa_pagetable_lookup (
  *
  * @return Address of pgd, or zero if no address could be found.
  */
-uint32_t xa_pid_to_pgd (xa_instance_t *instance, int pid);
+uint64_t xa_pid_to_pgd (xa_instance_t *instance, int pid);
 
 /**
  * Gets address of a symbol in domU virtual memory. It uses System.map
@@ -310,8 +310,8 @@ uint32_t xa_get_domain_id (char *name);
 char *linux_predict_sysmap_name (uint32_t id);
 
 uint32_t windows_pid_to_pgd (xa_instance_t *instance, int pid);
-uint32_t linux_pid_to_pgd (xa_instance_t *instance, int pid);
-uint32_t xa_current_cr3 (xa_instance_t *instance, uint32_t *cr3);
+uint64_t linux_pid_to_pgd (xa_instance_t *instance, int pid);
+uint32_t xa_current_cr3 (xa_instance_t *instance, uint64_t *cr3);
 
 /** Duplicate function from xc_util that should remain
  *  here until Xen 3.1.2 becomes widely distributed.
