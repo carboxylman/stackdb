@@ -19,7 +19,7 @@ CFLAGS += -D VMPROBE_DEBUG
 CFLAGS += -I$(XENACCESS_INC) -I$(TOP_SRCDIR)/vmprobes -I./
 
 LDFLAGS := -lxenctrl -lxenstore -lc
-LDFLAGS_SHARED := -L$(XENACCESS_LIBDIR) -lxenaccess -L../vmprobes -lvmprobes
+LDFLAGS_SHARED := -L$(XENACCESS_LIBDIR) -lxenaccess -L../../vmprobes -lvmprobes
 
 INST_BIN = vmprobebio vmprobeopen vmprobenull vmprobegeneric \
 	   vmprobebio-shared vmprobeopen-shared vmprobenull-shared vmprobegeneric-shared
