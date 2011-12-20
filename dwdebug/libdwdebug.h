@@ -495,7 +495,7 @@ struct symbol {
 	/* datatype info */
 	struct {
 	    datatype_code_t datatype_code;
-	    int byte_size;
+	    uint16_t byte_size;
 	    uint8_t isanon:1,
 		    isvoid:1;
 	    union {
@@ -545,7 +545,7 @@ struct symbol {
 	struct {
 	    uint8_t isparam:1,
 		    isconst:1,
-	            isenumval:1;
+		    isenumval:1;
 	    union {
 		void *constval;
 		struct {
@@ -556,6 +556,11 @@ struct symbol {
 		    uint64_t lowpc;
 		    uint64_t highpc;
 		} f;
+		struct {
+		    uint16_t byte_size;
+		    uint16_t bit_offset;
+		    uint16_t bit_size;
+		} v;
 	    } d;
 	    struct location l;
 	} ii;

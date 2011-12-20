@@ -547,6 +547,12 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     /* all variables are named, but not all members of structs/unions! */
     if (symbol->name) 
 	fprintf(ud->stream,"%s",symbol->name);
+    if (symbol->type == SYMBOL_TYPE_VAR 
+	&& symbol->s.ii.d.v.bit_size > 0) {
+	/* this is a bitfield */
+	fprintf(ud->stream,":%hd(%hd)",symbol->s.ii.d.v.bit_size,
+		symbol->s.ii.d.v.bit_offset);
+    }
     if (symbol->type == SYMBOL_TYPE_VAR
 	&& symbol->s.ii.isenumval) {
 	// XXX fix type printing -- this *is* a malloc'd constval

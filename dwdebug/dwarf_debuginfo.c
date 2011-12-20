@@ -384,6 +384,28 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    cbargs->symbol->s.ti.byte_size = num;
 	}
+	else if (num_set 
+		 && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
+	    cbargs->symbol->s.ii.d.v.byte_size = num;
+	}
+	else 
+	    lwarn("attrval %d for attr %s in bad context\n",
+		  (int)num,dwarf_attr_string(attr));
+	break;
+    case DW_AT_bit_size:
+	if (num_set 
+	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
+	    cbargs->symbol->s.ii.d.v.bit_size = num;
+	}
+	else 
+	    lwarn("attrval %d for attr %s in bad context\n",
+		  (int)num,dwarf_attr_string(attr));
+	break;
+    case DW_AT_bit_offset:
+	if (num_set 
+	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
+	    cbargs->symbol->s.ii.d.v.bit_offset = num;
+	}
 	else 
 	    lwarn("attrval %d for attr %s in bad context\n",
 		  (int)num,dwarf_attr_string(attr));
@@ -452,8 +474,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    break;
 	}
     /* now fall through to the block op */
-    case DW_AT_bit_size:
-    case DW_AT_bit_offset:
+    /* bit_size and bit_offset should probably always be consts! */
+    //case DW_AT_bit_size:
+    //case DW_AT_bit_offset:
 	/* these all need ops evaluated! */
 	if (block_set) {
 	    get_static_ops(cbargs->dwflmod,cbargs->dbg,
