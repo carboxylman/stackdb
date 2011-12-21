@@ -166,7 +166,60 @@ AC_PROG_INSTALL
         ;;
 esac]
 
-outfiles="$outfiles Makeconf Makefile \
+#
+# Check elfutils.
+#
+AC_ARG_WITH([elfutils],
+  AS_HELP_STRING([--with-elfutils=DIRECTORY],
+    [find elfutils install in DIRECTORY]),
+  [ELFUTILS="$with_elfutils"])
+if test -z "$ELFUTILS" ; then
+    # look in usual places
+    ELFUTILS=/usr/local
+    if test ! -e "$ELFUTILS/include/elfutils/libdw.h" ; then
+        ELFUTILS=/usr
+        if test ! -e "$ELFUTILS/include/elfutils/libdw.h" ; then
+            AC_MSG_ERROR([cannot find elfutils])
+        fi
+    fi
+fi
+if test ! -z "$with_elfutils" ; then
+    old_LDLP=$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH="$ELFUTILS/lib:$ELFUTILS/lib/elfutils/lib:$LD_LIBRARY_PATH"
+    old_LDFL=$LDFLAGS
+    LDFLAGS="-L$ELFUTILS/lib -L$ELFUTILS/lib/elfutils/lib $LDFLAGS"
+fi
+AC_CHECK_LIB(dw,dwarf_next_unit,
+    [AC_DEFINE([LIBDW_HAVE_NEXT_UNIT],[1],
+               [Define to 1 to mark libdw has dwarf_next_unit])],
+    [AC_MSG_WARN([Your elfutils does not have dwarf_next_unit; cannot use DWARF version info])],
+    [-lelf -lebl])
+if test ! -z "$with_elfutils" ; then
+    LD_LIBRARY_PATH="$old_LDLP"
+    LDFLAGS="$old_LDFL"
+fi
+AC_SUBST(ELFUTILS)
+
+#
+# Now, if this version of elfutils doesn't install version.h, try to figure out
+# its version.
+#
+if test ! -e "$ELFUTILS/include/elfutils/version.h" ; then
+    AC_DEFINE([ELFUTILS_NO_VERSION_H],[1],[Define to mark elfutils has no version.h])
+    if test -x "$ELFUTILS/bin/eu-objdump" ; then
+        EV=`"$ELFUTILS/bin/eu-objdump" -V | sed -r -n -e 's/objdump.*[[0-9]]\.([[0-9]]+)/\1/p'`
+    elif test -x "$ELFUTILS/bin/objdump" ; then
+        EV=`"$ELFUTILS/bin/objdump" -V | sed -r -n -e 's/objdump.*[[0-9]]\.([[0-9]]+)/\1/p'`
+    fi
+    if test "$?" != 0 ; then
+        AC_MSG_WARN([Could not detect elfutils version; build will probably break])
+        AC_DEFINE_UNQUOTED([ELFUTILS_BIN_VERSION],[0],[Define this with version obtained from elfutils objdump])
+    else 
+        AC_DEFINE_UNQUOTED([ELFUTILS_BIN_VERSION],$EV,[Define this with version obtained from elfutils objdump])
+    fi
+fi
+
+outfiles="$outfiles Makeconf Makefile dwdebug/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile"
 

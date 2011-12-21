@@ -57,6 +57,8 @@ SUDO		= @SUDO@
 
 export SHELL = /bin/sh
 
+ELFUTILS = @ELFUTILS@
+
 #
 # XXX this stuff should be pkg-config'd or similar
 #

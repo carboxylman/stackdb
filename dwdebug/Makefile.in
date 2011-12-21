@@ -15,24 +15,13 @@ CFLAGS := -Wall
 //CFLAGS += -O2
 CFLAGS += -g
 CFLAGS += -DLIBDWDEBUG_DEBUG
-CFLAGS += -I$(SRCDIR)/../lib
+CFLAGS += -I$(SRCDIR)/../lib -I$(OBJDIR)
 #CFLAGS += $(XENACCESS_FLAGS) $(VMPROBES_FLAGS)
 #CFLAGS += -I./ -I$(XENACCESS_INC)
 
 CFLAGS += $(shell pkg-config --cflags glib-2.0)
 
-ELFUTILS = /opt/elfutils
-ifeq ($(wildcard "$(ELFUTILS)"),"")
-	ELFUTILS = /usr
-endif
 CFLAGS += -I$(ELFUTILS)/include
-ELFUTILS_VERSION = $(shell $(ELFUTILS)/bin/eu-objdump -V | sed -r -n -e 's/objdump.*[0-9]\.([0-9]+)/\1/p')
-ifeq ("$(ELFUTILS_VERSION)","")
-    ELFUTILS_VERSION = $(shell $(ELFUTILS)/bin/objdump -V | sed -r -n -e 's/objdump.*[0-9]\.([0-9]+)/\1/p')
-endif
-ifneq ("$(ELFUTILS_VERSION)","")
-    CFLAGS += -DHAVE_ELFUTILS_VERSION=$(ELFUTILS_VERSION)
-endif
 LDFLAGS := $(shell pkg-config --libs glib-2.0)
 LDFLAGS += -L$(ELFUTILS)/lib -L$(ELFUTILS)/lib/elfutils -ldw -lelf -lebl
 

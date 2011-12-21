@@ -165,7 +165,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
 	num_set = 1;
 	break;
+/* not sure if 137 is the right number! */
+#if _INT_ELFUTILS_VERSION > 137
     case DW_FORM_exprloc:
+#endif
     case DW_FORM_block4:
     case DW_FORM_block2:
     case DW_FORM_block1:
@@ -432,10 +435,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_data_member_location:
 	/* can be either a constant or a loclist */
-	if (num_set && form != DW_FORM_sec_offset
+	if (num_set
+/* not sure if 137 is the right number! */
+#if _INT_ELFUTILS_VERSION > 137
+	    && form != DW_FORM_sec_offset
 	    && (cbargs->version >= 4
 		|| (form != DW_FORM_data4 
 		    && form != DW_FORM_data8))) {
+#else
+	    ) {
+#endif
 	    /* it's a constant */
 	    if (cbargs->symbol) {
 		cbargs->symbol->s.ii.l.loctype = LOCTYPE_MEMBER_OFFSET;
@@ -701,9 +710,12 @@ int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	[DW_OP_form_tls_address] = "form_tls_address",
 	[DW_OP_call_frame_cfa] = "call_frame_cfa",
 	[DW_OP_bit_piece] = "bit_piece",
+/* not sure if 137 is the right number! */
+#if _INT_ELFUTILS_VERSION > 137
 	[DW_OP_implicit_value] = "implicit_value",
 	[DW_OP_stack_value] = "stack_value",
 	[DW_OP_GNU_implicit_pointer] = "GNU_implicit_pointer",
+#endif
     };
 
     if (len == 0) {
@@ -987,6 +999,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
     struct symbol *voidsymbol;
 
  next_cu:
+#if LIBDW_HAVE_NEXT_UNIT
     if ((rc = dwarf_next_unit(dbg,offset,&nextcu,&cuhl,&version,
 			      &abbroffset,&addrsize,&offsize,NULL,NULL)) < 0) {
 	lerror("dwarf_next_unit: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
@@ -996,6 +1009,20 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	ldebug(2,"dwarf_next_unit returned (%d), aborting successfully.\n",rc);
 	goto out;
     }
+#else
+    if ((rc = dwarf_nextcu(dbg,offset,&nextcu,&cuhl,
+			   &abbroffset,&addrsize,&offsize)) < 0) {
+	lerror("dwarf_nextcu: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
+	goto errout;
+    }
+    else if (rc > 0) {
+	ldebug(2,"dwarf_nextcu returned (%d), aborting successfully.\n",rc);
+	goto out;
+    }
+
+    lwarn("assuming DWARF version 4; old elfutils!\n");
+    version = 4;
+#endif
 
     /*
      * Clean up our temp types offset table; it contains per-CU offsets
@@ -1635,7 +1662,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     }
 
     size_t shstrndx;
-#if HAVE_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION >= 152
     if (elf_getshdrstrndx(elf,&shstrndx) < 0) {
 #else 
     if (elf_getshstrndx(elf,&shstrndx) < 0) {

@@ -10,6 +10,14 @@
 #include <glib.h>
 
 #include "list.h"
+#include "config.h"
+
+#if ELFUTILS_NO_VERSION_H
+#define _INT_ELFUTILS_VERSION ELFUTILS_BIN_VERSION
+#else
+#include "elfutils/version.h"
+#define _INT_ELFUTILS_VERSION _ELFUTILS_VERSION
+#endif
 
 /*
  * Everybody's gotta call this!
