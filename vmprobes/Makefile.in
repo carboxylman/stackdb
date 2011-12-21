@@ -15,7 +15,7 @@ CFLAGS := -Wall
 CFLAGS += -O2
 CFLAGS += -g
 CFLAGS += $(XENACCESS_FLAGS) $(VMPROBES_FLAGS)
-CFLAGS += -I./ -I$(XENACCESS_INC)
+CFLAGS += -I./ -I$(TOP_SRCDIR)/lib -I$(XENACCESS_INC)
 
 HEADERS := vmprobes.h private.h
 

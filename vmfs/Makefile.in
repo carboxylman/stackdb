@@ -12,7 +12,7 @@ include $(OBJDIR)/Makeconf
 CFLAGS := -Wall
 CFLAGS += -O2
 CFLAGS += -g
-CFLAGS += $(XENACCESS_FLAGS) -I./ -I$(XENACCESS_INC)
+CFLAGS += $(XENACCESS_FLAGS) -I./ -I$(TOP_SRCDIR)/lib -I$(XENACCESS_INC)
 
 LDFLAGS := -lxenctrl -lxenstore
 LDFLAGS += -lebl -lelf -ldw
