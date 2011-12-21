@@ -2550,14 +2550,14 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	char *eventstr = NULL;
 	if (eventstrtmp)
 	    eventstr = url_encode(eventstrtmp);
-	char *name_trunc = strrchr(domainname,'-');
+	char *name_trunc = NULL; // strrchr(domainname,'-');
 	char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
 	struct timeval tv;
 	gettimeofday(&tv,NULL);
 	uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
 	char *extras = NULL;
 	if (dstr)
-	    extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
+	    extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
 			      ems,"VMI",dstr,"OBS");
 
 	if (send_a3_events) {
@@ -2621,14 +2621,14 @@ static int on_fn_pre(vmprobe_handle_t vp,
 				   domainname,psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
-	    char *name_trunc = strrchr(domainname,'-');
+	    char *name_trunc = NULL; // strrchr(domainname,'-');
 	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
 	    struct timeval tv;
 	    gettimeofday(&tv,NULL);
 	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
 	    char *extras = NULL;
 	    if (dstr)
-		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
+		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
 				  ems,"VMI",dstr,"OBS");
 
 	    if (send_a3_events) {
@@ -2673,14 +2673,14 @@ static int on_fn_pre(vmprobe_handle_t vp,
 				       domainname,filter->retval,psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
-	    char *name_trunc = strrchr(domainname,'-');
+	    char *name_trunc = NULL; // strrchr(domainname,'-');
 	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
 	    struct timeval tv;
 	    gettimeofday(&tv,NULL);
 	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
 	    char *extras = NULL;
 	    if (dstr)
-		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
+		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
 				  ems,"VMI",dstr,!dofilter ? "OBS" : "ENF");
 
 	    if (send_a3_events) {
