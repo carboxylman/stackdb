@@ -2554,7 +2554,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
 	struct timeval tv;
 	gettimeofday(&tv,NULL);
-	uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + (uint64_t)tv.tv_usec;
+	uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
 	char *extras = NULL;
 	if (dstr)
 	    extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
@@ -2625,7 +2625,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
 	    struct timeval tv;
 	    gettimeofday(&tv,NULL);
-	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + (uint64_t)tv.tv_usec;
+	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
 	    char *extras = NULL;
 	    if (dstr)
 		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
@@ -2677,7 +2677,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
 	    struct timeval tv;
 	    gettimeofday(&tv,NULL);
-	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + (uint64_t)tv.tv_usec;
+	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
 	    char *extras = NULL;
 	    if (dstr)
 		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
