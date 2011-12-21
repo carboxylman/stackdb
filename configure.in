@@ -179,7 +179,7 @@ if test -z "$ELFUTILS" ; then
     if test ! -e "$ELFUTILS/include/elfutils/libdw.h" ; then
         ELFUTILS=/usr
         if test ! -e "$ELFUTILS/include/elfutils/libdw.h" ; then
-            AC_MSG_ERROR([cannot find elfutils])
+            AC_MSG_WARN([cannot find elfutils])
         fi
     fi
 fi
@@ -222,6 +222,15 @@ fi
 outfiles="$outfiles Makeconf Makefile dwdebug/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile"
+
+#
+# Support older versions of xenctrl that don't have xc_map_foreign_pages.
+#
+AC_CHECK_LIB(xenctrl,xc_map_foreign_pages,
+             [XC_HAVE_MAP_FOREIGN=1],
+             [XCHAVE_MAP_FOREIGN=0],
+             [])
+AC_SUBST(XC_HAVE_MAP_FOREIGN)
 
 #
 # Do this for easy distclean.
