@@ -2103,15 +2103,15 @@ int web_init(void)
     return 0;
 }
 
-int web_report(const char *msg)
+int web_report(const char *msg,const char *extras)
 {
     char *statbuf = NULL;
     int sock, rv = 0;
 
     statbuf = (char *) malloc( strlen(msg) + QUERY_MAX + 128 );
     if (!statbuf) return 1;
-    sprintf(statbuf, "GET /%s%s:%%20%s HTTP/1.1\n"
-	    "Host: a3\n\n", conf_querykey, EVENT_TAG, msg);
+    sprintf(statbuf, "GET /%s%s:%%20%s&%s HTTP/1.1\n"
+	    "Host: a3\n\n", conf_querykey, EVENT_TAG, msg, extras);
 
     sock = open_statsserver();
     if (sock >= 0)
@@ -2547,23 +2547,41 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
 	char *eventstrtmp = ssprintf("domain=%s type=pslist %s",
 				     domainname,psliststr);
+	char *eventstr = NULL;
+	if (eventstrtmp)
+	    eventstr = url_encode(eventstrtmp);
+	char *name_trunc = strrchr(domainname,'-');
+	char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
+	struct timeval tv;
+	gettimeofday(&tv,NULL);
+	uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + (uint64_t)tv.tv_usec;
+	char *extras = NULL;
+	if (dstr)
+	    extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
+			      ems,"VMI",dstr,"OBS");
 
 	if (send_a3_events) {
-	    char *eventstr = url_encode(eventstrtmp);
-	    if (eventstr) {
-		web_report(eventstr);
-		free(eventstr);
+	    if (eventstr && extras) {
+		web_report(eventstr,extras);
 	    }
 	    else {
 		error("internal error 2 reporting pslist to A3 monitor!\n");
 	    }
-	}	    
-	 
-	fprintf(stdout," (would send %s to A3)\n",eventstrtmp);
+	}
 
-	free(eventstrtmp);
+	fprintf(stdout," (would send '%s' and '%s' to A3)\n",eventstr,extras);
 
-	free(psliststr);
+	if (eventstr)
+	    free(eventstr);
+	if (dstr)
+	    free(dstr);
+	if (extras)
+	    free(extras);
+	if (eventstrtmp)
+	    free(eventstrtmp);
+
+	if (psliststr)
+	    free(psliststr);
     }
 
     return filter_ptr;
@@ -2576,8 +2594,8 @@ static int on_fn_pre(vmprobe_handle_t vp,
     char *funcstr = NULL;
     char *argstr = NULL;
     struct argfilter *filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr);
-    char *eventstr;
-    char *eventstrtmp;
+    char *eventstr = NULL;
+    char *eventstrtmp = NULL;
     char *gfilterstr = " (not filtering; globally off!)";
 
     va = -1;
@@ -2601,21 +2619,37 @@ static int on_fn_pre(vmprobe_handle_t vp,
 
 	    eventstrtmp = ssprintf("domain=%s type=match %s %s(%s)",
 				   domainname,psstr,funcstr,argstr);
+	    if (eventstrtmp)
+		eventstr = url_encode(eventstrtmp);
+	    char *name_trunc = strrchr(domainname,'-');
+	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
+	    struct timeval tv;
+	    gettimeofday(&tv,NULL);
+	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + (uint64_t)tv.tv_usec;
+	    char *extras = NULL;
+	    if (dstr)
+		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
+				  ems,"VMI",dstr,"OBS");
 
 	    if (send_a3_events) {
-		eventstr = url_encode(eventstrtmp);
-		if (eventstr) {
-		    web_report(eventstr);
-		    free(eventstr);
+		if (eventstr && extras) {
+		    web_report(eventstr,extras);
 		}
 		else {
 		    error("internal error 2 reporting match-abort-returning to A3 monitor!\n");
 		}
 	    }
-	    
-	    fprintf(stdout," (would send %s to A3)\n",eventstrtmp);
 
-	    free(eventstrtmp);
+	    fprintf(stdout," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+
+	    if (eventstr)
+		free(eventstr);
+	    if (dstr)
+		free(dstr);
+	    if (extras)
+		free(extras);
+	    if (eventstrtmp)
+		free(eventstrtmp);
 	}
 	else {
 	    fprintf(stdout," Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!%s\n",
@@ -2637,21 +2671,37 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    else 
 		eventstrtmp = ssprintf("domain=%s type=abort retval=%d %s %s(%s)",
 				       domainname,filter->retval,psstr,funcstr,argstr);
+	    if (eventstrtmp)
+		eventstr = url_encode(eventstrtmp);
+	    char *name_trunc = strrchr(domainname,'-');
+	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
+	    struct timeval tv;
+	    gettimeofday(&tv,NULL);
+	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + (uint64_t)tv.tv_usec;
+	    char *extras = NULL;
+	    if (dstr)
+		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&type=%s",
+				  ems,"VMI",dstr,!dofilter ? "OBS" : "ENF");
 
 	    if (send_a3_events) {
-		eventstr = url_encode(eventstrtmp);
-		if (eventstr) {
-		    web_report(eventstr);
-		    free(eventstr);
+		if (eventstr && extras) {
+		    web_report(eventstr,extras);
 		}
 		else {
 		    error("internal error 2 reporting match-abort-returning to A3 monitor!\n");
 		}
 	    }
-	    
-	    fprintf(stdout," (would send %s to A3)\n",eventstrtmp);
 
-	    free(eventstrtmp);
+	    fprintf(stdout," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+
+	    if (eventstr)
+		free(eventstr);
+	    if (dstr)
+		free(dstr);
+	    if (extras)
+		free(extras);
+	    if (eventstrtmp)
+		free(eventstrtmp);
 
 	    if (dofilter) {
 		va = action_return(filter->retval);
