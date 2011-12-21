@@ -446,13 +446,25 @@ struct debugfile {
 struct symtab {
     struct debugfile *debugfile;
 
-    // XXX fix up for blocktabs
     char *srcfilename;
     char *compdirname;
-    int lowpc;
-    int highpc;
+    uint64_t lowpc;
+    uint64_t highpc;
     char *producer;
     int language;
+
+    /*
+     * If this symtab is a child, this is its parent.
+     */
+    struct symtab *parent;
+    /* If this symtab has subscopes, this list is the symtabs for each
+     * subscope.  Of course, each subscope could have more children.
+     */
+    struct list_head subtabs;
+    /* If this symtab is a child of some other symtab, it will be on
+     * that symtab's list.
+     */
+    struct list_head member;
 
     /* h(sym) -> struct symbol * */
     GHashTable *tab;
@@ -482,13 +494,6 @@ struct symbol {
     /* If this symbol is a member of another, this is its list entry. */
     /* XXX: maybe move this into the type detail stuff to save mem? */
     struct list_head member;
-
-    /* If this symbol has subscopes, put them in symtabs here.  If the
-     * this symbol is a function, the first block symtab is the
-     * function's symtab; any following symtabs 
-     
-     */
-    struct list_head blocktabs;
 
     /* Words fail me. */
     union {
@@ -555,6 +560,7 @@ struct symbol {
 		    uint8_t prototyped:1;
 		    uint64_t lowpc;
 		    uint64_t highpc;
+		    struct symtab *symtab;
 		} f;
 		struct {
 		    uint16_t byte_size;

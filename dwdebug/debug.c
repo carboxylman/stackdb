@@ -467,6 +467,7 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud) {
 }
 
 void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
+    struct symtab *csymtab;
     char *p = "";
     char *np;
     struct dump_info udn;
@@ -484,12 +485,23 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
     udn.meta = ud->meta;
     udn.detail = ud->detail;
 
-    fprintf(ud->stream,"%ssymtab(%s):\n",p,symtab->srcfilename);
-    fprintf(ud->stream,"%s    compdirname: %s\n",p,symtab->compdirname);
+    if (symtab->srcfilename)
+	fprintf(ud->stream,"%ssymtab(%s):\n",p,symtab->srcfilename);
+    else
+	fprintf(ud->stream,"%ssymtab:\n",p);
+    if (symtab->compdirname)
+	fprintf(ud->stream,"%s    compdirname: %s\n",p,symtab->compdirname);
     fprintf(ud->stream,"%s    low pc: 0x%x, high pc: 0x%x\n",p,symtab->lowpc,symtab->highpc);
-    fprintf(ud->stream,"%s    producer: %s\n",p,symtab->producer);
-    fprintf(ud->stream,"%s    language: %d\n",p,symtab->language);
+    if (symtab->producer)
+	fprintf(ud->stream,"%s    producer: %s\n",p,symtab->producer);
+    if (symtab->language)
+	fprintf(ud->stream,"%s    language: %d\n",p,symtab->language);
     g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
+
+    fprintf(ud->stream,"%s    subscope symtabs:\n",p);
+    list_for_each_entry(csymtab,&(symtab->subtabs),member) {
+	symtab_dump(csymtab,&udn);
+    }
 
     if (ud->prefix)
 	free(np);
@@ -567,6 +579,7 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     struct symbol *arg;
+    struct symtab *csymtab;
     int i = 0;
     struct dump_info udn = {
 	.stream = ud->stream,
@@ -599,6 +612,9 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream,")");
 	fprintf(ud->stream," @@ 0x%" PRIx64 " 0x%" PRIx64,
 		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc);
+	fprintf(ud->stream,"\n");
+
+	symtab_dump(symbol->s.ii.d.f.symtab,&udn);
     }
 }
 
@@ -945,6 +961,8 @@ struct symtab *symtab_create(struct debugfile *debugfile,
     symtab->language = language;
     symtab->lowpc = lowpc;
     symtab->highpc = highpc;
+
+    INIT_LIST_HEAD(&symtab->subtabs);
 
     symtab->tab = g_hash_table_new_full(g_str_hash,g_str_equal,
 					ghash_str_free,

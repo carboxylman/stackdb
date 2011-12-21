@@ -231,26 +231,43 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_low_pc:
 	ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
-	if (level == 0) 
-	    cbargs->cu_symtab->lowpc = addr;
-	else if (cbargs->symbol 
-		 && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
+	/* handle the symtab lowpc/highpc values first */
+	if (cbargs->symtab)
+	    cbargs->symtab->lowpc = addr;
+	else 
+	    lwarn("attrval %Lx for attr %s in bad context (symtab)\n",
+		  (int)addr,dwarf_attr_string(attr));
+
+	/* then if it's a function, do that too! */
+	if (cbargs->symbol 
+	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    cbargs->symbol->s.ii.d.f.lowpc = addr;
 	}
+	else if (!cbargs->symbol && cbargs->symtab) {
+	    ;
+	}
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context\n",
+	    lwarn("attrval %Lx for attr %s in bad context (symbol)\n",
 		  (int)addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_high_pc:
 	ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
-	if (level == 0) 
-	    cbargs->cu_symtab->highpc = addr;
-	else if (cbargs->symbol 
-		 && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
+
+	if (cbargs->symtab)
+	    cbargs->symtab->highpc = addr;
+	else 
+	    lwarn("attrval %Lx for attr %s in bad context (symtab)\n",
+		  (int)addr,dwarf_attr_string(attr));
+	
+	if (cbargs->symbol 
+	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    cbargs->symbol->s.ii.d.f.highpc = addr;
 	}
+	else if (!cbargs->symbol && cbargs->symtab) {
+	    ;
+	}
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context\n",
+	    lwarn("attrval %Lx for attr %s in bad context (symbol)\n",
 		  (int)addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_decl_file:
@@ -962,9 +979,9 @@ static int fill_debuginfo(struct debugfile *debugfile,
     Dwarf_Half version;
 
     struct symtab *cu_symtab;
-    struct symtab *symtab;
     struct symbol *symbol;
     struct symbol **symbols = (struct symbol **)malloc(maxdies*sizeof(struct symbol *));
+    struct symtab **symtabs = (struct symtab **)malloc(maxdies*sizeof(struct symtab *));
 
     GHashTable *typeoffsettab = g_hash_table_new(g_direct_hash,g_direct_equal);
     struct symbol *voidsymbol;
@@ -993,6 +1010,8 @@ static int fill_debuginfo(struct debugfile *debugfile,
     cu_symtab = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
     int cu_symtab_added = 0;
 
+    symtabs[0] = cu_symtab;
+
     /* Add the void symbol, always. */
     voidsymbol = add_void_symbol(debugfile,cu_symtab);
 
@@ -1006,7 +1025,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 
 	.debugfile = debugfile,
 	.cu_symtab = cu_symtab,
-	.symtab = NULL,
+	.symtab = cu_symtab,
 	.symbol = NULL,
 	.parentsymbol = NULL,
 	.voidsymbol = voidsymbol,
@@ -1023,6 +1042,8 @@ static int fill_debuginfo(struct debugfile *debugfile,
     }
 
     do {
+	struct symtab *newscope = NULL;
+
 	/* The first time we are not level 0 (i.e., at the CU's DIE),
 	 * check that we found a src filename attr; we must have it to
 	 * hash the symtab.
@@ -1055,17 +1076,12 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	ldebug(4," [%6Lx] %d %s\n",(uint64_t)offset,(int)level,
 	       dwarf_tag_string(tag));
 
-	/* XXX if we ever support per-function symtabs, we have
-	 * to fix this!
-	 */
-	symtab = cu_symtab;
-
 	/* Figure out what type of symbol (or symtab?) to create! */
 	if (tag == DW_TAG_variable
 	    || tag == DW_TAG_formal_parameter
 	    || tag == DW_TAG_member
 	    || tag == DW_TAG_enumerator) {
-	    symbols[level] = symbol_create(symtab,NULL,SYMBOL_TYPE_VAR);
+	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_VAR);
 	    if (tag == DW_TAG_formal_parameter) {
 		symbols[level]->s.ii.isparam = 1;
 	    }
@@ -1079,7 +1095,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		 || tag == DW_TAG_union_type
 		 || tag == DW_TAG_const_type
 		 || tag == DW_TAG_volatile_type) {
-	    symbols[level] = symbol_create(symtab,NULL,SYMBOL_TYPE_TYPE);
+	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_TYPE);
 	    switch (tag) {
 	    case DW_TAG_base_type:
 		symbols[level]->s.ti.datatype_code = DATATYPE_BASE; break;
@@ -1119,11 +1135,30 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    /* We cheat and don't actually type subranges... we're C
 	     * hackers, after all :).
 	    */
-	    
+	    ;
 	}
 	else if (tag == DW_TAG_subprogram) {
-	    symbols[level] = symbol_create(symtab,NULL,SYMBOL_TYPE_FUNCTION);
+	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_FUNCTION);
 	    INIT_LIST_HEAD(&(symbols[level]->s.ii.d.f.args));
+	    /* Build a new symtab and use it until we finish this
+	     * subprogram, or until we need another child scope.
+	     */
+	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
+	    newscope->parent = symtabs[level];
+	    // XXX: should we wait to do this until we level up after
+	    // successfully completing this new child scope?
+	    list_add_tail(&newscope->member,&symtabs[level]->subtabs);
+	    symbols[level]->s.ii.d.f.symtab = newscope;
+	}
+	else if (tag == DW_TAG_lexical_block) {
+	    /* Build a new symtab and use it until we finish this
+	     * block, or until we need another child scope.
+	     */
+	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
+	    newscope->parent = symtabs[level];
+	    // XXX: should we wait to do this until we level up after
+	    // successfully completing this new child scope?
+	    list_add_tail(&newscope->member,&symtabs[level]->subtabs);
 	}
 	else {
 	    if (tag != DW_TAG_compile_unit)
@@ -1138,12 +1173,21 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	else
 	    args.parentsymbol = NULL;
 	args.symbol = symbols[level];
+	if (newscope) {
+	    /* Make sure attrs are processed for the new scope! i.e.,
+	     * high_pc and low_pc.
+	     */
+	    args.symtab = newscope;
+	}
+	else 
+	    args.symtab = symtabs[level];
 	(void)dwarf_getattrs(&dies[level],attr_callback,&args,0);
 
 	/* Make room for the next level's DIE.  */
 	if (level + 1 == maxdies) {
 	    dies = (Dwarf_Die *)realloc(dies,(maxdies += 8)*sizeof(Dwarf_Die));
 	    symbols = (struct symbol **)realloc(symbols,maxdies*sizeof(struct symbol *));
+	    symtabs = (struct symtab **)realloc(symtabs,maxdies*sizeof(struct symtab *));
 	}
 
 	if (symbols[level] && symbols[level]->type == SYMBOL_TYPE_TYPE) {
@@ -1209,6 +1253,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		finalize_die_symbol(debugfile,level,symbols[level],
 				    symbols[level-1],voidsymbol);
 		symbols[level] = NULL;
+		//symtabs[level] = NULL;
 	    }
 
 	    while ((res = dwarf_siblingof(&dies[level],&dies[level])) == 1) {
@@ -1223,6 +1268,11 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		    finalize_die_symbol(debugfile,level,symbols[level],
 					symbols[level-1],voidsymbol);
 		    symbols[level] = NULL;
+		    /*if (symbols[level-1] 
+			&& symbols[level-1]->type == SYMBOL_TYPE_FUNCTION 
+			&& symtab->parent)
+			symtab = symtab->parent;*/
+		    //symtabs[level] = NULL;
 		}
 	    }
 
@@ -1239,6 +1289,10 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    /* New child */
 	    ++level;
 	    symbols[level] = NULL;
+	    if (!newscope)
+		symtabs[level] = symtabs[level-1];
+	    else
+		symtabs[level] = newscope;
 	}
     }
     while (level >= 0);
