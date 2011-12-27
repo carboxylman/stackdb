@@ -2342,8 +2342,8 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     else if (addr == sctab[302].addr) {
 	// hack to catch waitpid return value!
 	int pid = (int)regs->eax;
-	char *pname;
-	int ppid;
+	char *pname = "";
+	int ppid = -1;
 	struct process_data *tpdata;
 
 	if (pid <= 0)
@@ -2363,10 +2363,6 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 		break;
 	    }
 	}
-	if (tpdata->pid != pid) {
-	    pname = "";
-	    ppid = -1;
-	}
 
 	i = 302;
 
@@ -2374,7 +2370,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
 	long code;
 	if (!vmprobe_get_data(handle,regs,"waitpid_data",waitpid_stat_addr,data->pid,
-			      sizeof(long),&code)) {
+			      sizeof(long),(void *)&code)) {
 	    free_process_data(data);
 	    return NULL;
 	}
