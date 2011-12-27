@@ -566,16 +566,16 @@ char *sockaddr2str(struct sockaddr *sa)
 	inet_ntop(sa->sa_family,(const void *)&sin->sin_addr,
 		  tmpbuf,sizeof(tmpbuf));
 	tmpbuf[sizeof(tmpbuf)-1] = '\0';
-	usedlen = snprintf(buf,buflen,"{ .sa_family = AF_INET, { .sin_port = %hd, .sin_addr = '%s' } }",
-			   sin->sin_port,tmpbuf);
+	usedlen = snprintf(buf,buflen,"{ .sa_family = AF_INET, { .sin_port = %d, .sin_addr = '%s' } }",
+			   ntohs(sin->sin_port),tmpbuf);
 	buf[buflen - 1] = '\0';
     }
     else if (sa->sa_family == AF_INET6) {
 	struct sockaddr_in6 *sin = (struct sockaddr_in6 *)sa;
 	inet_ntop(sa->sa_family,(const void *)&sin->sin6_addr,tmpbuf,sizeof(tmpbuf));
 	tmpbuf[sizeof(tmpbuf)-1] = '\0';
-	usedlen = snprintf(buf,buflen,"{ .sa_family = AF_INET6, { .sin6_port = %hd, .sin6_flowinfo = %u, .sin_addr = '%s', .sin6_scope_id = %u } }",
-			   sin->sin6_port,sin->sin6_flowinfo,tmpbuf,
+	usedlen = snprintf(buf,buflen,"{ .sa_family = AF_INET6, { .sin6_port = %d, .sin6_flowinfo = %u, .sin_addr = '%s', .sin6_scope_id = %u } }",
+			   ntohs(sin->sin6_port),sin->sin6_flowinfo,tmpbuf,
 			   sin->sin6_scope_id);
 	buf[buflen - 1] = '\0';
     }
