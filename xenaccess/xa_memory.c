@@ -137,11 +137,18 @@ error_exit:
 void *xa_mmap_mfn (xa_instance_t *instance, int prot, unsigned long mfn)
 {
 #if 1
-    /* XXX hack for Utah */
-    if (mfn < 0 || mfn >= 0x300000) {
-	printf("WARNING: machine_addr %.8x out of range [%u-%u]!\n", (unsigned int)mfn, 0, 0x300000);
-	return NULL;
+#define MAXMPF	0x340000
+    /*
+     * XXX hack for Utah. Physical page frames should be less than 12GB,
+     * however, in some cases they can be a bit beyond that (holes in
+     * physaddr space?)
+     */
+    if (mfn < 0 || mfn >= MAXMPF) {
+	printf("WARNING: machine_addr %.8x out of range [%.8x-%.8x]!\n",
+	       (unsigned int)mfn, 0, MAXMPF);
+	//return NULL;
     }
+#undef MAXMPF
 #endif
     //xa_dbprint(1,"--MapMFN: Mapping mfn = 0x%.8x.\n", (unsigned int)mfn);
     return xa_map_page(instance, prot, mfn);
