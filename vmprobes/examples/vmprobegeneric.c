@@ -2285,6 +2285,7 @@ char *domainname;
 vmprobe_action_handle_t va;
 char *configfile = NULL;
 int reloadconfigfile = 0;
+FILE *filtered_events_fd = NULL;
 
 char from_hex(char ch) {
     return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
@@ -2622,6 +2623,13 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    struct timeval tv;
 	    gettimeofday(&tv,NULL);
 	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
+	    if (filtered_events_fd != NULL) {
+		    fprintf(filtered_events_fd, "%u.%04u: %s\n",
+			    (unsigned)tv.tv_sec, (unsigned)(tv.tv_usec/1000),
+			    eventstrtmp);
+		    fflush(filtered_events_fd);
+	    }
+
 	    char *extras = NULL;
 	    if (dstr)
 		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
@@ -2674,6 +2682,13 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    struct timeval tv;
 	    gettimeofday(&tv,NULL);
 	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
+	    if (filtered_events_fd != NULL) {
+		    fprintf(filtered_events_fd, "%u.%04u: %s\n",
+			    (unsigned)tv.tv_sec, (unsigned)(tv.tv_usec/1000),
+			    eventstrtmp);
+		    fflush(filtered_events_fd);
+	    }
+
 	    char *extras = NULL;
 	    if (dstr)
 		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
@@ -3102,13 +3117,20 @@ int main(int argc, char *argv[])
     syscall_list = (char **)malloc(sizeof(char *)*syscall_list_alloclen);
     argfilter_list = (struct argfilter **)malloc(sizeof(struct argfilter *)*argfilter_list_alloclen);
 
-    while ((ch = getopt(argc, argv, "m:s:f:daw:u:c:x")) != -1) {
+    while ((ch = getopt(argc, argv, "m:s:f:daw:u:c:xR:")) != -1) {
 	switch(ch) {
 	case 'c':
 	    configfile = optarg;
 	    break;
 	case 'a':
 	    send_a3_events = 1;
+	    break;
+	case 'R':
+	    filtered_events_fd = fopen(optarg, "w+");
+	    if (filtered_events_fd == NULL) {
+		fprintf(stderr, "Could not open event file '%s'\n", optarg);
+		exit(1);
+	    }
 	    break;
 	case 'w':
 	    strncpy(conf_statsserver,optarg,STATS_MAX);
