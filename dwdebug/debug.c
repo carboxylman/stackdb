@@ -82,7 +82,7 @@ static void ghash_symtab_free(gpointer data) {
 
     // XXX more?
     ldebug(5,"freeing symtab(%s:%s)\n",
-	   symtab->debugfile->idstr,symtab->srcfilename);
+	   symtab->debugfile->idstr,symtab->name);
     symtab_free(symtab);
 }
 
@@ -91,9 +91,178 @@ static void ghash_symbol_free(gpointer data) {
 
     // XXX more?
     ldebug(5,"freeing symbol(%s:%s:%s)\n",
-	   symbol->symtab->debugfile->idstr,symbol->symtab->srcfilename,
+	   symbol->symtab->debugfile->idstr,symbol->symtab->name,
 	   symbol->name);
     symbol_free(symbol);
+}
+
+/**
+ ** Symbol lookup functions.
+ **/
+
+/*
+ * NOTE: this function returns the tightest bounding symtab -- which may
+ * be the symtab that was passed in!!
+ */
+struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
+    struct symtab *tmp;
+    struct symtab *retval;
+
+    /*
+     * It is tempting to think we can just check the lowpc and
+     * highpc vals for this symtab before checking its children, but
+     * we can't do that.  Some symtabs may have children whose
+     * ranges are outside the parent -- i.e., a function defined in
+     * another.  So we can't even check the parent ranges before doing
+     * DFS!
+     *
+     * In other words, we need the tightest bound.
+     */
+    list_for_each_entry(tmp,&symtab->subtabs,member) {
+	retval = symtab_lookup_pc(tmp,pc);
+	if (retval)
+	    return retval;
+    }
+
+    /*
+     * Then check our symtab.
+     */
+    if (symtab->lowpc <= pc && pc <= symtab->highpc) {
+	return symtab;
+    }
+
+    return NULL;
+}
+
+struct symtab *space_lookup_symtab_pc(struct addrspace *space,uint64_t pc) {
+    struct memregion *region;
+    struct symtab *symtab;
+    int found = 0;
+    GHashTableIter iter, iter2;
+    gpointer key, value;
+    
+    list_for_each_entry(region,&space->regions,region) {
+	if (region->start <= pc && pc <= region->end)
+	    found = 1;
+	break;
+    }
+
+    if (!found)
+	return NULL;
+
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&value)) {
+	g_hash_table_iter_init(&iter2,((struct debugfile *)value)->srcfiles);
+	while (g_hash_table_iter_next(&iter2,
+				      (gpointer *)&key,(gpointer *)&symtab)) {
+	    symtab = symtab_lookup_pc(symtab,pc);
+	    if (symtab)
+		return symtab;
+	}
+    }
+
+    return NULL;
+}
+
+struct symbol *lookup_sym(struct addrspace *space,char *name,
+			  char *df_filename,char *df_name,char *df_version,
+			  char *srcfile) {
+    return NULL;
+}
+
+struct symbol *debugfile_lookup_var(struct debugfile *debugfile,char *name,
+				    char *srcfile) {
+    return NULL;
+}
+
+struct symbol *debugfile_lookup_func(struct debugfile *debugfile,char *name,
+				     char *srcfile) {
+    return NULL;
+}
+
+struct symbol *debugfile_lookup_type(struct debugfile *debugfile,char *name,
+				     char *srcfile) {
+    return NULL;
+}
+
+struct symbol *symtab_lookup_sym(struct symtab *symtab,char *name) {
+    struct symtab *tmp;
+    struct symbol *value;
+    int namelen;
+    char *namei;
+    GHashTableIter iter;
+    gpointer key;
+
+    if ((namei = index(name,':'))) {
+	namelen = namei - name;
+	namei++;
+    }
+    else {
+	namelen = strlen(name);
+	namei = NULL;
+    }
+
+    /*
+     * Check our symbols first, IF we're not looking for subtables.
+     */
+    if (!namei) {
+	g_hash_table_iter_init(&iter,symtab->tab);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer *)&key,(gpointer *)&value)) {
+	    if (strncmp(name,key,namelen) == 0)
+		return (struct symbol *)value;
+	}
+    }
+
+    /* 
+     * Else, start checking children symtabs; DFS; first wins.  If they
+     * sent a delimited string to us, only match successive subtabs
+     * named with that string!
+     */
+    if (namei) {
+	list_for_each_entry(tmp,&symtab->subtabs,member) {
+	    if (tmp->name && strncmp(name,tmp->name,namelen) == 0) {
+		return symtab_lookup_sym(tmp,namei);
+	    }
+	}
+    }
+
+    return NULL;
+}
+
+struct symbol *debugfile_lookup_sym(struct debugfile *debugfile,
+				    char *srcfile,char *name) {
+    struct symbol *retval;
+    struct symtab *symtab;
+    GHashTableIter iter;
+    gpointer key;
+
+    /*
+     * Always check globals first, then types, then srcfile tables.
+     */
+    if ((retval = g_hash_table_lookup(debugfile->globals,name)))
+	return retval;
+
+    if ((retval = g_hash_table_lookup(debugfile->types,name)))
+	return retval;
+
+    if (srcfile) {
+	if ((symtab = (struct symtab *)g_hash_table_lookup(debugfile->srcfiles,
+							   srcfile)))
+	    return symtab_lookup_sym(symtab,name);
+	else
+	    return NULL;
+    }
+
+    g_hash_table_iter_init(&iter,debugfile->srcfiles);
+    while (g_hash_table_iter_next(&iter,(gpointer *)&key,(gpointer *)&symtab)) {
+	retval = symtab_lookup_sym(symtab,name);
+	if (retval)
+	    return retval;
+    }
+
+    return NULL;
 }
 
 /**
@@ -209,6 +378,8 @@ struct memregion *memregion_create(struct addrspace *space,region_type_t type,
 	return NULL;
 
     memset(retval,0,sizeof(*retval));
+
+    retval->space = space;
 
     if (filename) 
 	retval->filename = strdup(filename);
@@ -431,8 +602,8 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud) {
 
     if (ud->prefix) {
 	p = ud->prefix;
-	np1 = malloc(strlen(p) + 2);
-	np2 = malloc(strlen(p) + 4);
+	np1 = malloc(strlen(p) + 1 + 2);
+	np2 = malloc(strlen(p) + 1 + 4);
 	sprintf(np1,"%s%s",p,"  ");
 	sprintf(np2,"%s%s",p,"    ");
     }
@@ -470,23 +641,32 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
     struct symtab *csymtab;
     char *p = "";
     char *np;
+    char *np2;
     struct dump_info udn;
+    struct dump_info udn2;
 
     if (ud->prefix) {
 	p = ud->prefix;
-	np = malloc(strlen(p) + 2);
+	np = malloc(strlen(p) + 1 + 2);
+	np2 = malloc(strlen(p) + 1 + 4);
 	sprintf(np,"%s%s",p,"  ");
+	sprintf(np2,"%s%s",p,"    ");
     }
     else {
 	np = "  ";
+	np2 = "    ";
     }
     udn.prefix = np;
     udn.stream = ud->stream;
     udn.meta = ud->meta;
     udn.detail = ud->detail;
+    udn2.prefix = np2;
+    udn2.stream = ud->stream;
+    udn2.meta = ud->meta;
+    udn2.detail = ud->detail;
 
-    if (symtab->srcfilename)
-	fprintf(ud->stream,"%ssymtab(%s):\n",p,symtab->srcfilename);
+    if (symtab->name)
+	fprintf(ud->stream,"%ssymtab(%s):\n",p,symtab->name);
     else
 	fprintf(ud->stream,"%ssymtab:\n",p);
     if (symtab->compdirname)
@@ -498,19 +678,28 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	fprintf(ud->stream,"%s    language: %d\n",p,symtab->language);
     g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
 
-    fprintf(ud->stream,"%s    subscope symtabs:\n",p);
-    list_for_each_entry(csymtab,&(symtab->subtabs),member) {
-	symtab_dump(csymtab,&udn);
+    if (!list_empty(&symtab->subtabs)) {
+	fprintf(ud->stream,"%s  subscopes:\n",p);
+	list_for_each_entry(csymtab,&(symtab->subtabs),member) {
+	    symtab_dump(csymtab,&udn2);
+	}
     }
 
-    if (ud->prefix)
+    if (symtab->name)
+	fprintf(ud->stream,"%send symtab(%s)\n",p,symtab->name);
+    else
+	fprintf(ud->stream,"%send symtab\n",p);
+
+    if (ud->prefix) {
 	free(np);
+	free(np2);
+    }
 }
 
 void location_dump(struct location *location,struct dump_info *ud) {
     switch(location->loctype) {
     case LOCTYPE_ADDR:
-	fprintf(ud->stream,"0x%" PRIuMAX,location->l.addr);
+	fprintf(ud->stream,"0x%" PRIx64,location->l.addr);
 	break;
     case LOCTYPE_REG:
 	fprintf(ud->stream,"REG(%d)",location->l.reg);
@@ -628,6 +817,11 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	.detail = 0,
 	.meta = 0,
     };
+
+    if (!symbol) {
+	lerror("NULLSYM!\n");
+	return;
+    }
 
     switch (symbol->s.ti.datatype_code) {
     case DATATYPE_VOID:
@@ -753,7 +947,7 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 
     if (ud->prefix) {
 	p = ud->prefix;
-	np = malloc(strlen(p) + 2);
+	np = malloc(strlen(p) + 1 + 2);
 	sprintf(np,"%s%s",p,"  ");
     }
     else {
@@ -877,13 +1071,15 @@ struct debugfile *debugfile_attach(struct memregion *region,
 
     list_add_tail(&debugfile->debugfile,&debugfiles);
 
+    g_hash_table_insert(region->debugfiles,idstr,debugfile);
+
     return debugfile;
 }
 
 int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab) {
-    if (unlikely(g_hash_table_lookup(debugfile->srcfiles,symtab->srcfilename)))
+    if (unlikely(g_hash_table_lookup(debugfile->srcfiles,symtab->name)))
 	return 1;
-    g_hash_table_insert(debugfile->srcfiles,symtab->srcfilename,symtab);
+    g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
     return 0;
 }
 
@@ -942,7 +1138,7 @@ void debugfile_free(struct debugfile *debugfile) {
  * Symtabs.
  */
 struct symtab *symtab_create(struct debugfile *debugfile,
-			     char *srcfilename,char *compdirname,
+			     char *name,char *compdirname,
 			     int language,char *producer,
 			     unsigned long lowpc,unsigned long highpc) {
     struct symtab *symtab;
@@ -954,7 +1150,7 @@ struct symtab *symtab_create(struct debugfile *debugfile,
 
     symtab->debugfile = debugfile;
 
-    symtab_set_srcfilename(symtab,srcfilename);
+    symtab_set_name(symtab,name);
     symtab_set_compdirname(symtab,compdirname);
     symtab_set_producer(symtab,producer);
 
@@ -971,11 +1167,11 @@ struct symtab *symtab_create(struct debugfile *debugfile,
     return symtab;
 }
 
-void symtab_set_srcfilename(struct symtab *symtab,char *srcfilename) {
-    symtab->srcfilename = srcfilename;
-    if (srcfilename && (!symtab->debugfile 
-			|| !symtab_str_in_strtab(symtab,srcfilename)))
-	symtab->srcfilename = strdup(srcfilename);
+void symtab_set_name(struct symtab *symtab,char *name) {
+    symtab->name = name;
+    if (name && (!symtab->debugfile 
+			|| !symtab_str_in_strtab(symtab,name)))
+	symtab->name = strdup(name);
 }
 
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
@@ -994,8 +1190,8 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 
 void symtab_free(struct symtab *symtab) {
     g_hash_table_destroy(symtab->tab);
-    if (symtab->srcfilename && !symtab_str_in_strtab(symtab,symtab->srcfilename))
-	free(symtab->srcfilename);
+    if (symtab->name && !symtab_str_in_strtab(symtab,symtab->name))
+	free(symtab->name);
     if (symtab->compdirname && !symtab_str_in_strtab(symtab,symtab->compdirname))
 	free(symtab->compdirname);
     if (symtab->producer && !symtab_str_in_strtab(symtab,symtab->producer))

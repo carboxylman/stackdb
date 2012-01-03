@@ -218,7 +218,7 @@ struct symtab *symtab_create(struct debugfile *debugfile,
 /* These symtab_set functions are about dealing with memory stuff, not
  * about hiding symtabs from dwarf or anything.
  */
-void symtab_set_srcfilename(struct symtab *symtab,char *srcfilename);
+void symtab_set_name(struct symtab *symtab,char *srcfilename);
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname);
 void symtab_set_producer(struct symtab *symtab,char *producer);
 void symtab_dump(struct symtab *symtab,struct dump_info *ud);
@@ -236,6 +236,24 @@ void symbol_set_srcline(struct symbol *symbol,int srcline);
 void symbol_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_free(struct symbol *symbol);
 void location_dump(struct location *location,struct dump_info *ud);
+
+/**
+ ** Lookup stuff!
+ **/
+
+/*
+ * Find the symbol table corresponding to the supplied PC.
+ */
+struct symtab *lookup_symtab(struct addrspace *space,uint64_t pc);
+struct symbol *debugfile_lookup_sym(struct debugfile *debugfile,
+				    char *srcfile,char *name);
+
+/*
+ * Given a region, and a symbol in a debugfile attached to that region,
+ * encode the value as a string.
+ */
+char *symbol_to_string(struct memregion *region,
+		       struct symbol *symbol);
 
 /*
  * Dwarf util stuff.
@@ -454,10 +472,14 @@ struct debugfile {
 struct symtab {
     struct debugfile *debugfile;
 
-    char *srcfilename;
+    /* This may be the source filename, OR a subscope name. */
+    char *name;
+    /* If this was a source filename, a compilation dir should be set. */
     char *compdirname;
+
     uint64_t lowpc;
     uint64_t highpc;
+
     char *producer;
     int language;
 
@@ -601,28 +623,6 @@ struct value {
 	unsigned char *bytes;
     } v;
 };
-
-/*
-// generic search; returns the first match.  checks globals, then vars
-// in source files, for the main program.
-struct symbol *lookup_sym(struct addrspace *space,char *name);
-// if the addrspace is the kernel, a lib is a module, and version is
-// irrelevant; if it's a userspace process, it's a shared lib and
-// possibly a version.
-struct symbol *lookup_libsym(struct addrspace *space,char *name,
-			     char *libname,char *version);
-struct symbol *lookup_sym_insrcfile(struct addrspace *space,char *name,
-				    char *srcfile);
-struct symbol *lookup_libsym_insrcfile(struct addrspace *space,char *name,
-				       char *srcfile,
-				       char *libname,char *version);
-struct symbol *lookup_sym_function(struct addrspace *space,char *name,
-				   char *function);
-struct symbol *lookup_libsym_function(struct addrspace *space,char *name,
-				      char *function,
-				      char *libname,char *version);
-*/
-
 
 #define DEBUGPRED 1
 #ifndef PIC

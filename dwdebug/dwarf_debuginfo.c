@@ -198,10 +198,12 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_name:
 	ldebug(4,"\t\t\tvalue = %s\n",str);
 	if (level == 0) {
-	    symtab_set_srcfilename(cbargs->cu_symtab,str);
+	    symtab_set_name(cbargs->cu_symtab,str);
 	}
 	else if (cbargs->symbol) {
 	    symbol_set_name(cbargs->symbol,str);
+	    if (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)
+		symtab_set_name(cbargs->symtab,str);
 	}
 	else {
 	    lwarn("attrval %s for attr %s in bad context\n",
@@ -790,7 +792,15 @@ int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    data += addrsize;
 	    CONSUME(addrsize);
 	    ldebug(9,"%s -> 0x%" PRIx64 "\n",known[op],addr);
-	    ONLYOP(retval,LOCTYPE_ADDR,addr,addr);
+	    if (start == (origdata + 1) && len == 0) {
+		retval->loctype = LOCTYPE_ADDR;
+		retval->l.addr = addr;
+		goto out;
+	    }
+	    else {
+		lwarn("unsupported %s op with other ops!\n",known[op]);
+	    }
+	    //ONLYOP(retval,LOCTYPE_ADDR,addr,((uint64_t)addr));
 	    break;
 
 	case DW_OP_reg0...DW_OP_reg31:
@@ -1032,7 +1042,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
     g_hash_table_remove_all(typeoffsettab);
 
     /* attr_callback has to fill this, and *MUST* fill at least
-     * srcfilename; otherwise we can't add the symtab to our hash table.
+     * name; otherwise we can't add the symtab to our hash table.
      */
     cu_symtab = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
     int cu_symtab_added = 0;
@@ -1076,7 +1086,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	 * hash the symtab.
 	 */
 	if (level > 0 && !cu_symtab_added) {
-	    if (!cu_symtab->srcfilename) {
+	    if (!cu_symtab->name) {
 		lerror("CU did not have a src filename; aborting processing!\n");
 		symtab_free(cu_symtab);
 		goto next_cu;
