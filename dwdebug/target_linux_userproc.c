@@ -176,12 +176,16 @@ static int linux_userproc_attach_internal(struct target *target) {
     if (lstate->attached)
 	return 0;
 
-    if (ptrace(PTRACE_ATTACH,target->space->pid) < 0)
+    if (ptrace(PTRACE_ATTACH,target->space->pid,NULL,NULL) < 0)
 	return 1;
 
     snprintf(buf,256,"/proc/%d/mem",target->space->pid);
-    if ((lstate->memfd = open(buf,O_LARGEFILE,O_RDWR)) < 0)
+    if ((lstate->memfd = open(buf,O_LARGEFILE,O_RDWR)) < 0) {
+	ptrace(PTRACE_DETACH,target->space->pid,NULL,NULL);
 	return 1;
+    }
+
+    lstate->attached = 1;
 
     return 0;
 }
@@ -202,9 +206,20 @@ static int linux_userproc_detach(struct target *target) {
     if (lstate->memfd > 0)
 	close(lstate->memfd);
 
-    if (ptrace(PTRACE_DETACH,target->space->pid) < 0)
-	return 1;
+    /* Sleep the child first; otherwise we'll end up sending it a trace
+       trap, which will kill it. */
+    kill(target->space->pid,SIGSTOP);
 
+    if (ptrace(PTRACE_DETACH,target->space->pid,NULL,NULL) < 0) {
+	lerror("ptrace detach %d failed: %s\n",target->space->pid,
+	       strerror(errno));
+	kill(target->space->pid,SIGCONT);
+	return 1;
+    }
+
+    kill(target->space->pid,SIGCONT);
+
+    ldebug(3,"ptrace detach %d succeeded.\n",target->space->pid);
     lstate->attached = 0;
 
     return 0;
@@ -331,6 +346,15 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct memregion *region) {
     ldebug(5,"pid %d\n",target->space->pid);
 
+    if (region->type == REGION_TYPE_MAIN 
+	|| region->type == REGION_TYPE_LIB) {
+	if (!debugfile_attach(region,region->filename,
+			      region->type == REGION_TYPE_MAIN ? \
+			      DEBUGFILE_TYPE_MAIN : \
+			      DEBUGFILE_TYPE_SHAREDLIB))
+	    return -1;
+    }
+
     return 0;
 }
 
@@ -406,6 +430,9 @@ static int linux_userproc_resume(struct target *target) {
 	}
     }
 
+    ldebug(5,"ptrace restart %d succeeded\n",target->space->pid);
+    lstate->last_signo = -1;
+
     return 0;
 }
 
@@ -436,7 +463,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 	 * on resume.
 	 */
 	lstate->last_signo = WSTOPSIG(pstatus);
-	if (lstate->last_signo & 0x80) {
+	if (lstate->last_signo == (SIGTRAP | 0x80)) {
 	    ldebug(5,"target %d stopped with trap signo %d\n",
 		   pid,lstate->last_signo);
 	    lstate->last_signo = -1;
