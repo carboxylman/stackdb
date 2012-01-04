@@ -579,7 +579,7 @@ struct symbol {
 	/* instance info */
 	struct {
 	    uint8_t isparam:1,
-		    isconst:1,
+		    ismember:1,
 		    isenumval:1,
 		    isdeclinline:1,
 		    isinlined:1,

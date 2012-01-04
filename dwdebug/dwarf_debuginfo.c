@@ -1152,6 +1152,9 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    if (tag == DW_TAG_formal_parameter) {
 		symbols[level]->s.ii.isparam = 1;
 	    }
+	    if (tag == DW_TAG_member) {
+		symbols[level]->s.ii.ismember = 1;
+	    }
 	}
 	else if (tag == DW_TAG_base_type
 		 || tag == DW_TAG_typedef
@@ -1531,7 +1534,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     }
     else if (symbol
 	     && symbol->type == SYMBOL_TYPE_VAR
-	     && symbol->s.ii.isparam) {
+	     && (symbol->s.ii.isparam || symbol->s.ii.ismember)) {
 	/* We allow unnamed params, of course, BUT we don't put them
 	 * into the symbol table.
 	 *
