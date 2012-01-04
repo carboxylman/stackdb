@@ -357,7 +357,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
 		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_ARRAY
 		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_CONST
-		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_VOL) {
+		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_VOL
+		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
 		    if (datatype)
 			cbargs->symbol->s.ti.type_datatype = datatype;
 		    else
@@ -1138,7 +1139,8 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		 || tag == DW_TAG_enumeration_type
 		 || tag == DW_TAG_union_type
 		 || tag == DW_TAG_const_type
-		 || tag == DW_TAG_volatile_type) {
+		 || tag == DW_TAG_volatile_type
+		 || tag == DW_TAG_subroutine_type) {
 	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_TYPE);
 	    switch (tag) {
 	    case DW_TAG_base_type:
@@ -1169,8 +1171,10 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		symbols[level]->s.ti.datatype_code = DATATYPE_CONST; break;
 	    case DW_TAG_volatile_type:
 		symbols[level]->s.ti.datatype_code = DATATYPE_VOL; break;
-	    //case DW_TAG_:
-		//symbols[level]->s.ti.t.datatype_code = DATATYPE_; break;
+	    case DW_TAG_subroutine_type:
+		symbols[level]->s.ti.datatype_code = DATATYPE_FUNCTION;
+		INIT_LIST_HEAD(&(symbols[level]->s.ti.d.f.args));
+		break;
 	    default:
 		break;
 	    }
@@ -1255,9 +1259,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		 * type actually is an anonymous type.
 		 */
 		char *newname = malloc(17+5);
-		snprintf(newname,17,"anon:%Lx",(uint64_t)offset);
-		    //symbols[level]->s.ti.byte_size,
-		    //symbols[level]->s.ti.d.v.encoding);
+		snprintf(newname,17,"anon:%" PRIu64,(uint64_t)offset);
 		ldebug(5,"unnamed/anonymous type! renamed to %s.\n",newname);
 		symbol_set_name(symbols[level],newname);
 		/* We don't want anonymous type symbols in the real
@@ -1405,10 +1407,11 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	/* Don't free it, but also don't insert it into symbol
 	 * tables.
 	 */
-	if (symbol->s.ti.datatype_code == DATATYPE_PTR
-	    && symbol->s.ti.type_datatype == NULL
+	if (symbol->s.ti.type_datatype == NULL
 	    && symbol->s.ti.type_datatype_ref == 0) {
-	    ldebug(3,"assuming anon ptr type %s without type is void\n",
+	    //&& symbol->s.ti.datatype_code == DATATYPE_PTR) {
+	    ldebug(3,"assuming anon %s type %s without type is void\n",
+		   DATATYPE(symbol->s.ti.datatype_code),
 		   symbol->name);
 	    symbol->s.ti.type_datatype = voidsymbol;
 	}
@@ -1424,9 +1427,10 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	     */
 	    if ((symbol->s.ti.datatype_code == DATATYPE_PTR
 		 || symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
-		 /* Not sure if C lets these two cases through, but whatever */
+		 /* Not sure if C lets these cases through, but whatever */
 		 || symbol->s.ti.datatype_code == DATATYPE_CONST
-		 || symbol->s.ti.datatype_code == DATATYPE_VOL)
+		 || symbol->s.ti.datatype_code == DATATYPE_VOL
+		 || symbol->s.ti.datatype_code == DATATYPE_FUNCTION)
 		&& symbol->s.ti.type_datatype == NULL
 		&& symbol->s.ti.type_datatype_ref == 0) {
 		ldebug(3,"assuming %s type %s without type is void\n",
@@ -1523,7 +1527,8 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 	    || symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
 	    || symbol->s.ti.datatype_code == DATATYPE_ARRAY
 	    || symbol->s.ti.datatype_code == DATATYPE_CONST
-	    || symbol->s.ti.datatype_code == DATATYPE_VOL) {
+	    || symbol->s.ti.datatype_code == DATATYPE_VOL
+	    || symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
 	    if (!symbol->s.ti.type_datatype) {
 		symbol->s.ti.type_datatype = \
 		    g_hash_table_lookup(reftab,
@@ -1553,6 +1558,18 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 		       symbol->s.ti.type_datatype->s.ti.type_datatype_ref);
 
 		resolve_refs(NULL,symbol->s.ti.type_datatype,data);
+	    }
+
+	    if (symbol->s.ti.datatype_code == DATATYPE_FUNCTION
+		&& symbol->s.ti.d.f.count) {
+		/* do it for the function type args! */
+		list_for_each_entry(member,&(symbol->s.ti.d.f.args),member) {
+		    if (!member->datatype) {
+			ldebug(3,"resolving type function %s arg %s tref 0x%x\n",
+			       symbol->name,member->name,member->datatype_addr_ref);
+			resolve_refs(NULL,member,reftab);
+		    }
+		}
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_STRUCT

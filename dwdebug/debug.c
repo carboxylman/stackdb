@@ -739,15 +739,18 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	//    && symbol->s.ii.isenumval)) {
 	    if (symbol->datatype) {
 		symbol_type_dump(symbol->datatype,&udn);
-		fprintf(ud->stream," ");
 	    }
 	    else if (symbol->datatype_addr_ref) 
-		fprintf(ud->stream,"tref%Lx ",symbol->datatype_addr_ref);
+		fprintf(ud->stream,"tref%Lx",symbol->datatype_addr_ref);
 	//}
     }
     /* all variables are named, but not all members of structs/unions! */
     /* well, inlined params aren't named either. */
     if (symbol->s.ii.isinlineinstance && symbol->s.ii.isparam) {
+	/* Only print a space if we printed the var's type above! */
+	if (ud->detail)
+	    fprintf(ud->stream," ");
+
 	if (symbol->s.ii.origin) {
 	    fprintf(ud->stream,"INLINED_PARAM(");
 	    symbol_var_dump(symbol->s.ii.origin,&udn);
@@ -756,8 +759,13 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	else
 	    fprintf(ud->stream,"INLINED_ANON_PARAM()");
     }
-    else if (symbol->name) 
+    else if (symbol->name) {
+	/* Only print a space if we printed the var's type above! */
+	if (ud->detail)
+	    fprintf(ud->stream," ");
+
 	fprintf(ud->stream,"%s",symbol->name);
+    }
 
     if (symbol->type == SYMBOL_TYPE_VAR 
 	&& symbol->s.ii.d.v.bit_size > 0) {
@@ -934,6 +942,26 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	}
 	else
 	    fprintf(ud->stream,"ptref%Lx *",symbol->s.ti.type_datatype_ref);
+	break;
+    case DATATYPE_FUNCTION:
+	if (ud->detail)
+	    symbol_type_dump(symbol->s.ti.type_datatype,ud);
+
+	if (symbol->s.ti.isanon) 
+	    fprintf(ud->stream,"()");
+	else if (symbol->name)
+	    fprintf(ud->stream,"(%s)",symbol->name);
+
+	if (ud->detail) {
+	    fprintf(ud->stream,"(");
+	    i = 0;
+	    list_for_each_entry(member,&(symbol->s.ti.d.f.args),member) {
+		symbol_var_dump(member,ud);
+		if (likely(++i != symbol->s.ti.d.f.count))
+		    fprintf(ud->stream,", ");
+	    }
+	    fprintf(ud->stream,")");
+	}
 	break;
     case DATATYPE_TYPEDEF:
 	if (!ud->detail)

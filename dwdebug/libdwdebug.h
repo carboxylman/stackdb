@@ -563,6 +563,15 @@ struct symbol {
 		struct {
 		    int nptrs;
 		} p;
+		/* For a function type (i.e., a DW_TAG_subroutine_type)
+		 * this data describes the function's arg type info.
+		 * The return type, if any, is specified in
+		 * type_datatype above.
+		 */
+		struct {
+		    struct list_head args;
+		    uint16_t count;
+		} f;
 	    } d;
 	} ti;
 	/* instance info */
@@ -584,6 +593,10 @@ struct symbol {
 
 	    union {
 		void *constval;
+		/* For a function instance (i.e., a DW_TAG_subprogram or
+		 * DW_TAG_inlined_subroutine, this data describes the
+		 * function's "type" information.
+		 */
 		struct {
 		    struct list_head args;
 		    uint16_t count;
