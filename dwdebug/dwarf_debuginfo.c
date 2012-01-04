@@ -249,6 +249,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    cbargs->symbol->s.ii.d.f.lowpc = addr;
 	}
+	else if (cbargs->symbol 
+		 && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+	    cbargs->symbol->s.ii.d.l.lowpc = addr;
+	}
 	else if (!cbargs->symbol && cbargs->symtab) {
 	    ;
 	}
@@ -268,6 +272,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (cbargs->symbol 
 	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    cbargs->symbol->s.ii.d.f.highpc = addr;
+	}
+	else if (cbargs->symbol 
+		 && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+	    cbargs->symbol->s.ii.d.l.highpc = addr;
 	}
 	else if (!cbargs->symbol && cbargs->symtab) {
 	    ;
@@ -355,7 +363,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_abstract_origin:
 	if (ref_set && cbargs->symbol 
 	    && (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION 
-		|| cbargs->symbol->type == SYMBOL_TYPE_VAR)) {
+		|| cbargs->symbol->type == SYMBOL_TYPE_VAR
+		|| cbargs->symbol->type == SYMBOL_TYPE_LABEL)) {
 	    cbargs->symbol->s.ii.isinlineinstance = 1;
 	    cbargs->symbol->s.ii.origin = (struct symbol *) \
 		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
@@ -1161,6 +1170,9 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		symbols[level]->s.ii.ismember = 1;
 	    }
 	}
+	else if (tag == DW_TAG_label) {
+	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_LABEL);
+	}
 	else if (tag == DW_TAG_unspecified_parameters) {
 	    if (!symbols[level-1])
 		lwarn("cannot handle unspecified_parameters without parent DIE!\n");
@@ -1517,7 +1529,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     }
     else if (symbol
 	     && (symbol->type == SYMBOL_TYPE_FUNCTION
-		 || symbol->type == SYMBOL_TYPE_VAR)
+		 || symbol->type == SYMBOL_TYPE_VAR
+		 || symbol->type == SYMBOL_TYPE_LABEL)
 	     && symbol->s.ii.isinlineinstance) {
 	/* An inlined instance; definitely need it in the symbol
 	 * tables.  But we have to give it a name.  And the name *has*

@@ -94,6 +94,7 @@ typedef enum {
     SYMBOL_TYPE_TYPE      = 0,
     SYMBOL_TYPE_VAR       = 1,
     SYMBOL_TYPE_FUNCTION  = 2,
+    SYMBOL_TYPE_LABEL     = 3,
     __SYMBOL_TYPE_MAX,
 } symbol_type_t;
 extern char *SYMBOL_TYPE_STRINGS[];
@@ -615,6 +616,10 @@ struct symbol {
 		    uint16_t bit_offset;
 		    uint16_t bit_size;
 		} v;
+		struct {
+		    uint64_t lowpc;
+		    uint64_t highpc;
+		} l;
 	    } d;
 	    struct location l;
 	} ii;

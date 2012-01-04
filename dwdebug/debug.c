@@ -726,6 +726,13 @@ void location_dump(struct location *location,struct dump_info *ud) {
     }
 }
 
+void symbol_label_dump(struct symbol *symbol,struct dump_info *ud) {
+    fprintf(ud->stream,"%s",symbol->name);
+    if (ud->meta) 
+	fprintf(ud->stream," (lowpc=0x%Lx,highpc=0x%Lx)",
+		symbol->s.ii.d.l.lowpc,symbol->s.ii.d.l.highpc);
+}
+
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     struct dump_info udn = {
 	.stream = ud->stream,
@@ -1031,6 +1038,8 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 	symbol_var_dump(symbol,&udn);
     else if (symbol->type == SYMBOL_TYPE_FUNCTION) 
 	symbol_function_dump(symbol,&udn);
+    else if (symbol->type == SYMBOL_TYPE_LABEL) 
+	symbol_label_dump(symbol,&udn);
     else 
 	fprintf(ud->stream,"unknown symbol type %d!",symbol->type);
     fprintf(ud->stream,"\n");
@@ -1368,7 +1377,8 @@ char *DEBUGFILE_TYPE_STRINGS[] = {
 char *SYMBOL_TYPE_STRINGS[] = {
     "type",
     "var",
-    "function"
+    "function",
+    "label"
 };
 
 char *DATATYPE_STRINGS[] = {
