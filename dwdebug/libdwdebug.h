@@ -580,7 +580,10 @@ struct symbol {
 	struct {
 	    uint8_t isparam:1,
 		    isconst:1,
-		    isenumval:1;
+		    isenumval:1,
+		    isdeclinline:1,
+		    isinlined:1,
+		    isinlineinstance:1;
 	    union {
 		void *constval;
 		struct {
@@ -591,11 +594,15 @@ struct symbol {
 		    uint64_t lowpc;
 		    uint64_t highpc;
 		    struct symtab *symtab;
+		    struct symbol *origin;
+		    uint64_t origin_ref;
 		} f;
 		struct {
 		    uint16_t byte_size;
 		    uint16_t bit_offset;
 		    uint16_t bit_size;
+		    struct symbol *origin;
+		    uint64_t origin_ref;
 		} v;
 	    } d;
 	    struct location l;

@@ -741,13 +741,24 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 		symbol_type_dump(symbol->datatype,&udn);
 		fprintf(ud->stream," ");
 	    }
-	    else 
+	    else if (symbol->datatype_addr_ref) 
 		fprintf(ud->stream,"tref%Lx ",symbol->datatype_addr_ref);
 	//}
     }
     /* all variables are named, but not all members of structs/unions! */
-    if (symbol->name) 
+    /* well, inlined params aren't named either. */
+    if (symbol->s.ii.isinlineinstance && symbol->s.ii.isparam) {
+	if (symbol->s.ii.d.v.origin) {
+	    fprintf(ud->stream,"INLINED_PARAM(");
+	    symbol_var_dump(symbol->s.ii.d.v.origin,&udn);
+	    fprintf(ud->stream,")");
+	}
+	else
+	    fprintf(ud->stream,"INLINED_ANON_PARAM()");
+    }
+    else if (symbol->name) 
 	fprintf(ud->stream,"%s",symbol->name);
+
     if (symbol->type == SYMBOL_TYPE_VAR 
 	&& symbol->s.ii.d.v.bit_size > 0) {
 	/* this is a bitfield */
@@ -782,14 +793,25 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    symbol_type_dump(symbol->datatype,&udn);
 	    fprintf(ud->stream," ");
 	}
-	else 
+	else if (symbol->datatype_addr_ref)
 	    fprintf(ud->stream,"ftref%Lx ",symbol->datatype_addr_ref);
     }
-    fprintf(ud->stream,"%s",symbol->name);
+    if (symbol->s.ii.isinlineinstance) {
+	if (symbol->s.ii.d.v.origin) {
+	    fprintf(ud->stream,"INLINED_FUNC(");
+	    symbol_var_dump(symbol->s.ii.d.f.origin,&udn);
+	    fprintf(ud->stream,")");
+	}
+	else
+	    fprintf(ud->stream,"INLINED_ANON_PARAM()");
+    }
+    else 
+	fprintf(ud->stream,"%s",symbol->name);
     if (ud->meta) 
-	fprintf(ud->stream," (lowpc=0x%Lx,highpc=0x%Lx,external=%d,prototyped=%d) ",
+	fprintf(ud->stream," (lowpc=0x%Lx,highpc=0x%Lx,external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
 		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc,
-		symbol->s.ii.d.f.external,symbol->s.ii.d.f.prototyped);
+		symbol->s.ii.d.f.external,symbol->s.ii.d.f.prototyped,
+		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
     if (ud->detail) {
 	fprintf(ud->stream,"(");
 	list_for_each_entry(arg,&(symbol->s.ii.d.f.args),member) {
@@ -819,7 +841,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
     };
 
     if (!symbol) {
-	lerror("NULLSYM!\n");
+	fprintf(ud->stream,"NULLTYPESYM!");
 	return;
     }
 

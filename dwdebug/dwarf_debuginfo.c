@@ -55,7 +55,7 @@ struct attrcb_args {
     struct symbol *symbol;
     struct symbol *parentsymbol;
     struct symbol *voidsymbol;
-    GHashTable *typeoffsettab;
+    GHashTable *reftab;
 };
 
 /* Declare this now; it's used in attr_callback. */
@@ -315,10 +315,52 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    lwarn("attrval %d for attr %s in bad context\n",
 		  flag,dwarf_attr_string(attr));
 	break;
+    case DW_AT_inline:
+	if (num_set && cbargs->symbol 
+	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
+	    if (num == 1)
+		cbargs->symbol->s.ii.isinlined = 1;
+	    else if (num == 2)
+		cbargs->symbol->s.ii.isdeclinline = 1;
+	    else if (num == 3) {
+		cbargs->symbol->s.ii.isinlined = 1;
+		cbargs->symbol->s.ii.isdeclinline = 1;
+	    }
+	}
+	else 
+	    lwarn("attrval %d for attr %s in bad context\n",
+		  flag,dwarf_attr_string(attr));
+	break;
+    case DW_AT_abstract_origin:
+	if (ref_set && cbargs->symbol 
+	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
+	    cbargs->symbol->s.ii.isinlineinstance = 1;
+	    cbargs->symbol->s.ii.d.f.origin = (struct symbol *) \
+		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
+	    /* Always set the ref so we can generate a unique name for 
+	     * the symbol; see finalize_die_symbol!!
+	     */
+	    cbargs->symbol->s.ii.d.f.origin_ref = ref;
+	}
+	else if (ref_set && cbargs->symbol 
+		 && cbargs->symbol->type == SYMBOL_TYPE_VAR
+		 && cbargs->symbol->s.ii.isparam) {
+	    cbargs->symbol->s.ii.isinlineinstance = 1;
+	    cbargs->symbol->s.ii.d.v.origin = (struct symbol *) \
+		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
+	    /* Always set the ref so we can generate a unique name for 
+	     * the symbol; see finalize_die_symbol!!
+	     */
+	    cbargs->symbol->s.ii.d.v.origin_ref = ref;
+	}
+	else 
+	    lwarn("attrval %Lx for attr %s in bad context\n",
+		  ref,dwarf_attr_string(attr));
+	break;
     case DW_AT_type:
 	if (ref_set && cbargs->symbol) {
 	    struct symbol *datatype = (struct symbol *) \
-		g_hash_table_lookup(cbargs->typeoffsettab,(gpointer)ref);
+		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
 	    if (cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 		if (cbargs->symbol->s.ti.datatype_code == DATATYPE_PTR) {
 		    if (datatype)
@@ -955,7 +997,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			struct symbol *symbol,
 			struct symbol *parentsymbol,
 			struct symbol *voidsymbol);
-void resolve_type_refs(gpointer key,gpointer value,gpointer data);
+void resolve_refs(gpointer key,gpointer value,gpointer data);
 
 struct symbol *add_void_symbol(struct debugfile *debugfile,
 			       struct symtab *symtab) {
@@ -1005,7 +1047,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
     struct symbol **symbols = (struct symbol **)malloc(maxdies*sizeof(struct symbol *));
     struct symtab **symtabs = (struct symtab **)malloc(maxdies*sizeof(struct symtab *));
 
-    GHashTable *typeoffsettab = g_hash_table_new(g_direct_hash,g_direct_equal);
+    GHashTable *reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
     struct symbol *voidsymbol;
 
  next_cu:
@@ -1035,11 +1077,12 @@ static int fill_debuginfo(struct debugfile *debugfile,
 #endif
 
     /*
-     * Clean up our temp types offset table; it contains per-CU offsets
-     * that map to types we've built.  We need this in case one type
+     * Clean up our refs table; it contains per-CU offsets
+     * that map to types and sources of inlined functions/variables
+     * we've built symbols for.  We need this in case one type/inlined instance
      * symbol references a type that has not yet appeared in the debug info.
      */
-    g_hash_table_remove_all(typeoffsettab);
+    g_hash_table_remove_all(reftab);
 
     /* attr_callback has to fill this, and *MUST* fill at least
      * name; otherwise we can't add the symtab to our hash table.
@@ -1066,7 +1109,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	.symbol = NULL,
 	.parentsymbol = NULL,
 	.voidsymbol = voidsymbol,
-	.typeoffsettab = typeoffsettab,
+	.reftab = reftab,
     };
 
     offset += cuhl;
@@ -1187,6 +1230,20 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    list_add_tail(&newscope->member,&symtabs[level]->subtabs);
 	    symbols[level]->s.ii.d.f.symtab = newscope;
 	}
+	else if (tag == DW_TAG_inlined_subroutine) {
+	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_FUNCTION);
+	    symbols[level]->s.ii.isinlineinstance = 1;
+	    INIT_LIST_HEAD(&(symbols[level]->s.ii.d.f.args));
+	    /* Build a new symtab and use it until we finish this
+	     * subprogram, or until we need another child scope.
+	     */
+	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
+	    newscope->parent = symtabs[level];
+	    // XXX: should we wait to do this until we level up after
+	    // successfully completing this new child scope?
+	    list_add_tail(&newscope->member,&symtabs[level]->subtabs);
+	    symbols[level]->s.ii.d.f.symtab = newscope;
+	}
 	else if (tag == DW_TAG_lexical_block) {
 	    /* Build a new symtab and use it until we finish this
 	     * block, or until we need another child scope.
@@ -1244,11 +1301,14 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		*/
 		symbols[level]->s.ti.isanon = 1;
 	    }
-	    /*
-	     * Add to this CU's temp type offset table.
-	     */
-	    g_hash_table_insert(typeoffsettab,(gpointer)offset,symbols[level]);
 	}
+
+	/*
+	 * Add to this CU's reference offset table.  We originally only
+	 * did this for types, but since inlined func/param instances
+	 * can refer to funcs/vars, we have to do it for every symbol.
+	 */
+	g_hash_table_insert(reftab,(gpointer)offset,symbols[level]);
 
 	/* Handle adding child symbols to parents!
 	 */
@@ -1342,7 +1402,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
      * The only other alternative is to use libelf/libdw to resolve them
      * during the single pass, which seems less good...
      */
-    g_hash_table_foreach(cu_symtab->tab,resolve_type_refs,typeoffsettab);
+    g_hash_table_foreach(cu_symtab->tab,resolve_refs,reftab);
 
     offset = nextcu;
     if (offset != 0) {
@@ -1460,6 +1520,57 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		debugfile_add_global(debugfile,symbol);
 	}
     }
+    else if (symbol
+	     && (symbol->type == SYMBOL_TYPE_FUNCTION
+		 || symbol->type == SYMBOL_TYPE_VAR)
+	     && symbol->s.ii.isinlineinstance) {
+	/* An inlined instance; definitely need it in the symbol
+	 * tables.  But we have to give it a name.  And the name *has*
+	 * to be unique... so we do our best: 
+	 *  __INLINED(<symbol_mem_addr>:(iref<src_sym_dwarf_addr>
+         *                               |<src_sym_name))
+	 * (we really should use the DWARF DIE addr for easier debug,
+	 * but that would cost us 8 bytes more in the symbol struct.)
+	 */
+	char *inname;
+	int inlen;
+	if (symbol->type == SYMBOL_TYPE_FUNCTION
+	    && symbol->s.ii.d.f.origin) {
+	    inlen = 9 + 1 + 16 + 1 + strlen(symbol->s.ii.d.f.origin->name) + 1 + 1;
+	    inname = malloc(sizeof(char)*inlen);
+	    sprintf(inname,"__INLINED(%p:%s)",
+		    (void *)symbol,
+		    symbol->s.ii.d.f.origin->name);
+	}
+	else if (symbol->type == SYMBOL_TYPE_FUNCTION
+	    && !symbol->s.ii.d.f.origin) {
+	    inlen = 9 + 1 + 16 + 1 + 4 + 16 + 1 + 1;
+	    inname = malloc(sizeof(char)*inlen);
+	    sprintf(inname,"__INLINED(%p:iref%Lx)",
+		    (void *)symbol,
+		    symbol->s.ii.d.f.origin_ref);
+	}
+	else if (symbol->type == SYMBOL_TYPE_VAR
+	    && symbol->s.ii.d.v.origin) {
+	    inlen = 9 + 1 + 16 + 1 + strlen(symbol->s.ii.d.v.origin->name) + 1 + 1;
+	    inname = malloc(sizeof(char)*inlen);
+	    sprintf(inname,"__INLINED(%p:%s)",
+		    (void *)symbol,
+		    symbol->s.ii.d.v.origin->name);
+	}
+	else if (symbol->type == SYMBOL_TYPE_VAR
+	    && !symbol->s.ii.d.v.origin) {
+	    inlen = 9 + 1 + 16 + 1 + 4 + 16 + 1 + 1;
+	    inname = malloc(sizeof(char)*inlen);
+	    sprintf(inname,"__INLINED(%p:iref%Lx)",
+		    (void *)symbol,
+		    symbol->s.ii.d.v.origin_ref);
+	}
+
+	symbol_set_name(symbol,inname);
+		    
+	symbol_insert(symbol);
+    }
     else if (symbol) {
 	lerror("non-anonymous symbol of type %s without a name!\n",
 	       SYMBOL_TYPE(symbol->type));
@@ -1473,16 +1584,16 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     return retval;
 }
 
-void resolve_type_refs(gpointer key,gpointer value,gpointer data) {
+void resolve_refs(gpointer key,gpointer value,gpointer data) {
     struct symbol *symbol = (struct symbol *)value;
-    GHashTable *typeoffsettab = (GHashTable *)data;
+    GHashTable *reftab = (GHashTable *)data;
     struct symbol *member;
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
 	if (symbol->s.ti.datatype_code == DATATYPE_PTR) {
 	    if (!symbol->s.ti.d.p.ptr_datatype) {
 		symbol->s.ti.d.p.ptr_datatype =		\
-		    g_hash_table_lookup(typeoffsettab,
+		    g_hash_table_lookup(reftab,
 					(gpointer)symbol->s.ti.d.p.ptr_datatype_addr_ref);
 		if (!symbol->s.ti.d.p.ptr_datatype) 
 		    lerror("could not resolve ref %Lx for ptr type symbol %s\n",
@@ -1493,7 +1604,7 @@ void resolve_type_refs(gpointer key,gpointer value,gpointer data) {
 
 		    /* If it's a pointer, always recurse */
 		    if (SYMBOL_IST_PTR(symbol->datatype))
-			resolve_type_refs(NULL,symbol->datatype,typeoffsettab);
+			resolve_refs(NULL,symbol->datatype,reftab);
 		}
 	    }
 	    else if (SYMBOL_IST_PTR(symbol->s.ti.d.p.ptr_datatype)) {
@@ -1505,75 +1616,75 @@ void resolve_type_refs(gpointer key,gpointer value,gpointer data) {
 		       symbol->s.ti.d.p.ptr_datatype->name,
 		       symbol->s.ti.d.p.ptr_datatype->s.ti.d.p.ptr_datatype_addr_ref);
 
-		resolve_type_refs(NULL,symbol->s.ti.d.p.ptr_datatype,data);
+		resolve_refs(NULL,symbol->s.ti.d.p.ptr_datatype,data);
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_TYPEDEF 
 		 && !symbol->s.ti.d.td.td_datatype) {
 	    symbol->s.ti.d.td.td_datatype = \
-		g_hash_table_lookup(typeoffsettab,
+		g_hash_table_lookup(reftab,
 				    (gpointer)symbol->s.ti.d.td.td_datatype_addr_ref);
 	    if (!symbol->s.ti.d.td.td_datatype) 
 		lerror("could not resolve ref %Lx for typedef type symbol %s\n",
 		       symbol->s.ti.d.td.td_datatype_addr_ref,symbol->name);
 	    else {
 		ldebug(3,"resolved typedef type symbol %s tdtref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.p.ptr_datatype_addr_ref);
+		       symbol->name,symbol->s.ti.d.td.td_datatype_addr_ref);
 
 		/* If it's a pointer, always recurse */
 		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_type_refs(NULL,symbol->datatype,typeoffsettab);
+		    resolve_refs(NULL,symbol->datatype,reftab);
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY 
 		 && !symbol->s.ti.d.a.array_datatype) {
 	    symbol->s.ti.d.a.array_datatype = \
-		g_hash_table_lookup(typeoffsettab,
+		g_hash_table_lookup(reftab,
 				    (gpointer)symbol->s.ti.d.a.array_datatype_addr_ref);
 	    if (!symbol->s.ti.d.a.array_datatype) 
 		lerror("could not resolve ref %Lx for array type symbol %s\n",
 		       symbol->s.ti.d.a.array_datatype_addr_ref,symbol->name);
 	    else {
 		ldebug(3,"resolved array type symbol %s atref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.p.ptr_datatype_addr_ref);
+		       symbol->name,symbol->s.ti.d.a.array_datatype_addr_ref);
 
 		/* If it's a pointer, always recurse */
 		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_type_refs(NULL,symbol->datatype,typeoffsettab);
+		    resolve_refs(NULL,symbol->datatype,reftab);
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_CONST 
 		 && !symbol->s.ti.d.cq.const_datatype) {
 	    symbol->s.ti.d.cq.const_datatype = \
-		g_hash_table_lookup(typeoffsettab,
+		g_hash_table_lookup(reftab,
 				    (gpointer)symbol->s.ti.d.cq.const_datatype_addr_ref);
 	    if (!symbol->s.ti.d.cq.const_datatype) 
 		lerror("could not resolve ref %Lx for const type symbol %s\n",
 		       symbol->s.ti.d.cq.const_datatype_addr_ref,symbol->name);
 	    else {
 		ldebug(3,"resolved const type symbol %s ctref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.p.ptr_datatype_addr_ref);
+		       symbol->name,symbol->s.ti.d.cq.const_datatype_addr_ref);
 
 		/* If it's a pointer, always recurse */
 		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_type_refs(NULL,symbol->datatype,typeoffsettab);
+		    resolve_refs(NULL,symbol->datatype,reftab);
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_VOL 
 		 && !symbol->s.ti.d.vq.vol_datatype) {
 	    symbol->s.ti.d.vq.vol_datatype = \
-		g_hash_table_lookup(typeoffsettab,
+		g_hash_table_lookup(reftab,
 				    (gpointer)symbol->s.ti.d.vq.vol_datatype_addr_ref);
 	    if (!symbol->s.ti.d.vq.vol_datatype) 
 		lerror("could not resolve ref %Lx for volatile type symbol %s\n",
 		       symbol->s.ti.d.vq.vol_datatype_addr_ref,symbol->name);
 	    else {
-		ldebug(3,"resolved volatile type symbol %s ctref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.p.ptr_datatype_addr_ref);
+		ldebug(3,"resolved volatile type symbol %s vref 0x%x\n",
+		       symbol->name,symbol->s.ti.d.vq.vol_datatype_addr_ref);
 
 		/* If it's a pointer, always recurse */
 		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_type_refs(NULL,symbol->datatype,typeoffsettab);
+		    resolve_refs(NULL,symbol->datatype,reftab);
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_STRUCT
@@ -1583,37 +1694,77 @@ void resolve_type_refs(gpointer key,gpointer value,gpointer data) {
 		if (!member->datatype) {
 		    ldebug(3,"resolving s/u %s arg %s tref 0x%x\n",
 			   symbol->name,member->name,member->datatype_addr_ref);
-		    resolve_type_refs(NULL,member,typeoffsettab);
+		    resolve_refs(NULL,member,reftab);
 		}
 	    }
     }
     else {
 	/* do it for the variable or function's main type */
-	if (!symbol->datatype) {
+	if (!symbol->datatype && symbol->datatype_addr_ref) {
 	    if (!(symbol->datatype = \
-		  g_hash_table_lookup(typeoffsettab,
+		  g_hash_table_lookup(reftab,
 				      (gpointer)symbol->datatype_addr_ref)))
 		lerror("could not resolve ref %Lx for var/func symbol %s\n",
 		       symbol->datatype_addr_ref,symbol->name);
 	    else {
 		ldebug(3,"resolved non-type symbol %s tref 0x%x\n",
 		       symbol->name,symbol->datatype_addr_ref);
-
-		/* If it's a pointer, always recurse */
-		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_type_refs(NULL,symbol->datatype,typeoffsettab);
 	    }
 	}
+
+	/* If it's a pointer, always recurse */
+	if (symbol->datatype && SYMBOL_IST_PTR(symbol->datatype))
+	    resolve_refs(NULL,symbol->datatype,reftab);
 
 	/* then, if this is a function, do the args */
 	if (symbol->type == SYMBOL_TYPE_FUNCTION) 
 	    list_for_each_entry(member,&(symbol->s.ii.d.f.args),member) {
-		if (!member->datatype) {
+		if (!member->datatype && member->datatype_addr_ref) {
 		    ldebug(3,"resolving function %s arg %s tref 0x%x\n",
 			   symbol->name,member->name,member->datatype_addr_ref);
-		    resolve_type_refs(NULL,member,typeoffsettab);
+		    resolve_refs(NULL,member,reftab);
 		}
 	    }
+    }
+
+    /*
+     * If this is an inlined instance of a function or variable
+     * (probably only a param variable?), resolve the origin ref if it
+     * exists.
+     *
+     * XXX: do we need to recurse on the resolved ref?  I hope not!
+     */
+    if (symbol->s.ii.isinlineinstance) {
+	if (symbol->type == SYMBOL_TYPE_FUNCTION
+		 && !symbol->s.ii.d.f.origin 
+		 && symbol->s.ii.d.f.origin_ref) {
+	    if (!(symbol->s.ii.d.f.origin =	\
+		  g_hash_table_lookup(reftab,
+				      (gpointer)symbol->s.ii.d.f.origin_ref))) {
+		lerror("could not resolve ref %Lx for inlined func\n",
+		       symbol->s.ii.d.f.origin_ref);
+	    }
+	    else {
+		ldebug(3,"resolved inlined func iref 0x%x to %s\n",
+		       symbol->s.ii.d.f.origin_ref,
+		       symbol->s.ii.d.f.origin->name);
+	    }
+	}
+	else if (symbol->type == SYMBOL_TYPE_VAR
+		 && !symbol->s.ii.d.v.origin 
+		 && symbol->s.ii.d.v.origin_ref) {
+	    if (!(symbol->s.ii.d.v.origin =	\
+		  g_hash_table_lookup(reftab,
+				      (gpointer)symbol->s.ii.d.v.origin_ref))) {
+		lerror("could not resolve ref %Lx for inlined var\n",
+		       symbol->s.ii.d.v.origin_ref);
+	    }
+	    else {
+		ldebug(3,"resolved inlined var iref 0x%x to %s\n",
+		       symbol->s.ii.d.v.origin_ref,
+		       symbol->s.ii.d.v.origin->name);
+	    }
+	}
     }
 }
 
