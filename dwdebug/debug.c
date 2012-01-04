@@ -748,9 +748,9 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     /* all variables are named, but not all members of structs/unions! */
     /* well, inlined params aren't named either. */
     if (symbol->s.ii.isinlineinstance && symbol->s.ii.isparam) {
-	if (symbol->s.ii.d.v.origin) {
+	if (symbol->s.ii.origin) {
 	    fprintf(ud->stream,"INLINED_PARAM(");
-	    symbol_var_dump(symbol->s.ii.d.v.origin,&udn);
+	    symbol_var_dump(symbol->s.ii.origin,&udn);
 	    fprintf(ud->stream,")");
 	}
 	else
@@ -797,9 +797,9 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"ftref%Lx ",symbol->datatype_addr_ref);
     }
     if (symbol->s.ii.isinlineinstance) {
-	if (symbol->s.ii.d.v.origin) {
+	if (symbol->s.ii.origin) {
 	    fprintf(ud->stream,"INLINED_FUNC(");
-	    symbol_var_dump(symbol->s.ii.d.f.origin,&udn);
+	    symbol_var_dump(symbol->s.ii.origin,&udn);
 	    fprintf(ud->stream,")");
 	}
 	else

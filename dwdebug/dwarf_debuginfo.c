@@ -333,25 +333,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_abstract_origin:
 	if (ref_set && cbargs->symbol 
-	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
+	    && (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION 
+		|| (cbargs->symbol->type == SYMBOL_TYPE_VAR
+		    && cbargs->symbol->s.ii.isparam))) {
 	    cbargs->symbol->s.ii.isinlineinstance = 1;
-	    cbargs->symbol->s.ii.d.f.origin = (struct symbol *) \
+	    cbargs->symbol->s.ii.origin = (struct symbol *) \
 		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
 	    /* Always set the ref so we can generate a unique name for 
 	     * the symbol; see finalize_die_symbol!!
 	     */
-	    cbargs->symbol->s.ii.d.f.origin_ref = ref;
-	}
-	else if (ref_set && cbargs->symbol 
-		 && cbargs->symbol->type == SYMBOL_TYPE_VAR
-		 && cbargs->symbol->s.ii.isparam) {
-	    cbargs->symbol->s.ii.isinlineinstance = 1;
-	    cbargs->symbol->s.ii.d.v.origin = (struct symbol *) \
-		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
-	    /* Always set the ref so we can generate a unique name for 
-	     * the symbol; see finalize_die_symbol!!
-	     */
-	    cbargs->symbol->s.ii.d.v.origin_ref = ref;
+	    cbargs->symbol->s.ii.origin_ref = ref;
 	}
 	else 
 	    lwarn("attrval %Lx for attr %s in bad context\n",
@@ -1534,37 +1525,19 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	 */
 	char *inname;
 	int inlen;
-	if (symbol->type == SYMBOL_TYPE_FUNCTION
-	    && symbol->s.ii.d.f.origin) {
-	    inlen = 9 + 1 + 16 + 1 + strlen(symbol->s.ii.d.f.origin->name) + 1 + 1;
+	if (symbol->s.ii.origin) {
+	    inlen = 9 + 1 + 16 + 1 + strlen(symbol->s.ii.origin->name) + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
 	    sprintf(inname,"__INLINED(%p:%s)",
 		    (void *)symbol,
-		    symbol->s.ii.d.f.origin->name);
+		    symbol->s.ii.origin->name);
 	}
-	else if (symbol->type == SYMBOL_TYPE_FUNCTION
-	    && !symbol->s.ii.d.f.origin) {
+	else {
 	    inlen = 9 + 1 + 16 + 1 + 4 + 16 + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
 	    sprintf(inname,"__INLINED(%p:iref%Lx)",
 		    (void *)symbol,
-		    symbol->s.ii.d.f.origin_ref);
-	}
-	else if (symbol->type == SYMBOL_TYPE_VAR
-	    && symbol->s.ii.d.v.origin) {
-	    inlen = 9 + 1 + 16 + 1 + strlen(symbol->s.ii.d.v.origin->name) + 1 + 1;
-	    inname = malloc(sizeof(char)*inlen);
-	    sprintf(inname,"__INLINED(%p:%s)",
-		    (void *)symbol,
-		    symbol->s.ii.d.v.origin->name);
-	}
-	else if (symbol->type == SYMBOL_TYPE_VAR
-	    && !symbol->s.ii.d.v.origin) {
-	    inlen = 9 + 1 + 16 + 1 + 4 + 16 + 1 + 1;
-	    inname = malloc(sizeof(char)*inlen);
-	    sprintf(inname,"__INLINED(%p:iref%Lx)",
-		    (void *)symbol,
-		    symbol->s.ii.d.v.origin_ref);
+		    symbol->s.ii.origin_ref);
 	}
 
 	symbol_set_name(symbol,inname);
@@ -1734,36 +1707,20 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
      *
      * XXX: do we need to recurse on the resolved ref?  I hope not!
      */
-    if (symbol->s.ii.isinlineinstance) {
-	if (symbol->type == SYMBOL_TYPE_FUNCTION
-		 && !symbol->s.ii.d.f.origin 
-		 && symbol->s.ii.d.f.origin_ref) {
-	    if (!(symbol->s.ii.d.f.origin =	\
-		  g_hash_table_lookup(reftab,
-				      (gpointer)symbol->s.ii.d.f.origin_ref))) {
-		lerror("could not resolve ref %Lx for inlined func\n",
-		       symbol->s.ii.d.f.origin_ref);
-	    }
-	    else {
-		ldebug(3,"resolved inlined func iref 0x%x to %s\n",
-		       symbol->s.ii.d.f.origin_ref,
-		       symbol->s.ii.d.f.origin->name);
-	    }
+    if (symbol->s.ii.isinlineinstance
+	&& !symbol->s.ii.origin 
+	&& symbol->s.ii.origin_ref) {
+	if (!(symbol->s.ii.origin = \
+	      g_hash_table_lookup(reftab,
+				  (gpointer)symbol->s.ii.origin_ref))) {
+	    lerror("could not resolve ref %Lx for inlined %s\n",
+		   symbol->s.ii.origin_ref,SYMBOL_TYPE(symbol->type));
 	}
-	else if (symbol->type == SYMBOL_TYPE_VAR
-		 && !symbol->s.ii.d.v.origin 
-		 && symbol->s.ii.d.v.origin_ref) {
-	    if (!(symbol->s.ii.d.v.origin =	\
-		  g_hash_table_lookup(reftab,
-				      (gpointer)symbol->s.ii.d.v.origin_ref))) {
-		lerror("could not resolve ref %Lx for inlined var\n",
-		       symbol->s.ii.d.v.origin_ref);
-	    }
-	    else {
-		ldebug(3,"resolved inlined var iref 0x%x to %s\n",
-		       symbol->s.ii.d.v.origin_ref,
-		       symbol->s.ii.d.v.origin->name);
-	    }
+	else {
+	    ldebug(3,"resolved inlined %s iref 0x%x to %s\n",
+		   SYMBOL_TYPE(symbol->type),
+		   symbol->s.ii.origin_ref,
+		   symbol->s.ii.origin->name);
 	}
     }
 }

@@ -584,6 +584,15 @@ struct symbol {
 		    isdeclinline:1,
 		    isinlined:1,
 		    isinlineinstance:1;
+
+	    /* If this instance is inlined, these point back to the
+	     * source for the inlined instance.  If it was a forward ref
+	     * in the DWARF info, origin_ref is set and origin has to be
+	     * filled in a postpass.
+	     */
+	    struct symbol *origin;
+	    uint64_t origin_ref;
+
 	    union {
 		void *constval;
 		struct {
@@ -594,15 +603,11 @@ struct symbol {
 		    uint64_t lowpc;
 		    uint64_t highpc;
 		    struct symtab *symtab;
-		    struct symbol *origin;
-		    uint64_t origin_ref;
 		} f;
 		struct {
 		    uint16_t byte_size;
 		    uint16_t bit_offset;
 		    uint16_t bit_size;
-		    struct symbol *origin;
-		    uint64_t origin_ref;
 		} v;
 	    } d;
 	    struct location l;
