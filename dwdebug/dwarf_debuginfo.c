@@ -47,6 +47,7 @@ struct attrcb_args {
     unsigned int addrsize;
     unsigned int offset_size;
     Dwarf_Off cu_offset;
+    Dwarf_Off die_offset;
     Dwarf_Half version;
 
     struct debugfile *debugfile;
@@ -86,9 +87,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	goto errout;
     }
 
-    ldebug(4,"\t\t%d %s (%s) (as=%d,os=%d)\n",(int)level,
-	   dwarf_attr_string(attr),dwarf_form_string(form),cbargs->addrsize,
-	   cbargs->offset_size);
+    ldebug(4,"\t\t[die%" PRIx64 "] %d %s (%s) (as=%d,os=%d)\n",(int)level,
+	   cbargs->die_offset,dwarf_attr_string(attr),dwarf_form_string(form),
+	   cbargs->addrsize,cbargs->offset_size);
 
     /* if form is a string */
     char *str = NULL;
@@ -118,8 +119,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	//str_set = 1;
 	//break;
 	if (*(attrp->valp) > (debugfile->strtablen - 1)) {
-	    lerror("dwarf str at 0x%lx not in strtab for attr %s!\n",
-		   (unsigned long int)*(attrp->valp),
+	    lerror("[die%" PRIx64 "] dwarf str at 0x%lx not in strtab for attr %s!\n",
+		   cbargs->die_offset,(unsigned long int)*(attrp->valp),
 		   dwarf_attr_string(attr));
 	    goto errout;
 	}
@@ -132,8 +133,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_FORM_addr:
 	if (unlikely(dwarf_formaddr(attrp,&addr) != 0)) {
-	    lerror("could not get dwarf addr for attr %s\n",
-		   dwarf_attr_string(attr));
+	    lerror("[die%" PRIx64 "] could not get dwarf addr for attr %s\n",
+		   cbargs->die_offset,dwarf_attr_string(attr));
 	    goto errout;
 	}
 	addr_set = 1;
@@ -145,8 +146,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_FORM_ref2:
     case DW_FORM_ref1:
 	if (unlikely(dwarf_formref_die(attrp,&rref) == NULL)) {
-	    lerror("could not get dwarf die ref for attr %s\n",
-		   dwarf_attr_string(attr));
+	    lerror("[die%" PRIx64 "] could not get dwarf die ref for attr %s\n",
+		   cbargs->die_offset,dwarf_attr_string(attr));
 	    goto errout;
 	}
 	ref = dwarf_dieoffset(&rref);
@@ -159,8 +160,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_FORM_data2:
     case DW_FORM_data1:
 	if (unlikely(dwarf_formudata(attrp,&num) != 0)) {
-	    lerror("could not load dwarf num for attr %s",
-		   dwarf_attr_string(attr));
+	    lerror("[die%" PRIx64 "] could not load dwarf num for attr %s",
+		   cbargs->die_offset,dwarf_attr_string(attr));
 	    goto errout;
 	}
 	num_set = 1;
@@ -174,23 +175,23 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_FORM_block1:
     case DW_FORM_block:
 	if (unlikely(dwarf_formblock(attrp,&block) != 0)) {
-	    lerror("could not load dwarf block for attr %s",
-		   dwarf_attr_string(attr));
+	    lerror("[die%" PRIx64 "] could not load dwarf block for attr %s",
+		   cbargs->die_offset,dwarf_attr_string(attr));
 	    goto errout;
 	}
 	block_set = 1;
 	break;
     case DW_FORM_flag:
 	if (unlikely(dwarf_formflag(attrp,&flag) != 0)) {
-	    lerror("could not load dwarf flag for attr %s",
-		   dwarf_attr_string(attr));
+	    lerror("[die%" PRIx64 "] could not load dwarf flag for attr %s",
+		   cbargs->die_offset,dwarf_attr_string(attr));
 	    goto errout;
 	}
 	flag_set = 1;
 	break;
     default:
-	lwarn("unrecognized form %s for attr %s\n",
-	      dwarf_form_string(form),dwarf_attr_string(attr));
+	lwarn("[die%" PRIx64 "] unrecognized form %s for attr %s\n",
+	      cbargs->die_offset,dwarf_form_string(form),dwarf_attr_string(attr));
 	goto errout;
     }
 
@@ -206,8 +207,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		symtab_set_name(cbargs->symtab,str);
 	}
 	else {
-	    lwarn("attrval %s for attr %s in bad context\n",
-		  str,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %s for attr %s in bad context\n",
+		  cbargs->die_offset,str,dwarf_attr_string(attr));
 	}
 	break;
     case DW_AT_producer:
@@ -215,24 +216,24 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (level == 0) 
 	    symtab_set_producer(cbargs->cu_symtab,str);
 	else 
-	    lwarn("attrval %s for attr %s in bad context\n",
-		  str,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %s for attr %s in bad context\n",
+		  cbargs->die_offset,str,dwarf_attr_string(attr));
 	break;
     case DW_AT_comp_dir:
 	ldebug(4,"\t\t\tvalue = %s\n",str);
 	if (level == 0) 
 	    symtab_set_compdirname(cbargs->cu_symtab,str);
 	else 
-	    lwarn("attrval %s for attr %s in bad context\n",
-		  str,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %s for attr %s in bad context\n",
+		  cbargs->die_offset,str,dwarf_attr_string(attr));
 	break;
     case DW_AT_language:
 	ldebug(4,"\t\t\tvalue = %d\n",num);
 	if (level == 0) 
 	    cbargs->cu_symtab->language = num;
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  (int)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_low_pc:
 	ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
@@ -240,8 +241,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (cbargs->symtab)
 	    cbargs->symtab->lowpc = addr;
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context (symtab)\n",
-		  (int)addr,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context (symtab)\n",
+		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
 
 	/* then if it's a function, do that too! */
 	if (cbargs->symbol 
@@ -252,8 +253,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context (symbol)\n",
-		  (int)addr,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context (symbol)\n",
+		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_high_pc:
 	ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
@@ -261,8 +262,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (cbargs->symtab)
 	    cbargs->symtab->highpc = addr;
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context (symtab)\n",
-		  (int)addr,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context (symtab)\n",
+		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
 	
 	if (cbargs->symbol 
 	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
@@ -272,48 +273,64 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context (symbol)\n",
-		  (int)addr,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context (symbol)\n",
+		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_decl_file:
 	if (cbargs->symbol) {
 	    ; // XXX
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  (int)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_decl_line:
 	if (cbargs->symbol) {
 	    cbargs->symbol->srcline = (int)num;
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  (int)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
+	break;
+    /* XXX: skip these for now. */
+    case DW_AT_stmt_list:
+    case DW_AT_call_file:
+    case DW_AT_call_line:
+    case DW_AT_declaration:
 	break;
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    cbargs->symbol->s.ti.d.v.encoding = num;
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  (int)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_external:
-	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-	    cbargs->symbol->s.ii.d.f.external = flag;
+	if (cbargs->symbol 
+	    && (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION
+		|| cbargs->symbol->type == SYMBOL_TYPE_VAR)) {
+	    cbargs->symbol->s.ii.isexternal = flag;
+	}
+	else if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE
+		 && cbargs->symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
+	    cbargs->symbol->s.ti.isexternal = flag;
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  flag,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
     case DW_AT_prototyped:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-	    cbargs->symbol->s.ii.d.f.prototyped = flag;
+	    cbargs->symbol->s.ii.isprototyped = flag;
+	}
+	else if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE
+		 && cbargs->symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
+	    cbargs->symbol->s.ti.isprototyped = flag;
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  flag,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
     case DW_AT_inline:
 	if (num_set && cbargs->symbol 
@@ -328,8 +345,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  flag,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
     case DW_AT_abstract_origin:
 	if (ref_set && cbargs->symbol 
@@ -345,8 +362,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->s.ii.origin_ref = ref;
 	}
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context\n",
-		  ref,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context\n",
+		  cbargs->die_offset,ref,dwarf_attr_string(attr));
 	break;
     case DW_AT_type:
 	if (ref_set && cbargs->symbol) {
@@ -366,7 +383,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			    (uint64_t)ref;
 		}
 		else 
-		    lwarn("bogus: type ref for unknown type symbol\n");
+		    lwarn("[die%" PRIx64 "] bogus: type ref for unknown type symbol\n",
+			  cbargs->die_offset);
 	    }
 	    else {
 		if (datatype)
@@ -384,8 +402,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context\n",
-		  (uint64_t)ref,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context\n",
+		  cbargs->die_offset,(uint64_t)ref,dwarf_attr_string(attr));
 	break;
     case DW_AT_const_value:
 	if (num_set
@@ -405,8 +423,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->s.ii.isenumval = 1;
 	}
 	else 
-	    lwarn("attrval %Lx for attr %s in bad context\n",
-		  (uint64_t)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context\n",
+		  cbargs->die_offset,(uint64_t)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_byte_size:
 	if (num_set 
@@ -418,8 +436,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->s.ii.d.v.byte_size = num;
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  (int)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_bit_size:
 	if (num_set 
@@ -427,8 +445,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->s.ii.d.v.bit_size = num;
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  (int)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_bit_offset:
 	if (num_set 
@@ -436,8 +454,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->s.ii.d.v.bit_offset = num;
 	}
 	else 
-	    lwarn("attrval %d for attr %s in bad context\n",
-		  (int)num,dwarf_attr_string(attr));
+	    lwarn("[die%" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_sibling:
 	/* we process all DIEs, so no need to skip any child content. */
@@ -460,8 +478,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		cbargs->symbol->s.ii.l.l.member_offset = (int32_t)num;
 	    }
 	    else {
-		lwarn("attrval %Lx for attr %s in bad context\n",
-		      (uint64_t)num,dwarf_attr_string(attr));
+		lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context\n",
+		      cbargs->die_offset,(uint64_t)num,dwarf_attr_string(attr));
 	    }
 	    break;
 	}
@@ -471,8 +489,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_frame_base:
 	/* if it's a loclist */
 	if (num_set) {
-	    lwarn("unrecognized loclist for attr %s // form %s mix!\n",
-		  dwarf_attr_string(attr),dwarf_form_string(form));
+	    lwarn("[die%" PRIx64 "] unrecognized loclist for attr %s // form %s mix!\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
 	    break;
 	}
     /* else fall through to a block op */
@@ -480,7 +499,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     //case DW_AT_count:
     case DW_AT_lower_bound:
 	if (num_set && num) {
-	    lwarn("we only support lower_bound attrs of 0 (%d)!\n",num);
+	    lwarn("[die%" PRIx64 "] we only support lower_bound attrs of 0 (%d)!\n",
+		  cbargs->die_offset,num);
 	    break;
 	}
     case DW_AT_upper_bound:
@@ -503,8 +523,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		++cbargs->parentsymbol->s.ti.d.a.count;
 	    }
 	    else {
-		lwarn("attrval %Lx for attr %s in bad context\n",
-		      (uint64_t)num,dwarf_attr_string(attr));
+		lwarn("[die%" PRIx64 "] attrval %Lx for attr %s in bad context\n",
+		      cbargs->die_offset,(uint64_t)num,dwarf_attr_string(attr));
 	    }
 	    break;
 	}
@@ -521,13 +541,15 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    break;
 	}
 	else {
-	    lwarn("unrecognized location attr %s // form %s mix!\n",
-		  dwarf_attr_string(attr),dwarf_form_string(form));
+	    lwarn("[die%" PRIx64 "] unrecognized location attr %s // form %s mix!\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
 	    //goto errout;
 	    break;
 	}
     default:
-	lwarn("unrecognized attr %s\n",dwarf_attr_string(attr));
+	lwarn("[die%" PRIx64 "] unrecognized attr %s\n",
+	      cbargs->die_offset,dwarf_attr_string(attr));
 	//goto errout;
 	break;
     }
@@ -1243,6 +1265,8 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	}
 	else 
 	    args.symtab = symtabs[level];
+
+	args.die_offset = offset;
 	(void)dwarf_getattrs(&dies[level],attr_callback,&args,0);
 
 	/* Make room for the next level's DIE.  */
@@ -1456,7 +1480,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		symbol->datatype = voidsymbol;
 	    }
 
-	    if (symbol->s.ii.d.f.external) 
+	    if (symbol->s.ii.isexternal) 
 		debugfile_add_global(debugfile,symbol);
 	}
 	else if (symbol->type == SYMBOL_TYPE_VAR) {

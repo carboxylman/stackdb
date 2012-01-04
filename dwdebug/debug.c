@@ -818,7 +818,7 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     if (ud->meta) 
 	fprintf(ud->stream," (lowpc=0x%Lx,highpc=0x%Lx,external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
 		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc,
-		symbol->s.ii.d.f.external,symbol->s.ii.d.f.prototyped,
+		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
 		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
     if (ud->detail) {
 	fprintf(ud->stream,"(");
@@ -951,6 +951,10 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"()");
 	else if (symbol->name)
 	    fprintf(ud->stream,"(%s)",symbol->name);
+
+	if (ud->meta)
+	    fprintf(ud->stream," (prototyped=%d,external=%d) ",
+		    symbol->s.ti.isprototyped,symbol->s.ti.isexternal);
 
 	if (ud->detail) {
 	    fprintf(ud->stream,"(");

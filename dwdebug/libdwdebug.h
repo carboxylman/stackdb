@@ -533,7 +533,9 @@ struct symbol {
 	    uint16_t byte_size;
 
 	    uint8_t isanon:1,
-		    isvoid:1;
+ 		    isvoid:1,
+		    isexternal:1,
+		    isprototyped:1;
 
 	    /* If we see the use of the type before the type, we
 	     * can only fill in the ref and fill the datatype in
@@ -581,7 +583,9 @@ struct symbol {
 		    isenumval:1,
 		    isdeclinline:1,
 		    isinlined:1,
-		    isinlineinstance:1;
+		    isinlineinstance:1,
+		    isexternal:1,
+		    isprototyped:1;
 
 	    /* If this instance is inlined, these point back to the
 	     * source for the inlined instance.  If it was a forward ref
@@ -600,8 +604,6 @@ struct symbol {
 		struct {
 		    struct list_head args;
 		    uint16_t count;
-		    uint8_t external:1;
-		    uint8_t prototyped:1;
 		    uint64_t lowpc;
 		    uint64_t highpc;
 		    struct symtab *symtab;
