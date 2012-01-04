@@ -351,8 +351,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_abstract_origin:
 	if (ref_set && cbargs->symbol 
 	    && (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION 
-		|| (cbargs->symbol->type == SYMBOL_TYPE_VAR
-		    && cbargs->symbol->s.ii.isparam))) {
+		|| cbargs->symbol->type == SYMBOL_TYPE_VAR)) {
 	    cbargs->symbol->s.ii.isinlineinstance = 1;
 	    cbargs->symbol->s.ii.origin = (struct symbol *) \
 		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
