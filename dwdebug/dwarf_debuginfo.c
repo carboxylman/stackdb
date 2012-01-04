@@ -297,6 +297,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_call_file:
     case DW_AT_call_line:
     case DW_AT_declaration:
+    case DW_AT_ranges:
+    case DW_AT_entry_pc:
+    case DW_AT_MIPS_linkage_name:
+    case DW_AT_artificial:
 	break;
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
