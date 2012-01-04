@@ -828,6 +828,11 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    if (i != symbol->s.ii.d.f.count)
 		fprintf(ud->stream,",");
 	}
+	if (symbol->s.ti.d.f.hasunspec) {
+	    if (i)
+		fprintf(ud->stream,",");
+	    fprintf(ud->stream,"...");
+	}
 	fprintf(ud->stream,")");
 	fprintf(ud->stream," @@ 0x%" PRIx64 " 0x%" PRIx64,
 		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc);
@@ -964,6 +969,12 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 		if (likely(++i != symbol->s.ti.d.f.count))
 		    fprintf(ud->stream,", ");
 	    }
+	    if (symbol->s.ti.d.f.hasunspec) {
+		if (i)
+		    fprintf(ud->stream,",");
+		fprintf(ud->stream,"...");
+	    }
+		    
 	    fprintf(ud->stream,")");
 	}
 	break;

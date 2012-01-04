@@ -573,6 +573,7 @@ struct symbol {
 		struct {
 		    struct list_head args;
 		    uint16_t count;
+		    uint8_t hasunspec:1;
 		} f;
 	    } d;
 	} ti;
@@ -604,6 +605,7 @@ struct symbol {
 		struct {
 		    struct list_head args;
 		    uint16_t count;
+		    uint8_t hasunspec:1;
 		    uint64_t lowpc;
 		    uint64_t highpc;
 		    struct symtab *symtab;

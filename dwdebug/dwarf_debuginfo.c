@@ -488,6 +488,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_frame_base:
 	/* if it's a loclist */
 	if (num_set) {
+	    break;
 	    lwarn("[DIE %" PRIx64 "] unrecognized loclist for attr %s // form %s mix!\n",
 		  cbargs->die_offset,dwarf_attr_string(attr),
 		  dwarf_form_string(form));
@@ -1154,6 +1155,17 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    }
 	    if (tag == DW_TAG_member) {
 		symbols[level]->s.ii.ismember = 1;
+	    }
+	}
+	else if (tag == DW_TAG_unspecified_parameters) {
+	    if (!symbols[level-1])
+		lwarn("cannot handle unspecified_parameters without parent DIE!\n");
+	    else if (symbols[level-1]->type == SYMBOL_TYPE_TYPE
+		     && symbols[level-1]->s.ti.datatype_code == DATATYPE_FUNCTION) {
+		symbols[level-1]->s.ti.d.f.hasunspec = 1;
+	    }
+	    else if (symbols[level-1]->type == SYMBOL_TYPE_FUNCTION) {
+		symbols[level-1]->s.ii.d.f.hasunspec = 1;
 	    }
 	}
 	else if (tag == DW_TAG_base_type
