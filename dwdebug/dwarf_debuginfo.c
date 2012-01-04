@@ -1530,6 +1530,17 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		    
 	symbol_insert(symbol);
     }
+    else if (symbol
+	     && symbol->type == SYMBOL_TYPE_VAR
+	     && symbol->s.ii.isparam) {
+	/* We allow unnamed params, of course, BUT we don't put them
+	 * into the symbol table.
+	 *
+	 * XXX: we only need this for subroutine type formal parameters;
+	 * should we make the check above more robust?
+	 */
+	retval = 1;
+    }
     else if (symbol) {
 	lerror("[DIE %" PRIx64 "] non-anonymous symbol of type %s without a name!\n",
 	       die_offset,SYMBOL_TYPE(symbol->type));
