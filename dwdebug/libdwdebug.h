@@ -531,8 +531,17 @@ struct symbol {
 	struct {
 	    datatype_code_t datatype_code;
 	    uint16_t byte_size;
+
 	    uint8_t isanon:1,
 		    isvoid:1;
+
+	    /* If we see the use of the type before the type, we
+	     * can only fill in the ref and fill the datatype in
+	     * a postpass.
+	     */
+	    struct symbol *type_datatype;
+	    uint64_t type_datatype_ref;
+
 	    union {
 		struct {
 		    int encoding;
@@ -547,33 +556,13 @@ struct symbol {
 		    int count;
 		} su;
 		struct {
-		    struct symbol *array_datatype;
-		    uint64_t array_datatype_addr_ref;
 		    int *subranges;
 		    int count;
 		    int alloc;
 		} a;
 		struct {
-		    struct symbol *ptr_datatype;
-		    /* If we see the use of the type before the type, we
-		     * can only fill in the ref and fill the datatype in
-		     * a postpass.
-		     */
-		    uint64_t ptr_datatype_addr_ref;
 		    int nptrs;
 		} p;
-		struct {
-		    struct symbol *td_datatype;
-		    uint64_t td_datatype_addr_ref;
-		} td;
-		struct {
-		    struct symbol *const_datatype;
-		    uint64_t const_datatype_addr_ref;
-		} cq;
-		struct {
-		    struct symbol *vol_datatype;
-		    uint64_t vol_datatype_addr_ref;
-		} vq;
 	    } d;
 	} ti;
 	/* instance info */

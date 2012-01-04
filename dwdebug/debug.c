@@ -850,7 +850,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream,"void");
 	break;
     case DATATYPE_ARRAY:
-	symbol_type_dump(symbol->s.ti.d.a.array_datatype,&udn);
+	symbol_type_dump(symbol->s.ti.type_datatype,&udn);
 	fprintf(ud->stream," ");
 	for (i = 0; i < symbol->s.ti.d.a.count; ++i) {
 	    fprintf(ud->stream,"[%d]",symbol->s.ti.d.a.subranges[i] + 1);
@@ -858,11 +858,11 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	break;
     case DATATYPE_CONST:
 	fprintf(ud->stream,"const ");
-	symbol_type_dump(symbol->s.ti.d.cq.const_datatype,ud);
+	symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	break;
     case DATATYPE_VOL:
 	fprintf(ud->stream,"volatile ");
-	symbol_type_dump(symbol->s.ti.d.vq.vol_datatype,ud);
+	symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	break;
     case DATATYPE_STRUCT:
     case DATATYPE_UNION:
@@ -921,31 +921,31 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	 * function, it's safe to print details for it; otherwise, it's
 	 * not... I think!
 	 */
-	if (symbol->s.ti.d.p.ptr_datatype) {
-	    if (symbol->s.ti.d.p.ptr_datatype->type == SYMBOL_TYPE_TYPE
-		&& (symbol->s.ti.d.p.ptr_datatype->s.ti.datatype_code == DATATYPE_PTR
-		    || symbol->s.ti.d.p.ptr_datatype->s.ti.datatype_code == DATATYPE_VOID 
-		    || symbol->s.ti.d.p.ptr_datatype->s.ti.datatype_code == DATATYPE_BASE))
-		symbol_type_dump(symbol->s.ti.d.p.ptr_datatype,ud);
+	if (symbol->s.ti.type_datatype) {
+	    if (symbol->s.ti.type_datatype->type == SYMBOL_TYPE_TYPE
+		&& (symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_PTR
+		    || symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_VOID 
+		    || symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_BASE))
+		symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	    else {
-		symbol_type_dump(symbol->s.ti.d.p.ptr_datatype,&udn);
+		symbol_type_dump(symbol->s.ti.type_datatype,&udn);
 	    }
 	    fprintf(ud->stream,"*");
 	}
 	else
-	    fprintf(ud->stream,"ptref%Lx *",symbol->s.ti.d.p.ptr_datatype_addr_ref);
+	    fprintf(ud->stream,"ptref%Lx *",symbol->s.ti.type_datatype_ref);
 	break;
     case DATATYPE_TYPEDEF:
 	if (!ud->detail)
 	    fprintf(ud->stream,"%s",symbol->name);
-	else if (symbol->s.ti.d.td.td_datatype) {
+	else if (symbol->s.ti.type_datatype) {
 	    fprintf(ud->stream,"typedef ");
-	    symbol_type_dump(symbol->s.ti.d.td.td_datatype,ud);
+	    symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	    fprintf(ud->stream," %s",symbol->name);
 	}
 	else 
 	    fprintf(ud->stream,"typedef tdtref%Lx %s",
-		    symbol->s.ti.d.td.td_datatype_addr_ref,symbol->name);
+		    symbol->s.ti.type_datatype_ref,symbol->name);
 	break;
     case DATATYPE_BASE:
 	if (!ud->meta)

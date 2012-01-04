@@ -353,42 +353,15 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    struct symbol *datatype = (struct symbol *) \
 		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
 	    if (cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
-		if (cbargs->symbol->s.ti.datatype_code == DATATYPE_PTR) {
+		if (cbargs->symbol->s.ti.datatype_code == DATATYPE_PTR
+		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
+		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_ARRAY
+		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_CONST
+		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_VOL) {
 		    if (datatype)
-			cbargs->symbol->s.ti.d.p.ptr_datatype = datatype;
-		    else 
-			cbargs->symbol->s.ti.d.p.ptr_datatype_addr_ref = \
-			    (uint64_t)ref;
-		}
-		else if (cbargs->symbol->s.ti.datatype_code == DATATYPE_TYPEDEF) {
-		    if (datatype)
-			cbargs->symbol->s.ti.d.td.td_datatype = datatype;
-		    else 
-			cbargs->symbol->s.ti.d.td.td_datatype_addr_ref = \
-			    (uint64_t)ref;
-		}
-		else if (cbargs->symbol->s.ti.datatype_code == DATATYPE_ARRAY) {
-		    /* This is the data type for the array. */
-		    if (datatype)
-			cbargs->symbol->s.ti.d.a.array_datatype = datatype;
+			cbargs->symbol->s.ti.type_datatype = datatype;
 		    else
-			cbargs->symbol->s.ti.d.a.array_datatype_addr_ref = \
-			    (uint64_t)ref;
-		}
-		else if (cbargs->symbol->s.ti.datatype_code == DATATYPE_CONST) {
-		    /* This is the data type for the const qualifier. */
-		    if (datatype)
-			cbargs->symbol->s.ti.d.cq.const_datatype = datatype;
-		    else
-			cbargs->symbol->s.ti.d.cq.const_datatype_addr_ref = \
-			    (uint64_t)ref;
-		}
-		else if (cbargs->symbol->s.ti.datatype_code == DATATYPE_VOL) {
-		    /* This is the data type for the volatile qualifier. */
-		    if (datatype)
-			cbargs->symbol->s.ti.d.vq.vol_datatype = datatype;
-		    else
-			cbargs->symbol->s.ti.d.vq.vol_datatype_addr_ref = \
+			cbargs->symbol->s.ti.type_datatype_ref = \
 			    (uint64_t)ref;
 		}
 		else 
@@ -1433,11 +1406,11 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	 * tables.
 	 */
 	if (symbol->s.ti.datatype_code == DATATYPE_PTR
-	    && symbol->s.ti.d.p.ptr_datatype == NULL
-	    && symbol->s.ti.d.p.ptr_datatype_addr_ref == 0) {
+	    && symbol->s.ti.type_datatype == NULL
+	    && symbol->s.ti.type_datatype_ref == 0) {
 	    ldebug(3,"assuming anon ptr type %s without type is void\n",
 		   symbol->name);
-	    symbol->s.ti.d.p.ptr_datatype = voidsymbol;
+	    symbol->s.ti.type_datatype = voidsymbol;
 	}
 
 	retval = 1;
@@ -1449,40 +1422,23 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    /* If it's a valid symbol, but doesn't have a type, make it
 	     * void!
 	     */
-	    if (symbol->s.ti.datatype_code == DATATYPE_PTR
-		&& symbol->s.ti.d.p.ptr_datatype == NULL
-		&& symbol->s.ti.d.p.ptr_datatype_addr_ref == 0) {
-		ldebug(3,"assuming ptr type %s without type is void\n",
+	    if ((symbol->s.ti.datatype_code == DATATYPE_PTR
+		 || symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
+		 /* Not sure if C lets these two cases through, but whatever */
+		 || symbol->s.ti.datatype_code == DATATYPE_CONST
+		 || symbol->s.ti.datatype_code == DATATYPE_VOL)
+		&& symbol->s.ti.type_datatype == NULL
+		&& symbol->s.ti.type_datatype_ref == 0) {
+		ldebug(3,"assuming %s type %s without type is void\n",
+		       DATATYPE(symbol->s.ti.datatype_code),
 		       symbol->name);
-		symbol->s.ti.d.p.ptr_datatype = voidsymbol;
-	    }
-	    else if (symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
-		     && symbol->s.ti.d.td.td_datatype == NULL
-		     && symbol->s.ti.d.td.td_datatype_addr_ref == 0) {
-		ldebug(3,"assuming typedef type %s without type is void\n",
-		       symbol->name);
-		symbol->s.ti.d.td.td_datatype = voidsymbol;
+		symbol->s.ti.type_datatype = voidsymbol;
 	    }
 	    else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY) {
 		/* Reduce the allocation to exactly the length we used! */
 		if (symbol->s.ti.d.a.alloc > symbol->s.ti.d.a.count)
 		    realloc(symbol->s.ti.d.a.subranges,
 			    sizeof(int)*symbol->s.ti.d.a.count);
-	    }
-	    /* Not sure if C lets these two cases through, but whatever */
-	    else if (symbol->s.ti.datatype_code == DATATYPE_CONST
-		     && symbol->s.ti.d.cq.const_datatype == NULL
-		     && symbol->s.ti.d.cq.const_datatype_addr_ref == 0) {
-		ldebug(3,"assuming const type %s without type is void\n",
-		       symbol->name);
-		symbol->s.ti.d.cq.const_datatype = voidsymbol;
-	    }
-	    else if (symbol->s.ti.datatype_code == DATATYPE_VOL
-		     && symbol->s.ti.d.vq.vol_datatype == NULL
-		     && symbol->s.ti.d.vq.vol_datatype_addr_ref == 0) {
-		ldebug(3,"assuming volatile type %s without type is void\n",
-		       symbol->name);
-		symbol->s.ti.d.vq.vol_datatype = voidsymbol;
 	    }
 
 	    if (!debugfile_find_type(debugfile,symbol->name))
@@ -1563,101 +1519,40 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
     struct symbol *member;
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
-	if (symbol->s.ti.datatype_code == DATATYPE_PTR) {
-	    if (!symbol->s.ti.d.p.ptr_datatype) {
-		symbol->s.ti.d.p.ptr_datatype =		\
+	if (symbol->s.ti.datatype_code == DATATYPE_PTR
+	    || symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
+	    || symbol->s.ti.datatype_code == DATATYPE_ARRAY
+	    || symbol->s.ti.datatype_code == DATATYPE_CONST
+	    || symbol->s.ti.datatype_code == DATATYPE_VOL) {
+	    if (!symbol->s.ti.type_datatype) {
+		symbol->s.ti.type_datatype = \
 		    g_hash_table_lookup(reftab,
-					(gpointer)symbol->s.ti.d.p.ptr_datatype_addr_ref);
-		if (!symbol->s.ti.d.p.ptr_datatype) 
-		    lerror("could not resolve ref %Lx for ptr type symbol %s\n",
-			   symbol->s.ti.d.p.ptr_datatype_addr_ref,symbol->name);
+					(gpointer)symbol->s.ti.type_datatype_ref);
+		if (!symbol->s.ti.type_datatype) 
+		    lerror("could not resolve ref %Lx for %s type symbol %s\n",
+			   symbol->s.ti.type_datatype_ref,
+			   DATATYPE(symbol->s.ti.datatype_code),
+			   symbol->name);
 		else {
-		    ldebug(3,"resolved ptr type symbol %s ptref 0x%x\n",
-			   symbol->name,symbol->s.ti.d.p.ptr_datatype_addr_ref);
+		    ldebug(3,"resolved %s type symbol %s ptref 0x%x\n",
+			   DATATYPE(symbol->s.ti.datatype_code),symbol->name,
+			   symbol->s.ti.type_datatype_ref);
 
 		    /* If it's a pointer, always recurse */
 		    if (SYMBOL_IST_PTR(symbol->datatype))
 			resolve_refs(NULL,symbol->datatype,reftab);
 		}
 	    }
-	    else if (SYMBOL_IST_PTR(symbol->s.ti.d.p.ptr_datatype)) {
+	    else if (SYMBOL_IST_PTR(symbol->s.ti.type_datatype)) {
 		/* Even if we resolved *this* pointer, anon pointers
 		 * further down the pointer chain may not have been
 		 * resolved!
 		 */
 		ldebug(3,"rresolving known ptr type symbol %s ptref 0x%x\n",
-		       symbol->s.ti.d.p.ptr_datatype->name,
-		       symbol->s.ti.d.p.ptr_datatype->s.ti.d.p.ptr_datatype_addr_ref);
+		       symbol->s.ti.type_datatype->name,
+		       symbol->s.ti.type_datatype->s.ti.type_datatype_ref);
 
-		resolve_refs(NULL,symbol->s.ti.d.p.ptr_datatype,data);
-	    }
-	}
-	else if (symbol->s.ti.datatype_code == DATATYPE_TYPEDEF 
-		 && !symbol->s.ti.d.td.td_datatype) {
-	    symbol->s.ti.d.td.td_datatype = \
-		g_hash_table_lookup(reftab,
-				    (gpointer)symbol->s.ti.d.td.td_datatype_addr_ref);
-	    if (!symbol->s.ti.d.td.td_datatype) 
-		lerror("could not resolve ref %Lx for typedef type symbol %s\n",
-		       symbol->s.ti.d.td.td_datatype_addr_ref,symbol->name);
-	    else {
-		ldebug(3,"resolved typedef type symbol %s tdtref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.td.td_datatype_addr_ref);
-
-		/* If it's a pointer, always recurse */
-		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_refs(NULL,symbol->datatype,reftab);
-	    }
-	}
-	else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY 
-		 && !symbol->s.ti.d.a.array_datatype) {
-	    symbol->s.ti.d.a.array_datatype = \
-		g_hash_table_lookup(reftab,
-				    (gpointer)symbol->s.ti.d.a.array_datatype_addr_ref);
-	    if (!symbol->s.ti.d.a.array_datatype) 
-		lerror("could not resolve ref %Lx for array type symbol %s\n",
-		       symbol->s.ti.d.a.array_datatype_addr_ref,symbol->name);
-	    else {
-		ldebug(3,"resolved array type symbol %s atref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.a.array_datatype_addr_ref);
-
-		/* If it's a pointer, always recurse */
-		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_refs(NULL,symbol->datatype,reftab);
-	    }
-	}
-	else if (symbol->s.ti.datatype_code == DATATYPE_CONST 
-		 && !symbol->s.ti.d.cq.const_datatype) {
-	    symbol->s.ti.d.cq.const_datatype = \
-		g_hash_table_lookup(reftab,
-				    (gpointer)symbol->s.ti.d.cq.const_datatype_addr_ref);
-	    if (!symbol->s.ti.d.cq.const_datatype) 
-		lerror("could not resolve ref %Lx for const type symbol %s\n",
-		       symbol->s.ti.d.cq.const_datatype_addr_ref,symbol->name);
-	    else {
-		ldebug(3,"resolved const type symbol %s ctref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.cq.const_datatype_addr_ref);
-
-		/* If it's a pointer, always recurse */
-		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_refs(NULL,symbol->datatype,reftab);
-	    }
-	}
-	else if (symbol->s.ti.datatype_code == DATATYPE_VOL 
-		 && !symbol->s.ti.d.vq.vol_datatype) {
-	    symbol->s.ti.d.vq.vol_datatype = \
-		g_hash_table_lookup(reftab,
-				    (gpointer)symbol->s.ti.d.vq.vol_datatype_addr_ref);
-	    if (!symbol->s.ti.d.vq.vol_datatype) 
-		lerror("could not resolve ref %Lx for volatile type symbol %s\n",
-		       symbol->s.ti.d.vq.vol_datatype_addr_ref,symbol->name);
-	    else {
-		ldebug(3,"resolved volatile type symbol %s vref 0x%x\n",
-		       symbol->name,symbol->s.ti.d.vq.vol_datatype_addr_ref);
-
-		/* If it's a pointer, always recurse */
-		if (SYMBOL_IST_PTR(symbol->datatype))
-		    resolve_refs(NULL,symbol->datatype,reftab);
+		resolve_refs(NULL,symbol->s.ti.type_datatype,data);
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_STRUCT
