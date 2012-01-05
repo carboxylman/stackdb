@@ -1475,8 +1475,6 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	retval = 1;
     }
     else if (symbol->name) {
-	symbol_insert(symbol);
-
 	if (symbol->type == SYMBOL_TYPE_TYPE) {
 	    /* If it's a valid symbol, but doesn't have a type, make it
 	     * void!
@@ -1501,6 +1499,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			    sizeof(int)*symbol->s.ti.d.a.count);
 	    }
 
+	    symbol_insert(symbol);
+
 	    if (!debugfile_find_type(debugfile,symbol->name))
 		debugfile_add_type(debugfile,symbol);
 	}
@@ -1512,6 +1512,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		symbol->datatype = voidsymbol;
 	    }
 
+	    symbol_insert(symbol);
+
 	    if (symbol->s.ii.isexternal) 
 		debugfile_add_global(debugfile,symbol);
 	}
@@ -1522,6 +1524,10 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		       die_offset,symbol->name);
 		symbol->datatype = voidsymbol;
 	    }
+
+	    /* Don't insert params or members into the symbol table! */
+	    if (!symbol->s.ii.isparam && !symbol->s.ii.ismember) 
+		symbol_insert(symbol);
 
 	    if (level == 1)
 		debugfile_add_global(debugfile,symbol);
