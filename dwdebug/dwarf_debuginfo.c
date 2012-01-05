@@ -29,7 +29,6 @@ int find_debug_files(struct target *target,
 		     struct memregion *region,
 		     char **filelist) {
     int alloclen = 4;
-    int listlen = 0;
 
     filelist = malloc(sizeof(char *)*alloclen);
     if (!filelist)
@@ -241,8 +240,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (cbargs->symtab)
 	    cbargs->symtab->lowpc = addr;
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context (symtab)\n",
-		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
+	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symtab)\n",
+		  cbargs->die_offset,addr,dwarf_attr_string(attr));
 
 	/* then if it's a function, do that too! */
 	if (cbargs->symbol 
@@ -257,8 +256,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context (symbol)\n",
-		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
+	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symbol)\n",
+		  cbargs->die_offset,addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_high_pc:
 	ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
@@ -266,8 +265,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (cbargs->symtab)
 	    cbargs->symtab->highpc = addr;
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context (symtab)\n",
-		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
+	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symtab)\n",
+		  cbargs->die_offset,addr,dwarf_attr_string(attr));
 	
 	if (cbargs->symbol 
 	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
@@ -281,8 +280,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context (symbol)\n",
-		  cbargs->die_offset,(int)addr,dwarf_attr_string(attr));
+	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symbol)\n",
+		  cbargs->die_offset,addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_decl_file:
 	if (cbargs->symbol) {
@@ -309,6 +308,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_entry_pc:
     case DW_AT_MIPS_linkage_name:
     case DW_AT_artificial:
+    /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
+    case 8455:
 	break;
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
@@ -374,7 +375,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->s.ii.origin_ref = ref;
 	}
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context\n",
+	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
 		  cbargs->die_offset,ref,dwarf_attr_string(attr));
 	break;
     case DW_AT_type:
@@ -414,8 +415,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context\n",
-		  cbargs->die_offset,(uint64_t)ref,dwarf_attr_string(attr));
+	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
+		  cbargs->die_offset,ref,dwarf_attr_string(attr));
 	break;
     case DW_AT_const_value:
 	if (num_set
@@ -510,8 +511,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		cbargs->symbol->s.ii.l.l.member_offset = (int32_t)num;
 	    }
 	    else {
-		lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context\n",
-		      cbargs->die_offset,(uint64_t)num,dwarf_attr_string(attr));
+		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
+		      cbargs->die_offset,num,dwarf_attr_string(attr));
 	    }
 	    break;
 	}
@@ -532,7 +533,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     //case DW_AT_count:
     case DW_AT_lower_bound:
 	if (num_set && num) {
-	    lwarn("[DIE %" PRIx64 "] we only support lower_bound attrs of 0 (%d)!\n",
+	    lwarn("[DIE %" PRIx64 "] we only support lower_bound attrs of 0 (%" PRIu64 ")!\n",
 		  cbargs->die_offset,num);
 	    break;
 	}
@@ -556,8 +557,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		++cbargs->parentsymbol->s.ti.d.a.count;
 	    }
 	    else {
-		lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context\n",
-		      cbargs->die_offset,(uint64_t)num,dwarf_attr_string(attr));
+		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
+		      cbargs->die_offset,num,dwarf_attr_string(attr));
 	    }
 	    break;
 	}
@@ -581,8 +582,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    break;
 	}
     default:
-	lwarn("[DIE %" PRIx64 "] unrecognized attr %s\n",
-	      cbargs->die_offset,dwarf_attr_string(attr));
+	lwarn("[DIE %" PRIx64 "] unrecognized attr %s (%d)\n",
+	      cbargs->die_offset,dwarf_attr_string(attr),attr);
 	//goto errout;
 	break;
     }
@@ -609,7 +610,7 @@ int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 		   Dwarf_Word len,const unsigned char *data,
 		   unsigned int attr,struct location *retval) {
 
-    const unsigned int ref_size = vers < 3 ? addrsize : offset_size;
+    /* const unsigned int ref_size = vers < 3 ? addrsize : offset_size; */
 
     /* XXX: we can't get other_byte_order from dbg since we don't have
      * the struct def for it... so we assume it's not a diff byte order
@@ -989,15 +990,8 @@ int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	}
 
 	continue;
-
-    invalid:
-	;
-	/*printf (gettext ("%*s[%4" PRIuMAX "] %s  <TRUNCATED>\n"),
-	  indent, "", (uintmax_t) offset, known[op]);*/
-	break;
     }
 
- runtimeout:
     lwarn("had to save dwarf ops for runtime!\n");
     retval->loctype = LOCTYPE_RUNTIME;
     retval->l.runtime.data = malloc(origlen);
@@ -1064,7 +1058,6 @@ static int fill_debuginfo(struct debugfile *debugfile,
     Dwarf_Half version;
 
     struct symtab *cu_symtab;
-    struct symbol *symbol;
     struct symbol **symbols = (struct symbol **)malloc(maxdies*sizeof(struct symbol *));
     struct symtab **symtabs = (struct symtab **)malloc(maxdies*sizeof(struct symtab *));
 
@@ -1137,8 +1130,8 @@ static int fill_debuginfo(struct debugfile *debugfile,
     level = 0;
 
     if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
-	lerror("cannot get DIE at offset %Lx: %s\n",
-	       (uint64_t)offset,dwarf_errmsg(-1));
+	lerror("cannot get DIE at offset %" PRIx64 ": %s\n",
+	       offset,dwarf_errmsg(-1));
 	goto errout;
     }
 
@@ -1169,8 +1162,8 @@ static int fill_debuginfo(struct debugfile *debugfile,
 
 	int tag = dwarf_tag(&dies[level]);
 	if (tag == DW_TAG_invalid) {
-	    lerror("cannot get tag of DIE at offset %Lx: %s\n",
-		   (uint64_t)offset,dwarf_errmsg(-1));
+	    lerror("cannot get tag of DIE at offset %" PRIx64 ": %s\n",
+		   offset,dwarf_errmsg(-1));
 	    goto errout;
 	}
 
@@ -1523,8 +1516,10 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY) {
 		/* Reduce the allocation to exactly the length we used! */
 		if (symbol->s.ti.d.a.alloc > symbol->s.ti.d.a.count)
-		    realloc(symbol->s.ti.d.a.subranges,
-			    sizeof(int)*symbol->s.ti.d.a.count);
+		    if (!realloc(symbol->s.ti.d.a.subranges,
+				 sizeof(int)*symbol->s.ti.d.a.count)) 
+			lerror("harmless subrange realloc failure: %s",
+			       strerror(errno));
 	    }
 
 	    symbol_insert(symbol);
@@ -1586,7 +1581,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	else {
 	    inlen = 9 + 1 + 16 + 1 + 4 + 16 + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
-	    sprintf(inname,"__INLINED(%p:iref%Lx)",
+	    sprintf(inname,"__INLINED(%p:iref%" PRIx64 ")",
 		    (void *)symbol,
 		    symbol->s.ii.origin_ref);
 	}
@@ -1644,7 +1639,7 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 		    g_hash_table_lookup(reftab,
 					(gpointer)symbol->s.ti.type_datatype_ref);
 		if (!symbol->s.ti.type_datatype) 
-		    lerror("could not resolve ref %Lx for %s type symbol %s\n",
+		    lerror("could not resolve ref %" PRIx64 " for %s type symbol %s\n",
 			   symbol->s.ti.type_datatype_ref,
 			   DATATYPE(symbol->s.ti.datatype_code),
 			   symbol->name);
@@ -1699,10 +1694,10 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 	    if (!(symbol->datatype = \
 		  g_hash_table_lookup(reftab,
 				      (gpointer)symbol->datatype_addr_ref)))
-		lerror("could not resolve ref %Lx for var/func symbol %s\n",
+		lerror("could not resolve ref %" PRIx64 " for var/func symbol %s\n",
 		       symbol->datatype_addr_ref,symbol->name);
 	    else {
-		ldebug(3,"resolved non-type symbol %s tref 0x%x\n",
+		ldebug(3,"resolved non-type symbol %s tref %" PRIx64 "\n",
 		       symbol->name,symbol->datatype_addr_ref);
 	    }
 	}
@@ -1737,7 +1732,7 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 	if (!(symbol->s.ii.origin = \
 	      g_hash_table_lookup(reftab,
 				  (gpointer)symbol->s.ii.origin_ref))) {
-	    lerror("could not resolve ref %Lx for inlined %s\n",
+	    lerror("could not resolve ref %" PRIx64 " for inlined %s\n",
 		   symbol->s.ii.origin_ref,SYMBOL_TYPE(symbol->type));
 	}
 	else {
@@ -1815,12 +1810,6 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	lerror("cannot get section header string table index\n");
 	return DWARF_CB_ABORT;
     }
-
-    /* read the string section contents into a big buf for use in dwarf
-     * attr interpretation.
-     */
-    char *string_section_data;
-    int string_section_data_len = 0;
 
     Elf_Scn *scn = NULL;
     while ((scn = elf_nextscn(elf,scn)) != NULL) {

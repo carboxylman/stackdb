@@ -671,7 +671,7 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	fprintf(ud->stream,"%ssymtab:\n",p);
     if (symtab->compdirname)
 	fprintf(ud->stream,"%s    compdirname: %s\n",p,symtab->compdirname);
-    fprintf(ud->stream,"%s    low pc: 0x%x, high pc: 0x%x\n",p,symtab->lowpc,symtab->highpc);
+    fprintf(ud->stream,"%s    low pc: 0x%" PRIx64 ", high pc: 0x%" PRIx64 "\n",p,symtab->lowpc,symtab->highpc);
     if (symtab->producer)
 	fprintf(ud->stream,"%s    producer: %s\n",p,symtab->producer);
     if (symtab->language)
@@ -729,7 +729,7 @@ void location_dump(struct location *location,struct dump_info *ud) {
 void symbol_label_dump(struct symbol *symbol,struct dump_info *ud) {
     fprintf(ud->stream,"%s",symbol->name);
     if (ud->meta) 
-	fprintf(ud->stream," (lowpc=0x%Lx,highpc=0x%Lx)",
+	fprintf(ud->stream," (lowpc=0x%" PRIx64 ",highpc=0x%" PRIx64 ")",
 		symbol->s.ii.d.l.lowpc,symbol->s.ii.d.l.highpc);
 }
 
@@ -748,7 +748,7 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 		symbol_type_dump(symbol->datatype,&udn);
 	    }
 	    else if (symbol->datatype_addr_ref) 
-		fprintf(ud->stream,"tref%Lx",symbol->datatype_addr_ref);
+		fprintf(ud->stream,"tref%" PRIx64,symbol->datatype_addr_ref);
 	//}
     }
     /* all variables are named, but not all members of structs/unions! */
@@ -797,7 +797,6 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     struct symbol *arg;
-    struct symtab *csymtab;
     int i = 0;
     struct dump_info udn = {
 	.stream = ud->stream,
@@ -812,7 +811,7 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream," ");
 	}
 	else if (symbol->datatype_addr_ref)
-	    fprintf(ud->stream,"ftref%Lx ",symbol->datatype_addr_ref);
+	    fprintf(ud->stream,"ftref%" PRIx64 " ",symbol->datatype_addr_ref);
     }
     if (symbol->s.ii.isinlineinstance) {
 	if (symbol->s.ii.origin) {
@@ -826,7 +825,7 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     else 
 	fprintf(ud->stream,"%s",symbol->name);
     if (ud->meta) 
-	fprintf(ud->stream," (lowpc=0x%Lx,highpc=0x%Lx,external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
+	fprintf(ud->stream," (lowpc=0x%" PRIx64 ",highpc=0x%" PRIx64 ",external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
 		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc,
 		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
 		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
@@ -960,7 +959,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"*");
 	}
 	else
-	    fprintf(ud->stream,"ptref%Lx *",symbol->s.ti.type_datatype_ref);
+	    fprintf(ud->stream,"ptref%" PRIx64 " *",symbol->s.ti.type_datatype_ref);
 	break;
     case DATATYPE_FUNCTION:
 	if (ud->detail)
@@ -1001,7 +1000,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream," %s",symbol->name);
 	}
 	else 
-	    fprintf(ud->stream,"typedef tdtref%Lx %s",
+	    fprintf(ud->stream,"typedef tdtref%" PRIx64 " %s",
 		    symbol->s.ti.type_datatype_ref,symbol->name);
 	break;
     case DATATYPE_BASE:

@@ -218,7 +218,7 @@ unsigned long target_generic_fd_write(int fd,
 		 || (rc <= 0 && (rc == EAGAIN || rc == EINTR))) 
 	    total += rc;
 	else {
-	    lerror("write error: %s (after %d bytes)\n",strerror(errno),total);
+	    lerror("write error: %s (after %ld bytes)\n",strerror(errno),total);
 	    break;
 	}
     }
