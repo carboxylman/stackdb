@@ -1619,17 +1619,16 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 			   DATATYPE(symbol->s.ti.datatype_code),symbol->name,
 			   symbol->s.ti.type_datatype_ref);
 
-		    /* If it's a pointer, always recurse */
-		    if (SYMBOL_IST_PTR(symbol->datatype))
-			resolve_refs(NULL,symbol->datatype,reftab);
+		    resolve_refs(NULL,symbol->s.ti.type_datatype,reftab);
 		}
 	    }
-	    else if (SYMBOL_IST_PTR(symbol->s.ti.type_datatype)) {
-		/* Even if we resolved *this* pointer, anon pointers
-		 * further down the pointer chain may not have been
+	    else {
+		/* Even if this symbol has been resolved, anon types
+		 * further down the type chain may not have been
 		 * resolved!
 		 */
-		ldebug(3,"rresolving known ptr type symbol %s ptref 0x%x\n",
+		ldebug(3,"rresolving known %s type symbol %s ref 0x%x\n",
+		       SYMBOL_TYPE(symbol->s.ti.type_datatype->s.ti.datatype_code),
 		       symbol->s.ti.type_datatype->name,
 		       symbol->s.ti.type_datatype->s.ti.type_datatype_ref);
 
@@ -1649,7 +1648,7 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_STRUCT
-		 || symbol->s.ti.datatype_code == DATATYPE_UNION) 
+		 || symbol->s.ti.datatype_code == DATATYPE_UNION) {
 	    /* do it for the struct members! */
 	    list_for_each_entry(member,&(symbol->s.ti.d.su.members),member) {
 		if (!member->datatype) {
@@ -1658,6 +1657,7 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 		    resolve_refs(NULL,member,reftab);
 		}
 	    }
+	}
     }
     else {
 	/* do it for the variable or function's main type */
@@ -1673,8 +1673,10 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 	    }
 	}
 
-	/* If it's a pointer, always recurse */
-	if (symbol->datatype && SYMBOL_IST_PTR(symbol->datatype))
+	/* Always recurse in case there are anon symbols down the chain
+	 * that need resolution.
+	 */
+	if (symbol->datatype)
 	    resolve_refs(NULL,symbol->datatype,reftab);
 
 	/* then, if this is a function, do the args */
@@ -1710,6 +1712,9 @@ void resolve_refs(gpointer key,gpointer value,gpointer data) {
 		   symbol->s.ii.origin_ref,
 		   symbol->s.ii.origin->name);
 	}
+
+	if (symbol->s.ii.origin)
+	    resolve_refs(NULL,symbol->s.ii.origin,reftab);
     }
 }
 
