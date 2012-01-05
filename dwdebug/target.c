@@ -210,6 +210,11 @@ unsigned long target_generic_fd_write(int fd,
     size_t rc;
     size_t total = 0;
 
+    if (lseek64(fd,addr,0) == (off_t)-1) {
+	lerror("lseek64: %s",strerror(errno));
+	return 0;
+    }
+
     while (1) {
 	rc = write(fd,buf+total,length-total);
 	if (rc > 0 && (total + rc) == length)
