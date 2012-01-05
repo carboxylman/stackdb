@@ -425,18 +425,38 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && cbargs->parentsymbol->type == SYMBOL_TYPE_TYPE
 	    && cbargs->parentsymbol->s.ti.datatype_code == DATATYPE_ENUM
 	    && cbargs->parentsymbol->s.ti.byte_size > 0) {
-	    // XXX we just use a 64-bit int and hope it doesn't
-	    // overflow; the alternative is to malloc a chunk of mem
-	    // once we know how many enumerators there are!
 	    cbargs->symbol->s.ii.constval = \
 		malloc(cbargs->parentsymbol->s.ti.byte_size);
 	    memcpy(cbargs->symbol->s.ii.constval,&num,
 		   cbargs->parentsymbol->s.ti.byte_size);
 	    cbargs->symbol->s.ii.isenumval = 1;
 	}
+	else if (num_set && cbargs->symbol 
+		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
+		     || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
+	    /* XXX: just use a 64 bit unsigned for now, since we may not
+	     * have seen the type for this symbol yet.  We can always
+	     * deal with it later.
+	     */
+	    cbargs->symbol->s.ii.constval = malloc(sizeof(Dwarf_Word));
+	    memcpy(cbargs->symbol->s.ii.constval,&num,sizeof(Dwarf_Word));
+	}
+	else if (str_set && cbargs->symbol 
+		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
+		     || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
+	    /* Don't malloc; use our copy of the string table. */
+	    cbargs->symbol->s.ii.constval = str;
+	}
+	else if (block_set && cbargs->symbol 
+		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
+		     || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
+	    cbargs->symbol->s.ii.constval = malloc(block.length);
+	    memcpy(cbargs->symbol->s.ii.constval,block.data,block.length);
+	}
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %Lx for attr %s in bad context\n",
-		  cbargs->die_offset,(uint64_t)num,dwarf_attr_string(attr));
+	    lwarn("[DIE %" PRIx64 "] attr %s form %s in bad context\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
 	break;
     case DW_AT_byte_size:
 	if (num_set 

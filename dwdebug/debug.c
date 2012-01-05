@@ -789,6 +789,9 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     if (ud->detail && symbol->s.ii.l.loctype != LOCTYPE_UNKNOWN) {
 	fprintf(ud->stream," @@ ");
 	location_dump(&symbol->s.ii.l,ud);
+
+	if (symbol->s.ii.constval)
+	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
     }
 }
 
@@ -843,6 +846,10 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream,")");
 	fprintf(ud->stream," @@ 0x%" PRIx64 " 0x%" PRIx64,
 		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc);
+
+	if (symbol->s.ii.constval)
+	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
+
 	fprintf(ud->stream,"\n");
 
 	symtab_dump(symbol->s.ii.d.f.symtab,&udn);
