@@ -428,9 +428,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    // XXX we just use a 64-bit int and hope it doesn't
 	    // overflow; the alternative is to malloc a chunk of mem
 	    // once we know how many enumerators there are!
-	    cbargs->symbol->s.ii.d.constval = \
+	    cbargs->symbol->s.ii.constval = \
 		malloc(cbargs->parentsymbol->s.ti.byte_size);
-	    memcpy(cbargs->symbol->s.ii.d.constval,&num,
+	    memcpy(cbargs->symbol->s.ii.constval,&num,
 		   cbargs->parentsymbol->s.ti.byte_size);
 	    cbargs->symbol->s.ii.isenumval = 1;
 	}
@@ -1340,9 +1340,17 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		++(symbols[level-1]->s.ti.d.su.count);
 	    }
 	    else if (tag == DW_TAG_formal_parameter) {
-		list_add_tail(&(symbols[level]->member),
-			      &(symbols[level-1]->s.ii.d.f.args));
-		++(symbols[level-1]->s.ii.d.f.count);
+		if (symbols[level-1]->type == SYMBOL_TYPE_FUNCTION) {
+		    list_add_tail(&(symbols[level]->member),
+				  &(symbols[level-1]->s.ii.d.f.args));
+		    ++(symbols[level-1]->s.ii.d.f.count);
+		}
+		else if (symbols[level-1]->type == SYMBOL_TYPE_TYPE
+			 && symbols[level-1]->s.ti.datatype_code == DATATYPE_FUNCTION) {
+		    list_add_tail(&(symbols[level]->member),
+				  &(symbols[level-1]->s.ti.d.f.args));
+		    ++(symbols[level-1]->s.ti.d.f.count);
+		}
 	    }
 	    else if (tag == DW_TAG_enumerator) {
 		if (symbols[level-1]->type == SYMBOL_TYPE_TYPE 

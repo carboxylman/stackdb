@@ -783,7 +783,7 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     if (symbol->type == SYMBOL_TYPE_VAR
 	&& symbol->s.ii.isenumval) {
 	// XXX fix type printing -- this *is* a malloc'd constval
-	fprintf(ud->stream," = %d",*((int *)symbol->s.ii.d.constval));
+	fprintf(ud->stream," = %d",*((int *)symbol->s.ii.constval));
     }
 
     if (ud->detail && symbol->s.ii.l.loctype != LOCTYPE_UNKNOWN) {

@@ -597,8 +597,10 @@ struct symbol {
 	    struct symbol *origin;
 	    uint64_t origin_ref;
 
+	    /* If this instance already has a value, this is it! */
+	    void *constval;
+
 	    union {
-		void *constval;
 		/* For a function instance (i.e., a DW_TAG_subprogram or
 		 * DW_TAG_inlined_subroutine, this data describes the
 		 * function's "type" information.
