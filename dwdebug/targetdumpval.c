@@ -4,15 +4,30 @@
 #include <errno.h>
 #include <string.h>
 
+#include <sys/user.h>
+#include <sys/ptrace.h>
+#include <inttypes.h>
+
+#include <signal.h>
+
 #include "libdwdebug.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
 
+struct target *t = NULL;
+
+void sigh(int signo) {
+    if (t) {
+	target_close(t);
+	fprintf(stderr,"Ending trace.\n");
+    }
+    exit(0);
+}
+
 int main(int argc,char **argv) {
     int pid = -1;
     char *exe = NULL;
-    struct target *t;
     char ch;
     int debug = 0;
     target_status_t tstat;
@@ -69,10 +84,26 @@ int main(int argc,char **argv) {
 	exit(-4);
     }
 
+    signal(SIGHUP,sigh);
+    signal(SIGINT,sigh);
+    signal(SIGQUIT,sigh);
+    signal(SIGABRT,sigh);
+    signal(SIGKILL,sigh);
+    signal(SIGSEGV,sigh);
+    signal(SIGPIPE,sigh);
+    signal(SIGALRM,sigh);
+    signal(SIGTERM,sigh);
+    signal(SIGUSR1,sigh);
+    signal(SIGUSR2,sigh);
+
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == STATUS_PAUSED) {
-	    printf("pid %d interrupted",pid);
+	    struct user_regs_struct regs;
+
+	    ptrace(PTRACE_GETREGS,pid,NULL,&regs);
+
+	    printf("pid %d interrupted at 0x%" PRIx64,pid,regs.rip);
 	    if (addr) {
 		if (target_read_addr(t,addr,sizeof(int),
 				     (unsigned char *)&value) != NULL)
