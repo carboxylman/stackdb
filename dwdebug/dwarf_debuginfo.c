@@ -980,13 +980,15 @@ int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    break;
 	default:
 	  /* No Operand.  */
-	  if (op < sizeof known / sizeof known[0] && known[op] != NULL)
-	      ; /*printf ("%*s[%4" PRIuMAX "] %s\n",
-		indent, "", (uintmax_t) offset, known[op]);*/
-	  else
-	      ; /*printf ("%*s[%4" PRIuMAX "] %#x\n",
-		indent, "", (uintmax_t) offset, op);*/
-	  break;
+	    if (op < sizeof known / sizeof known[0] && known[op] != NULL) {
+		; /*printf ("%*s[%4" PRIuMAX "] %s\n",
+		    indent, "", (uintmax_t) offset, known[op]);*/
+	    }
+	    else {
+		; /*printf ("%*s[%4" PRIuMAX "] %#x\n",
+		    indent, "", (uintmax_t) offset, op);*/
+	    }
+	    break;
 	}
 
 	continue;
@@ -1622,7 +1624,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     return retval;
 }
 
-void resolve_refs(gpointer key,gpointer value,gpointer data) {
+void resolve_refs(gpointer key __attribute__ ((unused)),
+		  gpointer value,gpointer data) {
     struct symbol *symbol = (struct symbol *)value;
     GHashTable *reftab = (GHashTable *)data;
     struct symbol *member;
