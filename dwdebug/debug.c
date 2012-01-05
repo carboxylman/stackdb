@@ -61,7 +61,9 @@ LIST_HEAD(debugfiles);
 /*
  * Some generic GHashTable util functions for freeing hashtables.
  */
-gboolean always_remove(gpointer key,gpointer value,gpointer user_data) {
+gboolean always_remove(gpointer key __attribute__((unused)),
+		       gpointer value __attribute__((unused)),
+		       gpointer user_data __attribute__((unused))) {
     return TRUE;
 }
 
@@ -585,12 +587,14 @@ static struct debugfile *__debugfile_create(char *filename,
     return debugfile;
 }
 
-void g_hash_foreach_dump_symtab(gpointer key,gpointer value,gpointer userdata) {
+void g_hash_foreach_dump_symtab(gpointer key __attribute__((unused)),
+				gpointer value,gpointer userdata) {
     struct dump_info *ud = (struct dump_info *)userdata;
     symtab_dump((struct symtab *)value,ud);
 }
 
-void g_hash_foreach_dump_symbol(gpointer key,gpointer value,gpointer userdata) {
+void g_hash_foreach_dump_symbol(gpointer key __attribute__((unused)),
+				gpointer value,gpointer userdata) {
     struct dump_info *ud = (struct dump_info *)userdata;
     symbol_dump((struct symbol *)value,ud);
 }
@@ -1338,11 +1342,6 @@ void symbol_set_type(struct symbol *symbol,symbol_type_t symtype) {
 
 void symbol_set_srcline(struct symbol *symbol,int srcline) {
     symbol->srcline = srcline;
-}
-
-void symbol_desc_function(struct symbol *symbol,uint64_t lowpc,uint64_t highpc,
-			  uint8_t inlined) {
-
 }
 
 void symbol_free(struct symbol *symbol) {
