@@ -8,11 +8,17 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/ptrace.h>
+#include <sys/user.h>
+#include <sys/reg.h>
+#include <bits/wordsize.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
+
+#include <elf.h>
+#include <libelf.h>
 
 #include "libdwdebug.h"
 
@@ -41,6 +47,9 @@ unsigned long linux_userproc_write(struct target *target,
 				   unsigned long long addr,
 				   unsigned long length,
 				   unsigned char *buf);
+char *linux_userproc_reg_name(struct target *target,REG reg);
+REGVAL linux_userproc_read_reg(struct target *target,REG reg);
+int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value);
 
 /*
  * Set up the target interface for this library.
@@ -58,6 +67,9 @@ struct target_ops linux_userspace_process_ops = {
     .monitor = linux_userproc_monitor,
     .read = linux_userproc_read,
     .write = linux_userproc_write,
+    .regname = linux_userproc_reg_name,
+    .readreg = linux_userproc_read_reg,
+    .writereg = linux_userproc_write_reg,
 };
 
 struct linux_userproc_state {
@@ -66,11 +78,24 @@ struct linux_userproc_state {
     int32_t ptrace_opts;
     enum __ptrace_request ptrace_type;
     int last_signo;
+    int syscall;
 };
 
 /**
  ** These are the only user-visible functions.
  **/
+
+int linux_userproc_last_signo(struct target *target) {
+    if (target)
+	return ((struct linux_userproc_state *)target->state)->last_signo;
+    return -1;
+}
+
+int linux_userproc_stopped_by_syscall(struct target *target) {
+    if (target)
+	return ((struct linux_userproc_state *)target->state)->syscall;
+    return 0;
+}
 
 /*
  * Attaches to @pid.  The caller does all of the normal ptrace
@@ -81,6 +106,12 @@ struct target *linux_userproc_attach(int pid) {
     char buf[256];
     struct stat sbuf;
     FILE *debugfile;
+    char pbuf[PATH_MAX*2];
+    char main_exe[PATH_MAX];
+    int fd;
+    Elf *elf;
+    int rc;
+    char *eident;
 
     ldebug(5,"opening pid %d\n",pid);
 
@@ -111,8 +142,36 @@ struct target *linux_userproc_attach(int pid) {
 	fclose(debugfile);
     }
 
+    /* Discover the wordsize and endianness of the process, based off
+     * its main executable.
+     */
+    /* first, find the pathname of our main exe */
+    snprintf(pbuf,PATH_MAX*2,"/proc/%d/exe",pid);
+    if ((rc = readlink(pbuf,main_exe,PATH_MAX - 1)) < 1)
+	return NULL;
+    main_exe[rc] = '\0';
+
+    if ((fd = open(main_exe,0,O_RDONLY)) < 0) {
+	lerror("open %s: %s\n",main_exe,strerror(errno));
+	return NULL;
+    }
+
+    elf_version(EV_CURRENT);
+    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
+	lerror("elf_begin %s: %s\n",main_exe,elf_errmsg(elf_errno()));
+	return NULL;
+    }
+
+    /* read the ident stuff to get wordsize and endianness info */
+    if (!(eident = elf_getident(elf,NULL))) {
+	lerror("elf_getident %s: %s\n",main_exe,elf_errmsg(elf_errno()));
+	elf_end(elf);
+	return NULL;
+    }
+
     target = (struct target *)malloc(sizeof(*target));
     if (!target) {
+	elf_end(elf);
 	errno = ENOMEM;
 	return NULL;
     }
@@ -123,8 +182,54 @@ struct target *linux_userproc_attach(int pid) {
     target->live = 1;
     target->writeable = 1;
     target->ops = &linux_userspace_process_ops;
+    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
+	target->wordsize = 4;
+	ldebug(3,"32-bit %s\n",main_exe);
+    }
+    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
+	target->wordsize = 8;
+	ldebug(3,"64-bit %s\n",main_exe);
+    }
+    else {
+	lerror("unknown elf class %d; not 32/64 bit!\n",
+	       (uint8_t)eident[EI_CLASS]);
+	free(target);
+	elf_end(elf);
+	return NULL;
+    }
+    target->ptrsize = target->wordsize;
+
+    if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
+	target->endian = DATA_LITTLE_ENDIAN;
+	ldebug(3,"little endian %s\n",main_exe);
+    }
+    else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
+	target->endian = DATA_BIG_ENDIAN;
+	ldebug(3,"big endian %s\n",main_exe);
+    }
+    else {
+	lerror("unknown elf data %d; not big/little endian!\n",
+	       (uint8_t)eident[EI_DATA]);
+	free(target);
+	elf_end(elf);
+	return NULL;
+    }
+
+    /* Which register is the fbreg is dependent on host cpu type, not
+     * target cpu type.
+     */
+#if __WORDSIZE == 64
+    target->fbregno = 6;
+#else
+    target->fbregno = 5;
+#endif
+
+    /* Done with the elf ident data. */
+    elf_end(elf);
 
     target->space = addrspace_create("NULL",0,pid);
+
+    target->space->target = target;
 
     ldebug(5,"opened pid %d\n",pid);
 
@@ -432,6 +537,7 @@ static int linux_userproc_resume(struct target *target) {
 
     ldebug(5,"ptrace restart %d succeeded\n",target->space->pid);
     lstate->last_signo = -1;
+    lstate->syscall = 0;
 
     return 0;
 }
@@ -467,6 +573,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 	    ldebug(5,"target %d stopped with trap signo %d\n",
 		   pid,lstate->last_signo);
 	    lstate->last_signo = -1;
+	    lstate->syscall = 1;
 	}
 	else {
 	    ldebug(5,"target %d stopped with signo %d\n",
@@ -523,4 +630,192 @@ unsigned long linux_userproc_write(struct target *target,
      * STOP without interfering with its execution, so we don't!
      */
     return target_generic_fd_write(lstate->memfd,addr,length,buf);
+}
+
+/*
+ * The register mapping between x86_64 registers is defined by AMD in
+ * http://www.x86-64.org/documentation/abi-0.99.pdf :
+ *
+ *
+ * Figure 3.36: DWARF Register Number Mapping
+ * Register Name Number Abbreviation
+ * General Purpose Register RAX 0 %rax
+ * General Purpose Register RDX 1 %rdx
+ * General Purpose Register RCX 2 %rcx
+ * General Purpose Register RBX 3 %rbx
+ * General Purpose Register RSI 4 %rsi
+ * General Purpose Register RDI 5 %rdi
+ * Frame Pointer Register RBP 6 %rbp
+ * Stack Pointer Register RSP 7 %rsp
+ * Extended Integer Registers 8-15 8-15 %r8–%r15
+ * Return Address RA 16
+ * Vector Registers 0–7 17-24 %xmm0–%xmm7
+ * Extended Vector Registers 8–15 25-32 %xmm8–%xmm15
+ * Floating Point Registers 0–7 33-40 %st0–%st7
+ * MMX Registers 0–7 41-48 %mm0–%mm7
+ * Flag Register 49 %rFLAGS
+ * Segment Register ES 50 %es
+ * Segment Register CS 51 %cs
+ * Segment Register SS 52 %ss
+ * Segment Register DS 53 %ds
+ * Segment Register FS 54 %fs
+ * Segment Register GS 55 %gs
+ * Reserved 56-57
+ * FS Base address 58 %fs.base
+ * GS Base address 59 %gs.base
+ * Reserved 60-61
+ * Task Register 62 %tr
+ * LDT Register 63 %ldtr
+ * 128-bit Media Control and Status 64 %mxcsr
+ * x87 Control Word 65 %fcw
+ * x87 Status Word 66 %fsw
+ */
+
+/* Register mapping.
+ *
+ * First, be aware that our host bit size (64/32) *does* influence which
+ * registers we can access -- i.e., ptrace on 64-bit host tracing a
+ * 32-bit process still gets the 64-bit registers -- but even then, we
+ * want the 32-bit mapping for DWARF reg num to i386 reg.
+ *
+ * Second, the mappings below are defined in sys/reg.h, but since the
+ * macros there are defined according to compile-time __WORDSIZE, we
+ * don't use them, and just encode the indexes manually.
+ * regmapNN[x] = y provides, for DWARF register x, an offset y into the
+ * register structs returned by ptrace.
+ *
+ * XXX XXX XXX
+ * If structs in sys/user.h change, ever, these mappings will be wrong.
+ * It is unfortunate that sys/user.h conditions the macros on __WORDSIZE.
+ */
+#define X86_64_DWREG_COUNT 67
+static int dreg_to_ptrace_idx64[X86_64_DWREG_COUNT] = { 
+    10, 12, 11, 5, 13, 14, 4, 19,
+    9, 8, 7, 6, 3, 2, 1, 0,
+    16, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    18, 24, 17, 20, 23, 25, 26, 
+    -1, -1, 
+    21, 22, 
+    -1, -1, 
+    -1, -1, -1, -1, -1,
+};
+static char *dreg_to_name64[X86_64_DWREG_COUNT] = { 
+    "rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
+    "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+    "rip",
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    "rflags", "es", "cs", "ss", "ds", "fs", "gs",
+    NULL, NULL,
+    "fs_base", "gs_base", 
+    NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL,
+};
+
+#define X86_32_DWREG_COUNT 10
+static int dreg_to_ptrace_idx32[X86_32_DWREG_COUNT] = { 
+    7, 2, 3, 1, 16, 6, 4, 5,
+    13, 15,
+};
+static char *dreg_to_name32[X86_32_DWREG_COUNT] = { 
+    "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
+    "eip", "eflags",
+};
+
+/*
+ * Register functions.
+ */
+char *linux_userproc_reg_name(struct target *target,REG reg) {
+#if __WORDSIZE == 64
+    if (reg >= X86_64_DWREG_COUNT) {
+	lerror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	return NULL;
+    }
+    return dreg_to_name64[reg];
+#else
+    if (reg >= I386_DWREG_COUNT) {
+	lerror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	return NULL;
+    }
+    return dreg_to_name32[reg];
+#endif
+}
+
+REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
+    struct user_regs_struct regs;
+    int ptrace_idx;
+
+#if __WORDSIZE == 64
+    if (reg >= X86_64_DWREG_COUNT) {
+	lerror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return 0;
+    }
+    ptrace_idx = dreg_to_ptrace_idx64[reg];
+#else
+    if (reg >= I386_DWREG_COUNT) {
+	lerror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return 0;
+    }
+    ptrace_idx = dreg_to_ptrace_idx32[reg];
+#endif
+
+    /* Don't bother checking if process is stopped!  We can't send it a
+     * STOP without interfering with its execution, so we don't!
+     */
+    if (ptrace(PTRACE_GETREGS,target->space->pid,NULL,&regs) == -1) {
+	lerror("ptrace(GETREGS): %s\n",strerror(errno));
+	return 0;
+    }
+
+    errno = 0;
+#if __WORDSIZE == 64
+    return (REGVAL)(((unsigned long *)&regs)[ptrace_idx]);
+#else 
+    return (REGVAL)(((long int *)&regs)[ptrace_idx]);
+#endif
+}
+
+int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
+    struct user_regs_struct regs;
+    int ptrace_idx;
+
+#if __WORDSIZE == 64
+    if (reg >= X86_64_DWREG_COUNT) {
+	lerror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+    ptrace_idx = dreg_to_ptrace_idx64[reg];
+#else
+    if (reg >= I386_DWREG_COUNT) {
+	lerror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+    ptrace_idx = dreg_to_ptrace_idx32[reg];
+#endif
+
+#if __WORDSIZE == 64
+    ((unsigned long *)&regs)[ptrace_idx] = (unsigned long)value;
+#else 
+    ((long int*)&regs)[ptrace_idx] = (long int)value;
+#endif
+
+    /* Don't bother checking if process is stopped!  We can't send it a
+     * STOP without interfering with its execution, so we don't!
+     */
+    if (ptrace(PTRACE_SETREGS,target->space->pid,NULL,&regs) == -1) {
+	lerror("ptrace(SETREGS): %s\n",strerror(errno));
+	return -1;
+    }
+
+    return 0;
 }
