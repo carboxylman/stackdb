@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 /**
  ** The generic target API!
@@ -59,8 +60,8 @@ unsigned char *target_read_addr(struct target *target,
 				unsigned long long addr,
 				unsigned long length,
 				unsigned char *buf) {
-    ldebug(5,"reading target(%s:%s) at %16llx (%d)\n",
-	   target->type,target->space->idstr,addr,length);
+    ldebug(5,"reading target(%s:%s) at %16llx into %p (%d)\n",
+	   target->type,target->space->idstr,addr,buf,length);
     return target->ops->read(target,addr,length,buf);
 }
 
@@ -82,6 +83,24 @@ int target_write(struct target *target,struct symbol *symbol,
     
 
     return 0;
+}
+
+char *target_reg_name(struct target *target,REG reg) {
+    ldebug(5,"target(%s:%s) reg name %d)\n",
+	   target->type,target->space->idstr,reg);
+    return target->ops->regname(target,reg);
+}
+
+REGVAL target_read_reg(struct target *target,REG reg) {
+    ldebug(5,"reading target(%s:%s) reg %d)\n",
+	   target->type,target->space->idstr,reg);
+    return target->ops->readreg(target,reg);
+}
+
+int target_write_reg(struct target *target,REG reg,REGVAL value) {
+    ldebug(5,"writing target(%s:%s) reg %d %" PRIx64 ")\n",
+	   target->type,target->space->idstr,reg);
+    return target->ops->writereg(target,reg,value);
 }
 
 int target_close(struct target *target) {
@@ -131,6 +150,8 @@ unsigned char *target_generic_fd_read(int fd,
     int retval;
     int len;
 
+    ldebug(5,"reading fd %d at 0x%llx into %p (%d)\n",fd,addr,buf,length);
+
     /* We must malloc their buffer if they want us to read a NUL-term
      * string!
      */
@@ -145,8 +166,10 @@ unsigned char *target_generic_fd_read(int fd,
 	lbuf = malloc(bufsiz);
     }
 
-    if (lseek64(fd,addr,SEEK_SET) == (off64_t) -1)
+    if (lseek64(fd,addr,SEEK_SET) == (off64_t) -1) {
+	lerror("lseek64(%d,0x%llx,0): %s\n",fd,addr,strerror(errno));
 	return NULL;
+    }
 
     while (1) {
 	retval = read(fd,lbuf+rc,bufsiz - rc);
@@ -160,6 +183,7 @@ unsigned char *target_generic_fd_read(int fd,
 		/* we've found a NUL-term string */
 		if (!realloc(lbuf,len + 1)) {
 		    free(lbuf);
+		    lerror("realloc: %s\n",strerror(errno));
 		    return NULL;
 		}
 		return lbuf;
@@ -171,6 +195,7 @@ unsigned char *target_generic_fd_read(int fd,
 		    if (!tbuf) {
 			/* we can't recover from this! */
 			free(lbuf);
+			lerror("malloc: %s\n",strerror(errno));
 			return NULL;
 		    }
 		    memcpy(tbuf,lbuf,bufsiz);
@@ -187,6 +212,7 @@ unsigned char *target_generic_fd_read(int fd,
 	else if (retval == 0 && rc != bufsiz) {
 	    if (lbuf != buf) 
 		free(lbuf);
+	    lerror("EOF before reading %d bytes!\n",bufsiz);
 	    errno = EOF;
 	    return NULL;
 	}
@@ -194,6 +220,7 @@ unsigned char *target_generic_fd_read(int fd,
 		 && retval != EAGAIN && retval != EINTR) {
 	    if (lbuf != buf) 
 		free(lbuf);
+	    lerror("read: %s\n",strerror(errno));
 	    return NULL;
 	}
 	else 

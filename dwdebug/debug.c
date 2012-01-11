@@ -11,7 +11,9 @@
 #include <unistd.h>
 #include <regex.h>
 #include <limits.h>
+#include <stdint.h>
 #include <inttypes.h>
+#include <stdarg.h>
 
 #include <glib.h>
 
@@ -99,9 +101,14 @@ static void ghash_symbol_free(gpointer data) {
 }
 
 /**
- ** Symbol lookup functions.
+ ** Local prototypes.
  **/
+static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member,
+					      struct symbol_chain **chainptr);
 
+/**
+ ** PC lookup functions.
+ **/
 /*
  * NOTE: this function returns the tightest bounding symtab -- which may
  * be the symtab that was passed in!!
@@ -136,7 +143,7 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
     return NULL;
 }
 
-struct symtab *space_lookup_symtab_pc(struct addrspace *space,uint64_t pc) {
+struct symtab *addrspace_lookup_pc(struct addrspace *space,uint64_t pc) {
     struct memregion *region;
     struct symtab *symtab;
     int found = 0;
@@ -167,65 +174,100 @@ struct symtab *space_lookup_symtab_pc(struct addrspace *space,uint64_t pc) {
     return NULL;
 }
 
-struct symbol *lookup_sym(struct addrspace *space,char *name,
-			  char *df_filename,char *df_name,char *df_version,
-			  char *srcfile) {
-    return NULL;
-}
-
-struct symbol *debugfile_lookup_var(struct debugfile *debugfile,char *name,
-				    char *srcfile) {
-    return NULL;
-}
-
-struct symbol *debugfile_lookup_func(struct debugfile *debugfile,char *name,
-				     char *srcfile) {
-    return NULL;
-}
-
-struct symbol *debugfile_lookup_type(struct debugfile *debugfile,char *name,
-				     char *srcfile) {
-    return NULL;
-}
-
-struct symbol *symtab_lookup_sym(struct symtab *symtab,char *name) {
-    struct symtab *tmp;
+/**
+ ** Symbol lookup functions.
+ **/
+struct symbol *symtab_lookup_sym(struct symtab *symtab,char *name,
+				 symbol_type_flag_t ftype) {
     struct symbol *value;
-    int namelen;
-    char *namei;
     GHashTableIter iter;
     gpointer key;
 
-    if ((namei = index(name,':'))) {
-	namelen = namei - name;
-	namei++;
-    }
-    else {
-	namelen = strlen(name);
-	namei = NULL;
+    /*
+     * Check our symbols first.
+     */
+    g_hash_table_iter_init(&iter,symtab->tab);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&value)) {
+	if (((ftype != SYMBOL_TYPE_FLAG_NONE
+	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+		      && SYMBOL_IS_FUNCTION(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+		      && SYMBOL_IS_LABEL(value))))
+	     || ftype == SYMBOL_TYPE_FLAG_NONE)
+	    && strcmp(name,key) == 0)
+	    return (struct symbol *)value;
     }
 
+    return NULL;
+}
+struct symbol_chain *symtab_lookup_nested_sym(struct symtab *symtab,char *name,
+					      const char *delim,
+					      symbol_type_flag_t ftype) {
+    struct symtab *tmp;
+    struct symbol *value;
+    GHashTableIter iter;
+    gpointer key;
+
+    //struct symbol_chain *chain = (struct symbol_chain *)malloc(sizeof(struct symbol_chain));
+
+    return NULL;
+
     /*
-     * Check our symbols first, IF we're not looking for subtables.
+     * Check our symbols first.
      */
-    if (!namei) {
-	g_hash_table_iter_init(&iter,symtab->tab);
-	while (g_hash_table_iter_next(&iter,
-				      (gpointer *)&key,(gpointer *)&value)) {
-	    if (strncmp(name,key,namelen) == 0)
-		return (struct symbol *)value;
-	}
+    g_hash_table_iter_init(&iter,symtab->tab);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&value)) {
+	if (((ftype != SYMBOL_TYPE_FLAG_NONE
+	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+		      && SYMBOL_IS_FUNCTION(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+		      && SYMBOL_IS_LABEL(value))))
+	     || ftype == SYMBOL_TYPE_FLAG_NONE)
+	    && strcmp(name,key) == 0)
+	    //return (struct symbol *)value;
+	    break;
     }
 
     /* 
-     * Else, start checking children symtabs; DFS; first wins.  If they
-     * sent a delimited string to us, only match successive subtabs
-     * named with that string!
+     * If no match, start checking children symtabs; DFS; first wins.
+     * BUT, we only check anonymous subtables (i.e., lexical blocks).
      */
-    if (namei) {
-	list_for_each_entry(tmp,&symtab->subtabs,member) {
-	    if (tmp->name && strncmp(name,tmp->name,namelen) == 0) {
-		return symtab_lookup_sym(tmp,namei);
+    list_for_each_entry(tmp,&symtab->subtabs,member) {
+	if (tmp->name && strcmp(name,tmp->name) == 0) {
+	    //return symtab_lookup_sym(tmp,namei,ftype);
+	}
+    }
+
+    return NULL;
+}
+
+struct symbol *target_lookup_sym(struct target *target,char *name,
+				 char *srcfile,symbol_type_flag_t ftype,
+				 struct memregion **retregion) {
+    struct memregion *region;
+    struct symbol *retval;
+    struct debugfile *debugfile;
+    GHashTableIter iter;
+    gpointer key;
+
+    if (!target->space)
+	return NULL;
+
+    list_for_each_entry(region,&target->space->regions,region) {
+	g_hash_table_iter_init(&iter,region->debugfiles);
+	while (g_hash_table_iter_next(&iter,(gpointer *)&key,
+				      (gpointer *)&debugfile)) {
+	    retval = debugfile_lookup_sym(debugfile,name,srcfile,ftype);
+	    if (retval) {
+		if (retregion)
+		    *retregion = region;
+		return retval;
 	    }
 	}
     }
@@ -233,8 +275,104 @@ struct symbol *symtab_lookup_sym(struct symtab *symtab,char *name) {
     return NULL;
 }
 
+struct symbol_chain *target_lookup_nested_sym(struct target *target,
+					      char *name,const char *delim,
+					      char *srcfile,
+					      symbol_type_flag_t ftype,
+					      struct memregion **retregion) {
+    int len, alen;
+    struct symbol *member;
+    struct symbol_chain *chain;
+    char *next;
+    char *lname;
+    char *saveptr = NULL;
+    struct symbol_chain *anonchain = NULL;
+    struct symbol **tmpsc = NULL;
+    int i;
+
+    chain = (struct symbol_chain *)malloc(sizeof(struct symbol_chain));
+
+    /* assume that most chains will only have 2 members :) */
+    alen = 2;
+    chain->chain = (struct symbol **)malloc(sizeof(struct symbol *)*alen);
+    len = 0;
+
+    lname = strdup(name);
+    while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
+	/* Do the first token by looking up in the target.  For the
+	 * rest, lookup in the parent symbol.
+	 */
+	if (len == 0) {
+	    if (!(chain->chain[len] = target_lookup_sym(target,next,
+							srcfile,ftype,retregion)))
+		goto errout;
+
+	    ++len;
+	    continue;
+	}
+
+	if (!(member = __symbol_get_one_member(chain->chain[len-1],
+					       next,&anonchain)))
+	    goto errout;
+	else if (anonchain && anonchain->count) {
+	    /* If anonchain has any members, we now have to glue those
+	     * members into our overall chain, BEFORE gluing the actual
+	     * found symbol onto the tail end of the chain.
+	     */
+	    //asm("int $3");
+	    if ((alen - len) < (anonchain->count + 1)) {
+		alen += (anonchain->count + 1) - (alen - len);
+		if (!(tmpsc = realloc(chain->chain,
+				      alen*sizeof(struct symbol *)))) {
+		    /* free the anonchain */
+		    free(anonchain->chain);
+		    free(anonchain);
+		    goto errout;
+		}
+		chain->chain = tmpsc;
+	    }
+	    for (i = 0; i < anonchain->count; ++i)
+		chain->chain[len++] = anonchain->chain[i];
+	    /* now slap the retval on, too! */
+	    chain->chain[len++] = member;
+	    /* free the anonchain and reset our pointer */
+	    //asm("int $3");
+	    free(anonchain->chain);
+	    free(anonchain);
+	    anonchain = NULL;
+	}
+	else {
+	    if (alen == len) {
+		alen += 2;
+		if (!realloc(chain->chain,alen*sizeof(struct symbol *)))
+		    goto errout;
+	    }
+	    chain->chain[len++] = member;
+	}
+    }
+    chain->count = len;
+    //asm("int $3");
+    free(lname);
+    /* downsize */
+    if (!realloc(chain->chain,chain->count*(sizeof(struct symbol *))))
+	lwarn("failed to downsize after succeeding: realloc: %s\n",
+	      strerror(errno));
+    //asm("int $3");
+
+    return chain;
+
+ errout:
+    *retregion = NULL;
+    free(lname);
+    free(chain->chain);
+    free(chain);
+
+    return NULL;
+}
+
 struct symbol *debugfile_lookup_sym(struct debugfile *debugfile,
-				    char *srcfile,char *name) {
+				    char *name,char *srcfile,
+				    symbol_type_flag_t ftype) {
     struct symbol *retval;
     struct symtab *symtab;
     GHashTableIter iter;
@@ -243,23 +381,25 @@ struct symbol *debugfile_lookup_sym(struct debugfile *debugfile,
     /*
      * Always check globals first, then types, then srcfile tables.
      */
-    if ((retval = g_hash_table_lookup(debugfile->globals,name)))
+    if (!(ftype & SYMBOL_TYPE_FLAG_TYPE)
+	&& (retval = g_hash_table_lookup(debugfile->globals,name)))
 	return retval;
 
-    if ((retval = g_hash_table_lookup(debugfile->types,name)))
+    if ((ftype & SYMBOL_TYPE_FLAG_TYPE || ftype & SYMBOL_TYPE_FLAG_NONE)
+	&& (retval = g_hash_table_lookup(debugfile->types,name)))
 	return retval;
 
     if (srcfile) {
 	if ((symtab = (struct symtab *)g_hash_table_lookup(debugfile->srcfiles,
 							   srcfile)))
-	    return symtab_lookup_sym(symtab,name);
+	    return symtab_lookup_sym(symtab,name,ftype);
 	else
 	    return NULL;
     }
 
     g_hash_table_iter_init(&iter,debugfile->srcfiles);
     while (g_hash_table_iter_next(&iter,(gpointer *)&key,(gpointer *)&symtab)) {
-	retval = symtab_lookup_sym(symtab,name);
+	retval = symtab_lookup_sym(symtab,name,ftype);
 	if (retval)
 	    return retval;
     }
@@ -403,6 +543,14 @@ struct memregion *memregion_create(struct addrspace *space,region_type_t type,
 	   retval->type);
 
     return retval;
+}
+
+struct target *memregion_target(struct memregion *region) {
+    return (region->space ? region->space->target : NULL);
+}
+
+int memregion_contains(struct memregion *region,ADDR addr) {
+    return (region->start <= addr && addr <= region->end ? 1 : 0);
 }
 
 void memregion_free(struct memregion *region) {
@@ -899,7 +1047,10 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	ss = "struct";
 	if (symbol->s.ti.datatype_code == DATATYPE_UNION)
 	    ss = "union";
-	fprintf(ud->stream,"%s %s",ss,symbol->name);
+	if (symbol->s.ti.isanon && ud->detail)
+	    fprintf(ud->stream,"%s",ss);
+	else
+	    fprintf(ud->stream,"%s %s",ss,symbol->name);
 	if (ud->meta) 
 	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti.byte_size);
 	if (ud->detail) {
@@ -911,6 +1062,19 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 		 */
 		if (member->datatype == symbol) {
 		    symbol_var_dump(member,&udn);
+		}
+		else if (SYMBOL_IST_STUN(member->datatype) 
+			 && member->datatype->s.ti.isanon) {
+		    symbol_type_dump(member->datatype,ud);
+
+		    if (ud->detail && member->s.ii.l.loctype != LOCTYPE_UNKNOWN) {
+			fprintf(ud->stream," @@ ");
+			location_dump(&member->s.ii.l,ud);
+
+			if (member->s.ii.constval)
+			    fprintf(ud->stream," @@ CONST(%p)",
+				    member->s.ii.constval);
+		    }
 		}
 		else 
 		    symbol_var_dump(member,ud);
@@ -1056,6 +1220,30 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 
     if (ud->prefix)
 	free(np);
+}
+
+void symbol_chain_dump(struct symbol_chain *chain,struct dump_info *ud) {
+    int i = 0;
+    struct dump_info udn = {
+	.stream = ud->stream,
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
+    char *prefixbuf = malloc(strlen(ud->prefix) + chain->count * 2 + 1);
+    strcpy(prefixbuf,ud->prefix);
+    int len = strlen(prefixbuf);
+
+    udn.prefix = prefixbuf;
+
+    while (1) {
+	symbol_dump(chain->chain[i],&udn);
+	if (++i == chain->count)
+	    break;
+	fprintf(ud->stream,"\n");
+	prefixbuf[len++] = ' ';
+	prefixbuf[len++] = ' ';
+	prefixbuf[len] = '\0';
+    }
 }
 
 struct debugfile *debugfile_create(char *filename,debugfile_type_t type) {
@@ -1207,6 +1395,8 @@ void debugfile_free(struct debugfile *debugfile) {
 
     if (debugfile->strtab)
 	free(debugfile->strtab);
+    if (debugfile->loctab)
+	free(debugfile->loctab);
 
     if (debugfile->version)
 	free(debugfile->version);
@@ -1344,6 +1534,551 @@ void symbol_set_srcline(struct symbol *symbol,int srcline) {
     symbol->srcline = srcline;
 }
 
+int symbol_type_bytesize(struct symbol *symbol) {
+    if (symbol->type == SYMBOL_TYPE_TYPE)
+	return symbol->s.ti.byte_size;
+    else 
+	return -1;
+}
+
+static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member,
+					      struct symbol_chain **chainptr) {
+    struct symbol *retval = NULL;
+    struct symbol **anonstack = NULL;
+    int *parentstack = NULL;
+    struct symbol **tmpstack = NULL;
+    int *tmpparentstack = NULL;
+    int stacklen = 0;
+    int stackalen = 0;
+    int i = 0;
+    /* Set type to symbol to seed the while loop in the SYMBOL_IST_STUN
+     * case.
+     */
+    struct symbol *type = symbol;
+    int j, k;
+    int startstacklen;
+    
+    /*
+    struct dump_info udn = {
+	.stream = stderr,
+	.prefix = "",
+	.detail = 1,
+	.meta = 1
+    };
+    */
+
+    if (SYMBOL_IST_FUNCTION(symbol)
+	&& symbol->s.ti.d.f.count) {
+	list_for_each_entry(retval,&symbol->s.ti.d.f.args,member) {
+	    if (retval->name && strcmp(retval->name,member) == 0)
+		goto out;
+	}
+    }
+    else if (SYMBOL_IST_ENUM(symbol)) {
+	list_for_each_entry(retval,&symbol->s.ti.d.e.members,member) {
+	    if (retval->name && strcmp(retval->name,member) == 0)
+		goto out;
+	}
+    }
+    else if (SYMBOL_IST_STUN(symbol)) {
+	/*
+	 * Check all our members.  If we come across an unnamed struct
+	 * or union member, push it onto our anon stack and come back to
+	 * it.  This avoids non-tail recursion.
+	 *
+	 * Also, we push variables, not types, as we go through the
+	 * list.  We also keep a parent index list; each time we push an
+	 * anonymous S/U member variable, we push the anonstack index of
+	 * its parent member variable.  Then we can build a symbol_chain
+	 * if the caller needs it.
+	 *
+	 * We need a symbol chain for summing up member offsets for
+	 * nested structs.  Note, however, that this chain only consists
+	 * of parent variables that were unnamed!!  That is the case
+	 * because this function only returns one member.  It is the
+	 * caller's job to build up the complete symbol chain consisting
+	 * of more than one nested variable/function.
+	 */
+	while (1) {
+	    list_for_each_entry(retval,&type->s.ti.d.su.members,member) {
+		//ldebug(1,"checking symbol: ");
+		//symbol_dump(retval,&udn);
+
+		if (SYMBOL_IST_STUN(retval->datatype) 
+		    && !retval->name) {
+		    /* push this one for later examination. */
+		    if (stacklen == stackalen) {
+			stackalen += 4;
+			if (!(tmpstack = (struct symbol **)realloc(anonstack,
+								   sizeof(struct symbol *)*stackalen))) {
+			    lerror("realloc anonstack: %s\n",strerror(errno));
+			    goto errout;
+			}
+			anonstack = tmpstack;
+
+			if (!(tmpparentstack = (int *)realloc(parentstack,
+							      sizeof(int)*stackalen))) {
+			    lerror("realloc parentstack: %s\n",
+				   strerror(errno));
+			    goto errout;
+			}
+			parentstack = tmpparentstack;
+		    }
+		    anonstack[stacklen] = retval;
+		    /* the parent is always the anonstack idx we're
+		     * working on.  Since we want the parent, we need i - 1.
+		     */
+		    parentstack[stacklen] = i - 1;
+		    ++stacklen;
+		}
+		else if (retval->name && strcmp(retval->name,member) == 0) {
+		    //free(anonstack);
+		    goto out;
+		}
+	    }
+	    if (stackalen > 8) 
+		lwarn("big stackalen=%d, stack=%d\n",stackalen,stacklen);
+	    else 
+		ldebug(4,"stackalen=%d, stack=%d\n",stackalen,stacklen);
+	    /* If we're out of stuff on our stack, bail. */
+	    if (i == stacklen) {
+		free(anonstack);
+		free(parentstack);
+		anonstack = NULL;
+		parentstack = NULL;
+		break;
+	    }
+	    /* Otherwise process the next thing on the stack. */
+	    else
+		type = anonstack[i++]->datatype;
+	}
+    }
+    else if (SYMBOL_IS_FUNCTION(symbol)) {
+	/* First, check our args. */
+	list_for_each_entry(retval,&symbol->s.ii.d.f.args,member) {
+	    if (retval->name && strcmp(retval->name,member) == 0)
+		goto out;
+	}
+
+	/* Second, check our internal symbol table.  Wait a sec, the
+	 * args are in the internal symtab too!  Hmmm.
+	 */
+	return symtab_lookup_sym(symbol->s.ii.d.f.symtab,member,
+				 SYMBOL_TYPE_FLAG_VAR | SYMBOL_TYPE_FLAG_FUNCTION);
+
+	/*
+	GHashTableIter iter;
+	char *localname;
+	struct symbol *localsymbol;
+
+	g_hash_table_iter_init(&iter,&symbol->s.ii.d.f.symtab->tab);
+	while (g_hash_table_iter_next(&iter,(gpointer *)&symname,
+				      (gpointer *)&localsymbol)) {
+	*/
+    }
+    else if (SYMBOL_IS_VAR(symbol) && SYMBOL_IST_STUN(symbol->datatype)) {
+	//ldebug(1,"returning result of searching S/U type symbol: ");
+	//symbol_dump(symbol->datatype,&udn);
+	return __symbol_get_one_member(symbol->datatype,member,chainptr);
+    }
+
+ errout:
+    if (anonstack)
+	free(anonstack);
+    if (parentstack)
+	free(parentstack);
+    return NULL;
+
+ out:
+    //ldebug(1,"returning symbol: ");
+    //symbol_dump(retval,&udn);
+
+    //asm("int $3");
+
+    /*
+     * If type points to something other than the top-level symbol, that
+     * means we explored anon structs, and we must return an anon symbol
+     * chain that includes the anon variables between @symbol and @retval.
+     */
+    if (chainptr && type != symbol) {
+	*chainptr = (struct symbol_chain *)malloc(sizeof(struct symbol_chain));
+	/* Always includes the anon struct we found, and any anon struct
+	 * parents.
+	 */
+	/* First count up how many anon parents we have in this chain; 
+	 * then malloc it; then fill it up in reverse order.
+	 */
+	(*chainptr)->count = 1;
+	for (j = i - 1; parentstack[j] != -1; j = parentstack[j]) {
+	    ++((*chainptr)->count);
+	}
+	(*chainptr)->chain = (struct symbol **)malloc(sizeof(struct symbol *)*(*chainptr)->count);
+	for (j = i - 1,k = (*chainptr)->count; k > 0; --k, j = parentstack[j]) {
+	    (*chainptr)->chain[k-1] = anonstack[j];
+	}
+    }
+    //asm("int $3");
+    if (anonstack) 
+	free(anonstack);
+    if (parentstack)
+	free(parentstack);
+    return retval;
+}
+
+struct symbol *symbol_get_one_member(struct symbol *symbol,char *member) {
+    return __symbol_get_one_member(symbol,member,NULL);
+}
+
+struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
+				 const char *delim) {
+    char *saveptr = NULL;
+    struct symbol *retval = NULL;
+    char *member;
+    char *mlist = strdup(memberlist);
+
+    retval = symbol;
+    while ((member = strtok_r(!saveptr ? mlist : NULL,".",&saveptr))) {
+	retval = symbol_get_one_member(retval,member);
+	if (!retval)
+	    break;
+    }
+
+    free(mlist);
+    return retval;
+}
+
+ADDR location_resolve(struct memregion *region,struct location *location) {
+    struct target *target = memregion_target(region);
+    REGVAL regval;
+
+    switch (location->loctype) {
+    case LOCTYPE_UNKNOWN:
+	errno = EINVAL;
+	return 0;
+    case LOCTYPE_ADDR:
+	errno = 0;
+	return location->l.addr;
+    case LOCTYPE_REG:
+	errno = EINVAL;
+	return 0;
+    case LOCTYPE_REG_ADDR:
+	/* load the register value */
+	regval = target_read_reg(target,location->l.reg);
+	if (errno)
+	    return 0;
+	errno = 0;
+	return regval;
+    case LOCTYPE_REG_OFFSET:
+	regval = target_read_reg(target,location->l.regoffset.reg);
+	if (errno)
+	    return 0;
+	errno = 0;
+	return (ADDR)(location->l.regoffset.offset + regval);
+    case LOCTYPE_FBREG_OFFSET:
+	/* DWARF only allows register numbers of 0..31, so we use 64
+	 * to specify the frame base register.
+	 */
+	regval = target_read_reg(target,target->fbregno);
+	if (errno)
+	    return 0;
+	errno = 0;
+	return (ADDR)(regval + location->l.fboffset);
+    case LOCTYPE_MEMBER_OFFSET:
+    case LOCTYPE_RUNTIME:
+	lwarn("currently unsupported location type %s\n",LOCTYPE(location->loctype));
+	errno = EINVAL;
+	return 0;
+    default:
+	lwarn("unknown location type %d\n",location->loctype);
+	errno = EINVAL;
+	return 0;
+    }
+
+    /* never reached */
+    return 0;
+}
+
+int location_load(struct memregion *region,struct location *location,
+		  load_flags_t flags,void *buf,int bufsiz) {
+    ADDR final_location = 0;
+    REGVAL regval;
+
+    /* We can't mmap a value that is simply in a register. */
+    if (flags & LOAD_FLAG_MMAP && location->loctype == LOCTYPE_REG) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (location->loctype == LOCTYPE_REG) {
+	/* just read the register directly */
+	regval = target_read_reg(memregion_target(region),location->l.reg);
+	if (errno)
+	    return -1;
+	if (memregion_target(region)->wordsize == 4 && __WORDSIZE == 64) {
+	    /* If the target is 32-bit on 64-bit host, we have to grab
+	     * the lower 32 bits of the regval.
+	     */
+	    memcpy(buf,((int32_t *)&regval)+1,bufsiz);
+	}
+	else
+	    memcpy(buf,&regval,bufsiz);
+    }
+    else {
+	final_location = location_resolve(region,location);
+	if (errno)
+	    return -1;
+
+	if (flags & LOAD_FLAG_CHECK_VISIBILITY
+	    && !memregion_contains(region,final_location)) {
+	    errno = EFAULT;
+	    return -1;
+	}
+
+	if (!target_read_addr(memregion_target(region),final_location,bufsiz,buf))
+	    return -1;
+    }
+
+    return 0;
+}
+
+int symbol_load(struct memregion *region,struct symbol *symbol,
+		load_flags_t flags,void **buf,int *bufsiz) {
+    int didalloc = 0;
+
+    if (!SYMBOL_IS_VAR(symbol)) {
+	lwarn("symbol %s is not a variable (is %s)!\n",
+	      symbol->name,SYMBOL_TYPE(symbol->type));
+	errno = EINVAL;
+	return -1;
+    }
+
+    /* Alloc a buffer if they didn't. */
+    if (!*buf) {
+	*bufsiz = symbol_type_bytesize(symbol->datatype);
+	*buf = malloc(*bufsiz);
+	if (!*buf) {
+	    lerror("malloc: %s\n",strerror(errno));
+	    return -1;
+	}
+	didalloc = 1;
+	ldebug(5,"malloc(%d) for symbol %s\n",bufsiz,symbol->name);
+    }
+
+    if (location_load(region,&(symbol->s.ii.l),flags,*buf,*bufsiz)) {
+	if (didalloc) {
+	    free(*buf);
+	    *buf = NULL;
+	    *bufsiz = 0;
+	}
+	return -1;
+    }
+
+    return 0;
+}
+
+int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
+		       load_flags_t flags,void **buf,int *bufsiz) {
+    int didalloc = 0;
+    int len = chain->count;
+    struct symbol *symbol = chain->chain[len - 1];
+    struct symbol *top_enclosing_symbol = NULL;
+    int i;
+    ADDR top_addr;
+    OFFSET totaloffset;
+
+    if (!SYMBOL_IS_VAR(symbol)) {
+	lwarn("symbol %s is not a variable (is %s)!\n",
+	      symbol->name,SYMBOL_TYPE(symbol->type));
+	errno = EINVAL;
+	return -1;
+    }
+
+    /*
+     * If this is a struct member, we need the chain.  Otherwise, just
+     * load the last member in the chain.
+     */
+    if (!symbol->s.ii.ismember) {
+	return symbol_load(region,symbol,flags,buf,bufsiz);
+    }
+    /* Otherwise... */
+
+    /* Alloc a buffer if they didn't. */
+    if (!*buf) {
+	*bufsiz = symbol_type_bytesize(symbol->datatype);
+	*buf = malloc(*bufsiz);
+	if (!*buf) {
+	    lerror("malloc: %s\n",strerror(errno));
+	    return -1;
+	}
+	didalloc = 1;
+	ldebug(5,"malloc(%d) for symbol %s\n",bufsiz,symbol->name);
+    }
+
+    /* Now assemble our member offset from the top enclosing struct,
+     * and resolve the location for that struct.  Then add our
+     * offset and load!
+     */
+    totaloffset = symbol->s.ii.l.l.member_offset;
+    for (i = len - 1; i > -1; --i) {
+	if (SYMBOL_IS_VAR(chain->chain[i])
+	    && chain->chain[i]->s.ii.ismember) {
+	    totaloffset += chain->chain[i]->s.ii.l.l.member_offset;
+	    continue;
+	}
+	else if (SYMBOL_IS_VAR(chain->chain[i])
+		 && SYMBOL_IST_STUN(chain->chain[i]->datatype)) {
+	    top_enclosing_symbol = chain->chain[i];
+	    break;
+	}
+	else {
+	    lerror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
+		   chain->chain[i]->name,SYMBOL_TYPE(chain->chain[i]->type),i);
+	    goto errout;
+	}
+    }
+
+    top_addr = location_resolve(region,&top_enclosing_symbol->s.ii.l);
+    if (errno) {
+	lerror("could not resolve location for top S/U in nested load: %s\n",
+	       strerror(errno));
+    	goto errout;
+    }
+
+    if (flags & LOAD_FLAG_CHECK_VISIBILITY
+	&& !memregion_contains(region,top_addr + totaloffset)) {
+	lerror("memregion does not contain address 0x%" PRIxADDR "\n",
+	       top_addr + totaloffset);
+	errno = EFAULT;
+	goto errout;
+    }
+
+    if (!target_read_addr(memregion_target(region),top_addr + totaloffset,
+			  *bufsiz,*buf))
+	goto errout;
+
+    return 0;
+
+ errout:
+    if (didalloc) 
+	free(*buf);
+    return -1;
+}
+
+signed char      rvalue_c(void *buf)   { return *((signed char *)buf); }
+unsigned char    rvalue_uc(void *buf)  { return *((unsigned char *)buf); }
+wchar_t          rvalue_wc(void *buf)  { return *((wchar_t *)buf); }
+uint8_t          rvalue_u8(void *buf)  { return *((uint8_t *)buf); }
+uint16_t         rvalue_u16(void *buf) { return *((uint16_t *)buf); }
+uint32_t         rvalue_u32(void *buf) { return *((uint32_t *)buf); }
+uint64_t         rvalue_u64(void *buf) { return *((uint64_t *)buf); }
+int8_t           rvalue_i8(void *buf)  { return *((int8_t *)buf); }
+int16_t          rvalue_i16(void *buf) { return *((int16_t *)buf); }
+int32_t          rvalue_i32(void *buf) { return *((int32_t *)buf); }
+int64_t          rvalue_i64(void *buf) { return *((int64_t *)buf); }
+
+void symbol_rvalue_print(FILE *stream,struct memregion *region,
+			 struct symbol *symbol,void *buf,int bufsiz) {
+    int i;
+    int size;
+    struct symbol *type;
+    struct target *target = memregion_target(region);
+
+    if (!SYMBOL_IS_VAR(symbol))
+	return;
+
+    type = symbol->datatype;
+    switch (type->s.ti.datatype_code) {
+    case DATATYPE_BASE:
+	if (type->s.ti.byte_size == 1) {
+	    if (type->s.ti.d.v.encoding == ENCODING_SIGNED_CHAR)
+		fprintf(stream,"%c",rvalue_c(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED_CHAR)
+		fprintf(stream,"%uc",rvalue_uc(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi8,rvalue_i8(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIu8,rvalue_u8(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else if (type->s.ti.byte_size == 2) {
+	    if (strstr(type->name,"char"))
+		fprintf(stream,"%lc",rvalue_wc(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi16,rvalue_i16(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED)
+		fprintf(stream,"%" PRIu16,rvalue_u16(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else if (type->s.ti.byte_size == 4) {
+	    if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi32,rvalue_i32(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED)
+		fprintf(stream,"%" PRIu32,rvalue_u32(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else if (type->s.ti.byte_size == 8) {
+	    if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi64,rvalue_i64(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED)
+		fprintf(stream,"%" PRIu64,rvalue_u64(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else {
+	    fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	return;
+    case DATATYPE_VOID:
+	fprintf(stream,"<VOID>");
+	return;
+    case DATATYPE_ARRAY:
+	fprintf(stream,"<ARRAY>");
+	return;
+    case DATATYPE_STRUCT:
+	fprintf(stream,"<STRUCT>");
+	return;
+    case DATATYPE_UNION:
+	fprintf(stream,"<UNION>");
+	return;
+    case DATATYPE_PTR:
+	fprintf(stream,"0x");
+	for (i = 0; i < target->ptrsize; ++i) {
+	    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
+	}
+	return;
+    case DATATYPE_FUNCTION:
+	fprintf(stream,"<FUNCTION>");
+	return;
+    case DATATYPE_TYPEDEF:
+	fprintf(stream,"<TYPEDEF>");
+	return;
+    case DATATYPE_CONST:
+	fprintf(stream,"<CONST>");
+	return;
+    case DATATYPE_VOL:
+	fprintf(stream,"<VOL>");
+	return;
+    case DATATYPE_BITFIELD:
+	fprintf(stream,"<BITFIELD>");
+	return;
+    default:
+	return;
+    }
+}
+
+void symbol_rvalue_tostring(struct symbol *symbol,char **buf,int *bufsiz,
+			    char *cur) {
+    return;
+}
+
+struct value *symbol_load_fat(struct memregion *region,struct symbol *symbol,
+			      load_flags_t flags,void *buf) {
+    return NULL;
+}
+
 void symbol_free(struct symbol *symbol) {
     if (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
 	free(symbol->name);
@@ -1380,6 +2115,7 @@ char *DEBUGFILE_TYPE_STRINGS[] = {
 };
 
 char *SYMBOL_TYPE_STRINGS[] = {
+    "none",
     "type",
     "var",
     "function",
