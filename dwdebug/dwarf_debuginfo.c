@@ -260,28 +260,75 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  cbargs->die_offset,addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_high_pc:
-	ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
+	if (num_set) {
+	    ldebug(4,"\t\t\tvalue = " PRIu64 "\n",num);
 
-	if (cbargs->symtab)
-	    cbargs->symtab->highpc = addr;
-	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symtab)\n",
-		  cbargs->die_offset,addr,dwarf_attr_string(attr));
+	    /* it's a relative offset from low_pc; if we haven't seen
+	     * low_pc yet, just bail.
+	     */
+
+	    if (cbargs->symtab && cbargs->symtab->lowpc)
+		cbargs->symtab->highpc = cbargs->symtab->lowpc + num;
+	    else 
+		lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (symtab)\n",
+		      cbargs->die_offset,num,dwarf_attr_string(attr));
 	
-	if (cbargs->symbol 
-	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-	    cbargs->symbol->s.ii.d.f.highpc = addr;
+	    if (cbargs->symbol 
+		&& cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
+		if (cbargs->symbol->s.ii.d.f.lowpc) {
+		    cbargs->symbol->s.ii.d.f.highpc = cbargs->symbol->s.ii.d.f.lowpc + num;
+		}
+		else {
+		    lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (function -- no lowpc)\n",
+			  cbargs->die_offset,num,dwarf_attr_string(attr));
+		}
+	    }
+	    else if (cbargs->symbol 
+		     && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+		if (cbargs->symbol->s.ii.d.l.lowpc) {
+		    cbargs->symbol->s.ii.d.l.highpc = cbargs->symbol->s.ii.d.l.lowpc + num;
+		}
+		else {
+		    lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (label -- no lowpc)\n",
+			  cbargs->die_offset,num,dwarf_attr_string(attr));
+		}
+	    }
+	    else if (!cbargs->symbol && cbargs->symtab) {
+		;
+	    }
+	    else 
+		lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (symbol)\n",
+		      cbargs->die_offset,num,dwarf_attr_string(attr));
+	    
 	}
-	else if (cbargs->symbol 
-		 && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
-	    cbargs->symbol->s.ii.d.l.highpc = addr;
+	else if (addr_set) {
+	    ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
+
+	    if (cbargs->symtab)
+		cbargs->symtab->highpc = addr;
+	    else 
+		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " (addr) for attr %s in bad context (symtab)\n",
+		      cbargs->die_offset,addr,dwarf_attr_string(attr));
+	
+	    if (cbargs->symbol 
+		&& cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
+		cbargs->symbol->s.ii.d.f.highpc = addr;
+	    }
+	    else if (cbargs->symbol 
+		     && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+		cbargs->symbol->s.ii.d.l.highpc = addr;
+	    }
+	    else if (!cbargs->symbol && cbargs->symtab) {
+		;
+	    }
+	    else 
+		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " (addr) for attr %s in bad context (symbol)\n",
+		      cbargs->die_offset,addr,dwarf_attr_string(attr));
 	}
-	else if (!cbargs->symbol && cbargs->symtab) {
-	    ;
+	else {
+	    lwarn("[DIE %" PRIx64 "] bad attr type for attr %s\n",
+		      cbargs->die_offset,dwarf_attr_string(attr));
 	}
-	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symbol)\n",
-		  cbargs->die_offset,addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_decl_file:
 	if (cbargs->symbol) {
@@ -313,7 +360,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
-	    cbargs->symbol->s.ti.d.v.encoding = num;
+	    /* our encoding_t is 1<->1 map to the DWARF encoding codes. */
+	    cbargs->symbol->s.ti.d.v.encoding = (encoding_t)num;
 	}
 	else 
 	    lwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
@@ -1184,6 +1232,9 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    if (tag == DW_TAG_member) {
 		symbols[level]->s.ii.ismember = 1;
 	    }
+	    if (tag == DW_TAG_enumerator) {
+		symbols[level]->s.ii.isenumval = 1;
+	    }
 	}
 	else if (tag == DW_TAG_label) {
 	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_LABEL);
@@ -1841,8 +1892,25 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		data->debugfile->strtablen = edata->d_size;
 		data->debugfile->strtab = malloc(edata->d_size);
 		memcpy(data->debugfile->strtab,edata->d_buf,edata->d_size);
+	    }
+	    else if (strcmp(name,".debug_loc") == 0) {
+		ldebug(2,"found %s section (%d) in debugfile %s\n",name,
+		       shdr->sh_size,data->debugfile->idstr);
 
-		break;
+		Elf_Data *edata = elf_rawdata(scn,NULL);
+		if (!edata) {
+		    lerror("cannot get data for valid loc section '%s': %s",
+			   name,elf_errmsg(-1));
+		    return DWARF_CB_ABORT;
+		}
+
+		/*
+		 * We just malloc a big buf now, and potentially use it
+		 * during runtime to evaluate DWARF location expressions.
+		 */
+		data->debugfile->loctablen = edata->d_size;
+		data->debugfile->loctab = malloc(edata->d_size);
+		memcpy(data->debugfile->loctab,edata->d_buf,edata->d_size);
 	    }
 	}
     }
