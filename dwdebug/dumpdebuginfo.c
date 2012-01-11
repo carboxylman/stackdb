@@ -72,12 +72,25 @@ int main(int argc,char **argv) {
 	debugfile_dump(debugfile,&ud);
     else {
 	for (i = 1; i < argc; ++i) {
-	    struct symbol *s = debugfile_lookup_sym(debugfile,
-						    NULL,argv[i]);
+	    char *idx = index(argv[i],'.');
+	    if (idx) {
+		*idx = '\0';
+		++idx;
+	    }
+	    struct symbol *s = debugfile_lookup_sym(debugfile,argv[i],
+						    NULL,SYMBOL_TYPE_NONE);
 	    if (!s)
 		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-	    else
+	    else if (!idx)
 		symbol_dump(s,&ud);
+	    else {
+		s = symbol_get_member(s,idx,".");
+		if (!s)
+		    fprintf(stderr,"Could not find member %s in %s!\n",
+			    idx,argv[i]);
+		else 
+		    symbol_dump(s,&ud);
+	    }
 	}
     }
 
