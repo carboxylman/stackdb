@@ -49,6 +49,10 @@ struct symtab;
 struct symbol;
 struct symbol_chain;
 struct location;
+struct range_list_entry;
+struct range;
+struct loc_list_entry;
+struct loc_list;
 
 struct dump_info;
 
@@ -227,6 +231,19 @@ typedef enum {
     ENCODING_UNSIGNED_FIXED = 14,
 } encoding_t;
 
+typedef enum {
+    RANGE_TYPE_NONE = 0,
+    RANGE_TYPE_PC = 1,
+    RANGE_TYPE_LIST = 2,
+    __RANGE_TYPE_MAX
+} range_type_t;
+
+extern char *RANGE_TYPE_STRINGS[];
+#define RANGE_TYPE(n) (((n) < __RANGE_TYPE_MAX) ? RANGE_TYPE_STRINGS[(n)] : NULL)
+
+#define RANGE_IS_PC(sym)   (sym && (sym)->rtype == RANGE_TYPE_PC)
+#define RANGE_IS_LIST(sym) (sym && (sym)->rtype == RANGE_TYPE_LIST)
+
 /**
  ** These functions form the target API.
  **/
@@ -303,8 +320,7 @@ void debugfile_free(struct debugfile *debugfile);
  **/
 struct symtab *symtab_create(struct debugfile *debugfile,
 			     char *srcfilename,char *compdirname,
-			     int language,char *producer,
-			     unsigned long lowpc,unsigned long highpc);
+			     int language,char *producer);
 /* These symtab_set functions are about dealing with memory stuff, not
  * about hiding symtabs from dwarf or anything.
  */
@@ -340,7 +356,11 @@ void symbol_chain_dump(struct symbol_chain *symbol_chain,struct dump_info *ud);
  ** Locations.
  **/
 void location_dump(struct location *location,struct dump_info *ud);
-ADDR location_resolve(struct memregion *region,struct location *location);
+ADDR location_resolve(struct memregion *region,struct location *location,
+		      struct loc_list *fblist);
+int location_load(struct memregion *region,struct location *location,
+		  struct loc_list *fblist,
+		  load_flags_t flags,void *buf,int bufsiz);
 
 /**
  ** Symtab (PC) lookup functions.
@@ -496,6 +516,7 @@ struct target {
     uint8_t ptrsize;
     uint8_t endian;
     REG fbregno;
+    REG ipregno;
 
     void *state;
     struct target_ops *ops;
@@ -650,13 +671,13 @@ struct debugfile {
      * checked for presence in this table before freeing.
      */
     char *strtab;
-    int strtablen;
+    unsigned int strtablen;
 
     /*
      * The debug location table for this file.
      */
     char *loctab;
-    int loctablen;
+    unsigned int loctablen;
 
     /*
      * Each srcfile in a debugfile gets its own symtable.  The symtable
@@ -692,6 +713,36 @@ struct debugfile {
     GHashTable *globals;
 };
 
+struct range_list_entry {
+    ADDR start;
+    ADDR end;
+};
+
+struct range {
+    range_type_t rtype;
+    union {
+	struct {
+	    uint64_t lowpc;
+	    uint64_t highpc;
+	};
+	struct {
+	    int32_t len;
+	    struct range_list_entry **list;
+	};
+    };
+};
+
+struct loc_list_entry {
+    ADDR start;
+    ADDR end;
+    struct location *loc;
+};
+
+struct loc_list {
+    int32_t len;
+    struct loc_list_entry **list;
+};
+
 /*
  * Symbol tables are mostly just backreferences to the objects they are
  * associated with (the parent debugfile they are in, and the srcfile
@@ -706,8 +757,10 @@ struct symtab {
     /* If this was a source filename, a compilation dir should be set. */
     char *compdirname;
 
-    uint64_t lowpc;
-    uint64_t highpc;
+    /* The range for this symtab is either a list of ranges, or a
+     * low_pc/high_pc range.
+     */
+    struct range range;
 
     char *producer;
     int language;
@@ -855,8 +908,8 @@ struct symbol {
 		    struct list_head args;
 		    uint16_t count;
 		    uint8_t hasunspec:1;
-		    uint64_t lowpc;
-		    uint64_t highpc;
+		    /* The frame base location list. */
+		    struct loc_list *fblist;
 		    struct symtab *symtab;
 		} f;
 		struct {
@@ -865,8 +918,7 @@ struct symbol {
 		    uint16_t bit_size;
 		} v;
 		struct {
-		    uint64_t lowpc;
-		    uint64_t highpc;
+		    struct range range;
 		} l;
 	    } d;
 	    struct location l;

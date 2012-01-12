@@ -223,6 +223,11 @@ struct target *linux_userproc_attach(int pid) {
 #else
     target->fbregno = 5;
 #endif
+#if __WORDSIZE == 64
+    target->ipregno = 16;
+#else
+    target->ipregno = 8;
+#endif
 
     /* Done with the elf ident data. */
     elf_end(elf);
@@ -751,6 +756,8 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
     struct user_regs_struct regs;
     int ptrace_idx;
 
+    ldebug(5,"reading reg %s\n",linux_userproc_reg_name(target,reg));
+
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
 	lerror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
@@ -786,6 +793,8 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
 int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     struct user_regs_struct regs;
     int ptrace_idx;
+
+    ldebug(5,"reading reg %s\n",linux_userproc_reg_name(target,reg));
 
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {

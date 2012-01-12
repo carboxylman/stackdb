@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
+#include <stdint.h>
 #include <inttypes.h>
 #include <assert.h>
 
@@ -58,7 +59,12 @@ struct attrcb_args {
     GHashTable *reftab;
 };
 
-/* Declare this now; it's used in attr_callback. */
+/* Declare these now; they are used in attr_callback. */
+static int    get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
+			  unsigned int addrsize,unsigned int offsetsize,
+			  unsigned int attr,Dwarf_Word offset,
+			  struct debugfile *debugfile,ADDR cu_base,
+			  struct loc_list *list);
 static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 			  unsigned int addrsize,unsigned int offset_size,
 			  Dwarf_Word len,const unsigned char *data,
@@ -152,6 +158,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	ref = dwarf_dieoffset(&rref);
 	ref_set = 1;
 	break;
+    case DW_FORM_sec_offset:
+      attrp->form = cbargs->offset_size == 8 ? DW_FORM_data8 : DW_FORM_data4;
+      /* Fall through.  */
     case DW_FORM_udata:
     case DW_FORM_sdata:
     case DW_FORM_data8:
@@ -236,21 +245,22 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_low_pc:
 	ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
-	/* handle the symtab lowpc/highpc values first */
-	if (cbargs->symtab)
-	    cbargs->symtab->lowpc = addr;
+	/* Handle the symtab lowpc/highpc values first; function
+	 * instances are part of the symtab.  Labels are not, so we do them
+	 * separately below.
+	 */
+	if (cbargs->symtab) {
+	    cbargs->symtab->range.rtype = RANGE_TYPE_PC;
+	    cbargs->symtab->range.lowpc = addr;
+	}
 	else 
 	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symtab)\n",
 		  cbargs->die_offset,addr,dwarf_attr_string(attr));
 
-	/* then if it's a function, do that too! */
 	if (cbargs->symbol 
-	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-	    cbargs->symbol->s.ii.d.f.lowpc = addr;
-	}
-	else if (cbargs->symbol 
-		 && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
-	    cbargs->symbol->s.ii.d.l.lowpc = addr;
+	    && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+	    cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
+	    cbargs->symbol->s.ii.d.l.range.lowpc = addr;
 	}
 	else if (!cbargs->symbol && cbargs->symtab) {
 	    ;
@@ -267,26 +277,19 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	     * low_pc yet, just bail.
 	     */
 
-	    if (cbargs->symtab && cbargs->symtab->lowpc)
-		cbargs->symtab->highpc = cbargs->symtab->lowpc + num;
+	    if (cbargs->symtab && cbargs->symtab->range.lowpc) {
+		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
+		cbargs->symtab->range.highpc = cbargs->symtab->range.lowpc + num;
+	    }
 	    else 
 		lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (symtab)\n",
 		      cbargs->die_offset,num,dwarf_attr_string(attr));
 	
 	    if (cbargs->symbol 
-		&& cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-		if (cbargs->symbol->s.ii.d.f.lowpc) {
-		    cbargs->symbol->s.ii.d.f.highpc = cbargs->symbol->s.ii.d.f.lowpc + num;
-		}
-		else {
-		    lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (function -- no lowpc)\n",
-			  cbargs->die_offset,num,dwarf_attr_string(attr));
-		}
-	    }
-	    else if (cbargs->symbol 
-		     && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
-		if (cbargs->symbol->s.ii.d.l.lowpc) {
-		    cbargs->symbol->s.ii.d.l.highpc = cbargs->symbol->s.ii.d.l.lowpc + num;
+		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+		if (cbargs->symbol->s.ii.d.l.range.lowpc) {
+		    cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
+		    cbargs->symbol->s.ii.d.l.range.highpc = cbargs->symbol->s.ii.d.l.range.lowpc + num;
 		}
 		else {
 		    lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (label -- no lowpc)\n",
@@ -304,19 +307,18 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	else if (addr_set) {
 	    ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
 
-	    if (cbargs->symtab)
-		cbargs->symtab->highpc = addr;
+	    if (cbargs->symtab) {
+		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
+		cbargs->symtab->range.highpc = addr;
+	    }
 	    else 
 		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " (addr) for attr %s in bad context (symtab)\n",
 		      cbargs->die_offset,addr,dwarf_attr_string(attr));
 	
 	    if (cbargs->symbol 
-		&& cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-		cbargs->symbol->s.ii.d.f.highpc = addr;
-	    }
-	    else if (cbargs->symbol 
-		     && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
-		cbargs->symbol->s.ii.d.l.highpc = addr;
+		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+		cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
+		cbargs->symbol->s.ii.d.l.range.highpc = addr;
 	    }
 	    else if (!cbargs->symbol && cbargs->symtab) {
 		;
@@ -406,8 +408,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
-		  cbargs->die_offset,flag,dwarf_attr_string(attr));
+	    lwarn("[DIE %" PRIx64 "] attrval 0x%" PRIu64 " for attr %s in bad context\n",
+		  cbargs->die_offset,num,dwarf_attr_string(attr));
 	break;
     case DW_AT_abstract_origin:
 	if (ref_set && cbargs->symbol 
@@ -562,20 +564,50 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
 		      cbargs->die_offset,num,dwarf_attr_string(attr));
 	    }
-	    break;
 	}
-	/* else fall through to loclist, then block if necessary */
-    case DW_AT_location:
-    //case DW_AT_data_member_location:
+	else if (num_set && (form == DW_FORM_data4 
+			     || form == DW_FORM_data8)) {
+	    lwarn("[DIE %" PRIx64 "] loclist attrval %" PRIx64 " for attr %s still unsupported!\n",
+		  cbargs->die_offset,num,dwarf_attr_string(attr));
+	    //get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
+	    //		cbargs->addrsize,cbargs->offset_size,
+	    //		attr,num,
+	    //		cbargs->debugfile,cbargs->symbol->range);
+	}
+	break;
     case DW_AT_frame_base:
 	/* if it's a loclist */
-	if (num_set) {
-	    break;
-	    lwarn("[DIE %" PRIx64 "] unrecognized loclist for attr %s // form %s mix!\n",
+	if (num_set && (form == DW_FORM_data4 
+			|| form == DW_FORM_data8)) {
+	    if (cbargs->symbol && SYMBOL_IS_FUNCTION(cbargs->symbol)) {
+		cbargs->symbol->s.ii.d.f.fblist = \
+		    (struct loc_list *)malloc(sizeof(struct loc_list));
+		memset(cbargs->symbol->s.ii.d.f.fblist,0,sizeof(struct loc_list));
+
+		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
+				cbargs->addrsize,cbargs->offset_size,
+				attr,num,
+				cbargs->debugfile,
+				cbargs->cu_symtab->range.lowpc,
+				cbargs->symbol->s.ii.d.f.fblist)) {
+		    lerror("[DIE %" PRIx64 "] failed to get loclist attrval %" PRIx64 " for attr %s in function symbol %s\n",
+			   cbargs->die_offset,num,dwarf_attr_string(attr),
+			   cbargs->symbol->name);
+		}
+	    }
+	    else {
+		lwarn("[DIE %" PRIx64 "] no/bad symbol for loclist for attr %s\n",
+		      cbargs->die_offset,dwarf_attr_string(attr));
+	    }
+	}
+	else {
+	    lwarn("[DIE %" PRIx64 "] bad loclist attr %s // form %s!\n",
 		  cbargs->die_offset,dwarf_attr_string(attr),
 		  dwarf_form_string(form));
-	    break;
 	}
+	break;
+    case DW_AT_location:
+    //case DW_AT_data_member_location:
     /* else fall through to a block op */
     /* well, not so fast -- let's flip through subrange stuff too! */
     //case DW_AT_count:
@@ -587,7 +619,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
     case DW_AT_upper_bound:
 	/* it's a constant, not a block op */
-	if (num_set) {
+	if (num_set && form != DW_FORM_sec_offset) {
 	    if (!cbargs->symbol && cbargs->parentsymbol
 		&& cbargs->parentsymbol->type == SYMBOL_TYPE_TYPE
 		&& cbargs->parentsymbol->s.ti.datatype_code == DATATYPE_ARRAY) {
@@ -644,6 +676,141 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     return 0;
 }
 
+static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
+		       unsigned int addrsize,unsigned int offsetsize,
+		       unsigned int attr,Dwarf_Word offset,
+		       struct debugfile *debugfile,ADDR cu_base,
+		       struct loc_list *list) {
+    char *readp;
+    char *endp;
+    ptrdiff_t loffset;
+    Dwarf_Addr begin;
+    Dwarf_Addr end;
+    int len = 0;
+    struct loc_list_entry **lltmp;
+    uint16_t exprlen;
+    int have_base = 0;
+    Dwarf_Addr base;
+    int alen = list->len;
+
+    /* XXX: we can't get other_byte_order from dbg since we don't have
+     * the struct def for it... so we assume it's not a diff byte order
+     * than the phys host for now.
+     */
+    int obo = 0;
+
+    if (!debugfile->loctab
+	|| offset > debugfile->loctablen) {
+	errno = EFAULT;
+	return -1;
+    }
+
+    readp = debugfile->loctab + offset;
+    endp = debugfile->loctab + debugfile->loctablen;
+
+    ldebug(5,"starting (loctab len %d, offset %d)\n",debugfile->loctablen,
+	   offset);
+
+    while (readp < endp) {
+	loffset = readp - debugfile->loctab;
+
+	if (unlikely((debugfile->loctablen - loffset) < addrsize * 2)) {
+	    lerror("[%6tx] invalid loclist entry\n",loffset);
+	    break;
+	}
+
+	if (addrsize == 8) {
+	    begin = read_8ubyte_unaligned_inc(obo,readp);
+	    end = read_8ubyte_unaligned_inc(obo,readp);
+	}
+	else {
+	    begin = read_4ubyte_unaligned_inc(obo,readp);
+	    end = read_4ubyte_unaligned_inc(obo,readp);
+	    if (begin == (Dwarf_Addr)(uint32_t)-1)
+		begin = (Dwarf_Addr)-1l;
+	}
+
+	if (begin == (Dwarf_Addr)-1l) {
+	    /* Base address entry.  */
+	    ldebug(5,"[%6tx] base address 0x%" PRIxADDR "\n",loffset,end);
+	    have_base = 1;
+	    base = end;
+	}
+	else if (begin == 0 && end == 0) {
+	    /* End of list entry.  */
+	    if (len == 0)
+		lwarn("[%6tx] empty list\n",loffset);
+	    else 
+		ldebug(5,"[%6tx] end of list\n");
+	    break;
+	}
+	else {
+	    ++len;
+
+	    /* We have a location expression entry.  */
+	    exprlen = read_2ubyte_unaligned_inc(obo,readp);
+
+	    ldebug(5,"[%6tx] loc expr range 0x%" PRIxADDR ",0x%" PRIxADDR ", len %hd\n",
+		   loffset,begin,end,exprlen);
+
+	    if (endp - readp <= (ptrdiff_t) exprlen) {
+		lerror("[%6tx] invalid exprlen (%hd) in entry\n",loffset,exprlen);
+		break;
+	    }
+	    else {
+		ldebug(5,"[%6tx] loc expr len (%hd) in entry\n",loffset,exprlen);
+	    }
+
+	    /* allocate space for another entry */
+	    if (list->len == alen) {
+		if (!(lltmp = (struct loc_list_entry **)realloc(list->list,
+								(list->len+1)*sizeof(struct loc_list_entry *)))) {
+		    lerror("loc_list realloc: %s\n",strerror(errno));
+		    return -1;
+		}
+		list->list = lltmp;
+		alen += 1;
+	    }
+
+	    list->list[list->len] = (struct loc_list_entry *)malloc(sizeof(struct loc_list_entry));
+	    if (!list->list[list->len]) {
+		lerror("loc_list_entry malloc: %s\n",strerror(errno));
+		return -1;
+	    }
+	    list->list[list->len]->loc = (struct location *)malloc(sizeof(struct location));
+	    if (!list->list[list->len]->loc) {
+		lerror("loc_list_entry location malloc: %s\n",strerror(errno));
+		free(list->list[list->len]);
+		return -1;
+	    }
+	    memset(list->list[list->len]->loc,0,sizeof(struct location));
+
+	    if (get_static_ops(dwflmod,dbg,3,addrsize,offsetsize,
+			       exprlen,(unsigned char *)readp,attr,
+			       list->list[list->len]->loc)) {
+		lerror("get_static_ops (%d) failed!\n",exprlen);
+		free(list->list[list->len]->loc);
+		free(list->list[list->len]);
+		return -1;
+	    }
+	    else {
+		ldebug(5,"get_static_ops (%d) succeeded!\n",exprlen);
+	    }
+
+	    list->list[list->len]->start = (have_base) ? begin + base \
+		                                       : begin + cu_base;
+	    list->list[list->len]->end =   (have_base) ? end + base \
+	      	                                       : end + cu_base;
+				
+	    list->len += 1;
+
+	    readp += exprlen;
+	}
+    }
+
+    return 0;
+}
+
 
 /*
  * This originally came from readelf.c, but I rewrote much of it.  Some
@@ -653,10 +820,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
  * do, and punt the rest for runtime evaluation against actual machine
  * data.
  */
-int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
-		   unsigned int addrsize,unsigned int offset_size,
-		   Dwarf_Word len,const unsigned char *data,
-		   unsigned int attr,struct location *retval) {
+static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
+			  unsigned int addrsize,unsigned int offset_size,
+			  Dwarf_Word len,const unsigned char *data,
+			  unsigned int attr,struct location *retval) {
 
     /* const unsigned int ref_size = vers < 3 ? addrsize : offset_size; */
 
@@ -1012,10 +1179,10 @@ int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    CONSUME(data - start);
 	    ldebug(9,"%s -> reg (%d) offset %ld\n",known[op],
 		   (uint8_t)(op - DW_OP_breg0),s64);
+	    retval->l.regoffset.offset = s64;
 	    ONLYOP(retval,LOCTYPE_REG_OFFSET,regoffset.reg,
 		   (uint8_t)(op - DW_OP_breg0));
-	    retval->l.regoffset.offset = s64;
-	  break;
+	    break;
 	case DW_OP_bregx:
 	    NEED(2);
 	    get_uleb128(u64,data); /* XXX check overrun */
@@ -1023,8 +1190,8 @@ int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    CONSUME(data - start);
 	    ldebug(9,"%s -> reg%" PRId8 ", offset %ld\n",known[op],
 		   (uint8_t)reg,s64);
-	    ONLYOP(retval,LOCTYPE_REG_OFFSET,regoffset.reg,(uint8_t)u64);
 	    retval->l.regoffset.offset = s64;
+	    ONLYOP(retval,LOCTYPE_REG_OFFSET,regoffset.reg,(uint8_t)u64);
 	    break;
 	default:
 	  /* No Operand.  */
@@ -1151,7 +1318,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
     /* attr_callback has to fill this, and *MUST* fill at least
      * name; otherwise we can't add the symtab to our hash table.
      */
-    cu_symtab = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
+    cu_symtab = symtab_create(debugfile,NULL,NULL,0,NULL);
     int cu_symtab_added = 0;
 
     symtabs[0] = cu_symtab;
@@ -1310,7 +1477,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    /* Build a new symtab and use it until we finish this
 	     * subprogram, or until we need another child scope.
 	     */
-	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
+	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -1324,7 +1491,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    /* Build a new symtab and use it until we finish this
 	     * subprogram, or until we need another child scope.
 	     */
-	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
+	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -1335,7 +1502,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    /* Build a new symtab and use it until we finish this
 	     * block, or until we need another child scope.
 	     */
-	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL,0,0);
+	    newscope = symtab_create(debugfile,NULL,NULL,0,NULL);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?

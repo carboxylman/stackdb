@@ -135,9 +135,15 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
 
     /*
      * Then check our symtab.
+     *
+     * XXX: check range list ranges too!!!
      */
-    if (symtab->lowpc <= pc && pc <= symtab->highpc) {
+    if (RANGE_IS_PC(&symtab->range)
+	&& symtab->range.lowpc <= pc && pc < symtab->range.highpc) {
 	return symtab;
+    }
+    else if (RANGE_IS_LIST(&symtab->range)) {
+	lwarn("no range list support yet!\n");
     }
 
     return NULL;
@@ -789,6 +795,55 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud) {
     }
 }
 
+void range_dump(struct range *range,struct dump_info *ud) {
+    int i;
+
+    if (RANGE_IS_PC(range))
+	fprintf(ud->stream,"%s  pc range: low=0x%" PRIx64 ", high=0x%" PRIx64,
+		ud->prefix,range->lowpc,range->highpc);
+    else if (RANGE_IS_LIST(range)) {
+	if (range->len == 0) {
+	    fprintf(ud->stream,"%s  RANGE(list): <NULL>",ud->prefix);
+	    return;
+	}
+
+	fprintf(ud->stream,"%s  RANGE(list): (",ud->prefix);
+	for (i = 0; i < range->len; ++i) {
+	    if (i > 0)
+		fprintf(ud->stream,",");
+
+	    fprintf(ud->stream,"[0x%" PRIxADDR ",0x%" PRIxADDR "]",
+		    range->list[i]->start,range->list[i]->end);
+	}
+	fprintf(ud->stream,")");
+    }
+}
+
+void loc_list_dump(struct loc_list *list,struct dump_info *ud) {
+    int i;
+    struct dump_info udn = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
+
+    fprintf(ud->stream,"%s  LOCLIST: (",ud->prefix);
+    for (i = 0; i < list->len; ++i) {
+	if (i > 0)
+	    fprintf(ud->stream,",");
+
+	fprintf(ud->stream,"[0x%" PRIxADDR ",0x%" PRIxADDR,
+		list->list[i]->start,list->list[i]->end);
+	if (list->list[i]->loc) {
+	    fprintf(ud->stream,"->exprloc=");
+	    location_dump(list->list[i]->loc,&udn);
+	}
+	fprintf(ud->stream,"]");
+    }
+    fprintf(ud->stream,")");
+}
+
 void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
     struct symtab *csymtab;
     char *p = "";
@@ -823,7 +878,7 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	fprintf(ud->stream,"%ssymtab:\n",p);
     if (symtab->compdirname)
 	fprintf(ud->stream,"%s    compdirname: %s\n",p,symtab->compdirname);
-    fprintf(ud->stream,"%s    low pc: 0x%" PRIx64 ", high pc: 0x%" PRIx64 "\n",p,symtab->lowpc,symtab->highpc);
+    range_dump(&symtab->range,&udn2);
     if (symtab->producer)
 	fprintf(ud->stream,"%s    producer: %s\n",p,symtab->producer);
     if (symtab->language)
@@ -879,10 +934,16 @@ void location_dump(struct location *location,struct dump_info *ud) {
 }
 
 void symbol_label_dump(struct symbol *symbol,struct dump_info *ud) {
+    struct dump_info udn = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
+
     fprintf(ud->stream,"%s",symbol->name);
     if (ud->meta) 
-	fprintf(ud->stream," (lowpc=0x%" PRIx64 ",highpc=0x%" PRIx64 ")",
-		symbol->s.ii.d.l.lowpc,symbol->s.ii.d.l.highpc);
+	range_dump(&symbol->s.ii.d.l.range,&udn);
 }
 
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
@@ -956,6 +1017,12 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	.detail = 0,
 	.meta = 0,
     };
+    struct dump_info udn2 = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
 
     if (ud->detail) {
 	if (symbol->datatype) {
@@ -976,11 +1043,14 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     }
     else 
 	fprintf(ud->stream,"%s",symbol->name);
-    if (ud->meta) 
-	fprintf(ud->stream," (lowpc=0x%" PRIx64 ",highpc=0x%" PRIx64 ",external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
-		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc,
+    if (ud->meta) {
+	if (symbol->s.ii.d.f.fblist && symbol->s.ii.d.f.fblist->len) {
+	    loc_list_dump(symbol->s.ii.d.f.fblist,&udn2);
+	}
+	fprintf(ud->stream," (external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
 		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
 		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
+    }
     if (ud->detail) {
 	fprintf(ud->stream,"(");
 	list_for_each_entry(arg,&(symbol->s.ii.d.f.args),member) {
@@ -995,8 +1065,6 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"...");
 	}
 	fprintf(ud->stream,")");
-	fprintf(ud->stream," @@ 0x%" PRIx64 " 0x%" PRIx64,
-		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc);
 
 	if (symbol->s.ii.constval)
 	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
@@ -1413,8 +1481,7 @@ void debugfile_free(struct debugfile *debugfile) {
  */
 struct symtab *symtab_create(struct debugfile *debugfile,
 			     char *name,char *compdirname,
-			     int language,char *producer,
-			     unsigned long lowpc,unsigned long highpc) {
+			     int language,char *producer) {
     struct symtab *symtab;
 
     symtab = (struct symtab *)malloc(sizeof(*symtab));
@@ -1429,8 +1496,7 @@ struct symtab *symtab_create(struct debugfile *debugfile,
     symtab_set_producer(symtab,producer);
 
     symtab->language = language;
-    symtab->lowpc = lowpc;
-    symtab->highpc = highpc;
+    symtab->range.rtype = RANGE_TYPE_NONE;
 
     INIT_LIST_HEAD(&symtab->subtabs);
 
@@ -1747,9 +1813,13 @@ struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
     return retval;
 }
 
-ADDR location_resolve(struct memregion *region,struct location *location) {
+ADDR location_resolve(struct memregion *region,struct location *location,
+		      struct loc_list *fblist) {
     struct target *target = memregion_target(region);
     REGVAL regval;
+    int i;
+    ADDR eip;
+    ADDR frame_base;
 
     switch (location->loctype) {
     case LOCTYPE_UNKNOWN:
@@ -1775,14 +1845,48 @@ ADDR location_resolve(struct memregion *region,struct location *location) {
 	errno = 0;
 	return (ADDR)(location->l.regoffset.offset + regval);
     case LOCTYPE_FBREG_OFFSET:
-	/* DWARF only allows register numbers of 0..31, so we use 64
-	 * to specify the frame base register.
+	/* If we have an fblist, we load EIP - 4, scan the location list
+	 * for a match, and run the frame base location op recursively
+	 * via location_resolve!
 	 */
-	regval = target_read_reg(target,target->fbregno);
+	if (!fblist) {
+	    lerror("FBREG_OFFSET, but no frame base loclist!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+	// XXX - 4 is intel-specific?
+	eip = target_read_reg(target,target->ipregno) - 4;
 	if (errno)
 	    return 0;
 	errno = 0;
-	return (ADDR)(regval + location->l.fboffset);
+	ldebug(5,"eip = 0x%" PRIxADDR "\n",eip);
+	for (i = 0; i < fblist->len; ++i) {
+	    if (fblist->list[i]->start <= eip && eip < fblist->list[i]->end)
+		break;
+	}
+	if (i == fblist->len) {
+	    lerror("FBREG_OFFSET location not currently valid!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+	else if (!fblist->list[i]->loc) {
+	    lerror("FBREG_OFFSET frame base in loclist does not have a location description!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+	/* now resolve the frame base value */
+	frame_base = location_resolve(region,fblist->list[i]->loc,NULL);
+	if (errno) {
+	    lerror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
+	    errno = EINVAL;
+	    return 0;
+	}
+	ldebug(5,"frame_base = 0x%" PRIxADDR "\n",frame_base);
+	ldebug(5,"fboffset = %" PRIi64 "\n",location->l.fboffset);
+	if (0 && location->l.fboffset < 0)
+	    return (ADDR)(frame_base - (ADDR)location->l.fboffset);
+	else
+	    return (ADDR)(frame_base + (ADDR)location->l.fboffset);
     case LOCTYPE_MEMBER_OFFSET:
     case LOCTYPE_RUNTIME:
 	lwarn("currently unsupported location type %s\n",LOCTYPE(location->loctype));
@@ -1799,6 +1903,7 @@ ADDR location_resolve(struct memregion *region,struct location *location) {
 }
 
 int location_load(struct memregion *region,struct location *location,
+		  struct loc_list *fblist,
 		  load_flags_t flags,void *buf,int bufsiz) {
     ADDR final_location = 0;
     REGVAL regval;
@@ -1824,9 +1929,12 @@ int location_load(struct memregion *region,struct location *location,
 	    memcpy(buf,&regval,bufsiz);
     }
     else {
-	final_location = location_resolve(region,location);
+	final_location = location_resolve(region,location,fblist);
+
 	if (errno)
 	    return -1;
+
+	ldebug(5,"final_location = 0x%" PRIxADDR "\n",final_location);
 
 	if (flags & LOAD_FLAG_CHECK_VISIBILITY
 	    && !memregion_contains(region,final_location)) {
@@ -1864,7 +1972,7 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	ldebug(5,"malloc(%d) for symbol %s\n",bufsiz,symbol->name);
     }
 
-    if (location_load(region,&(symbol->s.ii.l),flags,*buf,*bufsiz)) {
+    if (location_load(region,&(symbol->s.ii.l),NULL,flags,*buf,*bufsiz)) {
 	if (didalloc) {
 	    free(*buf);
 	    *buf = NULL;
@@ -1885,6 +1993,7 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
     int i;
     ADDR top_addr;
     OFFSET totaloffset;
+    struct loc_list *fblist;
 
     if (!SYMBOL_IS_VAR(symbol)) {
 	lwarn("symbol %s is not a variable (is %s)!\n",
@@ -1894,10 +2003,15 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
     }
 
     /*
-     * If this is a struct member, we need the chain.  Otherwise, just
-     * load the last member in the chain.
+     * If the nested symbol is a struct member, we need the chain.
+     * ALSO, if the nested symbol has a location type of FBREG or
+     * RUNTIME, we need to extract the next highest up frame base
+     * location list (probably the containing function or inlined
+     * subroutine).  Otherwise, just load the last member in the chain.
      */
-    if (!symbol->s.ii.ismember) {
+    if (!symbol->s.ii.ismember 
+	&& symbol->s.ii.l.loctype != LOCTYPE_FBREG_OFFSET
+	&& symbol->s.ii.l.loctype != LOCTYPE_RUNTIME) {
 	return symbol_load(region,symbol,flags,buf,bufsiz);
     }
     /* Otherwise... */
@@ -1911,52 +2025,75 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
 	    return -1;
 	}
 	didalloc = 1;
-	ldebug(5,"malloc(%d) for symbol %s\n",bufsiz,symbol->name);
+	ldebug(5,"malloc(%d) for symbol %s\n",*bufsiz,symbol->name);
     }
 
-    /* Now assemble our member offset from the top enclosing struct,
-     * and resolve the location for that struct.  Then add our
-     * offset and load!
-     */
-    totaloffset = symbol->s.ii.l.l.member_offset;
-    for (i = len - 1; i > -1; --i) {
-	if (SYMBOL_IS_VAR(chain->chain[i])
-	    && chain->chain[i]->s.ii.ismember) {
-	    totaloffset += chain->chain[i]->s.ii.l.l.member_offset;
-	    continue;
+    if (symbol->s.ii.ismember) {
+	/* Now assemble our member offset from the top enclosing struct,
+	 * and resolve the location for that struct.  Then add our
+	 * offset and load!
+	 */
+	totaloffset = symbol->s.ii.l.l.member_offset;
+	for (i = len - 1; i > -1; --i) {
+	    if (SYMBOL_IS_VAR(chain->chain[i])
+		&& chain->chain[i]->s.ii.ismember) {
+		totaloffset += chain->chain[i]->s.ii.l.l.member_offset;
+		continue;
+	    }
+	    else if (SYMBOL_IS_VAR(chain->chain[i])
+		     && SYMBOL_IST_STUN(chain->chain[i]->datatype)) {
+		top_enclosing_symbol = chain->chain[i];
+		break;
+	    }
+	    else {
+		lerror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
+		       chain->chain[i]->name,SYMBOL_TYPE(chain->chain[i]->type),i);
+		goto errout;
+	    }
 	}
-	else if (SYMBOL_IS_VAR(chain->chain[i])
-		 && SYMBOL_IST_STUN(chain->chain[i]->datatype)) {
-	    top_enclosing_symbol = chain->chain[i];
-	    break;
-	}
-	else {
-	    lerror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
-		   chain->chain[i]->name,SYMBOL_TYPE(chain->chain[i]->type),i);
+
+	top_addr = location_resolve(region,&top_enclosing_symbol->s.ii.l,NULL);
+	if (errno) {
+	    lerror("could not resolve location for top S/U in nested load: %s\n",
+		   strerror(errno));
 	    goto errout;
 	}
+
+	if (flags & LOAD_FLAG_CHECK_VISIBILITY
+	    && !memregion_contains(region,top_addr + totaloffset)) {
+	    lerror("memregion does not contain address 0x%" PRIxADDR "\n",
+		   top_addr + totaloffset);
+	    errno = EFAULT;
+	    goto errout;
+	}
+
+	if (!target_read_addr(memregion_target(region),top_addr + totaloffset,
+			      *bufsiz,*buf))
+	    goto errout;
+
+	return 0;
     }
+    else {
+	/* Find the deepest valid frame base listlocptr and pass that
+	 * along. 
+	 */
+	for (i = len - 2; i > -1; --i) {
+	    if (SYMBOL_IS_FUNCTION(chain->chain[i])
+		&& chain->chain[i]->s.ii.d.f.fblist) {
+		fblist = chain->chain[i]->s.ii.d.f.fblist;
+		break;
+	    }
+	}
 
-    top_addr = location_resolve(region,&top_enclosing_symbol->s.ii.l);
-    if (errno) {
-	lerror("could not resolve location for top S/U in nested load: %s\n",
-	       strerror(errno));
-    	goto errout;
+	if (!fblist && symbol->s.ii.l.loctype == LOCTYPE_FBREG_OFFSET) {
+	    lerror("symbol %s had an FBREG_OFFSET location, but no containing frame base list!\n",
+		   symbol->name);
+	}
+	else if (!fblist) {
+	    ldebug(5,"symbol %s had a RUNTIME location, but no containing frame base list; bad things may happen!\n");
+	}
+	return location_load(region,&symbol->s.ii.l,fblist,flags,*buf,*bufsiz);
     }
-
-    if (flags & LOAD_FLAG_CHECK_VISIBILITY
-	&& !memregion_contains(region,top_addr + totaloffset)) {
-	lerror("memregion does not contain address 0x%" PRIxADDR "\n",
-	       top_addr + totaloffset);
-	errno = EFAULT;
-	goto errout;
-    }
-
-    if (!target_read_addr(memregion_target(region),top_addr + totaloffset,
-			  *bufsiz,*buf))
-	goto errout;
-
-    return 0;
 
  errout:
     if (didalloc) 
@@ -2123,6 +2260,7 @@ char *SYMBOL_TYPE_STRINGS[] = {
 };
 
 char *DATATYPE_STRINGS[] = {
+    "void",
     "array",
     "struct",
     "enum",
@@ -2136,7 +2274,18 @@ char *DATATYPE_STRINGS[] = {
 };
 
 char *LOCTYPE_STRINGS[] = {
+    "unknown",
     "addr",
     "reg",
-    "regaddr"
+    "regaddr",
+    "regoffset",
+    "memberoffset",
+    "fbregoffset",
+    "runtime"
+};
+
+char *RANGE_TYPE_STRINGS[] = {
+    "none",
+    "pc",
+    "list"
 };
