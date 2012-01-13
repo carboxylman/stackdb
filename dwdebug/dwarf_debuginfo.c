@@ -400,17 +400,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    lwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
-    /* XXX: skip these for now. */
-    case DW_AT_stmt_list:
-    case DW_AT_call_file:
-    case DW_AT_call_line:
-    case DW_AT_declaration:
-    case DW_AT_entry_pc:
-    case DW_AT_MIPS_linkage_name:
-    case DW_AT_artificial:
-    /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
-    case 8455:
-	break;
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    /* our encoding_t is 1<->1 map to the DWARF encoding codes. */
@@ -726,7 +715,59 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  dwarf_form_string(form));
 	}
 	break;
+
+    /* XXX: skip these for now. */
+    case DW_AT_stmt_list:
+    case DW_AT_call_file:
+    case DW_AT_call_line:
+    case DW_AT_declaration:
+    case DW_AT_entry_pc:
+    case DW_AT_MIPS_linkage_name:
+    case DW_AT_artificial:
+    /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
+    case 8455:
+	break;
+
     case DW_AT_location:
+	/* We only accept this for params and variables */
+	if (SYMBOL_IS_VAR(cbargs->symbol)) {
+	    if (num_set && (form == DW_FORM_data4 
+			    || form == DW_FORM_data8)) {
+		cbargs->symbol->s.ii.l.loctype = LOCTYPE_LOCLIST;
+
+		cbargs->symbol->s.ii.l.l.loclist = \
+		    (struct loc_list *)malloc(sizeof(struct loc_list));
+		memset(cbargs->symbol->s.ii.l.l.loclist,0,sizeof(struct loc_list));
+
+		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
+				cbargs->addrsize,cbargs->offset_size,
+				attr,num,
+				cbargs->debugfile,
+				cbargs->cu_base,
+				cbargs->symbol->s.ii.l.l.loclist)) {
+		    lerror("[DIE %" PRIx64 "] failed to get loclist attrval %" PRIx64 " for attr %s in var symbol %s\n",
+			   cbargs->die_offset,num,dwarf_attr_string(attr),
+			   cbargs->symbol->name);
+		}
+	    }
+	    else if (block_set) {
+		get_static_ops(cbargs->dwflmod,cbargs->dbg,
+			       cbargs->version,cbargs->addrsize,cbargs->offset_size,
+			       block.length,block.data,attr,
+			       &cbargs->symbol->s.ii.l);
+	    }
+	    else {
+		lwarn("[DIE %" PRIx64 "] loclist: bad attr %s // form %s!\n",
+		      cbargs->die_offset,dwarf_attr_string(attr),
+		      dwarf_form_string(form));
+	    }
+	}
+	else {
+	    lwarn("[DIE %" PRIx64 "] bad attr %s // form %s!\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
+	}
+	break;
     //case DW_AT_data_member_location:
     /* else fall through to a block op */
     /* well, not so fast -- let's flip through subrange stuff too! */
@@ -1302,10 +1343,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    break;
 
 	case DW_OP_reg0...DW_OP_reg31:
-	    NEED(1);
-	    reg = *((uint8_t *)data) - (uint8_t)DW_OP_reg0;
-	    data += 1;
-	    CONSUME(1);
+	    reg = op - (uint8_t)DW_OP_reg0;
 
 	    ldebug(9,"%s -> 0x%" PRIu8 "\n",known[op],reg);
 	    ONLYOP(retval,LOCTYPE_REG,reg,reg);

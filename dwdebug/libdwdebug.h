@@ -197,8 +197,9 @@ typedef enum {
     LOCTYPE_REG_OFFSET    = 4,
     LOCTYPE_MEMBER_OFFSET = 5,
     LOCTYPE_FBREG_OFFSET  = 6,
+    LOCTYPE_LOCLIST       = 7,
     /* add here */
-    LOCTYPE_RUNTIME       = 7,
+    LOCTYPE_RUNTIME       = 8,
     __LOCTYPE_MAX,
 } location_type_t;
 extern char *LOCTYPE_STRINGS[];
@@ -811,6 +812,7 @@ struct location {
 	    char *data;
 	    uint16_t len;
 	} runtime;
+	struct loc_list *loclist;
     } l;
 };
 

@@ -934,6 +934,13 @@ void location_dump(struct location *location,struct dump_info *ud) {
     case LOCTYPE_RUNTIME:
 	fprintf(ud->stream,"RUNTIMEDWOP (%p,%d)",
 		location->l.runtime.data,location->l.runtime.len);
+	break;
+    case LOCTYPE_LOCLIST:
+	fprintf(ud->stream,"LOCLIST (%p,%d;",
+		location->l.runtime.data,location->l.runtime.len);
+	loc_list_dump(location->l.loclist,ud);
+	fprintf(ud->stream,")");
+	break;
     case LOCTYPE_UNKNOWN:
     case __LOCTYPE_MAX:
 	break;
@@ -2352,6 +2359,7 @@ char *LOCTYPE_STRINGS[] = {
     "regoffset",
     "memberoffset",
     "fbregoffset",
+    "loclist",
     "runtime"
 };
 
