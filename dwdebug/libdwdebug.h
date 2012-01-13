@@ -357,9 +357,9 @@ void symbol_chain_dump(struct symbol_chain *symbol_chain,struct dump_info *ud);
  **/
 void location_dump(struct location *location,struct dump_info *ud);
 ADDR location_resolve(struct memregion *region,struct location *location,
-		      struct loc_list *fblist);
+		      struct loc_list *fblist,struct location *fbloc);
 int location_load(struct memregion *region,struct location *location,
-		  struct loc_list *fblist,
+		  struct loc_list *fblist,struct location *fbloc,
 		  load_flags_t flags,void *buf,int bufsiz);
 
 /**
@@ -921,9 +921,17 @@ struct symbol {
 		struct {
 		    struct list_head args;
 		    uint16_t count;
-		    uint8_t hasunspec:1;
-		    /* The frame base location list. */
-		    struct loc_list *fblist;
+		    uint8_t hasunspec:1,
+			    /* If the fb loc is a list or single loc. */
+			    fbisloclist:1,
+			    fbissingleloc:1;
+		    /* The frame base location.  Can be a list or
+		     * single location.
+		     */
+		    union {
+			struct loc_list *fblist;
+			struct location *fbloc;
+		    };
 		    struct symtab *symtab;
 		} f;
 		struct {

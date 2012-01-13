@@ -1051,8 +1051,12 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     else 
 	fprintf(ud->stream,"%s",symbol->name);
     if (ud->meta) {
-	if (symbol->s.ii.d.f.fblist && symbol->s.ii.d.f.fblist->len) {
+	if (symbol->s.ii.d.f.fbisloclist && symbol->s.ii.d.f.fblist 
+	    && symbol->s.ii.d.f.fblist->len) {
 	    loc_list_dump(symbol->s.ii.d.f.fblist,&udn2);
+	}
+	else if (symbol->s.ii.d.f.fbissingleloc && symbol->s.ii.d.f.fbloc) { 
+	    location_dump(symbol->s.ii.d.f.fbloc,&udn2);
 	}
 	fprintf(ud->stream," (external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
 		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
@@ -1823,12 +1827,13 @@ struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
 }
 
 ADDR location_resolve(struct memregion *region,struct location *location,
-		      struct loc_list *fblist) {
+		      struct loc_list *fblist,struct location *fbloc) {
     struct target *target = memregion_target(region);
     REGVAL regval;
     int i;
     ADDR eip;
     ADDR frame_base;
+    struct location *final_fb_loc;
 
     switch (location->loctype) {
     case LOCTYPE_UNKNOWN:
@@ -1858,33 +1863,41 @@ ADDR location_resolve(struct memregion *region,struct location *location,
 	 * for a match, and run the frame base location op recursively
 	 * via location_resolve!
 	 */
-	if (!fblist) {
-	    lerror("FBREG_OFFSET, but no frame base loclist!\n");
+	if (fblist) {
+	    // XXX - 4 is intel-specific?
+	    eip = target_read_reg(target,target->ipregno) - 4;
+	    if (errno)
+		return 0;
+	    errno = 0;
+	    ldebug(5,"eip = 0x%" PRIxADDR "\n",eip);
+	    for (i = 0; i < fblist->len; ++i) {
+		if (fblist->list[i]->start <= eip && eip < fblist->list[i]->end) {
+		    final_fb_loc = fblist->list[i]->loc;
+		    break;
+		}
+	    }
+	    if (i == fblist->len) {
+		lerror("FBREG_OFFSET location not currently valid!\n");
+		errno = EINVAL;
+		return 0;
+	    }
+	    else if (!fblist->list[i]->loc) {
+		lerror("FBREG_OFFSET frame base in loclist does not have a location description!\n");
+		errno = EINVAL;
+		return 0;
+	    }
+	}
+	else if (fbloc) {
+	    final_fb_loc = fbloc;
+	}
+	else {
+	    lerror("FBREG_OFFSET, but no frame base loclist/loc!\n");
 	    errno = EINVAL;
 	    return 0;
 	}
-	// XXX - 4 is intel-specific?
-	eip = target_read_reg(target,target->ipregno) - 4;
-	if (errno)
-	    return 0;
-	errno = 0;
-	ldebug(5,"eip = 0x%" PRIxADDR "\n",eip);
-	for (i = 0; i < fblist->len; ++i) {
-	    if (fblist->list[i]->start <= eip && eip < fblist->list[i]->end)
-		break;
-	}
-	if (i == fblist->len) {
-	    lerror("FBREG_OFFSET location not currently valid!\n");
-	    errno = EINVAL;
-	    return 0;
-	}
-	else if (!fblist->list[i]->loc) {
-	    lerror("FBREG_OFFSET frame base in loclist does not have a location description!\n");
-	    errno = EINVAL;
-	    return 0;
-	}
+
 	/* now resolve the frame base value */
-	frame_base = location_resolve(region,fblist->list[i]->loc,NULL);
+	frame_base = location_resolve(region,final_fb_loc,NULL,NULL);
 	if (errno) {
 	    lerror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
 	    errno = EINVAL;
@@ -1912,7 +1925,7 @@ ADDR location_resolve(struct memregion *region,struct location *location,
 }
 
 int location_load(struct memregion *region,struct location *location,
-		  struct loc_list *fblist,
+		  struct loc_list *fblist,struct location *fbloc,
 		  load_flags_t flags,void *buf,int bufsiz) {
     ADDR final_location = 0;
     REGVAL regval;
@@ -1938,7 +1951,7 @@ int location_load(struct memregion *region,struct location *location,
 	    memcpy(buf,&regval,bufsiz);
     }
     else {
-	final_location = location_resolve(region,location,fblist);
+	final_location = location_resolve(region,location,fblist,fbloc);
 
 	if (errno)
 	    return -1;
@@ -2008,7 +2021,7 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	ldebug(5,"malloc(%d) for symbol %s\n",*bufsiz,symbol->name);
     }
 
-    if (location_load(region,&(symbol->s.ii.l),NULL,flags,*buf,*bufsiz)) {
+    if (location_load(region,&(symbol->s.ii.l),NULL,NULL,flags,*buf,*bufsiz)) {
 	if (didalloc) {
 	    free(*buf);
 	    *buf = NULL;
@@ -2031,6 +2044,7 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
     ADDR top_addr;
     OFFSET totaloffset;
     struct loc_list *fblist;
+    struct location *fbloc;
 
     if (!SYMBOL_IS_VAR(symbol)) {
 	lwarn("symbol %s is not a variable (is %s)!\n",
@@ -2101,7 +2115,7 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
 	    }
 	}
 
-	top_addr = location_resolve(region,&top_enclosing_symbol->s.ii.l,NULL);
+	top_addr = location_resolve(region,&top_enclosing_symbol->s.ii.l,NULL,NULL);
 	if (errno) {
 	    lerror("could not resolve location for top S/U in nested load: %s\n",
 		   strerror(errno));
@@ -2127,21 +2141,27 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
 	 * along. 
 	 */
 	for (i = len - 2; i > -1; --i) {
-	    if (SYMBOL_IS_FUNCTION(chain->chain[i])
-		&& chain->chain[i]->s.ii.d.f.fblist) {
-		fblist = chain->chain[i]->s.ii.d.f.fblist;
-		break;
+	    if (SYMBOL_IS_FUNCTION(chain->chain[i])) {
+		if (chain->chain[i]->s.ii.d.f.fbisloclist) {
+		    fblist = chain->chain[i]->s.ii.d.f.fblist;
+		    break;
+		}
+		else if (chain->chain[i]->s.ii.d.f.fbissingleloc) {
+		    fbloc = chain->chain[i]->s.ii.d.f.fbloc;
+		}
 	    }
 	}
 
-	if (!fblist && symbol->s.ii.l.loctype == LOCTYPE_FBREG_OFFSET) {
-	    lerror("symbol %s had an FBREG_OFFSET location, but no containing frame base list!\n",
-		   symbol->name);
+	if (!fblist && !fbloc) {
+	    if (symbol->s.ii.l.loctype == LOCTYPE_FBREG_OFFSET)
+		lerror("symbol %s had an FBREG_OFFSET location, but no containing frame base info!\n",
+		       symbol->name);
+	    else if (symbol->s.ii.l.loctype == LOCTYPE_RUNTIME) 
+		ldebug(5,"symbol %s had a RUNTIME location, but no containing frame base list; bad things may happen!\n",symbol->name);
 	}
-	else if (!fblist) {
-	    ldebug(5,"symbol %s had a RUNTIME location, but no containing frame base list; bad things may happen!\n");
-	}
-	return location_load(region,&symbol->s.ii.l,fblist,flags,*buf,*bufsiz);
+
+	return location_load(region,&symbol->s.ii.l,fblist,fbloc,flags,
+			     *buf,*bufsiz);
     }
 
  errout:

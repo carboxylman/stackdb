@@ -265,13 +265,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	 * instances are part of the symtab.  Labels are not, so we do them
 	 * separately below.
 	 */
-	if (cbargs->symtab && RANGE_IS_LIST(&cbargs->symtab->range)) {
-	    lerror("[DIE %" PRIx64 "] cannot update lowpc; already saw AT_ranges for symtab!\n",
-		   cbargs->die_offset);
-	}
-	else if (cbargs->symtab) {
-	    cbargs->symtab->range.rtype = RANGE_TYPE_PC;
-	    cbargs->symtab->range.lowpc = addr;
+	if (cbargs->symtab) {
+	    if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE) {
+		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
+		cbargs->symtab->range.lowpc = addr;
+	    }
 	}
 	else 
 	    lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symtab)\n",
@@ -307,12 +305,18 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	     * low_pc yet, just bail.
 	     */
 
+	    /* XXX disable this check for now; if we're processing low_pc
+	     * for a label, for instance, the symtab already may have a
+	     * list... and thus we don't need to update it.
 	    if (cbargs->symtab && RANGE_IS_LIST(&cbargs->symtab->range)) {
 		lerror("cannot update highpc; already saw AT_ranges for symtab!\n");
 	    }
-	    else if (cbargs->symtab && cbargs->symtab->range.lowpc) {
-		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
-		cbargs->symtab->range.highpc = cbargs->symtab->range.lowpc + num;
+	    */
+	    if (cbargs->symtab && cbargs->symtab->range.lowpc) {
+		if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE) {
+		    cbargs->symtab->range.rtype = RANGE_TYPE_PC;
+		    cbargs->symtab->range.highpc = cbargs->symtab->range.lowpc + num;
+		}
 	    }
 	    else 
 		lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (symtab)\n",
@@ -350,12 +354,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	else if (addr_set) {
 	    ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
 
-	    if (cbargs->symtab && RANGE_IS_LIST(&cbargs->symtab->range)) {
-		lerror("cannot update highpc; already saw AT_ranges for symtab!\n");
-	    }
-	    else if (cbargs->symtab) {
-		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
-		cbargs->symtab->range.highpc = addr;
+	    if (cbargs->symtab) {
+		if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE) {
+		    cbargs->symtab->range.rtype = RANGE_TYPE_PC;
+		    cbargs->symtab->range.highpc = addr;
+		}
 	    }
 	    else 
 		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " (addr) for attr %s in bad context (symtab)\n",
@@ -635,6 +638,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set && (form == DW_FORM_data4 
 			|| form == DW_FORM_data8)) {
 	    if (cbargs->symbol && SYMBOL_IS_FUNCTION(cbargs->symbol)) {
+		cbargs->symbol->s.ii.d.f.fbisloclist = 1;
+
 		cbargs->symbol->s.ii.d.f.fblist = \
 		    (struct loc_list *)malloc(sizeof(struct loc_list));
 		memset(cbargs->symbol->s.ii.d.f.fblist,0,sizeof(struct loc_list));
@@ -655,8 +660,31 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		      cbargs->die_offset,dwarf_attr_string(attr));
 	    }
 	}
+	/* if it's an exprloc in a block */
+	else if (block_set) {
+	    if (cbargs->symbol && SYMBOL_IS_FUNCTION(cbargs->symbol)) {
+		cbargs->symbol->s.ii.d.f.fbissingleloc = 1;
+
+		cbargs->symbol->s.ii.d.f.fbloc = \
+		    (struct location *)malloc(sizeof(struct location));
+		memset(cbargs->symbol->s.ii.d.f.fbloc,0,sizeof(struct location));
+
+		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->version,
+				   cbargs->addrsize,cbargs->offset_size,
+				   block.length,block.data,attr,
+				   cbargs->symbol->s.ii.d.f.fbloc)) {
+		    lerror("[DIE %" PRIx64 "] failed to get single loc attrval %" PRIx64 " for attr %s in function symbol %s\n",
+			   cbargs->die_offset,num,dwarf_attr_string(attr),
+			   cbargs->symbol->name);
+		}
+	    }
+	    else {
+		lwarn("[DIE %" PRIx64 "] no/bad symbol for single loc for attr %s\n",
+		      cbargs->die_offset,dwarf_attr_string(attr));
+	    }
+	}
 	else {
-	    lwarn("[DIE %" PRIx64 "] bad loclist attr %s // form %s!\n",
+	    lwarn("[DIE %" PRIx64 "] frame_base not num/block; attr %s // form %s mix!\n",
 		  cbargs->die_offset,dwarf_attr_string(attr),
 		  dwarf_form_string(form));
 	}
