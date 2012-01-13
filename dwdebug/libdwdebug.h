@@ -669,15 +669,27 @@ struct debugfile {
     /*
      * The debug string table for this file.  All string pointers are
      * checked for presence in this table before freeing.
+     *
+     * This table persists until the debugfile is freed.
      */
     char *strtab;
     unsigned int strtablen;
 
     /*
      * The debug location table for this file.
+     *
+     * This table is only live while the file is being processed.
      */
     char *loctab;
     unsigned int loctablen;
+
+    /*
+     * The range table for this file.
+     *
+     * This table is only live while the file is being processed.
+     */
+    char *rangetab;
+    unsigned int rangetablen;
 
     /*
      * Each srcfile in a debugfile gets its own symtable.  The symtable
@@ -718,6 +730,11 @@ struct range_list_entry {
     ADDR end;
 };
 
+struct range_list {
+    int32_t len;
+    struct range_list_entry **list;
+};
+
 struct range {
     range_type_t rtype;
     union {
@@ -725,10 +742,7 @@ struct range {
 	    uint64_t lowpc;
 	    uint64_t highpc;
 	};
-	struct {
-	    int32_t len;
-	    struct range_list_entry **list;
-	};
+	struct range_list rlist;
     };
 };
 

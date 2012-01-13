@@ -799,21 +799,21 @@ void range_dump(struct range *range,struct dump_info *ud) {
     int i;
 
     if (RANGE_IS_PC(range))
-	fprintf(ud->stream,"%s  pc range: low=0x%" PRIx64 ", high=0x%" PRIx64,
+	fprintf(ud->stream,"%sRANGE(pc): low=0x%" PRIx64 ", high=0x%" PRIx64,
 		ud->prefix,range->lowpc,range->highpc);
     else if (RANGE_IS_LIST(range)) {
-	if (range->len == 0) {
-	    fprintf(ud->stream,"%s  RANGE(list): <NULL>",ud->prefix);
+	if (range->rlist.len == 0) {
+	    fprintf(ud->stream,"%sRANGE(list): ()",ud->prefix);
 	    return;
 	}
 
-	fprintf(ud->stream,"%s  RANGE(list): (",ud->prefix);
-	for (i = 0; i < range->len; ++i) {
+	fprintf(ud->stream,"%sRANGE(list): (",ud->prefix);
+	for (i = 0; i < range->rlist.len; ++i) {
 	    if (i > 0)
 		fprintf(ud->stream,",");
 
 	    fprintf(ud->stream,"[0x%" PRIxADDR ",0x%" PRIxADDR "]",
-		    range->list[i]->start,range->list[i]->end);
+		    range->rlist.list[i]->start,range->rlist.list[i]->end);
 	}
 	fprintf(ud->stream,")");
     }
@@ -828,7 +828,7 @@ void loc_list_dump(struct loc_list *list,struct dump_info *ud) {
 	.meta = ud->meta,
     };
 
-    fprintf(ud->stream,"%s  LOCLIST: (",ud->prefix);
+    fprintf(ud->stream,"%sLOCLIST: (",ud->prefix);
     for (i = 0; i < list->len; ++i) {
 	if (i > 0)
 	    fprintf(ud->stream,",");
@@ -836,7 +836,7 @@ void loc_list_dump(struct loc_list *list,struct dump_info *ud) {
 	fprintf(ud->stream,"[0x%" PRIxADDR ",0x%" PRIxADDR,
 		list->list[i]->start,list->list[i]->end);
 	if (list->list[i]->loc) {
-	    fprintf(ud->stream,"->exprloc=");
+	    fprintf(ud->stream,"->");
 	    location_dump(list->list[i]->loc,&udn);
 	}
 	fprintf(ud->stream,"]");
@@ -851,6 +851,12 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
     char *np2;
     struct dump_info udn;
     struct dump_info udn2;
+    struct dump_info udn3 = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
 
     if (ud->prefix) {
 	p = ud->prefix;
@@ -878,7 +884,8 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	fprintf(ud->stream,"%ssymtab:\n",p);
     if (symtab->compdirname)
 	fprintf(ud->stream,"%s    compdirname: %s\n",p,symtab->compdirname);
-    range_dump(&symtab->range,&udn2);
+    range_dump(&symtab->range,&udn3);
+    fprintf(ud->stream,"\n");
     if (symtab->producer)
 	fprintf(ud->stream,"%s    producer: %s\n",p,symtab->producer);
     if (symtab->language)
@@ -1465,6 +1472,8 @@ void debugfile_free(struct debugfile *debugfile) {
 	free(debugfile->strtab);
     if (debugfile->loctab)
 	free(debugfile->loctab);
+    if (debugfile->rangetab)
+	free(debugfile->rangetab);
 
     if (debugfile->version)
 	free(debugfile->version);
@@ -1996,7 +2005,7 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	    return -1;
 	}
 	didalloc = 1;
-	ldebug(5,"malloc(%d) for symbol %s\n",bufsiz,symbol->name);
+	ldebug(5,"malloc(%d) for symbol %s\n",*bufsiz,symbol->name);
     }
 
     if (location_load(region,&(symbol->s.ii.l),NULL,flags,*buf,*bufsiz)) {
