@@ -1949,9 +1949,26 @@ int location_load(struct memregion *region,struct location *location,
     return 0;
 }
 
+/*
+ * Skips const and volatile types, for now.
+ */
+struct symbol *symbol_skip_types(struct symbol *type) {
+    if (!SYMBOL_IS_TYPE(type))
+	return NULL;
+
+    while (type->type == SYMBOL_TYPE_TYPE
+	   && (SYMBOL_IST_VOL(type)
+	       || SYMBOL_IST_CONST(type))) {
+	type = type->s.ti.type_datatype;
+    }
+
+    return type;
+}
+
 int symbol_load(struct memregion *region,struct symbol *symbol,
 		load_flags_t flags,void **buf,int *bufsiz) {
     int didalloc = 0;
+    struct symbol *datatype;
 
     if (!SYMBOL_IS_VAR(symbol)) {
 	lwarn("symbol %s is not a variable (is %s)!\n",
@@ -1960,9 +1977,19 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	return -1;
     }
 
+    datatype = symbol_skip_types(symbol->datatype);
+    if (symbol->datatype != datatype)
+	ldebug(5,"skipped from %s to %s for symbol %s\n",
+	       DATATYPE(symbol->datatype->s.ti.datatype_code),
+	       DATATYPE(datatype->s.ti.datatype_code),symbol->name);
+    else 
+	ldebug(5,"no skip; type for symbol %s is %s\n",
+	       symbol->name,DATATYPE(symbol->datatype->s.ti.datatype_code));
+
+
     /* Alloc a buffer if they didn't. */
     if (!*buf) {
-	*bufsiz = symbol_type_bytesize(symbol->datatype);
+	*bufsiz = symbol_type_bytesize(datatype);
 	*buf = malloc(*bufsiz);
 	if (!*buf) {
 	    lerror("malloc: %s\n",strerror(errno));
@@ -1989,6 +2016,7 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
     int didalloc = 0;
     int len = chain->count;
     struct symbol *symbol = chain->chain[len - 1];
+    struct symbol *datatype;
     struct symbol *top_enclosing_symbol = NULL;
     int i;
     ADDR top_addr;
@@ -2016,9 +2044,21 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
     }
     /* Otherwise... */
 
+    /* Grab the "real" datatype -- skipping things like const,
+     * volatile.
+     */
+    datatype = symbol_skip_types(symbol->datatype);
+    if (symbol->datatype != datatype)
+	ldebug(5,"skipped from %s to %s for symbol %s\n",
+	       DATATYPE(symbol->datatype->s.ti.datatype_code),
+	       DATATYPE(datatype->s.ti.datatype_code),symbol->name);
+    else 
+	ldebug(5,"no skip; type for symbol %s is %s\n",
+	       symbol->name,DATATYPE(symbol->datatype->s.ti.datatype_code));
+
     /* Alloc a buffer if they didn't. */
     if (!*buf) {
-	*bufsiz = symbol_type_bytesize(symbol->datatype);
+	*bufsiz = symbol_type_bytesize(datatype);
 	*buf = malloc(*bufsiz);
 	if (!*buf) {
 	    lerror("malloc: %s\n",strerror(errno));
@@ -2123,7 +2163,8 @@ void symbol_rvalue_print(FILE *stream,struct memregion *region,
     if (!SYMBOL_IS_VAR(symbol))
 	return;
 
-    type = symbol->datatype;
+    type = symbol_skip_types(symbol->datatype);
+
     switch (type->s.ti.datatype_code) {
     case DATATYPE_BASE:
 	if (type->s.ti.byte_size == 1) {
@@ -2270,6 +2311,7 @@ char *DATATYPE_STRINGS[] = {
     "union",
     "base",
     "const",
+    "volatile",
     "bitfield"
 };
 
