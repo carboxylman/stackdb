@@ -305,13 +305,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	     * low_pc yet, just bail.
 	     */
 
-	    /* XXX disable this check for now; if we're processing low_pc
-	     * for a label, for instance, the symtab already may have a
-	     * list... and thus we don't need to update it.
-	    if (cbargs->symtab && RANGE_IS_LIST(&cbargs->symtab->range)) {
-		lerror("cannot update highpc; already saw AT_ranges for symtab!\n");
-	    }
-	    */
 	    if (cbargs->symtab && cbargs->symtab->range.lowpc) {
 		if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE) {
 		    cbargs->symtab->range.rtype = RANGE_TYPE_PC;
