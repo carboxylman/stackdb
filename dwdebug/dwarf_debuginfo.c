@@ -417,6 +417,20 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    lwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
+    /* Don't bother with these yet. */
+    case DW_AT_decl_column:
+    case DW_AT_call_file:
+    case DW_AT_call_line:
+    case DW_AT_call_column:
+	break;
+    case DW_AT_stmt_list:
+	/* XXX: don't do line numbers yet. */
+	break;
+    case DW_AT_declaration:
+	/* XXX: hopefully this is mostly necessary to handle weird
+	 * scoping cases, so ignore for now.
+	 */
+	break;
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    /* our encoding_t is 1<->1 map to the DWARF encoding codes. */
@@ -601,17 +615,58 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	/* we process all DIEs, so no need to skip any child content. */
 	break;
     case DW_AT_data_member_location:
-	/* can be either a constant or a loclist */
-	if (num_set
+	/* can be either an exprloc, loclistptr, or a constant. */
+	if (block_set) {
+	    if (SYMBOL_IS_VAR(cbargs->symbol)
+		&& cbargs->symbol->s.ii.ismember) {
+		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->version,
+				   cbargs->addrsize,cbargs->offset_size,
+				   block.length,block.data,attr,
+				   &cbargs->symbol->s.ii.l)) {
+		    lerror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
+			   cbargs->die_offset,num,dwarf_attr_string(attr),
+			   dwarf_form_string(form));
+		}
+	    }
+	    else {
+		lwarn("[DIE %" PRIx64 "] no/bad symbol for attr %s // form %s\n",
+		      cbargs->die_offset,dwarf_attr_string(attr),
+		      dwarf_form_string(form));
+	    }
+	}
+	else if (num_set && (form == DW_FORM_data4 
+			     || form == DW_FORM_data8)) {
+	    if (SYMBOL_IS_VAR(cbargs->symbol)
+		&& cbargs->symbol->s.ii.ismember) {
+		cbargs->symbol->s.ii.l.loctype = LOCTYPE_LOCLIST;
+
+		cbargs->symbol->s.ii.l.l.loclist = \
+		    (struct loc_list *)malloc(sizeof(struct loc_list));
+		memset(cbargs->symbol->s.ii.l.l.loclist,0,sizeof(struct loc_list));
+
+		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
+				cbargs->addrsize,cbargs->offset_size,
+				attr,num,cbargs->debugfile,cbargs->cu_base,
+				cbargs->symbol->s.ii.l.l.loclist)) {
+		    lerror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
+			   cbargs->die_offset,num,dwarf_attr_string(attr),
+			   dwarf_form_string(form));
+		}
+	    }
+	    else {
+		lwarn("[DIE %" PRIx64 "] no/bad symbol for attr %s // form %s\n",
+		      cbargs->die_offset,dwarf_attr_string(attr),
+		      dwarf_form_string(form));
+	    }
+	}
+	else if (num_set
 /* not sure if 137 is the right number! */
 #if _INT_ELFUTILS_VERSION > 137
 	    && form != DW_FORM_sec_offset
+#endif
 	    && (cbargs->version >= 4
 		|| (form != DW_FORM_data4 
 		    && form != DW_FORM_data8))) {
-#else
-	    ) {
-#endif
 	    /* it's a constant */
 	    if (cbargs->symbol) {
 		cbargs->symbol->s.ii.l.loctype = LOCTYPE_MEMBER_OFFSET;
@@ -621,15 +676,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
 		      cbargs->die_offset,num,dwarf_attr_string(attr));
 	    }
-	}
-	else if (num_set && (form == DW_FORM_data4 
-			     || form == DW_FORM_data8)) {
-	    lwarn("[DIE %" PRIx64 "] loclist attrval %" PRIx64 " for attr %s still unsupported!\n",
-		  cbargs->die_offset,num,dwarf_attr_string(attr));
-	    //get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-	    //		cbargs->addrsize,cbargs->offset_size,
-	    //		attr,num,
-	    //		cbargs->debugfile,cbargs->symbol->range);
 	}
 	break;
     case DW_AT_frame_base:
@@ -732,18 +778,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  dwarf_form_string(form));
 	}
 	break;
-
-    /* XXX: skip these for now. */
-    case DW_AT_stmt_list:
-    case DW_AT_call_file:
-    case DW_AT_call_line:
-    case DW_AT_declaration:
-    case DW_AT_MIPS_linkage_name:
-    case DW_AT_artificial:
-    /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
-    case 8455:
-	break;
-
     case DW_AT_location:
 	/* We only accept this for params and variables */
 	if (SYMBOL_IS_VAR(cbargs->symbol)) {
@@ -784,6 +818,15 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  dwarf_form_string(form));
 	}
 	break;
+
+
+    case DW_AT_MIPS_linkage_name:
+    case DW_AT_artificial:
+    /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
+    case 8455:
+	break;
+
+
     //case DW_AT_data_member_location:
     /* else fall through to a block op */
     /* well, not so fast -- let's flip through subrange stuff too! */
