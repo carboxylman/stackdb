@@ -388,7 +388,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (addr_set) {
 	    ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
 
-	    if (SYMBOL_IS_FUNCTION(cbargs->symbol)) {
+	    if (level == 0) {
+		/* Don't bother recording this for CUs. */
+		;
+	    }
+	    else if (SYMBOL_IS_FUNCTION(cbargs->symbol)) {
 		cbargs->symbol->s.ii.d.f.entry_pc = addr;
 	    }
 	    else 
@@ -580,6 +584,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  cbargs->die_offset,dwarf_attr_string(attr),
 		  dwarf_form_string(form));
 	break;
+    /* XXX: byte/bit sizes/offsets can technically be a reference
+     * to another DIE, or an exprloc... but they should always be
+     * consts for C!
+     */
     case DW_AT_byte_size:
 	if (num_set 
 	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
@@ -589,27 +597,33 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		 && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
 	    cbargs->symbol->s.ii.d.v.byte_size = num;
 	}
-	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
-		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
+	else {
+	    lwarn("[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
+	}
 	break;
     case DW_AT_bit_size:
 	if (num_set 
 	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
 	    cbargs->symbol->s.ii.d.v.bit_size = num;
 	}
-	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
-		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
+	else {
+	    lwarn("[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
+	}
 	break;
     case DW_AT_bit_offset:
 	if (num_set 
 	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
 	    cbargs->symbol->s.ii.d.v.bit_offset = num;
 	}
-	else 
-	    lwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
-		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
+	else {
+	    lwarn("[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
+	}
 	break;
     case DW_AT_sibling:
 	/* we process all DIEs, so no need to skip any child content. */
@@ -818,25 +832,20 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  dwarf_form_string(form));
 	}
 	break;
-
-
-    case DW_AT_MIPS_linkage_name:
-    case DW_AT_artificial:
-    /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
-    case 8455:
-	break;
-
-
-    //case DW_AT_data_member_location:
-    /* else fall through to a block op */
-    /* well, not so fast -- let's flip through subrange stuff too! */
-    //case DW_AT_count:
     case DW_AT_lower_bound:
 	if (num_set && num) {
 	    lwarn("[DIE %" PRIx64 "] we only support lower_bound attrs of 0 (%" PRIu64 ")!\n",
 		  cbargs->die_offset,num);
-	    break;
 	}
+	else {
+	    lwarn("[DIE %" PRIx64 "] unsupported attr %s // form %s!\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
+	}
+	break;
+    case DW_AT_count:
+	lwarn("[DIE %" PRIx64 "] interpreting AT_count as AT_upper_bound!\n",
+		      cbargs->die_offset);
     case DW_AT_upper_bound:
 	/* it's a constant, not a block op */
 	if (num_set && form != DW_FORM_sec_offset) {
@@ -862,25 +871,21 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	    break;
 	}
-    /* now fall through to the block op */
-    /* bit_size and bit_offset should probably always be consts! */
-    //case DW_AT_bit_size:
-    //case DW_AT_bit_offset:
-	/* these all need ops evaluated! */
-	if (block_set) {
-	    get_static_ops(cbargs->dwflmod,cbargs->dbg,
-			   cbargs->version,cbargs->addrsize,cbargs->offset_size,
-			   block.length,block.data,attr,
-			   &cbargs->symbol->s.ii.l);
-	    break;
-	}
 	else {
-	    lwarn("[DIE %" PRIx64 "] unrecognized location attr %s // form %s mix!\n",
+	    lwarn("[DIE %" PRIx64 "] unsupported attr %s // form %s!\n",
 		  cbargs->die_offset,dwarf_attr_string(attr),
 		  dwarf_form_string(form));
-	    //goto errout;
-	    break;
 	}
+	break;
+
+    /* Skip these things. */
+    case DW_AT_MIPS_linkage_name:
+    case DW_AT_artificial:
+	break;
+    /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
+    case 8455:
+	break;
+
     default:
 	lwarn("[DIE %" PRIx64 "] unrecognized attr %s (%d)\n",
 	      cbargs->die_offset,dwarf_attr_string(attr),attr);
