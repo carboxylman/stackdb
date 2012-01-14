@@ -510,12 +510,12 @@ const char *dwarf_discr_list_string(unsigned int code);
  **/
 struct target {
     char *type;
-    uint8_t live;
-    uint8_t writeable;
-    uint8_t attached;
-    uint8_t wordsize;
-    uint8_t ptrsize;
-    uint8_t endian;
+    uint8_t live:1,
+    	    writeable:1,
+	    attached:1,
+	    endian:1,
+	    wordsize:4,
+	    ptrsize:4;
     REG fbregno;
     REG ipregno;
 
@@ -602,11 +602,11 @@ struct memregion {
     /* backref to containing space */
     struct addrspace *space;
 
+    char *filename;
     unsigned long long start;
     unsigned long long end;
-    unsigned int prot_flags;
     unsigned long long offset;
-    char *filename;
+    unsigned int prot_flags;
     region_type_t type;
 
     GHashTable *debugfiles;
@@ -615,6 +615,11 @@ struct memregion {
 };
 
 struct debugfile {
+    /* The type of debugfile */
+    debugfile_type_t type;
+
+    int refcnt;
+
     /* filename:name:version string.  If version is null, we use __NULL
        instead. */
     char *idstr;
@@ -628,8 +633,6 @@ struct debugfile {
      * until it is garbage-collected!
      */
     char *filename;
-    /* The type of debugfile */
-    debugfile_type_t type;
 
     /*
      * Currently unused -- we always garbage collect unused debugfiles.
@@ -639,8 +642,6 @@ struct debugfile {
     time_t ltime;
     /* the last mtime of this file */
     time_t mtime;
-    /* does this file get automatically garbage collected? */
-    uint8_t infinite;
     
     /*
      * The name of the program or lib, minus any version info.
@@ -654,8 +655,6 @@ struct debugfile {
      * Programs probably won't have versions
      */
     char *version;
-
-    int refcnt;
 
     struct list_head debugfile;
 
@@ -674,7 +673,6 @@ struct debugfile {
      * This table persists until the debugfile is freed.
      */
     char *strtab;
-    unsigned int strtablen;
 
     /*
      * The debug location table for this file.
@@ -682,7 +680,6 @@ struct debugfile {
      * This table is only live while the file is being processed.
      */
     char *loctab;
-    unsigned int loctablen;
 
     /*
      * The range table for this file.
@@ -690,7 +687,14 @@ struct debugfile {
      * This table is only live while the file is being processed.
      */
     char *rangetab;
+
+    /* Table lengths -- moved here for struct packing. */
+    unsigned int strtablen;
+    unsigned int loctablen;
     unsigned int rangetablen;
+
+    /* does this file get automatically garbage collected? */
+    uint8_t infinite;
 
     /*
      * Each srcfile in a debugfile gets its own symtable.  The symtable
@@ -824,6 +828,10 @@ struct symbol {
     char *name;
     /* The kind of symbol we are. */
     symbol_type_t type;
+
+    /* Where we exist. */
+    int srcline;
+
     /* If not a SYMBOL_TYPE_TYPE, our data type.
      * For functions, it is the return type; for anything else, its data
      * type.
@@ -833,9 +841,6 @@ struct symbol {
      * in the ref and fill the datatype in a postpass.
      */
     uint64_t datatype_addr_ref;
-
-    /* Where we exist. */
-    int srcline;
 
     /* If this symbol is a member of another, this is its list entry. */
     /* XXX: maybe move this into the type detail stuff to save mem? */
