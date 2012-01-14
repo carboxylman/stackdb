@@ -384,6 +384,23 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		      cbargs->die_offset,dwarf_attr_string(attr));
 	}
 	break;
+    case DW_AT_entry_pc:
+	if (addr_set) {
+	    ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
+
+	    if (SYMBOL_IS_FUNCTION(cbargs->symbol)) {
+		cbargs->symbol->s.ii.d.f.entry_pc = addr;
+	    }
+	    else 
+		lwarn("[DIE %" PRIx64 "] attrval 0x%" PRIx64 " for attr %s in bad context (symbol)\n",
+		      cbargs->die_offset,addr,dwarf_attr_string(attr));
+	}
+	else {
+	    lwarn("[DIE %" PRIx64 "] bad attr form for attr %s // form %s\n",
+		  cbargs->die_offset,dwarf_attr_string(attr),
+		  dwarf_form_string(form));
+	}
+	break;
     case DW_AT_decl_file:
 	if (cbargs->symbol) {
 	    ; // XXX
@@ -721,7 +738,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_call_file:
     case DW_AT_call_line:
     case DW_AT_declaration:
-    case DW_AT_entry_pc:
     case DW_AT_MIPS_linkage_name:
     case DW_AT_artificial:
     /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */

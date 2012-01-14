@@ -940,6 +940,7 @@ struct symbol {
 			struct location *fbloc;
 		    };
 		    struct symtab *symtab;
+		    ADDR entry_pc;
 		} f;
 		struct {
 		    uint16_t byte_size;
