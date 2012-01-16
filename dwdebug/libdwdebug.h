@@ -210,6 +210,7 @@ typedef enum {
     LOAD_FLAG_MMAP = 2,
     LOAD_FLAG_CHECK_VISIBILITY = 4,
     LOAD_FLAG_AUTO_DEREF = 8,
+    LOAD_FLAG_CHAR_PTR_AS_STR = 16,
 } load_flags_t;
 
 /*
@@ -464,7 +465,8 @@ struct value *symbol_load_fat(struct memregion *region,struct symbol *symbol,
 			      load_flags_t flags,void *buf);
 
 void symbol_rvalue_print(FILE *stream,struct memregion *region,
-			 struct symbol *symbol,void *buf,int bufsiz);
+			 struct symbol *symbol,void *buf,int bufsiz,
+			 load_flags_t flags);
 void symbol_rvalue_tostring(struct symbol *symbol,char **buf,int *bufsiz,
 			    char *cur);
 

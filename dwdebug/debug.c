@@ -1916,6 +1916,34 @@ ADDR location_resolve(struct memregion *region,struct location *location,
 	    return (ADDR)(frame_base - (ADDR)location->l.fboffset);
 	else
 	    return (ADDR)(frame_base + (ADDR)location->l.fboffset);
+    case LOCTYPE_LOCLIST:
+	/* Like the above case, we load EIP - 4, scan the location list
+	 * for a match, and run the matching location op recursively
+	 * via location_resolve!
+	 */
+	// XXX - 4 is intel-specific?
+	eip = target_read_reg(target,target->ipregno) - 4;
+	if (errno)
+	    return 0;
+	errno = 0;
+	ldebug(5,"eip = 0x%" PRIxADDR "\n",eip);
+	for (i = 0; i < location->l.loclist->len; ++i) {
+	    if (location->l.loclist->list[i]->start <= eip 
+		&& eip < location->l.loclist->list[i]->end)
+		break;
+	}
+	if (i == location->l.loclist->len) {
+	    lerror("LOCLIST location not currently valid!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+	else if (!location->l.loclist->list[i]->loc) {
+	    lerror("matching LOCLIST member does not have a location description!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+	return location_resolve(region,location->l.loclist->list[i]->loc,
+				fblist,fbloc);
     case LOCTYPE_MEMBER_OFFSET:
     case LOCTYPE_RUNTIME:
 	lwarn("currently unsupported location type %s\n",LOCTYPE(location->loctype));
@@ -1981,7 +2009,7 @@ int location_load(struct memregion *region,struct location *location,
 /*
  * Skips const and volatile types, for now.
  */
-struct symbol *symbol_skip_types(struct symbol *type) {
+struct symbol *symbol_type_skip_qualifiers(struct symbol *type) {
     if (!SYMBOL_IS_TYPE(type))
 	return NULL;
 
@@ -1994,10 +2022,38 @@ struct symbol *symbol_skip_types(struct symbol *type) {
     return type;
 }
 
+struct symbol *symbol_type_skip_ptrs(struct symbol *type) {
+    if (!SYMBOL_IS_TYPE(type))
+	return NULL;
+
+    while (type->type == SYMBOL_TYPE_TYPE && SYMBOL_IST_PTR(type)) {
+	type = type->s.ti.type_datatype;
+    }
+
+    return type;
+}
+
+int symbol_type_is_char(struct symbol *type) {
+    type = symbol_type_skip_qualifiers(type);
+
+    if (type->s.ti.datatype_code == DATATYPE_BASE
+	&& type->s.ti.byte_size == 1
+	&& (type->s.ti.d.v.encoding == ENCODING_SIGNED_CHAR
+	    || type->s.ti.d.v.encoding == ENCODING_UNSIGNED_CHAR)) 
+	return 1;
+
+    return 0;
+}
+
 int symbol_load(struct memregion *region,struct symbol *symbol,
 		load_flags_t flags,void **buf,int *bufsiz) {
     int didalloc = 0;
     struct symbol *datatype;
+    char *ptrbuf = NULL;
+    int ptrbufsiz;
+    int nptrs = 0;
+    unsigned long long addr;
+    char *strp;
 
     if (!SYMBOL_IS_VAR(symbol)) {
 	lwarn("symbol %s is not a variable (is %s)!\n",
@@ -2006,7 +2062,13 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	return -1;
     }
 
-    datatype = symbol_skip_types(symbol->datatype);
+    if (flags & LOAD_FLAG_CHAR_PTR_AS_STR && *buf) {
+	lwarn("must not supply a buffer when loading char * as string!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    datatype = symbol_type_skip_qualifiers(symbol->datatype);
     if (symbol->datatype != datatype)
 	ldebug(5,"skipped from %s to %s for symbol %s\n",
 	       DATATYPE(symbol->datatype->s.ti.datatype_code),
@@ -2015,6 +2077,76 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	ldebug(5,"no skip; type for symbol %s is %s\n",
 	       symbol->name,DATATYPE(symbol->datatype->s.ti.datatype_code));
 
+    /* If they want pointers automatically dereferenced, do it! */
+    if (flags & LOAD_FLAG_AUTO_DEREF && SYMBOL_IST_PTR(datatype)) {
+	ptrbufsiz = memregion_target(region)->ptrsize;
+	ptrbuf = malloc(ptrbufsiz);
+	if (!ptrbuf)
+	    return -1;
+
+	/* First, load the symbol's primary location -- the pointer
+	 * value.  Then, if there are more pointers, keep loading those
+	 * addrs.
+	 *
+	 * Don't allow any load flags through for this!  We don't want
+	 * to mmap just for pointers.
+	 */
+	if (location_load(region,&(symbol->s.ii.l),NULL,NULL,LOAD_FLAG_NONE,
+			  ptrbuf,ptrbufsiz)) {
+	    goto errout;
+	}
+
+	/* Skip past the pointer we just loaded. */
+	datatype = datatype->s.ti.type_datatype;
+
+	nptrs = 1;
+
+	ldebug(5,"auto_deref pointer %d\n",nptrs);
+
+	/* Now keep loading more pointers and skipping if we need! */
+	while (SYMBOL_IST_PTR(datatype)) {
+	    addr = *((unsigned long long *)ptrbuf);
+
+	    if (addr == 0) {
+		lwarn("failed to autoload NULL pointer %d for symbol %s\n",
+		      nptrs,symbol->name);
+		errno = EFAULT;
+		goto errout;
+	    }
+
+	    if (!target_read_addr(memregion_target(region),
+				  *((unsigned long long *)ptrbuf),
+				  ptrbufsiz,(unsigned char *)ptrbuf)) {
+		lwarn("failed to autoload pointer %d for symbol %s\n",
+		      nptrs,symbol->name);
+		goto errout;
+	    }
+
+	    datatype = datatype->s.ti.type_datatype;
+	    ++nptrs;
+
+	    ldebug(5,"auto_deref pointer %d\n",nptrs);
+	}
+    }
+
+    if (ptrbuf 
+	&& flags & LOAD_FLAG_CHAR_PTR_AS_STR
+	&& symbol_type_is_char(datatype)) {
+	if (!(strp = (char *)target_read_addr(memregion_target(region),
+					      *((unsigned long long *)ptrbuf),
+					      0,NULL))) {
+	    lwarn("failed to autoload last pointer for symbol %s\n",
+		  symbol->name);
+	    goto errout;
+	}
+
+	*buf = strp;
+	*bufsiz = strlen(strp) + 1;
+
+	ldebug(5,"autoloaded char * with len %d\n",*bufsiz);
+
+	goto out;
+    }
 
     /* Alloc a buffer if they didn't. */
     if (!*buf) {
@@ -2028,16 +2160,33 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	ldebug(5,"malloc(%d) for symbol %s\n",*bufsiz,symbol->name);
     }
 
-    if (location_load(region,&(symbol->s.ii.l),NULL,NULL,flags,*buf,*bufsiz)) {
-	if (didalloc) {
-	    free(*buf);
-	    *buf = NULL;
-	    *bufsiz = 0;
-	}
-	return -1;
+    if (ptrbuf && !target_read_addr(memregion_target(region),
+				    *((unsigned long long *)ptrbuf),
+				    *bufsiz,(unsigned char *)*buf)) {
+	lwarn("failed to autoload last pointer for symbol %s\n",
+	      symbol->name);
+	goto errout;
+    }
+    else if (location_load(region,&(symbol->s.ii.l),NULL,NULL,flags,
+			   *buf,*bufsiz)) {
+	goto errout;
     }
 
+ out:
+    if (ptrbuf)
+	free(ptrbuf);
     return 0;
+
+ errout:
+    if (didalloc) {
+	free(*buf);
+	*buf = NULL;
+	*bufsiz = 0;
+    }
+    if (ptrbuf)
+	free(ptrbuf);
+
+    return -1;
 }
 
 int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
@@ -2077,7 +2226,7 @@ int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
     /* Grab the "real" datatype -- skipping things like const,
      * volatile.
      */
-    datatype = symbol_skip_types(symbol->datatype);
+    datatype = symbol_type_skip_qualifiers(symbol->datatype);
     if (symbol->datatype != datatype)
 	ldebug(5,"skipped from %s to %s for symbol %s\n",
 	       DATATYPE(symbol->datatype->s.ti.datatype_code),
@@ -2190,7 +2339,8 @@ int32_t          rvalue_i32(void *buf) { return *((int32_t *)buf); }
 int64_t          rvalue_i64(void *buf) { return *((int64_t *)buf); }
 
 void symbol_rvalue_print(FILE *stream,struct memregion *region,
-			 struct symbol *symbol,void *buf,int bufsiz) {
+			 struct symbol *symbol,void *buf,int bufsiz,
+			 load_flags_t flags) {
     int i;
     int size;
     struct symbol *type;
@@ -2199,8 +2349,9 @@ void symbol_rvalue_print(FILE *stream,struct memregion *region,
     if (!SYMBOL_IS_VAR(symbol))
 	return;
 
-    type = symbol_skip_types(symbol->datatype);
+    type = symbol_type_skip_qualifiers(symbol->datatype);
 
+ again:
     switch (type->s.ti.datatype_code) {
     case DATATYPE_BASE:
 	if (type->s.ti.byte_size == 1) {
@@ -2258,9 +2409,27 @@ void symbol_rvalue_print(FILE *stream,struct memregion *region,
 	fprintf(stream,"<UNION>");
 	return;
     case DATATYPE_PTR:
-	fprintf(stream,"0x");
-	for (i = 0; i < target->ptrsize; ++i) {
-	    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
+	if (!(flags & LOAD_FLAG_AUTO_DEREF)) {
+	    fprintf(stream,"0x");
+	    if (target->endian == DATA_LITTLE_ENDIAN) {
+		for (i = target->ptrsize - 1; i > -1; --i) {
+		    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
+		}
+	    }
+	    else {
+		for (i = 0; i < target->ptrsize; ++i) {
+		    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
+		}
+	    }
+	}
+	else {
+	    type = symbol_type_skip_ptrs(type);
+
+	    if (symbol_type_is_char(type)) {
+		fprintf(stream,"%s",(char *)buf);
+	    }
+	    else
+		goto again;
 	}
 	return;
     case DATATYPE_FUNCTION:
