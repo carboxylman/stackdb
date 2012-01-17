@@ -2045,6 +2045,26 @@ int symbol_type_is_char(struct symbol *type) {
     return 0;
 }
 
+unsigned int symbol_type_array_bytesize(struct symbol *type) {
+    int i;
+    int size;
+    type = symbol_type_skip_qualifiers(type);
+
+    if (type->s.ti.datatype_code != DATATYPE_ARRAY)
+	return 0;
+
+    size = type->s.ti.type_datatype->s.ti.byte_size;
+
+    for (i = 0; i < type->s.ti.d.a.count; ++i) {
+	ldebug(5,"subrange length is %d\n",type->s.ti.d.a.subranges[i] + 1);
+	size = size * (type->s.ti.d.a.subranges[i] + 1);
+    }
+
+    ldebug(5,"full array size is %d for array type %s\n",size,type->name);
+
+    return size;
+}
+
 int symbol_load(struct memregion *region,struct symbol *symbol,
 		load_flags_t flags,void **buf,int *bufsiz) {
     int didalloc = 0;
@@ -2062,7 +2082,7 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 	return -1;
     }
 
-    if (flags & LOAD_FLAG_CHAR_PTR_AS_STR && *buf) {
+    if (flags & LOAD_FLAG_AUTO_STRING && *buf) {
 	lwarn("must not supply a buffer when loading char * as string!\n");
 	errno = EINVAL;
 	return -1;
@@ -2130,7 +2150,7 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
     }
 
     if (ptrbuf 
-	&& flags & LOAD_FLAG_CHAR_PTR_AS_STR
+	&& flags & LOAD_FLAG_AUTO_STRING
 	&& symbol_type_is_char(datatype)) {
 	if (!(strp = (char *)target_read_addr(memregion_target(region),
 					      *((unsigned long long *)ptrbuf),
@@ -2150,7 +2170,12 @@ int symbol_load(struct memregion *region,struct symbol *symbol,
 
     /* Alloc a buffer if they didn't. */
     if (!*buf) {
-	*bufsiz = symbol_type_bytesize(datatype);
+	if (datatype->s.ti.datatype_code == DATATYPE_ARRAY) {
+	    *bufsiz = symbol_type_array_bytesize(datatype);
+	}
+	else {
+	    *bufsiz = symbol_type_bytesize(datatype);
+	}
 	*buf = malloc(*bufsiz);
 	if (!*buf) {
 	    lerror("malloc: %s\n",strerror(errno));
@@ -2338,21 +2363,18 @@ int16_t          rvalue_i16(void *buf) { return *((int16_t *)buf); }
 int32_t          rvalue_i32(void *buf) { return *((int32_t *)buf); }
 int64_t          rvalue_i64(void *buf) { return *((int64_t *)buf); }
 
-void symbol_rvalue_print(FILE *stream,struct memregion *region,
-			 struct symbol *symbol,void *buf,int bufsiz,
-			 load_flags_t flags) {
-    int i;
-    int size;
-    struct symbol *type;
+void symbol_type_rvalue_print(FILE *stream,struct memregion *region,
+			      struct symbol *type,void *buf,int bufsiz,
+			      load_flags_t flags) {
     struct target *target = memregion_target(region);
-
-    if (!SYMBOL_IS_VAR(symbol))
-	return;
-
-    type = symbol_type_skip_qualifiers(symbol->datatype);
+    struct symbol *member;
+    int i;
 
  again:
     switch (type->s.ti.datatype_code) {
+    case DATATYPE_VOID:
+	fprintf(stream,"<VOID>");
+	return;
     case DATATYPE_BASE:
 	if (type->s.ti.byte_size == 1) {
 	    if (type->s.ti.d.v.encoding == ENCODING_SIGNED_CHAR)
@@ -2396,17 +2418,95 @@ void symbol_rvalue_print(FILE *stream,struct memregion *region,
 	    fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
 	}
 	return;
-    case DATATYPE_VOID:
-	fprintf(stream,"<VOID>");
-	return;
-    case DATATYPE_ARRAY:
-	fprintf(stream,"<ARRAY>");
-	return;
-    case DATATYPE_STRUCT:
-	fprintf(stream,"<STRUCT>");
+    case DATATYPE_ARRAY:;
+	/* catch 0-byte arrays */
+	if (type->s.ti.d.a.count == 0
+	    || type->s.ti.d.a.subranges[type->s.ti.d.a.count - 1] == 0) {
+	    fprintf(stream,"[  ]");
+	    return;
+	}
+
+	int typebytesize = type->s.ti.type_datatype->s.ti.byte_size;
+	int total = 1;
+	int *arcounts = (int *)malloc(sizeof(int)*(type->s.ti.d.a.count - 1));
+	uint64_t offset = 0;
+	int rowlength = type->s.ti.d.a.subranges[type->s.ti.d.a.count - 1] + 1;
+	struct symbol *datatype = type->s.ti.type_datatype;
+
+	for (i = 0; i < type->s.ti.d.a.count; ++i) {
+	    if (likely(i < (type->s.ti.d.a.count - 1))) {
+		arcounts[i] = 0;
+		fprintf(stream,"[ ");
+	    }
+	    total = total * (type->s.ti.d.a.subranges[i] + 1);
+	}
+	while (total) {
+	    /* do one row according to the current baseoffset */
+	    fprintf(stream,"[ ");
+	    for (i = 0; i < rowlength; ++i, offset += typebytesize) {
+		if (likely(i > 0))
+		    fprintf(stream,", ");
+		symbol_type_rvalue_print(stream,region,datatype,
+					 (void *)(buf+offset),
+					 typebytesize,flags);
+	    }
+	    total -= rowlength;
+	    fprintf(stream," ] ");
+
+	    /* Flow the index counters back and up as we do rows.  We
+	     * increment the next highest one each time we reach the
+	     * max length for one of the indices.
+	     */
+	    for (i = type->s.ti.d.a.count - 1; i > -1; --i) {
+		if (arcounts[i]++ < (type->s.ti.d.a.subranges[i] + 1)) 
+		    break;
+		else {
+		    fprintf(stream,"] ");
+		    /* reset this index counter */
+		    arcounts[i] = 0;
+		}
+	    }
+	}
+	free(arcounts);
 	return;
     case DATATYPE_UNION:
-	fprintf(stream,"<UNION>");
+	if (flags & LOAD_FLAG_AUTO_DEREF) {
+	    lwarn("do not enable auto_deref for unions; clearing!\n");
+	    flags &= ~LOAD_FLAG_AUTO_DEREF;
+	    flags &= ~LOAD_FLAG_AUTO_DEREF_RECURSE;
+	}
+	if (flags & LOAD_FLAG_AUTO_STRING) {
+	    lwarn("do not enable auto_string for unions; clearing!\n");
+	    flags &= ~LOAD_FLAG_AUTO_STRING;
+	}
+    case DATATYPE_STRUCT:
+	fprintf(stream,"{ ");
+	/* Only recursively follow pointers if the flags say so. */
+	if (!(flags & LOAD_FLAG_AUTO_DEREF_RECURSE)) 
+	    flags &= ~LOAD_FLAG_AUTO_DEREF;
+	i = 0;
+	list_for_each_entry(member,&type->s.ti.d.su.members,member) {
+	    if (likely(i))
+		fprintf(stream,", ");
+	    if (member->s.ii.l.loctype != LOCTYPE_MEMBER_OFFSET) {
+		lwarn("type %s member %s did not have a MEMBER_OFFSET location, skipping!\n",type->name,member->name);
+		if (member->name)
+		    fprintf(stream,".%s = ???",member->name);
+		continue;
+	    }
+
+	    if (member->name) 
+		fprintf(stream,".%s = ",member->name);
+	    symbol_rvalue_print(stream,region,member,
+				buf + member->s.ii.l.l.member_offset,
+				bufsiz - member->s.ii.l.l.member_offset,
+				flags);
+	    ++i;
+	}
+	fprintf(stream," }");
+	return;
+    case DATATYPE_BITFIELD:
+	fprintf(stream,"<BITFIELD>");
 	return;
     case DATATYPE_PTR:
 	if (!(flags & LOAD_FLAG_AUTO_DEREF)) {
@@ -2444,12 +2544,37 @@ void symbol_rvalue_print(FILE *stream,struct memregion *region,
     case DATATYPE_VOL:
 	fprintf(stream,"<VOL>");
 	return;
-    case DATATYPE_BITFIELD:
-	fprintf(stream,"<BITFIELD>");
-	return;
     default:
 	return;
     }
+}
+
+void symbol_rvalue_print(FILE *stream,struct memregion *region,
+			 struct symbol *symbol,void *buf,int bufsiz,
+			 load_flags_t flags) {
+    struct symbol *type;
+
+    if (!SYMBOL_IS_VAR(symbol))
+	return;
+
+    type = symbol_type_skip_qualifiers(symbol->datatype);
+
+    if (symbol->s.ii.d.v.bit_size
+	&& type->s.ti.datatype_code != DATATYPE_BASE) {
+	lwarn("apparent bitfield %s is not backed by a base type!",symbol->name);
+	fprintf(stream,"<BADBITFIELDTYPE>");
+	return;
+    }
+    /* If it's a bitfield, select those bits and print them. */
+    else if (symbol->s.ii.d.v.bit_size) {
+	ldebug(5,"doing bitfield for symbol %s: size=%d,offset=%d\n",
+	       symbol->name,symbol->s.ii.d.v.bit_size,
+	       symbol->s.ii.d.v.bit_offset);
+	fprintf(stream,"<BITFIELD>");
+	return;
+    }
+
+    return symbol_type_rvalue_print(stream,region,type,buf,bufsiz,flags);
 }
 
 void symbol_rvalue_tostring(struct symbol *symbol,char **buf,int *bufsiz,

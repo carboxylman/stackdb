@@ -196,14 +196,14 @@ int main(int argc,char **argv) {
 		    if (symbols[i]) {
 			if (!symbol_load(regions[i],symbols[i],
 					 LOAD_FLAG_AUTO_DEREF | 
-					 LOAD_FLAG_CHAR_PTR_AS_STR,
+					 LOAD_FLAG_AUTO_STRING,
 					 (void **)&word,&ssize)) {
 			    if (1) {
 				printf("%s = ",symbols[i]->name);
 				symbol_rvalue_print(stdout,regions[i],symbols[i],
 						    word,ssize,
 						    LOAD_FLAG_AUTO_DEREF |
-						    LOAD_FLAG_CHAR_PTR_AS_STR);
+						    LOAD_FLAG_AUTO_STRING);
 			    }
 			    else {
 				printf("%s = ",symbols[i]->name);
@@ -228,7 +228,7 @@ int main(int argc,char **argv) {
 				symbol_rvalue_print(stdout,regions[i],real,
 						    word,ssize,
 						    LOAD_FLAG_AUTO_DEREF |
-						    LOAD_FLAG_CHAR_PTR_AS_STR);
+						    LOAD_FLAG_AUTO_STRING);
 			    }
 			    else {
 				printf("%s = ",real->name);
