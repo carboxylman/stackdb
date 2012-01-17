@@ -2552,12 +2552,17 @@ void symbol_type_rvalue_print(FILE *stream,struct memregion *region,
 void symbol_rvalue_print(FILE *stream,struct memregion *region,
 			 struct symbol *symbol,void *buf,int bufsiz,
 			 load_flags_t flags) {
-    struct symbol *type;
+    struct symbol *type; 
+    struct target *target;
+    uint64_t bitmask;
+    uint16_t lboffset;
+    int i;
 
     if (!SYMBOL_IS_VAR(symbol))
 	return;
 
     type = symbol_type_skip_qualifiers(symbol->datatype);
+    target = memregion_target(region);
 
     if (symbol->s.ii.d.v.bit_size
 	&& type->s.ti.datatype_code != DATATYPE_BASE) {
@@ -2570,7 +2575,36 @@ void symbol_rvalue_print(FILE *stream,struct memregion *region,
 	ldebug(5,"doing bitfield for symbol %s: size=%d,offset=%d\n",
 	       symbol->name,symbol->s.ii.d.v.bit_size,
 	       symbol->s.ii.d.v.bit_offset);
-	fprintf(stream,"<BITFIELD>");
+	/* Create a bitmask */
+	bitmask = 1;
+	for (i = 1; i < symbol->s.ii.d.v.bit_size; ++i) {
+	    bitmask <<= 1;
+	    bitmask |= 1;
+	}
+	if (target->endian == DATA_LITTLE_ENDIAN)
+	    lboffset = (symbol->s.ii.d.v.byte_size * 8) - (symbol->s.ii.d.v.bit_offset + symbol->s.ii.d.v.bit_size);
+	else 
+	    lboffset = symbol->s.ii.d.v.bit_offset;
+	bitmask <<= lboffset;
+	
+	if (symbol->s.ii.d.v.byte_size == 1) 
+	    fprintf(stream,"%hhu",(uint8_t)(((*(uint8_t *)buf) & bitmask) \
+					    >> lboffset));
+	else if (symbol->s.ii.d.v.byte_size == 2) 
+	    fprintf(stream,"%hu",(uint16_t)(((*(uint16_t *)buf) & bitmask) \
+					    >> lboffset));
+	else if (symbol->s.ii.d.v.byte_size == 4) 
+	    fprintf(stream,"%u",(uint32_t)(((*(uint32_t *)buf) & bitmask) \
+					    >> lboffset));
+	else if (symbol->s.ii.d.v.byte_size == 8) 
+	    fprintf(stream,"%lu",(uint64_t)(((*(uint64_t *)buf) & bitmask) \
+					    >> lboffset));
+	else {
+	    lwarn("unsupported bitfield byte size %d for symbol %s\n",
+		  symbol->s.ii.d.v.byte_size,symbol->name);
+	    fprintf(stream,"<BADBITFIELDBYTESIZE>");
+	}
+	
 	return;
     }
 
