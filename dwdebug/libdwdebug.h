@@ -30,8 +30,10 @@ void libdwdebug_set_debug_level(int level);
 void _libdwdebug_debug(int level,char *format,...);
 
 #define ldebug(level,format,...) _libdwdebug_debug(level,"LDDEBUG: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)
+#define ldebugc(level,format,...) _libdwdebug_debug(level,format, ## __VA_ARGS__)
 #else
 #define ldebug(devel,format,...) ((void)0)
+#define ldebugc(devel,format,...) ((void)0)
 #endif
 
 #define lerror(format,...) fprintf(stderr, "LDERROR: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)
