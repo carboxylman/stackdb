@@ -17,6 +17,7 @@
 #include <limits.h>
 #include <errno.h>
 
+#include <gelf.h>
 #include <elf.h>
 #include <libelf.h>
 
@@ -452,20 +453,256 @@ static int linux_userproc_loadregions(struct target *target) {
     return -1;
 }
 
+static int DEBUGPATHLEN = 2;
+static char *DEBUGPATH[] = { 
+    "/usr/lib/debug",
+    "/usr/local/lib/debug"
+};
+
 static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct memregion *region) {
+    Elf *elf = NULL;
+    Elf_Scn *scn;
+    GElf_Shdr shdr_mem;
+    GElf_Shdr *shdr;
+    char *name;
+    size_t shstrndx;
+    int has_debuginfo = 0;
+    char *buildid = NULL;
+    char *debuglinkfile = NULL;
+    uint32_t debuglinkfilecrc = 0;
+    Elf_Data *edata;
+    char *eident = NULL;
+    int is64 = 0;
+    Elf32_Nhdr *nthdr32;
+    Elf64_Nhdr *nthdr64;
+    char *ndata,*nend;
+    int fd = -1;;
+    int i;
+    int len;
+    int retval = 0;
+    char pbuf[PATH_MAX];
+    char *finalfile = NULL;
+    char *regionfiledir = NULL;
+    char *tmp;
+    struct stat stbuf;
+
     ldebug(5,"pid %d\n",target->space->pid);
 
-    if (region->type == REGION_TYPE_MAIN 
-	|| region->type == REGION_TYPE_LIB) {
-	if (!debugfile_attach(region,region->filename,
-			      region->type == REGION_TYPE_MAIN ? \
-			      DEBUGFILE_TYPE_MAIN : \
-			      DEBUGFILE_TYPE_SHAREDLIB))
-	    return -1;
+    /*
+     * Open up the actual ELF binary and look for three sections to inform
+     * our search.  First, if there is a nonzero .debug_info section,
+     * load that.  Second, if there is a .note.gnu.build-id section,
+     * read the build id and decompose it into a two-byte dir/file.debug
+     * string that we look for in our search path (i.e., we look for
+     * $PATH/.build-id/b1/b2..bX.debug).  Otherwise, if there is a
+     * .gnu_debuglink section, we read that section and try to find a
+     * matching debug file. 
+     */
+    if (!region->filename || strlen(region->filename) == 0)
+	return -1;
+
+    if ((fd = open(region->filename,0,O_RDONLY)) < 0) {
+	lerror("open %s: %s\n",region->filename,strerror(errno));
+	return -1;
     }
 
-    return 0;
+    elf_version(EV_CURRENT);
+    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
+	lerror("elf_begin %s: %s\n",region->filename,elf_errmsg(elf_errno()));
+	goto errout;
+    }
+
+    /* read the ident stuff to get ELF byte size */
+    if (!(eident = elf_getident(elf,NULL))) {
+	lerror("elf_getident %s: %s\n",region->filename,elf_errmsg(elf_errno()));
+	goto errout;
+    }
+
+    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
+	is64 = 0;
+	ldebug(3,"32-bit %s\n",region->filename);
+    }
+    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
+	is64 = 1;
+    }
+    else {
+	lerror("unknown elf class %d; not 32/64 bit!\n",
+	       (uint8_t)eident[EI_CLASS]);
+	goto errout;
+    }
+
+#if _INT_ELFUTILS_VERSION >= 152
+    if (elf_getshdrstrndx(elf,&shstrndx) < 0) {
+#else 
+    if (elf_getshstrndx(elf,&shstrndx) < 0) {
+#endif
+	lerror("cannot get section header string table index\n");
+	goto errout;
+    }
+
+    scn = NULL;
+    while ((scn = elf_nextscn(elf,scn)) != NULL) {
+	shdr = gelf_getshdr(scn,&shdr_mem);
+
+	if (shdr && shdr->sh_size > 0) {
+	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
+
+	    if (strcmp(name,".debug_info") == 0) {
+		ldebug(2,"found %s section (%d) in region filename %s\n",
+		       name,shdr->sh_size,region->filename);
+		has_debuginfo = 1;
+		continue;
+	    }
+	    else if (!buildid && shdr->sh_type == SHT_NOTE) {
+		ldebug(2,"found %s note section (%d) in region filename %s\n",
+		       name,shdr->sh_size,region->filename);
+		edata = elf_rawdata(scn,NULL);
+		if (!edata) {
+		    lwarn("cannot get data for valid section '%s': %s",
+			  name,elf_errmsg(-1));
+		    continue;
+		}
+
+		ndata = edata->d_buf;
+		nend = ndata + edata->d_size;
+		while (ndata < nend) {
+		    if (is64) {
+			nthdr64 = (Elf64_Nhdr *)ndata;
+			/* skip past the header and the name string and its
+			 * padding */
+			ndata += sizeof(Elf64_Nhdr);
+			ldebug(5,"found note name '%s'\n",ndata);
+			ndata += nthdr64->n_namesz;
+			if (nthdr64->n_namesz % 4)
+			    ndata += (4 - nthdr64->n_namesz % 4);
+			ldebug(5,"found note desc '%s'\n",ndata);
+			/* dig out the build ID */
+			if (nthdr64->n_type == NT_GNU_BUILD_ID) {
+			    buildid = strdup(ndata);
+			    break;
+			}
+			/* skip past the descriptor and padding */
+			ndata += nthdr64->n_descsz;
+			if (nthdr64->n_namesz % 4)
+			    ndata += (4 - nthdr64->n_namesz % 4);
+		    }
+		    else {
+			nthdr32 = (Elf32_Nhdr *)ndata;
+			/* skip past the header and the name string and its
+			 * padding */
+			ndata += sizeof(Elf32_Nhdr);
+			ndata += nthdr32->n_namesz;
+			if (nthdr32->n_namesz % 4)
+			    ndata += (4 - nthdr32->n_namesz % 4);
+			/* dig out the build ID */
+			if (nthdr32->n_type == NT_GNU_BUILD_ID) {
+			    buildid = strdup(ndata);
+			    break;
+			}
+			/* skip past the descriptor and padding */
+			ndata += nthdr32->n_descsz;
+			if (nthdr32->n_namesz % 4)
+			    ndata += (4 - nthdr64->n_namesz % 4);
+		    }
+		}
+	    }
+	    else if (strcmp(name,".gnu_debuglink") == 0) {
+		edata = elf_rawdata(scn,NULL);
+		if (!edata) {
+		    lwarn("cannot get data for valid section '%s': %s",
+			  name,elf_errmsg(-1));
+		    continue;
+		}
+		debuglinkfile = strdup(edata->d_buf);
+		debuglinkfilecrc = *(uint32_t *)(edata->d_buf + edata->d_size - 4);
+	    }
+	}
+    }
+
+    elf_end(elf);
+    elf = NULL;
+    close(fd);
+    fd = -1;
+
+    ldebug(5,"ELF info for region file %s:\n",region->filename);
+    ldebug(5,"    has_debuginfo=%d,buildid='",has_debuginfo);
+    if (buildid) {
+	len = (int)strlen(buildid);
+	for (i = 0; i < len; ++i)
+	    ldebugc(5,"%hhx",buildid[i]);
+    }
+    ldebugc(5,"'\n");
+    ldebug(5,"    debuglinkfile=%s,debuglinkfilecrc=0x%x\n",
+	   debuglinkfile,debuglinkfilecrc);
+
+    if (has_debuginfo) {
+	finalfile = region->filename;
+    }
+    else if (buildid) {
+	for (i = 0; i < DEBUGPATHLEN; ++i) {
+	    snprintf(pbuf,PATH_MAX,"%s/.build-id/%02hhx/%s.debug",
+		     DEBUGPATH[i],*buildid,(char *)(buildid+1));
+	    if (stat(pbuf,&stbuf) == 0) {
+		finalfile = pbuf;
+		break;
+	    }
+	}
+    }
+    else if (debuglinkfile) {
+	/* Find the containing dir path so we can use it in our search
+	 * of the standard debug file dir infrastructure.
+	 */
+	regionfiledir = strdup(region->filename);
+	tmp = rindex(regionfiledir,'/');
+	if (tmp)
+	    *tmp = '\0';
+	for (i = 0; i < DEBUGPATHLEN; ++i) {
+	    snprintf(pbuf,PATH_MAX,"%s/%s/%s",
+		     DEBUGPATH[i],regionfiledir,debuglinkfile);
+	    if (stat(pbuf,&stbuf) == 0) {
+		finalfile = pbuf;
+		break;
+	    }
+	}
+    }
+    else {
+	lerror("could not find any debuginfo sources from ELF file %s!\n",
+	       region->filename);
+	goto errout;
+    }
+
+    if (finalfile) {
+	if (region->type == REGION_TYPE_MAIN 
+	    || region->type == REGION_TYPE_LIB) {
+	    if (!debugfile_attach(region,finalfile,
+				  region->type == REGION_TYPE_MAIN ?	\
+				  DEBUGFILE_TYPE_MAIN :			\
+				  DEBUGFILE_TYPE_SHAREDLIB))
+		goto errout;
+	}
+    }
+
+    /* Success!  Skip past errout. */
+    retval = 0;
+    goto out;
+
+ errout:
+    retval = -1;
+
+ out:
+    if (elf)
+	elf_end(elf);
+    if (fd > -1)
+	close(fd);
+if (regionfiledir) 
+free(regionfiledir);
+    if (buildid)
+	free(buildid);
+    if (debuglinkfile)
+	free(debuglinkfile);
+
+    return retval;
 }
 
 static target_status_t linux_userproc_status(struct target *target) {
