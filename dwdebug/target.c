@@ -34,8 +34,10 @@ int target_open(struct target *target) {
 	ldebug(6,"loaddebugfiles target(%s:%s), region %s:%d\n",
 	       target->type,target->space->idstr,
 	       region->filename,region->type);
-	if ((rc = target->ops->loaddebugfiles(target,region)))
-	    return rc;
+	if ((rc = target->ops->loaddebugfiles(target,region))) {
+	    lwarn("could not open debuginfo for region %s (%d)\n",
+		  region->filename,rc);
+	}
     }
 
     ldebug(6,"attach target(%s:%s)\n",target->type,target->space->idstr);
