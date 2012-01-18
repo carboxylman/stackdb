@@ -19,7 +19,10 @@ process hierarchy, and the syscall's arguments.  It allows the user to
 filter syscalls based on argument values (for the arguments it has type
 info for, at least), and to take actions, such as aborting a syscall
 with a return value prior to any work being done, or reporting it as a
-monitored event to A3 monitors.
+monitored event to A3 monitors. It also now allows stopping after a
+syscall has been executed, and can dump the return value and arguments
+that it knows are "out" params. It also allows filtering on those
+fields.
 
 The tracer cannot trace all syscalls, because the syscall list is
 hardcoded in -- and argument type info is only present for some syscalls
@@ -139,6 +142,11 @@ of parameters; you need not specify them all!
     same reason that hardcoding all type and decoding knowledge takes a
     long time and is simply busy work until we have debuginfo support.
 
+  * when=(pre|post|both) .  Specifies when the syscall should be matched.
+    You can match before ("pre"), after ("post") or both ("both").
+    If "when" is not specified, the default is "pre" to be compatible
+    with the old behavior.
+
   * pid=<process_id>.  Match on process id.
 
   * ppid=<parent_process_id> OR ppid=^<parent_process_id>.  This matches
@@ -186,7 +194,7 @@ Filter function=do_exit,name=apache,argname=code:signal,argval=SEGV
 
     VMI domain=a3-app type=match sys_execve(code=0xdeadbeef,code:signal=SIGSEGV,code:status=255))
 
-No -- name=^apache would match any process who has an ancestor pid named apache.  So, if an apache process spawned a sh, and your sh process exec'd nc, then if you had the following filter
+Note -- name=^apache would match any process who has an ancestor pid named apache.  So, if an apache process spawned a sh, and your sh process exec'd nc, then if you had the following filter
 
 Filter  function=sys_execve,argname=regs:filename,argval=/usr/bin/nc,name=^apache
 
@@ -204,6 +212,10 @@ Filter  function=sys_socketcall,argname=call:call,argval=connect
     syscall, sys_socketcall (including connect).  You can get connects
     using the expression above.
 
+The accept syscall is more useful to stop afterward, when the connection
+has been made and the socket struct filled in. You can do that with:
+
+Filter  function=sys_socketcall,argname=call:call,argval=accept,when=post
 
 -------
 | FAQ |
