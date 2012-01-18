@@ -1602,6 +1602,8 @@ static int fill_debuginfo(struct debugfile *debugfile,
 
     GHashTable *reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
     struct symbol *voidsymbol;
+    GHashTableIter iter;
+    struct symbol *rsymbol;
 
  next_cu:
 #if LIBDW_HAVE_NEXT_UNIT
@@ -1987,7 +1989,47 @@ static int fill_debuginfo(struct debugfile *debugfile,
      * The only other alternative is to use libelf/libdw to resolve them
      * during the single pass, which seems less good...
      */
-    g_hash_table_foreach(cu_symtab->tab,resolve_refs,reftab);
+    
+    /* g_hash_table_foreach(cu_symtab->tab,resolve_refs,reftab); */
+
+    /*
+     * resolve_refs was too badly broken for nested struct/union types,
+     * so we have moved to the very straightforward (and possibly
+     * wasteful) approach below.  All symbols are in the reftab, and we
+     * just postpass them all.  So, we might end up resolving some
+     * symbols we don't care about, but it's easy and simple.
+     */
+
+    g_hash_table_iter_init(&iter,reftab);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&offset,(gpointer)&rsymbol)) {
+	if (!rsymbol)
+	    continue;
+
+	if (rsymbol->type == SYMBOL_TYPE_TYPE
+	    && !rsymbol->s.ti.type_datatype
+	    && rsymbol->s.ti.type_datatype_ref) {
+	    rsymbol->s.ti.type_datatype = \
+		(struct symbol *)g_hash_table_lookup(reftab,
+						     (gpointer)rsymbol->s.ti.type_datatype_ref);
+	}
+	else if (rsymbol->type == SYMBOL_TYPE_FUNCTION
+		 || rsymbol->type == SYMBOL_TYPE_VAR
+		 || rsymbol->type == SYMBOL_TYPE_LABEL) {
+	    if (!rsymbol->datatype && rsymbol->datatype_addr_ref) {
+		rsymbol->datatype = \
+		    (struct symbol *)g_hash_table_lookup(reftab,
+							 (gpointer)rsymbol->datatype_addr_ref);
+	    }
+
+	    if (rsymbol->s.ii.isinlineinstance
+		&& !rsymbol->s.ii.origin && rsymbol->s.ii.origin_ref) {
+		rsymbol->s.ii.origin = \
+		    (struct symbol *)g_hash_table_lookup(reftab,
+							 (gpointer)rsymbol->s.ii.origin_ref);
+	    }
+	}
+    }
 
     offset = nextcu;
     if (offset != 0) {
@@ -2165,6 +2207,13 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     return retval;
 }
 
+/*
+ * Currently broken for nested struct/union resolution, if one of the
+ * nested members has the same type as a parent higher up in the nest.
+ *
+ * So, we don't use it anymore and have moved to a much more
+ * straightforward approach.
+ */
 void resolve_refs(gpointer key __attribute__ ((unused)),
 		  gpointer value,gpointer data) {
     struct symbol *symbol = (struct symbol *)value;
@@ -2172,6 +2221,8 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
     struct symbol *member;
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
+	if (symbol->s.ti.datatype_code == DATATYPE_BASE)
+	    return;
 	if (symbol->s.ti.datatype_code == DATATYPE_PTR
 	    || symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
 	    || symbol->s.ti.datatype_code == DATATYPE_ARRAY
@@ -2188,10 +2239,14 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 			   DATATYPE(symbol->s.ti.datatype_code),
 			   symbol->name);
 		else {
-		    ldebug(3,"resolved %s type symbol %s ptref 0x%x\n",
-			   DATATYPE(symbol->s.ti.datatype_code),symbol->name,
-			   symbol->s.ti.type_datatype_ref);
+		    ldebug(3,"resolved ref 0x%x %s type symbol %s\n",
+			   symbol->s.ti.type_datatype_ref,
+			   DATATYPE(symbol->s.ti.datatype_code),symbol->name);
 
+		    ldebug(3,"rresolving just-resolved %s type symbol %s\n",
+			   SYMBOL_TYPE(symbol->s.ti.type_datatype->s.ti.datatype_code),
+			   symbol->s.ti.type_datatype->name,
+			   symbol->s.ti.type_datatype->s.ti.type_datatype_ref);
 		    resolve_refs(NULL,symbol->s.ti.type_datatype,reftab);
 		}
 	    }
@@ -2212,23 +2267,33 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		&& symbol->s.ti.d.f.count) {
 		/* do it for the function type args! */
 		list_for_each_entry(member,&(symbol->s.ti.d.f.args),member) {
-		    if (!member->datatype) {
-			ldebug(3,"resolving type function %s arg %s tref 0x%x\n",
-			       symbol->name,member->name,member->datatype_addr_ref);
-			resolve_refs(NULL,member,reftab);
-		    }
+		    ldebug(3,"rresolving function type %s arg %s ref 0x%x\n",
+			   symbol->name,member->name,member->datatype_addr_ref);
+		    resolve_refs(NULL,member,reftab);
 		}
 	    }
 	}
 	else if (symbol->s.ti.datatype_code == DATATYPE_STRUCT
 		 || symbol->s.ti.datatype_code == DATATYPE_UNION) {
-	    /* do it for the struct members! */
+	    /* 
+	     * We need to recurse for each of the struct members too,
+	     * BUT we have to take special care with members because
+	     * the type of a member (or a member of a member, etc)
+	     * could be the same type we're trying to resolve
+	     * currently.  That would send us into a bad loop and blow
+	     * out the stack... so we can't do that.
+	     *
+	     * XXX: this is currently broken -- even if the member's
+	     * datatype is resolved, if that member has members, we
+	     * don't handle those.  We've moved to not using this
+	     * function anymore as a result.
+	     */
 	    list_for_each_entry(member,&(symbol->s.ti.d.su.members),member) {
-		if (!member->datatype) {
-		    ldebug(3,"resolving s/u %s arg %s tref 0x%x\n",
-			   symbol->name,member->name,member->datatype_addr_ref);
-		    resolve_refs(NULL,member,reftab);
-		}
+		if (member->datatype)
+		    continue;
+		ldebug(3,"rresolving s/u %s member %s ref 0x%x\n",
+		       symbol->name,member->name,member->datatype_addr_ref);
+		resolve_refs(NULL,member,reftab);
 	    }
 	}
     }
@@ -2241,23 +2306,28 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		lerror("could not resolve ref %" PRIx64 " for var/func symbol %s\n",
 		       symbol->datatype_addr_ref,symbol->name);
 	    else {
-		ldebug(3,"resolved non-type symbol %s tref %" PRIx64 "\n",
-		       symbol->name,symbol->datatype_addr_ref);
+		ldebug(3,"resolved ref %" PRIx64 " non-type symbol %s\n",
+		       symbol->datatype_addr_ref,symbol->name);
 	    }
 	}
 
 	/* Always recurse in case there are anon symbols down the chain
 	 * that need resolution.
 	 */
-	if (symbol->datatype)
+	if (symbol->datatype) {
+	    ldebug(3,"rresolving ref 0x%" PRIx64 " %s type symbol %s\n",
+		   symbol->datatype->s.ti.type_datatype_ref,
+		   SYMBOL_TYPE(symbol->datatype->s.ti.datatype_code),
+		   symbol->datatype->name);
 	    resolve_refs(NULL,symbol->datatype,reftab);
+	}
 
 	/* then, if this is a function, do the args */
 	if (symbol->type == SYMBOL_TYPE_FUNCTION) 
 	    list_for_each_entry(member,&(symbol->s.ii.d.f.args),member) {
-		if (!member->datatype && member->datatype_addr_ref) {
-		    ldebug(3,"resolving function %s arg %s tref 0x%x\n",
-			   symbol->name,member->name,member->datatype_addr_ref);
+		if (member->datatype) {
+		    ldebug(3,"rresolving ref 0x%x function %s arg %s\n",
+			   member->datatype_addr_ref,symbol->name,member->name);
 		    resolve_refs(NULL,member,reftab);
 		}
 	    }
@@ -2280,9 +2350,9 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		   symbol->s.ii.origin_ref,SYMBOL_TYPE(symbol->type));
 	}
 	else {
-	    ldebug(3,"resolved inlined %s iref 0x%x to %s\n",
-		   SYMBOL_TYPE(symbol->type),
+	    ldebug(3,"resolved ref 0x%x inlined %s to %s\n",
 		   symbol->s.ii.origin_ref,
+		   SYMBOL_TYPE(symbol->type),
 		   symbol->s.ii.origin->name);
 	}
 
