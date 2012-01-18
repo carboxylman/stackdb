@@ -116,6 +116,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
     struct symtab *tmp;
     struct symtab *retval;
+    int i;
 
     /*
      * It is tempting to think we can just check the lowpc and
@@ -143,7 +144,11 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
 	return symtab;
     }
     else if (RANGE_IS_LIST(&symtab->range)) {
-	lwarn("no range list support yet!\n");
+	for (i = 0; i < symtab->range.rlist.len; ++i) {
+	    if (symtab->range.rlist.list[i]->start <= pc 
+		&& pc < symtab->range.rlist.list[i]->end)
+		return symtab;
+	}
     }
 
     return NULL;
