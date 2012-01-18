@@ -16,6 +16,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <linux/netlink.h>
 #include <netdb.h>
 #include <signal.h>
 
@@ -196,10 +198,15 @@ void usage(char *progname) {
 	    "          [-m <sysmapfile>]\n"
 	    "          [-s sys_foo,sys_bar,...]\n"
 	    "          [-f <filter_expr>]\n"
+	    "          [-a [-w addr:port]]\n"
+	    "          [-R <logfile>]\n"
 	    "          <domain-name|dom-id>\n\n"
 	    "  -m  The Sysmap file for the guest's kernel.\n"
 	    "  -s  A comma-separated list of syscalls to probe.\n"
 	    "  -f  A syscall return filter.\n"
+	    "  -a  Report events to A3 controller.\n"
+	    "  -w  IP:port of A3 controller.\n"
+	    "  -R  Save A3 events in time-stamped <logfile>.\n"
 	    "",
 	    progname);
     exit(-1);
@@ -591,7 +598,18 @@ char *sockaddr2str(struct sockaddr *sa)
 
     buf = malloc(sizeof(char)*buflen);
 
-    if (sa->sa_family == AF_INET) {
+    switch (sa->sa_family) {
+    case AF_LOCAL:
+    {
+	struct sockaddr_un *sun = (struct sockaddr_un *)sa;
+	strncpy(tmpbuf, sun->sun_path, sizeof(tmpbuf)-1);
+	usedlen = snprintf(buf, buflen, "{.sun_family = AF_UNIX, .sun_path = '%s' }",
+			   tmpbuf);
+	break;
+    }
+
+    case AF_INET:
+    {
 	struct sockaddr_in *sin = (struct sockaddr_in *)sa;
 	inet_ntop(sa->sa_family,(const void *)&sin->sin_addr,
 		  tmpbuf,sizeof(tmpbuf));
@@ -599,8 +617,11 @@ char *sockaddr2str(struct sockaddr *sa)
 	usedlen = snprintf(buf,buflen,"{ .sa_family = AF_INET, { .sin_port = %d, .sin_addr = '%s' } }",
 			   ntohs(sin->sin_port),tmpbuf);
 	buf[buflen - 1] = '\0';
+	break;
     }
-    else if (sa->sa_family == AF_INET6) {
+
+    case AF_INET6:
+    {
 	struct sockaddr_in6 *sin = (struct sockaddr_in6 *)sa;
 	inet_ntop(sa->sa_family,(const void *)&sin->sin6_addr,tmpbuf,sizeof(tmpbuf));
 	tmpbuf[sizeof(tmpbuf)-1] = '\0';
@@ -608,9 +629,21 @@ char *sockaddr2str(struct sockaddr *sa)
 			   ntohs(sin->sin6_port),sin->sin6_flowinfo,tmpbuf,
 			   sin->sin6_scope_id);
 	buf[buflen - 1] = '\0';
+	break;
     }
-    else {
+
+    case AF_NETLINK:
+    {
+	struct sockaddr_nl *snl = (struct sockaddr_nl *)sa;
+
+	usedlen = snprintf(buf,buflen,"{ .nl_family = AF_NETLINK, .nl_pid = %u, .nl_groups = %u }",
+			   (unsigned)snl->nl_pid, snl->nl_groups);
+	break;
+    }
+
+    default:
 	snprintf(buf,buflen,"(unsupported family %d)",sa->sa_family);
+	break;
     }
 
     return buf;
@@ -651,7 +684,7 @@ void socket_args_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     switch (call) {
     case 2: case 3:
 	dbuf = vmprobe_get_data(handle,regs,"socketcall_arg1",a[1],pid,
-				sizeof(struct sockaddr),NULL);
+				sizeof(struct sockaddr_storage),NULL);
 	if (dbuf) {
 	    sas = sockaddr2str((struct sockaddr *)dbuf);
 	    free(dbuf);
@@ -661,7 +694,7 @@ void socket_args_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     case 5: case 6: case 7:
 	if (arg_data[arg]->postcall) {
 	    dbuf = vmprobe_get_data(handle,regs,"socketcall_arg1",a[1],pid,
-				    sizeof(struct sockaddr),NULL);
+				    sizeof(struct sockaddr_storage),NULL);
 	    if (dbuf) {
 		sas = sockaddr2str((struct sockaddr *)dbuf);
 		free(dbuf);
@@ -2954,7 +2987,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		}
 	    }
 
-	    fprintf(stdout," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+	    debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
 
 	    if (eventstr)
 		free(eventstr);
