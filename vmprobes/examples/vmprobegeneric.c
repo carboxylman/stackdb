@@ -669,20 +669,12 @@ void socket_args_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    dbuf = vmprobe_get_data(handle,regs,"socketcall_arg2",a[2],pid,
 				    sizeof(unsigned long),NULL);
 	    if (dbuf) {
-		int len = 9; /* NNNNNNNN + NULL */
-		sasl = malloc(len);
-		if (sasl)
-		    snprintf(sasl, len, "%lu", *(unsigned long *)dbuf);
+		sasl = ssprintf("%lu", *(unsigned long *)dbuf);
 		free(dbuf);
 	    }
 	} else {
-	    int len = 11; /* 0xNNNNNNNN + NULL */
-	    sas = malloc(len);
-	    if (sas)
-		snprintf(sas, len, "%p", (void *)a[1]);
-	    sasl = malloc(len);
-	    if (sasl)
-		snprintf(sasl, len, "%p", (void *)a[2]);
+	    sas = ssprintf("%p", (void *)a[1]);
+	    sasl = ssprintf("%p", (void *)a[2]);
 	}
 	break;
     default:
@@ -784,7 +776,7 @@ void sigset_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     int bufsiz;
     char *endptr;
 
-    for (i = 1; i < sizeof(signals) / sizeof(int); ++i) {
+    for (i = 1; i < sizeof(signals) / sizeof(signals[0]); ++i) {
 	if (k_sigismember(ss,i)) {
 	    if (done)
 		string_append(&buf,&bufsiz,&endptr," | ");
@@ -1293,7 +1285,7 @@ void signal_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 {
     unsigned long signo = *((unsigned long *)(arg_data[arg]->data));
 
-    if (signo < 0 || signo >= sizeof(signals) / sizeof(int)) {
+    if (signo < 0 || signo >= sizeof(signals) / sizeof(signals[0])) {
 	arg_data[arg]->decodings[0] = strdup("unknown");
 	return;
     }
@@ -1341,7 +1333,7 @@ void exit_code_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    char *signame = "unknown";
 	    arg_data[arg]->decodings[0] = ssprintf("signal");
 	    arg_data[arg]->decodings[1] = strdup("");
-	    if (signo >= 0 && signo < sizeof(signals) / sizeof(int))
+	    if (signo >= 0 && signo < sizeof(signals) / sizeof(signals[0]))
 		signame = signals[signo];
 	    arg_data[arg]->decodings[2] = strdup(signame);
 	}
@@ -1353,6 +1345,42 @@ void exit_code_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     }
  
     return;
+}
+
+void wait_stat_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		       int pid,int syscall,int arg,
+		       struct argdata **arg_data,
+		       struct process_data *data)
+{
+    unsigned long addr = *(unsigned long *)arg_data[arg]->data;
+
+    if (arg_data[arg]->postcall) {
+	long code = 0;
+
+	if (addr && vmprobe_get_data(handle,regs,"waitpid_stat",addr,pid,
+				     sizeof(long),(void *)&code)) {
+	    if (WIFEXITED(code)) {
+		arg_data[arg]->decodings[0] = strdup("exit");
+		arg_data[arg]->decodings[1] = ssprintf("%d",WEXITSTATUS(code));
+		arg_data[arg]->decodings[2] = strdup("");
+		return;
+	    }
+	    if (WIFSIGNALED(code)) {
+		int signo = WTERMSIG(code);
+		char *signame = "unknown";
+		arg_data[arg]->decodings[0] = ssprintf("signal");
+		arg_data[arg]->decodings[1] = strdup("");
+		if (signo >= 0 && signo < sizeof(signals) / sizeof(signals[0]))
+		    signame = signals[signo];
+		arg_data[arg]->decodings[2] = strdup(signame);
+		return;
+	    }
+	}
+    }
+
+    arg_data[arg]->decodings[0] = strdup(addr ? "undef" : "nostatus");
+    arg_data[arg]->decodings[1] = strdup("");
+    arg_data[arg]->decodings[2] = strdup("");
 }
 
 void process_ptregs_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
@@ -1508,7 +1536,8 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "fd", SC_ARG_TYPE_UINT } } },
     { 7, "sys_waitpid", 0xc0121340, RADDR_YES, 3,
       { { 1, "pid", SC_ARG_TYPE_PID_T },
-	{ 2, "stat_addr", SC_ARG_TYPE_PTR },
+	{ 2, "status", SC_ARG_TYPE_PTR, wait_stat_decoder,
+	  (char *[]) { "status:cause","status:code","status:signal" }, 3 },
 	{ 3, "options", SC_ARG_TYPE_INT } } },
     { 8, "sys_creat", 0xc0163420, RADDR_NO, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
@@ -2070,10 +2099,9 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 2, "info", SC_ARG_TYPE_PTR },
 	{ 3, "t", SC_ARG_TYPE_PTR },
       } },
-    { 302, "sys_waitpid_RET", 0x0, RADDR_NO, 0 },
     /* generic syscall stub, used for catching returns (at addr+7) */
-#define SYSCALL_RET_IX 303
-    { 303, "syscall_call", 0x0, RADDR_NO, 0 },
+#define SYSCALL_RET_IX 302
+    { 302, "syscall_call", 0x0, RADDR_NO, 0 },
 };
 
 #define STATS_MAX (128)
@@ -2432,6 +2460,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     int len, rc;
     struct cpu_user_regs tregs, *aregs = regs;
     int postcall = 0;
+    char *rvalstr = NULL;
 
     if (i == 11) {
 	++execcounter;
@@ -2478,10 +2507,8 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	tregs.esp = sc->argptr;
 	aregs = &tregs;
 
-	/* if so, do whatever we need to do */
-	printf("Syscall %d return for thread 0x%lx\n",
-	       sc->syscall_ix, curthread);
-	fflush(stdout);
+	debug(0, "Syscall %d return for thread 0x%lx\n",
+	      sc->syscall_ix, curthread);
 
 #ifndef STATIC_RET_PROBE
 	/* deregister the probe if no other process has it scheduled */
@@ -2506,6 +2533,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     else if (addr == sctab[301].addr) {
 	oi = i = 301;
     }
+#if 0
     else if (addr == sctab[302].addr) {
 	// hack to catch waitpid return value!
 	int pid = (int)regs->eax;
@@ -2564,7 +2592,9 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	free_process_data(data);
 
 	return NULL;
-    } else {
+    }
+#endif
+    else {
 	oi = i;
     }
 
@@ -2658,6 +2688,14 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	}
     }
 
+    /* XXX hack return value handling: for now it is just an int */
+    if (postcall) {
+	rvalstr = ssprintf("%ld", regs->eax);
+
+	printf("  ret_value: %s\n", rvalstr);
+	fflush(stdout);
+    }
+
     if (i == 7) {
 	waitpid_stat_addr = *((unsigned long *)(adata[1]->data));
     }
@@ -2720,6 +2758,12 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	}
     }
 
+    /* XXX return value hack */
+    if (rvalstr) {
+	len += strlen("ret_value") + 2;
+	len += strlen(rvalstr);
+    }
+
     *argstr = malloc(len+1);
 
     rc = 0;
@@ -2735,6 +2779,13 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	    debug(0,"rc = %d\n",rc);
 	}
     }
+
+    /* XXX return value hack */
+    if (rvalstr) {
+	rc += sprintf((*argstr)+rc, "ret_value=%s", rvalstr);
+	free(rvalstr);
+    }
+
     (*argstr)[len] = '\0';
 
     for (j = 0; j < sctab[i].argc; ++j) {
@@ -3726,13 +3777,8 @@ int main(int argc, char *argv[])
 	if (syscall_list_len && !found)
 	    continue;
 
-	//if (!strcmp(sctab[i].name,"sys_waitpid"))
-	//vaddrlist[302] = sctab[302].addr;
-
 	vaddrlist[i] = sctab[i].addr;
     }
-    //vaddrlist[300] = 0;
-    //vaddrlist[301] = 0;
 
 #ifdef STATIC_RET_PROBE
     /*
@@ -3854,13 +3900,8 @@ int main(int argc, char *argv[])
 		if (syscall_list_len && !found)
 		    continue;
 
-		//if (!strcmp(sctab[i].name,"sys_waitpid"))
-		//vaddrlist[302] = sctab[302].addr;
-		
 		vaddrlist[i] = sctab[i].addr;
 	    }
-	    //vaddrlist[300] = 0;
-	    //vaddrlist[301] = 0;
 
 #ifdef STATIC_RET_PROBE
 	    /*
