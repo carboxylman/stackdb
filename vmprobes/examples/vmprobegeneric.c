@@ -2441,10 +2441,7 @@ char *url_encode(char *str) {
 }
 
 int execcounter = 0;
-unsigned long waitpid_stat_addr = 0;
 	    
-struct argfilter segvfilter = { 0,0,0,-1,-1,0,-1,-1,0,0,NULL,NULL,0,NULL,0 };
-
 struct argfilter *handle_syscall(vmprobe_handle_t handle,
 				 struct cpu_user_regs *regs,
 				 char **psstr,char **funcstr,char **argstr,
@@ -2533,67 +2530,6 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     else if (addr == sctab[301].addr) {
 	oi = i = 301;
     }
-#if 0
-    else if (addr == sctab[302].addr) {
-	// hack to catch waitpid return value!
-	int pid = (int)regs->eax;
-	char *pname = "";
-	int ppid = -1;
-	struct process_data *tpdata;
-
-	if (pid <= 0)
-	    return NULL;
-
-	data = load_current_process_data(handle,regs,-1);
-
-	if (!data) {
-	    waitpid_stat_addr = 0;
-	    return NULL;
-	}
-
-	list_for_each_entry(tpdata,&processes,list) {
-	    if (tpdata->pid == pid) {
-		pname = tpdata->name;
-		ppid = tpdata->ppid;
-		break;
-	    }
-	}
-
-	oi = i = 302;
-
-	printf("loading sys_waitpid_RET stat_addr 0x%08lx\n",waitpid_stat_addr);
-
-	long code;
-	if (!vmprobe_get_data(handle,regs,"waitpid_data",waitpid_stat_addr,data->pid,
-			      sizeof(long),(void *)&code)) {
-	    free_process_data(data);
-	    return NULL;
-	}
-	
-	if (WIFEXITED(code)) {
-	    printf("\npid %d returned %d (%ld)!\n\n",pid,WEXITSTATUS(code),code);
-	}
-	else if (WIFSIGNALED(code)) {
-	    char *signame = "unknown";
-	    if (WTERMSIG(code) >= 0 && WTERMSIG(code) < sizeof(signals) / sizeof(int)) {
-		signame = signals[WTERMSIG(code)];
-	    }
-	    printf("\npid %d was signaled with %s (%ld)!\n\n",pid,signame,code);
-	    
-	    *psstr = ssprintf("pid=%d name=%s ppid=%d",pid,pname,ppid);
-	    *funcstr = strdup("do_exit");
-	    *argstr = ssprintf("code=,code:cause=signal,code:status=,code:signal=SIGSEGV,");
-
-	    free_process_data(data);
-	    
-	    return &segvfilter;
-	}
-
-	free_process_data(data);
-
-	return NULL;
-    }
-#endif
     else {
 	oi = i;
     }
@@ -2694,13 +2630,6 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
 	printf("  ret_value: %s\n", rvalstr);
 	fflush(stdout);
-    }
-
-    if (i == 7) {
-	waitpid_stat_addr = *((unsigned long *)(adata[1]->data));
-    }
-    else {
-	//waitpid_stat_addr = 0;
     }
 
     for (j = 0; j < sctab[i].argc; ++j) {
@@ -2914,6 +2843,9 @@ static int on_fn_pre(vmprobe_handle_t vp,
     va = -1;
 
     if (filter) {
+	/* XXX */
+	int postcall = (vmprobe_vaddr(vp) == sctab[SYSCALL_RET_IX].addr);
+
 	if (dofilter) 
 	    gfilterstr = "";
 
@@ -2929,8 +2861,9 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		  filter->gid,
 		  gfilterstr);
 
-	    eventstrtmp = ssprintf("domain=%s type=match %s %s(%s)",
-				   domainname,psstr,funcstr,argstr);
+	    eventstrtmp = ssprintf("domain=%s type=match when=%s %s %s(%s)",
+				   domainname,(postcall?"post":"pre"),
+				   psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
 	    char *name_trunc = NULL; // strrchr(domainname,'-');
