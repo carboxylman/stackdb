@@ -16,6 +16,7 @@ int main(int argc,char **argv) {
     struct debugfile *debugfile;
     int detail = 0;
     int meta = 0;
+    int i;
 
     while ((ch = getopt(argc, argv, "dDM")) != -1) {
 	switch(ch) {
@@ -34,8 +35,11 @@ int main(int argc,char **argv) {
 	}
     }
 
-    if (argc == (optind + 1))
-	filename = argv[optind];
+    argc -= optind;
+    argv += optind;
+
+    if (argc >= 1)
+	filename = argv[0];
     else {
 	fprintf(stderr,"ERROR: you must supply an ELF filename!\n");
 	exit(-1);
@@ -64,7 +68,31 @@ int main(int argc,char **argv) {
 	.detail = detail,
     };
 
-    debugfile_dump(debugfile,&ud);
+    if (argc < 2)
+	debugfile_dump(debugfile,&ud);
+    else {
+	for (i = 1; i < argc; ++i) {
+	    char *idx = index(argv[i],'.');
+	    if (idx) {
+		*idx = '\0';
+		++idx;
+	    }
+	    struct symbol *s = debugfile_lookup_sym(debugfile,argv[i],
+						    NULL,SYMBOL_TYPE_NONE);
+	    if (!s)
+		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+	    else if (!idx)
+		symbol_dump(s,&ud);
+	    else {
+		s = symbol_get_member(s,idx,".");
+		if (!s)
+		    fprintf(stderr,"Could not find member %s in %s!\n",
+			    idx,argv[i]);
+		else 
+		    symbol_dump(s,&ud);
+	    }
+	}
+    }
 
     debugfile_free(debugfile);
 

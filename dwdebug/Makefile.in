@@ -11,7 +11,8 @@ SUBDIRS =
 
 include $(OBJDIR)/Makeconf
 
-CFLAGS := -Wall
+CFLAGS := -Wall -Wextra -Wno-unused-parameter
+#-Wswitch-default -Wswitch-enum -Wtrampolines -Wtraditional-conversion -Wdeclaration-after-statement -Wshadow -Wbad-function-cast -Wcast-qual -Wcast-align -Wconversion -Wlogical-op -Wstrict-prototypes -Wold-style-definition -Wmissing-parameter-type -Wmissing-prototypes -Wmissing-declarations -Wmissing-field-initializers -Wmissing-format-attribute -Winline 
 //CFLAGS += -O2
 CFLAGS += -g
 CFLAGS += -DLIBDWDEBUG_DEBUG
@@ -34,6 +35,9 @@ EXAMPLES := targetdumpval dumpdebuginfo
 
 INST_INC = libdwdebug.h
 INST_LIB = $(LIBRARIES)
+
+# Get libtool to shut up when compiling.
+RM=rm -f
 
 all:	$(LIBRARIES) libdwdebug.so $(EXAMPLES) all-subdirs
 
@@ -67,8 +71,9 @@ install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	$(RM) -f $(OBJECTS) targetdumpval.lo dumpdebuginfo.lo *.o
-	$(RM) -f $(LIBRARIES) libdwdebug.so libdwdebug.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
+		libdwdebug.lo targetdumpval.lo dumpdebuginfo.lo
+	$(RM) -f $(LIBRARIES) libdwdebug.o libdwdebug.so libdwdebug.so.$(LIBVERSION) 
 	$(RM) -f $(EXAMPLES)
 
 distclean: distclean-subdirs

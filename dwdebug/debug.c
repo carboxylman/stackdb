@@ -11,7 +11,9 @@
 #include <unistd.h>
 #include <regex.h>
 #include <limits.h>
+#include <stdint.h>
 #include <inttypes.h>
+#include <stdarg.h>
 
 #include <glib.h>
 
@@ -61,7 +63,9 @@ LIST_HEAD(debugfiles);
 /*
  * Some generic GHashTable util functions for freeing hashtables.
  */
-gboolean always_remove(gpointer key,gpointer value,gpointer user_data) {
+gboolean always_remove(gpointer key __attribute__((unused)),
+		       gpointer value __attribute__((unused)),
+		       gpointer user_data __attribute__((unused))) {
     return TRUE;
 }
 
@@ -82,7 +86,7 @@ static void ghash_symtab_free(gpointer data) {
 
     // XXX more?
     ldebug(5,"freeing symtab(%s:%s)\n",
-	   symtab->debugfile->idstr,symtab->srcfilename);
+	   symtab->debugfile->idstr,symtab->name);
     symtab_free(symtab);
 }
 
@@ -91,9 +95,322 @@ static void ghash_symbol_free(gpointer data) {
 
     // XXX more?
     ldebug(5,"freeing symbol(%s:%s:%s)\n",
-	   symbol->symtab->debugfile->idstr,symbol->symtab->srcfilename,
+	   symbol->symtab->debugfile->idstr,symbol->symtab->name,
 	   symbol->name);
     symbol_free(symbol);
+}
+
+/**
+ ** Local prototypes.
+ **/
+static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member,
+					      struct symbol_chain **chainptr);
+
+/**
+ ** PC lookup functions.
+ **/
+/*
+ * NOTE: this function returns the tightest bounding symtab -- which may
+ * be the symtab that was passed in!!
+ */
+struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
+    struct symtab *tmp;
+    struct symtab *retval;
+
+    /*
+     * It is tempting to think we can just check the lowpc and
+     * highpc vals for this symtab before checking its children, but
+     * we can't do that.  Some symtabs may have children whose
+     * ranges are outside the parent -- i.e., a function defined in
+     * another.  So we can't even check the parent ranges before doing
+     * DFS!
+     *
+     * In other words, we need the tightest bound.
+     */
+    list_for_each_entry(tmp,&symtab->subtabs,member) {
+	retval = symtab_lookup_pc(tmp,pc);
+	if (retval)
+	    return retval;
+    }
+
+    /*
+     * Then check our symtab.
+     *
+     * XXX: check range list ranges too!!!
+     */
+    if (RANGE_IS_PC(&symtab->range)
+	&& symtab->range.lowpc <= pc && pc < symtab->range.highpc) {
+	return symtab;
+    }
+    else if (RANGE_IS_LIST(&symtab->range)) {
+	lwarn("no range list support yet!\n");
+    }
+
+    return NULL;
+}
+
+struct symtab *addrspace_lookup_pc(struct addrspace *space,uint64_t pc) {
+    struct memregion *region;
+    struct symtab *symtab;
+    int found = 0;
+    GHashTableIter iter, iter2;
+    gpointer key, value;
+    
+    list_for_each_entry(region,&space->regions,region) {
+	if (region->start <= pc && pc <= region->end)
+	    found = 1;
+	break;
+    }
+
+    if (!found)
+	return NULL;
+
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&value)) {
+	g_hash_table_iter_init(&iter2,((struct debugfile *)value)->srcfiles);
+	while (g_hash_table_iter_next(&iter2,
+				      (gpointer *)&key,(gpointer *)&symtab)) {
+	    symtab = symtab_lookup_pc(symtab,pc);
+	    if (symtab)
+		return symtab;
+	}
+    }
+
+    return NULL;
+}
+
+/**
+ ** Symbol lookup functions.
+ **/
+struct symbol *symtab_lookup_sym(struct symtab *symtab,char *name,
+				 symbol_type_flag_t ftype) {
+    struct symbol *value;
+    GHashTableIter iter;
+    gpointer key;
+
+    /*
+     * Check our symbols first.
+     */
+    g_hash_table_iter_init(&iter,symtab->tab);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&value)) {
+	if (((ftype != SYMBOL_TYPE_FLAG_NONE
+	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+		      && SYMBOL_IS_FUNCTION(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+		      && SYMBOL_IS_LABEL(value))))
+	     || ftype == SYMBOL_TYPE_FLAG_NONE)
+	    && strcmp(name,key) == 0)
+	    return (struct symbol *)value;
+    }
+
+    return NULL;
+}
+struct symbol_chain *symtab_lookup_nested_sym(struct symtab *symtab,char *name,
+					      const char *delim,
+					      symbol_type_flag_t ftype) {
+    struct symtab *tmp;
+    struct symbol *value;
+    GHashTableIter iter;
+    gpointer key;
+
+    //struct symbol_chain *chain = (struct symbol_chain *)malloc(sizeof(struct symbol_chain));
+
+    return NULL;
+
+    /*
+     * Check our symbols first.
+     */
+    g_hash_table_iter_init(&iter,symtab->tab);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&value)) {
+	if (((ftype != SYMBOL_TYPE_FLAG_NONE
+	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+		      && SYMBOL_IS_FUNCTION(value))
+		  || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+		      && SYMBOL_IS_LABEL(value))))
+	     || ftype == SYMBOL_TYPE_FLAG_NONE)
+	    && strcmp(name,key) == 0)
+	    //return (struct symbol *)value;
+	    break;
+    }
+
+    /* 
+     * If no match, start checking children symtabs; DFS; first wins.
+     * BUT, we only check anonymous subtables (i.e., lexical blocks).
+     */
+    list_for_each_entry(tmp,&symtab->subtabs,member) {
+	if (tmp->name && strcmp(name,tmp->name) == 0) {
+	    //return symtab_lookup_sym(tmp,namei,ftype);
+	}
+    }
+
+    return NULL;
+}
+
+struct symbol *target_lookup_sym(struct target *target,char *name,
+				 char *srcfile,symbol_type_flag_t ftype,
+				 struct memregion **retregion) {
+    struct memregion *region;
+    struct symbol *retval;
+    struct debugfile *debugfile;
+    GHashTableIter iter;
+    gpointer key;
+
+    if (!target->space)
+	return NULL;
+
+    list_for_each_entry(region,&target->space->regions,region) {
+	g_hash_table_iter_init(&iter,region->debugfiles);
+	while (g_hash_table_iter_next(&iter,(gpointer *)&key,
+				      (gpointer *)&debugfile)) {
+	    retval = debugfile_lookup_sym(debugfile,name,srcfile,ftype);
+	    if (retval) {
+		if (retregion)
+		    *retregion = region;
+		return retval;
+	    }
+	}
+    }
+
+    return NULL;
+}
+
+struct symbol_chain *target_lookup_nested_sym(struct target *target,
+					      char *name,const char *delim,
+					      char *srcfile,
+					      symbol_type_flag_t ftype,
+					      struct memregion **retregion) {
+    int len, alen;
+    struct symbol *member;
+    struct symbol_chain *chain;
+    char *next;
+    char *lname;
+    char *saveptr = NULL;
+    struct symbol_chain *anonchain = NULL;
+    struct symbol **tmpsc = NULL;
+    int i;
+
+    chain = (struct symbol_chain *)malloc(sizeof(struct symbol_chain));
+
+    /* assume that most chains will only have 2 members :) */
+    alen = 2;
+    chain->chain = (struct symbol **)malloc(sizeof(struct symbol *)*alen);
+    len = 0;
+
+    lname = strdup(name);
+    while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
+	/* Do the first token by looking up in the target.  For the
+	 * rest, lookup in the parent symbol.
+	 */
+	if (len == 0) {
+	    if (!(chain->chain[len] = target_lookup_sym(target,next,
+							srcfile,ftype,retregion)))
+		goto errout;
+
+	    ++len;
+	    continue;
+	}
+
+	if (!(member = __symbol_get_one_member(chain->chain[len-1],
+					       next,&anonchain)))
+	    goto errout;
+	else if (anonchain && anonchain->count) {
+	    /* If anonchain has any members, we now have to glue those
+	     * members into our overall chain, BEFORE gluing the actual
+	     * found symbol onto the tail end of the chain.
+	     */
+	    //asm("int $3");
+	    if ((alen - len) < (anonchain->count + 1)) {
+		alen += (anonchain->count + 1) - (alen - len);
+		if (!(tmpsc = realloc(chain->chain,
+				      alen*sizeof(struct symbol *)))) {
+		    /* free the anonchain */
+		    free(anonchain->chain);
+		    free(anonchain);
+		    goto errout;
+		}
+		chain->chain = tmpsc;
+	    }
+	    for (i = 0; i < anonchain->count; ++i)
+		chain->chain[len++] = anonchain->chain[i];
+	    /* now slap the retval on, too! */
+	    chain->chain[len++] = member;
+	    /* free the anonchain and reset our pointer */
+	    //asm("int $3");
+	    free(anonchain->chain);
+	    free(anonchain);
+	    anonchain = NULL;
+	}
+	else {
+	    if (alen == len) {
+		alen += 2;
+		if (!realloc(chain->chain,alen*sizeof(struct symbol *)))
+		    goto errout;
+	    }
+	    chain->chain[len++] = member;
+	}
+    }
+    chain->count = len;
+    //asm("int $3");
+    free(lname);
+    /* downsize */
+    if (!realloc(chain->chain,chain->count*(sizeof(struct symbol *))))
+	lwarn("failed to downsize after succeeding: realloc: %s\n",
+	      strerror(errno));
+    //asm("int $3");
+
+    return chain;
+
+ errout:
+    *retregion = NULL;
+    free(lname);
+    free(chain->chain);
+    free(chain);
+
+    return NULL;
+}
+
+struct symbol *debugfile_lookup_sym(struct debugfile *debugfile,
+				    char *name,char *srcfile,
+				    symbol_type_flag_t ftype) {
+    struct symbol *retval;
+    struct symtab *symtab;
+    GHashTableIter iter;
+    gpointer key;
+
+    /*
+     * Always check globals first, then types, then srcfile tables.
+     */
+    if (!(ftype & SYMBOL_TYPE_FLAG_TYPE)
+	&& (retval = g_hash_table_lookup(debugfile->globals,name)))
+	return retval;
+
+    if ((ftype & SYMBOL_TYPE_FLAG_TYPE || ftype & SYMBOL_TYPE_FLAG_NONE)
+	&& (retval = g_hash_table_lookup(debugfile->types,name)))
+	return retval;
+
+    if (srcfile) {
+	if ((symtab = (struct symtab *)g_hash_table_lookup(debugfile->srcfiles,
+							   srcfile)))
+	    return symtab_lookup_sym(symtab,name,ftype);
+	else
+	    return NULL;
+    }
+
+    g_hash_table_iter_init(&iter,debugfile->srcfiles);
+    while (g_hash_table_iter_next(&iter,(gpointer *)&key,(gpointer *)&symtab)) {
+	retval = symtab_lookup_sym(symtab,name,ftype);
+	if (retval)
+	    return retval;
+    }
+
+    return NULL;
 }
 
 /**
@@ -210,6 +527,8 @@ struct memregion *memregion_create(struct addrspace *space,region_type_t type,
 
     memset(retval,0,sizeof(*retval));
 
+    retval->space = space;
+
     if (filename) 
 	retval->filename = strdup(filename);
     retval->type = type;
@@ -230,6 +549,14 @@ struct memregion *memregion_create(struct addrspace *space,region_type_t type,
 	   retval->type);
 
     return retval;
+}
+
+struct target *memregion_target(struct memregion *region) {
+    return (region->space ? region->space->target : NULL);
+}
+
+int memregion_contains(struct memregion *region,ADDR addr) {
+    return (region->start <= addr && addr <= region->end ? 1 : 0);
 }
 
 void memregion_free(struct memregion *region) {
@@ -414,12 +741,14 @@ static struct debugfile *__debugfile_create(char *filename,
     return debugfile;
 }
 
-void g_hash_foreach_dump_symtab(gpointer key,gpointer value,gpointer userdata) {
+void g_hash_foreach_dump_symtab(gpointer key __attribute__((unused)),
+				gpointer value,gpointer userdata) {
     struct dump_info *ud = (struct dump_info *)userdata;
     symtab_dump((struct symtab *)value,ud);
 }
 
-void g_hash_foreach_dump_symbol(gpointer key,gpointer value,gpointer userdata) {
+void g_hash_foreach_dump_symbol(gpointer key __attribute__((unused)),
+				gpointer value,gpointer userdata) {
     struct dump_info *ud = (struct dump_info *)userdata;
     symbol_dump((struct symbol *)value,ud);
 }
@@ -431,8 +760,8 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud) {
 
     if (ud->prefix) {
 	p = ud->prefix;
-	np1 = malloc(strlen(p) + 2);
-	np2 = malloc(strlen(p) + 4);
+	np1 = malloc(strlen(p) + 1 + 2);
+	np2 = malloc(strlen(p) + 1 + 4);
 	sprintf(np1,"%s%s",p,"  ");
 	sprintf(np2,"%s%s",p,"    ");
     }
@@ -466,51 +795,125 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud) {
     }
 }
 
+void range_dump(struct range *range,struct dump_info *ud) {
+    int i;
+
+    if (RANGE_IS_PC(range))
+	fprintf(ud->stream,"%sRANGE(pc): low=0x%" PRIx64 ", high=0x%" PRIx64,
+		ud->prefix,range->lowpc,range->highpc);
+    else if (RANGE_IS_LIST(range)) {
+	if (range->rlist.len == 0) {
+	    fprintf(ud->stream,"%sRANGE(list): ()",ud->prefix);
+	    return;
+	}
+
+	fprintf(ud->stream,"%sRANGE(list): (",ud->prefix);
+	for (i = 0; i < range->rlist.len; ++i) {
+	    if (i > 0)
+		fprintf(ud->stream,",");
+
+	    fprintf(ud->stream,"[0x%" PRIxADDR ",0x%" PRIxADDR "]",
+		    range->rlist.list[i]->start,range->rlist.list[i]->end);
+	}
+	fprintf(ud->stream,")");
+    }
+}
+
+void loc_list_dump(struct loc_list *list,struct dump_info *ud) {
+    int i;
+    struct dump_info udn = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
+
+    fprintf(ud->stream,"%sLOCLIST: (",ud->prefix);
+    for (i = 0; i < list->len; ++i) {
+	if (i > 0)
+	    fprintf(ud->stream,",");
+
+	fprintf(ud->stream,"[0x%" PRIxADDR ",0x%" PRIxADDR,
+		list->list[i]->start,list->list[i]->end);
+	if (list->list[i]->loc) {
+	    fprintf(ud->stream,"->");
+	    location_dump(list->list[i]->loc,&udn);
+	}
+	fprintf(ud->stream,"]");
+    }
+    fprintf(ud->stream,")");
+}
+
 void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
     struct symtab *csymtab;
     char *p = "";
     char *np;
+    char *np2;
     struct dump_info udn;
+    struct dump_info udn2;
+    struct dump_info udn3 = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
 
     if (ud->prefix) {
 	p = ud->prefix;
-	np = malloc(strlen(p) + 2);
+	np = malloc(strlen(p) + 1 + 2);
+	np2 = malloc(strlen(p) + 1 + 4);
 	sprintf(np,"%s%s",p,"  ");
+	sprintf(np2,"%s%s",p,"    ");
     }
     else {
 	np = "  ";
+	np2 = "    ";
     }
     udn.prefix = np;
     udn.stream = ud->stream;
     udn.meta = ud->meta;
     udn.detail = ud->detail;
+    udn2.prefix = np2;
+    udn2.stream = ud->stream;
+    udn2.meta = ud->meta;
+    udn2.detail = ud->detail;
 
-    if (symtab->srcfilename)
-	fprintf(ud->stream,"%ssymtab(%s):\n",p,symtab->srcfilename);
+    if (symtab->name)
+	fprintf(ud->stream,"%ssymtab(%s):\n",p,symtab->name);
     else
 	fprintf(ud->stream,"%ssymtab:\n",p);
     if (symtab->compdirname)
 	fprintf(ud->stream,"%s    compdirname: %s\n",p,symtab->compdirname);
-    fprintf(ud->stream,"%s    low pc: 0x%x, high pc: 0x%x\n",p,symtab->lowpc,symtab->highpc);
+    range_dump(&symtab->range,&udn3);
+    fprintf(ud->stream,"\n");
     if (symtab->producer)
 	fprintf(ud->stream,"%s    producer: %s\n",p,symtab->producer);
     if (symtab->language)
 	fprintf(ud->stream,"%s    language: %d\n",p,symtab->language);
     g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
 
-    fprintf(ud->stream,"%s    subscope symtabs:\n",p);
-    list_for_each_entry(csymtab,&(symtab->subtabs),member) {
-	symtab_dump(csymtab,&udn);
+    if (!list_empty(&symtab->subtabs)) {
+	fprintf(ud->stream,"%s  subscopes:\n",p);
+	list_for_each_entry(csymtab,&(symtab->subtabs),member) {
+	    symtab_dump(csymtab,&udn2);
+	}
     }
 
-    if (ud->prefix)
+    if (symtab->name)
+	fprintf(ud->stream,"%send symtab(%s)\n",p,symtab->name);
+    else
+	fprintf(ud->stream,"%send symtab\n",p);
+
+    if (ud->prefix) {
 	free(np);
+	free(np2);
+    }
 }
 
 void location_dump(struct location *location,struct dump_info *ud) {
     switch(location->loctype) {
     case LOCTYPE_ADDR:
-	fprintf(ud->stream,"0x%" PRIuMAX,location->l.addr);
+	fprintf(ud->stream,"0x%" PRIx64,location->l.addr);
 	break;
     case LOCTYPE_REG:
 	fprintf(ud->stream,"REG(%d)",location->l.reg);
@@ -531,10 +934,30 @@ void location_dump(struct location *location,struct dump_info *ud) {
     case LOCTYPE_RUNTIME:
 	fprintf(ud->stream,"RUNTIMEDWOP (%p,%d)",
 		location->l.runtime.data,location->l.runtime.len);
+	break;
+    case LOCTYPE_LOCLIST:
+	fprintf(ud->stream,"LOCLIST (%p,%d;",
+		location->l.runtime.data,location->l.runtime.len);
+	loc_list_dump(location->l.loclist,ud);
+	fprintf(ud->stream,")");
+	break;
     case LOCTYPE_UNKNOWN:
     case __LOCTYPE_MAX:
 	break;
     }
+}
+
+void symbol_label_dump(struct symbol *symbol,struct dump_info *ud) {
+    struct dump_info udn = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
+
+    fprintf(ud->stream,"%s",symbol->name);
+    if (ud->meta) 
+	range_dump(&symbol->s.ii.d.l.range,&udn);
 }
 
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
@@ -550,15 +973,34 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	//    && symbol->s.ii.isenumval)) {
 	    if (symbol->datatype) {
 		symbol_type_dump(symbol->datatype,&udn);
-		fprintf(ud->stream," ");
 	    }
-	    else 
-		fprintf(ud->stream,"tref%Lx ",symbol->datatype_addr_ref);
+	    else if (symbol->datatype_addr_ref) 
+		fprintf(ud->stream,"tref%" PRIx64,symbol->datatype_addr_ref);
 	//}
     }
     /* all variables are named, but not all members of structs/unions! */
-    if (symbol->name) 
+    /* well, inlined params aren't named either. */
+    if (symbol->s.ii.isinlineinstance && symbol->s.ii.isparam) {
+	/* Only print a space if we printed the var's type above! */
+	if (ud->detail)
+	    fprintf(ud->stream," ");
+
+	if (symbol->s.ii.origin) {
+	    fprintf(ud->stream,"INLINED_PARAM(");
+	    symbol_var_dump(symbol->s.ii.origin,&udn);
+	    fprintf(ud->stream,")");
+	}
+	else
+	    fprintf(ud->stream,"INLINED_ANON_PARAM()");
+    }
+    else if (symbol->name) {
+	/* Only print a space if we printed the var's type above! */
+	if (ud->detail)
+	    fprintf(ud->stream," ");
+
 	fprintf(ud->stream,"%s",symbol->name);
+    }
+
     if (symbol->type == SYMBOL_TYPE_VAR 
 	&& symbol->s.ii.d.v.bit_size > 0) {
 	/* this is a bitfield */
@@ -568,18 +1010,20 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     if (symbol->type == SYMBOL_TYPE_VAR
 	&& symbol->s.ii.isenumval) {
 	// XXX fix type printing -- this *is* a malloc'd constval
-	fprintf(ud->stream," = %d",*((int *)symbol->s.ii.d.constval));
+	fprintf(ud->stream," = %d",*((int *)symbol->s.ii.constval));
     }
 
     if (ud->detail && symbol->s.ii.l.loctype != LOCTYPE_UNKNOWN) {
 	fprintf(ud->stream," @@ ");
 	location_dump(&symbol->s.ii.l,ud);
+
+	if (symbol->s.ii.constval)
+	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
     }
 }
 
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     struct symbol *arg;
-    struct symtab *csymtab;
     int i = 0;
     struct dump_info udn = {
 	.stream = ud->stream,
@@ -587,20 +1031,44 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	.detail = 0,
 	.meta = 0,
     };
+    struct dump_info udn2 = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
 
     if (ud->detail) {
 	if (symbol->datatype) {
 	    symbol_type_dump(symbol->datatype,&udn);
 	    fprintf(ud->stream," ");
 	}
-	else 
-	    fprintf(ud->stream,"ftref%Lx ",symbol->datatype_addr_ref);
+	else if (symbol->datatype_addr_ref)
+	    fprintf(ud->stream,"ftref%" PRIx64 " ",symbol->datatype_addr_ref);
     }
-    fprintf(ud->stream,"%s",symbol->name);
-    if (ud->meta) 
-	fprintf(ud->stream," (lowpc=0x%Lx,highpc=0x%Lx,external=%d,prototyped=%d) ",
-		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc,
-		symbol->s.ii.d.f.external,symbol->s.ii.d.f.prototyped);
+    if (symbol->s.ii.isinlineinstance) {
+	if (symbol->s.ii.origin) {
+	    fprintf(ud->stream,"INLINED_FUNC(");
+	    symbol_var_dump(symbol->s.ii.origin,&udn);
+	    fprintf(ud->stream,")");
+	}
+	else
+	    fprintf(ud->stream,"INLINED_ANON_PARAM()");
+    }
+    else 
+	fprintf(ud->stream,"%s",symbol->name);
+    if (ud->meta) {
+	if (symbol->s.ii.d.f.fbisloclist && symbol->s.ii.d.f.fblist 
+	    && symbol->s.ii.d.f.fblist->len) {
+	    loc_list_dump(symbol->s.ii.d.f.fblist,&udn2);
+	}
+	else if (symbol->s.ii.d.f.fbissingleloc && symbol->s.ii.d.f.fbloc) { 
+	    location_dump(symbol->s.ii.d.f.fbloc,&udn2);
+	}
+	fprintf(ud->stream," (external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
+		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
+		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
+    }
     if (ud->detail) {
 	fprintf(ud->stream,"(");
 	list_for_each_entry(arg,&(symbol->s.ii.d.f.args),member) {
@@ -609,9 +1077,16 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    if (i != symbol->s.ii.d.f.count)
 		fprintf(ud->stream,",");
 	}
+	if (symbol->s.ti.d.f.hasunspec) {
+	    if (i)
+		fprintf(ud->stream,",");
+	    fprintf(ud->stream,"...");
+	}
 	fprintf(ud->stream,")");
-	fprintf(ud->stream," @@ 0x%" PRIx64 " 0x%" PRIx64,
-		symbol->s.ii.d.f.lowpc,symbol->s.ii.d.f.highpc);
+
+	if (symbol->s.ii.constval)
+	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
+
 	fprintf(ud->stream,"\n");
 
 	symtab_dump(symbol->s.ii.d.f.symtab,&udn);
@@ -629,12 +1104,17 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	.meta = 0,
     };
 
+    if (!symbol) {
+	fprintf(ud->stream,"NULLTYPESYM!");
+	return;
+    }
+
     switch (symbol->s.ti.datatype_code) {
     case DATATYPE_VOID:
 	fprintf(ud->stream,"void");
 	break;
     case DATATYPE_ARRAY:
-	symbol_type_dump(symbol->s.ti.d.a.array_datatype,&udn);
+	symbol_type_dump(symbol->s.ti.type_datatype,&udn);
 	fprintf(ud->stream," ");
 	for (i = 0; i < symbol->s.ti.d.a.count; ++i) {
 	    fprintf(ud->stream,"[%d]",symbol->s.ti.d.a.subranges[i] + 1);
@@ -642,18 +1122,21 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	break;
     case DATATYPE_CONST:
 	fprintf(ud->stream,"const ");
-	symbol_type_dump(symbol->s.ti.d.cq.const_datatype,ud);
+	symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	break;
     case DATATYPE_VOL:
 	fprintf(ud->stream,"volatile ");
-	symbol_type_dump(symbol->s.ti.d.vq.vol_datatype,ud);
+	symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	break;
     case DATATYPE_STRUCT:
     case DATATYPE_UNION:
 	ss = "struct";
 	if (symbol->s.ti.datatype_code == DATATYPE_UNION)
 	    ss = "union";
-	fprintf(ud->stream,"%s %s",ss,symbol->name);
+	if (symbol->s.ti.isanon && ud->detail)
+	    fprintf(ud->stream,"%s",ss);
+	else
+	    fprintf(ud->stream,"%s %s",ss,symbol->name);
 	if (ud->meta) 
 	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti.byte_size);
 	if (ud->detail) {
@@ -665,6 +1148,19 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 		 */
 		if (member->datatype == symbol) {
 		    symbol_var_dump(member,&udn);
+		}
+		else if (SYMBOL_IST_STUN(member->datatype) 
+			 && member->datatype->s.ti.isanon) {
+		    symbol_type_dump(member->datatype,ud);
+
+		    if (ud->detail && member->s.ii.l.loctype != LOCTYPE_UNKNOWN) {
+			fprintf(ud->stream," @@ ");
+			location_dump(&member->s.ii.l,ud);
+
+			if (member->s.ii.constval)
+			    fprintf(ud->stream," @@ CONST(%p)",
+				    member->s.ii.constval);
+		    }
 		}
 		else 
 		    symbol_var_dump(member,ud);
@@ -705,31 +1201,61 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	 * function, it's safe to print details for it; otherwise, it's
 	 * not... I think!
 	 */
-	if (symbol->s.ti.d.p.ptr_datatype) {
-	    if (symbol->s.ti.d.p.ptr_datatype->type == SYMBOL_TYPE_TYPE
-		&& (symbol->s.ti.d.p.ptr_datatype->s.ti.datatype_code == DATATYPE_PTR
-		    || symbol->s.ti.d.p.ptr_datatype->s.ti.datatype_code == DATATYPE_VOID 
-		    || symbol->s.ti.d.p.ptr_datatype->s.ti.datatype_code == DATATYPE_BASE))
-		symbol_type_dump(symbol->s.ti.d.p.ptr_datatype,ud);
+	if (symbol->s.ti.type_datatype) {
+	    if (symbol->s.ti.type_datatype->type == SYMBOL_TYPE_TYPE
+		&& (symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_PTR
+		    || symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_VOID 
+		    || symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_BASE))
+		symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	    else {
-		symbol_type_dump(symbol->s.ti.d.p.ptr_datatype,&udn);
+		symbol_type_dump(symbol->s.ti.type_datatype,&udn);
 	    }
 	    fprintf(ud->stream,"*");
 	}
 	else
-	    fprintf(ud->stream,"ptref%Lx *",symbol->s.ti.d.p.ptr_datatype_addr_ref);
+	    fprintf(ud->stream,"ptref%" PRIx64 " *",symbol->s.ti.type_datatype_ref);
+	break;
+    case DATATYPE_FUNCTION:
+	if (ud->detail)
+	    symbol_type_dump(symbol->s.ti.type_datatype,ud);
+
+	if (symbol->s.ti.isanon) 
+	    fprintf(ud->stream,"()");
+	else if (symbol->name)
+	    fprintf(ud->stream,"(%s)",symbol->name);
+
+	if (ud->meta)
+	    fprintf(ud->stream," (prototyped=%d,external=%d) ",
+		    symbol->s.ti.isprototyped,symbol->s.ti.isexternal);
+
+	if (ud->detail) {
+	    fprintf(ud->stream,"(");
+	    i = 0;
+	    list_for_each_entry(member,&(symbol->s.ti.d.f.args),member) {
+		symbol_var_dump(member,ud);
+		if (likely(++i != symbol->s.ti.d.f.count))
+		    fprintf(ud->stream,", ");
+	    }
+	    if (symbol->s.ti.d.f.hasunspec) {
+		if (i)
+		    fprintf(ud->stream,",");
+		fprintf(ud->stream,"...");
+	    }
+		    
+	    fprintf(ud->stream,")");
+	}
 	break;
     case DATATYPE_TYPEDEF:
 	if (!ud->detail)
 	    fprintf(ud->stream,"%s",symbol->name);
-	else if (symbol->s.ti.d.td.td_datatype) {
+	else if (symbol->s.ti.type_datatype) {
 	    fprintf(ud->stream,"typedef ");
-	    symbol_type_dump(symbol->s.ti.d.td.td_datatype,ud);
+	    symbol_type_dump(symbol->s.ti.type_datatype,ud);
 	    fprintf(ud->stream," %s",symbol->name);
 	}
 	else 
-	    fprintf(ud->stream,"typedef tdtref%Lx %s",
-		    symbol->s.ti.d.td.td_datatype_addr_ref,symbol->name);
+	    fprintf(ud->stream,"typedef tdtref%" PRIx64 " %s",
+		    symbol->s.ti.type_datatype_ref,symbol->name);
 	break;
     case DATATYPE_BASE:
 	if (!ud->meta)
@@ -753,7 +1279,7 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 
     if (ud->prefix) {
 	p = ud->prefix;
-	np = malloc(strlen(p) + 2);
+	np = malloc(strlen(p) + 1 + 2);
 	sprintf(np,"%s%s",p,"  ");
     }
     else {
@@ -772,12 +1298,38 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 	symbol_var_dump(symbol,&udn);
     else if (symbol->type == SYMBOL_TYPE_FUNCTION) 
 	symbol_function_dump(symbol,&udn);
+    else if (symbol->type == SYMBOL_TYPE_LABEL) 
+	symbol_label_dump(symbol,&udn);
     else 
 	fprintf(ud->stream,"unknown symbol type %d!",symbol->type);
     fprintf(ud->stream,"\n");
 
     if (ud->prefix)
 	free(np);
+}
+
+void symbol_chain_dump(struct symbol_chain *chain,struct dump_info *ud) {
+    int i = 0;
+    struct dump_info udn = {
+	.stream = ud->stream,
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
+    char *prefixbuf = malloc(strlen(ud->prefix) + chain->count * 2 + 1);
+    strcpy(prefixbuf,ud->prefix);
+    int len = strlen(prefixbuf);
+
+    udn.prefix = prefixbuf;
+
+    while (1) {
+	symbol_dump(chain->chain[i],&udn);
+	if (++i == chain->count)
+	    break;
+	fprintf(ud->stream,"\n");
+	prefixbuf[len++] = ' ';
+	prefixbuf[len++] = ' ';
+	prefixbuf[len] = '\0';
+    }
 }
 
 struct debugfile *debugfile_create(char *filename,debugfile_type_t type) {
@@ -877,13 +1429,15 @@ struct debugfile *debugfile_attach(struct memregion *region,
 
     list_add_tail(&debugfile->debugfile,&debugfiles);
 
+    g_hash_table_insert(region->debugfiles,idstr,debugfile);
+
     return debugfile;
 }
 
 int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab) {
-    if (unlikely(g_hash_table_lookup(debugfile->srcfiles,symtab->srcfilename)))
+    if (unlikely(g_hash_table_lookup(debugfile->srcfiles,symtab->name)))
 	return 1;
-    g_hash_table_insert(debugfile->srcfiles,symtab->srcfilename,symtab);
+    g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
     return 0;
 }
 
@@ -927,6 +1481,10 @@ void debugfile_free(struct debugfile *debugfile) {
 
     if (debugfile->strtab)
 	free(debugfile->strtab);
+    if (debugfile->loctab)
+	free(debugfile->loctab);
+    if (debugfile->rangetab)
+	free(debugfile->rangetab);
 
     if (debugfile->version)
 	free(debugfile->version);
@@ -942,9 +1500,8 @@ void debugfile_free(struct debugfile *debugfile) {
  * Symtabs.
  */
 struct symtab *symtab_create(struct debugfile *debugfile,
-			     char *srcfilename,char *compdirname,
-			     int language,char *producer,
-			     unsigned long lowpc,unsigned long highpc) {
+			     char *name,char *compdirname,
+			     int language,char *producer) {
     struct symtab *symtab;
 
     symtab = (struct symtab *)malloc(sizeof(*symtab));
@@ -954,13 +1511,12 @@ struct symtab *symtab_create(struct debugfile *debugfile,
 
     symtab->debugfile = debugfile;
 
-    symtab_set_srcfilename(symtab,srcfilename);
+    symtab_set_name(symtab,name);
     symtab_set_compdirname(symtab,compdirname);
     symtab_set_producer(symtab,producer);
 
     symtab->language = language;
-    symtab->lowpc = lowpc;
-    symtab->highpc = highpc;
+    symtab->range.rtype = RANGE_TYPE_NONE;
 
     INIT_LIST_HEAD(&symtab->subtabs);
 
@@ -971,11 +1527,11 @@ struct symtab *symtab_create(struct debugfile *debugfile,
     return symtab;
 }
 
-void symtab_set_srcfilename(struct symtab *symtab,char *srcfilename) {
-    symtab->srcfilename = srcfilename;
-    if (srcfilename && (!symtab->debugfile 
-			|| !symtab_str_in_strtab(symtab,srcfilename)))
-	symtab->srcfilename = strdup(srcfilename);
+void symtab_set_name(struct symtab *symtab,char *name) {
+    symtab->name = name;
+    if (name && (!symtab->debugfile 
+			|| !symtab_str_in_strtab(symtab,name)))
+	symtab->name = strdup(name);
 }
 
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
@@ -994,8 +1550,8 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 
 void symtab_free(struct symtab *symtab) {
     g_hash_table_destroy(symtab->tab);
-    if (symtab->srcfilename && !symtab_str_in_strtab(symtab,symtab->srcfilename))
-	free(symtab->srcfilename);
+    if (symtab->name && !symtab_str_in_strtab(symtab,symtab->name))
+	free(symtab->name);
     if (symtab->compdirname && !symtab_str_in_strtab(symtab,symtab->compdirname))
 	free(symtab->compdirname);
     if (symtab->producer && !symtab_str_in_strtab(symtab,symtab->producer))
@@ -1064,9 +1620,1005 @@ void symbol_set_srcline(struct symbol *symbol,int srcline) {
     symbol->srcline = srcline;
 }
 
-void symbol_desc_function(struct symbol *symbol,uint64_t lowpc,uint64_t highpc,
-			  uint8_t inlined) {
+int symbol_type_bytesize(struct symbol *symbol) {
+    if (symbol->type == SYMBOL_TYPE_TYPE)
+	return symbol->s.ti.byte_size;
+    else 
+	return -1;
+}
 
+static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member,
+					      struct symbol_chain **chainptr) {
+    struct symbol *retval = NULL;
+    struct symbol **anonstack = NULL;
+    int *parentstack = NULL;
+    struct symbol **tmpstack = NULL;
+    int *tmpparentstack = NULL;
+    int stacklen = 0;
+    int stackalen = 0;
+    int i = 0;
+    /* Set type to symbol to seed the while loop in the SYMBOL_IST_STUN
+     * case.
+     */
+    struct symbol *type = symbol;
+    int j, k;
+    int startstacklen;
+    
+    /*
+    struct dump_info udn = {
+	.stream = stderr,
+	.prefix = "",
+	.detail = 1,
+	.meta = 1
+    };
+    */
+
+    if (SYMBOL_IST_FUNCTION(symbol)
+	&& symbol->s.ti.d.f.count) {
+	list_for_each_entry(retval,&symbol->s.ti.d.f.args,member) {
+	    if (retval->name && strcmp(retval->name,member) == 0)
+		goto out;
+	}
+    }
+    else if (SYMBOL_IST_ENUM(symbol)) {
+	list_for_each_entry(retval,&symbol->s.ti.d.e.members,member) {
+	    if (retval->name && strcmp(retval->name,member) == 0)
+		goto out;
+	}
+    }
+    else if (SYMBOL_IST_STUN(symbol)) {
+	/*
+	 * Check all our members.  If we come across an unnamed struct
+	 * or union member, push it onto our anon stack and come back to
+	 * it.  This avoids non-tail recursion.
+	 *
+	 * Also, we push variables, not types, as we go through the
+	 * list.  We also keep a parent index list; each time we push an
+	 * anonymous S/U member variable, we push the anonstack index of
+	 * its parent member variable.  Then we can build a symbol_chain
+	 * if the caller needs it.
+	 *
+	 * We need a symbol chain for summing up member offsets for
+	 * nested structs.  Note, however, that this chain only consists
+	 * of parent variables that were unnamed!!  That is the case
+	 * because this function only returns one member.  It is the
+	 * caller's job to build up the complete symbol chain consisting
+	 * of more than one nested variable/function.
+	 */
+	while (1) {
+	    list_for_each_entry(retval,&type->s.ti.d.su.members,member) {
+		//ldebug(1,"checking symbol: ");
+		//symbol_dump(retval,&udn);
+
+		if (SYMBOL_IST_STUN(retval->datatype) 
+		    && !retval->name) {
+		    /* push this one for later examination. */
+		    if (stacklen == stackalen) {
+			stackalen += 4;
+			if (!(tmpstack = (struct symbol **)realloc(anonstack,
+								   sizeof(struct symbol *)*stackalen))) {
+			    lerror("realloc anonstack: %s\n",strerror(errno));
+			    goto errout;
+			}
+			anonstack = tmpstack;
+
+			if (!(tmpparentstack = (int *)realloc(parentstack,
+							      sizeof(int)*stackalen))) {
+			    lerror("realloc parentstack: %s\n",
+				   strerror(errno));
+			    goto errout;
+			}
+			parentstack = tmpparentstack;
+		    }
+		    anonstack[stacklen] = retval;
+		    /* the parent is always the anonstack idx we're
+		     * working on.  Since we want the parent, we need i - 1.
+		     */
+		    parentstack[stacklen] = i - 1;
+		    ++stacklen;
+		}
+		else if (retval->name && strcmp(retval->name,member) == 0) {
+		    //free(anonstack);
+		    goto out;
+		}
+	    }
+	    if (stackalen > 8) 
+		lwarn("big stackalen=%d, stack=%d\n",stackalen,stacklen);
+	    else 
+		ldebug(4,"stackalen=%d, stack=%d\n",stackalen,stacklen);
+	    /* If we're out of stuff on our stack, bail. */
+	    if (i == stacklen) {
+		free(anonstack);
+		free(parentstack);
+		anonstack = NULL;
+		parentstack = NULL;
+		break;
+	    }
+	    /* Otherwise process the next thing on the stack. */
+	    else
+		type = anonstack[i++]->datatype;
+	}
+    }
+    else if (SYMBOL_IS_FUNCTION(symbol)) {
+	/* First, check our args. */
+	list_for_each_entry(retval,&symbol->s.ii.d.f.args,member) {
+	    if (retval->name && strcmp(retval->name,member) == 0)
+		goto out;
+	}
+
+	/* Second, check our internal symbol table.  Wait a sec, the
+	 * args are in the internal symtab too!  Hmmm.
+	 */
+	return symtab_lookup_sym(symbol->s.ii.d.f.symtab,member,
+				 SYMBOL_TYPE_FLAG_VAR | SYMBOL_TYPE_FLAG_FUNCTION);
+
+	/*
+	GHashTableIter iter;
+	char *localname;
+	struct symbol *localsymbol;
+
+	g_hash_table_iter_init(&iter,&symbol->s.ii.d.f.symtab->tab);
+	while (g_hash_table_iter_next(&iter,(gpointer *)&symname,
+				      (gpointer *)&localsymbol)) {
+	*/
+    }
+    else if (SYMBOL_IS_VAR(symbol) && SYMBOL_IST_STUN(symbol->datatype)) {
+	//ldebug(1,"returning result of searching S/U type symbol: ");
+	//symbol_dump(symbol->datatype,&udn);
+	return __symbol_get_one_member(symbol->datatype,member,chainptr);
+    }
+
+ errout:
+    if (anonstack)
+	free(anonstack);
+    if (parentstack)
+	free(parentstack);
+    return NULL;
+
+ out:
+    //ldebug(1,"returning symbol: ");
+    //symbol_dump(retval,&udn);
+
+    //asm("int $3");
+
+    /*
+     * If type points to something other than the top-level symbol, that
+     * means we explored anon structs, and we must return an anon symbol
+     * chain that includes the anon variables between @symbol and @retval.
+     */
+    if (chainptr && type != symbol) {
+	*chainptr = (struct symbol_chain *)malloc(sizeof(struct symbol_chain));
+	/* Always includes the anon struct we found, and any anon struct
+	 * parents.
+	 */
+	/* First count up how many anon parents we have in this chain; 
+	 * then malloc it; then fill it up in reverse order.
+	 */
+	(*chainptr)->count = 1;
+	for (j = i - 1; parentstack[j] != -1; j = parentstack[j]) {
+	    ++((*chainptr)->count);
+	}
+	(*chainptr)->chain = (struct symbol **)malloc(sizeof(struct symbol *)*(*chainptr)->count);
+	for (j = i - 1,k = (*chainptr)->count; k > 0; --k, j = parentstack[j]) {
+	    (*chainptr)->chain[k-1] = anonstack[j];
+	}
+    }
+    //asm("int $3");
+    if (anonstack) 
+	free(anonstack);
+    if (parentstack)
+	free(parentstack);
+    return retval;
+}
+
+struct symbol *symbol_get_one_member(struct symbol *symbol,char *member) {
+    return __symbol_get_one_member(symbol,member,NULL);
+}
+
+struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
+				 const char *delim) {
+    char *saveptr = NULL;
+    struct symbol *retval = NULL;
+    char *member;
+    char *mlist = strdup(memberlist);
+
+    retval = symbol;
+    while ((member = strtok_r(!saveptr ? mlist : NULL,".",&saveptr))) {
+	retval = symbol_get_one_member(retval,member);
+	if (!retval)
+	    break;
+    }
+
+    free(mlist);
+    return retval;
+}
+
+ADDR location_resolve(struct memregion *region,struct location *location,
+		      struct loc_list *fblist,struct location *fbloc) {
+    struct target *target = memregion_target(region);
+    REGVAL regval;
+    int i;
+    ADDR eip;
+    ADDR frame_base;
+    struct location *final_fb_loc;
+
+    switch (location->loctype) {
+    case LOCTYPE_UNKNOWN:
+	errno = EINVAL;
+	return 0;
+    case LOCTYPE_ADDR:
+	errno = 0;
+	return location->l.addr;
+    case LOCTYPE_REG:
+	errno = EINVAL;
+	return 0;
+    case LOCTYPE_REG_ADDR:
+	/* load the register value */
+	regval = target_read_reg(target,location->l.reg);
+	if (errno)
+	    return 0;
+	errno = 0;
+	return regval;
+    case LOCTYPE_REG_OFFSET:
+	regval = target_read_reg(target,location->l.regoffset.reg);
+	if (errno)
+	    return 0;
+	errno = 0;
+	return (ADDR)(location->l.regoffset.offset + regval);
+    case LOCTYPE_FBREG_OFFSET:
+	/* If we have an fblist, we load EIP - 4, scan the location list
+	 * for a match, and run the frame base location op recursively
+	 * via location_resolve!
+	 */
+	if (fblist) {
+	    // XXX - 4 is intel-specific?
+	    eip = target_read_reg(target,target->ipregno) - 4;
+	    if (errno)
+		return 0;
+	    errno = 0;
+	    ldebug(5,"eip = 0x%" PRIxADDR "\n",eip);
+	    for (i = 0; i < fblist->len; ++i) {
+		if (fblist->list[i]->start <= eip && eip < fblist->list[i]->end) {
+		    final_fb_loc = fblist->list[i]->loc;
+		    break;
+		}
+	    }
+	    if (i == fblist->len) {
+		lerror("FBREG_OFFSET location not currently valid!\n");
+		errno = EINVAL;
+		return 0;
+	    }
+	    else if (!fblist->list[i]->loc) {
+		lerror("FBREG_OFFSET frame base in loclist does not have a location description!\n");
+		errno = EINVAL;
+		return 0;
+	    }
+	}
+	else if (fbloc) {
+	    final_fb_loc = fbloc;
+	}
+	else {
+	    lerror("FBREG_OFFSET, but no frame base loclist/loc!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+
+	/* now resolve the frame base value */
+	frame_base = location_resolve(region,final_fb_loc,NULL,NULL);
+	if (errno) {
+	    lerror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
+	    errno = EINVAL;
+	    return 0;
+	}
+	ldebug(5,"frame_base = 0x%" PRIxADDR "\n",frame_base);
+	ldebug(5,"fboffset = %" PRIi64 "\n",location->l.fboffset);
+	if (0 && location->l.fboffset < 0)
+	    return (ADDR)(frame_base - (ADDR)location->l.fboffset);
+	else
+	    return (ADDR)(frame_base + (ADDR)location->l.fboffset);
+    case LOCTYPE_LOCLIST:
+	/* Like the above case, we load EIP - 4, scan the location list
+	 * for a match, and run the matching location op recursively
+	 * via location_resolve!
+	 */
+	// XXX - 4 is intel-specific?
+	eip = target_read_reg(target,target->ipregno) - 4;
+	if (errno)
+	    return 0;
+	errno = 0;
+	ldebug(5,"eip = 0x%" PRIxADDR "\n",eip);
+	for (i = 0; i < location->l.loclist->len; ++i) {
+	    if (location->l.loclist->list[i]->start <= eip 
+		&& eip < location->l.loclist->list[i]->end)
+		break;
+	}
+	if (i == location->l.loclist->len) {
+	    lerror("LOCLIST location not currently valid!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+	else if (!location->l.loclist->list[i]->loc) {
+	    lerror("matching LOCLIST member does not have a location description!\n");
+	    errno = EINVAL;
+	    return 0;
+	}
+	return location_resolve(region,location->l.loclist->list[i]->loc,
+				fblist,fbloc);
+    case LOCTYPE_MEMBER_OFFSET:
+    case LOCTYPE_RUNTIME:
+	lwarn("currently unsupported location type %s\n",LOCTYPE(location->loctype));
+	errno = EINVAL;
+	return 0;
+    default:
+	lwarn("unknown location type %d\n",location->loctype);
+	errno = EINVAL;
+	return 0;
+    }
+
+    /* never reached */
+    return 0;
+}
+
+int location_load(struct memregion *region,struct location *location,
+		  struct loc_list *fblist,struct location *fbloc,
+		  load_flags_t flags,void *buf,int bufsiz) {
+    ADDR final_location = 0;
+    REGVAL regval;
+
+    /* We can't mmap a value that is simply in a register. */
+    if (flags & LOAD_FLAG_MMAP && location->loctype == LOCTYPE_REG) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (location->loctype == LOCTYPE_REG) {
+	/* just read the register directly */
+	regval = target_read_reg(memregion_target(region),location->l.reg);
+	if (errno)
+	    return -1;
+	if (memregion_target(region)->wordsize == 4 && __WORDSIZE == 64) {
+	    /* If the target is 32-bit on 64-bit host, we have to grab
+	     * the lower 32 bits of the regval.
+	     */
+	    memcpy(buf,((int32_t *)&regval)+1,bufsiz);
+	}
+	else
+	    memcpy(buf,&regval,bufsiz);
+    }
+    else {
+	final_location = location_resolve(region,location,fblist,fbloc);
+
+	if (errno)
+	    return -1;
+
+	ldebug(5,"final_location = 0x%" PRIxADDR "\n",final_location);
+
+	if (flags & LOAD_FLAG_CHECK_VISIBILITY
+	    && !memregion_contains(region,final_location)) {
+	    errno = EFAULT;
+	    return -1;
+	}
+
+	if (!target_read_addr(memregion_target(region),final_location,bufsiz,buf))
+	    return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * Skips const and volatile types, for now.
+ */
+struct symbol *symbol_type_skip_qualifiers(struct symbol *type) {
+    if (!SYMBOL_IS_TYPE(type))
+	return NULL;
+
+    while (type->type == SYMBOL_TYPE_TYPE
+	   && (SYMBOL_IST_VOL(type)
+	       || SYMBOL_IST_CONST(type))) {
+	type = type->s.ti.type_datatype;
+    }
+
+    return type;
+}
+
+struct symbol *symbol_type_skip_ptrs(struct symbol *type) {
+    if (!SYMBOL_IS_TYPE(type))
+	return NULL;
+
+    while (type->type == SYMBOL_TYPE_TYPE && SYMBOL_IST_PTR(type)) {
+	type = type->s.ti.type_datatype;
+    }
+
+    return type;
+}
+
+int symbol_type_is_char(struct symbol *type) {
+    type = symbol_type_skip_qualifiers(type);
+
+    if (type->s.ti.datatype_code == DATATYPE_BASE
+	&& type->s.ti.byte_size == 1
+	&& (type->s.ti.d.v.encoding == ENCODING_SIGNED_CHAR
+	    || type->s.ti.d.v.encoding == ENCODING_UNSIGNED_CHAR)) 
+	return 1;
+
+    return 0;
+}
+
+unsigned int symbol_type_array_bytesize(struct symbol *type) {
+    int i;
+    int size;
+    type = symbol_type_skip_qualifiers(type);
+
+    if (type->s.ti.datatype_code != DATATYPE_ARRAY)
+	return 0;
+
+    size = type->s.ti.type_datatype->s.ti.byte_size;
+
+    for (i = 0; i < type->s.ti.d.a.count; ++i) {
+	ldebug(5,"subrange length is %d\n",type->s.ti.d.a.subranges[i] + 1);
+	size = size * (type->s.ti.d.a.subranges[i] + 1);
+    }
+
+    ldebug(5,"full array size is %d for array type %s\n",size,type->name);
+
+    return size;
+}
+
+int symbol_load(struct memregion *region,struct symbol *symbol,
+		load_flags_t flags,void **buf,int *bufsiz) {
+    int didalloc = 0;
+    struct symbol *datatype;
+    char *ptrbuf = NULL;
+    int ptrbufsiz;
+    int nptrs = 0;
+    unsigned long long addr;
+    char *strp;
+
+    if (!SYMBOL_IS_VAR(symbol)) {
+	lwarn("symbol %s is not a variable (is %s)!\n",
+	      symbol->name,SYMBOL_TYPE(symbol->type));
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (flags & LOAD_FLAG_AUTO_STRING && *buf) {
+	lwarn("must not supply a buffer when loading char * as string!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    datatype = symbol_type_skip_qualifiers(symbol->datatype);
+    if (symbol->datatype != datatype)
+	ldebug(5,"skipped from %s to %s for symbol %s\n",
+	       DATATYPE(symbol->datatype->s.ti.datatype_code),
+	       DATATYPE(datatype->s.ti.datatype_code),symbol->name);
+    else 
+	ldebug(5,"no skip; type for symbol %s is %s\n",
+	       symbol->name,DATATYPE(symbol->datatype->s.ti.datatype_code));
+
+    /* If they want pointers automatically dereferenced, do it! */
+    if (flags & LOAD_FLAG_AUTO_DEREF && SYMBOL_IST_PTR(datatype)) {
+	ptrbufsiz = memregion_target(region)->ptrsize;
+	ptrbuf = malloc(ptrbufsiz);
+	if (!ptrbuf)
+	    return -1;
+
+	/* First, load the symbol's primary location -- the pointer
+	 * value.  Then, if there are more pointers, keep loading those
+	 * addrs.
+	 *
+	 * Don't allow any load flags through for this!  We don't want
+	 * to mmap just for pointers.
+	 */
+	if (location_load(region,&(symbol->s.ii.l),NULL,NULL,LOAD_FLAG_NONE,
+			  ptrbuf,ptrbufsiz)) {
+	    goto errout;
+	}
+
+	/* Skip past the pointer we just loaded. */
+	datatype = datatype->s.ti.type_datatype;
+
+	nptrs = 1;
+
+	ldebug(5,"auto_deref pointer %d\n",nptrs);
+
+	/* Now keep loading more pointers and skipping if we need! */
+	while (SYMBOL_IST_PTR(datatype)) {
+	    addr = *((unsigned long long *)ptrbuf);
+
+	    if (addr == 0) {
+		lwarn("failed to autoload NULL pointer %d for symbol %s\n",
+		      nptrs,symbol->name);
+		errno = EFAULT;
+		goto errout;
+	    }
+
+	    if (!target_read_addr(memregion_target(region),
+				  *((unsigned long long *)ptrbuf),
+				  ptrbufsiz,(unsigned char *)ptrbuf)) {
+		lwarn("failed to autoload pointer %d for symbol %s\n",
+		      nptrs,symbol->name);
+		goto errout;
+	    }
+
+	    datatype = datatype->s.ti.type_datatype;
+	    ++nptrs;
+
+	    ldebug(5,"auto_deref pointer %d\n",nptrs);
+	}
+    }
+
+    if (ptrbuf 
+	&& flags & LOAD_FLAG_AUTO_STRING
+	&& symbol_type_is_char(datatype)) {
+	if (!(strp = (char *)target_read_addr(memregion_target(region),
+					      *((unsigned long long *)ptrbuf),
+					      0,NULL))) {
+	    lwarn("failed to autoload last pointer for symbol %s\n",
+		  symbol->name);
+	    goto errout;
+	}
+
+	*buf = strp;
+	*bufsiz = strlen(strp) + 1;
+
+	ldebug(5,"autoloaded char * with len %d\n",*bufsiz);
+
+	goto out;
+    }
+
+    /* Alloc a buffer if they didn't. */
+    if (!*buf) {
+	if (datatype->s.ti.datatype_code == DATATYPE_ARRAY) {
+	    *bufsiz = symbol_type_array_bytesize(datatype);
+	}
+	else {
+	    *bufsiz = symbol_type_bytesize(datatype);
+	}
+	*buf = malloc(*bufsiz);
+	if (!*buf) {
+	    lerror("malloc: %s\n",strerror(errno));
+	    return -1;
+	}
+	didalloc = 1;
+	ldebug(5,"malloc(%d) for symbol %s\n",*bufsiz,symbol->name);
+    }
+
+    if (ptrbuf && !target_read_addr(memregion_target(region),
+				    *((unsigned long long *)ptrbuf),
+				    *bufsiz,(unsigned char *)*buf)) {
+	lwarn("failed to autoload last pointer for symbol %s\n",
+	      symbol->name);
+	goto errout;
+    }
+    else if (location_load(region,&(symbol->s.ii.l),NULL,NULL,flags,
+			   *buf,*bufsiz)) {
+	goto errout;
+    }
+
+ out:
+    if (ptrbuf)
+	free(ptrbuf);
+    return 0;
+
+ errout:
+    if (didalloc) {
+	free(*buf);
+	*buf = NULL;
+	*bufsiz = 0;
+    }
+    if (ptrbuf)
+	free(ptrbuf);
+
+    return -1;
+}
+
+int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
+		       load_flags_t flags,void **buf,int *bufsiz) {
+    int didalloc = 0;
+    int len = chain->count;
+    struct symbol *symbol = chain->chain[len - 1];
+    struct symbol *datatype;
+    struct symbol *top_enclosing_symbol = NULL;
+    int i;
+    ADDR top_addr;
+    OFFSET totaloffset;
+    struct loc_list *fblist;
+    struct location *fbloc;
+
+    if (!SYMBOL_IS_VAR(symbol)) {
+	lwarn("symbol %s is not a variable (is %s)!\n",
+	      symbol->name,SYMBOL_TYPE(symbol->type));
+	errno = EINVAL;
+	return -1;
+    }
+
+    /*
+     * If the nested symbol is a struct member, we need the chain.
+     * ALSO, if the nested symbol has a location type of FBREG or
+     * RUNTIME, we need to extract the next highest up frame base
+     * location list (probably the containing function or inlined
+     * subroutine).  Otherwise, just load the last member in the chain.
+     */
+    if (!symbol->s.ii.ismember 
+	&& symbol->s.ii.l.loctype != LOCTYPE_FBREG_OFFSET
+	&& symbol->s.ii.l.loctype != LOCTYPE_RUNTIME) {
+	return symbol_load(region,symbol,flags,buf,bufsiz);
+    }
+    /* Otherwise... */
+
+    /* Grab the "real" datatype -- skipping things like const,
+     * volatile.
+     */
+    datatype = symbol_type_skip_qualifiers(symbol->datatype);
+    if (symbol->datatype != datatype)
+	ldebug(5,"skipped from %s to %s for symbol %s\n",
+	       DATATYPE(symbol->datatype->s.ti.datatype_code),
+	       DATATYPE(datatype->s.ti.datatype_code),symbol->name);
+    else 
+	ldebug(5,"no skip; type for symbol %s is %s\n",
+	       symbol->name,DATATYPE(symbol->datatype->s.ti.datatype_code));
+
+    /* Alloc a buffer if they didn't. */
+    if (!*buf) {
+	*bufsiz = symbol_type_bytesize(datatype);
+	*buf = malloc(*bufsiz);
+	if (!*buf) {
+	    lerror("malloc: %s\n",strerror(errno));
+	    return -1;
+	}
+	didalloc = 1;
+	ldebug(5,"malloc(%d) for symbol %s\n",*bufsiz,symbol->name);
+    }
+
+    if (symbol->s.ii.ismember) {
+	/* Now assemble our member offset from the top enclosing struct,
+	 * and resolve the location for that struct.  Then add our
+	 * offset and load!
+	 */
+	totaloffset = symbol->s.ii.l.l.member_offset;
+	for (i = len - 1; i > -1; --i) {
+	    if (SYMBOL_IS_VAR(chain->chain[i])
+		&& chain->chain[i]->s.ii.ismember) {
+		totaloffset += chain->chain[i]->s.ii.l.l.member_offset;
+		continue;
+	    }
+	    else if (SYMBOL_IS_VAR(chain->chain[i])
+		     && SYMBOL_IST_STUN(chain->chain[i]->datatype)) {
+		top_enclosing_symbol = chain->chain[i];
+		break;
+	    }
+	    else {
+		lerror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
+		       chain->chain[i]->name,SYMBOL_TYPE(chain->chain[i]->type),i);
+		goto errout;
+	    }
+	}
+
+	top_addr = location_resolve(region,&top_enclosing_symbol->s.ii.l,NULL,NULL);
+	if (errno) {
+	    lerror("could not resolve location for top S/U in nested load: %s\n",
+		   strerror(errno));
+	    goto errout;
+	}
+
+	if (flags & LOAD_FLAG_CHECK_VISIBILITY
+	    && !memregion_contains(region,top_addr + totaloffset)) {
+	    lerror("memregion does not contain address 0x%" PRIxADDR "\n",
+		   top_addr + totaloffset);
+	    errno = EFAULT;
+	    goto errout;
+	}
+
+	if (!target_read_addr(memregion_target(region),top_addr + totaloffset,
+			      *bufsiz,*buf))
+	    goto errout;
+
+	return 0;
+    }
+    else {
+	/* Find the deepest valid frame base listlocptr and pass that
+	 * along. 
+	 */
+	for (i = len - 2; i > -1; --i) {
+	    if (SYMBOL_IS_FUNCTION(chain->chain[i])) {
+		if (chain->chain[i]->s.ii.d.f.fbisloclist) {
+		    fblist = chain->chain[i]->s.ii.d.f.fblist;
+		    break;
+		}
+		else if (chain->chain[i]->s.ii.d.f.fbissingleloc) {
+		    fbloc = chain->chain[i]->s.ii.d.f.fbloc;
+		}
+	    }
+	}
+
+	if (!fblist && !fbloc) {
+	    if (symbol->s.ii.l.loctype == LOCTYPE_FBREG_OFFSET)
+		lerror("symbol %s had an FBREG_OFFSET location, but no containing frame base info!\n",
+		       symbol->name);
+	    else if (symbol->s.ii.l.loctype == LOCTYPE_RUNTIME) 
+		ldebug(5,"symbol %s had a RUNTIME location, but no containing frame base list; bad things may happen!\n",symbol->name);
+	}
+
+	return location_load(region,&symbol->s.ii.l,fblist,fbloc,flags,
+			     *buf,*bufsiz);
+    }
+
+ errout:
+    if (didalloc) 
+	free(*buf);
+    return -1;
+}
+
+signed char      rvalue_c(void *buf)   { return *((signed char *)buf); }
+unsigned char    rvalue_uc(void *buf)  { return *((unsigned char *)buf); }
+wchar_t          rvalue_wc(void *buf)  { return *((wchar_t *)buf); }
+uint8_t          rvalue_u8(void *buf)  { return *((uint8_t *)buf); }
+uint16_t         rvalue_u16(void *buf) { return *((uint16_t *)buf); }
+uint32_t         rvalue_u32(void *buf) { return *((uint32_t *)buf); }
+uint64_t         rvalue_u64(void *buf) { return *((uint64_t *)buf); }
+int8_t           rvalue_i8(void *buf)  { return *((int8_t *)buf); }
+int16_t          rvalue_i16(void *buf) { return *((int16_t *)buf); }
+int32_t          rvalue_i32(void *buf) { return *((int32_t *)buf); }
+int64_t          rvalue_i64(void *buf) { return *((int64_t *)buf); }
+
+void symbol_type_rvalue_print(FILE *stream,struct memregion *region,
+			      struct symbol *type,void *buf,int bufsiz,
+			      load_flags_t flags) {
+    struct target *target = memregion_target(region);
+    struct symbol *member;
+    int i;
+
+ again:
+    switch (type->s.ti.datatype_code) {
+    case DATATYPE_VOID:
+	fprintf(stream,"<VOID>");
+	return;
+    case DATATYPE_BASE:
+	if (type->s.ti.byte_size == 1) {
+	    if (type->s.ti.d.v.encoding == ENCODING_SIGNED_CHAR)
+		fprintf(stream,"%c",rvalue_c(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED_CHAR)
+		fprintf(stream,"%uc",rvalue_uc(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi8,rvalue_i8(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIu8,rvalue_u8(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else if (type->s.ti.byte_size == 2) {
+	    if (strstr(type->name,"char"))
+		fprintf(stream,"%lc",rvalue_wc(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi16,rvalue_i16(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED)
+		fprintf(stream,"%" PRIu16,rvalue_u16(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else if (type->s.ti.byte_size == 4) {
+	    if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi32,rvalue_i32(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED)
+		fprintf(stream,"%" PRIu32,rvalue_u32(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else if (type->s.ti.byte_size == 8) {
+	    if (type->s.ti.d.v.encoding == ENCODING_SIGNED)
+		fprintf(stream,"%" PRIi64,rvalue_i64(buf));
+	    else if (type->s.ti.d.v.encoding == ENCODING_UNSIGNED)
+		fprintf(stream,"%" PRIu64,rvalue_u64(buf));
+	    else 
+		fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	else {
+	    fprintf(stream,"<BASE_%d>",type->s.ti.byte_size);
+	}
+	return;
+    case DATATYPE_ARRAY:;
+	/* catch 0-byte arrays */
+	if (type->s.ti.d.a.count == 0
+	    || type->s.ti.d.a.subranges[type->s.ti.d.a.count - 1] == 0) {
+	    fprintf(stream,"[  ]");
+	    return;
+	}
+
+	int typebytesize = type->s.ti.type_datatype->s.ti.byte_size;
+	int total = 1;
+	int *arcounts = (int *)malloc(sizeof(int)*(type->s.ti.d.a.count - 1));
+	uint64_t offset = 0;
+	int rowlength = type->s.ti.d.a.subranges[type->s.ti.d.a.count - 1] + 1;
+	struct symbol *datatype = type->s.ti.type_datatype;
+
+	for (i = 0; i < type->s.ti.d.a.count; ++i) {
+	    if (likely(i < (type->s.ti.d.a.count - 1))) {
+		arcounts[i] = 0;
+		fprintf(stream,"[ ");
+	    }
+	    total = total * (type->s.ti.d.a.subranges[i] + 1);
+	}
+	while (total) {
+	    /* do one row according to the current baseoffset */
+	    fprintf(stream,"[ ");
+	    for (i = 0; i < rowlength; ++i, offset += typebytesize) {
+		if (likely(i > 0))
+		    fprintf(stream,", ");
+		symbol_type_rvalue_print(stream,region,datatype,
+					 (void *)(buf+offset),
+					 typebytesize,flags);
+	    }
+	    total -= rowlength;
+	    fprintf(stream," ] ");
+
+	    /* Flow the index counters back and up as we do rows.  We
+	     * increment the next highest one each time we reach the
+	     * max length for one of the indices.
+	     */
+	    for (i = type->s.ti.d.a.count - 1; i > -1; --i) {
+		if (arcounts[i]++ < (type->s.ti.d.a.subranges[i] + 1)) 
+		    break;
+		else {
+		    fprintf(stream,"] ");
+		    /* reset this index counter */
+		    arcounts[i] = 0;
+		}
+	    }
+	}
+	free(arcounts);
+	return;
+    case DATATYPE_UNION:
+	if (flags & LOAD_FLAG_AUTO_DEREF) {
+	    lwarn("do not enable auto_deref for unions; clearing!\n");
+	    flags &= ~LOAD_FLAG_AUTO_DEREF;
+	    flags &= ~LOAD_FLAG_AUTO_DEREF_RECURSE;
+	}
+	if (flags & LOAD_FLAG_AUTO_STRING) {
+	    lwarn("do not enable auto_string for unions; clearing!\n");
+	    flags &= ~LOAD_FLAG_AUTO_STRING;
+	}
+    case DATATYPE_STRUCT:
+	fprintf(stream,"{ ");
+	/* Only recursively follow pointers if the flags say so. */
+	if (!(flags & LOAD_FLAG_AUTO_DEREF_RECURSE)) 
+	    flags &= ~LOAD_FLAG_AUTO_DEREF;
+	i = 0;
+	list_for_each_entry(member,&type->s.ti.d.su.members,member) {
+	    if (likely(i))
+		fprintf(stream,", ");
+	    if (member->s.ii.l.loctype != LOCTYPE_MEMBER_OFFSET) {
+		lwarn("type %s member %s did not have a MEMBER_OFFSET location, skipping!\n",type->name,member->name);
+		if (member->name)
+		    fprintf(stream,".%s = ???",member->name);
+		continue;
+	    }
+
+	    if (member->name) 
+		fprintf(stream,".%s = ",member->name);
+	    symbol_rvalue_print(stream,region,member,
+				buf + member->s.ii.l.l.member_offset,
+				bufsiz - member->s.ii.l.l.member_offset,
+				flags);
+	    ++i;
+	}
+	fprintf(stream," }");
+	return;
+    case DATATYPE_BITFIELD:
+	fprintf(stream,"<BITFIELD>");
+	return;
+    case DATATYPE_PTR:
+	if (!(flags & LOAD_FLAG_AUTO_DEREF)) {
+	    fprintf(stream,"0x");
+	    if (target->endian == DATA_LITTLE_ENDIAN) {
+		for (i = target->ptrsize - 1; i > -1; --i) {
+		    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
+		}
+	    }
+	    else {
+		for (i = 0; i < target->ptrsize; ++i) {
+		    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
+		}
+	    }
+	}
+	else {
+	    type = symbol_type_skip_ptrs(type);
+
+	    if (symbol_type_is_char(type)) {
+		fprintf(stream,"%s",(char *)buf);
+	    }
+	    else
+		goto again;
+	}
+	return;
+    case DATATYPE_FUNCTION:
+	fprintf(stream,"<FUNCTION>");
+	return;
+    case DATATYPE_TYPEDEF:
+	fprintf(stream,"<TYPEDEF>");
+	return;
+    case DATATYPE_CONST:
+	fprintf(stream,"<CONST>");
+	return;
+    case DATATYPE_VOL:
+	fprintf(stream,"<VOL>");
+	return;
+    default:
+	return;
+    }
+}
+
+void symbol_rvalue_print(FILE *stream,struct memregion *region,
+			 struct symbol *symbol,void *buf,int bufsiz,
+			 load_flags_t flags) {
+    struct symbol *type; 
+    struct target *target;
+    uint64_t bitmask;
+    uint16_t lboffset;
+    int i;
+
+    if (!SYMBOL_IS_VAR(symbol))
+	return;
+
+    type = symbol_type_skip_qualifiers(symbol->datatype);
+    target = memregion_target(region);
+
+    if (symbol->s.ii.d.v.bit_size
+	&& type->s.ti.datatype_code != DATATYPE_BASE) {
+	lwarn("apparent bitfield %s is not backed by a base type!",symbol->name);
+	fprintf(stream,"<BADBITFIELDTYPE>");
+	return;
+    }
+    /* If it's a bitfield, select those bits and print them. */
+    else if (symbol->s.ii.d.v.bit_size) {
+	ldebug(5,"doing bitfield for symbol %s: size=%d,offset=%d\n",
+	       symbol->name,symbol->s.ii.d.v.bit_size,
+	       symbol->s.ii.d.v.bit_offset);
+	/* Create a bitmask */
+	bitmask = 1;
+	for (i = 1; i < symbol->s.ii.d.v.bit_size; ++i) {
+	    bitmask <<= 1;
+	    bitmask |= 1;
+	}
+	if (target->endian == DATA_LITTLE_ENDIAN)
+	    lboffset = (symbol->s.ii.d.v.byte_size * 8) - (symbol->s.ii.d.v.bit_offset + symbol->s.ii.d.v.bit_size);
+	else 
+	    lboffset = symbol->s.ii.d.v.bit_offset;
+	bitmask <<= lboffset;
+	
+	if (symbol->s.ii.d.v.byte_size == 1) 
+	    fprintf(stream,"%hhu",(uint8_t)(((*(uint8_t *)buf) & bitmask) \
+					    >> lboffset));
+	else if (symbol->s.ii.d.v.byte_size == 2) 
+	    fprintf(stream,"%hu",(uint16_t)(((*(uint16_t *)buf) & bitmask) \
+					    >> lboffset));
+	else if (symbol->s.ii.d.v.byte_size == 4) 
+	    fprintf(stream,"%u",(uint32_t)(((*(uint32_t *)buf) & bitmask) \
+					    >> lboffset));
+	else if (symbol->s.ii.d.v.byte_size == 8) 
+	    fprintf(stream,"%lu",(uint64_t)(((*(uint64_t *)buf) & bitmask) \
+					    >> lboffset));
+	else {
+	    lwarn("unsupported bitfield byte size %d for symbol %s\n",
+		  symbol->s.ii.d.v.byte_size,symbol->name);
+	    fprintf(stream,"<BADBITFIELDBYTESIZE>");
+	}
+	
+	return;
+    }
+
+    return symbol_type_rvalue_print(stream,region,type,buf,bufsiz,flags);
+}
+
+void symbol_rvalue_tostring(struct symbol *symbol,char **buf,int *bufsiz,
+			    char *cur) {
+    return;
+}
+
+struct value *symbol_load_fat(struct memregion *region,struct symbol *symbol,
+			      load_flags_t flags,void *buf) {
+    return NULL;
 }
 
 void symbol_free(struct symbol *symbol) {
@@ -1105,12 +2657,15 @@ char *DEBUGFILE_TYPE_STRINGS[] = {
 };
 
 char *SYMBOL_TYPE_STRINGS[] = {
+    "none",
     "type",
     "var",
-    "function"
+    "function",
+    "label"
 };
 
 char *DATATYPE_STRINGS[] = {
+    "void",
     "array",
     "struct",
     "enum",
@@ -1120,11 +2675,24 @@ char *DATATYPE_STRINGS[] = {
     "union",
     "base",
     "const",
+    "volatile",
     "bitfield"
 };
 
 char *LOCTYPE_STRINGS[] = {
+    "unknown",
     "addr",
     "reg",
-    "regaddr"
+    "regaddr",
+    "regoffset",
+    "memberoffset",
+    "fbregoffset",
+    "loclist",
+    "runtime"
+};
+
+char *RANGE_TYPE_STRINGS[] = {
+    "none",
+    "pc",
+    "list"
 };
