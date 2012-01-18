@@ -373,7 +373,7 @@ int location_load(struct memregion *region,struct location *location,
 /*
  * Find the symbol table corresponding to the supplied PC.
  */
-struct symtab *addrspace_lookup_pc(struct addrspace *space,uint64_t pc);
+struct symtab *target_lookup_pc(struct target *target,uint64_t pc);
 struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc);
 
 /**

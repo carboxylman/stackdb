@@ -154,14 +154,17 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
     return NULL;
 }
 
-struct symtab *addrspace_lookup_pc(struct addrspace *space,uint64_t pc) {
+struct symtab *target_lookup_pc(struct target *target,uint64_t pc) {
     struct memregion *region;
     struct symtab *symtab;
     int found = 0;
     GHashTableIter iter, iter2;
     gpointer key, value;
+
+    if (!target->space)
+	return NULL;
     
-    list_for_each_entry(region,&space->regions,region) {
+    list_for_each_entry(region,&target->space->regions,region) {
 	if (region->start <= pc && pc <= region->end)
 	    found = 1;
 	break;
