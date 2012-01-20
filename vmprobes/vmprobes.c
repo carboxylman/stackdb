@@ -115,7 +115,7 @@ set_regs(domid_t domid, vcpu_guest_context_t *ctx)
 }
 
 static void unregister_vmprobe_batch_internal(void) {
-    vmprobe_handle_t *handlelist[VMPROBE_MAX];
+    vmprobe_handle_t handlelist[VMPROBE_MAX];
     struct vmprobe_domain *domain;
     struct vmprobe_domain *tdomain;
     int handle;
@@ -216,6 +216,7 @@ init_evtchn(evtchn_port_t *dbg_port)
     return evtchn;
 }
 
+#if 0
 static int
 reinit_evtchn(evtchn_port_t *dbg_port)
 {
@@ -239,6 +240,7 @@ reinit_evtchn(evtchn_port_t *dbg_port)
     
     return evtchn;
 }
+#endif
 
 static int
 set_debugging(domid_t domid, bool enable)
@@ -596,7 +598,7 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
     if (probepoint->action) 
     action = probepoint->action;
     else 
-    action = list_entry(&probepoint->action_list.next,
+    action = list_entry(probepoint->action_list.next,
                 typeof(*action),node);
     list_for_each_entry_continue(action,&probepoint->action_list,node) {
     if (action->probe->disabled || action->executed_this_pass)
@@ -899,9 +901,6 @@ init_vmprobes(void)
 static int
 reinit_vmprobes(void)
 {
-    vmprobe_handle_t handle;
-    vmprobe_action_handle_t action_handle;
-    
     if (xc_handle != -1)
         return -1; // xc interface already open
 
@@ -932,7 +931,8 @@ __register_vmprobe(struct vmprobe *probe)
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_domain *domain;
     char *pages;
-    int offset, ret;
+    uint32_t offset;
+    int ret;
 
     probepoint = probe->probepoint;
     domain = probepoint->domain;
@@ -1001,7 +1001,8 @@ __unregister_vmprobe(struct vmprobe *probe)
     struct cpu_user_regs *regs;
     vcpu_guest_context_t ctx;
     char *pages;
-    int ret, i, offset;
+    int ret, i;
+    uint32_t offset;
 
     probepoint = probe->probepoint;
     domain = probepoint->domain;
@@ -1425,7 +1426,7 @@ out_error_domctl:
 
 int
 unregister_vmprobe_batch(domid_t domid,
-             vmprobe_handle_t *handlelist,
+	     vmprobe_handle_t *handlelist,
              int listlen)
 {
     struct vmprobe *probe;
@@ -1932,12 +1933,14 @@ restart_vmprobes(void)
 {
     interrupt = false;
 
+#if 0
     // reopen event channel
-    //xce_handle = reinit_evtchn(&dbg_port);
-    //if (xce_handle < 0)
-    //{
-    //    return xce_handle;
-    //}
+    xce_handle = reinit_evtchn(&dbg_port);
+    if (xce_handle < 0)
+    {
+        return xce_handle;
+    }
+#endif
     reinit_vmprobes();
 
     return 0;
@@ -2121,64 +2124,65 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     assert(xa_instance);
 
     page_size = xa_instance->page_size;
-    tmp_offset = addr - (addr & ~(page_size - 1));
+    tmp_offset = addr & (page_size - 1);
+    //tmp_offset = addr - (addr & ~(page_size - 1));
 
     debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d), offset = %d\n",
       name,target_length,addr,pid,tmp_offset);
 
     /* if we know what length we need, just grab it */
     if (length > 0) {
-    pages = (unsigned char *)mmap_pages(xa_instance, 
-                        addr,
-                        target_length, 
-                        &offset, 
-                        PROT_READ,
-                        pid);
-    if (!pages)
-        return NULL;
+	pages = (unsigned char *)mmap_pages(xa_instance, 
+					    addr,
+					    target_length, 
+					    &offset, 
+					    PROT_READ,
+					    pid);
+	if (!pages)
+	    return NULL;
 
-    no_pages = length / page_size;
-    if (length % page_size)
-        ++no_pages;
-    if ((length + offset) > page_size) {
-        ++no_pages;
-        debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d) overflowed onto next page\n",
-          name,target_length,addr,pid);
-    }
+	no_pages = length / page_size;
+	if (length % page_size)
+	    ++no_pages;
+	if ((length + offset) > page_size) {
+	    ++no_pages;
+	    debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d) overflowed onto next page\n",
+		  name,target_length,addr,pid);
+	}
     }
     else {
-    /* increase the mapping size by this much if the string is longer 
-       than we expect at first attempt. */
-    size = (page_size - tmp_offset);
+	/* increase the mapping size by this much if the string is longer 
+	   than we expect at first attempt. */
+	size = (page_size - tmp_offset);
 
-    while (1) {
-        if (1 || size > page_size) 
-        debug(2,"increasing size to %d (name=%s,addr=%08x,pid=%d)\n",
-              size,name,addr,pid);
-        pages = (unsigned char *)mmap_pages(xa_instance,addr,
+	while (1) {
+	    if (1 || size > page_size) 
+		debug(2,"increasing size to %d (name=%s,addr=%08x,pid=%d)\n",
+		      size,name,addr,pid);
+	    pages = (unsigned char *)mmap_pages(xa_instance,addr,
                         size,&offset,PROT_READ,pid);
-        if (!pages)
-        return NULL;
+	    if (!pages)
+		return NULL;
 
-        no_pages = size / page_size + 1;
-        length = strnlen((const char *)(pages + offset), size);
-        if (length < (size - offset)) {
-        break;
-        }
-        munmap(pages, no_pages * page_size);
-        size += page_size;
-    }
+	    no_pages = size / page_size + 1;
+	    length = strnlen((const char *)(pages + offset), size);
+	    if (length < (size - offset)) {
+		break;
+	    }
+	    munmap(pages, no_pages * page_size);
+	    size += page_size;
+	}
     }
 
     if (!target_buf)
-    retval = (unsigned char *)malloc(length+1);
+	retval = (unsigned char *)malloc(length+1);
     else 
-    retval = target_buf;
+	retval = target_buf;
     if (retval) {
-    memcpy(retval, pages + offset, length);
-    if (target_length <= 0) {
-        retval[length] = '\0';
-    }
+	memcpy(retval, pages + offset, length);
+	if (target_length <= 0) {
+	    retval[length] = '\0';
+	}
     }
     munmap(pages, no_pages * page_size);
     

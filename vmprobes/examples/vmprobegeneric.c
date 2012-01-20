@@ -24,12 +24,14 @@
 #include "vmprobes.h"
 #include "list.h"
 
-#define ARG_STR_LEN 1024
+#define ARG_STRING_LEN	1024
+#define ARG_BYTES_LEN	1024
 
 typedef enum {
     SC_ARG_TYPE_INT = 0,
     SC_ARG_TYPE_PT_REGS,
     SC_ARG_TYPE_STRING,
+    SC_ARG_TYPE_BYTES,
     SC_ARG_TYPE_SIZE_T,
     SC_ARG_TYPE_UINT,
     SC_ARG_TYPE_PID_T,
@@ -46,6 +48,7 @@ typedef enum {
     SC_ARG_TYPE_TIMESPEC,
     SC_ARG_TYPE_SIGSET_T,
     SC_ARG_TYPE_SIGINFO_T,
+    SC_ARG_TYPE_HEXINT,		/* for ints to display in hex */
     SC_ARG_TYPE__MAX__,
 } sc_arg_type_t;
 
@@ -135,19 +138,20 @@ void free_argdata(struct argdata *d) {
     if (d->str)
 	free(d->str);
     if (d->info->decodings_len) {
-	for (i = 0; i < d->info->decodings_len; ++i)
-	    if (d->decodings && d->decodings[i])
-		free(d->decodings[i]);
-	if (d->decodings)
+	if (d->decodings) {
+	    for (i = 0; i < d->info->decodings_len; ++i)
+		if (d->decodings[i])
+		    free(d->decodings[i]);
 	    free(d->decodings);
+	}
     }
     free(d);
 }
 
-void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
-		    int pid,int i,int j,
-		    struct argdata **arg_data,
-		    struct process_data *data);
+void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		   int pid,int i,int j,
+		   struct argdata **arg_data,
+		   struct process_data *data);
 
 #define SYSCALL_MAX 304
 
@@ -214,31 +218,43 @@ void usage(char *progname) {
 
 char *ssprintf(char *format,...) {
     va_list args;
-    char *buf;
-    int bufsiz = 80;
-    char *tbuf;
-    int rc;
+    char _buf[128], *buf, *tbuf;
+    int bufsiz, rc;
 
     va_start(args,format);
-    while (1) {
-	buf = malloc(bufsiz);
-	rc = vsnprintf(buf,bufsiz,format,args);
-	if (rc >= bufsiz) {
+
+    /* try once with static buf */
+    buf = _buf;
+    bufsiz = sizeof _buf;
+    rc = vsnprintf(buf, bufsiz, format, args);
+
+    /* that didn't work, build a dynamic buffer */
+    if (rc >= bufsiz) {
+	/* don't screw around, just git er done */
+	bufsiz = 1024;
+
+	while (1) {
+	    buf = malloc(bufsiz);
+	    if (buf == NULL)
+		return NULL;
+	    rc = vsnprintf(buf, bufsiz, format, args);
+	    if (rc < bufsiz)
+		break;
 	    free(buf);
-	    bufsiz += 80;
-	}
-	else {
-	    tbuf = malloc(sizeof(char)*(strlen(buf)+1));
-	    memcpy(tbuf,buf,strlen(buf)+1);
-	    free(buf);
-	    buf = tbuf;
-	    break;
+	    bufsiz += 1024;
 	}
     }
 
+    /* copy to a comfy-sized buffer */
+    bufsiz = strlen(buf) + 1;
+    tbuf = malloc(bufsiz);
+    memcpy(tbuf, buf, bufsiz);
+    if (buf != _buf)
+	free(buf);
+
     va_end(args);
 
-    return buf;
+    return tbuf;
 }
 
 void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
@@ -251,17 +267,14 @@ void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
 	return;
 
     len = strlen(str);
-    oldlen = *endptr - *buf;
-    remaining = *bufsiz - oldlen;
-
     if (!*buf) {
 	debug(1,"alloc'ing %d init bytes\n",len+80);
 	*bufsiz = len + 80;
 	*buf = malloc(sizeof(char) * *bufsiz);
 	*endptr = *buf;
-	oldlen = *endptr - *buf;
-	remaining = *bufsiz - oldlen;
     }
+    oldlen = *endptr - *buf;
+    remaining = *bufsiz - oldlen;
 
     if ((len+1) > remaining) {
 	debug(1,"expanding buf by %d bytes\n",len+80);
@@ -435,7 +448,7 @@ typedef struct openflagent {
 openflagent_t openflags[] = {
     { O_RDONLY, "O_RDONLY" },
     { O_WRONLY, "O_WRONLY" },
-    { O_RDWR, "O_RDWR." },
+    { O_RDWR, "O_RDWR" },
     { O_CREAT, "O_CREAT" },
     { O_EXCL, "O_EXCL" },
     { O_NOCTTY, "O_NOCTTY" },
@@ -661,20 +674,22 @@ void socket_args_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     char *typename;
     struct protoent *proto;
     char *protoname;
+    unsigned char *dbuf = NULL;
 
     call = *((int *)(arg_data[0]->data));
 
     if (call < 1 || call >= sizeof(socksyscalls) / sizeof(char *)) {
-	arg_data[arg]->decodings[0] = strdup("(unknown call)");
+	arg_data[arg]->decodings[0] = strdup("<unknown socket call>");
 	return;
     }
 
-    unsigned char *dbuf = \
-	vmprobe_get_data(handle,regs,"socketcall_args",
-			 *((unsigned long *)(arg_data[arg]->data)),pid,
-			 socketcall_nargs[call],NULL);
+    if (arg_data[arg]->data != NULL) {
+	dbuf = vmprobe_get_data(handle,regs,"socketcall_args",
+				*((unsigned long *)(arg_data[arg]->data)),pid,
+				socketcall_nargs[call],NULL);
+    }
     if (!dbuf) {
-	arg_data[arg]->decodings[0] = strdup("(bad socketcall args)");
+	arg_data[arg]->decodings[0] = strdup("<bad socketcall args>");
 	return;
     }
 
@@ -802,17 +817,21 @@ void sigset_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		    struct argdata **arg_data,
 		    struct process_data *data)
 {
-    vsigset_t *ss = (vsigset_t *)arg_data[arg];
+    vsigset_t *ss = (vsigset_t *)(arg_data[arg]->data);
     int i;
     int done = 0;
     char *buf = NULL;
     int bufsiz;
     char *endptr;
 
+    if (ss == NULL) {
+	return;
+    }
+
     for (i = 1; i < sizeof(signals) / sizeof(signals[0]); ++i) {
 	if (k_sigismember(ss,i)) {
 	    if (done)
-		string_append(&buf,&bufsiz,&endptr," | ");
+		string_append(&buf,&bufsiz,&endptr,"|");
 	    else 
 		done = 1;
 
@@ -878,7 +897,12 @@ void timezone_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		      struct argdata **arg_data,
 		      struct process_data *data)
 {
-    struct timezone *tz = (struct timezone *)arg_data[arg];
+    struct timezone *tz = (struct timezone *)(arg_data[arg]->data);
+
+    if (!tz) {
+	arg_data[arg]->decodings[0] = NULL;
+	return;
+    }
 
     arg_data[arg]->decodings[0] = ssprintf("{tz_minuteswest=%d,tz_dsttime=%d}",
 					   tz->tz_minuteswest,tz->tz_dsttime);
@@ -892,6 +916,11 @@ void itimerval_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       struct process_data *data)
 {
     struct itimerval *itv = (struct itimerval *)(arg_data[arg]->data);
+
+    if (!itv) {
+	arg_data[arg]->decodings[0] = NULL;
+	return;
+    }
 
     arg_data[arg]->decodings[0] = ssprintf("{it_interval={tv_sec=%ld,tv_usec=%ld},it_value={tv_sec=%ld,tv_usec=%ld}}",
 					   itv->it_interval.tv_sec,itv->it_interval.tv_usec,
@@ -922,10 +951,11 @@ int sc_arg_type_len[SC_ARG_TYPE__MAX__] = {
     sizeof(uint32_t),
     sizeof(struct pt_regs),
     0,
+    0,
     sizeof(uint32_t),
     sizeof(unsigned int),
     sizeof(uint32_t),
-    sizeof(uint32_t),
+    sizeof(off_t),
     sizeof(uint32_t),
     sizeof(long),
     sizeof(unsigned long),
@@ -1003,7 +1033,7 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
     unsigned long parent_addr;
     unsigned long real_parent_addr;
 
-    task_struct_buf = \
+    task_struct_buf =
 	vmprobe_get_data(handle,regs,"task_struct",task_addr,0,
 			 TASK_STRUCT_SIZE,NULL);
     if (!task_struct_buf)
@@ -1240,12 +1270,10 @@ void fcntl_cmd_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     int bufsiz;
     char *endptr;
 
-    //printf("0x%08x ",cmd);
-
-    for (i = 0; i < sizeof(fcntlcmds) / sizeof(fcntlcmdent_t); ++i) {
+    for (i = 0; i < sizeof(fcntlcmds) / sizeof(fcntlcmds[0]); ++i) {
 	if (cmd & fcntlcmds[i].cmd) {
 	    if (didone)
-		string_append(&buf,&bufsiz,&endptr," | ");
+		string_append(&buf,&bufsiz,&endptr,"|");
 	    else 
 		didone = 1;
 
@@ -1269,10 +1297,10 @@ void file_mode_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     int bufsiz;
     char *endptr;
 
-    for (i = 0; i < sizeof(filemodes) / sizeof(filemodeent_t); ++i) {
+    for (i = 0; i < sizeof(filemodes) / sizeof(filemodes[0]); ++i) {
 	if (mode & filemodes[i].mode) {
 	    if (didone)
-		string_append(&buf,&bufsiz,&endptr," | ");
+		string_append(&buf,&bufsiz,&endptr,"|");
 	    else 
 		didone = 1;
 	    string_append(&buf,&bufsiz,&endptr,filemodes[i].name);
@@ -1295,10 +1323,10 @@ void open_flags_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     int bufsiz;
     char *endptr;
 
-    for (i = 0; i < sizeof(openflags) / sizeof(openflagent_t); ++i) {
+    for (i = 0; i < sizeof(openflags) / sizeof(openflags[0]); ++i) {
 	if (flags & openflags[i].flag) {
 	    if (didone) {
-		string_append(&buf,&bufsiz,&endptr," | ");
+		string_append(&buf,&bufsiz,&endptr,"|");
 	    }
 	    else
 		didone = 1;
@@ -1308,6 +1336,15 @@ void open_flags_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     }
     arg_data[arg]->decodings[0] = buf;
  
+    /*
+     * XXX if flags don't include O_CREAT, then the following mode
+     * argument (which we already fetched) is garbage. Just zero it here.
+     */
+    if ((flags & O_CREAT) == 0 && arg_data[arg+1]->data != NULL) {
+	*(int *)arg_data[arg+1]->data = 0;
+	if (arg_data[arg+1]->str != NULL && strlen(arg_data[arg+1]->str) >= 10)
+	    strcpy(arg_data[arg+1]->str, "0x00000000");
+    }
     return;
 }
 
@@ -1335,7 +1372,7 @@ void ioctl_cmd_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     int i = 0;
     unsigned long cmd = *((unsigned long *)(arg_data[arg]->data));
 
-    for (i = 0; i < sizeof(ioctls); ++i) {
+    for (i = 0; i < sizeof(ioctls) / sizeof(ioctls[0]); ++i) {
 	if (cmd == ioctls[i].num) {
 	    arg_data[arg]->decodings[0] = strdup(ioctls[i].name);
 	    return;
@@ -1364,14 +1401,14 @@ void exit_code_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	else if (WIFSIGNALED(code)) {
 	    int signo = WTERMSIG(code);
 	    char *signame = "unknown";
-	    arg_data[arg]->decodings[0] = ssprintf("signal");
+	    arg_data[arg]->decodings[0] = strdup("signal");
 	    arg_data[arg]->decodings[1] = strdup("");
 	    if (signo >= 0 && signo < sizeof(signals) / sizeof(signals[0]))
 		signame = signals[signo];
 	    arg_data[arg]->decodings[2] = strdup(signame);
 	}
 	else {
-	    arg_data[arg]->decodings[0] = ssprintf("unknown");
+	    arg_data[arg]->decodings[0] = strdup("unknown");
 	    arg_data[arg]->decodings[1] = strdup("");
 	    arg_data[arg]->decodings[2] = strdup("");
 	}
@@ -1401,7 +1438,7 @@ void wait_stat_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    if (WIFSIGNALED(code)) {
 		int signo = WTERMSIG(code);
 		char *signame = "unknown";
-		arg_data[arg]->decodings[0] = ssprintf("signal");
+		arg_data[arg]->decodings[0] = strdup("signal");
 		arg_data[arg]->decodings[1] = strdup("");
 		if (signo >= 0 && signo < sizeof(signals) / sizeof(signals[0]))
 		    signame = signals[signo];
@@ -1508,13 +1545,15 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 			    struct argdata **arg_data,
 			    struct process_data *data)
 {
-    struct pt_regs *r = \
+    struct pt_regs *r =
 	(struct pt_regs *)vmprobe_get_data(handle,regs,
 					   "pt_regs",regs->esp+4,0,
 					   sizeof(struct pt_regs),NULL);
 
-    if (!r) 
+    if (!r) {
+	arg_data[arg]->str = strdup("<data access error>");
 	return NULL;
+    }
 
     arg_data[arg]->data = (unsigned char *)r;
     arg_data[arg]->str = ssprintf("{ebx=%08lx,ecx=%08lx,edx=%08lx,esi=%08lx,edi=%08lx,eax=%08lx,"
@@ -1555,26 +1594,26 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "regs", SC_ARG_TYPE_PT_REGS, NULL, NULL, 0, process_ptregs_loader } } },
     { 3, "sys_read", 0xc01658e0, RADDR_YES, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
-	{ 2, "buf", SC_ARG_TYPE_PTR },
+	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
 	{ 3, "count", SC_ARG_TYPE_INT } } },
     { 4, "sys_write", 0xc0165950, RADDR_YES, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
-	{ 2, "buf", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 3 },
+	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
 	{ 3, "count", SC_ARG_TYPE_INT } } },
-    { 5, "sys_open", 0xc01633f0, RADDR_NO, 3,
+    { 5, "sys_open", 0xc01633f0, RADDR_YES, 3,
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "flags", SC_ARG_TYPE_INT, open_flags_decoder,(char *[]) { "flags:flags" }, 1 },
-	{ 3, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
-    { 6, "sys_close", 0xc0164510, RADDR_NO, 1,
+	{ 2, "flags", SC_ARG_TYPE_HEXINT, open_flags_decoder,(char *[]) { "flags:flags" }, 1, NULL, 3 },
+	{ 3, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
+    { 6, "sys_close", 0xc0164510, RADDR_YES, 1,
       { { 1, "fd", SC_ARG_TYPE_UINT } } },
     { 7, "sys_waitpid", 0xc0121340, RADDR_YES, 3,
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "status", SC_ARG_TYPE_PTR, wait_stat_decoder,
 	  (char *[]) { "status:cause","status:code","status:signal" }, 3 },
 	{ 3, "options", SC_ARG_TYPE_INT } } },
-    { 8, "sys_creat", 0xc0163420, RADDR_NO, 2, 
+    { 8, "sys_creat", 0xc0163420, RADDR_YES, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
+	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 9, "sys_link", 0xc0176eb0, RADDR_NO, 2, 
       { { 1, "oldname", SC_ARG_TYPE_STRING },
 	{ 2, "newname", SC_ARG_TYPE_STRING } } },
@@ -1588,11 +1627,11 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "tloc", SC_ARG_TYPE_PTR } } },
     { 14, "sys_mknod", 0xc0176d00, RADDR_NO, 3, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT },
+	{ 2, "mode", SC_ARG_TYPE_HEXINT },
 	{ 3, "dev", SC_ARG_TYPE_UINT } } },
     { 15, "sys_chmod", 0xc01638c0, RADDR_NO, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
+	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 0 },
     { 0 },
     { 18, "sys_stat", 0xc016f7f0, RADDR_NO, 2, 
@@ -1607,7 +1646,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "dev_name", SC_ARG_TYPE_STRING },
 	{ 2, "dir_name", SC_ARG_TYPE_STRING },
 	{ 3, "type", SC_ARG_TYPE_STRING },
-	{ 4, "flags", SC_ARG_TYPE_ULONG },
+	{ 4, "flags", SC_ARG_TYPE_HEXINT },
 	{ 5, "data", SC_ARG_TYPE_PTR } } },
     { 22, "sys_oldumount", 0xc01839c0, RADDR_NO, 1, 
       { { 1, "name", SC_ARG_TYPE_STRING } } },
@@ -1618,8 +1657,8 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 26, "sys_ptrace", 0xc0127d80, RADDR_NO, 4, 
       { { 1, "request", SC_ARG_TYPE_LONG },
 	{ 2, "pid", SC_ARG_TYPE_LONG },
-	{ 3, "addr", SC_ARG_TYPE_LONG },
-	{ 4, "data", SC_ARG_TYPE_LONG } } },
+	{ 3, "addr", SC_ARG_TYPE_PTR },
+	{ 4, "data", SC_ARG_TYPE_PTR } } },
     { 27, "sys_alarm", 0xc01285e0, RADDR_NO, 1, 
       { { 1, "seconds", SC_ARG_TYPE_UINT } } },
     { 28, "sys_fstat", 0xc016f8e0, RADDR_NO, 2, 
@@ -1633,7 +1672,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 33, "sys_access", 0xc0163a40, RADDR_NO, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
+	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 34, "sys_nice", 0xc011a9a0, RADDR_NO, 1, 
       { { 1, "increment", SC_ARG_TYPE_INT } } },
     { 0 },
@@ -1646,7 +1685,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 2, "newname", SC_ARG_TYPE_STRING } } },
     { 39, "sys_mkdir", 0xc0176b30, RADDR_NO, 2, 
       { { 1, "pathname", SC_ARG_TYPE_STRING },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
+	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 40, "sys_rmdir", 0xc0176a20, RADDR_YES, 1, 
       { { 1, "pathname", SC_ARG_TYPE_STRING } } },
     { 41, "sys_dup", 0xc0177fe0, RADDR_NO, 1, 
@@ -1657,7 +1696,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "tbuf", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 45, "sys_brk", 0xc0155920, RADDR_NO, 1,
-      { { 1, "brk", SC_ARG_TYPE_ULONG } } },
+      { { 1, "brk", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
     { 48, "sys_signal", 0xc012a420, RADDR_NO, 2, 
@@ -1669,16 +1708,16 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "name", SC_ARG_TYPE_STRING } } },
     { 52, "sys_umount", 0xc0183770, RADDR_NO, 1, 
       { { 1, "name", SC_ARG_TYPE_STRING },
-	{ 2, "flags", SC_ARG_TYPE_INT } } },
+	{ 2, "flags", SC_ARG_TYPE_HEXINT } } },
     { 0 },
     { 54, "sys_ioctl", 0xc01788f0, RADDR_NO, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
-	{ 2, "cmd", SC_ARG_TYPE_UINT, ioctl_cmd_decoder,(char *[]) { "cmd:cmd" }, 1 },
-	{ 3, "arg", SC_ARG_TYPE_ULONG } } },
+	{ 2, "cmd", SC_ARG_TYPE_HEXINT, ioctl_cmd_decoder,(char *[]) { "cmd:cmd" }, 1 },
+	{ 3, "arg", SC_ARG_TYPE_PTR } } },
     { 55, "sys_fcntl", 0xc0178570, RADDR_NO, 3,
       { { 1, "fd", SC_ARG_TYPE_INT },
 	{ 2, "cmd", SC_ARG_TYPE_UINT, fcntl_cmd_decoder,(char *[]) { "cmd:cmd" }, 1 },
-	{ 3, "arg", SC_ARG_TYPE_ULONG } } },
+	{ 3, "arg", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 57, "sys_setpgid", 0xc012ebb0, RADDR_NO, 2, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
@@ -1686,7 +1725,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 0 },
     { 60, "sys_umask", 0xc012e8d0, RADDR_NO, 1,
-      { { 1, "mask", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mask:mask" }, 1 } } },
+      { { 1, "mask", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mask:mask" }, 1 } } },
     { 61, "sys_chroot", 0xc0164460, RADDR_NO, 1, 
       { { 1, "filename", SC_ARG_TYPE_STRING } } },
     { 62, "sys_ustat", 0xc016bcf0, RADDR_NO, 2, 
@@ -1724,7 +1763,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 77, "sys_getrusage", 0xc012e880, RADDR_NO, 2, 
       { { 1, "who", SC_ARG_TYPE_INT, },
 	{ 2, "ru", SC_ARG_TYPE_PTR } } },
-    { 78, "sys_gettimeofday", 0xc0123240, RADDR_NO, 2, 
+    { 78, "sys_gettimeofday", 0xc0123240, RADDR_YES, 2, 
       { { 1, "tv", SC_ARG_TYPE_PTR, },
 	{ 2, "tz", SC_ARG_TYPE_PTR } } },
     { 79, "sys_settimeofday", 0xc01238d0, RADDR_NO, 2, 
@@ -1747,7 +1786,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "library", SC_ARG_TYPE_STRING } } },
     { 87, "sys_swapon", 0xc015bbd0, RADDR_NO, 2, 
       { { 1, "specialfile", SC_ARG_TYPE_STRING },
-	{ 2, "swap_flags", SC_ARG_TYPE_INT } } },
+	{ 2, "swap_flags", SC_ARG_TYPE_HEXINT } } },
     { 88, "sys_reboot", 0xc012de60, RADDR_NO, 4, 
       { { 1, "magic1", SC_ARG_TYPE_INT },
 	{ 2, "magic2", SC_ARG_TYPE_INT },
@@ -1756,7 +1795,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 0 },
     { 91, "sys_munmap", 0xc01551d0, RADDR_NO, 2, 
-      { { 1, "addr", SC_ARG_TYPE_ULONG },
+      { { 1, "addr", SC_ARG_TYPE_PTR },
 	{ 2, "len", SC_ARG_TYPE_INT } } },
     { 92, "sys_truncate", 0xc0163fa0, RADDR_NO, 2, 
       { { 1, "path", SC_ARG_TYPE_STRING },
@@ -1766,7 +1805,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 2, "length", SC_ARG_TYPE_ULONG } } },
     { 94, "sys_fchmod", 0xc0163580, RADDR_NO, 2, 
       { { 1, "fd", SC_ARG_TYPE_INT },
-	{ 2, "mode", SC_ARG_TYPE_INT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
+	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 0 },
     { 96, "sys_getpriority", 0xc012f040, RADDR_NO, 2,
       { { 1, "which", SC_ARG_TYPE_INT },
@@ -1791,7 +1830,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 2, "args", SC_ARG_TYPE_PTR, socket_args_decoder,(char *[]) { "args:args" }, 1 } } },
     { 103, "sys_syslog", 0xc011f1e0, RADDR_NO, 3,
       { { 1, "type", SC_ARG_TYPE_INT },
-	{ 2, "buf", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 3 },
+	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
 	{ 3, "len", SC_ARG_TYPE_INT } } },
     { 104, "sys_setitimer", 0xc01229f0, RADDR_NO, 3,
       { { 1, "which", SC_ARG_TYPE_INT },
@@ -1852,7 +1891,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 3, "args", SC_ARG_TYPE_STRING } } },
     { 129, "sys_delete_module", 0xc013c8f0, RADDR_NO, 2, 
       { { 1, "name_user", SC_ARG_TYPE_STRING },
-	{ 2, "flags", SC_ARG_TYPE_UINT } } },
+	{ 2, "flags", SC_ARG_TYPE_HEXINT } } },
     { 0 },
     { 131, "sys_quotactl", 0xc01347f0, RADDR_NO, 0 },
     { 132, "sys_getpgid", 0xc012eda0, RADDR_NO, 1,
@@ -1893,7 +1932,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 144, "sys_msync", 0xc0157430, RADDR_NO, 3, 
       { { 1, "start", SC_ARG_TYPE_ULONG },
 	{ 2, "len", SC_ARG_TYPE_ULONG },
-	{ 3, "flags", SC_ARG_TYPE_INT } } },
+	{ 3, "flags", SC_ARG_TYPE_HEXINT } } },
     { 145, "sys_readv", 0xc0165ac0, RADDR_NO, 0 },
     { 146, "sys_writev", 0xc0165600, RADDR_NO, 0 },
     { 147, "sys_getsid", 0xc012e3f0, RADDR_NO, 11,
@@ -1908,7 +1947,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "start", SC_ARG_TYPE_ULONG },
 	{ 2, "len", SC_ARG_TYPE_ULONG } } },
     { 152, "sys_mlockall", 0xc0153da0, RADDR_NO, 1, 
-      { { 1, "flags", SC_ARG_TYPE_INT } } },
+      { { 1, "flags", SC_ARG_TYPE_HEXINT } } },
     { 153, "sys_munlockall", 0xc0153e80, RADDR_NO, 0 },
     { 154, "sys_sched_setparam", 0xc01190c0, RADDR_NO, 2, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
@@ -1934,11 +1973,11 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "rqtp", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "rqtp:rqtp" }, 1 },
 	{ 2, "rmtp", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "rmtp:rmtp" }, 1 } } },
     { 163, "sys_mremap", 0xc01573c0, RADDR_NO, 5, 
-      { { 1, "addr", SC_ARG_TYPE_ULONG },
+      { { 1, "addr", SC_ARG_TYPE_PTR },
 	{ 2, "old_len", SC_ARG_TYPE_ULONG },
 	{ 3, "new_len", SC_ARG_TYPE_ULONG },
-	{ 4, "flags", SC_ARG_TYPE_ULONG },
-	{ 5, "new_addr", SC_ARG_TYPE_ULONG } } },
+	{ 4, "flags", SC_ARG_TYPE_HEXINT },
+	{ 5, "new_addr", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
     { 166, "sys_vm86", 0xc01102b0, RADDR_NO, 0 },
@@ -1957,7 +1996,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "act", SC_ARG_TYPE_PTR },
 	{ 3, "oact", SC_ARG_TYPE_PTR },
-	{ 3, "sigsetsize", SC_ARG_TYPE_UINT } } },
+	{ 4, "sigsetsize", SC_ARG_TYPE_UINT } } },
     { 175, "sys_rt_sigprocmask", 0xc012cbd0, RADDR_NO, 4, 
       { { 1, "how", SC_ARG_TYPE_INT },
 	{ 2, "set", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
@@ -1998,10 +2037,10 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 196, "sys_lstat64", 0xc016f4d0, RADDR_NO, 0 },
     { 197, "sys_fstat64", 0xc016f880, RADDR_NO, 0 },
     { 198, "sys_lchown", 0xc01636d0, RADDR_NO, 0 },
-    { 199, "sys_getuid", 0xc0129750, RADDR_NO, 0, { } },
-    { 200, "sys_getgid", 0xc0129790, RADDR_NO, 0, { } },
-    { 201, "sys_geteuid", 0xc0129770, RADDR_NO, 0, { } },
-    { 202, "sys_getegid", 0xc01297b0, RADDR_NO, 0, { } },
+    { 199, "sys_getuid", 0xc0129750, RADDR_YES, 0, { } },
+    { 200, "sys_getgid", 0xc0129790, RADDR_YES, 0, { } },
+    { 201, "sys_geteuid", 0xc0129770, RADDR_YES, 0, { } },
+    { 202, "sys_getegid", 0xc01297b0, RADDR_YES, 0, { } },
     { 203, "sys_setreuid", 0xc012f790, RADDR_NO, 2, 
       { { 1, "ruid", SC_ARG_TYPE_UID_T }, 
 	{ 2, "euid", SC_ARG_TYPE_UID_T } } },
@@ -2277,20 +2316,38 @@ int web_report(const char *msg,const char *extras)
     return rv;
 }
 
-void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
-		    int pid,int i,int j,
-		    struct argdata **arg_data,
-		    struct process_data *pdata) {
+void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		   int pid,int i,int j,
+		   struct argdata **arg_data,
+		   struct process_data *pdata) {
     //char *syscallname = sctab[i].name;
     //char *name = sctab[i].args[j].name;
     sc_arg_type_t mytype = sctab[i].args[j].type;
     unsigned long argval;
     unsigned char *data = NULL;
+    unsigned long buflen = 0;
+    int isstring = 0;
     int data_len_arg_num = sctab[i].args[j].len_arg_num;
-    unsigned long *buflen = NULL;
 
+    /*
+     * It is possible that we already fetched the data for this argument.
+     */    
+    if (arg_data[j]->data != NULL || arg_data[j]->str != NULL) {
+	return;
+    }
+
+    /*
+     * Some syscall args require a buffer length that is passed as
+     * a seperate argument. Grab that value here, reading the arg
+     * as necessary.
+     */
     if (data_len_arg_num > 0) {
-	buflen = load_arg_data(handle,regs,pid,i,data_len_arg_num - 1,arg_data,pdata);
+	if (arg_data[data_len_arg_num-1]->data == NULL) {
+	    load_arg_data(handle,regs,pid,i,data_len_arg_num-1,arg_data,pdata);
+	    if (arg_data[data_len_arg_num-1]->data == NULL)
+		return;
+	}
+	buflen = *(unsigned long *)arg_data[data_len_arg_num-1]->data;
     }
 
     switch (j)
@@ -2338,11 +2395,8 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	argval = edx_addr;
 	break;
     default:
-	fprintf(stdout,"(XXX: loader ENOSUP)");
-	fflush(stdout);
-	arg_data[j]->data = NULL;
-	arg_data[j]->str = NULL;
-	return NULL;
+	arg_data[j]->str = strdup("<more than 6 args>");
+	return;
     }
 
     switch (mytype) {
@@ -2357,6 +2411,7 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     case SC_ARG_TYPE_LONG:
     case SC_ARG_TYPE_ULONG:
     case SC_ARG_TYPE_PTR:
+    case SC_ARG_TYPE_HEXINT:
 	arg_data[j]->data = malloc(sizeof(unsigned long int));
 	memcpy(arg_data[j]->data,(void *)&argval,sizeof(unsigned long int));
 
@@ -2370,75 +2425,122 @@ void *load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    arg_data[j]->str = ssprintf("%du",*(unsigned int *)arg_data[j]->data);
 	}
 	else if (mytype == SC_ARG_TYPE_LONG) {
-	    arg_data[j]->str = ssprintf("%l",*(int *)arg_data[j]->data);
+	    arg_data[j]->str = ssprintf("%l",*(long *)arg_data[j]->data);
 	}
 	else if (mytype == SC_ARG_TYPE_ULONG) {
-	    arg_data[j]->str = ssprintf("%lu",*(unsigned int *)arg_data[j]->data);
+	    arg_data[j]->str = ssprintf("%lu",*(unsigned long *)arg_data[j]->data);
 	}
-	else if (mytype == SC_ARG_TYPE_PTR) {
+	else if (mytype == SC_ARG_TYPE_PTR || mytype == SC_ARG_TYPE_HEXINT) {
 	    arg_data[j]->str = ssprintf("0x%08x",*(unsigned int *)arg_data[j]->data);
 	}
 	break;
+
+    /* null-terminated, printable string */
     case SC_ARG_TYPE_STRING:
+	isstring = 1;
+	/* fall into BYTES... */
+
+    /* array of bytes */
+    case SC_ARG_TYPE_BYTES:
 	if (!argval) {
-	    arg_data[j]->data = NULL;
-	    arg_data[j]->str = NULL;
-	    return NULL;
+	    arg_data[j]->str = strdup("NULL");
+	    return;
 	}
 
-	if (buflen && *buflen > 0) {
-	    arg_data[j]->data = malloc(sizeof(char *)*(*buflen+1));
+	/*
+	 * Make sure data is valid.
+	 * - All strings are considered "in" params.
+	 * - Byte arrays for read (3) and syslog (103) are "out",
+	 *   all others (write) are "in".
+	 * "in" data we can print on either side of the syscall.
+	 * "out" data is only printed post-syscall.
+	 */
+	switch (i) {
+	/* out */
+	case 3: case 103:
+	    if (!arg_data[j]->postcall) {
+		arg_data[j]->str = strdup("<undef>");
+		return;
+	    }
+	    break;
+	/* in: */
+	default:
+	    break;
+	}
+
+	if (buflen) {
+	    if (isstring && buflen > ARG_STRING_LEN)
+		buflen = ARG_STRING_LEN;
+	    else if (!isstring && buflen > ARG_BYTES_LEN)
+		buflen = ARG_BYTES_LEN;
+
+	    arg_data[j]->data = malloc(sizeof(char *)*(buflen+1));
 	    data = vmprobe_get_data(handle,regs,
 				    "syscall_argi_string",argval,
-				    pid,
-				    *buflen,
-				    arg_data[j]->data);
+				    pid,buflen,arg_data[j]->data);
 	    if (!data) {
-		free(arg_data[j]->data);
-		arg_data[j]->data = NULL;
+		arg_data[j]->str = strdup("<data access error>");
+		return;
 	    }
-	    else {
-		arg_data[j]->data[*buflen] = '\0';
-	    }
+	    arg_data[j]->data[buflen] = '\0';
+	}
+	else if (!isstring) {
+	    arg_data[j]->str = strdup("<need a buffer length>");
+	    return;
 	}
 	else {
+	    buflen = sc_arg_type_len[mytype];
 	    arg_data[j]->data = vmprobe_get_data(handle,regs,
 					   "syscall_argi_string",argval,
-					   pid,
-					   sc_arg_type_len[mytype],
-					   NULL);
+					   pid,buflen,NULL);
+	    if (arg_data[j]->data == NULL) {
+		arg_data[j]->str = strdup("<data access error>");
+		return;
+	    }
 	}
-	arg_data[j]->str = (char *)arg_data[j]->data;
+	if (isstring) {
+	    arg_data[j]->str = (char *)arg_data[j]->data;
+	} else {
+	    int cc;
+	    char *bp, *dp;
 
+	    cc = buflen < 8 ? buflen : 8;
+	    arg_data[j]->str = bp = malloc(cc*2 + 6);
+	    dp = (char *)arg_data[j]->data;
+	    strcpy(bp, "0x");
+	    bp += 2;
+	    while (cc-- > 0) {
+		sprintf(bp, "%02x", *dp++);
+		bp += 2;
+	    }
+	    strcpy(bp, "...");
+	}
 	break;
+
     default:
 	if (!argval) {
-	    arg_data[j]->data = NULL;
-	    arg_data[j]->str = NULL;
-	    return NULL;
+	    arg_data[j]->str = strdup("NULL");
+	    return;
 	}
-
 	if (sctab[i].args[j].al != NULL) {
-	    arg_data[j]->data = \
+	    arg_data[j]->data =
 		(unsigned char *)sctab[i].args[j].al(handle,regs,pid,i,j,
 						     argval,arg_data,pdata);
 	}
-	else if (sc_arg_type_len[mytype] > 0) {
+	else {
 	    arg_data[j]->data = vmprobe_get_data(handle,regs,
 						 "syscall_argi_default",argval,
 						 pid,
 						 sc_arg_type_len[mytype],
 						 NULL);
-	    arg_data[j]->str = ssprintf("0x%08x",(void *)argval);
-	}
-	else {
-	    arg_data[j]->data = NULL;
-	    arg_data[j]->str = NULL;
+	    if (arg_data[j]->data == NULL) {
+		arg_data[j]->str = strdup("<data access error>");
+		return;
+	    }
+	    arg_data[j]->str = ssprintf("0x%08x", (uint32_t)argval);
 	}
 	break;
     }
-
-    return arg_data[j];
 }
 
 int dofilter = 1;
@@ -2491,10 +2593,6 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     struct cpu_user_regs tregs, *aregs = regs;
     int postcall = 0;
     char *rvalstr = NULL;
-
-    if (i == 11) {
-	++execcounter;
-    }
 
     /*
      * Handle syscall returns. Only do something for those we care about.
@@ -2564,11 +2662,22 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	oi = i = 301;
     }
     else {
+	if (i == 11) {
+	    ++execcounter;
+	}
 	oi = i;
     }
 
     if (i < 0 || i >= SYSCALL_MAX) {
-	fprintf(stderr,"ERROR: bad syscall number %u in eax!\n",i);
+	fprintf(stderr,"ERROR: invalid syscall #%u %s[dom%d 0x%lx] ignored\n",
+		i, oi == SYSCALL_RET_IX ? "(after) " : "",
+		vmprobe_domid(handle), addr);
+	return NULL;
+    }
+    if (sctab[i].num == 0) {
+	fprintf(stderr,"ERROR: unknown syscall #%u %s[dom%d 0x%lx] ignored\n",
+		sctab[i].num, oi == SYSCALL_RET_IX ? "(after) " : "",
+		vmprobe_domid(handle), addr);
 	return NULL;
     }
 
@@ -2605,6 +2714,8 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	adata[j]->info = &sctab[i].args[j];
 	adata[j]->data = NULL;
 	adata[j]->str = NULL;
+	/* XXX I don't want to change every decoder to have extra arg */
+	adata[j]->postcall = postcall;
 
 	if (sctab[i].args[j].decodings_len) {
 	    adata[j]->decodings = (char **)malloc(sizeof(char *)*sctab[i].args[j].decodings_len);
@@ -2619,10 +2730,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     }
 
     for (j = 0; j < sctab[i].argc; ++j) {
-	adata[j] = load_arg_data(handle,aregs,data->pid,i,j,adata,data);
-
-	/* XXX I don't want to change every decoder to have extra arg */
-	adata[j]->postcall = postcall;
+	load_arg_data(handle,aregs,data->pid,i,j,adata,data);
 
 	debug(0,"loaded arg data for %s:%s\n",sctab[i].name,
 	      sctab[i].args[j].name);
@@ -2722,7 +2830,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
     /* XXX return value hack */
     if (rvalstr) {
-	len += strlen("ret_value") + 2;
+	len += strlen("ret_value") + 1;
 	len += strlen(rvalstr);
     }
 
@@ -2761,24 +2869,28 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	|| !strcmp(sctab[i].name,"sys_fork")
 	|| !strcmp(sctab[i].name,"sys_vfork")
 	|| !strcmp(sctab[i].name,"sys_clone")) {
+	char *eventstrtmp, *eventstr = NULL;
+	char *name_trunc, *dstr, *extras = NULL;
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+
 	psliststr = process_list_to_string(handle,regs,"|");
 	printf("\nCurrent Process List:\n\n%s\n",psliststr);
 	fflush(stdout);
 
-	char *eventstrtmp = ssprintf("domain=%s type=pslist %s",
-				     domainname,psliststr);
-	char *eventstr = NULL;
+	eventstrtmp = ssprintf("domain=%s type=pslist %s",
+			       domainname,psliststr);
 	if (eventstrtmp)
 	    eventstr = url_encode(eventstrtmp);
-	char *name_trunc = NULL; // strrchr(domainname,'-');
-	char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
-	struct timeval tv;
-	gettimeofday(&tv,NULL);
-	uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
-	char *extras = NULL;
-	if (dstr)
+	name_trunc = NULL; // strrchr(domainname,'-');
+	dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
+	if (dstr) {
+	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 +
+		    ((uint64_t)tv.tv_usec)/1000;
 	    extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
 			      ems,"VMI",dstr,"OBS");
+	}
 
 	if (send_a3_events) {
 	    if (eventstr && extras) {
@@ -2825,7 +2937,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	/*
 	 * Schedule any post action required.
 	 */
-	if (when == WHEN_POST || when == WHEN_BOTH) {
+	if (when != WHEN_PRE && sctab[i].raddr != RADDR_NO) {
 	    struct syscall_retinfo *sc;
 
 	    sc = malloc(sizeof(*sc));
@@ -2871,11 +2983,20 @@ static int on_fn_pre(vmprobe_handle_t vp,
     struct argfilter *filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr,&ancestry);
     char *eventstr = NULL;
     char *eventstrtmp = NULL;
+    char *extras = NULL;
+    char *dstr = NULL;
     char *gfilterstr = " (not filtering; globally off!)";
 
     va = -1;
 
     if (filter) {
+	char *name_trunc;
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	name_trunc = NULL; // strrchr(domainname,'-');
+	dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
+
 	/* XXX */
 	int postcall = (vmprobe_vaddr(vp) == sctab[SYSCALL_RET_IX].addr);
 
@@ -2899,24 +3020,22 @@ static int on_fn_pre(vmprobe_handle_t vp,
 				   psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
-	    char *name_trunc = NULL; // strrchr(domainname,'-');
-	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
-	    struct timeval tv;
-	    gettimeofday(&tv,NULL);
-	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
+
 	    if (filtered_events_fd != NULL) {
 		fprintf(filtered_events_fd, "%u.%03u: %s\n",
 			(unsigned)tv.tv_sec, (unsigned)(tv.tv_usec/1000),
 			eventstrtmp);
 		if (ancestry)
-		    fprintf(filtered_events_fd, "  Pid lineage:\n%s", ancestry);
+		    fprintf(filtered_events_fd, "  Pid lineage:\n%s\n", ancestry);
 		fflush(filtered_events_fd);
 	    }
 
-	    char *extras = NULL;
-	    if (dstr)
+	    if (dstr) {
+		uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 +
+			((uint64_t)tv.tv_usec)/1000;
 		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
 				  ems,"VMI",dstr,"OBS");
+	    }
 
 	    if (send_a3_events) {
 		if (eventstr && extras) {
@@ -2927,16 +3046,9 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		}
 	    }
 
-	    debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
-
-	    if (eventstr)
-		free(eventstr);
-	    if (dstr)
-		free(dstr);
-	    if (extras)
-		free(extras);
-	    if (eventstrtmp)
-		free(eventstrtmp);
+	    if (eventstr && extras) {
+		debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+	    }
 	}
 	else {
 	    debug(0," Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!%s\n",
@@ -2959,24 +3071,22 @@ static int on_fn_pre(vmprobe_handle_t vp,
 				       domainname,filter->retval,psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
-	    char *name_trunc = NULL; // strrchr(domainname,'-');
-	    char *dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
-	    struct timeval tv;
-	    gettimeofday(&tv,NULL);
-	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 + ((uint64_t)tv.tv_usec)/1000;
+
 	    if (filtered_events_fd != NULL) {
-		fprintf(filtered_events_fd, "%u.%04u: %s\n",
+		fprintf(filtered_events_fd, "%u.%03u: %s\n",
 			(unsigned)tv.tv_sec, (unsigned)(tv.tv_usec/1000),
 			eventstrtmp);
 		if (ancestry)
-		    fprintf(filtered_events_fd, "    Pid lineage: %s\n", ancestry);
+		    fprintf(filtered_events_fd, "  Pid lineage:\n%s\n", ancestry);
 		fflush(filtered_events_fd);
 	    }
 
-	    char *extras = NULL;
-	    if (dstr)
+	    if (dstr) {
+		uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 +
+			((uint64_t)tv.tv_usec)/1000;
 		extras = ssprintf("&ts=%llu&origin=%s&vmid=%s&eventtype=%s",
 				  ems,"VMI",dstr,!dofilter ? "OBS" : "ENF");
+	    }
 
 	    if (send_a3_events) {
 		if (eventstr && extras) {
@@ -2987,16 +3097,9 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		}
 	    }
 
-	    debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
-
-	    if (eventstr)
-		free(eventstr);
-	    if (dstr)
-		free(dstr);
-	    if (extras)
-		free(extras);
-	    if (eventstrtmp)
-		free(eventstrtmp);
+	    if (eventstr && extras) {
+		debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+	    }
 
 	    if (dofilter) {
 		va = action_return(filter->retval);
@@ -3004,6 +3107,15 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    }
 	}
     }
+
+    if (eventstr)
+	    free(eventstr);
+    if (eventstrtmp)
+	    free(eventstrtmp);
+    if (dstr)
+	    free(dstr);
+    if (extras)
+	    free(extras);
 
     if (psstr)
 	free(psstr);
@@ -3271,7 +3383,8 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		    }
 		    else if (strcmp(val, "post") == 0) {
 			/* Make sure syscall supports it */
-			if (sctab[filter->syscallnum].raddr == 0) {
+			if (filter->syscallnum != -1 &&
+			    sctab[filter->syscallnum].raddr == RADDR_NO) {
 			    fprintf(stderr, "ERROR: syscall %d does not support post-action\n", filter->syscallnum);
 			    filter->when = WHEN_PRE;
 			}
@@ -3281,7 +3394,8 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		    }
 		    else if (strcmp(val, "both") == 0) {
 			/* Make sure syscall supports post */
-			if (sctab[filter->syscallnum].raddr == 0) {
+			if (filter->syscallnum != -1 &&
+			    sctab[filter->syscallnum].raddr == RADDR_NO) {
 			    fprintf(stderr, "ERROR: syscall %d does not support post-action\n", filter->syscallnum);
 			    filter->when = WHEN_PRE;
 			}
