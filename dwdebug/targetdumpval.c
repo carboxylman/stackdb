@@ -33,13 +33,9 @@ int main(int argc,char **argv) {
     target_status_t tstat;
     int raw = 0;
     ADDR *addrs = NULL;
-    struct symbol **symbols = NULL;
-    struct symbol_chain **symbolchains = NULL;
-    struct memregion **regions = NULL;
+    struct bsymbol **symbols = NULL;
     char *word;
     int i, j;
-    char *idx;
-    struct symbol *ms;
     struct user_regs_struct regs;
     int ssize;
 
@@ -113,12 +109,8 @@ int main(int argc,char **argv) {
 	    memset(addrs,0,sizeof(ADDR)*argc);
 	}
 	else {
-	    symbols = (struct symbol **)malloc(sizeof(struct symbol *)*argc);
+	    symbols = (struct bsymbol **)malloc(sizeof(struct bsymbol *)*argc);
 	    memset(symbols,0,sizeof(struct symbol *)*argc);
-	    symbolchains = (struct symbol_chain **)malloc(sizeof(struct symbol_chain *)*argc);
-	    memset(symbolchains,0,sizeof(struct symbol_chain *)*argc);
-	    regions = (struct memregion **)malloc(sizeof(struct memregion *)*argc);
-	    memset(regions,0,sizeof(struct memregion *)*argc);
 	}
 
 	for (i = 0; i < argc; ++i) {
@@ -127,27 +119,14 @@ int main(int argc,char **argv) {
 		word = malloc(t->wordsize);
 	    }
 	    else {
-		idx = index(argv[i],'.');
-		if (idx) {
-		    symbolchains[i] = target_lookup_nested_sym(t,argv[i],".",NULL,
-							       SYMBOL_TYPE_FLAG_NONE,
-							       &regions[i]);
-		}
-		else {
-		    symbols[i] = target_lookup_sym(t,argv[i],NULL,
-						   SYMBOL_TYPE_FLAG_NONE,
-						   &regions[i]);
-		}
-
-		if (!symbols[i] && !symbolchains[i]) {
+		if (!(symbols[i] = target_lookup_sym(t,argv[i],".",NULL,
+						     SYMBOL_TYPE_FLAG_NONE))) {
 		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
 		    target_close(t);
 		    exit(-1);
 		}
-		else if (symbols[i])
-		    symbol_dump(symbols[i],&udn);
-		else 
-		    symbol_chain_dump(symbolchains[i],&udn);
+
+		bsymbol_dump(symbols[i],&udn);
 	    }
 	}
     }
@@ -193,56 +172,30 @@ int main(int argc,char **argv) {
 		    //ssize = symbol_get_bytesize(symbols[i]->datatype);
 		    //word = malloc(ssize);
 		    word = NULL;
-		    if (symbols[i]) {
-			if (!symbol_load(regions[i],symbols[i],
-					 LOAD_FLAG_AUTO_DEREF | 
-					 LOAD_FLAG_AUTO_STRING,
-					 (void **)&word,&ssize)) {
-			    if (1) {
-				printf("%s = ",symbols[i]->name);
-				symbol_rvalue_print(stdout,regions[i],symbols[i],
-						    word,ssize,
-						    LOAD_FLAG_AUTO_DEREF |
-						    LOAD_FLAG_AUTO_STRING);
-			    }
-			    else {
-				printf("%s = ",symbols[i]->name);
-				for (j = 0; j < ssize; ++j) {
-				    printf("%02hhx",word[j]);
-				}
-			    }
-			    printf("\n");
-			    free(word);
+		    if (!bsymbol_load(symbols[i],
+				      LOAD_FLAG_AUTO_DEREF | 
+				      LOAD_FLAG_AUTO_STRING,
+				      (void **)&word,&ssize)) {
+			if (1) {
+			    printf("%s = ",symbols[i]->lsymbol.symbol->name);
+			    symbol_rvalue_print(stdout,symbols[i]->lsymbol.symbol,
+						word,ssize,
+						LOAD_FLAG_AUTO_DEREF |
+						LOAD_FLAG_AUTO_STRING,
+						t);
 			}
-			else
-			    printf("%s: could not read value: %s\n",
-				   symbols[i]->name,strerror(errno));
-		    }
-		    else {
-			struct symbol *real = symbolchains[i]->chain[symbolchains[i]->count - 1];
-			if (!symbol_nested_load(regions[i],symbolchains[i],
-						LOAD_FLAG_NONE,
-						(void **)&word,&ssize)) {
-			    if (1) {
-				printf("%s = ",real->name);
-				symbol_rvalue_print(stdout,regions[i],real,
-						    word,ssize,
-						    LOAD_FLAG_AUTO_DEREF |
-						    LOAD_FLAG_AUTO_STRING);
+			else {
+			    printf("%s = ",symbols[i]->lsymbol.symbol->name);
+			    for (j = 0; j < ssize; ++j) {
+				printf("%02hhx",word[j]);
 			    }
-			    else {
-				printf("%s = ",real->name);
-				for (j = 0; j < ssize; ++j) {
-				    printf("%02hhx",word[j]);
-				}
-			    }
-			    printf("\n");
-			    free(word);
 			}
-			else
-			    printf("%s: could not read value: %s\n",
-				   real->name,strerror(errno));
+			printf("\n");
+			free(word);
 		    }
+		    else
+			printf("%s: could not read value: %s\n",
+			       symbols[i]->lsymbol.symbol->name,strerror(errno));
 		}
 	    }
 
