@@ -654,9 +654,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		&& cbargs->symbol->s.ii.ismember) {
 		cbargs->symbol->s.ii.l.loctype = LOCTYPE_LOCLIST;
 
-		cbargs->symbol->s.ii.l.l.loclist = \
-		    (struct loc_list *)malloc(sizeof(struct loc_list));
-		memset(cbargs->symbol->s.ii.l.l.loclist,0,sizeof(struct loc_list));
+		cbargs->symbol->s.ii.l.l.loclist = loc_list_create(0);
 
 		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				cbargs->addrsize,cbargs->offset_size,
@@ -699,9 +697,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    if (cbargs->symbol && SYMBOL_IS_FUNCTION(cbargs->symbol)) {
 		cbargs->symbol->s.ii.d.f.fbisloclist = 1;
 
-		cbargs->symbol->s.ii.d.f.fblist = \
-		    (struct loc_list *)malloc(sizeof(struct loc_list));
-		memset(cbargs->symbol->s.ii.d.f.fblist,0,sizeof(struct loc_list));
+		cbargs->symbol->s.ii.d.f.fblist = loc_list_create(0);
 
 		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				cbargs->addrsize,cbargs->offset_size,
@@ -799,9 +795,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			    || form == DW_FORM_data8)) {
 		cbargs->symbol->s.ii.l.loctype = LOCTYPE_LOCLIST;
 
-		cbargs->symbol->s.ii.l.l.loclist = \
-		    (struct loc_list *)malloc(sizeof(struct loc_list));
-		memset(cbargs->symbol->s.ii.l.l.loclist,0,sizeof(struct loc_list));
+		cbargs->symbol->s.ii.l.l.loclist = loc_list_create(0);
 
 		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				cbargs->addrsize,cbargs->offset_size,
@@ -912,10 +906,8 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     Dwarf_Addr begin;
     Dwarf_Addr end;
     int len = 0;
-    struct range_list_entry **rltmp;
     int have_base = 0;
     Dwarf_Addr base;
-    int alen = list->len;
 
     /* XXX: we can't get other_byte_order from dbg since we don't have
      * the struct def for it... so we assume it's not a diff byte order
@@ -972,29 +964,9 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    ++len;
 
 	    /* We have a range entry.  */
-	    /* Allocate space for another entry */
-	    if (list->len == alen) {
-		if (!(rltmp = (struct range_list_entry **)realloc(list->list,
-								  (list->len+1)*sizeof(struct range_list_entry *)))) {
-		    lerror("range_list realloc: %s\n",strerror(errno));
-		    return -1;
-		}
-		list->list = rltmp;
-		alen += 1;
-	    }
-
-	    list->list[list->len] = (struct range_list_entry *)malloc(sizeof(struct range_list_entry));
-	    if (!list->list[list->len]) {
-		lerror("range_list_entry malloc: %s\n",strerror(errno));
-		return -1;
-	    }
-
-	    list->list[list->len]->start = (have_base) ? begin + base \
-		                                       : begin + cu_base;
-	    list->list[list->len]->end =   (have_base) ? end + base \
-	      	                                       : end + cu_base;
-
-	    list->len += 1;
+	    range_list_add(list,
+			   (have_base) ? begin + base : begin + cu_base,
+			   (have_base) ? end + base : end + cu_base);
 	}
     }
 
@@ -1012,11 +984,10 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     Dwarf_Addr begin;
     Dwarf_Addr end;
     int len = 0;
-    struct loc_list_entry **lltmp;
     uint16_t exprlen;
     int have_base = 0;
     Dwarf_Addr base;
-    int alen = list->len;
+    struct location *tmploc;
 
     /* XXX: we can't get other_byte_order from dbg since we don't have
      * the struct def for it... so we assume it's not a diff byte order
@@ -1086,48 +1057,26 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 		ldebug(5,"[%6tx] loc expr len (%hd) in entry\n",loffset,exprlen);
 	    }
 
-	    /* allocate space for another entry */
-	    if (list->len == alen) {
-		if (!(lltmp = (struct loc_list_entry **)realloc(list->list,
-								(list->len+1)*sizeof(struct loc_list_entry *)))) {
-		    lerror("loc_list realloc: %s\n",strerror(errno));
-		    return -1;
-		}
-		list->list = lltmp;
-		alen += 1;
-	    }
-
-	    list->list[list->len] = (struct loc_list_entry *)malloc(sizeof(struct loc_list_entry));
-	    if (!list->list[list->len]) {
-		lerror("loc_list_entry malloc: %s\n",strerror(errno));
-		return -1;
-	    }
-	    list->list[list->len]->loc = (struct location *)malloc(sizeof(struct location));
-	    if (!list->list[list->len]->loc) {
-		lerror("loc_list_entry location malloc: %s\n",strerror(errno));
-		free(list->list[list->len]);
-		return -1;
-	    }
-	    memset(list->list[list->len]->loc,0,sizeof(struct location));
+	    tmploc = location_create();
 
 	    if (get_static_ops(dwflmod,dbg,3,addrsize,offsetsize,
 			       exprlen,(unsigned char *)readp,attr,
-			       list->list[list->len]->loc)) {
+			       tmploc)) {
 		lerror("get_static_ops (%d) failed!\n",exprlen);
-		free(list->list[list->len]->loc);
-		free(list->list[list->len]);
+		location_free(tmploc);
 		return -1;
 	    }
 	    else {
 		ldebug(5,"get_static_ops (%d) succeeded!\n",exprlen);
 	    }
 
-	    list->list[list->len]->start = (have_base) ? begin + base \
-		                                       : begin + cu_base;
-	    list->list[list->len]->end =   (have_base) ? end + base \
-	      	                                       : end + cu_base;
-				
-	    list->len += 1;
+	    if (loc_list_add(list,
+			     (have_base) ? begin + base : begin + cu_base,
+			     (have_base) ? end + base : end + cu_base,
+			     tmploc)) {
+		lerror("loc_list_add failed!\n");
+		location_free(tmploc);
+	    }
 
 	    readp += exprlen;
 	}
@@ -1562,7 +1511,7 @@ struct symbol *add_void_symbol(struct debugfile *debugfile,
     symbol->s.ti.datatype_code = DATATYPE_VOID;
 
     /* Always put it in its primary symtab, of course -- probably the CU's. */
-    symbol_insert(symbol);
+    symtab_insert(symbol->symtab,symbol,0);
 
     /* And also always put it in the debugfile's global types table. */
     debugfile_add_type(debugfile,symbol);
@@ -1865,21 +1814,24 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    symtabs = (struct symtab **)realloc(symtabs,maxdies*sizeof(struct symtab *));
 	}
 
-	if (symbols[level] && !symbols[level]->name) {
-	    if (symbols[level]->type == SYMBOL_TYPE_TYPE) {
-		/*
-		 * Fixup for GCC bugs, and for handling cases where a
-		 * type actually is an anonymous type.
+	if (symbols[level] && !symbols[level]->name
+	    && symbols[level]->type != SYMBOL_TYPE_TYPE) {
+		/* This is actually ok because function type params can
+		 * be unnamed, and so can inlined functions.
 		 */
-		char *newname = malloc(17+5);
-		snprintf(newname,17,"anon:%" PRIu64,(uint64_t)offset);
-		ldebug(5,"unnamed/anonymous type! renamed to %s.\n",newname);
-		symbol_set_name(symbols[level],newname);
-		/* We don't want anonymous type symbols in the real
-		 * symbol tables!
-		*/
-		symbols[level]->s.ti.isanon = 1;
-	    }
+		if (!((SYMBOL_IS_FUNCTION(symbols[level]) 
+		       && symbols[level]->s.ii.isinlineinstance)
+		      || (SYMBOL_IS_LABEL(symbols[level]) 
+			  && (symbols[level]->s.ii.isinlineinstance))
+		      || (SYMBOL_IS_VAR(symbols[level]) 
+			  && (symbols[level]->s.ii.isinlineinstance
+			      || (level > 0 
+				  && SYMBOL_IST_FUNCTION(symbols[level-1])
+				  && symbols[level]->s.ii.isparam)
+			      || (level > 0 && SYMBOL_IST_STUN(symbols[level-1])
+				  && symbols[level]->s.ii.ismember)))))
+		    lwarn("anonymous symbol of type %s at DIE 0x%" PRIx64 "!\n",
+			  SYMBOL_TYPE(symbols[level]->type),offset);
 	}
 
 	/*
@@ -2064,11 +2016,54 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	return -1;
     }
 
-    if (symbol->type == SYMBOL_TYPE_TYPE
-	&& symbol->s.ti.isanon) {
-	/* Don't free it, but also don't insert it into symbol
-	 * tables.
+    /*
+     * First, handle void types and array subrange allocation resizing.
+     */
+
+    if (symbol->type == SYMBOL_TYPE_TYPE) {
+	/* If it's a valid symbol, but doesn't have a type, make it
+	 * void!
 	 */
+	if (symbol->s.ti.type_datatype == NULL
+	    && symbol->s.ti.type_datatype_ref == 0
+	    && (symbol->s.ti.datatype_code == DATATYPE_PTR
+		|| symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
+		/* Not sure if C lets these cases through, but whatever */
+		|| symbol->s.ti.datatype_code == DATATYPE_CONST
+		|| symbol->s.ti.datatype_code == DATATYPE_VOL
+		|| symbol->s.ti.datatype_code == DATATYPE_FUNCTION)) {
+	    ldebug(3,"[DIE %" PRIx64 "] assuming %s type %s without type is void\n",
+		   die_offset,DATATYPE(symbol->s.ti.datatype_code),
+		   symbol->name);
+	    symbol->s.ti.type_datatype = voidsymbol;
+	}
+	else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY
+		 && symbol->s.ti.d.a.count) {
+	    /* Reduce the allocation to exactly the length we used! */
+	    if (symbol->s.ti.d.a.alloc > symbol->s.ti.d.a.count)
+		if (!realloc(symbol->s.ti.d.a.subranges,
+			     sizeof(int)*symbol->s.ti.d.a.count)) 
+		    lwarn("harmless subrange realloc failure: %s\n",
+			   strerror(errno));
+	}
+    }
+
+    /*
+     * Actually do the symtab inserts and generate names for symbols if
+     * we need to.
+     */
+
+    if (symbol->type == SYMBOL_TYPE_TYPE && !symbol->name) {
+	symbol->s.ti.isanon = 1;
+	/*
+	 * Fixup for GCC bugs (?), and for handling cases where a
+	 * type actually is an anonymous type.
+	 */
+	char *newname = malloc(17+5);
+	snprintf(newname,17,"anon:%" PRIx64,die_offset);
+	ldebug(5,"unnamed/anonymous type! renamed to %s.\n",newname);
+	symbol_set_name(symbol,newname);
+
 	if (symbol->s.ti.type_datatype == NULL
 	    && symbol->s.ti.type_datatype_ref == 0) {
 	    //&& symbol->s.ti.datatype_code == DATATYPE_PTR) {
@@ -2078,36 +2073,16 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    symbol->s.ti.type_datatype = voidsymbol;
 	}
 
+	symtab_insert(symbol->symtab,symbol,die_offset);
+
+	/* We inserted it, but into the anon table, not the primary
+	 * table! 
+	 */
 	retval = 1;
     }
     else if (symbol->name) {
 	if (symbol->type == SYMBOL_TYPE_TYPE) {
-	    /* If it's a valid symbol, but doesn't have a type, make it
-	     * void!
-	     */
-	    if ((symbol->s.ti.datatype_code == DATATYPE_PTR
-		 || symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
-		 /* Not sure if C lets these cases through, but whatever */
-		 || symbol->s.ti.datatype_code == DATATYPE_CONST
-		 || symbol->s.ti.datatype_code == DATATYPE_VOL
-		 || symbol->s.ti.datatype_code == DATATYPE_FUNCTION)
-		&& symbol->s.ti.type_datatype == NULL
-		&& symbol->s.ti.type_datatype_ref == 0) {
-		ldebug(3,"[DIE %" PRIx64 "] assuming %s type %s without type is void\n",
-		       die_offset,DATATYPE(symbol->s.ti.datatype_code),
-		       symbol->name);
-		symbol->s.ti.type_datatype = voidsymbol;
-	    }
-	    else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY) {
-		/* Reduce the allocation to exactly the length we used! */
-		if (symbol->s.ti.d.a.alloc > symbol->s.ti.d.a.count)
-		    if (!realloc(symbol->s.ti.d.a.subranges,
-				 sizeof(int)*symbol->s.ti.d.a.count)) 
-			lerror("harmless subrange realloc failure: %s",
-			       strerror(errno));
-	    }
-
-	    symbol_insert(symbol);
+	    symtab_insert(symbol->symtab,symbol,0);
 
 	    if (!debugfile_find_type(debugfile,symbol->name))
 		debugfile_add_type(debugfile,symbol);
@@ -2120,7 +2095,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		symbol->datatype = voidsymbol;
 	    }
 
-	    symbol_insert(symbol);
+	    symtab_insert(symbol->symtab,symbol,0);
 
 	    if (symbol->s.ii.isexternal) 
 		debugfile_add_global(debugfile,symbol);
@@ -2135,7 +2110,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 
 	    /* Don't insert params or members into the symbol table! */
 	    if (!symbol->s.ii.isparam && !symbol->s.ii.ismember) 
-		symbol_insert(symbol);
+		symtab_insert(symbol->symtab,symbol,0);
 
 	    if (level == 1)
 		debugfile_add_global(debugfile,symbol);
@@ -2172,8 +2147,10 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	}
 
 	symbol_set_name(symbol,inname);
-		    
-	symbol_insert(symbol);
+
+	/* Stick it in the anontab. */
+	symtab_insert(symbol->symtab,symbol,die_offset);
+	retval = 1;
     }
     else if (symbol
 	     && symbol->type == SYMBOL_TYPE_VAR

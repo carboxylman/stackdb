@@ -11,6 +11,7 @@
 #include <wchar.h>
 
 #include "list.h"
+#include "alist.h"
 #include "config.h"
 
 #if ELFUTILS_NO_VERSION_H
@@ -49,7 +50,8 @@ struct memregion;
 struct debugfile;
 struct symtab;
 struct symbol;
-struct symbol_chain;
+struct lsymbol;
+struct bsymbol;
 struct location;
 struct range_list_entry;
 struct range;
@@ -100,7 +102,7 @@ typedef enum {
     REGION_TYPE_LIB            = 6,
     __REGION_TYPE_MAX,
 } region_type_t;
-extern char *REGION_STRINGS[];
+extern char *REGION_TYPE_STRINGS[];
 #define REGION_TYPE(n) (((n) < __REGION_TYPE_MAX) ? REGION_TYPE_STRINGS[(n)] : NULL)
 
 typedef enum {
@@ -326,6 +328,7 @@ void debugfile_free(struct debugfile *debugfile);
 struct symtab *symtab_create(struct debugfile *debugfile,
 			     char *srcfilename,char *compdirname,
 			     int language,char *producer);
+int symtab_insert(struct symtab *symtab,struct symbol *symbol,uint64_t anonaddr);
 /* These symtab_set functions are about dealing with memory stuff, not
  * about hiding symtabs from dwarf or anything.
  */
@@ -342,7 +345,6 @@ int symtab_str_in_strtab(struct symtab *symtab,char *strp);
 struct symbol *symbol_create(struct symtab *symtab,
 			     char *name,symbol_type_t symtype);
 void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
-int symbol_insert(struct symbol *symbol);
 void symbol_set_name(struct symbol *symbol,char *name);
 void symbol_set_srcline(struct symbol *symbol,int srcline);
 /*
@@ -355,17 +357,25 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_free(struct symbol *symbol);
 
-void symbol_chain_dump(struct symbol_chain *symbol_chain,struct dump_info *ud);
+struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
+void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
+void lsymbol_free(struct lsymbol *lsymbol);
+struct bsymbol *bsymbol_create(struct memregion *region,struct symbol *symbol,
+			       struct array_list *chain);
+void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud);
+void bsymbol_free(struct bsymbol *bsymbol);
 
 /**
  ** Locations.
  **/
+struct location *location_create(void);
 void location_dump(struct location *location,struct dump_info *ud);
 ADDR location_resolve(struct memregion *region,struct location *location,
-		      struct loc_list *fblist,struct location *fbloc);
+		      struct array_list *symbol_chain);
 int location_load(struct memregion *region,struct location *location,
-		  struct loc_list *fblist,struct location *fbloc,
+		  struct array_list *symbol_chain,
 		  load_flags_t flags,void *buf,int bufsiz);
+void location_free(struct location *location);
 
 /**
  ** Symtab (PC) lookup functions.
@@ -380,40 +390,35 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc);
  ** Symbol/memaddr lookup functions.
  **/
 /*
- * We need to associate symbols and regions when looking up symbols on a
- * target (as opposed to a debugfile or symtab, in which case we can't
- * know what bit of memory the symbol might be associated with --
- * indeed, it might not be associated with any memory.  So, if the user
- * didn't know in which memory region the symbol was, and queried the
- * target globally, we optionally fill in the region pointer with the
- * region that contained the debugfile containing the symbol.
- */
-struct symbol *target_lookup_sym(struct target *target,char *name,
-				 char *srcfile,symbol_type_flag_t ftype,
-				 struct memregion **region);
-/*
- * Like the above function, except looks up a hierarchy of symbols.  At
- * present, only structures and unions and function instances can be
- * nested.  Each symbol chain member is either a SYMBOL_TYPE_VAR or a
+ * Looks up a symbol, or hierarchy of nested symbols.  Users shouldn't
+ * need to know the details of the bsymbol struct; it largely functions
+ * as a placeholder that saves the result of a nested lookup so that it
+ * is available for a later load.  The single symbol, or deepest-nested
+ * symbol, is in .symbol.  The chain of nested symbols (possibly
+ * including anonymous symbols), which includes the deepest-nested
+ * symbol itself, is in .chain.
+ *
+ * The bsymbol struct should be passed to _load functions, where it may
+ * be further annotated with load information.
+ *
+ * Each symbol chain member is either a SYMBOL_TYPE_VAR or a
  * SYMBOL_TYPE_FUNCTION -- unless the first member in your @name string
  * resolves to a SYMBOL_TYPE_TYPE.  In this case, the first member will
  * be a SYMBOL_TYPE_TYPE!
  */
-struct symbol_chain *target_lookup_nested_sym(struct target *target,
-					      char *name,const char *delim,
-					      char *srcfile,
-					      symbol_type_flag_t ftype,
-					      struct memregion **retregion);
+struct bsymbol *target_lookup_sym(struct target *target,
+				  char *name,const char *delim,
+				  char *srcfile,symbol_type_flag_t ftype);
+
 /* If you know which debugfile contains your symbol, this is fastest. */
-struct symbol *debugfile_lookup_sym(struct debugfile *debugfile,char *name,
-				    char *srcfile,symbol_type_flag_t ftype);
+struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
+				     char *name,const char *delim,
+				     char *srcfile,symbol_type_flag_t ftype);
+
 /* Look up one symbol in a symbol table by name. */
-struct symbol *symtab_lookup_sym(struct symtab *symtab,char *name,
-				 symbol_type_flag_t ftype);
-/* Look up a nested symbol in a symbol table by name. */
-struct symbol_chain *symtab_lookup_nested_sym(struct symtab *symtab,char *name,
-					      const char *delim,
-					      symbol_type_flag_t ftype);
+struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
+				  char *name,const char *delim,
+				  symbol_type_flag_t ftype);
 /*
  * @symbol may be either a SYMBOL_TYPE_TYPE, a SYMBOL_TYPE_FUNCTION, or
  * a SYMBOL_TYPE_VAR.  This function is really about returning an instance
@@ -450,26 +455,20 @@ struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
  * buf is not NULL, it should be sized to
  * symbol->datatype->s.ti.byte_size (best available as symbol_get
  */
-int symbol_load(struct memregion *region,struct symbol *symbol,
-		load_flags_t flags,void **buf,int *bufsiz);
-/* Like the above, but load the last (deepest) symbol in the chain,
- * using the chain info as necessary!  For instance, this is necessary
- * when loading structure members.
- */
-int symbol_nested_load(struct memregion *region,struct symbol_chain *chain,
-		       load_flags_t flags,void **buf,int *bufsiz);
+int bsymbol_load(struct bsymbol *bsymbol,
+		 load_flags_t flags,void **buf,int *bufsiz);
 /*
  * Load a symbol's value into a value struct, which contains a union
  * with basic type members (of the compiler of the library) and a single
  * "raw" field for complex types.  A "fat" value may also contain
  * metadata.
  */
-struct value *symbol_load_fat(struct memregion *region,struct symbol *symbol,
-			      load_flags_t flags,void *buf);
+struct value *bsymbol_load_fat(struct bsymbol *bsymbol,
+			       load_flags_t flags,void *buf);
 
-void symbol_rvalue_print(FILE *stream,struct memregion *region,
-			 struct symbol *symbol,void *buf,int bufsiz,
-			 load_flags_t flags);
+void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
+			 void *buf,int bufsiz,
+			 load_flags_t flags,struct target *target);
 void symbol_rvalue_tostring(struct symbol *symbol,char **buf,int *bufsiz,
 			    char *cur);
 
@@ -491,6 +490,19 @@ int64_t          rvalue_i64(void *buf);
  */
 char *symbol_to_string(struct memregion *region,
 		       struct symbol *symbol);
+
+/*
+ * Range/location list stuff.
+ *
+ * XXX: this should not be exposed to the user, probably.
+ */
+struct range_list *range_list_create(int initsize);
+int range_list_add(struct range_list *list,ADDR start,ADDR end);
+void range_list_internal_free(struct range_list *list);
+void range_list_free(struct range_list *list);
+struct loc_list *loc_list_create(int initsize);
+int loc_list_add(struct loc_list *list,ADDR start,ADDR end,struct location *loc);
+void loc_list_free(struct loc_list *list);
 
 /*
  * Dwarf util stuff.
@@ -613,6 +625,15 @@ struct memregion {
     unsigned long long offset;
     unsigned int prot_flags;
     region_type_t type;
+
+    /* This is an identifier that must be changed every time this
+     * memregion changes status, and something about it has been
+     * reloaded.  For instance, if it is now using different memory
+     * addresses than when we were last resolved symbols to locations
+     * inside of it, we need those symbols to be re-resolved before
+     * loading them again.
+     */
+    uint32_t stamp;
 
     GHashTable *debugfiles;
 
@@ -742,6 +763,7 @@ struct range_list_entry {
 
 struct range_list {
     int32_t len;
+    int32_t alen;
     struct range_list_entry **list;
 };
 
@@ -764,6 +786,7 @@ struct loc_list_entry {
 
 struct loc_list {
     int32_t len;
+    int32_t alen;
     struct loc_list_entry **list;
 };
 
@@ -802,8 +825,21 @@ struct symtab {
      */
     struct list_head member;
 
-    /* h(sym) -> struct symbol * */
+    /* 
+     * This hashtable stores only *named* symbols that existed in this
+     * scope.
+     *
+     * h(sym) -> struct symbol * 
+     */
     GHashTable *tab;
+
+    /* 
+     * This hashtable stores only *unnamed* symbols that existed in this
+     * scope.  These are probably mostly types.
+     *
+     * h(sym) -> struct symbol * 
+     */
+    GHashTable *anontab;
 };
 
 struct location {
@@ -962,12 +998,41 @@ struct symbol {
 };
 
 /*
- * Contains a top-to-bottom list of symbols that have a hierarchical
- * relationship.
+ * We return "elaborated" symbols from symbol lookups, and store location
+ * resolution info in here too.  An elaborated symbol has the symbol's
+ * chain if it is a nested symbol after a symbol lookup was performed.
+ * After a symbol load has been performed, it also has the memory region
+ * it currently exists in, the id the region had when the symbol was
+ * loaded (so we know if we have to actually reload it later or not, OR
+ * re-resolve its addr), and the resolved address it is at.  Since not
+ * all symbols may have addresses (i.e., they may be in registers, OR
+ * their location may change depending on the value of the PC), we also
+ * set an addr_valid bit only if addr is set to something real.
  */
-struct symbol_chain {
-    int count;
-    struct symbol **chain;
+struct lsymbol {
+    /*
+     * If it is not a nested symbol, only the symbol itself.  Otherwise,
+     * the deepest nested symbol.
+     */
+    struct symbol *symbol;
+    /*
+     * Contains a top-to-bottom list of symbols that have a hierarchical
+     * relationship.
+     */
+    struct array_list *chain;
+};
+
+struct bsymbol {
+    /*
+     * The lookup information.
+     */
+    struct lsymbol lsymbol;
+
+    /* Target binding information. */
+    struct memregion *region;
+    uint32_t region_stamp;
+    uint8_t addr_valid;
+    ADDR addr;
 };
 
 struct value {
