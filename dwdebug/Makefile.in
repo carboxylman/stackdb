@@ -14,7 +14,8 @@ include $(OBJDIR)/Makeconf
 CFLAGS := -Wall -Wextra -Wno-unused-parameter
 #-Wswitch-default -Wswitch-enum -Wtrampolines -Wtraditional-conversion -Wdeclaration-after-statement -Wshadow -Wbad-function-cast -Wcast-qual -Wcast-align -Wconversion -Wlogical-op -Wstrict-prototypes -Wold-style-definition -Wmissing-parameter-type -Wmissing-prototypes -Wmissing-declarations -Wmissing-field-initializers -Wmissing-format-attribute -Winline 
 //CFLAGS += -O2
-CFLAGS += -g
+CFLAGS += -g 
+#CFLAGS += -pg
 CFLAGS += -DLIBDWDEBUG_DEBUG
 CFLAGS += -I$(SRCDIR)/../lib -I$(OBJDIR)
 #CFLAGS += $(XENACCESS_FLAGS) $(VMPROBES_FLAGS)
@@ -26,7 +27,7 @@ CFLAGS += -I$(ELFUTILS)/include
 LDFLAGS := $(shell pkg-config --libs glib-2.0)
 LDFLAGS += -L$(ELFUTILS)/lib -L$(ELFUTILS)/lib/elfutils -ldw -lelf -lebl
 
-HEADERS := $(SRCDIR)/libdwdebug.h $(SRCDIR)/../lib/list.h
+HEADERS := $(SRCDIR)/libdwdebug.h $(SRCDIR)/../lib/list.h $(SRCDIR)/../lib/alist.h
 
 OBJECTS := debug.lo target.lo target_linux_userproc.lo dwarf_debuginfo.lo \
 	   dwarf_elfutils.lo 
