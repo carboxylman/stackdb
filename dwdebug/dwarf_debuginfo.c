@@ -2010,6 +2010,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			struct symbol *parentsymbol,
 			struct symbol *voidsymbol) {
     int retval = 0;
+    int *new_subranges;
 
     if (!symbol) {
 	lwarn("[DIE %" PRIx64 "] null symbol!\n",die_offset);
@@ -2040,11 +2041,14 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY
 		 && symbol->s.ti.d.a.count) {
 	    /* Reduce the allocation to exactly the length we used! */
-	    if (symbol->s.ti.d.a.alloc > symbol->s.ti.d.a.count)
-		if (!realloc(symbol->s.ti.d.a.subranges,
-			     sizeof(int)*symbol->s.ti.d.a.count)) 
+	    if (symbol->s.ti.d.a.alloc > symbol->s.ti.d.a.count) {
+		if (!(new_subranges = realloc(symbol->s.ti.d.a.subranges,
+					      sizeof(int)*symbol->s.ti.d.a.count))) 
 		    lwarn("harmless subrange realloc failure: %s\n",
 			   strerror(errno));
+		else 
+		    symbol->s.ti.d.a.subranges = new_subranges;
+	    }
 	}
     }
 
