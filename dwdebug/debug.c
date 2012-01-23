@@ -752,7 +752,7 @@ static struct debugfile *__debugfile_create(char *filename,
      * clean it.
      */
     debugfile->srcfiles = g_hash_table_new_full(g_str_hash,g_str_equal,
-						ghash_str_free,
+						NULL,
 						ghash_symtab_free);
 
     /* This is an optimization lookup hashtable, so we don't provide
@@ -2882,6 +2882,8 @@ void symbol_free(struct symbol *symbol) {
 	free(symbol->name);
 
     // XXX fill
+
+    free(symbol);
 }
 
 
