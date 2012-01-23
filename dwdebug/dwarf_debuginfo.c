@@ -2479,10 +2479,12 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     if (data->debugfile->loctab) {
 	free(data->debugfile->loctab);
 	data->debugfile->loctablen = 0;
+	data->debugfile->loctab = NULL;
     }
     if (data->debugfile->rangetab) {
 	free(data->debugfile->rangetab);
 	data->debugfile->rangetablen = 0;
+	data->debugfile->rangetab = NULL;
     }
 
     return DWARF_CB_OK;
