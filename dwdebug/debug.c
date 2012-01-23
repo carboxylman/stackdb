@@ -740,7 +740,7 @@ static struct debugfile *__debugfile_create(char *filename,
 	debugfile->name = strdup(name);
     if (version)
 	debugfile->version = strdup(version);
-    debugfile->refcnt = 1;
+    debugfile->refcnt = 0;
 
     debugfile->debugfile.next = NULL;
     debugfile->debugfile.prev = NULL;
