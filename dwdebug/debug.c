@@ -1577,6 +1577,7 @@ struct debugfile *debugfile_attach(struct memregion *region,
 int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab) {
     if (unlikely(g_hash_table_lookup(debugfile->srcfiles,symtab->name)))
 	return 1;
+    ldebug(5,"adding symtab %s:%s\n",debugfile->idstr,symtab->name);
     g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
     return 0;
 }

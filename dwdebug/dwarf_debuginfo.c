@@ -1609,22 +1609,6 @@ static int fill_debuginfo(struct debugfile *debugfile,
     do {
 	struct symtab *newscope = NULL;
 
-	/* The first time we are not level 0 (i.e., at the CU's DIE),
-	 * check that we found a src filename attr; we must have it to
-	 * hash the symtab.
-	 */
-	if (level > 0 && !cu_symtab_added) {
-	    if (!cu_symtab->name) {
-		lerror("CU did not have a src filename; aborting processing!\n");
-		symtab_free(cu_symtab);
-		goto next_cu;
-	    }
-	    else {
-		debugfile_add_symtab(debugfile,cu_symtab);
-		cu_symtab_added = 1;
-	    }
-	}
-
 	offset = dwarf_dieoffset(&dies[level]);
 	if (offset == ~0ul) {
 	    lerror("cannot get DIE offset: %s",dwarf_errmsg(-1));
@@ -1786,6 +1770,28 @@ static int fill_debuginfo(struct debugfile *debugfile,
 
 	args.die_offset = offset;
 	(void)dwarf_getattrs(&dies[level],attr_callback,&args,0);
+
+
+	/* The first time we are not level 0 (i.e., at the CU's DIE),
+	 * check that we found a src filename attr; we must have it to
+	 * hash the symtab.
+	 */
+	if (unlikely(!cu_symtab_added) && level == 0) {
+	    if (!cu_symtab->name) {
+		lerror("CU did not have a src filename; aborting processing!\n");
+		symtab_free(cu_symtab);
+		goto next_cu;
+	    }
+	    else {
+		if (debugfile_add_symtab(debugfile,cu_symtab)) {
+		    lerror("could not add CU symtab %s to debugfile; aborting processing!\n",
+			   cu_symtab->name);
+		    symtab_free(cu_symtab);
+		    goto next_cu;
+		}
+		cu_symtab_added = 1;
+	    }
+	}
 
 	/* Make room for the next level's DIE.  */
 	if (level + 1 == maxdies) {
