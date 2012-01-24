@@ -1820,12 +1820,14 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 
 void symtab_free(struct symtab *symtab) {
     struct symtab *tmp;
+    struct symtab *tmp2;
 
     ldebug(5,"freeing symtab(%s:%s)\n",
 	   symtab->debugfile->idstr,symtab->name);
 
-    list_for_each_entry(tmp,&symtab->subtabs,member) 
-	symtab_free(tmp);
+    if (!list_empty(&symtab->subtabs))
+	list_for_each_entry_safe(tmp,tmp2,&symtab->subtabs,member) 
+	    symtab_free(tmp);
     if (RANGE_IS_LIST(&symtab->range))
 	range_list_internal_free(&symtab->range.rlist);
     g_hash_table_destroy(symtab->tab);
@@ -2960,6 +2962,7 @@ struct value *symbol_load_fat(struct memregion *region,struct symbol *symbol,
 
 void symbol_free(struct symbol *symbol) {
     struct symbol *tmp;
+    struct symbol *tmp2;
 
     if (symbol->name)
 	ldebug(5,"freeing symbol %s//%s\n",SYMBOL_TYPE(symbol->type),symbol->name);
@@ -2990,11 +2993,11 @@ void symbol_free(struct symbol *symbol) {
 	    free(symbol->s.ti.d.a.subranges);
     }
     else if (SYMBOL_IST_STUN(symbol)) {
-	list_for_each_entry(tmp,&symbol->s.ti.d.su.members,member)
+	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti.d.su.members,member)
 	    symbol_free(tmp);
     }
     else if (SYMBOL_IST_FUNCTION(symbol)) {
-	list_for_each_entry(tmp,&symbol->s.ti.d.f.args,member)
+	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti.d.f.args,member)
 	    symbol_free(tmp);
     }
 
