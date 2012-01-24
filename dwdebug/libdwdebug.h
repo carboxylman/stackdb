@@ -845,7 +845,7 @@ struct symtab {
      * This hashtable stores only *unnamed* symbols that existed in this
      * scope.  These are probably mostly types.
      *
-     * h(sym) -> struct symbol * 
+     * h(addr) -> struct symbol * 
      */
     GHashTable *anontab;
 };
