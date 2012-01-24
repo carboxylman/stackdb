@@ -1105,27 +1105,8 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     }
     else 
 	fprintf(ud->stream,"%s",symbol->name);
-    if (ud->meta) {
-	if (symbol->s.ii.d.f.fbisloclist && symbol->s.ii.d.f.fblist 
-	    && symbol->s.ii.d.f.fblist->len) {
-	    fprintf(ud->stream,"(frame_base=");
-	    loc_list_dump(symbol->s.ii.d.f.fblist,&udn2);
-	    fprintf(ud->stream,",");
-	}
-	else if (symbol->s.ii.d.f.fbissingleloc && symbol->s.ii.d.f.fbloc) { 
-	    fprintf(ud->stream,"(frame_base=");
-	    location_dump(symbol->s.ii.d.f.fbloc,&udn2);
-	    fprintf(ud->stream,",");
-	}
-	else 
-	    fprintf(ud->stream,"(");
-
-	fprintf(ud->stream,"external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
-		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
-		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
-    }
     if (ud->detail) {
-	fprintf(ud->stream,"(");
+	fprintf(ud->stream," (");
 	list_for_each_entry(arg,&(symbol->s.ii.d.f.args),member) {
 	    ++i;
 	    symbol_var_dump(arg,ud);
@@ -1141,7 +1122,27 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 
 	if (symbol->s.ii.constval)
 	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
+    }
+    if (ud->meta) {
+	if (symbol->s.ii.d.f.fbisloclist && symbol->s.ii.d.f.fblist 
+	    && symbol->s.ii.d.f.fblist->len) {
+	    fprintf(ud->stream," (frame_base=");
+	    loc_list_dump(symbol->s.ii.d.f.fblist,&udn2);
+	    fprintf(ud->stream,",");
+	}
+	else if (symbol->s.ii.d.f.fbissingleloc && symbol->s.ii.d.f.fbloc) { 
+	    fprintf(ud->stream," (frame_base=");
+	    location_dump(symbol->s.ii.d.f.fbloc,&udn2);
+	    fprintf(ud->stream,",");
+	}
+	else 
+	    fprintf(ud->stream," (");
 
+	fprintf(ud->stream,"external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
+		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
+		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
+    }
+    if (ud->detail) {
 	fprintf(ud->stream,"\n");
 
 	symtab_dump(symbol->s.ii.d.f.symtab,&udn);
