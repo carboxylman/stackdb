@@ -949,10 +949,11 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	fprintf(ud->stream,"%s  subscopes:\n",p);
 	list_for_each_entry(csymtab,&(symtab->subtabs),member) {
 	    symtab_dump(csymtab,&udn2);
+	    fprintf(ud->stream,"\n");
 	}
     }
 
-    fprintf(ud->stream,"%s}\n",p);
+    fprintf(ud->stream,"%s}",p);
 
     if (ud->prefix) {
 	free(np);
