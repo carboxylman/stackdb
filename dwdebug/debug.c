@@ -2988,6 +2988,13 @@ void symbol_free(struct symbol *symbol) {
 	//if (symbol->s.ii.d.f.symtab)
 	//    symtab_free(symbol->s.ii.d.f.symtab);
     }
+    else if (symbol->type == SYMBOL_TYPE_LABEL) {
+	/*
+	 * Free the range list for a label.
+	 */
+	if (symbol->s.ii.d.l.range.rlist.list)
+	    range_list_internal_free(&symbol->s.ii.d.l.range.rlist);
+    }
     else if (SYMBOL_IST_ARRAY(symbol)) {
 	if (symbol->s.ti.d.a.subranges)
 	    free(symbol->s.ti.d.a.subranges);
