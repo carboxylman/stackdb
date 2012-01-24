@@ -415,7 +415,7 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
     if (!lname)
 	return lsymbol;
 
-    lwarn("found %s\n",lsymbol->symbol->name);
+    ldebug(5,"found %s\n",lsymbol->symbol->name);
 
     /* Otherwise, add the first one to our chain and start looking up
      * members.
@@ -1987,6 +1987,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     int j, k;
     int startstacklen;
     struct lsymbol *lsymbol;
+    struct symtab *subtab;
     
     /*
     struct dump_info udn = {
@@ -2099,6 +2100,22 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	    symbol = lsymbol->symbol;
 	    lsymbol_free(lsymbol);
 	    return symbol;
+	}
+
+	/* Third, check any anonymous subtabs.
+	 * 
+	 * NOTE: for now, only check one level; if the debuginfo emitter
+	 * has added more anonymous lexical scopes, or whatever, we
+	 * don't support them yet.
+	 */
+	list_for_each_entry(subtab,&symbol->s.ii.d.f.symtab->subtabs,member) {
+	    lsymbol = symtab_lookup_sym(subtab,member,NULL,
+					SYMBOL_TYPE_FLAG_VAR | SYMBOL_TYPE_FLAG_FUNCTION);
+	    if (lsymbol) {
+		symbol = lsymbol->symbol;
+		lsymbol_free(lsymbol);
+		return symbol;
+	    }
 	}
 
 	return NULL;
@@ -2294,11 +2311,23 @@ ADDR location_resolve(struct memregion *region,struct location *location,
 	}
 
 	/* now resolve the frame base value */
-	frame_base = location_resolve(region,final_fb_loc,NULL);
-	if (errno) {
-	    lerror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
-	    errno = EINVAL;
-	    return 0;
+	if (final_fb_loc->loctype == LOCTYPE_REG) {
+	    /* just read the register directly */
+	    frame_base = target_read_reg(memregion_target(region),
+					 final_fb_loc->l.reg);
+	    if (errno) {
+		lerror("FBREG_OFFSET frame base location description resolution failed when reading reg directly: %s\n",strerror(errno));
+		errno = EINVAL;
+		return 0;
+	    }
+	}
+	else {
+	    frame_base = location_resolve(region,final_fb_loc,NULL);
+	    if (errno) {
+		lerror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
+		errno = EINVAL;
+		return 0;
+	    }
 	}
 	ldebug(5,"frame_base = 0x%" PRIxADDR "\n",frame_base);
 	ldebug(5,"fboffset = %" PRIi64 "\n",location->l.fboffset);
