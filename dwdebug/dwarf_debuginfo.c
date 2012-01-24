@@ -305,60 +305,46 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	     * low_pc yet, just bail.
 	     */
 
-	    if (cbargs->symtab && cbargs->symtab->range.lowpc) {
-		if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE) {
+	    if (cbargs->symtab) {
+		if (cbargs->symtab->range.lowpc) {
 		    cbargs->symtab->range.rtype = RANGE_TYPE_PC;
 		    cbargs->symtab->range.highpc = cbargs->symtab->range.lowpc + num;
 		}
-	    }
-	    else 
-		lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (symtab)\n",
+		else 
+		    lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (no lowpc yet)!\n",
 		      cbargs->die_offset,num,dwarf_attr_string(attr));
-	
+	    }
+
 	    if (cbargs->symbol 
-		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+		&& (cbargs->symbol->type == SYMBOL_TYPE_LABEL
+		    || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
 		if (RANGE_IS_LIST(&cbargs->symbol->s.ii.d.l.range)) {
 		    lerror("cannot update highpc; already saw AT_ranges for %s symbol %s!\n",
 			   SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
 		}
 		/* This is not exactly good, but... */
-		else if (cbargs->symbol->s.ii.d.l.range.lowpc
-			 || RANGE_IS_PC(&cbargs->symbol->s.ii.d.l.range)) {
+		else if (cbargs->symbol->s.ii.d.l.range.lowpc) {
 		    cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
 		    cbargs->symbol->s.ii.d.l.range.highpc = cbargs->symbol->s.ii.d.l.range.lowpc + num;
 		}
 		else {
-		    lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (label -- no lowpc?)\n",
-			  cbargs->die_offset,num,dwarf_attr_string(attr));
+		    lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (%s %s -- no lowpc yet)!\n",
+			  cbargs->die_offset,num,dwarf_attr_string(attr),
+			  SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
 		}
 	    }
-	    else if (cbargs->symbol 
-		     && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-		;
-	    }
-	    else if (!cbargs->symbol && cbargs->symtab) {
-		;
-	    }
-	    else 
-		lwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (symbol)\n",
-		      cbargs->die_offset,num,dwarf_attr_string(attr));
-	    
 	}
 	else if (addr_set) {
 	    ldebug(4,"\t\t\tvalue = 0x%p\n",addr);
 
 	    if (cbargs->symtab) {
-		if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE) {
-		    cbargs->symtab->range.rtype = RANGE_TYPE_PC;
-		    cbargs->symtab->range.highpc = addr;
-		}
+		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
+		cbargs->symtab->range.highpc = addr;
 	    }
-	    else 
-		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " (addr) for attr %s in bad context (symtab)\n",
-		      cbargs->die_offset,addr,dwarf_attr_string(attr));
-	
+
 	    if (cbargs->symbol 
-		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
+		&& (cbargs->symbol->type == SYMBOL_TYPE_LABEL
+		    || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
 		if (RANGE_IS_LIST(&cbargs->symbol->s.ii.d.l.range)) {
 		    lerror("cannot update highpc; already saw AT_ranges for %s symbol %s!\n",
 			   SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
@@ -372,12 +358,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		     && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
 		;
 	    }
-	    else if (!cbargs->symbol && cbargs->symtab) {
-		;
-	    }
-	    else 
-		lwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " (addr) for attr %s in bad context (symbol)\n",
-		      cbargs->die_offset,addr,dwarf_attr_string(attr));
 	}
 	else {
 	    lwarn("[DIE %" PRIx64 "] bad attr type for attr %s\n",
