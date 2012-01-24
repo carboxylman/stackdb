@@ -2026,10 +2026,11 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
      */
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
-	/* If it's a valid symbol, but doesn't have a type, make it
-	 * void!
+	/* If it's a valid symbol, and it's not a base type, but doesn't
+	 * have a type, make it void!
 	 */
-	if (symbol->s.ti.type_datatype == NULL
+	if (!SYMBOL_IST_BASE(symbol)
+	    && symbol->s.ti.type_datatype == NULL
 	    && symbol->s.ti.type_datatype_ref == 0
 	    && (symbol->s.ti.datatype_code == DATATYPE_PTR
 		|| symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
