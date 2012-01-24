@@ -2120,16 +2120,39 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		free(symbol->name);
 	    symbol->name = symbol->s.ti.extname + foffset;
 
-	    symtab_insert_fakename(symbol->symtab,insertname,symbol,0);
+	    if (symtab_insert_fakename(symbol->symtab,insertname,symbol,0)) {
+		/* The symbol already was in this symtab's primary
+		 * table; put it in the anontable so it can get freed
+		 * later!
+		 */
+		lwarn("duplicate symbol %s at offset %"PRIx64"\n",
+		      insertname,die_offset);
+		if (symtab_insert_fakename(symbol->symtab,insertname,symbol,
+					   die_offset)) {
+		    lerror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
+			   insertname,die_offset);
+		}
+	    }
 
 	    if (!debugfile_find_type(debugfile,insertname))
 		debugfile_add_type_fakename(debugfile,insertname,symbol);
 	}
 	else {
-	    symtab_insert(symbol->symtab,symbol,0);
+	    if (symtab_insert(symbol->symtab,symbol,0)) {
+		/* The symbol already was in this symtab's primary
+		 * table; put it in the anontable so it can get freed
+		 * later!
+		 */
+		lwarn("duplicate symbol %s at offset %"PRIx64"\n",
+		      symbol->name,die_offset);
+		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
+		    lerror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
+			   symbol->name,die_offset);
+		}
+	    }
 
 	    if (!debugfile_find_type(debugfile,symbol->name))
-		debugfile_add_type_fakename(debugfile,symbol->name,symbol);
+		debugfile_add_type(debugfile,symbol);
 	}
     }
     else if (SYMBOL_IS_VAR(symbol) 
@@ -2149,7 +2172,18 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		symbol->datatype = voidsymbol;
 	    }
 
-	    symtab_insert(symbol->symtab,symbol,0);
+	    if (symtab_insert(symbol->symtab,symbol,0)) {
+		/* The symbol already was in this symtab's primary
+		 * table; put it in the anontable so it can get freed
+		 * later!
+		 */
+		lwarn("duplicate symbol %s at offset %"PRIx64"\n",
+		      symbol->name,die_offset);
+		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
+		    lerror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
+			   symbol->name,die_offset);
+		}
+	    }
 
 	    if (symbol->s.ii.isexternal) 
 		debugfile_add_global(debugfile,symbol);
@@ -2163,14 +2197,37 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    }
 
 	    /* Don't insert members into the symbol table! */
-	    if (!symbol->s.ii.ismember) 
-		symtab_insert(symbol->symtab,symbol,0);
+	    if (!symbol->s.ii.ismember) {
+		if (symtab_insert(symbol->symtab,symbol,0)) {
+		    /* The symbol already was in this symtab's primary
+		     * table; put it in the anontable so it can get freed
+		     * later!
+		     */
+		    lwarn("duplicate symbol %s at offset %"PRIx64"\n",
+			  symbol->name,die_offset);
+		    if (symtab_insert(symbol->symtab,symbol,die_offset)) {
+			lerror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
+			       symbol->name,die_offset);
+		    }
+		}
+	    }
 
 	    if (level == 1)
 		debugfile_add_global(debugfile,symbol);
 	}
 	else if (symbol->type == SYMBOL_TYPE_LABEL) {
-	    symtab_insert(symbol->symtab,symbol,0);
+	    if (symtab_insert(symbol->symtab,symbol,0)) {
+		/* The symbol already was in this symtab's primary
+		 * table; put it in the anontable so it can get freed
+		 * later!
+		 */
+		lwarn("duplicate symbol %s at offset %"PRIx64"\n",
+		      symbol->name,die_offset);
+		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
+		    lerror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
+			   symbol->name,die_offset);
+		}
+	    }
 	}
     }
     else if ((symbol->type == SYMBOL_TYPE_FUNCTION
@@ -2206,7 +2263,10 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	free(inname);
 
 	/* Stick it in the anontab. */
-	symtab_insert(symbol->symtab,symbol,die_offset);
+	if (symtab_insert(symbol->symtab,symbol,die_offset)) {
+	    lerror("could not insert inlineinstance symbol %s at offset %"PRIx64" into anontab!\n",
+			   symbol->name,die_offset);
+	}
 	retval = 1;
     }
     else if (symbol->type == SYMBOL_TYPE_VAR
