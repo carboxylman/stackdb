@@ -321,6 +321,8 @@ int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol);
 struct symbol *debugfile_find_type(struct debugfile *debugfile,
 				   char *typename);
 int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol);
+int debugfile_add_type_fakename(struct debugfile *debugfile,
+				char *fakename,struct symbol *symbol);
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud);
 void debugfile_free(struct debugfile *debugfile);
 
@@ -331,6 +333,8 @@ struct symtab *symtab_create(struct debugfile *debugfile,
 			     char *srcfilename,char *compdirname,
 			     int language,char *producer);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,uint64_t anonaddr);
+int symtab_insert_fakename(struct symtab *symtab,char *fakename,
+			   struct symbol *symbol,uint64_t anonaddr);
 /* These symtab_set functions are about dealing with memory stuff, not
  * about hiding symtabs from dwarf or anything.
  */
@@ -339,7 +343,9 @@ void symtab_set_compdirname(struct symtab *symtab,char *compdirname);
 void symtab_set_producer(struct symtab *symtab,char *producer);
 void symtab_dump(struct symtab *symtab,struct dump_info *ud);
 void symtab_free(struct symtab *symtab);
+#ifdef DWDEBUG_USE_STRTAB
 int symtab_str_in_strtab(struct symtab *symtab,char *strp);
+#endif
 
 /**
  ** Symbols.
@@ -867,8 +873,15 @@ struct symbol {
     /* the primary symbol table we are resident in */
     struct symtab *symtab;
 
-    /* Our name, if any */
+    /*
+     * Our name, if any.
+     *
+     * BUT, see comments about 'extname' below!!!  Do not free .name if
+     * extname is set!  Right now it can only be set for type symbols;
+     * hence, it is in the type section of the primary union below.
+     */
     char *name;
+
     /* The kind of symbol we are. */
     symbol_type_t type;
 
@@ -893,6 +906,26 @@ struct symbol {
     union {
 	/* datatype info */
 	struct {
+	    /*
+	     * If we copy the string table from the ELF binary
+	     * brute-force to save on lots of mallocs per symbol name,
+	     * we don't malloc each symbol's .name .  This means that
+	     * for type names that must be prepended to (i.e., the DWARF
+	     * name for a struct is just 'X', but we have to put it into
+	     * the symtab as 'struct X' to avoid typedef collisions
+	     * (i.e., typedef struct X X).  This means we have to drum
+	     * up a fake name. 
+	     * 
+	     * When the fakename pointer is non-NULL, that means that
+	     * the symbol's name is in fakename + offset (i.e., if 'X'
+	     * is a struct type, then fakename + 7 = 'X'.  In this case,
+	     * we set name to fakename + offset -- AND MOST IMPORTANTLY,
+	     * don't free name -- but only fakename.
+	     *
+	     * What a mess.
+	     */
+	    char *extname;
+
 	    datatype_code_t datatype_code;
 	    uint16_t byte_size;
 

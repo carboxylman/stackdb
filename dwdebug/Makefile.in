@@ -21,6 +21,8 @@ CFLAGS += -I$(SRCDIR)/../lib -I$(OBJDIR)
 #CFLAGS += $(XENACCESS_FLAGS) $(VMPROBES_FLAGS)
 #CFLAGS += -I./ -I$(XENACCESS_INC)
 
+CFLAGS += -DDWDEBUG_USE_STRTAB
+
 CFLAGS += $(shell pkg-config --cflags glib-2.0)
 
 CFLAGS += -I$(ELFUTILS)/include

@@ -2063,18 +2063,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
      * we need to.
      */
 
-    if (symbol->type == SYMBOL_TYPE_TYPE && !symbol->name) {
-	symbol->s.ti.isanon = 1;
-	/*
-	 * Fixup for GCC bugs (?), and for handling cases where a
-	 * type actually is an anonymous type.
-	 */
-	char *newname = malloc(17+5);
-	snprintf(newname,17,"anon:%" PRIx64,die_offset);
-	ldebug(5,"unnamed/anonymous type! renamed to %s.\n",newname);
-	symbol_set_name(symbol,newname);
-	free(newname);
-
+    if (symbol->type == SYMBOL_TYPE_TYPE) {
+	/* If it doesn't have a type, make it void. */
 	if (symbol->s.ti.type_datatype == NULL
 	    && symbol->s.ti.type_datatype_ref == 0) {
 	    //&& symbol->s.ti.datatype_code == DATATYPE_PTR) {
@@ -2084,12 +2074,76 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    symbol->s.ti.type_datatype = voidsymbol;
 	}
 
-	symtab_insert(symbol->symtab,symbol,die_offset);
+	if (!symbol->name) {
+	    symbol->s.ti.isanon = 1;
+	    /*
+	     * Fixup for GCC bugs (?), and for handling cases where a
+	     * type actually is an anonymous type.
+	     */
+	    char *newname = malloc(17+5);
+	    snprintf(newname,17,"anon:%" PRIx64,die_offset);
+	    ldebug(5,"unnamed/anonymous type! renamed to %s.\n",newname);
+	    symbol_set_name(symbol,newname);
+	    free(newname);
 
-	/* We inserted it, but into the anon table, not the primary
-	 * table! 
-	 */
-	retval = 1;
+	    symtab_insert(symbol->symtab,symbol,die_offset);
+
+	    /* We inserted it, but into the anon table, not the primary
+	     * table! 
+	     */
+	    retval = 1;
+	}
+	else if (SYMBOL_IST_STUN(symbol) || SYMBOL_IST_ENUM(symbol)) {
+	    /*
+	     * NOTE!!!  If this is a struct, union, or enum type, we
+	     * *have* to place the struct/union/enum type in front of
+	     * the alphanumeric name, since you can have typedefs that
+	     * are named the same name as a struct/union/enum.  So we
+	     * have to use the full type name as the hashtable key;
+	     * otherwise we'll see collisions with typedefs.
+	     *
+	     * This means the user has to lookup those types with the
+	     * fully-qualified type names (i.e., 'struct task_struct'),
+	     * not just 'task_struct'.
+	     */
+	    char *insertname = symbol->name;
+	    int foffset;
+	    if (SYMBOL_IST_ENUM(symbol)) {
+		foffset = 5;
+		insertname = malloc(strlen(symbol->name)+6);
+		sprintf(insertname,"enum %s",symbol->name);
+	    }
+	    else if (SYMBOL_IST_STRUCT(symbol)) {
+		foffset = 7;
+		insertname = malloc(strlen(symbol->name)+8);
+		sprintf(insertname,"struct %s",symbol->name);
+	    }
+	    else if (SYMBOL_IST_UNION(symbol)) {
+		foffset = 6;
+		insertname = malloc(strlen(symbol->name)+7);
+		sprintf(insertname,"union %s",symbol->name);
+	    }
+
+	    symbol->s.ti.extname = insertname;
+	    if (symbol->name
+#ifdef DWDEBUG_USE_STRTAB
+		&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
+#endif
+		) 
+		free(symbol->name);
+	    symbol->name = symbol->s.ti.extname + foffset;
+
+	    symtab_insert_fakename(symbol->symtab,insertname,symbol,0);
+
+	    if (!debugfile_find_type(debugfile,insertname))
+		debugfile_add_type_fakename(debugfile,insertname,symbol);
+	}
+	else {
+	    symtab_insert(symbol->symtab,symbol,0);
+
+	    if (!debugfile_find_type(debugfile,symbol->name))
+		debugfile_add_type_fakename(debugfile,symbol->name,symbol);
+	}
     }
     else if (SYMBOL_IS_VAR(symbol) 
 	     && symbol->s.ii.isparam 
@@ -2099,14 +2153,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	 */
 	retval = 1;
     }
-    else if (symbol->name) {
-	if (symbol->type == SYMBOL_TYPE_TYPE) {
-	    symtab_insert(symbol->symtab,symbol,0);
-
-	    if (!debugfile_find_type(debugfile,symbol->name))
-		debugfile_add_type(debugfile,symbol);
-	}
-	else if (symbol->type == SYMBOL_TYPE_FUNCTION) {
+    else if (symbol->name && symbol->type != SYMBOL_TYPE_TYPE) {
+	if (symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    if (symbol->datatype == NULL
 		&& symbol->datatype_addr_ref == 0) {
 		ldebug(3,"[DIE %" PRIx64 "] assuming function %s without type is void\n",
@@ -2504,6 +2552,16 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	data->debugfile->rangetablen = 0;
 	data->debugfile->rangetab = NULL;
     }
+    /*
+     * Only save strtab if we're gonna use it.
+     */
+#ifndef DWDEBUG_USE_STRTAB
+    if (data->debugfile->strtab) {
+	free(data->debugfile->strtab);
+	data->debugfile->strtablen = 0;
+	data->debugfile->strtab = NULL;
+    }
+#endif
 
     ebl_closebackend(ebl);
 

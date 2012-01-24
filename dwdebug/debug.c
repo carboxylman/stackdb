@@ -1340,8 +1340,14 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
     udn.meta = ud->meta;
     udn.detail = ud->detail;
 
-    fprintf(ud->stream,"%ssymbol(%s,%s,line=%d): ",
-	    p,symbol->name,SYMBOL_TYPE(symbol->type),symbol->srcline);
+    fprintf(ud->stream,"%ssymbol(",p);
+    if (SYMBOL_IS_TYPE(symbol) && symbol->s.ti.extname)
+	fprintf(ud->stream,"%s",symbol->s.ti.extname);
+    else
+	fprintf(ud->stream,"%s",symbol->name);
+    fprintf(ud->stream,",%s,line=%d): ",
+	    SYMBOL_TYPE(symbol->type),symbol->srcline);
+
     if (symbol->type == SYMBOL_TYPE_TYPE) 
 	symbol_type_dump(symbol,&udn);
     else if (symbol->type == SYMBOL_TYPE_VAR) 
@@ -1582,6 +1588,14 @@ int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol) {
     return 0;
 }
 
+int debugfile_add_type_fakename(struct debugfile *debugfile,
+				char *fakename,struct symbol *symbol) {
+    if (unlikely(g_hash_table_lookup(debugfile->types,fakename)))
+	return 1;
+    g_hash_table_insert(debugfile->types,fakename,symbol);
+    return 0;
+}
+
 void debugfile_free(struct debugfile *debugfile) {
     if (debugfile->refcnt) {
 	lwarn("debugfile(%s) still has refcnt %d, not freeing!\n",
@@ -1772,24 +1786,36 @@ struct symtab *symtab_create(struct debugfile *debugfile,
 }
 
 void symtab_set_name(struct symtab *symtab,char *name) {
-    symtab->name = name;
-    if (name && (!symtab->debugfile 
-			|| !symtab_str_in_strtab(symtab,name)))
+    if (name 
+#ifdef DWDEBUG_USE_STRTAB
+	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,name))
+#endif
+	)
 	symtab->name = strdup(name);
+    else 
+	symtab->name = name;
 }
 
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
-    symtab->compdirname = compdirname;
-    if (compdirname && (!symtab->debugfile 
-			|| !symtab_str_in_strtab(symtab,compdirname)))
+    if (compdirname
+#ifdef DWDEBUG_USE_STRTAB
+	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,compdirname))
+#endif
+	)
 	symtab->compdirname = strdup(compdirname);
+    else
+	symtab->compdirname = compdirname;
 }
 
 void symtab_set_producer(struct symtab *symtab,char *producer) {
-    symtab->producer = producer;
-    if (producer && (!symtab->debugfile 
-		     || !symtab_str_in_strtab(symtab,producer)))
+    if (producer 
+#ifdef DWDEBUG_USE_STRTAB
+	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,producer))
+#endif
+	)
 	symtab->producer = strdup(producer);
+    else
+	symtab->producer = producer;
 }
 
 void symtab_free(struct symtab *symtab) {
@@ -1805,16 +1831,29 @@ void symtab_free(struct symtab *symtab) {
     g_hash_table_destroy(symtab->tab);
     g_hash_table_destroy(symtab->anontab);
 
-    if (symtab->name && !symtab_str_in_strtab(symtab,symtab->name))
+    if (symtab->name
+#ifdef DWDEBUG_USE_STRTAB
+	&& !symtab_str_in_strtab(symtab,symtab->name)
+#endif
+	)
 	free(symtab->name);
-    if (symtab->compdirname && !symtab_str_in_strtab(symtab,symtab->compdirname))
+    if (symtab->compdirname
+#ifdef DWDEBUG_USE_STRTAB
+	&& !symtab_str_in_strtab(symtab,symtab->compdirname)
+#endif
+	)
 	free(symtab->compdirname);
-    if (symtab->producer && !symtab_str_in_strtab(symtab,symtab->producer))
+    if (symtab->producer
+#ifdef DWDEBUG_USE_STRTAB
+	&& !symtab_str_in_strtab(symtab,symtab->producer)
+#endif
+	)
 	free(symtab->producer);
 
     free(symtab);
 }
 
+#ifdef DWDEBUG_USE_STRTAB
 /* Returns 1 if string is in symtab; else 0 */
 int symtab_str_in_strtab(struct symtab *symtab,char *strp) {
     if (symtab->debugfile && symtab->debugfile->strtab
@@ -1823,6 +1862,7 @@ int symtab_str_in_strtab(struct symtab *symtab,char *strp) {
 	return 1;
     return 0;
 }
+#endif
 
 /*
  * Symbols.
@@ -1849,6 +1889,25 @@ struct symbol *symbol_create(struct symtab *symtab,
     return symbol;
 }
 
+int symtab_insert_fakename(struct symtab *symtab,char *fakename,
+			   struct symbol *symbol,uint64_t anonaddr) {
+    if (!anonaddr) {
+	if (unlikely(g_hash_table_lookup(symtab->tab,fakename)))
+	    return 1;
+	g_hash_table_insert(symtab->tab,fakename,symbol);
+	return 0;
+    }
+    else if (anonaddr) {
+	if (unlikely(g_hash_table_lookup(symtab->anontab,(gpointer)anonaddr)))
+	    return 1;
+	g_hash_table_insert(symtab->anontab,(gpointer)anonaddr,symbol);
+	return 0;
+    }
+
+    lerror("VERY BAD -- tried to insert a non-anonymous symbol with no name!\n");
+    return 1;
+}
+
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,uint64_t anonaddr) {
     if (!anonaddr && symbol->name) {
 	if (unlikely(g_hash_table_lookup(symtab->tab,symbol->name)))
@@ -1868,11 +1927,16 @@ int symtab_insert(struct symtab *symtab,struct symbol *symbol,uint64_t anonaddr)
 }
 
 void symbol_set_name(struct symbol *symbol,char *name) {
-    symbol->name = name;
-    if (name && (!symbol->symtab || !symbol->symtab->debugfile 
-		 || !symtab_str_in_strtab(symbol->symtab,name))) {
-	ldebug(5,"dup'ing symbol name %s\n",name);
+    if (name 
+#ifdef DWDEBUG_USE_STRTAB
+	&& (!symbol->symtab || !symbol->symtab->debugfile 
+	    || !symtab_str_in_strtab(symbol->symtab,name))
+#endif
+	) {
 	symbol->name = strdup(name);
+    }
+    else {
+	symbol->name = name;
     }
 }
 
@@ -2947,8 +3011,15 @@ void symbol_free(struct symbol *symbol) {
     if (symbol->type != SYMBOL_TYPE_TYPE)
 	location_internal_free(&symbol->s.ii.l);
 
-    if (symbol->name && (!symbol->symtab 
-			 || !symtab_str_in_strtab(symbol->symtab,symbol->name))) {
+    if (symbol->type == SYMBOL_TYPE_TYPE && symbol->s.ti.extname) {
+	ldebug(5,"freeing extname %s\n",symbol->s.ti.extname);
+	free(symbol->s.ti.extname);
+    }
+    else if (symbol->name
+#ifdef DWDEBUG_USE_STRTAB
+	     && (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
+#endif
+	     ) {
 	ldebug(5,"freeing name %s\n",symbol->name);
 	free(symbol->name);
     }
