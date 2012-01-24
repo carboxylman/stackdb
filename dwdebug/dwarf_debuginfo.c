@@ -316,8 +316,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 
 	    if (cbargs->symbol 
-		&& (cbargs->symbol->type == SYMBOL_TYPE_LABEL
-		    || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
+		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
 		if (RANGE_IS_LIST(&cbargs->symbol->s.ii.d.l.range)) {
 		    lerror("cannot update highpc; already saw AT_ranges for %s symbol %s!\n",
 			   SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
@@ -343,8 +342,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 
 	    if (cbargs->symbol 
-		&& (cbargs->symbol->type == SYMBOL_TYPE_LABEL
-		    || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
+		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
 		if (RANGE_IS_LIST(&cbargs->symbol->s.ii.d.l.range)) {
 		    lerror("cannot update highpc; already saw AT_ranges for %s symbol %s!\n",
 			   SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
@@ -353,10 +351,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
 		    cbargs->symbol->s.ii.d.l.range.highpc = addr;
 		}
-	    }
-	    else if (cbargs->symbol 
-		     && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-		;
 	    }
 	}
 	else {
