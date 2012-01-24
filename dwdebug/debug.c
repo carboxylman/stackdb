@@ -1015,6 +1015,12 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	.detail = 0,
 	.meta = 0,
     };
+    struct dump_info udn2 = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = 0,
+	.meta = 0,
+    };
 
     if (ud->detail) {
 	//if (1 || !(symbol->type == SYMBOL_TYPE_VAR
@@ -1063,7 +1069,7 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 
     if (ud->detail && symbol->s.ii.l.loctype != LOCTYPE_UNKNOWN) {
 	fprintf(ud->stream," @@ ");
-	location_dump(&symbol->s.ii.l,ud);
+	location_dump(&symbol->s.ii.l,&udn2);
 
 	if (symbol->s.ii.constval)
 	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
@@ -3018,7 +3024,12 @@ void symbol_free(struct symbol *symbol) {
      * Also have to free any constant data allocated.
      */
     if (symbol->type != SYMBOL_TYPE_TYPE
-	&& symbol->s.ii.constval)
+	&& symbol->s.ii.constval
+#ifdef DWDEBUG_USE_STRTAB
+	&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,
+						     symbol->s.ii.constval))
+#endif
+	)
 	free(symbol->s.ii.constval);
 
     /*

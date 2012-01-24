@@ -121,6 +121,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
     switch(form) {
     case DW_FORM_string:
+	// XXX: do we need to strcpy this one?  It's not in our strtab...
 	str = (char *)attrp->valp;
 	str_set = 1;
 	break;
@@ -136,6 +137,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    goto errout;
 	}
 	// XXX relocation...
+	// XXX: make sure to only use this pointer if DWDEBUG_USE_STRTAB!
 	if (cbargs->offset_size == 4)
 	    str = &debugfile->strtab[*((uint32_t *)attrp->valp)];
 	else 
@@ -545,7 +547,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
 		     || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
 	    /* Don't malloc; use our copy of the string table. */
+#ifdef DWDEBUG_USE_STRTAB
 	    cbargs->symbol->s.ii.constval = str;
+#else
+	    int slen = strlen(str);
+	    cbargs->symbol->s.ii.constval = malloc(slen+1);
+	    strcpy(cbargs->symbol->s.ii.constval,str,slen+1);
+#endif
 	}
 	else if (block_set && cbargs->symbol 
 		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
