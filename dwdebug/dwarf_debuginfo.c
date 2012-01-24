@@ -1993,10 +1993,16 @@ static int fill_debuginfo(struct debugfile *debugfile,
  errout:
     if (dies)
 	free(dies);
+    g_hash_table_destroy(reftab);
+    free(symbols);
+    free(symtabs);
     return -1;
  out:
     if (dies)
 	free(dies);
+    g_hash_table_destroy(reftab);
+    free(symbols);
+    free(symtabs);
     return retval;
 }
 
@@ -2067,6 +2073,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	snprintf(newname,17,"anon:%" PRIx64,die_offset);
 	ldebug(5,"unnamed/anonymous type! renamed to %s.\n",newname);
 	symbol_set_name(symbol,newname);
+	free(newname);
 
 	if (symbol->s.ti.type_datatype == NULL
 	    && symbol->s.ti.type_datatype_ref == 0) {
@@ -2081,6 +2088,14 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 
 	/* We inserted it, but into the anon table, not the primary
 	 * table! 
+	 */
+	retval = 1;
+    }
+    else if (SYMBOL_IS_VAR(symbol) 
+	     && symbol->s.ii.isparam 
+	     && parentsymbol && SYMBOL_IST_FUNCTION(parentsymbol)) {
+	/* Argh, catch function params that are part of function types
+	 * -- DO NOT put these in the symbol table!
 	 */
 	retval = 1;
     }
@@ -2112,18 +2127,20 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		symbol->datatype = voidsymbol;
 	    }
 
-	    /* Don't insert params or members into the symbol table! */
-	    if (!symbol->s.ii.isparam && !symbol->s.ii.ismember) 
+	    /* Don't insert members into the symbol table! */
+	    if (!symbol->s.ii.ismember) 
 		symtab_insert(symbol->symtab,symbol,0);
 
 	    if (level == 1)
 		debugfile_add_global(debugfile,symbol);
 	}
+	else if (symbol->type == SYMBOL_TYPE_LABEL) {
+	    symtab_insert(symbol->symtab,symbol,0);
+	}
     }
-    else if (symbol
-	     && (symbol->type == SYMBOL_TYPE_FUNCTION
-		 || symbol->type == SYMBOL_TYPE_VAR
-		 || symbol->type == SYMBOL_TYPE_LABEL)
+    else if ((symbol->type == SYMBOL_TYPE_FUNCTION
+	      || symbol->type == SYMBOL_TYPE_VAR
+	      || symbol->type == SYMBOL_TYPE_LABEL)
 	     && symbol->s.ii.isinlineinstance) {
 	/* An inlined instance; definitely need it in the symbol
 	 * tables.  But we have to give it a name.  And the name *has*
@@ -2136,14 +2153,14 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	char *inname;
 	int inlen;
 	if (symbol->s.ii.origin) {
-	    inlen = 9 + 1 + 16 + 1 + strlen(symbol->s.ii.origin->name) + 1 + 1;
+	    inlen = 9 + 1 + 18 + 1 + strlen(symbol->s.ii.origin->name) + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
 	    sprintf(inname,"__INLINED(%p:%s)",
 		    (void *)symbol,
 		    symbol->s.ii.origin->name);
 	}
 	else {
-	    inlen = 9 + 1 + 16 + 1 + 4 + 16 + 1 + 1;
+	    inlen = 9 + 1 + 18 + 1 + 4 + 16 + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
 	    sprintf(inname,"__INLINED(%p:iref%" PRIx64 ")",
 		    (void *)symbol,
@@ -2151,23 +2168,24 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	}
 
 	symbol_set_name(symbol,inname);
+	free(inname);
 
 	/* Stick it in the anontab. */
 	symtab_insert(symbol->symtab,symbol,die_offset);
 	retval = 1;
     }
-    else if (symbol
-	     && symbol->type == SYMBOL_TYPE_VAR
+    else if (symbol->type == SYMBOL_TYPE_VAR
 	     && (symbol->s.ii.isparam || symbol->s.ii.ismember)) {
 	/* We allow unnamed params, of course, BUT we don't put them
-	 * into the symbol table.
+	 * into the symbol table.  We leave them on the function
+	 * symbol/function type to be freed in symbol_free!
 	 *
 	 * XXX: we only need this for subroutine type formal parameters;
 	 * should we make the check above more robust?
 	 */
 	retval = 1;
     }
-    else if (symbol) {
+    else {
 	lerror("[DIE %" PRIx64 "] non-anonymous symbol of type %s without a name!\n",
 	       die_offset,SYMBOL_TYPE(symbol->type));
 	struct dump_info udn = {
@@ -2181,9 +2199,9 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	symbol_free(symbol);
 	retval = 1;
     }
-    else {
-	lwarn("[DIE %" PRIx64 "] null symbol!\n",die_offset);
-    }
+
+    ldebug(5,"finalized symbol at %lx %s//%s \n",
+	   die_offset,SYMBOL_TYPE(symbol->type),symbol->name);
 
     return retval;
 }
@@ -2393,7 +2411,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     Dwarf *dbg = dwfl_module_getdwarf(dwflmod,&dwbias);
     if (!dbg) {
 	lerror("could not get dwarf module!\n");
-	return DWARF_CB_ABORT;
+	goto errout;
     }
 
     size_t shstrndx;
@@ -2403,7 +2421,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     if (elf_getshstrndx(elf,&shstrndx) < 0) {
 #endif
 	lerror("cannot get section header string table index\n");
-	return DWARF_CB_ABORT;
+	goto errout;
     }
 
     Elf_Scn *scn = NULL;
@@ -2440,7 +2458,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	    if (!edata) {
 		lerror("cannot get data for valid section '%s': %s",
 		       name,elf_errmsg(-1));
-		return DWARF_CB_ABORT;
+		goto errout;
 	    }
 
 	    /*
@@ -2487,7 +2505,14 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	data->debugfile->rangetab = NULL;
     }
 
+    ebl_closebackend(ebl);
+
     return DWARF_CB_OK;
+
+ errout:
+    ebl_closebackend(ebl);
+
+    return DWARF_CB_ABORT;
 }
 
 /*

@@ -83,5 +83,7 @@ int main(int argc,char **argv) {
 
     debugfile_free(debugfile);
 
+    libdwdebug_fini();
+
     return 0;
 }

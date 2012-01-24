@@ -123,6 +123,10 @@ int target_close(struct target *target) {
     return 0;
 }
 
+void target_free(struct target *target) {
+    
+}
+
 
 /*
  * The target interface.  You can use address spaces and all the other

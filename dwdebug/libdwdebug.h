@@ -25,6 +25,7 @@
  * Everybody's gotta call this!
  */
 void libdwdebug_init(void);
+void libdwdebug_fini(void);
 
 void libdwdebug_set_debug_level(int level);
 #ifdef LIBDWDEBUG_DEBUG
@@ -279,6 +280,7 @@ unsigned long target_generic_fd_write(int fd,
 char *target_reg_name(struct target *target,REG reg);
 REGVAL target_read_reg(struct target *target,REG reg);
 int target_write_reg(struct target *target,REG reg,REGVAL value);
+void target_free(struct target *target);
 
 /* Populate a libsymd debugfile with DWARF debuginfo from an ELF file. */
 int load_debug_info(struct debugfile *debugfile);

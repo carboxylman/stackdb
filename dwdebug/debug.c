@@ -50,6 +50,11 @@ void libdwdebug_init(void) {
     regcomp(&LIBREGEX2,LIBFORMAT2,REG_EXTENDED);
 }
 
+void libdwdebug_fini(void) {
+    regfree(&LIBREGEX1);
+    regfree(&LIBREGEX2);
+}
+
 /*
  * Globals.
  */
@@ -522,7 +527,7 @@ struct addrspace *addrspace_create(char *name,int id,int pid) {
     retval->name = strdup(name);
     retval->id = id;
     retval->pid = pid;
-    retval->refcnt = 1;
+    retval->refcnt = 0;
 
     INIT_LIST_HEAD(&retval->regions);
 
@@ -1578,10 +1583,13 @@ int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol) {
 }
 
 void debugfile_free(struct debugfile *debugfile) {
-    char *idstr = debugfile->idstr;
-
-    if (debugfile->refcnt)
+    if (debugfile->refcnt) {
+	lwarn("debugfile(%s) still has refcnt %d, not freeing!\n",
+	      debugfile->idstr,debugfile->refcnt);
 	return;
+    }
+
+    ldebug(1,"freeing debugfile(%s)\n",debugfile->idstr);
 
     if (debugfile->kernel_debugfile)
 	--(debugfile->kernel_debugfile->refcnt);
@@ -1610,7 +1618,7 @@ void debugfile_free(struct debugfile *debugfile) {
     free(debugfile->idstr);
     free(debugfile);
 
-    ldebug(1,"freed debugfile(%s)\n",idstr);
+    ldebug(1,"freed debugfile\n");
 }
 
 /*
@@ -1662,8 +1670,7 @@ void range_list_internal_free(struct range_list *list) {
     for (i = 0; i < list->len; ++i) {
 	free(list->list[i]);
     }
-
-    free(list);
+    free(list->list);
 }
 
 void range_list_free(struct range_list *list) {
@@ -1720,6 +1727,7 @@ void loc_list_free(struct loc_list *list) {
 	free(list->list[i]);
     }
 
+    free(list->list);
     free(list);
 }
 
@@ -1786,6 +1794,9 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 
 void symtab_free(struct symtab *symtab) {
     struct symtab *tmp;
+
+    ldebug(5,"freeing symtab(%s:%s)\n",
+	   symtab->debugfile->idstr,symtab->name);
 
     list_for_each_entry(tmp,&symtab->subtabs,member) 
 	symtab_free(tmp);
@@ -1859,8 +1870,10 @@ int symtab_insert(struct symtab *symtab,struct symbol *symbol,uint64_t anonaddr)
 void symbol_set_name(struct symbol *symbol,char *name) {
     symbol->name = name;
     if (name && (!symbol->symtab || !symbol->symtab->debugfile 
-		 || !symtab_str_in_strtab(symbol->symtab,name)))
+		 || !symtab_str_in_strtab(symbol->symtab,name))) {
+	ldebug(5,"dup'ing symbol name %s\n",name);
 	symbol->name = strdup(name);
+    }
 }
 
 void symbol_set_type(struct symbol *symbol,symbol_type_t symtype) {
@@ -2386,7 +2399,7 @@ int location_load(struct memregion *region,struct location *location,
     return 0;
 }
 
-void location_free(struct location *location) {
+void location_internal_free(struct location *location) {
     if (location->loctype == LOCTYPE_RUNTIME) {
 	if (location->l.runtime.data) 
 	    free(location->l.runtime.data);
@@ -2395,6 +2408,10 @@ void location_free(struct location *location) {
 	if (location->l.loclist)
 	    loc_list_free(location->l.loclist);
     }
+}
+
+void location_free(struct location *location) {
+    location_internal_free(location);
     free(location);
 }
 
@@ -2878,10 +2895,63 @@ struct value *symbol_load_fat(struct memregion *region,struct symbol *symbol,
 }
 
 void symbol_free(struct symbol *symbol) {
-    if (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
-	free(symbol->name);
+    struct symbol *tmp;
 
-    // XXX fill
+    if (symbol->name)
+	ldebug(5,"freeing symbol %s//%s\n",SYMBOL_TYPE(symbol->type),symbol->name);
+    else 
+	ldebug(5,"freeing symbol %s//(null)\n",SYMBOL_TYPE(symbol->type));
+
+    /*
+     * We have to recurse through any symbol that has members, because
+     * those members are not in any symbol tables, so they won't be freed.
+     */
+    if (symbol->type == SYMBOL_TYPE_FUNCTION) {
+	if (symbol->s.ii.d.f.fbisloclist
+	    && symbol->s.ii.d.f.fblist)
+	    loc_list_free(symbol->s.ii.d.f.fblist);
+	else if (symbol->s.ii.d.f.fbissingleloc
+		 && symbol->s.ii.d.f.fbloc)
+	    location_free(symbol->s.ii.d.f.fbloc);
+
+	/*
+	 * Don't free the function's symtab -- it is freed in in
+	 * symtab_free since all functions will have a parent symtab.
+	 */
+	//if (symbol->s.ii.d.f.symtab)
+	//    symtab_free(symbol->s.ii.d.f.symtab);
+    }
+    else if (SYMBOL_IST_ARRAY(symbol)) {
+	if (symbol->s.ti.d.a.subranges)
+	    free(symbol->s.ti.d.a.subranges);
+    }
+    else if (SYMBOL_IST_STUN(symbol)) {
+	list_for_each_entry(tmp,&symbol->s.ti.d.su.members,member)
+	    symbol_free(tmp);
+    }
+    else if (SYMBOL_IST_FUNCTION(symbol)) {
+	list_for_each_entry(tmp,&symbol->s.ti.d.f.args,member)
+	    symbol_free(tmp);
+    }
+
+    /*
+     * Also have to free any constant data allocated.
+     */
+    if (symbol->type != SYMBOL_TYPE_TYPE
+	&& symbol->s.ii.constval)
+	free(symbol->s.ii.constval);
+
+    /*
+     * Also have to free location data, potentially.
+     */
+    if (symbol->type != SYMBOL_TYPE_TYPE)
+	location_internal_free(&symbol->s.ii.l);
+
+    if (symbol->name && (!symbol->symtab 
+			 || !symtab_str_in_strtab(symbol->symtab,symbol->name))) {
+	ldebug(5,"freeing name %s\n",symbol->name);
+	free(symbol->name);
+    }
 
     free(symbol);
 }
