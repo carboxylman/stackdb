@@ -881,7 +881,7 @@ void loc_list_dump(struct loc_list *list,struct dump_info *ud) {
 	.meta = ud->meta,
     };
 
-    fprintf(ud->stream,"%sLOCLIST: (",ud->prefix);
+    fprintf(ud->stream,"%sLOCLIST(",ud->prefix);
     for (i = 0; i < list->len; ++i) {
 	if (i > 0)
 	    fprintf(ud->stream,",");
@@ -932,17 +932,17 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
     udn2.detail = ud->detail;
 
     if (symtab->name)
-	fprintf(ud->stream,"%ssymtab(%s):\n",p,symtab->name);
+	fprintf(ud->stream,"%ssymtab(%s) (",p,symtab->name);
     else
-	fprintf(ud->stream,"%ssymtab:\n",p);
+	fprintf(ud->stream,"%ssymtab() (",p);
     if (symtab->compdirname)
-	fprintf(ud->stream,"%s    compdirname: %s\n",p,symtab->compdirname);
-    range_dump(&symtab->range,&udn3);
-    fprintf(ud->stream,"\n");
+	fprintf(ud->stream,"compdirname=%s ",symtab->compdirname);
     if (symtab->producer)
-	fprintf(ud->stream,"%s    producer: %s\n",p,symtab->producer);
+	fprintf(ud->stream,"producer=%s ",symtab->producer);
     if (symtab->language)
-	fprintf(ud->stream,"%s    language: %d\n",p,symtab->language);
+	fprintf(ud->stream,"language=%d ",symtab->language);
+    range_dump(&symtab->range,&udn3);
+    fprintf(ud->stream,") {\n");
     g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
 
     if (!list_empty(&symtab->subtabs)) {
@@ -952,10 +952,7 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	}
     }
 
-    if (symtab->name)
-	fprintf(ud->stream,"%send symtab(%s)\n",p,symtab->name);
-    else
-	fprintf(ud->stream,"%send symtab\n",p);
+    fprintf(ud->stream,"%s}\n",p);
 
     if (ud->prefix) {
 	free(np);
@@ -1110,12 +1107,19 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     if (ud->meta) {
 	if (symbol->s.ii.d.f.fbisloclist && symbol->s.ii.d.f.fblist 
 	    && symbol->s.ii.d.f.fblist->len) {
+	    fprintf(ud->stream,"(frame_base=");
 	    loc_list_dump(symbol->s.ii.d.f.fblist,&udn2);
+	    fprintf(ud->stream,",");
 	}
 	else if (symbol->s.ii.d.f.fbissingleloc && symbol->s.ii.d.f.fbloc) { 
+	    fprintf(ud->stream,"(frame_base=");
 	    location_dump(symbol->s.ii.d.f.fbloc,&udn2);
+	    fprintf(ud->stream,",");
 	}
-	fprintf(ud->stream," (external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
+	else 
+	    fprintf(ud->stream,"(");
+
+	fprintf(ud->stream,"external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
 		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
 		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
     }
