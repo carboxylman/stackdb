@@ -1504,10 +1504,8 @@ void resolve_refs(gpointer key,gpointer value,gpointer data);
 
 struct symbol *add_void_symbol(struct debugfile *debugfile,
 			       struct symtab *symtab) {
-    /* must malloc it so it can be freed safely */
-    char *vstr = malloc(5);
-    memcpy(vstr,"void",5);
-    struct symbol *symbol = symbol_create(symtab,vstr,SYMBOL_TYPE_TYPE);
+    /* symbol_create dups the name, so we just pass a static buf */
+    struct symbol *symbol = symbol_create(symtab,"void",SYMBOL_TYPE_TYPE);
     symbol->s.ti.datatype_code = DATATYPE_VOID;
 
     /* Always put it in its primary symtab, of course -- probably the CU's. */
