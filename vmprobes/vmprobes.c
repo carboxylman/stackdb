@@ -31,7 +31,7 @@ void vmprobes_set_debug_level(int level,int xa_level)
 void _vmprobes_debug(int level,char *format,...) {
     va_list args;
     if (vmprobes_debug_level < level)
-    return;
+	return;
     va_start(args, format);
     vfprintf(stderr, format, args);
     fflush(stderr);
@@ -121,21 +121,23 @@ static void unregister_vmprobe_batch_internal(void) {
     int handle;
 
     list_for_each_entry_safe(domain, tdomain, &domain_list, list) {
-    // setup a list for this domain:
-    for (handle = 0; handle < VMPROBE_MAX; handle++) {
-        handlelist[handle] = -1;
-        if (probe_list[handle] 
-        && domain->id == probe_list[handle]->probepoint->domain->id) {
-        handlelist[handle] = handle;
-        }
-    }
+	// setup a list for this domain:
+	for (handle = 0; handle < VMPROBE_MAX; handle++) {
+	    handlelist[handle] = -1;
+	    if (probe_list[handle] 
+		&& domain->id == probe_list[handle]->probepoint->domain->id) {
+		handlelist[handle] = handle;
+	    }
+	}
 
-    // batch unregister:
-    unregister_vmprobe_batch(domain->id,handlelist,VMPROBE_MAX);
+	// batch unregister:
+	unregister_vmprobe_batch(domain->id,handlelist,VMPROBE_MAX);
     }
 }
 
 #ifdef VMPROBE_SIGNAL
+static sighandler_t osighandler[_NSIG];
+
 static void
 signal_handler(int sig)
 {
@@ -148,8 +150,8 @@ signal_handler(int sig)
     interrupt = true;
     interrupt_sig = sig;
 
-    signal(sig, SIG_DFL);
-    //return;
+    // don't recurse
+    signal(sig, osighandler[sig]);
 
     if (0 && sig == SIGSEGV) {
         for (handle = 0; handle < VMPROBE_MAX; handle++)
@@ -163,30 +165,34 @@ signal_handler(int sig)
 
     VMPROBE_PERF_PRINT();
 
-    signal(sig, SIG_DFL);
     raise(sig);
 }
 
 static void
 signal_interrupt(void)
 {
-    if (signal(SIGPIPE, signal_handler) == SIG_IGN)
-        signal(SIGPIPE, SIG_IGN);
-    if (signal(SIGQUIT, signal_handler) == SIG_IGN)
+    int i;
+
+    for (i = 0; i < sizeof(osighandler) / sizeof(osighandler[0]); i++)
+	osighandler[i] = SIG_DFL;
+
+    if ((osighandler[SIGPIPE] = signal(SIGPIPE, signal_handler)) == SIG_IGN)
+	signal(SIGPIPE, SIG_IGN);
+    if ((osighandler[SIGQUIT] = signal(SIGQUIT, signal_handler)) == SIG_IGN)
         signal(SIGQUIT, SIG_IGN);
-    if (signal(SIGINT, signal_handler) == SIG_IGN)
+    if ((osighandler[SIGINT] = signal(SIGINT, signal_handler)) == SIG_IGN)
         signal(SIGINT, SIG_IGN);
-    if (signal(SIGABRT, signal_handler) == SIG_IGN)
+    if ((osighandler[SIGABRT] = signal(SIGABRT, signal_handler)) == SIG_IGN)
         signal(SIGABRT, SIG_IGN);
-    if (signal(SIGHUP, signal_handler) == SIG_IGN)
+    if ((osighandler[SIGHUP] = signal(SIGHUP, signal_handler)) == SIG_IGN)
         signal(SIGHUP, SIG_IGN);
-    if (signal(SIGILL, signal_handler) == SIG_IGN)
+    if ((osighandler[SIGILL] = signal(SIGILL, signal_handler)) == SIG_IGN)
         signal(SIGILL, SIG_IGN);
-    if (signal(SIGFPE, signal_handler) == SIG_IGN)
+    if ((osighandler[SIGFPE] = signal(SIGFPE, signal_handler)) == SIG_IGN)
         signal(SIGFPE, SIG_IGN);
-    if (signal(SIGSEGV, signal_handler) == SIG_IGN)
+    if ((osighandler[SIGSEGV] = signal(SIGSEGV, signal_handler)) == SIG_IGN)
         signal(SIGSEGV, SIG_IGN);
-    if (signal(SIGTERM, signal_handler) == SIG_IGN)
+    if ((osighandler[SIGTERM] = signal(SIGTERM, signal_handler)) == SIG_IGN)
         signal(SIGTERM, SIG_IGN);
 }
 #endif /* VMPROBE_SIGNAL */
@@ -235,7 +241,7 @@ reinit_evtchn(evtchn_port_t *dbg_port)
         perror("warning: failed to bind debug virq port");
     }
     else {
-    *dbg_port = port;
+	*dbg_port = port;
     }
     
     return evtchn;
@@ -313,8 +319,8 @@ remove_probe(struct vmprobe *probe)
     /* destroy any actions it might have */
     list_for_each_entry_safe(action,tmp_action,
                  &probe->probepoint->action_list,node) {
-    if (probe == action->probe)
-        action_destroy(action->handle);
+	if (probe == action->probe)
+	    action_destroy(action->handle);
     }
 
     list_del(&probe->node);
@@ -408,8 +414,8 @@ int domain_exists(domid_t domid)
 {
     char *vmpath = xa_get_vmpath((int)domid);
     if (vmpath) {
-    free(vmpath);
-    return 1;
+	free(vmpath);
+	return 1;
     }
     return 0;
 }
@@ -424,44 +430,44 @@ int domain_init(domid_t domid,char *sysmapfile) {
 
     vmd = find_domain(domid);
     if (!vmd)
-    return -1;
+	return -1;
 
     if (!sysmapfile)
-    return -2;
+	return -2;
 
     sysmapfh = fopen(sysmapfile,"r");
     if (!sysmapfh) {
-    error("could not fopen %s: %s\n",optarg,strerror(errno));
-    return -3;
+	error("could not fopen %s: %s\n",optarg,strerror(errno));
+	return -3;
     }
 
     while ((rc = fscanf(sysmapfh,"%x %c %s255",&addr,&symtype,sym)) != EOF) {
-    if (rc < 0) {
-        error("while reading %s: fscanf: %s\n",sysmapfile,strerror(errno));
-        return -5;
-    }
-    else if (rc != 3)
-        continue;
+	if (rc < 0) {
+	    error("while reading %s: fscanf: %s\n",sysmapfile,strerror(errno));
+	    return -5;
+	}
+	else if (rc != 3)
+	    continue;
         
-    if (!strcmp("init_task",sym)) {
-        vmd = find_domain(domid);
-        if (vmd->xa_instance.init_task != addr) {
-        error("Updating init_task address (to 0x%x) in xenaccess.\n",
-            addr);
-        vmd->xa_instance.init_task = addr;
-        break;
-        }
-    }
+	if (!strcmp("init_task",sym)) {
+	    vmd = find_domain(domid);
+	    if (vmd->xa_instance.init_task != addr) {
+		error("Updating init_task address (to 0x%x) in xenaccess.\n",
+		      addr);
+		vmd->xa_instance.init_task = addr;
+		break;
+	    }
+	}
         
-    if (!strcmp("swapper_pg_dir",sym)) {
-        vmd = find_domain(domid);
-        if (vmd->xa_instance.kpgd != addr) {
-        error("Updating kpgd address (to 0x%x)in xenaccess.\n",
-            addr);
-        vmd->xa_instance.kpgd = addr;
-        break;
-        }
-    }
+	if (!strcmp("swapper_pg_dir",sym)) {
+	    vmd = find_domain(domid);
+	    if (vmd->xa_instance.kpgd != addr) {
+		error("Updating kpgd address (to 0x%x)in xenaccess.\n",
+		      addr);
+		vmd->xa_instance.kpgd = addr;
+		break;
+	    }
+	}
     }
 
     return 0;
@@ -559,14 +565,14 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
      * still needing to run for this probepoint.
      */
     if (probepoint->state == VMPROBE_BP_SET) {
-    debug(1,"resetting action execution flags for new action pass\n");
-    list_for_each_entry(action,&probepoint->action_list,node) {
-        action->executed_this_pass = 0;
-    }
-
-    probepoint->action = NULL;
-    probepoint->action_obviates_orig = 0;
-    probepoint->action_requires_sstep = 0;
+	debug(1,"resetting action execution flags for new action pass\n");
+	list_for_each_entry(action,&probepoint->action_list,node) {
+	    action->executed_this_pass = 0;
+	}
+	
+	probepoint->action = NULL;
+	probepoint->action_obviates_orig = 0;
+	probepoint->action_requires_sstep = 0;
     }
 
     /*
@@ -575,74 +581,74 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
      * away!
      */
     if (probepoint->state == VMPROBE_ACTION_RUNNING) {
-    /* XXX: check later if other kinds are "done" */
-    if (1 || probepoint->action->type == VMPROBE_ACTION_RETURN) {
-        /* restore old code (i.e., the breakpoint and anything else) */
-        debug(1,"action finished at [dom%d:%lx]; restoring code\n",
-          probepoint->domain->id, probepoint->vaddr);
-        __remove_code(probepoint);
-        probepoint->state = VMPROBE_ACTION_DONE;
-    }
-    else {
-        debug(1,"action single step continues at [dom%d:%lx]\n",
-          probepoint->domain->id, probepoint->vaddr);
-        return 1;
-    }
+	/* XXX: check later if other kinds are "done" */
+	if (1 || probepoint->action->type == VMPROBE_ACTION_RETURN) {
+	    /* restore old code (i.e., the breakpoint and anything else) */
+	    debug(1,"action finished at [dom%d:%lx]; restoring code\n",
+		  probepoint->domain->id, probepoint->vaddr);
+	    __remove_code(probepoint);
+	    probepoint->state = VMPROBE_ACTION_DONE;
+	}
+	else {
+	    debug(1,"action single step continues at [dom%d:%lx]\n",
+		  probepoint->domain->id, probepoint->vaddr);
+	    return 1;
+	}
     }
 
     if (list_empty(&probepoint->action_list)) {
-    return 0;
+	return 0;
     }
 
     VMPROBE_PERF_START();
     if (probepoint->action) 
-    action = probepoint->action;
+	action = probepoint->action;
     else 
-    action = list_entry(probepoint->action_list.next,
-                typeof(*action),node);
+	action = list_entry(probepoint->action_list.next,
+			    typeof(*action),node);
     list_for_each_entry_continue(action,&probepoint->action_list,node) {
-    if (action->probe->disabled || action->executed_this_pass)
-        continue;
+	if (action->probe->disabled || action->executed_this_pass)
+	    continue;
 
-    if (action->type == VMPROBE_ACTION_CUSTOMCODE) {
-        /*
-         * Need to:
-         *  - copy code in
-         *  - single step until we're to the IP of
-         *    breakpoint+codelen, then restore orig code and BP;
-         *  <OR>
-         *  - restore breakpoint and just let code exec (no
-         *    post handler or any other actions!)
-         */
-    }
-    else if (action->type == VMPROBE_ACTION_RETURN) {
-        if (probepoint->action_obviates_orig) {
-        printf("WARNING: cannot run return action; something else"
-               " already changed control flow!\n");
-        continue;
-        }
+	if (action->type == VMPROBE_ACTION_CUSTOMCODE) {
+	    /*
+	     * Need to:
+	     *  - copy code in
+	     *  - single step until we're to the IP of
+	     *    breakpoint+codelen, then restore orig code and BP;
+	     *  <OR>
+	     *  - restore breakpoint and just let code exec (no
+	     *    post handler or any other actions!)
+	     */
+	}
+	else if (action->type == VMPROBE_ACTION_RETURN) {
+	    if (probepoint->action_obviates_orig) {
+		printf("WARNING: cannot run return action; something else"
+		       " already changed control flow!\n");
+		continue;
+	    }
 
-        /*
-         * Break out of this loop, and don't do any more
-         * actions.  This action is the final one.
-         */
-        ++have_action;
-        action->executed_this_pass = 1;
+	    /*
+	     * Break out of this loop, and don't do any more
+	     * actions.  This action is the final one.
+	     */
+	    ++have_action;
+	    action->executed_this_pass = 1;
 
-        regs->eax = action->detail.retval;
-        /* put a ret in for the breakpoint, then single step */
-        retop[0] = &RETURN;
-        __insert_code(probepoint,retop,1);
-        debug(1,"ret inserted at [dom%d:%lx]\n",
-          probepoint->domain->id, probepoint->vaddr);
+	    regs->eax = action->detail.retval;
+	    /* put a ret in for the breakpoint, then single step */
+	    retop[0] = &RETURN;
+	    __insert_code(probepoint,retop,1);
+	    debug(1,"ret inserted at [dom%d:%lx]\n",
+		  probepoint->domain->id, probepoint->vaddr);
 
-        probepoint->action_obviates_orig = 1;
-        probepoint->action_requires_sstep = 1;
-        probepoint->action = action;
-        probepoint->state = VMPROBE_ACTION_RUNNING;
+	    probepoint->action_obviates_orig = 1;
+	    probepoint->action_requires_sstep = 1;
+	    probepoint->action = action;
+	    probepoint->state = VMPROBE_ACTION_RUNNING;
 
-        break;
-    }
+	    break;
+	}
     }
     VMPROBE_PERF_STOP("vmprobes executes actions");
 
@@ -749,18 +755,18 @@ handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
     probepoint = domain->sstep_probepoint;
 
     if (handle_actions(probepoint,regs)) {
-    debug(1,"found actions to handle\n");
-    if (!probepoint->action_requires_sstep) {
-        VMPROBE_PERF_START();
-        __leave_singlestep(regs);
-        debug(2,"single step unset in dom%d during action handling\n",
-          domain->id);
-        domain->sstep_probepoint = NULL;
-        VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
-    }
+	debug(1,"found actions to handle\n");
+	if (!probepoint->action_requires_sstep) {
+	    VMPROBE_PERF_START();
+	    __leave_singlestep(regs);
+	    debug(2,"single step unset in dom%d during action handling\n",
+		  domain->id);
+	    domain->sstep_probepoint = NULL;
+	    VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
+	}
 
-    /* run the rest of the actions before the post handlers */
-    return;
+	/* run the rest of the actions before the post handlers */
+	return;
     }
 
     VMPROBE_PERF_START();
@@ -770,48 +776,48 @@ handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
      */
     list_for_each_entry(probe, &probepoint->probe_list, node)
     {
-        if (!probe->disabled && probe->post_handler)
-            probe->disabled = probe->post_handler(probe->handle, regs);
+	if (!probe->disabled && probe->post_handler)
+	    probe->disabled = probe->post_handler(probe->handle, regs);
     }
     
     VMPROBE_PERF_STOP("vmprobes executes post-handlers");
 
     if (!interrupt)
     {
-        VMPROBE_PERF_START();
+	VMPROBE_PERF_START();
         
-        /* turn singlestep mode off */
-        __leave_singlestep(regs);
-        domain->sstep_probepoint = NULL;
+	/* turn singlestep mode off */
+	__leave_singlestep(regs);
+	domain->sstep_probepoint = NULL;
         
-        VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
-        debug(2,"single step unset in dom%d\n", domain->id);
+	VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
+	debug(2,"single step unset in dom%d\n", domain->id);
         
-        VMPROBE_PERF_NEXT(); // next round of performance check
+	VMPROBE_PERF_NEXT(); // next round of performance check
 
-    if (!probepoint->action_obviates_orig) {
-        VMPROBE_PERF_START();
+	if (!probepoint->action_obviates_orig) {
+	    VMPROBE_PERF_START();
         
-        probepoint->state = VMPROBE_INSERTING;
+	    probepoint->state = VMPROBE_INSERTING;
         
-        /* inject a breakpoint for the next round */
-        __insert_breakpoint(probepoint);
+	    /* inject a breakpoint for the next round */
+	    __insert_breakpoint(probepoint);
         
-        probepoint->state = VMPROBE_BP_SET;
+	    probepoint->state = VMPROBE_BP_SET;
         
-        VMPROBE_PERF_STOP("vmprobes injects breakpoint back in domU");
-        debug(2,"bp set at [dom%d:%lx]\n", domain->id, probepoint->vaddr);
-    }
-    else {
-        /* Rely on obviating code to restore the breakpoint :) */
-        probepoint->state = VMPROBE_BP_SET;
-    }
+	    VMPROBE_PERF_STOP("vmprobes injects breakpoint back in domU");
+	    debug(2,"bp set at [dom%d:%lx]\n", domain->id, probepoint->vaddr);
+	}
+	else {
+	    /* Rely on obviating code to restore the breakpoint :) */
+	    probepoint->state = VMPROBE_BP_SET;
+	}
     }
 
     /* cleanup oneshot actions! */
     list_for_each_entry_safe(action,taction,&probepoint->action_list,node) {
-    if (action->whence == VMPROBE_ACTION_ONESHOT)
-        action_cancel(action->handle);
+	if (action->whence == VMPROBE_ACTION_ONESHOT)
+	    action_cancel(action->handle);
     }
 
     return;
@@ -1187,9 +1193,9 @@ register_vmprobe_batch(domid_t domid,
     int retval = 0;
 
     if (!handlelist)
-    return -1;
+	return -1;
     if (!listlen) 
-    return 0;
+	return 0;
     if (domid <= 0)
         return -1;
     
@@ -1217,96 +1223,96 @@ register_vmprobe_batch(domid_t domid,
     VMPROBE_PERF_STOP("vmprobes pauses domU");
 
     for (i = 0; i < listlen; ++i) {
-    /* allow sparse lists */
-    if (vaddrlist[i] == 0)
-        continue;
+	/* allow sparse lists */
+	if (vaddrlist[i] == 0)
+	    continue;
 
-    probepoint = find_probepoint(vaddrlist[i],domain);
-    if (!probepoint) {
-        probepoint = add_probepoint(vaddrlist[i],domain);
-        if (!probepoint) {
-        handlelist[i] = -1;
-        if (onfail == 2) {
-            ++retval;
-            continue;
-        }
-        else if (onfail == 1) {
-            ++retval;
-            goto errunreg;
-        }
-        else {
-            retval = 1;
-            goto out;
-        }
-        }
-    }
+	probepoint = find_probepoint(vaddrlist[i],domain);
+	if (!probepoint) {
+	    probepoint = add_probepoint(vaddrlist[i],domain);
+	    if (!probepoint) {
+		handlelist[i] = -1;
+		if (onfail == 2) {
+		    ++retval;
+		    continue;
+		}
+		else if (onfail == 1) {
+		    ++retval;
+		    goto errunreg;
+		}
+		else {
+		    retval = 1;
+		    goto out;
+		}
+	    }
+	}
 
-    probe = add_probe(pre_handler,post_handler,probepoint);
-    if (!probe) {
-        if (list_empty(&probepoint->probe_list))
-        remove_probepoint(probepoint);
+	probe = add_probe(pre_handler,post_handler,probepoint);
+	if (!probe) {
+	    if (list_empty(&probepoint->probe_list))
+		remove_probepoint(probepoint);
 
-        handlelist[i] = -1;
-        if (onfail == 2) {
-        ++retval;
-        continue;
-        }
-        else if (onfail == 1) {
-        ++retval;
-        goto errunreg;
-        }
-        else {
-        retval = 1;
-        goto out;
-        }
-    }
+	    handlelist[i] = -1;
+	    if (onfail == 2) {
+		++retval;
+		continue;
+	    }
+	    else if (onfail == 1) {
+		++retval;
+		goto errunreg;
+	    }
+	    else {
+		retval = 1;
+		goto out;
+	    }
+	}
         
-    if (__register_vmprobe(probe) < 0) {
-        remove_probe(probe);
-        if (list_empty(&probepoint->probe_list))
-        remove_probepoint(probepoint);
+	if (__register_vmprobe(probe) < 0) {
+	    remove_probe(probe);
+	    if (list_empty(&probepoint->probe_list))
+		remove_probepoint(probepoint);
 
-        handlelist[i] = -1;
-        if (onfail == 2) {
-        ++retval;
-        continue;
-        }
-        else if (onfail == 1) {
-        ++retval;
-        goto errunreg;
-        }
-        else {
-        retval = 1;
-        goto out;
-        }
-    }
+	    handlelist[i] = -1;
+	    if (onfail == 2) {
+		++retval;
+		continue;
+	    }
+	    else if (onfail == 1) {
+		++retval;
+		goto errunreg;
+	    }
+	    else {
+		retval = 1;
+		goto out;
+	    }
+	}
 
-    handlelist[i] = probe->handle;
+	handlelist[i] = probe->handle;
     }
     goto out;
 
  errunreg:
     for (i = 0; i < listlen; ++i) {
-    if (vaddrlist[i] == 0)
-        continue;
+	if (vaddrlist[i] == 0)
+	    continue;
 
-    if (handlelist[i] < 0)
-        continue;
+	if (handlelist[i] < 0)
+	    continue;
 
-    if ((probe = find_probe(handlelist[i]))) {
-        __unregister_vmprobe(probe);
+	if ((probe = find_probe(handlelist[i]))) {
+	    __unregister_vmprobe(probe);
 
-        remove_probe(probe);
-    }
+	    remove_probe(probe);
+	}
 
-    if ((probepoint = find_probepoint(vaddrlist[i],domain))) {
-        if (list_empty(&probepoint->probe_list)) {
-        remove_probepoint(probepoint);
+	if ((probepoint = find_probepoint(vaddrlist[i],domain))) {
+	    if (list_empty(&probepoint->probe_list)) {
+		remove_probepoint(probepoint);
 
-        if (list_empty(&domain->probepoint_list))
-            remove_domain(domain);
-        }
-    }
+		if (list_empty(&domain->probepoint_list))
+		    remove_domain(domain);
+	    }
+	}
     }
 
  out:
@@ -1436,10 +1442,10 @@ unregister_vmprobe_batch(domid_t domid,
     int i;
 
     if (!listlen)
-    return 0;
+	return 0;
 
     if (!(domain = find_domain(domid))) 
-    return -1;
+	return -1;
     
     VMPROBE_PERF_START();
     xc_domain_pause(xc_handle, domain->id);
@@ -1447,32 +1453,32 @@ unregister_vmprobe_batch(domid_t domid,
     VMPROBE_PERF_STOP("vmprobes pauses domU");
 
     for (i = 0; i < listlen; ++i) {
-    /* allow sparse lists */
-    if (handlelist[i] < 0)
-        continue;
+	/* allow sparse lists */
+	if (handlelist[i] < 0)
+	    continue;
 
-    if (!(probe = find_probe(handlelist[i]))) {
-        ++retval;
-        continue;
-    }
+	if (!(probe = find_probe(handlelist[i]))) {
+	    ++retval;
+	    continue;
+	}
 
-    probepoint = probe->probepoint; 
-    if (probepoint->domain != domain) {
-        ++retval;
-        continue;
-    }
+	probepoint = probe->probepoint; 
+	if (probepoint->domain != domain) {
+	    ++retval;
+	    continue;
+	}
 
-    if (__unregister_vmprobe(probe) < 0) {
-        ++ retval;
-        continue;
-    }
+	if (__unregister_vmprobe(probe) < 0) {
+	    ++retval;
+	    continue;
+	}
 
-    remove_probe(probe);
-    if (list_empty(&probepoint->probe_list)) {
-        remove_probepoint(probepoint);
-        if (list_empty(&domain->probepoint_list))
-        remove_domain(domain);
-    }
+	remove_probe(probe);
+	if (list_empty(&probepoint->probe_list)) {
+	    remove_probepoint(probepoint);
+	    if (list_empty(&domain->probepoint_list))
+		remove_domain(domain);
+	}
     }
 
     VMPROBE_PERF_START();
@@ -1574,36 +1580,36 @@ int action_sched(vmprobe_handle_t handle,
 
     action = find_probe_action(action_handle);
     if (!action) {
-    error("action_sched: no such action %d\n",action_handle);
-    return -1;
+	error("action_sched: no such action %d\n",action_handle);
+	return -1;
     }
 
     if (action->probe != NULL) {
-    error("action_sched: action %d already associated with probe %d\n",
-        action->handle,handle);
-    return -1;
+	error("action_sched: action %d already associated with probe %d\n",
+	      action->handle,handle);
+	return -1;
     }
 
     probe = find_probe(handle);
     if (!probe) {
-    error("action_sched: no such probe %d\n",handle);
-    return -1;
+	error("action_sched: no such probe %d\n",handle);
+	return -1;
     }
 
     /* only allow one return action per probepoint */
     list_for_each_entry(lpc,&probe->probepoint->action_list,node) {
-    if (lpc->type == VMPROBE_ACTION_RETURN) {
-        error("action_sched: probepoint for probe %d already has return action %d\n",
-            lpc->probe->handle,lpc->handle);
-        return -1;
-    }
+	if (lpc->type == VMPROBE_ACTION_RETURN) {
+	    error("action_sched: probepoint for probe %d already has return action %d\n",
+		  lpc->probe->handle,lpc->handle);
+	    return -1;
+	}
     }
 
     if (whence != VMPROBE_ACTION_ONESHOT && whence != VMPROBE_ACTION_REPEATPRE
-    && whence != VMPROBE_ACTION_REPEATPOST) {
-    error("action_sched: unknown whence %d for action %d\n",
-        whence,action_handle);
-    return -1;
+	&& whence != VMPROBE_ACTION_REPEATPOST) {
+	error("action_sched: unknown whence %d for action %d\n",
+	      whence,action_handle);
+	return -1;
     }
     action->whence = whence;
 
@@ -1622,8 +1628,8 @@ vmprobe_action_handle_t action_return(unsigned long retval)
 
     action = (vmprobe_action_t *)malloc(sizeof(vmprobe_action_t));
     if (!action) {
-    perror("no memory to allocate probe action\n");
-    return -ENOMEM;
+	perror("no memory to allocate probe action\n");
+	return -ENOMEM;
     }
     memset((void *)action,0,sizeof(vmprobe_action_t));
 
@@ -1665,12 +1671,12 @@ void action_cancel(vmprobe_action_handle_t action_handle)
 
     action = find_probe_action(action_handle);
     if (!action) {
-    error("action_cancel: no such action %d\n",action_handle);
-    return;
+	error("action_cancel: no such action %d\n",action_handle);
+	return;
     }
 
     if (!action->probe)
-    return;
+	return;
 
     list_del(&action->node);
     action->probe = NULL;
@@ -1685,27 +1691,27 @@ void action_destroy(vmprobe_action_handle_t action_handle)
 
     action = find_probe_action(action_handle);
     if (!action) {
-    error("action_destroy: no such action %d\n",action_handle);
-    return;
+	error("action_destroy: no such action %d\n",action_handle);
+	return;
     }
 
     if (action->probe) {
-    action_cancel(action_handle);
+	action_cancel(action_handle);
     }
 
     probe_action_list[action_handle] = NULL;
     cqueue_put(&action_handle_queue,action_handle);
 
     if (action->type == VMPROBE_ACTION_CUSTOMCODE
-    && action->detail.code.nr_opcodes) {
-    for (i = 0; i < action->detail.code.nr_opcodes; ++i) {
-        free(action->detail.code.opcodes[i]);
-    }
-    free(action->detail.code.opcodes);
+	&& action->detail.code.nr_opcodes) {
+	for (i = 0; i < action->detail.code.nr_opcodes; ++i) {
+	    free(action->detail.code.opcodes[i]);
+	}
+	free(action->detail.code.opcodes);
     }
     else if (action->type == VMPROBE_ACTION_MEMMOD
-         && action->detail.memmod.len) {
-    free(action->detail.memmod.data);
+	     && action->detail.memmod.len) {
+	free(action->detail.memmod.data);
     }
 
     free(action);
@@ -2067,35 +2073,35 @@ mmap_pages(xa_instance_t *xa_instance,
         /* let xenaccess use its memory cache for small size */
         pages = xa_access_user_va(xa_instance, vaddr, offset, 
                   pid, prot);
-    if (!pages) {
-        if (!pid)
-        return NULL;
+	if (!pages) {
+	    if (!pid)
+		return NULL;
 
-        pages = xa_access_user_va(xa_instance, vaddr, offset, 
-                      0, prot);
-        if (!pages)
-        return NULL;
-    }
+	    pages = xa_access_user_va(xa_instance, vaddr, offset, 
+				      0, prot);
+	    if (!pages)
+		return NULL;
+	}
     }
     else
     {
-    dstr = "large";
+	dstr = "large";
         /* xenaccess can't map multiple pages properly, use our own function */
         pages = xa_access_user_va_range(xa_instance, vaddr, size,
                     offset, pid, prot);
 
-    if (!pages) { // && pid) {
-        //return NULL;
-        if (!pid)
-        return NULL;
+	if (!pages) { // && pid) {
+	    //return NULL;
+	    if (!pid)
+		return NULL;
 
-        /* try kernel */
-        pages = xa_access_user_va_range(xa_instance, vaddr, size, 
-                        offset, 
-                        0, prot);
-        if (!pages) 
-        return NULL;
-    }
+	    /* try kernel */
+	    pages = xa_access_user_va_range(xa_instance, vaddr, size, 
+					    offset, 
+					    0, prot);
+	    if (!pages) 
+		return NULL;
+	}
     }
 
     debug(2,"%ld bytes at %lx mapped (%s)\n", size, vaddr,dstr);
@@ -2188,3 +2194,11 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     
     return retval;
 }
+
+/*
+ * Local variables:
+ * mode: C
+ * c-set-style: "BSD"
+ * c-basic-offset: 4
+ * End:
+ */
