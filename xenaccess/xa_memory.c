@@ -708,17 +708,19 @@ void *xa_access_user_va_range (
     uint64_t maddr;
     int kernel = !pid;
     int tmp_offset;
+    uint32_t num_pages;
+    uint32_t start;
 
-    uint32_t num_pages = size / instance->page_size;
-    uint32_t start = virt_address & ~(instance->page_size-1);
+    if (size == 0) {
+	xa_dbprint(0,"ERROR: invalid size (0)\n");
+	return NULL;
+    }
+
+    start = virt_address & ~(instance->page_size-1);
     tmp_offset = virt_address - start;
 
-    // add a page if we weren't an exact multiple of the page size
-    if (size == 0 || size % instance->page_size)
-	++num_pages;
-    // if we still need more bytes because we started too far into the 
-    // first page, add another!
-    if (size > (num_pages * instance->page_size - tmp_offset))
+    num_pages = (tmp_offset + size) / instance->page_size;
+    if ((tmp_offset + size) % instance->page_size)
 	++num_pages;
 
     uint64_t pgd = pid ? xa_pid_to_pgd(instance, pid) : instance->kpgd;
