@@ -972,12 +972,14 @@ __register_vmprobe(struct vmprobe *probe)
             &offset, 
             PROT_READ);
     if (pages) {
+	int np = 1;
+
         memcpy(probe->vbytes,pages+offset,64);
 
-        if ((4096 - offset) < 64)
-            munmap(pages,8192);
-        else
-            munmap(pages,4096);
+	if (offset + 64 > domain->xa_instance.page_size)
+            np++;
+	if (munmap(pages, np * domain->xa_instance.page_size))
+	    warning("munmap of %p failed\n", pages);
     }
 
     /* backup the original instruction */
@@ -999,6 +1001,44 @@ __register_vmprobe(struct vmprobe *probe)
     return 0;
 }
 
+static void
+__dump_probe(struct vmprobe *probe)
+{
+    struct vmprobe_probepoint *probepoint;
+    struct vmprobe_domain *domain;
+    char *pages;
+    uint32_t offset;
+
+    probepoint = probe->probepoint;
+    domain = probepoint->domain;
+
+    /* FIXME: David's code for batched probe registration? 
+       -- make this a function, it will shorten the code much */
+    pages = xa_access_kernel_va_range(&domain->xa_instance, 
+            probepoint->vaddr, 
+            64, 
+            &offset, 
+            PROT_READ);
+    if (pages) {
+	int i;
+
+        for (i = 0; i < 16; ++i) {
+            printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
+        }
+        printf("\n");
+        for (i = 0; i < 16; ++i) {
+            printf(" %08x",*((unsigned int *)(pages + offset + i*4)));
+        }
+        printf("\n");
+
+	i = 1;
+	if (offset + 64 > domain->xa_instance.page_size)
+	    i++;
+	if (munmap(pages, i * domain->xa_instance.page_size))
+	    warning("munmap of %p failed\n", pages);
+    }
+}
+
 static int
 __unregister_vmprobe(struct vmprobe *probe)
 {
@@ -1006,9 +1046,7 @@ __unregister_vmprobe(struct vmprobe *probe)
     struct vmprobe_domain *domain;
     struct cpu_user_regs *regs;
     vcpu_guest_context_t ctx;
-    char *pages;
-    int ret, i;
-    uint32_t offset;
+    int ret;
 
     probepoint = probe->probepoint;
     domain = probepoint->domain;
@@ -1032,28 +1070,8 @@ __unregister_vmprobe(struct vmprobe *probe)
 
     probepoint->state = VMPROBE_REMOVING;
 
-    /* FIXME: David's code for batched probe registration? 
-       -- make this a function, it will shorten the code much */
-    pages = xa_access_kernel_va_range(&domain->xa_instance, 
-            probepoint->vaddr, 
-            64, 
-            &offset, 
-            PROT_READ);
-    if (pages) {
-        for (i = 0; i < 16; ++i) {
-            printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
-        }
-        printf("\n");
-        for (i = 0; i < 16; ++i) {
-            printf(" %08x",*((unsigned int *)(pages + offset + i*4)));
-        }
-        printf("\n");
-
-        if ((4096 - offset) < 64)
-            munmap(pages,8192);
-        else
-            munmap(pages,4096);
-    }
+    if (vmprobes_debug_level >= 0)
+	__dump_probe(probe);
 
     /* restore the original instruction */
     ret = __remove_breakpoint(probepoint);
@@ -1063,28 +1081,8 @@ __unregister_vmprobe(struct vmprobe *probe)
         return ret;
     }
 
-    /* FIXME: David's code for batched probe registration? 
-       -- make this a function; it will shorten the code much */
-    pages = xa_access_kernel_va_range(&domain->xa_instance, 
-            probepoint->vaddr, 
-            64, 
-            &offset, 
-            PROT_READ);
-    if (pages) {
-        for (i = 0; i < 16; ++i) {
-            printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
-        }
-        printf("\n");
-        for (i = 0; i < 16; ++i) {
-            printf(" %08x",*((unsigned int *)(pages + offset + i*4)));
-        }
-        printf("\n");
-
-        if ((4096 - offset) < 64)
-            munmap(pages,8192);
-        else
-            munmap(pages,4096);
-    }
+    if (vmprobes_debug_level >= 0)
+	__dump_probe(probe);
 
     probepoint->state = VMPROBE_DISABLED;
 
@@ -2058,17 +2056,18 @@ mmap_pages(xa_instance_t *xa_instance,
            unsigned long vaddr, 
            unsigned long size, 
            uint32_t *offset,
+	   int *npages,
            int prot,
-       int pid)
+	   int pid)
 {
     unsigned char *pages;
-    unsigned long page_size, tmp_offset;
+    unsigned long page_size, page_offset;
     char *dstr = "small";
 
     page_size = xa_instance->page_size;
-    tmp_offset = vaddr - (vaddr & ~(page_size - 1));
+    page_offset = vaddr & (page_size - 1);
 
-    if (size > 0 && size < (page_size - tmp_offset))
+    if (size > 0 && size <= (page_size - page_offset))
     {
         /* let xenaccess use its memory cache for small size */
         pages = xa_access_user_va(xa_instance, vaddr, offset, 
@@ -2082,6 +2081,7 @@ mmap_pages(xa_instance_t *xa_instance,
 	    if (!pages)
 		return NULL;
 	}
+	*npages = 1;
     }
     else
     {
@@ -2102,6 +2102,17 @@ mmap_pages(xa_instance_t *xa_instance,
 	    if (!pages) 
 		return NULL;
 	}
+
+	/*
+	 * Compute how many pages were mapped.
+	 * *offset is the offset within the initial page mapped.
+	 * Number of pages is thus:
+	 *   round((*offset+size), page_size)
+	 */
+	*npages = (*offset + size) / page_size;
+	if ((*offset + size) % page_size)
+	    (*npages)++;
+
     }
 
     debug(2,"%ld bytes at %lx mapped (%s)\n", size, vaddr,dstr);
@@ -2119,9 +2130,10 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     unsigned char *pages;
     uint32_t offset = 0;
     unsigned long length = target_length, size = 0;
-    unsigned long page_size, no_pages;
+    unsigned long page_size;
     unsigned char *retval = NULL;
-    unsigned long tmp_offset;
+    unsigned long page_offset;
+    int no_pages;
     
     probe = find_probe(handle);
     assert(probe);
@@ -2130,11 +2142,10 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     assert(xa_instance);
 
     page_size = xa_instance->page_size;
-    tmp_offset = addr & (page_size - 1);
-    //tmp_offset = addr - (addr & ~(page_size - 1));
+    page_offset = addr & (page_size - 1);
 
     debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d), offset = %d\n",
-      name,target_length,addr,pid,tmp_offset);
+      name,target_length,addr,pid,page_offset);
 
     /* if we know what length we need, just grab it */
     if (length > 0) {
@@ -2142,40 +2153,36 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 					    addr,
 					    target_length, 
 					    &offset, 
+					    &no_pages,
 					    PROT_READ,
 					    pid);
 	if (!pages)
 	    return NULL;
 
-	no_pages = length / page_size;
-	if (length % page_size)
-	    ++no_pages;
-	if ((length + offset) > page_size) {
-	    ++no_pages;
-	    debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d) overflowed onto next page\n",
-		  name,target_length,addr,pid);
-	}
+	assert(offset == page_offset);
+	debug(2,"loading %s: %d bytes at (addr=%08x,pid=%d) mapped %d pages\n",
+	      name,target_length,addr,pid,no_pages);
     }
     else {
 	/* increase the mapping size by this much if the string is longer 
 	   than we expect at first attempt. */
-	size = (page_size - tmp_offset);
+	size = (page_size - page_offset);
 
 	while (1) {
 	    if (1 || size > page_size) 
 		debug(2,"increasing size to %d (name=%s,addr=%08x,pid=%d)\n",
 		      size,name,addr,pid);
 	    pages = (unsigned char *)mmap_pages(xa_instance,addr,
-                        size,&offset,PROT_READ,pid);
+			size,&offset,&no_pages,PROT_READ,pid);
 	    if (!pages)
 		return NULL;
 
-	    no_pages = size / page_size + 1;
 	    length = strnlen((const char *)(pages + offset), size);
-	    if (length < (size - offset)) {
+	    if (length < size) {
 		break;
 	    }
-	    munmap(pages, no_pages * page_size);
+	    if (munmap(pages, no_pages * page_size))
+		warning("munmap of %p failed\n", pages);
 	    size += page_size;
 	}
     }
@@ -2186,11 +2193,12 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	retval = target_buf;
     if (retval) {
 	memcpy(retval, pages + offset, length);
-	if (target_length <= 0) {
+	if (target_length == 0) {
 	    retval[length] = '\0';
 	}
     }
-    munmap(pages, no_pages * page_size);
+    if (munmap(pages, no_pages * page_size))
+	warning("munmap of %p failed\n", pages);
     
     return retval;
 }

@@ -1,3 +1,4 @@
+#include <assert.h>
 #include "vmprobes.h"
 #include "vmprobes_i386.h"
 
@@ -29,10 +30,11 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
                                      total, 
                                      &offset, 
                                      PROT_WRITE);
-    offset += extraoffset;
-
     if (!page)
         return -1;
+
+    assert(offset + total < xa_instance->page_size);
+    offset += extraoffset;
 
     if (!nosave) {
 	/* if they pass us raw memory, don't malloc */
@@ -41,7 +43,8 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
 	    debug(2,"dom%d: malloc(%d) bytes to dst %x, *dst %x\n",
 		  domain->id,total,(unsigned int)dst,(unsigned int)*dst);
 	    if (!*dst) {
-		munmap(page, xa_instance->page_size);
+		if (munmap(page, xa_instance->page_size))
+		    warning("munmap of %p failed\n", page);
 		return -1;
 	    }
 	}
@@ -64,7 +67,8 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
 	offset += opcode_list[i]->len;
     }
 
-    munmap(page, xa_instance->page_size);
+    if (munmap(page, xa_instance->page_size))
+	warning("munmap of %p failed\n", page);
     return 0;
 }
 
@@ -85,13 +89,14 @@ static int __arch_restore_instr(struct vmprobe_probepoint *probepoint,
                                      *src_len,
                                      &offset, 
                                      PROT_WRITE);
-    offset += extraoffset;
-
     if (!page)
         return -1;
 
-	debug(2,"dom%u: restoring %d bytes to %lx with offset %u\n",
-		 domain->id,*src_len,probepoint->vaddr,offset);
+    assert(offset + *src_len < xa_instance->page_size);
+    offset += extraoffset;
+
+    debug(2,"dom%u: restoring %d bytes to %lx with offset %u\n",
+	  domain->id,*src_len,probepoint->vaddr,offset);
     
     memcpy(page + offset, *src, *src_len);
 
@@ -103,7 +108,8 @@ static int __arch_restore_instr(struct vmprobe_probepoint *probepoint,
 	}
     }
 
-    munmap(page, xa_instance->page_size);
+    if (munmap(page, xa_instance->page_size))
+	warning("munmap of %p failed\n", page);
     return 0;
 }
 
