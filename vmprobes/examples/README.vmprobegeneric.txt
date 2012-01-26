@@ -161,8 +161,12 @@ of parameters; you need not specify them all!
     process who has parent_process_name as an ancestor at any level up in
     the process hierarchy.
 
-  * retval=<return-code>.  If this is an action filter, return this code
+  * retval=<return-code>.  If this is an abort filter, return this code
     from syscalls that match this filter.
+
+  * retval=(unix_regex|*).  If this is a match filter, match the syscall
+    return value against this value ala "argval". NOTE that in this use,
+    you cannot also use argval= (due to a coding shortcut I took).
 
   * apply=(0|1).  If 1, this is an abort filter and it will be applied
     if the global action filter bit is set... and thus the the value
@@ -171,12 +175,16 @@ of parameters; you need not specify them all!
 
 Here's a couple examples:
 
-
-Filter  function=sys_execve,name=php-cgi,retval=-1,apply=1
+Filter  function=sys_execve,name=php-cgi,apply=1,retval=-1
 
   * This filter would restrict any processes with a name of 'php-cgi'
-    from exec'ing anything.
+    from exec'ing anything. Note that apply MUST appear befor retval
+    to signal that this is an abort filter.
 
+Filter  function=sys_waitpid,name=php-cgi,when=post,retval=^[1-9]
+
+  * This filter matches returns from waitpid calls that returns an
+    actual pid (i.e., not -1 or 0).
 
 Filter function=do_exit,name=apache,argname=code:signal,argval=SEGV
 

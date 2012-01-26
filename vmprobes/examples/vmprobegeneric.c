@@ -1,3 +1,9 @@
+/*
+ * XXX try to create (must more verbose) output compatible with the old
+ * version for comparison.
+ */
+//#define OLD_VPG_COMPAT
+
 #define _GNU_SOURCE
 #include <string.h>
 #include <stdio.h>
@@ -26,6 +32,8 @@
 
 #define ARG_STRING_LEN	1024
 #define ARG_BYTES_LEN	1024
+
+static int debug = -1;
 
 typedef enum {
     SC_ARG_TYPE_INT = 0,
@@ -88,7 +96,6 @@ struct syscall_info {
 
 #define WHEN_PRE	0
 #define WHEN_POST	1
-#define WHEN_BOTH	2
 
 struct argfilter {
     int dofilter;
@@ -100,13 +107,14 @@ struct argfilter {
     int uid;
     int gid;
 
-    int argnum;
+    int argnum;	// -2: match retval, -1: match any value, ow: match arg num
     int decoding;
     regex_t *preg;
     char *strfrag;
-    int retval;
+    int abort_retval;
     char *name;
     int name_search;
+    int index;
 };
 
 void free_argfilter(struct argfilter *f) {
@@ -152,8 +160,6 @@ void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		   int pid,int i,int j,
 		   struct argdata **arg_data,
 		   struct process_data *data);
-
-#define SYSCALL_MAX 304
 
 #define STATIC_RET_PROBE
 
@@ -308,27 +314,54 @@ int ps_list_len = 0;
 int check_filters(int syscall,int arg,
 		  struct argdata **adata,
 		  struct process_data *pdata,
-		  struct argfilter **match)
+		  char *retvalstr,
+		  struct argfilter **match, int *needpost)
 {
     int pmatch = 0;
     int smatch = 0;
     int lpc;
     struct process_data *parent;
     char *argval = NULL;
+    int postcall = (retvalstr != NULL);
 
     for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
-	debug(0,"filter name=%s, process name=%s, filter when=%s\n",
+	debug(1,"filter name=%s, process name=%s, "
+	      "filter syscall=%d, syscall=%d, "
+	      "filter when=%s, when=%s\n",
 	      argfilter_list[lpc]->name,pdata->name,
-	      argfilter_list[lpc]->when == WHEN_PRE ? "pre" :
-	      (argfilter_list[lpc]->when == WHEN_POST ? "post" : "both"));
-	    
+	      argfilter_list[lpc]->syscallnum,syscall,
+	      argfilter_list[lpc]->when == WHEN_PRE ? "pre" : "post",
+	      postcall ? "post" : "pre");
+
+	/*
+	 * If we are post-syscall, only match post-syscall filters.
+	 */
+	if (postcall && argfilter_list[lpc]->when != WHEN_POST)
+	    continue;
+
+	/*
+	 * If we are called pre-syscall, we make a note of any post
+	 * syscall filter for this syscall so that our caller
+	 * will know that it needs to schedule the post-syscall probe.
+	 */
+	if (!postcall && argfilter_list[lpc]->when == WHEN_POST) {
+	    if (argfilter_list[lpc]->syscallnum == -1 ||
+		argfilter_list[lpc]->syscallnum == syscall)
+		*needpost = 1;
+	    continue;
+	}
+
 	if ((argfilter_list[lpc]->syscallnum == -1 || argfilter_list[lpc]->syscallnum == syscall)
-	    && (argfilter_list[lpc]->argnum == -1 || argfilter_list[lpc]->argnum == arg)) {
+	    && (argfilter_list[lpc]->argnum == -1 ||
+		(argfilter_list[lpc]->argnum == -2 && postcall) ||
+		argfilter_list[lpc]->argnum == arg)) {
 	    smatch = 1;
 	}
 
 	if (smatch) {
-	    if (argfilter_list[lpc]->decoding > -1
+	    if (postcall && argfilter_list[lpc]->argnum == -2)
+		argval = retvalstr;
+	    else if (argfilter_list[lpc]->decoding > -1
 		&& adata[arg]->decodings)
 		argval = adata[arg]->decodings[argfilter_list[lpc]->decoding];
 	    else
@@ -385,22 +418,37 @@ int check_filters(int syscall,int arg,
 
 	if (smatch && pmatch) {
 	    *match = argfilter_list[lpc];
-	    //printf("Filter match on %d %d %s (%d %d %d)\n",
-	    //       argfilter_list[lpc]->syscallnum,
-	    //       argfilter_list[lpc]->argnum,
-	    //       argfilter_list[lpc]->strfrag,
-	    //       argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
-	    //       argfilter_list[lpc]->gid);
+	    debug(1,"Filter match on %d %d %s (%d %d %d)\n",
+		  argfilter_list[lpc]->syscallnum,
+		  argfilter_list[lpc]->argnum,
+		  argfilter_list[lpc]->strfrag,
+		  argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
+		  argfilter_list[lpc]->gid);
 	    break;
 	}
 	else {
-	    //printf("Filter no match on %d %d %s (%d %d %d)\n",
-	    //       argfilter_list[lpc]->syscallnum,
-	    //       argfilter_list[lpc]->argnum,
-	    //       argfilter_list[lpc]->strfrag,
-	    //       argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
-	    //       argfilter_list[lpc]->gid);
+	    debug(1, "Filter no match on %d %d %s (%d %d %d)\n",
+		  argfilter_list[lpc]->syscallnum,
+		  argfilter_list[lpc]->argnum,
+		  argfilter_list[lpc]->strfrag,
+		  argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
+		  argfilter_list[lpc]->gid);
 	    smatch = pmatch = 0;
+	}
+    }
+
+    /*
+     * If necessary, finish scanning the list looking for possible
+     * post-syscall matches.
+     */
+    if (!postcall && *needpost == 0) {
+	for (++lpc; lpc < argfilter_list_len; ++lpc) {
+	    if (argfilter_list[lpc]->when == WHEN_POST &&
+		(argfilter_list[lpc]->syscallnum == -1 ||
+		 argfilter_list[lpc]->syscallnum == syscall)) {
+		*needpost = 1;
+		break;
+	    }
 	}
     }
 
@@ -796,7 +844,7 @@ void socket_args_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	break;
     case 6:
     case 7:
-	arg_data[arg]->decodings[0] = ssprintf("fd=%d,usockaddr=%s,usockaddr_len= %s",
+	arg_data[arg]->decodings[0] = ssprintf("fd=%d,usockaddr=%s,usockaddr_len=%s",
 					       (int)a[0],sas,sasl);
 	break;
     default:
@@ -1047,58 +1095,6 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
     memset(data,0,sizeof(struct process_data));
 
     data->pid = *((unsigned int *)(task_struct_buf+PID_OFFSET));
-
-    // stop recursion if we hit init!
-    if (data->pid == 1)
-	recurse = 0;
-
-    real_parent_addr = *((unsigned int *)(task_struct_buf+REAL_PARENT_OFFSET));
-    parent_addr = *((unsigned int *)(task_struct_buf+PARENT_OFFSET));
-
-    if (parent_addr && recurse) {
-	parent_data = load_process_data(handle,regs,parent_addr,recurse - 1,
-					printtree);
-	if (parent_data)
-	    data->ppid = parent_data->pid;
-	else 
-	    data->ppid = -1;
-	if (recurse)
-	    data->parent = parent_data;
-	else {
-	    data->parent = NULL;
-	    free_process_data(parent_data);
-	}
-    }
-    if (parent_addr == real_parent_addr) {
-    	data->real_ppid = data->ppid;
-    	data->real_parent = data->parent;
-    }
-    else if (real_parent_addr && recurse) {
-	real_parent_data = load_process_data(handle,regs,real_parent_addr,
-					     recurse - 1,printtree);
-	if (real_parent_data)
-	    data->real_ppid = real_parent_data->pid;
-	else 
-	    data->real_ppid = -1;
-	if (recurse)
-	    data->real_parent = real_parent_data;
-	else {
-	    data->real_parent = NULL;
-	    free_process_data(real_parent_data);
-	}
-    }
-    /*
-    if (parent_addr) {
-	parent_task_struct_buf = \
-	    vmprobe_get_data(handle,regs,parent_addr,
-			     TASK_STRUCT_SIZE,0,NULL);
-	if (parent_task_struct_buf) {
-	    data->ppid = *((int *)(parent_task_struct_buf+PID_OFFSET));
-	    free(parent_task_struct_buf);
-	}
-    }
-    */
-
     data->tgid = *((unsigned int *)(task_struct_buf+TGID_OFFSET));
     data->uid = *((unsigned int *)(task_struct_buf+UID_OFFSET));
     data->euid = *((unsigned int *)(task_struct_buf+EUID_OFFSET));
@@ -1109,43 +1105,81 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
     data->sgid = *((unsigned int *)(task_struct_buf+SGID_OFFSET));
     data->fsgid = *((unsigned int *)(task_struct_buf+FSGID_OFFSET));
     data->nextptr = *((unsigned long *)(task_struct_buf+TASKS_OFFSET)) - TASKS_OFFSET;
-
     if ((char *)(task_struct_buf+COMM_OFFSET) != NULL)
 	data->name = strndup((char *)(task_struct_buf+COMM_OFFSET),16);
-    else
-	data->name = NULL;
+
+    real_parent_addr = *((unsigned int *)(task_struct_buf+REAL_PARENT_OFFSET));
+    parent_addr = *((unsigned int *)(task_struct_buf+PARENT_OFFSET));
 
     free(task_struct_buf);
 
-    if (0 && printtree) {
+    /*
+     * Find our parent and handle recursion
+     */
+    data->ppid = data->real_ppid = -1;
+    if (data->pid != 1 && recurse) {
+	if (parent_addr) {
+	    parent_data = load_process_data(handle,regs,parent_addr,
+					    recurse - 1,printtree);
+	    if (parent_data) {
+		data->ppid = parent_data->pid;
+		data->parent = parent_data;
+	    }
+	}
+	if (parent_addr == real_parent_addr) {
+	    data->real_ppid = data->ppid;
+	    data->real_parent = data->parent;
+	}
+	else if (real_parent_addr) {
+	    real_parent_data = load_process_data(handle,regs,real_parent_addr,
+						 recurse - 1,printtree);
+	    if (real_parent_data) {
+		data->real_ppid = real_parent_data->pid;
+		data->real_parent = real_parent_data;
+	    }
+	}
+    }
+
+    if (printtree
+#ifndef OLD_VPG_COMPAT
+	&& debug >= 0
+#endif
+    ) {
 	fprintf(stdout,"    pstree: ");
 	print_process_data(handle,regs,data);
 	fprintf(stdout,"\n");
 	fflush(stdout);
     }
 
+
     return data;
 }
 
 LIST_HEAD(processes);
 
+void free_process_list(void)
+{
+    struct process_data *pdata, *tmp_pdata;
+
+    if (!list_empty(&processes)) {
+	list_for_each_entry_safe(pdata,tmp_pdata,&processes,list) {
+	    debug(2,"freeing %d %s\n",pdata->pid,pdata->name);
+	    list_del(&pdata->list);
+	    free_process_data(pdata);
+	}
+    }
+}
+
 int reload_process_list(vmprobe_handle_t handle,
 			struct cpu_user_regs *regs)
 {
     struct process_data *pdata;
-    struct process_data *tmp_pdata;
     unsigned long next;
     int startpid;
     int i = 0;
 
     // blow away the old list
-    if (!list_empty(&processes)) {
-	list_for_each_entry_safe(pdata,tmp_pdata,&processes,list) {
-	    debug(1,"freeing %d %s\n",pdata->pid,pdata->name);
-	    list_del(&pdata->list);
-	    free_process_data(pdata);
-	}
-    }
+    free_process_list();
 
     // grab init task
     pdata = load_process_data(handle,regs,init_task_addr,1,0);
@@ -1174,6 +1208,37 @@ int reload_process_list(vmprobe_handle_t handle,
 	    fprintf(stderr,"ERROR: could not load intermediate process data for ps list; returning what we have!\n");
 	    fflush(stderr);
 	    return 1;
+	}
+    }
+
+    return 0;
+}
+
+void print_process_list(void)
+{
+    struct process_data *pdata;
+
+    list_for_each_entry(pdata,&processes,list) {
+	printf("  ");
+	print_process_data(0, NULL, pdata);
+	printf("\n");
+    }
+}
+
+int pid_in_pslist(int pid)
+{
+    struct process_data *pdata;
+    int j;
+
+    if (ps_list_len == 0)
+	return 1;
+
+    list_for_each_entry(pdata,&processes,list) {
+	if (pdata->pid == pid) {
+	    for (j = 0; j < ps_list_len; ++j) {
+		if (strcmp(pdata->name,ps_list[j]) == 0)
+		    return 1;
+	    }
 	}
     }
 
@@ -1422,7 +1487,7 @@ void wait_stat_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       struct argdata **arg_data,
 		       struct process_data *data)
 {
-    unsigned long addr = *(unsigned long *)arg_data[arg]->data;
+    unsigned long addr = *((unsigned long *)arg_data[arg]->data);
 
     if (arg_data[arg]->postcall) {
 	long code = 0;
@@ -1566,6 +1631,8 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     return arg_data[arg]->data;
 }
 
+#define SYSCALL_MAX 303
+
 /*
  * If a syscall has RADDR_YES set for the raddr field, it means that it
  * returns through the generic syscall_call stub and thus we can statically
@@ -1583,7 +1650,7 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 #define RADDR_NO	0
 #define RADDR_YES	1
 
-struct syscall_info sctab[SYSCALL_MAX] = { 
+struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 1, "sys_exit", 0xc0121df0, RADDR_NO, 1,
       { { 1, "error_code", SC_ARG_TYPE_INT, 
@@ -2589,9 +2656,10 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     struct argfilter *filter_ptr = NULL;
     struct process_data *data;
     char *psliststr = NULL;
+    int mypid, dopslist = 0;
     int len, rc;
     struct cpu_user_regs tregs, *aregs = regs;
-    int postcall = 0;
+    int postcall = 0, needpost = 0;
     char *rvalstr = NULL;
 
     /*
@@ -2635,7 +2703,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	tregs.esp = sc->argptr;
 	aregs = &tregs;
 
-	debug(0, "Syscall %d return for thread 0x%lx\n",
+	debug(1, "Syscall %d return for thread 0x%lx\n",
 	      sc->syscall_ix, curthread);
 
 #ifndef STATIC_RET_PROBE
@@ -2661,6 +2729,14 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     else if (addr == sctab[301].addr) {
 	oi = i = 301;
     }
+    // Empirically, we have discovered that these can be called when
+    // the syscall number is not in eax. Ignore these, I think they are
+    // kernel-internal calls.
+    else if ((addr == sctab[6].addr && i != 6) ||
+	     (addr == sctab[114].addr && i != 114)) {
+	debug(0,"WARNING: ignoring internal use of syscall@0x%lx\n",addr);
+	return NULL;
+    }
     else {
 	if (i == 11) {
 	    ++execcounter;
@@ -2669,23 +2745,34 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     }
 
     if (i < 0 || i >= SYSCALL_MAX) {
-	fprintf(stderr,"ERROR: invalid syscall #%u %s[dom%d 0x%lx] ignored\n",
+	// This is a break point we set, so we must at least know the address.
+	// These may be internal uses of syscalls where eax is not set right.
+	for (j = 0; j < SYSCALL_MAX; j++) {
+	    if (addr == sctab[j].addr) {
+		fprintf(stderr,"ERROR: invalid syscall #%d %s[dom%d 0x%lx], "
+			"but addr matches syscall %d (%s)\n",
+			i, oi == SYSCALL_RET_IX ? "(after) " : "",
+			vmprobe_domid(handle), addr, j, sctab[j].name);
+		return NULL;
+	    }
+	}
+	fprintf(stderr,"ERROR: invalid syscall #%d %s[dom%d 0x%lx] ignored\n",
 		i, oi == SYSCALL_RET_IX ? "(after) " : "",
 		vmprobe_domid(handle), addr);
 	return NULL;
     }
     if (sctab[i].num == 0) {
-	fprintf(stderr,"ERROR: unknown syscall #%u %s[dom%d 0x%lx] ignored\n",
+	fprintf(stderr,"ERROR: unknown syscall #%d %s[dom%d 0x%lx] ignored\n",
 		sctab[i].num, oi == SYSCALL_RET_IX ? "(after) " : "",
 		vmprobe_domid(handle), addr);
 	return NULL;
     }
 
-    reload_process_list(handle,regs);
-
-    fprintf(stdout,"%s %s[dom%d 0x%lx]\n",
-	    sctab[i].name, oi == SYSCALL_RET_IX ? "(after) " : "",
-	    vmprobe_domid(handle), addr);
+    fprintf(stdout,"%s [dom%d 0x%lx]",
+	    sctab[i].name, vmprobe_domid(handle), addr);
+    if (oi == SYSCALL_RET_IX)
+	fprintf(stdout, " (rval=%d)", regs->eax);
+    fprintf(stdout, "\n");
     fflush(stdout);
 
     adata = (struct argdata **)malloc(sizeof(struct argdata *)*sctab[i].argc);
@@ -2721,7 +2808,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	    adata[j]->decodings = (char **)malloc(sizeof(char *)*sctab[i].args[j].decodings_len);
 	    memset(adata[j]->decodings,0,sizeof(char *)*sctab[i].args[j].decodings_len);
 
-	    debug(0,"initialized mem for %d decodings for %s:%s\n",
+	    debug(1,"initialized mem for %d decodings for %s:%s\n",
 		  sctab[i].args[j].decodings_len,sctab[i].name,
 		  sctab[i].args[j].name);
 	}
@@ -2732,36 +2819,43 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     for (j = 0; j < sctab[i].argc; ++j) {
 	load_arg_data(handle,aregs,data->pid,i,j,adata,data);
 
-	debug(0,"loaded arg data for %s:%s\n",sctab[i].name,
+	debug(1,"loaded arg data for %s:%s\n",sctab[i].name,
 	      sctab[i].args[j].name);
 	if (sctab[i].args[j].ad) {
 	    sctab[i].args[j].ad(handle,aregs,data->pid,i,j,adata,data);
-	    debug(0,"decoded mem for %d decodings for %s:%s\n",
+	    debug(1,"decoded mem for %d decodings for %s:%s\n",
 		  sctab[i].args[j].decodings_len,sctab[i].name,
 		  sctab[i].args[j].name);
 	}
 
-	debug(0,"about to print str 0x%08x for %s:%s (0x%08x, 0x%08x)\n",
+	debug(1,"about to print str 0x%08x for %s:%s (0x%08x, 0x%08x)\n",
 	      (unsigned int)(adata[j]->str),sctab[i].name,sctab[i].args[j].name,
 	      (unsigned int)(adata[j]->info), (unsigned int)(adata[j]->info ? adata[j]->info->name : 0));
 
-	printf("  %s: ",sctab[i].args[j].name);
-	fflush(stdout);
-	printf("%s\n",adata[j]->str);
-	fflush(stdout);
-
-	debug(0,"printed str for %s:%s\n",sctab[i].name,sctab[i].args[j].name);
+#ifndef OLD_VPG_COMPAT
+	if (debug >= 0)
+#endif
+	{
+	    printf("  %s: ",sctab[i].args[j].name);
+	    fflush(stdout);
+	    printf("%s\n",adata[j]->str);
+	    fflush(stdout);
+	}
 
 	for (k = 0; k < adata[j]->info->decodings_len; ++k) {
-	    if (adata[j]->decodings[k])
-		printf("    %s: %s\n",
-		       adata[j]->info->decodings[k],
-		       adata[j]->decodings[k]);
-	    else
-		printf("    %s: NULL\n",
-		       adata[j]->info->decodings[k]);
-	    fflush(stdout);
-	    debug(0,"printed decoding %d str for %s:%s\n",k,sctab[i].name,sctab[i].args[j].name);
+#ifndef OLD_VPG_COMPAT
+	    if (debug >= 0)
+#endif
+	    {
+		if (adata[j]->decodings[k])
+		    printf("    %s: %s\n",
+			   adata[j]->info->decodings[k],
+			   adata[j]->decodings[k]);
+		else
+		    printf("    %s: NULL\n",
+			   adata[j]->info->decodings[k]);
+		fflush(stdout);
+	    }
 	}
     }
 
@@ -2769,12 +2863,17 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     if (postcall) {
 	rvalstr = ssprintf("%ld", regs->eax);
 
-	printf("  ret_value: %s\n", rvalstr);
-	fflush(stdout);
+#ifndef OLD_VPG_COMPAT
+	if (debug >= 0)
+#endif
+	{
+	    printf("  ret_value: %s\n", rvalstr);
+	    fflush(stdout);
+	}
     }
 
     for (j = 0; j < sctab[i].argc; ++j) {
-	if (check_filters(i,j,adata,data,&filter_ptr))
+	if (check_filters(i,j,adata,data,rvalstr,&filter_ptr,&needpost))
 	    break;
     }
 
@@ -2805,26 +2904,27 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	}
     }
 
+    mypid = data->pid;
     free_process_data(data);
 
     len = 0;
     for (j = 0; j < sctab[i].argc; ++j) {
-	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
+	debug(1,"%s len = %d\n",sctab[i].args[j].name,len);
 	len = len + 2 + strlen(sctab[i].args[j].name);
 	if (adata[j]->str)
 	    len = len + strlen(adata[j]->str);
 	else 
 	    len = len + 6;
-	debug(0,"%s len = %d\n",sctab[i].args[j].name,len);
+	debug(1,"%s len = %d\n",sctab[i].args[j].name,len);
 
 	for (k = 0; k < adata[j]->info->decodings_len; ++k) {
-	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
+	    debug(1,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
 	    len = len + 2 + strlen(sctab[i].args[j].decodings[k]);
 	    if (adata[j]->decodings[k])
 		len = len + strlen(adata[j]->decodings[k]);
 	    else 
 		len = len + 6;
-	    debug(0,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
+	    debug(1,"%s len = %d\n",sctab[i].args[j].decodings[k],len);
 	}
     }
 
@@ -2838,15 +2938,15 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
     rc = 0;
     for (j = 0; j < sctab[i].argc; ++j) {
-	debug(0,"rc = %d\n",rc);
+	debug(1,"rc = %d\n",rc);
 	rc += sprintf((*argstr)+rc,"%s=%s,",sctab[i].args[j].name,adata[j]->str);
-	debug(0,"rc = %d\n",rc);
+	debug(1,"rc = %d\n",rc);
 
 	for (k = 0; k < sctab[i].args[j].decodings_len; ++k) {
-	    debug(0,"rc = %d\n",rc);
+	    debug(1,"rc = %d\n",rc);
 	    rc += sprintf((*argstr)+rc,"%s=%s,",
 			  sctab[i].args[j].decodings[k],adata[j]->decodings[k]);
-	    debug(0,"rc = %d\n",rc);
+	    debug(1,"rc = %d\n",rc);
 	}
     }
 
@@ -2864,11 +2964,76 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     }
     free(adata);
 
-    if (!strcmp(sctab[i].name,"sys_execve")
-	|| !strcmp(sctab[i].name,"sys_waitpid")
-	|| !strcmp(sctab[i].name,"sys_fork")
-	|| !strcmp(sctab[i].name,"sys_vfork")
-	|| !strcmp(sctab[i].name,"sys_clone")) {
+    /*
+     * See if we need to report a process list.
+     *
+     * As an optimization, if the user has specified a set of processes of
+     * interest, we only send a list if the (waitpid,execve,fork,vfork,clone)
+     * operation involved one of those processes.
+     */
+
+    /*
+     * If doing a waitpid, we have to refresh the process list
+     * before the call, since after the call the process of interest
+     * will no longer exist!
+     *
+     * Note that lots of other syscalls might happen between the waitpid
+     * call and the waitpid return, but at any of those syscalls, the
+     * process whose pid is ultimately returned by our waipid will still
+     * exist. One complication is if the last such syscall is exec, then
+     * the process name will be the pre-exec'ed value. We address that
+     * below by updating the process list post-exec.
+     */
+    if (!strcmp(sctab[i].name,"sys_waitpid")) {
+	if (!postcall) {
+	    reload_process_list(handle,regs);
+#if 0
+	    if (debug >= 0) {
+		printf("pre-waitpid, reloaded process list:\n");
+		print_process_list();
+	    }
+#endif
+	} else {
+#if 0
+	    if (debug >= 0) {
+		printf("post-waitpid, process list:\n");
+		print_process_list();
+	    }
+#endif
+	    if (regs->eax > 0 && pid_in_pslist(regs->eax)) {
+		reload_process_list(handle,regs);
+		dopslist = 1;
+	    }
+	}
+    }
+    /*
+     * For fork, exec, et.al. we check before the call and see if the
+     * caller is a process of interest.
+     */
+    else if (!postcall && (!strcmp(sctab[i].name,"sys_execve")
+			   || !strcmp(sctab[i].name,"sys_fork")
+			   || !strcmp(sctab[i].name,"sys_vfork")
+			   || !strcmp(sctab[i].name,"sys_clone"))) {
+	reload_process_list(handle,regs);
+	if (pid_in_pslist(mypid))
+	    dopslist = 1;
+
+	/* If this is exec we may need a post-syscall probe */
+	if (!needpost && ps_list_len && !strcmp(sctab[i].name,"sys_execve"))
+	    needpost = 1;
+    }
+    /*
+     * If we are post-exec, we update the process list to reflect
+     * the new identity of the exec'ed process.
+     */
+    else if (postcall && !strcmp(sctab[i].name,"sys_execve")) {
+	reload_process_list(handle,regs);
+    }
+
+    /*
+     * Send the process list.
+     */
+    if (dopslist) {
 	char *eventstrtmp, *eventstr = NULL;
 	char *name_trunc, *dstr, *extras = NULL;
 	struct timeval tv;
@@ -2876,8 +3041,14 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	gettimeofday(&tv, NULL);
 
 	psliststr = process_list_to_string(handle,regs,"|");
-	printf("\nCurrent Process List:\n\n%s\n",psliststr);
-	fflush(stdout);
+
+#ifndef OLD_VPG_COMPAT
+	if (debug >= 0)
+#endif
+	{
+	    printf("\nCurrent Process List:\n%s\n",psliststr);
+	    fflush(stdout);
+	}
 
 	eventstrtmp = ssprintf("domain=%s type=pslist %s",
 			       domainname,psliststr);
@@ -2901,7 +3072,13 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	    }
 	}
 
-	debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+#ifndef OLD_VPG_COMPAT
+	if (debug < 0)
+	    printf(" (would send 'pslist' to A3)\n");
+	else
+#endif
+	printf(" (would send '%s' and '%s' to A3)\n",eventstr,extras);
+	fflush(stdout);
 
 	if (eventstr)
 	    free(eventstr);
@@ -2916,28 +3093,11 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	    free(psliststr);
     }
 
-    /* no filter match, we are done. */
-    if (filter_ptr == NULL) {
-	return NULL;
-    }
-
     /*
-     * See if we should return a filter for this operation based on
-     * the "when" specification of the filter that exists.
+     * Schedule any post action required.
      */
-    if (!postcall) {
-	int when = filter_ptr->when;
-
-	/*
-	 * We are pre-syscall, don't return a filter if we are only post
-	 */
-	if (when == WHEN_POST)
-	    filter_ptr = NULL;
-
-	/*
-	 * Schedule any post action required.
-	 */
-	if (when != WHEN_PRE && sctab[i].raddr != RADDR_NO) {
+    if (!postcall && needpost) {
+	if (sctab[i].raddr != RADDR_NO) {
 	    struct syscall_retinfo *sc;
 
 	    sc = malloc(sizeof(*sc));
@@ -2958,16 +3118,9 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 		;
 	    }
 #endif
-	    debug(1, "registered syscall %d return probe for thread 0x%x\n",
+	    debug(1, "Registered syscall %d return probe for thread 0x%x\n",
 		  sc->syscall_ix, sc->thread_ptr);
 	}
-    }
-    else {
-	/*
-	 * We are post-syscall, don't return a filter if we are only pre
-	 */
-	if (filter_ptr->when == WHEN_PRE)
-	    filter_ptr = NULL;
     }
 
     return filter_ptr;
@@ -2980,7 +3133,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
     char *funcstr = NULL;
     char *argstr = NULL;
     char *ancestry = NULL;
-    struct argfilter *filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr,&ancestry);
+    struct argfilter *filter;
     char *eventstr = NULL;
     char *eventstrtmp = NULL;
     char *extras = NULL;
@@ -2989,6 +3142,13 @@ static int on_fn_pre(vmprobe_handle_t vp,
 
     va = -1;
 
+#ifdef OLD_VPG_COMPAT
+    /* for compat, ignore ancestry (a recent mike-ism) */
+    filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr,NULL);
+#else
+    filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr,
+			    filtered_events_fd ? &ancestry : NULL);
+#endif
     if (filter) {
 	char *name_trunc;
 	struct timeval tv;
@@ -3004,9 +3164,12 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    gfilterstr = "";
 
 	if (!filter->dofilter) {
-	    debug(0," Filter (noadjust) matched: %d %d %s (%d %d (%d) %d %d)%s\n",
+#ifndef OLD_VPG_COMPAT
+	    if (debug >= 0)
+#endif
+	    printf(" Filter (noadjust) matched: %d %d %s (%d %d (%d) %d %d)%s\n",
 		  filter->syscallnum,
-		  filter->argnum,
+		  filter->argnum == -1 ? regs->eax : filter->argnum,
 		  filter->strfrag,
 		  filter->pid,
 		  filter->ppid,
@@ -3047,11 +3210,20 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    }
 
 	    if (eventstr && extras) {
-		debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+#ifndef OLD_VPG_COMPAT
+		if (debug < 0)
+		    printf(" (would send 'match' (filt #%d) to A3)\n",
+			   filter->index);
+		else
+#endif
+		printf(" (would send '%s' and '%s' to A3)\n",eventstr,extras);
 	    }
 	}
 	else {
-	    debug(0," Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!%s\n",
+#ifndef OLD_VPG_COMPAT
+	    if (debug >= 0)
+#endif
+	    printf(" Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!%s\n",
 		  filter->syscallnum,
 		  filter->argnum,
 		  filter->strfrag,
@@ -3060,15 +3232,15 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		  filter->ppid_search,
 		  filter->uid,
 		  filter->gid,
-		  filter->retval,
+		  filter->abort_retval,
 		  gfilterstr);
 
 	    if (!dofilter) 
 		eventstrtmp = ssprintf("domain=%s type=would-abort retval=%d %s %s(%s)",
-				       domainname,filter->retval,psstr,funcstr,argstr);
+				       domainname,filter->abort_retval,psstr,funcstr,argstr);
 	    else 
 		eventstrtmp = ssprintf("domain=%s type=abort retval=%d %s %s(%s)",
-				       domainname,filter->retval,psstr,funcstr,argstr);
+				       domainname,filter->abort_retval,psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
 
@@ -3098,11 +3270,16 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	    }
 
 	    if (eventstr && extras) {
-		debug(0," (would send '%s' and '%s' to A3)\n",eventstr,extras);
+#ifndef OLD_VPG_COMPAT
+		if (debug < 0)
+		    printf(" (would send '%s' to A3)\n",dofilter?"abort":"would-abort");
+		else
+#endif
+		printf(" (would send '%s' and '%s' to A3)\n",eventstr,extras);
 	    }
 
 	    if (dofilter) {
-		va = action_return(filter->retval);
+		va = action_return(filter->abort_retval);
 		action_sched(vp,va,VMPROBE_ACTION_ONESHOT);
 	    }
 	}
@@ -3385,22 +3562,11 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 			/* Make sure syscall supports it */
 			if (filter->syscallnum != -1 &&
 			    sctab[filter->syscallnum].raddr == RADDR_NO) {
-			    fprintf(stderr, "ERROR: syscall %d does not support post-action\n", filter->syscallnum);
+			    fprintf(stderr, "WARNING: syscall %d does not support post-action, treating as pre-action\n", filter->syscallnum);
 			    filter->when = WHEN_PRE;
 			}
 			else {
 			    filter->when = WHEN_POST;
-			}
-		    }
-		    else if (strcmp(val, "both") == 0) {
-			/* Make sure syscall supports post */
-			if (filter->syscallnum != -1 &&
-			    sctab[filter->syscallnum].raddr == RADDR_NO) {
-			    fprintf(stderr, "ERROR: syscall %d does not support post-action\n", filter->syscallnum);
-			    filter->when = WHEN_PRE;
-			}
-			else {
-			    filter->when = WHEN_BOTH;
 			}
 		    }
 		    else {
@@ -3409,7 +3575,25 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		    }
 		}
 		else if (strcmp(var,"retval") == 0) {
-		    filter->retval = atoi(val);
+		    /* XXX dubious overload of retval */
+		    if (filter->dofilter) {
+			/* abort filter */
+			filter->abort_retval = atoi(val);
+		    } else {
+			/* match filter */
+			if (filter->when != WHEN_POST) {
+			    fprintf(stderr,"WARNING: 'retval=' applied to pre-action filter, ignoring 'retval='\n");
+			} else {
+			    filter->argnum = -2;
+			    filter->strfrag = strdup(val);
+			    filter->preg = (regex_t *)malloc(sizeof(regex_t));
+			    if ((rc = regcomp(filter->preg,val,REG_EXTENDED))) {
+				regerror(rc,filter->preg,errbuf,sizeof(errbuf));
+				fprintf(stderr,"ERROR: filter file format: regcomp(%s): %s\n",val,errbuf);
+				goto errout;
+			    }
+			}
+		    }
 		}
 		else if (strcmp(var,"pid") == 0) {
 		    filter->pid = atoi(val);
@@ -3456,15 +3640,20 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		    goto errout;
 		}
 	    }
+	    filter->index = alist_len + 1;
 	    alist[alist_len] = filter;
 	    ++alist_len;
 	    filter = NULL;
 	}
 	else {
-	    fprintf(stderr,"ERROR: unknown config directive!\n");
+	    fprintf(stderr,"ERROR: unknown config directive on line:\n");
+	    fprintf(stderr,"%s\n", buf);
 	    goto errout;
 	}
     }
+
+    if (buf)
+	free(buf);
 
     // if successful, update args!
     if (alist_len) {
@@ -3503,6 +3692,8 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
     return 0;
 
  errout:
+    if (buf)
+	free(buf);
     if (filter)
 	free_argfilter(filter);
     for (i = 0; i < alist_len; ++i) {
@@ -3521,9 +3712,59 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
     return -1;
 }
 
+static domid_t domid = 1;
+static char **syscall_list;
+static int syscall_list_len = 0;
+
+static void cleanup(int signo)
+{
+    struct syscall_retinfo *sc, *tmpsc;
+    int i, j;
+
+    if (signo) {
+	fflush(stdout);
+	fprintf(stderr, "Shutting down...\n");
+    }
+
+    // free the current process list
+    free_process_list();
+
+    // free the syscall return list
+    list_for_each_entry_safe(sc,tmpsc,&syscalls,list) {
+	list_del(&sc->list);
+	free(sc);
+    }
+
+    // free the function list
+    for (j = 0; j < syscall_list_len; ++j) {
+	free(syscall_list[j]);
+    }
+    if (syscall_list)
+	free(syscall_list);
+
+    // free the argfilter list
+    for (j = 0; j < argfilter_list_len; ++j) {
+	free_argfilter(argfilter_list[j]);
+    }
+    if (argfilter_list)
+	free(argfilter_list);
+
+    // free the process list
+    if (ps_list) {
+	for (i = 0; i < ps_list_len; ++i) {
+	    if (ps_list[i])
+		free(ps_list[i]);
+	}
+	free(ps_list);
+    }
+
+    if (signo)
+	raise(signo);
+    exit(-1);
+}
+
 int main(int argc, char *argv[])
 {
-    domid_t domid = 1; // default guest domain
     int i,j,found;
     char ch;
     char *saveptr, *token = NULL;
@@ -3538,9 +3779,6 @@ int main(int argc, char *argv[])
     char sym[256];
     char symtype;
     char *progname = argv[0];
-    int debug = -1;
-    char **syscall_list;
-    int syscall_list_len = 0;
     int syscall_list_alloclen = 8;
     int xa_debug = -1;
     vmprobe_handle_t schandles[SYSCALL_MAX];
@@ -3664,7 +3902,7 @@ int main(int argc, char *argv[])
 			}
 			break;
 		    case 3:
-			filter->retval = atoi(token2);
+			filter->abort_retval = atoi(token2);
 			break;
 		    case 4:
 			filter->pid = atoi(token2);
@@ -3759,6 +3997,9 @@ int main(int argc, char *argv[])
     signal(SIGUSR1,usrsighandle);
     signal(SIGUSR2,hupsighandle);
 
+    // for memory debugging, arrange to wind up here on SIGINT
+    signal(SIGINT,cleanup);
+
     if (send_a3_events && web_init()) {
 	error("could not connect to A3 monitor!\n");
 	exit(-6);
@@ -3790,23 +4031,6 @@ int main(int argc, char *argv[])
 	    for (i = 0; i < SYSCALL_MAX; ++i) {
 		if (sctab[i].name == NULL)
 		    continue;
-
-		/*
-		 * Special handling of waitpid return value.
-		 * Stop at the end of the waitpid function so we can
-		 * see the returned pid value.
-		 *
-		 * XXX this should be subsumed by the syscall_call
-		 * mechanism below.
-		 */
-		if (!strcmp(sctab[i].name, "sys_waitpid_RET") &&
-		    !strcmp(sym, "sys_waitpid")) {
-		    addr += 39;
-		    debug(1, "setting sys_waitpid return address to 0x%x.\n",
-			  addr);
-		    sctab[i].addr = addr;
-		    continue;
-		}
 
 		/*
 		 * If we found a syscall symbol, update the address
@@ -3866,7 +4090,7 @@ int main(int argc, char *argv[])
      * XXX should do this dynamically to mitigate the impact on others.
      */
     for (j = 0; j < argfilter_list_len; ++j) {
-	if (argfilter_list[j]->when != WHEN_PRE) {
+	if (argfilter_list[j]->when == WHEN_POST) {
 		vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
 		debug(1, "installing syscall return probe at 0x%x\n",
 		      vaddrlist[SYSCALL_RET_IX]);
@@ -3906,7 +4130,6 @@ int main(int argc, char *argv[])
 	    int newflistlen;
 	    char **newpslist;
 	    int newpslistlen;
-	    struct syscall_retinfo *sc, *tmpsc;
 
 	    if (load_config_file(configfile,&newflist,&newflistlen,
 				 &newalist,&newalistlen,
@@ -3924,7 +4147,7 @@ int main(int argc, char *argv[])
 		    vaddrlist[i] = 0;
 		    if (schandles[i] == -1)
 			continue;
-
+			    
 		    schandles[i] = -1;
 		    fprintf(stderr,"Unregistered probe for %s.\n",sctab[i].name);
 		}
@@ -3933,25 +4156,8 @@ int main(int argc, char *argv[])
 	    // stop the library fully!
 	    stop_vmprobes();
 
-	    // free the syscall return list
-	    list_for_each_entry_safe(sc,tmpsc,&syscalls,list) {
-		list_del(&sc->list);
-		free(sc);
-	    }
-
-	    // free the function list
-	    for (j = 0; j < syscall_list_len; ++j) {
-		free(syscall_list[j]);
-	    }
-	    if (syscall_list)
-		free(syscall_list);
-
-	    // free the argfilter list
-	    for (j = 0; j < argfilter_list_len; ++j) {
-		free_argfilter(argfilter_list[j]);
-	    }
-	    if (argfilter_list)
-		free(argfilter_list);
+	    // free up current data structures
+	    cleanup(0);
 
 	    // replace the argfilter list
 	    argfilter_list = newalist;
@@ -3989,7 +4195,7 @@ int main(int argc, char *argv[])
 	     * XXX should do this dynamically to mitigate the impact on others.
 	     */
 	    for (j = 0; j < argfilter_list_len; ++j) {
-		if (argfilter_list[j]->when != WHEN_PRE) {
+		if (argfilter_list[j]->when == WHEN_POST) {
 		    vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
 		    debug(1, "installing syscall return probe at 0x%x\n",
 			  vaddrlist[SYSCALL_RET_IX]);
@@ -4028,3 +4234,11 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+
+/*
+ * Local variables:
+ * mode: C
+ * c-set-style: "BSD"
+ * c-basic-offset: 4
+ * End:
+ */
