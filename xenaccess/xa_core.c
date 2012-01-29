@@ -72,6 +72,7 @@ int get_memory_size (xa_instance_t *instance)
         xsh = xs_domain_open();
         instance->m.xen.size =
             strtol(xs_read(xsh, xth, tmp, NULL), NULL, 10) * 1000;
+	free(tmp);
         if (0 == instance->m.xen.size){
             printf("ERROR: failed to get memory size for Xen domain.\n");
             ret = XA_FAILURE;

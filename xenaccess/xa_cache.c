@@ -246,6 +246,8 @@ int xa_destroy_cache (xa_instance_t *instance)
     xa_cache_entry_t tmp = NULL;
     while (current != NULL){
         tmp = current->next;
+	if (current->symbol_name)
+	    free(current->symbol_name);
         free(current);
         current = tmp;
     }
