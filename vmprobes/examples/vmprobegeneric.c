@@ -118,8 +118,10 @@ struct argfilter {
 };
 
 void free_argfilter(struct argfilter *f) {
-    if (f->preg)
+    if (f->preg) {
 	regfree(f->preg);
+	free(f->preg);
+    }
     if (f->strfrag)
 	free(f->strfrag);
     if (f->name)
@@ -1059,6 +1061,8 @@ void free_process_data(struct process_data *data)
     struct process_data *real_parent = data->real_parent;
     struct process_data *parent = data->parent;
 
+    assert(data != NULL && data != parent && data != real_parent);
+
     if (real_parent && real_parent != parent) 
 	free_process_data(real_parent);
     if (parent)
@@ -1206,7 +1210,6 @@ int reload_process_list(vmprobe_handle_t handle,
 
 	if (!pdata) {
 	    fprintf(stderr,"ERROR: could not load intermediate process data for ps list; returning what we have!\n");
-	    fflush(stderr);
 	    return 1;
 	}
     }
@@ -3964,6 +3967,10 @@ int main(int argc, char *argv[])
     }
 
     if (configfile) {
+	if (syscall_list)
+	    free(syscall_list);
+	if (argfilter_list)
+	    free(argfilter_list);
 	if (load_config_file(configfile,&syscall_list,&syscall_list_len,
 			     &argfilter_list,&argfilter_list_len,
 			     &ps_list,&ps_list_len)) {

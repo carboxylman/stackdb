@@ -505,6 +505,8 @@ add_domain(domid_t domid)
 
     if (xa_init_vm_id_strict(domid, &domain->xa_instance) == XA_FAILURE)
     {
+	if (domain->xa_instance.sysmap)
+	    free(domain->xa_instance.sysmap);
         free(domain);
         error("failed to init xa instance for dom%d\n", domid);
         return NULL;
@@ -534,6 +536,9 @@ remove_domain(struct vmprobe_domain *domain)
     list_del(&domain->list);
 
     xa_destroy(&domain->xa_instance);
+
+    if (domain->xa_instance.sysmap)
+	free(domain->xa_instance.sysmap);
 
     debug(0,"dom%d removed\n", domain->id);
     free(domain);
