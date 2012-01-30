@@ -1155,7 +1155,6 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
 	fflush(stdout);
     }
 
-
     return data;
 }
 
@@ -1196,8 +1195,10 @@ int reload_process_list(vmprobe_handle_t handle,
     startpid = pdata->pid;
     while (1) {
 	// when we hit init the second time, break!
-	if (i && pdata->pid == startpid)
+	if (i && pdata->pid == startpid) {
+	    free_process_data(pdata);
 	    break;
+	}
 	++i;
 
 	//INIT_LIST_HEAD(&pdata->list);
@@ -3654,6 +3655,7 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	    goto errout;
 	}
     }
+    fclose(ffile);
 
     if (buf)
 	free(buf);
@@ -3695,6 +3697,8 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
     return 0;
 
  errout:
+    fclose(ffile);
+
     if (buf)
 	free(buf);
     if (filter)
@@ -4068,6 +4072,7 @@ int main(int argc, char *argv[])
 	    }		
 	}
     }
+    fclose(sysmapfh);
 
     for (i = 0; i < SYSCALL_MAX; ++i) {
 	schandles[i] = -1;
