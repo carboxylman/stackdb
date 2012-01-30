@@ -59,10 +59,19 @@ export SHELL = /bin/sh
 
 ELFUTILS = @ELFUTILS@
 
+ELFUTILS_CFLAGS = -I$(ELFUTILS)/include
+ELFUTILS_LDFLAGS = -L$(ELFUTILS)/lib -L$(ELFUTILS)/lib/elfutils -ldw -lelf -lebl
+
+GLIB_CFLAGS     = $(shell pkg-config --cflags glib-2.0)
+GLIB_LDFLAGS    = $(shell pkg-config --libs glib-2.0)
+
 #
 # XXX this stuff should be pkg-config'd or similar
 #
-XENACCESS_FLAGS = -D ENABLE_XEN -D XA_DEBUG
+XENACCESS_FLAGS = -D ENABLE_XEN
+ifneq ("@ENABLE_XENACCESS_DEBUG@","1")
+     XENACCESS_FLAGS += -D XA_DEBUG
+endif
 ifeq ("@XC_HAVE_MAP_FOREIGN@","1")
     XENACCESS_FLAGS += -D HAVE_MAP_FOREIGN
 endif
@@ -71,9 +80,32 @@ XENACCESS_A     = $(XENACCESS_LIBDIR)/libxenaccess.a
 XENACCESS_SO    = $(XENACCESS_LIBDIR)/libxenaccess.so
 XENACCESS_INC   = $(TOP_SRCDIR)/
 
+ENABLE_XENACCESS = @ENABLE_XENACCESS@
+
 VMPROBES_FLAGS  = -D VMPROBE_DEBUG -D VMPROBE_i386 -D VMPROBE_SIGNAL
 #VMPROBES_FLAGS += -D VMPROBE_BENCHMARK
 VMPROBES_LIBDIR = $(OBJDIR)/vmprobes
 VMPROBES_A      = $(VMPROBES_LIBDIR)/libvmprobes.a
 VMPROBES_SO     = $(VMPROBES_LIBDIR)/libvmprobes.so
 VMPROBES_INC    = $(TOP_SRCDIR)/
+
+#
+# Set these so we get lseek64 right, everywhere, without having to muck
+# with header files too much.
+#
+CFLAGS += -D_GNU_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64
+
+CFLAGS += -Wall -Wextra -Wno-unused-parameter
+#-Wswitch-default -Wswitch-enum -Wtrampolines -Wtraditional-conversion -Wdeclaration-after-statement -Wshadow -Wbad-function-cast -Wcast-qual -Wcast-align -Wconversion -Wlogical-op -Wstrict-prototypes -Wold-style-definition -Wmissing-parameter-type -Wmissing-prototypes -Wmissing-declarations -Wmissing-field-initializers -Wmissing-format-attribute -Winline 
+
+CFLAGS += -O2
+
+ifeq ("@ENABLE_DEBUGINFO@","1")
+     CFLAGS += -g
+endif
+ifeq ("@ENABLE_PROFILING@","1")
+     CFLAGS += -pg
+endif
+ifeq ("@ENABLE_VMI_DEBUG@","1")
+     CFLAGS += -DVMI_DEBUG
+endif

@@ -1,10 +1,29 @@
+/*
+ * Copyright (c) 2011, 2012 The University of Utah
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
 #include <errno.h>
 #include <string.h>
 
-#include "libdwdebug.h"
+#include "log.h"
+#include "dwdebug.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -17,8 +36,11 @@ int main(int argc,char **argv) {
     int detail = 0;
     int meta = 0;
     int i;
+    log_flags_t flags;
 
-    while ((ch = getopt(argc, argv, "dDM")) != -1) {
+    dwdebug_init();
+
+    while ((ch = getopt(argc, argv, "dDMl:")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
@@ -28,6 +50,13 @@ int main(int argc,char **argv) {
 	    break;
 	case 'M':
 	    ++meta;
+	    break;
+	case 'l':
+	    if (vmi_log_get_flag_mask(optarg,&flags)) {
+		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
+		exit(-1);
+	    }
+	    vmi_set_log_flags(flags);
 	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
@@ -45,17 +74,16 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
-    libdwdebug_init();
-    libdwdebug_set_debug_level(debug);
+    vmi_set_log_level(debug);
 
-    debugfile = debugfile_create(filename,DEBUGFILE_TYPE_MAIN);
+    debugfile = debugfile_filename_create(filename,DEBUGFILE_TYPE_MAIN);
     if (!debugfile) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
 		filename);
 	exit(-1);
     }
 
-    if (load_debug_info(debugfile)) {
+    if (debugfile_load(debugfile)) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
 		filename);
 	exit(-1);
@@ -83,7 +111,7 @@ int main(int argc,char **argv) {
 
     debugfile_free(debugfile);
 
-    libdwdebug_fini();
+    dwdebug_fini();
 
     return 0;
 }

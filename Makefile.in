@@ -5,7 +5,10 @@ OBJDIR		= @top_builddir@
 
 include Makeconf
 
-SUBDIRS = xenaccess vmprobes vmps vmfs vmtap dwdebug
+SUBDIRS = lib dwdebug target 
+ifeq ($(ENABLE_XENACCESS),"1")
+	SUBDIRS += xenaccess vmprobes vmps vmfs vmtap
+endif
 
 all: all-subdirs 
 

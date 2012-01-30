@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2011, 2012 The University of Utah
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -10,7 +28,10 @@
 
 #include <signal.h>
 
-#include "libdwdebug.h"
+#include "log.h"
+#include "dwdebug.h"
+#include "target_api.h"
+#include "target.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -38,6 +59,7 @@ int main(int argc,char **argv) {
     int i, j;
     struct user_regs_struct regs;
     int ssize;
+    log_flags_t flags;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -46,7 +68,7 @@ int main(int argc,char **argv) {
 	.meta = 1,
     };
 
-    while ((ch = getopt(argc, argv, "p:e:dvs")) != -1) {
+    while ((ch = getopt(argc, argv, "p:e:dvsl:")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
@@ -63,6 +85,13 @@ int main(int argc,char **argv) {
 	case 's':
 	    raw = 0;
 	    break;
+	case 'l':
+	    if (vmi_log_get_flag_mask(optarg,&flags)) {
+		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
+		exit(-1);
+	    }
+	    vmi_set_log_flags(flags);
+	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -72,8 +101,8 @@ int main(int argc,char **argv) {
     argc -= optind;
     argv += optind;
 
-    libdwdebug_init();
-    libdwdebug_set_debug_level(debug);
+    dwdebug_init();
+    vmi_set_log_level(debug);
 
     if ((pid == -1 && exe == NULL)
 	|| (pid != -1 && exe != NULL)) {
@@ -110,7 +139,7 @@ int main(int argc,char **argv) {
 	}
 	else {
 	    symbols = (struct bsymbol **)malloc(sizeof(struct bsymbol *)*argc);
-	    memset(symbols,0,sizeof(struct symbol *)*argc);
+	    memset(symbols,0,sizeof(struct bsymbol *)*argc);
 	}
 
 	for (i = 0; i < argc; ++i) {
@@ -172,30 +201,35 @@ int main(int argc,char **argv) {
 		    //ssize = symbol_get_bytesize(symbols[i]->datatype);
 		    //word = malloc(ssize);
 		    word = NULL;
-		    if (!bsymbol_load(symbols[i],
-				      LOAD_FLAG_AUTO_DEREF | 
-				      LOAD_FLAG_AUTO_STRING,
-				      (void **)&word,&ssize)) {
+		    struct value *value;
+		    if ((value = bsymbol_load(symbols[i],
+					      LOAD_FLAG_AUTO_DEREF | 
+					      LOAD_FLAG_AUTO_STRING |
+					      LOAD_FLAG_NO_CHECK_VISIBILITY |
+					      LOAD_FLAG_NO_CHECK_BOUNDS))) {
 			if (1) {
-			    printf("%s = ",symbols[i]->lsymbol.symbol->name);
-			    symbol_rvalue_print(stdout,symbols[i]->lsymbol.symbol,
-						word,ssize,
+			    printf("%s = ",symbols[i]->lsymbol->symbol->name);
+			    symbol_rvalue_print(stdout,
+						symbols[i]->lsymbol->symbol,
+						value->buf,value->bufsiz,
 						LOAD_FLAG_AUTO_DEREF |
-						LOAD_FLAG_AUTO_STRING,
+						LOAD_FLAG_AUTO_STRING |
+						LOAD_FLAG_NO_CHECK_VISIBILITY |
+						LOAD_FLAG_NO_CHECK_BOUNDS,
 						t);
 			}
 			else {
-			    printf("%s = ",symbols[i]->lsymbol.symbol->name);
+			    printf("%s = ",symbols[i]->lsymbol->symbol->name);
 			    for (j = 0; j < ssize; ++j) {
 				printf("%02hhx",word[j]);
 			    }
 			}
 			printf("\n");
-			free(word);
+			value_free(value);
 		    }
 		    else
 			printf("%s: could not read value: %s\n",
-			       symbols[i]->lsymbol.symbol->name,strerror(errno));
+			       symbols[i]->lsymbol->symbol->name,strerror(errno));
 		}
 	    }
 

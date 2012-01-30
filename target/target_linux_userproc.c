@@ -1,5 +1,20 @@
-#define _LARGEFILE64_SOURCE
-#define _FILE_OFFSET_BITS 64
+/*
+ * Copyright (c) 2011, 2012 The University of Utah
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
+ */
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -21,7 +36,10 @@
 #include <elf.h>
 #include <libelf.h>
 
-#include "libdwdebug.h"
+#include "dwdebug.h"
+
+#include "target_api.h"
+#include "target.h"
 
 /*
  * Prototypes.
@@ -33,8 +51,11 @@ static int linux_userproc_init(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
 static int linux_userproc_detach(struct target *target);
 static int linux_userproc_fini(struct target *target);
-static int linux_userproc_loadregions(struct target *target);
+static int linux_userproc_loadspaces(struct target *target);
+static int linux_userproc_loadregions(struct target *target,
+				      struct addrspace *space);
 static int linux_userproc_loaddebugfiles(struct target *target,
+					 struct addrspace *space,
 					 struct memregion *region);
 static target_status_t linux_userproc_status(struct target *target);
 static int linux_userproc_pause(struct target *target);
@@ -44,13 +65,13 @@ static unsigned char *linux_userproc_read(struct target *target,
 					  unsigned long long addr,
 					  unsigned long length,
 					  unsigned char *buf);
-unsigned long linux_userproc_write(struct target *target,
-				   unsigned long long addr,
-				   unsigned long length,
-				   unsigned char *buf);
-char *linux_userproc_reg_name(struct target *target,REG reg);
-REGVAL linux_userproc_read_reg(struct target *target,REG reg);
-int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value);
+static unsigned long linux_userproc_write(struct target *target,
+					  unsigned long long addr,
+					  unsigned long length,
+					  unsigned char *buf);
+static char *linux_userproc_reg_name(struct target *target,REG reg);
+static REGVAL linux_userproc_read_reg(struct target *target,REG reg);
+static int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value);
 
 /*
  * Set up the target interface for this library.
@@ -60,6 +81,7 @@ struct target_ops linux_userspace_process_ops = {
     .fini = linux_userproc_fini,
     .attach = linux_userproc_attach_internal,
     .detach = linux_userproc_detach,
+    .loadspaces = linux_userproc_loadspaces,
     .loadregions = linux_userproc_loadregions,
     .loaddebugfiles = linux_userproc_loaddebugfiles,
     .status = linux_userproc_status,
@@ -74,6 +96,7 @@ struct target_ops linux_userspace_process_ops = {
 };
 
 struct linux_userproc_state {
+    int pid;
     int memfd;
     int attached;
     int32_t ptrace_opts;
@@ -103,6 +126,7 @@ int linux_userproc_stopped_by_syscall(struct target *target) {
  * interaction; we just facilitate debuginfo-assisted data operations.
  */
 struct target *linux_userproc_attach(int pid) {
+    struct linux_userproc_state *lstate;
     struct target *target;
     char buf[256];
     struct stat sbuf;
@@ -114,27 +138,27 @@ struct target *linux_userproc_attach(int pid) {
     int rc;
     char *eident;
 
-    ldebug(5,"opening pid %d\n",pid);
+    vdebug(5,LOG_T_LUP,"opening pid %d\n",pid);
 
     /* This is not strictly true; if they have the right capability they
      * can trace... but this is easier to check.
      */
     if (geteuid() != 0) {
-	lerror("must be root!\n");
+	verror("must be root!\n");
 	errno = EPERM;
 	return NULL;
     }
 
     snprintf(buf,256,"/proc/%d/stat",pid);
     if (stat(buf,&sbuf)) {
-	lerror("stat %s: %s\n",buf,strerror(errno));
+	verror("stat %s: %s\n",buf,strerror(errno));
 	errno = ESRCH;
 	return NULL;
     }
     else {
 	debugfile = fopen(buf,"r");
 	if (!debugfile || !fgets(buf,256,debugfile)) {
-	    lerror("fopen %s: %s\n",buf,strerror(errno));
+	    verror("fopen %s: %s\n",buf,strerror(errno));
 	    fclose(debugfile);
 	    return NULL;
 	}
@@ -153,46 +177,44 @@ struct target *linux_userproc_attach(int pid) {
     main_exe[rc] = '\0';
 
     if ((fd = open(main_exe,0,O_RDONLY)) < 0) {
-	lerror("open %s: %s\n",main_exe,strerror(errno));
+	verror("open %s: %s\n",main_exe,strerror(errno));
 	return NULL;
     }
 
     elf_version(EV_CURRENT);
     if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	lerror("elf_begin %s: %s\n",main_exe,elf_errmsg(elf_errno()));
+	verror("elf_begin %s: %s\n",main_exe,elf_errmsg(elf_errno()));
 	return NULL;
     }
 
     /* read the ident stuff to get wordsize and endianness info */
     if (!(eident = elf_getident(elf,NULL))) {
-	lerror("elf_getident %s: %s\n",main_exe,elf_errmsg(elf_errno()));
+	verror("elf_getident %s: %s\n",main_exe,elf_errmsg(elf_errno()));
 	elf_end(elf);
 	return NULL;
     }
 
-    target = (struct target *)malloc(sizeof(*target));
+    target = target_create("linux_userspace_process",NULL,
+			   &linux_userspace_process_ops);
     if (!target) {
 	elf_end(elf);
 	errno = ENOMEM;
 	return NULL;
     }
 
-    memset(target,0,sizeof(*target));
-
-    target->type = "linux_userspace_process";
     target->live = 1;
     target->writeable = 1;
-    target->ops = &linux_userspace_process_ops;
+
     if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
 	target->wordsize = 4;
-	ldebug(3,"32-bit %s\n",main_exe);
+	vdebug(3,LOG_T_LUP,"32-bit %s\n",main_exe);
     }
     else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
 	target->wordsize = 8;
-	ldebug(3,"64-bit %s\n",main_exe);
+	vdebug(3,LOG_T_LUP,"64-bit %s\n",main_exe);
     }
     else {
-	lerror("unknown elf class %d; not 32/64 bit!\n",
+	verror("unknown elf class %d; not 32/64 bit!\n",
 	       (uint8_t)eident[EI_CLASS]);
 	free(target);
 	elf_end(elf);
@@ -202,14 +224,14 @@ struct target *linux_userproc_attach(int pid) {
 
     if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
 	target->endian = DATA_LITTLE_ENDIAN;
-	ldebug(3,"little endian %s\n",main_exe);
+	vdebug(3,LOG_T_LUP,"little endian %s\n",main_exe);
     }
     else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
 	target->endian = DATA_BIG_ENDIAN;
-	ldebug(3,"big endian %s\n",main_exe);
+	vdebug(3,LOG_T_LUP,"big endian %s\n",main_exe);
     }
     else {
-	lerror("unknown elf data %d; not big/little endian!\n",
+	verror("unknown elf data %d; not big/little endian!\n",
 	       (uint8_t)eident[EI_DATA]);
 	free(target);
 	elf_end(elf);
@@ -233,11 +255,19 @@ struct target *linux_userproc_attach(int pid) {
     /* Done with the elf ident data. */
     elf_end(elf);
 
-    target->space = addrspace_create("NULL",0,pid);
+    lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
+    if (!lstate) {
+	free(target);
+	errno = ENOMEM;
+	return NULL;
+    }
+    memset(lstate,0,sizeof(*lstate));
 
-    target->space->target = target;
+    lstate->pid = pid;
 
-    ldebug(5,"opened pid %d\n",pid);
+    target->state = lstate;
+
+    vdebug(5,LOG_T_LUP,"opened pid %d\n",pid);
 
     return target;
 }
@@ -250,25 +280,23 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp) {
  ** These are all functions supporting the target API.
  **/
 
+int linux_userproc_pid(struct target *target) {
+    if (target && target->state)
+	return ((struct linux_userproc_state *)target->state)->pid;
+    return -1;
+}
+
 static int linux_userproc_init(struct target *target) {
-    struct linux_userproc_state *lstate;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
 
-    ldebug(5,"pid %d\n",target->space->pid);
-
-    lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
-    if (!lstate) {
-	errno = ENOMEM;
-	return 1;
-    }
-    memset(lstate,0,sizeof(*lstate));
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     lstate->memfd = -1;
     lstate->attached = 0;
     lstate->ptrace_opts = 0;
     lstate->ptrace_type = PTRACE_SYSCALL;
     lstate->last_signo = -1;
-
-    target->state = lstate;
 
     return 0;
 }
@@ -277,7 +305,7 @@ static int linux_userproc_attach_internal(struct target *target) {
     struct linux_userproc_state *lstate;
     char buf[256];
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     lstate = (struct linux_userproc_state *)(target->state);
     if (!lstate) {
@@ -287,12 +315,12 @@ static int linux_userproc_attach_internal(struct target *target) {
     if (lstate->attached)
 	return 0;
 
-    if (ptrace(PTRACE_ATTACH,target->space->pid,NULL,NULL) < 0)
+    if (ptrace(PTRACE_ATTACH,linux_userproc_pid(target),NULL,NULL) < 0)
 	return 1;
 
-    snprintf(buf,256,"/proc/%d/mem",target->space->pid);
+    snprintf(buf,256,"/proc/%d/mem",linux_userproc_pid(target));
     if ((lstate->memfd = open(buf,O_LARGEFILE,O_RDWR)) < 0) {
-	ptrace(PTRACE_DETACH,target->space->pid,NULL,NULL);
+	ptrace(PTRACE_DETACH,linux_userproc_pid(target),NULL,NULL);
 	return 1;
     }
 
@@ -304,7 +332,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 static int linux_userproc_detach(struct target *target) {
     struct linux_userproc_state *lstate;
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     lstate = (struct linux_userproc_state *)(target->state);
     if (!lstate) {
@@ -319,18 +347,18 @@ static int linux_userproc_detach(struct target *target) {
 
     /* Sleep the child first; otherwise we'll end up sending it a trace
        trap, which will kill it. */
-    kill(target->space->pid,SIGSTOP);
+    kill(linux_userproc_pid(target),SIGSTOP);
 
-    if (ptrace(PTRACE_DETACH,target->space->pid,NULL,NULL) < 0) {
-	lerror("ptrace detach %d failed: %s\n",target->space->pid,
+    if (ptrace(PTRACE_DETACH,linux_userproc_pid(target),NULL,NULL) < 0) {
+	verror("ptrace detach %d failed: %s\n",linux_userproc_pid(target),
 	       strerror(errno));
-	kill(target->space->pid,SIGCONT);
+	kill(linux_userproc_pid(target),SIGCONT);
 	return 1;
     }
 
-    kill(target->space->pid,SIGCONT);
+    kill(linux_userproc_pid(target),SIGCONT);
 
-    ldebug(3,"ptrace detach %d succeeded.\n",target->space->pid);
+    vdebug(3,LOG_T_LUP,"ptrace detach %d succeeded.\n",linux_userproc_pid(target));
     lstate->attached = 0;
 
     return 0;
@@ -339,7 +367,7 @@ static int linux_userproc_detach(struct target *target) {
 static int linux_userproc_fini(struct target *target) {
     struct linux_userproc_state *lstate;
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     lstate = (struct linux_userproc_state *)(target->state);
 
@@ -351,7 +379,18 @@ static int linux_userproc_fini(struct target *target) {
     return 0;
 }
 
-static int linux_userproc_loadregions(struct target *target) {
+static int linux_userproc_loadspaces(struct target *target) {
+    struct addrspace *space = addrspace_create(target,"NULL",0,
+					       linux_userproc_pid(target));
+    space->target = target;
+
+    list_add_tail(&space->space,&target->spaces);
+
+    return 0;
+}
+
+static int linux_userproc_loadregions(struct target *target,
+				      struct addrspace *space) {
     char buf[PATH_MAX*2];
     char main_exe[PATH_MAX];
     FILE *f;
@@ -362,15 +401,15 @@ static int linux_userproc_loadregions(struct target *target) {
     int rc;
     char *ret;
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     /* first, find the pathname of our main exe */
-    snprintf(buf,PATH_MAX*2,"/proc/%d/exe",target->space->pid);
+    snprintf(buf,PATH_MAX*2,"/proc/%d/exe",linux_userproc_pid(target));
     if ((rc = readlink(buf,main_exe,PATH_MAX - 1)) < 1)
 	return -1;
     main_exe[rc] = '\0';
 
-    snprintf(buf,PATH_MAX,"/proc/%d/maps",target->space->pid);
+    snprintf(buf,PATH_MAX,"/proc/%d/maps",linux_userproc_pid(target));
     f = fopen(buf,"r");
     if (!f)
 	return 1;
@@ -380,11 +419,11 @@ static int linux_userproc_loadregions(struct target *target) {
 	if (!(ret = fgets(buf,PATH_MAX*2,f)) && !errno)
 	    break;
 	else if (!ret && errno) {
-	    lerror("fgets: %s",strerror(errno));
+	    verror("fgets: %s",strerror(errno));
 	    break;
 	}
 
-	ldebug(8,"scanning mmap line %s",buf);
+	vdebug(8,LOG_T_LUP,"scanning mmap line %s",buf);
 
 	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*d:%*d %*d %s",&start,&end,
 		    &p[0],&p[1],&p[2],&p[3],&offset,buf);
@@ -409,7 +448,7 @@ static int linux_userproc_loadregions(struct target *target) {
 		buf[0] = '\0';
 	    }
 
-	    if (!(region = memregion_create(target->space,rtype,buf))) {
+	    if (!(region = memregion_create(space,rtype,buf))) {
 		goto err;
 	    }
 
@@ -432,15 +471,15 @@ static int linux_userproc_loadregions(struct target *target) {
 	else if (rc == EOF && !errno) {
 	    break;
 	else if (rc == EOF && errno) {
-	    lerror("fscanf error: %s\n",strerror(errno));
+	    verror("fscanf error: %s\n",strerror(errno));
 	    goto err;
 	}
 	*/
 	else if (rc > 0 && !errno) {
-	    lwarn("weird content in /proc/pid/maps (%d)!\n",rc);
+	    vwarn("weird content in /proc/pid/maps (%d)!\n",rc);
 	}
 	else if (rc > 0 && errno) {
-	    lwarn("weird content in /proc/pid/maps (%d): %s!\n",rc,strerror(errno));
+	    vwarn("weird content in /proc/pid/maps (%d): %s!\n",rc,strerror(errno));
 	}
     }
 
@@ -460,6 +499,7 @@ static char *DEBUGPATH[] = {
 };
 
 static int linux_userproc_loaddebugfiles(struct target *target,
+					 struct addrspace *space,
 					 struct memregion *region) {
     Elf *elf = NULL;
     Elf_Scn *scn;
@@ -487,7 +527,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     char *tmp;
     struct stat stbuf;
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     /*
      * Open up the actual ELF binary and look for three sections to inform
@@ -503,31 +543,31 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	return -1;
 
     if ((fd = open(region->filename,0,O_RDONLY)) < 0) {
-	lerror("open %s: %s\n",region->filename,strerror(errno));
+	verror("open %s: %s\n",region->filename,strerror(errno));
 	return -1;
     }
 
     elf_version(EV_CURRENT);
     if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	lerror("elf_begin %s: %s\n",region->filename,elf_errmsg(elf_errno()));
+	verror("elf_begin %s: %s\n",region->filename,elf_errmsg(elf_errno()));
 	goto errout;
     }
 
     /* read the ident stuff to get ELF byte size */
     if (!(eident = elf_getident(elf,NULL))) {
-	lerror("elf_getident %s: %s\n",region->filename,elf_errmsg(elf_errno()));
+	verror("elf_getident %s: %s\n",region->filename,elf_errmsg(elf_errno()));
 	goto errout;
     }
 
     if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
 	is64 = 0;
-	ldebug(3,"32-bit %s\n",region->filename);
+	vdebug(3,LOG_T_LUP,"32-bit %s\n",region->filename);
     }
     else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
 	is64 = 1;
     }
     else {
-	lerror("unknown elf class %d; not 32/64 bit!\n",
+	verror("unknown elf class %d; not 32/64 bit!\n",
 	       (uint8_t)eident[EI_CLASS]);
 	goto errout;
     }
@@ -537,7 +577,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 #else 
     if (elf_getshstrndx(elf,&shstrndx) < 0) {
 #endif
-	lerror("cannot get section header string table index\n");
+	verror("cannot get section header string table index\n");
 	goto errout;
     }
 
@@ -549,17 +589,19 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
 
 	    if (strcmp(name,".debug_info") == 0) {
-		ldebug(2,"found %s section (%d) in region filename %s\n",
+		vdebug(2,LOG_T_LUP,
+		       "found %s section (%d) in region filename %s\n",
 		       name,shdr->sh_size,region->filename);
 		has_debuginfo = 1;
 		continue;
 	    }
 	    else if (!buildid && shdr->sh_type == SHT_NOTE) {
-		ldebug(2,"found %s note section (%d) in region filename %s\n",
+		vdebug(2,LOG_T_LUP,
+		       "found %s note section (%d) in region filename %s\n",
 		       name,shdr->sh_size,region->filename);
 		edata = elf_rawdata(scn,NULL);
 		if (!edata) {
-		    lwarn("cannot get data for valid section '%s': %s",
+		    vwarn("cannot get data for valid section '%s': %s",
 			  name,elf_errmsg(-1));
 		    continue;
 		}
@@ -572,11 +614,11 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 			/* skip past the header and the name string and its
 			 * padding */
 			ndata += sizeof(Elf64_Nhdr);
-			ldebug(5,"found note name '%s'\n",ndata);
+			vdebug(5,LOG_T_LUP,"found note name '%s'\n",ndata);
 			ndata += nthdr64->n_namesz;
 			if (nthdr64->n_namesz % 4)
 			    ndata += (4 - nthdr64->n_namesz % 4);
-			ldebug(5,"found note desc '%s'\n",ndata);
+			vdebug(5,LOG_T_LUP,"found note desc '%s'\n",ndata);
 			/* dig out the build ID */
 			if (nthdr64->n_type == NT_GNU_BUILD_ID) {
 			    buildid = strdup(ndata);
@@ -610,7 +652,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	    else if (strcmp(name,".gnu_debuglink") == 0) {
 		edata = elf_rawdata(scn,NULL);
 		if (!edata) {
-		    lwarn("cannot get data for valid section '%s': %s",
+		    vwarn("cannot get data for valid section '%s': %s",
 			  name,elf_errmsg(-1));
 		    continue;
 		}
@@ -625,15 +667,15 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     close(fd);
     fd = -1;
 
-    ldebug(5,"ELF info for region file %s:\n",region->filename);
-    ldebug(5,"    has_debuginfo=%d,buildid='",has_debuginfo);
+    vdebug(5,LOG_T_LUP,"ELF info for region file %s:\n",region->filename);
+    vdebug(5,LOG_T_LUP,"    has_debuginfo=%d,buildid='",has_debuginfo);
     if (buildid) {
 	len = (int)strlen(buildid);
 	for (i = 0; i < len; ++i)
-	    ldebugc(5,"%hhx",buildid[i]);
+	    vdebugc(5,LOG_T_LUP,"%hhx",buildid[i]);
     }
-    ldebugc(5,"'\n");
-    ldebug(5,"    debuglinkfile=%s,debuglinkfilecrc=0x%x\n",
+    vdebugc(5,LOG_T_LUP,"'\n");
+    vdebug(5,LOG_T_LUP,"    debuglinkfile=%s,debuglinkfilecrc=0x%x\n",
 	   debuglinkfile,debuglinkfilecrc);
 
     if (has_debuginfo) {
@@ -667,7 +709,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	}
     }
     else {
-	lerror("could not find any debuginfo sources from ELF file %s!\n",
+	verror("could not find any debuginfo sources from ELF file %s!\n",
 	       region->filename);
 	goto errout;
     }
@@ -675,10 +717,10 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     if (finalfile) {
 	if (region->type == REGION_TYPE_MAIN 
 	    || region->type == REGION_TYPE_LIB) {
-	    if (!debugfile_attach(region,finalfile,
-				  region->type == REGION_TYPE_MAIN ?	\
-				  DEBUGFILE_TYPE_MAIN :			\
-				  DEBUGFILE_TYPE_SHAREDLIB))
+	    if (!target_associate_debugfile(target,region,finalfile,
+					    region->type == REGION_TYPE_MAIN ? \
+					    DEBUGFILE_TYPE_MAIN : \
+					    DEBUGFILE_TYPE_SHAREDLIB))
 		goto errout;
 	}
     }
@@ -713,10 +755,10 @@ static target_status_t linux_userproc_status(struct target *target) {
     target_status_t retval = STATUS_ERROR;
     int rc;
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
  again:
-    snprintf(buf,256,"/proc/%d/stat",target->space->pid);
+    snprintf(buf,256,"/proc/%d/stat",linux_userproc_pid(target));
     statf = fopen(buf,"r");
     if (!statf)
 	return STATUS_ERROR;
@@ -745,7 +787,7 @@ static int linux_userproc_pause(struct target *target) {
     /* pause/resume are invalid for ptrace processes; we only do I/O on
      * them when they trap naturally.
      */
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
     return 0;
 }
 
@@ -754,30 +796,30 @@ static int linux_userproc_resume(struct target *target) {
 
     lstate = (struct linux_userproc_state *)(target->state);
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     int ptopts = PTRACE_O_TRACESYSGOOD;
     ptopts |= lstate->ptrace_opts;
-    if (ptrace(PTRACE_SETOPTIONS,target->space->pid,NULL,ptopts) < 0) {
-	lwarn("ptrace setoptions failed: %s\n",strerror(errno));
+    if (ptrace(PTRACE_SETOPTIONS,linux_userproc_pid(target),NULL,ptopts) < 0) {
+	vwarn("ptrace setoptions failed: %s\n",strerror(errno));
     }
 
     if (lstate->last_signo > -1) {
-	if (ptrace(lstate->ptrace_type,target->space->pid,NULL,
+	if (ptrace(lstate->ptrace_type,linux_userproc_pid(target),NULL,
 		   lstate->last_signo) < 0) {
-	    lerror("ptrace signo %d restart failed: %s\n",
+	    verror("ptrace signo %d restart failed: %s\n",
 		   lstate->last_signo,strerror(errno));
 	    return 1;
 	}
     }
     else {
-	if (ptrace(lstate->ptrace_type,target->space->pid,NULL,NULL) < 0) {
-	    lerror("ptrace restart failed: %s\n",strerror(errno));
+	if (ptrace(lstate->ptrace_type,linux_userproc_pid(target),NULL,NULL) < 0) {
+	    verror("ptrace restart failed: %s\n",strerror(errno));
 	    return 1;
 	}
     }
 
-    ldebug(5,"ptrace restart %d succeeded\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"ptrace restart %d succeeded\n",linux_userproc_pid(target));
     lstate->last_signo = -1;
     lstate->syscall = 0;
 
@@ -789,14 +831,14 @@ static target_status_t linux_userproc_monitor(struct target *target) {
     pid_t pid;
     int pstatus;
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     lstate = (struct linux_userproc_state *)(target->state);
 
     /* do the whole ptrace waitpid dance */
 
  again:
-    pid = waitpid(target->space->pid,&pstatus,0);
+    pid = waitpid(linux_userproc_pid(target),&pstatus,0);
     if (pid < 0) {
 	if (errno == ECHILD || errno == EINVAL)
 	    return STATUS_ERROR;
@@ -812,13 +854,13 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 	 */
 	lstate->last_signo = WSTOPSIG(pstatus);
 	if (lstate->last_signo == (SIGTRAP | 0x80)) {
-	    ldebug(5,"target %d stopped with trap signo %d\n",
+	    vdebug(5,LOG_T_LUP,"target %d stopped with trap signo %d\n",
 		   pid,lstate->last_signo);
 	    lstate->last_signo = -1;
 	    lstate->syscall = 1;
 	}
 	else {
-	    ldebug(5,"target %d stopped with signo %d\n",
+	    vdebug(5,LOG_T_LUP,"target %d stopped with signo %d\n",
 		   pid,lstate->last_signo);
 	}
     }
@@ -832,7 +874,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 	return STATUS_DONE;
     }
     else {
-	lwarn("unexpected child process status event: %08x; bailing!\n",
+	vwarn("unexpected child process status event: %08x; bailing!\n",
 	      pstatus);
 	return STATUS_ERROR;
     }
@@ -851,7 +893,7 @@ static unsigned char *linux_userproc_read(struct target *target,
     struct linux_userproc_state *lstate;
     lstate = (struct linux_userproc_state *)(target->state);
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
@@ -866,7 +908,7 @@ unsigned long linux_userproc_write(struct target *target,
     struct linux_userproc_state *lstate;
     lstate = (struct linux_userproc_state *)(target->state);
 
-    ldebug(5,"pid %d\n",target->space->pid);
+    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
@@ -976,13 +1018,13 @@ static char *dreg_to_name32[X86_32_DWREG_COUNT] = {
 char *linux_userproc_reg_name(struct target *target,REG reg) {
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
-	lerror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
 	return NULL;
     }
     return dreg_to_name64[reg];
 #else
     if (reg >= I386_DWREG_COUNT) {
-	lerror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	return NULL;
     }
     return dreg_to_name32[reg];
@@ -993,18 +1035,18 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
     struct user_regs_struct regs;
     int ptrace_idx;
 
-    ldebug(5,"reading reg %s\n",linux_userproc_reg_name(target,reg));
+    vdebug(5,LOG_T_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
 
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
-	lerror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
     }
     ptrace_idx = dreg_to_ptrace_idx64[reg];
 #else
     if (reg >= I386_DWREG_COUNT) {
-	lerror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
     }
@@ -1014,8 +1056,8 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
      */
-    if (ptrace(PTRACE_GETREGS,target->space->pid,NULL,&regs) == -1) {
-	lerror("ptrace(GETREGS): %s\n",strerror(errno));
+    if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
+	verror("ptrace(GETREGS): %s\n",strerror(errno));
 	return 0;
     }
 
@@ -1031,18 +1073,18 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     struct user_regs_struct regs;
     int ptrace_idx;
 
-    ldebug(5,"reading reg %s\n",linux_userproc_reg_name(target,reg));
+    vdebug(5,LOG_T_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
 
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
-	lerror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return -1;
     }
     ptrace_idx = dreg_to_ptrace_idx64[reg];
 #else
     if (reg >= I386_DWREG_COUNT) {
-	lerror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return -1;
     }
@@ -1058,8 +1100,8 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
      */
-    if (ptrace(PTRACE_SETREGS,target->space->pid,NULL,&regs) == -1) {
-	lerror("ptrace(SETREGS): %s\n",strerror(errno));
+    if (ptrace(PTRACE_SETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
+	verror("ptrace(SETREGS): %s\n",strerror(errno));
 	return -1;
     }
 

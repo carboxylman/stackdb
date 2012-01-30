@@ -1,18 +1,36 @@
+/*
+ * Copyright (c) 2011, 2012 The University of Utah
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
+ */
+
 #ifndef __LIBDWDEBUG_H__
 #define __LIBDWDEBUG_H__
-
-#define _GNU_SOURCE
-#define _LARGEFILE64_SOURCE
-#define _FILE_OFFSET_BITS 64
 
 #include <stdint.h>
 #include <stdio.h>
 #include <glib.h>
 #include <wchar.h>
 
+#include "debugpred.h"
 #include "list.h"
 #include "alist.h"
 #include "config.h"
+#include "log.h"
+#include "output.h"
+#include "common.h"
 
 #if ELFUTILS_NO_VERSION_H
 #define _INT_ELFUTILS_VERSION ELFUTILS_BIN_VERSION
@@ -22,89 +40,24 @@
 #endif
 
 /*
- * Everybody's gotta call this!
+ * Any library users must call these to initialize global library state.
  */
-void libdwdebug_init(void);
-void libdwdebug_fini(void);
-
-void libdwdebug_set_debug_level(int level);
-#ifdef LIBDWDEBUG_DEBUG
-void _libdwdebug_debug(int level,char *format,...);
-
-#define ldebug(level,format,...) _libdwdebug_debug(level,"LDDEBUG: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)
-#define ldebugc(level,format,...) _libdwdebug_debug(level,format, ## __VA_ARGS__)
-#else
-#define ldebug(devel,format,...) ((void)0)
-#define ldebugc(devel,format,...) ((void)0)
-#endif
-
-#define lerror(format,...) fprintf(stderr, "LDERROR: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)
-#define lwarn(format,...) fprintf(stderr, "LDWARNING: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)
+void dwdebug_init(void);
+void dwdebug_fini(void);
 
 /**
  ** Some forward declarations.
  **/
-struct target;
-struct target_ops;
-struct addrspace;
-struct memregion;
 struct debugfile;
 struct symtab;
 struct symbol;
 struct lsymbol;
-struct bsymbol;
 struct location;
+struct range_list;
 struct range_list_entry;
 struct range;
 struct loc_list_entry;
 struct loc_list;
-
-struct dump_info;
-
-/* Might have to split these out into platform-specific stuff later; for
- * now, just make them big enough for anything.
- */
-typedef uint64_t ADDR;
-typedef int64_t OFFSET;
-typedef uint8_t REG;
-typedef uint64_t REGVAL;
-
-#define PRIxADDR PRIx64
-#define PRIuADDR PRIu64
-
-#define DATA_BIG_ENDIAN 0
-#define DATA_LITTLE_ENDIAN 1
-
-#define PROT_READ         0x00000001
-#define PROT_WRITE        0x00000002
-#define PROT_EXEC         0x00000004
-#define PROT_SHARED       0x00000008
-
-typedef enum {
-    STATUS_UNKNOWN        = 0,
-    STATUS_RUNNING        = 1,
-    STATUS_PAUSED         = 2,
-    STATUS_DEAD           = 3,
-    STATUS_STOPPED        = 4,
-    STATUS_ERROR          = 5,
-    STATUS_DONE           = 6,
-    __STATUS_MAX,
-} target_status_t;
-extern char *STATUS_STRINGS[];
-#define STATUS(n) (((n) < __STATUS_MAX) ? STATUS_STRINGS[(n)] : NULL)
-
-typedef enum {
-    REGION_TYPE_HEAP           = 0,
-    REGION_TYPE_STACK          = 1,
-    REGION_TYPE_VDSO           = 2,
-    REGION_TYPE_VSYSCALL       = 3,
-    REGION_TYPE_ANON           = 4,
-    REGION_TYPE_MAIN           = 5,
-    REGION_TYPE_LIB            = 6,
-    __REGION_TYPE_MAX,
-} region_type_t;
-extern char *REGION_TYPE_STRINGS[];
-#define REGION_TYPE(n) (((n) < __REGION_TYPE_MAX) ? REGION_TYPE_STRINGS[(n)] : NULL)
 
 typedef enum {
     DEBUGFILE_TYPE_KERNEL      = 0,
@@ -203,21 +156,13 @@ typedef enum {
     LOCTYPE_MEMBER_OFFSET = 5,
     LOCTYPE_FBREG_OFFSET  = 6,
     LOCTYPE_LOCLIST       = 7,
+    LOCTYPE_REALADDR      = 8,
     /* add here */
-    LOCTYPE_RUNTIME       = 8,
+    LOCTYPE_RUNTIME       = 9,
     __LOCTYPE_MAX,
 } location_type_t;
 extern char *LOCTYPE_STRINGS[];
 #define LOCTYPE(n) (((n) < __LOCTYPE_MAX) ? LOCTYPE_STRINGS[(n)] : NULL)
-
-typedef enum {
-    LOAD_FLAG_NONE = 0,
-    LOAD_FLAG_MMAP = 2,
-    LOAD_FLAG_CHECK_VISIBILITY = 4,
-    LOAD_FLAG_AUTO_DEREF = 8,
-    LOAD_FLAG_AUTO_DEREF_RECURSE = 16,
-    LOAD_FLAG_AUTO_STRING = 32,
-} load_flags_t;
 
 /*
  * These match the dwarf encoding codes.
@@ -253,69 +198,17 @@ extern char *RANGE_TYPE_STRINGS[];
 #define RANGE_IS_LIST(sym) (sym && (sym)->rtype == RANGE_TYPE_LIST)
 
 /**
- ** These functions form the target API.
- **/
-int target_open(struct target *target);
-target_status_t target_monitor(struct target *target);
-int target_resume(struct target *target);
-struct value *target_read(struct target *target,struct symbol *symbol);
-int target_write(struct target *target,struct symbol *symbol,struct value *value);
-int target_close(struct target *target);
-unsigned char *target_read_addr(struct target *target,
-				unsigned long long addr,
-				unsigned long length,
-				unsigned char *buf);
-int target_write_addr(struct target *target,unsigned long long addr,
-		      unsigned long length,unsigned char *buf);
-
-unsigned char *target_generic_fd_read(int fd,
-				      unsigned long long addr,
-				      unsigned long length,
-				      unsigned char *buf);
-
-unsigned long target_generic_fd_write(int fd,
-				      unsigned long long addr,
-				      unsigned long length,
-				      unsigned char *buf);
-char *target_reg_name(struct target *target,REG reg);
-REGVAL target_read_reg(struct target *target,REG reg);
-int target_write_reg(struct target *target,REG reg,REGVAL value);
-void target_free(struct target *target);
-
-/* Populate a libsymd debugfile with DWARF debuginfo from an ELF file. */
-int load_debug_info(struct debugfile *debugfile);
-
-/* linux userproc target ops */
-struct target *linux_userproc_attach(int pid);
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp);
-int linux_userproc_last_signo(struct target *target);
-int linux_userproc_stopped_by_syscall(struct target *target);
-
-/* linux corefile target ops */
-// XXX write
-
-/**
- ** Address spaces.
- **/
-struct addrspace *addrspace_create(char *name,int id,int pid);
-void addrspace_free(struct addrspace *space);
-void addrspace_dump(struct addrspace *space,struct dump_info *ud);
-
-/**
- ** Memory regions. 
- **/
-struct memregion *memregion_create(struct addrspace *space,region_type_t type,
-				   char *filename);
-int memregion_contains(struct memregion *region,ADDR addr);
-struct target *memregion_target(struct memregion *region);
-void memregion_free(struct memregion *region);
-
-/**
  ** Debugfiles.
  **/
-struct debugfile *debugfile_create(char *filename,debugfile_type_t type);
-struct debugfile *debugfile_attach(struct memregion *region,
-				   char *filename,debugfile_type_t type);
+struct debugfile *debugfile_filename_create(char *filename,debugfile_type_t type);
+struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
+				   char *name,char *version,char *idstr);
+/* Populate a libsymd debugfile with DWARF debuginfo from an ELF file. */
+int debugfile_load(struct debugfile *debugfile);
+
+char *debugfile_build_idstr(char *filename,char *name,char *version);
+int debugfile_filename_info(char *filename,char **realfilename,
+			    char **name,char **version);
 int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab);
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol);
 struct symbol *debugfile_find_type(struct debugfile *debugfile,
@@ -355,10 +248,17 @@ struct symbol *symbol_create(struct symtab *symtab,
 void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
 void symbol_set_name(struct symbol *symbol,char *name);
 void symbol_set_srcline(struct symbol *symbol,int srcline);
+
+int symbol_type_is_char(struct symbol *type);
 /*
  * For a SYMBOL_TYPE_TYPE symbol, return the type's byte size.
  */
 int symbol_type_bytesize(struct symbol *symbol);
+unsigned int symbol_type_array_bytesize(struct symbol *type);
+/* Return either type_array_bytesize or type_bytesize */
+unsigned int symbol_type_full_bytesize(struct symbol *type);
+struct symbol *symbol_type_skip_ptrs(struct symbol *type);
+struct symbol *symbol_type_skip_qualifiers(struct symbol *type);
 void symbol_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_type_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud);
@@ -368,21 +268,14 @@ void symbol_free(struct symbol *symbol);
 struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
 void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
 void lsymbol_free(struct lsymbol *lsymbol);
-struct bsymbol *bsymbol_create(struct memregion *region,struct symbol *symbol,
-			       struct array_list *chain);
-void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud);
-void bsymbol_free(struct bsymbol *bsymbol);
 
 /**
  ** Locations.
  **/
 struct location *location_create(void);
+int location_is_conditional(struct location *location);
 void location_dump(struct location *location,struct dump_info *ud);
-ADDR location_resolve(struct memregion *region,struct location *location,
-		      struct array_list *symbol_chain);
-int location_load(struct memregion *region,struct location *location,
-		  struct array_list *symbol_chain,
-		  load_flags_t flags,void *buf,int bufsiz);
+void location_internal_free(struct location *location);
 void location_free(struct location *location);
 
 /**
@@ -391,33 +284,11 @@ void location_free(struct location *location);
 /*
  * Find the symbol table corresponding to the supplied PC.
  */
-struct symtab *target_lookup_pc(struct target *target,uint64_t pc);
 struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc);
 
 /**
  ** Symbol/memaddr lookup functions.
  **/
-/*
- * Looks up a symbol, or hierarchy of nested symbols.  Users shouldn't
- * need to know the details of the bsymbol struct; it largely functions
- * as a placeholder that saves the result of a nested lookup so that it
- * is available for a later load.  The single symbol, or deepest-nested
- * symbol, is in .symbol.  The chain of nested symbols (possibly
- * including anonymous symbols), which includes the deepest-nested
- * symbol itself, is in .chain.
- *
- * The bsymbol struct should be passed to _load functions, where it may
- * be further annotated with load information.
- *
- * Each symbol chain member is either a SYMBOL_TYPE_VAR or a
- * SYMBOL_TYPE_FUNCTION -- unless the first member in your @name string
- * resolves to a SYMBOL_TYPE_TYPE.  In this case, the first member will
- * be a SYMBOL_TYPE_TYPE!
- */
-struct bsymbol *target_lookup_sym(struct target *target,
-				  char *name,const char *delim,
-				  char *srcfile,symbol_type_flag_t ftype);
-
 /* If you know which debugfile contains your symbol, this is fastest. */
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
@@ -451,53 +322,13 @@ struct symbol *symbol_get_one_member(struct symbol *symbol,char *member);
  * the given delimited string of member variables.
  */
 struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
-				 const char *delim);
-
-/**
- ** Symbolic target access.
- **/
-/*
- * Load a symbol's value, but just return a raw pointer.  If flags
- * contains LOAD_FLAGS_MMAP, we try to mmap the target's memory instead
- * of reading and copying the data; if that fails, we return NULL.  If
- * buf is not NULL, it should be sized to
- * symbol->datatype->s.ti.byte_size (best available as symbol_get
+				 const char *delim);/*
+ * Given an IP (as an object-relative address), check and see if this
+ * symbol is currently visible (in scope).  To do this we, check if the
+ * IP is in the symtab's range; or if it is in any child symtab's range
+ * where no symbol in that symtab overrides the primary symbol name!
  */
-int bsymbol_load(struct bsymbol *bsymbol,
-		 load_flags_t flags,void **buf,int *bufsiz);
-/*
- * Load a symbol's value into a value struct, which contains a union
- * with basic type members (of the compiler of the library) and a single
- * "raw" field for complex types.  A "fat" value may also contain
- * metadata.
- */
-struct value *bsymbol_load_fat(struct bsymbol *bsymbol,
-			       load_flags_t flags,void *buf);
-
-void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
-			 void *buf,int bufsiz,
-			 load_flags_t flags,struct target *target);
-void symbol_rvalue_tostring(struct symbol *symbol,char **buf,int *bufsiz,
-			    char *cur);
-
-signed char      rvalue_c(void *buf);
-unsigned char    rvalue_uc(void *buf);
-wchar_t          rvalue_wc(void *buf);
-uint8_t          rvalue_u8(void *buf);
-uint16_t         rvalue_u16(void *buf);
-uint32_t         rvalue_u32(void *buf);
-uint64_t         rvalue_u64(void *buf);
-int8_t           rvalue_i8(void *buf);
-int16_t          rvalue_i16(void *buf);
-int32_t          rvalue_i32(void *buf);
-int64_t          rvalue_i64(void *buf);
-
-/*
- * Given a region, and a symbol in a debugfile attached to that region,
- * encode the value as a string.
- */
-char *symbol_to_string(struct memregion *region,
-		       struct symbol *symbol);
+int symbol_visible_at_ip(struct symbol *symbol,ADDR ip);
 
 /*
  * Range/location list stuff.
@@ -533,121 +364,6 @@ const char *dwarf_discr_list_string(unsigned int code);
 /**
  ** Data structure definitions.
  **/
-struct target {
-    char *type;
-    uint8_t live:1,
-    	    writeable:1,
-	    attached:1,
-	    endian:1,
-	    wordsize:4,
-	    ptrsize:4;
-    REG fbregno;
-    REG ipregno;
-
-    void *state;
-    struct target_ops *ops;
-
-    struct addrspace *space;
-};
-
-struct target_ops {
-    /* init any target state, like a private per-target state struct */
-    int (*init)(struct target *target);
-    /* init any target state, like a private per-target state struct */
-    int (*fini)(struct target *target);
-    /* actually connect to the target to enable read/write */
-    int (*attach)(struct target *target);
-    /* detach from target, but don't unload */
-    int (*detach)(struct target *target);
-
-    /* divide the address space into regions with different protection
-     * flags, that might come from different source binary files.
-     */
-    int (*loadregions)(struct target *target);
-    /* for each loaded region, load one or more debugfiles and associate
-     * them with the region.
-     */
-    int (*loaddebugfiles)(struct target *target,
-			  struct memregion *region);
-
-    /* get target status. */
-    target_status_t (*status)(struct target *target);
-    /* pause a target */
-    int (*pause)(struct target *target);
-    /* resume from a paused state */
-    int (*resume)(struct target *target);
-    /* wait for something to happen to the target */
-    target_status_t (*monitor)(struct target *target);
-
-    /* get/set contents of a register */
-    char *(*regname)(struct target *target,REG reg);
-    REGVAL (*readreg)(struct target *target,REG reg);
-    int (*writereg)(struct target *target,REG reg,REGVAL value);
-
-    /* read some memory, potentially into a supplied buffer. */
-    unsigned char *(*read) (struct target *target,unsigned long long addr,
-			    unsigned long length,unsigned char *buf);
-    /* write some memory */
-    unsigned long (*write)(struct target *target,unsigned long long addr,
-			   unsigned long length,unsigned char *buf);
-};
-
-/*
- * An address space is the primary abstraction for associating debuginfo
- * with memory regions.  But, note that debuginfo files are associated
- * specifically with regions -- each address space is associated with
- * subentities I call regions.  A region closely corresponds to Linux's
- * notion of describing a process's address space as a collection of
- * mmaps of the program text/data, its libs, anonymous maps, and heap,
- * stack, syscall trampolines, etc -- and the protections associated
- * with those regions.
- *
- * We associate debuginfo files with regions, not address spaces, since
- * debuginfo applies to one or more regions (depending on the
- * size/protection needs of the main executable or library).
- */
-
-struct addrspace {
-    /* name:id:pid */
-    char *idstr;
-
-    char *name;
-    int id;
-    int pid;
-
-    struct list_head regions;
-
-    struct target *target;
-
-    struct list_head space;
-    int refcnt;
-};
-
-struct memregion {
-    /* backref to containing space */
-    struct addrspace *space;
-
-    char *filename;
-    unsigned long long start;
-    unsigned long long end;
-    unsigned long long offset;
-    unsigned int prot_flags;
-    region_type_t type;
-
-    /* This is an identifier that must be changed every time this
-     * memregion changes status, and something about it has been
-     * reloaded.  For instance, if it is now using different memory
-     * addresses than when we were last resolved symbols to locations
-     * inside of it, we need those symbols to be re-resolved before
-     * loading them again.
-     */
-    uint32_t stamp;
-
-    GHashTable *debugfiles;
-
-    struct list_head region;
-};
-
 struct debugfile {
     /* The type of debugfile */
     debugfile_type_t type;
@@ -798,6 +514,25 @@ struct loc_list {
     struct loc_list_entry **list;
 };
 
+struct location {
+    location_type_t loctype;
+    union {
+	ADDR addr;
+	REG reg;
+	int64_t fboffset;
+	struct {
+	    REG reg;
+	    int64_t offset;
+	} regoffset;
+	int32_t member_offset;
+	struct {
+	    char *data;
+	    uint16_t len;
+	} runtime;
+	struct loc_list *loclist;
+    } l;
+};
+
 /*
  * Symbol tables are mostly just backreferences to the objects they are
  * associated with (the parent debugfile they are in, and the srcfile
@@ -848,25 +583,6 @@ struct symtab {
      * h(addr) -> struct symbol * 
      */
     GHashTable *anontab;
-};
-
-struct location {
-    location_type_t loctype;
-    union {
-	ADDR addr;
-	REG reg;
-	int64_t fboffset;
-	struct {
-	    REG reg;
-	    int64_t offset;
-	} regoffset;
-	int32_t member_offset;
-	struct {
-	    char *data;
-	    uint16_t len;
-	} runtime;
-	struct loc_list *loclist;
-    } l;
 };
 
 struct symbol {
@@ -1056,99 +772,5 @@ struct lsymbol {
      */
     struct array_list *chain;
 };
-
-struct bsymbol {
-    /*
-     * The lookup information.
-     */
-    struct lsymbol lsymbol;
-
-    /* Target binding information. */
-    struct memregion *region;
-    uint32_t region_stamp;
-    uint8_t addr_valid;
-    ADDR addr;
-};
-
-struct value {
-    union {
-	signed char c;
-	unsigned char uc;
-	int8_t i8;
-	uint8_t u8;
-	int16_t i16;
-	uint16_t u16;
-	int32_t i32;
-	uint32_t u32;
-	int64_t i64;
-	uint64_t u64;
-
-	float f;
-	double d;
-	long double ld;
-
-	void *p;
-
-	void *data;
-    };
-};
-
-struct dump_info {
-    char *prefix;
-    FILE *stream;
-    int meta;
-    int detail;
-};
-
-
-#define DEBUGPRED 1
-#ifndef PIC
-#define PIC 1
-#endif
-
-/**
- ** likely/unlikely from elfutils.
- **/
-#if DEBUGPRED
-# ifdef __x86_64__
-asm (".section predict_data, \"aw\"; .previous\n"
-     ".section predict_line, \"a\"; .previous\n"
-     ".section predict_file, \"a\"; .previous");
-#  ifndef PIC
-#   define debugpred__(e, E) \
-  ({ long int _e = !!(e); \
-     asm volatile (".pushsection predict_data; ..predictcnt%=: .quad 0; .quad 0\n" \
-                   ".section predict_line; .quad %c1\n" \
-                   ".section predict_file; .quad %c2; .popsection\n" \
-                   "addq $1,..predictcnt%=(,%0,8)" \
-                   : : "r" (_e == E), "i" (__LINE__), "i" (__FILE__)); \
-    __builtin_expect (_e, E); \
-  })
-#  endif
-# elif defined __i386__
-asm (".section predict_data, \"aw\"; .previous\n"
-     ".section predict_line, \"a\"; .previous\n"
-     ".section predict_file, \"a\"; .previous");
-#  ifndef PIC
-#   define debugpred__(e, E) \
-  ({ long int _e = !!(e); \
-     asm volatile (".pushsection predict_data; ..predictcnt%=: .long 0; .long 0\n" \
-                   ".section predict_line; .long %c1\n" \
-                   ".section predict_file; .long %c2; .popsection\n" \
-                   "incl ..predictcnt%=(,%0,8)" \
-                   : : "r" (_e == E), "i" (__LINE__), "i" (__FILE__)); \
-    __builtin_expect (_e, E); \
-  })
-#  endif
-# endif
-# ifdef debugpred__
-#  define unlikely(e) debugpred__ (e,0)
-#  define likely(e) debugpred__ (e,1)
-# endif
-#endif
-#ifndef likely
-# define unlikely(expr) __builtin_expect (!!(expr), 0)
-# define likely(expr) __builtin_expect (!!(expr), 1)
-#endif
 
 #endif
