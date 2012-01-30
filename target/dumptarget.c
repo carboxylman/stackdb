@@ -32,6 +32,7 @@
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
+#include "target_linux_userproc.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;

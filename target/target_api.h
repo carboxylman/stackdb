@@ -93,14 +93,6 @@ struct bsymbol *target_lookup_sym(struct target *target,
 				  char *srcfile,symbol_type_flag_t ftype);
 
 /**
- ** Target backend functions.
- **/
-struct target *linux_userproc_attach(int pid);
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp);
-int linux_userproc_last_signo(struct target *target);
-int linux_userproc_stopped_by_syscall(struct target *target);
-
-/**
  ** Quick raw value converters
  **/
 signed char      rvalue_c(void *buf);
