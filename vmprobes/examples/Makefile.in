@@ -16,7 +16,7 @@ CFLAGS += -D VMPROBE_i386
 CFLAGS += -D VMPROBE_SIGNAL
 #CFLAGS += -D VMPROBE_BENCHMARK
 CFLAGS += -D VMPROBE_DEBUG
-CFLAGS += -I$(XENACCESS_INC) -I$(TOP_SRCDIR)/vmprobes -I./ -I$(TOP_SRCDIR)/lib
+CFLAGS += -I$(XENACCESS_INC) -I$(TOP_SRCDIR)/vmprobes -I./ -I$(TOP_SRCDIR)/include
 
 LDFLAGS := -lxenctrl -lxenstore -lc
 LDFLAGS_SHARED := -L$(XENACCESS_LIBDIR) -lxenaccess -L../../vmprobes -lvmprobes
