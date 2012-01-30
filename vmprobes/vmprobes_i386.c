@@ -12,7 +12,7 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
     xa_instance_t *xa_instance;
     uint32_t offset = 0;
     unsigned char *page;
-    int i;
+    int i, fmem = 0;
     int total = 0;
     
     domain = probepoint->domain;
@@ -47,6 +47,7 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
 		    warning("munmap of %p failed\n", page);
 		return -1;
 	    }
+	    fmem = 1;
 	}
 
 	debug(2,"dom%d: %u opcodes to %lx with offset %u; total %d\n",
@@ -59,6 +60,8 @@ static int __arch_replace_instr(struct vmprobe_probepoint *probepoint,
 	memcpy(*dst, page + offset, total);
 	if (dst_len)
 	    *dst_len = total;
+	if (fmem)
+		free(*dst);
     }
 
     /* replace */
