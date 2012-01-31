@@ -88,6 +88,18 @@ struct addrspace *addrspace_create(struct target *target,
     return retval;
 }
 
+struct memregion *addrspace_find_region(struct addrspace *space,char *name) {
+    struct memregion *region;
+
+    list_for_each_entry(region,&space->regions,region) {
+	if (strcmp(name,region->name) == 0)
+	    goto out;
+    }
+    return NULL;
+ out:
+    return region;
+}
+
 void addrspace_free(struct addrspace *space) {
     struct memregion *lpc;
     struct memregion *tmp;
@@ -120,10 +132,10 @@ static void ghash_debugfile_free(gpointer data) {
 }
 
 /*
- * Memory regions.
+ * Memory regions and ranges.
  */
-struct memregion *memregion_create(struct addrspace *space,region_type_t type,
-				   char *filename) {
+struct memregion *memregion_create(struct addrspace *space,
+				   region_type_t type,char *name) {
     struct memregion *retval;
 
     retval = (struct memregion *)malloc(sizeof(*retval));
@@ -134,59 +146,79 @@ struct memregion *memregion_create(struct addrspace *space,region_type_t type,
 
     retval->space = space;
 
-    if (filename) 
-	retval->filename = strdup(filename);
+    if (name) 
+	retval->name = strdup(name);
     retval->type = type;
 
     retval->debugfiles = g_hash_table_new_full(g_str_hash,g_str_equal,
 					       ghash_str_free,
 					       ghash_debugfile_free);
     if (!retval->debugfiles) {
-	if (retval->filename)
-	    free(retval->filename);
+	if (retval->name)
+	    free(retval->name);
 	free(retval);
 	return NULL;
     }
 
     list_add_tail(&retval->region,&space->regions);
 
-    vdebug(5,LOG_T_REGION,"built memregion(%s:%s:%d)\n",
-	   space->idstr,retval->filename,retval->type);
+    INIT_LIST_HEAD(&retval->ranges);
+
+    vdebug(5,LOG_T_REGION,"built memregion(%s:%s:%s)\n",
+	   space->idstr,retval->name,REGION_TYPE(retval->type));
 
     return retval;
 }
 
 struct target *memregion_target(struct memregion *region) {
-    return (region->space ? region->space->target : NULL);
+    return (region->space) ? region->space->target : NULL;
 }
 
-struct addrspace *memregion_space(struct memregion *region) {
-    return region->space;
+int memregion_contains_real(struct memregion *region,ADDR addr) {
+    struct memrange *range;
+    list_for_each_entry(range,&region->ranges,range) {
+	if (memrange_contains_real(range,addr))
+	    return 1;
+    }
+    return 0;
 }
 
-int memregion_contains(struct memregion *region,ADDR addr) {
-    return (region->start <= addr && addr <= region->end ? 1 : 0);
+struct memrange *memregion_find_range_real(struct memregion *region,
+					   ADDR real_addr) {
+    struct memrange *range;
+    list_for_each_entry(range,&region->ranges,range) {
+	if (memrange_contains_real(range,real_addr))
+	    return range;
+    }
+    return NULL;
+}
+
+struct memrange *memregion_find_range_obj(struct memregion *region,
+					  ADDR obj_addr) {
+    struct memrange *range;
+    list_for_each_entry(range,&region->ranges,range) {
+	if (memrange_contains_obj(range,obj_addr))
+	    return range;
+    }
+    return NULL;
 }
 
 void memregion_dump(struct memregion *region,struct dump_info *ud) {
-    fprintf(ud->stream,"%sregion(%s:%s:0x%llx,0x%llx,%lld)",
-	    ud->prefix,REGION_TYPE(region->type),region->filename,
-	    region->start,region->end,region->offset);
-}
-
-ADDR memregion_unrelocate(struct memregion *region,ADDR real) {
-    //return real - (region->start - region->offset);
-    return real;
-}
-
-ADDR memregion_relocate(struct memregion *region,ADDR obj) {
-    //return (region->start - region->offset) + obj;
-    return obj;
+    fprintf(ud->stream,"%sregion(%s:%s)",
+	    ud->prefix,REGION_TYPE(region->type),region->name);
 }
 
 void memregion_free(struct memregion *region) {
-    vdebug(5,LOG_T_SPACE,"freeing memregion(%s:%s:%d)\n",region->space->idstr,
-	   region->filename,region->type);
+    struct memrange *range;
+    struct memrange *tmp;
+
+    vdebug(5,LOG_T_REGION,"freeing memregion(%s:%s:%s)\n",
+	   region->space->idstr,
+	   region->name,REGION_TYPE(region->type));
+
+    list_for_each_entry_safe(range,tmp,&region->ranges,range) {
+	memrange_free(range);
+    }
 
     list_del(&region->region);
 
@@ -196,7 +228,98 @@ void memregion_free(struct memregion *region) {
 	   infinite debugfile. */
 	g_hash_table_remove_all(region->debugfiles);
     }
-    if (region->filename)
-	free(region->filename);
+    if (region->name)
+	free(region->name);
     free(region);
+}
+
+struct memrange *memrange_create(struct memregion *region,
+				 ADDR start,ADDR end,OFFSET offset,
+				 unsigned int prot_flags) {
+    struct memrange *retval;
+
+    retval = (struct memrange *)malloc(sizeof(*retval));
+    if (!retval) 
+	return NULL;
+
+    memset(retval,0,sizeof(*retval));
+
+    retval->region = region;
+    retval->start = start;
+    retval->end = end;
+    retval->offset = offset;
+    retval->prot_flags = prot_flags;
+
+    list_add_tail(&retval->range,&region->ranges);
+
+    vdebug(5,LOG_T_REGION,
+	   "built memregion(%s:%d:0x"PRIxADDR",0x"PRIxADDR","PRIiOFFSET",%u)\n",
+	   region->name,region->type,start,end,offset,prot_flags);
+
+    return retval;
+}
+
+struct memregion *memrange_region(struct memrange *range) {
+    return range->region;
+}
+
+struct addrspace *memrange_space(struct memrange *range) {
+    return (range->region) ? range->region->space : NULL;
+}
+
+struct target *memrange_target(struct memrange *range) {
+    return (range->region 
+	    && range->region->space) ? range->region->space->target : NULL;
+}
+
+int memrange_contains_real(struct memrange *range,ADDR real_addr) {
+    return (range->start <= real_addr && real_addr < range->end ? 1 : 0);
+}
+
+int memrange_contains_obj(struct memrange *range,ADDR obj_addr) {
+    if (range->base_obj_addr) {
+	/* XXX: fill in based on relocated sections. */
+	return 0;
+    }
+    else {
+	return memrange_contains_real(range,obj_addr);
+    }
+}
+
+void memrange_dump(struct memrange *range,struct dump_info *ud) {
+    fprintf(ud->stream,
+	    "%srange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET")",
+	    ud->prefix,REGION_TYPE(range->region->type),range->region->name,
+	    range->start,range->end,range->offset);
+}
+
+ADDR memrange_unrelocate(struct memrange *range,ADDR real) {
+    if (range->base_obj_addr) {
+	/* XXX: fill in based on relocated sections. */
+	return real;
+    }
+    else {
+	return real;
+    }
+}
+
+ADDR memrange_relocate(struct memrange *range,ADDR obj) {
+    if (range->base_obj_addr) {
+	/* XXX: fill in based on relocated sections. */
+	return obj;
+    }
+    else {
+	return obj;
+    }
+}
+
+void memrange_free(struct memrange *range) {
+    vdebug(5,LOG_T_SPACE,
+	   "freeing memrange(%s:%d:0x"PRIxADDR",0x"PRIxADDR","PRIiOFFSET",%u)\n",
+	   range->region->name,range->region->type,range->start,range->end,
+	   range->offset,range->prot_flags);
+
+    list_del(&range->range);
+
+    free(range);
 }

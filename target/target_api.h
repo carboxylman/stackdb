@@ -26,8 +26,9 @@
 
 struct target;
 struct target_ops;
-struct memregion;
 struct addrspace;
+struct memregion;
+struct memrange;
 
 typedef enum {
     STATUS_UNKNOWN        = 0,
@@ -156,8 +157,9 @@ struct target_ops {
      * might contain multiple subregions.
      */
     int (*loadspaces)(struct target *target);
-    /* divide the address space into regions with different protection
-     * flags, that might come from different source binary files.
+    /* divide the address space into regions, each containing one
+     * or more ranges, with different protection flags, that might come
+     * from different source binary files.
      */
     int (*loadregions)(struct target *target,
 		       struct addrspace *space);

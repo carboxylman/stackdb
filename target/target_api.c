@@ -60,12 +60,12 @@ int target_open(struct target *target) {
 		continue;
 
 	    vdebug(6,LOG_T_TARGET,
-		   "loaddebugfiles target(%s:%s), region %s:%d\n",
+		   "loaddebugfiles target(%s:%s):region(%s:%s)\n",
 		   target->type,space->idstr,
-		   region->filename,region->type);
+		   region->name,REGION_TYPE(region->type));
 	    if ((rc = target->ops->loaddebugfiles(target,space,region))) {
 		vwarn("could not open debuginfo for region %s (%d)\n",
-		      region->filename,rc);
+		      region->name,rc);
 	    }
 	}
     }
@@ -182,7 +182,7 @@ struct target *target_create(char *type,void *state,struct target_ops *ops) {
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr) {
     /* XXX: fill later. */
-    return;
+    return NULL;
 }
 
 void target_attach_mmap_entry(struct target *target,

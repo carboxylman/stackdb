@@ -396,6 +396,7 @@ static int linux_userproc_loadregions(struct target *target,
     FILE *f;
     char p[4];
     struct memregion *region;
+    struct memrange *range;
     unsigned long long start,end,offset;
     region_type_t rtype;
     int rc;
@@ -448,23 +449,28 @@ static int linux_userproc_loadregions(struct target *target,
 		buf[0] = '\0';
 	    }
 
-	    if (!(region = memregion_create(space,rtype,buf))) {
+	    /* Create a region for this map entry if it doesn't already
+	     * exist.
+	     */
+	    if (!(region = addrspace_find_region(space,buf))) {
+		if (!(region = memregion_create(space,rtype,buf)))
+		    goto err;
+	    }
+
+	    if (!(range = memrange_create(region,start,end,offset,0))) {
 		goto err;
 	    }
 
-	    region->start = start;
-	    region->end = end;
-	    region->offset = offset;
-
 	    if (p[0] == 'r')
-		region->prot_flags |= PROT_READ;
+		range->prot_flags |= PROT_READ;
 	    if (p[1] == 'w')
-		region->prot_flags |= PROT_WRITE;
+		range->prot_flags |= PROT_WRITE;
 	    if (p[2] == 'x')
-		region->prot_flags |= PROT_EXEC;
+		range->prot_flags |= PROT_EXEC;
 	    if (p[3] == 's')
-		region->prot_flags |= PROT_SHARED;
+		range->prot_flags |= PROT_SHARED;
 
+	    range = NULL;
 	    region = NULL;
 	}
 	/*
@@ -539,29 +545,29 @@ static int linux_userproc_loaddebugfiles(struct target *target,
      * .gnu_debuglink section, we read that section and try to find a
      * matching debug file. 
      */
-    if (!region->filename || strlen(region->filename) == 0)
+    if (!region->name || strlen(region->name) == 0)
 	return -1;
 
-    if ((fd = open(region->filename,0,O_RDONLY)) < 0) {
-	verror("open %s: %s\n",region->filename,strerror(errno));
+    if ((fd = open(region->name,0,O_RDONLY)) < 0) {
+	verror("open %s: %s\n",region->name,strerror(errno));
 	return -1;
     }
 
     elf_version(EV_CURRENT);
     if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	verror("elf_begin %s: %s\n",region->filename,elf_errmsg(elf_errno()));
+	verror("elf_begin %s: %s\n",region->name,elf_errmsg(elf_errno()));
 	goto errout;
     }
 
     /* read the ident stuff to get ELF byte size */
     if (!(eident = elf_getident(elf,NULL))) {
-	verror("elf_getident %s: %s\n",region->filename,elf_errmsg(elf_errno()));
+	verror("elf_getident %s: %s\n",region->name,elf_errmsg(elf_errno()));
 	goto errout;
     }
 
     if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
 	is64 = 0;
-	vdebug(3,LOG_T_LUP,"32-bit %s\n",region->filename);
+	vdebug(3,LOG_T_LUP,"32-bit %s\n",region->name);
     }
     else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
 	is64 = 1;
@@ -591,14 +597,14 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	    if (strcmp(name,".debug_info") == 0) {
 		vdebug(2,LOG_T_LUP,
 		       "found %s section (%d) in region filename %s\n",
-		       name,shdr->sh_size,region->filename);
+		       name,shdr->sh_size,region->name);
 		has_debuginfo = 1;
 		continue;
 	    }
 	    else if (!buildid && shdr->sh_type == SHT_NOTE) {
 		vdebug(2,LOG_T_LUP,
 		       "found %s note section (%d) in region filename %s\n",
-		       name,shdr->sh_size,region->filename);
+		       name,shdr->sh_size,region->name);
 		edata = elf_rawdata(scn,NULL);
 		if (!edata) {
 		    vwarn("cannot get data for valid section '%s': %s",
@@ -667,7 +673,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     close(fd);
     fd = -1;
 
-    vdebug(5,LOG_T_LUP,"ELF info for region file %s:\n",region->filename);
+    vdebug(5,LOG_T_LUP,"ELF info for region file %s:\n",region->name);
     vdebug(5,LOG_T_LUP,"    has_debuginfo=%d,buildid='",has_debuginfo);
     if (buildid) {
 	len = (int)strlen(buildid);
@@ -679,7 +685,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	   debuglinkfile,debuglinkfilecrc);
 
     if (has_debuginfo) {
-	finalfile = region->filename;
+	finalfile = region->name;
     }
     else if (buildid) {
 	for (i = 0; i < DEBUGPATHLEN; ++i) {
@@ -695,7 +701,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	/* Find the containing dir path so we can use it in our search
 	 * of the standard debug file dir infrastructure.
 	 */
-	regionfiledir = strdup(region->filename);
+	regionfiledir = strdup(region->name);
 	tmp = rindex(regionfiledir,'/');
 	if (tmp)
 	    *tmp = '\0';
@@ -710,7 +716,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     }
     else {
 	verror("could not find any debuginfo sources from ELF file %s!\n",
-	       region->filename);
+	       region->name);
 	goto errout;
     }
 
@@ -737,8 +743,8 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	elf_end(elf);
     if (fd > -1)
 	close(fd);
-if (regionfiledir) 
-free(regionfiledir);
+    if (regionfiledir) 
+	free(regionfiledir);
     if (buildid)
 	free(buildid);
     if (debuglinkfile)

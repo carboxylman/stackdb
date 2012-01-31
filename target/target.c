@@ -63,7 +63,7 @@ struct debugfile *target_associate_debugfile(struct target *target,
     /* if they already loaded this debugfile into this region, error */
     if (g_hash_table_lookup(region->debugfiles,idstr)) {
 	verror("debugfile(%s) already in use in region(%s) in space (%s)!\n",
-	       idstr,region->filename,region->space->idstr);
+	       idstr,region->name,region->space->idstr);
 	errno = EBUSY;
 	free(idstr);
 	if (realname != filename)
@@ -79,7 +79,7 @@ struct debugfile *target_associate_debugfile(struct target *target,
 
 	    vdebug(1,LOG_T_TARGET,
 		   "reusing debugfile(%s,%s,%s,%d) for region(%s) in space (%s,%d,%d)\n",
-		   realname,name,version,type,region->filename,
+		   realname,name,version,type,region->name,
 		   region->space->name,region->space->id,region->space->pid);
 
 	    g_hash_table_insert(region->debugfiles,realname,debugfile);
@@ -126,7 +126,7 @@ struct symtab *target_lookup_pc(struct target *target,uint64_t pc) {
 
     list_for_each_entry(space,&target->spaces,space) {
 	list_for_each_entry(region,&space->regions,region) {
-	    if (region->start <= pc && pc <= region->end)
+	    if (memregion_contains_real(region,pc))
 		goto found;
 	}
     }
@@ -178,8 +178,7 @@ struct bsymbol *target_lookup_sym(struct target *target,
     return NULL;
 
  out:
-    bsymbol = bsymbol_create(region,lsymbol->symbol,lsymbol->chain);
-    free(lsymbol);
+    bsymbol = bsymbol_create(region,lsymbol);
 
     return bsymbol;
 }
@@ -191,6 +190,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     struct symbol *datatype;
     struct memregion *region = bsymbol->region;
     struct target *target = memregion_target(region);
+    struct memrange *range;
     REGVAL ip;
     ADDR ip_addr;
     int nptrs = 0;
@@ -230,9 +230,21 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	if (errno)
 	    return NULL;
 
-	if (!symbol_visible_at_ip(symbol,
-				  memregion_unrelocate(region,ip_addr)))
+	/*
+	 * The symbol "visible" range is an object address; so, we need
+	 * to check for each range in the region, if the address is
+	 * visible inside one of them!
+	 */
+	range = memregion_find_range_real(region,ip_addr);
+	if (!range)
+	    verror("could not find range to check symbol visibility at IP 0x%"PRIxADDR" for symbol %s!\n",
+		   ip_addr,symbol->name);
+	else if (!symbol_visible_at_ip(symbol,
+				       memrange_unrelocate(range,ip_addr))) {
+	    verror("symbol not visible at IP 0x%"PRIxADDR" for symbol %s!\n",
+		   ip_addr,symbol->name);
 	    return NULL;
+	}
     }
 
     /* If they want pointers automatically dereferenced, do it! */
@@ -244,8 +256,13 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	 * Don't allow any load flags through for this!  We don't want
 	 * to mmap just for pointers.
 	 */
-	if (location_load(target,region,&(symbol->s.ii.l),symbol_chain,
-			  LOAD_FLAG_NONE,&ptraddr,target->ptrsize)) {
+	if (location_load(target,region,&(symbol->s.ii.l),LOAD_FLAG_NONE,
+			  &ptraddr,target->ptrsize,symbol_chain,&range)) {
+	    goto errout;
+	}
+
+	if (!range) {
+	    verror("could not find range in auto_deref\n");
 	    goto errout;
 	}
 
@@ -265,7 +282,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		goto errout;
 	    }
 
-	    if (location_addr_load(target,region,ptraddr,LOAD_FLAG_NONE,
+	    if (location_addr_load(target,range,ptraddr,LOAD_FLAG_NONE,
 				   &ptraddr,target->ptrsize)) {
 		vwarn("failed to autoload pointer %d for symbol %s\n",
 		      nptrs,symbol->name);
@@ -292,7 +309,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	/* XXX: should we use datatype, or the last pointer to datatype? */
 	value = value_create_noalloc(bsymbol,datatype);
 
-	if (!(value->buf = location_addr_load(target,region,ptraddr,flags,
+	if (!(value->buf = location_addr_load(target,range,ptraddr,flags,
 					      NULL,0))) {
 	    vwarn("failed to autoload last pointer for symbol %s\n",
 		  symbol->name);
@@ -313,7 +330,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	value = value_create_noalloc(bsymbol,datatype);
 	value->mmap = location_mmap(target,region,
 				    (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
-				    symbol_chain,flags,&value->buf);
+				    flags,&value->buf,symbol_chain,NULL);
 	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
 	    value->buf = NULL;
 	    value_free(value);
@@ -330,7 +347,8 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 
 	    if (!location_load(target,region,
 			       (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
-			       symbol_chain,flags,value->buf,value->bufsiz))
+			       flags,value->buf,value->bufsiz,symbol_chain,
+			       &value->range))
 		goto errout;
 	}
 
@@ -345,11 +363,15 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 
 	if (!location_load(target,region,
 			   (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
-			   symbol_chain,flags,value->buf,value->bufsiz))
+			   flags,value->buf,value->bufsiz,symbol_chain,
+			   &value->range))
 	    goto errout;
     }
 
  out:
+    if (value->range)
+	value->region_stamp = value->range->region->stamp;
+
     return value;
 
  errout:
@@ -373,7 +395,7 @@ int target_contains(struct target *target,ADDR addr) {
 
     list_for_each_entry(space,&target->spaces,space) {
 	list_for_each_entry(region,&space->regions,region) {
-	    if (memregion_contains(region,addr))
+	    if (memregion_contains_real(region,addr))
 		return 1;
 	}
     }
@@ -415,12 +437,16 @@ struct value *target_load_raw(struct target *target,struct memregion *region,
 	return NULL;
     }
 
-    if (!(value = value_create_raw(region,len)))
+    if (!(value = value_create_raw(len)))
 	return NULL;
 
-    if (!location_load(target,region,location,NULL,flags,
-		       value->buf,value->bufsiz))
+    if (!location_load(target,region,location,flags,
+		       value->buf,value->bufsiz,NULL,
+		       &value->range))
 	goto errout;
+
+    if (value->range)
+	value->region_stamp = value->range->region->stamp;
 
     return value;
 

@@ -27,10 +27,12 @@
  * they share.
  */
 
-struct mmap_entry *location_mmap(struct target *target,struct memregion *region,
+struct mmap_entry *location_mmap(struct target *target,
+				 struct memregion *region,
 				 struct location *location,
+				 load_flags_t flags,char **offset,
 				 struct array_list *symbol_chain,
-				 load_flags_t flags,char **offset) {
+				 struct memrange **range_saveptr) {
     struct mmap_entry *mme;
 
     if (!location_can_mmap(location,target))
@@ -41,11 +43,13 @@ struct mmap_entry *location_mmap(struct target *target,struct memregion *region,
 }
 
 char *location_load(struct target *target,struct memregion *region,
-		    struct location *location,struct array_list *symbol_chain,
-		    load_flags_t flags,void *buf,int bufsiz) {
+		    struct location *location,load_flags_t flags,
+		    void *buf,int bufsiz,
+		    struct array_list *symbol_chain,
+		    struct memrange **range_saveptr) {
     ADDR final_location = 0;
     REGVAL regval;
-
+    struct memrange *range;
 
     if (location->loctype == LOCTYPE_REG) {
 	/* They must supply a buffer if the value is in a register. */
@@ -77,25 +81,31 @@ char *location_load(struct target *target,struct memregion *region,
             memcpy(buf,&regval,bufsiz);
     }
     else {
-        final_location = location_resolve(target,region,location,symbol_chain);
+        final_location = location_resolve(target,region,location,symbol_chain,
+					  &range);
 
         if (errno)
             return NULL;
 
+	if (!range)
+	    vwarn("could not resolve a range with final location!\n");
+	else if (range_saveptr)
+	    *range_saveptr = range;
+
         vdebug(5,LOG_T_LOC,"final_location = 0x%" PRIxADDR "\n",final_location);
 
-        return location_addr_load(target,region,final_location,
+        return location_addr_load(target,range,final_location,
 				  flags,buf,bufsiz);
     }
 
     return 0;
 }
 
-char *location_addr_load(struct target *target,struct memregion *region,
+char *location_addr_load(struct target *target,struct memrange *range,
 			 ADDR addr,load_flags_t flags,
 			 void *buf,int bufsiz) {
     if (!(flags & LOAD_FLAG_NO_CHECK_BOUNDS) 
-	&& !memregion_contains(region,addr)) {
+	&& !memrange_contains_real(range,addr)) {
 	errno = EFAULT;
 	return NULL;
     }
@@ -103,11 +113,11 @@ char *location_addr_load(struct target *target,struct memregion *region,
     return (char *)target_read_addr(target,addr,bufsiz,buf);
 }
 
-char *location_obj_addr_load(struct target *target,struct memregion *region,
+char *location_obj_addr_load(struct target *target,struct memrange *range,
 			     ADDR addr,load_flags_t flags,
 			     void *buf,int bufsiz) {
-    addr = memregion_relocate(region,addr);
-    return location_addr_load(target,region,addr,flags,buf,bufsiz);
+    addr = memrange_relocate(range,addr);
+    return location_addr_load(target,range,addr,flags,buf,bufsiz);
 }
 
 
@@ -140,7 +150,8 @@ int location_can_mmap(struct location *location,struct target *target) {
 
 ADDR location_resolve(struct target *target,struct memregion *region,
 		      struct location *location,
-		      struct array_list *symbol_chain) {
+		      struct array_list *symbol_chain,
+		      struct memrange **range_saveptr) {
     REGVAL regval;
     int i;
     ADDR eip;
@@ -154,6 +165,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
     struct loc_list *fblist = NULL;
     struct location *fbloc = NULL;
     struct array_list *tmp_symbol_chain = NULL;
+    struct memrange *range;
 
     switch (location->loctype) {
     case LOCTYPE_UNKNOWN:
@@ -161,9 +173,15 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	return 0;
     case LOCTYPE_ADDR:
 	errno = 0;
-	return memregion_relocate(region,location->l.addr);
+	range = memregion_find_range_obj(region,location->l.addr);
+	if (range_saveptr)
+	    *range_saveptr = range;
+	return memrange_relocate(range,location->l.addr);
     case LOCTYPE_REALADDR:
 	errno = 0;
+	range = memregion_find_range_real(region,location->l.addr);
+	if (range_saveptr)
+	    *range_saveptr = range;
 	return location->l.addr;
     case LOCTYPE_REG:
 	errno = EINVAL;
@@ -239,13 +257,29 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 		return 0;
 	    errno = 0;
 	    vdebug(5,LOG_T_LOC,"eip = 0x%" PRIxADDR "\n",eip);
+
+	    /*
+	     * Find out which range in the region this address is in,
+	     * then translate it into an object address and compare with
+	     * the loclist.
+	     */
+	    range = memregion_find_range_real(region,eip);
+	    if (!range) {
+		verror("FBREG_OFFSET eip not in region %s!!\n",
+		       region->name);
+		errno = EINVAL;
+		return 0;
+	    }
+	    ADDR obj_eip = memrange_unrelocate(range,(ADDR)eip);
+
 	    for (i = 0; i < fblist->len; ++i) {
-		if (memregion_relocate(region,fblist->list[i]->start) <= eip 
-		    && eip < memregion_relocate(region,fblist->list[i]->end)) {
+		if (fblist->list[i]->start <= obj_eip 
+		    && obj_eip < fblist->list[i]->end) {
 		    final_fb_loc = fblist->list[i]->loc;
 		    break;
 		}
 	    }
+
 	    if (i == fblist->len) {
 		verror("FBREG_OFFSET location not currently valid!\n");
 		errno = EINVAL;
@@ -277,7 +311,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    }
 	}
 	else {
-	    frame_base = location_resolve(target,region,final_fb_loc,NULL);
+	    frame_base = location_resolve(target,region,final_fb_loc,NULL,NULL);
 	    if (errno) {
 		verror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
 		errno = EINVAL;
@@ -288,8 +322,12 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	vdebug(5,LOG_T_LOC,"fboffset = %" PRIi64 "\n",location->l.fboffset);
 	if (0 && location->l.fboffset < 0)
 	    return (ADDR)(frame_base - (ADDR)location->l.fboffset);
-	else
+	else {
+	    range = memregion_find_range_real(region,(ADDR)(frame_base + (ADDR)location->l.fboffset));
+	    if (range_saveptr)
+		*range_saveptr = range;
 	    return (ADDR)(frame_base + (ADDR)location->l.fboffset);
+	}
     case LOCTYPE_LOCLIST:
 	if (!target) {
 	    errno = EINVAL;
@@ -305,11 +343,24 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    return 0;
 	errno = 0;
 	vdebug(5,LOG_T_LOC,"eip = 0x%" PRIxADDR "\n",eip);
+
+	/*
+	 * Find out which range in the region this address is in,
+	 * then translate it into an object address and compare with
+	 * the loclist.
+	 */
+	range = memregion_find_range_real(region,eip);
+	if (!range) {
+	    verror("LOCLIST eip not in region %s!!\n",
+		   region->name);
+	    errno = EINVAL;
+	    return 0;
+	}
+	ADDR obj_eip = memrange_unrelocate(range,(ADDR)eip);
+
 	for (i = 0; i < location->l.loclist->len; ++i) {
-	    if (memregion_relocate(region,
-				   location->l.loclist->list[i]->start) <= eip 
-		&& eip < memregion_relocate(region,
-					    location->l.loclist->list[i]->end))
+	    if (location->l.loclist->list[i]->start <= obj_eip 
+		&& obj_eip < location->l.loclist->list[i]->end)
 		break;
 	}
 	if (i == location->l.loclist->len) {
@@ -326,7 +377,8 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 				/* XXX: is this correct, or should we
 				 * pass NULL?
 				 */
-				symbol_chain);
+				symbol_chain,
+				range_saveptr);
     case LOCTYPE_MEMBER_OFFSET:
 	/*
 	 * XXX: the assumption is that our @location arg is the same
@@ -396,7 +448,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 				    array_list_item(symbol_chain,i));
 	}
 	top_addr = location_resolve(target,region,&top_enclosing_symbol->s.ii.l,
-				    tmp_symbol_chain);
+				    tmp_symbol_chain,NULL);
 	if (tmp_symbol_chain)
 	    array_list_free(tmp_symbol_chain);
 	if (errno) {
@@ -405,6 +457,10 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    errno = EINVAL;
 	    return 0;
 	}
+
+	range = memregion_find_range_real(region,top_addr + totaloffset);
+	if (range_saveptr)
+	    *range_saveptr = range;
 
 	return top_addr + totaloffset;
     case LOCTYPE_RUNTIME:

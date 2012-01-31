@@ -19,20 +19,20 @@
 #include "target.h"
 
 struct bsymbol *bsymbol_create(struct memregion *region,
-			       struct symbol *symbol,struct array_list *chain) {
+			       struct lsymbol *lsymbol) {
     struct bsymbol *bsymbol = (struct bsymbol *)malloc(sizeof(struct bsymbol));
     memset(bsymbol,0,sizeof(struct bsymbol *));
-    bsymbol->lsymbol = (struct lsymbol *)malloc(sizeof(struct lsymbol));
-    memset(bsymbol->lsymbol,0,sizeof(struct lsymbol));
-    bsymbol->lsymbol->symbol = symbol;
-    bsymbol->lsymbol->chain = chain;
+    bsymbol->lsymbol = lsymbol;
     bsymbol->region = region;
     return bsymbol;
 }
 
 void bsymbol_free(struct bsymbol *bsymbol) {
-    if (bsymbol->lsymbol->chain)
-	array_list_free(bsymbol->lsymbol->chain);
+    if (bsymbol->lsymbol) {
+	if (bsymbol->lsymbol->chain)
+	    array_list_free(bsymbol->lsymbol->chain);
+	free(bsymbol->lsymbol);
+    }
     free(bsymbol);
 }
 
@@ -47,9 +47,7 @@ void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud) {
 
     fprintf(ud->stream,"bsymbol (");
     if (bsymbol->region) {
-	fprintf(ud->stream,"region=(");
 	memregion_dump(bsymbol->region,ud);
-	fprintf(ud->stream,")");
     }
     fprintf(ud->stream,")\n");
 

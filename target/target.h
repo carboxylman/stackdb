@@ -37,6 +37,7 @@
  **/
 struct addrspace;
 struct memregion;
+struct memrange;
 struct value;
 
 typedef enum {
@@ -99,21 +100,35 @@ struct debugfile *target_associate_debugfile(struct target *target,
  **/
 struct addrspace *addrspace_create(struct target *target,
 				   char *name,int id,int pid);
+struct memregion *addrspace_find_region(struct addrspace *space,char *name);
 void addrspace_free(struct addrspace *space);
 void addrspace_dump(struct addrspace *space,struct dump_info *ud);
 
 /**
- ** Memory regions. 
+ ** Memory region regions and ranges.
  **/
-struct memregion *memregion_create(struct addrspace *space,region_type_t type,
-				   char *filename);
-int memregion_contains(struct memregion *region,ADDR addr);
-ADDR memregion_unrelocate(struct memregion *region,ADDR real);
-ADDR memregion_relocate(struct memregion *region,ADDR obj);
+struct memregion *memregion_create(struct addrspace *space,
+					       region_type_t type,char *name);
+int memregion_contains_real(struct memregion *region,ADDR addr);
+struct memrange *memregion_find_range_real(struct memregion *region,
+					   ADDR real_addr);
+struct memrange *memregion_find_range_obj(struct memregion *region,
+					  ADDR obj_addr);
 struct target *memregion_target(struct memregion *region);
-struct addrspace *memregion_space(struct memregion *region);
 void memregion_dump(struct memregion *region,struct dump_info *ud);
 void memregion_free(struct memregion *region);
+
+struct memrange *memrange_create(struct memregion *region,
+				   ADDR start,ADDR end,OFFSET offset,
+				   unsigned int prot_flags);
+int memrange_contains_real(struct memrange *range,ADDR real_addr);
+int memrange_contains_obj(struct memrange *range,ADDR obj_addr);
+ADDR memrange_unrelocate(struct memrange *range,ADDR real);
+ADDR memrange_relocate(struct memrange *range,ADDR obj);
+struct target *memrange_target(struct memrange *range);
+struct addrspace *memrange_space(struct memrange *range);
+void memrange_dump(struct memrange *range,struct dump_info *ud);
+void memrange_free(struct memrange *range);
 
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr);
@@ -125,8 +140,8 @@ void target_release_mmap_entry(struct target *target,
 /**
  ** Bound symbols.
  **/
-struct bsymbol *bsymbol_create(struct memregion *region,struct symbol *symbol,
-			       struct array_list *chain);
+struct bsymbol *bsymbol_create(struct memregion *region,
+			       struct lsymbol *lsymbol);
 void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud);
 void bsymbol_free(struct bsymbol *bsymbol);
 
@@ -135,25 +150,30 @@ void bsymbol_free(struct bsymbol *bsymbol);
  **/
 ADDR location_resolve(struct target *target,struct memregion *region,
 		      struct location *location,
-		      struct array_list *symbol_chain);
+		      struct array_list *symbol_chain,
+		      struct memrange **range_saveptr);
 int location_can_mmap(struct location *location,struct target *target);
 
 /**
  ** Location loading functions.
  **/
 char *location_load(struct target *target,struct memregion *region,
-		    struct location *location,struct array_list *symbol_chain,
-		    load_flags_t flags,void *buf,int bufsiz);
-char *location_addr_load(struct target *target,struct memregion *region,
+		    struct location *location,load_flags_t flags,
+		    void *buf,int bufsiz,
+		    struct array_list *symbol_chain,
+		    struct memrange **range_saveptr);
+char *location_addr_load(struct target *target,struct memrange *range,
 			 ADDR addr,load_flags_t flags,
 			 void *buf,int bufsiz);
-char *location_obj_addr_load(struct target *target,struct memregion *region,
+char *location_obj_addr_load(struct target *target,struct memrange *range,
 			     ADDR addr,load_flags_t flags,
 			     void *buf,int bufsiz);
-struct mmap_entry *location_mmap(struct target *target,struct memregion *region,
+struct mmap_entry *location_mmap(struct target *target,
+				 struct memregion *region,
 				 struct location *location,
+				 load_flags_t flags,char **offset,
 				 struct array_list *symbol_chain,
-				 load_flags_t flags,char **offset);
+				 struct memrange **range_saveptr);
 /**
  ** Value loading functions.
  **/
@@ -176,8 +196,8 @@ struct value *target_load_raw_obj_location(struct target *target,
  * Values.
  */
 int value_alloc_buf(struct value *value,int len);
-struct value *value_create_raw(struct memregion *region,int len);
-struct value *value_create_type(struct memregion *region,struct symbol *type);
+struct value *value_create_raw(int len);
+struct value *value_create_type(struct symbol *type);
 struct value *value_create(struct bsymbol *bsymbol,struct symbol *type);
 struct value *value_create_noalloc(struct bsymbol *bsymbol,struct symbol *type);
 void value_free(struct value *value);
@@ -191,17 +211,21 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
  **/
 /*
  * An address space is the primary abstraction for associating debuginfo
- * with memory regions.  But, note that debuginfo files are associated
+ * with memory ranges.  But, note that debuginfo files are associated
  * specifically with regions -- each address space is associated with
- * subentities I call regions.  A region closely corresponds to Linux's
- * notion of describing a process's address space as a collection of
- * mmaps of the program text/data, its libs, anonymous maps, and heap,
- * stack, syscall trampolines, etc -- and the protections associated
- * with those regions.
+ * subentities I call regions, which include one or more ranges.  A
+ * range closely corresponds to Linux's notion of describing a process's
+ * address space as a collection of mmaps of the program text/data, its
+ * libs, anonymous maps, and heap, stack, syscall trampolines, etc --
+ * and the protections associated with those ranges.  Ranges can be
+ * grouped; the analogue is when an ELF object file is loaded into
+ * memory, it is split into several distinct memory ranges, each with
+ * different memory protections.  HOWEVER, each of these ranges
+ * corresponds to the same debugfile(s) that have debuginfo for the ELF
+ * object file.
  *
- * We associate debuginfo files with regions, not address spaces, since
- * debuginfo applies to one or more regions (depending on the
- * size/protection needs of the main executable or library).
+ * Regions, then, hold references to debugfiles, and potentially include
+ * multiple ranges.
  */
 
 struct addrspace {
@@ -224,19 +248,39 @@ struct addrspace {
     int refcnt;
 };
 
+/*
+ * Regions contain one or more ranges.  The initial reason to have a
+ * two-level hierarchy here is that when we load symbols, we know the
+ * symbol is in some debugfile, but if we maintained the mapping between
+ * debugfiles and ranges within the range data structure itself, we
+ * would not know which range the resolved symbol is associated with!
+ *
+ * More generally, when we lookup a symbol in a target's debugfiles, we
+ * don't know which range the symbol is in until we resolve its address
+ * (and address resolution can be a runtime process involving reading
+ * target execution state like registers).  So, we can only bind a
+ * symbol to one or more of the ranges that are connected to the
+ * debugfiles.
+ *
+ * This requires us to have a region structure that binds debugfile(s)
+ * to one or more ranges.  Regions are named and typed; we expect that
+ * the range itself is just an address range, potentially with an
+ * offset, and a set of protection flags.
+ */
 struct memregion {
     /* backref to containing space */
     struct addrspace *space;
 
-    char *filename;
-    unsigned long long start;
-    unsigned long long end;
-    unsigned long long offset;
-    unsigned int prot_flags;
+    char *name;
     region_type_t type;
 
+    /*
+     * Debugfiles associated with this region.
+     */
+    GHashTable *debugfiles;
+
     /* This is an identifier that must be changed every time this
-     * memregion changes status, and something about it has been
+     * memrange changes status, and something about it has been
      * reloaded.  For instance, if it is now using different memory
      * addresses than when we were last resolved symbols to locations
      * inside of it, we need those symbols to be re-resolved before
@@ -244,9 +288,37 @@ struct memregion {
      */
     uint32_t stamp;
 
-    GHashTable *debugfiles;
-
+    /* The list node linking this into the addrspace. */
     struct list_head region;
+
+    /* The ranges contained in this region. */
+    struct list_head ranges;
+};
+
+struct memrange {
+    /* backref to containing region */
+    struct memregion *region;
+
+    ADDR start;
+    ADDR end;
+    ADDR offset;
+    /*
+     * For a shared library, this is the object-relative start address.
+     * If in userspace, the regions are not laid out back to back, or if
+     * the object-relative addresses are not contiguous (i.e., a shared
+     * lib), we must have the base address to relocate like the dynamic
+     * loader did!
+     *
+     * XXX: for now, this is unsupported, because we have no good way of
+     * figuring out what the dynamic loader did in linux userspace.
+     * Eventually, we have to load the ELF object file ourselves, and
+     * note the object relative addresses and their offsets in the file.
+     */
+    ADDR base_obj_addr;
+    unsigned int prot_flags;
+
+    /* The list node linking this into the region. */
+    struct list_head range;
 };
 
 /*
@@ -269,6 +341,10 @@ struct bsymbol {
     struct memregion *region;
 };
 
+/*
+ * An mmap entry records a mapping of target memory we made while
+ * loading a value.
+ */
 struct mmap_entry {
     char *base_address;
     int pages;
@@ -291,7 +367,8 @@ struct value {
      */
     struct lsymbol *lsymbol;
 
-    struct memregion *region;
+    /* The memrange this value exists in. */
+    struct memrange *range;
 
     /* The region stamp at load time. */
     uint32_t region_stamp;

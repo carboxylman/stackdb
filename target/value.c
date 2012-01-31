@@ -18,14 +18,13 @@
 
 #include "target.h"
 
-struct value *value_create_raw(struct memregion *region,int len) {
+struct value *value_create_raw(int len) {
     struct value *value;
 
     if (!(value = malloc(sizeof(struct value)))) 
 	return NULL;
     memset(value,0,sizeof(struct value));
 
-    value->region_stamp = region->stamp;
     value->buf = malloc(len);
     if (!value->buf) {
 	free(value);
@@ -36,7 +35,7 @@ struct value *value_create_raw(struct memregion *region,int len) {
     return value;
 }
 
-struct value *value_create_type(struct memregion *region,struct symbol *type) {
+struct value *value_create_type(struct symbol *type) {
     struct value *value;
     int len = symbol_type_full_bytesize(type);
 
@@ -45,7 +44,6 @@ struct value *value_create_type(struct memregion *region,struct symbol *type) {
     memset(value,0,sizeof(struct value));
 
     value->type = type;
-    value->region_stamp = region->stamp;
     value->buf = malloc(len);
     if (!value->buf) {
 	free(value);
@@ -57,13 +55,12 @@ struct value *value_create_type(struct memregion *region,struct symbol *type) {
 }
 
 struct value *value_create(struct bsymbol *bsymbol,struct symbol *type) {
-    struct value *value = value_create_type(bsymbol->region,type);
+    struct value *value = value_create_type(type);
     int len = symbol_type_full_bytesize(type);
 
     if (!value)
 	return NULL;
 
-    value->region_stamp = bsymbol->region->stamp;
     value->type = type;
     value->buf = malloc(len);
     if (!value->buf) {
@@ -77,20 +74,26 @@ struct value *value_create(struct bsymbol *bsymbol,struct symbol *type) {
 
 struct value *value_create_noalloc(struct bsymbol *bsymbol,
 				   struct symbol *type) {
-    struct value *value = value_create_type(bsymbol->region,type);
+    struct value *value = value_create_type(type);
 
     if (!value)
 	return NULL;
 
-    value->region_stamp = bsymbol->region->stamp;
     value->type = type;
 
     return value;
 }
 
 void value_free(struct value *value) {
-    if (value->ismmap)
-	target_release_mmap_entry(value->region->space->target,value->mmap);
+    if (value->ismmap) {
+	if (value->range)
+	    target_release_mmap_entry(value->range->region->space->target,
+				      value->mmap);
+	else {
+	    verror("value for symbol %s was mmap'd, but has no range!\n",
+		   value->lsymbol->symbol->name);
+	}
+    }
     else
 	free(value->buf);
 
