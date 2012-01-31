@@ -39,12 +39,14 @@ typedef int64_t OFFSET;
 typedef uint64_t REGVAL;
 #define PRIxADDR PRIx64
 #define PRIuADDR PRIu64
+#define PRIiOFFSET PRIi64
 #else
 typedef uint32_t ADDR;
 typedef int32_t OFFSET;
 typedef uint32_t REGVAL;
 #define PRIxADDR PRIx32
 #define PRIuADDR PRIu32
+#define PRIiOFFSET PRIi32
 #endif
 
 typedef uint8_t REG;
