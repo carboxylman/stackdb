@@ -1252,8 +1252,10 @@ register_vmprobe_batch(domid_t domid,
 
 	probe = add_probe(pre_handler,post_handler,probepoint);
 	if (!probe) {
-	    if (list_empty(&probepoint->probe_list))
+	    if (list_empty(&probepoint->probe_list)) {
 		remove_probepoint(probepoint);
+		probepoint = NULL;
+	    }
 
 	    handlelist[i] = -1;
 	    if (onfail == 2) {
@@ -1272,8 +1274,11 @@ register_vmprobe_batch(domid_t domid,
         
 	if (__register_vmprobe(probe) < 0) {
 	    remove_probe(probe);
-	    if (list_empty(&probepoint->probe_list))
+	    probe = NULL;
+	    if (list_empty(&probepoint->probe_list)) {
 		remove_probepoint(probepoint);
+		probepoint = NULL;
+	    }
 
 	    handlelist[i] = -1;
 	    if (onfail == 2) {
@@ -1306,14 +1311,18 @@ register_vmprobe_batch(domid_t domid,
 	    __unregister_vmprobe(probe);
 
 	    remove_probe(probe);
+	    probe = NULL;
 	}
 
+	assert(domain != NULL);
 	if ((probepoint = find_probepoint(vaddrlist[i],domain))) {
 	    if (list_empty(&probepoint->probe_list)) {
 		remove_probepoint(probepoint);
-
-		if (list_empty(&domain->probepoint_list))
+		probepoint = NULL;
+		if (list_empty(&domain->probepoint_list)) {
 		    remove_domain(domain);
+		    domain = NULL;
+		}
 	    }
 	}
     }
@@ -1451,8 +1460,8 @@ unregister_vmprobe_batch(domid_t domid,
 	return -1;
     
     VMPROBE_PERF_START();
-    xc_domain_pause(xc_handle, domain->id);
-    debug(1,"dom%d paused\n", domain->id);
+    xc_domain_pause(xc_handle, domid);
+    debug(1,"dom%d paused\n", domid);
     VMPROBE_PERF_STOP("vmprobes pauses domU");
 
     for (i = 0; i < listlen; ++i) {
@@ -1465,6 +1474,7 @@ unregister_vmprobe_batch(domid_t domid,
 	    continue;
 	}
 
+	assert(domain != NULL);
 	probepoint = probe->probepoint; 
 	if (probepoint->domain != domain) {
 	    ++retval;
@@ -1477,16 +1487,20 @@ unregister_vmprobe_batch(domid_t domid,
 	}
 
 	remove_probe(probe);
+	probe = NULL;
 	if (list_empty(&probepoint->probe_list)) {
 	    remove_probepoint(probepoint);
-	    if (list_empty(&domain->probepoint_list))
+	    probepoint = NULL;
+	    if (list_empty(&domain->probepoint_list)) {
 		remove_domain(domain);
+		domain = NULL;
+	    }
 	}
     }
 
     VMPROBE_PERF_START();
-    xc_domain_unpause(xc_handle, domain->id);
-    debug(1,"dom%d unpaused\n", domain->id);
+    xc_domain_unpause(xc_handle, domid);
+    debug(1,"dom%d unpaused\n", domid);
     VMPROBE_PERF_STOP("vmprobes unpauses domU");
 
     /* cleanup vmprobes library when the last probe is unregistered */
@@ -1549,8 +1563,7 @@ unregister_vmprobe(vmprobe_handle_t handle)
 
     /* remove the probe, related probepoint and domain from the lists */
     remove_probe(probe);
-    if (list_empty(&probepoint->probe_list))
-    {
+    if (list_empty(&probepoint->probe_list)) {
         remove_probepoint(probepoint);
         if (list_empty(&domain->probepoint_list))
             remove_domain(domain);

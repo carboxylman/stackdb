@@ -2733,6 +2733,15 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     else if (addr == sctab[301].addr) {
 	oi = i = 301;
     }
+    // Even when the syscall number appears legit, check that the
+    // address is consistent. If one of the syscall probes is triggered
+    // due to an intra-kernel use, eax may not have the correct value.
+    else if (i >= 0 && i < SYSCALL_MAX && addr != sctab[i].addr) {
+	debug(0,"WARNING: ignoring internal use of syscall@0x%lx (i==%d)\n",
+	      addr, i);
+	return NULL;
+    }
+#if 0
     // Empirically, we have discovered that these can be called when
     // the syscall number is not in eax. Ignore these, I think they are
     // kernel-internal calls.
@@ -2741,6 +2750,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	debug(0,"WARNING: ignoring internal use of syscall@0x%lx\n",addr);
 	return NULL;
     }
+#endif
     else {
 	if (i == 11) {
 	    ++execcounter;
