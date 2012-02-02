@@ -420,18 +420,21 @@ int check_filters(int syscall,int arg,
 
 	if (smatch && pmatch) {
 	    *match = argfilter_list[lpc];
-	    debug(1,"Filter match on %d %d %s (%d %d %d)\n",
+	    debug(1,"Filter match on %d %d(%d) %s (%d %d %d)\n",
 		  argfilter_list[lpc]->syscallnum,
 		  argfilter_list[lpc]->argnum,
+		  argfilter_list[lpc]->decoding,
 		  argfilter_list[lpc]->strfrag,
 		  argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
 		  argfilter_list[lpc]->gid);
 	    break;
 	}
 	else {
-	    debug(1, "Filter no match on %d %d %s (%d %d %d)\n",
+	    debug(1, "Filter no match (%d,%d) on %d %d(%d) %s (%d %d %d)\n",
+		  smatch, pmatch,
 		  argfilter_list[lpc]->syscallnum,
 		  argfilter_list[lpc]->argnum,
+		  argfilter_list[lpc]->decoding,
 		  argfilter_list[lpc]->strfrag,
 		  argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
 		  argfilter_list[lpc]->gid);
@@ -3542,8 +3545,9 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 			    for (j = 0; j < sctab[filter->syscallnum].args[i].decodings_len; ++j)
 				if (!strcmp(sctab[filter->syscallnum].args[i].decodings[j],val))
 				    break;
-			    if (j > -1)
+			    if (j != sctab[filter->syscallnum].args[i].decodings_len)
 				break;
+			    j = -1;
 			}
 			if (i == sctab[filter->syscallnum].argc) {
 			    fprintf(stderr,"ERROR: filter file format: no such function arg %s to filter on!\n",val);
@@ -4028,6 +4032,8 @@ int main(int argc, char *argv[])
 
     // update symaddrs that we care about, if possible
     if (sysmapfile) {
+	int updated = 0;
+
 	//domain_init(domid,sysmapfile);
 
 	sysmapfh = fopen(sysmapfile,"r");
@@ -4074,6 +4080,7 @@ int main(int argc, char *argv[])
 			debug(1, "updating %s address to 0x%x.\n",
 			      sctab[i].name, addr);
 			sctab[i].addr = addr;
+			updated++;
 		    }
 
 		    // first match wins; there won't be more.
@@ -4081,6 +4088,8 @@ int main(int argc, char *argv[])
 		}
 	    }		
 	}
+	if (updated)
+	    fprintf(stderr, "Updated addresses for %d symbols\n", updated);
     }
     fclose(sysmapfh);
 
@@ -4248,6 +4257,13 @@ int main(int argc, char *argv[])
 	    }
 
 	    fprintf(stderr,"Reloaded config file successfully.\n");
+	    if (filtered_events_fd != NULL) {
+		struct timeval tv;
+
+		gettimeofday(&tv, NULL);
+		fprintf(filtered_events_fd, "%u.%03u: config file reloaded\n",
+			(unsigned)tv.tv_sec, (unsigned)(tv.tv_usec/1000));
+	    }
 	    reloadconfigfile = 0;
 
 	    restart_vmprobes();
