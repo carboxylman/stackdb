@@ -142,10 +142,9 @@ of parameters; you need not specify them all!
     same reason that hardcoding all type and decoding knowledge takes a
     long time and is simply busy work until we have debuginfo support.
 
-  * when=(pre|post|both) .  Specifies when the syscall should be matched.
-    You can match before ("pre"), after ("post") or both ("both").
-    If "when" is not specified, the default is "pre" to be compatible
-    with the old behavior.
+  * when=(pre|post) .  Specifies when the syscall should be matched.
+    You can match before ("pre") or after ("post"). If "when" is not
+    specified, the default is "pre" to be compatible with the old behavior.
 
   * pid=<process_id>.  Match on process id.
 
@@ -165,8 +164,7 @@ of parameters; you need not specify them all!
     from syscalls that match this filter.
 
   * retval=(unix_regex|*).  If this is a match filter, match the syscall
-    return value against this value ala "argval". NOTE that in this use,
-    you cannot also use argval= (due to a coding shortcut I took).
+    return value against this value ala "argval".
 
   * apply=(0|1).  If 1, this is an abort filter and it will be applied
     if the global action filter bit is set... and thus the the value
@@ -180,6 +178,12 @@ Filter  function=sys_execve,name=php-cgi,apply=1,retval=-1
   * This filter would restrict any processes with a name of 'php-cgi'
     from exec'ing anything. Note that apply MUST appear befor retval
     to signal that this is an abort filter.
+
+Filter  function=sys_execve,argname=regs:filename,argval=php-cgi,apply=1,retval=-1
+
+  * This filter would restrict any process from exec'ing a program
+    named "php-cgi" (if there were actually such a program). Contrast
+    this with the previous example.
 
 Filter  function=sys_waitpid,name=php-cgi,when=post,retval=^[1-9]
 

@@ -107,10 +107,15 @@ struct argfilter {
     int uid;
     int gid;
 
-    int argnum;	// -2: match retval, -1: match any value, ow: match arg num
+    int argnum;
     int decoding;
     regex_t *preg;
     char *strfrag;
+
+    int retval;
+    regex_t *ret_preg;
+    char *ret_strfrag;
+
     int abort_retval;
     char *name;
     int name_search;
@@ -124,6 +129,12 @@ void free_argfilter(struct argfilter *f) {
     }
     if (f->strfrag)
 	free(f->strfrag);
+    if (f->ret_preg) {
+	regfree(f->ret_preg);
+	free(f->ret_preg);
+    }
+    if (f->ret_strfrag)
+	free(f->ret_strfrag);
     if (f->name)
 	free(f->name);
     free(f);
@@ -320,6 +331,7 @@ int check_filters(int syscall,int arg,
 		  struct argfilter **match, int *needpost)
 {
     int pmatch = 0;
+    int rmatch = 0;
     int smatch = 0;
     int lpc;
     struct process_data *parent;
@@ -328,8 +340,8 @@ int check_filters(int syscall,int arg,
 
     for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
 	debug(1,"filter name=%s, process name=%s, "
-	      "filter syscall=%d, syscall=%d, "
-	      "filter when=%s, when=%s\n",
+	      "filter-syscall=%d, syscall=%d, "
+	      "filter-when=%s, when=%s\n",
 	      argfilter_list[lpc]->name,pdata->name,
 	      argfilter_list[lpc]->syscallnum,syscall,
 	      argfilter_list[lpc]->when == WHEN_PRE ? "pre" : "post",
@@ -355,16 +367,12 @@ int check_filters(int syscall,int arg,
 
 	if ((argfilter_list[lpc]->syscallnum == -1 || argfilter_list[lpc]->syscallnum == syscall)
 	    && (argfilter_list[lpc]->argnum == -1 ||
-		(argfilter_list[lpc]->argnum == -2 && postcall) ||
 		argfilter_list[lpc]->argnum == arg)) {
 	    smatch = 1;
 	}
 
 	if (smatch) {
-	    if (postcall && argfilter_list[lpc]->argnum == -2)
-		argval = retvalstr;
-	    else if (argfilter_list[lpc]->decoding > -1
-		&& adata[arg]->decodings)
+	    if (argfilter_list[lpc]->decoding > -1 && adata[arg]->decodings)
 		argval = adata[arg]->decodings[argfilter_list[lpc]->decoding];
 	    else
 		argval = adata[arg]->str;
@@ -377,6 +385,13 @@ int check_filters(int syscall,int arg,
 	    else
 		smatch = 0;
 	}
+
+	if (!postcall || argfilter_list[lpc]->retval < 0 ||
+	    argfilter_list[lpc]->ret_preg == NULL ||
+	    !regexec(argfilter_list[lpc]->ret_preg,retvalstr,0,NULL,0))
+	    rmatch = 1;
+	else
+	    rmatch = 0;
 
 	if ((argfilter_list[lpc]->pid == -1 
 	     || argfilter_list[lpc]->pid == pdata->pid)
@@ -418,27 +433,31 @@ int check_filters(int syscall,int arg,
 		 && strcmp(argfilter_list[lpc]->name,pdata->name))
 	    pmatch = 0;
 
-	if (smatch && pmatch) {
+	if (smatch && rmatch && pmatch) {
 	    *match = argfilter_list[lpc];
-	    debug(1,"Filter match on %d %d(%d) %s (%d %d %d)\n",
+	    debug(1,"Filter match on %d %d(%d) %s %d %s (%d %d %d)\n",
 		  argfilter_list[lpc]->syscallnum,
 		  argfilter_list[lpc]->argnum,
 		  argfilter_list[lpc]->decoding,
 		  argfilter_list[lpc]->strfrag,
+		  argfilter_list[lpc]->retval,
+		  argfilter_list[lpc]->ret_strfrag,
 		  argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
 		  argfilter_list[lpc]->gid);
 	    break;
 	}
 	else {
-	    debug(1, "Filter no match (%d,%d) on %d %d(%d) %s (%d %d %d)\n",
-		  smatch, pmatch,
+	    debug(1, "Filter no match (%d,%d,%d) on %d %d(%d) %s %d %s (%d %d %d)\n",
+		  smatch, rmatch, pmatch,
 		  argfilter_list[lpc]->syscallnum,
 		  argfilter_list[lpc]->argnum,
 		  argfilter_list[lpc]->decoding,
 		  argfilter_list[lpc]->strfrag,
+		  argfilter_list[lpc]->retval,
+		  argfilter_list[lpc]->ret_strfrag,
 		  argfilter_list[lpc]->pid,argfilter_list[lpc]->uid,
 		  argfilter_list[lpc]->gid);
-	    smatch = pmatch = 0;
+	    smatch = rmatch = pmatch = 0;
 	}
     }
 
@@ -1695,7 +1714,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "pathname", SC_ARG_TYPE_STRING } } },
     { 11, "sys_execve", 0xc01036e0, RADDR_YES, 1, 
       { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_decoder, (char *[]){ "regs:filename","regs:args","regs:env"}, 3, process_ptregs_loader } } },
-    { 12, "sys_chdir", 0xc0164330, RADDR_NO, 1, 
+    { 12, "sys_chdir", 0xc0164330, RADDR_YES, 1, 
       { { 1, "filename", SC_ARG_TYPE_STRING } } },
     { 13, "sys_time", 0xc0123200, RADDR_NO, 1,
       { { 1, "tloc", SC_ARG_TYPE_PTR } } },
@@ -1800,7 +1819,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 60, "sys_umask", 0xc012e8d0, RADDR_NO, 1,
       { { 1, "mask", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mask:mask" }, 1 } } },
-    { 61, "sys_chroot", 0xc0164460, RADDR_NO, 1, 
+    { 61, "sys_chroot", 0xc0164460, RADDR_YES, 1, 
       { { 1, "filename", SC_ARG_TYPE_STRING } } },
     { 62, "sys_ustat", 0xc016bcf0, RADDR_NO, 2, 
       { { 1, "dev", SC_ARG_TYPE_UINT },
@@ -2550,7 +2569,7 @@ void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 
 	    arg_data[j]->data = malloc(sizeof(char *)*(buflen+1));
 	    data = vmprobe_get_data(handle,regs,
-				    "syscall_argi_string",argval,
+				    "syscall_argi_bytes",argval,
 				    pid,buflen,arg_data[j]->data);
 	    if (!data) {
 		arg_data[j]->str = strdup("<data access error>");
@@ -3240,9 +3259,10 @@ static int on_fn_pre(vmprobe_handle_t vp,
 #ifndef OLD_VPG_COMPAT
 	    if (debug >= 0)
 #endif
-	    printf(" Filter (adjust) matched: %d %d %s (%d %d (%d) %d %d) -- returning %d!%s\n",
+	    printf(" Filter (adjust) matched: %d %d(%d) %s (%d %d (%d) %d %d) -- returning %d!%s\n",
 		  filter->syscallnum,
 		  filter->argnum,
+		  filter->decoding,
 		  filter->strfrag,
 		  filter->pid,
 		  filter->ppid,
@@ -3420,8 +3440,11 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	if (*buf == '#')
 	    continue;
 
-	if (buf[strlen(buf)-1] == '\n')
+	if (buf[strlen(buf)-1] == '\n') {
+	    if (*buf == '\n')
+		continue;
 	    buf[strlen(buf)-1] = '\0';
+	}
 
 	if (strncmp(buf,"Functions",strlen("Functions")) == 0) {
 	    bufptr = buf + 9;
@@ -3479,6 +3502,7 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	    filter->uid = -1;
 	    filter->dofilter = 0;
 	    filter->name_search = 0;
+	    filter->retval = -1;
 
 	    // histroic default
 	    filter->when = WHEN_PRE;
@@ -3602,11 +3626,11 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 			if (filter->when != WHEN_POST) {
 			    fprintf(stderr,"WARNING: 'retval=' applied to pre-action filter, ignoring 'retval='\n");
 			} else {
-			    filter->argnum = -2;
-			    filter->strfrag = strdup(val);
-			    filter->preg = (regex_t *)malloc(sizeof(regex_t));
-			    if ((rc = regcomp(filter->preg,val,REG_EXTENDED))) {
-				regerror(rc,filter->preg,errbuf,sizeof(errbuf));
+			    filter->retval = 0;
+			    filter->ret_strfrag = strdup(val);
+			    filter->ret_preg = (regex_t *)malloc(sizeof(regex_t));
+			    if ((rc = regcomp(filter->ret_preg,val,REG_EXTENDED))) {
+				regerror(rc,filter->ret_preg,errbuf,sizeof(errbuf));
 				fprintf(stderr,"ERROR: filter file format: regcomp(%s): %s\n",val,errbuf);
 				goto errout;
 			    }
