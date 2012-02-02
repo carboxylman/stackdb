@@ -606,11 +606,23 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
     }
 
     VMPROBE_PERF_START();
+    /*
+     * If there is a "current" action, we want to continue with the action
+     * after that. Otherwise we want to start with the first action on the
+     * list.
+     *
+     * XXX the "otherwise" case is why the first param of the list_entry
+     * is strange: we treat the header embedded in the probepoint struct
+     * as though it were embedded in an action struct so that when the
+     * list_blahblah_continue() operator takes the "next" element, it
+     * actually gets the first action on the probepoint list. This is a
+     * note to myself so that I don't try to "fix" this code again,
+     * thereby breaking it!
+     */
     if (probepoint->action) 
 	action = probepoint->action;
     else 
-	action = list_entry(probepoint->action_list.next,
-			    typeof(*action),node);
+	action = list_entry(&probepoint->action_list,typeof(*action),node);
     list_for_each_entry_continue(action,&probepoint->action_list,node) {
 	if (action->probe->disabled || action->executed_this_pass)
 	    continue;
@@ -1800,9 +1812,11 @@ run_vmprobes(void)
             /* FIXME: domain paused - does this really mean a bp/sstep-hit? */
             if (domain_paused(domain->id))
             {
-                debug(1,"dom%d paused by %s\n", domain->id,
-                        (!domain->sstep_probepoint) ? 
-                        "bp-hit" : "sstep-hit");
+                if (domain->sstep_probepoint)
+		    debug(1,"dom%d paused by sstep-hit, probepoint@0x%x\n",
+			  domain->id, domain->sstep_probepoint->vaddr);
+		 else
+		     debug(1,"dom%d paused by bp-hit\n", domain->id);
 
 #ifdef VMPROBE_BENCHMARK
                 /* domain->sstep_probepoint is set to non-zero if the
@@ -2197,6 +2211,8 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 
 	    length = strnlen((const char *)(pages + offset), size);
 	    if (length < size) {
+		debug(2,"got string of length %d, mapped %d pages\n",
+		      length, no_pages);
 		break;
 	    }
 	    if (munmap(pages, no_pages * page_size))
