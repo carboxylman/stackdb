@@ -44,6 +44,23 @@ static inline struct array_list *array_list_create(int initsize) {
     return list;
 }
 
+static inline struct array_list *array_list_clone(struct array_list *oldlist,
+						  int more) {
+    struct array_list *newlist = \
+	(struct array_list *)malloc(sizeof(struct array_list));
+    memset(newlist,0,sizeof(struct array_list));
+    if (oldlist)
+	newlist->alloc_len = oldlist->len + more;
+    else 
+	newlist->alloc_len = more;
+    newlist->list = (void **)malloc(sizeof(void *)*(newlist->alloc_len));
+    if (oldlist && oldlist->len) {
+	memcpy(newlist->list,oldlist->list,oldlist->len);
+	newlist->len = oldlist->len;
+    }
+    return newlist;
+}
+
 static inline int32_t array_list_len(struct array_list *list) {
     return list->len;
 }
