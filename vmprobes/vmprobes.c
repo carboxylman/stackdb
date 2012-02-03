@@ -23,7 +23,9 @@ static int vmprobes_debug_level = -1;
 
 void vmprobes_set_debug_level(int level,int xa_level)
 {
+#ifdef XA_DEBUG
     xa_set_debug_level(xa_level);
+#endif
     vmprobes_debug_level = level;
 }
 
