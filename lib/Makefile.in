@@ -1,0 +1,56 @@
+LIBVERSION      = 0.1
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= lib
+OBJDIR		= @top_builddir@
+
+SUBDIRS = 
+
+include $(OBJDIR)/Makeconf
+
+CFLAGS += -I$(TOP_SRCDIR)/include -I$(OBJDIR)
+
+HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
+	$(TOP_SRCDIR)/include/log.h
+
+OBJECTS := log.lo
+LIBRARIES := log.a
+
+INST_INC = 
+INST_LIB = $(LIBRARIES)
+
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(LIBRARIES) all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+.c.lo:	$(HEADERS)
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+log.a:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o log.a $(OBJECTS)
+
+#log.lo:	$(HEADERS) $(OBJECTS)
+#	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
+
+install: def-install install-subdirs
+
+clean: clean-subdirs
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
+		log.lo 
+	$(RM) -f $(LIBRARIES) log.o
+
+distclean: distclean-subdirs
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:
