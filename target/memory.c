@@ -100,6 +100,26 @@ struct memregion *addrspace_find_region(struct addrspace *space,char *name) {
     return region;
 }
 
+int addrspace_find_range_real(struct addrspace *space,ADDR addr,
+			      struct memregion **region_saveptr,
+			      struct memrange **range_saveptr) {
+    struct memregion *region;
+    struct memrange *range;
+
+    list_for_each_entry(region,&space->regions,region) {
+	if ((range = memregion_find_range_real(region,addr))) {
+	    if (region_saveptr)
+		*region_saveptr = region;
+	    if (range_saveptr)
+		*range_saveptr = range;
+	    goto out;
+	}
+    }
+    return 0;
+ out:
+    return 1;
+}
+
 void addrspace_free(struct addrspace *space) {
     struct memregion *lpc;
     struct memregion *tmp;
@@ -187,8 +207,13 @@ struct memrange *memregion_find_range_real(struct memregion *region,
 					   ADDR real_addr) {
     struct memrange *range;
     list_for_each_entry(range,&region->ranges,range) {
-	if (memrange_contains_real(range,real_addr))
+	if (memrange_contains_real(range,real_addr)) {
+	    vdebug(3,LOG_T_REGION,"lookup real(0x%"PRIxADDR") found memrange"
+		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		   real_addr,range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
 	    return range;
+	}
     }
     return NULL;
 }
@@ -197,8 +222,13 @@ struct memrange *memregion_find_range_obj(struct memregion *region,
 					  ADDR obj_addr) {
     struct memrange *range;
     list_for_each_entry(range,&region->ranges,range) {
-	if (memrange_contains_obj(range,obj_addr))
+	if (memrange_contains_obj(range,obj_addr)) {
+	    vdebug(3,LOG_T_REGION,"lookup obj(0x%"PRIxADDR") found memrange"
+		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		   obj_addr,range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
 	    return range;
+	}
     }
     return NULL;
 }
@@ -253,8 +283,8 @@ struct memrange *memrange_create(struct memregion *region,
     list_add_tail(&retval->range,&region->ranges);
 
     vdebug(5,LOG_T_REGION,
-	   "built memregion(%s:%d:0x"PRIxADDR",0x"PRIxADDR","PRIiOFFSET",%u)\n",
-	   region->name,region->type,start,end,offset,prot_flags);
+	   "built memregion(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+	   region->name,REGION_TYPE(region->type),start,end,offset,prot_flags);
 
     return retval;
 }
@@ -314,10 +344,10 @@ ADDR memrange_relocate(struct memrange *range,ADDR obj) {
 }
 
 void memrange_free(struct memrange *range) {
-    vdebug(5,LOG_T_SPACE,
-	   "freeing memrange(%s:%d:0x"PRIxADDR",0x"PRIxADDR","PRIiOFFSET",%u)\n",
-	   range->region->name,range->region->type,range->start,range->end,
-	   range->offset,range->prot_flags);
+    vdebug(5,LOG_T_REGION,
+	   "freeing memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+	   range->region->name,REGION_TYPE(range->region->type),
+	   range->start,range->end,range->offset,range->prot_flags);
 
     list_del(&range->range);
 

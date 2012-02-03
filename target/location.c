@@ -169,23 +169,27 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 
     switch (location->loctype) {
     case LOCTYPE_UNKNOWN:
+	vwarn("cannot resolve LOCTYPE_UNKNOWN; invalid!\n");
+	errno = EINVAL;
+	return 0;
+    case LOCTYPE_REG:
+	vwarn("cannot resolve LOCTYPE_REG; invalid!\n");
 	errno = EINVAL;
 	return 0;
     case LOCTYPE_ADDR:
 	errno = 0;
 	range = memregion_find_range_obj(region,location->l.addr);
+	/* The address should be in this region; it cannot change. */
 	if (range_saveptr)
 	    *range_saveptr = range;
 	return memrange_relocate(range,location->l.addr);
     case LOCTYPE_REALADDR:
 	errno = 0;
 	range = memregion_find_range_real(region,location->l.addr);
+	/* The address should be in this region; it cannot change. */
 	if (range_saveptr)
 	    *range_saveptr = range;
 	return location->l.addr;
-    case LOCTYPE_REG:
-	errno = EINVAL;
-	return 0;
     case LOCTYPE_REG_ADDR:
 	/* load the register value */
 	if (!target) {
@@ -196,6 +200,9 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	if (errno)
 	    return 0;
 	errno = 0;
+	/* The region/range may have changed; find the new range! */
+	if (range_saveptr)
+	    target_find_range_real(target,regval,NULL,NULL,range_saveptr);
 	return regval;
     case LOCTYPE_REG_OFFSET:
 	if (!target) {
@@ -206,6 +213,10 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	if (errno)
 	    return 0;
 	errno = 0;
+	/* The region/range may have changed; find the new range! */
+	if (range_saveptr)
+	    target_find_range_real(target,location->l.regoffset.offset + regval,
+				   NULL,NULL,range_saveptr);
 	return (ADDR)(location->l.regoffset.offset + regval);
     case LOCTYPE_FBREG_OFFSET:
 	if (!target) {
@@ -241,7 +252,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	}
 
 	if (!fblist && !fbloc) {
-	    verror("FBREG_OFFSET, but no fblist or fbloc to calc frame base!\n");
+	    verror("FBREG_OFFSET, but no fblist or fbloc to calc frame base (%d)!\n",chlen);
 	    errno = EINVAL;
 	    return 0;
 	}
@@ -318,16 +329,18 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 		return 0;
 	    }
 	}
+
 	vdebug(5,LOG_T_LOC,"frame_base = 0x%" PRIxADDR "\n",frame_base);
 	vdebug(5,LOG_T_LOC,"fboffset = %" PRIi64 "\n",location->l.fboffset);
-	if (0 && location->l.fboffset < 0)
-	    return (ADDR)(frame_base - (ADDR)location->l.fboffset);
-	else {
-	    range = memregion_find_range_real(region,(ADDR)(frame_base + (ADDR)location->l.fboffset));
-	    if (range_saveptr)
-		*range_saveptr = range;
-	    return (ADDR)(frame_base + (ADDR)location->l.fboffset);
-	}
+
+	/* The region/range may have changed; find the new range! */
+	if (range_saveptr)
+	    target_find_range_real(target,
+				   (ADDR)(frame_base + (ADDR)location->l.fboffset),
+				   NULL,NULL,range_saveptr);
+
+	return (ADDR)(frame_base + (ADDR)location->l.fboffset);
+	//return (ADDR)(frame_base - (ADDR)location->l.fboffset);
     case LOCTYPE_LOCLIST:
 	if (!target) {
 	    errno = EINVAL;
@@ -458,9 +471,10 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    return 0;
 	}
 
-	range = memregion_find_range_real(region,top_addr + totaloffset);
+	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
-	    *range_saveptr = range;
+	    target_find_range_real(target,top_addr + totaloffset,
+				   NULL,NULL,range_saveptr);
 
 	return top_addr + totaloffset;
     case LOCTYPE_RUNTIME:

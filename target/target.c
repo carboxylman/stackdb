@@ -114,6 +114,29 @@ struct debugfile *target_associate_debugfile(struct target *target,
     return debugfile;
 }
 
+int target_find_range_real(struct target *target,ADDR addr,
+			   struct addrspace **space_saveptr,
+			   struct memregion **region_saveptr,
+			   struct memrange **range_saveptr) {
+    struct addrspace *space;
+
+    if (list_empty(&target->spaces))
+	return 1;
+
+    list_for_each_entry(space,&target->spaces,space) {
+	if (addrspace_find_range_real(space,addr,
+				      region_saveptr,range_saveptr)) {
+	    if (space_saveptr) 
+		*space_saveptr = space;
+	    goto out;
+	}
+    }
+    return 0;
+
+ out:
+    return 1;
+}
+
 struct symtab *target_lookup_pc(struct target *target,uint64_t pc) {
     struct addrspace *space;
     struct memregion *region;
@@ -196,6 +219,8 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     int nptrs = 0;
     ADDR ptraddr = 0;
     struct location ptrloc;
+    struct memregion *ptrregion = NULL;
+    struct memrange *ptrrange = NULL;
 
     if (!SYMBOL_IS_VAR(symbol)) {
 	vwarn("symbol %s is not a variable (is %s)!\n",
@@ -282,7 +307,20 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		goto errout;
 	    }
 
-	    if (location_addr_load(target,range,ptraddr,LOAD_FLAG_NONE,
+	    /*
+	     * The pointer may be in another region!  We *have* to
+	     * switch regions -- and thus the memrange for the value we
+	     * return may not be in the bsymbol's region!
+	     */
+	    if (!target_find_range_real(target,ptraddr,
+					NULL,&ptrregion,&ptrrange) == -1) {
+		vwarn("could not auto_deref ptr not in a range: 0x%"PRIxADDR"\n",
+		      ptraddr);
+		errno = EFAULT;
+		goto errout;
+	    }
+
+	    if (location_addr_load(target,ptrrange,ptraddr,LOAD_FLAG_NONE,
 				   &ptraddr,target->ptrsize)) {
 		vwarn("failed to autoload pointer %d for symbol %s\n",
 		      nptrs,symbol->name);
@@ -293,6 +331,18 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	    ++nptrs;
 
 	    vdebug(5,LOG_T_SYMBOL,"auto_deref pointer %d\n",nptrs);
+	}
+
+	/*
+	 * The final pointer may be in another region and range!  So
+	 * look it up one more time.
+	 */
+	if (!target_find_range_real(target,ptraddr,
+				    NULL,&ptrregion,&ptrrange) == -1) {
+	    vwarn("could not auto_deref ptr not in a range: 0x%"PRIxADDR"\n",
+		  ptraddr);
+	    errno = EFAULT;
+	    goto errout;
 	}
     }
 
@@ -309,7 +359,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	/* XXX: should we use datatype, or the last pointer to datatype? */
 	value = value_create_noalloc(bsymbol,datatype);
 
-	if (!(value->buf = location_addr_load(target,range,ptraddr,flags,
+	if (!(value->buf = location_addr_load(target,ptrrange,ptraddr,flags,
 					      NULL,0))) {
 	    vwarn("failed to autoload last pointer for symbol %s\n",
 		  symbol->name);
@@ -328,7 +378,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	ptrloc.l.addr = ptraddr;
 
 	value = value_create_noalloc(bsymbol,datatype);
-	value->mmap = location_mmap(target,region,
+	value->mmap = location_mmap(target,(ptraddr) ? ptrregion : region,
 				    (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
 				    flags,&value->buf,symbol_chain,NULL);
 	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
@@ -345,7 +395,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		goto errout;
 	    }
 
-	    if (!location_load(target,region,
+	    if (!location_load(target,(ptraddr) ? ptrregion: region,
 			       (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
 			       flags,value->buf,value->bufsiz,symbol_chain,
 			       &value->range))

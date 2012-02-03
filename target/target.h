@@ -73,6 +73,10 @@ struct value *target_location_load_type(struct target *target,
 					load_flags_t flags,
 					struct symbol *type);
 int target_contains(struct target *target,ADDR addr);
+int target_find_range_real(struct target *target,ADDR addr,
+			   struct addrspace **space_saveptr,
+			   struct memregion **region_saveptr,
+			   struct memrange **range_saveptr);
 struct value *target_location_load_raw(struct target *target,
 				       struct location *location,
 				       load_flags_t flags,
@@ -101,6 +105,9 @@ struct debugfile *target_associate_debugfile(struct target *target,
 struct addrspace *addrspace_create(struct target *target,
 				   char *name,int id,int pid);
 struct memregion *addrspace_find_region(struct addrspace *space,char *name);
+int addrspace_find_range_real(struct addrspace *space,ADDR addr,
+			      struct memregion **region_saveptr,
+			      struct memrange **range_saveptr);
 void addrspace_free(struct addrspace *space);
 void addrspace_dump(struct addrspace *space,struct dump_info *ud);
 
