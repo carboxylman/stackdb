@@ -49,7 +49,8 @@ typedef uint32_t REGVAL;
 #define PRIiOFFSET PRIi32
 #endif
 
-typedef uint8_t REG;
+typedef int8_t REG;
+#define PRIiREG PRIi8
 
 #define DATA_BIG_ENDIAN 0
 #define DATA_LITTLE_ENDIAN 1
