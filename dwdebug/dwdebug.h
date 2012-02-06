@@ -721,6 +721,7 @@ struct symbol {
 		    struct list_head args;
 		    uint16_t count;
 		    uint8_t hasunspec:1,
+			    hasentrypc:1,
 			    /* If the fb loc is a list or single loc. */
 			    fbisloclist:1,
 			    fbissingleloc:1;

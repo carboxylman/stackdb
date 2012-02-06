@@ -375,6 +375,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	    else if (SYMBOL_IS_FUNCTION(cbargs->symbol)) {
 		cbargs->symbol->s.ii.d.f.entry_pc = addr;
+		cbargs->symbol->s.ii.d.f.hasentrypc = 1;
 	    }
 	    else 
 		vwarn("[DIE %" PRIx64 "] attrval 0x%" PRIx64 " for attr %s in bad context (symbol)\n",
