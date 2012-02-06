@@ -34,17 +34,105 @@
 #include "target.h"
 #include "target_linux_userproc.h"
 
+#include "probe_api.h"
+#include "probe.h"
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
 struct target *t = NULL;
 
+int len = 0;
+struct bsymbol **symbols = NULL;
+struct probe **probes = NULL;
+
 void sigh(int signo) {
+    int i;
+
     if (t) {
-	target_close(t);
+	target_pause(t);
 	fprintf(stderr,"Ending trace.\n");
+	for (i = 0; i < len; ++i) {
+	    if (probes[i])
+		probe_unregister(probes[i],1);
+	}
+	target_close(t);
+	fprintf(stderr,"Ended trace.\n");
     }
+
     exit(0);
+}
+
+int function_dump_args(struct probe *probe) {
+    struct value *value;
+    int i;
+    int j;
+
+    for (i = 0; i < len; ++i) 
+	if (probes[i] == probe)
+	    break;
+
+    if (i == len) {
+	fprintf(stderr,"Could not find our probe/symbol index!\n");
+	return 0;
+    }
+
+    fprintf(stderr,"%s (0x%"PRIxADDR")\n",symbols[i]->lsymbol->symbol->name,
+	    probe->probepoint->addr);
+
+    /* Make a chain with room for one more -- the
+     * one more is each arg we're going to process.
+     */
+    struct symbol *tsym;
+    struct array_list *tmp;
+    if (!symbols[i]->lsymbol->chain
+	|| array_list_len(symbols[i]->lsymbol->chain) == 0) {
+	tmp = array_list_clone(symbols[i]->lsymbol->chain,2);
+	array_list_add(tmp,symbols[i]->lsymbol->symbol);
+    }
+    else
+	tmp = array_list_clone(symbols[i]->lsymbol->chain,1);
+    int len = tmp->len;
+
+    struct lsymbol tlsym = {
+	.chain = tmp,
+    };
+    struct bsymbol tbsym = {
+	.lsymbol = &tlsym,
+	.region = symbols[i]->region,
+    };
+
+    ++tmp->len;
+    list_for_each_entry(tsym,&symbols[i]->lsymbol->symbol->s.ii.d.f.args,member) {
+	array_list_item_set(tmp,len,tsym);
+	tlsym.symbol = tsym;
+
+	if ((value = bsymbol_load(&tbsym,
+				  LOAD_FLAG_AUTO_DEREF | 
+				  LOAD_FLAG_AUTO_STRING |
+				  LOAD_FLAG_NO_CHECK_VISIBILITY |
+				  LOAD_FLAG_NO_CHECK_BOUNDS))) {
+	    printf("%s = ",tsym->name);
+	    symbol_rvalue_print(stdout,tsym,value->buf,value->bufsiz,
+				LOAD_FLAG_AUTO_DEREF |
+				LOAD_FLAG_AUTO_STRING |
+				LOAD_FLAG_NO_CHECK_VISIBILITY |
+				LOAD_FLAG_NO_CHECK_BOUNDS,
+				t);
+	    printf(" (0x");
+	    for (j = 0; j < value->bufsiz; ++j) {
+		printf("%02hhx",value->buf[j]);
+	    }
+	    printf(")");
+	    value_free(value);
+	}
+	printf(", ");
+    }
+    printf("\n");
+
+    array_list_free(tmp);
+
+    return 0;
 }
 
 int main(int argc,char **argv) {
@@ -55,12 +143,12 @@ int main(int argc,char **argv) {
     target_status_t tstat;
     int raw = 0;
     ADDR *addrs = NULL;
-    struct bsymbol **symbols = NULL;
     char *word;
     int i, j;
     struct user_regs_struct regs;
     int ssize;
     log_flags_t flags;
+    probepoint_type_t ptype = PROBEPOINT_FASTEST;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -84,7 +172,7 @@ int main(int argc,char **argv) {
 	    raw = 1;
 	    break;
 	case 's':
-	    raw = 0;
+	    ptype = PROBEPOINT_SW;
 	    break;
 	case 'l':
 	    if (vmi_log_get_flag_mask(optarg,&flags)) {
@@ -134,6 +222,7 @@ int main(int argc,char **argv) {
      * rest of our args.
      */
     if (argc) {
+	len = argc;
 	if (raw) {
 	    addrs = (ADDR *)malloc(sizeof(ADDR)*argc);
 	    memset(addrs,0,sizeof(ADDR)*argc);
@@ -141,22 +230,56 @@ int main(int argc,char **argv) {
 	else {
 	    symbols = (struct bsymbol **)malloc(sizeof(struct bsymbol *)*argc);
 	    memset(symbols,0,sizeof(struct bsymbol *)*argc);
+	    probes = (struct probe **)malloc(sizeof(struct probe *)*argc);
+	    memset(probes,0,sizeof(struct probe *)*argc);
 	}
+    }
 
-	for (i = 0; i < argc; ++i) {
-	    if (raw) {
-		addrs[i] = strtoll(argv[i],NULL,16);
-		word = malloc(t->wordsize);
+    for (i = 0; i < argc; ++i) {
+	if (raw) {
+	    addrs[i] = strtoll(argv[i],NULL,16);
+	    word = malloc(t->wordsize);
+	}
+	else {
+	    if (!(symbols[i] = target_lookup_sym(t,argv[i],".",NULL,
+						 SYMBOL_TYPE_FLAG_NONE))) {
+		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		target_close(t);
+		exit(-1);
 	    }
-	    else {
-		if (!(symbols[i] = target_lookup_sym(t,argv[i],".",NULL,
-						     SYMBOL_TYPE_FLAG_NONE))) {
-		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-		    target_close(t);
+
+	    bsymbol_dump(symbols[i],&udn);
+
+	    if (SYMBOL_IS_FUNCTION(symbols[i]->lsymbol->symbol)) {
+		/* Try to insert a breakpoint, fastest possible! */
+		ADDR probeaddr;
+		struct memrange *range;
+		if ((range = location_resolve_function_entry(t,symbols[i],
+							     &probeaddr))) {
+		    fprintf(stderr,"Could not resolve entry PC for function %s!\n",
+			    symbols[i]->lsymbol->symbol->name);
 		    exit(-1);
 		}
-
-		bsymbol_dump(symbols[i],&udn);
+		
+		probes[i] = probe_register_break(t,probeaddr,ptype,
+						 function_dump_args,NULL,
+						 symbols[i]->lsymbol,probeaddr,
+						 range);
+		
+		if (probes[i])
+		    fprintf(stderr,"Registered probe for %s at 0x%"PRIxADDR".\n",
+			    symbols[i]->lsymbol->symbol->name,probeaddr);
+		else {
+		    fprintf(stderr,"Failed to register probe for %s at 0x%"PRIxADDR".\n",
+			    symbols[i]->lsymbol->symbol->name,probeaddr);
+		    --i;
+		    for ( ; i >= 0; --i) {
+			if (probes[i]) {
+			    probe_unregister(probes[i],1);
+			}
+		    }
+		    exit(-1);
+		}
 	    }
 	}
     }
@@ -173,6 +296,14 @@ int main(int argc,char **argv) {
     signal(SIGUSR1,sigh);
     signal(SIGUSR2,sigh);
 
+    /* The target is paused after the attach; we have to resume it now
+     * that we've registered probes.
+     */
+    target_resume(t);
+
+    fprintf(stdout,"Starting main debugging loop!\n");
+    fflush(stdout);
+
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == STATUS_PAUSED) {
@@ -181,6 +312,8 @@ int main(int argc,char **argv) {
 
 	    ptrace(PTRACE_GETREGS,pid,NULL,&regs);
 	    printf("pid %d interrupted at 0x%" PRIx64 "\n",pid,regs.rip);
+
+	    goto resume;
 
 	    if (argc && raw) {
 		for (i = 0; i < argc; ++i) {
@@ -203,34 +336,40 @@ int main(int argc,char **argv) {
 		    //word = malloc(ssize);
 		    word = NULL;
 		    struct value *value;
-		    if ((value = bsymbol_load(symbols[i],
-					      LOAD_FLAG_AUTO_DEREF | 
-					      LOAD_FLAG_AUTO_STRING |
-					      LOAD_FLAG_NO_CHECK_VISIBILITY |
-					      LOAD_FLAG_NO_CHECK_BOUNDS))) {
-			if (1) {
-			    printf("%s = ",symbols[i]->lsymbol->symbol->name);
-			    symbol_rvalue_print(stdout,
-						symbols[i]->lsymbol->symbol,
-						value->buf,value->bufsiz,
-						LOAD_FLAG_AUTO_DEREF |
-						LOAD_FLAG_AUTO_STRING |
-						LOAD_FLAG_NO_CHECK_VISIBILITY |
-						LOAD_FLAG_NO_CHECK_BOUNDS,
-						t);
-			}
-			else {
-			    printf("%s = ",symbols[i]->lsymbol->symbol->name);
-			    for (j = 0; j < ssize; ++j) {
-				printf("%02hhx",word[j]);
+		    if (SYMBOL_IS_VAR(symbols[i]->lsymbol->symbol)) {
+			if ((value = bsymbol_load(symbols[i],
+						  LOAD_FLAG_AUTO_DEREF | 
+						  LOAD_FLAG_AUTO_STRING |
+						  LOAD_FLAG_NO_CHECK_VISIBILITY |
+						  LOAD_FLAG_NO_CHECK_BOUNDS))) {
+			    if (1) {
+				printf("%s = ",symbols[i]->lsymbol->symbol->name);
+				symbol_rvalue_print(stdout,
+						    symbols[i]->lsymbol->symbol,
+						    value->buf,value->bufsiz,
+						    LOAD_FLAG_AUTO_DEREF |
+						    LOAD_FLAG_AUTO_STRING |
+						    LOAD_FLAG_NO_CHECK_VISIBILITY |
+						    LOAD_FLAG_NO_CHECK_BOUNDS,
+						    t);
 			    }
+			    else {
+				printf("%s = ",symbols[i]->lsymbol->symbol->name);
+				for (j = 0; j < ssize; ++j) {
+				    printf("%02hhx",word[j]);
+				}
+			    }
+			    printf("\n");
+			    value_free(value);
 			}
-			printf("\n");
-			value_free(value);
+		    }
+		    else if (SYMBOL_IS_FUNCTION(symbols[i]->lsymbol->symbol)) {
+			;
 		    }
 		    else
 			printf("%s: could not read value: %s\n",
 			       symbols[i]->lsymbol->symbol->name,strerror(errno));
+		    fflush(stdout);
 		}
 	    }
 
