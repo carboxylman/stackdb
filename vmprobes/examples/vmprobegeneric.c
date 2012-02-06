@@ -610,6 +610,25 @@ static unsigned char socketcall_nargs[18] = \
      AL(3),AL(3),AL(4),AL(4),AL(4),AL(6),
      AL(6),AL(2),AL(5),AL(5),AL(3),AL(3)};
 
+typedef struct mmapprotent {
+    int prot;
+    char *name;
+} mmapprotent_t;
+
+mmapprotent_t mmapprot[] = {
+    { PROT_READ, "PROT_READ" },
+    { PROT_WRITE, "PROT_WRITE" },
+    { PROT_EXEC, "PROT_EXEC" },
+    { PROT_NONE, "PROT_NONE" },
+#ifdef PROT_GROWSDOWN
+    { PROT_GROWSDOWN, "PROT_GROWSDOWN" },
+#endif
+#ifdef PROT_GROWSUP
+    { PROT_GROWSUP, "PROT_GROWSUP" },
+#endif
+};
+
+
 #if 0
 struct timeval {
 	time_t		tv_sec;		/* seconds */
@@ -1657,6 +1676,39 @@ void *process_ptregs_loader(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     return arg_data[arg]->data;
 }
 
+void mmap_prot_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		       int pid,int syscall,int arg,
+		       struct argdata **arg_data,
+		       struct process_data *data)
+{
+    unsigned int prot = *((unsigned int *)(arg_data[arg]->data));
+    int i;
+    int didone = 0;
+    char *buf = NULL;
+    int bufsiz;
+    char *endptr;
+
+    for (i = 0; i < sizeof(mmapprot) / sizeof(mmapprot[0]); ++i) {
+	if (prot & mmapprot[i].prot) {
+	    if (didone)
+		string_append(&buf,&bufsiz,&endptr,"|");
+	    else 
+		didone = 1;
+	    string_append(&buf,&bufsiz,&endptr,mmapprot[i].name);
+	}
+    }
+    arg_data[arg]->decodings[0] = buf;
+ 
+    return;
+}
+
+void mmap_flag_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		       int pid,int syscall,int arg,
+		       struct argdata **arg_data,
+		       struct process_data *data)
+{
+}
+
 #define SYSCALL_MAX 303
 
 /*
@@ -1734,7 +1786,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "offset", SC_ARG_TYPE_INT },
 	{ 3, "origin", SC_ARG_TYPE_UINT } } },
-    { 20, "sys_getpid", 0xc0129710, RADDR_NO, 0, { } },
+    { 20, "sys_getpid", 0xc0129710, RADDR_YES, 0, { } },
     { 21, "sys_mount", 0xc0183690, RADDR_NO, 5, 
       { { 1, "dev_name", SC_ARG_TYPE_STRING },
 	{ 2, "dir_name", SC_ARG_TYPE_STRING },
@@ -2117,13 +2169,25 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 184, "sys_capget", 0xc0126f60, RADDR_NO, 0 },
     { 185, "sys_capset", 0xc0127080, RADDR_NO, 0 },
     { 186, "sys_sigaltstack", 0xc01043e0, RADDR_NO, 0 },
-    { 187, "sys_sendfile", 0xc0164d00, RADDR_NO, 0 },
+    { 187, "sys_sendfile", 0xc0164d00, RADDR_YES, 4,
+      { { 1, "out_fd", SC_ARG_TYPE_UINT },
+	{ 2, "in_fd", SC_ARG_TYPE_UINT },
+	{ 3, "offset", SC_ARG_TYPE_PTR },
+	{ 4, "count", SC_ARG_TYPE_INT } } },
     { 0 },
     { 0 },
     { 190, "sys_vfork", 0xc0102e70, RADDR_NO, 1, 
       { { 1, "regs", SC_ARG_TYPE_PT_REGS, NULL, NULL, 0, process_ptregs_loader } } },
     { 191, "sys_getrlimit", 0xc012f650, RADDR_NO, 0 },
-    { 192, "sys_mmap2", 0xc010a360, RADDR_NO, 0 },
+    { 192, "sys_mmap2", 0xc010a360, RADDR_YES, 6,
+      { { 1, "start", SC_ARG_TYPE_PTR, },
+	{ 2, "length", SC_ARG_TYPE_INT },
+	{ 3, "prot", SC_ARG_TYPE_HEXINT, mmap_prot_decoder,
+	  (char *[]) { "prot:prot" }, 1 },
+	{ 4, "flags", SC_ARG_TYPE_HEXINT, mmap_flag_decoder,
+	  (char *[]) { "flags:flags" }, 1 },
+	{ 5, "fd", SC_ARG_TYPE_UINT },      
+	{ 6, "offset", SC_ARG_TYPE_INT } } },
     { 193, "sys_truncate64", 0xc0163f80, RADDR_NO, 0 },
     { 194, "sys_ftruncate64", 0xc0163d90, RADDR_NO, 0 },
     { 195, "sys_stat64", 0xc016f640, RADDR_NO, 0 },
@@ -2804,12 +2868,18 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	return NULL;
     }
 
-    fprintf(stdout,"%s [dom%d 0x%lx]",
-	    sctab[i].name, vmprobe_domid(handle), addr);
-    if (oi == SYSCALL_RET_IX)
-	fprintf(stdout, " (rval=%d)", regs->eax);
-    fprintf(stdout, "\n");
-    fflush(stdout);
+    {
+	struct timeval _tv;
+	gettimeofday(&_tv, NULL);
+
+	fprintf(stdout,"\n%lu.%03lu: %s [dom%d 0x%lx]",
+		_tv.tv_sec, _tv.tv_usec / 1000,
+		sctab[i].name, vmprobe_domid(handle), addr);
+	if (oi == SYSCALL_RET_IX)
+	    fprintf(stdout, " (rval=%d)", regs->eax);
+	fprintf(stdout, "\n");
+	fflush(stdout);
+    }
 
     adata = (struct argdata **)malloc(sizeof(struct argdata *)*sctab[i].argc);
     memset(adata,0,sizeof(struct argdata *)*sctab[i].argc);
