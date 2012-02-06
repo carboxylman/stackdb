@@ -233,6 +233,24 @@ struct memrange *memregion_find_range_obj(struct memregion *region,
     return NULL;
 }
 
+ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
+			struct memrange **range_saveptr) {
+    struct memrange *range;
+    list_for_each_entry(range,&region->ranges,range) {
+	if (memrange_contains_obj(range,obj_addr)) {
+	    vdebug(3,LOG_T_REGION,"relocate obj(0x%"PRIxADDR") found memrange"
+		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		   obj_addr,range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
+	    if (range_saveptr)
+		*range_saveptr = range;
+	    return memrange_relocate(range,obj_addr);
+	}
+    }
+    errno = ESRCH;
+    return 0;
+}
+
 void memregion_dump(struct memregion *region,struct dump_info *ud) {
     fprintf(ud->stream,"%sregion(%s:%s)",
 	    ud->prefix,REGION_TYPE(region->type),region->name);

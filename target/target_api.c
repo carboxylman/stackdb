@@ -18,6 +18,8 @@
 
 #include "target_api.h"
 #include "target.h"
+#include "probe_api.h"
+#include "probe.h"
 
 #include <errno.h>
 #include <sys/types.h>
@@ -37,18 +39,18 @@ int target_open(struct target *target) {
 
     vdebug(5,LOG_T_TARGET,"opening target type %s\n",target->type);
 
-    vdebug(6,LOG_T_TARGET,"target type %s: init\n",target->type);
+    vdebug(5,LOG_T_TARGET,"target type %s: init\n",target->type);
     if ((rc = target->ops->init(target))) {
 	return rc;
     }
 
-    vdebug(6,LOG_T_TARGET,"target type %s: loadspaces\n",target->type);
+    vdebug(5,LOG_T_TARGET,"target type %s: loadspaces\n",target->type);
     if ((rc = target->ops->loadspaces(target))) {
 	return rc;
     }
 
     list_for_each_entry(space,&target->spaces,space) {
-	vdebug(6,LOG_T_TARGET,"target type %s: loadregions\n",target->type);
+	vdebug(5,LOG_T_TARGET,"target type %s: loadregions\n",target->type);
 	if ((rc = target->ops->loadregions(target,space))) {
 	    return rc;
 	}
@@ -59,7 +61,7 @@ int target_open(struct target *target) {
 	    if (region->type != REGION_TYPE_MAIN)
 		continue;
 
-	    vdebug(6,LOG_T_TARGET,
+	    vdebug(5,LOG_T_TARGET,
 		   "loaddebugfiles target(%s:%s):region(%s:%s)\n",
 		   target->type,space->idstr,
 		   region->name,REGION_TYPE(region->type));
@@ -70,7 +72,7 @@ int target_open(struct target *target) {
 	}
     }
 
-    vdebug(6,LOG_T_TARGET,"attach target(%s)\n",target->type);
+    vdebug(5,LOG_T_TARGET,"attach target(%s)\n",target->type);
     if ((rc = target->ops->attach(target))) {
 	return rc;
     }
@@ -79,13 +81,23 @@ int target_open(struct target *target) {
 }
     
 target_status_t target_monitor(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"monitoring target(%s)\n",target->type);
+    vdebug(9,LOG_T_TARGET,"monitoring target(%s)\n",target->type);
     return target->ops->monitor(target);
 }
     
 int target_resume(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"resuming target(%s)\n",target->type);
+    vdebug(9,LOG_T_TARGET,"resuming target(%s)\n",target->type);
     return target->ops->resume(target);
+}
+    
+int target_pause(struct target *target) {
+    vdebug(5,LOG_T_TARGET,"pausing target(%s)\n",target->type);
+    return target->ops->pause(target);
+}
+
+target_status_t target_status(struct target *target) {
+    vdebug(5,LOG_T_TARGET,"getting target(%s) status\n",target->type);
+    return target->ops->status(target);
 }
 
 unsigned char *target_read_addr(struct target *target,
@@ -97,8 +109,8 @@ unsigned char *target_read_addr(struct target *target,
     return target->ops->read(target,addr,length,buf);
 }
 
-int target_write_addr(struct target *target,unsigned long long addr,
-		      unsigned long length,unsigned char *buf) {
+unsigned long target_write_addr(struct target *target,unsigned long long addr,
+				unsigned long length,unsigned char *buf) {
     vdebug(5,LOG_T_TARGET,"writing target(%s) at %16llx (%d)\n",
 	   target->type,addr,length);
     return target->ops->write(target,addr,length,buf);
@@ -128,8 +140,8 @@ REGVAL target_read_reg(struct target *target,REG reg) {
 }
 
 int target_write_reg(struct target *target,REG reg,REGVAL value) {
-    vdebug(5,LOG_T_TARGET,"writing target(%s) reg %d %" PRIx64 ")\n",
-	   target->type,reg);
+    vdebug(5,LOG_T_TARGET,"writing target(%s) reg %d 0x%" PRIxREGVAL ")\n",
+	   target->type,reg,value);
     return target->ops->writereg(target,reg,value);
 }
 
@@ -152,7 +164,30 @@ int target_close(struct target *target) {
 }
 
 void target_free(struct target *target) {
+    GHashTableIter iter;
+    gpointer key;
+    struct probepoint *probepoint;
+
     g_hash_table_destroy(target->mmaps);
+
+    /* We have to free the probepoints manually, then remove all.  We
+     * can't remove an element during an iteration, but we *can* free
+     * the data :).
+     */
+    g_hash_table_iter_init(&iter,target->probepoints);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&probepoint)) {
+	probepoint_free_ext(probepoint);
+    }
+
+    g_hash_table_destroy(target->probepoints);
+
+    if (target->breakpoint_instrs)
+	free(target->breakpoint_instrs);
+
+    if (target->ret_instrs)
+	free(target->ret_instrs);
+
     free(target);
 }
 
@@ -176,6 +211,15 @@ struct target *target_create(char *type,void *state,struct target_ops *ops) {
 					  /* No names to free! */
 					  NULL,ghash_mmap_entry_free);
 
+    retval->probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    /*
+     * Hm, I think we should do this by default, and let target backends
+     * override it if they need.
+     */
+    retval->bp_handler = probepoint_bp_handler;
+    retval->ss_handler = probepoint_ss_handler;
+
     return retval;
 }
 
@@ -195,4 +239,70 @@ void target_release_mmap_entry(struct target *target,
 			       struct mmap_entry *mme) {
     /* XXX: fill later. */
     return;
+}
+
+REG target_get_unused_debug_reg(struct target *target) {
+    REG retval;
+    vdebug(5,LOG_T_TARGET,"getting unused debug reg for target(%s)\n",
+	   target->type);
+    retval = target->ops->get_unused_debug_reg(target);
+    vdebug(5,LOG_T_TARGET,"got unused debug reg for target(%s): %"PRIiREG"\n",
+	   target->type,retval);
+    return retval;
+}
+
+int target_set_hw_breakpoint(struct target *target,REG reg,ADDR addr) {
+    vdebug(5,LOG_T_TARGET,
+	   "setting hw breakpoint at 0x%"PRIxADDR" on target(%s) dreg %d\n",
+	   addr,target->type,reg);
+    return target->ops->set_hw_breakpoint(target,reg,addr);
+}
+
+int target_set_hw_watchpoint(struct target *target,REG reg,ADDR addr,
+			     probepoint_whence_t whence,int watchsize) {
+    vdebug(5,LOG_T_TARGET,
+	   "setting hw watchpoint at 0x%"PRIxADDR" on target(%s) dreg %d (%d)\n",
+	   addr,target->type,reg,watchsize);
+    return target->ops->set_hw_watchpoint(target,reg,addr,whence,watchsize);
+}
+
+int target_unset_hw_breakpoint(struct target *target,REG reg) {
+    vdebug(5,LOG_T_TARGET,
+	   "removing hw breakpoint on target(%s) dreg %d\n",
+	   target->type,reg);
+    return target->ops->unset_hw_breakpoint(target,reg);
+}
+
+int target_unset_hw_watchpoint(struct target *target,REG reg) {
+    vdebug(5,LOG_T_TARGET,
+	   "removing hw watchpoint on target(%s) dreg %d\n",
+	   target->type,reg);
+    return target->ops->unset_hw_watchpoint(target,reg);
+}
+
+
+int target_disable_hw_breakpoints(struct target *target) {
+    vdebug(5,LOG_T_TARGET,
+	   "disable hw breakpoints on target(%s)\n",target->type);
+    return target->ops->disable_hw_breakpoints(target);
+}
+
+int target_enable_hw_breakpoints(struct target *target) {
+    vdebug(5,LOG_T_TARGET,
+	   "enable hw breakpoints on target(%s)\n",target->type);
+    return target->ops->enable_hw_breakpoints(target);
+}
+
+int target_singlestep(struct target *target) {
+    vdebug(5,LOG_T_TARGET,"single stepping target(%s)\n",target->type);
+    return target->ops->singlestep(target);
+}
+
+int target_singlestep_end(struct target *target) {
+    if (target->ops->singlestep_end) {
+	vdebug(5,LOG_T_TARGET,"ending single stepping of target(%s)\n",
+	       target->type);
+	return target->ops->singlestep_end(target);
+    }
+    return 0;
 }

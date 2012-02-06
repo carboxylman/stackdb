@@ -18,12 +18,13 @@ CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
 
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h target.h target_api.h \
+	probe.h probe_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
-	symbol.lo value.lo target_linux_userproc.lo
+	symbol.lo value.lo target_linux_userproc.lo probe.lo
 
 LIBRARIES := target.a 
 

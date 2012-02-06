@@ -72,6 +72,21 @@ static unsigned long linux_userproc_write(struct target *target,
 static char *linux_userproc_reg_name(struct target *target,REG reg);
 static REGVAL linux_userproc_read_reg(struct target *target,REG reg);
 static int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value);
+static REG linux_userproc_get_unused_debug_reg(struct target *target);
+static int linux_userproc_set_hw_breakpoint(struct target *target,
+					    REG num,ADDR addr);
+static int linux_userproc_set_hw_watchpoint(struct target *target,
+					    REG num,ADDR addr,
+					    probepoint_whence_t whence,
+					    probepoint_watchsize_t watchsize);
+static int linux_userproc_unset_hw_breakpoint(struct target *target,
+					      REG num);
+static int linux_userproc_unset_hw_watchpoint(struct target *target,
+					      REG num);
+int linux_userproc_disable_hw_breakpoints(struct target *target);
+int linux_userproc_enable_hw_breakpoints(struct target *target);
+int linux_userproc_singlestep(struct target *target);
+int linux_userproc_singlestep_end(struct target *target);
 
 /*
  * Set up the target interface for this library.
@@ -93,6 +108,15 @@ struct target_ops linux_userspace_process_ops = {
     .regname = linux_userproc_reg_name,
     .readreg = linux_userproc_read_reg,
     .writereg = linux_userproc_write_reg,
+    .get_unused_debug_reg = linux_userproc_get_unused_debug_reg,
+    .set_hw_breakpoint = linux_userproc_set_hw_breakpoint,
+    .set_hw_watchpoint = linux_userproc_set_hw_watchpoint,
+    .unset_hw_breakpoint = linux_userproc_unset_hw_breakpoint,
+    .unset_hw_watchpoint = linux_userproc_unset_hw_watchpoint,
+    .disable_hw_breakpoints = linux_userproc_disable_hw_breakpoints,
+    .enable_hw_breakpoints = linux_userproc_enable_hw_breakpoints,
+    .singlestep = linux_userproc_singlestep,
+    .singlestep_end = linux_userproc_singlestep_end,
 };
 
 struct linux_userproc_state {
@@ -103,6 +127,14 @@ struct linux_userproc_state {
     enum __ptrace_request ptrace_type;
     int last_signo;
     int syscall;
+#if __WORDSIZE == 64
+    /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
+     * we use this might have to change.
+     */
+    unsigned long int dr[8];
+#else
+    int dr[8];
+#endif
 };
 
 /**
@@ -252,6 +284,16 @@ struct target *linux_userproc_attach(int pid) {
     target->ipregno = 8;
 #endif
 
+    target->breakpoint_instrs = malloc(1);
+    *(char *)(target->breakpoint_instrs) = 0xcc;
+    target->breakpoint_instrs_len = 1;
+    target->breakpoint_instr_count = 1;
+
+    target->ret_instrs = malloc(1);
+    *(char *)(target->ret_instrs) = 0xc3;
+    target->ret_instrs_len = 1;
+    target->ret_instr_count = 1;
+
     /* Done with the elf ident data. */
     elf_end(elf);
 
@@ -304,8 +346,10 @@ static int linux_userproc_init(struct target *target) {
 static int linux_userproc_attach_internal(struct target *target) {
     struct linux_userproc_state *lstate;
     char buf[256];
+    int pstatus;
+    int pid = linux_userproc_pid(target);
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(5,LOG_T_LUP,"pid %d\n",pid);
 
     lstate = (struct linux_userproc_state *)(target->state);
     if (!lstate) {
@@ -315,14 +359,35 @@ static int linux_userproc_attach_internal(struct target *target) {
     if (lstate->attached)
 	return 0;
 
-    if (ptrace(PTRACE_ATTACH,linux_userproc_pid(target),NULL,NULL) < 0)
-	return 1;
-
-    snprintf(buf,256,"/proc/%d/mem",linux_userproc_pid(target));
-    if ((lstate->memfd = open(buf,O_LARGEFILE,O_RDWR)) < 0) {
-	ptrace(PTRACE_DETACH,linux_userproc_pid(target),NULL,NULL);
+    errno = 0;
+    if (ptrace(PTRACE_ATTACH,pid,NULL,NULL) < 0) {
+	verror("ptrace attach pid %d failed: %s\n",pid,strerror(errno));
 	return 1;
     }
+
+    snprintf(buf,256,"/proc/%d/mem",pid);
+    if ((lstate->memfd = open(buf,O_LARGEFILE,O_RDWR)) < 0) {
+	verror("open %s failed, detaching: %s!\n",buf,strerror(errno));
+	ptrace(PTRACE_DETACH,pid,NULL,NULL);
+	return 1;
+    }
+
+    /*
+     * Wait for the child to get the PTRACE-sent SIGSTOP, then make sure
+     * we *don't* deliver that signal to it when the library user calls
+     * target_resume!
+     */
+
+    vdebug(3,LOG_T_LUP,"waiting for ptrace attach to hit pid %d\n",pid);
+ again:
+    vdebug(5,LOG_T_LUP,"initial waitpid target %d\n",pid);
+    if (waitpid(pid,&pstatus,0) < 0) {
+	if (errno == ECHILD || errno == EINVAL)
+	    return STATUS_ERROR;
+	else
+	    goto again;
+    }
+    vdebug(3,LOG_T_LUP,"ptrace attach has hit pid %d\n",pid);
 
     lstate->attached = 1;
 
@@ -349,6 +414,7 @@ static int linux_userproc_detach(struct target *target) {
        trap, which will kill it. */
     kill(linux_userproc_pid(target),SIGSTOP);
 
+    errno = 0;
     if (ptrace(PTRACE_DETACH,linux_userproc_pid(target),NULL,NULL) < 0) {
 	verror("ptrace detach %d failed: %s\n",linux_userproc_pid(target),
 	       strerror(errno));
@@ -756,44 +822,80 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 static target_status_t linux_userproc_status(struct target *target) {
     char buf[256];
     FILE *statf;
-    int pid;
+    int pid = linux_userproc_pid(target);
     char pstate;
     target_status_t retval = STATUS_ERROR;
     int rc;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(5,LOG_T_LUP,"pid %d\n",pid);
 
  again:
-    snprintf(buf,256,"/proc/%d/stat",linux_userproc_pid(target));
+    snprintf(buf,256,"/proc/%d/stat",pid);
     statf = fopen(buf,"r");
-    if (!statf)
+    if (!statf) {
+	verror("statf(%s): %s\n",buf,strerror(errno));
 	return STATUS_ERROR;
+    }
 
-    if ((rc = fscanf(statf,"%d (%s) %c",&pid,buf,&pstate)) == 3) {
-	if (pstate == 'R' || pstate == 'W')
+    if ((rc = fscanf(statf,"%d (%s %c",&pid,buf,&pstate))) {
+	if (pstate == 'R' || pstate == 'r' || pstate == 'W' || pstate == 'w')
 	    retval = STATUS_RUNNING;
-	else if (pstate == 'S' || pstate == 'D')
+	else if (pstate == 'S' || pstate == 's' || pstate == 'D' || pstate == 'd')
 	    retval = STATUS_STOPPED;
-	else if (pstate == 'Z')
+	else if (pstate == 'Z' || pstate == 'z')
 	    retval = STATUS_DEAD;
-	else if (pstate == 'T')
+	else if (pstate == 'T' || pstate == 't')
 	    retval = STATUS_PAUSED;
-	else 
+	else {
+	    vwarn("fscanf returned %d; read %d (%s) %c; returning STATUS_UNKNOWN!\n",
+		  rc,pid,buf,pstate);
 	    retval = STATUS_UNKNOWN;
+	}
     }
     else if (rc < 0 && errno == EINTR) {
 	fclose(statf);
 	goto again;
     }
 
+    vdebug(3,LOG_T_LUP,"pid %d status %d\n",linux_userproc_pid(target),retval);
+
     return retval;
 }
 
 static int linux_userproc_pause(struct target *target) {
-    /* pause/resume are invalid for ptrace processes; we only do I/O on
-     * them when they trap naturally.
-     */
+    int pid = linux_userproc_pid(target);
+    target_status_t status;
+    int pstatus;
+    
     vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+
+    /*
+     * We send a stop to the traced pid, and wait until it is delivered
+     * to us!  We do not save it for redelivery to the child!
+     *
+     * Only do this if the target is not currently paused, because it
+     * might need to be restarted with whatever last_signo state it had
+     * previously been paused with.
+     */
+    status = linux_userproc_status(target);
+    if (status == STATUS_PAUSED) 
+	return 0;
+
+    if (kill(pid,SIGSTOP) < 0) {
+	verror("kill(%d,SIGSTOP): %s\n",pid,strerror(errno));
+	return -1;
+    }
+
+    vdebug(3,LOG_T_LUP,"waiting for pause SIGSTOP to hit pid %d\n",pid);
+ again:
+    if (waitpid(pid,&pstatus,0) < 0) {
+	if (errno == ECHILD || errno == EINVAL)
+	    return STATUS_ERROR;
+	else
+	    goto again;
+    }
+    vdebug(3,LOG_T_LUP,"pause SIGSTOP has hit pid %d\n",pid);
+
     return 0;
 }
 
@@ -802,10 +904,11 @@ static int linux_userproc_resume(struct target *target) {
 
     lstate = (struct linux_userproc_state *)(target->state);
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     int ptopts = PTRACE_O_TRACESYSGOOD;
     ptopts |= lstate->ptrace_opts;
+    errno = 0;
     if (ptrace(PTRACE_SETOPTIONS,linux_userproc_pid(target),NULL,ptopts) < 0) {
 	vwarn("ptrace setoptions failed: %s\n",strerror(errno));
     }
@@ -825,7 +928,7 @@ static int linux_userproc_resume(struct target *target) {
 	}
     }
 
-    vdebug(5,LOG_T_LUP,"ptrace restart %d succeeded\n",linux_userproc_pid(target));
+    vdebug(9,LOG_T_LUP,"ptrace restart %d succeeded\n",linux_userproc_pid(target));
     lstate->last_signo = -1;
     lstate->syscall = 0;
 
@@ -834,17 +937,21 @@ static int linux_userproc_resume(struct target *target) {
 
 static target_status_t linux_userproc_monitor(struct target *target) {
     struct linux_userproc_state *lstate;
-    pid_t pid;
+    pid_t pid = linux_userproc_pid(target);
     int pstatus;
+    REG dreg = -1;
+    struct probepoint *dpp;
+    REGVAL ipval;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
     lstate = (struct linux_userproc_state *)(target->state);
 
     /* do the whole ptrace waitpid dance */
 
  again:
-    pid = waitpid(linux_userproc_pid(target),&pstatus,0);
+    vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
+    pid = waitpid(pid,&pstatus,0);
     if (pid < 0) {
 	if (errno == ECHILD || errno == EINVAL)
 	    return STATUS_ERROR;
@@ -860,10 +967,91 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 	 */
 	lstate->last_signo = WSTOPSIG(pstatus);
 	if (lstate->last_signo == (SIGTRAP | 0x80)) {
-	    vdebug(5,LOG_T_LUP,"target %d stopped with trap signo %d\n",
+	    vdebug(5,LOG_T_LUP,"target %d stopped with syscall trap signo %d\n",
 		   pid,lstate->last_signo);
 	    lstate->last_signo = -1;
 	    lstate->syscall = 1;
+	}
+	else if (lstate->last_signo == SIGTRAP) {
+	    /* Don't deliver debug traps! */
+	    vdebug(5,LOG_T_LUP,"target %d stopped with trap signo %d\n",
+		   pid,lstate->last_signo);
+	    lstate->last_signo = -1;
+
+	    /*
+	     * This is where we handle breakpoint or single step
+	     * events.
+	     *
+	     * If this was a single step event, notify the ss handler
+	     * (we always assume that if target->sstep_probepoint was
+	     * set, we are single stepping with hardware breakpoints
+	     * disabled, since the target code does this for us!).
+	     *
+	     * Otherwise, if the address matches one of our hardware
+	     * breakpoints, we pass that addr to the handler.
+	     *
+	     * Otherwise, if it doesn't match, we (locally, not in the
+	     * CPU's register state -- the generic bp handler does
+	     * this!) decrement EIP by the breakpoint instruction length
+	     * and search for that address.  If we find one, we notify
+	     * that BP handler.
+	     *
+	     * Otherwise, if we haven't found a SW probepoint that
+	     * matches, return to the user, and let THEM handle it!
+	     */
+
+	    if (target->sstep_probepoint) {
+		target->ss_handler(target,target->sstep_probepoint);
+		goto again;
+	    }
+	    else {
+		ipval = linux_userproc_read_reg(target,target->ipregno);
+		if (errno) {
+		    verror("could not read EIP while finding probepoint: %s\n",
+			   strerror(errno));
+		    return STATUS_ERROR;
+		}
+
+		/* We could check the debug status register bits, but
+		 * this is the same, really...
+		 */
+		if (lstate->dr[0] == ipval)
+		    dreg = 0;
+		else if (lstate->dr[1] == ipval)
+		    dreg = 1;
+		else if (lstate->dr[2] == ipval)
+		    dreg = 2;
+		else if (lstate->dr[3] == ipval)
+		    dreg = 3;
+
+		if (dreg > -1) {
+		    /* Found HW breakpoint! */
+		    /* Clear the status bits right now. */
+		    errno = 0;
+		    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+			   offsetof(struct user,u_debugreg[6]),(void *)0);
+		    if (errno) {
+			verror("could not clear status debug reg, continuing"
+			       " anyway: %s!\n",strerror(errno));
+		    }
+
+		    dpp = (struct probepoint *)g_hash_table_lookup(target->probepoints,
+								   (gpointer)ipval);
+		    target->bp_handler(target,dpp);
+		    goto again;
+		}
+		else if ((dpp = (struct probepoint *) \
+			  g_hash_table_lookup(target->probepoints,
+					      (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+		    target->bp_handler(target,dpp);
+		    goto again;
+		}
+		else {
+		    vwarn("could not find hardware bp and not sstep'ing;"
+			  " letting user handle fault at 0x%"PRIxADDR"!\n",
+			  ipval);
+		}
+	    }
 	}
 	else {
 	    vdebug(5,LOG_T_LUP,"target %d stopped with signo %d\n",
@@ -913,13 +1101,92 @@ unsigned long linux_userproc_write(struct target *target,
 				   unsigned char *buf) {
     struct linux_userproc_state *lstate;
     lstate = (struct linux_userproc_state *)(target->state);
+#if __WORDSIZE == 64
+    int64_t word;
+#else
+    int32_t word;
+#endif
+    struct memrange *range = NULL;;
+    unsigned int i = 0;
+    unsigned int j;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(5,LOG_T_LUP,"pid %d length %lu ",linux_userproc_pid(target),length);
+    for (j = 0; j < length && j < 16; ++j)
+	vdebugc(5,LOG_T_LUP,"%02hhx ",buf[j]);
+    vdebugc(5,LOG_T_LUP,"\n");
+
+    target_find_range_real(target,addr,NULL,NULL,&range);
 
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
      */
-    return target_generic_fd_write(lstate->memfd,addr,length,buf);
+
+    /*
+     * We cannot just write to text/executable ranges via the memory
+     * device.  BUT, if we can't resolve the address to a range, we just
+     * try it anyway.
+     */
+    if (!range || range->prot_flags & PROT_WRITE) {
+	return target_generic_fd_write(lstate->memfd,addr,length,buf);
+    }
+
+    /*
+     * If we're writing to a write-protected range, we have to use
+     * ptrace, word by word!  So if our write doesn't end on a word
+     * boundary, first read the word containing the last byte we're
+     * going to write, and fill it with our last byte.  Then write all
+     * the preceding words, and finally the special last word.
+     */
+    if (length % (__WORDSIZE / 8)) {
+	errno = 0;
+	word = ptrace(PTRACE_PEEKTEXT,linux_userproc_pid(target),
+		      (addr + length) - (length % (__WORDSIZE / 8)),
+		      NULL);
+	if (errno) {
+	    verror("ptrace(PEEKTEXT) last word: %s\n",strerror(errno));
+	    return 0;
+	}
+
+	vdebug(9,LOG_T_LUP,"last word was ");
+	for (j = 0; j < __WORDSIZE / 8; ++j)
+	    vdebugc(9,LOG_T_LUP,"%02hhx ",*(((char *)&word) + j));
+	vdebugc(9,LOG_T_LUP,"\n");
+
+	memcpy(&word,(buf + length) - (length % (__WORDSIZE / 8)),
+	       length % (__WORDSIZE / 8));
+
+	vdebug(9,LOG_T_LUP,"new last word is ");
+	for (j = 0; j < __WORDSIZE / 8; ++j)
+	    vdebugc(9,LOG_T_LUP,"%02hhx ",*(((char *)&word) + j));
+	vdebugc(9,LOG_T_LUP,"\n");
+    }
+
+    if (length / (__WORDSIZE / 8)) {
+	for (i = 0; i < length; i += (__WORDSIZE / 8)) {
+	    errno = 0;
+	    if (ptrace(PTRACE_POKETEXT,linux_userproc_pid(target),
+#if __WORDSIZE == 64
+		       addr + i,*(uint64_t *)(buf + i)) == -1) {
+#else
+		       addr + i,*(uint32_t *)(buf + i)) == -1) {
+#endif
+		verror("ptrace(POKETEXT): %s\n",strerror(errno));
+		return 0;
+	    }
+	}
+    }
+
+    if (length % (__WORDSIZE / 8)) {
+	errno = 0;
+	if (ptrace(PTRACE_POKETEXT,linux_userproc_pid(target),
+		   (i) ? addr + i - (__WORDSIZE / 8) : addr,
+		   word) == -1) {
+	    verror("ptrace(POKETEXT) last word: %s\n",strerror(errno));
+	    return 0;
+	}
+    }
+
+    return length;
 }
 
 /*
@@ -1062,6 +1329,7 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
      */
+    errno = 0;
     if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
 	verror("ptrace(GETREGS): %s\n",strerror(errno));
 	return 0;
@@ -1079,7 +1347,8 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     struct user_regs_struct regs;
     int ptrace_idx;
 
-    vdebug(5,LOG_T_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
+    vdebug(5,LOG_T_LUP,"writing reg %s 0x%"PRIxREGVAL"\n",
+	   linux_userproc_reg_name(target,reg),value);
 
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
@@ -1097,6 +1366,12 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     ptrace_idx = dreg_to_ptrace_idx32[reg];
 #endif
 
+    errno = 0;
+    if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
+	verror("ptrace(GETREGS): %s\n",strerror(errno));
+	return -1;
+    }
+
 #if __WORDSIZE == 64
     ((unsigned long *)&regs)[ptrace_idx] = (unsigned long)value;
 #else 
@@ -1106,10 +1381,342 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
      */
+    errno = 0;
     if (ptrace(PTRACE_SETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
 	verror("ptrace(SETREGS): %s\n",strerror(errno));
 	return -1;
     }
 
+    return 0;
+}
+
+/*
+ * Hardware breakpoint support.
+ */
+static REG linux_userproc_get_unused_debug_reg(struct target *target) {
+    struct linux_userproc_state *lstate;
+    REG retval = -1;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+
+    if (!lstate->dr[0]) { retval = 0; }
+    else if (!lstate->dr[1]) { retval = 1; }
+    else if (!lstate->dr[2]) { retval = 2; }
+    else if (!lstate->dr[3]) { retval = 3; }
+
+    vdebug(5,LOG_T_LUP,"returning unused debug reg %d\n",retval);
+
+    return retval;
+}
+
+#define VWORDBYTESIZE __WORDSIZE / 8
+
+#if __WORDSIZE == 64
+static int read_ptrace_debug_reg(int pid,unsigned long *array) {
+#else
+static int read_ptrace_debug_reg(int pid,int *array) {
+#endif
+    int i = 0;
+
+    errno = 0;
+    for ( ; i < 8; ++i) {
+#if __WORDSIZE == 64
+	array[i] = \
+	    (unsigned long)ptrace(PTRACE_PEEKUSER,pid,
+				  offsetof(struct user,u_debugreg[i]),NULL);
+#else
+	array[i] = \
+	    (int)ptrace(PTRACE_PEEKUSER,pid,
+			offsetof(struct user,u_debugreg[i]),NULL);
+#endif
+	if (errno) {
+	    verror("ptrace(PEEKUSER): %s\n",strerror(errno));
+	    return -1;
+	}
+    }
+
+    return 0;
+}
+
+struct x86_dr_format {
+    int dr0_l:1;
+    int dr0_g:1;
+    int dr1_l:1;
+    int dr1_g:1;
+    int dr2_l:1;
+    int dr2_g:1;
+    int dr3_l:1;
+    int dr3_g:1;
+    int exact_l:1;
+    int exact_g:1;
+    int reserved:6;
+    probepoint_whence_t dr0_break:2;
+    probepoint_watchsize_t dr0_len:2;
+    probepoint_whence_t dr1_break:2;
+    probepoint_watchsize_t dr1_len:2;
+    probepoint_whence_t dr2_break:2;
+    probepoint_watchsize_t dr2_len:2;
+    probepoint_whence_t dr3_break:2;
+    probepoint_watchsize_t dr3_len:2;
+};
+
+static int linux_userproc_set_hw_breakpoint(struct target *target,
+					    REG reg,ADDR addr) {
+    struct linux_userproc_state *lstate;
+    int pid;
+#if __WORDSIZE == 64
+    unsigned long cdr;
+#else
+    int cdr;
+#endif
+
+    if (reg < 0 || reg > 3) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    pid = linux_userproc_pid(target);
+
+    errno = 0;
+    ptrace(PTRACE_PEEKUSER,pid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)&cdr);
+    if (errno) {
+	vwarn("could not read current val of debug reg %"PRIiREG": %s!\n",
+	      reg,strerror(errno));
+    }
+    else if (cdr != 0) {
+	vwarn("debug reg %"PRIiREG" already has an address, overwriting (0x%"PRIxADDR")!\n",
+	      reg,cdr);
+	//errno = EBUSY;
+	//return -1;
+    }
+
+    /* Set the address, then the control bits. */
+    lstate->dr[reg] = addr;
+
+    /* Clear the status bits */
+    lstate->dr[6] = 0; //&= ~(1 << reg);
+
+    /* Set the local control bit, and unset the global bit. */
+    lstate->dr[7] |= (1 << (reg * 2));
+    lstate->dr[7] &= ~(1 << (reg * 2 + 1));
+    /* Set the break to be on execution (00b). */
+    lstate->dr[7] &= ~(3 << (16 + (reg * 4)));
+
+    /*
+    if (reg == 0) {
+	dr7->dr0_l = 1;
+	dr7->dr0_g = 0;
+	dr7->dr0_break = PROBEPOINT_EXEC;
+	dr7->dr0_len = 0;
+    }
+    */
+
+    /* Now write these values! */
+    errno = 0;
+    ptrace(PTRACE_POKEUSER,pid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)(lstate->dr[reg]));
+    if (errno) {
+	verror("could not update debug reg %"PRIiREG", aborting: %s!\n",
+	       reg,strerror(errno));
+	goto errout;
+    }
+
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[6]),(void *)(lstate->dr[6]));
+    if (errno) {
+	verror("could not update status debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[7]),(void *)(lstate->dr[7]));
+    if (errno) {
+	verror("could not update control debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+
+    return 0;
+
+ errout:
+    lstate->dr[reg] = 0;
+
+    return -1;
+}
+
+static int linux_userproc_set_hw_watchpoint(struct target *target,
+					    REG reg,ADDR addr,
+					    probepoint_whence_t whence,
+					    probepoint_watchsize_t watchsize) {
+    struct linux_userproc_state *lstate;
+    int pid;
+#if __WORDSIZE == 64
+    unsigned long cdr;
+#else
+    int cdr;
+#endif
+
+    if (reg < 0 || reg > 3) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    pid = linux_userproc_pid(target);
+
+    errno = 0;
+    ptrace(PTRACE_PEEKUSER,pid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)&cdr);
+    if (errno) {
+	vwarn("could not read current val of debug reg %"PRIiREG"!\n",reg);
+    }
+    else if (cdr != 0) {
+	vwarn("debug reg %"PRIiREG" already has an address, overwriting (0x%"PRIxADDR")!\n",
+	      reg,cdr);
+	//errno = EBUSY;
+	//return -1;
+    }
+
+    /* Set the address, then the control bits. */
+    lstate->dr[reg] = addr;
+
+    /* Clear the status bits */
+    lstate->dr[6] = 0; //&= ~(1 << reg);
+
+    /* Set the local control bit, and unset the global bit. */
+    lstate->dr[7] |= (1 << (reg * 2));
+    lstate->dr[7] &= ~(1 << (reg * 2 + 1));
+    /* Set the break to be on whatever whence was). */
+    lstate->dr[7] &= ~(whence << (16 + (reg * 4)));
+    /* Set the watchsize to be whatever watchsize was). */
+    lstate->dr[7] &= ~(watchsize << (18 + (reg * 4)));
+
+    /* Now write these values! */
+    errno = 0;
+    ptrace(PTRACE_POKEUSER,pid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)(lstate->dr[reg]));
+    if (errno) {
+	verror("could not update debug reg %"PRIiREG", aborting: %s!\n",reg,
+	       strerror(errno));
+	goto errout;
+    }
+
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[6]),(void *)(lstate->dr[6]));
+    if (errno) {
+	verror("could not update status debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[7]),(void *)(lstate->dr[7]));
+    if (errno) {
+	verror("could not update control debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+
+    return 0;
+
+ errout:
+    lstate->dr[reg] = 0;
+
+    return -1;
+}
+
+static int linux_userproc_unset_hw_breakpoint(struct target *target,REG reg) {
+    struct linux_userproc_state *lstate;
+    int pid;
+
+    if (reg < 0 || reg > 3) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    pid = linux_userproc_pid(target);
+
+    /* Set the address, then the control bits. */
+    lstate->dr[reg] = 0;
+
+    /* Clear the status bits */
+    lstate->dr[6] = 0; //&= ~(1 << reg);
+
+    /* Unset the local control bit, and unset the global bit. */
+    lstate->dr[7] &= ~(3 << (reg * 2));
+
+    errno = 0;
+    /* Now write these values! */
+    ptrace(PTRACE_POKEUSER,pid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)(lstate->dr[reg]));
+    if (errno) {
+	verror("could not update debug reg %"PRIiREG", aborting: %s!\n",
+	       reg,strerror(errno));
+	goto errout;
+    }
+
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[6]),(void *)(lstate->dr[6]));
+    if (errno) {
+	verror("could not update status debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[7]),(void *)(lstate->dr[7]));
+    if (errno) {
+	verror("could not update control debug reg,aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+
+    return 0;
+
+ errout:
+    return -1;
+}
+
+static int linux_userproc_unset_hw_watchpoint(struct target *target,REG reg) {
+    /* It's the exact same thing, yay! */
+    return linux_userproc_unset_hw_breakpoint(target,reg);
+}
+
+int linux_userproc_disable_hw_breakpoints(struct target *target) {
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[7]),(void *)0);
+    if (errno) {
+	verror("could not update control debug reg, aborting: %s!\n",
+	       strerror(errno));
+	return -1;
+    }
+    return 0;
+}
+
+int linux_userproc_enable_hw_breakpoints(struct target *target) {
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)(target->state);
+    
+    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+	   offsetof(struct user,u_debugreg[7]),(void *)lstate->dr[7]);
+    if (errno) {
+	verror("could not update control debug reg, aborting: %s!\n",
+	       strerror(errno));
+	return -1;
+    }
+    return 0;
+}
+
+int linux_userproc_singlestep(struct target *target) {
+    ptrace(PTRACE_SINGLESTEP,linux_userproc_pid(target),NULL,NULL);
+    if (errno) {
+	verror("could not ptrace single step: %s\n",strerror(errno));
+	return -1;
+    }
+    return 0;
+}
+
+int linux_userproc_singlestep_end(struct target *target) {
     return 0;
 }

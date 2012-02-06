@@ -22,6 +22,7 @@
 #include "common.h"
 #include "list.h"
 #include "dwdebug.h"
+#include "probe_api.h"
 #include <glib.h>
 
 struct target;
@@ -50,18 +51,38 @@ extern char *STATUS_STRINGS[];
 int target_open(struct target *target);
 target_status_t target_monitor(struct target *target);
 int target_resume(struct target *target);
+int target_pause(struct target *target);
+target_status_t target_status(struct target *target);
 int target_close(struct target *target);
 unsigned char *target_read_addr(struct target *target,
 				unsigned long long addr,
 				unsigned long length,
 				unsigned char *buf);
-int target_write_addr(struct target *target,unsigned long long addr,
-		      unsigned long length,unsigned char *buf);
+unsigned long target_write_addr(struct target *target,unsigned long long addr,
+				unsigned long length,unsigned char *buf);
 char *target_reg_name(struct target *target,REG reg);
 REGVAL target_read_reg(struct target *target,REG reg);
 int target_write_reg(struct target *target,REG reg,REGVAL value);
 void target_free(struct target *target);
 struct target *target_create(char *type,void *state,struct target_ops *ops);
+struct mmap_entry *target_lookup_mmap_entry(struct target *target,
+					    ADDR base_addr);
+void target_attach_mmap_entry(struct target *target,
+			      struct mmap_entry *mme);
+void target_release_mmap_entry(struct target *target,
+			       struct mmap_entry *mme);
+REG target_get_unused_debug_reg(struct target *target);
+int target_set_hw_breakpoint(struct target *target,REG reg,ADDR addr);
+int target_set_hw_watchpoint(struct target *target,REG reg,ADDR addr,
+			     probepoint_whence_t whence,int watchsize);
+int target_unset_hw_breakpoint(struct target *target,REG reg);
+int target_unset_hw_watchpoint(struct target *target,REG reg);
+
+int target_disable_hw_breakpoints(struct target *target);
+int target_enable_hw_breakpoints(struct target *target);
+
+int target_singlestep(struct target *target);
+int target_singlestep_end(struct target *target);
 
 /**
  ** Lookup functions.
@@ -108,6 +129,9 @@ int16_t          rvalue_i16(void *buf);
 int32_t          rvalue_i32(void *buf);
 int64_t          rvalue_i64(void *buf);
 
+typedef int (*target_debug_handler_t)(struct target *target,
+				      struct probepoint *probepoint);
+
 /**
  ** The primary target data structures.
  **/
@@ -141,6 +165,37 @@ struct target {
      * the map entry.
      */
     GHashTable *mmaps;
+
+    /*
+     * A hashtable of addresses to probe points.
+     */
+    GHashTable *probepoints;
+
+    /* One or more opcodes that create a software breakpoint */
+    void *breakpoint_instrs;
+    unsigned int breakpoint_instrs_len;
+    /* How many opcodes are in the above sequence, so we can single-step
+     * past them all.
+     */
+    unsigned int breakpoint_instr_count;
+
+    void *ret_instrs;
+    unsigned int ret_instrs_len;
+    unsigned int ret_instr_count;
+
+    struct probepoint *sstep_probepoint;
+
+    /* Single step and breakpoint handlers.  Since we control
+     * single-step mode, we report *any* single step stop events to the
+     * handler, and do nothing with them ourselves.
+     *
+     * For breakpoints, if we don't have a probepoint matching the
+     * breaking EIP, target_monitor will return to the library user, and
+     * they'll have to handle the exception themselves (i.e., this would
+     * happen if their code had a software breakpoint in it).
+     */
+    target_debug_handler_t ss_handler;
+    target_debug_handler_t bp_handler;
 };
 
 struct target_ops {
@@ -190,6 +245,19 @@ struct target_ops {
     /* write some memory */
     unsigned long (*write)(struct target *target,unsigned long long addr,
 			   unsigned long length,unsigned char *buf);
+
+    /* breakpoint/watchpoint stuff */
+    REG (*get_unused_debug_reg)(struct target *target);
+    int (*set_hw_breakpoint)(struct target *target,REG reg,ADDR addr);
+    int (*set_hw_watchpoint)(struct target *target,REG reg,ADDR addr,
+			     probepoint_whence_t whence,
+			     probepoint_watchsize_t watchsize);
+    int (*unset_hw_breakpoint)(struct target *target,REG reg);
+    int (*unset_hw_watchpoint)(struct target *target,REG reg);
+    int (*disable_hw_breakpoints)(struct target *target);
+    int (*enable_hw_breakpoints)(struct target *target);
+    int (*singlestep)(struct target *target);
+    int (*singlestep_end)(struct target *target);
 };
 
 #endif

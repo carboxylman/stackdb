@@ -121,6 +121,8 @@ struct memrange *memregion_find_range_real(struct memregion *region,
 					   ADDR real_addr);
 struct memrange *memregion_find_range_obj(struct memregion *region,
 					  ADDR obj_addr);
+ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
+			struct memrange **range_saveptr);
 struct target *memregion_target(struct memregion *region);
 void memregion_dump(struct memregion *region,struct dump_info *ud);
 void memregion_free(struct memregion *region);
@@ -160,6 +162,8 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 		      struct array_list *symbol_chain,
 		      struct memrange **range_saveptr);
 int location_can_mmap(struct location *location,struct target *target);
+int location_resolve_function_entry(struct target *target,
+				    struct bsymbol *bsymbol,ADDR *addr_saveptr);
 
 /**
  ** Location loading functions.

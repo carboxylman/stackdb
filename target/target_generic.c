@@ -127,22 +127,25 @@ unsigned long target_generic_fd_write(int fd,
 				      unsigned long length,
 				      unsigned char *buf) {
     size_t rc;
-    size_t total = 0;
+    long total = 0;
 
     if (lseek64(fd,addr,0) == (off_t)-1) {
 	verror("lseek64: %s",strerror(errno));
-	return 0;
+	return -1;
     }
 
     while (1) {
 	rc = write(fd,buf+total,length-total);
-	if (rc > 0 && (total + rc) == length)
+	if (rc > 0 && (total + rc) == length) {
+	    total += rc;
 	    break;
+	}
 	else if ((rc > 0 && rc < length)
 		 || (rc <= 0 && (rc == EAGAIN || rc == EINTR))) 
 	    total += rc;
 	else {
-	    verror("write error: %s (after %ld bytes)\n",strerror(errno),total);
+	    verror("write error: %s (after %ld bytes of %lu total) (buf 0x%p)\n",
+		   strerror(errno),total,length,(void *)buf);
 	    break;
 	}
     }

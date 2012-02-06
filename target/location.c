@@ -257,13 +257,12 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    return 0;
 	}
 
-	/* If we have an fblist, we load EIP - 4, scan the location list
+	/* If we have an fblist, we load EIP, scan the location list
 	 * for a match, and run the frame base location op recursively
 	 * via location_resolve!
 	 */
 	if (fblist) {
-	    // XXX - 4 is intel-specific?
-	    eip = target_read_reg(target,target->ipregno) - 4;
+	    eip = target_read_reg(target,target->ipregno);
 	    if (errno)
 		return 0;
 	    errno = 0;
@@ -346,12 +345,11 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    errno = EINVAL;
 	    return 0;
 	}
-	/* Like the above case, we load EIP - 4, scan the location list
+	/* Like the above case, we load EIP, scan the location list
 	 * for a match, and run the matching location op recursively
 	 * via location_resolve!
 	 */
-	// XXX - 4 is intel-specific?
-	eip = target_read_reg(target,target->ipregno) - 4;
+	eip = target_read_reg(target,target->ipregno);
 	if (errno)
 	    return 0;
 	errno = 0;
@@ -493,5 +491,49 @@ ADDR location_resolve(struct target *target,struct memregion *region,
     }
 
     /* never reached */
+    return 0;
+}
+
+int location_resolve_function_entry(struct target *target,
+				    struct bsymbol *bsymbol,ADDR *addr_saveptr) {
+    struct symbol *symbol = bsymbol->lsymbol->symbol;
+    int i;
+    ADDR obj_addr;
+    struct symtab *symtab;
+
+    if (!addr_saveptr || !SYMBOL_IS_FUNCTION(symbol))
+	return -1;
+
+    if (symbol->s.ii.d.f.hasentrypc)
+	obj_addr = symbol->s.ii.d.f.entry_pc;
+    else if ((symtab = symbol->s.ii.d.f.symtab)) {
+	if (RANGE_IS_PC(&symtab->range)) 
+	    obj_addr = symtab->range.lowpc;
+	else if (RANGE_IS_LIST(&symtab->range)) {
+	    /* Find the lowest addr! */
+	    obj_addr = ADDRMAX;
+	    for (i = 0; i < symtab->range.rlist.len; ++i) {
+		if (symtab->range.rlist.list[i]->start < obj_addr)
+		    obj_addr = symtab->range.rlist.list[i]->start;
+	    }
+	    vwarn("assuming function %s entry is lowest address in list 0x%"PRIxADDR"!\n",
+		  symbol->name,obj_addr);
+	}
+	else {
+	    vwarn("function %s range is not PC/list!\n",symbol->name);
+	    return -1;
+	}
+    }
+    else {
+	vwarn("function %s has no entry_pc nor symtab!\n",symbol->name);
+	return -1;
+    }
+
+    /* Translate the obj address to something real in this region. */
+    obj_addr = memregion_relocate(bsymbol->region,obj_addr,NULL);
+
+    if (addr_saveptr)
+	*addr_saveptr = obj_addr;
+
     return 0;
 }
