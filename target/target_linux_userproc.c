@@ -1036,6 +1036,9 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 			       " anyway: %s!\n",strerror(errno));
 			errno = 0;
 		    }
+		    else {
+			vdebug(5,LOG_T_LUP,"cleared status debug reg 6\n",pid);
+		    }
 
 		    dpp = (struct probepoint *)g_hash_table_lookup(target->probepoints,
 								   (gpointer)ipval);
