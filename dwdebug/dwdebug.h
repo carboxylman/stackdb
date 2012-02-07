@@ -225,9 +225,9 @@ void debugfile_free(struct debugfile *debugfile);
 struct symtab *symtab_create(struct debugfile *debugfile,
 			     char *srcfilename,char *compdirname,
 			     int language,char *producer);
-int symtab_insert(struct symtab *symtab,struct symbol *symbol,uint64_t anonaddr);
+int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
-			   struct symbol *symbol,uint64_t anonaddr);
+			   struct symbol *symbol,OFFSET anonaddr);
 /* These symtab_set functions are about dealing with memory stuff, not
  * about hiding symtabs from dwarf or anything.
  */
@@ -284,7 +284,7 @@ void location_free(struct location *location);
 /*
  * Find the symbol table corresponding to the supplied PC.
  */
-struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc);
+struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc);
 
 /**
  ** Symbol/memaddr lookup functions.
@@ -495,8 +495,8 @@ struct range {
     range_type_t rtype;
     union {
 	struct {
-	    uint64_t lowpc;
-	    uint64_t highpc;
+	    ADDR lowpc;
+	    ADDR highpc;
 	};
 	struct range_list rlist;
     };
@@ -519,12 +519,12 @@ struct location {
     union {
 	ADDR addr;
 	REG reg;
-	int64_t fboffset;
+	OFFSET fboffset;
 	struct {
 	    REG reg;
-	    int64_t offset;
+	    OFFSET offset;
 	} regoffset;
-	int32_t member_offset;
+	OFFSET member_offset;
 	struct {
 	    char *data;
 	    uint16_t len;
@@ -612,7 +612,7 @@ struct symbol {
     /* If we see the use of the type before the type, we can only fill
      * in the ref and fill the datatype in a postpass.
      */
-    uint64_t datatype_addr_ref;
+    OFFSET datatype_addr_ref;
 
     /* If this symbol is a member of another, this is its list entry. */
     /* XXX: maybe move this into the type detail stuff to save mem? */
@@ -655,7 +655,7 @@ struct symbol {
 	     * a postpass.
 	     */
 	    struct symbol *type_datatype;
-	    uint64_t type_datatype_ref;
+	    OFFSET type_datatype_ref;
 
 	    union {
 		struct {
@@ -707,7 +707,7 @@ struct symbol {
 	     * filled in a postpass.
 	     */
 	    struct symbol *origin;
-	    uint64_t origin_ref;
+	    OFFSET origin_ref;
 
 	    /* If this instance already has a value, this is it! */
 	    void *constval;

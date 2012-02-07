@@ -91,7 +91,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
  * NOTE: this function returns the tightest bounding symtab -- which may
  * be the symtab that was passed in!!
  */
-struct symtab *symtab_lookup_pc(struct symtab *symtab,uint64_t pc) {
+struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc) {
     struct symtab *tmp;
     struct symtab *retval;
     int i;
@@ -164,7 +164,7 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
      */
     g_hash_table_iter_init(&iter,symtab->tab);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer *)&key,(gpointer *)&value)) {
+				  (gpointer)&key,(gpointer)&value)) {
 	if (((ftype != SYMBOL_TYPE_FLAG_NONE
 	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(value))
 		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(value))
@@ -308,7 +308,7 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
     }
 
     g_hash_table_iter_init(&iter,debugfile->srcfiles);
-    while (g_hash_table_iter_next(&iter,(gpointer *)&key,(gpointer *)&symtab)) {
+    while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&symtab)) {
 	lsymbol = symtab_lookup_sym(symtab,name,delim,ftype);
 	if (lsymbol)
 	    return lsymbol;
@@ -700,7 +700,7 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 }
 
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
-			   struct symbol *symbol,uint64_t anonaddr) {
+			   struct symbol *symbol,OFFSET anonaddr) {
     if (!anonaddr) {
 	if (unlikely(g_hash_table_lookup(symtab->tab,fakename)))
 	    return 1;
@@ -718,7 +718,7 @@ int symtab_insert_fakename(struct symtab *symtab,char *fakename,
     return 1;
 }
 
-int symtab_insert(struct symtab *symtab,struct symbol *symbol,uint64_t anonaddr) {
+int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
     if (!anonaddr && symbol->name) {
 	if (unlikely(g_hash_table_lookup(symtab->tab,symbol->name)))
 	    return 1;
@@ -1511,7 +1511,7 @@ void range_dump(struct range *range,struct dump_info *ud) {
     int i;
 
     if (RANGE_IS_PC(range))
-	fprintf(ud->stream,"%sRANGE(pc): low=0x%" PRIx64 ", high=0x%" PRIx64,
+	fprintf(ud->stream,"%sRANGE(pc): low=0x%" PRIxADDR ", high=0x%" PRIxADDR,
 		ud->prefix,range->lowpc,range->highpc);
     else if (RANGE_IS_LIST(range)) {
 	if (range->rlist.len == 0) {
@@ -1624,7 +1624,7 @@ void location_dump(struct location *location,struct dump_info *ud) {
     switch(location->loctype) {
     case LOCTYPE_ADDR:
     case LOCTYPE_REALADDR:
-	fprintf(ud->stream,"0x%" PRIx64,location->l.addr);
+	fprintf(ud->stream,"0x%" PRIxADDR,location->l.addr);
 	break;
     case LOCTYPE_REG:
 	fprintf(ud->stream,"REG(%d)",location->l.reg);
@@ -1633,14 +1633,15 @@ void location_dump(struct location *location,struct dump_info *ud) {
 	fprintf(ud->stream,"REGADDR(%d)",location->l.reg);
 	break;
     case LOCTYPE_REG_OFFSET:
-	fprintf(ud->stream,"REGOFFSET(%hhd,%ld)",location->l.regoffset.reg,
-		location->l.regoffset.offset);
+	fprintf(ud->stream,"REGOFFSET(%hhd,%"PRIiOFFSET")",
+		location->l.regoffset.reg,location->l.regoffset.offset);
 	break;
     case LOCTYPE_FBREG_OFFSET:
-	fprintf(ud->stream,"FBREGOFFSET(%ld)",location->l.fboffset);
+	fprintf(ud->stream,"FBREGOFFSET(%"PRIiOFFSET")",location->l.fboffset);
 	break;
     case LOCTYPE_MEMBER_OFFSET:
-	fprintf(ud->stream,"MEMBEROFFSET(%d)",location->l.member_offset);
+	fprintf(ud->stream,"MEMBEROFFSET(%"PRIiOFFSET")",
+		location->l.member_offset);
 	break;
     case LOCTYPE_RUNTIME:
 	fprintf(ud->stream,"RUNTIMEDWOP (%p,%d)",
@@ -1689,7 +1690,7 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 		symbol_type_dump(symbol->datatype,&udn);
 	    }
 	    else if (symbol->datatype_addr_ref) 
-		fprintf(ud->stream,"tref%" PRIx64,symbol->datatype_addr_ref);
+		fprintf(ud->stream,"tref%"PRIxOFFSET,symbol->datatype_addr_ref);
 	//}
     }
     /* all variables are named, but not all members of structs/unions! */
@@ -1758,7 +1759,7 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream," ");
 	}
 	else if (symbol->datatype_addr_ref)
-	    fprintf(ud->stream,"ftref%" PRIx64 " ",symbol->datatype_addr_ref);
+	    fprintf(ud->stream,"ftref%" PRIxOFFSET " ",symbol->datatype_addr_ref);
     }
     if (symbol->s.ii.isinlineinstance) {
 	if (symbol->s.ii.origin) {
@@ -1935,7 +1936,8 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"*");
 	}
 	else
-	    fprintf(ud->stream,"ptref%" PRIx64 " *",symbol->s.ti.type_datatype_ref);
+	    fprintf(ud->stream,"ptref%"PRIxOFFSET" *",
+		    symbol->s.ti.type_datatype_ref);
 	break;
     case DATATYPE_FUNCTION:
 	if (ud->detail)
@@ -1976,7 +1978,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream," %s",symbol->name);
 	}
 	else 
-	    fprintf(ud->stream,"typedef tdtref%" PRIx64 " %s",
+	    fprintf(ud->stream,"typedef tdtref%"PRIxOFFSET" %s",
 		    symbol->s.ti.type_datatype_ref,symbol->name);
 	break;
     case DATATYPE_BASE:

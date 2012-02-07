@@ -474,8 +474,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		|| cbargs->symbol->type == SYMBOL_TYPE_VAR
 		|| cbargs->symbol->type == SYMBOL_TYPE_LABEL)) {
 	    cbargs->symbol->s.ii.isinlineinstance = 1;
-	    cbargs->symbol->s.ii.origin = (struct symbol *) \
-		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
+	    cbargs->symbol->s.ii.origin = (struct symbol *)		\
+		g_hash_table_lookup(cbargs->reftab,(gpointer)(OFFSET)ref);
 	    /* Always set the ref so we can generate a unique name for 
 	     * the symbol; see finalize_die_symbol!!
 	     */
@@ -488,7 +488,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_type:
 	if (ref_set && cbargs->symbol) {
 	    struct symbol *datatype = (struct symbol *) \
-		g_hash_table_lookup(cbargs->reftab,(gpointer)ref);
+		g_hash_table_lookup(cbargs->reftab,(gpointer)(OFFSET)ref);
 	    if (cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 		if (cbargs->symbol->s.ti.datatype_code == DATATYPE_PTR
 		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
@@ -1836,7 +1836,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	 * did this for types, but since inlined func/param instances
 	 * can refer to funcs/vars, we have to do it for every symbol.
 	 */
-	g_hash_table_insert(reftab,(gpointer)offset,symbols[level]);
+	g_hash_table_insert(reftab,(gpointer)(OFFSET)offset,symbols[level]);
 
 	/* Handle adding child symbols to parents!
 	 */
@@ -2270,7 +2270,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	else {
 	    inlen = 9 + 1 + 18 + 1 + 4 + 16 + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
-	    sprintf(inname,"__INLINED(%p:iref%" PRIx64 ")",
+	    sprintf(inname,"__INLINED(%p:iref%"PRIxOFFSET")",
 		    (void *)symbol,
 		    symbol->s.ii.origin_ref);
 	}
@@ -2344,12 +2344,13 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		    g_hash_table_lookup(reftab,
 					(gpointer)symbol->s.ti.type_datatype_ref);
 		if (!symbol->s.ti.type_datatype) 
-		    verror("could not resolve ref %" PRIx64 " for %s type symbol %s\n",
+		    verror("could not resolve ref %"PRIxOFFSET" for %s type symbol %s\n",
 			   symbol->s.ti.type_datatype_ref,
 			   DATATYPE(symbol->s.ti.datatype_code),
 			   symbol->name);
 		else {
-		    vdebug(3,LOG_D_DWARF,"resolved ref 0x%x %s type symbol %s\n",
+		    vdebug(3,LOG_D_DWARF,
+			   "resolved ref 0x%"PRIxOFFSET" %s type symbol %s\n",
 			   symbol->s.ti.type_datatype_ref,
 			   DATATYPE(symbol->s.ti.datatype_code),symbol->name);
 
@@ -2367,7 +2368,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		 * resolved!
 		 */
 		vdebug(3,LOG_D_DWARF,
-		       "rresolving known %s type symbol %s ref 0x%x\n",
+		       "rresolving known %s type symbol %s ref 0x%"PRIxOFFSET"\n",
 		       SYMBOL_TYPE(symbol->s.ti.type_datatype->s.ti.datatype_code),
 		       symbol->s.ti.type_datatype->name,
 		       symbol->s.ti.type_datatype->s.ti.type_datatype_ref);
@@ -2380,7 +2381,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		/* do it for the function type args! */
 		list_for_each_entry(member,&(symbol->s.ti.d.f.args),member) {
 		    vdebug(3,LOG_D_DWARF,
-			   "rresolving function type %s arg %s ref 0x%x\n",
+			   "rresolving function type %s arg %s ref 0x%"PRIxOFFSET"\n",
 			   symbol->name,member->name,member->datatype_addr_ref);
 		    resolve_refs(NULL,member,reftab);
 		}
@@ -2404,7 +2405,8 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	    list_for_each_entry(member,&(symbol->s.ti.d.su.members),member) {
 		if (member->datatype)
 		    continue;
-		vdebug(3,LOG_D_DWARF,"rresolving s/u %s member %s ref 0x%x\n",
+		vdebug(3,LOG_D_DWARF,
+		       "rresolving s/u %s member %s ref 0x%"PRIxOFFSET"\n",
 		       symbol->name,member->name,member->datatype_addr_ref);
 		resolve_refs(NULL,member,reftab);
 	    }
@@ -2416,11 +2418,11 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	    if (!(symbol->datatype = \
 		  g_hash_table_lookup(reftab,
 				      (gpointer)symbol->datatype_addr_ref)))
-		verror("could not resolve ref %" PRIx64 " for var/func symbol %s\n",
+		verror("could not resolve ref %"PRIxOFFSET" for var/func symbol %s\n",
 		       symbol->datatype_addr_ref,symbol->name);
 	    else {
 		vdebug(3,LOG_D_DWARF,
-		       "resolved ref %" PRIx64 " non-type symbol %s\n",
+		       "resolved ref %"PRIxOFFSET" non-type symbol %s\n",
 		       symbol->datatype_addr_ref,symbol->name);
 	    }
 	}
@@ -2430,7 +2432,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	 */
 	if (symbol->datatype) {
 	    vdebug(3,LOG_D_DWARF,
-		   "rresolving ref 0x%" PRIx64 " %s type symbol %s\n",
+		   "rresolving ref 0x%"PRIxOFFSET" %s type symbol %s\n",
 		   symbol->datatype->s.ti.type_datatype_ref,
 		   SYMBOL_TYPE(symbol->datatype->s.ti.datatype_code),
 		   symbol->datatype->name);
@@ -2442,7 +2444,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	    list_for_each_entry(member,&(symbol->s.ii.d.f.args),member) {
 		if (member->datatype) {
 		    vdebug(3,LOG_D_DWARF,
-			   "rresolving ref 0x%x function %s arg %s\n",
+			   "rresolving ref 0x%"PRIxOFFSET" function %s arg %s\n",
 			   member->datatype_addr_ref,symbol->name,member->name);
 		    resolve_refs(NULL,member,reftab);
 		}
@@ -2462,11 +2464,12 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	if (!(symbol->s.ii.origin = \
 	      g_hash_table_lookup(reftab,
 				  (gpointer)symbol->s.ii.origin_ref))) {
-	    verror("could not resolve ref %" PRIx64 " for inlined %s\n",
+	    verror("could not resolve ref 0x%"PRIxOFFSET" for inlined %s\n",
 		   symbol->s.ii.origin_ref,SYMBOL_TYPE(symbol->type));
 	}
 	else {
-	    vdebug(3,LOG_D_DWARF,"resolved ref 0x%x inlined %s to %s\n",
+	    vdebug(3,LOG_D_DWARF,
+		   "resolved ref 0x%"PRIxOFFSET" inlined %s to %s\n",
 		   symbol->s.ii.origin_ref,
 		   SYMBOL_TYPE(symbol->type),
 		   symbol->s.ii.origin->name);

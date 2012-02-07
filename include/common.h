@@ -40,6 +40,7 @@ typedef uint64_t REGVAL;
 #define PRIxADDR PRIx64
 #define PRIuADDR PRIu64
 #define PRIiOFFSET PRIi64
+#define PRIxOFFSET PRIx64
 #define PRIxREGVAL PRIx64
 #define ADDRMAX 0xffffffffffffffff
 #else
@@ -49,6 +50,7 @@ typedef uint32_t REGVAL;
 #define PRIxADDR PRIx32
 #define PRIuADDR PRIu32
 #define PRIiOFFSET PRIi32
+#define PRIxOFFSET PRIx32
 #define PRIxREGVAL PRIx32
 #define ADDRMAX 0xffffffff
 #endif
