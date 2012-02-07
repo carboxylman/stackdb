@@ -1021,7 +1021,7 @@ __register_vmprobe(struct vmprobe *probe)
 }
 
 static void
-__dump_probe(struct vmprobe *probe)
+__dump_probe(struct vmprobe *probe, char *str)
 {
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_domain *domain;
@@ -1041,14 +1041,18 @@ __dump_probe(struct vmprobe *probe)
     if (pages) {
 	int i;
 
+	if (str)
+	    printf("%s:\n", str);
+	printf("P:");
         for (i = 0; i < 16; ++i) {
             printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
         }
-        printf("\n");
+        printf("\nM:");
         for (i = 0; i < 16; ++i) {
             printf(" %08x",*((unsigned int *)(pages + offset + i*4)));
         }
         printf("\n");
+	fflush(stdout);
 
 	i = 1;
 	if (offset + 64 > domain->xa_instance.page_size)
@@ -1089,8 +1093,8 @@ __unregister_vmprobe(struct vmprobe *probe)
 
     probepoint->state = VMPROBE_REMOVING;
 
-    if (vmprobes_debug_level >= 0)
-	__dump_probe(probe);
+    if (vmprobes_debug_level > 0)
+	__dump_probe(probe, "Before remove_bp");
 
     /* restore the original instruction */
     ret = __remove_breakpoint(probepoint);
@@ -1100,8 +1104,8 @@ __unregister_vmprobe(struct vmprobe *probe)
         return ret;
     }
 
-    if (vmprobes_debug_level >= 0)
-	__dump_probe(probe);
+    if (vmprobes_debug_level > 0)
+	__dump_probe(probe, "After remove_bp");
 
     probepoint->state = VMPROBE_DISABLED;
 
@@ -1794,11 +1798,11 @@ run_vmprobes(void)
             debug(0,"caught signal and removing probes safely!\n");
             unregister_vmprobe_batch_internal();
             raise(interrupt_sig);
-        
-            /* stop requested? */
-            if (stop)
-                continue;
         }
+        
+	/* stop requested? */
+	if (stop)
+	    continue;
 
         if (!FD_ISSET(fd, &inset))
             goto retry; // nothing in eventchn
@@ -1970,6 +1974,7 @@ int
 restart_vmprobes(void)
 {
     interrupt = false;
+    stop = false;
 
 #if 0
     // reopen event channel

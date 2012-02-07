@@ -3430,7 +3430,7 @@ void usrsighandle(int signo) {
 
 void hupsighandle(int signo) {
     reloadconfigfile = 1;
-    interrupt_vmprobes();
+    stop_vmprobes();
     signal(signo,hupsighandle);
 }
 
@@ -3873,9 +3873,11 @@ static void cleanup(int signo)
 	free(ps_list);
     }
 
-    if (signo)
+    if (signo) {
 	raise(signo);
-    exit(-1);
+	sleep(2);
+	exit(-1);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -4278,8 +4280,9 @@ int main(int argc, char *argv[])
 		}
 	    }
 
+	    // already done just to get here
 	    // stop the library fully!
-	    stop_vmprobes();
+	    //stop_vmprobes();
 
 	    // free up current data structures
 	    cleanup(0);
