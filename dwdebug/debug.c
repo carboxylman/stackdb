@@ -148,7 +148,7 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     struct array_list *chain = NULL;
     GHashTableIter iter;
     gpointer key;
-    struct symbol *value;
+    struct symbol *svalue;
     struct symtab *subtab;
 
     if (delim && strstr(name,delim)) {
@@ -164,17 +164,17 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
      */
     g_hash_table_iter_init(&iter,symtab->tab);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&value)) {
+				  (gpointer)&key,(gpointer)&svalue)) {
 	if (((ftype != SYMBOL_TYPE_FLAG_NONE
-	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(value))
-		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(value))
+	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(svalue))
+		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(svalue))
 		  || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
-		      && SYMBOL_IS_FUNCTION(value))
+		      && SYMBOL_IS_FUNCTION(svalue))
 		  || (ftype & SYMBOL_TYPE_FLAG_LABEL 
-		      && SYMBOL_IS_LABEL(value))))
+		      && SYMBOL_IS_LABEL(svalue))))
 	     || ftype == SYMBOL_TYPE_FLAG_NONE)
-	    && strcmp(next,key) == 0) {
-	    symbol = (struct symbol *)value;
+	    && strcmp(next,(char *)key) == 0) {
+	    symbol = svalue;
 	    break;
 	}
     }
