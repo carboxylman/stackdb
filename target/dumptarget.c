@@ -135,6 +135,25 @@ int function_dump_args(struct probe *probe) {
     return 0;
 }
 
+int function_post(struct probe *probe) {
+    int i;
+
+    for (i = 0; i < len; ++i) 
+	if (probes[i] == probe)
+	    break;
+
+    if (i == len) {
+	fprintf(stderr,"Could not find our probe/symbol index!\n");
+	return 0;
+    }
+
+    fprintf(stderr,"%s (0x%"PRIxADDR") post handler\n",
+	    symbols[i]->lsymbol->symbol->name,probe->probepoint->addr);
+
+    return 0;
+}
+    
+
 int main(int argc,char **argv) {
     int pid = -1;
     char *exe = NULL;
@@ -149,6 +168,7 @@ int main(int argc,char **argv) {
     int ssize;
     log_flags_t flags;
     probepoint_type_t ptype = PROBEPOINT_FASTEST;
+    int do_post = 1;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -157,7 +177,7 @@ int main(int argc,char **argv) {
 	.meta = 1,
     };
 
-    while ((ch = getopt(argc, argv, "p:e:dvsl:")) != -1) {
+    while ((ch = getopt(argc, argv, "p:e:dvsl:P")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
@@ -180,6 +200,9 @@ int main(int argc,char **argv) {
 		exit(-1);
 	    }
 	    vmi_set_log_flags(flags);
+	    break;
+	case 'P':
+	    do_post = 0;
 	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
@@ -254,15 +277,16 @@ int main(int argc,char **argv) {
 		/* Try to insert a breakpoint, fastest possible! */
 		ADDR probeaddr;
 		struct memrange *range;
-		if ((range = location_resolve_function_entry(t,symbols[i],
-							     &probeaddr))) {
+		if (location_resolve_function_entry(t,symbols[i],
+						    &probeaddr,&range)) {
 		    fprintf(stderr,"Could not resolve entry PC for function %s!\n",
 			    symbols[i]->lsymbol->symbol->name);
 		    exit(-1);
 		}
 		
 		probes[i] = probe_register_break(t,probeaddr,ptype,
-						 function_dump_args,NULL,
+						 function_dump_args,
+						 (do_post) ? function_post : NULL,
 						 symbols[i]->lsymbol,probeaddr,
 						 range);
 		
@@ -311,7 +335,11 @@ int main(int argc,char **argv) {
 		goto resume;
 
 	    ptrace(PTRACE_GETREGS,pid,NULL,&regs);
+#if __WORDSIZE == 64
 	    printf("pid %d interrupted at 0x%" PRIx64 "\n",pid,regs.rip);
+#else
+	    printf("pid %d interrupted at 0x%lx\n",pid,regs.eip);
+#endif
 
 	    goto resume;
 
@@ -319,14 +347,14 @@ int main(int argc,char **argv) {
 		for (i = 0; i < argc; ++i) {
 		    if (target_read_addr(t,addrs[i],t->wordsize,
 					 (unsigned char *)word) != NULL) {
-			printf("0x%08" PRIx64 " = ",addrs[i]);
+			printf("0x%" PRIxADDR " = ",addrs[i]);
 			for (j = 0; j < t->wordsize; ++j) {
 			    printf("%02hhx",word[j]);
 			}
 			printf("\n");
 		    }
 		    else
-			printf("0x%08" PRIx64 ": could not read value: %s\n",
+			printf("0x%" PRIxADDR ": could not read value: %s\n",
 			       addrs[i],strerror(errno));
 		}
 	    }
