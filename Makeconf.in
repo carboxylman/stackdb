@@ -62,8 +62,13 @@ ELFUTILS = @ELFUTILS@
 ELFUTILS_CFLAGS = -I$(ELFUTILS)/include
 ELFUTILS_LDFLAGS = -L$(ELFUTILS)/lib -L$(ELFUTILS)/lib/elfutils -ldw -lelf -lebl
 
-GLIB_CFLAGS     = $(shell pkg-config --cflags glib-2.0)
-GLIB_LDFLAGS    = $(shell pkg-config --libs glib-2.0)
+# need this to pick up pkg-config files in wherever glib might be
+GLIB            = @GLIB@
+PKG_CONFIG_PATH := @GLIB@/lib/pkgconfig
+export PKG_CONFIG_PATH
+
+GLIB_CFLAGS     = `pkg-config --cflags glib-2.0`
+GLIB_LDFLAGS    = `pkg-config --libs glib-2.0`
 
 #
 # XXX this stuff should be pkg-config'd or similar
