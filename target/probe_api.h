@@ -200,7 +200,7 @@ void action_cancel(struct action *action);
 /*
  * High-level actions that require little ASM knowledge.
  */
-struct action *action_return(unsigned long retval);
+struct action *action_return(REGVAL retval);
 
 /*
  * Low-level actions that require little ASM knowledge, and may or may
