@@ -88,11 +88,11 @@ struct value *target_read(struct target *target,struct symbol *symbol);
 int target_write(struct target *target,struct symbol *symbol,struct value *value);
 
 unsigned char *target_generic_fd_read(int fd,
-				      unsigned long long addr,
+				      ADDR addr,
 				      unsigned long length,
 				      unsigned char *buf);
 unsigned long target_generic_fd_write(int fd,
-				      unsigned long long addr,
+				      ADDR addr,
 				      unsigned long length,
 				      unsigned char *buf);
 struct debugfile *target_associate_debugfile(struct target *target,
@@ -166,7 +166,8 @@ struct location *location_resolve_loclist(struct target *target,
 					  struct location *location);
 int location_can_mmap(struct location *location,struct target *target);
 int location_resolve_function_entry(struct target *target,
-				    struct bsymbol *bsymbol,ADDR *addr_saveptr);
+				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
+				    struct memrange **range_saveptr);
 
 /**
  ** Location loading functions.

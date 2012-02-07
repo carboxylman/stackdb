@@ -62,11 +62,11 @@ static int linux_userproc_pause(struct target *target);
 static int linux_userproc_resume(struct target *target);
 static target_status_t linux_userproc_monitor(struct target *target);
 static unsigned char *linux_userproc_read(struct target *target,
-					  unsigned long long addr,
+					  ADDR addr,
 					  unsigned long length,
 					  unsigned char *buf);
 static unsigned long linux_userproc_write(struct target *target,
-					  unsigned long long addr,
+					  ADDR addr,
 					  unsigned long length,
 					  unsigned char *buf);
 static char *linux_userproc_reg_name(struct target *target,REG reg);
@@ -1030,11 +1030,11 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 		    /* Found HW breakpoint! */
 		    /* Clear the status bits right now. */
 		    errno = 0;
-		    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-			   offsetof(struct user,u_debugreg[6]),(void *)0);
-		    if (errno) {
+		    if (ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+			       offsetof(struct user,u_debugreg[6]),0)) {
 			verror("could not clear status debug reg, continuing"
 			       " anyway: %s!\n",strerror(errno));
+			errno = 0;
 		    }
 
 		    dpp = (struct probepoint *)g_hash_table_lookup(target->probepoints,
@@ -1083,7 +1083,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 }
 
 static unsigned char *linux_userproc_read(struct target *target,
-					  unsigned long long addr,
+					  ADDR addr,
 					  unsigned long length,
 					  unsigned char *buf) {
     struct linux_userproc_state *lstate;
@@ -1098,7 +1098,7 @@ static unsigned char *linux_userproc_read(struct target *target,
 }
 
 unsigned long linux_userproc_write(struct target *target,
-				   unsigned long long addr,
+				   ADDR addr,
 				   unsigned long length,
 				   unsigned char *buf) {
     struct linux_userproc_state *lstate;
@@ -1279,8 +1279,8 @@ static char *dreg_to_name64[X86_64_DWREG_COUNT] = {
 
 #define X86_32_DWREG_COUNT 10
 static int dreg_to_ptrace_idx32[X86_32_DWREG_COUNT] = { 
-    7, 2, 3, 1, 16, 6, 4, 5,
-    13, 15,
+    6, 1, 2, 0, 15, 5, 3, 4,
+    12, 14,
 };
 static char *dreg_to_name32[X86_32_DWREG_COUNT] = { 
     "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",

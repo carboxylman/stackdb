@@ -29,7 +29,7 @@
  * NULL.
  */
 unsigned char *target_generic_fd_read(int fd,
-				      unsigned long long addr,
+				      ADDR addr,
 				      unsigned long length,
 				      unsigned char *buf) {
     unsigned char *lbuf = buf;
@@ -41,7 +41,7 @@ unsigned char *target_generic_fd_read(int fd,
     int retval;
     int len;
 
-    vdebug(5,LOG_T_OTHER,"reading fd %d at 0x%llx into %p (%d)\n",
+    vdebug(5,LOG_T_OTHER,"reading fd %d at 0x%"PRIxADDR" into %p (%d)\n",
 	   fd,addr,buf,length);
 
     /* We must malloc their buffer if they want us to read a NUL-term
@@ -59,7 +59,7 @@ unsigned char *target_generic_fd_read(int fd,
     }
 
     if (lseek64(fd,addr,SEEK_SET) == (off64_t) -1) {
-	verror("lseek64(%d,0x%llx,0): %s\n",fd,addr,strerror(errno));
+	verror("lseek64(%d,0x%"PRIxADDR",0): %s\n",fd,addr,strerror(errno));
 	return NULL;
     }
 
@@ -123,7 +123,7 @@ unsigned char *target_generic_fd_read(int fd,
 }
 
 unsigned long target_generic_fd_write(int fd,
-				      unsigned long long addr,
+				      ADDR addr,
 				      unsigned long length,
 				      unsigned char *buf) {
     size_t rc;

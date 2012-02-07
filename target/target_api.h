@@ -55,10 +55,10 @@ int target_pause(struct target *target);
 target_status_t target_status(struct target *target);
 int target_close(struct target *target);
 unsigned char *target_read_addr(struct target *target,
-				unsigned long long addr,
+				ADDR addr,
 				unsigned long length,
 				unsigned char *buf);
-unsigned long target_write_addr(struct target *target,unsigned long long addr,
+unsigned long target_write_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf);
 char *target_reg_name(struct target *target,REG reg);
 REGVAL target_read_reg(struct target *target,REG reg);
@@ -240,10 +240,10 @@ struct target_ops {
     int (*writereg)(struct target *target,REG reg,REGVAL value);
 
     /* read some memory, potentially into a supplied buffer. */
-    unsigned char *(*read) (struct target *target,unsigned long long addr,
+    unsigned char *(*read) (struct target *target,ADDR addr,
 			    unsigned long length,unsigned char *buf);
     /* write some memory */
-    unsigned long (*write)(struct target *target,unsigned long long addr,
+    unsigned long (*write)(struct target *target,ADDR addr,
 			   unsigned long length,unsigned char *buf);
 
     /* breakpoint/watchpoint stuff */

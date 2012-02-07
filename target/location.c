@@ -522,7 +522,8 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 }
 
 int location_resolve_function_entry(struct target *target,
-				    struct bsymbol *bsymbol,ADDR *addr_saveptr) {
+				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
+				    struct memrange **range_saveptr) {
     struct symbol *symbol = bsymbol->lsymbol->symbol;
     int i;
     ADDR obj_addr;
@@ -557,7 +558,7 @@ int location_resolve_function_entry(struct target *target,
     }
 
     /* Translate the obj address to something real in this region. */
-    obj_addr = memregion_relocate(bsymbol->region,obj_addr,NULL);
+    obj_addr = memregion_relocate(bsymbol->region,obj_addr,range_saveptr);
 
     if (addr_saveptr)
 	*addr_saveptr = obj_addr;
