@@ -77,7 +77,9 @@ int function_dump_args(struct probe *probe) {
 	return 0;
     }
 
-    fprintf(stderr,"%s (0x%"PRIxADDR")\n",symbols[i]->lsymbol->symbol->name,
+    fflush(stderr);
+
+    fprintf(stdout,"%s (0x%"PRIxADDR")\n",symbols[i]->lsymbol->symbol->name,
 	    probe->probepoint->addr);
 
     /* Make a chain with room for one more -- the
@@ -130,6 +132,8 @@ int function_dump_args(struct probe *probe) {
     }
     printf("\n");
 
+    fflush(stdout);
+
     array_list_free(tmp);
 
     return 0;
@@ -147,8 +151,12 @@ int function_post(struct probe *probe) {
 	return 0;
     }
 
-    fprintf(stderr,"%s (0x%"PRIxADDR") post handler\n",
+    fflush(stderr);
+
+    fprintf(stdout,"%s (0x%"PRIxADDR") post handler\n",
 	    symbols[i]->lsymbol->symbol->name,probe->probepoint->addr);
+
+    fflush(stdout);
 
     return 0;
 }
