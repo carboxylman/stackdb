@@ -50,8 +50,12 @@ char *location_load(struct target *target,struct memregion *region,
     ADDR final_location = 0;
     REGVAL regval;
     struct memrange *range;
+    struct location *loclistloc = NULL;
 
-    if (location->loctype == LOCTYPE_REG) {
+    if (location->loctype == LOCTYPE_REG
+	|| (location->loctype == LOCTYPE_LOCLIST
+	    && ((loclistloc = location_resolve_loclist(target,region,location))
+		&& loclistloc->loctype == LOCTYPE_REG))) {
 	/* They must supply a buffer if the value is in a register. */
 	if (!buf) {
 	    errno = EINVAL;
@@ -65,7 +69,8 @@ char *location_load(struct target *target,struct memregion *region,
 	}
 
         /* just read the register directly */
-        regval = target_read_reg(target,location->l.reg);
+        regval = target_read_reg(target,
+				 (loclistloc) ? loclistloc->l.reg : location->l.reg);
         if (errno)
             return NULL;
 
@@ -79,6 +84,8 @@ char *location_load(struct target *target,struct memregion *region,
 	    memcpy(buf,&regval,(bufsiz < 4) ? bufsiz : 4);
         else
             memcpy(buf,&regval,bufsiz);
+
+	return buf;
     }
     else {
         final_location = location_resolve(target,region,location,symbol_chain,
@@ -97,8 +104,6 @@ char *location_load(struct target *target,struct memregion *region,
         return location_addr_load(target,range,final_location,
 				  flags,buf,bufsiz);
     }
-
-    return 0;
 }
 
 char *location_addr_load(struct target *target,struct memrange *range,
@@ -136,6 +141,67 @@ int location_can_mmap(struct location *location,struct target *target) {
 
     /* If they didn't supply a target, the location *might* be mmapable */
     return 1;
+}
+
+/*
+ * This only handles figuring out which location on a loclist is valid,
+ * given the current EIP.  This is useful in case we are trying to
+ * resolve a location that is a loclist, and the matching location is a
+ * register (which has no address!).  So this function works in tandem
+ * with the one below in location_load().
+ */
+struct location *location_resolve_loclist(struct target *target,
+					  struct memregion *region,
+					  struct location *location) {
+    int i;
+    ADDR obj_eip;
+    REGVAL eip;
+    struct memrange *range;
+
+    if (!target) {
+	errno = EINVAL;
+	return 0;
+    }
+
+    /* We load EIP, scan the location list for a match, and run the
+     * matching location op recursively via location_resolve!
+     */
+    eip = target_read_reg(target,target->ipregno);
+    if (errno)
+	return NULL;
+    errno = 0;
+    vdebug(5,LOG_T_LOC,"eip = 0x%" PRIxADDR "\n",eip);
+
+    /*
+     * Find out which range in the region this address is in,
+     * then translate it into an object address and compare with
+     * the loclist.
+     */
+    range = memregion_find_range_real(region,eip);
+    if (!range) {
+	verror("LOCLIST eip not in region %s!!\n",region->name);
+	errno = EINVAL;
+	return NULL;
+    }
+    obj_eip = memrange_unrelocate(range,(ADDR)eip);
+
+    for (i = 0; i < location->l.loclist->len; ++i) {
+	if (location->l.loclist->list[i]->start <= obj_eip 
+	    && obj_eip < location->l.loclist->list[i]->end)
+	    break;
+    }
+    if (i == location->l.loclist->len) {
+	verror("LOCLIST location not currently valid!\n");
+	errno = EINVAL;
+	return NULL;
+    }
+    else if (!location->l.loclist->list[i]->loc) {
+	verror("matching LOCLIST member does not have a location description!\n");
+	errno = EINVAL;
+	return NULL;
+    }
+
+    return location->l.loclist->list[i]->loc;
 }
 
 /*
@@ -341,50 +407,11 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	return (ADDR)(frame_base + (ADDR)location->l.fboffset);
 	//return (ADDR)(frame_base - (ADDR)location->l.fboffset);
     case LOCTYPE_LOCLIST:
-	if (!target) {
-	    errno = EINVAL;
+	/* XXX: reuse fbloc to save a stack word */
+	if (!(fbloc = location_resolve_loclist(target,region,location)))
 	    return 0;
-	}
-	/* Like the above case, we load EIP, scan the location list
-	 * for a match, and run the matching location op recursively
-	 * via location_resolve!
-	 */
-	eip = target_read_reg(target,target->ipregno);
-	if (errno)
-	    return 0;
-	errno = 0;
-	vdebug(5,LOG_T_LOC,"eip = 0x%" PRIxADDR "\n",eip);
 
-	/*
-	 * Find out which range in the region this address is in,
-	 * then translate it into an object address and compare with
-	 * the loclist.
-	 */
-	range = memregion_find_range_real(region,eip);
-	if (!range) {
-	    verror("LOCLIST eip not in region %s!!\n",
-		   region->name);
-	    errno = EINVAL;
-	    return 0;
-	}
-	ADDR obj_eip = memrange_unrelocate(range,(ADDR)eip);
-
-	for (i = 0; i < location->l.loclist->len; ++i) {
-	    if (location->l.loclist->list[i]->start <= obj_eip 
-		&& obj_eip < location->l.loclist->list[i]->end)
-		break;
-	}
-	if (i == location->l.loclist->len) {
-	    verror("LOCLIST location not currently valid!\n");
-	    errno = EINVAL;
-	    return 0;
-	}
-	else if (!location->l.loclist->list[i]->loc) {
-	    verror("matching LOCLIST member does not have a location description!\n");
-	    errno = EINVAL;
-	    return 0;
-	}
-	return location_resolve(target,region,location->l.loclist->list[i]->loc,
+	return location_resolve(target,region,fbloc,
 				/* XXX: is this correct, or should we
 				 * pass NULL?
 				 */

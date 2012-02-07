@@ -161,6 +161,9 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 		      struct location *location,
 		      struct array_list *symbol_chain,
 		      struct memrange **range_saveptr);
+struct location *location_resolve_loclist(struct target *target,
+					  struct memregion *region,
+					  struct location *location);
 int location_can_mmap(struct location *location,struct target *target);
 int location_resolve_function_entry(struct target *target,
 				    struct bsymbol *bsymbol,ADDR *addr_saveptr);
