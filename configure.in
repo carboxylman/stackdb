@@ -181,6 +181,8 @@ if test ! -e "$ELFUTILS/include/elfutils/version.h" ; then
     AC_DEFINE([ELFUTILS_NO_VERSION_H],[1],[Define to mark elfutils has no version.h])
     if test -x "$ELFUTILS/bin/eu-objdump" ; then
         EV=`"$ELFUTILS/bin/eu-objdump" -V | sed -r -n -e 's/objdump.*[[0-9]]\.([[0-9]]+)/\1/p'`
+    elif test -x "$ELFUTILS/bin/vmi-eu-objdump" ; then
+        EV=`"$ELFUTILS/bin/vmi-eu-objdump" -V | sed -r -n -e 's/objdump.*[[0-9]]\.([[0-9]]+)/\1/p'`
     elif test -x "$ELFUTILS/bin/objdump" ; then
         EV=`"$ELFUTILS/bin/objdump" -V | sed -r -n -e 's/objdump.*[[0-9]]\.([[0-9]]+)/\1/p'`
     fi
