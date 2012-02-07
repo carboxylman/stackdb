@@ -159,10 +159,10 @@ struct symtab *target_lookup_pc(struct target *target,uint64_t pc) {
  found:
     g_hash_table_iter_init(&iter,region->debugfiles);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer *)&key,(gpointer *)&value)) {
+				  (gpointer)&key,(gpointer)&value)) {
 	g_hash_table_iter_init(&iter2,((struct debugfile *)value)->srcfiles);
 	while (g_hash_table_iter_next(&iter2,
-				      (gpointer *)&key,(gpointer *)&symtab)) {
+				      (gpointer)&key,(gpointer)&symtab)) {
 	    symtab = symtab_lookup_pc(symtab,pc);
 	    if (symtab)
 		return symtab;
@@ -189,8 +189,8 @@ struct bsymbol *target_lookup_sym(struct target *target,
     list_for_each_entry(space,&target->spaces,space) {
 	list_for_each_entry(region,&space->regions,region) {
 	    g_hash_table_iter_init(&iter,region->debugfiles);
-	    while (g_hash_table_iter_next(&iter,(gpointer *)&key,
-					  (gpointer *)&debugfile)) {
+	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
+					  (gpointer)&debugfile)) {
 		lsymbol = debugfile_lookup_sym(debugfile,name,delim,srcfile,
 					       ftype);
 		if (lsymbol) 

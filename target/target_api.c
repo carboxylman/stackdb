@@ -176,7 +176,7 @@ void target_free(struct target *target) {
      */
     g_hash_table_iter_init(&iter,target->probepoints);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer *)&key,(gpointer *)&probepoint)) {
+				  (gpointer)&key,(gpointer)&probepoint)) {
 	probepoint_free_ext(probepoint);
     }
 

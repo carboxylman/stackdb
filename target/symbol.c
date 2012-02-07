@@ -289,7 +289,7 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
 	    fprintf(stream,"%u",(uint32_t)(((*(uint32_t *)buf) & bitmask) \
 					    >> lboffset));
 	else if (symbol->s.ii.d.v.byte_size == 8) 
-	    fprintf(stream,"%lu",(uint64_t)(((*(uint64_t *)buf) & bitmask) \
+	    fprintf(stream,"%"PRIu64,(uint64_t)(((*(uint64_t *)buf) & bitmask) \
 					    >> lboffset));
 	else {
 	    vwarn("unsupported bitfield byte size %d for symbol %s\n",

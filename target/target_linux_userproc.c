@@ -118,6 +118,11 @@ struct target_ops linux_userspace_process_ops = {
     .singlestep = linux_userproc_singlestep,
     .singlestep_end = linux_userproc_singlestep_end,
 };
+#if __WORDSIZE == 64
+typedef unsigned long int ptrace_reg_t;
+#else
+typedef int ptrace_reg_t;
+#endif
 
 struct linux_userproc_state {
     int pid;
@@ -127,14 +132,11 @@ struct linux_userproc_state {
     enum __ptrace_request ptrace_type;
     int last_signo;
     int syscall;
-#if __WORDSIZE == 64
+
     /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
      * we use this might have to change.
      */
-    unsigned long int dr[8];
-#else
-    int dr[8];
-#endif
+    ptrace_reg_t dr[8];
 };
 
 /**
@@ -1015,13 +1017,13 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 		/* We could check the debug status register bits, but
 		 * this is the same, really...
 		 */
-		if (lstate->dr[0] == ipval)
+		if (lstate->dr[0] == (ptrace_reg_t)ipval)
 		    dreg = 0;
-		else if (lstate->dr[1] == ipval)
+		else if (lstate->dr[1] == (ptrace_reg_t)ipval)
 		    dreg = 1;
-		else if (lstate->dr[2] == ipval)
+		else if (lstate->dr[2] == (ptrace_reg_t)ipval)
 		    dreg = 2;
-		else if (lstate->dr[3] == ipval)
+		else if (lstate->dr[3] == (ptrace_reg_t)ipval)
 		    dreg = 3;
 
 		if (dreg > -1) {
@@ -1296,7 +1298,7 @@ char *linux_userproc_reg_name(struct target *target,REG reg) {
     }
     return dreg_to_name64[reg];
 #else
-    if (reg >= I386_DWREG_COUNT) {
+    if (reg >= X86_32_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	return NULL;
     }
@@ -1318,7 +1320,7 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
     }
     ptrace_idx = dreg_to_ptrace_idx64[reg];
 #else
-    if (reg >= I386_DWREG_COUNT) {
+    if (reg >= X86_32_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
@@ -1358,7 +1360,7 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     }
     ptrace_idx = dreg_to_ptrace_idx64[reg];
 #else
-    if (reg >= I386_DWREG_COUNT) {
+    if (reg >= X86_32_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return -1;
