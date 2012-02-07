@@ -1372,6 +1372,14 @@ int probepoint_ss_handler(struct target *target,
     }
 
     /*
+     * Enable hw breakpoints since we're done single stepping...
+     */
+    if (target_enable_hw_breakpoints(target) < 0) {
+	verror("could not enable hw breakpoints after failed"
+	       " sstep; proceeding anyway!\n");
+    }
+
+    /*
      * Just continue on...
      */
     target_resume(target);
