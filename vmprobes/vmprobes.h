@@ -207,6 +207,20 @@ domid_t
 vmprobe_domid(vmprobe_handle_t handle);
 
 /*
+ * Set a cookie value for the indicated vmprobe.
+ * Returns zero on success, non-zero otherwise.
+ */
+int
+vmprobe_setcookie(vmprobe_handle_t handle, void *cookie);
+
+/*
+ * Return the cookie value associated with the indicated handle.
+ * returns NULL if none.
+ */
+void *
+vmprobe_getcookie(vmprobe_handle_t handle);
+
+/*
  * Returns the pointer to a xenaccess instance that a probe belongs to.
  * If the given handle is invalid, the function returns NULL.
  * NOTE: This function is added to increase the performance of any future
