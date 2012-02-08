@@ -338,7 +338,7 @@ int main(int argc,char **argv) {
 
     while (1) {
 	tstat = target_monitor(t);
-	if (tstat == STATUS_PAUSED) {
+	if (tstat == TSTATUS_PAUSED) {
 	    if (linux_userproc_stopped_by_syscall(t)) 
 		goto resume;
 
@@ -418,11 +418,11 @@ int main(int argc,char **argv) {
 	}
 	else {
 	    target_close(t);
-	    if (tstat == STATUS_DONE)  {
+	    if (tstat == TSTATUS_DONE)  {
 		printf("pid %d finished.\n",pid);
 		break;
 	    }
-	    else if (tstat == STATUS_ERROR) {
+	    else if (tstat == TSTATUS_ERROR) {
 		printf("pid %d monitoring failed!\n",pid);
 		return -9;
 	    }

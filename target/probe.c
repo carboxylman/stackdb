@@ -321,7 +321,7 @@ static int __probe_unregister(struct probe *probe,int force) {
 
     /* Target must be paused before we do anything. */
     status = target_status(target);
-    if (status != STATUS_PAUSED) {
+    if (status != TSTATUS_PAUSED) {
         verror("target not paused (%d), cannot remove!\n",status);
 	errno = EINVAL;
 	return -1;
@@ -510,7 +510,7 @@ int probe_unregister_batch(struct target *target,struct probe **probelist,
 	return 0;
 
     /* Target must be paused before we do anything. */
-    if (target_status(target) != STATUS_PAUSED) {
+    if (target_status(target) != TSTATUS_PAUSED) {
         verror("target not paused!\n");
 	errno = EINVAL;
 	return -1;
@@ -704,7 +704,7 @@ struct probe *__probe_register(struct target *target,ADDR addr,
     }
 
     /* Target must be paused before we do anything. */
-    if (target_status(target) != STATUS_PAUSED) {
+    if (target_status(target) != TSTATUS_PAUSED) {
         verror("target not paused!\n");
 	errno = EINVAL;
 	return NULL;
@@ -823,7 +823,7 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
     }
 
     /* Target must be paused before we do anything. */
-    if (target_status(target) != STATUS_PAUSED) {
+    if (target_status(target) != TSTATUS_PAUSED) {
         verror("target not paused!\n");
 	errno = EINVAL;
 	return -1;

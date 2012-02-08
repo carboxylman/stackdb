@@ -32,24 +32,52 @@ struct memregion;
 struct memrange;
 
 typedef enum {
-    STATUS_UNKNOWN        = 0,
-    STATUS_RUNNING        = 1,
-    STATUS_PAUSED         = 2,
-    STATUS_DEAD           = 3,
-    STATUS_STOPPED        = 4,
-    STATUS_ERROR          = 5,
-    STATUS_DONE           = 6,
-    __STATUS_MAX,
+    TSTATUS_UNKNOWN        = 0,
+    TSTATUS_RUNNING        = 1,
+    TSTATUS_PAUSED         = 2,
+    TSTATUS_DEAD           = 3,
+    TSTATUS_STOPPED        = 4,
+    TSTATUS_ERROR          = 5,
+    TSTATUS_DONE           = 6,
 } target_status_t;
 
-extern char *STATUS_STRINGS[];
-#define STATUS(n) (((n) < __STATUS_MAX) ? STATUS_STRINGS[(n)] : NULL)
+typedef enum {
+    POLL_NOTHING          = 0,
+    POLL_ERROR            = 1,
+    POLL_SUCCESS          = 2,
+    POLL_UNKNOWN          = 3,
+    __POLL_MAX,
+} target_poll_outcome_t;
+
+extern char *TSTATUS_STRINGS[];
+#define TSTATUS(n) (((n) < sizeof(TSTATUS_STRINGS)/sizeof(char *)) \
+		    ? TSTATUS_STRINGS[(n)] : NULL)
+
+extern char *POLL_STRINGS[];
+#define POLL(n) (((n) < sizeof(POLL_STRINGS)/sizeof(char *)) \
+		 ? POLL_STRINGS[(n)] : NULL)
 
 /**
  ** These functions form the target API.
  **/
 int target_open(struct target *target);
+/*
+ * Monitors a target for debug/exception events, tries to handle any
+ * probes attached to the target, and only returns if it can't handle
+ * some condition that arises.
+ */
 target_status_t target_monitor(struct target *target);
+/*
+ * Polls a target for debug/exception events, and *will* try to handle
+ * any probes if it gets an event.  It saves the outcome in @outcome if
+ * you provide a non-NULL value.  @pstatus is mostly a legacy of the
+ * linux userspace target; in any case, its value is target-specific,
+ * and the target backend may populate it however it wishes.  Finally,
+ * like target_monitor, target_poll will return control to the user for
+ * any exceptions it encounters that it can't handle.
+ */
+target_status_t target_poll(struct target *target,
+			    target_poll_outcome_t *outcome,int *pstatus);
 int target_resume(struct target *target);
 int target_pause(struct target *target);
 target_status_t target_status(struct target *target);
@@ -233,6 +261,8 @@ struct target_ops {
     int (*resume)(struct target *target);
     /* wait for something to happen to the target */
     target_status_t (*monitor)(struct target *target);
+    target_status_t (*poll)(struct target *target,
+			    target_poll_outcome_t *outcome,int *pstatus);
 
     /* get/set contents of a register */
     char *(*regname)(struct target *target,REG reg);

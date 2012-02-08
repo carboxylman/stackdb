@@ -61,6 +61,9 @@ static target_status_t linux_userproc_status(struct target *target);
 static int linux_userproc_pause(struct target *target);
 static int linux_userproc_resume(struct target *target);
 static target_status_t linux_userproc_monitor(struct target *target);
+static target_status_t linux_userproc_poll(struct target *target,
+					   target_poll_outcome_t *outcome,
+					   int *pstatus);
 static unsigned char *linux_userproc_read(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
@@ -103,6 +106,7 @@ struct target_ops linux_userspace_process_ops = {
     .pause = linux_userproc_pause,
     .resume = linux_userproc_resume,
     .monitor = linux_userproc_monitor,
+    .poll = linux_userproc_poll,
     .read = linux_userproc_read,
     .write = linux_userproc_write,
     .regname = linux_userproc_reg_name,
@@ -385,7 +389,7 @@ static int linux_userproc_attach_internal(struct target *target) {
     vdebug(5,LOG_T_LUP,"initial waitpid target %d\n",pid);
     if (waitpid(pid,&pstatus,0) < 0) {
 	if (errno == ECHILD || errno == EINVAL)
-	    return STATUS_ERROR;
+	    return TSTATUS_ERROR;
 	else
 	    goto again;
     }
@@ -826,7 +830,7 @@ static target_status_t linux_userproc_status(struct target *target) {
     FILE *statf;
     int pid = linux_userproc_pid(target);
     char pstate;
-    target_status_t retval = STATUS_ERROR;
+    target_status_t retval = TSTATUS_ERROR;
     int rc;
 
     vdebug(5,LOG_T_LUP,"pid %d\n",pid);
@@ -836,22 +840,22 @@ static target_status_t linux_userproc_status(struct target *target) {
     statf = fopen(buf,"r");
     if (!statf) {
 	verror("statf(%s): %s\n",buf,strerror(errno));
-	return STATUS_ERROR;
+	return TSTATUS_ERROR;
     }
 
     if ((rc = fscanf(statf,"%d (%s %c",&pid,buf,&pstate))) {
 	if (pstate == 'R' || pstate == 'r' || pstate == 'W' || pstate == 'w')
-	    retval = STATUS_RUNNING;
+	    retval = TSTATUS_RUNNING;
 	else if (pstate == 'S' || pstate == 's' || pstate == 'D' || pstate == 'd')
-	    retval = STATUS_STOPPED;
+	    retval = TSTATUS_STOPPED;
 	else if (pstate == 'Z' || pstate == 'z')
-	    retval = STATUS_DEAD;
+	    retval = TSTATUS_DEAD;
 	else if (pstate == 'T' || pstate == 't')
-	    retval = STATUS_PAUSED;
+	    retval = TSTATUS_PAUSED;
 	else {
-	    vwarn("fscanf returned %d; read %d (%s) %c; returning STATUS_UNKNOWN!\n",
+	    vwarn("fscanf returned %d; read %d (%s) %c; returning TSTATUS_UNKNOWN!\n",
 		  rc,pid,buf,pstate);
-	    retval = STATUS_UNKNOWN;
+	    retval = TSTATUS_UNKNOWN;
 	}
     }
     else if (rc < 0 && errno == EINTR) {
@@ -880,7 +884,7 @@ static int linux_userproc_pause(struct target *target) {
      * previously been paused with.
      */
     status = linux_userproc_status(target);
-    if (status == STATUS_PAUSED) 
+    if (status == TSTATUS_PAUSED) 
 	return 0;
 
     if (kill(pid,SIGSTOP) < 0) {
@@ -892,7 +896,7 @@ static int linux_userproc_pause(struct target *target) {
  again:
     if (waitpid(pid,&pstatus,0) < 0) {
 	if (errno == ECHILD || errno == EINVAL)
-	    return STATUS_ERROR;
+	    return TSTATUS_ERROR;
 	else
 	    goto again;
     }
@@ -937,29 +941,15 @@ static int linux_userproc_resume(struct target *target) {
     return 0;
 }
 
-static target_status_t linux_userproc_monitor(struct target *target) {
+static target_status_t linux_userproc_handle_internal(struct target *target,
+						      int pstatus,int *again) {
     struct linux_userproc_state *lstate;
     pid_t pid = linux_userproc_pid(target);
-    int pstatus;
     REG dreg = -1;
     struct probepoint *dpp;
     REGVAL ipval;
 
-    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
-
     lstate = (struct linux_userproc_state *)(target->state);
-
-    /* do the whole ptrace waitpid dance */
-
- again:
-    vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
-    pid = waitpid(pid,&pstatus,0);
-    if (pid < 0) {
-	if (errno == ECHILD || errno == EINVAL)
-	    return STATUS_ERROR;
-	else
-	    goto again;
-    }
 
     if (WIFSTOPPED(pstatus)) {
 	/* Ok, this was a ptrace event; figure out which sig (or if it
@@ -1004,14 +994,14 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 
 	    if (target->sstep_probepoint) {
 		target->ss_handler(target,target->sstep_probepoint);
-		goto again;
+		goto out_again;
 	    }
 	    else {
 		ipval = linux_userproc_read_reg(target,target->ipregno);
 		if (errno) {
 		    verror("could not read EIP while finding probepoint: %s\n",
 			   strerror(errno));
-		    return STATUS_ERROR;
+		    return TSTATUS_ERROR;
 		}
 
 		/* We could check the debug status register bits, but
@@ -1043,13 +1033,13 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 		    dpp = (struct probepoint *)g_hash_table_lookup(target->probepoints,
 								   (gpointer)ipval);
 		    target->bp_handler(target,dpp);
-		    goto again;
+		    goto out_again;
 		}
 		else if ((dpp = (struct probepoint *) \
 			  g_hash_table_lookup(target->probepoints,
 					      (gpointer)(ipval - target->breakpoint_instrs_len)))) {
 		    target->bp_handler(target,dpp);
-		    goto again;
+		    goto out_again;
 		}
 		else {
 		    vwarn("could not find hardware bp and not sstep'ing;"
@@ -1062,27 +1052,110 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 	    vdebug(5,LOG_T_LUP,"target %d stopped with signo %d\n",
 		   pid,lstate->last_signo);
 	}
+
+	return TSTATUS_PAUSED;
     }
-    else if (WIFCONTINUED(pstatus)) 
+    else if (WIFCONTINUED(pstatus)) {
 	lstate->last_signo = -1;
+	goto out_again;
+    }
     else if (WIFSIGNALED(pstatus) || WIFEXITED(pstatus)) {
 	/* yikes, it was sigkill'd out from under us! */
 	/* XXX: is error good enough?  The pid is gone; we should
 	 * probably dump this target.
 	 */
-	return STATUS_DONE;
+	return TSTATUS_DONE;
     }
     else {
 	vwarn("unexpected child process status event: %08x; bailing!\n",
 	      pstatus);
-	return STATUS_ERROR;
+	return TSTATUS_ERROR;
     }
+
+    return TSTATUS_ERROR;
+
+ out_again:
+    if (again)
+	*again = 1;
+    return TSTATUS_RUNNING;
+}
+
+static target_status_t linux_userproc_poll(struct target *target,
+					   target_poll_outcome_t *outcome,
+					   int *pstatus) {
+    pid_t pid = linux_userproc_pid(target);
+    int status;
+    target_status_t retval;
+
+    vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
+    pid = waitpid(pid,&status,WNOHANG);
+    if (pid < 0) {
+	/* We always do this on error; these two errnos are the only
+	 * ones we should see, though.
+	 */
+	if (1 || errno == ECHILD || errno == EINVAL) {
+	    if (outcome)
+		*outcome = POLL_ERROR;
+	    return TSTATUS_ERROR;
+	}
+    }
+    else if (pid == 0) {
+	if (outcome)
+	    *outcome = POLL_NOTHING;
+	/* Assume it is running!  Is this right? */
+	return TSTATUS_RUNNING;
+    }
+    else if (pid == linux_userproc_pid(target)) {
+	if (outcome)
+	    *outcome = POLL_SUCCESS;
+	if (pstatus)
+	    *pstatus = status;
+
+	/*
+	 * Ok, handle whatever happened.  If we can't handle it, pass
+	 * control to the user, just like monitor() would.
+	 */
+	retval = linux_userproc_handle_internal(target,status,NULL);
+
+	return retval;
+    }
+    else {
+	if (outcome)
+	    *outcome = POLL_UNKNOWN;
+	return TSTATUS_ERROR;
+    }
+}
+
+static target_status_t linux_userproc_monitor(struct target *target) {
+    pid_t pid = linux_userproc_pid(target);
+    int pstatus;
+    int again;
+    target_status_t retval;
+
+    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+
+    /* do the whole ptrace waitpid dance */
+
+ again:
+    again = 0;
+    vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
+    pid = waitpid(pid,&pstatus,0);
+    if (pid < 0) {
+	if (errno == ECHILD || errno == EINVAL)
+	    return TSTATUS_ERROR;
+	else
+	    goto again;
+    }
+
+    retval = linux_userproc_handle_internal(target,pstatus,&again);
+    if (again)
+	goto again;
 
     // xxx write!  then write generic target functions, clean up the
     // headers and makefile, and get it to compile.  then add debug code
     // and try to actually load regions and monitor a process!
 
-    return STATUS_PAUSED;
+    return retval;
 }
 
 static unsigned char *linux_userproc_read(struct target *target,

@@ -84,6 +84,12 @@ target_status_t target_monitor(struct target *target) {
     vdebug(9,LOG_T_TARGET,"monitoring target(%s)\n",target->type);
     return target->ops->monitor(target);
 }
+
+target_status_t target_poll(struct target *target,
+			    target_poll_outcome_t *outcome,int *pstatus) {
+    vdebug(10,LOG_T_TARGET,"polling target(%s)\n",target->type);
+    return target->ops->poll(target,outcome,pstatus);
+}
     
 int target_resume(struct target *target) {
     vdebug(9,LOG_T_TARGET,"resuming target(%s)\n",target->type);
@@ -306,3 +312,24 @@ int target_singlestep_end(struct target *target) {
     }
     return 0;
 }
+
+
+/*
+ * Util stuff.
+ */
+char *TSTATUS_STRINGS[] = {
+    "UNKNOWN",
+    "RUNNING",
+    "PAUSED",
+    "DEAD",
+    "STOPPED",
+    "ERROR",
+    "DONE",
+};
+
+char *POLL_STRINGS[] = {
+    "NOTHING",
+    "ERROR",
+    "SUCCESS",
+    "UNKNOWN",
+};
