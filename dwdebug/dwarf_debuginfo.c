@@ -1259,6 +1259,9 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 #if _INT_ELFUTILS_VERSION > 137
 	[DW_OP_implicit_value] = "implicit_value",
 	[DW_OP_stack_value] = "stack_value",
+#endif
+/* not sure if 142 is the right number! */
+#if _INT_ELFUTILS_VERSION > 142
 	[DW_OP_GNU_implicit_pointer] = "GNU_implicit_pointer",
 #endif
     };
