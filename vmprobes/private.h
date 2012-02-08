@@ -36,6 +36,9 @@ struct vmprobe {
 
     /* True when the vmprobe is disabled */
     bool disabled;
+
+    /* User-specified cookie */
+    void *cookie;
 };
 
 struct vmprobe_action {

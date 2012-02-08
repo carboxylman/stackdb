@@ -80,7 +80,14 @@ with the updated configuration.
 -----------------
 
 The config file can have multiple lines, and multiple invocations of
-each 
+each.
+
+Domain <domain_name>
+
+This line specifies the domain for which the following config lines apply.
+This domain remains in effect til we encounter another "Domain" line or
+until the end of the file. If no Domain is specified in the config file,
+then one must have been given on the command line.
 
 Functions <function_name1>,<function_name2>,...
 

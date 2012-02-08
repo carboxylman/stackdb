@@ -30,6 +30,8 @@
 #include "vmprobes.h"
 #include "list.h"
 
+#define SYSCALL_MAX 303
+
 #define ARG_STRING_LEN	1024
 #define ARG_BYTES_LEN	1024
 
@@ -97,6 +99,9 @@ struct syscall_info {
 #define WHEN_PRE	0
 #define WHEN_POST	1
 
+/*
+ * For simplicity, argfilters are per-domain and copied as necessary.
+ */
 struct argfilter {
     int dofilter;
     int when;
@@ -121,6 +126,59 @@ struct argfilter {
     int name_search;
     int index;
 };
+
+struct argfilter *copy_argfilter(struct argfilter *f)
+{
+    struct argfilter *nf;
+    int re1 = 0, re2 = 0;
+
+    if ((nf = malloc(sizeof(*nf))) == NULL)
+	goto bad;
+
+    memcpy(nf, f, sizeof(*nf));
+    nf->strfrag = nf->ret_strfrag = nf->name = NULL;
+    nf->preg = nf->ret_preg = NULL;
+
+    if ((nf->strfrag = strdup(f->strfrag)) == NULL)
+	goto bad;
+    if ((nf->preg = malloc(sizeof(regex_t))) == NULL)
+	goto bad;
+    if (regcomp(nf->preg, nf->strfrag, REG_EXTENDED) != 0)
+	goto bad;
+    re1 = 1;
+    if ((nf->ret_strfrag = strdup(f->ret_strfrag)) == NULL)
+	goto bad;
+    if ((nf->ret_preg = malloc(sizeof(regex_t))) == NULL)
+	goto bad;
+    if (regcomp(nf->ret_preg, nf->ret_strfrag, REG_EXTENDED) != 0)
+	goto bad;
+    re2 = 1;
+    if ((nf->name = strdup(f->name)) == NULL)
+	goto bad;
+    return nf;
+
+ bad:
+    if (nf) {
+	if (nf->name)
+	    free(nf->name);
+	if (nf->ret_preg) {
+	    if (re2)
+		regfree(nf->ret_preg);
+	    free(nf->ret_preg);
+	}
+	if (nf->ret_strfrag)
+	    free(nf->ret_strfrag);
+	if (nf->preg) {
+	    if (re1)
+		regfree(nf->preg);
+	    free(nf->preg);
+	}
+	if (nf->strfrag)
+	    free(nf->strfrag);
+    }
+    free(nf);
+    return NULL;
+}
 
 void free_argfilter(struct argfilter *f) {
     if (f->preg) {
@@ -315,16 +373,38 @@ void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
     return;
 }
 
+/*
+ * The list of domains we are currently probing.
+ */
+LIST_HEAD(domains);
+
+struct domain_info {
+    domid_t domid;
+    char *domname;
+
+    /* malloc'ed list of functions (symbols) we are watching */
+    char **func_list;
+    int func_list_len;
+
+    /* malloc'ed list of filters */
+    struct argfilter **filt_list;
+    int filt_list_len;
+
+    /* malloc'ed list of process we are watching */
+    char **ps_list;
+    int ps_list_len;
+
+    /* syscall probe handles */
+    vmprobe_handle_t schandles[SYSCALL_MAX];
+    int nprobes;
+
+    struct list_head list;
+};
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
-struct argfilter **argfilter_list;
-int argfilter_list_len = 0;
-int argfilter_list_alloclen = 10;
-char **ps_list = NULL;
-int ps_list_len = 0;
-
-int check_filters(int syscall,int arg,
+int check_filters(struct domain_info *di,int syscall,int arg,
 		  struct argdata **adata,
 		  struct process_data *pdata,
 		  char *retvalstr,
@@ -337,6 +417,8 @@ int check_filters(int syscall,int arg,
     struct process_data *parent;
     char *argval = NULL;
     int postcall = (retvalstr != NULL);
+    struct argfilter **argfilter_list = di->filt_list;
+    int argfilter_list_len = di->filt_list_len;
 
     for (lpc = 0; lpc < argfilter_list_len; ++lpc) {
 	debug(1,"filter name=%s, process name=%s, "
@@ -1270,18 +1352,18 @@ void print_process_list(void)
     }
 }
 
-int pid_in_pslist(int pid)
+int pid_in_pslist(struct domain_info *di, int pid)
 {
     struct process_data *pdata;
     int j;
 
-    if (ps_list_len == 0)
+    if (di->ps_list_len == 0)
 	return 1;
 
     list_for_each_entry(pdata,&processes,list) {
 	if (pdata->pid == pid) {
-	    for (j = 0; j < ps_list_len; ++j) {
-		if (strcmp(pdata->name,ps_list[j]) == 0)
+	    for (j = 0; j < di->ps_list_len; ++j) {
+		if (strcmp(pdata->name, di->ps_list[j]) == 0)
 		    return 1;
 	    }
 	}
@@ -1290,7 +1372,8 @@ int pid_in_pslist(int pid)
     return 0;
 }
 
-char *process_list_to_string(vmprobe_handle_t handle,
+char *process_list_to_string(struct domain_info *di,
+			     vmprobe_handle_t handle,
 			     struct cpu_user_regs *regs,
 			     char *delim)
 {
@@ -1316,15 +1399,15 @@ char *process_list_to_string(vmprobe_handle_t handle,
 
     list_for_each_entry(pdata,&processes,list) {
 	found = 0;
-	for (j = 0; j < ps_list_len; ++j) {
-	    if (strcmp(pdata->name,ps_list[j]) == 0) {
+	for (j = 0; j < di->ps_list_len; ++j) {
+	    if (strcmp(pdata->name,di->ps_list[j]) == 0) {
 		found = 1;
 		break;
 	    }
 	}
 	// if we are filtering what we report based on process name,
 	// don't report it unless it's in our list.
-	if (found || !ps_list_len) {
+	if (found || !di->ps_list_len) {
 	    debug(1,"adding to string: pid=%d,ppid=%d,name=%s\n",
 		  pdata->pid,pdata->ppid,pdata->name);
 	    // tostring, then grab the next one!
@@ -1708,8 +1791,6 @@ void mmap_flag_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		       struct process_data *data)
 {
 }
-
-#define SYSCALL_MAX 303
 
 /*
  * If a syscall has RADDR_YES set for the raddr field, it means that it
@@ -2702,8 +2783,9 @@ void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 
 int dofilter = 1;
 int send_a3_events = 0;
-char *domainname;
 vmprobe_action_handle_t va;
+char *gdomname;
+domid_t gdomid = 0;
 char *configfile = NULL;
 int reloadconfigfile = 0;
 FILE *filtered_events_fd = NULL;
@@ -2734,7 +2816,8 @@ char *url_encode(char *str) {
 
 int execcounter = 0;
 	    
-struct argfilter *handle_syscall(vmprobe_handle_t handle,
+struct argfilter *handle_syscall(struct domain_info *di,
+				 vmprobe_handle_t handle,
 				 struct cpu_user_regs *regs,
 				 char **psstr,char **funcstr,char **argstr,
 				 char **ancestry)
@@ -2852,19 +2935,19 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 		fprintf(stderr,"ERROR: invalid syscall #%d %s[dom%d 0x%lx], "
 			"but addr matches syscall %d (%s)\n",
 			i, oi == SYSCALL_RET_IX ? "(after) " : "",
-			vmprobe_domid(handle), addr, j, sctab[j].name);
+			di->domid, addr, j, sctab[j].name);
 		return NULL;
 	    }
 	}
 	fprintf(stderr,"ERROR: invalid syscall #%d %s[dom%d 0x%lx] ignored\n",
 		i, oi == SYSCALL_RET_IX ? "(after) " : "",
-		vmprobe_domid(handle), addr);
+		di->domid, addr);
 	return NULL;
     }
     if (sctab[i].num == 0) {
 	fprintf(stderr,"ERROR: unknown syscall #%d %s[dom%d 0x%lx] ignored\n",
 		sctab[i].num, oi == SYSCALL_RET_IX ? "(after) " : "",
-		vmprobe_domid(handle), addr);
+		di->domid, addr);
 	return NULL;
     }
 
@@ -2874,7 +2957,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
 	fprintf(stdout,"\n%lu.%03lu: %s [dom%d 0x%lx]",
 		_tv.tv_sec, _tv.tv_usec / 1000,
-		sctab[i].name, vmprobe_domid(handle), addr);
+		sctab[i].name, di->domid, addr);
 	if (oi == SYSCALL_RET_IX)
 	    fprintf(stdout, " (rval=%d)", regs->eax);
 	fprintf(stdout, "\n");
@@ -2979,7 +3062,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
     }
 
     for (j = 0; j < sctab[i].argc; ++j) {
-	if (check_filters(i,j,adata,data,rvalstr,&filter_ptr,&needpost))
+	if (check_filters(di, i,j,adata,data,rvalstr,&filter_ptr,&needpost))
 	    break;
     }
 
@@ -3106,7 +3189,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 		print_process_list();
 	    }
 #endif
-	    if (regs->eax > 0 && pid_in_pslist(regs->eax)) {
+	    if (regs->eax > 0 && pid_in_pslist(di, regs->eax)) {
 		reload_process_list(handle,regs);
 		dopslist = 1;
 	    }
@@ -3121,11 +3204,12 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 			   || !strcmp(sctab[i].name,"sys_vfork")
 			   || !strcmp(sctab[i].name,"sys_clone"))) {
 	reload_process_list(handle,regs);
-	if (pid_in_pslist(mypid))
+	if (pid_in_pslist(di, mypid))
 	    dopslist = 1;
 
 	/* If this is exec we may need a post-syscall probe */
-	if (!needpost && ps_list_len && !strcmp(sctab[i].name,"sys_execve"))
+	if (!needpost && di->ps_list_len &&
+	    !strcmp(sctab[i].name,"sys_execve"))
 	    needpost = 1;
     }
     /*
@@ -3146,7 +3230,7 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 
 	gettimeofday(&tv, NULL);
 
-	psliststr = process_list_to_string(handle,regs,"|");
+	psliststr = process_list_to_string(di,handle,regs,"|");
 
 #ifndef OLD_VPG_COMPAT
 	if (debug >= 0)
@@ -3157,11 +3241,11 @@ struct argfilter *handle_syscall(vmprobe_handle_t handle,
 	}
 
 	eventstrtmp = ssprintf("domain=%s type=pslist %s",
-			       domainname,psliststr);
+			       di->domname,psliststr);
 	if (eventstrtmp)
 	    eventstr = url_encode(eventstrtmp);
-	name_trunc = NULL; // strrchr(domainname,'-');
-	dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
+	name_trunc = NULL; // strrchr(di->domname,'-');
+	dstr = url_encode(name_trunc ? name_trunc + 1 :di->domname);
 	if (dstr) {
 	    uint64_t ems = ((uint64_t)tv.tv_sec) * 1000 +
 		    ((uint64_t)tv.tv_usec)/1000;
@@ -3245,14 +3329,21 @@ static int on_fn_pre(vmprobe_handle_t vp,
     char *extras = NULL;
     char *dstr = NULL;
     char *gfilterstr = " (not filtering; globally off!)";
+    struct domain_info *di;
 
     va = -1;
 
+    di = vmprobe_getcookie(vp);
+    if (di == NULL) {
+	error("No vmprobe cookie!?\n");
+	return -1;
+    }
+
 #ifdef OLD_VPG_COMPAT
     /* for compat, ignore ancestry (a recent mike-ism) */
-    filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr,NULL);
+    filter = handle_syscall(di,vp,regs,&psstr,&funcstr,&argstr,NULL);
 #else
-    filter = handle_syscall(vp,regs,&psstr,&funcstr,&argstr,
+    filter = handle_syscall(di,vp,regs,&psstr,&funcstr,&argstr,
 			    filtered_events_fd ? &ancestry : NULL);
 #endif
     if (filter) {
@@ -3260,8 +3351,8 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	struct timeval tv;
 
 	gettimeofday(&tv, NULL);
-	name_trunc = NULL; // strrchr(domainname,'-');
-	dstr = url_encode(name_trunc ? name_trunc + 1 :domainname);
+	name_trunc = NULL; // strrchr(di->domname,'-');
+	dstr = url_encode(name_trunc ? name_trunc + 1 :di->domname);
 
 	/* XXX */
 	int postcall = (vmprobe_vaddr(vp) == sctab[SYSCALL_RET_IX].addr);
@@ -3285,7 +3376,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		  gfilterstr);
 
 	    eventstrtmp = ssprintf("domain=%s type=match when=%s %s %s(%s)",
-				   domainname,(postcall?"post":"pre"),
+				   di->domname,(postcall?"post":"pre"),
 				   psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
@@ -3344,10 +3435,10 @@ static int on_fn_pre(vmprobe_handle_t vp,
 
 	    if (!dofilter) 
 		eventstrtmp = ssprintf("domain=%s type=would-abort retval=%d %s %s(%s)",
-				       domainname,filter->abort_retval,psstr,funcstr,argstr);
+				       di->domname,filter->abort_retval,psstr,funcstr,argstr);
 	    else 
 		eventstrtmp = ssprintf("domain=%s type=abort retval=%d %s %s(%s)",
-				       domainname,filter->abort_retval,psstr,funcstr,argstr);
+				       di->domname,filter->abort_retval,psstr,funcstr,argstr);
 	    if (eventstrtmp)
 		eventstr = url_encode(eventstrtmp);
 
@@ -3390,6 +3481,8 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		action_sched(vp,va,VMPROBE_ACTION_ONESHOT);
 	    }
 	}
+    } else {
+	debug(1, " No filter\n");
     }
 
     if (eventstr)
@@ -3434,9 +3527,188 @@ void hupsighandle(int signo) {
     signal(signo,hupsighandle);
 }
 
-int load_config_file(char *file,char ***new_function_list,int *new_function_list_len,
-		     struct argfilter ***new_argfilter_list,int *new_argfilter_list_len,
-		     char ***new_ps_list,int *new_ps_list_len) {
+static struct domain_info *
+create_domain_info(domid_t domid, char *domname)
+{
+    struct domain_info *di;
+    int i;
+
+    if ((di = calloc(1, sizeof(*di))) == NULL)
+	return NULL;
+
+    di->domid = domid;
+    di->domname = domname ? strdup(domname) : ssprintf("%d", domid);
+    if (di->domname == NULL) {
+	free(di);
+	return NULL;
+    }
+
+    for (i = 0; i < SYSCALL_MAX; i++)
+	di->schandles[i] = -1;
+
+    INIT_LIST_HEAD(&di->list);
+    return di;
+}
+
+static void
+dump_domain_info(struct domain_info *di, char *str)
+{
+    if (str)
+	printf("%s ", str);
+    printf("%p: ", di);
+    fflush(stdout);
+
+    printf("id=%d, name=%s, func=%d@%p, filt=%d@%p, proc=%d@%p, nprobes=%d\n",
+	   di->domid, di->domname,
+	   di->func_list_len, di->func_list,
+	   di->filt_list_len, di->filt_list,
+	   di->ps_list_len, di->ps_list, di->nprobes);
+    fflush(stdout);
+}
+
+/*
+ * Update the domain info with the indicated lists.
+ */
+int
+update_domain_info(struct domain_info *di,
+		   char **func_list, int func_list_len,
+		   struct argfilter **filt_list, int filt_list_len,
+		   char **ps_list, int ps_list_len)
+{
+    /*
+     * Make sure we can create the new lists before we free anything.
+     * Highly consumptive of memory, but oh well.
+     */
+    char **flist, **plist;
+    struct argfilter **alist;
+    int i;
+
+    flist = malloc(sizeof(char *) * func_list_len);
+    alist = malloc(sizeof(struct argfilter *) * filt_list_len);
+    plist = malloc(sizeof(char *) * ps_list_len);
+    if (!flist || !alist || !plist) {
+	if (flist)
+	    free(flist);
+	if (alist)
+	    free(alist);
+	if (plist)
+	    free(plist);
+	return -1;
+    }
+    memcpy(flist, func_list, sizeof(char *) * func_list_len);
+    memcpy(alist, filt_list, sizeof(struct argfilter *) * filt_list_len);
+    memcpy(plist, ps_list, sizeof(char *) * ps_list_len);
+
+    if (di->func_list) {
+	for (i = 0; i < di->func_list_len; i++)
+	    free(di->func_list[i]);
+	free(di->func_list);
+	di->func_list = NULL;
+	di->func_list_len = 0;
+    }
+    if (func_list_len) {
+	di->func_list = flist;
+	di->func_list_len = func_list_len;
+    }
+
+    if (di->filt_list) {
+	for (i = 0; i < di->filt_list_len; i++)
+	    free_argfilter(di->filt_list[i]);
+	free(di->filt_list);
+	di->filt_list = NULL;
+	di->filt_list_len = 0;
+    }
+    if (filt_list_len) {
+	di->filt_list = alist;
+	di->filt_list_len = filt_list_len;
+    }
+
+    if (di->ps_list) {
+	for (i = 0; i < di->ps_list_len; i++)
+	    free(di->ps_list[i]);
+	free(di->ps_list);
+	di->ps_list = NULL;
+	di->ps_list_len = 0;
+    }
+    if (ps_list_len) {
+	di->ps_list = plist;
+	di->ps_list_len = ps_list_len;
+    }
+
+    if (debug >= 2)
+	dump_domain_info(di, "Updated");
+
+    return 0;
+}
+
+static void
+free_domain_info(struct domain_info *di)
+{
+    int i;
+
+    if (di == NULL)
+	return;
+
+    list_del(&di->list);
+
+    /* XXX what about syscall handles? */
+
+    if (di->ps_list) {
+	for (i = 0; i < di->ps_list_len; i++)
+	    free(di->ps_list[i]);
+	free(di->ps_list);
+	di->ps_list = NULL;
+	di->ps_list_len = 0;
+    }
+    if (di->filt_list) {
+	for (i = 0; i < di->filt_list_len; i++)
+	    free_argfilter(di->filt_list[i]);
+	free(di->filt_list);
+	di->filt_list = NULL;
+	di->filt_list_len = 0;
+    }
+    if (di->func_list) {
+	for (i = 0; i < di->func_list_len; i++)
+	    free(di->func_list[i]);
+	free(di->func_list);
+	di->func_list = NULL;
+	di->func_list_len = 0;
+    }
+    if (di->domname) {
+	free(di->domname);
+	di->domname = NULL;
+    }
+    di->domid = 0;
+
+    free(di);
+}
+
+domid_t
+valid_domain(char *str, char **name)
+{
+    domid_t id;
+    char *endptr = NULL;
+
+    *name = NULL;
+    id = (domid_t)strtol(str, &endptr, 0);
+    if (!isdigit((int)*str) || endptr == str) {
+	id = domain_lookup(str);
+	if (id == 0)
+	    return id;
+	*name = str;
+    }
+    
+    if (!domain_exists(id))
+	return 0;
+    
+    return id;
+}
+
+/*
+ * (Re)reads the configuration file.
+ */
+int load_config_file(char *file, struct list_head *doms)
+{
     char *buf;
     char *bufptr;
     char *tbuf;
@@ -3459,6 +3731,8 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
     int i = 0;
     int j;
     char *var = NULL, *val = NULL;
+    domid_t curdomid = 0;
+    struct domain_info *di, *curdi = NULL;
 
     ffile = fopen(file,"r");
     if (!ffile) {
@@ -3516,7 +3790,114 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	    buf[strlen(buf)-1] = '\0';
 	}
 
-	if (strncmp(buf,"Functions",strlen("Functions")) == 0) {
+	/*
+	 * Domain <domain_name>
+	 */
+	if (strncmp(buf,"Domain",6) == 0) {
+	    domid_t id;
+	    char *domname;
+	    int found;
+
+	    bufptr = buf + 6;
+	    while (*bufptr && (*bufptr == ' ' || *bufptr == '\t'))
+		++bufptr;
+	    if (!*bufptr) {
+		fprintf(stderr, "ERROR: no Domain specified\n");
+		goto errout;
+	    }
+	    id = valid_domain(bufptr, &domname);
+	    if (id == 0) {
+		fprintf(stderr, "ERROR: Invalid domain (%s) specified\n",
+			bufptr);
+		goto errout;
+	    }
+	    found = 0;
+	    list_for_each_entry(di, doms, list) {
+		if (di->domid == id) {
+		    found = 1;
+		    break;
+		}
+	    }
+	    if (!found) {
+		di = create_domain_info(id, domname);
+		if (di == NULL) {
+		    fprintf(stderr, "ERROR: no memory\n");
+		    goto errout;
+		}
+		list_add_tail(&di->list, doms);
+	    }
+
+	    /*
+	     * Record everything collected for the previous domain
+	     */
+	    if (curdi) {
+		if (update_domain_info(curdi, flist, flist_len,
+				       alist, alist_len, pslist, pslist_len)) {
+		    fprintf(stderr,
+			    "ERROR: could not update rules for domid %d\n",
+			    curdomid);
+		    goto errout;
+		}
+		if (flist_len) {
+		    flist_len = 0;
+		    flist_alloclen = 8;
+		    flist = realloc(flist, sizeof(char *)*flist_alloclen);
+		}
+		if (alist_len) {
+		    alist_len = 0;
+		    flist_alloclen = 8;
+		    alist = realloc(alist, sizeof(struct argfilter *)*alist_alloclen);
+		}
+		if (pslist_len) {
+		    pslist_len = 0;
+		    pslist_alloclen = 8;
+		    pslist = realloc(pslist, sizeof(char *)*pslist_alloclen);
+		}
+	    }
+	    debug(2,"config: switched domains from %d(%s) to %d(%s)\n",
+		  curdi ? curdi->domid : -1,
+		  curdi ? curdi->domname : "<none>",
+		  di->domid, di->domname);
+	    curdomid = id;
+	    curdi = di;
+	    continue;
+	}
+
+	/*
+	 * All other specifications require a valid domain context.
+	 * If we don't have one, use the global context.
+	 * If no global context, blow chunks.
+	 */
+	if (curdomid == 0) {
+	    int found;
+
+	    if (gdomid == 0) {
+		fprintf(stderr, "ERROR: no domain context for rules\n");
+		goto errout;
+	    }
+	    found = 0;
+	    list_for_each_entry(di, doms, list) {
+		if (di->domid == gdomid) {
+		    found = 1;
+		    break;
+		}
+	    }
+	    if (!found) {
+		di = create_domain_info(gdomid, gdomname);
+		if (di == NULL) {
+		    fprintf(stderr, "ERROR: no memory\n");
+		    goto errout;
+		}
+		list_add_tail(&di->list, doms);
+	    }
+	    curdomid = gdomid;
+	    curdi = di;
+	}
+
+	/*
+	 * Functions <function_name1>,<function_name2>,...
+	 */
+	if (strncmp(buf,"Functions",9) == 0) {
 	    bufptr = buf + 9;
 	    while (*bufptr == ' ' || *bufptr == '\t')
 		++bufptr;
@@ -3536,8 +3917,13 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		++flist_len;
 		debug(2,"read function %s\n",token);
 	    }
+	    continue;
 	}
-	else if (strncmp(buf,"ProcessListNames",strlen("ProcessListNames")) == 0) {
+
+	/*
+	 * ProcessListNames <process_name1>,<process_name2>,...
+	 */
+	if (strncmp(buf,"ProcessListNames",strlen("ProcessListNames")) == 0) {
 	    bufptr = buf + strlen("ProcessListNames");
 	    while (*bufptr == ' ' || *bufptr == '\t')
 		++bufptr;
@@ -3557,8 +3943,13 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 		++pslist_len;
 		debug(2,"read ps list name %s\n",token);
 	    }
+	    continue;
 	}
-	else if (strncmp(buf,"Filter",strlen("Filter")) == 0) {
+
+	/*
+	 * Filter
+	 */
+	if (strncmp(buf,"Filter",strlen("Filter")) == 0) {
 	    bufptr = buf + 6;
 	    while (*bufptr == ' ' || *bufptr == '\t')
 		++bufptr;
@@ -3756,51 +4147,52 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	    alist[alist_len] = filter;
 	    ++alist_len;
 	    filter = NULL;
+
+	    continue;
 	}
-	else {
-	    fprintf(stderr,"ERROR: unknown config directive on line:\n");
-	    fprintf(stderr,"%s\n", buf);
+
+	/*
+	 * Invalid rule
+	 */
+	fprintf(stderr,"ERROR: unknown config directive on line:\n");
+	fprintf(stderr,"%s\n", buf);
+	goto errout;
+    }
+
+    /*
+     * Record everything collected for the last domain
+     */
+    if (curdi) {
+	if (update_domain_info(curdi, flist, flist_len,
+			       alist, alist_len, pslist, pslist_len)) {
+	    fprintf(stderr, "ERROR: could not update rules for domid %d\n",
+		    curdomid);
 	    goto errout;
 	}
+	if (flist_len)
+	    free(flist);
+	if (alist_len)
+	    free(alist);
+	if (pslist_len)
+	    free(pslist);
     }
+
     fclose(ffile);
 
     if (buf)
 	free(buf);
 
-    // if successful, update args!
-    if (alist_len) {
-	struct argfilter **finalalist = (struct argfilter **)malloc(sizeof(struct argfilter *)*alist_len);
-	memcpy(finalalist,alist,alist_len*sizeof(struct argfilter *));
-	*new_argfilter_list = finalalist;
-    }
-    else {
-	*new_argfilter_list = NULL;
-    }
-    free(alist);
-    *new_argfilter_list_len = alist_len;
+    if (debug > 1) {
+	int ndoms = 0, scalls = 0, filts = 0;
 
-    if (flist_len) {
-	char **finalflist = (char **)malloc(sizeof(char *)*flist_len);
-	memcpy(finalflist,flist,flist_len*sizeof(char *));
-	*new_function_list = finalflist;
+	list_for_each_entry(di, doms, list) {
+	    ndoms++;
+	    scalls += di->func_list_len;
+	    filts += di->filt_list_len;
+	}
+	debug(2,"configfile: %d domains, %d functions, %d filters.\n",
+	      ndoms, scalls, filts);
     }
-    else {
-	*new_function_list = NULL;
-    }
-    free(flist);
-    *new_function_list_len = flist_len;
-
-    if (pslist_len) {
-	char **finalpslist = (char **)malloc(sizeof(char *)*pslist_len);
-	memcpy(finalpslist,pslist,pslist_len*sizeof(char *));
-	*new_ps_list = finalpslist;
-    }
-    else {
-	*new_ps_list = NULL;
-    }
-    free(pslist);
-    *new_ps_list_len = pslist_len;
 
     return 0;
 
@@ -3811,30 +4203,139 @@ int load_config_file(char *file,char ***new_function_list,int *new_function_list
 	free(buf);
     if (filter)
 	free_argfilter(filter);
-    for (i = 0; i < alist_len; ++i) {
+
+    for (i = 0; i < alist_len; ++i)
 	free_argfilter(alist[i]);
-    }
     free(alist);
-    for (i = 0; i < flist_len; ++i) {
+
+    for (i = 0; i < flist_len; ++i)
 	free(flist[i]);
-    }
     free(flist);
-    for (i = 0; i < pslist_len; ++i) {
+
+    for (i = 0; i < pslist_len; ++i)
 	free(pslist[i]);
-    }
     free(pslist);
+
+    list_for_each_entry_safe(curdi,di,doms,list) {
+	free_domain_info(curdi);
+    }
 
     return -1;
 }
 
-static domid_t domid = 1;
-static char **syscall_list;
-static int syscall_list_len = 0;
+/*
+ * Register all desired vmprobes for a domain.
+ * An empty function list means watch everything.
+ */
+static int register_domain_probes(struct domain_info *di)
+{
+    unsigned long vaddrlist[SYSCALL_MAX];
+    int i, j, rc;
 
+    /* make sure the domain didn't die prematurely */
+    if (!domain_exists(di->domid)) {
+	fprintf(stderr, "dom%d no longer exists!\n", di->domid);
+	return -1;
+    }
+
+    for (i = 0; i < SYSCALL_MAX; ++i) {
+	di->schandles[i] = -1;
+	vaddrlist[i] = 0;
+    }
+
+    for (i = 0; i < SYSCALL_MAX; ++i) {
+	int found;
+
+	if (sctab[i].name == NULL)
+	    continue;
+
+	found = 0;
+	for (j = 0; j < di->func_list_len; ++j) {
+	    if (!strcmp(sctab[i].name, di->func_list[j])) {
+		found = 1;
+		break;
+	    }
+	}
+	if (di->func_list_len && !found)
+	    continue;
+
+	vaddrlist[i] = sctab[i].addr;
+    }
+
+#ifdef STATIC_RET_PROBE
+    /*
+     * If someone wants a "post" probe, insert the magic probe.
+     * XXX should do this dynamically to mitigate the impact on others.
+     */
+    for (j = 0; j < di->filt_list_len; ++j) {
+	if (di->filt_list[j]->when == WHEN_POST) {
+	    vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
+	    debug(1, "dom%d: installing syscall return probe at 0x%x\n",
+		  di->domid, vaddrlist[SYSCALL_RET_IX]);
+	    break;
+	}
+    }
+#endif
+
+    rc = register_vmprobe_batch(di->domid, vaddrlist, SYSCALL_MAX,
+				on_fn_pre, on_fn_post, di->schandles, 1);
+    if (rc) {
+	for (i = 0; i < SYSCALL_MAX; ++i) {
+	    if (vaddrlist[i] && di->schandles[i] == -1)
+		break;
+	}
+	if (i == SYSCALL_MAX)
+	    error("dom%d: failed to register probes!\n", di->domid);
+	else
+	    error("dom%d: failed to register probe for %s\n",
+		  di->domid, sctab[i].name);
+	return -1;
+    }
+
+    for (i = 0; i < SYSCALL_MAX; ++i) {
+	if (vaddrlist[i] && di->schandles[i] > -1) {
+	    di->nprobes++;
+	    rc = vmprobe_setcookie(di->schandles[i], di);
+	    assert(rc == 0);
+	    fprintf(stderr, "dom%d: registered probe %d for %s\n",
+		    di->domid, di->schandles[i], sctab[i].name);
+	}
+    }
+
+    return 0;
+}
+
+static int unregister_domain_probes(struct domain_info *di)
+{
+    int i;
+
+    if (unregister_vmprobe_batch(di->domid, di->schandles, SYSCALL_MAX)) {
+	error("dom%d: failed to unregister some probes; this is bad!!\n",
+	      di->domid);
+	return -1;
+    }
+
+    for (i = 0; i < SYSCALL_MAX; ++i) {
+	if (di->schandles[i] >= 0) {
+	    di->schandles[i] = -1;
+	    fprintf(stderr, "dom%d: unregistered probe for %s.\n",
+		    di->domid, sctab[i].name);
+	}
+    }
+    di->nprobes = 0;
+
+    return 0;
+}
+
+/*
+ * Cleanup prior to exit.
+ * Note that the vmprobes signal handler has already been invoked
+ * and has unregistered all the probes.
+ */
 static void cleanup(int signo)
 {
     struct syscall_retinfo *sc, *tmpsc;
-    int i, j;
+    struct domain_info *di, *tmpdi;
 
     if (signo) {
 	fflush(stdout);
@@ -3850,27 +4351,11 @@ static void cleanup(int signo)
 	free(sc);
     }
 
-    // free the function list
-    for (j = 0; j < syscall_list_len; ++j) {
-	free(syscall_list[j]);
-    }
-    if (syscall_list)
-	free(syscall_list);
-
-    // free the argfilter list
-    for (j = 0; j < argfilter_list_len; ++j) {
-	free_argfilter(argfilter_list[j]);
-    }
-    if (argfilter_list)
-	free(argfilter_list);
-
-    // free the process list
-    if (ps_list) {
-	for (i = 0; i < ps_list_len; ++i) {
-	    if (ps_list[i])
-		free(ps_list[i]);
-	}
-	free(ps_list);
+    // free info for all domains monitored
+    list_for_each_entry_safe(di, tmpdi, &domains, list) {
+	if (debug >= 0)
+	    dump_domain_info(di, "Freeing");
+	free_domain_info(di);
     }
 
     if (signo) {
@@ -3882,29 +4367,20 @@ static void cleanup(int signo)
 
 int main(int argc, char *argv[])
 {
-    int i,j,found;
+    int i;
     char ch;
-    char *saveptr, *token = NULL;
-    char *saveptr2, *token2 = NULL;
-    struct argfilter *filter;
     char *sysmapfile = NULL;
     FILE *sysmapfh = NULL;
-    char *endptr = NULL;
     int rc;
-    char errbuf[128];
     unsigned int addr;
     char sym[256];
     char symtype;
     char *progname = argv[0];
-    int syscall_list_alloclen = 8;
     int xa_debug = -1;
-    vmprobe_handle_t schandles[SYSCALL_MAX];
-    unsigned long vaddrlist[SYSCALL_MAX];
+    struct domain_info *di;
+    int nprobes = 0;
 
-    syscall_list = (char **)malloc(sizeof(char *)*syscall_list_alloclen);
-    argfilter_list = (struct argfilter **)malloc(sizeof(struct argfilter *)*argfilter_list_alloclen);
-
-    while ((ch = getopt(argc, argv, "m:s:f:daw:u:c:xR:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:daw:u:c:xR:")) != -1) {
 	switch(ch) {
 	case 'c':
 	    configfile = optarg;
@@ -3934,140 +4410,6 @@ int main(int argc, char *argv[])
 	case 'm':
 	    sysmapfile = optarg;
 	    break;
-	case 's':
-	    token = NULL;
-	    saveptr = NULL;
-	    while ((token = strtok_r((!token)?optarg:NULL,",",&saveptr))) {
-		if (syscall_list_alloclen == syscall_list_len) {
-		    syscall_list_alloclen += 10;
-		    if (!(syscall_list = realloc(syscall_list,sizeof(char *)*syscall_list_alloclen))) {
-			error("realloc: %s\n",strerror(errno));
-			exit(-6);
-		    }
-		}
-		syscall_list[syscall_list_len] = strdup(token);
-		++syscall_list_len;
-	    }
-	    break;
-	case 'f':
-	    token = NULL;
-	    saveptr = NULL;
-	    while ((token = strtok_r((!token)?optarg:NULL,",",&saveptr))) {
-		filter = (struct argfilter *)malloc(sizeof(struct argfilter));
-		memset(filter,0,sizeof(struct argfilter));
-		filter->pid = -1;
-		filter->ppid = -1;
-		filter->ppid_search = 0;
-		filter->gid = -1;
-		filter->uid = -1;
-		filter->dofilter = 1;
-
-		saveptr2 = NULL;
-		token2 = NULL;
-		int i = 0;
-		while ((token2 = strtok_r((!token2)?token:NULL,":",&saveptr2))) {
-		    //printf("f token2 %s\n",token2);
-		    switch (i) {
-		    case 0:
-			if (!strcmp("*",token2)) {
-			    filter->syscallnum = -1;
-			    filter->argnum = -1;
-			    break;
-			}
-			for (j = 0; j < SYSCALL_MAX; ++j) {
-			    if (//sctab[j].num != 0 
-				!strcmp(sctab[j].name,token2))
-				break;
-			}
-			if (j == SYSCALL_MAX) {
-			    error("no such syscall %s to filter on!\n",token2);
-			    exit(2);
-			}
-			filter->syscallnum = j;
-			break;
-		    case 1:
-			if (!strcmp("*",token2)) {
-			    filter->argnum = -1;
-			    break;
-			}
-			if (filter->syscallnum == -1) {
-			    error("cannot specify argname when syscallname is wildcard!\n");
-			    exit(1);
-			}
-			for (j = 0; j < sctab[filter->syscallnum].argc; ++j) {
-			    if (!strcmp(sctab[filter->syscallnum].args[j].name,token2))
-				break;
-			}
-			if (j == sctab[filter->syscallnum].argc) {
-			    error("no such syscall arg %s to filter on!\n",token2);
-			    exit(2);
-			}
-			filter->argnum = j;
-			break;
-		    case 2:
-			if (!strcmp("*",token2)) {
-			    filter->preg = NULL;
-			    filter->strfrag = "*";
-			    break;
-			}
-			filter->strfrag = token2;
-			filter->preg = (regex_t *)malloc(sizeof(regex_t));
-			if ((rc = regcomp(filter->preg,token2,REG_EXTENDED))) {
-			    regerror(rc,filter->preg,errbuf,sizeof(errbuf));
-			    error("regcomp(%s): %s\n",token2,errbuf);
-			    exit(4);
-			}
-			break;
-		    case 3:
-			filter->abort_retval = atoi(token2);
-			break;
-		    case 4:
-			filter->pid = atoi(token2);
-			break;
-		    case 5:
-			if (*token2 == '^') {
-			    ++token2;
-			    filter->ppid_search = 1;
-			}
-			if (*token2 == '\0') {
-			    error("parent process search must have a parent pid!\n");
-			    filter->ppid = -1;
-			    filter->ppid_search = 0;
-			    break;
-			}
-			filter->ppid = atoi(token2);
-			break;
-		    case 6:
-			filter->uid = atoi(token2);
-			break;
-		    case 7:
-			filter->gid = atoi(token2);
-			break;
-		    case 8:
-			filter->dofilter = atoi(token2);
-			break;
-		    default:
-			break;
-		    }
-		    ++i;
-		}
-
-		if (i < 4) {
-		    error("bad filter, aborting!\n");
-		    exit(1);
-		}
-
-		if (argfilter_list_alloclen == argfilter_list_len) {
-		    argfilter_list_alloclen += 10;
-		    if (!(argfilter_list = realloc(argfilter_list,sizeof(struct argfilter *)*argfilter_list_alloclen))) {
-			error("realloc: %s\n",strerror(errno));
-			exit(-6);
-		    }
-		}
-		argfilter_list[argfilter_list_len] = filter;
-		++argfilter_list_len;
-	    }
-	    break;
 	default:
 	    usage(progname);
 	}
@@ -4075,43 +4417,30 @@ int main(int argc, char *argv[])
     argc -= optind;
     argv += optind;
 
-    if (configfile && (syscall_list_len || argfilter_list_len)) {
-	fprintf(stderr,"ERROR: you cannot specify both a config file and syscalls/filters!\n");
-	exit(7);
+    if (argc == 0 && configfile == NULL) {
+	fprintf(stderr, "ERROR: must specify a config file if no domain given\n");
+	exit(1);
+    }
+
+    /*
+     * If specified on the command line, we default to tracing all syscalls
+     * for this domain. The config file can further restrict this.
+     */
+    if (argc > 0) {
+	fprintf(stderr,"Looking up domain %s... ", argv[0]);
+	gdomid = valid_domain(argv[0], &gdomname);
+	if (gdomid == 0) {
+	    fprintf(stderr, "Invalid or not found\n");
+	    exit(1);
+	}
+	fprintf(stderr, "%d.\n", gdomid);
     }
 
     if (configfile) {
-	if (syscall_list)
-	    free(syscall_list);
-	if (argfilter_list)
-	    free(argfilter_list);
-	if (load_config_file(configfile,&syscall_list,&syscall_list_len,
-			     &argfilter_list,&argfilter_list_len,
-			     &ps_list,&ps_list_len)) {
-	    fprintf(stderr,"ERROR: failed to load config file %s!\n",configfile);
+	if (load_config_file(configfile, &domains)) {
+	    fprintf(stderr,"ERROR: failed to load config file %s!\n",
+		    configfile);
 	    exit(8);
-	}
-	debug(2,"configfile: %d functions (0x%08x), %d filters (0x%08x).\n",
-	      syscall_list_len,syscall_list,argfilter_list_len,argfilter_list);
-	argfilter_list_alloclen = argfilter_list_len;
-    }
-
-    domainname = argv[0];
-    if (argc > 0) {
-        domid = (domid_t)strtol(argv[0],&endptr,0);
-	if (!isdigit((int)(argv[0][0])) || endptr == argv[0]) {
-	    fprintf(stderr,"Looking up domain %s... ",argv[0]);
-	    domid = domain_lookup(argv[0]);
-	    if (domid == 0) {
-		fprintf(stderr,"not found!\n");
-		exit(1);
-	    }
-	    fprintf(stderr," %d.\n",domid);
-	}
-
-	if (!domain_exists(domid)) {
-	    error("no such domain id %d\n",domid);
-	    exit(3);
 	}
     }
 
@@ -4189,94 +4518,44 @@ int main(int argc, char *argv[])
     }
     fclose(sysmapfh);
 
-    for (i = 0; i < SYSCALL_MAX; ++i) {
-	schandles[i] = -1;
-	vaddrlist[i] = 0;
-    }
-
-    for (i = 0; i < SYSCALL_MAX; ++i) {
-	if (sctab[i].name == NULL)
-	    continue;
-
-	found = 0;
-	for (j = 0; j < syscall_list_len; ++j) {
-	    if (!strcmp(sctab[i].name,syscall_list[j])) {
-		found = 1;
-		break;
-	    }
-	}
-	if (syscall_list_len && !found)
-	    continue;
-
-	vaddrlist[i] = sctab[i].addr;
-    }
-
-#ifdef STATIC_RET_PROBE
-    /*
-     * If someone wants a "post" probe, insert the magic probe.
-     * XXX should do this dynamically to mitigate the impact on others.
-     */
-    for (j = 0; j < argfilter_list_len; ++j) {
-	if (argfilter_list[j]->when == WHEN_POST) {
-		vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
-		debug(1, "installing syscall return probe at 0x%x\n",
-		      vaddrlist[SYSCALL_RET_IX]);
-		break;
-	}
-    }
-#endif
-
-    if ((rc = register_vmprobe_batch(domid,vaddrlist,SYSCALL_MAX,
-				     on_fn_pre,on_fn_post,
-				     schandles,1))) {
-	for (i = 0; i < SYSCALL_MAX; ++i) {
-	    if (vaddrlist[i] && schandles[i] == -1)
-		break;
-	}
-	if (i == SYSCALL_MAX)
-	    error("Failed to register probes!\n");
-	else
-	    error("Failed to register probe for %s\n",sctab[i].name);
-	exit(-128);
-    }
-    else {
-	for (i = 0; i < SYSCALL_MAX; ++i) {
-	    if (vaddrlist[i] && schandles[i] > -1)
-		fprintf(stderr,"Registered probe %d for %s\n",
-			schandles[i],sctab[i].name);
-	}
+    list_for_each_entry(di, &domains, list) {
+	if (register_domain_probes(di))
+	    exit(-128);
+	nprobes += di->nprobes;
+	if (debug >= 0)
+	    dump_domain_info(di, "Registered");
     }
 
     while (1) {
-	run_vmprobes();
-	if (reloadconfigfile) {
-	    fprintf(stderr,"Reloading config file.\n");
-	    struct argfilter **newalist;
-	    int newalistlen;
-	    char **newflist;
-	    int newflistlen;
-	    char **newpslist;
-	    int newpslistlen;
+	int rc = 0;
 
-	    if (load_config_file(configfile,&newflist,&newflistlen,
-				 &newalist,&newalistlen,
-				 &newpslist,&newpslistlen)) {
-		fprintf(stderr,"ERROR: failed to load config file %s; not replacing current config!\n",configfile);
-		continue;
+	if (nprobes)
+	    run_vmprobes();
+	else {
+	    sigset_t mask;
+	    sigprocmask(0, NULL, &mask);
+	    sigdelset(&mask, SIGUSR2);
+	    fprintf(stderr,"No probes, suspending waiting for reconfig.\n");
+	    sigsuspend(&mask);
+	}
+	if (reloadconfigfile) {
+	    LIST_HEAD(ndomains);
+
+	    fprintf(stderr,"Reloading config file.\n");
+
+	    // load the new config file info
+	    if (load_config_file(configfile, &ndomains)) {
+		fprintf(stderr, "ERROR: failed to load config file %s; not replacing current config!\n",
+			configfile);
+		rc = 1;
+		goto nogo;
 	    }
 
 	    // unregister all probes
-	    if ((rc = unregister_vmprobe_batch(domid,schandles,SYSCALL_MAX))) {
-		fprintf(stderr,"ERROR: failed to unregister some probes; bad!!\n");
-	    }
-	    else {
-		for (i = 0; i < SYSCALL_MAX; ++i) {
-		    vaddrlist[i] = 0;
-		    if (schandles[i] == -1)
-			continue;
-			    
-		    schandles[i] = -1;
-		    fprintf(stderr,"Unregistered probe for %s.\n",sctab[i].name);
+	    list_for_each_entry(di, &domains, list) {
+		if (unregister_domain_probes(di)) {
+		    fprintf(stderr, "dom%d: failed to unregister all probes\n",
+			    di->domid);
 		}
 	    }
 
@@ -4287,82 +4566,49 @@ int main(int argc, char *argv[])
 	    // free up current data structures
 	    cleanup(0);
 
-	    // replace the argfilter list
-	    argfilter_list = newalist;
-	    argfilter_list_len = newalistlen;
+	    assert(list_empty(&domains));
 
-	    // replace the function list
-	    syscall_list = newflist;
-	    syscall_list_len = newflistlen;
-
-	    // replace the process name list
-	    ps_list = newpslist;
-	    ps_list_len = newpslistlen;
+	    // install the new list
+	    list_splice(&ndomains, &domains);
 
 	    // re-register probes
-	    for (i = 0; i < SYSCALL_MAX; ++i) {
-		if (sctab[i].name == NULL)
-		    continue;
-
-		found = 0;
-		for (j = 0; j < syscall_list_len; ++j) {
-		    if (!strcmp(sctab[i].name,syscall_list[j])) {
-			found = 1;
-			break;
+	    nprobes = 0;
+	    list_for_each_entry(di, &domains, list) {
+		// What is the right thing to do?
+		rc = register_domain_probes(di);
+		if (rc) {
+		    fprintf(stderr,
+			    "dom%d: could not register probes; "
+			    "unregistering all probes and awaiting reconfig\n",
+			    di->domid);
+		    list_for_each_entry(di, &domains, list) {
+			(void)unregister_vmprobe_batch(di->domid,
+						       di->schandles,
+						       SYSCALL_MAX);
 		    }
+		    rc = 1;
+		    nprobes = 0;
+		    goto nogo;
 		}
-		if (syscall_list_len && !found)
-		    continue;
-
-		vaddrlist[i] = sctab[i].addr;
+		nprobes += di->nprobes;
+		if (debug >= 0)
+		    dump_domain_info(di, "Registered");
 	    }
 
-#ifdef STATIC_RET_PROBE
-	    /*
-	     * If someone wants a "post" probe, insert the magic probe.
-	     * XXX should do this dynamically to mitigate the impact on others.
-	     */
-	    for (j = 0; j < argfilter_list_len; ++j) {
-		if (argfilter_list[j]->when == WHEN_POST) {
-		    vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
-		    debug(1, "installing syscall return probe at 0x%x\n",
-			  vaddrlist[SYSCALL_RET_IX]);
-		    break;
-		}
-	    }
-#endif
-
-	    if ((rc = register_vmprobe_batch(domid,vaddrlist,SYSCALL_MAX,
-					     on_fn_pre,on_fn_post,
-					     schandles,1))) {
-		for (i = 0; i < SYSCALL_MAX; ++i) {
-		    if (vaddrlist[i] && schandles[i] == -1)
-			break;
-		}
-		if (i == SYSCALL_MAX)
-		    error("Failed to register probes!\n");
-		else
-		    error("Failed to register probe for %s\n",sctab[i].name);
-		exit(-128);
-	    }
-	    else {
-		for (i = 0; i < SYSCALL_MAX; ++i) {
-		    if (vaddrlist[i] && schandles[i] > -1)
-			fprintf(stderr,"Registered probe %d for %s\n",
-				schandles[i],sctab[i].name);
-		}
-	    }
-
-	    fprintf(stderr,"Reloaded config file successfully.\n");
+	nogo:
+	    fprintf(stderr,"Config file %sreloaded, %d probes\n",
+		    rc ? "NOT " : "", nprobes);
 	    if (filtered_events_fd != NULL) {
 		struct timeval tv;
 
 		gettimeofday(&tv, NULL);
-		fprintf(filtered_events_fd, "%u.%03u: config file reloaded\n",
-			(unsigned)tv.tv_sec, (unsigned)(tv.tv_usec/1000));
+		fprintf(filtered_events_fd,
+			"%u.%03u: config file %sreloaded, %d probes\n",
+			(unsigned)tv.tv_sec, (unsigned)(tv.tv_usec/1000),
+			rc ? "NOT " : "", nprobes);
 	    }
-	    reloadconfigfile = 0;
 
+	    reloadconfigfile = 0;
 	    restart_vmprobes();
 	}
     }

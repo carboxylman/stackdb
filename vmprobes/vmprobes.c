@@ -83,6 +83,17 @@ only_probepoint_left(struct vmprobe_probepoint *probepoint)
             (probepoint->domain->probepoint_list.prev == &probepoint->node));
 }
 
+/* like domain_exists, but goes straight to the hypervisor for info */
+static inline bool
+domain_alive(domid_t domid)
+{
+    xc_dominfo_t dominfo;
+    bool rc = ((xc_domain_getinfo(xc_handle, domid, 1, &dominfo) == 1) &&
+	       (dominfo.domid == domid) &&
+	       dominfo.dying == 0 && dominfo.crashed == 0);
+    return rc;
+}
+
 static inline bool
 domain_paused(domid_t domid)
 {
@@ -138,7 +149,10 @@ static void unregister_vmprobe_batch_internal(void) {
 }
 
 #ifdef VMPROBE_SIGNAL
-static sighandler_t osighandler[_NSIG];
+static struct handlers {
+    int caught;
+    struct sigaction oaction;
+} handlers[_NSIG];
 
 static void
 signal_handler(int sig)
@@ -153,7 +167,12 @@ signal_handler(int sig)
     interrupt_sig = sig;
 
     // don't recurse
-    signal(sig, osighandler[sig]);
+    if (handlers[sig].caught) {
+	sigaction(sig, &handlers[sig].oaction, NULL);
+	handlers[sig].caught = 0;
+    }
+
+    debug(0,"got signal %d, reset handler to %p\n",sig,handlers[sig].oaction.sa_handler);
 
     if (0 && sig == SIGSEGV) {
         for (handle = 0; handle < VMPROBE_MAX; handle++)
@@ -170,32 +189,47 @@ signal_handler(int sig)
     raise(sig);
 }
 
-static void
-signal_interrupt(void)
+static inline void
+_sethandler(struct sigaction *act, int sig)
 {
-    int i;
+    if (sigaction(sig, act, &handlers[sig].oaction) == 0) {
+	if (handlers[sig].oaction.sa_handler == SIG_IGN)
+	    sigaction(sig, &handlers[sig].oaction, NULL);
+	else
+	    handlers[sig].caught = 1;
+    }
+}
 
-    for (i = 0; i < sizeof(osighandler) / sizeof(osighandler[0]); i++)
-	osighandler[i] = SIG_DFL;
+static void
+signal_interrupt(int on)
+{
+    struct sigaction act;
 
-    if ((osighandler[SIGPIPE] = signal(SIGPIPE, signal_handler)) == SIG_IGN)
-	signal(SIGPIPE, SIG_IGN);
-    if ((osighandler[SIGQUIT] = signal(SIGQUIT, signal_handler)) == SIG_IGN)
-        signal(SIGQUIT, SIG_IGN);
-    if ((osighandler[SIGINT] = signal(SIGINT, signal_handler)) == SIG_IGN)
-        signal(SIGINT, SIG_IGN);
-    if ((osighandler[SIGABRT] = signal(SIGABRT, signal_handler)) == SIG_IGN)
-        signal(SIGABRT, SIG_IGN);
-    if ((osighandler[SIGHUP] = signal(SIGHUP, signal_handler)) == SIG_IGN)
-        signal(SIGHUP, SIG_IGN);
-    if ((osighandler[SIGILL] = signal(SIGILL, signal_handler)) == SIG_IGN)
-        signal(SIGILL, SIG_IGN);
-    if ((osighandler[SIGFPE] = signal(SIGFPE, signal_handler)) == SIG_IGN)
-        signal(SIGFPE, SIG_IGN);
-    if ((osighandler[SIGSEGV] = signal(SIGSEGV, signal_handler)) == SIG_IGN)
-        signal(SIGSEGV, SIG_IGN);
-    if ((osighandler[SIGTERM] = signal(SIGTERM, signal_handler)) == SIG_IGN)
-        signal(SIGTERM, SIG_IGN);
+    /* restore default settings */
+    if (!on) {
+	int i;
+
+	for (i = 0; i < sizeof(handlers) / sizeof(handlers[0]); i++) {
+	    if (handlers[i].caught) {
+		sigaction(i, &handlers[i].oaction, NULL);
+		handlers[i].caught = 0;
+	    }
+	}
+	return;
+    }
+
+    memset(&act, 0, sizeof(act));
+    act.sa_handler = signal_handler;
+
+    _sethandler(&act, SIGPIPE);
+    _sethandler(&act, SIGQUIT);
+    _sethandler(&act, SIGINT);
+    _sethandler(&act, SIGABRT);
+    _sethandler(&act, SIGHUP);
+    _sethandler(&act, SIGILL);
+    _sethandler(&act, SIGFPE);
+    _sethandler(&act, SIGSEGV);
+    _sethandler(&act, SIGTERM);
 }
 #endif /* VMPROBE_SIGNAL */
 
@@ -865,6 +899,10 @@ cleanup_vmprobes(void)
         perror("failed to close xc interface");
     xc_handle = -1;
 
+#ifdef VMPROBE_SIGNAL
+    signal_interrupt(0);
+#endif
+
     debug(0,"vmprobes uninitialized\n");
 }
 
@@ -878,7 +916,7 @@ init_vmprobes(void)
         return -1; // xc interface already open
 
 #ifdef VMPROBE_SIGNAL
-    signal_interrupt();
+    signal_interrupt(1);
 #endif
     
     VMPROBE_PERF_RESET();
@@ -1521,6 +1559,13 @@ unregister_vmprobe_batch(domid_t domid,
     debug(1,"dom%d unpaused\n", domid);
     VMPROBE_PERF_STOP("vmprobes unpauses domU");
 
+    /* make sure we didn't kill the sucker */
+    if (!domain_alive(domid)) {
+	fprintf(stderr, "pooch screwed: dom%d died during surgery\n", domid);
+	raise(SIGSEGV);
+	pause();
+    }
+
     /* cleanup vmprobes library when the last probe is unregistered */
     if (list_empty(&domain_list))
         cleanup_vmprobes();
@@ -1950,24 +1995,8 @@ stop_vmprobes(void)
 
     interrupt_vmprobes();
 
-    /* NOTE: unbounding debug port and closing event channel happen in
+    /* NOTE: unbinding debug port and closing event channel happen in
        cleanup_vmprobes() */
-
-    //xc_evtchn_unbind(xce_handle,(evtchn_port_t)dbg_port);
-    //dbg_port = -1;
-    
-    //xc_evtchn_close(xce_handle);
-    //xce_handle = -1;
-    
-    //xc_interface_close(xc_handle);
-    //xc_handle = -1;
-
-    /* close the fd to make the select() in run_vmprobes() return */
-    //fd = xc_evtchn_fd(xce_handle);
-    //close(fd);
-
-    //xc_evtchn_close(xce_handle);
-    //xce_handle = -1;
 }
 
 int
@@ -2064,6 +2093,31 @@ vmprobe_domid(vmprobe_handle_t handle)
         return 0;
 
     return domain->id;
+}
+
+int
+vmprobe_setcookie(vmprobe_handle_t handle, void *cookie)
+{
+    struct vmprobe *probe;
+
+    probe = find_probe(handle);
+    if (!probe)
+        return -1;
+
+    probe->cookie = cookie;
+    return 0;
+}
+
+void *
+vmprobe_getcookie(vmprobe_handle_t handle)
+{
+    struct vmprobe *probe;
+
+    probe = find_probe(handle);
+    if (!probe)
+        return NULL;
+
+    return probe->cookie;
 }
 
 xa_instance_t *
