@@ -430,8 +430,7 @@ dwarf_form_string (unsigned int form)
     result = known_forms[form];
 
   if (unlikely (result == NULL))
-    snprintf (buf, sizeof buf, "unknown form %lx",
-	      (uint64_t)form);
+    snprintf (buf, sizeof buf, "unknown form %x",form);
 
   return result;
 }
