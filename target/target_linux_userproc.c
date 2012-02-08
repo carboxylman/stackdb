@@ -75,6 +75,7 @@ static unsigned long linux_userproc_write(struct target *target,
 static char *linux_userproc_reg_name(struct target *target,REG reg);
 static REGVAL linux_userproc_read_reg(struct target *target,REG reg);
 static int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value);
+static int linux_userproc_flush_context(struct target *target);
 static REG linux_userproc_get_unused_debug_reg(struct target *target);
 static int linux_userproc_set_hw_breakpoint(struct target *target,
 					    REG num,ADDR addr);
@@ -112,6 +113,7 @@ struct target_ops linux_userspace_process_ops = {
     .regname = linux_userproc_reg_name,
     .readreg = linux_userproc_read_reg,
     .writereg = linux_userproc_write_reg,
+    .flush_context = linux_userproc_flush_context,
     .get_unused_debug_reg = linux_userproc_get_unused_debug_reg,
     .set_hw_breakpoint = linux_userproc_set_hw_breakpoint,
     .set_hw_watchpoint = linux_userproc_set_hw_watchpoint,
@@ -136,6 +138,15 @@ struct linux_userproc_state {
     enum __ptrace_request ptrace_type;
     int last_signo;
     int syscall;
+
+    /*
+     * On the first register read on a paused domain, we read in this,
+     * and if it gets dirty, we flush it on resume.  All other reg ops
+     * are satisfied by just writing to this struct.
+     */
+    int regs_dirty:1,
+	regs_loaded:1;
+    struct user_regs_struct regs;
 
     /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
      * we use this might have to change.
@@ -912,6 +923,9 @@ static int linux_userproc_resume(struct target *target) {
 
     vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
 
+    /* First, flush back registers if they're dirty! */
+    linux_userproc_flush_context(target);
+
     int ptopts = PTRACE_O_TRACESYSGOOD;
     ptopts |= lstate->ptrace_opts;
     errno = 0;
@@ -1383,8 +1397,10 @@ char *linux_userproc_reg_name(struct target *target,REG reg) {
 }
 
 REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
-    struct user_regs_struct regs;
     int ptrace_idx;
+    struct linux_userproc_state *lstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
 
     vdebug(5,LOG_T_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
 
@@ -1404,26 +1420,31 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
     ptrace_idx = dreg_to_ptrace_idx32[reg];
 #endif
 
-    /* Don't bother checking if process is stopped!  We can't send it a
-     * STOP without interfering with its execution, so we don't!
-     */
-    errno = 0;
-    if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
-	verror("ptrace(GETREGS): %s\n",strerror(errno));
-	return 0;
+    /* Don't bother checking if process is stopped! */
+    if (!lstate->regs_loaded) {
+	errno = 0;
+	if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),
+		   NULL,&(lstate->regs)) == -1) {
+	    verror("ptrace(GETREGS): %s\n",strerror(errno));
+	    return 0;
+	}
+	lstate->regs_loaded = 1;
+	lstate->regs_dirty = 0;
     }
 
     errno = 0;
 #if __WORDSIZE == 64
-    return (REGVAL)(((unsigned long *)&regs)[ptrace_idx]);
+    return (REGVAL)(((unsigned long *)&(lstate->regs))[ptrace_idx]);
 #else 
-    return (REGVAL)(((long int *)&regs)[ptrace_idx]);
+    return (REGVAL)(((long int *)&(lstate->regs))[ptrace_idx]);
 #endif
 }
 
 int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
-    struct user_regs_struct regs;
     int ptrace_idx;
+    struct linux_userproc_state *lstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
 
     vdebug(5,LOG_T_LUP,"writing reg %s 0x%"PRIxREGVAL"\n",
 	   linux_userproc_reg_name(target,reg),value);
@@ -1444,25 +1465,47 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     ptrace_idx = dreg_to_ptrace_idx32[reg];
 #endif
 
-    errno = 0;
-    if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
-	verror("ptrace(GETREGS): %s\n",strerror(errno));
-	return -1;
+    /* Don't bother checking if process is stopped! */
+    if (!lstate->regs_loaded) {
+	errno = 0;
+	if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),
+		   NULL,&(lstate->regs)) == -1) {
+	    verror("ptrace(GETREGS): %s\n",strerror(errno));
+	    return 0;
+	}
+	lstate->regs_loaded = 1;
+	lstate->regs_dirty = 0;
     }
 
 #if __WORDSIZE == 64
-    ((unsigned long *)&regs)[ptrace_idx] = (unsigned long)value;
+    ((unsigned long *)&(lstate->regs))[ptrace_idx] = (unsigned long)value;
 #else 
-    ((long int*)&regs)[ptrace_idx] = (long int)value;
+    ((long int*)&(lstate->regs))[ptrace_idx] = (long int)value;
 #endif
 
-    /* Don't bother checking if process is stopped!  We can't send it a
-     * STOP without interfering with its execution, so we don't!
-     */
-    errno = 0;
-    if (ptrace(PTRACE_SETREGS,linux_userproc_pid(target),NULL,&regs) == -1) {
-	verror("ptrace(SETREGS): %s\n",strerror(errno));
-	return -1;
+    /* Flush the registers in target_resume! */
+    lstate->regs_dirty = 1;
+
+    return 0;
+}
+
+static int linux_userproc_flush_context(struct target *target) {
+    struct linux_userproc_state *lstate;
+    lstate = (struct linux_userproc_state *)(target->state);
+
+    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+
+    /* Flush back registers if they're dirty! */
+    if (lstate->regs_dirty) {
+	errno = 0;
+	if (ptrace(PTRACE_SETREGS,linux_userproc_pid(target),
+		   NULL,&(lstate->regs)) == -1) {
+	    verror("ptrace(SETREGS): %s\n",strerror(errno));
+	    return -1;
+	}
+	/* Invalidate our cache. */
+	lstate->regs_dirty = 0;
+	lstate->regs_loaded = 0;
     }
 
     return 0;
@@ -1787,6 +1830,11 @@ int linux_userproc_enable_hw_breakpoints(struct target *target) {
 }
 
 int linux_userproc_singlestep(struct target *target) {
+    if (target_flush_context(target) < 0) {
+	verror("could not flush context; not single stepping!\n");
+	return -1;
+    }
+
     ptrace(PTRACE_SINGLESTEP,linux_userproc_pid(target),NULL,NULL);
     if (errno) {
 	verror("could not ptrace single step: %s\n",strerror(errno));

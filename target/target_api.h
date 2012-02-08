@@ -91,6 +91,7 @@ unsigned long target_write_addr(struct target *target,ADDR addr,
 char *target_reg_name(struct target *target,REG reg);
 REGVAL target_read_reg(struct target *target,REG reg);
 int target_write_reg(struct target *target,REG reg,REGVAL value);
+int target_flush_context(struct target *target);
 void target_free(struct target *target);
 struct target *target_create(char *type,void *state,struct target_ops *ops);
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
@@ -268,6 +269,7 @@ struct target_ops {
     char *(*regname)(struct target *target,REG reg);
     REGVAL (*readreg)(struct target *target,REG reg);
     int (*writereg)(struct target *target,REG reg,REGVAL value);
+    int (*flush_context)(struct target *target);
 
     /* read some memory, potentially into a supplied buffer. */
     unsigned char *(*read) (struct target *target,ADDR addr,

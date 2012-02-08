@@ -151,6 +151,11 @@ int target_write_reg(struct target *target,REG reg,REGVAL value) {
     return target->ops->writereg(target,reg,value);
 }
 
+int target_flush_context(struct target *target) {
+    vdebug(5,LOG_T_TARGET,"flushing target(%s) cpu context\n",target->type);
+    return target->ops->flush_context(target);
+}
+
 int target_close(struct target *target) {
     int rc;
 
