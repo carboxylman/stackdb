@@ -109,17 +109,19 @@ target_status_t target_status(struct target *target) {
 unsigned char *target_read_addr(struct target *target,
 				ADDR addr,
 				unsigned long length,
-				unsigned char *buf) {
+				unsigned char *buf,
+				void *targetspecdata) {
     vdebug(5,LOG_T_TARGET,"reading target(%s) at %16llx into %p (%d)\n",
 	   target->type,addr,buf,length);
-    return target->ops->read(target,addr,length,buf);
+    return target->ops->read(target,addr,length,buf,targetspecdata);
 }
 
 unsigned long target_write_addr(struct target *target,ADDR addr,
-				unsigned long length,unsigned char *buf) {
+				unsigned long length,unsigned char *buf,
+				void *targetspecdata) {
     vdebug(5,LOG_T_TARGET,"writing target(%s) at %16llx (%d)\n",
 	   target->type,addr,length);
-    return target->ops->write(target,addr,length,buf);
+    return target->ops->write(target,addr,length,buf,targetspecdata);
 }
 
 struct value *target_read(struct target *target,struct symbol *symbol) {

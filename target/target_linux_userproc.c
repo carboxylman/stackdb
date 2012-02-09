@@ -67,11 +67,13 @@ static target_status_t linux_userproc_poll(struct target *target,
 static unsigned char *linux_userproc_read(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
-					  unsigned char *buf);
+					  unsigned char *buf,
+					  void *targetspecdata);
 static unsigned long linux_userproc_write(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
-					  unsigned char *buf);
+					  unsigned char *buf,
+					  void *targetspecdata);
 static char *linux_userproc_reg_name(struct target *target,REG reg);
 static REGVAL linux_userproc_read_reg(struct target *target,REG reg);
 static int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value);
@@ -1175,7 +1177,8 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 static unsigned char *linux_userproc_read(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
-					  unsigned char *buf) {
+					  unsigned char *buf,
+					  void *targetspecdata) {
     struct linux_userproc_state *lstate;
     lstate = (struct linux_userproc_state *)(target->state);
 
@@ -1190,7 +1193,8 @@ static unsigned char *linux_userproc_read(struct target *target,
 unsigned long linux_userproc_write(struct target *target,
 				   ADDR addr,
 				   unsigned long length,
-				   unsigned char *buf) {
+				   unsigned char *buf,
+				   void *targetspecdata) {
     struct linux_userproc_state *lstate;
     lstate = (struct linux_userproc_state *)(target->state);
 #if __WORDSIZE == 64
