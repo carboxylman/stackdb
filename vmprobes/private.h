@@ -15,12 +15,16 @@ struct vmprobe_probepoint;
 
 /* 
  * vmprobe -- represents a single probe.
+ *
+ * There can be multiple probes per probepoint, with each probe having
+ * a pointer to its probe-point (probepoint) and all probe-point probes
+ * linked together (via node).
  */
 struct vmprobe {
     /* A unique value that indicates this probe */
     vmprobe_handle_t handle;
     
-    /* Link to the probe list in the parent domain */
+    /* Link to the probe list in the parent probe-point */
     struct list_head node;
 
     unsigned char vbytes[64];
@@ -89,9 +93,15 @@ enum vmprobe_probepoint_state {
 struct vmprobe_domain;
 
 /*
- * vmprobe_point -- represents a probe-point, at which several vmprobes can be
- * registered.
- * A probe-point can contain multiple probes.
+ * vmprobe_point -- represents an address space probe-point.
+ *
+ * A probe-point can contain multiple probes (linked together via
+ * the list head probe_list).
+ *
+ * A probe-point has a pointer to its domain (domain) and all domain
+ * probe-points are linked together (via node).
+ *
+ * All probe-points are also on a global list (chained via list).
  */
 struct vmprobe_probepoint {
     /* Link to the global probepoint list */
@@ -131,7 +141,11 @@ struct vmprobe_probepoint {
 
 /*
  * vmprobe_domain -- represents an instrumented domain.
- * A domain can include multiple probe-points.
+ *
+ * A domain can contain multiple probe-points (linked together via
+ * the list head probepoint_list).
+ *
+ * There is a global list of domains (chained via list).
  */
 struct vmprobe_domain {
     /* Link to the domain list */
@@ -151,6 +165,10 @@ struct vmprobe_domain {
 
     /* XenAccess instance used to read/write domain's memory */
     xa_instance_t xa_instance;
+
+    /* Pending register state */
+    struct cpu_user_regs *regs;
+    vcpu_guest_context_t ctx;
 };
 
 #endif /* _XEN_VMPROBES_PRIVATE_H */

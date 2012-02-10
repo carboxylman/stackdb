@@ -49,6 +49,12 @@ arch_insert_code(struct vmprobe_probepoint *probepoint,
 static int
 arch_remove_code(struct vmprobe_probepoint *probepoint);
 
+static inline int
+arch_in_singlestep(struct cpu_user_regs *regs)
+{
+    return (regs->eflags & EF_TF) ? 1 : 0;
+}
+
 static inline void
 arch_enter_singlestep(struct cpu_user_regs *regs)
 {

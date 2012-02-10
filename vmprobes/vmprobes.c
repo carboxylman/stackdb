@@ -20,6 +20,7 @@
 #include "private.h"
 
 static int vmprobes_debug_level = -1;
+char *global_state = "INUSER";
 
 void vmprobes_set_debug_level(int level,int xa_level)
 {
@@ -46,6 +47,7 @@ void _vmprobes_debug(int level,char *format,...) {
 #define __remove_code(probepoint) (arch_remove_code(probepoint))
 #define __insert_breakpoint(probepoint) (arch_insert_breakpoint(probepoint))
 #define __remove_breakpoint(probepoint) (arch_remove_breakpoint(probepoint))
+#define __in_singlestep(regs)        	(arch_in_singlestep(regs))
 #define __enter_singlestep(regs)        (arch_enter_singlestep(regs))
 #define __leave_singlestep(regs)        (arch_leave_singlestep(regs))
 #define __get_org_ip(regs)              (arch_get_org_ip(regs))
@@ -69,6 +71,7 @@ static bool interrupt = 0;
 static int interrupt_sig = -1;
 static evtchn_port_t dbg_port = -1;
 
+/* Returns true if this probe is the only one associated with the probepoint */
 static inline bool
 only_probe_left(struct vmprobe *probe)
 {
@@ -76,6 +79,7 @@ only_probe_left(struct vmprobe *probe)
             (probe->probepoint->probe_list.prev == &probe->node));
 }
 
+/* Returns true if this probepoint is the only one associated with the dom */
 static inline bool
 only_probepoint_left(struct vmprobe_probepoint *probepoint)
 {
@@ -158,6 +162,9 @@ static void
 signal_handler(int sig)
 {
     vmprobe_handle_t handle;
+    char *ostate = global_state;
+
+    global_state = "INSIG";
 
     VMPROBE_PERF_STOP("vmprobes gets control back by interrupt");
     VMPROBE_PERF_NEXT();
@@ -172,7 +179,8 @@ signal_handler(int sig)
 	handlers[sig].caught = 0;
     }
 
-    debug(0,"got signal %d, reset handler to %p\n",sig,handlers[sig].oaction.sa_handler);
+    debug(0,"got signal %d in state %s, reset handler to %p\n",
+	  sig, ostate, handlers[sig].oaction.sa_handler);
 
     if (0 && sig == SIGSEGV) {
         for (handle = 0; handle < VMPROBE_MAX; handle++)
@@ -187,6 +195,8 @@ signal_handler(int sig)
     VMPROBE_PERF_PRINT();
 
     raise(sig);
+
+    global_state = ostate;
 }
 
 static inline void
@@ -240,15 +250,13 @@ init_evtchn(evtchn_port_t *dbg_port)
     int port;
     
     evtchn = xc_evtchn_open();
-    if (evtchn < 0)
-    {
+    if (evtchn < 0) {
         perror("failed to open evtchn device");
         return evtchn;
     }
     
     port = xc_evtchn_bind_virq(evtchn, VIRQ_DEBUGGER);
-    if (port < 0)
-    {
+    if (port < 0) {
         perror("failed to bind debug virq port");
         xc_evtchn_close(evtchn);
         return port;
@@ -266,14 +274,12 @@ reinit_evtchn(evtchn_port_t *dbg_port)
     int port;
     
     evtchn = xc_evtchn_open();
-    if (evtchn < 0)
-    {
+    if (evtchn < 0) {
         perror("failed to open evtchn device");
         return evtchn;
     }
     port = xc_evtchn_bind_virq(evtchn, VIRQ_DEBUGGER);
-    if (port < 0)
-    {
+    if (port < 0) {
         perror("warning: failed to bind debug virq port");
     }
     else {
@@ -316,15 +322,13 @@ add_probe(vmprobe_handler_t pre_handler,
     struct vmprobe *probe;
     vmprobe_handle_t handle = -1;
     
-    if (cqueue_empty(&handle_queue))
-    {
+    if (cqueue_empty(&handle_queue)) {
         error("total number of probes cannot exceed %d\n",VMPROBE_MAX);
         return NULL;
     }
 
     probe = (struct vmprobe *) malloc( sizeof(*probe) );
-    if (!probe)
-    {
+    if (!probe) {
         error("failed to allocate a new probe\n");
         return NULL;
     }
@@ -366,7 +370,12 @@ remove_probe(struct vmprobe *probe)
     cqueue_put(&handle_queue, handle);
     probe_list[handle] = NULL;
     
-    debug(0,"probe %d removed\n", probe->handle);
+    if (probe->probepoint && probe->probepoint->domain)
+	debug(0,"probe %d [dom%d:%lx] removed\n", probe->handle,
+	      probe->probepoint->domain->id, probe->probepoint->vaddr);
+    else
+	debug(0,"probe %d removed\n", probe->handle);
+
     free(probe);
 }
 
@@ -375,8 +384,7 @@ find_probepoint(unsigned long vaddr, struct vmprobe_domain *domain)
 {
     struct vmprobe_probepoint *probepoint;
 
-    list_for_each_entry(probepoint, &probepoint_list, list)
-    {
+    list_for_each_entry(probepoint, &probepoint_list, list) {
         if (probepoint->domain == domain && probepoint->vaddr == vaddr)
             return probepoint;
     }
@@ -394,9 +402,8 @@ add_probepoint(unsigned long vaddr, struct vmprobe_domain *domain)
         return NULL;
     
     probepoint = (struct vmprobe_probepoint *) malloc( sizeof(*probepoint) );
-    if (!probepoint)
-    {
-        perror("failed to allocate a new probepoint");
+    if (!probepoint) {
+        error("failed to allocate a new probepoint");
         return NULL;
     }
     
@@ -428,7 +435,8 @@ remove_probepoint(struct vmprobe_probepoint *probepoint)
     list_del(&probepoint->action_list);
 
     debug(0,"probepoint [dom%d:%lx] removed\n",
-      probepoint->domain->id,probepoint->vaddr);
+	  probepoint->domain->id, probepoint->vaddr);
+
     free(probepoint);
 }
 
@@ -437,8 +445,7 @@ find_domain(domid_t domid)
 {
     struct vmprobe_domain *domain;
 
-    list_for_each_entry(domain, &domain_list, list)
-    {
+    list_for_each_entry(domain, &domain_list, list) {
         if (domain->id == domid)
             return domain;
     }
@@ -523,9 +530,8 @@ add_domain(domid_t domid)
         return NULL;
 
     domain = (struct vmprobe_domain *) malloc( sizeof(*domain) );
-    if (!domain)
-    {
-        perror("failed to allocate a new domain");
+    if (!domain) {
+        error("failed to allocate a new domain");
         return NULL;
     }
     
@@ -539,8 +545,7 @@ add_domain(domid_t domid)
     domain->xa_instance.sysmap = linux_predict_sysmap_name(domid);
     domain->xa_instance.os_type = XA_OS_LINUX; // currently linux only
 
-    if (xa_init_vm_id_strict(domid, &domain->xa_instance) == XA_FAILURE)
-    {
+    if (xa_init_vm_id_strict(domid, &domain->xa_instance) == XA_FAILURE) {
 	if (domain->xa_instance.sysmap)
 	    free(domain->xa_instance.sysmap);
         free(domain);
@@ -555,13 +560,12 @@ add_domain(domid_t domid)
     domain->sstep_probepoint = NULL;
     INIT_LIST_HEAD(&domain->probepoint_list);
     
+    domain->regs = NULL;
+    memset(&domain->ctx, 0, sizeof(domain->ctx));
+
     list_add(&domain->list, &domain_list);
 
     debug(0,"dom%d added\n", domain->id);
-
-    //uint32_t offset;
-    //linux_get_taskstruct(&domain->xa_instance,65000,&offset);
-    //debug(0,"searched for task 65000 in dom%d\n", domain->id);
 
     return domain;
 }
@@ -577,6 +581,7 @@ remove_domain(struct vmprobe_domain *domain)
 	free(domain->xa_instance.sysmap);
 
     debug(0,"dom%d removed\n", domain->id);
+
     free(domain);
 }
 
@@ -709,11 +714,15 @@ static int handle_actions(struct vmprobe_probepoint *probepoint,
 }
 
 static int
-handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
+handle_bphit(struct vmprobe_domain *domain)
 {
     struct vmprobe *probe;
     struct vmprobe_probepoint *probepoint;
     int have_action = 0;
+    struct cpu_user_regs *regs;
+
+    regs = domain->regs;
+    assert(regs != NULL);
 
     probepoint = find_probepoint(__get_org_ip(regs), domain);
     if (!probepoint)
@@ -721,8 +730,7 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 
     debug(2,"bphit probepoint [dom%d:%lx]\n",domain->id,probepoint->vaddr);
 
-    if (probepoint->state == VMPROBE_BP_SET)
-    {
+    if (probepoint->state == VMPROBE_BP_SET) {
         /* save the original ip value in case something bad happens */
         domain->org_ip = __get_org_ip(regs);
 
@@ -733,8 +741,7 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
          * first time on this pass (which means we should not have an
          * action set!)
          */
-        list_for_each_entry(probe, &probepoint->probe_list, node)
-        {
+        list_for_each_entry(probe, &probepoint->probe_list, node) {
             if (!probe->disabled && probe->pre_handler)
                 probe->disabled = probe->pre_handler(probe->handle, regs);
         }
@@ -745,12 +752,10 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
         
         /* restore ip register */
         __reset_ip(regs);
+        domain->org_ip = 0;
         
         VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
         debug(2,"original ip %x restored in dom%d\n", regs->eip, domain->id);
-
-        /* nothing bad has happened, so set it zero */
-        domain->org_ip = 0;
     }
 
     /*
@@ -761,14 +766,7 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
         have_action = handle_actions(probepoint,regs);
     }
 
-    if (!have_action && !probepoint->action_obviates_orig) 
-    {
-        /* restore ip register */
-        //VMPROBE_PERF_START();
-        //__reset_ip(regs);
-        //debug(2,"original ip %x restored in dom%d\n", regs->eip, domain->id);
-        //VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
-        
+    if (!have_action && !probepoint->action_obviates_orig) {
         VMPROBE_PERF_START();
 
         probepoint->state = VMPROBE_REMOVING;
@@ -798,12 +796,16 @@ handle_bphit(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
 }
 
 static void
-handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
+handle_sstep(struct vmprobe_domain *domain)
 {
     struct vmprobe *probe;
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_action *action;
     struct vmprobe_action *taction;
+    struct cpu_user_regs *regs;
+
+    regs = domain->regs;
+    assert(regs != NULL);
 
     probepoint = domain->sstep_probepoint;
 
@@ -827,16 +829,14 @@ handle_sstep(struct vmprobe_domain *domain, struct cpu_user_regs *regs)
     /*
      * Run post-handlers
      */
-    list_for_each_entry(probe, &probepoint->probe_list, node)
-    {
+    list_for_each_entry(probe, &probepoint->probe_list, node) {
 	if (!probe->disabled && probe->post_handler)
 	    probe->disabled = probe->post_handler(probe->handle, regs);
     }
     
     VMPROBE_PERF_STOP("vmprobes executes post-handlers");
 
-    if (!interrupt)
-    {
+    if (!interrupt) {
 	VMPROBE_PERF_START();
         
 	/* turn singlestep mode off */
@@ -912,8 +912,10 @@ init_vmprobes(void)
     vmprobe_handle_t handle;
     vmprobe_action_handle_t action_handle;
     
-    if (xc_handle != -1)
-        return -1; // xc interface already open
+    if (xc_handle != -1) {
+	debug(1, "vmprobes already initialized\n");
+        return -1;
+    }
 
 #ifdef VMPROBE_SIGNAL
     signal_interrupt(1);
@@ -922,22 +924,19 @@ init_vmprobes(void)
     VMPROBE_PERF_RESET();
 
     xc_handle = xc_interface_open();
-    if (xc_handle < 0)
-    {
+    if (xc_handle < 0) {
         perror("failed to open xc interface");
         return xc_handle;
     }
 
     xce_handle = init_evtchn(&dbg_port);
-    if (xce_handle < 0)
-    {
+    if (xce_handle < 0) {
         perror("failed to open event channel\n");
         cleanup_vmprobes();
         return xce_handle;
     }
 
-    if (!cqueue_init(&handle_queue, VMPROBE_MAX))
-    {
+    if (!cqueue_init(&handle_queue, VMPROBE_MAX)) {
         perror("failed to init probe handle queue");
         cleanup_vmprobes();
         return -ENOMEM;
@@ -947,8 +946,7 @@ init_vmprobes(void)
     for (handle = 0; handle < VMPROBE_MAX; handle++)
         cqueue_put(&handle_queue, handle);
 
-    if (!cqueue_init(&action_handle_queue, VMPROBE_ACTION_MAX))
-    {
+    if (!cqueue_init(&action_handle_queue, VMPROBE_ACTION_MAX)) {
         perror("failed to init probe action handle queue");
         cleanup_vmprobes();
         return -ENOMEM;
@@ -970,15 +968,13 @@ reinit_vmprobes(void)
     VMPROBE_PERF_RESET();
 
     xc_handle = xc_interface_open();
-    if (xc_handle < 0)
-    {
+    if (xc_handle < 0) {
         perror("failed to open xc interface");
         return xc_handle;
     }
 
     xce_handle = init_evtchn(&dbg_port);
-    if (xce_handle < 0)
-    {
+    if (xce_handle < 0) {
         cleanup_vmprobes();
         return xce_handle;
     }
@@ -1042,8 +1038,7 @@ __register_vmprobe(struct vmprobe *probe)
     /* backup the original instruction */
     /* inject a breakpoint at the probe-point */
     ret = __insert_breakpoint(probepoint);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         probepoint->state = VMPROBE_DISABLED;
         return ret;
     }
@@ -1100,132 +1095,176 @@ __dump_probe(struct vmprobe *probe, char *str)
     }
 }
 
+/*
+ * Undo the domain address space and register state tweaks associated
+ * with a probe(point).
+ */
 static int
 __unregister_vmprobe(struct vmprobe *probe)
 {
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_domain *domain;
-    struct cpu_user_regs *regs;
-    vcpu_guest_context_t ctx;
-    int ret;
+    struct cpu_user_regs *regs = NULL;
+    int ret, setregs = 0;
 
     probepoint = probe->probepoint;
     domain = probepoint->domain;
 
-    /* NOTE: here, we try to restore the states of the (1) probepoint and 
-       (2) domain before we remove the specified probe completely. 
-       if there are other probes at the probepoint we should not touch it. 
-       likewise, if other probes are running in the domain, we have nothing to 
-       do with the domain. */
+    /* Must be paused */
+    assert(domain_paused(domain->id));
 
-    /* last probe at the probepoint? */
-    ret = only_probe_left(probe);
-    if (!ret)
-        return 0; // if not, nothing to restore
+    /*
+     * If there are other probes associated with the same probepoint,
+     * there is nothing to do.
+     */
+    if (!only_probe_left(probe))
+        return 0;
 
-    /* breakpoint set at the probepoint? */
-    if (probepoint->state != VMPROBE_BP_SET)
-        goto restore_domain; // jump to the 2nd phase; restore domain state
+    /*
+     * Get the registers if we need them.
+     * We do this early in case it fails. Saves having to recover
+     * from a half-cleaned up domain.
+     */
+    if (probepoint->state == VMPROBE_BP_SET ||
+	domain->sstep_probepoint == probepoint) {
 
-    VMPROBE_PERF_START();
+	VMPROBE_PERF_START();
 
-    probepoint->state = VMPROBE_REMOVING;
+	if ((regs = domain->regs) == NULL) {
+	    regs = get_regs(domain->id, &domain->ctx);
+	    if (regs == NULL) {
+		error("unregister: failed to get vcpu registers in dom%d\n",
+		      domain->id);
+		return -1;
+	    }
+	}
+	else
+	    debug(1, "using existing dom%d registers\n", domain->id);
 
-    if (vmprobes_debug_level > 0)
-	__dump_probe(probe, "Before remove_bp");
-
-    /* restore the original instruction */
-    ret = __remove_breakpoint(probepoint);
-    if (ret < 0)
-    {
-        probepoint->state = VMPROBE_BP_SET;
-        return ret;
+	VMPROBE_PERF_STOP("vmprobes obtains registers from domU");
     }
 
-    if (vmprobes_debug_level > 0)
-	__dump_probe(probe, "After remove_bp");
+    /*
+     * See if there is a breakpoint set. Three cases:
+     *   1. Domain is not at the breakpoint. Here we can just remove
+     *      the breakpoint from the address space.
+     *   2. Domain is at the breakpoint and we are processing it now.
+     *      In this case, the domain org_ip value will be set.
+     *      Besides removing the breakpoint, we need to restore the
+     *      IP to org_ip.
+     *   3. Domain has hit the breakpoint, but we have not processed it.
+     *	    Here org_ip won't be set but the domain IP will be at
+     *      probepoint location plus the size of the breakpoint.
+     *      Again, in addition to removing the breakpoint, we must back
+     *      up the IP to the breakpoint location.
+     */
+    if (probepoint->state == VMPROBE_BP_SET) {
+	unsigned long newip;
 
-    probepoint->state = VMPROBE_DISABLED;
+	/* check for case #3 */
+	newip = domain->org_ip;
+	if (newip == 0) {
+	    assert(regs != NULL);
+	    if (probepoint->vaddr == __get_org_ip(regs)) {
+		newip = probepoint->vaddr;
+		debug(1,"set ip=0x%lx in dom%d after unprocessed breakpoint\n",
+		      probepoint->vaddr, domain->id);
+	    }
+	}
 
-    VMPROBE_PERF_STOP("vmprobes removes breakpoint in domU");
-    debug(2,"bp removed at [dom%d:%lx] for the last time\n",
-            domain->id, probepoint->vaddr);
+	/* all cases, remove the breakpoint restoring original instruction */
+	VMPROBE_PERF_START();
 
-restore_domain:
-    /* last probepoint in the domain? */
-    ret = only_probepoint_left(probepoint);
-    if (!ret)
-        return 0; // if not, nothing to restore in the domain
+	probepoint->state = VMPROBE_REMOVING;
 
-    VMPROBE_PERF_START();
+	if (vmprobes_debug_level > 1)
+	    __dump_probe(probe, "Before remove_bp");
 
-    /* obtain vcpu register values */
-    regs = get_regs(domain->id, &ctx);
-    if (!regs)
-    {
-        error("failed to get vcpu registers in dom%d\n", domain->id);
-        return -1;
+	ret = __remove_breakpoint(probepoint);
+	if (ret < 0) {
+	    probepoint->state = VMPROBE_BP_SET;
+	    return ret;
+	}
+
+	if (vmprobes_debug_level > 1)
+	    __dump_probe(probe, "After remove_bp");
+
+	probepoint->state = VMPROBE_DISABLED;
+
+	VMPROBE_PERF_STOP("vmprobes removes breakpoint in domU");
+	debug(1,"bp removed at [dom%d:%lx]\n",
+	      domain->id, probepoint->vaddr);
+
+	/* cases #2 or #3, fix up the IP */
+	if (newip) {
+	    VMPROBE_PERF_START();
+
+	    assert(regs != NULL);
+	    regs->eip = newip;
+	    domain->org_ip = 0;
+	    setregs = 1;
+
+	    VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
+	    debug(1,"original ip=0x%x restored in dom%d\n",
+		  regs->eip, domain->id);
+	}
     }
 
-    VMPROBE_PERF_STOP("vmprobes obtains registers from domU");
-
-    /* singlestep still on? */
-    if (domain->sstep_probepoint)
-    {
+    /*
+     * If we were involved in a single-step related to this probepoint,
+     * clear the single-step flag.
+     */
+    if (domain->sstep_probepoint == probepoint) {
         VMPROBE_PERF_START();
 
         /* turn singlestep mode off */
+	assert(regs != NULL);
         __leave_singlestep(regs);
         domain->sstep_probepoint = NULL;
+	setregs = 1;
 
         VMPROBE_PERF_STOP("vmprobes unsets singlestep in domU");
-        debug(2,"sstep unset in dom%d for the last time\n", 
-                domain->id);
+        debug(1,"sstep unset in dom%d\n", domain->id);
     }
-    else
-        debug(2,"sstep NOT unset for last time\n");
-
-    /* ip register not restored yet? */
-    if (domain->org_ip)
-    {
-        VMPROBE_PERF_START();
-
-        /* restore ip register */
-        regs->eip = domain->org_ip;
-        domain->org_ip = 0;
-
-        VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
-        debug(2,"original ip %x restored in dom%d for the last time\n",
-                regs->eip, domain->id);
+    else if (domain->sstep_probepoint) {
+        debug(1,"sstep set for dom%d, but not ours (0x%lx)\n",
+	      domain->id, domain->sstep_probepoint->vaddr);
     }
-    else
-        debug(2,"orig IP NOT restored for last time (0x%08x)\n",regs->eip);
 
     VMPROBE_PERF_START();
 
-    /* set the restored register values back to vcpu */
-    ret = set_regs(domain->id, &ctx);
-    if (ret)
-    {
-        error("failed to set vcpu registers in dom%d\n", domain->id);    
+    /*
+     * Set the restored register values back to vcpu.
+     *
+     * XXX we are a tad bit screwed if this fails because we have
+     * potentially removed a breakpoint and messed with the single-step
+     * state. We need to address this.
+     */
+    if (setregs && (ret = set_regs(domain->id, &domain->ctx)) != 0) {
+        error("unregister: failed to set vcpu registers in dom%d\n",
+	      domain->id);    
         return -1;
     }
 
     VMPROBE_PERF_STOP("vmprobes sets registers in domU");
 
-    VMPROBE_PERF_START();
+    /*
+     * If we are the final probepoint in the domain, turn off debugging.
+     */
+    if (only_probepoint_left(probepoint)) {
+	VMPROBE_PERF_START();
 
-    /* turn debugging mode off */
-    ret = set_debugging(domain->id, false);
-    if (ret)
-    {
-        error("failed to unset debugging in dom%d\n", domain->id);
-        return -1;
+	/* turn debugging mode off */
+	ret = set_debugging(domain->id, false);
+	if (ret) {
+	    error("unregister: failed to unset debugging in dom%d\n",
+		  domain->id);
+	    return -1;
+	}
+
+	VMPROBE_PERF_STOP("vmprobes unsets debugging in domU");
+	debug(1,"debugging unset in dom%d\n", domain->id);
     }
-
-    VMPROBE_PERF_STOP("vmprobes unsets debugging in domU");
-    debug(2,"debugging unset in dom%d for the last time\n", 
-            domain->id);
 
     return 0;
 }
@@ -1272,14 +1311,43 @@ register_vmprobe_batch(domid_t domid,
     domain = find_domain(domid);
     if (!domain) {
         domain = add_domain(domid);
-        if (!domain)
+        if (!domain) {
+	    if (list_empty(&domain_list))
+		cleanup_vmprobes();
             return -1;
+	}
     }
 
+#if 0
+    if (domain_paused(domain->id)) {
+	fprintf(stderr, "batch register: dom%d already paused\n", domain->id);
+    }
+#endif
+
     VMPROBE_PERF_START();
-    xc_domain_pause(xc_handle,domain->id);
+    if ((rc = xc_domain_pause(xc_handle,domain->id)) != 0) {
+	error("dom%d: batch register: cannot pause (%d)\n", domain->id, rc);
+	if (list_empty(&domain->probepoint_list)) {
+	    remove_domain(domain);
+	    if (list_empty(&domain_list))
+		cleanup_vmprobes();
+	}
+	return rc;
+    }
     debug(1,"dom%d paused\n",domain->id);
     VMPROBE_PERF_STOP("vmprobes pauses domU");
+
+#if 0
+    {
+	struct cpu_user_regs *_regs;
+	vcpu_guest_context_t _ctx;
+
+	_regs = get_regs(domain->id, &_ctx);
+	if (_regs) {
+	    fprintf(stderr, "batch register: dom%d paused at 0x%lx\n", domain->id, _regs->eip);
+	}
+    }
+#endif
 
     for (i = 0; i < listlen; ++i) {
 	/* allow sparse lists */
@@ -1412,16 +1480,14 @@ register_vmprobe(domid_t domid,
     
     /* do not proceed further if the domain is currently paused */
     ret = domain_paused(domid);
-    if (ret)
-    {
+    if (ret) {
         error("dom%d currently paused\n", domid);
         return -EPERM;
     }
     
     /* initialize vmprobes library at the first probe registration attempt */
     ret = list_empty(&domain_list);
-    if (ret)
-    {
+    if (ret) {
         ret = init_vmprobes();
         if (ret < 0)
             return ret;
@@ -1429,18 +1495,19 @@ register_vmprobe(domid_t domid,
 
     /* add the domain to the list if it is the first time to instrument it */
     domain = find_domain(domid);
-    if (!domain)
-    {
+    if (!domain) {
         domain = add_domain(domid);
-        if (!domain)
+        if (!domain) {
+	    if (list_empty(&domain_list))
+		;
             return -1;
+	}
     }
     
     /* add the probepoint to the list if it is the first time to instrument 
        it */
     probepoint = find_probepoint(vaddr, domain);
-    if (!probepoint)
-    {
+    if (!probepoint) {
         probepoint = add_probepoint(vaddr, domain);
         if (!probepoint)
             return -1;
@@ -1454,14 +1521,31 @@ register_vmprobe(domid_t domid,
     debug(1,"trying to pause dom%d\n", domain->id);
     VMPROBE_PERF_START();
     
+#if 0
+    if (domain_paused(domain->id)) {
+	fprintf(stderr, "register: dom%d already paused\n", domain->id);
+    }
+#endif
+
     /* pause the domain */
     ret = xc_domain_pause(xc_handle, domain->id);
-    if (ret < 0)
-    {
-        error("failed to pause dom%d\n", domain->id);
+    if (ret < 0) {
+        error("dom%d: probe register: cannot pause (%d)\n", domain->id, ret);
         goto out_error_domctl;
     }
     
+#if 0
+    {
+	struct cpu_user_regs *_regs;
+	vcpu_guest_context_t _ctx;
+
+	_regs = get_regs(domain->id, &_ctx);
+	if (_regs) {
+	    fprintf(stderr, "register: dom%d paused at 0x%lx\n", domain->id, _regs->eip);
+	}
+    }
+#endif
+
     VMPROBE_PERF_STOP("vmprobes sets domU to be paused");
 
     /* inject the probe at the probepoint */
@@ -1474,8 +1558,7 @@ register_vmprobe(domid_t domid,
     
     /* unpause the domain */
     ret = xc_domain_unpause(xc_handle, domain->id);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         error("failed to unpause dom%d\n", domain->id);
         goto out_error_domctl;
     }
@@ -1515,10 +1598,31 @@ unregister_vmprobe_batch(domid_t domid,
     if (!(domain = find_domain(domid))) 
 	return -1;
     
+#if 0
+    if (domain_paused(domid)) {
+	fprintf(stderr, "batch unregister: dom%d already paused\n", domid);
+    }
+#endif
+
     VMPROBE_PERF_START();
-    xc_domain_pause(xc_handle, domid);
+    if ((i = xc_domain_pause(xc_handle, domid)) != 0) {
+        error("dom%d: batch unregister: cannot pause (%d)\n", domid, i);
+	return -1;
+    }
     debug(1,"dom%d paused\n", domid);
     VMPROBE_PERF_STOP("vmprobes pauses domU");
+
+#if 0
+    {
+	struct cpu_user_regs *_regs;
+	vcpu_guest_context_t _ctx;
+
+	_regs = get_regs(domid, &_ctx);
+	if (_regs) {
+	    fprintf(stderr, "batch unregister: dom%d paused at 0x%lx\n", domid, _regs->eip);
+	}
+    }
+#endif
 
     for (i = 0; i < listlen; ++i) {
 	/* allow sparse lists */
@@ -1561,9 +1665,12 @@ unregister_vmprobe_batch(domid_t domid,
 
     /* make sure we didn't kill the sucker */
     if (!domain_alive(domid)) {
-	fprintf(stderr, "pooch screwed: dom%d died during surgery\n", domid);
-	raise(SIGSEGV);
-	pause();
+	if (domain) {
+	    fprintf(stderr, "pooch screwed: dom%d died during surgery\n",
+		    domid);
+	    raise(SIGSEGV);
+	    pause();
+	}
     }
 
     /* cleanup vmprobes library when the last probe is unregistered */
@@ -1592,22 +1699,39 @@ unregister_vmprobe(vmprobe_handle_t handle)
     debug(1,"trying to pause dom%d\n", domain->id);
     VMPROBE_PERF_START();
     
+#if 0
+    if (domain_paused(domain->id)) {
+	fprintf(stderr, "unregister: dom%d already paused\n", domain->id);
+    }
+#endif
+
     /* pause the domain */
     ret = xc_domain_pause(xc_handle, domain->id);
-    if (ret < 0)
-    {
-        error("failed to pause dom%d\n", domain->id);
+    if (ret < 0) {
+        error("dom%d: probe unregister: cannot pause (%d)\n", domain->id, ret);
         return -1; // this is critical, do not proceed further
     }
     
+#if 0
+    {
+	struct cpu_user_regs *_regs;
+	vcpu_guest_context_t _ctx;
+
+	_regs = get_regs(domain->id, &_ctx);
+	if (_regs) {
+	    fprintf(stderr, "unregister: dom%d paused at 0x%lx\n", domain->id, _regs->eip);
+	}
+    }
+#endif
+
     VMPROBE_PERF_STOP("vmprobes sets domU to be paused");
     
     /* remove the probe from the probepoint */
     ret = __unregister_vmprobe(probe);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         // FIXME: failed to remove the probe, should exit or proceed further?
         // let's do nothing for now.
+        warning("failed to remove probe from dom%d\n", domain->id);
     }
 
     debug(1,"trying to unpause dom%d\n", domain->id);
@@ -1615,8 +1739,7 @@ unregister_vmprobe(vmprobe_handle_t handle)
     
     /* unpause the domain */
     ret = xc_domain_unpause(xc_handle, domain->id);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         // FIXME: failed to unpause the domain, should exit or proceed further?
         // let's just print a warning message for now.
         warning("failed to unpause dom%d\n", domain->id);
@@ -1633,8 +1756,7 @@ unregister_vmprobe(vmprobe_handle_t handle)
     }
 
     /* cleanup vmprobes library when the last probe is unregistered */
-    ret = list_empty(&domain_list);
-    if (ret)
+    if (list_empty(&domain_list))
         cleanup_vmprobes();
     
     return 0;
@@ -1707,7 +1829,7 @@ vmprobe_action_handle_t action_return(unsigned long retval)
 
     action = (vmprobe_action_t *)malloc(sizeof(vmprobe_action_t));
     if (!action) {
-	perror("no memory to allocate probe action\n");
+	error("no memory to allocate probe action\n");
 	return -ENOMEM;
     }
     memset((void *)action,0,sizeof(vmprobe_action_t));
@@ -1806,40 +1928,40 @@ run_vmprobes(void)
     evtchn_port_t port = -1;
     struct timeval tv;
     fd_set inset;
-    struct cpu_user_regs *regs;
-    vcpu_guest_context_t ctx;
 
     /* no domain means no probe registered */
-    if (list_empty(&domain_list))
-    {
+    if (list_empty(&domain_list)) {
         error("no probe has been registered\n");
         return;
     }
 
     /* get a select()able file descriptor of the event channel */
     fd = xc_evtchn_fd(xce_handle);
-    if (fd == -1)
-    {
+    if (fd == -1) {
         error("event channel not initialized\n");
         return;
     }
 
+    global_state = "INRUN";
+
     /* loop until the stop flag is set */
-    while (!stop)
-    {
+    while (!stop) {
         tv.tv_sec = 0;
         tv.tv_usec = 50;
         FD_ZERO(&inset);
         FD_SET(fd, &inset);
+
+	global_state = "IDLE";
 
         /* wait for a domain to trigger the VIRQ */
         ret = select(fd+1, &inset, NULL, NULL, &tv);
         if (ret == -1) // timeout
             continue;
 
+	global_state = "INRUN";
+
         /* an interrupt while waiting at select()? */
-        if (interrupt && interrupt_sig > -1)
-        {
+        if (interrupt && interrupt_sig > -1) {
             debug(0,"caught signal and removing probes safely!\n");
             unregister_vmprobe_batch_internal();
             raise(interrupt_sig);
@@ -1847,10 +1969,11 @@ run_vmprobes(void)
         
 	/* stop requested? */
 	if (stop)
-	    continue;
+	    break;
 
+	/* nothing to do */
         if (!FD_ISSET(fd, &inset))
-            goto retry; // nothing in eventchn
+	    continue;
 
         /* we've got something from eventchn. let's see what it is! */
         port = xc_evtchn_pending(xce_handle);
@@ -1858,11 +1981,14 @@ run_vmprobes(void)
             goto retry; // not the event that we are looking for
 
         /* it's a debugger event, find the domain that reported the event */
-        list_for_each_entry(domain, &domain_list, list)
-        {
+	/* XXX we need to round-robin here for fairness */
+        list_for_each_entry(domain, &domain_list, list) {
+	    global_state = "INDOMS";
+
             /* FIXME: domain paused - does this really mean a bp/sstep-hit? */
-            if (domain_paused(domain->id))
-            {
+            if (domain_paused(domain->id)) {
+		global_state = "INDOM";
+
                 if (domain->sstep_probepoint)
 		    debug(1,"dom%d paused by sstep-hit, probepoint@0x%x\n",
 			  domain->id, domain->sstep_probepoint->vaddr);
@@ -1872,13 +1998,11 @@ run_vmprobes(void)
 #ifdef VMPROBE_BENCHMARK
                 /* domain->sstep_probepoint is set to non-zero if the
                    event is a singlestep hit */
-                if (domain->sstep_probepoint)
-                {
+                if (domain->sstep_probepoint) {
                     VMPROBE_PERF_STOP("vmprobes gets control back "
                             "after sstep-hit");
                 }
-                else
-                {
+                else {
                     VMPROBE_PERF_STOP("vmprobes gets control back after "
                         "bp-hit");
                 }
@@ -1887,38 +2011,48 @@ run_vmprobes(void)
                 VMPROBE_PERF_START();
 
                 /* obtain vcpu register values */
-                regs = get_regs(domain->id, &ctx);
-                if (!regs)
-                {
-                    error("failed to get vcpu registers in dom%d\n",domain->id);
-                    goto retry; // FIXME: should we exit or retry?
+		assert(domain->regs == NULL);
+		domain->regs = get_regs(domain->id, &domain->ctx);
+		if (domain->regs == NULL) {
+		    /* FIXME: should we exit or retry? */
+		    error("failed to get vcpu registers in dom%d\n",domain->id);
+		    continue; // at least check other domains
                 }
 
                 VMPROBE_PERF_STOP("vmprobes obtains registers from domU");
 
+		debug(1,"dom%d paused at 0x%x\n", domain->regs->eip);
+
                 /* handle the triggered probe based on its event type */
-                if (regs->eflags & 0x00000100 && 
-                    !domain->sstep_probepoint)
-                {
+                if (__in_singlestep(domain->regs) &&
+		    !domain->sstep_probepoint) {
                     // domain not supposed to be in singlestep mode
                     warning("phantom single step for dom%d!\n", domain->id);
+		    // we need to clear it or we will be right back here!
+		    __leave_singlestep(domain->regs);
                 }
-                else if (!domain->sstep_probepoint)
-                    handle_bphit(domain, regs); /* breakpoint hit */
-                else
-                    handle_sstep(domain, regs); /* singlestep hit */
+                else if (!domain->sstep_probepoint) {
+		    global_state = "INBP";
+                    handle_bphit(domain); /* breakpoint hit */
+		}
+                else {
+		    global_state = "INSS";
+                    handle_sstep(domain); /* singlestep hit */
+		}
+		global_state = "INDOM";
 
                 VMPROBE_PERF_START();
 
                 /* set the restored register values back to vcpu;
                    register values are restored in the event handling
                    function; handle_bphit() or handle_sstep() */
-                ret = set_regs(domain->id, &ctx);
-                if (ret)
-                {
+                ret = set_regs(domain->id, &domain->ctx);
+		domain->regs = NULL;
+                if (ret) {
+		    /* FIXME: should we exit or retry? */
                     error("failed to set vcpu registers in dom%d\n",
                         domain->id);
-                    goto retry; // FIXME: should we exit or retry?
+		    continue; // at least check other domains
                 }
 
                 VMPROBE_PERF_STOP("vmprobes sets registers to domU");
@@ -1931,25 +2065,28 @@ run_vmprobes(void)
 
                 /* unpause the domain */
                 ret = xc_domain_unpause(xc_handle, domain->id);
-                if (ret < 0)
-                {
-                    error("failed to unpause dom%d\n", domain->id);
-                    goto retry; // FIXME: should we exit or retry?
+                if (ret < 0) {
+		    /* FIXME: should we exit or retry? */
+		    error("failed to unpause dom%d\n", domain->id);
+		    continue; // at least check other domains
                 }
 
                 VMPROBE_PERF_STOP("vmprobes unpauses domU");
 
                 VMPROBE_PERF_START(); /* stops at bp-hit or sstep-hit */
 
-            } /* if (domain_paused(domain->id)) */
+	    } /* if (domain_paused(domain->id)) */
 
-        } /* list_for_each_entry(domain, &domain_list, list) */
+	    global_state = "INDOMS";
+
+	} /* list_for_each_entry(domain, &domain_list, list) */
+
+	global_state = "INRUN";
 
 retry:
         /* unmask the event channel */
         ret = xc_evtchn_unmask(xce_handle, port);
-        if (ret == -1)
-        {
+        if (ret == -1) {
             error("failed to unmask event channel\n");
             break;
         }
@@ -1962,6 +2099,8 @@ retry:
         unregister_vmprobe_batch_internal();
         raise(interrupt_sig);
     }
+
+    global_state = "INUSER";
 }
 
 void
@@ -2008,8 +2147,7 @@ restart_vmprobes(void)
 #if 0
     // reopen event channel
     xce_handle = reinit_evtchn(&dbg_port);
-    if (xce_handle < 0)
-    {
+    if (xce_handle < 0) {
         return xce_handle;
     }
 #endif
@@ -2160,8 +2298,7 @@ mmap_pages(xa_instance_t *xa_instance,
     page_size = xa_instance->page_size;
     page_offset = vaddr & (page_size - 1);
 
-    if (size > 0 && size <= (page_size - page_offset))
-    {
+    if (size > 0 && size <= (page_size - page_offset)) {
         /* let xenaccess use its memory cache for small size */
         pages = xa_access_user_va(xa_instance, vaddr, offset, 
                   pid, prot);
@@ -2176,8 +2313,7 @@ mmap_pages(xa_instance_t *xa_instance,
 	}
 	*npages = 1;
     }
-    else
-    {
+    else {
 	dstr = "large";
         /* xenaccess can't map multiple pages properly, use our own function */
         pages = xa_access_user_va_range(xa_instance, vaddr, size,

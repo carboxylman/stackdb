@@ -345,7 +345,7 @@ void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
 
     len = strlen(str);
     if (!*buf) {
-	debug(1,"alloc'ing %d init bytes\n",len+80);
+	debug(2,"alloc'ing %d init bytes\n",len+80);
 	*bufsiz = len + 80;
 	*buf = malloc(sizeof(char) * *bufsiz);
 	*endptr = *buf;
@@ -354,7 +354,7 @@ void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
     remaining = *bufsiz - oldlen;
 
     if ((len+1) > remaining) {
-	debug(1,"expanding buf by %d bytes\n",len+80);
+	debug(2,"expanding buf by %d bytes\n",len+80);
 	tbuf = malloc(sizeof(char)*(*bufsiz + len + 80));
 	memcpy(tbuf,*buf,*bufsiz);
 	free(*buf);
@@ -364,11 +364,11 @@ void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
     }
 
     memcpy(*endptr,str,len);
-    debug(1,"copied\n");
+    debug(2,"copied\n");
     (*endptr)[len] = '\0';
-    debug(1,"terminated\n");
+    debug(2,"terminated\n");
     *endptr = *endptr + len;
-    debug(1,"endptr updated\n");
+    debug(2,"endptr updated\n");
 
     return;
 }
@@ -2860,7 +2860,6 @@ struct argfilter *handle_syscall(struct domain_info *di,
 		break;
 	    }
 	}
-
 	/* if not, we are done */
 	if (!found) {
 	    return NULL;
@@ -3300,7 +3299,9 @@ struct argfilter *handle_syscall(struct domain_info *di,
 	    sc->arg0 = regs->ebx;
 	    sc->arg1 = regs->ecx;
 	    sc->argptr = regs->esp;
-	    list_add_tail(&sc->list, &syscalls);
+
+	    /* stick it on the front of the list */
+	    list_add(&sc->list, &syscalls);
 
 #ifndef STATIC_RET_PROBE
 	    if (list_empty(&syscalls)) {
@@ -4574,9 +4575,9 @@ int main(int argc, char *argv[])
 	    // re-register probes
 	    nprobes = 0;
 	    list_for_each_entry(di, &domains, list) {
-		// What is the right thing to do?
 		rc = register_domain_probes(di);
 		if (rc) {
+		    // What is the right thing to do?
 		    fprintf(stderr,
 			    "dom%d: could not register probes; "
 			    "unregistering all probes and awaiting reconfig\n",
@@ -4609,7 +4610,8 @@ int main(int argc, char *argv[])
 	    }
 
 	    reloadconfigfile = 0;
-	    restart_vmprobes();
+	    if (nprobes)
+		restart_vmprobes();
 	}
     }
 
