@@ -345,6 +345,8 @@ int xa_init_vm_name_lax (char *domain_name, xa_instance_t *instance);
  */
 int xa_init_vm_id_strict (uint32_t domain_id, xa_instance_t *instance);
 
+int xa_init_vm_id_strict_noos (uint32_t domain_id, xa_instance_t *instance);
+
 /**
  * Initializes access to a specific domU given a domain id.  The
  * domain id must represent an active domain and must be > 0.  All

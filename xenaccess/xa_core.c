@@ -430,7 +430,7 @@ void init_xen_version (xa_instance_t *instance)
 /* given a xa_instance_t struct with the xc_handle and the
  * domain_id filled in, this function will fill in the rest
  * of the values using queries to libxc. */
-int helper_init (xa_instance_t *instance)
+ int helper_init (xa_instance_t *instance,int noos)
 {
     int ret = XA_SUCCESS;
 
@@ -504,10 +504,10 @@ int helper_init (xa_instance_t *instance)
     }
 
     /* setup OS specific stuff */
-    if (instance->os_type == XA_OS_LINUX){
+    if (!noos && instance->os_type == XA_OS_LINUX){
         ret = linux_init(instance);
     }
-    else if (instance->os_type == XA_OS_WINDOWS){
+    else if (!noos && instance->os_type == XA_OS_WINDOWS){
         ret = windows_init(instance);
     }
 
@@ -566,7 +566,37 @@ int xa_init_vm_private
     instance->m.xen.domain_id = domain_id;
     instance->m.xen.live_pfn_to_mfn_table = NULL;
     instance->m.xen.nr_pfns = 0;
-    return helper_init(instance);
+    return helper_init(instance,0);
+#else
+    return XA_FAILURE;
+#endif /* ENABLE_XEN */
+}
+
+/* Initialize to view an actively running Xen domain but don't call
+ * OS-specific init helper.
+ */
+int xa_init_vm_private_noos
+    (uint32_t domain_id, xa_instance_t *instance, uint32_t error_mode)
+{
+#ifdef ENABLE_XEN
+    int xc_handle;
+    instance->mode = XA_MODE_XEN;
+    xa_dbprint(0,"XenAccess Mode Xen\n");
+    instance->error_mode = error_mode;
+    xa_dbprint(0,"XenAccess Error Mode = %d\n", instance->error_mode);
+
+    /* open handle to the libxc interface */
+    if ((xc_handle = xc_interface_open()) == -1){
+        printf("ERROR: Failed to open libxc interface\n");
+        return XA_FAILURE;
+    }
+    instance->m.xen.xc_handle = xc_handle;
+
+    xa_init_common(instance);
+    instance->m.xen.domain_id = domain_id;
+    instance->m.xen.live_pfn_to_mfn_table = NULL;
+    instance->m.xen.nr_pfns = 0;
+    return helper_init(instance,1);
 #else
     return XA_FAILURE;
 #endif /* ENABLE_XEN */
@@ -595,7 +625,7 @@ int xa_init_file_private (
 
     xa_init_common(instance);
     instance->image_type = strndup(image_type, MAX_IMAGE_TYPE_LEN);
-    return helper_init(instance);
+    return helper_init(instance,0);
 }
 
 /* below are stub init functions that are called by library users */
@@ -615,6 +645,10 @@ int xa_init_vm_name_lax (char *domain_name, xa_instance_t *instance)
 int xa_init_vm_id_strict (uint32_t domain_id, xa_instance_t *instance)
 {
     return xa_init_vm_private(domain_id, instance, XA_FAILHARD);
+}
+int xa_init_vm_id_strict_noos (uint32_t domain_id, xa_instance_t *instance)
+{
+    return xa_init_vm_private_noos(domain_id, instance, XA_FAILHARD);
 }
 int xa_init_vm_id_lax (uint32_t domain_id, xa_instance_t *instance)
 {
