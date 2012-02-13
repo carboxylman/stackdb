@@ -736,7 +736,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 			/* skip past the descriptor and padding */
 			ndata += nthdr32->n_descsz;
 			if (nthdr32->n_namesz % 4)
-			    ndata += (4 - nthdr64->n_namesz % 4);
+			    ndata += (4 - nthdr32->n_namesz % 4);
 		    }
 		}
 	    }
