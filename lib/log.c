@@ -38,7 +38,7 @@ static char *log_flag_stringmap[] = {
     "D_DFILE", "D_SYMBOL", "D_SYMTAB", "D_LOC", "D_LOOKUP",
         "D_DWARF", "D_OTHER", 
     "T_TARGET", "T_SPACE", "T_REGION", "T_LOOKUP", "T_LOC", "T_OTHER",
-        "T_SYMBOL", "T_LUP",
+        "T_SYMBOL", "T_LUP", "T_XV",
 };
 
 static enum log_flag_bits log_flag_map[] = {
@@ -46,7 +46,7 @@ static enum log_flag_bits log_flag_map[] = {
     LOG_D_DFILE, LOG_D_SYMBOL, LOG_D_SYMTAB, LOG_D_LOC, LOG_D_LOOKUP,
         LOG_D_DWARF, LOG_D_OTHER, 
     LOG_T_TARGET, LOG_T_SPACE, LOG_T_REGION, LOG_T_LOOKUP, LOG_T_LOC, 
-        LOG_T_OTHER, LOG_T_SYMBOL, LOG_T_LUP, 
+        LOG_T_OTHER, LOG_T_SYMBOL, LOG_T_LUP, LOG_T_XV, 
 };
 
 int vmi_log_get_flag_val(char *flag,log_flags_t *flagval) {

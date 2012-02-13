@@ -42,7 +42,7 @@ typedef uint64_t REGVAL;
 #define PRIiOFFSET PRIi64
 #define PRIxOFFSET PRIx64
 #define PRIxREGVAL PRIx64
-#define ADDRMAX 0xffffffffffffffff
+#define ADDRMAX UINT64_MAX
 #else
 typedef uint32_t ADDR;
 typedef int32_t OFFSET;
@@ -52,7 +52,7 @@ typedef uint32_t REGVAL;
 #define PRIiOFFSET PRIi32
 #define PRIxOFFSET PRIx32
 #define PRIxREGVAL PRIx32
-#define ADDRMAX 0xffffffff
+#define ADDRMAX UINT32_MAX
 #endif
 
 typedef int8_t REG;
@@ -61,9 +61,9 @@ typedef int8_t REG;
 #define DATA_BIG_ENDIAN 0
 #define DATA_LITTLE_ENDIAN 1
 
-#define PROT_READ         0x00000001
-#define PROT_WRITE        0x00000002
-#define PROT_EXEC         0x00000004
-#define PROT_SHARED       0x00000008
+#define PROT_READ         0x1
+#define PROT_WRITE        0x2
+#define PROT_EXEC         0x4
+#define PROT_SHARED       0x8
 
 #endif /* __COMMON_H__ */

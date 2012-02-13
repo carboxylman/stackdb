@@ -14,8 +14,15 @@ CFLAGS += -I$(TOP_SRCDIR)/target -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include \
 	-I$(TOP_SRCDIR)/dwdebug -I$(OBJDIR)
 CFLAGS += -DDWDEBUG_USE_STRTAB
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS)
+	CFLAGS += -I$(XENACCESS_INC)
+endif
 
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+endif
 
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h target.h target_api.h \
 	probe.h probe_api.h \
@@ -25,12 +32,18 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h target.h target_api.h \
 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo target_linux_userproc.lo probe.lo
+ifeq ($(ENABLE_XENACCESS),"1")
+	OBJECTS += target_xen_vm.lo
+endif
 
 LIBRARIES := target.a 
 
 PROGRAMS := dumptarget
 
 STATICLIBS := $(OBJDIR)/dwdebug/dwdebug.a $(OBJDIR)/lib/log.a
+ifeq ($(ENABLE_XENACCESS),"1")
+	STATICLIBS += $(XENACCESS_A)
+endif
 
 INST_INC = 
 INST_LIB = $(LIBRARIES)

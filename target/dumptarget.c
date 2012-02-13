@@ -33,6 +33,7 @@
 #include "target_api.h"
 #include "target.h"
 #include "target_linux_userproc.h"
+#include "target_xen_vm.h"
 
 #include "probe_api.h"
 #include "probe.h"
@@ -165,8 +166,9 @@ int function_post(struct probe *probe) {
 int main(int argc,char **argv) {
     int pid = -1;
     char *exe = NULL;
+    char *domain = NULL;
     char ch;
-    int debug = 0;
+    int debug = -1;
     target_status_t tstat;
     int raw = 0;
     ADDR *addrs = NULL;
@@ -185,13 +187,16 @@ int main(int argc,char **argv) {
 	.meta = 1,
     };
 
-    while ((ch = getopt(argc, argv, "p:e:dvsl:P")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:e:dvsl:P")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
 	    break;
 	case 'p':
 	    pid = atoi(optarg);
+	    break;
+	case 'm':
+	    domain = optarg;
 	    break;
 	case 'e':
 	    exe = optarg;
@@ -223,12 +228,9 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
     vmi_set_log_level(debug);
-
-    if ((pid == -1 && exe == NULL)
-	|| (pid != -1 && exe != NULL)) {
-	fprintf(stderr,"ERROR: must specify either '-p <pid>' or '-e /path/to/executable!\n");
-	exit(-2);
-    }
+#ifdef XA_DEBUG
+    xa_set_debug_level(debug);
+#endif
 
     if (pid > 0) {
 	t = linux_userproc_attach(pid);
@@ -237,13 +239,25 @@ int main(int argc,char **argv) {
 	    exit(-3);
 	}
     }
-    else {
+    else if (domain) {
+	t = xen_vm_attach(domain);
+	if (!t) {
+	    fprintf(stderr,"could not attach to dom %s!\n",domain);
+	    exit(-3);
+	}
+    }
+    else if (exe) {
 	t = linux_userproc_launch(exe,NULL,NULL);
 	if (!t) {
 	    fprintf(stderr,"could not launch exe %s!\n",exe);
 	    exit(-3);
 	}
     }
+    else {
+	fprintf(stderr,"ERROR: must specify a target!\n");
+	exit(-2);
+    }
+
     if (target_open(t)) {
 	fprintf(stderr,"could not open pid %d!\n",pid);
 	exit(-4);
@@ -354,7 +368,7 @@ int main(int argc,char **argv) {
 	    if (argc && raw) {
 		for (i = 0; i < argc; ++i) {
 		    if (target_read_addr(t,addrs[i],t->wordsize,
-					 (unsigned char *)word) != NULL) {
+					 (unsigned char *)word,NULL) != NULL) {
 			printf("0x%" PRIxADDR " = ",addrs[i]);
 			for (j = 0; j < t->wordsize; ++j) {
 			    printf("%02hhx",word[j]);
@@ -417,6 +431,10 @@ int main(int argc,char **argv) {
 	    }
 	}
 	else {
+	    for (i = 0; i < len; ++i) {
+		if (probes[i])
+		    probe_unregister(probes[i],1);
+	    }
 	    target_close(t);
 	    if (tstat == TSTATUS_DONE)  {
 		printf("pid %d finished.\n",pid);
