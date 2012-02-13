@@ -273,7 +273,13 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     }
 
     /* If they want pointers automatically dereferenced, do it! */
-    if (flags & LOAD_FLAG_AUTO_DEREF && SYMBOL_IST_PTR(datatype)) {
+    if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))
+	|| ((flags & LOAD_FLAG_AUTO_STRING) 
+	    && SYMBOL_IST_PTR(datatype) 
+	    && symbol_type_is_char(datatype->s.ti.type_datatype))) {
+	vdebug(5,LOG_T_SYMBOL,"auto_deref: starting ptr symbol %s\n",
+	       symbol->name);
+
 	/* First, load the symbol's primary location -- the pointer
 	 * value.  Then, if there are more pointers, keep loading those
 	 * addrs.
@@ -281,10 +287,15 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	 * Don't allow any load flags through for this!  We don't want
 	 * to mmap just for pointers.
 	 */
-	if (location_load(target,region,&(symbol->s.ii.l),LOAD_FLAG_NONE,
-			  &ptraddr,target->ptrsize,symbol_chain,&range)) {
+	if (!location_load(target,region,&(symbol->s.ii.l),LOAD_FLAG_NONE,
+			   &ptraddr,target->ptrsize,symbol_chain,&range)) {
+	    verror("auto_deref: could not load ptr for symbol %s!\n",
+		   symbol->name);
 	    goto errout;
 	}
+
+	vdebug(5,LOG_T_SYMBOL,"auto_deref: loaded ptr for symbol %s\n",
+	       symbol->name);
 
 	if (!range) {
 	    verror("could not find range in auto_deref\n");
@@ -320,7 +331,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		goto errout;
 	    }
 
-	    if (location_addr_load(target,ptrrange,ptraddr,LOAD_FLAG_NONE,
+	    if (!location_addr_load(target,ptrrange,ptraddr,LOAD_FLAG_NONE,
 				   &ptraddr,target->ptrsize)) {
 		vwarn("failed to autoload pointer %d for symbol %s\n",
 		      nptrs,symbol->name);
