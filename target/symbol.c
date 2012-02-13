@@ -181,7 +181,8 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	list_for_each_entry(member,&type->s.ti.d.su.members,member) {
 	    if (likely(i))
 		fprintf(stream,", ");
-	    if (member->s.ii.l.loctype != LOCTYPE_MEMBER_OFFSET) {
+	    if (type->s.ti.datatype_code == DATATYPE_STRUCT 
+		&& member->s.ii.l.loctype != LOCTYPE_MEMBER_OFFSET) {
 		vwarn("type %s member %s did not have a MEMBER_OFFSET location, skipping!\n",type->name,member->name);
 		if (member->name)
 		    fprintf(stream,".%s = ???",member->name);
@@ -190,10 +191,13 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 
 	    if (member->name) 
 		fprintf(stream,".%s = ",member->name);
-	    symbol_rvalue_print(stream,member,
-				buf + member->s.ii.l.l.member_offset,
-				bufsiz - member->s.ii.l.l.member_offset,
-				flags,target);
+	    if (type->s.ti.datatype_code == DATATYPE_UNION)
+		symbol_rvalue_print(stream,member,buf,bufsiz,flags,target);
+	    else
+		symbol_rvalue_print(stream,member,
+				    buf + member->s.ii.l.l.member_offset,
+				    bufsiz - member->s.ii.l.l.member_offset,
+				    flags,target);
 	    ++i;
 	}
 	fprintf(stream," }");
@@ -202,7 +206,18 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	fprintf(stream,"<BITFIELD>");
 	return;
     case DATATYPE_PTR:
-	if (!(flags & LOAD_FLAG_AUTO_DEREF)) {
+	if ((flags & LOAD_FLAG_AUTO_DEREF) ||
+	    ((flags & LOAD_FLAG_AUTO_STRING) 
+	     && symbol_type_is_char(type->s.ti.type_datatype))) {
+	    type = symbol_type_skip_ptrs(type);
+
+	    if (symbol_type_is_char(type)) {
+		fprintf(stream,"%s",(char *)buf);
+	    }
+	    else
+		goto again;
+	}
+	else {
 	    fprintf(stream,"0x");
 	    if (target->endian == DATA_LITTLE_ENDIAN) {
 		for (i = target->ptrsize - 1; i > -1; --i) {
@@ -214,15 +229,6 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 		    fprintf(stream,"%02hhx",*(((uint8_t *)buf)+i));
 		}
 	    }
-	}
-	else {
-	    type = symbol_type_skip_ptrs(type);
-
-	    if (symbol_type_is_char(type)) {
-		fprintf(stream,"%s",(char *)buf);
-	    }
-	    else
-		goto again;
 	}
 	return;
     case DATATYPE_FUNCTION:
