@@ -115,7 +115,7 @@ char *location_addr_load(struct target *target,struct memrange *range,
 	return NULL;
     }
 
-    return (char *)target_read_addr(target,addr,bufsiz,buf);
+    return (char *)target_read_addr(target,addr,bufsiz,buf,NULL);
 }
 
 char *location_obj_addr_load(struct target *target,struct memrange *range,

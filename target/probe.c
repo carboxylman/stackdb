@@ -282,7 +282,7 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	/* restore the original instruction */
 	if (target_write_addr(target,probepoint->addr,
 			      probepoint->breakpoint_orig_mem_len,
-			      probepoint->breakpoint_orig_mem) \
+			      probepoint->breakpoint_orig_mem,NULL) \
 	    != probepoint->breakpoint_orig_mem_len) {
 	    verror("could not restore orig instrs for bp remove");
 	    return 1;
@@ -394,7 +394,7 @@ static int __probe_unregister(struct probe *probe,int force) {
 		&& probepoint->action_orig_mem_len) {
 		if (target_write_addr(target,probepoint->addr,
 				      probepoint->action_orig_mem_len,
-				      probepoint->action_orig_mem) \
+				      probepoint->action_orig_mem,NULL) \
 		    != probepoint->action_orig_mem_len) {
 		    verror("could not write orig code for forced action remove; badness will probably ensue!\n");
 		    probepoint->state = PROBE_DISABLED;
@@ -443,7 +443,7 @@ static int __probe_unregister(struct probe *probe,int force) {
 		&& probepoint->breakpoint_orig_mem_len) {
 		if (target_write_addr(target,probepoint->addr,
 				      probepoint->breakpoint_orig_mem_len,
-				      probepoint->breakpoint_orig_mem) \
+				      probepoint->breakpoint_orig_mem,NULL) \
 		    != probepoint->breakpoint_orig_mem_len) {
 		    verror("could not write orig code for forced breakpoint remove; badness will probably ensue!\n");
 		}
@@ -649,7 +649,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 
 	if (!target_read_addr(target,probepoint->addr,
 			      probepoint->breakpoint_orig_mem_len,
-			      probepoint->breakpoint_orig_mem)) {
+			      probepoint->breakpoint_orig_mem,NULL)) {
 	    verror("could not save orig instrs for bp insert\n");
 	    probepoint->state = PROBE_DISABLED;
 	    free(probepoint->breakpoint_orig_mem);
@@ -662,7 +662,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 
 	if (target_write_addr(target,probepoint->addr,
 			      target->breakpoint_instrs_len,
-			      target->breakpoint_instrs) \
+			      target->breakpoint_instrs,NULL) \
 	    != target->breakpoint_instrs_len) {
 	    verror("could not write breakpoint instrs for bp insert\n");
 	    probepoint->state = PROBE_DISABLED;
@@ -1075,7 +1075,7 @@ int probepoint_bp_handler(struct target *target,
 		if (probepoint->action_orig_mem
 		    && target_write_addr(target,probepoint->addr,
 					 probepoint->action_orig_mem_len,
-					 probepoint->action_orig_mem) \
+					 probepoint->action_orig_mem,NULL) \
 		    != probepoint->action_orig_mem_len) {
 		    verror("could not restore orig code that action"
 			   " replaced; assuming breakpoint is left in place and"
@@ -1120,7 +1120,7 @@ int probepoint_bp_handler(struct target *target,
 	    if (probepoint->action_orig_mem) {
 		if (target_write_addr(target,probepoint->addr,
 				      probepoint->action_orig_mem_len,
-				      probepoint->action_orig_mem) \
+				      probepoint->action_orig_mem,NULL) \
 		    != probepoint->action_orig_mem_len) {
 		    verror("could not restore orig code that action replaced;"
 			   " continuing, but badness will ensue!");
@@ -1166,7 +1166,7 @@ int probepoint_bp_handler(struct target *target,
 
 	    if (target_write_addr(target,probepoint->addr,
 				  probepoint->breakpoint_orig_mem_len,
-				  probepoint->breakpoint_orig_mem) \
+				  probepoint->breakpoint_orig_mem,NULL) \
 		!= probepoint->breakpoint_orig_mem_len) {
 		verror("could not restore orig code that breakpoint"
 		       " replaced; assuming breakpoint is left in place and"
@@ -1192,6 +1192,9 @@ int probepoint_bp_handler(struct target *target,
 		verror("could not temporarily disable hw breakpoints before"
 		       " sstep'ing; proceeding anyway!\n");
 	    }
+
+	    probepoint->state = PROBE_BP_HANDLING;
+	    target->sstep_probepoint = probepoint;
 	    if (target_singlestep(target) < 0) {
 		if (probepoint->style == PROBEPOINT_HW) {
 		    verror("could not single step target after BP;"
@@ -1218,7 +1221,7 @@ int probepoint_bp_handler(struct target *target,
 
 		    if (target_write_addr(target,probepoint->addr,
 					  probepoint->breakpoint_orig_mem_len,
-					  probepoint->breakpoint_orig_mem) \
+					  probepoint->breakpoint_orig_mem,NULL) \
 			!= probepoint->breakpoint_orig_mem_len) {
 			verror("could not restore orig code that breakpoint"
 			       " replaced; assuming breakpoint is left in place and"
@@ -1229,14 +1232,12 @@ int probepoint_bp_handler(struct target *target,
 		 * the best we can do is act like the BP is still set.
 		 */
 		probepoint->state = PROBE_BP_SET;
+		target->sstep_probepoint = NULL;
 	    }
 	    else {
 		/* If single step init succeeded, let the ss handler take
 		 * over.
 		 */
-		probepoint->state = PROBE_BP_HANDLING;
-		target->sstep_probepoint = probepoint;
-
 		vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for ");
 		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
 		vdebugc(4,LOG_P_PROBEPOINT,"\n");
@@ -1302,7 +1303,7 @@ int probepoint_ss_handler(struct target *target,
 	    if (probepoint->action_orig_mem) {
 		if (target_write_addr(target,probepoint->addr,
 				      probepoint->action_orig_mem_len,
-				      probepoint->action_orig_mem) \
+				      probepoint->action_orig_mem,NULL) \
 		    != probepoint->action_orig_mem_len) {
 		    verror("could not restore orig code that action replaced;"
 			   " continuing, but badness will ensue!");
@@ -1353,7 +1354,7 @@ int probepoint_ss_handler(struct target *target,
 	/* Re-inject a breakpoint for the next round */
 	if (target_write_addr(target,probepoint->addr,
 			      target->breakpoint_instrs_len,
-			      target->breakpoint_instrs) \
+			      target->breakpoint_instrs,NULL) \
 	    != target->breakpoint_instrs_len) {
 	    verror("could not write breakpoint instrs for bp re-insert, disabling!\n");
 	    probepoint->state = PROBE_DISABLED;
@@ -1428,7 +1429,7 @@ static int handle_actions(struct probepoint *probepoint) {
 
 	    if (target_write_addr(target,probepoint->addr,
 				  probepoint->action_orig_mem_len,
-				  probepoint->action_orig_mem) \
+				  probepoint->action_orig_mem,NULL) \
 		!= probepoint->action_orig_mem_len) {
 		verror("could not restore orignal under-action code, disabling probe!\n");
 		probepoint->state = PROBE_DISABLED;
@@ -1490,7 +1491,7 @@ static int handle_actions(struct probepoint *probepoint) {
 	    probepoint->action_orig_mem_len = target->ret_instrs_len;
 	    if (!target_read_addr(target,probepoint->addr,
 				  probepoint->action_orig_mem_len,
-				  probepoint->action_orig_mem)) {
+				  probepoint->action_orig_mem,NULL)) {
 		verror("could not save original under-action code; disabling probepoint!\n");
 		probepoint->state = PROBE_DISABLED;
 		free(probepoint->action_orig_mem);
@@ -1502,7 +1503,7 @@ static int handle_actions(struct probepoint *probepoint) {
 	    }
 	    if (target_write_addr(target,probepoint->addr,
 				  probepoint->action_orig_mem_len,
-				  probepoint->action_orig_mem) \
+				  probepoint->action_orig_mem,NULL) \
 		!= probepoint->action_orig_mem_len) {
 		verror("could not insert action code; disabling probepoint!\n");
 		probepoint->state = PROBE_DISABLED;
