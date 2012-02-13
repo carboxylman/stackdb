@@ -79,8 +79,9 @@ int function_dump_args(struct probe *probe) {
     }
 
     fflush(stderr);
+    fflush(stdout);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR")\n",symbols[i]->lsymbol->symbol->name,
+    fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",symbols[i]->lsymbol->symbol->name,
 	    probe->probepoint->addr);
 
     /* Make a chain with room for one more -- the
@@ -107,6 +108,8 @@ int function_dump_args(struct probe *probe) {
 
     ++tmp->len;
     list_for_each_entry(tsym,&symbols[i]->lsymbol->symbol->s.ii.d.f.args,member) {
+	fflush(stderr);
+	fflush(stdout);
 	array_list_item_set(tmp,len,tsym);
 	tlsym.symbol = tsym;
 
@@ -179,6 +182,7 @@ int main(int argc,char **argv) {
     log_flags_t flags;
     probepoint_type_t ptype = PROBEPOINT_FASTEST;
     int do_post = 1;
+    int offset = 0;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -187,8 +191,11 @@ int main(int argc,char **argv) {
 	.meta = 1,
     };
 
-    while ((ch = getopt(argc, argv, "m:p:e:dvsl:P")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:e:dvsl:Po:")) != -1) {
 	switch(ch) {
+	case 'o':
+	    offset = atoi(optarg);
+	    break;
 	case 'd':
 	    ++debug;
 	    break;
@@ -306,7 +313,7 @@ int main(int argc,char **argv) {
 		    exit(-1);
 		}
 		
-		probes[i] = probe_register_break(t,probeaddr,ptype,
+		probes[i] = probe_register_break(t,probeaddr + offset,ptype,
 						 function_dump_args,
 						 (do_post) ? function_post : NULL,
 						 symbols[i]->lsymbol,probeaddr,
