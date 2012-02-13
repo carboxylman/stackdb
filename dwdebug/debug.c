@@ -1110,7 +1110,7 @@ struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
 }
 
 /*
- * Skips const and volatile types, for now.
+ * Skips const and volatile types, for now.  Ok, skip typedefs too!
  */
 struct symbol *symbol_type_skip_qualifiers(struct symbol *type) {
     if (!SYMBOL_IS_TYPE(type))
@@ -1118,7 +1118,8 @@ struct symbol *symbol_type_skip_qualifiers(struct symbol *type) {
 
     while (type->type == SYMBOL_TYPE_TYPE
 	   && (SYMBOL_IST_VOL(type)
-	       || SYMBOL_IST_CONST(type))) {
+	       || SYMBOL_IST_CONST(type)
+	       || SYMBOL_IST_TYPEDEF(type))) {
 	type = type->s.ti.type_datatype;
     }
 
