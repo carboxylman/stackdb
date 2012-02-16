@@ -167,7 +167,8 @@ struct location *location_resolve_loclist(struct target *target,
 int location_can_mmap(struct location *location,struct target *target);
 int location_resolve_function_entry(struct target *target,
 				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				    struct memrange **range_saveptr);
+				    struct memrange **range_saveptr,
+				    int use_prologue_guess);
 
 /**
  ** Location loading functions.

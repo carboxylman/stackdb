@@ -33,7 +33,9 @@
 #include "target_api.h"
 #include "target.h"
 #include "target_linux_userproc.h"
+#ifdef ENABLE_XENACCESS
 #include "target_xen_vm.h"
+#endif
 
 #include "probe_api.h"
 #include "probe.h"
@@ -169,7 +171,9 @@ int function_post(struct probe *probe) {
 int main(int argc,char **argv) {
     int pid = -1;
     char *exe = NULL;
+#ifdef ENABLE_XENACCESS
     char *domain = NULL;
+#endif
     char ch;
     int debug = -1;
     target_status_t tstat;
@@ -183,6 +187,7 @@ int main(int argc,char **argv) {
     probepoint_type_t ptype = PROBEPOINT_FASTEST;
     int do_post = 1;
     int offset = 0;
+    int upg = 1;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -191,8 +196,12 @@ int main(int argc,char **argv) {
 	.meta = 1,
     };
 
-    while ((ch = getopt(argc, argv, "m:p:e:dvsl:Po:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:e:dvsl:Po:U")) != -1) {
 	switch(ch) {
+	case 'U':
+	    /* Don't use auto prologue guess. */
+	    upg = 0;
+	    break;
 	case 'o':
 	    offset = atoi(optarg);
 	    break;
@@ -203,7 +212,12 @@ int main(int argc,char **argv) {
 	    pid = atoi(optarg);
 	    break;
 	case 'm':
+#ifdef ENABLE_XENACCESS
 	    domain = optarg;
+#else
+	    verror("xen support not compiled on this host!\n");
+	    exit(-1);
+#endif
 	    break;
 	case 'e':
 	    exe = optarg;
@@ -235,7 +249,7 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
     vmi_set_log_level(debug);
-#ifdef XA_DEBUG
+#if defined(ENABLE_XENACCESS) && defined(XA_DEBUG)
     xa_set_debug_level(debug);
 #endif
 
@@ -246,6 +260,7 @@ int main(int argc,char **argv) {
 	    exit(-3);
 	}
     }
+#ifdef ENABLE_XENACCESS
     else if (domain) {
 	t = xen_vm_attach(domain);
 	if (!t) {
@@ -253,6 +268,7 @@ int main(int argc,char **argv) {
 	    exit(-3);
 	}
     }
+#endif
     else if (exe) {
 	t = linux_userproc_launch(exe,NULL,NULL);
 	if (!t) {
@@ -307,7 +323,7 @@ int main(int argc,char **argv) {
 		ADDR probeaddr;
 		struct memrange *range;
 		if (location_resolve_function_entry(t,symbols[i],
-						    &probeaddr,&range)) {
+						    &probeaddr,&range,upg)) {
 		    fprintf(stderr,"Could not resolve entry PC for function %s!\n",
 			    symbols[i]->lsymbol->symbol->name);
 		    exit(-1);
@@ -316,15 +332,15 @@ int main(int argc,char **argv) {
 		probes[i] = probe_register_break(t,probeaddr + offset,ptype,
 						 function_dump_args,
 						 (do_post) ? function_post : NULL,
-						 symbols[i]->lsymbol,probeaddr,
+						 symbols[i]->lsymbol,probeaddr + offset,
 						 range);
 		
 		if (probes[i])
 		    fprintf(stderr,"Registered probe for %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,probeaddr);
+			    symbols[i]->lsymbol->symbol->name,probeaddr + offset);
 		else {
 		    fprintf(stderr,"Failed to register probe for %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,probeaddr);
+			    symbols[i]->lsymbol->symbol->name,probeaddr + offset);
 		    --i;
 		    for ( ; i >= 0; --i) {
 			if (probes[i]) {

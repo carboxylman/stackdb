@@ -259,6 +259,11 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     return NULL;
 }
 
+struct symbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
+    return (struct symbol *)g_hash_table_lookup(debugfile->addresses,
+						(gpointer)addr);
+}
+
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
 				     char *srcfile,symbol_type_flag_t ftype) {
@@ -520,6 +525,12 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
      */
     debugfile->types = g_hash_table_new(g_str_hash,g_str_equal);
 
+    /* This is an optimization lookup hashtable, so we don't provide
+     * *any* key or value destructors since we don't want them freed
+     * when the hashtable is destroyed.
+     */
+    debugfile->addresses = g_hash_table_new(g_direct_hash,g_direct_equal);
+
     return debugfile;
 }
 
@@ -602,6 +613,7 @@ void debugfile_free(struct debugfile *debugfile) {
     if (debugfile->debugfile.prev != NULL || debugfile->debugfile.next != NULL)
 	list_del(&debugfile->debugfile);
 
+    g_hash_table_destroy(debugfile->addresses);
     g_hash_table_destroy(debugfile->globals);
     g_hash_table_destroy(debugfile->types);
     /* All the per-debugfile-per-srcfile symtabs (and their symbols) are
@@ -1037,6 +1049,40 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     if (parentstack)
 	free(parentstack);
     return retval;
+}
+
+
+int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr) {
+    struct symtab *symtab;
+    int i;
+
+    if (!SYMBOL_IS_FUNCTION(symbol))
+	return 0;
+
+    if ((symtab = symbol->s.ii.d.f.symtab)) {
+	if (RANGE_IS_PC(&symtab->range)) {
+	    if (symtab->range.lowpc <= obj_addr 
+		&& obj_addr < symtab->range.highpc) 
+		return 1;
+	    else 
+		return 0;
+	}
+	else if (RANGE_IS_LIST(&symtab->range)) {
+	    for (i = 0; i < symtab->range.rlist.len; ++i) {
+		if (symtab->range.rlist.list[i]->start <= obj_addr
+		    && obj_addr < symtab->range.rlist.list[i]->end) {
+		    return 1;
+		}
+	    }
+	}
+	else {
+	    vwarn("function %s range is not PC/list!\n",symbol->name);
+	}
+    }
+    else
+	vwarn("function %s does not have symtab!\n",symbol->name);
+
+    return 0;
 }
 
 /*

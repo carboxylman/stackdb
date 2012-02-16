@@ -55,6 +55,8 @@ struct attrcb_args {
     Dwarf_Off die_offset;
     Dwarf_Half version;
     Dwarf_Addr cu_base;
+    bool have_stmt_list_offset;
+    Dwarf_Word stmt_list_offset;
 
     struct debugfile *debugfile;
     struct symtab *cu_symtab;
@@ -230,6 +232,18 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	else {
 	    vwarn("[DIE %" PRIx64 "] attrval %s for attr %s in bad context\n",
 		  cbargs->die_offset,str,dwarf_attr_string(attr));
+	}
+	break;
+    case DW_AT_stmt_list:
+	/* XXX: don't do line numbers yet. */
+	if (num_set) {
+	    cbargs->stmt_list_offset = num;
+	    cbargs->have_stmt_list_offset = true;
+	    vdebug(4,LOG_D_DWARF,"\t\t\tvalue = %d\n",num);
+	}
+	else {
+	    vwarn("[DIE %" PRIx64 "] attr %s in bad context\n",
+		  cbargs->die_offset,dwarf_attr_string(attr));
 	}
 	break;
     case DW_AT_producer:
@@ -408,9 +422,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_call_file:
     case DW_AT_call_line:
     case DW_AT_call_column:
-	break;
-    case DW_AT_stmt_list:
-	/* XXX: don't do line numbers yet. */
 	break;
     case DW_AT_declaration:
 	/* XXX: hopefully this is mostly necessary to handle weird
@@ -1601,6 +1612,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	.cu_offset = offset,
 	.version = version,
 	.cu_base = version,
+	.have_stmt_list_offset = 0,
 
 	.debugfile = debugfile,
 	.cu_symtab = cu_symtab,
@@ -1983,6 +1995,14 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	}
     }
 
+    /* Try to find prologue info from line table for this CU. */
+    if (args.have_stmt_list_offset) {
+	get_lines(debugfile,args.stmt_list_offset,addrsize);
+    }
+    else {
+	vwarn("not doing offset %lx\n",args.stmt_list_offset);
+    }
+
     offset = nextcu;
     if (offset != 0) {
 	goto next_cu;
@@ -2057,6 +2077,39 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		else 
 		    symbol->s.ti.d.a.subranges = new_subranges;
 	    }
+	}
+    }
+
+    if (symbol->type == SYMBOL_TYPE_FUNCTION && symbol->name) {
+	ADDR fminaddr = ADDRMAX;
+	struct symtab *symtab;
+	int i;
+
+	if (symbol->s.ii.d.f.hasentrypc)
+	    fminaddr = symbol->s.ii.d.f.entry_pc;
+	else if ((symtab = symbol->s.ii.d.f.symtab)) {
+	    if (RANGE_IS_PC(&symtab->range)) 
+		fminaddr = symtab->range.lowpc;
+	    else if (RANGE_IS_LIST(&symtab->range)) {
+		/* Find the lowest addr! */
+		for (i = 0; i < symtab->range.rlist.len; ++i) {
+		    if (symtab->range.rlist.list[i]->start < fminaddr)
+			fminaddr = symtab->range.rlist.list[i]->start;
+		}
+		vwarn("assuming function %s entry is lowest address in list 0x%"PRIxADDR"!\n",
+		      symbol->name,fminaddr);
+	    }
+	    else {
+		vwarn("function %s range is not PC/list!\n",symbol->name);
+		return -1;
+	    }
+	}
+
+	if (fminaddr < ADDRMAX) {
+	    g_hash_table_insert(debugfile->addresses,(gpointer)fminaddr,symbol);
+	    vdebug(4,LOG_D_DWARF,
+		   "inserted function %s with minaddr 0x%"PRIxADDR" into debugfile addresses table\n",
+		   symbol->name,fminaddr);
 	}
     }
 
@@ -2223,7 +2276,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		     * later!
 		     */
 		    vwarn("duplicate symbol %s at offset %"PRIx64"\n",
-			  symbol->name,die_offset);
+		    	  symbol->name,die_offset);
 		    if (symtab_insert(symbol->symtab,symbol,die_offset)) {
 			verror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
 			       symbol->name,die_offset);
@@ -2570,6 +2623,10 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		saveptr = &data->debugfile->rangetab;
 		saveptrlen = &data->debugfile->rangetablen;
 	    }
+	    else if (strcmp(name,".debug_line") == 0) {
+		saveptr = &data->debugfile->linetab;
+		saveptrlen = &data->debugfile->linetablen;
+	    }
 	    else {
 		continue;
 	    }
@@ -2627,6 +2684,11 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	free(data->debugfile->rangetab);
 	data->debugfile->rangetablen = 0;
 	data->debugfile->rangetab = NULL;
+    }
+    if (data->debugfile->linetab) {
+	free(data->debugfile->linetab);
+	data->debugfile->linetablen = 0;
+	data->debugfile->linetab = NULL;
     }
     /*
      * Only save strtab if we're gonna use it.

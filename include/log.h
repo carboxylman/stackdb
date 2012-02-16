@@ -25,6 +25,7 @@
 				   __FUNCTION__, __LINE__, ## __VA_ARGS__)
 #define vwarn(format,...)  fprintf(stderr, "VWARNING: %s:%d: "format, \
 				   __FUNCTION__, __LINE__, ## __VA_ARGS__)
+#define vwarnc(format,...) fprintf(stderr,format, ## __VA_ARGS__)
 
 /*
  * If you change these flags and bits, make really sure to update

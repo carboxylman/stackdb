@@ -24,6 +24,8 @@
 #include <glib.h>
 #include <wchar.h>
 
+#include <elfutils/libdw.h>
+
 #include "debugpred.h"
 #include "list.h"
 #include "alist.h"
@@ -249,6 +251,8 @@ void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
 void symbol_set_name(struct symbol *symbol,char *name);
 void symbol_set_srcline(struct symbol *symbol,int srcline);
 
+int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr);
+
 int symbol_type_is_char(struct symbol *type);
 /*
  * For a SYMBOL_TYPE_TYPE symbol, return the type's byte size.
@@ -293,6 +297,7 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc);
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
 				     char *srcfile,symbol_type_flag_t ftype);
+struct symbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr);
 
 /* Look up one symbol in a symbol table by name. */
 struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
@@ -346,6 +351,8 @@ void loc_list_free(struct loc_list *list);
 /*
  * Dwarf util stuff.
  */
+int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size);
+
 const char *dwarf_tag_string(unsigned int tag);
 const char *dwarf_attr_string(unsigned int attrnum);
 const char *dwarf_form_string(unsigned int form);
@@ -438,10 +445,18 @@ struct debugfile {
      */
     char *rangetab;
 
+    /*
+     * The line table for this file.
+     *
+     * This table is only live while the file is being processed.
+     */
+    char *linetab;
+
     /* Table lengths -- moved here for struct packing. */
     unsigned int strtablen;
     unsigned int loctablen;
     unsigned int rangetablen;
+    unsigned int linetablen;
 
     /* does this file get automatically garbage collected? */
     uint8_t infinite;
@@ -478,6 +493,14 @@ struct debugfile {
      * h(identifier) = struct symbol *
      */
     GHashTable *globals;
+
+    /*
+     * Any symbol that has a fixed address location gets an entry in
+     * this table.
+     *
+     * h(address) = struct symbol *
+     */
+    GHashTable *addresses;
 };
 
 struct range_list_entry {
@@ -724,7 +747,8 @@ struct symbol {
 			    hasentrypc:1,
 			    /* If the fb loc is a list or single loc. */
 			    fbisloclist:1,
-			    fbissingleloc:1;
+			    fbissingleloc:1,
+			    prologue_guessed:1;
 		    /* The frame base location.  Can be a list or
 		     * single location.
 		     */
@@ -734,6 +758,8 @@ struct symbol {
 		    };
 		    struct symtab *symtab;
 		    ADDR entry_pc;
+		    ADDR prologue_end;
+		    ADDR epilogue_begin;
 		} f;
 		struct {
 		    uint16_t byte_size;

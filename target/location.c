@@ -523,7 +523,8 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 
 int location_resolve_function_entry(struct target *target,
 				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				    struct memrange **range_saveptr) {
+				    struct memrange **range_saveptr,
+				    int use_prologue_guess) {
     struct symbol *symbol = bsymbol->lsymbol->symbol;
     int i;
     ADDR obj_addr;
@@ -532,7 +533,9 @@ int location_resolve_function_entry(struct target *target,
     if (!addr_saveptr || !SYMBOL_IS_FUNCTION(symbol))
 	return -1;
 
-    if (symbol->s.ii.d.f.hasentrypc)
+    if (use_prologue_guess && symbol->s.ii.d.f.prologue_end) 
+	obj_addr = symbol->s.ii.d.f.prologue_end;
+    else if (symbol->s.ii.d.f.hasentrypc)
 	obj_addr = symbol->s.ii.d.f.entry_pc;
     else if ((symtab = symbol->s.ii.d.f.symtab)) {
 	if (RANGE_IS_PC(&symtab->range)) 

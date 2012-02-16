@@ -21,6 +21,461 @@
  ** stuff -- plus it is more relocation-ready!
  **/
 
+/*
+ * This is taken directly from elfutils/src/readelf.c, tweaked into
+ * "better" C, and hooked so that we can "detect" end of prologues.
+ */
+int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) {
+    unsigned char *linestartp = (unsigned char *)&debugfile->linetab[offset];
+    unsigned char *lineendp = (unsigned char *)debugfile->linetab + debugfile->linetablen;
+    unsigned char *linep = linestartp;
+    const unsigned char *clinep;
+    unsigned char *endp;
+    /* XXX: we can't get other_byte_order from dbg since we don't have
+     * the struct def for it... so we assume it's not a diff byte order
+     * than the phys host for now.
+     */
+    int obo = 0;
+    size_t start_offset;
+    Dwarf_Word unit_length;
+    unsigned int length;
+    uint_fast16_t version;
+    Dwarf_Word header_length;
+    uint_fast8_t minimum_instr_len;
+    uint_fast8_t max_ops_per_instr;
+    uint_fast8_t default_is_stmt;
+    int_fast8_t line_base;
+    uint_fast8_t line_range;
+    uint_fast8_t opcode_base;
+    uint8_t *standard_opcode_lengths;
+    unsigned int u128;
+    int s128;
+    Dwarf_Word address;
+    unsigned int op_index;
+    size_t line;
+    uint_fast8_t is_stmt;
+    unsigned int opcode;
+    int line_increment;
+    int i;
+    struct symbol *symbol = NULL;
+    struct symbol *candidate_symbol = NULL;
+    bool prologue_end = false;
+    bool epilogue_begin = false;
+
+    /* We only recognize addresses for symbols in this table, so don't
+     * process if there are no addresses!  (unlikey)
+     */
+    if (g_hash_table_size(debugfile->addresses) == 0) 
+	return 0;
+
+    vdebug(5,LOG_D_DWARF,"processing lines at offset 0x%lx!\n",offset);
+
+    while (linep < lineendp) {
+	start_offset = linep - linestartp;
+	unit_length = read_4ubyte_unaligned_inc(obo,linep);
+	length = 4;
+
+	if (unlikely (unit_length == 0xffffffff)) {
+	    if (unlikely (linep + 8 > lineendp)) 
+		goto invalid_data_out;
+
+	    unit_length = read_8ubyte_unaligned_inc(obo,linep);
+	    length = 8;
+	}
+
+	/* Check whether we have enough room in the section.  */
+	if (unit_length < 2 + length + 5 * 1
+	    || unlikely (linep + unit_length > lineendp))
+	    goto invalid_data_out;
+
+	lineendp = linep + unit_length;
+
+	/* The next element of the header is the version identifier.  */
+	version = read_2ubyte_unaligned_inc(obo,linep);
+
+	/* Next comes the header length.  */
+	if (length == 4)
+	    header_length = read_4ubyte_unaligned_inc(obo,linep);
+	else
+	    header_length = read_8ubyte_unaligned_inc(obo,linep);
+
+	/* Next the minimum instruction length.  */
+	minimum_instr_len = *linep++;
+
+	/* Next the maximum operations per instruction, in version 4 format.  */
+	max_ops_per_instr = version < 4 ? 1 : *linep++;
+
+	/* Then the flag determining the default value of the is_stmt
+	   register.  */
+	default_is_stmt = *linep++;
+
+	/* Now the line base.  */
+	line_base = *((int_fast8_t *)linep);
+	++linep;
+
+	/* And the line range.  */
+	line_range = *(linep++);
+
+	/* The opcode base.  */
+	opcode_base = *(linep++);
+
+	if (unlikely (linep + opcode_base - 1 >= lineendp))
+	    goto invalid_unit_out;
+
+	standard_opcode_lengths = linep - 1;
+
+	linep += opcode_base - 1;
+	if (unlikely(linep >= lineendp))
+	    goto invalid_unit_out;
+
+	while (*linep != 0) {
+	    endp = memchr(linep,'\0',lineendp - linep);
+	    if (unlikely(endp == NULL))
+		goto invalid_unit_out;
+
+	    linep = endp + 1;
+	}
+	/* Skip the final NUL byte.  */
+	++linep;
+
+	if (unlikely(linep >= lineendp))
+	    goto invalid_unit_out;
+
+	while (*linep != 0) {
+	    /* First comes the file name.  */
+	    endp = memchr(linep,'\0',lineendp - linep);
+	    if (unlikely(endp == NULL))
+		goto invalid_unit_out;
+	    linep = endp + 1;
+
+	    /* Then the index.  */
+	    clinep = (const unsigned char *)linep;
+	    get_uleb128(u128,clinep);
+
+	    /* Next comes the modification time.  */
+	    get_uleb128(u128,clinep);
+
+	    /* Finally the length of the file.  */
+	    get_uleb128(u128,clinep);
+
+	    linep = (unsigned char *)clinep;
+	}
+	/* Skip the final NUL byte.  */
+	++linep;
+
+	address = 0;
+	op_index = 0;
+	line = 1;
+	is_stmt = default_is_stmt;
+	prologue_end = false;
+	epilogue_begin = false;
+
+	inline void advance_pc(unsigned int op_advance) {
+	    address += op_advance;
+	    op_index = (op_index + op_advance) % max_ops_per_instr;
+	}
+
+	while (linep < lineendp) {
+	    /* Read the opcode.  */
+	    opcode = *(unsigned char *)linep++;
+
+	    /* Is this a special opcode?  */
+	    if (likely(opcode >= opcode_base)) {
+		/* Yes.  Handling this is quite easy since the opcode value
+		   is computed with
+
+		   opcode = (desired line increment - line_base)
+		             + (line_range * address advance) + opcode_base
+		*/
+		line_increment = (line_base
+				  + (opcode - opcode_base) % line_range);
+
+		/* Perform the increments.  */
+		line += line_increment;
+		advance_pc((opcode - opcode_base) / line_range);
+
+		/*
+		 * If the epilogue_begin register is set, try to do it.
+		 */
+		if (epilogue_begin && candidate_symbol) {
+		    /* Use it if the address is in the function range. */
+		    if (symbol_contains_addr(candidate_symbol,address)) {
+			candidate_symbol->s.ii.d.f.epilogue_begin =	\
+			    (ADDR)address;
+			vdebug(3,LOG_D_DWARF,
+			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
+			       candidate_symbol->name,(ADDR)address);
+		    }
+		    else {
+			vdebug(5,LOG_D_DWARF,
+			       "set_epilogue_begin: address 0x%"PRIxADDR" not in %s\n",
+			       (ADDR)address,candidate_symbol->name);
+		    }
+		}
+
+		/*
+		 * If the prologue_end register is set, try to use that
+		 * before doing autodetection.
+		 */
+		if (prologue_end && candidate_symbol) {
+		    /* Use it if the address is in the function range. */
+		    if (symbol_contains_addr(candidate_symbol,address)) {
+			candidate_symbol->s.ii.d.f.prologue_end = (ADDR)address;
+			vdebug(3,LOG_D_DWARF,
+			       "set_prologue_end: %s is 0x%"PRIxADDR"\n",
+			       candidate_symbol->name,(ADDR)address);
+
+			/* Unset auto detected flag; we have one for
+			   sure. */
+			candidate_symbol->s.ii.d.f.prologue_guessed = 0;
+
+			/* Unset symbol so we don't try to use "auto"
+			   detection. */
+			symbol = NULL;
+		    }
+		    else {
+			vdebug(5,LOG_D_DWARF,
+			       "set_prologue_end: address 0x%"PRIxADDR" not in %s\n",
+			       (ADDR)address,candidate_symbol->name);
+		    }
+		}
+
+		/* Clear prologue_end and epilogue_begin registers as
+		   per the spec. */
+		prologue_end = false;
+		epilogue_begin = false;
+
+		/*
+		 * Try to find a symbol at this address; if we find one,
+		 * and it is a function, set its prologue_end value!
+		 */
+		if (symbol) {
+		    /* If the current address is not in s, assume we're
+		     * done with it!
+		     *
+		     * XXX: is this right?
+		     */
+		    if (symbol_contains_addr(symbol,address)) {
+			symbol->s.ii.d.f.prologue_end = (ADDR)address;
+			vdebug(3,LOG_D_DWARF,
+			       "assuming prologue_end of %s is 0x%"PRIxADDR"\n",
+			       symbol->name,(ADDR)address);
+
+			/* Set auto detected flag; we're just guessing! */
+			symbol->s.ii.d.f.prologue_guessed = 1;
+		    }
+		    else {
+			vdebug(5,LOG_D_DWARF,
+			       "address 0x%"PRIxADDR" not in %s\n",
+			       (ADDR)address,symbol->name);
+		    }
+
+		    /*
+		     * We only assume the first address after seeing the
+		     * function's lowest address is the end of prologue.
+		     */
+		    symbol = NULL;
+		}
+
+		if (!symbol) {
+		    symbol = debugfile_lookup_addr(debugfile,(ADDR)address);
+		    if (symbol) {
+			vdebug(3,LOG_D_DWARF,
+			       "found candidate prologue function %s at 0x%"PRIxADDR"\n",
+			       symbol->name,(ADDR)address);
+			candidate_symbol = symbol;
+		    }
+		    else 
+			vdebug(5,LOG_D_DWARF,
+			       "did not find function at 0x%"PRIxADDR"\n",
+			       (ADDR)address);
+		}
+	    }
+	    else if (opcode == 0) {
+		/* This an extended opcode.  */
+		if (unlikely(linep + 2 > lineendp))
+		    goto invalid_unit_out;
+
+		/* The length.  */
+		length = *(unsigned char *)linep++;
+
+		if (unlikely(linep + length > lineendp))
+		    goto invalid_unit_out;
+
+		/* The sub-opcode.  */
+		opcode = *(unsigned char *)linep++;
+
+		switch (opcode) {
+		case DW_LNE_end_sequence:
+		    /* Reset the registers we care about.  */
+		    address = 0;
+		    op_index = 0;
+		    line = 1;
+		    is_stmt = default_is_stmt;
+		    break;
+		case DW_LNE_set_address:
+		    op_index = 0;
+		    if (address_size == 4)
+			address = read_4ubyte_unaligned_inc(obo,linep);
+		    else
+			address = read_8ubyte_unaligned_inc(obo,linep);
+
+		    vwarn("ext op addr 0x%"PRIxADDR"\n",address);
+
+		    if (!symbol) {
+			symbol = debugfile_lookup_addr(debugfile,(ADDR)address);
+			if (symbol) {
+			    vdebug(3,LOG_D_DWARF,
+				   "found candidate prologue function %s at 0x%"PRIxADDR"\n",
+				   symbol->name,(ADDR)address);
+			    candidate_symbol = symbol;
+			}
+		    }
+
+		    break;
+		case DW_LNE_define_file:;
+		    endp = memchr(linep,'\0',lineendp - linep);
+		    if (unlikely(endp == NULL))
+			goto invalid_unit_out;
+		    linep = endp + 1;
+
+		    clinep = (const unsigned char *)linep;
+		    /* unsigned int diridx; */
+		    get_uleb128(u128,clinep);
+		    /* Dwarf_Word mtime; */
+		    get_uleb128(u128,clinep);
+		    /* Dwarf_Word filelength; */
+		    get_uleb128(u128,clinep);
+		    linep = (unsigned char *)clinep;
+
+		    break;
+		case DW_LNE_set_discriminator:
+		    /* Takes one ULEB128 parameter, the discriminator.  */
+		    if (unlikely(standard_opcode_lengths[opcode] != 1))
+			goto invalid_unit_out;
+
+		    clinep = (const unsigned char *)linep;
+		    get_uleb128(u128,clinep);
+		    linep = (unsigned char *)clinep;
+		    break;
+		default:
+		    /* Unknown, ignore it.  */
+		    vwarn("unknown opcode\n");
+		    linep += length - 1;
+		    break;
+		}
+	    }
+	    else if (opcode <= DW_LNS_set_isa) {
+		/* This is a known standard opcode.  */
+		switch (opcode) {
+		case DW_LNS_copy:
+		    /* Takes no argument.  */
+		    /* Clear prologue_end and epilogue_begin registers as
+		       per the spec. */
+		    prologue_end = false;
+		    epilogue_begin = false;
+		    break;
+		case DW_LNS_advance_pc:
+		    /* Takes one uleb128 parameter which is added to the
+		       address.  */
+		    clinep = (const unsigned char *)linep;
+		    get_uleb128(u128,clinep);
+		    linep = (unsigned char *)clinep;
+		    advance_pc(u128);
+		    break;
+		case DW_LNS_advance_line:
+		    /* Takes one sleb128 parameter which is added to the
+		       line.  */
+		    clinep = (const unsigned char *)linep;
+		    get_sleb128(s128,clinep);
+		    linep = (unsigned char *)clinep;
+		    line += s128;
+		    break;
+		case DW_LNS_set_file:
+		    /* Takes one uleb128 parameter which is stored in file.  */
+		    clinep = (const unsigned char *)linep;
+		    get_uleb128(u128,clinep);
+		    linep = (unsigned char *)clinep;
+		    break;
+		case DW_LNS_set_column:
+		    /* Takes one uleb128 parameter which is stored in column.  */
+		    if (unlikely(standard_opcode_lengths[opcode] != 1))
+			goto invalid_unit_out;
+		    clinep = (const unsigned char *)linep;
+		    get_uleb128(u128,clinep);
+		    linep = (unsigned char *)clinep;
+		    break;
+		case DW_LNS_negate_stmt:
+		    /* Takes no argument.  */
+		    is_stmt = 1 - is_stmt;
+		    break;
+		case DW_LNS_set_basic_block:
+		    /* Takes no argument.  */
+		    break;
+		case DW_LNS_const_add_pc:
+		    /* Takes no argument.  */
+		    advance_pc((255 - opcode_base) / line_range);
+		    break;
+		case DW_LNS_fixed_advance_pc:
+		    /* Takes one 16 bit parameter which is added to the
+		       address.  */
+		    if (unlikely(standard_opcode_lengths[opcode] != 1))
+			goto invalid_unit_out;
+		    u128 = read_2ubyte_unaligned_inc(obo,linep);
+		    address += u128;
+		    op_index = 0;
+		    break;
+		case DW_LNS_set_prologue_end:
+		    /* Takes no argument.  */
+		    prologue_end = true;
+		    break;
+		case DW_LNS_set_epilogue_begin:
+		    /* Takes no argument.  */
+		    epilogue_begin = true;
+		    break;
+		case DW_LNS_set_isa:
+		    /* Takes one uleb128 parameter which is stored in isa.  */
+		    if (unlikely(standard_opcode_lengths[opcode] != 1))
+			goto invalid_unit_out;
+		    clinep = (const unsigned char *)linep;
+		    get_uleb128(u128,clinep);
+		    linep = (unsigned char *)clinep;
+		    break;
+		}
+	    }
+	    else {
+		/* This is a new opcode the generator but not we know about.
+		   Read the parameters associated with it but then discard
+		   everything.  Read all the parameters for this opcode.  */
+		vwarn(" unknown opcode with %" PRIu8 " parameters:",
+		      standard_opcode_lengths[opcode]);
+		for (i = standard_opcode_lengths[opcode]; i > 0; --i) {
+		    clinep = (const unsigned char *)linep;
+		    get_uleb128(u128,clinep);
+		    linep = (unsigned char *)clinep;
+		    if (i != standard_opcode_lengths[opcode])
+			vwarnc(",");
+		    vwarnc(" %u",u128);
+		}
+		vwarnc("\n");
+
+		/* Next round, ignore this opcode.  */
+		continue;
+	    }
+	}
+    }
+
+    return 0;
+
+ invalid_unit_out:
+    verror("invalid data at offset %tu\n",linep - linestartp);
+    return -1;
+
+ invalid_data_out:
+    verror("invalid line data (overrun)!\n");
+    return -1;
+}
+
 /**
  ** Convenience string functions, straight out of elfutils/readelf.c !
  **/
