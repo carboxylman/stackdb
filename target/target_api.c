@@ -111,7 +111,7 @@ unsigned char *target_read_addr(struct target *target,
 				unsigned long length,
 				unsigned char *buf,
 				void *targetspecdata) {
-    vdebug(5,LOG_T_TARGET,"reading target(%s) at %16llx into %p (%d)\n",
+    vdebug(5,LOG_T_TARGET,"reading target(%s) at 0x%"PRIxADDR" into %p (%d)\n",
 	   target->type,addr,buf,length);
     return target->ops->read(target,addr,length,buf,targetspecdata);
 }
@@ -119,7 +119,7 @@ unsigned char *target_read_addr(struct target *target,
 unsigned long target_write_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf,
 				void *targetspecdata) {
-    vdebug(5,LOG_T_TARGET,"writing target(%s) at %16llx (%d)\n",
+    vdebug(5,LOG_T_TARGET,"writing target(%s) at 0x%"PRIxADDR" (%d)\n",
 	   target->type,addr,length);
     return target->ops->write(target,addr,length,buf,targetspecdata);
 }

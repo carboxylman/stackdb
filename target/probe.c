@@ -95,13 +95,13 @@ static struct probepoint *probepoint_lookup(struct target *target,ADDR addr) {
 }
 
 static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
+					      struct memrange *range,
 					      probepoint_type_t type,
 					      probepoint_style_t style,
 					      probepoint_whence_t whence,
 					      probepoint_watchsize_t watchsize,
 					      struct lsymbol *lsymbol,
-					      ADDR symbol_addr,
-					      struct memrange *range) {
+					      ADDR symbol_addr) {
     struct probepoint *probepoint;
 
     probepoint = (struct probepoint *)malloc(sizeof(*probepoint));
@@ -119,6 +119,9 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     probepoint->style = style;
     probepoint->whence = whence;
     probepoint->watchsize = watchsize;
+
+    probepoint->lsymbol = lsymbol;
+    probepoint->symbol_addr = symbol_addr;
     
     probepoint->debugregnum = -1;
 
@@ -134,30 +137,35 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     return probepoint;
 }
 
-static struct probepoint *probepoint_create_break(struct target *target,ADDR addr,
+static struct probepoint *probepoint_create_break(struct target *target,
+						  ADDR addr,
+						  struct memrange *range,
 						  probepoint_style_t style,
 						  struct lsymbol *lsymbol,
-						  ADDR symbol_addr,
-						  struct memrange *range) {
-    return __probepoint_create(target,addr,PROBEPOINT_BREAK,style,
-			       PROBEPOINT_EXEC,0,lsymbol,symbol_addr,range);
+						  ADDR symbol_addr) {
+    struct probepoint *probepoint = __probepoint_create(target,addr,range,
+							PROBEPOINT_BREAK,style,
+							PROBEPOINT_EXEC,0,
+							lsymbol,symbol_addr);
+    return probepoint;
 }
 
-static struct probepoint *probepoint_create_watch(struct target *target,ADDR addr,
+static struct probepoint *probepoint_create_watch(struct target *target,
+						  ADDR addr,
+						  struct memrange *range,
 						  probepoint_style_t style,
 						  probepoint_whence_t whence,
 						  probepoint_watchsize_t watchsize,
 						  struct lsymbol *lsymbol,
-						  ADDR symbol_addr,
-						  struct memrange *range) {
+						  ADDR symbol_addr) {
     if (style == PROBEPOINT_SW) {
 	verror("software watchpoints not supported right now!\n");
 	errno = EINVAL;
 	return NULL;
     }
 
-    return __probepoint_create(target,addr,PROBEPOINT_WATCH,style,
-			       whence,watchsize,lsymbol,symbol_addr,range);
+    return __probepoint_create(target,addr,range,PROBEPOINT_WATCH,style,
+			       whence,watchsize,lsymbol,symbol_addr);
 }
 
 static void probepoint_free_internal(struct probepoint *probepoint) {
@@ -300,7 +308,7 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 
     vdebug(2,LOG_P_PROBEPOINT,"");
     LOGDUMPPROBEPOINT(2,LOG_P_PROBEPOINT,probepoint);
-    vdebug(2,LOG_P_PROBEPOINT," removed");
+    vdebugc(2,LOG_P_PROBEPOINT," removed\n");
 
     return 0;
 }
@@ -679,20 +687,21 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 
     vdebug(2,LOG_P_PROBEPOINT,"");
     LOGDUMPPROBEPOINT(2,LOG_P_PROBEPOINT,probepoint);
-    vdebug(2,LOG_P_PROBEPOINT," inserted");
+    vdebugc(2,LOG_P_PROBEPOINT," inserted\n");
 
     return 0;
 }
 
 struct probe *__probe_register(struct target *target,ADDR addr,
+			       struct memrange *range,
 			       probepoint_type_t type,
 			       probepoint_style_t style,
 			       probepoint_whence_t whence,
 			       probepoint_watchsize_t watchsize,
 			       probe_handler_t pre_handler,
 			       probe_handler_t post_handler,
-			       struct lsymbol *lsymbol,ADDR symbol_addr,
-			       struct memrange *range) {
+			       struct lsymbol *lsymbol,
+			       ADDR symbol_addr) {
     struct probe *probe;
     struct probepoint *probepoint;
     int created = 0;
@@ -735,16 +744,16 @@ struct probe *__probe_register(struct target *target,ADDR addr,
     }
     else {
         if (type == PROBEPOINT_BREAK) {
-	    if (!(probepoint = probepoint_create_break(target,addr,style,lsymbol,
-						       symbol_addr,range))) {
+	    if (!(probepoint = probepoint_create_break(target,addr,range,style,
+						       lsymbol,symbol_addr))) {
 		verror("could not create breakpoint for 0x%"PRIxADDR"\n",addr);
 		return NULL;
 	    }
 	}
 	else {
-	    if (!(probepoint = probepoint_create_watch(target,addr,style,whence,
-						       watchsize,lsymbol,
-						       symbol_addr,range))) {
+	    if (!(probepoint = probepoint_create_watch(target,addr,range,
+						       style,whence,watchsize,
+						       lsymbol,symbol_addr))) {
 		verror("could not create breakpoint for 0x%"PRIxADDR"\n",addr);
 		return NULL;
 	    }
@@ -777,27 +786,27 @@ struct probe *__probe_register(struct target *target,ADDR addr,
 }
 
 struct probe *probe_register_break(struct target *target,ADDR addr,
+				   struct memrange *range,
 				   probepoint_style_t style,
 				   probe_handler_t pre_handler,
 				   probe_handler_t post_handler,
-				   struct lsymbol *lsymbol,ADDR symbol_addr,
-				   struct memrange *range) {
-    return __probe_register(target,addr,PROBEPOINT_BREAK,style,
+				   struct lsymbol *lsymbol,ADDR symbol_addr) {
+    return __probe_register(target,addr,range,PROBEPOINT_BREAK,style,
 			    PROBEPOINT_EXEC,0,pre_handler,post_handler,
-			    lsymbol,symbol_addr,range);
+			    lsymbol,symbol_addr);
 }
 
 struct probe *probe_register_watch(struct target *target,ADDR addr,
+				   struct memrange *range,
 				   probepoint_style_t style,
 				   probepoint_whence_t whence,
 				   probepoint_watchsize_t watchsize,
 				   probe_handler_t pre_handler,
 				   probe_handler_t post_handler,
-				   struct lsymbol *lsymbol,ADDR symbol_addr,
-				   struct memrange *range) {
-    return __probe_register(target,addr,PROBEPOINT_BREAK,style,
+				   struct lsymbol *lsymbol,ADDR symbol_addr) {
+    return __probe_register(target,addr,range,PROBEPOINT_BREAK,style,
 			    whence,watchsize,pre_handler,post_handler,
-			    lsymbol,symbol_addr,range);
+			    lsymbol,symbol_addr);
 }
 
 int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
@@ -834,10 +843,10 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
 	if (addrlist[i] == 0)
 	    continue;
 
-	if (!(probelist[i] = __probe_register(target,addrlist[i],type,style,
+	if (!(probelist[i] = __probe_register(target,addrlist[i],NULL,type,style,
 					      whence,watchsize,
 					      pre_handler,post_handler,
-					      NULL,0,NULL))) {
+					      NULL,0))) {
 	    if (failureaction == 2) {
 		++retval;
 		continue;
@@ -1401,9 +1410,15 @@ int probepoint_ss_handler(struct target *target,
 static int handle_actions(struct probepoint *probepoint) {
     struct target *target = probepoint->target;
     struct action *action;
+    REGVAL rval;
 
     /* Reset if we are executing actions for this BP right after hit. */
     if (probepoint->state == PROBE_BP_SET) {
+	vdebug(3,LOG_P_ACTION,
+	       "resetting actions state after bp hit at ");
+	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	vdebugc(3,LOG_P_ACTION,"\n");
+
 	probepoint->action = NULL;
 	probepoint->action_obviates_orig = 0;
 	probepoint->action_needs_ssteps = 0;
@@ -1450,20 +1465,38 @@ static int handle_actions(struct probepoint *probepoint) {
     }
 
     if (list_empty(&probepoint->actions)) {
+	vdebug(3,LOG_P_ACTION,
+	       "no actions to run at ");
+	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	vdebugc(3,LOG_P_ACTION,"\n");
 	return 0;
     }
 
     /*
-     * Check to see if there are more actions.
+     * If there is a "current" action, we want to continue with the action
+     * after that. Otherwise we want to start with the first action on the
+     * list.
+     *
+     * XXX the "otherwise" case is why the first param of the list_entry
+     * is strange: we treat the header embedded in the probepoint struct
+     * as though it were embedded in an action struct so that when the
+     * list_blahblah_continue() operator takes the "next" element, it
+     * actually gets the first action on the probepoint list. This is a
+     * note to myself so that I don't try to "fix" this code again,
+     * thereby breaking it!
      */
     if (probepoint->action) 
 	action = probepoint->action;
     else 
-	action = list_entry(probepoint->actions.next,
-			    typeof(*action),action);
+	action = list_entry(&probepoint->actions,typeof(*action),action);
     list_for_each_entry_continue(action,&probepoint->actions,action) {
-	if (!action->probe->enabled)
+	if (!action->probe->enabled) {
+	    vdebug(3,LOG_P_ACTION,
+		   "skipping disabled probe at ");
+	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	    vdebugc(3,LOG_P_ACTION,"\n");
 	    continue;
+	}
 
 	if (action->type == ACTION_CUSTOMCODE) {
 	    /*
@@ -1481,6 +1514,84 @@ static int handle_actions(struct probepoint *probepoint) {
 		vwarn("WARNING: cannot run return action; something else"
 		      " already changed control flow!\n");
 		continue;
+	    }
+
+	    vdebug(3,LOG_P_ACTION,
+		   "starting return action at ");
+	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	    vdebugc(3,LOG_P_ACTION,"\n");
+
+	    /*
+	     * If we have executed a prologue: if the prologue contains
+	     * a save of the frame pointer (0x55), all we have to do is
+	     * set rsp to rbp (same as calling leaveq), and call retq.
+	     * If the prologue does not contain a save of the frame
+	     * pointer, we have to track all modifications to rsp during
+	     * the prologue, undo them, and call retq.
+	     */
+	    if (action->detail.ret.prologue) {
+		if (action->detail.ret.prologue_uses_bp) {
+		    vdebug(3,LOG_P_ACTION,
+			   "setting ESP to EBP and returning (prologue uses EBP) at ");
+		    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+		    vdebugc(3,LOG_P_ACTION,"\n");
+
+		    errno = 0;
+		    rval = target_read_reg(target,target->fbregno);
+		    if (errno) {
+			verror("read EBP failed; disabling probepoint!\n");
+			probepoint->state = PROBE_DISABLED;
+			free(probepoint->action_orig_mem);
+			probepoint->action = NULL;
+			probepoint->action_orig_mem = NULL;
+			probepoint->action_needs_ssteps = 0;
+
+			return 0;
+		    }
+
+		    if (target_write_reg(target,target->spregno,rval)) {
+			verror("set ESP to EBP failed; disabling probepoint!\n");
+			probepoint->state = PROBE_DISABLED;
+			free(probepoint->action_orig_mem);
+			probepoint->action = NULL;
+			probepoint->action_orig_mem = NULL;
+			probepoint->action_needs_ssteps = 0;
+
+			return 0;
+		    }
+		}
+		else {
+		    vdebug(3,LOG_P_ACTION,
+			   "undoing prologue ESP changes (%d) and returning at ",
+			   action->detail.ret.prologue_sp_offset);
+		    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+		    vdebugc(3,LOG_P_ACTION,"\n");
+
+		    errno = 0;
+		    rval = target_read_reg(target,target->fbregno);
+		    if (errno) {
+			verror("read EBP failed; disabling probepoint!\n");
+			probepoint->state = PROBE_DISABLED;
+			free(probepoint->action_orig_mem);
+			probepoint->action = NULL;
+			probepoint->action_orig_mem = NULL;
+			probepoint->action_needs_ssteps = 0;
+
+			return 0;
+		    }
+
+		    if (target_write_reg(target,target->spregno,
+					 rval + probepoint->action->detail.ret.prologue_sp_offset)) {
+			verror("undoing prologue ESP changes failed; disabling probepoint!\n");
+			probepoint->state = PROBE_DISABLED;
+			free(probepoint->action_orig_mem);
+			probepoint->action = NULL;
+			probepoint->action_orig_mem = NULL;
+			probepoint->action_needs_ssteps = 0;
+
+			return 0;
+		    }
+		}
 	    }
 
 	    /*
@@ -1502,8 +1613,8 @@ static int handle_actions(struct probepoint *probepoint) {
 		return 0;
 	    }
 	    if (target_write_addr(target,probepoint->addr,
-				  probepoint->action_orig_mem_len,
-				  probepoint->action_orig_mem,NULL) \
+				  target->ret_instrs_len,
+				  target->ret_instrs,NULL) \
 		!= probepoint->action_orig_mem_len) {
 		verror("could not insert action code; disabling probepoint!\n");
 		probepoint->state = PROBE_DISABLED;
@@ -1525,8 +1636,8 @@ static int handle_actions(struct probepoint *probepoint) {
 		return 0;
 	    }
 
-	    vdebug(3,LOG_P_ACTION,"ret(0x%"PRIxREGVAL" inserted at ",
-		   action->detail.retval);
+	    vdebug(3,LOG_P_ACTION,"ret(0x%"PRIxREGVAL") inserted at ",
+		   action->detail.ret.retval);
 	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
 	    vdebugc(3,LOG_P_ACTION,"\n");
 
@@ -1569,17 +1680,102 @@ static int handle_actions(struct probepoint *probepoint) {
 int action_sched(struct probe *probe,struct action *action,
 		 action_whence_t whence) {
     struct action *lpc;
+    unsigned char *code;
+    unsigned int code_len = 0;
+    struct probepoint *probepoint;
+    struct target *target;
 
     if (action->probe != NULL) {
 	verror("action already associated with probe!\n");
 	return -1;
     }
 
+    if (!probe->probepoint) {
+	errno = EINVAL;
+	verror("probe not attached to a probepoint!\n");
+	return -1;
+    }
+
+    probepoint = probe->probepoint;
+    target = probepoint->target;
+
     /* only allow one return action per probepoint */
-    list_for_each_entry(lpc,&probe->probepoint->actions,action) {
-	if (lpc->type == ACTION_RETURN) {
-	    verror("probepoint already has return action\n");
-	    return -1;
+    if (action->type == ACTION_RETURN) {
+	list_for_each_entry(lpc,&probe->probepoint->actions,action) {
+	    if (lpc->type == ACTION_RETURN) {
+		verror("probepoint already has return action\n");
+		return -1;
+	    }
+	}
+
+	/* Try to disassemble and setup return from the prologue. */
+	if (probepoint->symbol_addr 
+	    && probepoint->symbol_addr != probepoint->addr) {
+	    if (probepoint->symbol_addr > probepoint->addr) {
+		vwarn("probepoint symbol addr < probepoint addr -- bad\n");
+	    }
+	    else {
+		/* Read the prologue; if the first byte is 0x55, we're
+		 * using frame pointers and we don't need to analyze the
+		 * prologue to watch the stack grow so we can undo it.
+		 * Otherwise, read the stack growth during the prologue
+		 * so we can undo it during a return.
+		 */
+		code_len = probepoint->addr - probepoint->symbol_addr;
+		code = (unsigned char *)malloc(code_len);
+		memset(code,0,code_len);
+
+		if (!target_read_addr(target,probepoint->symbol_addr,
+				      code_len,code,NULL)) {
+		    vwarn("could not read prologue code; skipping disasm!\n");
+		    free(code);
+		    code = NULL;
+		}
+		else {
+		    if (*code == 0x55) {
+			free(code);
+			action->detail.ret.prologue_uses_bp = 1;
+			vdebug(3,LOG_P_ACTION,
+			       "skipping prologue disassembly for function %s: first instr push EBP\n",
+			       probe->probepoint->lsymbol->symbol->name);
+		    }
+		    else if (disasm_get_prologue_stack_size(target,code,code_len,
+							    &action->detail.ret.prologue_sp_offset)) {
+			verror("could not disassemble function prologue that needed stack tracking for return action!\n");
+			free(code);
+			return -1;
+		    }
+		    else {
+			vdebug(3,LOG_P_ACTION,
+			       "disassembled prologue for function %s: sp moved %d\n",
+			       probe->probepoint->lsymbol->symbol->name,
+			       action->detail.ret.prologue_sp_offset);
+		    }
+		}
+	    }
+	}
+	else {
+	    /* Check the first byte at addr; if it is 0x55, we're using
+	     * frame pointers and we don't need to analyze the prologue.
+	     */
+	    code_len = 1;
+	    code = (unsigned char *)malloc(code_len);
+	    memset(code,0,code_len);
+
+	    if (!target_read_addr(target,probepoint->symbol_addr,
+				  code_len,code,NULL)) {
+		vwarn("could not read first byte of prologue code in non-prologue frame pointer usage check!\n");
+		free(code);
+		return -1;
+	    }
+	    else if (*code != 0x55) {
+		verror("cannot schedule a return from a function that lacks prologue info and does not use frame pointers; your stack would be smashed!\n");
+		free(code);
+		return -1;
+	    }
+
+	    free(code);
+	    action->detail.ret.prologue_uses_bp = 1;
 	}
     }
 
@@ -1629,7 +1825,7 @@ struct action *action_return(REGVAL retval) {
     action->whence = ACTION_UNSCHED;
     INIT_LIST_HEAD(&action->action);
 
-    action->detail.retval = retval;
+    action->detail.ret.retval = retval;
 
     return action;
 }

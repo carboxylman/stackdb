@@ -164,6 +164,39 @@ CFLAGS="$old_CFLAGS"
 AC_SUBST(GLIB)
 
 #
+# Check distorm.
+#
+DISTORM=/usr/local
+ENABLE_DISTORM=1
+AC_ARG_ENABLE(distorm,
+	      AS_HELP_STRING([--disable-distorm],
+                             [Disable distorm support]),
+	      [if test "x$enableval" = "xno"; then \
+	           ENABLE_DISTORM=0; \
+	       else \
+	           ENABLE_DISTORM=1; \
+	       fi],
+	      [ENABLE_DISTORM=1])
+if test "$ENABLE_DISTORM" = "1"; then 
+    AC_ARG_WITH([distorm],
+      AS_HELP_STRING([--with-distorm=DIRECTORY],
+        [find distorm install in DIRECTORY]),
+        [DISTORM="$with_distorm"])
+    old_LDLP=$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH="$DISTORM/lib:$LD_LIBRARY_PATH"
+    ld_LDFL=$LDFLAGS
+    LDFLAGS="-L$DISTORM/lib $LDFLAGS"
+    AC_CHECK_LIB(distorm3,distorm_decompose64,
+   	 [ENABLE_DISTORM=1],
+   	 [AC_MSG_WARN([Your distorm does not have distorm_decompose; disabling])],
+	 [-ldistorm3])
+    LD_LIBRARY_PATH="$old_LDLP"
+    LDFLAGS="$old_LDFL"
+fi
+AC_SUBST(DISTORM)
+AC_SUBST(ENABLE_DISTORM)
+
+#
 # Check elfutils.
 #
 AC_ARG_WITH([elfutils],

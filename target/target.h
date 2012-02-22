@@ -165,10 +165,13 @@ struct location *location_resolve_loclist(struct target *target,
 					  struct memregion *region,
 					  struct location *location);
 int location_can_mmap(struct location *location,struct target *target);
-int location_resolve_function_entry(struct target *target,
+int location_resolve_function_start(struct target *target,
 				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				    struct memrange **range_saveptr,
-				    int use_prologue_guess);
+				    struct memrange **range_saveptr);
+int location_resolve_function_prologue_end(struct target *target,
+					   struct bsymbol *bsymbol,
+					   ADDR *addr_saveptr,
+					   struct memrange **range_saveptr);
 
 /**
  ** Location loading functions.
@@ -190,6 +193,14 @@ struct mmap_entry *location_mmap(struct target *target,
 				 load_flags_t flags,char **offset,
 				 struct array_list *symbol_chain,
 				 struct memrange **range_saveptr);
+
+/**
+ ** Disassembly helpers.
+ **/
+int disasm_get_prologue_stack_size(struct target *target,
+				   unsigned char *inst_buf,unsigned int buf_len,
+				   int *sp);
+
 /**
  ** Value loading functions.
  **/
@@ -221,6 +232,15 @@ void value_free(struct value *value);
 void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
 			 void *buf,int bufsiz,
 			 load_flags_t flags,struct target *target);
+
+/*
+ * Disassembly stuff.
+ */
+#ifdef ENABLE_DISTORM
+int disasm_get_prologue_stack_size(struct target *target,
+				   unsigned char *inst_buf,unsigned int buf_len,
+				   int *sp);
+#endif
 
 /**
  ** Data structure definitions.
@@ -353,8 +373,9 @@ struct bsymbol {
      */
     struct lsymbol *lsymbol;
 
-    /* Binding to a target region. */
+    /* Binding to a target region/range pair. */
     struct memregion *region;
+    struct memrange *range;
 };
 
 /*

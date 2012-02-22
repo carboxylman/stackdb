@@ -91,19 +91,19 @@ typedef enum {
  * -1 indicating that it failed to register the probe.
  */
 struct probe *probe_register_break(struct target *target,ADDR addr,
+				   struct memrange *range,
 				   probepoint_style_t style,
 				   probe_handler_t pre_handler,
 				   probe_handler_t post_handler,
-				   struct lsymbol *lsymbol,ADDR symbol_addr,
-				   struct memrange *range);
+				   struct lsymbol *lsymbol,ADDR symbol_addr);
 struct probe *probe_register_watch(struct target *target,ADDR addr,
+				   struct memrange *range,
 				   probepoint_style_t style,
 				   probepoint_whence_t whence,
 				   probepoint_watchsize_t watchsize,
 				   probe_handler_t pre_handler,
 				   probe_handler_t post_handler,
-				   struct lsymbol *lsymbol,ADDR symbol_addr,
-				   struct memrange *range);
+				   struct lsymbol *lsymbol,ADDR symbol_addr);
 
 int probe_register_batch(struct target *target,ADDR *addrlist,int count,
 			 probepoint_type_t type,probepoint_style_t style,

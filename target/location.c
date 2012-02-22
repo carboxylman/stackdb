@@ -521,10 +521,9 @@ ADDR location_resolve(struct target *target,struct memregion *region,
     return 0;
 }
 
-int location_resolve_function_entry(struct target *target,
+int location_resolve_function_start(struct target *target,
 				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				    struct memrange **range_saveptr,
-				    int use_prologue_guess) {
+				    struct memrange **range_saveptr) {
     struct symbol *symbol = bsymbol->lsymbol->symbol;
     int i;
     ADDR obj_addr;
@@ -533,9 +532,7 @@ int location_resolve_function_entry(struct target *target,
     if (!addr_saveptr || !SYMBOL_IS_FUNCTION(symbol))
 	return -1;
 
-    if (use_prologue_guess && symbol->s.ii.d.f.prologue_end) 
-	obj_addr = symbol->s.ii.d.f.prologue_end;
-    else if (symbol->s.ii.d.f.hasentrypc)
+    if (symbol->s.ii.d.f.hasentrypc)
 	obj_addr = symbol->s.ii.d.f.entry_pc;
     else if ((symtab = symbol->s.ii.d.f.symtab)) {
 	if (RANGE_IS_PC(&symtab->range)) 
@@ -561,10 +558,32 @@ int location_resolve_function_entry(struct target *target,
     }
 
     /* Translate the obj address to something real in this region. */
-    obj_addr = memregion_relocate(bsymbol->region,obj_addr,range_saveptr);
+    *addr_saveptr = memregion_relocate(bsymbol->region,obj_addr,range_saveptr);
 
-    if (addr_saveptr)
-	*addr_saveptr = obj_addr;
+    vdebug(3,LOG_T_LOC,"found start 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
+	   obj_addr,*addr_saveptr);
+
+    return 0;
+}
+
+int location_resolve_function_prologue_end(struct target *target,
+					   struct bsymbol *bsymbol,
+					   ADDR *addr_saveptr,
+					   struct memrange **range_saveptr) {
+    struct symbol *symbol = bsymbol->lsymbol->symbol;
+
+    if (!addr_saveptr || !SYMBOL_IS_FUNCTION(symbol))
+	return -1;
+
+    if (!symbol->s.ii.d.f.prologue_guessed) {
+	vwarn("function %s has no prologue_end!\n",symbol->name);
+	return -1;
+    }
+
+    /* Translate the obj address to something real in this region. */
+    *addr_saveptr = memregion_relocate(bsymbol->region,
+				       symbol->s.ii.d.f.prologue_end,
+				       range_saveptr);
 
     return 0;
 }

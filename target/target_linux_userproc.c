@@ -294,12 +294,11 @@ struct target *linux_userproc_attach(int pid) {
      */
 #if __WORDSIZE == 64
     target->fbregno = 6;
-#else
-    target->fbregno = 5;
-#endif
-#if __WORDSIZE == 64
+    target->spregno = 7;
     target->ipregno = 16;
 #else
+    target->fbregno = 5;
+    target->spregno = 4;
     target->ipregno = 8;
 #endif
 

@@ -109,7 +109,8 @@ int function_dump_args(struct probe *probe) {
     };
 
     ++tmp->len;
-    list_for_each_entry(tsym,&symbols[i]->lsymbol->symbol->s.ii.d.f.args,member) {
+    list_for_each_entry(tsym,&symbols[i]->lsymbol->symbol->s.ii.d.f.args,
+			member) {
 	fflush(stderr);
 	fflush(stdout);
 	array_list_item_set(tmp,len,tsym);
@@ -309,6 +310,15 @@ int main(int argc,char **argv) {
 	    word = malloc(t->wordsize);
 	}
 	else {
+	    /* Look for retval code */
+	    char *retcode_str = index(argv[i],':');
+	    REGVAL retcode = 0;
+	    if (retcode_str) {
+		*retcode_str = '\0';
+		++retcode_str;
+		retcode = (REGVAL)atoi(retcode_str);
+	    }
+
 	    if (!(symbols[i] = target_lookup_sym(t,argv[i],".",NULL,
 						 SYMBOL_TYPE_FLAG_NONE))) {
 		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
@@ -320,35 +330,73 @@ int main(int argc,char **argv) {
 
 	    if (SYMBOL_IS_FUNCTION(symbols[i]->lsymbol->symbol)) {
 		/* Try to insert a breakpoint, fastest possible! */
-		ADDR probeaddr;
+		ADDR start = 0;
+		ADDR prologueend = 0;
+		ADDR probeaddr = 0;
 		struct memrange *range;
-		if (location_resolve_function_entry(t,symbols[i],
-						    &probeaddr,&range,upg)) {
-		    fprintf(stderr,"Could not resolve entry PC for function %s!\n",
+		if (location_resolve_function_start(t,symbols[i],
+						    &start,&range)) {
+		    fprintf(stderr,
+			    "Could not resolve entry PC for function %s!\n",
 			    symbols[i]->lsymbol->symbol->name);
-		    exit(-1);
+		    goto err_unreg;
+		}
+		else {
+		    probeaddr = start;
+		}
+		if (location_resolve_function_prologue_end(t,symbols[i],
+							   &prologueend,
+							   &range)) {
+		    fprintf(stderr,
+			    "Could not resolve prologue_end for function %s!\n",
+			    symbols[i]->lsymbol->symbol->name);
+		}
+		else {
+		    probeaddr = prologueend;
 		}
 		
-		probes[i] = probe_register_break(t,probeaddr + offset,ptype,
-						 function_dump_args,
-						 (do_post) ? function_post : NULL,
-						 symbols[i]->lsymbol,probeaddr + offset,
-						 range);
+		probes[i] = \
+		    probe_register_break(t,probeaddr + offset,range,ptype,
+					 function_dump_args,
+					 (do_post) ? function_post : NULL,
+					 symbols[i]->lsymbol,start);
 		
-		if (probes[i])
-		    fprintf(stderr,"Registered probe for %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,probeaddr + offset);
-		else {
-		    fprintf(stderr,"Failed to register probe for %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,probeaddr + offset);
-		    --i;
-		    for ( ; i >= 0; --i) {
-			if (probes[i]) {
-			    probe_unregister(probes[i],1);
+		if (probes[i]) {
+		    fprintf(stderr,
+			    "Registered probe %s at 0x%"PRIxADDR".\n",
+			    symbols[i]->lsymbol->symbol->name,
+			    probeaddr + offset);
+		    /* Add the retcode action, if any! */
+		    if (retcode_str) {
+			struct action *action = action_return(retcode);
+			if (!action) {
+			    fprintf(stderr,"could not create action!\n");
+			    goto err_unreg;
+			}
+			if (action_sched(probes[i],action,ACTION_REPEATPRE)) {
+			    fprintf(stderr,"could not schedule action!\n");
+			    goto err_unreg;
 			}
 		    }
-		    exit(-1);
 		}
+		else {
+		    fprintf(stderr,
+			    "Failed to register probe %s at 0x%"PRIxADDR".\n",
+			    symbols[i]->lsymbol->symbol->name,
+			    probeaddr + offset);
+		    --i;
+		    goto err_unreg;
+		}
+
+		continue;
+
+		err_unreg:
+		for ( ; i >= 0; --i) {
+		    if (probes[i]) {
+			probe_unregister(probes[i],1);
+		    }
+		}
+		exit(-1);
 	    }
 	}
     }
@@ -416,7 +464,8 @@ int main(int argc,char **argv) {
 						  LOAD_FLAG_NO_CHECK_VISIBILITY |
 						  LOAD_FLAG_NO_CHECK_BOUNDS))) {
 			    if (1) {
-				printf("%s = ",symbols[i]->lsymbol->symbol->name);
+				printf("%s = ",
+				       symbols[i]->lsymbol->symbol->name);
 				symbol_rvalue_print(stdout,
 						    symbols[i]->lsymbol->symbol,
 						    value->buf,value->bufsiz,
@@ -427,7 +476,8 @@ int main(int argc,char **argv) {
 						    t);
 			    }
 			    else {
-				printf("%s = ",symbols[i]->lsymbol->symbol->name);
+				printf("%s = ",
+				       symbols[i]->lsymbol->symbol->name);
 				for (j = 0; j < ssize; ++j) {
 				    printf("%02hhx",word[j]);
 				}
@@ -441,7 +491,8 @@ int main(int argc,char **argv) {
 		    }
 		    else
 			printf("%s: could not read value: %s\n",
-			       symbols[i]->lsymbol->symbol->name,strerror(errno));
+			       symbols[i]->lsymbol->symbol->name,
+			       strerror(errno));
 		    fflush(stdout);
 		}
 	    }

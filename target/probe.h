@@ -70,6 +70,7 @@ struct probepoint {
      * different than the addr above, of course.
      */
     ADDR symbol_addr;
+
     /* Always save off which memrange the probe is in. */
     struct memrange *range;
     
@@ -119,7 +120,12 @@ struct action {
     action_type_t type;
     action_whence_t whence;
     union {
-	REGVAL retval;
+	struct {
+	    REGVAL retval;
+	    int8_t prologue:1,
+		   prologue_uses_bp:1;
+	    int prologue_sp_offset;
+	} ret;
 	struct {
 	    void **instrs;
 	    uint32_t instrs_count;

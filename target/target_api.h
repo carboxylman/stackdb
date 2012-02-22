@@ -181,6 +181,7 @@ struct target {
 	    wordsize:4,
 	    ptrsize:4;
     REG fbregno;
+    REG spregno;
     REG ipregno;
 
     void *state;
