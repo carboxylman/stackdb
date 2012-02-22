@@ -1336,8 +1336,6 @@ int probepoint_ss_handler(struct target *target,
 	}
 	else {
 	    /* Next single step is in place, so let it keep going. */
-	    target_resume(target);
-
 	    return 0;
 	}
     }
@@ -1411,6 +1409,9 @@ static int handle_actions(struct probepoint *probepoint) {
     struct target *target = probepoint->target;
     struct action *action;
     REGVAL rval;
+    void *local_ret_instrs;
+    unsigned int local_ret_instrs_len;
+    unsigned int local_ret_instr_count;
 
     /* Reset if we are executing actions for this BP right after hit. */
     if (probepoint->state == PROBE_BP_SET) {
@@ -1524,10 +1525,10 @@ static int handle_actions(struct probepoint *probepoint) {
 	    /*
 	     * If we have executed a prologue: if the prologue contains
 	     * a save of the frame pointer (0x55), all we have to do is
-	     * set rsp to rbp (same as calling leaveq), and call retq.
+	     * set rsp to rbp, call leaveq, and call retq.
 	     * If the prologue does not contain a save of the frame
 	     * pointer, we have to track all modifications to rsp during
-	     * the prologue, undo them, and call retq.
+	     * the prologue, undo them, and call leaveq, and retq.
 	     */
 	    if (action->detail.ret.prologue) {
 		if (action->detail.ret.prologue_uses_bp) {
@@ -1559,6 +1560,10 @@ static int handle_actions(struct probepoint *probepoint) {
 
 			return 0;
 		    }
+
+		    local_ret_instrs = target->full_ret_instrs;
+		    local_ret_instrs_len = target->full_ret_instrs_len;
+		    local_ret_instr_count = target->full_ret_instr_count;
 		}
 		else {
 		    vdebug(3,LOG_P_ACTION,
@@ -1568,9 +1573,9 @@ static int handle_actions(struct probepoint *probepoint) {
 		    vdebugc(3,LOG_P_ACTION,"\n");
 
 		    errno = 0;
-		    rval = target_read_reg(target,target->fbregno);
+		    rval = target_read_reg(target,target->spregno);
 		    if (errno) {
-			verror("read EBP failed; disabling probepoint!\n");
+			verror("read ESP failed; disabling probepoint!\n");
 			probepoint->state = PROBE_DISABLED;
 			free(probepoint->action_orig_mem);
 			probepoint->action = NULL;
@@ -1581,7 +1586,7 @@ static int handle_actions(struct probepoint *probepoint) {
 		    }
 
 		    if (target_write_reg(target,target->spregno,
-					 rval + probepoint->action->detail.ret.prologue_sp_offset)) {
+					 rval + (REGVAL)-action->detail.ret.prologue_sp_offset)) {
 			verror("undoing prologue ESP changes failed; disabling probepoint!\n");
 			probepoint->state = PROBE_DISABLED;
 			free(probepoint->action_orig_mem);
@@ -1591,15 +1596,30 @@ static int handle_actions(struct probepoint *probepoint) {
 
 			return 0;
 		    }
+
+		    local_ret_instrs = target->ret_instrs;
+		    local_ret_instrs_len = target->ret_instrs_len;
+		    local_ret_instr_count = target->ret_instr_count;
 		}
+	    }
+	    else {
+		local_ret_instrs = target->ret_instrs;
+		local_ret_instrs_len = target->ret_instrs_len;
+		local_ret_instr_count = target->ret_instr_count;
 	    }
 
 	    /*
 	     * Save the original code at the probepoint, and replace it
 	     * with the action code, and set EIP to the probepoint.
 	     */
-	    probepoint->action_orig_mem = malloc(target->ret_instrs_len);
-	    probepoint->action_orig_mem_len = target->ret_instrs_len;
+
+	    /*
+	     * If our prologue used a frame pointer, we have to do a
+	     * full return (LEAVE,RET).  Otherwise, just RET.
+	     */
+
+	    probepoint->action_orig_mem = malloc(local_ret_instrs_len);
+	    probepoint->action_orig_mem_len = local_ret_instrs_len;
 	    if (!target_read_addr(target,probepoint->addr,
 				  probepoint->action_orig_mem_len,
 				  probepoint->action_orig_mem,NULL)) {
@@ -1613,8 +1633,8 @@ static int handle_actions(struct probepoint *probepoint) {
 		return 0;
 	    }
 	    if (target_write_addr(target,probepoint->addr,
-				  target->ret_instrs_len,
-				  target->ret_instrs,NULL) \
+				  local_ret_instrs_len,
+				  local_ret_instrs,NULL) \
 		!= probepoint->action_orig_mem_len) {
 		verror("could not insert action code; disabling probepoint!\n");
 		probepoint->state = PROBE_DISABLED;
@@ -1646,7 +1666,7 @@ static int handle_actions(struct probepoint *probepoint) {
 	     * actions.  This action is the final one.
 	     */
 	    probepoint->action_obviates_orig = 1;
-	    probepoint->action_needs_ssteps = 1;
+	    probepoint->action_needs_ssteps = local_ret_instr_count;
 	    probepoint->action = action;
 	    probepoint->state = PROBE_ACTION_RUNNING;
 
@@ -1715,6 +1735,8 @@ int action_sched(struct probe *probe,struct action *action,
 		vwarn("probepoint symbol addr < probepoint addr -- bad\n");
 	    }
 	    else {
+		action->detail.ret.prologue = 1;
+
 		/* Read the prologue; if the first byte is 0x55, we're
 		 * using frame pointers and we don't need to analyze the
 		 * prologue to watch the stack grow so we can undo it.

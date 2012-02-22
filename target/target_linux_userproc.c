@@ -308,9 +308,18 @@ struct target *linux_userproc_attach(int pid) {
     target->breakpoint_instr_count = 1;
 
     target->ret_instrs = malloc(1);
+    /* RET */
     *(char *)(target->ret_instrs) = 0xc3;
     target->ret_instrs_len = 1;
     target->ret_instr_count = 1;
+
+    target->full_ret_instrs = malloc(1);
+    /* LEAVE */
+    *(char *)(target->full_ret_instrs) = 0xc9;
+    /* RET */
+    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
+    target->full_ret_instrs_len = 2;
+    target->full_ret_instr_count = 2;
 
     /* Done with the elf ident data. */
     elf_end(elf);

@@ -215,6 +215,10 @@ struct target {
     unsigned int ret_instrs_len;
     unsigned int ret_instr_count;
 
+    void *full_ret_instrs;
+    unsigned int full_ret_instrs_len;
+    unsigned int full_ret_instr_count;
+
     struct probepoint *sstep_probepoint;
 
     /* Single step and breakpoint handlers.  Since we control
