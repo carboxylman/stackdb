@@ -52,7 +52,7 @@ typedef enum {
 
 typedef enum {
     PROBEPOINT_EXEC = 0,
-    PROBEPOINT_READ = 1,
+    PROBEPOINT_WRITE = 1,
     PROBEPOINT_READWRITE = 3,
 } probepoint_whence_t;
 
@@ -60,7 +60,6 @@ typedef enum {
     PROBEPOINT_L0 = 0,
     PROBEPOINT_L2 = 1,
     PROBEPOINT_L4 = 3,
-    PROBEPOINT_L8 = 2,
 } probepoint_watchsize_t;
 
 typedef enum {
@@ -124,6 +123,8 @@ int probe_unregister(struct probe *probe,int force);
 
 int probe_unregister_batch(struct target *target,struct probe **probelist,
 			   int listlen,int force);
+
+probepoint_watchsize_t probepoint_closest_watchsize(int size);
 
 /*
  * Disables a running probe. When disabled, both pre- and post-handlers are 

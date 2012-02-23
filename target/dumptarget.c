@@ -167,6 +167,100 @@ int function_post(struct probe *probe) {
 
     return 0;
 }
+
+int var_pre(struct probe *probe) {
+    int i,j;
+    struct value *value;
+
+    for (i = 0; i < len; ++i) 
+	if (probes[i] == probe)
+	    break;
+
+    if (i == len) {
+	fprintf(stderr,"Could not find our probe/symbol index!\n");
+	return 0;
+    }
+
+    fflush(stderr);
+
+    if ((value = bsymbol_load(symbols[i],
+			      LOAD_FLAG_AUTO_DEREF | 
+			      LOAD_FLAG_AUTO_STRING |
+			      LOAD_FLAG_NO_CHECK_VISIBILITY |
+			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
+	fprintf(stdout,"%s (0x%"PRIxADDR") (pre) = ",
+		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr);
+
+	symbol_rvalue_print(stdout,symbols[i]->lsymbol->symbol,
+			    value->buf,value->bufsiz,
+			    LOAD_FLAG_AUTO_DEREF |
+			    LOAD_FLAG_AUTO_STRING |
+			    LOAD_FLAG_NO_CHECK_VISIBILITY |
+			    LOAD_FLAG_NO_CHECK_BOUNDS,
+			    t);
+	printf(" (0x");
+	for (j = 0; j < value->bufsiz; ++j) {
+	    printf("%02hhx",value->buf[j]);
+	}
+	printf(")\n");
+	value_free(value);
+    }
+    else
+	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
+		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
+		strerror(errno));
+
+    fflush(stdout);
+
+    return 0;
+}
+
+int var_post(struct probe *probe) {
+    int i,j;
+    struct value *value;
+
+    for (i = 0; i < len; ++i) 
+	if (probes[i] == probe)
+	    break;
+
+    if (i == len) {
+	fprintf(stderr,"Could not find our probe/symbol index!\n");
+	return 0;
+    }
+
+    fflush(stderr);
+
+    if ((value = bsymbol_load(symbols[i],
+			      LOAD_FLAG_AUTO_DEREF | 
+			      LOAD_FLAG_AUTO_STRING |
+			      LOAD_FLAG_NO_CHECK_VISIBILITY |
+			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
+	fprintf(stdout,"%s (0x%"PRIxADDR") (post) = ",
+		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr);
+
+	symbol_rvalue_print(stdout,symbols[i]->lsymbol->symbol,
+			    value->buf,value->bufsiz,
+			    LOAD_FLAG_AUTO_DEREF |
+			    LOAD_FLAG_AUTO_STRING |
+			    LOAD_FLAG_NO_CHECK_VISIBILITY |
+			    LOAD_FLAG_NO_CHECK_BOUNDS,
+			    t);
+	printf(" (0x");
+	for (j = 0; j < value->bufsiz; ++j) {
+	    printf("%02hhx",value->buf[j]);
+	}
+	printf(")\n");
+	value_free(value);
+    }
+    else
+	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
+		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
+		strerror(errno));
+
+    fflush(stdout);
+
+    return 0;
+}
     
 
 int main(int argc,char **argv) {
@@ -339,6 +433,7 @@ int main(int argc,char **argv) {
 		    fprintf(stderr,
 			    "Could not resolve entry PC for function %s!\n",
 			    symbols[i]->lsymbol->symbol->name);
+		    --i;
 		    goto err_unreg;
 		}
 		else {
@@ -387,17 +482,64 @@ int main(int argc,char **argv) {
 		    --i;
 		    goto err_unreg;
 		}
-
-		continue;
-
-		err_unreg:
-		for ( ; i >= 0; --i) {
-		    if (probes[i]) {
-			probe_unregister(probes[i],1);
-		    }
-		}
-		exit(-1);
 	    }
+	    else if (SYMBOL_IS_VAR(symbols[i]->lsymbol->symbol)) {
+		/* Try to insert a watchpoint. */
+		ADDR addr;
+		struct memrange *range;
+		ssize = symbol_type_full_bytesize(symbols[i]->lsymbol->symbol->datatype);
+		if (ssize <= 0) {
+		    fprintf(stderr,
+			    "Bad size (%d) for type of %s!\n",
+			    ssize,symbols[i]->lsymbol->symbol->name);
+		    --i;
+		    goto err_unreg;
+		}
+
+		errno = 0;
+		addr = location_resolve(t,symbols[i]->region,
+					&symbols[i]->lsymbol->symbol->s.ii.l,
+					symbols[i]->lsymbol->chain,&range);
+		if (!addr && errno) {
+		    fprintf(stderr,
+			    "Could not resolve location for %s!\n",
+			    symbols[i]->lsymbol->symbol->name);
+		    --i;
+		    goto err_unreg;
+		}
+
+		probes[i] = \
+		    probe_register_watch(t,addr,range,PROBEPOINT_HW,
+					 (retcode_str && *retcode_str == 'w') \
+					 ? PROBEPOINT_WRITE \
+					 : PROBEPOINT_READWRITE,
+					 probepoint_closest_watchsize(ssize),
+					 var_pre,var_post,
+					 symbols[i]->lsymbol,addr);
+		
+		if (probes[i]) {
+		    fprintf(stderr,
+			    "Registered probe %s at 0x%"PRIxADDR".\n",
+			    symbols[i]->lsymbol->symbol->name,addr);
+		}
+		else {
+		    fprintf(stderr,
+			    "Failed to register probe %s at 0x%"PRIxADDR".\n",
+			    symbols[i]->lsymbol->symbol->name,addr);
+		    --i;
+		    goto err_unreg;
+		}
+	    }
+
+	    continue;
+
+	err_unreg:
+	    for ( ; i >= 0; --i) {
+		if (probes[i]) {
+		    probe_unregister(probes[i],1);
+		}
+	    }
+	    exit(-1);
 	}
     }
 
@@ -434,9 +576,9 @@ int main(int argc,char **argv) {
 	    printf("pid %d interrupted at 0x%lx\n",pid,regs.eip);
 #endif
 
-	    goto resume;
-
-	    if (argc && raw) {
+	    if (!raw)
+		goto resume;
+	    else {
 		for (i = 0; i < argc; ++i) {
 		    if (target_read_addr(t,addrs[i],t->wordsize,
 					 (unsigned char *)word,NULL) != NULL) {
@@ -451,52 +593,6 @@ int main(int argc,char **argv) {
 			       addrs[i],strerror(errno));
 		}
 	    }
-	    else if (argc && !raw) {
-		for (i = 0; i < argc; ++i) {
-		    //ssize = symbol_get_bytesize(symbols[i]->datatype);
-		    //word = malloc(ssize);
-		    word = NULL;
-		    struct value *value;
-		    if (SYMBOL_IS_VAR(symbols[i]->lsymbol->symbol)) {
-			if ((value = bsymbol_load(symbols[i],
-						  LOAD_FLAG_AUTO_DEREF | 
-						  LOAD_FLAG_AUTO_STRING |
-						  LOAD_FLAG_NO_CHECK_VISIBILITY |
-						  LOAD_FLAG_NO_CHECK_BOUNDS))) {
-			    if (1) {
-				printf("%s = ",
-				       symbols[i]->lsymbol->symbol->name);
-				symbol_rvalue_print(stdout,
-						    symbols[i]->lsymbol->symbol,
-						    value->buf,value->bufsiz,
-						    LOAD_FLAG_AUTO_DEREF |
-						    LOAD_FLAG_AUTO_STRING |
-						    LOAD_FLAG_NO_CHECK_VISIBILITY |
-						    LOAD_FLAG_NO_CHECK_BOUNDS,
-						    t);
-			    }
-			    else {
-				printf("%s = ",
-				       symbols[i]->lsymbol->symbol->name);
-				for (j = 0; j < ssize; ++j) {
-				    printf("%02hhx",word[j]);
-				}
-			    }
-			    printf("\n");
-			    value_free(value);
-			}
-		    }
-		    else if (SYMBOL_IS_FUNCTION(symbols[i]->lsymbol->symbol)) {
-			;
-		    }
-		    else
-			printf("%s: could not read value: %s\n",
-			       symbols[i]->lsymbol->symbol->name,
-			       strerror(errno));
-		    fflush(stdout);
-		}
-	    }
-
 	resume:
 	    if (target_resume(t)) {
 		fprintf(stderr,"could not resume target pid %d\n",pid);

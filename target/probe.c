@@ -804,7 +804,7 @@ struct probe *probe_register_watch(struct target *target,ADDR addr,
 				   probe_handler_t pre_handler,
 				   probe_handler_t post_handler,
 				   struct lsymbol *lsymbol,ADDR symbol_addr) {
-    return __probe_register(target,addr,range,PROBEPOINT_BREAK,style,
+    return __probe_register(target,addr,range,PROBEPOINT_WATCH,style,
 			    whence,watchsize,pre_handler,post_handler,
 			    lsymbol,symbol_addr);
 }
@@ -881,6 +881,15 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
 
  out:
     return retval;
+}
+
+probepoint_watchsize_t probepoint_closest_watchsize(int size) {
+    if (size <= 1)
+	return PROBEPOINT_L0;
+    else if (size <= 2)
+	return PROBEPOINT_L2;
+    else 
+	return PROBEPOINT_L4;
 }
 
 /*

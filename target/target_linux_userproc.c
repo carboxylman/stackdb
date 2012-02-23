@@ -972,6 +972,11 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
     REG dreg = -1;
     struct probepoint *dpp;
     REGVAL ipval;
+#if __WORDSIZE == 64
+    unsigned long cdr;
+#else
+    int cdr;
+#endif
 
     lstate = (struct linux_userproc_state *)(target->state);
 
@@ -1021,24 +1026,64 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		goto out_again;
 	    }
 	    else {
-		ipval = linux_userproc_read_reg(target,target->ipregno);
+		/* Check the hw debug status reg first */
+		errno = 0;
+		cdr = ptrace(PTRACE_PEEKUSER,pid,
+			     offsetof(struct user,u_debugreg[6]),NULL);
 		if (errno) {
-		    verror("could not read EIP while finding probepoint: %s\n",
-			   strerror(errno));
-		    return TSTATUS_ERROR;
+		    vwarn("could not read current val of status debug reg; skipping to EIP check!\n");
+		    errno = 0;
+		    cdr = 0;
 		}
 
-		/* We could check the debug status register bits, but
-		 * this is the same, really...
-		 */
-		if (lstate->dr[0] == (ptrace_reg_t)ipval)
-		    dreg = 0;
-		else if (lstate->dr[1] == (ptrace_reg_t)ipval)
-		    dreg = 1;
-		else if (lstate->dr[2] == (ptrace_reg_t)ipval)
-		    dreg = 2;
-		else if (lstate->dr[3] == (ptrace_reg_t)ipval)
-		    dreg = 3;
+		/* Only check the 4 low-order bits */
+		if (cdr & 15) {
+		    if (cdr & 0x1)
+			dreg = 0;
+		    else if (cdr & 0x2)
+			dreg = 1;
+		    else if (cdr & 0x4)
+			dreg = 2;
+		    else if (cdr & 0x8)
+			dreg = 3;
+
+		    /* If we are relying on the status reg to tell us,
+		     * then also read the actual hw debug reg to get the
+		     * address we broke on.
+		     */
+		    errno = 0;
+		    ipval = ptrace(PTRACE_PEEKUSER,pid,
+				   offsetof(struct user,u_debugreg[dreg]),NULL );
+		    if (errno) {
+			verror("could not read current val of debug reg %d after up status!\n",dreg);
+			return TSTATUS_ERROR;
+		    }
+
+		    vdebug(4,LOG_T_LUP,
+			   "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
+			   dreg,ipval);
+		}
+		else {
+		    ipval = linux_userproc_read_reg(target,target->ipregno);
+		    if (errno) {
+			verror("could not read EIP while finding probepoint: %s\n",
+			       strerror(errno));
+			return TSTATUS_ERROR;
+		    }
+
+		    if (lstate->dr[0] == (ptrace_reg_t)ipval)
+			dreg = 0;
+		    else if (lstate->dr[1] == (ptrace_reg_t)ipval)
+			dreg = 1;
+		    else if (lstate->dr[2] == (ptrace_reg_t)ipval)
+			dreg = 2;
+		    else if (lstate->dr[3] == (ptrace_reg_t)ipval)
+			dreg = 3;
+
+		    vdebug(4,LOG_T_LUP,
+			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
+			   dreg,ipval);
+		}
 
 		if (dreg > -1) {
 		    /* Found HW breakpoint! */
@@ -1056,6 +1101,12 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 
 		    dpp = (struct probepoint *)g_hash_table_lookup(target->probepoints,
 								   (gpointer)ipval);
+
+		    if (!dpp) {
+			verror("found hw breakpoint with no probe!\n");
+			return TSTATUS_ERROR;
+		    }
+
 		    target->bp_handler(target,dpp);
 		    goto out_again;
 		}
@@ -1721,33 +1772,38 @@ static int linux_userproc_set_hw_watchpoint(struct target *target,
     /* Set the local control bit, and unset the global bit. */
     lstate->dr[7] |= (1 << (reg * 2));
     lstate->dr[7] &= ~(1 << (reg * 2 + 1));
-    /* Set the break to be on whatever whence was). */
-    lstate->dr[7] &= ~(whence << (16 + (reg * 4)));
+    /* Set the break to be on whatever whence was) (clear the bits first!). */
+    lstate->dr[7] &= ~(3 << (16 + (reg * 4)));
+    lstate->dr[7] |= (whence << (16 + (reg * 4)));
     /* Set the watchsize to be whatever watchsize was). */
-    lstate->dr[7] &= ~(watchsize << (18 + (reg * 4)));
+    lstate->dr[7] &= ~(3 << (18 + (reg * 4)));
+    lstate->dr[7] |= (watchsize << (18 + (reg * 4)));
+
+    vdebug(4,LOG_T_LUP,"dreg6 = 0x%"PRIxADDR"; dreg7 = 0x%"PRIxADDR", w = %d, ws = 0x%x\n",
+	   lstate->dr[6],lstate->dr[7],whence,watchsize);
 
     /* Now write these values! */
     errno = 0;
     ptrace(PTRACE_POKEUSER,pid,
 	   offsetof(struct user,u_debugreg[reg]),(void *)(lstate->dr[reg]));
     if (errno) {
-	verror("could not update debug reg %"PRIiREG", aborting: %s!\n",reg,
-	       strerror(errno));
+	verror("could not update debug reg %"PRIiREG" (%p), aborting: %s!\n",reg,
+	       (void *)(lstate->dr[reg]),strerror(errno));
 	goto errout;
     }
 
     ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
 	   offsetof(struct user,u_debugreg[6]),(void *)(lstate->dr[6]));
     if (errno) {
-	verror("could not update status debug reg, aborting: %s!\n",
-	       strerror(errno));
+	verror("could not update status debug reg (%p), aborting: %s!\n",
+	       (void *)(lstate->dr[6]),strerror(errno));
 	goto errout;
     }
     ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
 	   offsetof(struct user,u_debugreg[7]),(void *)(lstate->dr[7]));
     if (errno) {
-	verror("could not update control debug reg, aborting: %s!\n",
-	       strerror(errno));
+	verror("could not update control debug reg (%p), aborting: %s!\n",
+	       (void *)(lstate->dr[7]),strerror(errno));
 	goto errout;
     }
 
