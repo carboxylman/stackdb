@@ -964,6 +964,9 @@ static int xen_vm_resume(struct target *target) {
     if (!xstate->dominfo.paused)
 	return -1;
 
+    /* Flush back registers if they're dirty! */
+    xen_vm_flush_context(target);
+
     return xc_domain_unpause(xc_handle,xstate->id);
 }
 
