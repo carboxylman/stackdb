@@ -539,9 +539,18 @@ static int xen_vm_detach(struct target *target) {
     if (!target->attached)
 	return 0;
 
+    if (xen_vm_status(target) == TSTATUS_PAUSED) {
+	/* Flush back registers if they're dirty! */
+	xen_vm_flush_context(target);
+    }
+
     if (xc_domctl(xc_handle,&domctl)) {
-	verror("could not enable debugging of dom %d!\n",xstate->id);
+	verror("could not disable debugging of dom %d!\n",xstate->id);
         return -1;
+    }
+
+    if (xen_vm_status(target) == TSTATUS_PAUSED) {
+	xen_vm_resume(target);
     }
 
     --xc_refcnt;
@@ -562,6 +571,9 @@ static int xen_vm_detach(struct target *target) {
 	    verror("failed to close xc interface\n");
 	}
 	xc_handle = -1;
+
+	vdebug(4,LOG_T_XV,"xc detach dom %d succeeded.\n",xstate->id);
+	target->attached = 0;
     }
 
     vdebug(3,LOG_T_XV,"detach dom %d succeeded.\n",xstate->id);
@@ -948,6 +960,10 @@ static int xen_vm_pause(struct target *target) {
 	return -1;
     }
 
+    xstate->dominfo_valid = 0;
+    if (xen_vm_load_dominfo(target)) 
+	vwarn("could not reload dominfo for dom %d after pause!\n",xstate->id);
+
     return 0;
 }
 
@@ -999,11 +1015,26 @@ static target_status_t xen_vm_monitor(struct target *target) {
         if (ret == -1) // timeout
             continue;
 
-        if (!FD_ISSET(fd, &inset))
+        if (!FD_ISSET(fd, &inset)) 
             goto again; // nothing in eventchn
+	else {
+	    /* From previous */
+	    xa_destroy_cache(&xstate->xa_instance);
+	    xa_destroy_pid_cache(&xstate->xa_instance);
+	}
 
         /* we've got something from eventchn. let's see what it is! */
         port = xc_evtchn_pending(xce_handle);
+
+	/* unmask the event channel BEFORE doing anything else,
+	 * like unpausing the target!
+	 */
+	ret = xc_evtchn_unmask(xce_handle, port);
+	if (ret == -1) {
+	    verror("failed to unmask event channel\n");
+	    break;
+	}
+
         if (port != dbg_port)
             continue; // not the event that we are looking for
 
@@ -1023,25 +1054,61 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		}
 	    }
 	    else {
-		errno = 0;
-		ipval = xen_vm_read_reg(target,target->ipregno);
-		if (errno) {
-		    verror("could not read EIP while finding probepoint: %s\n",
-			   strerror(errno));
-		    return TSTATUS_ERROR;
-		}
+		/* Check the hw debug status reg first */
 
-		/* We could check the debug status register bits, but
-		 * this is the same, really...
-		 */
-		if (xstate->dr[0] == ipval)
-		    dreg = 0;
-		else if (xstate->dr[1] == ipval)
-		    dreg = 1;
-		else if (xstate->dr[2] == ipval)
-		    dreg = 2;
-		else if (xstate->dr[3] == ipval)
-		    dreg = 3;
+		/* Only check the 4 low-order bits */
+		if (xstate->context.debugreg[6] & 15) {
+		    if (xstate->context.debugreg[6] & 0x1)
+			dreg = 0;
+		    else if (xstate->context.debugreg[6] & 0x2)
+			dreg = 1;
+		    else if (xstate->context.debugreg[6] & 0x4)
+			dreg = 2;
+		    else if (xstate->context.debugreg[6] & 0x8)
+			dreg = 3;
+
+		    /* If we are relying on the status reg to tell us,
+		     * then also read the actual hw debug reg to get the
+		     * address we broke on.
+		     */
+		    errno = 0;
+		    ipval = xstate->context.debugreg[dreg];
+
+		    vdebug(4,LOG_T_XV,
+			   "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
+			   dreg,ipval);
+		}
+		else {
+		    vdebug(4,LOG_T_XV,
+			   "dreg status was 0x%"PRIxREGVAL"; trying eip method\n",
+			   (ADDR)xstate->context.debugreg[6]);
+
+		    errno = 0;
+		    ipval = xen_vm_read_reg(target,target->ipregno);
+		    if (errno) {
+			verror("could not read EIP while finding probepoint: %s\n",
+			       strerror(errno));
+			return TSTATUS_ERROR;
+		    }
+
+		    if (xstate->dr[0] == ipval)
+			dreg = 0;
+		    else if (xstate->dr[1] == ipval)
+			dreg = 1;
+		    else if (xstate->dr[2] == ipval)
+			dreg = 2;
+		    else if (xstate->dr[3] == ipval)
+			dreg = 3;
+
+		    if (dreg) 
+			vdebug(4,LOG_T_XV,
+			       "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
+			       dreg,ipval);
+		    else
+			vdebug(4,LOG_T_XV,
+			       "did NOT find hw break (eip) on 0x%"PRIxADDR"\n",
+			       ipval);
+		}
 
 		if (dreg > -1) {
 		    /* Found HW breakpoint! */
@@ -1072,20 +1139,13 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		    vwarn("could not find hardware bp and not sstep'ing;"
 			  " letting user handle fault at 0x%"PRIxADDR"!\n",
 			  ipval);
+		    return TSTATUS_PAUSED;
 		}
 	    }
 	}
 
     again:
-	xa_destroy_cache(&xstate->xa_instance);
-	xa_destroy_pid_cache(&xstate->xa_instance);
-
-        /* unmask the event channel */
-        ret = xc_evtchn_unmask(xce_handle, port);
-        if (ret == -1) {
-            verror("failed to unmask event channel\n");
-            break;
-        }
+	continue;
     }
 
     return TSTATUS_ERROR;
@@ -1497,6 +1557,9 @@ static int xen_vm_flush_context(struct target *target) {
     if (xstate->context_valid && xstate->context_dirty) {
 	vdebug(9,LOG_T_XV,"dom %d\n",xstate->id);
 
+	vdebug(4,LOG_T_XV,"EIP is 0x%"PRIxREGVAL" before context flush\n",
+	       xen_vm_read_reg(target,target->ipregno));
+
 	if (xc_vcpu_setcontext(xc_handle,xstate->id,
 			       xstate->dominfo.max_vcpu_id,
 			       &xstate->context) < 0) {
@@ -1635,10 +1698,16 @@ static int xen_vm_set_hw_watchpoint(struct target *target,
     /* Set the local control bit, and unset the global bit. */
     xstate->dr[7] |= (1 << (reg * 2));
     xstate->dr[7] &= ~(1 << (reg * 2 + 1));
-    /* Set the break to be on whatever whence was). */
-    xstate->dr[7] &= ~(whence << (16 + (reg * 4)));
+    /* Set the break to be on whatever whence was) (clear the bits first!). */
+    xstate->dr[7] &= ~(3 << (16 + (reg * 4)));
+    xstate->dr[7] |= (whence << (16 + (reg * 4)));
     /* Set the watchsize to be whatever watchsize was). */
-    xstate->dr[7] &= ~(watchsize << (18 + (reg * 4)));
+    xstate->dr[7] &= ~(3 << (18 + (reg * 4)));
+    xstate->dr[7] |= (watchsize << (18 + (reg * 4)));
+
+    vdebug(4,LOG_T_XV,
+	   "dreg6 = 0x%"PRIxADDR"; dreg7 = 0x%"PRIxADDR", w = %d, ws = 0x%x\n",
+	   xstate->dr[6],xstate->dr[7],whence,watchsize);
 
     /* Now save these values for later write in flush_context! */
     xstate->context.debugreg[reg] = xstate->dr[reg];
