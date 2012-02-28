@@ -566,15 +566,15 @@ int main(int argc,char **argv) {
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == TSTATUS_PAUSED) {
-	    if (linux_userproc_stopped_by_syscall(t)) 
+	    if (!domain && linux_userproc_stopped_by_syscall(t))
 		goto resume;
 
-	    ptrace(PTRACE_GETREGS,pid,NULL,&regs);
-#if __WORDSIZE == 64
-	    printf("pid %d interrupted at 0x%" PRIx64 "\n",pid,regs.rip);
-#else
-	    printf("pid %d interrupted at 0x%lx\n",pid,regs.eip);
-#endif
+	    if (!domain)
+		printf("pid %d interrupted at 0x%" PRIxREGVAL "\n",pid,
+		       target_read_reg(t,t->ipregno));
+	    else 
+		printf("domain %s interrupted at 0x%" PRIxREGVAL "\n",domain,
+		       target_read_reg(t,t->ipregno));
 
 	    if (!raw)
 		goto resume;
