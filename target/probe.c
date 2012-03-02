@@ -51,6 +51,8 @@ static struct probe *probe_create(struct probepoint *probepoint,
     
     list_add_tail(&probe->probe,&probepoint->probes);
 
+    INIT_LIST_HEAD(&probe->child_probes);
+
     vdebug(5,LOG_P_PROBE,"probe at ");
     LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probe->probepoint);
     vdebugc(5,LOG_P_PROBE," added\n");
@@ -61,12 +63,24 @@ static struct probe *probe_create(struct probepoint *probepoint,
 static void probe_free(struct probe *probe) {
     struct action *action;
     struct action *tmp;
+    struct probe *cprobe;
+    struct probe *ctmp;
 
     /* destroy any actions it might have */
     list_for_each_entry_safe(action,tmp,&probe->probepoint->actions,action) {
 	if (probe == action->probe)
 	    action_destroy(action);
     }
+
+    /* DO NOT remove children; just unlink them from the lists. */
+    list_for_each_entry_safe(cprobe,ctmp,&probe->child_probes,child_probe) {
+	list_del(&cprobe->child_probe);
+	cprobe->parent = NULL;
+    }
+
+    /* remove it from its parent's list */
+    if (probe->parent)
+	list_del(&probe->child_probe);
 
     list_del(&probe->probe);
 
@@ -501,6 +515,19 @@ int probe_unregister(struct probe *probe,int force) {
     return __probe_unregister(probe,force);
 }
 
+int probe_unregister_children(struct probe *probe,int force) {
+    struct probe *cprobe;
+    struct probe *tmp;
+    int retval = 0;
+
+    list_for_each_entry_safe(cprobe,tmp,&probe->child_probes,child_probe) {
+	if (probe_unregister(cprobe,force))
+	    ++retval;
+    }
+
+    return retval;
+}
+
 /*
  * This function always frees its probes, BUT the underlying probepoints
  * might fail to be freed.  If so, we return the number of probepoints
@@ -794,6 +821,26 @@ struct probe *probe_register_break(struct target *target,ADDR addr,
     return __probe_register(target,addr,range,PROBEPOINT_BREAK,style,
 			    PROBEPOINT_EXEC,0,pre_handler,post_handler,
 			    lsymbol,symbol_addr);
+}
+
+struct probe *probe_register_child(struct probe *parent,OFFSET offset,
+				   probepoint_style_t style,
+				   probe_handler_t pre_handler,
+				   probe_handler_t post_handler) {
+    struct probe *p = __probe_register(parent->probepoint->target,
+				       parent->probepoint->addr + offset,
+				       parent->probepoint->range,
+				       PROBEPOINT_BREAK,style,
+				       PROBEPOINT_EXEC,0,pre_handler,post_handler,
+				       parent->probepoint->lsymbol,
+				       parent->probepoint->symbol_addr);
+    if (!p)
+	return NULL;
+
+    p->parent = parent;
+    list_add_tail(&p->child_probe,&parent->child_probes);
+
+    return p;
 }
 
 struct probe *probe_register_watch(struct target *target,ADDR addr,
@@ -1784,29 +1831,6 @@ int action_sched(struct probe *probe,struct action *action,
 		    }
 		}
 	    }
-	}
-	else {
-	    /* Check the first byte at addr; if it is 0x55, we're using
-	     * frame pointers and we don't need to analyze the prologue.
-	     */
-	    code_len = 1;
-	    code = (unsigned char *)malloc(code_len);
-	    memset(code,0,code_len);
-
-	    if (!target_read_addr(target,probepoint->symbol_addr,
-				  code_len,code,NULL)) {
-		vwarn("could not read first byte of prologue code in non-prologue frame pointer usage check!\n");
-		free(code);
-		return -1;
-	    }
-	    else if (*code != 0x55) {
-		verror("cannot schedule a return from a function that lacks prologue info and does not use frame pointers; your stack would be smashed!\n");
-		free(code);
-		return -1;
-	    }
-
-	    free(code);
-	    action->detail.ret.prologue_uses_bp = 1;
 	}
     }
 

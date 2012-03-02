@@ -104,6 +104,11 @@ struct probe *probe_register_watch(struct target *target,ADDR addr,
 				   probe_handler_t post_handler,
 				   struct lsymbol *lsymbol,ADDR symbol_addr);
 
+struct probe *probe_register_child(struct probe *parent,OFFSET offset,
+				   probepoint_style_t style,
+				   probe_handler_t pre_handler,
+				   probe_handler_t post_handler);
+
 int probe_register_batch(struct target *target,ADDR *addrlist,int count,
 			 probepoint_type_t type,probepoint_style_t style,
 			 probepoint_whence_t whence,
@@ -120,6 +125,7 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int count,
  * the error.
  */
 int probe_unregister(struct probe *probe,int force);
+int probe_unregister_children(struct probe *probe,int force);
 
 int probe_unregister_batch(struct target *target,struct probe **probelist,
 			   int listlen,int force);

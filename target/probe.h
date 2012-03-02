@@ -114,6 +114,19 @@ struct probe {
 
     /* Link to the probe list  */
     struct list_head probe;
+
+    /* A list of "child" probes -- i.e., perhaps breakpoints within a
+     * function whose entry point is this probe.
+     */
+    struct list_head child_probes;
+
+    /* If this probe is a child of some parent, this is its node on the
+     * above `child_probes' list.
+     */
+    struct list_head child_probe;
+
+    /* If this probe is a child of some parent, this is its parent. */
+    struct probe *parent;
 };
 
 struct action {
