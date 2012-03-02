@@ -11,50 +11,64 @@ SUBDIRS =
 
 include $(OBJDIR)/Makeconf
 
-CFLAGS += -I$(TOP_SRCDIR)/target -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include \
-	-I$(OBJDIR)
-CFLAGS += -DDWDEBUG_USE_STRTAB
-CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+LCFLAGS := -I$(SRCDIR) -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include -I$(OBJDIR)
+LCFLAGS += -DDWDEBUG_USE_STRTAB
+LCFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+
+CFLAGS += $(LCFLAGS)
+PYCFLAGS += -I@PYTHON_INCLUDE@ $(LCFLAGS)
 
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
 
 HEADERS := $(SRCDIR)/dwdebug.h \
-	$(TOP_SRCDIR)/target/target_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
 OBJECTS := debug.lo dwarf_debuginfo.lo dwarf_elfutils.lo 
-LIBRARIES := dwdebug.a dwdebug.so.$(LIBVERSION)
-
-STATICLIBS := $(OBJDIR)/lib/log.a dwdebug.a
+LIBRARIES := libdwdebug.a libdwdebug.so.$(LIBVERSION)
+STATICLIBS := $(OBJDIR)/lib/libvlog.a libdwdebug.a
+DYNAMICLIBS := $(OBJDIR)/lib/libvlog.so libdwdebug.so
+SWIGLIBS := _dwdebug.so
 
 PROGRAMS := dumpdebuginfo
 
 INST_INC = dwdebug.h
-INST_LIB = $(LIBRARIES)
+INST_LIB = $(LIBRARIES) $(SWIGLIBS)
 
 # Get libtool to shut up when compiling.
 RM=rm -f
 
-all:	$(LIBRARIES) dwdebug.so $(PROGRAMS) all-subdirs
+all:	$(LIBRARIES) libdwdebug.so $(SWIGLIBS) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
 .c.lo:	$(HEADERS)
 	$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-dwdebug.a:	$(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o dwdebug.a $(OBJECTS)
+libdwdebug.a:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libdwdebug.a $(OBJECTS)
 
 dwdebug.lo:	$(HEADERS) $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
 
-dwdebug.so.$(LIBVERSION):	dwdebug.lo
+libdwdebug.so.$(LIBVERSION):	dwdebug.lo
 	$(CP) -f dwdebug.lo $@
 
-dwdebug.so:	dwdebug.so.$(LIBVERSION)
+libdwdebug.so:	libdwdebug.so.$(LIBVERSION)
 	$(LN_S) $< $@
+
+dwdebug_wrap_py.c: $(SRCDIR)/dwdebug.i $(SRCDIR)/dwdebug.h #$(SRCDIR)/dwdebug.py.tail
+	swig -python $(PYCFLAGS) -o dwdebug_wrap_py.c -module dwdebug \
+		$(SRCDIR)/dwdebug.i
+	#cat $(SRCDIR)/dwdebug.py.tail >> dwdebug.py
+	#touch $@
+
+dwdebug_wrap_py.o: dwdebug_wrap_py.c $(SRCDIR)/dwdebug.h
+	$(CC) -fPIC -c $(PYCFLAGS) $<
+
+_dwdebug.so:	dwdebug_wrap_py.o
+	ld -shared $^ $(DYNAMICLIBS) $(LDFLAGS) -o $@
 
 dumpdebuginfo: $(HEADERS) $(LIBRARIES) dumpdebuginfo.lo $(STATICLIBS)
 	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
@@ -65,7 +79,8 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
 		dwdebug.lo targetdumpval.lo dumpdebuginfo.lo
-	$(RM) -f $(LIBRARIES) dwdebug.o dwdebug.so dwdebug.so.$(LIBVERSION) 
+	$(RM) -f $(LIBRARIES) dwdebug.o libdwdebug.so libdwdebug.so.$(LIBVERSION) 
+	$(RM) -f dwdebug.py* dwdebug_wrap_py.* _dwdebug.so
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs

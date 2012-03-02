@@ -101,8 +101,10 @@ VMPROBES_INC    = $(TOP_SRCDIR)/
 # Set these so we get lseek64 right, everywhere, without having to muck
 # with header files too much.
 #
-CFLAGS += -D_GNU_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64
+PYCFLAGS := -D_GNU_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64
+CFLAGS += $(PYCFLAGS)
 
+# Swig/python doesn't get warning flags.
 CFLAGS += -Wall -Wextra -Wno-unused-parameter
 #-Wswitch-default -Wswitch-enum -Wtrampolines -Wtraditional-conversion -Wdeclaration-after-statement -Wshadow -Wbad-function-cast -Wcast-qual -Wcast-align -Wconversion -Wlogical-op -Wstrict-prototypes -Wold-style-definition -Wmissing-parameter-type -Wmissing-prototypes -Wmissing-declarations -Wmissing-field-initializers -Wmissing-format-attribute -Winline 
 
@@ -116,4 +118,5 @@ ifeq ("@ENABLE_PROFILING@","1")
 endif
 ifeq ("@ENABLE_VMI_DEBUG@","1")
      CFLAGS += -DVMI_DEBUG
+     PYCFLAGS += -DVMI_DEBUG
 endif
