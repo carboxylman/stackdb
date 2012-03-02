@@ -50,7 +50,7 @@ LIBRARIES := target.a
 
 PROGRAMS := dumptarget
 
-STATICLIBS := $(OBJDIR)/dwdebug/dwdebug.a $(OBJDIR)/lib/log.a
+STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvlog.a
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif

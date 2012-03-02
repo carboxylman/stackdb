@@ -15,7 +15,7 @@ HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/log.h
 
 OBJECTS := log.lo
-LIBRARIES := log.a
+LIBRARIES := libvlog.a libvlog.so
 
 INST_INC = 
 INST_LIB = $(LIBRARIES)
@@ -30,18 +30,24 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-log.a:	$(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o log.a $(OBJECTS)
+libvlog.a:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libvlog.a $(OBJECTS)
 
-#log.lo:	$(HEADERS) $(OBJECTS)
-#	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
+vlog.lo:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
+
+libvlog.so.$(LIBVERSION): vlog.lo
+	$(CP) -f vlog.lo $@
+
+libvlog.so:	libvlog.so.$(LIBVERSION)
+	$(LN_S) $< $@
 
 install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
-		log.lo 
-	$(RM) -f $(LIBRARIES) log.o
+		log.lo vlog.lo 
+	$(RM) -f $(LIBRARIES) log.o vlog.* libvlog.*
 
 distclean: distclean-subdirs
 
