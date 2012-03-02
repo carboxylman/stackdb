@@ -197,6 +197,9 @@ struct mmap_entry *location_mmap(struct target *target,
 /**
  ** Disassembly helpers.
  **/
+int disasm_get_ret_offsets(struct target *target,
+			   unsigned char *inst_buf,unsigned int buf_len,
+			   struct array_list **offset_list);
 int disasm_get_prologue_stack_size(struct target *target,
 				   unsigned char *inst_buf,unsigned int buf_len,
 				   int *sp);

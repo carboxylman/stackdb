@@ -1,7 +1,97 @@
 #include "target_api.h"
+#include "alist.h"
 
 #include <distorm.h>
 #include <mnemonics.h>
+
+/*
+ * Returns an integer corresponding to modifications to the stack
+ * pointer.  For instance, if you pass it a prologue, we'll likely
+ * return a negative integer as the stack grows downwards -- i.e.,
+ * during pushes, subs, enters.
+ *
+ * On error, we return -1; on success, 0.
+ */
+int disasm_get_ret_offsets(struct target *target,
+			   unsigned char *inst_buf,unsigned int buf_len,
+			   struct array_list **offset_list) {
+    _CodeInfo ci;
+    _DInst di;
+    _DecodedInst inst;
+    unsigned int di_count = 0;
+    struct array_list *tmplist;
+    OFFSET *offset;
+
+    if (!offset_list) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    tmplist = array_list_create(0);
+
+    ci.code = (unsigned char *)inst_buf;
+    ci.codeLen = buf_len;
+    ci.codeOffset = 0;
+    ci.features = DF_NONE;
+    if (target->wordsize == 4)
+	ci.dt = Decode32Bits;
+    else
+	ci.dt = Decode64Bits;
+
+    while (ci.codeOffset < buf_len) {
+	memset(&di,0,sizeof(di));
+	if (distorm_decompose64(&ci,&di,1,&di_count) == DECRES_INPUTERR) {
+	    vwarn("decoding error at offset %"PRIu64"\n",ci.codeOffset);
+	    goto inst_err_out;
+	}
+	if (di_count == 0) 
+	    break;
+
+	if (di.flags == FLAG_NOT_DECODABLE) {
+	    vwarn("bad instruction at offset %"PRIu64"\n",ci.codeOffset);
+	    goto inst_err_out;
+	}
+
+	/*
+	 * Only decode RETs; add their offsets to the list when we find them! 
+	 */
+	memset(&inst,0,sizeof(inst));
+	if (di.opcode == I_RET || di.opcode == I_RETF) {
+	    offset = calloc(1,sizeof(OFFSET));
+	    *offset = ci.codeOffset;
+	    array_list_add(tmplist,offset);
+
+	    distorm_format(&ci,&di,&inst);
+	    vdebug(3,LOG_T_DISASM,"decoded %s %s at %"PRIu64"\n",
+		   inst.mnemonic.p,inst.operands.p,ci.codeOffset);
+	}
+	else {
+	    distorm_format(&ci,&di,&inst);
+	    vdebug(6,LOG_T_DISASM,"decoded non-ret %s %s at %"PRIu64"\n",
+		   inst.mnemonic.p,inst.operands.p,ci.codeOffset);
+	}
+
+	/* Setup next iteration. */
+	ci.codeOffset += di.size;
+	ci.code += di.size;
+    }
+
+    if (ci.codeOffset != buf_len) {
+	vwarn("decoding stopped %"PRIi64" bytes short\n",
+	      (uint64_t)buf_len - ci.codeOffset);
+	goto inst_err_out;
+    }
+
+    if (offset_list)
+	*offset_list = tmplist;
+    return 0;
+
+ inst_err_out:
+    array_list_deep_free(tmplist);
+    array_list_free(tmplist);
+    return -1;
+}
+
 
 /*
  * Returns an integer corresponding to modifications to the stack
@@ -54,7 +144,7 @@ int disasm_get_prologue_stack_size(struct target *target,
 	}
 
 	distorm_format(&ci,&di,&inst);
-	vdebug(3,LOG_P_ACTION,"decoded %s %s\n",inst.mnemonic.p,inst.operands.p);
+	vdebug(3,LOG_T_DISASM,"decoded %s %s\n",inst.mnemonic.p,inst.operands.p);
 
 	/*
 	 * XXX: all the inc/decrements for ENTER, POP/PUSH are affected
