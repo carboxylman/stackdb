@@ -48,6 +48,7 @@ struct target *t = NULL;
 int len = 0;
 struct bsymbol **symbols = NULL;
 struct probe **probes = NULL;
+ADDR *retaddrs = NULL;
 
 void sigh(int signo) {
     int i;
@@ -56,14 +57,107 @@ void sigh(int signo) {
 	target_pause(t);
 	fprintf(stderr,"Ending trace.\n");
 	for (i = 0; i < len; ++i) {
-	    if (probes[i])
+	    if (probes[i]) {
+		probe_unregister_children(probes[i],1);
 		probe_unregister(probes[i],1);
+	    }
 	}
 	target_close(t);
 	fprintf(stderr,"Ended trace.\n");
     }
 
     exit(0);
+}
+
+int retaddr_save(struct probe *probe) {
+    struct probe *parent = NULL;
+    int i;
+    REGVAL sp;
+
+    if (probe->parent)
+	parent = probe->parent;
+
+    if (!parent) {
+	fprintf(stderr,"Could not find parent probe in retaddr_save!\n");
+	return 0;
+    }
+
+    for (i = 0; i < len; ++i) 
+	if (probes[i] == parent)
+	    break;
+
+    if (i == len) {
+	fprintf(stderr,"Could not find our parent probe/retaddr index!\n");
+	return 0;
+    }
+
+    fflush(stderr);
+    fflush(stdout);
+
+    errno = 0;
+    sp = target_read_reg(t,t->spregno);
+    if (errno) {
+	fprintf(stderr,"Could not read SP in retaddr_save!\n");
+	return 0;
+    }
+
+    if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
+			  (unsigned char *)&retaddrs[i],NULL)) {
+	fprintf(stderr,"Could not read top of stack in retaddr_save!\n");
+	return 0;
+    }
+
+    fprintf(stdout,"%s (0x%"PRIxADDR"): retaddr = 0x%"PRIxADDR"\n",
+	    symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
+	    retaddrs[i]);
+
+    return 0;
+}
+
+int retaddr_check(struct probe *probe) {
+    struct probe *parent = NULL;
+    int i;
+    REGVAL sp;
+    ADDR newretaddr;
+
+    if (probe->parent)
+	parent = probe->parent;
+
+    if (!parent) {
+	fprintf(stderr,"Could not find parent probe in retaddr_check!\n");
+	return 0;
+    }
+
+    for (i = 0; i < len; ++i) 
+	if (probes[i] == parent)
+	    break;
+
+    if (i == len) {
+	fprintf(stderr,"Could not find our parent probe/retaddr index!\n");
+	return 0;
+    }
+
+    fflush(stderr);
+    fflush(stdout);
+
+    errno = 0;
+    sp = target_read_reg(t,t->spregno);
+    if (errno) {
+	fprintf(stderr,"Could not read SP in retaddr_check!\n");
+	return 0;
+    }
+
+    if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
+			  (unsigned char *)&newretaddr,NULL)) {
+	fprintf(stderr,"Could not read top of stack in retaddr_check!\n");
+	return 0;
+    }
+
+    fprintf(stdout,"%s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR"; oldretaddr = 0x%"PRIxADDR"\n",
+	    symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
+	    newretaddr,retaddrs[i]);
+
+    return 0;
 }
 
 int function_dump_args(struct probe *probe) {
@@ -395,6 +489,8 @@ int main(int argc,char **argv) {
 	    memset(symbols,0,sizeof(struct bsymbol *)*argc);
 	    probes = (struct probe **)malloc(sizeof(struct probe *)*argc);
 	    memset(probes,0,sizeof(struct probe *)*argc);
+	    retaddrs = (ADDR *)malloc(sizeof(ADDR)*argc);
+	    memset(probes,0,sizeof(ADDR)*argc);
 	}
     }
 
@@ -423,11 +519,24 @@ int main(int argc,char **argv) {
 	    bsymbol_dump(symbols[i],&udn);
 
 	    if (SYMBOL_IS_FUNCTION(symbols[i]->lsymbol->symbol)) {
-		/* Try to insert a breakpoint, fastest possible! */
+		/* Try to insert a breakpoint, fastest possible, at the
+		 * end of the prologue.  If they specified an int, do a
+		 * return with that as the return code.  If they
+		 * specified 'c', then add another breakpoint at the
+		 * *immediate* entry point of the function, record the
+		 * current return addr on the top of the stack, and add
+		 * child breakpoints on all the function's return
+		 * statements.
+		 */
 		ADDR start = 0;
 		ADDR prologueend = 0;
 		ADDR probeaddr = 0;
 		struct memrange *range;
+		struct array_list *retlist = NULL;
+		struct range *funcrange;
+		unsigned char *funccode;
+		unsigned int funclen;
+
 		if (location_resolve_function_start(t,symbols[i],
 						    &start,&range)) {
 		    fprintf(stderr,
@@ -462,7 +571,66 @@ int main(int argc,char **argv) {
 			    symbols[i]->lsymbol->symbol->name,
 			    probeaddr + offset);
 		    /* Add the retcode action, if any! */
-		    if (retcode_str) {
+		    if (retcode_str && *retcode_str == 'c') {
+			/* Add another probe at the entry point to
+			 * record the current return addr.
+			 */
+			if (!probe_register_child(probes[i],
+						  start - probes[i]->probepoint->addr,
+						  PROBEPOINT_SW,
+						  retaddr_save,NULL)) {
+			    fprintf(stderr,"could not create child return addr probe for function %s!\n",
+				    symbols[i]->lsymbol->symbol->name);
+			    goto err_unreg;
+			}
+			else {
+			    fprintf(stderr,
+				    "Registered return addr save probe for %s at 0x%"PRIxADDR".\n",
+				    symbols[i]->lsymbol->symbol->name,start);
+			}
+			/* Dissasemble the function and grab a list of
+			 * RET instrs, and insert more child
+			 * breakpoints.
+			 */
+			funcrange = &symbols[i]->lsymbol->symbol->s.ii.d.f.symtab->range;
+			if (RANGE_IS_PC(funcrange)) {
+			    funclen = funcrange->highpc - funcrange->lowpc;
+			    funccode = malloc(funclen);
+
+			    if (!target_read_addr(t,funcrange->lowpc,
+						  funclen,funccode,NULL)) {
+				fprintf(stderr,"could not read code before disasm of function %s!\n",
+				    symbols[i]->lsymbol->symbol->name);
+				goto err_unreg;
+			    }
+
+			    if (disasm_get_ret_offsets(t,funccode,funclen,
+						       &retlist)) {
+				fprintf(stderr,"could not disasm function %s!\n",
+					symbols[i]->lsymbol->symbol->name);
+				goto err_unreg;
+			    }
+
+			    /* Now register child breakpoints for each RET! */
+			    for (j = 0; j < array_list_len(retlist); ++j) {
+				OFFSET *offset = (OFFSET *)array_list_item(retlist,j);
+				if (!probe_register_child(probes[i],
+							  (start + *offset) - probes[i]->probepoint->addr,
+							  PROBEPOINT_SW,
+							  retaddr_check,NULL)) {
+				    fprintf(stderr,"could not create child return addr check probe for function %s!\n",
+					    symbols[i]->lsymbol->symbol->name);
+				    goto err_unreg;
+				}
+				else {
+				    fprintf(stderr,
+					    "Registered return addr check probe for %s at 0x%"PRIxADDR".\n",
+					    symbols[i]->lsymbol->symbol->name,start + *offset);
+				}
+			    }
+			}
+		    }
+		    else if (retcode_str) {
 			struct action *action = action_return(retcode);
 			if (!action) {
 			    fprintf(stderr,"could not create action!\n");
@@ -536,6 +704,7 @@ int main(int argc,char **argv) {
 	err_unreg:
 	    for ( ; i >= 0; --i) {
 		if (probes[i]) {
+		    probe_unregister_children(probes[i],1);
 		    probe_unregister(probes[i],1);
 		}
 	    }
@@ -566,15 +735,24 @@ int main(int argc,char **argv) {
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == TSTATUS_PAUSED) {
-	    if (!domain && linux_userproc_stopped_by_syscall(t))
+	    if (
+#ifdef ENABLE_XENACCESS
+		!domain && 
+#endif
+		linux_userproc_stopped_by_syscall(t))
 		goto resume;
 
+#ifdef ENABLE_XENACCESS
 	    if (!domain)
 		printf("pid %d interrupted at 0x%" PRIxREGVAL "\n",pid,
 		       target_read_reg(t,t->ipregno));
 	    else 
 		printf("domain %s interrupted at 0x%" PRIxREGVAL "\n",domain,
 		       target_read_reg(t,t->ipregno));
+#else
+	    printf("pid %d interrupted at 0x%" PRIxREGVAL "\n",pid,
+		   target_read_reg(t,t->ipregno));
+#endif
 
 	    if (!raw)
 		goto resume;
@@ -602,8 +780,10 @@ int main(int argc,char **argv) {
 	}
 	else {
 	    for (i = 0; i < len; ++i) {
-		if (probes[i])
+		if (probes[i]) {
+		    probe_unregister_children(probes[i],1);
 		    probe_unregister(probes[i],1);
+		}
 	    }
 	    target_close(t);
 	    if (tstat == TSTATUS_DONE)  {
