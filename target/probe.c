@@ -126,6 +126,7 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     memset(probepoint,0,sizeof(*probepoint));
     
     probepoint->addr = addr;
+    probepoint->range = range;
     probepoint->target = target;
     probepoint->state = PROBE_DISABLED;
 
