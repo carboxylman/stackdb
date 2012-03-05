@@ -140,6 +140,13 @@ static inline int array_list_add(struct array_list *list,void *element) {
     return 0;
 }
 
+static inline void *array_list_remove(struct array_list *list) {
+    if (list->len) 
+	return list->list[--list->len];
+
+    return NULL;
+}
+
 static inline void *array_list_item(struct array_list *list,int i) {
     if (!list->list || i < 0 || i >= list->alloc_len) {
 	errno = EINVAL;
