@@ -39,6 +39,7 @@
 
 #include "probe_api.h"
 #include "probe.h"
+#include "alist.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -47,19 +48,25 @@ struct target *t = NULL;
 
 int len = 0;
 struct bsymbol **symbols = NULL;
-struct probe **probes = NULL;
-ADDR *retaddrs = NULL;
+GHashTable *probes;
+GHashTable *retaddrs;
+GHashTable *bsymbols;
 
 void sigh(int signo) {
-    int i;
+    GHashTableIter iter;
+    gpointer key;
+    struct probe *probe;
 
     if (t) {
 	target_pause(t);
 	fprintf(stderr,"Ending trace.\n");
-	for (i = 0; i < len; ++i) {
-	    if (probes[i]) {
-		probe_unregister_children(probes[i],1);
-		probe_unregister(probes[i],1);
+	g_hash_table_iter_init(&iter,probes);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer)&key,
+				      (gpointer)&probe)) {
+	    if (!probe->parent) {
+		probe_unregister_children(probe,1);
+		probe_unregister(probe,1);
 	    }
 	}
 	target_close(t);
@@ -71,8 +78,9 @@ void sigh(int signo) {
 
 int retaddr_save(struct probe *probe) {
     struct probe *parent = NULL;
-    int i;
     REGVAL sp;
+    struct array_list *alist;
+    ADDR *retaddr;
 
     if (probe->parent)
 	parent = probe->parent;
@@ -82,11 +90,10 @@ int retaddr_save(struct probe *probe) {
 	return 0;
     }
 
-    for (i = 0; i < len; ++i) 
-	if (probes[i] == parent)
-	    break;
+    alist = (struct array_list *) \
+	g_hash_table_lookup(retaddrs,(gpointer)parent->probepoint->addr);
 
-    if (i == len) {
+    if (!alist) {
 	fprintf(stderr,"Could not find our parent probe/retaddr index!\n");
 	return 0;
     }
@@ -101,24 +108,31 @@ int retaddr_save(struct probe *probe) {
 	return 0;
     }
 
+    retaddr = malloc(sizeof(*retaddr));
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
-			  (unsigned char *)&retaddrs[i],NULL)) {
+			  (unsigned char *)retaddr,NULL)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_save!\n");
 	return 0;
     }
 
+    array_list_add(alist,retaddr);
+
     fprintf(stdout,"%s (0x%"PRIxADDR"): retaddr = 0x%"PRIxADDR"\n",
-	    symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
-	    retaddrs[i]);
+	    probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
+	    *retaddr);
+
+    fflush(stderr);
+    fflush(stdout);
 
     return 0;
 }
 
 int retaddr_check(struct probe *probe) {
     struct probe *parent = NULL;
-    int i;
     REGVAL sp;
     ADDR newretaddr;
+    ADDR *oldretaddr = NULL;
+    struct array_list *alist;
 
     if (probe->parent)
 	parent = probe->parent;
@@ -128,11 +142,10 @@ int retaddr_check(struct probe *probe) {
 	return 0;
     }
 
-    for (i = 0; i < len; ++i) 
-	if (probes[i] == parent)
-	    break;
+    alist = (struct array_list *) \
+	g_hash_table_lookup(retaddrs,(gpointer)parent->probepoint->addr);
 
-    if (i == len) {
+    if (!alist) {
 	fprintf(stderr,"Could not find our parent probe/retaddr index!\n");
 	return 0;
     }
@@ -147,37 +160,40 @@ int retaddr_check(struct probe *probe) {
 	return 0;
     }
 
+    oldretaddr = (ADDR *)array_list_remove(alist);
+
+    if (!oldretaddr) {
+	fprintf(stderr,"Could not read from saved retaddrs; just inserted?\n");
+	return 0;
+    }
+
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
 			  (unsigned char *)&newretaddr,NULL)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_check!\n");
+	free(oldretaddr);
 	return 0;
     }
 
     fprintf(stdout,"%s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR"; oldretaddr = 0x%"PRIxADDR"\n",
-	    symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
-	    newretaddr,retaddrs[i]);
+	    probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
+	    newretaddr,*oldretaddr);
+
+    fflush(stderr);
+    fflush(stdout);
+
+    free(oldretaddr);
 
     return 0;
 }
 
 int function_dump_args(struct probe *probe) {
     struct value *value;
-    int i;
     int j;
-
-    for (i = 0; i < len; ++i) 
-	if (probes[i] == probe)
-	    break;
-
-    if (i == len) {
-	fprintf(stderr,"Could not find our probe/symbol index!\n");
-	return 0;
-    }
 
     fflush(stderr);
     fflush(stdout);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",symbols[i]->lsymbol->symbol->name,
+    fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",probe->probepoint->lsymbol->symbol->name,
 	    probe->probepoint->addr);
 
     /* Make a chain with room for one more -- the
@@ -185,13 +201,13 @@ int function_dump_args(struct probe *probe) {
      */
     struct symbol *tsym;
     struct array_list *tmp;
-    if (!symbols[i]->lsymbol->chain
-	|| array_list_len(symbols[i]->lsymbol->chain) == 0) {
-	tmp = array_list_clone(symbols[i]->lsymbol->chain,2);
-	array_list_add(tmp,symbols[i]->lsymbol->symbol);
+    if (!probe->probepoint->lsymbol->chain
+	|| array_list_len(probe->probepoint->lsymbol->chain) == 0) {
+	tmp = array_list_clone(probe->probepoint->lsymbol->chain,2);
+	array_list_add(tmp,probe->probepoint->lsymbol->symbol);
     }
     else
-	tmp = array_list_clone(symbols[i]->lsymbol->chain,1);
+	tmp = array_list_clone(probe->probepoint->lsymbol->chain,1);
     int len = tmp->len;
 
     struct lsymbol tlsym = {
@@ -199,11 +215,11 @@ int function_dump_args(struct probe *probe) {
     };
     struct bsymbol tbsym = {
 	.lsymbol = &tlsym,
-	.region = symbols[i]->region,
+	.region = probe->probepoint->range->region,
     };
 
     ++tmp->len;
-    list_for_each_entry(tsym,&symbols[i]->lsymbol->symbol->s.ii.d.f.args,
+    list_for_each_entry(tsym,&probe->probepoint->lsymbol->symbol->s.ii.d.f.args,
 			member) {
 	fflush(stderr);
 	fflush(stdout);
@@ -241,21 +257,10 @@ int function_dump_args(struct probe *probe) {
 }
 
 int function_post(struct probe *probe) {
-    int i;
-
-    for (i = 0; i < len; ++i) 
-	if (probes[i] == probe)
-	    break;
-
-    if (i == len) {
-	fprintf(stderr,"Could not find our probe/symbol index!\n");
-	return 0;
-    }
-
     fflush(stderr);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") post handler\n",
-	    symbols[i]->lsymbol->symbol->name,probe->probepoint->addr);
+	    probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr);
 
     fflush(stdout);
 
@@ -263,29 +268,22 @@ int function_post(struct probe *probe) {
 }
 
 int var_pre(struct probe *probe) {
-    int i,j;
+    int j;
     struct value *value;
-
-    for (i = 0; i < len; ++i) 
-	if (probes[i] == probe)
-	    break;
-
-    if (i == len) {
-	fprintf(stderr,"Could not find our probe/symbol index!\n");
-	return 0;
-    }
+    struct bsymbol *bsymbol = (struct bsymbol *) \
+	g_hash_table_lookup(bsymbols,(gpointer)probe->probepoint->addr);
 
     fflush(stderr);
 
-    if ((value = bsymbol_load(symbols[i],
+    if ((value = bsymbol_load(bsymbol,
 			      LOAD_FLAG_AUTO_DEREF | 
 			      LOAD_FLAG_AUTO_STRING |
 			      LOAD_FLAG_NO_CHECK_VISIBILITY |
 			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre) = ",
-		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr);
+		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr);
 
-	symbol_rvalue_print(stdout,symbols[i]->lsymbol->symbol,
+	symbol_rvalue_print(stdout,probe->probepoint->lsymbol->symbol,
 			    value->buf,value->bufsiz,
 			    LOAD_FLAG_AUTO_DEREF |
 			    LOAD_FLAG_AUTO_STRING |
@@ -301,7 +299,7 @@ int var_pre(struct probe *probe) {
     }
     else
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
-		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
+		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
 		strerror(errno));
 
     fflush(stdout);
@@ -310,29 +308,22 @@ int var_pre(struct probe *probe) {
 }
 
 int var_post(struct probe *probe) {
-    int i,j;
+    int j;
     struct value *value;
-
-    for (i = 0; i < len; ++i) 
-	if (probes[i] == probe)
-	    break;
-
-    if (i == len) {
-	fprintf(stderr,"Could not find our probe/symbol index!\n");
-	return 0;
-    }
+    struct bsymbol *bsymbol = (struct bsymbol *) \
+	g_hash_table_lookup(bsymbols,(gpointer)probe->probepoint->addr);
 
     fflush(stderr);
 
-    if ((value = bsymbol_load(symbols[i],
+    if ((value = bsymbol_load(bsymbol,
 			      LOAD_FLAG_AUTO_DEREF | 
 			      LOAD_FLAG_AUTO_STRING |
 			      LOAD_FLAG_NO_CHECK_VISIBILITY |
 			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
 	fprintf(stdout,"%s (0x%"PRIxADDR") (post) = ",
-		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr);
+		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr);
 
-	symbol_rvalue_print(stdout,symbols[i]->lsymbol->symbol,
+	symbol_rvalue_print(stdout,probe->probepoint->lsymbol->symbol,
 			    value->buf,value->bufsiz,
 			    LOAD_FLAG_AUTO_DEREF |
 			    LOAD_FLAG_AUTO_STRING |
@@ -348,7 +339,7 @@ int var_post(struct probe *probe) {
     }
     else
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
-		symbols[i]->lsymbol->symbol->name,probe->probepoint->addr,
+		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
 		strerror(errno));
 
     fflush(stdout);
@@ -370,13 +361,15 @@ int main(int argc,char **argv) {
     ADDR *addrs = NULL;
     char *word;
     int i, j;
-    struct user_regs_struct regs;
     int ssize;
     log_flags_t flags;
     probepoint_type_t ptype = PROBEPOINT_FASTEST;
     int do_post = 1;
     int offset = 0;
     int upg = 1;
+    GHashTableIter iter;
+    gpointer key;
+    struct probe *probe;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -487,38 +480,56 @@ int main(int argc,char **argv) {
 	else {
 	    symbols = (struct bsymbol **)malloc(sizeof(struct bsymbol *)*argc);
 	    memset(symbols,0,sizeof(struct bsymbol *)*argc);
-	    probes = (struct probe **)malloc(sizeof(struct probe *)*argc);
-	    memset(probes,0,sizeof(struct probe *)*argc);
-	    retaddrs = (ADDR *)malloc(sizeof(ADDR)*argc);
-	    memset(probes,0,sizeof(ADDR)*argc);
+
+	    probes = g_hash_table_new(g_direct_hash,g_direct_equal);
+	    retaddrs = g_hash_table_new(g_direct_hash,g_direct_equal);
+	    bsymbols = g_hash_table_new(g_direct_hash,g_direct_equal);
 	}
     }
 
-    for (i = 0; i < argc; ++i) {
-	if (raw) {
+    if (raw) {
+	for (i = 0; i < argc; ++i) {
 	    addrs[i] = strtoll(argv[i],NULL,16);
 	    word = malloc(t->wordsize);
 	}
-	else {
+    }
+    else {
+	struct array_list *symlist = array_list_create(0);
+	struct bsymbol *bsymbol;
+	int *retcodes = (int *)malloc(sizeof(int)*argc);
+	char **retcode_strs = (char **)malloc(sizeof(char *)*argc);
+
+	memset(retcodes,0,sizeof(int)*argc);
+	memset(retcode_strs,0,sizeof(char *)*argc);
+
+	for (i = 0; i < argc; ++i) {
 	    /* Look for retval code */
 	    char *retcode_str = index(argv[i],':');
 	    REGVAL retcode = 0;
 	    if (retcode_str) {
 		*retcode_str = '\0';
 		++retcode_str;
-		retcode = (REGVAL)atoi(retcode_str);
+		retcode_strs[i] = retcode_str;
+		retcodes[i] = (REGVAL)atoi(retcode_str);
 	    }
 
-	    if (!(symbols[i] = target_lookup_sym(t,argv[i],".",NULL,
+	    if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
 						 SYMBOL_TYPE_FLAG_NONE))) {
 		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
 		target_close(t);
 		exit(-1);
 	    }
 
-	    bsymbol_dump(symbols[i],&udn);
+	    array_list_add(symlist,bsymbol);
+	}
 
-	    if (SYMBOL_IS_FUNCTION(symbols[i]->lsymbol->symbol)) {
+	/* Now move through symlist (we may add to it!) */
+	for (i = 0; i < array_list_len(symlist); ++i) {
+	    bsymbol = (struct bsymbol *)array_list_item(symlist,i);
+
+	    bsymbol_dump(bsymbol,&udn);
+
+	    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 		/* Try to insert a breakpoint, fastest possible, at the
 		 * end of the prologue.  If they specified an int, do a
 		 * return with that as the return code.  If they
@@ -532,67 +543,88 @@ int main(int argc,char **argv) {
 		ADDR prologueend = 0;
 		ADDR probeaddr = 0;
 		struct memrange *range;
-		struct array_list *retlist = NULL;
+		struct array_list *cflist = NULL;
 		struct range *funcrange;
 		unsigned char *funccode;
 		unsigned int funclen;
 
-		if (location_resolve_function_start(t,symbols[i],
+		if (location_resolve_function_start(t,bsymbol,
 						    &start,&range)) {
 		    fprintf(stderr,
 			    "Could not resolve entry PC for function %s!\n",
-			    symbols[i]->lsymbol->symbol->name);
+			    bsymbol->lsymbol->symbol->name);
 		    --i;
 		    goto err_unreg;
 		}
 		else {
 		    probeaddr = start;
 		}
-		if (location_resolve_function_prologue_end(t,symbols[i],
+		if (location_resolve_function_prologue_end(t,bsymbol,
 							   &prologueend,
 							   &range)) {
 		    fprintf(stderr,
 			    "Could not resolve prologue_end for function %s!\n",
-			    symbols[i]->lsymbol->symbol->name);
+			    bsymbol->lsymbol->symbol->name);
 		}
 		else {
 		    probeaddr = prologueend;
 		}
+
+		if (g_hash_table_lookup(probes,(gpointer)start)
+		    || g_hash_table_lookup(probes,(gpointer)prologueend)) {
+		    /* This is a function we have already added that was
+		     * called by some other function in our call graph;
+		     * skip!
+		     */
+		    continue;
+		}
 		
-		probes[i] = \
+		probe = \
 		    probe_register_break(t,probeaddr + offset,range,ptype,
 					 function_dump_args,
 					 (do_post) ? function_post : NULL,
-					 symbols[i]->lsymbol,start);
+					 bsymbol->lsymbol,start);
+		g_hash_table_insert(probes,(gpointer)probe->probepoint->addr,(gpointer)probe);
+		g_hash_table_insert(retaddrs,(gpointer)probe->probepoint->addr,(gpointer)array_list_create(0));
 		
-		if (probes[i]) {
+		if (probe) {
 		    fprintf(stderr,
 			    "Registered probe %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,
+			    bsymbol->lsymbol->symbol->name,
 			    probeaddr + offset);
 		    /* Add the retcode action, if any! */
-		    if (retcode_str && *retcode_str == 'c') {
+		    if ((i < argc && retcode_strs[i] && *retcode_strs[i] == 'c')
+			/* If we're into symbols past argc, these were
+			 * added because we added this symbol after
+			 * disassembly.  We don't add return code
+			 * actions to it, but we *do* keep
+			 * dissassembling and adding more functions
+			 * until we find a leaf function.
+			 */
+			|| i >= argc) {
 			/* Add another probe at the entry point to
 			 * record the current return addr.
 			 */
-			if (!probe_register_child(probes[i],
-						  start - probes[i]->probepoint->addr,
-						  PROBEPOINT_SW,
-						  retaddr_save,NULL)) {
+			struct probe *cprobe;
+			if (!(cprobe = probe_register_child(probe,
+							    start - probe->probepoint->addr,
+							    PROBEPOINT_SW,
+							    retaddr_save,NULL))) {
 			    fprintf(stderr,"could not create child return addr probe for function %s!\n",
-				    symbols[i]->lsymbol->symbol->name);
+				    bsymbol->lsymbol->symbol->name);
 			    goto err_unreg;
 			}
 			else {
 			    fprintf(stderr,
 				    "Registered return addr save probe for %s at 0x%"PRIxADDR".\n",
-				    symbols[i]->lsymbol->symbol->name,start);
+				    bsymbol->lsymbol->symbol->name,start);
 			}
+			g_hash_table_insert(probes,(gpointer)cprobe->probepoint->addr,(gpointer)cprobe);
 			/* Dissasemble the function and grab a list of
 			 * RET instrs, and insert more child
 			 * breakpoints.
 			 */
-			funcrange = &symbols[i]->lsymbol->symbol->s.ii.d.f.symtab->range;
+			funcrange = &bsymbol->lsymbol->symbol->s.ii.d.f.symtab->range;
 			if (RANGE_IS_PC(funcrange)) {
 			    funclen = funcrange->highpc - funcrange->lowpc;
 			    funccode = malloc(funclen);
@@ -600,43 +632,71 @@ int main(int argc,char **argv) {
 			    if (!target_read_addr(t,funcrange->lowpc,
 						  funclen,funccode,NULL)) {
 				fprintf(stderr,"could not read code before disasm of function %s!\n",
-				    symbols[i]->lsymbol->symbol->name);
+				    bsymbol->lsymbol->symbol->name);
 				goto err_unreg;
 			    }
 
-			    if (disasm_get_ret_offsets(t,funccode,funclen,
-						       &retlist)) {
+			    if (disasm_get_control_flow_offsets(t,
+								INST_CF_RET |
+								INST_CF_CALL,
+								funccode,funclen,
+								&cflist,
+								funcrange->lowpc)) {
 				fprintf(stderr,"could not disasm function %s!\n",
-					symbols[i]->lsymbol->symbol->name);
+					bsymbol->lsymbol->symbol->name);
 				goto err_unreg;
 			    }
 
 			    /* Now register child breakpoints for each RET! */
-			    for (j = 0; j < array_list_len(retlist); ++j) {
-				OFFSET *offset = (OFFSET *)array_list_item(retlist,j);
-				if (!probe_register_child(probes[i],
-							  (start + *offset) - probes[i]->probepoint->addr,
-							  PROBEPOINT_SW,
-							  retaddr_check,NULL)) {
-				    fprintf(stderr,"could not create child return addr check probe for function %s!\n",
-					    symbols[i]->lsymbol->symbol->name);
-				    goto err_unreg;
+			    for (j = 0; j < array_list_len(cflist); ++j) {
+				struct inst_cf_data *idata = \
+				    (struct inst_cf_data *)array_list_item(cflist,
+									   j);
+				if (idata->type == INST_RET) {
+				    if (!(cprobe = probe_register_child(probe,
+									(start + idata->offset) - probe->probepoint->addr,
+									PROBEPOINT_SW,
+									retaddr_check,NULL))) {
+					fprintf(stderr,"could not create child return addr check probe for function %s!\n",
+						bsymbol->lsymbol->symbol->name);
+					array_list_deep_free(cflist);
+					array_list_free(cflist);
+					goto err_unreg;
+				    }
+				    else {
+					fprintf(stderr,
+						"Registered return addr check probe for %s at 0x%"PRIxADDR".\n",
+						bsymbol->lsymbol->symbol->name,start + idata->offset);
+				    }
+				    g_hash_table_insert(probes,(gpointer)cprobe->probepoint->addr,(gpointer)cprobe);
 				}
-				else {
-				    fprintf(stderr,
-					    "Registered return addr check probe for %s at 0x%"PRIxADDR".\n",
-					    symbols[i]->lsymbol->symbol->name,start + *offset);
+				else if (idata->type == INST_CALL) {
+				    struct bsymbol *callsymbol;
+				    /* Find this function and add it to
+				     * our monitored set.
+				     */
+				    if (idata->target_addr 
+					&& !g_hash_table_lookup(probes,(gpointer)idata->target_addr)
+					&& (callsymbol = target_lookup_sym_addr(t,idata->target_addr))) {
+					array_list_add(symlist,callsymbol);
+					fprintf(stderr,
+						"Adding called function %s at 0x%"PRIxADDR".\n",
+						callsymbol->lsymbol->symbol->name,idata->target_addr);
+				    }
 				}
 			    }
+
+			    array_list_deep_free(cflist);
+			    array_list_free(cflist);
 			}
 		    }
-		    else if (retcode_str) {
-			struct action *action = action_return(retcode);
+		    else if (i < argc && retcode_strs[i]) {
+			struct action *action = action_return(retcodes[i]);
 			if (!action) {
 			    fprintf(stderr,"could not create action!\n");
 			    goto err_unreg;
 			}
-			if (action_sched(probes[i],action,ACTION_REPEATPRE)) {
+			if (action_sched(probe,action,ACTION_REPEATPRE)) {
 			    fprintf(stderr,"could not schedule action!\n");
 			    goto err_unreg;
 			}
@@ -645,55 +705,55 @@ int main(int argc,char **argv) {
 		else {
 		    fprintf(stderr,
 			    "Failed to register probe %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,
+			    bsymbol->lsymbol->symbol->name,
 			    probeaddr + offset);
 		    --i;
 		    goto err_unreg;
 		}
 	    }
-	    else if (SYMBOL_IS_VAR(symbols[i]->lsymbol->symbol)) {
+	    else if (SYMBOL_IS_VAR(bsymbol->lsymbol->symbol)) {
 		/* Try to insert a watchpoint. */
 		ADDR addr;
 		struct memrange *range;
-		ssize = symbol_type_full_bytesize(symbols[i]->lsymbol->symbol->datatype);
+		ssize = symbol_type_full_bytesize(bsymbol->lsymbol->symbol->datatype);
 		if (ssize <= 0) {
 		    fprintf(stderr,
 			    "Bad size (%d) for type of %s!\n",
-			    ssize,symbols[i]->lsymbol->symbol->name);
+			    ssize,bsymbol->lsymbol->symbol->name);
 		    --i;
 		    goto err_unreg;
 		}
 
 		errno = 0;
-		addr = location_resolve(t,symbols[i]->region,
-					&symbols[i]->lsymbol->symbol->s.ii.l,
-					symbols[i]->lsymbol->chain,&range);
+		addr = location_resolve(t,bsymbol->region,
+					&bsymbol->lsymbol->symbol->s.ii.l,
+					bsymbol->lsymbol->chain,&range);
 		if (!addr && errno) {
 		    fprintf(stderr,
 			    "Could not resolve location for %s!\n",
-			    symbols[i]->lsymbol->symbol->name);
+			    bsymbol->lsymbol->symbol->name);
 		    --i;
 		    goto err_unreg;
 		}
 
-		probes[i] = \
+		probe = \
 		    probe_register_watch(t,addr,range,PROBEPOINT_HW,
-					 (retcode_str && *retcode_str == 'w') \
+					 (i < argc && retcode_strs[i] && *retcode_strs[i] == 'w') \
 					 ? PROBEPOINT_WRITE \
 					 : PROBEPOINT_READWRITE,
 					 probepoint_closest_watchsize(ssize),
 					 var_pre,var_post,
-					 symbols[i]->lsymbol,addr);
+					 bsymbol->lsymbol,addr);
 		
-		if (probes[i]) {
+		if (probe) {
 		    fprintf(stderr,
 			    "Registered probe %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,addr);
+			    bsymbol->lsymbol->symbol->name,addr);
 		}
 		else {
 		    fprintf(stderr,
 			    "Failed to register probe %s at 0x%"PRIxADDR".\n",
-			    symbols[i]->lsymbol->symbol->name,addr);
+			    bsymbol->lsymbol->symbol->name,addr);
 		    --i;
 		    goto err_unreg;
 		}
@@ -702,10 +762,13 @@ int main(int argc,char **argv) {
 	    continue;
 
 	err_unreg:
-	    for ( ; i >= 0; --i) {
-		if (probes[i]) {
-		    probe_unregister_children(probes[i],1);
-		    probe_unregister(probes[i],1);
+	    g_hash_table_iter_init(&iter,probes);
+	    while (g_hash_table_iter_next(&iter,
+					  (gpointer)&key,
+					  (gpointer)&probe)) {
+		if (!probe->parent) {
+		    probe_unregister_children(probe,1);
+		    probe_unregister(probe,1);
 		}
 	    }
 	    exit(-1);
@@ -779,10 +842,13 @@ int main(int argc,char **argv) {
 	    }
 	}
 	else {
-	    for (i = 0; i < len; ++i) {
-		if (probes[i]) {
-		    probe_unregister_children(probes[i],1);
-		    probe_unregister(probes[i],1);
+	    g_hash_table_iter_init(&iter,probes);
+	    while (g_hash_table_iter_next(&iter,
+					  (gpointer)&key,
+					  (gpointer)&probe)) {
+		if (!probe->parent) {
+		    probe_unregister_children(probe,1);
+		    probe_unregister(probe,1);
 		}
 	    }
 	    target_close(t);

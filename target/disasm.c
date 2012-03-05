@@ -1,3 +1,4 @@
+#include "disasm.h"
 #include "target_api.h"
 #include "alist.h"
 
@@ -5,24 +6,19 @@
 #include <mnemonics.h>
 
 /*
- * Returns an integer corresponding to modifications to the stack
- * pointer.  For instance, if you pass it a prologue, we'll likely
- * return a negative integer as the stack grows downwards -- i.e.,
- * during pushes, subs, enters.
- *
- * On error, we return -1; on success, 0.
+ * Returns offsets for a specific instruction.
  */
-int disasm_get_ret_offsets(struct target *target,
-			   unsigned char *inst_buf,unsigned int buf_len,
-			   struct array_list **offset_list) {
+int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
+				    unsigned char *inst_buf,unsigned int buf_len,
+				    struct array_list **offset_list,ADDR base) {
     _CodeInfo ci;
     _DInst di;
     _DecodedInst inst;
     unsigned int di_count = 0;
     struct array_list *tmplist;
-    OFFSET *offset;
+    struct inst_cf_data *idata;
 
-    if (!offset_list) {
+    if (!offset_list || flags == 0) {
 	errno = EINVAL;
 	return -1;
     }
@@ -56,21 +52,66 @@ int disasm_get_ret_offsets(struct target *target,
 	 * Only decode RETs; add their offsets to the list when we find them! 
 	 */
 	memset(&inst,0,sizeof(inst));
-	if (di.opcode == I_RET || di.opcode == I_RETF) {
-	    offset = calloc(1,sizeof(OFFSET));
-	    *offset = ci.codeOffset;
-	    array_list_add(tmplist,offset);
+	if (flags & INST_CF_RET 
+	    && (di.opcode == I_RET || di.opcode == I_RETF)) {
+	    idata = calloc(1,sizeof(*idata));
+	    memset(idata,0,sizeof(*idata));
 
-	    distorm_format(&ci,&di,&inst);
-	    vdebug(3,LOG_T_DISASM,"decoded %s %s at %"PRIu64"\n",
-		   inst.mnemonic.p,inst.operands.p,ci.codeOffset);
+	    idata->type = INST_RET;
+	    idata->offset = ci.codeOffset;
+	    array_list_add(tmplist,idata);
+
+	    goto valid_inst;
+	}
+	else if (flags & INST_CF_CALL 
+	    && (di.opcode == I_CALL || di.opcode == I_CALL_FAR)) {
+	    idata = calloc(1,sizeof(*idata));
+	    memset(idata,0,sizeof(*idata));
+
+	    idata->type = INST_CALL;
+	    idata->offset = ci.codeOffset;
+
+	    if (di.ops[0].type == O_PC) {
+		idata->target_addr = base + INSTRUCTION_GET_TARGET(&di);
+	    }
+	    else if (di.ops[0].type == O_IMM && di.opcode == I_CALL) {
+		idata->target_is_offset = 1;
+		idata->target_offset = di.imm.sqword;
+	    }
+	    else if (di.ops[0].type == O_IMM && di.opcode == I_CALL_FAR) {
+		idata->target_addr = di.imm.qword;
+	    }
+	    else if (di.ops[0].type == O_PTR && di.opcode == I_CALL_FAR) {
+		idata->target_addr = di.imm.ptr.off;
+	    }
+	    else if (di.ops[0].type == O_REG && di.opcode == I_CALL) {
+		idata->target_is_reg = 1;
+		idata->target_reg = di.ops[0].index;
+	    }
+	    else {
+		distorm_format(&ci,&di,&inst);
+		vwarn("decoded unknown call inst %s %s at %"PRIu64"\n",
+		       inst.mnemonic.p,inst.operands.p,ci.codeOffset);
+		goto invalid_inst;
+	    }
+
+	    array_list_add(tmplist,idata);
+
+	    goto valid_inst;
 	}
 	else {
 	    distorm_format(&ci,&di,&inst);
-	    vdebug(6,LOG_T_DISASM,"decoded non-ret %s %s at %"PRIu64"\n",
+	    vdebug(6,LOG_T_DISASM,"decoded ignored inst %s %s at %"PRIu64"\n",
 		   inst.mnemonic.p,inst.operands.p,ci.codeOffset);
+	    goto invalid_inst;
 	}
 
+    valid_inst:
+	distorm_format(&ci,&di,&inst);
+	vdebug(3,LOG_T_DISASM,"decoded %s %s at %"PRIu64"\n",
+	       inst.mnemonic.p,inst.operands.p,ci.codeOffset);
+
+    invalid_inst:
 	/* Setup next iteration. */
 	ci.codeOffset += di.size;
 	ci.code += di.size;

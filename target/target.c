@@ -172,6 +172,47 @@ struct symtab *target_lookup_pc(struct target *target,uint64_t pc) {
     return NULL;
 }
 
+struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
+    struct addrspace *space;
+    struct memregion *region;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
+    struct symbol *symbol;
+    struct bsymbol *bsymbol;
+    struct lsymbol *lsymbol;
+
+    if (list_empty(&target->spaces))
+	return NULL;
+
+    vdebug(3,LOG_T_SYMBOL,
+	   "trying to find symbol at address 0x%"PRIxADDR"\n",
+	   addr);
+
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    if (memregion_contains_real(region,addr))
+		goto found;
+	}
+    }
+
+    return NULL;
+
+ found:
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&debugfile)) {
+	if ((symbol = (struct symbol *)g_hash_table_lookup(debugfile->addresses,
+							   (gpointer)addr))) {
+	    lsymbol = lsymbol_create(symbol,NULL);
+	    bsymbol = bsymbol_create(region,lsymbol);
+	    return bsymbol;
+	}
+    }
+
+    return NULL;
+}
+
 struct bsymbol *target_lookup_sym(struct target *target,
 				  char *name,const char *delim,
 				  char *srcfile,symbol_type_flag_t ftype) {

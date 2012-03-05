@@ -31,6 +31,7 @@
 
 #include "target_api.h"
 #include "dwdebug.h"
+#include "disasm.h"
 
 /**
  ** Some forward declarations.
@@ -197,12 +198,14 @@ struct mmap_entry *location_mmap(struct target *target,
 /**
  ** Disassembly helpers.
  **/
-int disasm_get_ret_offsets(struct target *target,
-			   unsigned char *inst_buf,unsigned int buf_len,
-			   struct array_list **offset_list);
+#ifdef ENABLE_DISTORM
+int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
+				    unsigned char *inst_buf,unsigned int buf_len,
+				    struct array_list **offset_list,ADDR base);
 int disasm_get_prologue_stack_size(struct target *target,
 				   unsigned char *inst_buf,unsigned int buf_len,
 				   int *sp);
+#endif
 
 /**
  ** Value loading functions.
@@ -235,15 +238,6 @@ void value_free(struct value *value);
 void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
 			 void *buf,int bufsiz,
 			 load_flags_t flags,struct target *target);
-
-/*
- * Disassembly stuff.
- */
-#ifdef ENABLE_DISTORM
-int disasm_get_prologue_stack_size(struct target *target,
-				   unsigned char *inst_buf,unsigned int buf_len,
-				   int *sp);
-#endif
 
 /**
  ** Data structure definitions.

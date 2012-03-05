@@ -144,6 +144,7 @@ struct symtab *target_lookup_pc(struct target *target,uint64_t pc);
 struct bsymbol *target_lookup_sym(struct target *target,
 				  char *name,const char *delim,
 				  char *srcfile,symbol_type_flag_t ftype);
+struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr);
 
 /**
  ** Quick raw value converters
