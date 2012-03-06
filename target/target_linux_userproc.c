@@ -1779,6 +1779,11 @@ static int linux_userproc_set_hw_watchpoint(struct target *target,
     lstate->dr[7] &= ~(3 << (18 + (reg * 4)));
     lstate->dr[7] |= (watchsize << (18 + (reg * 4)));
 
+    /* Enable the LE bit to slow the processor! */
+    lstate->dr[7] |= (1 << 8);
+    /* Enable the GE bit to slow the processor! */
+    /* lstate->dr[7] |= (1 << 9); */
+
     vdebug(4,LOG_T_LUP,"dreg6 = 0x%"PRIxADDR"; dreg7 = 0x%"PRIxADDR", w = %d, ws = 0x%x\n",
 	   lstate->dr[6],lstate->dr[7],whence,watchsize);
 
