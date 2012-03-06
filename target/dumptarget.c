@@ -586,6 +586,7 @@ int main(int argc,char **argv) {
 					 bsymbol->lsymbol,start);
 		g_hash_table_insert(probes,(gpointer)probe->probepoint->addr,(gpointer)probe);
 		g_hash_table_insert(retaddrs,(gpointer)probe->probepoint->addr,(gpointer)array_list_create(0));
+		g_hash_table_insert(bsymbols,(gpointer)(probeaddr + offset),(gpointer)bsymbol);
 		
 		if (probe) {
 		    fprintf(stderr,
@@ -757,6 +758,8 @@ int main(int argc,char **argv) {
 		    --i;
 		    goto err_unreg;
 		}
+		g_hash_table_insert(probes,(gpointer)addr,(gpointer)probe);
+		g_hash_table_insert(bsymbols,(gpointer)addr,(gpointer)bsymbol);
 	    }
 
 	    continue;
