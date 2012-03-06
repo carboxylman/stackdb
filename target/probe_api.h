@@ -60,6 +60,7 @@ typedef enum {
     PROBEPOINT_L0 = 0,
     PROBEPOINT_L2 = 1,
     PROBEPOINT_L4 = 3,
+    PROBEPOINT_L8 = 2,
 } probepoint_watchsize_t;
 
 typedef enum {

@@ -936,8 +936,16 @@ probepoint_watchsize_t probepoint_closest_watchsize(int size) {
 	return PROBEPOINT_L0;
     else if (size <= 2)
 	return PROBEPOINT_L2;
-    else 
+    else {
+#if __WORDSIZE == 64
+	if (size <= 4)
+	    return PROBEPOINT_L4;
+	else 
+	    return PROBEPOINT_L8;
+#else
 	return PROBEPOINT_L4;
+#endif
+    }
 }
 
 /*
@@ -1047,6 +1055,11 @@ int probepoint_bp_handler(struct target *target,
 	probepoint->state = PROBE_BP_SET;
 	return -1;
     }
+
+    vdebug(5,LOG_P_PROBEPOINT,"EIP is 0x%"PRIxREGVAL" at ",ipval);
+    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
+    vdebugc(5,LOG_P_PROBEPOINT,"\n");
+
 
     /* If SW bp, reset EIP and write it back *now*, because it's easy
      * here, and then if the user tries to read it, it's "correct".
