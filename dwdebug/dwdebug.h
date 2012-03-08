@@ -86,6 +86,29 @@ extern char *SYMBOL_TYPE_STRINGS[];
 #define SYMBOL_IS_FUNCTION(sym) (sym && (sym)->type == SYMBOL_TYPE_FUNCTION)
 #define SYMBOL_IS_LABEL(sym) (sym && (sym)->type == SYMBOL_TYPE_LABEL)
 
+#define SYMBOL_IS_FULL_TYPE(sym) (sym && (sym)->type == SYMBOL_TYPE_TYPE \
+				  && (sym)->s.ti)
+#define SYMBOL_IS_FULL_VAR(sym) (sym && (sym)->type == SYMBOL_TYPE_VAR \
+				 && (sym)->s.ii)
+#define SYMBOL_IS_FULL_FUNCTION(sym) (sym && (sym)->type == SYMBOL_TYPE_FUNCTION \
+				      && (sym)->s.ii)
+#define SYMBOL_IS_FULL_LABEL(sym) (sym && (sym)->type == SYMBOL_TYPE_LABEL \
+				   && (sym)->s.ii)
+
+typedef enum {
+    LOADTYPE_FULL         = 0,
+    LOADTYPE_PARTIAL      = 1,
+} load_type_t;
+
+/*
+ * In the symbol struct, these fields share a 32-bit int, divided this
+ * way.  If you add more symbol types, or load types, adjust these
+ * accordingly!
+ */
+#define LOAD_TYPE_BITS   1
+#define SYMBOL_TYPE_BITS 3
+#define SRCLINE_BITS     28
+
 /* We use this enum type for filtering during symbol searching, when the
  * caller might accept multiple different symbol types.
  */
@@ -115,38 +138,40 @@ typedef enum {
 extern char *DATATYPE_STRINGS[];
 #define DATATYPE(n) (((n) < __DATATYPE_MAX) ? DATATYPE_STRINGS[(n)] : NULL)
 
-#define SYMBOL_IST_VOID(sym)     (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_VOID)
-#define SYMBOL_IST_ARRAY(sym)    (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_ARRAY)
-#define SYMBOL_IST_STRUCT(sym)   (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-				  && (sym)->s.ti.datatype_code == DATATYPE_STRUCT)
-#define SYMBOL_IST_ENUM(sym)     (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_ENUM)
-#define SYMBOL_IST_PTR(sym)      (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_PTR)
-#define SYMBOL_IST_FUNCTION(sym) (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-				  && (sym)->s.ti.datatype_code \
+#define DATATYPE_CODE_BITS 4
+
+#define SYMBOL_IST_VOID(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_VOID)
+#define SYMBOL_IST_ARRAY(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_ARRAY)
+#define SYMBOL_IST_STRUCT(sym)   (SYMBOL_IS_FULL_TYPE(sym) \
+				  && (sym)->s.ti->datatype_code == DATATYPE_STRUCT)
+#define SYMBOL_IST_ENUM(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_ENUM)
+#define SYMBOL_IST_PTR(sym)      (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_PTR)
+#define SYMBOL_IST_FUNCTION(sym) (SYMBOL_IS_FULL_TYPE(sym) \
+				  && (sym)->s.ti->datatype_code \
 				                == DATATYPE_FUNCTION)
-#define SYMBOL_IST_TYPEDEF(sym)  (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-				  && (sym)->s.ti.datatype_code \
+#define SYMBOL_IST_TYPEDEF(sym)  (SYMBOL_IS_FULL_TYPE(sym) \
+				  && (sym)->s.ti->datatype_code \
 				                == DATATYPE_TYPEDEF)
-#define SYMBOL_IST_UNION(sym)    (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_UNION)
-#define SYMBOL_IST_BASE(sym)     (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_BASE)
-#define SYMBOL_IST_CONST(sym)    (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_CONST)
-#define SYMBOL_IST_VOL(sym)      (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-			          && (sym)->s.ti.datatype_code == DATATYPE_VOL)
-#define SYMBOL_IST_BITFIELD(sym) (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-				  && (sym)->s.ti.datatype_code \
+#define SYMBOL_IST_UNION(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_UNION)
+#define SYMBOL_IST_BASE(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_BASE)
+#define SYMBOL_IST_CONST(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_CONST)
+#define SYMBOL_IST_VOL(sym)      (SYMBOL_IS_FULL_TYPE(sym) \
+			          && (sym)->s.ti->datatype_code == DATATYPE_VOL)
+#define SYMBOL_IST_BITFIELD(sym) (SYMBOL_IS_FULL_TYPE(sym) \
+				  && (sym)->s.ti->datatype_code \
 				                == DATATYPE_BITFIELD)
 /* convenient! */
-#define SYMBOL_IST_STUN(sym)     (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-	                          && ((sym)->s.ti.datatype_code \
+#define SYMBOL_IST_STUN(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
+	                          && ((sym)->s.ti->datatype_code \
 	                                        == DATATYPE_STRUCT \
-	                              || (sym)->s.ti.datatype_code \
+	                              || (sym)->s.ti->datatype_code \
 				                == DATATYPE_UNION))
 
 typedef enum {
@@ -245,8 +270,10 @@ int symtab_str_in_strtab(struct symtab *symtab,char *strp);
 /**
  ** Symbols.
  **/
-struct symbol *symbol_create(struct symtab *symtab,
+struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
 			     char *name,symbol_type_t symtype);
+struct symbol *symbol_create_full(struct symtab *symtab,SMOFFSET offset,
+				  char *name,symbol_type_t symtype);
 void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
 void symbol_set_name(struct symbol *symbol,char *name);
 void symbol_set_srcline(struct symbol *symbol,int srcline);
@@ -608,10 +635,10 @@ struct symtab {
     GHashTable *anontab;
 };
 
-struct symbol {
-    /* the primary symbol table we are resident in */
-    struct symtab *symtab;
+struct symbol_type;
+struct symbol_instance;
 
+struct symbol {
     /*
      * Our name, if any.
      *
@@ -621,158 +648,175 @@ struct symbol {
      */
     char *name;
 
+    /* The primary symbol table we are resident in. */
+    struct symtab *symtab;
+
+    /* Our refcnt. */
+    REFCNT refcnt;
+
+    /* Our offset location in the debugfile. */
+    SMOFFSET ref;
+
+    /* If we see the use of the type before the type, or we're doing
+     * partial loads, we can only fill in the ref and fill the datatype
+     * in a postpass.
+     */
+    SMOFFSET datatype_ref;
+
+    /* Are we full or partial? */
+    load_type_t loadtag:LOAD_TYPE_BITS;
+
     /* The kind of symbol we are. */
-    symbol_type_t type;
+    symbol_type_t type:SYMBOL_TYPE_BITS;
 
     /* Where we exist. */
-    int srcline;
+    unsigned int srcline:SRCLINE_BITS;
 
     /* If not a SYMBOL_TYPE_TYPE, our data type.
      * For functions, it is the return type; for anything else, its data
      * type.
      */
     struct symbol *datatype;
-    /* If we see the use of the type before the type, we can only fill
-     * in the ref and fill the datatype in a postpass.
-     */
-    OFFSET datatype_addr_ref;
 
     /* If this symbol is a member of another, this is its list entry. */
     /* XXX: maybe move this into the type detail stuff to save mem? */
     struct list_head member;
 
-    /* Words fail me. */
     union {
-	/* datatype info */
-	struct {
-	    /*
-	     * If we copy the string table from the ELF binary
-	     * brute-force to save on lots of mallocs per symbol name,
-	     * we don't malloc each symbol's .name .  This means that
-	     * for type names that must be prepended to (i.e., the DWARF
-	     * name for a struct is just 'X', but we have to put it into
-	     * the symtab as 'struct X' to avoid typedef collisions
-	     * (i.e., typedef struct X X).  This means we have to drum
-	     * up a fake name. 
-	     * 
-	     * When the fakename pointer is non-NULL, that means that
-	     * the symbol's name is in fakename + offset (i.e., if 'X'
-	     * is a struct type, then fakename + 7 = 'X'.  In this case,
-	     * we set name to fakename + offset -- AND MOST IMPORTANTLY,
-	     * don't free name -- but only fakename.
-	     *
-	     * What a mess.
-	     */
-	    char *extname;
-
-	    datatype_code_t datatype_code;
-	    uint16_t byte_size;
-
-	    uint8_t isanon:1,
- 		    isvoid:1,
-		    isexternal:1,
-		    isprototyped:1;
-
-	    /* If we see the use of the type before the type, we
-	     * can only fill in the ref and fill the datatype in
-	     * a postpass.
-	     */
-	    struct symbol *type_datatype;
-	    OFFSET type_datatype_ref;
-
-	    union {
-		struct {
-		    encoding_t encoding;
-		    int bit_size;
-		} v;
-		struct {
-		    struct list_head members;
-		    int count;
-		} e;
-		struct {
-		    struct list_head members;
-		    int count;
-		} su;
-		struct {
-		    int *subranges;
-		    int count;
-		    int alloc;
-		} a;
-		struct {
-		    int nptrs;
-		} p;
-		/* For a function type (i.e., a DW_TAG_subroutine_type)
-		 * this data describes the function's arg type info.
-		 * The return type, if any, is specified in
-		 * type_datatype above.
-		 */
-		struct {
-		    struct list_head args;
-		    uint16_t count;
-		    uint8_t hasunspec:1;
-		} f;
-	    } d;
-	} ti;
-	/* instance info */
-	struct {
-	    uint8_t isparam:1,
-		    ismember:1,
-		    isenumval:1,
-		    isdeclinline:1,
-		    isinlined:1,
-		    isinlineinstance:1,
-		    isexternal:1,
-		    isprototyped:1;
-
-	    /* If this instance is inlined, these point back to the
-	     * source for the inlined instance.  If it was a forward ref
-	     * in the DWARF info, origin_ref is set and origin has to be
-	     * filled in a postpass.
-	     */
-	    struct symbol *origin;
-	    OFFSET origin_ref;
-
-	    /* If this instance already has a value, this is it! */
-	    void *constval;
-
-	    union {
-		/* For a function instance (i.e., a DW_TAG_subprogram or
-		 * DW_TAG_inlined_subroutine, this data describes the
-		 * function's "type" information.
-		 */
-		struct {
-		    struct list_head args;
-		    uint16_t count;
-		    uint8_t hasunspec:1,
-			    hasentrypc:1,
-			    /* If the fb loc is a list or single loc. */
-			    fbisloclist:1,
-			    fbissingleloc:1,
-			    prologue_guessed:1;
-		    /* The frame base location.  Can be a list or
-		     * single location.
-		     */
-		    union {
-			struct loc_list *fblist;
-			struct location *fbloc;
-		    };
-		    struct symtab *symtab;
-		    ADDR entry_pc;
-		    ADDR prologue_end;
-		    ADDR epilogue_begin;
-		} f;
-		struct {
-		    uint16_t byte_size;
-		    uint16_t bit_offset;
-		    uint16_t bit_size;
-		} v;
-		struct {
-		    struct range range;
-		} l;
-	    } d;
-	    struct location l;
-	} ii;
+	struct symbol_type *ti;
+	struct symbol_instance *ii;
     } s;
+};
+
+struct symbol_type {
+    /*
+     * If we copy the string table from the ELF binary
+     * brute-force to save on lots of mallocs per symbol name,
+     * we don't malloc each symbol's .name .  This means that
+     * for type names that must be prepended to (i.e., the DWARF
+     * name for a struct is just 'X', but we have to put it into
+     * the symtab as 'struct X' to avoid typedef collisions
+     * (i.e., typedef struct X X).  This means we have to drum
+     * up a fake name. 
+     * 
+     * When the fakename pointer is non-NULL, that means that
+     * the symbol's name is in fakename + offset (i.e., if 'X'
+     * is a struct type, then fakename + 7 = 'X'.  In this case,
+     * we set name to fakename + offset -- AND MOST IMPORTANTLY,
+     * don't free name -- but only fakename.
+     *
+     * What a mess.
+     */
+    char *extname;
+
+    datatype_code_t datatype_code:DATATYPE_CODE_BITS;
+
+    uint8_t isanon:1,
+            isvoid:1,
+	    isexternal:1,
+	    isprototyped:1;
+
+    uint16_t byte_size;
+
+    /* If we see the use of the type before the type, we
+     * can only fill in the ref and fill the datatype in
+     * a postpass.
+     */
+    SMOFFSET type_datatype_ref;
+    struct symbol *type_datatype;
+
+    union {
+	struct {
+	    encoding_t encoding;
+	    int bit_size;
+	} v;
+	struct {
+	    struct list_head members;
+	    int count;
+	} e;
+	struct {
+	    struct list_head members;
+	    int count;
+	} su;
+	struct {
+	    int *subranges;
+	    int count;
+	    int alloc;
+	} a;
+	struct {
+	    int nptrs;
+	} p;
+	/* For a function type (i.e., a DW_TAG_subroutine_type)
+	 * this data describes the function's arg type info.
+	 * The return type, if any, is specified in
+	 * type_datatype above.
+	 */
+	struct {
+	    struct list_head args;
+	    uint16_t count;
+	    uint8_t hasunspec:1;
+	} f;
+    } d;
+};
+
+struct symbol_instance {
+    uint8_t isparam:1,
+	    ismember:1,
+	    isenumval:1,
+	    isdeclinline:1,
+	    isinlined:1,
+	    isinlineinstance:1,
+	    isexternal:1,
+	    isprototyped:1;
+
+    /* If this instance is inlined, these point back to the
+     * source for the inlined instance.  If it was a forward ref
+     * in the DWARF info, origin_ref is set and origin has to be
+     * filled in a postpass.
+     */
+    SMOFFSET origin_ref;
+    struct symbol *origin;
+
+    /* If this instance already has a value, this is it! */
+    void *constval;
+
+    union {
+	/* For a function instance (i.e., a DW_TAG_subprogram or
+	 * DW_TAG_inlined_subroutine, this data describes the
+	 * function's "type" information.
+	 */
+	struct {
+	    struct list_head args;
+	    uint16_t count;
+	    uint8_t hasunspec:1,
+		    hasentrypc:1,
+		       /* If the fb loc is a list or single loc. */
+		    fbisloclist:1,
+		    fbissingleloc:1,
+		    prologue_guessed:1;
+		       /* The frame base location.  Can be a list or
+		        * single location.
+			*/
+	    union {
+		struct loc_list *fblist;
+		struct location *fbloc;
+	    };
+	    struct symtab *symtab;
+	    ADDR entry_pc;
+	    ADDR prologue_end;
+	    ADDR epilogue_begin;
+	} f;
+	struct {
+	    uint16_t byte_size;
+	    uint16_t bit_offset;
+	    uint16_t bit_size;
+	} v;
+	struct {
+	    struct range range;
+	} l;
+    } d;
+
+    struct location l;
 };
 
 /*

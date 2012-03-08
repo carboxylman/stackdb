@@ -116,7 +116,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     Dwarf_Addr addr;
     Dwarf_Block block;
     bool flag;
-    uint64_t ref = 0;
+    SMOFFSET ref = 0;
     Dwarf_Die rref;
 
     uint8_t str_set = 0;
@@ -298,13 +298,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
 	if (cbargs->symbol 
 	    && cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
-	    if (RANGE_IS_LIST(&cbargs->symbol->s.ii.d.l.range)) {
+	    if (RANGE_IS_LIST(&cbargs->symbol->s.ii->d.l.range)) {
 		verror("cannot update lowpc; already saw AT_ranges for %s symbol %s!\n",
 		       SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
 	    }
 	    else {
-		cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
-		cbargs->symbol->s.ii.d.l.range.lowpc = addr;
+		cbargs->symbol->s.ii->d.l.range.rtype = RANGE_TYPE_PC;
+		cbargs->symbol->s.ii->d.l.range.lowpc = addr;
 	    }
 	}
 	else if (cbargs->symbol 
@@ -338,14 +338,14 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
 	    if (cbargs->symbol 
 		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
-		if (RANGE_IS_LIST(&cbargs->symbol->s.ii.d.l.range)) {
+		if (RANGE_IS_LIST(&cbargs->symbol->s.ii->d.l.range)) {
 		    verror("cannot update highpc; already saw AT_ranges for %s symbol %s!\n",
 			   SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
 		}
 		/* This is not exactly good, but... */
-		else if (cbargs->symbol->s.ii.d.l.range.lowpc) {
-		    cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
-		    cbargs->symbol->s.ii.d.l.range.highpc = cbargs->symbol->s.ii.d.l.range.lowpc + num;
+		else if (cbargs->symbol->s.ii->d.l.range.lowpc) {
+		    cbargs->symbol->s.ii->d.l.range.rtype = RANGE_TYPE_PC;
+		    cbargs->symbol->s.ii->d.l.range.highpc = cbargs->symbol->s.ii->d.l.range.lowpc + num;
 		}
 		else {
 		    vwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (%s %s -- no lowpc yet)!\n",
@@ -364,13 +364,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
 	    if (cbargs->symbol 
 		&& cbargs->symbol->type == SYMBOL_TYPE_LABEL) {
-		if (RANGE_IS_LIST(&cbargs->symbol->s.ii.d.l.range)) {
+		if (RANGE_IS_LIST(&cbargs->symbol->s.ii->d.l.range)) {
 		    verror("cannot update highpc; already saw AT_ranges for %s symbol %s!\n",
 			   SYMBOL_TYPE(cbargs->symbol->type),cbargs->symbol->name);
 		}
 		else {
-		    cbargs->symbol->s.ii.d.l.range.rtype = RANGE_TYPE_PC;
-		    cbargs->symbol->s.ii.d.l.range.highpc = addr;
+		    cbargs->symbol->s.ii->d.l.range.rtype = RANGE_TYPE_PC;
+		    cbargs->symbol->s.ii->d.l.range.highpc = addr;
 		}
 	    }
 	}
@@ -388,8 +388,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		;
 	    }
 	    else if (SYMBOL_IS_FUNCTION(cbargs->symbol)) {
-		cbargs->symbol->s.ii.d.f.entry_pc = addr;
-		cbargs->symbol->s.ii.d.f.hasentrypc = 1;
+		cbargs->symbol->s.ii->d.f.entry_pc = addr;
+		cbargs->symbol->s.ii->d.f.hasentrypc = 1;
 	    }
 	    else 
 		vwarn("[DIE %" PRIx64 "] attrval 0x%" PRIx64 " for attr %s in bad context (symbol)\n",
@@ -431,7 +431,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    /* our encoding_t is 1<->1 map to the DWARF encoding codes. */
-	    cbargs->symbol->s.ti.d.v.encoding = (encoding_t)num;
+	    cbargs->symbol->s.ti->d.v.encoding = (encoding_t)num;
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
@@ -441,11 +441,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (cbargs->symbol 
 	    && (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION
 		|| cbargs->symbol->type == SYMBOL_TYPE_VAR)) {
-	    cbargs->symbol->s.ii.isexternal = flag;
+	    cbargs->symbol->s.ii->isexternal = flag;
 	}
 	else if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE
-		 && cbargs->symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
-	    cbargs->symbol->s.ti.isexternal = flag;
+		 && cbargs->symbol->s.ti->datatype_code == DATATYPE_FUNCTION) {
+	    cbargs->symbol->s.ti->isexternal = flag;
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
@@ -453,11 +453,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_prototyped:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
-	    cbargs->symbol->s.ii.isprototyped = flag;
+	    cbargs->symbol->s.ii->isprototyped = flag;
 	}
 	else if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE
-		 && cbargs->symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
-	    cbargs->symbol->s.ti.isprototyped = flag;
+		 && cbargs->symbol->s.ti->datatype_code == DATATYPE_FUNCTION) {
+	    cbargs->symbol->s.ti->isprototyped = flag;
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
@@ -467,12 +467,12 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set && cbargs->symbol 
 	    && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    if (num == 1)
-		cbargs->symbol->s.ii.isinlined = 1;
+		cbargs->symbol->s.ii->isinlined = 1;
 	    else if (num == 2)
-		cbargs->symbol->s.ii.isdeclinline = 1;
+		cbargs->symbol->s.ii->isdeclinline = 1;
 	    else if (num == 3) {
-		cbargs->symbol->s.ii.isinlined = 1;
-		cbargs->symbol->s.ii.isdeclinline = 1;
+		cbargs->symbol->s.ii->isinlined = 1;
+		cbargs->symbol->s.ii->isdeclinline = 1;
 	    }
 	}
 	else 
@@ -484,16 +484,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION 
 		|| cbargs->symbol->type == SYMBOL_TYPE_VAR
 		|| cbargs->symbol->type == SYMBOL_TYPE_LABEL)) {
-	    cbargs->symbol->s.ii.isinlineinstance = 1;
-	    cbargs->symbol->s.ii.origin = (struct symbol *)		\
+	    cbargs->symbol->s.ii->isinlineinstance = 1;
+	    cbargs->symbol->s.ii->origin = (struct symbol *)		\
 		g_hash_table_lookup(cbargs->reftab,(gpointer)(OFFSET)ref);
 	    /* Always set the ref so we can generate a unique name for 
 	     * the symbol; see finalize_die_symbol!!
 	     */
-	    cbargs->symbol->s.ii.origin_ref = ref;
+	    cbargs->symbol->s.ii->origin_ref = ref;
 	}
 	else 
-	    vwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
+	    vwarn("[DIE %" PRIx64 "] attrval %" PRIxSMOFFSET " for attr %s in bad context\n",
 		  cbargs->die_offset,ref,dwarf_attr_string(attr));
 	break;
     case DW_AT_type:
@@ -501,16 +501,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    struct symbol *datatype = (struct symbol *) \
 		g_hash_table_lookup(cbargs->reftab,(gpointer)(OFFSET)ref);
 	    if (cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
-		if (cbargs->symbol->s.ti.datatype_code == DATATYPE_PTR
-		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
-		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_ARRAY
-		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_CONST
-		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_VOL
-		    || cbargs->symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
+		if (cbargs->symbol->s.ti->datatype_code == DATATYPE_PTR
+		    || cbargs->symbol->s.ti->datatype_code == DATATYPE_TYPEDEF
+		    || cbargs->symbol->s.ti->datatype_code == DATATYPE_ARRAY
+		    || cbargs->symbol->s.ti->datatype_code == DATATYPE_CONST
+		    || cbargs->symbol->s.ti->datatype_code == DATATYPE_VOL
+		    || cbargs->symbol->s.ti->datatype_code == DATATYPE_FUNCTION) {
 		    if (datatype)
-			cbargs->symbol->s.ti.type_datatype = datatype;
+			cbargs->symbol->s.ti->type_datatype = datatype;
 		    else
-			cbargs->symbol->s.ti.type_datatype_ref = \
+			cbargs->symbol->s.ti->type_datatype_ref = \
 			    (uint64_t)ref;
 		}
 		else 
@@ -521,19 +521,19 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		if (datatype)
 		    cbargs->symbol->datatype = datatype;
 		else 
-		    cbargs->symbol->datatype_addr_ref = (uint64_t)ref;
+		    cbargs->symbol->datatype_ref = ref;
 	    }
 	}
 	else if (ref_set && !cbargs->symbol && cbargs->parentsymbol 
 		 && cbargs->parentsymbol->type == SYMBOL_TYPE_TYPE 
-		 && cbargs->parentsymbol->s.ti.datatype_code == DATATYPE_ARRAY) {
+		 && cbargs->parentsymbol->s.ti->datatype_code == DATATYPE_ARRAY) {
 	    /* If the parent was an array_type, don't worry about typing its
 	     * array subranges.
 	     */
 	    ;
 	}
 	else 
-	    vwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
+	    vwarn("[DIE %" PRIx64 "] attrval %" PRIxSMOFFSET " for attr %s in bad context\n",
 		  cbargs->die_offset,ref,dwarf_attr_string(attr));
 	break;
     case DW_AT_const_value:
@@ -542,13 +542,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && cbargs->symbol->type == SYMBOL_TYPE_VAR
 	    && cbargs->parentsymbol
 	    && cbargs->parentsymbol->type == SYMBOL_TYPE_TYPE
-	    && cbargs->parentsymbol->s.ti.datatype_code == DATATYPE_ENUM
-	    && cbargs->parentsymbol->s.ti.byte_size > 0) {
-	    cbargs->symbol->s.ii.constval = \
-		malloc(cbargs->parentsymbol->s.ti.byte_size);
-	    memcpy(cbargs->symbol->s.ii.constval,&num,
-		   cbargs->parentsymbol->s.ti.byte_size);
-	    cbargs->symbol->s.ii.isenumval = 1;
+	    && cbargs->parentsymbol->s.ti->datatype_code == DATATYPE_ENUM
+	    && cbargs->parentsymbol->s.ti->byte_size > 0) {
+	    cbargs->symbol->s.ii->constval = \
+		malloc(cbargs->parentsymbol->s.ti->byte_size);
+	    memcpy(cbargs->symbol->s.ii->constval,&num,
+		   cbargs->parentsymbol->s.ti->byte_size);
+	    cbargs->symbol->s.ii->isenumval = 1;
 	}
 	else if (num_set && cbargs->symbol 
 		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
@@ -557,26 +557,26 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	     * have seen the type for this symbol yet.  We can always
 	     * deal with it later.
 	     */
-	    cbargs->symbol->s.ii.constval = malloc(sizeof(Dwarf_Word));
-	    memcpy(cbargs->symbol->s.ii.constval,&num,sizeof(Dwarf_Word));
+	    cbargs->symbol->s.ii->constval = malloc(sizeof(Dwarf_Word));
+	    memcpy(cbargs->symbol->s.ii->constval,&num,sizeof(Dwarf_Word));
 	}
 	else if (str_set && cbargs->symbol 
 		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
 		     || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
 	    /* Don't malloc; use our copy of the string table. */
 #ifdef DWDEBUG_USE_STRTAB
-	    cbargs->symbol->s.ii.constval = str;
+	    cbargs->symbol->s.ii->constval = str;
 #else
 	    int slen = strlen(str);
-	    cbargs->symbol->s.ii.constval = malloc(slen+1);
-	    strcpy(cbargs->symbol->s.ii.constval,str,slen+1);
+	    cbargs->symbol->s.ii->constval = malloc(slen+1);
+	    strcpy(cbargs->symbol->s.ii->constval,str,slen+1);
 #endif
 	}
 	else if (block_set && cbargs->symbol 
 		 && (cbargs->symbol->type == SYMBOL_TYPE_VAR
 		     || cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)) {
-	    cbargs->symbol->s.ii.constval = malloc(block.length);
-	    memcpy(cbargs->symbol->s.ii.constval,block.data,block.length);
+	    cbargs->symbol->s.ii->constval = malloc(block.length);
+	    memcpy(cbargs->symbol->s.ii->constval,block.data,block.length);
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attr %s form %s in bad context\n",
@@ -590,11 +590,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_byte_size:
 	if (num_set 
 	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
-	    cbargs->symbol->s.ti.byte_size = num;
+	    cbargs->symbol->s.ti->byte_size = num;
 	}
 	else if (num_set 
 		 && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
-	    cbargs->symbol->s.ii.d.v.byte_size = num;
+	    cbargs->symbol->s.ii->d.v.byte_size = num;
 	}
 	else {
 	    vwarn("[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
@@ -605,7 +605,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_bit_size:
 	if (num_set 
 	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
-	    cbargs->symbol->s.ii.d.v.bit_size = num;
+	    cbargs->symbol->s.ii->d.v.bit_size = num;
 	}
 	else {
 	    vwarn("[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
@@ -616,7 +616,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_bit_offset:
 	if (num_set 
 	    && cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_VAR) {
-	    cbargs->symbol->s.ii.d.v.bit_offset = num;
+	    cbargs->symbol->s.ii->d.v.bit_offset = num;
 	}
 	else {
 	    vwarn("[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
@@ -631,11 +631,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	/* can be either an exprloc, loclistptr, or a constant. */
 	if (block_set) {
 	    if (SYMBOL_IS_VAR(cbargs->symbol)
-		&& cbargs->symbol->s.ii.ismember) {
+		&& cbargs->symbol->s.ii->ismember) {
 		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				   cbargs->addrsize,cbargs->offset_size,
 				   block.length,block.data,attr,
-				   &cbargs->symbol->s.ii.l)) {
+				   &cbargs->symbol->s.ii->l)) {
 		    verror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
 			   cbargs->die_offset,num,dwarf_attr_string(attr),
 			   dwarf_form_string(form));
@@ -650,15 +650,15 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	else if (num_set && (form == DW_FORM_data4 
 			     || form == DW_FORM_data8)) {
 	    if (SYMBOL_IS_VAR(cbargs->symbol)
-		&& cbargs->symbol->s.ii.ismember) {
-		cbargs->symbol->s.ii.l.loctype = LOCTYPE_LOCLIST;
+		&& cbargs->symbol->s.ii->ismember) {
+		cbargs->symbol->s.ii->l.loctype = LOCTYPE_LOCLIST;
 
-		cbargs->symbol->s.ii.l.l.loclist = loc_list_create(0);
+		cbargs->symbol->s.ii->l.l.loclist = loc_list_create(0);
 
 		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				cbargs->addrsize,cbargs->offset_size,
 				attr,num,cbargs->debugfile,cbargs->cu_base,
-				cbargs->symbol->s.ii.l.l.loclist)) {
+				cbargs->symbol->s.ii->l.l.loclist)) {
 		    verror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
 			   cbargs->die_offset,num,dwarf_attr_string(attr),
 			   dwarf_form_string(form));
@@ -680,8 +680,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    && form != DW_FORM_data8))) {
 	    /* it's a constant */
 	    if (cbargs->symbol) {
-		cbargs->symbol->s.ii.l.loctype = LOCTYPE_MEMBER_OFFSET;
-		cbargs->symbol->s.ii.l.l.member_offset = (int32_t)num;
+		cbargs->symbol->s.ii->l.loctype = LOCTYPE_MEMBER_OFFSET;
+		cbargs->symbol->s.ii->l.l.member_offset = (int32_t)num;
 	    }
 	    else {
 		vwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
@@ -694,16 +694,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set && (form == DW_FORM_data4 
 			|| form == DW_FORM_data8)) {
 	    if (cbargs->symbol && SYMBOL_IS_FUNCTION(cbargs->symbol)) {
-		cbargs->symbol->s.ii.d.f.fbisloclist = 1;
+		cbargs->symbol->s.ii->d.f.fbisloclist = 1;
 
-		cbargs->symbol->s.ii.d.f.fblist = loc_list_create(0);
+		cbargs->symbol->s.ii->d.f.fblist = loc_list_create(0);
 
 		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				cbargs->addrsize,cbargs->offset_size,
 				attr,num,
 				cbargs->debugfile,
 				cbargs->cu_base,
-				cbargs->symbol->s.ii.d.f.fblist)) {
+				cbargs->symbol->s.ii->d.f.fblist)) {
 		    verror("[DIE %" PRIx64 "] failed to get loclist attrval %" PRIx64 " for attr %s in function symbol %s\n",
 			   cbargs->die_offset,num,dwarf_attr_string(attr),
 			   cbargs->symbol->name);
@@ -717,16 +717,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	/* if it's an exprloc in a block */
 	else if (block_set) {
 	    if (cbargs->symbol && SYMBOL_IS_FUNCTION(cbargs->symbol)) {
-		cbargs->symbol->s.ii.d.f.fbissingleloc = 1;
+		cbargs->symbol->s.ii->d.f.fbissingleloc = 1;
 
-		cbargs->symbol->s.ii.d.f.fbloc = \
+		cbargs->symbol->s.ii->d.f.fbloc = \
 		    (struct location *)malloc(sizeof(struct location));
-		memset(cbargs->symbol->s.ii.d.f.fbloc,0,sizeof(struct location));
+		memset(cbargs->symbol->s.ii->d.f.fbloc,0,sizeof(struct location));
 
 		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				   cbargs->addrsize,cbargs->offset_size,
 				   block.length,block.data,attr,
-				   cbargs->symbol->s.ii.d.f.fbloc)) {
+				   cbargs->symbol->s.ii->d.f.fbloc)) {
 		    verror("[DIE %" PRIx64 "] failed to get single loc attrval %" PRIx64 " for attr %s in function symbol %s\n",
 			   cbargs->die_offset,num,dwarf_attr_string(attr),
 			   cbargs->symbol->name);
@@ -769,12 +769,12 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 
 	    if (cbargs->symbol && SYMBOL_IS_LABEL(cbargs->symbol)
-		&& cbargs->symbol->s.ii.d.l.range.rtype == RANGE_TYPE_NONE) {
+		&& cbargs->symbol->s.ii->d.l.range.rtype == RANGE_TYPE_NONE) {
 		if (get_rangelist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				  cbargs->addrsize,cbargs->offset_size,
 				  attr,num,
 				  cbargs->debugfile,cbargs->cu_base,
-				  &cbargs->symbol->s.ii.d.l.range.rlist)) {
+				  &cbargs->symbol->s.ii->d.l.range.rlist)) {
 		    verror("[DIE %" PRIx64 "] failed to get rangelist attrval %" PRIx64 " for attr %s in label symbol %s\n",
 			   cbargs->die_offset,num,dwarf_attr_string(attr),
 			   cbargs->symbol->name);
@@ -792,16 +792,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (SYMBOL_IS_VAR(cbargs->symbol)) {
 	    if (num_set && (form == DW_FORM_data4 
 			    || form == DW_FORM_data8)) {
-		cbargs->symbol->s.ii.l.loctype = LOCTYPE_LOCLIST;
+		cbargs->symbol->s.ii->l.loctype = LOCTYPE_LOCLIST;
 
-		cbargs->symbol->s.ii.l.l.loclist = loc_list_create(0);
+		cbargs->symbol->s.ii->l.l.loclist = loc_list_create(0);
 
 		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
 				cbargs->addrsize,cbargs->offset_size,
 				attr,num,
 				cbargs->debugfile,
 				cbargs->cu_base,
-				cbargs->symbol->s.ii.l.l.loclist)) {
+				cbargs->symbol->s.ii->l.l.loclist)) {
 		    verror("[DIE %" PRIx64 "] failed to get loclist attrval %" PRIx64 " for attr %s in var symbol %s\n",
 			   cbargs->die_offset,num,dwarf_attr_string(attr),
 			   cbargs->symbol->name);
@@ -811,7 +811,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		get_static_ops(cbargs->dwflmod,cbargs->dbg,
 			       cbargs->version,cbargs->addrsize,cbargs->offset_size,
 			       block.length,block.data,attr,
-			       &cbargs->symbol->s.ii.l);
+			       &cbargs->symbol->s.ii->l);
 	    }
 	    else {
 		vwarn("[DIE %" PRIx64 "] loclist: bad attr %s // form %s!\n",
@@ -844,19 +844,19 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set && form != DW_FORM_sec_offset) {
 	    if (!cbargs->symbol && cbargs->parentsymbol
 		&& cbargs->parentsymbol->type == SYMBOL_TYPE_TYPE
-		&& cbargs->parentsymbol->s.ti.datatype_code == DATATYPE_ARRAY) {
-		if (cbargs->parentsymbol->s.ti.d.a.count == \
-		    cbargs->parentsymbol->s.ti.d.a.alloc) {
-		    if (!realloc(cbargs->parentsymbol->s.ti.d.a.subranges,
-				 sizeof(int)*(cbargs->parentsymbol->s.ti.d.a.alloc + 4))) {
+		&& cbargs->parentsymbol->s.ti->datatype_code == DATATYPE_ARRAY) {
+		if (cbargs->parentsymbol->s.ti->d.a.count == \
+		    cbargs->parentsymbol->s.ti->d.a.alloc) {
+		    if (!realloc(cbargs->parentsymbol->s.ti->d.a.subranges,
+				 sizeof(int)*(cbargs->parentsymbol->s.ti->d.a.alloc + 4))) {
 			verror("realloc: %s",strerror(errno));
 			return DWARF_CB_ABORT;
 		    }
-		    cbargs->parentsymbol->s.ti.d.a.alloc += 4;
+		    cbargs->parentsymbol->s.ti->d.a.alloc += 4;
 		}
 
-		cbargs->parentsymbol->s.ti.d.a.subranges[cbargs->parentsymbol->s.ti.d.a.count] = (int)num;
-		++cbargs->parentsymbol->s.ti.d.a.count;
+		cbargs->parentsymbol->s.ti->d.a.subranges[cbargs->parentsymbol->s.ti->d.a.count] = (int)num;
+		++cbargs->parentsymbol->s.ti->d.a.count;
 	    }
 	    else {
 		vwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
@@ -1510,8 +1510,9 @@ void resolve_refs(gpointer key,gpointer value,gpointer data);
 struct symbol *add_void_symbol(struct debugfile *debugfile,
 			       struct symtab *symtab) {
     /* symbol_create dups the name, so we just pass a static buf */
-    struct symbol *symbol = symbol_create(symtab,"void",SYMBOL_TYPE_TYPE);
-    symbol->s.ti.datatype_code = DATATYPE_VOID;
+    struct symbol *symbol = symbol_create_full(symtab,0,"void",
+					       SYMBOL_TYPE_TYPE);
+    symbol->s.ti->datatype_code = DATATYPE_VOID;
 
     /* Always put it in its primary symtab, of course -- probably the CU's. */
     symtab_insert(symbol->symtab,symbol,0);
@@ -1656,29 +1657,31 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    || tag == DW_TAG_formal_parameter
 	    || tag == DW_TAG_member
 	    || tag == DW_TAG_enumerator) {
-	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_VAR);
+	    symbols[level] = symbol_create_full(symtabs[level],offset,NULL,
+						SYMBOL_TYPE_VAR);
 	    if (tag == DW_TAG_formal_parameter) {
-		symbols[level]->s.ii.isparam = 1;
+		symbols[level]->s.ii->isparam = 1;
 	    }
 	    if (tag == DW_TAG_member) {
-		symbols[level]->s.ii.ismember = 1;
+		symbols[level]->s.ii->ismember = 1;
 	    }
 	    if (tag == DW_TAG_enumerator) {
-		symbols[level]->s.ii.isenumval = 1;
+		symbols[level]->s.ii->isenumval = 1;
 	    }
 	}
 	else if (tag == DW_TAG_label) {
-	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_LABEL);
+	    symbols[level] = symbol_create_full(symtabs[level],offset,NULL,
+						SYMBOL_TYPE_LABEL);
 	}
 	else if (tag == DW_TAG_unspecified_parameters) {
 	    if (!symbols[level-1])
 		vwarn("cannot handle unspecified_parameters without parent DIE!\n");
 	    else if (symbols[level-1]->type == SYMBOL_TYPE_TYPE
-		     && symbols[level-1]->s.ti.datatype_code == DATATYPE_FUNCTION) {
-		symbols[level-1]->s.ti.d.f.hasunspec = 1;
+		     && symbols[level-1]->s.ti->datatype_code == DATATYPE_FUNCTION) {
+		symbols[level-1]->s.ti->d.f.hasunspec = 1;
 	    }
 	    else if (symbols[level-1]->type == SYMBOL_TYPE_FUNCTION) {
-		symbols[level-1]->s.ii.d.f.hasunspec = 1;
+		symbols[level-1]->s.ii->d.f.hasunspec = 1;
 	    }
 	}
 	else if (tag == DW_TAG_base_type
@@ -1691,39 +1694,40 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		 || tag == DW_TAG_const_type
 		 || tag == DW_TAG_volatile_type
 		 || tag == DW_TAG_subroutine_type) {
-	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_TYPE);
+	    symbols[level] = symbol_create_full(symtabs[level],offset,
+						NULL,SYMBOL_TYPE_TYPE);
 	    switch (tag) {
 	    case DW_TAG_base_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_BASE; break;
+		symbols[level]->s.ti->datatype_code = DATATYPE_BASE; break;
 	    case DW_TAG_typedef:
-		symbols[level]->s.ti.datatype_code = DATATYPE_TYPEDEF; break;
+		symbols[level]->s.ti->datatype_code = DATATYPE_TYPEDEF; break;
 	    case DW_TAG_pointer_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_PTR; break;
+		symbols[level]->s.ti->datatype_code = DATATYPE_PTR; break;
 	    case DW_TAG_array_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_ARRAY;
-		symbols[level]->s.ti.d.a.subranges = malloc(sizeof(int)*4);
-		symbols[level]->s.ti.d.a.count = 0;
-		symbols[level]->s.ti.d.a.alloc = 4;
+		symbols[level]->s.ti->datatype_code = DATATYPE_ARRAY;
+		symbols[level]->s.ti->d.a.subranges = malloc(sizeof(int)*4);
+		symbols[level]->s.ti->d.a.count = 0;
+		symbols[level]->s.ti->d.a.alloc = 4;
 		break;
 	    case DW_TAG_structure_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_STRUCT;
-		INIT_LIST_HEAD(&(symbols[level]->s.ti.d.su.members));
+		symbols[level]->s.ti->datatype_code = DATATYPE_STRUCT;
+		INIT_LIST_HEAD(&(symbols[level]->s.ti->d.su.members));
 		break;
 	    case DW_TAG_enumeration_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_ENUM; 
-		INIT_LIST_HEAD(&(symbols[level]->s.ti.d.e.members));
+		symbols[level]->s.ti->datatype_code = DATATYPE_ENUM; 
+		INIT_LIST_HEAD(&(symbols[level]->s.ti->d.e.members));
 		break;
 	    case DW_TAG_union_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_UNION;
-		INIT_LIST_HEAD(&(symbols[level]->s.ti.d.su.members));
+		symbols[level]->s.ti->datatype_code = DATATYPE_UNION;
+		INIT_LIST_HEAD(&(symbols[level]->s.ti->d.su.members));
 		break;
 	    case DW_TAG_const_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_CONST; break;
+		symbols[level]->s.ti->datatype_code = DATATYPE_CONST; break;
 	    case DW_TAG_volatile_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_VOL; break;
+		symbols[level]->s.ti->datatype_code = DATATYPE_VOL; break;
 	    case DW_TAG_subroutine_type:
-		symbols[level]->s.ti.datatype_code = DATATYPE_FUNCTION;
-		INIT_LIST_HEAD(&(symbols[level]->s.ti.d.f.args));
+		symbols[level]->s.ti->datatype_code = DATATYPE_FUNCTION;
+		INIT_LIST_HEAD(&(symbols[level]->s.ti->d.f.args));
 		break;
 	    default:
 		break;
@@ -1736,8 +1740,9 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    ;
 	}
 	else if (tag == DW_TAG_subprogram) {
-	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_FUNCTION);
-	    INIT_LIST_HEAD(&(symbols[level]->s.ii.d.f.args));
+	    symbols[level] = symbol_create_full(symtabs[level],offset,NULL,
+						SYMBOL_TYPE_FUNCTION);
+	    INIT_LIST_HEAD(&(symbols[level]->s.ii->d.f.args));
 	    /* Build a new symtab and use it until we finish this
 	     * subprogram, or until we need another child scope.
 	     */
@@ -1746,12 +1751,13 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
 	    list_add_tail(&newscope->member,&symtabs[level]->subtabs);
-	    symbols[level]->s.ii.d.f.symtab = newscope;
+	    symbols[level]->s.ii->d.f.symtab = newscope;
 	}
 	else if (tag == DW_TAG_inlined_subroutine) {
-	    symbols[level] = symbol_create(symtabs[level],NULL,SYMBOL_TYPE_FUNCTION);
-	    symbols[level]->s.ii.isinlineinstance = 1;
-	    INIT_LIST_HEAD(&(symbols[level]->s.ii.d.f.args));
+	    symbols[level] = symbol_create_full(symtabs[level],offset,
+						NULL,SYMBOL_TYPE_FUNCTION);
+	    symbols[level]->s.ii->isinlineinstance = 1;
+	    INIT_LIST_HEAD(&(symbols[level]->s.ii->d.f.args));
 	    /* Build a new symtab and use it until we finish this
 	     * subprogram, or until we need another child scope.
 	     */
@@ -1760,7 +1766,7 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
 	    list_add_tail(&newscope->member,&symtabs[level]->subtabs);
-	    symbols[level]->s.ii.d.f.symtab = newscope;
+	    symbols[level]->s.ii->d.f.symtab = newscope;
 	}
 	else if (tag == DW_TAG_lexical_block) {
 	    /* Build a new symtab and use it until we finish this
@@ -1832,16 +1838,16 @@ static int fill_debuginfo(struct debugfile *debugfile,
 		 * be unnamed, and so can inlined functions.
 		 */
 		if (!((SYMBOL_IS_FUNCTION(symbols[level]) 
-		       && symbols[level]->s.ii.isinlineinstance)
+		       && symbols[level]->s.ii->isinlineinstance)
 		      || (SYMBOL_IS_LABEL(symbols[level]) 
-			  && (symbols[level]->s.ii.isinlineinstance))
+			  && (symbols[level]->s.ii->isinlineinstance))
 		      || (SYMBOL_IS_VAR(symbols[level]) 
-			  && (symbols[level]->s.ii.isinlineinstance
+			  && (symbols[level]->s.ii->isinlineinstance
 			      || (level > 0 
 				  && SYMBOL_IST_FUNCTION(symbols[level-1])
-				  && symbols[level]->s.ii.isparam)
+				  && symbols[level]->s.ii->isparam)
 			      || (level > 0 && SYMBOL_IST_STUN(symbols[level-1])
-				  && symbols[level]->s.ii.ismember)))))
+				  && symbols[level]->s.ii->ismember)))))
 		    vwarn("anonymous symbol of type %s at DIE 0x%" PRIx64 "!\n",
 			  SYMBOL_TYPE(symbols[level]->type),offset);
 	}
@@ -1858,29 +1864,29 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	if (level > 1 && symbols[level-1]) {
 	    if (tag == DW_TAG_member) {
 		list_add_tail(&(symbols[level]->member),
-			      &(symbols[level-1]->s.ti.d.su.members));
-		++(symbols[level-1]->s.ti.d.su.count);
+			      &(symbols[level-1]->s.ti->d.su.members));
+		++(symbols[level-1]->s.ti->d.su.count);
 	    }
 	    else if (tag == DW_TAG_formal_parameter) {
 		if (symbols[level-1]->type == SYMBOL_TYPE_FUNCTION) {
 		    list_add_tail(&(symbols[level]->member),
-				  &(symbols[level-1]->s.ii.d.f.args));
-		    ++(symbols[level-1]->s.ii.d.f.count);
+				  &(symbols[level-1]->s.ii->d.f.args));
+		    ++(symbols[level-1]->s.ii->d.f.count);
 		}
 		else if (symbols[level-1]->type == SYMBOL_TYPE_TYPE
-			 && symbols[level-1]->s.ti.datatype_code == DATATYPE_FUNCTION) {
+			 && symbols[level-1]->s.ti->datatype_code == DATATYPE_FUNCTION) {
 		    list_add_tail(&(symbols[level]->member),
-				  &(symbols[level-1]->s.ti.d.f.args));
-		    ++(symbols[level-1]->s.ti.d.f.count);
+				  &(symbols[level-1]->s.ti->d.f.args));
+		    ++(symbols[level-1]->s.ti->d.f.count);
 		}
 	    }
 	    else if (tag == DW_TAG_enumerator) {
 		if (symbols[level-1]->type == SYMBOL_TYPE_TYPE 
-		    && symbols[level-1]->s.ti.datatype_code == DATATYPE_ENUM) {
+		    && symbols[level-1]->s.ti->datatype_code == DATATYPE_ENUM) {
 		    symbols[level]->datatype = symbols[level-1];
 		    list_add_tail(&(symbols[level]->member),
-				  &(symbols[level-1]->s.ti.d.e.members));
-		    ++(symbols[level-1]->s.ti.d.e.count);
+				  &(symbols[level-1]->s.ti->d.e.members));
+		    ++(symbols[level-1]->s.ti->d.e.count);
 		}
 		else
 		    verror("invalid parent for enumerator %s!\n",
@@ -1971,26 +1977,26 @@ static int fill_debuginfo(struct debugfile *debugfile,
 	    continue;
 
 	if (rsymbol->type == SYMBOL_TYPE_TYPE
-	    && !rsymbol->s.ti.type_datatype
-	    && rsymbol->s.ti.type_datatype_ref) {
-	    rsymbol->s.ti.type_datatype = \
+	    && !rsymbol->s.ti->type_datatype
+	    && rsymbol->s.ti->type_datatype_ref) {
+	    rsymbol->s.ti->type_datatype = \
 		(struct symbol *)g_hash_table_lookup(reftab,
-						     (gpointer)rsymbol->s.ti.type_datatype_ref);
+						     (gpointer)(OFFSET)rsymbol->s.ti->type_datatype_ref);
 	}
 	else if (rsymbol->type == SYMBOL_TYPE_FUNCTION
 		 || rsymbol->type == SYMBOL_TYPE_VAR
 		 || rsymbol->type == SYMBOL_TYPE_LABEL) {
-	    if (!rsymbol->datatype && rsymbol->datatype_addr_ref) {
+	    if (!rsymbol->datatype && rsymbol->datatype_ref) {
 		rsymbol->datatype = \
 		    (struct symbol *)g_hash_table_lookup(reftab,
-							 (gpointer)rsymbol->datatype_addr_ref);
+							 (gpointer)(OFFSET)rsymbol->datatype_ref);
 	    }
 
-	    if (rsymbol->s.ii.isinlineinstance
-		&& !rsymbol->s.ii.origin && rsymbol->s.ii.origin_ref) {
-		rsymbol->s.ii.origin = \
+	    if (rsymbol->s.ii->isinlineinstance
+		&& !rsymbol->s.ii->origin && rsymbol->s.ii->origin_ref) {
+		rsymbol->s.ii->origin = \
 		    (struct symbol *)g_hash_table_lookup(reftab,
-							 (gpointer)rsymbol->s.ii.origin_ref);
+							 (gpointer)(OFFSET)rsymbol->s.ii->origin_ref);
 	    }
 	}
     }
@@ -2052,30 +2058,30 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	 * have a type, make it void!
 	 */
 	if (!SYMBOL_IST_BASE(symbol)
-	    && symbol->s.ti.type_datatype == NULL
-	    && symbol->s.ti.type_datatype_ref == 0
-	    && (symbol->s.ti.datatype_code == DATATYPE_PTR
-		|| symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
+	    && symbol->s.ti->type_datatype == NULL
+	    && symbol->s.ti->type_datatype_ref == 0
+	    && (symbol->s.ti->datatype_code == DATATYPE_PTR
+		|| symbol->s.ti->datatype_code == DATATYPE_TYPEDEF
 		/* Not sure if C lets these cases through, but whatever */
-		|| symbol->s.ti.datatype_code == DATATYPE_CONST
-		|| symbol->s.ti.datatype_code == DATATYPE_VOL
-		|| symbol->s.ti.datatype_code == DATATYPE_FUNCTION)) {
+		|| symbol->s.ti->datatype_code == DATATYPE_CONST
+		|| symbol->s.ti->datatype_code == DATATYPE_VOL
+		|| symbol->s.ti->datatype_code == DATATYPE_FUNCTION)) {
 	    vdebug(3,LOG_D_DWARF,
 		   "[DIE %" PRIx64 "] assuming %s type %s without type is void\n",
-		   die_offset,DATATYPE(symbol->s.ti.datatype_code),
+		   die_offset,DATATYPE(symbol->s.ti->datatype_code),
 		   symbol->name);
-	    symbol->s.ti.type_datatype = voidsymbol;
+	    symbol->s.ti->type_datatype = voidsymbol;
 	}
-	else if (symbol->s.ti.datatype_code == DATATYPE_ARRAY
-		 && symbol->s.ti.d.a.count) {
+	else if (symbol->s.ti->datatype_code == DATATYPE_ARRAY
+		 && symbol->s.ti->d.a.count) {
 	    /* Reduce the allocation to exactly the length we used! */
-	    if (symbol->s.ti.d.a.alloc > symbol->s.ti.d.a.count) {
-		if (!(new_subranges = realloc(symbol->s.ti.d.a.subranges,
-					      sizeof(int)*symbol->s.ti.d.a.count))) 
+	    if (symbol->s.ti->d.a.alloc > symbol->s.ti->d.a.count) {
+		if (!(new_subranges = realloc(symbol->s.ti->d.a.subranges,
+					      sizeof(int)*symbol->s.ti->d.a.count))) 
 		    vwarn("harmless subrange realloc failure: %s\n",
 			   strerror(errno));
 		else 
-		    symbol->s.ti.d.a.subranges = new_subranges;
+		    symbol->s.ti->d.a.subranges = new_subranges;
 	    }
 	}
     }
@@ -2085,9 +2091,9 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	struct symtab *symtab;
 	int i;
 
-	if (symbol->s.ii.d.f.hasentrypc)
-	    fminaddr = symbol->s.ii.d.f.entry_pc;
-	else if ((symtab = symbol->s.ii.d.f.symtab)) {
+	if (symbol->s.ii->d.f.hasentrypc)
+	    fminaddr = symbol->s.ii->d.f.entry_pc;
+	else if ((symtab = symbol->s.ii->d.f.symtab)) {
 	    if (RANGE_IS_PC(&symtab->range)) 
 		fminaddr = symtab->range.lowpc;
 	    else if (RANGE_IS_LIST(&symtab->range)) {
@@ -2099,9 +2105,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		vwarn("assuming function %s entry is lowest address in list 0x%"PRIxADDR"!\n",
 		      symbol->name,fminaddr);
 	    }
-	    else {
+	    else if (!symbol->s.ii->isinlined) {
 		vwarn("function %s range is not PC/list!\n",symbol->name);
-		return -1;
 	    }
 	}
 
@@ -2120,18 +2125,18 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
 	/* If it doesn't have a type, make it void. */
-	if (symbol->s.ti.type_datatype == NULL
-	    && symbol->s.ti.type_datatype_ref == 0) {
-	    //&& symbol->s.ti.datatype_code == DATATYPE_PTR) {
+	if (symbol->s.ti->type_datatype == NULL
+	    && symbol->s.ti->type_datatype_ref == 0) {
+	    //&& symbol->s.ti->datatype_code == DATATYPE_PTR) {
 	    vdebug(3,LOG_D_DWARF,
 		   "[DIE %" PRIx64 "] assuming anon %s type %s without type is void\n",
-		   die_offset,DATATYPE(symbol->s.ti.datatype_code),
+		   die_offset,DATATYPE(symbol->s.ti->datatype_code),
 		   symbol->name);
-	    symbol->s.ti.type_datatype = voidsymbol;
+	    symbol->s.ti->type_datatype = voidsymbol;
 	}
 
 	if (!symbol->name) {
-	    symbol->s.ti.isanon = 1;
+	    symbol->s.ti->isanon = 1;
 	    /*
 	     * Fixup for GCC bugs (?), and for handling cases where a
 	     * type actually is an anonymous type.
@@ -2181,14 +2186,14 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		sprintf(insertname,"union %s",symbol->name);
 	    }
 
-	    symbol->s.ti.extname = insertname;
+	    symbol->s.ti->extname = insertname;
 	    if (symbol->name
 #ifdef DWDEBUG_USE_STRTAB
 		&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
 #endif
 		) 
 		free(symbol->name);
-	    symbol->name = symbol->s.ti.extname + foffset;
+	    symbol->name = symbol->s.ti->extname + foffset;
 
 	    if (symtab_insert_fakename(symbol->symtab,insertname,symbol,0)) {
 		/* The symbol already was in this symtab's primary
@@ -2226,7 +2231,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	}
     }
     else if (SYMBOL_IS_VAR(symbol) 
-	     && symbol->s.ii.isparam 
+	     && symbol->s.ii->isparam 
 	     && parentsymbol && SYMBOL_IST_FUNCTION(parentsymbol)) {
 	/* Argh, catch function params that are part of function types
 	 * -- DO NOT put these in the symbol table!
@@ -2236,7 +2241,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     else if (symbol->name && symbol->type != SYMBOL_TYPE_TYPE) {
 	if (symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    if (symbol->datatype == NULL
-		&& symbol->datatype_addr_ref == 0) {
+		&& symbol->datatype_ref == 0) {
 		vdebug(3,LOG_D_DWARF,
 		       "[DIE %" PRIx64 "] assuming function %s without type is void\n",
 		       die_offset,symbol->name);
@@ -2256,20 +2261,20 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		}
 	    }
 
-	    if (symbol->s.ii.isexternal) 
+	    if (symbol->s.ii->isexternal) 
 		debugfile_add_global(debugfile,symbol);
 	}
 	else if (symbol->type == SYMBOL_TYPE_VAR) {
 	    if (symbol->datatype == NULL
-		&& symbol->datatype_addr_ref == 0) {
+		&& symbol->datatype_ref == 0) {
 		vdebug(3,LOG_D_DWARF,
-		       "[DIE %" PRIx64 "] assuming var %s without type is void\n",
-		       die_offset,symbol->name);
+		       "assuming var %s without type is void at %"PRIx64"\n",
+		       symbol->name,die_offset);
 		symbol->datatype = voidsymbol;
 	    }
 
 	    /* Don't insert members into the symbol table! */
-	    if (!symbol->s.ii.ismember) {
+	    if (!symbol->s.ii->ismember) {
 		if (symtab_insert(symbol->symtab,symbol,0)) {
 		    /* The symbol already was in this symtab's primary
 		     * table; put it in the anontable so it can get freed
@@ -2305,7 +2310,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     else if ((symbol->type == SYMBOL_TYPE_FUNCTION
 	      || symbol->type == SYMBOL_TYPE_VAR
 	      || symbol->type == SYMBOL_TYPE_LABEL)
-	     && symbol->s.ii.isinlineinstance) {
+	     && symbol->s.ii->isinlineinstance) {
 	/* An inlined instance; definitely need it in the symbol
 	 * tables.  But we have to give it a name.  And the name *has*
 	 * to be unique... so we do our best: 
@@ -2316,19 +2321,19 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	 */
 	char *inname;
 	int inlen;
-	if (symbol->s.ii.origin) {
-	    inlen = 9 + 1 + 18 + 1 + strlen(symbol->s.ii.origin->name) + 1 + 1;
+	if (symbol->s.ii->origin) {
+	    inlen = 9 + 1 + 18 + 1 + strlen(symbol->s.ii->origin->name) + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
 	    sprintf(inname,"__INLINED(%p:%s)",
 		    (void *)symbol,
-		    symbol->s.ii.origin->name);
+		    symbol->s.ii->origin->name);
 	}
 	else {
 	    inlen = 9 + 1 + 18 + 1 + 4 + 16 + 1 + 1;
 	    inname = malloc(sizeof(char)*inlen);
-	    sprintf(inname,"__INLINED(%p:iref%"PRIxOFFSET")",
+	    sprintf(inname,"__INLINED(%p:iref%"PRIxSMOFFSET")",
 		    (void *)symbol,
-		    symbol->s.ii.origin_ref);
+		    symbol->s.ii->origin_ref);
 	}
 
 	symbol_set_name(symbol,inname);
@@ -2342,7 +2347,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	retval = 1;
     }
     else if (symbol->type == SYMBOL_TYPE_VAR
-	     && (symbol->s.ii.isparam || symbol->s.ii.ismember)) {
+	     && (symbol->s.ii->isparam || symbol->s.ii->ismember)) {
 	/* We allow unnamed params, of course, BUT we don't put them
 	 * into the symbol table.  We leave them on the function
 	 * symbol/function type to be freed in symbol_free!
@@ -2353,8 +2358,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	retval = 1;
     }
     else {
-	verror("[DIE %" PRIx64 "] non-anonymous symbol of type %s without a name!\n",
-	       die_offset,SYMBOL_TYPE(symbol->type));
+	verror("non-anonymous symbol of type %s without a name at %"PRIx64"!\n",
+	       SYMBOL_TYPE(symbol->type),die_offset);
 	struct dump_info udn = {
 	    .stream = stderr,
 	    .prefix = "  ",
@@ -2367,7 +2372,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	retval = 1;
     }
 
-    vdebug(5,LOG_D_DWARF,"finalized symbol at %lx %s//%s \n",
+    vdebug(5,LOG_D_SYMBOL,"finalized symbol at %lx %s//%s \n",
 	   die_offset,SYMBOL_TYPE(symbol->type),symbol->name);
 
     return retval;
@@ -2387,35 +2392,35 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
     struct symbol *member;
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
-	if (symbol->s.ti.datatype_code == DATATYPE_BASE)
+	if (symbol->s.ti->datatype_code == DATATYPE_BASE)
 	    return;
-	if (symbol->s.ti.datatype_code == DATATYPE_PTR
-	    || symbol->s.ti.datatype_code == DATATYPE_TYPEDEF
-	    || symbol->s.ti.datatype_code == DATATYPE_ARRAY
-	    || symbol->s.ti.datatype_code == DATATYPE_CONST
-	    || symbol->s.ti.datatype_code == DATATYPE_VOL
-	    || symbol->s.ti.datatype_code == DATATYPE_FUNCTION) {
-	    if (!symbol->s.ti.type_datatype) {
-		symbol->s.ti.type_datatype = \
+	if (symbol->s.ti->datatype_code == DATATYPE_PTR
+	    || symbol->s.ti->datatype_code == DATATYPE_TYPEDEF
+	    || symbol->s.ti->datatype_code == DATATYPE_ARRAY
+	    || symbol->s.ti->datatype_code == DATATYPE_CONST
+	    || symbol->s.ti->datatype_code == DATATYPE_VOL
+	    || symbol->s.ti->datatype_code == DATATYPE_FUNCTION) {
+	    if (!symbol->s.ti->type_datatype) {
+		symbol->s.ti->type_datatype = \
 		    g_hash_table_lookup(reftab,
-					(gpointer)symbol->s.ti.type_datatype_ref);
-		if (!symbol->s.ti.type_datatype) 
-		    verror("could not resolve ref %"PRIxOFFSET" for %s type symbol %s\n",
-			   symbol->s.ti.type_datatype_ref,
-			   DATATYPE(symbol->s.ti.datatype_code),
+					(gpointer)(OFFSET)symbol->s.ti->type_datatype_ref);
+		if (!symbol->s.ti->type_datatype) 
+		    verror("could not resolve ref %"PRIxSMOFFSET" for %s type symbol %s\n",
+			   symbol->s.ti->type_datatype_ref,
+			   DATATYPE(symbol->s.ti->datatype_code),
 			   symbol->name);
 		else {
 		    vdebug(3,LOG_D_DWARF,
-			   "resolved ref 0x%"PRIxOFFSET" %s type symbol %s\n",
-			   symbol->s.ti.type_datatype_ref,
-			   DATATYPE(symbol->s.ti.datatype_code),symbol->name);
+			   "resolved ref 0x%"PRIxSMOFFSET" %s type symbol %s\n",
+			   symbol->s.ti->type_datatype_ref,
+			   DATATYPE(symbol->s.ti->datatype_code),symbol->name);
 
 		    vdebug(3,LOG_D_DWARF,
 			   "rresolving just-resolved %s type symbol %s\n",
-			   SYMBOL_TYPE(symbol->s.ti.type_datatype->s.ti.datatype_code),
-			   symbol->s.ti.type_datatype->name,
-			   symbol->s.ti.type_datatype->s.ti.type_datatype_ref);
-		    resolve_refs(NULL,symbol->s.ti.type_datatype,reftab);
+			   SYMBOL_TYPE(symbol->s.ti->type_datatype->s.ti->datatype_code),
+			   symbol->s.ti->type_datatype->name,
+			   symbol->s.ti->type_datatype->s.ti->type_datatype_ref);
+		    resolve_refs(NULL,symbol->s.ti->type_datatype,reftab);
 		}
 	    }
 	    else {
@@ -2424,27 +2429,27 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		 * resolved!
 		 */
 		vdebug(3,LOG_D_DWARF,
-		       "rresolving known %s type symbol %s ref 0x%"PRIxOFFSET"\n",
-		       SYMBOL_TYPE(symbol->s.ti.type_datatype->s.ti.datatype_code),
-		       symbol->s.ti.type_datatype->name,
-		       symbol->s.ti.type_datatype->s.ti.type_datatype_ref);
+		       "rresolving known %s type symbol %s ref 0x%"PRIxSMOFFSET"\n",
+		       SYMBOL_TYPE(symbol->s.ti->type_datatype->s.ti->datatype_code),
+		       symbol->s.ti->type_datatype->name,
+		       symbol->s.ti->type_datatype->s.ti->type_datatype_ref);
 
-		resolve_refs(NULL,symbol->s.ti.type_datatype,data);
+		resolve_refs(NULL,symbol->s.ti->type_datatype,data);
 	    }
 
-	    if (symbol->s.ti.datatype_code == DATATYPE_FUNCTION
-		&& symbol->s.ti.d.f.count) {
+	    if (symbol->s.ti->datatype_code == DATATYPE_FUNCTION
+		&& symbol->s.ti->d.f.count) {
 		/* do it for the function type args! */
-		list_for_each_entry(member,&(symbol->s.ti.d.f.args),member) {
+		list_for_each_entry(member,&(symbol->s.ti->d.f.args),member) {
 		    vdebug(3,LOG_D_DWARF,
-			   "rresolving function type %s arg %s ref 0x%"PRIxOFFSET"\n",
-			   symbol->name,member->name,member->datatype_addr_ref);
+			   "rresolving function type %s arg %s ref 0x%"PRIxSMOFFSET"\n",
+			   symbol->name,member->name,member->datatype_ref);
 		    resolve_refs(NULL,member,reftab);
 		}
 	    }
 	}
-	else if (symbol->s.ti.datatype_code == DATATYPE_STRUCT
-		 || symbol->s.ti.datatype_code == DATATYPE_UNION) {
+	else if (symbol->s.ti->datatype_code == DATATYPE_STRUCT
+		 || symbol->s.ti->datatype_code == DATATYPE_UNION) {
 	    /* 
 	     * We need to recurse for each of the struct members too,
 	     * BUT we have to take special care with members because
@@ -2458,28 +2463,28 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	     * don't handle those.  We've moved to not using this
 	     * function anymore as a result.
 	     */
-	    list_for_each_entry(member,&(symbol->s.ti.d.su.members),member) {
+	    list_for_each_entry(member,&(symbol->s.ti->d.su.members),member) {
 		if (member->datatype)
 		    continue;
 		vdebug(3,LOG_D_DWARF,
-		       "rresolving s/u %s member %s ref 0x%"PRIxOFFSET"\n",
-		       symbol->name,member->name,member->datatype_addr_ref);
+		       "rresolving s/u %s member %s ref 0x%"PRIxSMOFFSET"\n",
+		       symbol->name,member->name,member->datatype_ref);
 		resolve_refs(NULL,member,reftab);
 	    }
 	}
     }
     else {
 	/* do it for the variable or function's main type */
-	if (!symbol->datatype && symbol->datatype_addr_ref) {
+	if (!symbol->datatype && symbol->datatype_ref) {
 	    if (!(symbol->datatype = \
 		  g_hash_table_lookup(reftab,
-				      (gpointer)symbol->datatype_addr_ref)))
-		verror("could not resolve ref %"PRIxOFFSET" for var/func symbol %s\n",
-		       symbol->datatype_addr_ref,symbol->name);
+				      (gpointer)(OFFSET)symbol->datatype_ref)))
+		verror("could not resolve ref %"PRIxSMOFFSET" for var/func symbol %s\n",
+		       symbol->datatype_ref,symbol->name);
 	    else {
 		vdebug(3,LOG_D_DWARF,
-		       "resolved ref %"PRIxOFFSET" non-type symbol %s\n",
-		       symbol->datatype_addr_ref,symbol->name);
+		       "resolved ref %"PRIxSMOFFSET" non-type symbol %s\n",
+		       symbol->datatype_ref,symbol->name);
 	    }
 	}
 
@@ -2488,20 +2493,20 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	 */
 	if (symbol->datatype) {
 	    vdebug(3,LOG_D_DWARF,
-		   "rresolving ref 0x%"PRIxOFFSET" %s type symbol %s\n",
-		   symbol->datatype->s.ti.type_datatype_ref,
-		   SYMBOL_TYPE(symbol->datatype->s.ti.datatype_code),
+		   "rresolving ref 0x%"PRIxSMOFFSET" %s type symbol %s\n",
+		   symbol->datatype->s.ti->type_datatype_ref,
+		   SYMBOL_TYPE(symbol->datatype->s.ti->datatype_code),
 		   symbol->datatype->name);
 	    resolve_refs(NULL,symbol->datatype,reftab);
 	}
 
 	/* then, if this is a function, do the args */
 	if (symbol->type == SYMBOL_TYPE_FUNCTION) 
-	    list_for_each_entry(member,&(symbol->s.ii.d.f.args),member) {
+	    list_for_each_entry(member,&(symbol->s.ii->d.f.args),member) {
 		if (member->datatype) {
 		    vdebug(3,LOG_D_DWARF,
-			   "rresolving ref 0x%"PRIxOFFSET" function %s arg %s\n",
-			   member->datatype_addr_ref,symbol->name,member->name);
+			   "rresolving ref 0x%"PRIxSMOFFSET" function %s arg %s\n",
+			   member->datatype_ref,symbol->name,member->name);
 		    resolve_refs(NULL,member,reftab);
 		}
 	    }
@@ -2514,25 +2519,25 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
      *
      * XXX: do we need to recurse on the resolved ref?  I hope not!
      */
-    if (symbol->s.ii.isinlineinstance
-	&& !symbol->s.ii.origin 
-	&& symbol->s.ii.origin_ref) {
-	if (!(symbol->s.ii.origin = \
+    if (symbol->s.ii->isinlineinstance
+	&& !symbol->s.ii->origin 
+	&& symbol->s.ii->origin_ref) {
+	if (!(symbol->s.ii->origin = \
 	      g_hash_table_lookup(reftab,
-				  (gpointer)symbol->s.ii.origin_ref))) {
-	    verror("could not resolve ref 0x%"PRIxOFFSET" for inlined %s\n",
-		   symbol->s.ii.origin_ref,SYMBOL_TYPE(symbol->type));
+				  (gpointer)(OFFSET)symbol->s.ii->origin_ref))) {
+	    verror("could not resolve ref 0x%"PRIxSMOFFSET" for inlined %s\n",
+		   symbol->s.ii->origin_ref,SYMBOL_TYPE(symbol->type));
 	}
 	else {
 	    vdebug(3,LOG_D_DWARF,
-		   "resolved ref 0x%"PRIxOFFSET" inlined %s to %s\n",
-		   symbol->s.ii.origin_ref,
+		   "resolved ref 0x%"PRIxSMOFFSET" inlined %s to %s\n",
+		   symbol->s.ii->origin_ref,
 		   SYMBOL_TYPE(symbol->type),
-		   symbol->s.ii.origin->name);
+		   symbol->s.ii->origin->name);
 	}
 
-	if (symbol->s.ii.origin)
-	    resolve_refs(NULL,symbol->s.ii.origin,reftab);
+	if (symbol->s.ii->origin)
+	    resolve_refs(NULL,symbol->s.ii->origin,reftab);
     }
 }
 

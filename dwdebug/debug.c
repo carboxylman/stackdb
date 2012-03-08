@@ -799,7 +799,7 @@ int symtab_str_in_strtab(struct symtab *symtab,char *strp) {
 /**
  ** Functions for symbols.
  **/
-struct symbol *symbol_create(struct symtab *symtab,
+struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
 			     char *name,symbol_type_t symtype) {
     struct symbol *symbol;
 
@@ -807,6 +807,8 @@ struct symbol *symbol_create(struct symtab *symtab,
     if (!symbol)
 	return NULL;
     memset(symbol,0,sizeof(*symbol));
+
+    symbol->ref = offset;
 
     symbol->symtab = symtab;
     symbol_set_name(symbol,name);
@@ -817,6 +819,73 @@ struct symbol *symbol_create(struct symtab *symtab,
      */
     if (name)
 	g_hash_table_insert(symtab->tab,name,symbol);
+
+    vdebug(LOG_D_SYMBOL,5,"offset %"PRIxSMOFFSET"\n",offset);
+
+    return symbol;
+}
+
+struct symbol *symbol_create_full(struct symtab *symtab,SMOFFSET offset,
+				  char *name,symbol_type_t symtype) {
+    struct symbol *symbol;
+
+    symbol = (struct symbol *)malloc(sizeof(*symbol));
+    if (!symbol)
+	return NULL;
+    memset(symbol,0,sizeof(*symbol));
+
+    symbol->ref = offset;
+
+    switch (symtype) {
+    case SYMBOL_TYPE_TYPE:
+	symbol->s.ti = (struct symbol_type *)malloc(sizeof(*symbol->s.ti));
+	if (!symbol->s.ti) {
+	    free(symbol);
+	    return NULL;
+	}
+	memset(symbol->s.ti,0,sizeof(*symbol->s.ti));
+	break;
+    case SYMBOL_TYPE_VAR:
+	symbol->s.ii = (struct symbol_instance *)malloc(sizeof(*symbol->s.ii));
+	if (!symbol->s.ii) {
+	    free(symbol);
+	    return NULL;
+	}
+	memset(symbol->s.ii,0,sizeof(*symbol->s.ii));
+	break;
+    case SYMBOL_TYPE_FUNCTION:
+	symbol->s.ii = (struct symbol_instance *)malloc(sizeof(*symbol->s.ii));
+	if (!symbol->s.ii) {
+	    free(symbol);
+	    return NULL;
+	}
+	memset(symbol->s.ii,0,sizeof(*symbol->s.ii));
+	break;
+    case SYMBOL_TYPE_LABEL:
+	symbol->s.ii = (struct symbol_instance *)malloc(sizeof(*symbol->s.ii));
+	if (!symbol->s.ii) {
+	    free(symbol);
+	    return NULL;
+	}
+	memset(symbol->s.ii,0,sizeof(*symbol->s.ii));
+	break;
+    default:
+	verror("bad symbol type %d!\n",symtype);
+	free(symbol);
+	return NULL;
+    }
+
+    symbol->symtab = symtab;
+    symbol_set_name(symbol,name);
+    symbol_set_type(symbol,symtype);
+
+    /* Only insert the symbol automatically if we have a name.  This
+     * won't be true for our dwarf parser, for instance.
+     */
+    if (name)
+	g_hash_table_insert(symtab->tab,name,symbol);
+
+    vdebug(LOG_D_SYMBOL,5,"offset %"PRIxSMOFFSET"\n",offset);
 
     return symbol;
 }
@@ -845,7 +914,7 @@ void symbol_set_srcline(struct symbol *symbol,int srcline) {
 
 int symbol_type_bytesize(struct symbol *symbol) {
     if (symbol->type == SYMBOL_TYPE_TYPE)
-	return symbol->s.ti.byte_size;
+	return symbol->s.ti->byte_size;
     else 
 	return -1;
 }
@@ -878,14 +947,14 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     */
 
     if (SYMBOL_IST_FUNCTION(symbol)
-	&& symbol->s.ti.d.f.count) {
-	list_for_each_entry(retval,&symbol->s.ti.d.f.args,member) {
+	&& symbol->s.ti->d.f.count) {
+	list_for_each_entry(retval,&symbol->s.ti->d.f.args,member) {
 	    if (retval->name && strcmp(retval->name,member) == 0)
 		goto out;
 	}
     }
     else if (SYMBOL_IST_ENUM(symbol)) {
-	list_for_each_entry(retval,&symbol->s.ti.d.e.members,member) {
+	list_for_each_entry(retval,&symbol->s.ti->d.e.members,member) {
 	    if (retval->name && strcmp(retval->name,member) == 0)
 		goto out;
 	}
@@ -910,7 +979,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	 * of more than one nested variable/function.
 	 */
 	while (1) {
-	    list_for_each_entry(retval,&type->s.ti.d.su.members,member) {
+	    list_for_each_entry(retval,&type->s.ti->d.su.members,member) {
 		//vdebug(4,LOG_D_SYMBOL,"checking symbol: ");
 		//symbol_dump(retval,&udn);
 
@@ -966,7 +1035,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     }
     else if (SYMBOL_IS_FUNCTION(symbol)) {
 	/* First, check our args. */
-	list_for_each_entry(retval,&symbol->s.ii.d.f.args,member) {
+	list_for_each_entry(retval,&symbol->s.ii->d.f.args,member) {
 	    if (retval->name && strcmp(retval->name,member) == 0)
 		goto out;
 	}
@@ -974,7 +1043,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	/* Second, check our internal symbol table.  Wait a sec, the
 	 * args are in the internal symtab too!  Hmmm.
 	 */
-	lsymbol = symtab_lookup_sym(symbol->s.ii.d.f.symtab,member,NULL,
+	lsymbol = symtab_lookup_sym(symbol->s.ii->d.f.symtab,member,NULL,
 				    SYMBOL_TYPE_FLAG_VAR | SYMBOL_TYPE_FLAG_FUNCTION);
 	if (lsymbol) {
 	    symbol = lsymbol->symbol;
@@ -988,7 +1057,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	 * has added more anonymous lexical scopes, or whatever, we
 	 * don't support them yet.
 	 */
-	list_for_each_entry(subtab,&symbol->s.ii.d.f.symtab->subtabs,member) {
+	list_for_each_entry(subtab,&symbol->s.ii->d.f.symtab->subtabs,member) {
 	    if (subtab->name)
 		continue;
 
@@ -1059,7 +1128,7 @@ int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr) {
     if (!SYMBOL_IS_FUNCTION(symbol))
 	return 0;
 
-    if ((symtab = symbol->s.ii.d.f.symtab)) {
+    if ((symtab = symbol->s.ii->d.f.symtab)) {
 	if (RANGE_IS_PC(&symtab->range)) {
 	    if (symtab->range.lowpc <= obj_addr 
 		&& obj_addr < symtab->range.highpc) 
@@ -1166,7 +1235,7 @@ struct symbol *symbol_type_skip_qualifiers(struct symbol *type) {
 	   && (SYMBOL_IST_VOL(type)
 	       || SYMBOL_IST_CONST(type)
 	       || SYMBOL_IST_TYPEDEF(type))) {
-	type = type->s.ti.type_datatype;
+	type = type->s.ti->type_datatype;
     }
 
     return type;
@@ -1177,7 +1246,7 @@ struct symbol *symbol_type_skip_ptrs(struct symbol *type) {
 	return NULL;
 
     while (type->type == SYMBOL_TYPE_TYPE && SYMBOL_IST_PTR(type)) {
-	type = type->s.ti.type_datatype;
+	type = type->s.ti->type_datatype;
     }
 
     return type;
@@ -1189,10 +1258,10 @@ int symbol_type_is_char(struct symbol *type) {
 
     type = symbol_type_skip_qualifiers(type);
 
-    if (type->s.ti.datatype_code == DATATYPE_BASE
-	&& type->s.ti.byte_size == 1
-	&& (type->s.ti.d.v.encoding == ENCODING_SIGNED_CHAR
-	    || type->s.ti.d.v.encoding == ENCODING_UNSIGNED_CHAR)) 
+    if (type->s.ti->datatype_code == DATATYPE_BASE
+	&& type->s.ti->byte_size == 1
+	&& (type->s.ti->d.v.encoding == ENCODING_SIGNED_CHAR
+	    || type->s.ti->d.v.encoding == ENCODING_UNSIGNED_CHAR)) 
 	return 1;
 
     return 0;
@@ -1207,15 +1276,15 @@ unsigned int symbol_type_array_bytesize(struct symbol *type) {
 
     type = symbol_type_skip_qualifiers(type);
 
-    if (type->s.ti.datatype_code != DATATYPE_ARRAY)
+    if (type->s.ti->datatype_code != DATATYPE_ARRAY)
 	return 0;
 
-    size = type->s.ti.type_datatype->s.ti.byte_size;
+    size = type->s.ti->type_datatype->s.ti->byte_size;
 
-    for (i = 0; i < type->s.ti.d.a.count; ++i) {
+    for (i = 0; i < type->s.ti->d.a.count; ++i) {
 	vdebug(5,LOG_D_SYMBOL,"subrange length is %d\n",
-	       type->s.ti.d.a.subranges[i] + 1);
-	size = size * (type->s.ti.d.a.subranges[i] + 1);
+	       type->s.ti->d.a.subranges[i] + 1);
+	size = size * (type->s.ti->d.a.subranges[i] + 1);
     }
 
     vdebug(5,LOG_D_SYMBOL,"full array size is %d for array type %s\n",size,
@@ -1230,7 +1299,7 @@ unsigned int symbol_type_full_bytesize(struct symbol *type) {
 
     type = symbol_type_skip_qualifiers(type);
 
-    if (type->s.ti.datatype_code == DATATYPE_ARRAY)
+    if (type->s.ti->datatype_code == DATATYPE_ARRAY)
 	return symbol_type_array_bytesize(type);
     return symbol_type_bytesize(type);
 }
@@ -1240,48 +1309,48 @@ void symbol_free(struct symbol *symbol) {
     struct symbol *tmp2;
 
     if (symbol->name)
-	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//%s\n",
-	       SYMBOL_TYPE(symbol->type),symbol->name);
+	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//%s at %"PRIxSMOFFSET"\n",
+	       SYMBOL_TYPE(symbol->type),symbol->name,symbol->ref);
     else 
-	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//(null)\n",
-	       SYMBOL_TYPE(symbol->type));
+	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//(null) at %"PRIxSMOFFSET"\n",
+	       SYMBOL_TYPE(symbol->type),symbol->ref);
 
     /*
      * We have to recurse through any symbol that has members, because
      * those members are not in any symbol tables, so they won't be freed.
      */
-    if (symbol->type == SYMBOL_TYPE_FUNCTION) {
-	if (symbol->s.ii.d.f.fbisloclist
-	    && symbol->s.ii.d.f.fblist)
-	    loc_list_free(symbol->s.ii.d.f.fblist);
-	else if (symbol->s.ii.d.f.fbissingleloc
-		 && symbol->s.ii.d.f.fbloc)
-	    location_free(symbol->s.ii.d.f.fbloc);
+    if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	if (symbol->s.ii->d.f.fbisloclist
+	    && symbol->s.ii->d.f.fblist)
+	    loc_list_free(symbol->s.ii->d.f.fblist);
+	else if (symbol->s.ii->d.f.fbissingleloc
+		 && symbol->s.ii->d.f.fbloc)
+	    location_free(symbol->s.ii->d.f.fbloc);
 
 	/*
 	 * Don't free the function's symtab -- it is freed in in
 	 * symtab_free since all functions will have a parent symtab.
 	 */
-	//if (symbol->s.ii.d.f.symtab)
-	//    symtab_free(symbol->s.ii.d.f.symtab);
+	//if (symbol->s.ii->d.f.symtab)
+	//    symtab_free(symbol->s.ii->d.f.symtab);
     }
-    else if (symbol->type == SYMBOL_TYPE_LABEL) {
+    else if (SYMBOL_IS_FULL_LABEL(symbol)) {
 	/*
 	 * Free the range list for a label.
 	 */
-	if (symbol->s.ii.d.l.range.rlist.list)
-	    range_list_internal_free(&symbol->s.ii.d.l.range.rlist);
+	if (symbol->s.ii->d.l.range.rlist.list)
+	    range_list_internal_free(&symbol->s.ii->d.l.range.rlist);
     }
     else if (SYMBOL_IST_ARRAY(symbol)) {
-	if (symbol->s.ti.d.a.subranges)
-	    free(symbol->s.ti.d.a.subranges);
+	if (symbol->s.ti->d.a.subranges)
+	    free(symbol->s.ti->d.a.subranges);
     }
     else if (SYMBOL_IST_STUN(symbol)) {
-	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti.d.su.members,member)
+	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.su.members,member)
 	    symbol_free(tmp);
     }
     else if (SYMBOL_IST_FUNCTION(symbol)) {
-	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti.d.f.args,member)
+	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.f.args,member)
 	    symbol_free(tmp);
     }
 
@@ -1289,23 +1358,24 @@ void symbol_free(struct symbol *symbol) {
      * Also have to free any constant data allocated.
      */
     if (symbol->type != SYMBOL_TYPE_TYPE
-	&& symbol->s.ii.constval
+	&& symbol->s.ii
+	&& symbol->s.ii->constval
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,
-						     symbol->s.ii.constval))
+						     symbol->s.ii->constval))
 #endif
 	)
-	free(symbol->s.ii.constval);
+	free(symbol->s.ii->constval);
 
     /*
      * Also have to free location data, potentially.
      */
-    if (symbol->type != SYMBOL_TYPE_TYPE)
-	location_internal_free(&symbol->s.ii.l);
+    if (symbol->type != SYMBOL_TYPE_TYPE && symbol->s.ii)
+	location_internal_free(&symbol->s.ii->l);
 
-    if (symbol->type == SYMBOL_TYPE_TYPE && symbol->s.ti.extname) {
-	vdebug(5,LOG_D_SYMBOL,"freeing extname %s\n",symbol->s.ti.extname);
-	free(symbol->s.ti.extname);
+    if (SYMBOL_IS_FULL_TYPE(symbol) && symbol->s.ti->extname) {
+	vdebug(5,LOG_D_SYMBOL,"freeing extname %s\n",symbol->s.ti->extname);
+	free(symbol->s.ti->extname);
     }
     else if (symbol->name
 #ifdef DWDEBUG_USE_STRTAB
@@ -1314,6 +1384,13 @@ void symbol_free(struct symbol *symbol) {
 	     ) {
 	vdebug(5,LOG_D_SYMBOL,"freeing name %s\n",symbol->name);
 	free(symbol->name);
+    }
+
+    if (symbol->s.ti) {
+	free(symbol->s.ti);
+    }
+    else if (symbol->s.ii) {
+	free(symbol->s.ii);
     }
 
     free(symbol);
@@ -1713,7 +1790,7 @@ void symbol_label_dump(struct symbol *symbol,struct dump_info *ud) {
 
     fprintf(ud->stream,"%s",symbol->name);
     if (ud->meta) 
-	range_dump(&symbol->s.ii.d.l.range,&udn);
+	range_dump(&symbol->s.ii->d.l.range,&udn);
 }
 
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
@@ -1732,24 +1809,24 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 
     if (ud->detail) {
 	//if (1 || !(symbol->type == SYMBOL_TYPE_VAR
-	//    && symbol->s.ii.isenumval)) {
+	//    && symbol->s.ii->isenumval)) {
 	    if (symbol->datatype) {
 		symbol_type_dump(symbol->datatype,&udn);
 	    }
-	    else if (symbol->datatype_addr_ref) 
-		fprintf(ud->stream,"tref%"PRIxOFFSET,symbol->datatype_addr_ref);
+	    else if (symbol->datatype_ref) 
+		fprintf(ud->stream,"tref%"PRIxSMOFFSET,symbol->datatype_ref);
 	//}
     }
     /* all variables are named, but not all members of structs/unions! */
     /* well, inlined params aren't named either. */
-    if (symbol->s.ii.isinlineinstance && symbol->s.ii.isparam) {
+    if (symbol->s.ii->isinlineinstance && symbol->s.ii->isparam) {
 	/* Only print a space if we printed the var's type above! */
 	if (ud->detail)
 	    fprintf(ud->stream," ");
 
-	if (symbol->s.ii.origin) {
+	if (symbol->s.ii->origin) {
 	    fprintf(ud->stream,"INLINED_PARAM(");
-	    symbol_var_dump(symbol->s.ii.origin,&udn);
+	    symbol_var_dump(symbol->s.ii->origin,&udn);
 	    fprintf(ud->stream,")");
 	}
 	else
@@ -1764,23 +1841,23 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     }
 
     if (symbol->type == SYMBOL_TYPE_VAR 
-	&& symbol->s.ii.d.v.bit_size > 0) {
+	&& symbol->s.ii->d.v.bit_size > 0) {
 	/* this is a bitfield */
-	fprintf(ud->stream,":%hd(%hd)",symbol->s.ii.d.v.bit_size,
-		symbol->s.ii.d.v.bit_offset);
+	fprintf(ud->stream,":%hd(%hd)",symbol->s.ii->d.v.bit_size,
+		symbol->s.ii->d.v.bit_offset);
     }
     if (symbol->type == SYMBOL_TYPE_VAR
-	&& symbol->s.ii.isenumval) {
+	&& symbol->s.ii->isenumval) {
 	// XXX fix type printing -- this *is* a malloc'd constval
-	fprintf(ud->stream," = %d",*((int *)symbol->s.ii.constval));
+	fprintf(ud->stream," = %d",*((int *)symbol->s.ii->constval));
     }
 
-    if (ud->detail && symbol->s.ii.l.loctype != LOCTYPE_UNKNOWN) {
+    if (ud->detail && symbol->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
 	fprintf(ud->stream," @@ ");
-	location_dump(&symbol->s.ii.l,&udn2);
+	location_dump(&symbol->s.ii->l,&udn2);
 
-	if (symbol->s.ii.constval)
-	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
+	if (symbol->s.ii->constval)
+	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii->constval);
     }
 }
 
@@ -1805,13 +1882,13 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    symbol_type_dump(symbol->datatype,&udn);
 	    fprintf(ud->stream," ");
 	}
-	else if (symbol->datatype_addr_ref)
-	    fprintf(ud->stream,"ftref%" PRIxOFFSET " ",symbol->datatype_addr_ref);
+	else if (symbol->datatype_ref)
+	    fprintf(ud->stream,"ftref%" PRIxSMOFFSET " ",symbol->datatype_ref);
     }
-    if (symbol->s.ii.isinlineinstance) {
-	if (symbol->s.ii.origin) {
+    if (symbol->s.ii->isinlineinstance) {
+	if (symbol->s.ii->origin) {
 	    fprintf(ud->stream,"INLINED_FUNC(");
-	    symbol_var_dump(symbol->s.ii.origin,&udn);
+	    symbol_var_dump(symbol->s.ii->origin,&udn);
 	    fprintf(ud->stream,")");
 	}
 	else
@@ -1821,45 +1898,45 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream,"%s",symbol->name);
     if (ud->detail) {
 	fprintf(ud->stream," (");
-	list_for_each_entry(arg,&(symbol->s.ii.d.f.args),member) {
+	list_for_each_entry(arg,&(symbol->s.ii->d.f.args),member) {
 	    ++i;
 	    symbol_var_dump(arg,ud);
-	    if (i != symbol->s.ii.d.f.count)
+	    if (i != symbol->s.ii->d.f.count)
 		fprintf(ud->stream,",");
 	}
-	if (symbol->s.ti.d.f.hasunspec) {
+	if (symbol->s.ti->d.f.hasunspec) {
 	    if (i)
 		fprintf(ud->stream,",");
 	    fprintf(ud->stream,"...");
 	}
 	fprintf(ud->stream,")");
 
-	if (symbol->s.ii.constval)
-	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii.constval);
+	if (symbol->s.ii->constval)
+	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii->constval);
     }
     if (ud->meta) {
-	if (symbol->s.ii.d.f.fbisloclist && symbol->s.ii.d.f.fblist 
-	    && symbol->s.ii.d.f.fblist->len) {
+	if (symbol->s.ii->d.f.fbisloclist && symbol->s.ii->d.f.fblist 
+	    && symbol->s.ii->d.f.fblist->len) {
 	    fprintf(ud->stream," (frame_base=");
-	    loc_list_dump(symbol->s.ii.d.f.fblist,&udn2);
+	    loc_list_dump(symbol->s.ii->d.f.fblist,&udn2);
 	    fprintf(ud->stream,",");
 	}
-	else if (symbol->s.ii.d.f.fbissingleloc && symbol->s.ii.d.f.fbloc) { 
+	else if (symbol->s.ii->d.f.fbissingleloc && symbol->s.ii->d.f.fbloc) { 
 	    fprintf(ud->stream," (frame_base=");
-	    location_dump(symbol->s.ii.d.f.fbloc,&udn2);
+	    location_dump(symbol->s.ii->d.f.fbloc,&udn2);
 	    fprintf(ud->stream,",");
 	}
 	else 
 	    fprintf(ud->stream," (");
 
 	fprintf(ud->stream,"external=%d,prototyped=%d,declinline=%d,inlined=%d) ",
-		symbol->s.ii.isexternal,symbol->s.ii.isprototyped,
-		symbol->s.ii.isdeclinline,symbol->s.ii.isinlined);
+		symbol->s.ii->isexternal,symbol->s.ii->isprototyped,
+		symbol->s.ii->isdeclinline,symbol->s.ii->isinlined);
     }
     if (ud->detail) {
 	fprintf(ud->stream,"\n");
 
-	symtab_dump(symbol->s.ii.d.f.symtab,&udn);
+	symtab_dump(symbol->s.ii->d.f.symtab,&udn);
     }
 }
 
@@ -1879,39 +1956,39 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	return;
     }
 
-    switch (symbol->s.ti.datatype_code) {
+    switch (symbol->s.ti->datatype_code) {
     case DATATYPE_VOID:
 	fprintf(ud->stream,"void");
 	break;
     case DATATYPE_ARRAY:
-	symbol_type_dump(symbol->s.ti.type_datatype,&udn);
+	symbol_type_dump(symbol->s.ti->type_datatype,&udn);
 	fprintf(ud->stream," ");
-	for (i = 0; i < symbol->s.ti.d.a.count; ++i) {
-	    fprintf(ud->stream,"[%d]",symbol->s.ti.d.a.subranges[i] + 1);
+	for (i = 0; i < symbol->s.ti->d.a.count; ++i) {
+	    fprintf(ud->stream,"[%d]",symbol->s.ti->d.a.subranges[i] + 1);
 	}
 	break;
     case DATATYPE_CONST:
 	fprintf(ud->stream,"const ");
-	symbol_type_dump(symbol->s.ti.type_datatype,ud);
+	symbol_type_dump(symbol->s.ti->type_datatype,ud);
 	break;
     case DATATYPE_VOL:
 	fprintf(ud->stream,"volatile ");
-	symbol_type_dump(symbol->s.ti.type_datatype,ud);
+	symbol_type_dump(symbol->s.ti->type_datatype,ud);
 	break;
     case DATATYPE_STRUCT:
     case DATATYPE_UNION:
 	ss = "struct";
-	if (symbol->s.ti.datatype_code == DATATYPE_UNION)
+	if (symbol->s.ti->datatype_code == DATATYPE_UNION)
 	    ss = "union";
-	if (symbol->s.ti.isanon && ud->detail)
+	if (symbol->s.ti->isanon && ud->detail)
 	    fprintf(ud->stream,"%s",ss);
 	else
 	    fprintf(ud->stream,"%s %s",ss,symbol->name);
 	if (ud->meta) 
-	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti.byte_size);
+	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti->byte_size);
 	if (ud->detail) {
 	    fprintf(ud->stream," { ");
-	    list_for_each_entry(member,&(symbol->s.ti.d.su.members),member) {
+	    list_for_each_entry(member,&(symbol->s.ti->d.su.members),member) {
 		/* NOTE: C structs/unions can have members of the same
 		 * type as the parent struct -- so don't recurse if this
 		 * is true! -- OR if it's a pointer chain back to the struct.
@@ -1920,21 +1997,21 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 		    symbol_var_dump(member,&udn);
 		}
 		else if (SYMBOL_IST_STUN(member->datatype) 
-			 && member->datatype->s.ti.isanon) {
+			 && member->datatype->s.ti->isanon) {
 		    symbol_type_dump(member->datatype,ud);
 
-		    if (ud->detail && member->s.ii.l.loctype != LOCTYPE_UNKNOWN) {
+		    if (ud->detail && member->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
 			fprintf(ud->stream," @@ ");
-			location_dump(&member->s.ii.l,ud);
+			location_dump(&member->s.ii->l,ud);
 
-			if (member->s.ii.constval)
+			if (member->s.ii->constval)
 			    fprintf(ud->stream," @@ CONST(%p)",
-				    member->s.ii.constval);
+				    member->s.ii->constval);
 		    }
 		}
 		else 
 		    symbol_var_dump(member,ud);
-		if (likely(++i != symbol->s.ti.d.su.count))
+		if (likely(++i != symbol->s.ti->d.su.count))
 		    fprintf(ud->stream,"; ");
 	    }
 	    fprintf(ud->stream," }");
@@ -1943,13 +2020,13 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
     case DATATYPE_ENUM:
 	fprintf(ud->stream,"enum %s",symbol->name);
 	if (ud->meta) 
-	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti.byte_size);
+	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti->byte_size);
 	if (ud->detail) {
 	    fprintf(ud->stream," { ");
-	    list_for_each_entry(member,&(symbol->s.ti.d.e.members),member) {
+	    list_for_each_entry(member,&(symbol->s.ti->d.e.members),member) {
 		symbol_var_dump(member,&udn);
 		//symbol_var_dump(member,ud);
-		if (likely(++i != symbol->s.ti.d.su.count))
+		if (likely(++i != symbol->s.ti->d.su.count))
 		    fprintf(ud->stream,", ");
 	    }
 	    fprintf(ud->stream," }");
@@ -1971,43 +2048,43 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	 * function, it's safe to print details for it; otherwise, it's
 	 * not... I think!
 	 */
-	if (symbol->s.ti.type_datatype) {
-	    if (symbol->s.ti.type_datatype->type == SYMBOL_TYPE_TYPE
-		&& (symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_PTR
-		    || symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_VOID 
-		    || symbol->s.ti.type_datatype->s.ti.datatype_code == DATATYPE_BASE))
-		symbol_type_dump(symbol->s.ti.type_datatype,ud);
+	if (symbol->s.ti->type_datatype) {
+	    if (symbol->s.ti->type_datatype->type == SYMBOL_TYPE_TYPE
+		&& (symbol->s.ti->type_datatype->s.ti->datatype_code == DATATYPE_PTR
+		    || symbol->s.ti->type_datatype->s.ti->datatype_code == DATATYPE_VOID 
+		    || symbol->s.ti->type_datatype->s.ti->datatype_code == DATATYPE_BASE))
+		symbol_type_dump(symbol->s.ti->type_datatype,ud);
 	    else {
-		symbol_type_dump(symbol->s.ti.type_datatype,&udn);
+		symbol_type_dump(symbol->s.ti->type_datatype,&udn);
 	    }
 	    fprintf(ud->stream,"*");
 	}
 	else
-	    fprintf(ud->stream,"ptref%"PRIxOFFSET" *",
-		    symbol->s.ti.type_datatype_ref);
+	    fprintf(ud->stream,"ptref%"PRIxSMOFFSET" *",
+		    symbol->s.ti->type_datatype_ref);
 	break;
     case DATATYPE_FUNCTION:
 	if (ud->detail)
-	    symbol_type_dump(symbol->s.ti.type_datatype,ud);
+	    symbol_type_dump(symbol->s.ti->type_datatype,ud);
 
-	if (symbol->s.ti.isanon) 
+	if (symbol->s.ti->isanon) 
 	    fprintf(ud->stream,"()");
 	else if (symbol->name)
 	    fprintf(ud->stream,"(%s)",symbol->name);
 
 	if (ud->meta)
 	    fprintf(ud->stream," (prototyped=%d,external=%d) ",
-		    symbol->s.ti.isprototyped,symbol->s.ti.isexternal);
+		    symbol->s.ti->isprototyped,symbol->s.ti->isexternal);
 
 	if (ud->detail) {
 	    fprintf(ud->stream,"(");
 	    i = 0;
-	    list_for_each_entry(member,&(symbol->s.ti.d.f.args),member) {
+	    list_for_each_entry(member,&(symbol->s.ti->d.f.args),member) {
 		symbol_var_dump(member,ud);
-		if (likely(++i != symbol->s.ti.d.f.count))
+		if (likely(++i != symbol->s.ti->d.f.count))
 		    fprintf(ud->stream,", ");
 	    }
-	    if (symbol->s.ti.d.f.hasunspec) {
+	    if (symbol->s.ti->d.f.hasunspec) {
 		if (i)
 		    fprintf(ud->stream,",");
 		fprintf(ud->stream,"...");
@@ -2019,27 +2096,27 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
     case DATATYPE_TYPEDEF:
 	if (!ud->detail)
 	    fprintf(ud->stream,"%s",symbol->name);
-	else if (symbol->s.ti.type_datatype) {
+	else if (symbol->s.ti->type_datatype) {
 	    fprintf(ud->stream,"typedef ");
-	    symbol_type_dump(symbol->s.ti.type_datatype,ud);
+	    symbol_type_dump(symbol->s.ti->type_datatype,ud);
 	    fprintf(ud->stream," %s",symbol->name);
 	}
 	else 
-	    fprintf(ud->stream,"typedef tdtref%"PRIxOFFSET" %s",
-		    symbol->s.ti.type_datatype_ref,symbol->name);
+	    fprintf(ud->stream,"typedef tdtref%"PRIxSMOFFSET" %s",
+		    symbol->s.ti->type_datatype_ref,symbol->name);
 	break;
     case DATATYPE_BASE:
 	if (!ud->meta)
 	    fprintf(ud->stream,"%s",symbol->name);
 	else 
 	    fprintf(ud->stream,"%s (byte_size=%d,encoding=%d)",symbol->name,
-		    symbol->s.ti.byte_size,symbol->s.ti.d.v.encoding);
+		    symbol->s.ti->byte_size,symbol->s.ti->d.v.encoding);
 	break;
     case DATATYPE_BITFIELD:
 	fprintf(ud->stream,"bitfield %s",symbol->name);
 	break;
     default:
-	vwarn("unknown datatype_code %d!\n",symbol->s.ti.datatype_code);
+	vwarn("unknown datatype_code %d!\n",symbol->s.ti->datatype_code);
     }
 }
 
@@ -2062,8 +2139,8 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
     udn.detail = ud->detail;
 
     fprintf(ud->stream,"%ssymbol(",p);
-    if (SYMBOL_IS_TYPE(symbol) && symbol->s.ti.extname)
-	fprintf(ud->stream,"%s",symbol->s.ti.extname);
+    if (SYMBOL_IS_TYPE(symbol) && symbol->s.ti->extname)
+	fprintf(ud->stream,"%s",symbol->s.ti->extname);
     else
 	fprintf(ud->stream,"%s",symbol->name);
     fprintf(ud->stream,",%s,line=%d): ",

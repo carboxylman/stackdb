@@ -200,7 +200,7 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		if (epilogue_begin && candidate_symbol) {
 		    /* Use it if the address is in the function range. */
 		    if (symbol_contains_addr(candidate_symbol,address)) {
-			candidate_symbol->s.ii.d.f.epilogue_begin =	\
+			candidate_symbol->s.ii->d.f.epilogue_begin =	\
 			    (ADDR)address;
 			vdebug(3,LOG_D_DWARF,
 			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
@@ -220,14 +220,14 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		if (prologue_end && candidate_symbol) {
 		    /* Use it if the address is in the function range. */
 		    if (symbol_contains_addr(candidate_symbol,address)) {
-			candidate_symbol->s.ii.d.f.prologue_end = (ADDR)address;
+			candidate_symbol->s.ii->d.f.prologue_end = (ADDR)address;
 			vdebug(3,LOG_D_DWARF,
 			       "set_prologue_end: %s is 0x%"PRIxADDR"\n",
 			       candidate_symbol->name,(ADDR)address);
 
 			/* Unset auto detected flag; we have one for
 			   sure. */
-			candidate_symbol->s.ii.d.f.prologue_guessed = 0;
+			candidate_symbol->s.ii->d.f.prologue_guessed = 0;
 
 			/* Unset symbol so we don't try to use "auto"
 			   detection. */
@@ -256,13 +256,13 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		     * XXX: is this right?
 		     */
 		    if (symbol_contains_addr(symbol,address)) {
-			symbol->s.ii.d.f.prologue_end = (ADDR)address;
+			symbol->s.ii->d.f.prologue_end = (ADDR)address;
 			vdebug(3,LOG_D_DWARF,
 			       "assuming prologue_end of %s is 0x%"PRIxADDR"\n",
 			       symbol->name,(ADDR)address);
 
 			/* Set auto detected flag; we're just guessing! */
-			symbol->s.ii.d.f.prologue_guessed = 1;
+			symbol->s.ii->d.f.prologue_guessed = 1;
 		    }
 		    else {
 			vdebug(5,LOG_D_DWARF,
@@ -319,8 +319,6 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 			address = read_4ubyte_unaligned_inc(obo,linep);
 		    else
 			address = read_8ubyte_unaligned_inc(obo,linep);
-
-		    vwarn("ext op addr 0x%"PRIxADDR"\n",address);
 
 		    if (!symbol) {
 			symbol = debugfile_lookup_addr(debugfile,(ADDR)address);
