@@ -58,6 +58,14 @@ typedef uint32_t REGVAL;
 typedef int8_t REG;
 #define PRIiREG PRIi8
 
+/*
+ * We use small offsets for DWARF offset addrs.  Saves mem in symbol
+ * structures, which is very important.
+ */
+typedef int32_t SMOFFSET;
+#define PRIiSMOFFSET PRIi32
+#define PRIxSMOFFSET PRIx32
+
 #define DATA_BIG_ENDIAN 0
 #define DATA_LITTLE_ENDIAN 1
 
