@@ -10,8 +10,8 @@ SUBDIRS =
 
 include $(OBJDIR)/Makeconf
 
-CFLAGS += -I$(TOP_SRCDIR)/target -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include \
-	-I$(TOP_SRCDIR)/dwdebug -I$(OBJDIR)
+CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
+	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
 CFLAGS += -DDWDEBUG_USE_STRTAB
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")

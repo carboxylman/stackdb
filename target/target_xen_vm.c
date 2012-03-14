@@ -12,6 +12,8 @@
 #include <elf.h>
 #include <libelf.h>
 
+#include "config.h"
+
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
@@ -71,7 +73,10 @@ static int xc_refcnt = 0;
 
 static int xc_handle = -1;
 static int xce_handle = -1;
-static evtchn_port_or_error_t dbg_port = -1;
+#if !defined(XC_EVTCHN_PORT_T)
+#error "XC_EVTCHN_PORT_T undefined!"
+#endif
+static XC_EVTCHN_PORT_T dbg_port = -1;
 
 #define EF_TF (0x00000100)
 #define EF_IF (0x00000200)
@@ -499,7 +504,12 @@ static int xen_vm_attach_internal(struct target *target) {
 	}
 
 	dbg_port = xc_evtchn_bind_virq(xce_handle,VIRQ_DEBUGGER);
-	if (dbg_port < 0) {
+	/* Try to cast dbg_port to something signed.  Old xc versions
+	 * have a bug in that evtchn_port_t is declared as uint32_t, but
+	 * the function prototypes that return them can theoretically
+	 * return -1.  So, try to test for that...
+	 */
+	if ((int32_t)dbg_port < 0) {
 	    verror("failed to bind debug virq port: %s",strerror(errno));
 	    xc_evtchn_close(xce_handle);
 	    xc_interface_close(xc_handle);
