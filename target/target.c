@@ -102,7 +102,7 @@ struct debugfile *target_associate_debugfile(struct target *target,
     /*
      * Finally, load in the debuginfo!
      */
-    if (debugfile_load(debugfile)) {
+    if (debugfile_load(debugfile,NULL)) {
 	debugfile_free(debugfile);
 	return NULL;
     }
@@ -274,11 +274,11 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     datatype = symbol_type_skip_qualifiers(symbol->datatype);
     if (symbol->datatype != datatype)
 	vdebug(5,LOG_T_SYMBOL,"skipped from %s to %s for symbol %s\n",
-	       DATATYPE(symbol->datatype->s.ti.datatype_code),
-	       DATATYPE(datatype->s.ti.datatype_code),symbol->name);
+	       DATATYPE(symbol->datatype->datatype_code),
+	       DATATYPE(datatype->datatype_code),symbol->name);
     else 
 	vdebug(5,LOG_T_SYMBOL,"no skip; type for symbol %s is %s\n",
-	       symbol->name,DATATYPE(symbol->datatype->s.ti.datatype_code));
+	       symbol->name,DATATYPE(symbol->datatype->datatype_code));
 
     /* Check if this symbol is currently visible to us! */
     if (!(flags & LOAD_FLAG_NO_CHECK_VISIBILITY)) {
@@ -317,7 +317,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))
 	|| ((flags & LOAD_FLAG_AUTO_STRING) 
 	    && SYMBOL_IST_PTR(datatype) 
-	    && symbol_type_is_char(datatype->s.ti.type_datatype))) {
+	    && symbol_type_is_char(datatype->s.ti->type_datatype))) {
 	vdebug(5,LOG_T_SYMBOL,"auto_deref: starting ptr symbol %s\n",
 	       symbol->name);
 
@@ -328,7 +328,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	 * Don't allow any load flags through for this!  We don't want
 	 * to mmap just for pointers.
 	 */
-	if (!location_load(target,region,&(symbol->s.ii.l),LOAD_FLAG_NONE,
+	if (!location_load(target,region,&(symbol->s.ii->l),LOAD_FLAG_NONE,
 			   &ptraddr,target->ptrsize,symbol_chain,&range)) {
 	    verror("auto_deref: could not load ptr for symbol %s!\n",
 		   symbol->name);
@@ -344,7 +344,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	}
 
 	/* Skip past the pointer we just loaded. */
-	datatype = datatype->s.ti.type_datatype;
+	datatype = datatype->s.ti->type_datatype;
 
 	nptrs = 1;
 
@@ -379,7 +379,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		goto errout;
 	    }
 
-	    datatype = datatype->s.ti.type_datatype;
+	    datatype = datatype->s.ti->type_datatype;
 	    ++nptrs;
 
 	    vdebug(5,LOG_T_SYMBOL,"auto_deref pointer %d\n",nptrs);
@@ -431,7 +431,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 
 	value = value_create_noalloc(bsymbol,datatype);
 	value->mmap = location_mmap(target,(ptraddr) ? ptrregion : region,
-				    (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
+				    (ptraddr) ? &ptrloc : &(symbol->s.ii->l),
 				    flags,&value->buf,symbol_chain,NULL);
 	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
 	    value->buf = NULL;
@@ -448,7 +448,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	    }
 
 	    if (!location_load(target,(ptraddr) ? ptrregion: region,
-			       (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
+			       (ptraddr) ? &ptrloc : &(symbol->s.ii->l),
 			       flags,value->buf,value->bufsiz,symbol_chain,
 			       &value->range))
 		goto errout;
@@ -461,10 +461,10 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	ptrloc.loctype = LOCTYPE_REALADDR;
 	ptrloc.l.addr = ptraddr;
 
-	value = value_create(bsymbol,datatype);
+	value = value_create_type(datatype);
 
 	if (!location_load(target,region,
-			   (ptraddr) ? &ptrloc : &(symbol->s.ii.l),
+			   (ptraddr) ? &ptrloc : &(symbol->s.ii->l),
 			   flags,value->buf,value->bufsiz,symbol_chain,
 			   &value->range))
 	    goto errout;

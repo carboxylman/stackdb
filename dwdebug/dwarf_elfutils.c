@@ -204,12 +204,12 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 			    (ADDR)address;
 			vdebug(3,LOG_D_DWARF,
 			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
-			       candidate_symbol->name,(ADDR)address);
+			       symbol_get_name(candidate_symbol),(ADDR)address);
 		    }
 		    else {
 			vdebug(5,LOG_D_DWARF,
 			       "set_epilogue_begin: address 0x%"PRIxADDR" not in %s\n",
-			       (ADDR)address,candidate_symbol->name);
+			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
 		}
 
@@ -223,7 +223,7 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 			candidate_symbol->s.ii->d.f.prologue_end = (ADDR)address;
 			vdebug(3,LOG_D_DWARF,
 			       "set_prologue_end: %s is 0x%"PRIxADDR"\n",
-			       candidate_symbol->name,(ADDR)address);
+			       symbol_get_name(candidate_symbol),(ADDR)address);
 
 			/* Unset auto detected flag; we have one for
 			   sure. */
@@ -236,7 +236,7 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		    else {
 			vdebug(5,LOG_D_DWARF,
 			       "set_prologue_end: address 0x%"PRIxADDR" not in %s\n",
-			       (ADDR)address,candidate_symbol->name);
+			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
 		}
 
@@ -259,7 +259,7 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 			symbol->s.ii->d.f.prologue_end = (ADDR)address;
 			vdebug(3,LOG_D_DWARF,
 			       "assuming prologue_end of %s is 0x%"PRIxADDR"\n",
-			       symbol->name,(ADDR)address);
+			       symbol_get_name(symbol),(ADDR)address);
 
 			/* Set auto detected flag; we're just guessing! */
 			symbol->s.ii->d.f.prologue_guessed = 1;
@@ -267,7 +267,7 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		    else {
 			vdebug(5,LOG_D_DWARF,
 			       "address 0x%"PRIxADDR" not in %s\n",
-			       (ADDR)address,symbol->name);
+			       (ADDR)address,symbol_get_name(symbol));
 		    }
 
 		    /*
@@ -282,7 +282,7 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		    if (symbol) {
 			vdebug(3,LOG_D_DWARF,
 			       "found candidate prologue function %s at 0x%"PRIxADDR"\n",
-			       symbol->name,(ADDR)address);
+			       symbol_get_name(symbol),(ADDR)address);
 			candidate_symbol = symbol;
 		    }
 		    else 
@@ -325,7 +325,7 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 			if (symbol) {
 			    vdebug(3,LOG_D_DWARF,
 				   "found candidate prologue function %s at 0x%"PRIxADDR"\n",
-				   symbol->name,(ADDR)address);
+				   symbol_get_name(symbol),(ADDR)address);
 			    candidate_symbol = symbol;
 			}
 		    }

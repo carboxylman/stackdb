@@ -307,12 +307,12 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	for (i = chlen - 2; i > -1; --i) {
 	    symbol = array_list_item(symbol_chain,i);
 	    if (SYMBOL_IS_FUNCTION(symbol)) {
-		if (symbol->s.ii.d.f.fbisloclist) {
-		    fblist = symbol->s.ii.d.f.fblist;
+		if (symbol->s.ii->d.f.fbisloclist) {
+		    fblist = symbol->s.ii->d.f.fb.list;
 		    break;
 		}
-		else if (symbol->s.ii.d.f.fbissingleloc) {
-		    fbloc = symbol->s.ii.d.f.fbloc;
+		else if (symbol->s.ii->d.f.fbissingleloc) {
+		    fbloc = symbol->s.ii->d.f.fb.loc;
 		}
 	    }
 	}
@@ -432,7 +432,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	chlen = array_list_len(symbol_chain);
 	symbol = array_list_item(symbol_chain,chlen - 1);
 
-	if (!SYMBOL_IS_VAR(symbol) || !symbol->s.ii.ismember) {
+	if (!SYMBOL_IS_VAR(symbol) || !symbol->ismember) {
 	    vwarn("deepest symbol (%s) in chain is not member; cannot process MEMBER_OFFSET!\n",
 		  symbol->name);
 	    errno = EINVAL;
@@ -446,9 +446,9 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	for (i = chlen - 1; i > -1; --i) {
 	    symbol = array_list_item(symbol_chain,i);
 	    if (SYMBOL_IS_VAR(symbol)
-		&& symbol->s.ii.ismember
-		&& symbol->s.ii.l.loctype == LOCTYPE_MEMBER_OFFSET) {
-		totaloffset += symbol->s.ii.l.l.member_offset;
+		&& symbol->ismember
+		&& symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
+		totaloffset += symbol->s.ii->l.l.member_offset;
 		continue;
 	    }
 	    else if (SYMBOL_IS_VAR(symbol)
@@ -485,7 +485,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 		array_list_item_set(tmp_symbol_chain,i,
 				    array_list_item(symbol_chain,i));
 	}
-	top_addr = location_resolve(target,region,&top_enclosing_symbol->s.ii.l,
+	top_addr = location_resolve(target,region,&top_enclosing_symbol->s.ii->l,
 				    tmp_symbol_chain,NULL);
 	if (tmp_symbol_chain)
 	    array_list_free(tmp_symbol_chain);
@@ -521,47 +521,77 @@ ADDR location_resolve(struct target *target,struct memregion *region,
     return 0;
 }
 
-int location_resolve_function_start(struct target *target,
-				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				    struct memrange **range_saveptr) {
+int location_resolve_symbol_base(struct target *target,
+				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
+				 struct memrange **range_saveptr) {
     struct symbol *symbol = bsymbol->lsymbol->symbol;
     int i;
     ADDR obj_addr;
     struct symtab *symtab;
 
-    if (!addr_saveptr || !SYMBOL_IS_FUNCTION(symbol))
+    if (!addr_saveptr || !SYMBOL_IS_FULL_INSTANCE(symbol))
 	return -1;
 
-    if (symbol->s.ii.d.f.hasentrypc)
-	obj_addr = symbol->s.ii.d.f.entry_pc;
-    else if ((symtab = symbol->s.ii.d.f.symtab)) {
-	if (RANGE_IS_PC(&symtab->range)) 
-	    obj_addr = symtab->range.lowpc;
-	else if (RANGE_IS_LIST(&symtab->range)) {
-	    /* Find the lowest addr! */
-	    obj_addr = ADDRMAX;
-	    for (i = 0; i < symtab->range.rlist.len; ++i) {
-		if (symtab->range.rlist.list[i]->start < obj_addr)
-		    obj_addr = symtab->range.rlist.list[i]->start;
+    if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	if (symbol->s.ii->d.f.hasentrypc)
+	    obj_addr = symbol->s.ii->d.f.entry_pc;
+	else if ((symtab = symbol->s.ii->d.f.symtab)) {
+	    if (RANGE_IS_PC(&symtab->range)) 
+		obj_addr = symtab->range.r.a.lowpc;
+	    else if (RANGE_IS_LIST(&symtab->range)) {
+		/* Find the lowest addr! */
+		obj_addr = ADDRMAX;
+		for (i = 0; i < symtab->range.r.rlist.len; ++i) {
+		    if (symtab->range.r.rlist.list[i]->start < obj_addr)
+			obj_addr = symtab->range.r.rlist.list[i]->start;
+		}
+		vwarn("assuming function %s entry is lowest address in list 0x%"PRIxADDR"!\n",
+		      symbol->name,obj_addr);
 	    }
-	    vwarn("assuming function %s entry is lowest address in list 0x%"PRIxADDR"!\n",
-		  symbol->name,obj_addr);
+	    else {
+		vwarn("function %s range is not PC/list!\n",symbol->name);
+		return -1;
+	    }
 	}
 	else {
-	    vwarn("function %s range is not PC/list!\n",symbol->name);
+	    vwarn("function %s has no entry_pc nor symtab!\n",symbol->name);
 	    return -1;
 	}
     }
-    else {
-	vwarn("function %s has no entry_pc nor symtab!\n",symbol->name);
-	return -1;
+    else if (SYMBOL_IS_FULL_LABEL(symbol)) {
+	if (RANGE_IS_PC(&symbol->s.ii->d.l.range)) 
+	    obj_addr = symbol->s.ii->d.l.range.r.a.lowpc;
+	else if (RANGE_IS_LIST(&symbol->s.ii->d.l.range)) {
+	    /* Find the lowest addr! */
+	    obj_addr = ADDRMAX;
+	    for (i = 0; i < symbol->s.ii->d.l.range.r.rlist.len; ++i) {
+		if (symbol->s.ii->d.l.range.r.rlist.list[i]->start < obj_addr)
+		    obj_addr = symbol->s.ii->d.l.range.r.rlist.list[i]->start;
+	    }
+	    vwarn("assuming label %s entry is lowest address in list 0x%"PRIxADDR"!\n",
+		  symbol->name,obj_addr);
+	}
+	else {
+	    vwarn("label %s range is not PC/list!\n",symbol->name);
+	    return -1;
+	}
+    }
+    else if (SYMBOL_IS_FULL_VAR(symbol)) {
+	obj_addr = location_resolve(target,bsymbol->region,
+				    &bsymbol->lsymbol->symbol->s.ii->l,
+				    bsymbol->lsymbol->chain,range_saveptr);
+	if (!obj_addr && errno) {
+	    verror("could not resolve location for %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    return -1;
+	}
     }
 
     /* Translate the obj address to something real in this region. */
     *addr_saveptr = memregion_relocate(bsymbol->region,obj_addr,range_saveptr);
 
-    vdebug(3,LOG_T_LOC,"found start 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
-	   obj_addr,*addr_saveptr);
+    vdebug(3,LOG_T_LOC,"found base of '%s' 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
+	   bsymbol->lsymbol->symbol->name,obj_addr,*addr_saveptr);
 
     return 0;
 }
@@ -572,17 +602,17 @@ int location_resolve_function_prologue_end(struct target *target,
 					   struct memrange **range_saveptr) {
     struct symbol *symbol = bsymbol->lsymbol->symbol;
 
-    if (!addr_saveptr || !SYMBOL_IS_FUNCTION(symbol))
+    if (!addr_saveptr || !SYMBOL_IS_FULL_FUNCTION(symbol))
 	return -1;
 
-    if (!symbol->s.ii.d.f.prologue_guessed) {
+    if (!symbol->s.ii->d.f.prologue_guessed) {
 	vwarn("function %s has no prologue_end!\n",symbol->name);
 	return -1;
     }
 
     /* Translate the obj address to something real in this region. */
     *addr_saveptr = memregion_relocate(bsymbol->region,
-				       symbol->s.ii.d.f.prologue_end,
+				       symbol->s.ii->d.f.prologue_end,
 				       range_saveptr);
 
     return 0;

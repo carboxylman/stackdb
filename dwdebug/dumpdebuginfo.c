@@ -21,6 +21,8 @@
 #include <getopt.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/types.h>
+#include <regex.h>
 
 #include "log.h"
 #include "dwdebug.h"
@@ -35,15 +37,25 @@ int main(int argc,char **argv) {
     struct debugfile *debugfile;
     int detail = 0;
     int meta = 0;
-    int i;
+    int i, j;
     log_flags_t flags;
+    char *optargc;
+    int dotypes = 1;
+    int doglobals = 1;
+    int dosymtabs = 1;
+
+    int dlen = 0;
+    struct debugfile_load_opts **dlo_list = \
+	(struct debugfile_load_opts **)malloc(sizeof(*dlo_list));
+    dlo_list[dlen] = NULL;
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "dDMl:")) != -1) {
+    while ((ch = getopt(argc, argv, "dDMl:R:TGS")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
+	    vmi_set_log_level(debug);
 	    break;
 	case 'D':
 	    ++detail;
@@ -57,6 +69,34 @@ int main(int argc,char **argv) {
 		exit(-1);
 	    }
 	    vmi_set_log_flags(flags);
+	    break;
+	case 'R':
+	    optargc = strdup(optarg);
+
+	    struct debugfile_load_opts *opts = \
+		debugfile_load_opts_parse(optarg);
+
+	    if (!opts)
+		goto dlo_err;
+
+	    dlo_list[dlen] = opts;
+	    ++dlen;
+	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlen + 1));
+	    dlo_list[dlen] = NULL;
+	    free(optargc);
+	    break;
+    dlo_err:
+	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
+	    free(optargc);
+	    exit(-1);
+	case 'T':
+	    dotypes = 0;
+	    break;
+	case 'G':
+	    doglobals = 0;
+	    break;
+	case 'S':
+	    dosymtabs = 0;
 	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
@@ -74,8 +114,6 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
-    vmi_set_log_level(debug);
-
     debugfile = debugfile_filename_create(filename,DEBUGFILE_TYPE_MAIN);
     if (!debugfile) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
@@ -83,7 +121,27 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
-    if (debugfile_load(debugfile)) {
+    struct debugfile_load_opts *opts = NULL;
+    for (i = 0; dlo_list[i]; ++i) {
+	if (!dlo_list[i]->debugfile_regex_list
+	    || dlo_list[i]->debugfile_regex_list[0] == NULL) {
+	    opts = dlo_list[i];
+	    break;
+	}
+	else {
+	    for (j = 0; dlo_list[i]->debugfile_regex_list[j]; ++j) {
+		if (!regexec(dlo_list[i]->debugfile_regex_list[j],
+			     filename,0,NULL,0)) {
+		    opts = dlo_list[i];
+		    break;
+		}
+	    }
+	    if (opts)
+		break;
+	}
+    }
+
+    if (debugfile_load(debugfile,opts)) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
 		filename);
 	exit(-1);
@@ -97,7 +155,7 @@ int main(int argc,char **argv) {
     };
 
     if (argc < 2)
-	debugfile_dump(debugfile,&ud);
+	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs);
     else {
 	for (i = 1; i < argc; ++i) {
 	    struct lsymbol *s = debugfile_lookup_sym(debugfile,argv[i],".",

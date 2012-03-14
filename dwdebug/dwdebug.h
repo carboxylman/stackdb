@@ -23,6 +23,8 @@
 #include <stdio.h>
 #include <glib.h>
 #include <wchar.h>
+#include <sys/types.h>
+#include <regex.h>
 
 #include <elfutils/libdw.h>
 
@@ -61,6 +63,13 @@ struct range;
 struct loc_list_entry;
 struct loc_list;
 
+struct debugfile_load_opts {
+    regex_t **debugfile_regex_list;
+    regex_t **srcfile_regex_list;
+    regex_t **symbol_regex_list;
+    int quick;
+};
+
 typedef enum {
     DEBUGFILE_TYPE_KERNEL      = 0,
     DEBUGFILE_TYPE_KMOD        = 1,
@@ -85,9 +94,12 @@ extern char *SYMBOL_TYPE_STRINGS[];
 #define SYMBOL_IS_VAR(sym) (sym && (sym)->type == SYMBOL_TYPE_VAR)
 #define SYMBOL_IS_FUNCTION(sym) (sym && (sym)->type == SYMBOL_TYPE_FUNCTION)
 #define SYMBOL_IS_LABEL(sym) (sym && (sym)->type == SYMBOL_TYPE_LABEL)
+#define SYMBOL_IS_INSTANCE(sym) (sym && (sym)->type != SYMBOL_TYPE_TYPE)
 
 #define SYMBOL_IS_FULL_TYPE(sym) (sym && (sym)->type == SYMBOL_TYPE_TYPE \
 				  && (sym)->s.ti)
+#define SYMBOL_IS_FULL_INSTANCE(sym) (sym && (sym)->type != SYMBOL_TYPE_TYPE \
+				      && (sym)->s.ii)
 #define SYMBOL_IS_FULL_VAR(sym) (sym && (sym)->type == SYMBOL_TYPE_VAR \
 				 && (sym)->s.ii)
 #define SYMBOL_IS_FULL_FUNCTION(sym) (sym && (sym)->type == SYMBOL_TYPE_FUNCTION \
@@ -100,14 +112,18 @@ typedef enum {
     LOADTYPE_PARTIAL      = 1,
 } load_type_t;
 
+#define SYMBOL_IS_FULL(sym) ((sym)->loadtag == LOADTYPE_FULL)
+#define SYMBOL_IS_PARTIAL(sym) ((sym)->loadtag == LOADTYPE_PARTIAL)
+
 /*
  * In the symbol struct, these fields share a 32-bit int, divided this
  * way.  If you add more symbol types, or load types, adjust these
  * accordingly!
  */
-#define LOAD_TYPE_BITS   1
-#define SYMBOL_TYPE_BITS 3
-#define SRCLINE_BITS     28
+#define LOAD_TYPE_BITS      1
+#define SYMBOL_TYPE_BITS    3
+#define DATATYPE_CODE_BITS  4
+#define SRCLINE_BITS       19
 
 /* We use this enum type for filtering during symbol searching, when the
  * caller might accept multiple different symbol types.
@@ -138,40 +154,48 @@ typedef enum {
 extern char *DATATYPE_STRINGS[];
 #define DATATYPE(n) (((n) < __DATATYPE_MAX) ? DATATYPE_STRINGS[(n)] : NULL)
 
-#define DATATYPE_CODE_BITS 4
-
-#define SYMBOL_IST_VOID(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_VOID)
-#define SYMBOL_IST_ARRAY(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_ARRAY)
-#define SYMBOL_IST_STRUCT(sym)   (SYMBOL_IS_FULL_TYPE(sym) \
-				  && (sym)->s.ti->datatype_code == DATATYPE_STRUCT)
-#define SYMBOL_IST_ENUM(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_ENUM)
-#define SYMBOL_IST_PTR(sym)      (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_PTR)
-#define SYMBOL_IST_FUNCTION(sym) (SYMBOL_IS_FULL_TYPE(sym) \
-				  && (sym)->s.ti->datatype_code \
+#define SYMBOL_IST_VOID(sym)     (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_VOID)
+#define SYMBOL_IST_ARRAY(sym)    (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_ARRAY)
+#define SYMBOL_IST_FULL_ARRAY(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
+				       && (sym)->datatype_code == DATATYPE_ARRAY)
+#define SYMBOL_IST_STRUCT(sym)   (SYMBOL_IS_TYPE(sym) \
+				  && (sym)->datatype_code == DATATYPE_STRUCT)
+#define SYMBOL_IST_ENUM(sym)     (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_ENUM)
+#define SYMBOL_IST_PTR(sym)      (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_PTR)
+#define SYMBOL_IST_FUNCTION(sym) (SYMBOL_IS_TYPE(sym) \
+				  && (sym)->datatype_code \
 				                == DATATYPE_FUNCTION)
-#define SYMBOL_IST_TYPEDEF(sym)  (SYMBOL_IS_FULL_TYPE(sym) \
-				  && (sym)->s.ti->datatype_code \
+#define SYMBOL_IST_FULL_FUNCTION(sym) (SYMBOL_IS_FULL_TYPE(sym) \
+				       && (sym)->datatype_code \
+				                == DATATYPE_FUNCTION)
+#define SYMBOL_IST_TYPEDEF(sym)  (SYMBOL_IS_TYPE(sym) \
+				  && (sym)->datatype_code \
 				                == DATATYPE_TYPEDEF)
-#define SYMBOL_IST_UNION(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_UNION)
-#define SYMBOL_IST_BASE(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_BASE)
-#define SYMBOL_IST_CONST(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_CONST)
-#define SYMBOL_IST_VOL(sym)      (SYMBOL_IS_FULL_TYPE(sym) \
-			          && (sym)->s.ti->datatype_code == DATATYPE_VOL)
-#define SYMBOL_IST_BITFIELD(sym) (SYMBOL_IS_FULL_TYPE(sym) \
-				  && (sym)->s.ti->datatype_code \
+#define SYMBOL_IST_UNION(sym)    (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_UNION)
+#define SYMBOL_IST_BASE(sym)     (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_BASE)
+#define SYMBOL_IST_CONST(sym)    (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_CONST)
+#define SYMBOL_IST_VOL(sym)      (SYMBOL_IS_TYPE(sym) \
+			          && (sym)->datatype_code == DATATYPE_VOL)
+#define SYMBOL_IST_BITFIELD(sym) (SYMBOL_IS_TYPE(sym) \
+				  && (sym)->datatype_code \
 				                == DATATYPE_BITFIELD)
 /* convenient! */
-#define SYMBOL_IST_STUN(sym)     (SYMBOL_IS_FULL_TYPE(sym) \
-	                          && ((sym)->s.ti->datatype_code \
+#define SYMBOL_IST_STUN(sym)     (SYMBOL_IS_TYPE(sym) \
+	                          && ((sym)->datatype_code \
 	                                        == DATATYPE_STRUCT \
-	                              || (sym)->s.ti->datatype_code \
+	                              || (sym)->datatype_code \
+				                == DATATYPE_UNION))
+#define SYMBOL_IST_FULL_STUN(sym) (SYMBOL_IS_FULL_TYPE(sym) \
+				   && ((sym)->datatype_code \
+				                == DATATYPE_STRUCT \
+				       || (sym)->datatype_code \
 				                == DATATYPE_UNION))
 
 typedef enum {
@@ -231,7 +255,10 @@ struct debugfile *debugfile_filename_create(char *filename,debugfile_type_t type
 struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
 				   char *name,char *version,char *idstr);
 /* Populate a libsymd debugfile with DWARF debuginfo from an ELF file. */
-int debugfile_load(struct debugfile *debugfile);
+int debugfile_load(struct debugfile *debugfile,struct debugfile_load_opts *opts);
+
+struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr);
+void debugfile_load_opts_free(struct debugfile_load_opts *opts);
 
 char *debugfile_build_idstr(char *filename,char *name,char *version);
 int debugfile_filename_info(char *filename,char **realfilename,
@@ -243,21 +270,20 @@ struct symbol *debugfile_find_type(struct debugfile *debugfile,
 int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol);
 int debugfile_add_type_fakename(struct debugfile *debugfile,
 				char *fakename,struct symbol *symbol);
-void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud);
+void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
+		    int types,int globals,int symtabs);
 void debugfile_free(struct debugfile *debugfile);
 
 /**
  ** Symbol tables.
  **/
-struct symtab *symtab_create(struct debugfile *debugfile,
+struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 			     char *srcfilename,char *compdirname,
 			     int language,char *producer);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
 			   struct symbol *symbol,OFFSET anonaddr);
-/* These symtab_set functions are about dealing with memory stuff, not
- * about hiding symtabs from dwarf or anything.
- */
+char *symtab_get_name(struct symtab *symtab);
 void symtab_set_name(struct symtab *symtab,char *srcfilename);
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname);
 void symtab_set_producer(struct symtab *symtab,char *producer);
@@ -271,11 +297,12 @@ int symtab_str_in_strtab(struct symtab *symtab,char *strp);
  ** Symbols.
  **/
 struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
-			     char *name,symbol_type_t symtype);
-struct symbol *symbol_create_full(struct symtab *symtab,SMOFFSET offset,
-				  char *name,symbol_type_t symtype);
-void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
+			     char *name,symbol_type_t symtype,int full);
+char *symbol_get_name(struct symbol *symbol);
+char *symbol_get_name_orig(struct symbol *symbol);
 void symbol_set_name(struct symbol *symbol,char *name);
+void symbol_build_extname(struct symbol *symbol);
+void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
 void symbol_set_srcline(struct symbol *symbol,int srcline);
 
 int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr);
@@ -297,6 +324,8 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_free(struct symbol *symbol);
 
 struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
+char *lsymbol_get_name(struct lsymbol *lsymbol);
+struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol);
 void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
 void lsymbol_free(struct lsymbol *lsymbol);
 
@@ -497,6 +526,14 @@ struct debugfile {
     GHashTable *srcfiles;
 
     /*
+     * Each CU debugfile gets its own symtable.  This is a map between
+     * CU offsets (i.e., in aranges and pubnames) and symtabs.
+     *
+     * h(offset) -> struct symtab *
+     */
+    GHashTable *cuoffsets;
+
+    /*
      * Assume that, per-debug-info file, type names are unique -- i.e.,
      * they are not per-srcfile foreach srcfile in the debugfile.
      *
@@ -528,6 +565,16 @@ struct debugfile {
      * h(address) = struct symbol *
      */
     GHashTable *addresses;
+
+    /*
+     * Any symbol in the pubnames table for any CUs in this debugfile is
+     * in here, with a pointer to its global DIE offset (i.e., from
+     * start of debug_info section.  This tells us what we need to load
+     * IF we don't already have @identifier.
+     *
+     * h(identifier) = global_die_offset
+     */
+    GHashTable *pubnames;
 };
 
 struct range_list_entry {
@@ -547,9 +594,9 @@ struct range {
 	struct {
 	    ADDR lowpc;
 	    ADDR highpc;
-	};
+	} a;
 	struct range_list rlist;
-    };
+    } r;
 };
 
 struct loc_list_entry {
@@ -583,6 +630,8 @@ struct location {
     } l;
 };
 
+    
+
 /*
  * Symbol tables are mostly just backreferences to the objects they are
  * associated with (the parent debugfile they are in, and the srcfile
@@ -597,6 +646,12 @@ struct symtab {
     /* If this was a source filename, a compilation dir should be set. */
     char *compdirname;
 
+    /*
+     * Any symbol in the pubnames table for any CUs in this debugfile is
+     * in here, with a pointer to its CU's symtab.
+     */
+    GHashTable *pubnames;
+
     /* The range for this symtab is either a list of ranges, or a
      * low_pc/high_pc range.
      */
@@ -604,6 +659,11 @@ struct symtab {
 
     char *producer;
     int language;
+
+    /* The offset where this symtab came from.  For CU symtabs, it is
+     * the CU; for function symtabs, it is the function's DIE.
+     */
+    SMOFFSET ref;
 
     /*
      * If this symtab is a child, this is its parent.
@@ -648,47 +708,6 @@ struct symbol {
      */
     char *name;
 
-    /* The primary symbol table we are resident in. */
-    struct symtab *symtab;
-
-    /* Our refcnt. */
-    REFCNT refcnt;
-
-    /* Our offset location in the debugfile. */
-    SMOFFSET ref;
-
-    /* If we see the use of the type before the type, or we're doing
-     * partial loads, we can only fill in the ref and fill the datatype
-     * in a postpass.
-     */
-    SMOFFSET datatype_ref;
-
-    /* Are we full or partial? */
-    load_type_t loadtag:LOAD_TYPE_BITS;
-
-    /* The kind of symbol we are. */
-    symbol_type_t type:SYMBOL_TYPE_BITS;
-
-    /* Where we exist. */
-    unsigned int srcline:SRCLINE_BITS;
-
-    /* If not a SYMBOL_TYPE_TYPE, our data type.
-     * For functions, it is the return type; for anything else, its data
-     * type.
-     */
-    struct symbol *datatype;
-
-    /* If this symbol is a member of another, this is its list entry. */
-    /* XXX: maybe move this into the type detail stuff to save mem? */
-    struct list_head member;
-
-    union {
-	struct symbol_type *ti;
-	struct symbol_instance *ii;
-    } s;
-};
-
-struct symbol_type {
     /*
      * If we copy the string table from the ELF binary
      * brute-force to save on lots of mallocs per symbol name,
@@ -709,13 +728,66 @@ struct symbol_type {
      */
     char *extname;
 
+    /* The primary symbol table we are resident in. */
+    struct symtab *symtab;
+
+    /* Are we full or partial? */
+    load_type_t loadtag:LOAD_TYPE_BITS;
+
+    /* The kind of symbol we are. */
+    symbol_type_t type:SYMBOL_TYPE_BITS;
+
+    /* If this is a type symbol, which type. */
     datatype_code_t datatype_code:DATATYPE_CODE_BITS;
 
-    uint8_t isanon:1,
-            isvoid:1,
-	    isexternal:1,
-	    isprototyped:1;
+    unsigned int isexternal:1,
+	isprototyped:1,
+	isparam:1,
+	ismember:1,
+	isenumval:1,
+	isinlineinstance:1;
 
+    /* Where we exist. */
+    unsigned int srcline:SRCLINE_BITS;
+
+    /* Our refcnt. */
+    REFCNT refcnt;
+
+    /* Our offset location in the debugfile. */
+    SMOFFSET ref;
+
+    /*
+     * If this is a type symbol, datatype_ref and datatype are used as
+     * part of its type definition when the definition references
+     * another type (i.e., typedefs).
+     *
+     * If this is an instance symbol, datatype_ref and datatype are the
+     * instance's type.
+     *
+     * If we see the use of the type before the type, or we're doing
+     * partial loads, we can only fill in the ref and fill the datatype
+     * in a postpass.
+     */
+    SMOFFSET datatype_ref;
+
+    /* If not a SYMBOL_TYPE_TYPE, our data type.
+     * For functions, it is the return type; for anything else, its data
+     * type.
+     */
+    struct symbol *datatype;
+
+    /* If this symbol has an address (or multiple addresses, or a range
+     * of addresses, this is the smallest one.
+     */
+    ADDR base_addr;
+
+    union {
+	struct symbol_type *ti;
+	struct symbol_instance *ii;
+    } s;
+};
+
+struct symbol_type {
     uint16_t byte_size;
 
     /* If we see the use of the type before the type, we
@@ -760,14 +832,8 @@ struct symbol_type {
 };
 
 struct symbol_instance {
-    uint8_t isparam:1,
-	    ismember:1,
-	    isenumval:1,
-	    isdeclinline:1,
-	    isinlined:1,
-	    isinlineinstance:1,
-	    isexternal:1,
-	    isprototyped:1;
+    uint8_t isdeclinline:1,
+	    isinlined:1;
 
     /* If this instance is inlined, these point back to the
      * source for the inlined instance.  If it was a forward ref
@@ -798,15 +864,23 @@ struct symbol_instance {
 		        * single location.
 			*/
 	    union {
-		struct loc_list *fblist;
-		struct location *fbloc;
-	    };
+		struct loc_list *list;
+		struct location *loc;
+	    } fb;
 	    struct symtab *symtab;
 	    ADDR entry_pc;
 	    ADDR prologue_end;
 	    ADDR epilogue_begin;
 	} f;
 	struct {
+	    /* If this symbol is a member of another, this is its list
+	     * entry.  Right now, only variable symbols are members.
+	     * Note that we also keep a pointer back to the symbol
+	     * containing this symbol_instance struct; need this for
+	     * list traversals.
+	     */
+	    struct list_head member;
+	    struct symbol *member_symbol;
 	    uint16_t byte_size;
 	    uint16_t bit_offset;
 	    uint16_t bit_size;

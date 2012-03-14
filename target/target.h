@@ -166,9 +166,9 @@ struct location *location_resolve_loclist(struct target *target,
 					  struct memregion *region,
 					  struct location *location);
 int location_can_mmap(struct location *location,struct target *target);
-int location_resolve_function_start(struct target *target,
-				    struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				    struct memrange **range_saveptr);
+int location_resolve_symbol_base(struct target *target,
+				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
+				 struct memrange **range_saveptr);
 int location_resolve_function_prologue_end(struct target *target,
 					   struct bsymbol *bsymbol,
 					   ADDR *addr_saveptr,
