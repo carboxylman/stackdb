@@ -36,6 +36,7 @@ struct action;
 struct target;
 struct memrange;
 struct lsymbol;
+struct bsymbol;
 
 typedef int (*probe_handler_t)(struct probe *probe);
 
@@ -90,6 +91,11 @@ typedef enum {
  * new handle to the probe. Alternatively, the function can return a value of
  * -1 indicating that it failed to register the probe.
  */
+struct probe *probe_register_symbol(struct target *target,struct bsymbol *bsymbol,
+				    probepoint_style_t style,
+				    probepoint_whence_t whence,
+				    probe_handler_t pre_handler,
+				    probe_handler_t post_handler);
 struct probe *probe_register_break(struct target *target,ADDR addr,
 				   struct memrange *range,
 				   probepoint_style_t style,

@@ -38,7 +38,7 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h target.h target_api.h \
 	$(TOP_SRCDIR)/include/output.h
 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
-	symbol.lo value.lo target_linux_userproc.lo probe.lo
+	symbol.lo value.lo target_linux_userproc.lo probe.lo probe_lib.lo
 ifeq ($(ENABLE_XENACCESS),"1")
 	OBJECTS += target_xen_vm.lo
 endif
