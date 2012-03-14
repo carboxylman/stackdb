@@ -1225,6 +1225,18 @@ int probepoint_bp_handler(struct target *target,
 		    break;
 		}
 	    }
+
+	    /*
+	     * XXX: for now, always force single step even for HW
+	     * breakpoints, since the Xen VM backend will get stuck in
+	     * an infinite loop at the breakpoint location.
+	     *
+	     * For whatever reason, this does not happen for the Linux
+	     * userspace process target.  Until we know why, just always
+	     * single step here.
+	     */
+	    doit = 1;
+	    
 	    if (!doit) {
 		probepoint->state = PROBE_BP_SET;
 
