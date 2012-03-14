@@ -1,0 +1,102 @@
+To build this software, you must have installed
+
+  * glib (>= 2.14, I believe);
+  * elfutils (>= 0.137 should be fine, but ideally you will want
+    something much newer, such as 0.148 or 0.152);
+
+Optionally, you could also install
+
+  * distorm
+  * xenaccess (which requires Xen libs like xenctrl, xs)
+
+to include support for x86 and x86_64 disassembly, and Xen target
+backends, respectively.
+
+In the following two sections, we provide instructions for building
+dependencies, followed by instructions for building this package.
+
+
+BUILDING dependencies.
+
+
+  glib:
+
+Grab /proj/a3/vmi-deps/glib-2.30.2.tar.bz2
+(http://ftp.gnome.org/pub/gnome/sources/glib/2.30/glib-2.30.2.tar.bz2);
+unpack; and configure like this:
+
+  $ ./configure --prefix=/opt/vmi/glib
+
+We suggest you put glib in /opt to prevent other system binaries from
+being linked with it.  This could happen if you install it to
+/usr/local, since your LD configuration might include /usr/local/lib.
+This would be bad, so use /opt.
+
+Then make, install like normal.
+
+
+  elfutils:
+
+Grab /proj/a3/vmi-deps/elfutils-0.152.tar.bz2
+(https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-0.152.tar.bz2);
+unpack; and configure like this (but see note below first!):
+
+  $ ./configure --prefix=/opt/vmi/elfutils --with-zlib --with-bzlib \
+        --enable-debugpred
+
+(you can also add the `--program-prefix=vmi-eu-' argument so that you
+don't have confusion between `readelf' and other binaries from the
+system elfutils... but this should not happen if you install to
+/opt/vmi/elfutils, since /opt/vmi/elfutils/usr/bin is probably not going
+to be in your PATH!).
+
+NOTE: if you are building on an ancient Linux (i.e., Fedora 8), you may
+need some additional patches when building elfutils.  If you are
+building on Emulab, you can find these at
+
+  /proj/a3/vmi-deps/elfutils-portability.patch 
+    (https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-portability.patch)
+  /proj/a3/vmi-deps/elfutils-robustify.patch
+    (https://fedorahosted.org/releases/e/l/elfutils/0.152/elfutils-robustify.patch)
+
+Just apply them in this order, then configure, make, and install
+
+
+  distorm:
+
+You can either copy the /proj/a3/vmi-deps/distorm dir to your node, and
+do
+
+  $ cd distorm/make/linux ; make clean ; make install
+
+(distorm does not install its headers correctly)
+
+  $ cd ../..; cp -p distorm/include/* /usr/local/include
+
+Alternately, you can download distorm from
+http://code.google.com/p/distorm/downloads/detail?name=distorm3-1.0.zip .
+
+You may need to edit its build config or Makefiles to change the prefix
+to /usr/local (or wherever you like).
+
+
+BUILDING vmi.
+
+  $ cd vmi ; autoconf ; cd ..
+  $ mkdir vmi.obj ; cd vmi.obj
+  $ ../vmi/configure --prefix=/usr/local --with-glib=/opt/vmi/glib \
+        --with-distorm=/usr/local --with-elfutils=/opt/vmi/elfutils
+  $ make
+
+and hopefully things should work.  
+
+Once it builds, you should be able to run
+
+  $ sudo LD_LIBRARY_PATH=/opt/vmi/elfutils/lib:/opt/vmi/glib/lib:/usr/local/lib:/usr/lib \
+        target/dumptarget -m <vm_name> sys_open
+
+and watch things happen.
+
+There is also the `dwdebug/dumpdebuginfo' program that you can run on a 
+single ELF file containing .debug_info section(s); it will dump most of
+the symbol information it reads if you pass it the '-D' and '-M' args.
