@@ -386,7 +386,7 @@ struct target *xen_vm_attach(char *domain) {
     target->ret_instrs_len = 1;
     target->ret_instr_count = 1;
 
-    target->full_ret_instrs = malloc(1);
+    target->full_ret_instrs = malloc(2);
     /* LEAVE */
     *(char *)(target->full_ret_instrs) = 0xc9;
     /* RET */
