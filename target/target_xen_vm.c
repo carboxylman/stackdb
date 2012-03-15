@@ -1136,6 +1136,9 @@ static target_status_t xen_vm_monitor(struct target *target) {
 			return TSTATUS_ERROR;
 		    }
 
+		    /* Clear dreg for next iteration. */
+		    dreg = -1;
+
 		    target->bp_handler(target,dpp);
 		    goto again;
 		}
@@ -1580,6 +1583,12 @@ static int xen_vm_flush_context(struct target *target) {
 	/* Invalidate our cache. */
 	xstate->context_dirty = 0;
 	xstate->context_valid = 0;
+
+	vdebug(4,LOG_T_XV,
+	       "debug registers (our copy): 0x%"PRIxADDR",0x%"PRIxADDR
+	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
+	       xstate->dr[0],xstate->dr[1],xstate->dr[2],xstate->dr[3],
+	       xstate->dr[6],xstate->dr[7]);
     }
 
     /* Invalidate dominfo here too so we reload it. */
