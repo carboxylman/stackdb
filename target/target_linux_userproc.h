@@ -23,7 +23,8 @@
 
 /* linux userproc target ops */
 struct target *linux_userproc_attach(int pid);
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp);
+struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
+				     int keepstdin,char *outfile,char *errfile);
 int linux_userproc_last_signo(struct target *target);
 int linux_userproc_stopped_by_syscall(struct target *target);
 

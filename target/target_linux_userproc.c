@@ -45,7 +45,8 @@
  * Prototypes.
  */
 struct target *linux_userproc_attach(int pid);
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp);
+struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
+				     int keepstdin,char *outfile,char *errfile);
 
 static int linux_userproc_init(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
@@ -341,7 +342,433 @@ struct target *linux_userproc_attach(int pid) {
     return target;
 }
 
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp) {
+struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
+				     int keepstdin,char *outfile,char *errfile) {
+    struct linux_userproc_state *lstate;
+    struct target *target;
+    int pid;
+    int newfd;
+    int dynamic = 0;
+    Elf *elf = NULL;
+    Elf_Scn *scn;
+    GElf_Shdr shdr_mem;
+    GElf_Shdr *shdr;
+    char *name;
+    size_t shstrndx;
+    char *eident = NULL;
+    int is64 = 0;
+    int fd = -1;
+    int pstatus;
+
+#if __WORDSIZE == 64
+#define LUP_SC_EXEC             59
+#define LUP_SC_MPROTECT         10
+#define LUP_SC_MMAP              9
+#define LUP_SC_MUNMAP           11
+#define LUP_SC_MMAP2             9 /* no mmap2 */
+#define LUP_SC_PRCTL           157
+#define LUP_SC_ARCH_PRCTL      158
+#define LUP_SC_SET_THREAD_AREA 205
+#else
+#define LUP_SC_EXEC             11
+#define LUP_SC_MPROTECT        125
+#define LUP_SC_MMAP             90
+#define LUP_SC_MUNMAP           91
+#define LUP_SC_MMAP2           192
+#define LUP_SC_PRCTL           172
+#define LUP_SC_ARCH_PRCTL      172 /* no arch_prctl */
+#define LUP_SC_SET_THREAD_AREA 243
+#endif
+
+    struct user_regs_struct uregs;
+#if __WORDSIZE == 64
+    unsigned long orig_eax;
+#else
+    long int orig_eax;
+#endif
+    REGVAL syscall = 0;
+
+    /* Read the binary and see if it is a dynamic or statically-linked
+     * executable.  If it's dynamic, we look for one sequence of
+     * syscalls to infer when the the fully-linked program is in
+     * memory.  If it's static, we look for another (much simpler)
+     * sequence.
+     */
+    if ((fd = open(filename,0,O_RDONLY)) < 0) {
+	verror("open %s: %s\n",filename,strerror(errno));
+	return NULL;
+    }
+
+    target = target_create("linux_userspace_process",NULL,
+			   &linux_userspace_process_ops);
+    if (!target) {
+	errno = ENOMEM;
+	return NULL;
+    }
+
+    target->live = 1;
+    target->writeable = 1;
+
+    elf_version(EV_CURRENT);
+    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
+	verror("elf_begin %s: %s\n",filename,elf_errmsg(elf_errno()));
+	goto errout;
+    }
+
+    /* read the ident stuff to get ELF byte size */
+    if (!(eident = elf_getident(elf,NULL))) {
+	verror("elf_getident %s: %s\n",filename,elf_errmsg(elf_errno()));
+	goto errout;
+    }
+
+    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
+	is64 = 0;
+	vdebug(3,LOG_T_LUP,"32-bit %s\n",filename);
+    }
+    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
+	is64 = 1;
+    }
+    else {
+	verror("unknown elf class %d; not 32/64 bit!\n",
+	       (uint8_t)eident[EI_CLASS]);
+	goto errout;
+    }
+
+    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
+	target->wordsize = 4;
+	vdebug(3,LOG_T_LUP,"32-bit %s\n",filename);
+    }
+    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
+	target->wordsize = 8;
+	vdebug(3,LOG_T_LUP,"64-bit %s\n",filename);
+    }
+    else {
+	verror("unknown elf class %d; not 32/64 bit!\n",
+	       (uint8_t)eident[EI_CLASS]);
+	free(target);
+	elf_end(elf);
+	return NULL;
+    }
+    target->ptrsize = target->wordsize;
+
+    if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
+	target->endian = DATA_LITTLE_ENDIAN;
+	vdebug(3,LOG_T_LUP,"little endian %s\n",filename);
+    }
+    else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
+	target->endian = DATA_BIG_ENDIAN;
+	vdebug(3,LOG_T_LUP,"big endian %s\n",filename);
+    }
+    else {
+	verror("unknown elf data %d; not big/little endian!\n",
+	       (uint8_t)eident[EI_DATA]);
+	free(target);
+	elf_end(elf);
+	return NULL;
+    }
+
+#if _INT_ELFUTILS_VERSION >= 152
+    if (elf_getshdrstrndx(elf,&shstrndx) < 0) {
+#else 
+    if (elf_getshstrndx(elf,&shstrndx) < 0) {
+#endif
+	verror("cannot get section header string table index\n");
+	goto errout;
+    }
+
+    scn = NULL;
+    while ((scn = elf_nextscn(elf,scn)) != NULL) {
+	shdr = gelf_getshdr(scn,&shdr_mem);
+
+	if (shdr && shdr->sh_size > 0) {
+	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
+
+	    if (strcmp(name,".dynamic") == 0) {
+		vdebug(2,LOG_T_LUP,
+		       "found %s section (%d) in executable %s; dynamic\n",
+		       name,shdr->sh_size,filename);
+		dynamic = 1;
+		break;
+	    }
+	}
+    }
+    if (!dynamic)
+	vdebug(2,LOG_T_LUP,"no %s section in executable %s; static\n",
+	       ".dynamic",filename);
+
+    elf_end(elf);
+    elf = NULL;
+    close(fd);
+    fd = -1;
+
+    /* Which register is the fbreg is dependent on host cpu type, not
+     * target cpu type.
+     */
+#if __WORDSIZE == 64
+    target->fbregno = 6;
+    target->spregno = 7;
+    target->ipregno = 16;
+#else
+    target->fbregno = 5;
+    target->spregno = 4;
+    target->ipregno = 8;
+#endif
+
+    target->breakpoint_instrs = malloc(1);
+    *(char *)(target->breakpoint_instrs) = 0xcc;
+    target->breakpoint_instrs_len = 1;
+    target->breakpoint_instr_count = 1;
+
+    target->ret_instrs = malloc(1);
+    /* RET */
+    *(char *)(target->ret_instrs) = 0xc3;
+    target->ret_instrs_len = 1;
+    target->ret_instr_count = 1;
+
+    target->full_ret_instrs = malloc(1);
+    /* LEAVE */
+    *(char *)(target->full_ret_instrs) = 0xc9;
+    /* RET */
+    *(((char *)(target->full_ret_instrs))+1) = 0xc3;
+    target->full_ret_instrs_len = 2;
+    target->full_ret_instr_count = 2;
+
+    lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
+    if (!lstate) {
+	free(target);
+	errno = ENOMEM;
+	return NULL;
+    }
+    memset(lstate,0,sizeof(*lstate));
+
+    target->state = lstate;
+
+    if ((pid = fork()) > 0) {
+	lstate->pid = pid;
+	
+	/* Parent; wait for ptrace to signal us. */
+	vdebug(3,LOG_T_LUP,"waiting for ptrace traceme pid %d to exec\n",pid);
+     again:
+	vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
+	if (waitpid(pid,&pstatus,0) < 0) {
+	    if (errno == ECHILD || errno == EINVAL) {
+		verror("waitpid(%d): %s\n",pid,strerror(errno));
+		return NULL;
+	    }
+	    else {
+		if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
+		    verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
+		    return NULL;
+		}
+		goto again;
+	    }
+	}
+	if (WIFSTOPPED(pstatus)) {
+	    /* Ok, this was a ptrace event; if it was a syscall, figure out
+	     * which one.
+	     */
+	    if (WSTOPSIG(pstatus) == SIGTRAP) {
+		vdebug(3,LOG_T_LUP,"ptrace traceme: pid %d has exec'd\n",pid);
+		if (ptrace(PTRACE_GETREGS,pid,0,&uregs) < 0) {
+		    vwarn("could not read EAX to deciper exec syscall!\n");
+		}
+		else {
+#if __WORDSIZE == 64
+		    orig_eax = uregs.orig_rax;
+#else
+		    orig_eax = uregs.orig_eax;
+#endif
+		    vdebug(5,LOG_T_LUP,"exec syscall: %lu\n",orig_eax);
+		}
+	    }
+	    else {
+		vdebug(5,LOG_T_LUP,"exec hunt sig (no trap)\n");
+		if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
+		    verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
+		    return NULL;
+		}
+		goto again;
+	    }
+	}
+	else {
+	    if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
+		verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
+		return NULL;
+	    }
+	    goto again;
+	}
+    }
+    else if (!pid) {
+	if (!keepstdin) 
+	    close(STDIN_FILENO);
+
+	if (outfile && strcmp(outfile,"-") != 0) {
+	    newfd = open(outfile,O_CREAT | O_APPEND | O_WRONLY,
+			 S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP);
+	    if (newfd < 0) {
+		verror("open(%s): %s\n",outfile,strerror(errno));
+		exit(-1);
+	    }
+	    dup2(newfd,STDOUT_FILENO);
+	}
+	else if (!outfile) {
+	    newfd = open("/dev/null",O_WRONLY);
+	    dup2(newfd,STDOUT_FILENO);
+	}
+
+	if (errfile && strcmp(errfile,"-") != 0) {
+	    newfd = open(errfile,O_CREAT | O_APPEND | O_WRONLY,
+			 S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP);
+	    if (newfd < 0) {
+		verror("open(%s): %s\n",errfile,strerror(errno));
+		exit(-1);
+	    }
+	    dup2(newfd,STDERR_FILENO);
+	}
+	else if (!errfile) {
+	    newfd = open("/dev/null",O_WRONLY);
+	    dup2(newfd,STDERR_FILENO);
+	}
+
+	/* Don't chdir like normal for daemons. */
+
+	ptrace(PTRACE_TRACEME,0,NULL,NULL);
+	kill(getpid(),SIGINT);
+
+	execve(filename,argv,envp);
+	exit(-1);
+    }
+    else {
+	verror("fork: %s\n",strerror(errno));
+	goto errout;
+    }
+
+    /*
+     * Ok, now that we have our child process, more setup!
+     * 
+     * We let the process spin through its setup; if it's static,
+     * simply look for prctl or set_thread_area.  If it's dynamic, look
+     * for a sequence like 
+     * mmap|mmap2|mprotect* ; arch_prctl|set_thread_area ; mprotect* ; munmap
+     */
+ again2:
+    /* Look for syscalls! */
+    if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
+	verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
+	return NULL;
+    }
+    vdebug(9,LOG_T_LUP,"waitpid target %d (syscall inference)\n",pid);
+    if (waitpid(pid,&pstatus,0) < 0) {
+	if (errno == ECHILD || errno == EINVAL) {
+	    verror("waitpid(%d): %s\n",pid,strerror(errno));
+	    return NULL;
+	}
+	else {
+	    goto again2;
+	}
+    }
+    if (WIFSTOPPED(pstatus)) {
+	/* Ok, this was a ptrace event; if it was a syscall, figure out
+	 * which one.
+	 */
+	if (WSTOPSIG(pstatus) == SIGTRAP) {
+	    if (ptrace(PTRACE_GETREGS,pid,0,&uregs) < 0) {
+		vwarn("could not read EAX to deciper syscall; skipping inference!\n");
+		errno = 0;
+		goto out;
+	    }
+#if __WORDSIZE == 64
+	    orig_eax = uregs.orig_rax;
+#else
+	    orig_eax = uregs.orig_eax;
+#endif
+
+	    vdebug(5,LOG_T_LUP,"syscall: %ld (%ld)\n",orig_eax,syscall);
+
+	    if (dynamic) {
+		/* syscall state machine for the dynamic case: */
+		if ((syscall == 0 
+		     || ((syscall == LUP_SC_MPROTECT
+			  || syscall == LUP_SC_MMAP
+			  || syscall == LUP_SC_MMAP2)))
+		    && (orig_eax == LUP_SC_MPROTECT
+			|| orig_eax == LUP_SC_MMAP
+			|| orig_eax == LUP_SC_MMAP2)) {
+		    syscall = orig_eax;
+		}
+		else if ((syscall == LUP_SC_MPROTECT
+			  || syscall == LUP_SC_MMAP
+			  || syscall == LUP_SC_MMAP2)
+			 && (orig_eax == LUP_SC_PRCTL
+			     || orig_eax == LUP_SC_ARCH_PRCTL
+			     || orig_eax == LUP_SC_SET_THREAD_AREA)) {
+		    syscall = orig_eax;
+		}
+		else if ((syscall == LUP_SC_PRCTL
+			  || syscall == LUP_SC_ARCH_PRCTL
+			  || syscall == LUP_SC_SET_THREAD_AREA)
+			 && orig_eax == LUP_SC_MPROTECT) {
+		    syscall = orig_eax;
+		}
+		else if (syscall == LUP_SC_MPROTECT
+			 && orig_eax == LUP_SC_MUNMAP) {
+		    syscall = orig_eax;
+		}
+		else if (syscall == LUP_SC_MUNMAP
+			 && orig_eax == LUP_SC_MUNMAP) {
+		    syscall = orig_eax;
+		    vdebug(5,LOG_T_LUP,"found end of munmap to end dynamic load sequence!\n");
+		    goto out;
+		}
+	    }
+	    else {
+		if (orig_eax == LUP_SC_PRCTL) {
+		    vdebug(5,LOG_T_LUP,"found prctl to end static load sequence!\n");
+		    goto out;
+		}
+		else if (orig_eax == LUP_SC_ARCH_PRCTL) {
+		    vdebug(5,LOG_T_LUP,"found arch_prctl to end static load sequence!\n");
+		    goto out;
+		}
+		else if (orig_eax == LUP_SC_SET_THREAD_AREA) {
+		    vdebug(5,LOG_T_LUP,"found set_thread_area to end static load sequence!\n");
+		    goto out;
+		}
+	    }
+	}
+	goto again2;
+    }
+    else if (WIFCONTINUED(pstatus)) {
+	goto again2;
+    }
+    else if (WIFSIGNALED(pstatus) || WIFEXITED(pstatus)) {
+	/* yikes, it was sigkill'd out from under us! */
+	/* XXX: is error good enough?  The pid is gone; we should
+	 * probably dump this target.
+	 */
+	verror("pid %d bailed in initial tracing!\n",pid);
+	return NULL;
+    }
+    else {
+	vwarn("pid %d: unhandled waitpid condition while waiting for load; trying again!\n",pid);
+	goto again2;
+    }
+
+ out:
+    if (ptrace(PTRACE_DETACH,pid,NULL,NULL) < 0) {
+	verror("ptrace temporary detach failed (will try to kill child): %s\n",strerror(errno));
+	kill(9,pid);
+	goto errout;
+    }
+    return target;
+
+ errout:
+    if (target)
+	target_free(target);
+    if (elf)
+	elf_end(elf);
+    if (fd > 1)
+	close(fd);
     return NULL;
 }
 
