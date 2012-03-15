@@ -120,12 +120,12 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	    return;
 	}
 
-	int typebytesize = type->s.ti->type_datatype->s.ti->byte_size;
+	int typebytesize = type->datatype->s.ti->byte_size;
 	int total = 1;
 	int *arcounts = (int *)malloc(sizeof(int)*(type->s.ti->d.a.count - 1));
 	uint64_t offset = 0;
 	int rowlength = type->s.ti->d.a.subranges[type->s.ti->d.a.count - 1] + 1;
-	struct symbol *datatype = type->s.ti->type_datatype;
+	struct symbol *datatype = type->datatype;
 
 	for (i = 0; i < type->s.ti->d.a.count; ++i) {
 	    if (likely(i < (type->s.ti->d.a.count - 1))) {
@@ -211,7 +211,7 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
     case DATATYPE_PTR:
 	if ((flags & LOAD_FLAG_AUTO_DEREF) ||
 	    ((flags & LOAD_FLAG_AUTO_STRING) 
-	     && symbol_type_is_char(type->s.ti->type_datatype))) {
+	     && symbol_type_is_char(type->datatype))) {
 	    type = symbol_type_skip_ptrs(type);
 
 	    if (symbol_type_is_char(type)) {

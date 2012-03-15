@@ -317,7 +317,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))
 	|| ((flags & LOAD_FLAG_AUTO_STRING) 
 	    && SYMBOL_IST_PTR(datatype) 
-	    && symbol_type_is_char(datatype->s.ti->type_datatype))) {
+	    && symbol_type_is_char(datatype->datatype))) {
 	vdebug(5,LOG_T_SYMBOL,"auto_deref: starting ptr symbol %s\n",
 	       symbol->name);
 
@@ -344,7 +344,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	}
 
 	/* Skip past the pointer we just loaded. */
-	datatype = datatype->s.ti->type_datatype;
+	datatype = datatype->datatype;
 
 	nptrs = 1;
 
@@ -379,7 +379,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		goto errout;
 	    }
 
-	    datatype = datatype->s.ti->type_datatype;
+	    datatype = datatype->datatype;
 	    ++nptrs;
 
 	    vdebug(5,LOG_T_SYMBOL,"auto_deref pointer %d\n",nptrs);
@@ -462,6 +462,11 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	ptrloc.l.addr = ptraddr;
 
 	value = value_create_type(datatype);
+	if (!value) {
+	    verror("could not create value for type (ptr is %p); %s\n",
+		   datatype,datatype ? datatype->name : NULL);
+	    goto errout;
+	}
 
 	if (!location_load(target,region,
 			   (ptraddr) ? &ptrloc : &(symbol->s.ii->l),

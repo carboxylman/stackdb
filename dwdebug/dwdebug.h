@@ -790,13 +790,6 @@ struct symbol {
 struct symbol_type {
     uint16_t byte_size;
 
-    /* If we see the use of the type before the type, we
-     * can only fill in the ref and fill the datatype in
-     * a postpass.
-     */
-    SMOFFSET type_datatype_ref;
-    struct symbol *type_datatype;
-
     union {
 	struct {
 	    encoding_t encoding;
