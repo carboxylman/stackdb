@@ -42,6 +42,7 @@ typedef uint64_t REGVAL;
 #define PRIiOFFSET PRIi64
 #define PRIxOFFSET PRIx64
 #define PRIxREGVAL PRIx64
+#define PRIuREGVAL PRIu64
 #define ADDRMAX UINT64_MAX
 #else
 typedef uint32_t ADDR;
@@ -52,6 +53,7 @@ typedef uint32_t REGVAL;
 #define PRIiOFFSET PRIi32
 #define PRIxOFFSET PRIx32
 #define PRIxREGVAL PRIx32
+#define PRIuREGVAL PRIu32
 #define ADDRMAX UINT32_MAX
 #endif
 
@@ -73,5 +75,14 @@ typedef int32_t SMOFFSET;
 #define PROT_WRITE        0x2
 #define PROT_EXEC         0x4
 #define PROT_SHARED       0x8
+
+/*
+ * Reference count stuff.
+ */
+typedef uint32_t REFCNT;
+
+#define RHOLD(x) ++((x)->refcnt)
+#define RPUT(x)  --((x)->refcnt)
+#define RPUTF(x,objname) --((x)->refcnt) || objname_free(x)
 
 #endif /* __COMMON_H__ */
