@@ -22,6 +22,7 @@
 #include <xen/xen.h>
 #include <xs.h>
 #include <xenaccess/xenaccess.h>
+#include <xenaccess/xa_private.h>
 
 #include "target_xen_vm.h"
 

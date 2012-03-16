@@ -332,7 +332,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    else if (cbargs->symtab->range.rtype == RANGE_TYPE_PC) {
 		/* Already decoded it in get_aranges; just check here! */
 		if (cbargs->symtab->range.r.a.lowpc != addr) {
-		    vwarn("inconsistent %s (aranges?) 0x%"PRIx64" (was 0x%"PRIx64") at %"PRIx64"\n",
+		    vwarn("inconsistent %s (aranges?) 0x%"PRIx64" (was 0x%"PRIxADDR") at %"PRIx64"\n",
 			  dwarf_attr_string(attr),addr,
 			  cbargs->symtab->range.r.a.lowpc,cbargs->die_offset);
 		}
@@ -560,7 +560,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->isinlineinstance = 1;
 	    if (SYMBOL_IS_FULL(cbargs->symbol)) {
 		cbargs->symbol->s.ii->origin = (struct symbol *)	\
-		    g_hash_table_lookup(cbargs->reftab,(gpointer)(OFFSET)ref);
+		    g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref);
 		/* Always set the ref so we can generate a unique name for 
 		 * the symbol; see finalize_die_symbol!!
 		 */
@@ -574,7 +574,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_type:
 	if (ref_set && cbargs->symbol) {
 	    struct symbol *datatype = (struct symbol *) \
-		g_hash_table_lookup(cbargs->reftab,(gpointer)(OFFSET)ref);
+		g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref);
 	    if (cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 		if (cbargs->symbol->datatype_code == DATATYPE_PTR
 		    || cbargs->symbol->datatype_code == DATATYPE_TYPEDEF
@@ -1754,10 +1754,11 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
     /* attr_callback has to fill this, and *MUST* fill at least
      * name; otherwise we can't add the symtab to our hash table.
      */
+    /* XXX: If the offset exceeds a 32-bit max, yes, we *will* overflow! */
     if (!(cu_symtab = (struct symtab *)\
-	  g_hash_table_lookup(debugfile->cuoffsets,(gpointer)offset))) {
+	  g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
 	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0,NULL);
-	g_hash_table_insert(debugfile->cuoffsets,(gpointer)offset,
+	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
 			    (gpointer)cu_symtab);
     }
     else {
@@ -2063,7 +2064,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	 * did this for types, but since inlined func/param instances
 	 * can refer to funcs/vars, we have to do it for every symbol.
 	 */
-	g_hash_table_insert(reftab,(gpointer)(OFFSET)offset,symbols[level]);
+	g_hash_table_insert(reftab,(gpointer)(uintptr_t)offset,symbols[level]);
 
 	/* Handle adding child symbols to parents!
 	 *
@@ -2205,7 +2206,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    && rsymbol->datatype_ref) {
 	    rsymbol->datatype = (struct symbol *) \
 		g_hash_table_lookup(reftab,
-				    (gpointer)(OFFSET)rsymbol->datatype_ref);
+				    (gpointer)(uintptr_t)rsymbol->datatype_ref);
 	}
 
 	if (SYMBOL_IS_FULL_INSTANCE(rsymbol)
@@ -2213,7 +2214,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    && !rsymbol->s.ii->origin && rsymbol->s.ii->origin_ref) {
 	    rsymbol->s.ii->origin = (struct symbol *) \
 		g_hash_table_lookup(reftab,
-				    (gpointer)(OFFSET)rsymbol->s.ii->origin_ref);
+				    (gpointer)(uintptr_t)rsymbol->s.ii->origin_ref);
 	}
     }
 
@@ -2222,7 +2223,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	get_lines(debugfile,args.stmt_list_offset,addrsize);
     }
     else {
-	vwarn("not doing offset %lx\n",args.stmt_list_offset);
+	vwarn("not doing offset 0x%"PRIx64"\n",args.stmt_list_offset);
     }
 
  nextcuiter:
@@ -2596,7 +2597,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	    if (!symbol->datatype) {
 		symbol->datatype = \
 		    g_hash_table_lookup(reftab,
-					(gpointer)(OFFSET)symbol->datatype_ref);
+					(gpointer)(uintptr_t)symbol->datatype_ref);
 		if (!symbol->datatype) 
 		    verror("could not resolve ref %"PRIxSMOFFSET" for %s type symbol %s\n",
 			   symbol->datatype_ref,
@@ -2677,7 +2678,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	if (!symbol->datatype && symbol->datatype_ref) {
 	    if (!(symbol->datatype = \
 		  g_hash_table_lookup(reftab,
-				      (gpointer)(OFFSET)symbol->datatype_ref)))
+				      (gpointer)(uintptr_t)symbol->datatype_ref)))
 		verror("could not resolve ref %"PRIxSMOFFSET" for var/func symbol %s\n",
 		       symbol->datatype_ref,symbol_get_name(symbol));
 	    else {
@@ -2726,7 +2727,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	&& symbol->s.ii->origin_ref) {
 	if (!(symbol->s.ii->origin = \
 	      g_hash_table_lookup(reftab,
-				  (gpointer)(OFFSET)symbol->s.ii->origin_ref))) {
+				  (gpointer)(uintptr_t)symbol->s.ii->origin_ref))) {
 	    verror("could not resolve ref 0x%"PRIxSMOFFSET" for inlined %s\n",
 		   symbol->s.ii->origin_ref,SYMBOL_TYPE(symbol->type));
 	}
@@ -2772,13 +2773,13 @@ int get_pubnames(struct debugfile *debugfile,unsigned char *buf,unsigned int len
 	int is64 = 0;
 
 	if (length == DWARF3_LENGTH_64_BIT) {
-	    vwarn("64-bit DWARF length %ld; continuing.\n",length);
+	    vwarn("64-bit DWARF length %"PRIu64"; continuing.\n",length);
 	    length = read_8ubyte_unaligned_inc(obo,readp);
 	    is64 = 1;
 	}
 	else if (unlikely(length >= DWARF3_LENGTH_MIN_ESCAPE_CODE
 			  && length <= DWARF3_LENGTH_MAX_ESCAPE_CODE))
-	    vwarn("bad DWARF length %ld; continuing anyway!\n",length);
+	    vwarn("bad DWARF length %"PRIu64"; continuing anyway!\n",length);
 
 	unsigned int version = read_2ubyte_unaligned_inc(obo,readp);
 	if (version != 2) 
@@ -2804,7 +2805,7 @@ int get_pubnames(struct debugfile *debugfile,unsigned char *buf,unsigned int len
 	    die_offset += offset;
 
 	    g_hash_table_insert(debugfile->pubnames,strdup((const char *)readp),
-				(gpointer)die_offset);
+				(gpointer)(uintptr_t)die_offset);
 	    readp += strlen((const char *)readp) + 1;
 	}
     }
@@ -2848,12 +2849,12 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	Dwarf_Word length = read_4ubyte_unaligned_inc(obo,readp);
 
 	if (length == DWARF3_LENGTH_64_BIT) {
-	    vwarn("64-bit DWARF length %ld; continuing.\n",length);
+	    vwarn("64-bit DWARF length %"PRIu64"; continuing.\n",length);
 	    length = read_8ubyte_unaligned_inc(obo,readp);
 	}
 	else if (unlikely(length >= DWARF3_LENGTH_MIN_ESCAPE_CODE
 			  && length <= DWARF3_LENGTH_MAX_ESCAPE_CODE))
-	    vwarn("bad DWARF length %ld; continuing anyway!\n",length);
+	    vwarn("bad DWARF length %"PRIu64"; continuing anyway!\n",length);
 
 	unsigned int version = read_2ubyte_unaligned_inc(obo,readp);
 	if (version != 2) 
@@ -2876,10 +2877,10 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	 * exist yet.
 	 */
 	if (!(cu_symtab = (struct symtab *)\
-	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)offset))) {
+	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
 	    cu_symtab = symtab_create(debugfile,(SMOFFSET)offset,NULL,NULL,0,
 				      NULL);
-	    g_hash_table_insert(debugfile->cuoffsets,(gpointer)offset,cu_symtab);
+	    g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,cu_symtab);
 	}
 
 	while (1) {
