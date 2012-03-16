@@ -1258,15 +1258,15 @@ static unsigned char *xen_vm_read(struct target *target,
     /* if we know what length we need, just grab it */
     if (length > 0) {
 	pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,
-					    target_length,&offset,&no_pages,
-					    PROT_READ,pid);
+					    length,&offset,&no_pages,
+					    PROT_READ | PROT_WRITE ,pid);
 	if (!pages)
 	    return NULL;
 
 	assert(offset == page_offset);
 	vdebug(3,LOG_T_XV,
-	       "read dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d mapped pages=%d\n",
-	       xstate->id,addr,page_offset,target_length,pid,no_pages);
+	       "read dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d len=%d mapped pages=%d\n",
+	       xstate->id,addr,page_offset,pid,length,no_pages);
     }
     else {
 	/* increase the mapping size by this much if the string is longer 
@@ -1279,7 +1279,8 @@ static unsigned char *xen_vm_read(struct target *target,
 		       "increasing size to %d (dom=%d,addr=%"PRIxADDR",pid=%d)\n",
 		       size,xstate->id,addr,pid);
 	    pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,size,
-						&offset,&no_pages,PROT_READ,pid);
+						&offset,&no_pages,
+						PROT_READ | PROT_WRITE,pid);
 	    if (!pages)
 		return NULL;
 
@@ -1349,7 +1350,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,unsigned long length,
     /* Map the pages we have to write to. */
     pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,
 					length,&offset,&no_pages,
-					PROT_WRITE,pid);
+					PROT_READ | PROT_WRITE,pid);
     if (!pages) {
 	errno = EFAULT;
 	return 0;
