@@ -1259,7 +1259,7 @@ static unsigned char *xen_vm_read(struct target *target,
     if (length > 0) {
 	pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,
 					    length,&offset,&no_pages,
-					    PROT_READ | PROT_WRITE ,pid);
+					    PROT_READ,pid);
 	if (!pages)
 	    return NULL;
 
@@ -1280,7 +1280,7 @@ static unsigned char *xen_vm_read(struct target *target,
 		       size,xstate->id,addr,pid);
 	    pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,size,
 						&offset,&no_pages,
-						PROT_READ | PROT_WRITE,pid);
+						PROT_READ,pid);
 	    if (!pages)
 		return NULL;
 
@@ -1350,7 +1350,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,unsigned long length,
     /* Map the pages we have to write to. */
     pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,
 					length,&offset,&no_pages,
-					PROT_READ | PROT_WRITE,pid);
+					PROT_WRITE,pid);
     if (!pages) {
 	errno = EFAULT;
 	return 0;
