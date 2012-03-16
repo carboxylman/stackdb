@@ -87,8 +87,8 @@ void _xa_dbprint(int level,char *format, ...);
 /*-------------------------------------
  * Definitions to support the LRU cache
  */
-#define XA_CACHE_SIZE 25
-#define XA_PID_CACHE_SIZE 5
+#define XA_CACHE_SIZE 0 // 25
+#define XA_PID_CACHE_SIZE 0 // 5
 
 /**
  * Check if a symbol_name is in the LRU cache.
