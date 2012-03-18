@@ -31,6 +31,7 @@
 #include "debugpred.h"
 #include "list.h"
 #include "alist.h"
+#include "rfilter.h"
 #include "config.h"
 #include "log.h"
 #include "output.h"
@@ -123,7 +124,7 @@ typedef enum {
 #define LOAD_TYPE_BITS      1
 #define SYMBOL_TYPE_BITS    3
 #define DATATYPE_CODE_BITS  4
-#define SRCLINE_BITS       19
+#define SRCLINE_BITS       17
 
 /* We use this enum type for filtering during symbol searching, when the
  * caller might accept multiple different symbol types.
@@ -352,7 +353,8 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc);
 /* If you know which debugfile contains your symbol, this is fastest. */
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
-				     char *srcfile,symbol_type_flag_t ftype);
+				     struct rfilter_list *srcfile_rflist,
+				     symbol_type_flag_t ftype);
 struct symbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr);
 
 /* Look up one symbol in a symbol table by name. */
@@ -741,6 +743,7 @@ struct symbol {
     datatype_code_t datatype_code:DATATYPE_CODE_BITS;
 
     unsigned int isexternal:1,
+	isdeclaration:1,
 	isprototyped:1,
 	isparam:1,
 	ismember:1,

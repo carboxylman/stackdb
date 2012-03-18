@@ -230,6 +230,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	case DW_AT_decl_line:
 	case DW_AT_type:
 	case DW_AT_external:
+	case DW_AT_declaration:
 	case DW_AT_prototyped:
 	case DW_AT_low_pc:
 	case DW_AT_high_pc:
@@ -499,11 +500,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_call_line:
     case DW_AT_call_column:
 	break;
-    case DW_AT_declaration:
-	/* XXX: hopefully this is mostly necessary to handle weird
-	 * scoping cases, so ignore for now.
-	 */
-	break;
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    /* our encoding_t is 1<->1 map to the DWARF encoding codes. */
@@ -512,6 +508,14 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
+	break;
+    case DW_AT_declaration:
+	if (cbargs->symbol) {
+	    cbargs->symbol->isdeclaration = flag;
+	}
+	else 
+	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
+		  cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
     case DW_AT_external:
 	if (cbargs->symbol 
@@ -2454,7 +2458,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		}
 	    }
 
-	    if (symbol->isexternal) 
+	    if (symbol->isexternal && !symbol->isdeclaration) 
 		debugfile_add_global(debugfile,symbol);
 	}
 	else if (symbol->type == SYMBOL_TYPE_VAR) {
@@ -2482,7 +2486,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		}
 	    }
 
-	    if (symbol->isexternal) 
+	    if (symbol->isexternal && !symbol->isdeclaration) 
 		debugfile_add_global(debugfile,symbol);
 	}
 	else if (symbol->type == SYMBOL_TYPE_LABEL) {

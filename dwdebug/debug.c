@@ -35,6 +35,7 @@
 #include "output.h"
 #include "list.h"
 #include "alist.h"
+#include "rfilter.h"
 #include "dwdebug.h"
 
 static char *LIBFORMAT1 = "([\\w\\d_\\.\\-]+[\\w\\d]).so.([\\d\\.]+)";
@@ -144,6 +145,7 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     struct array_list *anonchain = NULL;
     int i;
     struct lsymbol *lsymbol = NULL;
+    struct lsymbol *lsymbol_tmp = NULL;
     struct symbol *symbol = NULL;
     struct array_list *chain = NULL;
     GHashTableIter iter;
@@ -159,8 +161,9 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     else
 	next = name;
 
-    /* Do the first token by looking up in this symtab, or its subtabs.
-     * For the rest, lookup in the parent symbol.
+    /* 
+     * Do the first token by looking up in this symtab, or its anonymous
+     * subtabs.
      */
     g_hash_table_iter_init(&iter,symtab->tab);
     while (g_hash_table_iter_next(&iter,
@@ -174,37 +177,107 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 		      && SYMBOL_IS_LABEL(svalue))))
 	     || ftype == SYMBOL_TYPE_FLAG_NONE)
 	    && strcmp(next,(char *)key) == 0) {
-	    symbol = svalue;
-	    break;
+	    /* If this is a type symbol, or a symbol with a location,
+	     * allow it to match right away; else, save it off if we
+	     * haven't already saved off a "first match"; else, save it
+	     * off and return it if we don't find anything better!
+	     */
+	    if (SYMBOL_IS_TYPE(svalue)) {
+		symbol = svalue;
+		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		       "found top-level symtab type %s\n",symbol->name);
+		break;
+	    }
+	    else if (!svalue->isdeclaration) {
+		     //SYMBOL_IS_FULL(svalue) 
+		     // && svalue->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
+		symbol = svalue;
+		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		       "found top-level symtab definition %s\n",symbol->name);
+		break;
+	    }
+	    else if (!symbol) {
+		symbol = svalue;
+		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		       "found top-level symtab non-type, non-definition %s; saving\n",
+		       symbol->name);
+	    }
 	}
     }
 
-    if (!symbol) {
-	/*
-	 * Free all our local data, since we'll be returning from
-	 * recursion.
-	 */
-	if (lname) {
-	    free(lname);
-	    lname = NULL;
-	}
-	if (chain) {
-	    array_list_free(chain);
-	    chain = NULL;
-	}
-
+    /*
+     * If we didn't find a match in our symtab, OR if the symbol was
+     * a non-type declaration, keep looking for a type or definition in our
+     * subtabs.
+     */
+    if ((!symbol || (symbol && !SYMBOL_IS_TYPE(symbol) 
+		     && symbol->isdeclaration))
+	&& !list_empty(&symtab->subtabs)) {
+	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	       "checking symtab anon subtabs\n");
+	//!SYMBOL_IS_FULL(symbol) || symbol->s.ii->l.loctype == LOCTYPE_UNKNOWN)
 	list_for_each_entry(subtab,&symtab->subtabs,member) {
 	    /*
-	     * We only search anonymous subtabs!
+	     * We only search anonymous subtabs, because if the user is
+	     * looking for something nested, we need them to actually
+	     * specify a fully-qualified string.
+	     *
+	     * We could relax this constraint later on, but only if they
+	     * give us a flag, because otherwise if you look for `i',
+	     * your result will have very little meaning.
 	     *
 	     * XXX: what about inlined instances of variables or
 	     * functions?  How can we let users search for these?
 	     */
-	    if (subtab->name) {
-		lsymbol = symtab_lookup_sym(subtab,name,delim,ftype);
-		if (lsymbol)
-		    return lsymbol;
+	    if (!subtab->name) {
+		lsymbol_tmp = symtab_lookup_sym(subtab,name,delim,ftype);
+		if (lsymbol_tmp) {
+		    if (SYMBOL_IS_TYPE(lsymbol_tmp->symbol)) {
+			lsymbol = lsymbol_tmp;
+			vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+			       "found anon symtab type %s\n",
+			       lsymbol->symbol->name);
+			goto recout;
+		    }
+		    else if (!lsymbol_tmp->symbol->isdeclaration) {
+			     //SYMBOL_IS_FULL(lsymbol_tmp->symbol) 
+			     // && lsymbol_tmp->symbol->s.ii->l.loctype 
+			     //    != LOCTYPE_UNKNOWN) {
+			lsymbol = lsymbol_tmp;
+			vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+			       "found anon symtab definition %s\n",
+			       lsymbol->symbol->name);
+			goto recout;
+		    }
+		    else if (!lsymbol) {
+			lsymbol = lsymbol_tmp;
+			vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+			       "found anon symtab non-type, non-definition %s; saving\n",
+			       lsymbol->symbol->name);
+		    }
+		    else {
+			lsymbol_free(lsymbol_tmp);
+		    }
+		}
 	    }
+	}
+
+    recout:
+	if (lsymbol) {
+	    if (lname) {
+		free(lname);
+		lname = NULL;
+	    }
+	    if (chain) {
+		array_list_free(chain);
+		chain = NULL;
+	    }
+
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		   "returning best subtab symbol %s\n",
+		   lsymbol->symbol->name);
+
+	    return lsymbol;
 	}
     }
 
@@ -214,121 +287,14 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     lsymbol = lsymbol_create(symbol,chain);
 
     /* If it's not a delimited string, stop now, successfully. */
-    if (!lname)
+    if (!lname) {
+	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
+	       lsymbol->symbol->name);
 	return lsymbol;
-
-    /* Otherwise, add the first one to our chain and start looking up
-     * members.
-     */
-    array_list_add(chain,symbol);
-
-    while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
-	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
-	    goto errout;
-	else if (anonchain && array_list_len(anonchain)) {
-	    /* If anonchain has any members, we now have to glue those
-	     * members into our overall chain, BEFORE gluing the actual
-	     * found symbol onto the tail end of the chain.
-	     */
-	    //asm("int $3");
-	    for (i = 0; i < array_list_len(anonchain); ++i) {
-		array_list_add(chain,array_list_item(anonchain,i));
-	    }
-	    /* now slap the retval on, too! */
-	    array_list_add(chain,symbol);
-	    /* free the anonchain (and its members!) and reset our pointer */
-	    //asm("int $3");
-	    array_list_free(anonchain);
-	    anonchain = NULL;
-	}
     }
 
-    free(lname);
-
-    /* downsize */
-    array_list_compact(chain);
-
-    return lsymbol;
-
- errout:
-    if (lname)
-	free(lname);
-    if (lsymbol)
-	lsymbol_free(lsymbol);
-
-    return NULL;
-}
-
-struct symbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
-    return (struct symbol *)g_hash_table_lookup(debugfile->addresses,
-						(gpointer)addr);
-}
-
-struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
-				     char *name,const char *delim,
-				     char *srcfile,symbol_type_flag_t ftype) {
-    char *next = NULL;
-    char *lname = NULL;
-    char *saveptr = NULL;
-    struct array_list *anonchain = NULL;
-    int i;
-    struct lsymbol *lsymbol = NULL;
-    struct symbol *symbol;
-    struct array_list *chain = NULL;
-    struct symtab *symtab;
-    GHashTableIter iter;
-    gpointer key;
-
-    if (delim && strstr(name,delim)) {
-	lname = strdup(name);
-	next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr);
-	chain = array_list_create(1);
-    }
-    else
-	next = name;
-
-    /*
-     * Always check globals first, then types, then srcfile tables.
-     */
-    if (!(ftype & SYMBOL_TYPE_FLAG_TYPE)
-	&& (symbol = g_hash_table_lookup(debugfile->globals,next)))
-	goto found;
-
-    if ((ftype & SYMBOL_TYPE_FLAG_TYPE || ftype & SYMBOL_TYPE_FLAG_NONE)
-	&& (symbol = g_hash_table_lookup(debugfile->types,next)))
-	goto found;
-
-    if (srcfile) {
-	if ((symtab = (struct symtab *)g_hash_table_lookup(debugfile->srcfiles,
-							   srcfile))) {
-	    if (lname)
-		free(lname);
-	    return symtab_lookup_sym(symtab,name,delim,ftype);
-	}
-	else {
-	    if (lname)
-		free(lname);
-	    return NULL;
-	}
-    }
-
-    g_hash_table_iter_init(&iter,debugfile->srcfiles);
-    while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&symtab)) {
-	lsymbol = symtab_lookup_sym(symtab,name,delim,ftype);
-	if (lsymbol)
-	    return lsymbol;
-    }
-    if (!lsymbol)
-	return NULL;
-
- found:
-    lsymbol = lsymbol_create(symbol,chain);
-
-    /* If it's not a delimited string, stop now, successfully. */
-    if (!lname)
-	return lsymbol;
-
-    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found %s\n",lsymbol->symbol->name);
+    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	   "found top-level %s; checking members\n",lsymbol->symbol->name);
 
     /* Otherwise, add the first one to our chain and start looking up
      * members.
@@ -367,8 +333,216 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
     return lsymbol;
 
  errout:
+    if (lname)
+	free(lname);
+    if (lsymbol)
+	lsymbol_free(lsymbol);
+
+    return NULL;
+}
+
+struct symbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
+    return (struct symbol *)g_hash_table_lookup(debugfile->addresses,
+						(gpointer)addr);
+}
+
+struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
+				     char *name,const char *delim,
+				     struct rfilter_list *srcfile_rflist,
+				     symbol_type_flag_t ftype) {
+    char *next = NULL;
+    char *lname = NULL;
+    char *saveptr = NULL;
+    struct array_list *anonchain = NULL;
+    int i;
+    struct lsymbol *lsymbol = NULL;
+    struct lsymbol *lsymbol_tmp = NULL;
+    struct symbol *symbol = NULL;
+    struct array_list *chain = NULL;
+    struct symtab *symtab;
+    GHashTableIter iter;
+    gpointer key;
+    struct rfilter *rf;
+    int accept = RF_ACCEPT;
+
+    if (delim && strstr(name,delim)) {
+	lname = strdup(name);
+	next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr);
+	chain = array_list_create(1);
+    }
+    else
+	next = name;
+
+    /*
+     * Always check globals first, then types, then srcfile tables.
+     */
+    if ((ftype & SYMBOL_TYPE_FLAG_VAR || ftype & SYMBOL_TYPE_FLAG_FUNCTION
+	 || ftype & SYMBOL_TYPE_FLAG_LABEL || ftype == SYMBOL_TYPE_FLAG_NONE)
+	&& (symbol = g_hash_table_lookup(debugfile->globals,next))) {
+	if (srcfile_rflist) {
+	    rfilter_check(srcfile_rflist,symbol->symtab->name,&accept,&rf);
+	    if (accept == RF_ACCEPT) {
+		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found rf global %s\n",
+		       symbol->name);
+		goto found;
+	    }
+	}
+	else {
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found global %s\n",
+		   symbol->name);
+	    goto found;
+	}
+    }
+
+    if ((ftype & SYMBOL_TYPE_FLAG_TYPE || ftype == SYMBOL_TYPE_FLAG_NONE)
+	&& (symbol = g_hash_table_lookup(debugfile->types,next))) {
+	if (srcfile_rflist) {
+	    rfilter_check(srcfile_rflist,symbol->symtab->name,&accept,&rf);
+	    if (accept == RF_ACCEPT) {
+		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found rf type %s\n",
+		       symbol->name);
+		goto found;
+	    }
+	}
+	else {
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found type %s\n",
+		   symbol->name);
+	    goto found;
+	}
+    }
+
+    /* 
+     * Check all the srcfiles, or check according to the rfilter.
+     */
+    g_hash_table_iter_init(&iter,debugfile->srcfiles);
+    while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&symtab)) {
+	if (srcfile_rflist) {
+	    rfilter_check(srcfile_rflist,key,&accept,&rf);
+	    if (accept == RF_REJECT)
+		continue;
+	}
+
+	lsymbol_tmp = symtab_lookup_sym(symtab,name,delim,ftype);
+	if (lsymbol_tmp) {
+	    /* If we do find a match, and it's a type, take it! */
+	    if (SYMBOL_IS_TYPE(lsymbol_tmp->symbol)) {
+		lsymbol = lsymbol_tmp;
+		break;
+	    }
+	    /* Or if we find a match and it is a definition (which
+	     * implies it should have a location!), take it!
+	     */
+	    else if (!lsymbol_tmp->symbol->isdeclaration) {
+		     //SYMBOL_IS_FULL(lsymbol_tmp->symbol) 
+		     // && lsymbol_tmp->symbol->s.ii->l.loctype 
+		     //    != LOCTYPE_UNKNOWN) {
+		lsymbol = lsymbol_tmp;
+		break;
+	    }
+	    /* Otherwise, if we haven't found anything else yet, save it
+	     * off as our "first match", and keep looking.  If we find
+	     * nothing better later on, we'll use it.
+	     */
+	    else if (!lsymbol) {
+		lsymbol = lsymbol_tmp;
+	    }
+	    /* We are never going to use this match, so free it. */
+	    else {
+		lsymbol_free(lsymbol_tmp);
+	    }
+	}
+    }
+
+    /* If we didn't find anything in our srcfiles traversal, we're
+     * done.
+     */
+    if (!lsymbol)
+	return NULL;
+
+ found:
+    /*
+     * If we found a symbol match in our srcfiles, and it is not a
+     * declaration, return it!  Why do we just return it?  Because 
+     * symtab_lookup_sym will have *already* finished searching for any
+     * children in the fully-qualified symbol name.
+     *
+     * XXX: this can be very wasteful!  We may search fully down a long
+     * chain, only to find that the end of the chain is a type or
+     * declaration, and then keep on searching!  We may never find
+     * something better :).
+     * 
+     * So, we have to expose this to the user as a param of some sort:
+     * LOOKUP_OPT_FIRST_MATCH; LOOKUP_OPT_FIND_DEFINITION; or
+     * something.
+     */
+    if (lsymbol	&& !lsymbol->symbol->isdeclaration) {
+	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found best %s in symtab\n",
+	       lsymbol->symbol->name);
+	return lsymbol;
+    }
+    /* We're not going to use it; it is no better than symbol. */
+    else if (symbol) {
+	if (lsymbol) {
+	    lsymbol_free(lsymbol);
+	    lsymbol = NULL;
+	}
+    }
+
+    /* If we only have the result from types/globals search, use that! */
+    if (!lsymbol) 
+	lsymbol = lsymbol_create(symbol,chain);
+
+    /* If it's not a delimited string, stop now, successfully. */
+    if (!lname) {
+	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
+	       lsymbol->symbol->name);
+	return lsymbol;
+    }
+
+    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	   "found top-level %s; checking members\n",lsymbol->symbol->name);
+
+    /* Otherwise, add the first one to our chain and start looking up
+     * members.
+     */
+    array_list_add(chain,symbol);
+
+    while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
+	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
+	    goto errout;
+	else if (anonchain && array_list_len(anonchain)) {
+	    /* If anonchain has any members, we now have to glue those
+	     * members into our overall chain, BEFORE gluing the actual
+	     * found symbol onto the tail end of the chain.
+	     */
+	    //asm("int $3");
+	    for (i = 0; i < array_list_len(anonchain); ++i) {
+		array_list_add(chain,array_list_item(anonchain,i));
+	    }
+	    /* free the anonchain (and its members!) and reset our pointer */
+	    array_list_free(anonchain);
+	    anonchain = NULL;
+	}
+	/* now slap the retval on, too! */
+	array_list_add(chain,symbol);
+    }
+
     free(lname);
-    lsymbol_free(lsymbol);
+
+    /* downsize */
+    array_list_compact(chain);
+
+    /* set the primary symbol in lsymbol to the *end* of the chain */
+    lsymbol->symbol = (struct symbol *)array_list_item(lsymbol->chain,
+						       array_list_len(lsymbol->chain) - 1);
+
+    return lsymbol;
+
+ errout:
+    if (lname)
+	free(lname);
+    if (lsymbol)
+	lsymbol_free(lsymbol);
 
     return NULL;
 }
@@ -2063,6 +2237,11 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream," = %d",*((int *)symbol->s.ii->constval));
     }
 
+    if (ud->meta && !symbol->isparam && !symbol->ismember) {
+	fprintf(ud->stream," (external=%d,declaration=%d)",
+		symbol->isexternal,symbol->isdeclaration);
+    }
+
     if (ud->detail && SYMBOL_IS_FULL_INSTANCE(symbol) 
 	&& symbol->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
 	fprintf(ud->stream," @@ ");
@@ -2135,8 +2314,8 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     }
 
     if (ud->meta) {
-	fprintf(ud->stream," (external=%d,prototyped=%d",
-		symbol->isexternal,symbol->isprototyped);
+	fprintf(ud->stream," (external=%d,declaration=%d,prototyped=%d",
+		symbol->isexternal,symbol->isdeclaration,symbol->isprototyped);
 	if (SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream,",declinline=%d,inlined=%d",
 		    symbol->s.ii->isdeclinline,symbol->s.ii->isinlined);
