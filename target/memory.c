@@ -246,6 +246,12 @@ ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 		*range_saveptr = range;
 	    return memrange_relocate(range,obj_addr);
 	}
+	else {
+	    vdebug(3,LOG_T_REGION,"obj(0x%"PRIxADDR") not found in memrange"
+		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		   obj_addr,range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
+	}
     }
     errno = ESRCH;
     return 0;
