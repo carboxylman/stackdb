@@ -1363,6 +1363,11 @@ static int linux_userproc_resume(struct target *target) {
     /* First, flush back registers if they're dirty! */
     linux_userproc_flush_context(target);
 
+    /* ALWAYS invalidate our cached copy of registers; flush_context may
+     * not do this!
+     */
+    lstate->regs_loaded = 0;
+
     int ptopts = PTRACE_O_TRACESYSGOOD;
     ptopts |= lstate->ptrace_opts;
     errno = 0;
