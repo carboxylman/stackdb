@@ -1004,7 +1004,7 @@ static int xen_vm_resume(struct target *target) {
 static target_status_t xen_vm_monitor(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     int ret, fd;
-    evtchn_port_or_error_t port = -1;
+    XC_EVTCHN_PORT_T port = -1;
     struct timeval tv;
     fd_set inset;
     REGVAL ipval;
@@ -1697,7 +1697,7 @@ static int xen_vm_set_hw_breakpoint(struct target *target,
         return ret;
     }
     vdebug(4,LOG_T_XV | LOG_P_PROBE,"registered probe [dom%d:%"PRIxADDR"]\n",
-	   msgxstate->id,addr);
+	   xstate->id,addr);
 #endif
 
     return 0;
@@ -1767,7 +1767,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,
         return ret;
     }
     vdebug(4,LOG_T_XV | LOG_P_PROBE,"registered probe [dom%d:%"PRIxADDR"]\n",
-	   msgxstate->id,addr);
+	   xstate->id,addr);
 #endif
 
     return 0;
@@ -1777,6 +1777,7 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
     struct xen_vm_state *xstate;
 #ifdef DETERMINISTIC_TIMETRAVEL
     int ret;
+    ADDR addr;
 #endif
 
     if (reg < 0 || reg > 3) {
@@ -1790,6 +1791,10 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
 	if (xen_vm_load_context(target)) 
 	    return -1;
     }
+
+#ifdef DETERMINISTIC_TIMETRAVEL
+    addr = xstate->dr[reg];
+#endif
 
     /* Set the address, then the control bits. */
     xstate->dr[reg] = 0;
@@ -1816,7 +1821,7 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
         return ret;
     }
     vdebug(4,LOG_T_XV | LOG_P_PROBE,"unregistered probe [dom%d:%"PRIxADDR"]\n",
-	   msgxstate->id,addr);
+	   xstate->id,addr);
 #endif
 
     return 0;
@@ -1880,7 +1885,7 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
         return ret;
     }
     vdebug(4,LOG_T_XV | LOG_P_PROBE,"%sed probe [dom%d:%"PRIxADDR"]\n",
-	   msgxstate->id,addr);
+	   msg,xstate->id,addr);
 #endif
     return 0;
 }

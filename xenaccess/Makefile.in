@@ -14,6 +14,9 @@ CFLAGS += -O2
 CFLAGS += -g
 
 CFLAGS += $(XENACCESS_FLAGS)
+ifeq ("@DETERMINISTIC_TIMETRAVEL@","1")
+     CFLAGS += -DDETERMINISTIC_TIMETRAVEL
+endif
 
 HEADERS := xenaccess.h xa_private.h
 
