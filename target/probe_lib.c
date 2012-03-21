@@ -27,7 +27,7 @@ struct probe *probe_register_function(struct probe *probe,
     int j;
     struct array_list *cflist = NULL;
     struct range *funcrange;
-    unsigned char *funccode;
+    unsigned char *funccode = NULL;
     unsigned int funclen;
     struct inst_cf_data *idata;
     size_t bufsiz;
@@ -184,11 +184,11 @@ struct probe *probe_register_function(struct probe *probe,
     return NULL;
 }
 
-/* Helper function used below. */
-struct probe *probe_register_function_instrs(struct probe *probe,
+struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     probepoint_style_t style,
-					     struct bsymbol *bsymbol,
-					     inst_cf_flags_t flags) {
+					     inst_type_t inst,
+					     struct probe *probe,...) {
+    va_list ap;
     struct target *target = probe->target;
     struct memrange *range;
     struct memrange *newrange;
@@ -198,11 +198,13 @@ struct probe *probe_register_function_instrs(struct probe *probe,
     int j;
     struct array_list *cflist = NULL;
     struct range *funcrange;
-    unsigned char *funccode;
+    unsigned char *funccode = NULL;
     unsigned int funclen;
     struct inst_cf_data *idata;
     size_t bufsiz;
     char *buf;
+    GHashTable *itypes = NULL;
+    inst_cf_flags_t cfflags = INST_CF_NONE;
 
     if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
 	verror("must supply a full function symbol!\n");
@@ -218,6 +220,22 @@ struct probe *probe_register_function_instrs(struct probe *probe,
 	       bsymbol->lsymbol->symbol->name);
 	return NULL;
     }
+
+    /* Process our varargs list.  There must be at least one
+     * inst_type_t,probe * tuple, as shown in the fucntion prototype.
+     * If inst_type_t is not INST_TYPE_NONE, we process another probe *;
+     * otherwise, we abort since it's the end of the list.
+     */
+    itypes = g_hash_table_new(g_direct_hash,g_direct_equal);
+    g_hash_table_insert(itypes,(gpointer)inst,probe);
+    cfflags |= INST_TO_CF_FLAG(inst);
+    va_start(ap,probe);
+    while ((inst = va_arg(ap,inst_type_t)) != INST_NONE) {
+	probe = va_arg(ap,struct probe *);
+	g_hash_table_insert(itypes,(gpointer)inst,probe);
+	cfflags |= INST_TO_CF_FLAG(inst);
+    }
+    va_end(ap);
 
     /* Disassemble the function to find the return instructions. */
     funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
@@ -237,7 +255,7 @@ struct probe *probe_register_function_instrs(struct probe *probe,
 	goto errout;
     }
 
-    if (disasm_get_control_flow_offsets(target,flags,funccode,funclen,
+    if (disasm_get_control_flow_offsets(target,cfflags,funccode,funclen,
 					&cflist,funcrange->r.a.lowpc)) {
 	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
 	goto errout;
@@ -264,6 +282,8 @@ struct probe *probe_register_function_instrs(struct probe *probe,
 	    newrange = range;
 	}
 
+	probe = (struct probe *)g_hash_table_lookup(itypes,(gpointer)idata->type);
+
 	/* Create the j-th instruction probe.  Assume that all
 	 * instruction names fit in 16 bytes.
 	 */
@@ -280,10 +300,14 @@ struct probe *probe_register_function_instrs(struct probe *probe,
 	if (!__probe_register_addr(source,probeaddr,newrange,
 				   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
 				   PROBEPOINT_LAUTO,bsymbol,start)) {
+	    verror("could not register probe %s at 0x%"PRIxADDR"!\n",
+		   source->name,probeaddr);
 	    goto errout;
 	}
 
-	if (probe_register_source(probe,source)) {
+	if (!probe_register_source(probe,source)) {
+	    verror("could not register probe %s on source %s!\n",
+		   probe->name,source->name);
 	    probe_free(source,1);
 	    goto errout;
 	}
@@ -299,10 +323,14 @@ struct probe *probe_register_function_instrs(struct probe *probe,
 	array_list_free(cflist);
 	cflist = NULL;
     }
+    if (itypes)
+	g_hash_table_destroy(itypes);
 
     return probe;
 
  errout:
+    if (itypes)
+	g_hash_table_destroy(itypes);
     if (funccode)
 	free(funccode);
     if (cflist) {

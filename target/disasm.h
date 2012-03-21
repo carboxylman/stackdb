@@ -17,15 +17,17 @@ typedef enum {
 
 typedef enum {
     INST_CF_NONE    = 0,
-    INST_CF_RET     = 1,
-    INST_CF_CALL    = 2,
-    INST_CF_SYSCALL = 4,
-    INST_CF_SYSRET  = 8,
-    INST_CF_INT     = 16,
-    INST_CF_JMP     = 32,
-    INST_CF_JCC     = 64,
-    INST_CF_CMOV    = 128,
+    INST_CF_RET     = 1 << INST_RET,
+    INST_CF_CALL    = 1 << INST_CALL,
+    INST_CF_SYSCALL = 1 << INST_SYSCALL,
+    INST_CF_SYSRET  = 1 << INST_SYSRET,
+    INST_CF_INT     = 1 << INST_INT,
+    INST_CF_JMP     = 1 << INST_JMP,
+    INST_CF_JCC     = 1 << INST_JCC,
+    INST_CF_CMOV    = 1 << INST_CMOV,
 } inst_cf_flags_t;
+
+#define INST_TO_CF_FLAG(inst) (1 << (inst))
 
 /* These are exactly equivalent to the distorm ones for now! */
 typedef enum {

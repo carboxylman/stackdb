@@ -14,12 +14,12 @@
 #include "probe.h"
 
 #define LOGDUMPPROBEPOINT(dl,lt,pp) \
-    if ((pp)->bsymbol->lsymbol && (pp)->symbol_addr) { \
+    if ((pp)->bsymbol && (pp)->symbol_addr) { \
 	vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR" %s:%+d) ", \
 		(pp)->addr,(pp)->bsymbol->lsymbol->symbol->name, \
 		(pp)->symbol_addr - (pp)->addr);	\
     } \
-    else if ((pp)->bsymbol->lsymbol) { \
+    else if ((pp)->bsymbol) { \
         vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR" %s) ", \
 	       (pp)->addr,(pp)->bsymbol->lsymbol->symbol->name); \
     } \
@@ -27,6 +27,33 @@
         vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR") ", \
 	       (pp)->addr); \
     }
+
+#define LOGDUMPPROBEPOINT_NL(dl,lt,p) \
+    LOGDUMPPROBEPOINT((dl),(lt),(p)); \
+    vdebugc((dl),(lt),"\n");
+
+#define LOGDUMPPROBE(dl,lt,p) \
+    vdebugc((dl),(lt),"probe(%s) ",probe->name); \
+    if ((p)->bsymbol) { \
+	vdebugc((dl),(lt),"(on %s) ", \
+		(p)->bsymbol->lsymbol->symbol->name);	\
+    } \
+    else { \
+        vdebugc((dl),(lt),"(on <UNKNOWN>) ");	\
+    } \
+    if ((p)->probepoint) { 			  \
+	LOGDUMPPROBEPOINT(dl,lt,(p)->probepoint); \
+    } \
+    if ((p)->sources) { 			\
+	vdebugc((dl),(lt)," (%d sources)",g_list_length((p)->sources));	\
+    } \
+    if ((p)->sinks) { 			\
+	vdebugc((dl),(lt)," (%d sinks)",g_list_length((p)->sources)); \
+    }
+
+#define LOGDUMPPROBE_NL(dl,lt,p) \
+    LOGDUMPPROBE((dl),(lt),(p)); \
+    vdebugc((dl),(lt),"\n");
 
 /*
  * If the user doesn't supply pre/post handlers, and the probe has sinks
@@ -43,6 +70,8 @@ int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
     int rc;
 
     if (probe->sinks) {
+	LOGDUMPPROBE(5,LOG_P_PROBE,probe);
+
 	list = probe->sinks;
 	while (list) {
 	    ptmp = (struct probe *)list->data;
@@ -68,6 +97,8 @@ int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
     int rc;
 
     if (probe->sinks) {
+	LOGDUMPPROBE(5,LOG_P_PROBE,probe);
+
 	list = probe->sinks;
 	while (list) {
 	    ptmp = (struct probe *)list->data;
@@ -91,9 +122,8 @@ static struct probepoint *probepoint_lookup(struct target *target,ADDR addr) {
 						 (gpointer)addr);
 
     if (retval) {
-	vdebug(9,LOG_P_PROBEPOINT,"found probepoint ");
-	LOGDUMPPROBEPOINT(9,LOG_P_PROBEPOINT,retval);
-	vdebugc(9,LOG_P_PROBEPOINT,"\n");
+	vdebug(9,LOG_P_PROBEPOINT,"found ");
+	LOGDUMPPROBEPOINT_NL(9,LOG_P_PROBEPOINT,retval);
     }
     else
 	vdebug(9,LOG_P_PROBEPOINT,"did not find probepoint at 0x%"PRIxADDR"\n",
@@ -139,9 +169,8 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
 
     g_hash_table_insert(target->probepoints,(gpointer)addr,probepoint);
 
-    vdebug(5,LOG_P_PROBEPOINT,"");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(5,LOG_P_PROBEPOINT," added\n");
+    vdebug(5,LOG_P_PROBEPOINT,"created ");
+    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
     return probepoint;
 }
@@ -208,9 +237,8 @@ static void probepoint_free(struct probepoint *probepoint) {
     g_hash_table_remove(probepoint->target->probepoints,
 			(gpointer)probepoint->addr);
 
-    vdebug(5,LOG_P_PROBEPOINT,"freed probepoint ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(5,LOG_P_PROBEPOINT,"\n");
+    vdebug(5,LOG_P_PROBEPOINT,"freed ");
+    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
     free(probepoint);
 }
@@ -222,9 +250,8 @@ static void probepoint_free(struct probepoint *probepoint) {
 void probepoint_free_ext(struct probepoint *probepoint) {
     probepoint_free_internal(probepoint);
 
-    vdebug(5,LOG_P_PROBEPOINT,"freed probepoint ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(5,LOG_P_PROBEPOINT," (ext)\n");
+    vdebug(5,LOG_P_PROBEPOINT,"freed (ext) ");
+    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
     free(probepoint);
 }
@@ -239,16 +266,15 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 
     target = probepoint->target;
 
-    vdebug(5,LOG_P_PROBEPOINT,"removing probepoint ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(5,LOG_P_PROBEPOINT,"\n");
+    vdebug(5,LOG_P_PROBEPOINT,"removing ");
+    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
     /* Check if the probepoint has already been inserted; we do not want
      * to backup a previously inserted breakpoint.
      */
     if (probepoint->state == PROBE_DISABLED) {
 	/* return success, the probepoint is already removed */
-	vdebug(7,LOG_P_PROBEPOINT,"probepoint ");
+	vdebug(7,LOG_P_PROBEPOINT,"");
 	LOGDUMPPROBEPOINT(7,LOG_P_PROBEPOINT,probepoint);
 	vdebugc(7,LOG_P_PROBEPOINT," already disabled\n");
 
@@ -279,9 +305,8 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 		verror("failure while removing hw breakpoint; cannot recover!\n");
 	    }
 	    else {
-		vdebug(4,LOG_P_PROBEPOINT,"removed HW breakpoint ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		vdebug(4,LOG_P_PROBEPOINT,"removed HW break ");
+		LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
 	    }
 	}
 	else {
@@ -290,9 +315,8 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 		verror("failure while removing hw watchpoint; cannot recover!\n");
 	    }
 	    else {
-		vdebug(4,LOG_P_PROBEPOINT,"removed HW watchpoint ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		vdebug(4,LOG_P_PROBEPOINT,"removed HW watch ");
+		LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
 	    }
 	}
 
@@ -313,9 +337,8 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	    return 1;
 	}
 
-	vdebug(4,LOG_P_PROBEPOINT,"removed SW breakpoint ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LOG_P_PROBEPOINT,"removed SW break ");
+	LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
 
 	free(probepoint->breakpoint_orig_mem);
 	probepoint->breakpoint_orig_mem = NULL;
@@ -323,9 +346,8 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 
     probepoint->state = PROBE_DISABLED;
 
-    vdebug(2,LOG_P_PROBEPOINT,"");
-    LOGDUMPPROBEPOINT(2,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(2,LOG_P_PROBEPOINT," removed\n");
+    vdebug(2,LOG_P_PROBEPOINT,"removed ");
+    LOGDUMPPROBEPOINT_NL(2,LOG_P_PROBEPOINT,probepoint);
 
     return 0;
 }
@@ -338,15 +360,14 @@ static int __probepoint_insert(struct probepoint *probepoint) {
     target = probepoint->target;
 
     vdebug(5,LOG_P_PROBEPOINT,"inserting ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(5,LOG_P_PROBEPOINT,"\n");
+    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
     /* Check if the probepoint has already been inserted; we do not want
      * to backup a previously inserted breakpoint.
      */
     if (probepoint->state != PROBE_DISABLED) {
 	/* return success, the probepoint is already being managed */
-	vdebug(9,LOG_P_PROBEPOINT," ");
+	vdebug(9,LOG_P_PROBEPOINT,"");
 	LOGDUMPPROBEPOINT(9,LOG_P_PROBEPOINT,probepoint);
 	vdebugc(9,LOG_P_PROBEPOINT," already inserted\n");
 
@@ -364,15 +385,13 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    probepoint->debugregnum = reg;
 
 	    vdebug(3,LOG_P_PROBEPOINT,"using HW reg %d for ",reg);
-	    LOGDUMPPROBEPOINT(3,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(3,LOG_P_PROBEPOINT,"\n");
+	    LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
 	}
 	else {
 	    probepoint->style = PROBEPOINT_SW;
 
 	    vdebug(3,LOG_P_PROBEPOINT,"using SW for FASTEST ");
-	    LOGDUMPPROBEPOINT(3,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(3,LOG_P_PROBEPOINT,"\n");
+	    LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
 	}
     }
     else if (probepoint->style == PROBEPOINT_HW) {
@@ -380,8 +399,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    probepoint->debugregnum = reg;
 
 	    vdebug(3,LOG_P_PROBEPOINT,"using HW reg %d for ",reg);
-	    LOGDUMPPROBEPOINT(3,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(3,LOG_P_PROBEPOINT,"\n");
+	    LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
 	}
 	else {
 	    vwarn("could not get a debug reg!\n");
@@ -412,9 +430,8 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 		verror("failure inserting hw breakpoint!\n");
 	    }
 	    else {
-		vdebug(7,LOG_P_PROBEPOINT,"inserted hw breakpoint at ");
-		LOGDUMPPROBEPOINT(7,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(7,LOG_P_PROBEPOINT,"\n");
+		vdebug(7,LOG_P_PROBEPOINT,"inserted hw break at ");
+		LOGDUMPPROBEPOINT_NL(7,LOG_P_PROBEPOINT,probepoint);
 	    }
 	}
 	else {
@@ -425,9 +442,8 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 		verror("failure inserting hw watchpoint!\n");
 	    }
 	    else {
-		vdebug(7,LOG_P_PROBEPOINT,"inserted hw watchpoint at ");
-		LOGDUMPPROBEPOINT(7,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(7,LOG_P_PROBEPOINT,"\n");
+		vdebug(7,LOG_P_PROBEPOINT,"inserted hw watch at ");
+		LOGDUMPPROBEPOINT_NL(7,LOG_P_PROBEPOINT,probepoint);
 	    }
 	}
 
@@ -457,8 +473,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	}
 
 	vdebug(3,LOG_P_PROBEPOINT,"saved orig mem under SW ");
-	LOGDUMPPROBEPOINT(3,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(3,LOG_P_PROBEPOINT,"\n");
+	LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
 
 	if (target_write_addr(target,probepoint->addr,
 			      target->breakpoint_instrs_len,
@@ -471,15 +486,13 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	}
 
 	vdebug(3,LOG_P_PROBEPOINT,"inserted SW ");
-	LOGDUMPPROBEPOINT(3,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(3,LOG_P_PROBEPOINT,"\n");
+	LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
     }
 
     probepoint->state = PROBE_BP_SET;
 
-    vdebug(2,LOG_P_PROBEPOINT,"");
-    LOGDUMPPROBEPOINT(2,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(2,LOG_P_PROBEPOINT," inserted\n");
+    vdebug(2,LOG_P_PROBEPOINT,"inserted ");
+    LOGDUMPPROBEPOINT_NL(2,LOG_P_PROBEPOINT,probepoint);
 
     return 0;
 }
@@ -508,7 +521,7 @@ struct probe *probe_create(struct target *target,struct probe_ops *pops,
     probe->ops = pops;
 
     if (PROBE_SAFE_OP(probe,init)) {
-	verror("probe '%s' init failed, calling fini!\n",probe->name);
+	verror("probe %s init failed, calling fini!\n",probe->name);
 	PROBE_SAFE_OP(probe,fini);
 	if (name)
 	    free(probe->name);
@@ -516,29 +529,59 @@ struct probe *probe_create(struct target *target,struct probe_ops *pops,
 	return NULL;
     }
 
-    vdebug(5,LOG_P_PROBE,"probe '%s' initialized\n");
+    vdebug(5,LOG_P_PROBE,"initialized ");
+    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
 
     return probe;
 }
 
 int probe_free(struct probe *probe,int force) {
+    vdebug(5,LOG_P_PROBE,"");
+    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+
     if (probe->sinks && !force) {
-	verror("could not free a probe that had sinks remaining!\n");
+	verror("could not free probe %s with sinks remaining!\n",
+	       probe->name);
 	return -1;
     }
     else if (probe->probepoint && !force) {
-	verror("could not free a probe that had a probepoint remaining!\n");
+	verror("could not free probe %s with probepoint remaining!\n",
+	       probe->name);
 	return -1;
     }
-    else if (probe->sinks || probe->probepoint) {
-	vwarn("forcefully freeing a probe that had sinks/probepoint remaining!\n");
-	probe_unregister(probe,force);
+    
+    if (probe->sinks) 
+	vwarn("forcefully freeing probe %s that had sinks/probepoint remaining!\n",
+	      probe->name);
+
+    /* If we still need to unregister, we call probe_unregister, which
+     * will call us again if the probe was an autofree probe.  So, if it
+     * is an autofree probe, let probe_unregister call us again if it
+     * succeeds.  If it fails, and we're forcing the free, do it anyway.
+     */
+    if (probe->probepoint || probe->sources) {
+	if (!probe_unregister(probe,force)) {
+	    if (probe->autofree)
+		return 0;
+	}
+	else {
+	    if (force) 
+		verror("probe_unregister %s failed, forcing free to continue",
+		       probe->name);
+	    else {
+		verror("probe_unregister %s failed, not forcing!",probe->name);
+		return -1;
+	    }
+	}
     }
 
     if (PROBE_SAFE_OP(probe,fini)) {
-	verror("probe '%s' fini failed, aborting!\n",probe->name);
+	verror("probe %s fini failed, aborting!\n",probe->name);
 	return -1;
     }
+
+    vdebug(5,LOG_P_PROBE,"almost done: ");
+    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
 
     if (probe->name)
 	free(probe->name);
@@ -557,11 +600,9 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     struct probe *ptmp;
     GList *list;
 
-    if (probepoint) {
-	vdebug(5,LOG_P_PROBE,"unregistering probe at ");
-	LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probepoint);
-	vdebugc(5,LOG_P_PROBE,"\n");
-    }
+    vdebug(5,LOG_P_PROBE,"");
+    LOGDUMPPROBE(5,LOG_P_PROBE,probe);
+    vdebugc(5,LOG_P_PROBE,"(force=%d,onlyone=%d)\n",force,onlyone);
 
     if (probe->sources) 
 	vdebug(5,LOG_P_PROBE,"detaching probe %s from sources\n",probe->name);
@@ -605,17 +646,33 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	}
     }
 
+    /* If we are a source on somebody's sink list, remove ourselves! */
+    if (probe->sinks) {
+	list = probe->sinks;
+	while (list) {
+	    ptmp = (struct probe *)list->data;
+	    ptmp->sources = g_list_remove(ptmp->sources,probe);
+	    list = g_list_next(list);
+	}
+	probe->sinks = NULL;
+    }
+
     /* Unregister from any sources. */
     if (probe->sources) {
 	list = probe->sources;
 	while (list) {
+	vdebug(5,LOG_P_PROBE,"removing source\n");
 	    ptmp = (struct probe *)list->data;
+	    /* We MUST get the next ptr before calling the
+	     * probe_unregister_source* functions, because they will
+	     * remove our element!
+	     */
+	    list = g_list_next(list);
 	    /* Unregister from the sources, possibly recursively. */
 	    if (onlyone)
 		probe_unregister_source_one(probe,ptmp,force);
 	    else 
 		probe_unregister_source(probe,ptmp,force);
-	    list = g_list_next(list);
 	}
 	g_list_free(probe->sources);
 	probe->sources = NULL;
@@ -832,7 +889,7 @@ int probe_unregister_source(struct probe *sink,struct probe *src,int force) {
 
     /* Do it recursively! */
     if (src->autofree && !src->sinks)
-	__probe_unregister(src,force,1);
+	__probe_unregister(src,force,0);
 
     if (PROBE_SAFE_OP(sink,unregistered)) {
 	verror("probe %s: unregistered failed, aborting\n",sink->name);
@@ -1016,7 +1073,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 	goto errout;
     }
 
-    vdebug(5,LOG_P_PROBE,"probe attached to ");
+    vdebug(5,LOG_P_PROBE,"probe %s attached to ",probe->name);
     LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probe->probepoint);
     vdebugc(5,LOG_P_PROBE,"\n");
 
@@ -1125,8 +1182,11 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     struct target *target = sink->target;
 
+    // XXX: what if the sources have different symbols??
+    sink->bsymbol = src->bsymbol;
+
     if (sink->target != src->target) {
-	verror("sink/src targets different!\n");
+	verror("sink %s/src %s targets different!\n",sink->name,src->name);
 	goto errout;
     }
 
@@ -1147,8 +1207,10 @@ struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     }
 
     /* Enable everybody downstream. */
-    if (probe_enable(sink))
+    if (probe_enable(sink)) {
+	verror("failed to enable sink probe '%s', aborting\n",sink->name);
 	goto errout;
+    }
 
     return sink;
 
@@ -1410,6 +1472,18 @@ int probe_is_base(struct probe *probe) {
     return probe->probepoint != NULL;
 }
 
+int probe_num_sources(struct probe *probe) {
+    if (probe->sources)
+	return g_list_length(probe->sources);
+    return 0;
+}
+
+int probe_num_sinks(struct probe *probe) {
+    if (probe->sinks)
+	return g_list_length(probe->sinks);
+    return 0;
+}
+
 /*
  * Returns the address the a probe is targeting.
  * If the given handle is invalid, the function returns a value of 0.
@@ -1525,7 +1599,7 @@ int probepoint_bp_handler(struct target *target,
 		if (probe->pre_handler(probe,probe->handler_data,probe))
 		    probe_disable(probe);
 	    }
-	    else if (probe->sinks) {
+	    else if (0 && probe->sinks) {
 		vdebug(4,LOG_P_PROBEPOINT,
 		       "running default probe sink pre_handler at ");
 		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
@@ -1876,7 +1950,7 @@ int probepoint_ss_handler(struct target *target,
 		if (probe->post_handler(probe,probe->handler_data,probe)) 
 		    probe_disable(probe);
 	    }
-	    else if (probe->sinks) {
+	    else if (0 && probe->sinks) {
 		vdebug(4,LOG_P_PROBEPOINT,
 		       "running default probe sink pre_handler at ");
 		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);

@@ -152,10 +152,10 @@ struct probe *probe_register_function(struct probe *probe,
  */
 #ifdef ENABLE_DISTORM
 #include <disasm.h>
-struct probe *probe_register_function_instrs(struct probe *probe,
+struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     probepoint_style_t style,
-					     struct bsymbol *bsymbol,
-					     inst_cf_flags_t flags);
+					     inst_type_t inst,
+					     struct probe *probe,...);
 #endif
 
 /**
@@ -322,6 +322,10 @@ int probe_enabled(struct probe *probe);
  * attached to a probepoint.
  */
 int probe_is_base(struct probe *probe);
+
+int probe_num_sources(struct probe *probe);
+
+int probe_num_sinks(struct probe *probe);
 
 /*
  * Returns the address the a probe is targeting.
