@@ -204,6 +204,11 @@ struct target {
      */
     GHashTable *probepoints;
 
+    /*
+     * A hashtable of pointers to probes.
+     */
+    GHashTable *probes;
+
     /* One or more opcodes that create a software breakpoint */
     void *breakpoint_instrs;
     unsigned int breakpoint_instrs_len;

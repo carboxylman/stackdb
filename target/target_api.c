@@ -194,6 +194,7 @@ void target_free(struct target *target) {
     }
 
     g_hash_table_destroy(target->probepoints);
+    g_hash_table_destroy(target->probes);
 
     if (target->breakpoint_instrs)
 	free(target->breakpoint_instrs);
@@ -225,6 +226,8 @@ struct target *target_create(char *type,void *state,struct target_ops *ops) {
 					  NULL,ghash_mmap_entry_free);
 
     retval->probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    retval->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     /*
      * Hm, I think we should do this by default, and let target backends
