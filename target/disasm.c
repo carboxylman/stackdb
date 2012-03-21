@@ -5,6 +5,22 @@
 #include <distorm.h>
 #include <mnemonics.h>
 
+static char *inst_names[] = {
+    "NONE",
+    "RET",
+    "CALL",
+    "SYSCALL",
+    "SYSRET",
+    "INT",
+    "JMP",
+    "JCC",
+    "CMOV",
+};
+
+const char *disasm_get_inst_name(inst_type_t type) {
+    return inst_names[type];
+}
+
 /*
  * Returns offsets for a specific instruction.
  */

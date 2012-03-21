@@ -199,6 +199,7 @@ struct mmap_entry *location_mmap(struct target *target,
  ** Disassembly helpers.
  **/
 #ifdef ENABLE_DISTORM
+const char *disasm_get_inst_name(inst_type_t type);
 int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 				    unsigned char *inst_buf,unsigned int buf_len,
 				    struct array_list **offset_list,ADDR base);
