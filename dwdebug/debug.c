@@ -1114,6 +1114,9 @@ struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
 
     symbol->ref = offset;
 
+    /* Comparison functions in dwarf_debuginfo need this set nonzero! */
+    symbol->base_addr = ADDRMAX;
+
     if (full) {
 	switch (symtype) {
 	case SYMBOL_TYPE_TYPE:
