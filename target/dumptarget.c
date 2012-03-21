@@ -49,8 +49,11 @@ struct target *t = NULL;
 int len = 0;
 struct bsymbol **symbols = NULL;
 GHashTable *probes;
-GHashTable *retaddrs;
+GHashTable *disfuncs;
 GHashTable *bsymbols;
+struct array_list *shadow_stack;
+
+int doit = 0;
 
 void sigh(int signo) {
     GHashTableIter iter;
@@ -64,10 +67,7 @@ void sigh(int signo) {
 	while (g_hash_table_iter_next(&iter,
 				      (gpointer)&key,
 				      (gpointer)&probe)) {
-	    if (!probe->parent) {
-		probe_unregister_children(probe,1);
-		probe_unregister(probe,1);
-	    }
+	    probe_unregister(probe,1);
 	}
 	target_close(t);
 	fprintf(stderr,"Ended trace.\n");
@@ -76,27 +76,75 @@ void sigh(int signo) {
     exit(0);
 }
 
-int retaddr_save(struct probe *probe) {
-    struct probe *parent = NULL;
+int retaddr_check(struct probe *probe,void *handler_data,
+		  struct probe *trigger);
+int retaddr_save(struct probe *probe,void *handler_data,
+		 struct probe *trigger);
+
+int dynamic_instr_func(ADDR ip,struct bsymbol *bsymbol) {
+    /* Disassemble the called function if we haven't already! */
+    if (!g_hash_table_lookup(disfuncs,(gpointer)ip)) {
+	/* Dissasemble the function and grab a list of
+	 * RET instrs, and insert more child
+	 * breakpoints.
+	 */
+	int bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+4+1+2+1;
+	char *buf = malloc(bufsiz);
+	snprintf(buf,bufsiz,"call_in_%s",bsymbol->lsymbol->symbol->name);
+	struct probe *cprobe = probe_create(t,NULL,buf,NULL,retaddr_save,
+					    NULL,0);
+	free(buf);
+	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
+	buf = malloc(bufsiz);
+	snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
+	struct probe *rprobe = probe_create(t,NULL,buf,retaddr_check,NULL,
+					    NULL,0);
+
+	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,
+					    INST_RET,rprobe,
+					    INST_CALL,cprobe,
+					    INST_NONE)) {
+	    probe_free(cprobe,1);
+	    probe_free(rprobe,1);
+	    return -1;
+	}
+
+	if (probe_num_sources(cprobe) == 0) {
+	    probe_free(cprobe,1);
+	    fprintf(stderr,
+		    "No call sites in %s.\n",bsymbol->lsymbol->symbol->name);
+	}
+	else {
+	    g_hash_table_insert(probes,(gpointer)cprobe,(gpointer)cprobe);
+	    fprintf(stderr,
+		    "Registered %d call probes in function %s.\n",
+		    probe_num_sources(cprobe),bsymbol->lsymbol->symbol->name);
+	}
+
+	if (probe_num_sources(rprobe) == 0) {
+	    probe_free(rprobe,1);
+	    fprintf(stderr,
+		    "No return sites in %s.\n",bsymbol->lsymbol->symbol->name);
+	}
+	else {
+	    g_hash_table_insert(probes,(gpointer)rprobe,(gpointer)rprobe);
+	    fprintf(stderr,
+		    "Registered %d return probes in function %s.\n",
+		    probe_num_sources(rprobe),bsymbol->lsymbol->symbol->name);
+	}
+
+	g_hash_table_insert(disfuncs,(gpointer)ip,(gpointer)1);
+    }
+
+    return 0;
+}
+
+int retaddr_save(struct probe *probe,void *handler_data,
+		 struct probe *trigger) {
+    struct target *t = probe->target;
     REGVAL sp;
-    struct array_list *alist;
+    REGVAL ip;
     ADDR *retaddr;
-
-    if (probe->parent)
-	parent = probe->parent;
-
-    if (!parent) {
-	fprintf(stderr,"Could not find parent probe in retaddr_save!\n");
-	return 0;
-    }
-
-    alist = (struct array_list *) \
-	g_hash_table_lookup(retaddrs,(gpointer)parent->probepoint->addr);
-
-    if (!alist) {
-	fprintf(stderr,"Could not find our parent probe/retaddr index!\n");
-	return 0;
-    }
 
     fflush(stderr);
     fflush(stdout);
@@ -108,6 +156,7 @@ int retaddr_save(struct probe *probe) {
 	return 0;
     }
 
+    /* Grab the return address on the top of the stack */
     retaddr = malloc(sizeof(*retaddr));
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
 			  (unsigned char *)retaddr,NULL)) {
@@ -115,40 +164,50 @@ int retaddr_save(struct probe *probe) {
 	return 0;
     }
 
-    array_list_add(alist,retaddr);
+    /* Grab the current IP -- the post-call IP */
+    ip = target_read_reg(t,t->ipregno);
+    if (errno) {
+	fprintf(stderr,"Could not read IP in retaddr_save!\n");
+	fflush(stderr);
+	fflush(stdout);
+	return 0;
+    }
 
-    fprintf(stdout,"%s (0x%"PRIxADDR"): retaddr = 0x%"PRIxADDR"\n",
-	    probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
-	    *retaddr);
+    struct bsymbol *bsymbol = target_lookup_sym_addr(t,ip);
+    if (!bsymbol) {
+	fprintf(stdout,
+		"(SAVE) call 0x%"PRIxADDR" (<UNKNOWN>)"
+		" (from within %s): retaddr = 0x%"PRIxADDR
+		" (skipping unknown function!)\n",
+		ip,probe->bsymbol->lsymbol->symbol->name,*retaddr);
+	free(retaddr);
+	return 0;
+    }
+    else {
+	fprintf(stdout,
+		"(SAVE) call 0x%"PRIxADDR" (%s)"
+		" (from within %s): retaddr = 0x%"PRIxADDR"\n",
+		ip,bsymbol->lsymbol->symbol->name,
+		probe->bsymbol->lsymbol->symbol->name,
+		*retaddr);
+    }
 
-    fflush(stderr);
-    fflush(stdout);
+    /* Since we know that the call is a known function that we can
+     * disasm and instrument return points for, push it onto the shadow
+     * stack!
+     */
+    array_list_add(shadow_stack,retaddr);
+
+    dynamic_instr_func(ip,bsymbol);
 
     return 0;
 }
 
-int retaddr_check(struct probe *probe) {
-    struct probe *parent = NULL;
+int retaddr_check(struct probe *probe,void *handler_data,
+		  struct probe *trigger) {
     REGVAL sp;
     ADDR newretaddr;
     ADDR *oldretaddr = NULL;
-    struct array_list *alist;
-
-    if (probe->parent)
-	parent = probe->parent;
-
-    if (!parent) {
-	fprintf(stderr,"Could not find parent probe in retaddr_check!\n");
-	return 0;
-    }
-
-    alist = (struct array_list *) \
-	g_hash_table_lookup(retaddrs,(gpointer)parent->probepoint->addr);
-
-    if (!alist) {
-	fprintf(stderr,"Could not find our parent probe/retaddr index!\n");
-	return 0;
-    }
 
     fflush(stderr);
     fflush(stdout);
@@ -160,10 +219,10 @@ int retaddr_check(struct probe *probe) {
 	return 0;
     }
 
-    oldretaddr = (ADDR *)array_list_remove(alist);
+    oldretaddr = (ADDR *)array_list_remove(shadow_stack);
 
     if (!oldretaddr) {
-	fprintf(stderr,"Could not read from saved retaddrs; just inserted?\n");
+	fprintf(stderr,"Could not read from shadow stack; just inserted?\n");
 	return 0;
     }
 
@@ -174,9 +233,29 @@ int retaddr_check(struct probe *probe) {
 	return 0;
     }
 
-    fprintf(stdout,"%s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR"; oldretaddr = 0x%"PRIxADDR"\n",
-	    probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
-	    newretaddr,*oldretaddr);
+    if (newretaddr != *oldretaddr)
+	fprintf(stdout,
+		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
+		" oldretaddr = 0x%"PRIxADDR" ------ STACK CORRUPTION!\n",
+		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
+		newretaddr,*oldretaddr);
+    else 
+	fprintf(stdout,
+		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
+		" oldretaddr = 0x%"PRIxADDR"\n",
+		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
+		newretaddr,*oldretaddr);
+
+    if (doit) {
+	if (!target_write_addr(t,(ADDR)sp,sizeof(ADDR),
+			       (unsigned char *)oldretaddr,NULL)) {
+	    fprintf(stderr,"Could not reset top of stack in retaddr_check!\n");
+	    free(oldretaddr);
+	    return 0;
+	}
+	else 
+	    fprintf(stdout,"Reset stack after corruption!\n");
+    }
 
     fflush(stderr);
     fflush(stdout);
@@ -186,28 +265,30 @@ int retaddr_check(struct probe *probe) {
     return 0;
 }
 
-int function_dump_args(struct probe *probe) {
+int function_dump_args(struct probe *probe,void *handler_data,
+		       struct probe *trigger) {
     struct value *value;
     int j;
 
     fflush(stderr);
     fflush(stdout);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",probe->probepoint->lsymbol->symbol->name,
-	    probe->probepoint->addr);
+    fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",
+	    probe->bsymbol->lsymbol->symbol->name,probe_addr(probe));
 
     /* Make a chain with room for one more -- the
      * one more is each arg we're going to process.
      */
+    struct symbol_instance *tsym_instance;
     struct symbol *tsym;
     struct array_list *tmp;
-    if (!probe->probepoint->lsymbol->chain
-	|| array_list_len(probe->probepoint->lsymbol->chain) == 0) {
-	tmp = array_list_clone(probe->probepoint->lsymbol->chain,2);
-	array_list_add(tmp,probe->probepoint->lsymbol->symbol);
+    if (!probe->bsymbol->lsymbol->chain
+	|| array_list_len(probe->bsymbol->lsymbol->chain) == 0) {
+	tmp = array_list_clone(probe->bsymbol->lsymbol->chain,2);
+	array_list_add(tmp,probe->bsymbol->lsymbol->symbol);
     }
     else
-	tmp = array_list_clone(probe->probepoint->lsymbol->chain,1);
+	tmp = array_list_clone(probe->bsymbol->lsymbol->chain,1);
     int len = tmp->len;
 
     struct lsymbol tlsym = {
@@ -219,8 +300,9 @@ int function_dump_args(struct probe *probe) {
     };
 
     ++tmp->len;
-    list_for_each_entry(tsym,&probe->probepoint->lsymbol->symbol->s.ii.d.f.args,
-			member) {
+    list_for_each_entry(tsym_instance,&probe->bsymbol->lsymbol->symbol->s.ii->d.f.args,
+			d.v.member) {
+	tsym = tsym_instance->d.v.member_symbol;
 	fflush(stderr);
 	fflush(stdout);
 	array_list_item_set(tmp,len,tsym);
@@ -256,22 +338,25 @@ int function_dump_args(struct probe *probe) {
     return 0;
 }
 
-int function_post(struct probe *probe) {
+int function_post(struct probe *probe,void *handler_data,
+		  struct probe *trigger) {
     fflush(stderr);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") post handler\n",
-	    probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr);
+	    probe->bsymbol->lsymbol->symbol->name,
+	    probe_addr(probe));
 
     fflush(stdout);
 
     return 0;
 }
 
-int var_pre(struct probe *probe) {
+int var_pre(struct probe *probe,void *handler_data,
+	    struct probe *trigger) {
     int j;
     struct value *value;
     struct bsymbol *bsymbol = (struct bsymbol *) \
-	g_hash_table_lookup(bsymbols,(gpointer)probe->probepoint->addr);
+	g_hash_table_lookup(bsymbols,(gpointer)probe_addr(probe));
 
     fflush(stderr);
 
@@ -281,9 +366,10 @@ int var_pre(struct probe *probe) {
 			      LOAD_FLAG_NO_CHECK_VISIBILITY |
 			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre) = ",
-		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr);
+		probe->bsymbol->lsymbol->symbol->name,
+		probe_addr(probe));
 
-	symbol_rvalue_print(stdout,probe->probepoint->lsymbol->symbol,
+	symbol_rvalue_print(stdout,probe->bsymbol->lsymbol->symbol,
 			    value->buf,value->bufsiz,
 			    LOAD_FLAG_AUTO_DEREF |
 			    LOAD_FLAG_AUTO_STRING |
@@ -299,7 +385,7 @@ int var_pre(struct probe *probe) {
     }
     else
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
-		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
+		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
 
     fflush(stdout);
@@ -307,11 +393,12 @@ int var_pre(struct probe *probe) {
     return 0;
 }
 
-int var_post(struct probe *probe) {
+int var_post(struct probe *probe,void *handler_data,
+	     struct probe *trigger) {
     int j;
     struct value *value;
     struct bsymbol *bsymbol = (struct bsymbol *) \
-	g_hash_table_lookup(bsymbols,(gpointer)probe->probepoint->addr);
+	g_hash_table_lookup(bsymbols,(gpointer)probe_addr(probe));
 
     fflush(stderr);
 
@@ -321,9 +408,9 @@ int var_post(struct probe *probe) {
 			      LOAD_FLAG_NO_CHECK_VISIBILITY |
 			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
 	fprintf(stdout,"%s (0x%"PRIxADDR") (post) = ",
-		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr);
+		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe));
 
-	symbol_rvalue_print(stdout,probe->probepoint->lsymbol->symbol,
+	symbol_rvalue_print(stdout,probe->bsymbol->lsymbol->symbol,
 			    value->buf,value->bufsiz,
 			    LOAD_FLAG_AUTO_DEREF |
 			    LOAD_FLAG_AUTO_STRING |
@@ -338,19 +425,24 @@ int var_post(struct probe *probe) {
 	value_free(value);
     }
     else
-	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
-		probe->probepoint->lsymbol->symbol->name,probe->probepoint->addr,
+	fprintf(stdout,"%s (0x%"PRIxADDR") (post): could not read value: %s\n",
+		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
 
     fflush(stdout);
 
     return 0;
 }
-    
+
+extern char **environ;
 
 int main(int argc,char **argv) {
     int pid = -1;
+    int doexe = 0;
     char *exe = NULL;
+    char **exeargs = NULL;
+    char *exeoutfile = NULL;
+    char *exeerrfile = NULL;
 #ifdef ENABLE_XENACCESS
     char *domain = NULL;
 #endif
@@ -361,9 +453,8 @@ int main(int argc,char **argv) {
     ADDR *addrs = NULL;
     char *word;
     int i, j;
-    int ssize;
     log_flags_t flags;
-    probepoint_type_t ptype = PROBEPOINT_FASTEST;
+    probepoint_style_t style = PROBEPOINT_FASTEST;
     int do_post = 1;
     int offset = 0;
     int upg = 1;
@@ -378,7 +469,22 @@ int main(int argc,char **argv) {
 	.meta = 1,
     };
 
-    while ((ch = getopt(argc, argv, "m:p:e:dvsl:Po:U")) != -1) {
+    /* Find the '--' and save the remaining args so they can be passed
+     * to linux_userproc_launch below.  Truncate argc and argv to just
+     * include any function/variable breakpoint/watchpoint params, and
+     * any other args, to be parsed later.
+     */
+    for (i = 0; i < argc; ++i) {
+	if (!strcmp(argv[i],"--") && (i + 1) < argc) {
+	    exe = argv[i + 1];
+	    argv[i] = NULL;
+	    argc = i;
+	    exeargs = &argv[i + 2];
+	    break;
+	}
+    }
+
+    while ((ch = getopt(argc, argv, "m:p:eE:O:dvsl:Po:U")) != -1) {
 	switch(ch) {
 	case 'U':
 	    /* Don't use auto prologue guess. */
@@ -402,13 +508,19 @@ int main(int argc,char **argv) {
 #endif
 	    break;
 	case 'e':
-	    exe = optarg;
+	    doexe = 1;
+	    break;
+	case 'E':
+	    exeerrfile = optarg;
+	    break;
+	case 'O':
+	    exeoutfile = optarg;
 	    break;
 	case 'v':
 	    raw = 1;
 	    break;
 	case 's':
-	    ptype = PROBEPOINT_SW;
+	    style = PROBEPOINT_SW;
 	    break;
 	case 'l':
 	    if (vmi_log_get_flag_mask(optarg,&flags)) {
@@ -451,8 +563,14 @@ int main(int argc,char **argv) {
 	}
     }
 #endif
-    else if (exe) {
-	t = linux_userproc_launch(exe,NULL,NULL);
+    else if (doexe) {
+	if (!exe) {
+	    fprintf(stderr,"must supply at least an executable to launch (%d)!\n",i);
+	    exit(-1);
+	}
+
+	t = linux_userproc_launch(exe,exeargs,environ,0,
+				  exeoutfile,exeerrfile);
 	if (!t) {
 	    fprintf(stderr,"could not launch exe %s!\n",exe);
 	    exit(-3);
@@ -481,8 +599,10 @@ int main(int argc,char **argv) {
 	    symbols = (struct bsymbol **)malloc(sizeof(struct bsymbol *)*argc);
 	    memset(symbols,0,sizeof(struct bsymbol *)*argc);
 
+	    shadow_stack = array_list_create(64);
+
 	    probes = g_hash_table_new(g_direct_hash,g_direct_equal);
-	    retaddrs = g_hash_table_new(g_direct_hash,g_direct_equal);
+	    disfuncs = g_hash_table_new(g_direct_hash,g_direct_equal);
 	    bsymbols = g_hash_table_new(g_direct_hash,g_direct_equal);
 	}
     }
@@ -505,7 +625,6 @@ int main(int argc,char **argv) {
 	for (i = 0; i < argc; ++i) {
 	    /* Look for retval code */
 	    char *retcode_str = index(argv[i],':');
-	    REGVAL retcode = 0;
 	    if (retcode_str) {
 		*retcode_str = '\0';
 		++retcode_str;
@@ -529,237 +648,90 @@ int main(int argc,char **argv) {
 
 	    bsymbol_dump(bsymbol,&udn);
 
-	    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
-		/* Try to insert a breakpoint, fastest possible, at the
-		 * end of the prologue.  If they specified an int, do a
-		 * return with that as the return code.  If they
-		 * specified 'c', then add another breakpoint at the
-		 * *immediate* entry point of the function, record the
-		 * current return addr on the top of the stack, and add
-		 * child breakpoints on all the function's return
-		 * statements.
-		 */
-		ADDR start = 0;
-		ADDR prologueend = 0;
-		ADDR probeaddr = 0;
-		struct memrange *range;
-		struct array_list *cflist = NULL;
-		struct range *funcrange;
-		unsigned char *funccode;
-		unsigned int funclen;
+	    probepoint_whence_t whence;
+	    probe_handler_t pre;
+	    probe_handler_t post = NULL;
 
-		if (location_resolve_function_start(t,bsymbol,
-						    &start,&range)) {
+	    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
+		whence = PROBEPOINT_EXEC;
+		pre = function_dump_args;
+		if (do_post)
+		    post = function_post;
+	    }
+	    else {
+		pre = var_pre;
+		if (do_post)
+		    post = var_post;
+		if (i < argc && retcode_strs[i] 
+		    && *retcode_strs[i] == 'w') {
+		    whence = PROBEPOINT_WRITE;
+		}
+		else 
+		    whence = PROBEPOINT_READWRITE;
+	    }
+
+	    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)
+		&& ((i < argc && retcode_strs[i] 
+		     && (*retcode_strs[i] == 'c'
+			 || *retcode_strs[i] == 'C')))) {
+		ADDR funcstart;
+		if (location_resolve_symbol_base(t,bsymbol,&funcstart,NULL)) {
 		    fprintf(stderr,
-			    "Could not resolve entry PC for function %s!\n",
+			    "Could not resolve base addr for function %s!\n",
 			    bsymbol->lsymbol->symbol->name);
-		    --i;
 		    goto err_unreg;
 		}
-		else {
-		    probeaddr = start;
-		}
-		if (location_resolve_function_prologue_end(t,bsymbol,
-							   &prologueend,
-							   &range)) {
+		if (dynamic_instr_func(funcstart,bsymbol)) {
 		    fprintf(stderr,
-			    "Could not resolve prologue_end for function %s!\n",
-			    bsymbol->lsymbol->symbol->name);
-		}
-		else {
-		    probeaddr = prologueend;
-		}
-
-		if (g_hash_table_lookup(probes,(gpointer)start)
-		    || g_hash_table_lookup(probes,(gpointer)prologueend)) {
-		    /* This is a function we have already added that was
-		     * called by some other function in our call graph;
-		     * skip!
-		     */
-		    continue;
-		}
-		
-		probe = \
-		    probe_register_break(t,probeaddr + offset,range,ptype,
-					 function_dump_args,
-					 (do_post) ? function_post : NULL,
-					 bsymbol->lsymbol,start);
-		g_hash_table_insert(probes,(gpointer)probe->probepoint->addr,(gpointer)probe);
-		g_hash_table_insert(retaddrs,(gpointer)probe->probepoint->addr,(gpointer)array_list_create(0));
-		g_hash_table_insert(bsymbols,(gpointer)(probeaddr + offset),(gpointer)bsymbol);
-		
-		if (probe) {
-		    fprintf(stderr,
-			    "Registered probe %s at 0x%"PRIxADDR".\n",
-			    bsymbol->lsymbol->symbol->name,
-			    probeaddr + offset);
-		    /* Add the retcode action, if any! */
-		    if ((i < argc && retcode_strs[i] && *retcode_strs[i] == 'c')
-			/* If we're into symbols past argc, these were
-			 * added because we added this symbol after
-			 * disassembly.  We don't add return code
-			 * actions to it, but we *do* keep
-			 * dissassembling and adding more functions
-			 * until we find a leaf function.
-			 */
-			|| i >= argc) {
-			/* Add another probe at the entry point to
-			 * record the current return addr.
-			 */
-			struct probe *cprobe;
-			if (!(cprobe = probe_register_child(probe,
-							    start - probe->probepoint->addr,
-							    PROBEPOINT_SW,
-							    retaddr_save,NULL))) {
-			    fprintf(stderr,"could not create child return addr probe for function %s!\n",
-				    bsymbol->lsymbol->symbol->name);
-			    goto err_unreg;
-			}
-			else {
-			    fprintf(stderr,
-				    "Registered return addr save probe for %s at 0x%"PRIxADDR".\n",
-				    bsymbol->lsymbol->symbol->name,start);
-			}
-			g_hash_table_insert(probes,(gpointer)cprobe->probepoint->addr,(gpointer)cprobe);
-			/* Dissasemble the function and grab a list of
-			 * RET instrs, and insert more child
-			 * breakpoints.
-			 */
-			funcrange = &bsymbol->lsymbol->symbol->s.ii.d.f.symtab->range;
-			if (RANGE_IS_PC(funcrange)) {
-			    funclen = funcrange->highpc - funcrange->lowpc;
-			    funccode = malloc(funclen);
-
-			    if (!target_read_addr(t,funcrange->lowpc,
-						  funclen,funccode,NULL)) {
-				fprintf(stderr,"could not read code before disasm of function %s!\n",
-				    bsymbol->lsymbol->symbol->name);
-				goto err_unreg;
-			    }
-
-			    if (disasm_get_control_flow_offsets(t,
-								INST_CF_RET |
-								INST_CF_CALL,
-								funccode,funclen,
-								&cflist,
-								funcrange->lowpc)) {
-				fprintf(stderr,"could not disasm function %s!\n",
-					bsymbol->lsymbol->symbol->name);
-				goto err_unreg;
-			    }
-
-			    /* Now register child breakpoints for each RET! */
-			    for (j = 0; j < array_list_len(cflist); ++j) {
-				struct inst_cf_data *idata = \
-				    (struct inst_cf_data *)array_list_item(cflist,
-									   j);
-				if (idata->type == INST_RET) {
-				    if (!(cprobe = probe_register_child(probe,
-									(start + idata->offset) - probe->probepoint->addr,
-									PROBEPOINT_SW,
-									retaddr_check,NULL))) {
-					fprintf(stderr,"could not create child return addr check probe for function %s!\n",
-						bsymbol->lsymbol->symbol->name);
-					array_list_deep_free(cflist);
-					array_list_free(cflist);
-					goto err_unreg;
-				    }
-				    else {
-					fprintf(stderr,
-						"Registered return addr check probe for %s at 0x%"PRIxADDR".\n",
-						bsymbol->lsymbol->symbol->name,start + idata->offset);
-				    }
-				    g_hash_table_insert(probes,(gpointer)cprobe->probepoint->addr,(gpointer)cprobe);
-				}
-				else if (idata->type == INST_CALL) {
-				    struct bsymbol *callsymbol;
-				    /* Find this function and add it to
-				     * our monitored set.
-				     */
-				    if (idata->target_addr 
-					&& !g_hash_table_lookup(probes,(gpointer)idata->target_addr)
-					&& (callsymbol = target_lookup_sym_addr(t,idata->target_addr))) {
-					array_list_add(symlist,callsymbol);
-					fprintf(stderr,
-						"Adding called function %s at 0x%"PRIxADDR".\n",
-						callsymbol->lsymbol->symbol->name,idata->target_addr);
-				    }
-				}
-			    }
-
-			    array_list_deep_free(cflist);
-			    array_list_free(cflist);
-			}
-		    }
-		    else if (i < argc && retcode_strs[i]) {
-			struct action *action = action_return(retcodes[i]);
-			if (!action) {
-			    fprintf(stderr,"could not create action!\n");
-			    goto err_unreg;
-			}
-			if (action_sched(probe,action,ACTION_REPEATPRE)) {
-			    fprintf(stderr,"could not schedule action!\n");
-			    goto err_unreg;
-			}
-		    }
-		}
-		else {
-		    fprintf(stderr,
-			    "Failed to register probe %s at 0x%"PRIxADDR".\n",
-			    bsymbol->lsymbol->symbol->name,
-			    probeaddr + offset);
-		    --i;
+			    "Could not instrument function %s (0x%"PRIxADDR")!\n",
+			    bsymbol->lsymbol->symbol->name,funcstart);
 		    goto err_unreg;
 		}
 	    }
-	    else if (SYMBOL_IS_VAR(bsymbol->lsymbol->symbol)) {
-		/* Try to insert a watchpoint. */
-		ADDR addr;
-		struct memrange *range;
-		ssize = symbol_type_full_bytesize(bsymbol->lsymbol->symbol->datatype);
-		if (ssize <= 0) {
-		    fprintf(stderr,
-			    "Bad size (%d) for type of %s!\n",
-			    ssize,bsymbol->lsymbol->symbol->name);
-		    --i;
+	    else {
+		probe = probe_create(t,NULL,bsymbol->lsymbol->symbol->name,
+				     pre,post,NULL,0);
+		if (!probe)
+		    goto err_unreg;
+
+		if (!probe_register_symbol(probe,bsymbol,style,whence,
+					   PROBEPOINT_LAUTO)) {
+		    probe_free(probe,1);
 		    goto err_unreg;
 		}
 
-		errno = 0;
-		addr = location_resolve(t,bsymbol->region,
-					&bsymbol->lsymbol->symbol->s.ii.l,
-					bsymbol->lsymbol->chain,&range);
-		if (!addr && errno) {
+		g_hash_table_insert(probes,(gpointer)probe,(gpointer)probe);
+		g_hash_table_insert(bsymbols,(gpointer)probe_addr(probe),
+				    (gpointer)bsymbol);
+
+		if (probe) {
 		    fprintf(stderr,
-			    "Could not resolve location for %s!\n",
+			    "Registered probe %s at 0x%"PRIxADDR".\n",
+			    bsymbol->lsymbol->symbol->name,
+			    probe_addr(probe));
+		    
+		    /* Add the retcode action, if any! */
+		    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
+			if (i < argc && retcode_strs[i]) {
+			    struct action *action = action_return(retcodes[i]);
+			    if (!action) {
+				fprintf(stderr,"could not create action!\n");
+				goto err_unreg;
+			    }
+			    if (action_sched(probe,action,ACTION_REPEATPRE,1)) {
+				fprintf(stderr,"could not schedule action!\n");
+				goto err_unreg;
+			    }
+			}
+		    }
+		}
+		else {
+		    fprintf(stderr,
+			    "Failed to register probe on '%s'\n",
 			    bsymbol->lsymbol->symbol->name);
 		    --i;
 		    goto err_unreg;
 		}
-
-		probe = \
-		    probe_register_watch(t,addr,range,PROBEPOINT_HW,
-					 (i < argc && retcode_strs[i] && *retcode_strs[i] == 'w') \
-					 ? PROBEPOINT_WRITE \
-					 : PROBEPOINT_READWRITE,
-					 probepoint_closest_watchsize(ssize),
-					 var_pre,var_post,
-					 bsymbol->lsymbol,addr);
-		
-		if (probe) {
-		    fprintf(stderr,
-			    "Registered probe %s at 0x%"PRIxADDR".\n",
-			    bsymbol->lsymbol->symbol->name,addr);
-		}
-		else {
-		    fprintf(stderr,
-			    "Failed to register probe %s at 0x%"PRIxADDR".\n",
-			    bsymbol->lsymbol->symbol->name,addr);
-		    --i;
-		    goto err_unreg;
-		}
-		g_hash_table_insert(probes,(gpointer)addr,(gpointer)probe);
-		g_hash_table_insert(bsymbols,(gpointer)addr,(gpointer)bsymbol);
 	    }
 
 	    continue;
@@ -769,10 +741,7 @@ int main(int argc,char **argv) {
 	    while (g_hash_table_iter_next(&iter,
 					  (gpointer)&key,
 					  (gpointer)&probe)) {
-		if (!probe->parent) {
-		    probe_unregister_children(probe,1);
-		    probe_unregister(probe,1);
-		}
+		probe_unregister(probe,1);
 	    }
 	    exit(-1);
 	}
@@ -820,8 +789,18 @@ int main(int argc,char **argv) {
 		   target_read_reg(t,t->ipregno));
 #endif
 
-	    if (!raw)
+	    if (!raw
+#ifdef ENABLE_XENACCESS
+		&& !domain
+#endif
+		)
 		goto resume;
+#ifdef ENABLE_XENACCESS
+	    else if (domain && !raw) {
+		fprintf(stderr,"ERROR: unexpected Xen interrupt; trying to cleanup!\n");
+		goto exit;
+	    }
+#endif
 	    else {
 		for (i = 0; i < argc; ++i) {
 		    if (target_read_addr(t,addrs[i],t->wordsize,
@@ -845,14 +824,14 @@ int main(int argc,char **argv) {
 	    }
 	}
 	else {
+	exit:
+	    fflush(stderr);
+	    fflush(stdout);
 	    g_hash_table_iter_init(&iter,probes);
 	    while (g_hash_table_iter_next(&iter,
 					  (gpointer)&key,
 					  (gpointer)&probe)) {
-		if (!probe->parent) {
-		    probe_unregister_children(probe,1);
-		    probe_unregister(probe,1);
-		}
+		probe_unregister(probe,1);
 	    }
 	    target_close(t);
 	    if (tstat == TSTATUS_DONE)  {
