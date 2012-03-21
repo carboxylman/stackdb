@@ -14,81 +14,75 @@
 #include "probe.h"
 
 #define LOGDUMPPROBEPOINT(dl,lt,pp) \
-    if ((pp)->lsymbol && (pp)->symbol_addr) { \
-	vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR" %s:%d) ", \
-		(pp)->addr,(pp)->lsymbol->symbol->name, \
+    if ((pp)->bsymbol->lsymbol && (pp)->symbol_addr) { \
+	vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR" %s:%+d) ", \
+		(pp)->addr,(pp)->bsymbol->lsymbol->symbol->name, \
 		(pp)->symbol_addr - (pp)->addr);	\
     } \
-    else if ((pp)->lsymbol) { \
+    else if ((pp)->bsymbol->lsymbol) { \
         vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR" %s) ", \
-	       (pp)->addr,(pp)->lsymbol->symbol->name); \
+	       (pp)->addr,(pp)->bsymbol->lsymbol->symbol->name); \
     } \
     else { \
         vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR") ", \
 	       (pp)->addr); \
     }
 
-/**
- ** Data structure stuff.
- **/
+/*
+ * If the user doesn't supply pre/post handlers, and the probe has sinks
+ * attached to it, we invoke these handlers to pass the event to the
+ * sinks.  Users that write their own handlers should call these
+ * handlers from within their handler, so that sinks can attach to their
+ * handlers if desired.
+ */
+int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
+				struct probe *trigger) {
+    struct probe *ptmp;
+    GList *list;
+    int retval = 0;
+    int rc;
 
-static struct probe *probe_create(struct probepoint *probepoint,
-				  probe_handler_t pre_handler,
-				  probe_handler_t post_handler) {
-    struct probe *probe;
-
-    probe = (struct probe *)malloc(sizeof(*probe));
-    if (!probe) {
-        verror("failed to allocate a new probe\n");
-        return NULL;
+    if (probe->sinks) {
+	list = probe->sinks;
+	while (list) {
+	    ptmp = (struct probe *)list->data;
+	    /* Signal each of the sinks. */
+	    if (ptmp->pre_handler) {
+		if ((rc = ptmp->pre_handler(ptmp,ptmp->handler_data,trigger))) {
+		    probe_disable(ptmp);
+		    retval |= rc;
+		}
+	    }
+	    list = g_list_next(list);
+	}
     }
-    memset(probe,0,sizeof(*probe));
-    
-    probe->pre_handler = pre_handler;
-    probe->post_handler = post_handler;
-    probe->probepoint = probepoint;
-    probe->enabled = 0; // disabled at first
-    
-    list_add_tail(&probe->probe,&probepoint->probes);
 
-    INIT_LIST_HEAD(&probe->child_probes);
-
-    vdebug(5,LOG_P_PROBE,"probe at ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probe->probepoint);
-    vdebugc(5,LOG_P_PROBE," added\n");
-
-    return probe;
+    return retval;
 }
 
-static void probe_free(struct probe *probe) {
-    struct action *action;
-    struct action *tmp;
-    struct probe *cprobe;
-    struct probe *ctmp;
+int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
+				struct probe *trigger) {
+    struct probe *ptmp;
+    GList *list;
+    int retval = 0;
+    int rc;
 
-    /* destroy any actions it might have */
-    list_for_each_entry_safe(action,tmp,&probe->probepoint->actions,action) {
-	if (probe == action->probe)
-	    action_destroy(action);
+    if (probe->sinks) {
+	list = probe->sinks;
+	while (list) {
+	    ptmp = (struct probe *)list->data;
+	    /* Signal each of the sinks. */
+	    if (ptmp->post_handler) {
+		if ((rc = ptmp->post_handler(ptmp,ptmp->handler_data,trigger))) {
+		    probe_disable(ptmp);
+		    retval |= rc;
+		}
+	    }
+	    list = g_list_next(list);
+	}
     }
 
-    /* DO NOT remove children; just unlink them from the lists. */
-    list_for_each_entry_safe(cprobe,ctmp,&probe->child_probes,child_probe) {
-	list_del(&cprobe->child_probe);
-	cprobe->parent = NULL;
-    }
-
-    /* remove it from its parent's list */
-    if (probe->parent)
-	list_del(&probe->child_probe);
-
-    list_del(&probe->probe);
-
-    vdebug(5,LOG_P_PROBE,"probe at ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probe->probepoint);
-    vdebugc(5,LOG_P_PROBE," removed\n");
-
-    free(probe);
+    return retval;
 }
 
 static struct probepoint *probepoint_lookup(struct target *target,ADDR addr) {
@@ -114,7 +108,7 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
 					      probepoint_style_t style,
 					      probepoint_whence_t whence,
 					      probepoint_watchsize_t watchsize,
-					      struct lsymbol *lsymbol,
+					      struct bsymbol *bsymbol,
 					      ADDR symbol_addr) {
     struct probepoint *probepoint;
 
@@ -135,7 +129,7 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     probepoint->whence = whence;
     probepoint->watchsize = watchsize;
 
-    probepoint->lsymbol = lsymbol;
+    probepoint->bsymbol = bsymbol;
     probepoint->symbol_addr = symbol_addr;
     
     probepoint->debugregnum = -1;
@@ -156,12 +150,12 @@ static struct probepoint *probepoint_create_break(struct target *target,
 						  ADDR addr,
 						  struct memrange *range,
 						  probepoint_style_t style,
-						  struct lsymbol *lsymbol,
+						  struct bsymbol *bsymbol,
 						  ADDR symbol_addr) {
     struct probepoint *probepoint = __probepoint_create(target,addr,range,
 							PROBEPOINT_BREAK,style,
 							PROBEPOINT_EXEC,0,
-							lsymbol,symbol_addr);
+							bsymbol,symbol_addr);
     return probepoint;
 }
 
@@ -171,7 +165,7 @@ static struct probepoint *probepoint_create_watch(struct target *target,
 						  probepoint_style_t style,
 						  probepoint_whence_t whence,
 						  probepoint_watchsize_t watchsize,
-						  struct lsymbol *lsymbol,
+						  struct bsymbol *bsymbol,
 						  ADDR symbol_addr) {
     if (style == PROBEPOINT_SW) {
 	verror("software watchpoints not supported right now!\n");
@@ -180,7 +174,7 @@ static struct probepoint *probepoint_create_watch(struct target *target,
     }
 
     return __probepoint_create(target,addr,range,PROBEPOINT_WATCH,style,
-			       whence,watchsize,lsymbol,symbol_addr);
+			       whence,watchsize,bsymbol,symbol_addr);
 }
 
 static void probepoint_free_internal(struct probepoint *probepoint) {
@@ -192,12 +186,20 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
     /* Destroy any actions it might have (probe_free does this too,
      * but this is much more efficient.
      */
-    list_for_each_entry_safe(action,atmp,&probepoint->actions,action) 
-	action_destroy(action);
+    list_for_each_entry_safe(action,atmp,&probepoint->actions,action) {
+	if (action->autofree)
+	    action_destroy(action);
+	else
+	    action_cancel(action);
+    }
 
     /* Destroy the probes. */
     list_for_each_entry_safe(probe,ptmp,&probepoint->probes,probe) 
-	probe_free(probe);
+	if (probe->autofree)
+	    probe_free(probe,0);
+    /* XXX: we could also go *up* the src/sink chain and destroy all the
+     * sinks... should we?
+     */
 }
 
 static void probepoint_free(struct probepoint *probepoint) {
@@ -326,244 +328,6 @@ static int __probepoint_remove(struct probepoint *probepoint) {
     vdebugc(2,LOG_P_PROBEPOINT," removed\n");
 
     return 0;
-}
-
-/*
- * We never fail to remove the probe; this function only returns errors
- * if it tried to remove the underlying probepoint and failed.
- */
-static int __probe_unregister(struct probe *probe,int force) {
-    struct probepoint *probepoint = probe->probepoint;
-    struct target *target = probepoint->target;
-    int action_did_obviate = 0;
-    target_status_t status;
-
-    vdebug(5,LOG_P_PROBE,"unregistering probe at ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probepoint);
-    vdebugc(5,LOG_P_PROBE,"\n");
-
-    /* Target must be paused before we do anything. */
-    status = target_status(target);
-    if (status != TSTATUS_PAUSED) {
-        verror("target not paused (%d), cannot remove!\n",status);
-	errno = EINVAL;
-	return -1;
-    }
-
-    /* Free the probe first of all; current state of the probepoint
-     * doesn't matter for this operation, BECAUSE we traverse the list
-     * of pre/post handlers *safely* to guard against deletes here.
-     *
-     * Yes, this means a pre/post handler can delete the probe.
-     */
-    probe_free(probe);
-
-    /* If this is the last probe at this probepoint, remove the
-     * probepoint too -- IF possible, or IF forced!
-     */
-    if (!list_empty(&probepoint->probes)) 
-	return 0;
-
-    vdebug(5,LOG_P_PROBE,"no more probes at ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probepoint);
-    vdebugc(5,LOG_P_PROBE,"; removing probepoint!\n");
-
-    /* 
-     * If the probepoint is not currently being handled, simply remove
-     * it.  Otherwise, we have to handle complex cases!
-     */
-    if (probepoint->state == PROBE_BP_SET || probepoint->state == PROBE_DISABLED) {
-	vdebug(7,LOG_P_PROBE,"doing easy removal of ");
-	LOGDUMPPROBEPOINT(7,LOG_P_PROBE,probepoint);
-	vdebugc(7,LOG_P_PROBE,"; removing probepoint!\n");
-
-	__probepoint_remove(probepoint);
-	free(probepoint);
-
-	return 0;
-    }
-    /*
-     * Handle complex stuff :).
-     */
-    else if (!force) {
-	vwarn("probepoint being handled (state %d); not forcing unregister yet!\n",
-	      probepoint->state);
-	errno = EAGAIN;
-	return -1;
-    }
-    else {
-	if (probepoint->state == PROBE_BP_HANDLING) {
-	    vwarn("force unregister probe while its breakpoint is being handled; trying to clean up normally!\n");
-	}
-	else if (probepoint->state == PROBE_BP_HANDLING_POST) {
-	    vwarn("force unregister probe while its breakpoint is being post handled; trying to clean up normally!\n");
-	}
-	else if (probepoint->state == PROBE_INSERTING) {
-	    vwarn("forced unregister probe while it is inserting; trying to clean up normally!\n");
-	    probepoint->state = PROBE_BP_SET;
-	}
-	else if (probepoint->state == PROBE_REMOVING) {
-	    vwarn("forced unregister probe while it is removing; trying to clean up normally!\n");
-	    probepoint->state = PROBE_BP_SET;
-	}
-	else if (probepoint->state == PROBE_ACTION_RUNNING) {
-	    vwarn("forced unregister probe while it is running action; trying to clean up normally!\n");
-	    /* We need to remove the action code, if any, reset the EIP
-	     * to what it would have been if we had just hit the BP, and
-	     * then do the normal breakpoint removal.
-	     */
-	    if (probepoint->action
-		&& probepoint->action_orig_mem
-		&& probepoint->action_orig_mem_len) {
-		if (target_write_addr(target,probepoint->addr,
-				      probepoint->action_orig_mem_len,
-				      probepoint->action_orig_mem,NULL) \
-		    != probepoint->action_orig_mem_len) {
-		    verror("could not write orig code for forced action remove; badness will probably ensue!\n");
-		    probepoint->state = PROBE_DISABLED;
-		}
-		else {
-		    probepoint->state = PROBE_BP_SET;
-		}
-		free(probepoint->action_orig_mem);
-		probepoint->action_orig_mem = NULL;
-	    }
-	    else {
-		vwarn("action running, but no orig mem to restore (might be ok)!\n");
-		probepoint->state = PROBE_BP_SET;
-	    }
-	    
-	    if (probepoint->action && probepoint->action_obviates_orig)
-		action_did_obviate = 1;
-
-	    /* NULL these out to be safe. */
-	    probepoint->action_orig_mem = NULL;
-	    probepoint->action_orig_mem_len = 0;
-	    probepoint->action = NULL;
-	    probepoint->action_obviates_orig = 0;
-	    probepoint->action_needs_ssteps = 0;
-	}
-
-	/*
-	 * Coming out of the above checks, the probepoint must be in either
-	 * the PROBE_DISABLED, PROBE_BP_SET, PROBE_BP_HANDLING, or
-	 * PROBE_BP_HANDLING_POST states.  If it's disabled, we do nothing.
-	 * If it's set, we replace the breakpoint instructions with the
-	 * original contents; and if we're doing initial BP handling, reset
-	 * EIP to the probepoint addr; else if we're doing BP handling after
-	 * the single step, *don't* reset IP, since we already did the
-	 * original instruction.  UNLESS we were executing an action that
-	 * obviated the original code control flow -- then we replace the
-	 * original code, BUT DO NOT update EIP!!!
-	 *
-	 * Man, I hope that's everything.
-	 */
-
-	if (probepoint->state != PROBE_DISABLED) {
-	    /* Replace the original code. */
-	    if (probepoint->style == PROBEPOINT_SW
-		&& probepoint->breakpoint_orig_mem
-		&& probepoint->breakpoint_orig_mem_len) {
-		if (target_write_addr(target,probepoint->addr,
-				      probepoint->breakpoint_orig_mem_len,
-				      probepoint->breakpoint_orig_mem,NULL) \
-		    != probepoint->breakpoint_orig_mem_len) {
-		    verror("could not write orig code for forced breakpoint remove; badness will probably ensue!\n");
-		}
-	    }
-	    else if (probepoint->style == PROBEPOINT_HW) {
-		if (target_unset_hw_breakpoint(target,probepoint->debugregnum)) {
-		    verror("could not remove hardware breakpoint; cannot repair!\n");
-		}
-	    }
-
-	    /* Reset EIP to the right thing. */
-	    if (probepoint->state == PROBE_BP_HANDLING && !action_did_obviate) {
-		/* We still must execute the original instruction. */
-		if (target_write_reg(target,target->ipregno,probepoint->addr)) {
-		    verror("could not reset IP to bp addr 0x%"PRIxADDR" for forced breakpoint remove; badness will probably ensue!\n",
-			   probepoint->addr);
-		}
-	    }
-	    else if (probepoint->state == PROBE_BP_HANDLING_POST) {
-		/* We already replaced and reset the original instruction, so
-		 * don't reset IP!
-		 */
-		;
-	    }
-
-	    /* At this point, the probepoint will be "disabled" no
-	     * matter what happens; we can't repair anything that goes
-	     * wrong.
-	     */
-	    probepoint->state = PROBE_DISABLED;
-	}
-    }
-
-    /* Now, actually free the probepoint! */
-    probepoint_free(probepoint);
-
-    return 0;
-}
-
-/*
- * Unregisters a probe.
- * Upon successful completion, a value of 0 is returned. Otherwise, a value
- * of -1 is returned and the global integer variable errno is set to indicate 
- * the error.
- */
-int probe_unregister(struct probe *probe,int force) {
-    return __probe_unregister(probe,force);
-}
-
-int probe_unregister_children(struct probe *probe,int force) {
-    struct probe *cprobe;
-    struct probe *tmp;
-    int retval = 0;
-
-    list_for_each_entry_safe(cprobe,tmp,&probe->child_probes,child_probe) {
-	if (probe_unregister(cprobe,force))
-	    ++retval;
-    }
-
-    return retval;
-}
-
-/*
- * This function always frees its probes, BUT the underlying probepoints
- * might fail to be freed.  If so, we return the number of probepoints
- * that failed to free (note that if other probes are attached, those
- * probepoints are not freed and it's not an error).
- */
-int probe_unregister_batch(struct target *target,struct probe **probelist,
-			   int listlen,int force) {
-    int i;
-    int retval = 0;
-
-    if (!probelist)
-	return -1;
-    if (!listlen) 
-	return 0;
-
-    /* Target must be paused before we do anything. */
-    if (target_status(target) != TSTATUS_PAUSED) {
-        verror("target not paused!\n");
-	errno = EINVAL;
-	return -1;
-    }
-
-    for (i = 0; i < listlen; ++i) {
-	/* allow sparse lists */
-	if (probelist[i] == NULL)
-	    continue;
-
-	if (__probe_unregister(probelist[i],force)) {
-	    ++retval;
-	}
-	probelist[i] = NULL;
-    }
-
-    return retval;
 }
 
 static int __probepoint_insert(struct probepoint *probepoint) {
@@ -720,19 +484,437 @@ static int __probepoint_insert(struct probepoint *probepoint) {
     return 0;
 }
 
-struct probe *__probe_register(struct target *target,ADDR addr,
-			       struct memrange *range,
-			       probepoint_type_t type,
-			       probepoint_style_t style,
-			       probepoint_whence_t whence,
-			       probepoint_watchsize_t watchsize,
-			       probe_handler_t pre_handler,
-			       probe_handler_t post_handler,
-			       struct lsymbol *lsymbol,
-			       ADDR symbol_addr) {
+struct probe *probe_create(struct target *target,struct probe_ops *pops,
+			   const char *name,
+			   probe_handler_t pre_handler,
+			   probe_handler_t post_handler,
+			   void *handler_data,int autofree) {
     struct probe *probe;
+
+    probe = (struct probe *)malloc(sizeof(*probe));
+    if (!probe) {
+        verror("failed to allocate a new probe\n");
+        return NULL;
+    }
+    memset(probe,0,sizeof(*probe));
+
+    probe->target = target;
+    probe->name = (name) ? strdup(name) : NULL;
+    probe->pre_handler = pre_handler;
+    probe->post_handler = post_handler;
+    probe->handler_data = handler_data;
+    probe->enabled = 0; // disabled at first
+    probe->autofree = autofree;
+    probe->ops = pops;
+
+    if (PROBE_SAFE_OP(probe,init)) {
+	verror("probe '%s' init failed, calling fini!\n",probe->name);
+	PROBE_SAFE_OP(probe,fini);
+	if (name)
+	    free(probe->name);
+	free(probe);
+	return NULL;
+    }
+
+    vdebug(5,LOG_P_PROBE,"probe '%s' initialized\n");
+
+    return probe;
+}
+
+int probe_free(struct probe *probe,int force) {
+    if (probe->sinks && !force) {
+	verror("could not free a probe that had sinks remaining!\n");
+	return -1;
+    }
+    else if (probe->probepoint && !force) {
+	verror("could not free a probe that had a probepoint remaining!\n");
+	return -1;
+    }
+    else if (probe->sinks || probe->probepoint) {
+	vwarn("forcefully freeing a probe that had sinks/probepoint remaining!\n");
+	probe_unregister(probe,force);
+    }
+
+    if (PROBE_SAFE_OP(probe,fini)) {
+	verror("probe '%s' fini failed, aborting!\n",probe->name);
+	return -1;
+    }
+
+    if (probe->name)
+	free(probe->name);
+    free(probe);
+
+    return 0;
+}
+
+static int __probe_unregister(struct probe *probe,int force,int onlyone) {
+    struct probepoint *probepoint = probe->probepoint;
+    struct target *target = probe->target;
+    int action_did_obviate = 0;
+    target_status_t status;
+    struct action *action;
+    struct action *tmp;
+    struct probe *ptmp;
+    GList *list;
+
+    if (probepoint) {
+	vdebug(5,LOG_P_PROBE,"unregistering probe at ");
+	LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probepoint);
+	vdebugc(5,LOG_P_PROBE,"\n");
+    }
+
+    if (probe->sources) 
+	vdebug(5,LOG_P_PROBE,"detaching probe %s from sources\n",probe->name);
+
+    if (probe->sinks && !force) {
+	verror("could not unregister a probe that had sinks remaining!\n");
+	return -1;
+    }
+    else if (probe->sinks) {
+	vwarn("forcefully unregistering a probe that had sinks remaining!\n");
+    }
+
+    /* Target must be paused before we do anything. */
+    status = target_status(target);
+    if (status != TSTATUS_PAUSED) {
+        verror("target not paused (%d), cannot remove!\n",status);
+	errno = EINVAL;
+	return -1;
+    }
+
+    /* Disable it (and its sources if necessary). */
+    if (onlyone) 
+	probe_disable_one(probe);
+    else 
+	probe_disable(probe);
+
+    if (probepoint) {
+	/* Remove the probe from the probepoint's list. */
+	list_del(&probe->probe);
+	probe->probepoint = NULL;
+
+	/* Cancel (and possibly destroy) any actions it might have. */
+	list_for_each_entry_safe(action,tmp,&probepoint->actions,
+				 action) {
+	    if (probe == action->probe) {
+		if (action->autofree) 
+		    action_destroy(action);
+		else
+		    action_cancel(action);
+	    }
+	}
+    }
+
+    /* Unregister from any sources. */
+    if (probe->sources) {
+	list = probe->sources;
+	while (list) {
+	    ptmp = (struct probe *)list->data;
+	    /* Unregister from the sources, possibly recursively. */
+	    if (onlyone)
+		probe_unregister_source_one(probe,ptmp,force);
+	    else 
+		probe_unregister_source(probe,ptmp,force);
+	    list = g_list_next(list);
+	}
+	g_list_free(probe->sources);
+	probe->sources = NULL;
+	vdebug(5,LOG_P_PROBE,"probe sources removed\n");
+    }
+
+    probe->bsymbol = NULL;
+
+    /* At this point, the probe is unregistered; what remains is to
+     * remove its probepoint, if necessary, and we don't have to wait to
+     * let the user know.
+     */
+    if (PROBE_SAFE_OP(probe,unregistered)) {
+	verror("probe '%s': unregistered failed, aborting\n",probe->name);
+	return -1;
+    }
+
+    /* Free the probe if it is an autofree probe. */
+    if (probe->autofree)
+	if (probe_free(probe,force))
+	    verror("could not autofree probe; continuing anyway!\n");
+
+    /* If it's just a source/sink probe, we're done; otherwise, try to
+     * remove the probepoint too if no one else is using it.
+     */
+    if (!probepoint) 
+	return 0;
+
+    /* If this is the last probe at this probepoint, remove the
+     * probepoint too -- IF possible, or IF forced!
+     */
+    if (!list_empty(&probepoint->probes)) 
+	return 0;
+
+    vdebug(5,LOG_P_PROBE,"no more probes at ");
+    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probepoint);
+    vdebugc(5,LOG_P_PROBE,"; removing probepoint!\n");
+
+    /* 
+     * If the probepoint is not currently being handled, simply remove
+     * it.  Otherwise, we have to handle complex cases!
+     */
+    if (probepoint->state == PROBE_BP_SET || probepoint->state == PROBE_DISABLED) {
+	vdebug(7,LOG_P_PROBE,"doing easy removal of ");
+	LOGDUMPPROBEPOINT(7,LOG_P_PROBE,probepoint);
+	vdebugc(7,LOG_P_PROBE,"; removing probepoint!\n");
+
+	__probepoint_remove(probepoint);
+	probepoint_free(probepoint);
+
+	return 0;
+    }
+    /*
+     * Handle complex stuff :).
+     */
+    else if (!force) {
+	vwarn("probepoint being handled (state %d); not forcing unregister yet!\n",
+	      probepoint->state);
+	errno = EAGAIN;
+	return -1;
+    }
+    else {
+	if (probepoint->state == PROBE_BP_HANDLING) {
+	    vwarn("force unregister probe while its breakpoint is being handled; trying to clean up normally!\n");
+	}
+	else if (probepoint->state == PROBE_BP_HANDLING_POST) {
+	    vwarn("force unregister probe while its breakpoint is being post handled; trying to clean up normally!\n");
+	}
+	else if (probepoint->state == PROBE_INSERTING) {
+	    vwarn("forced unregister probe while it is inserting; trying to clean up normally!\n");
+	    probepoint->state = PROBE_BP_SET;
+	}
+	else if (probepoint->state == PROBE_REMOVING) {
+	    vwarn("forced unregister probe while it is removing; trying to clean up normally!\n");
+	    probepoint->state = PROBE_BP_SET;
+	}
+	else if (probepoint->state == PROBE_ACTION_RUNNING) {
+	    vwarn("forced unregister probe while it is running action; trying to clean up normally!\n");
+	    /* We need to remove the action code, if any, reset the EIP
+	     * to what it would have been if we had just hit the BP, and
+	     * then do the normal breakpoint removal.
+	     */
+	    if (probepoint->action
+		&& probepoint->action_orig_mem
+		&& probepoint->action_orig_mem_len) {
+		if (target_write_addr(target,probepoint->addr,
+				      probepoint->action_orig_mem_len,
+				      probepoint->action_orig_mem,NULL) \
+		    != probepoint->action_orig_mem_len) {
+		    verror("could not write orig code for forced action remove; badness will probably ensue!\n");
+		    probepoint->state = PROBE_DISABLED;
+		}
+		else {
+		    probepoint->state = PROBE_BP_SET;
+		}
+		free(probepoint->action_orig_mem);
+		probepoint->action_orig_mem = NULL;
+	    }
+	    else {
+		vwarn("action running, but no orig mem to restore (might be ok)!\n");
+		probepoint->state = PROBE_BP_SET;
+	    }
+	    
+	    if (probepoint->action && probepoint->action_obviates_orig)
+		action_did_obviate = 1;
+
+	    /* NULL these out to be safe. */
+	    probepoint->action_orig_mem = NULL;
+	    probepoint->action_orig_mem_len = 0;
+	    probepoint->action = NULL;
+	    probepoint->action_obviates_orig = 0;
+	    probepoint->action_needs_ssteps = 0;
+	}
+
+	/*
+	 * Coming out of the above checks, the probepoint must be in either
+	 * the PROBE_DISABLED, PROBE_BP_SET, PROBE_BP_HANDLING, or
+	 * PROBE_BP_HANDLING_POST states.  If it's disabled, we do nothing.
+	 * If it's set, we replace the breakpoint instructions with the
+	 * original contents; and if we're doing initial BP handling, reset
+	 * EIP to the probepoint addr; else if we're doing BP handling after
+	 * the single step, *don't* reset IP, since we already did the
+	 * original instruction.  UNLESS we were executing an action that
+	 * obviated the original code control flow -- then we replace the
+	 * original code, BUT DO NOT update EIP!!!
+	 *
+	 * Man, I hope that's everything.
+	 */
+
+	if (probepoint->state != PROBE_DISABLED) {
+	    /* Replace the original code. */
+	    if (probepoint->style == PROBEPOINT_SW
+		&& probepoint->breakpoint_orig_mem
+		&& probepoint->breakpoint_orig_mem_len) {
+		if (target_write_addr(target,probepoint->addr,
+				      probepoint->breakpoint_orig_mem_len,
+				      probepoint->breakpoint_orig_mem,NULL) \
+		    != probepoint->breakpoint_orig_mem_len) {
+		    verror("could not write orig code for forced breakpoint remove; badness will probably ensue!\n");
+		}
+	    }
+	    else if (probepoint->style == PROBEPOINT_HW) {
+		if (target_unset_hw_breakpoint(target,probepoint->debugregnum)) {
+		    verror("could not remove hardware breakpoint; cannot repair!\n");
+		}
+	    }
+
+	    /* Reset EIP to the right thing. */
+	    if (probepoint->state == PROBE_BP_HANDLING && !action_did_obviate
+		&& probepoint->type != PROBEPOINT_WATCH) {
+		/* We still must execute the original instruction. */
+		/* BUT NOT for watchpoints!  We do not know anything
+		 * about the original instruction.
+		 */
+		if (target_write_reg(target,target->ipregno,probepoint->addr)) {
+		    verror("could not reset IP to bp addr 0x%"PRIxADDR" for forced breakpoint remove; badness will probably ensue!\n",
+			   probepoint->addr);
+		}
+	    }
+	    else if (probepoint->state == PROBE_BP_HANDLING_POST) {
+		/* We already replaced and reset the original instruction, so
+		 * don't reset IP!
+		 */
+		;
+	    }
+
+	    /* At this point, the probepoint will be "disabled" no
+	     * matter what happens; we can't repair anything that goes
+	     * wrong.
+	     */
+	    probepoint->state = PROBE_DISABLED;
+	}
+    }
+
+    /* Now, actually free the probepoint! */
+    probepoint_free(probepoint);
+
+    return 0;
+}
+
+/*
+ * Unregisters a probe.
+ * Upon successful completion, a value of 0 is returned. Otherwise, a value
+ * of -1 is returned and the global integer variable errno is set to indicate 
+ * the error.
+ */
+int probe_unregister(struct probe *probe,int force) {
+    return __probe_unregister(probe,force,0);
+}
+
+int probe_unregister_one(struct probe *probe,int force) {
+    return __probe_unregister(probe,force,1);
+}
+
+int probe_unregister_source(struct probe *sink,struct probe *src,int force) {
+    target_status_t status;
+    struct target *target = sink->target;
+
+    if (!sink->sources) {
+	verror("probe %s has no sources!\n",sink->name);
+	return -1;
+    }
+
+    /* Target must be paused before we do anything. */
+    status = target_status(target);
+    if (status != TSTATUS_PAUSED) {
+        verror("target not paused (%d), cannot remove!\n",status);
+	errno = EINVAL;
+	return -1;
+    }
+
+    sink->sources = g_list_remove(sink->sources,src);
+    src->sinks = g_list_remove(src->sinks,sink);
+
+    /* Do it recursively! */
+    if (src->autofree && !src->sinks)
+	__probe_unregister(src,force,1);
+
+    if (PROBE_SAFE_OP(sink,unregistered)) {
+	verror("probe %s: unregistered failed, aborting\n",sink->name);
+	return -1;
+    }
+
+    if (sink->autofree) {
+	return probe_free(sink,force);
+    }
+
+    return 0;
+}
+
+int probe_unregister_source_one(struct probe *sink,struct probe *src,
+				int force) {
+    if (!sink->sources) {
+	verror("probe %s has no sources!\n",sink->name);
+	return -1;
+    }
+
+    sink->sources = g_list_remove(sink->sources,src);
+    src->sinks = g_list_remove(src->sinks,sink);
+
+    if (PROBE_SAFE_OP(sink,unregistered)) {
+	verror("probe %s: unregistered failed, aborting\n",sink->name);
+	return -1;
+    }
+
+    if (sink->autofree) {
+	return probe_free(sink,force);
+    }
+
+    return 0;
+}
+
+/*
+ * This function always frees its probes, BUT the underlying probepoints
+ * might fail to be freed.  If so, we return the number of probepoints
+ * that failed to free (note that if other probes are attached, those
+ * probepoints are not freed and it's not an error).
+ */
+int probe_unregister_batch(struct target *target,struct probe **probelist,
+			   int listlen,int force) {
+    int i;
+    int retval = 0;
+
+    if (!probelist)
+	return -1;
+    if (!listlen) 
+	return 0;
+
+    /* Target must be paused before we do anything. */
+    if (target_status(target) != TSTATUS_PAUSED) {
+        verror("target not paused!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    for (i = 0; i < listlen; ++i) {
+	/* allow sparse lists */
+	if (probelist[i] == NULL)
+	    continue;
+
+	if (__probe_unregister(probelist[i],force,1)) {
+	    ++retval;
+	}
+	probelist[i] = NULL;
+    }
+
+    return retval;
+}
+
+struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
+				    struct memrange *range,
+				    probepoint_type_t type,
+				    probepoint_style_t style,
+				    probepoint_whence_t whence,
+				    probepoint_watchsize_t watchsize,
+				    struct bsymbol *bsymbol,ADDR symbol_addr) {
     struct probepoint *probepoint;
     int created = 0;
+    struct target *target = probe->target;
 
     if (type == PROBEPOINT_WATCH && style == PROBEPOINT_SW) {
 	verror("software watchpoints are unsupported!\n");
@@ -745,6 +927,25 @@ struct probe *__probe_register(struct target *target,ADDR addr,
         verror("target not paused!\n");
 	errno = EINVAL;
 	return NULL;
+    }
+
+    /* If the user has associated a bound symbol with this probe
+     * registration, try to look up its start addr (and grab the range
+     * if we can).
+     */
+    if (bsymbol) {
+	location_resolve_symbol_base(target,bsymbol,&symbol_addr,
+				     (!range) ? &range : NULL);
+	probe->bsymbol = bsymbol;
+    }
+
+    /* If we don't have a range yet, get it. */
+    if (!range) {
+	target_find_range_real(target,addr,NULL,NULL,&range);
+	if (!range) {
+	    verror("could not find range for 0x%"PRIxADDR"\n",addr);
+	    goto errout;
+	}
     }
 
     /* Create a probepoint if this is a new addr. */
@@ -767,94 +968,225 @@ struct probe *__probe_register(struct target *target,ADDR addr,
 		  && watchsize == probepoint->watchsize))) {
 	    verror("addr 0x%"PRIxADDR" already has a probepoint with different properties!\n",addr);
 	    errno = EADDRINUSE;
-	    return NULL;
+	    goto errout;
 	}
     }
     else {
         if (type == PROBEPOINT_BREAK) {
 	    if (!(probepoint = probepoint_create_break(target,addr,range,style,
-						       lsymbol,symbol_addr))) {
+						       bsymbol,symbol_addr))) {
 		verror("could not create breakpoint for 0x%"PRIxADDR"\n",addr);
-		return NULL;
+		goto errout;
 	    }
 	}
 	else {
 	    if (!(probepoint = probepoint_create_watch(target,addr,range,
 						       style,whence,watchsize,
-						       lsymbol,symbol_addr))) {
-		verror("could not create breakpoint for 0x%"PRIxADDR"\n",addr);
-		return NULL;
+						       bsymbol,symbol_addr))) {
+		verror("could not create watchpoint for 0x%"PRIxADDR"\n",addr);
+		goto errout;
 	    }
 	}
 
 	created = 1;
-    }
 
-    /* Create the probe and attach it to the probepoint. */
-    probe = probe_create(probepoint,pre_handler,post_handler);
-    if (!probe) {
-	verror("could not create probe for 0x%"PRIxADDR"\n",addr);
-	if (created)
-	    probepoint_free(probepoint);
-        return NULL;
+	g_hash_table_insert(target->probepoints,(gpointer)addr,probepoint);
     }
 
     /* Inject the probepoint. */
     if (__probepoint_insert(probepoint)) {
 	verror("could not insert probepoint at 0x%"PRIxADDR"\n",addr);
-	probe_free(probe);
-	if (created)
+	if (created) 
 	    probepoint_free(probepoint);
+	goto errout;
+    }
+
+    list_add_tail(&probe->probe,&probepoint->probes);
+    probe->probepoint = probepoint;
+
+    if (PROBE_SAFE_OP(probe,registered)) {
+	verror("probe '%s': registered failed, aborting\n",probe->name);
+	if (created) 
+	    probepoint_free(probepoint);
+	goto errout;
+    }
+
+    if (probe_enable(probe) && created) {
+	probepoint_free(probepoint);
+	goto errout;
+    }
+
+    vdebug(5,LOG_P_PROBE,"probe attached to ");
+    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probe->probepoint);
+    vdebugc(5,LOG_P_PROBE,"\n");
+
+    return probe;
+
+ errout:
+    if (probe->autofree)
+	probe_free(probe,1);
+    return NULL;
+}
+
+struct probe *probe_register_addr(struct probe *probe,ADDR addr,
+				  probepoint_type_t type,
+				  probepoint_style_t style,
+				  probepoint_whence_t whence,
+				  probepoint_watchsize_t watchsize,
+				  struct bsymbol *bsymbol) {
+    return __probe_register_addr(probe,addr,NULL,type,style,whence,watchsize,
+				 bsymbol,0);
+}
+
+struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
+				    probepoint_style_t style,
+				    probepoint_whence_t whence,
+				    probepoint_watchsize_t watchsize) {
+    struct target *target = probe->target;
+    struct memrange *range;
+    ADDR start;
+    ADDR prologueend;
+    ADDR probeaddr;
+    int ssize;
+
+    if (!SYMBOL_IS_FULL_INSTANCE(bsymbol->lsymbol->symbol)) {
+	verror("cannot probe a partial symbol!\n");
 	return NULL;
     }
 
-    probe->enabled = 1;
+    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
+	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	    verror("could not resolve entry PC for function %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    return NULL;
+	}
+	else 
+	    probeaddr = start;
+
+	if (location_resolve_function_prologue_end(target,bsymbol,
+						   &prologueend,&range)) {
+	    vwarn("could not resolve prologue_end for function %s!\n",
+		  bsymbol->lsymbol->symbol->name);
+	}
+	else 
+	    probeaddr = prologueend;
+
+	probe = __probe_register_addr(probe,probeaddr,range,
+				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      bsymbol,start);
+    }
+    else if (SYMBOL_IS_FULL_LABEL(bsymbol->lsymbol->symbol)) {
+	if (location_resolve_symbol_base(target,bsymbol,&probeaddr,&range)) {
+	    verror("could not resolve base addr for label %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    goto errout;
+	}
+
+	probe = __probe_register_addr(probe,probeaddr,range,
+				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      bsymbol,probeaddr);
+    }
+    else if (SYMBOL_IS_FULL_VAR(bsymbol->lsymbol->symbol)) {
+	if (watchsize == PROBEPOINT_LAUTO) {
+	    ssize = symbol_type_full_bytesize(bsymbol->lsymbol->symbol->datatype);
+	    if (ssize <= 0) {
+		verror("bad size (%d) for type of %s!\n",
+		       ssize,bsymbol->lsymbol->symbol->name);
+		goto errout;
+	    }
+
+	    watchsize = probepoint_closest_watchsize(ssize);
+	}
+
+	if (location_resolve_symbol_base(target,bsymbol,&probeaddr,&range)) {
+	    verror("could not resolve base addr for var %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    goto errout;
+	}
+
+	probe = __probe_register_addr(probe,probeaddr,range,
+				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      bsymbol,probeaddr);
+    }
+    else {
+	verror("unknown symbol type '%s'!\n",
+	       SYMBOL_TYPE(bsymbol->lsymbol->symbol->type));
+	goto errout;
+    }
 
     return probe;
+
+ errout:
+    if (probe->autofree)
+	probe_free(probe,1);
+    return NULL;
 }
 
-struct probe *probe_register_break(struct target *target,ADDR addr,
-				   struct memrange *range,
-				   probepoint_style_t style,
-				   probe_handler_t pre_handler,
-				   probe_handler_t post_handler,
-				   struct lsymbol *lsymbol,ADDR symbol_addr) {
-    return __probe_register(target,addr,range,PROBEPOINT_BREAK,style,
-			    PROBEPOINT_EXEC,0,pre_handler,post_handler,
-			    lsymbol,symbol_addr);
+struct probe *probe_register_source(struct probe *sink,struct probe *src) {
+    struct target *target = sink->target;
+
+    if (sink->target != src->target) {
+	verror("sink/src targets different!\n");
+	goto errout;
+    }
+
+    /* Target must be paused before we do anything. */
+    if (target_status(target) != TSTATUS_PAUSED) {
+        verror("target not paused!\n");
+	errno = EINVAL;
+	goto errout;
+    }
+
+    /* Add this sink to the src, and vice versa! */
+    sink->sources = g_list_prepend(sink->sources,src);
+    src->sinks = g_list_prepend(src->sinks,sink);
+
+    if (PROBE_SAFE_OP(sink,registered)) {
+	verror("probe '%s': registered failed, aborting\n",sink->name);
+	goto errout;
+    }
+
+    /* Enable everybody downstream. */
+    if (probe_enable(sink))
+	goto errout;
+
+    return sink;
+
+ errout:
+    if (sink->autofree)
+	probe_free(sink,1);
+    return NULL;
 }
 
-struct probe *probe_register_child(struct probe *parent,OFFSET offset,
-				   probepoint_style_t style,
-				   probe_handler_t pre_handler,
-				   probe_handler_t post_handler) {
-    struct probe *p = __probe_register(parent->probepoint->target,
-				       parent->probepoint->addr + offset,
-				       parent->probepoint->range,
-				       PROBEPOINT_BREAK,style,
-				       PROBEPOINT_EXEC,0,pre_handler,post_handler,
-				       parent->probepoint->lsymbol,
-				       parent->probepoint->symbol_addr);
-    if (!p)
-	return NULL;
+struct probe *probe_register_sources(struct probe *sink,struct probe *src,...) {
+    va_list ap;
+    struct probe *rc;
+    struct probe *tsrc;
 
-    p->parent = parent;
-    list_add_tail(&p->child_probe,&parent->child_probes);
+    va_start(ap,src);
+    while ((tsrc = va_arg(ap,struct probe *))) {
+	if (tsrc->target != sink->target) {
+	    verror("sink %s and src %s targets differ!\n",sink->name,src->name);
+	    return NULL;
+	}
+    }
+    va_end(ap);
 
-    return p;
-}
+    if (!(rc = probe_register_source(sink,src)))
+	return rc;
 
-struct probe *probe_register_watch(struct target *target,ADDR addr,
-				   struct memrange *range,
-				   probepoint_style_t style,
-				   probepoint_whence_t whence,
-				   probepoint_watchsize_t watchsize,
-				   probe_handler_t pre_handler,
-				   probe_handler_t post_handler,
-				   struct lsymbol *lsymbol,ADDR symbol_addr) {
-    return __probe_register(target,addr,range,PROBEPOINT_WATCH,style,
-			    whence,watchsize,pre_handler,post_handler,
-			    lsymbol,symbol_addr);
+    va_start(ap,src);
+    while ((tsrc = va_arg(ap,struct probe *))) {
+	if (!(rc = probe_register_source(sink,tsrc)))
+	    return rc;
+	/*
+	 * XXX: need to unwind registrations, too, in case of failure,
+	 * just like for probe batch registration!
+	 */
+    }
+    va_end(ap);
+
+    return sink;
 }
 
 int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
@@ -863,10 +1195,13 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
 			 probepoint_watchsize_t watchsize,
 			 probe_handler_t pre_handler,
 			 probe_handler_t post_handler,
+			 void *handler_data,
 			 struct probe **probelist,
 			 int failureaction) {
     int i;
     int retval = 0;
+    struct probe *probe;
+    char *buf;
 
     if (!probelist)
 	return -1;
@@ -891,10 +1226,14 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
 	if (addrlist[i] == 0)
 	    continue;
 
-	if (!(probelist[i] = __probe_register(target,addrlist[i],NULL,type,style,
-					      whence,watchsize,
-					      pre_handler,post_handler,
-					      NULL,0))) {
+	buf = malloc(5+1+16+1);
+	sprintf(buf,"probe@%"PRIxADDR,addrlist[i]);
+	probe = probe_create(target,NULL,buf,pre_handler,post_handler,
+			     handler_data,0);
+
+	if (!(probelist[i] = probe_register_addr(probe,addrlist[i],
+						 type,style,whence,watchsize,
+						 NULL))) {
 	    if (failureaction == 2) {
 		++retval;
 		continue;
@@ -924,7 +1263,7 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
 	 * totally should not happen here though -- the batch
 	 * registration is like a transaction.
 	 */
-	__probe_unregister(probelist[i],0);
+	__probe_unregister(probelist[i],0,1);
     }
 
  out:
@@ -948,25 +1287,113 @@ probepoint_watchsize_t probepoint_closest_watchsize(int size) {
     }
 }
 
-/*
- * Disables a running probe. When disabled, both pre- and post-handlers are 
- * ignored until the probe is enabled back.
- * Returns a value of 0 upon successful completion, or a value of -1 if the
- * given handle is invalid.
- * NOTE: To enable a probe, call enable_probe() function below.
- */
-int probe_disable(struct probe *probe) {
+int probe_disable_one(struct probe *probe) {
     probe->enabled = 0;
+
+    if (PROBE_SAFE_OP(probe,disabled)) {
+	verror("probe '%s': disabled failed, ignoring\n",probe->name);
+	return -1;
+    }
+
     return 0;
 }
 
-/*
- * Enables an inactive probe.
- * Returns a value of 0 upon successful completion, or a value of -1 if the
- * given handle is invalid.
- */
-int probe_enable(struct probe *probe) {
+int probe_disable(struct probe *probe) {
+    struct probe *ptmp;
+    GList *list;
+    GList *list2;
+    int anyenabled = 0;
+    int retval = 0;
+
+    if (probe_disable_one(probe))
+	return -1;
+
+    if (probe->sources) {
+	list = probe->sources;
+	while (list) {
+	    ptmp = (struct probe *)list->data;
+
+	    /* Disable recursively *if* the source doesn't have any
+	     * enabled sinks.
+	     */
+	    if (probe_enabled(ptmp)) {
+		list2 = ptmp->sinks;
+		while (list2) {
+		    if (((struct probe *)(list->data))->enabled) {
+			anyenabled = 1;
+			break;
+		    }
+		    list2 = g_list_next(list2);
+		}
+		if (!anyenabled)
+		    retval |= probe_disable(ptmp);
+		anyenabled = 0;
+	    }
+	    list = g_list_next(list);
+	}
+    }
+
+    return retval;
+}
+
+int probe_enable_one(struct probe *probe) {
     probe->enabled = 1;
+
+    if (PROBE_SAFE_OP(probe,enabled)) {
+	verror("probe '%s': enabled failed, disabling!\n",probe->name);
+	probe->enabled = 0;
+	return -1;
+    }
+
+    return 0;
+}
+
+int probe_enable(struct probe *probe) {
+    struct probe *ptmp;
+    GList *list;
+    GList *list2;
+    int anyenabled = 0;
+
+    if (probe->sources) {
+	list = probe->sources;
+	while (list) {
+	    ptmp = (struct probe *)list->data;
+	    if (!probe_enabled(ptmp))
+		probe_enable(ptmp);
+	    list = g_list_next(list);
+	}
+    }
+
+    probe->enabled = 1;
+
+    if (PROBE_SAFE_OP(probe,enabled)) {
+	verror("probe '%s': enabled failed, disabling\n",probe->name);
+	probe->enabled = 0;
+	if (probe->sources) {
+	    list = probe->sources;
+	    while (list) {
+		ptmp = (struct probe *)list->data;
+
+		/* basically do probe_disable, but don't notify probe! */
+		if (probe_enabled(ptmp)) {
+		    list2 = ptmp->sinks;
+		    while (list2) {
+			if (((struct probe *)(list->data))->enabled) {
+			    anyenabled = 1;
+			    break;
+			}
+			list2 = g_list_next(list2);
+		    }
+		    if (!anyenabled)
+			probe_disable(ptmp);
+		    anyenabled = 0;
+		}
+		list = g_list_next(list);
+	    }
+	}
+	return -1;
+    }
+
     return 0;
 }
 
@@ -977,6 +1404,10 @@ int probe_enable(struct probe *probe) {
  */
 int probe_enabled(struct probe *probe) {
     return probe->enabled;
+}
+
+int probe_is_base(struct probe *probe) {
+    return probe->probepoint != NULL;
 }
 
 /*
@@ -1085,12 +1516,22 @@ int probepoint_bp_handler(struct target *target,
      * set!)
      */
     list_for_each_entry(probe,&probepoint->probes,probe) {
-	if (probe->enabled && probe->pre_handler) {
-	    vdebug(4,LOG_P_PROBEPOINT,"running pre handler at ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	if (probe->enabled) {
+	    if (probe->pre_handler) {
+		vdebug(4,LOG_P_PROBEPOINT,"running pre handler at ");
+		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+		vdebugc(4,LOG_P_PROBEPOINT,"\n");
 
-	    probe->enabled = !probe->pre_handler(probe);
+		if (probe->pre_handler(probe,probe->handler_data,probe))
+		    probe_disable(probe);
+	    }
+	    else if (probe->sinks) {
+		vdebug(4,LOG_P_PROBEPOINT,
+		       "running default probe sink pre_handler at ");
+		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		probe_do_sink_pre_handlers(probe,NULL,probe);
+	    }
 	    doit = 1;
 	}
     }
@@ -1220,7 +1661,7 @@ int probepoint_bp_handler(struct target *target,
 	doit = 0;
 	if (probepoint->style == PROBEPOINT_HW) {
 	    list_for_each_entry(probe,&probepoint->probes,probe) {
-		if (probe->enabled && probe->post_handler) {
+		if (probe->enabled && (probe->post_handler || probe->sinks)) {
 		    doit = 1;
 		    break;
 		}
@@ -1426,8 +1867,24 @@ int probepoint_ss_handler(struct target *target,
      * Run post-handlers
      */
     list_for_each_entry(probe,&probepoint->probes,probe) {
-	if (probe->enabled && probe->post_handler)
-	    probe->enabled = !probe->post_handler(probe);
+	if (probe->enabled) {
+	    if (probe->post_handler) {
+		vdebug(4,LOG_P_PROBEPOINT,"running post handler at ");
+		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+		if (probe->post_handler(probe,probe->handler_data,probe)) 
+		    probe_disable(probe);
+	    }
+	    else if (probe->sinks) {
+		vdebug(4,LOG_P_PROBEPOINT,
+		       "running default probe sink pre_handler at ");
+		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+		probe_do_sink_post_handlers(probe,NULL,probe);
+	    }
+	}
     }
     
     /*
@@ -1457,8 +1914,12 @@ int probepoint_ss_handler(struct target *target,
 
     /* cleanup oneshot actions! */
     list_for_each_entry_safe(action,taction,&probepoint->actions,action) {
-	if (action->whence == ACTION_ONESHOT)
-	    action_cancel(action);
+	if (action->whence == ACTION_ONESHOT) {
+	    if (action->autofree)
+		action_destroy(action);
+	    else 
+		action_cancel(action);
+	}
     }
 
     /*
@@ -1780,12 +2241,14 @@ static int handle_actions(struct probepoint *probepoint) {
  * Actions do not have priorities; they are executed in the order scheduled.
  */
 int action_sched(struct probe *probe,struct action *action,
-		 action_whence_t whence) {
+		 action_whence_t whence,int autofree) {
     struct action *lpc;
     unsigned char *code;
     unsigned int code_len = 0;
     struct probepoint *probepoint;
     struct target *target;
+
+    action->autofree = autofree;
 
     if (action->probe != NULL) {
 	verror("action already associated with probe!\n");
@@ -1841,7 +2304,7 @@ int action_sched(struct probe *probe,struct action *action,
 			action->detail.ret.prologue_uses_bp = 1;
 			vdebug(3,LOG_P_ACTION,
 			       "skipping prologue disassembly for function %s: first instr push EBP\n",
-			       probe->probepoint->lsymbol->symbol->name);
+			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>");
 		    }
 		    else if (disasm_get_prologue_stack_size(target,code,code_len,
 							    &action->detail.ret.prologue_sp_offset)) {
@@ -1852,7 +2315,7 @@ int action_sched(struct probe *probe,struct action *action,
 		    else {
 			vdebug(3,LOG_P_ACTION,
 			       "disassembled prologue for function %s: sp moved %d\n",
-			       probe->probepoint->lsymbol->symbol->name,
+			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>",
 			       action->detail.ret.prologue_sp_offset);
 		    }
 		}

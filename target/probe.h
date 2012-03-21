@@ -45,6 +45,14 @@ int probepoint_bp_handler(struct target *target,
 int probepoint_ss_handler(struct target *target,
 			  struct probepoint *probepoint);
 
+struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
+				    struct memrange *range,
+				    probepoint_type_t type,
+				    probepoint_style_t style,
+				    probepoint_whence_t whence,
+				    probepoint_watchsize_t watchsize,
+				    struct bsymbol *bsymbol,ADDR symbol_addr);
+
 /*
  * A probe point is the address site where an actual break/watch point
  * is registered.  We associate multiple logical probes with a single
@@ -65,8 +73,8 @@ struct probepoint {
     struct target *target;
 
     /* If this probepoint is associated with a symbol, save it! */
-    struct lsymbol *lsymbol;
-    /* If we have a symbol, save its resolved addr (which may be
+    struct bsymbol *bsymbol;
+    /* If we have a symbol, save its resolved base addr (which may be
      * different than the addr above, of course.
      */
     ADDR symbol_addr;
@@ -100,6 +108,13 @@ struct probepoint {
 };
 
 struct probe {
+    char *name;
+
+    struct probe_ops *ops;
+
+    /* The target this probe is associated with. */
+    struct target *target;
+
     /* The target probe-point */
     struct probepoint *probepoint;
 
@@ -112,21 +127,22 @@ struct probe {
     /* True when the vmprobe is enabled */
     uint8_t enabled;
 
+    uint8_t autofree;
+
     /* Link to the probe list  */
     struct list_head probe;
 
-    /* A list of "child" probes -- i.e., perhaps breakpoints within a
-     * function whose entry point is this probe.
-     */
-    struct list_head child_probes;
+    void *handler_data;
 
-    /* If this probe is a child of some parent, this is its node on the
-     * above `child_probes' list.
+    /* A list of probes we listen to.
      */
-    struct list_head child_probe;
+    GList *sources;
 
-    /* If this probe is a child of some parent, this is its parent. */
-    struct probe *parent;
+    /* A list of "listening" probes.
+     */
+    GList *sinks;
+
+    struct bsymbol *bsymbol;
 };
 
 struct action {
@@ -159,10 +175,13 @@ struct action {
 
     int executed_this_pass;
 
+    int autofree;
+
     /* An action can only be attached to one vmprobe at a time. */
     struct list_head action;
 
     struct probe *probe;
+
 };
 
 /* The target_api code needs to call this, but we don't want it exposed
