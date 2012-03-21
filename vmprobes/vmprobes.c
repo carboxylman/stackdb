@@ -1042,6 +1042,19 @@ __register_vmprobe(struct vmprobe *probe)
         probepoint->state = VMPROBE_DISABLED;
         return ret;
     }
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    /* XXX: I have no idea if this is a good place to add this code
+     * XXX: someone should implement proper error handling for the case Xen says "no"
+     * XXX: someone should implement probe "unregister" code somewhere... I have no idea where
+     */
+    debug(2,"registering probe [dom%d:%lx] with Xen\n", domain->id, probepoint->vaddr);
+    ret = xc_ttd_vmi_add_probe(xc_handle, domain->id, probepoint->vaddr);
+    if (ret) {
+        perror("Failed to register probe with Xen\n");
+        probepoint->state = VMPROBE_DISABLED;
+        return ret;
+    }
+#endif
 
     probepoint->state = VMPROBE_BP_SET;
 
@@ -1247,6 +1260,17 @@ __unregister_vmprobe(struct vmprobe *probe)
     }
 
     VMPROBE_PERF_STOP("vmprobes sets registers in domU");
+
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    /* XXX: I have no idea if this is a good place to add this code
+     * XXX: someone should implement proper error handling for the case Xen says "no"
+     */
+    debug(2,"unregistering probe [dom%d:%lx] with Xen\n", domain->id, probepoint->vaddr);
+    ret = xc_ttd_vmi_remove_probe(xc_handle, domain->id, probepoint->vaddr);
+    if (ret) {
+        error("Failed to unregister probe with Xen, ret:%d\n", ret);
+    }
+#endif
 
     /*
      * If we are the final probepoint in the domain, turn off debugging.

@@ -112,6 +112,9 @@ int target_unset_hw_watchpoint(struct target *target,REG reg);
 int target_disable_hw_breakpoints(struct target *target);
 int target_enable_hw_breakpoints(struct target *target);
 
+int target_notify_sw_breakpoint(struct target *target,ADDR addr,
+				int notification);
+
 int target_singlestep(struct target *target);
 int target_singlestep_end(struct target *target);
 
@@ -303,6 +306,8 @@ struct target_ops {
     int (*unset_hw_watchpoint)(struct target *target,REG reg);
     int (*disable_hw_breakpoints)(struct target *target);
     int (*enable_hw_breakpoints)(struct target *target);
+    int (*notify_sw_breakpoint)(struct target *target,ADDR addr,
+				int notification);
     int (*singlestep)(struct target *target);
     int (*singlestep_end)(struct target *target);
 };

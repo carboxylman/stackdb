@@ -92,6 +92,8 @@ static int linux_userproc_unset_hw_watchpoint(struct target *target,
 					      REG num);
 int linux_userproc_disable_hw_breakpoints(struct target *target);
 int linux_userproc_enable_hw_breakpoints(struct target *target);
+int linux_userproc_notify_sw_breakpoint(struct target *target,ADDR addr,
+					int notification);
 int linux_userproc_singlestep(struct target *target);
 int linux_userproc_singlestep_end(struct target *target);
 
@@ -124,6 +126,7 @@ struct target_ops linux_userspace_process_ops = {
     .unset_hw_watchpoint = linux_userproc_unset_hw_watchpoint,
     .disable_hw_breakpoints = linux_userproc_disable_hw_breakpoints,
     .enable_hw_breakpoints = linux_userproc_enable_hw_breakpoints,
+    .notify_sw_breakpoint = linux_userproc_notify_sw_breakpoint,
     .singlestep = linux_userproc_singlestep,
     .singlestep_end = linux_userproc_singlestep_end,
 };
@@ -2331,6 +2334,11 @@ int linux_userproc_enable_hw_breakpoints(struct target *target) {
 	       strerror(errno));
 	return -1;
     }
+    return 0;
+}
+
+int linux_userproc_notify_sw_breakpoint(struct target *target,ADDR addr,
+					int notification) {
     return 0;
 }
 

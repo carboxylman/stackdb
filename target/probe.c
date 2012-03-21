@@ -337,6 +337,9 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	    return 1;
 	}
 
+	if (target_notify_sw_breakpoint(target,probepoint->addr,0)) 
+	    verror("target sw breakpoint removal notification failed; nonfatal!\n");
+
 	vdebug(4,LOG_P_PROBEPOINT,"removed SW break ");
 	LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
 
@@ -484,6 +487,9 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    free(probepoint->breakpoint_orig_mem);
 	    return 1;
 	}
+
+	if (target_notify_sw_breakpoint(target,probepoint->addr,1)) 
+	    verror("target sw breakpoint insertion notification failed; nonfatal!\n");
 
 	vdebug(3,LOG_P_PROBEPOINT,"inserted SW ");
 	LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);

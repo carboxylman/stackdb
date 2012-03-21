@@ -64,6 +64,8 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,REG num);
 static int xen_vm_unset_hw_watchpoint(struct target *target,REG num);
 int xen_vm_disable_hw_breakpoints(struct target *target);
 int xen_vm_enable_hw_breakpoints(struct target *target);
+int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
+				int notification);
 int xen_vm_singlestep(struct target *target);
 int xen_vm_singlestep_end(struct target *target);
 
@@ -111,6 +113,7 @@ struct target_ops xen_vm_ops = {
     .unset_hw_watchpoint = xen_vm_unset_hw_watchpoint,
     .disable_hw_breakpoints = xen_vm_disable_hw_breakpoints,
     .enable_hw_breakpoints = xen_vm_enable_hw_breakpoints,
+    .notify_sw_breakpoint = xen_vm_notify_sw_breakpoint,
     .singlestep = xen_vm_singlestep,
     .singlestep_end = xen_vm_singlestep_end,
 };
@@ -1643,6 +1646,9 @@ struct x86_dr_format {
 static int xen_vm_set_hw_breakpoint(struct target *target,
 					    REG reg,ADDR addr) {
     struct xen_vm_state *xstate;
+#ifdef DETERMINISTIC_TIMETRAVEL
+    int ret;
+#endif
 
     if (reg < 0 || reg > 3) {
 	errno = EINVAL;
@@ -1682,6 +1688,18 @@ static int xen_vm_set_hw_breakpoint(struct target *target,
 
     xstate->context_dirty = 1;
 
+#ifdef DETERMINISTIC_TIMETRAVEL
+    ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
+
+    if (ret) {
+        verror("failed to register probe [dom%d:%"PRIxADDR" (%d)\n",
+	       xstate->id,addr,ret);
+        return ret;
+    }
+    vdebug(4,LOG_T_XV | LOG_P_PROBE,"registered probe [dom%d:%"PRIxADDR"]\n",
+	   msgxstate->id,addr);
+#endif
+
     return 0;
 }
 
@@ -1690,6 +1708,9 @@ static int xen_vm_set_hw_watchpoint(struct target *target,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize) {
     struct xen_vm_state *xstate;
+#ifdef DETERMINISTIC_TIMETRAVEL
+    int ret;
+#endif
 
     if (reg < 0 || reg > 3) {
 	errno = EINVAL;
@@ -1737,11 +1758,26 @@ static int xen_vm_set_hw_watchpoint(struct target *target,
 
     xstate->context_dirty = 1;
 
+#ifdef DETERMINISTIC_TIMETRAVEL
+    ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
+
+    if (ret) {
+        verror("failed to register probe [dom%d:%"PRIxADDR" (%d)\n",
+	       xstate->id,addr,ret);
+        return ret;
+    }
+    vdebug(4,LOG_T_XV | LOG_P_PROBE,"registered probe [dom%d:%"PRIxADDR"]\n",
+	   msgxstate->id,addr);
+#endif
+
     return 0;
 }
 
 static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
     struct xen_vm_state *xstate;
+#ifdef DETERMINISTIC_TIMETRAVEL
+    int ret;
+#endif
 
     if (reg < 0 || reg > 3) {
 	errno = EINVAL;
@@ -1770,6 +1806,18 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
     xstate->context.debugreg[7] = xstate->dr[7];
 
     xstate->context_dirty = 1;
+
+#ifdef DETERMINISTIC_TIMETRAVEL
+    ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,addr);
+
+    if (ret) {
+        verror("failed to unregister probe [dom%d:%"PRIxADDR" (%d)\n",
+	       xstate->id,addr,ret);
+        return ret;
+    }
+    vdebug(4,LOG_T_XV | LOG_P_PROBE,"unregistered probe [dom%d:%"PRIxADDR"]\n",
+	   msgxstate->id,addr);
+#endif
 
     return 0;
 }
@@ -1806,6 +1854,34 @@ int xen_vm_enable_hw_breakpoints(struct target *target) {
 
     xstate->context_dirty = 1;
 
+    return 0;
+}
+
+int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
+				int notification) {
+#ifdef DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+    int ret = -1;
+    char *msg = "unregister";
+
+    xstate = (struct xen_vm_state *)(target->state);
+
+    if (notification) {
+	msg = "register";
+	ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
+    }
+    else {
+	ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,addr);
+    }
+
+    if (ret) {
+        verror("failed to %s probe [dom%d:%"PRIxADDR" (%d)\n",
+	       msg,xstate->id,addr,ret);
+        return ret;
+    }
+    vdebug(4,LOG_T_XV | LOG_P_PROBE,"%sed probe [dom%d:%"PRIxADDR"]\n",
+	   msgxstate->id,addr);
+#endif
     return 0;
 }
 

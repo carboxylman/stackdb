@@ -309,6 +309,14 @@ int target_enable_hw_breakpoints(struct target *target) {
     return target->ops->enable_hw_breakpoints(target);
 }
 
+int target_notify_sw_breakpoint(struct target *target,ADDR addr,
+				int notification) {
+    vdebug(5,LOG_T_TARGET,
+	   "notify sw breakpoint (%d) on target(%s)\n",
+	   notification,target->type);
+    return target->ops->notify_sw_breakpoint(target,addr,notification);
+}
+
 int target_singlestep(struct target *target) {
     vdebug(5,LOG_T_TARGET,"single stepping target(%s)\n",target->type);
     return target->ops->singlestep(target);
