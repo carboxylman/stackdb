@@ -1820,6 +1820,9 @@ int xen_vm_singlestep(struct target *target) {
 	return -1;
     }
 
+    /* flush_context will not have done this necessarily! */
+    xstate->context_valid = 0;
+
     /*
      * Because the semantics of target_singlestep() dictate that the
      * target will be running after target_singlestep(), we manually
