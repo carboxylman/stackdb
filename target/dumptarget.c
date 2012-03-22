@@ -81,9 +81,18 @@ int retaddr_check(struct probe *probe,void *handler_data,
 int retaddr_save(struct probe *probe,void *handler_data,
 		 struct probe *trigger);
 
-int dynamic_instr_func(ADDR ip,struct bsymbol *bsymbol) {
+ADDR instrument_func(struct bsymbol *bsymbol) {
+    ADDR funcstart = 0;
+
+    if (location_resolve_symbol_base(t,bsymbol,&funcstart,NULL)) {
+	fprintf(stderr,
+		"Could not resolve base addr for function %s!\n",
+		bsymbol->lsymbol->symbol->name);
+	return 0;
+    }
+
     /* Disassemble the called function if we haven't already! */
-    if (!g_hash_table_lookup(disfuncs,(gpointer)ip)) {
+    if (!g_hash_table_lookup(disfuncs,(gpointer)funcstart)) {
 	/* Dissasemble the function and grab a list of
 	 * RET instrs, and insert more child
 	 * breakpoints.
@@ -106,7 +115,7 @@ int dynamic_instr_func(ADDR ip,struct bsymbol *bsymbol) {
 					    INST_NONE)) {
 	    probe_free(cprobe,1);
 	    probe_free(rprobe,1);
-	    return -1;
+	    return 0;
 	}
 
 	if (probe_num_sources(cprobe) == 0) {
@@ -133,10 +142,10 @@ int dynamic_instr_func(ADDR ip,struct bsymbol *bsymbol) {
 		    probe_num_sources(rprobe),bsymbol->lsymbol->symbol->name);
 	}
 
-	g_hash_table_insert(disfuncs,(gpointer)ip,(gpointer)1);
+	g_hash_table_insert(disfuncs,(gpointer)funcstart,(gpointer)1);
     }
 
-    return 0;
+    return funcstart;
 }
 
 int retaddr_save(struct probe *probe,void *handler_data,
@@ -198,7 +207,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
      */
     array_list_add(shadow_stack,retaddr);
 
-    dynamic_instr_func(ip,bsymbol);
+    instrument_func(bsymbol);
 
     return 0;
 }
@@ -675,13 +684,7 @@ int main(int argc,char **argv) {
 		     && (*retcode_strs[i] == 'c'
 			 || *retcode_strs[i] == 'C')))) {
 		ADDR funcstart;
-		if (location_resolve_symbol_base(t,bsymbol,&funcstart,NULL)) {
-		    fprintf(stderr,
-			    "Could not resolve base addr for function %s!\n",
-			    bsymbol->lsymbol->symbol->name);
-		    goto err_unreg;
-		}
-		if (dynamic_instr_func(funcstart,bsymbol)) {
+		if ((funcstart = instrument_func(bsymbol)) == 0) {
 		    fprintf(stderr,
 			    "Could not instrument function %s (0x%"PRIxADDR")!\n",
 			    bsymbol->lsymbol->symbol->name,funcstart);

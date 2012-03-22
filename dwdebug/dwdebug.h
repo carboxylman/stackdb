@@ -44,6 +44,8 @@
 #define _INT_ELFUTILS_VERSION _ELFUTILS_VERSION
 #endif
 
+#define DWDEBUG_DEF_DELIM "."
+
 /*
  * Any library users must call these to initialize global library state.
  */

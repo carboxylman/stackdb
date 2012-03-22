@@ -1043,6 +1043,9 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 	    }
 	}
 	else {
+	    if (whence == PROBEPOINT_WAUTO) 
+		whence = PROBEPOINT_READWRITE;
+
 	    if (!(probepoint = probepoint_create_watch(target,addr,range,
 						       style,whence,watchsize,
 						       bsymbol,symbol_addr))) {

@@ -88,6 +88,7 @@ typedef enum {
 } probepoint_style_t;
 
 typedef enum {
+    PROBEPOINT_WAUTO = -1,
     PROBEPOINT_EXEC = 0,
     PROBEPOINT_WRITE = 1,
     PROBEPOINT_READWRITE = 3,
@@ -126,6 +127,39 @@ typedef enum {
  **/
 
 /*
+ * Creates a probe named @name on @target, with the given @pre_handler
+ * and @post_handler handlers, which will be called with @handler_data.
+ * The type of probe will be determined automatically (break or watch);
+ * we will use the fastest kind of probe possible (i.e., prefer
+ * hardware); if a watchpoint is chosen, the size of the watch will be
+ * sized appropriately to the symbol's type, and we will watch for
+ * read/write.
+ *
+ * DWDEBUG_DEF_DELIM is used as the delimiter when looking up the symbol.
+ *
+ * The created probe is NOT autofreed, so the user must probe_free() it
+ * later!  Or they can probe_unregister() it and probe_register*() it
+ * later before probe_free()'ing it.
+ */
+struct probe *probe_simple(struct target *target,char *name,
+			   probe_handler_t pre_handler,
+			   probe_handler_t post_handler,
+			   void *handler_data);
+
+/*
+ * Like the above, but accepts a pre-created @probe, a @delim, and more
+ * probe controls (@style, @whence, @watchsize).  Not all these controls
+ * may be used; @whence and @watchsize are only used in the event that a
+ * watchpoint probe is created (i.e., if @name is a variable).
+ */
+struct probe *probe_register_symbol_name(struct probe *probe,
+					 char *name,const char *delim,
+					 probepoint_style_t style,
+					 probepoint_whence_t whence,
+					 probepoint_watchsize_t watchsize);
+					 
+
+/*
  * Registers @probe in such a way that probe->pre_handler is called when
  * the function entry point is hit (if @force_at_entry is set, the entry
  * point is the entry point -- which may be the entry point as set in
@@ -139,16 +173,21 @@ typedef enum {
  * to tweak args or the return value before the function executes or
  * returns.
  */
-struct probe *probe_register_function(struct probe *probe,
-				      probepoint_style_t style,
-				      struct bsymbol *bsymbol,
-				      int force_at_entry);
+struct probe *probe_register_function_ee(struct probe *probe,
+					 probepoint_style_t style,
+					 struct bsymbol *bsymbol,
+					 int force_at_entry);
 
 /*
- * Registers @probe atop source probes at each return site in this
- * function.  @probe->pre_handler will be called from the triggering
- * probe's pre_handler, and @probe->post_handler will be called from the
- * triggering probe's post_handler.
+ * This function disassembles the function pointed to by @bsymbol if it
+ * can.  Then, for each @inst,@probe tuple, it registers @probe at the
+ * address of that instruction type.  The user can supply as many
+ * @inst,@type tuples as they wish, but each @inst must be unique
+ * (unchecked, so don't shoot yourself in the foot!).
+ *
+ * IMPORTANT: you *must* end the list with INST_NONE !!!
+ *
+ * XXX: add support for using a cached disassembly of some sort...
  */
 #ifdef ENABLE_DISTORM
 #include <disasm.h>

@@ -13,10 +13,46 @@
 #include "probe_api.h"
 #include "probe.h"
 
-struct probe *probe_register_function(struct probe *probe,
-				      probepoint_style_t style,
-				      struct bsymbol *bsymbol,
-				      int force_at_entry) {
+struct probe *probe_simple(struct target *target,char *name,
+			   probe_handler_t pre_handler,
+			   probe_handler_t post_handler,
+			   void *handler_data) {
+    struct probe *probe = probe_create(target,NULL,name,pre_handler,
+				       post_handler,handler_data,0);
+    if (!probe)
+	return NULL;
+
+    return probe_register_symbol_name(probe,name,DWDEBUG_DEF_DELIM,
+				      PROBEPOINT_FASTEST,PROBEPOINT_WAUTO,
+				      PROBEPOINT_LAUTO);
+}
+
+struct probe *probe_register_symbol_name(struct probe *probe,
+					 char *name,const char *delim,
+					 probepoint_style_t style,
+					 probepoint_whence_t whence,
+					 probepoint_watchsize_t watchsize) {
+    struct bsymbol *bsymbol;
+    struct target *target = probe->target;
+
+    if (!(bsymbol = target_lookup_sym(target,name,delim,NULL,
+				      SYMBOL_TYPE_FLAG_NONE))) {
+	verror("could not find symbol %s!\n",name);
+	goto errout;
+    }
+
+    return probe_register_symbol(probe,bsymbol,style,whence,watchsize);
+
+ errout:
+    if (probe->autofree)
+	probe_free(probe,1);
+    return NULL;
+}
+
+struct probe *probe_register_function_ee(struct probe *probe,
+					 probepoint_style_t style,
+					 struct bsymbol *bsymbol,
+					 int force_at_entry) {
     struct target *target = probe->target;
     struct memrange *range;
     struct memrange *newrange;
