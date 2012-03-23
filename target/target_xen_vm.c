@@ -997,6 +997,9 @@ static int xen_vm_resume(struct target *target) {
     /* Flush back registers if they're dirty! */
     xen_vm_flush_context(target);
 
+    /* flush_context will not have done this necessarily! */
+    xstate->context_valid = 0;
+
     return xc_domain_unpause(xc_handle,xstate->id);
 }
 
@@ -1923,6 +1926,9 @@ int xen_vm_singlestep_end(struct target *target) {
 	verror("could not flush context; single step end will probably fail!\n");
 	return -1;
     }
+
+    /* flush_context will not have done this necessarily! */
+    xstate->context_valid = 0;
 
     return 0;
 }
