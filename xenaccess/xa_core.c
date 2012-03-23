@@ -419,7 +419,7 @@ void init_xen_version (xa_instance_t *instance)
         instance->m.xen.xen_version = XA_XENVER_3_3_0;
         xa_dbprint(0,"**set instance->m.xen.xen_version = 3.3.0\n");
     }
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     else if (fnmatch("3.0-unstable", versionStr, 0) == 0){
         instance->m.xen.xen_version = XA_XENVER_3_1_4;
         xa_dbprint(0,"**set instance->m.xen.xen_version = 3.1.4 for the time-traveling Xen\n");

@@ -285,22 +285,22 @@ AC_SUBST(XC_HAVE_MAP_FOREIGN)
 # Support time travel.
 #
 AC_CHECK_LIB(xenctrl,xc_ttd_vmi_add_probe,
-             [DETERMINISTIC_TIMETRAVEL=1],
-             [DETERMINISTIC_TIMETRAVEL=0],
+             [CONFIG_DETERMINISTIC_TIMETRAVEL=1],
+             [CONFIG_DETERMINISTIC_TIMETRAVEL=0],
              [])
-AC_SUBST(DETERMINISTIC_TIMETRAVEL)
+AC_SUBST(CONFIG_DETERMINISTIC_TIMETRAVEL)
 
 # Allow it to be disabled even if autodetected.
 AC_ARG_ENABLE(time-travel,
 	      AS_HELP_STRING([--disable-time-travel],
                              [Disable time-travel support]),
 	      [if test "x$enableval" = "xno"; then \
-	           DETERMINISTIC_TIMETRAVEL=0; \
+	           CONFIG_DETERMINISTIC_TIMETRAVEL=0; \
 	       else \
-	           DETERMINISTIC_TIMETRAVEL=1; \
+	           CONFIG_DETERMINISTIC_TIMETRAVEL=1; \
 	       fi],
-	      [EDETERMINISTIC_TIMETRAVEL=1])
-AC_SUBST(DETERMINISTIC_TIMETRAVEL)
+	      [CONFIG_DETERMINISTIC_TIMETRAVEL=1])
+AC_SUBST(CONFIG_DETERMINISTIC_TIMETRAVEL)
 
 #
 # Support older versions of xenctrl that don't have evtchn_port_or_error_t.
