@@ -26,10 +26,6 @@
 #ifndef __NFS_PERF_PROBES_H__
 #define __NFS_PERF_PROBES_H__
 
-
-int probe_sys_open(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_sys_close(struct probe *probe, void *handler_data, struct probe *trigger);
-
 int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger);

@@ -28,18 +28,6 @@
 #include "probes.h"
 #include "debug.h"
 
-int probe_sys_open(struct probe *probe, void *handler_data, struct probe *trigger)
-{
-    DBG("sys_open called\n");
-    return 0;
-}
-
-int probe_sys_close(struct probe *probe, void *handler_data, struct probe *trigger)
-{
-    DBG("sys_close called\n");
-    return 0;
-}
-
 int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     DBG("netif_poll called\n");

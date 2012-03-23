@@ -87,8 +87,6 @@ void sigh(int signo)
 }
 
 const probe_cmd_t cmdlist[] = {
-        {"sys_open",                    probe_sys_open},
-        {"sys_close",                   probe_sys_close},
         {"netif_poll",                  probe_netif_poll},
         {"netif_poll.ttd_skb_dequeue",  probe_netif_poll_lb_skb_dequeue},
         {"netif_receive_skb",           probe_netif_receive_skb},
