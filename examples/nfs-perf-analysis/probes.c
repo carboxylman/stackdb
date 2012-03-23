@@ -46,7 +46,7 @@ int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trig
     return 0;
 }
 
-int probe_probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger)
+int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     DBG("netif_poll at label skb_dequeue called\n");
     return 0;
