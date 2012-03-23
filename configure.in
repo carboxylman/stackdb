@@ -348,7 +348,8 @@ AC_SUBST(ENABLE_VMI_DEBUG)
 outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           target/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
-          vmfs/Makefile vmps/Makefile vmtap/Makefile"
+          vmfs/Makefile vmps/Makefile vmtap/Makefile \
+	  examples/nfs-perf-analysis/Makefile"
 
 #
 # Do this for easy distclean.

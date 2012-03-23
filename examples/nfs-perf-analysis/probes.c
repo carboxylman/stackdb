@@ -23,6 +23,9 @@
  * 
  */
 
+#include <probe.h>
+
+
 /* foo */
 int probe_foo(struct probe *probe, void *handler_data, struct probe *trigger)
 {

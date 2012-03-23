@@ -35,15 +35,17 @@
 
 #include <signal.h>
 
-#include "log.h"
-#include "dwdebug.h"
-#include "target_api.h"
-#include "target.h"
-#include "target_xen_vm.h"
+#include <log.h>
+#include <dwdebug.h>
+#include <target_api.h>
+#include <target.h>
+#include <target_xen_vm.h>
 
-#include "probe_api.h"
-#include "probe.h"
-#include "alist.h"
+#include <probe_api.h>
+#include <probe.h>
+#include <alist.h>
+
+#include "probes.h"
 
 typedef struct probe_cmd {
     char *symbol;
@@ -52,6 +54,8 @@ typedef struct probe_cmd {
 
 struct target *t;
 GHashTable *probes;
+
+#define ERR printf
 
 void unreg_probes(GHashTable *probes)
 {
@@ -93,7 +97,8 @@ int main(int argc, char *argv[])
     target_status_t tstat;
     struct bsymbol *bsymbol;
     struct probe *probe;
-    int i;
+    char *domain = NULL;
+    int i, cmdcount;
 
     dwdebug_init();
     vmi_set_log_level(debug_level);
@@ -130,7 +135,7 @@ int main(int argc, char *argv[])
             exit(-1);
         }
 
-        bsymbol_dump(bsymbol, &udn);
+        //bsymbol_dump(bsymbol, &udn);
 
         probe = probe_create(t, NULL, 
                              bsymbol->lsymbol->symbol->name,
