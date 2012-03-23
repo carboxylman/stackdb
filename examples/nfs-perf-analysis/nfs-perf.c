@@ -102,7 +102,7 @@ const probe_cmd_t cmdlist[] = {
         {"ext3_journalled_writepage",   probe_ext3_journalled_writepage},
         {"__block_write_full_page",     probe___block_write_full_page},
         {"submit_bh",                   probe_submit_bh},
-        {"blkif_queue_request",         probe_blkif_queue_request},
+//        {"blkif_queue_request",         probe_blkif_queue_request},
         {"blkif_int",                   probe_blkif_int},
         /* {"",  probe_},
         {"",  probe_},
