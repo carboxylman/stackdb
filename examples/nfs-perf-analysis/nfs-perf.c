@@ -87,8 +87,30 @@ void sigh(int signo)
 }
 
 const probe_cmd_t cmdlist[] = {
-        {"sys_open",                 probe_sys_open},
-        {"sys_close",                probe_sys_close},
+        {"sys_open",                    probe_sys_open},
+        {"sys_close",                   probe_sys_close},
+        {"netif_poll",                  probe_netif_poll},
+        {"netif_poll.ttd_skb_dequeue",  probe_netif_poll_lb_skb_dequeue},
+        {"netif_receive_skb",           probe_netif_receive_skb},
+        {"ip_rcv",                      probe_ip_rcv},
+        {"tcp_v4_rcv",                  probe_tcp_v4_rcv},
+        {"tcp_data_queue",              probe_tcp_data_queue},
+        {"skb_copy_datagram_iovec",     probe_skb_copy_datagram_iovec},
+        {"svc_process",                 probe_svc_process},
+        {"nfsd3_proc_write",            probe_nfsd3_proc_write},
+        {"do_readv_writev",             probe_do_readv_writev_ttd_copy_from_user},
+        {"generic_file_writev",         probe_generic_file_writev},
+        {"generic_file_buffered_write", probe_generic_file_buffered_write},
+        {"ext3_journalled_writepage",   probe_ext3_journalled_writepage},
+        {"__block_write_full_page",     probe___block_write_full_page},
+        {"submit_bh",                   probe_submit_bh},
+        {"blkif_queue_request",         probe_blkif_queue_request},
+        {"blkif_int",                   probe_blkif_int},
+        /* {"",  probe_},
+        {"",  probe_},
+        {"",  probe_},
+        {"",  probe_}, */
+
 };
 
 /* command parser for GNU argp - see  GNU docs for more info */

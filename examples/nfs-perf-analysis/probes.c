@@ -40,4 +40,109 @@ int probe_sys_close(struct probe *probe, void *handler_data, struct probe *trigg
     return 0;
 }
 
+int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("netif_poll called\n");
+    return 0;
+}
+
+int probe_probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("netif_poll at label skb_dequeue called\n");
+    return 0;
+}
+
+int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("netif_receive_skb called\n");
+    return 0;
+}
+
+int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("ip_rcv called\n");
+    return 0;
+}
+
+int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("tcp_v4_rcv called\n");
+    return 0;
+}
+
+int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("tcp_data_queue called\n");
+    return 0;
+}
+
+int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("skb_copy_datagram_iovec called\n");
+    return 0;
+}
+
+int probe_svc_process(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("svc_process called\n");
+    return 0;
+}
+
+int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("nfsd3_proc_write called\n");
+    return 0;
+}
+
+int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("do_readv_writev_ttd_copy_from_user called\n");
+    return 0;
+}
+
+int probe_generic_file_writev(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("generic_file_writev called\n");
+    return 0;
+}
+
+int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("generic_file_buffered_write called\n");
+    return 0;
+}
+
+int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("ext3_journalled_writepage called\n");
+    return 0;
+}
+
+int probe___block_write_full_page(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("__block_write_full_page called\n");
+    return 0;
+}
+
+int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("submit_bh called\n");
+    return 0;
+}
+
+int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("blkif_queue_request called\n");
+    return 0;
+}
+
+int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("blkif_int called\n");
+    return 0;
+}
+
+
+
+
 

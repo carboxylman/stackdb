@@ -30,4 +30,22 @@
 int probe_sys_open(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_sys_close(struct probe *probe, void *handler_data, struct probe *trigger);
 
+int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_svc_process(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_generic_file_writev(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe___block_write_full_page(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigger);
+
 #endif /* __NFS_PERF_PROBES_H__ */
