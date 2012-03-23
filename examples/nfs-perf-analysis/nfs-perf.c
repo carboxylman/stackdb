@@ -54,8 +54,6 @@ typedef struct probe_cmd {
 struct target *t;
 GHashTable *probes;
 
-#define ERR printf
-
 void unreg_probes(GHashTable *probes)
 {
     GHashTableIter iter;
