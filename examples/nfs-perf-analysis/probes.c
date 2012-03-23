@@ -28,13 +28,15 @@
 #include "probes.h"
 #include "debug.h"
 
-int probe_foo(struct probe *probe, void *handler_data, struct probe *trigger)
+int probe_sys_open(struct probe *probe, void *handler_data, struct probe *trigger)
 {
+    DBG("sys_open called\n");
     return 0;
 }
 
-int probe_bar(struct probe *probe, void *handler_data, struct probe *trigger)
+int probe_sys_close(struct probe *probe, void *handler_data, struct probe *trigger)
 {
+    DBG("sys_close called\n");
     return 0;
 }
 

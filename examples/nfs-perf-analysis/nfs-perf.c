@@ -77,18 +77,18 @@ void sigh(int signo)
     if (t)
     {
         target_pause(t);
-        ERR("Ending trace.\n");
+        DBG("Ending trace.\n");
         unreg_probes(probes);
         target_close(t);
-        ERR("Ended trace.\n");
+        DBG("Ended trace.\n");
     }
 
     exit(0);
 }
 
 const probe_cmd_t cmdlist[] = {
-        {"do_divide_error",                 probe_foo},
-        {"do_debug",                        probe_bar},
+        {"sys_open",                 probe_sys_open},
+        {"sys_close",                probe_sys_close},
 };
 
 /* command parser for GNU argp - see  GNU docs for more info */
@@ -232,7 +232,7 @@ int main(int argc, char *argv[])
      */
     target_resume(t);
 
-    printf("Starting main debugging loop!\n");
+    DBG("Starting main debugging loop!\n");
     
     while (1)
     {
