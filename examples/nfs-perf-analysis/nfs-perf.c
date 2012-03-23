@@ -46,6 +46,9 @@
 #include "probes.h"
 #include "debug.h"
 
+char *dom_name = NULL; 
+int verbose = 0; 
+
 typedef struct probe_cmd {
     char *symbol;
     probe_handler_t handler;
@@ -97,7 +100,7 @@ error_t cmd_parser(int key, char *arg, struct argp_state *state)
     {
         case 'm': 
 		{
-			guest_vm_name = arg;
+			dom_name = arg;
 			break;
 		}
 
@@ -116,7 +119,7 @@ error_t cmd_parser(int key, char *arg, struct argp_state *state)
 
 const struct argp_option cmd_opts[] =
 {
-	{ .name = "m-domain",  .key = 'm', .arg = "FILE",  .flags = 0,
+    { .name = "domain-name",  .key = 'm', .arg = "FILE",  .flags = 0,
 		.doc = "Domain name" },
 
     { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
@@ -137,7 +140,6 @@ const struct argp parser_def =
 const char *argp_program_version     = "nfs-perf v0.1";
 const char *argp_program_bug_address = "<aburtsev@flux.utah.edu>";
 
-char *dom_name = NULL; 
 
 int main(int argc, char *argv[])
 {
@@ -237,11 +239,11 @@ int main(int argc, char *argv[])
         tstat = target_monitor(t);
         if (tstat == TSTATUS_PAUSED)
         {
-            printf("domain %s interrupted at 0x%" PRIxREGVAL "\n", domain,
+            printf("domain %s interrupted at 0x%" PRIxREGVAL "\n", dom_name, 
                     target_read_reg(t,t->ipregno));
             if (target_resume(t))
             {
-                ERR("Can't resume target dom %s\n", domain);
+                ERR("Can't resume target dom %s\n", dom_name);
                 target_close(t);
                 exit(-16);
             }
