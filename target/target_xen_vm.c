@@ -997,6 +997,9 @@ static int xen_vm_resume(struct target *target) {
     /* Flush back registers if they're dirty! */
     xen_vm_flush_context(target);
 
+    /* flush_context will not have done this necessarily! */
+    xstate->context_valid = 0;
+
     return xc_domain_unpause(xc_handle,xstate->id);
 }
 
@@ -1646,7 +1649,7 @@ struct x86_dr_format {
 static int xen_vm_set_hw_breakpoint(struct target *target,
 					    REG reg,ADDR addr) {
     struct xen_vm_state *xstate;
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     int ret;
 #endif
 
@@ -1688,7 +1691,7 @@ static int xen_vm_set_hw_breakpoint(struct target *target,
 
     xstate->context_dirty = 1;
 
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
 
     if (ret) {
@@ -1708,7 +1711,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize) {
     struct xen_vm_state *xstate;
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     int ret;
 #endif
 
@@ -1758,7 +1761,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,
 
     xstate->context_dirty = 1;
 
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
 
     if (ret) {
@@ -1775,7 +1778,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,
 
 static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
     struct xen_vm_state *xstate;
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     int ret;
     ADDR addr;
 #endif
@@ -1792,7 +1795,7 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
 	    return -1;
     }
 
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     addr = xstate->dr[reg];
 #endif
 
@@ -1812,7 +1815,7 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,REG reg) {
 
     xstate->context_dirty = 1;
 
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,addr);
 
     if (ret) {
@@ -1864,7 +1867,7 @@ int xen_vm_enable_hw_breakpoints(struct target *target) {
 
 int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 				int notification) {
-#ifdef DETERMINISTIC_TIMETRAVEL
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     struct xen_vm_state *xstate;
     int ret = -1;
     char *msg = "unregister";
@@ -1923,6 +1926,9 @@ int xen_vm_singlestep_end(struct target *target) {
 	verror("could not flush context; single step end will probably fail!\n");
 	return -1;
     }
+
+    /* flush_context will not have done this necessarily! */
+    xstate->context_valid = 0;
 
     return 0;
 }
