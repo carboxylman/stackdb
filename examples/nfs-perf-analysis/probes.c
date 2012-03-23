@@ -25,14 +25,14 @@
 
 #include <probe.h>
 
+#include "probes.h"
+#include "debug.h"
 
-/* foo */
 int probe_foo(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     return 0;
 }
 
-/* bar */
 int probe_bar(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     return 0;

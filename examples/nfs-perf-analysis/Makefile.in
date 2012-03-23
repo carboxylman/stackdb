@@ -36,7 +36,8 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/probes.h
+HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/probes.h \
+	   $(TOP_SRCDIR)/$(SUBDIR)/debug.h
 
 OBJECTS := probes.lo 
 

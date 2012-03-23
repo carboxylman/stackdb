@@ -17,16 +17,14 @@
  * 
  *  examples/nfs-perf-analysis/nfs-perf.c
  *
- *  Performance analysis of the request processing path of the
+ *  Performance analysis of the request processing path in the
  *  Linux network file system stack. 
  *
  *  Authors: Anton Burtsev, aburtsev@flux.utah.edu
  * 
  */
 
-#ifndef ENABLE_XENACCESS
-#error "XenAccess must be enabled"
-#endif
+#include <argp.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +44,7 @@
 #include <alist.h>
 
 #include "probes.h"
+#include "debug.h"
 
 typedef struct probe_cmd {
     char *symbol;
@@ -91,29 +90,81 @@ const probe_cmd_t cmdlist[] = {
         {"do_debug",                        probe_bar},
 };
 
+/* command parser for GNU argp - see  GNU docs for more info */
+error_t cmd_parser(int key, char *arg, struct argp_state *state)
+{
+    /*settings_t *setup = (settings_t *)state->input;*/
+
+    switch ( key )
+    {
+        case 'm': 
+		{
+			guest_vm_name = arg;
+			break;
+		}
+
+	    case 'v': 
+		{
+			verbose = 1; 
+			break;
+		}
+
+        default:
+            return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+const struct argp_option cmd_opts[] =
+{
+	{ .name = "m-domain",  .key = 'm', .arg = "FILE",  .flags = 0,
+		.doc = "Domain name" },
+
+    { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
+		.doc = "Verbose" },
+
+    {0}
+};
+
+const struct argp parser_def =
+{
+    .options = cmd_opts,
+    .parser = cmd_parser,
+    .doc =
+        "Performance analysis of the Linux Network File System stack"
+};
+
+
+const char *argp_program_version     = "nfs-perf v0.1";
+const char *argp_program_bug_address = "<aburtsev@flux.utah.edu>";
+
+char *dom_name = NULL; 
+
 int main(int argc, char *argv[])
 {
     int debug_level = -1;
     target_status_t tstat;
     struct bsymbol *bsymbol;
     struct probe *probe;
-    char *domain = NULL;
     int i, cmdcount;
+
+    argp_parse(&parser_def, argc, argv, 0, 0, NULL);
 
     dwdebug_init();
     vmi_set_log_level(debug_level);
     xa_set_debug_level(debug_level);
 
-    t = xen_vm_attach(domain);
+    t = xen_vm_attach(dom_name);
     if (!t)
     {
-        ERR("Can't attach to dom %s!\n", domain);
+        ERR("Can't attach to dom %s!\n", dom_name);
         exit(-3);
     }
 
     if (target_open(t))
     {
-        ERR("Can't open target %s!\n", domain);
+        ERR("Can't open target %s!\n", dom_name);
         exit(-4);
     }
 
