@@ -31,7 +31,7 @@ int probe_sys_open(struct probe *probe, void *handler_data, struct probe *trigge
 int probe_sys_close(struct probe *probe, void *handler_data, struct probe *trigger);
 
 int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger);
+int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trigger);
