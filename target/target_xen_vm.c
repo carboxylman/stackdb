@@ -1874,6 +1874,11 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 
     xstate = (struct xen_vm_state *)(target->state);
 
+    if (!xstate->context_valid) {
+	if (xen_vm_load_context(target)) 
+	    return -1;
+    }
+
     if (notification) {
 	msg = "register";
 	ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
@@ -1896,6 +1901,11 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 int xen_vm_singlestep(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
+    if (!xstate->context_valid) {
+	if (xen_vm_load_context(target)) 
+	    return -1;
+    }
+
     xstate->context.user_regs.eflags |= EF_TF;
     xstate->context_dirty = 1;
 
@@ -1917,6 +1927,11 @@ int xen_vm_singlestep(struct target *target) {
 
 int xen_vm_singlestep_end(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    if (!xstate->context_valid) {
+	if (xen_vm_load_context(target)) 
+	    return -1;
+    }
 
     xstate->context.user_regs.eflags &= ~EF_TF;
     xstate->context.user_regs.eflags &= ~EF_IF;
