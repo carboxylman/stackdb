@@ -1070,7 +1070,10 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		}
 		else {
 		    // domain not supposed to be in singlestep mode
-		    vwarn("phantom single step for dom %d!\n",xstate->id);
+		    vwarn("phantom single step for dom %d; letting user"
+			  " handle fault at 0x%"PRIxADDR"!\n",
+			  xstate->id,ipval);
+		    return TSTATUS_PAUSED;
 		}
 	    }
 	    else {
