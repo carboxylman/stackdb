@@ -36,7 +36,7 @@
 #include "debug.h"
 //#include "request.h"
 
-//struct bsymbol bsymbol_netif_poll_local_skb;
+struct bsymbol *bsymbol_netif_poll_lvar_skb = NULL;
 
 typedef enum nfs_perf_stage_id {
         STAGE_ID_NETIF_POLL              = 1, 
@@ -65,6 +65,13 @@ int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trig
 
 int probe_netif_poll_lb_skb_dequeue_init(struct probe *probe) {
     DBG("netif_poll_lb_skb_dequeue_init at label skb_dequeue called\n");
+
+    bsymbol_netif_poll_lvar_skb = target_lookup_sym(probe->target, "netif_poll.skb", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_netif_poll_lvar_skb) {
+        ERR("Failed to create a bsymbol for netif_poll.skb\n");
+        return -1;
+    }
+
     return 0;
 };
 
@@ -72,8 +79,13 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
 {
     struct request *req;
     struct stage   *req_stage;
+    struct value   *v_skb;
 
     DBG("netif_poll at label skb_dequeue called\n");
+
+    lval_skb = bsymbol_load(bsymbol_netif_poll_lvar_skb, LOAD_FLAG_NONE);
+    if (lval_skb) 
+        DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
 
 #if 0
 

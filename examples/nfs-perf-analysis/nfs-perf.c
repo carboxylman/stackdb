@@ -52,8 +52,6 @@ int verbose = 0;
 struct target *t;
 GHashTable *probes;
 
-
-
 void sigh(int signo)
 {
     if (t)
