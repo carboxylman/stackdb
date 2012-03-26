@@ -23,16 +23,24 @@
  * 
  */
 
+#include <log.h>
+#include <dwdebug.h>
+#include <target_api.h>
+#include <target.h>
+#include <target_xen_vm.h>
+
+#include <probe_api.h>
 #include <probe.h>
 
 #include "probes.h"
 #include "debug.h"
+//#include "request.h"
 
-struct bsymbol bsymbol_netif_poll_local_skb;
+//struct bsymbol bsymbol_netif_poll_local_skb;
 
 typedef enum nfs_perf_stage_id {
-        STAGE_ID_NETIF_POLL             1, 
-        STAGE_ID_NETIF_POLL_SKB_DEQUEUE 2,
+        STAGE_ID_NETIF_POLL              = 1, 
+        STAGE_ID_NETIF_POLL_SKB_DEQUEUE  = 2,
 } nfs_perf_stage_id_t;
 
 /* XXX: This funciton pollutes the kernel binary since it's included in many places */
@@ -45,6 +53,7 @@ static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
 };
 
 int probe_netif_poll_init(struct probe *probe) {
+    DBG("netif_poll_init called\n");
     return 0;
 };
 
@@ -55,6 +64,7 @@ int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trig
 }
 
 int probe_netif_poll_lb_skb_dequeue_init(struct probe *probe) {
+    DBG("netif_poll_lb_skb_dequeue_init at label skb_dequeue called\n");
     return 0;
 };
 
@@ -94,6 +104,7 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
 }
 
 int probe_netif_receive_skb_init(struct probe *probe) {
+    DBG("netif_receive_skb_init called\n");
     return 0;
 };
 
@@ -101,7 +112,7 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
 {
     struct request *req;
     struct stage   *req_stage;
-    u32 req_id;
+    unsigned long   req_id;
 
     DBG("netif_receive_skb called\n");
 
@@ -111,6 +122,7 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
 }
 
 int probe_ip_rcv_init(struct probe *probe) {
+    DBG("ip_rcv called\n");
     return 0;
 };
 
@@ -121,6 +133,7 @@ int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
 }
 
 int probe_tcp_v4_rcv_init(struct probe *probe) {
+    DBG("tcp_v4_rcv_init called\n");
     return 0;
 };
 
@@ -131,6 +144,7 @@ int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trig
 }
 
 int probe_tcp_data_queue_init(struct probe *probe) {
+    DBG("tcp_data_queue_init called\n");
     return 0;
 };
 
@@ -141,6 +155,7 @@ int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *
 }
 
 int probe_skb_copy_datagram_iovec_init(struct probe *probe) {
+    DBG("skb_copy_datagram_iovec_init called\n");
     return 0;
 };
 
@@ -151,6 +166,7 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
 }
 
 int probe_svc_process_init(struct probe *probe) {
+    DBG("svc_process_init called\n");
     return 0;
 };
 
@@ -161,6 +177,7 @@ int probe_svc_process(struct probe *probe, void *handler_data, struct probe *tri
 }
 
 int probe_nfsd3_proc_write_init(struct probe *probe) {
+    DBG("nfsd3_proc_write_init called\n");
     return 0;
 };
 
@@ -171,6 +188,7 @@ int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe
 }
 
 int probe_do_readv_writev_ttd_copy_from_user_init(struct probe *probe) {
+    DBG("do_readv_writev_ttd_copy_from_user_init called\n");
     return 0;
 };
 
@@ -181,6 +199,7 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
 }
 
 int probe_generic_file_writev_init(struct probe *probe) {
+    DBG("generic_file_writev_init called\n");
     return 0;
 };
 
@@ -191,6 +210,7 @@ int probe_generic_file_writev(struct probe *probe, void *handler_data, struct pr
 }
 
 int probe_generic_file_buffered_write_init(struct probe *probe) {
+    DBG("generic_file_buffered_write_init called\n");
     return 0;
 };
 
@@ -201,6 +221,7 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
 }
 
 int probe_ext3_journalled_writepage_init(struct probe *probe) {
+    DBG("ext3_journalled_writepage_init called\n");
     return 0;
 };
 
@@ -211,6 +232,7 @@ int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, str
 }
 
 int probe___block_write_full_page_init(struct probe *probe) {
+    DBG("__block_write_full_page_init called\n");
     return 0;
 };
 
@@ -221,6 +243,7 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
 }
 
 int probe_submit_bh_init(struct probe *probe) {
+    DBG("submit_bh_init called\n");
     return 0;
 };
 
@@ -231,6 +254,7 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
 }
 
 int probe_blkif_queue_request_init(struct probe *probe) {
+    DBG("blkif_queue_request_init called\n");
     return 0;
 };
 
@@ -241,6 +265,7 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
 }
 
 int probe_blkif_int_init(struct probe *probe) {
+    DBG("blkif_int_init called\n");
     return 0;
 };
 
@@ -279,6 +304,8 @@ const probe_registration_t probe_list[] = {
 int register_probes(struct target *t, GHashTable *probes) {
 
     int i, probe_count;
+    struct bsymbol *bsymbol;
+    struct probe *probe;
 
     probes = g_hash_table_new(g_direct_hash, g_direct_equal);
 

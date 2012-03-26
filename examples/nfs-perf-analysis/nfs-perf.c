@@ -49,6 +49,10 @@
 char *dom_name = NULL; 
 int verbose = 0; 
 
+struct target *t;
+GHashTable *probes;
+
+
 
 void sigh(int signo)
 {
@@ -113,15 +117,11 @@ const struct argp parser_def =
 const char *argp_program_version     = "nfs-perf v0.1";
 const char *argp_program_bug_address = "<aburtsev@flux.utah.edu>";
 
-struct target *t;
-GHashTable *probes;
-
 int main(int argc, char *argv[])
 {
     int debug_level = -1;
     target_status_t tstat;
-    struct bsymbol *bsymbol;
-    struct probe *probe;
+    int ret;
 
 
     argp_parse(&parser_def, argc, argv, 0, 0, NULL);

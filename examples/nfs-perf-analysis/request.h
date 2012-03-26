@@ -36,12 +36,12 @@ struct request {
 /* a stage has a name, timestamp, and 4 words of stage-specific data just in
    case we want to record something special about this stage */
 struct stage {
-        struct request *req;
-        char  name[32];
-        u64   timestamp;
-        u32   id;
-        u32   data[4];
-        struct list_head  next_stage;        
+        struct request      *req;
+        char                name[32];
+        unsigned long long  timestamp;
+        unsigned long       id;
+        unsigned long       data[4];
+        struct list_head    next_stage;        
 }
 
 #if 0
