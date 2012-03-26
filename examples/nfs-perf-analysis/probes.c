@@ -28,6 +28,50 @@
 #include "probes.h"
 #include "debug.h"
 
+
+typedef struct reg_var {
+    char           *name;
+    struct bsymbol *bsymbol;
+} reg_var_t;
+
+struct bsymbol bsymbol_netif_poll_local_skb;
+
+const reg_var_t var_list[] = {
+        {"skb",                  &bsymbol_netif_poll_local_skb},
+};
+
+int register_vars(){
+    int i, var_count;
+
+    varcount = sizeof(var_list) / sizeof(var_list[0]);
+    for (i = 0; i < var_count; i++)
+    {
+        cmdlist[i].bsymbol = target_lookup_sym(target, cmdlist[i].name, ".", 
+                                                NULL, SYMBOL_TYPE_FLAG_NONE);
+        if (!cmdlist[i].bsymbol)
+        {
+            ERR("Could not find symbol %s!\n", cmdlist[i].symbol);
+            return -1;
+        }
+
+    }
+}
+
+
+typedef enum nfs_perf_stage_id {
+        STAGE_ID_NETIF_POLL             1, 
+        STAGE_ID_NETIF_POLL_SKB_DEQUEUE 2,
+} nfs_perf_stage_id_t;
+
+/* XXX: This funciton pollutes the kernel binary since it's included in many places */
+static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
+    switch ( id ) {
+    case STAGE_ID_NETIF_POLL: return "netif_poll";
+    case STAGE_ID_NETIF_POLL_SKB_DEQUEUE: return "netif_poll_skb_dequeue";
+    default: return "undefined";
+    };
+};
+
 int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     DBG("netif_poll called\n");
@@ -36,13 +80,49 @@ int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trig
 
 int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger)
 {
+    struct request *req;
+    struct stage   *req_stage;
+
     DBG("netif_poll at label skb_dequeue called\n");
+
+#if 0
+
+    /* we add a new request to the analysis */
+    req = request_alloc();
+    if (!req) {
+        ERR("Failed to allocate request\n");
+        return 0;
+    }
+
+    req_stage = request_stage_alloc(stage_id_to_name(STAGE_ID_NETIF_POLL));
+    if (!req_stage) {
+        ERR("Failed to allocate request stage\n");
+        request_free(req);
+        return 0;
+    }
+
+    /* XXX: read the timestampt here */
+    req_stage->timestamp = 0;
+
+    /* XXX: read stage id (address of the skb) */
+    req_stage->id = 0;
+
+    request_add_stage(req, req_stage);
+#endif
+
     return 0;
 }
 
 int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger)
 {
+    struct request *req;
+    struct stage   *req_stage;
+    u32 req_id;
+
     DBG("netif_receive_skb called\n");
+
+    /* XXX: read request id -- address of the skb passed to the netif_skb_function */
+    req_id = 0;
     return 0;
 }
 
