@@ -79,7 +79,7 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
 {
     struct request *req;
     struct stage   *req_stage;
-    struct value   *v_skb;
+    struct value   *lval_skb;
 
     DBG("netif_poll at label skb_dequeue called\n");
 
