@@ -26,6 +26,8 @@
 #ifndef __NFS_PERF_PROBES_H__
 #define __NFS_PERF_PROBES_H__
 
+#if 0
+
 int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger);
@@ -43,5 +45,10 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
 int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct probe *trigger);
 int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigger);
+
+#endif
+
+int register_probes(struct target *t, GHashTable *probes);
+void unregister_probes(GHashTable *probes);
 
 #endif /* __NFS_PERF_PROBES_H__ */

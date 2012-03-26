@@ -49,28 +49,6 @@
 char *dom_name = NULL; 
 int verbose = 0; 
 
-typedef struct probe_cmd {
-    char *symbol;
-    probe_handler_t handler;
-} probe_cmd_t;
-
-struct target *t;
-GHashTable *probes;
-
-void unreg_probes(GHashTable *probes)
-{
-    GHashTableIter iter;
-    gpointer key;
-    struct probe *probe;
-
-    g_hash_table_iter_init(&iter, probes);
-    while (g_hash_table_iter_next(&iter,
-                (gpointer)&key,
-                (gpointer)&probe))
-    {
-        probe_unregister(probe,1);
-    }
-}
 
 void sigh(int signo)
 {
@@ -78,38 +56,13 @@ void sigh(int signo)
     {
         target_pause(t);
         DBG("Ending trace.\n");
-        unreg_probes(probes);
+        unregister_probes(probes);
         target_close(t);
         DBG("Ended trace.\n");
     }
 
     exit(0);
 }
-
-const probe_cmd_t cmdlist[] = {
-        {"netif_poll",                  probe_netif_poll},
-        {"netif_poll.ttd_skb_dequeue",  probe_netif_poll_lb_skb_dequeue},
-        {"netif_receive_skb",           probe_netif_receive_skb},
-        {"ip_rcv",                      probe_ip_rcv},
-        {"tcp_v4_rcv",                  probe_tcp_v4_rcv},
-        {"tcp_data_queue",              probe_tcp_data_queue},
-        {"skb_copy_datagram_iovec",     probe_skb_copy_datagram_iovec},
-        {"svc_process",                 probe_svc_process},
-        {"nfsd3_proc_write",            probe_nfsd3_proc_write},
-        {"do_readv_writev",             probe_do_readv_writev_ttd_copy_from_user},
-        {"generic_file_writev",         probe_generic_file_writev},
-        {"generic_file_buffered_write", probe_generic_file_buffered_write},
-        {"ext3_journalled_writepage",   probe_ext3_journalled_writepage},
-        {"__block_write_full_page",     probe___block_write_full_page},
-        {"submit_bh",                   probe_submit_bh},
-//        {"blkif_queue_request",         probe_blkif_queue_request},
-        {"blkif_int",                   probe_blkif_int},
-        /* {"",  probe_},
-        {"",  probe_},
-        {"",  probe_},
-        {"",  probe_}, */
-
-};
 
 /* command parser for GNU argp - see  GNU docs for more info */
 error_t cmd_parser(int key, char *arg, struct argp_state *state)
@@ -160,6 +113,8 @@ const struct argp parser_def =
 const char *argp_program_version     = "nfs-perf v0.1";
 const char *argp_program_bug_address = "<aburtsev@flux.utah.edu>";
 
+struct target *t;
+GHashTable *probes;
 
 int main(int argc, char *argv[])
 {
@@ -167,7 +122,7 @@ int main(int argc, char *argv[])
     target_status_t tstat;
     struct bsymbol *bsymbol;
     struct probe *probe;
-    int i, cmdcount;
+
 
     argp_parse(&parser_def, argc, argv, 0, 0, NULL);
 
@@ -188,50 +143,11 @@ int main(int argc, char *argv[])
         exit(-4);
     }
 
-    probes = g_hash_table_new(g_direct_hash,g_direct_equal);
-
-    /*
-     * Inject probes at locations specified in cmdlist.
-     */
-    cmdcount = sizeof(cmdlist) / sizeof(cmdlist[0]);
-    for (i = 0; i < cmdcount; ++i)
+    ret = register_probes(t, probes);
+    if (ret)
     {
-        bsymbol = target_lookup_sym(t, cmdlist[i].symbol, ".", 
-                                    NULL, SYMBOL_TYPE_FLAG_NONE);
-        if (!bsymbol)
-        {
-            ERR("Could not find symbol %s!\n", cmdlist[i].symbol);
-            unreg_probes(probes);
-            target_close(t);
-            exit(-1);
-        }
-
-        //bsymbol_dump(bsymbol, &udn);
-
-        probe = probe_create(t, NULL, 
-                             bsymbol->lsymbol->symbol->name,
-                             cmdlist[i].handler, NULL, NULL, 0);
-        if (!probe)
-        {
-            ERR("could not create probe on '%s'\n", 
-                bsymbol->lsymbol->symbol->name);
-            unreg_probes(probes);
-            exit(-1);
-        }
-
-        if (!probe_register_symbol(probe, 
-                                   bsymbol, PROBEPOINT_FASTEST,
-                                   PROBEPOINT_EXEC, PROBEPOINT_LAUTO))
-        {
-            ERR("could not register probe on '%s'\n",
-                bsymbol->lsymbol->symbol->name);
-            probe_free(probe, 1);
-            unreg_probes(probes);
-            exit(-1);
-        }
-        g_hash_table_insert(probes, 
-                            (gpointer)probe->probepoint->addr, 
-                            (gpointer)probe);
+        ERR("Failed to register probes, ret:%d", ret);
+        exit(ret);
     }
 
     signal(SIGHUP, sigh);
@@ -270,7 +186,7 @@ int main(int argc, char *argv[])
         }
         else
         {
-            unreg_probes(probes);
+            unregister_probes(probes);
             target_close(t);
             if (tstat == TSTATUS_DONE)
                 break;

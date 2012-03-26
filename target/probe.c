@@ -503,7 +503,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
     return 0;
 }
 
-struct probe *probe_create(struct target *target,struct probe_ops *pops,
+struct probe *probe_create(struct target *target, struct probe_ops *pops,
 			   const char *name,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,

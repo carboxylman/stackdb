@@ -26,6 +26,8 @@
 #ifndef __NFS_PERF_REQUEST_H__
 #define __NFS_PERF_REQUEST_H__
 
+#include "list.h"
+
 /* request is a linked list of stages */
 struct request {
         struct list_head  stages;        
@@ -42,6 +44,8 @@ struct stage {
         struct list_head  next_stage;        
 }
 
+#if 0
+
 struct request *request_alloc();
 void request_free(struct request *req);
 
@@ -54,6 +58,8 @@ struct hash * global_hash_by_name(char *name);
 
 /* hash is used to resolve unique IDs into requests */
 struct request *hash_request_by_id(struct hash *h, u32 id)
+
+#endif /* if 0 */
 
 #endif
 
