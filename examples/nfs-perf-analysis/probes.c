@@ -37,6 +37,8 @@
 //#include "request.h"
 
 struct bsymbol *bsymbol_netif_poll_lvar_skb = NULL;
+struct bsymbol *bsymbol_netif_receive_skb_lvar_skb = NULL;
+struct bsymbol *bsymbol_ip_rcv_lvar_skb = NULL;
 
 typedef enum nfs_perf_stage_id {
         STAGE_ID_NETIF_POLL              = 1, 
@@ -84,8 +86,12 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
     DBG("netif_poll at label skb_dequeue called\n");
 
     lval_skb = bsymbol_load(bsymbol_netif_poll_lvar_skb, LOAD_FLAG_NONE);
-    if (lval_skb) 
-        DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
+    if (!lval_skb) {
+        ERR("Cannot access value of skb\n");
+        return -1;
+    }
+
+    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
 
 #if 0
 
@@ -107,7 +113,7 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
     req_stage->timestamp = 0;
 
     /* XXX: read stage id (address of the skb) */
-    req_stage->id = 0;
+    req_id = *(unsigned long*)lval_skb->buf;
 
     request_add_stage(req, req_stage);
 #endif
@@ -117,6 +123,13 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
 
 int probe_netif_receive_skb_init(struct probe *probe) {
     DBG("netif_receive_skb_init called\n");
+
+    bsymbol_netif_receive_skb_lvar_skb = target_lookup_sym(probe->target, "netif_receive_skb.skb", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_netif_receive_skb_lvar_skb) {
+        ERR("Failed to create a bsymbol for netif_receive_skb.skb\n");
+        return -1;
+    }
+
     return 0;
 };
 
@@ -125,22 +138,48 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
     struct request *req;
     struct stage   *req_stage;
     unsigned long   req_id;
+    struct value   *lval_skb;
 
     DBG("netif_receive_skb called\n");
 
-    /* XXX: read request id -- address of the skb passed to the netif_skb_function */
-    req_id = 0;
+    lval_skb = bsymbol_load(bsymbol_netif_receive_skb_lvar_skb, LOAD_FLAG_NONE);
+    if (!lval_skb) {
+        ERR("Cannot access value of skb\n");
+        return -1;
+    }
+
+    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
+
+    /* Rrequest id is address of the skb passed to the netif_skb_function */
+    req_id = *(unsigned long*)lval_skb->buf;
     return 0;
 }
 
 int probe_ip_rcv_init(struct probe *probe) {
     DBG("ip_rcv called\n");
+
+    bsymbol_ip_rcv_lvar_skb = target_lookup_sym(probe->target, "ip_rcv.skb", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_ip_rcv_lvar_skb) {
+        ERR("Failed to create a bsymbol for ip_rcv.skb\n");
+        return -1;
+    }
+
     return 0;
 };
 
 int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
 {
+    struct value   *lval_skb;
+
     DBG("ip_rcv called\n");
+
+    lval_skb = bsymbol_load(bsymbol_ip_rcv_lvar_skb, LOAD_FLAG_NONE);
+    if (!lval_skb) {
+        ERR("Cannot access value of skb\n");
+        return -1;
+    }
+
+    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
     return 0;
 }
 
