@@ -145,7 +145,6 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 
  inst_err_out:
     array_list_deep_free(tmplist);
-    array_list_free(tmplist);
     return -1;
 }
 

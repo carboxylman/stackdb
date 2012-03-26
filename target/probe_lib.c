@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "log.h"
+#include "alist.h"
 
 #include "dwdebug.h"
 
@@ -201,7 +202,6 @@ struct probe *probe_register_function_ee(struct probe *probe,
 
     if (cflist) {
 	array_list_deep_free(cflist);
-	array_list_free(cflist);
 	cflist = NULL;
     }
 
@@ -212,7 +212,6 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	free(funccode);
     if (cflist) {
 	array_list_deep_free(cflist);
-	array_list_free(cflist);
     }
     probe_unregister(probe,1);
     if (probe->autofree)
@@ -281,8 +280,12 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	goto errout;
     }
 
+    /* We allocate an extra NULL byte on the back side because distorm
+     * seems to have an off by one error (guessing, according to
+     * valgrind!
+     */
     funclen = funcrange->r.a.highpc - funcrange->r.a.lowpc;
-    funccode = malloc(funclen);
+    funccode = malloc(funclen + 1);
 
     if (!target_read_addr(target,funcrange->r.a.lowpc,
 			  funclen,funccode,NULL)) {
@@ -290,6 +293,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	       bsymbol->lsymbol->symbol->name);
 	goto errout;
     }
+
+    funccode[funclen] = 0;
 
     if (disasm_get_control_flow_offsets(target,cfflags,funccode,funclen,
 					&cflist,funcrange->r.a.lowpc)) {
@@ -356,7 +361,6 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 
     if (cflist) {
 	array_list_deep_free(cflist);
-	array_list_free(cflist);
 	cflist = NULL;
     }
     if (itypes)
@@ -371,7 +375,6 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	free(funccode);
     if (cflist) {
 	array_list_deep_free(cflist);
-	array_list_free(cflist);
     }
     probe_unregister(probe,1);
     if (probe->autofree)

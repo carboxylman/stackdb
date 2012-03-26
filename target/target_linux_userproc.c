@@ -317,7 +317,7 @@ struct target *linux_userproc_attach(int pid) {
     target->ret_instrs_len = 1;
     target->ret_instr_count = 1;
 
-    target->full_ret_instrs = malloc(1);
+    target->full_ret_instrs = malloc(2);
     /* LEAVE */
     *(char *)(target->full_ret_instrs) = 0xc9;
     /* RET */
@@ -905,6 +905,8 @@ static int linux_userproc_fini(struct target *target) {
 static int linux_userproc_loadspaces(struct target *target) {
     struct addrspace *space = addrspace_create(target,"NULL",0,
 					       linux_userproc_pid(target));
+    RHOLD(space);
+
     space->target = target;
 
     list_add_tail(&space->space,&target->spaces);
@@ -1316,6 +1318,7 @@ static target_status_t linux_userproc_status(struct target *target) {
 
     vdebug(3,LOG_T_LUP,"pid %d status %d\n",linux_userproc_pid(target),retval);
 
+    fclose(statf);
     return retval;
 }
 

@@ -71,10 +71,16 @@ static inline struct array_list *array_list_clone(struct array_list *oldlist,
 }
 
 static inline int32_t array_list_len(struct array_list *list) {
+    if (!list)
+	return 0;
+
     return list->len;
 }
 
 static inline int32_t array_list_alloc_len(struct array_list *list) {
+    if (!list)
+	return 0;
+
     return list->alloc_len;
 }
 
@@ -149,6 +155,36 @@ static inline int array_list_add(struct array_list *list,void *element) {
     return 0;
 }
 
+static inline int array_list_append(struct array_list *list,void *element) {
+    return array_list_add(list,element);
+}
+
+static inline int array_list_prepend(struct array_list *list,void *element) {
+    void **lltmp;
+    int i;
+
+    /* allocate space for another entry if necessary */
+    if (list->len == list->alloc_len) {
+	if (!(lltmp = (void **)realloc(list->list,
+				       (list->len+1)*sizeof(void *)))) {
+	    return -1;
+	}
+	list->list = lltmp;
+	list->alloc_len += 1;
+    }
+
+    /* shift the whole list over one, ugh */
+    for (i = list->len - 1; i > -1; --i) {
+	list->list[i + 1] = list->list[i];
+    }
+
+    list->list[0] = element;
+
+    list->len += 1;
+
+    return 0;
+}
+
 static inline void *array_list_remove(struct array_list *list) {
     if (list->len) 
 	return list->list[--list->len];
@@ -174,17 +210,21 @@ static inline int array_list_item_set(struct array_list *list,int i,void *item) 
 }
 
 static inline void array_list_free(struct array_list *list) {
-    free(list->list);
+    if (list->list)
+	free(list->list);
     free(list);
 }
 
-static inline void array_list_deep_free(struct array_list *list) {
+static inline void array_list_internal_free(struct array_list *list) {
     int i;
 
     for (i = 0; i < list->len; ++i)
 	free(list->list[i]);
 }
 
-
+static inline void array_list_deep_free(struct array_list *list) {
+    array_list_internal_free(list);
+    array_list_free(list);
+}
 
 #endif

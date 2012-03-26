@@ -278,7 +278,9 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		}
 
 		if (!symbol) {
-		    symbol = debugfile_lookup_addr(debugfile,(ADDR)address);
+		    symbol = (struct symbol *) \
+			g_hash_table_lookup(debugfile->addresses,
+					    (gpointer)(ADDR)address);
 		    if (symbol) {
 			vdebug(3,LOG_D_DWARF,
 			       "found candidate prologue function %s at 0x%"PRIxADDR"\n",
@@ -321,7 +323,9 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 			address = read_8ubyte_unaligned_inc(obo,linep);
 
 		    if (!symbol) {
-			symbol = debugfile_lookup_addr(debugfile,(ADDR)address);
+			symbol = (struct symbol *) \
+			    g_hash_table_lookup(debugfile->addresses,
+						(gpointer)(ADDR)address);
 			if (symbol) {
 			    vdebug(3,LOG_D_DWARF,
 				   "found candidate prologue function %s at 0x%"PRIxADDR"\n",

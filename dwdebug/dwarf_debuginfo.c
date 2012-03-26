@@ -912,12 +912,14 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    }
 		}
 
+		int i;
+		for (i = 0; i < loclist->len; ++i) {
+		    if (loclist->list[i]->start < cbargs->symbol->base_addr)
+			cbargs->symbol->base_addr = loclist->list[i]->start;
+		}
+
 		if (SYMBOL_IS_PARTIAL(cbargs->symbol)) {
-		    int i;
-		    for (i = 0; i < loclist->len; ++i) {
-			if (loclist->list[i]->start < cbargs->symbol->base_addr)
-			    cbargs->symbol->base_addr = loclist->list[i]->start;
-		    }
+		    loc_list_free(loclist);
 		}
 	    }
 	    else if (block_set) {
@@ -933,12 +935,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			       cbargs->version,cbargs->addrsize,cbargs->offset_size,
 			       block.length,block.data,attr,
 			       loc);
-		if (SYMBOL_IS_PARTIAL(cbargs->symbol)) {
-		    if (loc->loctype == LOCTYPE_ADDR 
-			&& loc->l.addr < cbargs->symbol->base_addr)
-			cbargs->symbol->base_addr = loc->l.addr;
+
+		if (loc->loctype == LOCTYPE_ADDR 
+		    && loc->l.addr < cbargs->symbol->base_addr)
+		    cbargs->symbol->base_addr = loc->l.addr;
+
+		if (SYMBOL_IS_PARTIAL(cbargs->symbol)) 
 		    free(loc);
-		}
 	    }
 	    else {
 		vwarn("[DIE %" PRIx64 "] loclist: bad attr %s // form %s!\n",
@@ -1761,7 +1764,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
     /* XXX: If the offset exceeds a 32-bit max, yes, we *will* overflow! */
     if (!(cu_symtab = (struct symtab *)\
 	  g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
-	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0,NULL);
+	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL);
 	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
 			    (gpointer)cu_symtab);
     }
@@ -1930,7 +1933,8 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    /* Build a new symtab and use it until we finish this
 	     * subprogram, or until we need another child scope.
 	     */
-	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL);
+	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL,
+				     symbols[level]);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -1947,7 +1951,8 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    /* Build a new symtab and use it until we finish this
 	     * subprogram, or until we need another child scope.
 	     */
-	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL);
+	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL,
+				     symbols[level]);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -1964,7 +1969,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    /* Build a new symtab and use it until we finish this
 	     * block, or until we need another child scope.
 	     */
-	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL);
+	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -2342,11 +2347,11 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    }
 	}
 
-	if (fminaddr != 0) {
+	if (fminaddr != 0 && fminaddr != ADDRMAX) {
 	    g_hash_table_insert(debugfile->addresses,(gpointer)fminaddr,symbol);
 	    vdebug(4,LOG_D_DWARF,
-		   "inserted function %s with minaddr 0x%"PRIxADDR" into debugfile addresses table\n",
-		   symbol_get_name_orig(symbol),fminaddr);
+		   "inserted %s %s with minaddr 0x%"PRIxADDR" into debugfile addresses table\n",
+		   SYMBOL_TYPE(symbol->type),symbol_get_name_orig(symbol),fminaddr);
 	}
     }
 
@@ -2565,7 +2570,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	};
 	symbol_var_dump(symbol,&udn);
 	fprintf(stderr,"\n");
-	symbol_free(symbol);
+	/* Don't need to force; nobody holds refs to us yet! */
+	symbol_free(symbol,0);
 	retval = 1;
     }
 
@@ -2883,7 +2889,7 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	if (!(cu_symtab = (struct symtab *)\
 	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
 	    cu_symtab = symtab_create(debugfile,(SMOFFSET)offset,NULL,NULL,0,
-				      NULL);
+				      NULL,NULL);
 	    g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,cu_symtab);
 	}
 

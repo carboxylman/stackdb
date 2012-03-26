@@ -100,6 +100,8 @@ struct debugfile *target_associate_debugfile(struct target *target,
 					     struct memregion *region,
 					     char *filename,
 					     debugfile_type_t type);
+void target_disassociate_debugfile(struct debugfile *debugfile);
+
 /**
  ** Address spaces.
  **/
@@ -109,7 +111,7 @@ struct memregion *addrspace_find_region(struct addrspace *space,char *name);
 int addrspace_find_range_real(struct addrspace *space,ADDR addr,
 			      struct memregion **region_saveptr,
 			      struct memrange **range_saveptr);
-void addrspace_free(struct addrspace *space);
+REFCNT addrspace_free(struct addrspace *space,int force);
 void addrspace_dump(struct addrspace *space,struct dump_info *ud);
 
 /**
@@ -279,7 +281,7 @@ struct addrspace {
     /* A backref to the target containing this address space. */
     struct target *target;
 
-    int refcnt;
+    REFCNT refcnt;
 };
 
 /*

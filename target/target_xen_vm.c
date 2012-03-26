@@ -620,6 +620,9 @@ static int xen_vm_fini(struct target *target) {
 static int xen_vm_loadspaces(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
     struct addrspace *space = addrspace_create(target,"NULL",0,xstate->id);
+
+    RHOLD(space);
+
     space->target = target;
 
     list_add_tail(&space->space,&target->spaces);

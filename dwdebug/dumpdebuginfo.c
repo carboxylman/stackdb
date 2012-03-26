@@ -43,6 +43,7 @@ int main(int argc,char **argv) {
     int dotypes = 1;
     int doglobals = 1;
     int dosymtabs = 1;
+    char *endptr = NULL;
 
     int dlen = 0;
     struct debugfile_load_opts **dlo_list = \
@@ -158,16 +159,26 @@ int main(int argc,char **argv) {
 	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs);
     else {
 	for (i = 1; i < argc; ++i) {
-	    struct lsymbol *s = debugfile_lookup_sym(debugfile,argv[i],".",
-						     NULL,SYMBOL_TYPE_NONE);
+	    struct lsymbol *s;
+	    ADDR addr = (ADDR)strtoull(argv[i],&endptr,0);
+
+	    if (endptr != argv[i])
+		s = debugfile_lookup_addr(debugfile,addr);
+	    else
+		s = debugfile_lookup_sym(debugfile,argv[i],".",
+					 NULL,SYMBOL_TYPE_NONE);
+	    
 	    if (!s)
 		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-	    else
+	    else {
 		lsymbol_dump(s,&ud);
+		lsymbol_release(s);
+		lsymbol_free(s,0);
+	    }
 	}
     }
 
-    debugfile_free(debugfile);
+    debugfile_free(debugfile,0);
 
     dwdebug_fini();
 

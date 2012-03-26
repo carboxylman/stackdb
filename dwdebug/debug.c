@@ -76,7 +76,14 @@ static void ghash_symbol_free(gpointer data) {
     vdebug(5,LOG_D_SYMBOL,"freeing symbol(%s:%s:%s)\n",
 	   symbol->symtab->debugfile->idstr,symbol->symtab->name,
 	   symbol->name);
-    symbol_free(symbol);
+    /* We force-free the symbol; this function is only called if its
+     * symtab is going away.  All symbols have to be on a symtab, so
+     * we're inconsistent if we don't force it to be freed!
+     *
+     * If anybody is still holding a ref at this point, that's their
+     * fault and they have to fix it.
+     */
+    symbol_free(symbol,1);
 }
 
 /**
@@ -136,9 +143,9 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc) {
 /**
  ** Symbol lookup functions.
  **/
-struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
-				  char *name,const char *delim,
-				  symbol_type_flag_t ftype) {
+static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
+					 char *name,const char *delim,
+					 symbol_type_flag_t ftype) {
     char *next = NULL;
     char *lname = NULL;
     char *saveptr = NULL;
@@ -230,7 +237,7 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 	     * functions?  How can we let users search for these?
 	     */
 	    if (!subtab->name) {
-		lsymbol_tmp = symtab_lookup_sym(subtab,name,delim,ftype);
+		lsymbol_tmp = __symtab_lookup_sym(subtab,name,delim,ftype);
 		if (lsymbol_tmp) {
 		    if (SYMBOL_IS_TYPE(lsymbol_tmp->symbol)) {
 			lsymbol = lsymbol_tmp;
@@ -256,7 +263,10 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 			       lsymbol->symbol->name);
 		    }
 		    else {
-			lsymbol_free(lsymbol_tmp);
+			/* Don't force free; somebody else might be
+			 * holding a ref!
+			 */
+			lsymbol_free(lsymbol_tmp,0);
 		    }
 		}
 	    }
@@ -290,6 +300,7 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     if (!lname) {
 	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
 	       lsymbol->symbol->name);
+
 	return lsymbol;
     }
 
@@ -309,7 +320,6 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 	     * members into our overall chain, BEFORE gluing the actual
 	     * found symbol onto the tail end of the chain.
 	     */
-	    //asm("int $3");
 	    for (i = 0; i < array_list_len(anonchain); ++i) {
 		array_list_add(chain,array_list_item(anonchain,i));
 	    }
@@ -336,20 +346,93 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     if (lname)
 	free(lname);
     if (lsymbol)
-	lsymbol_free(lsymbol);
+	/* Don't force free; somebody else might have a ref! */
+	lsymbol_free(lsymbol,0);
 
     return NULL;
 }
 
-struct symbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
-    return (struct symbol *)g_hash_table_lookup(debugfile->addresses,
-						(gpointer)addr);
+struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
+				  char *name,const char *delim,
+				  symbol_type_flag_t ftype) {
+    struct lsymbol *ls = __symtab_lookup_sym(symtab,name,delim,ftype);
+    struct array_list *chain;
+    int i;
+
+    if (ls) {
+	RHOLD(ls);
+	chain = ls->chain;
+	for (i = 0; i < array_list_len(chain); ++i) {
+	    RHOLD((struct symbol *)array_list_item(chain,i));
+	}
+    }
+
+    return ls;
 }
 
-struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
-				     char *name,const char *delim,
-				     struct rfilter_list *srcfile_rflist,
-				     symbol_type_flag_t ftype) {
+struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
+    struct array_list *chain;
+    struct lsymbol *ls;
+    struct symbol *s = (struct symbol *)g_hash_table_lookup(debugfile->addresses,
+							    (gpointer)addr);
+    struct symtab *st;
+    int i;
+
+    if (!s) 
+	return NULL;
+
+    chain = array_list_create(1);
+    array_list_prepend(chain,s);
+    ls = lsymbol_create(s,chain);
+
+ again:
+    if (s->isparam || s->ismember) {
+	if (s->isparam && SYMBOL_IS_FUNCTION(s->s.ii->d.v.member_symbol)) {
+	    s = s->s.ii->d.v.member_symbol;
+	    array_list_prepend(chain,s);
+	    goto again;
+	}
+	else {
+	    /* if (!SYMBOL_IS_FULL(s)
+	     *  || (s->isparam && SYMBOL_IST_FUNCTION(s->s.ii->d.v.member_symbol))
+	     *  || (s->ismember)) {
+	     */
+	    goto out;
+	}
+    }
+    else if (SYMBOL_IS_VAR(s) || SYMBOL_IS_FUNCTION(s)) {
+	/* If the symtab the var/function is on is not the root, trace
+	 * up until we find either the root symtab, or a function
+	 * symtab.  If we find a function's symtab, we keep going up and
+	 * look for more functions.  When we hit the root symtab, we're
+	 * done, of course.
+	 */
+	st = s->symtab;
+	while (!SYMTAB_IS_ROOT(st) && !s->symtab->symtab_symbol)
+	    st = st->parent;
+	if (st->symtab_symbol) {
+	    s = st->symtab_symbol;
+	    array_list_prepend(chain,s);
+	    goto again;
+	}
+	else 
+	    goto out;
+    }
+    /* Just fall out */
+
+ out:
+    RHOLD(ls);
+    for (i = 0; i < array_list_len(chain); ++i) {
+	RHOLD((struct symbol *)array_list_item(chain,i));
+    }
+
+    return ls;
+}
+
+static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
+					      char *name,const char *delim,
+					      struct rfilter_list *srcfile_rflist,
+					      symbol_type_flag_t ftype) {
     char *next = NULL;
     char *lname = NULL;
     char *saveptr = NULL;
@@ -422,7 +505,7 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 		continue;
 	}
 
-	lsymbol_tmp = symtab_lookup_sym(symtab,name,delim,ftype);
+	lsymbol_tmp = __symtab_lookup_sym(symtab,name,delim,ftype);
 	if (lsymbol_tmp) {
 	    /* If we do find a match, and it's a type, take it! */
 	    if (SYMBOL_IS_TYPE(lsymbol_tmp->symbol)) {
@@ -448,7 +531,8 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 	    }
 	    /* We are never going to use this match, so free it. */
 	    else {
-		lsymbol_free(lsymbol_tmp);
+		/* Don't force free; somebody else might have a ref! */
+		lsymbol_free(lsymbol_tmp,0);
 	    }
 	}
     }
@@ -478,12 +562,13 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
     if (lsymbol	&& !lsymbol->symbol->isdeclaration) {
 	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found best %s in symtab\n",
 	       lsymbol->symbol->name);
-	return lsymbol;
+	goto out;
     }
     /* We're not going to use it; it is no better than symbol. */
     else if (symbol) {
 	if (lsymbol) {
-	    lsymbol_free(lsymbol);
+	    /* Don't force free; somebody might have a ref to it. */
+	    lsymbol_free(lsymbol,0);
 	    lsymbol = NULL;
 	}
     }
@@ -496,7 +581,7 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
     if (!lname) {
 	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
 	       lsymbol->symbol->name);
-	return lsymbol;
+	goto out;
     }
 
     vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
@@ -515,7 +600,6 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 	     * members into our overall chain, BEFORE gluing the actual
 	     * found symbol onto the tail end of the chain.
 	     */
-	    //asm("int $3");
 	    for (i = 0; i < array_list_len(anonchain); ++i) {
 		array_list_add(chain,array_list_item(anonchain,i));
 	    }
@@ -536,15 +620,35 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
     lsymbol->symbol = (struct symbol *)array_list_item(lsymbol->chain,
 						       array_list_len(lsymbol->chain) - 1);
 
+ out:
     return lsymbol;
 
  errout:
     if (lname)
 	free(lname);
     if (lsymbol)
-	lsymbol_free(lsymbol);
+	/* Don't force free; somebody might have a ref to it! */
+	lsymbol_free(lsymbol,0);
 
     return NULL;
+}
+
+struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
+				     char *name,const char *delim,
+				     struct rfilter_list *srcfile_rflist,
+				     symbol_type_flag_t ftype) {
+    struct lsymbol *lsymbol = __debugfile_lookup_sym(debugfile,name,delim,
+						     srcfile_rflist,ftype);
+    int i;
+
+    if (lsymbol) {
+	RHOLD(lsymbol);
+	for (i = 0; i < array_list_len(lsymbol->chain); ++i) {
+	    RHOLD((struct symbol *)array_list_item(lsymbol->chain,i));
+	}
+    }
+
+    return lsymbol;
 }
 
 /**
@@ -889,11 +993,19 @@ int debugfile_add_type_fakename(struct debugfile *debugfile,
     return 0;
 }
 
-void debugfile_free(struct debugfile *debugfile) {
+REFCNT debugfile_free(struct debugfile *debugfile,int force) {
+    int retval = debugfile->refcnt;
+
     if (debugfile->refcnt) {
-	vwarn("debugfile(%s) still has refcnt %d, not freeing!\n",
-	      debugfile->idstr,debugfile->refcnt);
-	return;
+	if (!force) {
+	    verror("cannot free (%d refs) debugfile(%s)",
+		   debugfile->refcnt,debugfile->idstr);
+	    return debugfile->refcnt;
+	}
+	else {
+	    vwarn("forced free (%d refs) debugfile(%s)",
+		  debugfile->refcnt,debugfile->idstr);
+	}
     }
 
     vdebug(5,LOG_D_DFILE,"freeing debugfile(%s)\n",debugfile->idstr);
@@ -929,6 +1041,8 @@ void debugfile_free(struct debugfile *debugfile) {
     free(debugfile);
 
     vdebug(5,LOG_D_DFILE,"freed debugfile\n");
+
+    return retval;
 }
 
 /**
@@ -936,7 +1050,8 @@ void debugfile_free(struct debugfile *debugfile) {
  **/
 struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 			     char *name,char *compdirname,
-			     int language,char *producer) {
+			     int language,char *producer,
+			     struct symbol *symtab_symbol) {
     struct symtab *symtab;
 
     symtab = (struct symtab *)malloc(sizeof(*symtab));
@@ -954,6 +1069,8 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
     symtab->range.rtype = RANGE_TYPE_NONE;
 
     symtab->ref = offset;
+
+    symtab->symtab_symbol = symtab_symbol;
 
     INIT_LIST_HEAD(&symtab->subtabs);
 
@@ -1389,13 +1506,14 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	/* Second, check our internal symbol table.  Wait a sec, the
 	 * args are in the internal symtab too!  Hmmm.
 	 */
-	lsymbol = symtab_lookup_sym(symbol->s.ii->d.f.symtab,member,NULL,
-				    SYMBOL_TYPE_FLAG_VAR 
-				    | SYMBOL_TYPE_FLAG_FUNCTION
-				    | SYMBOL_TYPE_FLAG_LABEL);
+	lsymbol = __symtab_lookup_sym(symbol->s.ii->d.f.symtab,member,NULL,
+				      SYMBOL_TYPE_FLAG_VAR 
+				      | SYMBOL_TYPE_FLAG_FUNCTION
+				      | SYMBOL_TYPE_FLAG_LABEL);
 	if (lsymbol) {
 	    symbol = lsymbol->symbol;
-	    lsymbol_free(lsymbol);
+	    /* Don't force free; somebody might have a reference */
+	    lsymbol_free(lsymbol,0);
 	    return symbol;
 	}
 
@@ -1409,13 +1527,14 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	    if (subtab->name)
 		continue;
 
-	    lsymbol = symtab_lookup_sym(subtab,member,NULL,
-					SYMBOL_TYPE_FLAG_VAR 
-					| SYMBOL_TYPE_FLAG_FUNCTION
-					| SYMBOL_TYPE_FLAG_FUNCTION);
+	    lsymbol = __symtab_lookup_sym(subtab,member,NULL,
+					  SYMBOL_TYPE_FLAG_VAR 
+					  | SYMBOL_TYPE_FLAG_FUNCTION
+					  | SYMBOL_TYPE_FLAG_FUNCTION);
 	    if (lsymbol) {
 		symbol = lsymbol->symbol;
-		lsymbol_free(lsymbol);
+		/* Don't force free; somebody might have a reference */
+		lsymbol_free(lsymbol,0);
 		return symbol;
 	    }
 	}
@@ -1438,9 +1557,6 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
  out:
     //vdebug(3,LOG_D_SYMBOL,"returning symbol: ");
     //symbol_dump(retval,&udn);
-
-    //asm("int $3");
-
     /*
      * If type points to something other than the top-level symbol, that
      * means we explored anon structs, and we must return an anon symbol
@@ -1462,11 +1578,12 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	    array_list_item_set(*chainptr,k-1,anonstack[j]);
 	}
     }
-    //asm("int $3");
+
     if (anonstack) 
 	free(anonstack);
     if (parentstack)
 	free(parentstack);
+
     return retval;
 }
 
@@ -1553,7 +1670,12 @@ int symbol_visible_at_ip(struct symbol *symbol,ADDR ip) {
 }
 
 struct symbol *symbol_get_one_member(struct symbol *symbol,char *member) {
-    return __symbol_get_one_member(symbol,member,NULL);
+    struct symbol *retval = __symbol_get_one_member(symbol,member,NULL);
+
+    if (retval) 
+	RHOLD(retval);
+
+    return retval;
 }
 
 struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
@@ -1565,12 +1687,16 @@ struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
 
     retval = symbol;
     while ((member = strtok_r(!saveptr ? mlist : NULL,".",&saveptr))) {
-	retval = symbol_get_one_member(retval,member);
+	retval = __symbol_get_one_member(retval,member,NULL);
 	if (!retval)
 	    break;
     }
 
     free(mlist);
+
+    if (retval)
+	RHOLD(retval);
+
     return retval;
 }
 
@@ -1661,10 +1787,27 @@ unsigned int symbol_type_full_bytesize(struct symbol *type) {
     return symbol_type_bytesize(type);
 }
 
-void symbol_free(struct symbol *symbol) {
+REFCNT symbol_release(struct symbol *symbol) {
+    return RPUTNF(symbol);
+}
+
+REFCNT symbol_free(struct symbol *symbol,int force) {
     struct symbol_instance *tmp;
     struct symbol_instance *tmp2;
     struct symbol *tmp_symbol;
+    int retval = symbol->refcnt;
+
+    if (symbol->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) ",symbol->refcnt);
+	    ERRORDUMPSYMBOL_NL(symbol);
+	    return symbol->refcnt;
+	}
+	else {
+	    vwarn("forced free (%d refs) ",symbol->refcnt);
+	    ERRORDUMPSYMBOL_NL(symbol);
+	}
+    }
 
     if (symbol->name)
 	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//%s at %"PRIxSMOFFSET"\n",
@@ -1707,14 +1850,14 @@ void symbol_free(struct symbol *symbol) {
 	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.su.members,
 				 d.v.member) {
 	    tmp_symbol = tmp->d.v.member_symbol;
-	    symbol_free(tmp_symbol);
+	    symbol_free(tmp_symbol,force);
 	}
     }
     else if (SYMBOL_IST_FULL_FUNCTION(symbol)) {
 	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.f.args,
 				 d.v.member) {
 	    tmp_symbol = tmp->d.v.member_symbol;
-	    symbol_free(tmp_symbol);
+	    symbol_free(tmp_symbol,force);
 	}
     }
 
@@ -1757,6 +1900,8 @@ void symbol_free(struct symbol *symbol) {
     }
 
     free(symbol);
+
+    return retval;
 }
 
 /**
@@ -1765,7 +1910,7 @@ void symbol_free(struct symbol *symbol) {
 struct lsymbol *lsymbol_create(struct symbol *symbol,
 			       struct array_list *chain) {
     struct lsymbol *lsymbol = (struct lsymbol *)malloc(sizeof(struct lsymbol));
-    memset(lsymbol,0,sizeof(struct lsymbol *));
+    memset(lsymbol,0,sizeof(struct lsymbol));
     lsymbol->symbol = symbol;
     lsymbol->chain = chain;
     return lsymbol;
@@ -1781,10 +1926,35 @@ struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol) {
     return lsymbol->symbol;
 }
 
-void lsymbol_free(struct lsymbol *lsymbol) {
-    if (lsymbol->chain)
+void lsymbol_release(struct lsymbol *lsymbol) {
+    RPUTNF(lsymbol);
+}
+
+REFCNT lsymbol_free(struct lsymbol *lsymbol,int force) {
+    int retval = lsymbol->refcnt;
+    int i;
+
+    if (lsymbol->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) ",lsymbol->refcnt);
+	    ERRORDUMPLSYMBOL_NL(lsymbol);
+	    return lsymbol->refcnt;
+	}
+	else {
+	    vwarn("forced free (%d refs) ",lsymbol->refcnt);
+	    ERRORDUMPLSYMBOL(lsymbol);
+	}
+    }
+
+    if (lsymbol->chain) {
+	for (i = 0; i < array_list_len(lsymbol->chain); ++i) {
+	    RPUTNF((struct symbol *)array_list_item(lsymbol->chain,i));
+	}
 	array_list_free(lsymbol->chain);
+    }
     free(lsymbol);
+
+    return retval;
 }
 
 /**

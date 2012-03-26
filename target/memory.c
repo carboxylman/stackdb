@@ -52,7 +52,6 @@ struct addrspace *addrspace_create(struct target *target,
 	    if (((name && strcmp(name,lpc->name) == 0)
 		 || (name == NULL && lpc->name == NULL))
 		&& id == lpc->id && pid == lpc->pid) {
-		++(lpc->refcnt);
 		return lpc;
 	    }
 	}
@@ -120,14 +119,24 @@ int addrspace_find_range_real(struct addrspace *space,ADDR addr,
     return 1;
 }
 
-void addrspace_free(struct addrspace *space) {
+REFCNT addrspace_free(struct addrspace *space,int force) {
     struct memregion *lpc;
     struct memregion *tmp;
+    REFCNT retval = space->refcnt;
+
+    if (space->refcnt) {
+	if (!force) {
+	    verror("cannot free (%d refs) space(%s)",
+		   space->refcnt,space->idstr);
+	    return space->refcnt;
+	}
+	else {
+	    vwarn("forced free (%d refs) space(%s)",
+		  space->refcnt,space->idstr);
+	}
+    }
 
     assert(space);
-
-    if (--(space->refcnt))
-	return;
 
     vdebug(5,LOG_T_SPACE,"freeing addrspace(%s)\n",space->idstr);
 
@@ -141,14 +150,8 @@ void addrspace_free(struct addrspace *space) {
     free(space->name);
     free(space->idstr);
     free(space);
-}
 
-static void ghash_str_free(gpointer data) {
-    free((void *)data);
-}
-
-static void ghash_debugfile_free(gpointer data) {
-    debugfile_free((struct debugfile *)data);
+    return retval;
 }
 
 /*
@@ -170,9 +173,8 @@ struct memregion *memregion_create(struct addrspace *space,
 	retval->name = strdup(name);
     retval->type = type;
 
-    retval->debugfiles = g_hash_table_new_full(g_str_hash,g_str_equal,
-					       ghash_str_free,
-					       ghash_debugfile_free);
+    retval->debugfiles = g_hash_table_new(g_str_hash,g_str_equal);
+
     if (!retval->debugfiles) {
 	if (retval->name)
 	    free(retval->name);
@@ -265,6 +267,9 @@ void memregion_dump(struct memregion *region,struct dump_info *ud) {
 void memregion_free(struct memregion *region) {
     struct memrange *range;
     struct memrange *tmp;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
 
     vdebug(5,LOG_T_REGION,"freeing memregion(%s:%s:%s)\n",
 	   region->space->idstr,
@@ -277,10 +282,17 @@ void memregion_free(struct memregion *region) {
     list_del(&region->region);
 
     if (region->debugfiles) {
-	/* NOTE: the ghash_debugfile_free value destructor handles
-	   destroying the debugfile if its refcnt is 0 and it is not an
-	   infinite debugfile. */
-	g_hash_table_remove_all(region->debugfiles);
+	g_hash_table_iter_init(&iter,region->debugfiles);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer)&key,(gpointer)&debugfile)) {
+	    /* Don't force; somebody else might have a ref! */
+	    RPUT(debugfile,debugfile);
+	    /* This is probably a violation of the hashtable usage
+	     * principles, but oh well!
+	     */
+	    //free(key);
+	}
+	g_hash_table_destroy(region->debugfiles);
     }
     if (region->name)
 	free(region->name);

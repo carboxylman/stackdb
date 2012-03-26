@@ -180,6 +180,10 @@ void target_free(struct target *target) {
     GHashTableIter iter;
     gpointer key;
     struct probepoint *probepoint;
+    struct addrspace *space;
+    struct addrspace *tmp;
+
+    vdebug(5,LOG_T_TARGET,"freeing target(%s)\n",target->type);
 
     g_hash_table_destroy(target->mmaps);
 
@@ -196,11 +200,19 @@ void target_free(struct target *target) {
     g_hash_table_destroy(target->probepoints);
     g_hash_table_destroy(target->probes);
 
+    /* Unload the debugfiles we might hold, if we can */
+    list_for_each_entry_safe(space,tmp,&target->spaces,space) {
+	RPUT(space,addrspace);
+    }
+
     if (target->breakpoint_instrs)
 	free(target->breakpoint_instrs);
 
     if (target->ret_instrs)
 	free(target->ret_instrs);
+
+    if (target->full_ret_instrs)
+	free(target->full_ret_instrs);
 
     free(target);
 }

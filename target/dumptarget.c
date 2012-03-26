@@ -48,28 +48,51 @@ struct target *t = NULL;
 
 int len = 0;
 struct bsymbol **symbols = NULL;
-GHashTable *probes;
-GHashTable *disfuncs;
-GHashTable *bsymbols;
+GHashTable *probes = NULL;
+GHashTable *disfuncs = NULL;
+GHashTable *bsymbols = NULL;
 struct array_list *shadow_stack;
 
 int doit = 0;
 
-void sigh(int signo) {
+target_status_t cleanup() {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
+    target_status_t retval;
+
+    g_hash_table_iter_init(&iter,probes);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,
+				  (gpointer)&probe)) {
+	probe_unregister(probe,1);
+	probe_free(probe,1);
+    }
+    retval = target_close(t);
+    target_free(t);
+
+    if (probes) 
+	g_hash_table_destroy(probes);
+    if (disfuncs)
+	g_hash_table_destroy(disfuncs);
+    if (bsymbols)
+	g_hash_table_destroy(bsymbols);
+
+    if (shadow_stack)
+	array_list_deep_free(shadow_stack);
+
+    if (symbols)
+	free(symbols);
+
+    return retval;
+}
+
+void sigh(int signo) {
 
     if (t) {
 	target_pause(t);
 	fprintf(stderr,"Ending trace.\n");
-	g_hash_table_iter_init(&iter,probes);
-	while (g_hash_table_iter_next(&iter,
-				      (gpointer)&key,
-				      (gpointer)&probe)) {
-	    probe_unregister(probe,1);
-	}
-	target_close(t);
+	cleanup();
 	fprintf(stderr,"Ended trace.\n");
     }
 
@@ -108,6 +131,7 @@ ADDR instrument_func(struct bsymbol *bsymbol) {
 	snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
 	struct probe *rprobe = probe_create(t,NULL,buf,retaddr_check,NULL,
 					    NULL,0);
+	free(buf);
 
 	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,
 					    INST_RET,rprobe,
@@ -467,8 +491,6 @@ int main(int argc,char **argv) {
     int do_post = 1;
     int offset = 0;
     int upg = 1;
-    GHashTableIter iter;
-    gpointer key;
     struct probe *probe;
 
     struct dump_info udn = {
@@ -551,6 +573,9 @@ int main(int argc,char **argv) {
     argv += optind;
 
     dwdebug_init();
+
+    atexit(dwdebug_fini);
+
     vmi_set_log_level(debug);
 #if defined(ENABLE_XENACCESS) && defined(XA_DEBUG)
     xa_set_debug_level(debug);
@@ -644,7 +669,7 @@ int main(int argc,char **argv) {
 	    if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
 						 SYMBOL_TYPE_FLAG_NONE))) {
 		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-		target_close(t);
+		cleanup();
 		exit(-1);
 	    }
 
@@ -740,14 +765,16 @@ int main(int argc,char **argv) {
 	    continue;
 
 	err_unreg:
-	    g_hash_table_iter_init(&iter,probes);
-	    while (g_hash_table_iter_next(&iter,
-					  (gpointer)&key,
-					  (gpointer)&probe)) {
-		probe_unregister(probe,1);
-	    }
+	    array_list_free(symlist);
+	    free(retcodes);
+	    free(retcode_strs);
+	    cleanup();
 	    exit(-1);
 	}
+
+	array_list_free(symlist);
+	free(retcodes);
+	free(retcode_strs);
     }
 
     signal(SIGHUP,sigh);
@@ -822,7 +849,7 @@ int main(int argc,char **argv) {
 	resume:
 	    if (target_resume(t)) {
 		fprintf(stderr,"could not resume target pid %d\n",pid);
-		target_close(t);
+		cleanup();
 		exit(-16);
 	    }
 	}
@@ -830,27 +857,21 @@ int main(int argc,char **argv) {
 	exit:
 	    fflush(stderr);
 	    fflush(stdout);
-	    g_hash_table_iter_init(&iter,probes);
-	    while (g_hash_table_iter_next(&iter,
-					  (gpointer)&key,
-					  (gpointer)&probe)) {
-		probe_unregister(probe,1);
-	    }
-	    target_close(t);
+	    tstat = cleanup();
 	    if (tstat == TSTATUS_DONE)  {
 		printf("pid %d finished.\n",pid);
-		break;
+		exit(0);
 	    }
 	    else if (tstat == TSTATUS_ERROR) {
 		printf("pid %d monitoring failed!\n",pid);
-		return -9;
+		exit(-9);
 	    }
 	    else {
 		printf("pid %d monitoring failed with %d!\n",pid,tstat);
-		return -10;
+		exit(-10);
 	    }
 	}
     }
 
-    return 0;
+    exit(0);
 }

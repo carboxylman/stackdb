@@ -23,6 +23,7 @@
 
 #define verror(format,...) fprintf(stderr, "VERROR:   %s:%d: "format, \
 				   __FUNCTION__, __LINE__, ## __VA_ARGS__)
+#define verrorc(format,...) fprintf(stderr,format, ## __VA_ARGS__)
 #define vwarn(format,...)  fprintf(stderr, "VWARNING: %s:%d: "format, \
 				   __FUNCTION__, __LINE__, ## __VA_ARGS__)
 #define vwarnc(format,...) fprintf(stderr,format, ## __VA_ARGS__)

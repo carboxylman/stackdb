@@ -396,7 +396,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	}
 
 	vdebug(5,LOG_T_LOC,"frame_base = 0x%" PRIxADDR "\n",frame_base);
-	vdebug(5,LOG_T_LOC,"fboffset = %"PRIi64"\n",location->l.fboffset);
+	vdebug(5,LOG_T_LOC,"fboffset = %"PRIiOFFSET"\n",location->l.fboffset);
 
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)

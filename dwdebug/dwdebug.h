@@ -46,6 +46,41 @@
 
 #define DWDEBUG_DEF_DELIM "."
 
+#define LOGDUMPSYMBOL(dl,lt,s) \
+    vdebugc((dl),(lt),"symbol(%s,%s,%"PRIxSMOFFSET")", \
+	    symbol_get_name((s)),SYMBOL_TYPE((s)->type),(s)->ref);
+
+#define LOGDUMPSYMBOL_NL(dl,lt,s) \
+    LOGDUMPSYMBOL((dl),(lt),(s)); \
+    vdebugc((dl),(lt),"\n");
+
+#define ERRORDUMPSYMBOL(s) \
+    verrorc("symbol(%s,%s,%"PRIxSMOFFSET")", \
+	    symbol_get_name((s)),SYMBOL_TYPE((s)->type),(s)->ref);
+
+#define ERRORDUMPSYMBOL_NL(s) \
+    ERRORDUMPSYMBOL((s)); \
+    verrorc("\n");
+
+
+#define LOGDUMPLSYMBOL(dl,lt,s) \
+    vdebugc((dl),(lt),"lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d)", \
+	    symbol_get_name((s)->symbol),SYMBOL_TYPE((s)->symbol->type), \
+	    (s)->symbol->ref,array_list_len((s)->chain));
+
+#define LOGDUMPLSYMBOL_NL(dl,lt,s) \
+    LOGDUMPLSYMBOL((dl),(lt),(s)); \
+    vdebugc((dl),(lt),"\n");
+
+#define ERRORDUMPLSYMBOL(s) \
+    verrorc("lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d)", \
+	    symbol_get_name((s)->symbol),SYMBOL_TYPE((s)->symbol->type), \
+	    (s)->symbol->ref,array_list_len((s)->chain));
+
+#define ERRORDUMPLSYMBOL_NL(s) \
+    ERRORDUMPLSYMBOL((s)); \
+    verrorc("\n");
+
 /*
  * Any library users must call these to initialize global library state.
  */
@@ -275,14 +310,15 @@ int debugfile_add_type_fakename(struct debugfile *debugfile,
 				char *fakename,struct symbol *symbol);
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 		    int types,int globals,int symtabs);
-void debugfile_free(struct debugfile *debugfile);
+REFCNT debugfile_free(struct debugfile *debugfile,int force);
 
 /**
  ** Symbol tables.
  **/
 struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 			     char *srcfilename,char *compdirname,
-			     int language,char *producer);
+			     int language,char *producer,
+			     struct symbol *symtab_symtab);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
 			   struct symbol *symbol,OFFSET anonaddr);
@@ -324,13 +360,15 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_type_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
-void symbol_free(struct symbol *symbol);
+REFCNT symbol_release(struct symbol *symbol);
+REFCNT symbol_free(struct symbol *symbol,int force);
 
 struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
 char *lsymbol_get_name(struct lsymbol *lsymbol);
 struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol);
 void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
-void lsymbol_free(struct lsymbol *lsymbol);
+void lsymbol_release(struct lsymbol *lsymbol);
+REFCNT lsymbol_free(struct lsymbol *lsymbol,int force);
 
 /**
  ** Locations.
@@ -346,20 +384,82 @@ void location_free(struct location *location);
  **/
 /*
  * Find the symbol table corresponding to the supplied PC.
+ *
+ * XXX: We don't refcnt symtabs.  There is no point to refcnt'ing top-level
+ * symtabs, since they are always around as long as the debugfile is.
+ * However, we probably should RHOLD on the symtab's parent symbol.  But
+ * that is confusing!  Hm.
  */
 struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc);
 
 /**
  ** Symbol/memaddr lookup functions.
  **/
-/* If you know which debugfile contains your symbol, this is fastest. */
+/* 
+ * Look up a (possibly delimited with @delim) symbol named @name in
+ * @debugfile.  @ftype contains symbol_type_flag_t flags controlling
+ * which kind of symbols we will return.  If @ftype == SYMBOL_TYPE_FLAG_NONE, 
+ * we will return the first match of any symbol type on the given name;
+ * _NONE is a wildcard.  If @ftype is the wildcard, or has any of
+ * SYMBOL_TYPE_FLAG_VAR, SYMBOL_TYPE_FLAG_FUNCTION, SYMBOL_TYPE_FLAG_LABEL
+ * set, we will first consult the global names (functions or variables)
+ * in the debugfile.  If no matches result from that, and @ftype is the
+ * wildcard or SYMBOL_TYPE_FLAG_TYPE, we consult the global types table.
+ *
+ * If the global tables don't have our symbol, we scan through the
+ * symbol tables for each source file in the debugfile (each source file
+ * from the original compilation gets its own top-level symbol table).
+ * This part of the search is tricky; why?  Because we want to return
+ * the "best" match, and the "best" match for a var/function is its
+ * definition -- not a declaration (i.e., an 'extern ...' reference).
+ * We may encounter lots of declarations before we find the definition,
+ * so it's kind of wasteful.  Anyway... if we find a type match, we
+ * return it right away.  If we find a declaration, we return it right
+ * away.  If we find a definition, and never find a subsequent
+ * definition or type, we return the first definition we found.
+ *
+ * If this function returns an lsymbol, it takes a reference to the
+ * lsymbol itself, AND to lsymbol->symbol, and to each symbol in
+ * lsymbol->chain.  lsymbol_release is the correct way to release these
+ * refs.
+ * 
+ * If you know which debugfile contains your symbol, this is fastest.
+ */
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
 				     struct rfilter_list *srcfile_rflist,
 				     symbol_type_flag_t ftype);
-struct symbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr);
+/*
+ * Look up a specific address and find its symbol.
+ * 
+ * This function attempts to trace back the lookup chain as best as
+ * possible; it builds up the lsymbol's lookup chain in reverse.  BUT,
+ * it can only do this if the symbol at @addr is not a struct member,
+ * nor a param of a function type.  Why?  Because those symbols are
+ * members of a type -- not at instance -- so we don't know how to trace
+ * back further than the struct or function type, respectively.
+ *
+ * However, this should never bite us; lookups by address should only
+ * return functions or global (or static local) variables; these can
+ * always be looked up.
+ *
+ * So, we can basically return hierarchies of nested vars and function
+ * symbols.
+ *
+ * If this function returns an lsymbol, it takes a reference to the
+ * lsymbol itself, AND to lsymbol->symbol, and to each symbol in
+ * lsymbol->chain.  lsymbol_release is the correct way to release these
+ * refs.
+ */
+struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr);
 
-/* Look up one symbol in a symbol table by name. */
+/* Look up one symbol in a symbol table by name.
+ *
+ * If this function returns an lsymbol, it takes a reference to the
+ * lsymbol itself, AND to lsymbol->symbol, and to each symbol in
+ * lsymbol->chain.  lsymbol_release is the correct way to release these
+ * refs.
+ */
 struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 				  char *name,const char *delim,
 				  symbol_type_flag_t ftype);
@@ -380,14 +480,21 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
  * SYMBOL_VAR:
  *   DATATYPE_(STRUCT|UNION): find a matching member.  If @symbol
  *     contains anonymous members, we recurse into those in a BFS.
+ *
+ * If this function returns a symbol, it takes a reference to it.
+ * symbol_release is the correct way to release these refs.
  */
 struct symbol *symbol_get_one_member(struct symbol *symbol,char *member);
 /*
  * Given a starting symbol, searches its member hierarchy according to
  * the given delimited string of member variables.
+ *
+ * If this function returns a symbol, it takes a reference to it.
+ * symbol_release is the correct way to release these refs.
  */
 struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
-				 const char *delim);/*
+				 const char *delim);
+/*
  * Given an IP (as an object-relative address), check and see if this
  * symbol is currently visible (in scope).  To do this we, check if the
  * IP is in the symtab's range; or if it is in any child symtab's range
@@ -435,7 +542,7 @@ struct debugfile {
     /* The type of debugfile */
     debugfile_type_t type;
 
-    int refcnt;
+    REFCNT refcnt;
 
     /* filename:name:version string.  If version is null, we use __NULL
        instead. */
@@ -634,7 +741,8 @@ struct location {
     } l;
 };
 
-    
+#define SYMTAB_IS_ROOT(symtab) ((symtab)->parent == NULL)
+#define SYMTAB_IS_ANON(symtab) ((symtab)->symtab_symbol == NULL)
 
 /*
  * Symbol tables are mostly just backreferences to the objects they are
@@ -668,6 +776,12 @@ struct symtab {
      * the CU; for function symtabs, it is the function's DIE.
      */
     SMOFFSET ref;
+
+    /*
+     * If this is a symtab for symbol (i.e., for a function), this is
+     * that symbol.
+     */
+    struct symbol *symtab_symbol;
 
     /*
      * If this symtab is a child, this is its parent.
@@ -904,6 +1018,9 @@ struct symbol_instance {
  * set an addr_valid bit only if addr is set to something real.
  */
 struct lsymbol {
+    /* Our refcnt. */
+    REFCNT refcnt;
+
     /*
      * If it is not a nested symbol, only the symbol itself.  Otherwise,
      * the deepest nested symbol.

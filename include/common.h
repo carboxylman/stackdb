@@ -81,8 +81,11 @@ typedef int32_t SMOFFSET;
  */
 typedef uint32_t REFCNT;
 
-#define RHOLD(x) ++((x)->refcnt)
-#define RPUT(x)  --((x)->refcnt)
-#define RPUTF(x,objname) --((x)->refcnt) || objname_free(x)
+#define RHOLD(x)          ++((x)->refcnt)
+#define RPUT(x,objtype)   --((x)->refcnt) == 0 ? objtype ## _free(x,0) \
+	                                       : (x)->refcnt
+#define RPUTFF(x,objtype) --((x)->refcnt) == 0 ? objtype ## _free(x,1) \
+	                                       : objtype ## _free(x,1)
+#define RPUTNF(x)         --((x)->refcnt)
 
 #endif /* __COMMON_H__ */

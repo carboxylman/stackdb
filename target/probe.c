@@ -472,6 +472,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    verror("could not save orig instrs for bp insert\n");
 	    probepoint->state = PROBE_DISABLED;
 	    free(probepoint->breakpoint_orig_mem);
+	    probepoint->breakpoint_orig_mem = NULL;
 	    return 1;
 	}
 
@@ -485,6 +486,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    verror("could not write breakpoint instrs for bp insert\n");
 	    probepoint->state = PROBE_DISABLED;
 	    free(probepoint->breakpoint_orig_mem);
+	    probepoint->breakpoint_orig_mem = NULL;
 	    return 1;
 	}
 
@@ -818,6 +820,10 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 				      probepoint->breakpoint_orig_mem,NULL) \
 		    != probepoint->breakpoint_orig_mem_len) {
 		    verror("could not write orig code for forced breakpoint remove; badness will probably ensue!\n");
+		}
+		else {
+		    free(probepoint->breakpoint_orig_mem);
+		    probepoint->breakpoint_orig_mem = NULL;
 		}
 	    }
 	    else if (probepoint->style == PROBEPOINT_HW) {

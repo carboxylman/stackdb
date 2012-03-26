@@ -75,14 +75,14 @@ struct debugfile *target_associate_debugfile(struct target *target,
     list_for_each_entry(debugfile,&debugfiles,debugfile) {
 	if (strcmp(idstr,debugfile->idstr) == 0
 	    && type == debugfile->type) {
-	    ++(debugfile->refcnt);
+	    RHOLD(debugfile);
 
 	    vdebug(1,LOG_T_TARGET,
 		   "reusing debugfile(%s,%s,%s,%d) for region(%s) in space (%s,%d,%d)\n",
 		   realname,name,version,type,region->name,
 		   region->space->name,region->space->id,region->space->pid);
 
-	    g_hash_table_insert(region->debugfiles,realname,debugfile);
+	    g_hash_table_insert(region->debugfiles,debugfile->idstr,debugfile);
 
 	    free(idstr);
 	    if (realname != filename)
@@ -98,20 +98,35 @@ struct debugfile *target_associate_debugfile(struct target *target,
 	    free(realname);
 	return NULL;
     }
+    /* debugfile_create strdups its first arg */
+    if (realname != filename)
+	free(realname);
 
     /*
      * Finally, load in the debuginfo!
      */
     if (debugfile_load(debugfile,NULL)) {
-	debugfile_free(debugfile);
+	/* If the load was unsuccessful, we don't have a ref to it! */
+	debugfile_free(debugfile,0);
 	return NULL;
     }
+
+    RHOLD(debugfile);
 
     list_add_tail(&debugfile->debugfile,&debugfiles);
 
     g_hash_table_insert(region->debugfiles,idstr,debugfile);
 
+    vdebug(1,LOG_T_TARGET,
+	   "loaded debugfile(%s) for region(%s) in space (%s,%d,%d)\n",
+	   idstr,region->name,
+	   region->space->name,region->space->id,region->space->pid);
+
     return debugfile;
+}
+
+void target_disassociate_debugfile(struct debugfile *debugfile) {
+    list_del(&debugfile->debugfile);
 }
 
 int target_find_range_real(struct target *target,ADDR addr,
