@@ -38,6 +38,8 @@
 
 struct bsymbol *bsymbol_netif_poll_lvar_skb = NULL;
 struct bsymbol *bsymbol_netif_receive_skb_lvar_skb = NULL;
+struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_skb = NULL;
+struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_to = NULL;
 struct bsymbol *bsymbol_ip_rcv_lvar_skb = NULL;
 struct bsymbol *bsymbol_tcp_v4_rcv_lvar_skb = NULL;
 struct bsymbol *bsymbol_tcp_data_queue_lvar_skb = NULL;
@@ -46,6 +48,7 @@ struct bsymbol *bsymbol_do_readv_writev_lvar_uvector = NULL;
 struct bsymbol *bsymbol_generic_file_writev_lvar_iov = NULL;
 struct bsymbol *bsymbol_generic_file_buffered_write_lvar_iov = NULL;
 struct bsymbol *bsymbol_generic_file_buffered_write_lvar_page = NULL;
+struct bsymbol *bsymbol_ext3_journalled_writepage_lvar_page = NULL;
 struct bsymbol *bsymbol___block_write_full_page_lvar_page = NULL;
 struct bsymbol *bsymbol___block_write_full_page_lvar_bh = NULL;
 struct bsymbol *bsymbol_submit_bh_lvar_bh = NULL;
