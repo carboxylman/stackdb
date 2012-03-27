@@ -26,27 +26,27 @@
 #ifndef __NFS_PERF_PROBES_H__
 #define __NFS_PERF_PROBES_H__
 
-#if 0
+typedef enum nfs_perf_stage_id {
+        STAGE_ID_NETIF_POLL              = 1, 
+        STAGE_ID_NETIF_POLL_SKB_DEQUEUE  = 2,
+        STAGE_ID_NETIF_RECEIVE_SKB       = 3,
+        STAGE_ID_IP_RCV                  = 4,
+        STAGE_ID_TCP_V4_RCV              = 5, 
+        STAGE_ID_SKB_COPY_DATAGRAM_IOVEC = 6,
+} nfs_perf_stage_id_t;
 
-int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_svc_process(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_generic_file_writev(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe___block_write_full_page(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct probe *trigger);
-int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigger);
-
-#endif
+/* XXX: This funciton pollutes the kernel binary since it's included in many places */
+static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
+    switch ( id ) {
+    case STAGE_ID_NETIF_POLL: return "netif_poll";
+    case STAGE_ID_NETIF_POLL_SKB_DEQUEUE: return "netif_poll_skb_dequeue";
+    case STAGE_ID_NETIF_RECEIVE_SKB: return "netif_receive_skb";
+    case STAGE_ID_IP_RCV: return "ip_rcv";
+    case STAGE_ID_TCP_V4_RCV: return "tcp_v4_rcv";
+    case STAGE_ID_SKB_COPY_DATAGRAM_IOVEC: return "skb_copy_datagram_iovec";
+    default: return "undefined";
+    };
+};
 
 int register_probes(struct target *t, GHashTable *probes);
 void unregister_probes(GHashTable *probes);

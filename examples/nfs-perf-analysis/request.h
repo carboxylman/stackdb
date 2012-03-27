@@ -17,7 +17,8 @@
  *
  *  examples/nfs-perf-analysis/request.h
  *
- *  Datastructures, which describe NFS requests for the analysis algorithm
+ *  Datastructures, which describe NFS requests for the
+ *  analysis algorithm. Each request is a list of stages. 
  *
  *  Authors: Anton Burtsev, aburtsev@flux.utah.edu
  * 
@@ -30,36 +31,33 @@
 
 /* request is a linked list of stages */
 struct request {
-        struct list_head  stages;        
+    unsigned long req_id;
+    unsigned long req_number;
+    struct list_head  stages;        
 }
 
 /* a stage has a name, timestamp, and 4 words of stage-specific data just in
    case we want to record something special about this stage */
 struct stage {
-        struct request      *req;
-        char                name[32];
-        unsigned long long  timestamp;
-        unsigned long       id;
-        unsigned long       data[4];
-        struct list_head    next_stage;        
+    struct request      *req;
+    unsigned long       id;
+    unsigned long long  timestamp;
+    unsigned long       data[4];
+    struct list_head    next_stage;        
 }
 
-#if 0
-
-struct request *request_alloc();
+void request_hash_init(void);
+void request_hash_add(struct request *req, unsigned long req_id);
+struct request *req resuest_hash_lookup(unsigned long req_id);
+int request_hash_change_id(struct request *req, unsigned long new_req_id);
+int request_hash_remove(struct request *req);
+struct request *request_alloc(void);
+struct stage *request_stage_alloc(nfs_perf_stage_id_t stage_id);
 void request_free(struct request *req);
-
-struct stage * request_stage_alloc(char *name);
-int request_add_stage(struct request *req, struct stage *req_stage);
-
-/* We have an individual hash for every stage, this function lookups a hash
-   by name (typically a name of a stage) */
-struct hash * global_hash_by_name(char *name);
-
-/* hash is used to resolve unique IDs into requests */
-struct request *hash_request_by_id(struct hash *h, u32 id)
-
-#endif /* if 0 */
+void request_print(struct request *req);
+int request_add_stage(struct request *req, struct req_stage *req_stage);
+void request_done(struct request *req);
+struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t stage_id);
 
 #endif
 

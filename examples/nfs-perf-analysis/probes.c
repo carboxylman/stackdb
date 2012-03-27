@@ -34,12 +34,10 @@
 
 #include "probes.h"
 #include "debug.h"
-//#include "request.h"
+#include "request.h"
 
 struct bsymbol *bsymbol_netif_poll_lvar_skb = NULL;
 struct bsymbol *bsymbol_netif_receive_skb_lvar_skb = NULL;
-struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_skb = NULL;
-struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_to = NULL;
 struct bsymbol *bsymbol_ip_rcv_lvar_skb = NULL;
 struct bsymbol *bsymbol_tcp_v4_rcv_lvar_skb = NULL;
 struct bsymbol *bsymbol_tcp_data_queue_lvar_skb = NULL;
@@ -48,7 +46,6 @@ struct bsymbol *bsymbol_do_readv_writev_lvar_uvector = NULL;
 struct bsymbol *bsymbol_generic_file_writev_lvar_iov = NULL;
 struct bsymbol *bsymbol_generic_file_buffered_write_lvar_iov = NULL;
 struct bsymbol *bsymbol_generic_file_buffered_write_lvar_page = NULL;
-struct bsymbol *bsymbol_ext3_journalled_writepage_lvar_page = NULL;
 struct bsymbol *bsymbol___block_write_full_page_lvar_page = NULL;
 struct bsymbol *bsymbol___block_write_full_page_lvar_bh = NULL;
 struct bsymbol *bsymbol_submit_bh_lvar_bh = NULL;
@@ -56,20 +53,6 @@ struct bsymbol *bsymbol_submit_bh_lvar_bio = NULL;
 struct bsymbol *bsymbol_blkif_queue_request_lvar_bio = NULL;
 struct bsymbol *bsymbol_blkif_queue_request_lvar_id = NULL;
 struct bsymbol *bsymbol_blkif_int_lvar_id = NULL;
-
-typedef enum nfs_perf_stage_id {
-        STAGE_ID_NETIF_POLL              = 1, 
-        STAGE_ID_NETIF_POLL_SKB_DEQUEUE  = 2,
-} nfs_perf_stage_id_t;
-
-/* XXX: This funciton pollutes the kernel binary since it's included in many places */
-static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
-    switch ( id ) {
-    case STAGE_ID_NETIF_POLL: return "netif_poll";
-    case STAGE_ID_NETIF_POLL_SKB_DEQUEUE: return "netif_poll_skb_dequeue";
-    default: return "undefined";
-    };
-};
 
 int probe_netif_poll_init(struct probe *probe) {
     DBG("netif_poll_init called\n");
@@ -99,6 +82,7 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
     struct request *req;
     struct stage   *req_stage;
     struct value   *lval_skb;
+    unsigned long  req_id;
 
     DBG("netif_poll at label skb_dequeue called\n");
 
@@ -107,10 +91,11 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
         ERR("Cannot access value of skb\n");
         return -1;
     }
-    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
 
-#if 0
+    req_id = *(unsigned long*)lval_skb->buf;
 
+    DBG("skb = 0x%lx\n", req_id);
+    
     /* we add a new request to the analysis */
     req = request_alloc();
     if (!req) {
@@ -118,22 +103,16 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
         return 0;
     }
 
-    req_stage = request_stage_alloc(stage_id_to_name(STAGE_ID_NETIF_POLL));
-    if (!req_stage) {
-        ERR("Failed to allocate request stage\n");
-        request_free(req);
-        return 0;
+    request_hash_add(req, req_id);
+
+    req = request_move_on_path(req_id, STAGE_ID_NETIF_POLL_SKB_DEQUEUE);
+    if(!req) {
+        ERR("Failed to move request on its processing path to stage:%s\n", 
+            stage_id_to_name(STAGE_ID_NETIF_POLL_SKB_DEQUEUE));
+        request_done(req);
+        return -1;
     }
-
-    /* XXX: read the timestampt here */
-    req_stage->timestamp = 0;
-
-    /* XXX: read stage id (address of the skb) */
-    req_id = *(unsigned long*)lval_skb->buf;
-
-    request_add_stage(req, req_stage);
-#endif
-
+    
     return 0;
 }
 
@@ -152,7 +131,6 @@ int probe_netif_receive_skb_init(struct probe *probe) {
 int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct request *req;
-    struct stage   *req_stage;
     unsigned long   req_id;
     struct value   *lval_skb;
 
@@ -163,10 +141,18 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
         ERR("Cannot access value of skb\n");
         return -1;
     }
-    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
-
-    /* Rrequest id is address of the skb passed to the netif_skb_function */
     req_id = *(unsigned long*)lval_skb->buf;
+
+    DBG("skb = 0x%lx\n", req_id);
+
+    req = request_move_on_path(req_id, STAGE_ID_NETIF_RECEIVE_SKB);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_NETIF_RECEIVE_SKB));
+        request_done(req);
+        return -1;
+    }
+    
     return 0;
 }
 
@@ -186,6 +172,8 @@ int probe_ip_rcv_init(struct probe *probe) {
 int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct value   *lval_skb;
+    struct request *req;
+    unsigned long   req_id;
 
     DBG("ip_rcv called\n");
 
@@ -194,7 +182,19 @@ int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
         ERR("Cannot access value of skb\n");
         return -1;
     }
-    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
+    
+    req_id = *(unsigned long*)lval_skb->buf;
+
+    DBG("skb = 0x%lx\n", req_id);
+
+    req = request_move_on_path(req_id, STAGE_ID_IP_RCV);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_IP_RCV));
+        request_done(req);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -213,6 +213,8 @@ int probe_tcp_v4_rcv_init(struct probe *probe) {
 int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct value   *lval_skb;
+    struct request *req;
+    unsigned long   req_id;
 
     DBG("tcp_v4_rcv called\n");
 
@@ -221,7 +223,19 @@ int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trig
         ERR("Cannot access value of skb\n");
         return -1;
     }
-    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
+    
+    req_id = *(unsigned long*)lval_skb->buf;
+
+    DBG("skb = 0x%lx\n", req_id);
+
+    req = request_move_on_path(req_id, STAGE_ID_TCP_V4_RCV);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_TCP_V4_RCV));
+        request_done(req);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -240,6 +254,8 @@ int probe_tcp_data_queue_init(struct probe *probe) {
 int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct value   *lval_skb;
+    struct request *req;
+    unsigned long   req_id;
 
     DBG("tcp_data_queue called\n");
 
@@ -248,8 +264,18 @@ int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *
         ERR("Cannot access value of skb\n");
         return -1;
     }
-    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
 
+    req_id = *(unsigned long*)lval_skb->buf;
+
+    DBG("skb = 0x%lx\n", req_id);
+
+    req = request_move_on_path(req_id, STAGE_ID_TCP_DATA_QUEUE);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_TCP_DATA_QUEUE));
+        request_done(req);
+        return -1;
+    }
     return 0;
 }
 
@@ -275,6 +301,9 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
 {
     struct value   *lval_skb;
     struct value   *lval_to;
+    struct request *req;
+    unsigned long   req_id, new_req_id;
+    int             ret;
 
     DBG("skb_copy_datagram_iovec called\n");
 
@@ -283,15 +312,35 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
         ERR("Cannot access value of skb\n");
         return -1;
     }
-    DBG("skb = 0x%lx\n", *(unsigned long*)lval_skb->buf);
+
+    req_id = *(unsigned long*)lval_skb->buf;
+    DBG("skb = 0x%lx\n", req_id);
 
     lval_to = bsymbol_load(bsymbol_skb_copy_datagram_iovec_lvar_to, LOAD_FLAG_NONE);
     if (!lval_to) {
         ERR("Cannot access value of to\n");
         return -1;
     }
-    DBG("iovec to = 0x%lx\n", *(unsigned long*)lval_to->buf);
+    
+    new_req_id = *(unsigned long*)lval_to->buf;
+    DBG("iovec to = 0x%lx\n", new_req_id);
 
+    req = request_move_on_path(req_id, STAGE_ID_SKB_COPY_DATAGRAM_IOVEC);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_SKB_COPY_DATAGRAM_IOVEC));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID_SKB_COPY_DATAGRAM_IOVEC));
+        request_done(req);
+        return -1;
+    }
+
+    request_done(req);
     return 0;
 }
 
@@ -647,6 +696,8 @@ int register_probes(struct target *t, GHashTable *probes) {
 
     probes = g_hash_table_new(g_direct_hash, g_direct_equal);
 
+    request_hash_init();
+    
     /*
      * Inject probes at locations specified in probe_list.
      */
