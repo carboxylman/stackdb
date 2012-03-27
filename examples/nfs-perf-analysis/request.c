@@ -183,9 +183,10 @@ struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t s
     return req;
 }
 
-gboolean request_hash_print(gpointer key, gpointer value, gpointer user_data) {
+gboolean request_hash_print_and_free(gpointer key, gpointer value, gpointer user_data) {
     struct request *req = (struct request*)value;
-    request_done(req);
+    request_print(req);
+    request_free(req);
     return 1;
 };
 
