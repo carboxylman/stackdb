@@ -664,6 +664,19 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
     return 0;
 }
 
+int probe_kernel_halt_fini(struct probe *probe) {
+    DBG("kernel_halt_fini called\n");
+    request_analysis_done();
+    return 0;
+};
+
+int probe_kernel_halt(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    DBG("kernel_halt called\n");
+    request_analysis_done();
+    return 0;
+}
+
 typedef struct probe_registration {
     char                *symbol;
     probe_handler_t     handler; 
@@ -688,6 +701,8 @@ const probe_registration_t probe_list[] = {
     {"submit_bh",                   probe_submit_bh, {.init = probe_submit_bh_init}},
 //    {"blkif_queue_request",         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
     {"blkif_int",                   probe_blkif_int, {.init = probe_blkif_int_init}},
+    {"kernel_halt",                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}},
+
 };
 
 int register_probes(struct target *t, GHashTable *probes) {

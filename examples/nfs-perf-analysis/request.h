@@ -59,6 +59,7 @@ void request_print(struct request *req);
 void request_add_stage(struct request *req, struct stage *req_stage);
 void request_done(struct request *req);
 struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t stage_id);
+void request_analysis_done(void);
 
 #endif
 

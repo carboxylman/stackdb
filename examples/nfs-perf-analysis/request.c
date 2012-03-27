@@ -182,3 +182,14 @@ struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t s
     request_add_stage(req, req_stage);
     return req;
 }
+
+gboolean request_hash_print(gpointer key, gpointer value, gpointer user_data) {
+    struct request *req = (struct request*)value;
+    request_done(req);
+    return 1;
+};
+
+void request_analysis_done(void) {
+    g_hash_table_foreach_remove(request_hash, request_hash_print, NULL);
+    return;
+};
