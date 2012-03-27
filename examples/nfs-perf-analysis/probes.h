@@ -26,13 +26,16 @@
 #ifndef __NFS_PERF_PROBES_H__
 #define __NFS_PERF_PROBES_H__
 
+#include <target.h>
+
 typedef enum nfs_perf_stage_id {
         STAGE_ID_NETIF_POLL              = 1, 
         STAGE_ID_NETIF_POLL_SKB_DEQUEUE  = 2,
         STAGE_ID_NETIF_RECEIVE_SKB       = 3,
         STAGE_ID_IP_RCV                  = 4,
         STAGE_ID_TCP_V4_RCV              = 5, 
-        STAGE_ID_SKB_COPY_DATAGRAM_IOVEC = 6,
+	STAGE_ID_TCP_DATA_QUEUE          = 6,
+        STAGE_ID_SKB_COPY_DATAGRAM_IOVEC = 7,
 } nfs_perf_stage_id_t;
 
 /* XXX: This funciton pollutes the kernel binary since it's included in many places */
@@ -43,6 +46,7 @@ static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
     case STAGE_ID_NETIF_RECEIVE_SKB: return "netif_receive_skb";
     case STAGE_ID_IP_RCV: return "ip_rcv";
     case STAGE_ID_TCP_V4_RCV: return "tcp_v4_rcv";
+    case STAGE_ID_TCP_DATA_QUEUE: return "tcp_data_queue";
     case STAGE_ID_SKB_COPY_DATAGRAM_IOVEC: return "skb_copy_datagram_iovec";
     default: return "undefined";
     };

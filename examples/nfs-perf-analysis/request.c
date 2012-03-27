@@ -24,6 +24,7 @@
  * 
  */
 
+#include "debug.h"
 #include "request.h"
 #include "probes.h"
 
@@ -36,13 +37,12 @@ void request_hash_init(void) {
 };
 
 void request_hash_add(struct request *req, unsigned long req_id) {
-{
     struct request *lost_req;
 
     /* Check if guest re-uses this address and we somehow
        lost track of this request and forgot to remove it
        from our hashes */
-    lost_req = resuest_hash_lookup(req_id);
+    lost_req = request_hash_lookup(req_id);
     if (lost_req) {
         ERR_ON(lost_req->req_id != req_id,
                "lost_req->req_id != req_id: 0x%lx != 0x%lx\n", 
@@ -57,14 +57,11 @@ void request_hash_add(struct request *req, unsigned long req_id) {
     return;
 }
 
-struct request *req resuest_hash_lookup(unsigned long req_id) {
-{
-    return (struct request *req) g_hash_table_lookup (request_hash, (gpointer) req_id);
+struct request *request_hash_lookup(unsigned long req_id) {
+    return (struct request *) g_hash_table_lookup (request_hash, (gpointer) req_id);
 }
 
 int request_hash_change_id(struct request *req, unsigned long new_req_id) {
-{
-    struct request *req; 
 
     req = request_hash_lookup(req->req_id);
     if (!req) {
@@ -76,7 +73,7 @@ int request_hash_change_id(struct request *req, unsigned long new_req_id) {
         ERR("Failed to remove request from the hash, req_id:0x%lx\n", req->req_id);
     }
 
-    request_hash_add(req, req_id);
+    request_hash_add(req, new_req_id);
     return 0;
 }
 
@@ -102,6 +99,8 @@ struct request *request_alloc(void) {
     INIT_LIST_HEAD(&req->stages);
     req->req_number = global_unique_request_number;
     global_unique_request_number++;
+
+    return req;
 }
 
 struct stage *request_stage_alloc(nfs_perf_stage_id_t stage_id) {
@@ -114,13 +113,15 @@ struct stage *request_stage_alloc(nfs_perf_stage_id_t stage_id) {
     memset(stage, 0, sizeof(struct stage));
     INIT_LIST_HEAD(&stage->next_stage);
     stage->id = stage_id;
+    
+    return stage;
 }
 
 void request_free(struct request *req) {
     struct stage *stage, *next;
 
     /* deallocate stages first */
-    list_for_each_entry_safe(stage, next, &req->stages, stages) 
+    list_for_each_entry_safe(stage, next, &req->stages, next_stage) 
     {
         list_del(&stage->next_stage);
         free(stage);
@@ -134,10 +135,10 @@ void request_print(struct request *req) {
     struct stage *stage, *next;
     unsigned long long prev_timestamp = 0;
 
-    printf("req #%d", req->req_number);
-    list_for_each_entry_safe(stage, next, &req->stages, stages) 
+    printf("req #%lu", req->req_number);
+    list_for_each_entry_safe(stage, next, &req->stages, next_stage) 
     {
-        printf(" %s:%ll", stage_id_to_name(stage->id), stage->timestamp - prev_timestamp);
+        printf(" %s:%lld", stage_id_to_name(stage->id), stage->timestamp - prev_timestamp);
         prev_timestamp = stage->timestamp;
     }
     printf("\n");
@@ -145,9 +146,10 @@ void request_print(struct request *req) {
     return; 
 };
 
-int request_add_stage(struct request *req, struct req_stage *req_stage)
+void request_add_stage(struct request *req, struct stage *req_stage)
 {
     list_add_tail(&req_stage->next_stage, &req->stages);
+    return;
 }
 
 void request_done(struct request *req) {
@@ -160,6 +162,7 @@ void request_done(struct request *req) {
 struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t stage_id)
 {
     struct request *req; 
+    struct stage *req_stage;
 
     req = request_hash_lookup(req_id);
     if (!req) {

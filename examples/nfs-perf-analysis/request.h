@@ -28,34 +28,35 @@
 #define __NFS_PERF_REQUEST_H__
 
 #include "list.h"
+#include "probes.h"
 
 /* request is a linked list of stages */
-struct request {
+typedef struct request {
     unsigned long req_id;
     unsigned long req_number;
     struct list_head  stages;        
-}
+} request_t;
 
 /* a stage has a name, timestamp, and 4 words of stage-specific data just in
    case we want to record something special about this stage */
-struct stage {
+typedef struct stage {
     struct request      *req;
     unsigned long       id;
     unsigned long long  timestamp;
     unsigned long       data[4];
     struct list_head    next_stage;        
-}
+} stage_t;
 
 void request_hash_init(void);
 void request_hash_add(struct request *req, unsigned long req_id);
-struct request *req resuest_hash_lookup(unsigned long req_id);
+struct request * request_hash_lookup(unsigned long req_id);
 int request_hash_change_id(struct request *req, unsigned long new_req_id);
 int request_hash_remove(struct request *req);
 struct request *request_alloc(void);
 struct stage *request_stage_alloc(nfs_perf_stage_id_t stage_id);
 void request_free(struct request *req);
 void request_print(struct request *req);
-int request_add_stage(struct request *req, struct req_stage *req_stage);
+void request_add_stage(struct request *req, struct stage *req_stage);
 void request_done(struct request *req);
 struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t stage_id);
 
