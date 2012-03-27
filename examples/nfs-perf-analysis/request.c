@@ -191,6 +191,6 @@ gboolean request_hash_print_and_free(gpointer key, gpointer value, gpointer user
 };
 
 void request_analysis_done(void) {
-    g_hash_table_foreach_remove(request_hash, request_hash_print, NULL);
+    g_hash_table_foreach_remove(request_hash, request_hash_print_and_free, NULL);
     return;
 };
