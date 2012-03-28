@@ -3,7 +3,7 @@ LIBVERSION = 0.1
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= ctxprobes
+SUBDIR		= examples/context-aware-probes
 OBJDIR		= @top_builddir@
 
 SUBDIRS = 
