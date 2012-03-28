@@ -68,6 +68,7 @@ struct attrcb_args {
     struct symbol *voidsymbol;
     GHashTable *reftab;
     int quick;
+    GHashTable *cu_abstract_origins;
 };
 
 /* Declare these now; they are used in attr_callback. */
@@ -128,6 +129,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     uint8_t flag_set = 0;
     uint8_t ref_set = 0;
     uint8_t block_set = 0;
+
+    struct array_list *iilist;
 
     switch(form) {
     case DW_FORM_string:
@@ -570,6 +573,15 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		 */
 		cbargs->symbol->s.ii->origin_ref = ref;
 	    }
+
+	    iilist = g_hash_table_lookup(cbargs->cu_abstract_origins,
+					 (gpointer)(uintptr_t)ref);
+	    if (!iilist) {
+		iilist = array_list_create(1);
+		g_hash_table_insert(cbargs->cu_abstract_origins,
+				    (gpointer)(uintptr_t)ref,iilist);
+	    }
+	    array_list_add(iilist,(void *)cbargs->symbol);
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %" PRIxSMOFFSET " for attr %s in bad context\n",
@@ -1716,8 +1728,9 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
     struct symbol *voidsymbol;
     GHashTableIter iter;
     struct symbol *rsymbol;
-
     int quick = 0;
+    GHashTable *cu_abstract_origins = g_hash_table_new(g_direct_hash,g_direct_equal);
+    struct array_list *iilist;
 
     if (opts && opts->quick)
 	quick = 1;
@@ -1804,6 +1817,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	.voidsymbol = voidsymbol,
 	.reftab = reftab,
 	.quick = quick,
+	.cu_abstract_origins = cu_abstract_origins,
     };
 
     offset += cuhl;
@@ -2085,6 +2099,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	if (!quick && level > 1 && symbols[level-1]) {
 	    if (tag == DW_TAG_member) {
 		symbols[level]->s.ii->d.v.member_symbol = symbols[level];
+		symbols[level]->s.ii->d.v.parent_symbol = symbols[level-1];
 		list_add_tail(&(symbols[level]->s.ii->d.v.member),
 			      &(symbols[level-1]->s.ti->d.su.members));
 		++(symbols[level-1]->s.ti->d.su.count);
@@ -2092,6 +2107,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    else if (tag == DW_TAG_formal_parameter) {
 		if (symbols[level-1]->type == SYMBOL_TYPE_FUNCTION) {
 		    symbols[level]->s.ii->d.v.member_symbol = symbols[level];
+		    symbols[level]->s.ii->d.v.parent_symbol = symbols[level-1];
 		    list_add_tail(&(symbols[level]->s.ii->d.v.member),
 				  &(symbols[level-1]->s.ii->d.f.args));
 		    ++(symbols[level-1]->s.ii->d.f.count);
@@ -2099,6 +2115,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 		else if (symbols[level-1]->type == SYMBOL_TYPE_TYPE
 			 && symbols[level-1]->datatype_code == DATATYPE_FUNCTION) {
 		    symbols[level]->s.ii->d.v.member_symbol = symbols[level];
+		    symbols[level]->s.ii->d.v.parent_symbol = symbols[level-1];
 		    list_add_tail(&(symbols[level]->s.ii->d.v.member),
 				  &(symbols[level-1]->s.ti->d.f.args));
 		    ++(symbols[level-1]->s.ti->d.f.count);
@@ -2108,6 +2125,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 		if (symbols[level-1]->type == SYMBOL_TYPE_TYPE 
 		    && symbols[level-1]->datatype_code == DATATYPE_ENUM) {
 		    symbols[level]->s.ii->d.v.member_symbol = symbols[level];
+		    symbols[level]->s.ii->d.v.parent_symbol = symbols[level-1];
 		    symbols[level]->datatype = symbols[level-1];
 		    list_add_tail(&(symbols[level]->s.ii->d.v.member),
 				  &(symbols[level-1]->s.ti->d.e.members));
@@ -2218,12 +2236,20 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 				    (gpointer)(uintptr_t)rsymbol->datatype_ref);
 	}
 
-	if (SYMBOL_IS_FULL_INSTANCE(rsymbol)
-	    && rsymbol->isinlineinstance
-	    && !rsymbol->s.ii->origin && rsymbol->s.ii->origin_ref) {
-	    rsymbol->s.ii->origin = (struct symbol *) \
-		g_hash_table_lookup(reftab,
-				    (gpointer)(uintptr_t)rsymbol->s.ii->origin_ref);
+	if (SYMBOL_IS_FULL_INSTANCE(rsymbol)) {
+	    if (rsymbol->isinlineinstance
+		&& !rsymbol->s.ii->origin && rsymbol->s.ii->origin_ref) {
+		rsymbol->s.ii->origin = (struct symbol *)	\
+		    g_hash_table_lookup(reftab,
+					(gpointer)(uintptr_t)rsymbol->s.ii->origin_ref);
+	    }
+
+	    iilist = (struct array_list *)g_hash_table_lookup(cu_abstract_origins,
+							      (gpointer)offset);
+	    if (iilist) {
+		g_hash_table_remove(cu_abstract_origins,(gpointer)offset);
+		rsymbol->s.ii->inline_instances = iilist;
+	    }
 	}
     }
 
@@ -2236,6 +2262,19 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
     }
 
  nextcuiter:
+    /* clear out inline instances table! */
+    g_hash_table_iter_init(&iter,cu_abstract_origins);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&offset,(gpointer)&iilist)) {
+	vwarn("did not use abstract origins list (%d) for offset 0x%"PRIxOFFSET"!\n",
+	      array_list_len(iilist),offset);
+	/* GHashTable thankfully does not depend on the value pointer
+	 * being valid in order to remove items from the hashtable!
+	 */
+	array_list_free(iilist);
+    }
+    g_hash_table_remove_all(cu_abstract_origins);
+
     offset = nextcu;
     if (offset != 0) {
 	goto next_cu;
@@ -2244,16 +2283,13 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
     goto out;
 
  errout:
-    if (dies)
-	free(dies);
-    g_hash_table_destroy(reftab);
-    free(symbols);
-    free(symtabs);
-    return -1;
+    retval = -1;
+
  out:
     if (dies)
 	free(dies);
     g_hash_table_destroy(reftab);
+    g_hash_table_destroy(cu_abstract_origins);
     free(symbols);
     free(symtabs);
     return retval;
@@ -2525,15 +2561,15 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    if (symbol->s.ii->origin) {
 		inlen = 9 + 1 + 18 + 1 + strlen(symbol_get_name_orig(symbol->s.ii->origin)) + 1 + 1;
 		inname = malloc(sizeof(char)*inlen);
-		sprintf(inname,"__INLINED(%p:%s)",
-			(void *)symbol,
+		sprintf(inname,"__INLINED(ref%"PRIxSMOFFSET":%s)",
+			symbol->ref,
 			symbol_get_name_orig(symbol->s.ii->origin));
 	    }
 	    else {
 		inlen = 9 + 1 + 18 + 1 + 4 + 16 + 1 + 1;
 		inname = malloc(sizeof(char)*inlen);
-		sprintf(inname,"__INLINED(%p:iref%"PRIxSMOFFSET")",
-			(void *)symbol,
+		sprintf(inname,"__INLINED(ref%"PRIxSMOFFSET":iref%"PRIxSMOFFSET")",
+			symbol->ref,
 			symbol->s.ii->origin_ref);
 	    }
 

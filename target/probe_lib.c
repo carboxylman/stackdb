@@ -382,3 +382,127 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     return NULL;
 
 }
+
+struct probe *probe_register_inlined_symbol(struct probe *probe,
+					    struct bsymbol *bsymbol,
+					    int do_primary,
+					    probepoint_style_t style,
+					    probepoint_whence_t whence,
+					    probepoint_watchsize_t watchsize) {
+    struct target *target = probe->target;
+    int i;
+    struct symbol *symbol = bsymbol->lsymbol->symbol;
+    struct probe *pcprobe = NULL;
+    struct probe *cprobe;
+    size_t bufsiz;
+    char *buf;
+    struct array_list *cprobes = NULL;
+
+    if (!SYMBOL_IS_FULL_INSTANCE(symbol)) {
+	verror("cannot probe a partial symbol!\n");
+	return NULL;
+    }
+
+    /* We only try to register on the primary if it has an address
+     * (i.e., is not ONLY inlined).
+     */
+    if (do_primary && !location_resolve_symbol_base(target,bsymbol,NULL,NULL)) {
+	bufsiz = strlen(symbol->name)+1+2+1+2+16+1;
+	buf = malloc(bufsiz);
+	snprintf(buf,bufsiz,"%s"PRIxADDR,bsymbol_get_name(bsymbol));
+
+	pcprobe = probe_create(target,NULL,buf,probe->pre_handler,
+			       probe->post_handler,NULL,1);
+	free(buf);
+
+	/* Register the i-th instance probe. */
+	if (!probe_register_symbol(pcprobe,bsymbol,style,whence,watchsize)) {
+	    verror("could not register probe %s!\n",pcprobe->name);
+	    probe_free(pcprobe,1);
+	    pcprobe = NULL;
+	    goto errout;
+	}
+
+	vdebug(3,LOG_P_PROBE,"registered %s probe at 0x%"PRIxADDR"\n",
+	       pcprobe->name,probe_addr(pcprobe));
+
+	if (!probe_register_source(probe,pcprobe)) {
+	    verror("could not register probe %s on source %s!\n",
+		   probe->name,pcprobe->name);
+	    probe_free(pcprobe,1);
+	    pcprobe = NULL;
+	    goto errout;
+	}
+
+	vdebug(3,LOG_P_PROBE,"registered %s probe on source %s\n",
+	       probe->name,pcprobe->name);
+    }
+
+    if (symbol->s.ii->inline_instances) {
+	struct array_list *iilist = symbol->s.ii->inline_instances;
+	cprobes = array_list_create(array_list_len(iilist));
+
+	for (i = 0; i < array_list_len(iilist); ++i) {
+	    struct symbol *isymbol = (struct symbol *) \
+		array_list_item(iilist,i);
+	    struct bsymbol *ibsymbol = (struct bsymbol *) \
+		bsymbol_create(lsymbol_create_from_symbol(isymbol),
+			       bsymbol->region,NULL);
+
+	    cprobe = probe_create(target,NULL,bsymbol_get_name(ibsymbol),
+				  probe->pre_handler,probe->post_handler,NULL,1);
+	    /* Register the i-th instance probe. */
+	    if (!probe_register_symbol(cprobe,ibsymbol,style,whence,watchsize)) {
+		verror("could not register probe %s!\n",cprobe->name);
+		probe_free(cprobe,1);
+		goto errout;
+	    }
+
+	    bufsiz = strlen(isymbol->name)+1+6+1+2+1+2+16+1;
+	    buf = malloc(bufsiz);
+	    snprintf(buf,bufsiz,"%s_inline_at_0x%"PRIxADDR,
+		     bsymbol_get_name(bsymbol),
+		     probe_addr(cprobe));
+	    probe_rename(probe,buf);
+	    free(buf);
+
+	    vdebug(3,LOG_P_PROBE,"registered %s probe at 0x%"PRIxADDR"\n",
+		   cprobe->name,probe_addr(cprobe));
+
+	    if (!probe_register_source(probe,cprobe)) {
+		verror("could not register probe %s on source %s!\n",
+		       probe->name,cprobe->name);
+		probe_free(cprobe,1);
+		goto errout;
+	    }
+
+	    vdebug(3,LOG_P_PROBE,"registered %s probe on source %s\n",
+		   probe->name,cprobe->name);
+
+	    array_list_append(cprobes,cprobe);
+	}
+    }
+
+    array_list_free(cprobes);
+    return probe;
+
+ errout:
+    /* If we can autofree the top-level parent probe, great, that will
+     * free all the sources beneath it we might have created.  But
+     * otherwise, we have to free those source probes one by one.
+     */
+    if (probe->autofree)
+	probe_free(probe,1);
+    else {
+	probe_free(pcprobe,1);
+	if (cprobes) {
+	    for (i = 0; i < array_list_len(cprobes); ++i) {
+		cprobe = (struct probe *)array_list_item(cprobes,i);
+		probe_free(cprobe,1);
+	    }
+	}
+    }
+    array_list_free(cprobes);
+
+    return NULL;
+}

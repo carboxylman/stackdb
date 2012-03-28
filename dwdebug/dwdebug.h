@@ -47,7 +47,7 @@
 #define DWDEBUG_DEF_DELIM "."
 
 #define LOGDUMPSYMBOL(dl,lt,s) \
-    vdebugc((dl),(lt),"symbol(%s,%s,%"PRIxSMOFFSET")", \
+    vdebugc((dl),(lt),"symbol(%s,%s,0x%"PRIxSMOFFSET")", \
 	    symbol_get_name((s)),SYMBOL_TYPE((s)->type),(s)->ref);
 
 #define LOGDUMPSYMBOL_NL(dl,lt,s) \
@@ -55,7 +55,7 @@
     vdebugc((dl),(lt),"\n");
 
 #define ERRORDUMPSYMBOL(s) \
-    verrorc("symbol(%s,%s,%"PRIxSMOFFSET")", \
+    verrorc("symbol(%s,%s,0x%"PRIxSMOFFSET")", \
 	    symbol_get_name((s)),SYMBOL_TYPE((s)->type),(s)->ref);
 
 #define ERRORDUMPSYMBOL_NL(s) \
@@ -64,7 +64,7 @@
 
 
 #define LOGDUMPLSYMBOL(dl,lt,s) \
-    vdebugc((dl),(lt),"lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d)", \
+    vdebugc((dl),(lt),"lsymbol(%s,%s,0x%"PRIxSMOFFSET";chainlen=%d)", \
 	    symbol_get_name((s)->symbol),SYMBOL_TYPE((s)->symbol->type), \
 	    (s)->symbol->ref,array_list_len((s)->chain));
 
@@ -73,7 +73,7 @@
     vdebugc((dl),(lt),"\n");
 
 #define ERRORDUMPLSYMBOL(s) \
-    verrorc("lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d)", \
+    verrorc("lsymbol(%s,%s,0x%"PRIxSMOFFSET";chainlen=%d)", \
 	    symbol_get_name((s)->symbol),SYMBOL_TYPE((s)->symbol->type), \
 	    (s)->symbol->ref,array_list_len((s)->chain));
 
@@ -341,11 +341,18 @@ char *symbol_get_name(struct symbol *symbol);
 char *symbol_get_name_orig(struct symbol *symbol);
 void symbol_set_name(struct symbol *symbol,char *name);
 void symbol_build_extname(struct symbol *symbol);
+/*
+ * Returns a real, valid type for the symbol.  If it is an inline
+ * instance, we skip to the abstract origin root and use that datatype.
+ * If not, for now we just return @symbol->type.
+ */
+struct symbol *symbol_get_datatype(struct symbol *symbol);
 void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
 void symbol_set_srcline(struct symbol *symbol,int srcline);
 
 int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr);
 
+int symbol_is_inlined(struct symbol *symbol);
 int symbol_type_is_char(struct symbol *type);
 /*
  * For a SYMBOL_TYPE_TYPE symbol, return the type's byte size.
@@ -360,14 +367,98 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_type_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
+/*
+ * Takes a reference to the symbol.  Users should not call this.
+ */
+void symbol_hold(struct symbol *symbol);
+/*
+ * Releases a reference to the symbol and tries to free it.
+ */
 REFCNT symbol_release(struct symbol *symbol);
+/* 
+ * Frees a symbol.  Users should never call this; call symbol_release
+ * instead.
+ */
 REFCNT symbol_free(struct symbol *symbol,int force);
 
+/* Creates an lsymbol data structure and takes references to all its
+ * symbols.  Users probably never should call this function.
+ *
+ * This function takes a ref to each symbol in @chain, BUT NOT to
+ * @return (call lsymbol_hold() to get that ref).
+ */
 struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
+/* If we already know that @member is a member of @symbol -- i.e., it is
+ * a nested var in a struct or function, or a function/function type
+ * param, etc... we can just clone @parent's chain and extend it by one
+ * to include the child.
+ *
+ * Users might sometimes wish to call this function to obtain an lsymbol
+ * structure, but they shouldn't need to.
+ *
+ * This function takes a ref to each symbol in @chain, BUT NOT to
+ * @return (call lsymbol_hold() to get that ref).
+ */
+struct lsymbol *lsymbol_create_from_member(struct lsymbol *parent,
+					   struct symbol *member);
+/*
+ * Creates an lsymbol from an existing symbol.  This is a best-effort
+ * process that may not lead to what you want.  Why?  Suppose that you
+ * lookup 'struct mystruct.mymember'.  In this case, your lsymbol will
+ * have two items on the chain; one for 'struct mystruct', and one for
+ * 'mymember'.  If you pass the 'mymember' symbol into this function,
+ * you will get the same chain.
+ *
+ * However, if you lookup 'ms.mymember', where 'ms' is an instance of
+ * 'mystruct', your lsymbol chain will have the two symbols for 'ms' and
+ * 'mymember'.  Then if you pass the symbol for 'mymember' to this
+ * function, you will still get the 'struct mystruct', 'mymember' chain.
+ *
+ * This result is expected and happens because we cannot trace up
+ * instance chains.  We cannot know *which* instance of 'struct
+ * mystruct' you want to have as the parent of 'mymember'.
+ *
+ * This function takes a ref to each symbol in its chain, BUT NOT to
+ * @return (call lsymbol_hold() to get that ref).
+ */
+struct lsymbol *lsymbol_create_from_symbol(struct symbol *symbol);
+/*
+ * Add another symbol to the end of our lookup chain and make it the
+ * primary symbol (i.e, @lsymbol->symbol = symbol), and hold a ref on
+ * @symbol.  Users should not need to call this.
+ */
+void lsymbol_append(struct lsymbol *lsymbol,struct symbol *symbol);
+/*
+ * Add a symbol to the start of our lookup chain and hold a ref on
+ * @symbol.  Users should not need to call this.
+ */
+void lsymbol_prepend(struct lsymbol *lsymbol,struct symbol *symbol);
 char *lsymbol_get_name(struct lsymbol *lsymbol);
 struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol);
 void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
+/*
+ * Takes a reference to the lsymbol (NOT to the symbols on the chain!).
+ * Users should never call this function; the lookup functions return
+ * lsymbols that have been held.  The user should only call
+ * lsymbol_release on them.
+ */
+void lsymbol_hold(struct lsymbol *lsymbol);
+/*
+ * Takes references to the symbols on the lsymbol chain!.  Users should
+ * never call this function unless they call lsymbol_create*(); the
+ * lookup functions return lsymbols that have been held.  The user
+ * should only call lsymbol_release on them.
+ */
+void lsymbol_hold_int(struct lsymbol *lsymbol);
+/*
+ * Releases the reference to the lsymbol, and frees it if its refcnt is
+ * 0.
+ */
 void lsymbol_release(struct lsymbol *lsymbol);
+/*
+ * Releases references to the symbols on the chain and tries to free the
+ * lsymbol (not the underlying symbols!).
+ */
 REFCNT lsymbol_free(struct lsymbol *lsymbol,int force);
 
 /**
@@ -955,6 +1046,12 @@ struct symbol_instance {
     SMOFFSET origin_ref;
     struct symbol *origin;
 
+    /* If this symbol was declared or is inlined (is an abstract
+     * origin), this is a list of the inline instance symbols
+     * corresponding to this abstract origin.
+     */
+    struct array_list *inline_instances;
+
     /* If this instance already has a value, this is it! */
     void *constval;
 
@@ -989,10 +1086,12 @@ struct symbol_instance {
 	     * entry.  Right now, only variable symbols are members.
 	     * Note that we also keep a pointer back to the symbol
 	     * containing this symbol_instance struct; need this for
-	     * list traversals.
+	     * list traversals.  Then we also keep a pointer back to the
+	     * parent symbol we are a member of.
 	     */
 	    struct list_head member;
 	    struct symbol *member_symbol;
+	    struct symbol *parent_symbol;
 	    uint16_t byte_size;
 	    uint16_t bit_offset;
 	    uint16_t bit_size;
@@ -1028,7 +1127,8 @@ struct lsymbol {
     struct symbol *symbol;
     /*
      * Contains a top-to-bottom list of symbols that have a hierarchical
-     * relationship.
+     * relationship.  This list should have @symbol at the end if it
+     * exists and has elements.
      */
     struct array_list *chain;
 };

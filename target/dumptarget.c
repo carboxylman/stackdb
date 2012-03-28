@@ -50,7 +50,6 @@ int len = 0;
 struct bsymbol **symbols = NULL;
 GHashTable *probes = NULL;
 GHashTable *disfuncs = NULL;
-GHashTable *bsymbols = NULL;
 struct array_list *shadow_stack;
 
 int doit = 0;
@@ -60,6 +59,7 @@ target_status_t cleanup() {
     gpointer key;
     struct probe *probe;
     target_status_t retval;
+    struct bsymbol *bsymbol;
 
     g_hash_table_iter_init(&iter,probes);
     while (g_hash_table_iter_next(&iter,
@@ -75,8 +75,6 @@ target_status_t cleanup() {
 	g_hash_table_destroy(probes);
     if (disfuncs)
 	g_hash_table_destroy(disfuncs);
-    if (bsymbols)
-	g_hash_table_destroy(bsymbols);
 
     if (shadow_stack)
 	array_list_deep_free(shadow_stack);
@@ -232,6 +230,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
     array_list_add(shadow_stack,retaddr);
 
     instrument_func(bsymbol);
+    bsymbol_release(bsymbol);
 
     return 0;
 }
@@ -388,8 +387,7 @@ int var_pre(struct probe *probe,void *handler_data,
 	    struct probe *trigger) {
     int j;
     struct value *value;
-    struct bsymbol *bsymbol = (struct bsymbol *) \
-	g_hash_table_lookup(bsymbols,(gpointer)probe_addr(probe));
+    struct bsymbol *bsymbol = probe->bsymbol;
 
     fflush(stderr);
 
@@ -430,8 +428,7 @@ int var_post(struct probe *probe,void *handler_data,
 	     struct probe *trigger) {
     int j;
     struct value *value;
-    struct bsymbol *bsymbol = (struct bsymbol *) \
-	g_hash_table_lookup(bsymbols,(gpointer)probe_addr(probe));
+    struct bsymbol *bsymbol = probe->bsymbol;
 
     fflush(stderr);
 
@@ -637,14 +634,13 @@ int main(int argc,char **argv) {
 
 	    probes = g_hash_table_new(g_direct_hash,g_direct_equal);
 	    disfuncs = g_hash_table_new(g_direct_hash,g_direct_equal);
-	    bsymbols = g_hash_table_new(g_direct_hash,g_direct_equal);
 	}
     }
 
     if (raw) {
+	word = malloc(t->wordsize);
 	for (i = 0; i < argc; ++i) {
 	    addrs[i] = strtoll(argv[i],NULL,16);
-	    word = malloc(t->wordsize);
 	}
     }
     else {
@@ -717,25 +713,34 @@ int main(int argc,char **argv) {
 		}
 	    }
 	    else {
-		probe = probe_create(t,NULL,bsymbol->lsymbol->symbol->name,
+		probe = probe_create(t,NULL,bsymbol_get_name(bsymbol),
 				     pre,post,NULL,0);
 		if (!probe)
 		    goto err_unreg;
 
-		if (!probe_register_symbol(probe,bsymbol,style,whence,
-					   PROBEPOINT_LAUTO)) {
-		    probe_free(probe,1);
-		    goto err_unreg;
+		if (symbol_is_inlined(bsymbol_get_symbol(bsymbol))) {
+		    if (!probe_register_inlined_symbol(probe,bsymbol,
+						       1,
+						       style,whence,
+						       PROBEPOINT_LAUTO)) {
+			probe_free(probe,1);
+			goto err_unreg;
+		    }
+		}
+		else {
+		    if (!probe_register_symbol(probe,bsymbol,style,whence,
+					       PROBEPOINT_LAUTO)) {
+			probe_free(probe,1);
+			goto err_unreg;
+		    }
 		}
 
 		g_hash_table_insert(probes,(gpointer)probe,(gpointer)probe);
-		g_hash_table_insert(bsymbols,(gpointer)probe_addr(probe),
-				    (gpointer)bsymbol);
 
 		if (probe) {
 		    fprintf(stderr,
 			    "Registered probe %s at 0x%"PRIxADDR".\n",
-			    bsymbol->lsymbol->symbol->name,
+			    bsymbol_get_name(bsymbol),
 			    probe_addr(probe));
 		    
 		    /* Add the retcode action, if any! */
@@ -756,15 +761,18 @@ int main(int argc,char **argv) {
 		else {
 		    fprintf(stderr,
 			    "Failed to register probe on '%s'\n",
-			    bsymbol->lsymbol->symbol->name);
+			    bsymbol_get_name(bsymbol));
 		    --i;
 		    goto err_unreg;
 		}
 	    }
 
+	    bsymbol_release(bsymbol);
+
 	    continue;
 
 	err_unreg:
+	    bsymbol_release(bsymbol);
 	    array_list_free(symlist);
 	    free(retcodes);
 	    free(retcode_strs);

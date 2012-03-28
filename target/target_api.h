@@ -142,6 +142,9 @@ struct symtab *target_lookup_pc(struct target *target,uint64_t pc);
  * SYMBOL_TYPE_FUNCTION -- unless the first member in your @name string
  * resolves to a SYMBOL_TYPE_TYPE.  In this case, the first member will
  * be a SYMBOL_TYPE_TYPE!
+ *
+ * This function takes a ref to its return value on the user's behalf;
+ * call bsymbol_release() to release (and maybe free) it.
  */
 
 struct bsymbol *target_lookup_sym(struct target *target,

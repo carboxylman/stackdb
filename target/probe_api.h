@@ -178,6 +178,13 @@ struct probe *probe_register_function_ee(struct probe *probe,
 					 struct bsymbol *bsymbol,
 					 int force_at_entry);
 
+struct probe *probe_register_inlined_symbol(struct probe *probe,
+					    struct bsymbol *bsymbol,
+					    int do_primary,
+					    probepoint_style_t style,
+					    probepoint_whence_t whence,
+					    probepoint_watchsize_t watchsize);
+
 /*
  * This function disassembles the function pointed to by @bsymbol if it
  * can.  Then, for each @inst,@probe tuple, it registers @probe at the
@@ -235,6 +242,8 @@ struct probe *probe_create(struct target *target,struct probe_ops *pops,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
 			   void *handler_data,int autofree);
+
+void probe_rename(struct probe *probe,const char *name);
 
 /*
  * If the probe was not specified as an @autofree probe, anybody who

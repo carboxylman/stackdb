@@ -160,6 +160,8 @@ int main(int argc,char **argv) {
     else {
 	for (i = 1; i < argc; ++i) {
 	    struct lsymbol *s;
+	    struct lsymbol *s2;
+	    struct symbol *is;
 	    ADDR addr = (ADDR)strtoull(argv[i],&endptr,0);
 
 	    if (endptr != argv[i])
@@ -171,9 +173,23 @@ int main(int argc,char **argv) {
 	    if (!s)
 		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
 	    else {
+		fprintf(stderr,"forward lookup %s: ",argv[i]);
 		lsymbol_dump(s,&ud);
+		is = s->symbol;
+		/* We release this one because we got it through a
+		 * lookup function, so a ref was taken to it on our
+		 * behalf.
+		 */
 		lsymbol_release(s);
-		lsymbol_free(s,0);
+
+		s2 = lsymbol_create_from_symbol(is);
+		fprintf(stderr,"reverse lookup %s: ",argv[i]);
+		lsymbol_dump(s2,&ud);
+		/* We free this one instead of releasing because we
+		 * created it instead of looked it up, so a ref to it was
+		 * not taken on our behalf.
+		 */
+		lsymbol_free(s2,0);
 	    }
 	}
     }

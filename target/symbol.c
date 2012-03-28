@@ -18,22 +18,58 @@
 
 #include "target.h"
 
-struct bsymbol *bsymbol_create(struct memregion *region,
-			       struct lsymbol *lsymbol) {
+struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
+			       struct memregion *region,
+			       struct memrange *range) {
     struct bsymbol *bsymbol = (struct bsymbol *)malloc(sizeof(struct bsymbol));
     memset(bsymbol,0,sizeof(struct bsymbol *));
+
     bsymbol->lsymbol = lsymbol;
     bsymbol->region = region;
+    bsymbol->range = range;
+
+    lsymbol_hold(lsymbol);
+
     return bsymbol;
 }
 
-void bsymbol_free(struct bsymbol *bsymbol) {
-    if (bsymbol->lsymbol) {
-	if (bsymbol->lsymbol->chain)
-	    array_list_free(bsymbol->lsymbol->chain);
-	free(bsymbol->lsymbol);
+char *bsymbol_get_name(struct bsymbol *bsymbol) {
+    return lsymbol_get_name(bsymbol->lsymbol);
+}
+
+struct symbol *bsymbol_get_symbol(struct bsymbol *bsymbol) {
+    return lsymbol_get_symbol(bsymbol->lsymbol);
+}
+
+void bsymbol_hold(struct bsymbol *bsymbol) {
+    RHOLD(bsymbol);
+}
+
+REFCNT bsymbol_release(struct bsymbol *bsymbol) {
+    return RPUT(bsymbol,bsymbol);
+}
+
+REFCNT bsymbol_free(struct bsymbol *bsymbol,int force) {
+    int retval = bsymbol->refcnt;
+
+    if (retval) {
+	if (!force) {
+	    vwarn("cannot free (%d refs) ",retval);
+	    ERRORDUMPBSYMBOL_NL(bsymbol);
+	    return retval;
+	}
+	else {
+	    verror("forced free (%d refs) ",retval);
+	    ERRORDUMPBSYMBOL(bsymbol);
+	}
     }
+
+    if (bsymbol->lsymbol) 
+	lsymbol_release(bsymbol->lsymbol);
+
     free(bsymbol);
+
+    return retval;
 }
 
 void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud) {
@@ -262,7 +298,7 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
     if (!SYMBOL_IS_VAR(symbol))
 	return;
 
-    type = symbol_type_skip_qualifiers(symbol->datatype);
+    type = symbol_type_skip_qualifiers(symbol_get_datatype(symbol));
 
     if (symbol->s.ii->d.v.bit_size
 	&& type->datatype_code != DATATYPE_BASE) {
