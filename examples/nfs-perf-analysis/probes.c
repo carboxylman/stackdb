@@ -57,6 +57,8 @@ struct bsymbol *bsymbol_blkif_queue_request_lvar_bio = NULL;
 struct bsymbol *bsymbol_blkif_queue_request_lvar_id = NULL;
 struct bsymbol *bsymbol_blkif_int_lvar_id = NULL;
 
+static int xc_handle = -1;
+
 int probe_netif_poll_init(struct probe *probe) {
     DBG("netif_poll_init called\n");
     return 0;
@@ -702,6 +704,35 @@ const probe_registration_t probe_list[] = {
 //    {"blkif_queue_request",         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
     {"blkif_int",                   probe_blkif_int, {.init = probe_blkif_int_init}},
     {"kernel_halt",                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}},
+
+};
+
+int perf_init(void) {
+
+    xc_handle = xc_interface_open();
+
+    if (xc_handle < 0) {
+	    ERR("failed to open xc interface: %s\n",strerror(errno));
+	    return -1;
+	}
+
+    return 0;
+}
+
+unsigned long long perf_get_rdtsc(struct target *t) 
+{
+    vcpu_guest_context_t ctx;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state); 
+
+    
+    if (xc_vcpu_getcontext(xc_handle, xstate->id, 
+                           xstate->dominfo.max_vcpu_id, &ctx)) {
+        ERR("Failed to get vcpu context for dom:%d, vcpu:%d\n",
+            xstate->id, xstate->dominfo.max_vcpu_id);
+        return NULL;
+    }
+
+    return ctx.ttd_perf.tsc;
 
 };
 
