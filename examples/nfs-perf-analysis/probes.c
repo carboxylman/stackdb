@@ -57,7 +57,6 @@ struct bsymbol *bsymbol_blkif_queue_request_lvar_bio = NULL;
 struct bsymbol *bsymbol_blkif_queue_request_lvar_id = NULL;
 struct bsymbol *bsymbol_blkif_int_lvar_id = NULL;
 
-static int xc_handle = -1;
 
 int probe_netif_poll_init(struct probe *probe) {
     DBG("netif_poll_init called\n");
@@ -109,7 +108,7 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
 
     request_hash_add(req, req_id);
 
-    req = request_move_on_path(req_id, STAGE_ID_NETIF_POLL_SKB_DEQUEUE);
+    req = request_move_on_path(probe, req_id, STAGE_ID_NETIF_POLL_SKB_DEQUEUE);
     if(!req) {
         ERR("Failed to move request on its processing path to stage:%s\n", 
             stage_id_to_name(STAGE_ID_NETIF_POLL_SKB_DEQUEUE));
@@ -149,7 +148,7 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
 
     DBG("skb = 0x%lx\n", req_id);
 
-    req = request_move_on_path(req_id, STAGE_ID_NETIF_RECEIVE_SKB);
+    req = request_move_on_path(probe, req_id, STAGE_ID_NETIF_RECEIVE_SKB);
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_NETIF_RECEIVE_SKB));
@@ -191,7 +190,7 @@ int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
 
     DBG("skb = 0x%lx\n", req_id);
 
-    req = request_move_on_path(req_id, STAGE_ID_IP_RCV);
+    req = request_move_on_path(probe, req_id, STAGE_ID_IP_RCV);
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_IP_RCV));
@@ -232,7 +231,7 @@ int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trig
 
     DBG("skb = 0x%lx\n", req_id);
 
-    req = request_move_on_path(req_id, STAGE_ID_TCP_V4_RCV);
+    req = request_move_on_path(probe, req_id, STAGE_ID_TCP_V4_RCV);
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_TCP_V4_RCV));
@@ -273,7 +272,7 @@ int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *
 
     DBG("skb = 0x%lx\n", req_id);
 
-    req = request_move_on_path(req_id, STAGE_ID_TCP_DATA_QUEUE);
+    req = request_move_on_path(probe, req_id, STAGE_ID_TCP_DATA_QUEUE);
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_TCP_DATA_QUEUE));
@@ -329,7 +328,7 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
     new_req_id = *(unsigned long*)lval_to->buf;
     DBG("iovec to = 0x%lx\n", new_req_id);
 
-    req = request_move_on_path(req_id, STAGE_ID_SKB_COPY_DATAGRAM_IOVEC);
+    req = request_move_on_path(probe, req_id, STAGE_ID_SKB_COPY_DATAGRAM_IOVEC);
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_SKB_COPY_DATAGRAM_IOVEC));
@@ -707,35 +706,6 @@ const probe_registration_t probe_list[] = {
 
 };
 
-int perf_init(void) {
-
-    xc_handle = xc_interface_open();
-
-    if (xc_handle < 0) {
-	    ERR("failed to open xc interface: %s\n",strerror(errno));
-	    return -1;
-	}
-
-    return 0;
-}
-
-unsigned long long perf_get_rdtsc(struct target *t) 
-{
-    vcpu_guest_context_t ctx;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state); 
-
-    
-    if (xc_vcpu_getcontext(xc_handle, xstate->id, 
-                           xstate->dominfo.max_vcpu_id, &ctx)) {
-        ERR("Failed to get vcpu context for dom:%d, vcpu:%d\n",
-            xstate->id, xstate->dominfo.max_vcpu_id);
-        return NULL;
-    }
-
-    return ctx.ttd_perf.tsc;
-
-};
-
 int register_probes(struct target *t, GHashTable *probes) {
 
     int i, probe_count;
@@ -745,6 +715,8 @@ int register_probes(struct target *t, GHashTable *probes) {
     probes = g_hash_table_new(g_direct_hash, g_direct_equal);
 
     request_hash_init();
+
+    perf_init();
     
     /*
      * Inject probes at locations specified in probe_list.

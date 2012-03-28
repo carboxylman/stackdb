@@ -28,6 +28,14 @@
 #include "request.h"
 #include "probes.h"
 
+#include <target.h>
+#include <target_xen_vm.h>
+
+#include <probe_api.h>
+#include <probe.h>
+
+int xc_handle = -1;
+
 GHashTable *request_hash; 
 unsigned long global_unique_request_number = 0;
 
@@ -134,12 +142,20 @@ void request_free(struct request *req) {
 void request_print(struct request *req) {
     struct stage *stage, *next;
     unsigned long long prev_timestamp = 0;
+    int first_stage = 1;
 
     printf("req #%lu", req->req_number);
     list_for_each_entry_safe(stage, next, &req->stages, next_stage) 
     {
-        printf(" %s:%lld", stage_id_to_name(stage->id), stage->timestamp - prev_timestamp);
-        prev_timestamp = stage->timestamp;
+        if(first_stage) {
+            first_stage = 0;
+            printf(" %s:%d", stage_id_to_name(stage->id), 0);
+	} else {
+            printf(" %s:%lld", stage_id_to_name(stage->id), stage->timestamp - prev_timestamp);
+        }
+        
+	prev_timestamp = stage->timestamp;
+	 
     }
     printf("\n");
     
@@ -159,7 +175,7 @@ void request_done(struct request *req) {
     return;
 }
 
-struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t stage_id)
+struct request *request_move_on_path(struct probe *probe, unsigned long req_id, nfs_perf_stage_id_t stage_id)
 {
     struct request *req; 
     struct stage *req_stage;
@@ -178,7 +194,7 @@ struct request *request_move_on_path(unsigned long req_id, nfs_perf_stage_id_t s
     }
 
     /* XXX: read the time stamp here */
-    req_stage->timestamp = stage_id;
+    req_stage->timestamp = perf_get_rdtsc(probe->target);
     request_add_stage(req, req_stage);
     return req;
 }
@@ -194,3 +210,33 @@ void request_analysis_done(void) {
     g_hash_table_foreach_remove(request_hash, request_hash_print_and_free, NULL);
     return;
 };
+
+int perf_init(void) {
+
+    xc_handle = xc_interface_open();
+
+    if (xc_handle < 0) {
+        ERR("failed to open xc interface: %s\n",strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+unsigned long long perf_get_rdtsc(struct target *t) 
+{
+    vcpu_guest_context_t ctx;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)(t->state); 
+
+    
+    if (xc_vcpu_getcontext(xc_handle, xstate->id, 
+                           xstate->dominfo.max_vcpu_id, &ctx)) {
+        ERR("Failed to get vcpu context for dom:%d, vcpu:%d\n",
+            xstate->id, xstate->dominfo.max_vcpu_id);
+        return 0;
+    }
+
+    return ctx.ttd_perf.tsc;
+
+};
+
+
