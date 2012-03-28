@@ -48,6 +48,13 @@ static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
     case STAGE_ID_TCP_V4_RCV: return "tcp_v4_rcv";
     case STAGE_ID_TCP_DATA_QUEUE: return "tcp_data_queue";
     case STAGE_ID_SKB_COPY_DATAGRAM_IOVEC: return "skb_copy_datagram_iovec";
+    case STAGE_ID_DO_READV_WRITEV: return "do_readv_writev";
+    case STAGE_ID_GENERIC_FILE_WRITEV: return "generic_file_writev";
+    case STAGE_ID_GENERIC_FILE_BUFFERED_WRITE: return "generic_file_buffered_write";
+    case STAGE_ID_EXT3_JOURNALLED_WRITEPAGE: return "ext3_journalled_writepage";
+    case STAGE_ID___BLOCK_WRITE_FULL_PAGE: return "__block_write_full_page";
+    case STAGE_ID_SUBMIT_BH: return "submit_bh";
+    case STAGE_ID_BLKIF_QUEUE_REQUEST: return "blkif_queue_request";
     default: return "undefined";
     };
 };

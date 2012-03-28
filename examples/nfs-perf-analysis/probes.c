@@ -343,7 +343,6 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
         return -1;
     }
 
-    request_done(req);
     return 0;
 }
 
@@ -391,6 +390,8 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
 {
     struct value   *lval_uvector;
     struct value   *lval_iov;
+    unsigned long   req_id, new_req_id;
+    int             ret;
 
     DBG("do_readv_writev.ttd_copy_from_user called\n");
 
@@ -399,14 +400,31 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
         ERR("Cannot access value of uvector\n");
         return -1;
     }
-    DBG("uvector = 0x%lx\n", *(unsigned long*)lval_uvector->buf);
+    req_id = *(unsigned long*)lval_uvector->buf;
+    DBG("uvector = 0x%lx\n", req_id);
 
     lval_iov = bsymbol_load(bsymbol_do_readv_writev_lvar_iov, LOAD_FLAG_NONE);
     if (!lval_iov) {
         ERR("Cannot access value of iov\n");
         return -1;
     }
-    DBG("iov = 0x%lx\n", *(unsigned long*)lval_iov->buf);
+    new_req_id = *(unsigned long*)lval_iov->buf;
+    DBG("iov = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_DO_READV_WRITEV);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_DO_READV_WRITEV));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID_DO_READV_WRITEV));
+        request_done(req);
+        return -1;
+    }
 
     return 0;
 }
@@ -426,7 +444,8 @@ int probe_generic_file_writev_init(struct probe *probe) {
 int probe_generic_file_writev(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct value   *lval_iov;
-
+    unsigned long   req_id;
+    
     DBG("generic_file_writev called\n");
 
     lval_iov = bsymbol_load(bsymbol_generic_file_writev_lvar_iov, LOAD_FLAG_NONE);
@@ -434,7 +453,15 @@ int probe_generic_file_writev(struct probe *probe, void *handler_data, struct pr
         ERR("Cannot access value of iov\n");
         return -1;
     }
-    DBG("iov = 0x%lx\n", *(unsigned long*)lval_iov->buf);
+    req_id = *(unsigned long*)lval_iov->buf;
+    DBG("iov = 0x%lx\n", req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_GENERIC_FILE_WRITEV);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_GENERIC_FILE_WRITEV));
+        return -1;
+    }
 
     return 0;
 }
@@ -462,6 +489,8 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
 {
     struct value   *lval_iov;
     struct value   *lval_page;
+    unsigned long   req_id, new_req_id;
+    int             ret;
 
     DBG("generic_file_buffered_write called\n");
     lval_iov = bsymbol_load(bsymbol_generic_file_buffered_write_lvar_iov, LOAD_FLAG_NONE);
@@ -469,15 +498,31 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
         ERR("Cannot access value of iov\n");
         return -1;
     }
-    DBG("iov = 0x%lx\n", *(unsigned long*)lval_iov->buf);
+    req_id = *(unsigned long*)lval_iov->buf;
+    DBG("iov = 0x%lx\n", req_id);
 
     lval_page = bsymbol_load(bsymbol_generic_file_buffered_write_lvar_page, LOAD_FLAG_NONE);
     if (!lval_page) {
         ERR("Cannot access value of page\n");
         return -1;
     }
-    DBG("page = 0x%lx\n", *(unsigned long*)lval_page->buf);
+    new_req_id = *(unsigned long*)lval_page->buf;
+    DBG("page = 0x%lx\n", new_req_id);
 
+    req = request_move_on_path(probe, req_id, STAGE_ID_GENERIC_FILE_BUFFERED_WRITE);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_GENERIC_FILE_BUFFERED_WRITE));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID_GENERIC_FILE_BUFFERED_WRITE));
+        request_done(req);
+        return -1;
+    }
     return 0;
 }
 
@@ -497,6 +542,7 @@ int probe_ext3_journalled_writepage_init(struct probe *probe) {
 int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct value   *lval_page;
+    unsigned long   req_id;
 
     DBG("ext3_journalled_writepage called\n");
     lval_page = bsymbol_load(bsymbol_ext3_journalled_writepage_lvar_page, LOAD_FLAG_NONE);
@@ -504,7 +550,16 @@ int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, str
         ERR("Cannot access value of page\n");
         return -1;
     }
-    DBG("page = 0x%lx\n", *(unsigned long*)lval_page->buf);
+    req_id = *(unsigned long*)lval_page->buf;
+    DBG("page = 0x%lx\n", req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_EXT3_JOURNALLED_WRITEPAGE);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_EXT3_JOURNALLED_WRITEPAGE));
+        return -1;
+    }
+
     return 0;
 }
 
@@ -532,6 +587,8 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
 {
     struct value   *lval_page;
     struct value   *lval_bh;
+    unsigned long   req_id, new_req_id;
+    int             ret;
 
     DBG("__block_write_full_page called\n");
 
@@ -540,14 +597,31 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
         ERR("Cannot access value of page\n");
         return -1;
     }
-    DBG("page = 0x%lx\n", *(unsigned long*)lval_page->buf);
+    req_id = *(unsigned long*)lval_page->buf;
+    DBG("page = 0x%lx\n", req_id);
 
     lval_bh = bsymbol_load(bsymbol___block_write_full_page_lvar_bh, LOAD_FLAG_NONE);
     if (!lval_bh) {
         ERR("Cannot access value of page\n");
         return -1;
     }
-    DBG("page = 0x%lx\n", *(unsigned long*)lval_bh->buf);
+    new_req_id = *(unsigned long*)lval_bh->buf;
+    DBG("bh = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID___BLOCK_WRITE_FULL_PAGE);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID___BLOCK_WRITE_FULL_PAGE));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID___BLOCK_WRITE_FULL_PAGE));
+        request_done(req);
+        return -1;
+    }
 
     return 0;
 }
@@ -576,6 +650,8 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
 {
     struct value   *lval_bh;
     struct value   *lval_bio;
+    unsigned long   req_id, new_req_id;
+    int             ret;
 
     DBG("submit_bh called\n");
     
@@ -584,14 +660,32 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
         ERR("Cannot access value of bh\n");
         return -1;
     }
-    DBG("bh = 0x%lx\n", *(unsigned long*)lval_bh->buf);
+    req_id = *(unsigned long*)lval_bh->buf;
+    DBG("bh = 0x%lx\n", req_id);
 
     lval_bio  = bsymbol_load(bsymbol_submit_bh_lvar_bio, LOAD_FLAG_NONE);
     if (!lval_bio) {
         ERR("Cannot access value of bio\n");
         return -1;
     }
-    DBG("bio = 0x%lx\n", *(unsigned long*)lval_bio->buf);
+    new_req_id = *(unsigned long*)lval_bio->buf;
+    DBG("bio = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_SUBMIT_BH);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_SUBMIT_BH));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID_SUBMIT_BH));
+        request_done(req);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -619,6 +713,8 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
 {
     struct value   *lval_bio;
     struct value   *lval_id;
+    unsigned long   req_id, new_req_id;
+    int             ret;
 
     DBG("blkif_queue_request called\n");
 
@@ -627,14 +723,31 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
         ERR("Cannot access value of bh\n");
         return -1;
     }
-    DBG("bio = 0x%lx\n", *(unsigned long*)lval_bio->buf);
+    req_id = *(unsigned long*)lval_bio->buf;
+    DBG("bio = 0x%lx\n", req_id);
 
     lval_id  = bsymbol_load(bsymbol_blkif_queue_request_lvar_id, LOAD_FLAG_NONE);
     if (!lval_id) {
         ERR("Cannot access value of id\n");
         return -1;
     }
-    DBG("id = 0x%lx\n", *(unsigned long*)lval_id->buf);
+    new_req_id = *(unsigned long*)lval_id->buf;
+    DBG("id = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_BLKIF_QUEUE_REQUEST);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_BLKIF_QUEUE_REQUEST));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID_BLKIF_QUEUE_REQUEST));
+        request_done(req);
+        return -1;
+
     return 0;
 }
 
@@ -653,6 +766,7 @@ int probe_blkif_int_init(struct probe *probe) {
 int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct value   *lval_id;
+    unsigned long   req_id;
 
     DBG("blkif_int called\n");
 
@@ -661,7 +775,18 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
         ERR("Cannot access value of id\n");
         return -1;
     }
-    DBG("id = 0x%lx\n", *(unsigned long*)lval_id->buf);
+    
+    req_id = *(unsigned long*)lval_id->buf;
+    DBG("id = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_BLKIF_INT);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_BLKIF_INT));
+        return -1;
+    }
+
+    request_done(req);
     return 0;
 }
 
@@ -685,24 +810,24 @@ typedef struct probe_registration {
 } probe_registration_t;
 
 const probe_registration_t probe_list[] = {
-    {"netif_poll",                  probe_netif_poll, {.init = probe_netif_poll_init}},
-    {"netif_poll.ttd_skb_dequeue",  probe_netif_poll_lb_skb_dequeue, {.init = probe_netif_poll_lb_skb_dequeue_init}},
-    {"netif_receive_skb",           probe_netif_receive_skb, {.init = probe_netif_receive_skb_init}},
-    {"ip_rcv",                      probe_ip_rcv, {.init = probe_ip_rcv_init}},
-    {"tcp_v4_rcv",                  probe_tcp_v4_rcv, {.init = probe_tcp_v4_rcv_init}},
-    {"tcp_data_queue",              probe_tcp_data_queue, {.init = probe_tcp_data_queue_init}},
-    {"skb_copy_datagram_iovec",     probe_skb_copy_datagram_iovec, {.init = probe_skb_copy_datagram_iovec_init}},
-    {"svc_process",                 probe_svc_process, {.init = probe_svc_process_init}},
-    {"nfsd3_proc_write",            probe_nfsd3_proc_write, {.init = probe_nfsd3_proc_write_init}},
-    {"do_readv_writev",             probe_do_readv_writev_ttd_copy_from_user, {.init = probe_do_readv_writev_ttd_copy_from_user_init}},
-    {"generic_file_writev",         probe_generic_file_writev, {.init = probe_generic_file_writev_init}},
-    {"generic_file_buffered_write", probe_generic_file_buffered_write, {.init = probe_generic_file_buffered_write_init}},
-    {"ext3_journalled_writepage",   probe_ext3_journalled_writepage, {.init = probe_ext3_journalled_writepage_init}},
-    {"__block_write_full_page",     probe___block_write_full_page, {.init = probe___block_write_full_page_init}},
-    {"submit_bh",                   probe_submit_bh, {.init = probe_submit_bh_init}},
-//    {"blkif_queue_request",         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
-    {"blkif_int",                   probe_blkif_int, {.init = probe_blkif_int_init}},
-    {"kernel_halt",                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}},
+    {"netif_poll",                                  probe_netif_poll, {.init = probe_netif_poll_init}},
+    {"netif_poll.ttd_skb_dequeue",                  probe_netif_poll_lb_skb_dequeue, {.init = probe_netif_poll_lb_skb_dequeue_init}},
+    {"netif_receive_skb",                           probe_netif_receive_skb, {.init = probe_netif_receive_skb_init}},
+    {"ip_rcv",                                      probe_ip_rcv, {.init = probe_ip_rcv_init}},
+    {"tcp_v4_rcv",                                  probe_tcp_v4_rcv, {.init = probe_tcp_v4_rcv_init}},
+    {"tcp_data_queue",                              probe_tcp_data_queue, {.init = probe_tcp_data_queue_init}},
+    {"skb_copy_datagram_iovec",                     probe_skb_copy_datagram_iovec, {.init = probe_skb_copy_datagram_iovec_init}},
+    {"svc_process",                                 probe_svc_process, {.init = probe_svc_process_init}},
+    {"nfsd3_proc_write",                            probe_nfsd3_proc_write, {.init = probe_nfsd3_proc_write_init}},
+    {"do_readv_writev.ttd_iov_label",               probe_do_readv_writev_ttd_copy_from_user, {.init = probe_do_readv_writev_ttd_copy_from_user_init}},
+    {"generic_file_writev",                         probe_generic_file_writev, {.init = probe_generic_file_writev_init}},
+    {"generic_file_buffered_write.ttd_page_label",  probe_generic_file_buffered_write, {.init = probe_generic_file_buffered_write_init}},
+    {"ext3_journalled_writepage",                   probe_ext3_journalled_writepage, {.init = probe_ext3_journalled_writepage_init}},
+    {"__block_write_full_page.ttd_bh_label",        probe___block_write_full_page, {.init = probe___block_write_full_page_init}},
+    {"submit_bh",                                   probe_submit_bh, {.init = probe_submit_bh_init}},
+//    {"blkif_queue_request",                         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
+    {"blkif_int",                                   probe_blkif_int, {.init = probe_blkif_int_init}},
+    {"kernel_halt",                                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}},
 
 };
 
