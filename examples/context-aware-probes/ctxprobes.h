@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  *
- *  ctxprobes/ctxprobes.h
+ *  examples/context-aware-probes/ctxprobes.h
  *
  *  Probes aware of guest's context changes -- task switches, traps, 
  *  and interrupts.
@@ -27,23 +27,36 @@
 #ifndef __CTXPROBES_H__
 #define __CTXPROBES_H__
 
-typedef void (*ctxprobes_function_call_handler_t)(void);
-typedef void (*ctxprobes_function_return_handler_t)(void);
-typedef void (*ctxprobes_variable_handler_t)(void);
+typedef struct var {
+    char *name;
+	int size;
+	char *buf;
+} var_t;
+
+typedef void (*ctxprobes_func_call_handler_t)(var_t *arg_list,
+                                              int arg_count);
+
+typedef void (*ctxprobes_func_return_handler_t)(var_t *arg_list, 
+                                                int arg_count,
+                                                var_t retval);
+
+//typedef void (*ctxprobes_var_handler_t)(var_t *var);
 
 
 int ctxprobes_init(char *domain_name, int debug_level);
+
 void ctxprobes_cleanup(void);
+
 int ctxprobes_wait(void);
 
 
-int ctxprobes_function_call(char *symbol,
-                            ctxprobes_function_call_handler_t handler);
+int ctxprobes_func_call(char *symbol,
+                        ctxprobes_func_call_handler_t handler);
 
-int ctxprobes_function_return(char *symbol,
-                              ctxprobes_function_return_handler_t handler);
+int ctxprobes_func_return(char *symbol,
+                          ctxprobes_func_return_handler_t handler);
 
-int ctxprobes_variable(char *symbol,
-                       ctxprobes_variable_handler_t handler);
+//int ctxprobes_var(char *symbol,
+//                  ctxprobes_var_handler_t handler);
 
 #endif /* __CTXPROBES_H__ */

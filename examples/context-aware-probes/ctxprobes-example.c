@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  ctxprobes/ctxprobes-example.c
+ *  examples/context-aware-probes/ctxprobes-example.c
  *
  *  An example code to demonstrate how to use context-aware probes.
  *
@@ -25,15 +25,26 @@
 
 #include <argp.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "ctxprobes.h"
 
 char *domain_name = NULL; 
 int verbose = 0; 
 
-void sys_open(void)
+void sys_open_call(var_t *args, int argcount)
 {
-	printf("sys_open called\n");
+    if (argcount != 3)
+        printf("argcount is not 3\n", argcount);
+    printf("sys_open(%s=%s, %s=0x%08x, %s=0x%08x)\n", 
+           args[0].name, args[0].buf,
+           args[1].name, *(int *)args[1].buf,
+           args[2].name, *(int *)args[2].buf);
+}
+
+void sys_open_return(var_t *args, int argcount, var_t retval)
+{
+    printf("sys_open returned\n");
 }
 
 /* command parser for GNU argp - see  GNU docs for more info */
@@ -66,7 +77,7 @@ const struct argp_option cmd_opts[] =
     { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
       .doc = "Verbose" },
 
-    {0}
+    {0,}
 };
 
 const struct argp parser_def =
@@ -93,10 +104,17 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    ret = ctxprobes_function_call("sys_open", sys_open);
+    ret = ctxprobes_func_call("sys_open", sys_open_call);
     if (ret)
     {
-        fprintf(stderr, "failed to register probe\n");
+        fprintf(stderr, "failed to register probe on sys_open call\n");
+        exit(1);
+    }
+
+    ret = ctxprobes_func_return("sys_open", sys_open_return);
+    if (ret)
+    {
+        fprintf(stderr, "failed to register probe on sys_open return\n");
         exit(1);
     }
 

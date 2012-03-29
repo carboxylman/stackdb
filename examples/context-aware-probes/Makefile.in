@@ -37,9 +37,10 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/ctxprobes.h \
+	   $(TOP_SRCDIR)/$(SUBDIR)/private.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/debug.h
 
-OBJECTS := ctxprobes.lo 
+OBJECTS := ctxprobes.lo private.lo
 
 LIBRARIES := $(OBJDIR)/target/target.a 
 

@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  ctxprobes/debug.h
+ *  examples/context-aware-probes/debug.h
  * 
  *  DBG*, ERR*, WARN* declarations
  *
@@ -23,8 +23,8 @@
  * 
  */
 
-#ifndef __NFS_PERF_DEBUG_H__
-#define __NFS_PERF_DEBUG_H__
+#ifndef __CTXPROBES_DEBUG_H__
+#define __CTXPROBES_DEBUG_H__
 
 #include <stdio.h>
 
@@ -119,4 +119,4 @@
             }                                                                       \
     } while (0)
 
-#endif /* __NFS_PERF_DEBUG_H__ */
+#endif /* __CTXPROBES_DEBUG_H__ */
