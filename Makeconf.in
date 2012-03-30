@@ -128,3 +128,8 @@ ifeq ("@ENABLE_VMI_DEBUG@","1")
      CFLAGS += -DVMI_DEBUG
      PYCFLAGS += -DVMI_DEBUG
 endif
+
+#
+# Use Judy.
+#
+LDFLAGS += -L@JUDY@/lib -lJudy

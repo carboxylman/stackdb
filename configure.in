@@ -251,6 +251,29 @@ if test ! -e "$ELFUTILS/include/elfutils/version.h" ; then
     fi
 fi
 
+#
+# Check Judy.
+#
+AC_ARG_WITH([judy],
+  AS_HELP_STRING([--with-judy=DIRECTORY],
+    [find judy install in DIRECTORY]),
+  [JUDY="$with_judy"])
+if test -z "$JUDY" ; then
+    # look in usual places
+    JUDY=/usr/local
+    if test ! -e "$JUDY/include/Judy.h" ; then
+        JUDY=/usr
+        if test ! -e "$JUDY/include/Judy.h" ; then
+            AC_MSG_ERROR([cannot find judy])
+        fi
+    fi
+else
+    if test ! -e "$JUDY/include/Judy.h" ; then
+       AC_MSG_ERROR([cannot find judy])
+    fi
+fi
+AC_SUBST(JUDY)
+
 AC_ARG_ENABLE(xenaccess,
 	      AS_HELP_STRING([--disable-xenaccess],
                              [Disable xenaccess support]),
@@ -346,7 +369,7 @@ AC_ARG_ENABLE(vmi-debug,
 AC_SUBST(ENABLE_VMI_DEBUG)
 
 outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
-          target/Makefile \
+          target/Makefile tests/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile \
           examples/nfs-perf-analysis/Makefile \

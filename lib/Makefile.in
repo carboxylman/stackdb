@@ -12,10 +12,10 @@ include $(OBJDIR)/Makeconf
 CFLAGS += -I$(TOP_SRCDIR)/include -I$(OBJDIR)
 
 HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/log.h
+	$(TOP_SRCDIR)/include/log.h $(TOP_SRCDIR)/include/clfit.h
 
-OBJECTS := log.lo
-LIBRARIES := libvlog.a libvlog.so
+OBJECTS := log.lo clfit.lo
+LIBRARIES := libvmilib.a libvmilib.so
 
 INST_INC = 
 INST_LIB = $(LIBRARIES)
@@ -30,24 +30,24 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-libvlog.a:	$(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libvlog.a $(OBJECTS)
+libvmilib.a:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libvmilib.a $(OBJECTS)
 
-vlog.lo:	$(HEADERS) $(OBJECTS)
+vmilib.lo:	$(HEADERS) $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
 
-libvlog.so.$(LIBVERSION): vlog.lo
-	$(CP) -f vlog.lo $@
+libvmilib.so.$(LIBVERSION): vmilib.lo
+	$(CP) -f vmilib.lo $@
 
-libvlog.so:	libvlog.so.$(LIBVERSION)
-	$(LN_S) $< $@
+libvmilib.so:	libvmilib.so.$(LIBVERSION)
+	$(LN_S) -f $< $@
 
 install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
-		log.lo vlog.lo 
-	$(RM) -f $(LIBRARIES) log.o vlog.* libvlog.*
+		log.lo vmilib.lo 
+	$(RM) -f $(LIBRARIES) log.o vmilib.* libvmilib.*
 
 distclean: distclean-subdirs
 
