@@ -56,6 +56,13 @@ int register_call_probe(int raw, /* 0:use symbol, 1:use addr (raw address) */
     struct bsymbol *bsymbol = NULL;
     struct probe *probe;
 
+    struct dump_info udn = {
+        .stream = stderr,
+        .prefix = "",
+        .detail = 1,
+        .meta = 1,
+    };
+
     if (!raw)
     {
         bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
@@ -113,6 +120,15 @@ int register_call_probe(int raw, /* 0:use symbol, 1:use addr (raw address) */
     return 0;
 }
 
+/* FIXME: remove this after fixing the bug in probing function returns. */
+static int cprobe_handler(struct probe *probe,
+                          void *data,
+                          struct probe *trigger)
+{
+    DBG("CPROBE HANDLER CALLED!\n");
+    return 0;
+}
+
 int register_return_probe(char *symbol, 
                           probe_handler_t handler,
                           probepoint_whence_t whence,
@@ -120,9 +136,17 @@ int register_return_probe(char *symbol,
                           void *data)
 {
     struct bsymbol *bsymbol = NULL;
-    struct probe *probe;
-    int bufsiz;
-    char *buf;
+    struct probe *rprobe;
+    int len;
+    char *name;
+    struct probe *cprobe;
+    
+    struct dump_info udn = {
+        .stream = stderr,
+        .prefix = "",
+        .detail = 1,
+        .meta = 1,
+    };
 
     bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
     if (!bsymbol)
@@ -131,53 +155,95 @@ int register_return_probe(char *symbol,
         return -1;
     }
 
-    //bsymbol_dump(bsymbol, &udn);
+    bsymbol_dump(bsymbol, &udn);
 
     /* Dissasemble the function and grab a list of
      * RET instrs, and insert more child
      * breakpoints.
      */
-    bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
-    buf = malloc(bufsiz);
-    snprintf(buf, bufsiz, "ret_in_%s", bsymbol->lsymbol->symbol->name);
-    probe = probe_create(t, NULL,
-                         buf,
-                         NULL, /* pre_handler */
-                         handler,
-                         data,
-                         0);
-    free(buf);
-    if (!probe)
+
+    /* FIXME: remove this after fixing the bug in probing function returns. */
+    len = strlen(bsymbol->lsymbol->symbol->name)+1+4+1+2+1;
+    name = (char *)malloc(len);
+    snprintf(name, len, "call_in_%s", bsymbol->lsymbol->symbol->name);
+    cprobe = probe_create(t, NULL,
+                          name,
+                          NULL, /* pre_handler */
+                          cprobe_handler, /* post_handler */
+                          NULL,
+                          0);
+    free(name);
+    if (!cprobe)
     {
         ERR("Could not create return probe on '%s'\n",
             bsymbol->lsymbol->symbol->name);
         return -1;
     }
 
+    len = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
+    name = (char *)malloc(len);
+    snprintf(name, len, "ret_in_%s", bsymbol->lsymbol->symbol->name);
+    rprobe = probe_create(t, NULL,
+                         name,
+                         handler, /* pre_handler */
+                         NULL, /* post_handler */
+                         NULL, //data,
+                         0);
+    free(name);
+    if (!rprobe)
+    {
+        ERR("Could not create return probe on '%s'\n",
+            bsymbol->lsymbol->symbol->name);
+        return -1;
+    }
+
+    /* FIXME: remove this after fixing the bug in probing function returns. */
     if (!probe_register_function_instrs(bsymbol,
                                         PROBEPOINT_SW,
-                                        INST_RET, probe,
+                                        INST_RET, rprobe,
+                                        INST_CALL, cprobe,
                                         INST_NONE))
     {
-        probe_free(probe, 1);
+        probe_free(cprobe, 1);
+        probe_free(rprobe, 1);
         ERR("Could not register return probe on '%s'\n",
             bsymbol->lsymbol->symbol->name);
         return -1;
     }
 
-    if (probe_num_sources(probe) == 0)
+    /* FIXME: remove this after fixing the bug in probing function returns. */
+    if (probe_num_sources(cprobe) == 0)
     {
-        probe_free(probe, 1);
+        probe_free(cprobe, 1);
+        ERR("No call sites in %s.\n",
+            bsymbol->lsymbol->symbol->name);
+        return -2;
+    }
+
+    /* FIXME: remove this after fixing the bug in probing function returns. */
+    g_hash_table_insert(probes,
+                        (gpointer)cprobe,
+                        (gpointer)cprobe);
+    
+    /* FIXME: remove this after fixing the bug in probing function returns. */
+    DBG("Registered %d call probes in function %s.\n",
+        probe_num_sources(cprobe),
+        bsymbol->lsymbol->symbol->name);
+
+    if (probe_num_sources(rprobe) == 0)
+    {
+        probe_free(rprobe, 1);
         ERR("No return sites in %s.\n",
             bsymbol->lsymbol->symbol->name);
         return -2;
     }
     
     g_hash_table_insert(probes,
-                        (gpointer)probe,
-                        (gpointer)probe);
+                        (gpointer)rprobe,
+                        (gpointer)rprobe);
+    
     DBG("Registered %d return probes in function %s.\n",
-        probe_num_sources(probe),
+        probe_num_sources(rprobe),
         bsymbol->lsymbol->symbol->name);
 
     return 0;
@@ -197,6 +263,7 @@ void unregister_probes()
         probe_unregister(probe, 1);
     }
 }
+
 
 int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe)
 {
