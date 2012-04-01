@@ -44,6 +44,13 @@ int register_return_probe(char *symbol,
 void unregister_probes();
 
 
+unsigned long current_task_addr(void);
+
+int load_task_info(task_t **task, unsigned long task_struct_addr);
+
+void unload_task_info(task_t *task);
+
+
 int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe);
 
 void unload_func_args(var_t *arg_list, int arg_count);

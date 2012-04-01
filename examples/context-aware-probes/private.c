@@ -41,6 +41,42 @@
 #include "private.h"
 #include "debug.h"
 
+struct pt_regs {
+    long ebx;
+    long ecx;
+    long edx;
+    long esi;
+    long edi;
+    long ebp;
+    long eax;
+    int  xds;
+    int  xes; 
+    long orig_eax;
+    long eip;
+    int  xcs;
+    long eflags;
+    long esp;
+    int  xss;
+};
+
+#define THREAD_SIZE (8192)
+#define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
+
+#define TASK_STRUCT_SIZE (1312)
+#define TASK_PID_OFFSET (168)
+#define TASK_TGID_OFFSET (172)
+#define TASK_REAL_PARENT_OFFSET (176)
+#define TASK_PARENT_OFFSET (180)
+#define TASK_UID_OFFSET (336)
+#define TASK_EUID_OFFSET (340)
+#define TASK_SUID_OFFSET (344)
+#define TASK_FSUID_OFFSET (348)
+#define TASK_GID_OFFSET (352)
+#define TASK_EGID_OFFSET (356)
+#define TASK_SGID_OFFSET (360)
+#define TASK_FSGID_OFFSET (364)
+#define TASK_COMM_OFFSET (396)
+
 extern struct target *t;
 extern GHashTable *probes;
 
@@ -56,12 +92,12 @@ int register_call_probe(int raw, /* 0:use symbol, 1:use addr (raw address) */
     struct bsymbol *bsymbol = NULL;
     struct probe *probe;
 
-    struct dump_info udn = {
-        .stream = stderr,
-        .prefix = "",
-        .detail = 1,
-        .meta = 1,
-    };
+    //struct dump_info udn = {
+    //    .stream = stderr,
+    //    .prefix = "",
+    //    .detail = 1,
+    //    .meta = 1,
+    //};
 
     if (!raw)
     {
@@ -264,6 +300,72 @@ void unregister_probes()
     }
 }
 
+unsigned long current_task_addr(void)
+{
+    unsigned long esp = target_read_reg(t, 4);
+    unsigned long thread_info_ptr = current_thread_ptr(esp);
+    unsigned long task_addr = 0;
+    
+    if (!target_read_addr(t,
+                          thread_info_ptr,
+                          sizeof(unsigned long),
+                          (unsigned char *)&task_addr,
+                          NULL))
+    {
+        return 0;
+    }
+
+    return task_addr;
+}
+
+int load_task_info(task_t **task, unsigned long task_struct_addr)
+{
+    unsigned char *task_struct_buf;
+
+    task_struct_buf = (unsigned char *)malloc(TASK_STRUCT_SIZE);
+    if (!task_struct_buf)
+        return -1;
+    memset(task_struct_buf, 0, TASK_STRUCT_SIZE);
+
+    if (!target_read_addr(t, 
+                          task_struct_addr, 
+                          TASK_STRUCT_SIZE, 
+                          task_struct_buf, 
+                          NULL))
+    {
+        free(task_struct_buf);
+        return -1;
+    }
+
+    task_t *tsk = (task_t *)malloc(sizeof(task_t));
+    if (!tsk)
+    {
+        free(task_struct_buf);
+        return -1;
+    }
+    memset(tsk, 0, sizeof(task_t));
+
+    tsk->pid = *((unsigned int *)(task_struct_buf + TASK_PID_OFFSET));
+    if ((char *)(task_struct_buf + TASK_COMM_OFFSET) != NULL)
+        tsk->comm = strndup((char *)(task_struct_buf + TASK_COMM_OFFSET), 16);
+
+    free(task_struct_buf);
+
+    *task = tsk;
+
+    return 0;
+}
+
+void unload_task_info(task_t *task)
+{
+    if (task)
+    {
+        if (task->comm)
+            free(task->comm);
+        free(task);
+    }
+}
+
 
 int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe)
 {
@@ -365,14 +467,17 @@ error_exit:
 void unload_func_args(var_t *arg_list, int arg_count)
 {
     int i;
-    for (i = 0; i < arg_count; i++)
+    if (arg_list)
     {
-        if (arg_list[i].name)
-            free(arg_list[i].name);
-        if (arg_list[i].buf)
-            free(arg_list[i].buf);
+        for (i = 0; i < arg_count; i++)
+        {
+            if (arg_list[i].name)
+                free(arg_list[i].name);
+            if (arg_list[i].buf)
+                free(arg_list[i].buf);
+        }
+        free(arg_list);
     }
-    free(arg_list);
 }
 
 int load_func_retval(var_t *retval, struct probe *probe)

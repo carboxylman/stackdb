@@ -44,6 +44,11 @@ char *dom_name = NULL;
 struct target *t = NULL;
 GHashTable *probes = NULL;
 
+task_t *task_current = NULL;
+
+struct bsymbol *bsymbol_task_prev = NULL;
+struct bsymbol *bsymbol_task_next = NULL;
+
 static int probe_func_call(struct probe *probe,
                            void *data,
                            struct probe *trigger)
@@ -60,10 +65,10 @@ static int probe_func_call(struct probe *probe,
     if (ret)
     {
         ERR("Failed to load function args\n");
-        return 1;
+        //return 1;
     }
 
-    handler(arg_list, arg_count);
+    handler(task_current, arg_list, arg_count);
 
     unload_func_args(arg_list, arg_count);
 
@@ -87,17 +92,17 @@ static int probe_func_return(struct probe *probe,
     if (ret)
     {
         ERR("Failed to load function args\n");
-        return 1;
+        //return 1;
     }
 
     ret = load_func_retval(&retval, probe);
     if (ret)
     {
         ERR("Failed to load function retval\n");
-        return 1;
+        //return 1;
     }
 
-    handler(arg_list, arg_count, retval);
+    handler(task_current, arg_list, arg_count, retval);
 
     unload_func_args(arg_list, arg_count);
 
@@ -128,11 +133,80 @@ static int probe_interrupt(struct probe *probe,
     return 0;
 }
 
+static int init_task_switch(struct probe *probe)
+{
+    DBG("Task switch init\n");
+    
+    bsymbol_task_prev = target_lookup_sym(probe->target, 
+                                          "schedule.prev",
+                                          ".",
+                                          NULL,
+                                          SYMBOL_TYPE_NONE);
+    if (!bsymbol_task_prev)
+    {
+        ERR("Failed to create a bsymbol for schedule.prev\n");
+        return -1;
+    }
+
+    bsymbol_task_next = target_lookup_sym(probe->target, 
+                                          "schedule.next",
+                                          ".",
+                                          NULL,
+                                          SYMBOL_TYPE_NONE);
+    if (!bsymbol_task_next)
+    {
+        ERR("Failed to create a bsymbol for schedule.next\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 static int probe_task_switch(struct probe *probe, 
                              void *data, 
                              struct probe *trigger)
 {
-    DBG("Task switch: %s\n", probe->name);
+    struct value *lvalue_task_prev, *lvalue_task_next;
+    task_t *task_prev, *task_next;
+    int ret;
+
+    lvalue_task_prev = bsymbol_load(bsymbol_task_prev, LOAD_FLAG_NONE);
+    if (!lvalue_task_prev)
+    {
+        ERR("Cannot access value of schedule.prev\n");
+        return -1;
+    }
+
+    lvalue_task_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_NONE);
+    if (!lvalue_task_next)
+    {
+        ERR("Cannot access value of schedule.next\n");
+        return -1;
+    }
+
+    ret = load_task_info(&task_prev, *(unsigned long *)lvalue_task_prev->buf);
+    if (ret)
+    {
+        ERR("Cannot load task info of schedule.prev\n");
+        return -1;
+    }
+
+    ret = load_task_info(&task_next, *(unsigned long *)lvalue_task_next->buf);
+    if (ret)
+    {
+        ERR("Cannot load task info of schedule.next\n");
+        return -1;
+    }
+
+    DBG("Task switch: %d (%s) -> %d (%s)\n", 
+        task_prev->pid, task_prev->comm,
+        task_next->pid, task_next->comm);
+    
+    unload_task_info(task_prev);
+
+    unload_task_info(task_current);
+    task_current = task_next;
+
     return 0;
 }
 
@@ -141,6 +215,7 @@ typedef struct probe_entry {
     char *symbol;
     ADDR addr;
     probe_handler_t handler;
+    struct probe_ops ops;
 } probe_entry_t;
 
 /* 
@@ -149,29 +224,30 @@ typedef struct probe_entry {
  */
 const probe_entry_t probe_list[] = 
 {
-    { 0, "do_divide_error",                0x0,        probe_trap },
-    { 0, "do_debug",                       0x0,        probe_trap },
-    { 0, "do_nmi",                         0x0,        probe_trap },
-    { 0, "do_int3",                        0x0,        probe_trap },
-    { 0, "do_overflow",                    0x0,        probe_trap },
-    { 0, "do_bounds",                      0x0,        probe_trap },
-    { 0, "do_invalid_op",                  0x0,        probe_trap },
-    //{ 1, "device_not_available",           0xc01055a8, probe_trap },
-    //{ 0, "double_fault",                   0x0,        probe_trap },
-    { 0, "do_coprocessor_segment_overrun", 0x0,        probe_trap },
-    { 0, "do_invalid_TSS",                 0x0,        probe_trap },
-    { 0, "do_segment_not_present",         0x0,        probe_trap },
-    { 0, "do_stack_segment",               0x0,        probe_trap },
-    { 0, "do_general_protection",          0x0,        probe_trap },
-    { 0, "do_page_fault",                  0x0,        probe_trap },
-    //{ 0, "spurious_interrupt_bug",         0x0,        probe_trap },
-    { 0, "do_coprocessor_error",           0x0,        probe_trap },
-    { 0, "do_alignment_check",             0x0,        probe_trap },
-    //{ 0, "intel_machine_check",            0x0,        probe_trap },
-    { 0, "do_simd_coprocessor_error",      0x0,        probe_trap },
-    //{ 1, "system_call",                    0xc01052e8, probe_syscall },
-    { 0, "do_IRQ",                         0x0,        probe_interrupt },
-    { 0, "schedule.switch_tasks",          0x0,        probe_task_switch },
+    { 0, "do_divide_error",                0x0,        probe_trap, {0} },
+    { 0, "do_debug",                       0x0,        probe_trap, {0} },
+    { 0, "do_nmi",                         0x0,        probe_trap, {0} },
+    { 0, "do_int3",                        0x0,        probe_trap, {0} },
+    { 0, "do_overflow",                    0x0,        probe_trap, {0} },
+    { 0, "do_bounds",                      0x0,        probe_trap, {0} },
+    { 0, "do_invalid_op",                  0x0,        probe_trap, {0} },
+    //{ 1, "device_not_available",           0xc01055a8, probe_trap, {0} },
+    //{ 0, "double_fault",                   0x0,        probe_trap, {0} },
+    { 0, "do_coprocessor_segment_overrun", 0x0,        probe_trap, {0} },
+    { 0, "do_invalid_TSS",                 0x0,        probe_trap, {0} },
+    { 0, "do_segment_not_present",         0x0,        probe_trap, {0} },
+    { 0, "do_stack_segment",               0x0,        probe_trap, {0} },
+    { 0, "do_general_protection",          0x0,        probe_trap, {0} },
+    { 0, "do_page_fault",                  0x0,        probe_trap, {0} },
+    //{ 0, "spurious_interrupt_bug",         0x0,        probe_trap, {0} },
+    { 0, "do_coprocessor_error",           0x0,        probe_trap, {0} },
+    { 0, "do_alignment_check",             0x0,        probe_trap, {0} },
+    //{ 0, "intel_machine_check",            0x0,        probe_trap, {0} },
+    { 0, "do_simd_coprocessor_error",      0x0,        probe_trap, {0} },
+    //{ 1, "system_call",                    0xc01052e8, probe_syscall, {0} },
+    { 0, "do_IRQ",                         0x0,        probe_interrupt, {0} },
+    { 0, "schedule.switch_tasks",          0x0,        probe_task_switch,
+      { .init = init_task_switch } },
 };
 
 static void sigh(int signo)
@@ -182,6 +258,7 @@ static void sigh(int signo)
 
 int ctxprobes_init(char *domain_name, int debug_level)
 {
+    unsigned task_struct_addr;
     int i, probe_count;
     int ret;
 
@@ -231,7 +308,7 @@ int ctxprobes_init(char *domain_name, int debug_level)
                                   probe_list[i].symbol, 
                                   probe_list[i].addr,
                                   probe_list[i].handler,
-                                  NULL, /* ops */
+                                  &probe_list[i].ops,
                                   PROBEPOINT_EXEC,
                                   SYMBOL_TYPE_FLAG_NONE,
                                   NULL); /* data */
@@ -242,6 +319,16 @@ int ctxprobes_init(char *domain_name, int debug_level)
             return -1;
         }
     }
+
+    task_struct_addr = current_task_addr();
+    ret = load_task_info(&task_current, task_struct_addr);
+    if (ret)
+    {
+        ERR("Cannot load current task info\n");
+        return -1;
+    }
+
+    DBG("Current task: %d (%s)\n", task_current->pid, task_current->comm);
 
     signal(SIGHUP, sigh);
     signal(SIGINT, sigh);

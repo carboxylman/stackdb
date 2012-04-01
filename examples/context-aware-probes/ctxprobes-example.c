@@ -32,17 +32,20 @@
 char *domain_name = NULL; 
 int verbose = 0; 
 
-void sys_open_call(var_t *args, int argcount)
+void sys_open_call(task_t *task, var_t *args, int argcount)
 {
     if (argcount != 3)
-        printf("argcount is not 3\n", argcount);
-    printf("sys_open(%s=%s, %s=0x%08x, %s=0x%08x)\n", 
-           args[0].name, args[0].buf,
-           args[1].name, *(int *)args[1].buf,
-           args[2].name, *(int *)args[2].buf);
+        fprintf(stderr, "%d (%s):\tsys_open args are not three but %d!\n", 
+               task->pid, task->comm, argcount);
+    else
+        printf("%d (%s):\tsys_open(%s=%s, %s=0x%08x, %s=0x%08x)\n", 
+               task->pid, task->comm,
+               args[0].name, args[0].buf,
+               args[1].name, *(int *)args[1].buf,
+               args[2].name, *(int *)args[2].buf);
 }
 
-void sys_open_return(var_t *args, int argcount, var_t retval)
+void sys_open_return(task_t *task, var_t *args, int argcount, var_t retval)
 {
     printf("sys_open returned\n");
 }
@@ -110,14 +113,14 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to register probe on sys_open call\n");
         exit(1);
     }
-
+#if 0
     ret = ctxprobes_func_return("sys_open", sys_open_return);
     if (ret)
     {
         fprintf(stderr, "failed to register probe on sys_open return\n");
         exit(1);
     }
-
+#endif
     ctxprobes_wait();
 
     ctxprobes_cleanup();

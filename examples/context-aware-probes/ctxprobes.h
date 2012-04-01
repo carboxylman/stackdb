@@ -33,10 +33,18 @@ typedef struct var {
 	char *buf;
 } var_t;
 
-typedef void (*ctxprobes_func_call_handler_t)(var_t *arg_list,
+typedef struct task {
+    unsigned int pid;
+	char *comm;
+	struct task *parent;
+} task_t;
+
+typedef void (*ctxprobes_func_call_handler_t)(task_t *task,
+                                              var_t *arg_list,
                                               int arg_count);
 
-typedef void (*ctxprobes_func_return_handler_t)(var_t *arg_list, 
+typedef void (*ctxprobes_func_return_handler_t)(task_t *task,
+                                                var_t *arg_list, 
                                                 int arg_count,
                                                 var_t retval);
 
