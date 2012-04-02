@@ -14,17 +14,18 @@ clrange_t clrange_create() {
 
 int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
     struct clf_range_data *crd = (struct clf_range_data *)malloc(sizeof(*crd));
-    PWord_t pv;
+    PWord_t pv = NULL;
     struct array_list *alist;
     int created = 0;
 
     crd->end = end;
     crd->data = data;
 
-    JLG(pv,*clf,start);
+    if (*clf) 
+	JLG(pv,*clf,start);
     if (!pv) {
 	//fprintf(stderr,"inserting new alist for 0x%lx,0x%lx\n",start,end);
-	fflush(stderr);
+	//fflush(stderr);
 	alist = array_list_create(1);
 	created = 1;
 	JLI(pv,*clf,start);
@@ -52,21 +53,23 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
 int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data) {
     struct clf_range_data *crd;
     PWord_t pv;
+    struct array_list *alist;
+    int i;
 
     /* We look for an exact match, and update the end value if there is
-     * an exact match for this start addr, but only update the data if
-     * @data is non-NULL and the start addr matches.
+     * an exact match for this start addr and data.
      */
     JLG(pv,*clf,start);
     if (!pv) 
 	return -1;
 
-    crd = (struct clf_range_data *)*pv;
-    if (crd->end != end) {
-	crd->end = end;
-
-	if (data)
-	    crd->data = data;
+    alist = (struct array_list *)*pv;
+    for (i = 0; i < array_list_len(alist); ++i) {
+	crd = (struct clf_range_data *)array_list_item(alist,i);
+	if (crd->end != end && crd->data == data) {
+	    crd->end = end;
+	    break;
+	}
     }
 
     return 0;
@@ -163,11 +166,13 @@ clmatch_t clmatch_create() {
  * index.  If you 
  */
 int clmatch_add(clmatch_t *clf,Word_t index,void *data) {
-    PWord_t pv;
+    PWord_t pv = NULL;
     struct array_list *alist;
     int created = 0;
 
-    JLG(pv,*clf,index);
+
+    if (*clf) 
+	JLG(pv,*clf,index);
     if (!pv) {
 	alist = array_list_create(1);
 	created = 1;
