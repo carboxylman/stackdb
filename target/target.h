@@ -265,7 +265,8 @@ struct mmap_entry *location_mmap(struct target *target,
 const char *disasm_get_inst_name(inst_type_t type);
 int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 				    unsigned char *inst_buf,unsigned int buf_len,
-				    struct array_list **offset_list,ADDR base);
+				    struct array_list **offset_list,ADDR base,
+				    int noabort);
 int disasm_get_prologue_stack_size(struct target *target,
 				   unsigned char *inst_buf,unsigned int buf_len,
 				   int *sp);

@@ -176,7 +176,7 @@ struct probe *probe_register_symbol_name(struct probe *probe,
 struct probe *probe_register_function_ee(struct probe *probe,
 					 probepoint_style_t style,
 					 struct bsymbol *bsymbol,
-					 int force_at_entry);
+					 int force_at_entry,int noabort);
 
 struct probe *probe_register_inlined_symbol(struct probe *probe,
 					    struct bsymbol *bsymbol,
@@ -190,7 +190,10 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
  * can.  Then, for each @inst,@probe tuple, it registers @probe at the
  * address of that instruction type.  The user can supply as many
  * @inst,@type tuples as they wish, but each @inst must be unique
- * (unchecked, so don't shoot yourself in the foot!).
+ * (unchecked, so don't shoot yourself in the foot!).  If you set
+ * @noabort to nonzero, the disassembler will continue even if it sees
+ * an undecodeable instruction (it just skips one byte and tries to keep
+ * going).
  *
  * IMPORTANT: you *must* end the list with INST_NONE !!!
  *
@@ -200,6 +203,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 #include <disasm.h>
 struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     probepoint_style_t style,
+					     int noabort,
 					     inst_type_t inst,
 					     struct probe *probe,...);
 #endif

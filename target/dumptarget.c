@@ -131,7 +131,7 @@ ADDR instrument_func(struct bsymbol *bsymbol) {
 					    NULL,0);
 	free(buf);
 
-	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,
+	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
 					    INST_RET,rprobe,
 					    INST_CALL,cprobe,
 					    INST_NONE)) {
@@ -834,9 +834,10 @@ int main(int argc,char **argv) {
 		)
 		goto resume;
 #ifdef ENABLE_XENACCESS
-	    else if (domain && !raw) {
-		fprintf(stderr,"ERROR: unexpected Xen interrupt; trying to cleanup!\n");
-		goto exit;
+	    else if (domain) { // && !raw) {
+		goto resume;
+		//fprintf(stderr,"ERROR: unexpected Xen interrupt; trying to cleanup!\n");
+		//goto exit;
 	    }
 #endif
 	    else {

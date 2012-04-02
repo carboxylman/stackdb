@@ -53,7 +53,7 @@ struct probe *probe_register_symbol_name(struct probe *probe,
 struct probe *probe_register_function_ee(struct probe *probe,
 					 probepoint_style_t style,
 					 struct bsymbol *bsymbol,
-					 int force_at_entry) {
+					 int force_at_entry,int noabort) {
     struct target *target = probe->target;
     struct memrange *range;
     struct memrange *newrange;
@@ -143,7 +143,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
     }
 
     if (disasm_get_control_flow_offsets(target,INST_CF_RET,funccode,funclen,
-					&cflist,funcrange->r.a.lowpc)) {
+					&cflist,funcrange->r.a.lowpc,noabort)) {
 	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
 	goto errout;
     }
@@ -221,6 +221,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 
 struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     probepoint_style_t style,
+					     int noabort,
 					     inst_type_t inst,
 					     struct probe *probe,...) {
     va_list ap;
@@ -297,7 +298,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     funccode[funclen] = 0;
 
     if (disasm_get_control_flow_offsets(target,cfflags,funccode,funclen,
-					&cflist,funcrange->r.a.lowpc)) {
+					&cflist,funcrange->r.a.lowpc,noabort)) {
 	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
 	goto errout;
     }
