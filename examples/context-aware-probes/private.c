@@ -62,6 +62,7 @@ struct pt_regs {
 #define THREAD_SIZE (8192)
 #define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
 
+/* FIXME: remove this and get size and offsets from debug-info. */
 #define TASK_STRUCT_SIZE (1312)
 #define TASK_PID_OFFSET (168)
 #define TASK_TGID_OFFSET (172)
@@ -177,12 +178,12 @@ int register_return_probe(char *symbol,
     char *name;
     struct probe *cprobe;
     
-    struct dump_info udn = {
-        .stream = stderr,
-        .prefix = "",
-        .detail = 1,
-        .meta = 1,
-    };
+    //struct dump_info udn = {
+    //    .stream = stderr,
+    //    .prefix = "",
+    //    .detail = 1,
+    //    .meta = 1,
+    //};
 
     bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
     if (!bsymbol)
@@ -191,7 +192,7 @@ int register_return_probe(char *symbol,
         return -1;
     }
 
-    bsymbol_dump(bsymbol, &udn);
+    //bsymbol_dump(bsymbol, &udn);
 
     /* Dissasemble the function and grab a list of
      * RET instrs, and insert more child
@@ -318,9 +319,12 @@ unsigned long current_task_addr(void)
     return task_addr;
 }
 
-int load_task_info(task_t **task, unsigned long task_struct_addr)
+int load_task_info(task_t **ptask, unsigned long task_struct_addr)
 {
     unsigned char *task_struct_buf;
+    unsigned long parent_addr;
+    unsigned long real_parent_addr;
+    task_t *task, *current, *parent;
 
     task_struct_buf = (unsigned char *)malloc(TASK_STRUCT_SIZE);
     if (!task_struct_buf)
@@ -337,32 +341,88 @@ int load_task_info(task_t **task, unsigned long task_struct_addr)
         return -1;
     }
 
-    task_t *tsk = (task_t *)malloc(sizeof(task_t));
-    if (!tsk)
+    task = (task_t *)malloc(sizeof(task_t));
+    if (!task)
     {
         free(task_struct_buf);
         return -1;
     }
-    memset(tsk, 0, sizeof(task_t));
+    memset(task, 0, sizeof(task_t));
 
-    tsk->pid = *((unsigned int *)(task_struct_buf + TASK_PID_OFFSET));
-    if ((char *)(task_struct_buf + TASK_COMM_OFFSET) != NULL)
-        tsk->comm = strndup((char *)(task_struct_buf + TASK_COMM_OFFSET), 16);
+    current = task;
+
+    while (1)
+    {
+        task->pid = *((unsigned int *)(task_struct_buf + TASK_PID_OFFSET));
+        task->tgid = *((unsigned int *)(task_struct_buf + TASK_TGID_OFFSET));
+        task->uid = *((unsigned int *)(task_struct_buf + TASK_UID_OFFSET));
+        task->euid = *((unsigned int *)(task_struct_buf + TASK_EUID_OFFSET));
+        task->suid = *((unsigned int *)(task_struct_buf + TASK_SUID_OFFSET));
+        task->fsuid = *((unsigned int *)(task_struct_buf + TASK_FSUID_OFFSET));
+        task->gid = *((unsigned int *)(task_struct_buf + TASK_GID_OFFSET));
+        task->egid = *((unsigned int *)(task_struct_buf + TASK_EGID_OFFSET));
+        task->sgid = *((unsigned int *)(task_struct_buf + TASK_SGID_OFFSET));
+        task->fsgid = *((unsigned int *)(task_struct_buf + TASK_FSGID_OFFSET));
+        if ((char *)(task_struct_buf + TASK_COMM_OFFSET) != NULL)
+        {
+            task->comm = 
+                strndup((char *)(task_struct_buf + TASK_COMM_OFFSET), 16);
+        }
+        real_parent_addr = 
+            *((unsigned long *)(task_struct_buf + TASK_REAL_PARENT_OFFSET));
+        parent_addr = 
+            *((unsigned long *)(task_struct_buf + TASK_PARENT_OFFSET));
+
+        if (task->pid == 0)
+        {
+			task->parent = NULL;
+            break;
+        }
+
+        memset(task_struct_buf, 0, TASK_STRUCT_SIZE);
+
+        if (!target_read_addr(t, 
+                              parent_addr, 
+                              TASK_STRUCT_SIZE, 
+                              task_struct_buf, 
+                              NULL))
+        {
+            free(task_struct_buf);
+            unload_task_info(current);
+            return -1;
+        }
+
+        parent = (task_t *)malloc(sizeof(task_t));
+        if (!parent)
+        {
+            free(task_struct_buf);
+            unload_task_info(current);
+            return -1;
+        }
+        memset(parent, 0, sizeof(task_t));
+
+        task->parent = parent;
+        task = parent;
+    }
 
     free(task_struct_buf);
 
-    *task = tsk;
+    *ptask = current;
 
     return 0;
 }
 
 void unload_task_info(task_t *task)
 {
-    if (task)
+    task_t *parent;
+    
+    while (task)
     {
+        parent = task->parent;
         if (task->comm)
             free(task->comm);
         free(task);
+        task = parent;
     }
 }
 

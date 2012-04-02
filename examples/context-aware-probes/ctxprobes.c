@@ -54,23 +54,24 @@ static int probe_func_call(struct probe *probe,
                            struct probe *trigger)
 {
     var_t *arg_list = NULL;
-    int ret, arg_count = 0;
+    int arg_count = 0;
+    //int ret;
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
 
     DBG("Function call: %s\n", probe->name);
  
-    ret = load_func_args(&arg_list, &arg_count, probe);
-    if (ret)
-    {
-        ERR("Failed to load function args\n");
-        //return 1;
-    }
+    //ret = load_func_args(&arg_list, &arg_count, probe);
+    //if (ret)
+    //{
+    //    ERR("Failed to load function args\n");
+    //    return 1;
+    //}
 
     handler(task_current, arg_list, arg_count);
 
-    unload_func_args(arg_list, arg_count);
+    //unload_func_args(arg_list, arg_count);
 
     return 0;
 }
@@ -92,14 +93,14 @@ static int probe_func_return(struct probe *probe,
     if (ret)
     {
         ERR("Failed to load function args\n");
-        //return 1;
+        return 1;
     }
 
     ret = load_func_retval(&retval, probe);
     if (ret)
     {
         ERR("Failed to load function retval\n");
-        //return 1;
+        return 1;
     }
 
     handler(task_current, arg_list, arg_count, retval);
@@ -224,28 +225,50 @@ typedef struct probe_entry {
  */
 const probe_entry_t probe_list[] = 
 {
-    { 0, "do_divide_error",                0x0,        probe_trap, {0} },
-    { 0, "do_debug",                       0x0,        probe_trap, {0} },
-    { 0, "do_nmi",                         0x0,        probe_trap, {0} },
-    { 0, "do_int3",                        0x0,        probe_trap, {0} },
-    { 0, "do_overflow",                    0x0,        probe_trap, {0} },
-    { 0, "do_bounds",                      0x0,        probe_trap, {0} },
-    { 0, "do_invalid_op",                  0x0,        probe_trap, {0} },
-    //{ 1, "device_not_available",           0xc01055a8, probe_trap, {0} },
-    //{ 0, "double_fault",                   0x0,        probe_trap, {0} },
-    { 0, "do_coprocessor_segment_overrun", 0x0,        probe_trap, {0} },
-    { 0, "do_invalid_TSS",                 0x0,        probe_trap, {0} },
-    { 0, "do_segment_not_present",         0x0,        probe_trap, {0} },
-    { 0, "do_stack_segment",               0x0,        probe_trap, {0} },
-    { 0, "do_general_protection",          0x0,        probe_trap, {0} },
-    { 0, "do_page_fault",                  0x0,        probe_trap, {0} },
-    //{ 0, "spurious_interrupt_bug",         0x0,        probe_trap, {0} },
-    { 0, "do_coprocessor_error",           0x0,        probe_trap, {0} },
-    { 0, "do_alignment_check",             0x0,        probe_trap, {0} },
-    //{ 0, "intel_machine_check",            0x0,        probe_trap, {0} },
-    { 0, "do_simd_coprocessor_error",      0x0,        probe_trap, {0} },
-    //{ 1, "system_call",                    0xc01052e8, probe_syscall, {0} },
-    { 0, "do_IRQ",                         0x0,        probe_interrupt, {0} },
+    { 0, "do_divide_error",                0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_debug",                       0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_nmi",                         0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_int3",                        0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_overflow",                    0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_bounds",                      0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_invalid_op",                  0x0,        probe_trap, 
+      { .init = NULL } },
+    //{ 1, "device_not_available",           0xc01055a8, probe_trap, 
+    //  { .init = NULL } },
+    //{ 0, "double_fault",                   0x0,        probe_trap, 
+    //  { .init = NULL } },
+    { 0, "do_coprocessor_segment_overrun", 0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_invalid_TSS",                 0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_segment_not_present",         0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_stack_segment",               0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_general_protection",          0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_page_fault",                  0x0,        probe_trap, 
+      { .init = NULL } },
+    //{ 0, "spurious_interrupt_bug",         0x0,        probe_trap, 
+    //  { .init = NULL } },
+    { 0, "do_coprocessor_error",           0x0,        probe_trap, 
+      { .init = NULL } },
+    { 0, "do_alignment_check",             0x0,        probe_trap, 
+      { .init = NULL } },
+    //{ 0, "intel_machine_check",            0x0,        probe_trap, 
+    //  { .init = NULL } },
+    { 0, "do_simd_coprocessor_error",      0x0,        probe_trap, 
+      { .init = NULL } },
+    //{ 1, "system_call",                    0xc01052e8, probe_syscall, 
+    //  { .init = NULL } },
+    { 0, "do_IRQ",                         0x0,        probe_interrupt, 
+      { .init = NULL } },
     { 0, "schedule.switch_tasks",          0x0,        probe_task_switch,
       { .init = init_task_switch } },
 };
@@ -308,7 +331,7 @@ int ctxprobes_init(char *domain_name, int debug_level)
                                   probe_list[i].symbol, 
                                   probe_list[i].addr,
                                   probe_list[i].handler,
-                                  &probe_list[i].ops,
+                                  (struct probe_ops *)&probe_list[i].ops,
                                   PROBEPOINT_EXEC,
                                   SYMBOL_TYPE_FLAG_NONE,
                                   NULL); /* data */

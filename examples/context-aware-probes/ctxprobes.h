@@ -29,14 +29,18 @@
 
 typedef struct var {
     char *name;
-	int size;
-	char *buf;
+    int size;
+    char *buf;
 } var_t;
 
 typedef struct task {
     unsigned int pid;
-	char *comm;
-	struct task *parent;
+    unsigned int tgid;
+    struct task *real_parent;
+    struct task *parent;
+    unsigned int uid, euid, suid, fsuid;
+    unsigned int gid, egid, sgid, fsgid;
+    char *comm;
 } task_t;
 
 typedef void (*ctxprobes_func_call_handler_t)(task_t *task,

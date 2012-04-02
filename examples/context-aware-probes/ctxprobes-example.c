@@ -34,20 +34,25 @@ int verbose = 0;
 
 void sys_open_call(task_t *task, var_t *args, int argcount)
 {
-    if (argcount != 3)
-        fprintf(stderr, "%d (%s):\tsys_open args are not three but %d!\n", 
-               task->pid, task->comm, argcount);
+    if (!args)
+        printf("%d (%s): sys_open called\n", task->pid, task->comm);
     else
-        printf("%d (%s):\tsys_open(%s=%s, %s=0x%08x, %s=0x%08x)\n", 
+        printf("%d (%s): sys_open(%s=%s, %s=%x, %s=%x) called\n", 
                task->pid, task->comm,
                args[0].name, args[0].buf,
                args[1].name, *(int *)args[1].buf,
                args[2].name, *(int *)args[2].buf);
+    printf("- Parent task chain: \n");
+    while (task->parent)
+    {
+        printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
+        task = task->parent;
+    }
 }
 
 void sys_open_return(task_t *task, var_t *args, int argcount, var_t retval)
 {
-    printf("sys_open returned\n");
+    printf("%d (%s): sys_open returned\n", task->pid, task->comm);
 }
 
 /* command parser for GNU argp - see  GNU docs for more info */
@@ -80,7 +85,7 @@ const struct argp_option cmd_opts[] =
     { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
       .doc = "Verbose" },
 
-    {0,}
+    { .name = NULL }
 };
 
 const struct argp parser_def =
