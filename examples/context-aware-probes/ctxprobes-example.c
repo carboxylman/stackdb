@@ -41,13 +41,17 @@ void sys_open_call(char *symbol,
                    int argcount, 
                    task_t *task)
 {
-    //printf("%d (%s): sys_open(%s=%s, %s=%x, %s=%x) called\n", 
-    //       task->pid, task->comm,
-    //       args[0].name, args[0].buf,
-    //       args[1].name, *(int *)args[1].buf,
-    //       args[2].name, *(int *)args[2].buf);
-    printf("%d (%s): %s called\n", task->pid, task->comm, symbol);
-
+    if (!args || argcount < 3)
+        printf("%d (%s): %s called, but failed to load args\n", 
+               task->pid, task->comm, symbol);
+    else
+        printf("%d (%s): %s(%s=%s, %s=0x%x, %s=0x%x)\n", 
+               task->pid, task->comm,
+               symbol,
+               args[0].name, args[0].buf,
+               args[1].name, *(int *)args[1].buf,
+               args[2].name, *(int *)args[2].buf);
+    
     printf("- Parent task chain: \n");
     while (task->parent)
     {
@@ -129,6 +133,7 @@ int main(int argc, char *argv[])
     //    exit(1);
     //}
 
+    printf("Starting instrumentation ...\n");
     ctxprobes_wait();
 
     ctxprobes_cleanup();

@@ -56,7 +56,7 @@ static int probe_func_call(struct probe *probe,
 	char *symbol;
     var_t *arg_list = NULL;
     int arg_count = 0;
-    //int ret;
+    int ret;
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
@@ -65,13 +65,13 @@ static int probe_func_call(struct probe *probe,
 
     DBG("Function call: %s\n", symbol);
  
-    //ret = load_func_args(&arg_list, &arg_count, probe);
-    //if (ret)
-    //    ERR("Failed to load function args\n");
+    ret = load_func_args(&arg_list, &arg_count, probe);
+    if (ret)
+        ERR("Failed to load function args\n");
 
     handler(symbol, arg_list, arg_count, task_current);
 
-    //unload_func_args(arg_list, arg_count);
+    unload_func_args(arg_list, arg_count);
 
     return 0;
 }
@@ -124,13 +124,13 @@ static int probe_trap(struct probe *probe,
 //    return 0;
 //}
 
-static int probe_interrupt(struct probe *probe, 
-                           void *data, 
-                           struct probe *trigger)
-{
-    DBG("Interrupt: %s\n", probe->name);
-    return 0;
-}
+//static int probe_interrupt(struct probe *probe, 
+//                           void *data, 
+//                           struct probe *trigger)
+//{
+//    DBG("Interrupt: %s\n", probe->name);
+//    return 0;
+//}
 
 static int init_task_switch(struct probe *probe)
 {
@@ -273,8 +273,8 @@ const probe_entry_t probe_list[] =
       { .init = NULL } },
     //{ 1, "system_call",                    0xc01052e8, probe_syscall, 
     //  { .init = NULL } },
-    { 0, "do_IRQ",                         0x0,        probe_interrupt, 
-      { .init = NULL } },
+    //{ 0, "do_IRQ",                         0x0,        probe_interrupt, 
+    //  { .init = NULL } },
     { 0, "schedule.switch_tasks",          0x0,        probe_task_switch,
       { .init = init_task_switch } },
 };
@@ -383,12 +383,11 @@ void ctxprobes_cleanup(void)
         DBG("Ending trace.\n");
      
         unregister_probes(probes);
+        unload_task_info(task_current);
         target_close(t);
 
         DBG("Ended trace.\n");
         
-        unload_task_info(task_current);
-
         task_current = NULL;
         probes = NULL;
         t = NULL;
