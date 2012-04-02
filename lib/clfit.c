@@ -49,6 +49,29 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
     return -1;
 }
 
+int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data) {
+    struct clf_range_data *crd;
+    PWord_t pv;
+
+    /* We look for an exact match, and update the end value if there is
+     * an exact match for this start addr, but only update the data if
+     * @data is non-NULL and the start addr matches.
+     */
+    JLG(pv,*clf,start);
+    if (!pv) 
+	return -1;
+
+    crd = (struct clf_range_data *)*pv;
+    if (crd->end != end) {
+	crd->end = end;
+
+	if (data)
+	    crd->data = data;
+    }
+
+    return 0;
+}
+
 void *clrange_find(clrange_t *clf,Word_t index) {
     PWord_t pv;
     struct array_list *alist;
@@ -112,6 +135,9 @@ void clrange_free(clmatch_t *clf) {
     int rci;
     Word_t index;
     Word_t bytes_freed;
+
+    if (!clf || !*clf)
+	return;
 
     /* This stinks -- we have to free each element one by one. */
     while (1) {

@@ -36,6 +36,7 @@
 #include "log.h"
 #include "output.h"
 #include "common.h"
+#include "clfit.h"
 
 #if ELFUTILS_NO_VERSION_H
 #define _INT_ELFUTILS_VERSION ELFUTILS_BIN_VERSION
@@ -327,6 +328,20 @@ void symtab_set_name(struct symtab *symtab,char *srcfilename);
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname);
 void symtab_set_producer(struct symtab *symtab,char *producer);
 void symtab_dump(struct symtab *symtab,struct dump_info *ud);
+/*
+ * Since we can get symtab info from multiple places (i.e.,
+ * .debug_aranges, and from .debug_info), we need to be able to update
+ * 1) the symtab's ranges, and 2) the debugfile's ranges lookup data
+ * struct.  This function handles adding a new range, or updating an old
+ * one whose end address may have changed (i.e., dwarf inconsistencies),
+ * or converting a RANGE_TYPE_PC to a RANGE_TYPE_LIST.  If you supply
+ * @rt_hint, and the current type of the symtab's range is NONE, we will
+ * create a range of type @rt_hint (i.e., if you know that there will be
+ * more than one range entry, supply RANGE_TYPE_LIST; if this is the
+ * only one, use RANGE_TYPE_PC).
+ */
+void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
+			 range_type_t rt_hint);
 void symtab_free(struct symtab *symtab);
 #ifdef DWDEBUG_USE_STRTAB
 int symtab_str_in_strtab(struct symtab *symtab,char *strp);
@@ -777,6 +792,8 @@ struct debugfile {
      * h(identifier) = global_die_offset
      */
     GHashTable *pubnames;
+
+    clrange_t ranges;
 };
 
 struct range_list_entry {

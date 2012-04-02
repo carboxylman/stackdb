@@ -369,19 +369,39 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 }
 
 struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
+    struct symtab *symtab;
     struct lsymbol *ls;
     struct symbol *s = (struct symbol *)g_hash_table_lookup(debugfile->addresses,
 							    (gpointer)addr);
 
-    if (!s) 
-	return NULL;
+    if (!s) {
+	/* If we didn't find it, try our symtab search struct! */
+	symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
 
-    ls = lsymbol_create_from_symbol(s);
+	if (symtab) {
+	    while (1) {
+		if (symtab->symtab_symbol) {
+		    s = symtab->symtab_symbol;
+		    break;
+		}
+		else if (symtab->parent) 
+		    symtab = symtab->parent;
+		else 
+		    break;
+	    }
+	}
+    }
 
-    if (ls)
-	lsymbol_hold(ls);
+    if (s) {
+	ls = lsymbol_create_from_symbol(s);
 
-    return ls;
+	if (ls)
+	    lsymbol_hold(ls);
+
+	return ls;
+    }
+
+    return NULL;
 }
 
 static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
@@ -876,6 +896,8 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
     debugfile->pubnames = g_hash_table_new_full(g_str_hash,g_str_equal,
 						free,NULL);
 
+    debugfile->ranges = clrange_create();
+
     return debugfile;
 }
 
@@ -909,10 +931,38 @@ struct debugfile *debugfile_filename_create(char *filename,debugfile_type_t type
 }
 
 int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab) {
-    if (unlikely(g_hash_table_lookup(debugfile->srcfiles,symtab->name)))
-	return 1;
-    vdebug(3,LOG_D_DFILE,"adding symtab %s:%s\n",debugfile->idstr,symtab->name);
-    g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
+    gpointer retp;
+
+    /* If it's a root (CU) symtab, add it to the main hashtable. */
+    if (SYMTAB_IS_ROOT(symtab)) {
+	if (symtab->name) {
+	    if ((retp = g_hash_table_lookup(debugfile->srcfiles,
+					    symtab->name)) != NULL
+		&& retp != symtab)
+		return 1;
+	    else if (retp == symtab)
+		return 0;
+	    else {
+		vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:%s\n",
+		       debugfile->idstr,symtab->name);
+		g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
+	    }
+	}
+
+	if ((retp = g_hash_table_lookup(debugfile->cuoffsets,
+					(gpointer)(uintptr_t)symtab->ref)) != NULL
+	    && retp != symtab)
+	    return 2;
+	else if (retp == symtab)
+	    return 0;
+	else {
+	    g_hash_table_insert(debugfile->cuoffsets,
+				(gpointer)(uintptr_t)symtab->ref,symtab);
+	    vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:0x%"PRIxSMOFFSET"\n",
+		   debugfile->idstr,symtab->ref);
+	}
+    }
+    
     return 0;
 }
 
@@ -975,6 +1025,8 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
      * destroyed as a result of this.
      */
     g_hash_table_destroy(debugfile->srcfiles);
+
+    clrange_free(&debugfile->ranges);
 
     if (debugfile->strtab)
 	free(debugfile->strtab);
@@ -1041,6 +1093,13 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 }
 
 void symtab_set_name(struct symtab *symtab,char *name) {
+
+    /* If this top-level symtab is being renamed, remove it from our
+     * debugfile!
+     */
+    if (name && SYMTAB_IS_ROOT(symtab) && symtab->debugfile && symtab->name)
+	g_hash_table_remove(symtab->debugfile->srcfiles,symtab->name);
+
     if (name 
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,name))
@@ -1049,6 +1108,13 @@ void symtab_set_name(struct symtab *symtab,char *name) {
 	symtab->name = strdup(name);
     else 
 	symtab->name = name;
+
+    /* If this top-level symtab wasn't in our debugfile srcfiles
+     * hash, add it!
+     */
+    if (name && SYMTAB_IS_ROOT(symtab) && symtab->debugfile 
+	&& !g_hash_table_lookup(symtab->debugfile->srcfiles,symtab->name)) 
+	g_hash_table_insert(symtab->debugfile->srcfiles,symtab->name,symtab);
 }
 
 char *symtab_get_name(struct symtab *symtab) {
@@ -1112,6 +1178,128 @@ int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
 
     verror("VERY BAD -- tried to insert a non-anonymous symbol with no name!\n");
     return 1;
+}
+
+void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
+			 range_type_t rt_hint) {
+    struct range *r = &symtab->range;
+    int i;
+
+    if (r->rtype == RANGE_TYPE_NONE) {
+	if (rt_hint == RANGE_TYPE_LIST) {
+	    r->rtype = RANGE_TYPE_LIST;
+	    /* Reset it -- it's a union, so we need to clear what's there! */
+	    memset(&r->r.rlist,0,sizeof(struct range_list));
+
+	    /* And the new thing. */
+	    range_list_add(&r->r.rlist,start,end);
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(8,LOG_D_DWARF,
+		   "init RANGE_LIST(0x%"PRIxADDR",0x%"PRIxADDR")"
+		   " for symtab 0x%"PRIxSMOFFSET"\n",start,end,symtab->ref);
+	}
+	else {
+	    r->rtype = RANGE_TYPE_PC;
+
+	    r->r.a.lowpc = start;
+	    r->r.a.highpc = end;
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(8,LOG_D_DWARF,
+		   "init RANGE_PC(0x%"PRIxADDR",0x%"PRIxADDR")"
+		   " for symtab 0x%"PRIxSMOFFSET"\n",start,end,symtab->ref);
+	}
+    }
+    else if (r->rtype == RANGE_TYPE_PC) {
+	ADDR olowpc = r->r.a.lowpc;
+	ADDR ohighpc = r->r.a.highpc;
+
+	/* If the start/end range matches the current thing, do nothing! */
+	if (olowpc == start && ohighpc == end) {
+	    return;
+	}
+	/* If the start address is equal, but the end is not, warn about
+	 * inconsistent DWARF, but update the range -- both here and in
+	 * the debugfile->ranges clrange struct!
+	 */
+	else if (olowpc == start && ohighpc != end) {
+	    r->r.a.highpc = end;
+
+	    if (symtab->debugfile) 
+		clrange_update_end(&symtab->debugfile->ranges,start,end,symtab);
+
+	    verror("inconsistent RANGE_PC end: 0x%"PRIxADDR",0x%"PRIxADDR
+		   " (new end 0x%"PRIxADDR") for symtab 0x%"PRIxSMOFFSET
+		   "; updating!\n",start,ohighpc,end,symtab->ref);
+	}
+	/* If the start addrs don't match, or neither start nor end
+	 * match, this symtab was of RANGE_TYPE_PC, but now we must
+	 * convert it to a RANGE_TYPE_LIST.
+	 */
+	else {
+	    r->rtype = RANGE_TYPE_LIST;
+	    /* Reset it -- it's a union, so we need to clear what's there! */
+	    memset(&r->r.rlist,0,sizeof(struct range_list));
+
+	    /* Add the old thing. */
+	    range_list_add(&r->r.rlist,olowpc,ohighpc);
+
+	    /* And the new thing. */
+	    range_list_add(&r->r.rlist,start,end);
+	    vdebug(5,LOG_D_DWARF,
+		   "converted RANGE_PC to LIST with new entry (0x%"PRIxADDR
+		   ",0x%"PRIxADDR")\n",start,end);
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(7,LOG_D_DWARF,
+		   "converting RANGE_PC to LIST; new entry (0x%"PRIxADDR
+		   ",0x%"PRIxADDR") for symtab 0x%"PRIxSMOFFSET"\n",
+		   start,end,symtab->ref);
+	}
+    }
+    else if (r->rtype == RANGE_TYPE_LIST) {
+	/* Look through the list and see if any of the start addrs match
+	 * this one; if so, and the end doesn't match, update that one.
+	 * Otherwise, add a new one.
+	 */
+	for (i = 0; i < r->r.rlist.len; ++i) {
+	    if (r->r.rlist.list[i]->start == start
+		&& r->r.rlist.list[i]->end != end) {
+		verror("inconsistent RANGE_LIST entry end: 0x%"PRIxADDR
+		       ",0x%"PRIxADDR" (new end 0x%"PRIxADDR
+		       ") for symtab 0x%"PRIxSMOFFSET"; updating!\n",
+		       start,r->r.rlist.list[i]->end,end,symtab->ref);
+
+		r->r.rlist.list[i]->end = end;
+		
+		if (symtab->debugfile) 
+		    clrange_update_end(&symtab->debugfile->ranges,start,end,
+				       symtab);
+
+		break;
+	    }
+	}
+
+	if (i == r->r.rlist.len) {
+	    range_list_add(&r->r.rlist,start,end);
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(8,LOG_D_DWARF,
+		   "added RANGE_LIST entry (0x%"PRIxADDR",0x%"PRIxADDR
+		   ") for symtab 0x%"PRIxSMOFFSET")\n",start,end,symtab->ref);
+	}
+    }
+
+    return;
 }
 
 void symtab_free(struct symtab *symtab) {

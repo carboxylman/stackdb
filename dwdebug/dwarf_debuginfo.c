@@ -69,6 +69,11 @@ struct attrcb_args {
     GHashTable *reftab;
     int quick;
     GHashTable *cu_abstract_origins;
+
+    ADDR lowpc;
+    ADDR highpc;
+    uint8_t lowpc_set:1,
+	highpc_is_offset:1;
 };
 
 /* Declare these now; they are used in attr_callback. */
@@ -318,40 +323,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->cu_base = addr;
 	}
 
-	/* Handle the symtab lowpc/highpc values first; function
-	 * instances are part of the symtab.  Labels are not, so we do them
-	 * separately below.
-	 *
-	 * NOTE: also, only set the symtab's low_pc/high_pc values if
-	 * this is the CU symtab, OR if this is a function symtab!
-	 * Other things may have a low_pc; we don't want to overwrite
-	 * the current symtab's lowpc/highpc values in that case!
-	 */
-	if (cbargs->symtab && (SYMBOL_IS_FUNCTION(cbargs->symbol) 
-			       || level == 0)) {
-	    if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE) {
-		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
-		cbargs->symtab->range.r.a.lowpc = addr;
-	    }
-	    else if (cbargs->symtab->range.rtype == RANGE_TYPE_PC) {
-		/* Already decoded it in get_aranges; just check here! */
-		if (cbargs->symtab->range.r.a.lowpc != addr) {
-		    vwarn("inconsistent %s (aranges?) 0x%"PRIx64" (was 0x%"PRIxADDR") at %"PRIx64"\n",
-			  dwarf_attr_string(attr),addr,
-			  cbargs->symtab->range.r.a.lowpc,cbargs->die_offset);
-		}
-	    }
-	    else if (cbargs->symtab->range.rtype == RANGE_TYPE_LIST) {
-		/*
-		vwarn("inconsistent %s (aranges?) 0x%"PRIx64" (was 0x%"PRIx64") at %"PRIx64" (already was a RANGE_LIST!)\n",
-		      dwarf_attr_string(attr),addr,
-		      cbargs->symtab->range.r.a.lowpc,cbargs->die_offset);
-		*/ ;
-	    }
-	}
-	else if (!cbargs->symtab)
-	    vwarn("[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symtab)\n",
-		  cbargs->die_offset,addr,dwarf_attr_string(attr));
+	cbargs->lowpc = addr;
+	cbargs->lowpc_set = 1;
 
 	if (cbargs->symbol && addr < cbargs->symbol->base_addr)
 	    cbargs->symbol->base_addr = addr;
@@ -383,28 +356,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    /* it's a relative offset from low_pc; if we haven't seen
 	     * low_pc yet, just bail.
 	     */
-
-	    if (cbargs->symtab && (SYMBOL_IS_FUNCTION(cbargs->symbol) 
-				   || level == 0)) {
-		if (cbargs->symtab->range.rtype == RANGE_TYPE_PC) {
-		    /* Might have already decoded it in get_aranges;
-		     * just check here!
-		     */
-		    if (cbargs->symtab->range.r.a.highpc 
-			&& cbargs->symtab->range.r.a.highpc != \
-			     (cbargs->symtab->range.r.a.lowpc + num)) {
-			vwarn("inconsistent %s (aranges?) 0x%"PRIx64" at %"PRIx64"\n",
-			      dwarf_attr_string(attr),addr,cbargs->die_offset);
-		    }
-		    else if (cbargs->symtab->range.r.a.lowpc) {
-			cbargs->symtab->range.rtype = RANGE_TYPE_PC;
-			cbargs->symtab->range.r.a.highpc = cbargs->symtab->range.r.a.lowpc + num;
-		    }
-		    else 
-			vwarn("[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for attr %s in bad context (no lowpc yet)!\n",
-			      cbargs->die_offset,num,dwarf_attr_string(attr));
-		}
-	    }
+	    cbargs->highpc = num;
+	    cbargs->highpc_is_offset = 1;
 
 	    if (SYMBOL_IS_FULL_LABEL(cbargs->symbol)) {
 		if (RANGE_IS_LIST(&cbargs->symbol->s.ii->d.l.range)) {
@@ -426,10 +379,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	else if (addr_set) {
 	    vdebug(4,LOG_D_DWARF,"\t\t\tvalue = 0x%p\n",addr);
 
-	    if (cbargs->symtab) {
-		cbargs->symtab->range.rtype = RANGE_TYPE_PC;
-		cbargs->symtab->range.r.a.highpc = addr;
-	    }
+	    cbargs->highpc = addr;
+	    cbargs->highpc_is_offset = 0;
 
 	    /* On the off chance that high_pc is the lowest address for
 	     * this symbol, check it!
@@ -826,52 +777,32 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set && (form == DW_FORM_data4 
 			|| form == DW_FORM_data8)) {
 	    if (cbargs->symtab) {
-		if (cbargs->symtab->range.rtype == RANGE_TYPE_NONE
-		    /* DWARF allows the symtab to have its own low_pc, as
-		     * well as a range.
-		     */
-		    || level == 0) {
-		    /* If we already had set a range list in
-		     * get_aranges, just clear it and reset it here --
-		     * don't bother checking for consistency!!
-		     */
-		    if (cbargs->symtab->range.rtype == RANGE_TYPE_LIST) {
-			range_list_internal_free(&cbargs->symtab->range.r.rlist);
-			memset(&cbargs->symtab->range.r.rlist,0,
-			       sizeof(struct range_list));
-		    }
-		    else if (cbargs->symtab->range.rtype == RANGE_TYPE_PC) {
-			/*
-			 * Convert it to a list first, and ignore
-			 * whatever was set before!
-			 */
-			/* ADDR olowpc = cbargs->symtab->range.r.a.lowpc; */
-			/* ADDR ohighpc = cbargs->symtab->range.r.a.highpc; */
+		/* Just in case the symtab already has range info, we
+		 * have to get the list, then "update" the entries in
+		 * the real symtab list -- which will add them if they
+		 * don't exist, or update any conflicting entries.
+		 */
+		struct range_list rl;
+		int i;
+		memset(&rl,0,sizeof(rl));
 
-			memset(&cbargs->symtab->range.r.rlist,0,
-			       sizeof(struct range_list));
-
-			/*
-			cbargs->symtab->range.rtype = RANGE_TYPE_LIST;
-
-			range_list_add(&cbargs->symtab->range.r.rlist,olowpc,
-				       ohighpc);
-			*/
-		    }
-
-		    cbargs->symtab->range.rtype = RANGE_TYPE_LIST;
-		    if (get_rangelist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				      cbargs->addrsize,cbargs->offset_size,
-				      attr,num,
-				      cbargs->debugfile,cbargs->cu_base,
-				      &cbargs->symtab->range.r.rlist)) {
-			verror("[DIE %" PRIx64 "] failed to get rangelist attrval %" PRIx64 " for attr %s in symtab\n",
-			       cbargs->die_offset,num,dwarf_attr_string(attr));
-		    }
+		if (get_rangelist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
+				  cbargs->addrsize,cbargs->offset_size,
+				  attr,num,
+				  cbargs->debugfile,cbargs->cu_base,
+				  &rl)) {
+		    verror("[DIE %" PRIx64 "] failed to get rangelist attrval %" PRIx64 " for attr %s in symtab\n",
+			   cbargs->die_offset,num,dwarf_attr_string(attr));
 		}
 		else {
-		    verror("[DIE %" PRIx64 "] cannot set symtab rangelist; already set a range!\n",cbargs->die_offset);
+		    for (i = 0; i < rl.len; ++i) {
+			symtab_update_range(cbargs->symtab,
+					    rl.list[i]->start,rl.list[i]->end,
+					    RANGE_TYPE_LIST);
+		    }
 		}
+
+		range_list_internal_free(&rl);
 	    }
 
 	    if (cbargs->symbol && SYMBOL_IS_FULL_LABEL(cbargs->symbol)
@@ -2011,6 +1942,10 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	else 
 	    args.symtab = symtabs[level];
 
+	args.lowpc = args.highpc = 0;
+	args.lowpc_set = 0;
+	args.highpc_is_offset = 0;
+
 	args.die_offset = offset;
 	(void)dwarf_getattrs(&dies[level],attr_callback,&args,0);
 
@@ -2052,6 +1987,30 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 		    vdebug(3,LOG_D_DWARF,"skipping CU '%s'\n",symtab_get_name(cu_symtab));
 		    goto nextcuiter;
 		}
+	    }
+	}
+
+	/* If we're actually handling this CU, then... */
+
+	/* Handle updating the symtab with low_pc and high_pc attrs, if
+	 * we have a symtab, now that we have processed both attrs (if
+	 * they existed).
+	 */
+	if (args.symtab && args.lowpc_set) {
+	    if (args.highpc_is_offset
+		|| args.highpc > args.lowpc) {
+		if (!args.highpc_is_offset) 
+		    symtab_update_range(args.symtab,args.lowpc,
+					args.highpc,RANGE_TYPE_NONE);
+		else
+		    symtab_update_range(args.symtab,args.lowpc,
+					args.lowpc + args.highpc,
+					RANGE_TYPE_NONE);
+	    }
+	    else {
+		verror("bad lowpc/highpc (0x%"PRIxADDR",0x%"PRIxADDR
+		       ") for symtab at 0x%"PRIxSMOFFSET"\n",
+		       args.lowpc,args.highpc,args.symtab->ref);
 	    }
 	}
 
@@ -2926,7 +2885,7 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
 	    cu_symtab = symtab_create(debugfile,(SMOFFSET)offset,NULL,NULL,0,
 				      NULL,NULL);
-	    g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,cu_symtab);
+	    debugfile_add_symtab(debugfile,cu_symtab);
 	}
 
 	while (1) {
@@ -2945,39 +2904,11 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	    /* Two zero values mark the end.  */
 	    if (range_address == 0 && range_length == 0)
 		break;
+	    
 
-	    /* If it's the first tuple, leave it as RANGE_PC; else, change
-	     * type to RANGE_LIST and build the list!
-	     */
-	    struct range *r = &cu_symtab->range;
-	    if (r->rtype == RANGE_TYPE_NONE) {
-		r->rtype = RANGE_TYPE_PC;
-		r->r.a.lowpc = range_address;
-		r->r.a.highpc = range_address + range_length;
-		vdebug(5,LOG_D_DWARF,
-		       "added RANGE_TYPE_PC(0x%"PRIxADDR",0x%"PRIxADDR")\n",
-		       r->r.a.lowpc,r->r.a.highpc);
-	    }
-	    else if (r->rtype == RANGE_TYPE_PC) {
-		ADDR olowpc = r->r.a.lowpc;
-		ADDR ohighpc = r->r.a.highpc;
-		r->rtype = RANGE_TYPE_LIST;
-		/* reset it; it's a union? */
-		memset(&r->r.rlist,0,sizeof(struct range_list));
-		range_list_add(&r->r.rlist,olowpc,ohighpc);
-		range_list_add(&r->r.rlist,range_address,
-			       range_address + range_length);
-		vdebug(5,LOG_D_DWARF,
-		       "converted PC to LIST with new entry (0x%"PRIxADDR",0x%"PRIxADDR")\n",
-		       range_address,range_address + range_length);
-	    }
-	    else if (r->rtype == RANGE_TYPE_LIST) {
-		range_list_add(&r->r.rlist,range_address,
-			       range_address + range_length);
-		vdebug(5,LOG_D_DWARF,
-		       "added RANGE_TYPE_LIST entry (0x%"PRIxADDR",0x%"PRIxADDR")\n",
-		       range_address,range_address + range_length);
-	    }
+	    symtab_update_range(cu_symtab,range_address,
+				range_address + range_length,
+				RANGE_TYPE_NONE);
 	}
     }
 
