@@ -41,18 +41,23 @@ typedef struct task {
     unsigned int uid, euid, suid, fsuid;
     unsigned int gid, egid, sgid, fsgid;
     char *comm;
+	unsigned long vaddr; /* virtual address of the task_struct */
 } task_t;
 
-typedef void (*ctxprobes_func_call_handler_t)(task_t *task,
+typedef void (*ctxprobes_func_call_handler_t)(char *symbol,
                                               var_t *arg_list,
-                                              int arg_count);
+                                              int arg_count,
+                                              task_t *task);
 
-typedef void (*ctxprobes_func_return_handler_t)(task_t *task,
+typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
                                                 var_t *arg_list, 
                                                 int arg_count,
-                                                var_t retval);
+                                                var_t retval,
+                                                task_t *task);
 
-//typedef void (*ctxprobes_var_handler_t)(var_t *var);
+//typedef void (*ctxprobes_var_handler_t)(char *symbol,
+//                                        var_t *var,
+//                                        task_t *task);
 
 
 int ctxprobes_init(char *domain_name, int debug_level);

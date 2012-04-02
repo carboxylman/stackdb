@@ -212,7 +212,7 @@ int register_return_probe(char *symbol,
     free(name);
     if (!cprobe)
     {
-        ERR("Could not create return probe on '%s'\n",
+        ERR("Could not create call probe on '%s'\n",
             bsymbol->lsymbol->symbol->name);
         return -1;
     }
@@ -243,7 +243,7 @@ int register_return_probe(char *symbol,
     {
         probe_free(cprobe, 1);
         probe_free(rprobe, 1);
-        ERR("Could not register return probe on '%s'\n",
+        ERR("Could not register call and return probes on '%s'\n",
             bsymbol->lsymbol->symbol->name);
         return -1;
     }
@@ -368,14 +368,16 @@ int load_task_info(task_t **ptask, unsigned long task_struct_addr)
             task->comm = 
                 strndup((char *)(task_struct_buf + TASK_COMM_OFFSET), 16);
         }
+        task->vaddr = task_struct_addr;
         real_parent_addr = 
             *((unsigned long *)(task_struct_buf + TASK_REAL_PARENT_OFFSET));
         parent_addr = 
             *((unsigned long *)(task_struct_buf + TASK_PARENT_OFFSET));
 
-        if (task->pid == 0)
+        if (parent_addr == task_struct_addr || task->pid == 0)
         {
-			task->parent = NULL;
+            task->real_parent = NULL;
+            task->parent = NULL;
             break;
         }
 
@@ -403,6 +405,7 @@ int load_task_info(task_t **ptask, unsigned long task_struct_addr)
 
         task->parent = parent;
         task = parent;
+        task_struct_addr = parent_addr;
     }
 
     free(task_struct_buf);
@@ -459,6 +462,8 @@ int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe)
     };
 
     arglen = probe->bsymbol->lsymbol->symbol->s.ii->d.f.count;
+    DBG("Function %s has %d args\n", probe->name, arglen);
+
     args = (var_t *)malloc(sizeof(var_t) * arglen);
     if (!args)
     {

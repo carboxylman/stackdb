@@ -53,6 +53,7 @@ static int probe_func_call(struct probe *probe,
                            void *data,
                            struct probe *trigger)
 {
+	char *symbol;
     var_t *arg_list = NULL;
     int arg_count = 0;
     //int ret;
@@ -60,16 +61,15 @@ static int probe_func_call(struct probe *probe,
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
 
-    DBG("Function call: %s\n", probe->name);
+	symbol = probe->name;
+
+    DBG("Function call: %s\n", symbol);
  
     //ret = load_func_args(&arg_list, &arg_count, probe);
     //if (ret)
-    //{
     //    ERR("Failed to load function args\n");
-    //    return 1;
-    //}
 
-    handler(task_current, arg_list, arg_count);
+    handler(symbol, arg_list, arg_count, task_current);
 
     //unload_func_args(arg_list, arg_count);
 
@@ -80,30 +80,28 @@ static int probe_func_return(struct probe *probe,
                              void *data,
                              struct probe *trigger)
 {
+	char *symbol;
     var_t *arg_list = NULL;
     var_t retval;
-    int ret, arg_count = 0;
+    int arg_count = 0;
+    int ret;
 
     ctxprobes_func_return_handler_t handler 
         = (ctxprobes_func_return_handler_t) data;
 
-    DBG("Function return: %s\n", probe->name);
+	symbol = probe->name;
+
+    DBG("Function return: %s\n", symbol);
  
     ret = load_func_args(&arg_list, &arg_count, probe);
     if (ret)
-    {
         ERR("Failed to load function args\n");
-        return 1;
-    }
 
     ret = load_func_retval(&retval, probe);
     if (ret)
-    {
         ERR("Failed to load function retval\n");
-        return 1;
-    }
 
-    handler(task_current, arg_list, arg_count, retval);
+    handler(symbol, arg_list, arg_count, retval, task_current);
 
     unload_func_args(arg_list, arg_count);
 
@@ -118,13 +116,13 @@ static int probe_trap(struct probe *probe,
     return 0;
 }
 
-static int probe_syscall(struct probe *probe, 
-                         void *data, 
-                         struct probe *trigger)
-{
-    DBG("System call: %s\n", probe->name);
-    return 0;
-}
+//static int probe_syscall(struct probe *probe, 
+//                         void *data, 
+//                         struct probe *trigger)
+//{
+//    DBG("System call: %s\n", probe->name);
+//    return 0;
+//}
 
 static int probe_interrupt(struct probe *probe, 
                            void *data, 
@@ -199,14 +197,22 @@ static int probe_task_switch(struct probe *probe,
         return -1;
     }
 
-    DBG("Task switch: %d (%s) -> %d (%s)\n", 
-        task_prev->pid, task_prev->comm,
-        task_next->pid, task_next->comm);
+    if (task_prev->vaddr != task_next->vaddr)
+    {
+        DBG("Task switch: %d (%s) -> %d (%s)\n", 
+            task_prev->pid, task_prev->comm,
+            task_next->pid, task_next->comm);
+    }
     
     unload_task_info(task_prev);
 
-    unload_task_info(task_current);
-    task_current = task_next;
+    if (task_prev->vaddr != task_next->vaddr)
+    {
+        unload_task_info(task_current);
+        task_current = task_next;
+    }
+    else
+        unload_task_info(task_next);
 
     return 0;
 }
@@ -381,6 +387,9 @@ void ctxprobes_cleanup(void)
 
         DBG("Ended trace.\n");
         
+        unload_task_info(task_current);
+
+        task_current = NULL;
         probes = NULL;
         t = NULL;
         dom_name = NULL;

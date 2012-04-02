@@ -23,25 +23,31 @@
  * 
  */
 
-#include <argp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <getopt.h>
+#include <log.h>
 
 #include "ctxprobes.h"
 
-char *domain_name = NULL; 
-int verbose = 0; 
+extern char *optarg;
+extern int optind, opterr, optopt;
 
-void sys_open_call(task_t *task, var_t *args, int argcount)
+char *domain_name = NULL; 
+int debug_level = -1; 
+
+void sys_open_call(char *symbol, 
+                   var_t *args, 
+                   int argcount, 
+                   task_t *task)
 {
-    if (!args)
-        printf("%d (%s): sys_open called\n", task->pid, task->comm);
-    else
-        printf("%d (%s): sys_open(%s=%s, %s=%x, %s=%x) called\n", 
-               task->pid, task->comm,
-               args[0].name, args[0].buf,
-               args[1].name, *(int *)args[1].buf,
-               args[2].name, *(int *)args[2].buf);
+    //printf("%d (%s): sys_open(%s=%s, %s=%x, %s=%x) called\n", 
+    //       task->pid, task->comm,
+    //       args[0].name, args[0].buf,
+    //       args[1].name, *(int *)args[1].buf,
+    //       args[2].name, *(int *)args[2].buf);
+    printf("%d (%s): %s called\n", task->pid, task->comm, symbol);
+
     printf("- Parent task chain: \n");
     while (task->parent)
     {
@@ -50,60 +56,57 @@ void sys_open_call(task_t *task, var_t *args, int argcount)
     }
 }
 
-void sys_open_return(task_t *task, var_t *args, int argcount, var_t retval)
+void sys_open_return(char *symbol, 
+                     var_t *args, 
+                     int argcount, 
+                     var_t retval,
+                     task_t *task)
 {
-    printf("%d (%s): sys_open returned\n", task->pid, task->comm);
+    printf("%d (%s): %s returned\n", task->pid, task->comm, symbol);
 }
 
-/* command parser for GNU argp - see  GNU docs for more info */
-error_t cmd_parser(int key, char *arg, struct argp_state *state)
+void parse_opt(int argc, char *argv[])
 {
-    /*settings_t *setup = (settings_t *)state->input;*/
-
-    switch (key)
+    char ch;
+    log_flags_t debug_flags;
+    
+    while ((ch = getopt(argc, argv, "dl:")) != -1)
     {
-        case 'm': 
-            domain_name = arg;
-            break;
+        switch(ch)
+        {
+            case 'd':
+                ++debug_level;
+                break;
 
-        case 'v': 
-            verbose = 1; 
-            break;
+            case 'l':
+                if (vmi_log_get_flag_mask(optarg, &debug_flags))
+                {
+                    fprintf(stderr, "ERROR: bad debug flag in '%s'!\n", optarg);
+                    exit(-1);
+                }
+                vmi_set_log_flags(debug_flags);
+                break;
 
-        default:
-            return ARGP_ERR_UNKNOWN;
+            default:
+                fprintf(stderr, "ERROR: unknown option %c!\n", ch);
+                exit(-1);
+        }
     }
 
-    return 0;
+    if (argc <= optind)
+    {
+        printf("Usage: %s [option] <domain>\n", argv[0]);
+        exit(-1);
+    }
+
+    domain_name = argv[optind];
 }
-
-const struct argp_option cmd_opts[] =
-{
-    { .name = "domain-name",  .key = 'm', .arg = "FILE",  .flags = 0,
-      .doc = "Domain name" },
-
-    { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
-      .doc = "Verbose" },
-
-    { .name = NULL }
-};
-
-const struct argp parser_def =
-{
-    .options = cmd_opts,
-    .parser = cmd_parser,
-    .doc = "An example program to show how to use context-aware probes"
-};
-
-const char *argp_program_version     = "ctxprobes-example v0.1";
-const char *argp_program_bug_address = "<chunghwn@cs.utah.edu>";
 
 int main(int argc, char *argv[])
 {
-    int ret, debug_level = -1;
+    int ret;
 
-    argp_parse(&parser_def, argc, argv, 0, 0, NULL);
-    if (verbose) debug_level = 8;
+    parse_opt(argc, argv);
 
     ret = ctxprobes_init(domain_name, debug_level);
     if (ret)
@@ -118,14 +121,14 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to register probe on sys_open call\n");
         exit(1);
     }
-#if 0
-    ret = ctxprobes_func_return("sys_open", sys_open_return);
-    if (ret)
-    {
-        fprintf(stderr, "failed to register probe on sys_open return\n");
-        exit(1);
-    }
-#endif
+
+    //ret = ctxprobes_func_return("sys_open", sys_open_return);
+    //if (ret)
+    //{
+    //    fprintf(stderr, "failed to register probe on sys_open return\n");
+    //    exit(1);
+    //}
+
     ctxprobes_wait();
 
     ctxprobes_cleanup();
