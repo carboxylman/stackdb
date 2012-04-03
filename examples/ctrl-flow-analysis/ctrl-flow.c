@@ -15,9 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  examples/context-aware-probes/ctxprobes-example.c
+ *  examples/ctrl-flow-analysis/ctrl-flow.c
  *
- *  An example code to demonstrate how to use context-aware probes.
+ *  Security analysis to detect abnormal control flows of Linux 
+ *  kernel.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 
@@ -28,46 +29,13 @@
 #include <getopt.h>
 #include <log.h>
 
-#include "ctxprobes.h"
+#include <ctxprobes.h>
 
 extern char *optarg;
 extern int optind, opterr, optopt;
 
 static char *domain_name = NULL; 
 static int debug_level = -1; 
-
-void sys_open_call(char *symbol, 
-                   var_t *args, 
-                   int argcount, 
-                   task_t *task)
-{
-    if (!args || argcount < 3)
-        printf("%d (%s): %s called, but failed to load args\n", 
-               task->pid, task->comm, symbol);
-    else
-        printf("%d (%s): %s(%s=%s, %s=0x%x, %s=0x%x)\n", 
-               task->pid, task->comm,
-               symbol,
-               args[0].name, args[0].buf,
-               args[1].name, *(int *)args[1].buf,
-               args[2].name, *(int *)args[2].buf);
-    
-    printf("- Parent task chain: \n");
-    while (task->parent)
-    {
-        printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
-        task = task->parent;
-    }
-}
-
-void sys_open_return(char *symbol, 
-                     var_t *args, 
-                     int argcount, 
-                     var_t retval,
-                     task_t *task)
-{
-    printf("%d (%s): %s returned\n", task->pid, task->comm, symbol);
-}
 
 void parse_opt(int argc, char *argv[])
 {
@@ -119,12 +87,12 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    ret = ctxprobes_func_call("sys_open", sys_open_call);
-    if (ret)
-    {
-        fprintf(stderr, "failed to register probe on sys_open call\n");
-        exit(1);
-    }
+    //ret = ctxprobes_func_call("sys_open", sys_open_call);
+    //if (ret)
+    //{
+    //    fprintf(stderr, "failed to register probe on sys_open call\n");
+    //    exit(1);
+    //}
 
     //ret = ctxprobes_func_return("sys_open", sys_open_return);
     //if (ret)

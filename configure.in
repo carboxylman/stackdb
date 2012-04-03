@@ -373,7 +373,8 @@ outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile \
           examples/nfs-perf-analysis/Makefile \
-          examples/context-aware-probes/Makefile"
+          examples/context-aware-probes/Makefile \
+          examples/ctrl-flow-analysis/Makefile"
 
 #
 # Do this for easy distclean.
