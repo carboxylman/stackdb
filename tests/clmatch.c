@@ -72,7 +72,7 @@ int main(int argc,char **argv) {
 
     CHECKNOLINE(cl,50,retval,failures);
 
-    clmatch_free(&cl);
+    clmatch_free(cl);
 
     return failures;
 }

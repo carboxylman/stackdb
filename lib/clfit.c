@@ -83,6 +83,9 @@ void *clrange_find(clrange_t *clf,Word_t index) {
     Word_t lrlen = ~(Word_t)0;
     struct clf_range_data *retval = NULL;
 
+    if (!clf || !*clf)
+	return NULL;
+
     //fprintf(stderr,"starting looking for %lu\n",idx);
     //fflush(stderr);
 
@@ -133,26 +136,26 @@ void *clrange_find(clrange_t *clf,Word_t index) {
     }
 }
 
-void clrange_free(clmatch_t *clf) {
+void clrange_free(clmatch_t clf) {
     PWord_t pv;
     int rci;
     Word_t index;
     Word_t bytes_freed;
 
-    if (!clf || !*clf)
+    if (!clf)
 	return;
 
     /* This stinks -- we have to free each element one by one. */
     while (1) {
 	index = 0;
-	JLF(pv,*clf,index);
+	JLF(pv,clf,index);
 	if (pv == NULL)
 	    break;
 	array_list_deep_free((struct array_list *)*pv);
-	JLD(rci,*clf,index);
+	JLD(rci,clf,index);
     }
 
-    JLFA(bytes_freed,*clf);
+    JLFA(bytes_freed,clf);
 }
 
 clmatch_t clmatch_create() {
@@ -169,7 +172,6 @@ int clmatch_add(clmatch_t *clf,Word_t index,void *data) {
     PWord_t pv = NULL;
     struct array_list *alist;
     int created = 0;
-
 
     if (*clf) 
 	JLG(pv,*clf,index);
@@ -205,6 +207,9 @@ int clmatch_add(clmatch_t *clf,Word_t index,void *data) {
 struct array_list *clmatch_find(clmatch_t *clf,Word_t index) {
     PWord_t pv;
 
+    if (!clf || !*clf)
+	return NULL;
+
     /*
      * We look for the previous index (including @index itself).
      */
@@ -214,7 +219,8 @@ struct array_list *clmatch_find(clmatch_t *clf,Word_t index) {
     return (struct array_list *)*pv;
 }
 
-void clmatch_free(clmatch_t *clf) {
+void clmatch_free(clmatch_t clf) {
     Word_t bytes_freed;
-    JLFA(bytes_freed,*clf);
+    if (clf)
+	JLFA(bytes_freed,clf);
 }

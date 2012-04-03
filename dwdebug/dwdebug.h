@@ -794,6 +794,8 @@ struct debugfile {
     GHashTable *pubnames;
 
     clrange_t ranges;
+
+    GHashTable *srclines;
 };
 
 struct range_list_entry {

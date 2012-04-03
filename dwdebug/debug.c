@@ -898,6 +898,12 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
 
     debugfile->ranges = clrange_create();
 
+    /* 
+     * We *do* have to strdup the keys... so free them when we destroy!
+     */
+    debugfile->srclines = g_hash_table_new_full(g_str_hash,g_str_equal,
+						free,clrange_free);
+
     return debugfile;
 }
 
@@ -1026,7 +1032,9 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
      */
     g_hash_table_destroy(debugfile->srcfiles);
 
-    clrange_free(&debugfile->ranges);
+    clrange_free(debugfile->ranges);
+
+    g_hash_table_destroy(debugfile->srclines);
 
     if (debugfile->strtab)
 	free(debugfile->strtab);

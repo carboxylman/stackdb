@@ -51,7 +51,7 @@ int main(int argc,char **argv) {
     CHECKRANGE(cl,0x01,retval,RANGE(0x00,0x02),failures);
     CHECKRANGE(cl,0x02,retval,RANGE(0x00,0xff),failures);
 
-    clrange_free(&cl);
+    clrange_free(cl);
 
     return failures;
 }
