@@ -157,7 +157,16 @@ struct probe *probe_register_symbol_name(struct probe *probe,
 					 probepoint_style_t style,
 					 probepoint_whence_t whence,
 					 probepoint_watchsize_t watchsize);
-					 
+
+struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
+				    probepoint_style_t style,
+				    probepoint_whence_t whence,
+				    probepoint_watchsize_t watchsize);
+
+struct probe *probe_register_line(struct probe *probe,char *filename,int line,
+				  probepoint_style_t style,
+				  probepoint_whence_t whence,
+				  probepoint_watchsize_t watchsize);
 
 /*
  * Registers @probe in such a way that probe->pre_handler is called when

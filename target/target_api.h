@@ -152,6 +152,10 @@ struct bsymbol *target_lookup_sym(struct target *target,
 				  char *srcfile,symbol_type_flag_t ftype);
 struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr);
 
+struct bsymbol *target_lookup_sym_line(struct target *target,
+				       char *filename,int line,
+				       SMOFFSET *offset,ADDR *addr);
+
 /**
  ** Quick raw value converters
  **/

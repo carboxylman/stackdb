@@ -1142,6 +1142,68 @@ struct probe *probe_register_addr(struct probe *probe,ADDR addr,
 				 bsymbol,0);
 }
 
+struct probe *probe_register_line(struct probe *probe,char *filename,int line,
+				  probepoint_style_t style,
+				  probepoint_whence_t whence,
+				  probepoint_watchsize_t watchsize) {
+    struct target *target = probe->target;
+    struct memrange *range;
+    ADDR start = 0;
+    ADDR probeaddr;
+    struct bsymbol *bsymbol = NULL;
+
+    bsymbol = target_lookup_sym_line(target,filename,line,NULL,&probeaddr);
+    if (!bsymbol)
+	return NULL;
+
+    /* No need to bsymbol_hold(); __probe_register_addr() does it. 
+     * IN FACT, we need to release when we exit!
+     */
+
+    if (!SYMBOL_IS_FULL_INSTANCE(bsymbol->lsymbol->symbol)) {
+	verror("cannot probe a partial symbol!\n");
+	goto errout;
+    }
+
+    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
+	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	    verror("could not resolve entry PC for function %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    goto errout;
+	}
+
+	probe = __probe_register_addr(probe,probeaddr,range,
+				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      bsymbol,start);
+    }
+    else if (SYMBOL_IS_FULL_LABEL(bsymbol->lsymbol->symbol)) {
+	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	    verror("could not resolve base addr for label %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    goto errout;
+	}
+
+	probe = __probe_register_addr(probe,probeaddr,range,
+				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      bsymbol,start);
+    }
+    else {
+	verror("unknown symbol type '%s'!\n",
+	       SYMBOL_TYPE(bsymbol->lsymbol->symbol->type));
+	goto errout;
+    }
+
+    bsymbol_release(bsymbol);
+    return probe;
+
+ errout:
+    if (probe->autofree)
+	probe_free(probe,1);
+    if (bsymbol)
+	bsymbol_release(bsymbol);
+    return NULL;
+}
+
 struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 				    probepoint_style_t style,
 				    probepoint_whence_t whence,

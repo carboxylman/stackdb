@@ -266,6 +266,54 @@ struct bsymbol *target_lookup_sym(struct target *target,
      */
     lsymbol_release(lsymbol);
 
+    /* Take a ref to bsymbol on the user's behalf, since this is
+     * a lookup function.
+     */
+    bsymbol_hold(bsymbol);
+
+    return bsymbol;
+}
+
+struct bsymbol *target_lookup_sym_line(struct target *target,
+				       char *filename,int line,
+				       SMOFFSET *offset,ADDR *addr) {
+    struct addrspace *space;
+    struct bsymbol *bsymbol;
+    struct lsymbol *lsymbol = NULL;
+    struct memregion *region;
+    struct debugfile *debugfile;
+    GHashTableIter iter;
+    gpointer key;
+
+    if (list_empty(&target->spaces))
+	return NULL;
+
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    g_hash_table_iter_init(&iter,region->debugfiles);
+	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
+					  (gpointer)&debugfile)) {
+		lsymbol = debugfile_lookup_sym_line(debugfile,filename,line,
+						    offset,addr);
+		if (lsymbol) 
+		    goto out;
+	    }
+	}
+    }
+    return NULL;
+
+ out:
+    bsymbol = bsymbol_create(lsymbol,region,NULL);
+    /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym_line
+     * took one on our behalf, so we release one!
+     */
+    lsymbol_release(lsymbol);
+
+    /* Take a ref to bsymbol on the user's behalf, since this is
+     * a lookup function.
+     */
+    bsymbol_hold(bsymbol);
+
     return bsymbol;
 }
 

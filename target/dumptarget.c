@@ -655,18 +655,38 @@ int main(int argc,char **argv) {
 	for (i = 0; i < argc; ++i) {
 	    /* Look for retval code */
 	    char *retcode_str = index(argv[i],':');
+	    int line = -1;
 	    if (retcode_str) {
-		*retcode_str = '\0';
-		++retcode_str;
-		retcode_strs[i] = retcode_str;
-		retcodes[i] = (REGVAL)atoi(retcode_str);
+		if (*(retcode_str+1) == 'L') {
+		    /* line breakpoint, not retval */
+		    *retcode_str = '\0';
+		    ++retcode_str;
+		    line = retcodes[i] = atoi(retcode_str + 1);
+		    retcode_strs[i] = retcode_str;
+		}
+		else {
+		    *retcode_str = '\0';
+		    ++retcode_str;
+		    retcode_strs[i] = retcode_str;
+		    retcodes[i] = (REGVAL)atoi(retcode_str);
+		}
 	    }
 
-	    if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
-						 SYMBOL_TYPE_FLAG_NONE))) {
-		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-		cleanup();
-		exit(-1);
+	    if (line > 0) {
+		if (!(bsymbol = target_lookup_sym_line(t,argv[i],line,
+						       NULL,NULL))) {
+		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
+	    }
+	    else {
+		if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
+						  SYMBOL_TYPE_FLAG_NONE))) {
+		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
 	    }
 
 	    array_list_add(symlist,bsymbol);
@@ -718,7 +738,14 @@ int main(int argc,char **argv) {
 		if (!probe)
 		    goto err_unreg;
 
-		if (symbol_is_inlined(bsymbol_get_symbol(bsymbol))) {
+		if (i < argc && *retcode_strs[i] == 'L') {
+		    if (!probe_register_line(probe,argv[i],retcodes[i],
+					     style,whence,PROBEPOINT_LAUTO)) {
+			probe_free(probe,1);
+			goto err_unreg;
+		    }
+		}
+		else if (symbol_is_inlined(bsymbol_get_symbol(bsymbol))) {
 		    if (!probe_register_inlined_symbol(probe,bsymbol,
 						       1,
 						       style,whence,
