@@ -46,9 +46,9 @@ LIBRARIES :=
 PROGRAMS := ctrl-flow
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
-              $(OBJDIR)/target/target.a \
+              $(OBJDIR)/target/libtarget.a \
               $(OBJDIR)/dwdebug/libdwdebug.a \
-              $(OBJDIR)/lib/libvlog.a
+              $(OBJDIR)/lib/libvmilib.a
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif

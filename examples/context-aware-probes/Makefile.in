@@ -46,9 +46,9 @@ LIBRARIES := ctxprobes.a
 
 PROGRAMS := ctxprobes-example
 
-STATICLIBS := $(OBJDIR)/target/target.a \
+STATICLIBS := $(OBJDIR)/target/libtarget.a \
               $(OBJDIR)/dwdebug/libdwdebug.a \
-              $(OBJDIR)/lib/libvlog.a
+              $(OBJDIR)/lib/libvmilib.a
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
