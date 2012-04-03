@@ -53,25 +53,29 @@ static int probe_func_call(struct probe *probe,
                            void *data,
                            struct probe *trigger)
 {
-	char *symbol;
+    char *symbol;
     var_t *arg_list = NULL;
     int arg_count = 0;
-    int ret;
+    //int ret;
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
 
-	symbol = probe->name;
+    symbol = probe->name;
 
-    DBG("Function call: %s\n", symbol);
- 
-    ret = load_func_args(&arg_list, &arg_count, probe);
-    if (ret)
-        ERR("Failed to load function args\n");
+    DBG("%d (%s): Function call: %s\n", 
+        task_current->pid, task_current->comm, 
+        symbol);
+  
+    //ret = load_func_args(&arg_list, &arg_count, probe);
+    //if (ret)
+    //    ERR("Failed to load function args\n");
 
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
     handler(symbol, arg_list, arg_count, task_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
 
-    unload_func_args(arg_list, arg_count);
+    //unload_func_args(arg_list, arg_count);
 
     return 0;
 }
@@ -80,7 +84,7 @@ static int probe_func_return(struct probe *probe,
                              void *data,
                              struct probe *trigger)
 {
-	char *symbol;
+    char *symbol;
     var_t *arg_list = NULL;
     var_t retval;
     int arg_count = 0;
@@ -89,21 +93,25 @@ static int probe_func_return(struct probe *probe,
     ctxprobes_func_return_handler_t handler 
         = (ctxprobes_func_return_handler_t) data;
 
-	symbol = probe->name;
+    symbol = probe->name;
 
-    DBG("Function return: %s\n", symbol);
+    DBG("%d (%s): Function return: %s\n", 
+        task_current->pid, task_current->comm, 
+        symbol);
  
-    ret = load_func_args(&arg_list, &arg_count, probe);
-    if (ret)
-        ERR("Failed to load function args\n");
+    //ret = load_func_args(&arg_list, &arg_count, probe);
+    //if (ret)
+    //    ERR("Failed to load function args\n");
 
     ret = load_func_retval(&retval, probe);
     if (ret)
         ERR("Failed to load function retval\n");
 
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
     handler(symbol, arg_list, arg_count, retval, task_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
 
-    unload_func_args(arg_list, arg_count);
+    //unload_func_args(arg_list, arg_count);
 
     return 0;
 }
@@ -112,25 +120,47 @@ static int probe_trap(struct probe *probe,
                       void *data, 
                       struct probe *trigger)
 {
-    DBG("Trap: %s\n", probe->name);
+    DBG("%d (%s): Trap %s\n", 
+        task_current->pid, task_current->comm, 
+        probe->name);
     return 0;
 }
 
-//static int probe_syscall(struct probe *probe, 
-//                         void *data, 
-//                         struct probe *trigger)
-//{
-//    DBG("System call: %s\n", probe->name);
-//    return 0;
-//}
+static int probe_syscall(struct probe *probe, 
+                         void *data, 
+                         struct probe *trigger)
+{
+    unsigned int eax = target_read_reg(t, 0);
+    DBG("%d (%s): System call %d (0x%02x)\n", 
+        task_current->pid, task_current->comm,
+        eax, eax);
+    return 0;
+}
 
-//static int probe_interrupt(struct probe *probe, 
-//                           void *data, 
-//                           struct probe *trigger)
-//{
-//    DBG("Interrupt: %s\n", probe->name);
-//    return 0;
-//}
+static int probe_interrupt(struct probe *probe, 
+                           void *data, 
+                           struct probe *trigger)
+{
+    int irq;
+    //struct pt_regs *regs;
+
+    //value = get_function_arg(0, probe, t);
+    //if (!value)
+    //{
+    //    ERR("Could not read IRQ\n");
+    //    return 1;
+    //}
+
+    //regs = (struct pt_regs *)value->buf;
+    //irq = ~regs->orig_eax & 0xff;
+	unsigned int eax = target_read_reg(t, 0);
+	irq = ~eax & 0xff;
+
+    DBG("%d (%s): Interrupt %d (0x%02x)\n",
+        task_current->pid, task_current->comm, 
+        irq, irq);
+    return 0;
+}
 
 static int init_task_switch(struct probe *probe)
 {
@@ -271,8 +301,8 @@ const probe_entry_t probe_list[] =
     //  { .init = NULL } },
     { 0, "do_simd_coprocessor_error",      0x0,        probe_trap, 
       { .init = NULL } },
-    //{ 1, "system_call",                    0xc01052e8, probe_syscall, 
-    //  { .init = NULL } },
+    { 1, "system_call",                    0xc01052e8, probe_syscall, 
+      { .init = NULL } },
     //{ 0, "do_IRQ",                         0x0,        probe_interrupt, 
     //  { .init = NULL } },
     { 0, "schedule.switch_tasks",          0x0,        probe_task_switch,
