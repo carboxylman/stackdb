@@ -123,12 +123,14 @@ ADDR instrument_func(struct bsymbol *bsymbol) {
 	snprintf(buf,bufsiz,"call_in_%s",bsymbol->lsymbol->symbol->name);
 	struct probe *cprobe = probe_create(t,NULL,buf,NULL,retaddr_save,
 					    NULL,0);
+	cprobe->handler_data = cprobe->name;
 	free(buf);
 	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
 	struct probe *rprobe = probe_create(t,NULL,buf,retaddr_check,NULL,
-					    NULL,0);
+					    buf,0);
+	rprobe->handler_data = rprobe->name;
 	free(buf);
 
 	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
@@ -212,6 +214,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		" (skipping unknown function!)\n",
 		ip,probe->bsymbol->lsymbol->symbol->name,*retaddr);
 	free(retaddr);
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
 	return 0;
     }
     else {
@@ -221,6 +224,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		ip,bsymbol->lsymbol->symbol->name,
 		probe->bsymbol->lsymbol->symbol->name,
 		*retaddr);
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
     }
 
     /* Since we know that the call is a known function that we can
@@ -265,18 +269,22 @@ int retaddr_check(struct probe *probe,void *handler_data,
 	return 0;
     }
 
-    if (newretaddr != *oldretaddr)
+    if (newretaddr != *oldretaddr) {
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR" ------ STACK CORRUPTION!\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
 		newretaddr,*oldretaddr);
-    else 
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+    }
+    else {
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR"\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
 		newretaddr,*oldretaddr);
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+    }
 
     if (doit) {
 	if (!target_write_addr(t,(ADDR)sp,sizeof(ADDR),
@@ -363,6 +371,8 @@ int function_dump_args(struct probe *probe,void *handler_data,
     }
     printf("\n");
 
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
+
     fflush(stdout);
 
     array_list_free(tmp);
@@ -377,6 +387,7 @@ int function_post(struct probe *probe,void *handler_data,
     fprintf(stdout,"%s (0x%"PRIxADDR") post handler\n",
 	    probe->bsymbol->lsymbol->symbol->name,
 	    probe_addr(probe));
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stdout);
 
@@ -418,6 +429,7 @@ int var_pre(struct probe *probe,void *handler_data,
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stdout);
 
@@ -458,6 +470,7 @@ int var_post(struct probe *probe,void *handler_data,
 	fprintf(stdout,"%s (0x%"PRIxADDR") (post): could not read value: %s\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stdout);
 
@@ -735,6 +748,7 @@ int main(int argc,char **argv) {
 	    else {
 		probe = probe_create(t,NULL,bsymbol_get_name(bsymbol),
 				     pre,post,NULL,0);
+		probe->handler_data = probe->name;
 		if (!probe)
 		    goto err_unreg;
 
