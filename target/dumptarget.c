@@ -257,11 +257,6 @@ int retaddr_check(struct probe *probe,void *handler_data,
 
     oldretaddr = (ADDR *)array_list_remove(shadow_stack);
 
-    if (!oldretaddr) {
-	fprintf(stderr,"Could not read from shadow stack; just inserted?\n");
-	return 0;
-    }
-
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
 			  (unsigned char *)&newretaddr,NULL)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_check!\n");
@@ -269,7 +264,16 @@ int retaddr_check(struct probe *probe,void *handler_data,
 	return 0;
     }
 
-    if (newretaddr != *oldretaddr) {
+    if (!oldretaddr || newretaddr != *oldretaddr) {
+	if (!oldretaddr) {
+	    fprintf(stdout,
+		    "(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
+		    " could not read from shadow stack; just inserted?\n",
+		    probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
+		    newretaddr);
+	    fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+	    return 0;
+	}
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR" ------ STACK CORRUPTION!\n",
