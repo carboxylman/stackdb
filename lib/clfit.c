@@ -152,6 +152,7 @@ void clrange_free(clmatch_t clf) {
 	if (pv == NULL)
 	    break;
 	array_list_deep_free((struct array_list *)*pv);
+	*pv = NULL;
 	JLD(rci,clf,index);
     }
 
@@ -220,7 +221,24 @@ struct array_list *clmatch_find(clmatch_t *clf,Word_t index) {
 }
 
 void clmatch_free(clmatch_t clf) {
+    PWord_t pv;
+    int rci;
+    Word_t index;
     Word_t bytes_freed;
-    if (clf)
-	JLFA(bytes_freed,clf);
+
+    if (!clf)
+	return;
+
+    /* This stinks -- we have to free each element one by one. */
+    while (1) {
+	index = 0;
+	JLF(pv,clf,index);
+	if (pv == NULL)
+	    break;
+	array_list_free((struct array_list *)*pv);
+	*pv = NULL;
+	JLD(rci,clf,index);
+    }
+
+    JLFA(bytes_freed,clf);
 }
