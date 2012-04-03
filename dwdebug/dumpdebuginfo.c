@@ -163,8 +163,15 @@ int main(int argc,char **argv) {
 	    struct lsymbol *s2;
 	    struct symbol *is;
 	    ADDR addr = (ADDR)strtoull(argv[i],&endptr,0);
+	    char *cptr = NULL;
 
-	    if (endptr != argv[i])
+	    if ((cptr = index(argv[i],':'))) {
+		*cptr = '\0';
+		++cptr;
+		s = debugfile_lookup_sym_line(debugfile,argv[i],
+					      atoi(cptr),NULL,NULL);
+	    }
+	    else if (endptr != argv[i])
 		s = debugfile_lookup_addr(debugfile,addr);
 	    else
 		s = debugfile_lookup_sym(debugfile,argv[i],".",

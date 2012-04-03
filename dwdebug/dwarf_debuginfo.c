@@ -2214,7 +2214,7 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 
     /* Try to find prologue info from line table for this CU. */
     if (args.have_stmt_list_offset) {
-	get_lines(debugfile,args.stmt_list_offset,addrsize);
+	get_lines(debugfile,cu_symtab,args.stmt_list_offset,addrsize);
     }
     else {
 	vwarn("not doing offset 0x%"PRIx64"\n",args.stmt_list_offset);

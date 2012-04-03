@@ -368,6 +368,50 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
     return ls;
 }
 
+struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
+					       char *filename,int line) {
+    GHashTableIter iter;
+    clmatch_t clf;
+    char *srcfile;
+
+    g_hash_table_iter_init(&iter,debugfile->srclines);
+    while (g_hash_table_iter_next(&iter,(gpointer)&srcfile,(gpointer)&clf)) {
+	if (strstr(srcfile,filename)) {
+	    return clmatch_find(&clf,line);
+	}
+    }
+
+    return NULL;
+}
+
+struct lsymbol *debugfile_lookup_sym_line(struct debugfile *debugfile,
+					     char *filename,int line,
+					     SMOFFSET *offset,ADDR *addr) {
+    struct array_list *addrs;
+    struct lsymbol *ls = NULL;
+    int i;
+    ADDR iaddr;
+
+    addrs = debugfile_lookup_addrs_line(debugfile,filename,line);
+    if (!addrs)
+	return NULL;
+
+    for (i = 0; i < array_list_len(addrs); ++i) {
+	iaddr = (ADDR)array_list_item(addrs,i);
+	ls = debugfile_lookup_addr(debugfile,iaddr);
+	if (ls) {
+	    if (addr)
+		*addr = iaddr;
+	    if (offset && ls->symbol->base_addr != ADDRMAX) {
+		*offset = iaddr - ls->symbol->base_addr;
+	    }
+	    return ls;
+	}
+    }
+
+    return NULL;
+}
+
 struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
     struct symtab *symtab;
     struct lsymbol *ls;
@@ -902,7 +946,7 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
      * We *do* have to strdup the keys... so free them when we destroy!
      */
     debugfile->srclines = g_hash_table_new_full(g_str_hash,g_str_equal,
-						free,clrange_free);
+						free,clmatch_free);
 
     return debugfile;
 }

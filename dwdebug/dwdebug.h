@@ -559,6 +559,12 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
  */
 struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr);
 
+struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
+					       char *filename,int line);
+struct lsymbol *debugfile_lookup_sym_line(struct debugfile *debugfile,
+					  char *filename,int line,
+					  SMOFFSET *offset,ADDR *addr);
+
 /* Look up one symbol in a symbol table by name.
  *
  * If this function returns an lsymbol, it takes a reference to the
@@ -624,7 +630,8 @@ void loc_list_free(struct loc_list *list);
 /*
  * Dwarf util stuff.
  */
-int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size);
+int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
+	      Dwarf_Off offset,size_t address_size);
 
 const char *dwarf_tag_string(unsigned int tag);
 const char *dwarf_attr_string(unsigned int attrnum);
