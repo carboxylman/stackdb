@@ -56,7 +56,7 @@
 #define TXT_FG_COLOR            TXT_FG_WHITE
 
 #define ERR(_f, _a...)   do {                                                   \
-        fprintf(stderr, TXT_FG_RED"Error" TXT_FG_WHITE ": " _f, ## _a);  \
+        fprintf(stderr, TXT_FG_RED"Error" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);  \
     } while (0)
 
 #define WARN(_f, _a...)  do {                                                   \

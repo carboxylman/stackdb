@@ -41,6 +41,7 @@
 #include "debug.h"
 
 char *dom_name = NULL;
+FILE *sysmap_handle = NULL;
 struct target *t = NULL;
 GHashTable *probes = NULL;
 
@@ -63,7 +64,7 @@ static int probe_func_call(struct probe *probe,
 
     symbol = probe->name;
 
-    DBG("%d (%s): Function call: %s\n", 
+    DBG("%d (%s): Function %s called\n", 
         task_current->pid, task_current->comm, 
         symbol);
   
@@ -95,7 +96,7 @@ static int probe_func_return(struct probe *probe,
 
     symbol = probe->name;
 
-    DBG("%d (%s): Function return: %s\n", 
+    DBG("%d (%s): Function %s returned\n", 
         task_current->pid, task_current->comm, 
         symbol);
  
@@ -116,30 +117,51 @@ static int probe_func_return(struct probe *probe,
     return 0;
 }
 
-static int probe_trap(struct probe *probe, 
-                      void *data, 
-                      struct probe *trigger)
+static int probe_trap_call(struct probe *probe, 
+                           void *data, 
+                           struct probe *trigger)
 {
-    DBG("%d (%s): Trap %s\n", 
+    DBG("%d (%s): Trap %s called\n", 
         task_current->pid, task_current->comm, 
         probe->name);
     return 0;
 }
 
-static int probe_syscall(struct probe *probe, 
-                         void *data, 
-                         struct probe *trigger)
+static int probe_trap_return(struct probe *probe, 
+                             void *data, 
+                             struct probe *trigger)
+{
+    DBG("%d (%s): Trap %s returned\n", 
+        task_current->pid, task_current->comm, 
+        probe->name);
+    return 0;
+}
+
+static int probe_syscall_call(struct probe *probe, 
+                              void *data, 
+                              struct probe *trigger)
 {
     unsigned int eax = target_read_reg(t, 0);
-    DBG("%d (%s): System call %d (0x%02x)\n", 
+    DBG("%d (%s): System call %d (0x%02x) called\n", 
         task_current->pid, task_current->comm,
         eax, eax);
     return 0;
 }
 
-static int probe_interrupt(struct probe *probe, 
-                           void *data, 
-                           struct probe *trigger)
+static int probe_syscall_return(struct probe *probe,
+                                void *data,
+                                struct probe *trigger)
+{
+    unsigned int eax = target_read_reg(t, 0);
+    DBG("%d (%s): System call %d (0x%02x) returned\n", 
+        task_current->pid, task_current->comm,
+        eax, eax);
+    return 0;
+}
+
+static int probe_interrupt_call(struct probe *probe, 
+                                void *data, 
+                                struct probe *trigger)
 {
     int irq;
     //struct pt_regs *regs;
@@ -153,41 +175,37 @@ static int probe_interrupt(struct probe *probe,
 
     //regs = (struct pt_regs *)value->buf;
     //irq = ~regs->orig_eax & 0xff;
-	unsigned int eax = target_read_reg(t, 0);
-	irq = ~eax & 0xff;
+    unsigned int eax = target_read_reg(t, 0);
+    irq = ~eax & 0xff;
 
-    DBG("%d (%s): Interrupt %d (0x%02x)\n",
+    DBG("%d (%s): Interrupt %d (0x%02x) called\n",
         task_current->pid, task_current->comm, 
         irq, irq);
     return 0;
 }
 
-static int init_task_switch(struct probe *probe)
+static int probe_interrupt_return(struct probe *probe, 
+                                  void *data, 
+                                  struct probe *trigger)
 {
-    DBG("Task switch init\n");
-    
-    bsymbol_task_prev = target_lookup_sym(probe->target, 
-                                          "schedule.prev",
-                                          ".",
-                                          NULL,
-                                          SYMBOL_TYPE_NONE);
-    if (!bsymbol_task_prev)
-    {
-        ERR("Failed to create a bsymbol for schedule.prev\n");
-        return -1;
-    }
+    int irq;
+    //struct pt_regs *regs;
 
-    bsymbol_task_next = target_lookup_sym(probe->target, 
-                                          "schedule.next",
-                                          ".",
-                                          NULL,
-                                          SYMBOL_TYPE_NONE);
-    if (!bsymbol_task_next)
-    {
-        ERR("Failed to create a bsymbol for schedule.next\n");
-        return -1;
-    }
+    //value = get_function_arg(0, probe, t);
+    //if (!value)
+    //{
+    //    ERR("Could not read IRQ\n");
+    //    return 1;
+    //}
 
+    //regs = (struct pt_regs *)value->buf;
+    //irq = ~regs->orig_eax & 0xff;
+    unsigned int eax = target_read_reg(t, 0);
+    irq = ~eax & 0xff;
+
+    DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
+        task_current->pid, task_current->comm, 
+        irq, irq);
     return 0;
 }
 
@@ -247,11 +265,39 @@ static int probe_task_switch(struct probe *probe,
     return 0;
 }
 
+static int probe_task_switch_init(struct probe *probe)
+{
+    DBG("Task switch init\n");
+    
+    bsymbol_task_prev = target_lookup_sym(probe->target, 
+                                          "schedule.prev",
+                                          ".",
+                                          NULL,
+                                          SYMBOL_TYPE_NONE);
+    if (!bsymbol_task_prev)
+    {
+        ERR("Failed to create a bsymbol for schedule.prev\n");
+        return -1;
+    }
+
+    bsymbol_task_next = target_lookup_sym(probe->target, 
+                                          "schedule.next",
+                                          ".",
+                                          NULL,
+                                          SYMBOL_TYPE_NONE);
+    if (!bsymbol_task_next)
+    {
+        ERR("Failed to create a bsymbol for schedule.next\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 typedef struct probe_entry {
-    int raw; /* 0:use symbol, 1:use addr (raw address) */
     char *symbol;
-    ADDR addr;
-    probe_handler_t handler;
+    probe_handler_t call_handler;
+    probe_handler_t return_handler;
     struct probe_ops ops;
 } probe_entry_t;
 
@@ -259,54 +305,54 @@ typedef struct probe_entry {
  * FIXME: read raw addresses of assembly functions from System.map --
  * we are currently using hard-coded addresses.
  */
-const probe_entry_t probe_list[] = 
+static const probe_entry_t probe_list[] = 
 {
-    { 0, "do_divide_error",                0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_debug",                       0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_nmi",                         0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_int3",                        0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_overflow",                    0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_bounds",                      0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_invalid_op",                  0x0,        probe_trap, 
-      { .init = NULL } },
-    //{ 1, "device_not_available",           0xc01055a8, probe_trap, 
-    //  { .init = NULL } },
-    //{ 0, "double_fault",                   0x0,        probe_trap, 
-    //  { .init = NULL } },
-    { 0, "do_coprocessor_segment_overrun", 0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_invalid_TSS",                 0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_segment_not_present",         0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_stack_segment",               0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_general_protection",          0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_page_fault",                  0x0,        probe_trap, 
-      { .init = NULL } },
-    //{ 0, "spurious_interrupt_bug",         0x0,        probe_trap, 
-    //  { .init = NULL } },
-    { 0, "do_coprocessor_error",           0x0,        probe_trap, 
-      { .init = NULL } },
-    { 0, "do_alignment_check",             0x0,        probe_trap, 
-      { .init = NULL } },
-    //{ 0, "intel_machine_check",            0x0,        probe_trap, 
-    //  { .init = NULL } },
-    { 0, "do_simd_coprocessor_error",      0x0,        probe_trap, 
-      { .init = NULL } },
-    { 1, "system_call",                    0xc01052e8, probe_syscall, 
-      { .init = NULL } },
-    //{ 0, "do_IRQ",                         0x0,        probe_interrupt, 
-    //  { .init = NULL } },
-    { 0, "schedule.switch_tasks",          0x0,        probe_task_switch,
-      { .init = init_task_switch } },
+    { "do_divide_error",                probe_trap_call,        
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_debug",                       probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_nmi",                         probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_int3",                        probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_overflow",                    probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_bounds",                      probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_invalid_op",                  probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    //{ "device_not_available",           probe_trap_call, 
+    //  probe_trap_return,                { .init = NULL } },
+    //{ "double_fault",                   probe_trap_call, 
+    //  probe_trap_return,                { .init = NULL } },
+    { "do_coprocessor_segment_overrun", probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_invalid_TSS",                 probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_segment_not_present",         probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_stack_segment",               probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_general_protection",          probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_page_fault",                  probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    //{ "spurious_interrupt_bug",         probe_trap_call, 
+    //  probe_trap_return,                { .init = NULL } },
+    { "do_coprocessor_error",           probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_alignment_check",             probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    //{ "intel_machine_check",            probe_trap_call, 
+    //  probe_trap_return,                { .init = NULL } },
+    { "do_simd_coprocessor_error",      probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "system_call",                    probe_syscall_call, 
+      NULL/*probe_syscall_return*/,             { .init = NULL } },
+    //{ "do_IRQ",                         probe_interrupt_call, 
+    //  probe_interrupt_return,           { .init = NULL } },
+    { "schedule.switch_tasks",          probe_task_switch, 
+      NULL,                             { .init = probe_task_switch_init } },
 };
 
 static void sigh(int signo)
@@ -315,7 +361,9 @@ static void sigh(int signo)
     exit(0);
 }
 
-int ctxprobes_init(char *domain_name, int debug_level)
+int ctxprobes_init(char *domain_name, 
+                   char *sysmap_file, 
+                   int debug_level)
 {
     unsigned task_struct_addr;
     int i, probe_count;
@@ -328,6 +376,13 @@ int ctxprobes_init(char *domain_name, int debug_level)
     }
 
     dom_name = domain_name;
+
+    sysmap_handle = fopen(sysmap_file, "r");
+    if (!sysmap_handle)
+    {
+        ERR("Could not open file %s\n", sysmap_file);
+        return -2;
+    }
 
     dwdebug_init();
     vmi_set_log_level(debug_level);
@@ -363,22 +418,45 @@ int ctxprobes_init(char *domain_name, int debug_level)
     probe_count = sizeof(probe_list) / sizeof(probe_list[0]);    
     for (i = 0; i < probe_count; i++)
     {
-        ret = register_call_probe(probe_list[i].raw,
-                                  probe_list[i].symbol, 
-                                  probe_list[i].addr,
-                                  probe_list[i].handler,
-                                  (struct probe_ops *)&probe_list[i].ops,
-                                  PROBEPOINT_EXEC,
-                                  SYMBOL_TYPE_FLAG_NONE,
-                                  NULL); /* data */
-        if (ret)
+        if (probe_list[i].call_handler)
         {
-            ERR("Failed to register probe on '%s'\n", probe_list[i].symbol);
-            ctxprobes_cleanup();
-            return -1;
+            ret = register_call_probe(probe_list[i].symbol, 
+                                      probe_list[i].call_handler,
+                                      (struct probe_ops *)&probe_list[i].ops,
+                                      PROBEPOINT_EXEC,
+                                      SYMBOL_TYPE_FLAG_NONE,
+                                      NULL); /* data */
+            if (ret)
+            {
+                ERR("Failed to register call probe on '%s'\n", 
+                    probe_list[i].symbol);
+                ctxprobes_cleanup();
+                return -1;
+            }
+        }
+
+        if (probe_list[i].return_handler)
+        {
+            ret = register_return_probe(probe_list[i].symbol, 
+                                        probe_list[i].return_handler,
+                                        NULL,
+                                        PROBEPOINT_EXEC,
+                                        SYMBOL_TYPE_FLAG_NONE,
+                                        NULL); /* data */
+            if (ret)
+            {
+                ERR("Failed to register return probe on '%s'\n", 
+                    probe_list[i].symbol);
+                ctxprobes_cleanup();
+                return -1;
+            }
         }
     }
 
+    /*
+     * Obtain current task info -- task info will be updated on detecting
+     * task switches later on.
+     */
     task_struct_addr = current_task_addr();
     ret = load_task_info(&task_current, task_struct_addr);
     if (ret)
@@ -386,7 +464,6 @@ int ctxprobes_init(char *domain_name, int debug_level)
         ERR("Cannot load current task info\n");
         return -1;
     }
-
     DBG("Current task: %d (%s)\n", task_current->pid, task_current->comm);
 
     signal(SIGHUP, sigh);
@@ -418,9 +495,12 @@ void ctxprobes_cleanup(void)
 
         DBG("Ended trace.\n");
         
+        fclose(sysmap_handle);
+
         task_current = NULL;
         probes = NULL;
         t = NULL;
+        sysmap_handle = NULL;
         dom_name = NULL;
     }
 }
@@ -484,9 +564,7 @@ int ctxprobes_func_call(char *symbol,
         return -1;
     }
 
-    ret = register_call_probe(0, /* raw */
-                              symbol, 
-                              0, /* addr */
+    ret = register_call_probe(symbol, 
                               probe_func_call,
                               NULL, /* ops */
                               PROBEPOINT_EXEC,
@@ -514,6 +592,7 @@ int ctxprobes_func_return(char *symbol,
 
     ret = register_return_probe(symbol, 
                                 probe_func_return,
+                                NULL, /* ops */
                                 PROBEPOINT_EXEC,
                                 SYMBOL_TYPE_FLAG_FUNCTION,
                                 handler); /* data <- ctxprobes handler */

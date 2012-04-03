@@ -23,8 +23,8 @@
  * 
  */
 
-#ifndef __CTXPROBES_DEBUG_H__
-#define __CTXPROBES_DEBUG_H__
+#ifndef __CTRL_FLOW_DEBUG_H__
+#define __CTRL_FLOW_DEBUG_H__
 
 #include <stdio.h>
 
@@ -119,4 +119,4 @@
             }                                                                       \
     } while (0)
 
-#endif /* __CTXPROBES_DEBUG_H__ */
+#endif /* __CTRL_FLOW_DEBUG_H__ */

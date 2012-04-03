@@ -35,6 +35,7 @@ extern int optind, opterr, optopt;
 
 static char *domain_name = NULL; 
 static int debug_level = -1; 
+static char *sysmap_file = NULL;
 
 void sys_open_call(char *symbol, 
                    var_t *args, 
@@ -74,7 +75,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:")) != -1)
     {
         switch(ch)
         {
@@ -89,6 +90,10 @@ void parse_opt(int argc, char *argv[])
                     exit(-1);
                 }
                 vmi_set_log_flags(debug_flags);
+                break;
+
+            case 'm':
+                sysmap_file = optarg;
                 break;
 
             default:
@@ -112,7 +117,7 @@ int main(int argc, char *argv[])
 
     parse_opt(argc, argv);
 
-    ret = ctxprobes_init(domain_name, debug_level);
+    ret = ctxprobes_init(domain_name, sysmap_file, debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");

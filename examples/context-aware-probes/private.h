@@ -27,9 +27,7 @@
 #ifndef __CTXPROBES_PRIVATE_H__
 #define __CTXPROBES_PRIVATE_H__
 
-int register_call_probe(int raw, /* 0:use symbol, 1:use addr (raw address) */
-                        char *symbol, 
-                        ADDR addr, 
+int register_call_probe(char *symbol, 
                         probe_handler_t handler,
                         struct probe_ops *ops,
                         probepoint_whence_t whence,
@@ -38,10 +36,14 @@ int register_call_probe(int raw, /* 0:use symbol, 1:use addr (raw address) */
 
 int register_return_probe(char *symbol, 
                           probe_handler_t handler,
+                          struct probe_ops *ops,
                           probepoint_whence_t whence,
                           symbol_type_flag_t ftype,
                           void *data);
 void unregister_probes();
+
+
+unsigned long sysmap_symbol_addr(char *symbol);
 
 
 unsigned long current_task_addr(void);

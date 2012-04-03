@@ -41,7 +41,7 @@ typedef struct task {
     unsigned int uid, euid, suid, fsuid;
     unsigned int gid, egid, sgid, fsgid;
     char *comm;
-	unsigned long vaddr; /* virtual address of the task_struct */
+    unsigned long vaddr; /* virtual address of the task_struct */
 } task_t;
 
 typedef void (*ctxprobes_func_call_handler_t)(char *symbol,
@@ -60,7 +60,9 @@ typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
 //                                        task_t *task);
 
 
-int ctxprobes_init(char *domain_name, int debug_level);
+int ctxprobes_init(char *domain_name, 
+                   char *sysmap_file, 
+                   int debug_level);
 
 void ctxprobes_cleanup(void);
 
