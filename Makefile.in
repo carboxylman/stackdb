@@ -10,14 +10,14 @@ ifeq ($(ENABLE_XENACCESS),"1")
 	SUBDIRS += xenaccess vmprobes # vmps vmfs vmtap
 endif
 SUBDIRS += target
-SUBDIRS += tests
+#SUBDIRS += tests
 
 all: all-subdirs 
 
 install: install-subdirs
 
-test:
-	make -C tests test
+#test:
+#	make -C tests test
 
 # We use separate src and obj trees, so the traditional distclean to
 # clean "made" files from a mingled source-and-obj tree is unnecessary.
