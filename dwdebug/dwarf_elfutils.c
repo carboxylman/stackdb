@@ -502,6 +502,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			goto invalid_unit_out;
 		    }
 		    currentfile = array_list_item(filelist,(int)u128);
+		    currentclf = NULL;
 
 		    linep = (unsigned char *)clinep;
 		    break;
