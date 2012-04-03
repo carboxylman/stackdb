@@ -80,13 +80,15 @@ clean: clean-subdirs
 distclean: distclean-subdirs
 
 run: ctrl-flow
-	sudo ./ctrl-flow a3guest
+	sudo ./ctrl-flow -m /boot/System.map-2.6.18-xenU a3guest
 
 demo: ctrl-flow
-	sudo ./ctrl-flow a3guest 2> /dev/null
+	sudo ./ctrl-flow -m /boot/System.map-2.6.18-xenU \
+	a3guest 2> /dev/null
 
 debug: ctrl-flow
-	sudo ./ctrl-flow -ddddddddddd -l T_ALL,P_ALL,T_XV a3guest
+	sudo ./ctrl-flow -ddddddddddd -l T_ALL,P_ALL,T_XV 
+	-m /boot/System.map-2.6.18-xenU a3guest
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.

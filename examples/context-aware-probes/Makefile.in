@@ -83,13 +83,15 @@ clean: clean-subdirs
 distclean: distclean-subdirs
 
 run: ctxprobes-example
-	sudo ./ctxprobes-example a3guest
+	sudo ./ctxprobes-example -m /boot/System.map-2.6.18-xenU a3guest
 
 demo: ctxprobes-example
-	sudo ./ctxprobes-example a3guest 2> /dev/null
+	sudo ./ctxprobes-example -m /boot/System.map-2.6.18-xenU \
+	a3guest 2> /dev/null
 
 debug: ctxprobes-example
-	sudo ./ctxprobes-example -ddddddddddd -l T_ALL,P_ALL,T_XV a3guest
+	sudo ./ctxprobes-example -ddddddddddd -l T_ALL,P_ALL,T_XV 
+	-m /boot/System.map-2.6.18-xenU a3guest
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.
