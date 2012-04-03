@@ -738,7 +738,7 @@ int main(int argc,char **argv) {
 		if (!probe)
 		    goto err_unreg;
 
-		if (i < argc && *retcode_strs[i] == 'L') {
+		if (i < argc && retcode_strs[i] && *retcode_strs[i] == 'L') {
 		    if (!probe_register_line(probe,argv[i],retcodes[i],
 					     style,whence,PROBEPOINT_LAUTO)) {
 			probe_free(probe,1);
