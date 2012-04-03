@@ -236,7 +236,7 @@ int register_return_probe(char *symbol,
 
     /* FIXME: remove this after fixing the bug in probing function returns. */
     if (!probe_register_function_instrs(bsymbol,
-                                        PROBEPOINT_SW,
+                                        PROBEPOINT_SW, 1,
                                         INST_RET, rprobe,
                                         INST_CALL, cprobe,
                                         INST_NONE))
