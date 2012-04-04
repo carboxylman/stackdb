@@ -57,6 +57,8 @@ int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe);
 
 void unload_func_args(var_t *arg_list, int arg_count);
 
-int load_func_retval(var_t *retval, struct probe *probe);
+int load_func_retval(var_t **retval, struct probe *probe);
+
+void unload_func_retval(var_t *retval);
 
 #endif /* __CTXPROBES_PRIVATE_H__  */

@@ -50,6 +50,24 @@ task_t *task_current = NULL;
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
 
+struct pt_regs {
+    long ebx;
+    long ecx;
+    long edx;
+    long esi;
+    long edi;
+    long ebp;
+    long eax;
+    int  xds;
+    int  xes; 
+    long orig_eax;
+    long eip;
+    int  xcs;
+    long eflags;
+    long esp;
+    int  xss;
+};
+
 static int probe_func_call(struct probe *probe,
                            void *data,
                            struct probe *trigger)
@@ -57,7 +75,7 @@ static int probe_func_call(struct probe *probe,
     char *symbol;
     var_t *arg_list = NULL;
     int arg_count = 0;
-    //int ret;
+    int ret;
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
@@ -68,15 +86,15 @@ static int probe_func_call(struct probe *probe,
         task_current->pid, task_current->comm, 
         symbol);
   
-    //ret = load_func_args(&arg_list, &arg_count, probe);
-    //if (ret)
-    //    ERR("Failed to load function args\n");
+    ret = load_func_args(&arg_list, &arg_count, probe);
+    if (ret)
+        ERR("Failed to load function args\n");
 
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
     handler(symbol, arg_list, arg_count, task_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
 
-    //unload_func_args(arg_list, arg_count);
+    unload_func_args(arg_list, arg_count);
 
     return 0;
 }
@@ -87,7 +105,7 @@ static int probe_func_return(struct probe *probe,
 {
     char *symbol;
     var_t *arg_list = NULL;
-    var_t retval;
+    var_t *retval = NULL;
     int arg_count = 0;
     int ret;
 
@@ -112,6 +130,7 @@ static int probe_func_return(struct probe *probe,
     handler(symbol, arg_list, arg_count, retval, task_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
 
+    unload_func_retval(retval);
     //unload_func_args(arg_list, arg_count);
 
     return 0;
@@ -163,21 +182,18 @@ static int probe_interrupt_call(struct probe *probe,
                                 void *data, 
                                 struct probe *trigger)
 {
-    int irq;
-    //struct pt_regs *regs;
+    var_t *arg_list = NULL;
+    int arg_count = 0;
+    struct pt_regs *regs;
+    int ret, irq;
 
-    //value = get_function_arg(0, probe, t);
-    //if (!value)
-    //{
-    //    ERR("Could not read IRQ\n");
-    //    return 1;
-    //}
+    ret = load_func_args(&arg_list, &arg_count, probe);
+    if (ret)
+        ERR("Failed to load function args\n");
 
-    //regs = (struct pt_regs *)value->buf;
-    //irq = ~regs->orig_eax & 0xff;
-    unsigned int eax = target_read_reg(t, 0);
-    irq = ~eax & 0xff;
-
+    regs = (struct pt_regs *)arg_list[0].buf;
+    irq = ~regs->orig_eax & 0xff;
+   
     DBG("%d (%s): Interrupt %d (0x%02x) called\n",
         task_current->pid, task_current->comm, 
         irq, irq);
@@ -188,21 +204,22 @@ static int probe_interrupt_return(struct probe *probe,
                                   void *data, 
                                   struct probe *trigger)
 {
-    int irq;
+    //var_t *arg_list = NULL;
+    //int arg_count = 0;
     //struct pt_regs *regs;
+    int irq = 0;
+    //int ret;
+    
+    //ret = load_func_args(&arg_list, &arg_count, probe);
+    //if (ret)
+    //    ERR("Failed to load function args\n");
 
-    //value = get_function_arg(0, probe, t);
-    //if (!value)
-    //{
-    //    ERR("Could not read IRQ\n");
-    //    return 1;
-    //}
-
-    //regs = (struct pt_regs *)value->buf;
+    //regs = (struct pt_regs *)arg_list[0].buf;
     //irq = ~regs->orig_eax & 0xff;
-    unsigned int eax = target_read_reg(t, 0);
-    irq = ~eax & 0xff;
 
+    //DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
+    //    task_current->pid, task_current->comm, 
+    //    irq, irq);
     DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
         task_current->pid, task_current->comm, 
         irq, irq);

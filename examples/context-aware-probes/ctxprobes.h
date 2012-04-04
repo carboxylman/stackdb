@@ -52,7 +52,7 @@ typedef void (*ctxprobes_func_call_handler_t)(char *symbol,
 typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
                                                 var_t *arg_list, 
                                                 int arg_count,
-                                                var_t retval,
+                                                var_t *retval,
                                                 task_t *task);
 
 //typedef void (*ctxprobes_var_handler_t)(char *symbol,

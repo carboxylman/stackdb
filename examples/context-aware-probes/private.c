@@ -103,13 +103,13 @@ int register_call_probe(char *symbol,
     bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
     if (!bsymbol)
     {
-        WARN("Could not find symbol %s in debuginfo. Trying sysmap...\n", 
+        WARN("Could not find symbol '%s' in debuginfo. Trying sysmap...\n", 
              symbol);
         
         addr = sysmap_symbol_addr(symbol);
         if (!addr)
         {
-            ERR("Could not find symbol %s in both debuginfo and sysmap!\n", 
+            ERR("Could not find symbol '%s' in both debuginfo and sysmap!\n", 
                 symbol);
             return -1;
         }
@@ -465,8 +465,6 @@ int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe)
     };
 
     arglen = probe->bsymbol->lsymbol->symbol->s.ii->d.f.count;
-    DBG("Function %s has %d args\n", probe->name, arglen);
-
     args = (var_t *)malloc(sizeof(var_t) * arglen);
     if (!args)
     {
@@ -548,7 +546,53 @@ void unload_func_args(var_t *arg_list, int arg_count)
     }
 }
 
-int load_func_retval(var_t *retval, struct probe *probe)
+int load_func_retval(var_t **retval, struct probe *probe)
 {
+    var_t *value;
+    unsigned long eax;
+    
+    value = (var_t *)malloc(sizeof(var_t));
+    if (!value)
+    {
+        ERR("Cannot allocate memory for function retval!\n");
+        return -4;
+    }
+    memset(value, 0, sizeof(var_t));
+    
+    value->size = sizeof(eax);
+    
+    value->name = (char *)malloc(strlen(probe->name)+1+6+1);
+    if (!value->name)
+    {
+        ERR("Cannot allocate memory for function retval name!\n");
+        unload_func_retval(value);
+        return -4;
+    }
+    sprintf(value->name, "%s.return", probe->name);
+    
+    value->buf = (char *)malloc(value->size);
+    if (!value->buf)
+    {
+        ERR("Cannot allocate memory for function retval buf!\n");
+        unload_func_retval(value);
+        return -4;
+    }
+    eax = target_read_reg(t, 0);
+    memcpy(value->buf, &eax, value->size);
+
+    *retval = value;
+    
     return 0;
+}
+
+void unload_func_retval(var_t *retval)
+{
+    if (retval)
+    {
+        if (retval->name)
+            free(retval->name);
+        if (retval->buf)
+            free(retval->buf);
+        free(retval);
+    }
 }
