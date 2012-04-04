@@ -29,6 +29,7 @@
 #include <log.h>
 
 #include "ctxprobes.h"
+#include "debug.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -37,17 +38,39 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 
+char context_ch(ctxprobes_context_t context)
+{
+    char c;
+    switch (context) {
+        case CTXPROBES_CONTEXT_NORMAL:
+            c = 'N';
+            break;
+        case CTXPROBES_CONTEXT_TRAP:
+            c = 'T';
+            break;
+        case CTXPROBES_CONTEXT_INTERRUPT:
+            c = 'I';
+            break;
+        default:
+            c = 'X';
+            ERR("Invalid context identifier %d!\n", context);
+            break;
+    }
+    return c;
+}
+
 void sys_open_call(char *symbol, 
-                   var_t *args, 
+                   ctxprobes_var_t *args, 
                    int argcount, 
-                   task_t *task)
+                   ctxprobes_task_t *task,
+                   ctxprobes_context_t context)
 {
     if (!args || argcount < 3)
-        printf("%d (%s): %s called, but failed to load args\n", 
-               task->pid, task->comm, symbol);
+        printf("[%c] %d (%s): %s called, but failed to load args\n", 
+               context_ch(context), task->pid, task->comm, symbol);
     else
-        printf("%d (%s): %s(%s=%s, %s=0x%x, %s=0x%x)\n", 
-               task->pid, task->comm, symbol,
+        printf("[%c] %d (%s): %s(%s=%s, %s=0x%x, %s=0x%x)\n", 
+               context_ch(context), task->pid, task->comm, symbol,
                args[0].name, args[0].buf,
                args[1].name, *(int *)args[1].buf,
                args[2].name, *(int *)args[2].buf);
@@ -61,17 +84,18 @@ void sys_open_call(char *symbol,
 }
 
 void sys_open_return(char *symbol, 
-                     var_t *args, 
+                     ctxprobes_var_t *args, 
                      int argcount, 
-                     var_t *retval,
-                     task_t *task)
+                     ctxprobes_var_t *retval,
+                     ctxprobes_task_t *task,
+                     ctxprobes_context_t context)
 {
-	if (!retval)
-		printf("%d (%s): %s returned, but failed to load retval\n", 
-		       task->pid, task->comm, symbol);
+    if (!retval)
+        printf("[%c] %d (%s): %s returned, but failed to load retval\n", 
+               context_ch(context), task->pid, task->comm, symbol);
     else
-        printf("%d (%s): %s returned %d (0x%x)\n", 
-               task->pid, task->comm, symbol,
+        printf("[%c] %d (%s): %s returned %d (0x%x)\n", 
+               context_ch(context), task->pid, task->comm, symbol,
                *(int *)retval->buf, *(int *)retval->buf);
 
     printf("- Parent task chain: \n");

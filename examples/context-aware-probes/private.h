@@ -85,17 +85,21 @@ unsigned long sysmap_symbol_addr(char *symbol);
 
 unsigned long current_task_addr(void);
 
-int load_task_info(task_t **task, unsigned long task_struct_addr);
+int load_task_info(ctxprobes_task_t **task, unsigned long task_struct_addr);
 
-void unload_task_info(task_t *task);
+void unload_task_info(ctxprobes_task_t *task);
 
 
-int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe);
+int load_func_args(ctxprobes_var_t **arg_list, 
+                   int *arg_count, 
+                   struct probe *probe);
 
-void unload_func_args(var_t *arg_list, int arg_count);
+void unload_func_args(ctxprobes_var_t *arg_list, 
+                      int arg_count);
 
-int load_func_retval(var_t **retval, struct probe *probe);
+int load_func_retval(ctxprobes_var_t **retval, 
+                     struct probe *probe);
 
-void unload_func_retval(var_t *retval);
+void unload_func_retval(ctxprobes_var_t *retval);
 
 #endif /* __CTXPROBES_PRIVATE_H__  */

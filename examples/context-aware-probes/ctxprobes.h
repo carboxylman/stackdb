@@ -27,37 +27,46 @@
 #ifndef __CTXPROBES_H__
 #define __CTXPROBES_H__
 
-typedef struct var {
+typedef enum {
+    CTXPROBES_CONTEXT_NORMAL,
+    CTXPROBES_CONTEXT_TRAP,
+    CTXPROBES_CONTEXT_INTERRUPT 
+} ctxprobes_context_t;
+
+typedef struct ctxprobes_var {
     char *name;
     int size;
     char *buf;
-} var_t;
+} ctxprobes_var_t;
 
-typedef struct task {
+typedef struct ctxprobes_task {
+    unsigned long vaddr; /* virtual address of the task_struct */
     unsigned int pid;
     unsigned int tgid;
-    struct task *real_parent;
-    struct task *parent;
     unsigned int uid, euid, suid, fsuid;
     unsigned int gid, egid, sgid, fsgid;
     char *comm;
-    unsigned long vaddr; /* virtual address of the task_struct */
-} task_t;
+    struct ctxprobes_task *parent;
+    struct ctxprobes_task *real_parent;
+} ctxprobes_task_t;
 
 typedef void (*ctxprobes_func_call_handler_t)(char *symbol,
-                                              var_t *arg_list,
+                                              ctxprobes_var_t *arg_list,
                                               int arg_count,
-                                              task_t *task);
+                                              ctxprobes_task_t *task,
+                                              ctxprobes_context_t context);
 
 typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
-                                                var_t *arg_list, 
+                                                ctxprobes_var_t *arg_list, 
                                                 int arg_count,
-                                                var_t *retval,
-                                                task_t *task);
+                                                ctxprobes_var_t *retval,
+                                                ctxprobes_task_t *task,
+                                                ctxprobes_context_t context);
 
 //typedef void (*ctxprobes_var_handler_t)(char *symbol,
-//                                        var_t *var,
-//                                        task_t *task);
+//                                        ctxprobes_var_t *var,
+//                                        ctxprobes_task_t *task,
+//                                        ctxprobes_context_t context);
 
 
 int ctxprobes_init(char *domain_name, 

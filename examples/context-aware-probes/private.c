@@ -285,12 +285,12 @@ unsigned long current_task_addr(void)
     return task_addr;
 }
 
-int load_task_info(task_t **ptask, unsigned long task_struct_addr)
+int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
 {
     unsigned char *task_struct_buf;
     unsigned long parent_addr;
     unsigned long real_parent_addr;
-    task_t *task, *current, *parent;
+    ctxprobes_task_t *task, *current, *parent;
 
     task_struct_buf = (unsigned char *)malloc(TASK_STRUCT_SIZE);
     if (!task_struct_buf)
@@ -307,13 +307,13 @@ int load_task_info(task_t **ptask, unsigned long task_struct_addr)
         return -1;
     }
 
-    task = (task_t *)malloc(sizeof(task_t));
+    task = (ctxprobes_task_t *)malloc(sizeof(ctxprobes_task_t));
     if (!task)
     {
         free(task_struct_buf);
         return -1;
     }
-    memset(task, 0, sizeof(task_t));
+    memset(task, 0, sizeof(ctxprobes_task_t));
 
     current = task;
 
@@ -360,14 +360,14 @@ int load_task_info(task_t **ptask, unsigned long task_struct_addr)
             return -1;
         }
 
-        parent = (task_t *)malloc(sizeof(task_t));
+        parent = (ctxprobes_task_t *)malloc(sizeof(ctxprobes_task_t));
         if (!parent)
         {
             free(task_struct_buf);
             unload_task_info(current);
             return -1;
         }
-        memset(parent, 0, sizeof(task_t));
+        memset(parent, 0, sizeof(ctxprobes_task_t));
 
         task->parent = parent;
         task = parent;
@@ -381,9 +381,9 @@ int load_task_info(task_t **ptask, unsigned long task_struct_addr)
     return 0;
 }
 
-void unload_task_info(task_t *task)
+void unload_task_info(ctxprobes_task_t *task)
 {
-    task_t *parent;
+    ctxprobes_task_t *parent;
     
     while (task)
     {
@@ -396,7 +396,9 @@ void unload_task_info(task_t *task)
 }
 
 
-int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe)
+int load_func_args(ctxprobes_var_t **arg_list, 
+                   int *arg_count, 
+                   struct probe *probe)
 {
     int ret = 0;
     struct value *value;
@@ -404,7 +406,7 @@ int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe)
     struct symbol *tsym;
     struct array_list *tmp;
     int len, i = 0;
-    var_t *args;
+    ctxprobes_var_t *args;
     int arglen;
 
     if (!probe->bsymbol->lsymbol->chain || 
@@ -428,14 +430,14 @@ int load_func_args(var_t **arg_list, int *arg_count, struct probe *probe)
     };
 
     arglen = probe->bsymbol->lsymbol->symbol->s.ii->d.f.count;
-    args = (var_t *)malloc(sizeof(var_t) * arglen);
+    args = (ctxprobes_var_t *)malloc(sizeof(ctxprobes_var_t) * arglen);
     if (!args)
     {
         ret = -4;
         ERR("Cannot allocate memory for function arg!\n");
         goto error_exit;
     }
-    memset(args, 0, sizeof(var_t) * arglen);
+    memset(args, 0, sizeof(ctxprobes_var_t) * arglen);
 
     ++tmp->len;
     list_for_each_entry(tsym_instance,
@@ -493,7 +495,7 @@ error_exit:
     return ret;
 }
 
-void unload_func_args(var_t *arg_list, int arg_count)
+void unload_func_args(ctxprobes_var_t *arg_list, int arg_count)
 {
     int i;
     if (arg_list)
@@ -509,18 +511,18 @@ void unload_func_args(var_t *arg_list, int arg_count)
     }
 }
 
-int load_func_retval(var_t **retval, struct probe *probe)
+int load_func_retval(ctxprobes_var_t **retval, struct probe *probe)
 {
-    var_t *value;
+    ctxprobes_var_t *value;
     unsigned long eax;
     
-    value = (var_t *)malloc(sizeof(var_t));
+    value = (ctxprobes_var_t *)malloc(sizeof(ctxprobes_var_t));
     if (!value)
     {
         ERR("Cannot allocate memory for function retval!\n");
         return -4;
     }
-    memset(value, 0, sizeof(var_t));
+    memset(value, 0, sizeof(ctxprobes_var_t));
     
     value->size = sizeof(eax);
     
@@ -548,7 +550,7 @@ int load_func_retval(var_t **retval, struct probe *probe)
     return 0;
 }
 
-void unload_func_retval(var_t *retval)
+void unload_func_retval(ctxprobes_var_t *retval)
 {
     if (retval)
     {

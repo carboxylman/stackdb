@@ -45,7 +45,9 @@ FILE *sysmap_handle = NULL;
 struct target *t = NULL;
 GHashTable *probes = NULL;
 
-task_t *task_current = NULL;
+ctxprobes_task_t *task_current = NULL;
+ctxprobes_context_t context_current = CTXPROBES_CONTEXT_NORMAL;
+ctxprobes_context_t context_prev;
 
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
@@ -55,7 +57,7 @@ static int probe_func_call(struct probe *probe,
                            struct probe *trigger)
 {
     char *symbol;
-    var_t *arg_list = NULL;
+    ctxprobes_var_t *arg_list = NULL;
     int arg_count = 0;
     int ret;
 
@@ -73,7 +75,11 @@ static int probe_func_call(struct probe *probe,
         ERR("Failed to load function args\n");
 
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
-    handler(symbol, arg_list, arg_count, task_current);
+    handler(symbol, 
+            arg_list, 
+            arg_count, 
+            task_current, 
+            context_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
 
     unload_func_args(arg_list, arg_count);
@@ -86,8 +92,8 @@ static int probe_func_return(struct probe *probe,
                              struct probe *trigger)
 {
     char *symbol;
-    var_t *arg_list = NULL;
-    var_t *retval = NULL;
+    ctxprobes_var_t *arg_list = NULL;
+    ctxprobes_var_t *retval = NULL;
     int arg_count = 0;
     int ret;
 
@@ -109,7 +115,12 @@ static int probe_func_return(struct probe *probe,
         ERR("Failed to load function retval\n");
 
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
-    handler(symbol, arg_list, arg_count, retval, task_current);
+    handler(symbol, 
+            arg_list, 
+            arg_count, 
+            retval, 
+            task_current, 
+            context_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
 
     unload_func_retval(retval);
@@ -122,9 +133,13 @@ static int probe_trap_call(struct probe *probe,
                            void *data, 
                            struct probe *trigger)
 {
+	context_prev = context_current;
+	context_current = CTXPROBES_CONTEXT_TRAP;
+
     DBG("%d (%s): Trap %s called\n", 
         task_current->pid, task_current->comm, 
         probe->name);
+
     return 0;
 }
 
@@ -135,6 +150,9 @@ static int probe_trap_return(struct probe *probe,
     DBG("%d (%s): Trap %s returned\n", 
         task_current->pid, task_current->comm, 
         probe->name);
+
+	context_current = context_prev;
+
     return 0;
 }
 
@@ -164,10 +182,13 @@ static int probe_interrupt_call(struct probe *probe,
                                 void *data, 
                                 struct probe *trigger)
 {
-    var_t *arg_list = NULL;
+    ctxprobes_var_t *arg_list = NULL;
     int arg_count = 0;
     struct pt_regs *regs;
     int ret, irq;
+
+	context_prev = context_current;
+	context_current = CTXPROBES_CONTEXT_INTERRUPT;
 
     ret = load_func_args(&arg_list, &arg_count, probe);
     if (ret)
@@ -179,6 +200,7 @@ static int probe_interrupt_call(struct probe *probe,
     DBG("%d (%s): Interrupt %d (0x%02x) called\n",
         task_current->pid, task_current->comm, 
         irq, irq);
+
     return 0;
 }
 
@@ -186,7 +208,7 @@ static int probe_interrupt_return(struct probe *probe,
                                   void *data, 
                                   struct probe *trigger)
 {
-    //var_t *arg_list = NULL;
+    //ctxprobes_var_t *arg_list = NULL;
     //int arg_count = 0;
     //struct pt_regs *regs;
     //int irq = 0;
@@ -204,6 +226,9 @@ static int probe_interrupt_return(struct probe *probe,
     //    irq, irq);
     DBG("%d (%s): Interrupt X (0xXX) returned\n",
         task_current->pid, task_current->comm);
+
+	context_current = context_prev;
+
     return 0;
 }
 
@@ -212,7 +237,7 @@ static int probe_task_switch(struct probe *probe,
                              struct probe *trigger)
 {
     struct value *lvalue_task_prev, *lvalue_task_next;
-    task_t *task_prev, *task_next;
+    ctxprobes_task_t *task_prev, *task_next;
     int ret;
 
     lvalue_task_prev = bsymbol_load(bsymbol_task_prev, LOAD_FLAG_NONE);
