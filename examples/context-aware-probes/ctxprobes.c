@@ -50,24 +50,6 @@ task_t *task_current = NULL;
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
 
-struct pt_regs {
-    long ebx;
-    long ecx;
-    long edx;
-    long esi;
-    long edi;
-    long ebp;
-    long eax;
-    int  xds;
-    int  xes; 
-    long orig_eax;
-    long eip;
-    int  xcs;
-    long eflags;
-    long esp;
-    int  xss;
-};
-
 static int probe_func_call(struct probe *probe,
                            void *data,
                            struct probe *trigger)
@@ -207,7 +189,7 @@ static int probe_interrupt_return(struct probe *probe,
     //var_t *arg_list = NULL;
     //int arg_count = 0;
     //struct pt_regs *regs;
-    int irq = 0;
+    //int irq = 0;
     //int ret;
     
     //ret = load_func_args(&arg_list, &arg_count, probe);
@@ -220,9 +202,8 @@ static int probe_interrupt_return(struct probe *probe,
     //DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
     //    task_current->pid, task_current->comm, 
     //    irq, irq);
-    DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
-        task_current->pid, task_current->comm, 
-        irq, irq);
+    DBG("%d (%s): Interrupt X (0xXX) returned\n",
+        task_current->pid, task_current->comm);
     return 0;
 }
 
@@ -512,8 +493,14 @@ void ctxprobes_cleanup(void)
 
         DBG("Ended trace.\n");
         
+        if (bsymbol_task_prev)
+            bsymbol_release(bsymbol_task_prev);
+        if (bsymbol_task_next)
+            bsymbol_release(bsymbol_task_next);
         fclose(sysmap_handle);
 
+        bsymbol_task_prev = NULL;
+        bsymbol_task_next = NULL;
         task_current = NULL;
         probes = NULL;
         t = NULL;
