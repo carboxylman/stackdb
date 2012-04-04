@@ -66,9 +66,9 @@ static int probe_func_call(struct probe *probe,
 
     symbol = probe->name;
 
-    DBG("%d (%s): Function %s called\n", 
-        task_current->pid, task_current->comm, 
-        symbol);
+    DBG("%d (%s): Function %s called (context: %s)\n", 
+        task_current->pid, task_current->comm, symbol, 
+        context_string(context_current));
   
     ret = load_func_args(&arg_list, &arg_count, probe);
     if (ret)
@@ -102,9 +102,9 @@ static int probe_func_return(struct probe *probe,
 
     symbol = probe->name;
 
-    DBG("%d (%s): Function %s returned\n", 
-        task_current->pid, task_current->comm, 
-        symbol);
+    DBG("%d (%s): Function %s returned (context: %s)\n", 
+        task_current->pid, task_current->comm, symbol,
+        context_string(context_current));
  
     //ret = load_func_args(&arg_list, &arg_count, probe);
     //if (ret)
@@ -133,8 +133,8 @@ static int probe_trap_call(struct probe *probe,
                            void *data, 
                            struct probe *trigger)
 {
-	context_prev = context_current;
-	context_current = CTXPROBES_CONTEXT_TRAP;
+    //context_prev = context_current;
+    //context_current = CTXPROBES_CONTEXT_TRAP;
 
     DBG("%d (%s): Trap %s called\n", 
         task_current->pid, task_current->comm, 
@@ -151,7 +151,7 @@ static int probe_trap_return(struct probe *probe,
         task_current->pid, task_current->comm, 
         probe->name);
 
-	context_current = context_prev;
+    context_current = context_prev;
 
     return 0;
 }
@@ -187,8 +187,8 @@ static int probe_interrupt_call(struct probe *probe,
     struct pt_regs *regs;
     int ret, irq;
 
-	context_prev = context_current;
-	context_current = CTXPROBES_CONTEXT_INTERRUPT;
+    context_prev = context_current;
+    context_current = CTXPROBES_CONTEXT_INTERRUPT;
 
     ret = load_func_args(&arg_list, &arg_count, probe);
     if (ret)
@@ -227,7 +227,7 @@ static int probe_interrupt_return(struct probe *probe,
     DBG("%d (%s): Interrupt X (0xXX) returned\n",
         task_current->pid, task_current->comm);
 
-	context_current = context_prev;
+    context_current = context_prev;
 
     return 0;
 }
@@ -344,8 +344,8 @@ static const probe_entry_t probe_list[] =
       NULL/*probe_trap_return*/,                { .init = NULL } },
     { "do_invalid_op",                  probe_trap_call, 
       NULL/*probe_trap_return*/,                { .init = NULL } },
-    //{ "device_not_available",           probe_trap_call, 
-    //  probe_trap_return,                { .init = NULL } },
+    { "device_not_available",           probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
     //{ "double_fault",                   probe_trap_call, 
     //  probe_trap_return,                { .init = NULL } },
     { "do_coprocessor_segment_overrun", probe_trap_call, 
@@ -376,6 +376,10 @@ static const probe_entry_t probe_list[] =
     //  probe_interrupt_return,           { .init = NULL } },
     { "schedule.switch_tasks",          probe_task_switch, 
       NULL,                             { .init = probe_task_switch_init } },
+    //{ "ret_from_exception",             probe_trap_return, 
+    //  NULL,                             { .init = NULL } },
+    //{ "ret_from_intr",                  probe_interrupt_return, 
+    //  NULL,                             { .init = NULL } },
 };
 
 static void sigh(int signo)

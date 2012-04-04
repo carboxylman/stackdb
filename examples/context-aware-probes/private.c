@@ -245,6 +245,8 @@ unsigned long sysmap_symbol_addr(char *symbol)
     char sym[256];
     char symtype;
 
+    fseek (sysmap_handle, 0, SEEK_SET);
+
     while ((rc = fscanf(sysmap_handle,
                         "%lx %c %s255", 
                         &addr, 
@@ -393,6 +395,28 @@ void unload_task_info(ctxprobes_task_t *task)
         free(task);
         task = parent;
     }
+}
+
+static char *context_strs[] = { "NORMAL", "TRAP", "INTERRUPT", "UNKNOWN" };
+char *context_string(ctxprobes_context_t context)
+{
+    char *str;
+    switch (context) {
+        case CTXPROBES_CONTEXT_NORMAL:
+            str = context_strs[0];
+            break;
+        case CTXPROBES_CONTEXT_TRAP:
+            str = context_strs[1];
+            break;
+        case CTXPROBES_CONTEXT_INTERRUPT:
+            str = context_strs[2];
+            break;
+        default:
+            str = context_strs[3];
+            ERR("Invalid context identifier %d!\n", context);
+            break;
+    }
+    return str;
 }
 
 
