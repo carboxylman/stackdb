@@ -1,3 +1,5 @@
+-*- mode: Text -*-
+
 To build this software, you must have installed
 
   * glib (>= 2.14, I believe);

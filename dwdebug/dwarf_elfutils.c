@@ -1,3 +1,33 @@
+/* Print information from ELF file in human-readable form.
+   Copyright (C) 1999-2012 Red Hat, Inc.
+   Copyright (c) 2011, 2012 The University of Utah
+
+   ELF utility functions, adapted from Red Hat elfutils.
+
+   This file is based on Red Hat elfutils' `src/readelf.c' file, which was
+   Written by Ulrich Drepper <drepper@redhat.com>, 1999.
+
+   Red Hat elfutils is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by the
+   Free Software Foundation; version 2 of the License.
+
+   Red Hat elfutils is distributed in the hope that it will be useful, but
+   WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public License along
+   with Red Hat elfutils; if not, write to the Free Software Foundation,
+   Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301 USA.
+
+   Red Hat elfutils is an included package of the Open Invention Network.
+   An included package of the Open Invention Network is a package for which
+   Open Invention Network licensees cross-license their patents.  No patent
+   license is granted, either expressly or impliedly, by designation as an
+   included package.  Should you wish to participate in the Open Invention
+   Network licensing program, please visit www.openinventionnetwork.com
+   <http://www.openinventionnetwork.com>.  */
+
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -24,8 +54,8 @@
  **/
 
 /*
- * This is taken directly from elfutils/src/readelf.c, tweaked into
- * "better" C, and hooked so that we can "detect" end of prologues.
+ * This is taken from elfutils/src/readelf.c:print_debug_line_section(),
+ * tweaked into "better" C, and hooked so that we can "detect" end of prologues.
  */
 int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 	      Dwarf_Off offset,size_t address_size) {
@@ -604,7 +634,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 }
 
 /**
- ** Convenience string functions, straight out of elfutils/readelf.c !
+ ** Convenience string function, straight out of elfutils/readelf.c !
  **/
 const char *
 dwarf_tag_string (unsigned int tag)
@@ -738,6 +768,9 @@ dwarf_tag_string (unsigned int tag)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_attr_string (unsigned int attrnum)
 {
@@ -970,6 +1003,9 @@ dwarf_attr_string (unsigned int attrnum)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_form_string (unsigned int form)
 {
@@ -1018,6 +1054,9 @@ dwarf_form_string (unsigned int form)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_lang_string (unsigned int lang)
 {
@@ -1061,6 +1100,9 @@ dwarf_lang_string (unsigned int lang)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_inline_string (unsigned int code)
 {
@@ -1079,6 +1121,9 @@ dwarf_inline_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_encoding_string (unsigned int code)
 {
@@ -1116,6 +1161,9 @@ dwarf_encoding_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_access_string (unsigned int code)
 {
@@ -1133,6 +1181,9 @@ dwarf_access_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_visibility_string (unsigned int code)
 {
@@ -1150,6 +1201,9 @@ dwarf_visibility_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_virtuality_string (unsigned int code)
 {
@@ -1167,6 +1221,9 @@ dwarf_virtuality_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_identifier_case_string (unsigned int code)
 {
@@ -1185,6 +1242,9 @@ dwarf_identifier_case_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_calling_convention_string (unsigned int code)
 {
@@ -1209,6 +1269,9 @@ dwarf_calling_convention_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_ordering_string (unsigned int code)
 {
@@ -1225,6 +1288,9 @@ dwarf_ordering_string (unsigned int code)
 }
 
 
+/**
+ ** Convenience string function, straight out of elfutils/readelf.c !
+ **/
 const char *
 dwarf_discr_list_string (unsigned int code)
 {

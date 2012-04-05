@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2012 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -13,8 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
- *
+ * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ */
+
+/*
  *  examples/nfs-perf-analysis/request.c
  *
  *  Request manipulation functions: hashing, move between stages,

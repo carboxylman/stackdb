@@ -2,6 +2,7 @@
  * The libxa library provides access to resources in domU machines.
  * 
  * Copyright (C) 2005 - 2007  Bryan D. Payne (bryan@thepaynes.cc)
+ * Copyright (C) 2011, 2012 The University of Utah
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

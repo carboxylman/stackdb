@@ -1,3 +1,65 @@
+-*- mode: Text -*-
+
+VMI is Copyright (c) 2011, 2012 The University of Utah.
+
+VMI is distributed under the GNU General Public License version 2 (GPLv2).
+The text of the GNU GPLv2 is included below.
+
+Certain third-party components are included with the VMI software distribution.
+Those components are copyrighted and licensed as described in the files that
+make up those components.  For convenience, the following is a summary of the
+third-party components included with the VMI software
+
+Major components:
+
+  xenaccess/
+    The libxa library provides access to resources in domU machines.
+    Copyright (C) 2005 - 2007  Bryan D. Payne (bryan@thepaynes.cc)
+    Modifications by the University of Utah.
+    Copyright (c) 2011, 2012 The University of Utah.
+    Distributed under the GNU GPLv2.
+
+  dwdebug/dwarf_elfutils.c
+    ELF utility functions, adapted from Red Hat elfutils.
+    Copyright (C) 1999-2012 Red Hat, Inc.
+    Modifications by the University of Utah.
+    Copyright (c) 2011, 2012 The University of Utah
+    Distributed under the GNU GPLv2.
+
+Minor components:
+
+  dwdebug/memory-access.h
+    Unaligned memory access functionality.
+    Copyright (C) 2000-2010 Red Hat, Inc.
+    Distributed under the GNU GPLv2.
+
+  include/list.h
+  examples/nfs-perf-analysis/list.h
+    List-implementation code adapted from the Linux kernel.
+    Copyright (c) Linux Torvalds
+    Modifications by the University of Utah.
+    Copyright (c) 2011, 2012 The University of Utah
+    Distributed under the GNU GPLv2.
+
+  lib/debugpred.h
+    Portions of Red Hat elfutils.
+    Copyright (C) 2008, 2009 Red Hat, Inc.
+    Distributed under the GNU GPLv2.
+
+  vmfs/elfutils/
+  vmps/elfutils/
+    Portions of Red Hat elfutils.
+    Copyright (C) 2000, 2001, 2002, 2004, 2005, 2006 Red Hat, Inc.
+    Distributed under the GNU GPLv2.
+
+  vmfs/inih/
+  vmps/inih/
+    inih is a simple .INI file parser written in C
+    Copyright (c) 2009, Brush Technology
+    Distributed under the New BSD license.
+
+-------------------------------------------------------------------------------
+
 		    GNU GENERAL PUBLIC LICENSE
 		       Version 2, June 1991
 

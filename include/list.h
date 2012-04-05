@@ -1,3 +1,25 @@
+/*
+ * Copyright (c) Linus Torvalds
+ * Copyright (c) 2011, 2012 The University of Utah
+ *
+ * This file contains list-implementation code taken from Linux
+ * (primarily the Linux source file `include/linux/list.h') and
+ * de-kernelized for user-space programs.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ */
+
 #ifndef _LINUX_LIST_H
 #define _LINUX_LIST_H
 
