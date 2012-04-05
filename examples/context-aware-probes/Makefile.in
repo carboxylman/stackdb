@@ -89,20 +89,13 @@ demo: ctxprobes-example
 	sudo ./ctxprobes-example -m /boot/System.map-2.6.18-xenU \
 	a3guest 2> /dev/null
 
-debug: ctxprobes-example
-	sudo ./ctxprobes-example -ddddddddddd -l T_ALL,P_ALL,T_XV 
+verbose: ctxprobes-example
+	sudo ./ctxprobes-example -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU a3guest
 
-run-tt: ctxprobes-example
-	sudo ./ctxprobes-example -m /boot/System.map-2.6.18-xenU clientA
-
-demo-tt: ctxprobes-example
-	sudo ./ctxprobes-example -m /boot/System.map-2.6.18-xenU \
-	clientA 2> /dev/null
-
-debug-tt: ctxprobes-example
-	sudo ./ctxprobes-example -ddddddddddd -l T_ALL,P_ALL,T_XV 
-	-m /boot/System.map-2.6.18-xenU clientA
+debug: ctxprobes-example
+	sudo gdb --args ./ctxprobes-example -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m /boot/System.map-2.6.18-xenU a3guest
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.
