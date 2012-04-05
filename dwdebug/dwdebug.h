@@ -385,7 +385,7 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
 /*
  * Takes a reference to the symbol.  Users should not call this.
  */
-void symbol_hold(struct symbol *symbol);
+REFCNT symbol_hold(struct symbol *symbol);
 /*
  * Releases a reference to the symbol and tries to free it.
  */

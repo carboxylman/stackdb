@@ -2021,6 +2021,10 @@ unsigned int symbol_type_full_bytesize(struct symbol *type) {
     return symbol_type_bytesize(type);
 }
 
+REFCNT symbol_hold(struct symbol *symbol) {
+    return RHOLD(symbol);
+}
+
 REFCNT symbol_release(struct symbol *symbol) {
     /*
      * WE DO NOT FREE symbols on release; our debugfile garbage
