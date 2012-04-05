@@ -17,7 +17,7 @@ CFLAGS += $(XENACCESS_FLAGS) -I./ -I$(TOP_SRCDIR)/include -I$(XENACCESS_INC)
 LDFLAGS := -lxenctrl -lxenstore
 LDFLAGS += -lebl -lelf -ldw
 
-OBJECTS := config.lo offset.lo web.lo log.lo vmps.lo
+OBJECTS := inih/ini.lo offset.lo web.lo log.lo vmps.lo
 
 INST_BIN := vmps
 
