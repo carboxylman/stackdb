@@ -1797,12 +1797,12 @@ unsigned long linux_userproc_write(struct target *target,
  * General Purpose Register RDI 5 %rdi
  * Frame Pointer Register RBP 6 %rbp
  * Stack Pointer Register RSP 7 %rsp
- * Extended Integer Registers 8-15 8-15 %r8–%r15
+ * Extended Integer Registers 8-15 8-15 %r8-%r15
  * Return Address RA 16
- * Vector Registers 0–7 17-24 %xmm0–%xmm7
- * Extended Vector Registers 8–15 25-32 %xmm8–%xmm15
- * Floating Point Registers 0–7 33-40 %st0–%st7
- * MMX Registers 0–7 41-48 %mm0–%mm7
+ * Vector Registers 0-7 17-24 %xmm0-%xmm7
+ * Extended Vector Registers 8-15 25-32 %xmm8-%xmm15
+ * Floating Point Registers 0-7 33-40 %st0-%st7
+ * MMX Registers 0-7 41-48 %mm0-%mm7
  * Flag Register 49 %rFLAGS
  * Segment Register ES 50 %es
  * Segment Register CS 51 %cs
