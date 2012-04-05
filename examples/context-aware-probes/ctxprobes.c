@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  ctxprobes/ctxprobes.c
+ *  examples/context-aware-probes/ctxprobes.c
  *
  *  Probes aware of guest's context changes -- task switches, traps, 
  *  and interrupts.
@@ -23,6 +23,9 @@
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 
  */
+
+#include <stdio.h>
+#include <stdlib.h>
 
 #include <log.h>
 #include <dwdebug.h>
@@ -32,46 +35,200 @@
 
 #include <probe_api.h>
 #include <probe.h>
-#include <alist.h>
 
 #include "ctxprobes.h"
+#include "private.h"
 #include "debug.h"
 
-static char *dom_name = NULL;
-static struct target *t = NULL;
-static GHashTable *probes = NULL; /* lower-level probes */
-static GHashTable *ctxprobes = NULL; /* context-aware probes */
+char *dom_name = NULL;
+FILE *sysmap_handle = NULL;
+struct target *t = NULL;
+GHashTable *probes = NULL;
 
-typedef struct probe_entry
+ctxprobes_task_t *task_current = NULL;
+ctxprobes_context_t context_current = CTXPROBES_CONTEXT_NORMAL;
+ctxprobes_context_t context_prev;
+
+struct bsymbol *bsymbol_task_prev = NULL;
+struct bsymbol *bsymbol_task_next = NULL;
+
+static int probe_func_call(struct probe *probe,
+                           void *data,
+                           struct probe *trigger)
 {
-    int raw; /* 0:use symbol, 1:use addr (raw address) */
     char *symbol;
-    ADDR addr;
-    probe_handler_t handler;
+    ctxprobes_var_t *arg_list = NULL;
+    int arg_count = 0;
+    int ret;
 
-} probe_entry_t;
+    ctxprobes_func_call_handler_t handler 
+        = (ctxprobes_func_call_handler_t) data;
 
-static int probe_trap(struct probe *probe, 
-                      void *data, 
-                      struct probe *trigger)
-{
-    DBG("Trap: %s\n", probe->name);
+    symbol = probe->name;
+
+    DBG("%d (%s): Function %s called (context: %s)\n", 
+        task_current->pid, task_current->comm, symbol, 
+        context_string(context_current));
+  
+    ret = load_func_args(&arg_list, &arg_count, probe);
+    if (ret)
+        ERR("Failed to load function args\n");
+
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
+    handler(symbol, 
+            arg_list, 
+            arg_count, 
+            task_current, 
+            context_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
+
+    unload_func_args(arg_list, arg_count);
+
     return 0;
 }
 
-static int probe_syscall(struct probe *probe, 
-                         void *data, 
-                         struct probe *trigger)
+static int probe_func_return(struct probe *probe,
+                             void *data,
+                             struct probe *trigger)
 {
-    DBG("System call: %s\n", probe->name);
+    char *symbol;
+    ctxprobes_var_t *arg_list = NULL;
+    ctxprobes_var_t *retval = NULL;
+    int arg_count = 0;
+    int ret;
+
+    ctxprobes_func_return_handler_t handler 
+        = (ctxprobes_func_return_handler_t) data;
+
+    symbol = probe->name;
+
+    DBG("%d (%s): Function %s returned (context: %s)\n", 
+        task_current->pid, task_current->comm, symbol,
+        context_string(context_current));
+ 
+    //ret = load_func_args(&arg_list, &arg_count, probe);
+    //if (ret)
+    //    ERR("Failed to load function args\n");
+
+    ret = load_func_retval(&retval, probe);
+    if (ret)
+        ERR("Failed to load function retval\n");
+
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
+    handler(symbol, 
+            arg_list, 
+            arg_count, 
+            retval, 
+            task_current, 
+            context_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
+
+    unload_func_retval(retval);
+    //unload_func_args(arg_list, arg_count);
+
     return 0;
 }
 
-static int probe_interrupt(struct probe *probe, 
+static int probe_trap_call(struct probe *probe, 
                            void *data, 
                            struct probe *trigger)
 {
-    DBG("Interrupt: %s\n", probe->name);
+    //context_prev = context_current;
+    //context_current = CTXPROBES_CONTEXT_TRAP;
+
+    DBG("%d (%s): Trap %s called\n", 
+        task_current->pid, task_current->comm, 
+        probe->name);
+
+    return 0;
+}
+
+static int probe_trap_return(struct probe *probe, 
+                             void *data, 
+                             struct probe *trigger)
+{
+    DBG("%d (%s): Trap %s returned\n", 
+        task_current->pid, task_current->comm, 
+        probe->name);
+
+    context_current = context_prev;
+
+    return 0;
+}
+
+static int probe_syscall_call(struct probe *probe, 
+                              void *data, 
+                              struct probe *trigger)
+{
+    unsigned int eax = target_read_reg(t, 0);
+    DBG("%d (%s): System call %d (0x%02x) called\n", 
+        task_current->pid, task_current->comm,
+        eax, eax);
+    return 0;
+}
+
+static int probe_syscall_return(struct probe *probe,
+                                void *data,
+                                struct probe *trigger)
+{
+    unsigned int eax = target_read_reg(t, 0);
+    DBG("%d (%s): System call %d (0x%02x) returned\n", 
+        task_current->pid, task_current->comm,
+        eax, eax);
+    return 0;
+}
+
+static int probe_interrupt_call(struct probe *probe, 
+                                void *data, 
+                                struct probe *trigger)
+{
+    ctxprobes_var_t *arg_list = NULL;
+    int arg_count = 0;
+    struct pt_regs *regs;
+    int ret, irq;
+
+    context_prev = context_current;
+    context_current = CTXPROBES_CONTEXT_INTERRUPT;
+
+    ret = load_func_args(&arg_list, &arg_count, probe);
+    if (ret)
+        ERR("Failed to load function args\n");
+
+    regs = (struct pt_regs *)arg_list[0].buf;
+    irq = ~regs->orig_eax & 0xff;
+   
+    DBG("%d (%s): Interrupt %d (0x%02x) called\n",
+        task_current->pid, task_current->comm, 
+        irq, irq);
+
+    return 0;
+}
+
+static int probe_interrupt_return(struct probe *probe, 
+                                  void *data, 
+                                  struct probe *trigger)
+{
+    //ctxprobes_var_t *arg_list = NULL;
+    //int arg_count = 0;
+    //struct pt_regs *regs;
+    //int irq = 0;
+    //int ret;
+    
+    //ret = load_func_args(&arg_list, &arg_count, probe);
+    //if (ret)
+    //    ERR("Failed to load function args\n");
+
+    //regs = (struct pt_regs *)arg_list[0].buf;
+    //irq = ~regs->orig_eax & 0xff;
+
+    //DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
+    //    task_current->pid, task_current->comm, 
+    //    irq, irq);
+    DBG("%d (%s): Interrupt X (0xXX) returned\n",
+        task_current->pid, task_current->comm);
+
+    context_current = context_prev;
+
     return 0;
 }
 
@@ -79,39 +236,150 @@ static int probe_task_switch(struct probe *probe,
                              void *data, 
                              struct probe *trigger)
 {
-    DBG("Task switch: %s\n", probe->name);
+    struct value *lvalue_task_prev, *lvalue_task_next;
+    ctxprobes_task_t *task_prev, *task_next;
+    int ret;
+
+    lvalue_task_prev = bsymbol_load(bsymbol_task_prev, LOAD_FLAG_NONE);
+    if (!lvalue_task_prev)
+    {
+        ERR("Cannot access value of schedule.prev\n");
+        return -1;
+    }
+
+    lvalue_task_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_NONE);
+    if (!lvalue_task_next)
+    {
+        ERR("Cannot access value of schedule.next\n");
+        return -1;
+    }
+
+    ret = load_task_info(&task_prev, *(unsigned long *)lvalue_task_prev->buf);
+    if (ret)
+    {
+        ERR("Cannot load task info of schedule.prev\n");
+        return -1;
+    }
+
+    ret = load_task_info(&task_next, *(unsigned long *)lvalue_task_next->buf);
+    if (ret)
+    {
+        ERR("Cannot load task info of schedule.next\n");
+        return -1;
+    }
+
+    if (task_prev->vaddr != task_next->vaddr)
+    {
+        DBG("Task switch: %d (%s) -> %d (%s)\n", 
+            task_prev->pid, task_prev->comm,
+            task_next->pid, task_next->comm);
+    }
+    
+    unload_task_info(task_prev);
+
+    if (task_prev->vaddr != task_next->vaddr)
+    {
+        unload_task_info(task_current);
+        task_current = task_next;
+    }
+    else
+        unload_task_info(task_next);
+
     return 0;
 }
+
+static int probe_task_switch_init(struct probe *probe)
+{
+    DBG("Task switch init\n");
+    
+    bsymbol_task_prev = target_lookup_sym(probe->target, 
+                                          "schedule.prev",
+                                          ".",
+                                          NULL,
+                                          SYMBOL_TYPE_NONE);
+    if (!bsymbol_task_prev)
+    {
+        ERR("Failed to create a bsymbol for schedule.prev\n");
+        return -1;
+    }
+
+    bsymbol_task_next = target_lookup_sym(probe->target, 
+                                          "schedule.next",
+                                          ".",
+                                          NULL,
+                                          SYMBOL_TYPE_NONE);
+    if (!bsymbol_task_next)
+    {
+        ERR("Failed to create a bsymbol for schedule.next\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+typedef struct probe_entry {
+    char *symbol;
+    probe_handler_t call_handler;
+    probe_handler_t return_handler;
+    struct probe_ops ops;
+} probe_entry_t;
 
 /* 
  * FIXME: read raw addresses of assembly functions from System.map --
  * we are currently using hard-coded addresses.
  */
-const probe_entry_t probe_list[] = 
+static const probe_entry_t probe_list[] = 
 {
-    { 0, "do_divide_error",                0x0,        probe_trap },
-    { 0, "do_debug",                       0x0,        probe_trap },
-    { 0, "do_nmi",                         0x0,        probe_trap },
-    { 0, "do_int3",                        0x0,        probe_trap },
-    { 0, "do_overflow",                    0x0,        probe_trap },
-    { 0, "do_bounds",                      0x0,        probe_trap },
-    { 0, "do_invalid_op",                  0x0,        probe_trap },
-    //{ 1, "device_not_available",           0xc01055a8, probe_trap },
-    //{ 0, "double_fault",                   0x0,        probe_trap },
-    { 0, "do_coprocessor_segment_overrun", 0x0,        probe_trap },
-    { 0, "do_invalid_TSS",                 0x0,        probe_trap },
-    { 0, "do_segment_not_present",         0x0,        probe_trap },
-    { 0, "do_stack_segment",               0x0,        probe_trap },
-    { 0, "do_general_protection",          0x0,        probe_trap },
-    { 0, "do_page_fault",                  0x0,        probe_trap },
-    //{ 0, "spurious_interrupt_bug",         0x0,        probe_trap },
-    { 0, "do_coprocessor_error",           0x0,        probe_trap },
-    { 0, "do_alignment_check",             0x0,        probe_trap },
-    //{ 0, "intel_machine_check",            0x0,        probe_trap },
-    { 0, "do_simd_coprocessor_error",      0x0,        probe_trap },
-    //{ 1, "system_call",                    0xc01052e8, probe_syscall },
-    { 0, "do_IRQ",                         0x0,        probe_interrupt },
-    { 0, "schedule.switch_tasks",          0x0,        probe_task_switch },
+    { "do_divide_error",                probe_trap_call,        
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_debug",                       probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_nmi",                         probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_int3",                        probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_overflow",                    probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_bounds",                      probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_invalid_op",                  probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "device_not_available",           probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    //{ "double_fault",                   probe_trap_call, 
+    //  probe_trap_return,                { .init = NULL } },
+    { "do_coprocessor_segment_overrun", probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_invalid_TSS",                 probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_segment_not_present",         probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_stack_segment",               probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_general_protection",          probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_page_fault",                  probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    //{ "spurious_interrupt_bug",         probe_trap_call, 
+    //  probe_trap_return,                { .init = NULL } },
+    { "do_coprocessor_error",           probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "do_alignment_check",             probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    //{ "intel_machine_check",            probe_trap_call, 
+    //  probe_trap_return,                { .init = NULL } },
+    { "do_simd_coprocessor_error",      probe_trap_call, 
+      NULL/*probe_trap_return*/,                { .init = NULL } },
+    { "system_call",                    probe_syscall_call, 
+      NULL/*probe_syscall_return*/,             { .init = NULL } },
+    //{ "do_IRQ",                         probe_interrupt_call, 
+    //  probe_interrupt_return,           { .init = NULL } },
+    { "schedule.switch_tasks",          probe_task_switch, 
+      NULL,                             { .init = probe_task_switch_init } },
+    //{ "ret_from_exception",             probe_trap_return, 
+    //  NULL,                             { .init = NULL } },
+    //{ "ret_from_intr",                  probe_interrupt_return, 
+    //  NULL,                             { .init = NULL } },
 };
 
 static void sigh(int signo)
@@ -120,93 +388,11 @@ static void sigh(int signo)
     exit(0);
 }
 
-static int register_probe(int raw, /* 0:use symbol, 1:use addr (raw address) */
-                          char *symbol, 
-                          ADDR addr, 
-                          probe_handler_t handler,
-                          struct probe_ops *ops,
-                          probepoint_whence_t whence,
-                          symbol_type_flag_t ftype,
-                          void *data)
+int ctxprobes_init(char *domain_name, 
+                   char *sysmap_file, 
+                   int debug_level)
 {
-    struct bsymbol *bsymbol = NULL;
-    struct probe *probe;
-
-    if (!raw)
-    {
-        bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
-        if (!bsymbol)
-        {
-            ERR("Could not find symbol %s!\n", symbol);
-            return -1;
-        }
-    }
-
-    //bsymbol_dump(bsymbol, &udn);
-
-    probe = probe_create(t, ops,
-                         (raw) ? symbol : bsymbol->lsymbol->symbol->name,
-                         handler, 
-                         NULL, /* post_handler */
-                         data, 
-                         0); /* autofree */
-    if (!probe)
-    {
-        ERR("Could not create probe on '%s'\n",
-            (raw) ? symbol : bsymbol->lsymbol->symbol->name);
-        return -1;
-    }
-
-    if (raw)
-    {
-        if (!probe_register_addr(probe,
-                                 addr, PROBEPOINT_BREAK, PROBEPOINT_FASTEST,
-                                 whence, PROBEPOINT_LAUTO, 
-                                 NULL)) /* bsymbol */
-        {
-            ERR("Could not register probe on 0x%08x\n", addr);
-            probe_free(probe, 1);
-            return -1;
-        }
-    }
-    else
-    {
-        if (!probe_register_symbol(probe,
-                                   bsymbol, PROBEPOINT_FASTEST,
-                                   whence, PROBEPOINT_LAUTO))
-        {
-            ERR("Could not register probe on '%s'\n",
-                bsymbol->lsymbol->symbol->name);
-            probe_free(probe, 1);
-            return -1;
-        }
-    }
-
-    g_hash_table_insert(probes,
-                        (gpointer)probe->probepoint->addr,
-                        (gpointer)probe);
-
-    return 0;
-}
-
-static void unregister_probes()
-{
-    GHashTableIter iter;
-    gpointer key;
-    struct probe *probe;
-
-    g_hash_table_iter_init(&iter, probes);
-    while (g_hash_table_iter_next(&iter,
-                                  (gpointer)&key,
-                                  (gpointer)&probe))
-    {
-        probe_unregister(probe, 1);
-    }
-}
-
-
-int ctxprobes_init(char *domain_name, int debug_level)
-{
+    unsigned task_struct_addr;
     int i, probe_count;
     int ret;
 
@@ -217,6 +403,13 @@ int ctxprobes_init(char *domain_name, int debug_level)
     }
 
     dom_name = domain_name;
+
+    sysmap_handle = fopen(sysmap_file, "r");
+    if (!sysmap_handle)
+    {
+        ERR("Could not open file %s\n", sysmap_file);
+        return -2;
+    }
 
     dwdebug_init();
     vmi_set_log_level(debug_level);
@@ -252,30 +445,53 @@ int ctxprobes_init(char *domain_name, int debug_level)
     probe_count = sizeof(probe_list) / sizeof(probe_list[0]);    
     for (i = 0; i < probe_count; i++)
     {
-        ret = register_probe(probe_list[i].raw,
-                             probe_list[i].symbol, 
-                             probe_list[i].addr,
-                             probe_list[i].handler,
-                             NULL, /* ops */
-                             PROBEPOINT_EXEC,
-                             SYMBOL_TYPE_FLAG_NONE,
-                             NULL); /* data */
-        if (ret)
+        if (probe_list[i].call_handler)
         {
-            ERR("Failed to register probe on '%s'\n", probe_list[i].symbol);
-            ctxprobes_cleanup();
-            return -1;
+            ret = register_call_probe(probe_list[i].symbol, 
+                                      probe_list[i].call_handler,
+                                      (struct probe_ops *)&probe_list[i].ops,
+                                      PROBEPOINT_EXEC,
+                                      SYMBOL_TYPE_FLAG_NONE,
+                                      NULL); /* data */
+            if (ret)
+            {
+                ERR("Failed to register call probe on '%s'\n", 
+                    probe_list[i].symbol);
+                ctxprobes_cleanup();
+                return -1;
+            }
+        }
+
+        if (probe_list[i].return_handler)
+        {
+            ret = register_return_probe(probe_list[i].symbol, 
+                                        probe_list[i].return_handler,
+                                        NULL,
+                                        PROBEPOINT_EXEC,
+                                        SYMBOL_TYPE_FLAG_NONE,
+                                        NULL); /* data */
+            if (ret)
+            {
+                ERR("Failed to register return probe on '%s'\n", 
+                    probe_list[i].symbol);
+                ctxprobes_cleanup();
+                return -1;
+            }
         }
     }
 
-    ctxprobes = g_hash_table_new(g_direct_hash, g_direct_equal);
-    if (!ctxprobes)
+    /*
+     * Obtain current task info -- task info will be updated on detecting
+     * task switches later on.
+     */
+    task_struct_addr = current_task_addr();
+    ret = load_task_info(&task_current, task_struct_addr);
+    if (ret)
     {
-        ERR("Can't create context-aware probe table for target %s\n", 
-            dom_name);
-        ctxprobes_cleanup();
-        return -5;
+        ERR("Cannot load current task info\n");
+        return -1;
     }
+    DBG("Current task: %d (%s)\n", task_current->pid, task_current->comm);
 
     signal(SIGHUP, sigh);
     signal(SIGINT, sigh);
@@ -301,13 +517,23 @@ void ctxprobes_cleanup(void)
         DBG("Ending trace.\n");
      
         unregister_probes(probes);
+        unload_task_info(task_current);
         target_close(t);
 
         DBG("Ended trace.\n");
         
-        ctxprobes = NULL;
+        if (bsymbol_task_prev)
+            bsymbol_release(bsymbol_task_prev);
+        if (bsymbol_task_next)
+            bsymbol_release(bsymbol_task_next);
+        fclose(sysmap_handle);
+
+        bsymbol_task_prev = NULL;
+        bsymbol_task_next = NULL;
+        task_current = NULL;
         probes = NULL;
         t = NULL;
+        sysmap_handle = NULL;
         dom_name = NULL;
     }
 }
@@ -360,8 +586,60 @@ int ctxprobes_wait(void)
     return 0;
 }
 
-int ctxprobes_function_call(char *symbol,
-                            ctxprobes_function_call_handler_t handler)
+int ctxprobes_func_call(char *symbol,
+                        ctxprobes_func_call_handler_t handler)
+{
+    int ret;
+
+    if (!t)
+    {
+        ERR("Target not initialized\n");
+        return -1;
+    }
+
+    ret = register_call_probe(symbol, 
+                              probe_func_call,
+                              NULL, /* ops */
+                              PROBEPOINT_EXEC,
+                              SYMBOL_TYPE_FLAG_FUNCTION,
+                              handler); /* data <- ctxprobes handler */
+    if (ret)
+    {
+        ERR("Failed to register context-aware call probe on '%s'\n", symbol);
+        return -1;
+    }
+
+    return 0;
+}
+
+int ctxprobes_func_return(char *symbol,
+                          ctxprobes_func_return_handler_t handler)
+{
+    int ret;
+
+    if (!t)
+    {
+        ERR("Target not initialized\n");
+        return -1;
+    }
+
+    ret = register_return_probe(symbol, 
+                                probe_func_return,
+                                NULL, /* ops */
+                                PROBEPOINT_EXEC,
+                                SYMBOL_TYPE_FLAG_FUNCTION,
+                                handler); /* data <- ctxprobes handler */
+    if (ret)
+    {
+        ERR("Failed to register context-aware return probe on '%s'\n", symbol);
+        return -1;
+    }
+
+    return 0;
+}
+/*
+int ctxprobes_var(char *symbol,
+                  ctxprobes_var_handler_t handler)
 {
     if (!t)
     {
@@ -371,28 +649,4 @@ int ctxprobes_function_call(char *symbol,
 
     return 0;
 }
-
-int ctxprobes_function_return(char *symbol,
-                              ctxprobes_function_return_handler_t handler)
-{
-    if (!t)
-    {
-        ERR("Target not initialized\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-int ctxprobes_variable(char *symbol,
-                       ctxprobes_variable_handler_t handler)
-{
-    if (!t)
-    {
-        ERR("Target not initialized\n");
-        return -1;
-    }
-
-    return 0;
-}
-
+*/

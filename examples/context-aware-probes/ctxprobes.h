@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  *
- *  ctxprobes/ctxprobes.h
+ *  examples/context-aware-probes/ctxprobes.h
  *
  *  Probes aware of guest's context changes -- task switches, traps, 
  *  and interrupts.
@@ -27,23 +27,64 @@
 #ifndef __CTXPROBES_H__
 #define __CTXPROBES_H__
 
-typedef void (*ctxprobes_function_call_handler_t)(void);
-typedef void (*ctxprobes_function_return_handler_t)(void);
-typedef void (*ctxprobes_variable_handler_t)(void);
+typedef enum {
+    CTXPROBES_CONTEXT_NORMAL,
+    CTXPROBES_CONTEXT_TRAP,
+    CTXPROBES_CONTEXT_INTERRUPT 
+} ctxprobes_context_t;
+
+typedef struct ctxprobes_var {
+    char *name;
+    int size;
+    char *buf;
+} ctxprobes_var_t;
+
+typedef struct ctxprobes_task {
+    unsigned long vaddr; /* virtual address of the task_struct */
+    unsigned int pid;
+    unsigned int tgid;
+    unsigned int uid, euid, suid, fsuid;
+    unsigned int gid, egid, sgid, fsgid;
+    char *comm;
+    struct ctxprobes_task *parent;
+    struct ctxprobes_task *real_parent;
+} ctxprobes_task_t;
+
+typedef void (*ctxprobes_func_call_handler_t)(char *symbol,
+                                              ctxprobes_var_t *arg_list,
+                                              int arg_count,
+                                              ctxprobes_task_t *task,
+                                              ctxprobes_context_t context);
+
+typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
+                                                ctxprobes_var_t *arg_list, 
+                                                int arg_count,
+                                                ctxprobes_var_t *retval,
+                                                ctxprobes_task_t *task,
+                                                ctxprobes_context_t context);
+
+//typedef void (*ctxprobes_var_handler_t)(char *symbol,
+//                                        ctxprobes_var_t *var,
+//                                        ctxprobes_task_t *task,
+//                                        ctxprobes_context_t context);
 
 
-int ctxprobes_init(char *domain_name, int debug_level);
+int ctxprobes_init(char *domain_name, 
+                   char *sysmap_file, 
+                   int debug_level);
+
 void ctxprobes_cleanup(void);
+
 int ctxprobes_wait(void);
 
 
-int ctxprobes_function_call(char *symbol,
-                            ctxprobes_function_call_handler_t handler);
+int ctxprobes_func_call(char *symbol,
+                        ctxprobes_func_call_handler_t handler);
 
-int ctxprobes_function_return(char *symbol,
-                              ctxprobes_function_return_handler_t handler);
+int ctxprobes_func_return(char *symbol,
+                          ctxprobes_func_return_handler_t handler);
 
-int ctxprobes_variable(char *symbol,
-                       ctxprobes_variable_handler_t handler);
+//int ctxprobes_var(char *symbol,
+//                  ctxprobes_var_handler_t handler);
 
 #endif /* __CTXPROBES_H__ */

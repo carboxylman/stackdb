@@ -142,12 +142,19 @@ struct symtab *target_lookup_pc(struct target *target,uint64_t pc);
  * SYMBOL_TYPE_FUNCTION -- unless the first member in your @name string
  * resolves to a SYMBOL_TYPE_TYPE.  In this case, the first member will
  * be a SYMBOL_TYPE_TYPE!
+ *
+ * This function takes a ref to its return value on the user's behalf;
+ * call bsymbol_release() to release (and maybe free) it.
  */
 
 struct bsymbol *target_lookup_sym(struct target *target,
 				  char *name,const char *delim,
 				  char *srcfile,symbol_type_flag_t ftype);
 struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr);
+
+struct bsymbol *target_lookup_sym_line(struct target *target,
+				       char *filename,int line,
+				       SMOFFSET *offset,ADDR *addr);
 
 /**
  ** Quick raw value converters

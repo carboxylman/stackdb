@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  ctxprobes/ctxprobes-example.c
+ *  examples/context-aware-probes/ctxprobes-example.c
  *
  *  An example code to demonstrate how to use context-aware probes.
  *
@@ -23,83 +23,158 @@
  * 
  */
 
-#include <argp.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <log.h>
 
 #include "ctxprobes.h"
+#include "debug.h"
 
-char *domain_name = NULL; 
-int verbose = 0; 
+extern char *optarg;
+extern int optind, opterr, optopt;
 
-void sys_open(void)
+static char *domain_name = NULL; 
+static int debug_level = -1; 
+static char *sysmap_file = NULL;
+
+char context_ch(ctxprobes_context_t context)
 {
-	printf("sys_open called\n");
+    char c;
+    switch (context) {
+        case CTXPROBES_CONTEXT_NORMAL:
+            c = 'N';
+            break;
+        case CTXPROBES_CONTEXT_TRAP:
+            c = 'T';
+            break;
+        case CTXPROBES_CONTEXT_INTERRUPT:
+            c = 'I';
+            break;
+        default:
+            c = 'X';
+            ERR("Invalid context identifier %d!\n", context);
+            break;
+    }
+    return c;
 }
 
-/* command parser for GNU argp - see  GNU docs for more info */
-error_t cmd_parser(int key, char *arg, struct argp_state *state)
+void sys_open_call(char *symbol, 
+                   ctxprobes_var_t *args, 
+                   int argcount, 
+                   ctxprobes_task_t *task,
+                   ctxprobes_context_t context)
 {
-    /*settings_t *setup = (settings_t *)state->input;*/
-
-    switch (key)
+    if (!args || argcount < 3)
+        printf("[%c] %d (%s): %s called, but failed to load args\n", 
+               context_ch(context), task->pid, task->comm, symbol);
+    else
+        printf("[%c] %d (%s): %s(%s=%s, %s=0x%x, %s=0x%x)\n", 
+               context_ch(context), task->pid, task->comm, symbol,
+               args[0].name, args[0].buf,
+               args[1].name, *(int *)args[1].buf,
+               args[2].name, *(int *)args[2].buf);
+    
+    printf("- Parent task chain: \n");
+    while (task->parent)
     {
-        case 'm': 
-            domain_name = arg;
-            break;
+        printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
+        task = task->parent;
+    }
+}
 
-        case 'v': 
-            verbose = 1; 
-            break;
+void sys_open_return(char *symbol, 
+                     ctxprobes_var_t *args, 
+                     int argcount, 
+                     ctxprobes_var_t *retval,
+                     ctxprobes_task_t *task,
+                     ctxprobes_context_t context)
+{
+    if (!retval)
+        printf("[%c] %d (%s): %s returned, but failed to load retval\n", 
+               context_ch(context), task->pid, task->comm, symbol);
+    else
+        printf("[%c] %d (%s): %s returned %d (0x%x)\n", 
+               context_ch(context), task->pid, task->comm, symbol,
+               *(int *)retval->buf, *(int *)retval->buf);
 
-        default:
-            return ARGP_ERR_UNKNOWN;
+    printf("- Parent task chain: \n");
+    while (task->parent)
+    {
+        printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
+        task = task->parent;
+    }
+}
+
+void parse_opt(int argc, char *argv[])
+{
+    char ch;
+    log_flags_t debug_flags;
+    
+    while ((ch = getopt(argc, argv, "dl:m:")) != -1)
+    {
+        switch(ch)
+        {
+            case 'd':
+                ++debug_level;
+                break;
+
+            case 'l':
+                if (vmi_log_get_flag_mask(optarg, &debug_flags))
+                {
+                    fprintf(stderr, "ERROR: bad debug flag in '%s'!\n", optarg);
+                    exit(-1);
+                }
+                vmi_set_log_flags(debug_flags);
+                break;
+
+            case 'm':
+                sysmap_file = optarg;
+                break;
+
+            default:
+                fprintf(stderr, "ERROR: unknown option %c!\n", ch);
+                exit(-1);
+        }
     }
 
-    return 0;
+    if (argc <= optind)
+    {
+        printf("Usage: %s [option] <domain>\n", argv[0]);
+        exit(-1);
+    }
+
+    domain_name = argv[optind];
 }
-
-const struct argp_option cmd_opts[] =
-{
-    { .name = "domain-name",  .key = 'm', .arg = "FILE",  .flags = 0,
-      .doc = "Domain name" },
-
-    { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
-      .doc = "Verbose" },
-
-    {0}
-};
-
-const struct argp parser_def =
-{
-    .options = cmd_opts,
-    .parser = cmd_parser,
-    .doc = "An example program to show how to use context-aware probes"
-};
-
-const char *argp_program_version     = "ctxprobes-example v0.1";
-const char *argp_program_bug_address = "<chunghwn@cs.utah.edu>";
 
 int main(int argc, char *argv[])
 {
-    int ret, debug_level = -1;
+    int ret;
 
-    argp_parse(&parser_def, argc, argv, 0, 0, NULL);
-    if (verbose) debug_level = 8;
+    parse_opt(argc, argv);
 
-    ret = ctxprobes_init(domain_name, debug_level);
+    ret = ctxprobes_init(domain_name, sysmap_file, debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");
         exit(1);
     }
 
-    ret = ctxprobes_function_call("sys_open", sys_open);
+    ret = ctxprobes_func_call("sys_open", sys_open_call);
     if (ret)
     {
-        fprintf(stderr, "failed to register probe\n");
+        fprintf(stderr, "failed to register probe on sys_open call\n");
         exit(1);
     }
 
+    ret = ctxprobes_func_return("sys_open", sys_open_return);
+    if (ret)
+    {
+        fprintf(stderr, "failed to register probe on sys_open return\n");
+        exit(1);
+    }
+
+    printf("Starting instrumentation ...\n");
     ctxprobes_wait();
 
     ctxprobes_cleanup();

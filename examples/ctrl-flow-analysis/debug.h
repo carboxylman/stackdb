@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  examples/context-aware-probes/debug.h
+ *  examples/ctrl-flow-analysis/debug.h
  * 
  *  DBG*, ERR*, WARN* declarations
  *
@@ -23,8 +23,8 @@
  * 
  */
 
-#ifndef __CTXPROBES_DEBUG_H__
-#define __CTXPROBES_DEBUG_H__
+#ifndef __CTRL_FLOW_DEBUG_H__
+#define __CTRL_FLOW_DEBUG_H__
 
 #include <stdio.h>
 
@@ -60,7 +60,7 @@
     } while (0)
 
 #define WARN(_f, _a...)  do {                                                   \
-        fprintf(stderr, TXT_FG_YELLOW "Warrning" TXT_FG_WHITE ": " _f, ## _a);  \
+        fprintf(stderr, TXT_FG_YELLOW "Warrning" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);  \
     } while (0)
 
 #define WARN_ON(_g, _f, _a...) do {                                             \
@@ -70,7 +70,7 @@
     } while (0)
 
 #define DBG(_f, _a...)   do {                                                   \
-        fprintf(stderr, TXT_FG_COLOR "DBG" TXT_FG_WHITE ": " _f, ## _a);       \
+        fprintf(stderr, TXT_FG_COLOR "DBG" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);       \
     } while (0)
 
 #define DBG_ON(_g, _f, _a...) do {                                              \
@@ -119,4 +119,4 @@
             }                                                                       \
     } while (0)
 
-#endif /* __CTXPROBES_DEBUG_H__ */
+#endif /* __CTRL_FLOW_DEBUG_H__ */

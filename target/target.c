@@ -193,7 +193,6 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     GHashTableIter iter;
     gpointer key;
     struct debugfile *debugfile;
-    struct symbol *symbol;
     struct bsymbol *bsymbol;
     struct lsymbol *lsymbol;
 
@@ -217,10 +216,14 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     g_hash_table_iter_init(&iter,region->debugfiles);
     while (g_hash_table_iter_next(&iter,
 				  (gpointer)&key,(gpointer)&debugfile)) {
-	if ((symbol = (struct symbol *)g_hash_table_lookup(debugfile->addresses,
-							   (gpointer)addr))) {
-	    lsymbol = lsymbol_create(symbol,NULL);
-	    bsymbol = bsymbol_create(region,lsymbol);
+	if ((lsymbol = debugfile_lookup_addr(debugfile,addr))) {
+	    bsymbol = bsymbol_create(lsymbol,region,NULL);
+	    /* bsymbol_create took a ref to lsymbol, so we release it! */
+	    lsymbol_release(lsymbol);
+	    /* Take a ref to bsymbol on the user's behalf, since this is
+	     * a lookup function.
+	    */
+	    bsymbol_hold(bsymbol);
 	    return bsymbol;
 	}
     }
@@ -257,7 +260,59 @@ struct bsymbol *target_lookup_sym(struct target *target,
     return NULL;
 
  out:
-    bsymbol = bsymbol_create(region,lsymbol);
+    bsymbol = bsymbol_create(lsymbol,region,NULL);
+    /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym
+     * took one on our behalf, so we release one!
+     */
+    lsymbol_release(lsymbol);
+
+    /* Take a ref to bsymbol on the user's behalf, since this is
+     * a lookup function.
+     */
+    bsymbol_hold(bsymbol);
+
+    return bsymbol;
+}
+
+struct bsymbol *target_lookup_sym_line(struct target *target,
+				       char *filename,int line,
+				       SMOFFSET *offset,ADDR *addr) {
+    struct addrspace *space;
+    struct bsymbol *bsymbol;
+    struct lsymbol *lsymbol = NULL;
+    struct memregion *region;
+    struct debugfile *debugfile;
+    GHashTableIter iter;
+    gpointer key;
+
+    if (list_empty(&target->spaces))
+	return NULL;
+
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    g_hash_table_iter_init(&iter,region->debugfiles);
+	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
+					  (gpointer)&debugfile)) {
+		lsymbol = debugfile_lookup_sym_line(debugfile,filename,line,
+						    offset,addr);
+		if (lsymbol) 
+		    goto out;
+	    }
+	}
+    }
+    return NULL;
+
+ out:
+    bsymbol = bsymbol_create(lsymbol,region,NULL);
+    /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym_line
+     * took one on our behalf, so we release one!
+     */
+    lsymbol_release(lsymbol);
+
+    /* Take a ref to bsymbol on the user's behalf, since this is
+     * a lookup function.
+     */
+    bsymbol_hold(bsymbol);
 
     return bsymbol;
 }
@@ -267,6 +322,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     struct symbol *symbol = bsymbol->lsymbol->symbol;
     struct array_list *symbol_chain = bsymbol->lsymbol->chain;
     struct symbol *datatype;
+    struct symbol *startdatatype = NULL;
     struct memregion *region = bsymbol->region;
     struct target *target = memregion_target(region);
     struct memrange *range;
@@ -278,22 +334,25 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     struct memregion *ptrregion = NULL;
     struct memrange *ptrrange = NULL;
 
-    if (!SYMBOL_IS_VAR(symbol)) {
-	vwarn("symbol %s is not a variable (is %s)!\n",
+    if (!SYMBOL_IS_FULL_VAR(symbol)) {
+	vwarn("symbol %s is not a full variable (is %s)!\n",
 	      symbol->name,SYMBOL_TYPE(symbol->type));
 	errno = EINVAL;
 	return NULL;
     }
 
     /* Get its real type. */
-    datatype = symbol_type_skip_qualifiers(symbol->datatype);
-    if (symbol->datatype != datatype)
+
+    startdatatype = symbol_get_datatype(symbol);
+    datatype = symbol_type_skip_qualifiers(startdatatype);
+
+    if (startdatatype != datatype)
 	vdebug(5,LOG_T_SYMBOL,"skipped from %s to %s for symbol %s\n",
-	       DATATYPE(symbol->datatype->datatype_code),
+	       DATATYPE(startdatatype->datatype_code),
 	       DATATYPE(datatype->datatype_code),symbol->name);
     else 
 	vdebug(5,LOG_T_SYMBOL,"no skip; type for symbol %s is %s\n",
-	       symbol->name,DATATYPE(symbol->datatype->datatype_code));
+	       symbol->name,DATATYPE(datatype->datatype_code));
 
     /* Check if this symbol is currently visible to us! */
     if (!(flags & LOAD_FLAG_NO_CHECK_VISIBILITY)) {

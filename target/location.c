@@ -313,6 +313,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 		}
 		else if (symbol->s.ii->d.f.fbissingleloc) {
 		    fbloc = symbol->s.ii->d.f.fb.loc;
+		    break;
 		}
 	    }
 	}

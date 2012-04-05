@@ -5,6 +5,8 @@
 #include <assert.h>
 
 #include "dwdebug.h"
+#include "clfit.h"
+#include "alist.h"
 
 #include "memory-access.h"
 
@@ -25,7 +27,8 @@
  * This is taken directly from elfutils/src/readelf.c, tweaked into
  * "better" C, and hooked so that we can "detect" end of prologues.
  */
-int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) {
+int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
+	      Dwarf_Off offset,size_t address_size) {
     unsigned char *linestartp = (unsigned char *)&debugfile->linetab[offset];
     unsigned char *lineendp = (unsigned char *)debugfile->linetab + debugfile->linetablen;
     unsigned char *linep = linestartp;
@@ -61,6 +64,15 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
     struct symbol *candidate_symbol = NULL;
     bool prologue_end = false;
     bool epilogue_begin = false;
+    struct array_list *dirlist = NULL;
+    struct array_list *filelist = NULL;
+    char *buf;
+    char *currentfile = NULL;
+    clmatch_t currentclf = NULL;
+    char *dirp;
+    unsigned char *startp;
+    int filenamelen;
+    int retval;
 
     /* We only recognize addresses for symbols in this table, so don't
      * process if there are no addresses!  (unlikey)
@@ -74,6 +86,9 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 	start_offset = linep - linestartp;
 	unit_length = read_4ubyte_unaligned_inc(obo,linep);
 	length = 4;
+
+	dirlist = array_list_create(16);
+	filelist = array_list_create(16);
 
 	if (unlikely (unit_length == 0xffffffff)) {
 	    if (unlikely (linep + 8 > lineendp)) 
@@ -133,6 +148,8 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 	    if (unlikely(endp == NULL))
 		goto invalid_unit_out;
 
+	    array_list_append(dirlist,linep);
+
 	    linep = endp + 1;
 	}
 	/* Skip the final NUL byte.  */
@@ -146,11 +163,26 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 	    endp = memchr(linep,'\0',lineendp - linep);
 	    if (unlikely(endp == NULL))
 		goto invalid_unit_out;
+	    startp = linep;
 	    linep = endp + 1;
 
 	    /* Then the index.  */
 	    clinep = (const unsigned char *)linep;
 	    get_uleb128(u128,clinep);
+
+	    /* Construct a full filename. */
+	    if (u128 == 0) {
+		if (cu_symtab->compdirname)
+		    dirp = cu_symtab->compdirname;
+		else
+		    dirp = (char *)array_list_item(dirlist,0);
+	    }
+	    else 
+		dirp = (char *)array_list_item(dirlist,u128 - 1);
+	    filenamelen = strlen(dirp)+1+(endp - startp)+1;
+	    buf = malloc(filenamelen);
+	    snprintf(buf,filenamelen,"%s/%s",dirp,(char *)startp);
+	    array_list_add(filelist,buf);
 
 	    /* Next comes the modification time.  */
 	    get_uleb128(u128,clinep);
@@ -163,6 +195,12 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 	/* Skip the final NUL byte.  */
 	++linep;
 
+	/* Free the dirlist -- we're done with it since we're done with
+	 * the file table.
+	 */
+	array_list_free(dirlist);
+	dirlist = NULL;
+
 	address = 0;
 	op_index = 0;
 	line = 1;
@@ -170,9 +208,33 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 	prologue_end = false;
 	epilogue_begin = false;
 
+	currentfile = (char *)array_list_item(filelist,0);
+	currentclf = NULL;
+
 	inline void advance_pc(unsigned int op_advance) {
 	    address += op_advance;
 	    op_index = (op_index + op_advance) % max_ops_per_instr;
+	}
+
+	inline void storeline() {
+	    /* Add the line to our lookup structure. */
+	    if (!currentclf) 
+		currentclf = (clmatch_t)g_hash_table_lookup(debugfile->srclines,
+							    currentfile);
+	    /* This may change the currentclf pointer, so we have to
+	     * remove it from the hashtable and reinsert it.  A Judy
+	     * array's main pointer can change when you add/remove
+	     * things from it.
+	     *
+	     * So, since we specified automatic key/value destroy
+	     * functions for this hashtable, we have to "steal" the
+	     * currently stored key/value pair (which removes them
+	     * without destroying them), and re-insert them, so that the
+	     * new value of currentclf is inserted.
+	     */
+	    clmatch_add(&currentclf,line,(void *)(ADDR)address);
+	    g_hash_table_steal(debugfile->srclines,currentfile);
+	    g_hash_table_insert(debugfile->srclines,currentfile,currentclf);
 	}
 
 	while (linep < lineendp) {
@@ -193,6 +255,8 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		/* Perform the increments.  */
 		line += line_increment;
 		advance_pc((opcode - opcode_base) / line_range);
+
+		storeline();
 
 		/*
 		 * If the epilogue_begin register is set, try to do it.
@@ -309,6 +373,12 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 
 		switch (opcode) {
 		case DW_LNE_end_sequence:
+		    /* Save the line/address tuple. */
+		    storeline();
+
+		    currentfile = (char *)array_list_item(filelist,0);
+		    currentclf = NULL;
+
 		    /* Reset the registers we care about.  */
 		    address = 0;
 		    op_index = 0;
@@ -339,11 +409,34 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		    endp = memchr(linep,'\0',lineendp - linep);
 		    if (unlikely(endp == NULL))
 			goto invalid_unit_out;
+		    startp = linep;
 		    linep = endp + 1;
 
 		    clinep = (const unsigned char *)linep;
 		    /* unsigned int diridx; */
 		    get_uleb128(u128,clinep);
+
+		    
+		    /* Construct a full filename. */
+		    if (u128 == 0) {
+			if (cu_symtab->compdirname)
+			    dirp = cu_symtab->compdirname;
+			else
+			    dirp = (char *)array_list_item(dirlist,0);
+		    }
+		    else 
+			dirp = (char *)array_list_item(dirlist,u128 - 1);
+		    filenamelen = strlen(dirp)+1+(endp - startp)+1;
+		    buf = malloc(filenamelen);
+		    snprintf(buf,filenamelen,"%s/%s",dirp,(char *)startp);
+		    array_list_add(filelist,buf);
+
+		    /* XXX: DWARF spec doesn't say if this becomes the
+		     * current file; assume it does!
+		     */
+		    currentfile = buf;
+		    currentclf = NULL;
+
 		    /* Dwarf_Word mtime; */
 		    get_uleb128(u128,clinep);
 		    /* Dwarf_Word filelength; */
@@ -372,6 +465,10 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		switch (opcode) {
 		case DW_LNS_copy:
 		    /* Takes no argument.  */
+
+		    /* Save the line/address tuple. */
+		    storeline();
+
 		    /* Clear prologue_end and epilogue_begin registers as
 		       per the spec. */
 		    prologue_end = false;
@@ -397,6 +494,16 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		    /* Takes one uleb128 parameter which is stored in file.  */
 		    clinep = (const unsigned char *)linep;
 		    get_uleb128(u128,clinep);
+
+		    /* Update the current line and currentclf stuff. */
+		    if (u128 >= (unsigned int)array_list_len(filelist)) {
+			vwarn("set_file index %u out of bounds; aborting!\n",
+			      u128);
+			goto invalid_unit_out;
+		    }
+		    currentfile = array_list_item(filelist,(int)u128);
+		    currentclf = NULL;
+
 		    linep = (unsigned char *)clinep;
 		    break;
 		case DW_LNS_set_column:
@@ -462,20 +569,36 @@ int get_lines(struct debugfile *debugfile,Dwarf_Off offset,size_t address_size) 
 		vwarnc("\n");
 
 		/* Next round, ignore this opcode.  */
-		continue;
+		//continue;
 	    }
+	}
+
+	if (filelist) {
+	    array_list_free(filelist);
+	    filelist = NULL;
 	}
     }
 
-    return 0;
+    retval = 0;
+    goto out;
 
  invalid_unit_out:
     verror("invalid data at offset %tu\n",linep - linestartp);
-    return -1;
+    retval = -1;
+    goto out;
 
  invalid_data_out:
     verror("invalid line data (overrun)!\n");
-    return -1;
+    retval = -1;
+    goto out;
+
+ out:
+    if (dirlist)
+	array_list_free(dirlist);
+    if (filelist) 
+	array_list_free(filelist);
+
+    return retval;
 }
 
 /**

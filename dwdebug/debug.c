@@ -301,6 +301,11 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
 	       lsymbol->symbol->name);
 
+	/* Make sure the chain is not NULL and that we take a ref to
+	 * symbol.
+	 */
+	lsymbol_append(lsymbol,symbol);
+
 	return lsymbol;
     }
 
@@ -310,7 +315,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
     /* Otherwise, add the first one to our chain and start looking up
      * members.
      */
-    array_list_add(chain,symbol);
+    lsymbol_append(lsymbol,symbol);
 
     while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
 	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
@@ -321,24 +326,21 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	     * found symbol onto the tail end of the chain.
 	     */
 	    for (i = 0; i < array_list_len(anonchain); ++i) {
-		array_list_add(chain,array_list_item(anonchain,i));
+		lsymbol_append(lsymbol,
+			       (struct symbol *)array_list_item(anonchain,i));
 	    }
 	    /* free the anonchain (and its members!) and reset our pointer */
 	    array_list_free(anonchain);
 	    anonchain = NULL;
 	}
 	/* now slap the retval on, too! */
-	array_list_add(chain,symbol);
+	lsymbol_append(lsymbol,symbol);
     }
 
     free(lname);
 
     /* downsize */
     array_list_compact(chain);
-
-    /* set the primary symbol in lsymbol to the *end* of the chain */
-    lsymbol->symbol = (struct symbol *)array_list_item(lsymbol->chain,
-						       array_list_len(lsymbol->chain) - 1);
 
     return lsymbol;
 
@@ -356,77 +358,94 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 				  char *name,const char *delim,
 				  symbol_type_flag_t ftype) {
     struct lsymbol *ls = __symtab_lookup_sym(symtab,name,delim,ftype);
-    struct array_list *chain;
-    int i;
 
-    if (ls) {
-	RHOLD(ls);
-	chain = ls->chain;
-	for (i = 0; i < array_list_len(chain); ++i) {
-	    RHOLD((struct symbol *)array_list_item(chain,i));
-	}
-    }
+    /* __symtab_lookup_sym already held refs to all the symbols on our
+     * chain.
+     */
+    if (ls)
+	lsymbol_hold(ls);
 
     return ls;
 }
 
+struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
+					       char *filename,int line) {
+    GHashTableIter iter;
+    clmatch_t clf;
+    char *srcfile;
+
+    g_hash_table_iter_init(&iter,debugfile->srclines);
+    while (g_hash_table_iter_next(&iter,(gpointer)&srcfile,(gpointer)&clf)) {
+	if (strstr(srcfile,filename)) {
+	    return clmatch_find(&clf,line);
+	}
+    }
+
+    return NULL;
+}
+
+struct lsymbol *debugfile_lookup_sym_line(struct debugfile *debugfile,
+					     char *filename,int line,
+					     SMOFFSET *offset,ADDR *addr) {
+    struct array_list *addrs;
+    struct lsymbol *ls = NULL;
+    int i;
+    ADDR iaddr;
+
+    addrs = debugfile_lookup_addrs_line(debugfile,filename,line);
+    if (!addrs)
+	return NULL;
+
+    for (i = 0; i < array_list_len(addrs); ++i) {
+	iaddr = (ADDR)array_list_item(addrs,i);
+	ls = debugfile_lookup_addr(debugfile,iaddr);
+	if (ls) {
+	    if (addr)
+		*addr = iaddr;
+	    if (offset && ls->symbol->base_addr != ADDRMAX) {
+		*offset = iaddr - ls->symbol->base_addr;
+	    }
+	    return ls;
+	}
+    }
+
+    return NULL;
+}
+
 struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
-    struct array_list *chain;
+    struct symtab *symtab;
     struct lsymbol *ls;
     struct symbol *s = (struct symbol *)g_hash_table_lookup(debugfile->addresses,
 							    (gpointer)addr);
-    struct symtab *st;
-    int i;
 
-    if (!s) 
-	return NULL;
+    if (!s) {
+	/* If we didn't find it, try our symtab search struct! */
+	symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
 
-    chain = array_list_create(1);
-    array_list_prepend(chain,s);
-    ls = lsymbol_create(s,chain);
-
- again:
-    if (s->isparam || s->ismember) {
-	if (s->isparam && SYMBOL_IS_FUNCTION(s->s.ii->d.v.member_symbol)) {
-	    s = s->s.ii->d.v.member_symbol;
-	    array_list_prepend(chain,s);
-	    goto again;
-	}
-	else {
-	    /* if (!SYMBOL_IS_FULL(s)
-	     *  || (s->isparam && SYMBOL_IST_FUNCTION(s->s.ii->d.v.member_symbol))
-	     *  || (s->ismember)) {
-	     */
-	    goto out;
+	if (symtab) {
+	    while (1) {
+		if (symtab->symtab_symbol) {
+		    s = symtab->symtab_symbol;
+		    break;
+		}
+		else if (symtab->parent) 
+		    symtab = symtab->parent;
+		else 
+		    break;
+	    }
 	}
     }
-    else if (SYMBOL_IS_VAR(s) || SYMBOL_IS_FUNCTION(s)) {
-	/* If the symtab the var/function is on is not the root, trace
-	 * up until we find either the root symtab, or a function
-	 * symtab.  If we find a function's symtab, we keep going up and
-	 * look for more functions.  When we hit the root symtab, we're
-	 * done, of course.
-	 */
-	st = s->symtab;
-	while (!SYMTAB_IS_ROOT(st) && !s->symtab->symtab_symbol)
-	    st = st->parent;
-	if (st->symtab_symbol) {
-	    s = st->symtab_symbol;
-	    array_list_prepend(chain,s);
-	    goto again;
-	}
-	else 
-	    goto out;
-    }
-    /* Just fall out */
 
- out:
-    RHOLD(ls);
-    for (i = 0; i < array_list_len(chain); ++i) {
-	RHOLD((struct symbol *)array_list_item(chain,i));
+    if (s) {
+	ls = lsymbol_create_from_symbol(s);
+
+	if (ls)
+	    lsymbol_hold(ls);
+
+	return ls;
     }
 
-    return ls;
+    return NULL;
 }
 
 static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
@@ -581,6 +600,9 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     if (!lname) {
 	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
 	       lsymbol->symbol->name);
+
+	lsymbol_append(lsymbol,symbol);
+
 	goto out;
     }
 
@@ -590,7 +612,7 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     /* Otherwise, add the first one to our chain and start looking up
      * members.
      */
-    array_list_add(chain,symbol);
+    lsymbol_append(lsymbol,symbol);
 
     while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
 	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
@@ -601,24 +623,21 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	     * found symbol onto the tail end of the chain.
 	     */
 	    for (i = 0; i < array_list_len(anonchain); ++i) {
-		array_list_add(chain,array_list_item(anonchain,i));
+		lsymbol_append(lsymbol,
+			       (struct symbol *)array_list_item(anonchain,i));
 	    }
 	    /* free the anonchain (and its members!) and reset our pointer */
 	    array_list_free(anonchain);
 	    anonchain = NULL;
 	}
 	/* now slap the retval on, too! */
-	array_list_add(chain,symbol);
+	lsymbol_append(lsymbol,symbol);
     }
 
     free(lname);
 
     /* downsize */
     array_list_compact(chain);
-
-    /* set the primary symbol in lsymbol to the *end* of the chain */
-    lsymbol->symbol = (struct symbol *)array_list_item(lsymbol->chain,
-						       array_list_len(lsymbol->chain) - 1);
 
  out:
     return lsymbol;
@@ -639,14 +658,9 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     symbol_type_flag_t ftype) {
     struct lsymbol *lsymbol = __debugfile_lookup_sym(debugfile,name,delim,
 						     srcfile_rflist,ftype);
-    int i;
 
-    if (lsymbol) {
-	RHOLD(lsymbol);
-	for (i = 0; i < array_list_len(lsymbol->chain); ++i) {
-	    RHOLD((struct symbol *)array_list_item(lsymbol->chain,i));
-	}
-    }
+    if (lsymbol) 
+	lsymbol_hold(lsymbol);
 
     return lsymbol;
 }
@@ -926,6 +940,14 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
     debugfile->pubnames = g_hash_table_new_full(g_str_hash,g_str_equal,
 						free,NULL);
 
+    debugfile->ranges = clrange_create();
+
+    /* 
+     * We *do* have to strdup the keys... so free them when we destroy!
+     */
+    debugfile->srclines = g_hash_table_new_full(g_str_hash,g_str_equal,
+						free,clmatch_free);
+
     return debugfile;
 }
 
@@ -959,10 +981,38 @@ struct debugfile *debugfile_filename_create(char *filename,debugfile_type_t type
 }
 
 int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab) {
-    if (unlikely(g_hash_table_lookup(debugfile->srcfiles,symtab->name)))
-	return 1;
-    vdebug(3,LOG_D_DFILE,"adding symtab %s:%s\n",debugfile->idstr,symtab->name);
-    g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
+    gpointer retp;
+
+    /* If it's a root (CU) symtab, add it to the main hashtable. */
+    if (SYMTAB_IS_ROOT(symtab)) {
+	if (symtab->name) {
+	    if ((retp = g_hash_table_lookup(debugfile->srcfiles,
+					    symtab->name)) != NULL
+		&& retp != symtab)
+		return 1;
+	    else if (retp == symtab)
+		return 0;
+	    else {
+		vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:%s\n",
+		       debugfile->idstr,symtab->name);
+		g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
+	    }
+	}
+
+	if ((retp = g_hash_table_lookup(debugfile->cuoffsets,
+					(gpointer)(uintptr_t)symtab->ref)) != NULL
+	    && retp != symtab)
+	    return 2;
+	else if (retp == symtab)
+	    return 0;
+	else {
+	    g_hash_table_insert(debugfile->cuoffsets,
+				(gpointer)(uintptr_t)symtab->ref,symtab);
+	    vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:0x%"PRIxSMOFFSET"\n",
+		   debugfile->idstr,symtab->ref);
+	}
+    }
+    
     return 0;
 }
 
@@ -1025,6 +1075,10 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
      * destroyed as a result of this.
      */
     g_hash_table_destroy(debugfile->srcfiles);
+
+    clrange_free(debugfile->ranges);
+
+    g_hash_table_destroy(debugfile->srclines);
 
     if (debugfile->strtab)
 	free(debugfile->strtab);
@@ -1091,6 +1145,13 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 }
 
 void symtab_set_name(struct symtab *symtab,char *name) {
+
+    /* If this top-level symtab is being renamed, remove it from our
+     * debugfile!
+     */
+    if (name && SYMTAB_IS_ROOT(symtab) && symtab->debugfile && symtab->name)
+	g_hash_table_remove(symtab->debugfile->srcfiles,symtab->name);
+
     if (name 
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,name))
@@ -1099,6 +1160,13 @@ void symtab_set_name(struct symtab *symtab,char *name) {
 	symtab->name = strdup(name);
     else 
 	symtab->name = name;
+
+    /* If this top-level symtab wasn't in our debugfile srcfiles
+     * hash, add it!
+     */
+    if (name && SYMTAB_IS_ROOT(symtab) && symtab->debugfile 
+	&& !g_hash_table_lookup(symtab->debugfile->srcfiles,symtab->name)) 
+	g_hash_table_insert(symtab->debugfile->srcfiles,symtab->name,symtab);
 }
 
 char *symtab_get_name(struct symtab *symtab) {
@@ -1162,6 +1230,128 @@ int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
 
     verror("VERY BAD -- tried to insert a non-anonymous symbol with no name!\n");
     return 1;
+}
+
+void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
+			 range_type_t rt_hint) {
+    struct range *r = &symtab->range;
+    int i;
+
+    if (r->rtype == RANGE_TYPE_NONE) {
+	if (rt_hint == RANGE_TYPE_LIST) {
+	    r->rtype = RANGE_TYPE_LIST;
+	    /* Reset it -- it's a union, so we need to clear what's there! */
+	    memset(&r->r.rlist,0,sizeof(struct range_list));
+
+	    /* And the new thing. */
+	    range_list_add(&r->r.rlist,start,end);
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(8,LOG_D_DWARF,
+		   "init RANGE_LIST(0x%"PRIxADDR",0x%"PRIxADDR")"
+		   " for symtab 0x%"PRIxSMOFFSET"\n",start,end,symtab->ref);
+	}
+	else {
+	    r->rtype = RANGE_TYPE_PC;
+
+	    r->r.a.lowpc = start;
+	    r->r.a.highpc = end;
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(8,LOG_D_DWARF,
+		   "init RANGE_PC(0x%"PRIxADDR",0x%"PRIxADDR")"
+		   " for symtab 0x%"PRIxSMOFFSET"\n",start,end,symtab->ref);
+	}
+    }
+    else if (r->rtype == RANGE_TYPE_PC) {
+	ADDR olowpc = r->r.a.lowpc;
+	ADDR ohighpc = r->r.a.highpc;
+
+	/* If the start/end range matches the current thing, do nothing! */
+	if (olowpc == start && ohighpc == end) {
+	    return;
+	}
+	/* If the start address is equal, but the end is not, warn about
+	 * inconsistent DWARF, but update the range -- both here and in
+	 * the debugfile->ranges clrange struct!
+	 */
+	else if (olowpc == start && ohighpc != end) {
+	    r->r.a.highpc = end;
+
+	    if (symtab->debugfile) 
+		clrange_update_end(&symtab->debugfile->ranges,start,end,symtab);
+
+	    verror("inconsistent RANGE_PC end: 0x%"PRIxADDR",0x%"PRIxADDR
+		   " (new end 0x%"PRIxADDR") for symtab 0x%"PRIxSMOFFSET
+		   "; updating!\n",start,ohighpc,end,symtab->ref);
+	}
+	/* If the start addrs don't match, or neither start nor end
+	 * match, this symtab was of RANGE_TYPE_PC, but now we must
+	 * convert it to a RANGE_TYPE_LIST.
+	 */
+	else {
+	    r->rtype = RANGE_TYPE_LIST;
+	    /* Reset it -- it's a union, so we need to clear what's there! */
+	    memset(&r->r.rlist,0,sizeof(struct range_list));
+
+	    /* Add the old thing. */
+	    range_list_add(&r->r.rlist,olowpc,ohighpc);
+
+	    /* And the new thing. */
+	    range_list_add(&r->r.rlist,start,end);
+	    vdebug(5,LOG_D_DWARF,
+		   "converted RANGE_PC to LIST with new entry (0x%"PRIxADDR
+		   ",0x%"PRIxADDR")\n",start,end);
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(7,LOG_D_DWARF,
+		   "converting RANGE_PC to LIST; new entry (0x%"PRIxADDR
+		   ",0x%"PRIxADDR") for symtab 0x%"PRIxSMOFFSET"\n",
+		   start,end,symtab->ref);
+	}
+    }
+    else if (r->rtype == RANGE_TYPE_LIST) {
+	/* Look through the list and see if any of the start addrs match
+	 * this one; if so, and the end doesn't match, update that one.
+	 * Otherwise, add a new one.
+	 */
+	for (i = 0; i < r->r.rlist.len; ++i) {
+	    if (r->r.rlist.list[i]->start == start
+		&& r->r.rlist.list[i]->end != end) {
+		verror("inconsistent RANGE_LIST entry end: 0x%"PRIxADDR
+		       ",0x%"PRIxADDR" (new end 0x%"PRIxADDR
+		       ") for symtab 0x%"PRIxSMOFFSET"; updating!\n",
+		       start,r->r.rlist.list[i]->end,end,symtab->ref);
+
+		r->r.rlist.list[i]->end = end;
+		
+		if (symtab->debugfile) 
+		    clrange_update_end(&symtab->debugfile->ranges,start,end,
+				       symtab);
+
+		break;
+	    }
+	}
+
+	if (i == r->r.rlist.len) {
+	    range_list_add(&r->r.rlist,start,end);
+
+	    if (symtab->debugfile)
+		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    vdebug(8,LOG_D_DWARF,
+		   "added RANGE_LIST entry (0x%"PRIxADDR",0x%"PRIxADDR
+		   ") for symtab 0x%"PRIxSMOFFSET")\n",start,end,symtab->ref);
+	}
+    }
+
+    return;
 }
 
 void symtab_free(struct symtab *symtab) {
@@ -1700,6 +1890,43 @@ struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
     return retval;
 }
 
+struct symbol *symbol_get_datatype(struct symbol *symbol) {
+    struct symbol *datatype = symbol->datatype;
+
+    if (SYMBOL_IS_FULL_INSTANCE(symbol) && symbol->s.ii->origin) {
+	/* If it has an abstract origin, use the abstract origin's
+	 * type!  And there may be a chain of abstract origins, so we have
+	 * to follow them!
+	 */
+	while (1) {
+	    /* If it is not abstract, then stop looking. */
+	    if (!symbol->s.ii->origin)
+		break;
+
+	    /* Otherwise, if its origin's origin is abstract, keep going. */
+	    if (symbol->s.ii->origin->s.ii->origin) 
+		symbol = symbol->s.ii->origin;
+	    /* If the origin's origin is not abstract, it's the real origin
+	     * -- so if it doesn't have a datatype...
+	     */
+	    else if (symbol->s.ii->origin->datatype) {
+		datatype = symbol->s.ii->origin->datatype;
+		break;
+	    }
+	    /* Error out! */
+	    else {
+		verror("abstract origin %s of inline instance %s has no datatype!\n",
+		       symbol_get_name(symbol->s.ii->origin),
+		       symbol_get_name(symbol));
+		errno = EINVAL;
+		return NULL;
+	    }
+	}
+    }
+
+    return datatype;
+}
+
 /*
  * Skips const and volatile types, for now.  Ok, skip typedefs too!
  */
@@ -1726,6 +1953,13 @@ struct symbol *symbol_type_skip_ptrs(struct symbol *type) {
     }
 
     return type;
+}
+
+int symbol_is_inlined(struct symbol *symbol) {
+    if (SYMBOL_IS_FULL_INSTANCE(symbol)
+	&& symbol->s.ii->inline_instances)
+	return 1;
+    return 0;
 }
 
 int symbol_type_is_char(struct symbol *type) {
@@ -1787,7 +2021,15 @@ unsigned int symbol_type_full_bytesize(struct symbol *type) {
     return symbol_type_bytesize(type);
 }
 
+REFCNT symbol_hold(struct symbol *symbol) {
+    return RHOLD(symbol);
+}
+
 REFCNT symbol_release(struct symbol *symbol) {
+    /*
+     * WE DO NOT FREE symbols on release; our debugfile garbage
+     * collector has to do this for us according to some policy!
+     */
     return RPUTNF(symbol);
 }
 
@@ -1874,6 +2116,12 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	free(symbol->s.ii->constval);
 
     /*
+     * Also have to free any inline instance list.
+     */
+    if (SYMBOL_IS_FULL_INSTANCE(symbol) && symbol->s.ii->inline_instances) 
+	array_list_free(symbol->s.ii->inline_instances);
+
+    /*
      * Also have to free location data, potentially.
      */
     if (SYMBOL_IS_FULL_INSTANCE(symbol))
@@ -1910,10 +2158,118 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 struct lsymbol *lsymbol_create(struct symbol *symbol,
 			       struct array_list *chain) {
     struct lsymbol *lsymbol = (struct lsymbol *)malloc(sizeof(struct lsymbol));
+
     memset(lsymbol,0,sizeof(struct lsymbol));
     lsymbol->symbol = symbol;
     lsymbol->chain = chain;
+
+    if (chain)
+	lsymbol_hold_int(lsymbol);
+
     return lsymbol;
+}
+
+void lsymbol_append(struct lsymbol *lsymbol,struct symbol *symbol) {
+    if (!lsymbol->chain)
+	lsymbol->chain = array_list_create(1);
+
+    /* Add the symbol to the end of the chain, and ... */
+    array_list_append(lsymbol->chain,symbol);
+
+    /* Update the "deepest nested symbol" pointer to point to it. */
+    lsymbol->symbol = symbol;
+
+    RHOLD(symbol);
+}
+
+void lsymbol_prepend(struct lsymbol *lsymbol,struct symbol *symbol) {
+    if (!lsymbol->chain)
+	lsymbol->chain = array_list_create(1);
+
+    array_list_prepend(lsymbol->chain,symbol);
+
+    RHOLD(symbol);
+}
+
+struct lsymbol *lsymbol_create_from_member(struct lsymbol *parent,
+					   struct symbol *member) {
+    struct array_list *chain;
+    struct lsymbol *ls;
+
+    chain = array_list_clone(parent->chain,1);
+    array_list_append(chain,member);
+    ls = lsymbol_create(member,chain);
+
+    lsymbol_hold_int(ls);
+
+    return ls;
+}
+
+struct lsymbol *lsymbol_create_from_symbol(struct symbol *symbol) {
+    struct array_list *chain;
+    struct lsymbol *ls;
+    struct symbol *s = symbol;
+    struct symtab *st;
+
+    if (!s) 
+	return NULL;
+
+    chain = array_list_create(1);
+    ls = lsymbol_create(s,chain);
+
+ again:
+    lsymbol_prepend(ls,s);
+    if (SYMBOL_IS_TYPE(s)) {
+	goto out;
+    }
+    else if (SYMBOL_IS_VAR(s)
+	     && (symbol->isenumval || symbol->isparam || symbol->ismember)) {
+	if (symbol->isenumval) {
+	    s = s->datatype;
+	    goto again;
+	}
+	else if (s->isparam || s->ismember) {
+	    if (s->isparam && SYMBOL_IS_FUNCTION(s->s.ii->d.v.parent_symbol)) {
+		s = s->s.ii->d.v.parent_symbol;
+		goto again;
+	    }
+	    else if (s->ismember 
+		     && SYMBOL_IST_STUN(s->s.ii->d.v.parent_symbol)) {
+		s = s->s.ii->d.v.parent_symbol;
+		goto again;
+	    }
+	    else {
+		/* if (!SYMBOL_IS_FULL(s)
+		 *  || (s->isparam && SYMBOL_IST_FUNCTION(s->s.ii->d.v.parent_symbol))
+		 *  || (s->ismember)) {
+		 */
+		goto out;
+	    }
+	}
+	goto out;
+    }
+    else if (SYMBOL_IS_VAR(s) || SYMBOL_IS_FUNCTION(s)) {
+	/* If the symtab the var/function is on is not the root, trace
+	 * up until we find either the root symtab, or a function
+	 * symtab.  If we find a function's symtab, we keep going up and
+	 * look for more functions.  When we hit the root symtab, we're
+	 * done, of course.
+	 */
+	st = s->symtab;
+	while (st && !SYMTAB_IS_ROOT(st) && !st->symtab_symbol)
+	    st = st->parent;
+	if (st->symtab_symbol) {
+	    s = st->symtab_symbol;
+	    goto again;
+	}
+	else {
+	    goto out;
+	}
+    }
+    /* Just fall out */
+
+ out:
+    return ls;
 }
 
 char *lsymbol_get_name(struct lsymbol *lsymbol) {
@@ -1926,8 +2282,19 @@ struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol) {
     return lsymbol->symbol;
 }
 
+void lsymbol_hold_int(struct lsymbol *lsymbol) {
+    int i;
+    for (i = 0; i < array_list_len(lsymbol->chain); ++i) {
+	RHOLD((struct symbol *)array_list_item(lsymbol->chain,i));
+    }
+}
+
+void lsymbol_hold(struct lsymbol *lsymbol) {
+    RHOLD(lsymbol);
+}
+
 void lsymbol_release(struct lsymbol *lsymbol) {
-    RPUTNF(lsymbol);
+    RPUT(lsymbol,lsymbol);
 }
 
 REFCNT lsymbol_free(struct lsymbol *lsymbol,int force) {
@@ -1936,12 +2303,12 @@ REFCNT lsymbol_free(struct lsymbol *lsymbol,int force) {
 
     if (lsymbol->refcnt) {
 	if (!force) {
-	    verror("cannot free (%d refs) ",lsymbol->refcnt);
+	    vwarn("cannot free (%d refs) ",lsymbol->refcnt);
 	    ERRORDUMPLSYMBOL_NL(lsymbol);
 	    return lsymbol->refcnt;
 	}
 	else {
-	    vwarn("forced free (%d refs) ",lsymbol->refcnt);
+	    verror("forced free (%d refs) ",lsymbol->refcnt);
 	    ERRORDUMPLSYMBOL(lsymbol);
 	}
     }
@@ -1951,6 +2318,9 @@ REFCNT lsymbol_free(struct lsymbol *lsymbol,int force) {
 	    RPUTNF((struct symbol *)array_list_item(lsymbol->chain,i));
 	}
 	array_list_free(lsymbol->chain);
+    }
+    else if (lsymbol->symbol) {
+	RPUTNF(lsymbol->symbol);
     }
     free(lsymbol);
 
@@ -2347,6 +2717,7 @@ void symbol_label_dump(struct symbol *symbol,struct dump_info *ud) {
 }
 
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
+    struct symbol *datatype = symbol_get_datatype(symbol);
     struct dump_info udn = {
 	.stream = ud->stream,
 	.prefix = ud->prefix,
@@ -2363,8 +2734,8 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     if (ud->detail) {
 	//if (1 || !(symbol->type == SYMBOL_TYPE_VAR
 	//    && symbol->isenumval)) {
-	    if (symbol->datatype) {
-		symbol_type_dump(symbol->datatype,&udn);
+	    if (datatype) {
+		symbol_type_dump(datatype,&udn);
 	    }
 	    else if (symbol->datatype_ref) 
 		fprintf(ud->stream,"tref%"PRIxSMOFFSET,symbol->datatype_ref);
@@ -2426,6 +2797,7 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 }
 
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
+    struct symbol *datatype = symbol_get_datatype(symbol);
     struct symbol_instance *arg_instance;
     struct symbol *arg;
     int i = 0;
@@ -2443,8 +2815,8 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     };
 
     if (ud->detail) {
-	if (symbol->datatype) {
-	    symbol_type_dump(symbol->datatype,&udn);
+	if (datatype) {
+	    symbol_type_dump(datatype,&udn);
 	    fprintf(ud->stream," ");
 	}
 	else if (symbol->datatype_ref)
@@ -2501,6 +2873,15 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 		     && symbol->s.ii->d.f.fb.loc) { 
 		fprintf(ud->stream,",frame_base=");
 		location_dump(symbol->s.ii->d.f.fb.loc,&udn2);
+	    }
+
+	    if (symbol->s.ii->inline_instances) {
+		fprintf(ud->stream,",inlineinstances=(");
+		for (i = 0; i < array_list_len(symbol->s.ii->inline_instances); ++i) {
+		    fprintf(ud->stream,"0x%"PRIxADDR",",
+			    ((struct symbol *)(array_list_item(symbol->s.ii->inline_instances,i)))->base_addr);
+		}
+		fprintf(ud->stream,")");
 	    }
 	}
 	fprintf(ud->stream,")");

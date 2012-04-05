@@ -33,6 +33,46 @@
 #include "dwdebug.h"
 #include "disasm.h"
 
+
+#define LOGDUMPBSYMBOL(dl,lt,s) \
+    vdebugc((dl),(lt), \
+	    "bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
+	    "region=(%s(space=%s)),range=(0x%"PRIxADDR"-0x%"PRIxADDR";"	\
+	    "offset=0x%"PRIxADDR";base=0x%"PRIxADDR"))",		\
+	    symbol_get_name((s)->lsymbol->symbol),			\
+	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
+	    (s)->lsymbol->symbol->ref,					\
+	    array_list_len((s)->lsymbol->chain),			\
+	    (s)->region ? (s)->region->name : NULL,			\
+	    (s)->region ? (s)->region->space->idstr : NULL,		\
+	    (s)->range ? (s)->range->start : 0,				\
+	    (s)->range ? (s)->range->end : 0,				\
+	    (s)->range ? (s)->range->offset : 0,			\
+	    (s)->range ? (s)->range->base_obj_addr : 0);
+
+#define LOGDUMPBSYMBOL_NL(dl,lt,s) \
+    LOGDUMPBSYMBOL((dl),(lt),(s)); \
+    vdebugc((dl),(lt),"\n");
+
+#define ERRORDUMPBSYMBOL(s) \
+    verrorc("bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
+	    "region=(%s(space=%s)),range=(0x%"PRIxADDR"-0x%"PRIxADDR";"	\
+	    "offset=0x%"PRIxADDR";base=0x%"PRIxADDR"))",		\
+	    symbol_get_name((s)->lsymbol->symbol),			\
+	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
+	    (s)->lsymbol->symbol->ref,					\
+	    array_list_len((s)->lsymbol->chain),			\
+	    (s)->region ? (s)->region->name : NULL,			\
+	    (s)->region ? (s)->region->space->idstr : NULL,		\
+	    (s)->range ? (s)->range->start : 0,				\
+	    (s)->range ? (s)->range->end : 0,				\
+	    (s)->range ? (s)->range->offset : 0,			\
+	    (s)->range ? (s)->range->base_obj_addr : 0);
+
+#define ERRORDUMPBSYMBOL_NL(s) \
+    ERRORDUMPBSYMBOL((s)); \
+    verrorc("\n");
+
 /**
  ** Some forward declarations.
  **/
@@ -152,10 +192,31 @@ void target_release_mmap_entry(struct target *target,
 /**
  ** Bound symbols.
  **/
-struct bsymbol *bsymbol_create(struct memregion *region,
-			       struct lsymbol *lsymbol);
+/*
+ * Binds an lsymbol to a memregion.  Does NOT hold a ref to the returned
+ * bsymbol; the user must do that if they want to use the bsymbol in
+ * their code.
+ */
+struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
+			       struct memregion *region,
+			       struct memrange *range);
+char *bsymbol_get_name(struct bsymbol *bsymbol);
+struct symbol *bsymbol_get_symbol(struct bsymbol *bsymbol);
 void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud);
-void bsymbol_free(struct bsymbol *bsymbol);
+/*
+ * Takes a reference to the bsymbol.  Users should not call this; target
+ * lookup functions will do this for you.
+ */
+void bsymbol_hold(struct bsymbol *bsymbol);
+/*
+ * Releases a reference to the bsymbol and tries to free it.
+ */
+REFCNT bsymbol_release(struct bsymbol *bsymbol);
+/* 
+ * Frees a bsymbol.  Users should never call this; call bsymbol_release
+ * instead.
+ */
+REFCNT bsymbol_free(struct bsymbol *bsymbol,int force);
 
 /**
  ** Location resolution.
@@ -204,7 +265,8 @@ struct mmap_entry *location_mmap(struct target *target,
 const char *disasm_get_inst_name(inst_type_t type);
 int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 				    unsigned char *inst_buf,unsigned int buf_len,
-				    struct array_list **offset_list,ADDR base);
+				    struct array_list **offset_list,ADDR base,
+				    int noabort);
 int disasm_get_prologue_stack_size(struct target *target,
 				   unsigned char *inst_buf,unsigned int buf_len,
 				   int *sp);
@@ -376,6 +438,8 @@ struct bsymbol {
     /* Binding to a target region/range pair. */
     struct memregion *region;
     struct memrange *range;
+
+    REFCNT refcnt;
 };
 
 /*
@@ -387,6 +451,36 @@ struct mmap_entry {
     int pages;
     int refcnt;
 };
+
+#define value_to_u64(v) (*((uint64_t *)(v)->buf))
+#define value_to_u32(v) (*((uint32_t *)(v)->buf))
+#define value_to_u16(v) (*((uint16_t *)(v)->buf))
+#define value_to_u8(v) (*((uint8_t *)(v)->buf))
+
+#define value_to_i64(v) (*((int64_t *)(v)->buf))
+#define value_to_i32(v) (*((int32_t *)(v)->buf))
+#define value_to_i16(v) (*((int16_t *)(v)->buf))
+#define value_to_i8(v) (*((int8_t *)(v)->buf))
+
+#if __WORDSIZE == 64
+#define value_to_unsigned_long value_to_u64
+#define value_to_long value_to_i64
+#else
+#define value_to_unsigned_long value_to_u32
+#define value_to_long value_to_i32
+#endif
+
+#define value_to_int value_to_i32
+#define value_to_unsigned_int value_to_u32
+
+#define value_to_char(v) ((char)value_to_i8((v)))
+#define value_to_unsigned_char(v) ((unsigned char)value_to_i8((v)))
+#define value_to_string(v) ((v)->buf)
+#if __WORDSIZE == 64
+#define value_to_num(v) value_to_i64((v))
+#else
+#define value_to_num(v) value_to_i32((v))
+#endif
 
 struct value {
     /*

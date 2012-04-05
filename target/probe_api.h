@@ -157,7 +157,16 @@ struct probe *probe_register_symbol_name(struct probe *probe,
 					 probepoint_style_t style,
 					 probepoint_whence_t whence,
 					 probepoint_watchsize_t watchsize);
-					 
+
+struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
+				    probepoint_style_t style,
+				    probepoint_whence_t whence,
+				    probepoint_watchsize_t watchsize);
+
+struct probe *probe_register_line(struct probe *probe,char *filename,int line,
+				  probepoint_style_t style,
+				  probepoint_whence_t whence,
+				  probepoint_watchsize_t watchsize);
 
 /*
  * Registers @probe in such a way that probe->pre_handler is called when
@@ -176,14 +185,24 @@ struct probe *probe_register_symbol_name(struct probe *probe,
 struct probe *probe_register_function_ee(struct probe *probe,
 					 probepoint_style_t style,
 					 struct bsymbol *bsymbol,
-					 int force_at_entry);
+					 int force_at_entry,int noabort);
+
+struct probe *probe_register_inlined_symbol(struct probe *probe,
+					    struct bsymbol *bsymbol,
+					    int do_primary,
+					    probepoint_style_t style,
+					    probepoint_whence_t whence,
+					    probepoint_watchsize_t watchsize);
 
 /*
  * This function disassembles the function pointed to by @bsymbol if it
  * can.  Then, for each @inst,@probe tuple, it registers @probe at the
  * address of that instruction type.  The user can supply as many
  * @inst,@type tuples as they wish, but each @inst must be unique
- * (unchecked, so don't shoot yourself in the foot!).
+ * (unchecked, so don't shoot yourself in the foot!).  If you set
+ * @noabort to nonzero, the disassembler will continue even if it sees
+ * an undecodeable instruction (it just skips one byte and tries to keep
+ * going).
  *
  * IMPORTANT: you *must* end the list with INST_NONE !!!
  *
@@ -193,6 +212,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 #include <disasm.h>
 struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     probepoint_style_t style,
+					     int noabort,
 					     inst_type_t inst,
 					     struct probe *probe,...);
 #endif
@@ -235,6 +255,8 @@ struct probe *probe_create(struct target *target,struct probe_ops *pops,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
 			   void *handler_data,int autofree);
+
+void probe_rename(struct probe *probe,const char *name);
 
 /*
  * If the probe was not specified as an @autofree probe, anybody who

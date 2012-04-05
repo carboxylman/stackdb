@@ -31,8 +31,9 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h target.h target_api.h \
-	probe.h probe_api.h \
+HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
+	$(SRCDIR)/target.h $(SRCDIR)/target_api.h \
+	$(SRCDIR)/probe.h $(SRCDIR)/probe_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
@@ -46,11 +47,11 @@ ifeq ($(ENABLE_DISTORM),"1")
 	OBJECTS += disasm.lo
 endif
 
-LIBRARIES := target.a 
+LIBRARIES := libtarget.a libtarget.so.$(LIBVERSION)
 
 PROGRAMS := dumptarget
 
-STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvlog.a
+STATICLIBS := libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
@@ -68,19 +69,28 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-target.a:	$(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o target.a $(OBJECTS)
+libtarget.a:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libtarget.a $(OBJECTS)
 
-dumptarget: $(HEADERS) $(LIBRARIES) dumptarget.lo $(STATICLIBS)
-	$(CC) -o $@ $(CFLAGS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+libtarget.lo:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
+
+libtarget.so.$(LIBVERSION):	target.lo
+	$(CP) -f target.lo $@
+
+libtarget.so:	libtarget.so.$(LIBVERSION)
+	$(LN_S) $< $@
+
+dumptarget: $(HEADERS) dumptarget.lo $(STATICLIBS)
+	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
+	$(SUDO) $(CP) -fd libtarget.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
 		target.lo dumptarget.lo 
-	$(RM) -f $(LIBRARIES) target.o 
+	$(RM) -f $(LIBRARIES) target.o libtarget.so libtarget.so.$(LIBVERSION)
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs

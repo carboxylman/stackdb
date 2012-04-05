@@ -3,6 +3,7 @@ To build this software, you must have installed
   * glib (>= 2.14, I believe);
   * elfutils (>= 0.137 should be fine, but ideally you will want
     something much newer, such as 0.148 or 0.152);
+  * Judy
 
 Optionally, you could also install
 
@@ -78,6 +79,15 @@ http://code.google.com/p/distorm/downloads/detail?name=distorm3-1.0.zip .
 
 You may need to edit its build config or Makefiles to change the prefix
 to /usr/local (or wherever you like).
+
+
+  Judy:
+
+Grab either /proj/a3/vmi-deps/ or
+http://downloads.sourceforge.net/project/judy/judy/Judy-1.0.5/Judy-1.0.5.tar.gz .
+configure, make, install (if you change the build prefix to anything
+other than /usr or /usr/local, tell vmi's configure about it via
+--with-judy=/my/prefix .
 
 
 BUILDING vmi.

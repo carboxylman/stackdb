@@ -159,7 +159,10 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     probepoint->whence = whence;
     probepoint->watchsize = watchsize;
 
-    probepoint->bsymbol = bsymbol;
+    if (bsymbol) {
+	probepoint->bsymbol = bsymbol;
+	bsymbol_hold(bsymbol);
+    }
     probepoint->symbol_addr = symbol_addr;
     
     probepoint->debugregnum = -1;
@@ -229,6 +232,11 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
     /* XXX: we could also go *up* the src/sink chain and destroy all the
      * sinks... should we?
      */
+
+    if (probepoint->bsymbol) {
+	bsymbol_release(probepoint->bsymbol);
+	probepoint->bsymbol = NULL;
+    }
 }
 
 static void probepoint_free(struct probepoint *probepoint) {
@@ -598,6 +606,20 @@ int probe_free(struct probe *probe,int force) {
     return 0;
 }
 
+void probe_rename(struct probe *probe,const char *name) {
+    vdebug(5,LOG_P_PROBE,"renaming ");
+    LOGDUMPPROBE(5,LOG_P_PROBE,probe);
+
+    if (probe->name)
+	free(probe->name);
+
+    probe->name = (name) ? strdup(name) : NULL;
+
+    vdebugc(5,LOG_P_PROBE," to ");
+    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+
+}
+
 static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     struct probepoint *probepoint = probe->probepoint;
     struct target *target = probe->target;
@@ -687,7 +709,10 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	vdebug(5,LOG_P_PROBE,"probe sources removed\n");
     }
 
-    probe->bsymbol = NULL;
+    if (probe->bsymbol) {
+	bsymbol_release(probe->bsymbol);
+	probe->bsymbol = NULL;
+    }
 
     /* At this point, the probe is unregistered; what remains is to
      * remove its probepoint, if necessary, and we don't have to wait to
@@ -985,17 +1010,20 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     int created = 0;
     struct target *target = probe->target;
 
+    if (bsymbol) 
+	bsymbol_hold(bsymbol);
+
     if (type == PROBEPOINT_WATCH && style == PROBEPOINT_SW) {
 	verror("software watchpoints are unsupported!\n");
 	errno = EINVAL;
-	return NULL;
+	goto errout;
     }
 
     /* Target must be paused before we do anything. */
     if (target_status(target) != TSTATUS_PAUSED) {
         verror("target not paused!\n");
 	errno = EINVAL;
-	return NULL;
+	goto errout;
     }
 
     /* If the user has associated a bound symbol with this probe
@@ -1095,6 +1123,10 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     return probe;
 
  errout:
+    if (bsymbol) {
+	bsymbol_release(bsymbol);
+	probe->bsymbol = NULL;
+    }
     if (probe->autofree)
 	probe_free(probe,1);
     return NULL;
@@ -1110,6 +1142,68 @@ struct probe *probe_register_addr(struct probe *probe,ADDR addr,
 				 bsymbol,0);
 }
 
+struct probe *probe_register_line(struct probe *probe,char *filename,int line,
+				  probepoint_style_t style,
+				  probepoint_whence_t whence,
+				  probepoint_watchsize_t watchsize) {
+    struct target *target = probe->target;
+    struct memrange *range;
+    ADDR start = 0;
+    ADDR probeaddr;
+    struct bsymbol *bsymbol = NULL;
+
+    bsymbol = target_lookup_sym_line(target,filename,line,NULL,&probeaddr);
+    if (!bsymbol)
+	return NULL;
+
+    /* No need to bsymbol_hold(); __probe_register_addr() does it. 
+     * IN FACT, we need to release when we exit!
+     */
+
+    if (!SYMBOL_IS_FULL_INSTANCE(bsymbol->lsymbol->symbol)) {
+	verror("cannot probe a partial symbol!\n");
+	goto errout;
+    }
+
+    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
+	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	    verror("could not resolve entry PC for function %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    goto errout;
+	}
+
+	probe = __probe_register_addr(probe,probeaddr,range,
+				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      bsymbol,start);
+    }
+    else if (SYMBOL_IS_FULL_LABEL(bsymbol->lsymbol->symbol)) {
+	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	    verror("could not resolve base addr for label %s!\n",
+		   bsymbol->lsymbol->symbol->name);
+	    goto errout;
+	}
+
+	probe = __probe_register_addr(probe,probeaddr,range,
+				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      bsymbol,start);
+    }
+    else {
+	verror("unknown symbol type '%s'!\n",
+	       SYMBOL_TYPE(bsymbol->lsymbol->symbol->type));
+	goto errout;
+    }
+
+    bsymbol_release(bsymbol);
+    return probe;
+
+ errout:
+    if (probe->autofree)
+	probe_free(probe,1);
+    if (bsymbol)
+	bsymbol_release(bsymbol);
+    return NULL;
+}
+
 struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 				    probepoint_style_t style,
 				    probepoint_whence_t whence,
@@ -1121,16 +1215,18 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     ADDR probeaddr;
     int ssize;
 
+    /* No need to bsymbol_hold(); __probe_register_addr() does it. */
+
     if (!SYMBOL_IS_FULL_INSTANCE(bsymbol->lsymbol->symbol)) {
 	verror("cannot probe a partial symbol!\n");
-	return NULL;
+	goto errout;
     }
 
     if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
 	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
 	    verror("could not resolve entry PC for function %s!\n",
 		   bsymbol->lsymbol->symbol->name);
-	    return NULL;
+	    goto errout;
 	}
 	else 
 	    probeaddr = start;
@@ -1160,7 +1256,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     }
     else if (SYMBOL_IS_FULL_VAR(bsymbol->lsymbol->symbol)) {
 	if (watchsize == PROBEPOINT_LAUTO) {
-	    ssize = symbol_type_full_bytesize(bsymbol->lsymbol->symbol->datatype);
+	    ssize = symbol_type_full_bytesize(symbol_get_datatype(bsymbol->lsymbol->symbol));
 	    if (ssize <= 0) {
 		verror("bad size (%d) for type of %s!\n",
 		       ssize,bsymbol->lsymbol->symbol->name);
@@ -1197,8 +1293,13 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     struct target *target = sink->target;
 
-    // XXX: what if the sources have different symbols??
-    sink->bsymbol = src->bsymbol;
+    /* XXX: should we do this?  Steal the src's bsymbol if we don't have
+     * one!
+     */
+    if (!sink->bsymbol && src->bsymbol) {
+	bsymbol_hold(src->bsymbol);
+	sink->bsymbol = src->bsymbol;
+    }
 
     if (sink->target != src->target) {
 	verror("sink %s/src %s targets different!\n",sink->name,src->name);
@@ -1230,6 +1331,10 @@ struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     return sink;
 
  errout:
+    if (sink->bsymbol) {
+	bsymbol_release(sink->bsymbol);
+	sink->bsymbol = NULL;
+    }
     if (sink->autofree)
 	probe_free(sink,1);
     return NULL;
@@ -1500,11 +1605,13 @@ int probe_num_sinks(struct probe *probe) {
 }
 
 /*
- * Returns the address the a probe is targeting.
- * If the given handle is invalid, the function returns a value of 0.
+ * Returns the address the a probe is targeting, or 0 if the probe is a
+ * sink without a probepoint.
  */
 ADDR probe_addr(struct probe *probe) {
-    return probe->probepoint->addr;
+    if (probe->probepoint)
+	return probe->probepoint->addr;
+    return 0;
 }
 
 /*

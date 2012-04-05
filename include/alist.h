@@ -64,7 +64,7 @@ static inline struct array_list *array_list_clone(struct array_list *oldlist,
 	newlist->alloc_len = more;
     newlist->list = (void **)malloc(sizeof(void *)*(newlist->alloc_len));
     if (oldlist && oldlist->len) {
-	memcpy(newlist->list,oldlist->list,oldlist->len);
+	memcpy(newlist->list,oldlist->list,sizeof(void *)*(oldlist->len));
 	newlist->len = oldlist->len;
     }
     return newlist;

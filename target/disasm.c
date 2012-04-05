@@ -26,7 +26,8 @@ const char *disasm_get_inst_name(inst_type_t type) {
  */
 int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 				    unsigned char *inst_buf,unsigned int buf_len,
-				    struct array_list **offset_list,ADDR base) {
+				    struct array_list **offset_list,ADDR base,
+				    int noabort) {
     _CodeInfo ci;
     _DInst di;
     _DecodedInst inst;
@@ -61,7 +62,13 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 
 	if (di.flags == FLAG_NOT_DECODABLE) {
 	    vwarn("bad instruction at offset %"PRIu64"\n",ci.codeOffset);
-	    goto inst_err_out;
+	    if (!noabort)
+		goto inst_err_out;
+	    else {
+		ci.codeOffset += 1;
+		ci.code += 1;
+		continue;
+	    }
 	}
 
 	/*
@@ -136,7 +143,8 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
     if (ci.codeOffset != buf_len) {
 	vwarn("decoding stopped %"PRIi64" bytes short\n",
 	      (uint64_t)buf_len - ci.codeOffset);
-	goto inst_err_out;
+	if (!noabort)
+	    goto inst_err_out;
     }
 
     if (offset_list)

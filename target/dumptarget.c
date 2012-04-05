@@ -50,7 +50,6 @@ int len = 0;
 struct bsymbol **symbols = NULL;
 GHashTable *probes = NULL;
 GHashTable *disfuncs = NULL;
-GHashTable *bsymbols = NULL;
 struct array_list *shadow_stack;
 
 int doit = 0;
@@ -60,6 +59,7 @@ target_status_t cleanup() {
     gpointer key;
     struct probe *probe;
     target_status_t retval;
+    struct bsymbol *bsymbol;
 
     g_hash_table_iter_init(&iter,probes);
     while (g_hash_table_iter_next(&iter,
@@ -75,8 +75,6 @@ target_status_t cleanup() {
 	g_hash_table_destroy(probes);
     if (disfuncs)
 	g_hash_table_destroy(disfuncs);
-    if (bsymbols)
-	g_hash_table_destroy(bsymbols);
 
     if (shadow_stack)
 	array_list_deep_free(shadow_stack);
@@ -125,15 +123,17 @@ ADDR instrument_func(struct bsymbol *bsymbol) {
 	snprintf(buf,bufsiz,"call_in_%s",bsymbol->lsymbol->symbol->name);
 	struct probe *cprobe = probe_create(t,NULL,buf,NULL,retaddr_save,
 					    NULL,0);
+	cprobe->handler_data = cprobe->name;
 	free(buf);
 	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
 	struct probe *rprobe = probe_create(t,NULL,buf,retaddr_check,NULL,
-					    NULL,0);
+					    buf,0);
+	rprobe->handler_data = rprobe->name;
 	free(buf);
 
-	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,
+	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
 					    INST_RET,rprobe,
 					    INST_CALL,cprobe,
 					    INST_NONE)) {
@@ -214,6 +214,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		" (skipping unknown function!)\n",
 		ip,probe->bsymbol->lsymbol->symbol->name,*retaddr);
 	free(retaddr);
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
 	return 0;
     }
     else {
@@ -223,6 +224,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		ip,bsymbol->lsymbol->symbol->name,
 		probe->bsymbol->lsymbol->symbol->name,
 		*retaddr);
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
     }
 
     /* Since we know that the call is a known function that we can
@@ -232,6 +234,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
     array_list_add(shadow_stack,retaddr);
 
     instrument_func(bsymbol);
+    bsymbol_release(bsymbol);
 
     return 0;
 }
@@ -254,11 +257,6 @@ int retaddr_check(struct probe *probe,void *handler_data,
 
     oldretaddr = (ADDR *)array_list_remove(shadow_stack);
 
-    if (!oldretaddr) {
-	fprintf(stderr,"Could not read from shadow stack; just inserted?\n");
-	return 0;
-    }
-
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
 			  (unsigned char *)&newretaddr,NULL)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_check!\n");
@@ -266,18 +264,31 @@ int retaddr_check(struct probe *probe,void *handler_data,
 	return 0;
     }
 
-    if (newretaddr != *oldretaddr)
+    if (!oldretaddr || newretaddr != *oldretaddr) {
+	if (!oldretaddr) {
+	    fprintf(stdout,
+		    "(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
+		    " could not read from shadow stack; just inserted?\n",
+		    probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
+		    newretaddr);
+	    fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+	    return 0;
+	}
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR" ------ STACK CORRUPTION!\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
 		newretaddr,*oldretaddr);
-    else 
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+    }
+    else {
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR"\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
 		newretaddr,*oldretaddr);
+	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+    }
 
     if (doit) {
 	if (!target_write_addr(t,(ADDR)sp,sizeof(ADDR),
@@ -364,6 +375,8 @@ int function_dump_args(struct probe *probe,void *handler_data,
     }
     printf("\n");
 
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
+
     fflush(stdout);
 
     array_list_free(tmp);
@@ -378,6 +391,7 @@ int function_post(struct probe *probe,void *handler_data,
     fprintf(stdout,"%s (0x%"PRIxADDR") post handler\n",
 	    probe->bsymbol->lsymbol->symbol->name,
 	    probe_addr(probe));
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stdout);
 
@@ -388,8 +402,7 @@ int var_pre(struct probe *probe,void *handler_data,
 	    struct probe *trigger) {
     int j;
     struct value *value;
-    struct bsymbol *bsymbol = (struct bsymbol *) \
-	g_hash_table_lookup(bsymbols,(gpointer)probe_addr(probe));
+    struct bsymbol *bsymbol = probe->bsymbol;
 
     fflush(stderr);
 
@@ -420,6 +433,7 @@ int var_pre(struct probe *probe,void *handler_data,
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stdout);
 
@@ -430,8 +444,7 @@ int var_post(struct probe *probe,void *handler_data,
 	     struct probe *trigger) {
     int j;
     struct value *value;
-    struct bsymbol *bsymbol = (struct bsymbol *) \
-	g_hash_table_lookup(bsymbols,(gpointer)probe_addr(probe));
+    struct bsymbol *bsymbol = probe->bsymbol;
 
     fflush(stderr);
 
@@ -461,6 +474,7 @@ int var_post(struct probe *probe,void *handler_data,
 	fprintf(stdout,"%s (0x%"PRIxADDR") (post): could not read value: %s\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
+    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stdout);
 
@@ -637,14 +651,13 @@ int main(int argc,char **argv) {
 
 	    probes = g_hash_table_new(g_direct_hash,g_direct_equal);
 	    disfuncs = g_hash_table_new(g_direct_hash,g_direct_equal);
-	    bsymbols = g_hash_table_new(g_direct_hash,g_direct_equal);
 	}
     }
 
     if (raw) {
+	word = malloc(t->wordsize);
 	for (i = 0; i < argc; ++i) {
 	    addrs[i] = strtoll(argv[i],NULL,16);
-	    word = malloc(t->wordsize);
 	}
     }
     else {
@@ -659,18 +672,38 @@ int main(int argc,char **argv) {
 	for (i = 0; i < argc; ++i) {
 	    /* Look for retval code */
 	    char *retcode_str = index(argv[i],':');
+	    int line = -1;
 	    if (retcode_str) {
-		*retcode_str = '\0';
-		++retcode_str;
-		retcode_strs[i] = retcode_str;
-		retcodes[i] = (REGVAL)atoi(retcode_str);
+		if (*(retcode_str+1) == 'L') {
+		    /* line breakpoint, not retval */
+		    *retcode_str = '\0';
+		    ++retcode_str;
+		    line = retcodes[i] = atoi(retcode_str + 1);
+		    retcode_strs[i] = retcode_str;
+		}
+		else {
+		    *retcode_str = '\0';
+		    ++retcode_str;
+		    retcode_strs[i] = retcode_str;
+		    retcodes[i] = (REGVAL)atoi(retcode_str);
+		}
 	    }
 
-	    if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
-						 SYMBOL_TYPE_FLAG_NONE))) {
-		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-		cleanup();
-		exit(-1);
+	    if (line > 0) {
+		if (!(bsymbol = target_lookup_sym_line(t,argv[i],line,
+						       NULL,NULL))) {
+		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
+	    }
+	    else {
+		if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
+						  SYMBOL_TYPE_FLAG_NONE))) {
+		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
 	    }
 
 	    array_list_add(symlist,bsymbol);
@@ -717,25 +750,42 @@ int main(int argc,char **argv) {
 		}
 	    }
 	    else {
-		probe = probe_create(t,NULL,bsymbol->lsymbol->symbol->name,
+		probe = probe_create(t,NULL,bsymbol_get_name(bsymbol),
 				     pre,post,NULL,0);
+		probe->handler_data = probe->name;
 		if (!probe)
 		    goto err_unreg;
 
-		if (!probe_register_symbol(probe,bsymbol,style,whence,
-					   PROBEPOINT_LAUTO)) {
-		    probe_free(probe,1);
-		    goto err_unreg;
+		if (i < argc && retcode_strs[i] && *retcode_strs[i] == 'L') {
+		    if (!probe_register_line(probe,argv[i],retcodes[i],
+					     style,whence,PROBEPOINT_LAUTO)) {
+			probe_free(probe,1);
+			goto err_unreg;
+		    }
+		}
+		else if (symbol_is_inlined(bsymbol_get_symbol(bsymbol))) {
+		    if (!probe_register_inlined_symbol(probe,bsymbol,
+						       1,
+						       style,whence,
+						       PROBEPOINT_LAUTO)) {
+			probe_free(probe,1);
+			goto err_unreg;
+		    }
+		}
+		else {
+		    if (!probe_register_symbol(probe,bsymbol,style,whence,
+					       PROBEPOINT_LAUTO)) {
+			probe_free(probe,1);
+			goto err_unreg;
+		    }
 		}
 
 		g_hash_table_insert(probes,(gpointer)probe,(gpointer)probe);
-		g_hash_table_insert(bsymbols,(gpointer)probe_addr(probe),
-				    (gpointer)bsymbol);
 
 		if (probe) {
 		    fprintf(stderr,
 			    "Registered probe %s at 0x%"PRIxADDR".\n",
-			    bsymbol->lsymbol->symbol->name,
+			    bsymbol_get_name(bsymbol),
 			    probe_addr(probe));
 		    
 		    /* Add the retcode action, if any! */
@@ -756,15 +806,18 @@ int main(int argc,char **argv) {
 		else {
 		    fprintf(stderr,
 			    "Failed to register probe on '%s'\n",
-			    bsymbol->lsymbol->symbol->name);
+			    bsymbol_get_name(bsymbol));
 		    --i;
 		    goto err_unreg;
 		}
 	    }
 
+	    bsymbol_release(bsymbol);
+
 	    continue;
 
 	err_unreg:
+	    bsymbol_release(bsymbol);
 	    array_list_free(symlist);
 	    free(retcodes);
 	    free(retcode_strs);
@@ -826,9 +879,10 @@ int main(int argc,char **argv) {
 		)
 		goto resume;
 #ifdef ENABLE_XENACCESS
-	    else if (domain && !raw) {
-		fprintf(stderr,"ERROR: unexpected Xen interrupt; trying to cleanup!\n");
-		goto exit;
+	    else if (domain) { // && !raw) {
+		goto resume;
+		//fprintf(stderr,"ERROR: unexpected Xen interrupt; trying to cleanup!\n");
+		//goto exit;
 	    }
 #endif
 	    else {

@@ -43,11 +43,11 @@ HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/probes.h \
 
 OBJECTS := probes.lo request.lo
 
-LIBRARIES := $(OBJDIR)/target/target.a 
+LIBRARIES := $(OBJDIR)/target/libtarget.a 
 
 PROGRAMS := nfs-perf
 
-STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvlog.a
+STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
