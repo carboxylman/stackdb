@@ -12,7 +12,7 @@
 
 #include "vmps.h"
 #include "list.h"
-#include "config.h"
+#include "inih/config.h"
 #include "offset.h"
 #include "web.h"
 #include "log.h"
@@ -231,7 +231,7 @@ int config_handler(void* user,
 static
 int load_config(const char *config)
 {
-    if (config_parse(config, config_handler, NULL) < 0)
+    if (ini_parse(config, config_handler, NULL) < 0)
     {
         fprintf(stderr, "Failed to load '%s'\n", config);
         return -1;
