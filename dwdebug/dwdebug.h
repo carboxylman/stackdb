@@ -162,7 +162,7 @@ typedef enum {
 #define LOAD_TYPE_BITS      1
 #define SYMBOL_TYPE_BITS    3
 #define DATATYPE_CODE_BITS  4
-#define SRCLINE_BITS       17
+#define SRCLINE_BITS       16
 
 /* We use this enum type for filtering during symbol searching, when the
  * caller might accept multiple different symbol types.
@@ -573,8 +573,15 @@ struct lsymbol *debugfile_lookup_sym_line(struct debugfile *debugfile,
  * refs.
  */
 struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
-				  char *name,const char *delim,
+				  const char *name,const char *delim,
 				  symbol_type_flag_t ftype);
+
+struct lsymbol *lsymbol_lookup_member(struct lsymbol *lsymbol,
+				      const char *name,const char *delim);
+
+struct lsymbol *symbol_lookup_member(struct symbol *symbol,
+				     const char *name,const char *delim);
+
 /*
  * @symbol may be either a SYMBOL_TYPE_TYPE, a SYMBOL_TYPE_FUNCTION, or
  * a SYMBOL_TYPE_VAR.  This function is really about returning an instance
@@ -975,7 +982,8 @@ struct symbol {
     /* If this is a type symbol, which type. */
     datatype_code_t datatype_code:DATATYPE_CODE_BITS;
 
-    unsigned int isexternal:1,
+    unsigned int isdynamic:1,
+	isexternal:1,
 	isdeclaration:1,
 	isprototyped:1,
 	isparam:1,

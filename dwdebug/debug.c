@@ -144,8 +144,8 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc) {
  ** Symbol lookup functions.
  **/
 static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
-					 char *name,const char *delim,
-					 symbol_type_flag_t ftype) {
+					   const char *name,const char *delim,
+					   symbol_type_flag_t ftype) {
     char *next = NULL;
     char *lname = NULL;
     char *saveptr = NULL;
@@ -166,7 +166,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	chain = array_list_create(1);
     }
     else
-	next = name;
+	next = (char *)name;
 
     /* 
      * Do the first token by looking up in this symtab, or its anonymous
@@ -317,6 +317,9 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
      */
     lsymbol_append(lsymbol,symbol);
 
+    if (!delim)
+	delim = DWDEBUG_DEF_DELIM;
+
     while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
 	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
 	    goto errout;
@@ -355,7 +358,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 }
 
 struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
-				  char *name,const char *delim,
+				  const char *name,const char *delim,
 				  symbol_type_flag_t ftype) {
     struct lsymbol *ls = __symtab_lookup_sym(symtab,name,delim,ftype);
 
@@ -366,6 +369,115 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 	lsymbol_hold(ls);
 
     return ls;
+}
+
+static struct lsymbol *__symbol_lookup_sym(struct symbol *symbol,
+					   const char *name,const char *delim) {
+
+    char *next;
+    char *lname = NULL;
+    char *saveptr = NULL;
+    struct array_list *anonchain = NULL;
+    int i;
+    struct lsymbol *lsymbol = NULL;
+    struct array_list *chain = array_list_create(0);
+
+    if (!SYMBOL_IS_FULL_TYPE(symbol) && !SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	verror("symbol %s is not a full type nor a full function!\n",
+	       symbol_get_name(symbol));
+	return NULL;
+    }
+
+    lname = strdup(name);
+
+    /* Add the first one to our chain and start looking up members. */
+    lsymbol = lsymbol_create(symbol,chain);
+    lsymbol_append(lsymbol,symbol);
+
+    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	   "starting at top-level %s: checking members\n",
+	   symbol_get_name(symbol));
+
+    if (!delim)
+	delim = DWDEBUG_DEF_DELIM;
+
+    while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
+	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
+	    goto errout;
+	else if (anonchain && array_list_len(anonchain)) {
+	    /* If anonchain has any members, we now have to glue those
+	     * members into our overall chain, BEFORE gluing the actual
+	     * found symbol onto the tail end of the chain.
+	     */
+	    for (i = 0; i < array_list_len(anonchain); ++i) {
+		lsymbol_append(lsymbol,
+			       (struct symbol *)array_list_item(anonchain,i));
+	    }
+	    /* free the anonchain (and its members!) and reset our pointer */
+	    array_list_free(anonchain);
+	    anonchain = NULL;
+	}
+	/* now slap the retval on, too! */
+	lsymbol_append(lsymbol,symbol);
+    }
+
+    free(lname);
+
+    /* downsize */
+    array_list_compact(chain);
+
+    return lsymbol;
+
+ errout:
+    if (lname)
+	free(lname);
+    if (lsymbol)
+	lsymbol_release(lsymbol);
+
+    return NULL;
+}
+
+struct lsymbol *lsymbol_lookup_member(struct lsymbol *lsymbol,
+				      const char *name,const char *delim) {
+    struct lsymbol *ls;
+    struct array_list *chain;
+    int i;
+
+    /* Very simple -- we just create a new lsymbol by cloning @lsymbol,
+     * then appending to its anon chain as we lookup members!
+     */
+    ls = __symbol_lookup_sym(lsymbol->symbol,name,delim);
+    if (!ls)
+	return NULL;
+    chain = array_list_clone(lsymbol->chain,array_list_len(lsymbol->chain));
+    /* We have to take refs to each symbol of the cloned chain. */
+    for (i = 0; i < array_list_len(chain); ++i)
+	symbol_hold((struct symbol *)array_list_item(chain,i));
+
+    /* Now we're going to actually use the new chain, append the old
+     * chain, replace the old chain on lsymbol, and free the old chain.
+     */
+    array_list_concat(chain,lsymbol->chain);
+    array_list_free(lsymbol->chain);
+    lsymbol->chain = chain;
+
+    /* This is a lookup function, so it has to hold a ref to its return
+     * value.
+     */
+    lsymbol_hold(lsymbol);
+
+    return lsymbol;
+}
+
+struct lsymbol *symbol_lookup_member(struct symbol *symbol,
+				     const char *name,const char *delim) {
+    struct lsymbol *lsymbol = __symbol_lookup_sym(symbol,name,delim);
+    if (!lsymbol)
+	return NULL;
+
+    lsymbol_hold(lsymbol);
+
+    return lsymbol;
 }
 
 struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
@@ -613,6 +725,9 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
      * members.
      */
     lsymbol_append(lsymbol,symbol);
+
+    if (!delim)
+	delim = DWDEBUG_DEF_DELIM;
 
     while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
 	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
@@ -1550,6 +1665,13 @@ void symbol_set_type(struct symbol *symbol,symbol_type_t symtype) {
 }
 
 void symbol_set_srcline(struct symbol *symbol,int srcline) {
+    if (srcline > ((1 << SRCLINE_BITS) - 1)) {
+	vwarn("symbol %s at srcline %d: line too large (max %d)!\n",
+	      symbol_get_name(symbol),srcline,(1 << SRCLINE_BITS) - 1);
+	symbol->srcline = 0xffff;
+	return;
+    }
+
     symbol->srcline = srcline;
 }
 
@@ -1876,7 +1998,11 @@ struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
     char *mlist = strdup(memberlist);
 
     retval = symbol;
-    while ((member = strtok_r(!saveptr ? mlist : NULL,".",&saveptr))) {
+
+    if (!delim)
+	delim = DWDEBUG_DEF_DELIM;
+
+    while ((member = strtok_r(!saveptr ? mlist : NULL,delim,&saveptr))) {
 	retval = __symbol_get_one_member(retval,member,NULL);
 	if (!retval)
 	    break;
@@ -2029,8 +2155,13 @@ REFCNT symbol_release(struct symbol *symbol) {
     /*
      * WE DO NOT FREE symbols on release; our debugfile garbage
      * collector has to do this for us according to some policy!
+     *
+     * Actually, we only free dynamic symbols automatically on release!
      */
-    return RPUTNF(symbol);
+    if (symbol->isdynamic)
+	return RPUT(symbol,symbol);
+    else
+	return RPUTNF(symbol);
 }
 
 REFCNT symbol_free(struct symbol *symbol,int force) {
@@ -2057,6 +2188,14 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     else 
 	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//(null) at %"PRIxSMOFFSET"\n",
 	       SYMBOL_TYPE(symbol->type),symbol->ref);
+
+    /* If this is a dynamic symbol, we have to recursively release any
+     * dynamic symbols it points to.
+     */
+    if (symbol->isdynamic) {
+	if (SYMBOL_IST_PTR(symbol)) 
+	    symbol_release(symbol->datatype);
+    }
 
     /*
      * We have to recurse through any symbol that has members, because
