@@ -85,11 +85,14 @@ target_status_t cleanup() {
     return retval;
 }
 
+int nonrootsethits = 0;
+
 void sigh(int signo) {
 
     if (t) {
 	target_pause(t);
-	fprintf(stderr,"Ending trace.\n");
+	fprintf(stderr,"Ending trace (hits on probes not from root set: %d).\n",
+		nonrootsethits);
 	cleanup();
 	fprintf(stderr,"Ended trace.\n");
     }
@@ -102,7 +105,7 @@ int retaddr_check(struct probe *probe,void *handler_data,
 int retaddr_save(struct probe *probe,void *handler_data,
 		 struct probe *trigger);
 
-ADDR instrument_func(struct bsymbol *bsymbol) {
+ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
     ADDR funcstart = 0;
 
     if (location_resolve_symbol_base(t,bsymbol,&funcstart,NULL)) {
@@ -125,21 +128,35 @@ ADDR instrument_func(struct bsymbol *bsymbol) {
 					    NULL,0);
 	cprobe->handler_data = cprobe->name;
 	free(buf);
-	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
-	buf = malloc(bufsiz);
-	snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
-	struct probe *rprobe = probe_create(t,NULL,buf,retaddr_check,NULL,
+	struct probe *rprobe;
+	if (!isroot) {
+	    bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
+	    buf = malloc(bufsiz);
+	    snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
+	    rprobe = probe_create(t,NULL,buf,retaddr_check,NULL,
 					    buf,0);
-	rprobe->handler_data = rprobe->name;
-	free(buf);
+	    rprobe->handler_data = rprobe->name;
+	    free(buf);
+	}
 
-	if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
-					    INST_RET,rprobe,
-					    INST_CALL,cprobe,
-					    INST_NONE)) {
-	    probe_free(cprobe,1);
-	    probe_free(rprobe,1);
-	    return 0;
+
+	if (isroot) {
+	    if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
+						INST_CALL,cprobe,
+						INST_NONE)) {
+		probe_free(cprobe,1);
+		return 0;
+	    }
+	}
+	else {
+	    if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
+						INST_RET,rprobe,
+						INST_CALL,cprobe,
+						INST_NONE)) {
+		probe_free(cprobe,1);
+		probe_free(rprobe,1);
+		return 0;
+	    }
 	}
 
 	if (probe_num_sources(cprobe) == 0) {
@@ -154,16 +171,18 @@ ADDR instrument_func(struct bsymbol *bsymbol) {
 		    probe_num_sources(cprobe),bsymbol->lsymbol->symbol->name);
 	}
 
-	if (probe_num_sources(rprobe) == 0) {
-	    probe_free(rprobe,1);
-	    fprintf(stderr,
-		    "No return sites in %s.\n",bsymbol->lsymbol->symbol->name);
-	}
-	else {
-	    g_hash_table_insert(probes,(gpointer)rprobe,(gpointer)rprobe);
-	    fprintf(stderr,
-		    "Registered %d return probes in function %s.\n",
-		    probe_num_sources(rprobe),bsymbol->lsymbol->symbol->name);
+	if (!isroot) {
+	    if (probe_num_sources(rprobe) == 0) {
+		probe_free(rprobe,1);
+		fprintf(stderr,
+			"No return sites in %s.\n",bsymbol->lsymbol->symbol->name);
+	    }
+	    else {
+		g_hash_table_insert(probes,(gpointer)rprobe,(gpointer)rprobe);
+		fprintf(stderr,
+			"Registered %d return probes in function %s.\n",
+			probe_num_sources(rprobe),bsymbol->lsymbol->symbol->name);
+	    }
 	}
 
 	g_hash_table_insert(disfuncs,(gpointer)funcstart,(gpointer)1);
@@ -211,21 +230,26 @@ int retaddr_save(struct probe *probe,void *handler_data,
 	fprintf(stdout,
 		"(SAVE) call 0x%"PRIxADDR" (<UNKNOWN>)"
 		" (from within %s): retaddr = 0x%"PRIxADDR
-		" (skipping unknown function!)\n",
-		ip,probe->bsymbol->lsymbol->symbol->name,*retaddr);
+		" (skipping unknown function!)"
+		" (handler_data = %s) (stack depth = %d)\n",
+		ip,probe->bsymbol->lsymbol->symbol->name,*retaddr,
+		(char *)handler_data,array_list_len(shadow_stack));
 	free(retaddr);
-	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+	fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 	return 0;
     }
     else {
 	fprintf(stdout,
 		"(SAVE) call 0x%"PRIxADDR" (%s)"
-		" (from within %s): retaddr = 0x%"PRIxADDR"\n",
+		" (from within %s): retaddr = 0x%"PRIxADDR
+		" (handler_data = %s) (stack depth = %d)\n",
 		ip,bsymbol->lsymbol->symbol->name,
 		probe->bsymbol->lsymbol->symbol->name,
-		*retaddr);
-	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+		*retaddr,(char *)handler_data,array_list_len(shadow_stack));
     }
+
+    fflush(stderr);
+    fflush(stdout);
 
     /* Since we know that the call is a known function that we can
      * disasm and instrument return points for, push it onto the shadow
@@ -233,7 +257,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
      */
     array_list_add(shadow_stack,retaddr);
 
-    instrument_func(bsymbol);
+    instrument_func(bsymbol,0);
     bsymbol_release(bsymbol);
 
     return 0;
@@ -247,6 +271,14 @@ int retaddr_check(struct probe *probe,void *handler_data,
 
     fflush(stderr);
     fflush(stdout);
+
+    /* These are probably from functions we instrumented, but
+     * that were not called from our function root set.
+     */
+    if (array_list_len(shadow_stack) == 0) {
+	++nonrootsethits;
+	return 0;
+    }
 
     errno = 0;
     sp = target_read_reg(t,t->spregno);
@@ -264,30 +296,23 @@ int retaddr_check(struct probe *probe,void *handler_data,
 	return 0;
     }
 
-    if (!oldretaddr || newretaddr != *oldretaddr) {
-	if (!oldretaddr) {
-	    fprintf(stdout,
-		    "(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
-		    " could not read from shadow stack; just inserted?\n",
-		    probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
-		    newretaddr);
-	    fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
-	    return 0;
-	}
+    if (newretaddr != *oldretaddr) {
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
-		" oldretaddr = 0x%"PRIxADDR" ------ STACK CORRUPTION!\n",
+		" oldretaddr = 0x%"PRIxADDR
+		" (handler_data = %s) (stack depth = %d) ---- STACK CORRUPTION!\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
-		newretaddr,*oldretaddr);
-	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+		newretaddr,*oldretaddr,
+		(char *)handler_data,array_list_len(shadow_stack));
     }
     else {
 	fprintf(stdout,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
-		" oldretaddr = 0x%"PRIxADDR"\n",
+		" oldretaddr = 0x%"PRIxADDR
+		" (handler_data = %s) (stack depth = %d)\n",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
-		newretaddr,*oldretaddr);
-	fprintf(stderr,"  (handler_data = %s)\n",(char *)handler_data);
+		newretaddr,*oldretaddr,
+		(char *)handler_data,array_list_len(shadow_stack));
     }
 
     if (doit) {
@@ -337,6 +362,8 @@ int function_dump_args(struct probe *probe,void *handler_data,
 
     struct lsymbol tlsym = {
 	.chain = tmp,
+	// hack to prevent value_free from trying to release us!
+	.refcnt = 1,
     };
     struct bsymbol tbsym = {
 	.lsymbol = &tlsym,
@@ -373,13 +400,20 @@ int function_dump_args(struct probe *probe,void *handler_data,
 	}
 	printf(", ");
     }
-    printf("\n");
 
     fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
+    fflush(stderr);
     fflush(stdout);
 
     array_list_free(tmp);
+
+#ifdef ENABLE_XENACCESS
+    value = linux_load_current_task(t);
+    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+    fflush(stderr);
+    fflush(stdout);
+#endif
 
     return 0;
 }
@@ -387,12 +421,14 @@ int function_dump_args(struct probe *probe,void *handler_data,
 int function_post(struct probe *probe,void *handler_data,
 		  struct probe *trigger) {
     fflush(stderr);
+    fflush(stdout);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR") post handler\n",
+    fprintf(stdout,"%s (0x%"PRIxADDR") post handler",
 	    probe->bsymbol->lsymbol->symbol->name,
 	    probe_addr(probe));
     fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
+    fflush(stderr);
     fflush(stdout);
 
     return 0;
@@ -405,6 +441,7 @@ int var_pre(struct probe *probe,void *handler_data,
     struct bsymbol *bsymbol = probe->bsymbol;
 
     fflush(stderr);
+    fflush(stdout);
 
     if ((value = bsymbol_load(bsymbol,
 			      LOAD_FLAG_AUTO_DEREF | 
@@ -426,15 +463,16 @@ int var_pre(struct probe *probe,void *handler_data,
 	for (j = 0; j < value->bufsiz; ++j) {
 	    printf("%02hhx",value->buf[j]);
 	}
-	printf(")\n");
+	printf(")");
 	value_free(value);
     }
     else
-	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s\n",
+	fprintf(stdout,"%s (0x%"PRIxADDR") (pre): could not read value: %s",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
     fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
+    fflush(stderr);
     fflush(stdout);
 
     return 0;
@@ -447,6 +485,7 @@ int var_post(struct probe *probe,void *handler_data,
     struct bsymbol *bsymbol = probe->bsymbol;
 
     fflush(stderr);
+    fflush(stdout);
 
     if ((value = bsymbol_load(bsymbol,
 			      LOAD_FLAG_AUTO_DEREF | 
@@ -467,15 +506,16 @@ int var_post(struct probe *probe,void *handler_data,
 	for (j = 0; j < value->bufsiz; ++j) {
 	    printf("%02hhx",value->buf[j]);
 	}
-	printf(")\n");
+	printf(")");
 	value_free(value);
     }
     else
-	fprintf(stdout,"%s (0x%"PRIxADDR") (post): could not read value: %s\n",
+	fprintf(stdout,"%s (0x%"PRIxADDR") (post): could not read value: %s",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe),
 		strerror(errno));
     fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
+    fflush(stderr);
     fflush(stdout);
 
     return 0;
@@ -742,7 +782,7 @@ int main(int argc,char **argv) {
 		     && (*retcode_strs[i] == 'c'
 			 || *retcode_strs[i] == 'C')))) {
 		ADDR funcstart;
-		if ((funcstart = instrument_func(bsymbol)) == 0) {
+		if ((funcstart = instrument_func(bsymbol,1)) == 0) {
 		    fprintf(stderr,
 			    "Could not instrument function %s (0x%"PRIxADDR")!\n",
 			    bsymbol->lsymbol->symbol->name,funcstart);
