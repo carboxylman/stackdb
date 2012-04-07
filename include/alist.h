@@ -135,6 +135,15 @@ static inline int array_list_expand_to(struct array_list *list,int plussize) {
     return array_list_expand(list,newsize);
 }
 
+static inline struct array_list *array_list_concat(struct array_list *list,
+						   struct array_list *newtail) {
+    array_list_expand_to(list,list->len + newtail->len);
+    memcpy(list->list + list->len * sizeof(void *),newtail->list,newtail->len);
+    list->len += newtail->len;
+
+    return list;
+}
+
 static inline int array_list_add(struct array_list *list,void *element) {
     void **lltmp;
 
