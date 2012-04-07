@@ -164,7 +164,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	/* We should be in the same range, of course; this should never
 	 * happen!
 	 */
-	if (0 && (!target_find_range_real(target,
+	if (0 && (!target_find_memory_real(target,
 					  funcrange->r.a.lowpc + idata->offset,
 					  NULL,NULL,&newrange)
 		  || range != newrange)) {
@@ -314,7 +314,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	/* We should be in the same range, of course; this should never
 	 * happen!
 	 */
-	if (0 && (!target_find_range_real(target,
+	if (0 && (!target_find_memory_real(target,
 					  funcrange->r.a.lowpc + idata->offset,
 					  NULL,NULL,&newrange)
 		  || range != newrange)) {

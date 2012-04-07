@@ -1349,7 +1349,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,unsigned long length,
 	   "write dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
 	   xstate->id,addr,page_offset,length,pid);
 
-    target_find_range_real(target,addr,NULL,NULL,&range);
+    target_find_memory_real(target,addr,NULL,NULL,&range);
 
     /*
      * This is mostly a stub for later, when we might actually check

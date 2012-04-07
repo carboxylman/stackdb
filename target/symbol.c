@@ -18,6 +18,25 @@
 
 #include "target.h"
 
+struct symbol *target_create_dynamic_type_pointer(struct target *target,
+						  struct symbol *type) {
+    struct symbol *retval = symbol_create(type->symtab,0,NULL,SYMBOL_TYPE_TYPE,1);
+
+    retval->datatype_code = DATATYPE_PTR;
+    retval->isdynamic = 1;
+
+    retval->datatype = type;
+    retval->datatype_ref = type->ref;
+
+    retval->s.ti->byte_size = target->ptrsize;
+
+    symbol_hold(type);
+    symbol_hold(retval);
+
+    return retval;
+}
+
+
 struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
 			       struct memregion *region,
 			       struct memrange *range) {
@@ -39,6 +58,10 @@ char *bsymbol_get_name(struct bsymbol *bsymbol) {
 
 struct symbol *bsymbol_get_symbol(struct bsymbol *bsymbol) {
     return lsymbol_get_symbol(bsymbol->lsymbol);
+}
+
+struct lsymbol *bsymbol_get_lsymbol(struct bsymbol *bsymbol) {
+    return bsymbol->lsymbol;
 }
 
 void bsymbol_hold(struct bsymbol *bsymbol) {
@@ -108,39 +131,39 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
     case DATATYPE_BASE:
 	if (type->s.ti->byte_size == 1) {
 	    if (type->s.ti->d.v.encoding == ENCODING_SIGNED_CHAR)
-		fprintf(stream,"%c",rvalue_c(buf));
+		fprintf(stream,"%c",rv_c(buf));
 	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED_CHAR)
-		fprintf(stream,"%uc",rvalue_uc(buf));
+		fprintf(stream,"%uc",rv_uc(buf));
 	    else if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
-		fprintf(stream,"%" PRIi8,rvalue_i8(buf));
+		fprintf(stream,"%" PRIi8,rv_i8(buf));
 	    else if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
-		fprintf(stream,"%" PRIu8,rvalue_u8(buf));
+		fprintf(stream,"%" PRIu8,rv_u8(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
 	}
 	else if (type->s.ti->byte_size == 2) {
 	    if (strstr(type->name,"char"))
-		fprintf(stream,"%lc",rvalue_wc(buf));
+		fprintf(stream,"%lc",rv_wc(buf));
 	    else if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
-		fprintf(stream,"%" PRIi16,rvalue_i16(buf));
+		fprintf(stream,"%" PRIi16,rv_i16(buf));
 	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED)
-		fprintf(stream,"%" PRIu16,rvalue_u16(buf));
+		fprintf(stream,"%" PRIu16,rv_u16(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
 	}
 	else if (type->s.ti->byte_size == 4) {
 	    if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
-		fprintf(stream,"%" PRIi32,rvalue_i32(buf));
+		fprintf(stream,"%" PRIi32,rv_i32(buf));
 	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED)
-		fprintf(stream,"%" PRIu32,rvalue_u32(buf));
+		fprintf(stream,"%" PRIu32,rv_u32(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
 	}
 	else if (type->s.ti->byte_size == 8) {
 	    if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
-		fprintf(stream,"%" PRIi64,rvalue_i64(buf));
+		fprintf(stream,"%" PRIi64,rv_i64(buf));
 	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED)
-		fprintf(stream,"%" PRIu64,rvalue_u64(buf));
+		fprintf(stream,"%" PRIu64,rv_u64(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
 	}

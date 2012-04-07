@@ -101,30 +101,10 @@ char *location_load(struct target *target,struct memregion *region,
 
         vdebug(5,LOG_T_LOC,"final_location = 0x%" PRIxADDR "\n",final_location);
 
-        return location_addr_load(target,range,final_location,
-				  flags,buf,bufsiz);
+        return (char *)__target_load_addr_real(target,range,final_location,
+					       flags,buf,bufsiz);
     }
 }
-
-char *location_addr_load(struct target *target,struct memrange *range,
-			 ADDR addr,load_flags_t flags,
-			 void *buf,int bufsiz) {
-    if (!(flags & LOAD_FLAG_NO_CHECK_BOUNDS) 
-	&& !memrange_contains_real(range,addr)) {
-	errno = EFAULT;
-	return NULL;
-    }
-
-    return (char *)target_read_addr(target,addr,bufsiz,buf,NULL);
-}
-
-char *location_obj_addr_load(struct target *target,struct memrange *range,
-			     ADDR addr,load_flags_t flags,
-			     void *buf,int bufsiz) {
-    addr = memrange_relocate(range,addr);
-    return location_addr_load(target,range,addr,flags,buf,bufsiz);
-}
-
 
 int location_can_mmap(struct location *location,struct target *target) {
     /* We can't mmap a value that is simply in a register. */
@@ -204,6 +184,82 @@ struct location *location_resolve_loclist(struct target *target,
     return location->l.loclist->list[i]->loc;
 }
 
+OFFSET location_resolve_member_offset(struct target *target,
+				      struct location *location,
+				      struct array_list *symbol_chain,
+				      struct symbol **top_symbol_saveptr,
+				      int *chain_top_symbol_idx_saveptr) {
+    int chlen;
+    int i;
+    OFFSET totaloffset;
+    struct symbol *symbol;
+
+    if (location->loctype != LOCTYPE_MEMBER_OFFSET) {
+	verror("location type %s is not a member offset!",
+	       LOCTYPE(location->loctype));
+	errno = EINVAL;
+	return 0;
+    }
+
+    /*
+     * XXX: the assumption is that our @location arg is the same
+     * location as in the last symbol in @symbol_chain!
+     */
+    if (!symbol_chain) {
+	verror("cannot resolve MEMBER_OFFSET without containing symbol_chain!\n");
+	errno = EINVAL;
+	return 0;
+    }
+
+    chlen = array_list_len(symbol_chain);
+    symbol = array_list_item(symbol_chain,chlen - 1);
+
+    if (!SYMBOL_IS_FULL_VAR(symbol) || !symbol->ismember) {
+	verror("deepest symbol (%s) in chain is not member; cannot resolve"
+	       " MEMBER_OFFSET location!\n",symbol_get_name(symbol));
+	errno = EINVAL;
+	return 0;
+    }
+
+    /*
+     * Calculate the total offset, i.e. for nested S/Us.
+     */
+    totaloffset = 0;
+    for (i = chlen - 1; i > -1; --i) {
+	symbol = array_list_item(symbol_chain,i);
+	if (SYMBOL_IS_FULL_VAR(symbol)
+	    && symbol->ismember
+	    && symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
+	    totaloffset += symbol->s.ii->l.l.member_offset;
+	    continue;
+	}
+	else if (SYMBOL_IS_VAR(symbol)
+		 && SYMBOL_IST_STUN(symbol->datatype)) {
+	    if (top_symbol_saveptr)
+		*top_symbol_saveptr = symbol;
+	    if (chain_top_symbol_idx_saveptr)
+		*chain_top_symbol_idx_saveptr = i;
+	    break;
+	}
+	else if (SYMBOL_IST_STUN(symbol)) {
+	    /* In this case, don't save the top symbol, because it's not
+	     * a var and thus it has no address.  Callers who need that
+	     * must notice an error in this case; callers who just want
+	     * the offset from the top enclosing STUN type don't need it.
+	     */
+	    break;
+	}
+	else {
+	    verror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
+		   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type),i);
+	    errno = EINVAL;
+	    return 0;
+	}
+    }
+
+    return totaloffset;
+}
+
 /*
  * Resolves a location -- which may be as simple as a fixed address, or
  * complex as a series of operations produced by a compiler's DWARF
@@ -268,7 +324,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	errno = 0;
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
-	    target_find_range_real(target,regval,NULL,NULL,range_saveptr);
+	    target_find_memory_real(target,regval,NULL,NULL,range_saveptr);
 	return regval;
     case LOCTYPE_REG_OFFSET:
 	if (!target) {
@@ -281,7 +337,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	errno = 0;
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
-	    target_find_range_real(target,location->l.regoffset.offset + regval,
+	    target_find_memory_real(target,location->l.regoffset.offset + regval,
 				   NULL,NULL,range_saveptr);
 	return (ADDR)(location->l.regoffset.offset + regval);
     case LOCTYPE_FBREG_OFFSET:
@@ -401,7 +457,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
-	    target_find_range_real(target,
+	    target_find_memory_real(target,
 				   (ADDR)(frame_base + (ADDR)location->l.fboffset),
 				   NULL,NULL,range_saveptr);
 
@@ -419,57 +475,18 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 				symbol_chain,
 				range_saveptr);
     case LOCTYPE_MEMBER_OFFSET:
-	/*
-	 * XXX: the assumption is that our @location arg is the same
-	 * location as in the last symbol in @symbol_chain!
-	 */
-
-	if (!symbol_chain) {
-	    vwarn("cannot process MEMBER_OFFSET without containing symbol_chain!\n");
-	    errno = EINVAL;
+	totaloffset = location_resolve_member_offset(target,location,
+						     symbol_chain,
+						     &top_enclosing_symbol,&i);
+	if (errno)
 	    return 0;
-	}
 
 	chlen = array_list_len(symbol_chain);
 	symbol = array_list_item(symbol_chain,chlen - 1);
 
-	if (!SYMBOL_IS_VAR(symbol) || !symbol->ismember) {
-	    vwarn("deepest symbol (%s) in chain is not member; cannot process MEMBER_OFFSET!\n",
-		  symbol->name);
-	    errno = EINVAL;
-	    return 0;
-	}
-
-	/*
-	 * Calculate the total offset, i.e. for nested S/Us.
-	 */
-	totaloffset = 0;
-	for (i = chlen - 1; i > -1; --i) {
-	    symbol = array_list_item(symbol_chain,i);
-	    if (SYMBOL_IS_VAR(symbol)
-		&& symbol->ismember
-		&& symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
-		totaloffset += symbol->s.ii->l.l.member_offset;
-		continue;
-	    }
-	    else if (SYMBOL_IS_VAR(symbol)
-		     && SYMBOL_IST_STUN(symbol->datatype)) {
-		top_enclosing_symbol = symbol;
-		break;
-	    }
-	    else {
-		verror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
-		       symbol->name,SYMBOL_TYPE(symbol->type),i);
-		errno = EINVAL;
-		return 0;
-	    }
-	}
-	/* reset symbol to the deepest nested */
-	symbol = array_list_item(symbol_chain,chlen - 1);
-
 	if (!top_enclosing_symbol) {
 	    verror("could not find top enclosing symbol for MEMBER_OFFSET for symbol %s!\n",
-		   symbol->name);
+		   symbol_get_name(symbol));
 	    errno = EINVAL;
 	    return 0;
 	}
@@ -499,7 +516,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
-	    target_find_range_real(target,top_addr + totaloffset,
+	    target_find_memory_real(target,top_addr + totaloffset,
 				   NULL,NULL,range_saveptr);
 
 	return top_addr + totaloffset;

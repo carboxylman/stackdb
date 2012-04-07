@@ -474,6 +474,14 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    return 1;
 	}
 
+	unsigned char ibuf[7];
+	if (!target_read_addr(target,probepoint->addr,
+			      6,ibuf,NULL)) {
+	    verror("could not check orig instrs for bp insert\n");
+	}
+	vwarn("orig bytes: %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx\n",
+	      (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],(int)ibuf[4],(int)ibuf[5]);
+
 	if (!target_read_addr(target,probepoint->addr,
 			      probepoint->breakpoint_orig_mem_len,
 			      probepoint->breakpoint_orig_mem,NULL)) {
@@ -1038,7 +1046,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 
     /* If we don't have a range yet, get it. */
     if (!range) {
-	target_find_range_real(target,addr,NULL,NULL,&range);
+	target_find_memory_real(target,addr,NULL,NULL,&range);
 	if (!range) {
 	    verror("could not find range for 0x%"PRIxADDR"\n",addr);
 	    goto errout;

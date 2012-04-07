@@ -129,29 +129,6 @@ void target_disassociate_debugfile(struct debugfile *debugfile) {
     list_del(&debugfile->debugfile);
 }
 
-int target_find_range_real(struct target *target,ADDR addr,
-			   struct addrspace **space_saveptr,
-			   struct memregion **region_saveptr,
-			   struct memrange **range_saveptr) {
-    struct addrspace *space;
-
-    if (list_empty(&target->spaces))
-	return 1;
-
-    list_for_each_entry(space,&target->spaces,space) {
-	if (addrspace_find_range_real(space,addr,
-				      region_saveptr,range_saveptr)) {
-	    if (space_saveptr) 
-		*space_saveptr = space;
-	    goto out;
-	}
-    }
-    return 0;
-
- out:
-    return 1;
-}
-
 struct symtab *target_lookup_pc(struct target *target,uint64_t pc) {
     struct addrspace *space;
     struct memregion *region;
@@ -317,6 +294,282 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
     return bsymbol;
 }
 
+struct value *bsymbol_load_member_symbol(struct bsymbol *bsymbol,
+					 struct lsymbol *member,
+					 load_flags_t flags) {
+    /* Basically, we check @member's chain to make sure it includes
+     * @bsymbol->lsymbol->symbol (if not it's an error);
+     */
+}
+
+/*
+ * You can ask for *any* nesting of variables, given some bound symbol.
+ * If @bsymbol is a function, you can ask for its args or locals.  If
+ * the locals or args are structs, you can directly ask for members --
+ * but make sure that if you want pointers followed, you set the
+ * LOAD_FLAG_AUTO_DEREF flag; otherwise a nested load across a pointer
+ * (i.e., if the current member we're working on is a pointer, and you
+ * have specified another nested member within that thing, we won't be
+ * able to follow the pointer, and hence will fail to find the next
+ * member) will fail.  If @bsymbol is a struct/union var, you can of
+ * course ask for any of its (nested) members.
+ *
+ * Your top-level @bsymbol must be either a function or a struct/union
+ * var; nothing else makes sense as far as loading memory.
+ */
+struct value *target_load_bsymbol_member(struct target *target,
+					 struct bsymbol *bsymbol,
+					 const char *member,const char *delim,
+					 load_flags_t flags) {
+    
+}
+
+struct value *target_load_type(struct target *target,struct symbol *type,
+			       ADDR addr,load_flags_t flags) {
+    struct symbol *datatype = type;
+    struct value *value;
+    struct memregion *region;
+    struct memrange *range;
+    ADDR ptraddr;
+    struct location ptrloc;
+
+    datatype = symbol_type_skip_qualifiers(type);
+
+    if (!SYMBOL_IS_FULL_TYPE(datatype)) {
+	verror("symbol %s is not a full type (is %s)!\n",
+	       symbol_get_name(type),SYMBOL_TYPE(type->type));
+	errno = EINVAL;
+	return NULL;
+    }
+
+    if (datatype != type)
+	vdebug(5,LOG_T_SYMBOL,"skipped from %s to %s for type %s\n",
+	       DATATYPE(type->datatype_code),
+	       DATATYPE(datatype->datatype_code),symbol_get_name(type));
+    else 
+	vdebug(5,LOG_T_SYMBOL,"no skip; type for type %s is %s\n",
+	       symbol_get_name(type),DATATYPE(datatype->datatype_code));
+
+    /* Get range/region info for the addr. */
+    if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
+	errno = EFAULT;
+	return NULL;
+    }
+
+    /* If they want pointers automatically dereferenced, do it! */
+    ptraddr = target_autoload_pointers(target,datatype,addr,flags,
+				       &datatype,&range);
+    if (errno) {
+	verror("failed to autoload pointers for type %s at addr 0x%"PRIxADDR"\n",
+	       symbol_get_name(type),addr);
+	return NULL;
+    }
+    region = range->region;
+
+    if (!ptraddr) {
+	verror("last pointer was NULL!\n");
+	errno = EFAULT;
+	return NULL;
+    }
+
+    /*
+     * Now allocate the value struct for various cases and return.
+     */
+
+    /* If we're autoloading pointers and we want to load char * pointers
+     * as strings, do it!
+     */
+    if (ptraddr != addr
+	&& flags & LOAD_FLAG_AUTO_STRING
+	&& symbol_type_is_char(datatype)) {
+	/* XXX: should we use datatype, or the last pointer to datatype? */
+	value = value_create_noalloc(NULL,datatype);
+
+	if (!(value->buf = (char *)__target_load_addr_real(target,range,
+							   ptraddr,flags,
+							   NULL,0))) {
+	    verror("failed to autoload char * for type %s at addr 0x%"PRIxADDR"\n",
+		   symbol_get_name(type),addr);
+	    goto errout;
+	}
+	value->bufsiz = strlen(value->buf) + 1;
+	value->isstring = 1;
+	value->range = range;
+
+	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
+
+	/* success! */
+	goto out;
+    }
+    else if (flags & LOAD_FLAG_MUST_MMAP || flags & LOAD_FLAG_SHOULD_MMAP) {
+	ptrloc.loctype = LOCTYPE_REALADDR;
+	ptrloc.l.addr = ptraddr != addr ? ptraddr : addr;
+
+	value = value_create_noalloc(NULL,datatype);
+	value->mmap = location_mmap(target,region,&ptrloc,
+				    flags,&value->buf,NULL,NULL);
+	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
+	    value->buf = NULL;
+	    goto errout;
+	}
+	else if (!value->mmap) {
+	    /* fall back to regular load */
+	    value->bufsiz = symbol_type_full_bytesize(datatype);
+	    value->buf = malloc(value->bufsiz);
+	    if (!value->buf) {
+		value->bufsiz = 0;
+		goto errout;
+	    }
+
+	    if (!__target_load_addr_real(target,range,ptraddr,flags,
+					 (unsigned char *)value->buf,
+					 value->bufsiz)) 
+		goto errout;
+	}
+
+	/* success! */
+	goto out;
+    }
+    else {
+	value = value_create_type(datatype);
+	if (!value) {
+	    verror("could not create value for type (ptr is %p) %s\n",
+		   datatype,datatype ? datatype->name : NULL);
+	    goto errout;
+	}
+
+	if (!__target_load_addr_real(target,range,ptraddr,flags,
+				     (unsigned char *)value->buf,
+				     value->bufsiz))
+	    goto errout;
+    }
+
+ out:
+    if (value->range)
+	value->region_stamp = value->range->region->stamp;
+
+    return value;
+
+ errout:
+    if (value)
+	value_free(value);
+
+    return NULL;
+
+}
+
+struct value *target_load_value_member(struct target *target,
+				       struct value *value,const char *member,
+				       const char *delim,load_flags_t flags) {
+    struct value *retval;
+    struct symbol *startdatatype = value->type;
+    struct symbol *datatype = value->type;
+    struct lsymbol *ls;
+    ADDR paddr = 0;
+    struct memrange *range;
+    int totaloffset = 0;
+
+    /* If the datatype is a pointer, and we are autoloading pointers,
+     * then try to find a struct/union type that is pointed to!
+     */
+    if (SYMBOL_IST_PTR(startdatatype)) {
+	if (flags & LOAD_FLAG_AUTO_DEREF) {
+	    datatype = symbol_type_skip_qualifiers(startdatatype);
+	    paddr = v_addr(value);
+	}
+	else {
+	    errno = EINVAL;
+	    return NULL;
+	}
+    }
+
+    if (!SYMBOL_IST_FULL_STUN(datatype)) {
+	vwarn("symbol %s is not a full struct/union type (is %s)!\n",
+	      symbol_get_name(datatype),SYMBOL_TYPE(datatype->type));
+	errno = EINVAL;
+	return NULL;
+    }
+
+    ls = symbol_lookup_member(datatype,member,delim);
+    if (!ls)
+	return NULL;
+    if (ls->symbol->s.ii->l.loctype != LOCTYPE_MEMBER_OFFSET) {
+	verror("loctype for symbol %s is %s, not MEMBER_OFFSET!\n",
+	       symbol_get_name(ls->symbol),
+	       LOCTYPE(ls->symbol->s.ii->l.loctype));
+	lsymbol_release(ls);
+	errno = EINVAL;
+	return NULL;
+    }
+
+    /* Try to load pointers if we have any -- if we don't, this does
+     * nothing.
+     */
+    paddr = target_autoload_pointers(target,datatype,paddr,flags,&datatype,
+				     &range);
+    if (errno) {
+	lsymbol_release(ls);
+	return NULL;
+    }
+
+    /* Resolve the member offset! */
+    totaloffset = location_resolve_member_offset(target,&ls->symbol->s.ii->l,
+						 ls->chain,NULL,NULL);
+    if (errno) {
+	verror("could not resolve member_offset for symbol %s!\n",
+	       symbol_get_name(ls->symbol));
+	lsymbol_release(ls);
+	return NULL;
+    }
+
+    /* If we have a pointer, we have to load paddr + totaloffset. */
+    if (paddr
+	&& flags & LOAD_FLAG_AUTO_STRING
+	&& symbol_type_is_char(datatype)) {
+	/* XXX: should we use datatype, or the last pointer to datatype? */
+	retval = value_create_noalloc(ls,datatype);
+
+	if (!(retval->buf = (char *)__target_load_addr_real(target,range,
+							    paddr,flags,
+							    NULL,0))) {
+	    verror("failed to autoload char pointer\n");
+	}
+	else {
+	    retval->bufsiz = strlen(retval->buf) + 1;
+	    retval->isstring = 1;
+	    retval->range = range;
+
+	    vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",
+		   retval->bufsiz);
+	}
+    }
+    else if (paddr) {
+	retval = value_create(ls,datatype);
+
+	if (!__target_load_addr_real(target,range,paddr + totaloffset,flags,
+				     (unsigned char *)retval->buf,
+				     retval->bufsiz)) {
+	    verror("failed to autoload pointer\n");
+	}
+	else {
+	    retval->range = range;
+
+	    vdebug(5,LOG_T_SYMBOL,"autoloaded pointer with len %d\n",
+		   retval->bufsiz);
+	}
+    }
+    else {
+	retval = value_create(ls,datatype);
+	retval->range = value->range;
+	memcpy(retval->buf,value->buf + totaloffset,retval->bufsiz);
+	vdebug(5,LOG_T_SYMBOL,"got value from value at byte offset %d\n",
+	       totaloffset);
+    }
+
+    lsymbol_release(ls);
+    return retval;
+}
+
 struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     struct value *value = NULL;
     struct symbol *symbol = bsymbol->lsymbol->symbol;
@@ -328,7 +581,6 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     struct memrange *range;
     REGVAL ip;
     ADDR ip_addr;
-    int nptrs = 0;
     ADDR ptraddr = 0;
     struct location ptrloc;
     struct memregion *ptrregion = NULL;
@@ -409,8 +661,8 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	    goto errout;
 	}
 
-	vdebug(5,LOG_T_SYMBOL,"auto_deref: loaded ptr for symbol %s\n",
-	       symbol->name);
+	vdebug(5,LOG_T_SYMBOL,"loaded ptr value 0x%"PRIxADDR"for symbol %s\n",
+	       ptraddr,symbol->name);
 
 	if (!range) {
 	    verror("could not find range in auto_deref\n");
@@ -418,58 +670,20 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	}
 
 	/* Skip past the pointer we just loaded. */
-	datatype = datatype->datatype;
+	datatype = symbol_get_datatype(datatype);
 
-	nptrs = 1;
+	/* Skip past any qualifiers! */
+	datatype = symbol_type_skip_qualifiers(datatype);
 
-	vdebug(5,LOG_T_SYMBOL,"auto_deref pointer %d\n",nptrs);
-
-	/* Now keep loading more pointers and skipping if we need! */
-	while (SYMBOL_IST_PTR(datatype)) {
-	    if (ptraddr == 0) {
-		vwarn("failed to autoload NULL pointer %d for symbol %s\n",
-		      nptrs,symbol->name);
-		errno = EFAULT;
-		goto errout;
-	    }
-
-	    /*
-	     * The pointer may be in another region!  We *have* to
-	     * switch regions -- and thus the memrange for the value we
-	     * return may not be in the bsymbol's region!
-	     */
-	    if (!target_find_range_real(target,ptraddr,
-					NULL,&ptrregion,&ptrrange) == -1) {
-		vwarn("could not auto_deref ptr not in a range: 0x%"PRIxADDR"\n",
-		      ptraddr);
-		errno = EFAULT;
-		goto errout;
-	    }
-
-	    if (!location_addr_load(target,ptrrange,ptraddr,LOAD_FLAG_NONE,
-				   &ptraddr,target->ptrsize)) {
-		vwarn("failed to autoload pointer %d for symbol %s\n",
-		      nptrs,symbol->name);
-		goto errout;
-	    }
-
-	    datatype = datatype->datatype;
-	    ++nptrs;
-
-	    vdebug(5,LOG_T_SYMBOL,"auto_deref pointer %d\n",nptrs);
-	}
-
-	/*
-	 * The final pointer may be in another region and range!  So
-	 * look it up one more time.
-	 */
-	if (!target_find_range_real(target,ptraddr,
-				    NULL,&ptrregion,&ptrrange) == -1) {
-	    vwarn("could not auto_deref ptr not in a range: 0x%"PRIxADDR"\n",
-		  ptraddr);
-	    errno = EFAULT;
+	ptraddr = target_autoload_pointers(target,datatype,ptraddr,flags,
+					   &datatype,&range);
+	if (errno) {
+	    vwarn("failed to autoload pointers for symbol %s\n",
+		  symbol_get_name(symbol));
 	    goto errout;
 	}
+
+	ptrregion = range->region;
     }
 
     /*
@@ -483,16 +697,18 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	&& flags & LOAD_FLAG_AUTO_STRING
 	&& symbol_type_is_char(datatype)) {
 	/* XXX: should we use datatype, or the last pointer to datatype? */
-	value = value_create_noalloc(bsymbol,datatype);
+	value = value_create_noalloc(bsymbol->lsymbol,datatype);
 
-	if (!(value->buf = location_addr_load(target,ptrrange,ptraddr,flags,
-					      NULL,0))) {
+	if (!(value->buf = (char *)__target_load_addr_real(target,ptrrange,
+							   ptraddr,flags,
+							   NULL,0))) {
 	    vwarn("failed to autoload last pointer for symbol %s\n",
 		  symbol->name);
 	    goto errout;
 	}
 	value->bufsiz = strlen(value->buf) + 1;
 	value->isstring = 1;
+	value->range = ptrrange;
 
 	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
 
@@ -503,7 +719,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	ptrloc.loctype = LOCTYPE_REALADDR;
 	ptrloc.l.addr = ptraddr;
 
-	value = value_create_noalloc(bsymbol,datatype);
+	value = value_create_noalloc(bsymbol->lsymbol,datatype);
 	value->mmap = location_mmap(target,(ptraddr) ? ptrregion : region,
 				    (ptraddr) ? &ptrloc : &(symbol->s.ii->l),
 				    flags,&value->buf,symbol_chain,NULL);
@@ -535,7 +751,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	ptrloc.loctype = LOCTYPE_REALADDR;
 	ptrloc.l.addr = ptraddr;
 
-	value = value_create_type(datatype);
+	value = value_create(bsymbol->lsymbol,datatype);
 	if (!value) {
 	    verror("could not create value for type (ptr is %p); %s\n",
 		   datatype,datatype ? datatype->name : NULL);
@@ -562,15 +778,30 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     return NULL;
 }
 
-struct value *target_location_load_type(struct target *target,
-					struct location *location,
-					load_flags_t flags,
-					struct symbol *type) {
-    /* XXX: fill in from above later. */
-    return NULL;
+int target_find_memory_real(struct target *target,ADDR addr,
+			    struct addrspace **space_saveptr,
+			    struct memregion **region_saveptr,
+			    struct memrange **range_saveptr) {
+    struct addrspace *space;
+
+    if (list_empty(&target->spaces))
+	return 0;
+
+    list_for_each_entry(space,&target->spaces,space) {
+	if (addrspace_find_range_real(space,addr,
+				      region_saveptr,range_saveptr)) {
+	    if (space_saveptr) 
+		*space_saveptr = space;
+	    goto out;
+	}
+    }
+    return 0;
+
+ out:
+    return 1;
 }
 
-int target_contains(struct target *target,ADDR addr) {
+int target_contains_real(struct target *target,ADDR addr) {
     struct addrspace *space;
     struct memregion *region;
 
@@ -584,6 +815,83 @@ int target_contains(struct target *target,ADDR addr) {
     return 0;
 }
 
+ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
+			      ADDR addr,load_flags_t flags,
+			      struct symbol **datatype_saveptr,
+			      struct memrange **range_saveptr) {
+    load_flags_t ptrloadflags = flags;
+    ADDR paddr = addr;
+    struct memrange *range = NULL;
+    int nptrs = 0;
+
+    /*
+     * Don't allow any load flags through for this!  We don't want
+     * to mmap just for pointers.
+     */
+    ptrloadflags &= ~LOAD_FLAG_MUST_MMAP;
+    ptrloadflags &= ~LOAD_FLAG_SHOULD_MMAP;
+
+    while (SYMBOL_IST_PTR(datatype)) {
+	if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))
+	    || ((flags & LOAD_FLAG_AUTO_STRING) 
+		&& SYMBOL_IST_PTR(datatype) 
+		&& symbol_type_is_char(datatype->datatype))) {
+	    if (paddr == 0) {
+		verror("failed to follow NULL pointer #%d\n",nptrs);
+		errno = EFAULT;
+		goto errout;
+	    }
+
+	    vdebug(5,LOG_T_SYMBOL,"loading ptr at 0x%"PRIxADDR"\n",paddr);
+
+	    /*
+	     * The pointer may be in another region!  We *have* to
+	     * switch regions -- and thus the memrange for the value we
+	     * return may not be in @addr's region/range!
+	     */
+	    if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
+		verror("could not find range for ptr 0x%"PRIxADDR"\n",paddr);
+		errno = EFAULT;
+		goto errout;
+	    }
+
+	    if (!__target_load_addr_real(target,range,paddr,ptrloadflags,
+					 (unsigned char *)&paddr,
+					 target->ptrsize)) {
+		verror("could not load ptr 0x%"PRIxADDR"\n",paddr);
+		errno = EFAULT;
+		goto errout;
+	    }
+
+	    ++nptrs;
+	    vdebug(5,LOG_T_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
+		   paddr,nptrs);
+
+	    /* Skip past the pointer we just loaded. */
+	    datatype = symbol_get_datatype(datatype);
+
+	    /* Skip past any qualifiers! */
+	    datatype = symbol_type_skip_qualifiers(datatype);
+	}
+	else {
+	    break;
+	}
+    }
+
+    if (range) {
+	if (range_saveptr)
+	    *range_saveptr = range;
+	if (datatype_saveptr)
+	    *datatype_saveptr = datatype;
+    }
+
+    errno = 0;
+    return paddr;
+
+ errout:
+    return 0;
+}
+
 /*
  * Load a raw value (i.e., no symbol or type info) using an object
  * file-based location (i.e., a fixed object-relative address) and a
@@ -591,16 +899,22 @@ int target_contains(struct target *target,ADDR addr) {
  *
  * Note: you cannot mmap raw values; they must be copied from target memory.
  */
-struct value *target_load_raw_obj_location(struct target *target,
-					   struct memregion *region,
-					   ADDR obj_addr,load_flags_t flags,
-					   int len) {
-    struct location l = {
-	.loctype = LOCTYPE_ADDR,
-	.l.addr = obj_addr,
-    };
+struct value *target_load_addr_obj(struct target *target,struct memregion *region,
+				   ADDR obj_addr,load_flags_t flags,int len) {
+    ADDR real;
+    struct memrange *range;
 
-    return target_load_raw(target,region,&l,flags,len);
+    if (flags & LOAD_FLAG_MUST_MMAP) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    errno = 0;
+    real = memregion_relocate(region,obj_addr,&range);
+    if (errno)
+	return NULL;
+
+    return target_load_addr_real(target,real,flags,len);
 }
 
 /*
@@ -608,9 +922,9 @@ struct value *target_load_raw_obj_location(struct target *target,
  *
  * Note: you cannot mmap raw values; they must be copied from target memory.
  */
-struct value *target_load_raw(struct target *target,struct memregion *region,
-			      struct location *location,load_flags_t flags,
-			      int len) {
+struct value *target_load_addr_real(struct target *target,ADDR addr,
+				    load_flags_t flags,int len) {
+    struct memrange *range;
     struct value *value;
 
     if (flags & LOAD_FLAG_MUST_MMAP) {
@@ -618,20 +932,49 @@ struct value *target_load_raw(struct target *target,struct memregion *region,
 	return NULL;
     }
 
-    if (!(value = value_create_raw(len)))
+    if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
+	errno = EFAULT;
 	return NULL;
+    }
 
-    if (!location_load(target,region,location,flags,
-		       value->buf,value->bufsiz,NULL,
-		       &value->range))
-	goto errout;
+    if (!(value = value_create_raw(len))) {
+	return NULL;
+    }
+    value->range = range;
 
-    if (value->range)
-	value->region_stamp = value->range->region->stamp;
+    if (!__target_load_addr_real(target,range,addr,flags,
+				 (unsigned char *)value->buf,value->bufsiz)) {
+	value_free(value);
+	return NULL;
+    }
 
     return value;
+}
 
- errout:
-    value_free(value);
-    return NULL;
+unsigned char *target_load_raw_addr_real(struct target *target,ADDR addr,
+					 load_flags_t flags,
+					 unsigned char *buf,int bufsiz) {
+    struct memrange *range;
+
+    if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
+	errno = EFAULT;
+	return NULL;
+    }
+
+    return __target_load_addr_real(target,range,addr,flags,
+				   (unsigned char *)buf,bufsiz);
+}
+
+unsigned char *__target_load_addr_real(struct target *target,
+				       struct memrange *range,
+				       ADDR addr,load_flags_t flags,
+				       unsigned char *buf,int bufsiz) {
+    if (!(flags & LOAD_FLAG_NO_CHECK_BOUNDS) 
+	&& (!memrange_contains_real(range,addr)
+	    || !memrange_contains_real(range,addr+bufsiz-1))) {
+	errno = EFAULT;
+	return NULL;
+    }
+
+    return target_read_addr(target,addr,bufsiz,buf,NULL);
 }

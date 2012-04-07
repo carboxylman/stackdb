@@ -124,19 +124,6 @@ unsigned long target_write_addr(struct target *target,ADDR addr,
     return target->ops->write(target,addr,length,buf,targetspecdata);
 }
 
-struct value *target_read(struct target *target,struct symbol *symbol) {
-    
-
-    return 0;
-}
-
-int target_write(struct target *target,struct symbol *symbol,
-		 struct value *value) {
-    
-
-    return 0;
-}
-
 char *target_reg_name(struct target *target,REG reg) {
     vdebug(5,LOG_T_TARGET,"target(%s) reg name %d)\n",target->type,reg);
     return target->ops->regname(target,reg);

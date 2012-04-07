@@ -1708,7 +1708,7 @@ unsigned long linux_userproc_write(struct target *target,
 	vdebugc(5,LOG_T_LUP,"%02hhx ",buf[j]);
     vdebugc(5,LOG_T_LUP,"\n");
 
-    target_find_range_real(target,addr,NULL,NULL,&range);
+    target_find_memory_real(target,addr,NULL,NULL,&range);
 
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
