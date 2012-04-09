@@ -182,7 +182,7 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 
 	int typebytesize = type->datatype->s.ti->byte_size;
 	int total = 1;
-	int *arcounts = (int *)malloc(sizeof(int)*(type->s.ti->d.a.count - 1));
+	int *arcounts = (int *)malloc(sizeof(int)*(type->s.ti->d.a.count));
 	uint64_t offset = 0;
 	int rowlength = type->s.ti->d.a.subranges[type->s.ti->d.a.count - 1] + 1;
 	struct symbol *datatype = type->datatype;
