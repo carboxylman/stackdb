@@ -236,6 +236,14 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		(char *)handler_data,array_list_len(shadow_stack));
 	free(retaddr);
 	fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
+
+#ifdef ENABLE_XENACCESS
+	struct value *value = linux_load_current_task(t);
+	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+	value_free(value);
+	fflush(stderr);
+	fflush(stdout);
+#endif
 	return 0;
     }
     else {
@@ -246,6 +254,14 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		ip,bsymbol->lsymbol->symbol->name,
 		probe->bsymbol->lsymbol->symbol->name,
 		*retaddr,(char *)handler_data,array_list_len(shadow_stack));
+	
+#ifdef ENABLE_XENACCESS
+	struct value *value = linux_load_current_task(t);
+	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+	value_free(value);
+	fflush(stderr);
+	fflush(stdout);
+#endif
     }
 
     fflush(stderr);
@@ -314,6 +330,14 @@ int retaddr_check(struct probe *probe,void *handler_data,
 		newretaddr,*oldretaddr,
 		(char *)handler_data,array_list_len(shadow_stack));
     }
+
+#ifdef ENABLE_XENACCESS
+    struct value *value = linux_load_current_task(t);
+    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+    value_free(value);
+    fflush(stderr);
+    fflush(stdout);
+#endif
 
     if (doit) {
 	if (!target_write_addr(t,(ADDR)sp,sizeof(ADDR),
@@ -411,6 +435,7 @@ int function_dump_args(struct probe *probe,void *handler_data,
 #ifdef ENABLE_XENACCESS
     value = linux_load_current_task(t);
     fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+    value_free(value);
     fflush(stderr);
     fflush(stdout);
 #endif
