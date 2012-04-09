@@ -187,6 +187,8 @@ void target_free(struct target *target) {
     g_hash_table_destroy(target->probepoints);
     g_hash_table_destroy(target->probes);
 
+    array_list_free(target->sstep_stack);
+
     /* Unload the debugfiles we might hold, if we can */
     list_for_each_entry_safe(space,tmp,&target->spaces,space) {
 	RPUT(space,addrspace);
@@ -227,6 +229,8 @@ struct target *target_create(char *type,void *state,struct target_ops *ops) {
     retval->probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     retval->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    retval->sstep_stack = array_list_create(4);
 
     /*
      * Hm, I think we should do this by default, and let target backends

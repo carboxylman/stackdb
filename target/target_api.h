@@ -413,6 +413,7 @@ struct target {
 
     struct probepoint *sstep_probepoint;
     int sstep_leave_enabled;
+    struct array_list *sstep_stack;
 
     /* Single step and breakpoint handlers.  Since we control
      * single-step mode, we report *any* single step stop events to the

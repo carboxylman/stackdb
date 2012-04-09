@@ -70,7 +70,8 @@ int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
     int rc;
 
     if (probe->sinks) {
-	LOGDUMPPROBE(5,LOG_P_PROBE,probe);
+	vdebug(5,LOG_P_PROBE,"");
+	LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
 
 	list = probe->sinks;
 	while (list) {
@@ -97,7 +98,8 @@ int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
     int rc;
 
     if (probe->sinks) {
-	LOGDUMPPROBE(5,LOG_P_PROBE,probe);
+	vdebug(5,LOG_P_PROBE,"");
+	LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
 
 	list = probe->sinks;
 	while (list) {
@@ -616,7 +618,7 @@ int probe_free(struct probe *probe,int force) {
 
 void probe_rename(struct probe *probe,const char *name) {
     vdebug(5,LOG_P_PROBE,"renaming ");
-    LOGDUMPPROBE(5,LOG_P_PROBE,probe);
+    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
 
     if (probe->name)
 	free(probe->name);
@@ -1818,6 +1820,7 @@ int probepoint_bp_handler(struct target *target,
 		/* leave the state as action running */
 		probepoint->state = PROBE_ACTION_RUNNING;
 		target->sstep_probepoint = probepoint;
+		array_list_append(target->sstep_stack,probepoint);
 
 		vdebug(4,LOG_P_PROBEPOINT,"sstep for ");
 		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
@@ -1931,6 +1934,8 @@ int probepoint_bp_handler(struct target *target,
 
 	    probepoint->state = PROBE_BP_HANDLING;
 	    target->sstep_probepoint = probepoint;
+	    array_list_append(target->sstep_stack,probepoint);
+
 	    if (target_singlestep(target) < 0) {
 		if (probepoint->style == PROBEPOINT_HW) {
 		    verror("could not single step target after BP;"
@@ -1969,6 +1974,11 @@ int probepoint_bp_handler(struct target *target,
 		 */
 		probepoint->state = PROBE_BP_SET;
 		target->sstep_probepoint = NULL;
+		array_list_remove(target->sstep_stack);
+		if (array_list_len(target->sstep_stack))
+		    target->sstep_probepoint = (struct probepoint *) \
+			array_list_item(target->sstep_stack,
+					array_list_len(target->sstep_stack) - 1);
 	    }
 	    else {
 		/* If single step init succeeded, let the ss handler take
@@ -2099,6 +2109,11 @@ int probepoint_ss_handler(struct target *target,
 	verror("could not stop single stepping target; continuing anyway!\n");
 
     target->sstep_probepoint = NULL;
+    array_list_remove(target->sstep_stack);
+    if (array_list_len(target->sstep_stack))
+	target->sstep_probepoint = (struct probepoint *)	\
+	    array_list_item(target->sstep_stack,
+			    array_list_len(target->sstep_stack) - 1);
 
     if (probepoint->style == PROBEPOINT_SW) {
 	/* Re-inject a breakpoint for the next round */
