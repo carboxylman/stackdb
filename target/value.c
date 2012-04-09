@@ -64,22 +64,14 @@ struct value *value_create_type(struct symbol *type) {
 
 struct value *value_create(struct lsymbol *lsymbol,struct symbol *type) {
     struct value *value = value_create_type(type);
-    int len = symbol_type_full_bytesize(type);
 
     if (!value)
 	return NULL;
 
-    lsymbol_hold(lsymbol);
-    symbol_hold(type);
-
-    value->lsymbol = lsymbol;
-    value->type = type;
-    value->buf = malloc(len);
-    if (!value->buf) {
-	free(value);
-	return NULL;
+    if (lsymbol) {
+	lsymbol_hold(lsymbol);
+	value->lsymbol = lsymbol;
     }
-    value->bufsiz = len;
 
     return value;
 }
