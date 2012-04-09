@@ -637,6 +637,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		   ip_addr,symbol->name);
 	    return NULL;
 	}
+	range = NULL;
     }
 
     /* If they want pointers automatically dereferenced, do it! */
@@ -654,6 +655,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	 * Don't allow any load flags through for this!  We don't want
 	 * to mmap just for pointers.
 	 */
+	range = NULL;
 	if (!location_load(target,region,&(symbol->s.ii->l),LOAD_FLAG_NONE,
 			   &ptraddr,target->ptrsize,symbol_chain,&range)) {
 	    verror("auto_deref: could not load ptr for symbol %s!\n",
@@ -663,11 +665,6 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 
 	vdebug(5,LOG_T_SYMBOL,"loaded ptr value 0x%"PRIxADDR"for symbol %s\n",
 	       ptraddr,symbol->name);
-
-	if (!range) {
-	    verror("could not find range in auto_deref\n");
-	    goto errout;
-	}
 
 	/* Skip past the pointer we just loaded. */
 	datatype = symbol_get_datatype(datatype);
@@ -683,7 +680,17 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	    goto errout;
 	}
 
-	ptrregion = range->region;
+	if (range)
+	    ptrregion = range->region;
+	else {
+	    /* We might not have a range if the value was in a register;
+	     * if we don't have one, find it!
+	     */
+	    if (!target_find_memory_real(target,ptraddr,NULL,NULL,&range)) {
+		errno = EFAULT;
+		return NULL;
+	    }
+	}
     }
 
     /*
