@@ -1584,6 +1584,8 @@ struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
     symbol_set_name(symbol,name);
     symbol_set_type(symbol,symtype);
 
+    symbol->refcnt = 0;
+
     /* Only insert the symbol automatically if we have a name.  This
      * won't be true for our dwarf parser, for instance.
      */
@@ -2301,6 +2303,7 @@ struct lsymbol *lsymbol_create(struct symbol *symbol,
     memset(lsymbol,0,sizeof(struct lsymbol));
     lsymbol->symbol = symbol;
     lsymbol->chain = chain;
+    lsymbol->refcnt = 0;
 
     if (chain)
 	lsymbol_hold_int(lsymbol);

@@ -46,6 +46,7 @@ struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
     bsymbol->lsymbol = lsymbol;
     bsymbol->region = region;
     bsymbol->range = range;
+    bsymbol->refcnt = 0;
 
     lsymbol_hold(lsymbol);
 
