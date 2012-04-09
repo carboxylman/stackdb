@@ -550,6 +550,8 @@ struct value *target_load_value_member(struct target *target,
 				     (unsigned char *)retval->buf,
 				     retval->bufsiz)) {
 	    verror("failed to autoload pointer\n");
+	    value_free(retval);
+	    retval = NULL;
 	}
 	else {
 	    retval->range = range;
