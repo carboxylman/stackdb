@@ -544,7 +544,7 @@ struct value *target_load_value_member(struct target *target,
 	}
     }
     else if (paddr) {
-	retval = value_create(ls,datatype);
+	retval = value_create(ls,symbol_get_datatype(ls->symbol));
 
 	if (!__target_load_addr_real(target,range,paddr + totaloffset,flags,
 				     (unsigned char *)retval->buf,
@@ -559,7 +559,7 @@ struct value *target_load_value_member(struct target *target,
 	}
     }
     else {
-	retval = value_create(ls,datatype);
+	retval = value_create(ls,symbol_get_datatype(ls->symbol));
 	retval->range = value->range;
 	memcpy(retval->buf,value->buf + totaloffset,retval->bufsiz);
 	vdebug(5,LOG_T_SYMBOL,"got value from value at byte offset %d\n",
