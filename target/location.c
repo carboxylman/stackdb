@@ -85,6 +85,9 @@ char *location_load(struct target *target,struct memregion *region,
         else
             memcpy(buf,&regval,bufsiz);
 
+	if (range_saveptr) 
+	    *range_saveptr = NULL;
+
 	return buf;
     }
     else {
