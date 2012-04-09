@@ -36,6 +36,7 @@
 #define ARG_BYTES_LEN	1024
 
 static int debug = -1;
+static int use_real_parent = 0;
 
 typedef enum {
     SC_ARG_TYPE_INT = 0,
@@ -288,6 +289,7 @@ void usage(char *progname) {
 	    "  -a  Report events to A3 controller.\n"
 	    "  -w  IP:port of A3 controller.\n"
 	    "  -R  Save A3 events in time-stamped <logfile>.\n"
+	    "  -r  Use the real_parent field in ppid/pname searches (workaround strace).\n"
 	    "",
 	    progname);
     exit(-1);
@@ -485,13 +487,13 @@ int check_filters(struct domain_info *di,int syscall,int arg,
 	}
 	if (pmatch && argfilter_list[lpc]->ppid_search) {
 	    pmatch = 0;
-	    parent = pdata->parent;
+	    parent = use_real_parent ? pdata->real_parent : pdata->parent;
 	    while (parent) {
 		if (parent->pid == argfilter_list[lpc]->ppid) {
 		    pmatch = 1;
 		    break;
 		}
-		parent = parent->parent;
+		parent = use_real_parent ? parent->real_parent : parent->parent;
 	    }
 	}
 	else if (pmatch 
@@ -501,13 +503,13 @@ int check_filters(struct domain_info *di,int syscall,int arg,
 
 	if (pmatch && argfilter_list[lpc]->name_search) {
 	    pmatch = 0;
-	    parent = pdata->parent;
+	    parent = use_real_parent ? pdata->real_parent : pdata->parent;
 	    while (parent) {
 		if (!strcmp(parent->name,argfilter_list[lpc]->name)) {
 		    pmatch = 1;
 		    break;
 		}
-		parent = parent->parent;
+		parent = use_real_parent ? parent->real_parent : parent->parent;
 	    }
 	}
 	else if (pmatch 
@@ -3076,7 +3078,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
 
 	/* allow 128 chars per process */
 	for (len = 0; _pdata != NULL; len += 128)
-	    _pdata = _pdata->parent;
+	    _pdata = use_real_parent ? _pdata->real_parent : _pdata->parent;
 	str = *ancestry = (char *)malloc(len);
 
 	_pdata = data;
@@ -3088,7 +3090,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
 		     _pdata->tgid,_pdata->uid,_pdata->euid,_pdata->suid,
 		     _pdata->gid,_pdata->egid,_pdata->sgid);
 	    str += strlen(str);
-	    _pdata = _pdata->parent;
+	    _pdata = use_real_parent ? _pdata->real_parent : _pdata->parent;
 	}
     }
 
@@ -4381,7 +4383,7 @@ int main(int argc, char *argv[])
     struct domain_info *di;
     int nprobes = 0;
 
-    while ((ch = getopt(argc, argv, "m:daw:u:c:xR:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:daw:u:c:xR:r")) != -1) {
 	switch(ch) {
 	case 'c':
 	    configfile = optarg;
@@ -4410,6 +4412,9 @@ int main(int argc, char *argv[])
 	    break;
 	case 'm':
 	    sysmapfile = optarg;
+	    break;
+	case 'r':
+	    use_real_parent = 1;
 	    break;
 	default:
 	    usage(progname);
