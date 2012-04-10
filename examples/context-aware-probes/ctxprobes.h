@@ -51,6 +51,7 @@ typedef struct ctxprobes_task {
 } ctxprobes_task_t;
 
 typedef void (*ctxprobes_func_prologue_handler_t)(char *symbol,
+                                                  unsigned long retaddr,
                                                   ctxprobes_task_t *task,
                                                   ctxprobes_context_t context);
 
@@ -64,6 +65,7 @@ typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
                                                 ctxprobes_var_t *arg_list, 
                                                 int arg_count,
                                                 ctxprobes_var_t *retval,
+                                                unsigned long retaddr,
                                                 ctxprobes_task_t *task,
                                                 ctxprobes_context_t context);
 

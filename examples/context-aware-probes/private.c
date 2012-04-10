@@ -251,8 +251,8 @@ int register_return_probe(char *symbol,
     probe = probe_create(t, 
                          ops,
                          bsymbol->lsymbol->symbol->name,
-                         NULL, /* pre_handler */
-                         handler, /* post_handler */
+                         handler, /* pre_handler */
+                         NULL, /* post_handler */
                          data,
                          0);
     if (!probe)

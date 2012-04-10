@@ -52,11 +52,18 @@ ctxprobes_context_t context_prev;
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
 
+/* This variable temporarily holds the address in SP between a function's
+ * proloque invocation and return, based on an assumption that no other
+ * functions get called in the meantime a function is being executed. */
+REGVAL regsp;
+
 static int probe_func_prologue(struct probe *probe,
                                void *data,
                                struct probe *trigger)
 {
     char *symbol;
+    REGVAL sp;
+    ADDR retaddr = 0;
 
     ctxprobes_func_prologue_handler_t handler 
         = (ctxprobes_func_prologue_handler_t) data;
@@ -67,8 +74,25 @@ static int probe_func_prologue(struct probe *probe,
         task_current->pid, task_current->comm, symbol, 
         context_string(context_current));
   
+    errno = 0;
+    sp = target_read_reg(t, t->spregno);
+    if (errno)
+        ERR("Could not read SP!\n");
+    DBG("SP: 0x%08x\n", sp);
+
+    /* Save sp in a global variable. */
+	regsp = sp;
+    
+    /* Grab the return address on the top of the stack */
+    if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
+                          (unsigned char *)&retaddr, NULL))
+    {
+        ERR("Could not read top of stack!\n");
+    }
+
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
     handler(symbol, 
+            retaddr, 
             task_current, 
             context_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
@@ -120,6 +144,8 @@ static int probe_func_return(struct probe *probe,
     ctxprobes_var_t *retval = NULL;
     int arg_count = 0;
     int ret;
+    REGVAL sp;
+    ADDR retaddr = 0;
 
     ctxprobes_func_return_handler_t handler 
         = (ctxprobes_func_return_handler_t) data;
@@ -138,11 +164,27 @@ static int probe_func_return(struct probe *probe,
     if (ret)
         ERR("Failed to load function retval\n");
 
+    //errno = 0;
+    //sp = target_read_reg(t, t->spregno);
+    //if (errno)
+    //    ERR("Could not read SP!\n");
+    /* Use the saved SP in global variable. */
+	sp = regsp;
+    DBG("SP: 0x%08x\n", sp);
+    
+    /* Grab the return address on the top of the stack */
+    if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
+                          (unsigned char *)&retaddr, NULL))
+    {
+        ERR("Could not read top of stack!\n");
+    }
+
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
     handler(symbol, 
             arg_list, 
             arg_count, 
             retval, 
+            retaddr, 
             task_current, 
             context_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);

@@ -60,18 +60,21 @@ char context_ch(ctxprobes_context_t context)
 }
 
 void sys_open_prologue(char *symbol, 
+                       unsigned long retaddr,
                        ctxprobes_task_t *task,
                        ctxprobes_context_t context)
 {
     printf("[%c] %d (%s): %s proloque invoked\n", 
            context_ch(context), task->pid, task->comm, symbol);
     
+    printf("- Return address: 0x%08x\n", retaddr);
+/*
     printf("- Parent task chain: \n");
     while (task->parent)
     {
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
-    }
+    }*/
 }
 
 void sys_open_call(char *symbol, 
@@ -89,19 +92,20 @@ void sys_open_call(char *symbol,
                args[0].name, args[0].buf,
                args[1].name, *(int *)args[1].buf,
                args[2].name, *(int *)args[2].buf);
-    
+/*    
     printf("- Parent task chain: \n");
     while (task->parent)
     {
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
-    }
+    }*/
 }
 
 void sys_open_return(char *symbol, 
                      ctxprobes_var_t *args, 
                      int argcount, 
                      ctxprobes_var_t *retval,
+                     unsigned long retaddr,
                      ctxprobes_task_t *task,
                      ctxprobes_context_t context)
 {
@@ -113,12 +117,14 @@ void sys_open_return(char *symbol,
                context_ch(context), task->pid, task->comm, symbol,
                *(int *)retval->buf, *(int *)retval->buf);
 
+    printf("- Return address: 0x%08x\n", retaddr);
+/*
     printf("- Parent task chain: \n");
     while (task->parent)
     {
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
-    }
+    }*/
 }
 
 void parse_opt(int argc, char *argv[])
