@@ -36,6 +36,15 @@ typedef enum nfs_perf_stage_id {
         STAGE_ID_TCP_V4_RCV              = 5, 
 	STAGE_ID_TCP_DATA_QUEUE          = 6,
         STAGE_ID_SKB_COPY_DATAGRAM_IOVEC = 7,
+        STAGE_ID_DO_READV_WRITEV         = 8, 
+        STAGE_ID_GENERIC_FILE_WRITEV     = 9, 
+        STAGE_ID_GENERIC_FILE_BUFFERED_WRITE = 10, 
+        STAGE_ID_EXT3_JOURNALLED_WRITEPAGE = 11, 
+        STAGE_ID___BLOCK_WRITE_FULL_PAGE = 12, 
+        STAGE_ID_SUBMIT_BH               = 13, 
+        STAGE_ID_BLKIF_QUEUE_REQUEST     = 14,
+        STAGE_ID_BLKIF_INT               = 15,	
+
 } nfs_perf_stage_id_t;
 
 /* XXX: This funciton pollutes the kernel binary since it's included in many places */
@@ -55,6 +64,7 @@ static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
     case STAGE_ID___BLOCK_WRITE_FULL_PAGE: return "__block_write_full_page";
     case STAGE_ID_SUBMIT_BH: return "submit_bh";
     case STAGE_ID_BLKIF_QUEUE_REQUEST: return "blkif_queue_request";
+    case STAGE_ID_BLKIF_INT: return "blkif_int";		       
     default: return "undefined";
     };
 };

@@ -77,7 +77,7 @@ int request_hash_change_id(struct request *req, unsigned long new_req_id) {
         return -1;
     }
 
-    WARN_ON(req->id == new_req_id, "old and new ids are the same, you have an error in your code\n");
+    WARN_ON(req->req_id == new_req_id, "old and new ids are the same, you have an error in your code\n");
 
     if(!g_hash_table_remove(request_hash, (gpointer)req->req_id)) {
         ERR("Failed to remove request from the hash, req_id:0x%lx\n", req->req_id);

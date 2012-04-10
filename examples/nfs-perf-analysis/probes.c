@@ -390,6 +390,7 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
 {
     struct value   *lval_uvector;
     struct value   *lval_iov;
+    struct request *req;
     unsigned long   req_id, new_req_id;
     int             ret;
 
@@ -445,7 +446,8 @@ int probe_generic_file_writev(struct probe *probe, void *handler_data, struct pr
 {
     struct value   *lval_iov;
     unsigned long   req_id;
-    
+    struct request *req;
+
     DBG("generic_file_writev called\n");
 
     lval_iov = bsymbol_load(bsymbol_generic_file_writev_lvar_iov, LOAD_FLAG_NONE);
@@ -491,6 +493,7 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
     struct value   *lval_page;
     unsigned long   req_id, new_req_id;
     int             ret;
+    struct request *req;
 
     DBG("generic_file_buffered_write called\n");
     lval_iov = bsymbol_load(bsymbol_generic_file_buffered_write_lvar_iov, LOAD_FLAG_NONE);
@@ -543,6 +546,7 @@ int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, str
 {
     struct value   *lval_page;
     unsigned long   req_id;
+    struct request *req;
 
     DBG("ext3_journalled_writepage called\n");
     lval_page = bsymbol_load(bsymbol_ext3_journalled_writepage_lvar_page, LOAD_FLAG_NONE);
@@ -589,6 +593,7 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
     struct value   *lval_bh;
     unsigned long   req_id, new_req_id;
     int             ret;
+    struct request *req;
 
     DBG("__block_write_full_page called\n");
 
@@ -652,6 +657,7 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
     struct value   *lval_bio;
     unsigned long   req_id, new_req_id;
     int             ret;
+    struct request *req;
 
     DBG("submit_bh called\n");
     
@@ -715,6 +721,7 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
     struct value   *lval_id;
     unsigned long   req_id, new_req_id;
     int             ret;
+    struct request *req;
 
     DBG("blkif_queue_request called\n");
 
@@ -747,6 +754,7 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
              req_id, new_req_id, stage_id_to_name(STAGE_ID_BLKIF_QUEUE_REQUEST));
         request_done(req);
         return -1;
+    }
 
     return 0;
 }
@@ -767,6 +775,7 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
 {
     struct value   *lval_id;
     unsigned long   req_id;
+    struct request *req;
 
     DBG("blkif_int called\n");
 
@@ -777,7 +786,7 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
     }
     
     req_id = *(unsigned long*)lval_id->buf;
-    DBG("id = 0x%lx\n", new_req_id);
+    DBG("id = 0x%lx\n", req_id);
 
     req = request_move_on_path(probe, req_id, STAGE_ID_BLKIF_INT);
     if(!req) {
