@@ -48,6 +48,7 @@
 
 char *dom_name = NULL; 
 int verbose = 0; 
+int debug_level = -1;
 
 struct target *t;
 GHashTable *probes;
@@ -85,6 +86,23 @@ error_t cmd_parser(int key, char *arg, struct argp_state *state)
 			break;
 		}
 
+	    case 'd': 
+		{
+			++debug_level; 
+			break;
+		}
+
+	    case 'l': 
+		{
+			log_flags_t flags;
+			if (vmi_log_get_flag_mask(arg,&flags)) {
+				fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",arg);
+				exit(-1);
+			}
+			vmi_set_log_flags(flags);
+			break;
+		}
+
         default:
             return ARGP_ERR_UNKNOWN;
     }
@@ -99,6 +117,12 @@ const struct argp_option cmd_opts[] =
 
     { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
 		.doc = "Verbose" },
+
+    { .name = "logtypes",  .key = 'l', .arg = "FILE", .flags = 0, 
+		.doc = "Log types" },
+
+    { .name = "debug",  .key = 'd', .arg = 0, .flags = 0, 
+		.doc = "Debug level" },
 
     {0}
 };
@@ -117,7 +141,6 @@ const char *argp_program_bug_address = "<aburtsev@flux.utah.edu>";
 
 int main(int argc, char *argv[])
 {
-    int debug_level = -1;
     target_status_t tstat;
     int ret;
 
