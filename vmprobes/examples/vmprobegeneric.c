@@ -233,8 +233,6 @@ void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 		   struct argdata **arg_data,
 		   struct process_data *data);
 
-#define STATIC_RET_PROBE
-
 /*
  * Indentifies "outstanding" syscall returns.
  *
@@ -245,13 +243,13 @@ void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 struct syscall_retinfo {
     unsigned long thread_ptr;
     int syscall_ix;
+    unsigned long raddr;
     unsigned long arg0;
     unsigned long arg1;
     unsigned long argptr;
 
     struct list_head list;
 };
-LIST_HEAD(syscalls);
 
 struct process_data {
     unsigned int pid;
@@ -380,6 +378,18 @@ void string_append(char **buf,int *bufsiz,char **endptr,char *str) {
  */
 LIST_HEAD(domains);
 
+/*
+ * Maximum per-domain return addresses supported.
+ */
+#define RADDRS_MAX 8
+
+/*
+ * Conservative:
+ * [0 - SYSCALL_MAX-1] are for system call entries.
+ * [SYSCALL_MAX - SYSCALL_MAX*2-1] are for syscall-specific return points.
+ */
+#define HANDLE_MAX  (SYSCALL_MAX*2)
+
 struct domain_info {
     domid_t domid;
     char *domname;
@@ -397,8 +407,18 @@ struct domain_info {
     int ps_list_len;
 
     /* syscall probe handles */
-    vmprobe_handle_t schandles[SYSCALL_MAX];
+    vmprobe_handle_t schandles[HANDLE_MAX];
     int nprobes;
+
+    /* processes in domain */
+    struct list_head processes;
+
+    /* threads with outstanding syscalls */
+    struct list_head syscalls;
+
+    /* valid return addresses */
+    unsigned long raddrs[RADDRS_MAX];
+    int nraddrs;
 
     struct list_head list;
 };
@@ -1283,14 +1303,12 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
     return data;
 }
 
-LIST_HEAD(processes);
-
-void free_process_list(void)
+void free_process_list(struct domain_info *di)
 {
     struct process_data *pdata, *tmp_pdata;
 
-    if (!list_empty(&processes)) {
-	list_for_each_entry_safe(pdata,tmp_pdata,&processes,list) {
+    if (!list_empty(&di->processes)) {
+	list_for_each_entry_safe(pdata,tmp_pdata,&di->processes,list) {
 	    debug(2,"freeing %d %s\n",pdata->pid,pdata->name);
 	    list_del(&pdata->list);
 	    free_process_data(pdata);
@@ -1298,8 +1316,8 @@ void free_process_list(void)
     }
 }
 
-int reload_process_list(vmprobe_handle_t handle,
-			struct cpu_user_regs *regs)
+int reload_process_list(struct domain_info *di,
+			vmprobe_handle_t handle, struct cpu_user_regs *regs)
 {
     struct process_data *pdata;
     unsigned long next;
@@ -1307,7 +1325,7 @@ int reload_process_list(vmprobe_handle_t handle,
     int i = 0;
 
     // blow away the old list
-    free_process_list();
+    free_process_list(di);
 
     // grab init task
     pdata = load_process_data(handle,regs,init_task_addr,1,0);
@@ -1327,7 +1345,7 @@ int reload_process_list(vmprobe_handle_t handle,
 	++i;
 
 	//INIT_LIST_HEAD(&pdata->list);
-	list_add_tail(&pdata->list,&processes);
+	list_add_tail(&pdata->list,&di->processes);
 	debug(1,"adding %d\n",pdata->pid);
 
 	// grab the next one!
@@ -1343,11 +1361,11 @@ int reload_process_list(vmprobe_handle_t handle,
     return 0;
 }
 
-void print_process_list(void)
+void print_process_list(struct domain_info *di)
 {
     struct process_data *pdata;
 
-    list_for_each_entry(pdata,&processes,list) {
+    list_for_each_entry(pdata,&di->processes,list) {
 	printf("  ");
 	print_process_data(0, NULL, pdata);
 	printf("\n");
@@ -1362,7 +1380,7 @@ int pid_in_pslist(struct domain_info *di, int pid)
     if (di->ps_list_len == 0)
 	return 1;
 
-    list_for_each_entry(pdata,&processes,list) {
+    list_for_each_entry(pdata,&di->processes,list) {
 	if (pdata->pid == pid) {
 	    for (j = 0; j < di->ps_list_len; ++j) {
 		if (strcmp(pdata->name, di->ps_list[j]) == 0)
@@ -1399,7 +1417,7 @@ char *process_list_to_string(struct domain_info *di,
     buf = malloc(bufsiz);
     bufptr = buf;
 
-    list_for_each_entry(pdata,&processes,list) {
+    list_for_each_entry(pdata,&di->processes,list) {
 	found = 0;
 	for (j = 0; j < di->ps_list_len; ++j) {
 	    if (strcmp(pdata->name,di->ps_list[j]) == 0) {
@@ -1795,177 +1813,180 @@ void mmap_flag_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 }
 
 /*
- * If a syscall has RADDR_YES set for the raddr field, it means that it
+ * If a syscall has RADDR_GEN set for the raddr field, it means that it
  * returns through the generic syscall_call stub and thus we can statically
  * identify a "return address" where we can stop. Note that we could determine
  * a return address on the fly by looking at the top of the stack when we
  * are stopped at the entry point, but that is a little too much for my
  * pretty little head right now.
  *
- * The default value is NO unless we empirically determine that a particular
- * syscall goes through the stub.
+ * The field may get tweaked to another non-zero value for particular syscalls
+ * where we can identify a more syscall-specific return point.
+ *
+ * The default value is RADDR_NONE unless we empirically determine that a
+ * particular syscall goes through the stub.
  *
  * We define some constants here just so we can easily pick the raddr field
  * out of the soup of numbers below.
  */
-#define RADDR_NO	0
-#define RADDR_YES	1
+#define RADDR_NONE	0
+#define RADDR_GEN	1
 
 struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
-    { 1, "sys_exit", 0xc0121df0, RADDR_NO, 1,
+    { 1, "sys_exit", 0xc0121df0, RADDR_NONE, 1,
       { { 1, "error_code", SC_ARG_TYPE_INT, 
 	  exit_code_decoder, 
 	  (char *[]) { "error_code:cause","error_code:status","error_code:signal" },
 	  3 } } },
-    { 2, "sys_fork", 0xc0102ef0, RADDR_NO, 1,
+    { 2, "sys_fork", 0xc0102ef0, RADDR_NONE, 1,
       { { 1, "regs", SC_ARG_TYPE_PT_REGS, NULL, NULL, 0, process_ptregs_loader } } },
-    { 3, "sys_read", 0xc01658e0, RADDR_YES, 3,
+    { 3, "sys_read", 0xc01658e0, RADDR_GEN, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
 	{ 3, "count", SC_ARG_TYPE_INT } } },
-    { 4, "sys_write", 0xc0165950, RADDR_YES, 3,
+    { 4, "sys_write", 0xc0165950, RADDR_GEN, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
 	{ 3, "count", SC_ARG_TYPE_INT } } },
-    { 5, "sys_open", 0xc01633f0, RADDR_YES, 3,
+    { 5, "sys_open", 0xc01633f0, RADDR_GEN, 3,
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "flags", SC_ARG_TYPE_HEXINT, open_flags_decoder,(char *[]) { "flags:flags" }, 1, NULL, 3 },
 	{ 3, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
-    { 6, "sys_close", 0xc0164510, RADDR_YES, 1,
+    { 6, "sys_close", 0xc0164510, RADDR_GEN, 1,
       { { 1, "fd", SC_ARG_TYPE_UINT } } },
-    { 7, "sys_waitpid", 0xc0121340, RADDR_YES, 3,
+    { 7, "sys_waitpid", 0xc0121340, RADDR_GEN, 3,
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "status", SC_ARG_TYPE_PTR, wait_stat_decoder,
 	  (char *[]) { "status:cause","status:code","status:signal" }, 3 },
 	{ 3, "options", SC_ARG_TYPE_INT } } },
-    { 8, "sys_creat", 0xc0163420, RADDR_YES, 2, 
+    { 8, "sys_creat", 0xc0163420, RADDR_GEN, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
-    { 9, "sys_link", 0xc0176eb0, RADDR_NO, 2, 
+    { 9, "sys_link", 0xc0176eb0, RADDR_NONE, 2, 
       { { 1, "oldname", SC_ARG_TYPE_STRING },
 	{ 2, "newname", SC_ARG_TYPE_STRING } } },
-    { 10, "sys_unlink", 0xc01768e0, RADDR_NO, 1, 
+    { 10, "sys_unlink", 0xc01768e0, RADDR_NONE, 1, 
       { { 1, "pathname", SC_ARG_TYPE_STRING } } },
-    { 11, "sys_execve", 0xc01036e0, RADDR_YES, 1, 
+    { 11, "sys_execve", 0xc01036e0, RADDR_GEN, 1, 
       { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_decoder, (char *[]){ "regs:filename","regs:args","regs:env"}, 3, process_ptregs_loader } } },
-    { 12, "sys_chdir", 0xc0164330, RADDR_YES, 1, 
+    { 12, "sys_chdir", 0xc0164330, RADDR_GEN, 1, 
       { { 1, "filename", SC_ARG_TYPE_STRING } } },
-    { 13, "sys_time", 0xc0123200, RADDR_NO, 1,
+    { 13, "sys_time", 0xc0123200, RADDR_NONE, 1,
       { { 1, "tloc", SC_ARG_TYPE_PTR } } },
-    { 14, "sys_mknod", 0xc0176d00, RADDR_NO, 3, 
+    { 14, "sys_mknod", 0xc0176d00, RADDR_NONE, 3, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "mode", SC_ARG_TYPE_HEXINT },
 	{ 3, "dev", SC_ARG_TYPE_UINT } } },
-    { 15, "sys_chmod", 0xc01638c0, RADDR_NO, 2, 
+    { 15, "sys_chmod", 0xc01638c0, RADDR_NONE, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 0 },
     { 0 },
-    { 18, "sys_stat", 0xc016f7f0, RADDR_NO, 2, 
+    { 18, "sys_stat", 0xc016f7f0, RADDR_NONE, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "statbuf", SC_ARG_TYPE_PTR } } },
-    { 19, "sys_lseek", 0xc01657a0, RADDR_NO, 3, 
+    { 19, "sys_lseek", 0xc01657a0, RADDR_NONE, 3, 
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "offset", SC_ARG_TYPE_INT },
 	{ 3, "origin", SC_ARG_TYPE_UINT } } },
-    { 20, "sys_getpid", 0xc0129710, RADDR_YES, 0, { } },
-    { 21, "sys_mount", 0xc0183690, RADDR_NO, 5, 
+    { 20, "sys_getpid", 0xc0129710, RADDR_GEN, 0, { } },
+    { 21, "sys_mount", 0xc0183690, RADDR_NONE, 5, 
       { { 1, "dev_name", SC_ARG_TYPE_STRING },
 	{ 2, "dir_name", SC_ARG_TYPE_STRING },
 	{ 3, "type", SC_ARG_TYPE_STRING },
 	{ 4, "flags", SC_ARG_TYPE_HEXINT },
 	{ 5, "data", SC_ARG_TYPE_PTR } } },
-    { 22, "sys_oldumount", 0xc01839c0, RADDR_NO, 1, 
+    { 22, "sys_oldumount", 0xc01839c0, RADDR_NONE, 1, 
       { { 1, "name", SC_ARG_TYPE_STRING } } },
     { 0 },
     { 0 },
-    { 25, "sys_stime", 0xc0123970, RADDR_NO, 1,
+    { 25, "sys_stime", 0xc0123970, RADDR_NONE, 1,
       { { 1, "tptr", SC_ARG_TYPE_PTR } } },
-    { 26, "sys_ptrace", 0xc0127d80, RADDR_NO, 4, 
+    { 26, "sys_ptrace", 0xc0127d80, RADDR_NONE, 4, 
       { { 1, "request", SC_ARG_TYPE_LONG },
 	{ 2, "pid", SC_ARG_TYPE_LONG },
 	{ 3, "addr", SC_ARG_TYPE_PTR },
 	{ 4, "data", SC_ARG_TYPE_PTR } } },
-    { 27, "sys_alarm", 0xc01285e0, RADDR_NO, 1, 
+    { 27, "sys_alarm", 0xc01285e0, RADDR_NONE, 1, 
       { { 1, "seconds", SC_ARG_TYPE_UINT } } },
-    { 28, "sys_fstat", 0xc016f8e0, RADDR_NO, 2, 
+    { 28, "sys_fstat", 0xc016f8e0, RADDR_NONE, 2, 
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "statbuf", SC_ARG_TYPE_PTR } } },
-    { 29, "sys_pause", 0xc012c960, RADDR_NO, 0 },
-    { 30, "sys_utime", 0xc01641f0, RADDR_NO, 2, 
+    { 29, "sys_pause", 0xc012c960, RADDR_NONE, 0 },
+    { 30, "sys_utime", 0xc01641f0, RADDR_NONE, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "times", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
-    { 33, "sys_access", 0xc0163a40, RADDR_NO, 2, 
+    { 33, "sys_access", 0xc0163a40, RADDR_NONE, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
-    { 34, "sys_nice", 0xc011a9a0, RADDR_NO, 1, 
+    { 34, "sys_nice", 0xc011a9a0, RADDR_NONE, 1, 
       { { 1, "increment", SC_ARG_TYPE_INT } } },
     { 0 },
-    { 36, "sys_sync", 0xc01677d0, RADDR_NO, 0 },
-    { 37, "sys_kill", 0xc012c630, RADDR_NO, 2, 
+    { 36, "sys_sync", 0xc01677d0, RADDR_NONE, 0 },
+    { 37, "sys_kill", 0xc012c630, RADDR_NONE, 2, 
       { { 1, "pid", SC_ARG_TYPE_INT },
 	{ 2, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 } } },
-    { 38, "sys_rename", 0xc0176630, RADDR_NO, 2, 
+    { 38, "sys_rename", 0xc0176630, RADDR_NONE, 2, 
       { { 1, "oldname", SC_ARG_TYPE_STRING },
 	{ 2, "newname", SC_ARG_TYPE_STRING } } },
-    { 39, "sys_mkdir", 0xc0176b30, RADDR_NO, 2, 
+    { 39, "sys_mkdir", 0xc0176b30, RADDR_NONE, 2, 
       { { 1, "pathname", SC_ARG_TYPE_STRING },
 	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
-    { 40, "sys_rmdir", 0xc0176a20, RADDR_YES, 1, 
+    { 40, "sys_rmdir", 0xc0176a20, RADDR_GEN, 1, 
       { { 1, "pathname", SC_ARG_TYPE_STRING } } },
-    { 41, "sys_dup", 0xc0177fe0, RADDR_NO, 1, 
+    { 41, "sys_dup", 0xc0177fe0, RADDR_NONE, 1, 
       { { 1, "fildes", SC_ARG_TYPE_UINT } } },
-    { 42, "sys_pipe", 0xc010a4b0, RADDR_NO, 1,
+    { 42, "sys_pipe", 0xc010a4b0, RADDR_NONE, 1,
       { { 1, "fildes", SC_ARG_TYPE_PTR } } },
-    { 43, "sys_times", 0xc012ea90, RADDR_NO, 1,
+    { 43, "sys_times", 0xc012ea90, RADDR_NONE, 1,
       { { 1, "tbuf", SC_ARG_TYPE_PTR } } },
     { 0 },
-    { 45, "sys_brk", 0xc0155920, RADDR_NO, 1,
+    { 45, "sys_brk", 0xc0155920, RADDR_NONE, 1,
       { { 1, "brk", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
-    { 48, "sys_signal", 0xc012a420, RADDR_NO, 2, 
+    { 48, "sys_signal", 0xc012a420, RADDR_NONE, 2, 
       { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "handler", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
-    { 51, "sys_acct", 0xc01347f0, RADDR_NO, 1,
+    { 51, "sys_acct", 0xc01347f0, RADDR_NONE, 1,
       { { 1, "name", SC_ARG_TYPE_STRING } } },
-    { 52, "sys_umount", 0xc0183770, RADDR_NO, 1, 
+    { 52, "sys_umount", 0xc0183770, RADDR_NONE, 1, 
       { { 1, "name", SC_ARG_TYPE_STRING },
 	{ 2, "flags", SC_ARG_TYPE_HEXINT } } },
     { 0 },
-    { 54, "sys_ioctl", 0xc01788f0, RADDR_NO, 3,
+    { 54, "sys_ioctl", 0xc01788f0, RADDR_NONE, 3,
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "cmd", SC_ARG_TYPE_HEXINT, ioctl_cmd_decoder,(char *[]) { "cmd:cmd" }, 1 },
 	{ 3, "arg", SC_ARG_TYPE_PTR } } },
-    { 55, "sys_fcntl", 0xc0178570, RADDR_NO, 3,
+    { 55, "sys_fcntl", 0xc0178570, RADDR_NONE, 3,
       { { 1, "fd", SC_ARG_TYPE_INT },
 	{ 2, "cmd", SC_ARG_TYPE_UINT, fcntl_cmd_decoder,(char *[]) { "cmd:cmd" }, 1 },
 	{ 3, "arg", SC_ARG_TYPE_PTR } } },
     { 0 },
-    { 57, "sys_setpgid", 0xc012ebb0, RADDR_NO, 2, 
+    { 57, "sys_setpgid", 0xc012ebb0, RADDR_NONE, 2, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "pgid", SC_ARG_TYPE_PID_T } } },
     { 0 },
     { 0 },
-    { 60, "sys_umask", 0xc012e8d0, RADDR_NO, 1,
+    { 60, "sys_umask", 0xc012e8d0, RADDR_NONE, 1,
       { { 1, "mask", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mask:mask" }, 1 } } },
-    { 61, "sys_chroot", 0xc0164460, RADDR_YES, 1, 
+    { 61, "sys_chroot", 0xc0164460, RADDR_GEN, 1, 
       { { 1, "filename", SC_ARG_TYPE_STRING } } },
-    { 62, "sys_ustat", 0xc016bcf0, RADDR_NO, 2, 
+    { 62, "sys_ustat", 0xc016bcf0, RADDR_NONE, 2, 
       { { 1, "dev", SC_ARG_TYPE_UINT },
 	{ 2, "ubuf", SC_ARG_TYPE_PTR } } },
-    { 63, "sys_dup2", 0xc0178450, RADDR_NO, 2, 
+    { 63, "sys_dup2", 0xc0178450, RADDR_NONE, 2, 
       { { 1, "oldfd", SC_ARG_TYPE_UINT },
 	{ 2, "newfd", SC_ARG_TYPE_UINT } } },
-    { 64, "sys_getppid", 0xc0129730, RADDR_NO, 0 },
-    { 65, "sys_getpgrp", 0xc012ee10, RADDR_NO, 0 },
-    { 66, "sys_setsid", 0xc012e460, RADDR_NO, 0, { } },
-    { 67, "sys_sigaction", 0xc01045d0, RADDR_NO, 3, 
+    { 64, "sys_getppid", 0xc0129730, RADDR_NONE, 0 },
+    { 65, "sys_getpgrp", 0xc012ee10, RADDR_NONE, 0 },
+    { 66, "sys_setsid", 0xc012e460, RADDR_NONE, 0, { } },
+    { 67, "sys_sigaction", 0xc01045d0, RADDR_NONE, 3, 
       { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "act", SC_ARG_TYPE_PTR },
 	{ 3, "oact", SC_ARG_TYPE_PTR } } },
@@ -1973,234 +1994,234 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 0 },
     { 0 },
-    { 72, "sys_sigsuspend", 0xc0105020, RADDR_NO, 3, 
+    { 72, "sys_sigsuspend", 0xc0105020, RADDR_NONE, 3, 
       { { 1, "history0", SC_ARG_TYPE_INT },
 	{ 2, "history1", SC_ARG_TYPE_INT },
 	{ 2, "mask", SC_ARG_TYPE_UINT } } },
-    { 73, "sys_sigpending", 0xc012a010, RADDR_NO, 1, 
+    { 73, "sys_sigpending", 0xc012a010, RADDR_NONE, 1, 
       { { 1, "set", SC_ARG_TYPE_PTR } } },
-    { 74, "sys_sethostname", 0xc012e130, RADDR_NO, 2, 
+    { 74, "sys_sethostname", 0xc012e130, RADDR_NONE, 2, 
       { { 1, "hostname", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 2 },
 	{ 2, "len", SC_ARG_TYPE_INT } } },
-    { 75, "sys_setrlimit", 0xc012e6a0, RADDR_NO, 2, 
+    { 75, "sys_setrlimit", 0xc012e6a0, RADDR_NONE, 2, 
       { { 1, "resource", SC_ARG_TYPE_UINT, },
 	{ 2, "rlim", SC_ARG_TYPE_PTR } } },
-    { 76, "sys_old_getrlimit", 0xc012f6e0, RADDR_NO, 2, 
+    { 76, "sys_old_getrlimit", 0xc012f6e0, RADDR_NONE, 2, 
       { { 1, "resource", SC_ARG_TYPE_UINT, },
 	{ 2, "rlim", SC_ARG_TYPE_PTR } } },
-    { 77, "sys_getrusage", 0xc012e880, RADDR_NO, 2, 
+    { 77, "sys_getrusage", 0xc012e880, RADDR_NONE, 2, 
       { { 1, "who", SC_ARG_TYPE_INT, },
 	{ 2, "ru", SC_ARG_TYPE_PTR } } },
-    { 78, "sys_gettimeofday", 0xc0123240, RADDR_YES, 2, 
+    { 78, "sys_gettimeofday", 0xc0123240, RADDR_GEN, 2, 
       { { 1, "tv", SC_ARG_TYPE_PTR, },
 	{ 2, "tz", SC_ARG_TYPE_PTR } } },
-    { 79, "sys_settimeofday", 0xc01238d0, RADDR_NO, 2, 
+    { 79, "sys_settimeofday", 0xc01238d0, RADDR_NONE, 2, 
       { { 1, "tv", SC_ARG_TYPE_TIMEVAL, timeval_decoder,(char *[]) { "tv:tv" }, 1 },
 	{ 2, "tz", SC_ARG_TYPE_TIMEZONE, timezone_decoder,(char *[]) { "tz:tz" }, 1 } } },
     { 0 },
     { 0 },
     { 0 },
-    { 83, "sys_symlink", 0xc0176750, RADDR_NO, 2, 
+    { 83, "sys_symlink", 0xc0176750, RADDR_NONE, 2, 
       { { 1, "oldname", SC_ARG_TYPE_STRING },
 	{ 2, "newname", SC_ARG_TYPE_STRING } } },
-    { 84, "sys_lstat", 0xc016f7b0, RADDR_NO, 2, 
+    { 84, "sys_lstat", 0xc016f7b0, RADDR_NONE, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "statbuf", SC_ARG_TYPE_PTR } } },
-    { 85, "sys_readlink", 0xc016f3d0, RADDR_NO, 3, 
+    { 85, "sys_readlink", 0xc016f3d0, RADDR_NONE, 3, 
       { { 1, "path", SC_ARG_TYPE_STRING },
 	{ 2, "buf", SC_ARG_TYPE_PTR },
 	{ 3, "bufsiz", SC_ARG_TYPE_INT } } },
-    { 86, "sys_uselib", 0xc01719b0, RADDR_NO, 1, 
+    { 86, "sys_uselib", 0xc01719b0, RADDR_NONE, 1, 
       { { 1, "library", SC_ARG_TYPE_STRING } } },
-    { 87, "sys_swapon", 0xc015bbd0, RADDR_NO, 2, 
+    { 87, "sys_swapon", 0xc015bbd0, RADDR_NONE, 2, 
       { { 1, "specialfile", SC_ARG_TYPE_STRING },
 	{ 2, "swap_flags", SC_ARG_TYPE_HEXINT } } },
-    { 88, "sys_reboot", 0xc012de60, RADDR_NO, 4, 
+    { 88, "sys_reboot", 0xc012de60, RADDR_NONE, 4, 
       { { 1, "magic1", SC_ARG_TYPE_INT },
 	{ 2, "magic2", SC_ARG_TYPE_INT },
 	{ 3, "cmd", SC_ARG_TYPE_UINT },
 	{ 4, "arg", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
-    { 91, "sys_munmap", 0xc01551d0, RADDR_NO, 2, 
+    { 91, "sys_munmap", 0xc01551d0, RADDR_NONE, 2, 
       { { 1, "addr", SC_ARG_TYPE_PTR },
 	{ 2, "len", SC_ARG_TYPE_INT } } },
-    { 92, "sys_truncate", 0xc0163fa0, RADDR_NO, 2, 
+    { 92, "sys_truncate", 0xc0163fa0, RADDR_NONE, 2, 
       { { 1, "path", SC_ARG_TYPE_STRING },
 	{ 2, "length", SC_ARG_TYPE_ULONG } } },
-    { 93, "sys_ftruncate", 0xc0163db0, RADDR_NO, 2, 
+    { 93, "sys_ftruncate", 0xc0163db0, RADDR_NONE, 2, 
       { { 1, "fd", SC_ARG_TYPE_INT },
 	{ 2, "length", SC_ARG_TYPE_ULONG } } },
-    { 94, "sys_fchmod", 0xc0163580, RADDR_NO, 2, 
+    { 94, "sys_fchmod", 0xc0163580, RADDR_NONE, 2, 
       { { 1, "fd", SC_ARG_TYPE_INT },
 	{ 2, "mode", SC_ARG_TYPE_HEXINT, file_mode_decoder,(char *[]) { "mode:mode" }, 1 } } },
     { 0 },
-    { 96, "sys_getpriority", 0xc012f040, RADDR_NO, 2,
+    { 96, "sys_getpriority", 0xc012f040, RADDR_NONE, 2,
       { { 1, "which", SC_ARG_TYPE_INT },
 	{ 2, "who", SC_ARG_TYPE_INT } } },
-    { 97, "sys_setpriority", 0xc012ee30, RADDR_NO, 3,
+    { 97, "sys_setpriority", 0xc012ee30, RADDR_NONE, 3,
       { { 1, "which", SC_ARG_TYPE_INT },
 	{ 2, "who", SC_ARG_TYPE_INT },
 	{ 3, "niceval", SC_ARG_TYPE_INT } } },
     { 0 },
-    { 99, "sys_statfs", 0xc0164160, RADDR_NO, 2, 
+    { 99, "sys_statfs", 0xc0164160, RADDR_NONE, 2, 
       { { 1, "path", SC_ARG_TYPE_STRING },
 	{ 2, "buf", SC_ARG_TYPE_PTR } } },
-    { 100, "sys_fstatfs", 0xc0164040, RADDR_NO, 2, 
+    { 100, "sys_fstatfs", 0xc0164040, RADDR_NONE, 2, 
       { { 1, "fd", SC_ARG_TYPE_INT },
 	{ 2, "buf", SC_ARG_TYPE_PTR } } },
-    { 101, "sys_ioperm", 0xc01098f0, RADDR_NO, 3, 
+    { 101, "sys_ioperm", 0xc01098f0, RADDR_NONE, 3, 
       { { 1, "from", SC_ARG_TYPE_ULONG },
 	{ 2, "num", SC_ARG_TYPE_ULONG },
 	{ 3, "turn_on", SC_ARG_TYPE_INT } } },
-    { 102, "sys_socketcall", 0xc028eaa0, RADDR_YES, 2,
+    { 102, "sys_socketcall", 0xc028eaa0, RADDR_GEN, 2,
       { { 1, "call", SC_ARG_TYPE_INT, socket_call_decoder,(char *[]) { "call:call" }, 1 },
 	{ 2, "args", SC_ARG_TYPE_PTR, socket_args_decoder,(char *[]) { "args:args" }, 1 } } },
-    { 103, "sys_syslog", 0xc011f1e0, RADDR_NO, 3,
+    { 103, "sys_syslog", 0xc011f1e0, RADDR_NONE, 3,
       { { 1, "type", SC_ARG_TYPE_INT },
 	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
 	{ 3, "len", SC_ARG_TYPE_INT } } },
-    { 104, "sys_setitimer", 0xc01229f0, RADDR_NO, 3,
+    { 104, "sys_setitimer", 0xc01229f0, RADDR_NONE, 3,
       { { 1, "which", SC_ARG_TYPE_INT },
 	{ 2, "value", SC_ARG_TYPE_ITIMERVAL, itimerval_decoder,(char *[]) { "value:value" }, 1 },
 	{ 3, "ovalue", SC_ARG_TYPE_PTR } } },
-    { 105, "sys_getitimer", 0xc0122e40, RADDR_NO, 2,
+    { 105, "sys_getitimer", 0xc0122e40, RADDR_NONE, 2,
       { { 1, "which", SC_ARG_TYPE_INT },
 	{ 2, "value", SC_ARG_TYPE_PTR } } },
-    { 106, "sys_newstat", 0xc016f5d0, RADDR_NO, 2, 
+    { 106, "sys_newstat", 0xc016f5d0, RADDR_NONE, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "statbuf", SC_ARG_TYPE_PTR } } },
-    { 107, "sys_newlstat", 0xc016f460, RADDR_NO, 2, 
+    { 107, "sys_newlstat", 0xc016f460, RADDR_NONE, 2, 
       { { 1, "filename", SC_ARG_TYPE_STRING },
 	{ 2, "statbuf", SC_ARG_TYPE_PTR } } },
-    { 108, "sys_newfstat", 0xc016f8b0, RADDR_NO, 1, 
+    { 108, "sys_newfstat", 0xc016f8b0, RADDR_NONE, 1, 
       { { 1, "fd", SC_ARG_TYPE_INT },
 	{ 2, "statbuf", SC_ARG_TYPE_PTR } } },
-    { 109, "sys_uname", 0xc010a2a0, RADDR_NO, 1,
+    { 109, "sys_uname", 0xc010a2a0, RADDR_NONE, 1,
       { { 1, "name", SC_ARG_TYPE_PTR } } },
-    { 110, "sys_iopl", 0xc0109820, RADDR_NO, 1,
+    { 110, "sys_iopl", 0xc0109820, RADDR_NONE, 1,
       {	{ 1, "unused", SC_ARG_TYPE_ULONG } } },
-    { 111, "sys_vhangup", 0xc0162d60, RADDR_NO, 0 },
+    { 111, "sys_vhangup", 0xc0162d60, RADDR_NONE, 0 },
     { 0 },
     { 0 },
-    { 114, "sys_wait4", 0xc0121300, RADDR_NO, 4,
+    { 114, "sys_wait4", 0xc0121300, RADDR_NONE, 4,
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "stat_addr", SC_ARG_TYPE_PTR },
 	{ 3, "options", SC_ARG_TYPE_INT },
 	{ 4, "ru", SC_ARG_TYPE_PTR } } },
-    { 115, "sys_swapoff", 0xc015b310, RADDR_NO, 1,
+    { 115, "sys_swapoff", 0xc015b310, RADDR_NONE, 1,
 	{ { 1, "specialfile", SC_ARG_TYPE_STRING } } },
-    { 116, "sys_sysinfo", 0xc0128480, RADDR_NO, 0 },
-    { 117, "sys_ipc", 0xc010a500, RADDR_NO, 0 },
-    { 118, "sys_fsync", 0xc0167720, RADDR_NO, 1,
+    { 116, "sys_sysinfo", 0xc0128480, RADDR_NONE, 0 },
+    { 117, "sys_ipc", 0xc010a500, RADDR_NONE, 0 },
+    { 118, "sys_fsync", 0xc0167720, RADDR_NONE, 1,
       {	{ 1, "fd", SC_ARG_TYPE_UINT } } },
-    { 119, "sys_sigreturn", 0xc01050f0, RADDR_NO, 0 },
-    { 120, "sys_clone", 0xc0102eb0, RADDR_NO, 1, 
+    { 119, "sys_sigreturn", 0xc01050f0, RADDR_NONE, 0 },
+    { 120, "sys_clone", 0xc0102eb0, RADDR_NONE, 1, 
       { { 1, "regs", SC_ARG_TYPE_PT_REGS, process_ptregs_decoder,(char *[]) { "regs:flags" }, 1, process_ptregs_loader } } },
-    { 121, "sys_setdomainname", 0xc012d630, RADDR_NO, 2, 
+    { 121, "sys_setdomainname", 0xc012d630, RADDR_NONE, 2, 
       { { 1, "name", SC_ARG_TYPE_STRING, NULL, NULL, 0, NULL, 2 },
 	{ 2, "len", SC_ARG_TYPE_INT } } },
-    { 122, "sys_newuname", 0xc012d840, RADDR_NO, 1,
+    { 122, "sys_newuname", 0xc012d840, RADDR_NONE, 1,
       { { 1, "name", SC_ARG_TYPE_PTR } } },
-    { 123, "sys_modify_ldt", 0xc0109f60, RADDR_NO, 0 },
-    { 124, "sys_adjtimex", 0xc0123740, RADDR_NO, 0 },
-    { 125, "sys_mprotect", 0xc0156480, RADDR_NO, 3, 
+    { 123, "sys_modify_ldt", 0xc0109f60, RADDR_NONE, 0 },
+    { 124, "sys_adjtimex", 0xc0123740, RADDR_NONE, 0 },
+    { 125, "sys_mprotect", 0xc0156480, RADDR_NONE, 3, 
       { { 1, "start", SC_ARG_TYPE_ULONG },
 	{ 2, "len", SC_ARG_TYPE_ULONG },
 	{ 3, "prot", SC_ARG_TYPE_ULONG } } },
-    { 126, "sys_sigprocmask", 0xc012cd00, RADDR_NO, 3, 
+    { 126, "sys_sigprocmask", 0xc012cd00, RADDR_NONE, 3, 
       { { 1, "how", SC_ARG_TYPE_INT },
 	{ 2, "set", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 3, "oset", SC_ARG_TYPE_PTR } } },
     { 0 },
-    { 128, "sys_init_module", 0xc013d170, RADDR_NO, 3, 
+    { 128, "sys_init_module", 0xc013d170, RADDR_NONE, 3, 
       { { 1, "umod", SC_ARG_TYPE_PTR },
 	{ 2, "len", SC_ARG_TYPE_ULONG },
 	{ 3, "args", SC_ARG_TYPE_STRING } } },
-    { 129, "sys_delete_module", 0xc013c8f0, RADDR_NO, 2, 
+    { 129, "sys_delete_module", 0xc013c8f0, RADDR_NONE, 2, 
       { { 1, "name_user", SC_ARG_TYPE_STRING },
 	{ 2, "flags", SC_ARG_TYPE_HEXINT } } },
     { 0 },
-    { 131, "sys_quotactl", 0xc01347f0, RADDR_NO, 0 },
-    { 132, "sys_getpgid", 0xc012eda0, RADDR_NO, 1,
+    { 131, "sys_quotactl", 0xc01347f0, RADDR_NONE, 0 },
+    { 132, "sys_getpgid", 0xc012eda0, RADDR_NONE, 1,
       {	{ 1, "pid", SC_ARG_TYPE_PID_T } } },
-    { 133, "sys_fchdir", 0xc01643c0, RADDR_NO, 1,
+    { 133, "sys_fchdir", 0xc01643c0, RADDR_NONE, 1,
       {	{ 1, "fd", SC_ARG_TYPE_UINT } } },
-    { 134, "sys_bdflush", 0xc0166460, RADDR_NO, 2, 
+    { 134, "sys_bdflush", 0xc0166460, RADDR_NONE, 2, 
       { { 1, "func", SC_ARG_TYPE_INT },
 	{ 2, "data", SC_ARG_TYPE_ULONG } } },
-    { 135, "sys_sysfs", 0xc01817f0, RADDR_NO, 3, 
+    { 135, "sys_sysfs", 0xc01817f0, RADDR_NONE, 3, 
       { { 1, "option", SC_ARG_TYPE_INT },
 	{ 2, "arg1", SC_ARG_TYPE_ULONG },
 	{ 3, "arg1", SC_ARG_TYPE_ULONG } } },
-    { 136, "sys_personality", 0xc011dbb0, RADDR_NO, 1,
+    { 136, "sys_personality", 0xc011dbb0, RADDR_NONE, 1,
       {	{ 1, "personality", SC_ARG_TYPE_ULONG } } },
     { 0 },
     { 0 },
     { 0 },
-    { 140, "sys_llseek", 0xc0165830, RADDR_NO, 5, 
+    { 140, "sys_llseek", 0xc0165830, RADDR_NONE, 5, 
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "offset_high", SC_ARG_TYPE_ULONG },
 	{ 3, "offset_low", SC_ARG_TYPE_ULONG },
 	{ 4, "result", SC_ARG_TYPE_PTR },
 	{ 5, "origin", SC_ARG_TYPE_UINT } } },
-    { 141, "sys_getdents", 0xc0178d90, RADDR_NO, 3, 
+    { 141, "sys_getdents", 0xc0178d90, RADDR_NONE, 3, 
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "dirent", SC_ARG_TYPE_PTR },
 	{ 3, "count", SC_ARG_TYPE_UINT } } },
-    { 142, "sys_select", 0xc017a240, RADDR_NO, 5, 
+    { 142, "sys_select", 0xc017a240, RADDR_NONE, 5, 
       { { 1, "n", SC_ARG_TYPE_INT },
 	{ 2, "inp", SC_ARG_TYPE_PTR },
 	{ 3, "outp", SC_ARG_TYPE_PTR },
 	{ 4, "exp", SC_ARG_TYPE_PTR },
 	{ 5, "tvp", SC_ARG_TYPE_TIMEVAL, timeval_decoder,(char *[]) { "tvp:tvp" }, 1 } } },
-    { 143, "sys_flock", 0xc017cf00, RADDR_NO, 2, 
+    { 143, "sys_flock", 0xc017cf00, RADDR_NONE, 2, 
       { { 1, "fd", SC_ARG_TYPE_UINT },
 	{ 2, "cmd", SC_ARG_TYPE_UINT } } },
-    { 144, "sys_msync", 0xc0157430, RADDR_NO, 3, 
+    { 144, "sys_msync", 0xc0157430, RADDR_NONE, 3, 
       { { 1, "start", SC_ARG_TYPE_ULONG },
 	{ 2, "len", SC_ARG_TYPE_ULONG },
 	{ 3, "flags", SC_ARG_TYPE_HEXINT } } },
-    { 145, "sys_readv", 0xc0165ac0, RADDR_NO, 0 },
-    { 146, "sys_writev", 0xc0165600, RADDR_NO, 0 },
-    { 147, "sys_getsid", 0xc012e3f0, RADDR_NO, 11,
+    { 145, "sys_readv", 0xc0165ac0, RADDR_NONE, 0 },
+    { 146, "sys_writev", 0xc0165600, RADDR_NONE, 0 },
+    { 147, "sys_getsid", 0xc012e3f0, RADDR_NONE, 11,
       {	{ 1, "pid", SC_ARG_TYPE_PID_T } } },
-    { 148, "sys_fdatasync", 0xc0167700, RADDR_NO, 1,
+    { 148, "sys_fdatasync", 0xc0167700, RADDR_NONE, 1,
       {	{ 1, "fd", SC_ARG_TYPE_UINT } } },
-    { 149, "sys_sysctl", 0xc0126d70, RADDR_NO, 0 },
-    { 150, "sys_mlock", 0xc0153ed0, RADDR_NO, 2, 
+    { 149, "sys_sysctl", 0xc0126d70, RADDR_NONE, 0 },
+    { 150, "sys_mlock", 0xc0153ed0, RADDR_NONE, 2, 
       { { 1, "start", SC_ARG_TYPE_ULONG },
 	{ 2, "len", SC_ARG_TYPE_ULONG } } },
-    { 151, "sys_munlock", 0xc0153d30, RADDR_NO, 2, 
+    { 151, "sys_munlock", 0xc0153d30, RADDR_NONE, 2, 
       { { 1, "start", SC_ARG_TYPE_ULONG },
 	{ 2, "len", SC_ARG_TYPE_ULONG } } },
-    { 152, "sys_mlockall", 0xc0153da0, RADDR_NO, 1, 
+    { 152, "sys_mlockall", 0xc0153da0, RADDR_NONE, 1, 
       { { 1, "flags", SC_ARG_TYPE_HEXINT } } },
-    { 153, "sys_munlockall", 0xc0153e80, RADDR_NO, 0 },
-    { 154, "sys_sched_setparam", 0xc01190c0, RADDR_NO, 2, 
+    { 153, "sys_munlockall", 0xc0153e80, RADDR_NONE, 0 },
+    { 154, "sys_sched_setparam", 0xc01190c0, RADDR_NONE, 2, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "param", SC_ARG_TYPE_PTR } } },
-    { 155, "sys_sched_getparam", 0xc011b460, RADDR_NO, 2, 
+    { 155, "sys_sched_getparam", 0xc011b460, RADDR_NONE, 2, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "param", SC_ARG_TYPE_PTR } } },
-    { 156, "sys_sched_setscheduler", 0xc01190e0, RADDR_NO, 3, 
+    { 156, "sys_sched_setscheduler", 0xc01190e0, RADDR_NONE, 3, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 1, "policy", SC_ARG_TYPE_INT },
 	{ 3, "param", SC_ARG_TYPE_PTR } } },
-    { 157, "sys_sched_getscheduler", 0xc011b400, RADDR_NO, 1, 
+    { 157, "sys_sched_getscheduler", 0xc011b400, RADDR_NONE, 1, 
       { { 1, "pid", SC_ARG_TYPE_PID_T } } },
     { 158, "sys_sched_yield", 0xc0119140, 0 },
-    { 159, "sys_sched_get_priority_max", 0xc0116300, RADDR_NO, 1, 
+    { 159, "sys_sched_get_priority_max", 0xc0116300, RADDR_NONE, 1, 
       { { 1, "policy", SC_ARG_TYPE_INT } } },
-    { 160, "sys_sched_get_priority_min", 0xc0116330, RADDR_NO, 1, 
+    { 160, "sys_sched_get_priority_min", 0xc0116330, RADDR_NONE, 1, 
       { { 1, "policy", SC_ARG_TYPE_INT } } },
-    { 161, "sys_sched_rr_get_interval", 0xc011a440, RADDR_NO, 2, 
+    { 161, "sys_sched_rr_get_interval", 0xc011a440, RADDR_NONE, 2, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "interval", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "interval:interval" }, 1 } } },
-    { 162, "sys_nanosleep", 0xc0137590, RADDR_NO, 2, 
+    { 162, "sys_nanosleep", 0xc0137590, RADDR_NONE, 2, 
       { { 1, "rqtp", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "rqtp:rqtp" }, 1 },
 	{ 2, "rmtp", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "rmtp:rmtp" }, 1 } } },
-    { 163, "sys_mremap", 0xc01573c0, RADDR_NO, 5, 
+    { 163, "sys_mremap", 0xc01573c0, RADDR_NONE, 5, 
       { { 1, "addr", SC_ARG_TYPE_PTR },
 	{ 2, "old_len", SC_ARG_TYPE_ULONG },
 	{ 3, "new_len", SC_ARG_TYPE_ULONG },
@@ -2208,61 +2229,61 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	{ 5, "new_addr", SC_ARG_TYPE_PTR } } },
     { 0 },
     { 0 },
-    { 166, "sys_vm86", 0xc01102b0, RADDR_NO, 0 },
+    { 166, "sys_vm86", 0xc01102b0, RADDR_NONE, 0 },
     { 0 },
-    { 168, "sys_poll", 0xc0179380, RADDR_NO, 3, 
+    { 168, "sys_poll", 0xc0179380, RADDR_NONE, 3, 
       { { 1, "ufds", SC_ARG_TYPE_PTR },
 	{ 2, "nfds", SC_ARG_TYPE_UINT },
 	{ 3, "timeout", SC_ARG_TYPE_LONG } } },
-    { 169, "sys_nfsservctl", 0xc01347f0, RADDR_NO, 0 },
+    { 169, "sys_nfsservctl", 0xc01347f0, RADDR_NONE, 0 },
     { 0 },
     { 0 },
-    { 172, "sys_prctl", 0xc012e8f0, RADDR_NO, 0 },
-    { 173, "sys_rt_sigreturn", 0xc0104ee0, RADDR_NO, 1, 
+    { 172, "sys_prctl", 0xc012e8f0, RADDR_NONE, 0 },
+    { 173, "sys_rt_sigreturn", 0xc0104ee0, RADDR_NONE, 1, 
       { { 1, "__unused", SC_ARG_TYPE_ULONG } } },
-    { 174, "sys_rt_sigaction", 0xc012a470, RADDR_NO, 4, 
+    { 174, "sys_rt_sigaction", 0xc012a470, RADDR_NONE, 4, 
       { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "act", SC_ARG_TYPE_PTR },
 	{ 3, "oact", SC_ARG_TYPE_PTR },
 	{ 4, "sigsetsize", SC_ARG_TYPE_UINT } } },
-    { 175, "sys_rt_sigprocmask", 0xc012cbd0, RADDR_NO, 4, 
+    { 175, "sys_rt_sigprocmask", 0xc012cbd0, RADDR_NONE, 4, 
       { { 1, "how", SC_ARG_TYPE_INT },
 	{ 2, "set", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 3, "oset", SC_ARG_TYPE_PTR },
 	{ 4, "sigsetsize", SC_ARG_TYPE_UINT } } },
-    { 176, "sys_rt_sigpending", 0xc012a030, RADDR_NO, 2, 
+    { 176, "sys_rt_sigpending", 0xc012a030, RADDR_NONE, 2, 
       { { 1, "set", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 2, "sigsetsize", SC_ARG_TYPE_UINT } } },
-    { 177, "sys_rt_sigtimedwait", 0xc012ce50, RADDR_NO, 4, 
+    { 177, "sys_rt_sigtimedwait", 0xc012ce50, RADDR_NONE, 4, 
       { { 1, "uthese", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 2, "uinfo", SC_ARG_TYPE_SIGINFO_T, siginfo_decoder,(char *[]) { "uinfo:uinfo" }, 1 },
 	{ 3, "uts", SC_ARG_TYPE_TIMESPEC, timespec_decoder,(char *[]) { "uts:uts" }, 1 },
 	{ 4, "sigsetsize", SC_ARG_TYPE_UINT } } },
-    { 178, "sys_rt_sigqueueinfo", 0xc012b7a0, RADDR_NO, 3, 
+    { 178, "sys_rt_sigqueueinfo", 0xc012b7a0, RADDR_NONE, 3, 
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 3, "uinfo", SC_ARG_TYPE_SIGINFO_T, siginfo_decoder,(char *[]) { "uinfo:uinfo" }, 1 } } },
-    { 179, "sys_rt_sigsuspend", 0xc012c980, RADDR_NO, 2, 
+    { 179, "sys_rt_sigsuspend", 0xc012c980, RADDR_NONE, 2, 
       { { 1, "unewset", SC_ARG_TYPE_SIGSET_T, sigset_decoder,(char *[]) { "set:set" }, 1 },
 	{ 2, "sigsetsize", SC_ARG_TYPE_UINT } } },
-    { 180, "sys_pread64", 0xc01659c0, RADDR_NO, 0 },
-    { 181, "sys_pwrite64", 0xc0165a40, RADDR_NO, 0 },
+    { 180, "sys_pread64", 0xc01659c0, RADDR_NONE, 0 },
+    { 181, "sys_pwrite64", 0xc0165a40, RADDR_NONE, 0 },
     { 0 },
-    { 183, "sys_getcwd", 0xc017ecb0, RADDR_NO, 0 },
-    { 184, "sys_capget", 0xc0126f60, RADDR_NO, 0 },
-    { 185, "sys_capset", 0xc0127080, RADDR_NO, 0 },
-    { 186, "sys_sigaltstack", 0xc01043e0, RADDR_NO, 0 },
-    { 187, "sys_sendfile", 0xc0164d00, RADDR_YES, 4,
+    { 183, "sys_getcwd", 0xc017ecb0, RADDR_NONE, 0 },
+    { 184, "sys_capget", 0xc0126f60, RADDR_NONE, 0 },
+    { 185, "sys_capset", 0xc0127080, RADDR_NONE, 0 },
+    { 186, "sys_sigaltstack", 0xc01043e0, RADDR_NONE, 0 },
+    { 187, "sys_sendfile", 0xc0164d00, RADDR_GEN, 4,
       { { 1, "out_fd", SC_ARG_TYPE_UINT },
 	{ 2, "in_fd", SC_ARG_TYPE_UINT },
 	{ 3, "offset", SC_ARG_TYPE_PTR },
 	{ 4, "count", SC_ARG_TYPE_INT } } },
     { 0 },
     { 0 },
-    { 190, "sys_vfork", 0xc0102e70, RADDR_NO, 1, 
+    { 190, "sys_vfork", 0xc0102e70, RADDR_NONE, 1, 
       { { 1, "regs", SC_ARG_TYPE_PT_REGS, NULL, NULL, 0, process_ptregs_loader } } },
-    { 191, "sys_getrlimit", 0xc012f650, RADDR_NO, 0 },
-    { 192, "sys_mmap2", 0xc010a360, RADDR_YES, 6,
+    { 191, "sys_getrlimit", 0xc012f650, RADDR_NONE, 0 },
+    { 192, "sys_mmap2", 0xc010a360, RADDR_GEN, 6,
       { { 1, "start", SC_ARG_TYPE_PTR, },
 	{ 2, "length", SC_ARG_TYPE_INT },
 	{ 3, "prot", SC_ARG_TYPE_HEXINT, mmap_prot_decoder,
@@ -2271,65 +2292,62 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	  (char *[]) { "flags:flags" }, 1 },
 	{ 5, "fd", SC_ARG_TYPE_UINT },      
 	{ 6, "offset", SC_ARG_TYPE_INT } } },
-    { 193, "sys_truncate64", 0xc0163f80, RADDR_NO, 0 },
-    { 194, "sys_ftruncate64", 0xc0163d90, RADDR_NO, 0 },
-    { 195, "sys_stat64", 0xc016f640, RADDR_NO, 0 },
-    { 196, "sys_lstat64", 0xc016f4d0, RADDR_NO, 0 },
-    { 197, "sys_fstat64", 0xc016f880, RADDR_NO, 0 },
-    { 198, "sys_lchown", 0xc01636d0, RADDR_NO, 0 },
-    { 199, "sys_getuid", 0xc0129750, RADDR_YES, 0, { } },
-    { 200, "sys_getgid", 0xc0129790, RADDR_YES, 0, { } },
-    { 201, "sys_geteuid", 0xc0129770, RADDR_YES, 0, { } },
-    { 202, "sys_getegid", 0xc01297b0, RADDR_YES, 0, { } },
-    { 203, "sys_setreuid", 0xc012f790, RADDR_NO, 2, 
+    { 193, "sys_truncate64", 0xc0163f80, RADDR_NONE, 0 },
+    { 194, "sys_ftruncate64", 0xc0163d90, RADDR_NONE, 0 },
+    { 195, "sys_stat64", 0xc016f640, RADDR_NONE, 0 },
+    { 196, "sys_lstat64", 0xc016f4d0, RADDR_NONE, 0 },
+    { 197, "sys_fstat64", 0xc016f880, RADDR_NONE, 0 },
+    { 198, "sys_lchown", 0xc01636d0, RADDR_NONE, 0 },
+    { 199, "sys_getuid", 0xc0129750, RADDR_GEN, 0, { } },
+    { 200, "sys_getgid", 0xc0129790, RADDR_GEN, 0, { } },
+    { 201, "sys_geteuid", 0xc0129770, RADDR_GEN, 0, { } },
+    { 202, "sys_getegid", 0xc01297b0, RADDR_GEN, 0, { } },
+    { 203, "sys_setreuid", 0xc012f790, RADDR_NONE, 2, 
       { { 1, "ruid", SC_ARG_TYPE_UID_T }, 
 	{ 2, "euid", SC_ARG_TYPE_UID_T } } },
-    { 204, "sys_setregid", 0xc012f220, RADDR_NO, 2, 
+    { 204, "sys_setregid", 0xc012f220, RADDR_NONE, 2, 
       { { 1, "rgid", SC_ARG_TYPE_GID_T }, 
 	{ 2, "egid", SC_ARG_TYPE_GID_T } } },
-    { 205, "sys_getgroups", 0xc012e560, RADDR_NO, 0 },
-    { 206, "sys_setgroups", 0xc012e1d0, RADDR_NO, 0 },
-    { 207, "sys_fchown", 0xc0163530, RADDR_NO, 0 },
-    { 208, "sys_setresuid", 0xc012fa30, RADDR_NO, 3, 
+    { 205, "sys_getgroups", 0xc012e560, RADDR_NONE, 0 },
+    { 206, "sys_setgroups", 0xc012e1d0, RADDR_NONE, 0 },
+    { 207, "sys_fchown", 0xc0163530, RADDR_NONE, 0 },
+    { 208, "sys_setresuid", 0xc012fa30, RADDR_NONE, 3, 
       { { 1, "ruid", SC_ARG_TYPE_UID_T }, 
 	{ 2, "euid", SC_ARG_TYPE_UID_T }, 
 	{ 3, "suid", SC_ARG_TYPE_UID_T } } },
-    { 209, "sys_getresuid", 0xc012e2e0, RADDR_NO, 3, 
+    { 209, "sys_getresuid", 0xc012e2e0, RADDR_NONE, 3, 
       { { 1, "ruid", SC_ARG_TYPE_PTR }, 
 	{ 2, "euid", SC_ARG_TYPE_PTR }, 
 	{ 3, "suid", SC_ARG_TYPE_PTR } } },
-    { 210, "sys_setresgid", 0xc012f450, RADDR_NO, 3, 
+    { 210, "sys_setresgid", 0xc012f450, RADDR_NONE, 3, 
       { { 1, "rgid", SC_ARG_TYPE_GID_T }, 
 	{ 2, "egid", SC_ARG_TYPE_GID_T }, 
 	{ 3, "sgid", SC_ARG_TYPE_GID_T } } },
-    { 211, "sys_getresgid", 0xc012e320, RADDR_NO, 3, 
+    { 211, "sys_getresgid", 0xc012e320, RADDR_NONE, 3, 
       { { 1, "rgid", SC_ARG_TYPE_PTR }, 
 	{ 2, "egid", SC_ARG_TYPE_PTR }, 
 	{ 3, "sgid", SC_ARG_TYPE_PTR } } },
-    { 212, "sys_chown", 0xc0163790, RADDR_NO, 3, 
+    { 212, "sys_chown", 0xc0163790, RADDR_NONE, 3, 
       { { 1, "filename", SC_ARG_TYPE_STRING }, 
 	{ 2, "user", SC_ARG_TYPE_UID_T }, 
 	{ 3, "group", SC_ARG_TYPE_GID_T } } },
-    { 213, "sys_setuid", 0xc012f910, RADDR_NO, 1, 
+    { 213, "sys_setuid", 0xc012f910, RADDR_NONE, 1, 
       { { 1, "uid", SC_ARG_TYPE_UID_T } } },
-    { 214, "sys_setgid", 0xc012f360, RADDR_NO, 1, 
+    { 214, "sys_setgid", 0xc012f360, RADDR_NONE, 1, 
       { { 1, "gid", SC_ARG_TYPE_GID_T } } },
-    { 215, "sys_setfsuid", 0xc012f5a0, RADDR_NO, 1, 
+    { 215, "sys_setfsuid", 0xc012f5a0, RADDR_NONE, 1, 
       { { 1, "uid", SC_ARG_TYPE_UID_T } } },
-    { 216, "sys_setfsgid", 0xc012e360, RADDR_NO, 1, 
+    { 216, "sys_setfsgid", 0xc012e360, RADDR_NONE, 1, 
       { { 1, "gid", SC_ARG_TYPE_GID_T } } },
-    { 217, "sys_pivot_root", 0xc0183cb0, RADDR_NO, 0 },
-    { 218, "sys_mincore", 0xc01537a0, RADDR_NO, 0 },
-    { 219, "sys_madvise", 0xc014f340, RADDR_NO, 0 },
-    { 220, "sys_getdents64", 0xc0178ba0, RADDR_NO, 0 },
-    { 221, "sys_fcntl64", 0xc0178310, RADDR_NO, 0 },
+    { 217, "sys_pivot_root", 0xc0183cb0, RADDR_NONE, 0 },
+    { 218, "sys_mincore", 0xc01537a0, RADDR_NONE, 0 },
+    { 219, "sys_madvise", 0xc014f340, RADDR_NONE, 0 },
+    { 220, "sys_getdents64", 0xc0178ba0, RADDR_NONE, 0 },
+    { 221, "sys_fcntl64", 0xc0178310, RADDR_NONE, 0 },
     { 0 },
     { 0 },
-    { 224, "sys_gettid", 0xc01297d0, RADDR_NO, 0 },
-    { 225, "sys_readahead", 0xc0142370, RADDR_NO, 0 },
-    { 0 },
-    { 0 },
-    { 0 },
+    { 224, "sys_gettid", 0xc01297d0, RADDR_NONE, 0 },
+    { 225, "sys_readahead", 0xc0142370, RADDR_NONE, 0 },
     { 0 },
     { 0 },
     { 0 },
@@ -2339,81 +2357,84 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 0 },
     { 0 },
     { 0 },
-    { 238, "sys_tkill", 0xc012bb50, RADDR_NO, 0 },
-    { 239, "sys_sendfile64", 0xc0164c50, RADDR_NO, 0 },
-    { 240, "sys_futex", 0xc013a090, RADDR_NO, 0 },
-    { 241, "sys_sched_setaffinity", 0xc011a190, RADDR_NO, 0 },
-    { 242, "sys_sched_getaffinity", 0xc0118cb0, RADDR_NO, 0 },
-    { 243, "sys_set_thread_area", 0xc0103820, RADDR_NO, 0 },
-    { 244, "sys_get_thread_area", 0xc0102d20, RADDR_NO, 0 },
-    { 245, "sys_io_setup", 0xc0185be0, RADDR_NO, 0 },
-    { 246, "sys_io_destroy", 0xc0184e60, RADDR_NO, 0 },
-    { 247, "sys_io_getevents", 0xc0185330, RADDR_NO, 0 },
-    { 248, "sys_io_submit", 0xc0186120, RADDR_NO, 0 },
-    { 249, "sys_io_cancel", 0xc0186220, RADDR_NO, 0 },
-    { 250, "sys_fadvise64", 0xc01466c0, RADDR_NO, 0 },
-    { 0 },
-    { 252, "sys_exit_group", 0xc0121dd0, RADDR_NO, 0 },
-    { 253, "sys_lookup_dcookie", 0xc01347f0, RADDR_NO, 0 },
-    { 254, "sys_epoll_create", 0xc0191560, RADDR_NO, 0 },
-    { 255, "sys_epoll_ctl", 0xc0191810, RADDR_NO, 0 },
-    { 256, "sys_epoll_wait", 0xc0191110, RADDR_NO, 0 },
-    { 257, "sys_remap_file_pages", 0xc014e010, RADDR_NO, 0 },
-    { 258, "sys_set_tid_address", 0xc011d140, RADDR_NO, 0 },
-    { 259, "sys_timer_create", 0xc01332c0, RADDR_NO, 0 },
-    { 260, "sys_timer_settime", 0xc0133ac0, RADDR_NO, 0 },
-    { 261, "sys_timer_gettime", 0xc01339e0, RADDR_NO, 0 },
-    { 262, "sys_timer_getoverrun", 0xc0133a80, RADDR_NO, 0 },
-    { 263, "sys_timer_delete", 0xc0133d60, RADDR_NO, 0 },
-    { 264, "sys_clock_settime", 0xc0133630, RADDR_NO, 0 },
-    { 265, "sys_clock_gettime", 0xc01336e0, RADDR_NO, 0 },
-    { 266, "sys_clock_getres", 0xc0133790, RADDR_NO, 0 },
-    { 267, "sys_clock_nanosleep", 0xc0132cb0, RADDR_NO, 0 },
-    { 268, "sys_statfs64", 0xc01640c0, RADDR_NO, 0 },
-    { 269, "sys_fstatfs64", 0xc0163fc0, RADDR_NO, 0 },
-    { 270, "sys_tgkill", 0xc012bb70, RADDR_NO, 0 },
-    { 271, "sys_utimes", 0xc0163c00, RADDR_NO, 0 },
-    { 272, "sys_fadvise64_64", 0xc01464e0, RADDR_NO, 0 },
-    { 0 },
-    { 274, "sys_mbind", 0xc01347f0, RADDR_NO, 0 },
-    { 275, "sys_get_mempolicy", 0xc01347f0, RADDR_NO, 0 },
-    { 276, "sys_set_mempolicy", 0xc01347f0, RADDR_NO, 0 },
-    { 277, "sys_mq_open", 0xc01347f0, RADDR_NO, 0 },
-    { 278, "sys_mq_unlink", 0xc01347f0, RADDR_NO, 0 },
-    { 279, "sys_mq_timedsend", 0xc01347f0, RADDR_NO, 0 },
-    { 280, "sys_mq_timedreceive", 0xc01347f0, RADDR_NO, 0 },
-    { 281, "sys_mq_notify", 0xc01347f0, RADDR_NO, 0 },
-    { 282, "sys_mq_getsetattr", 0xc01347f0, RADDR_NO, 0 },
-    { 0 },
-    { 284, "sys_waitid", 0xc0121370, RADDR_NO, 0 },
-    { 0 },
-    { 286, "sys_add_key", 0xc01347f0, RADDR_NO, 0 },
-    { 287, "sys_request_key", 0xc01347f0, RADDR_NO, 0 },
-    { 288, "sys_keyctl", 0xc01347f0, RADDR_NO, 0 },
-    { 289, "sys_ioprio_set", 0xc018cc70, RADDR_NO, 0 },
-    { 290, "sys_ioprio_get", 0xc018ca40, RADDR_NO, 0 },
-    { 291, "sys_inotify_init", 0xc0190840, RADDR_NO, 0 },
-    { 292, "sys_inotify_add_watch", 0xc01909f0, RADDR_NO, 0 },
-    { 293, "sys_inotify_rm_watch", 0xc0190360, RADDR_NO, 0 },
     { 0 },
     { 0 },
     { 0 },
+    { 238, "sys_tkill", 0xc012bb50, RADDR_NONE, 0 },
+    { 239, "sys_sendfile64", 0xc0164c50, RADDR_NONE, 0 },
+    { 240, "sys_futex", 0xc013a090, RADDR_NONE, 0 },
+    { 241, "sys_sched_setaffinity", 0xc011a190, RADDR_NONE, 0 },
+    { 242, "sys_sched_getaffinity", 0xc0118cb0, RADDR_NONE, 0 },
+    { 243, "sys_set_thread_area", 0xc0103820, RADDR_NONE, 0 },
+    { 244, "sys_get_thread_area", 0xc0102d20, RADDR_NONE, 0 },
+    { 245, "sys_io_setup", 0xc0185be0, RADDR_NONE, 0 },
+    { 246, "sys_io_destroy", 0xc0184e60, RADDR_NONE, 0 },
+    { 247, "sys_io_getevents", 0xc0185330, RADDR_NONE, 0 },
+    { 248, "sys_io_submit", 0xc0186120, RADDR_NONE, 0 },
+    { 249, "sys_io_cancel", 0xc0186220, RADDR_NONE, 0 },
+    { 250, "sys_fadvise64", 0xc01466c0, RADDR_NONE, 0 },
+    { 0 },
+    { 252, "sys_exit_group", 0xc0121dd0, RADDR_NONE, 0 },
+    { 253, "sys_lookup_dcookie", 0xc01347f0, RADDR_NONE, 0 },
+    { 254, "sys_epoll_create", 0xc0191560, RADDR_NONE, 0 },
+    { 255, "sys_epoll_ctl", 0xc0191810, RADDR_NONE, 0 },
+    { 256, "sys_epoll_wait", 0xc0191110, RADDR_NONE, 0 },
+    { 257, "sys_remap_file_pages", 0xc014e010, RADDR_NONE, 0 },
+    { 258, "sys_set_tid_address", 0xc011d140, RADDR_NONE, 0 },
+    { 259, "sys_timer_create", 0xc01332c0, RADDR_NONE, 0 },
+    { 260, "sys_timer_settime", 0xc0133ac0, RADDR_NONE, 0 },
+    { 261, "sys_timer_gettime", 0xc01339e0, RADDR_NONE, 0 },
+    { 262, "sys_timer_getoverrun", 0xc0133a80, RADDR_NONE, 0 },
+    { 263, "sys_timer_delete", 0xc0133d60, RADDR_NONE, 0 },
+    { 264, "sys_clock_settime", 0xc0133630, RADDR_NONE, 0 },
+    { 265, "sys_clock_gettime", 0xc01336e0, RADDR_NONE, 0 },
+    { 266, "sys_clock_getres", 0xc0133790, RADDR_NONE, 0 },
+    { 267, "sys_clock_nanosleep", 0xc0132cb0, RADDR_NONE, 0 },
+    { 268, "sys_statfs64", 0xc01640c0, RADDR_NONE, 0 },
+    { 269, "sys_fstatfs64", 0xc0163fc0, RADDR_NONE, 0 },
+    { 270, "sys_tgkill", 0xc012bb70, RADDR_NONE, 0 },
+    { 271, "sys_utimes", 0xc0163c00, RADDR_NONE, 0 },
+    { 272, "sys_fadvise64_64", 0xc01464e0, RADDR_NONE, 0 },
+    { 0 },
+    { 274, "sys_mbind", 0xc01347f0, RADDR_NONE, 0 },
+    { 275, "sys_get_mempolicy", 0xc01347f0, RADDR_NONE, 0 },
+    { 276, "sys_set_mempolicy", 0xc01347f0, RADDR_NONE, 0 },
+    { 277, "sys_mq_open", 0xc01347f0, RADDR_NONE, 0 },
+    { 278, "sys_mq_unlink", 0xc01347f0, RADDR_NONE, 0 },
+    { 279, "sys_mq_timedsend", 0xc01347f0, RADDR_NONE, 0 },
+    { 280, "sys_mq_timedreceive", 0xc01347f0, RADDR_NONE, 0 },
+    { 281, "sys_mq_notify", 0xc01347f0, RADDR_NONE, 0 },
+    { 282, "sys_mq_getsetattr", 0xc01347f0, RADDR_NONE, 0 },
+    { 0 },
+    { 284, "sys_waitid", 0xc0121370, RADDR_NONE, 0 },
+    { 0 },
+    { 286, "sys_add_key", 0xc01347f0, RADDR_NONE, 0 },
+    { 287, "sys_request_key", 0xc01347f0, RADDR_NONE, 0 },
+    { 288, "sys_keyctl", 0xc01347f0, RADDR_NONE, 0 },
+    { 289, "sys_ioprio_set", 0xc018cc70, RADDR_NONE, 0 },
+    { 290, "sys_ioprio_get", 0xc018ca40, RADDR_NONE, 0 },
+    { 291, "sys_inotify_init", 0xc0190840, RADDR_NONE, 0 },
+    { 292, "sys_inotify_add_watch", 0xc01909f0, RADDR_NONE, 0 },
+    { 293, "sys_inotify_rm_watch", 0xc0190360, RADDR_NONE, 0 },
     { 0 },
     { 0 },
     { 0 },
-    { 300, "do_exit", 0x0, RADDR_NO, 1,
+    { 0 },
+    { 0 },
+    { 0 },
+    { 300, "do_exit", 0x0, RADDR_NONE, 1,
       { { 1, "code", SC_ARG_TYPE_LONG, 
 	  exit_code_decoder, 
 	  (char *[]) { "code:cause","code:status","code:signal" },
 	  3 } } },
-    { 301, "force_sig_info", 0x0, RADDR_NO, 1,
+    { 301, "force_sig_info", 0x0, RADDR_NONE, 1,
       { { 1, "sig", SC_ARG_TYPE_INT, signal_decoder,(char *[]) { "sig:sig" }, 1 },
 	{ 2, "info", SC_ARG_TYPE_PTR },
 	{ 3, "t", SC_ARG_TYPE_PTR },
       } },
     /* generic syscall stub, used for catching returns (at addr+7) */
 #define SYSCALL_RET_IX 302
-    { 302, "syscall_call", 0x0, RADDR_NO, 0 },
+    { 302, "syscall_call", 0x0, RADDR_NONE, 0 },
 };
 
 #define STATS_MAX (128)
@@ -2816,13 +2837,38 @@ char *url_encode(char *str) {
     return buf;
 }
 
-int execcounter = 0;
-	    
+static inline int
+is_return_addr(struct domain_info *di, unsigned long addr)
+{
+    int i;
+
+    for (i = 0; i < di->nraddrs; i++)
+	if (addr == di->raddrs[i])
+	    return 1;
+
+    return 0;
+}
+
+static inline struct syscall_retinfo *
+syscall_return_addr(struct domain_info *di,
+		    unsigned long addr, unsigned long curthread)
+{
+    struct syscall_retinfo *sc;
+
+    /* see if they have a pending return action */
+    list_for_each_entry(sc, &di->syscalls, list) {
+	if (sc->thread_ptr == curthread && sc->raddr == addr)
+	    return sc;
+    }
+
+    return NULL;
+}
+
 struct argfilter *handle_syscall(struct domain_info *di,
 				 vmprobe_handle_t handle,
 				 struct cpu_user_regs *regs,
 				 char **psstr,char **funcstr,char **argstr,
-				 char **ancestry)
+				 int *ispostcall, char **ancestry)
 {
     unsigned long addr = vmprobe_vaddr(handle);
     uint32_t oi, i = regs->eax;
@@ -2837,94 +2883,76 @@ struct argfilter *handle_syscall(struct domain_info *di,
     int postcall = 0, needpost = 0;
     char *rvalstr = NULL;
 
+    *ispostcall = 0;
+
     /*
      * Handle syscall returns. Only do something for those we care about.
      */
-    if (addr == sctab[SYSCALL_RET_IX].addr) {
+    if (is_return_addr(di, addr)) {
+	unsigned long curthread = current_thread_ptr(regs->esp);
 	struct syscall_retinfo *sc;
-	unsigned long curthread;
-	int found = 0;
 
-#ifndef STATIC_RET_PROBE
-	if (list_empty(&syscalls)) {
-	    fprintf(stderr,"ERROR: syscall return with none pending!\n");
+	sc = syscall_return_addr(di, addr, curthread);
+	if (sc != NULL) {
+	    /* remove ourselves from the list */
+	    list_del(&sc->list);
+
+	    /* for extracting arguments, we need pre-call values */
+	    tregs = *regs;
+	    tregs.ebx = sc->arg0;
+	    tregs.ecx = sc->arg1;
+	    tregs.esp = sc->argptr;
+	    aregs = &tregs;
+
+	    debug(1, "Syscall %d return@0x%lx for thread 0x%lx\n",
+		  sc->syscall_ix, sc->raddr, sc->thread_ptr);
+
+	    oi = SYSCALL_RET_IX;
+	    i = sc->syscall_ix;
+	    *ispostcall = postcall = 1;
+
+	    /* dealloc the struct */
+	    free(sc);
+	    sc = NULL;
+	}
+	/*
+	 * Someone else hit a return address.
+	 * This happens when a thread is in a syscall but doesn't require
+	 * any post-syscall action. In these cases we do not create a syscall
+	 * return entry but will still hit the breakpoint.
+	 */
+	else {
+	    debug(1,"dom%d: thread 0x%x hit raddr 0x%lx; no action needed\n",
+		  di->domid, curthread, addr);
 	    return NULL;
 	}
-#endif
-
-	/* figure out who is running */
-	curthread = current_thread_ptr(regs->esp);
-
-	/* see if they have a pending return action */
-	list_for_each_entry(sc, &syscalls, list) {
-	    if (sc->thread_ptr == curthread) {
-		found++;
-		break;
-	    }
-	}
-	/* if not, we are done */
-	if (!found) {
-	    return NULL;
-	}
-
-	/* remove ourselves from the list */
-	list_del(&sc->list);
-
-	/* for the purpose of extracting arguments, we need pre-call values */
-	tregs = *regs;
-	tregs.ebx = sc->arg0;
-	tregs.ecx = sc->arg1;
-	tregs.esp = sc->argptr;
-	aregs = &tregs;
-
-	debug(1, "Syscall %d return for thread 0x%lx\n",
-	      sc->syscall_ix, curthread);
-
-#ifndef STATIC_RET_PROBE
-	/* deregister the probe if no other process has it scheduled */
-	if (list_empty(&syscalls)) {
-	    /* remove probe */
-	    ;	
-	}
-#endif
-
-	oi = SYSCALL_RET_IX;
-	i = sc->syscall_ix;
-	postcall = 1;
-
-	/* dealloc the struct */
-	free(sc);
     }
 
-    // hack to catch do_exit too!
+    /*
+     * Catch special, non-syscall calls
+     */
     else if (addr == sctab[300].addr) {
 	oi = i = 300;
     }
     else if (addr == sctab[301].addr) {
 	oi = i = 301;
     }
-    // Even when the syscall number appears legit, check that the
-    // address is consistent. If one of the syscall probes is triggered
-    // due to an intra-kernel use, eax may not have the correct value.
+
+    /*
+     * Even when the syscall number appears legit, check that the
+     * address is consistent. If one of the syscall probes is triggered
+     * due to an intra-kernel use, eax may not have the correct value.
+     */
     else if (i >= 0 && i < SYSCALL_MAX && addr != sctab[i].addr) {
-	debug(0,"WARNING: ignoring internal use of syscall@0x%lx (i==%d)\n",
-	      addr, i);
+	debug(0,"WARNING: dom%d: ignoring internal use of syscall@0x%lx (i==%d)\n",
+	      di->domid, addr, i);
 	return NULL;
     }
-#if 0
-    // Empirically, we have discovered that these can be called when
-    // the syscall number is not in eax. Ignore these, I think they are
-    // kernel-internal calls.
-    else if ((addr == sctab[6].addr && i != 6) ||
-	     (addr == sctab[114].addr && i != 114)) {
-	debug(0,"WARNING: ignoring internal use of syscall@0x%lx\n",addr);
-	return NULL;
-    }
-#endif
+
+    /*
+     * A normal, probed syscall entry.
+     */
     else {
-	if (i == 11) {
-	    ++execcounter;
-	}
 	oi = i;
     }
 
@@ -2940,14 +2968,14 @@ struct argfilter *handle_syscall(struct domain_info *di,
 		return NULL;
 	    }
 	}
-	fprintf(stderr,"ERROR: invalid syscall #%d %s[dom%d 0x%lx] ignored\n",
-		i, oi == SYSCALL_RET_IX ? "(after) " : "",
+	fprintf(stderr,"ERROR: invalid syscall #%d@0x%lx %s[dom%d 0x%lx] ignored\n",
+		i, addr, oi == SYSCALL_RET_IX ? "(after) " : "",
 		di->domid, addr);
 	return NULL;
     }
     if (sctab[i].num == 0) {
-	fprintf(stderr,"ERROR: unknown syscall #%d %s[dom%d 0x%lx] ignored\n",
-		sctab[i].num, oi == SYSCALL_RET_IX ? "(after) " : "",
+	fprintf(stderr,"ERROR: unknown syscall #%d@0x%lx %s[dom%d 0x%lx] ignored\n",
+		sctab[i].num, addr, oi == SYSCALL_RET_IX ? "(after) " : "",
 		di->domid, addr);
 	return NULL;
     }
@@ -2969,20 +2997,6 @@ struct argfilter *handle_syscall(struct domain_info *di,
     memset(adata,0,sizeof(struct argdata *)*sctab[i].argc);
 
     data = load_current_process_data(handle,regs,-1);
-
-#if 0
-    /* Lets grab the return address */
-    if (oi != SYSCALL_RET_IX) {
-	unsigned long raddr, loc;
-	loc = (unsigned long)regs->esp - 0;
-	if (vmprobe_get_data(handle, regs, "syscall_raddr", loc, 0,
-			     sizeof(raddr), (unsigned char *)&raddr) == NULL)
-		raddr = 0x69696969;
-	printf("%s: sp=%x, addr=%lx, value=%lx\n",
-	       sctab[i].name, regs->esp, loc, raddr);
-	fflush(stdout);
-    }
-#endif
 
     for (j = 0; j < sctab[i].argc; ++j) {
 	adata[j] = (struct argdata *)malloc(sizeof(struct argdata));
@@ -3176,22 +3190,22 @@ struct argfilter *handle_syscall(struct domain_info *di,
      */
     if (!strcmp(sctab[i].name,"sys_waitpid")) {
 	if (!postcall) {
-	    reload_process_list(handle,regs);
+	    reload_process_list(di,handle,regs);
 #if 0
 	    if (debug >= 0) {
 		printf("pre-waitpid, reloaded process list:\n");
-		print_process_list();
+		print_process_list(di);
 	    }
 #endif
 	} else {
 #if 0
 	    if (debug >= 0) {
 		printf("post-waitpid, process list:\n");
-		print_process_list();
+		print_process_list(di);
 	    }
 #endif
 	    if (regs->eax > 0 && pid_in_pslist(di, regs->eax)) {
-		reload_process_list(handle,regs);
+		reload_process_list(di,handle,regs);
 		dopslist = 1;
 	    }
 	}
@@ -3204,7 +3218,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
 			   || !strcmp(sctab[i].name,"sys_fork")
 			   || !strcmp(sctab[i].name,"sys_vfork")
 			   || !strcmp(sctab[i].name,"sys_clone"))) {
-	reload_process_list(handle,regs);
+	reload_process_list(di,handle,regs);
 	if (pid_in_pslist(di, mypid))
 	    dopslist = 1;
 
@@ -3218,7 +3232,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
      * the new identity of the exec'ed process.
      */
     else if (postcall && !strcmp(sctab[i].name,"sys_execve")) {
-	reload_process_list(handle,regs);
+	reload_process_list(di,handle,regs);
     }
 
     /*
@@ -3288,7 +3302,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
      * Schedule any post action required.
      */
     if (!postcall && needpost) {
-	if (sctab[i].raddr != RADDR_NO) {
+	if (sctab[i].raddr != RADDR_NONE) {
 	    struct syscall_retinfo *sc;
 
 	    sc = malloc(sizeof(*sc));
@@ -3298,19 +3312,15 @@ struct argfilter *handle_syscall(struct domain_info *di,
 	    }
 	    sc->thread_ptr = current_thread_ptr(regs->esp);
 	    sc->syscall_ix = i;
+	    if ((sc->raddr = sctab[i].raddr) == RADDR_GEN)
+		sc->raddr = sctab[SYSCALL_RET_IX].addr;
 	    sc->arg0 = regs->ebx;
 	    sc->arg1 = regs->ecx;
 	    sc->argptr = regs->esp;
 
 	    /* stick it on the front of the list */
-	    list_add(&sc->list, &syscalls);
+	    list_add(&sc->list, &di->syscalls);
 
-#ifndef STATIC_RET_PROBE
-	    if (list_empty(&syscalls)) {
-		/* register probe */
-		;
-	    }
-#endif
 	    debug(1, "Registered syscall %d return probe for thread 0x%x\n",
 		  sc->syscall_ix, sc->thread_ptr);
 	}
@@ -3333,6 +3343,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
     char *dstr = NULL;
     char *gfilterstr = " (not filtering; globally off!)";
     struct domain_info *di;
+    int postcall = 0;
 
     va = -1;
 
@@ -3344,9 +3355,9 @@ static int on_fn_pre(vmprobe_handle_t vp,
 
 #ifdef OLD_VPG_COMPAT
     /* for compat, ignore ancestry (a recent mike-ism) */
-    filter = handle_syscall(di,vp,regs,&psstr,&funcstr,&argstr,NULL);
+    filter = handle_syscall(di,vp,regs,&psstr,&funcstr,&argstr,&postcall,NULL);
 #else
-    filter = handle_syscall(di,vp,regs,&psstr,&funcstr,&argstr,
+    filter = handle_syscall(di,vp,regs,&psstr,&funcstr,&argstr,&postcall,
 			    filtered_events_fd ? &ancestry : NULL);
 #endif
     if (filter) {
@@ -3356,9 +3367,6 @@ static int on_fn_pre(vmprobe_handle_t vp,
 	gettimeofday(&tv, NULL);
 	name_trunc = NULL; // strrchr(di->domname,'-');
 	dstr = url_encode(name_trunc ? name_trunc + 1 :di->domname);
-
-	/* XXX */
-	int postcall = (vmprobe_vaddr(vp) == sctab[SYSCALL_RET_IX].addr);
 
 	if (dofilter) 
 	    gfilterstr = "";
@@ -3546,8 +3554,11 @@ create_domain_info(domid_t domid, char *domname)
 	return NULL;
     }
 
-    for (i = 0; i < SYSCALL_MAX; i++)
+    for (i = 0; i < HANDLE_MAX; i++)
 	di->schandles[i] = -1;
+
+    INIT_LIST_HEAD(&di->processes);
+    INIT_LIST_HEAD(&di->syscalls);
 
     INIT_LIST_HEAD(&di->list);
     return di;
@@ -4067,7 +4078,7 @@ int load_config_file(char *file, struct list_head *doms)
 		    else if (strcmp(val, "post") == 0) {
 			/* Make sure syscall supports it */
 			if (filter->syscallnum != -1 &&
-			    sctab[filter->syscallnum].raddr == RADDR_NO) {
+			    sctab[filter->syscallnum].raddr == RADDR_NONE) {
 			    fprintf(stderr, "WARNING: syscall %d does not support post-action, treating as pre-action\n", filter->syscallnum);
 			    filter->when = WHEN_PRE;
 			}
@@ -4232,7 +4243,7 @@ int load_config_file(char *file, struct list_head *doms)
  */
 static int register_domain_probes(struct domain_info *di)
 {
-    unsigned long vaddrlist[SYSCALL_MAX];
+    unsigned long vaddrlist[HANDLE_MAX];
     int i, j, rc;
 
     /* make sure the domain didn't die prematurely */
@@ -4241,7 +4252,7 @@ static int register_domain_probes(struct domain_info *di)
 	return -1;
     }
 
-    for (i = 0; i < SYSCALL_MAX; ++i) {
+    for (i = 0; i < HANDLE_MAX; ++i) {
 	di->schandles[i] = -1;
 	vaddrlist[i] = 0;
     }
@@ -4263,45 +4274,63 @@ static int register_domain_probes(struct domain_info *di)
 	    continue;
 
 	vaddrlist[i] = sctab[i].addr;
-    }
 
-#ifdef STATIC_RET_PROBE
-    /*
-     * If someone wants a "post" probe, insert the magic probe.
-     * XXX should do this dynamically to mitigate the impact on others.
-     */
-    for (j = 0; j < di->filt_list_len; ++j) {
-	if (di->filt_list[j]->when == WHEN_POST) {
-	    vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
-	    debug(1, "dom%d: installing syscall return probe at 0x%x\n",
-		  di->domid, vaddrlist[SYSCALL_RET_IX]);
-	    break;
+	/*
+	 * If we also need a POST probe, set it.
+	 * We use a syscall-specific return address if possible,
+	 * otherwise use the generic return address.
+	 */
+	for (j = 0; j < di->filt_list_len; ++j) {
+	    if (di->filt_list[j]->when != WHEN_POST ||
+		(di->filt_list[j]->syscallnum >= 0 &&
+		 di->filt_list[j]->syscallnum != i))
+		continue;
+
+	    assert(sctab[i].raddr != RADDR_NONE);
+	    if (sctab[i].raddr != RADDR_GEN) {
+		assert(di->nraddrs < RADDRS_MAX);
+		di->raddrs[di->nraddrs++] = sctab[i].raddr;
+		vaddrlist[SYSCALL_MAX+i] = sctab[i].raddr;
+		debug(1, "dom%d: installing %s return probe at 0x%x\n",
+		      di->domid, sctab[i].name, sctab[i].raddr);
+	    } else if (vaddrlist[SYSCALL_RET_IX] == 0) {
+		assert(di->nraddrs < RADDRS_MAX);
+		di->raddrs[di->nraddrs++] = sctab[SYSCALL_RET_IX].addr;
+		vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
+		debug(1, "dom%d: installing syscall return probe at 0x%x\n",
+		      di->domid, vaddrlist[SYSCALL_RET_IX]);
+	    }
 	}
     }
-#endif
 
-    rc = register_vmprobe_batch(di->domid, vaddrlist, SYSCALL_MAX,
+    rc = register_vmprobe_batch(di->domid, vaddrlist, HANDLE_MAX,
 				on_fn_pre, on_fn_post, di->schandles, 1);
     if (rc) {
-	for (i = 0; i < SYSCALL_MAX; ++i) {
+	for (i = 0; i < HANDLE_MAX; ++i) {
 	    if (vaddrlist[i] && di->schandles[i] == -1)
 		break;
 	}
-	if (i == SYSCALL_MAX)
+	if (i == HANDLE_MAX)
 	    error("dom%d: failed to register probes!\n", di->domid);
-	else
-	    error("dom%d: failed to register probe for %s\n",
-		  di->domid, sctab[i].name);
+	else {
+	    j = i < SYSCALL_MAX ? i : (i - SYSCALL_MAX);
+	    error("dom%d: failed to register probe for %s%s\n",
+		  di->domid, sctab[j].name,
+		  (i == j) ? "" : " return");
+	}
 	return -1;
     }
 
-    for (i = 0; i < SYSCALL_MAX; ++i) {
+    for (i = 0; i < HANDLE_MAX; ++i) {
 	if (vaddrlist[i] && di->schandles[i] > -1) {
+	    j = i < SYSCALL_MAX ? i : (i - SYSCALL_MAX);
+
 	    di->nprobes++;
 	    rc = vmprobe_setcookie(di->schandles[i], di);
 	    assert(rc == 0);
-	    fprintf(stderr, "dom%d: registered probe %d for %s\n",
-		    di->domid, di->schandles[i], sctab[i].name);
+	    fprintf(stderr, "dom%d: registered probe %d for %s%s\n",
+		    di->domid, di->schandles[i], sctab[j].name,
+		    (i == j) ? "" : " return");
 	}
     }
 
@@ -4310,21 +4339,25 @@ static int register_domain_probes(struct domain_info *di)
 
 static int unregister_domain_probes(struct domain_info *di)
 {
-    int i;
+    int i, j;
 
-    if (unregister_vmprobe_batch(di->domid, di->schandles, SYSCALL_MAX)) {
+    if (unregister_vmprobe_batch(di->domid, di->schandles, HANDLE_MAX)) {
 	error("dom%d: failed to unregister some probes; this is bad!!\n",
 	      di->domid);
 	return -1;
     }
 
-    for (i = 0; i < SYSCALL_MAX; ++i) {
+    for (i = 0; i < HANDLE_MAX; ++i) {
+	j = i < SYSCALL_MAX ? i : (i - SYSCALL_MAX);
+
 	if (di->schandles[i] >= 0) {
 	    di->schandles[i] = -1;
-	    fprintf(stderr, "dom%d: unregistered probe for %s.\n",
-		    di->domid, sctab[i].name);
+	    fprintf(stderr, "dom%d: unregistered probe for %s%s.\n",
+		    di->domid, sctab[j].name,
+		    (i == j) ? "" : " return");
 	}
     }
+    di->nraddrs = 0;
     di->nprobes = 0;
 
     return 0;
@@ -4345,19 +4378,20 @@ static void cleanup(int signo)
 	fprintf(stderr, "Shutting down...\n");
     }
 
-    // free the current process list
-    free_process_list();
-
-    // free the syscall return list
-    list_for_each_entry_safe(sc,tmpsc,&syscalls,list) {
-	list_del(&sc->list);
-	free(sc);
-    }
-
     // free info for all domains monitored
     list_for_each_entry_safe(di, tmpdi, &domains, list) {
 	if (debug >= 0)
 	    dump_domain_info(di, "Freeing");
+
+	// free the current process list
+	free_process_list(di);
+
+	// free the syscall return list
+	list_for_each_entry_safe(sc,tmpsc,&di->syscalls,list) {
+	    list_del(&sc->list);
+	    free(sc);
+	}
+
 	free_domain_info(di);
     }
 
@@ -4514,6 +4548,23 @@ int main(int argc, char *argv[])
 			updated++;
 		    }
 
+		    /*
+		     * We also identify a couple of common empirically-derived
+		     * syscall-specific return points.
+		     */
+		    if (!strcmp(sym, "sys_socketcall")) {
+			addr += 30;
+			debug(1, "setting sys_socketcall return address to 0x%x.\n",
+			      addr);
+			sctab[i].raddr = addr;
+		    }
+		    else if (!strcmp(sym, "sys_waitpid")) {
+			addr += 40;
+			debug(1, "setting sys_waitpid return address to 0x%x.\n",
+			      addr);
+			sctab[i].raddr = addr;
+		    }
+
 		    // first match wins; there won't be more.
 		    //break;
 		}
@@ -4590,7 +4641,7 @@ int main(int argc, char *argv[])
 		    list_for_each_entry(di, &domains, list) {
 			(void)unregister_vmprobe_batch(di->domid,
 						       di->schandles,
-						       SYSCALL_MAX);
+						       HANDLE_MAX);
 		    }
 		    rc = 1;
 		    nprobes = 0;
