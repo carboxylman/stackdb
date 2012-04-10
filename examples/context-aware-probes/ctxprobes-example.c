@@ -59,6 +59,21 @@ char context_ch(ctxprobes_context_t context)
     return c;
 }
 
+void sys_open_prologue(char *symbol, 
+                       ctxprobes_task_t *task,
+                       ctxprobes_context_t context)
+{
+    printf("[%c] %d (%s): %s proloque invoked\n", 
+           context_ch(context), task->pid, task->comm, symbol);
+    
+    printf("- Parent task chain: \n");
+    while (task->parent)
+    {
+        printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
+        task = task->parent;
+    }
+}
+
 void sys_open_call(char *symbol, 
                    ctxprobes_var_t *args, 
                    int argcount, 
@@ -157,6 +172,13 @@ int main(int argc, char *argv[])
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");
+        exit(1);
+    }
+
+    ret = ctxprobes_func_prologue("sys_open", sys_open_prologue);
+    if (ret)
+    {
+        fprintf(stderr, "failed to register probe on sys_open prologue\n");
         exit(1);
     }
 

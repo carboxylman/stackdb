@@ -52,7 +52,30 @@ ctxprobes_context_t context_prev;
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
 
-/* Higher level user probe handler is called here; call */
+static int probe_func_prologue(struct probe *probe,
+                               void *data,
+                               struct probe *trigger)
+{
+    char *symbol;
+
+    ctxprobes_func_prologue_handler_t handler 
+        = (ctxprobes_func_prologue_handler_t) data;
+
+    symbol = probe->name;
+
+    DBG("%d (%s): Function %s prologue (context: %s)\n", 
+        task_current->pid, task_current->comm, symbol, 
+        context_string(context_current));
+  
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
+    handler(symbol, 
+            task_current, 
+            context_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
+
+    return 0;
+}
+
 static int probe_func_call(struct probe *probe,
                            void *data,
                            struct probe *trigger)
@@ -88,7 +111,6 @@ static int probe_func_call(struct probe *probe,
     return 0;
 }
 
-/* Higher level user probe handler is called here; return  */
 static int probe_func_return(struct probe *probe,
                              void *data,
                              struct probe *trigger)
@@ -131,431 +153,6 @@ static int probe_func_return(struct probe *probe,
     return 0;
 }
 
-/* TRAP_divide_error -- trap gate #0; call */
-static int probe_divide_error_call(struct probe *probe, 
-                                   void *data, 
-                                   struct probe *trigger)
-{
-    DBG("%d (%s): Trap divide error called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_divide_error -- trap gate #0; return */
-static int probe_divide_error_return(struct probe *probe, 
-                                     void *data, 
-                                     struct probe *trigger)
-{
-    DBG("%d (%s): Trap divide error returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_debug -- interrupt gate #1; call */
-static int probe_debug_call(struct probe *probe, 
-                            void *data, 
-                            struct probe *trigger)
-{
-    DBG("%d (%s): Trap debug called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_debug -- interrupt gate #1; return */
-static int probe_debug_return(struct probe *probe, 
-                              void *data, 
-                              struct probe *trigger)
-{
-    DBG("%d (%s): Trap debug returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_nmi -- interrupt gate #2; call */
-static int probe_nmi_call(struct probe *probe, 
-                          void *data, 
-                          struct probe *trigger)
-{
-    DBG("%d (%s): Trap NMI called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_nmi -- interrupt gate #2; return */
-static int probe_nmi_return(struct probe *probe, 
-                            void *data, 
-                            struct probe *trigger)
-{
-    DBG("%d (%s): Trap NMI returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_int3 -- system interrupt gate #3; call */
-static int probe_int3_call(struct probe *probe, 
-                           void *data, 
-                           struct probe *trigger)
-{
-    DBG("%d (%s): Trap breakpoint called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_int3 -- system interrupt gate #3; return */
-static int probe_int3_return(struct probe *probe, 
-                             void *data, 
-                             struct probe *trigger)
-{
-    DBG("%d (%s): Trap breakpoint returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_overflow -- system gate #4; call */
-static int probe_overflow_call(struct probe *probe, 
-                               void *data, 
-                               struct probe *trigger)
-{
-    DBG("%d (%s): Trap overflow called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_overflow -- system gate #4; return */
-static int probe_overflow_return(struct probe *probe, 
-                                 void *data, 
-                                 struct probe *trigger)
-{
-    DBG("%d (%s): Trap overflow returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_bounds -- trap gate #5; call */
-static int probe_bounds_call(struct probe *probe, 
-                             void *data, 
-                             struct probe *trigger)
-{
-    DBG("%d (%s): Trap bounds check called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_bounds -- trap gate #5; return */
-static int probe_bounds_return(struct probe *probe, 
-                               void *data, 
-                               struct probe *trigger)
-{
-    DBG("%d (%s): Trap bounds check returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_invalid_op -- trap gate #6; call */
-static int probe_invalid_op_call(struct probe *probe, 
-                                 void *data, 
-                                 struct probe *trigger)
-{
-    DBG("%d (%s): Trap invalid opcode called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_invalid_op -- trap gate #6; return */
-static int probe_invalid_op_return(struct probe *probe, 
-                                   void *data, 
-                                   struct probe *trigger)
-{
-    DBG("%d (%s): Trap invalid opcode returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_no_device -- trap gate #7; call */
-static int probe_device_not_available_call(struct probe *probe, 
-                                           void *data, 
-                                           struct probe *trigger)
-{
-    DBG("%d (%s): Trap device not available called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_no_device -- trap gate #7; return */
-static int probe_device_not_available_return(struct probe *probe, 
-                                             void *data, 
-                                             struct probe *trigger)
-{
-    DBG("%d (%s): Trap device not available returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_double_fault -- trap gate #8; call */
-static int probe_double_fault_call(struct probe *probe, 
-                                   void *data, 
-                                   struct probe *trigger)
-{
-    DBG("%d (%s): Trap double fault called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_double_fault -- trap gate #8; return */
-static int probe_double_fault_return(struct probe *probe, 
-                                     void *data, 
-                                     struct probe *trigger)
-{
-    DBG("%d (%s): Trap double fault returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_copro_seg -- trap gate #9; call */
-static int probe_coprocessor_segment_overrun_call(struct probe *probe, 
-                                                  void *data, 
-                                                  struct probe *trigger)
-{
-    DBG("%d (%s): Trap coprocessor segment overrun called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_copro_seg -- trap gate #9; return */
-static int probe_coprocessor_segment_overrun_return(struct probe *probe, 
-                                                    void *data, 
-                                                    struct probe *trigger)
-{
-    DBG("%d (%s): Trap coprocessor segment overrun returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_invalid_tss -- trap gate #10; call */
-static int probe_invalid_TSS_call(struct probe *probe, 
-                                  void *data, 
-                                  struct probe *trigger)
-{
-    DBG("%d (%s): Trap invalid TSS called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_invalid_tss -- trap gate #10; return */
-static int probe_invalid_TSS_return(struct probe *probe, 
-                                    void *data, 
-                                    struct probe *trigger)
-{
-    DBG("%d (%s): Trap invalid TSS returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_no_segment -- trap gate #11; call */
-static int probe_segment_not_present_call(struct probe *probe, 
-                                          void *data, 
-                                          struct probe *trigger)
-{
-    DBG("%d (%s): Trap segment not present called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_no_segment -- trap gate #11; return */
-static int probe_segment_not_present_return(struct probe *probe, 
-                                            void *data, 
-                                            struct probe *trigger)
-{
-    DBG("%d (%s): Trap segment not present returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_stack_error -- trap gate #12; call */
-static int probe_stack_segment_call(struct probe *probe, 
-                                    void *data, 
-                                    struct probe *trigger)
-{
-    DBG("%d (%s): Trap stack exception called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_stack_error -- trap gate #12; return */
-static int probe_stack_segment_return(struct probe *probe, 
-                                      void *data, 
-                                      struct probe *trigger)
-{
-    DBG("%d (%s): Trap stack exception returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_gp_fault -- trap gate #13; call */
-static int probe_general_protection_call(struct probe *probe, 
-                                         void *data, 
-                                         struct probe *trigger)
-{
-    DBG("%d (%s): Trap general protection called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_gp_fault -- trap gate #13; return */
-static int probe_general_protection_return(struct probe *probe, 
-                                           void *data, 
-                                           struct probe *trigger)
-{
-    DBG("%d (%s): Trap general protection returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_page_fault -- trap gate #14; call */
-static int probe_page_fault_call(struct probe *probe, 
-                                 void *data, 
-                                 struct probe *trigger)
-{
-    ctxprobes_var_t *arg_list = NULL;
-    int arg_count = 0;
-    unsigned long error_code;
-    char error_str[128] = {0,};
-    int ret;
-
-    ret = load_func_args(&arg_list, &arg_count, probe);
-    if (ret)
-        ERR("Failed to load function args\n");
-
-    memcpy(&error_code, arg_list[1].buf, arg_list[1].size);
-    strcat(error_str, (error_code & 1) ?
-           "protection-fault, " : "no-page-found, ");
-    strcat(error_str, (error_code & 2) ?
-           "write, " : "read, ");
-    strcat(error_str, (error_code & 4) ?
-           "user, " : "kernel, ");
-    strcat(error_str, (error_code & 8) ?
-           "reserved-bit, " : "");
-    strcat(error_str, (error_code & 16) ?
-           "instr-fetch, " : "");
-    error_str[strlen(error_str)-2] = '\0';
-
-    DBG("%d (%s): Trap page fault called (%s)\n", 
-        task_current->pid, task_current->comm, error_str);
-
-    return 0;
-}
-
-/* TRAP_page_fault -- trap gate #14; return */
-static int probe_page_fault_return(struct probe *probe, 
-                                   void *data, 
-                                   struct probe *trigger)
-{
-    DBG("%d (%s): Trap page fault returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_spurious_int -- trap gate #15; call */
-static int probe_spurious_interrupt_bug_call(struct probe *probe, 
-                                             void *data, 
-                                             struct probe *trigger)
-{
-    DBG("%d (%s): Trap spurious interrupt bug called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_spurious_int -- trap gate #15; return */
-static int probe_spurious_interrupt_bug_return(struct probe *probe, 
-                                               void *data, 
-                                               struct probe *trigger)
-{
-    DBG("%d (%s): Trap spurious interrupt bug returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_copro_error -- trap gate #16; call */
-static int probe_coprocessor_error_call(struct probe *probe, 
-                                        void *data, 
-                                        struct probe *trigger)
-{
-    DBG("%d (%s): Trap floating point error called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_copro_error -- trap gate #16; return */
-static int probe_coprocessor_error_return(struct probe *probe, 
-                                          void *data, 
-                                          struct probe *trigger)
-{
-    DBG("%d (%s): Trap floating point error returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_alignment_check -- trap gate #17; call */
-static int probe_alignment_check_call(struct probe *probe, 
-                                      void *data, 
-                                      struct probe *trigger)
-{
-    DBG("%d (%s): Trap alignment check called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_alignment_check -- trap gate #17; return */
-static int probe_alignment_check_return(struct probe *probe, 
-                                        void *data, 
-                                        struct probe *trigger)
-{
-    DBG("%d (%s): Trap alignment check returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_machine_check -- trap gate #18; call */
-static int probe_machine_check_call(struct probe *probe, 
-                                    void *data, 
-                                    struct probe *trigger)
-{
-    DBG("%d (%s): Trap machine check called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_machine_check -- trap gate #18; return */
-static int probe_machine_check_return(struct probe *probe, 
-                                      void *data, 
-                                      struct probe *trigger)
-{
-    DBG("%d (%s): Trap machine check returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_simd_error -- trap gate #19; call */
-static int probe_simd_coprocessor_error_call(struct probe *probe, 
-                                             void *data, 
-                                             struct probe *trigger)
-{
-    DBG("%d (%s): Trap SIMD floating point error called\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* TRAP_simd_error -- trap gate #19; return */
-static int probe_simd_coprocessor_error_return(struct probe *probe, 
-                                             void *data, 
-                                             struct probe *trigger)
-{
-    DBG("%d (%s): Trap SIMD floating point error returned\n", 
-        task_current->pid, task_current->comm);
-    return 0;
-}
-
-/* All traps except system calls are routed to corresponding handlers; call */
 static int probe_trap_call(struct probe *probe, 
                            void *data, 
                            struct probe *trigger)
@@ -563,107 +160,26 @@ static int probe_trap_call(struct probe *probe,
     //context_prev = context_current;
     //context_current = CTXPROBES_CONTEXT_TRAP;
 
-    if (strcmp("do_divide_error", probe->name) == 0)
-        return probe_divide_error_call(probe, data, trigger);
-    else if (strcmp("do_debug", probe->name) == 0)
-        return probe_debug_call(probe, data, trigger);
-    else if (strcmp("do_nmi", probe->name) == 0)
-        return probe_nmi_call(probe, data, trigger);
-    else if (strcmp("do_int3", probe->name) == 0)
-        return probe_int3_call(probe, data, trigger);
-    else if (strcmp("do_overflow", probe->name) == 0)
-        return probe_overflow_call(probe, data, trigger);
-    else if (strcmp("do_bounds", probe->name) == 0)
-        return probe_bounds_call(probe, data, trigger);
-    else if (strcmp("do_invalid_op", probe->name) == 0)
-        return probe_invalid_op_call(probe, data, trigger);
-    else if (strcmp("device_not_available", probe->name) == 0)
-        return probe_device_not_available_call(probe, data, trigger);
-    else if (strcmp("do_coprocessor_segment_overrun", probe->name) == 0)
-        return probe_coprocessor_segment_overrun_call(probe, data, trigger);
-    else if (strcmp("double_fault", probe->name) == 0)
-        return probe_double_fault_call(probe, data, trigger);
-    else if (strcmp("do_invalid_TSS", probe->name) == 0)
-        return probe_invalid_TSS_call(probe, data, trigger);
-    else if (strcmp("do_segment_not_present", probe->name) == 0)
-        return probe_segment_not_present_call(probe, data, trigger);
-    else if (strcmp("do_stack_segment", probe->name) == 0)
-        return probe_stack_segment_call(probe, data, trigger);
-    else if (strcmp("do_general_protection", probe->name) == 0)
-        return probe_general_protection_call(probe, data, trigger);
-    else if (strcmp("do_page_fault", probe->name) == 0)
-        return probe_page_fault_call(probe, data, trigger);
-    else if (strcmp("spurious_interrupt_bug", probe->name) == 0)
-        return probe_spurious_interrupt_bug_call(probe, data, trigger);
-    else if (strcmp("do_coprocessor_error", probe->name) == 0)
-        return probe_coprocessor_error_call(probe, data, trigger);
-    else if (strcmp("do_alignment_check", probe->name) == 0)
-        return probe_alignment_check_call(probe, data, trigger);
-    else if (strcmp("intel_machine_check", probe->name) == 0)
-        return probe_machine_check_call(probe, data, trigger);
-    else if (strcmp("do_simd_coprocessor_error", probe->name) == 0)
-        return probe_simd_coprocessor_error_call(probe, data, trigger);
+    DBG("%d (%s): Trap %s called\n", 
+        task_current->pid, task_current->comm, 
+        probe->name);
 
-    ERR("Unknown trap call!\n");
-    return -1;
+    return 0;
 }
 
-/* All traps except system calls are routed to corresponding handlers; return */
 static int probe_trap_return(struct probe *probe, 
                              void *data, 
                              struct probe *trigger)
 {
-    int ret = -1;
+    DBG("%d (%s): Trap %s returned\n", 
+        task_current->pid, task_current->comm, 
+        probe->name);
 
-    if (strcmp("do_divide_error", probe->name) == 0)
-        ret = probe_divide_error_return(probe, data, trigger);
-    else if (strcmp("do_debug", probe->name) == 0)
-        ret = probe_debug_return(probe, data, trigger);
-    else if (strcmp("do_nmi", probe->name) == 0)
-        ret = probe_nmi_return(probe, data, trigger);
-    else if (strcmp("do_int3", probe->name) == 0)
-        ret = probe_int3_return(probe, data, trigger);
-    else if (strcmp("do_overflow", probe->name) == 0)
-        ret = probe_overflow_return(probe, data, trigger);
-    else if (strcmp("do_bounds", probe->name) == 0)
-        ret = probe_bounds_return(probe, data, trigger);
-    else if (strcmp("do_invalid_op", probe->name) == 0)
-        ret = probe_invalid_op_return(probe, data, trigger);
-    else if (strcmp("device_not_available", probe->name) == 0)
-        ret = probe_device_not_available_return(probe, data, trigger);
-    else if (strcmp("do_coprocessor_segment_overrun", probe->name) == 0)
-        ret = probe_coprocessor_segment_overrun_return(probe, data, trigger);
-    else if (strcmp("double_fault", probe->name) == 0)
-        ret = probe_double_fault_return(probe, data, trigger);
-    else if (strcmp("do_invalid_TSS", probe->name) == 0)
-        ret = probe_invalid_TSS_return(probe, data, trigger);
-    else if (strcmp("do_segment_not_present", probe->name) == 0)
-        ret = probe_segment_not_present_return(probe, data, trigger);
-    else if (strcmp("do_stack_segment", probe->name) == 0)
-        ret = probe_stack_segment_return(probe, data, trigger);
-    else if (strcmp("do_general_protection", probe->name) == 0)
-        ret = probe_general_protection_return(probe, data, trigger);
-    else if (strcmp("do_page_fault", probe->name) == 0)
-        ret = probe_page_fault_return(probe, data, trigger);
-    else if (strcmp("spurious_interrupt_bug", probe->name) == 0)
-        ret = probe_spurious_interrupt_bug_return(probe, data, trigger);
-    else if (strcmp("do_coprocessor_error", probe->name) == 0)
-        ret = probe_coprocessor_error_return(probe, data, trigger);
-    else if (strcmp("do_alignment_check", probe->name) == 0)
-        ret = probe_alignment_check_return(probe, data, trigger);
-    else if (strcmp("intel_machine_check", probe->name) == 0)
-        ret = probe_machine_check_return(probe, data, trigger);
-    else if (strcmp("do_simd_coprocessor_error", probe->name) == 0)
-        ret = probe_simd_coprocessor_error_return(probe, data, trigger);
-    else
-        ERR("Unknown trap return!\n");
-    
     context_current = context_prev;
 
-    return  ret;
+    return 0;
 }
 
-/* TRAP_syscall -- system gate #256; call */
 static int probe_syscall_call(struct probe *probe, 
                               void *data, 
                               struct probe *trigger)
@@ -675,7 +191,6 @@ static int probe_syscall_call(struct probe *probe,
     return 0;
 }
 
-/* TRAP_syscall -- system gate #256; return */
 static int probe_syscall_return(struct probe *probe,
                                 void *data,
                                 struct probe *trigger)
@@ -687,7 +202,6 @@ static int probe_syscall_return(struct probe *probe,
     return 0;
 }
 
-/* Interrupt request; call */
 static int probe_interrupt_call(struct probe *probe, 
                                 void *data, 
                                 struct probe *trigger)
@@ -714,7 +228,6 @@ static int probe_interrupt_call(struct probe *probe,
     return 0;
 }
 
-/* Interrupt request; return */
 static int probe_interrupt_return(struct probe *probe, 
                                   void *data, 
                                   struct probe *trigger)
@@ -743,7 +256,6 @@ static int probe_interrupt_return(struct probe *probe,
     return 0;
 }
 
-/* Task switch */
 static int probe_task_switch(struct probe *probe, 
                              void *data, 
                              struct probe *trigger)
@@ -994,24 +506,14 @@ int ctxprobes_init(char *domain_name,
 
     /*
      * Obtain current task info -- task info will be updated on detecting
-     * task switches later on. Since on a suppeneded replay session we cannot
-     * read the current task address from ESP, assign a dummy task info with
-     * a task name(comm) "null".
+     * task switches later on.
      */
     task_struct_addr = current_task_addr();
     ret = load_task_info(&task_current, task_struct_addr);
     if (ret)
     {
-        WARN("Cannot load initial task info. Assigning dummy task info...\n");
-        task_current = (ctxprobes_task_t *)malloc(sizeof(ctxprobes_task_t));
-        if (!task_current)
-        {
-            ERR("Cannot allocate memory for initial task info!\n");
-            ctxprobes_cleanup();
-            return -4;
-        }
-        memset(task_current, 0, sizeof(ctxprobes_task_t));
-        task_current->comm = strdup("null");
+        ERR("Cannot load current task info\n");
+        return -1;
     }
     DBG("Current task: %d (%s)\n", task_current->pid, task_current->comm);
 
@@ -1103,6 +605,32 @@ int ctxprobes_wait(void)
             else
                 return -10;
         }
+    }
+
+    return 0;
+}
+
+int ctxprobes_func_prologue(char *symbol,
+                            ctxprobes_func_prologue_handler_t handler)
+{
+    int ret;
+
+    if (!t)
+    {
+        ERR("Target not initialized\n");
+        return -1;
+    }
+
+    ret = register_prologue_probe(symbol, 
+                                  probe_func_prologue,
+                                  NULL, /* ops */
+                                  PROBEPOINT_EXEC,
+                                  SYMBOL_TYPE_FLAG_FUNCTION,
+                                  handler); /* data <- ctxprobes handler */
+    if (ret)
+    {
+        ERR("Failed to register context-aware prologue probe on '%s'\n", symbol);
+        return -1;
     }
 
     return 0;

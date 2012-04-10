@@ -64,6 +64,13 @@ struct pt_regs {
     int  xss;
 };
 
+int register_prologue_probe(char *symbol, 
+                            probe_handler_t handler,
+                            struct probe_ops *ops,
+                            probepoint_whence_t whence,
+                            symbol_type_flag_t ftype,
+                            void *data);
+
 int register_call_probe(char *symbol, 
                         probe_handler_t handler,
                         struct probe_ops *ops,

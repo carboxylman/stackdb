@@ -50,6 +50,10 @@ typedef struct ctxprobes_task {
     struct ctxprobes_task *real_parent;
 } ctxprobes_task_t;
 
+typedef void (*ctxprobes_func_prologue_handler_t)(char *symbol,
+                                                  ctxprobes_task_t *task,
+                                                  ctxprobes_context_t context);
+
 typedef void (*ctxprobes_func_call_handler_t)(char *symbol,
                                               ctxprobes_var_t *arg_list,
                                               int arg_count,
@@ -77,6 +81,8 @@ void ctxprobes_cleanup(void);
 
 int ctxprobes_wait(void);
 
+int ctxprobes_func_prologue(char *symbol,
+                            ctxprobes_func_prologue_handler_t handler);
 
 int ctxprobes_func_call(char *symbol,
                         ctxprobes_func_call_handler_t handler);

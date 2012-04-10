@@ -45,6 +45,76 @@ extern struct target *t;
 extern FILE *sysmap_handle;
 extern GHashTable *probes;
 
+int register_prologue_probe(char *symbol, 
+                            probe_handler_t handler,
+                            struct probe_ops *ops,
+                            probepoint_whence_t whence,
+                            symbol_type_flag_t ftype,
+                            void *data)
+{
+    struct bsymbol *bsymbol = NULL;
+    struct probe *probe;
+    
+    //struct dump_info udn = {
+    //    .stream = stderr,
+    //    .prefix = "",
+    //    .detail = 1,
+    //    .meta = 1,
+    //};
+
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
+    if (!bsymbol)
+    {
+        ERR("Could not find symbol %s!\n", symbol);
+        return -1;
+    }
+
+    //bsymbol_dump(bsymbol, &udn);
+
+    probe = probe_create(t, 
+                         ops,
+                         bsymbol->lsymbol->symbol->name,
+                         NULL, /* pre_handler */
+                         handler, /* post_handler */
+                         data,
+                         0);
+    if (!probe)
+    {
+        ERR("Could not create prologue probe on '%s'\n",
+            bsymbol->lsymbol->symbol->name);
+        return -1;
+    }
+
+    if (!probe_register_function_instrs(bsymbol,
+                                        PROBEPOINT_SW, 1,
+                                        INST_CALL, probe,
+                                        INST_NONE))
+    {
+        probe_free(probe, 1);
+        ERR("Could not register prologue probe on '%s'\n",
+            bsymbol->lsymbol->symbol->name);
+        return -1;
+    }
+
+    if (probe_num_sources(probe) == 0)
+    {
+        probe_free(probe, 1);
+        ERR("No call sites in %s.\n",
+            bsymbol->lsymbol->symbol->name);
+        return -2;
+    }
+    
+    g_hash_table_insert(probes,
+                        (gpointer)probe,
+                        (gpointer)probe);
+    
+    DBG("Registered %d prologue probes in function %s.\n",
+        probe_num_sources(probe),
+        bsymbol->lsymbol->symbol->name);
+
+    return 0;
+}
+
 int register_call_probe(char *symbol, 
                         probe_handler_t handler,
                         struct probe_ops *ops,
