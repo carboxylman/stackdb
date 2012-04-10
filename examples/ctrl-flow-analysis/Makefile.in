@@ -43,7 +43,7 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := ctrl-flow
+PROGRAMS := ctrl-flow-static ctrl-flow-dynamic
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -66,7 +66,11 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-ctrl-flow: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow.lo $(STATICLIBS)
+ctrl-flow-static: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-static.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+ctrl-flow-dynamic: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-dynamic.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -74,25 +78,10 @@ install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) ctrl-flow.lo 
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) ctrl-flow-static.lo ctrl-flow-dynamic.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
-
-run: ctrl-flow
-	sudo ./ctrl-flow -m /boot/System.map-2.6.18-xenU a3guest
-
-demo: ctrl-flow
-	sudo ./ctrl-flow -m /boot/System.map-2.6.18-xenU \
-	a3guest 2> /dev/null
-
-verbose: ctrl-flow
-	sudo ./ctrl-flow -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU a3guest
-
-debug: ctrl-flow
-	sudo gdb --args ./ctrl-flow -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU a3guest
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.

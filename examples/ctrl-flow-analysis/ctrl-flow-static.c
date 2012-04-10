@@ -15,10 +15,10 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  examples/ctrl-flow-analysis/ctrl-flow.c
+ *  examples/ctrl-flow-analysis/ctrl-flow-static.c
  *
- *  Security analysis to detect abnormal control flows of Linux 
- *  kernel.
+ *  Static security analysis to detect abnormal control flows of Linux 
+ *  kernel instrumenting all sys_* functions.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 
