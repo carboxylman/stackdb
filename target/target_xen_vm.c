@@ -1062,21 +1062,31 @@ static target_status_t xen_vm_monitor(struct target *target) {
 	xen_vm_load_context(target);
 
 	if (target_status(target) == TSTATUS_PAUSED) {
+	    errno = 0;
+	    ipval = xen_vm_read_reg(target,target->ipregno);
+	    if (errno) {
+		verror("could not read EIP while finding probepoint: %s\n",
+		       strerror(errno));
+		return TSTATUS_ERROR;
+	    }
+
 	    /* handle the triggered probe based on its event type */
-	    if (xstate->context.user_regs.eflags & 0x00000100) {
-		if (target->sstep_probepoint) {
+	    if (target->sstep_probepoint) {
+		if (xstate->context.user_regs.eflags & 0x00000100) {
 		    target->ss_handler(target,target->sstep_probepoint);
 		    goto again;
 		}
 		else {
-		    // domain not supposed to be in singlestep mode
-		    vwarn("phantom single step for dom %d; letting user"
-			  " handle fault at 0x%"PRIxADDR"!\n",
-			  xstate->id,ipval);
-		    return TSTATUS_PAUSED;
+		    vwarn("expected single step to happen, but the flag"
+			  " is clear; EIP is 0x%"PRIxADDR"; EFLAGS is 0x%"PRIx32"\n",
+			  ipval,xstate->context.user_regs.eflags);
+		    goto bpcheck;
 		}
 	    }
 	    else {
+	    bpcheck:
+		dreg = -1;
+
 		/* Check the hw debug status reg first */
 
 		/* Only check the 4 low-order bits */
@@ -1089,7 +1099,9 @@ static target_status_t xen_vm_monitor(struct target *target) {
 			dreg = 2;
 		    else if (xstate->context.debugreg[6] & 0x8)
 			dreg = 3;
+		}
 
+		if (dreg > -1) {
 		    /* If we are relying on the status reg to tell us,
 		     * then also read the actual hw debug reg to get the
 		     * address we broke on.
@@ -1106,14 +1118,6 @@ static target_status_t xen_vm_monitor(struct target *target) {
 			   "dreg status was 0x%"PRIxREGVAL"; trying eip method\n",
 			   (ADDR)xstate->context.debugreg[6]);
 
-		    errno = 0;
-		    ipval = xen_vm_read_reg(target,target->ipregno);
-		    if (errno) {
-			verror("could not read EIP while finding probepoint: %s\n",
-			       strerror(errno));
-			return TSTATUS_ERROR;
-		    }
-
 		    if (xstate->dr[0] == ipval)
 			dreg = 0;
 		    else if (xstate->dr[1] == ipval)
@@ -1123,12 +1127,12 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		    else if (xstate->dr[3] == ipval)
 			dreg = 3;
 
-		    if (dreg) 
+		    if (dreg > -1) 
 			vdebug(4,LOG_T_XV,
 			       "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
 			       dreg,ipval);
 		    else
-			vdebug(4,LOG_T_XV,
+			vdebug(6,LOG_T_XV,
 			       "did NOT find hw break (eip) on 0x%"PRIxADDR"\n",
 			       ipval);
 		}
@@ -1149,17 +1153,42 @@ static target_status_t xen_vm_monitor(struct target *target) {
 			return TSTATUS_ERROR;
 		    }
 
-		    /* Clear dreg for next iteration. */
-		    dreg = -1;
+		    /* BEFORE we run the bp handler: 
+		     *
+		     * If the domain happens to be in singlestep mode, and
+		     * we are hitting a breakpoint anyway... we have to
+		     * handle the breakpoint, singlestep ourselves, AND
+		     * THEN leave the processor in single step mode.
+		     */
+		    if (0 && xstate->context.user_regs.eflags & 0x00000100)
+			target->sstep_leave_enabled = 1;
 
+		    /* Run the breakpoint handler. */
 		    target->bp_handler(target,dpp);
 		    goto again;
 		}
 		else if ((dpp = (struct probepoint *) \
 			  g_hash_table_lookup(target->probepoints,
 					      (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+		    /* BEFORE we run the bp handler: 
+		     *
+		     * If the domain happens to be in singlestep mode, and
+		     * we are hitting a breakpoint anyway... we have to
+		     * handle the breakpoint, singlestep ourselves, AND
+		     * THEN leave the processor in single step mode.
+		     */
+		    if (0 && xstate->context.user_regs.eflags & 0x00000100)
+			target->sstep_leave_enabled = 1;
+
+		    /* Run the breakpoint handler. */
 		    target->bp_handler(target,dpp);
 		    goto again;
+		}
+		else if (xstate->context.user_regs.eflags & 0x00000100) {
+		    vwarn("phantom single step for dom %d (no breakpoint"
+			  " set either!); letting user handle fault at"
+			  " 0x%"PRIxADDR"!\n",xstate->id,ipval);
+		    return TSTATUS_PAUSED;
 		}
 		else {
 		    vwarn("could not find hardware bp and not sstep'ing;"
@@ -1349,7 +1378,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,unsigned long length,
 	   "write dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
 	   xstate->id,addr,page_offset,length,pid);
 
-    target_find_range_real(target,addr,NULL,NULL,&range);
+    target_find_memory_real(target,addr,NULL,NULL,&range);
 
     /*
      * This is mostly a stub for later, when we might actually check
@@ -1912,7 +1941,13 @@ int xen_vm_singlestep(struct target *target) {
 	    return -1;
     }
 
+#if __WORDSIZE == 32
+    xstate->eflags = xstate->context.user_regs.eflags;
+#else
+    xstate->eflags = xstate->context.user_regs.rflags;
+#endif
     xstate->context.user_regs.eflags |= EF_TF;
+    xstate->context.user_regs.eflags &= ~EF_IF;
     xstate->context_dirty = 1;
 
     if (target_flush_context(target) < 0) {
@@ -1934,13 +1969,24 @@ int xen_vm_singlestep(struct target *target) {
 int xen_vm_singlestep_end(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
+    if (target->sstep_leave_enabled) {
+	target->sstep_leave_enabled = 0;
+	return 0;
+    }
+
     if (!xstate->context_valid) {
 	if (xen_vm_load_context(target)) 
 	    return -1;
     }
 
-    xstate->context.user_regs.eflags &= ~EF_TF;
-    xstate->context.user_regs.eflags &= ~EF_IF;
+    //xstate->context.user_regs.eflags &= ~EF_TF;
+    //xstate->context.user_regs.eflags &= ~EF_IF;
+#if __WORDSIZE ==32
+    xstate->context.user_regs.eflags = xstate->eflags;
+#else
+    xstate->context.user_regs.rflags = xstate->eflags;
+#endif
+
     xstate->context_dirty = 1;
 
     if (target_flush_context(target) < 0) {

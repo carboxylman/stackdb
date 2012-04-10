@@ -124,19 +124,6 @@ unsigned long target_write_addr(struct target *target,ADDR addr,
     return target->ops->write(target,addr,length,buf,targetspecdata);
 }
 
-struct value *target_read(struct target *target,struct symbol *symbol) {
-    
-
-    return 0;
-}
-
-int target_write(struct target *target,struct symbol *symbol,
-		 struct value *value) {
-    
-
-    return 0;
-}
-
 char *target_reg_name(struct target *target,REG reg) {
     vdebug(5,LOG_T_TARGET,"target(%s) reg name %d)\n",target->type,reg);
     return target->ops->regname(target,reg);
@@ -200,6 +187,8 @@ void target_free(struct target *target) {
     g_hash_table_destroy(target->probepoints);
     g_hash_table_destroy(target->probes);
 
+    array_list_free(target->sstep_stack);
+
     /* Unload the debugfiles we might hold, if we can */
     list_for_each_entry_safe(space,tmp,&target->spaces,space) {
 	RPUT(space,addrspace);
@@ -240,6 +229,8 @@ struct target *target_create(char *type,void *state,struct target_ops *ops) {
     retval->probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     retval->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    retval->sstep_stack = array_list_create(4);
 
     /*
      * Hm, I think we should do this by default, and let target backends

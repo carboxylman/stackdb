@@ -442,7 +442,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_decl_line:
 	if (cbargs->symbol) {
-	    cbargs->symbol->srcline = (int)num;
+	    symbol_set_srcline(cbargs->symbol,(int)num);
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",

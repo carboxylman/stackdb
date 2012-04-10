@@ -60,7 +60,7 @@
     } while (0)
 
 #define WARN(_f, _a...)  do {                                                   \
-        fprintf(stderr, TXT_FG_YELLOW "Warrning" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);  \
+        fprintf(stderr, TXT_FG_YELLOW "Warning" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);  \
     } while (0)
 
 #define WARN_ON(_g, _f, _a...) do {                                             \

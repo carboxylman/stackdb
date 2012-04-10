@@ -57,6 +57,18 @@ extern char *POLL_STRINGS[];
 #define POLL(n) (((n) < sizeof(POLL_STRINGS)/sizeof(char *)) \
 		 ? POLL_STRINGS[(n)] : NULL)
 
+typedef enum {
+    LOAD_FLAG_NONE = 0,
+    LOAD_FLAG_SHOULD_MMAP = 1,
+    LOAD_FLAG_MUST_MMAP = 2,
+    LOAD_FLAG_NO_CHECK_BOUNDS = 4,
+    LOAD_FLAG_NO_CHECK_VISIBILITY = 8,
+    LOAD_FLAG_AUTO_DEREF = 16,
+    LOAD_FLAG_AUTO_DEREF_RECURSE = 32,
+    LOAD_FLAG_AUTO_STRING = 64,
+    LOAD_FLAG_NO_AUTO_RESOLVE = 128,
+} load_flags_t;
+
 /**
  ** These functions form the target API.
  **/
@@ -118,6 +130,12 @@ int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 int target_singlestep(struct target *target);
 int target_singlestep_end(struct target *target);
 
+struct value *target_location_load_raw(struct target *target,
+				       struct location *location,
+				       load_flags_t flags,
+				       char **buf,int *bufsiz);
+
+
 /**
  ** Lookup functions.
  **/
@@ -157,22 +175,180 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
 				       SMOFFSET *offset,ADDR *addr);
 
 /**
- ** Quick raw value converters
+ ** Address/memory range functions.
  **/
-signed char      rvalue_c(void *buf);
-unsigned char    rvalue_uc(void *buf);
-wchar_t          rvalue_wc(void *buf);
-uint8_t          rvalue_u8(void *buf);
-uint16_t         rvalue_u16(void *buf);
-uint32_t         rvalue_u32(void *buf);
-uint64_t         rvalue_u64(void *buf);
-int8_t           rvalue_i8(void *buf);
-int16_t          rvalue_i16(void *buf);
-int32_t          rvalue_i32(void *buf);
-int64_t          rvalue_i64(void *buf);
+int target_contains_real(struct target *target,ADDR addr);
+int target_find_memory_real(struct target *target,ADDR addr,
+			    struct addrspace **space_saveptr,
+			    struct memregion **region_saveptr,
+			    struct memrange **range_saveptr);
+/**
+ ** Load functions.
+ **/
+struct value *target_load_value_member(struct target *target,
+				       struct value *value,const char *member,
+				       const char *delim,load_flags_t flags);
+/*
+ * Load a symbol's value, but just return a raw pointer.  If flags
+ * contains LOAD_FLAGS_MMAP, we try to mmap the target's memory instead
+ * of reading and copying the data; if that fails, we return NULL.  If
+ * buf is not NULL, it should be sized to
+ * symbol->datatype->s.ti.byte_size (best available as symbol_get
+ */
+struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags);
+/*
+ * This function creates a value by loading the number of bytes
+ * specified by @type from a real @addr.
+ */
+struct value *target_load_type(struct target *target,struct symbol *type,
+			       ADDR addr,load_flags_t flags);
+/*
+ * Load a raw value (i.e., no symbol or type info) using an object
+ * file-based location (i.e., a fixed object-relative address) and a
+ * specific region.
+ *
+ * Note: you cannot mmap raw values; they must be copied from target memory.
+ */
+struct value *target_load_addr_obj(struct target *target,struct memregion *region,
+				   ADDR obj_addr,load_flags_t flags,int len);
+/*
+ * Load a raw value (i.e., no symbol or type info) using a real address.
+ *
+ * Note: you cannot mmap raw values; they must be copied from target memory.
+ */
+struct value *target_load_addr_real(struct target *target,ADDR addr,
+				    load_flags_t flags,int len);
+
+/*
+ * Starting at @addr, which is of type @datatype, load as many pointers
+ * as specified by our @flags (if @flags does not have
+ * LOAD_FLAG_AUTO_DEREF or LOAD_FLAG_AUTO_STRING set, or @datatype is
+ * not a pointer type symbol, this function will immediately return, and
+ * will return @addr without setting @datatype_saveptr and
+ * @range_saveptr).
+ *
+ * This function will keep loading pointers as long as @datatype and its
+ * pointed-to type (recursively) are pointers.  Once @datatype is no
+ * longer a pointer, we stop, return the last pointer value, save the
+ * non-pointer type in @datatype_saveptr, and save the memrange
+ * containing the last pointer in @range_saveptr.
+ * 
+ * You can set @datatype_saveptr and/or @range_saveptr to NULL safely.
+ *
+ * If an error occurs (i.e., attempt to deref a NULL pointer), we return
+ * 0 and set errno appropriately.
+ */
+ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
+			      ADDR addr,load_flags_t flags,
+			      struct symbol **datatype_saveptr,
+			      struct memrange **range_saveptr);
+
+/**
+ ** Symbol functions.
+ **/
+/*
+ * If you have the type of symbol you're interested in, but you need to
+ * load a pointer to a chunk of memory of that type, you can create a
+ * dynamic type symbol that points to your "base" type.
+ *
+ * Dynamic symbols are the only kind of symbols that hold refs to other
+ * symbols (in this case, the return value holds a ref to @type).  This
+ * function also holds a ref to the symbol it returns, since it is
+ * anticipated that only users will call this function.
+ */
+struct symbol *target_create_dynamic_type_pointer(struct target *target,
+						  struct symbol *type);
 
 typedef int (*target_debug_handler_t)(struct target *target,
 				      struct probepoint *probepoint);
+
+/**
+ ** Bound symbol interface functions -- user should not need any more
+ ** knowledge of bsymbols other than these few functions.
+ **/
+char *bsymbol_get_name(struct bsymbol *bsymbol);
+struct symbol *bsymbol_get_symbol(struct bsymbol *bsymbol);
+struct lsymbol *bsymbol_get_lsymbol(struct bsymbol *bsymbol);
+void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud);
+/*
+ * Takes a reference to the bsymbol.  Users should not call this; target
+ * lookup functions will do this for you.
+ */
+void bsymbol_hold(struct bsymbol *bsymbol);
+/*
+ * Releases a reference to the bsymbol and tries to free it.
+ */
+REFCNT bsymbol_release(struct bsymbol *bsymbol);
+
+/**
+ ** Value functions.
+ **/
+/* The only thing a user should do to a value is free it, or "cast" it to
+ * something else.
+ */
+void value_free(struct value *value);
+
+/**
+ ** Quick value converters
+ **/
+signed char      v_c(struct value *v);
+unsigned char    v_uc(struct value *v);
+wchar_t          v_wc(struct value *v);
+uint8_t          v_u8(struct value *v);
+uint16_t         v_u16(struct value *v);
+uint32_t         v_u32(struct value *v);
+uint64_t         v_u64(struct value *v);
+int8_t           v_i8(struct value *v);
+int16_t          v_i16(struct value *v);
+int32_t          v_i32(struct value *v);
+int64_t          v_i64(struct value *v);
+ADDR             v_addr(struct value *v);
+
+/**
+ ** Quick raw value converters
+ **/
+signed char      rv_c(void *buf);
+unsigned char    rv_uc(void *buf);
+wchar_t          rv_wc(void *buf);
+uint8_t          rv_u8(void *buf);
+uint16_t         rv_u16(void *buf);
+uint32_t         rv_u32(void *buf);
+uint64_t         rv_u64(void *buf);
+int8_t           rv_i8(void *buf);
+int16_t          rv_i16(void *buf);
+int32_t          rv_i32(void *buf);
+int64_t          rv_i64(void *buf);
+ADDR             rv_addr(void *buf);
+
+#define value_to_u64(v) (*((uint64_t *)(v)->buf))
+#define value_to_u32(v) (*((uint32_t *)(v)->buf))
+#define value_to_u16(v) (*((uint16_t *)(v)->buf))
+#define value_to_u8(v) (*((uint8_t *)(v)->buf))
+
+#define value_to_i64(v) (*((int64_t *)(v)->buf))
+#define value_to_i32(v) (*((int32_t *)(v)->buf))
+#define value_to_i16(v) (*((int16_t *)(v)->buf))
+#define value_to_i8(v) (*((int8_t *)(v)->buf))
+
+#if __WORDSIZE == 64
+#define value_to_unsigned_long value_to_u64
+#define value_to_long value_to_i64
+#else
+#define value_to_unsigned_long value_to_u32
+#define value_to_long value_to_i32
+#endif
+
+#define value_to_int value_to_i32
+#define value_to_unsigned_int value_to_u32
+
+#define value_to_char(v) ((char)value_to_i8((v)))
+#define value_to_unsigned_char(v) ((unsigned char)value_to_i8((v)))
+#define value_to_string(v) ((v)->buf)
+#if __WORDSIZE == 64
+#define value_to_num(v) value_to_i64((v))
+#else
+#define value_to_num(v) value_to_i32((v))
+#endif
 
 /**
  ** The primary target data structures.
@@ -236,6 +412,8 @@ struct target {
     unsigned int full_ret_instr_count;
 
     struct probepoint *sstep_probepoint;
+    int sstep_leave_enabled;
+    struct array_list *sstep_stack;
 
     /* Single step and breakpoint handlers.  Since we control
      * single-step mode, we report *any* single step stop events to the
@@ -318,5 +496,41 @@ struct target_ops {
     int (*singlestep)(struct target *target);
     int (*singlestep_end)(struct target *target);
 };
+
+struct value {
+    /*
+     * The type of value -- it may NOT be the primary type of the
+     * bsymbol!  i.e., it may be the pointed-to type, or we may have
+     * stripped off the const/vol qualifiers.
+     *
+     * We could also save the load flags so we always know what type of
+     * memory this object is pointing to, but we'll skip that for now.
+     */
+    struct symbol *type;
+
+    /*
+     * A backreference to the symbol this value is associated with.
+     */
+    struct lsymbol *lsymbol;
+
+    /* The memrange this value exists in. */
+    struct memrange *range;
+
+    /* The region stamp at load time. */
+    uint32_t region_stamp;
+
+    /* If this value is mmap'd instead of alloc'd, store that too. */
+    struct mmap_entry *mmap;
+    char *buf;
+    int bufsiz;
+    uint8_t ismmap:1,
+	    isstring:1;
+
+    /* The resolved address of the value. */
+    ADDR addr;
+    /* The value of the PC when we last resolved this symbol's address. */
+    ADDR addr_resolved_ip;
+};
+
 
 #endif

@@ -94,40 +94,9 @@ typedef enum {
 extern char *REGION_TYPE_STRINGS[];
 #define REGION_TYPE(n) (((n) < __REGION_TYPE_MAX) ? REGION_TYPE_STRINGS[(n)] : NULL)
 
-typedef enum {
-    LOAD_FLAG_NONE = 0,
-    LOAD_FLAG_SHOULD_MMAP = 1,
-    LOAD_FLAG_MUST_MMAP = 2,
-    LOAD_FLAG_NO_CHECK_BOUNDS = 4,
-    LOAD_FLAG_NO_CHECK_VISIBILITY = 8,
-    LOAD_FLAG_AUTO_DEREF = 16,
-    LOAD_FLAG_AUTO_DEREF_RECURSE = 32,
-    LOAD_FLAG_AUTO_STRING = 64,
-    LOAD_FLAG_NO_AUTO_RESOLVE = 128,
-} load_flags_t;
-
 /**
  ** Target functions.
  **/
-struct value *target_location_load_type(struct target *target,
-					struct location *location,
-					load_flags_t flags,
-					struct symbol *type);
-int target_contains(struct target *target,ADDR addr);
-int target_find_range_real(struct target *target,ADDR addr,
-			   struct addrspace **space_saveptr,
-			   struct memregion **region_saveptr,
-			   struct memrange **range_saveptr);
-struct value *target_location_load_raw(struct target *target,
-				       struct location *location,
-				       load_flags_t flags,
-				       char **buf,int *bufsiz);
-
-
-int target_resume(struct target *target);
-struct value *target_read(struct target *target,struct symbol *symbol);
-int target_write(struct target *target,struct symbol *symbol,struct value *value);
-
 unsigned char *target_generic_fd_read(int fd,
 				      ADDR addr,
 				      unsigned long length,
@@ -141,6 +110,15 @@ struct debugfile *target_associate_debugfile(struct target *target,
 					     char *filename,
 					     debugfile_type_t type);
 void target_disassociate_debugfile(struct debugfile *debugfile);
+
+/*
+ * Given a range and some flags, does the actual target_addr_read after
+ * checking bounds (if the flags wanted it).
+ */
+unsigned char *__target_load_addr_real(struct target *target,
+				       struct memrange *range,
+				       ADDR addr,load_flags_t flags,
+				       unsigned char *buf,int bufsiz);
 
 /**
  ** Address spaces.
@@ -200,18 +178,6 @@ void target_release_mmap_entry(struct target *target,
 struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
 			       struct memregion *region,
 			       struct memrange *range);
-char *bsymbol_get_name(struct bsymbol *bsymbol);
-struct symbol *bsymbol_get_symbol(struct bsymbol *bsymbol);
-void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud);
-/*
- * Takes a reference to the bsymbol.  Users should not call this; target
- * lookup functions will do this for you.
- */
-void bsymbol_hold(struct bsymbol *bsymbol);
-/*
- * Releases a reference to the bsymbol and tries to free it.
- */
-REFCNT bsymbol_release(struct bsymbol *bsymbol);
 /* 
  * Frees a bsymbol.  Users should never call this; call bsymbol_release
  * instead.
@@ -228,6 +194,11 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 struct location *location_resolve_loclist(struct target *target,
 					  struct memregion *region,
 					  struct location *location);
+OFFSET location_resolve_member_offset(struct target *target,
+				      struct location *location,
+				      struct array_list *symbol_chain,
+				      struct symbol **top_symbol_saveptr,
+				      int *chain_top_symbol_idx_saveptr);
 int location_can_mmap(struct location *location,struct target *target);
 int location_resolve_symbol_base(struct target *target,
 				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
@@ -259,6 +230,22 @@ struct mmap_entry *location_mmap(struct target *target,
 				 struct memrange **range_saveptr);
 
 /**
+ ** Value loading functions.
+ **/
+/*
+ * Values.
+ */
+int value_alloc_buf(struct value *value,int len);
+struct value *value_create_raw(int len);
+struct value *value_create_type(struct symbol *type);
+struct value *value_create(struct lsymbol *lsymbol,struct symbol *type);
+struct value *value_create_noalloc(struct lsymbol *lsymbol,struct symbol *type);
+
+void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
+			 void *buf,int bufsiz,
+			 load_flags_t flags,struct target *target);
+
+/**
  ** Disassembly helpers.
  **/
 #ifdef ENABLE_DISTORM
@@ -271,38 +258,6 @@ int disasm_get_prologue_stack_size(struct target *target,
 				   unsigned char *inst_buf,unsigned int buf_len,
 				   int *sp);
 #endif
-
-/**
- ** Value loading functions.
- **/
-/*
- * Load a symbol's value, but just return a raw pointer.  If flags
- * contains LOAD_FLAGS_MMAP, we try to mmap the target's memory instead
- * of reading and copying the data; if that fails, we return NULL.  If
- * buf is not NULL, it should be sized to
- * symbol->datatype->s.ti.byte_size (best available as symbol_get
- */
-struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags);
-struct value *target_load_raw(struct target *target,struct memregion *region,
-			      struct location *location,load_flags_t flags,
-			      int len);
-struct value *target_load_raw_obj_location(struct target *target,
-					   struct memregion *region,
-					   ADDR obj_addr,load_flags_t flags,
-					   int len);
-/*
- * Values.
- */
-int value_alloc_buf(struct value *value,int len);
-struct value *value_create_raw(int len);
-struct value *value_create_type(struct symbol *type);
-struct value *value_create(struct bsymbol *bsymbol,struct symbol *type);
-struct value *value_create_noalloc(struct bsymbol *bsymbol,struct symbol *type);
-void value_free(struct value *value);
-
-void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
-			 void *buf,int bufsiz,
-			 load_flags_t flags,struct target *target);
 
 /**
  ** Data structure definitions.
@@ -450,71 +405,6 @@ struct mmap_entry {
     char *base_address;
     int pages;
     int refcnt;
-};
-
-#define value_to_u64(v) (*((uint64_t *)(v)->buf))
-#define value_to_u32(v) (*((uint32_t *)(v)->buf))
-#define value_to_u16(v) (*((uint16_t *)(v)->buf))
-#define value_to_u8(v) (*((uint8_t *)(v)->buf))
-
-#define value_to_i64(v) (*((int64_t *)(v)->buf))
-#define value_to_i32(v) (*((int32_t *)(v)->buf))
-#define value_to_i16(v) (*((int16_t *)(v)->buf))
-#define value_to_i8(v) (*((int8_t *)(v)->buf))
-
-#if __WORDSIZE == 64
-#define value_to_unsigned_long value_to_u64
-#define value_to_long value_to_i64
-#else
-#define value_to_unsigned_long value_to_u32
-#define value_to_long value_to_i32
-#endif
-
-#define value_to_int value_to_i32
-#define value_to_unsigned_int value_to_u32
-
-#define value_to_char(v) ((char)value_to_i8((v)))
-#define value_to_unsigned_char(v) ((unsigned char)value_to_i8((v)))
-#define value_to_string(v) ((v)->buf)
-#if __WORDSIZE == 64
-#define value_to_num(v) value_to_i64((v))
-#else
-#define value_to_num(v) value_to_i32((v))
-#endif
-
-struct value {
-    /*
-     * The type of value -- it may NOT be the primary type of the
-     * bsymbol!  i.e., it may be the pointed-to type, or we may have
-     * stripped off the const/vol qualifiers.
-     *
-     * We could also save the load flags so we always know what type of
-     * memory this object is pointing to, but we'll skip that for now.
-     */
-    struct symbol *type;
-
-    /*
-     * A backreference to the symbol this value is associated with.
-     */
-    struct lsymbol *lsymbol;
-
-    /* The memrange this value exists in. */
-    struct memrange *range;
-
-    /* The region stamp at load time. */
-    uint32_t region_stamp;
-
-    /* If this value is mmap'd instead of alloc'd, store that too. */
-    struct mmap_entry *mmap;
-    char *buf;
-    int bufsiz;
-    uint8_t ismmap:1,
-	    isstring:1;
-
-    /* The resolved address of the value. */
-    ADDR addr;
-    /* The value of the PC when we last resolved this symbol's address. */
-    ADDR addr_resolved_ip;
 };
 
 #endif

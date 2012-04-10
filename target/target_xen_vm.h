@@ -31,8 +31,17 @@ struct xen_vm_state {
      * we use this might have to change.
      */
     unsigned long dr[8];
+
+#if __WORDSIZE == 32
+    uint32_t eflags;
+#else
+    uint64_t rflags;
+#endif
 };
 
 struct target *xen_vm_attach(char *domain);
+
+struct value *linux_load_current_task(struct target *target);
+int linux_get_task_pid(struct target *target,struct value *task);
 
 #endif /* __TARGET_XEN_VM_H__ */
