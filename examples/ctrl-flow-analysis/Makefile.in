@@ -83,6 +83,28 @@ clean: clean-subdirs
 
 distclean: distclean-subdirs
 
+run: ctrl-flow-static
+	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
+	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
+	a3guest
+
+demo: ctrl-flow-static
+	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
+	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
+	a3guest 2> /dev/null
+
+verbose: ctrl-flow-static
+	sudo ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m /boot/System.map-2.6.18-xenU \
+	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
+	a3guest
+
+debug: ctrl-flow-static
+	sudo gdb --args ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m /boot/System.map-2.6.18-xenU \
+	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
+	a3guest
+
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.
 %.MAKE:
