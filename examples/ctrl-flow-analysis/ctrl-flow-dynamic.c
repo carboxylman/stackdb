@@ -26,10 +26,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 #include <log.h>
 
 #include <ctxprobes.h>
+#include "debug.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -37,13 +39,48 @@ extern int optind, opterr, optopt;
 static char *domain_name = NULL; 
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
+static char *funclist_file = NULL;
+
+static char *proc_name = "linux-sendpage-static";
+static unsigned long oldretaddr;
+
+void probe_func_call(char *symbol, 
+                     unsigned long retaddr,
+                     ctxprobes_task_t *task,
+                     ctxprobes_context_t context)
+{
+    if (strcmp(task->comm, proc_name) == 0)
+    {
+        printf("%d (%s): 0x%08lx -> %s\n", 
+               task->pid, task->comm, retaddr, symbol);
+        oldretaddr = retaddr;
+    }
+}
+
+void probe_func_return(char *symbol, 
+                       ctxprobes_var_t *args, 
+                       int argcount, 
+                       ctxprobes_var_t *retval,
+                       unsigned long retaddr,
+                       ctxprobes_task_t *task,
+                       ctxprobes_context_t context)
+{
+    if (strcmp(task->comm, proc_name) == 0)
+    {
+        printf("%d (%s): %s -> 0x%08lx\n", 
+               task->pid, task->comm, symbol, retaddr);
+        if (oldretaddr != retaddr)
+            printf("Abnormal control flow!: oldaddr=0x%08lx, newaddr=0x%08lx\n",
+                   oldretaddr, retaddr);
+    }
+}
 
 void parse_opt(int argc, char *argv[])
 {
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:f:")) != -1)
     {
         switch(ch)
         {
@@ -54,7 +91,8 @@ void parse_opt(int argc, char *argv[])
             case 'l':
                 if (vmi_log_get_flag_mask(optarg, &debug_flags))
                 {
-                    fprintf(stderr, "ERROR: bad debug flag in '%s'!\n", optarg);
+                    fprintf(stderr, "ERROR: bad debug flag in '%s'!\n", 
+                            optarg);
                     exit(-1);
                 }
                 vmi_set_log_flags(debug_flags);
@@ -64,6 +102,10 @@ void parse_opt(int argc, char *argv[])
                 sysmap_file = optarg;
                 break;
 
+            case 'f':
+                funclist_file = optarg;
+                break;
+                
             default:
                 fprintf(stderr, "ERROR: unknown option %c!\n", ch);
                 exit(-1);
@@ -81,9 +123,18 @@ void parse_opt(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-    int ret;
-
+    static FILE *fp;
+    char funcname[256];
+    int count, ret;
+    
     parse_opt(argc, argv);
+
+    fp = fopen(funclist_file, "r");
+    if (!fp)
+    {
+        ERR("Could not open function list file\n");
+        return -2;
+    }
 
     ret = ctxprobes_init(domain_name, sysmap_file, debug_level);
     if (ret)
@@ -92,24 +143,42 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    //ret = ctxprobes_func_call("sys_open", sys_open_call);
-    //if (ret)
-    //{
-    //    fprintf(stderr, "failed to register probe on sys_open call\n");
-    //    exit(1);
-    //}
+    /*
+     * Start analysis by observing all system calls called by a process 
+     * named as "linux-sendpage-static".
+     */
 
-    //ret = ctxprobes_func_return("sys_open", sys_open_return);
-    //if (ret)
-    //{
-    //    fprintf(stderr, "failed to register probe on sys_open return\n");
-    //    exit(1);
-    //}
+    count = 0;
+    while (fgets(funcname, 255, fp))
+    {
+        funcname[strlen(funcname)-1] = '\0';
 
-    printf("Starting instrumentation ...\n");
+        ret = ctxprobes_reg_func_prologue(funcname, probe_func_call);
+        if (ret)
+        {
+            WARN("Failed to register probe on %s call. Skipping...\n", 
+                 funcname);
+            continue;
+        }
+
+        ret = ctxprobes_reg_func_return(funcname, probe_func_return);
+        if (ret)
+        {
+            WARN("Failed to register probe on %s return. Skipping...\n", 
+                 funcname);
+            ctxprobes_unreg_func_prologue(funcname, probe_func_call);
+            continue;
+        }
+
+        count++;
+    } 
+
+    printf("Total %d functions registered. Starting instrumentation...\n",
+           count);
     ctxprobes_wait();
 
     ctxprobes_cleanup();
+    fclose(fp);
     return 0;
 }
 
