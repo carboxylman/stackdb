@@ -67,17 +67,10 @@ void probe_func_call(char *symbol,
                      ctxprobes_task_t *task,
                      ctxprobes_context_t context)
 {
-    printf("[%c] %d (%s): %s proloque invoked\n", 
+    printf("[%c] %d (%s): %s call\n", 
            context_ch(context), task->pid, task->comm, symbol);
     
     printf("- Return address: 0x%08lx\n", retaddr);
-
-    printf("- Parent task chain: \n");
-    while (task->parent)
-    {
-        printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
-        task = task->parent;
-    }
 }
 
 void probe_func_return(char *symbol, 
@@ -88,22 +81,10 @@ void probe_func_return(char *symbol,
                        ctxprobes_task_t *task,
                        ctxprobes_context_t context)
 {
-    if (!retval)
-        printf("[%c] %d (%s): %s returned, but failed to load retval\n", 
-               context_ch(context), task->pid, task->comm, symbol);
-    else
-        printf("[%c] %d (%s): %s returned %d (0x%x)\n", 
-               context_ch(context), task->pid, task->comm, symbol,
-               *(int *)retval->buf, *(int *)retval->buf);
+    printf("[%c] %d (%s): %s return\n", 
+           context_ch(context), task->pid, task->comm, symbol);
 
     printf("- Return address: 0x%08lx\n", retaddr);
-
-    printf("- Parent task chain: \n");
-    while (task->parent)
-    {
-        printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
-        task = task->parent;
-    }
 }
 
 void parse_opt(int argc, char *argv[])
@@ -192,7 +173,7 @@ int main(int argc, char *argv[])
         {
             WARN("Failed to register probe on %s return. Skipping...\n", 
                  funcname);
-            ctxprobes_unreg_func_return(funcname, probe_func_return);
+            ctxprobes_unreg_func_prologue(funcname, probe_func_call);
             continue;
         }
 
