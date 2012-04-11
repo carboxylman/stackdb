@@ -43,7 +43,8 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := ctrl-flow-static ctrl-flow-dynamic
+PROGRAMS := ctrl-flow-static ctrl-flow-dynamic \
+            ctrl-flow-exploit-01
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -74,36 +75,38 @@ ctrl-flow-dynamic: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-dynamic.lo $(STA
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+ctrl-flow-exploit-01: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-exploit-01.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) ctrl-flow-static.lo ctrl-flow-dynamic.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
+	ctrl-flow-static.lo ctrl-flow-dynamic.lo \
+	ctrl-flow-exploit-01.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
 
-run: ctrl-flow-static
-	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
-	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
-	a3guest
+run: ctrl-flow-exploit-01
+	sudo ./ctrl-flow-exploit-01 -m /boot/System.map-2.6.18-xenU \
+	clientA
 
-demo: ctrl-flow-static
-	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
-	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
-	a3guest 2> /dev/null
+demo: ctrl-flow-exploit-01
+	sudo ./ctrl-flow-exploit-01 -m /boot/System.map-2.6.18-xenU \
+	clientA 2> /dev/null
 
-verbose: ctrl-flow-static
-	sudo ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
+verbose: ctrl-flow-exploit-01
+	sudo ./ctrl-flow-exploit-01 -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
-	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
-	a3guest
+	clientA
 
-debug: ctrl-flow-static
-	sudo gdb --args ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
+debug: ctrl-flow-exploit-01
+	sudo gdb --args ./ctrl-flow-exploit-01 -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
-	-f ../../../vmi/examples/ctrl-flow-analysis/syscall-list.txt \
-	a3guest
+	clientA
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.
