@@ -67,14 +67,14 @@ void sys_open_prologue(char *symbol,
     printf("[%c] %d (%s): %s proloque invoked\n", 
            context_ch(context), task->pid, task->comm, symbol);
     
-    printf("- Return address: 0x%08x\n", retaddr);
-/*
+    printf("- Return address: 0x%08lx\n", retaddr);
+
     printf("- Parent task chain: \n");
     while (task->parent)
     {
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
-    }*/
+    }
 }
 
 void sys_open_call(char *symbol, 
@@ -92,13 +92,13 @@ void sys_open_call(char *symbol,
                args[0].name, args[0].buf,
                args[1].name, *(int *)args[1].buf,
                args[2].name, *(int *)args[2].buf);
-/*    
+    
     printf("- Parent task chain: \n");
     while (task->parent)
     {
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
-    }*/
+    }
 }
 
 void sys_open_return(char *symbol, 
@@ -117,14 +117,14 @@ void sys_open_return(char *symbol,
                context_ch(context), task->pid, task->comm, symbol,
                *(int *)retval->buf, *(int *)retval->buf);
 
-    printf("- Return address: 0x%08x\n", retaddr);
-/*
+    printf("- Return address: 0x%08lx\n", retaddr);
+
     printf("- Parent task chain: \n");
     while (task->parent)
     {
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
-    }*/
+    }
 }
 
 void parse_opt(int argc, char *argv[])
@@ -181,28 +181,28 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    ret = ctxprobes_func_prologue("sys_open", sys_open_prologue);
+    ret = ctxprobes_reg_func_prologue("sys_open", sys_open_prologue);
     if (ret)
     {
         fprintf(stderr, "failed to register probe on sys_open prologue\n");
         exit(1);
     }
 
-    ret = ctxprobes_func_call("sys_open", sys_open_call);
+    ret = ctxprobes_reg_func_call("sys_open", sys_open_call);
     if (ret)
     {
         fprintf(stderr, "failed to register probe on sys_open call\n");
         exit(1);
     }
 
-    ret = ctxprobes_func_return("sys_open", sys_open_return);
+    ret = ctxprobes_reg_func_return("sys_open", sys_open_return);
     if (ret)
     {
         fprintf(stderr, "failed to register probe on sys_open return\n");
         exit(1);
     }
 
-    printf("Starting instrumentation ...\n");
+    printf("Starting instrumentation...\n");
     ctxprobes_wait();
 
     ctxprobes_cleanup();

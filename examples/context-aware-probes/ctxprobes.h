@@ -78,21 +78,26 @@ typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
                    int debug_level);
-
 void ctxprobes_cleanup(void);
 
 int ctxprobes_wait(void);
 
-int ctxprobes_func_prologue(char *symbol,
-                            ctxprobes_func_prologue_handler_t handler);
+int ctxprobes_reg_func_call(char *symbol,
+                            ctxprobes_func_call_handler_t handler);
+int ctxprobes_reg_func_prologue(char *symbol,
+                                ctxprobes_func_prologue_handler_t handler);
+int ctxprobes_reg_func_return(char *symbol,
+                              ctxprobes_func_return_handler_t handler);
+//int ctxprobes_reg_var(char *symbol,
+//                      ctxprobes_var_handler_t handler);
 
-int ctxprobes_func_call(char *symbol,
-                        ctxprobes_func_call_handler_t handler);
-
-int ctxprobes_func_return(char *symbol,
-                          ctxprobes_func_return_handler_t handler);
-
-//int ctxprobes_var(char *symbol,
-//                  ctxprobes_var_handler_t handler);
+void ctxprobes_unreg_func_call(char *symbol,
+                               ctxprobes_func_call_handler_t handler);
+void ctxprobes_unreg_func_prologue(char *symbol,
+                                   ctxprobes_func_prologue_handler_t handler);
+void ctxprobes_unreg_func_return(char *symbol,
+                                 ctxprobes_func_return_handler_t handler);
+//void ctxprobes_unreg_var(char *symbol,
+//                         ctxprobes_var_handler_t handler);
 
 #endif /* __CTXPROBES_H__ */

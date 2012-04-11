@@ -64,13 +64,6 @@ struct pt_regs {
     int  xss;
 };
 
-int register_prologue_probe(char *symbol, 
-                            probe_handler_t handler,
-                            struct probe_ops *ops,
-                            probepoint_whence_t whence,
-                            symbol_type_flag_t ftype,
-                            void *data);
-
 int register_call_probe(char *symbol, 
                         probe_handler_t handler,
                         struct probe_ops *ops,
@@ -78,22 +71,26 @@ int register_call_probe(char *symbol,
                         symbol_type_flag_t ftype,
                         void *data);
 
+int register_prologue_probe(char *symbol, 
+                            probe_handler_t handler,
+                            struct probe_ops *ops,
+                            probepoint_whence_t whence,
+                            symbol_type_flag_t ftype,
+                            void *data);
+
 int register_return_probe(char *symbol, 
                           probe_handler_t handler,
                           struct probe_ops *ops,
                           probepoint_whence_t whence,
                           symbol_type_flag_t ftype,
                           void *data);
-void unregister_probes();
 
+void unregister_probes();
 
 unsigned long sysmap_symbol_addr(char *symbol);
 
-
 unsigned long current_task_addr(void);
-
 int load_task_info(ctxprobes_task_t **task, unsigned long task_struct_addr);
-
 void unload_task_info(ctxprobes_task_t *task);
 
 char *context_string(ctxprobes_context_t context);
@@ -102,13 +99,8 @@ char *context_string(ctxprobes_context_t context);
 int load_func_args(ctxprobes_var_t **arg_list, 
                    int *arg_count, 
                    struct probe *probe);
-
-void unload_func_args(ctxprobes_var_t *arg_list, 
-                      int arg_count);
-
-int load_func_retval(ctxprobes_var_t **retval, 
-                     struct probe *probe);
-
+void unload_func_args(ctxprobes_var_t *arg_list, int arg_count);
+int load_func_retval(ctxprobes_var_t **retval, struct probe *probe);
 void unload_func_retval(ctxprobes_var_t *retval);
 
 #endif /* __CTXPROBES_PRIVATE_H__  */

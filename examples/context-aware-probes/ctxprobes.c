@@ -43,7 +43,10 @@
 char *dom_name = NULL;
 FILE *sysmap_handle = NULL;
 struct target *t = NULL;
+
 GHashTable *probes = NULL;
+GHashTable *cprobes = NULL;
+GHashTable *rprobes = NULL;
 
 ctxprobes_task_t *task_current = NULL;
 ctxprobes_context_t context_current = CTXPROBES_CONTEXT_NORMAL;
@@ -81,7 +84,7 @@ static int probe_func_prologue(struct probe *probe,
     DBG("SP: 0x%08x\n", sp);
 
     /* Save sp in a global variable. */
-	regsp = sp;
+    regsp = sp;
     
     /* Grab the return address on the top of the stack */
     if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
@@ -169,7 +172,7 @@ static int probe_func_return(struct probe *probe,
     //if (errno)
     //    ERR("Could not read SP!\n");
     /* Use the saved SP in global variable. */
-	sp = regsp;
+    sp = regsp;
     DBG("SP: 0x%08x\n", sp);
     
     /* Grab the return address on the top of the stack */
@@ -504,6 +507,22 @@ int ctxprobes_init(char *domain_name,
         return -5;
     }
 
+    cprobes = g_hash_table_new(g_direct_hash, g_direct_equal);
+    if (!cprobes)
+    {
+        ERR("Can't create prologue probe table for target %s\n", dom_name);
+        ctxprobes_cleanup();
+        return -5;
+    }
+
+    rprobes = g_hash_table_new(g_direct_hash, g_direct_equal);
+    if (!rprobes)
+    {
+        ERR("Can't create return probe table for target %s\n", dom_name);
+        ctxprobes_cleanup();
+        return -5;
+    }
+
     /*
      * Register probes to detect context changes; traps, interrupts, and
      * task switches.
@@ -585,6 +604,7 @@ void ctxprobes_cleanup(void)
         unregister_probes(probes);
         unload_task_info(task_current);
         target_close(t);
+        target_free(t);
 
         DBG("Ended trace.\n");
         
@@ -593,6 +613,13 @@ void ctxprobes_cleanup(void)
         if (bsymbol_task_next)
             bsymbol_release(bsymbol_task_next);
         fclose(sysmap_handle);
+
+        if (probes) 
+            g_hash_table_destroy(probes);
+        if (cprobes)
+            g_hash_table_destroy(cprobes);
+        if (rprobes)
+            g_hash_table_destroy(rprobes);
 
         bsymbol_task_prev = NULL;
         bsymbol_task_next = NULL;
@@ -652,34 +679,8 @@ int ctxprobes_wait(void)
     return 0;
 }
 
-int ctxprobes_func_prologue(char *symbol,
-                            ctxprobes_func_prologue_handler_t handler)
-{
-    int ret;
-
-    if (!t)
-    {
-        ERR("Target not initialized\n");
-        return -1;
-    }
-
-    ret = register_prologue_probe(symbol, 
-                                  probe_func_prologue,
-                                  NULL, /* ops */
-                                  PROBEPOINT_EXEC,
-                                  SYMBOL_TYPE_FLAG_FUNCTION,
-                                  handler); /* data <- ctxprobes handler */
-    if (ret)
-    {
-        ERR("Failed to register context-aware prologue probe on '%s'\n", symbol);
-        return -1;
-    }
-
-    return 0;
-}
-
-int ctxprobes_func_call(char *symbol,
-                        ctxprobes_func_call_handler_t handler)
+int ctxprobes_reg_func_call(char *symbol,
+                            ctxprobes_func_call_handler_t handler)
 {
     int ret;
 
@@ -704,8 +705,35 @@ int ctxprobes_func_call(char *symbol,
     return 0;
 }
 
-int ctxprobes_func_return(char *symbol,
-                          ctxprobes_func_return_handler_t handler)
+int ctxprobes_reg_func_prologue(char *symbol,
+                                ctxprobes_func_prologue_handler_t handler)
+{
+    int ret;
+
+    if (!t)
+    {
+        ERR("Target not initialized\n");
+        return -1;
+    }
+
+    ret = register_prologue_probe(symbol, 
+                                  probe_func_prologue,
+                                  NULL, /* ops */
+                                  PROBEPOINT_EXEC,
+                                  SYMBOL_TYPE_FLAG_FUNCTION,
+                                  handler); /* data <- ctxprobes handler */
+    if (ret)
+    {
+        ERR("Failed to register context-aware prologue probe on '%s'\n", 
+            symbol);
+        return -1;
+    }
+
+    return 0;
+}
+
+int ctxprobes_reg_func_return(char *symbol,
+                              ctxprobes_func_return_handler_t handler)
 {
     int ret;
 
@@ -730,8 +758,8 @@ int ctxprobes_func_return(char *symbol,
     return 0;
 }
 /*
-int ctxprobes_var(char *symbol,
-                  ctxprobes_var_handler_t handler)
+int ctxprobes_reg_var(char *symbol,
+                      ctxprobes_var_handler_t handler)
 {
     if (!t)
     {
@@ -739,6 +767,100 @@ int ctxprobes_var(char *symbol,
         return -1;
     }
 
+    return 0;
+}
+*/
+void ctxprobes_unreg_func_call(char *symbol,
+                               ctxprobes_func_call_handler_t handler)
+{
+    GHashTableIter iter;
+    gpointer key;
+    struct probe *probe;
+
+    g_hash_table_iter_init(&iter, probes);
+    while (g_hash_table_iter_next(&iter,
+           (gpointer)&key,
+           (gpointer)&probe))
+    {
+        if (strcmp(probe->name, symbol) == 0 && 
+            probe->handler_data == (void *)handler)
+        {
+            probe_unregister(probe, 1);
+            probe_free(probe, 1);
+            g_hash_table_iter_remove(&iter);
+            break;
+        }
+    }
+}
+
+void ctxprobes_unreg_func_prologue(char *symbol,
+                                   ctxprobes_func_prologue_handler_t handler)
+{
+    GHashTableIter iter;
+    gpointer key;
+    struct probe *probe;
+    struct bsymbol *bsymbol = NULL;
+    ADDR funcstart = 0;
+    
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL,
+                                SYMBOL_TYPE_FLAG_FUNCTION);
+    if (bsymbol)
+    {
+        if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL) == 0)
+            g_hash_table_remove(cprobes, (gpointer)funcstart);
+    }
+
+    g_hash_table_iter_init(&iter, probes);
+    while (g_hash_table_iter_next(&iter,
+           (gpointer)&key,
+           (gpointer)&probe))
+    {
+        if (strcmp(probe->name, symbol) == 0 && 
+            probe->handler_data == (void *)handler)
+        {
+            probe_unregister(probe, 1);
+            probe_free(probe, 1);
+            g_hash_table_iter_remove(&iter);
+            break;
+        }
+    }
+}
+
+void ctxprobes_unreg_func_return(char *symbol,
+                                 ctxprobes_func_return_handler_t handler)
+{
+    GHashTableIter iter;
+    gpointer key;
+    struct probe *probe;
+    struct bsymbol *bsymbol = NULL;
+    ADDR funcstart = 0;
+    
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL, 
+                                SYMBOL_TYPE_FLAG_FUNCTION);
+    if (bsymbol)
+    {
+        if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL) == 0)
+            g_hash_table_remove(rprobes, (gpointer)funcstart);
+    }
+
+    g_hash_table_iter_init(&iter, probes);
+    while (g_hash_table_iter_next(&iter,
+           (gpointer)&key,
+           (gpointer)&probe))
+    {
+        if (strcmp(probe->name, symbol) == 0 && 
+            probe->handler_data == (void *)handler)
+        {
+            probe_unregister(probe, 1);
+            probe_free(probe, 1);
+            g_hash_table_iter_remove(&iter);
+            break;
+        }
+    }
+}
+/*
+int ctxprobes_unreg_var(char *symbol)
+{
     return 0;
 }
 */
