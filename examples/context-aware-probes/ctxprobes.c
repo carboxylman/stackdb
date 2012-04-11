@@ -567,14 +567,24 @@ int ctxprobes_init(char *domain_name,
 
     /*
      * Obtain current task info -- task info will be updated on detecting
-     * task switches later on.
+     * task switches later on. Since on a suppeneded replay session we cannot
+     * read the current task address from ESP, assign a dummy task info with
+     * a task name(comm) "null".
      */
     task_struct_addr = current_task_addr();
     ret = load_task_info(&task_current, task_struct_addr);
     if (ret)
     {
-        ERR("Cannot load current task info\n");
-        return -1;
+        WARN("Cannot load initial task info. Assigning dummy task info...\n");
+        task_current = (ctxprobes_task_t *)malloc(sizeof(ctxprobes_task_t));
+        if (!task_current)
+        {
+            ERR("Cannot allocate memory for initial task info!\n");
+            ctxprobes_cleanup();
+            return -4;
+        }
+        memset(task_current, 0, sizeof(ctxprobes_task_t));
+        task_current->comm = strdup("null");
     }
     DBG("Current task: %d (%s)\n", task_current->pid, task_current->comm);
 
