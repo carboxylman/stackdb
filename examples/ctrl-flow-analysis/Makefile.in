@@ -43,8 +43,8 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := ctrl-flow-static ctrl-flow-dynamic \
-            ctrl-flow-exploit-01
+PROGRAMS := ctrl-flow-static \
+            ctrl-flow-passwd
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -71,11 +71,7 @@ ctrl-flow-static: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-static.lo $(STATI
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-ctrl-flow-dynamic: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-dynamic.lo $(STATICLIBS)
-	$(LIBTOOL) --mode=link \
-	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
-
-ctrl-flow-exploit-01: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-exploit-01.lo $(STATICLIBS)
+ctrl-flow-passwd: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-passwd.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -84,27 +80,27 @@ install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
-	ctrl-flow-static.lo ctrl-flow-dynamic.lo \
-	ctrl-flow-exploit-01.lo
+	ctrl-flow-static.lo \
+	ctrl-flow-passwd.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
 
-run: ctrl-flow-exploit-01
-	sudo ./ctrl-flow-exploit-01 -m /boot/System.map-2.6.18-xenU \
+run: ctrl-flow-passwd
+	sudo ./ctrl-flow-passwd -m /boot/System.map-2.6.18-xenU \
 	clientA
 
-demo: ctrl-flow-exploit-01
-	sudo ./ctrl-flow-exploit-01 -m /boot/System.map-2.6.18-xenU \
+demo: ctrl-flow-passwd
+	sudo ./ctrl-flow-passwd -m /boot/System.map-2.6.18-xenU \
 	clientA 2> /dev/null
 
-verbose: ctrl-flow-exploit-01
-	sudo ./ctrl-flow-exploit-01 -ddddddddddd -l T_ALL,P_ALL,T_XV \
+verbose: ctrl-flow-passwd
+	sudo ./ctrl-flow-passwd -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
 	clientA
 
-debug: ctrl-flow-exploit-01
-	sudo gdb --args ./ctrl-flow-exploit-01 -ddddddddddd -l T_ALL,P_ALL,T_XV \
+debug: ctrl-flow-passwd
+	sudo gdb --args ./ctrl-flow-passwd -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
 	clientA
 

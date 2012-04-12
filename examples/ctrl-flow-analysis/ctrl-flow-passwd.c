@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  examples/ctrl-flow-analysis/ctrl-flow-exploit-01.c
+ *  examples/ctrl-flow-analysis/ctrl-flow-passwd.c
  *
  *  Detect write access to /etc/passwd and return the task uid and
  *  the branch counter.
