@@ -462,6 +462,17 @@ static int xen_vm_load_context(struct target *target) {
 	    return -1;
 	}
 	xstate->context_valid = 1;
+
+	vdebug(4,LOG_T_XV,
+	       "debug registers (vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
+	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
+	       xstate->context.debugreg[0],xstate->context.debugreg[1],
+	       xstate->context.debugreg[2],xstate->context.debugreg[3],
+	       xstate->context.debugreg[6],xstate->context.debugreg[7]);
+    }
+    else {
+	vdebug(4,LOG_T_XV,
+	       "did not need to load context; current context is valid\n");
     }
 
     return 0;
@@ -1626,6 +1637,13 @@ static int xen_vm_flush_context(struct target *target) {
 	/* Invalidate our cache. */
 	xstate->context_dirty = 0;
 	xstate->context_valid = 0;
+
+	vdebug(4,LOG_T_XV,
+	       "debug registers (vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
+	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
+	       xstate->context.debugreg[0],xstate->context.debugreg[1],
+	       xstate->context.debugreg[2],xstate->context.debugreg[3],
+	       xstate->context.debugreg[6],xstate->context.debugreg[7]);
 
 	vdebug(4,LOG_T_XV,
 	       "debug registers (our copy): 0x%"PRIxADDR",0x%"PRIxADDR
