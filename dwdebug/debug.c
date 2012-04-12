@@ -1051,9 +1051,10 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
 
     /* 
      * We *do* have to strdup the keys... so free them when we destroy!
+     * Also, our values are dwarf_cu_die_ref structs, so free those too!
      */
     debugfile->pubnames = g_hash_table_new_full(g_str_hash,g_str_equal,
-						free,NULL);
+						free,free);
 
     debugfile->ranges = clrange_create();
 

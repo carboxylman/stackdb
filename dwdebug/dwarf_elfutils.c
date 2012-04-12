@@ -80,7 +80,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
     if (g_hash_table_size(debugfile->addresses) == 0) 
 	return 0;
 
-    vdebug(5,LOG_D_DWARF,"processing lines at offset 0x%lx!\n",offset);
+    vdebug(5,LOG_D_LOC,"processing lines at offset 0x%lx!\n",offset);
 
     while (linep < lineendp) {
 	start_offset = linep - linestartp;
@@ -266,12 +266,12 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    if (symbol_contains_addr(candidate_symbol,address)) {
 			candidate_symbol->s.ii->d.f.epilogue_begin =	\
 			    (ADDR)address;
-			vdebug(3,LOG_D_DWARF,
+			vdebug(3,LOG_D_LOC,
 			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 		    }
 		    else {
-			vdebug(5,LOG_D_DWARF,
+			vdebug(5,LOG_D_LOC,
 			       "set_epilogue_begin: address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
@@ -285,7 +285,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    /* Use it if the address is in the function range. */
 		    if (symbol_contains_addr(candidate_symbol,address)) {
 			candidate_symbol->s.ii->d.f.prologue_end = (ADDR)address;
-			vdebug(3,LOG_D_DWARF,
+			vdebug(3,LOG_D_LOC,
 			       "set_prologue_end: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 
@@ -298,7 +298,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			symbol = NULL;
 		    }
 		    else {
-			vdebug(5,LOG_D_DWARF,
+			vdebug(5,LOG_D_LOC,
 			       "set_prologue_end: address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
@@ -321,7 +321,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		     */
 		    if (symbol_contains_addr(symbol,address)) {
 			symbol->s.ii->d.f.prologue_end = (ADDR)address;
-			vdebug(3,LOG_D_DWARF,
+			vdebug(3,LOG_D_LOC,
 			       "assuming prologue_end of %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
 
@@ -329,7 +329,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			symbol->s.ii->d.f.prologue_guessed = 1;
 		    }
 		    else {
-			vdebug(5,LOG_D_DWARF,
+			vdebug(5,LOG_D_LOC,
 			       "address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(symbol));
 		    }
@@ -346,13 +346,13 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			g_hash_table_lookup(debugfile->addresses,
 					    (gpointer)(ADDR)address);
 		    if (symbol) {
-			vdebug(3,LOG_D_DWARF,
+			vdebug(3,LOG_D_LOC,
 			       "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
 			candidate_symbol = symbol;
 		    }
 		    else 
-			vdebug(5,LOG_D_DWARF,
+			vdebug(5,LOG_D_LOC,
 			       "did not find function at 0x%"PRIxADDR"\n",
 			       (ADDR)address);
 		}
@@ -397,7 +397,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			    g_hash_table_lookup(debugfile->addresses,
 						(gpointer)(ADDR)address);
 			if (symbol) {
-			    vdebug(3,LOG_D_DWARF,
+			    vdebug(3,LOG_D_LOC,
 				   "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 				   symbol_get_name(symbol),(ADDR)address);
 			    candidate_symbol = symbol;

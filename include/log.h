@@ -41,22 +41,24 @@ typedef enum log_flag_bits {
     LOG_FB_D_LOC       = 4,
     LOG_FB_D_LOOKUP    = 5,
     LOG_FB_D_DWARF     = 6,
-    LOG_FB_D_OTHER     = 7,
+    LOG_FB_D_DWARFATTR = 7,
+    LOG_FB_D_DWARFOPS  = 8,
+    LOG_FB_D_OTHER     = 9,
 
-    LOG_FB_T_TARGET    = 8,
-    LOG_FB_T_SPACE     = 9,
-    LOG_FB_T_REGION    = 10,
-    LOG_FB_T_LOOKUP    = 11,
-    LOG_FB_T_LOC       = 12,
-    LOG_FB_T_OTHER     = 13,
-    LOG_FB_T_SYMBOL    = 14,
-    LOG_FB_T_LUP       = 15,
-    LOG_FB_T_XV        = 16,
-    LOG_FB_T_DISASM    = 17,
+    LOG_FB_T_TARGET    = 12,
+    LOG_FB_T_SPACE     = 13,
+    LOG_FB_T_REGION    = 14,
+    LOG_FB_T_LOOKUP    = 15,
+    LOG_FB_T_LOC       = 16,
+    LOG_FB_T_OTHER     = 17,
+    LOG_FB_T_SYMBOL    = 18,
+    LOG_FB_T_LUP       = 19,
+    LOG_FB_T_XV        = 20,
+    LOG_FB_T_DISASM    = 21,
 
-    LOG_FB_P_PROBE     = 20,
-    LOG_FB_P_PROBEPOINT= 21,
-    LOG_FB_P_ACTION    = 22,
+    LOG_FB_P_PROBE     = 24,
+    LOG_FB_P_PROBEPOINT= 25,
+    LOG_FB_P_ACTION    = 26,
 } log_flag_bits_t;
 
 typedef enum log_flags {
@@ -67,6 +69,8 @@ typedef enum log_flags {
     LOG_D_LOC          = 1 << LOG_FB_D_LOC,
     LOG_D_LOOKUP       = 1 << LOG_FB_D_LOOKUP,
     LOG_D_DWARF        = 1 << LOG_FB_D_DWARF,
+    LOG_D_DWARFATTR    = 1 << LOG_FB_D_DWARFATTR,
+    LOG_D_DWARFOPS     = 1 << LOG_FB_D_DWARFOPS,
     LOG_D_OTHER        = 1 << LOG_FB_D_OTHER,
     LOG_T_TARGET       = 1 << LOG_FB_T_TARGET,
     LOG_T_SPACE        = 1 << LOG_FB_T_SPACE,
@@ -84,7 +88,8 @@ typedef enum log_flags {
 } log_flags_t;
 
 #define LOG_D_ALL (LOG_D_DFILE | LOG_D_SYMBOL | LOG_D_SYMTAB | LOG_D_LOC \
-		   | LOG_D_LOOKUP | LOG_D_DWARF | LOG_D_OTHER)
+		   | LOG_D_LOOKUP | LOG_D_DWARF | LOG_D_DWARFATTR \
+		   | LOG_D_DWARFOPS | LOG_D_OTHER )
 #define LOG_T_ALL (LOG_T_TARGET | LOG_T_SPACE | LOG_T_REGION | LOG_T_LOOKUP \
 		   | LOG_T_LOC | LOG_T_OTHER | LOG_T_SYMBOL | LOG_T_DISASM)
 #define LOG_P_ALL (LOG_P_PROBE | LOG_P_PROBEPOINT | LOG_P_ACTION)

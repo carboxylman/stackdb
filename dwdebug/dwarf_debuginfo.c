@@ -47,15 +47,23 @@
  * Prototypes.
  */
 
+struct cu_meta {
+    size_t cuhl;
+    Dwarf_Half version;
+    uint8_t addrsize;
+    uint8_t offsize;
+    Dwarf_Off abbroffset;
+    Dwarf_Off nextcu;
+};
+
 struct attrcb_args {
     Dwfl_Module *dwflmod;
     Dwarf *dbg;
+    struct cu_meta *meta;
+
     int level;
-    unsigned int addrsize;
-    unsigned int offset_size;
     Dwarf_Off cu_offset;
     Dwarf_Off die_offset;
-    Dwarf_Half version;
     Dwarf_Addr cu_base;
     bool have_stmt_list_offset;
     Dwarf_Word stmt_list_offset;
@@ -114,9 +122,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	goto errout;
     }
 
-    vdebug(4,LOG_D_DWARF,"\t\t[DIE %" PRIx64 "] %d %s (%s) (as=%d,os=%d)\n",
+    vdebug(4,LOG_D_DWARFATTR,"\t\t[DIE %" PRIx64 "] %d %s (%s) (as=%d,os=%d)\n",
 	   (int)level,cbargs->die_offset,dwarf_attr_string(attr),
-	   dwarf_form_string(form),cbargs->addrsize,cbargs->offset_size);
+	   dwarf_form_string(form),cbargs->meta->addrsize,cbargs->meta->offsize);
 
     /* if form is a string */
     char *str = NULL;
@@ -156,7 +164,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
 	// XXX relocation...
 	// XXX: make sure to only use this pointer if DWDEBUG_USE_STRTAB!
-	if (cbargs->offset_size == 4)
+	if (cbargs->meta->offsize == 4)
 	    str = &debugfile->strtab[*((uint32_t *)attrp->valp)];
 	else 
 	    str = &debugfile->strtab[*((uint64_t *)attrp->valp)];
@@ -185,7 +193,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	ref_set = 1;
 	break;
     case DW_FORM_sec_offset:
-      attrp->form = cbargs->offset_size == 8 ? DW_FORM_data8 : DW_FORM_data4;
+      attrp->form = cbargs->meta->offsize == 8 ? DW_FORM_data8 : DW_FORM_data4;
       /* Fall through.  */
     case DW_FORM_udata:
     case DW_FORM_sdata:
@@ -261,7 +269,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
     switch (attr) {
     case DW_AT_name:
-	vdebug(4,LOG_D_DWARF,"\t\t\tvalue = %s\n",str);
+	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %s\n",str);
 	if (level == 0) {
 	    symtab_set_name(cbargs->cu_symtab,str);
 	}
@@ -280,7 +288,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set) {
 	    cbargs->stmt_list_offset = num;
 	    cbargs->have_stmt_list_offset = true;
-	    vdebug(4,LOG_D_DWARF,"\t\t\tvalue = %d\n",num);
+	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %d\n",num);
 	}
 	else {
 	    vwarn("[DIE %" PRIx64 "] attr %s in bad context\n",
@@ -288,7 +296,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
 	break;
     case DW_AT_producer:
-	vdebug(4,LOG_D_DWARF,"\t\t\tvalue = %s\n",str);
+	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %s\n",str);
 	if (level == 0) 
 	    symtab_set_producer(cbargs->cu_symtab,str);
 	else 
@@ -296,7 +304,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  cbargs->die_offset,str,dwarf_attr_string(attr));
 	break;
     case DW_AT_comp_dir:
-	vdebug(4,LOG_D_DWARF,"\t\t\tvalue = %s\n",str);
+	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %s\n",str);
 	if (level == 0) 
 	    symtab_set_compdirname(cbargs->cu_symtab,str);
 	else 
@@ -304,7 +312,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  cbargs->die_offset,str,dwarf_attr_string(attr));
 	break;
     case DW_AT_language:
-	vdebug(4,LOG_D_DWARF,"\t\t\tvalue = %d\n",num);
+	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %d\n",num);
 	if (level == 0) 
 	    cbargs->cu_symtab->language = num;
 	else 
@@ -312,7 +320,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		  cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_low_pc:
-	vdebug(4,LOG_D_DWARF,"\t\t\tvalue = 0x%p\n",addr);
+	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
 
 	/* If we see a new compilation unit, save its low pc separately
 	 * for use in loclist calculations.  CUs can have both a low pc
@@ -351,7 +359,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_high_pc:
 	if (num_set) {
-	    vdebug(4,LOG_D_DWARF,"\t\t\tvalue = " PRIu64 "\n",num);
+	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = " PRIu64 "\n",num);
 
 	    /* it's a relative offset from low_pc; if we haven't seen
 	     * low_pc yet, just bail.
@@ -377,7 +385,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else if (addr_set) {
-	    vdebug(4,LOG_D_DWARF,"\t\t\tvalue = 0x%p\n",addr);
+	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
 
 	    cbargs->highpc = addr;
 	    cbargs->highpc_is_offset = 0;
@@ -406,7 +414,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_entry_pc:
 	if (addr_set) {
-	    vdebug(4,LOG_D_DWARF,"\t\t\tvalue = 0x%p\n",addr);
+	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
 
 	    if (level == 0) {
 		/* Don't bother recording this for CUs. */
@@ -661,8 +669,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (block_set) {
 	    if (SYMBOL_IS_VAR(cbargs->symbol)
 		&& cbargs->symbol->ismember) {
-		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				   cbargs->addrsize,cbargs->offset_size,
+		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
+				   cbargs->meta->addrsize,cbargs->meta->offsize,
 				   block.length,block.data,attr,
 				   &cbargs->symbol->s.ii->l)) {
 		    verror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
@@ -684,8 +692,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
 		cbargs->symbol->s.ii->l.l.loclist = loc_list_create(0);
 
-		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				cbargs->addrsize,cbargs->offset_size,
+		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
+				cbargs->meta->addrsize,cbargs->meta->offsize,
 				attr,num,cbargs->debugfile,cbargs->cu_base,
 				cbargs->symbol->s.ii->l.l.loclist)) {
 		    verror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
@@ -704,7 +712,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 #if _INT_ELFUTILS_VERSION > 137
 	    && form != DW_FORM_sec_offset
 #endif
-	    && (cbargs->version >= 4
+	    && (cbargs->meta->version >= 4
 		|| (form != DW_FORM_data4 
 		    && form != DW_FORM_data8))) {
 	    /* it's a constant */
@@ -727,8 +735,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
 		cbargs->symbol->s.ii->d.f.fb.list = loc_list_create(0);
 
-		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				cbargs->addrsize,cbargs->offset_size,
+		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
+				cbargs->meta->addrsize,cbargs->meta->offsize,
 				attr,num,
 				cbargs->debugfile,
 				cbargs->cu_base,
@@ -752,8 +760,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    (struct location *)malloc(sizeof(struct location));
 		memset(cbargs->symbol->s.ii->d.f.fb.loc,0,sizeof(struct location));
 
-		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				   cbargs->addrsize,cbargs->offset_size,
+		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
+				   cbargs->meta->addrsize,cbargs->meta->offsize,
 				   block.length,block.data,attr,
 				   cbargs->symbol->s.ii->d.f.fb.loc)) {
 		    verror("[DIE %" PRIx64 "] failed to get single loc attrval %" PRIx64 " for attr %s in function symbol %s\n",
@@ -786,8 +794,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		int i;
 		memset(&rl,0,sizeof(rl));
 
-		if (get_rangelist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				  cbargs->addrsize,cbargs->offset_size,
+		if (get_rangelist(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
+				  cbargs->meta->addrsize,cbargs->meta->offsize,
 				  attr,num,
 				  cbargs->debugfile,cbargs->cu_base,
 				  &rl)) {
@@ -807,8 +815,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
 	    if (cbargs->symbol && SYMBOL_IS_FULL_LABEL(cbargs->symbol)
 		&& cbargs->symbol->s.ii->d.l.range.rtype == RANGE_TYPE_NONE) {
-		if (get_rangelist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				  cbargs->addrsize,cbargs->offset_size,
+		if (get_rangelist(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
+				  cbargs->meta->addrsize,cbargs->meta->offsize,
 				  attr,num,
 				  cbargs->debugfile,cbargs->cu_base,
 				  &cbargs->symbol->s.ii->d.l.range.r.rlist)) {
@@ -839,8 +847,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    loclist = loc_list_create(0);
 		}
 
-		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->version,
-				cbargs->addrsize,cbargs->offset_size,
+		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
+				cbargs->meta->addrsize,cbargs->meta->offsize,
 				attr,num,
 				cbargs->debugfile,
 				cbargs->cu_base,
@@ -875,7 +883,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    memset(loc,0,sizeof(*loc));
 		}
 		get_static_ops(cbargs->dwflmod,cbargs->dbg,
-			       cbargs->version,cbargs->addrsize,cbargs->offset_size,
+			       cbargs->meta->version,cbargs->meta->addrsize,cbargs->meta->offsize,
 			       block.length,block.data,attr,
 			       loc);
 
@@ -996,7 +1004,7 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     readp = debugfile->rangetab + offset;
     endp = debugfile->rangetab + debugfile->rangetablen;
 
-    vdebug(5,LOG_D_DWARF,"starting (rangetab len %d, offset %d)\n",
+    vdebug(5,LOG_D_LOC,"starting (rangetab len %d, offset %d)\n",
 	   debugfile->rangetablen,offset);
 
     while (readp < endp) {
@@ -1020,7 +1028,7 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 
 	if (begin == (Dwarf_Addr)-1l) {
 	    /* Base address entry.  */
-	    vdebug(5,LOG_D_DWARF,"[%6tx] base address 0x%" PRIxADDR "\n",
+	    vdebug(5,LOG_D_LOC,"[%6tx] base address 0x%" PRIxADDR "\n",
 		   loffset,end);
 	    have_base = 1;
 	    base = end;
@@ -1030,7 +1038,7 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    if (len == 0)
 		vwarn("[%6tx] empty list\n",loffset);
 	    else 
-		vdebug(5,LOG_D_DWARF,"[%6tx] end of list\n");
+		vdebug(5,LOG_D_LOC,"[%6tx] end of list\n");
 	    break;
 	}
 	else {
@@ -1077,7 +1085,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     readp = debugfile->loctab + offset;
     endp = debugfile->loctab + debugfile->loctablen;
 
-    vdebug(5,LOG_D_DWARF,"starting (loctab len %d, offset %d)\n",
+    vdebug(5,LOG_D_LOC,"starting (loctab len %d, offset %d)\n",
 	   debugfile->loctablen,offset);
 
     while (readp < endp) {
@@ -1101,7 +1109,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 
 	if (begin == (Dwarf_Addr)-1l) {
 	    /* Base address entry.  */
-	    vdebug(5,LOG_D_DWARF,"[%6tx] base address 0x%" PRIxADDR "\n",
+	    vdebug(5,LOG_D_LOC,"[%6tx] base address 0x%" PRIxADDR "\n",
 		   loffset,end);
 	    have_base = 1;
 	    base = end;
@@ -1111,7 +1119,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    if (len == 0)
 		vwarn("[%6tx] empty list\n",loffset);
 	    else 
-		vdebug(5,LOG_D_DWARF,"[%6tx] end of list\n");
+		vdebug(5,LOG_D_LOC,"[%6tx] end of list\n");
 	    break;
 	}
 	else {
@@ -1120,7 +1128,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    /* We have a location expression entry.  */
 	    exprlen = read_2ubyte_unaligned_inc(obo,readp);
 
-	    vdebug(5,LOG_D_DWARF,"[%6tx] loc expr range 0x%" PRIxADDR ",0x%" PRIxADDR ", len %hd\n",
+	    vdebug(5,LOG_D_LOC,"[%6tx] loc expr range 0x%" PRIxADDR ",0x%" PRIxADDR ", len %hd\n",
 		   loffset,begin,end,exprlen);
 
 	    if (endp - readp <= (ptrdiff_t) exprlen) {
@@ -1128,7 +1136,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 		break;
 	    }
 	    else {
-		vdebug(5,LOG_D_DWARF,"[%6tx] loc expr len (%hd) in entry\n",
+		vdebug(5,LOG_D_LOC,"[%6tx] loc expr len (%hd) in entry\n",
 		       loffset,exprlen);
 	    }
 
@@ -1137,12 +1145,12 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    if (get_static_ops(dwflmod,dbg,3,addrsize,offsetsize,
 			       exprlen,(unsigned char *)readp,attr,
 			       tmploc)) {
-		verror("get_static_ops (%d) failed!\n",exprlen);
+		verror("get_loclist (%d) failed!\n",exprlen);
 		location_free(tmploc);
 		return -1;
 	    }
 	    else {
-		vdebug(5,LOG_D_DWARF,"get_static_ops (%d) succeeded!\n",exprlen);
+		vdebug(5,LOG_D_LOC,"get_loclist (%d) succeeded!\n",exprlen);
 	    }
 
 	    if (loc_list_add(list,
@@ -1374,7 +1382,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     u64 = (uint64_t)*((tt *)data);			\
     data += size;					\
     CONSUME(size);					\
-    vdebug(6,LOG_D_DWARF,"%s -> 0x%" PRIuMAX "\n",known[op],u64);	\
+    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);	\
     if (attr == DW_AT_data_member_location) {		\
 	ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,		\
 	       member_offset,(int32_t)u64);		\
@@ -1389,7 +1397,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     s64 = (int64_t)*((tt *)data);			\
     data += size;					\
     CONSUME(size);					\
-    vdebug(6,LOG_D_DWARF,"%s -> 0x%" PRIxMAX "\n",known[op],s64);	\
+    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIxMAX "\n",known[op],s64);	\
     if (attr == DW_AT_data_member_location) {		\
 	ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,		\
 	       member_offset,(int32_t)s64);		\
@@ -1403,7 +1411,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	uint_fast8_t op = *data++;
 	const unsigned char *start = data;
 
-	vdebug(6,LOG_D_DWARF,"%s with len = %d\n",known[op],len);
+	vdebug(6,LOG_D_DWARFOPS,"%s with len = %d\n",known[op],len);
 
 	Dwarf_Word addr;
 	uint8_t reg;
@@ -1421,7 +1429,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    }
 	    data += addrsize;
 	    CONSUME(addrsize);
-	    vdebug(6,LOG_D_DWARF,"%s -> 0x%" PRIx64 "\n",known[op],addr);
+	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIx64 "\n",known[op],addr);
 	    if (start == (origdata + 1) && len == 0) {
 		retval->loctype = LOCTYPE_ADDR;
 		retval->l.addr = addr;
@@ -1436,7 +1444,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	case DW_OP_reg0...DW_OP_reg31:
 	    reg = op - (uint8_t)DW_OP_reg0;
 
-	    vdebug(6,LOG_D_DWARF,"%s -> 0x%" PRIu8 "\n",known[op],reg);
+	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIu8 "\n",known[op],reg);
 	    ONLYOP(retval,LOCTYPE_REG,reg,reg);
 	    break;
 	//case DW_OP_piece:
@@ -1444,7 +1452,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    NEED(1);
 	    get_uleb128(u64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARF,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
+	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
 	    ONLYOP(retval,LOCTYPE_REG,reg,(uint8_t)u64);
 	    break;
 
@@ -1453,7 +1461,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    NEED(1);
 	    get_uleb128(u64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARF,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
+	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
 	    if (attr == DW_AT_data_member_location) {
 		ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,
 		       member_offset,(int32_t)u64);
@@ -1468,7 +1476,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    NEED(1);
 	    get_sleb128(s64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARF,"%s -> 0x%" PRIxMAX "\n",known[op],s64);
+	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIxMAX "\n",known[op],s64);
 	    if (attr == DW_AT_data_member_location) {
 		ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,
 		       member_offset,(int32_t)s64);
@@ -1519,14 +1527,14 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	  NEED(1);
 	  get_sleb128(s64,data); /* XXX check overrun */
 	  CONSUME(data - start);
-	  vdebug(6,LOG_D_DWARF,"%s -> fbreg offset %ld\n",known[op],s64);
+	  vdebug(6,LOG_D_DWARFOPS,"%s -> fbreg offset %ld\n",known[op],s64);
 	  ONLYOP(retval,LOCTYPE_FBREG_OFFSET,fboffset,s64);
 	  break;
 	case DW_OP_breg0 ... DW_OP_breg31:
 	    NEED(1);
 	    get_sleb128(s64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARF,"%s -> reg (%d) offset %ld\n",known[op],
+	    vdebug(6,LOG_D_DWARFOPS,"%s -> reg (%d) offset %ld\n",known[op],
 		   (uint8_t)(op - DW_OP_breg0),s64);
 	    retval->l.regoffset.offset = s64;
 	    ONLYOP(retval,LOCTYPE_REG_OFFSET,regoffset.reg,
@@ -1537,7 +1545,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    get_uleb128(u64,data); /* XXX check overrun */
 	    get_sleb128(s64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARF,"%s -> reg%" PRId8 ", offset %ld\n",known[op],
+	    vdebug(6,LOG_D_DWARFOPS,"%s -> reg%" PRId8 ", offset %ld\n",known[op],
 		   (uint8_t)u64,s64);
 	    retval->l.regoffset.offset = s64;
 	    ONLYOP(retval,LOCTYPE_REG_OFFSET,regoffset.reg,(uint8_t)u64);
@@ -1577,7 +1585,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			Dwarf_Off die_offset,
 			struct symbol *symbol,
 			struct symbol *parentsymbol,
-			struct symbol *voidsymbol);
+			struct symbol *voidsymbol,
+			GHashTable *reftab,struct array_list *die_offsets);
 void resolve_refs(gpointer key,gpointer value,gpointer data);
 
 struct symbol *add_void_symbol(struct debugfile *debugfile,
@@ -1596,125 +1605,33 @@ struct symbol *add_void_symbol(struct debugfile *debugfile,
     return symbol;
 }
 
-/*
- * Traverses the debuginfo section by hopping around as needed, with a
- * post-pass to resolve accumulated references.  We start with an
- * initial g
- */
-static int debuginfo_unordered_traversal(struct debugfile *debugfile,
-					 GHashTable *names_to_cu_offsets,
-					 regex_t **srcfile_regex_list,
-					 regex_t **symbol_regex_list,
-					 int quick,
-					 Dwfl_Module *dwflmod,Dwarf *dbg) {
-    return -1;
-}
-
-/*
- * Traverses the entire debuginfo section in order, one pass.  For each
- * CU, parse it according to constraints in @srcfile_regex_list,
- * @symbol_regex_list, and @quick; then does a post-pass after each CU
- * to resolve references (necessary since we do a strict one-pass
- * traversal).
- *
- * If @srcfile_regex_list, and the CU srcfile name doesn't match
- * anything, skip the CU.
- *
- * Then, if we're processing the CU, and if @symbol_regex_list is set,
- * load all type symbols and inlined origins, and any other symbols that
- * match our regex list; but once we finish the CU, and have resolved
- * references, remove any symbols that have refcnt zero.
- *
- * Finally, if @quick, do not load any detailed information for symbols,
- * including children (i.e., params, members) -- EXCEPT for enumerated
- * vars.  They are technically children, but they are in the namespace
- * of the parent.
- */
-static int debuginfo_ordered_traversal(struct debugfile *debugfile,
-				       struct debugfile_load_opts *opts,
-				       Dwfl_Module *dwflmod,Dwarf *dbg) {
-    int rc;
+static int debuginfo_load_cu(struct debugfile *debugfile,
+			     struct debugfile_load_opts *opts,
+			     Dwfl_Module *dwflmod,Dwarf *dbg,
+			     Dwarf_Off *cu_offset,
+			     struct cu_meta *meta,
+			     struct array_list *init_die_offsets) {
     int retval = 0;
-
-    vdebug(1,LOG_D_DWARF,"starting on %s \n",debugfile->filename);
-
+    Dwarf_Off offset = *cu_offset;
+    struct attrcb_args args;
     int maxdies = 8;
-    int level;
+    int level = 0;
     Dwarf_Die *dies = (Dwarf_Die *)malloc(maxdies*sizeof(Dwarf_Die));
-    Dwarf_Off offset = 0;
-
-    /* New compilation unit.  */
-    size_t cuhl;
-    Dwarf_Off abbroffset;
-    uint8_t addrsize;
-    uint8_t offsize;
-    Dwarf_Off nextcu;
-    Dwarf_Half version;
-
-    struct symtab *cu_symtab;
-    struct symbol **symbols = (struct symbol **)malloc(maxdies*sizeof(struct symbol *));
-    struct symtab **symtabs = (struct symtab **)malloc(maxdies*sizeof(struct symtab *));
-
     GHashTable *reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
-    struct symbol *voidsymbol;
     GHashTableIter iter;
-    struct symbol *rsymbol;
-    int quick = 0;
-    GHashTable *cu_abstract_origins = g_hash_table_new(g_direct_hash,g_direct_equal);
+    GHashTable *cu_abstract_origins = g_hash_table_new(g_direct_hash,
+						       g_direct_equal);
     struct array_list *iilist;
 
-    if (opts && opts->quick)
-	quick = 1;
+    struct symtab *cu_symtab;
+    struct symbol **symbols = (struct symbol **) \
+	malloc(maxdies*sizeof(struct symbol *));
+    struct symtab **symtabs = (struct symtab **) \
+	malloc(maxdies*sizeof(struct symtab *));
 
- next_cu:
-#if defined(LIBDW_HAVE_NEXT_UNIT) && LIBDW_HAVE_NEXT_UNIT == 1
-    if ((rc = dwarf_next_unit(dbg,offset,&nextcu,&cuhl,&version,
-			      &abbroffset,&addrsize,&offsize,NULL,NULL)) < 0) {
-	verror("dwarf_next_unit: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
-	goto errout;
-    }
-    else if (rc > 0) {
-	vdebug(2,LOG_D_DWARF,
-	       "dwarf_next_unit returned (%d), aborting successfully.\n",rc);
-	goto out;
-    }
-#else
-    if ((rc = dwarf_nextcu(dbg,offset,&nextcu,&cuhl,
-			   &abbroffset,&addrsize,&offsize)) < 0) {
-	verror("dwarf_nextcu: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
-	goto errout;
-    }
-    else if (rc > 0) {
-	vdebug(2,LOG_D_DWARF,
-	       "dwarf_nextcu returned (%d), aborting successfully.\n",rc);
-	goto out;
-    }
-
-    vwarn("assuming DWARF version 4; old elfutils!\n");
-    version = 4;
-#endif
-
-    /*
-     * Clean up our refs table; it contains per-CU offsets
-     * that map to types and sources of inlined functions/variables
-     * we've built symbols for.  We need this in case one type/inlined instance
-     * symbol references a type that has not yet appeared in the debug info.
-     */
-    g_hash_table_remove_all(reftab);
-
-    /* attr_callback has to fill this, and *MUST* fill at least
-     * name; otherwise we can't add the symtab to our hash table.
-     */
-    /* XXX: If the offset exceeds a 32-bit max, yes, we *will* overflow! */
-    if (!(cu_symtab = (struct symtab *)\
-	  g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
-	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL);
-	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
-			    (gpointer)cu_symtab);
-    }
-    else {
-	vdebug(5,LOG_D_DWARF,"using existing CU symtab!\n");
-    }
+    struct symbol *voidsymbol;
+    struct symbol *rsymbol;
+    int quick = (opts && opts->quick) ? opts->quick : 0;
     /*
      * XXX: what if we are using a CU symtab created in get_aranges or
      * get_pubnames, and we don't end up hashing the symtab in
@@ -1724,35 +1641,64 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
      * a DWARF bug :).
      */
     int cu_symtab_added = 0;
+    int cu_symtab_just_added = 0;
 
+    struct array_list *die_offsets = NULL;
+    int i;
+
+    if (init_die_offsets) 
+	die_offsets = array_list_clone(init_die_offsets,0);
+
+    /* XXX: If the offset exceeds a 32-bit max, yes, we *will* overflow! */
+    if (!(cu_symtab = (struct symtab *) \
+	  g_hash_table_lookup(debugfile->cuoffsets,
+			      (gpointer)(uintptr_t)offset))) {
+
+	/* attr_callback has to fill cu_symtab, and *MUST* fill at least
+	 * the name field; otherwise we can't add the symtab to our hash table.
+	 */
+	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL);
+	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
+			    (gpointer)cu_symtab);
+    }
+    else
+	vdebug(5,LOG_D_DWARF,"using existing CU symtab!\n");
+
+
+    /* Set the top-level symtab. */
     symtabs[0] = cu_symtab;
 
     /* Add the void symbol, always. */
     voidsymbol = add_void_symbol(debugfile,cu_symtab);
 
-    struct attrcb_args args = {
-	.dwflmod = dwflmod,
-	.dbg = dbg,
-	.addrsize = addrsize,
-	.offset_size = offsize,
-	.cu_offset = offset,
-	.version = version,
-	.cu_base = version,
-	.have_stmt_list_offset = 0,
+    /* Setup our args for attr_callback! */
+    args.dwflmod = dwflmod;
+    args.dbg = dbg;
+    args.meta = meta;
 
-	.debugfile = debugfile,
-	.cu_symtab = cu_symtab,
-	.symtab = cu_symtab,
-	.symbol = NULL,
-	.parentsymbol = NULL,
-	.voidsymbol = voidsymbol,
-	.reftab = reftab,
-	.quick = quick,
-	.cu_abstract_origins = cu_abstract_origins,
-    };
+    args.level = level;
+    args.cu_offset = offset;
+    args.cu_base = 0;
+    args.have_stmt_list_offset = 0;
+    args.stmt_list_offset = 0;
 
-    offset += cuhl;
-    level = 0;
+    args.debugfile = debugfile;
+    args.cu_symtab = cu_symtab;
+    args.symtab = cu_symtab;
+    args.symbol = NULL;
+    args.parentsymbol = NULL;
+    args.voidsymbol = voidsymbol;
+    args.reftab = reftab;
+    args.quick = quick;
+    args.cu_abstract_origins = cu_abstract_origins;
+
+    /* Skip the CU header. */
+    offset += meta->cuhl;
+
+    /* If we are doing a partial CU load, we still have to parse the CU
+     * DIE's attributes!  So, we have to hold the skip to the first
+     * offset in die_offsets until we've done that.
+     */
 
     if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
 	verror("cannot get DIE at offset %" PRIx64 ": %s\n",
@@ -1957,16 +1903,19 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    if (!symtab_get_name(cu_symtab)) {
 		verror("CU did not have a src filename; aborting processing!\n");
 		symtab_free(cu_symtab);
-		goto nextcuiter;
+		cu_symtab = NULL;
+		goto out;
 	    }
 	    else {
 		if (debugfile_add_symtab(debugfile,cu_symtab)) {
 		    verror("could not add CU symtab %s to debugfile; aborting processing!\n",
 			   symtab_get_name(cu_symtab));
 		    symtab_free(cu_symtab);
-		    goto nextcuiter;
+		    cu_symtab = NULL;
+		    goto out;
 		}
 		cu_symtab_added = 1;
+		cu_symtab_just_added = 1;
 	    }
 
 	    /*
@@ -1984,8 +1933,9 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 		    ++rp;
 		}
 		if (!match) {
-		    vdebug(3,LOG_D_DWARF,"skipping CU '%s'\n",symtab_get_name(cu_symtab));
-		    goto nextcuiter;
+		    vdebug(3,LOG_D_DWARF,"skipping CU '%s'\n",
+			   symtab_get_name(cu_symtab));
+		    goto out;
 		}
 	    }
 	}
@@ -2014,11 +1964,42 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    }
 	}
 
+	/* If we have die_offsets to load, and we're not just going to
+	 * load the full CU, AND if we have now processed the CU
+	 * symtab's attributes, we need to skip to the first DIE in our
+	 * list.
+	 */
+	if (cu_symtab_just_added 
+	    && (!opts 
+		|| (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+	    && die_offsets) {
+	    offset = *cu_offset 
+		+ (SMOFFSET)(uintptr_t)array_list_item(die_offsets,0);
+	    i = 1;
+	    cu_symtab_just_added = 0;
+	    /* So many things key off level == 0 that we set it to 1
+	     * deliberately.
+	     */
+	    level = 1;
+	    if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
+		verror("cannot get first DIE at offset 0x%"PRIx64
+		       " during partial CU load: %s\n",offset,dwarf_errmsg(-1));
+		goto errout;
+	    }
+	    vdebug(5,LOG_D_DWARF,"skipping to first DIE 0x%x\n",offset);
+	    symtabs[level] = symtabs[level-1];
+	    continue;
+	}
+	else
+	    cu_symtab_just_added = 0;
+
 	/* Make room for the next level's DIE.  */
 	if (level + 1 == maxdies) {
 	    dies = (Dwarf_Die *)realloc(dies,(maxdies += 8)*sizeof(Dwarf_Die));
-	    symbols = (struct symbol **)realloc(symbols,maxdies*sizeof(struct symbol *));
-	    symtabs = (struct symtab **)realloc(symtabs,maxdies*sizeof(struct symtab *));
+	    symbols = (struct symbol **) \
+		realloc(symbols,maxdies*sizeof(struct symbol *));
+	    symtabs = (struct symtab **) \
+		realloc(symtabs,maxdies*sizeof(struct symtab *));
 	}
 
 	if (SYMBOL_IS_INSTANCE(symbols[level]) 
@@ -2100,7 +2081,45 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	    }
 	}
 
+	inline int setup_skip_to_next_die(void) {
+	    int alen = array_list_len(die_offsets);
+
+	    /* Maybe skip to the next offset if we haven't already
+	     * processed this DIE.
+	     */
+	    while (i < alen) {
+		offset = *cu_offset 
+		    + (SMOFFSET)(uintptr_t)array_list_item(die_offsets,i);
+		if (g_hash_table_lookup(reftab,(gpointer)offset)) {
+		    vdebug(5,LOG_D_DWARF,
+			   "already did partial load of DIE 0x%x\n",offset);
+		    ++i;
+		}
+		else
+		    break;
+	    }
+	    if (i >= alen) {
+		vdebug(5,LOG_D_DWARF,"end of partial load DIE list!\n");
+		return 0;
+	    }
+
+	    ++i;
+	    /* So many things key off level == 0 that we set
+	     * it to 1 deliberately.
+	     */
+	    level = 1;
+	    if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
+		verror("cannot get DIE 0x%x at offset 0x%"PRIx64
+		       " during partial CU load: %s\n",
+		       i - 1,offset,dwarf_errmsg(-1));
+		return -1;
+	    }
+	    vdebug(5,LOG_D_DWARF,"skipping to DIE 0x%x\n",offset);
+	    return 1;
+	}
+
 	int res = dwarf_child(&dies[level],&dies[level + 1]);
+	int res2;
 	if (res > 0) {
 	do_sibling:
 	    /* No new child, but possibly a new sibling, so finalize the
@@ -2108,34 +2127,85 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	     */
 	    if (symbols[level]) {
 		finalize_die_symbol(debugfile,level,offset,symbols[level],
-				    symbols[level-1],voidsymbol);
+				    symbols[level-1],voidsymbol,
+				    reftab,die_offsets);
 		symbols[level] = NULL;
 		//symtabs[level] = NULL;
 	    }
 
-	    while ((res = dwarf_siblingof(&dies[level],&dies[level])) == 1) {
-
-		if (level-- == 0)
-		    break;
-
-		/* Now that a DIE's children have all been parsed, and
-		 * we're leveling up, finalize the "parent" DIE's symbol.
-		 */
-		if (symbols[level]) {
-		    finalize_die_symbol(debugfile,level,offset,symbols[level],
-					symbols[level-1],voidsymbol);
-		    symbols[level] = NULL;
-		    /*if (symbols[level-1] 
-			&& symbols[level-1]->type == SYMBOL_TYPE_FUNCTION 
-			&& symtab->parent)
-			symtab = symtab->parent;*/
-		    //symtabs[level] = NULL;
-		}
+	    if ((!opts 
+		 || (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+		&& die_offsets
+		&& level == 1) {
+		res2 = setup_skip_to_next_die();
+		/* error; bail */
+		if (res2 == -1) goto errout;
+		/* no DIEs left to load in CU */
+		else if (res2 == 0) { level = -1; }
+		/* next die offset is setup; continue */
+		else if (res2 == 1) continue;
 	    }
+	    else {
+		while ((res = dwarf_siblingof(&dies[level],&dies[level])) == 1) {
+		    int oldlevel = level--;
+		    /* If we're loading a partial CU, if there are more DIEs
+		     * we need to load, do them!  We don't process any
+		     * siblings at level 1, since that's the level we start
+		     * each DIE load in a partial CU load at.
+		     */
+		    if ((!opts 
+			 || (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+			&& die_offsets
+			&& oldlevel == 1) {
+			res2 = setup_skip_to_next_die();
+			/* error; bail */
+			if (res2 == -1) goto errout;
+			/* no DIEs left to load in CU */
+			else if (res2 == 0) { level = -1; break; }
+			/* next die offset is setup; continue */
+			else if (res2 == 1) continue;
+		    }
+		    /* Otherwise, we stop when the level was zero! */
+		    else if (oldlevel == 0)
+			break;
 
-	    if (res == -1) {
-		verror("cannot get next DIE: %s\n",dwarf_errmsg(-1));
-		goto errout;
+		    /* Now that a DIE's children have all been parsed, and
+		     * we're leveling up, finalize the "parent" DIE's symbol.
+		     */
+		    if (symbols[level]) {
+			finalize_die_symbol(debugfile,level,offset,symbols[level],
+					    symbols[level-1],voidsymbol,
+					    reftab,die_offsets);
+			symbols[level] = NULL;
+			/*if (symbols[level-1] 
+			  && symbols[level-1]->type == SYMBOL_TYPE_FUNCTION 
+			  && symtab->parent)
+			  symtab = symtab->parent;*/
+			//symtabs[level] = NULL;
+		    }
+		}
+
+		if (res == -1) {
+		    verror("cannot get next DIE: %s\n",dwarf_errmsg(-1));
+		    goto errout;
+		}
+		else if (res == 0 
+			 && (!opts 
+			     || (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+			 && die_offsets
+			 && level == 1) {
+		    /* If there IS a sibling, but we don't want to
+		     * process it, because we finished the DIE we wanted
+		     * to do, skip to the next DIE.
+		     */
+		    res2 = setup_skip_to_next_die();
+		    /* error; bail */
+		    if (res2 == -1) goto errout;
+		    /* no DIEs left to load in CU */
+		    else if (res2 == 0) { level = -1; }
+		    /* next die offset is setup; continue */
+		    else if (res2 == 1) continue;
+		}
 	    }
 	}
 	else if (res < 0) {
@@ -2214,14 +2284,14 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 
     /* Try to find prologue info from line table for this CU. */
     if (args.have_stmt_list_offset) {
-	get_lines(debugfile,cu_symtab,args.stmt_list_offset,addrsize);
+	get_lines(debugfile,cu_symtab,args.stmt_list_offset,meta->addrsize);
     }
     else {
-	vwarn("not doing offset 0x%"PRIx64"\n",args.stmt_list_offset);
+	vwarn("not doing get_lines for offset 0x%"PRIx64"\n",
+	      args.stmt_list_offset);
     }
 
- nextcuiter:
-    /* clear out inline instances table! */
+    /* Clear out inline instances table! */
     g_hash_table_iter_init(&iter,cu_abstract_origins);
     while (g_hash_table_iter_next(&iter,
 				  (gpointer)&offset,(gpointer)&iilist)) {
@@ -2232,12 +2302,9 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
 	 */
 	array_list_free(iilist);
     }
-    g_hash_table_remove_all(cu_abstract_origins);
 
-    offset = nextcu;
-    if (offset != 0) {
-	goto next_cu;
-    }
+    /* Save off whatever offset we got to! */
+    *cu_offset = offset;
 
     goto out;
 
@@ -2245,12 +2312,125 @@ static int debuginfo_ordered_traversal(struct debugfile *debugfile,
     retval = -1;
 
  out:
-    if (dies)
-	free(dies);
+    free(dies);
     g_hash_table_destroy(reftab);
     g_hash_table_destroy(cu_abstract_origins);
     free(symbols);
     free(symtabs);
+
+    return retval;
+}
+
+/*
+ * Traverses the entire debuginfo section in order, one pass.  For each
+ * CU, parse it according to constraints in @srcfile_regex_list,
+ * @symbol_regex_list, and @quick; then does a post-pass after each CU
+ * to resolve references (necessary since we do a strict one-pass
+ * traversal).
+ *
+ * If @srcfile_regex_list, and the CU srcfile name doesn't match
+ * anything, skip the CU.
+ *
+ * Then, if we're processing the CU, and if @symbol_regex_list is set,
+ * load all type symbols and inlined origins, and any other symbols that
+ * match our regex list; but once we finish the CU, and have resolved
+ * references, remove any symbols that have refcnt zero.
+ *
+ * Finally, if @quick, do not load any detailed information for symbols,
+ * including children (i.e., params, members) -- EXCEPT for enumerated
+ * vars.  They are technically children, but they are in the namespace
+ * of the parent.
+ *
+ * If the user supplies cu_die_offsets, we only do the CUs specified
+ * (and debuginfo_load_cu might only do the DIEs requested too!).  That
+ * works like this:
+ *
+ * Traverses the debuginfo section by hopping around as needed, with a
+ * post-pass to resolve accumulated references.  We start with an
+ * initial set of symbol names that map to struct dwarf_cu_die_ref
+ * offset pairs.  If the DEBUGFILE_LOAD_FLAG_FULL_CU flag is set, we
+ * load the full CU for any offset.  Otherwise, we load only the
+ * specified DIE, save off any other DIEs it references, and add those
+ * offsets to a list to load.  If we don't load full CUs, we have to do
+ * the post-pass on the reftab/abs origin stuff ourselves still, because
+ * we're not going to handle the DIE's refs recursively.
+ */
+static int debuginfo_load(struct debugfile *debugfile,
+			  struct debugfile_load_opts *opts,
+			  Dwfl_Module *dwflmod,Dwarf *dbg,
+			  GHashTable *cu_die_offsets) {
+    int rc;
+    int retval = 0;
+    Dwarf_Off offset = 0;
+    struct cu_meta meta;
+    gpointer cu_offset;
+    struct array_list *die_offsets = NULL;
+    GHashTableIter iter;
+
+    vdebug(1,LOG_D_DWARF,"starting on %s \n",debugfile->filename);
+
+    if (cu_die_offsets) {
+	g_hash_table_iter_init(&iter,cu_die_offsets);
+	if (!g_hash_table_iter_next(&iter,&cu_offset,(gpointer *)&die_offsets)) {
+	    vwarn("cu_die_offsets had nothing; not parsing entire debuginfo!\n");
+	    return -1;
+	}
+	offset = (Dwarf_Off)cu_offset;
+    }
+
+    while (1) {
+#if defined(LIBDW_HAVE_NEXT_UNIT) && LIBDW_HAVE_NEXT_UNIT == 1
+	if ((rc = dwarf_next_unit(dbg,offset,&meta.nextcu,&meta.cuhl,
+				  &meta.version,&meta.abbroffset,&meta.addrsize,
+				  &meta.offsize,NULL,NULL)) < 0) {
+	    verror("dwarf_next_unit: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
+	    goto errout;
+	}
+	else if (rc > 0) {
+	    vdebug(2,LOG_D_DWARF,
+		   "dwarf_next_unit returned (%d), aborting successfully.\n",rc);
+	    goto out;
+	}
+#else
+	if ((rc = dwarf_nextcu(dbg,offset,&meta.nextcu,&meta.cuhl,
+			       &meta.abbroffset,&meta.addrsize,
+			       &meta.offsize)) < 0) {
+	    verror("dwarf_nextcu: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
+	    goto errout;
+	}
+	else if (rc > 0) {
+	    vdebug(2,LOG_D_DWARF,
+		   "dwarf_nextcu returned (%d), aborting successfully.\n",rc);
+	    goto out;
+	}
+
+	vwarn("assuming DWARF version 4; old elfutils!\n");
+	meta.version = 4;
+#endif
+
+	if (debuginfo_load_cu(debugfile,opts,dwflmod,dbg,&offset,&meta,
+			      die_offsets)) {
+	    retval = -1;
+	    goto errout;
+	}
+
+	if (cu_die_offsets) {
+	    if (!g_hash_table_iter_next(&iter,&cu_offset,(gpointer *)&die_offsets)) 
+		break;
+	    offset = (Dwarf_Off)cu_offset;
+	}
+	else {
+	    offset = meta.nextcu;
+	    if (offset == 0) 
+		break;
+	}
+    }
+    goto out;
+
+ errout:
+    retval = -1;
+
+ out:
     return retval;
 }
 
@@ -2262,7 +2442,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			Dwarf_Off die_offset,
 			struct symbol *symbol,
 			struct symbol *parentsymbol,
-			struct symbol *voidsymbol) {
+			struct symbol *voidsymbol,
+			GHashTable *reftab,struct array_list *die_offsets) {
     int retval = 0;
     int *new_subranges;
 
@@ -2347,6 +2528,34 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    vdebug(4,LOG_D_DWARF,
 		   "inserted %s %s with minaddr 0x%"PRIxADDR" into debugfile addresses table\n",
 		   SYMBOL_TYPE(symbol->type),symbol_get_name_orig(symbol),fminaddr);
+	}
+    }
+
+    /*
+     * If we're doing a partial CU load (i.e., loading specific DIE
+     * offset within this CU), any other symbols referenced by this
+     * symbol need to get appended to our DIE load list if we haven't
+     * already loaded them!
+     */
+    if (die_offsets) {
+	if (!symbol->datatype
+	    && symbol->datatype_ref
+	    && !(symbol->datatype = (struct symbol *)	\
+		 g_hash_table_lookup(reftab,
+				     (gpointer)(uintptr_t)symbol->datatype_ref))) {
+	    array_list_append(die_offsets,
+			      (void *)(uintptr_t)symbol->datatype_ref);
+	}
+
+	if (SYMBOL_IS_FULL_INSTANCE(symbol)) {
+	    if (symbol->isinlineinstance
+		&& !symbol->s.ii->origin && symbol->s.ii->origin_ref
+		&& !(symbol->s.ii->origin = (struct symbol *)	\
+		     g_hash_table_lookup(reftab,
+					 (gpointer)(uintptr_t)symbol->s.ii->origin_ref))) {
+		array_list_append(die_offsets,
+				  (void *)(uintptr_t)symbol->s.ii->origin_ref);
+	    }
 	}
     }
 
@@ -2807,10 +3016,19 @@ int get_pubnames(struct debugfile *debugfile,unsigned char *buf,unsigned int len
 		break;
 
 	    /* Use a global offset, not a per-CU offset. */
-	    die_offset += offset;
+	    /* die_offset += offset; */
+
+	    /* XXX: this is wasteful for 64-bit hosts; we could save all
+	     * these mallocs by just using a u64 and giving half the
+	     * bits to the cuoffset and half to the dieoffset.
+	     */
+	    struct dwarf_cu_die_ref *dcd = (struct dwarf_cu_die_ref *)	\
+		malloc(sizeof(*dcd));
+	    dcd->cu_offset = offset;
+	    dcd->die_offset = die_offset;
 
 	    g_hash_table_insert(debugfile->pubnames,strdup((const char *)readp),
-				(gpointer)(uintptr_t)die_offset);
+				(gpointer)dcd);
 	    readp += strlen((const char *)readp) + 1;
 	}
     }
@@ -3077,9 +3295,8 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		vdebug(2,LOG_D_DWARF,
 		       "found .debug_info section in debugfile %s\n",
 		       data->debugfile->idstr);
-		debuginfo_ordered_traversal(data->debugfile,
-					    data->debugfile_load_opts,
-					    dwflmod,dbg);
+		debuginfo_load(data->debugfile,data->debugfile_load_opts,
+			       dwflmod,dbg,NULL);
 		//break;
 	    }
 	}

@@ -101,12 +101,60 @@ struct range_list_entry;
 struct range;
 struct loc_list_entry;
 struct loc_list;
+struct dwarf_cu_die;
+
+typedef enum {
+    DEBUGFILE_LOAD_FLAG_NONE = 0,
+    /* These control which CUs/DIEs are loaded.
+     * _ORDERED says to traverse the entire debug_info section in order.
+     * _PUBNAMES says to only load the symbols specified in the
+     *   debug_pubnames section (and if an rfilter list is given, only
+     *   load those symbols).
+     * _SYMBOLS says to load the entire debuginfo file, 
+     */
+    DEBUGFILE_LOAD_FLAG_ORDERED = 1 << 0,
+    DEBUGFILE_LOAD_FLAG_PUBNAMES = 1 << 1,
+    DEBUGFILE_LOAD_FLAG_SYMBOLS = 1 << 2,
+    /* These control whether symbols are loaded fully or partially. */
+    DEBUGFILE_LOAD_FLAG_FULLSYM = 1 << 8,
+    DEBUGFILE_LOAD_FLAG_PARTIALSYM = 1 << 9,
+    /* This flag controls how matches are performed when doing
+     * DEBUGFILE_LOAD_FLAG_SYMBOLS (the default is to stop on first
+     * match).
+     */
+    DEBUGFILE_LOAD_FLAG_ALLMATCHES = 1 << 16,
+    /* This flag specifies that we will try to promote all per-CU types
+     * to be pubtypes, and then check if each symbol's type (if it has
+     * one) is already a "pubtype" and is equivalent to our type (well,
+     * the equivalence check is controlled by the next flag!).  If we
+     * find a match, we set the symbol's datatype_ref field to the
+     * per-CU offset (so we can load the real thing if we ever *want*
+     * to), but we set the datatype field to point to the "pubtype" type
+     * symbol AND take a reference to it.
+     */
+    DEBUGFILE_LOAD_FLAG_REDUCETYPES = 1 << 17,
+    /* If the previous flag was set, if this is NOT set, we only check
+     * name/datacode_type matches; if it IS set, we check all type
+     * fields (including members and their types, recursively) for
+     * equivalence).
+     */
+    DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV = 1 << 18,
+    /* If we are doing _PUBNAMES or _SYMBOLS, always load the full CU
+     * for any symbol we encounter.
+     */
+    DEBUGFILE_LOAD_FLAG_FULL_CU = 1 << 19,
+} debugfile_load_flags_t;
 
 struct debugfile_load_opts {
     regex_t **debugfile_regex_list;
     regex_t **srcfile_regex_list;
+    /* Note: removed this in preference to using
+     * DEBUGFILE_LOAD_FLAG_SYMBOLS and specifying the symbol regexes
+     * there.
+     */
     regex_t **symbol_regex_list;
     int quick;
+    debugfile_load_flags_t flags;
 };
 
 typedef enum {
@@ -662,6 +710,8 @@ struct debugfile {
     /* The type of debugfile */
     debugfile_type_t type;
 
+    debugfile_load_flags_t load_flags;
+
     REFCNT refcnt;
 
     /* filename:name:version string.  If version is null, we use __NULL
@@ -810,6 +860,11 @@ struct debugfile {
     clrange_t ranges;
 
     GHashTable *srclines;
+};
+
+struct dwarf_cu_die_ref {
+    SMOFFSET cu_offset;
+    SMOFFSET die_offset;
 };
 
 struct range_list_entry {
