@@ -39,9 +39,10 @@ endif
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/probes.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/request.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/list.h \
+	   $(TOP_SRCDIR)/$(SUBDIR)/perf.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/debug.h
 
-OBJECTS := probes.lo request.lo
+OBJECTS := probes.lo request.lo pref.lo
 
 LIBRARIES := $(OBJDIR)/target/libtarget.a 
 

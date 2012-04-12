@@ -32,6 +32,8 @@
 #include <probe_api.h>
 #include <probe.h>
 
+#include <perf.h>
+
 #include "probes.h"
 #include "debug.h"
 #include "request.h"
