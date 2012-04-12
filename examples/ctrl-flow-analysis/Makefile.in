@@ -39,7 +39,7 @@ endif
 
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/debug.h
 
-OBJECTS := 
+OBJECTS := perf.lo
 
 LIBRARIES := 
 

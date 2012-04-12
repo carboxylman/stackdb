@@ -33,9 +33,8 @@
 #include <ctxprobes.h>
 #include "debug.h"
 
-#define O_RDONLY 00000000
-#define O_WRONLY 00000001
-#define O_RDWR   00000002
+#define O_WRONLY (00000001)
+#define O_RDWR   (00000002)
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -43,6 +42,8 @@ extern int optind, opterr, optopt;
 static char *domain_name = NULL; 
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
+
+extern struct target *t;
 
 void probe_fileopen(char *symbol, 
                     ctxprobes_var_t *args,
@@ -58,12 +59,19 @@ void probe_fileopen(char *symbol,
 
     char *filename = args[0].buf;
     int flags = *(int *)args[1].buf;
-    
+
     if (strcmp(filename, "/etc/passwd") == 0 &&
         (flags & O_WRONLY || flags & O_RDWR))
     {
-        printf("%d (%s): Write access to /etc/passwd!\n",
-               task->pid, task->comm);
+        unsigned long long brctr = perf_get_brctr(t);
+        if (!brctr)
+        {
+            ERR("Failed to get branch counter\n");
+            return;
+        }
+
+        printf("Write access to /etc/passwd: brctr=%lld, task=%d (%s)\n",
+               brctr, task->pid, task->comm);
         exit(0);
     }
 }
@@ -123,11 +131,19 @@ int main(int argc, char *argv[])
         exit(ret);
     }
 
+    ret = perf_init();
+    if (ret)
+    {
+        ERR("Failed to init perf/branch counter reader\n");
+        ctxprobes_cleanup();
+        exit(ret);
+    }
+
     ret = ctxprobes_reg_func_call("sys_open", probe_fileopen);
     if (ret)
     {
-        ctxprobes_cleanup();
         ERR("Failed to register probe on sys_open.call\n");
+        ctxprobes_cleanup();
         exit(ret);
     } 
 
