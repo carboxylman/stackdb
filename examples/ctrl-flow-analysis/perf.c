@@ -25,6 +25,7 @@
  */
 
 #include "perf.h"
+#include "debug.h"
 
 #include <target.h>
 #include <target_xen_vm.h>
