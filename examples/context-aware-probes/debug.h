@@ -57,12 +57,12 @@
 
 #define ERR(_f, _a...)   do {                                                   \
         fprintf(stderr, TXT_FG_RED"Error" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);  \
-        fflush(stderr);
+        fflush(stderr); \
     } while (0)
 
 #define WARN(_f, _a...)  do {                                                   \
         fprintf(stderr, TXT_FG_YELLOW "Warning" TXT_FG_WHITE ": " _f, ## _a);  \
-        fflush(stderr);
+        fflush(stderr); \
     } while (0)
 
 #define WARN_ON(_g, _f, _a...) do {                                             \
@@ -73,7 +73,7 @@
 
 #define DBG(_f, _a...)   do {                                                   \
         fprintf(stderr, TXT_FG_COLOR "DBG" TXT_FG_WHITE ": " _f, ## _a);       \
-        fflush(stderr);
+        fflush(stderr); \
     } while (0)
 
 #define DBG_ON(_g, _f, _a...) do {                                              \
@@ -84,7 +84,7 @@
 
 #define LOG(_f, _a...)   do {                                                   \
         printf("" _f, ##_a);                                                    \
-        fflush(stdout);
+        fflush(stdout); \
     } while (0)
 
 #define ERR_ON(_g, _f, _a...) do {                                              \
