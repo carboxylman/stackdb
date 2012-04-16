@@ -111,7 +111,7 @@ static int probe_func_call(struct probe *probe,
     char *symbol;
     ctxprobes_var_t *arg_list = NULL;
     int arg_count = 0;
-    int ret;
+    int i, ret;
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
@@ -125,6 +125,15 @@ static int probe_func_call(struct probe *probe,
     ret = load_func_args(&arg_list, &arg_count, probe);
     if (ret)
         ERR("Failed to load function args\n");
+    else
+    {
+        DBG("- Function arguments:\n");
+        for (i = 0; i < arg_count; i++)
+            DBG("  %s = %d (0x%08x)\n", 
+                arg_list[i].name, 
+                *(unsigned int *)arg_list[i].buf,
+                *(unsigned int *)arg_list[i].buf);
+    }
 
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
     handler(symbol, 
@@ -163,10 +172,22 @@ static int probe_func_return(struct probe *probe,
     //ret = load_func_args(&arg_list, &arg_count, probe);
     //if (ret)
     //    ERR("Failed to load function args\n");
+    //else
+    //{
+    //    DBG("- Function arguments:\n");
+    //    for (i = 0; i < arg_count; i++)
+    //        DBG("  %s = 0x%08x\n", 
+    //            arg_list[i].name, *(unsigned int *)arg_list[i].buf);
+    //}
 
     ret = load_func_retval(&retval, probe);
     if (ret)
         ERR("Failed to load function retval\n");
+    else
+    {
+        DBG("- Function return value: %d (0x%08x)\n", 
+            *(int *)retval->buf, *(int *)retval->buf);
+    }
 
     //errno = 0;
     //sp = target_read_reg(t, t->spregno);
@@ -825,7 +846,7 @@ static int probe_task_switch(struct probe *probe,
     {
         ERR("Cannot access value of schedule.prev\n");
         //return -1;
-		return 0;
+        return 0;
     }
 
     lvalue_task_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_NONE);
@@ -833,7 +854,7 @@ static int probe_task_switch(struct probe *probe,
     {
         ERR("Cannot access value of schedule.next\n");
         //return -1;
-		return 0;
+        return 0;
     }
 
     ret = load_task_info(&task_prev, *(unsigned long *)lvalue_task_prev->buf);
@@ -841,7 +862,7 @@ static int probe_task_switch(struct probe *probe,
     {
         ERR("Cannot load task info of schedule.prev\n");
         //return -1;
-		return 0;
+        return 0;
     }
 
     ret = load_task_info(&task_next, *(unsigned long *)lvalue_task_next->buf);
@@ -849,7 +870,7 @@ static int probe_task_switch(struct probe *probe,
     {
         ERR("Cannot load task info of schedule.next\n");
         //return -1;
-		return 0;
+        return 0;
     }
 
     if (task_prev->vaddr != task_next->vaddr)
@@ -1136,7 +1157,7 @@ int ctxprobes_wait(void)
 {
     target_status_t tstat;
     unsigned task_struct_addr;
-	int ret;
+    int ret;
 
     if (!t)
     {
@@ -1156,13 +1177,13 @@ int ctxprobes_wait(void)
      * of fixing the problem caused by starting VMI right after the
      * creation of the suspended guest VM.
      */
-	sleep(1);
+    sleep(1);
     task_struct_addr = current_task_addr();
     ret = load_task_info(&task_current, task_struct_addr);
     if (ret)
     {
         WARN("Failed to load initial task info!\n");
-		return -1;
+        return -1;
     }
     DBG("Initial task: %d (%s)\n", task_current->pid, task_current->comm);
 
