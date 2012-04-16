@@ -1017,7 +1017,9 @@ int ctxprobes_init(char *domain_name,
 
     dwdebug_init();
     vmi_set_log_level(debug_level);
+#ifdef XA_DEBUG
     xa_set_debug_level(debug_level);
+#endif
 
     t = xen_vm_attach(dom_name);
     if (!t)
