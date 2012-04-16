@@ -26,6 +26,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <log.h>
 #include <dwdebug.h>
@@ -83,7 +84,7 @@ static int probe_func_prologue(struct probe *probe,
         ERR("Could not read SP!\n");
     DBG("SP: 0x%08x\n", sp);
 
-    /* Save sp in a global variable. */
+    /* FIXME: Save sp in a global variable. */
     regsp = sp;
     
     /* Grab the return address on the top of the stack */
@@ -171,7 +172,7 @@ static int probe_func_return(struct probe *probe,
     //sp = target_read_reg(t, t->spregno);
     //if (errno)
     //    ERR("Could not read SP!\n");
-    /* Use the saved SP in global variable. */
+    /* FIXME: Use the saved SP in global variable. */
     sp = regsp;
     DBG("SP: 0x%08x\n", sp);
     
@@ -823,28 +824,32 @@ static int probe_task_switch(struct probe *probe,
     if (!lvalue_task_prev)
     {
         ERR("Cannot access value of schedule.prev\n");
-        return -1;
+        //return -1;
+		return 0;
     }
 
     lvalue_task_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_NONE);
     if (!lvalue_task_next)
     {
         ERR("Cannot access value of schedule.next\n");
-        return -1;
+        //return -1;
+		return 0;
     }
 
     ret = load_task_info(&task_prev, *(unsigned long *)lvalue_task_prev->buf);
     if (ret)
     {
         ERR("Cannot load task info of schedule.prev\n");
-        return -1;
+        //return -1;
+		return 0;
     }
 
     ret = load_task_info(&task_next, *(unsigned long *)lvalue_task_next->buf);
     if (ret)
     {
         ERR("Cannot load task info of schedule.next\n");
-        return -1;
+        //return -1;
+		return 0;
     }
 
     if (task_prev->vaddr != task_next->vaddr)
@@ -971,7 +976,6 @@ int ctxprobes_init(char *domain_name,
                    char *sysmap_file, 
                    int debug_level)
 {
-    unsigned task_struct_addr;
     int i, probe_count;
     int ret;
 
@@ -1075,29 +1079,6 @@ int ctxprobes_init(char *domain_name,
         }
     }
 
-    /*
-     * Obtain current task info -- task info will be updated on detecting
-     * task switches later on. Since on a suppeneded replay session we cannot
-     * read the current task address from ESP, assign a dummy task info with
-     * a task name(comm) "null".
-     */
-    task_struct_addr = current_task_addr();
-    ret = load_task_info(&task_current, task_struct_addr);
-    if (ret)
-    {
-        WARN("Cannot load initial task info. Assigning dummy task info...\n");
-        task_current = (ctxprobes_task_t *)malloc(sizeof(ctxprobes_task_t));
-        if (!task_current)
-        {
-            ERR("Cannot allocate memory for initial task info!\n");
-            ctxprobes_cleanup();
-            return -4;
-        }
-        memset(task_current, 0, sizeof(ctxprobes_task_t));
-        task_current->comm = strdup("null");
-    }
-    DBG("Current task: %d (%s)\n", task_current->pid, task_current->comm);
-
     signal(SIGHUP, sigh);
     signal(SIGINT, sigh);
     signal(SIGQUIT, sigh);
@@ -1154,6 +1135,8 @@ void ctxprobes_cleanup(void)
 int ctxprobes_wait(void)
 {
     target_status_t tstat;
+    unsigned task_struct_addr;
+	int ret;
 
     if (!t)
     {
@@ -1166,6 +1149,22 @@ int ctxprobes_wait(void)
      * that we've registered probes.
      */
     target_resume(t);
+
+    /*
+     * Run the target for a little while so that it creates the first 
+     * task, and get the task info after that.  This is a "stupid" way
+     * of fixing the problem caused by starting VMI right after the
+     * creation of the suspended guest VM.
+     */
+	sleep(1);
+    task_struct_addr = current_task_addr();
+    ret = load_task_info(&task_current, task_struct_addr);
+    if (ret)
+    {
+        WARN("Failed to load initial task info!\n");
+		return -1;
+    }
+    DBG("Initial task: %d (%s)\n", task_current->pid, task_current->comm);
 
     DBG("Starting main debugging loop!\n");
 
