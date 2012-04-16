@@ -195,12 +195,6 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 	/* Skip the final NUL byte.  */
 	++linep;
 
-	/* Free the dirlist -- we're done with it since we're done with
-	 * the file table.
-	 */
-	array_list_free(dirlist);
-	dirlist = NULL;
-
 	address = 0;
 	op_index = 0;
 	line = 1;
@@ -217,10 +211,12 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 	}
 
 	inline void storeline() {
+	    gpointer orig_key = NULL;
 	    /* Add the line to our lookup structure. */
-	    if (!currentclf) 
-		currentclf = (clmatch_t)g_hash_table_lookup(debugfile->srclines,
-							    currentfile);
+
+	    g_hash_table_lookup_extended(debugfile->srclines,
+					 currentfile,&orig_key,&currentclf);
+
 	    /* This may change the currentclf pointer, so we have to
 	     * remove it from the hashtable and reinsert it.  A Judy
 	     * array's main pointer can change when you add/remove
@@ -233,8 +229,19 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 	     * new value of currentclf is inserted.
 	     */
 	    clmatch_add(&currentclf,line,(void *)(ADDR)address);
-	    g_hash_table_steal(debugfile->srclines,currentfile);
-	    g_hash_table_insert(debugfile->srclines,currentfile,currentclf);
+
+	    if (orig_key) {
+		/* If it had been in the hash, we have to get the
+		 * orig key and use its exact value again so we
+		 * don't leak the non-strdup'd pointer.
+		 */
+		g_hash_table_steal(debugfile->srclines,currentfile);
+		g_hash_table_insert(debugfile->srclines,orig_key,
+				    currentclf);
+	    }
+	    else 
+		g_hash_table_insert(debugfile->srclines,strdup(currentfile),
+				    currentclf);
 	}
 
 	while (linep < lineendp) {
@@ -572,11 +579,6 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		//continue;
 	    }
 	}
-
-	if (filelist) {
-	    array_list_free(filelist);
-	    filelist = NULL;
-	}
     }
 
     retval = 0;
@@ -596,7 +598,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
     if (dirlist)
 	array_list_free(dirlist);
     if (filelist) 
-	array_list_free(filelist);
+	array_list_deep_free(filelist);
 
     return retval;
 }
