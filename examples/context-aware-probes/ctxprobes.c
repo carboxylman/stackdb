@@ -67,8 +67,8 @@ static int probe_func_prologue(struct probe *probe,
                                struct probe *trigger)
 {
     char *symbol;
-    REGVAL sp;
     ADDR retaddr = 0;
+    REGVAL sp;
 
     ctxprobes_func_prologue_handler_t handler 
         = (ctxprobes_func_prologue_handler_t) data;
@@ -109,10 +109,12 @@ static int probe_func_call(struct probe *probe,
                            void *data,
                            struct probe *trigger)
 {
+    int ret;
     char *symbol;
     ctxprobes_var_t *arg_list = NULL;
     int arg_count = 0;
-    int i, ret;
+    int i, j, len;
+    char buf[256];
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
@@ -130,10 +132,19 @@ static int probe_func_call(struct probe *probe,
     {
         DBG("- Function arguments:\n");
         for (i = 0; i < arg_count; i++)
-            DBG("  %s = %d (0x%08x)\n", 
-                arg_list[i].name, 
-                *(unsigned int *)arg_list[i].buf,
-                *(unsigned int *)arg_list[i].buf);
+        {
+            len = arg_list[i].size;
+            for (j = 0; j < len; j++)
+                sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+            if (len <= 4)
+                DBG("  %s = %d (0x%s)\n", arg_list[i].name, 
+                    *(int *)arg_list[i].buf, buf); 
+            else if (arg_list[i].buf[len-1] == '\0') // consider it as a string
+                DBG("  %s = %s (0x%s)\n", arg_list[i].name, 
+                    arg_list[i].buf, buf); 
+            else
+                DBG("  %s = 0x%s\n", arg_list[i].name, buf); 
+        }
     }
 
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
@@ -153,13 +164,15 @@ static int probe_func_return(struct probe *probe,
                              void *data,
                              struct probe *trigger)
 {
+    int ret;
     char *symbol;
     ctxprobes_var_t *arg_list = NULL;
     ctxprobes_var_t *retval = NULL;
     int arg_count = 0;
-    int i, ret;
-    REGVAL sp;
+    int i, j, len;
+    char buf[256];
     ADDR retaddr = 0;
+    REGVAL sp;
 
     ctxprobes_func_return_handler_t handler 
         = (ctxprobes_func_return_handler_t) data;
@@ -177,8 +190,19 @@ static int probe_func_return(struct probe *probe,
     {
         DBG("- Function arguments:\n");
         for (i = 0; i < arg_count; i++)
-            DBG("  %s = 0x%08x\n", 
-                arg_list[i].name, *(unsigned int *)arg_list[i].buf);
+        {
+            len = arg_list[i].size;
+            for (j = 0; j < len; j++)
+                sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+            if (len <= 4)
+                DBG("  %s = %d (0x%s)\n", arg_list[i].name, 
+                    *(int *)arg_list[i].buf, buf); 
+            else if (arg_list[i].buf[len-1] == '\0') // consider it as a string
+                DBG("  %s = %s (0x%s)\n", arg_list[i].name, 
+                    arg_list[i].buf, buf); 
+            else
+                DBG("  %s = 0x%s\n", arg_list[i].name, buf); 
+        }
     }
 
     ret = load_func_retval(&retval, trigger);
