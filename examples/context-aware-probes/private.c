@@ -561,8 +561,8 @@ int load_func_args(ctxprobes_var_t **arg_list,
 
     struct lsymbol tlsym = {
         .chain = tmp,
-	// hack to prevent value_free from trying to release us!
-	.refcnt = 1,
+        /* hack to prevent value_free from trying to release us! */
+        .refcnt = 1,
     };
     struct bsymbol tbsym = {
         .lsymbol = &tlsym,

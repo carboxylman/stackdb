@@ -156,7 +156,7 @@ static int probe_func_return(struct probe *probe,
     ctxprobes_var_t *arg_list = NULL;
     ctxprobes_var_t *retval = NULL;
     int arg_count = 0;
-    int ret;
+    int i, ret;
     REGVAL sp;
     ADDR retaddr = 0;
 
@@ -169,18 +169,18 @@ static int probe_func_return(struct probe *probe,
         task_current->pid, task_current->comm, symbol,
         context_string(context_current));
  
-    //ret = load_func_args(&arg_list, &arg_count, probe);
-    //if (ret)
-    //    ERR("Failed to load function args\n");
-    //else
-    //{
-    //    DBG("- Function arguments:\n");
-    //    for (i = 0; i < arg_count; i++)
-    //        DBG("  %s = 0x%08x\n", 
-    //            arg_list[i].name, *(unsigned int *)arg_list[i].buf);
-    //}
+    ret = load_func_args(&arg_list, &arg_count, trigger);
+    if (ret)
+        ERR("Failed to load function args\n");
+    else
+    {
+        DBG("- Function arguments:\n");
+        for (i = 0; i < arg_count; i++)
+            DBG("  %s = 0x%08x\n", 
+                arg_list[i].name, *(unsigned int *)arg_list[i].buf);
+    }
 
-    ret = load_func_retval(&retval, probe);
+    ret = load_func_retval(&retval, trigger);
     if (ret)
         ERR("Failed to load function retval\n");
     else
@@ -215,7 +215,7 @@ static int probe_func_return(struct probe *probe,
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
 
     unload_func_retval(retval);
-    //unload_func_args(arg_list, arg_count);
+    unload_func_args(arg_list, arg_count);
 
     return 0;
 }
@@ -649,8 +649,8 @@ static int probe_trap_call(struct probe *probe,
                            void *data, 
                            struct probe *trigger)
 {
-    //context_prev = context_current;
-    //context_current = CTXPROBES_CONTEXT_TRAP;
+    context_prev = context_current;
+    context_current = CTXPROBES_CONTEXT_TRAP;
 
     if (strcmp("do_divide_error", probe->name) == 0)
         return probe_divide_error_call(probe, data, trigger);
@@ -811,22 +811,21 @@ static int probe_interrupt_return(struct probe *probe,
     //ctxprobes_var_t *arg_list = NULL;
     //int arg_count = 0;
     //struct pt_regs *regs;
-    //int irq = 0;
+    int irq = 0;
     //int ret;
     
-    //ret = load_func_args(&arg_list, &arg_count, probe);
+    /* FIXME: this currently fails to load symbol. */
+    //ret = load_func_args(&arg_list, &arg_count, trigger);
     //if (ret)
     //    ERR("Failed to load function args\n");
 
     //regs = (struct pt_regs *)arg_list[0].buf;
     //irq = ~regs->orig_eax & 0xff;
 
-    //DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
-    //    task_current->pid, task_current->comm, 
-    //    irq, irq);
-    DBG("%d (%s): Interrupt X (0xXX) returned\n",
-        task_current->pid, task_current->comm);
-
+    DBG("%d (%s): Interrupt %d (0x%02x) returned\n",
+        task_current->pid, task_current->comm, 
+        irq, irq);
+    
     context_current = context_prev;
 
     return 0;
@@ -841,7 +840,9 @@ static int probe_task_switch(struct probe *probe,
     ctxprobes_task_t *task_prev, *task_next;
     int ret;
 
-    lvalue_task_prev = bsymbol_load(bsymbol_task_prev, LOAD_FLAG_NONE);
+    lvalue_task_prev = bsymbol_load(bsymbol_task_prev, 
+                                    LOAD_FLAG_NO_CHECK_BOUNDS | 
+                                    LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lvalue_task_prev)
     {
         ERR("Cannot access value of schedule.prev\n");
@@ -849,7 +850,9 @@ static int probe_task_switch(struct probe *probe,
         return 0;
     }
 
-    lvalue_task_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_NONE);
+    lvalue_task_next = bsymbol_load(bsymbol_task_next,  
+                                    LOAD_FLAG_NO_CHECK_BOUNDS | 
+                                    LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lvalue_task_next)
     {
         ERR("Cannot access value of schedule.next\n");
@@ -873,7 +876,8 @@ static int probe_task_switch(struct probe *probe,
         return 0;
     }
 
-    if (task_prev->vaddr != task_next->vaddr)
+    /* FIXME: consider change to the same task as a task switch for now. */
+    //if (task_prev->vaddr != task_next->vaddr)
     {
         DBG("Task switch: %d (%s) -> %d (%s)\n", 
             task_prev->pid, task_prev->comm,
@@ -882,17 +886,18 @@ static int probe_task_switch(struct probe *probe,
     
     unload_task_info(task_prev);
 
-    if (task_prev->vaddr != task_next->vaddr)
+    //if (task_prev->vaddr != task_next->vaddr)
     {
         unload_task_info(task_current);
         task_current = task_next;
     }
-    else
-        unload_task_info(task_next);
+    //else
+    //    unload_task_info(task_next);
 
     return 0;
 }
 
+/* Load symbols of local variables in schedule, prev and next. */
 static int probe_task_switch_init(struct probe *probe)
 {
     DBG("Task switch init\n");
@@ -936,49 +941,49 @@ typedef struct probe_entry {
 static const probe_entry_t probe_list[] = 
 {
     { "do_divide_error",                probe_trap_call,        
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_debug",                       probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_nmi",                         probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_int3",                        probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_overflow",                    probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_bounds",                      probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_invalid_op",                  probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
-    { "device_not_available",           probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
+    //{ "device_not_available",           probe_trap_call, 
+    //  NULL,                             { .init = NULL } },
     //{ "double_fault",                   probe_trap_call, 
-    //  probe_trap_return,                { .init = NULL } },
+    //  NULL,                             { .init = NULL } },
     { "do_coprocessor_segment_overrun", probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_invalid_TSS",                 probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_segment_not_present",         probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_stack_segment",               probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_general_protection",          probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_page_fault",                  probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     //{ "spurious_interrupt_bug",         probe_trap_call, 
-    //  probe_trap_return,                { .init = NULL } },
+    //  NULL,                             { .init = NULL } },
     { "do_coprocessor_error",           probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "do_alignment_check",             probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     //{ "intel_machine_check",            probe_trap_call, 
-    //  probe_trap_return,                { .init = NULL } },
+    //  NULL,                             { .init = NULL } },
     { "do_simd_coprocessor_error",      probe_trap_call, 
-      NULL/*probe_trap_return*/,                { .init = NULL } },
+      probe_trap_return,                { .init = NULL } },
     { "system_call",                    probe_syscall_call, 
       NULL/*probe_syscall_return*/,             { .init = NULL } },
-    //{ "do_IRQ",                         probe_interrupt_call, 
-    //  probe_interrupt_return,           { .init = NULL } },
+    { "do_IRQ",                         probe_interrupt_call, 
+      probe_interrupt_return,           { .init = NULL } },
     { "schedule.switch_tasks",          probe_task_switch, 
       NULL,                             { .init = probe_task_switch_init } },
     //{ "ret_from_exception",             probe_trap_return, 
