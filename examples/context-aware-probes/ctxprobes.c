@@ -51,7 +51,8 @@ GHashTable *rprobes = NULL;
 
 ctxprobes_task_t *task_current = NULL;
 ctxprobes_context_t context_current = CTXPROBES_CONTEXT_NORMAL;
-ctxprobes_context_t context_prev;
+ctxprobes_context_t context_prev_trap;
+ctxprobes_context_t context_prev_intr;
 
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
@@ -649,8 +650,13 @@ static int probe_trap_call(struct probe *probe,
                            void *data, 
                            struct probe *trigger)
 {
-    context_prev = context_current;
+    context_prev_trap = context_current;
     context_current = CTXPROBES_CONTEXT_TRAP;
+
+    DBG("%d (%s): Context change: %s -> %s\n", 
+        task_current->pid, task_current->comm, 
+        context_string(context_prev_trap), 
+        context_string(context_current));
 
     if (strcmp("do_divide_error", probe->name) == 0)
         return probe_divide_error_call(probe, data, trigger);
@@ -747,7 +753,12 @@ static int probe_trap_return(struct probe *probe,
     else
         ERR("Unknown trap return!\n");
     
-    context_current = context_prev;
+    DBG("%d (%s): Context change: %s -> %s\n", 
+        task_current->pid, task_current->comm, 
+        context_string(context_current), 
+        context_string(context_prev_trap));
+
+    context_current = context_prev_trap;
 
     return  ret;
 }
@@ -758,9 +769,9 @@ static int probe_syscall_call(struct probe *probe,
                               struct probe *trigger)
 {
     unsigned int eax = target_read_reg(t, 0);
-    DBG("%d (%s): System call %d (0x%02x) called\n", 
+    DBG("%d (%s): System call %d (0x%02x) called (context: %s)\n", 
         task_current->pid, task_current->comm,
-        eax, eax);
+        eax, eax, context_string(context_current));
     return 0;
 }
 
@@ -770,9 +781,9 @@ static int probe_syscall_return(struct probe *probe,
                                 struct probe *trigger)
 {
     unsigned int eax = target_read_reg(t, 0);
-    DBG("%d (%s): System call %d (0x%02x) returned\n", 
+    DBG("%d (%s): System call %d (0x%02x) returned (context: %s)\n", 
         task_current->pid, task_current->comm,
-        eax, eax);
+        eax, eax, context_string(context_current));
     return 0;
 }
 
@@ -786,8 +797,13 @@ static int probe_interrupt_call(struct probe *probe,
     struct pt_regs *regs;
     int ret, irq;
 
-    context_prev = context_current;
+    context_prev_intr = context_current;
     context_current = CTXPROBES_CONTEXT_INTERRUPT;
+
+    DBG("%d (%s): Context change: %s -> %s\n", 
+        task_current->pid, task_current->comm, 
+        context_string(context_prev_intr), 
+        context_string(context_current));
 
     ret = load_func_args(&arg_list, &arg_count, probe);
     if (ret)
@@ -826,7 +842,12 @@ static int probe_interrupt_return(struct probe *probe,
         task_current->pid, task_current->comm, 
         irq, irq);
     
-    context_current = context_prev;
+    DBG("%d (%s): Context change: %s -> %s\n", 
+        task_current->pid, task_current->comm, 
+        context_string(context_current), 
+        context_string(context_prev_intr));
+
+    context_current = context_prev_intr;
 
     return 0;
 }
