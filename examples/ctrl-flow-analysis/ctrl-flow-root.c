@@ -67,13 +67,13 @@ char *context_str(ctxprobes_context_t context)
     return str;
 }
 
-void probe_pcreate_return(char *symbol, 
-                          ctxprobes_var_t *args, 
-                          int argcount, 
-                          ctxprobes_var_t *retval,
-                          unsigned long retaddr,
-                          ctxprobes_task_t *task,
-                          ctxprobes_context_t context)
+void probe_fork_return(char *symbol, 
+                       ctxprobes_var_t *args, 
+                       int argcount, 
+                       ctxprobes_var_t *retval,
+                       unsigned long retaddr,
+                       ctxprobes_task_t *task,
+                       ctxprobes_context_t context)
 {
     if (!retval)
     {
@@ -81,12 +81,22 @@ void probe_pcreate_return(char *symbol,
         return;
     }
 
-    int retcode = *(int *)retval->buf;
-
-    fflush(stderr);
-    printf("%d (%s): process created (retcode: %d)\n", 
-           task->pid, task->comm, retcode);
-    fflush(stdout);
+    unsigned int pid = *(unsigned int *)retval->buf;
+    if (pid == pid_passwd)
+    {
+        unsigned long long brctr = ctxprobes_get_brctr();
+        if (!brctr)
+        {
+            ERR("Failed to get branch counter\n");
+            //return;
+        }
+        
+        fflush(stderr);
+        printf("[%s] %d (%s): task %d created (uid = %d, euid = %d, brctr = %d).\n", 
+               context_str(context), task->pid, task->comm, pid, 
+               task->uid, task->euid, brctr);
+        fflush(stdout);
+    }
 }
 
 void parse_opt(int argc, char *argv[])
@@ -152,18 +162,10 @@ int main(int argc, char *argv[])
         exit(ret);
     }
 
-    ret = ctxprobes_reg_func_return("sys_fork", probe_pcreate_return);
+    ret = ctxprobes_reg_func_return("sys_fork", probe_fork_return);
     if (ret)
     {
         ERR("Failed to register probe on sys_fork return\n");
-        ctxprobes_cleanup();
-        exit(ret);
-    } 
-
-    ret = ctxprobes_reg_func_return("sys_clone", probe_pcreate_return);
-    if (ret)
-    {
-        ERR("Failed to register probe on sys_clone return\n");
         ctxprobes_cleanup();
         exit(ret);
     } 
