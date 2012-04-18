@@ -44,7 +44,8 @@ OBJECTS := perf.lo
 LIBRARIES := 
 
 PROGRAMS := ctrl-flow-static \
-            ctrl-flow-passwd
+            ctrl-flow-passwd \
+            ctrl-flow-root
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -75,32 +76,73 @@ ctrl-flow-passwd: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-passwd.lo $(STATI
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+ctrl-flow-root: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-root.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
 	ctrl-flow-static.lo \
-	ctrl-flow-passwd.lo
+	ctrl-flow-passwd.lo \
+	ctrl-flow-root.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
 
-run: ctrl-flow-passwd
+run-static: ctrl-flow-static
+	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
+	clientA
+
+demo-static: ctrl-flow-static
+	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
+	clientA 2> /dev/null
+
+verbose-static: ctrl-flow-static
+	sudo ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m /boot/System.map-2.6.18-xenU \
+	clientA
+
+debug-static: ctrl-flow-static
+	sudo gdb --args ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m /boot/System.map-2.6.18-xenU \
+	clientA
+
+run-passwd: ctrl-flow-passwd
 	sudo ./ctrl-flow-passwd -m /boot/System.map-2.6.18-xenU \
 	clientA
 
-demo: ctrl-flow-passwd
+demo-passwd: ctrl-flow-passwd
 	sudo ./ctrl-flow-passwd -m /boot/System.map-2.6.18-xenU \
 	clientA 2> /dev/null
 
-verbose: ctrl-flow-passwd
+verbose-passwd: ctrl-flow-passwd
 	sudo ./ctrl-flow-passwd -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
 	clientA
 
-debug: ctrl-flow-passwd
+debug-passwd: ctrl-flow-passwd
 	sudo gdb --args ./ctrl-flow-passwd -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m /boot/System.map-2.6.18-xenU \
+	clientA
+
+run-root: ctrl-flow-root
+	sudo ./ctrl-flow-root -m /boot/System.map-2.6.18-xenU \
+	clientA
+
+demo-root: ctrl-flow-root
+	sudo ./ctrl-flow-root -m /boot/System.map-2.6.18-xenU \
+	clientA 2> /dev/null
+
+verbose-root: ctrl-flow-root
+	sudo ./ctrl-flow-root -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m /boot/System.map-2.6.18-xenU \
+	clientA
+
+debug-root: ctrl-flow-root
+	sudo gdb --args ./ctrl-flow-root -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
 	clientA
 
