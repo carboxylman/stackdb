@@ -45,6 +45,27 @@ static char *sysmap_file = NULL;
 
 extern struct target *t;
 
+char *context_str(ctxprobes_context_t context)
+{
+    char *str;
+    switch (context) {
+        case CTXPROBES_CONTEXT_NORMAL:
+            str = "Normal";
+            break;
+        case CTXPROBES_CONTEXT_TRAP:
+            str = "Trap";
+            break;
+        case CTXPROBES_CONTEXT_INTERRUPT:
+            str = "Interrupt";
+            break;
+        default:
+            str = "Unknown";
+            ERR("Invalid context identifier %d!\n", context);
+            break;
+    }
+    return str;
+}
+
 void probe_fileopen(char *symbol, 
                     ctxprobes_var_t *args,
                     int argcount,
@@ -70,9 +91,9 @@ void probe_fileopen(char *symbol,
             return;
         }
 
-        printf("Write access to /etc/passwd: brctr=%lld, task=%d (%s)\n",
-               brctr, task->pid, task->comm);
-        exit(0);
+        printf("Write access to /etc/passwd: "
+               "brctr=%lld, task=%d (%s), context=%s\n",
+               brctr, task->pid, task->comm, context_str(context));
     }
 }
 
