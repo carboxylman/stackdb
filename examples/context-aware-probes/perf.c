@@ -24,6 +24,8 @@
  *  Date: April, 2012
  */
 
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+
 #include "perf.h"
 #include "debug.h"
 
@@ -73,4 +75,6 @@ unsigned long long perf_get_brctr(struct target *t)
 
     return ctx.ttd_perf.brctr;
 };
+
+#endif /* CONFIG_DETERMINISTIC_TIMETRAVEL */
 

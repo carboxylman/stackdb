@@ -27,10 +27,14 @@
 #ifndef __PERF_H__
 #define __PERF_H__
 
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+
 #include <target.h>
 
 int perf_init(void);
 unsigned long long perf_get_rdtsc(struct target *t);
 unsigned long long perf_get_brctr(struct target *t);
+
+#endif /* CONFIG_DETERMINISTIC_TIMETRAVEL */
 
 #endif /* __PERF_H__ */
