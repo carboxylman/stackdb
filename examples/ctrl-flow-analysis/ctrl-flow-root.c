@@ -43,20 +43,21 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 
-extern struct target *t;
+static unsigned int pid_passwd;
+static unsigned long long brctr_passwd;
 
 char *context_str(ctxprobes_context_t context)
 {
     char *str;
     switch (context) {
         case CTXPROBES_CONTEXT_NORMAL:
-            str = "Normal";
+            str = "N";
             break;
         case CTXPROBES_CONTEXT_TRAP:
-            str = "Trap";
+            str = "T";
             break;
         case CTXPROBES_CONTEXT_INTERRUPT:
-            str = "Interrupt";
+            str = "I";
             break;
         default:
             str = "Unknown";
@@ -80,10 +81,12 @@ void probe_pcreate_return(char *symbol,
         return;
     }
 
-	int retcode = *(int *)retval->buf;
+    int retcode = *(int *)retval->buf;
 
+    fflush(stderr);
     printf("%d (%s): process created (retcode: %d)\n", 
            task->pid, task->comm, retcode);
+    fflush(stdout);
 }
 
 void parse_opt(int argc, char *argv[])
@@ -91,7 +94,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:p:b:")) != -1)
     {
         switch(ch)
         {
@@ -111,6 +114,14 @@ void parse_opt(int argc, char *argv[])
 
             case 'm':
                 sysmap_file = optarg;
+                break;
+
+            case 'p':
+                pid_passwd = atoi(optarg);
+                break;
+
+            case 'b':
+                brctr_passwd = atoll(optarg);
                 break;
 
             default:

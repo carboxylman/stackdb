@@ -130,20 +130,24 @@ debug-passwd: ctrl-flow-passwd
 
 run-root: ctrl-flow-root
 	sudo ./ctrl-flow-root -m /boot/System.map-2.6.18-xenU \
+	-p 293 -b 0 \
 	clientA
 
 demo-root: ctrl-flow-root
 	sudo ./ctrl-flow-root -m /boot/System.map-2.6.18-xenU \
+	-p 293 -b 0 \
 	clientA 2> /dev/null
 
 verbose-root: ctrl-flow-root
 	sudo ./ctrl-flow-root -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
+	-p 293 -b 0 \
 	clientA
 
 debug-root: ctrl-flow-root
 	sudo gdb --args ./ctrl-flow-root -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m /boot/System.map-2.6.18-xenU \
+	-p 293 -b 0 \
 	clientA
 
 # How to recursively descend into subdirectories to make general
