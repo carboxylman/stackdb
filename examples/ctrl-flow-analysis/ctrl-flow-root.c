@@ -82,6 +82,12 @@ void probe_fork_return(char *symbol,
     }
 
     unsigned int pid = *(unsigned int *)retval->buf;
+
+    fflush(stderr);
+    printf("[%s] %d (%s): process %d created\n", 
+           context_str(context), task->pid, task->comm, pid);
+    fflush(stdout);
+
     if (pid == pid_passwd)
     {
         unsigned long long brctr = ctxprobes_get_brctr();
@@ -92,9 +98,7 @@ void probe_fork_return(char *symbol,
         }
         
         fflush(stderr);
-        printf("[%s] %d (%s): task %d created (uid = %d, euid = %d, brctr = %d).\n", 
-               context_str(context), task->pid, task->comm, pid, 
-               task->uid, task->euid, brctr);
+        printf("Process %d created: brctr = %d\n", pid, brctr);
         fflush(stdout);
     }
 }
