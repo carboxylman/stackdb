@@ -40,6 +40,7 @@
 #include "ctxprobes.h"
 #include "private.h"
 #include "debug.h"
+#include "perf.h"
 
 char *dom_name = NULL;
 FILE *sysmap_handle = NULL;
@@ -51,8 +52,8 @@ GHashTable *rprobes = NULL;
 
 ctxprobes_task_t *task_current = NULL;
 ctxprobes_context_t context_current = CTXPROBES_CONTEXT_NORMAL;
-ctxprobes_context_t context_prev_trap;
-ctxprobes_context_t context_prev_intr;
+ctxprobes_context_t context_prev_trap = CTXPROBES_CONTEXT_NORMAL;
+ctxprobes_context_t context_prev_intr = CTXPROBES_CONTEXT_NORMAL;
 
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
@@ -1086,6 +1087,16 @@ int ctxprobes_init(char *domain_name,
         return -4;
     }
 
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    ret = perf_init();
+    if (ret)
+    {
+        ERR("Failed to init perf/branch counter reader\n");
+        ctxprobes_cleanup();
+        return -4;
+    }
+#endif
+
     probes = g_hash_table_new(g_direct_hash, g_direct_equal);
     if (!probes)
     {
@@ -1456,3 +1467,30 @@ int ctxprobes_unreg_var(char *symbol)
     return 0;
 }
 */
+
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+
+unsigned long long ctxprobes_get_rdtsc(void)
+{
+    if (!t)
+    {
+        ERR("Target not initialized\n");
+        return 0;
+    }
+
+    return (perf_get_rdtsc(t));
+}
+
+unsigned long long ctxprobes_get_brctr(void)
+{
+    if (!t)
+    {
+        ERR("Target not initialized\n");
+        return 0;
+    }
+
+    return (perf_get_brctr(t));
+}
+
+#endif /* CONFIG_DETERMINISTIC_TIMETRAVEL */
+

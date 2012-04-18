@@ -34,7 +34,6 @@
 #include <log.h>
 
 #include <ctxprobes.h>
-#include "perf.h"
 #include "debug.h"
 
 extern char *optarg;
@@ -139,14 +138,6 @@ int main(int argc, char *argv[])
     if (ret)
     {
         ERR("Failed to init ctxprobes\n");
-        exit(ret);
-    }
-
-    ret = perf_init();
-    if (ret)
-    {
-        ERR("Failed to init perf/branch counter reader\n");
-        ctxprobes_cleanup();
         exit(ret);
     }
 

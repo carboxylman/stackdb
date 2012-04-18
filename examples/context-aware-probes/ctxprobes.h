@@ -100,4 +100,12 @@ void ctxprobes_unreg_func_return(char *symbol,
 //void ctxprobes_unreg_var(char *symbol,
 //                         ctxprobes_var_handler_t handler);
 
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+
+unsigned long long ctxprobes_get_rdtsc(void);
+
+unsigned long long ctxprobes_get_brctr(void);
+
+#endif /* CONFIG_DETERMINISTIC_TIMETRAVEL */
+
 #endif /* __CTXPROBES_H__ */

@@ -34,7 +34,6 @@
 #include <log.h>
 
 #include <ctxprobes.h>
-#include "perf.h"
 #include "debug.h"
 
 #define O_WRONLY (00000001)
@@ -47,20 +46,18 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 
-extern struct target *t;
-
 char *context_str(ctxprobes_context_t context)
 {
     char *str;
     switch (context) {
         case CTXPROBES_CONTEXT_NORMAL:
-            str = "Normal";
+            str = "N";
             break;
         case CTXPROBES_CONTEXT_TRAP:
-            str = "Trap";
+            str = "T";
             break;
         case CTXPROBES_CONTEXT_INTERRUPT:
-            str = "Interrupt";
+            str = "I";
             break;
         default:
             str = "Unknown";
@@ -84,20 +81,34 @@ void probe_fileopen(char *symbol,
 
     char *filename = args[0].buf;
     int flags = *(int *)args[1].buf;
+    int mode = *(int *)args[2].buf;
 
-    if (strcmp(filename, "/etc/passwd") == 0 &&
-        (flags & O_WRONLY || flags & O_RDWR))
+	fflush(stderr);
+    printf("[%s] %d (%s): sys_open(filename = %s, flags = 0x%x, mode = 0x%x)\n",
+           context_str(context), task->pid, task->comm,
+           filename, flags, mode);
+	fflush(stdout);
+
+    //if (context == CTXPROBES_CONTEXT_NORMAL)
     {
-        unsigned long long brctr = perf_get_brctr(t);
-        if (!brctr)
+        if (strcmp(filename, "/etc/passwd") == 0)
         {
-            ERR("Failed to get branch counter\n");
-            return;
+            if ((flags & O_WRONLY) || (flags & O_RDWR))
+            {
+                unsigned long long brctr = ctxprobes_get_brctr();
+                if (!brctr)
+                {
+                    ERR("Failed to get branch counter\n");
+                    //return;
+                }
+                
+				fflush(stderr);
+                printf("Write access to %s: "
+                       "brctr = %lld, task = %d (%s)\n",
+                        filename, brctr, task->pid, task->comm);
+                fflush(stdout);
+            }
         }
-
-        printf("Write access to /etc/passwd: "
-               "brctr=%lld, task=%d (%s), context=%s\n",
-               brctr, task->pid, task->comm, context_str(context));
     }
 }
 
@@ -153,14 +164,6 @@ int main(int argc, char *argv[])
     if (ret)
     {
         ERR("Failed to init ctxprobes\n");
-        exit(ret);
-    }
-
-    ret = perf_init();
-    if (ret)
-    {
-        ERR("Failed to init perf/branch counter reader\n");
-        ctxprobes_cleanup();
         exit(ret);
     }
 

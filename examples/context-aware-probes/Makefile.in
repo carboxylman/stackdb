@@ -38,9 +38,10 @@ endif
 
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/ctxprobes.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/private.h \
-	   $(TOP_SRCDIR)/$(SUBDIR)/debug.h
+	   $(TOP_SRCDIR)/$(SUBDIR)/debug.h \
+	   $(TOP_SRCDIR)/$(SUBDIR)/perf.h
 
-OBJECTS := ctxprobes.lo private.lo
+OBJECTS := ctxprobes.lo private.lo perf.lo
 
 LIBRARIES := ctxprobes.a
 
@@ -77,7 +78,7 @@ install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) ctxprobes-example.lo 
+	@$(LIBTOOL) --mode=clean rm -f $(LIBRARIES) $(OBJECTS) ctxprobes-example.lo 
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs

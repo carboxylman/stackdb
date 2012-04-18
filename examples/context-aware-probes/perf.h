@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
- *  examples/ctrl-flow-analysis/perf.h
+ *  examples/context-aware-probes/perf.h
  *
  *  Functions to access performance model during replay
  *

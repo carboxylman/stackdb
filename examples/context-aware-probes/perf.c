@@ -16,7 +16,7 @@
  * Foundation, 51 Franklin St, Suite 500, Boston, MA 02110-1335, USA.
  * 
  * 
- *  examples/ctrl-flow-analysis/perf.c
+ *  examples/context-aware-probes/perf.c
  *
  *  Functions to access performance model during replay
  *
