@@ -23,6 +23,10 @@
  * 
  */
 
+#ifndef CONFIG_DETERMINISTIC_TIMETRAVEL
+#error "Program runs only on Time Travel enabled Xen"
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +34,7 @@
 #include <log.h>
 
 #include <ctxprobes.h>
+#include "perf.h"
 #include "debug.h"
 
 extern char *optarg;
@@ -63,12 +68,23 @@ char *context_str(ctxprobes_context_t context)
 }
 
 void probe_pcreate_return(char *symbol, 
-                          ctxprobes_var_t *args,
-                          int argcount,
+                          ctxprobes_var_t *args, 
+                          int argcount, 
+                          ctxprobes_var_t *retval,
+                          unsigned long retaddr,
                           ctxprobes_task_t *task,
                           ctxprobes_context_t context)
 {
-    printf("%d (%s): process created\n", task->pid, task->comm);
+    if (!retval)
+    {
+        ERR("Something wrong with return value loading!\n");
+        return;
+    }
+
+	int retcode = *(int *)retval->buf;
+
+    printf("%d (%s): process created (retcode: %d)\n", 
+           task->pid, task->comm, retcode);
 }
 
 void parse_opt(int argc, char *argv[])

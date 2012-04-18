@@ -23,6 +23,9 @@
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 
  */
+#ifndef CONFIG_DETERMINISTIC_TIMETRAVEL
+#error "Program runs only on Time Travel enabled Xen"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +34,7 @@
 #include <log.h>
 
 #include <ctxprobes.h>
+#include "perf.h"
 #include "debug.h"
 
 #define O_WRONLY (00000001)
