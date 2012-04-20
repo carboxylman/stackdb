@@ -73,17 +73,23 @@ static void ghash_symtab_free(gpointer data) {
 static void ghash_symbol_free(gpointer data) {
     struct symbol *symbol = (struct symbol *)data;
 
-    vdebug(5,LOG_D_SYMBOL,"freeing symbol(%s:%s:%s)\n",
+    vdebug(5,LOG_D_SYMBOL,"freeing symbol(%s:%s:%s) %p\n",
 	   symbol->symtab->debugfile->idstr,symbol->symtab->name,
-	   symbol->name);
+	   symbol->name,data);
     /* We force-free the symbol; this function is only called if its
      * symtab is going away.  All symbols have to be on a symtab, so
      * we're inconsistent if we don't force it to be freed!
      *
      * If anybody is still holding a ref at this point, that's their
      * fault and they have to fix it.
+     *
+     * Wait, now that we share symbols between CUs, we cannot force free
+     * anymore!
      */
-    symbol_free(symbol,1);
+    if (symbol->isshared)
+	symbol_release(symbol);
+    else 
+	symbol_free(symbol,0);
 }
 
 /**
@@ -370,6 +376,44 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 
     return ls;
 }
+static struct symbol *__symtab_get_sym(struct symtab *symtab,const char *name) {
+    struct symbol *symbol = NULL;
+    struct symtab *subtab;
+
+    /* 
+     * Do the first token by looking up in this symtab.
+     */
+    if ((symbol = (struct symbol *)g_hash_table_lookup(symtab->tab,name)))
+	return symbol;
+
+    /*
+     * If we didn't find a match in our symtab, keep looking in our subtabs.
+     */
+    list_for_each_entry(subtab,&symtab->subtabs,member) {
+	/*
+	 * We only search anonymous subtabs, because if the user is
+	 * looking for something nested, we need them to actually
+	 * specify a fully-qualified string.
+	 *
+	 * We could relax this constraint later on, but only if they
+	 * give us a flag, because otherwise if you look for `i',
+	 * your result will have very little meaning.
+	 *
+	 * XXX: what about inlined instances of variables or
+	 * functions?  How can we let users search for these?
+	 */
+	if (!subtab->name) {
+	    if ((symbol = __symtab_get_sym(subtab,name)))
+		return symbol;
+	}
+    }
+
+    return NULL;
+}
+
+struct symbol *symtab_get_sym(struct symtab *symtab,const char *name) {
+    return __symtab_get_sym(symtab,name);
+}
 
 static struct lsymbol *__symbol_lookup_sym(struct symbol *symbol,
 					   const char *name,const char *delim) {
@@ -562,7 +606,7 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
 
 static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 					      char *name,const char *delim,
-					      struct rfilter_list *srcfile_rflist,
+					      struct rfilter *srcfile_filter,
 					      symbol_type_flag_t ftype) {
     char *next = NULL;
     char *lname = NULL;
@@ -576,7 +620,7 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     struct symtab *symtab;
     GHashTableIter iter;
     gpointer key;
-    struct rfilter *rf;
+    struct rfilter_entry *rfe;
     int accept = RF_ACCEPT;
 
     if (delim && strstr(name,delim)) {
@@ -593,8 +637,8 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     if ((ftype & SYMBOL_TYPE_FLAG_VAR || ftype & SYMBOL_TYPE_FLAG_FUNCTION
 	 || ftype & SYMBOL_TYPE_FLAG_LABEL || ftype == SYMBOL_TYPE_FLAG_NONE)
 	&& (symbol = g_hash_table_lookup(debugfile->globals,next))) {
-	if (srcfile_rflist) {
-	    rfilter_check(srcfile_rflist,symbol->symtab->name,&accept,&rf);
+	if (srcfile_filter) {
+	    rfilter_check(srcfile_filter,symbol->symtab->name,&accept,&rfe);
 	    if (accept == RF_ACCEPT) {
 		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found rf global %s\n",
 		       symbol->name);
@@ -610,8 +654,8 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 
     if ((ftype & SYMBOL_TYPE_FLAG_TYPE || ftype == SYMBOL_TYPE_FLAG_NONE)
 	&& (symbol = g_hash_table_lookup(debugfile->types,next))) {
-	if (srcfile_rflist) {
-	    rfilter_check(srcfile_rflist,symbol->symtab->name,&accept,&rf);
+	if (srcfile_filter) {
+	    rfilter_check(srcfile_filter,symbol->symtab->name,&accept,&rfe);
 	    if (accept == RF_ACCEPT) {
 		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found rf type %s\n",
 		       symbol->name);
@@ -630,8 +674,8 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
      */
     g_hash_table_iter_init(&iter,debugfile->srcfiles);
     while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&symtab)) {
-	if (srcfile_rflist) {
-	    rfilter_check(srcfile_rflist,key,&accept,&rf);
+	if (srcfile_filter) {
+	    rfilter_check(srcfile_filter,key,&accept,&rfe);
 	    if (accept == RF_REJECT)
 		continue;
 	}
@@ -769,10 +813,10 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
-				     struct rfilter_list *srcfile_rflist,
+				     struct rfilter *srcfile_filter,
 				     symbol_type_flag_t ftype) {
     struct lsymbol *lsymbol = __debugfile_lookup_sym(debugfile,name,delim,
-						     srcfile_rflist,ftype);
+						     srcfile_filter,ftype);
 
     if (lsymbol) 
 	lsymbol_hold(lsymbol);
@@ -795,13 +839,59 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 /**
  ** Debugfiles.
  **/
+debugfile_load_flags_t debugfile_load_flags_parse(char *flagstr,char *delim) {
+    char *token2 = NULL;
+    char *saveptr2;
+    debugfile_load_flags_t flags = 0;
+
+    if (!delim)
+	delim = ",";
+
+    while ((token2 = strtok_r((!token2)?flagstr:NULL,delim,&saveptr2))) {
+	vdebug(7,LOG_D_DFILE,"token2 = '%s'\n",token2);
+	if (strcmp(token2,"NONE") == 0 || strcmp(token2,"*") == 0) {
+	    flags = DEBUGFILE_LOAD_FLAG_NONE;
+	    return 0;
+	}
+	else if (strcmp(token2,"ORDERED") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_ORDERED;
+	else if (strcmp(token2,"PUBNAMES") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_PUBNAMES;
+	else if (strcmp(token2,"SYMBOLS") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_SYMBOLS;
+	else if (strcmp(token2,"FULLSYM") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_FULLSYM;
+	else if (strcmp(token2,"PARTIALSYM") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_PARTIALSYM;
+	else if (strcmp(token2,"ALLMATCHES") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_ALLMATCHES;
+	else if (strcmp(token2,"REDUCETYPES") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_REDUCETYPES;
+	else if (strcmp(token2,"REDUCETYPES_FULL_EQUIV") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV;
+	else if (strcmp(token2,"FULL_CU") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_FULL_CU;
+	else {
+	    verror("unknown flag '%s'\n",token2);
+	    errno = EINVAL;
+	    return 0;
+	}
+    }
+
+    return flags;
+}
+
+/*
+ * FLAG,FLAG,FLAG|| \
+ * [<A|1|R|0>::][<A|1|R|0>:]dfn;[<A|1|R|0>:]dfn;[<A|1|R|0>:]dfn|| \
+ * [<A|1|R|0>::][<A|1|R|0>:]sfn;[<A|1|R|0>:]sfn;[<A|1|R|0>:]sfn|| \
+ * [<A|1|R|0>::][<A|1|R|0>:]ss;[<A|1|R|0>:]ss;[<A|1|R|0>:]ss
+ */
 struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr) {
     int i;
-    int rlen;
-    char *token, *token2;
-    char *saveptr, *saveptr2;
-    int errcode;
-    char errbuf[64];
+    char *token;
+    char *saveptr;
+    struct rfilter *rf;
 
     struct debugfile_load_opts *opts = \
 	(struct debugfile_load_opts *)malloc(sizeof(*opts));
@@ -814,50 +904,25 @@ struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr) {
     i = 0;
     while ((token = strtok_r((!token)?optstr:NULL,"||",&saveptr))) {
 	vdebug(7,LOG_D_DFILE,"token = '%s' at %d\n",token,i);
-	token2 = NULL;
-	saveptr2 = NULL;
-	if (i < 3) {
-	    rlen = 0;
-	    regex_t **rl = (regex_t **)malloc(sizeof(regex_t *));
-	    rl[0] = NULL;
-	    while ((token2 = strtok_r((!token2)?token:NULL,";",&saveptr2))) {
-		if (*token == '\0')
-		    continue;
 
-		vdebug(7,LOG_D_DFILE,"token2 = '%s' at %d\n",token,i);
-		rl[rlen] = (regex_t *)malloc(sizeof(regex_t));
-		++rlen;
-		rl = realloc(rl,sizeof(*rl)*(rlen + 1));
-		rl[rlen] = NULL;
-		if ((errcode = regcomp(rl[rlen-1],token2,REG_EXTENDED))) {
-		    regerror(errcode,rl[rlen-1],errbuf,64);
-		    verror("bad regex '%s': %s\n",token2,errbuf);
-		    goto errout;
-		}
-	    }
-
-	    if (rlen) {
-		if (i == 0) {
-		    opts->debugfile_regex_list = rl;
-		    vdebug(4,LOG_D_DFILE,"debugfile regex list len %d\n",rlen);
-		}
-		else if (i == 1) {
-		    opts->srcfile_regex_list = rl;
-		    vdebug(4,LOG_D_DFILE,"srcfile regex list len %d\n",rlen);
-		}
-		else if (i == 2) {
-		    opts->symbol_regex_list = rl;
-		    vdebug(4,LOG_D_DFILE,"symbol regex list len %d\n",rlen);
-		}
-	    }
-	    else {
-		vdebug(4,LOG_D_DFILE,"list len %d at %d\n",rlen,i);
-		free(rl);
+	if (i == 0) {
+	    opts->flags = debugfile_load_flags_parse(token,NULL);
+	    if (errno) {
+		verror("could not load flags!\n");
+		goto errout;
 	    }
 	}
-	else if (i == 3) {
-	    opts->quick = atoi(token);
-	    vwarn("quick = %d\n",opts->quick);
+	else if (i < 4) {
+	    rf = rfilter_create_parse(token);
+	    if (!rf) {
+		goto errout;
+	    }
+	    else if (i == 1)
+		opts->debugfile_filter = rf;
+	    else if (i == 2) 
+		opts->srcfile_filter = rf;
+	    else if (i == 3) 
+		opts->symbol_filter = rf;
 	}
 	++i;
     }
@@ -870,32 +935,12 @@ struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr) {
 }
 
 void debugfile_load_opts_free(struct debugfile_load_opts *opts) {
-    regex_t *rp;
-
-    if (opts->debugfile_regex_list) {
-	rp = opts->debugfile_regex_list[0];
-	while (rp) {
-	    regfree(rp);
-	    ++rp;
-	}
-	free(opts->debugfile_regex_list);
-    }
-    if (opts->srcfile_regex_list) {
-	rp = opts->srcfile_regex_list[0];
-	while (rp) {
-	    regfree(rp);
-	    ++rp;
-	}
-	free(opts->srcfile_regex_list);
-    }
-    if (opts->symbol_regex_list) {
-	rp = opts->symbol_regex_list[0];
-	while (rp) {
-	    regfree(rp);
-	    ++rp;
-	}
-	free(opts->symbol_regex_list);
-    }
+    if (opts->debugfile_filter) 
+	rfilter_free(opts->debugfile_filter);
+    if (opts->srcfile_filter) 
+	rfilter_free(opts->srcfile_filter);
+    if (opts->symbol_filter) 
+	rfilter_free(opts->symbol_filter);
 
     free(opts);
 }
@@ -1043,6 +1088,9 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
      */
     debugfile->types = g_hash_table_new(g_str_hash,g_str_equal);
 
+    debugfile->shared_types = symtab_create(debugfile,0,"__sharedtypes__",
+					    NULL,-1,NULL,NULL,1);
+
     /* This is an optimization lookup hashtable, so we don't provide
      * *any* key or value destructors since we don't want them freed
      * when the hashtable is destroyed.
@@ -1141,21 +1189,18 @@ int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol) {
 
 struct symbol *debugfile_find_type(struct debugfile *debugfile,
 				   char *typename) {
-    return (struct symbol *)g_hash_table_lookup(debugfile->types,typename);
+    struct symbol *s = (struct symbol *) \
+	symtab_get_sym(debugfile->shared_types,typename);
+    if (!s)
+	s = (struct symbol *)g_hash_table_lookup(debugfile->types,typename);
+    return s;
 }
 
-int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol) {
-    if (unlikely(g_hash_table_lookup(debugfile->types,symbol->name)))
+int debugfile_add_type_name(struct debugfile *debugfile,
+			    char *name,struct symbol *symbol) {
+    if (unlikely(g_hash_table_lookup(debugfile->types,name)))
 	return 1;
-    g_hash_table_insert(debugfile->types,symbol->name,symbol);
-    return 0;
-}
-
-int debugfile_add_type_fakename(struct debugfile *debugfile,
-				char *fakename,struct symbol *symbol) {
-    if (unlikely(g_hash_table_lookup(debugfile->types,fakename)))
-	return 1;
-    g_hash_table_insert(debugfile->types,fakename,symbol);
+    g_hash_table_insert(debugfile->types,name,symbol);
     return 0;
 }
 
@@ -1192,6 +1237,11 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
      */
     g_hash_table_destroy(debugfile->srcfiles);
 
+    /* This has to be called last, of all the things that might hold
+     * symbols.
+     */
+    symtab_free(debugfile->shared_types);
+
     clrange_free(debugfile->ranges);
 
     g_hash_table_destroy(debugfile->srclines);
@@ -1221,7 +1271,7 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 			     char *name,char *compdirname,
 			     int language,char *producer,
-			     struct symbol *symtab_symbol) {
+			     struct symbol *symtab_symbol,int noautoinsert) {
     struct symtab *symtab;
 
     symtab = (struct symtab *)malloc(sizeof(*symtab));
@@ -1231,7 +1281,7 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 
     symtab->debugfile = debugfile;
 
-    symtab_set_name(symtab,name);
+    symtab_set_name(symtab,name,noautoinsert);
     symtab_set_compdirname(symtab,compdirname);
     symtab_set_producer(symtab,producer);
 
@@ -1260,7 +1310,7 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
     return symtab;
 }
 
-void symtab_set_name(struct symtab *symtab,char *name) {
+void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
 
     /* If this top-level symtab is being renamed, remove it from our
      * debugfile!
@@ -1280,7 +1330,7 @@ void symtab_set_name(struct symtab *symtab,char *name) {
     /* If this top-level symtab wasn't in our debugfile srcfiles
      * hash, add it!
      */
-    if (name && SYMTAB_IS_ROOT(symtab) && symtab->debugfile 
+    if (name && !noautoinsert && SYMTAB_IS_ROOT(symtab) && symtab->debugfile 
 	&& !g_hash_table_lookup(symtab->debugfile->srcfiles,symtab->name)) 
 	g_hash_table_insert(symtab->debugfile->srcfiles,symtab->name,symtab);
 }
@@ -1311,12 +1361,11 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 	symtab->producer = producer;
 }
 
-int symtab_insert_fakename(struct symtab *symtab,char *fakename,
-			   struct symbol *symbol,OFFSET anonaddr) {
-    if (!anonaddr) {
-	if (unlikely(g_hash_table_lookup(symtab->tab,fakename)))
+int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
+    if (!anonaddr && symbol_get_name(symbol)) {
+	if (unlikely(g_hash_table_lookup(symtab->tab,symbol_get_name(symbol))))
 	    return 1;
-	g_hash_table_insert(symtab->tab,fakename,symbol);
+	g_hash_table_insert(symtab->tab,symbol_get_name(symbol),symbol);
 	return 0;
     }
     else if (anonaddr) {
@@ -1330,22 +1379,22 @@ int symtab_insert_fakename(struct symtab *symtab,char *fakename,
     return 1;
 }
 
-int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
-    if (!anonaddr && symbol->name) {
-	if (unlikely(g_hash_table_lookup(symtab->tab,symbol->name)))
-	    return 1;
-	g_hash_table_insert(symtab->tab,symbol->name,symbol);
-	return 0;
-    }
-    else if (anonaddr) {
-	if (unlikely(g_hash_table_lookup(symtab->anontab,(gpointer)anonaddr)))
-	    return 1;
-	g_hash_table_insert(symtab->anontab,(gpointer)anonaddr,symbol);
-	return 0;
-    }
+void symtab_remove(struct symtab *symtab,struct symbol *symbol) {
+    if (symbol_get_name(symbol) 
+	&& g_hash_table_lookup(symtab->tab,symbol_get_name(symbol))) 
+	g_hash_table_remove(symtab->tab,symbol_get_name(symbol));
+    else if (g_hash_table_lookup(symtab->anontab,
+				 (gpointer)(uintptr_t)symbol->ref))
+	g_hash_table_remove(symtab->anontab,(gpointer)(uintptr_t)symbol->ref);
+    else
+	vwarn("symbol %s not on symtab %s!\n",symbol_get_name(symbol),symtab->name);
+}
 
-    verror("VERY BAD -- tried to insert a non-anonymous symbol with no name!\n");
-    return 1;
+void symtab_steal(struct symtab *symtab,struct symbol *symbol) {
+    if (symbol_get_name(symbol)) 
+	g_hash_table_steal(symtab->tab,symbol_get_name(symbol));
+    else 
+	g_hash_table_steal(symtab->anontab,(gpointer)(uintptr_t)symbol->ref);
 }
 
 void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
@@ -1479,6 +1528,7 @@ void symtab_free(struct symtab *symtab) {
 
     if (!list_empty(&symtab->subtabs))
 	list_for_each_entry_safe(tmp,tmp2,&symtab->subtabs,member) 
+	    //if (!tmp->symtab_symbol || !tmp->symtab_symbol->isshared)
 	    symtab_free(tmp);
     if (RANGE_IS_LIST(&symtab->range))
 	range_list_internal_free(&symtab->range.r.rlist);
@@ -1590,7 +1640,7 @@ struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
     /* Only insert the symbol automatically if we have a name.  This
      * won't be true for our dwarf parser, for instance.
      */
-    if (name)
+    if (0 && name)
 	g_hash_table_insert(symtab->tab,name,symbol);
 
     vdebug(LOG_D_SYMBOL,5,"offset %"PRIxSMOFFSET"\n",offset);
@@ -1658,9 +1708,96 @@ void symbol_build_extname(struct symbol *symbol) {
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol_name))
 #endif
-	) 
+	)
 	free(symbol_name);
     symbol->name = symbol->extname + foffset;
+}
+
+struct symtab *symbol_get_root_symtab(struct symbol *symbol) {
+    struct symtab *st = symbol->symtab;
+
+    while (st && st->parent)
+	st = st->parent;
+
+    return st;
+}
+
+void symbol_change_symtab(struct symbol *symbol,struct symtab *symtab,
+			  int noinsert,int typerecurse) {
+    struct symbol_instance *tmpi;
+
+    if (!symtab)
+	return;
+
+    if (symbol->symtab == symtab)
+	return;
+
+    /* If it's a member, don't insert OR remove it! */
+    if (!symbol->ismember) {
+
+	//vwarn("symbol %s symtab %s %d %d\n",symbol_get_name(symbol),symtab->name,
+	//    noinsert,typerecurse);
+
+	/* Remove it from what it might be currently on, but don't free it! */
+	symtab_steal(symbol->symtab,symbol);
+
+	/* Add it to the new thing. */
+	symbol->symtab = symtab;
+	if (!noinsert) {
+	    if (symtab_insert(symbol->symtab,symbol,0))
+		symtab_insert(symbol->symtab,symbol,symbol->ref);
+	}
+    }
+
+    /* Change our immediate children if necessary.  For instance
+     * symbols, we only recurse on their types if we were told to.  In
+     * general, we are saved from crazy recursion loops (i.e., on nested
+     * struct types) because we check to see if we already changed the
+     * symtab.
+     */
+    if (typerecurse && symbol->datatype)
+	symbol_change_symtab(symbol->datatype,symtab,noinsert,typerecurse);
+
+    if (!SYMBOL_IS_FULL(symbol))
+	return;
+
+    if (SYMBOL_IS_TYPE(symbol)) {
+	if (SYMBOL_IST_STUN(symbol)) {
+	    list_for_each_entry(tmpi,&symbol->s.ti->d.su.members,d.v.member) 
+		symbol_change_symtab(tmpi->d.v.member_symbol,symtab,noinsert,
+				     typerecurse);
+	}
+	else if (SYMBOL_IST_ENUM(symbol)) {
+	    list_for_each_entry(tmpi,&symbol->s.ti->d.e.members,d.v.member) 
+		symbol_change_symtab(tmpi->d.v.member_symbol,symtab,noinsert,
+				     typerecurse);
+	}
+    }
+    /* NOTE: for instance, we don't yet change the *origin symbol's
+     * symtab!  Perhaps we should hold it if symbol->symtab != symtab???
+     */
+    else if (SYMBOL_IS_VAR(symbol)) {
+	/* XXX: we don't change upwards, i.e., *parent_symbol!  I think
+	 * this is correct...
+	 */
+	symbol->symtab = symtab;
+    }
+    else if (SYMBOL_IS_FUNCTION(symbol)) {
+	/* We don't need to recurse on this symtab; any children already
+	 * point to d.f.symtab.
+	 */
+	if (symbol->s.ii->d.f.symtab->parent) 
+	    list_del(&symbol->s.ii->d.f.symtab->member);
+	symbol->s.ii->d.f.symtab->parent = symtab;
+	list_add_tail(&symbol->s.ii->d.f.symtab->member,&symtab->subtabs);
+
+	/* We also don't need to do it for any of our args or variables;
+	 * they are on this function's symtab, which we just reparented.
+	 */
+    }
+    /* Nothing to do for labels. */
+
+    return;
 }
 
 void symbol_set_type(struct symbol *symbol,symbol_type_t symtype) {
@@ -1683,6 +1820,283 @@ int symbol_type_bytesize(struct symbol *symbol) {
 	return -1;
 
     return symbol->s.ti->byte_size;
+}
+
+static inline int __check_type_in_list(struct symbol *type,
+				       struct array_list *list) {
+    int i;
+
+    if (!list)
+	return 0;
+
+    for (i = 0; i < list->len; ++i)
+	if (array_list_item(list,i) == type)
+	    return 1;
+    return 0;
+}
+
+static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
+			       struct array_list **t1ss,
+			       struct array_list **t2ss,
+			       GHashTable *updated_datatype_refs) {
+    struct symbol_type *ti1;
+    struct symbol_type *ti2;
+    struct symbol *m1;
+    struct symbol *m2;
+    struct symbol_instance *mi1;
+    struct symbol_instance *mi2;
+    struct symbol *t1d;
+    struct symbol *t2d;
+    int retval = 0;
+    int rc;
+    int i;
+
+    if (t1 == t2)
+	return 0;
+
+    //vwarn("t1 = %p t2 = %p\n",t1,t2);
+
+    /* Check if we've already been examining this type (for nested
+     * structs/unions); if we have, just return equiv so that the
+     * recursion will return!  Equivalence is decided further up the
+     * stack.
+     */
+    if ((rc = __check_type_in_list(t1,*t1ss)) 
+	== __check_type_in_list(t2,*t2ss)) {
+	if (rc == 1)
+	    return 0;
+    }
+    else {
+	return 1;
+    }
+
+    if (t1->datatype_code != t2->datatype_code)
+	return 1;
+
+    if (t1->loadtag != t2->loadtag)
+	return 1;
+
+    if (!((symbol_get_name(t1) == NULL && symbol_get_name(t2) == NULL)
+	  || strcmp(symbol_get_name(t1),symbol_get_name(t2)) == 0))
+	return 1;
+
+    if (t1->loadtag == LOADTYPE_PARTIAL)
+	/* They are equivalent, as far as we can tell! */
+	return 0;
+
+    ti1 = t1->s.ti;
+    ti2 = t2->s.ti;
+
+    if (ti1->byte_size != ti2->byte_size)
+	return 1;
+
+    if (ti1->encoding != ti2->encoding)
+	return 1;
+
+    switch (t1->datatype_code) {
+    case DATATYPE_VOID:
+	return 0;
+    case DATATYPE_ARRAY:
+	/* Check the ranges first; then check the types. */
+	if (ti1->d.a.count != ti2->d.a.count)
+	    return 1;
+	for (i = 0; i < ti1->d.a.count; ++i)
+	    if (ti1->d.a.subranges[i] != ti2->d.a.subranges[i])
+		return 1;
+	t1d = t1->datatype;
+	t2d = t2->datatype;
+	if (updated_datatype_refs) {
+	    if (!(t1d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+							     (gpointer)(uintptr_t)t1->datatype_ref))) 
+		t1d = t1->datatype;
+	    if (!(t2d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+							     (gpointer)(uintptr_t)t2->datatype_ref)))
+		t2d = t2->datatype;
+	}
+	return __symbol_type_equiv(t1d,t2d,t1ss,t2ss,updated_datatype_refs);
+    case DATATYPE_STRUCT:
+    case DATATYPE_UNION:
+	if (ti1->d.su.count != ti2->d.su.count)
+	    return 1;
+
+	/* Before we check member types, push ourselves as "already
+	 * being checked".  Then, if a recursive call to this function
+	 * sees these symbols on their respective lists again, it just
+	 * returns 0 (equivalent) and we finish the checking further up
+	 * the recursion stack.
+	 */
+	int t1created = 0;
+	int t2created = 0;
+	if (!*t1ss) {
+	    *t1ss = array_list_create(4);
+	    t1created = 1;
+	}
+	if (!*t2ss) {
+	    *t2ss = array_list_create(4);
+	    t2created = 1;
+	}
+	array_list_append(*t1ss,t1);
+	array_list_append(*t2ss,t2);
+
+	/* Then check all the names/types of the members! */
+	i = 0;
+	list_for_each_entry_dual(mi1,mi2,&ti1->d.su.members,&ti2->d.su.members,
+				 d.v.member,d.v.member) {
+	    m1 = mi1->d.v.member_symbol;
+	    m2 = mi2->d.v.member_symbol;
+	    //vwarn("i = %d %p %p %p %p %p %p\n",i,ti1,ti2,mi1,mi2,m1,m2);
+	    if ((m1 == NULL && m2 == NULL)
+		|| (symbol_get_name(m1) == NULL && symbol_get_name(m2) == NULL))
+		/* name can be NULL for function params, of course */
+		;
+	    else if ((m1 == NULL && m2 != NULL)
+		|| (m1 != NULL && m2 == NULL)
+		|| (symbol_get_name(m1) == NULL && symbol_get_name(m2) != NULL)
+		|| (symbol_get_name(m1) != NULL && symbol_get_name(m2) == NULL)
+		|| strcmp(symbol_get_name(m1),symbol_get_name(m2))) {
+		retval = 1;
+		break;
+	    }
+
+	    t1d = m1->datatype;
+	    t2d = m2->datatype;
+
+	    if (updated_datatype_refs) {
+		t1d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+							   (gpointer)(uintptr_t) \
+							   m1->datatype_ref);
+		if (!t1d)
+		    t1d = m1->datatype;
+		t2d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+							   (gpointer)(uintptr_t) \
+							   m2->datatype_ref);
+		if (!t2d)
+		    t2d = m2->datatype;
+	    }
+
+	    if (t1d == t2d)
+		continue;
+
+	    if ((rc = __symbol_type_equiv(t1d,t2d,t1ss,t2ss,
+					  updated_datatype_refs))) {
+		retval = rc;
+		break;
+	    }
+	    ++i;
+	};
+
+	if (t1created) {
+	    array_list_free(*t1ss);
+	    *t1ss = NULL;
+	}
+	else 
+	    array_list_remove(*t1ss);
+	if (t2created) {
+	    array_list_free(*t2ss);
+	    *t2ss = NULL;
+	}
+	else 
+	    array_list_remove(*t2ss);
+
+	return retval;
+    case DATATYPE_PTR:
+    case DATATYPE_TYPEDEF:
+	t1d = t1->datatype;
+	t2d = t2->datatype;
+	if (updated_datatype_refs) {
+	    t1d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+						       (gpointer)(uintptr_t) \
+						       t1->datatype_ref);
+	    if (!t1d)
+		t1d = t1->datatype;
+	    t2d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+						       (gpointer)(uintptr_t) \
+						       t2->datatype_ref);
+	    if (!t2d)
+		t2d = t2->datatype;
+	}
+
+	if (t1d == t2d)
+	    return 0;
+
+	return __symbol_type_equiv(t1d,t2d,t1ss,t2ss,updated_datatype_refs);
+    case DATATYPE_FUNCTION:
+	if (ti1->d.f.count != ti2->d.f.count)
+	    return 1;
+
+	/* Check all the names/types of the members! */
+	list_for_each_entry_dual(mi1,mi2,&ti1->d.f.args,&ti2->d.f.args,
+				 d.v.member,d.v.member) {
+	    m1 = mi1->d.v.member_symbol;
+	    m2 = mi2->d.v.member_symbol;
+	    if ((m1 == NULL && m2 == NULL)
+		|| (symbol_get_name(m1) == NULL && symbol_get_name(m2) == NULL))
+		/* name can be NULL for function params, of course */
+		;
+	    else if ((m1 == NULL && m2 != NULL)
+		     || (m1 != NULL && m2 == NULL)
+		     || (symbol_get_name(m1) == NULL && symbol_get_name(m2) != NULL)
+		     || (symbol_get_name(m1) != NULL && symbol_get_name(m2) == NULL)
+		     || strcmp(symbol_get_name(m1),symbol_get_name(m2))) {
+		retval = 1;
+		break;
+	    }
+
+	    t1d = m1->datatype;
+	    t2d = m2->datatype;
+	    if (updated_datatype_refs) {
+		t1d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+							   (gpointer)(uintptr_t) \
+							   m1->datatype_ref);
+		if (!t1d)
+		    t1d = m1->datatype;
+		t2d = (struct symbol *)g_hash_table_lookup(updated_datatype_refs,
+							   (gpointer)(uintptr_t) \
+							   m2->datatype_ref);
+		if (!t2d)
+		    t2d = m2->datatype;
+	    }
+
+	    if (t1d == t2d)
+		continue;
+
+	    if ((rc = __symbol_type_equiv(t1d,t2d,t1ss,t2ss,
+					  updated_datatype_refs))) {
+		retval = rc;
+		break;
+	    }
+	};
+
+	return retval;
+    case DATATYPE_ENUM:
+	/* XXX: just assume that life is good if the names are equiv. */
+	return 0;
+    case DATATYPE_BASE:
+	return 0;
+    case DATATYPE_CONST:
+    case DATATYPE_VOL:
+	return 0;
+    case DATATYPE_BITFIELD:
+	if (ti1->d.v.bit_size != ti2->d.v.bit_size)
+	    return 1;
+	return 0;
+    default:
+	return -1;
+    }
+}
+
+int symbol_type_equal(struct symbol *t1,struct symbol *t2,
+		      GHashTable *updated_datatype_refs) {
+    struct array_list *t1ss = NULL;
+    struct array_list *t2ss = NULL;
+    int retval;
+
+    if (!SYMBOL_IS_TYPE(t1) || !SYMBOL_IS_TYPE(t2))
+	return -1;
+
+    retval = __symbol_type_equiv(t1,t2,&t1ss,&t2ss,updated_datatype_refs);
+
+    return retval;
 }
 
 static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member,
@@ -2103,8 +2517,8 @@ int symbol_type_is_char(struct symbol *type) {
 
     if (type->datatype_code == DATATYPE_BASE
 	&& type->s.ti->byte_size == 1
-	&& (type->s.ti->d.v.encoding == ENCODING_SIGNED_CHAR
-	    || type->s.ti->d.v.encoding == ENCODING_UNSIGNED_CHAR)) 
+	&& (type->s.ti->encoding == ENCODING_SIGNED_CHAR
+	    || type->s.ti->encoding == ENCODING_UNSIGNED_CHAR)) 
 	return 1;
 
     return 0;
@@ -2151,20 +2565,46 @@ unsigned int symbol_type_full_bytesize(struct symbol *type) {
 }
 
 REFCNT symbol_hold(struct symbol *symbol) {
+    vdebug(10,LOG_D_SYMBOL,"holding symbol %s//%s at %"PRIxSMOFFSET"\n",
+	   SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
     return RHOLD(symbol);
 }
 
 REFCNT symbol_release(struct symbol *symbol) {
+    REFCNT retval;
+    char *name = NULL;
+    if (symbol_get_name(symbol)) 
+	name = strdup(symbol_get_name(symbol));
     /*
      * WE DO NOT FREE symbols on release; our debugfile garbage
      * collector has to do this for us according to some policy!
      *
      * Actually, we only free dynamic symbols automatically on release!
      */
-    if (symbol->isdynamic)
-	return RPUT(symbol,symbol);
-    else
-	return RPUTNF(symbol);
+    if (symbol->isdynamic || symbol->isshared) {
+	vdebug(10,LOG_D_SYMBOL,
+	       "dynamic/shared symbol %s//%s at %"PRIxSMOFFSET":     ",
+	       SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
+	retval = RPUT(symbol,symbol);
+	if (retval)
+	    vdebugc(10,LOG_D_SYMBOL,"  refcnt %d\n",retval);
+	else 
+	    vdebug(10,LOG_D_SYMBOL,"dynamic/shared symbol %s refcnt 0\n",name);
+    }
+    else {
+	vdebug(10,LOG_D_SYMBOL,"symbol %s//%s at %"PRIxSMOFFSET":     ",
+	       SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
+	retval = RPUTNF(symbol);
+	retval = RPUT(symbol,symbol);
+	if (retval)
+	    vdebugc(10,LOG_D_SYMBOL,"  refcnt %d\n",retval);
+	else 
+	    vdebug(10,LOG_D_SYMBOL,"symbol %s refcnt 0\n",name);
+    }
+    if (name)
+	free(name);
+
+    return retval;
 }
 
 REFCNT symbol_free(struct symbol *symbol,int force) {
@@ -2172,6 +2612,9 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     struct symbol_instance *tmp2;
     struct symbol *tmp_symbol;
     int retval = symbol->refcnt;
+
+    if (symbol->freenextpass) 
+	return symbol->refcnt;
 
     if (symbol->refcnt) {
 	if (!force) {
@@ -2192,12 +2635,21 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//(null) at %"PRIxSMOFFSET"\n",
 	       SYMBOL_TYPE(symbol->type),symbol->ref);
 
+    /*
+     * If this symbol refers to a type from some other CU, release on
+     * that type.
+     */
+    if (symbol->usesshareddatatype && symbol->datatype) {
+	symbol_release(symbol->datatype);
+	symbol->usesshareddatatype = 0;
+	symbol->datatype = NULL;
+    }
     /* If this is a dynamic symbol, we have to recursively release any
      * dynamic symbols it points to.
      */
-    if (symbol->isdynamic) {
-	if (SYMBOL_IST_PTR(symbol)) 
-	    symbol_release(symbol->datatype);
+    else if (symbol->isdynamic && symbol->datatype) {
+	symbol_release(symbol->datatype);
+	symbol->datatype = NULL;
     }
 
     /*
@@ -2216,7 +2668,7 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	 * Don't free the function's symtab -- it is freed in in
 	 * symtab_free since all functions will have a parent symtab.
 	 */
-	//if (symbol->s.ii->d.f.symtab)
+	//if (symbol->isshared && symbol->s.ii->d.f.symtab)
 	//    symtab_free(symbol->s.ii->d.f.symtab);
     }
     else if (SYMBOL_IS_FULL_LABEL(symbol)) {
@@ -2289,9 +2741,31 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	free(symbol->s.ii);
     }
 
+    vdebug(5,LOG_D_SYMBOL,"freeing %p\n",symbol);
     free(symbol);
 
     return retval;
+}
+
+void symbol_type_mark_members_free_next_pass(struct symbol *symbol,int force) {
+    struct symbol_instance *tmp;
+
+    /*
+     * We have to recurse through any symbol that has members, because
+     * those members are not in any symbol tables, so they won't be freed.
+     */
+    if (SYMBOL_IST_FULL_STUN(symbol)) {
+	list_for_each_entry(tmp,&symbol->s.ti->d.su.members,
+				 d.v.member) 
+	    tmp->d.v.member_symbol->freenextpass = 1;
+    }
+    else if (SYMBOL_IST_FULL_FUNCTION(symbol)) {
+	list_for_each_entry(tmp,&symbol->s.ti->d.f.args,
+				 d.v.member) 
+	    tmp->d.v.member_symbol->freenextpass = 1;
+    }
+
+    return;
 }
 
 /**
@@ -2677,8 +3151,17 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
     fprintf(ud->stream,"%s    version:  %s\n",p,debugfile->version);
     fprintf(ud->stream,"%s    refcnt:   %d\n",p,debugfile->refcnt);
     fprintf(ud->stream,"%s  types: (%d)\n",p,g_hash_table_size(debugfile->types));
-    if (types)
+    if (types) 
 	g_hash_table_foreach(debugfile->types,g_hash_foreach_dump_symbol,&udn);
+    fprintf(ud->stream,"%s  shared types: (%d+%d)\n",p,
+	    g_hash_table_size(debugfile->shared_types->tab),
+	    g_hash_table_size(debugfile->shared_types->anontab));
+    if (types) {
+	g_hash_table_foreach(debugfile->shared_types->tab,
+			     g_hash_foreach_dump_symbol,&udn);
+	g_hash_table_foreach(debugfile->shared_types->anontab,
+			     g_hash_foreach_dump_symbol,&udn);
+    }
     fprintf(ud->stream,"%s  globals: (%d)\n",
 	    p,g_hash_table_size(debugfile->globals));
     if (globals) 
@@ -3219,7 +3702,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"%s",symbol->name);
 	else 
 	    fprintf(ud->stream,"%s (byte_size=%d,encoding=%d)",symbol->name,
-		    symbol->s.ti->byte_size,symbol->s.ti->d.v.encoding);
+		    symbol->s.ti->byte_size,symbol->s.ti->encoding);
 	break;
     case DATATYPE_BITFIELD:
 	fprintf(ud->stream,"bitfield %s",symbol->name);

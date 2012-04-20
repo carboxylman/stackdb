@@ -316,6 +316,22 @@ static inline void list_splice_init(struct list_head *list,
          pos = list_entry(pos->member.next, typeof(*pos), member))
 
 /**
+ * list_for_each_entry_dual  -   iterate over two lists of given type
+ * @pos:    the type * to use as a loop counter.
+ * @pos2:   the type * to use as a loop counter.
+ * @head:   the head for your list.
+ * @head2:  the head for your list.
+ * @member: the name of the list_struct within the struct.
+ * @member2:the name of the list_struct within the struct.
+ */
+#define list_for_each_entry_dual(pos, pos2, head, head2, member, member2)	\
+    for (pos = list_entry((head)->next, typeof(*pos), member),		\
+	     pos2 = list_entry((head2)->next, typeof(*pos2), member2);	\
+         &pos->member != (head) && &pos2->member2 != (head2);           \
+         pos = list_entry(pos->member.next, typeof(*pos), member),	\
+	     pos2 = list_entry(pos2->member2.next, typeof(*pos2), member2))
+
+/**
  * list_for_each_entry_reverse - iterate backwards over list of given type.
  * @pos:    the type * to use as a loop counter.
  * @head:   the head for your list.

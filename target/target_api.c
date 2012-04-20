@@ -212,13 +212,15 @@ void ghash_mmap_entry_free(gpointer data) {
     free(mme);
 }
 
-struct target *target_create(char *type,void *state,struct target_ops *ops) {
+struct target *target_create(char *type,void *state,struct target_ops *ops,
+			     struct debugfile_load_opts **dfoptlist) {
     struct target *retval = malloc(sizeof(struct target));
     memset(retval,0,sizeof(struct target));
 
     retval->type = type;
     retval->state = state;
     retval->ops = ops;
+    retval->debugfile_opts_list = dfoptlist;
 
     INIT_LIST_HEAD(&retval->spaces);
 

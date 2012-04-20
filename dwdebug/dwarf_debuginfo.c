@@ -69,13 +69,13 @@ struct attrcb_args {
     Dwarf_Word stmt_list_offset;
 
     struct debugfile *debugfile;
+    struct debugfile_load_opts *opts;
     struct symtab *cu_symtab;
     struct symtab *symtab;
     struct symbol *symbol;
     struct symbol *parentsymbol;
     struct symbol *voidsymbol;
     GHashTable *reftab;
-    int quick;
     GHashTable *cu_abstract_origins;
 
     ADDR lowpc;
@@ -271,12 +271,12 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_name:
 	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %s\n",str);
 	if (level == 0) {
-	    symtab_set_name(cbargs->cu_symtab,str);
+	    symtab_set_name(cbargs->cu_symtab,str,0);
 	}
 	else if (cbargs->symbol) {
 	    symbol_set_name(cbargs->symbol,str);
 	    if (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION)
-		symtab_set_name(cbargs->symtab,str);
+		symtab_set_name(cbargs->symtab,str,0);
 	}
 	else {
 	    vwarn("[DIE %" PRIx64 "] attrval %s for attr %s in bad context\n",
@@ -465,7 +465,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    /* our encoding_t is 1<->1 map to the DWARF encoding codes. */
-	    cbargs->symbol->s.ti->d.v.encoding = (encoding_t)num;
+	    cbargs->symbol->s.ti->encoding = (encoding_t)num;
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
@@ -548,8 +548,15 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_type:
 	if (ref_set && cbargs->symbol) {
-	    struct symbol *datatype = (struct symbol *) \
-		g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref);
+	    /*
+	     * Disable the datatype lookup here; there's no point; it
+	     * saves us no time, and for implementing type compression
+	     * (see end of CU load function) and code simplicity with
+	     * that, we just do all datatype lookups there, in one
+	     * place.
+	     */
+	    /* struct symbol *datatype = (struct symbol *)		
+	           g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref); */
 	    if (cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 		if (cbargs->symbol->datatype_code == DATATYPE_PTR
 		    || cbargs->symbol->datatype_code == DATATYPE_TYPEDEF
@@ -558,8 +565,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    || cbargs->symbol->datatype_code == DATATYPE_VOL
 		    || cbargs->symbol->datatype_code == DATATYPE_FUNCTION) {
 		    cbargs->symbol->datatype_ref = (uint64_t)ref;
-		    if (datatype)
-			cbargs->symbol->datatype = datatype;
+		    /* if (datatype)
+		           cbargs->symbol->datatype = datatype; */
 		}
 		else 
 		    vwarn("[DIE %" PRIx64 "] bogus: type ref for unknown type symbol\n",
@@ -567,8 +574,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	    else {
 		cbargs->symbol->datatype_ref = ref;
-		if (datatype)
-		    cbargs->symbol->datatype = datatype;
+		/* if (datatype)
+		       cbargs->symbol->datatype = datatype; */
 	    }
 	}
 	else if (ref_set && !cbargs->symbol && cbargs->parentsymbol 
@@ -612,7 +619,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 #else
 	    int slen = strlen(str);
 	    cbargs->symbol->s.ii->constval = malloc(slen+1);
-	    strcpy(cbargs->symbol->s.ii->constval,str,slen+1);
+	    strncpy(cbargs->symbol->s.ii->constval,str,slen+1);
 #endif
 	}
 	else if (block_set && SYMBOL_IS_FULL_INSTANCE(cbargs->symbol)) {
@@ -1581,8 +1588,9 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 /* Used in fill_debuginfo; defined right afer it for ease of
  * understanding the code.
  */
+
+void finalize_die_symbol_name(struct symbol *symbol);
 int finalize_die_symbol(struct debugfile *debugfile,int level,
-			Dwarf_Off die_offset,
 			struct symbol *symbol,
 			struct symbol *parentsymbol,
 			struct symbol *voidsymbol,
@@ -1600,17 +1608,18 @@ struct symbol *add_void_symbol(struct debugfile *debugfile,
     symtab_insert(symbol->symtab,symbol,0);
 
     /* And also always put it in the debugfile's global types table. */
-    debugfile_add_type(debugfile,symbol);
+    if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES))
+	debugfile_add_type_name(debugfile,symbol_get_name(symbol),symbol);
 
     return symbol;
 }
 
 static int debuginfo_load_cu(struct debugfile *debugfile,
-			     struct debugfile_load_opts *opts,
 			     Dwfl_Module *dwflmod,Dwarf *dbg,
 			     Dwarf_Off *cu_offset,
 			     struct cu_meta *meta,
 			     struct array_list *init_die_offsets) {
+    struct debugfile_load_opts *opts = debugfile->opts;
     int retval = 0;
     Dwarf_Off offset = *cu_offset;
     struct attrcb_args args;
@@ -1631,7 +1640,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 
     struct symbol *voidsymbol;
     struct symbol *rsymbol;
-    int quick = (opts && opts->quick) ? opts->quick : 0;
+    int quick = opts->flags & DEBUGFILE_LOAD_FLAG_PARTIALSYM;
     /*
      * XXX: what if we are using a CU symtab created in get_aranges or
      * get_pubnames, and we don't end up hashing the symtab in
@@ -1645,6 +1654,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 
     struct array_list *die_offsets = NULL;
     int i;
+    struct symbol *tsymbol;
+    char *sname;
+    int accept;
 
     if (init_die_offsets) 
 	die_offsets = array_list_clone(init_die_offsets,0);
@@ -1657,7 +1669,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	/* attr_callback has to fill cu_symtab, and *MUST* fill at least
 	 * the name field; otherwise we can't add the symtab to our hash table.
 	 */
-	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL);
+	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL,0);
 	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
 			    (gpointer)cu_symtab);
     }
@@ -1683,13 +1695,13 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
     args.stmt_list_offset = 0;
 
     args.debugfile = debugfile;
+    args.opts = opts;
     args.cu_symtab = cu_symtab;
     args.symtab = cu_symtab;
     args.symbol = NULL;
     args.parentsymbol = NULL;
     args.voidsymbol = voidsymbol;
     args.reftab = reftab;
-    args.quick = quick;
     args.cu_abstract_origins = cu_abstract_origins;
 
     /* Skip the CU header. */
@@ -1728,19 +1740,29 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	/* Figure out what type of symbol (or symtab?) to create! */
 	if (tag == DW_TAG_variable
 	    || tag == DW_TAG_formal_parameter
-	    || tag == DW_TAG_member
 	    || tag == DW_TAG_enumerator) {
 	    symbols[level] = symbol_create(symtabs[level],offset,NULL,
 					   SYMBOL_TYPE_VAR,!quick);
 	    if (tag == DW_TAG_formal_parameter) {
 		symbols[level]->isparam = 1;
 	    }
-	    if (tag == DW_TAG_member) {
-		symbols[level]->ismember = 1;
-	    }
 	    if (tag == DW_TAG_enumerator) {
 		symbols[level]->isenumval = 1;
 	    }
+	}
+	else if (tag == DW_TAG_member) {
+	    /* Members are special IF the parent is a type, because if
+	     * that type got shared in a previous pass, we have to share
+	     * these symbols too.
+	     */
+	    if (symbols[level-1] && SYMBOL_IS_TYPE(symbols[level-1])
+		&& symbols[level-1]->isshared)
+		symbols[level] = symbol_create(symbols[level-1]->symtab,offset,
+					       NULL,SYMBOL_TYPE_VAR,!quick);
+	    else 
+		symbols[level] = symbol_create(symtabs[level],offset,NULL,
+					       SYMBOL_TYPE_VAR,!quick);
+	    symbols[level]->ismember = 1;
 	}
 	else if (tag == DW_TAG_label) {
 	    symbols[level] = symbol_create(symtabs[level],offset,NULL,
@@ -1825,7 +1847,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * subprogram, or until we need another child scope.
 	     */
 	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL,
-				     symbols[level]);
+				     symbols[level],0);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -1843,7 +1865,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * subprogram, or until we need another child scope.
 	     */
 	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL,
-				     symbols[level]);
+				     symbols[level],0);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -1860,7 +1882,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    /* Build a new symtab and use it until we finish this
 	     * block, or until we need another child scope.
 	     */
-	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL);
+	    newscope = symtab_create(debugfile,offset,NULL,NULL,0,NULL,NULL,0);
 	    newscope->parent = symtabs[level];
 	    // XXX: should we wait to do this until we level up after
 	    // successfully completing this new child scope?
@@ -1922,17 +1944,10 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * If we have regexes for symtabs and this one doesn't
 	     * match, skip it!
 	     */
-	    if (opts && opts->srcfile_regex_list) {
-		regex_t **rp = opts->srcfile_regex_list;
-		int match = 0;
-		while (*rp) {
-		    if (regexec(*rp,symtab_get_name(cu_symtab),0,NULL,0) == 0) {
-			match = 1;
-			break;
-		    }
-		    ++rp;
-		}
-		if (!match) {
+	    if (opts->srcfile_filter) {
+		if (rfilter_check(opts->srcfile_filter,symtab_get_name(cu_symtab),
+				  &accept,NULL)
+		    && accept == RF_REJECT) {
 		    vdebug(3,LOG_D_DWARF,"skipping CU '%s'\n",
 			   symtab_get_name(cu_symtab));
 		    goto out;
@@ -1941,6 +1956,108 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	}
 
 	/* If we're actually handling this CU, then... */
+
+	/* THIS MUST HAPPEN FIRST:
+	 *
+	 * If we are going to give the symbol an extname, we must do it
+	 * now, before it goes onto any hashtables.  We cannot rename in
+	 * finalize_die_symbol; that is too late and will cause memory
+	 * corruption because the symbol will have already been inserted
+	 * into hashtables.
+	 */
+	if (symbols[level])
+	    finalize_die_symbol_name(symbols[level]);
+
+	/*
+	 * Type compression, part 1:
+	 *
+	 * If we've loaded the attrs for a non-enumerated type, and it
+	 * is already present in our global type table, AND if the user
+	 * hasn't specified that we must *fully* check the type
+	 * equivalence (DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV), and
+	 * if the looked up symbol is not in our CU, AND if we're at
+	 * level 1 (we only consider types that are at the top level),
+	 * we can 
+	 *   free this symbol, use the looked-up value right away, and
+	 *   skip any of our children!
+	 *
+	 * Type compression, part 2 continues below (needed if
+	 * DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV is set because we
+	 * can't fully check type equivalence until we've loaded this
+	 * type and all its children, if any).
+	 */
+	if (level == 1 && symbols[level] 
+	    && SYMBOL_IS_TYPE(symbols[level]) && !SYMBOL_IST_ENUM(symbols[level])
+	    && opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
+	    && !(opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV)
+	    && symbol_get_name(symbols[level])) {
+	    if ((tsymbol = symtab_get_sym(debugfile->shared_types,
+					  symbol_get_name(symbols[level])))) {
+		if (SYMBOL_IS_TYPE(tsymbol) && !SYMBOL_IST_ENUM(tsymbol)
+		    ) {//&& symbols[level]->symtab != tsymbol->symtab) {
+		    /* Insert the looked up symbol into our CU's temp
+		     * reftab so that any of our DIEs that tries to use
+		     * it gets the "global" one instead.
+		     */
+		    g_hash_table_insert(reftab,
+					(gpointer)(uintptr_t)symbols[level]->ref,
+					tsymbol);
+
+		    vdebug(4,LOG_D_SYMBOL,
+			   "inserting shared symbol (quick check) %s (%s"
+			   " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
+			   PRIxSMOFFSET" into reftab\n",
+			   symbol_get_name(tsymbol),
+			   symbol_get_name_orig(tsymbol),
+			   tsymbol->ref,
+			   SYMBOL_TYPE(tsymbol->type),symbols[level]->ref);
+
+		    /* Since we're moving across the CU boundary, we
+		     * have to hold a ref to this symbol *now*!
+		     *
+		     * There is a slight possibility that we might end
+		     * up "wasting" this reference -- i.e., if our CU
+		     * had listed it, but then did not reference it in
+		     * any of its DIEs.
+		     *
+		     * NOTE: no longer hold a ref here; we have to hold
+		     * a ref each time we actually use it; see below in
+		     * the datatype_ref resolution code!
+		     */
+		    /* symbol_hold(tsymbol); */
+		    /* Free ourself! */
+		    symbol_free(symbols[level],0);
+		    symbols[level] = NULL;
+		    /* Skip to the next sibling, or to the next DIE if
+		     * we're doing a partial CU load.
+		     */
+		    goto do_sibling;
+		}
+	    }
+	    else {
+		vdebug(4,LOG_D_SYMBOL,
+		       "sharing symbol (quick check) %s (%s) of type %s\n",
+		       symbol_get_name(symbols[level]),
+		       symbol_get_name_orig(symbols[level]),
+		       SYMBOL_TYPE(symbols[level]->type));
+		symbols[level]->isshared = 1;
+		symbol_hold(symbols[level]);
+		//symtab_insert(debugfile->shared_types,symbols[level],0);
+		/* We have to change its symtab, AND later on (after
+		 * we've processed any symbols it or its members (i.e.,
+		 * STUN types) reference, we have to mark those symbols
+		 * as shared, too, even if they are anon (putting them
+		 * into the anontab in shared types if they are -- and
+		 * must use the CU+DIE offset, not just CU-relative
+		 * offset!), and change *their* symtabs.
+		 */
+		/* For now, don't set the recurse-on-type bit.  Also,
+		 * don't insert it, since finalize_die_symbol will!
+		 */
+		symbol_change_symtab(symbols[level],debugfile->shared_types,1,0);
+		//symbols[level]->symtab = debugfile->shared_types;
+	    }
+	}
 
 	/* Handle updating the symtab with low_pc and high_pc attrs, if
 	 * we have a symtab, now that we have processed both attrs (if
@@ -1970,8 +2087,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	 * list.
 	 */
 	if (cu_symtab_just_added 
-	    && (!opts 
-		|| (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+	    && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
 	    && die_offsets) {
 	    offset = *cu_offset 
 		+ (SMOFFSET)(uintptr_t)array_list_item(die_offsets,0);
@@ -2066,7 +2182,12 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    && symbols[level-1]->datatype_code == DATATYPE_ENUM) {
 		    symbols[level]->s.ii->d.v.member_symbol = symbols[level];
 		    symbols[level]->s.ii->d.v.parent_symbol = symbols[level-1];
+		    /* Yes, this means we don't do type compression for
+		     * enumerated types!  See comments near datatype_ref
+		     * resolution near the bottom of this function.
+		     */
 		    symbols[level]->datatype = symbols[level-1];
+		    symbols[level]->datatype_ref = symbols[level-1]->ref;
 		    list_add_tail(&(symbols[level]->s.ii->d.v.member),
 				  &(symbols[level-1]->s.ti->d.e.members));
 		    ++(symbols[level-1]->s.ti->d.e.count);
@@ -2122,19 +2243,23 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	int res2;
 	if (res > 0) {
 	do_sibling:
+	    /* If we were teleported here, set res just in case somebody
+	     * expects it to be valid in this block, if the block ever
+	     * gets code that needs it!
+	     */
+	    res = 1;
 	    /* No new child, but possibly a new sibling, so finalize the
 	     * current sibling if it exists!
 	     */
 	    if (symbols[level]) {
-		finalize_die_symbol(debugfile,level,offset,symbols[level],
+		finalize_die_symbol(debugfile,level,symbols[level],
 				    symbols[level-1],voidsymbol,
 				    reftab,die_offsets);
 		symbols[level] = NULL;
 		//symtabs[level] = NULL;
 	    }
 
-	    if ((!opts 
-		 || (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+	    if (!(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
 		&& die_offsets
 		&& level == 1) {
 		res2 = setup_skip_to_next_die();
@@ -2153,8 +2278,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		     * siblings at level 1, since that's the level we start
 		     * each DIE load in a partial CU load at.
 		     */
-		    if ((!opts 
-			 || (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+		    if (!(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
 			&& die_offsets
 			&& oldlevel == 1) {
 			res2 = setup_skip_to_next_die();
@@ -2173,7 +2297,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		     * we're leveling up, finalize the "parent" DIE's symbol.
 		     */
 		    if (symbols[level]) {
-			finalize_die_symbol(debugfile,level,offset,symbols[level],
+			finalize_die_symbol(debugfile,level,symbols[level],
 					    symbols[level-1],voidsymbol,
 					    reftab,die_offsets);
 			symbols[level] = NULL;
@@ -2190,8 +2314,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    goto errout;
 		}
 		else if (res == 0 
-			 && (!opts 
-			     || (opts && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)))
+			 && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
 			 && die_offsets
 			 && level == 1) {
 		    /* If there IS a sibling, but we don't want to
@@ -2250,6 +2373,10 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      * wasteful) approach below.  All symbols are in the reftab, and we
      * just postpass them all.  So, we might end up resolving some
      * symbols we don't care about, but it's easy and simple.
+     *
+     * Also, we now don't set the ->datatype field at all during
+     * attr_callback because of type compression; we do all that here
+     * for code simplicity.
      */
 
     g_hash_table_iter_init(&iter,reftab);
@@ -2258,11 +2385,43 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	if (!rsymbol)
 	    continue;
 
-	if (!rsymbol->datatype
-	    && rsymbol->datatype_ref) {
+	/* If we didn't yet resolve the symbol's datatype (or if we're
+	 * doing quick type compression, the value for the datatype_ref
+	 * key in reftab might have changed as we compressed above, in
+	 * which case we need to re-resolve), and if we have a
+	 * datatype_ref, resolve it!
+	 */
+	if ((!rsymbol->datatype 
+	     || (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
+		 && !(opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV)))
+	    && rsymbol->datatype_ref
+	    && !rsymbol->isshared) {
 	    rsymbol->datatype = (struct symbol *) \
 		g_hash_table_lookup(reftab,
 				    (gpointer)(uintptr_t)rsymbol->datatype_ref);
+	    /* Type compression: if this type is in another CU, hold a
+	     * ref to it! 
+	     */
+	    if (/* *opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
+		&& !(opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) */
+		rsymbol->datatype
+		&& rsymbol->datatype->isshared) {
+		/*
+		&& SYMTAB_IS_ROOT(rsymbol->datatype->symtab)
+		&& rsymbol->datatype->symtab != cu_symtab)
+		*/
+		symbol_hold(rsymbol->datatype);
+		rsymbol->usesshareddatatype = 1;
+
+		vdebug(4,LOG_D_SYMBOL,
+		       "using shared symbol (quick check) %s (%s 0x%"PRIxSMOFFSET
+		       ") of type %s at offset 0x%"PRIxSMOFFSET"\n",
+		       symbol_get_name(rsymbol->datatype),
+		       symbol_get_name_orig(rsymbol->datatype),
+		       rsymbol->datatype->ref,
+		       SYMBOL_TYPE(rsymbol->datatype->type),
+		       rsymbol->datatype_ref);
+	    }
 	}
 
 	if (SYMBOL_IS_FULL_INSTANCE(rsymbol)) {
@@ -2278,6 +2437,227 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    if (iilist) {
 		g_hash_table_remove(cu_abstract_origins,(gpointer)offset);
 		rsymbol->s.ii->inline_instances = iilist;
+	    }
+	}
+    }
+
+    /* Type compression part 2a:
+     *
+     * We go through our entire reftab, again, now that all refs have
+     * been resolved and we can do full type equivalence checks (if
+     * we're doing DEBUGFILE_LOAD_FLAG_REDUCETYPES and opts->flags &
+     * DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV (if we didn't need to
+     * check for full equiv, that check has already been done in
+     * debuginfo_load_cu as a shortcut), check full type equivalence).
+     *
+     * Unfortunately, full equivalence requires us to check *here*, once
+     * we've post-passed all our datatype refs.  Why?  For the same
+     * reason that the post-pass is there -- we may not have fully
+     * resolved the type refs for the type we are examining (i.e., for a
+     * struct type, some of the members' types may still be
+     * unresolved until after the post-pass).
+     *
+     * Basically, for each symbol with a valid name, we look it up in
+     * the debugfile->types hashtable.  If we find it there already, we
+     * change reftab so that the DIE offset for that symbol points to
+     * the one we find.  (This means, that to be useful, we have to
+     * construct names for pointer/const/vol/array types so that we can
+     * look them up too... but we can try the base type thing first and
+     * see if it works good enough.)  If we find it, we free it.
+     *
+     * XXX: but how do we know if we can free what it points to?  Should
+     * we maintain a counter of who points to what refs, and any that
+     * have zero, remove?  Should we do this with symbol refcnt
+     * mechanism?  WAIT -- the principle is that any type we find that
+     * matches a type at one of our refs *fully* matches, including all
+     * of the types it references, so when we rewrite reftab to use the
+     * global type we found, we can safely free the type from this CU
+     * AND any types it references.  Suppose we free a pointer to a
+     * struct type because we matched it against a global type.  Ok,
+     * that means we free the struct type and anything it references.
+     * Later, when we process the reftab entry for the struct type
+     * itself, we will also find a match in the globals table, and reuse
+     * *that* global entry in reftab.  What this means, though, is that
+     * we can't free any symbols that did match until after the loop!
+     * So we keep a free list.
+     *
+     * We also need to build fake names for some kinds of types once
+     * they've been resolved -- pointers are the big one, because if we
+     * can save pointer/const/vol/types, 
+     *
+     * Of course, this may be temporarily very wasteful; we may have
+     * created lots of type symbols we will now remove, and this is
+     * essentially our third pass through the CU (and we still have a
+     * 4th one to rewrite all our ->datatype fields.  But it should
+     * result in less memory usage if there are lots of CUs that have
+     * identical types.
+     *
+     */
+    if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
+	&& opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
+	GHashTable *updated = g_hash_table_new(g_direct_hash,g_direct_equal);
+	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2a\n");
+	g_hash_table_iter_init(&iter,reftab);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer)&offset,(gpointer)&rsymbol)) {
+	    if (!rsymbol || !SYMBOL_IS_TYPE(rsymbol) || SYMBOL_IST_ENUM(rsymbol))
+		continue;
+
+	    if (rsymbol->freenextpass) {
+		rsymbol->freenextpass = 0;
+		symbol_free(rsymbol,0);
+		g_hash_table_iter_replace(&iter,NULL);
+		continue;
+	    }
+
+	    if (!(sname = symbol_get_name(rsymbol)))
+		continue;
+
+	    if (sname 
+		&& (tsymbol = symtab_get_sym(debugfile->shared_types,sname))
+		&& rsymbol != tsymbol && tsymbol->isshared) {
+		if (symbol_type_equal(rsymbol,tsymbol,updated) == 0) {
+		    /* Insert the looked up symbol into our CU's temp
+		     * reftab so that any of our DIEs that tries to use
+		     * it gets the "global" one instead.
+		     */
+		    g_hash_table_iter_replace(&iter,tsymbol);
+
+		    g_hash_table_insert(updated,(gpointer)(uintptr_t)offset,
+					(gpointer)tsymbol);
+
+		    vdebug(4,LOG_D_SYMBOL,
+			   "inserting shared symbol (slow check) %s (%s"
+			   " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
+			   PRIxSMOFFSET" into reftab\n",
+			   symbol_get_name(tsymbol),
+			   symbol_get_name_orig(tsymbol),
+			   tsymbol->ref,
+			   SYMBOL_TYPE(tsymbol->type),offset);
+
+		    /* Since we're moving across the CU boundary, we
+		     * have to hold a ref to this symbol *now*!
+		     *
+		     * There is a slight possibility that we might end
+		     * up "wasting" this reference -- i.e., if our CU
+		     * had listed it, but then did not reference it in
+		     * any of its DIEs.
+		     *
+		     * NOTE: no longer hold a ref here; we have to hold
+		     * a ref each time we actually use it; see below in
+		     * the datatype_ref resolution code!
+		     */
+		    /* symbol_hold(tsymbol); */
+		    /* Mark all the symbols that symbol_free would
+		     * free as "free next pass" symbols, so that we just
+		     * free them and don't process them anymore in our
+		     * reftab passes.
+		     */
+		    /* Free ourself, but not our members! */
+		    symbol_type_mark_members_free_next_pass(rsymbol,0);
+		    /* Remove ourself from our symtab (and destroy ourself). */
+		    symtab_remove(rsymbol->symtab,rsymbol);
+		    continue;
+		}
+	    }
+	    else if (rsymbol != tsymbol) {
+		/* zzz XXXX: must also change its members' symtabs,
+		 * recursively -- all of them!!
+		 */
+		rsymbol->isshared = 1;
+		/* For now, don't set the recurse-on-type bit.  Don't
+		 * set the noinsert bit, since we need to stick the
+		 * symbol into the new symbol and remove it from the
+		 * old.
+		 */
+		symbol_hold(rsymbol);
+		symbol_change_symtab(rsymbol,debugfile->shared_types,0,0);
+		continue;
+	    }
+	}
+	g_hash_table_destroy(updated);
+    }
+
+    /* Type compression 2b:
+     *
+     * Once we've done this first compression pass, we need to go back,
+     * again, and resolve all the datatype refs again!  Argh!  But at
+     * least it's only the datatype pointers.
+     */
+    if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
+	&& opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
+	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2b\n");
+	g_hash_table_iter_init(&iter,reftab);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer)&offset,(gpointer)&rsymbol)) {
+	    if (!rsymbol)
+		continue;
+
+	    if (rsymbol->freenextpass) {
+		rsymbol->freenextpass = 0;
+		symbol_free(rsymbol,0);
+		g_hash_table_iter_replace(&iter,NULL);
+		continue;
+	    }
+
+	    if (rsymbol->datatype_ref) {
+		tsymbol = (struct symbol *)	\
+		    g_hash_table_lookup(reftab,
+					(gpointer)(uintptr_t)rsymbol->datatype_ref);
+		/* Type compression: if this type is in another CU, hold
+		 * a ref to it!
+		 */
+		if (tsymbol != rsymbol && tsymbol && tsymbol->isshared) {
+		    rsymbol->datatype = tsymbol;
+		    symbol_hold(tsymbol);
+		    rsymbol->usesshareddatatype = 1;
+
+		    //if (tsymbol->datatype && tsymbol->datatype->isshared)
+		    //	symbol_hold(tsymbol->datatype);
+
+		    vdebug(4,LOG_D_SYMBOL,
+			   "using shared symbol (slow check) %s (%s 0x%"PRIxSMOFFSET
+			   ") of type %s instead of 0x%"PRIxSMOFFSET
+			   " at offset 0x%"PRIxSMOFFSET"\n",
+			   symbol_get_name(rsymbol->datatype),
+			   symbol_get_name_orig(rsymbol->datatype),
+			   rsymbol->datatype->ref,
+			   SYMBOL_TYPE(rsymbol->datatype->type),
+			   rsymbol->datatype_ref,offset);
+		}
+	    }
+	}
+
+	/* Clean up anybody else who still needs to be freed; also,
+	 * check for shared symbols that were unused by this CU (i.e.,
+	 * needless types like double or whatever that even if the code
+	 * didn't use, the user could still want.
+	 */
+	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2c\n");
+	g_hash_table_iter_init(&iter,reftab);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer)&offset,(gpointer)&rsymbol)) {
+	    if (!rsymbol)
+		continue;
+
+	    /* If we shared this symbol, but nothing in our CU held a
+	     * ref to it, hold an extra ref to it, since it is now on 1)
+	     * the shared types symtab, and 2) our symtab.  We cannot do
+	     * this in the previous pass; if our reftab's symbols take
+	     * more than one ref to this symbol, we need all those
+	     * refs.  If we don't take any refs to it, though, we still
+	     * need one ref to release when it is freed from this CU's
+	     * symtab.
+	     */
+	    if (rsymbol->symtab != cu_symtab 
+		&& rsymbol->isshared && rsymbol->refcnt == 1)
+		//symbol_hold(rsymbol);
+
+	    if (rsymbol->freenextpass) {
+		rsymbol->freenextpass = 0;
+		symbol_free(rsymbol,0);
+		g_hash_table_iter_replace(&iter,NULL);
+		continue;
 	    }
 	}
     }
@@ -2356,7 +2736,6 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
  * we're not going to handle the DIE's refs recursively.
  */
 static int debuginfo_load(struct debugfile *debugfile,
-			  struct debugfile_load_opts *opts,
 			  Dwfl_Module *dwflmod,Dwarf *dbg,
 			  GHashTable *cu_die_offsets) {
     int rc;
@@ -2368,6 +2747,14 @@ static int debuginfo_load(struct debugfile *debugfile,
     GHashTableIter iter;
 
     vdebug(1,LOG_D_DWARF,"starting on %s \n",debugfile->filename);
+
+    /* Set some defaults so we don't have to keep checking opts == NULL. */
+    if (!debugfile->opts) {
+	debugfile->opts = (struct debugfile_load_opts *) \
+	    malloc(sizeof(*debugfile->opts));
+	memset(debugfile->opts,0,sizeof(*debugfile->opts));
+	debugfile->opts->flags = DEBUGFILE_LOAD_FLAG_NONE;
+    }
 
     if (cu_die_offsets) {
 	g_hash_table_iter_init(&iter,cu_die_offsets);
@@ -2408,7 +2795,7 @@ static int debuginfo_load(struct debugfile *debugfile,
 	meta.version = 4;
 #endif
 
-	if (debuginfo_load_cu(debugfile,opts,dwflmod,dbg,&offset,&meta,
+	if (debuginfo_load_cu(debugfile,dwflmod,dbg,&offset,&meta,
 			      die_offsets)) {
 	    retval = -1;
 	    goto errout;
@@ -2435,11 +2822,34 @@ static int debuginfo_load(struct debugfile *debugfile,
 }
 
 /*
+ * If we have to change the name of the symbol, we do it IMMEDIATELY
+ * after parsing DIE attrs so that naming is consistent for all the
+ * hashtable insertions we do!
+ */
+void finalize_die_symbol_name(struct symbol *symbol) {
+    if (symbol_get_name_orig(symbol)
+	&& (SYMBOL_IST_STUN(symbol) || SYMBOL_IST_ENUM(symbol))) {
+	/*
+	 * NOTE!!!  If this is a struct, union, or enum type, we
+	 * *have* to place the struct/union/enum type in front of
+	 * the alphanumeric name, since you can have typedefs that
+	 * are named the same name as a struct/union/enum.  So we
+	 * have to use the full type name as the hashtable key;
+	 * otherwise we'll see collisions with typedefs.
+	 *
+	 * This means the user has to lookup those types with the
+	 * fully-qualified type names (i.e., 'struct task_struct'),
+	 * not just 'task_struct'.
+	 */
+	symbol_build_extname(symbol);
+    }
+}
+
+/*
  * Returns 0 if the symbol was successfully inserted into symbol tables, 
  * and 1 if not (which may not be an error).
  */
 int finalize_die_symbol(struct debugfile *debugfile,int level,
-			Dwarf_Off die_offset,
 			struct symbol *symbol,
 			struct symbol *parentsymbol,
 			struct symbol *voidsymbol,
@@ -2448,9 +2858,11 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
     int *new_subranges;
 
     if (!symbol) {
-	vwarn("[DIE %" PRIx64 "] null symbol!\n",die_offset);
+	verror("null symbol!\n");
 	return -1;
     }
+
+    Dwarf_Off die_offset = symbol->ref;
 
     /*
      * First, handle void types and array subrange allocation resizing.
@@ -2565,17 +2977,6 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
      */
 
     if (SYMBOL_IS_TYPE(symbol)) {
-	/* If it doesn't have a type, make it void. */
-	if (symbol->datatype == NULL
-	    && symbol->datatype_ref == 0) {
-	    //&& symbol->datatype_code == DATATYPE_PTR) {
-	    vdebug(3,LOG_D_DWARF,
-		   "[DIE %" PRIx64 "] assuming anon %s type %s without type is void\n",
-		   die_offset,DATATYPE(symbol->datatype_code),
-		   symbol_get_name_orig(symbol));
-	    symbol->datatype = voidsymbol;
-	}
-
 	if (!symbol_get_name_orig(symbol)) {
 	    symtab_insert(symbol->symtab,symbol,die_offset);
 
@@ -2584,56 +2985,24 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	     */
 	    retval = 1;
 	}
-	else if (SYMBOL_IST_STUN(symbol) || SYMBOL_IST_ENUM(symbol)) {
-	    /*
-	     * NOTE!!!  If this is a struct, union, or enum type, we
-	     * *have* to place the struct/union/enum type in front of
-	     * the alphanumeric name, since you can have typedefs that
-	     * are named the same name as a struct/union/enum.  So we
-	     * have to use the full type name as the hashtable key;
-	     * otherwise we'll see collisions with typedefs.
-	     *
-	     * This means the user has to lookup those types with the
-	     * fully-qualified type names (i.e., 'struct task_struct'),
-	     * not just 'task_struct'.
-	     */
-	    char *insertname;
-	    symbol_build_extname(symbol);
-	    insertname = symbol_get_name(symbol);
-
-	    if (symtab_insert_fakename(symbol->symtab,insertname,symbol,0)) {
-		/* The symbol already was in this symtab's primary
-		 * table; put it in the anontable so it can get freed
-		 * later!
-		 */
-		vwarn("duplicate symbol %s at offset %"PRIx64"\n",
-		      insertname,die_offset);
-		if (symtab_insert_fakename(symbol->symtab,insertname,symbol,
-					   die_offset)) {
-		    verror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
-			   insertname,die_offset);
-		}
-	    }
-
-	    if (!debugfile_find_type(debugfile,insertname))
-		debugfile_add_type_fakename(debugfile,insertname,symbol);
-	}
 	else {
 	    if (symtab_insert(symbol->symtab,symbol,0)) {
 		/* The symbol already was in this symtab's primary
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarn("duplicate symbol %s at offset %"PRIx64"\n",
-		      symbol_get_name_orig(symbol),die_offset);
+		vwarn("duplicate symbol %s (orig %s) at offset %"PRIx64"\n",
+		      symbol_get_name(symbol),symbol_get_name_orig(symbol),
+		      die_offset);
 		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
-		    verror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
-			   symbol_get_name_orig(symbol),die_offset);
+		    verror("could not insert duplicate symbol %s (%s) at offset %"PRIx64" into anontab!\n",
+			   symbol_get_name(symbol),symbol_get_name_orig(symbol),
+			   die_offset);
 		}
 	    }
 
-	    if (!debugfile_find_type(debugfile,symbol_get_name_orig(symbol)))
-		debugfile_add_type(debugfile,symbol);
+	    if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES))
+		debugfile_add_type_name(debugfile,symbol_get_name(symbol),symbol);
 	}
     }
     else if (SYMBOL_IS_VAR(symbol) 
@@ -2779,8 +3148,9 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	retval = 1;
     }
 
-    vdebug(5,LOG_D_SYMBOL,"finalized symbol at %lx %s//%s \n",
-	   die_offset,SYMBOL_TYPE(symbol->type),symbol_get_name_orig(symbol));
+    vdebug(5,LOG_D_SYMBOL,"finalized symbol at %lx %s//%s %p\n",
+	   die_offset,SYMBOL_TYPE(symbol->type),symbol_get_name_orig(symbol),
+	   symbol);
 
     return retval;
 }
@@ -3102,7 +3472,7 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	if (!(cu_symtab = (struct symtab *)\
 	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
 	    cu_symtab = symtab_create(debugfile,(SMOFFSET)offset,NULL,NULL,0,
-				      NULL,NULL);
+				      NULL,NULL,0);
 	    debugfile_add_symtab(debugfile,cu_symtab);
 	}
 
@@ -3135,7 +3505,6 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 
 struct process_dwflmod_argdata {
     struct debugfile *debugfile;
-    struct debugfile_load_opts *debugfile_load_opts;
     int fd;
 };
 
@@ -3295,8 +3664,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		vdebug(2,LOG_D_DWARF,
 		       "found .debug_info section in debugfile %s\n",
 		       data->debugfile->idstr);
-		debuginfo_load(data->debugfile,data->debugfile_load_opts,
-			       dwflmod,dbg,NULL);
+		debuginfo_load(data->debugfile,dwflmod,dbg,NULL);
 		//break;
 	    }
 	}
@@ -3343,7 +3711,8 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
  * Primary debuginfo interface.  Given an ELF filename, load all its
  * debuginfo into the supplied debugfile using elfutils libs.
  */
-int debugfile_load(struct debugfile *debugfile,struct debugfile_load_opts *opts) {
+int debugfile_load(struct debugfile *debugfile,
+		   struct debugfile_load_opts *opts) {
     int fd;
     Dwfl *dwfl;
     Dwfl_Module *mod;
@@ -3353,6 +3722,9 @@ int debugfile_load(struct debugfile *debugfile,struct debugfile_load_opts *opts)
 	verror("open %s: %s\n",filename,strerror(errno));
 	return -1;
     }
+
+    /* Save our load options. */
+    debugfile->opts = opts;
 
     /* 
      * Don't try to find any extra debuginfo; we'll handle that elsewhere.
@@ -3394,7 +3766,6 @@ int debugfile_load(struct debugfile *debugfile,struct debugfile_load_opts *opts)
      */
     struct process_dwflmod_argdata data = { 
 	.debugfile = debugfile,
-	.debugfile_load_opts = opts,
 	.fd = fd,
     };
     if (dwfl_getmodules(dwfl,&process_dwflmod,&data,0) < 0) {

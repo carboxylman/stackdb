@@ -37,22 +37,21 @@ int main(int argc,char **argv) {
     struct debugfile *debugfile;
     int detail = 0;
     int meta = 0;
-    int i, j;
+    int i;
     log_flags_t flags;
     char *optargc;
     int dotypes = 1;
     int doglobals = 1;
     int dosymtabs = 1;
     char *endptr = NULL;
+    int nofree = 0;
 
-    int dlen = 0;
-    struct debugfile_load_opts **dlo_list = \
-	(struct debugfile_load_opts **)malloc(sizeof(*dlo_list));
-    dlo_list[dlen] = NULL;
+    int dlo_idx = 0;
+    struct debugfile_load_opts **dlo_list = NULL;
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "dDMl:R:TGS")) != -1) {
+    while ((ch = getopt(argc, argv, "dDMl:F:TGSN")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
@@ -71,7 +70,7 @@ int main(int argc,char **argv) {
 	    }
 	    vmi_set_log_flags(flags);
 	    break;
-	case 'R':
+	case 'F':
 	    optargc = strdup(optarg);
 
 	    struct debugfile_load_opts *opts = \
@@ -80,11 +79,10 @@ int main(int argc,char **argv) {
 	    if (!opts)
 		goto dlo_err;
 
-	    dlo_list[dlen] = opts;
-	    ++dlen;
-	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlen + 1));
-	    dlo_list[dlen] = NULL;
-	    free(optargc);
+	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlo_idx + 2));
+	    dlo_list[dlo_idx] = opts;
+	    ++dlo_idx;
+	    dlo_list[dlo_idx] = NULL;
 	    break;
     dlo_err:
 	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
@@ -98,6 +96,9 @@ int main(int argc,char **argv) {
 	    break;
 	case 'S':
 	    dosymtabs = 0;
+	    break;
+	case 'N':
+	    nofree = 1;
 	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
@@ -122,23 +123,20 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
+    /* Figure out which of them applies to our debugfile. */
     struct debugfile_load_opts *opts = NULL;
-    for (i = 0; dlo_list[i]; ++i) {
-	if (!dlo_list[i]->debugfile_regex_list
-	    || dlo_list[i]->debugfile_regex_list[0] == NULL) {
-	    opts = dlo_list[i];
-	    break;
-	}
-	else {
-	    for (j = 0; dlo_list[i]->debugfile_regex_list[j]; ++j) {
-		if (!regexec(dlo_list[i]->debugfile_regex_list[j],
-			     filename,0,NULL,0)) {
-		    opts = dlo_list[i];
-		    break;
-		}
-	    }
-	    if (opts)
+    if (dlo_list) {
+	int accept;
+	for (i = 0; dlo_list[i]; ++i) {
+	    /* We only care if there was a match (or no match and the
+	     * filter defaulted to accept) that accepted our filename
+	     * for processing.
+	     */
+	    rfilter_check(dlo_list[i]->debugfile_filter,filename,&accept,NULL);
+	    if (accept == RF_ACCEPT) {
+		opts = dlo_list[i];
 		break;
+	    }
 	}
     }
 
@@ -201,7 +199,8 @@ int main(int argc,char **argv) {
 	}
     }
 
-    debugfile_free(debugfile,0);
+    if (!nofree)
+	debugfile_free(debugfile,0);
 
     dwdebug_fini();
 

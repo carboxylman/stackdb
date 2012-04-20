@@ -72,6 +72,9 @@ typedef enum {
 /**
  ** These functions form the target API.
  **/
+/*
+ * Opens a target.
+ */
 int target_open(struct target *target);
 /*
  * Monitors a target for debug/exception events, tries to handle any
@@ -107,7 +110,8 @@ REGVAL target_read_reg(struct target *target,REG reg);
 int target_write_reg(struct target *target,REG reg,REGVAL value);
 int target_flush_context(struct target *target);
 void target_free(struct target *target);
-struct target *target_create(char *type,void *state,struct target_ops *ops);
+struct target *target_create(char *type,void *state,struct target_ops *ops,
+			     struct debugfile_load_opts **dfoptlist);
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr);
 void target_attach_mmap_entry(struct target *target,
@@ -373,6 +377,8 @@ struct target {
 
     void *state;
     struct target_ops *ops;
+
+    struct debugfile_load_opts **debugfile_opts_list;
 
     /* Targets can have multiple address spaces, but not sure how we're
      * going to use this yet.

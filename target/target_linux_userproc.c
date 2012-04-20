@@ -44,9 +44,11 @@
 /*
  * Prototypes.
  */
-struct target *linux_userproc_attach(int pid);
+struct target *linux_userproc_attach(int pid,
+				     struct debugfile_load_opts **dfoptlist);
 struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
-				     int keepstdin,char *outfile,char *errfile);
+				     int keepstdin,char *outfile,char *errfile,
+				     struct debugfile_load_opts **dfoptlist);
 
 static int linux_userproc_init(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
@@ -180,7 +182,8 @@ int linux_userproc_stopped_by_syscall(struct target *target) {
  * Attaches to @pid.  The caller does all of the normal ptrace
  * interaction; we just facilitate debuginfo-assisted data operations.
  */
-struct target *linux_userproc_attach(int pid) {
+struct target *linux_userproc_attach(int pid,
+				     struct debugfile_load_opts **dfoptlist) {
     struct linux_userproc_state *lstate;
     struct target *target;
     char buf[256];
@@ -250,7 +253,7 @@ struct target *linux_userproc_attach(int pid) {
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops);
+			   &linux_userspace_process_ops,dfoptlist);
     if (!target) {
 	elf_end(elf);
 	errno = ENOMEM;
@@ -346,7 +349,8 @@ struct target *linux_userproc_attach(int pid) {
 }
 
 struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
-				     int keepstdin,char *outfile,char *errfile) {
+				     int keepstdin,char *outfile,char *errfile,
+				     struct debugfile_load_opts **dfoptlist) {
     struct linux_userproc_state *lstate;
     struct target *target;
     int pid;
@@ -403,7 +407,7 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops);
+			   &linux_userspace_process_ops,dfoptlist);
     if (!target) {
 	errno = ENOMEM;
 	return NULL;
@@ -1251,7 +1255,8 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	    if (!target_associate_debugfile(target,region,finalfile,
 					    region->type == REGION_TYPE_MAIN ? \
 					    DEBUGFILE_TYPE_MAIN : \
-					    DEBUGFILE_TYPE_SHAREDLIB))
+					    DEBUGFILE_TYPE_SHAREDLIB)
+		&& errno != 0)
 		goto errout;
 	}
     }

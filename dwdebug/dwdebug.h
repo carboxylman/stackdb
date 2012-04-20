@@ -92,6 +92,7 @@ void dwdebug_fini(void);
  ** Some forward declarations.
  **/
 struct debugfile;
+struct debugfile_load_opts;
 struct symtab;
 struct symbol;
 struct lsymbol;
@@ -144,18 +145,6 @@ typedef enum {
      */
     DEBUGFILE_LOAD_FLAG_FULL_CU = 1 << 19,
 } debugfile_load_flags_t;
-
-struct debugfile_load_opts {
-    regex_t **debugfile_regex_list;
-    regex_t **srcfile_regex_list;
-    /* Note: removed this in preference to using
-     * DEBUGFILE_LOAD_FLAG_SYMBOLS and specifying the symbol regexes
-     * there.
-     */
-    regex_t **symbol_regex_list;
-    int quick;
-    debugfile_load_flags_t flags;
-};
 
 typedef enum {
     DEBUGFILE_TYPE_KERNEL      = 0,
@@ -210,7 +199,7 @@ typedef enum {
 #define LOAD_TYPE_BITS      1
 #define SYMBOL_TYPE_BITS    3
 #define DATATYPE_CODE_BITS  4
-#define SRCLINE_BITS       16
+#define SRCLINE_BITS       13
 
 /* We use this enum type for filtering during symbol searching, when the
  * caller might accept multiple different symbol types.
@@ -342,7 +331,8 @@ struct debugfile *debugfile_filename_create(char *filename,debugfile_type_t type
 struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
 				   char *name,char *version,char *idstr);
 /* Populate a libsymd debugfile with DWARF debuginfo from an ELF file. */
-int debugfile_load(struct debugfile *debugfile,struct debugfile_load_opts *opts);
+int debugfile_load(struct debugfile *debugfile,
+		   struct debugfile_load_opts *opts);
 
 struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr);
 void debugfile_load_opts_free(struct debugfile_load_opts *opts);
@@ -354,9 +344,8 @@ int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab);
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol);
 struct symbol *debugfile_find_type(struct debugfile *debugfile,
 				   char *typename);
-int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol);
-int debugfile_add_type_fakename(struct debugfile *debugfile,
-				char *fakename,struct symbol *symbol);
+int debugfile_add_type_name(struct debugfile *debugfile,
+			    char *name,struct symbol *symbol);
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 		    int types,int globals,int symtabs);
 REFCNT debugfile_free(struct debugfile *debugfile,int force);
@@ -367,12 +356,15 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force);
 struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 			     char *srcfilename,char *compdirname,
 			     int language,char *producer,
-			     struct symbol *symtab_symtab);
+			     struct symbol *symtab_symtab,int noautoinsert);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
+struct symbol *symtab_get_sym(struct symtab *symtab,const char *name);
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
 			   struct symbol *symbol,OFFSET anonaddr);
+void symtab_remove(struct symtab *symtab,struct symbol *symbol);
+void symtab_steal(struct symtab *symtab,struct symbol *symbol);
 char *symtab_get_name(struct symtab *symtab);
-void symtab_set_name(struct symtab *symtab,char *srcfilename);
+void symtab_set_name(struct symtab *symtab,char *srcfilename,int noautoinsert);
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname);
 void symtab_set_producer(struct symtab *symtab,char *producer);
 void symtab_dump(struct symtab *symtab,struct dump_info *ud);
@@ -404,6 +396,9 @@ char *symbol_get_name(struct symbol *symbol);
 char *symbol_get_name_orig(struct symbol *symbol);
 void symbol_set_name(struct symbol *symbol,char *name);
 void symbol_build_extname(struct symbol *symbol);
+struct symtab *symbol_get_root_symtab(struct symbol *symbol);
+void symbol_change_symtab(struct symbol *symbol,struct symtab *symtab,
+			  int noinsert,int typerecurse);
 /*
  * Returns a real, valid type for the symbol.  If it is an inline
  * instance, we skip to the abstract origin root and use that datatype.
@@ -416,6 +411,8 @@ void symbol_set_srcline(struct symbol *symbol,int srcline);
 int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr);
 
 int symbol_is_inlined(struct symbol *symbol);
+int symbol_type_equal(struct symbol *t1,struct symbol *t2,
+		      GHashTable *updated_datatype_refs);
 int symbol_type_is_char(struct symbol *type);
 /*
  * For a SYMBOL_TYPE_TYPE symbol, return the type's byte size.
@@ -443,6 +440,7 @@ REFCNT symbol_release(struct symbol *symbol);
  * instead.
  */
 REFCNT symbol_free(struct symbol *symbol,int force);
+void symbol_type_mark_members_free_next_pass(struct symbol *symbol,int force);
 
 /* Creates an lsymbol data structure and takes references to all its
  * symbols.  Users probably never should call this function.
@@ -581,7 +579,7 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc);
  */
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
-				     struct rfilter_list *srcfile_rflist,
+				     struct rfilter *srcfile_filter,
 				     symbol_type_flag_t ftype);
 /*
  * Look up a specific address and find its symbol.
@@ -706,13 +704,22 @@ const char *dwarf_discr_list_string(unsigned int code);
 /**
  ** Data structure definitions.
  **/
+struct debugfile_load_opts {
+    struct rfilter *debugfile_filter;
+    struct rfilter *srcfile_filter;
+    struct rfilter *symbol_filter;
+    debugfile_load_flags_t flags;
+};
+
 struct debugfile {
     /* The type of debugfile */
     debugfile_type_t type;
 
-    debugfile_load_flags_t load_flags;
-
+    /* Our reference count. */
     REFCNT refcnt;
+
+    /* Save the options we were loaded with, forever. */
+    struct debugfile_load_opts *opts;
 
     /* filename:name:version string.  If version is null, we use __NULL
        instead. */
@@ -827,6 +834,8 @@ struct debugfile {
      */
     /* h(typename) -> struct symbol * */
     GHashTable *types;
+
+    struct symtab *shared_types;
 
     /*
      * Each global var/function (i.e., not declared as static, and not
@@ -1004,6 +1013,7 @@ struct symbol {
      * hence, it is in the type section of the primary union below.
      */
     char *name;
+    //    int orig_offset;
 
     /*
      * If we copy the string table from the ELF binary
@@ -1038,6 +1048,9 @@ struct symbol {
     datatype_code_t datatype_code:DATATYPE_CODE_BITS;
 
     unsigned int isdynamic:1,
+	isshared:1,
+	usesshareddatatype:1,
+	freenextpass:1,
 	isexternal:1,
 	isdeclaration:1,
 	isprototyped:1,
@@ -1088,10 +1101,10 @@ struct symbol {
 
 struct symbol_type {
     uint16_t byte_size;
+    encoding_t encoding:16;
 
     union {
 	struct {
-	    encoding_t encoding;
 	    int bit_size;
 	} v;
 	struct {

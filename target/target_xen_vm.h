@@ -39,7 +39,15 @@ struct xen_vm_state {
 #endif
 };
 
-struct target *xen_vm_attach(char *domain);
+/*
+ * Attaches to @domain (which may be paused or running) (@domain may be
+ * a name string or a domain id number).  @dfoptlist is a
+ * NULL-terminated list of debugfile_load_opts structs (ideally parsed
+ * from debugfile_load_opts_parse if you're coming from the command
+ * line).
+ */
+struct target *xen_vm_attach(char *domain,
+			     struct debugfile_load_opts **dfoptlist);
 
 struct value *linux_load_current_task(struct target *target);
 int linux_get_task_pid(struct target *target,struct value *task);

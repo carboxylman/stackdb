@@ -22,9 +22,27 @@
 #include "target_api.h"
 
 /* linux userproc target ops */
-struct target *linux_userproc_attach(int pid);
+/*
+ * Attaches to @pid, a current process id.  @dfoptlist is a
+ * NULL-terminated list of debugfile_load_opts structs (ideally parsed
+ * from debugfile_load_opts_parse if you're coming from the command
+ * line).
+ */
+struct target *linux_userproc_attach(int pid,
+				     struct debugfile_load_opts **dfoptlist);
+/*
+ * Executes @filename with the given @argv and @envp NULL-terminated
+ * lists.  If @keepstdin is set, we don't close it before the call to
+ * exec in the child.  If @outfile and/or @errfile are set, those files
+ * are opened and the standard file descriptors for the child process
+ * are redirected appropriately (you cannot use the same filename for
+ * both!).  @dfoptlist is a NULL-terminated list of debugfile_load_opts
+ * structs (ideally parsed from debugfile_load_opts_parse if you're
+ * coming from the command line).
+ */
 struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
-				     int keepstdin,char *outfile,char *errfile);
+				     int keepstdin,char *outfile,char *errfile,
+				     struct debugfile_load_opts **dfoptlist);
 int linux_userproc_last_signo(struct target *target);
 int linux_userproc_stopped_by_syscall(struct target *target);
 

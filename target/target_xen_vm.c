@@ -29,7 +29,8 @@
 /*
  * Prototypes.
  */
-struct target *xen_vm_attach(char *domain);
+struct target *xen_vm_attach(char *domain,
+			     struct debugfile_load_opts **dfoptlist);
 
 static int xen_vm_init(struct target *target);
 static int xen_vm_attach_internal(struct target *target);
@@ -128,7 +129,8 @@ struct target_ops xen_vm_ops = {
  * that.  We also read how much mem the domain has; if it is
  * PAE-enabled; 
  */
-struct target *xen_vm_attach(char *domain) {
+struct target *xen_vm_attach(char *domain,
+			     struct debugfile_load_opts **dfoptlist) {
     struct target *target;
     struct xen_vm_state *xstate = NULL;
     struct xs_handle *xsh = NULL;
@@ -152,7 +154,7 @@ struct target *xen_vm_attach(char *domain) {
 
     vdebug(5,LOG_T_XV,"attaching to domain %s\n",domain);
 
-    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops)))
+    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,dfoptlist)))
 	return NULL;
 
     if (!(xstate = (struct xen_vm_state *)malloc(sizeof(*xstate)))) {
@@ -912,7 +914,8 @@ static int xen_vm_loaddebugfiles(struct target *target,
 	    if (!target_associate_debugfile(target,region,finalfile,
 					    region->type == REGION_TYPE_MAIN ? \
 					    DEBUGFILE_TYPE_MAIN : \
-					    DEBUGFILE_TYPE_SHAREDLIB))
+					    DEBUGFILE_TYPE_SHAREDLIB)
+		&& errno != 0)
 		goto errout;
 	}
     }

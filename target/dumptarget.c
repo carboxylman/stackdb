@@ -571,6 +571,10 @@ int main(int argc,char **argv) {
     int offset = 0;
     int upg = 1;
     struct probe *probe;
+    struct debugfile_load_opts **dlo_list = NULL;
+    int dlo_idx = 0;
+    char *optargc;
+    struct debugfile_load_opts *opts;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -594,7 +598,7 @@ int main(int argc,char **argv) {
 	}
     }
 
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dvsl:Po:U")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:eE:O:dvsl:Po:UF:")) != -1) {
 	switch(ch) {
 	case 'U':
 	    /* Don't use auto prologue guess. */
@@ -642,6 +646,23 @@ int main(int argc,char **argv) {
 	case 'P':
 	    do_post = 0;
 	    break;
+	case 'F':
+	    optargc = strdup(optarg);
+
+	    opts = debugfile_load_opts_parse(optarg);
+
+	    if (!opts)
+		goto dlo_err;
+
+	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlo_idx + 2));
+	    dlo_list[dlo_idx] = opts;
+	    ++dlo_idx;
+	    dlo_list[dlo_idx] = NULL;
+	    break;
+    dlo_err:
+	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
+	    free(optargc);
+	    exit(-1);
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -661,7 +682,7 @@ int main(int argc,char **argv) {
 #endif
 
     if (pid > 0) {
-	t = linux_userproc_attach(pid);
+	t = linux_userproc_attach(pid,dlo_list);
 	if (!t) {
 	    fprintf(stderr,"could not attach to pid %d!\n",pid);
 	    exit(-3);
@@ -669,7 +690,7 @@ int main(int argc,char **argv) {
     }
 #ifdef ENABLE_XENACCESS
     else if (domain) {
-	t = xen_vm_attach(domain);
+	t = xen_vm_attach(domain,dlo_list);
 	if (!t) {
 	    fprintf(stderr,"could not attach to dom %s!\n",domain);
 	    exit(-3);
@@ -683,7 +704,7 @@ int main(int argc,char **argv) {
 	}
 
 	t = linux_userproc_launch(exe,exeargs,environ,0,
-				  exeoutfile,exeerrfile);
+				  exeoutfile,exeerrfile,dlo_list);
 	if (!t) {
 	    fprintf(stderr,"could not launch exe %s!\n",exe);
 	    exit(-3);

@@ -46,6 +46,34 @@ struct debugfile *target_associate_debugfile(struct target *target,
     char *realname = NULL;
     char *name = NULL;
     char *version = NULL;
+    struct debugfile_load_opts *opts = NULL;
+    int accept;
+    int i;
+
+    /*
+     * If the target has debugfile load opts, match one of them with the
+     * filename if possible, then parse or not parse it.  We set errno = 0
+     * even if we return NULL in this case.
+     */
+    if (target->debugfile_opts_list) {
+	for (i = 0; target->debugfile_opts_list[i]; ++i) {
+	    /* We only care if there was a match (or no match and the
+	     * filter defaulted to accept) that accepted our filename
+	     * for processing.
+	     */
+	    rfilter_check(target->debugfile_opts_list[i]->debugfile_filter,
+			  filename,&accept,NULL);
+	    if (accept == RF_ACCEPT) {
+		opts = target->debugfile_opts_list[i];
+		break;
+	    }
+	}
+
+	if (!opts) {
+	    errno = 0;
+	    return NULL;
+	}
+    }
 
     if (type != DEBUGFILE_TYPE_SHAREDLIB) 
 	debugfile_filename_info(filename,&realname,NULL,NULL);
@@ -105,7 +133,7 @@ struct debugfile *target_associate_debugfile(struct target *target,
     /*
      * Finally, load in the debuginfo!
      */
-    if (debugfile_load(debugfile,NULL)) {
+    if (debugfile_load(debugfile,opts)) {
 	/* If the load was unsuccessful, we don't have a ref to it! */
 	debugfile_free(debugfile,0);
 	return NULL;

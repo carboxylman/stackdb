@@ -131,13 +131,13 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	return;
     case DATATYPE_BASE:
 	if (type->s.ti->byte_size == 1) {
-	    if (type->s.ti->d.v.encoding == ENCODING_SIGNED_CHAR)
+	    if (type->s.ti->encoding == ENCODING_SIGNED_CHAR)
 		fprintf(stream,"%c",rv_c(buf));
-	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED_CHAR)
+	    else if (type->s.ti->encoding == ENCODING_UNSIGNED_CHAR)
 		fprintf(stream,"%uc",rv_uc(buf));
-	    else if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
+	    else if (type->s.ti->encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi8,rv_i8(buf));
-	    else if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
+	    else if (type->s.ti->encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIu8,rv_u8(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
@@ -145,25 +145,25 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	else if (type->s.ti->byte_size == 2) {
 	    if (strstr(type->name,"char"))
 		fprintf(stream,"%lc",rv_wc(buf));
-	    else if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
+	    else if (type->s.ti->encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi16,rv_i16(buf));
-	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED)
+	    else if (type->s.ti->encoding == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu16,rv_u16(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
 	}
 	else if (type->s.ti->byte_size == 4) {
-	    if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
+	    if (type->s.ti->encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi32,rv_i32(buf));
-	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED)
+	    else if (type->s.ti->encoding == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu32,rv_u32(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
 	}
 	else if (type->s.ti->byte_size == 8) {
-	    if (type->s.ti->d.v.encoding == ENCODING_SIGNED)
+	    if (type->s.ti->encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi64,rv_i64(buf));
-	    else if (type->s.ti->d.v.encoding == ENCODING_UNSIGNED)
+	    else if (type->s.ti->encoding == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu64,rv_u64(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
