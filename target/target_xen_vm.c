@@ -459,7 +459,10 @@ static int xen_vm_load_context(struct target *target) {
 	    rc = xen_vm_load_dominfo(target);
 	    if (rc)
 		return rc;
-	}
+	} else {
+        vdebug(4,LOG_T_XV,
+	       "did not need to load dominfo; current dominfo is valid\n");
+    }
 
 	if (xc_vcpu_getcontext(xc_handle,xstate->id,
 			       xstate->dominfo.max_vcpu_id,
@@ -958,6 +961,9 @@ static target_status_t xen_vm_status(struct target *target) {
 	    verror("could not load dominfo for dom %d\n",xstate->id);
 	    return retval;
 	}
+    } else {
+        vdebug(4,LOG_T_XV,
+	       "did not need to load dominfo; current dominfo is valid\n");
     }
 
     if (xstate->dominfo.paused)
