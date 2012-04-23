@@ -433,6 +433,8 @@ static int xen_vm_load_dominfo(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
 
     if (!xstate->dominfo_valid) {
+        vdebug(4,LOG_T_XV,
+	       "load dominfo; current dominfo is invalid\n");
 	if (xc_domain_getinfo(xc_handle,xstate->id,1,
 			      &xstate->dominfo) <= 0) {
 	    verror("could not get domaininfo for %d\n",xstate->id);
@@ -440,6 +442,9 @@ static int xen_vm_load_dominfo(struct target *target) {
 	    return -1;
 	}
 	xstate->dominfo_valid = 1;
+    } else {
+        vdebug(4,LOG_T_XV,
+	       "did not need to load dominfo; current dominfo is valid\n");
     }
 
     return 0;
