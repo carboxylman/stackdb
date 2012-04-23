@@ -1085,6 +1085,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
             continue; // not the event that we are looking for
 
 	xstate->context_valid = 0;
+    xstate->dominfo_valid = 0;
 	xen_vm_load_context(target);
 
 	if (target_status(target) == TSTATUS_PAUSED) {
