@@ -24,6 +24,10 @@
  * 
  */
 
+#ifndef ENABLE_XENACCESS
+#error "XenAccess must be enabled"
+#endif
+
 #ifndef __CTXPROBES_H__
 #define __CTXPROBES_H__
 
