@@ -1027,6 +1027,7 @@ static int xen_vm_resume(struct target *target) {
 
     /* flush_context will not have done this necessarily! */
     xstate->context_valid = 0;
+    xstate->dominfo_valid = 0;
 
     return xc_domain_unpause(xc_handle,xstate->id);
 }
