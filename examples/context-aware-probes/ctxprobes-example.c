@@ -59,6 +59,39 @@ char context_ch(ctxprobes_context_t context)
     return c;
 }
 
+char *context_str(ctxprobes_context_t context)
+{
+    char *str;
+    switch (context) {
+        case CTXPROBES_CONTEXT_NORMAL:
+            str = "Normal";
+            break;
+        case CTXPROBES_CONTEXT_TRAP:
+            str = "Trap";
+            break;
+        case CTXPROBES_CONTEXT_INTERRUPT:
+            str = "Interrupt";
+            break;
+        default:
+            str = "Unknown";
+            ERR("Invalid context identifier %d!\n", context);
+            break;
+    }
+    return str;
+}
+
+void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
+{
+    printf("Task switch: %d (%s) -> %d (%s)\n",
+           prev->pid, prev->comm, next->pid, next->comm);
+}
+
+void context_change(ctxprobes_context_t prev, ctxprobes_context_t next)
+{
+    printf("Context change: %s -> %s\n",
+           context_str(prev), context_str(next));
+}
+
 void sys_open_prologue(char *symbol, 
                        unsigned long retaddr,
                        ctxprobes_task_t *task,
@@ -174,7 +207,11 @@ int main(int argc, char *argv[])
 
     parse_opt(argc, argv);
 
-    ret = ctxprobes_init(domain_name, sysmap_file, debug_level);
+    ret = ctxprobes_init(domain_name, 
+                         sysmap_file, 
+                         NULL,//task_switch, 
+                         NULL,//context_change, 
+                         debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");

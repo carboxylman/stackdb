@@ -55,6 +55,9 @@ ctxprobes_context_t context_current = CTXPROBES_CONTEXT_NORMAL;
 ctxprobes_context_t context_prev_trap = CTXPROBES_CONTEXT_NORMAL;
 ctxprobes_context_t context_prev_intr = CTXPROBES_CONTEXT_NORMAL;
 
+ctxprobes_task_switch_handler_t user_task_switch_handler = NULL;
+ctxprobes_context_change_handler_t user_context_change_handler = NULL;
+
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
 
@@ -725,6 +728,11 @@ static int probe_trap_call(struct probe *probe,
         return probe_simd_coprocessor_error_call(probe, data, trigger);
 
     ERR("Unknown trap call!\n");
+
+    /* Call user context change handler. */
+    if (user_context_change_handler)
+        user_context_change_handler(context_prev_trap, context_current);
+
     return -1;
 }
 
@@ -782,6 +790,10 @@ static int probe_trap_return(struct probe *probe,
         task_current->pid, task_current->comm, 
         context_string(context_current), 
         context_string(context_prev_trap));
+
+    /* Call user context change handler. */
+    if (user_context_change_handler)
+        user_context_change_handler(context_current, context_prev_trap);
 
     context_current = context_prev_trap;
 
@@ -841,6 +853,10 @@ static int probe_interrupt_call(struct probe *probe,
         task_current->pid, task_current->comm, 
         irq, irq);
 
+    /* Call user context change handler. */
+    if (user_context_change_handler)
+        user_context_change_handler(context_prev_intr, context_current);
+
     return 0;
 }
 
@@ -871,6 +887,10 @@ static int probe_interrupt_return(struct probe *probe,
         task_current->pid, task_current->comm, 
         context_string(context_current), 
         context_string(context_prev_intr));
+
+    /* Call user context change handler. */
+    if (user_context_change_handler)
+        user_context_change_handler(context_current, context_prev_intr);
 
     context_current = context_prev_intr;
 
@@ -928,6 +948,10 @@ static int probe_task_switch(struct probe *probe,
         DBG("Task switch: %d (%s) -> %d (%s)\n", 
             task_prev->pid, task_prev->comm,
             task_next->pid, task_next->comm);
+
+        /* Call user task switch handler. */
+        if (user_task_switch_handler)
+            user_task_switch_handler(task_prev, task_next);
     }
     
     unload_task_info(task_prev);
@@ -1046,6 +1070,8 @@ static void sigh(int signo)
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
+                   ctxprobes_task_switch_handler_t task_switch_handler,
+                   ctxprobes_context_change_handler_t context_change_handler,  
                    int debug_level)
 {
     int i, probe_count;
@@ -1065,6 +1091,9 @@ int ctxprobes_init(char *domain_name,
         ERR("Could not open file %s\n", sysmap_file);
         return -2;
     }
+
+    user_task_switch_handler = task_switch_handler;
+    user_context_change_handler = context_change_handler;
 
     dwdebug_init();
     vmi_set_log_level(debug_level);

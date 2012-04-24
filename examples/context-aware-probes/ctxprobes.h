@@ -73,6 +73,12 @@ typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
                                                 ctxprobes_task_t *task,
                                                 ctxprobes_context_t context);
 
+typedef void (*ctxprobes_task_switch_handler_t)(ctxprobes_task_t *prev,
+                                                ctxprobes_task_t *next);
+
+typedef void (*ctxprobes_context_change_handler_t)(ctxprobes_context_t prev,
+                                                   ctxprobes_context_t next);
+
 //typedef void (*ctxprobes_var_handler_t)(char *symbol,
 //                                        ctxprobes_var_t *var,
 //                                        ctxprobes_task_t *task,
@@ -81,6 +87,8 @@ typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
+                   ctxprobes_task_switch_handler_t task_switch_handler,
+                   ctxprobes_context_change_handler_t context_change_handler,  
                    int debug_level);
 void ctxprobes_cleanup(void);
 
