@@ -160,7 +160,7 @@ int main(int argc, char *argv[])
     
     parse_opt(argc, argv);
 
-    ret = ctxprobes_init(domain_name, sysmap_file, debug_level);
+    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, debug_level);
     if (ret)
     {
         ERR("Failed to init ctxprobes\n");

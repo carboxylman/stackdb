@@ -209,8 +209,8 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         NULL,//task_switch, 
-                         NULL,//context_change, 
+                         task_switch, 
+                         context_change, 
                          debug_level);
     if (ret)
     {
