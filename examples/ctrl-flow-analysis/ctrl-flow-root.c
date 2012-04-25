@@ -27,11 +27,16 @@
 #error "Program runs only on Time Travel enabled Xen"
 #endif
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <signal.h>
+
 #include <log.h>
+#include <list.h>
+#include <alist.h>
 
 #include <ctxprobes.h>
 #include "debug.h"
@@ -43,31 +48,81 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 
-static unsigned int pid_passwd;
-static unsigned long long brctr_passwd;
+static struct array_list *pidlist;
+static unsigned long long brctr_pwd;
+
+static struct array_list *tracklist;
+
+int alist_contains(struct array_list *list, unsigned int pid)
+{
+    int i;
+    unsigned int tmp;
+
+    for (i = 0; i < array_list_len(list); i++)
+    {
+        tmp = (unsigned int)array_list_item(list, i);
+        if (tmp == pid)
+            return 1;
+    }
+
+    return 0;
+}
 
 void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
-    if (next->pid == pid_passwd)
+    unsigned long long brctr = ctxprobes_get_brctr();
+    if (!brctr)
     {
-        unsigned long long brctr = ctxprobes_get_brctr();
-        if (!brctr)
-        {
-            ERR("Failed to get branch counter\n");
-            return;
-        }
+        ERR("Failed to get branch counter\n");
+        return;
+    }
 
+    if (brctr >= brctr_pwd)
+    {
         fflush(stderr);
-        printf("%d (%s): uid = %d, euid = %d\n",
-               next->pid, next->comm, next->uid, next->euid);
+        printf("End of analysis: /etc/passwd accessed\n");
         fflush(stdout);
+            
+        kill(getpid(), SIGINT);
+        return;
+    }
 
-        if (brctr > brctr_passwd)
+    if (alist_contains(pidlist, next->pid))
+    {
+        if (!alist_contains(tracklist, next->pid))
         {
+            /* 
+             * First task switch to a suspected process, put it in the tracked
+             * process list if it is with non-root uid. 
+             */
+            array_list_add(tracklist, (void *)next->pid);
             fflush(stderr);
-            printf("/etc/passwd accessed!\n");
+            printf("First task switch to %d (%s): uid = %d\n",
+                   next->pid, next->comm, next->uid);
             fflush(stdout);
+
+            if (next->uid != 0)
+            {
+                /* Put a watch-point at next->uid. */
+                fflush(stderr);
+                printf("Put a watch-point at uid of %d (%s)\n", 
+                       next->pid, next->comm);
+                fflush(stdout);
+            }
         }
+    }
+}
+
+void parse_pidlist(char *pidlist_str)
+{
+    char *pid_str = NULL;
+    char *ptr = NULL;
+    unsigned int pid;
+
+    while ((pid_str = strtok_r(!ptr ? pidlist_str : NULL, ",", &ptr))) 
+    {
+        pid = atoi(pid_str);
+        array_list_prepend(pidlist, (void *)pid);
     }
 }
 
@@ -99,11 +154,11 @@ void parse_opt(int argc, char *argv[])
                 break;
 
             case 'p':
-                pid_passwd = atoi(optarg);
+                parse_pidlist(optarg);
                 break;
 
             case 'b':
-                brctr_passwd = atoll(optarg);
+                brctr_pwd = atoll(optarg);
                 break;
 
             default:
@@ -125,6 +180,9 @@ int main(int argc, char *argv[])
 {
     int ret;
     
+    pidlist = array_list_create(10);
+    tracklist = array_list_create(10);
+
     parse_opt(argc, argv);
 
     ret = ctxprobes_init(domain_name, 
@@ -149,6 +207,11 @@ int main(int argc, char *argv[])
     ctxprobes_wait();
 
     ctxprobes_cleanup();
+
+    if (pidlist)
+        array_list_free(pidlist);
+    if (tracklist)
+        array_list_free(tracklist);
     return 0;
 }
 
