@@ -84,11 +84,6 @@ void parse_opt(int argc, char *argv[])
                 ++debug_level;
                 break;
 
-        fflush(stderr);
-        printf("%d (%s): uid = %d, euid = %d\n",
-               next->pid, next->comm, next->uid, next->euid);
-        fflush(stdout);
-
             case 'l':
                 if (vmi_log_get_flag_mask(optarg, &debug_flags))
                 {

@@ -83,12 +83,6 @@ void probe_fileopen(char *symbol,
     int flags = *(int *)args[1].buf;
     int mode = *(int *)args[2].buf;
 
-	fflush(stderr);
-    printf("[%s] %d (%s): sys_open(filename = %s, flags = 0x%x, mode = 0x%x)\n",
-           context_str(context), task->pid, task->comm,
-           filename, flags, mode);
-	fflush(stdout);
-
     //if (context == CTXPROBES_CONTEXT_NORMAL)
     {
         if (strcmp(filename, "/etc/passwd") == 0)
@@ -102,10 +96,14 @@ void probe_fileopen(char *symbol,
                     //return;
                 }
                 
-				fflush(stderr);
-                printf("Write access to %s: "
-                       "brctr = %lld, task = %d (%s)\n",
-                        filename, brctr, task->pid, task->comm);
+                fflush(stderr);
+                printf("%lld:", brctr);
+                while (task)
+                {
+                    printf(" %d", task->pid);
+                    task = task->parent;
+                    }
+                printf("\n");
                 fflush(stdout);
             }
         }
