@@ -127,15 +127,25 @@ static inline struct rfilter *rfilter_create_parse(char *fstr) {
 	return NULL;
 
     /* Check for default policy. */
-    if ((*fstr == '1' || *fstr == 'A' || *fstr == 'a') 
+    if ((*fstr == '1' || *fstr == 'A' || *fstr == 'a')
 	&& *(fstr+1) == ':' && *(fstr+2) == ':') {
 	pol = 1;
 	fstr += 3;
+    }
+    else if ((*fstr == '1' || *fstr == 'A' || *fstr == 'a')
+	     && *(fstr+1) == '\0') {
+	pol = 1;
+	fstr += 1;
     }
     else if ((*fstr == '0' || *fstr == 'R' || *fstr == 'r')
 	     && *(fstr+1) == ':' && *(fstr+2) == ':') {
 	pol = 0;
 	fstr += 3;
+    }
+    else if ((*fstr == '0' || *fstr == 'R' || *fstr == 'r')
+	     && *(fstr+1) == '\0') {
+	pol = 0;
+	fstr += 1;
     }
     else {
 	pol = 0;

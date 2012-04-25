@@ -104,26 +104,28 @@ struct loc_list_entry;
 struct loc_list;
 struct dwarf_cu_die;
 
+/*
+ * Our default load strategy is to always load the basic info for each
+ * CU; to load all aranges info (address range info for each CU); to
+ * load all pubnames info (gives per-CU offsets for pubnames); and to
+ * load full CUs.  The flags below restrict what portions of the CUs we
+ * try to load, and can be combined with debugfile_load_opts rfilters on
+ * per-CU filenames (and on per-symbol names if PUBNAMES is set --
+ * although only the pubnames will be filtered; any of their dependent
+ * symbols will not be filtered).
+ */
 typedef enum {
     DEBUGFILE_LOAD_FLAG_NONE = 0,
     /* These control which CUs/DIEs are loaded.
-     * _ORDERED says to traverse the entire debug_info section in order.
-     * _PUBNAMES says to only load the symbols specified in the
-     *   debug_pubnames section (and if an rfilter list is given, only
-     *   load those symbols).
-     * _SYMBOLS says to load the entire debuginfo file, 
+     * _CUHEADERS says to load only the CU headers.
+     * _PUBNAMES says to load all CU headers, but after that, only load
+     *   any of the symbols in the debug_pubnames section, and their
+     *   dependencies.
      */
-    DEBUGFILE_LOAD_FLAG_ORDERED = 1 << 0,
+    DEBUGFILE_LOAD_FLAG_CUHEADERS = 1 << 0,
     DEBUGFILE_LOAD_FLAG_PUBNAMES = 1 << 1,
-    DEBUGFILE_LOAD_FLAG_SYMBOLS = 1 << 2,
-    /* These control whether symbols are loaded fully or partially. */
-    DEBUGFILE_LOAD_FLAG_FULLSYM = 1 << 8,
-    DEBUGFILE_LOAD_FLAG_PARTIALSYM = 1 << 9,
-    /* This flag controls how matches are performed when doing
-     * DEBUGFILE_LOAD_FLAG_SYMBOLS (the default is to stop on first
-     * match).
-     */
-    DEBUGFILE_LOAD_FLAG_ALLMATCHES = 1 << 16,
+    /* This forces partial symbol loading, instead of the default full. */
+    DEBUGFILE_LOAD_FLAG_PARTIALSYM = 1 << 8,
     /* This flag specifies that we will try to promote all per-CU types
      * to be pubtypes, and then check if each symbol's type (if it has
      * one) is already a "pubtype" and is equivalent to our type (well,
@@ -140,10 +142,6 @@ typedef enum {
      * equivalence).
      */
     DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV = 1 << 18,
-    /* If we are doing _PUBNAMES or _SYMBOLS, always load the full CU
-     * for any symbol we encounter.
-     */
-    DEBUGFILE_LOAD_FLAG_FULL_CU = 1 << 19,
 } debugfile_load_flags_t;
 
 typedef enum {
@@ -184,8 +182,9 @@ extern char *SYMBOL_TYPE_STRINGS[];
 				   && (sym)->s.ii)
 
 typedef enum {
-    LOADTYPE_FULL         = 0,
-    LOADTYPE_PARTIAL      = 1,
+    LOADTYPE_UNLOADED     = 0,
+    LOADTYPE_FULL         = 1,
+    LOADTYPE_PARTIAL      = 2,
 } load_type_t;
 
 #define SYMBOL_IS_FULL(sym) ((sym)->loadtag == LOADTYPE_FULL)
@@ -196,10 +195,10 @@ typedef enum {
  * way.  If you add more symbol types, or load types, adjust these
  * accordingly!
  */
-#define LOAD_TYPE_BITS      1
+#define LOAD_TYPE_BITS      2
 #define SYMBOL_TYPE_BITS    3
 #define DATATYPE_CODE_BITS  4
-#define SRCLINE_BITS       13
+#define SRCLINE_BITS       20
 
 /* We use this enum type for filtering during symbol searching, when the
  * caller might accept multiple different symbol types.
@@ -958,7 +957,10 @@ struct symtab {
     struct range range;
 
     char *producer;
-    int language;
+    short int language;
+
+    /* Right now, this is only set for top-level CU symtabs. */
+    load_type_t loadtag:LOAD_TYPE_BITS;
 
     /* The offset where this symtab came from.  For CU symtabs, it is
      * the CU; for function symtabs, it is the function's DIE.
@@ -1013,7 +1015,9 @@ struct symbol {
      * hence, it is in the type section of the primary union below.
      */
     char *name;
-    //    int orig_offset;
+
+    /* The primary symbol table we are resident in. */
+    struct symtab *symtab;
 
     /*
      * If we copy the string table from the ELF binary
@@ -1025,18 +1029,10 @@ struct symbol {
      * (i.e., typedef struct X X).  This means we have to drum
      * up a fake name. 
      * 
-     * When the fakename pointer is non-NULL, that means that
-     * the symbol's name is in fakename + offset (i.e., if 'X'
-     * is a struct type, then fakename + 7 = 'X'.  In this case,
-     * we set name to fakename + offset -- AND MOST IMPORTANTLY,
-     * don't free name -- but only fakename.
-     *
-     * What a mess.
+     * But, the fake name always contains the real name as a substring.
+     * So, this is the offset of that string.
      */
-    char *extname;
-
-    /* The primary symbol table we are resident in. */
-    struct symtab *symtab;
+    unsigned int orig_name_offset:8;
 
     /* Are we full or partial? */
     load_type_t loadtag:LOAD_TYPE_BITS;

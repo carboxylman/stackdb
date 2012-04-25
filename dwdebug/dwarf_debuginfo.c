@@ -1594,7 +1594,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			struct symbol *symbol,
 			struct symbol *parentsymbol,
 			struct symbol *voidsymbol,
-			GHashTable *reftab,struct array_list *die_offsets);
+			GHashTable *reftab,struct array_list *die_offsets,
+			SMOFFSET cu_offset);
 void resolve_refs(gpointer key,gpointer value,gpointer data);
 
 struct symbol *add_void_symbol(struct debugfile *debugfile,
@@ -1650,13 +1651,13 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      * a DWARF bug :).
      */
     int cu_symtab_added = 0;
-    int cu_symtab_just_added = 0;
 
     struct array_list *die_offsets = NULL;
     int i;
     struct symbol *tsymbol;
     char *sname;
     int accept;
+    gpointer key;
 
     if (init_die_offsets) 
 	die_offsets = array_list_clone(init_die_offsets,0);
@@ -1673,9 +1674,35 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
 			    (gpointer)cu_symtab);
     }
-    else
-	vdebug(5,LOG_D_DWARF,"using existing CU symtab!\n");
+    else {
+	vdebug(5,LOG_D_DWARF,"using existing CU symtab %s!\n",
+	       cu_symtab->name);
 
+	/* Create a reftab of the existing symbols, so we can skip
+	 * loading them if they're already done.
+	 */
+	g_hash_table_iter_init(&iter,cu_symtab->anontab);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer *)&key,(gpointer *)&tsymbol)) 
+	    g_hash_table_insert(reftab,key,(gpointer *)tsymbol);
+	g_hash_table_iter_init(&iter,cu_symtab->tab);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer *)&key,(gpointer *)&tsymbol)) 
+	    g_hash_table_insert(reftab,key,(gpointer *)tsymbol);
+    }
+
+    /* Set the load type. */
+    if (cu_symtab->loadtag != LOADTYPE_UNLOADED && die_offsets)
+	cu_symtab->loadtag = LOADTYPE_PARTIAL;
+    else if (cu_symtab->loadtag != LOADTYPE_PARTIAL && die_offsets)
+	cu_symtab->loadtag = LOADTYPE_PARTIAL;
+    else
+	cu_symtab->loadtag = LOADTYPE_FULL;
+
+    /* If we've loaded this one before, don't add it again! */
+    if (cu_symtab->name && g_hash_table_lookup(debugfile->srcfiles,
+					       cu_symtab->name))
+	cu_symtab_added = 1;
 
     /* Set the top-level symtab. */
     symtabs[0] = cu_symtab;
@@ -1921,7 +1948,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	 * check that we found a src filename attr; we must have it to
 	 * hash the symtab.
 	 */
-	if (unlikely(!cu_symtab_added) && level == 0) {
+	if (tag == DW_TAG_compile_unit && unlikely(!cu_symtab_added)) {
 	    if (!symtab_get_name(cu_symtab)) {
 		verror("CU did not have a src filename; aborting processing!\n");
 		symtab_free(cu_symtab);
@@ -1937,15 +1964,26 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    goto out;
 		}
 		cu_symtab_added = 1;
-		cu_symtab_just_added = 1;
 	    }
 
+	    /*
+	     * Only check CU load options on the initial load, because
+	     * if we have to expand it later, it is because a symbol or
+	     * address search required it... and the initial load opts
+	     * are meaningless.
+	     */
+	    if (debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_CUHEADERS)
+		goto out;
+	    if (debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_PUBNAMES
+		&& (!die_offsets || array_list_len(die_offsets) == 0))
+		goto out;
 	    /*
 	     * If we have regexes for symtabs and this one doesn't
 	     * match, skip it!
 	     */
-	    if (opts->srcfile_filter) {
-		if (rfilter_check(opts->srcfile_filter,symtab_get_name(cu_symtab),
+	    else if (opts->srcfile_filter) {
+		if (rfilter_check(opts->srcfile_filter,
+				  symtab_get_name(cu_symtab),
 				  &accept,NULL)
 		    && accept == RF_REJECT) {
 		    vdebug(3,LOG_D_DWARF,"skipping CU '%s'\n",
@@ -1953,6 +1991,29 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    goto out;
 		}
 	    }
+	}
+
+	/* If we have die_offsets to load, and we're not just going to
+	 * load the full CU, AND if we have now processed the CU
+	 * symtab's attributes, we need to skip to the first DIE in our
+	 * list.
+	 */
+	if (tag == DW_TAG_compile_unit && die_offsets) {
+	    offset = *cu_offset 
+		+ (SMOFFSET)(uintptr_t)array_list_item(die_offsets,0);
+	    i = 1;
+	    /* So many things key off level == 0 that we set it to 1
+	     * deliberately.
+	     */
+	    level = 1;
+	    if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
+		verror("cannot get first DIE at offset 0x%"PRIx64
+		       " during partial CU load: %s\n",offset,dwarf_errmsg(-1));
+		goto errout;
+	    }
+	    vdebug(5,LOG_D_DWARF,"skipping to first DIE 0x%x\n",offset);
+	    symtabs[level] = symtabs[level-1];
+	    continue;
 	}
 
 	/* If we're actually handling this CU, then... */
@@ -2081,34 +2142,6 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    }
 	}
 
-	/* If we have die_offsets to load, and we're not just going to
-	 * load the full CU, AND if we have now processed the CU
-	 * symtab's attributes, we need to skip to the first DIE in our
-	 * list.
-	 */
-	if (cu_symtab_just_added 
-	    && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
-	    && die_offsets) {
-	    offset = *cu_offset 
-		+ (SMOFFSET)(uintptr_t)array_list_item(die_offsets,0);
-	    i = 1;
-	    cu_symtab_just_added = 0;
-	    /* So many things key off level == 0 that we set it to 1
-	     * deliberately.
-	     */
-	    level = 1;
-	    if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
-		verror("cannot get first DIE at offset 0x%"PRIx64
-		       " during partial CU load: %s\n",offset,dwarf_errmsg(-1));
-		goto errout;
-	    }
-	    vdebug(5,LOG_D_DWARF,"skipping to first DIE 0x%x\n",offset);
-	    symtabs[level] = symtabs[level-1];
-	    continue;
-	}
-	else
-	    cu_symtab_just_added = 0;
-
 	/* Make room for the next level's DIE.  */
 	if (level + 1 == maxdies) {
 	    dies = (Dwarf_Die *)realloc(dies,(maxdies += 8)*sizeof(Dwarf_Die));
@@ -2229,13 +2262,15 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * it to 1 deliberately.
 	     */
 	    level = 1;
+	    symtabs[level] = cu_symtab;
 	    if (dwarf_offdie(dbg,offset,&dies[level]) == NULL) {
-		verror("cannot get DIE 0x%x at offset 0x%"PRIx64
-		       " during partial CU load: %s\n",
-		       i - 1,offset,dwarf_errmsg(-1));
+		verror("cannot get DIE %d at offset 0x%"PRIx64
+		       " during partial CU (0x%"PRIx64") load: %s\n",
+		       i - 1,offset,*cu_offset,dwarf_errmsg(-1));
 		return -1;
 	    }
-	    vdebug(5,LOG_D_DWARF,"skipping to DIE 0x%x\n",offset);
+	    vdebug(5,LOG_D_DWARF,"skipping to DIE %d at 0x%x in CU 0x%"PRIx64"\n",
+		   i,offset,*cu_offset);
 	    return 1;
 	}
 
@@ -2254,14 +2289,12 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    if (symbols[level]) {
 		finalize_die_symbol(debugfile,level,symbols[level],
 				    symbols[level-1],voidsymbol,
-				    reftab,die_offsets);
+				    reftab,die_offsets,(SMOFFSET)*cu_offset);
 		symbols[level] = NULL;
 		//symtabs[level] = NULL;
 	    }
 
-	    if (!(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
-		&& die_offsets
-		&& level == 1) {
+	    if (die_offsets && level == 1) {
 		res2 = setup_skip_to_next_die();
 		/* error; bail */
 		if (res2 == -1) goto errout;
@@ -2278,9 +2311,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		     * siblings at level 1, since that's the level we start
 		     * each DIE load in a partial CU load at.
 		     */
-		    if (!(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
-			&& die_offsets
-			&& oldlevel == 1) {
+		    if (die_offsets && oldlevel == 1) {
 			res2 = setup_skip_to_next_die();
 			/* error; bail */
 			if (res2 == -1) goto errout;
@@ -2299,7 +2330,8 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    if (symbols[level]) {
 			finalize_die_symbol(debugfile,level,symbols[level],
 					    symbols[level-1],voidsymbol,
-					    reftab,die_offsets);
+					    reftab,die_offsets,
+					    (SMOFFSET)*cu_offset);
 			symbols[level] = NULL;
 			/*if (symbols[level-1] 
 			  && symbols[level-1]->type == SYMBOL_TYPE_FUNCTION 
@@ -2313,10 +2345,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    verror("cannot get next DIE: %s\n",dwarf_errmsg(-1));
 		    goto errout;
 		}
-		else if (res == 0 
-			 && !(opts->flags & DEBUGFILE_LOAD_FLAG_FULL_CU)
-			 && die_offsets
-			 && level == 1) {
+		else if (res == 0 && die_offsets && level == 1) {
 		    /* If there IS a sibling, but we don't want to
 		     * process it, because we finished the DIE we wanted
 		     * to do, skip to the next DIE.
@@ -2493,8 +2522,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      * identical types.
      *
      */
-    if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
-	&& opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
+    if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
 	GHashTable *updated = g_hash_table_new(g_direct_hash,g_direct_equal);
 	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2a\n");
 	g_hash_table_iter_init(&iter,reftab);
@@ -2584,8 +2612,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      * again, and resolve all the datatype refs again!  Argh!  But at
      * least it's only the datatype pointers.
      */
-    if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
-	&& opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
+    if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
 	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2b\n");
 	g_hash_table_iter_init(&iter,reftab);
 	while (g_hash_table_iter_next(&iter,
@@ -2736,15 +2763,21 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
  * we're not going to handle the DIE's refs recursively.
  */
 static int debuginfo_load(struct debugfile *debugfile,
-			  Dwfl_Module *dwflmod,Dwarf *dbg,
-			  GHashTable *cu_die_offsets) {
+			  Dwfl_Module *dwflmod,Dwarf *dbg) {
     int rc;
     int retval = 0;
+    GHashTable *cu_die_offsets = NULL;
     Dwarf_Off offset = 0;
     struct cu_meta meta;
     gpointer cu_offset;
     struct array_list *die_offsets = NULL;
     GHashTableIter iter;
+    struct dwarf_cu_die_ref *dcd;
+    struct array_list *tmpal;
+    int i;
+    gpointer key;
+    struct rfilter_entry *rfe;
+    int accept = RF_ACCEPT;
 
     vdebug(1,LOG_D_DWARF,"starting on %s \n",debugfile->filename);
 
@@ -2756,12 +2789,59 @@ static int debuginfo_load(struct debugfile *debugfile,
 	debugfile->opts->flags = DEBUGFILE_LOAD_FLAG_NONE;
     }
 
-    if (cu_die_offsets) {
-	g_hash_table_iter_init(&iter,cu_die_offsets);
-	if (!g_hash_table_iter_next(&iter,&cu_offset,(gpointer *)&die_offsets)) {
-	    vwarn("cu_die_offsets had nothing; not parsing entire debuginfo!\n");
-	    return -1;
+    if (debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_PUBNAMES) {
+	offset = OFFSETMAX;
+	cu_die_offsets = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					       NULL,
+					       (GDestroyNotify)array_list_free);
+	g_hash_table_iter_init(&iter,debugfile->pubnames);
+	while (g_hash_table_iter_next(&iter,&key,(gpointer *)&dcd)) {
+	    if (!(tmpal = (struct array_list *) \
+		  g_hash_table_lookup(cu_die_offsets,
+				      (gpointer)(uintptr_t)dcd->cu_offset))) {
+		tmpal = array_list_create(1);
+		g_hash_table_insert(cu_die_offsets,
+				    (gpointer)(uintptr_t)dcd->cu_offset,
+				    (gpointer *)tmpal);
+	    }
+
+	    /* Check the pubname against our rfilter of symbol names, if
+	     * any, and skip or include it as the rfilter dictates.
+	     *
+	     * NOTE that we insert an empty list for the CU to make sure
+	     * its header gets loaded.  This way (since each CU in a
+	     * sane C program will have at least one thing in
+	     * debug_pubnames -- otherwise what's the point?), we force
+	     * each CU header to be parsed.  If this turns out to not
+	     * work well enough, we'll have to force it another way.
+	     */
+	    if (debugfile->opts->symbol_filter) {
+		rfilter_check(debugfile->opts->symbol_filter,(char *)key,
+			      &accept,&rfe);
+		if (accept == RF_REJECT) 
+		    continue;
+	    }
+
+	    array_list_append(tmpal,(void *)(uintptr_t)dcd->die_offset);
+	    if ((Dwarf_Off)dcd->cu_offset < offset)
+		offset = (Dwarf_Off)dcd->cu_offset;
 	}
+
+	g_hash_table_iter_init(&iter,cu_die_offsets);
+	while (g_hash_table_iter_next(&iter,&cu_offset,(gpointer *)&tmpal)) {
+	    vdebug(5,LOG_D_DWARF,"preloading offsets for CU 0x%"PRIxSMOFFSET": ",
+		   (SMOFFSET)(uintptr_t)cu_offset);
+	    for (i = 0; i < array_list_len(tmpal); ++i) {
+		vdebugc(5,LOG_D_DWARF,"0x%"PRIxSMOFFSET" ",
+			(SMOFFSET)(uintptr_t)array_list_item(tmpal,i));
+	    }
+	    vdebugc(5,LOG_D_DWARF,"\n");
+	}
+
+	/* Get the first one to seed the loop below. */
+	g_hash_table_iter_init(&iter,cu_die_offsets);
+	if (!g_hash_table_iter_next(&iter,&cu_offset,(gpointer *)&die_offsets)) 
+	    goto out;
 	offset = (Dwarf_Off)cu_offset;
     }
 
@@ -2818,6 +2898,8 @@ static int debuginfo_load(struct debugfile *debugfile,
     retval = -1;
 
  out:
+    if (debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_PUBNAMES) 
+	g_hash_table_destroy(cu_die_offsets);
     return retval;
 }
 
@@ -2853,7 +2935,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			struct symbol *symbol,
 			struct symbol *parentsymbol,
 			struct symbol *voidsymbol,
-			GHashTable *reftab,struct array_list *die_offsets) {
+			GHashTable *reftab,struct array_list *die_offsets,
+			SMOFFSET cu_offset) {
     int retval = 0;
     int *new_subranges;
 
@@ -2956,17 +3039,38 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 g_hash_table_lookup(reftab,
 				     (gpointer)(uintptr_t)symbol->datatype_ref))) {
 	    array_list_append(die_offsets,
-			      (void *)(uintptr_t)symbol->datatype_ref);
+			      (void *)(uintptr_t)(symbol->datatype_ref - cu_offset));
 	}
 
-	if (SYMBOL_IS_FULL_INSTANCE(symbol)) {
+	/* We can't do this for inlined formal params, vars, or labels,
+	 * because we will jump into the middle of a subprogram, without
+	 * knowing we are in that subprogram DIE -- so our symtab
+	 * hierarchy will be screwed up!
+	 *
+	 * XXX: I still think that this might be insufficient, and
+	 * might end up putting inlined subroutines onto the wrong
+	 * symtabs.  BUT, for now it seems reasonable because even if
+	 * there are nested subroutines, as long as we fully process the
+	 * outermost one (i.e., add it to die_offsets first) first,
+	 * we'll process the children ones first (well, at least as long
+	 * as they are loading without PARTIALSYM).  If they load with
+	 * PARTIALSYM, then we won't process nested subroutines and
+	 * we're screwed?  Worried.  But there's also little
+	 * alternative, other than to back up to the CU start and skim
+	 * over stacks of DIE children until we hit this origin_ref, and
+	 * then process the top-most "parent" DIE of the origin_ref
+	 * child DIE.  That is more expensive and more complicated :).
+	 *
+	 * TODO: but I suppose we'll have to do it...
+	 */
+	if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
 	    if (symbol->isinlineinstance
 		&& !symbol->s.ii->origin && symbol->s.ii->origin_ref
 		&& !(symbol->s.ii->origin = (struct symbol *)	\
 		     g_hash_table_lookup(reftab,
 					 (gpointer)(uintptr_t)symbol->s.ii->origin_ref))) {
 		array_list_append(die_offsets,
-				  (void *)(uintptr_t)symbol->s.ii->origin_ref);
+				  (void *)(uintptr_t)(symbol->s.ii->origin_ref - cu_offset));
 	    }
 	}
     }
@@ -2991,9 +3095,9 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarn("duplicate symbol %s (orig %s) at offset %"PRIx64"\n",
+		vwarn("duplicate symbol %s (orig %s) at offset %"PRIx64" (symtab %s)\n",
 		      symbol_get_name(symbol),symbol_get_name_orig(symbol),
-		      die_offset);
+		      die_offset,symbol->symtab->name);
 		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
 		    verror("could not insert duplicate symbol %s (%s) at offset %"PRIx64" into anontab!\n",
 			   symbol_get_name(symbol),symbol_get_name_orig(symbol),
@@ -3028,8 +3132,9 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarn("duplicate symbol %s at offset %"PRIx64"\n",
-		      symbol_get_name_orig(symbol),die_offset);
+		vwarn("duplicate symbol %s at offset %"PRIx64" (symtab %s)\n",
+		      symbol_get_name_orig(symbol),die_offset,
+		      symbol->symtab->name);
 		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
 		    verror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
 			   symbol_get_name_orig(symbol),die_offset);
@@ -3055,8 +3160,9 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		     * table; put it in the anontable so it can get freed
 		     * later!
 		     */
-		    vwarn("duplicate symbol %s at offset %"PRIx64"\n",
-		    	  symbol_get_name_orig(symbol),die_offset);
+		    vwarn("duplicate symbol %s at offset %"PRIx64" (symtab %s)\n",
+		    	  symbol_get_name_orig(symbol),die_offset,
+			  symbol->symtab->name);
 		    if (symtab_insert(symbol->symtab,symbol,die_offset)) {
 			verror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
 			       symbol_get_name_orig(symbol),die_offset);
@@ -3073,8 +3179,9 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarn("duplicate symbol %s at offset %"PRIx64"\n",
-		      symbol_get_name_orig(symbol),die_offset);
+		vwarn("duplicate symbol %s at offset %"PRIx64" (symtab %s)\n",
+		      symbol_get_name_orig(symbol),die_offset,
+		      symbol->symtab->name);
 		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
 		    verror("could not insert duplicate symbol %s at offset %"PRIx64" into anontab!\n",
 			   symbol_get_name_orig(symbol),die_offset);
@@ -3664,7 +3771,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		vdebug(2,LOG_D_DWARF,
 		       "found .debug_info section in debugfile %s\n",
 		       data->debugfile->idstr);
-		debuginfo_load(data->debugfile,dwflmod,dbg,NULL);
+		debuginfo_load(data->debugfile,dwflmod,dbg);
 		//break;
 	    }
 	}
