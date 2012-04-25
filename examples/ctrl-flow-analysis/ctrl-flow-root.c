@@ -46,60 +46,28 @@ static char *sysmap_file = NULL;
 static unsigned int pid_passwd;
 static unsigned long long brctr_passwd;
 
-char *context_str(ctxprobes_context_t context)
+void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
-    char *str;
-    switch (context) {
-        case CTXPROBES_CONTEXT_NORMAL:
-            str = "N";
-            break;
-        case CTXPROBES_CONTEXT_TRAP:
-            str = "T";
-            break;
-        case CTXPROBES_CONTEXT_INTERRUPT:
-            str = "I";
-            break;
-        default:
-            str = "Unknown";
-            ERR("Invalid context identifier %d!\n", context);
-            break;
-    }
-    return str;
-}
-
-void probe_fork_return(char *symbol, 
-                       ctxprobes_var_t *args, 
-                       int argcount, 
-                       ctxprobes_var_t *retval,
-                       unsigned long retaddr,
-                       ctxprobes_task_t *task,
-                       ctxprobes_context_t context)
-{
-    if (!retval)
-    {
-        ERR("Something wrong with return value loading!\n");
-        return;
-    }
-
-    unsigned int pid = *(unsigned int *)retval->buf;
-
-    fflush(stderr);
-    printf("[%s] %d (%s): process %d created\n", 
-           context_str(context), task->pid, task->comm, pid);
-    fflush(stdout);
-
-    if (pid == pid_passwd)
+    if (next->pid == pid_passwd)
     {
         unsigned long long brctr = ctxprobes_get_brctr();
         if (!brctr)
         {
             ERR("Failed to get branch counter\n");
-            //return;
+            return;
         }
-        
+
         fflush(stderr);
-        printf("Process %d created: brctr = %d\n", pid, brctr);
+        printf("%d (%s): uid = %d, euid = %d\n",
+               next->pid, next->comm, next->uid, next->euid);
         fflush(stdout);
+
+        if (brctr > brctr_passwd)
+        {
+            fflush(stderr);
+            printf("/etc/passwd accessed!\n");
+            fflush(stdout);
+        }
     }
 }
 
@@ -115,6 +83,11 @@ void parse_opt(int argc, char *argv[])
             case 'd':
                 ++debug_level;
                 break;
+
+        fflush(stderr);
+        printf("%d (%s): uid = %d, euid = %d\n",
+               next->pid, next->comm, next->uid, next->euid);
+        fflush(stdout);
 
             case 'l':
                 if (vmi_log_get_flag_mask(optarg, &debug_flags))
@@ -159,13 +132,17 @@ int main(int argc, char *argv[])
     
     parse_opt(argc, argv);
 
-    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, debug_level);
+    ret = ctxprobes_init(domain_name, 
+                         sysmap_file, 
+                         task_switch, 
+                         NULL, 
+                         debug_level);
     if (ret)
     {
         ERR("Failed to init ctxprobes\n");
         exit(ret);
     }
-
+/*
     ret = ctxprobes_reg_func_return("sys_fork", probe_fork_return);
     if (ret)
     {
@@ -173,7 +150,7 @@ int main(int argc, char *argv[])
         ctxprobes_cleanup();
         exit(ret);
     } 
-
+*/
     ctxprobes_wait();
 
     ctxprobes_cleanup();
