@@ -81,7 +81,7 @@ void probe_fileopen(char *symbol,
 
     char *filename = args[0].buf;
     int flags = *(int *)args[1].buf;
-    int mode = *(int *)args[2].buf;
+    //int mode = *(int *)args[2].buf;
 
     //if (context == CTXPROBES_CONTEXT_NORMAL)
     {
@@ -102,7 +102,7 @@ void probe_fileopen(char *symbol,
                 {
                     printf(" %d", task->pid);
                     task = task->parent;
-                    }
+                }
                 printf("\n");
                 fflush(stdout);
             }
