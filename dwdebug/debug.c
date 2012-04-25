@@ -853,24 +853,16 @@ debugfile_load_flags_t debugfile_load_flags_parse(char *flagstr,char *delim) {
 	    flags = DEBUGFILE_LOAD_FLAG_NONE;
 	    return 0;
 	}
-	else if (strcmp(token2,"ORDERED") == 0)
-	    flags |= DEBUGFILE_LOAD_FLAG_ORDERED;
+	else if (strcmp(token2,"CUHEADERS") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_CUHEADERS;
 	else if (strcmp(token2,"PUBNAMES") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_PUBNAMES;
-	else if (strcmp(token2,"SYMBOLS") == 0)
-	    flags |= DEBUGFILE_LOAD_FLAG_SYMBOLS;
-	else if (strcmp(token2,"FULLSYM") == 0)
-	    flags |= DEBUGFILE_LOAD_FLAG_FULLSYM;
 	else if (strcmp(token2,"PARTIALSYM") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_PARTIALSYM;
-	else if (strcmp(token2,"ALLMATCHES") == 0)
-	    flags |= DEBUGFILE_LOAD_FLAG_ALLMATCHES;
 	else if (strcmp(token2,"REDUCETYPES") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_REDUCETYPES;
 	else if (strcmp(token2,"REDUCETYPES_FULL_EQUIV") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV;
-	else if (strcmp(token2,"FULL_CU") == 0)
-	    flags |= DEBUGFILE_LOAD_FLAG_FULL_CU;
 	else {
 	    verror("unknown flag '%s'\n",token2);
 	    errno = EINVAL;
@@ -1311,6 +1303,8 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 }
 
 void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
+    if (symtab->name && strcmp(symtab->name,name) == 0)
+	return;
 
     /* If this top-level symtab is being renamed, remove it from our
      * debugfile!
@@ -1340,6 +1334,9 @@ char *symtab_get_name(struct symtab *symtab) {
 }
 
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
+    if (symtab->compdirname && strcmp(symtab->compdirname,compdirname) == 0)
+	return;
+
     if (compdirname
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,compdirname))
@@ -1351,6 +1348,9 @@ void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
 }
 
 void symtab_set_producer(struct symtab *symtab,char *producer) {
+    if (symtab->producer && strcmp(symtab->producer,producer) == 0)
+	return;
+
     if (producer 
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,producer))
@@ -1649,14 +1649,11 @@ struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
 }
 
 char *symbol_get_name(struct symbol *symbol) {
-    if (symbol->extname)
-	return symbol->extname;
-
     return symbol->name;
 }
 
 char *symbol_get_name_orig(struct symbol *symbol) {
-    return symbol->name;
+    return symbol->name + symbol->orig_name_offset;
 }
 
 void symbol_set_name(struct symbol *symbol,char *name) {
@@ -1703,14 +1700,14 @@ void symbol_build_extname(struct symbol *symbol) {
 	return;
     }
 
-    symbol->extname = insert_name;
+    symbol->name = insert_name;
     if (symbol_name
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol_name))
 #endif
 	)
 	free(symbol_name);
-    symbol->name = symbol->extname + foffset;
+    symbol->orig_name_offset = foffset;
 }
 
 struct symtab *symbol_get_root_symtab(struct symbol *symbol) {
@@ -2720,11 +2717,6 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
      */
     if (SYMBOL_IS_FULL_INSTANCE(symbol))
 	location_internal_free(&symbol->s.ii->l);
-
-    if (symbol->extname) {
-	vdebug(5,LOG_D_SYMBOL,"freeing extname %s\n",symbol->extname);
-	free(symbol->extname);
-    }
     else if (symbol->name
 #ifdef DWDEBUG_USE_STRTAB
 	     && (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
@@ -3569,7 +3561,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	if (ud->detail && SYMBOL_IS_FULL(symbol) && !symbol->name)
 	    fprintf(ud->stream,"%s",ss);
 	else
-	    fprintf(ud->stream,"%s %s",ss,symbol->name);
+	    fprintf(ud->stream,"%s",symbol->name);
 	if (ud->meta && SYMBOL_IS_FULL(symbol)) 
 	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti->byte_size);
 	if (ud->detail && SYMBOL_IS_FULL(symbol)) {
@@ -3606,7 +3598,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	}
 	break;
     case DATATYPE_ENUM:
-	fprintf(ud->stream,"enum %s",symbol->name);
+	fprintf(ud->stream,"%s",symbol->name);
 	if (ud->meta && SYMBOL_IS_FULL(symbol)) 
 	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti->byte_size);
 	if (ud->detail && SYMBOL_IS_FULL(symbol)) {
@@ -3691,7 +3683,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	else if (symbol->datatype) {
 	    fprintf(ud->stream,"typedef ");
 	    symbol_type_dump(symbol->datatype,ud);
-	    fprintf(ud->stream," %s",symbol->name);
+	    fprintf(ud->stream," %s",symbol_get_name_orig(symbol));
 	}
 	else 
 	    fprintf(ud->stream,"typedef tdtref%"PRIxSMOFFSET" %s",
@@ -3732,7 +3724,7 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
 	fprintf(ud->stream,"%stype(%s,line=%d): ",
-		p,(symbol->extname) ? symbol->extname : symbol->name,
+		p,symbol->name,
 		symbol->srcline);
 	symbol_type_dump(symbol,&udn);
 	fprintf(ud->stream,"\n");

@@ -44,6 +44,7 @@ typedef uint64_t REGVAL;
 #define PRIxREGVAL PRIx64
 #define PRIuREGVAL PRIu64
 #define ADDRMAX UINT64_MAX
+#define OFFSETMAX UINT64_MAX
 #else
 typedef uint32_t ADDR;
 typedef int32_t OFFSET;
@@ -55,6 +56,7 @@ typedef uint32_t REGVAL;
 #define PRIxREGVAL PRIx32
 #define PRIuREGVAL PRIu32
 #define ADDRMAX UINT32_MAX
+#define OFFSETMAX UINT32_MAX
 #endif
 
 typedef int8_t REG;
