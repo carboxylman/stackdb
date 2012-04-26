@@ -68,13 +68,7 @@ int alist_contains(struct array_list *list, unsigned int pid)
     return 0;
 }
 
-void probe_fork_return(char *symbol,
-                       ctxprobes_var_t *args,
-					   int argcount,
-					   ctxprobes_var_t *retval,
-					   unsigned long retaddr,
-					   ctxprobes_task_t *task,
-					   ctxprobes_context_t context)
+void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
@@ -93,31 +87,28 @@ void probe_fork_return(char *symbol,
         return;
     }
 
-    unsigned int child_pid = *(unsigned int *)retval->buf;
-
-    if (alist_contains(pidlist, child_pid))
+    if (alist_contains(pidlist, next->pid))
     {
-        if (!alist_contains(tracklist, child_pid))
+        if (!alist_contains(tracklist, next->pid))
         {
             /* 
-             * Creation of a suspected process, put it in the tracked
+             * First task switch to a suspected process, put it in the tracked
              * process list if it is with non-root uid. 
              */
-            array_list_add(tracklist, (void *)child_pid);
+            array_list_add(tracklist, (void *)next->pid);
             fflush(stderr);
-			printf("Process %d created\n", child_pid);
-            //printf("Process %d (%s) created: uid = %d\n",
-            //       child->pid, child->comm, child->uid);
+            printf("First task switch to %d (%s): uid = %d\n",
+                   next->pid, next->comm, next->uid);
             fflush(stdout);
 
-            //if (child->uid != 0)
-            //{
-                /* Put a watch-point at child->uid. */
-            //    fflush(stderr);
-            //    printf("Put a watch-point at uid of %d (%s)\n", 
-            //           child->pid, child->comm);
-            //    fflush(stdout);
-            //}
+            if (next->uid != 0)
+            {
+                /* Put a watch-point at next->uid. */
+                fflush(stderr);
+                printf("Put a watch-point at uid of %d (%s)\n", 
+                       next->pid, next->comm);
+                fflush(stdout);
+            }
         }
     }
 }
@@ -196,7 +187,7 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         NULL, 
+                         task_switch, 
                          NULL, 
                          debug_level);
     if (ret)
@@ -204,7 +195,7 @@ int main(int argc, char *argv[])
         ERR("Failed to init ctxprobes\n");
         exit(ret);
     }
-
+/*
     ret = ctxprobes_reg_func_return("sys_fork", probe_fork_return);
     if (ret)
     {
@@ -212,7 +203,7 @@ int main(int argc, char *argv[])
         ctxprobes_cleanup();
         exit(ret);
     } 
-
+*/
     ctxprobes_wait();
 
     ctxprobes_cleanup();
