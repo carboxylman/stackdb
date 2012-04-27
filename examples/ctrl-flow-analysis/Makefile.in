@@ -28,6 +28,12 @@ OBJDIR		= @top_builddir@
 
 SUBDIRS = 
 
+# Temporary cmdline arg values hard-coded for easiness of testing.
+CTRLFLOW_GUEST      = clientA
+CTRLFLOW_SYSMAP     = /boot/System.map-2.6.18-xenU
+CTRLFLOW_ROOT_BRCTR = 457134451 
+CTRLFLOW_ROOT_PIDS  = 292,290,285,1,0
+
 include $(OBJDIR)/Makeconf
 
 CFLAGS += -I$(OBJDIR) \
@@ -112,63 +118,65 @@ clean: clean-subdirs
 
 distclean: distclean-subdirs
 
+# Temporary cmdlines hard-coded for easiness of testing.
+
 run-static: ctrl-flow-static
-	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
-	clientA
+	sudo ./ctrl-flow-static \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 demo-static: ctrl-flow-static
-	sudo ./ctrl-flow-static -m /boot/System.map-2.6.18-xenU \
-	clientA 2> /dev/null
+	sudo ./ctrl-flow-static \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST) \
+	2> /dev/null
 
 verbose-static: ctrl-flow-static
-	sudo ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU \
-	clientA
+	sudo ./ctrl-flow-static \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 debug-static: ctrl-flow-static
-	sudo gdb --args ./ctrl-flow-static -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU \
-	clientA
+	sudo gdb --args ./ctrl-flow-static \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 run-passwd: ctrl-flow-passwd
-	sudo ./ctrl-flow-passwd -m /boot/System.map-2.6.18-xenU \
-	clientA
+	sudo ./ctrl-flow-passwd \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 demo-passwd: ctrl-flow-passwd
-	sudo ./ctrl-flow-passwd -m /boot/System.map-2.6.18-xenU \
-	clientA 2> /dev/null
+	sudo ./ctrl-flow-passwd \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST) 2> /dev/null
 
 verbose-passwd: ctrl-flow-passwd
-	sudo ./ctrl-flow-passwd -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU \
-	clientA
+	sudo ./ctrl-flow-passwd \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 debug-passwd: ctrl-flow-passwd
-	sudo gdb --args ./ctrl-flow-passwd -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU \
-	clientA
+	sudo gdb --args ./ctrl-flow-passwd \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 run-root: ctrl-flow-root
-	sudo ./ctrl-flow-root -m /boot/System.map-2.6.18-xenU \
-	-p 292,290,285,1,0 -b 457134451 \
-	clientA
+	sudo ./ctrl-flow-root \
+	-p $(CTRLFLOW_ROOT_PIDS) -b $(CTRLFLOW_ROOT_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 demo-root: ctrl-flow-root
-	sudo ./ctrl-flow-root -m /boot/System.map-2.6.18-xenU \
-	-p 292,290,285,1,0 -b 457134451 \
-	clientA 2> /dev/null
+	sudo ./ctrl-flow-root \
+	-p $(CTRLFLOW_ROOT_PIDS) -b $(CTRLFLOW_ROOT_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST) \
+	2> /dev/null
 
 verbose-root: ctrl-flow-root
 	sudo ./ctrl-flow-root -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU \
-	-p 292,290,285,1,0 -b 457134451 \
-	clientA
+	-p $(CTRLFLOW_ROOT_PIDS) -b $(CTRLFLOW_ROOT_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 debug-root: ctrl-flow-root
 	sudo gdb --args ./ctrl-flow-root -ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m /boot/System.map-2.6.18-xenU \
-	-p 292,290,285,1,0 -b 457134451 \
-	clientA
+	-p $(CTRLFLOW_ROOT_PIDS) -b $(CTRLFLOW_ROOT_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.
