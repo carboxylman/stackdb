@@ -83,7 +83,7 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
         printf("End of analysis: /etc/passwd accessed\n");
         fflush(stdout);
             
-        kill(getpid(), SIGINT);
+        //kill(getpid(), SIGINT);
         return;
     }
 
@@ -107,6 +107,7 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
                 fflush(stderr);
                 printf("Put a watch-point at uid of %d (%s)\n", 
                        next->pid, next->comm);
+
                 fflush(stdout);
             }
         }
