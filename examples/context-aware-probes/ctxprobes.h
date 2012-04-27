@@ -73,16 +73,16 @@ typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
                                                 ctxprobes_task_t *task,
                                                 ctxprobes_context_t context);
 
+typedef void (*ctxprobes_var_handler_t)(char *symbol,
+                                        ctxprobes_var_t *var,
+                                        ctxprobes_task_t *task,
+                                        ctxprobes_context_t context);
+
 typedef void (*ctxprobes_task_switch_handler_t)(ctxprobes_task_t *prev,
                                                 ctxprobes_task_t *next);
 
 typedef void (*ctxprobes_context_change_handler_t)(ctxprobes_context_t prev,
                                                    ctxprobes_context_t next);
-
-//typedef void (*ctxprobes_var_handler_t)(char *symbol,
-//                                        ctxprobes_var_t *var,
-//                                        ctxprobes_task_t *task,
-//                                        ctxprobes_context_t context);
 
 
 int ctxprobes_init(char *domain_name, 
@@ -100,8 +100,9 @@ int ctxprobes_reg_func_prologue(char *symbol,
                                 ctxprobes_func_prologue_handler_t handler);
 int ctxprobes_reg_func_return(char *symbol,
                               ctxprobes_func_return_handler_t handler);
-//int ctxprobes_reg_var(char *symbol,
-//                      ctxprobes_var_handler_t handler);
+int ctxprobes_reg_var(char *symbol,
+                      ctxprobes_var_handler_t handler,
+                      int readwrite);
 
 void ctxprobes_unreg_func_call(char *symbol,
                                ctxprobes_func_call_handler_t handler);
@@ -109,8 +110,8 @@ void ctxprobes_unreg_func_prologue(char *symbol,
                                    ctxprobes_func_prologue_handler_t handler);
 void ctxprobes_unreg_func_return(char *symbol,
                                  ctxprobes_func_return_handler_t handler);
-//void ctxprobes_unreg_var(char *symbol,
-//                         ctxprobes_var_handler_t handler);
+void ctxprobes_unreg_var(char *symbol,
+                         ctxprobes_var_handler_t handler);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
 

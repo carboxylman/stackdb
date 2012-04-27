@@ -249,6 +249,54 @@ static int probe_func_return(struct probe *probe,
     return 0;
 }
 
+static int probe_var(struct probe *probe,
+                     void *data,
+                     struct probe *trigger)
+{
+    struct value *value;
+    struct bsymbol *bsymbol = probe->bsymbol;
+    int i;
+
+    ctxprobes_var_handler_t handler = (ctxprobes_var_handler_t) data;
+
+    fflush(stderr);
+    fflush(stdout);
+
+    if ((value = bsymbol_load(bsymbol,
+                              LOAD_FLAG_AUTO_DEREF |
+                              LOAD_FLAG_AUTO_STRING |
+                              LOAD_FLAG_NO_CHECK_VISIBILITY |
+                              LOAD_FLAG_NO_CHECK_BOUNDS)))
+    {
+        printf("%s (0x%08x) = ", probe->bsymbol->lsymbol->symbol->name,
+                                 probe_addr(probe));
+
+        symbol_rvalue_print(stdout, probe->bsymbol->lsymbol->symbol,
+                            value->buf, value->bufsiz,
+                            LOAD_FLAG_AUTO_DEREF |
+                            LOAD_FLAG_AUTO_STRING |
+                            LOAD_FLAG_NO_CHECK_VISIBILITY |
+                            LOAD_FLAG_NO_CHECK_BOUNDS,
+                            t);
+        printf("(0x");
+        for (i = 0; i < value->bufsiz; i++)
+            printf("%02hhx", value->buf[i]);
+        printf(")\n");
+        value_free(value);
+    }
+    else
+    {
+        printf("%s (0x%08x): could not read value: %s\n",
+               probe->bsymbol->lsymbol->symbol->name, probe_addr(probe),
+               strerror(errno));
+    }
+
+    fflush(stderr);
+    fflush(stdout);
+
+    return 0;
+}
+
 /* TRAP_divide_error -- trap gate #0; call */
 static int probe_divide_error_call(struct probe *probe, 
                                    void *data, 
@@ -1389,19 +1437,34 @@ int ctxprobes_reg_func_return(char *symbol,
 
     return 0;
 }
-/*
+
 int ctxprobes_reg_var(char *symbol,
-                      ctxprobes_var_handler_t handler)
+                      ctxprobes_var_handler_t handler,
+                      int readwrite)
 {
+    int ret;
+
     if (!t)
     {
         ERR("Target not initialized\n");
         return -1;
     }
 
+    ret = register_var_probe(symbol,
+                             probe_var,
+                             (readwrite) ? 
+                             PROBEPOINT_READWRITE : PROBEPOINT_WRITE,
+                             SYMBOL_TYPE_FLAG_VAR,
+                             handler); /* data <- ctxprobes handler */
+    if (ret)
+    {
+        ERR("Failed to register context-aware var probe on '%s'\n", symbol);
+        return -1;
+    }
+
     return 0;
 }
-*/
+
 void ctxprobes_unreg_func_call(char *symbol,
                                ctxprobes_func_call_handler_t handler)
 {
@@ -1490,12 +1553,30 @@ void ctxprobes_unreg_func_return(char *symbol,
         }
     }
 }
-/*
-int ctxprobes_unreg_var(char *symbol)
+
+void ctxprobes_unreg_var(char *symbol,
+                         ctxprobes_var_handler_t handler)
 {
-    return 0;
+    GHashTableIter iter;
+    gpointer key;
+    struct probe *probe;
+
+    g_hash_table_iter_init(&iter, probes);
+    while (g_hash_table_iter_next(&iter,
+           (gpointer)&key,
+           (gpointer)&probe))
+    {
+        if (strcmp(probe->name, symbol) == 0 && 
+            probe->handler_data == (void *)handler)
+        {
+            probe_unregister(probe, 1);
+            probe_free(probe, 1);
+            g_hash_table_iter_remove(&iter);
+            break;
+        }
+    }
 }
-*/
+
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
 

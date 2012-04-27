@@ -86,15 +86,15 @@ int register_call_probe(char *symbol,
 
     probe = probe_create(t, 
                          ops,
-                         (bsymbol) ? bsymbol->lsymbol->symbol->name : symbol,
+                         (bsymbol) ? bsymbol_get_name(bsymbol) : symbol,
                          handler, /* pre_handler */
                          NULL, /* post_handler */
                          data, 
                          0); /* autofree */
     if (!probe)
     {
-        ERR("Could not create call probe on '%s'\n",
-            bsymbol->lsymbol->symbol->name);
+        ERR("Could not create call probe on '%s'\n", 
+            bsymbol_get_name(bsymbol));
         bsymbol_release(bsymbol);
         return -1;
     }
@@ -120,7 +120,7 @@ int register_call_probe(char *symbol,
                                            PROBEPOINT_LAUTO))
         {
             ERR("Could not register inlined call probe on '%s'\n",
-                bsymbol->lsymbol->symbol->name);
+                bsymbol_get_name(bsymbol));
             probe_free(probe, 1);
             bsymbol_release(bsymbol);
             return -1;
@@ -133,16 +133,14 @@ int register_call_probe(char *symbol,
                                    PROBEPOINT_LAUTO))
         {
             ERR("Could not register call probe on '%s'\n",
-                bsymbol->lsymbol->symbol->name);
+                bsymbol_get_name(bsymbol));
             probe_free(probe, 1);
             bsymbol_release(bsymbol);
             return -1;
         }
     }
 
-    g_hash_table_insert(probes,
-                        (gpointer)probe->probepoint->addr,
-                        (gpointer)probe);
+    g_hash_table_insert(probes, (gpointer)probe, (gpointer)probe);
 
     if (bsymbol)
         bsymbol_release(bsymbol);
@@ -180,7 +178,7 @@ int register_prologue_probe(char *symbol,
     if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL))
     {
         ERR("Could not resolve base addr for function %s!\n",
-            bsymbol->lsymbol->symbol->name);
+            bsymbol_get_name(bsymbol));
         return -1;
     }
 
@@ -188,13 +186,13 @@ int register_prologue_probe(char *symbol,
     if (g_hash_table_lookup(cprobes, (gpointer)funcstart))
     {
         WARN("Already registered function %s prologue. Skipping...\n",
-             bsymbol->lsymbol->symbol->name);
+             bsymbol_get_name(bsymbol));
         return 0;
     }
 
     probe = probe_create(t, 
                          ops,
-                         bsymbol->lsymbol->symbol->name,
+                         bsymbol_get_name(bsymbol),
                          NULL, /* pre_handler */
                          handler, /* post_handler */
                          data,
@@ -202,7 +200,7 @@ int register_prologue_probe(char *symbol,
     if (!probe)
     {
         ERR("Could not create prologue probe on '%s'\n",
-            bsymbol->lsymbol->symbol->name);
+            bsymbol_get_name(bsymbol));
         return -1;
     }
 
@@ -213,7 +211,7 @@ int register_prologue_probe(char *symbol,
     {
         probe_free(probe, 1);
         ERR("Could not register prologue probe on '%s'\n",
-            bsymbol->lsymbol->symbol->name);
+            bsymbol_get_name(bsymbol));
         return -1;
     }
 
@@ -221,7 +219,7 @@ int register_prologue_probe(char *symbol,
     {
         probe_free(probe, 1);
         ERR("No call sites in %s.\n",
-            bsymbol->lsymbol->symbol->name);
+            bsymbol_get_name(bsymbol));
         return -2;
     }
     
@@ -235,7 +233,7 @@ int register_prologue_probe(char *symbol,
     
     DBG("Registered %d prologue probes in function %s.\n",
         probe_num_sources(probe),
-        bsymbol->lsymbol->symbol->name);
+        bsymbol_get_name(bsymbol));
 
     return 0;
 }
@@ -270,7 +268,7 @@ int register_return_probe(char *symbol,
     if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL))
     {
         ERR("Could not resolve base addr for function %s!\n",
-            bsymbol->lsymbol->symbol->name);
+            bsymbol_get_name(bsymbol));
         return -1;
     }
 
@@ -278,7 +276,7 @@ int register_return_probe(char *symbol,
     if (g_hash_table_lookup(rprobes, (gpointer)funcstart))
     {
         WARN("Already registered function %s return. Skipping...\n",
-             bsymbol->lsymbol->symbol->name);
+             bsymbol_get_name(bsymbol));
         return 0;
     }
 
@@ -289,7 +287,7 @@ int register_return_probe(char *symbol,
 
     probe = probe_create(t, 
                          ops,
-                         bsymbol->lsymbol->symbol->name,
+                         bsymbol_get_name(bsymbol),
                          handler, /* pre_handler */
                          NULL, /* post_handler */
                          data,
@@ -297,7 +295,7 @@ int register_return_probe(char *symbol,
     if (!probe)
     {
         ERR("Could not create return probe on '%s'\n",
-            bsymbol->lsymbol->symbol->name);
+            bsymbol_get_name(bsymbol));
         return -1;
     }
 
@@ -308,15 +306,14 @@ int register_return_probe(char *symbol,
     {
         probe_free(probe, 1);
         ERR("Could not register return probe on '%s'\n",
-            bsymbol->lsymbol->symbol->name);
+            bsymbol_get_name(bsymbol));
         return -1;
     }
 
     if (probe_num_sources(probe) == 0)
     {
         probe_free(probe, 1);
-        ERR("No return sites in %s.\n",
-            bsymbol->lsymbol->symbol->name);
+        ERR("No return sites in %s.\n", bsymbol_get_name(bsymbol));
         return -2;
     }
     
@@ -329,8 +326,57 @@ int register_return_probe(char *symbol,
                         (gpointer)probe);
     
     DBG("Registered %d return probes in function %s.\n",
-        probe_num_sources(probe),
-        bsymbol->lsymbol->symbol->name);
+        probe_num_sources(probe), bsymbol_get_name(bsymbol));
+
+    return 0;
+}
+
+int register_var_probe(char *symbol,
+                       probe_handler_t handler,
+                       probepoint_whence_t whence,
+                       symbol_type_flag_t ftype,
+                       void *data)
+{
+    struct bsymbol *bsymbol = NULL;
+    struct probe *probe;
+
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
+    if (!bsymbol)
+    {
+        ERR("Could not find symbol %s!\n", symbol);
+        return -1;
+    }
+
+    //if (bsymbol)
+    //    bsymbol_dump(bsymbol, &udn);
+
+    probe = probe_create(t, 
+                         NULL, /* ops */
+                         bsymbol_get_name(bsymbol), 
+                         NULL, /* pre_handler */
+                         handler, /* post_handler */
+                         data, 
+                         0); /* autofree */
+    if (!probe)
+    {
+        ERR("Could not create var probe on '%s'\n", symbol);
+        return -1;
+    }
+
+    if (!probe_register_symbol(probe, bsymbol, 
+                               PROBEPOINT_FASTEST, whence, 
+                               PROBEPOINT_LAUTO))
+    {
+        ERR("Could not register var probe on '%s'\n",
+            bsymbol_get_name(bsymbol));
+        probe_free(probe, 1);
+        bsymbol_release(bsymbol);
+        return -1;
+    }
+    
+    g_hash_table_insert(probes, (gpointer)probe, (gpointer)probe);
+
+    bsymbol_release(bsymbol);
 
     return 0;
 }
