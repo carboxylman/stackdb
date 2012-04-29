@@ -27,6 +27,8 @@
 #include <regex.h>
 
 #include <elfutils/libdw.h>
+#include <elfutils/libdwfl.h>
+#include <elfutils/libebl.h>
 
 #include "debugpred.h"
 #include "list.h"
@@ -332,6 +334,9 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
 /* Populate a libsymd debugfile with DWARF debuginfo from an ELF file. */
 int debugfile_load(struct debugfile *debugfile,
 		   struct debugfile_load_opts *opts);
+int debugfile_expand_symbol(struct debugfile *debugfile,struct symbol *symbol);
+int debugfile_expand_cu(struct debugfile *debugfile,struct symtab *cu_symtab,
+			struct array_list *die_offsets,int expand_dies);
 
 struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr);
 void debugfile_load_opts_free(struct debugfile_load_opts *opts);
@@ -339,7 +344,7 @@ void debugfile_load_opts_free(struct debugfile_load_opts *opts);
 char *debugfile_build_idstr(char *filename,char *name,char *version);
 int debugfile_filename_info(char *filename,char **realfilename,
 			    char **name,char **version);
-int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab);
+int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab);
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol);
 struct symbol *debugfile_find_type(struct debugfile *debugfile,
 				   char *typename);
@@ -353,9 +358,8 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force);
  ** Symbol tables.
  **/
 struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
-			     char *srcfilename,char *compdirname,
-			     int language,char *producer,
-			     struct symbol *symtab_symtab,int noautoinsert);
+			     char *name,struct symbol *symtab_symtab,
+			     int noautoinsert);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 struct symbol *symtab_get_sym(struct symtab *symtab,const char *name);
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
@@ -366,6 +370,7 @@ char *symtab_get_name(struct symtab *symtab);
 void symtab_set_name(struct symtab *symtab,char *srcfilename,int noautoinsert);
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname);
 void symtab_set_producer(struct symtab *symtab,char *producer);
+void symtab_set_language(struct symtab *symtab,int language);
 void symtab_dump(struct symtab *symtab,struct dump_info *ud);
 /*
  * Since we can get symtab info from multiple places (i.e.,
@@ -720,6 +725,15 @@ struct debugfile {
     /* Save the options we were loaded with, forever. */
     struct debugfile_load_opts *opts;
 
+    /*
+     * If the symtab was loaded partially (or not loaded beyond the CU
+     * header), we keep the debuginfo file loaded), so we have to save
+     * off the elfutils info.
+     */
+    int fd;
+    Dwfl *dwfl;
+    Ebl *ebl;
+
     /* filename:name:version string.  If version is null, we use __NULL
        instead. */
     char *idstr;
@@ -929,7 +943,34 @@ struct location {
 };
 
 #define SYMTAB_IS_ROOT(symtab) ((symtab)->parent == NULL)
+#define SYMTAB_IS_CU(symtab)   ((symtab)->meta != NULL)
 #define SYMTAB_IS_ANON(symtab) ((symtab)->symtab_symbol == NULL)
+
+struct dwarf_cu_meta {
+    Dwfl_Module *dwflmod;
+    Dwarf *dbg;
+    size_t cuhl;
+    Dwarf_Half version;
+    uint8_t addrsize;
+    uint8_t offsize;
+    Dwarf_Off abbroffset;
+    Dwarf_Off nextcu;
+
+    /* If this was a source filename, a compilation dir should be set. */
+    char *compdirname;
+
+    /*
+     * Any symbol in the pubnames table for any CUs in this debugfile is
+     * in here, with a pointer to its CU's symtab.
+     */
+    GHashTable *pubnames;
+
+    char *producer;
+    short int language;
+
+    /* Right now, this is only set for top-level CU symtabs. */
+    load_type_t loadtag:LOAD_TYPE_BITS;
+};
 
 /*
  * Symbol tables are mostly just backreferences to the objects they are
@@ -940,27 +981,16 @@ struct location {
 struct symtab {
     struct debugfile *debugfile;
 
+    /* If this is a top-level (CU) symtab, we need some extra info. */
+    struct dwarf_cu_meta *meta;
+
     /* This may be the source filename, OR a subscope name. */
     char *name;
-    /* If this was a source filename, a compilation dir should be set. */
-    char *compdirname;
-
-    /*
-     * Any symbol in the pubnames table for any CUs in this debugfile is
-     * in here, with a pointer to its CU's symtab.
-     */
-    GHashTable *pubnames;
 
     /* The range for this symtab is either a list of ranges, or a
      * low_pc/high_pc range.
      */
     struct range range;
-
-    char *producer;
-    short int language;
-
-    /* Right now, this is only set for top-level CU symtabs. */
-    load_type_t loadtag:LOAD_TYPE_BITS;
 
     /* The offset where this symtab came from.  For CU symtabs, it is
      * the CU; for function symtabs, it is the function's DIE.

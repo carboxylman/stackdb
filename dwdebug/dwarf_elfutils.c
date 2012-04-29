@@ -202,8 +202,8 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 
 	    /* Construct a full filename. */
 	    if (u128 == 0) {
-		if (cu_symtab->compdirname)
-		    dirp = cu_symtab->compdirname;
+		if (cu_symtab->meta->compdirname)
+		    dirp = cu_symtab->meta->compdirname;
 		else
 		    dirp = (char *)array_list_item(dirlist,0);
 	    }
@@ -456,8 +456,8 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    
 		    /* Construct a full filename. */
 		    if (u128 == 0) {
-			if (cu_symtab->compdirname)
-			    dirp = cu_symtab->compdirname;
+			if (cu_symtab->meta->compdirname)
+			    dirp = cu_symtab->meta->compdirname;
 			else
 			    dirp = (char *)array_list_item(dirlist,0);
 		    }

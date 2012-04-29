@@ -169,14 +169,17 @@ int main(int argc,char **argv) {
 		s = debugfile_lookup_sym_line(debugfile,argv[i],
 					      atoi(cptr),NULL,NULL);
 	    }
-	    else if (endptr != argv[i])
+	    else if (endptr != argv[i]) {
 		s = debugfile_lookup_addr(debugfile,addr);
-	    else
+	    }
+	    else {
 		s = debugfile_lookup_sym(debugfile,argv[i],".",
 					 NULL,SYMBOL_TYPE_NONE);
-	    
-	    if (!s)
-		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+	    }
+
+	    if (!s) {
+		fprintf(stderr,"Could not lookup %s!\n",argv[i]);
+	    }
 	    else {
 		fprintf(stderr,"forward lookup %s: ",argv[i]);
 		lsymbol_dump(s,&ud);

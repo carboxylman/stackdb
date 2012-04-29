@@ -578,6 +578,23 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
 	/* If we didn't find it, try our symtab search struct! */
 	symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
 
+	if (symtab) 
+	    vwarn("found symtab %s 0x%"PRIxSMOFFSET"\n",symtab->name,
+		  symtab->ref);
+
+	/* If the symtab is a top-level, unloaded (or partially loaded)
+	 * symtab, finish loading it first.  Then redo the lookup.
+	 */
+	if (symtab && 
+	    ((SYMTAB_IS_CU(symtab) 
+	      && (symtab->meta->loadtag == LOADTYPE_UNLOADED 
+		  || symtab->meta->loadtag == LOADTYPE_PARTIAL))
+	     || SYMTAB_IS_ROOT(symtab))) {
+	    debugfile_expand_cu(debugfile,symtab,NULL,1);
+
+	    symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
+	}
+
 	if (symtab) {
 	    while (1) {
 		if (symtab->symtab_symbol) {
@@ -737,6 +754,17 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     if (lsymbol	&& !lsymbol->symbol->isdeclaration) {
 	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found best %s in symtab\n",
 	       lsymbol->symbol->name);
+	/* If we found a match, fully load it (and its children and
+	 * dependent DIEs if it hasn't been yet!).
+	 */
+	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL) {
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial lsymbol %s\n",
+		   symbol_get_name(lsymbol->symbol));
+	    debugfile_expand_symbol(debugfile,lsymbol->symbol);
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanded partial lsymbol %s\n",
+		   symbol_get_name(lsymbol->symbol));
+	}
+
 	goto out;
     }
     /* We're not going to use it; it is no better than symbol. */
@@ -749,8 +777,32 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     }
 
     /* If we only have the result from types/globals search, use that! */
-    if (!lsymbol) 
+    if (!lsymbol) {
+	/* If we found a match, fully load it (and its children and
+	 * dependent DIEs if it hasn't been yet!).
+	 */
+	if (symbol->loadtag == LOADTYPE_PARTIAL) {
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial symbol %s\n",
+		   symbol_get_name(symbol));
+	    debugfile_expand_symbol(debugfile,symbol);
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanded partial symbol %s\n",
+		   symbol_get_name(symbol));
+	}
+
 	lsymbol = lsymbol_create(symbol,chain);
+    }
+    else {
+	/* If we found a match, fully load it (and its children and
+	 * dependent DIEs if it hasn't been yet!).
+	 */
+	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL) {
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial lsymbol %s\n",
+		   symbol_get_name(lsymbol->symbol));
+	    debugfile_expand_symbol(debugfile,lsymbol->symbol);
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanded partial lsymbol %s\n",
+		   symbol_get_name(lsymbol->symbol));
+	}
+    }
 
     /* If it's not a delimited string, stop now, successfully. */
     if (!lname) {
@@ -1081,7 +1133,7 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
     debugfile->types = g_hash_table_new(g_str_hash,g_str_equal);
 
     debugfile->shared_types = symtab_create(debugfile,0,"__sharedtypes__",
-					    NULL,-1,NULL,NULL,1);
+					    NULL,1);
 
     /* This is an optimization lookup hashtable, so we don't provide
      * *any* key or value destructors since we don't want them freed
@@ -1136,39 +1188,37 @@ struct debugfile *debugfile_filename_create(char *filename,debugfile_type_t type
     return debugfile;
 }
 
-int debugfile_add_symtab(struct debugfile *debugfile,struct symtab *symtab) {
+int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab) {
     gpointer retp;
 
-    /* If it's a root (CU) symtab, add it to the main hashtable. */
-    if (SYMTAB_IS_ROOT(symtab)) {
-	if (symtab->name) {
-	    if ((retp = g_hash_table_lookup(debugfile->srcfiles,
-					    symtab->name)) != NULL
-		&& retp != symtab)
-		return 1;
-	    else if (retp == symtab)
-		return 0;
-	    else {
-		vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:%s\n",
-		       debugfile->idstr,symtab->name);
-		g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
-	    }
-	}
-
-	if ((retp = g_hash_table_lookup(debugfile->cuoffsets,
-					(gpointer)(uintptr_t)symtab->ref)) != NULL
+    /* Assume it is a root symtab! */
+    if (symtab->name) {
+	if ((retp = g_hash_table_lookup(debugfile->srcfiles,
+					symtab->name)) != NULL
 	    && retp != symtab)
-	    return 2;
+		return 1;
 	else if (retp == symtab)
 	    return 0;
 	else {
-	    g_hash_table_insert(debugfile->cuoffsets,
-				(gpointer)(uintptr_t)symtab->ref,symtab);
-	    vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:0x%"PRIxSMOFFSET"\n",
-		   debugfile->idstr,symtab->ref);
+	    vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:%s\n",
+		   debugfile->idstr,symtab->name);
+	    g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
 	}
     }
-    
+
+    if ((retp = g_hash_table_lookup(debugfile->cuoffsets,
+				    (gpointer)(uintptr_t)symtab->ref)) != NULL
+	&& retp != symtab)
+	return 2;
+    else if (retp == symtab)
+	return 0;
+    else {
+	g_hash_table_insert(debugfile->cuoffsets,
+			    (gpointer)(uintptr_t)symtab->ref,symtab);
+	vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:0x%"PRIxSMOFFSET"\n",
+	       debugfile->idstr,symtab->ref);
+    }
+
     return 0;
 }
 
@@ -1244,6 +1294,21 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 	free(debugfile->loctab);
     if (debugfile->rangetab)
 	free(debugfile->rangetab);
+    if (debugfile->linetab)
+	free(debugfile->linetab);
+
+    if (debugfile->ebl) {
+	ebl_closebackend(debugfile->ebl);
+	debugfile->ebl = NULL;
+    }
+    if (debugfile->dwfl) {
+	dwfl_end(debugfile->dwfl);
+	debugfile->dwfl = NULL;
+    }
+    if (debugfile->fd) {
+	close(debugfile->fd);
+	debugfile->fd = 0;
+    }
 
     if (debugfile->version)
 	free(debugfile->version);
@@ -1261,9 +1326,8 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
  ** Symtabs.
  **/
 struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
-			     char *name,char *compdirname,
-			     int language,char *producer,
-			     struct symbol *symtab_symbol,int noautoinsert) {
+			     char *name,struct symbol *symtab_symbol,
+			     int noautoinsert) {
     struct symtab *symtab;
 
     symtab = (struct symtab *)malloc(sizeof(*symtab));
@@ -1274,10 +1338,7 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
     symtab->debugfile = debugfile;
 
     symtab_set_name(symtab,name,noautoinsert);
-    symtab_set_compdirname(symtab,compdirname);
-    symtab_set_producer(symtab,producer);
 
-    symtab->language = language;
     symtab->range.rtype = RANGE_TYPE_NONE;
 
     symtab->ref = offset;
@@ -1309,7 +1370,7 @@ void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
     /* If this top-level symtab is being renamed, remove it from our
      * debugfile!
      */
-    if (name && SYMTAB_IS_ROOT(symtab) && symtab->debugfile && symtab->name)
+    if (name && SYMTAB_IS_CU(symtab) && symtab->debugfile && symtab->name)
 	g_hash_table_remove(symtab->debugfile->srcfiles,symtab->name);
 
     if (name 
@@ -1324,7 +1385,7 @@ void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
     /* If this top-level symtab wasn't in our debugfile srcfiles
      * hash, add it!
      */
-    if (name && !noautoinsert && SYMTAB_IS_ROOT(symtab) && symtab->debugfile 
+    if (name && !noautoinsert && SYMTAB_IS_CU(symtab) && symtab->debugfile 
 	&& !g_hash_table_lookup(symtab->debugfile->srcfiles,symtab->name)) 
 	g_hash_table_insert(symtab->debugfile->srcfiles,symtab->name,symtab);
 }
@@ -1334,7 +1395,11 @@ char *symtab_get_name(struct symtab *symtab) {
 }
 
 void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
-    if (symtab->compdirname && strcmp(symtab->compdirname,compdirname) == 0)
+    if (!SYMTAB_IS_CU(symtab))
+	return;
+
+    if (symtab->meta->compdirname 
+	&& strcmp(symtab->meta->compdirname,compdirname) == 0)
 	return;
 
     if (compdirname
@@ -1342,13 +1407,16 @@ void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
 	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,compdirname))
 #endif
 	)
-	symtab->compdirname = strdup(compdirname);
+	symtab->meta->compdirname = strdup(compdirname);
     else
-	symtab->compdirname = compdirname;
+	symtab->meta->compdirname = compdirname;
 }
 
 void symtab_set_producer(struct symtab *symtab,char *producer) {
-    if (symtab->producer && strcmp(symtab->producer,producer) == 0)
+    if (!SYMTAB_IS_CU(symtab))
+	return;
+
+    if (symtab->meta->producer && strcmp(symtab->meta->producer,producer) == 0)
 	return;
 
     if (producer 
@@ -1356,9 +1424,16 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,producer))
 #endif
 	)
-	symtab->producer = strdup(producer);
+	symtab->meta->producer = strdup(producer);
     else
-	symtab->producer = producer;
+	symtab->meta->producer = producer;
+}
+
+void symtab_set_language(struct symtab *symtab,int language) {
+    if (!SYMTAB_IS_CU(symtab))
+	return;
+
+    symtab->meta->language = language;
 }
 
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
@@ -1438,6 +1513,10 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 
 	/* If the start/end range matches the current thing, do nothing! */
 	if (olowpc == start && ohighpc == end) {
+	    vdebug(8,LOG_D_DWARF,
+		   "RANGE_PC(0x%"PRIxADDR",0x%"PRIxADDR") matched for symtab"
+		   " %s at 0x%"PRIxSMOFFSET"; not updating\n",start,end,
+		   symtab->name,symtab->ref);
 	    return;
 	}
 	/* If the start address is equal, but the end is not, warn about
@@ -1541,19 +1620,21 @@ void symtab_free(struct symtab *symtab) {
 #endif
 	)
 	free(symtab->name);
-    if (symtab->compdirname
+    if (SYMTAB_IS_CU(symtab)) {
+	if (symtab->meta->compdirname
 #ifdef DWDEBUG_USE_STRTAB
-	&& !symtab_str_in_strtab(symtab,symtab->compdirname)
+	    && !symtab_str_in_strtab(symtab,symtab->meta->compdirname)
 #endif
-	)
-	free(symtab->compdirname);
-    if (symtab->producer
+	    )
+	    free(symtab->meta->compdirname);
+	if (symtab->meta->producer
 #ifdef DWDEBUG_USE_STRTAB
-	&& !symtab_str_in_strtab(symtab,symtab->producer)
+	    && !symtab_str_in_strtab(symtab,symtab->meta->producer)
 #endif
-	)
-	free(symtab->producer);
-
+	    )
+	    free(symtab->meta->producer);
+	free(symtab->meta);
+    }
     free(symtab);
 }
 
@@ -1657,6 +1738,9 @@ char *symbol_get_name_orig(struct symbol *symbol) {
 }
 
 void symbol_set_name(struct symbol *symbol,char *name) {
+    if (symbol->name && strcmp(symbol->name,name) == 0)
+	return;
+
     if (name 
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symbol->symtab || !symbol->symtab->debugfile 
@@ -2717,7 +2801,8 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
      */
     if (SYMBOL_IS_FULL_INSTANCE(symbol))
 	location_internal_free(&symbol->s.ii->l);
-    else if (symbol->name
+    
+    if (symbol->name
 #ifdef DWDEBUG_USE_STRTAB
 	     && (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
 #endif
@@ -3260,12 +3345,14 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	fprintf(ud->stream,"%ssymtab(%s) (",p,symtab->name);
     else
 	fprintf(ud->stream,"%ssymtab() (",p);
-    if (symtab->compdirname)
-	fprintf(ud->stream,"compdirname=%s ",symtab->compdirname);
-    if (symtab->producer)
-	fprintf(ud->stream,"producer=%s ",symtab->producer);
-    if (symtab->language)
-	fprintf(ud->stream,"language=%d ",symtab->language);
+    if (SYMTAB_IS_CU(symtab)) {
+	if (symtab->meta->compdirname)
+	    fprintf(ud->stream,"compdirname=%s ",symtab->meta->compdirname);
+	if (symtab->meta->producer)
+	    fprintf(ud->stream,"producer=%s ",symtab->meta->producer);
+	if (symtab->meta->language)
+	    fprintf(ud->stream,"language=%d ",symtab->meta->language);
+    }
     range_dump(&symtab->range,&udn3);
     fprintf(ud->stream,") {\n");
     g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
