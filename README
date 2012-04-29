@@ -2,7 +2,7 @@
 
 To build this software, you must have installed
 
-  * glib (>= 2.14, I believe);
+  * glib (>= 2.29.10, I believe);
   * elfutils (>= 0.137 should be fine, but ideally you will want
     something much newer, such as 0.148 or 0.152);
   * Judy
