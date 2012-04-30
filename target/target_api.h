@@ -253,14 +253,14 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 /*
  * If you have the type of symbol you're interested in, but you need to
  * load a pointer to a chunk of memory of that type, you can create a
- * dynamic type symbol that points to your "base" type.
+ * synthetic type symbol that points to your "base" type.
  *
- * Dynamic symbols are the only kind of symbols that hold refs to other
+ * Synthetic symbols are the only kind of symbols that hold refs to other
  * symbols (in this case, the return value holds a ref to @type).  This
  * function also holds a ref to the symbol it returns, since it is
  * anticipated that only users will call this function.
  */
-struct symbol *target_create_dynamic_type_pointer(struct target *target,
+struct symbol *target_create_synthetic_type_pointer(struct target *target,
 						  struct symbol *type);
 
 typedef int (*target_debug_handler_t)(struct target *target,

@@ -2662,7 +2662,7 @@ REFCNT symbol_release(struct symbol *symbol) {
      *
      * Actually, we only free dynamic symbols automatically on release!
      */
-    if (symbol->isdynamic || symbol->isshared) {
+    if (symbol->issynthetic || symbol->isshared) {
 	vdebug(10,LOG_D_SYMBOL,
 	       "dynamic/shared symbol %s//%s at %"PRIxSMOFFSET":     ",
 	       SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
@@ -2728,7 +2728,7 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     /* If this is a dynamic symbol, we have to recursively release any
      * dynamic symbols it points to.
      */
-    else if (symbol->isdynamic && symbol->datatype) {
+    else if (symbol->issynthetic && symbol->datatype) {
 	symbol_release(symbol->datatype);
 	symbol->datatype = NULL;
     }

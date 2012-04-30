@@ -37,7 +37,7 @@ struct value *linux_load_current_task(struct target *target) {
     }
 
     itptr_type = \
-	target_create_dynamic_type_pointer(target,
+	target_create_synthetic_type_pointer(target,
 					   bsymbol_get_symbol(it_type));
 
     errno = 0;

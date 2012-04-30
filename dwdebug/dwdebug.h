@@ -1073,7 +1073,7 @@ struct symbol {
     /* If this is a type symbol, which type. */
     datatype_code_t datatype_code:DATATYPE_CODE_BITS;
 
-    unsigned int isdynamic:1,
+    unsigned int issynthetic:1,
 	isshared:1,
 	usesshareddatatype:1,
 	freenextpass:1,

@@ -18,12 +18,12 @@
 
 #include "target.h"
 
-struct symbol *target_create_dynamic_type_pointer(struct target *target,
+struct symbol *target_create_synthetic_type_pointer(struct target *target,
 						  struct symbol *type) {
     struct symbol *retval = symbol_create(type->symtab,0,NULL,SYMBOL_TYPE_TYPE,1);
 
     retval->datatype_code = DATATYPE_PTR;
-    retval->isdynamic = 1;
+    retval->issynthetic = 1;
 
     retval->datatype = type;
     retval->datatype_ref = type->ref;
