@@ -105,9 +105,9 @@ int register_call_probe(char *symbol,
     {
         if (!probe_register_addr(probe, addr, 
                                  PROBEPOINT_BREAK, 
-                                 PROBEPOINT_FASTEST, whence, 
+                                 PROBEPOINT_SW, whence, 
                                  PROBEPOINT_LAUTO,
-                                 NULL))
+                                 NULL)) /* bsymbol */
         {
             ERR("Could not register call probe on 0x%08lx\n", addr);
             probe_free(probe, 1);
@@ -118,7 +118,7 @@ int register_call_probe(char *symbol,
     {
         if (!probe_register_inlined_symbol(probe, bsymbol, 
                                            1,
-                                           PROBEPOINT_FASTEST, whence, 
+                                           PROBEPOINT_SW, whence, 
                                            PROBEPOINT_LAUTO))
         {
             ERR("Could not register inlined call probe on '%s'\n",
@@ -131,7 +131,7 @@ int register_call_probe(char *symbol,
     else
     {
         if (!probe_register_symbol(probe, bsymbol, 
-                                   PROBEPOINT_FASTEST, whence, 
+                                   PROBEPOINT_SW, whence, 
                                    PROBEPOINT_LAUTO))
         {
             ERR("Could not register call probe on '%s'\n",
@@ -368,7 +368,7 @@ int register_var_probe(char *symbol,
     }
 
     if (!probe_register_symbol(probe, bsymbol, 
-                               PROBEPOINT_FASTEST, whence, 
+                               PROBEPOINT_SW, whence, 
                                PROBEPOINT_LAUTO))
     {
         ERR("Could not register var probe on '%s'\n",
@@ -381,6 +381,43 @@ int register_var_probe(char *symbol,
     g_hash_table_insert(probes, (gpointer)probe, (gpointer)probe);
 
     bsymbol_release(bsymbol);
+
+    return 0;
+}
+
+int register_raw_probe(unsigned long addr, 
+                       char *name,
+                       probe_handler_t handler,
+                       probepoint_whence_t whence,
+                       void *data)
+{
+    struct probe *probe;
+    
+    probe = probe_create(t, 
+                         NULL, /* ops */
+                         name, 
+                         NULL, /* pre_handler */
+                         handler, /* post_handler */
+                         data, 
+                         0); /* autofree */
+    if (!probe)
+    {
+        ERR("Could not create raw probe on '0x%08lx'\n", addr);
+        return -1;
+    }
+
+    if (!probe_register_addr(probe, addr,
+                PROBEPOINT_WATCH,
+                PROBEPOINT_HW, whence,
+                PROBEPOINT_LAUTO,
+                NULL)) /* bsymbol */
+    {
+        ERR("Could not register raw probe on 0x%08lx\n", addr);
+        probe_free(probe, 1);
+        return -1;
+    }
+
+    g_hash_table_insert(probes, (gpointer)probe, (gpointer)probe);
 
     return 0;
 }

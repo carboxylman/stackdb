@@ -255,53 +255,35 @@ static int probe_var(struct probe *probe,
                      void *data,
                      struct probe *trigger)
 {
-    char *symbol;
-    struct value *value;
-    struct bsymbol *bsymbol = probe->bsymbol;
-    int i;
+    ctxprobes_var_t value;
+    int tmp = -1;
 
     ctxprobes_var_handler_t handler = (ctxprobes_var_handler_t) data;
 
-    symbol = bsymbol_get_name(probe->bsymbol);
+    DBG("%d (%s): Variable %s (0x%08x) read or written (context: %s)\n", 
+        task_current->pid, task_current->comm, 
+		probe->name, probe_addr(probe), 
+        context_string(context_current));
     
-    /* FIXME: test code */
-    fflush(stderr);
-    fflush(stdout);
-    if ((value = bsymbol_load(bsymbol,
-                              LOAD_FLAG_AUTO_DEREF |
-                              LOAD_FLAG_AUTO_STRING |
-                              LOAD_FLAG_NO_CHECK_VISIBILITY |
-                              LOAD_FLAG_NO_CHECK_BOUNDS)))
+    if (!target_read_addr(t, 
+                          probe_addr(probe), 
+                          4, /* FIXME: size hard-coded */ 
+                          (unsigned char *)&tmp, 
+                          NULL))
     {
-        printf("TEST: %s (0x%08x) = ", 
-               probe->bsymbol->lsymbol->symbol->name,
-               probe_addr(probe));
+        ERR("Could not read memory for %s (0x%08x)\n", 
+            probe->name, probe_addr(probe));
+        return -1;
+    }
 
-        symbol_rvalue_print(stdout, probe->bsymbol->lsymbol->symbol,
-                            value->buf, value->bufsiz,
-                            LOAD_FLAG_AUTO_DEREF |
-                            LOAD_FLAG_AUTO_STRING |
-                            LOAD_FLAG_NO_CHECK_VISIBILITY |
-                            LOAD_FLAG_NO_CHECK_BOUNDS,
-                            t);
-        printf("(0x");
-        for (i = 0; i < value->bufsiz; i++)
-            printf("%02hhx", value->buf[i]);
-        printf(")\n");
-        value_free(value);
-    }
-    else
-    {
-        printf("TEST: %s (0x%08x): could not read value: %s\n",
-               probe->bsymbol->lsymbol->symbol->name, probe_addr(probe),
-               strerror(errno));
-    }
-    fflush(stderr);
-    fflush(stdout);
-    
+    value.name = probe->name;
+    value.size = 4; /* FIXME: size hard-coded */
+    value.buf = (char *)&tmp;
+
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
-    handler(symbol, 
-            NULL, /* ctxprobes_var_t *var */
+    handler(probe_addr(probe),
+            probe->name, 
+            &value, 
             task_current, 
             context_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
@@ -1450,7 +1432,8 @@ int ctxprobes_reg_func_return(char *symbol,
     return 0;
 }
 
-int ctxprobes_reg_var(char *symbol,
+int ctxprobes_reg_var(unsigned long addr, //char *symbol,
+                      char *name, 
                       ctxprobes_var_handler_t handler,
                       int readwrite)
 {
@@ -1462,16 +1445,27 @@ int ctxprobes_reg_var(char *symbol,
         return -1;
     }
 
-    ret = register_var_probe(symbol,
+    //ret = register_var_probe(symbol,
+    //                         probe_var,
+    //                         NULL, /* ops */
+    //                         (readwrite) ? 
+    //                             PROBEPOINT_READWRITE : PROBEPOINT_WRITE,
+    //                         SYMBOL_TYPE_FLAG_NONE,//SYMBOL_TYPE_FLAG_VAR,
+    //                         handler); /* data <- ctxprobes handler */
+    //if (ret)
+    //{
+    //    ERR("Failed to register context-aware var probe on '%s'\n", symbol);
+    //    return -1;
+    //}
+
+    ret = register_raw_probe(addr, name, 
                              probe_var,
-                             NULL, /* ops */
                              (readwrite) ? 
-                             PROBEPOINT_READWRITE : PROBEPOINT_WRITE,
-                             SYMBOL_TYPE_FLAG_NONE,//SYMBOL_TYPE_FLAG_VAR,
+                                 PROBEPOINT_READWRITE : PROBEPOINT_WRITE,
                              handler); /* data <- ctxprobes handler */
     if (ret)
     {
-        ERR("Failed to register context-aware var probe on '%s'\n", symbol);
+        ERR("Failed to register context-aware raw probe on '%s'\n", name);
         return -1;
     }
 

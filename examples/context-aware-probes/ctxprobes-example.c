@@ -28,10 +28,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
+
 #include <log.h>
+#include <list.h>
+#include <alist.h>
 
 #include "ctxprobes.h"
 #include "debug.h"
+
+#define TASK_UID_OFFSET (336)
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -39,6 +44,8 @@ extern int optind, opterr, optopt;
 static char *domain_name = NULL; 
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
+
+static struct array_list *tasklist;
 
 char context_ch(ctxprobes_context_t context)
 {
@@ -82,29 +89,57 @@ char *context_str(ctxprobes_context_t context)
     return str;
 }
 
-void task_switch_next(char *symbol,
-                      ctxprobes_var_t *var,
-                      ctxprobes_task_t *task,
-                      ctxprobes_context_t context)
+int alist_contains(struct array_list *list, unsigned int pid)
 {
-    // TODO: ...
-    printf("schedule.next: 0x%08x\n", var);
+    int i;
+    unsigned int tmp;
+
+    for (i = 0; i < array_list_len(list); i++)
+    {
+        tmp = (unsigned int)array_list_item(list, i);
+        if (tmp == pid)
+            return 1;
+    }
+
+    return 0;
+}
+
+void task_uid_modified(unsigned long addr,
+                       char *name,
+                       ctxprobes_var_t *var,
+                       ctxprobes_task_t *task,
+                       ctxprobes_context_t context)
+{
+    printf("Task uid modified: new value = %d\n", *(int *)var->buf);
 }
 
 void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
+    int ret;
+    unsigned long addr;
+    char *name;
+
     printf("Task switch: %d (%s) -> %d (%s)\n",
            prev->pid, prev->comm, next->pid, next->comm);
 
-    static int registered = 0;
-    if (!registered)
+    if (!alist_contains(tasklist, next->vaddr))
     {
-        int ret = ctxprobes_reg_var("schedule.next", task_switch_next, 0);
+        addr = next->vaddr + TASK_UID_OFFSET;
+        name = "schedule.next->uid"; 
+
+        ret = ctxprobes_reg_var(addr,
+                                name, 
+                                task_uid_modified, 
+                                0);
         if (ret)
-            ERR("Failed to register probe on schedule.next\n");
-        else
-            printf("Probe registered on schedule.next\n");
-        registered = 1;
+        {
+            ERR("Failed to register probe on %s\n", name);
+            return;
+        }
+        
+        array_list_add(tasklist, (void *)next->vaddr);
+        
+        printf("Probe registered on %s (0x%08lx)\n", name, addr);
     }
 }
 
@@ -227,6 +262,8 @@ int main(int argc, char *argv[])
 {
     int ret;
 
+    tasklist = array_list_create(100);
+
     parse_opt(argc, argv);
 
     ret = ctxprobes_init(domain_name, 
@@ -265,6 +302,9 @@ int main(int argc, char *argv[])
     ctxprobes_wait();
 
     ctxprobes_cleanup();
+
+    if (tasklist)
+        array_list_free(tasklist);
     return 0;
 }
 

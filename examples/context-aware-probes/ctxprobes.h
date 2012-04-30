@@ -75,7 +75,8 @@ typedef void (*ctxprobes_func_return_handler_t)(char *symbol,
                                                 ctxprobes_task_t *task,
                                                 ctxprobes_context_t context);
 
-typedef void (*ctxprobes_var_handler_t)(char *symbol,
+typedef void (*ctxprobes_var_handler_t)(unsigned long addr,
+                                        char *name,
                                         ctxprobes_var_t *var,
                                         ctxprobes_task_t *task,
                                         ctxprobes_context_t context);
@@ -102,7 +103,8 @@ int ctxprobes_reg_func_prologue(char *symbol,
                                 ctxprobes_func_prologue_handler_t handler);
 int ctxprobes_reg_func_return(char *symbol,
                               ctxprobes_func_return_handler_t handler);
-int ctxprobes_reg_var(char *symbol,
+int ctxprobes_reg_var(unsigned long addr, //char *symbol,
+                      char *name,
                       ctxprobes_var_handler_t handler,
                       int readwrite);
 

@@ -94,6 +94,12 @@ int register_var_probe(char *symbol,
                        symbol_type_flag_t ftype,
                        void *data);
 
+int register_raw_probe(unsigned long addr, 
+                       char *name,
+                       probe_handler_t handler,
+                       probepoint_whence_t whence,
+                       void *data);
+
 void unregister_probes();
 
 unsigned long sysmap_symbol_addr(char *symbol);
