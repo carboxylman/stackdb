@@ -82,10 +82,30 @@ char *context_str(ctxprobes_context_t context)
     return str;
 }
 
+void task_switch_next(char *symbol,
+                      ctxprobes_var_t *var,
+                      ctxprobes_task_t *task,
+                      ctxprobes_context_t context)
+{
+    // TODO: ...
+    printf("schedule.next: 0x%08x\n", var);
+}
+
 void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
     printf("Task switch: %d (%s) -> %d (%s)\n",
            prev->pid, prev->comm, next->pid, next->comm);
+
+    static int registered = 0;
+    if (!registered)
+    {
+        int ret = ctxprobes_reg_var("schedule.next", task_switch_next, 0);
+        if (ret)
+            ERR("Failed to register probe on schedule.next\n");
+        else
+            printf("Probe registered on schedule.next\n");
+        registered = 1;
+    }
 }
 
 void context_change(ctxprobes_context_t prev, ctxprobes_context_t next)

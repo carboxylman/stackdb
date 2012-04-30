@@ -79,7 +79,7 @@ static int probe_func_prologue(struct probe *probe,
     ctxprobes_func_prologue_handler_t handler 
         = (ctxprobes_func_prologue_handler_t) data;
 
-    symbol = probe->name;
+    symbol = bsymbol_get_name(probe->bsymbol);
 
     DBG("%d (%s): Function %s prologue (context: %s)\n", 
         task_current->pid, task_current->comm, symbol, 
@@ -125,7 +125,7 @@ static int probe_func_call(struct probe *probe,
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
 
-    symbol = probe->name;
+    symbol = bsymbol_get_name(probe->bsymbol);
 
     DBG("%d (%s): Function %s called (context: %s)\n", 
         task_current->pid, task_current->comm, symbol, 
@@ -183,7 +183,7 @@ static int probe_func_return(struct probe *probe,
     ctxprobes_func_return_handler_t handler 
         = (ctxprobes_func_return_handler_t) data;
 
-    symbol = probe->name;
+    symbol = bsymbol_get_name(probe->bsymbol);
 
     DBG("%d (%s): Function %s returned (context: %s)\n", 
         task_current->pid, task_current->comm, symbol,
@@ -255,23 +255,27 @@ static int probe_var(struct probe *probe,
                      void *data,
                      struct probe *trigger)
 {
+    char *symbol;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
     int i;
 
     ctxprobes_var_handler_t handler = (ctxprobes_var_handler_t) data;
 
+    symbol = bsymbol_get_name(probe->bsymbol);
+    
+    /* FIXME: test code */
     fflush(stderr);
     fflush(stdout);
-
     if ((value = bsymbol_load(bsymbol,
                               LOAD_FLAG_AUTO_DEREF |
                               LOAD_FLAG_AUTO_STRING |
                               LOAD_FLAG_NO_CHECK_VISIBILITY |
                               LOAD_FLAG_NO_CHECK_BOUNDS)))
     {
-        printf("%s (0x%08x) = ", probe->bsymbol->lsymbol->symbol->name,
-                                 probe_addr(probe));
+        printf("TEST: %s (0x%08x) = ", 
+               probe->bsymbol->lsymbol->symbol->name,
+               probe_addr(probe));
 
         symbol_rvalue_print(stdout, probe->bsymbol->lsymbol->symbol,
                             value->buf, value->bufsiz,
@@ -288,14 +292,20 @@ static int probe_var(struct probe *probe,
     }
     else
     {
-        printf("%s (0x%08x): could not read value: %s\n",
+        printf("TEST: %s (0x%08x): could not read value: %s\n",
                probe->bsymbol->lsymbol->symbol->name, probe_addr(probe),
                strerror(errno));
     }
-
     fflush(stderr);
     fflush(stdout);
-
+    
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
+    handler(symbol, 
+            NULL, /* ctxprobes_var_t *var */
+            task_current, 
+            context_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
+    
     return 0;
 }
 
@@ -1022,7 +1032,7 @@ static int probe_task_switch_init(struct probe *probe)
 {
     DBG("Task switch init\n");
     
-    bsymbol_task_prev = target_lookup_sym(probe->target, 
+    bsymbol_task_prev = target_lookup_sym(t,//probe->target, 
                                           "schedule.prev",
                                           ".",
                                           NULL,
@@ -1033,7 +1043,7 @@ static int probe_task_switch_init(struct probe *probe)
         return -1;
     }
 
-    bsymbol_task_next = target_lookup_sym(probe->target, 
+    bsymbol_task_next = target_lookup_sym(t,//probe->target, 
                                           "schedule.next",
                                           ".",
                                           NULL,
@@ -1454,9 +1464,10 @@ int ctxprobes_reg_var(char *symbol,
 
     ret = register_var_probe(symbol,
                              probe_var,
+                             NULL, /* ops */
                              (readwrite) ? 
                              PROBEPOINT_READWRITE : PROBEPOINT_WRITE,
-                             SYMBOL_TYPE_FLAG_VAR,
+                             SYMBOL_TYPE_FLAG_NONE,//SYMBOL_TYPE_FLAG_VAR,
                              handler); /* data <- ctxprobes handler */
     if (ret)
     {

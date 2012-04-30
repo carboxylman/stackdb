@@ -335,6 +335,7 @@ int register_return_probe(char *symbol,
 
 int register_var_probe(char *symbol,
                        probe_handler_t handler,
+                       struct probe_ops *ops,
                        probepoint_whence_t whence,
                        symbol_type_flag_t ftype,
                        void *data)
@@ -353,7 +354,7 @@ int register_var_probe(char *symbol,
     //    bsymbol_dump(bsymbol, &udn);
 
     probe = probe_create(t, 
-                         NULL, /* ops */
+                         ops,
                          bsymbol_get_name(bsymbol), 
                          NULL, /* pre_handler */
                          handler, /* post_handler */
@@ -361,7 +362,8 @@ int register_var_probe(char *symbol,
                          0); /* autofree */
     if (!probe)
     {
-        ERR("Could not create var probe on '%s'\n", symbol);
+        ERR("Could not create var probe on '%s'\n", bsymbol_get_name(bsymbol));
+        bsymbol_release(bsymbol);
         return -1;
     }
 
