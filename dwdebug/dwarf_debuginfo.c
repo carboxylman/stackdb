@@ -1766,9 +1766,11 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
     dbg = meta->dbg;
 
     /* Set the load type -- the expected, no-errors state :)! */
-    if (meta->loadtag == LOADTYPE_UNLOADED && die_offsets)
+    if (meta->loadtag == LOADTYPE_UNLOADED 
+	&& (die_offsets || debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_PARTIALSYM))
 	meta->loadtag = LOADTYPE_PARTIAL;
-    else if (meta->loadtag == LOADTYPE_PARTIAL && die_offsets)
+    else if (meta->loadtag == LOADTYPE_PARTIAL 
+	     && (die_offsets || debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_PARTIALSYM))
 	meta->loadtag = LOADTYPE_PARTIAL;
     else if (meta->loadtag == LOADTYPE_FULL && die_offsets) {
 	verror("CU %s (offset 0x%"PRIxSMOFFSET") already fully loaded!\n",
