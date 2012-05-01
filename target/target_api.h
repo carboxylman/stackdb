@@ -134,11 +134,6 @@ int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 int target_singlestep(struct target *target);
 int target_singlestep_end(struct target *target);
 
-struct value *target_location_load_raw(struct target *target,
-				       struct location *location,
-				       load_flags_t flags,
-				       char **buf,int *bufsiz);
-
 
 /**
  ** Lookup functions.
