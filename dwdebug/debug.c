@@ -2354,6 +2354,16 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     else if (SYMBOL_IS_VAR(symbol) && SYMBOL_IST_STUN(symbol->datatype)) {
 	//vdebug(3,LOG_D_SYMBOL,"returning result of searching S/U type symbol: ");
 	//symbol_dump(symbol->datatype,&udn);
+	/* Make sure the datatype is fully loaded before we search it. */
+	if (symbol->datatype->loadtag == LOADTYPE_PARTIAL) {
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		   "expanding partial type symbol %s\n",
+		   symbol_get_name(symbol->datatype));
+	    debugfile_expand_symbol(symbol->symtab->debugfile,symbol->datatype);
+	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		   "expanded partial type symbol %s\n",
+		   symbol_get_name(symbol->datatype));
+	}
 	return __symbol_get_one_member(symbol->datatype,member,chainptr);
     }
 
