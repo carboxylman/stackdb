@@ -826,8 +826,10 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	delim = DWDEBUG_DEF_DELIM;
 
     while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
-	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain)))
+	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain))) {
+	    vwarn("did not find symbol for %s\n",next);
 	    goto errout;
+	}
 	else if (anonchain && array_list_len(anonchain)) {
 	    /* If anonchain has any members, we now have to glue those
 	     * members into our overall chain, BEFORE gluing the actual
@@ -2198,18 +2200,35 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     int j, k;
     struct lsymbol *lsymbol;
     struct symtab *subtab;
+    struct symbol *tsymbol;
     
-    /*
     struct dump_info udn = {
 	.stream = stderr,
 	.prefix = "",
 	.detail = 1,
 	.meta = 1
     };
-    */
+    vdebug(4,LOG_D_LOOKUP,"symbol: ");
+    symbol_dump(symbol,&udn);
+    
 
     if (!SYMBOL_IS_FULL(symbol))
 	return NULL;
+
+    /* This doesn't look safe, but it is!  If it's a type, we skip
+     * const/vol or typedefs, before testing.  If it's not one of those
+     * types, this function is an identity function, so we just operate
+     * on @symbol.
+     */
+    if (SYMBOL_IS_TYPE(symbol)) {
+	tsymbol = symbol_type_skip_qualifiers(symbol);
+	if (tsymbol != symbol) {
+	    vdebug(4,LOG_D_LOOKUP,"skipped type symbol %s, now: ",
+		   symbol_get_name(symbol));
+	    symbol_dump(tsymbol,&udn);
+	    symbol = tsymbol;
+	}
+    }
 
     if (SYMBOL_IST_FUNCTION(symbol)
 	&& symbol->s.ti->d.f.count) {
@@ -2351,20 +2370,46 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 
 	return NULL;
     }
-    else if (SYMBOL_IS_VAR(symbol) && SYMBOL_IST_STUN(symbol->datatype)) {
-	//vdebug(3,LOG_D_SYMBOL,"returning result of searching S/U type symbol: ");
-	//symbol_dump(symbol->datatype,&udn);
+    else if (SYMBOL_IS_VAR(symbol)) {
+	/* This doesn't look safe, but it is!  If it's a type, we skip
+	 * const/vol or typedefs, before testing.  If it's not one of those
+	 * types, this function is an identity function, so we just operate
+	 * on @symbol.
+	 */
+	tsymbol = symbol_type_skip_qualifiers(symbol->datatype);
+	if (tsymbol != symbol->datatype) {
+	    vdebug(4,LOG_D_LOOKUP,"skipped type symbol for %s, now: ",
+		   symbol_get_name(symbol->datatype));
+	    symbol_dump(tsymbol,&udn);
+	}
+
 	/* Make sure the datatype is fully loaded before we search it. */
-	if (symbol->datatype->loadtag == LOADTYPE_PARTIAL) {
+	if (tsymbol->loadtag == LOADTYPE_PARTIAL) {
 	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
 		   "expanding partial type symbol %s\n",
-		   symbol_get_name(symbol->datatype));
-	    debugfile_expand_symbol(symbol->symtab->debugfile,symbol->datatype);
+		   symbol_get_name(tsymbol));
+	    debugfile_expand_symbol(tsymbol->symtab->debugfile,tsymbol);
 	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
 		   "expanded partial type symbol %s\n",
-		   symbol_get_name(symbol->datatype));
+		   symbol_get_name(tsymbol));
 	}
-	return __symbol_get_one_member(symbol->datatype,member,chainptr);
+
+	if (SYMBOL_IST_STUN(tsymbol)) {
+	    //vdebug(3,LOG_D_SYMBOL,"returning result of searching S/U type symbol: ");
+	    //symbol_dump(tsymbol,&udn);
+
+	    return __symbol_get_one_member(tsymbol,member,chainptr);
+	}
+	else if (SYMBOL_IST_PTR(tsymbol)) {
+	    /*
+	     * We keep looking inside the pointed-to type, autoexpanding it
+	     * if necessary.
+	     */
+	    return __symbol_get_one_member(symbol_type_skip_ptrs(tsymbol),
+					   member,chainptr);
+	}
+	else 
+	    goto errout;
     }
 
  errout:
