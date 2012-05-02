@@ -43,6 +43,9 @@
 #include <ctxprobes.h>
 #include "debug.h"
 
+// FIXME: hard-coded task_struct offsets will be removed later.
+#define TASK_UID_OFFSET (336)
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
@@ -70,8 +73,30 @@ int alist_contains(struct array_list *list, unsigned int pid)
     return 0;
 }
 
+void task_uid_write(unsigned long addr,
+                    char *ame,
+                    ctxprobes_var_t *var,
+                    ctxprobes_task_t *task,
+                    ctxprobes_context_t context)
+{
+    unsigned long long brctr = ctxprobes_get_brctr();
+    if (!brctr)
+    {
+        ERR("Failed to get branch counter\n");
+        return;
+    }
+
+    fflush(stderr);
+    printf("%lld: %d\n", brctr, task->pid);
+    fflush(stdout);
+}
+
 void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
+    int ret;
+    unsigned long addr;
+    char *name;
+
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
     {
@@ -81,9 +106,9 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 
     if (brctr >= brctr_pwd)
     {
-        fflush(stderr);
-        printf("End of analysis: /etc/passwd accessed\n");
-        fflush(stdout);
+        //fflush(stderr);
+        //printf("End of analysis: /etc/passwd accessed\n");
+        //fflush(stdout);
             
         //kill(getpid(), SIGINT);
         return;
@@ -97,21 +122,32 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
              * First task switch to a suspected process, put it in the tracked
              * process list if it is with non-root uid. 
              */
-            array_list_add(tracklist, (void *)next->pid);
-            fflush(stderr);
-            printf("First task switch to %d (%s): uid = %d\n",
-                   next->pid, next->comm, next->uid);
-            fflush(stdout);
+            
+            //fflush(stderr);
+            //printf("First task switch to %d (%s): uid = %d\n",
+            //       next->pid, next->comm, next->uid);
+            //fflush(stdout);
 
             if (next->uid != 0)
             {
-                /* Put a watch-point at next->uid. */
-                fflush(stderr);
-                printf("Put a watch-point at uid of %d (%s)\n", 
-                       next->pid, next->comm);
+                addr = next->vaddr + TASK_UID_OFFSET;
+                name = "schedule.next->uid";
 
-                fflush(stdout);
+                ret = ctxprobes_reg_var(addr, name, task_uid_write, 0);
+                if (ret)
+                {
+                    printf("Failed to register probe on %s\n", name);
+                    return;
+                }
+                
+                /* Put a watch-point at next->uid. */
+                //fflush(stderr);
+                //printf("Put a watch-point at uid of %d (%s)\n", 
+                //       next->pid, next->comm);
+                //fflush(stdout);
             }
+            
+            array_list_add(tracklist, (void *)next->pid);
         }
     }
 }
