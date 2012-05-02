@@ -45,12 +45,15 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 
+static unsigned long long brctr_root;
+static unsigned int pid_root;
+
 void parse_opt(int argc, char *argv[])
 {
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:p:b:")) != -1)
     {
         switch(ch)
         {
@@ -70,6 +73,14 @@ void parse_opt(int argc, char *argv[])
 
             case 'm':
                 sysmap_file = optarg;
+                break;
+
+            case 'p':
+                pid_root = atoi(optarg);
+                break;
+
+            case 'b':
+                brctr_root = atoll(optarg);
                 break;
 
             default:
