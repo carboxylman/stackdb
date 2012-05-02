@@ -469,46 +469,31 @@ unsigned long sysmap_symbol_addr(char *symbol)
     return 0;
 }
 
-
-unsigned long current_task_addr(void)
-{
-    unsigned long esp = target_read_reg(t, 4);
-    unsigned long thread_info_ptr = current_thread_ptr(esp);
-    unsigned long task_addr = 0;
-    
-    if (!target_read_addr(t,
-                          thread_info_ptr,
-                          sizeof(unsigned long),
-                          (unsigned char *)&task_addr,
-                          NULL))
-    {
-        return 0;
-    }
-
-    return task_addr;
-}
-
 int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
 {
-    unsigned char *task_struct_buf;
+	struct value *task_value, *member_value;
+	struct bsymbol *it_type;
+	struct symbol *itptr_type;
     unsigned long parent_addr;
     unsigned long real_parent_addr;
-    ctxprobes_task_t *task, *current, *parent;
+	ctxprobes_task_t *task, *current, *parent;
 
-    task_struct_buf = (unsigned char *)malloc(TASK_STRUCT_SIZE);
-    if (!task_struct_buf)
-        return -1;
-    memset(task_struct_buf, 0, TASK_STRUCT_SIZE);
+	it_type = target_lookup_sym(t, "struct task_struct",
+			NULL, NULL, SYMBOL_TYPE_FLAG_TYPE);
+	if (!it_type)
+	{
+		ERR("Could not find type for struct task_struct!\n");
+		return NULL;
+	}
 
-    if (!target_read_addr(t, 
-                          task_struct_addr, 
-                          TASK_STRUCT_SIZE, 
-                          task_struct_buf, 
-                          NULL))
-    {
-        free(task_struct_buf);
-        return -1;
-    }
+	itptr_type = \
+				 target_create_synthetic_type_pointer(target,
+						 bsymbol_get_symbol(it_type));
+
+	task_value = target_load_type(t, itptr_type, task_struct_addr,
+	                 LOAD_FLAG_AUTO_DEREF);
+	if (!task_value)
+		return -1;
 
     task = (ctxprobes_task_t *)malloc(sizeof(ctxprobes_task_t));
     if (!task)
@@ -522,6 +507,10 @@ int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
 
     while (1)
     {
+		// TODO: Wrap it with a for using an array of the member names.
+		member_value = target_load_value_member(t, task_value, "pid", NULL,
+		                     LOAD_FLAG_NONE);
+
         task->pid = *((unsigned int *)(task_struct_buf + TASK_PID_OFFSET));
         task->tgid = *((unsigned int *)(task_struct_buf + TASK_TGID_OFFSET));
         task->uid = *((unsigned int *)(task_struct_buf + TASK_UID_OFFSET));
@@ -577,7 +566,8 @@ int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
         task_struct_addr = parent_addr;
     }
 
-    free(task_struct_buf);
+    symbol_release(itptr_type);
+	bsymbol_release(it_type);
 
     *ptask = current;
 

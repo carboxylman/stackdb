@@ -46,14 +46,12 @@ typedef struct ctxprobes_var {
 } ctxprobes_var_t;
 
 typedef struct ctxprobes_task {
-    unsigned long vaddr; /* virtual address of the task_struct */
     unsigned int pid;
-    unsigned int tgid;
-    unsigned int uid, euid, suid, fsuid;
-    unsigned int gid, egid, sgid, fsgid;
+    unsigned int uid;
+    unsigned int euid;
+    unsigned int gid;
     char *comm;
     struct ctxprobes_task *parent;
-    struct ctxprobes_task *real_parent;
 } ctxprobes_task_t;
 
 typedef void (*ctxprobes_func_prologue_handler_t)(char *symbol,
