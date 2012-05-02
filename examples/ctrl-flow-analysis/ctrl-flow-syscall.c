@@ -45,8 +45,28 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 
+static char *syscall_file = NULL;
 static unsigned long long brctr_root;
 static unsigned int pid_root;
+
+
+void probe_syscall_call(char *symbol, 
+                        ctxprobes_var_t *args,
+                        int argcount,
+                        ctxprobes_task_t *task,
+                        ctxprobes_context_t context)
+{
+}
+
+void probe_syscall_return(char *symbol,
+                          ctxprobes_var_t *args,
+                          int argcount,
+                          ctxprobes_var_t *retval,
+                          unsigned long retaddr,
+                          ctxprobes_task_t *task,
+                          ctxprobes_context_t context)
+{
+}
 
 void parse_opt(int argc, char *argv[])
 {
@@ -75,6 +95,10 @@ void parse_opt(int argc, char *argv[])
                 sysmap_file = optarg;
                 break;
 
+            case 's':
+                syscall_file = optarg;
+                break;
+
             case 'p':
                 pid_root = atoi(optarg);
                 break;
@@ -100,9 +124,18 @@ void parse_opt(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-    int ret;
+    static FILE *fp;
+    char syscall[256];
+    int count, ret;
     
     parse_opt(argc, argv);
+
+    fp = fopen(syscall_file, "r");
+    if (!fp)
+    {
+        ERR("Could not open system call list file\n");
+        return -2;
+    }
 
     ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, debug_level);
     if (ret)
@@ -110,6 +143,33 @@ int main(int argc, char *argv[])
         ERR("Failed to init ctxprobes\n");
         exit(ret);
     }
+
+    count = 0;
+    while (fgets(syscall, 255, fp))
+    {
+        syscall[strlen(syscall)-1] = '\0';
+
+        ret = ctxprobes_reg_func_call(syscall, probe_syscall_call);
+        if (ret)
+        {
+            WARN("Failed to register probe on %s call. Skipping...\n",
+                    syscall);
+            continue;
+        }
+
+        ret = ctxprobes_reg_func_return(syscall, probe_syscall_return);
+        if (ret)
+        {
+            WARN("Failed to register probe on %s return. Skipping...\n",
+                    syscall);
+            ctxprobes_unreg_func_prologue(syscall, probe_syscall_call);
+            continue;
+        }
+
+        count++;
+    }
+
+    DBG("Total %d system calls instrumented\n");
 
     ctxprobes_wait();
 
