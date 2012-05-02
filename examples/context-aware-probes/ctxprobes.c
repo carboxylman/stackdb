@@ -81,6 +81,12 @@ static int probe_func_prologue(struct probe *probe,
 
     symbol = bsymbol_get_name(probe->bsymbol);
 
+    unload_task_info(task_current);
+    if (load_task_info(&task_current, current_task_addr()))
+    {
+        ERR("Cannot load current task info\n");
+    }
+
     DBG("%d (%s): Function %s prologue (context: %s)\n", 
         task_current->pid, task_current->comm, symbol, 
         context_string(context_current));
@@ -126,6 +132,12 @@ static int probe_func_call(struct probe *probe,
         = (ctxprobes_func_call_handler_t) data;
 
     symbol = bsymbol_get_name(probe->bsymbol);
+
+    unload_task_info(task_current);
+    if (load_task_info(&task_current, current_task_addr()))
+    {
+        ERR("Cannot load current task info\n");
+    }
 
     DBG("%d (%s): Function %s called (context: %s)\n", 
         task_current->pid, task_current->comm, symbol, 
@@ -184,6 +196,12 @@ static int probe_func_return(struct probe *probe,
         = (ctxprobes_func_return_handler_t) data;
 
     symbol = bsymbol_get_name(probe->bsymbol);
+
+    unload_task_info(task_current);
+    if (load_task_info(&task_current, current_task_addr()))
+    {
+        ERR("Cannot load current task info\n");
+    }
 
     DBG("%d (%s): Function %s returned (context: %s)\n", 
         task_current->pid, task_current->comm, symbol,
@@ -262,6 +280,12 @@ static int probe_var(struct probe *probe,
     int tmp = -1;
 
     ctxprobes_var_handler_t handler = (ctxprobes_var_handler_t) data;
+
+    unload_task_info(task_current);
+    if (load_task_info(&task_current, current_task_addr()))
+    {
+        ERR("Cannot load current task info\n");
+    }
 
     DBG("%d (%s): Variable %s (0x%08x) read or written (context: %s)\n", 
         task_current->pid, task_current->comm, 

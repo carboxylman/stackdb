@@ -67,6 +67,10 @@ void probe_syscall_call(char *symbol,
             return;
         }
 
+        fflush(stderr);
+        printf("call = %s, uid = %d\n", symbol, task->uid);
+        fflush(stdout);
+            
         if (brctr < brctr_root)
         {
             uid_at_call = task->uid;
@@ -94,6 +98,10 @@ void probe_syscall_return(char *symbol,
             return;
         }
 
+        fflush(stderr);
+        printf("return = %s, uid = %d\n", symbol, task->uid);
+        fflush(stdout);
+            
         if (brctr >= brctr_root)
         {
             if (uid_at_call > 0 && task->uid == 0)
