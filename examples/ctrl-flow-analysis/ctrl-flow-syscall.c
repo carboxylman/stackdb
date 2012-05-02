@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
         {
             WARN("Failed to register probe on %s return. Skipping...\n",
                     syscall);
-            ctxprobes_unreg_func_prologue(syscall, probe_syscall_call);
+            ctxprobes_unreg_func_call(syscall, probe_syscall_call);
             continue;
         }
 
