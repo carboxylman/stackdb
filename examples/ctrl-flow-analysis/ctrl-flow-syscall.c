@@ -49,6 +49,8 @@ static char *syscall_file = NULL;
 static unsigned long long brctr_root;
 static unsigned int pid_root;
 
+static int uid_at_call = 0;
+static unsigned long long brctr_at_call;
 
 void probe_syscall_call(char *symbol, 
                         ctxprobes_var_t *args,
@@ -56,6 +58,23 @@ void probe_syscall_call(char *symbol,
                         ctxprobes_task_t *task,
                         ctxprobes_context_t context)
 {
+    if (task->pid == pid_root)
+    {
+        unsigned long long brctr = ctxprobes_get_brctr();
+        if (!brctr)
+        {
+            ERR("Failed to get branch counter\n");
+            return;
+        }
+
+        if (brctr < brctr_root)
+        {
+            uid_at_call = task->uid;
+            brctr_at_call = brctr;
+        }
+        else
+            uid_at_call = 0;
+    }
 }
 
 void probe_syscall_return(char *symbol,
@@ -66,6 +85,25 @@ void probe_syscall_return(char *symbol,
                           ctxprobes_task_t *task,
                           ctxprobes_context_t context)
 {
+    if (task->pid == pid_root)
+    {
+        unsigned long long brctr = ctxprobes_get_brctr();
+        if (!brctr)
+        {
+            ERR("Failed to get branch counter\n");
+            return;
+        }
+
+        if (brctr >= brctr_root)
+        {
+            if (uid_at_call > 0 && task->uid == 0)
+            {
+                fflush(stderr);
+                printf("%lld %lld: %s\n", brctr_at_call, brctr, symbol);
+                fflush(stdout);
+            }
+        }
+    }
 }
 
 void parse_opt(int argc, char *argv[])
@@ -73,7 +111,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:p:b:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:s:p:b:")) != -1)
     {
         switch(ch)
         {
@@ -169,7 +207,7 @@ int main(int argc, char *argv[])
         count++;
     }
 
-    DBG("Total %d system calls instrumented\n");
+    DBG("Total %d system calls instrumented\n", count);
 
     ctxprobes_wait();
 
