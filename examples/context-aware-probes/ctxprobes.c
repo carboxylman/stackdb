@@ -228,11 +228,14 @@ static int probe_func_return(struct probe *probe,
     sp = regsp;
     DBG("SP: 0x%08x\n", sp);
     
-    /* Grab the return address on the top of the stack */
-    if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
-                          (unsigned char *)&retaddr, NULL))
-    {
-        ERR("Could not read top of stack!\n");
+	if (sp)
+	{
+        /* Grab the return address on the top of the stack */
+        if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
+                              (unsigned char *)&retaddr, NULL))
+        {
+            ERR("Could not read top of stack!\n");
+        }
     }
 
     DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
