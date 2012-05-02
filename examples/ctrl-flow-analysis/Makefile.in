@@ -36,6 +36,9 @@ CTRLFLOW_ROOT_PIDS     = 292,290,285,1,0
 CTRLFLOW_SYSCALL_BRCTR = 438590614
 CTRLFLOW_SYSCALL_PID   = 290
 CTRLFLOW_SYSCALL_LIST  = $(TOP_SRCDIR)/$(SUBDIR)/syscall-list.txt
+CTRLFLOW_CFI_SYSCALL   = sys_sendfile
+CTRLFLOW_CFI_BEGIN     = 438589081
+CTRLFLOW_CFI_END       = 438590831
 
 include $(OBJDIR)/Makeconf
 
@@ -75,7 +78,8 @@ LIBRARIES :=
 PROGRAMS := ctrl-flow-static \
             ctrl-flow-passwd \
             ctrl-flow-root \
-			ctrl-flow-syscall
+			ctrl-flow-syscall \
+			ctrl-flow-cfi
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -114,6 +118,10 @@ ctrl-flow-syscall: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-syscall.lo $(STA
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+ctrl-flow-cfi: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-cfi.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
@@ -121,7 +129,9 @@ clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
 	ctrl-flow-static.lo \
 	ctrl-flow-passwd.lo \
-	ctrl-flow-root.lo
+	ctrl-flow-root.lo \
+	ctrl-flow-syscall.lo \
+	ctrl-flow-cfi.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
@@ -211,6 +221,30 @@ debug-syscall: ctrl-flow-syscall
 	-s $(CTRLFLOW_SYSCALL_LIST) \
 	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
+run-cfi: ctrl-flow-cfi
+	sudo ./ctrl-flow-cfi \
+	-b $(CTRLFLOW_CFI_BEGIN) -e $(CTRLFLOW_CFI_END) \
+	-s $(CTRLFLOW_CFI_SYSCALL) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+demo-cfi: ctrl-flow-cfi
+	sudo ./ctrl-flow-cfi \
+	-b $(CTRLFLOW_CFI_BEGIN) -e $(CTRLFLOW_CFI_END) \
+	-s $(CTRLFLOW_CFI_SYSCALL) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST) \
+	2> /dev/null
+
+verbose-cfi: ctrl-flow-cfi
+	sudo ./ctrl-flow-cfi -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(CTRLFLOW_CFI_BEGIN) -e $(CTRLFLOW_CFI_END) \
+	-s $(CTRLFLOW_CFI_SYSCALL) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+debug-cfi: ctrl-flow-cfi
+	sudo gdb --args ./ctrl-flow-cfi -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(CTRLFLOW_CFI_BEGIN) -e $(CTRLFLOW_CFI_END) \
+	-s $(CTRLFLOW_CFI_SYSCALL) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.
