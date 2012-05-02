@@ -79,6 +79,8 @@ void task_uid_write(unsigned long addr,
                     ctxprobes_task_t *task,
                     ctxprobes_context_t context)
 {
+    int uid;
+
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
     {
@@ -86,9 +88,23 @@ void task_uid_write(unsigned long addr,
         return;
     }
 
-    fflush(stderr);
-    printf("%lld: %d\n", brctr, task->pid);
-    fflush(stdout);
+    if (brctr >= brctr_pwd)
+    {
+        //fflush(stderr);
+        //printf("End of analysis: /etc/passwd accessed\n");
+        //fflush(stdout);
+            
+        //kill(getpid(), SIGINT);
+        return;
+    }
+
+    uid = *(int *)var->buf;
+    if (uid == 0)
+    {
+        fflush(stderr);
+        printf("%lld: %d\n", brctr, task->pid);
+        fflush(stdout);
+    }
 }
 
 void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
