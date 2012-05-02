@@ -29,10 +29,12 @@ OBJDIR		= @top_builddir@
 SUBDIRS = 
 
 # Temporary cmdline arg values hard-coded for easiness of testing.
-CTRLFLOW_GUEST      = clientA
-CTRLFLOW_SYSMAP     = /boot/System.map-2.6.18-xenU
-CTRLFLOW_ROOT_BRCTR = 457134451 
-CTRLFLOW_ROOT_PIDS  = 292,290,285,1,0
+CTRLFLOW_GUEST         = clientA
+CTRLFLOW_SYSMAP        = /boot/System.map-2.6.18-xenU
+CTRLFLOW_ROOT_BRCTR    = 457134451 
+CTRLFLOW_ROOT_PIDS     = 292,290,285,1,0
+CTRLFLOW_SYSCALL_BRCTR = 438590614
+CTRLFLOW_SYSCALL_PID   = 290
 
 include $(OBJDIR)/Makeconf
 
@@ -177,6 +179,28 @@ debug-root: ctrl-flow-root
 	sudo gdb --args ./ctrl-flow-root -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-p $(CTRLFLOW_ROOT_PIDS) -b $(CTRLFLOW_ROOT_BRCTR) \
 	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+run-syscall: ctrl-flow-syscall
+	sudo ./ctrl-flow-syscall \
+	-p $(CTRLFLOW_SYSCALL_PID) -b $(CTRLFLOW_SYSCALL_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+demo-syscall: ctrl-flow-syscall
+	sudo ./ctrl-flow-syscall \
+	-p $(CTRLFLOW_SYSCALL_PID) -b $(CTRLFLOW_SYSCALL_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST) \
+	2> /dev/null
+
+verbose-syscall: ctrl-flow-syscall
+	sudo ./ctrl-flow-syscall -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-p $(CTRLFLOW_SYSCALL_PID) -b $(CTRLFLOW_SYSCALL_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+debug-syscall: ctrl-flow-syscall
+	sudo gdb --args ./ctrl-flow-syscall -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-p $(CTRLFLOW_SYSCALL_PID) -b $(CTRLFLOW_SYSCALL_BRCTR) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.
