@@ -113,7 +113,6 @@ sys_reboot
 sys_getpgrp
 sys_getgroups
 sys_setsid
-sys_newuname
 sys_setuid
 sys_umask
 sys_times
