@@ -48,12 +48,69 @@ static char *syscall_name = NULL;
 static unsigned long long brctr_begin;
 static unsigned long long brctr_end;
 
+void probe_disfunc_return(char *symbol,
+        unsigned long ip,
+        ctxprobes_task_t *task,
+        ctxprobes_context_t context)
+{
+    unsigned long long brctr = ctxprobes_get_brctr();
+    if (!brctr)
+    {
+        ERR("Failed to get branch counter\n");
+        return;
+    }
+
+    fflush(stderr);
+    printf("%d (%s): disfunc %s (0x%08lx) called, uid: %d\n",
+            task->pid, task->comm, symbol, ip, task->uid);
+    fflush(stdout);
+}
+
+void probe_disfunc_call(char *symbol,
+        unsigned long ip,
+        ctxprobes_task_t *task,
+        ctxprobes_context_t context)
+{
+    unsigned long long brctr = ctxprobes_get_brctr();
+    if (!brctr)
+    {
+        ERR("Failed to get branch counter\n");
+        return;
+    }
+
+    fflush(stderr);
+    printf("%d (%s): disfunc %s (0x%08lx) returned, uid: %d\n",
+            task->pid, task->comm, symbol, ip, task->uid);
+    fflush(stdout);
+}
+
 void probe_syscall_call(char *symbol, 
                         ctxprobes_var_t *args,
                         int argcount,
                         ctxprobes_task_t *task,
                         ctxprobes_context_t context)
 {
+    unsigned long long brctr = ctxprobes_get_brctr();
+    if (!brctr)
+    {
+        ERR("Failed to get branch counter\n");
+        return;
+    }
+
+    if (brctr == brctr_begin)
+    {
+        fflush(stderr);
+        printf("%s called at brctr %d: start checking CFI\n: ", syscall_name, brctr);
+        fflush(stdout);
+
+        ret = ctxprobes_instrument_func(syscall_name, disfunc_call, disfunc_return);
+        if (ret)
+        {
+            ERR("Failed to instrument function %s\n", syscall_name);
+            exit(1);
+        }
+    }
+
 }
 
 void probe_syscall_return(char *symbol,
@@ -64,6 +121,19 @@ void probe_syscall_return(char *symbol,
                           ctxprobes_task_t *task,
                           ctxprobes_context_t context)
 {
+    unsigned long long brctr = ctxprobes_get_brctr();
+    if (!brctr)
+    {
+        ERR("Failed to get branch counter\n");
+        return;
+    }
+
+    if (brctr == brctr_end)
+    {
+        fflush(stderr);
+        printf("%s returned at brctr %d: end of analysis\n", syscall_name, brctr);
+        fflush(stdout);
+    }
 }
 
 void parse_opt(int argc, char *argv[])
@@ -82,7 +152,7 @@ void parse_opt(int argc, char *argv[])
             case 'l':
                 if (vmi_log_get_flag_mask(optarg, &debug_flags))
                 {
-                    fprintf(stderr, "ERROR: bad debug flag in '%s'!\n", 
+                    printf(stderr, "ERROR: bad debug flag in '%s'!\n", 
                             optarg);
                     exit(-1);
                 }
