@@ -451,10 +451,10 @@ ADDR instrument_func(struct bsymbol *bsymbol,
         snprintf(buf, bufsiz, "call_in_%s", bsymbol->lsymbol->symbol->name);
         struct probe *cprobe = probe_create(t, NULL, buf, NULL, call_handler,
                                             call_data, 0);
-        //cprobe->handler_data = cprobe->name;
+        cprobe->handler_data = call_data;
         free(buf);
 
-        struct probe *rprobe;
+        struct probe *rprobe = NULL;
         if (!isroot)
         {
             bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
@@ -462,7 +462,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,
             snprintf(buf, bufsiz, "ret_in_%s", bsymbol->lsymbol->symbol->name);
             rprobe = probe_create(t, NULL, buf, return_handler, NULL,
                                   return_data, 0);
-            //rprobe->handler_data = rprobe->name;
+            rprobe->handler_data = return_data;
             free(buf);
         }
 

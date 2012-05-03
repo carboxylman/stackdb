@@ -1634,8 +1634,8 @@ int ctxprobes_instrument_func(char *symbol,
     if ((funcstart = instrument_func(bsymbol, 
                                      probe_disfunc_call, 
                                      probe_disfunc_return, 
-                                     call_handler,
-                                     return_handler,
+                                     call_handler, /* data <- ctxprobes handler */
+                                     return_handler, /* data <- ctxprobes handler */
                                      root)) == 0) 
     {
         fprintf(stderr,
