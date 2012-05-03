@@ -32,6 +32,22 @@
 #define THREAD_SIZE (8192)
 #define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
 
+/* FIXME: remove this and get size and offsets from debug-info. */
+#define TASK_STRUCT_SIZE (1312)
+#define TASK_PID_OFFSET (168)
+#define TASK_TGID_OFFSET (172)
+#define TASK_REAL_PARENT_OFFSET (176)
+#define TASK_PARENT_OFFSET (180)
+#define TASK_UID_OFFSET (336)
+#define TASK_EUID_OFFSET (340)
+#define TASK_SUID_OFFSET (344)
+#define TASK_FSUID_OFFSET (348)
+#define TASK_GID_OFFSET (352)
+#define TASK_EGID_OFFSET (356)
+#define TASK_SGID_OFFSET (360)
+#define TASK_FSGID_OFFSET (364)
+#define TASK_COMM_OFFSET (396)
+
 struct pt_regs {
     long ebx;
     long ecx;
@@ -83,6 +99,13 @@ int register_raw_probe(unsigned long addr,
                        probe_handler_t handler,
                        probepoint_whence_t whence,
                        void *data);
+
+ADDR instrument_func(struct bsymbol *bsymbol, 
+                     probe_handler_t call_handler, 
+                     probe_handler_t return_handler,
+                     void *call_data,
+                     void *return_data,
+                     int isroot);
 
 void unregister_probes();
 

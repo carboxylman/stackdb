@@ -51,6 +51,7 @@ struct target *t = NULL;
 GHashTable *probes = NULL;
 GHashTable *cprobes = NULL;
 GHashTable *rprobes = NULL;
+GHashTable *disfuncs = NULL;
 
 ctxprobes_task_t *task_current = NULL;
 ctxprobes_context_t context_current = CTXPROBES_CONTEXT_NORMAL;
@@ -246,8 +247,8 @@ static int probe_func_return(struct probe *probe,
     sp = regsp;
     DBG("SP: 0x%08x\n", sp);
     
-	if (sp)
-	{
+    if (sp)
+    {
         /* Grab the return address on the top of the stack */
         if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
                               (unsigned char *)&retaddr, NULL))
@@ -289,7 +290,7 @@ static int probe_var(struct probe *probe,
 
     DBG("%d (%s): Variable %s (0x%08x) read or written (context: %s)\n", 
         task_current->pid, task_current->comm, 
-		probe->name, probe_addr(probe), 
+        probe->name, probe_addr(probe), 
         context_string(context_current));
     
     if (!target_read_addr(t, 
@@ -315,6 +316,102 @@ static int probe_var(struct probe *probe,
             context_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
     
+    return 0;
+}
+
+static int probe_disfunc_call(struct probe *probe,
+                              void *data,
+                              struct probe *trigger)
+{
+    REGVAL ip;
+    char *symbol = NULL;
+    struct bsymbol *bsymbol;
+
+    ctxprobes_disfunc_handler_t handler = (ctxprobes_disfunc_handler_t) data;
+    
+    unload_task_info(task_current);
+    if (load_task_info(&task_current, current_task_addr()))
+    {
+        ERR("Cannot load current task info\n");
+    }
+
+    DBG("%d (%s): Disassembled function %s called (context: %s)\n", 
+        task_current->pid, task_current->comm, 
+        probe->name, context_string(context_current));
+    
+    ip = target_read_reg(t, t->ipregno);
+    if (errno)
+    {
+        ERR("Could not read IP!\n");
+        return 0;
+    }
+
+    bsymbol = target_lookup_sym_addr(t, ip);
+    if (!bsymbol)
+    {
+        WARN("Unknown function called: ip = 0x%08x\n", ip);
+    }
+    else
+    {
+        symbol = bsymbol_get_name(bsymbol);
+        bsymbol_release(bsymbol);
+    }
+
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
+    handler(symbol,
+            ip,
+            task_current, 
+            context_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
+
+    return 0;
+}
+
+static int probe_disfunc_return(struct probe *probe,
+                                void *data,
+                                struct probe *trigger)
+{ 
+    REGVAL ip;
+    char *symbol = NULL;
+    struct bsymbol *bsymbol;
+
+    ctxprobes_disfunc_handler_t handler = (ctxprobes_disfunc_handler_t) data;
+    
+    unload_task_info(task_current);
+    if (load_task_info(&task_current, current_task_addr()))
+    {
+        ERR("Cannot load current task info\n");
+    }
+
+    DBG("%d (%s): Disassembled function %s returned (context: %s)\n", 
+        task_current->pid, task_current->comm, 
+        probe->name, context_string(context_current));
+    
+    ip = target_read_reg(t, t->ipregno);
+    if (errno)
+    {
+        ERR("Could not read IP!\n");
+        return 0;
+    }
+
+    bsymbol = target_lookup_sym_addr(t, ip);
+    if (!bsymbol)
+    {
+        WARN("Unknown function returned: ip = 0x%08x\n", ip);
+    }
+    else
+    {
+        symbol = bsymbol_get_name(bsymbol);
+        bsymbol_release(bsymbol);
+    }
+    
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
+    handler(symbol,
+            ip,
+            task_current, 
+            context_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
+
     return 0;
 }
 
@@ -1219,6 +1316,15 @@ int ctxprobes_init(char *domain_name,
         return -5;
     }
 
+    disfuncs = g_hash_table_new(g_direct_hash, g_direct_equal);
+    if (!disfuncs)
+    {
+        ERR("Can't create disassembled function probe table for target %s\n", 
+            dom_name);
+        ctxprobes_cleanup();
+        return -5;
+    }
+
     /*
      * Register probes to detect context changes; traps, interrupts, and
      * task switches.
@@ -1303,6 +1409,8 @@ void ctxprobes_cleanup(void)
             g_hash_table_destroy(cprobes);
         if (rprobes)
             g_hash_table_destroy(rprobes);
+        if (disfuncs)
+            g_hash_table_destroy(disfuncs);
 
         bsymbol_task_prev = NULL;
         bsymbol_task_next = NULL;
@@ -1499,8 +1607,48 @@ int ctxprobes_reg_var(unsigned long addr, //char *symbol,
     return 0;
 }
 
+int ctxprobes_instrument_func(char *symbol,
+                              ctxprobes_disfunc_handler_t call_handler,
+                              ctxprobes_disfunc_handler_t return_handler,
+                              int root)
+{
+    struct bsymbol *bsymbol = NULL;
+    ADDR funcstart;
+
+    //struct dump_info udn = {
+    //    .stream = stderr,
+    //    .prefix = "",
+    //    .detail = 1,
+    //    .meta = 1,
+    //};
+
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL, SYMBOL_TYPE_FLAG_FUNCTION);
+    if (!bsymbol)
+    {
+        ERR("Could not find symbol %s!\n", symbol);
+        return -1;
+    }
+
+    //bsymbol_dump(bsymbol, &udn);
+
+    if ((funcstart = instrument_func(bsymbol, 
+                                     probe_disfunc_call, 
+                                     probe_disfunc_return, 
+                                     call_handler,
+                                     return_handler,
+                                     root)) == 0) 
+    {
+        fprintf(stderr,
+                "Could not instrument function %s (0x%"PRIxADDR")!\n",
+                bsymbol->lsymbol->symbol->name,funcstart);
+        return -1;
+    }
+
+    return 0;
+}
+
 void ctxprobes_unreg_func_call(char *symbol,
-                               ctxprobes_func_call_handler_t handler)
+        ctxprobes_func_call_handler_t handler)
 {
     GHashTableIter iter;
     gpointer key;

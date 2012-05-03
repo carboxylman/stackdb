@@ -46,12 +46,14 @@ typedef struct ctxprobes_var {
 } ctxprobes_var_t;
 
 typedef struct ctxprobes_task {
+    unsigned long vaddr; /* virtual address of the task_struct */
     unsigned int pid;
-    unsigned int uid;
-    unsigned int euid;
-    unsigned int gid;
+    unsigned int tgid;
+    unsigned int uid, euid, suid, fsuid;
+    unsigned int gid, egid, sgid, fsgid;
     char *comm;
     struct ctxprobes_task *parent;
+    struct ctxprobes_task *real_parent;
 } ctxprobes_task_t;
 
 typedef void (*ctxprobes_func_prologue_handler_t)(char *symbol,
@@ -79,6 +81,11 @@ typedef void (*ctxprobes_var_handler_t)(unsigned long addr,
                                         ctxprobes_task_t *task,
                                         ctxprobes_context_t context);
 
+typedef void (*ctxprobes_disfunc_handler_t)(char *symbol,
+                                            unsigned long ip,
+                                            ctxprobes_task_t *task,
+                                            ctxprobes_context_t context);
+
 typedef void (*ctxprobes_task_switch_handler_t)(ctxprobes_task_t *prev,
                                                 ctxprobes_task_t *next);
 
@@ -105,6 +112,11 @@ int ctxprobes_reg_var(unsigned long addr, //char *symbol,
                       char *name,
                       ctxprobes_var_handler_t handler,
                       int readwrite);
+
+int ctxprobes_instrument_func(char *symbol,
+                              ctxprobes_disfunc_handler_t call_handler,
+                              ctxprobes_disfunc_handler_t return_handler,
+                              int root);
 
 void ctxprobes_unreg_func_call(char *symbol,
                                ctxprobes_func_call_handler_t handler);

@@ -49,6 +49,7 @@ extern FILE *sysmap_handle;
 extern GHashTable *probes; /* all probes */
 extern GHashTable *cprobes; /* probes on function prologues */
 extern GHashTable *rprobes; /* probes on function returns */
+extern GHashTable *disfuncs; /* disassembled function probes */
 
 int register_call_probe(char *symbol, 
                         probe_handler_t handler,
@@ -422,6 +423,107 @@ int register_raw_probe(unsigned long addr,
     return 0;
 }
 
+ADDR instrument_func(struct bsymbol *bsymbol, 
+                     probe_handler_t call_handler, 
+                     probe_handler_t return_handler, 
+                     void *call_data,
+                     void *return_data,
+                     int isroot)
+{
+    ADDR funcstart = 0;
+
+    if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL)) 
+    {
+        ERR("Could not resolve base addr for function %s!\n",
+            bsymbol->lsymbol->symbol->name);
+        return 0;
+    }
+
+    /* Disassemble the called function if we haven't already! */
+    if (!g_hash_table_lookup(disfuncs, (gpointer)funcstart))
+    {
+        /* Dissasemble the function and grab a list of
+         * RET instrs, and insert more child
+         * breakpoints.
+         */
+        int bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+4+1+2+1;
+        char *buf = malloc(bufsiz);
+        snprintf(buf, bufsiz, "call_in_%s", bsymbol->lsymbol->symbol->name);
+        struct probe *cprobe = probe_create(t, NULL, buf, NULL, call_handler,
+                                            call_data, 0);
+        //cprobe->handler_data = cprobe->name;
+        free(buf);
+
+        struct probe *rprobe;
+        if (!isroot)
+        {
+            bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
+            buf = malloc(bufsiz);
+            snprintf(buf, bufsiz, "ret_in_%s", bsymbol->lsymbol->symbol->name);
+            rprobe = probe_create(t, NULL, buf, return_handler, NULL,
+                                  return_data, 0);
+            //rprobe->handler_data = rprobe->name;
+            free(buf);
+        }
+
+        if (isroot)
+        {
+            if (!probe_register_function_instrs(bsymbol, PROBEPOINT_SW, 1,
+                                                INST_CALL, cprobe,
+                                                INST_NONE))
+            {
+                probe_free(cprobe, 1);
+                return 0;
+            }
+        }
+        else
+        {
+            if (!probe_register_function_instrs(bsymbol, PROBEPOINT_SW, 1,
+                                                INST_RET, rprobe,
+                                                INST_CALL, cprobe,
+                                                INST_NONE))
+            {
+                probe_free(cprobe, 1);
+                probe_free(rprobe, 1);
+                return 0;
+            }
+        }
+
+        if (probe_num_sources(cprobe) == 0)
+        {
+            probe_free(cprobe, 1);
+            WARN("No call sites in %s.\n", bsymbol->lsymbol->symbol->name);
+        }
+        else
+        {
+            g_hash_table_insert(probes, (gpointer)cprobe, (gpointer)cprobe);
+            DBG("Registered %d call probes in function %s.\n",
+                probe_num_sources(cprobe), bsymbol->lsymbol->symbol->name);
+        }
+
+        if (!isroot)
+        {
+            if (probe_num_sources(rprobe) == 0)
+            {
+                probe_free(rprobe, 1);
+                WARN("No return sites in %s.\n", bsymbol->lsymbol->symbol->name);
+            }
+            else
+            {
+                g_hash_table_insert(probes, (gpointer)rprobe, (gpointer)rprobe);
+                DBG("Registered %d return probes in function %s.\n",
+                    probe_num_sources(rprobe), bsymbol->lsymbol->symbol->name);
+            }
+        }
+
+        g_hash_table_insert(disfuncs, (gpointer)funcstart, (gpointer)1);
+    }
+
+    return funcstart;
+}
+
+
+
 void unregister_probes()
 {
     GHashTableIter iter;
@@ -430,14 +532,13 @@ void unregister_probes()
 
     g_hash_table_iter_init(&iter, probes);
     while (g_hash_table_iter_next(&iter,
-           (gpointer)&key,
-           (gpointer)&probe))
+                (gpointer)&key,
+                (gpointer)&probe))
     {
         probe_unregister(probe, 1);
         probe_free(probe, 1);
     }
 }
-
 
 unsigned long sysmap_symbol_addr(char *symbol)
 {
@@ -469,31 +570,46 @@ unsigned long sysmap_symbol_addr(char *symbol)
     return 0;
 }
 
+
+unsigned long current_task_addr(void)
+{
+    unsigned long esp = target_read_reg(t, 4);
+    unsigned long thread_info_ptr = current_thread_ptr(esp);
+    unsigned long task_addr = 0;
+    
+    if (!target_read_addr(t,
+                          thread_info_ptr,
+                          sizeof(unsigned long),
+                          (unsigned char *)&task_addr,
+                          NULL))
+    {
+        return 0;
+    }
+
+    return task_addr;
+}
+
 int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
 {
-	struct value *task_value, *member_value;
-	struct bsymbol *it_type;
-	struct symbol *itptr_type;
+    unsigned char *task_struct_buf;
     unsigned long parent_addr;
     unsigned long real_parent_addr;
-	ctxprobes_task_t *task, *current, *parent;
+    ctxprobes_task_t *task, *current, *parent;
 
-	it_type = target_lookup_sym(t, "struct task_struct",
-			NULL, NULL, SYMBOL_TYPE_FLAG_TYPE);
-	if (!it_type)
-	{
-		ERR("Could not find type for struct task_struct!\n");
-		return NULL;
-	}
+    task_struct_buf = (unsigned char *)malloc(TASK_STRUCT_SIZE);
+    if (!task_struct_buf)
+        return -1;
+    memset(task_struct_buf, 0, TASK_STRUCT_SIZE);
 
-	itptr_type = \
-				 target_create_synthetic_type_pointer(target,
-						 bsymbol_get_symbol(it_type));
-
-	task_value = target_load_type(t, itptr_type, task_struct_addr,
-	                 LOAD_FLAG_AUTO_DEREF);
-	if (!task_value)
-		return -1;
+    if (!target_read_addr(t, 
+                          task_struct_addr, 
+                          TASK_STRUCT_SIZE, 
+                          task_struct_buf, 
+                          NULL))
+    {
+        free(task_struct_buf);
+        return -1;
+    }
 
     task = (ctxprobes_task_t *)malloc(sizeof(ctxprobes_task_t));
     if (!task)
@@ -507,10 +623,6 @@ int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
 
     while (1)
     {
-		// TODO: Wrap it with a for using an array of the member names.
-		member_value = target_load_value_member(t, task_value, "pid", NULL,
-		                     LOAD_FLAG_NONE);
-
         task->pid = *((unsigned int *)(task_struct_buf + TASK_PID_OFFSET));
         task->tgid = *((unsigned int *)(task_struct_buf + TASK_TGID_OFFSET));
         task->uid = *((unsigned int *)(task_struct_buf + TASK_UID_OFFSET));
@@ -566,8 +678,7 @@ int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
         task_struct_addr = parent_addr;
     }
 
-    symbol_release(itptr_type);
-	bsymbol_release(it_type);
+    free(task_struct_buf);
 
     *ptask = current;
 

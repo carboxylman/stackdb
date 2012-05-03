@@ -110,18 +110,21 @@ void task_uid_modified(unsigned long addr,
                        ctxprobes_task_t *task,
                        ctxprobes_context_t context)
 {
+    fflush(stderr);
     printf("Task uid modified: new value = %d\n", *(int *)var->buf);
 }
 
 void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
-    int ret;
-    unsigned long addr;
-    char *name;
+    //int ret;
+    //unsigned long addr;
+    //char *name;
 
+    fflush(stderr);
+    
     printf("Task switch: %d (%s) -> %d (%s)\n",
            prev->pid, prev->comm, next->pid, next->comm);
-
+/*
     if (!alist_contains(tasklist, next->vaddr))
     {
         addr = next->vaddr + TASK_UID_OFFSET;
@@ -141,12 +144,18 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
         
         printf("Probe registered on %s (0x%08lx)\n", name, addr);
     }
+*/    
+    fflush(stdout);
 }
 
 void context_change(ctxprobes_context_t prev, ctxprobes_context_t next)
 {
+    fflush(stderr);
+    
     printf("Context change: %s -> %s\n",
            context_str(prev), context_str(next));
+    
+    fflush(stdout);
 }
 
 void sys_open_prologue(char *symbol, 
@@ -154,6 +163,8 @@ void sys_open_prologue(char *symbol,
                        ctxprobes_task_t *task,
                        ctxprobes_context_t context)
 {
+    fflush(stderr);
+    
     printf("[%c] %d (%s): %s proloque invoked\n", 
            context_ch(context), task->pid, task->comm, symbol);
     
@@ -165,6 +176,8 @@ void sys_open_prologue(char *symbol,
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
     }
+    
+    fflush(stdout);
 }
 
 void sys_open_call(char *symbol, 
@@ -173,6 +186,8 @@ void sys_open_call(char *symbol,
                    ctxprobes_task_t *task,
                    ctxprobes_context_t context)
 {
+    fflush(stderr);
+    
     if (!args || argcount < 3)
         printf("[%c] %d (%s): %s called, but failed to load args\n", 
                context_ch(context), task->pid, task->comm, symbol);
@@ -189,6 +204,8 @@ void sys_open_call(char *symbol,
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
     }
+    
+    fflush(stdout);
 }
 
 void sys_open_return(char *symbol, 
@@ -199,6 +216,8 @@ void sys_open_return(char *symbol,
                      ctxprobes_task_t *task,
                      ctxprobes_context_t context)
 {
+    fflush(stderr);
+
     if (!retval)
         printf("[%c] %d (%s): %s returned, but failed to load retval\n", 
                context_ch(context), task->pid, task->comm, symbol);
@@ -215,6 +234,36 @@ void sys_open_return(char *symbol,
         printf("  %d (%s)\n", task->parent->pid, task->parent->comm);
         task = task->parent;
     }
+
+    fflush(stdout);
+}
+
+void disfunc_return(char *symbol,
+                    unsigned long ip,
+                    ctxprobes_task_t *task,
+                    ctxprobes_context_t context)
+{
+    fflush(stderr);
+    
+    printf("%d (%s): disfunc %s (0x%08lx) called\n", 
+	       task->pid, task->comm, symbol, ip);    
+
+    fflush(stdout);
+}
+
+void disfunc_call(char *symbol,
+                  unsigned long ip,
+                  ctxprobes_task_t *task,
+                  ctxprobes_context_t context)
+{
+    fflush(stderr);
+
+    printf("%d (%s): disfunc %s (0x%08lx) returned\n", 
+	       task->pid, task->comm, symbol, ip);    
+    
+	ctxprobes_instrument_func("sys_open", disfunc_call, disfunc_return, 0);
+    
+    fflush(stdout);
 }
 
 void parse_opt(int argc, char *argv[])
@@ -268,15 +317,15 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         task_switch, 
-                         context_change, 
+                         NULL,//task_switch, 
+                         NULL,//context_change, 
                          debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");
         exit(1);
     }
-
+/*
     ret = ctxprobes_reg_func_prologue("sys_open", sys_open_prologue);
     if (ret)
     {
@@ -295,6 +344,13 @@ int main(int argc, char *argv[])
     if (ret)
     {
         fprintf(stderr, "failed to register probe on sys_open return\n");
+        exit(1);
+    }
+*/
+    ret = ctxprobes_instrument_func("sys_open", disfunc_call, disfunc_return, 1);
+    if (ret)
+    {
+        fprintf(stderr, "failed to instrument function sys_open\n");
         exit(1);
     }
 
