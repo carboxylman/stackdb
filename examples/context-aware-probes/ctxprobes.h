@@ -115,8 +115,7 @@ int ctxprobes_reg_var(unsigned long addr, //char *symbol,
 
 int ctxprobes_instrument_func(char *symbol,
                               ctxprobes_disfunc_handler_t call_handler,
-                              ctxprobes_disfunc_handler_t return_handler,
-                              int root);
+                              ctxprobes_disfunc_handler_t return_handler);
 
 void ctxprobes_unreg_func_call(char *symbol,
                                ctxprobes_func_call_handler_t handler);

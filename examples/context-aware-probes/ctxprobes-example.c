@@ -261,8 +261,6 @@ void disfunc_call(char *symbol,
     printf("%d (%s): disfunc %s (0x%08lx) returned\n", 
            task->pid, task->comm, symbol, ip);    
     
-    ctxprobes_instrument_func("sys_open", disfunc_call, disfunc_return, 0);
-    
     fflush(stdout);
 }
 
@@ -317,15 +315,15 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         task_switch, 
-                         context_change, 
+                         NULL,//task_switch, 
+                         NULL,//context_change, 
                          debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");
         exit(1);
     }
-
+/*
     ret = ctxprobes_reg_func_prologue("sys_open", sys_open_prologue);
     if (ret)
     {
@@ -346,8 +344,8 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to register probe on sys_open return\n");
         exit(1);
     }
-
-    ret = ctxprobes_instrument_func("sys_sendfile", disfunc_call, disfunc_return, 1);
+*/
+    ret = ctxprobes_instrument_func("sys_open", disfunc_call, disfunc_return);
     if (ret)
     {
         fprintf(stderr, "failed to instrument function sys_open\n");

@@ -69,6 +69,10 @@ struct bsymbol *bsymbol_task_next = NULL;
  * functions get called in the meantime a function is being executed. */
 REGVAL regsp;
 
+/* This variable temporarily holds the address of the high-level user
+   disfunc return handler. */
+ctxprobes_disfunc_handler_t user_disfunc_return_handler;
+
 static int probe_func_prologue(struct probe *probe,
                                void *data,
                                struct probe *trigger)
@@ -319,54 +323,6 @@ static int probe_var(struct probe *probe,
     return 0;
 }
 
-static int probe_disfunc_call(struct probe *probe,
-                              void *data,
-                              struct probe *trigger)
-{
-    REGVAL ip;
-    char *symbol = NULL;
-    struct bsymbol *bsymbol;
-
-    ctxprobes_disfunc_handler_t handler = (ctxprobes_disfunc_handler_t) data;
-    
-    unload_task_info(task_current);
-    if (load_task_info(&task_current, current_task_addr()))
-    {
-        ERR("Cannot load current task info\n");
-    }
-
-    DBG("%d (%s): Disassembled function %s called (context: %s)\n", 
-        task_current->pid, task_current->comm, 
-        probe->name, context_string(context_current));
-    
-    ip = target_read_reg(t, t->ipregno);
-    if (errno)
-    {
-        ERR("Could not read IP!\n");
-        return 0;
-    }
-
-    bsymbol = target_lookup_sym_addr(t, ip);
-    if (!bsymbol)
-    {
-        WARN("Unknown function called: ip = 0x%08x\n", ip);
-    }
-    else
-    {
-        symbol = bsymbol_get_name(bsymbol);
-        bsymbol_release(bsymbol);
-    }
-
-    DBG("Calling user probe handler 0x%08x\n", (uint32_t)handler);
-    handler(symbol,
-            ip,
-            task_current, 
-            context_current);
-    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
-
-    return 0;
-}
-
 static int probe_disfunc_return(struct probe *probe,
                                 void *data,
                                 struct probe *trigger)
@@ -411,6 +367,70 @@ static int probe_disfunc_return(struct probe *probe,
             task_current, 
             context_current);
     DBG("Returned from user probe handler 0x%08x\n", (uint32_t)handler);
+
+    return 0;
+}
+
+static int probe_disfunc_call(struct probe *probe,
+                              void *data,
+                              struct probe *trigger)
+{
+    REGVAL ip;
+    char *symbol = NULL;
+    struct bsymbol *bsymbol;
+    ADDR funcstart = 0;
+
+    ctxprobes_disfunc_handler_t call_handler = (ctxprobes_disfunc_handler_t) data;
+
+    /* FIXME: use a global variable temporarily. */
+    ctxprobes_disfunc_handler_t return_handler = user_disfunc_return_handler;
+
+    unload_task_info(task_current);
+    if (load_task_info(&task_current, current_task_addr()))
+    {
+        ERR("Cannot load current task info\n");
+    }
+
+    DBG("%d (%s): Disassembled function %s called (context: %s)\n", 
+        task_current->pid, task_current->comm, 
+        probe->name, context_string(context_current));
+    
+    ip = target_read_reg(t, t->ipregno);
+    if (errno)
+    {
+        ERR("Could not read IP!\n");
+        return 0;
+    }
+
+    bsymbol = target_lookup_sym_addr(t, ip);
+    if (!bsymbol)
+    {
+        WARN("Unknown function called: ip = 0x%08x\n", ip);
+    }
+    else
+    {
+        symbol = bsymbol_get_name(bsymbol);
+
+        if ((funcstart = instrument_func(bsymbol, 
+                                         probe_disfunc_call, 
+                                         probe_disfunc_return, 
+                                         call_handler, /* data <- ctxprobes handler */
+                                         return_handler, /* data <- ctxprobes handler */
+                                         0 /* non-root */)) == 0) 
+        {
+            ERR("Could not instrument function %s (0x%08x)!\n",
+                bsymbol->lsymbol->symbol->name, funcstart);
+        }
+        
+        bsymbol_release(bsymbol);
+    }
+
+    DBG("Calling user probe handler 0x%08x\n", (uint32_t)call_handler);
+    call_handler(symbol,
+                 ip,
+                 task_current, 
+                 context_current);
+    DBG("Returned from user probe handler 0x%08x\n", (uint32_t)call_handler);
 
     return 0;
 }
@@ -1609,8 +1629,7 @@ int ctxprobes_reg_var(unsigned long addr, //char *symbol,
 
 int ctxprobes_instrument_func(char *symbol,
                               ctxprobes_disfunc_handler_t call_handler,
-                              ctxprobes_disfunc_handler_t return_handler,
-                              int root)
+                              ctxprobes_disfunc_handler_t return_handler)
 {
     struct bsymbol *bsymbol = NULL;
     ADDR funcstart;
@@ -1636,13 +1655,14 @@ int ctxprobes_instrument_func(char *symbol,
                                      probe_disfunc_return, 
                                      call_handler, /* data <- ctxprobes handler */
                                      return_handler, /* data <- ctxprobes handler */
-                                     root)) == 0) 
+                                     1 /* root */)) == 0) 
     {
-        fprintf(stderr,
-                "Could not instrument function %s (0x%"PRIxADDR")!\n",
-                bsymbol->lsymbol->symbol->name,funcstart);
+        ERR("Could not instrument function %s (0x%08x)!\n",
+            bsymbol->lsymbol->symbol->name, funcstart);
         return -1;
     }
+
+    user_disfunc_return_handler = return_handler;
 
     return 0;
 }
