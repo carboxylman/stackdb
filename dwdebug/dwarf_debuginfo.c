@@ -870,10 +870,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    }
 		}
 
-		int i;
-		for (i = 0; i < loclist->len; ++i) {
-		    if (loclist->list[i]->start < cbargs->symbol->base_addr)
-			cbargs->symbol->base_addr = loclist->list[i]->start;
+		if (SYMBOL_IS_FUNCTION(cbargs->symbol)
+		    || SYMBOL_IS_LABEL(cbargs->symbol)) {
+		    int i;
+		    for (i = 0; i < loclist->len; ++i) {
+			if (loclist->list[i]->start < cbargs->symbol->base_addr)
+			    cbargs->symbol->base_addr = loclist->list[i]->start;
+		    }
 		}
 
 		if (SYMBOL_IS_PARTIAL(cbargs->symbol)) {
