@@ -90,6 +90,8 @@ void probe_syscall_call(char *symbol,
                         ctxprobes_task_t *task,
                         ctxprobes_context_t context)
 {
+    int ret;
+
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
     {
@@ -100,10 +102,10 @@ void probe_syscall_call(char *symbol,
     if (brctr == brctr_begin)
     {
         fflush(stderr);
-        printf("%s called at brctr %d: start checking CFI\n: ", syscall_name, brctr);
+        printf("%s called at brctr %lld: start checking CFI\n: ", syscall_name, brctr);
         fflush(stdout);
 
-        ret = ctxprobes_instrument_func(syscall_name, disfunc_call, disfunc_return);
+        ret = ctxprobes_instrument_func(syscall_name, probe_disfunc_call, probe_disfunc_return);
         if (ret)
         {
             ERR("Failed to instrument function %s\n", syscall_name);
@@ -131,7 +133,7 @@ void probe_syscall_return(char *symbol,
     if (brctr == brctr_end)
     {
         fflush(stderr);
-        printf("%s returned at brctr %d: end of analysis\n", syscall_name, brctr);
+        printf("%s returned at brctr %lld: end of analysis\n", syscall_name, brctr);
         fflush(stdout);
     }
 }
@@ -152,7 +154,7 @@ void parse_opt(int argc, char *argv[])
             case 'l':
                 if (vmi_log_get_flag_mask(optarg, &debug_flags))
                 {
-                    printf(stderr, "ERROR: bad debug flag in '%s'!\n", 
+                    fprintf(stderr, "ERROR: bad debug flag in '%s'!\n", 
                             optarg);
                     exit(-1);
                 }
