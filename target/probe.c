@@ -1301,7 +1301,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	}
 
 	probe = __probe_register_addr(probe,probeaddr,range,
-				      PROBEPOINT_BREAK,style,whence,watchsize,
+				      PROBEPOINT_WATCH,style,whence,watchsize,
 				      bsymbol,probeaddr);
     }
     else {
