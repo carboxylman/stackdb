@@ -81,13 +81,18 @@ void probe_syscall_call(char *symbol,
             return;
         }
 
+        DBG("Syscall call = %s, uid = %d\n", symbol, task->uid);
+        
         if (brctr < brctr_root)
         {
             uid_at_call = task->uid;
             brctr_at_call = brctr;
         }
         else
+        {
             uid_at_call = 0;
+            kill_everything(domain_name);
+        }
     }
 }
 
@@ -107,6 +112,8 @@ void probe_syscall_return(char *symbol,
             ERR("Failed to get branch counter\n");
             return;
         }
+
+        DBG("Syscall return = %s, uid = %d\n", symbol, task->uid);
 
         if (brctr >= brctr_root)
         {
