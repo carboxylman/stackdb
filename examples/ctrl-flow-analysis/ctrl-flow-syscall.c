@@ -29,10 +29,12 @@
 #error "Program runs only on Time Travel enabled Xen"
 #endif
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <signal.h>
 #include <log.h>
 
 #include <ctxprobes.h>
@@ -52,6 +54,18 @@ static unsigned int pid_root;
 static int uid_at_call = 0;
 static unsigned long long brctr_at_call;
 
+void kill_everything(char *domain_name)
+{
+    char cmd[128];
+
+    sprintf(cmd, "sudo xm destroy %s", domain_name);
+    system(cmd);
+
+    system("sudo killall -9 ttd-deviced");
+
+    kill(getpid(), SIGINT);
+}
+
 void probe_syscall_call(char *symbol, 
                         ctxprobes_var_t *args,
                         int argcount,
@@ -67,10 +81,6 @@ void probe_syscall_call(char *symbol,
             return;
         }
 
-        //fflush(stderr);
-        //printf("call = %s, uid = %d\n", symbol, task->uid);
-        //fflush(stdout);
-            
         if (brctr < brctr_root)
         {
             uid_at_call = task->uid;
@@ -98,17 +108,16 @@ void probe_syscall_return(char *symbol,
             return;
         }
 
-        //fflush(stderr);
-        //printf("return = %s, uid = %d\n", symbol, task->uid);
-        //fflush(stdout);
-            
         if (brctr >= brctr_root)
         {
             if (uid_at_call > 0 && task->uid == 0)
             {
                 fflush(stderr);
-                printf("%lld %lld: %s\n", brctr_at_call, brctr, symbol);
+                printf("Syscall %s called at %lld escalated privilege\n", 
+                       symbol, brctr_at_call);
                 fflush(stdout);
+
+                kill_everything(domain_name);
             }
         }
     }

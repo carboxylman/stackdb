@@ -58,6 +58,18 @@ static unsigned long long brctr_pwd;
 
 static struct array_list *tracklist;
 
+void kill_everything(char *domain_name)
+{
+    char cmd[128];
+
+    sprintf(cmd, "sudo xm destroy %s", domain_name);
+    system(cmd);
+
+    system("sudo killall -9 ttd-deviced");
+
+    kill(getpid(), SIGINT);
+}
+
 int alist_contains(struct array_list *list, unsigned int pid)
 {
     int i;
@@ -90,11 +102,7 @@ void task_uid_write(unsigned long addr,
 
     if (brctr >= brctr_pwd)
     {
-        //fflush(stderr);
-        //printf("End of analysis: /etc/passwd accessed\n");
-        //fflush(stdout);
-            
-        //kill(getpid(), SIGINT);
+        kill_everything(domain_name);
         return;
     }
 
@@ -102,8 +110,11 @@ void task_uid_write(unsigned long addr,
     if (uid == 0)
     {
         fflush(stderr);
-        printf("%lld: %d\n", brctr, task->pid);
+        printf("Process %d escalated privilege at %lld.\n", 
+               task->pid, brctr);
         fflush(stdout);
+        
+        kill_everything(domain_name);
     }
 }
 
@@ -122,11 +133,7 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 
     if (brctr >= brctr_pwd)
     {
-        //fflush(stderr);
-        //printf("End of analysis: /etc/passwd accessed\n");
-        //fflush(stdout);
-            
-        //kill(getpid(), SIGINT);
+        kill_everything(domain_name);
         return;
     }
 
@@ -139,11 +146,6 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
              * process list if it is with non-root uid. 
              */
             
-            //fflush(stderr);
-            //printf("First task switch to %d (%s): uid = %d\n",
-            //       next->pid, next->comm, next->uid);
-            //fflush(stdout);
-
             if (next->uid != 0)
             {
                 addr = next->vaddr + TASK_UID_OFFSET;
@@ -155,12 +157,6 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
                     printf("Failed to register probe on %s\n", name);
                     return;
                 }
-                
-                /* Put a watch-point at next->uid. */
-                //fflush(stderr);
-                //printf("Put a watch-point at uid of %d (%s)\n", 
-                //       next->pid, next->comm);
-                //fflush(stdout);
             }
             
             array_list_add(tracklist, (void *)next->pid);
@@ -250,15 +246,7 @@ int main(int argc, char *argv[])
         ERR("Failed to init ctxprobes\n");
         exit(ret);
     }
-/*
-    ret = ctxprobes_reg_func_return("sys_fork", probe_fork_return);
-    if (ret)
-    {
-        ERR("Failed to register probe on sys_fork return\n");
-        ctxprobes_cleanup();
-        exit(ret);
-    } 
-*/
+    
     ctxprobes_wait();
 
     ctxprobes_cleanup();
