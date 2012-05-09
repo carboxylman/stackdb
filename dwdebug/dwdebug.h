@@ -535,6 +535,11 @@ void location_dump(struct location *location,struct dump_info *ud);
 void location_internal_free(struct location *location);
 void location_free(struct location *location);
 
+OFFSET location_resolve_offset(struct location *location,
+			       struct array_list *symbol_chain,
+			       struct symbol **top_symbol_saveptr,
+			       int *chain_top_symbol_idx_saveptr);
+
 /**
  ** Symtab (PC) lookup functions.
  **/

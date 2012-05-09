@@ -255,8 +255,8 @@ struct bsymbol *target_lookup_sym(struct target *target,
 	    g_hash_table_iter_init(&iter,region->debugfiles);
 	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
 					  (gpointer)&debugfile)) {
-		lsymbol = debugfile_lookup_sym(debugfile,name,delim,srcfile,
-					       ftype);
+		lsymbol = debugfile_lookup_sym(debugfile,name,
+					       delim,NULL,ftype);
 		if (lsymbol) 
 		    goto out;
 	    }
@@ -541,8 +541,8 @@ struct value *target_load_value_member(struct target *target,
     }
 
     /* Resolve the member offset! */
-    totaloffset = location_resolve_member_offset(target,&ls->symbol->s.ii->l,
-						 ls->chain,NULL,NULL);
+    totaloffset = location_resolve_offset(&ls->symbol->s.ii->l,
+					  ls->chain,NULL,NULL);
     if (errno) {
 	verror("could not resolve member_offset for symbol %s!\n",
 	       symbol_get_name(ls->symbol));
@@ -597,6 +597,168 @@ struct value *target_load_value_member(struct target *target,
     }
 
     lsymbol_release(ls);
+    return retval;
+}
+
+struct value *target_load_bsymbol(struct target *target,
+				  struct bsymbol *bsymbol,load_flags_t flags) {
+
+}
+
+/*
+ * What we do here is traverse @bsymbol's lsymbol chain.  For each var
+ * we encounter, try to resolve its address.  If the chain is
+ * interrupted by pointers, load those and continue loading any
+ * subsequent variables.
+ */
+ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
+			      load_flags_t flags,
+			      struct memrange **range_saveptr) {
+    ADDR retval;
+    int i = 0;
+    int alen;
+    int rc;
+    struct symbol *symbol;
+    struct array_list *symbol_chain;
+    struct bsymbol bsymbol_slice;
+    struct lsymbol lsymbol_slice;
+    struct symbol *datatype;
+    OFFSET offset;
+    struct memregion *current_region = bsymbol->region;
+    struct memrange *current_range = bsymbol->range;
+    load_flags_t tflags = flags | LOAD_FLAG_AUTO_DEREF;
+
+    symbol_chain = bsymbol->lsymbol->chain;
+    alen = array_list_len(symbol_chain);
+
+    /*
+     * We maintain a "slice" of the lsymbol chain, because we only want
+     * to pass the subset of it that is our current value of i -- the
+     * part of the list we have traversed.
+     */
+    lsymbol_slice.refcnt = 1;
+    lsymbol_slice.chain = array_list_clone(symbol_chain,0);
+
+    bsymbol_slice.lsymbol = &lsymbol_slice;
+    bsymbol_slice.region = bsymbol->region;
+    bsymbol_slice.range = bsymbol->range;
+    bsymbol_slice.refcnt = 1;
+
+    /*
+     * We traverse through the lsymbol, loading nested chunks.  If the
+     * end of the chain is a function, we return its base address.
+     * Otherwise, we do nothing for functions (they may be used to
+     * resolve the location of variables, however -- i.e., computing the
+     * dwarf frame_base virtual register).  Otherwise, for variables, if
+     * their types are pointers, we load the pointer, and keep loading
+     * the chain according to the next type.  If the last var is a
+     * pointer, and the AUTO_DEREF flag is set, we deref the pointer(s)
+     * and return the value of the last pointer.  If it is not a
+     * pointer, we return the computed address of the last var.
+     *
+     * The one weird thing is that if the var is a member that is a
+     * struct/union type, we skip it because our location resolution for
+     * members automatically goes back up the chain to handle nested
+     * struct members.
+     */
+    while (1) {
+	symbol = (struct symbol *)array_list_item(symbol_chain,i);
+	++i;
+	lsymbol_slice.chain->len = i;
+	lsymbol_slice.symbol = symbol;
+
+	/* 
+	 * If the last symbol is a function, we only want to return its
+	 * base address.  So do that.
+	 */
+	if (i == alen && SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	    if ((rc = location_resolve_symbol_base(target,&bsymbol_slice,
+						   &retval,&current_range))) {
+		verror("could not resolve base addr for function %s!\n",
+		       symbol_get_name(symbol));
+		errno = rc;
+		goto errout;
+	    }
+	    vdebug(5,LOG_T_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
+		   symbol_get_name(symbol),retval);
+	    goto out;
+	}
+	else if (!SYMBOL_IS_FULL_VAR(symbol)) {
+	    verror("symbol %s of type %s is not a full variable!\n",
+		   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type));
+	    errno = EINVAL;
+	    goto errout;
+	}
+
+	datatype = symbol_type_skip_qualifiers(symbol->datatype);
+	if (symbol->ismember && SYMBOL_IST_STUN(datatype)) {
+	    vdebug(5,LOG_T_SYMBOL,"skipping member %s in stun type %s\n",
+		   symbol_get_name(symbol),symbol_get_name(datatype));
+	    continue;
+	}
+	else if (symbol->ismember) {
+	    offset = location_resolve_offset(&symbol->s.ii->l,
+					     lsymbol_slice.chain,NULL,NULL);
+	    if (errno) {
+		verror("could not resolve offset for member %s\n",
+		       symbol_get_name(symbol));
+		goto errout;
+	    }
+	    retval += offset;
+	    vdebug(5,LOG_T_SYMBOL,
+		   "member %s at offset 0x%"PRIxOFFSET"; really at 0x%"PRIxADDR
+		   "\n",
+		   symbol_get_name(symbol),offset,retval);
+	}
+	else {
+	    retval = location_resolve(target,current_region,&symbol->s.ii->l,
+				      lsymbol_slice.chain,&current_range);
+	    if (errno) {
+		verror("could not resolve location for symbol %s\n",
+		       symbol_get_name(symbol));
+		goto errout;
+	    }
+	    current_region = current_range->region;
+	    vdebug(5,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		   symbol_get_name(symbol),retval);
+	}
+
+	/*
+	 * If the symbol is a pointer, load it now.  If this is the
+	 * final symbol in the chain, and flags & AUTO_DEREF, also load
+	 * the final pointer(s), and return the value.  Otherwise, just
+	 * return the address of the final pointer.
+	 */
+	if (SYMBOL_IST_PTR(datatype)) {
+	    if (i < alen || (i == alen && flags & LOAD_FLAG_AUTO_DEREF)) {
+		retval = target_autoload_pointers(target,datatype,retval,tflags,
+						  NULL,&current_range);
+		if (errno) {
+		    verror("could not load pointer for symbol %s\n",
+			   symbol_get_name(symbol));
+		    goto errout;
+		}
+		current_region = current_range->region;
+		vdebug(5,LOG_T_SYMBOL,
+		       "autoloaded pointer(s) for var %s now at 0x%"PRIxADDR"\n",
+		       symbol_get_name(symbol),retval);
+	    }
+
+	    if (i == alen)
+		goto out;
+	}
+
+	if (i >= alen) 
+	    goto out;
+    }
+
+ errout:
+    retval = 0;
+
+ out:
+    array_list_free(lsymbol_slice.chain);
+    if (range_saveptr)
+	*range_saveptr = current_range;
     return retval;
 }
 

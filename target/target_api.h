@@ -184,6 +184,10 @@ int target_find_memory_real(struct target *target,ADDR addr,
 /**
  ** Load functions.
  **/
+ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
+			      load_flags_t flags,
+			      struct memrange **range_saveptr);
+
 struct value *target_load_value_member(struct target *target,
 				       struct value *value,const char *member,
 				       const char *delim,load_flags_t flags);

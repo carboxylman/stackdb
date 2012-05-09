@@ -3109,6 +3109,100 @@ int location_is_conditional(struct location *location) {
     }
 }
 
+OFFSET location_resolve_offset(struct location *location,
+			       struct array_list *symbol_chain,
+			       struct symbol **top_symbol_saveptr,
+			       int *chain_top_symbol_idx_saveptr) {
+    int chlen;
+    int i;
+    OFFSET totaloffset;
+    struct symbol *symbol;
+    struct symbol *tdatatype;
+
+    if (location->loctype != LOCTYPE_MEMBER_OFFSET) {
+	verror("location type %s is not a member offset!",
+	       LOCTYPE(location->loctype));
+	errno = EINVAL;
+	return 0;
+    }
+
+    /*
+     * XXX: the assumption is that our @location arg is the same
+     * location as in the last symbol in @symbol_chain!
+     */
+    if (!symbol_chain) {
+	verror("cannot resolve MEMBER_OFFSET without containing symbol_chain!\n");
+	errno = EINVAL;
+	return 0;
+    }
+
+    chlen = array_list_len(symbol_chain);
+    symbol = array_list_item(symbol_chain,chlen - 1);
+
+    if (!SYMBOL_IS_FULL_VAR(symbol) || !symbol->ismember) {
+	verror("deepest symbol (%s) in chain is not member; cannot resolve"
+	       " MEMBER_OFFSET location!\n",symbol_get_name(symbol));
+	errno = EINVAL;
+	return 0;
+    }
+
+    /*
+     * Calculate the total offset, i.e. for nested S/Us.
+     */
+    totaloffset = 0;
+    for (i = chlen - 1; i > -1; --i) {
+	symbol = array_list_item(symbol_chain,i);
+	if (i < (chlen - 1) && SYMBOL_IS_VAR(symbol)
+	    && (SYMBOL_IST_PTR(symbol->datatype)
+		|| SYMBOL_IST_CONST(symbol->datatype)
+		|| SYMBOL_IST_VOL(symbol->datatype)
+		|| SYMBOL_IST_TYPEDEF(symbol->datatype))
+	    && (tdatatype = symbol_type_skip_qualifiers(symbol_type_skip_ptrs(symbol_type_skip_qualifiers(symbol->datatype))))
+	    && SYMBOL_IST_STUN(tdatatype)) {
+	    /* In this case, when symbol is a var with a type like 
+	     * const|vol *+ [typedef+] struct, we still allow this var
+	     * to be our top enclosing symbol, because we're going to
+	     * use the pointer in combination with the offset.
+	     */
+	    if (top_symbol_saveptr)
+		*top_symbol_saveptr = symbol;
+	    if (chain_top_symbol_idx_saveptr)
+		*chain_top_symbol_idx_saveptr = i;
+	    break;
+	}
+	else if (SYMBOL_IS_FULL_VAR(symbol)
+	    && symbol->ismember
+	    && symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
+	    totaloffset += symbol->s.ii->l.l.member_offset;
+	    continue;
+	}
+	else if (SYMBOL_IS_VAR(symbol)
+		 && SYMBOL_IST_STUN(symbol->datatype)) {
+	    if (top_symbol_saveptr)
+		*top_symbol_saveptr = symbol;
+	    if (chain_top_symbol_idx_saveptr)
+		*chain_top_symbol_idx_saveptr = i;
+	    break;
+	}
+	else if (SYMBOL_IST_STUN(symbol)) {
+	    /* In this case, don't save the top symbol, because it's not
+	     * a var and thus it has no address.  Callers who need that
+	     * must notice an error in this case; callers who just want
+	     * the offset from the top enclosing STUN type don't need it.
+	     */
+	    break;
+	}
+	else {
+	    verror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
+		   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type),i);
+	    errno = EINVAL;
+	    return 0;
+	}
+    }
+
+    return totaloffset;
+}
+
 void location_internal_free(struct location *location) {
     if (location->loctype == LOCTYPE_RUNTIME) {
 	if (location->l.runtime.data) 

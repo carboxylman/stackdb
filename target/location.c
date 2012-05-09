@@ -187,82 +187,6 @@ struct location *location_resolve_loclist(struct target *target,
     return location->l.loclist->list[i]->loc;
 }
 
-OFFSET location_resolve_member_offset(struct target *target,
-				      struct location *location,
-				      struct array_list *symbol_chain,
-				      struct symbol **top_symbol_saveptr,
-				      int *chain_top_symbol_idx_saveptr) {
-    int chlen;
-    int i;
-    OFFSET totaloffset;
-    struct symbol *symbol;
-
-    if (location->loctype != LOCTYPE_MEMBER_OFFSET) {
-	verror("location type %s is not a member offset!",
-	       LOCTYPE(location->loctype));
-	errno = EINVAL;
-	return 0;
-    }
-
-    /*
-     * XXX: the assumption is that our @location arg is the same
-     * location as in the last symbol in @symbol_chain!
-     */
-    if (!symbol_chain) {
-	verror("cannot resolve MEMBER_OFFSET without containing symbol_chain!\n");
-	errno = EINVAL;
-	return 0;
-    }
-
-    chlen = array_list_len(symbol_chain);
-    symbol = array_list_item(symbol_chain,chlen - 1);
-
-    if (!SYMBOL_IS_FULL_VAR(symbol) || !symbol->ismember) {
-	verror("deepest symbol (%s) in chain is not member; cannot resolve"
-	       " MEMBER_OFFSET location!\n",symbol_get_name(symbol));
-	errno = EINVAL;
-	return 0;
-    }
-
-    /*
-     * Calculate the total offset, i.e. for nested S/Us.
-     */
-    totaloffset = 0;
-    for (i = chlen - 1; i > -1; --i) {
-	symbol = array_list_item(symbol_chain,i);
-	if (SYMBOL_IS_FULL_VAR(symbol)
-	    && symbol->ismember
-	    && symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
-	    totaloffset += symbol->s.ii->l.l.member_offset;
-	    continue;
-	}
-	else if (SYMBOL_IS_VAR(symbol)
-		 && SYMBOL_IST_STUN(symbol->datatype)) {
-	    if (top_symbol_saveptr)
-		*top_symbol_saveptr = symbol;
-	    if (chain_top_symbol_idx_saveptr)
-		*chain_top_symbol_idx_saveptr = i;
-	    break;
-	}
-	else if (SYMBOL_IST_STUN(symbol)) {
-	    /* In this case, don't save the top symbol, because it's not
-	     * a var and thus it has no address.  Callers who need that
-	     * must notice an error in this case; callers who just want
-	     * the offset from the top enclosing STUN type don't need it.
-	     */
-	    break;
-	}
-	else {
-	    verror("invalid chain member (%s,%s) for nested S/U member (%d)!\n",
-		   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type),i);
-	    errno = EINVAL;
-	    return 0;
-	}
-    }
-
-    return totaloffset;
-}
-
 /*
  * Resolves a location -- which may be as simple as a fixed address, or
  * complex as a series of operations produced by a compiler's DWARF
@@ -478,9 +402,8 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 				symbol_chain,
 				range_saveptr);
     case LOCTYPE_MEMBER_OFFSET:
-	totaloffset = location_resolve_member_offset(target,location,
-						     symbol_chain,
-						     &top_enclosing_symbol,&i);
+	totaloffset = location_resolve_offset(location,symbol_chain,
+					      &top_enclosing_symbol,&i);
 	if (errno)
 	    return 0;
 
