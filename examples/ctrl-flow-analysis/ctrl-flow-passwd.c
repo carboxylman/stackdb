@@ -29,10 +29,12 @@
 #error "Program runs only on Time Travel enabled Xen"
 #endif
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <signal.h>
 #include <log.h>
 
 #include <ctxprobes.h>
@@ -48,25 +50,16 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 
-char *context_str(ctxprobes_context_t context)
+void kill_everything(char *domain_name)
 {
-    char *str;
-    switch (context) {
-        case CTXPROBES_CONTEXT_NORMAL:
-            str = "N";
-            break;
-        case CTXPROBES_CONTEXT_TRAP:
-            str = "T";
-            break;
-        case CTXPROBES_CONTEXT_INTERRUPT:
-            str = "I";
-            break;
-        default:
-            str = "Unknown";
-            ERR("Invalid context identifier %d!\n", context);
-            break;
-    }
-    return str;
+    char cmd[128];
+
+    sprintf(cmd, "sudo xm destroy %s", domain_name);
+    system(cmd);
+
+    system("sudo killall -9 ttd-deviced");
+
+    kill(getpid(), SIGINT);
 }
 
 void probe_fileopen(char *symbol, 
@@ -83,9 +76,8 @@ void probe_fileopen(char *symbol,
 
     char *filename = args[0].buf;
     int flags = *(int *)args[1].buf;
-    //int mode = *(int *)args[2].buf;
 
-    //if (context == CTXPROBES_CONTEXT_NORMAL)
+    if (context == CTXPROBES_CONTEXT_NORMAL)
     {
         if (strcmp(filename, "/etc/passwd") == 0)
         {
@@ -95,18 +87,24 @@ void probe_fileopen(char *symbol,
                 if (!brctr)
                 {
                     ERR("Failed to get branch counter\n");
-                    //return;
+                    return;
                 }
                 
-                fflush(stderr);
-                printf("%lld:", brctr);
+                char pids_str[256] = {0,};
                 while (task)
                 {
-                    printf(" %d", task->pid);
+                    sprintf(pids_str+strlen(pids_str), "%d,", 
+                            task->pid);
                     task = task->parent;
                 }
-                printf("\n");
+                pids_str[strlen(pids_str)-1] = '\0';
+
+                fflush(stderr);
+                printf("Password file opened in write mode at %lld: "
+                       "suspected processes = %s\n", brctr, pids_str);
                 fflush(stdout);
+
+                kill_everything(domain_name);
             }
         }
     }
