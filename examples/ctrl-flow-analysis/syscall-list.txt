@@ -120,7 +120,6 @@ sys_setresgid
 sys_setdomainname
 sys_setpriority
 sys_gethostname
-sys_setrlimit
 sys_setreuid
 sys_setgroups
 sys_getsid

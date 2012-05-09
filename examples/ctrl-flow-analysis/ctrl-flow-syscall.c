@@ -72,6 +72,9 @@ void probe_syscall_call(char *symbol,
                         ctxprobes_task_t *task,
                         ctxprobes_context_t context)
 {
+    //DBG("%d (%s): call = %s, uid = %d, brctr = %lld\n", 
+    //    task->pid, task->comm, symbol, task->uid, ctxprobes_get_brctr());
+        
     if (task->pid == pid_root)
     {
         unsigned long long brctr = ctxprobes_get_brctr();
@@ -81,8 +84,6 @@ void probe_syscall_call(char *symbol,
             return;
         }
 
-        DBG("Syscall call = %s, uid = %d\n", symbol, task->uid);
-        
         if (brctr < brctr_root)
         {
             uid_at_call = task->uid;
@@ -104,6 +105,9 @@ void probe_syscall_return(char *symbol,
                           ctxprobes_task_t *task,
                           ctxprobes_context_t context)
 {
+    //DBG("%d (%s): return = %s, uid = %d, brctr = %lld\n", 
+    //    task->pid, task->comm, symbol, task->uid, ctxprobes_get_brctr());
+
     if (task->pid == pid_root)
     {
         unsigned long long brctr = ctxprobes_get_brctr();
@@ -112,8 +116,6 @@ void probe_syscall_return(char *symbol,
             ERR("Failed to get branch counter\n");
             return;
         }
-
-        DBG("Syscall return = %s, uid = %d\n", symbol, task->uid);
 
         if (brctr >= brctr_root)
         {
