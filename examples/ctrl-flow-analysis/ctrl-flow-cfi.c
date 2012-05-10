@@ -28,10 +28,12 @@
 #error "Program runs only on Time Travel enabled Xen"
 #endif
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <signal.h>
 #include <log.h>
 
 #include <ctxprobes.h>
@@ -47,11 +49,24 @@ static char *sysmap_file = NULL;
 static char *syscall_name = NULL;
 static unsigned long long brctr_begin;
 static unsigned long long brctr_end;
+static unsigned int pid_root;
+
+void kill_everything(char *domain_name)
+{
+    char cmd[128];
+
+    sprintf(cmd, "sudo xm destroy %s", domain_name);
+    system(cmd);
+
+    system("sudo killall -9 ttd-deviced");
+
+    kill(getpid(), SIGINT);
+}
 
 void probe_disfunc_return(char *symbol,
-        unsigned long ip,
-        ctxprobes_task_t *task,
-        ctxprobes_context_t context)
+                          unsigned long ip,
+                          ctxprobes_task_t *task,
+                          ctxprobes_context_t context)
 {
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
@@ -60,16 +75,22 @@ void probe_disfunc_return(char *symbol,
         return;
     }
 
-    fflush(stderr);
-    printf("%d (%s): disfunc %s (0x%08lx) called, uid: %d\n",
-            task->pid, task->comm, symbol, ip, task->uid);
-    fflush(stdout);
+    if (task->pid == pid_root)
+    {
+        fflush(stderr);
+        printf("%d (%s): %s (0x%08lx) returned (uid = %d)\n",
+               task->pid, task->comm, symbol, ip, task->uid);
+        fflush(stdout);
+    }
+    
+    if (brctr > brctr_end)
+        kill_everything(domain_name);
 }
 
 void probe_disfunc_call(char *symbol,
-        unsigned long ip,
-        ctxprobes_task_t *task,
-        ctxprobes_context_t context)
+                        unsigned long ip,
+                        ctxprobes_task_t *task,
+                        ctxprobes_context_t context)
 {
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
@@ -78,10 +99,13 @@ void probe_disfunc_call(char *symbol,
         return;
     }
 
-    fflush(stderr);
-    printf("%d (%s): disfunc %s (0x%08lx) returned, uid: %d\n",
-            task->pid, task->comm, symbol, ip, task->uid);
-    fflush(stdout);
+    if (task->pid == pid_root)
+    {
+        fflush(stderr);
+        printf("%d (%s): %s (0x%08lx) called (uid = %d)\n",
+               task->pid, task->comm, symbol, ip, task->uid);
+        fflush(stdout);
+    }
 }
 
 void probe_syscall_call(char *symbol, 
@@ -102,39 +126,18 @@ void probe_syscall_call(char *symbol,
     if (brctr == brctr_begin)
     {
         fflush(stderr);
-        printf("%s called at brctr %lld: start checking CFI\n: ", syscall_name, brctr);
+        printf("%s called at brctr %lld. Start checking CFI!\n", 
+               syscall_name, brctr);
         fflush(stdout);
 
-        ret = ctxprobes_instrument_func(syscall_name, probe_disfunc_call, probe_disfunc_return);
+        ret = ctxprobes_instrument_func(syscall_name, 
+                                        probe_disfunc_call, 
+                                        probe_disfunc_return);
         if (ret)
         {
             ERR("Failed to instrument function %s\n", syscall_name);
             exit(1);
         }
-    }
-
-}
-
-void probe_syscall_return(char *symbol,
-                          ctxprobes_var_t *args,
-                          int argcount,
-                          ctxprobes_var_t *retval,
-                          unsigned long retaddr,
-                          ctxprobes_task_t *task,
-                          ctxprobes_context_t context)
-{
-    unsigned long long brctr = ctxprobes_get_brctr();
-    if (!brctr)
-    {
-        ERR("Failed to get branch counter\n");
-        return;
-    }
-
-    if (brctr == brctr_end)
-    {
-        fflush(stderr);
-        printf("%s returned at brctr %lld: end of analysis\n", syscall_name, brctr);
-        fflush(stdout);
     }
 }
 
@@ -143,7 +146,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:s:b:e:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:s:p:b:e:")) != -1)
     {
         switch(ch)
         {
@@ -167,6 +170,10 @@ void parse_opt(int argc, char *argv[])
 
             case 's':
                 syscall_name = optarg;
+                break;
+
+            case 'p':
+                pid_root = atoi(optarg);
                 break;
 
             case 'b':
@@ -212,13 +219,6 @@ int main(int argc, char *argv[])
         ctxprobes_cleanup();
         exit(ret);
     } 
-
-    ret = ctxprobes_reg_func_return(syscall_name, probe_syscall_return);
-    if (ret)
-    {
-        ERR("Failed to register probe on %s return\n", syscall_name);
-        exit(1);
-    }
 
     ctxprobes_wait();
 
