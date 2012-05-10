@@ -131,9 +131,12 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 	    }
 	    else {
 		distorm_format(&ci,&di,&inst);
-		vwarn("decoded unknown call inst %s %s at %"PRIu64"\n",
-		       inst.mnemonic.p,inst.operands.p,ci.codeOffset);
-		goto invalid_inst;
+		vwarn("decoded unknown call inst %s %s at %"PRIu64
+		      " (type=%hhu,index=%hhu,size=%hu) -- returning to user"
+		      " anyway!)\n",
+		      inst.mnemonic.p,inst.operands.p,ci.codeOffset,
+		      di.ops[0].type,di.ops[0].index,di.ops[0].size);
+		//goto invalid_inst;
 	    }
 
 	    array_list_add(tmplist,idata);
