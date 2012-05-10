@@ -1627,46 +1627,6 @@ int ctxprobes_reg_var(unsigned long addr, //char *symbol,
     return 0;
 }
 
-int ctxprobes_instrument_func(char *symbol,
-                              ctxprobes_disfunc_handler_t call_handler,
-                              ctxprobes_disfunc_handler_t return_handler)
-{
-    struct bsymbol *bsymbol = NULL;
-    ADDR funcstart;
-
-    //struct dump_info udn = {
-    //    .stream = stderr,
-    //    .prefix = "",
-    //    .detail = 1,
-    //    .meta = 1,
-    //};
-
-    bsymbol = target_lookup_sym(t, symbol, ".", NULL, SYMBOL_TYPE_FLAG_FUNCTION);
-    if (!bsymbol)
-    {
-        ERR("Could not find symbol %s!\n", symbol);
-        return -1;
-    }
-
-    //bsymbol_dump(bsymbol, &udn);
-
-    if ((funcstart = instrument_func(bsymbol, 
-                                     probe_disfunc_call, 
-                                     probe_disfunc_return, 
-                                     call_handler, /* data <- ctxprobes handler */
-                                     return_handler, /* data <- ctxprobes handler */
-                                     1 /* root */)) == 0) 
-    {
-        ERR("Could not instrument function %s (0x%08x)!\n",
-            bsymbol->lsymbol->symbol->name, funcstart);
-        return -1;
-    }
-
-    user_disfunc_return_handler = return_handler;
-
-    return 0;
-}
-
 void ctxprobes_unreg_func_call(char *symbol,
         ctxprobes_func_call_handler_t handler)
 {
@@ -1779,6 +1739,67 @@ void ctxprobes_unreg_var(char *symbol,
     }
 }
 
+int ctxprobes_instrument_func(char *symbol,
+                              ctxprobes_disfunc_handler_t call_handler,
+                              ctxprobes_disfunc_handler_t return_handler)
+{
+    struct bsymbol *bsymbol = NULL;
+    ADDR funcstart;
+
+    //struct dump_info udn = {
+    //    .stream = stderr,
+    //    .prefix = "",
+    //    .detail = 1,
+    //    .meta = 1,
+    //};
+
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL, SYMBOL_TYPE_FLAG_FUNCTION);
+    if (!bsymbol)
+    {
+        ERR("Could not find symbol %s!\n", symbol);
+        return -1;
+    }
+
+    //bsymbol_dump(bsymbol, &udn);
+
+    if ((funcstart = instrument_func(bsymbol, 
+                                     probe_disfunc_call, 
+                                     probe_disfunc_return, 
+                                     call_handler, /* data <- ctxprobes handler */
+                                     return_handler, /* data <- ctxprobes handler */
+                                     1 /* root */)) == 0) 
+    {
+        ERR("Could not instrument function %s (0x%08x)!\n",
+            bsymbol->lsymbol->symbol->name, funcstart);
+        return -1;
+    }
+
+    user_disfunc_return_handler = return_handler;
+
+    return 0;
+}
+
+unsigned long ctxprobes_funcstart(char *symbol)
+{
+    struct bsymbol *bsymbol = NULL;
+    ADDR funcstart;
+    
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL, SYMBOL_TYPE_FLAG_FUNCTION);
+    if (!bsymbol)
+    {
+        ERR("Could not find symbol %s!\n", symbol);
+        return 0;
+    }
+
+    if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL)) 
+    {
+        ERR("Could not resolve base addr for function %s!\n",
+            bsymbol->lsymbol->symbol->name);
+        return 0;
+    }
+
+    return (unsigned long)funcstart;
+}
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
 

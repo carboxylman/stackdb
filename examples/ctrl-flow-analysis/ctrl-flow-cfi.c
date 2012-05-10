@@ -34,7 +34,10 @@
 #include <string.h>
 #include <getopt.h>
 #include <signal.h>
+
 #include <log.h>
+#include <list.h>
+#include <alist.h>
 
 #include <ctxprobes.h>
 #include "debug.h"
@@ -50,6 +53,15 @@ static char *syscall_name = NULL;
 static unsigned long long brctr_begin;
 static unsigned long long brctr_end;
 static unsigned int pid_root;
+
+typedef struct funcinfo {
+    char symbol[128];
+    unsigned long ip;
+    unsigned long startaddr;
+    int task_uid;
+} funcinfo_t;
+
+static struct array_list *funcinfo_stack;
 
 void kill_everything(char *domain_name)
 {
@@ -77,9 +89,49 @@ void probe_disfunc_return(char *symbol,
 
     if (task->pid == pid_root)
     {
+        unsigned long funcstart = 0;
+        if (symbol)
+            funcstart = ctxprobes_funcstart(symbol);
+        else
+            symbol = "unknown function";
+
+        char pad[128];
+        int i, len;
+
+        while (1)
+        {
+            funcinfo_t *fi = (funcinfo_t *)array_list_remove(funcinfo_stack);
+            if (!fi)
+            {
+                ERR("Call and return do not match!: %s (0x%08lx)\n", 
+                    symbol, funcstart);
+                kill_everything(domain_name);
+            }
+
+            memset(pad, 0, sizeof(pad));
+            len = array_list_len(funcinfo_stack);
+            for (i = 0; i < len; i++)
+                strcat(pad, "  ");
+
+            if (fi->startaddr == funcstart)
+            {
+                free(fi);
+                break;
+            }
+            else
+            {
+                fflush(stderr);
+                printf("%s%s (0x%08lx) virtually returned (uid = ?)\n",
+                       pad, fi->symbol, fi->startaddr);
+                fflush(stdout);
+
+                free(fi);
+            }
+        }
+        
         fflush(stderr);
-        printf("%d (%s): %s (0x%08lx) returned (uid = %d)\n",
-               task->pid, task->comm, symbol, ip, task->uid);
+        printf("%s%s (0x%08lx) returned (uid = %d)\n",
+               pad, symbol, funcstart, task->uid);
         fflush(stdout);
     }
     
@@ -101,9 +153,27 @@ void probe_disfunc_call(char *symbol,
 
     if (task->pid == pid_root)
     {
+        char pad[128] = {0,};
+        int i, len = array_list_len(funcinfo_stack);
+        for (i = 0; i < len; i++)
+            strcat(pad, "  ");
+
+        funcinfo_t *fi = (funcinfo_t *)malloc(sizeof(funcinfo_t));
+        memset(fi, 0, sizeof(funcinfo_t));
+        fi->ip = ip;
+        fi->task_uid = task->uid;
+        if (symbol)
+        {
+            strcpy(fi->symbol, symbol);
+            fi->startaddr = ctxprobes_funcstart(symbol);
+        }
+        else
+            strcpy(fi->symbol, "unknown function");
+        array_list_add(funcinfo_stack, fi);
+
         fflush(stderr);
-        printf("%d (%s): %s (0x%08lx) called (uid = %d)\n",
-               task->pid, task->comm, symbol, ip, task->uid);
+        printf("%s%s (0x%08lx) called (uid = %d)\n",
+               pad, fi->symbol, fi->startaddr, fi->task_uid);
         fflush(stdout);
     }
 }
@@ -205,6 +275,8 @@ int main(int argc, char *argv[])
     
     parse_opt(argc, argv);
 
+    funcinfo_stack = array_list_create(64);
+
     ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, debug_level);
     if (ret)
     {
@@ -223,6 +295,8 @@ int main(int argc, char *argv[])
     ctxprobes_wait();
 
     ctxprobes_cleanup();
+
+    array_list_deep_free(funcinfo_stack);
     return 0;
 }
 

@@ -113,10 +113,6 @@ int ctxprobes_reg_var(unsigned long addr, //char *symbol,
                       ctxprobes_var_handler_t handler,
                       int readwrite);
 
-int ctxprobes_instrument_func(char *symbol,
-                              ctxprobes_disfunc_handler_t call_handler,
-                              ctxprobes_disfunc_handler_t return_handler);
-
 void ctxprobes_unreg_func_call(char *symbol,
                                ctxprobes_func_call_handler_t handler);
 void ctxprobes_unreg_func_prologue(char *symbol,
@@ -125,6 +121,12 @@ void ctxprobes_unreg_func_return(char *symbol,
                                  ctxprobes_func_return_handler_t handler);
 void ctxprobes_unreg_var(char *symbol,
                          ctxprobes_var_handler_t handler);
+
+int ctxprobes_instrument_func(char *symbol,
+                              ctxprobes_disfunc_handler_t call_handler,
+                              ctxprobes_disfunc_handler_t return_handler);
+
+unsigned long ctxprobes_funcstart(char *symbol);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
 
