@@ -59,6 +59,7 @@ typedef struct funcinfo {
     unsigned long ip;
     unsigned long startaddr;
     int task_uid;
+    unsigned long long brctr;
 } funcinfo_t;
 
 static struct array_list *funcinfo_stack;
@@ -98,6 +99,8 @@ void probe_disfunc_return(char *symbol,
         char pad[128];
         int i, len;
 
+        int uid_at_call = 0;
+        unsigned long long brctr_at_call = 0;
         while (1)
         {
             funcinfo_t *fi = (funcinfo_t *)array_list_remove(funcinfo_stack);
@@ -109,32 +112,53 @@ void probe_disfunc_return(char *symbol,
             }
 
             memset(pad, 0, sizeof(pad));
-            len = array_list_len(funcinfo_stack);
+            len = array_list_len(funcinfo_stack)+1;
             for (i = 0; i < len; i++)
                 strcat(pad, "  ");
 
             if (fi->startaddr == funcstart)
             {
+                uid_at_call = fi->task_uid;
+                brctr_at_call = fi->brctr;
                 free(fi);
                 break;
             }
             else
             {
                 fflush(stderr);
-                printf("%s%s (0x%08lx) virtually returned (uid = ?)\n",
-                       pad, fi->symbol, fi->startaddr);
+                printf("%s%s supposedly returned (uid = ?)\n",
+                       pad, fi->symbol);
                 fflush(stdout);
+
+                //if (fi->task_uid > 0 && task->uid == 0)
+                //{
+                //    fflush(stderr);
+                //    printf("%s (0x%08lx) called at %lld "
+                //           "might have escalated privilege.\n", 
+                //           fi->symbol, fi->ip, fi->brctr);
+                //    fflush(stdout);
+                //}
 
                 free(fi);
             }
         }
         
         fflush(stderr);
-        printf("%s%s (0x%08lx) returned (uid = %d)\n",
-               pad, symbol, funcstart, task->uid);
+        printf("%s%s returned (uid = %d)\n", pad, symbol, task->uid);
         fflush(stdout);
+
+        //if (uid_at_call > 0 && task->uid == 0)
+        //{
+        //    fflush(stderr);
+        //    printf("%s (0x%08lx) called at %lld "
+        //           "might have escalated privilege.\n", 
+        //           symbol, funcstart, brctr_at_call);
+        //    fflush(stdout);
+        
+        //    kill_everything(domain_name);
+        //}
     }
-    
+
     if (brctr > brctr_end)
         kill_everything(domain_name);
 }
@@ -154,7 +178,7 @@ void probe_disfunc_call(char *symbol,
     if (task->pid == pid_root)
     {
         char pad[128] = {0,};
-        int i, len = array_list_len(funcinfo_stack);
+        int i, len = array_list_len(funcinfo_stack)+1;
         for (i = 0; i < len; i++)
             strcat(pad, "  ");
 
@@ -162,18 +186,18 @@ void probe_disfunc_call(char *symbol,
         memset(fi, 0, sizeof(funcinfo_t));
         fi->ip = ip;
         fi->task_uid = task->uid;
+        fi->brctr = brctr;
         if (symbol)
         {
             strcpy(fi->symbol, symbol);
             fi->startaddr = ctxprobes_funcstart(symbol);
         }
         else
-            strcpy(fi->symbol, "unknown function");
+            sprintf(fi->symbol, "Unknown function (0x%08lx)", fi->startaddr);
         array_list_add(funcinfo_stack, fi);
 
         fflush(stderr);
-        printf("%s%s (0x%08lx) called (uid = %d)\n",
-               pad, fi->symbol, fi->startaddr, fi->task_uid);
+        printf("%s%s called (uid = %d)\n", pad, fi->symbol, fi->task_uid);
         fflush(stdout);
     }
 }
@@ -196,8 +220,7 @@ void probe_syscall_call(char *symbol,
     if (brctr == brctr_begin)
     {
         fflush(stderr);
-        printf("%s called at brctr %lld. Start checking CFI!\n", 
-               syscall_name, brctr);
+        printf("%s called (uid = %d)\n", syscall_name, task->uid);
         fflush(stdout);
 
         ret = ctxprobes_instrument_func(syscall_name, 
