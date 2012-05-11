@@ -724,7 +724,8 @@ char *context_string(ctxprobes_context_t context)
 
 int load_func_args(ctxprobes_var_t **arg_list, 
                    int *arg_count, 
-                   struct probe *probe)
+                   struct probe *probe,
+                   struct probe *trigger)
 {
     int ret = 0;
     struct value *value;
@@ -754,7 +755,9 @@ int load_func_args(ctxprobes_var_t **arg_list,
     };
     struct bsymbol tbsym = {
         .lsymbol = &tlsym,
-        .region = probe->probepoint->range->region
+        .region = (probe->probepoint) ? 
+                      probe->probepoint->range->region : 
+                      trigger->probepoint->range->region
     };
 
     arglen = probe->bsymbol->lsymbol->symbol->s.ii->d.f.count;

@@ -120,7 +120,8 @@ char *context_string(ctxprobes_context_t context);
 
 int load_func_args(ctxprobes_var_t **arg_list, 
                    int *arg_count, 
-                   struct probe *probe);
+                   struct probe *probe,
+                   struct probe *trigger);
 void unload_func_args(ctxprobes_var_t *arg_list, int arg_count);
 int load_func_retval(ctxprobes_var_t **retval, struct probe *probe);
 void unload_func_retval(ctxprobes_var_t *retval);
