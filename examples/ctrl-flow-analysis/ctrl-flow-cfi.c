@@ -93,14 +93,10 @@ void probe_disfunc_return(char *symbol,
         unsigned long funcstart = 0;
         if (symbol)
             funcstart = ctxprobes_funcstart(symbol);
-        else
-            symbol = "unknown function";
 
         char pad[128];
         int i, len;
 
-        int uid_at_call = 0;
-        unsigned long long brctr_at_call = 0;
         while (1)
         {
             funcinfo_t *fi = (funcinfo_t *)array_list_remove(funcinfo_stack);
@@ -118,45 +114,15 @@ void probe_disfunc_return(char *symbol,
 
             if (fi->startaddr == funcstart)
             {
-                uid_at_call = fi->task_uid;
-                brctr_at_call = fi->brctr;
                 free(fi);
                 break;
             }
-            else
-            {
-                fflush(stderr);
-                printf("%s%s supposedly returned (uid = ?)\n",
-                       pad, fi->symbol);
-                fflush(stdout);
-
-                //if (fi->task_uid > 0 && task->uid == 0)
-                //{
-                //    fflush(stderr);
-                //    printf("%s (0x%08lx) called at %lld "
-                //           "might have escalated privilege.\n", 
-                //           fi->symbol, fi->ip, fi->brctr);
-                //    fflush(stdout);
-                //}
-
-                free(fi);
-            }
+            free(fi);
         }
         
         fflush(stderr);
-        printf("%s%s returned (uid = %d)\n", pad, symbol, task->uid);
+        printf("%s%s returned (ip = 0x%08lx)\n", pad, symbol, ip);
         fflush(stdout);
-
-        //if (uid_at_call > 0 && task->uid == 0)
-        //{
-        //    fflush(stderr);
-        //    printf("%s (0x%08lx) called at %lld "
-        //           "might have escalated privilege.\n", 
-        //           symbol, funcstart, brctr_at_call);
-        //    fflush(stdout);
-        
-        //    kill_everything(domain_name);
-        //}
     }
 
     if (brctr > brctr_end)
@@ -185,20 +151,26 @@ void probe_disfunc_call(char *symbol,
         funcinfo_t *fi = (funcinfo_t *)malloc(sizeof(funcinfo_t));
         memset(fi, 0, sizeof(funcinfo_t));
         fi->ip = ip;
-        fi->task_uid = task->uid;
         fi->brctr = brctr;
         if (symbol)
         {
             strcpy(fi->symbol, symbol);
             fi->startaddr = ctxprobes_funcstart(symbol);
+        
+            fflush(stderr);
+            printf("%s%s called (ip = 0x%08lx)\n", pad, symbol, ip);
+            fflush(stdout);
         }
         else
-            sprintf(fi->symbol, "Unknown function (0x%08lx)", fi->startaddr);
-        array_list_add(funcinfo_stack, fi);
+        {
+            fflush(stderr);
+            printf("%sUNKNOWN FUNCTION (0x%08lx) CALLED (brctr = %lld)\n", 
+                   pad, ip, brctr);
+            fflush(stdout);
 
-        fflush(stderr);
-        printf("%s%s called (uid = %d)\n", pad, fi->symbol, fi->task_uid);
-        fflush(stdout);
+            kill_everything(domain_name);
+        }
+        array_list_add(funcinfo_stack, fi);
     }
 }
 
@@ -220,7 +192,7 @@ void probe_syscall_call(char *symbol,
     if (brctr == brctr_begin)
     {
         fflush(stderr);
-        printf("%s called (uid = %d)\n", syscall_name, task->uid);
+        printf("%s called (brctr = %lld)\n", syscall_name, brctr);
         fflush(stdout);
 
         ret = ctxprobes_instrument_func(syscall_name, 
