@@ -80,7 +80,8 @@ PROGRAMS := ctrl-flow-static \
             ctrl-flow-passwd \
             ctrl-flow-root \
 			ctrl-flow-syscall \
-			ctrl-flow-cfi
+			ctrl-flow-cfi \
+            ctrl-flow-page
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -123,6 +124,10 @@ ctrl-flow-cfi: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-cfi.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+ctrl-flow-page: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-page.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
@@ -132,7 +137,8 @@ clean: clean-subdirs
 	ctrl-flow-passwd.lo \
 	ctrl-flow-root.lo \
 	ctrl-flow-syscall.lo \
-	ctrl-flow-cfi.lo
+	ctrl-flow-cfi.lo \
+	ctrl-flow-page.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
@@ -245,6 +251,24 @@ debug-cfi: ctrl-flow-cfi
 	sudo gdb --args ./ctrl-flow-cfi -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-b $(CTRLFLOW_CFI_BEGIN) -e $(CTRLFLOW_CFI_END) \
 	-s $(CTRLFLOW_CFI_SYSCALL) -p $(CTRLFLOW_CFI_PID) \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+run-page: ctrl-flow-page
+	sudo ./ctrl-flow-page \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+demo-page: ctrl-flow-page
+	sudo ./ctrl-flow-page \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST) 2> /dev/null
+
+verbose-page: ctrl-flow-page
+	sudo ./ctrl-flow-page \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
+
+debug-page: ctrl-flow-page
+	sudo gdb --args ./ctrl-flow-page \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 # How to recursively descend into subdirectories to make general
