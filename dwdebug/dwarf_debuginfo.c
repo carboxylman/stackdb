@@ -2159,9 +2159,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	 * we have a symtab, now that we have processed both attrs (if
 	 * they existed).
 	 */
-	if (args.symtab && args.lowpc_set) {
+	if (args.symtab && args.symtab->ref == offset && args.lowpc_set) {
 	    if (args.highpc_is_offset
-		|| args.highpc > args.lowpc) {
+		|| args.highpc >= args.lowpc) {
 		if (!args.highpc_is_offset) 
 		    symtab_update_range(args.symtab,args.lowpc,
 					args.highpc,RANGE_TYPE_NONE);
@@ -3357,9 +3357,12 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarn("duplicate symbol %s (orig %s) at offset %"PRIx64" (symtab %s)\n",
-		      symbol_get_name(symbol),symbol_get_name_orig(symbol),
-		      die_offset,symbol->symtab->name);
+		if (!strcmp("unsigned int",symbol_get_name(symbol)) == 0)
+		    vwarn("duplicate symbol %s (orig %s) at offset %"PRIx64
+			  " (symtab %s)\n",
+			  symbol_get_name(symbol),symbol_get_name_orig(symbol),
+			  die_offset,symbol->symtab->name);
+
 		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
 		    verror("could not insert duplicate symbol %s (%s) at offset %"PRIx64" into anontab!\n",
 			   symbol_get_name(symbol),symbol_get_name_orig(symbol),
