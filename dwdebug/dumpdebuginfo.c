@@ -195,6 +195,7 @@ int main(int argc,char **argv) {
 		    list2 = g_list_first(list);
 		    while (1) {
 			symbol_dump((struct symbol *)list2->data,&ud);
+			fprintf(ud.stream,"\n");
 			if (!(list2 = g_list_next(list2)))
 			    break;
 		    }

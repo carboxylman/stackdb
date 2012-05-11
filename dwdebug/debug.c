@@ -163,6 +163,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
     struct array_list *chain = NULL;
     GHashTableIter iter;
     gpointer key;
+    gpointer value;
     struct symbol *svalue;
     struct symtab *subtab;
 
@@ -180,7 +181,8 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
      */
     g_hash_table_iter_init(&iter,symtab->tab);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&svalue)) {
+				  &key,&value)) {
+	svalue = (struct symbol *)value;
 	if (((ftype != SYMBOL_TYPE_FLAG_NONE
 	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(svalue))
 		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(svalue))
@@ -527,11 +529,15 @@ struct lsymbol *symbol_lookup_member(struct symbol *symbol,
 struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
 					       char *filename,int line) {
     GHashTableIter iter;
+    gpointer key;
+    gpointer value;
     clmatch_t clf;
     char *srcfile;
 
     g_hash_table_iter_init(&iter,debugfile->srclines);
-    while (g_hash_table_iter_next(&iter,(gpointer)&srcfile,(gpointer)&clf)) {
+    while (g_hash_table_iter_next(&iter,&key,&value)) {
+	srcfile = (char *)key;
+	clf = (clmatch_t)value;
 	if (strstr(srcfile,filename)) {
 	    return clmatch_find(&clf,line);
 	}
@@ -637,6 +643,7 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     struct symtab *symtab;
     GHashTableIter iter;
     gpointer key;
+    gpointer value;
     struct rfilter_entry *rfe;
     int accept = RF_ACCEPT;
 
@@ -690,7 +697,8 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
      * Check all the srcfiles, or check according to the rfilter.
      */
     g_hash_table_iter_init(&iter,debugfile->srcfiles);
-    while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&symtab)) {
+    while (g_hash_table_iter_next(&iter,&key,&value)) {
+	symtab = (struct symtab *)value;
 	if (srcfile_filter) {
 	    rfilter_check(srcfile_filter,key,&accept,&rfe);
 	    if (accept == RF_REJECT)
@@ -910,6 +918,8 @@ GList *debugfile_match_syms(struct debugfile *debugfile,
     char *srcfile_name;
     struct symtab *cu_symtab;
     int accept;
+    gpointer key;
+    gpointer value;
 
     if (!symbol_filter) {
 	errno = EINVAL;
@@ -920,15 +930,19 @@ GList *debugfile_match_syms(struct debugfile *debugfile,
 	if (ftype == SYMBOL_TYPE_FLAG_NONE
 	    || ftype & SYMBOL_TYPE_FLAG_TYPE) {
 	    g_hash_table_iter_init(&iter,debugfile->types);
-	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
-					  (gpointer *)&symbol)) {
+	    while (g_hash_table_iter_next(&iter,&key,
+					  &value)) {
+		name = (char *)key;
+		symbol = (struct symbol *)value;
 		rfilter_check(symbol_filter,name,&accept,NULL);
 		if (accept == RF_ACCEPT)
 		    retval = g_list_prepend(retval,symbol);
 	    }
 	    g_hash_table_iter_init(&iter,debugfile->shared_types->tab);
-	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
-					  (gpointer *)&symbol)) {
+	    while (g_hash_table_iter_next(&iter,&key,
+					  &value)) {
+		name = (char *)key;
+		symbol = (struct symbol *)value;
 		rfilter_check(symbol_filter,name,&accept,NULL);
 		if (accept == RF_ACCEPT)
 		    retval = g_list_prepend(retval,symbol);
@@ -940,8 +954,10 @@ GList *debugfile_match_syms(struct debugfile *debugfile,
 	    || ftype & SYMBOL_TYPE_FLAG_FUNCTION
 	    || ftype & SYMBOL_TYPE_FLAG_LABEL) {
 	    g_hash_table_iter_init(&iter,debugfile->globals);
-	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
-					  (gpointer *)&symbol)) {
+	    while (g_hash_table_iter_next(&iter,&key,
+					  &value)) {
+		name = (char *)key;
+		symbol = (struct symbol *)value;
 		if (ftype == SYMBOL_TYPE_FLAG_NONE
 		    || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(symbol))
 		    || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
@@ -957,8 +973,10 @@ GList *debugfile_match_syms(struct debugfile *debugfile,
     }
     else {
 	g_hash_table_iter_init(&iter2,debugfile->srcfiles);
-	while (g_hash_table_iter_next(&iter2,(gpointer *)&srcfile_name,
-				      (gpointer *)&cu_symtab)) {
+	while (g_hash_table_iter_next(&iter2,&key,
+				      &value)) {
+	    srcfile_name = (char *)key;
+	    cu_symtab = (struct symtab *)value;
 	    if (srcfile_filter) {
 		rfilter_check(srcfile_filter,srcfile_name,&accept,NULL);
 		if (accept == RF_REJECT)
@@ -966,8 +984,10 @@ GList *debugfile_match_syms(struct debugfile *debugfile,
 	    }
 
 	    g_hash_table_iter_init(&iter,cu_symtab->tab);
-	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
-					  (gpointer *)&symbol)) {
+	    while (g_hash_table_iter_next(&iter,&key,
+					  &value)) {
+		name = (char *)key;
+		symbol = (struct symbol *)value;
 		if ((ftype == SYMBOL_TYPE_FLAG_NONE
 		     || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(symbol))
 		     || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
@@ -3427,12 +3447,14 @@ void g_hash_foreach_dump_symtab(gpointer key __attribute__((unused)),
 				gpointer value,gpointer userdata) {
     struct dump_info *ud = (struct dump_info *)userdata;
     symtab_dump((struct symtab *)value,ud);
+    fprintf(ud->stream,"\n");
 }
 
 void g_hash_foreach_dump_symbol(gpointer key __attribute__((unused)),
 				gpointer value,gpointer userdata) {
     struct dump_info *ud = (struct dump_info *)userdata;
     symbol_dump((struct symbol *)value,ud);
+    fprintf(ud->stream,"\n");
 }
 
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
@@ -3591,17 +3613,23 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	    fprintf(ud->stream,"language=%d ",symtab->meta->language);
     }
     range_dump(&symtab->range,&udn3);
-    fprintf(ud->stream,") {\n");
-    g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
+    fprintf(ud->stream,")");
+    if (g_hash_table_size(symtab->tab) > 0 || !list_empty(&symtab->subtabs)) {
+	fprintf(ud->stream," {\n");
+	g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
 
-    if (!list_empty(&symtab->subtabs)) {
-	fprintf(ud->stream,"%s  subscopes:\n",p);
-	list_for_each_entry(csymtab,&(symtab->subtabs),member) {
-	    symtab_dump(csymtab,&udn2);
+	if (!list_empty(&symtab->subtabs)) {
+	    fprintf(ud->stream,"%s  subscopes:\n",p);
+	    list_for_each_entry(csymtab,&(symtab->subtabs),member) {
+		symtab_dump(csymtab,&udn2);
+		fprintf(ud->stream,"\n");
+	    }
 	}
-    }
 
-    fprintf(ud->stream,"%s}\n",p);
+	fprintf(ud->stream,"%s}",p);
+    }
+    else 
+	fprintf(ud->stream," { }");
 
     if (ud->prefix) {
 	free(np);
@@ -3882,7 +3910,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	ss = "struct";
 	if (symbol->datatype_code == DATATYPE_UNION)
 	    ss = "union";
-	if (ud->detail && SYMBOL_IS_FULL(symbol) && !symbol->name)
+	if (!symbol->name)
 	    fprintf(ud->stream,"%s",ss);
 	else
 	    fprintf(ud->stream,"%s",symbol->name);
@@ -3922,7 +3950,10 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	}
 	break;
     case DATATYPE_ENUM:
-	fprintf(ud->stream,"%s",symbol->name);
+	if (!symbol_get_name(symbol))
+	    fprintf(ud->stream,"enum");
+	else
+	    fprintf(ud->stream,"%s",symbol_get_name(symbol));
 	if (ud->meta && SYMBOL_IS_FULL(symbol)) 
 	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti->byte_size);
 	if (ud->detail && SYMBOL_IS_FULL(symbol)) {
@@ -4051,13 +4082,11 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 		p,symbol->name,
 		symbol->srcline);
 	symbol_type_dump(symbol,&udn);
-	fprintf(ud->stream,"\n");
     }
     else if (symbol->type == SYMBOL_TYPE_VAR) {
 	fprintf(ud->stream,"%svar(%s,line=%d): ",
 		p,symbol->name,symbol->srcline);
 	symbol_var_dump(symbol,&udn);
-	fprintf(ud->stream,"\n");
     }
     else if (symbol->type == SYMBOL_TYPE_FUNCTION) {
 	fprintf(ud->stream,"%sfunction(%s,line=%d): ",
@@ -4068,7 +4097,6 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream,"%slabel(%s,line=%d): ",
 		p,symbol->name,symbol->srcline);
 	symbol_label_dump(symbol,&udn);
-	fprintf(ud->stream,"\n");
     }
     else {
 	fprintf(ud->stream,"unknown symbol type %d!\n",symbol->type);
