@@ -23,6 +23,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <regex.h>
+#include <ctype.h>
 
 #include "log.h"
 #include "dwdebug.h"
@@ -163,11 +164,51 @@ int main(int argc,char **argv) {
 	    ADDR addr = (ADDR)strtoull(argv[i],&endptr,0);
 	    char *cptr = NULL;
 
-	    if ((cptr = index(argv[i],':'))) {
+	    if ((cptr = rindex(argv[i],':'))) {
 		*cptr = '\0';
 		++cptr;
-		s = debugfile_lookup_sym_line(debugfile,argv[i],
-					      atoi(cptr),NULL,NULL);
+		if (isdigit(*cptr))
+		    s = debugfile_lookup_sym_line(debugfile,argv[i],
+						  atoi(cptr),NULL,NULL);
+		else if (*cptr == 'F' || *cptr == 'f') {
+		    GList *list = NULL;
+		    GList *list2;
+		    struct rfilter *rfilter = rfilter_create_parse(argv[i]);
+		    if (!rfilter) {
+			fprintf(stderr,
+				"Could not create symbol rfilter from '%s'!\n",
+				argv[i]);
+			continue;
+		    }
+
+		    list = debugfile_match_syms(debugfile,rfilter,
+						SYMBOL_TYPE_FLAG_NONE,
+						NULL,
+						(*cptr == 'F') ? 1 : 0);
+		    if (!list) {
+			fprintf(stderr,
+				"Did not find any symbols for rfilter '%s'!\n",
+				argv[i]);
+			continue;
+		    }
+
+		    list2 = g_list_first(list);
+		    while (1) {
+			symbol_dump((struct symbol *)list2->data,&ud);
+			if (!(list2 = g_list_next(list2)))
+			    break;
+		    }
+
+		    rfilter_free(rfilter);
+		    g_list_free(list);
+		    continue;
+		}
+		else {
+		    fprintf(stderr,
+			    "Unknown suffix char '%c' in arg '%s', skipping!\n",
+			    *cptr,argv[i]);
+		    continue;
+		}
 	    }
 	    else if (endptr != argv[i]) {
 		s = debugfile_lookup_addr(debugfile,addr);

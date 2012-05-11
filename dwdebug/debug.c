@@ -878,6 +878,113 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
     return lsymbol;
 }
 
+GList *debugfile_match_syms_as_lsymbols(struct debugfile *debugfile,
+				       struct rfilter *symbol_filter,
+				       symbol_type_flag_t ftype,
+				       struct rfilter *srcfile_filter,
+				       int globals_only) {
+    GList *retval = debugfile_match_syms(debugfile,symbol_filter,ftype,
+					 srcfile_filter,globals_only);
+    GList *tlist;
+    if (retval) {
+	tlist = g_list_first(retval);
+	while ((tlist = g_list_next(retval))) {
+	    tlist->data = lsymbol_create_from_symbol((struct symbol *) \
+						     tlist->data);
+	}
+    }
+
+    return retval;
+}
+
+GList *debugfile_match_syms(struct debugfile *debugfile,
+			    struct rfilter *symbol_filter,
+			    symbol_type_flag_t ftype,
+			    struct rfilter *srcfile_filter,
+			    int globals_only) {
+    GList *retval = NULL;
+    GHashTableIter iter;
+    char *name;
+    struct symbol *symbol;
+    GHashTableIter iter2;
+    char *srcfile_name;
+    struct symtab *cu_symtab;
+    int accept;
+
+    if (!symbol_filter) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    if (globals_only && !srcfile_filter) {
+	if (ftype == SYMBOL_TYPE_FLAG_NONE
+	    || ftype & SYMBOL_TYPE_FLAG_TYPE) {
+	    g_hash_table_iter_init(&iter,debugfile->types);
+	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
+					  (gpointer *)&symbol)) {
+		rfilter_check(symbol_filter,name,&accept,NULL);
+		if (accept == RF_ACCEPT)
+		    retval = g_list_prepend(retval,symbol);
+	    }
+	    g_hash_table_iter_init(&iter,debugfile->shared_types->tab);
+	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
+					  (gpointer *)&symbol)) {
+		rfilter_check(symbol_filter,name,&accept,NULL);
+		if (accept == RF_ACCEPT)
+		    retval = g_list_prepend(retval,symbol);
+	    }
+	}
+
+	if (ftype == SYMBOL_TYPE_FLAG_NONE
+	    || ftype & SYMBOL_TYPE_FLAG_VAR
+	    || ftype & SYMBOL_TYPE_FLAG_FUNCTION
+	    || ftype & SYMBOL_TYPE_FLAG_LABEL) {
+	    g_hash_table_iter_init(&iter,debugfile->globals);
+	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
+					  (gpointer *)&symbol)) {
+		if (ftype == SYMBOL_TYPE_FLAG_NONE
+		    || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(symbol))
+		    || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+			&& SYMBOL_IS_FUNCTION(symbol))
+		    || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+			&& SYMBOL_IS_LABEL(symbol))) {
+		    rfilter_check(symbol_filter,name,&accept,NULL);
+		    if (accept == RF_ACCEPT)
+			retval = g_list_prepend(retval,symbol);
+		}
+	    }
+	}
+    }
+    else {
+	g_hash_table_iter_init(&iter2,debugfile->srcfiles);
+	while (g_hash_table_iter_next(&iter2,(gpointer *)&srcfile_name,
+				      (gpointer *)&cu_symtab)) {
+	    if (srcfile_filter) {
+		rfilter_check(srcfile_filter,srcfile_name,&accept,NULL);
+		if (accept == RF_REJECT)
+		    continue;
+	    }
+
+	    g_hash_table_iter_init(&iter,cu_symtab->tab);
+	    while (g_hash_table_iter_next(&iter,(gpointer *)&name,
+					  (gpointer *)&symbol)) {
+		if ((ftype == SYMBOL_TYPE_FLAG_NONE
+		     || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(symbol))
+		     || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+			 && SYMBOL_IS_FUNCTION(symbol))
+		     || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+			 && SYMBOL_IS_LABEL(symbol)))) {
+		    rfilter_check(symbol_filter,name,&accept,NULL);
+		    if (accept == RF_ACCEPT)
+			retval = g_list_prepend(retval,symbol);
+		}
+	    }
+	}
+    }
+
+    return retval;
+}
+
 /**
  ** Data structure management.  In general, our _free() functions do
  ** *everything* to free an object -- remove it from any lists it is on,
@@ -3088,25 +3195,6 @@ struct location *location_create(void) {
     memset(location,0,sizeof(struct location));
     location->loctype = LOCTYPE_UNKNOWN;
     return location;
-}
-
-
-int location_is_conditional(struct location *location) {
-    switch (location->loctype) {
-	/*
-	 * Technically, in some cases, FBREG_OFFSET and MEMBER_OFFSET
-	 * could also be unconditional.  But that gets nearly as
-	 * expensive to compute as actually resolving the location
-	 * against the current IP would be!
-	 *
-	 * So for now, we only do this for fixed addresses.
-	 */
-    case LOCTYPE_ADDR:
-    case LOCTYPE_REALADDR:
-	return 0;
-    default:
-	return 1;
-    }
 }
 
 OFFSET location_resolve_offset(struct location *location,
