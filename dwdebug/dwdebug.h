@@ -293,6 +293,25 @@ extern char *LOCTYPE_STRINGS[];
 #define LOCTYPE(n) (((n) < __LOCTYPE_MAX) ? LOCTYPE_STRINGS[(n)] : NULL)
 
 /*
+ * Returns 1 if resolving this location might be dependent on the IP; 0
+ * otherwise.
+ */
+#define LOCATION_COND_IP(loc)  (!((loc)->loctype == LOCTYPE_ADDR	\
+				  || (loc)->loctype == LOCTYPE_REALADDR))
+/*
+ * Returns 1 if resolving this location might be dependent on memory; 0
+ * otherwise.
+ */
+#define LOCATION_COND_MEM(loc) (!((loc)->loctype == LOCTYPE_REG		\
+				  || (loc)->loctype == LOCTYPE_REG_ADDR	\
+				  || (loc)->loctype == LOCTYPE_REG_OFFSET))
+/*
+ * Returns 1 if resolving this location might be dependent on memory; 0
+ * otherwise.
+ */
+#define LOCATION_IN_REG(loc) ((loc)->loctype == LOCTYPE_REG)
+
+/*
  * These match the dwarf encoding codes.
  */
 typedef enum {
@@ -530,7 +549,6 @@ REFCNT lsymbol_free(struct lsymbol *lsymbol,int force);
  ** Locations.
  **/
 struct location *location_create(void);
-int location_is_conditional(struct location *location);
 void location_dump(struct location *location,struct dump_info *ud);
 void location_internal_free(struct location *location);
 void location_free(struct location *location);
@@ -590,6 +608,47 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
 				     struct rfilter *srcfile_filter,
 				     symbol_type_flag_t ftype);
+
+/*
+ * We return a list of all matching symbols in the debugfile, that are
+ * either globals, or are at the "top level" of a CU.  In other words,
+ * we do not look for nested symbols.  That would be very slow...
+ *
+ * If @globals_only is set and @srcfile_filter is NULL, we only search
+ * the globals or types/shared_types hashes in the debugfile; we do not
+ * examine each CU's symtab.
+ *
+ * If @globals is set and @srcfile_filter is NOT NULL, we will search
+ * through all CUs that match srcfile_filter, but only return symbol
+ * names that match IF they are global symbols.
+ *
+ * If @globals is not set and @srcfile_filter is not set, we go through
+ * all CUs.
+ *
+ * Our search and return values will be restricted by which @ftype
+ * symbol type flags you set; you can set a combination; if you set it
+ * to 0 (SYMBOL_TYPE_FLAG_NONE), we do not restrict our symbol search or
+ * return values.
+ *
+ * The returned GList must be freed using g_list_free; if any of the
+ * debugfile/symtab hashtables is modified later (i.e., the debugfile is
+ * only partially loaded), this list may not be used.
+ *
+ * The items on this list are struct symbol *, and if you want to use
+ * them, you MUST symbol_hold() them!  This function does not do it for
+ * you!
+ */
+GList *debugfile_match_syms(struct debugfile *debugfile,
+			    struct rfilter *symbol_filter,
+			    symbol_type_flag_t ftype,
+			    struct rfilter *srcfile_filter,
+			    int globals_only);
+
+GList *debugfile_match_syms_as_lsymbols(struct debugfile *debugfile,
+					struct rfilter *symbol_filter,
+					symbol_type_flag_t ftype,
+					struct rfilter *srcfile_filter,
+					int globals_only);
 /*
  * Look up a specific address and find its symbol.
  * 

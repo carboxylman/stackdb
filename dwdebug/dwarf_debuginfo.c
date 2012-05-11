@@ -1683,6 +1683,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
     char *sname;
     int accept;
     gpointer key;
+    gpointer value;
 
     /*
      * If we only want to load specific die offsets, clone the incoming
@@ -1707,13 +1708,13 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 			      (gpointer)(uintptr_t)offset))) {
 	if (!meta) {
 	    verror("Could not find a previous CU symtab at offset"
-		   " 0x%"PRIxOFFSET", and no DWARF metadata supplied;"
+		   " 0x%"PRIx64", and no DWARF metadata supplied;"
 		   " aborting!\n",offset);
 	    goto errout;
 	}
 
 	vdebug(5,LOG_D_DWARF,
-	       "creating new CU symtab at offset 0x%"PRIxOFFSET"!\n",offset);
+	       "creating new CU symtab at offset 0x%"PRIx64"!\n",offset);
 
 	/* attr_callback has to fill cu_symtab, and *MUST* fill at least
 	 * the name field; otherwise we can't add the symtab to our hash table.
@@ -1725,13 +1726,13 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
     }
     else {
 	vdebug(5,LOG_D_DWARF,
-	       "using existing CU symtab %s (offset 0x%"PRIxOFFSET")!\n",
+	       "using existing CU symtab %s (offset 0x%"PRIx64")!\n",
 	       cu_symtab->name,offset);
 
 	if (!cu_symtab->meta) {
 	    if (!meta) {
 		verror("No DWARF metadata supplied for CU symtab load at offset"
-		       " 0x%"PRIxOFFSET"; aborting!\n",offset);
+		       " 0x%"PRIx64"; aborting!\n",offset);
 		goto errout;
 	    }
 	    cu_symtab->meta = meta;
@@ -1744,16 +1745,18 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	if (1 || cu_symtab->meta->loadtag == LOADTYPE_PARTIAL) {
 	    g_hash_table_iter_init(&iter,cu_symtab->anontab);
 	    while (g_hash_table_iter_next(&iter,
-					  (gpointer *)&key,(gpointer *)&tsymbol)) {
+					  (gpointer *)&key,(gpointer *)&value)) {
+		tsymbol = (struct symbol *)value;
 		g_hash_table_insert(reftab,key,(gpointer *)tsymbol);
 		vdebug(6,LOG_D_DWARF,
 		       "inserted %s into reuse reftab\n",tsymbol->name);
 	    }
 	    g_hash_table_iter_init(&iter,cu_symtab->tab);
 	    while (g_hash_table_iter_next(&iter,
-					  (gpointer *)&key,(gpointer *)&tsymbol))  {
-		g_hash_table_insert(reftab,(gpointer *)(uintptr_t)tsymbol->ref,
-				    (gpointer *)tsymbol);
+					  (gpointer *)&key,(gpointer *)&value))  {
+		tsymbol = (struct symbol *)value;
+		g_hash_table_insert(reftab,(gpointer)(uintptr_t)tsymbol->ref,
+				    (gpointer)tsymbol);
 		vdebug(6,LOG_D_DWARF,
 		       "inserted %s (0x%"PRIxSMOFFSET") into reuse reftab\n",
 		       tsymbol->name,tsymbol->ref);
@@ -2156,9 +2159,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	 * we have a symtab, now that we have processed both attrs (if
 	 * they existed).
 	 */
-	if (args.symtab && args.lowpc_set) {
+	if (args.symtab && args.symtab->ref == offset && args.lowpc_set) {
 	    if (args.highpc_is_offset
-		|| args.highpc > args.lowpc) {
+		|| args.highpc >= args.lowpc) {
 		if (!args.highpc_is_offset) 
 		    symtab_update_range(args.symtab,args.lowpc,
 					args.highpc,RANGE_TYPE_NONE);
@@ -2615,7 +2618,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 
     g_hash_table_iter_init(&iter,reftab);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer)&offset,(gpointer)&rsymbol)) {
+				  (gpointer *)&key,(gpointer *)&value)) {
+	offset = (uintptr_t)key;
+	rsymbol = (struct symbol *)value;
 	if (!rsymbol)
 	    continue;
 
@@ -2667,9 +2672,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    }
 
 	    iilist = (struct array_list *)g_hash_table_lookup(cu_abstract_origins,
-							      (gpointer)offset);
+							      (gpointer)(uintptr_t)offset);
 	    if (iilist) {
-		g_hash_table_remove(cu_abstract_origins,(gpointer)offset);
+		g_hash_table_remove(cu_abstract_origins,(gpointer)(uintptr_t)offset);
 		rsymbol->s.ii->inline_instances = iilist;
 	    }
 	}
@@ -2732,7 +2737,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2a\n");
 	g_hash_table_iter_init(&iter,reftab);
 	while (g_hash_table_iter_next(&iter,
-				      (gpointer)&offset,(gpointer)&rsymbol)) {
+				      (gpointer *)&key,(gpointer *)&value)) {
+	    offset = (uintptr_t)key;
+	    rsymbol = (struct symbol *)value;
 	    if (!rsymbol || !SYMBOL_IS_TYPE(rsymbol) || SYMBOL_IST_ENUM(rsymbol))
 		continue;
 
@@ -2821,7 +2828,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2b\n");
 	g_hash_table_iter_init(&iter,reftab);
 	while (g_hash_table_iter_next(&iter,
-				      (gpointer)&offset,(gpointer)&rsymbol)) {
+				      (gpointer *)&key,(gpointer *)&value)) {
+	    offset = (uintptr_t)key;
+	    rsymbol = (struct symbol *)value;
 	    if (!rsymbol)
 		continue;
 
@@ -2868,7 +2877,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2c\n");
 	g_hash_table_iter_init(&iter,reftab);
 	while (g_hash_table_iter_next(&iter,
-				      (gpointer)&offset,(gpointer)&rsymbol)) {
+				      (gpointer *)&key,(gpointer *)&value)) {
+	    offset = (uintptr_t)key;
+	    rsymbol = (struct symbol *)value;
 	    if (!rsymbol)
 		continue;
 
@@ -2906,8 +2917,10 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
     /* Clear out inline instances table! */
     g_hash_table_iter_init(&iter,cu_abstract_origins);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer)&offset,(gpointer)&iilist)) {
-	vwarn("did not use abstract origins list (%d) for offset 0x%"PRIxOFFSET"!\n",
+				      (gpointer *)&key,(gpointer *)&value)) {
+	offset = (uintptr_t)key;
+	iilist = (struct array_list *)value;
+	vwarn("did not use abstract origins list (%d) for offset 0x%"PRIx64"!\n",
 	      array_list_len(iilist),offset);
 	/* GHashTable thankfully does not depend on the value pointer
 	 * being valid in order to remove items from the hashtable!
@@ -3023,6 +3036,7 @@ static int debuginfo_load(struct debugfile *debugfile,
     struct array_list *tmpal;
     int i;
     gpointer key;
+    gpointer value;
     struct rfilter_entry *rfe;
     int accept = RF_ACCEPT;
 
@@ -3034,7 +3048,8 @@ static int debuginfo_load(struct debugfile *debugfile,
 					       NULL,
 					       (GDestroyNotify)array_list_free);
 	g_hash_table_iter_init(&iter,debugfile->pubnames);
-	while (g_hash_table_iter_next(&iter,&key,(gpointer *)&dcd)) {
+	while (g_hash_table_iter_next(&iter,&key,(gpointer)&value)) {
+	    dcd = (struct dwarf_cu_die_ref *)value;
 	    if (!(tmpal = (struct array_list *) \
 		  g_hash_table_lookup(cu_die_offsets,
 				      (gpointer)(uintptr_t)dcd->cu_offset))) {
@@ -3068,7 +3083,8 @@ static int debuginfo_load(struct debugfile *debugfile,
 	}
 
 	g_hash_table_iter_init(&iter,cu_die_offsets);
-	while (g_hash_table_iter_next(&iter,&cu_offset,(gpointer *)&tmpal)) {
+	while (g_hash_table_iter_next(&iter,&cu_offset,&value)) {
+	    tmpal = (struct array_list *)value;
 	    vdebug(5,LOG_D_DWARF,"preloading offsets for CU 0x%"PRIxSMOFFSET": ",
 		   (SMOFFSET)(uintptr_t)cu_offset);
 	    for (i = 0; i < array_list_len(tmpal); ++i) {
@@ -3080,9 +3096,10 @@ static int debuginfo_load(struct debugfile *debugfile,
 
 	/* Get the first one to seed the loop below. */
 	g_hash_table_iter_init(&iter,cu_die_offsets);
-	if (!g_hash_table_iter_next(&iter,&cu_offset,(gpointer *)&die_offsets)) 
+	if (!g_hash_table_iter_next(&iter,&cu_offset,&value)) 
 	    goto out;
-	offset = (Dwarf_Off)cu_offset;
+	die_offsets = (struct array_list *)value;
+	offset = (Dwarf_Off)(uintptr_t)cu_offset;
     }
 
     while (1) {
@@ -3126,9 +3143,10 @@ static int debuginfo_load(struct debugfile *debugfile,
 
 	if (cu_die_offsets) {
 	    if (!g_hash_table_iter_next(&iter,&cu_offset,
-					(gpointer *)&die_offsets)) 
+					&value)) 
 		break;
-	    offset = (Dwarf_Off)cu_offset;
+	    die_offsets = (struct array_list *)value;
+	    offset = (Dwarf_Off)(uintptr_t)cu_offset;
 	}
 	else {
 	    offset = meta->nextcu;
@@ -3339,9 +3357,12 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarn("duplicate symbol %s (orig %s) at offset %"PRIx64" (symtab %s)\n",
-		      symbol_get_name(symbol),symbol_get_name_orig(symbol),
-		      die_offset,symbol->symtab->name);
+		if (!strcmp("unsigned int",symbol_get_name(symbol)) == 0)
+		    vwarn("duplicate symbol %s (orig %s) at offset %"PRIx64
+			  " (symtab %s)\n",
+			  symbol_get_name(symbol),symbol_get_name_orig(symbol),
+			  die_offset,symbol->symtab->name);
+
 		if (symtab_insert(symbol->symtab,symbol,die_offset)) {
 		    verror("could not insert duplicate symbol %s (%s) at offset %"PRIx64" into anontab!\n",
 			   symbol_get_name(symbol),symbol_get_name_orig(symbol),
@@ -3546,7 +3567,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 
 		    vdebug(3,LOG_D_DWARF,
 			   "rresolving just-resolved %s type symbol %s\n",
-			   SYMBOL_TYPE(symbol->datatype->datatype_code),
+			   DATATYPE(symbol->datatype->datatype_code),
 			   symbol_get_name(symbol->datatype),
 			   symbol->datatype->datatype_ref);
 		    resolve_refs(NULL,symbol->datatype,reftab);
@@ -3559,7 +3580,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		 */
 		vdebug(3,LOG_D_DWARF,
 		       "rresolving known %s type symbol %s ref 0x%"PRIxSMOFFSET"\n",
-		       SYMBOL_TYPE(symbol->datatype->datatype_code),
+		       DATATYPE(symbol->datatype->datatype_code),
 		       symbol_get_name(symbol->datatype),
 		       symbol->datatype->datatype_ref);
 
@@ -3630,7 +3651,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	    vdebug(3,LOG_D_DWARF,
 		   "rresolving ref 0x%"PRIxSMOFFSET" %s type symbol %s\n",
 		   symbol->datatype->datatype_ref,
-		   SYMBOL_TYPE(symbol->datatype->datatype_code),
+		   DATATYPE(symbol->datatype->datatype_code),
 		   symbol_get_name(symbol->datatype));
 	    resolve_refs(NULL,symbol->datatype,reftab);
 	}
