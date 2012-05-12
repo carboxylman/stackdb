@@ -150,7 +150,7 @@ int main(int argc, char *argv[])
         return -2;
     }
 
-    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, debug_level);
+    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, NULL, debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");

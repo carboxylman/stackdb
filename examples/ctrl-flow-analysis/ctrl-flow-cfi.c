@@ -272,7 +272,7 @@ int main(int argc, char *argv[])
 
     funcinfo_stack = array_list_create(64);
 
-    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, debug_level);
+    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, NULL, debug_level);
     if (ret)
     {
         ERR("Failed to init ctxprobes\n");

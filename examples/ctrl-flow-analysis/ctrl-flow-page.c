@@ -79,32 +79,34 @@ void kill_everything(char *domain_name)
     kill(getpid(), SIGINT);
 }
 
-void probe_pagefault(char *symbol, 
-                     ctxprobes_var_t *args,
-                     int argcount,
-                     ctxprobes_task_t *task,
-                     ctxprobes_context_t context)
+void probe_pagefault(unsigned long address,
+                     int protection_fault,
+                     int write_access,
+                     int user_mode,
+                     int reserved_bit,
+                     int instr_fetch,
+                     ctxprobes_task_t *task)
 {
     unsigned long error_code;
     char error_str[128] = {0,};
 
-    memcpy(&error_code, args[1].buf, args[1].size);
-
-    strcat(error_str, (error_code & 1) ?
-            "protection-fault, " : "no-page-found, ");
-    strcat(error_str, (error_code & 2) ?
-            "write, " : "read, ");
-    strcat(error_str, (error_code & 4) ?
-            "user, " : "kernel, ");
-    strcat(error_str, (error_code & 8) ?
-            "reserved-bit, " : "");
-    strcat(error_str, (error_code & 16) ?
-            "instr-fetch, " : "");
+    strcat(error_str, protection_fault ?
+           "protection-fault, " : "no-page-found, ");
+    strcat(error_str, write_access ?
+           "write-access, " : "read-access, ");
+    strcat(error_str, user_mode ?
+           "user-mode, " : "kernel-mode, ");
+    strcat(error_str, reserved_bit ?
+           "reserved-bit, " : "");
+    strcat(error_str, instr_fetch ?
+           "instr-fetch, " : "");
     error_str[strlen(error_str)-2] = '\0';
     
     fflush(stderr);
-    printf("%d (%s): Page fault (%s)\n",
-           task->pid, task->comm, error_str);
+
+    printf("%d (%s): Page fault: address = 0x%08lx, error = (%s)\n", 
+           task->pid, task->comm, address, error_str);
+
     fflush(stdout);
 }
 
@@ -156,20 +158,17 @@ int main(int argc, char *argv[])
     
     parse_opt(argc, argv);
 
-    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, debug_level);
+    ret = ctxprobes_init(domain_name, 
+                         sysmap_file, 
+                         NULL, 
+                         NULL, 
+                         probe_pagefault, 
+                         debug_level);
     if (ret)
     {
         ERR("Failed to init ctxprobes\n");
         exit(ret);
     }
-
-    ret = ctxprobes_reg_func_call("do_page_fault", probe_pagefault);
-    if (ret)
-    {
-        ERR("Failed to register probe on handle_pte_fault.call\n");
-        ctxprobes_cleanup();
-        exit(ret);
-    } 
 
     ctxprobes_wait();
 

@@ -240,6 +240,7 @@ int main(int argc, char *argv[])
                          sysmap_file, 
                          task_switch, 
                          NULL, 
+                         NULL, 
                          debug_level);
     if (ret)
     {
