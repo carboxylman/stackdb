@@ -90,6 +90,13 @@ void probe_pagefault(unsigned long address,
     unsigned long error_code;
     char error_str[128] = {0,};
 
+    unsigned long long brctr = ctxprobes_get_brctr();
+    if (!brctr)
+    {
+        ERR("Failed to get branch counter\n");
+        return;
+    }
+                
     strcat(error_str, protection_fault ?
            "protection-fault, " : "no-page-found, ");
     strcat(error_str, write_access ?
@@ -104,8 +111,8 @@ void probe_pagefault(unsigned long address,
     
     fflush(stderr);
 
-    printf("%d (%s): Page fault: address = 0x%08lx, error = (%s)\n", 
-           task->pid, task->comm, address, error_str);
+    printf("%d (%s): Page fault: address = 0x%08lx, brctr = %lld, error = (%s)\n", 
+           task->pid, task->comm, address, brctr, error_str);
 
     fflush(stdout);
 }
