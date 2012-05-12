@@ -85,15 +85,26 @@ void probe_pagefault(char *symbol,
                      ctxprobes_task_t *task,
                      ctxprobes_context_t context)
 {
+    unsigned long error_code;
+    char error_str[128] = {0,};
+
+    memcpy(&error_code, args[1].buf, args[1].size);
+
+    strcat(error_str, (error_code & 1) ?
+            "protection-fault, " : "no-page-found, ");
+    strcat(error_str, (error_code & 2) ?
+            "write, " : "read, ");
+    strcat(error_str, (error_code & 4) ?
+            "user, " : "kernel, ");
+    strcat(error_str, (error_code & 8) ?
+            "reserved-bit, " : "");
+    strcat(error_str, (error_code & 16) ?
+            "instr-fetch, " : "");
+    error_str[strlen(error_str)-2] = '\0';
+    
     fflush(stderr);
-    printf("[%c] %d (%s): %s(%s=0x%lx, %s=0x%lx, %s=0x%lx, %s=0x%lx, %s=0x%lx, %s=%d)\n",
-            context_ch(context), task->pid, task->comm, symbol,
-            args[0].name, *(unsigned long *)args[0].buf,
-            args[1].name, *(unsigned long *)args[1].buf,
-            args[2].name, *(unsigned long *)args[2].buf,
-            args[3].name, *(unsigned long *)args[3].buf,
-            args[4].name, *(unsigned long *)args[4].buf,
-            args[5].name, *(int *)args[5].buf);
+    printf("%d (%s): Page fault (%s)\n",
+           task->pid, task->comm, error_str);
     fflush(stdout);
 }
 
@@ -152,7 +163,7 @@ int main(int argc, char *argv[])
         exit(ret);
     }
 
-    ret = ctxprobes_reg_func_call("handle_pte_fault", probe_pagefault);
+    ret = ctxprobes_reg_func_call("do_page_fault", probe_pagefault);
     if (ret)
     {
         ERR("Failed to register probe on handle_pte_fault.call\n");

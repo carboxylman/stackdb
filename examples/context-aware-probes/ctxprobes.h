@@ -90,13 +90,23 @@ typedef void (*ctxprobes_task_switch_handler_t)(ctxprobes_task_t *prev,
                                                 ctxprobes_task_t *next);
 
 typedef void (*ctxprobes_context_change_handler_t)(ctxprobes_context_t prev,
-                                                   ctxprobes_context_t next);
+                                                   ctxprobes_context_t next,
+                                                   ctxprobes_task_t *task);
+
+typedef void (*ctxprobes_page_fault_handler_t)(unsigned long address,
+                                               int protection_fault,
+                                               int write_access,
+                                               int user_mode,
+                                               int reserved_bit,
+                                               int instr_fetch,
+                                               ctxprobes_task_t *task);
 
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
                    ctxprobes_task_switch_handler_t task_switch_handler,
                    ctxprobes_context_change_handler_t context_change_handler,  
+                   ctxprobes_page_fault_handler_t page_fault_handler,  
                    int debug_level);
 void ctxprobes_cleanup(void);
 

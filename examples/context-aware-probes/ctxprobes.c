@@ -60,6 +60,7 @@ ctxprobes_context_t context_prev_intr = CTXPROBES_CONTEXT_NORMAL;
 
 ctxprobes_task_switch_handler_t user_task_switch_handler = NULL;
 ctxprobes_context_change_handler_t user_context_change_handler = NULL;
+ctxprobes_page_fault_handler_t user_page_fault_handler = NULL;
 
 struct bsymbol *bsymbol_task_prev = NULL;
 struct bsymbol *bsymbol_task_next = NULL;
@@ -722,29 +723,60 @@ static int probe_page_fault_call(struct probe *probe,
 {
     ctxprobes_var_t *arg_list = NULL;
     int arg_count = 0;
+    unsigned long address = 0;
     unsigned long error_code;
     char error_str[128] = {0,};
     int ret;
+
+    /* FIXME: this is a hard-coded way of getting the pagefault address */
+    struct xen_vm_state *xstate = (struct xen_vm_state *)(t->state);
+    if (xstate)
+    {
+        vcpu_guest_context_t *context = &xstate->context;
+        if (context)
+            address = context->ctrlreg[2];
+        else
+            ERR("Could not get vcpu guest context\n");
+    }
+    else
+        ERR("Could not get xen vm state\n");
 
     ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     if (ret)
         ERR("Failed to load function args\n");
 
     memcpy(&error_code, arg_list[1].buf, arg_list[1].size);
-    strcat(error_str, (error_code & 1) ?
+    int protection_fault = (error_code & 1);
+    int write_access = (error_code & 2);
+    int user_mode = (error_code & 4);
+    int reserved_bit = (error_code & 8);
+    int instr_fetch = (error_code & 16);
+
+    strcat(error_str, protection_fault ?
            "protection-fault, " : "no-page-found, ");
-    strcat(error_str, (error_code & 2) ?
+    strcat(error_str, write_access ?
            "write, " : "read, ");
-    strcat(error_str, (error_code & 4) ?
+    strcat(error_str, user_mode ?
            "user, " : "kernel, ");
-    strcat(error_str, (error_code & 8) ?
+    strcat(error_str, reserved_bit ?
            "reserved-bit, " : "");
-    strcat(error_str, (error_code & 16) ?
+    strcat(error_str, instr_fetch ?
            "instr-fetch, " : "");
     error_str[strlen(error_str)-2] = '\0';
 
-    DBG("%d (%s): Trap page fault called (%s)\n", 
-        task_current->pid, task_current->comm, error_str);
+    DBG("%d (%s): Trap page fault called (addr = 0x%08lx, error = %s)\n", 
+        task_current->pid, task_current->comm, address, error_str);
+
+    if (user_page_fault_handler)
+    {
+        user_page_fault_handler(address, 
+                                protection_fault,
+                                write_access,
+                                user_mode,
+                                reserved_bit,
+                                instr_fetch,
+                                task_current);
+    }
 
     return 0;
 }
@@ -917,7 +949,9 @@ static int probe_trap_call(struct probe *probe,
 
     /* Call user context change handler. */
     if (user_context_change_handler)
-        user_context_change_handler(context_prev_trap, context_current);
+        user_context_change_handler(context_prev_trap, 
+                                    context_current,
+                                    task_current);
 
     return -1;
 }
@@ -979,7 +1013,9 @@ static int probe_trap_return(struct probe *probe,
 
     /* Call user context change handler. */
     if (user_context_change_handler)
-        user_context_change_handler(context_current, context_prev_trap);
+        user_context_change_handler(context_current, 
+                                    context_prev_trap,
+                                    task_current);
 
     context_current = context_prev_trap;
 
@@ -1041,7 +1077,9 @@ static int probe_interrupt_call(struct probe *probe,
 
     /* Call user context change handler. */
     if (user_context_change_handler)
-        user_context_change_handler(context_prev_intr, context_current);
+        user_context_change_handler(context_prev_intr, 
+                                    context_current,
+                                    task_current);
 
     return 0;
 }
@@ -1076,7 +1114,9 @@ static int probe_interrupt_return(struct probe *probe,
 
     /* Call user context change handler. */
     if (user_context_change_handler)
-        user_context_change_handler(context_current, context_prev_intr);
+        user_context_change_handler(context_current, 
+                                    context_prev_intr,
+                                    task_current);
 
     context_current = context_prev_intr;
 
@@ -1258,6 +1298,7 @@ int ctxprobes_init(char *domain_name,
                    char *sysmap_file, 
                    ctxprobes_task_switch_handler_t task_switch_handler,
                    ctxprobes_context_change_handler_t context_change_handler,  
+                   ctxprobes_page_fault_handler_t page_fault_handler,  
                    int debug_level)
 {
     int i, probe_count;
@@ -1280,6 +1321,7 @@ int ctxprobes_init(char *domain_name,
 
     user_task_switch_handler = task_switch_handler;
     user_context_change_handler = context_change_handler;
+    user_page_fault_handler = page_fault_handler;
 
     dwdebug_init();
     vmi_set_log_level(debug_level);

@@ -148,13 +148,45 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
     fflush(stdout);
 }
 
-void context_change(ctxprobes_context_t prev, ctxprobes_context_t next)
+void context_change(ctxprobes_context_t prev, 
+                    ctxprobes_context_t next,
+                    ctxprobes_task_t *task)
 {
     fflush(stderr);
     
-    printf("Context change: %s -> %s\n",
-           context_str(prev), context_str(next));
+    printf("%d (%s): Context change: %s -> %s\n",
+           task->pid, task->comm, context_str(prev), context_str(next));
     
+    fflush(stdout);
+}
+
+void page_fault(unsigned long address,
+                int protection_fault,
+                int write_access,
+                int user_mode,
+                int reserved_bit,
+                int instr_fetch,
+                ctxprobes_task_t *task)
+{
+    char error_str[128] = {0,};
+    
+    strcat(error_str, protection_fault ?
+           "protection-fault, " : "no-page-found, ");
+    strcat(error_str, write_access ?
+           "write-access, " : "read-access, ");
+    strcat(error_str, user_mode ?
+           "user-mode, " : "kernel-mode, ");
+    strcat(error_str, reserved_bit ?
+           "reserved-bit, " : "");
+    strcat(error_str, instr_fetch ?
+           "instr-fetch, " : "");
+    error_str[strlen(error_str)-2] = '\0';
+    
+    fflush(stderr);
+
+    printf("%d (%s): Page fault: address = 0x%08lx, error = (%s)\n", 
+           task->pid, task->comm, address, error_str);
+
     fflush(stdout);
 }
 
@@ -316,7 +348,8 @@ int main(int argc, char *argv[])
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
                          NULL,//task_switch, 
-                         NULL,//context_change, 
+                         NULL,//context_change,
+                         page_fault,
                          debug_level);
     if (ret)
     {
@@ -344,14 +377,14 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to register probe on sys_open return\n");
         exit(1);
     }
-*/
+
     ret = ctxprobes_instrument_func("sys_open", disfunc_call, disfunc_return);
     if (ret)
     {
         fprintf(stderr, "failed to instrument function sys_open\n");
         exit(1);
     }
-
+*/
     printf("Starting instrumentation...\n");
     ctxprobes_wait();
 
