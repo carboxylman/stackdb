@@ -729,17 +729,35 @@ static int probe_page_fault_call(struct probe *probe,
     int ret;
 
     /* FIXME: this is a hard-coded way of getting the pagefault address */
+    int xc_handle = -1;
     struct xen_vm_state *xstate = (struct xen_vm_state *)(t->state);
     if (xstate)
     {
-        vcpu_guest_context_t *context = &xstate->context;
-        if (context)
-            address = context->ctrlreg[2];
+        xc_handle = xc_interface_open();
+        if (xc_handle >= 0)
+        {
+            xc_dominfo_t dominfo;
+            memset(&dominfo, 0, sizeof(dominfo));
+            if (xc_domain_getinfo(xc_handle, xstate->id, 1, &dominfo) > 0)
+            {
+                vcpu_guest_context_t context;
+                memset(&context, 0, sizeof(context));
+                if (xc_vcpu_getcontext(xc_handle, xstate->id, 
+                                       dominfo.max_vcpu_id, &context) >= 0)
+                    address = context.ctrlreg[2];
+                else
+                    ERR("Could not get vcpu context for %d\n", xstate->id);
+            }
+            else
+                ERR("Could not get domain info for %d\n", xstate->id);
+        }
         else
-            ERR("Could not get vcpu guest context\n");
+            ERR("Could not open xc interface: %s\n", strerror(errno));
     }
     else
         ERR("Could not get xen vm state\n");
+    if (xc_handle >= 0)
+        xc_interface_close(xc_handle);
 
     ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     if (ret)
