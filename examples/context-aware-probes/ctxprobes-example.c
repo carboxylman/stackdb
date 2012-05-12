@@ -347,8 +347,8 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         NULL,//task_switch, 
-                         NULL,//context_change,
+                         task_switch, 
+                         context_change,
                          page_fault,
                          debug_level);
     if (ret)
@@ -356,7 +356,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to init ctxprobes\n");
         exit(1);
     }
-/*
+
     ret = ctxprobes_reg_func_prologue("sys_open", sys_open_prologue);
     if (ret)
     {
@@ -384,7 +384,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to instrument function sys_open\n");
         exit(1);
     }
-*/
+
     printf("Starting instrumentation...\n");
     ctxprobes_wait();
 
