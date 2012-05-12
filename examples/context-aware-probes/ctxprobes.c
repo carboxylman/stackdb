@@ -152,9 +152,9 @@ static int probe_func_call(struct probe *probe,
     ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     if (ret)
         ERR("Failed to load function args\n");
-    else
+    else if (arg_list && arg_count > 0)
     {
-        DBG("- Function arguments:\n");
+        DBG("- Function arguments (count = %d):\n", arg_count);
         for (i = 0; i < arg_count; i++)
         {
             len = arg_list[i].size;

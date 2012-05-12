@@ -735,6 +735,15 @@ int load_func_args(ctxprobes_var_t **arg_list,
     int len, i = 0;
     ctxprobes_var_t *args;
     int arglen;
+    struct probepoint *ppt;
+
+    if (probe->probepoint)
+        ppt = probe->probepoint;
+    else
+    {
+        WARN("probe->probepoint is NULL, try using trigger->probepoint\n");
+        ppt = trigger->probepoint;
+    }
 
     if (!probe->bsymbol->lsymbol->chain || 
         array_list_len(probe->bsymbol->lsymbol->chain) == 0)
@@ -755,9 +764,7 @@ int load_func_args(ctxprobes_var_t **arg_list,
     };
     struct bsymbol tbsym = {
         .lsymbol = &tlsym,
-        .region = (probe->probepoint) ? 
-                      probe->probepoint->range->region : 
-                      trigger->probepoint->range->region
+        .region = ppt->range->region
     };
 
     arglen = probe->bsymbol->lsymbol->symbol->s.ii->d.f.count;
