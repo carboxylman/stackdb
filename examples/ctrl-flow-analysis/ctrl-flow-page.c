@@ -34,6 +34,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <signal.h>
+#include <ctype.h>
 #include <log.h>
 
 #include <ctxprobes.h>
@@ -44,27 +45,18 @@ extern int optind, opterr, optopt;
 
 static char *domain_name = NULL; 
 static int debug_level = -1; 
-static char *sysmap_file = NULL;
 
-char context_ch(ctxprobes_context_t context)
+static char *sysmap_file = NULL;
+static unsigned long long brctr_root;
+static unsigned int pid_root;
+
+void capitalize(char *str)
 {
-    char c;
-    switch (context) {
-        case CTXPROBES_CONTEXT_NORMAL:
-            c = 'N';
-            break;
-        case CTXPROBES_CONTEXT_TRAP:
-            c = 'T';
-            break;
-        case CTXPROBES_CONTEXT_INTERRUPT:
-            c = 'I';
-            break;
-        default:
-            c = 'X';
-            ERR("Invalid context identifier %d!\n", context);
-            break;
+    while (*str != '\0')
+    {
+        *str = toupper((unsigned char )*str);
+        ++str;
     }
-    return c;
 }
 
 void kill_everything(char *domain_name)
@@ -87,34 +79,47 @@ void probe_pagefault(unsigned long address,
                      int instr_fetch,
                      ctxprobes_task_t *task)
 {
-    unsigned long error_code;
-    char error_str[128] = {0,};
-
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
     {
         ERR("Failed to get branch counter\n");
         return;
     }
-                
-    strcat(error_str, protection_fault ?
-           "protection-fault, " : "no-page-found, ");
-    strcat(error_str, write_access ?
-           "write-access, " : "read-access, ");
-    strcat(error_str, user_mode ?
-           "user-mode, " : "kernel-mode, ");
-    strcat(error_str, reserved_bit ?
-           "reserved-bit, " : "");
-    strcat(error_str, instr_fetch ?
-           "instr-fetch, " : "");
-    error_str[strlen(error_str)-2] = '\0';
-    
-    fflush(stderr);
 
-    printf("%d (%s): Page fault: address = 0x%08lx, brctr = %lld, error = (%s)\n", 
-           task->pid, task->comm, address, brctr, error_str);
+    if (brctr >= brctr_root)
+        kill_everything(domain_name);
 
-    fflush(stdout);
+    if (task->pid == pid_root)
+    {
+        if (!instr_fetch)
+        {
+            char desc[128] = {0,};
+            strcat(desc, protection_fault ?
+                    "protection-fault, " : "no-page-found, ");
+            strcat(desc, write_access ?
+                    "write-access, " : "read-access, ");
+            strcat(desc, user_mode ?
+                    "user-mode, " : "kernel-mode, ");
+            desc[strlen(desc)-2] = '\0';
+
+            if (address == 0)
+            {
+                capitalize(desc);
+
+                fflush(stderr);
+                printf("PAGE FAULT AT 0x00000000 (%s, BRCTR = %lld)\n", 
+                        desc, brctr);
+                fflush(stdout);
+                kill_everything(domain_name);
+            }
+            else
+            {
+                fflush(stderr);
+                printf("Page fault at 0x%08lx (%s)\n", address, desc);
+                fflush(stdout);
+            }
+        }
+    }
 }
 
 void parse_opt(int argc, char *argv[])
@@ -122,7 +127,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:p:b:")) != -1)
     {
         switch(ch)
         {
@@ -142,6 +147,14 @@ void parse_opt(int argc, char *argv[])
 
             case 'm':
                 sysmap_file = optarg;
+                break;
+
+            case 'p':
+                pid_root = atoi(optarg);
+                break;
+
+            case 'b':
+                brctr_root = atoll(optarg);
                 break;
 
             default:

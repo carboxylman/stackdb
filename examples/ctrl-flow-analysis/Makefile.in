@@ -40,6 +40,8 @@ CTRLFLOW_CFI_SYSCALL   = sys_sendfile
 CTRLFLOW_CFI_BEGIN     = 482862644
 CTRLFLOW_CFI_END       = $(CTRLFLOW_SYSCALL_BRCTR)
 CTRLFLOW_CFI_PID       = $(CTRLFLOW_SYSCALL_PID)
+CTRLFLOW_PAGE_BRCTR    = $(CTRLFLOW_SYSCALL_BRCTR)
+CTRLFLOW_PAGE_PID      = $(CTRLFLOW_SYSCALL_PID)
 
 include $(OBJDIR)/Makeconf
 
@@ -255,20 +257,22 @@ debug-cfi: ctrl-flow-cfi
 
 run-page: ctrl-flow-page
 	sudo ./ctrl-flow-page \
+	-b $(CTRLFLOW_PAGE_BRCTR) -p $(CTRLFLOW_PAGE_PID) \
 	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 demo-page: ctrl-flow-page
 	sudo ./ctrl-flow-page \
+	-b $(CTRLFLOW_PAGE_BRCTR) -p $(CTRLFLOW_PAGE_PID) \
 	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST) 2> /dev/null
 
 verbose-page: ctrl-flow-page
-	sudo ./ctrl-flow-page \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	sudo ./ctrl-flow-page -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(CTRLFLOW_PAGE_BRCTR) -p $(CTRLFLOW_PAGE_PID) \
 	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 debug-page: ctrl-flow-page
-	sudo gdb --args ./ctrl-flow-page \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	sudo gdb --args ./ctrl-flow-page -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(CTRLFLOW_PAGE_BRCTR) -p $(CTRLFLOW_PAGE_PID) \
 	-m $(CTRLFLOW_SYSMAP) $(CTRLFLOW_GUEST)
 
 # How to recursively descend into subdirectories to make general
