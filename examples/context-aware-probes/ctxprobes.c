@@ -1045,24 +1045,30 @@ static int probe_syscall_call(struct probe *probe,
                               void *data, 
                               struct probe *trigger)
 {
+#ifdef CTXPROBES_DEBUG
     unsigned int eax = target_read_reg(t, 0);
+#endif
     DBG("%d (%s): System call %d (0x%02x) called (context: %s)\n", 
         task_current->pid, task_current->comm,
         eax, eax, context_string(context_current));
     return 0;
 }
 
+#if 0
 /* TRAP_syscall -- system gate #256; return */
 static int probe_syscall_return(struct probe *probe,
                                 void *data,
                                 struct probe *trigger)
 {
+#ifdef CTXPROBES_DEBUG
     unsigned int eax = target_read_reg(t, 0);
+#endif
     DBG("%d (%s): System call %d (0x%02x) returned (context: %s)\n", 
         task_current->pid, task_current->comm,
         eax, eax, context_string(context_current));
     return 0;
 }
+#endif
 
 /* Interrupt request; call */
 static int probe_interrupt_call(struct probe *probe, 
@@ -1110,7 +1116,9 @@ static int probe_interrupt_return(struct probe *probe,
     //ctxprobes_var_t *arg_list = NULL;
     //int arg_count = 0;
     //struct pt_regs *regs;
+#ifdef CTXPROBES_VERBOSE
     int irq = 0;
+#endif
     //int ret;
     
     /* FIXME: this currently fails to load symbol. */

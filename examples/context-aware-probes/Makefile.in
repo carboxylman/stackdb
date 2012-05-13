@@ -52,6 +52,8 @@ ifeq ($(ENABLE_DISTORM),"1")
 	CFLAGS += -I$(DISTORM)/include
 endif
 
+CFLAGS += -D CTXPROBES_DEBUG
+
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
 	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)

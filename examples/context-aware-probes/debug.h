@@ -62,27 +62,43 @@
         fflush(stderr); \
     } while (0)
 
+#ifdef CTXPROBES_DEBUG
 #define WARN(_f, _a...)  do {                                                   \
         fprintf(stderr, TXT_FG_YELLOW "Warning" TXT_FG_WHITE ": " _f, ## _a);  \
         fflush(stderr); \
     } while (0)
+#else
+#define WARN(_f, _a...)  ((void)0)
+#endif
 
+#ifdef CTXPROBES_DEBUG
 #define WARN_ON(_g, _f, _a...) do {                                             \
         if (_g) {                                                               \
             WARN(_f, ## _a);                                                    \
         }                                                                       \
     } while (0)
+#else
+#define WARN_ON(_g, _f, _a...) ((void)0)
+#endif
 
+#ifdef CTXPROBES_DEBUG
 #define DBG(_f, _a...)   do {                                                   \
         fprintf(stderr, TXT_FG_COLOR "DBG" TXT_FG_WHITE ": " _f, ## _a);       \
         fflush(stderr); \
     } while (0)
+#else
+#define DBG(_f, _a...)   ((void)0)
+#endif
 
+#ifdef CTXPROBES_DEBUG
 #define DBG_ON(_g, _f, _a...) do {                                              \
         if (_g) {                                                               \
             DBG(_f, ## _a);                                                     \
         }                                                                       \
     } while (0)
+#else
+#define DBG_ON(_g, _f, _a...) ((void)0)
+#endif
 
 #define LOG(_f, _a...)   do {                                                   \
         printf("" _f, ##_a);                                                    \
