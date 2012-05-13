@@ -17,9 +17,9 @@
  */
 
 /*
- *  examples/ctrl-flow-analysis/ctrl-flow-passwd.c
+ *  examples/null-deref-analysis/null-deref-process.c
  *
- *  Determine where the process of the given pid became root.
+ *  Determine which process of the given pids escalated privilege.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 

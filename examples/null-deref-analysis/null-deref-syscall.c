@@ -17,7 +17,7 @@
  */
 
 /*
- *  examples/ctrl-flow-analysis/ctrl-flow-syscall.c
+ *  examples/null-deref-analysis/null-deref-syscall.c
  *
  *  Record control flow for the process that changed the uid field at
  *  the granularity of a system call.

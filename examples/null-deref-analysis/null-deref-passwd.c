@@ -17,7 +17,7 @@
  */
 
 /*
- *  examples/ctrl-flow-analysis/ctrl-flow-passwd.c
+ *  examples/null-deref-analysis/null-deref-passwd.c
  *
  *  Detect write access to /etc/passwd and return the task uid and
  *  the branch counter.

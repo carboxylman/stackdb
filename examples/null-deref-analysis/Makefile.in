@@ -1,0 +1,286 @@
+## -*- mode: Makefile -*-
+##
+## Copyright (c) 2012 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+
+###############################################################################
+
+PACKAGE = null-deref-analysis
+LIBVERSION = 0.1
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= examples/null-deref-analysis
+OBJDIR		= @top_builddir@
+
+SUBDIRS = 
+
+# Temporary cmdline arg values hard-coded for easiness of testing.
+NULL_DEREF_GUEST         = clientA
+NULL_DEREF_SYSMAP        = /boot/System.map-2.6.18-xenU
+NULL_DEREF_PASS2_BRCTR   = 500433419
+NULL_DEREF_PASS2_PIDS    = 296,293,285,1,0
+NULL_DEREF_PASS3_BRCTR   = 482864171
+NULL_DEREF_PASS3_PID     = 293
+NULL_DEREF_PASS3_LIST    = $(TOP_SRCDIR)/$(SUBDIR)/syscall-list.txt
+NULL_DEREF_PASS4_SYSCALL = sys_sendfile
+NULL_DEREF_PASS4_BEGIN   = 482862644
+NULL_DEREF_PASS4_END     = $(NULL_DEREF_PASS3_BRCTR)
+NULL_DEREF_PASS4_PID     = $(NULL_DEREF_PASS3_PID)
+NULL_DEREF_PASS5_BRCTR   = $(NULL_DEREF_PASS3_BRCTR)
+NULL_DEREF_PASS5_PID     = $(NULL_DEREF_PASS3_PID)
+
+include $(OBJDIR)/Makeconf
+
+CFLAGS += -I$(OBJDIR) \
+	  -I$(TOP_SRCDIR)/lib \
+	  -I$(TOP_SRCDIR)/include \
+	  -I$(TOP_SRCDIR)/dwdebug \
+	  -I$(TOP_SRCDIR)/target \
+      -I$(TOP_SRCDIR)/examples/context-aware-probes \
+	  -I$(TOP_SRCDIR)/$(SUBDIR)
+
+CFLAGS += -DDWDEBUG_USE_STRTAB
+CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS)
+	CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
+	CFLAGS += -I$(DISTORM)/include
+endif
+
+LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
+endif
+
+HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/debug.h
+
+OBJECTS := 
+
+LIBRARIES := 
+
+PROGRAMS := ctrl-flow-static \
+            null-deref-passwd \
+            null-deref-process \
+			null-deref-syscall \
+			null-deref-cfi \
+            null-deref-pagefault
+
+STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
+              $(OBJDIR)/target/libtarget.a \
+              $(OBJDIR)/dwdebug/libdwdebug.a \
+              $(OBJDIR)/lib/libvmilib.a
+ifeq ($(ENABLE_XENACCESS),"1")
+	STATICLIBS += $(XENACCESS_A)
+endif
+
+INST_INC = 
+INST_LIB = $(LIBRARIES)
+
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(PROGRAMS) all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+.c.lo:	$(HEADERS)
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+ctrl-flow-static: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-static.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+null-deref-passwd: $(HEADERS) $(LIBRARIES) $(OBJECTS) null-deref-passwd.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+null-deref-process: $(HEADERS) $(LIBRARIES) $(OBJECTS) null-deref-process.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+null-deref-syscall: $(HEADERS) $(LIBRARIES) $(OBJECTS) null-deref-syscall.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+null-deref-cfi: $(HEADERS) $(LIBRARIES) $(OBJECTS) null-deref-cfi.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+null-deref-pagefault: $(HEADERS) $(LIBRARIES) $(OBJECTS) null-deref-pagefault.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+install: def-install install-subdirs
+	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
+
+clean: clean-subdirs
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
+	ctrl-flow-static.lo \
+	null-deref-passwd.lo \
+	null-deref-process.lo \
+	null-deref-syscall.lo \
+	null-deref-cfi.lo \
+	null-deref-pagefault.lo
+	$(RM) -f $(PROGRAMS)
+
+distclean: distclean-subdirs
+
+# Temporary cmdlines hard-coded for easiness of testing.
+
+run-static: ctrl-flow-static
+	sudo ./ctrl-flow-static \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+demo-static: ctrl-flow-static
+	sudo ./ctrl-flow-static \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
+	2> /dev/null
+
+verbose-static: ctrl-flow-static
+	sudo ./ctrl-flow-static \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+debug-static: ctrl-flow-static
+	sudo gdb --args ./ctrl-flow-static \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+run-pass1: null-deref-passwd
+	sudo ./null-deref-passwd \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+demo-pass1: null-deref-passwd
+	sudo ./null-deref-passwd \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) 2> /dev/null
+
+verbose-pass1: null-deref-passwd
+	sudo ./null-deref-passwd \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+debug-pass1: null-deref-passwd
+	sudo gdb --args ./null-deref-passwd \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+run-pass2: null-deref-process
+	sudo ./null-deref-process \
+	-p $(NULL_DEREF_PASS2_PIDS) -b $(NULL_DEREF_PASS2_BRCTR) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+demo-pass2: null-deref-process
+	sudo ./null-deref-process \
+	-p $(NULL_DEREF_PASS2_PIDS) -b $(NULL_DEREF_PASS2_BRCTR) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
+	2> /dev/null
+
+verbose-pass2: null-deref-process
+	sudo ./null-deref-process -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-p $(NULL_DEREF_PASS2_PIDS) -b $(NULL_DEREF_PASS2_BRCTR) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+debug-pass2: null-deref-process
+	sudo gdb --args ./null-deref-process -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-p $(NULL_DEREF_PASS2_PIDS) -b $(NULL_DEREF_PASS2_BRCTR) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+run-pass3: null-deref-syscall
+	sudo ./null-deref-syscall \
+	-p $(NULL_DEREF_PASS3_PID) -b $(NULL_DEREF_PASS3_BRCTR) \
+	-s $(NULL_DEREF_PASS3_LIST) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+demo-pass3: null-deref-syscall
+	sudo ./null-deref-syscall \
+	-p $(NULL_DEREF_PASS3_PID) -b $(NULL_DEREF_PASS3_BRCTR) \
+	-s $(NULL_DEREF_PASS3_LIST) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
+	2> /dev/null
+
+verbose-pass3: null-deref-syscall
+	sudo ./null-deref-syscall -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-p $(NULL_DEREF_PASS3_PID) -b $(NULL_DEREF_PASS3_BRCTR) \
+	-s $(NULL_DEREF_PASS3_LIST) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+debug-pass3: null-deref-syscall
+	sudo gdb --args ./null-deref-syscall -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-p $(NULL_DEREF_PASS3_PID) -b $(NULL_DEREF_PASS3_BRCTR) \
+	-s $(NULL_DEREF_PASS3_LIST) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+run-pass4: null-deref-cfi
+	sudo ./null-deref-cfi \
+	-b $(NULL_DEREF_PASS4_BEGIN) -e $(NULL_DEREF_PASS4_END) \
+	-s $(NULL_DEREF_PASS4_SYSCALL) -p $(NULL_DEREF_PASS4_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+demo-pass4: null-deref-cfi
+	sudo ./null-deref-cfi \
+	-b $(NULL_DEREF_PASS4_BEGIN) -e $(NULL_DEREF_PASS4_END) \
+	-s $(NULL_DEREF_PASS4_SYSCALL) -p $(NULL_DEREF_PASS4_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
+	2> /dev/null
+
+verbose-pass4: null-deref-cfi
+	sudo ./null-deref-cfi -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(NULL_DEREF_PASS4_BEGIN) -e $(NULL_DEREF_PASS4_END) \
+	-s $(NULL_DEREF_PASS4_SYSCALL) -p $(NULL_DEREF_PASS4_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+debug-pass4: null-deref-cfi
+	sudo gdb --args ./null-deref-cfi -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(NULL_DEREF_PASS4_BEGIN) -e $(NULL_DEREF_PASS4_END) \
+	-s $(NULL_DEREF_PASS4_SYSCALL) -p $(NULL_DEREF_PASS4_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+run-pass5: null-deref-pagefault
+	sudo ./null-deref-pagefault \
+	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+demo-pass5: null-deref-pagefault
+	sudo ./null-deref-pagefault \
+	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) 2> /dev/null
+
+verbose-pass5: null-deref-pagefault
+	sudo ./null-deref-pagefault -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+debug-pass5: null-deref-pagefault
+	sudo gdb --args ./null-deref-pagefault -ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:

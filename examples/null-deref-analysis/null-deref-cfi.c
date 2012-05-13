@@ -17,7 +17,7 @@
  */
 
 /*
- *  examples/ctrl-flow-analysis/ctrl-flow-cfi.c
+ *  examples/null-deref-analysis/null-deref-cfi.c
  *
  *  CFI check on syscall in question.
  *

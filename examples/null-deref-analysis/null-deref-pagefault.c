@@ -17,7 +17,7 @@
  */
 
 /*
- *  examples/ctrl-flow-analysis/ctrl-flow-page.c
+ *  examples/null-deref-analysis/null-deref-pagefault.c
  *
  *  Find out who wrote the kernel page zero.
  *
