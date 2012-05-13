@@ -24,4 +24,10 @@ import subprocess
 import shlex
 
 if __name__ == "__main__":
-	sys.exit(0)
+	if len(sys.argv) != 2:
+		print "Usage: %s <domain>" % (sys.argv[0])
+		sys.exit(1) 
+
+	domain = sys.argv[1]
+
+	print domain
