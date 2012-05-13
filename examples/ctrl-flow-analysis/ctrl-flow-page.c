@@ -111,7 +111,9 @@ void probe_pagefault(unsigned long address,
                 if (concise)
                 {
                     printf("brctr=%lld\n", brctr);
-                    printf("address=0x%08lx\b", address);
+                    printf("protection=%d\n", protection_fault);
+                    printf("write=%d\n", write_access);
+                    printf("user=%d\n", user_mode);
                 }
                 else
                 {

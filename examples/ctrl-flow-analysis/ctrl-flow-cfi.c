@@ -174,7 +174,7 @@ void probe_disfunc_call(char *symbol,
             if (concise)
             {
                 printf("brctr=%lld\n", brctr);
-                printf("address=0x%08lx\n", ip);
+                printf("ip=0x%08lx\n", ip);
             }
             else
             {

@@ -1116,7 +1116,7 @@ static int probe_interrupt_return(struct probe *probe,
     //ctxprobes_var_t *arg_list = NULL;
     //int arg_count = 0;
     //struct pt_regs *regs;
-#ifdef CTXPROBES_VERBOSE
+#ifdef CTXPROBES_DEBUG
     int irq = 0;
 #endif
     //int ret;
