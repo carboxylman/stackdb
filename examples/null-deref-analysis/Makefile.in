@@ -78,8 +78,7 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := ctrl-flow-static \
-            null-deref-passwd \
+PROGRAMS := null-deref-passwd \
             null-deref-process \
 			null-deref-syscall \
 			null-deref-cfi \
@@ -106,10 +105,6 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-ctrl-flow-static: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctrl-flow-static.lo $(STATICLIBS)
-	$(LIBTOOL) --mode=link \
-	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
-
 null-deref-passwd: $(HEADERS) $(LIBRARIES) $(OBJECTS) null-deref-passwd.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
@@ -135,7 +130,6 @@ install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
-	ctrl-flow-static.lo \
 	null-deref-passwd.lo \
 	null-deref-process.lo \
 	null-deref-syscall.lo \
@@ -146,25 +140,6 @@ clean: clean-subdirs
 distclean: distclean-subdirs
 
 # Temporary cmdlines hard-coded for easiness of testing.
-
-run-static: ctrl-flow-static
-	sudo ./ctrl-flow-static \
-	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
-
-demo-static: ctrl-flow-static
-	sudo ./ctrl-flow-static \
-	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
-	2> /dev/null
-
-verbose-static: ctrl-flow-static
-	sudo ./ctrl-flow-static \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
-
-debug-static: ctrl-flow-static
-	sudo gdb --args ./ctrl-flow-static \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
 
 run-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
