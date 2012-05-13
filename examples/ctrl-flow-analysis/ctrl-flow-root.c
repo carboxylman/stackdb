@@ -52,6 +52,7 @@ extern int optind, opterr, optopt;
 static char *domain_name = NULL; 
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
+static int concise = 0;
 
 static struct array_list *pidlist;
 static unsigned long long brctr_pwd;
@@ -110,8 +111,16 @@ void task_uid_write(unsigned long addr,
     if (uid == 0)
     {
         fflush(stderr);
-        printf("Process %d escalated privilege at %lld.\n", 
-               task->pid, brctr);
+        if (concise)
+        {
+            printf("brctr=%lld\n", brctr);
+            printf("pid=%d\n", task->pid);
+        }
+        else
+        {
+            printf("Process %d escalated privilege at %lld.\n", 
+                   task->pid, brctr);
+        }
         fflush(stdout);
         
         kill_everything(domain_name);
@@ -182,7 +191,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:p:b:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:p:b:c")) != -1)
     {
         switch(ch)
         {
@@ -204,12 +213,16 @@ void parse_opt(int argc, char *argv[])
                 sysmap_file = optarg;
                 break;
 
+            case 'b':
+                brctr_pwd = atoll(optarg);
+                break;
+
             case 'p':
                 parse_pidlist(optarg);
                 break;
 
-            case 'b':
-                brctr_pwd = atoll(optarg);
+            case 'c':
+                concise = 1;
                 break;
 
             default:

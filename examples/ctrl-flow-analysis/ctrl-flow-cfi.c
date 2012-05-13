@@ -48,6 +48,7 @@ extern int optind, opterr, optopt;
 static char *domain_name = NULL; 
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
+static int concise = 0;
 
 static char *syscall_name = NULL;
 static unsigned long long brctr_begin;
@@ -120,9 +121,12 @@ void probe_disfunc_return(char *symbol,
             free(fi);
         }
         
-        fflush(stderr);
-        printf("%s%s returned (ip = 0x%08lx)\n", pad, symbol, ip);
-        fflush(stdout);
+        if (!concise)
+        {
+            fflush(stderr);
+            printf("%s%s returned (ip = 0x%08lx)\n", pad, symbol, ip);
+            fflush(stdout);
+        }
     }
 
     if (brctr > brctr_end)
@@ -157,16 +161,27 @@ void probe_disfunc_call(char *symbol,
             strcpy(fi->symbol, symbol);
             fi->startaddr = ctxprobes_funcstart(symbol);
         
-            fflush(stderr);
-            printf("%s%s called (ip = 0x%08lx)\n", pad, symbol, ip);
-            fflush(stdout);
+            if (!concise)
+            {
+                fflush(stderr);
+                printf("%s%s called (ip = 0x%08lx)\n", pad, symbol, ip);
+                fflush(stdout);
+            }
         }
         else
         {
             fflush(stderr);
-            printf("%sUNKNOWN FUNCTION (0x%08lx) CALLED (brctr = %lld)\n", 
-                   pad, ip, brctr);
-            fflush(stdout);
+            if (concise)
+            {
+                printf("brctr=%lld\n", brctr);
+                printf("address=0x%08lx\n", ip);
+            }
+            else
+            {
+                printf("%sUNKNOWN FUNCTION (0x%08lx) CALLED (brctr = %lld)\n", 
+                       pad, ip, brctr);
+                fflush(stdout);
+            }
 
             kill_everything(domain_name);
         }
@@ -211,7 +226,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:s:p:b:e:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:s:p:b:e:c")) != -1)
     {
         switch(ch)
         {
@@ -247,6 +262,10 @@ void parse_opt(int argc, char *argv[])
 
             case 'e':
                 brctr_end = atoll(optarg);
+                break;
+
+            case 'c':
+                concise = 1;
                 break;
 
             default:

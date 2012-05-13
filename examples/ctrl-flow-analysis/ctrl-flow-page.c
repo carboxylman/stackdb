@@ -45,8 +45,9 @@ extern int optind, opterr, optopt;
 
 static char *domain_name = NULL; 
 static int debug_level = -1; 
-
 static char *sysmap_file = NULL;
+static int concise = 0;
+
 static unsigned long long brctr_root;
 static unsigned int pid_root;
 
@@ -107,16 +108,28 @@ void probe_pagefault(unsigned long address,
                 capitalize(desc);
 
                 fflush(stderr);
-                printf("PAGE FAULT AT 0x00000000 (%s, BRCTR = %lld)\n", 
-                        desc, brctr);
+                if (concise)
+                {
+                    printf("brctr=%lld\n", brctr);
+                    printf("address=0x%08lx\b", address);
+                }
+                else
+                {
+                    printf("PAGE FAULT AT 0x00000000 (%s, BRCTR = %lld)\n", 
+                            desc, brctr);
+                }
                 fflush(stdout);
+                
                 kill_everything(domain_name);
             }
             else
             {
-                fflush(stderr);
-                printf("Page fault at 0x%08lx (%s)\n", address, desc);
-                fflush(stdout);
+                if (!concise)
+                {
+                    fflush(stderr);
+                    printf("Page fault at 0x%08lx (%s)\n", address, desc);
+                    fflush(stdout);
+                }
             }
         }
     }
@@ -127,7 +140,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:p:b:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:p:b:c")) != -1)
     {
         switch(ch)
         {
@@ -155,6 +168,10 @@ void parse_opt(int argc, char *argv[])
 
             case 'b':
                 brctr_root = atoll(optarg);
+                break;
+
+            case 'c':
+                concise = 1;
                 break;
 
             default:

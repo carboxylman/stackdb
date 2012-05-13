@@ -46,6 +46,7 @@ extern int optind, opterr, optopt;
 static char *domain_name = NULL; 
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
+static int concise = 0;
 
 static char *syscall_file = NULL;
 static unsigned long long brctr_root;
@@ -122,8 +123,16 @@ void probe_syscall_return(char *symbol,
             if (uid_at_call > 0 && task->uid == 0)
             {
                 fflush(stderr);
-                printf("Syscall %s called at %lld escalated privilege\n", 
-                       symbol, brctr_at_call);
+                if (concise)
+                {
+                    printf("brctr=%lld\n", brctr_at_call);
+                    printf("syscall=%s\n", symbol);
+                }
+                else
+                {
+                    printf("Syscall %s called at %lld has escalated privilege\n", 
+                           symbol, brctr_at_call);
+                }
                 fflush(stdout);
 
                 kill_everything(domain_name);
@@ -137,7 +146,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:s:p:b:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:s:p:b:c")) != -1)
     {
         switch(ch)
         {
@@ -169,6 +178,10 @@ void parse_opt(int argc, char *argv[])
 
             case 'b':
                 brctr_root = atoll(optarg);
+                break;
+
+            case 'c':
+                concise = 1;
                 break;
 
             default:

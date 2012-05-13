@@ -49,6 +49,7 @@ extern int optind, opterr, optopt;
 static char *domain_name = NULL; 
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
+static int concise = 0;
 
 void kill_everything(char *domain_name)
 {
@@ -100,8 +101,16 @@ void probe_fileopen(char *symbol,
                 pids_str[strlen(pids_str)-1] = '\0';
 
                 fflush(stderr);
-                printf("Password file opened in write mode at %lld: "
-                       "suspected processes = %s\n", brctr, pids_str);
+                if (concise)
+                {
+                    printf("brctr=%lld\n", brctr);
+                    printf("pids=%s\n", pids_str);
+                }
+                else
+                {
+                    printf("Password file opened in write mode at %lld: "
+                           "suspected processes = %s.\n", brctr, pids_str);
+                }
                 fflush(stdout);
 
                 kill_everything(domain_name);
@@ -115,7 +124,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:c")) != -1)
     {
         switch(ch)
         {
@@ -135,6 +144,10 @@ void parse_opt(int argc, char *argv[])
 
             case 'm':
                 sysmap_file = optarg;
+                break;
+
+            case 'c':
+                concise = 1;
                 break;
 
             default:
