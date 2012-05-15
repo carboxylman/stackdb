@@ -764,11 +764,11 @@ static int probe_page_fault_call(struct probe *probe,
         ERR("Failed to load function args\n");
 
     memcpy(&error_code, arg_list[1].buf, arg_list[1].size);
-    int protection_fault = (error_code & 1);
-    int write_access = (error_code & 2);
-    int user_mode = (error_code & 4);
-    int reserved_bit = (error_code & 8);
-    int instr_fetch = (error_code & 16);
+    int protection_fault = ((error_code & 1) != 0);
+    int write_access = ((error_code & 2) != 0);
+    int user_mode = ((error_code & 4) != 0);
+    int reserved_bit = ((error_code & 8) != 0);
+    int instr_fetch = ((error_code & 16) != 0);
 
     strcat(error_str, protection_fault ?
            "protection-fault, " : "no-page-found, ");

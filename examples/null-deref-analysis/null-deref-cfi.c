@@ -96,7 +96,7 @@ void probe_disfunc_return(char *symbol,
             funcstart = ctxprobes_funcstart(symbol);
 
         char pad[128];
-        int i, len;
+        int i, depth;
 
         while (1)
         {
@@ -109,8 +109,8 @@ void probe_disfunc_return(char *symbol,
             }
 
             memset(pad, 0, sizeof(pad));
-            len = array_list_len(funcinfo_stack)+1;
-            for (i = 0; i < len; i++)
+            depth = array_list_len(funcinfo_stack)+1;
+            for (i = 0; i < depth; i++)
                 strcat(pad, "  ");
 
             if (fi->startaddr == funcstart)
@@ -121,12 +121,13 @@ void probe_disfunc_return(char *symbol,
             free(fi);
         }
         
-        if (!concise)
-        {
-            fflush(stderr);
+        fflush(stderr);
+        if (concise)
+            printf("brctr=%lld, function=%s, return=%d, ip=0x%08lx, depth=%d\n", 
+                   brctr, symbol, 1, ip, depth);
+        else
             printf("%s%s returned (ip = 0x%08lx)\n", pad, symbol, ip);
-            fflush(stdout);
-        }
+        fflush(stdout);
     }
 
     if (brctr > brctr_end)
@@ -148,14 +149,23 @@ void probe_disfunc_call(char *symbol,
     if (task->pid == pid_root)
     {
         char pad[128] = {0,};
-        int i, len = array_list_len(funcinfo_stack)+1;
-        for (i = 0; i < len; i++)
+        int i, depth = array_list_len(funcinfo_stack)+1;
+        for (i = 0; i < depth; i++)
             strcat(pad, "  ");
 
         funcinfo_t *fi = (funcinfo_t *)malloc(sizeof(funcinfo_t));
         memset(fi, 0, sizeof(funcinfo_t));
         fi->ip = ip;
         fi->brctr = brctr;
+
+        if (concise)
+        {
+            fflush(stderr);
+            printf("brctr=%lld, function=%s, return=%d, ip=0x%08lx, depth=%d\n", 
+                   brctr, symbol, 0, ip, depth);
+            fflush(stdout);
+        }
+
         if (symbol)
         {
             strcpy(fi->symbol, symbol);
@@ -170,15 +180,10 @@ void probe_disfunc_call(char *symbol,
         }
         else
         {
-            fflush(stderr);
-            if (concise)
+            if (!concise)
             {
-                printf("brctr=%lld\n", brctr);
-                printf("ip=0x%08lx\n", ip);
-            }
-            else
-            {
-                printf("%sUNKNOWN FUNCTION (0x%08lx) CALLED (brctr = %lld)\n", 
+                fflush(stderr);
+                printf("%sUNKNOWN FUNCTION (0x%08lX) CALLED (brctr = %lld)\n", 
                        pad, ip, brctr);
                 fflush(stdout);
             }
@@ -207,7 +212,11 @@ void probe_syscall_call(char *symbol,
     if (brctr == brctr_begin)
     {
         fflush(stderr);
-        printf("%s called (brctr = %lld)\n", syscall_name, brctr);
+        if (concise)
+            printf("brctr=%lld, function=%s, return=%d, depth=%d\n", 
+                   brctr, syscall_name, 0, 0);
+        else
+            printf("%s called (brctr = %lld)\n", syscall_name, brctr);
         fflush(stdout);
 
         ret = ctxprobes_instrument_func(syscall_name, 

@@ -42,6 +42,7 @@ NULL_DEREF_PASS4_END     = $(NULL_DEREF_PASS3_BRCTR)
 NULL_DEREF_PASS4_PID     = $(NULL_DEREF_PASS3_PID)
 NULL_DEREF_PASS5_BRCTR   = $(NULL_DEREF_PASS3_BRCTR)
 NULL_DEREF_PASS5_PID     = $(NULL_DEREF_PASS3_PID)
+NULL_DEREF_PASS5_ADDR    = 0x00000000
 
 include $(OBJDIR)/Makeconf
 
@@ -149,6 +150,10 @@ demo-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) 2> /dev/null
 
+concise-pass1: null-deref-passwd
+	sudo ./null-deref-passwd -c \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) 2> /dev/null
+
 verbose-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
 	-ddddddddddd -l T_ALL,P_ALL,T_XV \
@@ -166,6 +171,12 @@ run-pass2: null-deref-process
 
 demo-pass2: null-deref-process
 	sudo ./null-deref-process \
+	-p $(NULL_DEREF_PASS2_PIDS) -b $(NULL_DEREF_PASS2_BRCTR) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
+	2> /dev/null
+
+concise-pass2: null-deref-process
+	sudo ./null-deref-process -c \
 	-p $(NULL_DEREF_PASS2_PIDS) -b $(NULL_DEREF_PASS2_BRCTR) \
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
 	2> /dev/null
@@ -188,6 +199,13 @@ run-pass3: null-deref-syscall
 
 demo-pass3: null-deref-syscall
 	sudo ./null-deref-syscall \
+	-p $(NULL_DEREF_PASS3_PID) -b $(NULL_DEREF_PASS3_BRCTR) \
+	-s $(NULL_DEREF_PASS3_LIST) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
+	2> /dev/null
+
+concise-pass3: null-deref-syscall
+	sudo ./null-deref-syscall -c \
 	-p $(NULL_DEREF_PASS3_PID) -b $(NULL_DEREF_PASS3_BRCTR) \
 	-s $(NULL_DEREF_PASS3_LIST) \
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
@@ -218,6 +236,13 @@ demo-pass4: null-deref-cfi
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
 	2> /dev/null
 
+concise-pass4: null-deref-cfi
+	sudo ./null-deref-cfi -c \
+	-b $(NULL_DEREF_PASS4_BEGIN) -e $(NULL_DEREF_PASS4_END) \
+	-s $(NULL_DEREF_PASS4_SYSCALL) -p $(NULL_DEREF_PASS4_PID) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
+	2> /dev/null
+
 verbose-pass4: null-deref-cfi
 	sudo ./null-deref-cfi -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-b $(NULL_DEREF_PASS4_BEGIN) -e $(NULL_DEREF_PASS4_END) \
@@ -233,21 +258,31 @@ debug-pass4: null-deref-cfi
 run-pass5: null-deref-pagefault
 	sudo ./null-deref-pagefault \
 	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-a $(NULL_DEREF_PASS5_ADDR) \
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
 
 demo-pass5: null-deref-pagefault
 	sudo ./null-deref-pagefault \
 	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-a $(NULL_DEREF_PASS5_ADDR) \
+	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) 2> /dev/null
+
+concise-pass5: null-deref-pagefault
+	sudo ./null-deref-pagefault -c \
+	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-a $(NULL_DEREF_PASS5_ADDR) \
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) 2> /dev/null
 
 verbose-pass5: null-deref-pagefault
 	sudo ./null-deref-pagefault -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-a $(NULL_DEREF_PASS5_ADDR) \
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
 
 debug-pass5: null-deref-pagefault
 	sudo gdb --args ./null-deref-pagefault -ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-b $(NULL_DEREF_PASS5_BRCTR) -p $(NULL_DEREF_PASS5_PID) \
+	-a $(NULL_DEREF_PASS5_ADDR) \
 	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST)
 
 # How to recursively descend into subdirectories to make general

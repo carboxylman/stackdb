@@ -50,6 +50,7 @@ static int concise = 0;
 
 static unsigned long long brctr_root;
 static unsigned int pid_root;
+static unsigned long addr_root;
 
 void capitalize(char *str)
 {
@@ -103,24 +104,27 @@ void probe_pagefault(unsigned long address,
                     "user-mode, " : "kernel-mode, ");
             desc[strlen(desc)-2] = '\0';
 
-            if (address == 0)
+            if (concise)
             {
-                capitalize(desc);
-
                 fflush(stderr);
-                if (concise)
-                {
-                    printf("brctr=%lld\n", brctr);
-                    printf("protection=%d\n", protection_fault);
-                    printf("write=%d\n", write_access);
-                    printf("user=%d\n", user_mode);
-                }
-                else
-                {
-                    printf("PAGE FAULT AT 0x00000000 (%s, BRCTR = %lld)\n", 
-                            desc, brctr);
-                }
+                printf("brctr=%lld, address=0x%08lx, "
+                       "protection=%d, write=%d, user=%d\n", 
+                       brctr, address, 
+                       protection_fault, write_access, user_mode);
                 fflush(stdout);
+            }
+
+            if (address == addr_root && write_access)
+            {
+                if (!concise)
+                {
+                    capitalize(desc);
+                    
+                    fflush(stderr);
+                    printf("PAGE FAULT AT 0x%08lX (%s, BRCTR = %lld)\n", 
+                            address, desc, brctr);
+                    fflush(stdout);
+                }
                 
                 kill_everything(domain_name);
             }
@@ -142,7 +146,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:p:b:c")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:p:b:a:c")) != -1)
     {
         switch(ch)
         {
@@ -170,6 +174,10 @@ void parse_opt(int argc, char *argv[])
 
             case 'b':
                 brctr_root = atoll(optarg);
+                break;
+
+            case 'a':
+                sscanf(optarg, "%x", &addr_root);
                 break;
 
             case 'c':
