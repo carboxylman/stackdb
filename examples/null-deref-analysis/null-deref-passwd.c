@@ -50,6 +50,7 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 static int concise = 0;
+static int interactive = 0;
 
 void kill_everything(char *domain_name)
 {
@@ -108,10 +109,19 @@ void probe_fileopen(char *symbol,
                 }
                 else
                 {
-                    printf("Password file opened in write mode at %lld: "
-                           "suspected processes = %s.\n", brctr, pids_str);
+                    printf("PASSWORD FILE OPENED WITH WRITE ACCESS "
+                           "(BRCTR = %lld, PIDS = %s).\n", brctr, pids_str);
                 }
                 fflush(stdout);
+
+                if (interactive)
+                {
+                    fflush(stderr);
+                    printf("Analysis completed, press enter to end replay session: ");
+                    fflush(stdout);
+                    
+                    getchar();
+                }
 
                 kill_everything(domain_name);
             }
@@ -119,12 +129,47 @@ void probe_fileopen(char *symbol,
     }
 }
 
+int register_probes(void)
+{
+    int ret;
+
+    ret = ctxprobes_reg_func_call("sys_open", probe_fileopen);
+    if (ret)
+    {
+        ERR("Failed to register probe on sys_open.call\n");
+        return ret;
+    } 
+
+    return 0;
+}
+
+void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
+{
+    static int logged_in = 0;
+    int ret;
+
+    if (!logged_in && strcmp(next->comm, "getty") == 0)
+    {
+        fflush(stderr);
+        printf("Replay session booted, press enter to run analysis: ");
+        fflush(stdout);
+
+        getchar();
+
+        ret = register_probes();
+        if (ret)
+            kill_everything(domain_name);
+
+        logged_in = 1;
+   }
+}
+
 void parse_opt(int argc, char *argv[])
 {
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:c")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:ci")) != -1)
     {
         switch(ch)
         {
@@ -149,6 +194,10 @@ void parse_opt(int argc, char *argv[])
             case 'c':
                 concise = 1;
                 break;
+            
+            case 'i':
+                interactive = 1;
+                break;
 
             default:
                 fprintf(stderr, "ERROR: unknown option %c!\n", ch);
@@ -168,23 +217,47 @@ void parse_opt(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     int ret;
+    ctxprobes_task_switch_handler_t task_switch_handler = NULL;
     
     parse_opt(argc, argv);
 
-    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, NULL, debug_level);
+    if (interactive)
+    {
+        task_switch_handler = probe_task_switch;
+    
+        fflush(stderr);
+        printf("Initializing VMI...\n");
+        fflush(stdout);
+    }
+
+    ret = ctxprobes_init(domain_name, 
+                         sysmap_file, 
+                         task_switch_handler,
+                         NULL, /* context change handler */
+                         NULL, /* page fault handler */
+                         debug_level);
     if (ret)
     {
-        ERR("Failed to init ctxprobes\n");
+        ERR("Could not initialize context-aware probes\n");
         exit(ret);
     }
 
-    ret = ctxprobes_reg_func_call("sys_open", probe_fileopen);
-    if (ret)
+    if (interactive)
     {
-        ERR("Failed to register probe on sys_open.call\n");
-        ctxprobes_cleanup();
-        exit(ret);
-    } 
+        fflush(stderr);
+        printf("VMI initialized.\n");
+        printf("Waiting for replay session to be booted...\n");
+        fflush(stdout);
+    }
+    else
+    {
+        ret = register_probes();
+        if (ret)
+        {
+            ctxprobes_cleanup();
+            exit(ret);
+        }
+    }
 
     ctxprobes_wait();
 
