@@ -29,16 +29,16 @@
 #error "Program runs only on Time Travel enabled Xen"
 #endif
 
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
-#include <signal.h>
-#include <log.h>
 
+#include <log.h>
 #include <ctxprobes.h>
+
 #include "debug.h"
+#include "util.h"
 
 #define O_WRONLY (00000001)
 #define O_RDWR   (00000002)
@@ -51,18 +51,6 @@ static int debug_level = -1;
 static char *sysmap_file = NULL;
 static int concise = 0;
 static int interactive = 0;
-
-void kill_everything(char *domain_name)
-{
-    char cmd[128];
-
-    sprintf(cmd, "sudo xm destroy %s", domain_name);
-    system(cmd);
-
-    system("sudo killall -9 ttd-deviced");
-
-    kill(getpid(), SIGINT);
-}
 
 void probe_fileopen(char *symbol, 
                     ctxprobes_var_t *args,

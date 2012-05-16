@@ -29,12 +29,10 @@
 #error "Program runs only on Time Travel enabled Xen"
 #endif
 
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
-#include <signal.h>
 
 #include <log.h>
 #include <list.h>
@@ -42,6 +40,7 @@
 
 #include <ctxprobes.h>
 #include "debug.h"
+#include "util.h"
 
 // FIXME: hard-coded task_struct offsets will be removed later.
 #define TASK_UID_OFFSET (336)
@@ -58,18 +57,6 @@ static struct array_list *pidlist;
 static unsigned long long brctr_pwd;
 
 static struct array_list *tracklist;
-
-void kill_everything(char *domain_name)
-{
-    char cmd[128];
-
-    sprintf(cmd, "sudo xm destroy %s", domain_name);
-    system(cmd);
-
-    system("sudo killall -9 ttd-deviced");
-
-    kill(getpid(), SIGINT);
-}
 
 int alist_contains(struct array_list *list, unsigned int pid)
 {

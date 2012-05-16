@@ -28,17 +28,16 @@
 #error "Program runs only on Time Travel enabled Xen"
 #endif
 
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
-#include <signal.h>
-#include <ctype.h>
-#include <log.h>
 
+#include <log.h>
 #include <ctxprobes.h>
+
 #include "debug.h"
+#include "util.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -51,27 +50,6 @@ static int concise = 0;
 static unsigned long long brctr_root;
 static unsigned int pid_root;
 static unsigned long addr_root;
-
-void capitalize(char *str)
-{
-    while (*str != '\0')
-    {
-        *str = toupper((unsigned char )*str);
-        ++str;
-    }
-}
-
-void kill_everything(char *domain_name)
-{
-    char cmd[128];
-
-    sprintf(cmd, "sudo xm destroy %s", domain_name);
-    system(cmd);
-
-    system("sudo killall -9 ttd-deviced");
-
-    kill(getpid(), SIGINT);
-}
 
 void probe_pagefault(unsigned long address,
                      int protection_fault,
