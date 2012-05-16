@@ -183,7 +183,7 @@ void probe_disfunc_call(char *symbol,
             if (!concise)
             {
                 fflush(stderr);
-                printf("%sUNKNOWN FUNCTION (0x%08lX) CALLED (brctr = %lld)\n", 
+                printf("%sUNKNOWN FUNCTION (0x%08lX) CALLED (BRCTR = %lld)\n", 
                        pad, ip, brctr);
                 fflush(stdout);
             }
