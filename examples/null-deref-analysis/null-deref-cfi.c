@@ -233,8 +233,7 @@ void parse_opt(int argc, char *argv[])
             case 'l':
                 if (vmi_log_get_flag_mask(optarg, &debug_flags))
                 {
-                    fprintf(stderr, "ERROR: bad debug flag in '%s'!\n", 
-                            optarg);
+                    ERR("Bad debug flag in '%s'!\n", optarg);
                     exit(-1);
                 }
                 vmi_set_log_flags(debug_flags);
@@ -265,7 +264,7 @@ void parse_opt(int argc, char *argv[])
                 break;
 
             default:
-                fprintf(stderr, "ERROR: unknown option %c!\n", ch);
+                ERR("Unknown option %c!\n", ch);
                 exit(-1);
         }
     }
