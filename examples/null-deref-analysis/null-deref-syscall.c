@@ -19,8 +19,8 @@
 /*
  *  examples/null-deref-analysis/null-deref-syscall.c
  *
- *  Record control flow for the process that changed the uid field at
- *  the granularity of a system call.
+ *  PASS-3: Find out in which system call, called by the process of
+ *  the given pid, modified the uid bit.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 

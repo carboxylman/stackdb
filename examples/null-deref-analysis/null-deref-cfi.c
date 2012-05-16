@@ -19,7 +19,8 @@
 /*
  *  examples/null-deref-analysis/null-deref-cfi.c
  *
- *  CFI check on syscall in question.
+ *  PASS-4: Check CFI of the given system call, called by the process
+ *  of the given pid.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 

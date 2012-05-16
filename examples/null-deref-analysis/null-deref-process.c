@@ -19,7 +19,8 @@
 /*
  *  examples/null-deref-analysis/null-deref-process.c
  *
- *  Determine which process of the given pids escalated privilege.
+ *  PASS-2: Find out which process of the given suspected pids
+ *  modified the uid bit.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 

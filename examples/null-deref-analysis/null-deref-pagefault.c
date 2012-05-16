@@ -19,7 +19,7 @@
 /*
  *  examples/null-deref-analysis/null-deref-pagefault.c
  *
- *  Find out who wrote the kernel page zero.
+ *  PASS-5: List page faults raised by the process of the given pid.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 

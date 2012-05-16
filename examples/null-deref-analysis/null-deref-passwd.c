@@ -19,8 +19,7 @@
 /*
  *  examples/null-deref-analysis/null-deref-passwd.c
  *
- *  Detect write access to /etc/passwd and return the task uid and
- *  the branch counter.
+ *  PASS-1: Detect the password file opened with write access.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 
