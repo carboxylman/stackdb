@@ -117,7 +117,7 @@ void probe_fileopen(char *symbol,
     }
 }
 
-int register_probes(void)
+int start_analysis(void)
 {
     int ret;
 
@@ -133,10 +133,10 @@ int register_probes(void)
 
 void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
-    static int logged_in = 0;
+    static int booted = 0;
     int ret;
 
-    if (!logged_in && strcmp(next->comm, "getty") == 0)
+    if (!booted && strcmp(next->comm, "getty") == 0)
     {
         fflush(stderr);
         printf("Replay session booted, press enter to run analysis: ");
@@ -144,11 +144,11 @@ void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 
         getchar();
 
-        ret = register_probes();
+        ret = start_analysis();
         if (ret)
             kill_everything(domain_name);
 
-        logged_in = 1;
+        booted = 1;
    }
 }
 
@@ -239,7 +239,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        ret = register_probes();
+        ret = start_analysis();
         if (ret)
         {
             ctxprobes_cleanup();

@@ -155,7 +155,7 @@ void parse_opt(int argc, char *argv[])
                 break;
 
             case 'a':
-                sscanf(optarg, "%x", &addr_root);
+                sscanf(optarg, "%lx", &addr_root);
                 break;
 
             case 'c':

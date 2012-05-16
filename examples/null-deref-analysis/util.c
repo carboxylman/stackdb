@@ -32,6 +32,10 @@
 #include <signal.h>
 #include <ctype.h>
 
+#include <list.h>
+#include <alist.h>
+
+#include "debug.h"
 #include "util.h"
 
 void kill_everything(char *domain_name)
@@ -54,3 +58,32 @@ void capitalize(char *str)
         ++str;
     }
 }
+
+void array_list_parse(struct array_list *list, char *str)
+{
+    char *obj_str = NULL;
+    char *ptr = NULL;
+    unsigned int item;
+
+    while ((obj_str = strtok_r(!ptr ? str : NULL, ",", &ptr))) 
+    {
+        item = atoi(obj_str);
+        array_list_prepend(list, (void *)item);
+    }
+}
+
+int array_list_contains(struct array_list *list, void *item)
+{
+    int i;
+    void *tmp;
+
+    for (i = 0; i < array_list_len(list); i++)
+    {
+        tmp = array_list_item(list, i);
+        if (tmp == item)
+            return 1;
+    }
+
+    return 0;
+}
+

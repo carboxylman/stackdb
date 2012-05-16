@@ -35,10 +35,8 @@
 #include <getopt.h>
 
 #include <log.h>
-#include <list.h>
-#include <alist.h>
-
 #include <ctxprobes.h>
+
 #include "debug.h"
 #include "util.h"
 
@@ -52,32 +50,18 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 static int concise = 0;
+static int interactive = 0;
 
-static struct array_list *pidlist;
 static unsigned long long brctr_pwd;
-
+static struct array_list *pidlist;
 static struct array_list *tracklist;
+static int old_uid;
 
-int alist_contains(struct array_list *list, unsigned int pid)
-{
-    int i;
-    unsigned int tmp;
-
-    for (i = 0; i < array_list_len(list); i++)
-    {
-        tmp = (unsigned int)array_list_item(list, i);
-        if (tmp == pid)
-            return 1;
-    }
-
-    return 0;
-}
-
-void task_uid_write(unsigned long addr,
-                    char *ame,
-                    ctxprobes_var_t *var,
-                    ctxprobes_task_t *task,
-                    ctxprobes_context_t context)
+void probe_task_uid_write(unsigned long addr,
+                          char *ame,
+                          ctxprobes_var_t *var,
+                          ctxprobes_task_t *task,
+                          ctxprobes_context_t context)
 {
     int uid;
 
@@ -95,27 +79,33 @@ void task_uid_write(unsigned long addr,
     }
 
     uid = *(int *)var->buf;
-    if (uid == 0)
+    if (uid != old_uid)
     {
         fflush(stderr);
         if (concise)
-        {
-            printf("brctr=%lld\n", brctr);
-            printf("pid=%d\n", task->pid);
-        }
+            printf("brctr=%lld, pid=%d, olduid=%d, newuid=%d\n", 
+                   brctr, task->pid, old_uid, uid);
         else
-        {
-            printf("Process %d escalated privilege at %lld.\n", 
-                   task->pid, brctr);
-        }
+            printf("TASK UID MODIFIED: %d -> %d (BRCTR = %lld, PID = %d).\n", 
+                   old_uid, uid, brctr, task->pid);
         fflush(stdout);
-        
+
+        if (interactive)
+        {
+            fflush(stderr);
+            printf("Analysis completed, press enter to end replay session: ");
+            fflush(stdout);
+
+            getchar();
+        }
+
         kill_everything(domain_name);
     }
 }
 
-void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
+void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
 {
+    static int booted = 0;
     int ret;
     unsigned long addr;
     char *name;
@@ -128,48 +118,60 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
     }
 
     if (brctr >= brctr_pwd)
-    {
         kill_everything(domain_name);
-        return;
+
+    if (!booted && strcmp(next->comm, "getty") == 0)
+    {
+        fflush(stderr);
+        printf("Replay session booted, press enter to proceed: ");
+        fflush(stdout);
+
+        getchar();
+
+        booted = 1;
     }
 
-    if (alist_contains(pidlist, next->pid))
+    if (array_list_contains(pidlist, (void *)next->pid))
     {
-        if (!alist_contains(tracklist, next->pid))
+        if (!array_list_contains(tracklist, (void *)next->pid))
         {
             /* 
              * First task switch to a suspected process, put it in the tracked
              * process list if it is with non-root uid. 
              */
-            
+
             if (next->uid != 0)
             {
+                if (interactive)
+                {
+                    fflush(stderr);
+                    printf("Process %d (%s) is non-root, setting up a watchpoint...\n", 
+                           next->pid, next->comm);
+                    fflush(stdout);
+                }
+
+                old_uid = next->uid;
+
                 addr = next->vaddr + TASK_UID_OFFSET;
                 name = "schedule.next->uid";
 
-                ret = ctxprobes_reg_var(addr, name, task_uid_write, 0);
+                ret = ctxprobes_reg_var(addr, name, probe_task_uid_write, 0);
                 if (ret)
                 {
                     printf("Failed to register probe on %s\n", name);
                     return;
                 }
+
+				if (interactive)
+				{
+                    fflush(stderr);
+                    printf("Watchpoint set up.\n");
+                    fflush(stdout);
+				}
             }
             
             array_list_add(tracklist, (void *)next->pid);
         }
-    }
-}
-
-void parse_pidlist(char *pidlist_str)
-{
-    char *pid_str = NULL;
-    char *ptr = NULL;
-    unsigned int pid;
-
-    while ((pid_str = strtok_r(!ptr ? pidlist_str : NULL, ",", &ptr))) 
-    {
-        pid = atoi(pid_str);
-        array_list_prepend(pidlist, (void *)pid);
     }
 }
 
@@ -178,7 +180,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:p:b:c")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:cib:p:")) != -1)
     {
         switch(ch)
         {
@@ -200,16 +202,20 @@ void parse_opt(int argc, char *argv[])
                 sysmap_file = optarg;
                 break;
 
+            case 'c':
+                concise = 1;
+                break;
+
+            case 'i':
+                interactive = 1;
+                break;
+
             case 'b':
                 brctr_pwd = atoll(optarg);
                 break;
 
             case 'p':
-                parse_pidlist(optarg);
-                break;
-
-            case 'c':
-                concise = 1;
+                array_list_parse(pidlist, optarg);
                 break;
 
             default:
@@ -236,18 +242,33 @@ int main(int argc, char *argv[])
 
     parse_opt(argc, argv);
 
+    if (interactive)
+    {
+        fflush(stderr);
+        printf("Initializing VMI...\n");
+        fflush(stdout);
+    }
+
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         task_switch, 
-                         NULL, 
-                         NULL, 
+                         probe_task_switch, 
+                         NULL, /* context change handler */
+                         NULL, /* page fault handler */
                          debug_level);
     if (ret)
     {
-        ERR("Failed to init ctxprobes\n");
+        ERR("Could not initialize context-aware probes\n");
         exit(ret);
     }
     
+    if (interactive)
+    {
+        fflush(stderr);
+        printf("VMI initialized.\n");
+        printf("Running analysis while replay session is booting...\n");
+        fflush(stdout);
+    }
+
     ctxprobes_wait();
 
     ctxprobes_cleanup();

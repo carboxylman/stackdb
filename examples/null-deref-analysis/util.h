@@ -25,6 +25,12 @@
  * 
  */
 
+#include <list.h>
+#include <alist.h>
+
 void kill_everything(char *domain_name);
 
 void capitalize(char *str);
+
+void array_list_parse(struct array_list *list, char *str);
+int array_list_contains(struct array_list *list, void *obj);
