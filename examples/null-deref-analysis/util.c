@@ -42,10 +42,10 @@ void kill_everything(char *domain_name)
 {
     char cmd[128];
 
-    sprintf(cmd, "sudo xm destroy %s", domain_name);
+    sprintf(cmd, "xm destroy %s", domain_name);
     system(cmd);
 
-    system("sudo killall -9 ttd-deviced");
+    system("killall -9 ttd-deviced");
 
     kill(getpid(), SIGINT);
 }
