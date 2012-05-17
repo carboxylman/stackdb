@@ -152,4 +152,5 @@ endif
 #
 # Use Judy.
 #
+CFLAGS  += -I@JUDY@/include
 LDFLAGS += -L@JUDY@/lib -lJudy
