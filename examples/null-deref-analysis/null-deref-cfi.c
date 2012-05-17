@@ -49,6 +49,7 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 static int concise = 0;
+static int interactive = 0;
 
 static char *syscall_name = NULL;
 static unsigned long long brctr_begin;
@@ -176,17 +177,26 @@ void probe_disfunc_call(char *symbol,
                 fflush(stdout);
             }
 
+            if (interactive)
+            {
+                fflush(stderr);
+                printf("Analysis completed, press enter to end replay session: ");
+                fflush(stdout);
+
+                getchar();
+            }
+
             kill_everything(domain_name);
         }
         array_list_add(funcinfo_stack, fi);
     }
 }
 
-void probe_syscall_call(char *symbol, 
-                        ctxprobes_var_t *args,
-                        int argcount,
-                        ctxprobes_task_t *task,
-                        ctxprobes_context_t context)
+void probe_suspected_syscall(char *symbol, 
+                             ctxprobes_var_t *args,
+                             int argcount,
+                             ctxprobes_task_t *task,
+                             ctxprobes_context_t context)
 {
     int ret;
 
@@ -218,12 +228,47 @@ void probe_syscall_call(char *symbol,
     }
 }
 
+int start_analysis(void)
+{
+    int ret;
+
+    ret = ctxprobes_reg_func_call(syscall_name, probe_suspected_syscall);
+    if (ret)
+    {
+        ERR("Failed to register probe on %s call\n", syscall_name);
+        return ret;
+    } 
+    
+    return 0;
+}
+
+void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
+{
+    static int booted = 0;
+    int ret;
+
+    if (!booted && strcmp(next->comm, "getty") == 0)
+    {
+        fflush(stderr);
+        printf("Replay session booted, press enter to run analysis: ");
+        fflush(stdout);
+
+        getchar();
+
+        ret = start_analysis();
+        if (ret)
+            kill_everything(domain_name);
+
+        booted = 1;
+   }
+}
+
 void parse_opt(int argc, char *argv[])
 {
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:s:p:b:e:c")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:cib:e:p:s:")) != -1)
     {
         switch(ch)
         {
@@ -244,12 +289,12 @@ void parse_opt(int argc, char *argv[])
                 sysmap_file = optarg;
                 break;
 
-            case 's':
-                syscall_name = optarg;
+            case 'c':
+                concise = 1;
                 break;
 
-            case 'p':
-                pid_root = atoi(optarg);
+            case 'i':
+                interactive = 1;
                 break;
 
             case 'b':
@@ -260,8 +305,12 @@ void parse_opt(int argc, char *argv[])
                 brctr_end = atoll(optarg);
                 break;
 
-            case 'c':
-                concise = 1;
+            case 'p':
+                pid_root = atoi(optarg);
+                break;
+
+            case 's':
+                syscall_name = optarg;
                 break;
 
             default:
@@ -282,25 +331,49 @@ void parse_opt(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     int ret;
+    ctxprobes_task_switch_handler_t task_switch_handler = NULL;
     
     parse_opt(argc, argv);
 
     funcinfo_stack = array_list_create(64);
 
-    ret = ctxprobes_init(domain_name, sysmap_file, NULL, NULL, NULL, debug_level);
+    if (interactive)
+    {
+        task_switch_handler = probe_task_switch;
+    
+        fflush(stderr);
+        printf("Initializing VMI...\n");
+        fflush(stdout);
+    }
+
+    ret = ctxprobes_init(domain_name, 
+                         sysmap_file, 
+                         task_switch_handler,
+                         NULL, /* context change handler */
+                         NULL, /* page fault handler */
+                         debug_level);
     if (ret)
     {
-        ERR("Failed to init ctxprobes\n");
+        ERR("Could not initialize context-aware probes\n");
         exit(ret);
     }
 
-    ret = ctxprobes_reg_func_call(syscall_name, probe_syscall_call);
-    if (ret)
+    if (interactive)
     {
-        ERR("Failed to register probe on %s call\n", syscall_name);
-        ctxprobes_cleanup();
-        exit(ret);
-    } 
+        fflush(stderr);
+        printf("VMI initialized.\n");
+        printf("Waiting for replay session to be booted...\n");
+        fflush(stdout);
+    }
+    else
+    {
+        ret = start_analysis();
+        if (ret)
+        {
+            ctxprobes_cleanup();
+            exit(ret);
+        }
+    }
 
     ctxprobes_wait();
 
