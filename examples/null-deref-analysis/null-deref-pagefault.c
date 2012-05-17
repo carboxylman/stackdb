@@ -46,6 +46,7 @@ static char *domain_name = NULL;
 static int debug_level = -1; 
 static char *sysmap_file = NULL;
 static int concise = 0;
+static int interactive = 0;
 
 static unsigned long long brctr_root;
 static unsigned int pid_root;
@@ -75,11 +76,11 @@ void probe_pagefault(unsigned long address,
         {
             char desc[128] = {0,};
             strcat(desc, protection_fault ?
-                    "protection-fault, " : "no-page-found, ");
+                   "protection-fault, " : "no-page-found, ");
             strcat(desc, write_access ?
-                    "write-access, " : "read-access, ");
+                   "write-access, " : "read-access, ");
             strcat(desc, user_mode ?
-                    "user-mode, " : "kernel-mode, ");
+                   "user-mode, " : "kernel-mode, ");
             desc[strlen(desc)-2] = '\0';
 
             if (concise)
@@ -100,10 +101,19 @@ void probe_pagefault(unsigned long address,
                     
                     fflush(stderr);
                     printf("PAGE FAULT AT 0x%08lX (%s, BRCTR = %lld)\n", 
-                            address, desc, brctr);
+                           address, desc, brctr);
                     fflush(stdout);
                 }
                 
+                if (interactive)
+                {
+                    fflush(stderr);
+                    printf("Analysis completed, press enter to end replay session: ");
+                    fflush(stdout);
+                    
+                    getchar();
+                }
+
                 kill_everything(domain_name);
             }
             else
@@ -119,12 +129,28 @@ void probe_pagefault(unsigned long address,
     }
 }
 
+void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
+{
+    static int booted = 0;
+
+    if (!booted && strcmp(next->comm, "getty") == 0)
+    {
+        fflush(stderr);
+        printf("Replay session booted, press enter to run analysis: ");
+        fflush(stdout);
+
+        getchar();
+
+        booted = 1;
+   }
+}
+
 void parse_opt(int argc, char *argv[])
 {
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:p:b:a:c")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:cib:p:a:")) != -1)
     {
         switch(ch)
         {
@@ -145,20 +171,24 @@ void parse_opt(int argc, char *argv[])
                 sysmap_file = optarg;
                 break;
 
-            case 'p':
-                pid_root = atoi(optarg);
+            case 'c':
+                concise = 1;
+                break;
+
+            case 'i':
+                interactive = 1;
                 break;
 
             case 'b':
                 brctr_root = atoll(optarg);
                 break;
 
-            case 'a':
-                sscanf(optarg, "%lx", &addr_root);
+            case 'p':
+                pid_root = atoi(optarg);
                 break;
 
-            case 'c':
-                concise = 1;
+            case 'a':
+                sscanf(optarg, "%lx", &addr_root);
                 break;
 
             default:
@@ -179,19 +209,37 @@ void parse_opt(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     int ret;
+    ctxprobes_task_switch_handler_t task_switch_handler = NULL;
     
     parse_opt(argc, argv);
 
+    if (interactive)
+    {
+        task_switch_handler = probe_task_switch;
+    
+        fflush(stderr);
+        printf("Initializing VMI...\n");
+        fflush(stdout);
+    }
+
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         NULL, 
-                         NULL, 
-                         probe_pagefault, 
+                         task_switch_handler,
+                         NULL, /* context change handler */
+                         probe_pagefault,
                          debug_level);
     if (ret)
     {
-        ERR("Failed to init ctxprobes\n");
+        ERR("Could not initialize context-aware probes\n");
         exit(ret);
+    }
+
+    if (interactive)
+    {
+        fflush(stderr);
+        printf("VMI initialized.\n");
+        printf("Waiting for replay session to be booted...\n");
+        fflush(stdout);
     }
 
     ctxprobes_wait();
