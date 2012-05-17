@@ -87,8 +87,8 @@ void probe_task_uid_write(unsigned long addr,
             printf("brctr=%lld, pid=%d, olduid=%d, newuid=%d\n", 
                    brctr, task->pid, old_uid, uid);
         else
-            printf("TASK UID MODIFIED: %d -> %d (BRCTR = %lld, PID = %d).\n", 
-                   old_uid, uid, brctr, task->pid);
+            printf("TASK UID MODIFIED: %d -> %d (PID = %d, BRCTR = %lld).\n", 
+                   old_uid, uid, task->pid, brctr);
         fflush(stdout);
 
         if (interactive)

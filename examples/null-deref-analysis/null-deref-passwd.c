@@ -97,7 +97,7 @@ void probe_fileopen(char *symbol,
                 else
                 {
                     printf("PASSWORD FILE OPENED WITH WRITE ACCESS "
-                           "(BRCTR = %lld, PIDS = %s).\n", brctr, pids_str);
+                           "(PIDS = %s, BRCTR = %lld).\n", pids_str, brctr);
                 }
                 fflush(stdout);
 

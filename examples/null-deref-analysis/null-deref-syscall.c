@@ -117,9 +117,9 @@ void probe_syscall_return(char *symbol,
                            brctr_at_call, task->pid, symbol, uid_at_call, task->uid);
                 else
                     printf("TASK UID MODIFIED: %d -> %d "
-                           "(BRCTR = %lld, PID = %d, SYSCALL = %s).\n",
+                           "(PID = %d, SYSCALL = %s, BRCTR = %lld).\n",
                            uid_at_call, task->uid, 
-                           brctr_at_call, task->pid, symbol);
+                           task->pid, symbol, brctr_at_call);
                 fflush(stdout);
 
                 if (interactive)
