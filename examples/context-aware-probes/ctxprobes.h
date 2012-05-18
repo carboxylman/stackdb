@@ -93,7 +93,8 @@ typedef void (*ctxprobes_context_change_handler_t)(ctxprobes_context_t prev,
                                                    ctxprobes_context_t next,
                                                    ctxprobes_task_t *task);
 
-typedef void (*ctxprobes_page_fault_handler_t)(unsigned long address,
+typedef void (*ctxprobes_page_fault_handler_t)(unsigned long ip,
+                                               unsigned long address,
                                                int protection_fault,
                                                int write_access,
                                                int user_mode,

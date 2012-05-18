@@ -724,6 +724,7 @@ static int probe_page_fault_call(struct probe *probe,
     ctxprobes_var_t *arg_list = NULL;
     int arg_count = 0;
     unsigned long address = 0;
+    struct pt_regs regs;
     unsigned long error_code;
     char error_str[128] = {0,};
     int ret;
@@ -763,6 +764,8 @@ static int probe_page_fault_call(struct probe *probe,
     if (ret)
         ERR("Failed to load function args\n");
 
+    memcpy(&regs, arg_list[0].buf, arg_list[0].size);
+
     memcpy(&error_code, arg_list[1].buf, arg_list[1].size);
     int protection_fault = ((error_code & 1) != 0);
     int write_access = ((error_code & 2) != 0);
@@ -782,12 +785,15 @@ static int probe_page_fault_call(struct probe *probe,
            "instr-fetch, " : "");
     error_str[strlen(error_str)-2] = '\0';
 
-    DBG("%d (%s): Trap page fault called (addr = 0x%08lx, error = %s)\n", 
-        task_current->pid, task_current->comm, address, error_str);
+    DBG("%d (%s): Trap page fault called "
+        "(eip = 0x%08lx, addr = 0x%08lx, error = %s)\n", 
+        task_current->pid, task_current->comm, 
+        regs.eip, address, error_str);
 
     if (user_page_fault_handler)
     {
-        user_page_fault_handler(address, 
+        user_page_fault_handler(regs.eip, 
+                                address, 
                                 protection_fault,
                                 write_access,
                                 user_mode,

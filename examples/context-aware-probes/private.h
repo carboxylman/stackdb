@@ -111,6 +111,8 @@ void unregister_probes();
 
 unsigned long sysmap_symbol_addr(char *symbol);
 
+int load_regs(struct pt_regs *regs, unsigned long regs_addr);
+
 unsigned long current_task_addr(void);
 int load_task_info(ctxprobes_task_t **task, unsigned long task_struct_addr);
 void unload_task_info(ctxprobes_task_t *task);

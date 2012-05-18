@@ -160,7 +160,8 @@ void context_change(ctxprobes_context_t prev,
     fflush(stdout);
 }
 
-void page_fault(unsigned long address,
+void page_fault(unsigned long ip,
+                unsigned long address,
                 int protection_fault,
                 int write_access,
                 int user_mode,
@@ -184,8 +185,8 @@ void page_fault(unsigned long address,
     
     fflush(stderr);
 
-    printf("%d (%s): Page fault: address = 0x%08lx, error = (%s)\n", 
-           task->pid, task->comm, address, error_str);
+    printf("%d (%s): Page fault: ip = 0x%08lx, address = 0x%08lx, error = (%s)\n", 
+           task->pid, task->comm, ip, address, error_str);
 
     fflush(stdout);
 }
@@ -347,8 +348,8 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         task_switch, 
-                         context_change,
+                         NULL,//task_switch, 
+                         NULL,//context_change,
                          page_fault,
                          debug_level);
     if (ret)
@@ -356,7 +357,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to init ctxprobes\n");
         exit(1);
     }
-
+/*
     ret = ctxprobes_reg_func_prologue("sys_open", sys_open_prologue);
     if (ret)
     {
@@ -384,7 +385,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to instrument function sys_open\n");
         exit(1);
     }
-
+*/
     printf("Starting instrumentation...\n");
     ctxprobes_wait();
 

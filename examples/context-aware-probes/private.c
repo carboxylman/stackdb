@@ -571,6 +571,21 @@ unsigned long sysmap_symbol_addr(char *symbol)
 }
 
 
+int load_regs(struct pt_regs *regs, unsigned long regs_addr)
+{
+    if (!target_read_addr(t, 
+                          regs_addr, 
+                          sizeof(struct pt_regs), 
+                          (unsigned char *)regs, 
+                          NULL))
+    {
+        return -1;
+    }
+
+    return 0;
+}
+
+
 unsigned long current_task_addr(void)
 {
     unsigned long esp = target_read_reg(t, 4);
