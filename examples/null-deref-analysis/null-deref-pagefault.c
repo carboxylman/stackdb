@@ -52,7 +52,8 @@ static unsigned long long brctr_root;
 static unsigned int pid_root;
 static unsigned long addr_root;
 
-void probe_pagefault(unsigned long address,
+void probe_pagefault(unsigned long ip,
+                     unsigned long address,
                      int protection_fault,
                      int write_access,
                      int user_mode,
@@ -86,9 +87,9 @@ void probe_pagefault(unsigned long address,
             if (concise)
             {
                 fflush(stderr);
-                printf("brctr=%lld, pid=%d, address=0x%08lx, "
+                printf("brctr=%lld, pid=%d, address=0x%08lx, ip=0x%08lx"
                        "protection=%d, write=%d, user=%d\n", 
-                       brctr, task->pid, address, 
+                       brctr, task->pid, address, ip,
                        protection_fault, write_access, user_mode);
                 fflush(stdout);
             }
@@ -100,8 +101,9 @@ void probe_pagefault(unsigned long address,
                     capitalize(desc);
                     
                     fflush(stderr);
-                    printf("PAGE FAULT AT 0x%08lX (%s, PID = %d, BRCTR = %lld)\n", 
-                           address, desc, task->pid, brctr);
+                    printf("PAGE FAULT AT 0x%08lX "
+                           "(%s, PID = %d, IP = 0x%08lX, BRCTR = %lld)\n", 
+                           address, desc, task->pid, ip, brctr);
                     fflush(stdout);
                 }
                 
@@ -121,7 +123,8 @@ void probe_pagefault(unsigned long address,
                 if (!concise)
                 {
                     fflush(stderr);
-                    printf("Page fault at 0x%08lx (%s)\n", address, desc);
+                    printf("Page fault at 0x%08lx (%s, pid = %d, ip = 0x%08lx)\n", 
+                           address, desc, task->pid, ip);
                     fflush(stdout);
                 }
             }
