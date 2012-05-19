@@ -65,6 +65,10 @@ int vmi_log_get_flag_val(char *flag,log_flags_t *flagval) {
 	*flagval = LOG_P_ALL;
 	return 0;
     }
+    else if (strcmp("C_ALL",flag) == 0) {
+	*flagval = LOG_C_ALL;
+	return 0;
+    }
 
     for (i = 0; i < sizeof(log_flag_stringmap) / sizeof(char *); ++i) {
 	if (!strcmp(log_flag_stringmap[i],flag))
