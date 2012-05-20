@@ -29,8 +29,10 @@ OBJDIR		= @top_builddir@
 SUBDIRS = 
 
 # Temporary cmdline arg values hard-coded for easiness of testing.
-CTXPROBES_GUEST  = clientA
-CTXPROBES_SYSMAP = /boot/System.map-2.6.18-xenU
+CTXPROBES_DAEMON_LOG  = /local/sda4/logs/ttd.log
+CTXPROBES_REPLAY_CONF = /local/sda4/vm-images/client_A_solo_with_net.conf
+CTXPROBES_GUEST       = clientA
+CTXPROBES_SYSMAP      = /boot/System.map-2.6.18-xenU
 
 include $(OBJDIR)/Makeconf
 
@@ -111,16 +113,16 @@ distclean: distclean-subdirs
 # Temporary cmdlines hard-coded for easiness of testing.
 
 daemon: /usr/sbin/ttd-deviced
-	sudo ttd-deviced -f $(NULL_DEREF_DAEMON_LOG)
+	sudo ttd-deviced -f $(CTXPROBES_DAEMON_LOG)
 
 replay: /usr/sbin/xm
-	sudo xm create $(NULL_DEREF_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c
+	sudo xm create $(CTXPROBES_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c
 
 replay-pause: /usr/sbin/xm
-	sudo xm create $(NULL_DEREF_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c -p
+	sudo xm create $(CTXPROBES_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c -p
 
 kill: /usr/sbin/xm /usr/bin/killall 
-	sudo xm destroy $(NULL_DEREF_GUEST)
+	sudo xm destroy $(CTXPROBES_GUEST)
 	sudo killall -9 ttd-deviced
 	sudo killall -9 null-deref-
 
