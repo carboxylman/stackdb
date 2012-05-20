@@ -147,11 +147,20 @@ distclean: distclean-subdirs
 daemon: /usr/sbin/ttd-deviced
 	sudo ttd-deviced -f $(NULL_DEREF_DAEMON_LOG)
 
+record: /usr/sbin/xm
+	sudo xm create $(NULL_DEREF_REPLAY_CONF) time_travel="ttd_flag=1" -c
+
 replay: /usr/sbin/xm
 	sudo xm create $(NULL_DEREF_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c
 
 replay-pause: /usr/sbin/xm
 	sudo xm create $(NULL_DEREF_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c -p
+
+kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
+	sudo xm destroy $(NULL_DEREF_GUEST)
+	sleep 1
+	sudo killall -9 ttd-deviced
+	sudo killall -9 -r "null-deref-*".
 
 run-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
