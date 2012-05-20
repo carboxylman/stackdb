@@ -33,6 +33,8 @@
 #ifndef __CTXPROBES_H__
 #define __CTXPROBES_H__
 
+#include <alist.h>
+
 typedef enum {
     CTXPROBES_CONTEXT_NORMAL,
     CTXPROBES_CONTEXT_TRAP,
@@ -108,6 +110,7 @@ int ctxprobes_init(char *domain_name,
                    ctxprobes_task_switch_handler_t task_switch_handler,
                    ctxprobes_context_change_handler_t context_change_handler,  
                    ctxprobes_page_fault_handler_t page_fault_handler,  
+                   struct array_list *pidlist, // show logs for only these pids
                    int debug_level);
 void ctxprobes_cleanup(void);
 

@@ -46,6 +46,21 @@ static char *sysmap_file = NULL;
 
 static struct array_list *tasklist;
 
+int array_list_contains(struct array_list *list, void *item)
+{
+    int i;
+    void *tmp;
+
+    for (i = 0; i < array_list_len(list); i++)
+    {
+        tmp = array_list_item(list, i);
+        if (tmp == item)
+            return 1;
+    }
+
+    return 0;
+}
+
 char context_ch(ctxprobes_context_t context)
 {
     char c;
@@ -88,21 +103,6 @@ char *context_str(ctxprobes_context_t context)
     return str;
 }
 
-int alist_contains(struct array_list *list, unsigned int pid)
-{
-    int i;
-    unsigned int tmp;
-
-    for (i = 0; i < array_list_len(list); i++)
-    {
-        tmp = (unsigned int)array_list_item(list, i);
-        if (tmp == pid)
-            return 1;
-    }
-
-    return 0;
-}
-
 void task_uid_modified(unsigned long addr,
                        char *name,
                        ctxprobes_var_t *var,
@@ -124,7 +124,7 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
     printf("Task switch: %d (%s) -> %d (%s)\n",
            prev->pid, prev->comm, next->pid, next->comm);
 /*
-    if (!alist_contains(tasklist, next->vaddr))
+    if (!array_list_contains(tasklist, (void *)next->vaddr))
     {
         addr = next->vaddr + TASK_UID_OFFSET;
         name = "schedule.next->uid"; 
@@ -350,6 +350,7 @@ int main(int argc, char *argv[])
                          NULL,//task_switch, 
                          NULL,//context_change,
                          page_fault,
+                         NULL, /* pidlist */
                          debug_level);
     if (ret)
     {
