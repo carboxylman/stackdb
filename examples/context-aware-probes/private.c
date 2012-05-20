@@ -41,7 +41,6 @@
 
 #include "ctxprobes.h"
 #include "private.h"
-#include "debug.h"
 
 extern struct target *t;
 extern FILE *sysmap_handle;
@@ -72,14 +71,15 @@ int register_call_probe(char *symbol,
     bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
     if (!bsymbol)
     {
-        WARN("Could not find symbol '%s' in debuginfo. Trying sysmap...\n", 
-             symbol);
+        vdebugc(-1, LOG_C_WARN, "Warning: Could not find symbol '%s' "
+                "in debuginfo. Trying sysmap...\n", 
+                symbol);
         
         addr = sysmap_symbol_addr(symbol);
         if (!addr)
         {
-            ERR("Could not find symbol '%s' in both debuginfo and sysmap!\n", 
-                symbol);
+            verror("Could not find symbol '%s' in both debuginfo and sysmap!\n", 
+                   symbol);
             return -1;
         }
     }
@@ -96,8 +96,8 @@ int register_call_probe(char *symbol,
                          0); /* autofree */
     if (!probe)
     {
-        ERR("Could not create call probe on '%s'\n", 
-            bsymbol_get_name(bsymbol));
+        verror("Could not create call probe on '%s'\n", 
+               bsymbol_get_name(bsymbol));
         bsymbol_release(bsymbol);
         return -1;
     }
@@ -110,7 +110,7 @@ int register_call_probe(char *symbol,
                                  PROBEPOINT_LAUTO,
                                  NULL)) /* bsymbol */
         {
-            ERR("Could not register call probe on 0x%08lx\n", addr);
+            verror("Could not register call probe on 0x%08lx\n", addr);
             probe_free(probe, 1);
             return -1;
         }
@@ -122,8 +122,8 @@ int register_call_probe(char *symbol,
                                            PROBEPOINT_SW, whence, 
                                            PROBEPOINT_LAUTO))
         {
-            ERR("Could not register inlined call probe on '%s'\n",
-                bsymbol_get_name(bsymbol));
+            verror("Could not register inlined call probe on '%s'\n",
+                   bsymbol_get_name(bsymbol));
             probe_free(probe, 1);
             bsymbol_release(bsymbol);
             return -1;
@@ -135,7 +135,7 @@ int register_call_probe(char *symbol,
                                    PROBEPOINT_SW, whence, 
                                    PROBEPOINT_LAUTO))
         {
-            ERR("Could not register call probe on '%s'\n",
+            verror("Could not register call probe on '%s'\n",
                 bsymbol_get_name(bsymbol));
             probe_free(probe, 1);
             bsymbol_release(bsymbol);
@@ -172,7 +172,7 @@ int register_prologue_probe(char *symbol,
     bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
     if (!bsymbol)
     {
-        ERR("Could not find symbol %s!\n", symbol);
+        verror("Could not find symbol %s!\n", symbol);
         return -1;
     }
 
@@ -180,16 +180,17 @@ int register_prologue_probe(char *symbol,
 
     if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL))
     {
-        ERR("Could not resolve base addr for function %s!\n",
-            bsymbol_get_name(bsymbol));
+        verror("Could not resolve base addr for function %s!\n",
+               bsymbol_get_name(bsymbol));
         return -1;
     }
 
     /* Skip if we have already registered this function! */
     if (g_hash_table_lookup(cprobes, (gpointer)funcstart))
     {
-        WARN("Already registered function %s prologue. Skipping...\n",
-             bsymbol_get_name(bsymbol));
+        vdebugc(-1, LOG_C_WARN, "Warning: Already registered function %s "
+                "prologue. Skipping...\n",
+                bsymbol_get_name(bsymbol));
         return 0;
     }
 
@@ -202,8 +203,8 @@ int register_prologue_probe(char *symbol,
                          0);
     if (!probe)
     {
-        ERR("Could not create prologue probe on '%s'\n",
-            bsymbol_get_name(bsymbol));
+        verror("Could not create prologue probe on '%s'\n",
+               bsymbol_get_name(bsymbol));
         return -1;
     }
 
@@ -213,16 +214,16 @@ int register_prologue_probe(char *symbol,
                                         INST_NONE))
     {
         probe_free(probe, 1);
-        ERR("Could not register prologue probe on '%s'\n",
-            bsymbol_get_name(bsymbol));
+        verror("Could not register prologue probe on '%s'\n",
+               bsymbol_get_name(bsymbol));
         return -1;
     }
 
     if (probe_num_sources(probe) == 0)
     {
         probe_free(probe, 1);
-        ERR("No call sites in %s.\n",
-            bsymbol_get_name(bsymbol));
+        verror("No call sites in %s.\n",
+               bsymbol_get_name(bsymbol));
         return -2;
     }
     
@@ -234,7 +235,7 @@ int register_prologue_probe(char *symbol,
                         (gpointer)probe,
                         (gpointer)probe);
     
-    DBG("Registered %d prologue probes in function %s.\n",
+    vdebugc(5, LOG_C_DISASM, "Registered %d prologue probes in function %s.\n",
         probe_num_sources(probe),
         bsymbol_get_name(bsymbol));
 
@@ -262,7 +263,7 @@ int register_return_probe(char *symbol,
     bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
     if (!bsymbol)
     {
-        ERR("Could not find symbol %s!\n", symbol);
+        verror("Could not find symbol %s!\n", symbol);
         return -1;
     }
 
@@ -270,16 +271,17 @@ int register_return_probe(char *symbol,
 
     if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL))
     {
-        ERR("Could not resolve base addr for function %s!\n",
-            bsymbol_get_name(bsymbol));
+        verror("Could not resolve base addr for function %s!\n",
+               bsymbol_get_name(bsymbol));
         return -1;
     }
 
     /* Skip if we have already registered this function! */
     if (g_hash_table_lookup(rprobes, (gpointer)funcstart))
     {
-        WARN("Already registered function %s return. Skipping...\n",
-             bsymbol_get_name(bsymbol));
+        vdebugc(-1, LOG_C_WARN, "Warning: Already registered function %s "
+                "return. Skipping...\n",
+                bsymbol_get_name(bsymbol));
         return 0;
     }
 
@@ -297,8 +299,8 @@ int register_return_probe(char *symbol,
                          0);
     if (!probe)
     {
-        ERR("Could not create return probe on '%s'\n",
-            bsymbol_get_name(bsymbol));
+        verror("Could not create return probe on '%s'\n",
+               bsymbol_get_name(bsymbol));
         return -1;
     }
 
@@ -308,15 +310,15 @@ int register_return_probe(char *symbol,
                                         INST_NONE))
     {
         probe_free(probe, 1);
-        ERR("Could not register return probe on '%s'\n",
-            bsymbol_get_name(bsymbol));
+        verror("Could not register return probe on '%s'\n",
+               bsymbol_get_name(bsymbol));
         return -1;
     }
 
     if (probe_num_sources(probe) == 0)
     {
         probe_free(probe, 1);
-        ERR("No return sites in %s.\n", bsymbol_get_name(bsymbol));
+        verror("No return sites in %s.\n", bsymbol_get_name(bsymbol));
         return -2;
     }
     
@@ -328,8 +330,8 @@ int register_return_probe(char *symbol,
                         (gpointer)probe,
                         (gpointer)probe);
     
-    DBG("Registered %d return probes in function %s.\n",
-        probe_num_sources(probe), bsymbol_get_name(bsymbol));
+    vdebugc(5, LOG_C_DISASM, "Registered %d return probes in function %s.\n",
+            probe_num_sources(probe), bsymbol_get_name(bsymbol));
 
     return 0;
 }
@@ -347,7 +349,7 @@ int register_var_probe(char *symbol,
     bsymbol = target_lookup_sym(t, symbol, ".", NULL, ftype);
     if (!bsymbol)
     {
-        ERR("Could not find symbol %s!\n", symbol);
+        verror("Could not find symbol %s!\n", symbol);
         return -1;
     }
 
@@ -363,7 +365,7 @@ int register_var_probe(char *symbol,
                          0); /* autofree */
     if (!probe)
     {
-        ERR("Could not create var probe on '%s'\n", bsymbol_get_name(bsymbol));
+        verror("Could not create var probe on '%s'\n", bsymbol_get_name(bsymbol));
         bsymbol_release(bsymbol);
         return -1;
     }
@@ -372,8 +374,8 @@ int register_var_probe(char *symbol,
                                PROBEPOINT_SW, whence, 
                                PROBEPOINT_LAUTO))
     {
-        ERR("Could not register var probe on '%s'\n",
-            bsymbol_get_name(bsymbol));
+        verror("Could not register var probe on '%s'\n",
+               bsymbol_get_name(bsymbol));
         probe_free(probe, 1);
         bsymbol_release(bsymbol);
         return -1;
@@ -403,7 +405,7 @@ int register_raw_probe(unsigned long addr,
                          0); /* autofree */
     if (!probe)
     {
-        ERR("Could not create raw probe on '0x%08lx'\n", addr);
+        verror("Could not create raw probe on '0x%08lx'\n", addr);
         return -1;
     }
 
@@ -413,7 +415,7 @@ int register_raw_probe(unsigned long addr,
                 PROBEPOINT_LAUTO,
                 NULL)) /* bsymbol */
     {
-        ERR("Could not register raw probe on 0x%08lx\n", addr);
+        verror("Could not register raw probe on 0x%08lx\n", addr);
         probe_free(probe, 1);
         return -1;
     }
@@ -434,8 +436,8 @@ ADDR instrument_func(struct bsymbol *bsymbol,
 
     if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL)) 
     {
-        ERR("Could not resolve base addr for function %s!\n",
-            bsymbol->lsymbol->symbol->name);
+        verror("Could not resolve base addr for function %s!\n",
+               bsymbol->lsymbol->symbol->name);
         return 0;
     }
 
@@ -492,13 +494,14 @@ ADDR instrument_func(struct bsymbol *bsymbol,
         if (probe_num_sources(cprobe) == 0)
         {
             probe_free(cprobe, 1);
-            WARN("No call sites in %s.\n", bsymbol->lsymbol->symbol->name);
+            vdebugc(-1, LOG_C_WARN, "Warning: No call sites in %s.\n", 
+                    bsymbol->lsymbol->symbol->name);
         }
         else
         {
             g_hash_table_insert(probes, (gpointer)cprobe, (gpointer)cprobe);
-            DBG("Registered %d call probes in function %s.\n",
-                probe_num_sources(cprobe), bsymbol->lsymbol->symbol->name);
+            vdebugc(5, LOG_C_DISASM, "Registered %d call probes in function %s.\n",
+                    probe_num_sources(cprobe), bsymbol->lsymbol->symbol->name);
         }
 
         if (!isroot)
@@ -506,13 +509,14 @@ ADDR instrument_func(struct bsymbol *bsymbol,
             if (probe_num_sources(rprobe) == 0)
             {
                 probe_free(rprobe, 1);
-                WARN("No return sites in %s.\n", bsymbol->lsymbol->symbol->name);
+                vdebugc(-1, LOG_C_WARN, "Warning: No return sites in %s.\n", 
+                        bsymbol->lsymbol->symbol->name);
             }
             else
             {
                 g_hash_table_insert(probes, (gpointer)rprobe, (gpointer)rprobe);
-                DBG("Registered %d return probes in function %s.\n",
-                    probe_num_sources(rprobe), bsymbol->lsymbol->symbol->name);
+                vdebugc(5, LOG_C_DISASM, "Registered %d return probes in function %s.\n",
+                        probe_num_sources(rprobe), bsymbol->lsymbol->symbol->name);
             }
         }
 
@@ -557,7 +561,7 @@ unsigned long sysmap_symbol_addr(char *symbol)
     {
         if (rc < 0)
         {
-            ERR("Could not fscanf Systemp.map\n");
+            verror("Could not fscanf Systemp.map\n");
             return -5;
         }
         else if (rc != 3)
@@ -730,7 +734,7 @@ char *context_string(ctxprobes_context_t context)
             break;
         default:
             str = context_strs[3];
-            ERR("Invalid context identifier %d!\n", context);
+            verror("Invalid context identifier %d!\n", context);
             break;
     }
     return str;
@@ -756,7 +760,8 @@ int load_func_args(ctxprobes_var_t **arg_list,
         ppt = probe->probepoint;
     else
     {
-        WARN("probe->probepoint is NULL, try using trigger->probepoint\n");
+        vdebugc(-1, LOG_C_WARN, "Warning: probe->probepoint is NULL, "
+                "try using trigger->probepoint\n");
         ppt = trigger->probepoint;
     }
 
@@ -787,7 +792,7 @@ int load_func_args(ctxprobes_var_t **arg_list,
     if (!args)
     {
         ret = -4;
-        ERR("Cannot allocate memory for function arg!\n");
+        verror("Cannot allocate memory for function arg!\n");
         goto error_exit;
     }
     memset(args, 0, sizeof(ctxprobes_var_t) * arglen);
@@ -810,7 +815,7 @@ int load_func_args(ctxprobes_var_t **arg_list,
         if (!value)
         {
             ret = -1;
-            ERR("Cannot load function arg symbol!\n");
+            verror("Cannot load function arg symbol!\n");
             goto error_exit;
         }
 
@@ -821,7 +826,7 @@ int load_func_args(ctxprobes_var_t **arg_list,
         {
             value_free(value);
             ret = -4;
-            ERR("Cannot duplicate function arg name!\n");
+            verror("Cannot duplicate function arg name!\n");
             goto error_exit;
         }
 
@@ -830,7 +835,7 @@ int load_func_args(ctxprobes_var_t **arg_list,
         {
             value_free(value);
             ret = -4;
-            ERR("Cannot allocate memory for function arg buf!\n");
+            verror("Cannot allocate memory for function arg buf!\n");
             goto error_exit;
         }
         memcpy(args[i].buf, value->buf, args[i].size);
@@ -872,7 +877,7 @@ int load_func_retval(ctxprobes_var_t **retval, struct probe *probe)
     value = (ctxprobes_var_t *)malloc(sizeof(ctxprobes_var_t));
     if (!value)
     {
-        ERR("Cannot allocate memory for function retval!\n");
+        verror("Cannot allocate memory for function retval!\n");
         return -4;
     }
     memset(value, 0, sizeof(ctxprobes_var_t));
@@ -882,7 +887,7 @@ int load_func_retval(ctxprobes_var_t **retval, struct probe *probe)
     value->name = (char *)malloc(strlen(probe->name)+1+6+1);
     if (!value->name)
     {
-        ERR("Cannot allocate memory for function retval name!\n");
+        verror("Cannot allocate memory for function retval name!\n");
         unload_func_retval(value);
         return -4;
     }
@@ -891,7 +896,7 @@ int load_func_retval(ctxprobes_var_t **retval, struct probe *probe)
     value->buf = (char *)malloc(value->size);
     if (!value->buf)
     {
-        ERR("Cannot allocate memory for function retval buf!\n");
+        verror("Cannot allocate memory for function retval buf!\n");
         unload_func_retval(value);
         return -4;
     }

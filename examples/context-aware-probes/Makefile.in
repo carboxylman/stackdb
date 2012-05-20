@@ -29,7 +29,7 @@ OBJDIR		= @top_builddir@
 SUBDIRS = 
 
 # Temporary cmdline arg values hard-coded for easiness of testing.
-CTXPROBES_GUEST  = a3guest
+CTXPROBES_GUEST  = clientA
 CTXPROBES_SYSMAP = /boot/System.map-2.6.18-xenU
 
 include $(OBJDIR)/Makeconf
@@ -64,7 +64,6 @@ endif
 
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/ctxprobes.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/private.h \
-	   $(TOP_SRCDIR)/$(SUBDIR)/debug.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/perf.h
 
 OBJECTS := ctxprobes.lo private.lo perf.lo
@@ -111,8 +110,22 @@ distclean: distclean-subdirs
 
 # Temporary cmdlines hard-coded for easiness of testing.
 
+daemon: /usr/sbin/ttd-deviced
+	sudo ttd-deviced -f $(NULL_DEREF_DAEMON_LOG)
+
+replay: /usr/sbin/xm
+	sudo xm create $(NULL_DEREF_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c
+
+replay-pause: /usr/sbin/xm
+	sudo xm create $(NULL_DEREF_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c -p
+
+kill: /usr/sbin/xm /usr/bin/killall 
+	sudo xm destroy $(NULL_DEREF_GUEST)
+	sudo killall -9 ttd-deviced
+	sudo killall -9 null-deref-
+
 run: ctxprobes-example
-	sudo ./ctxprobes-example \
+	sudo ./ctxprobes-example -d -l C_ALL \
 	-m $(CTXPROBES_SYSMAP) $(CTXPROBES_GUEST)
 
 demo: ctxprobes-example
@@ -122,12 +135,12 @@ demo: ctxprobes-example
 
 verbose: ctxprobes-example
 	sudo ./ctxprobes-example \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
 	-m $(CTXPROBES_SYSMAP) $(CTXPROBES_GUEST)
 
 debug: ctxprobes-example
 	sudo gdb --args ./ctxprobes-example \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
 	-m $(CTXPROBES_SYSMAP) $(CTXPROBES_GUEST)
 
 # How to recursively descend into subdirectories to make general
