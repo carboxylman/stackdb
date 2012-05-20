@@ -268,8 +268,11 @@ int main(int argc, char *argv[])
 {
     int ret;
     ctxprobes_task_switch_handler_t task_switch_handler = NULL;
+    struct array_list *pidlist = array_list_create(1);
     
     parse_opt(argc, argv);
+
+    array_list_prepend(pidlist, (void *)pid_root);
 
     if (interactive)
     {
@@ -285,7 +288,7 @@ int main(int argc, char *argv[])
                          task_switch_handler,
                          NULL, /* context change handler */
                          NULL, /* page fault handler */
-                         NULL, /* pid list */
+                         pidlist, 
                          debug_level);
     if (ret)
     {
@@ -313,6 +316,9 @@ int main(int argc, char *argv[])
     ctxprobes_wait();
 
     ctxprobes_cleanup();
+    
+    if (pidlist)
+        array_list_free(pidlist);
     return 0;
 }
 
