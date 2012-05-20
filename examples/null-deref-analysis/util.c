@@ -45,6 +45,8 @@ void kill_everything(char *domain_name)
     sprintf(cmd, "xm destroy %s", domain_name);
     system(cmd);
 
+    sleep(1);
+
     system("killall -9 ttd-deviced");
 
     kill(getpid(), SIGINT);
