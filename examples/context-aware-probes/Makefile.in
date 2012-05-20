@@ -131,9 +131,8 @@ run: ctxprobes-example
 	-m $(CTXPROBES_SYSMAP) $(CTXPROBES_GUEST)
 
 demo: ctxprobes-example
-	sudo ./ctxprobes-example \
-	-m $(CTXPROBES_SYSMAP) $(CTXPROBES_GUEST) \
-	2> /dev/null
+	sudo ./ctxprobes-example -l C_CTX,C_FUNC \
+	-m $(CTXPROBES_SYSMAP) $(CTXPROBES_GUEST)
 
 verbose: ctxprobes-example
 	sudo ./ctxprobes-example \
