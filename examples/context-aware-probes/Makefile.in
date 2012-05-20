@@ -124,10 +124,10 @@ replay-pause: /usr/sbin/xm
 kill: /usr/sbin/xm /usr/bin/killall 
 	sudo xm destroy $(CTXPROBES_GUEST)
 	sudo killall -9 ttd-deviced
-	sudo killall -9 null-deref-
+	sudo killall -9 ctxprobes-example
 
 run: ctxprobes-example
-	sudo ./ctxprobes-example -d -l C_ALL \
+	sudo ./ctxprobes-example -l C_ALL \
 	-m $(CTXPROBES_SYSMAP) $(CTXPROBES_GUEST)
 
 demo: ctxprobes-example

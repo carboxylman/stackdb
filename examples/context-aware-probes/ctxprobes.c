@@ -92,7 +92,7 @@ static int probe_func_prologue(struct probe *probe,
         verror("Cannot load current task info\n");
     }
 
-    vdebugc(0, LOG_C_FUNC, "%d (%s): Function %s prologue (context: %s)\n", 
+    vdebugc(-1, LOG_C_FUNC, "%d (%s): Function %s prologue (context: %s)\n", 
             task_current->pid, task_current->comm, symbol, 
             context_string(context_current));
   
@@ -146,7 +146,7 @@ static int probe_func_call(struct probe *probe,
         verror("Cannot load current task info\n");
     }
 
-    vdebugc(0, LOG_C_FUNC, "%d (%s): Function %s called (context: %s)\n", 
+    vdebugc(-1, LOG_C_FUNC, "%d (%s): Function %s called (context: %s)\n", 
             task_current->pid, task_current->comm, symbol, 
             context_string(context_current));
  
@@ -155,7 +155,7 @@ static int probe_func_call(struct probe *probe,
         verror("Failed to load function args\n");
     else if (arg_list && arg_count > 0)
     {
-        vdebugc(0, LOG_C_FUNC, "- Function arguments (count = %d):\n", 
+        vdebugc(-1, LOG_C_FUNC, "- Function arguments (count = %d):\n", 
                 arg_count);
         for (i = 0; i < arg_count; i++)
         {
@@ -163,13 +163,13 @@ static int probe_func_call(struct probe *probe,
             for (j = 0; j < len; j++)
                 sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
             if (len <= 4)
-                vdebugc(0, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
+                vdebugc(-1, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
                         *(int *)arg_list[i].buf, buf); 
             else if (arg_list[i].buf[len-1] == '\0') // consider it as a string
-                vdebugc(0, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
+                vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
             else
-                vdebugc(0, LOG_C_FUNC, "  %s = 0x%s\n", arg_list[i].name, buf); 
+                vdebugc(-1, LOG_C_FUNC, "  %s = 0x%s\n", arg_list[i].name, buf); 
         }
     }
 
@@ -213,7 +213,7 @@ static int probe_func_return(struct probe *probe,
         verror("Cannot load current task info\n");
     }
 
-    vdebugc(0, LOG_C_FUNC, "%d (%s): Function %s returned (context: %s)\n", 
+    vdebugc(-1, LOG_C_FUNC, "%d (%s): Function %s returned (context: %s)\n", 
             task_current->pid, task_current->comm, symbol,
             context_string(context_current));
  
@@ -222,20 +222,20 @@ static int probe_func_return(struct probe *probe,
         verror("Failed to load function args\n");
     else
     {
-        vdebugc(0, LOG_C_FUNC, "- Function arguments:\n");
+        vdebugc(-1, LOG_C_FUNC, "- Function arguments:\n");
         for (i = 0; i < arg_count; i++)
         {
             len = arg_list[i].size;
             for (j = 0; j < len; j++)
                 sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
             if (len <= 4)
-                vdebugc(0, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
+                vdebugc(-1, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
                         *(int *)arg_list[i].buf, buf); 
             else if (arg_list[i].buf[len-1] == '\0') // consider it as a string
-                vdebugc(0, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
+                vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
             else
-                vdebugc(0, LOG_C_FUNC, "  %s = 0x%s\n", arg_list[i].name, buf); 
+                vdebugc(-1, LOG_C_FUNC, "  %s = 0x%s\n", arg_list[i].name, buf); 
         }
     }
 
@@ -244,7 +244,7 @@ static int probe_func_return(struct probe *probe,
         verror("Failed to load function retval\n");
     else
     {
-        vdebugc(0, LOG_C_FUNC, "- Function return value: %d (0x%08x)\n", 
+        vdebugc(-1, LOG_C_FUNC, "- Function return value: %d (0x%08x)\n", 
                 *(int *)retval->buf, *(int *)retval->buf);
     }
 
@@ -299,7 +299,7 @@ static int probe_var(struct probe *probe,
         verror("Cannot load current task info\n");
     }
 
-    vdebugc(0, LOG_C_VAR, "%d (%s): Variable %s (0x%08x) read or written "
+    vdebugc(-1, LOG_C_VAR, "%d (%s): Variable %s (0x%08x) read or written "
             "(context: %s)\n", 
             task_current->pid, task_current->comm, 
             probe->name, probe_addr(probe), 
@@ -349,7 +349,7 @@ static int probe_disfunc_return(struct probe *probe,
         verror("Cannot load current task info\n");
     }
 
-    vdebugc(0, LOG_C_DISASM, "%d (%s): Disassembled function %s returned "
+    vdebugc(-1, LOG_C_DISASM, "%d (%s): Disassembled function %s returned "
             "(context: %s)\n", 
             task_current->pid, task_current->comm, 
             probe->name, context_string(context_current));
@@ -405,7 +405,7 @@ static int probe_disfunc_call(struct probe *probe,
         verror("Cannot load current task info\n");
     }
 
-    vdebugc(0, LOG_C_DISASM, "%d (%s): Disassembled function %s called "
+    vdebugc(-1, LOG_C_DISASM, "%d (%s): Disassembled function %s called "
             "(context: %s)\n", 
             task_current->pid, task_current->comm, 
             probe->name, context_string(context_current));
@@ -458,7 +458,7 @@ static int probe_divide_error_call(struct probe *probe,
                                    void *data, 
                                    struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap divide error called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap divide error called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -468,7 +468,7 @@ static int probe_divide_error_return(struct probe *probe,
                                      void *data, 
                                      struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap divide error returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap divide error returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -478,7 +478,7 @@ static int probe_debug_call(struct probe *probe,
                             void *data, 
                             struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap debug called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap debug called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -488,7 +488,7 @@ static int probe_debug_return(struct probe *probe,
                               void *data, 
                               struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap debug returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap debug returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -498,7 +498,7 @@ static int probe_nmi_call(struct probe *probe,
                           void *data, 
                           struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap NMI called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap NMI called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -508,7 +508,7 @@ static int probe_nmi_return(struct probe *probe,
                             void *data, 
                             struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap NMI returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap NMI returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -518,7 +518,7 @@ static int probe_int3_call(struct probe *probe,
                            void *data, 
                            struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap breakpoint called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap breakpoint called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -528,7 +528,7 @@ static int probe_int3_return(struct probe *probe,
                              void *data, 
                              struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap breakpoint returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap breakpoint returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -538,7 +538,7 @@ static int probe_overflow_call(struct probe *probe,
                                void *data, 
                                struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap overflow called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap overflow called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -548,7 +548,7 @@ static int probe_overflow_return(struct probe *probe,
                                  void *data, 
                                  struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap overflow returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap overflow returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -558,7 +558,7 @@ static int probe_bounds_call(struct probe *probe,
                              void *data, 
                              struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap bounds check called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap bounds check called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -568,7 +568,7 @@ static int probe_bounds_return(struct probe *probe,
                                void *data, 
                                struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap bounds check returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap bounds check returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -578,7 +578,7 @@ static int probe_invalid_op_call(struct probe *probe,
                                  void *data, 
                                  struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap invalid opcode called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap invalid opcode called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -588,7 +588,7 @@ static int probe_invalid_op_return(struct probe *probe,
                                    void *data, 
                                    struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap invalid opcode returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap invalid opcode returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -598,7 +598,7 @@ static int probe_device_not_available_call(struct probe *probe,
                                            void *data, 
                                            struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap device not available called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap device not available called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -608,7 +608,7 @@ static int probe_device_not_available_return(struct probe *probe,
                                              void *data, 
                                              struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap device not available returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap device not available returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -618,7 +618,7 @@ static int probe_double_fault_call(struct probe *probe,
                                    void *data, 
                                    struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap double fault called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap double fault called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -628,7 +628,7 @@ static int probe_double_fault_return(struct probe *probe,
                                      void *data, 
                                      struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap double fault returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap double fault returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -638,7 +638,7 @@ static int probe_coprocessor_segment_overrun_call(struct probe *probe,
                                                   void *data, 
                                                   struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap coprocessor segment overrun called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap coprocessor segment overrun called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -648,7 +648,7 @@ static int probe_coprocessor_segment_overrun_return(struct probe *probe,
                                                     void *data, 
                                                     struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap coprocessor segment overrun returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap coprocessor segment overrun returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -658,7 +658,7 @@ static int probe_invalid_TSS_call(struct probe *probe,
                                   void *data, 
                                   struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap invalid TSS called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap invalid TSS called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -668,7 +668,7 @@ static int probe_invalid_TSS_return(struct probe *probe,
                                     void *data, 
                                     struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap invalid TSS returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap invalid TSS returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -678,7 +678,7 @@ static int probe_segment_not_present_call(struct probe *probe,
                                           void *data, 
                                           struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap segment not present called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap segment not present called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -688,7 +688,7 @@ static int probe_segment_not_present_return(struct probe *probe,
                                             void *data, 
                                             struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap segment not present returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap segment not present returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -698,7 +698,7 @@ static int probe_stack_segment_call(struct probe *probe,
                                     void *data, 
                                     struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap stack exception called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap stack exception called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -708,7 +708,7 @@ static int probe_stack_segment_return(struct probe *probe,
                                       void *data, 
                                       struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap stack exception returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap stack exception returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -718,7 +718,7 @@ static int probe_general_protection_call(struct probe *probe,
                                          void *data, 
                                          struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap general protection called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap general protection called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -728,7 +728,7 @@ static int probe_general_protection_return(struct probe *probe,
                                            void *data, 
                                            struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap general protection returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap general protection returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -802,7 +802,7 @@ static int probe_page_fault_call(struct probe *probe,
            "instr-fetch, " : "");
     error_str[strlen(error_str)-2] = '\0';
 
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap page fault called "
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap page fault called "
             "(eip = 0x%08lx, addr = 0x%08lx, error = %s)\n", 
             task_current->pid, task_current->comm, 
             regs.eip, address, error_str);
@@ -827,7 +827,7 @@ static int probe_page_fault_return(struct probe *probe,
                                    void *data, 
                                    struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap page fault returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap page fault returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -837,7 +837,7 @@ static int probe_spurious_interrupt_bug_call(struct probe *probe,
                                              void *data, 
                                              struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap spurious interrupt bug called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap spurious interrupt bug called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -847,7 +847,7 @@ static int probe_spurious_interrupt_bug_return(struct probe *probe,
                                                void *data, 
                                                struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap spurious interrupt bug returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap spurious interrupt bug returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -857,7 +857,7 @@ static int probe_coprocessor_error_call(struct probe *probe,
                                         void *data, 
                                         struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap floating point error called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap floating point error called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -867,7 +867,7 @@ static int probe_coprocessor_error_return(struct probe *probe,
                                           void *data, 
                                           struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap floating point error returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap floating point error returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -877,7 +877,7 @@ static int probe_alignment_check_call(struct probe *probe,
                                       void *data, 
                                       struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap alignment check called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap alignment check called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -887,7 +887,7 @@ static int probe_alignment_check_return(struct probe *probe,
                                         void *data, 
                                         struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap alignment check returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap alignment check returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -897,7 +897,7 @@ static int probe_machine_check_call(struct probe *probe,
                                     void *data, 
                                     struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap machine check called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap machine check called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -907,7 +907,7 @@ static int probe_machine_check_return(struct probe *probe,
                                       void *data, 
                                       struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap machine check returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap machine check returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -917,7 +917,7 @@ static int probe_simd_coprocessor_error_call(struct probe *probe,
                                              void *data, 
                                              struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap SIMD floating point error called\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap SIMD floating point error called\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -927,7 +927,7 @@ static int probe_simd_coprocessor_error_return(struct probe *probe,
                                              void *data, 
                                              struct probe *trigger)
 {
-    vdebugc(0, LOG_C_CTX, "%d (%s): Trap SIMD floating point error returned\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Trap SIMD floating point error returned\n", 
             task_current->pid, task_current->comm);
     return 0;
 }
@@ -940,7 +940,7 @@ static int probe_trap_call(struct probe *probe,
     context_prev_trap = context_current;
     context_current = CTXPROBES_CONTEXT_TRAP;
 
-    vdebugc(0, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
             task_current->pid, task_current->comm, 
             context_string(context_prev_trap), 
             context_string(context_current));
@@ -1047,7 +1047,7 @@ static int probe_trap_return(struct probe *probe,
     else
         verror("Unknown trap return!\n");
     
-    vdebugc(0, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
             task_current->pid, task_current->comm, 
             context_string(context_current), 
             context_string(context_prev_trap));
@@ -1070,7 +1070,7 @@ static int probe_syscall_call(struct probe *probe,
 {
     unsigned int eax = target_read_reg(t, 0);
     
-    vdebugc(0, LOG_C_CTX, "%d (%s): System call %d (0x%02x) called (context: %s)\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) called (context: %s)\n", 
         task_current->pid, task_current->comm,
         eax, eax, context_string(context_current));
     
@@ -1085,7 +1085,7 @@ static int probe_syscall_return(struct probe *probe,
 {
     unsigned int eax = target_read_reg(t, 0);
     
-    vdebugc(0, LOG_C_CTX, "%d (%s): System call %d (0x%02x) returned (context: %s)\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) returned (context: %s)\n", 
         task_current->pid, task_current->comm,
         eax, eax, context_string(context_current));
     
@@ -1106,7 +1106,7 @@ static int probe_interrupt_call(struct probe *probe,
     context_prev_intr = context_current;
     context_current = CTXPROBES_CONTEXT_INTERRUPT;
 
-    vdebugc(0, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
             task_current->pid, task_current->comm, 
             context_string(context_prev_intr), 
             context_string(context_current));
@@ -1118,7 +1118,7 @@ static int probe_interrupt_call(struct probe *probe,
     regs = (struct pt_regs *)arg_list[0].buf;
     irq = ~regs->orig_eax & 0xff;
    
-    vdebugc(0, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) called\n",
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) called\n",
             task_current->pid, task_current->comm, 
             irq, irq);
 
@@ -1150,11 +1150,11 @@ static int probe_interrupt_return(struct probe *probe,
     //regs = (struct pt_regs *)arg_list[0].buf;
     //irq = ~regs->orig_eax & 0xff;
 
-    vdebugc(0, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) returned\n",
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) returned\n",
             task_current->pid, task_current->comm, 
             irq, irq);
     
-    vdebugc(0, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
+    vdebugc(-1, LOG_C_CTX, "%d (%s): Context change: %s -> %s\n", 
             task_current->pid, task_current->comm, 
             context_string(context_current), 
             context_string(context_prev_intr));
@@ -1218,7 +1218,7 @@ static int probe_task_switch(struct probe *probe,
     /* FIXME: consider change to the same task as a task switch for now. */
     //if (task_prev->vaddr != task_next->vaddr)
     {
-        vdebugc(0, LOG_C_CTX, "Task switch: %d (%s) -> %d (%s)\n", 
+        vdebugc(-1, LOG_C_CTX, "Task switch: %d (%s) -> %d (%s)\n", 
                 task_prev->pid, task_prev->comm,
                 task_next->pid, task_next->comm);
 
@@ -1563,7 +1563,7 @@ int ctxprobes_wait(void)
         vdebugc(-1, LOG_C_WARN, "Warning: Failed to load initial task info!\n");
         return -1;
     }
-    vdebugc(0, LOG_C_CTX, "Initial task: %d (%s)\n", 
+    vdebugc(-1, LOG_C_CTX, "Initial task: %d (%s)\n", 
             task_current->pid, task_current->comm);
 
     vdebugc(-1, LOG_C_WARN, "Warning: Starting main debugging loop!\n");
