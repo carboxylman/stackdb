@@ -161,10 +161,10 @@ run-pass1: null-deref-passwd
 
 demo-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
+	-l C_CTX,C_FUNC \
 	-i \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 concise-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
