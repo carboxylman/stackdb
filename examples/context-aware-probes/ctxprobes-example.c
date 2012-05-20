@@ -34,7 +34,6 @@
 #include <alist.h>
 
 #include "ctxprobes.h"
-#include "debug.h"
 
 #define TASK_UID_OFFSET (336)
 
@@ -62,7 +61,7 @@ char context_ch(ctxprobes_context_t context)
             break;
         default:
             c = 'X';
-            ERR("Invalid context identifier %d!\n", context);
+            verror("Invalid context identifier %d!\n", context);
             break;
     }
     return c;
@@ -83,7 +82,7 @@ char *context_str(ctxprobes_context_t context)
             break;
         default:
             str = "Unknown";
-            ERR("Invalid context identifier %d!\n", context);
+            verror("Invalid context identifier %d!\n", context);
             break;
     }
     return str;
@@ -136,7 +135,7 @@ void task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
                                 0);
         if (ret)
         {
-            ERR("Failed to register probe on %s\n", name);
+            verror("Failed to register probe on %s\n", name);
             return;
         }
         
