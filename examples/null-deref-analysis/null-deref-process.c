@@ -163,12 +163,12 @@ void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
                     return;
                 }
 
-				if (interactive)
-				{
+                if (interactive)
+                {
                     fflush(stderr);
                     printf("Watchpoint set up.\n");
                     fflush(stdout);
-				}
+                }
             }
             
             array_list_add(tracklist, (void *)next->pid);
@@ -254,6 +254,7 @@ int main(int argc, char *argv[])
                          probe_task_switch, 
                          NULL, /* context change handler */
                          NULL, /* page fault handler */
+                         pidlist,
                          debug_level);
     if (ret)
     {

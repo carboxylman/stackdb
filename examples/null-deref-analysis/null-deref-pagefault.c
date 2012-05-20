@@ -230,6 +230,7 @@ int main(int argc, char *argv[])
                          task_switch_handler,
                          NULL, /* context change handler */
                          probe_pagefault,
+                         NULL, /* pid list */
                          debug_level);
     if (ret)
     {

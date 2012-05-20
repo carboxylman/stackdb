@@ -1463,8 +1463,8 @@ static int probe_task_switch(struct probe *probe,
     //if (task_prev->vaddr != task_next->vaddr)
     {
         if (!user_pidlist || 
-            array_list_contains(user_pidlist, (void *)task_prev->pid) || 
-            array_list_contains(user_pidlist, (void *)task_next->pid))
+            (array_list_contains(user_pidlist, (void *)task_prev->pid) && 
+            array_list_contains(user_pidlist, (void *)task_next->pid)))
         {
             vdebugc(-1, LOG_C_CTX, "Task switch: %d (%s) -> %d (%s)\n", 
                     task_prev->pid, task_prev->comm,

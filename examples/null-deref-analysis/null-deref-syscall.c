@@ -285,6 +285,7 @@ int main(int argc, char *argv[])
                          task_switch_handler,
                          NULL, /* context change handler */
                          NULL, /* page fault handler */
+                         NULL, /* pid list */
                          debug_level);
     if (ret)
     {

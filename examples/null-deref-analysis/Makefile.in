@@ -170,8 +170,7 @@ concise-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
 	-c \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 verbose-pass1: null-deref-passwd
 	sudo ./null-deref-passwd \
@@ -195,11 +194,12 @@ run-pass2: null-deref-process
 
 demo-pass2: null-deref-process
 	sudo ./null-deref-process \
+	-l C_CTX \
 	-i \
 	-p $(NULL_DEREF_PASS2_PIDS) \
 	-b $(NULL_DEREF_PASS2_BRCTR) \
-	-m $(NULL_DEREF_SYSMAP) $(NULL_DEREF_GUEST) \
-	2> /dev/null
+	-m $(NULL_DEREF_SYSMAP) \
+	$(NULL_DEREF_GUEST)
 
 concise-pass2: null-deref-process
 	sudo ./null-deref-process \
@@ -207,8 +207,7 @@ concise-pass2: null-deref-process
 	-p $(NULL_DEREF_PASS2_PIDS) \
 	-b $(NULL_DEREF_PASS2_BRCTR) \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 verbose-pass2: null-deref-process
 	sudo ./null-deref-process \
@@ -237,13 +236,13 @@ run-pass3: null-deref-syscall
 
 demo-pass3: null-deref-syscall
 	sudo ./null-deref-syscall \
+	-l C_CTX \
 	-i \
 	-p $(NULL_DEREF_PASS3_PID) \
 	-b $(NULL_DEREF_PASS3_BRCTR) \
 	-s $(NULL_DEREF_PASS3_LIST) \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 concise-pass3: null-deref-syscall
 	sudo ./null-deref-syscall \
@@ -252,8 +251,7 @@ concise-pass3: null-deref-syscall
 	-b $(NULL_DEREF_PASS3_BRCTR) \
 	-s $(NULL_DEREF_PASS3_LIST) \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 verbose-pass3: null-deref-syscall
 	sudo ./null-deref-syscall \
@@ -291,8 +289,7 @@ demo-pass4: null-deref-cfi
 	-s $(NULL_DEREF_PASS4_SYSCALL) \
 	-p $(NULL_DEREF_PASS4_PID) \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 concise-pass4: null-deref-cfi
 	sudo ./null-deref-cfi \
@@ -302,8 +299,7 @@ concise-pass4: null-deref-cfi
 	-s $(NULL_DEREF_PASS4_SYSCALL) \
 	-p $(NULL_DEREF_PASS4_PID) \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 verbose-pass4: null-deref-cfi
 	sudo ./null-deref-cfi \
@@ -341,8 +337,7 @@ demo-pass5: null-deref-pagefault
 	-p $(NULL_DEREF_PASS5_PID) \
 	-a $(NULL_DEREF_PASS5_ADDR) \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 concise-pass5: null-deref-pagefault
 	sudo ./null-deref-pagefault \
@@ -351,8 +346,7 @@ concise-pass5: null-deref-pagefault
 	-p $(NULL_DEREF_PASS5_PID) \
 	-a $(NULL_DEREF_PASS5_ADDR) \
 	-m $(NULL_DEREF_SYSMAP) \
-	$(NULL_DEREF_GUEST) \
-	2> /dev/null
+	$(NULL_DEREF_GUEST)
 
 verbose-pass5: null-deref-pagefault
 	sudo ./null-deref-pagefault \
