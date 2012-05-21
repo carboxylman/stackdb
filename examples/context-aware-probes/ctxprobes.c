@@ -71,6 +71,11 @@ struct bsymbol *bsymbol_task_next = NULL;
  * functions get called in the meantime a function is being executed. */
 REGVAL regsp;
 
+/* This variable temporarily holds the irq number, based on an assumption
+ * that no other interrupt handlers get called in the meantime a interrupt
+ * handler is being executed. */
+int irq_no;
+
 /* This variable temporarily holds the address of the high-level user
    disfunc return handler. */
 ctxprobes_disfunc_handler_t user_disfunc_return_handler;
@@ -1349,6 +1354,7 @@ static int probe_interrupt_call(struct probe *probe,
 
     regs = (struct pt_regs *)arg_list[0].buf;
     irq = ~regs->orig_eax & 0xff;
+    irq_no = irq;
    
     if (!user_pidlist || 
         array_list_contains(user_pidlist, (void *)task_current->pid))
@@ -1375,7 +1381,7 @@ static int probe_interrupt_return(struct probe *probe,
     //ctxprobes_var_t *arg_list = NULL;
     //int arg_count = 0;
     //struct pt_regs *regs;
-    int irq = 0;
+    int irq = irq_no;
     //int ret;
     
     /* FIXME: this currently fails to load symbol. */
