@@ -169,7 +169,7 @@ static int probe_func_call(struct probe *probe,
  
     ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     if (ret)
-        verror("Failed to load function args\n");
+        vdebugc(-1, LOG_C_WARN, "Failed to load function args\n");
     else if (arg_list && arg_count > 0)
     {
         vdebugc(-1, LOG_C_FUNC, "- Function arguments (count = %d):\n", 
@@ -236,7 +236,7 @@ static int probe_func_return(struct probe *probe,
  
     ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     if (ret)
-        verror("Failed to load function args\n");
+        vdebugc(-1, LOG_C_WARN, "Failed to load function args\n");
     else
     {
         vdebugc(-1, LOG_C_FUNC, "- Function arguments:\n");
@@ -258,7 +258,7 @@ static int probe_func_return(struct probe *probe,
 
     ret = load_func_retval(&retval, trigger);
     if (ret)
-        verror("Failed to load function retval\n");
+        vdebugc(-1, LOG_C_WARN, "Failed to load function retval\n");
     else
     {
         vdebugc(-1, LOG_C_FUNC, "- Function return value: %d (0x%08x)\n", 
@@ -932,7 +932,7 @@ static int probe_page_fault_call(struct probe *probe,
 
     ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     if (ret)
-        verror("Failed to load function args\n");
+        vdebugc(-1, LOG_C_WARN, "Failed to load function args\n");
 
     memcpy(&regs, arg_list[0].buf, arg_list[0].size);
 
@@ -1345,7 +1345,7 @@ static int probe_interrupt_call(struct probe *probe,
 
     ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     if (ret)
-        verror("Failed to load function args\n");
+        vdebugc(-1, LOG_C_WARN, "Failed to load function args\n");
 
     regs = (struct pt_regs *)arg_list[0].buf;
     irq = ~regs->orig_eax & 0xff;
@@ -1381,7 +1381,7 @@ static int probe_interrupt_return(struct probe *probe,
     /* FIXME: this currently fails to load symbol. */
     //ret = load_func_args(&arg_list, &arg_count, probe, trigger);
     //if (ret)
-    //    verror("Failed to load function args\n");
+    //    vdebugc(-1, LOG_C_WARN, "Failed to load function args\n");
 
     //regs = (struct pt_regs *)arg_list[0].buf;
     //irq = ~regs->orig_eax & 0xff;

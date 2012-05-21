@@ -815,7 +815,7 @@ int load_func_args(ctxprobes_var_t **arg_list,
         if (!value)
         {
             ret = -1;
-            verror("Cannot load function arg symbol!\n");
+            vdebugc(-1, LOG_C_WARN, "Cannot load function arg symbol!\n");
             goto error_exit;
         }
 
