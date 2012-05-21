@@ -242,12 +242,17 @@ int start_analysis(void)
     return 0;
 }
 
-void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
+void probe_execve(char *symbol,
+                  ctxprobes_var_t *args,
+                  int argcount,
+                  ctxprobes_task_t *task,
+                  ctxprobes_context_t context)
 {
     static int booted = 0;
     int ret;
-
-    if (!booted && strcmp(next->comm, "getty") == 0)
+    char *filename = args[0].buf;
+    
+    if (!booted && strcmp(filename, "/sbin/getty") == 0)
     {
         fflush(stderr);
         printf("Replay session booted, press enter to run analysis: ");
@@ -331,7 +336,6 @@ void parse_opt(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     int ret;
-    ctxprobes_task_switch_handler_t task_switch_handler = NULL;
     
     parse_opt(argc, argv);
 
@@ -339,8 +343,6 @@ int main(int argc, char *argv[])
 
     if (interactive)
     {
-        task_switch_handler = probe_task_switch;
-    
         fflush(stderr);
         printf("Initializing VMI...\n");
         fflush(stdout);
@@ -348,7 +350,7 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         task_switch_handler,
+                         NULL, /* task switch handler */
                          NULL, /* context change handler */
                          NULL, /* page fault handler */
                          NULL, /* pid list */
@@ -361,6 +363,13 @@ int main(int argc, char *argv[])
 
     if (interactive)
     {
+        ret = ctxprobes_reg_func_call("do_execve", probe_execve);
+        if (ret)
+        {
+            ERR("Failed to register probe on sys_execve.call\n");
+            return ret;
+        }
+
         fflush(stderr);
         printf("VMI initialized.\n");
         printf("Waiting for replay session to be booted...\n");
