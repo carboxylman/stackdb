@@ -62,8 +62,8 @@ void probe_syscall_call(char *symbol,
                         ctxprobes_task_t *task,
                         ctxprobes_context_t context)
 {
-    DBG("%d (%s): call = %s, uid = %d, brctr = %lld\n", 
-        task->pid, task->comm, symbol, task->uid, ctxprobes_get_brctr());
+    //DBG("%d (%s): call = %s, uid = %d, brctr = %lld\n", 
+    //    task->pid, task->comm, symbol, task->uid, ctxprobes_get_brctr());
         
     if (task->pid == pid_root)
     {
@@ -95,8 +95,8 @@ void probe_syscall_return(char *symbol,
                           ctxprobes_task_t *task,
                           ctxprobes_context_t context)
 {
-    DBG("%d (%s): return = %s, uid = %d, brctr = %lld\n", 
-        task->pid, task->comm, symbol, task->uid, ctxprobes_get_brctr());
+    //DBG("%d (%s): return = %s, uid = %d, brctr = %lld\n", 
+    //    task->pid, task->comm, symbol, task->uid, ctxprobes_get_brctr());
 
     if (task->pid == pid_root)
     {
@@ -159,16 +159,16 @@ int start_analysis(void)
         ret = ctxprobes_reg_func_call(syscall, probe_syscall_call);
         if (ret)
         {
-            WARN("Failed to register probe on %s call. Skipping...\n",
-                 syscall);
+            //WARN("Failed to register probe on %s call. Skipping...\n",
+            //     syscall);
             continue;
         }
 
         ret = ctxprobes_reg_func_return(syscall, probe_syscall_return);
         if (ret)
         {
-            WARN("Failed to register probe on %s return. Skipping...\n",
-                 syscall);
+            //WARN("Failed to register probe on %s return. Skipping...\n",
+            //     syscall);
             ctxprobes_unreg_func_call(syscall, probe_syscall_call);
             continue;
         }
@@ -176,18 +176,23 @@ int start_analysis(void)
         count++;
     }
 
-    DBG("Total %d system calls instrumented\n", count);
+    //DBG("Total %d system calls instrumented\n", count);
     
     fclose(fp);
     return 0;
 }
 
-void probe_task_switch(ctxprobes_task_t *prev, ctxprobes_task_t *next)
+void probe_execve(char *symbol,
+                  ctxprobes_var_t *args,
+                  int argcount,
+                  ctxprobes_task_t *task,
+                  ctxprobes_context_t context)
 {
     static int booted = 0;
     int ret;
-
-    if (!booted && strcmp(next->comm, "getty") == 0)
+    char *filename = args[0].buf;
+    
+    if (!booted && strcmp(filename, "/sbin/getty") == 0)
     {
         fflush(stderr);
         printf("Replay session booted, press enter to run analysis: ");
@@ -267,7 +272,6 @@ void parse_opt(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     int ret;
-    ctxprobes_task_switch_handler_t task_switch_handler = NULL;
     struct array_list *pidlist = array_list_create(1);
     
     parse_opt(argc, argv);
@@ -276,8 +280,6 @@ int main(int argc, char *argv[])
 
     if (interactive)
     {
-        task_switch_handler = probe_task_switch;
-    
         fflush(stderr);
         printf("Initializing VMI...\n");
         fflush(stdout);
@@ -285,7 +287,7 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         task_switch_handler,
+                         NULL, /* task switch handler */
                          NULL, /* context change handler */
                          NULL, /* page fault handler */
                          pidlist, 
@@ -298,6 +300,13 @@ int main(int argc, char *argv[])
 
     if (interactive)
     {
+        ret = ctxprobes_reg_func_call("do_execve", probe_execve);
+        if (ret)
+        {
+            ERR("Failed to register probe on sys_execve.call\n");
+            return ret;
+        }
+
         fflush(stderr);
         printf("VMI initialized.\n");
         printf("Waiting for replay session to be booted...\n");
