@@ -745,7 +745,8 @@ int is_string(char *buf, int len)
     int i;
     if (buf[len-1] != '\0')
         return 0;
-    for (i = 0; i < len; i++)
+    --len;
+    for (i = 0; i < len; ++i)
     {
         if (buf[i] == '\0')
             return 0;
