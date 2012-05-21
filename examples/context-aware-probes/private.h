@@ -118,7 +118,7 @@ int load_task_info(ctxprobes_task_t **task, unsigned long task_struct_addr);
 void unload_task_info(ctxprobes_task_t *task);
 
 char *context_string(ctxprobes_context_t context);
-
+int is_string(char *buf, int len);
 
 int load_func_args(ctxprobes_var_t **arg_list, 
                    int *arg_count, 

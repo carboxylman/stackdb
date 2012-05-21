@@ -179,12 +179,12 @@ static int probe_func_call(struct probe *probe,
             len = arg_list[i].size;
             for (j = 0; j < len; j++)
                 sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
-            if (len <= 4)
-                vdebugc(-1, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
-                        *(int *)arg_list[i].buf, buf); 
-            else if (arg_list[i].buf[len-1] == '\0') // consider it as a string
+            if (is_string(arg_list[i].buf, len))
                 vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
+            else if (len <= 4)
+                vdebugc(-1, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
+                        *(int *)arg_list[i].buf, buf); 
             else
                 vdebugc(-1, LOG_C_FUNC, "  %s = 0x%s\n", arg_list[i].name, buf); 
         }
@@ -245,12 +245,12 @@ static int probe_func_return(struct probe *probe,
             len = arg_list[i].size;
             for (j = 0; j < len; j++)
                 sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
-            if (len <= 4)
-                vdebugc(-1, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
-                        *(int *)arg_list[i].buf, buf); 
-            else if (arg_list[i].buf[len-1] == '\0') // consider it as a string
+            if (is_string(arg_list[i].buf, len))
                 vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
+            else if (len <= 4)
+                vdebugc(-1, LOG_C_FUNC, "  %s = %d (0x%s)\n", arg_list[i].name, 
+                        *(int *)arg_list[i].buf, buf); 
             else
                 vdebugc(-1, LOG_C_FUNC, "  %s = 0x%s\n", arg_list[i].name, buf); 
         }
