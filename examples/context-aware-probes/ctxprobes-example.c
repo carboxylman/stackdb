@@ -384,7 +384,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to register probe on sys_open return\n");
         exit(1);
     }
-
+/*
     ret = ctxprobes_instrument_func("sys_open", disfunc_call, disfunc_return);
     if (ret)
     {
