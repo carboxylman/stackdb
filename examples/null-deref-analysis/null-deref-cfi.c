@@ -232,6 +232,16 @@ int start_analysis(void)
 {
     int ret;
 
+    ret = ctxprobes_track(NULL, /* task switch handler */
+                          NULL, /* context change handler */
+                          NULL, /* page fault handler */
+                          NULL); /* pid list */
+    if (ret)
+    {
+        ERR("Could not start tracking contexts\n");
+        return ret;
+    }
+
     ret = ctxprobes_reg_func_call(syscall_name, probe_suspected_syscall);
     if (ret)
     {
@@ -354,16 +364,6 @@ int main(int argc, char *argv[])
     if (ret)
     {
         ERR("Could not initialize context-aware probes\n");
-        exit(ret);
-    }
-
-    ret = ctxprobes_track(NULL, /* task switch handler */
-                          NULL, /* context change handler */
-                          NULL, /* page fault handler */
-                          NULL); /* pid list */
-    if (ret)
-    {
-        ERR("Could not start tracking contexts\n");
         exit(ret);
     }
 
