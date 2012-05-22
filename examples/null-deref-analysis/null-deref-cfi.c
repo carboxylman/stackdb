@@ -350,14 +350,20 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         NULL, /* task switch handler */
-                         NULL, /* context change handler */
-                         NULL, /* page fault handler */
-                         NULL, /* pid list */
                          debug_level);
     if (ret)
     {
         ERR("Could not initialize context-aware probes\n");
+        exit(ret);
+    }
+
+    ret = ctxprobes_track(NULL, /* task switch handler */
+                          NULL, /* context change handler */
+                          NULL, /* page fault handler */
+                          NULL); /* pid list */
+    if (ret)
+    {
+        ERR("Could not start tracking contexts\n");
         exit(ret);
     }
 

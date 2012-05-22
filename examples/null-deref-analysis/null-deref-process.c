@@ -258,19 +258,26 @@ int main(int argc, char *argv[])
         fflush(stdout);
     }
 
+    
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         probe_task_switch, 
-                         NULL, /* context change handler */
-                         NULL, /* page fault handler */
-                         pidlist,
                          debug_level);
     if (ret)
     {
         ERR("Could not initialize context-aware probes\n");
         exit(ret);
     }
-    
+
+    ret = ctxprobes_track(probe_task_switch, 
+                          NULL, /* context change handler */
+                          NULL, /* page fault handler */
+                          pidlist);
+    if (ret)
+    {
+        ERR("Could not start tracking contexts\n");
+        exit(ret);
+    }
+
     if (interactive)
     {
         ret = ctxprobes_reg_func_call("do_execve", probe_execve);
