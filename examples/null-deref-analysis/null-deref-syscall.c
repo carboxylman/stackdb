@@ -152,7 +152,7 @@ int start_analysis(void)
     if (ret)
     {
         ERR("Could not start tracking contexts\n");
-        exit(ret);
+        return ret;
     }
 
     fp = fopen(syscall_file, "r");
