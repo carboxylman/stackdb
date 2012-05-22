@@ -1836,7 +1836,7 @@ int ctxprobes_wait(void)
     if (!user_pidlist || 
         array_list_contains(user_pidlist, (void *)task_current->pid))
     {
-        vdebugc(-1, LOG_C_CTX, "Initial task: %d (%s)\n", 
+        vdebugc(0, LOG_C_CTX, "Initial task: %d (%s)\n", 
                 task_current->pid, task_current->comm);
     }
 

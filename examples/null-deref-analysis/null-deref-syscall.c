@@ -53,6 +53,7 @@ static char *syscall_file = NULL;
 static unsigned long long brctr_root;
 static unsigned int pid_root;
 
+static struct array_list *pidlist;
 static unsigned int uid_at_call = 0;
 static unsigned long long brctr_at_call;
 
@@ -143,6 +144,16 @@ int start_analysis(void)
     FILE *fp;
     char syscall[256];
     int count;
+
+    ret = ctxprobes_track(NULL, /* task switch handler */
+                          NULL, /* context change handler */
+                          NULL, /* page fault handler */
+                          pidlist); 
+    if (ret)
+    {
+        ERR("Could not start tracking contexts\n");
+        exit(ret);
+    }
 
     fp = fopen(syscall_file, "r");
     if (!fp)
@@ -277,7 +288,8 @@ void parse_opt(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     int ret;
-    struct array_list *pidlist = array_list_create(1);
+    
+    pidlist = array_list_create(1);
     
     parse_opt(argc, argv);
 
@@ -296,16 +308,6 @@ int main(int argc, char *argv[])
     if (ret)
     {
         ERR("Could not initialize context-aware probes\n");
-        exit(ret);
-    }
-
-    ret = ctxprobes_track(NULL, /* task switch handler */
-                          NULL, /* context change handler */
-                          NULL, /* page fault handler */
-                          pidlist); 
-    if (ret)
-    {
-        ERR("Could not start tracking contexts\n");
         exit(ret);
     }
 
