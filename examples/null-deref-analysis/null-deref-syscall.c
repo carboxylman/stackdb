@@ -176,7 +176,12 @@ int start_analysis(void)
         count++;
     }
 
-    //DBG("Total %d system calls instrumented\n", count);
+    if (interactive)
+    {
+        fflush(stderr);
+        printf("Total %d system calls instrumented.\n", count);
+        fflush(stdout);
+    }
     
     fclose(fp);
     return 0;
