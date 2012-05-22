@@ -132,6 +132,23 @@ void probe_pagefault(unsigned long ip,
     }
 }
 
+int start_analysis(void)
+{
+    int ret;
+
+    ret = ctxprobes_track(NULL, /* task switch handler */
+                          NULL, /* context change handler */
+                          probe_pagefault,
+                          NULL); /* pid list */
+    if (ret)
+    {
+        ERR("Could not start tracking contexts\n");
+        return ret;
+    }
+
+    return 0;
+}
+
 void probe_execve(char *symbol,
                   ctxprobes_var_t *args,
                   int argcount,
@@ -149,6 +166,10 @@ void probe_execve(char *symbol,
         fflush(stdout);
 
         getchar();
+
+        ret = start_analysis();
+        if (ret)
+            kill_everything(domain_name);
 
         booted = 1;
    }
@@ -237,16 +258,6 @@ int main(int argc, char *argv[])
         exit(ret);
     }
 
-    ret = ctxprobes_track(NULL, /* task switch handler */
-                          NULL, /* context change handler */
-                          probe_pagefault,
-                          NULL); /* pid list */
-    if (ret)
-    {
-        ERR("Could not start tracking contexts\n");
-        exit(ret);
-    }
-
     if (interactive)
     {
         ret = ctxprobes_reg_func_call("do_execve", probe_execve);
@@ -260,6 +271,15 @@ int main(int argc, char *argv[])
         printf("VMI initialized.\n");
         printf("Waiting for replay session to be booted...\n");
         fflush(stdout);
+    }
+    else
+    {
+        ret = start_analysis();
+        if (ret)
+        {
+            ctxprobes_cleanup();
+            exit(ret);
+        }
     }
 
     ctxprobes_wait();
