@@ -123,8 +123,8 @@ void probe_pagefault(unsigned long ip,
                 if (!concise)
                 {
                     fflush(stderr);
-                    printf("Page fault at 0x%08lx (%s, pid = %d, ip = 0x%08lx)\n", 
-                           address, desc, task->pid, ip);
+                    printf("Page fault at 0x%08lx (%s, pid = %d)\n", 
+                           address, desc, task->pid);
                     fflush(stdout);
                 }
             }
