@@ -347,15 +347,21 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         NULL,//task_switch, 
-                         NULL,//context_change,
-                         page_fault,
-                         NULL, /* pidlist */
                          debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");
-        exit(1);
+        exit(ret);
+    }
+
+    ret = ctxprobes_track(NULL,//task_switch, 
+                          NULL,//context_change,
+                          page_fault,
+                          NULL); /* pidlist */
+    if (ret)
+    {
+        fprintf(stderr, "failed to start tracking contexts\n");
+        exit(ret);
     }
 /*
     ret = ctxprobes_reg_func_prologue("sys_open", sys_open_prologue);
@@ -364,7 +370,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "failed to register probe on sys_open prologue\n");
         exit(1);
     }
-
+*/
     ret = ctxprobes_reg_func_call("sys_open", sys_open_call);
     if (ret)
     {

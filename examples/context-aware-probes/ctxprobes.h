@@ -107,12 +107,14 @@ typedef void (*ctxprobes_page_fault_handler_t)(unsigned long ip,
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
-                   ctxprobes_task_switch_handler_t task_switch_handler,
-                   ctxprobes_context_change_handler_t context_change_handler,  
-                   ctxprobes_page_fault_handler_t page_fault_handler,  
-                   struct array_list *pidlist, // show logs for only these pids
                    int debug_level);
+
 void ctxprobes_cleanup(void);
+
+int ctxprobes_track(ctxprobes_task_switch_handler_t task_switch_handler,
+                    ctxprobes_context_change_handler_t context_change_handler,  
+                    ctxprobes_page_fault_handler_t page_fault_handler,  
+                    struct array_list *pidlist); // show logs for only these pids
 
 int ctxprobes_wait(void);
 

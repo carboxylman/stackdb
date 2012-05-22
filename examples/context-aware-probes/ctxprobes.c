@@ -1598,13 +1598,8 @@ static void sigh(int signo)
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
-                   ctxprobes_task_switch_handler_t task_switch_handler,
-                   ctxprobes_context_change_handler_t context_change_handler,  
-                   ctxprobes_page_fault_handler_t page_fault_handler,  
-                   struct array_list *pidlist, // show logs for only these pids
                    int debug_level)
 {
-    int i, probe_count;
     int ret;
 
     if (t)
@@ -1621,12 +1616,6 @@ int ctxprobes_init(char *domain_name,
         verror("Could not open file %s\n", sysmap_file);
         return -2;
     }
-
-    user_task_switch_handler = task_switch_handler;
-    user_context_change_handler = context_change_handler;
-    user_page_fault_handler = page_fault_handler;
-
-    user_pidlist = pidlist;
 
     dwdebug_init();
     vmi_set_log_level(debug_level);
@@ -1692,48 +1681,6 @@ int ctxprobes_init(char *domain_name,
         return -5;
     }
 
-    /*
-     * Register probes to detect context changes; traps, interrupts, and
-     * task switches.
-     */
-    probe_count = sizeof(probe_list) / sizeof(probe_list[0]);    
-    for (i = 0; i < probe_count; i++)
-    {
-        if (probe_list[i].call_handler)
-        {
-            ret = register_call_probe(probe_list[i].symbol, 
-                                      probe_list[i].call_handler,
-                                      (struct probe_ops *)&probe_list[i].ops,
-                                      PROBEPOINT_EXEC,
-                                      SYMBOL_TYPE_FLAG_NONE,
-                                      NULL); /* data */
-            if (ret)
-            {
-                verror("Failed to register call probe on '%s'\n", 
-                       probe_list[i].symbol);
-                ctxprobes_cleanup();
-                return -1;
-            }
-        }
-
-        if (probe_list[i].return_handler)
-        {
-            ret = register_return_probe(probe_list[i].symbol, 
-                                        probe_list[i].return_handler,
-                                        NULL,
-                                        PROBEPOINT_EXEC,
-                                        SYMBOL_TYPE_FLAG_NONE,
-                                        NULL); /* data */
-            if (ret)
-            {
-                verror("Failed to register return probe on '%s'\n", 
-                       probe_list[i].symbol);
-                ctxprobes_cleanup();
-                return -1;
-            }
-        }
-    }
-
     signal(SIGHUP, sigh);
     signal(SIGINT, sigh);
     signal(SIGQUIT, sigh);
@@ -1787,6 +1734,70 @@ void ctxprobes_cleanup(void)
         sysmap_handle = NULL;
         dom_name = NULL;
     }
+}
+
+int ctxprobes_track(ctxprobes_task_switch_handler_t task_switch_handler,
+                    ctxprobes_context_change_handler_t context_change_handler,  
+                    ctxprobes_page_fault_handler_t page_fault_handler,  
+                    struct array_list *pidlist)
+{
+    int ret;
+    int i, probe_count;
+
+    if (!t)
+    {
+        verror("Target not initialized\n");
+        return -1;
+    }
+
+    user_task_switch_handler = task_switch_handler;
+    user_context_change_handler = context_change_handler;
+    user_page_fault_handler = page_fault_handler;
+    user_pidlist = pidlist;
+
+    /*
+     * Register probes to detect context changes; traps, interrupts, and
+     * task switches.
+     */
+    probe_count = sizeof(probe_list) / sizeof(probe_list[0]);    
+    for (i = 0; i < probe_count; i++)
+    {
+        if (probe_list[i].call_handler)
+        {
+            ret = register_call_probe(probe_list[i].symbol, 
+                                      probe_list[i].call_handler,
+                                      (struct probe_ops *)&probe_list[i].ops,
+                                      PROBEPOINT_EXEC,
+                                      SYMBOL_TYPE_FLAG_NONE,
+                                      NULL); /* data */
+            if (ret)
+            {
+                verror("Failed to register call probe on '%s'\n", 
+                       probe_list[i].symbol);
+                ctxprobes_cleanup();
+                return -1;
+            }
+        }
+
+        if (probe_list[i].return_handler)
+        {
+            ret = register_return_probe(probe_list[i].symbol, 
+                                        probe_list[i].return_handler,
+                                        NULL,
+                                        PROBEPOINT_EXEC,
+                                        SYMBOL_TYPE_FLAG_NONE,
+                                        NULL); /* data */
+            if (ret)
+            {
+                verror("Failed to register return probe on '%s'\n", 
+                       probe_list[i].symbol);
+                ctxprobes_cleanup();
+                return -1;
+            }
+        }
+    }
+
+    return 0;
 }
 
 int ctxprobes_wait(void)
