@@ -1706,15 +1706,16 @@ void ctxprobes_cleanup(void)
      
         unregister_probes(probes);
         unload_task_info(task_current);
-        target_close(t);
-        target_free(t);
-
-        vdebugc(-1, LOG_C_WARN, "Warning: Ended trace.\n");
         
         if (bsymbol_task_prev)
             bsymbol_release(bsymbol_task_prev);
         if (bsymbol_task_next)
             bsymbol_release(bsymbol_task_next);
+
+        target_close(t);
+        target_free(t);
+
+        vdebugc(-1, LOG_C_WARN, "Warning: Ended trace.\n");
         fclose(sysmap_handle);
 
         if (probes) 
