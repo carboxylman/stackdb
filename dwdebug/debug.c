@@ -199,7 +199,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	     */
 	    if (SYMBOL_IS_TYPE(svalue)) {
 		symbol = svalue;
-		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		vdebug(3,LOG_D_LOOKUP,
 		       "found top-level symtab type %s\n",symbol->name);
 		break;
 	    }
@@ -207,13 +207,13 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 		     //SYMBOL_IS_FULL(svalue) 
 		     // && svalue->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
 		symbol = svalue;
-		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		vdebug(3,LOG_D_LOOKUP,
 		       "found top-level symtab definition %s\n",symbol->name);
 		break;
 	    }
 	    else if (!symbol) {
 		symbol = svalue;
-		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+		vdebug(3,LOG_D_LOOKUP,
 		       "found top-level symtab non-type, non-definition %s; saving\n",
 		       symbol->name);
 	    }
@@ -228,7 +228,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
     if ((!symbol || (symbol && !SYMBOL_IS_TYPE(symbol) 
 		     && symbol->isdeclaration))
 	&& !list_empty(&symtab->subtabs)) {
-	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	vdebug(3,LOG_D_LOOKUP,
 	       "checking symtab anon subtabs\n");
 	//!SYMBOL_IS_FULL(symbol) || symbol->s.ii->l.loctype == LOCTYPE_UNKNOWN)
 	list_for_each_entry(subtab,&symtab->subtabs,member) {
@@ -249,7 +249,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 		if (lsymbol_tmp) {
 		    if (SYMBOL_IS_TYPE(lsymbol_tmp->symbol)) {
 			lsymbol = lsymbol_tmp;
-			vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+			vdebug(3,LOG_D_LOOKUP,
 			       "found anon symtab type %s\n",
 			       lsymbol->symbol->name);
 			goto recout;
@@ -259,14 +259,14 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 			     // && lsymbol_tmp->symbol->s.ii->l.loctype 
 			     //    != LOCTYPE_UNKNOWN) {
 			lsymbol = lsymbol_tmp;
-			vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+			vdebug(3,LOG_D_LOOKUP,
 			       "found anon symtab definition %s\n",
 			       lsymbol->symbol->name);
 			goto recout;
 		    }
 		    else if (!lsymbol) {
 			lsymbol = lsymbol_tmp;
-			vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+			vdebug(3,LOG_D_LOOKUP,
 			       "found anon symtab non-type, non-definition %s; saving\n",
 			       lsymbol->symbol->name);
 		    }
@@ -291,7 +291,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 		chain = NULL;
 	    }
 
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	    vdebug(3,LOG_D_LOOKUP,
 		   "returning best subtab symbol %s\n",
 		   lsymbol->symbol->name);
 
@@ -306,7 +306,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 
     /* If it's not a delimited string, stop now, successfully. */
     if (!lname) {
-	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
+	vdebug(3,LOG_D_LOOKUP,"found plain %s\n",
 	       lsymbol->symbol->name);
 
 	/* Make sure the chain is not NULL and that we take a ref to
@@ -317,7 +317,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	return lsymbol;
     }
 
-    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+    vdebug(3,LOG_D_LOOKUP,
 	   "found top-level %s; checking members\n",lsymbol->symbol->name);
 
     /* Otherwise, add the first one to our chain and start looking up
@@ -584,9 +584,9 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
 	/* If we didn't find it, try our symtab search struct! */
 	symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
 
-	if (symtab) 
-	    vwarn("found symtab %s 0x%"PRIxSMOFFSET"\n",symtab->name,
-		  symtab->ref);
+	//if (symtab) 
+	//    vwarn("found symtab %s 0x%"PRIxSMOFFSET"\n",symtab->name,
+	//	  symtab->ref);
 
 	/* If the symtab is a top-level, unloaded (or partially loaded)
 	 * symtab, finish loading it first.  Then redo the lookup.
