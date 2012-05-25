@@ -37,17 +37,20 @@
 
 #include "debug.h"
 #include "util.h"
+#include "ctxprobes.h"
 
 void kill_everything(char *domain_name)
 {
     char cmd[128];
 
-    sprintf(cmd, "xm destroy %s", domain_name);
+    ctxprobes_cleanup();
+
+    sprintf(cmd, "/usr/sbin/xm destroy %s", domain_name);
     system(cmd);
 
     sleep(1);
 
-    system("killall -9 ttd-deviced");
+    system("/usr/bin/killall -9 ttd-deviced");
 
     kill(getpid(), SIGINT);
 }
