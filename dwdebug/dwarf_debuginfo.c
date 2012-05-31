@@ -2215,10 +2215,10 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * match, skip it!
 	     */
 	    else if (opts->srcfile_filter) {
-		if (rfilter_check(opts->srcfile_filter,
-				  symtab_get_name(cu_symtab),
-				  &accept,NULL)
-		    && accept == RF_REJECT) {
+		rfilter_check(opts->srcfile_filter,
+			      symtab_get_name(cu_symtab),
+			      &accept,NULL);
+		if (accept == RF_REJECT) {
 		    vdebug(3,LOG_D_DWARF,"skipping CU '%s'\n",
 			   symtab_get_name(cu_symtab));
 		    goto out;
@@ -2669,6 +2669,31 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		rsymbol->s.ii->origin = (struct symbol *)	\
 		    g_hash_table_lookup(reftab,
 					(gpointer)(uintptr_t)rsymbol->s.ii->origin_ref);
+
+		if (rsymbol->s.ii->origin) {
+		    /* Autoset the instance's datatype attrs! */
+		    rsymbol->datatype = rsymbol->s.ii->origin->datatype;
+		    rsymbol->datatype_ref = rsymbol->s.ii->origin->datatype_ref;
+		    //memcpy(&rsymbol->s.ii->l,&rsymbol->s.ii->origin->s.ii->l,
+		    //	   sizeof(struct location));
+
+		    vdebug(4,LOG_D_SYMBOL,
+			   "copied datatype %s//%s (0x%"PRIxSMOFFSET"),"
+			   " loctype=%s for inline instance %s//%s"
+			   " (0x%"PRIxSMOFFSET"\n",
+			   rsymbol->datatype ? DATATYPE(rsymbol->datatype->datatype_code) : NULL,
+			   rsymbol->datatype ? symbol_get_name(rsymbol->datatype) : NULL,
+			   rsymbol->datatype ? rsymbol->datatype->ref : 0,
+			   LOCTYPE(rsymbol->s.ii->l.loctype),
+			   SYMBOL_TYPE(rsymbol->type),symbol_get_name(rsymbol),
+			   rsymbol->ref);
+		}
+		else {
+		    vwarn("could not find abstract origin for inline instance"
+			  " %s//%s (0x%"PRIxSMOFFSET"\n",
+			   SYMBOL_TYPE(rsymbol->type),symbol_get_name(rsymbol),
+			   rsymbol->ref);
+		}
 	    }
 
 	    iilist = (struct array_list *)g_hash_table_lookup(cu_abstract_origins,
