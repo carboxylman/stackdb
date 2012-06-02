@@ -216,6 +216,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	block_set = 1;
 	break;
     case DW_FORM_flag:
+/* not sure if 137 is the right number! */
+#if _INT_ELFUTILS_VERSION > 137
+    case DW_FORM_flag_present:
+#endif
 	if (unlikely(dwarf_formflag(attrp,&flag) != 0)) {
 	    verror("[DIE %" PRIx64 "] could not load dwarf flag for attr %s",
 		   cbargs->die_offset,dwarf_attr_string(attr));
@@ -224,8 +228,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	flag_set = 1;
 	break;
     default:
-	vwarn("[DIE %" PRIx64 "] unrecognized form %s for attr %s\n",
-	      cbargs->die_offset,dwarf_form_string(form),dwarf_attr_string(attr));
+	vwarn("[DIE %" PRIx64 "] unrecognized form %s (0x%x) for attr %s\n",
+	      cbargs->die_offset,dwarf_form_string(form),form,dwarf_attr_string(attr));
 	goto errout;
     }
 
@@ -842,7 +846,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_location:
 	/* We only accept this for params and variables */
 	if (SYMBOL_IS_VAR(cbargs->symbol)) {
-	    if (num_set && (form == DW_FORM_data4 
+	    if (num_set && (form == DW_FORM_sec_offset 
+			    || form == DW_FORM_data4 
 			    || form == DW_FORM_data8)) {
 		struct loc_list *loclist;
 		if (SYMBOL_IS_FULL(cbargs->symbol)) {
@@ -1421,7 +1426,10 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	uint_fast8_t op = *data++;
 	const unsigned char *start = data;
 
-	vdebug(6,LOG_D_DWARFOPS,"%s with len = %d\n",known[op],len);
+	if (op < sizeof known / sizeof known[0] && known[op] != NULL) 
+	    vdebug(6,LOG_D_DWARFOPS,"%s with len = %d\n",known[op],len);
+	else
+	    verror("unknown op 0x%hhx with len = %d\n",op,len);
 
 	Dwarf_Word addr;
 	uint8_t reg;
@@ -1576,7 +1584,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	continue;
     }
 
-    vwarn("had to save dwarf ops for runtime!\n");
+    //vwarn("had to save dwarf ops for runtime!\n");
     retval->loctype = LOCTYPE_RUNTIME;
     retval->l.runtime.data = malloc(origlen);
     memcpy(retval->l.runtime.data,origdata,origlen);
@@ -2132,6 +2140,8 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    if (tag != DW_TAG_compile_unit)
 		vwarn("unknown dwarf tag %s!\n",dwarf_tag_string(tag));
 	    symbols[level] = NULL;
+	    if (tag != DW_TAG_compile_unit) 
+		goto do_sibling;
 	}
 
 	/* Get the attribute values.  */
@@ -2984,6 +2994,11 @@ int debugfile_expand_symbol(struct debugfile *debugfile,struct symbol *symbol) {
 	cu_symtab = cu_symtab->parent;
     die_offset = cu_symtab->ref;
 
+    if (cu_symtab->meta && cu_symtab->meta->loadtag == LOADTYPE_FULL) {
+	vwarn("cu %s already fully loaded!\n",cu_symtab->name);
+	return 0;
+    }
+
     array_list_append(sal,(void *)(uintptr_t)symbol->ref);
 
     vdebug(5,LOG_D_DWARF,
@@ -3000,6 +3015,12 @@ int debugfile_expand_symbol(struct debugfile *debugfile,struct symbol *symbol) {
 int debugfile_expand_cu(struct debugfile *debugfile,struct symtab *cu_symtab,
 			struct array_list *die_offsets,int expand_dies) {
     Dwarf_Off cu_offset = cu_symtab->ref;
+
+    if (cu_symtab->meta && cu_symtab->meta->loadtag == LOADTYPE_FULL) {
+	vwarn("cu %s already fully loaded!\n",cu_symtab->name);
+	return 0;
+    }
+
     if (die_offsets) {
 	vdebug(5,LOG_D_DWARF,
 	       "loading %d DIEs from CU symtab %s (offset 0x%"PRIxOFFSET")!\n",

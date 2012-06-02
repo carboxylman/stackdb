@@ -584,9 +584,10 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
 	/* If we didn't find it, try our symtab search struct! */
 	symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
 
-	//if (symtab) 
-	//    vwarn("found symtab %s 0x%"PRIxSMOFFSET"\n",symtab->name,
-	//	  symtab->ref);
+	if (symtab) 
+	    vdebug(6,LOG_D_LOOKUP,
+		   "found symtab %s 0x%"PRIxSMOFFSET"\n",
+		   symtab->name,symtab->ref);
 
 	/* If the symtab is a top-level, unloaded (or partially loaded)
 	 * symtab, finish loading it first.  Then redo the lookup.
@@ -595,7 +596,8 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
 	    ((SYMTAB_IS_CU(symtab) 
 	      && (symtab->meta->loadtag == LOADTYPE_UNLOADED 
 		  || symtab->meta->loadtag == LOADTYPE_PARTIAL))
-	     || SYMTAB_IS_ROOT(symtab))) {
+	     || (SYMTAB_IS_ROOT(symtab)
+		 && symtab->meta && symtab->meta->loadtag != LOADTYPE_FULL))) {
 	    debugfile_expand_cu(debugfile,symtab,NULL,1);
 
 	    symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
