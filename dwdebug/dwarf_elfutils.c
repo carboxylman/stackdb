@@ -699,7 +699,7 @@ dwarf_tag_string (unsigned int tag)
       [DW_TAG_mutable_type] = "mutable_type",
       [DW_TAG_condition] = "condition",
       [DW_TAG_shared_type] = "shared_type",
-#if HAVE_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION >= 152
       [DW_TAG_type_unit] = "type_unit",
       [DW_TAG_rvalue_reference_type] = "rvalue_reference_type",
       [DW_TAG_template_alias] = "template_alias",
@@ -733,7 +733,7 @@ dwarf_tag_string (unsigned int tag)
 	result = "class_template";
 	break;
 
-#if HAVE_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION >= 152
       case DW_TAG_GNU_BINCL:
 	result = "GNU_BINCL";
 	break;
@@ -865,7 +865,7 @@ dwarf_attr_string (unsigned int attrnum)
       [DW_AT_elemental] = "elemental",
       [DW_AT_pure] = "pure",
       [DW_AT_recursive] = "recursive",
-#if HAVE_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION >= 152
       [DW_AT_signature] = "signature",
       [DW_AT_main_subprogram] = "main_subprogram",
       [DW_AT_data_bit_offset] = "data_bit_offset",
@@ -978,7 +978,7 @@ dwarf_attr_string (unsigned int attrnum)
 	result = "body_end";
 	break;
 
-#if HAVE_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION >= 152
       case DW_AT_GNU_vector:
 	result = "GNU_vector";
 	break;
@@ -1032,7 +1032,7 @@ dwarf_form_string (unsigned int form)
       [DW_FORM_ref8] = "ref8",
       [DW_FORM_ref_udata] = "ref_udata",
       [DW_FORM_indirect] = "indirect",
-#if HAVE_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION >= 152
       [DW_FORM_sec_offset] = "sec_offset",
       [DW_FORM_exprloc] = "exprloc",
       [DW_FORM_flag_present] = "flag_present",
