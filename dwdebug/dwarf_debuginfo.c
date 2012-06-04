@@ -793,7 +793,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_ranges:
 	/* always a rangelistptr */
-	if (num_set && (form == DW_FORM_data4 
+	if (num_set && (form == DW_FORM_sec_offset 
+			|| form == DW_FORM_data4 
 			|| form == DW_FORM_data8)) {
 	    if (cbargs->symtab) {
 		/* Just in case the symtab already has range info, we
