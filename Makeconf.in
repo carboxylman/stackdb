@@ -153,4 +153,9 @@ endif
 # Use Judy.
 #
 CFLAGS  += -I@JUDY@/include
-LDFLAGS += -L@JUDY@/lib -lJudy
+LDFLAGS += -L@JUDY@/lib -lJudy 
+
+#
+# Some things (Fedora) need this explicitly.
+#
+LDFLAGS += -ldl
