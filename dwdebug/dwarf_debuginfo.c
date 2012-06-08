@@ -3618,8 +3618,20 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	};
 	symbol_var_dump(symbol,&udn);
 	fprintf(stderr,"\n");
-	/* Don't need to force; nobody holds refs to us yet! */
-	symbol_free(symbol,0);
+
+	/*
+	 * XXX: we cannot free any symbols in this function; they are
+	 * already on the reftab and might have been attached to the
+	 * parent.  Just stick it in the anontab.
+	 */
+	///* Don't need to force; nobody holds refs to us yet! */
+	//symbol_free(symbol,0);
+	//retval = 2;
+	//return retval;
+	if (symtab_insert(symbol->symtab,symbol,die_offset)) {
+	    verror("could not insert non-anon symbol with no name at offset %"PRIx64" into anontab!\n",
+		   die_offset);
+	}
 	retval = 1;
     }
 
