@@ -139,7 +139,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
     switch(form) {
     case DW_FORM_string:
-	// XXX: do we need to strcpy this one?  It's not in our strtab...
+	// XXX: do we need to strcpy this one?  It's not in our dbg_strtab...
 	str = (char *)attrp->valp;
 	str_set = 1;
 	break;
@@ -148,8 +148,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	//str = dwarf_formstring(attrp);
 	//str_set = 1;
 	//break;
-	if (*(attrp->valp) > (debugfile->strtablen - 1)) {
-	    verror("[DIE %" PRIx64 "] dwarf str at 0x%lx not in strtab for attr %s!\n",
+	if (*(attrp->valp) > (debugfile->dbg_strtablen - 1)) {
+	    verror("[DIE %" PRIx64 "] dwarf str at 0x%lx not in dbg_strtab for attr %s!\n",
 		   cbargs->die_offset,(unsigned long int)*(attrp->valp),
 		   dwarf_attr_string(attr));
 	    goto errout;
@@ -157,9 +157,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	// XXX relocation...
 	// XXX: make sure to only use this pointer if DWDEBUG_USE_STRTAB!
 	if (cbargs->meta->offsize == 4)
-	    str = &debugfile->strtab[*((uint32_t *)attrp->valp)];
+	    str = &debugfile->dbg_strtab[*((uint32_t *)attrp->valp)];
 	else 
-	    str = &debugfile->strtab[*((uint64_t *)attrp->valp)];
+	    str = &debugfile->dbg_strtab[*((uint64_t *)attrp->valp)];
 	str_set = 1;
 	break;
     case DW_FORM_addr:
@@ -466,7 +466,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_encoding:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE) {
 	    /* our encoding_t is 1<->1 map to the DWARF encoding codes. */
-	    cbargs->symbol->s.ti->encoding = (encoding_t)num;
+	    cbargs->symbol->s.ti->d.t.encoding = (encoding_t)num;
 	}
 	else 
 	    vwarn("[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
@@ -601,11 +601,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && cbargs->parentsymbol
 	    && SYMBOL_IS_FULL_TYPE(cbargs->parentsymbol)
 	    && cbargs->parentsymbol->datatype_code == DATATYPE_ENUM
-	    && cbargs->parentsymbol->s.ti->byte_size > 0) {
+	    && cbargs->parentsymbol->size > 0) {
 	    cbargs->symbol->s.ii->constval = \
-		malloc(cbargs->parentsymbol->s.ti->byte_size);
+		malloc(cbargs->parentsymbol->size);
 	    memcpy(cbargs->symbol->s.ii->constval,&num,
-		   cbargs->parentsymbol->s.ti->byte_size);
+		   cbargs->parentsymbol->size);
 	    cbargs->symbol->isenumval = 1;
 	}
 	else if (num_set && SYMBOL_IS_FULL_INSTANCE(cbargs->symbol)) {
@@ -640,12 +640,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
      * consts for C!
      */
     case DW_AT_byte_size:
-	if (num_set && SYMBOL_IS_TYPE(cbargs->symbol)) {
-	    cbargs->symbol->s.ti->byte_size = num;
-	}
-	else if (num_set && SYMBOL_IS_VAR(cbargs->symbol)) {
-	    cbargs->symbol->s.ii->d.v.byte_size = num;
-	}
+	if (num_set) 
+	    cbargs->symbol->size = num;
 	else {
 	    vwarn("[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
 		  cbargs->die_offset,dwarf_attr_string(attr),
@@ -1619,7 +1615,7 @@ struct symbol *do_void_symbol(struct debugfile *debugfile,
 						       (gpointer)"void")))
 	return symbol;
 
-    symbol = symbol_create(symtab,0,"void",SYMBOL_TYPE_TYPE,1);
+    symbol = symbol_create(symtab,0,"void",SYMBOL_TYPE_TYPE,SYMBOL_SOURCE_DWARF,1);
     symbol->datatype_code = DATATYPE_VOID;
 
     /* Always put it in its primary symtab, of course -- probably the CU's. */
@@ -1693,6 +1689,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
     int accept;
     gpointer key;
     gpointer value;
+    struct array_list *duplist;
 
     /*
      * If we only want to load specific die offsets, clone the incoming
@@ -1769,6 +1766,19 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		vdebug(6,LOG_D_DWARF,
 		       "inserted %s (0x%"PRIxSMOFFSET") into reuse reftab\n",
 		       tsymbol->name,tsymbol->ref);
+	    }
+	    g_hash_table_iter_init(&iter,cu_symtab->duptab);
+	    while (g_hash_table_iter_next(&iter,
+					  (gpointer *)&key,(gpointer *)&value))  {
+		duplist = (struct array_list *)value;
+		for (i = 0; i < array_list_len(duplist); ++i) {
+		    tsymbol = (struct symbol *)array_list_item(duplist,i);
+		    g_hash_table_insert(reftab,(gpointer)(uintptr_t)tsymbol->ref,
+					(gpointer)tsymbol);
+		    vdebug(6,LOG_D_DWARF,
+			   "inserted dup %s (0x%"PRIxSMOFFSET") into reuse reftab\n",
+			   tsymbol->name,tsymbol->ref);
+		}
 	    }
 	}
     }
@@ -1855,6 +1865,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	struct symtab *newscope = NULL;
 	struct symbol *ts;
 	int nofinalize = 0;
+	int rc;
 
 	offset = dwarf_dieoffset(&dies[level]);
 	if (offset == ~0ul) {
@@ -1978,7 +1989,8 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    || tag == DW_TAG_enumerator) {
 	    if (!symbols[level]) {
 		symbols[level] = symbol_create(symtabs[level],offset,NULL,
-					       SYMBOL_TYPE_VAR,(!quick || expand_dies));
+					       SYMBOL_TYPE_VAR,SYMBOL_SOURCE_DWARF,
+					       (!quick || expand_dies));
 		if (tag == DW_TAG_formal_parameter) {
 		    symbols[level]->isparam = 1;
 		}
@@ -1996,17 +2008,23 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		if (symbols[level-1] && SYMBOL_IS_TYPE(symbols[level-1])
 		    && symbols[level-1]->isshared)
 		    symbols[level] = symbol_create(symbols[level-1]->symtab,offset,
-						   NULL,SYMBOL_TYPE_VAR,(!quick || expand_dies));
+						   NULL,SYMBOL_TYPE_VAR,
+						   SYMBOL_SOURCE_DWARF,
+						   (!quick || expand_dies));
 		else 
 		    symbols[level] = symbol_create(symtabs[level],offset,NULL,
-						   SYMBOL_TYPE_VAR,(!quick || expand_dies));
+						   SYMBOL_TYPE_VAR,
+						   SYMBOL_SOURCE_DWARF,
+						   (!quick || expand_dies));
 		symbols[level]->ismember = 1;
 	    }
 	}
 	else if (tag == DW_TAG_label) {
 	    if (!symbols[level])
 		symbols[level] = symbol_create(symtabs[level],offset,NULL,
-					       SYMBOL_TYPE_LABEL,(!quick || expand_dies));
+					       SYMBOL_TYPE_LABEL,
+					       SYMBOL_SOURCE_DWARF,
+					       (!quick || expand_dies));
 	}
 	else if (tag == DW_TAG_unspecified_parameters) {
 	    if (!symbols[level-1])
@@ -2031,7 +2049,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 || tag == DW_TAG_subroutine_type) {
 	    if (!symbols[level])
 		symbols[level] = symbol_create(symtabs[level],offset,
-					       NULL,SYMBOL_TYPE_TYPE,(!quick || expand_dies));
+					       NULL,SYMBOL_TYPE_TYPE,
+					       SYMBOL_SOURCE_DWARF,
+					       (!quick || expand_dies));
 	    switch (tag) {
 	    case DW_TAG_base_type:
 		symbols[level]->datatype_code = DATATYPE_BASE; break;
@@ -2090,7 +2110,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 || tag == DW_TAG_inlined_subroutine) {
 	    if (!symbols[level]) {
 		symbols[level] = symbol_create(symtabs[level],offset,NULL,
-					       SYMBOL_TYPE_FUNCTION,(!quick || expand_dies));
+					       SYMBOL_TYPE_FUNCTION,
+					       SYMBOL_SOURCE_DWARF,
+					       (!quick || expand_dies));
 		/* Build a new symtab and use it until we finish this
 		 * subprogram, or until we need another child scope.
 		 */
@@ -2462,10 +2484,24 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	/* The last thing to do is finalize the symbol (which we can do
 	 * before processing its children.
 	 */
-	if (symbols[level] && !nofinalize)
-	    finalize_die_symbol(debugfile,level,symbols[level],
-				symbols[level-1],voidsymbol,
-				reftab,die_offsets,(SMOFFSET)*cu_offset);
+	if (symbols[level] && !nofinalize) {
+	    rc = finalize_die_symbol(debugfile,level,symbols[level],
+				     symbols[level-1],voidsymbol,
+				     reftab,die_offsets,(SMOFFSET)*cu_offset);
+	    /*
+	     * XXX: don't try to do this in the future, because 1) the
+	     * symbol is already on our reftab (see above), and 2) the
+	     * symbol may have been put on a parent list (see above
+	     * block).
+	     */
+	    if (rc == 2) {
+		/*
+		 * This symbol was actually freed; don't try to
+		 * reference it anymore!  See finalize_die_symbol.
+		 */
+		symbols[level] = NULL;
+	    }
+	}
 
 	inline int setup_skip_to_next_die(void) {
 	    int alen = array_list_len(die_offsets);
@@ -3998,8 +4034,8 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	    unsigned int *saveptrlen;
 
 	    if (strcmp(name,".debug_str") == 0) {
-		saveptr = &debugfile->strtab;
-		saveptrlen = &debugfile->strtablen;
+		saveptr = &debugfile->dbg_strtab;
+		saveptrlen = &debugfile->dbg_strtablen;
 	    }
 	    else if (strcmp(name,".debug_loc") == 0) {
 		saveptr = &debugfile->loctab;
@@ -4064,9 +4100,22 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	    vdebug(2,LOG_D_DWARF,"section empty, which is fine!\n");
 	}
     }
-    if (!debugfile->strtab) {
-	vwarn("no string table found for debugfile %s; things may break!\n",
+    if (!debugfile->dbg_strtab) {
+	vwarn("no debug string table found for debugfile %s; things may break!\n",
 	      debugfile->filename);
+    }
+
+    if (!symtab_get_size_simple(debugfile->elf_symtab)) {
+	/* If we couldn't load from the actual ELF binary, load from the
+	 * debuginfo file instead.  Neither may work...
+	 */
+	if (elf_load_symtab(elf,debugfile->filename,debugfile))
+	    vwarn("elf_symtab load failed for debugfile %s!\n",
+		  debugfile->filename);
+	else
+	    vdebug(4,LOG_D_DWARF | LOG_D_ELF,
+		   "elf_symtab load succeeded for debugfile %s!\n",
+		   debugfile->filename);
     }
 
     /* now rescan for debug_info sections */
@@ -4113,13 +4162,13 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	debugfile->linetab = NULL;
     }
     /*
-     * Only save strtab if we're gonna use it.
+     * Only save dbg_strtab if we're gonna use it.
      */
 #ifndef DWDEBUG_USE_STRTAB
-    if (debugfile->strtab) {
-	free(debugfile->strtab);
-	debugfile->strtablen = 0;
-	debugfile->strtab = NULL;
+    if (debugfile->dbg_strtab) {
+	free(debugfile->dbg_strtab);
+	debugfile->dbg_strtablen = 0;
+	debugfile->dbg_strtab = NULL;
     }
 #endif
 
@@ -4135,6 +4184,13 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 
     return DWARF_CB_ABORT;
 }
+
+static struct debugfile_load_opts default_load_opts = {
+    .debugfile_filter = NULL,
+    .srcfile_filter = NULL,
+    .symbol_filter = NULL,
+    .flags = DEBUGFILE_LOAD_FLAG_NONE
+};
 
 /*
  * Primary debuginfo interface.  Given an ELF filename, load all its
@@ -4154,9 +4210,12 @@ int debugfile_load(struct debugfile *debugfile,
 
     /* Set some defaults so we don't have to keep checking opts == NULL. */
     if (!opts) {
+	opts = &default_load_opts;
+	/*
 	opts = (struct debugfile_load_opts *)malloc(sizeof(*opts));
 	memset(opts,0,sizeof(*debugfile->opts));
 	opts->flags = DEBUGFILE_LOAD_FLAG_NONE;
+	*/
     }
     /* Save our load options. */
     debugfile->opts = opts;

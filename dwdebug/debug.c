@@ -161,11 +161,9 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
     struct lsymbol *lsymbol_tmp = NULL;
     struct symbol *symbol = NULL;
     struct array_list *chain = NULL;
-    GHashTableIter iter;
-    gpointer key;
-    gpointer value;
     struct symbol *svalue;
     struct symtab *subtab;
+    struct array_list *duplist;
 
     if (delim && strstr(name,delim)) {
 	lname = strdup(name);
@@ -176,46 +174,73 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	next = (char *)name;
 
     /* 
-     * Do the first token by looking up in this symtab, or its anonymous
-     * subtabs.
+     * Do the first token by looking up in this symtab, or its duptab
+     * table.
      */
-    g_hash_table_iter_init(&iter,symtab->tab);
-    while (g_hash_table_iter_next(&iter,
-				  &key,&value)) {
-	svalue = (struct symbol *)value;
-	if (((ftype != SYMBOL_TYPE_FLAG_NONE
-	      && ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(svalue))
-		  || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(svalue))
-		  || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
-		      && SYMBOL_IS_FUNCTION(svalue))
-		  || (ftype & SYMBOL_TYPE_FLAG_LABEL 
-		      && SYMBOL_IS_LABEL(svalue))))
-	     || ftype == SYMBOL_TYPE_FLAG_NONE)
-	    && strcmp(next,(char *)key) == 0) {
+    if ((svalue = (struct symbol *)g_hash_table_lookup(symtab->tab,next))
+	&& (ftype == SYMBOL_TYPE_FLAG_NONE
+	    || ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(svalue))
+		|| (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(svalue))
+		|| (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+		    && SYMBOL_IS_FUNCTION(svalue))
+		|| (ftype & SYMBOL_TYPE_FLAG_LABEL 
+		    && SYMBOL_IS_LABEL(svalue))))) {
 	    /* If this is a type symbol, or a symbol with a location,
 	     * allow it to match right away; else, save it off if we
 	     * haven't already saved off a "first match"; else, save it
 	     * off and return it if we don't find anything better!
 	     */
-	    if (SYMBOL_IS_TYPE(svalue)) {
-		symbol = svalue;
-		vdebug(3,LOG_D_LOOKUP,
-		       "found top-level symtab type %s\n",symbol->name);
-		break;
-	    }
-	    else if (!svalue->isdeclaration) {
-		     //SYMBOL_IS_FULL(svalue) 
-		     // && svalue->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
-		symbol = svalue;
-		vdebug(3,LOG_D_LOOKUP,
-		       "found top-level symtab definition %s\n",symbol->name);
-		break;
-	    }
-	    else if (!symbol) {
-		symbol = svalue;
-		vdebug(3,LOG_D_LOOKUP,
-		       "found top-level symtab non-type, non-definition %s; saving\n",
-		       symbol->name);
+	symbol = svalue;
+	if (SYMBOL_IS_TYPE(svalue)) 
+	    vdebug(3,LOG_D_LOOKUP,
+		   "found top-level symtab type %s\n",symbol->name);
+	else if (!svalue->isdeclaration) 
+	    vdebug(3,LOG_D_LOOKUP,
+		   "found top-level symtab definition %s\n",symbol->name);
+	else 
+	    vdebug(3,LOG_D_LOOKUP,
+		   "found top-level symtab non-type, non-definition %s; saving\n",
+		   symbol->name);
+    }
+    /* If it's in the duptab table, figure out which match is best; we
+     * prefer the first non-type definition, unless they're looking for
+     * a type.
+     */
+    else if ((duplist = (struct array_list *) \
+	      g_hash_table_lookup(symtab->duptab,next))) {
+	for (i = 0; i < array_list_len(duplist); ++i) {
+	    svalue = (struct symbol *)array_list_item(duplist,i);
+	    if (ftype == SYMBOL_TYPE_FLAG_NONE
+		|| ((ftype & SYMBOL_TYPE_FLAG_TYPE && SYMBOL_IS_TYPE(svalue))
+		    || (ftype & SYMBOL_TYPE_FLAG_VAR && SYMBOL_IS_VAR(svalue))
+		    || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+			&& SYMBOL_IS_FUNCTION(svalue))
+		    || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+			&& SYMBOL_IS_LABEL(svalue)))) {
+		/* If this is a type symbol, or a symbol with a location,
+		 * allow it to match right away; else, save it off if we
+		 * haven't already saved off a "first match"; else, save it
+		 * off and return it if we don't find anything better!
+		 */
+		if (SYMBOL_IS_TYPE(svalue)) {
+		    symbol = svalue;
+		    vdebug(3,LOG_D_LOOKUP,
+			   "found top-level dup symtab type %s\n",symbol->name);
+		    break;
+		}
+		else if (!svalue->isdeclaration) {
+		    symbol = svalue;
+		    vdebug(3,LOG_D_LOOKUP,
+			   "found top-level dup symtab definition %s\n",symbol->name);
+		    break;
+		}
+		else if (!symbol) {
+		    symbol = svalue;
+		    vdebug(3,LOG_D_LOOKUP,
+			   "found top-level dup symtab non-type, non-definition"
+			   " %s; saving and continuing search\n",
+			   symbol->name);
+		}
 	    }
 	}
     }
@@ -381,12 +406,17 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 static struct symbol *__symtab_get_sym(struct symtab *symtab,const char *name) {
     struct symbol *symbol = NULL;
     struct symtab *subtab;
+    struct array_list *duplist;
 
     /* 
      * Do the first token by looking up in this symtab.
      */
     if ((symbol = (struct symbol *)g_hash_table_lookup(symtab->tab,name)))
 	return symbol;
+    else if ((duplist = (struct array_list *) \
+	      g_hash_table_lookup(symtab->duptab,name)))
+	/* Just return the first duplicate for now. */
+	return (struct symbol *)array_list_item(duplist,0);
 
     /*
      * If we didn't find a match in our symtab, keep looking in our subtabs.
@@ -922,6 +952,8 @@ GList *debugfile_match_syms(struct debugfile *debugfile,
     int accept;
     gpointer key;
     gpointer value;
+    struct array_list *duplist;
+    int i;
 
     if (!symbol_filter) {
 	errno = EINVAL;
@@ -999,6 +1031,32 @@ GList *debugfile_match_syms(struct debugfile *debugfile,
 		    rfilter_check(symbol_filter,name,&accept,NULL);
 		    if (accept == RF_ACCEPT)
 			retval = g_list_prepend(retval,symbol);
+		}
+	    }
+
+	    g_hash_table_iter_init(&iter,cu_symtab->duptab);
+	    while (g_hash_table_iter_next(&iter,&key,&value)) {
+		name = (char *)key;
+		duplist = (struct array_list *)value;
+
+		/* Like the above ->tab search, but this time check the
+		 * name first, and then only check the symbol flags if
+		 * the name matched.
+		 */
+		rfilter_check(symbol_filter,name,&accept,NULL);
+		if (accept == RF_ACCEPT) {
+		    for (i = 0; i < array_list_len(duplist); ++i) {
+			symbol = (struct symbol *)array_list_item(duplist,i);
+			if ((ftype == SYMBOL_TYPE_FLAG_NONE
+			     || (ftype & SYMBOL_TYPE_FLAG_VAR 
+				 && SYMBOL_IS_VAR(symbol))
+			     || (ftype & SYMBOL_TYPE_FLAG_FUNCTION 
+				 && SYMBOL_IS_FUNCTION(symbol))
+			     || (ftype & SYMBOL_TYPE_FLAG_LABEL 
+				 && SYMBOL_IS_LABEL(symbol)))) {
+			    retval = g_list_prepend(retval,symbol);
+			}
+		    }
 		}
 	    }
 	}
@@ -1235,6 +1293,11 @@ struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
     debugfile->debugfile.next = NULL;
     debugfile->debugfile.prev = NULL;
 
+    /* Create the ELF symtab. */
+    debugfile->elf_symtab = symtab_create(debugfile,0,".symtab",NULL,1);
+
+    debugfile->elf_ranges = clrange_create();
+
     /* initialize hashtables */
 
     /* This is the primary symtab hashtable -- so we provide key and
@@ -1419,8 +1482,14 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 
     g_hash_table_destroy(debugfile->srclines);
 
-    if (debugfile->strtab)
-	free(debugfile->strtab);
+    symtab_free(debugfile->elf_symtab);
+
+    clrange_free(debugfile->elf_ranges);
+
+    if (debugfile->elf_strtab)
+	free(debugfile->elf_strtab);
+    if (debugfile->dbg_strtab)
+	free(debugfile->dbg_strtab);
     if (debugfile->loctab)
 	free(debugfile->loctab);
     if (debugfile->rangetab)
@@ -1485,6 +1554,14 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 					NULL,
 					ghash_symbol_free);
 
+    symtab->duptab = g_hash_table_new_full(g_str_hash,g_str_equal,
+					   /* Don't free the symbol names;
+					    * symbol_free will do that!
+					    */
+					   NULL,
+					   /* Values are just ints. */
+					   NULL);
+
     symtab->anontab = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 					    /* No symbol names to free!
 					     */
@@ -1492,6 +1569,12 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 					    ghash_symbol_free);
 
     return symtab;
+}
+
+int symtab_get_size_simple(struct symtab *symtab) {
+    return (g_hash_table_size(symtab->tab)
+	    + g_hash_table_size(symtab->anontab)
+	    + g_hash_table_size(symtab->duptab));
 }
 
 void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
@@ -1506,7 +1589,9 @@ void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
 
     if (name 
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,name))
+	&& (!symtab->debugfile 
+	    || (!symtab_str_in_dbg_strtab(symtab,name)
+		&& !symtab_str_in_elf_strtab(symtab,name)))
 #endif
 	)
 	symtab->name = strdup(name);
@@ -1535,7 +1620,7 @@ void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
 
     if (compdirname
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,compdirname))
+	&& (!symtab->debugfile || !symtab_str_in_dbg_strtab(symtab,compdirname))
 #endif
 	)
 	symtab->meta->compdirname = strdup(compdirname);
@@ -1552,7 +1637,7 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 
     if (producer 
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symtab->debugfile || !symtab_str_in_strtab(symtab,producer))
+	&& (!symtab->debugfile || !symtab_str_in_dbg_strtab(symtab,producer))
 #endif
 	)
 	symtab->meta->producer = strdup(producer);
@@ -1568,15 +1653,42 @@ void symtab_set_language(struct symtab *symtab,int language) {
 }
 
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
-    if (!anonaddr && symbol_get_name(symbol)) {
-	if (unlikely(g_hash_table_lookup(symtab->tab,symbol_get_name(symbol))))
-	    return 1;
-	g_hash_table_insert(symtab->tab,symbol_get_name(symbol),symbol);
+    char *name = symbol_get_name(symbol);
+    struct symbol *exsym = NULL;
+    struct array_list *exlist = NULL;
+
+    if (name) {
+	if (unlikely((exlist = (struct array_list *) \
+		      g_hash_table_lookup(symtab->duptab,name)))) {
+	    array_list_append(exlist,symbol);
+
+	    vdebug(5,LOG_D_DWARF | LOG_D_SYMBOL,
+		   "duplicate symbol %s (%d)\n",
+		   symbol->name,array_list_len(exlist));
+	}
+	else if (unlikely((exsym = (struct symbol *) \
+			   g_hash_table_lookup(symtab->tab,name)))) {
+	    exlist = array_list_create(2);
+	    array_list_append(exlist,exsym);
+	    array_list_append(exlist,symbol);
+	    g_hash_table_steal(symtab->tab,name);
+	    g_hash_table_insert(symtab->duptab,name,exlist);
+
+	    vdebug(5,LOG_D_DWARF | LOG_D_SYMBOL,
+		   "duplicate symbol %s (2)\n",symbol->name);
+	}
+	else {
+	    g_hash_table_insert(symtab->tab,name,symbol);
+	}
 	return 0;
     }
-    else if (anonaddr) {
-	if (unlikely(g_hash_table_lookup(symtab->anontab,(gpointer)anonaddr)))
+
+    if (anonaddr) {
+	if (unlikely(g_hash_table_lookup(symtab->anontab,(gpointer)anonaddr))) {
+	    verror("BAD -- tried to insert a duplicate anonymous symbol"
+		   " at 0x%"PRIxOFFSET"!\n",anonaddr);
 	    return 1;
+	}
 	g_hash_table_insert(symtab->anontab,(gpointer)anonaddr,symbol);
 	return 0;
     }
@@ -1586,21 +1698,62 @@ int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
 }
 
 void symtab_remove(struct symtab *symtab,struct symbol *symbol) {
-    if (symbol_get_name(symbol) 
-	&& g_hash_table_lookup(symtab->tab,symbol_get_name(symbol))) 
-	g_hash_table_remove(symtab->tab,symbol_get_name(symbol));
+    char *name = symbol_get_name(symbol);
+    struct symbol *exsym = NULL;
+    struct array_list *exlist = NULL;
+
+    if (name) {
+	if (unlikely((exlist = (struct array_list *) \
+		      g_hash_table_lookup(symtab->duptab,name)))) {
+	    array_list_remove_item(exlist,symbol);
+	    if (array_list_len(exlist) == 1) {
+		g_hash_table_steal(symtab->duptab,name);
+		exsym = (struct symbol *)array_list_item(exlist,0);
+		array_list_free(exlist);
+		g_hash_table_insert(symtab->tab,name,exsym);
+	    }
+	    symbol_free(symbol,0);
+	}
+	else if (g_hash_table_lookup(symtab->tab,name))
+	    g_hash_table_remove(symtab->tab,name);
+	else 
+	    vwarn("symbol %s not on symtab %s!\n",name,symtab->name);
+    }
     else if (g_hash_table_lookup(symtab->anontab,
-				 (gpointer)(uintptr_t)symbol->ref))
+				 (gpointer)(uintptr_t)symbol->ref)) {
 	g_hash_table_remove(symtab->anontab,(gpointer)(uintptr_t)symbol->ref);
+	symbol_free(symbol,0);
+    }
     else
-	vwarn("symbol %s not on symtab %s!\n",symbol_get_name(symbol),symtab->name);
+	vwarn("anon symbol 0x%"PRIxSMOFFSET" not on symtab %s!\n",
+	      symbol->ref,symtab->name);
 }
 
 void symtab_steal(struct symtab *symtab,struct symbol *symbol) {
-    if (symbol_get_name(symbol)) 
-	g_hash_table_steal(symtab->tab,symbol_get_name(symbol));
-    else 
+    char *name = symbol_get_name(symbol);
+    struct symbol *exsym = NULL;
+    struct array_list *exlist = NULL;
+
+    if (name) {
+	if (unlikely((exlist = (struct array_list *) \
+		      g_hash_table_lookup(symtab->duptab,name)))) {
+	    array_list_remove_item(exlist,symbol);
+	    if (array_list_len(exlist) == 1) {
+		g_hash_table_steal(symtab->duptab,name);
+		exsym = (struct symbol *)array_list_item(exlist,0);
+		array_list_free(exlist);
+		g_hash_table_insert(symtab->tab,name,exsym);
+	    }
+	}
+	else if (g_hash_table_lookup(symtab->tab,name))
+	    g_hash_table_steal(symtab->tab,name);
+    }
+    else if (g_hash_table_lookup(symtab->anontab,
+				 (gpointer)(uintptr_t)symbol->ref))
 	g_hash_table_steal(symtab->anontab,(gpointer)(uintptr_t)symbol->ref);
+    else 
+	vwarn("anon symbol 0x%"PRIxSMOFFSET" not on symtab %s!\n",
+	      symbol->ref,symtab->name);
 }
 
 void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
@@ -1732,6 +1885,11 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 void symtab_free(struct symtab *symtab) {
     struct symtab *tmp;
     struct symtab *tmp2;
+    GHashTableIter iter;
+    struct array_list *exlist = NULL;
+    int i;
+    struct symbol *exsym;
+    gpointer key, value;
 
     vdebug(5,LOG_D_SYMTAB,"freeing symtab(%s:%s)\n",
 	   symtab->debugfile->idstr,symtab->name);
@@ -1742,25 +1900,44 @@ void symtab_free(struct symtab *symtab) {
 	    symtab_free(tmp);
     if (RANGE_IS_LIST(&symtab->range))
 	range_list_internal_free(&symtab->range.r.rlist);
+
+    /* Release the duplicates first. */
+    g_hash_table_iter_init(&iter,symtab->duptab);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&key,(gpointer *)&value)) {
+	exlist = (struct array_list *)value;
+	for (i = 0; i < array_list_len(exlist); ++i) {
+	    exsym = (struct symbol *)array_list_item(exlist,i);
+	    symbol_free(exsym,0);
+	}
+	array_list_free(exlist);
+	/* This should not be necessary, but just so the hash lib
+	 * doesn't try to reuse the freed list pointer...
+	 */
+	g_hash_table_iter_replace(&iter,NULL);
+    }
+    g_hash_table_destroy(symtab->duptab);
+
     g_hash_table_destroy(symtab->tab);
     g_hash_table_destroy(symtab->anontab);
 
     if (symtab->name
 #ifdef DWDEBUG_USE_STRTAB
-	&& !symtab_str_in_strtab(symtab,symtab->name)
+	&& !symtab_str_in_dbg_strtab(symtab,symtab->name)
+	&& !symtab_str_in_elf_strtab(symtab,symtab->name)
 #endif
 	)
 	free(symtab->name);
     if (SYMTAB_IS_CU(symtab)) {
 	if (symtab->meta->compdirname
 #ifdef DWDEBUG_USE_STRTAB
-	    && !symtab_str_in_strtab(symtab,symtab->meta->compdirname)
+	    && !symtab_str_in_dbg_strtab(symtab,symtab->meta->compdirname)
 #endif
 	    )
 	    free(symtab->meta->compdirname);
 	if (symtab->meta->producer
 #ifdef DWDEBUG_USE_STRTAB
-	    && !symtab_str_in_strtab(symtab,symtab->meta->producer)
+	    && !symtab_str_in_dbg_strtab(symtab,symtab->meta->producer)
 #endif
 	    )
 	    free(symtab->meta->producer);
@@ -1770,11 +1947,19 @@ void symtab_free(struct symtab *symtab) {
 }
 
 #ifdef DWDEBUG_USE_STRTAB
-/* Returns 1 if string is in symtab; else 0 */
-int symtab_str_in_strtab(struct symtab *symtab,char *strp) {
-    if (symtab->debugfile && symtab->debugfile->strtab
-	&& strp >= symtab->debugfile->strtab
-	&& strp < (symtab->debugfile->strtab + symtab->debugfile->strtablen))
+/* Returns 1 if string is in elf_strtab; else 0 */
+int symtab_str_in_elf_strtab(struct symtab *symtab,char *strp) {
+    if (symtab->debugfile && symtab->debugfile->elf_strtab
+	&& strp >= symtab->debugfile->elf_strtab
+	&& strp < (symtab->debugfile->elf_strtab + symtab->debugfile->elf_strtablen))
+	return 1;
+    return 0;
+}
+/* Returns 1 if string is in debuginfo strtab; else 0 */
+int symtab_str_in_dbg_strtab(struct symtab *symtab,char *strp) {
+    if (symtab->debugfile && symtab->debugfile->dbg_strtab
+	&& strp >= symtab->debugfile->dbg_strtab
+	&& strp < (symtab->debugfile->dbg_strtab + symtab->debugfile->dbg_strtablen))
 	return 1;
     return 0;
 }
@@ -1784,7 +1969,8 @@ int symtab_str_in_strtab(struct symtab *symtab,char *strp) {
  ** Functions for symbols.
  **/
 struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
-			     char *name,symbol_type_t symtype,int full) {
+			     char *name,symbol_type_t symtype,
+			     symbol_source_t source,int full) {
     struct symbol *symbol;
 
     symbol = (struct symbol *)malloc(sizeof(*symbol));
@@ -1875,7 +2061,8 @@ void symbol_set_name(struct symbol *symbol,char *name) {
     if (name 
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symbol->symtab || !symbol->symtab->debugfile 
-	    || !symtab_str_in_strtab(symbol->symtab,name))
+	    || (!symtab_str_in_dbg_strtab(symbol->symtab,name)
+		&& !symtab_str_in_elf_strtab(symbol->symtab,name)))
 #endif
 	) {
 	symbol->name = strdup(name);
@@ -1918,7 +2105,9 @@ void symbol_build_extname(struct symbol *symbol) {
     symbol->name = insert_name;
     if (symbol_name
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol_name))
+	&& (!symbol->symtab 
+	    || (!symtab_str_in_dbg_strtab(symbol->symtab,symbol_name)
+		&& !symtab_str_in_elf_strtab(symbol->symtab,symbol_name)))
 #endif
 	)
 	free(symbol_name);
@@ -2028,10 +2217,7 @@ void symbol_set_srcline(struct symbol *symbol,int srcline) {
 }
 
 int symbol_type_bytesize(struct symbol *symbol) {
-    if (!SYMBOL_IS_FULL_TYPE(symbol))
-	return -1;
-
-    return symbol->s.ti->byte_size;
+    return symbol->size;
 }
 
 static inline int __check_type_in_list(struct symbol *type,
@@ -2099,10 +2285,10 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
     ti1 = t1->s.ti;
     ti2 = t2->s.ti;
 
-    if (ti1->byte_size != ti2->byte_size)
+    if (t1->size != t2->size)
 	return 1;
 
-    if (ti1->encoding != ti2->encoding)
+    if (ti1->d.t.encoding != ti2->d.t.encoding)
 	return 1;
 
     switch (t1->datatype_code) {
@@ -2289,7 +2475,7 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
     case DATATYPE_VOL:
 	return 0;
     case DATATYPE_BITFIELD:
-	if (ti1->d.v.bit_size != ti2->d.v.bit_size)
+	if (ti1->d.t.bit_size != ti2->d.t.bit_size)
 	    return 1;
 	return 0;
     default:
@@ -2781,9 +2967,9 @@ int symbol_type_is_char(struct symbol *type) {
 	return 0;
 
     if (type->datatype_code == DATATYPE_BASE
-	&& type->s.ti->byte_size == 1
-	&& (type->s.ti->encoding == ENCODING_SIGNED_CHAR
-	    || type->s.ti->encoding == ENCODING_UNSIGNED_CHAR)) 
+	&& type->size == 1
+	&& (type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR
+	    || type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR)) 
 	return 1;
 
     return 0;
@@ -2804,7 +2990,7 @@ unsigned int symbol_type_array_bytesize(struct symbol *type) {
     if (!SYMBOL_IS_FULL(type) || !SYMBOL_IS_FULL(type->datatype))
 	return 0;
 
-    size = type->datatype->s.ti->byte_size;
+    size = type->datatype->size;
 
     for (i = 0; i < type->s.ti->d.a.count; ++i) {
 	vdebug(5,LOG_D_SYMBOL,"subrange length is %d\n",
@@ -2968,7 +3154,7 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     if (SYMBOL_IS_FULL_INSTANCE(symbol)
 	&& symbol->s.ii->constval
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,
+	&& (!symbol->symtab || !symtab_str_in_dbg_strtab(symbol->symtab,
 						     symbol->s.ii->constval))
 #endif
 	)
@@ -2988,7 +3174,9 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     
     if (symbol->name
 #ifdef DWDEBUG_USE_STRTAB
-	     && (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,symbol->name))
+	     && (!symbol->symtab 
+		 || (!symtab_str_in_dbg_strtab(symbol->symtab,symbol->name)
+		     && !symtab_str_in_elf_strtab(symbol->symtab,symbol->name)))
 #endif
 	     ) {
 	vdebug(5,LOG_D_SYMBOL,"freeing name %s\n",symbol->name);
@@ -3459,8 +3647,29 @@ void g_hash_foreach_dump_symbol(gpointer key __attribute__((unused)),
     fprintf(ud->stream,"\n");
 }
 
+void g_hash_foreach_dump_duplist(gpointer key,gpointer value,gpointer userdata) {
+    struct dump_info *ud = (struct dump_info *)userdata;
+    struct array_list *duplist = (struct array_list *)value;
+    char *name = (char *)key;
+    int i;
+    struct dump_info udn;
+
+    udn.prefix = malloc(strlen(ud->prefix)+2);
+    sprintf(udn.prefix,"%s%s",ud->prefix,"  ");
+    udn.stream = ud->stream;
+    udn.meta = ud->meta;
+    udn.detail = ud->detail;
+
+    fprintf(ud->stream,"%sduplist(%s):\n",ud->prefix,name);
+    for (i = 0; i < array_list_len(duplist); ++i) {
+	 symbol_dump((struct symbol *)array_list_item(duplist,i),&udn);
+	 fprintf(ud->stream,"\n");
+    }
+    fprintf(ud->stream,"\n");
+}
+
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
-		    int types,int globals,int symtabs) {
+		    int types,int globals,int symtabs,int elfsymtab) {
     char *p = "";
     char *np1, *np2;
     struct dump_info udn;
@@ -3491,14 +3700,17 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
     fprintf(ud->stream,"%s  types: (%d)\n",p,g_hash_table_size(debugfile->types));
     if (types) 
 	g_hash_table_foreach(debugfile->types,g_hash_foreach_dump_symbol,&udn);
-    fprintf(ud->stream,"%s  shared types: (%d+%d)\n",p,
+    fprintf(ud->stream,"%s  shared types: (%d+%d+%d)\n",p,
 	    g_hash_table_size(debugfile->shared_types->tab),
-	    g_hash_table_size(debugfile->shared_types->anontab));
+	    g_hash_table_size(debugfile->shared_types->anontab),
+	    g_hash_table_size(debugfile->shared_types->duptab));
     if (types) {
 	g_hash_table_foreach(debugfile->shared_types->tab,
 			     g_hash_foreach_dump_symbol,&udn);
 	g_hash_table_foreach(debugfile->shared_types->anontab,
 			     g_hash_foreach_dump_symbol,&udn);
+	g_hash_table_foreach(debugfile->shared_types->duptab,
+			     g_hash_foreach_dump_duplist,&udn);
     }
     fprintf(ud->stream,"%s  globals: (%d)\n",
 	    p,g_hash_table_size(debugfile->globals));
@@ -3511,6 +3723,14 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 	g_hash_table_foreach(debugfile->srcfiles,g_hash_foreach_dump_symtab,&udn);
 	if (g_hash_table_size(debugfile->srcfiles))
 	    fprintf(ud->stream,"\n");
+    }
+    fprintf(ud->stream,"%s  ELF symtab: (tab=%d,anontab=%d,duptab=%d)\n",p,
+	    g_hash_table_size(debugfile->elf_symtab->tab),
+	    g_hash_table_size(debugfile->elf_symtab->anontab),
+	    g_hash_table_size(debugfile->elf_symtab->duptab));
+    if (elfsymtab) {
+	symtab_dump(debugfile->elf_symtab,&udn);
+	fprintf(ud->stream,"\n");
     }
 
     if (ud->prefix) {
@@ -3616,9 +3836,11 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
     }
     range_dump(&symtab->range,&udn3);
     fprintf(ud->stream,")");
-    if (g_hash_table_size(symtab->tab) > 0 || !list_empty(&symtab->subtabs)) {
+    if (g_hash_table_size(symtab->tab) > 0 || !list_empty(&symtab->subtabs)
+	|| g_hash_table_size(symtab->duptab) > 0) {
 	fprintf(ud->stream," {\n");
 	g_hash_table_foreach(symtab->tab,g_hash_foreach_dump_symbol,&udn);
+	g_hash_table_foreach(symtab->duptab,g_hash_foreach_dump_duplist,&udn);
 
 	if (!list_empty(&symtab->subtabs)) {
 	    fprintf(ud->stream,"%s  subscopes:\n",p);
@@ -3766,6 +3988,9 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	if (symbol->s.ii->constval)
 	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii->constval);
     }
+    else if (ud->detail)
+	fprintf(ud->stream," @@ 0x%"PRIxADDR" (size=%d)",
+		symbol->base_addr,symbol->size);
 }
 
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
@@ -3864,6 +4089,9 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 
 	symtab_dump(symbol->s.ii->d.f.symtab,&udn);
     }
+    else if (ud->detail)
+	fprintf(ud->stream," @@ 0x%"PRIxADDR" (size=%d)",
+		symbol->base_addr,symbol->size);
 }
 
 void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
@@ -3917,7 +4145,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	else
 	    fprintf(ud->stream,"%s",symbol->name);
 	if (ud->meta && SYMBOL_IS_FULL(symbol)) 
-	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti->byte_size);
+	    fprintf(ud->stream," (byte_size=%d)",symbol->size);
 	if (ud->detail && SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream," { ");
 	    list_for_each_entry(member_instance,&(symbol->s.ti->d.su.members),
@@ -3957,7 +4185,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	else
 	    fprintf(ud->stream,"%s",symbol_get_name(symbol));
 	if (ud->meta && SYMBOL_IS_FULL(symbol)) 
-	    fprintf(ud->stream," (byte_size=%d)",symbol->s.ti->byte_size);
+	    fprintf(ud->stream," (byte_size=%d)",symbol->size);
 	if (ud->detail && SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream," { ");
 	    list_for_each_entry(member_instance,&(symbol->s.ti->d.e.members),
@@ -4051,7 +4279,7 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"%s",symbol->name);
 	else 
 	    fprintf(ud->stream,"%s (byte_size=%d,encoding=%d)",symbol->name,
-		    symbol->s.ti->byte_size,symbol->s.ti->encoding);
+		    symbol->size,symbol->s.ti->d.t.encoding);
 	break;
     case DATATYPE_BITFIELD:
 	fprintf(ud->stream,"bitfield %s",symbol->name);
@@ -4181,6 +4409,11 @@ char *SYMBOL_TYPE_STRINGS[] = {
     "var",
     "function",
     "label"
+};
+
+char *SYMBOL_SOURCE_STRINGS[] = {
+    [SYMBOL_SOURCE_DWARF] = "DWARF",
+    [SYMBOL_SOURCE_ELF] = "ELF"
 };
 
 char *DATATYPE_STRINGS[] = {

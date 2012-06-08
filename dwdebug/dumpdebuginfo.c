@@ -44,6 +44,7 @@ int main(int argc,char **argv) {
     int dotypes = 1;
     int doglobals = 1;
     int dosymtabs = 1;
+    int doelfsymtab = 1;
     char *endptr = NULL;
     int nofree = 0;
 
@@ -52,7 +53,7 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "dDMl:F:TGSN")) != -1) {
+    while ((ch = getopt(argc, argv, "dDMl:F:TGSNE")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
@@ -97,6 +98,9 @@ int main(int argc,char **argv) {
 	    break;
 	case 'S':
 	    dosymtabs = 0;
+	    break;
+	case 'E':
+	    doelfsymtab = 0;
 	    break;
 	case 'N':
 	    nofree = 1;
@@ -155,7 +159,7 @@ int main(int argc,char **argv) {
     };
 
     if (argc < 2)
-	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs);
+	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs,doelfsymtab);
     else {
 	for (i = 1; i < argc; ++i) {
 	    struct lsymbol *s;
@@ -223,8 +227,9 @@ int main(int argc,char **argv) {
 		fprintf(stderr,"Could not lookup %s!\n",argv[i]);
 	    }
 	    else {
-		fprintf(stderr,"forward lookup %s: ",argv[i]);
+		fprintf(stdout,"forward lookup %s: ",argv[i]);
 		lsymbol_dump(s,&ud);
+		fprintf(stdout,"\n");
 		is = s->symbol;
 		/* We release this one because we got it through a
 		 * lookup function, so a ref was taken to it on our
@@ -233,13 +238,14 @@ int main(int argc,char **argv) {
 		lsymbol_release(s);
 
 		s2 = lsymbol_create_from_symbol(is);
-		fprintf(stderr,"reverse lookup %s: ",argv[i]);
+		fprintf(stdout,"reverse lookup %s: ",argv[i]);
 		lsymbol_dump(s2,&ud);
 		/* We free this one instead of releasing because we
 		 * created it instead of looked it up, so a ref to it was
 		 * not taken on our behalf.
 		 */
 		lsymbol_free(s2,0);
+		fprintf(stdout,"\n");
 	    }
 	}
     }

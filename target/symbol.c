@@ -20,7 +20,8 @@
 
 struct symbol *target_create_synthetic_type_pointer(struct target *target,
 						  struct symbol *type) {
-    struct symbol *retval = symbol_create(type->symtab,0,NULL,SYMBOL_TYPE_TYPE,1);
+    struct symbol *retval = symbol_create(type->symtab,0,NULL,SYMBOL_TYPE_TYPE,
+					  SYMBOL_SOURCE_DWARF,1);
 
     retval->datatype_code = DATATYPE_PTR;
     retval->issynthetic = 1;
@@ -28,7 +29,7 @@ struct symbol *target_create_synthetic_type_pointer(struct target *target,
     retval->datatype = type;
     retval->datatype_ref = type->ref;
 
-    retval->s.ti->byte_size = target->ptrsize;
+    retval->size = target->ptrsize;
 
     symbol_hold(type);
     symbol_hold(retval);
@@ -130,46 +131,46 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	fprintf(stream,"<VOID>");
 	return;
     case DATATYPE_BASE:
-	if (type->s.ti->byte_size == 1) {
-	    if (type->s.ti->encoding == ENCODING_SIGNED_CHAR)
+	if (type->size == 1) {
+	    if (type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR)
 		fprintf(stream,"%c",rv_c(buf));
-	    else if (type->s.ti->encoding == ENCODING_UNSIGNED_CHAR)
+	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR)
 		fprintf(stream,"%uc",rv_uc(buf));
-	    else if (type->s.ti->encoding == ENCODING_SIGNED)
+	    else if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi8,rv_i8(buf));
-	    else if (type->s.ti->encoding == ENCODING_SIGNED)
+	    else if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIu8,rv_u8(buf));
 	    else 
-		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
+		fprintf(stream,"<BASE_%d>",type->size);
 	}
-	else if (type->s.ti->byte_size == 2) {
+	else if (type->size == 2) {
 	    if (strstr(type->name,"char"))
 		fprintf(stream,"%lc",rv_wc(buf));
-	    else if (type->s.ti->encoding == ENCODING_SIGNED)
+	    else if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi16,rv_i16(buf));
-	    else if (type->s.ti->encoding == ENCODING_UNSIGNED)
+	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu16,rv_u16(buf));
 	    else 
-		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
+		fprintf(stream,"<BASE_%d>",type->size);
 	}
-	else if (type->s.ti->byte_size == 4) {
-	    if (type->s.ti->encoding == ENCODING_SIGNED)
+	else if (type->size == 4) {
+	    if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi32,rv_i32(buf));
-	    else if (type->s.ti->encoding == ENCODING_UNSIGNED)
+	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu32,rv_u32(buf));
 	    else 
-		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
+		fprintf(stream,"<BASE_%d>",type->size);
 	}
-	else if (type->s.ti->byte_size == 8) {
-	    if (type->s.ti->encoding == ENCODING_SIGNED)
+	else if (type->size == 8) {
+	    if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi64,rv_i64(buf));
-	    else if (type->s.ti->encoding == ENCODING_UNSIGNED)
+	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu64,rv_u64(buf));
 	    else 
-		fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
+		fprintf(stream,"<BASE_%d>",type->size);
 	}
 	else {
-	    fprintf(stream,"<BASE_%d>",type->s.ti->byte_size);
+	    fprintf(stream,"<BASE_%d>",type->size);
 	}
 	return;
     case DATATYPE_ARRAY:;
@@ -180,7 +181,7 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	    return;
 	}
 
-	int typebytesize = type->datatype->s.ti->byte_size;
+	int typebytesize = type->datatype->size;
 	int total = 1;
 	int *arcounts = (int *)malloc(sizeof(int)*(type->s.ti->d.a.count));
 	uint64_t offset = 0;
@@ -343,26 +344,26 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
 	    bitmask |= 1;
 	}
 	if (target->endian == DATA_LITTLE_ENDIAN)
-	    lboffset = (symbol->s.ii->d.v.byte_size * 8) - (symbol->s.ii->d.v.bit_offset + symbol->s.ii->d.v.bit_size);
+	    lboffset = (symbol->size * 8) - (symbol->s.ii->d.v.bit_offset + symbol->s.ii->d.v.bit_size);
 	else 
 	    lboffset = symbol->s.ii->d.v.bit_offset;
 	bitmask <<= lboffset;
 	
-	if (symbol->s.ii->d.v.byte_size == 1) 
+	if (symbol->size == 1) 
 	    fprintf(stream,"%hhu",(uint8_t)(((*(uint8_t *)buf) & bitmask) \
 					    >> lboffset));
-	else if (symbol->s.ii->d.v.byte_size == 2) 
+	else if (symbol->size == 2) 
 	    fprintf(stream,"%hu",(uint16_t)(((*(uint16_t *)buf) & bitmask) \
 					    >> lboffset));
-	else if (symbol->s.ii->d.v.byte_size == 4) 
+	else if (symbol->size == 4) 
 	    fprintf(stream,"%u",(uint32_t)(((*(uint32_t *)buf) & bitmask) \
 					    >> lboffset));
-	else if (symbol->s.ii->d.v.byte_size == 8) 
+	else if (symbol->size == 8) 
 	    fprintf(stream,"%"PRIu64,(uint64_t)(((*(uint64_t *)buf) & bitmask) \
 					    >> lboffset));
 	else {
 	    vwarn("unsupported bitfield byte size %d for symbol %s\n",
-		  symbol->s.ii->d.v.byte_size,symbol->name);
+		  symbol->size,symbol->name);
 	    fprintf(stream,"<BADBITFIELDBYTESIZE>");
 	}
 	

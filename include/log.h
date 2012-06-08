@@ -44,6 +44,7 @@ typedef enum log_flag_bits {
     LOG_FB_D_DWARFATTR = 7,
     LOG_FB_D_DWARFOPS  = 8,
     LOG_FB_D_OTHER     = 9,
+    LOG_FB_D_ELF       = 10,
 
     LOG_FB_T_TARGET    = 12,
     LOG_FB_T_SPACE     = 13,
@@ -78,6 +79,7 @@ typedef enum log_flags {
     LOG_D_DWARFATTR    = 1 << LOG_FB_D_DWARFATTR,
     LOG_D_DWARFOPS     = 1 << LOG_FB_D_DWARFOPS,
     LOG_D_OTHER        = 1 << LOG_FB_D_OTHER,
+    LOG_D_ELF        = 1 << LOG_FB_D_ELF,
     LOG_T_TARGET       = 1 << LOG_FB_T_TARGET,
     LOG_T_SPACE        = 1 << LOG_FB_T_SPACE,
     LOG_T_REGION       = 1 << LOG_FB_T_REGION,
@@ -100,12 +102,11 @@ typedef enum log_flags {
 
 #define LOG_D_ALL (LOG_D_DFILE | LOG_D_SYMBOL | LOG_D_SYMTAB | LOG_D_LOC \
 		   | LOG_D_LOOKUP | LOG_D_DWARF | LOG_D_DWARFATTR \
-		   | LOG_D_DWARFOPS | LOG_D_OTHER )
+		   | LOG_D_DWARFOPS | LOG_D_OTHER| LOG_D_ELF )
 #define LOG_T_ALL (LOG_T_TARGET | LOG_T_SPACE | LOG_T_REGION | LOG_T_LOOKUP \
 		   | LOG_T_LOC | LOG_T_OTHER | LOG_T_SYMBOL | LOG_T_DISASM)
 #define LOG_P_ALL (LOG_P_PROBE | LOG_P_PROBEPOINT | LOG_P_ACTION)
-#define LOG_C_ALL (LOG_C_CTX | LOG_C_FUNC | LOG_C_VAR | LOG_C_DISASM \
-           | LOG_C_WARN)
+#define LOG_C_ALL (LOG_C_CTX | LOG_C_FUNC | LOG_C_VAR | LOG_C_DISASM)
 
 void vmi_set_log_level(int level);
 void vmi_set_log_flags(log_flags_t flags);

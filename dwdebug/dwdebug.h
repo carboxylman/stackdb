@@ -184,6 +184,17 @@ extern char *SYMBOL_TYPE_STRINGS[];
 				   && (sym)->s.ii)
 
 typedef enum {
+    SYMBOL_SOURCE_DWARF   = 0,
+    SYMBOL_SOURCE_ELF     = 1,
+} symbol_source_t;
+extern char *SYMBOL_SOURCE_STRINGS[];
+#define SYMBOL_SOURCE(n) (((n) < (sizeof(SYMBOL_SOURCE_STRINGS) \
+				  / sizeof(SYMBOL_SOURCE_STRINGS[0]))) \
+			  ? SYMBOL_SOURCE_STRINGS[(n)] : NULL)
+#define SYMBOL_IS_DWARF(sym) ((sym) && (sym)->source == SYMBOL_SOURCE_DWARF)
+#define SYMBOL_IS_ELF(sym)  ((sym) && (sym)->source == SYMBOL_SOURCE_ELF)
+
+typedef enum {
     LOADTYPE_UNLOADED     = 0,
     LOADTYPE_FULL         = 1,
     LOADTYPE_PARTIAL      = 2,
@@ -199,6 +210,7 @@ typedef enum {
  */
 #define LOAD_TYPE_BITS      2
 #define SYMBOL_TYPE_BITS    3
+#define SYMBOL_SOURCE_BITS   1
 #define DATATYPE_CODE_BITS  4
 #define SRCLINE_BITS       20
 
@@ -370,7 +382,7 @@ struct symbol *debugfile_find_type(struct debugfile *debugfile,
 int debugfile_add_type_name(struct debugfile *debugfile,
 			    char *name,struct symbol *symbol);
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
-		    int types,int globals,int symtabs);
+		    int types,int globals,int symtabs,int elfsymtab);
 REFCNT debugfile_free(struct debugfile *debugfile,int force);
 
 /**
@@ -379,6 +391,7 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force);
 struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 			     char *name,struct symbol *symtab_symtab,
 			     int noautoinsert);
+int symtab_get_size_simple(struct symtab *symtab);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 struct symbol *symtab_get_sym(struct symtab *symtab,const char *name);
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
@@ -407,14 +420,16 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 			 range_type_t rt_hint);
 void symtab_free(struct symtab *symtab);
 #ifdef DWDEBUG_USE_STRTAB
-int symtab_str_in_strtab(struct symtab *symtab,char *strp);
+int symtab_str_in_elf_strtab(struct symtab *symtab,char *strp);
+int symtab_str_in_dbg_strtab(struct symtab *symtab,char *strp);
 #endif
 
 /**
  ** Symbols.
  **/
 struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
-			     char *name,symbol_type_t symtype,int full);
+			     char *name,symbol_type_t symtype,
+			     symbol_source_t source,int full);
 char *symbol_get_name(struct symbol *symbol);
 char *symbol_get_name_orig(struct symbol *symbol);
 void symbol_set_name(struct symbol *symbol,char *name);
@@ -768,6 +783,20 @@ const char *dwarf_calling_convention_string(unsigned int code);
 const char *dwarf_ordering_string(unsigned int code);
 const char *dwarf_discr_list_string(unsigned int code);
 
+/*
+ * Elf util stuff.
+ */
+int elf_get_base_addrs(Elf *elf,
+		       ADDR *base_virt_addr_saveptr,
+		       ADDR *base_phys_addr_saveptr);
+int elf_get_debuginfo_info(Elf *elf,
+			   int *has_debuginfo_saveptr,
+			   char **buildid_saveptr,
+			   char **gnu_debuglinkfile_saveptr,
+			   uint32_t *gnu_debuglinkfile_crc_saveptr);
+int elf_get_arch_info(Elf *elf,int *wordsize,int *endian);
+int elf_is_dynamic_exe(Elf *elf);
+int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile);
 
 /**
  ** Data structure definitions.
@@ -845,12 +874,39 @@ struct debugfile {
     struct debugfile *kernel_debugfile;
 
     /*
-     * The debug string table for this file.  All string pointers are
+     * The string table for this file.  All ELF string pointers are
+     * checked for presence in this table before freeing.
+     *
+     * This table persists until the debugfile is freed.
+     *
+     * NOTE: this may either come from the debuginfo file, OR the ELF
+     * binary.  Different distros fragment out the symtab into those
+     * files differently; we check the ELF binary first, then the
+     * debuginfo file.
+     */
+    char *elf_strtab;
+
+    /*
+     * The ELF symtab for this file; all symbols in this table are ELF
+     * symbols, not DWARF symbols.  They cannot be expanded into
+     * fully-loaded symbols.
+     */
+    struct symtab *elf_symtab;
+
+    /* 
+     * We keep a separate range structure for ELF symbols, because the
+     * normal debugfile->ranges range structure contains symtabs, not
+     * symbols.  So they can't be mixed... unfortunate.
+     */
+    clrange_t elf_ranges;
+
+    /*
+     * The debug string table for this file.  All debuginfo string pointers are
      * checked for presence in this table before freeing.
      *
      * This table persists until the debugfile is freed.
      */
-    char *strtab;
+    char *dbg_strtab;
 
     /*
      * The debug location table for this file.
@@ -874,7 +930,8 @@ struct debugfile {
     char *linetab;
 
     /* Table lengths -- moved here for struct packing. */
-    unsigned int strtablen;
+    unsigned int elf_strtablen;
+    unsigned int dbg_strtablen;
     unsigned int loctablen;
     unsigned int rangetablen;
     unsigned int linetablen;
@@ -927,7 +984,8 @@ struct debugfile {
 
     /*
      * Any symbol that has a fixed address location gets an entry in
-     * this table.
+     * this table.  ELF symbols from the ELF symtab may also be in this
+     * table, but debuginfo symbols always take precedence over them.
      *
      * h(address) = struct symbol *
      */
@@ -1082,11 +1140,21 @@ struct symtab {
 
     /* 
      * This hashtable stores only *named* symbols that existed in this
-     * scope.
+     * scope.  If the symbol exists multiple times in this symtab, then
+     * it is not in this table, but rather in duptab below.  If we have
+     * to insert a symbol already present in this table, we create a
+     * list and move it to the duptab.
      *
-     * h(sym) -> struct symbol * 
+     * h(sym) -> struct symbol *
      */
     GHashTable *tab;
+
+    /* 
+     * This hashtable stores lists of duplicate symbols in this symtab.
+     *
+     * h(sym) -> struct array_list * (struct symbol *)
+     */
+    GHashTable *duptab;
 
     /* 
      * This hashtable stores only *unnamed* symbols that existed in this
@@ -1128,14 +1196,20 @@ struct symbol {
      */
     unsigned int orig_name_offset:8;
 
+    /* Where we exist. */
+    unsigned int srcline:SRCLINE_BITS;
+
+    /* If this is a type symbol, which type. */
+    datatype_code_t datatype_code:DATATYPE_CODE_BITS;
+
     /* Are we full or partial? */
     load_type_t loadtag:LOAD_TYPE_BITS;
 
     /* The kind of symbol we are. */
     symbol_type_t type:SYMBOL_TYPE_BITS;
 
-    /* If this is a type symbol, which type. */
-    datatype_code_t datatype_code:DATATYPE_CODE_BITS;
+    /* The symbol source. */
+    symbol_source_t source:SYMBOL_SOURCE_BITS;
 
     unsigned int issynthetic:1,
 	isshared:1,
@@ -1148,9 +1222,6 @@ struct symbol {
 	ismember:1,
 	isenumval:1,
 	isinlineinstance:1;
-
-    /* Where we exist. */
-    unsigned int srcline:SRCLINE_BITS;
 
     /* Our refcnt. */
     REFCNT refcnt;
@@ -1172,6 +1243,12 @@ struct symbol {
      */
     SMOFFSET datatype_ref;
 
+    /*
+     * If this is a type or var debug symbol, or an ELF symbol, it may
+     * be nonzero.
+     */
+    uint32_t size;
+
     /* If not a SYMBOL_TYPE_TYPE, our data type.
      * For functions, it is the return type; for anything else, its data
      * type.
@@ -1190,13 +1267,11 @@ struct symbol {
 };
 
 struct symbol_type {
-    uint16_t byte_size;
-    encoding_t encoding:16;
-
     union {
 	struct {
-	    int bit_size;
-	} v;
+	    uint16_t bit_size;
+	    encoding_t encoding:16;
+	} t;
 	struct {
 	    struct list_head members;
 	    int count;
@@ -1284,7 +1359,6 @@ struct symbol_instance {
 	    struct list_head member;
 	    struct symbol *member_symbol;
 	    struct symbol *parent_symbol;
-	    uint16_t byte_size;
 	    uint16_t bit_offset;
 	    uint16_t bit_size;
 	} v;
