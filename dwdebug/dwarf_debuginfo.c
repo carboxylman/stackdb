@@ -3580,6 +3580,22 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	}
 	retval = 1;
     }
+    else if (symbol->type == SYMBOL_TYPE_VAR 
+	     && symbol->isparam
+	     && SYMBOL_IS_FULL_FUNCTION(parentsymbol) 
+	     && parentsymbol->isinlineinstance) {
+	/* Sometimes it seems we see unnamed function params that are
+	 * not marked as inline instances, BUT have a subprogram parent
+	 * that is an inline instance.
+	 *
+	 * Stick it in the anontab; otherwise it won't get freed.
+	 */
+	if (symtab_insert(symbol->symtab,symbol,die_offset)) {
+	    verror("could not insert anon param at offset %"PRIx64" into anontab!\n",
+		   die_offset);
+	}
+	retval = 1;
+    }
     else if (symbol->type == SYMBOL_TYPE_VAR
 	     && (symbol->isparam || symbol->ismember)) {
 	/* We allow unnamed params, of course, BUT we don't put them
