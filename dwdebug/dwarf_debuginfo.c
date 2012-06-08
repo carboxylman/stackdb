@@ -3195,11 +3195,13 @@ static int debuginfo_load(struct debugfile *debugfile,
 				  &meta->version,&meta->abbroffset,&meta->addrsize,
 				  &meta->offsize,NULL,NULL)) < 0) {
 	    verror("dwarf_next_unit: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
+	    free(meta);
 	    goto errout;
 	}
 	else if (rc > 0) {
 	    vdebug(2,LOG_D_DWARF,
 		   "dwarf_next_unit returned (%d), aborting successfully.\n",rc);
+	    free(meta);
 	    goto out;
 	}
 #else
@@ -3207,11 +3209,13 @@ static int debuginfo_load(struct debugfile *debugfile,
 			       &meta->abbroffset,&meta->addrsize,
 			       &meta->offsize)) < 0) {
 	    verror("dwarf_nextcu: %s (%d)\n",dwarf_errmsg(dwarf_errno()),rc);
+	    free(meta);
 	    goto errout;
 	}
 	else if (rc > 0) {
 	    vdebug(2,LOG_D_DWARF,
 		   "dwarf_nextcu returned (%d), aborting successfully.\n",rc);
+	    free(meta);
 	    goto out;
 	}
 
