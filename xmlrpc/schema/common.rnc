@@ -1,0 +1,23 @@
+
+ADDR = xsd:unsignedLong
+OFFSET = xsd:long
+SMOFFSET = xsd:int
+
+Param = element param {
+    attribute name { text } &
+    attribute longName { text }? &
+    attribute description { text } &
+    element defaultValue { text }?
+}
+
+OutValue = element outValue {
+    attribute name { text } &
+    attribute longName { text }? &
+    element value { text }
+}
+
+KeyValue = element keyValue {
+    element key { text },
+    element value { text }
+}
+

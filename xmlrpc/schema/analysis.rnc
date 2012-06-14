@@ -1,0 +1,29 @@
+
+default namespace = "urn:flux.utah.edu:a3:vmi:analysis:1"
+
+include "common.rnc"
+
+start = Analysis
+
+Analysis = element analysis {
+    element name { text } &
+    element id { xsd:ID } &
+    element description { text } &
+    element author { text } &
+    element authorContactEmail { text } &
+
+    element requiresWriteMode { xsd:boolean } &
+    element requiresControlMode { xsd:boolean } &
+    element reportsProgress { xsd:boolean } &
+    element reportsIntermediateResults { xsd:boolean } &
+    element reportsFinalResults { xsd:boolean } &
+
+    element inputParams { Param* } &
+    element outputParams { Param* }
+}
+
+AnalysisResult = element analysisResult {
+    element value { text } &
+    element msg { text } &
+    element outputValues { OutValue* }
+}
