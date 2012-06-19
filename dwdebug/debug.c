@@ -830,6 +830,11 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	}
 
 	lsymbol = lsymbol_create(symbol,chain);
+
+	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
+	       lsymbol->symbol->name);
+
+	lsymbol_append(lsymbol,symbol);
     }
     else {
 	/* If we found a match, fully load it (and its children and
@@ -846,21 +851,12 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 
     /* If it's not a delimited string, stop now, successfully. */
     if (!lname) {
-	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
-	       lsymbol->symbol->name);
-
-	lsymbol_append(lsymbol,symbol);
 
 	goto out;
     }
 
     vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
 	   "found top-level %s; checking members\n",lsymbol->symbol->name);
-
-    /* Otherwise, add the first one to our chain and start looking up
-     * members.
-     */
-    lsymbol_append(lsymbol,symbol);
 
     if (!delim)
 	delim = DWDEBUG_DEF_DELIM;
