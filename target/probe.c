@@ -1501,6 +1501,13 @@ probepoint_watchsize_t probepoint_closest_watchsize(int size) {
     }
 }
 
+void *probe_summarize(struct probe *probe) {
+    if (!probe->ops || !probe->ops->summarize) 
+	return NULL;
+
+    return probe->ops->summarize(probe);
+}
+
 int probe_disable_one(struct probe *probe) {
     probe->enabled = 0;
 

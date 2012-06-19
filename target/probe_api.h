@@ -59,6 +59,8 @@ struct probe_ops {
     int (*disabled)(struct probe *probe);
     /* Called after this probe has been unregistered. */
     int (*unregistered)(struct probe *probe);
+    /* Called when the user calls probe_summarize(). */
+    void *(*summarize)(struct probe *probe);
     /* Called just before this probe is deallocated.  If you allocated
      * any probe-specific data structures, or took a reference to this
      * probe and it is an autofree probe, you must free those
@@ -355,6 +357,12 @@ int probe_unregister_batch(struct target *target,struct probe **probelist,
 			   int listlen,int force);
 
 probepoint_watchsize_t probepoint_closest_watchsize(int size);
+
+/*
+ * Calls the summarize handler probe operation for this probe type, if
+ * it has one.  If no such handler exists, it returns NULL.
+ */
+void *probe_summarize(struct probe *probe);
 
 /*
  * Disables a running probe. When disabled, both pre- and post-handlers are 
