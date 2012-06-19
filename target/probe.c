@@ -499,7 +499,8 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 			      6,ibuf,NULL)) {
 	    verror("could not check orig instrs for bp insert\n");
 	}
-	vwarn("orig bytes: %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx\n",
+	vdebug(7,LOG_P_PROBEPOINT,
+	       "orig bytes: %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx\n",
 	      (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],(int)ibuf[4],(int)ibuf[5]);
 
 	if (!target_read_addr(target,probepoint->addr,
@@ -1309,6 +1310,9 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	       SYMBOL_TYPE(bsymbol->lsymbol->symbol->type));
 	goto errout;
     }
+
+    vdebug(5,LOG_P_PROBE,"registered probe on %s at 0x%"PRIxADDR"\n",
+	   bsymbol->lsymbol->symbol->name,probeaddr);
 
     return probe;
 
