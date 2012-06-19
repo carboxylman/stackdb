@@ -34,6 +34,7 @@ extern int optind, opterr, optopt;
 int main(int argc,char **argv) {
     char ch;
     int debug = 0;
+    int warn = 0;
     char *filename;
     struct debugfile *debugfile;
     int detail = 0;
@@ -53,11 +54,15 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "dDMl:F:TGSNE")) != -1) {
+    while ((ch = getopt(argc, argv, "dwgDMl:F:TGSNE")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
 	    vmi_set_log_level(debug);
+	    break;
+	case 'w':
+	    ++warn;
+	    vmi_set_warn_level(warn);
 	    break;
 	case 'D':
 	    ++detail;

@@ -23,10 +23,15 @@
 #include "log.h"
 
 static int vmi_log_level = -1;
+static int vmi_warn_level = -1;
 static log_flags_t vmi_log_flags = 0;
 
 void vmi_set_log_level(int level) {
     vmi_log_level = level;
+}
+
+void vmi_set_warn_level(int level) {
+    vmi_warn_level = level;
 }
 
 void vmi_set_log_flags(log_flags_t flags) {
@@ -105,6 +110,16 @@ int vmi_log_get_flag_mask(char *flaglist,log_flags_t *flagmask) {
 void _vmi_debug(int level,log_flags_t flags,char *format,...) {
     va_list args;
     if (vmi_log_level < level || !(flags & vmi_log_flags))
+	return;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    fflush(stderr);
+    va_end(args);
+}
+
+void _vmi_warn(int level,log_flags_t flags,char *format,...) {
+    va_list args;
+    if (vmi_warn_level < level || !(flags & vmi_log_flags))
 	return;
     va_start(args, format);
     vfprintf(stderr, format, args);

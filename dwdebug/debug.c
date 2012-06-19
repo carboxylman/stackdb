@@ -863,7 +863,7 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 
     while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
 	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain))) {
-	    vwarn("did not find symbol for %s\n",next);
+	    vwarnopt(3,LOG_D_LOOKUP,"did not find symbol for %s\n",next);
 	    goto errout;
 	}
 	else if (anonchain && array_list_len(anonchain)) {
@@ -1215,7 +1215,7 @@ int debugfile_filename_info(char *filename,char **realfilename,
     }
 
     if ((rc = readlink(filename,buf,PATH_MAX - 1)) == (size_t)-1) {
-	vwarn("readlink(%s): %s\n",filename,strerror(errno));
+	verror("readlink(%s): %s\n",filename,strerror(errno));
 	realname = NULL;
 	return -1;
     }
@@ -2617,7 +2617,8 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 		}
 	    }
 	    if (stackalen > 8) 
-		vwarn("big stackalen=%d, stack=%d\n",stackalen,stacklen);
+		vwarnopt(4,LOG_D_LOOKUP,"big stackalen=%d, stack=%d\n",
+			 stackalen,stacklen);
 	    else 
 		vdebug(4,LOG_D_SYMBOL,"stackalen=%d, stack=%d\n",
 		       stackalen,stacklen);

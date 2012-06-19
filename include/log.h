@@ -28,6 +28,13 @@
 				   __FUNCTION__, __LINE__, ## __VA_ARGS__)
 #define vwarnc(format,...) fprintf(stderr,format, ## __VA_ARGS__)
 
+#define vwarnopt(level,flags,format,...) _vmi_warn(level,flags, \
+						   "VWARNING: %s:%d: "format, \
+						   __FUNCTION__, __LINE__, \
+						   ## __VA_ARGS__)
+#define vwarnoptc(level,flags,format,...) _vmi_warn(level,flags,format, \
+						    ## __VA_ARGS__)
+
 /*
  * If you change these flags and bits, make really sure to update
  * lib/log.c!
@@ -109,12 +116,14 @@ typedef enum log_flags {
 #define LOG_C_ALL (LOG_C_CTX | LOG_C_FUNC | LOG_C_VAR | LOG_C_DISASM)
 
 void vmi_set_log_level(int level);
+void vmi_set_warn_level(int level);
 void vmi_set_log_flags(log_flags_t flags);
 
 int vmi_log_get_flag_val(char *flag,log_flags_t *flagval);
 int vmi_log_get_flag_mask(char *flaglist,log_flags_t *flagmask);
 
 void _vmi_debug(int level,log_flags_t flags,char *format,...);
+void _vmi_warn(int level,log_flags_t flags,char *format,...);
 
 #ifdef VMI_DEBUG
 #define vdebug(level,flags,format,...) _vmi_debug(level,flags,"VDEBUG: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)
