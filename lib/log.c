@@ -107,6 +107,12 @@ int vmi_log_get_flag_mask(char *flaglist,log_flags_t *flagmask) {
     return 0;
 }
 
+int vdebug_is_on(int level,log_flags_t flags) {
+    if (vmi_log_level < level || !(flags & vmi_log_flags))
+	return 0;
+    return 1;
+}
+
 void _vmi_debug(int level,log_flags_t flags,char *format,...) {
     va_list args;
     if (vmi_log_level < level || !(flags & vmi_log_flags))

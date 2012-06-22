@@ -125,6 +125,8 @@ int vmi_log_get_flag_mask(char *flaglist,log_flags_t *flagmask);
 void _vmi_debug(int level,log_flags_t flags,char *format,...);
 void _vmi_warn(int level,log_flags_t flags,char *format,...);
 
+int vdebug_is_on(int level,log_flags_t flags);
+
 #ifdef VMI_DEBUG
 #define vdebug(level,flags,format,...) _vmi_debug(level,flags,"VDEBUG: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)
 #define vdebugc(level,flags,format,...) _vmi_debug(level,flags,format, ## __VA_ARGS__)

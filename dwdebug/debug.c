@@ -2520,7 +2520,8 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	.meta = 1
     };
     vdebug(4,LOG_D_LOOKUP,"symbol: ");
-    symbol_dump(symbol,&udn);
+    if (vdebug_is_on(4,LOG_D_LOOKUP))
+	symbol_dump(symbol,&udn);
     
 
     if (!SYMBOL_IS_FULL(symbol))
@@ -2536,7 +2537,9 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	if (tsymbol != symbol) {
 	    vdebug(4,LOG_D_LOOKUP,"skipped type symbol %s, now: ",
 		   symbol_get_name(symbol));
-	    symbol_dump(tsymbol,&udn);
+	    if (vdebug_is_on(4,LOG_D_LOOKUP))
+		symbol_dump(tsymbol,&udn);
+
 	    symbol = tsymbol;
 	}
     }
@@ -2581,8 +2584,9 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	    list_for_each_entry(retval_instance,&type->s.ti->d.su.members,
 				d.v.member) {
 		retval = retval_instance->d.v.member_symbol;
-		//vdebug(4,LOG_D_SYMBOL,"checking symbol: ");
-		//symbol_dump(retval,&udn);
+		vdebug(5,LOG_D_SYMBOL,"checking symbol: ");
+		if (vdebug_is_on(4,LOG_D_SYMBOL))
+		    symbol_dump(retval,&udn);
 
 		if (SYMBOL_IST_STUN(retval->datatype) 
 		    && !retval->name) {
@@ -2692,7 +2696,8 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	if (tsymbol != symbol->datatype) {
 	    vdebug(4,LOG_D_LOOKUP,"skipped type symbol for %s, now: ",
 		   symbol_get_name(symbol->datatype));
-	    symbol_dump(tsymbol,&udn);
+	    if (vdebug_is_on(4,LOG_D_LOOKUP))
+		symbol_dump(tsymbol,&udn);
 	}
 
 	/* Make sure the datatype is fully loaded before we search it. */
@@ -2707,8 +2712,9 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	}
 
 	if (SYMBOL_IST_STUN(tsymbol)) {
-	    //vdebug(3,LOG_D_SYMBOL,"returning result of searching S/U type symbol: ");
-	    //symbol_dump(tsymbol,&udn);
+	    vdebug(4,LOG_D_SYMBOL,"returning result of searching S/U type symbol: ");
+	    if (vdebug_is_on(4,LOG_D_SYMBOL))
+		symbol_dump(tsymbol,&udn);
 
 	    return __symbol_get_one_member(tsymbol,member,chainptr);
 	}
@@ -2732,8 +2738,9 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     return NULL;
 
  out:
-    //vdebug(3,LOG_D_SYMBOL,"returning symbol: ");
-    //symbol_dump(retval,&udn);
+    vdebug(3,LOG_D_SYMBOL | LOG_D_LOOKUP,"returning symbol: ");
+    if (vdebug_is_on(3,LOG_D_LOOKUP | LOG_D_LOOKUP))
+	symbol_dump(retval,&udn);
     /*
      * If type points to something other than the top-level symbol, that
      * means we explored anon structs, and we must return an anon symbol
