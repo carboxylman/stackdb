@@ -1983,6 +1983,7 @@ struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
 
     /* Comparison functions in dwarf_debuginfo need this set nonzero! */
     symbol->base_addr = ADDRMAX;
+    symbol->has_base_addr = 0;
 
     if (full) {
 	switch (symtype) {
@@ -3017,6 +3018,39 @@ unsigned int symbol_type_full_bytesize(struct symbol *type) {
     if (type->datatype_code == DATATYPE_ARRAY)
 	return symbol_type_array_bytesize(type);
     return symbol_type_bytesize(type);
+}
+
+int symbol_get_location_offset(struct symbol *symbol,OFFSET *offset_saveptr) {
+    if (SYMBOL_IS_FULL_INSTANCE(symbol)
+	     && symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
+	if (offset_saveptr)
+	    *offset_saveptr = symbol->s.ii->l.l.member_offset;
+	return 0;
+    }
+    return -1;
+}
+
+int symbol_get_location_addr(struct symbol *symbol,ADDR *addr_saveptr) {
+    ADDR addr;
+    int retval = 0;
+
+    if (symbol->has_base_addr) {
+	addr = symbol->base_addr;
+    }
+    else if (SYMBOL_IS_FULL_INSTANCE(symbol)
+	     && symbol->s.ii->l.loctype == LOCTYPE_ADDR) {
+	addr = symbol->s.ii->l.l.addr;
+    }
+    else {
+	retval = -1;
+	goto errout;
+    }
+
+    if (addr_saveptr)
+	*addr_saveptr = addr;
+
+ errout:
+    return retval;
 }
 
 REFCNT symbol_hold(struct symbol *symbol) {

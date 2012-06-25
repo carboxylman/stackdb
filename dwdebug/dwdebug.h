@@ -465,6 +465,10 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_type_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
+
+int symbol_get_location_offset(struct symbol *symbol,OFFSET *offset_saveptr);
+int symbol_get_location_addr(struct symbol *symbol,ADDR *addr_saveptr);
+
 /*
  * Takes a reference to the symbol.  Users should not call this.
  */
@@ -1221,7 +1225,8 @@ struct symbol {
 	isparam:1,
 	ismember:1,
 	isenumval:1,
-	isinlineinstance:1;
+	isinlineinstance:1,
+	has_base_addr;
 
     /* Our refcnt. */
     REFCNT refcnt;

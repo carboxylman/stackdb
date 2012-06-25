@@ -342,8 +342,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	cbargs->lowpc = addr;
 	cbargs->lowpc_set = 1;
 
-	if (cbargs->symbol && addr < cbargs->symbol->base_addr)
+	if (cbargs->symbol && addr < cbargs->symbol->base_addr) {
 	    cbargs->symbol->base_addr = addr;
+	    cbargs->symbol->has_base_addr = 1;
+	}
 
 	if (SYMBOL_IS_FULL_LABEL(cbargs->symbol)) {
 	    if (RANGE_IS_LIST(&cbargs->symbol->s.ii->d.l.range)) {
@@ -405,8 +407,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    /* On the off chance that high_pc is the lowest address for
 	     * this symbol, check it!
 	     */
-	    if (cbargs->symbol && addr < cbargs->symbol->base_addr)
+	    if (cbargs->symbol && addr < cbargs->symbol->base_addr) {
 		cbargs->symbol->base_addr = addr;
+		cbargs->symbol->has_base_addr = 1;
+	    }
 
 	    if (SYMBOL_IS_FULL_LABEL(cbargs->symbol)) {
 		if (RANGE_IS_LIST(&cbargs->symbol->s.ii->d.l.range)) {
@@ -435,8 +439,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 
 	    if (SYMBOL_IS_FUNCTION(cbargs->symbol)) {
-		if (addr < cbargs->symbol->base_addr) 
+		if (addr < cbargs->symbol->base_addr) { 
 		    cbargs->symbol->base_addr = addr;
+		    cbargs->symbol->has_base_addr = 1;
+		}
 
 		if (SYMBOL_IS_FULL(cbargs->symbol)) {
 		    cbargs->symbol->s.ii->d.f.entry_pc = addr;
@@ -917,8 +923,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    || SYMBOL_IS_LABEL(cbargs->symbol)) {
 		    int i;
 		    for (i = 0; i < loclist->len; ++i) {
-			if (loclist->list[i]->start < cbargs->symbol->base_addr)
+			if (loclist->list[i]->start < cbargs->symbol->base_addr) {
 			    cbargs->symbol->base_addr = loclist->list[i]->start;
+			    cbargs->symbol->has_base_addr = 1;
+			}
 		    }
 		}
 
@@ -941,8 +949,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			       loc);
 
 		if (loc->loctype == LOCTYPE_ADDR 
-		    && loc->l.addr < cbargs->symbol->base_addr)
+		    && loc->l.addr < cbargs->symbol->base_addr) {
 		    cbargs->symbol->base_addr = loc->l.addr;
+		    cbargs->symbol->has_base_addr = 1;
+		}
 
 		if (SYMBOL_IS_PARTIAL(cbargs->symbol)) 
 		    free(loc);
