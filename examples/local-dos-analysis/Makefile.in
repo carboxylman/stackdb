@@ -1,0 +1,154 @@
+## -*- mode: Makefile -*-
+##
+## Copyright (c) 2012 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+
+###############################################################################
+
+PACKAGE = local-dos-analysis
+LIBVERSION = 0.1
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= examples/local-dos-analysis
+OBJDIR		= @top_builddir@
+
+SUBDIRS = 
+
+# Temporary cmdline arg values hard-coded for easiness of testing.
+LOCAL_DOS_DAEMON_LOG    = /local/sda4/logs/ttd.log
+LOCAL_DOS_REPLAY_CONF   = /local/sda4/vm-images/client_A_solo_with_net.conf
+LOCAL_DOS_GUEST         = clientA
+LOCAL_DOS_SYSMAP        = /boot/System.map-2.6.18-xenU
+
+include $(OBJDIR)/Makeconf
+
+CFLAGS += -I$(OBJDIR) \
+	  -I$(TOP_SRCDIR)/lib \
+	  -I$(TOP_SRCDIR)/include \
+	  -I$(TOP_SRCDIR)/dwdebug \
+	  -I$(TOP_SRCDIR)/target \
+      -I$(TOP_SRCDIR)/examples/context-aware-probes \
+	  -I$(TOP_SRCDIR)/$(SUBDIR)
+
+CFLAGS += -DDWDEBUG_USE_STRTAB
+CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS)
+	CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
+	CFLAGS += -I$(DISTORM)/include
+endif
+
+LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
+endif
+
+HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/debug.h
+
+OBJECTS := 
+
+LIBRARIES := 
+
+PROGRAMS := local-dos-process
+
+STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
+              $(OBJDIR)/target/libtarget.a \
+              $(OBJDIR)/dwdebug/libdwdebug.a \
+              $(OBJDIR)/lib/libvmilib.a
+ifeq ($(ENABLE_XENACCESS),"1")
+	STATICLIBS += $(XENACCESS_A)
+endif
+
+INST_INC = 
+INST_LIB = $(LIBRARIES)
+
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(PROGRAMS) all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+.c.lo:	$(HEADERS)
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+local-dos-process: $(HEADERS) $(LIBRARIES) $(OBJECTS) local-dos-process.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+install: def-install install-subdirs
+	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
+
+clean: clean-subdirs
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
+	local-dos-process.lo \
+	$(RM) -f $(PROGRAMS)
+
+distclean: distclean-subdirs
+
+# Temporary cmdlines hard-coded for easiness of testing.
+
+daemon: /usr/sbin/ttd-deviced
+	sudo ttd-deviced -f $(LOCAL_DOS_DAEMON_LOG)
+
+record: /usr/sbin/xm
+	sudo xm create $(LOCAL_DOS_REPLAY_CONF) time_travel="ttd_flag=1" -c
+
+replay: /usr/sbin/xm
+	sudo xm create $(LOCAL_DOS_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c
+
+replay-pause: /usr/sbin/xm
+	sudo xm create $(LOCAL_DOS_REPLAY_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c -p
+
+kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
+	sudo xm destroy $(LOCAL_DOS_GUEST)
+	sleep 1
+	sudo killall -9 ttd-deviced
+	sudo killall -9 -r "local-dos-*".
+
+run-pass1: local-dos-process
+	sudo ./local-dos-process \
+	-m $(LOCAL_DOS_SYSMAP) \
+	$(LOCAL_DOS_GUEST)
+
+verbose-pass1: local-dos-process
+	sudo ./local-dos-process \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
+	-m $(LOCAL_DOS_SYSMAP) \
+	$(LOCAL_DOS_GUEST)
+
+debug-pass1: local-dos-process
+	sudo gdb --args ./local-dos-process \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
+	-m $(LOCAL_DOS_SYSMAP) \
+	$(LOCAL_DOS_GUEST)
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:
