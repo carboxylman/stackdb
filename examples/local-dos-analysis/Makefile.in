@@ -35,6 +35,10 @@ LOCAL_DOS_GUEST         = clientA
 LOCAL_DOS_SYSMAP        = /boot/System.map-2.6.18-xenU
 LOCAL_DOS_PASS2_PID     = 292
 LOCAL_DOS_PASS2_LIST    = $(TOP_SRCDIR)/$(SUBDIR)/syscall-list.txt
+LOCAL_DOS_PASS3_SYSCALL = sys_close # sys_exit_group
+LOCAL_DOS_PASS3_BEGIN   = 411172892 # 411240236
+LOCAL_DOS_PASS3_END     = 411237513
+LOCAL_DOS_PASS3_PID     = $(LOCAL_DOS_PASS2_PID)
 
 include $(OBJDIR)/Makeconf
 
