@@ -33,8 +33,8 @@ LOCAL_DOS_DAEMON_LOG    = /local/sda4/logs/ttd.log
 LOCAL_DOS_REPLAY_CONF   = /local/sda4/vm-images/client_A_solo_with_net.conf
 LOCAL_DOS_GUEST         = clientA
 LOCAL_DOS_SYSMAP        = /boot/System.map-2.6.18-xenU
-LOCAL_DOS_PASS2_BRCTR   = 411099251 #389521494
-LOCAL_DOS_PASS2_PID     = 292 #293
+LOCAL_DOS_PASS2_PID     = 292
+LOCAL_DOS_PASS2_LIST    = $(TOP_SRCDIR)/$(SUBDIR)/syscall-list.txt
 
 include $(OBJDIR)/Makeconf
 
@@ -71,7 +71,8 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := local-dos-process
+PROGRAMS := local-dos-process \
+            local-dos-syscall
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -95,6 +96,10 @@ include $(TOP_SRCDIR)/Makerules
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
 local-dos-process: $(HEADERS) $(LIBRARIES) $(OBJECTS) local-dos-process.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+local-dos-syscall: $(HEADERS) $(LIBRARIES) $(OBJECTS) local-dos-syscall.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -147,24 +152,24 @@ debug-pass1: local-dos-process
 
 run-pass2: local-dos-syscall
 	sudo ./local-dos-syscall \
-	-b $(LOCAL_DOS_PASS2_BRCTR) \
 	-p $(LOCAL_DOS_PASS2_PID) \
+	-s $(LOCAL_DOS_PASS2_LIST) \
 	-m $(LOCAL_DOS_SYSMAP) \
 	$(LOCAL_DOS_GUEST)
 
 verbose-pass2: local-dos-syscall
 	sudo ./local-dos-syscall \
 	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
-	-b $(LOCAL_DOS_PASS2_BRCTR) \
 	-p $(LOCAL_DOS_PASS2_PID) \
+	-s $(LOCAL_DOS_PASS2_LIST) \
 	-m $(LOCAL_DOS_SYSMAP) \
 	$(LOCAL_DOS_GUEST)
 
 debug-pass2: local-dos-syscall
 	sudo gdb --args ./local-dos-syscall \
 	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
-	-b $(LOCAL_DOS_PASS2_BRCTR) \
 	-p $(LOCAL_DOS_PASS2_PID) \
+	-s $(LOCAL_DOS_PASS2_LIST) \
 	-m $(LOCAL_DOS_SYSMAP) \
 	$(LOCAL_DOS_GUEST)
 
