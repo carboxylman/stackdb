@@ -157,7 +157,7 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:b:p:s:")) != -1)
+    while ((ch = getopt(argc, argv, "dl:m:p:s:")) != -1)
     {
         switch(ch)
         {
