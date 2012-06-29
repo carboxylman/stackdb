@@ -84,7 +84,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
     struct range *funcrange;
     unsigned char *funccode = NULL;
     unsigned int funclen;
-    struct inst_cf_data *idata;
+    struct inst_data *idata;
     size_t bufsiz;
     char *buf;
 
@@ -172,7 +172,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 
     /* Now register probes for each return instruction! */
     for (j = 0; j < array_list_len(cflist); ++j) {
-	idata = (struct inst_cf_data *)array_list_item(cflist,j);
+	idata = (struct inst_data *)array_list_item(cflist,j);
 
 	if (idata->type != INST_RET) {
 	    verror("disasm instr was not RET!\n");
@@ -255,7 +255,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     struct range *funcrange;
     unsigned char *funccode = NULL;
     unsigned int funclen;
-    struct inst_cf_data *idata;
+    struct inst_data *idata;
     size_t bufsiz;
     char *buf;
     GHashTable *itypes = NULL;
@@ -327,7 +327,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 
     /* Now register probes for each instruction! */
     for (j = 0; j < array_list_len(cflist); ++j) {
-	idata = (struct inst_cf_data *)array_list_item(cflist,j);
+	idata = (struct inst_data *)array_list_item(cflist,j);
 
 	/* We should be in the same range, of course; this should never
 	 * happen!

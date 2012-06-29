@@ -21,25 +21,42 @@
 
 #include "common.h"
 
+extern char *const inst_type_names[];
+extern char *const reg_type_names[];
+
 typedef enum {
     INST_NONE    = 0,
     INST_RET,
+    INST_IRET,
     INST_CALL,
     INST_SYSCALL,
     INST_SYSRET,
+    INST_SYSENTER,
+    INST_SYSEXIT,
     INST_INT,
+    INST_INT3,
+    INST_INTO,
     INST_JMP,
     INST_JCC,
     INST_CMOV,
 } inst_type_t;
 
+#define INST_TYPE_NAME(inst_type) (((inst_type) < (sizeof(inst_type_names) \
+						   / sizeof(inst_type_names[0]))) \
+				   ? inst_type_names[(inst_type)] : "UNKNOWN")
+
 typedef enum {
     INST_CF_NONE    = 0,
     INST_CF_RET     = 1 << INST_RET,
+    INST_CF_IRET    = 1 << INST_IRET,
     INST_CF_CALL    = 1 << INST_CALL,
     INST_CF_SYSCALL = 1 << INST_SYSCALL,
     INST_CF_SYSRET  = 1 << INST_SYSRET,
+    INST_CF_SYSENTER= 1 << INST_SYSENTER,
+    INST_CF_SYSEXIT = 1 << INST_SYSEXIT,
     INST_CF_INT     = 1 << INST_INT,
+    INST_CF_INT3    = 1 << INST_INT3,
+    INST_CF_INTO    = 1 << INST_INTO,
     INST_CF_JMP     = 1 << INST_JMP,
     INST_CF_JCC     = 1 << INST_JCC,
     INST_CF_CMOV    = 1 << INST_CMOV,
@@ -69,19 +86,66 @@ typedef enum {
     RG_CR0,RG_UNUSED0,RG_CR2,RG_CR3,RG_CR4,
     RG_UNUSED1,RG_UNUSED2,RG_UNUSED3,RG_CR8,
     RG_DR0,RG_DR1,RG_DR2,RG_DR3,RG_UNUSED4,RG_UNUSED5,RG_DR6,RG_DR7
-} reg_type_t;
+} reg_t;
 
-struct inst_cf_data {
+#define REG_NAME(inst_type) (((inst_type) < (sizeof(inst_type_names) \
+						   / sizeof(inst_type_names[0]))) \
+			     ? inst_type_names[(inst_type)] : "UNKNOWN")
+
+#define LOGDUMPDISASMIDATA(dl,lt,idata)		\
+    vdebugc((dl),(lt),					\
+	    "inst_data(%s:+%"PRIdOFFSET":%s%s%s%s:disp=%"PRIu64","	\
+	    "target=0x%"PRIxADDR")\n",					\
+	    INST_TYPE_NAME((idata)->type),(idata)->offset,		\
+	    ((idata)->cf.is_relative) ? "relative," : "",		\
+	    ((idata)->cf.is_mem) ? "mem," : "",				\
+	    ((idata)->cf.is_reg) ? "reg," : "",				\
+	    ((idata)->cf.target_in_segment) ? "target_in_segment," : "", \
+	    (idata)->cf.disp,(idata)->target);
+
+struct inst_data {
     inst_type_t type;
-    int target_is_indirect:1,
-        target_is_offset:1,
-        target_is_reg:1;
     OFFSET offset;
+
     union {
-	reg_type_t target_reg;
-	OFFSET target_offset;
-	ADDR target_addr;
+	struct {
+	    int is_relative:1,
+		is_mem:1,
+		is_reg:1,
+		target_in_segment;
+
+	    uint64_t disp;
+	    union {
+		/* If it's an interrupt, which number. */
+		uint8_t intnum;
+		/* If it's an indirect jump/call, which register or mem
+		 * contains the target address.
+		 */
+		struct {
+		    reg_t base_reg;
+		    reg_t index_reg;
+		    uint8_t scale;
+		};
+		ADDR mem;
+		/* If it's a relative branch, the offset. */
+		OFFSET reloffset;
+		/* If it's an absolute branch, the dest addr. */
+		ADDR addr;
+	    };
+	    /* If the base address of the bytes to disasm is available, and the
+	     * branch is an absolute branch, we can compute the actual
+	     * destination.
+	     */
+	    ADDR target;
+	} cf;
     };
+};
+
+struct disasm_data {
+    struct bsymbol *bsymbol;
+    ADDR start;
+    unsigned int len;
+    unsigned char *code;
 };
 
 #endif /* __DISASM_H__ */
