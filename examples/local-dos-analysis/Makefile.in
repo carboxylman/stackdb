@@ -33,11 +33,11 @@ LOCAL_DOS_DAEMON_LOG    = /local/sda4/logs/ttd.log
 LOCAL_DOS_REPLAY_CONF   = /local/sda4/vm-images/client_A_solo_with_net.conf
 LOCAL_DOS_GUEST         = clientA
 LOCAL_DOS_SYSMAP        = /boot/System.map-2.6.18-xenU
-LOCAL_DOS_PASS2_PID     = 292
+LOCAL_DOS_PASS2_PID     = 292 # 293
 LOCAL_DOS_PASS2_LIST    = $(TOP_SRCDIR)/$(SUBDIR)/syscall-list.txt
-LOCAL_DOS_PASS3_SYSCALL = sys_close # sys_exit_group
-LOCAL_DOS_PASS3_BEGIN   = 411172892 # 411240236
-LOCAL_DOS_PASS3_END     = 411237513
+LOCAL_DOS_PASS3_SYSCALL = sys_exit_group # sys_close
+LOCAL_DOS_PASS3_BEGIN   = 411240236 # 411172892
+#LOCAL_DOS_PASS3_END     = 411237513
 LOCAL_DOS_PASS3_PID     = $(LOCAL_DOS_PASS2_PID)
 
 include $(OBJDIR)/Makeconf
@@ -71,12 +71,13 @@ endif
 
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/debug.h
 
-OBJECTS := 
+OBJECTS := util.lo
 
 LIBRARIES := 
 
 PROGRAMS := local-dos-process \
-            local-dos-syscall
+            local-dos-syscall \
+            local-dos-cfi
 
 STATICLIBS := $(OBJDIR)/examples/context-aware-probes/ctxprobes.a \
               $(OBJDIR)/target/libtarget.a \
@@ -104,6 +105,10 @@ local-dos-process: $(HEADERS) $(LIBRARIES) $(OBJECTS) local-dos-process.lo $(STA
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 local-dos-syscall: $(HEADERS) $(LIBRARIES) $(OBJECTS) local-dos-syscall.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+local-dos-cfi: $(HEADERS) $(LIBRARIES) $(OBJECTS) local-dos-cfi.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -174,6 +179,32 @@ debug-pass2: local-dos-syscall
 	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
 	-p $(LOCAL_DOS_PASS2_PID) \
 	-s $(LOCAL_DOS_PASS2_LIST) \
+	-m $(LOCAL_DOS_SYSMAP) \
+	$(LOCAL_DOS_GUEST)
+
+run-pass3: local-dos-cfi
+	sudo ./local-dos-cfi \
+	-b $(LOCAL_DOS_PASS3_BEGIN) \
+	-s $(LOCAL_DOS_PASS3_SYSCALL) \
+	-p $(LOCAL_DOS_PASS3_PID) \
+	-m $(LOCAL_DOS_SYSMAP) \
+	$(LOCAL_DOS_GUEST)
+
+verbose-pass3: local-dos-cfi
+	sudo ./local-dos-cfi \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
+	-b $(LOCAL_DOS_PASS3_BEGIN) \
+	-s $(LOCAL_DOS_PASS3_SYSCALL) \
+	-p $(LOCAL_DOS_PASS3_PID) \
+	-m $(LOCAL_DOS_SYSMAP) \
+	$(LOCAL_DOS_GUEST)
+
+debug-pass3: local-dos-cfi
+	sudo gdb --args ./local-dos-cfi \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
+	-b $(LOCAL_DOS_PASS3_BEGIN) \
+	-s $(LOCAL_DOS_PASS3_SYSCALL) \
+	-p $(LOCAL_DOS_PASS3_PID) \
 	-m $(LOCAL_DOS_SYSMAP) \
 	$(LOCAL_DOS_GUEST)
 
