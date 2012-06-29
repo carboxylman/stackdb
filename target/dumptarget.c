@@ -362,12 +362,35 @@ int function_dump_args(struct probe *probe,void *handler_data,
 		       struct probe *trigger) {
     struct value *value;
     int j;
+    ADDR probeaddr;
+    struct probepoint *probepoint;
 
     fflush(stderr);
     fflush(stdout);
 
+    struct dump_info udn = {
+	.stream = stderr,
+	.prefix = "",
+	.detail = 1,
+	.meta = 1,
+    };
+
+    if (!probe->probepoint && trigger) {
+	probepoint = trigger->probepoint;
+	probeaddr = probe_addr(trigger);
+    }
+    else {
+	probeaddr = probe_addr(probe);
+	probepoint = probe->probepoint;
+    }
+
+    //struct bsymbol *bsymbol = target_lookup_sym_addr(t,probeaddr);
+    //ip = target_read_reg(t,t->ipregno);
+
     fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",
-	    probe->bsymbol->lsymbol->symbol->name,probe_addr(probe));
+	    probe->bsymbol->lsymbol->symbol->name,probeaddr);
+
+    //bsymbol_dump(bsymbol,&udn);
 
     /* Make a chain with room for one more -- the
      * one more is each arg we're going to process.
@@ -391,7 +414,7 @@ int function_dump_args(struct probe *probe,void *handler_data,
     };
     struct bsymbol tbsym = {
 	.lsymbol = &tlsym,
-	.region = probe->probepoint->range->region,
+	.region = probepoint->range->region,
     };
 
     ++tmp->len;
@@ -445,12 +468,24 @@ int function_dump_args(struct probe *probe,void *handler_data,
 
 int function_post(struct probe *probe,void *handler_data,
 		  struct probe *trigger) {
+    ADDR probeaddr;
+    struct probepoint *probepoint;
+
+    if (!probe->probepoint && trigger) {
+	probepoint = trigger->probepoint;
+	probeaddr = probe_addr(trigger);
+    }
+    else {
+	probeaddr = probe_addr(probe);
+	probepoint = probe->probepoint;
+    }
+
     fflush(stderr);
     fflush(stdout);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") post handler",
 	    probe->bsymbol->lsymbol->symbol->name,
-	    probe_addr(probe));
+	    probeaddr);
     fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stderr);
