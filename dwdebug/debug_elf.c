@@ -480,6 +480,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 		symbol->size = sym->st_size;
 
 		symbol->base_addr = (ADDR)sym->st_value;
+		symbol->has_base_addr = 1;
 
 		symtab_insert(debugfile->elf_symtab,symbol,0);
 
