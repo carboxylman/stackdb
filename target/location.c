@@ -46,6 +46,7 @@ char *location_load(struct target *target,struct memregion *region,
 		    struct location *location,load_flags_t flags,
 		    void *buf,int bufsiz,
 		    struct array_list *symbol_chain,
+		    ADDR *addr_saveptr,
 		    struct memrange **range_saveptr) {
     ADDR final_location = 0;
     REGVAL regval;
@@ -101,6 +102,8 @@ char *location_load(struct target *target,struct memregion *region,
 	    vwarn("could not resolve a range with final location!\n");
 	else if (range_saveptr)
 	    *range_saveptr = range;
+	if (addr_saveptr)
+	    *addr_saveptr = final_location;
 
         vdebug(5,LOG_T_LOC,"final_location = 0x%" PRIxADDR "\n",final_location);
 
@@ -223,7 +226,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	return 0;
     case LOCTYPE_REG:
 	vwarn("cannot resolve LOCTYPE_REG; invalid!\n");
-	errno = EINVAL;
+	errno = EADDRNOTAVAIL;
 	return 0;
     case LOCTYPE_ADDR:
 	errno = 0;
@@ -558,6 +561,9 @@ int location_resolve_function_prologue_end(struct target *target,
 	vwarn("function %s has no prologue_end!\n",symbol->name);
 	return -1;
     }
+
+    vdebug(5,LOG_T_LOC,"prologue_end of %s is 0x%"PRIxADDR"\n",symbol->name,
+	   symbol->s.ii->d.f.prologue_end);
 
     /* Translate the obj address to something real in this region. */
     *addr_saveptr = memregion_relocate(bsymbol->region,

@@ -67,6 +67,7 @@ typedef enum {
     LOAD_FLAG_AUTO_DEREF_RECURSE = 32,
     LOAD_FLAG_AUTO_STRING = 64,
     LOAD_FLAG_NO_AUTO_RESOLVE = 128,
+    LOAD_FLAG_VALUE_FORCE_COPY = 256,
 } load_flags_t;
 
 /**
@@ -286,9 +287,6 @@ REFCNT bsymbol_release(struct bsymbol *bsymbol);
 /**
  ** Value functions.
  **/
-/* The only thing a user should do to a value is free it, or "cast" it to
- * something else.
- */
 void value_free(struct value *value);
 
 /**
@@ -308,20 +306,29 @@ int64_t          v_i64(struct value *v);
 ADDR             v_addr(struct value *v);
 
 /**
- ** Quick raw value converters
+ ** Value update functions.
  **/
-signed char      rv_c(void *buf);
-unsigned char    rv_uc(void *buf);
-wchar_t          rv_wc(void *buf);
-uint8_t          rv_u8(void *buf);
-uint16_t         rv_u16(void *buf);
-uint32_t         rv_u32(void *buf);
-uint64_t         rv_u64(void *buf);
-int8_t           rv_i8(void *buf);
-int16_t          rv_i16(void *buf);
-int32_t          rv_i32(void *buf);
-int64_t          rv_i64(void *buf);
-ADDR             rv_addr(void *buf);
+int value_update(struct value *value,const char *buf,int bufsiz);
+int value_update_zero(struct value *value,const char *buf,int bufsiz);
+int value_update_c(struct value *value,signed char v);
+int value_update_uc(struct value *value,unsigned char v);
+int value_update_wc(struct value *value,wchar_t v);
+int value_update_u8(struct value *value,uint8_t v);
+int value_update_u16(struct value *value,uint16_t v);
+int value_update_u32(struct value *value,uint32_t v);
+int value_update_u64(struct value *value,uint64_t v);
+int value_update_i8(struct value *value,int8_t v);
+int value_update_i16(struct value *value,int16_t v);
+int value_update_i32(struct value *value,int32_t v);
+int value_update_i64(struct value *value,int64_t v);
+int value_update_addr(struct value *value,ADDR v);
+int value_update_num(struct value *value,int64_t v);
+int value_update_unum(struct value *value,uint64_t v);
+
+/**
+ ** The single value store function.
+ **/
+int target_store_value(struct target *target,struct value *value);
 
 #define value_to_u64(v) (*((uint64_t *)(v)->buf))
 #define value_to_u32(v) (*((uint32_t *)(v)->buf))
@@ -352,6 +359,22 @@ ADDR             rv_addr(void *buf);
 #else
 #define value_to_num(v) value_to_i32((v))
 #endif
+
+/**
+ ** Quick raw value converters
+ **/
+signed char      rv_c(void *buf);
+unsigned char    rv_uc(void *buf);
+wchar_t          rv_wc(void *buf);
+uint8_t          rv_u8(void *buf);
+uint16_t         rv_u16(void *buf);
+uint32_t         rv_u32(void *buf);
+uint64_t         rv_u64(void *buf);
+int8_t           rv_i8(void *buf);
+int16_t          rv_i16(void *buf);
+int32_t          rv_i32(void *buf);
+int64_t          rv_i64(void *buf);
+ADDR             rv_addr(void *buf);
 
 /**
  ** The primary target data structures.
@@ -535,6 +558,8 @@ struct value {
     ADDR addr;
     /* The value of the PC when we last resolved this symbol's address. */
     ADDR addr_resolved_ip;
+
+    struct value *parent_value;
 };
 
 

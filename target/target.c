@@ -272,6 +272,7 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     struct debugfile *debugfile;
     struct bsymbol *bsymbol;
     struct lsymbol *lsymbol;
+    struct memrange *range;
 
     if (list_empty(&target->spaces))
 	return NULL;
@@ -282,7 +283,7 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
 
     list_for_each_entry(space,&target->spaces,space) {
 	list_for_each_entry(region,&space->regions,region) {
-	    if (memregion_contains_real(region,addr))
+	    if ((range = memregion_find_range_real(region,addr)))
 		goto found;
 	}
     }
@@ -293,7 +294,8 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     g_hash_table_iter_init(&iter,region->debugfiles);
     while (g_hash_table_iter_next(&iter,
 				  (gpointer)&key,(gpointer)&debugfile)) {
-	if ((lsymbol = debugfile_lookup_addr(debugfile,addr))) {
+	if ((lsymbol = debugfile_lookup_addr(debugfile,
+					     memrange_unrelocate(range,addr)))) {
 	    bsymbol = bsymbol_create(lsymbol,region,NULL);
 	    /* bsymbol_create took a ref to lsymbol, so we release it! */
 	    lsymbol_release(lsymbol);
@@ -495,6 +497,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	value->bufsiz = strlen(value->buf) + 1;
 	value->isstring = 1;
 	value->range = range;
+	value->addr = ptraddr;
 
 	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
 
@@ -507,7 +510,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 
 	value = value_create_noalloc(NULL,datatype);
 	value->mmap = location_mmap(target,region,&ptrloc,
-				    flags,&value->buf,NULL,NULL);
+				    flags,&value->buf,NULL,&range);
 	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
 	    value->buf = NULL;
 	    goto errout;
@@ -527,6 +530,9 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 		goto errout;
 	}
 
+	value->addr = ptrloc.l.addr;
+	value->range = range;
+
 	/* success! */
 	goto out;
     }
@@ -542,6 +548,9 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 				     (unsigned char *)value->buf,
 				     value->bufsiz))
 	    goto errout;
+
+	value->addr = ptraddr;
+	value->range = range;
     }
 
  out:
@@ -562,19 +571,32 @@ struct value *target_load_value_member(struct target *target,
 				       struct value *value,const char *member,
 				       const char *delim,load_flags_t flags) {
     struct value *retval;
-    struct symbol *startdatatype = value->type;
-    struct symbol *datatype = value->type;
+    struct symbol *vstartdatatype = symbol_type_skip_qualifiers(value->type);
+    struct symbol *vdatatype = vstartdatatype;
+    struct symbol *mdatatype;
     struct lsymbol *ls;
     ADDR paddr = 0;
     struct memrange *range;
     int totaloffset = 0;
 
-    /* If the datatype is a pointer, and we are autoloading pointers,
+    /*
+     * We have to handle two levels of pointers, potentially.  Suppose
+     * that the @value's type is a pointer.  Then we have to load that
+     * pointer (and any others), then find the member offset inside the
+     * pointed-to struct/union, and then... if THAT member is itself a
+     * pointer, we read THAT pointer (and any others) until we don't
+     * have any more pointers.
+     *
+     * Of course, that behavior is only enabled when
+     * LOAD_FLAG_AUTO_DEREF is set.
+     */
+
+    /* If the value's datatype is a pointer, and we are autoloading pointers,
      * then try to find a struct/union type that is pointed to!
      */
-    if (SYMBOL_IST_PTR(startdatatype)) {
+    if (SYMBOL_IST_PTR(vstartdatatype)) {
 	if (flags & LOAD_FLAG_AUTO_DEREF) {
-	    datatype = symbol_type_skip_qualifiers(startdatatype);
+	    vdatatype = symbol_type_skip_ptrs(vstartdatatype);
 	    paddr = v_addr(value);
 	}
 	else {
@@ -583,14 +605,18 @@ struct value *target_load_value_member(struct target *target,
 	}
     }
 
-    if (!SYMBOL_IST_FULL_STUN(datatype)) {
+    if (!SYMBOL_IST_FULL_STUN(vdatatype)) {
 	vwarn("symbol %s is not a full struct/union type (is %s)!\n",
-	      symbol_get_name(datatype),SYMBOL_TYPE(datatype->type));
+	      symbol_get_name(vdatatype),SYMBOL_TYPE(vdatatype->type));
 	errno = EINVAL;
 	return NULL;
     }
 
-    ls = symbol_lookup_member(datatype,member,delim);
+    /*
+     * Resolve the member symbol within vdatatype, the struct/union real
+     * datatype.
+     */
+    ls = symbol_lookup_member(vdatatype,member,delim);
     if (!ls)
 	return NULL;
     if (ls->symbol->s.ii->l.loctype != LOCTYPE_MEMBER_OFFSET) {
@@ -601,16 +627,7 @@ struct value *target_load_value_member(struct target *target,
 	errno = EINVAL;
 	return NULL;
     }
-
-    /* Try to load pointers if we have any -- if we don't, this does
-     * nothing.
-     */
-    paddr = target_autoload_pointers(target,datatype,paddr,flags,&datatype,
-				     &range);
-    if (errno) {
-	lsymbol_release(ls);
-	return NULL;
-    }
+    mdatatype = symbol_type_skip_qualifiers(ls->symbol->datatype);
 
     /* Resolve the member offset! */
     totaloffset = location_resolve_offset(&ls->symbol->s.ii->l,
@@ -622,59 +639,182 @@ struct value *target_load_value_member(struct target *target,
 	return NULL;
     }
 
-    /* If we have a pointer, we have to load paddr + totaloffset. */
-    if (paddr
-	&& flags & LOAD_FLAG_AUTO_STRING
-	&& symbol_type_is_char(datatype)) {
-	/* XXX: should we use datatype, or the last pointer to datatype? */
-	retval = value_create_noalloc(ls,datatype);
+    /* Try to load the address of @value if @value was a pointer. */
+    if (paddr) {
+	vdatatype = vstartdatatype;
+	paddr = target_autoload_pointers(target,vdatatype,paddr,flags,&vdatatype,
+					 &range);
+	if (errno) {
+	    lsymbol_release(ls);
+	    return NULL;
+	}
+    }
 
-	if (!(retval->buf = (char *)__target_load_addr_real(target,range,
-							    paddr,flags,
-							    NULL,0))) {
-	    verror("failed to autoload char pointer\n");
+    /*
+     * If the member we are loading is itself a pointer to a string, and
+     * we're autoloading strings, do that.
+     */
+    if (flags & LOAD_FLAG_AUTO_STRING
+	&& SYMBOL_IST_PTR(mdatatype)
+	&& symbol_type_is_char(symbol_type_skip_ptrs(mdatatype))) {
+	/* If we loaded pointers to @value, we have to load paddr +
+	 * totaloffset to get to the member's pointer.  If we actually
+	 * had the whole struct in @value when we were called, we don't
+	 * have to load the first pointer.
+	 */
+	if (paddr) {
+	    if (!__target_load_addr_real(target,range,paddr + totaloffset,flags,
+					 (unsigned char *)&paddr,
+					 target->ptrsize)) {
+		verror("failed to load value/member dual pointer\n");
+		retval = NULL;
+		goto out;
+	    }
+	}
+	/* Otherwise, the pointer is already at the totaloffset in @value.*/
+	else {
+	    memcpy(&paddr,value->buf + totaloffset,target->ptrsize);
+	    /* Skip one pointer because this value *is* the address
+	     * contained in the first pointer.
+	     */
+	    mdatatype = mdatatype->datatype;
+	    if (!target_find_memory_real(target,paddr,NULL,NULL,&range)) {
+		errno = EFAULT;
+		return NULL;
+	    }
+	}
+
+	/* Now, since the member is a pointer too, try to autoload as
+	 * many as possible.
+	 */
+	paddr = target_autoload_pointers(target,mdatatype,paddr,flags,
+					 &mdatatype,&range);
+	if (errno) {
+	    retval = NULL;
+	    goto out;
+	}
+
+	/* XXX: should we use mdatatype, or the last pointer to mdatatype? */
+	retval = value_create_noalloc(ls,mdatatype);
+
+	if (!(retval->buf = (char *)__target_load_addr_real(target,range,paddr,
+							    flags,NULL,0))) {
+	    verror("failed to autoload char pointer at 0x%"PRIxADDR"\n",paddr);
+	    value_free(retval);
+	    retval = NULL;
+	    goto out;
 	}
 	else {
 	    retval->bufsiz = strlen(retval->buf) + 1;
 	    retval->isstring = 1;
 	    retval->range = range;
+	    retval->addr = paddr;
 
 	    vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",
 		   retval->bufsiz);
 	}
     }
-    else if (paddr) {
-	retval = value_create(ls,symbol_get_datatype(ls->symbol));
+    else if (flags & LOAD_FLAG_AUTO_DEREF
+	     && SYMBOL_IST_PTR(mdatatype)) {
+	/* If we loaded pointers to @value, we have to load paddr +
+	 * totaloffset to get to the member's pointer.  If we actually
+	 * had the whole struct in @value when we were called, we don't
+	 * have to load the first pointer.
+	 */
+	if (paddr) {
+	    if (!__target_load_addr_real(target,range,paddr + totaloffset,flags,
+					 (unsigned char *)&paddr,
+					 target->ptrsize)) {
+		verror("failed to load value/member dual pointer\n");
+		retval = NULL;
+		goto out;
+	    }
+	}
+	/* Otherwise, the pointer is already at the totaloffset in @value.*/
+	else {
+	    memcpy(&paddr,value->buf + totaloffset,target->ptrsize);
+	    /* Skip one pointer because this value *is* the address
+	     * contained in the first pointer.
+	     */
+	    mdatatype = mdatatype->datatype;
+	    if (!target_find_memory_real(target,paddr,NULL,NULL,&range)) {
+		errno = EFAULT;
+		return NULL;
+	    }
+	}
 
-	if (!__target_load_addr_real(target,range,paddr + totaloffset,flags,
+	/* Now, since the member is a pointer too, try to autoload as
+	 * many as possible.
+	 */
+	paddr = target_autoload_pointers(target,mdatatype,paddr,flags,
+					 &mdatatype,&range);
+	if (errno) {
+	    verror("failed to autoload member pointer\n");
+	    retval = NULL;
+	    goto out;
+	}
+
+	retval = value_create(ls,mdatatype);
+
+	if (!__target_load_addr_real(target,range,paddr,flags,
 				     (unsigned char *)retval->buf,
 				     retval->bufsiz)) {
-	    verror("failed to autoload pointer\n");
+	    verror("failed to load value at 0x%"PRIxADDR"\n",paddr);
+	    asm("int $3");
 	    value_free(retval);
 	    retval = NULL;
+	    goto out;
 	}
 	else {
 	    retval->range = range;
+	    retval->addr = paddr;
 
 	    vdebug(5,LOG_T_SYMBOL,"autoloaded pointer with len %d\n",
 		   retval->bufsiz);
 	}
     }
-    else {
+    else if (paddr) {
+	/* If we loaded pointers to @value, we have to load paddr +
+	 * totaloffset to get to the member's pointer.  Then we have to
+	 * load the whole pointed-to member like normal.
+	 */
 	retval = value_create(ls,symbol_get_datatype(ls->symbol));
 	retval->range = value->range;
-	memcpy(retval->buf,value->buf + totaloffset,retval->bufsiz);
-	vdebug(5,LOG_T_SYMBOL,"got value from value at byte offset %d\n",
-	       totaloffset);
+	retval->addr = paddr + totaloffset;
+	
+	if (!__target_load_addr_real(target,range,paddr + totaloffset,flags,
+				     (unsigned char *)retval->buf,
+				     retval->bufsiz)) {
+	    verror("failed to load member inside value pointer at 0x%"PRIxADDR"\n",
+		   paddr + totaloffset);
+	    value_free(retval);
+	    retval = NULL;
+	    goto out;
+	}
+    }
+    else {
+	/* The value we need is entirely contain in @value, yay!  Easy. */
+	retval = value_create(ls,symbol_get_datatype(ls->symbol));
+	retval->range = value->range;
+	retval->addr = value->addr + totaloffset;
+	if (flags & LOAD_FLAG_VALUE_FORCE_COPY) {
+	    memcpy(retval->buf,value->buf + totaloffset,retval->bufsiz);
+	    vdebug(5,LOG_T_SYMBOL,
+		   "copied value from value buf at byte offset %d\n",
+		   totaloffset);
+	}
+	else {
+	    retval->buf = value->buf + totaloffset;
+	    retval->parent_value = value;
+	    vdebug(5,LOG_T_SYMBOL,
+		   "shared value from value buf at byte offset %d\n",
+		   totaloffset);
+	}
     }
 
+ out:
     lsymbol_release(ls);
     return retval;
-}
-
-struct value *target_load_bsymbol(struct target *target,
-				  struct bsymbol *bsymbol,load_flags_t flags) {
-
 }
 
 /*
@@ -692,29 +832,40 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
     int rc;
     struct symbol *symbol;
     struct array_list *symbol_chain;
-    struct bsymbol bsymbol_slice;
-    struct lsymbol lsymbol_slice;
     struct symbol *datatype;
     OFFSET offset;
     struct memregion *current_region = bsymbol->region;
     struct memrange *current_range = bsymbol->range;
     load_flags_t tflags = flags | LOAD_FLAG_AUTO_DEREF;
+    struct array_list *tchain = NULL;
 
     symbol_chain = bsymbol->lsymbol->chain;
     alen = array_list_len(symbol_chain);
+    symbol = (struct symbol *)array_list_item(symbol_chain,alen - 1);
+
+    /* 
+     * If the last symbol is a function, we only want to return its
+     * base address.  So do that.
+     */
+    if (i == alen && SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	if ((rc = location_resolve_symbol_base(target,bsymbol,
+					       &retval,&current_range))) {
+	    verror("could not resolve base addr for function %s!\n",
+		   symbol_get_name(symbol));
+	    errno = rc;
+	    goto errout;
+	}
+	vdebug(5,LOG_T_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
+	       symbol_get_name(symbol),retval);
+	goto out;
+    }
 
     /*
      * We maintain a "slice" of the lsymbol chain, because we only want
      * to pass the subset of it that is our current value of i -- the
      * part of the list we have traversed.
      */
-    lsymbol_slice.refcnt = 1;
-    lsymbol_slice.chain = array_list_clone(symbol_chain,0);
-
-    bsymbol_slice.lsymbol = &lsymbol_slice;
-    bsymbol_slice.region = bsymbol->region;
-    bsymbol_slice.range = bsymbol->range;
-    bsymbol_slice.refcnt = 1;
+    tchain = array_list_clone(symbol_chain,0);
 
     /*
      * We traverse through the lsymbol, loading nested chunks.  If the
@@ -736,26 +887,9 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
     while (1) {
 	symbol = (struct symbol *)array_list_item(symbol_chain,i);
 	++i;
-	lsymbol_slice.chain->len = i;
-	lsymbol_slice.symbol = symbol;
+	tchain->len = i;
 
-	/* 
-	 * If the last symbol is a function, we only want to return its
-	 * base address.  So do that.
-	 */
-	if (i == alen && SYMBOL_IS_FULL_FUNCTION(symbol)) {
-	    if ((rc = location_resolve_symbol_base(target,&bsymbol_slice,
-						   &retval,&current_range))) {
-		verror("could not resolve base addr for function %s!\n",
-		       symbol_get_name(symbol));
-		errno = rc;
-		goto errout;
-	    }
-	    vdebug(5,LOG_T_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
-		   symbol_get_name(symbol),retval);
-	    goto out;
-	}
-	else if (!SYMBOL_IS_FULL_VAR(symbol)) {
+	if (!SYMBOL_IS_FULL_VAR(symbol)) {
 	    verror("symbol %s of type %s is not a full variable!\n",
 		   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type));
 	    errno = EINVAL;
@@ -770,7 +904,7 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
 	}
 	else if (symbol->ismember) {
 	    offset = location_resolve_offset(&symbol->s.ii->l,
-					     lsymbol_slice.chain,NULL,NULL);
+					     tchain,NULL,NULL);
 	    if (errno) {
 		verror("could not resolve offset for member %s\n",
 		       symbol_get_name(symbol));
@@ -783,16 +917,36 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
 		   symbol_get_name(symbol),offset,retval);
 	}
 	else {
-	    retval = location_resolve(target,current_region,&symbol->s.ii->l,
-				      lsymbol_slice.chain,&current_range);
-	    if (errno) {
-		verror("could not resolve location for symbol %s\n",
-		       symbol_get_name(symbol));
-		goto errout;
+	    if (LOCATION_IN_REG(&symbol->s.ii->l)) {
+		/* If this var is in a register, and it's the last
+		 * symbol on the chain, we can't provide an address for
+		 * it!
+		 *
+		 * Actually, this situation can never happen; we could
+		 * never give an address for a member of a struct inside
+		 * a register; and if the value inside the register is a
+		 * pointer, location_resolve handles that case for us.
+		 *
+		 * So, this should never happen.
+		 */
+		if (1 || i == alen) {
+		    errno = EADDRNOTAVAIL;
+		    goto errout;
+		}
 	    }
-	    current_region = current_range->region;
-	    vdebug(5,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
-		   symbol_get_name(symbol),retval);
+	    else {
+		retval = location_resolve(target,current_region,
+					  &symbol->s.ii->l,
+					  tchain,&current_range);
+		if (errno) {
+		    verror("could not resolve location for symbol %s\n",
+			   symbol_get_name(symbol));
+		    goto errout;
+		}
+		current_region = current_range->region;
+		vdebug(5,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		       symbol_get_name(symbol),retval);
+	    }
 	}
 
 	/*
@@ -828,7 +982,7 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
     retval = 0;
 
  out:
-    array_list_free(lsymbol_slice.chain);
+    array_list_free(tchain);
     if (range_saveptr)
 	*range_saveptr = current_range;
     return retval;
@@ -846,6 +1000,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     REGVAL ip;
     ADDR ip_addr;
     ADDR ptraddr = 0;
+    ADDR finaladdr = 0;
     struct location ptrloc;
     struct memregion *ptrregion = NULL;
     struct memrange *ptrrange = NULL;
@@ -921,7 +1076,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	 */
 	range = NULL;
 	if (!location_load(target,region,&(symbol->s.ii->l),LOAD_FLAG_NONE,
-			   &ptraddr,target->ptrsize,symbol_chain,&range)) {
+			   &ptraddr,target->ptrsize,symbol_chain,&finaladdr,&range)) {
 	    verror("auto_deref: could not load ptr for symbol %s!\n",
 		   symbol->name);
 	    goto errout;
@@ -980,6 +1135,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	value->bufsiz = strlen(value->buf) + 1;
 	value->isstring = 1;
 	value->range = ptrrange;
+	value->addr = ptraddr;
 
 	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
 
@@ -1011,9 +1167,11 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	    if (!location_load(target,(ptraddr) ? ptrregion: region,
 			       (ptraddr) ? &ptrloc : &(symbol->s.ii->l),
 			       flags,value->buf,value->bufsiz,symbol_chain,
-			       &value->range))
+			       &finaladdr,&value->range))
 		goto errout;
 	}
+
+	value->addr = finaladdr;
 
 	/* success! */
 	goto out;
@@ -1032,8 +1190,10 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	if (!location_load(target,region,
 			   (ptraddr) ? &ptrloc : &(symbol->s.ii->l),
 			   flags,value->buf,value->bufsiz,symbol_chain,
-			   &value->range))
+			   &finaladdr,&value->range))
 	    goto errout;
+
+	value->addr = finaladdr;
     }
 
  out:
@@ -1047,6 +1207,18 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	value_free(value);
 
     return NULL;
+}
+
+int target_store_value(struct target *target,struct value *value) {
+    /* mmap'd values were stored whenever they were value_update_*'d */
+    if (value->mmap)
+	return 0;
+
+    if (target_write_addr(target,value->addr,(unsigned long)value->bufsiz,
+			  (unsigned char *)value->buf,NULL)
+	!= (unsigned long)value->bufsiz)
+	return -1;
+    return 0;
 }
 
 int target_find_memory_real(struct target *target,ADDR addr,
@@ -1106,7 +1278,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 	if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))
 	    || ((flags & LOAD_FLAG_AUTO_STRING) 
 		&& SYMBOL_IST_PTR(datatype) 
-		&& symbol_type_is_char(datatype->datatype))) {
+		&& symbol_type_is_char(symbol_type_skip_ptrs(datatype)))) {
 	    if (paddr == 0) {
 		verror("failed to follow NULL pointer #%d\n",nptrs);
 		errno = EFAULT;
@@ -1212,6 +1384,7 @@ struct value *target_load_addr_real(struct target *target,ADDR addr,
 	return NULL;
     }
     value->range = range;
+    value->addr = addr;
 
     if (!__target_load_addr_real(target,range,addr,flags,
 				 (unsigned char *)value->buf,value->bufsiz)) {

@@ -103,7 +103,7 @@ void value_free(struct value *value) {
 		   value->lsymbol->symbol->name);
 	}
     }
-    else
+    else if (!value->parent_value)
 	free(value->buf);
 
     if (value->type)
@@ -128,6 +128,166 @@ int32_t          v_i32(struct value *v) { return *((int32_t *)v->buf); }
 int64_t          v_i64(struct value *v) { return *((int64_t *)v->buf); }
 ADDR             v_addr(struct value *v){ return *((ADDR *)v->buf); }
 
+int value_update(struct value *value,const char *buf,int bufsiz) {
+    if (bufsiz < 0) {
+	errno = EINVAL;
+	return -1;
+    }
+    else if (bufsiz > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    else if (bufsiz > 0)
+	memcpy(value->buf,buf,bufsiz);
+
+    return 0;
+}
+
+int value_update_zero(struct value *value,const char *buf,int bufsiz) {
+    if (bufsiz < 0) {
+	errno = EINVAL;
+	return -1;
+    }
+    else if (bufsiz > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    else if (bufsiz > 0)
+	memcpy(value->buf,buf,bufsiz);
+
+    if (bufsiz < value->bufsiz)
+	memset(value->buf + bufsiz,0,value->bufsiz - bufsiz);
+
+    return 0;
+}
+
+int value_update_c(struct value *value,signed char v) {
+    if ((signed)sizeof(signed char) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(signed char));
+    return 0;
+}
+int value_update_uc(struct value *value,unsigned char v) {
+    if ((signed)sizeof(signed char) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(signed char));
+    return 0;
+}
+int value_update_wc(struct value *value,wchar_t v) {
+    if ((signed)sizeof(signed char) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(signed char));
+    return 0;
+}
+int value_update_u8(struct value *value,uint8_t v) {
+    if ((signed)sizeof(uint8_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(uint8_t));
+    return 0;
+}
+int value_update_u16(struct value *value,uint16_t v) {
+    if ((signed)sizeof(uint16_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(uint16_t));
+    return 0;
+}
+int value_update_u32(struct value *value,uint32_t v) {
+    if ((signed)sizeof(uint32_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(uint32_t));
+    return 0;
+}
+int value_update_u64(struct value *value,uint64_t v) {
+    if ((signed)sizeof(uint64_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(uint64_t));
+    return 0;
+}
+int value_update_i8(struct value *value,int8_t v) {
+    if ((signed)sizeof(int8_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(int8_t));
+    return 0;
+}
+int value_update_i16(struct value *value,int16_t v) {
+    if ((signed)sizeof(int16_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(int16_t));
+    return 0;
+}
+int value_update_i32(struct value *value,int32_t v) {
+    if ((signed)sizeof(int32_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(int32_t));
+    return 0;
+}
+int value_update_i64(struct value *value,int64_t v) {
+    if ((signed)sizeof(int64_t) > value->bufsiz) {
+	errno = EOVERFLOW;
+	return -1;
+    }
+    memcpy(value->buf,&v,sizeof(int64_t));
+    return 0;
+}
+int value_update_addr(struct value *value,ADDR v) {
+    if (value->bufsiz <= (signed)sizeof(ADDR)) {
+	memcpy(value->buf,&v,value->bufsiz);
+    }
+    else /* if (value->bufsiz > sizeof(ADDR)) */ {
+	memcpy(value->buf,&v,sizeof(ADDR));
+    }
+    return 0;
+}
+int value_update_num(struct value *value,int64_t v) {
+    if (value->bufsiz == (signed)sizeof(int64_t))
+	return value_update_i64(value,v);
+    else if (value->bufsiz == (signed)sizeof(int32_t))
+	return value_update_i32(value,(int32_t)v);
+    else if (value->bufsiz == (signed)sizeof(int16_t))
+	return value_update_i16(value,(int16_t)v);
+    else if (value->bufsiz == (signed)sizeof(int8_t))
+	return value_update_i8(value,(int8_t)v);
+    else {
+	errno = EINVAL;
+	return -1;
+    }
+    return 0;
+}
+int value_update_unum(struct value *value,uint64_t v) {
+    if (value->bufsiz == (signed)sizeof(uint64_t))
+	return value_update_u64(value,v);
+    else if (value->bufsiz == (signed)sizeof(uint32_t))
+	return value_update_u32(value,(uint32_t)v);
+    else if (value->bufsiz == (signed)sizeof(uint16_t))
+	return value_update_u16(value,(uint16_t)v);
+    else if (value->bufsiz == (signed)sizeof(uint8_t))
+	return value_update_u8(value,(uint8_t)v);
+    else {
+	errno = EINVAL;
+	return -1;
+    }
+    return 0;
+}
 
 signed char      rv_c(void *buf)   { return *((signed char *)buf); }
 unsigned char    rv_uc(void *buf)  { return *((unsigned char *)buf); }

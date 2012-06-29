@@ -197,6 +197,16 @@ REFCNT bsymbol_free(struct bsymbol *bsymbol,int force);
 /**
  ** Location resolution.
  **/
+/*
+ * Resolves @location to an address.  If necessary, uses @symbol_chain
+ * to do the resolution (i.e., sometimes local vars need a virtual
+ * frame base register value that is computed by looking up the
+ * containing symbol hierarchy).
+ *
+ * If you pass a location that would "resolve" to a register, not a
+ * memory address, we return 0 and set errno EADDRNOTAVAIL.  On other
+ * errors, we return 0 with errno set appropriately.
+ */
 ADDR location_resolve(struct target *target,struct memregion *region,
 		      struct location *location,
 		      struct array_list *symbol_chain,
@@ -204,11 +214,6 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 struct location *location_resolve_loclist(struct target *target,
 					  struct memregion *region,
 					  struct location *location);
-OFFSET location_resolve_member_offset(struct target *target,
-				      struct location *location,
-				      struct array_list *symbol_chain,
-				      struct symbol **top_symbol_saveptr,
-				      int *chain_top_symbol_idx_saveptr);
 int location_can_mmap(struct location *location,struct target *target);
 int location_resolve_symbol_base(struct target *target,
 				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
@@ -225,6 +230,7 @@ char *location_load(struct target *target,struct memregion *region,
 		    struct location *location,load_flags_t flags,
 		    void *buf,int bufsiz,
 		    struct array_list *symbol_chain,
+		    ADDR *addr_saveptr,
 		    struct memrange **range_saveptr);
 char *location_addr_load(struct target *target,struct memrange *range,
 			 ADDR addr,load_flags_t flags,
