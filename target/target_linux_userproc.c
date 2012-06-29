@@ -194,7 +194,8 @@ struct target *linux_userproc_attach(int pid,
     int fd;
     Elf *elf;
     int rc;
-    char *eident;
+    int wordsize;
+    int endian;
 
     vdebug(5,LOG_T_LUP,"opening pid %d\n",pid);
 
@@ -239,62 +240,39 @@ struct target *linux_userproc_attach(int pid,
 	return NULL;
     }
 
-    elf_version(EV_CURRENT);
-    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	verror("elf_begin %s: %s\n",main_exe,elf_errmsg(elf_errno()));
-	return NULL;
-    }
-
-    /* read the ident stuff to get wordsize and endianness info */
-    if (!(eident = elf_getident(elf,NULL))) {
-	verror("elf_getident %s: %s\n",main_exe,elf_errmsg(elf_errno()));
-	elf_end(elf);
-	return NULL;
-    }
-
     target = target_create("linux_userspace_process",NULL,
 			   &linux_userspace_process_ops,dfoptlist);
-    if (!target) {
-	elf_end(elf);
-	errno = ENOMEM;
+    if (!target) 
 	return NULL;
-    }
 
     target->live = 1;
     target->writeable = 1;
 
-    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	target->wordsize = 4;
-	vdebug(3,LOG_T_LUP,"32-bit %s\n",main_exe);
-    }
-    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	target->wordsize = 8;
-	vdebug(3,LOG_T_LUP,"64-bit %s\n",main_exe);
-    }
-    else {
-	verror("unknown elf class %d; not 32/64 bit!\n",
-	       (uint8_t)eident[EI_CLASS]);
-	free(target);
-	elf_end(elf);
+    elf_version(EV_CURRENT);
+    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
+	verror("elf_begin %s: %s\n",main_exe,elf_errmsg(elf_errno()));
+	target_free(target);
 	return NULL;
     }
-    target->ptrsize = target->wordsize;
 
-    if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
-	target->endian = DATA_LITTLE_ENDIAN;
-	vdebug(3,LOG_T_LUP,"little endian %s\n",main_exe);
-    }
-    else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
-	target->endian = DATA_BIG_ENDIAN;
-	vdebug(3,LOG_T_LUP,"big endian %s\n",main_exe);
-    }
-    else {
-	verror("unknown elf data %d; not big/little endian!\n",
-	       (uint8_t)eident[EI_DATA]);
-	free(target);
+    if (elf_get_arch_info(elf,&wordsize,&endian)) {
+	verror("could not get ELF arch info for %s\n",main_exe);
+	target_free(target);
 	elf_end(elf);
 	return NULL;
     }
+    target->wordsize = wordsize;
+    target->endian = endian;
+    vdebug(3,LOG_T_LUP,
+	   "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
+	   main_exe,target->wordsize,
+	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
+
+    /* Done with the elf stuff. */
+    elf_end(elf);
+
+    /* Wordsize and ptrsize the same, obviously... */
+    target->ptrsize = target->wordsize;
 
     /* Which register is the fbreg is dependent on host cpu type, not
      * target cpu type.
@@ -328,12 +306,9 @@ struct target *linux_userproc_attach(int pid,
     target->full_ret_instrs_len = 2;
     target->full_ret_instr_count = 2;
 
-    /* Done with the elf ident data. */
-    elf_end(elf);
-
     lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
     if (!lstate) {
-	free(target);
+	target_free(target);
 	errno = ENOMEM;
 	return NULL;
     }
@@ -357,13 +332,8 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     int newfd;
     int dynamic = 0;
     Elf *elf = NULL;
-    Elf_Scn *scn;
-    GElf_Shdr shdr_mem;
-    GElf_Shdr *shdr;
-    char *name;
-    size_t shstrndx;
-    char *eident = NULL;
-    int is64 = 0;
+    int wordsize;
+    int endian;
     int fd = -1;
     int pstatus;
 
@@ -416,93 +386,39 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     target->live = 1;
     target->writeable = 1;
 
+    /* Figure out some ELF stuff. */
+
     elf_version(EV_CURRENT);
     if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
 	verror("elf_begin %s: %s\n",filename,elf_errmsg(elf_errno()));
 	goto errout;
     }
 
-    /* read the ident stuff to get ELF byte size */
-    if (!(eident = elf_getident(elf,NULL))) {
-	verror("elf_getident %s: %s\n",filename,elf_errmsg(elf_errno()));
+    if (elf_get_arch_info(elf,&wordsize,&endian)) {
+	verror("could not get ELF arch info\n");
 	goto errout;
     }
+    target->wordsize = wordsize;
+    target->endian = endian;
+    vdebug(3,LOG_T_LUP,
+	   "loaded ELF arch info (wordsize=%d;endian=%s)\n",
+	   target->wordsize,
+	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
 
-    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	is64 = 0;
-	vdebug(3,LOG_T_LUP,"32-bit %s\n",filename);
-    }
-    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	is64 = 1;
-    }
-    else {
-	verror("unknown elf class %d; not 32/64 bit!\n",
-	       (uint8_t)eident[EI_CLASS]);
-	goto errout;
-    }
-
-    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	target->wordsize = 4;
-	vdebug(3,LOG_T_LUP,"32-bit %s\n",filename);
-    }
-    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	target->wordsize = 8;
-	vdebug(3,LOG_T_LUP,"64-bit %s\n",filename);
-    }
-    else {
-	verror("unknown elf class %d; not 32/64 bit!\n",
-	       (uint8_t)eident[EI_CLASS]);
-	free(target);
-	elf_end(elf);
-	return NULL;
-    }
     target->ptrsize = target->wordsize;
 
-    if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
-	target->endian = DATA_LITTLE_ENDIAN;
-	vdebug(3,LOG_T_LUP,"little endian %s\n",filename);
-    }
-    else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
-	target->endian = DATA_BIG_ENDIAN;
-	vdebug(3,LOG_T_LUP,"big endian %s\n",filename);
-    }
-    else {
-	verror("unknown elf data %d; not big/little endian!\n",
-	       (uint8_t)eident[EI_DATA]);
-	free(target);
-	elf_end(elf);
-	return NULL;
-    }
-
-#if _INT_ELFUTILS_VERSION >= 152
-    if (elf_getshdrstrndx(elf,&shstrndx) < 0) {
-#else 
-    if (elf_getshstrndx(elf,&shstrndx) < 0) {
-#endif
-	verror("cannot get section header string table index\n");
+    dynamic = elf_is_dynamic_exe(elf);
+    if (dynamic < 0) {
+	verror("could not check if %s is static/dynamic exe; aborting!\n",
+	       filename);
 	goto errout;
     }
+    else if (!dynamic)
+	vdebug(2,LOG_T_LUP,"executable %s is static\n",filename);
+    else 
+	vdebug(2,LOG_T_LUP,"executable %s is dynamic\n",filename);
 
-    scn = NULL;
-    while ((scn = elf_nextscn(elf,scn)) != NULL) {
-	shdr = gelf_getshdr(scn,&shdr_mem);
-
-	if (shdr && shdr->sh_size > 0) {
-	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
-
-	    if (strcmp(name,".dynamic") == 0) {
-		vdebug(2,LOG_T_LUP,
-		       "found %s section (%d) in executable %s; dynamic\n",
-		       name,shdr->sh_size,filename);
-		dynamic = 1;
-		break;
-	    }
-	}
-    }
-    if (!dynamic)
-	vdebug(2,LOG_T_LUP,"no %s section in executable %s; static\n",
-	       ".dynamic",filename);
-
+    /* Done with ELF stuff. */
     elf_end(elf);
     elf = NULL;
     close(fd);
@@ -542,9 +458,8 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 
     lstate = (struct linux_userproc_state *)malloc(sizeof(*lstate));
     if (!lstate) {
-	free(target);
 	errno = ENOMEM;
-	return NULL;
+	goto errout;
     }
     memset(lstate,0,sizeof(*lstate));
 
@@ -560,12 +475,12 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 	if (waitpid(pid,&pstatus,0) < 0) {
 	    if (errno == ECHILD || errno == EINVAL) {
 		verror("waitpid(%d): %s\n",pid,strerror(errno));
-		return NULL;
+		goto errout;
 	    }
 	    else {
 		if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
 		    verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
-		    return NULL;
+		    goto errout;
 		}
 		goto again;
 	    }
@@ -592,7 +507,7 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 		vdebug(5,LOG_T_LUP,"exec hunt sig (no trap)\n");
 		if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
 		    verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
-		    return NULL;
+		    goto errout;
 		}
 		goto again;
 	    }
@@ -600,7 +515,7 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 	else {
 	    if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
 		verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
-		return NULL;
+		goto errout;
 	    }
 	    goto again;
 	}
@@ -662,13 +577,13 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     /* Look for syscalls! */
     if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
 	verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
-	return NULL;
+	goto errout;
     }
     vdebug(9,LOG_T_LUP,"waitpid target %d (syscall inference)\n",pid);
     if (waitpid(pid,&pstatus,0) < 0) {
 	if (errno == ECHILD || errno == EINVAL) {
 	    verror("waitpid(%d): %s\n",pid,strerror(errno));
-	    return NULL;
+	    goto errout;
 	}
 	else {
 	    goto again2;
@@ -754,7 +669,7 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 	 * probably dump this target.
 	 */
 	verror("pid %d bailed in initial tracing!\n",pid);
-	return NULL;
+	goto errout;
     }
     else {
 	vwarn("pid %d: unhandled waitpid condition while waiting for load; trying again!\n",pid);
@@ -1037,22 +952,11 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region) {
     Elf *elf = NULL;
-    Elf_Scn *scn;
-    GElf_Shdr shdr_mem;
-    GElf_Shdr *shdr;
-    char *name;
-    size_t shstrndx;
     int has_debuginfo = 0;
     char *buildid = NULL;
     char *debuglinkfile = NULL;
     uint32_t debuglinkfilecrc = 0;
-    Elf_Data *edata;
-    char *eident = NULL;
-    int is64 = 0;
-    Elf32_Nhdr *nthdr32;
-    Elf64_Nhdr *nthdr64;
-    char *ndata,*nend;
-    int fd = -1;;
+    int fd = -1;
     int i;
     int len;
     int retval = 0;
@@ -1061,8 +965,17 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     char *regionfiledir = NULL;
     char *tmp;
     struct stat stbuf;
+    struct debugfile *debugfile = NULL;
+    struct debugfile_load_opts *opts = NULL;
 
     vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+
+    if (!(region->type == REGION_TYPE_MAIN 
+	  || region->type == REGION_TYPE_LIB)) {
+	vdebug(4,LOG_T_LUP,"region %s is not MAIN nor LIB; skipping!\n",
+	       region->name);
+	return 0;
+    }
 
     /*
      * Open up the actual ELF binary and look for three sections to inform
@@ -1088,119 +1001,19 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	goto errout;
     }
 
-    /* read the ident stuff to get ELF byte size */
-    if (!(eident = elf_getident(elf,NULL))) {
-	verror("elf_getident %s: %s\n",region->name,elf_errmsg(elf_errno()));
+    /* This should be in load_regions, but we've already got the ELF
+     * binary open here... so just do it.
+     */
+    if (elf_get_base_addrs(elf,&region->base_virt_addr,&region->base_phys_addr)) {
+	verror("elf_get_base_addrs %s failed!\n",region->name);
 	goto errout;
     }
 
-    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	is64 = 0;
-	vdebug(3,LOG_T_LUP,"32-bit %s\n",region->name);
-    }
-    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	is64 = 1;
-    }
-    else {
-	verror("unknown elf class %d; not 32/64 bit!\n",
-	       (uint8_t)eident[EI_CLASS]);
+    if (elf_get_debuginfo_info(elf,&has_debuginfo,&buildid,&debuglinkfile,
+			       &debuglinkfilecrc)) {
+	verror("elf_get_debuginfo_info %s failed!\n",region->name);
 	goto errout;
     }
-
-#if _INT_ELFUTILS_VERSION >= 152
-    if (elf_getshdrstrndx(elf,&shstrndx) < 0) {
-#else 
-    if (elf_getshstrndx(elf,&shstrndx) < 0) {
-#endif
-	verror("cannot get section header string table index\n");
-	goto errout;
-    }
-
-    scn = NULL;
-    while ((scn = elf_nextscn(elf,scn)) != NULL) {
-	shdr = gelf_getshdr(scn,&shdr_mem);
-
-	if (shdr && shdr->sh_size > 0) {
-	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
-
-	    if (strcmp(name,".debug_info") == 0) {
-		vdebug(2,LOG_T_LUP,
-		       "found %s section (%d) in region filename %s\n",
-		       name,shdr->sh_size,region->name);
-		has_debuginfo = 1;
-		continue;
-	    }
-	    else if (!buildid && shdr->sh_type == SHT_NOTE) {
-		vdebug(2,LOG_T_LUP,
-		       "found %s note section (%d) in region filename %s\n",
-		       name,shdr->sh_size,region->name);
-		edata = elf_rawdata(scn,NULL);
-		if (!edata) {
-		    vwarn("cannot get data for valid section '%s': %s",
-			  name,elf_errmsg(-1));
-		    continue;
-		}
-
-		ndata = edata->d_buf;
-		nend = ndata + edata->d_size;
-		while (ndata < nend) {
-		    if (is64) {
-			nthdr64 = (Elf64_Nhdr *)ndata;
-			/* skip past the header and the name string and its
-			 * padding */
-			ndata += sizeof(Elf64_Nhdr);
-			vdebug(5,LOG_T_LUP,"found note name '%s'\n",ndata);
-			ndata += nthdr64->n_namesz;
-			if (nthdr64->n_namesz % 4)
-			    ndata += (4 - nthdr64->n_namesz % 4);
-			vdebug(5,LOG_T_LUP,"found note desc '%s'\n",ndata);
-			/* dig out the build ID */
-			if (nthdr64->n_type == NT_GNU_BUILD_ID) {
-			    buildid = strdup(ndata);
-			    break;
-			}
-			/* skip past the descriptor and padding */
-			ndata += nthdr64->n_descsz;
-			if (nthdr64->n_namesz % 4)
-			    ndata += (4 - nthdr64->n_namesz % 4);
-		    }
-		    else {
-			nthdr32 = (Elf32_Nhdr *)ndata;
-			/* skip past the header and the name string and its
-			 * padding */
-			ndata += sizeof(Elf32_Nhdr);
-			ndata += nthdr32->n_namesz;
-			if (nthdr32->n_namesz % 4)
-			    ndata += (4 - nthdr32->n_namesz % 4);
-			/* dig out the build ID */
-			if (nthdr32->n_type == NT_GNU_BUILD_ID) {
-			    buildid = strdup(ndata);
-			    break;
-			}
-			/* skip past the descriptor and padding */
-			ndata += nthdr32->n_descsz;
-			if (nthdr32->n_namesz % 4)
-			    ndata += (4 - nthdr32->n_namesz % 4);
-		    }
-		}
-	    }
-	    else if (strcmp(name,".gnu_debuglink") == 0) {
-		edata = elf_rawdata(scn,NULL);
-		if (!edata) {
-		    vwarn("cannot get data for valid section '%s': %s",
-			  name,elf_errmsg(-1));
-		    continue;
-		}
-		debuglinkfile = strdup(edata->d_buf);
-		debuglinkfilecrc = *(uint32_t *)(edata->d_buf + edata->d_size - 4);
-	    }
-	}
-    }
-
-    elf_end(elf);
-    elf = NULL;
-    close(fd);
-    fd = -1;
 
     vdebug(5,LOG_T_LUP,"ELF info for region file %s:\n",region->name);
     vdebug(5,LOG_T_LUP,"    has_debuginfo=%d,buildid='",has_debuginfo);
@@ -1216,7 +1029,8 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     if (has_debuginfo) {
 	finalfile = region->name;
     }
-    else if (buildid) {
+
+    if (!finalfile && buildid) {
 	for (i = 0; i < DEBUGPATHLEN; ++i) {
 	    snprintf(pbuf,PATH_MAX,"%s/.build-id/%02hhx/%s.debug",
 		     DEBUGPATH[i],*buildid,(char *)(buildid+1));
@@ -1226,7 +1040,8 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	    }
 	}
     }
-    else if (debuglinkfile) {
+
+    if (!finalfile && debuglinkfile) {
 	/* Find the containing dir path so we can use it in our search
 	 * of the standard debug file dir infrastructure.
 	 */
@@ -1243,22 +1058,55 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	    }
 	}
     }
-    else {
+
+    if (!finalfile) {
 	verror("could not find any debuginfo sources from ELF file %s!\n",
 	       region->name);
 	goto errout;
     }
-
-    if (finalfile) {
-	if (region->type == REGION_TYPE_MAIN 
-	    || region->type == REGION_TYPE_LIB) {
-	    if (!target_associate_debugfile(target,region,finalfile,
+    else if (!(opts = \
+	       target_get_debugfile_load_opts(target,region,finalfile,
+					      region->type == REGION_TYPE_MAIN ? \
+					      DEBUGFILE_TYPE_MAIN :	\
+					      DEBUGFILE_TYPE_SHAREDLIB))
+	     && errno) {
+	vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_LUP,
+	       "opts prohibit loading of debugfile for region %s\n",
+	       region->name);
+	/* "Success", fall out. */
+    }
+    else if ((debugfile = \
+	      target_reuse_debugfile(target,region,finalfile,
+				     region->type == REGION_TYPE_MAIN ? \
+				     DEBUGFILE_TYPE_MAIN :		\
+				     DEBUGFILE_TYPE_SHAREDLIB))) {
+	vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_LUP,
+	       "reusing debugfile %s for region %s\n",
+	       debugfile->idstr,region->name);
+	/* Success, just fall out. */
+    }
+    else {
+	/*
+	 * Need to create a new debugfile.  But first, we try to
+	 * populate the "debugfile's" ELF symtab/strtab using the ELF
+	 * binary, not debuginfo.  We want the internal ELF symbols, and
+	 * some distros put those in the debuginfo file; some put them
+	 * in the actual executable/lib.  So we check the actual binary
+	 * first.
+	 */
+	debugfile = target_create_debugfile(target,finalfile,
 					    region->type == REGION_TYPE_MAIN ? \
-					    DEBUGFILE_TYPE_MAIN : \
-					    DEBUGFILE_TYPE_SHAREDLIB)
-		&& errno != 0)
-		goto errout;
-	}
+					    DEBUGFILE_TYPE_MAIN :	\
+					    DEBUGFILE_TYPE_SHAREDLIB);
+	if (!debugfile)
+	    goto errout;
+
+	if (elf_load_symtab(elf,region->name,debugfile))
+	    vwarn("could not load ELF symtab into debugfile %s\n",
+		  debugfile->idstr);
+
+	if (target_load_and_associate_debugfile(target,region,debugfile,opts)) 
+	    goto errout;
     }
 
     /* Success!  Skip past errout. */

@@ -58,7 +58,10 @@ int target_open(struct target *target) {
 
     list_for_each_entry(space,&target->spaces,space) {
 	list_for_each_entry(region,&space->regions,region) {
-	    if (region->type != REGION_TYPE_MAIN)
+	    if (region->type == REGION_TYPE_HEAP
+		|| region->type == REGION_TYPE_STACK
+		|| region->type == REGION_TYPE_VDSO
+		|| region->type == REGION_TYPE_VSYSCALL) 
 		continue;
 
 	    vdebug(5,LOG_T_TARGET,
@@ -69,6 +72,29 @@ int target_open(struct target *target) {
 		vwarn("could not open debuginfo for region %s (%d)\n",
 		      region->name,rc);
 	    }
+
+	    /*
+	     * Once the region has been loaded and associated with a
+	     * debuginfo file, we calculate the phys_offset of the
+	     * loaded code -- which is the base_phys_addr - base_virt_addr
+	     * from the ELF program headers.
+	     */
+	    if (region->type == REGION_TYPE_MAIN)
+		region->phys_offset = 0;
+	    else 
+		region->phys_offset = region->base_load_addr		\
+		    + (region->base_phys_addr - region->base_virt_addr);
+
+	    vdebug(5,LOG_T_TARGET,
+		   "target(%s:%s) finished region(%s:%s,"
+		   "base_load_addr=0x%"PRIxADDR",base_phys_addr=0x%"PRIxADDR
+		   ",base_virt_addr=0x%"PRIxADDR
+		   ",phys_offset=%"PRIiOFFSET" (0x%"PRIxOFFSET"))",
+		   target->type,space->idstr,
+		   region->name,REGION_TYPE(region->type),
+		   region->base_load_addr,region->base_phys_addr,
+		   region->base_virt_addr,region->phys_offset,
+		   region->phys_offset);
 	}
     }
 

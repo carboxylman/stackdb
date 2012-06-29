@@ -746,6 +746,8 @@ static int xen_vm_loaddebugfiles(struct target *target,
     char *tmp;
     struct stat stbuf;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct debugfile *debugfile;
+    struct debugfile_load_opts *opts;
 
     vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
 
@@ -935,13 +937,39 @@ static int xen_vm_loaddebugfiles(struct target *target,
     }
 
     if (finalfile) {
-	if (region->type == REGION_TYPE_MAIN 
-	    || region->type == REGION_TYPE_LIB) {
-	    if (!target_associate_debugfile(target,region,finalfile,
-					    region->type == REGION_TYPE_MAIN ? \
-					    DEBUGFILE_TYPE_MAIN : \
-					    DEBUGFILE_TYPE_SHAREDLIB)
-		&& errno != 0)
+	if (!(opts =							\
+	      target_get_debugfile_load_opts(target,region,finalfile,
+					     DEBUGFILE_TYPE_KERNEL))
+	    && errno) {
+	    vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_XV,
+		   "opts prohibit loading of debugfile for region %s\n",
+		   region->name);
+	    /* "Success", fall out. */
+	}
+	else if ((debugfile =					\
+		  target_reuse_debugfile(target,region,finalfile,
+					 DEBUGFILE_TYPE_KERNEL))) {
+	    vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_XV,
+		   "reusing debugfile %s for region %s\n",
+		   debugfile->idstr,region->name);
+	    /* Success, just fall out. */
+	}
+	else {
+	    /*
+	     * Need to create a new debugfile.  But first, we try to
+	     * populate the "debugfile's" ELF symtab/strtab using the ELF
+	     * binary, not debuginfo.  We want the internal ELF symbols, and
+	     * some distros put those in the debuginfo file; some put them
+	     * in the actual executable/lib.  So we check the actual binary
+	     * first.
+	     */
+	    debugfile = target_create_debugfile(target,finalfile,
+						DEBUGFILE_TYPE_KERNEL);
+	    if (!debugfile)
+		goto errout;
+
+	    if (target_load_and_associate_debugfile(target,region,debugfile,
+						    opts)) 
 		goto errout;
 	}
     }
@@ -1122,9 +1150,9 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		    goto again;
 		}
 		else {
-		    vwarn("expected single step to happen, but the flag"
-			  " is clear; EIP is 0x%"PRIxADDR"; EFLAGS is 0x%"PRIx32"\n",
-			  ipval,xstate->context.user_regs.eflags);
+		    //vwarn("expected single step to happen, but the flag"
+		    //	  " is clear; EIP is 0x%"PRIxADDR"; EFLAGS is 0x%"PRIx32"\n",
+		    //	  ipval,xstate->context.user_regs.eflags);
 		    goto bpcheck;
 		}
 	    }

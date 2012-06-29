@@ -32,20 +32,10 @@ LIST_HEAD(debugfiles);
 
 extern struct target_ops linux_userspace_process_ops;
 
-/*
- * A utility function that attaches a file containing debug symbols to a
- * region (and first looks for an existing match, if that file has
- * already been loaded).
- */
-struct debugfile *target_associate_debugfile(struct target *target,
-					     struct memregion *region,
-					     char *filename,
-					     debugfile_type_t type) {
-    struct debugfile *debugfile;
-    char *idstr;
-    char *realname = NULL;
-    char *name = NULL;
-    char *version = NULL;
+struct debugfile_load_opts *target_get_debugfile_load_opts(struct target *target,
+							   struct memregion *region,
+							   char *filename,
+							   debugfile_type_t type) {
     struct debugfile_load_opts *opts = NULL;
     int accept;
     int i;
@@ -56,6 +46,8 @@ struct debugfile *target_associate_debugfile(struct target *target,
      * even if we return NULL in this case.
      */
     if (target->debugfile_opts_list) {
+	vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
+	       "checking debugfile optlist\n");
 	for (i = 0; target->debugfile_opts_list[i]; ++i) {
 	    /* We only care if there was a match (or no match and the
 	     * filter defaulted to accept) that accepted our filename
@@ -65,15 +57,48 @@ struct debugfile *target_associate_debugfile(struct target *target,
 			  filename,&accept,NULL);
 	    if (accept == RF_ACCEPT) {
 		opts = target->debugfile_opts_list[i];
-		break;
+		vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
+		       "using debugfile opts %p\n",opts);
+		errno = 0;
+		return opts;
 	    }
+	    vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
+		   "not using debugfile opts %p\n",
+		   target->debugfile_opts_list[i]);
 	}
 
+	/* If we didn't find an opts that allowed us to load the file,
+	 * tell the caller not to load it.
+	 */
 	if (!opts) {
-	    errno = 0;
+	    errno = EINVAL;
 	    return NULL;
 	}
     }
+    else 
+	vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
+	       "no debugfile optlist supplied!\n");
+
+    /* No opts to return to caller, but it's still fine to load the
+     * file.
+     */
+    errno = 0;
+    return NULL;
+}
+
+/*
+ * A function that tries to find a debugfile that has already been used,
+ * and if it does, it associates this region with it.
+ */
+struct debugfile *target_reuse_debugfile(struct target *target,
+					 struct memregion *region,
+					 char *filename,
+					 debugfile_type_t type) {
+    struct debugfile *debugfile;
+    char *idstr;
+    char *realname = NULL;
+    char *name = NULL;
+    char *version = NULL;
 
     if (type != DEBUGFILE_TYPE_SHAREDLIB) 
 	debugfile_filename_info(filename,&realname,NULL,NULL);
@@ -119,6 +144,37 @@ struct debugfile *target_associate_debugfile(struct target *target,
 	}
     }
 
+    free(idstr);
+    if (realname != filename)
+	free(realname);
+    return NULL;
+}
+
+/*
+ * Creates a debugfile; very simple wrapper for debugfile_create.
+ */
+struct debugfile *target_create_debugfile(struct target *target,
+					  char *filename,
+					  debugfile_type_t type) {
+    struct debugfile *debugfile;
+    char *idstr;
+    char *realname = NULL;
+    char *name = NULL;
+    char *version = NULL;
+
+    if (type != DEBUGFILE_TYPE_SHAREDLIB) 
+	debugfile_filename_info(filename,&realname,NULL,NULL);
+    else 
+	debugfile_filename_info(filename,&realname,&name,&version);
+
+    if (!realname) 
+	realname = filename;
+    else 
+	vdebug(2,LOG_T_TARGET,"using %s instead of symlink %s\n",
+	       realname,filename);
+
+    idstr = debugfile_build_idstr(realname,name,version);
+
     debugfile = debugfile_create(realname,type,name,version,idstr);
     if (!debugfile) {
 	free(idstr);
@@ -130,27 +186,43 @@ struct debugfile *target_associate_debugfile(struct target *target,
     if (realname != filename)
 	free(realname);
 
-    /*
-     * Finally, load in the debuginfo!
-     */
-    if (debugfile_load(debugfile,opts)) {
-	/* If the load was unsuccessful, we don't have a ref to it! */
-	debugfile_free(debugfile,0);
-	return NULL;
+    return debugfile;
+}
+
+/*
+ * A utility function that loads a debugfile with the given opts.
+ */
+int target_load_and_associate_debugfile(struct target *target,
+					struct memregion *region,
+					struct debugfile *debugfile,
+					struct debugfile_load_opts *opts) {
+
+    /* if they already loaded this debugfile into this region, error */
+    if (g_hash_table_lookup(region->debugfiles,debugfile->idstr)) {
+	verror("debugfile(%s) already in use in region(%s) in space (%s)!\n",
+	       debugfile->idstr,region->name,region->space->idstr);
+	errno = EBUSY;
+	return -1;
     }
+
+    if (debugfile_load(debugfile,opts))
+	return -1;
 
     RHOLD(debugfile);
 
     list_add_tail(&debugfile->debugfile,&debugfiles);
 
-    g_hash_table_insert(region->debugfiles,idstr,debugfile);
+    g_hash_table_insert(region->debugfiles,debugfile->idstr,debugfile);
 
     vdebug(1,LOG_T_TARGET,
-	   "loaded debugfile(%s) for region(%s) in space (%s,%d,%d)\n",
-	   idstr,region->name,
+	   "loaded and associated debugfile(%s) for region(%s,"
+	   "base_phys=0x%"PRIxADDR",base_virt=0x%"PRIxADDR")"
+	   " in space (%s,%d,%d)\n",
+	   debugfile->idstr,region->name,
+	   region->base_phys_addr,region->base_virt_addr,
 	   region->space->name,region->space->id,region->space->pid);
 
-    return debugfile;
+    return 0;
 }
 
 void target_disassociate_debugfile(struct debugfile *debugfile) {

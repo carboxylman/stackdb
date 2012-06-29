@@ -186,6 +186,16 @@ struct memregion *memregion_create(struct addrspace *space,
 
     INIT_LIST_HEAD(&retval->ranges);
 
+    /* Set this to ADDRMAX so when we add ranges, we can find the lowest
+     * range start addr.
+     */
+    retval->base_load_addr = ADDRMAX;
+    /* Set these to 0; default case; when we load debugfiles for
+     * regions, we can update them.
+     */
+    retval->base_phys_addr = 0;
+    retval->base_virt_addr = 0;
+
     vdebug(5,LOG_T_REGION,"built memregion(%s:%s:%s)\n",
 	   space->idstr,retval->name,REGION_TYPE(retval->type));
 
@@ -316,6 +326,9 @@ struct memrange *memrange_create(struct memregion *region,
     retval->offset = offset;
     retval->prot_flags = prot_flags;
 
+    if (start < region->base_load_addr)
+	region->base_load_addr = start;
+
     list_add_tail(&retval->range,&region->ranges);
 
     vdebug(5,LOG_T_REGION,
@@ -343,13 +356,7 @@ int memrange_contains_real(struct memrange *range,ADDR real_addr) {
 }
 
 int memrange_contains_obj(struct memrange *range,ADDR obj_addr) {
-    if (range->base_obj_addr) {
-	/* XXX: fill in based on relocated sections. */
-	return 0;
-    }
-    else {
-	return memrange_contains_real(range,obj_addr);
-    }
+    return memrange_contains_real(range,obj_addr + range->region->phys_offset);
 }
 
 void memrange_dump(struct memrange *range,struct dump_info *ud) {
@@ -360,23 +367,11 @@ void memrange_dump(struct memrange *range,struct dump_info *ud) {
 }
 
 ADDR memrange_unrelocate(struct memrange *range,ADDR real) {
-    if (range->base_obj_addr) {
-	/* XXX: fill in based on relocated sections. */
-	return real;
-    }
-    else {
-	return real;
-    }
+    return real - range->region->phys_offset;
 }
 
 ADDR memrange_relocate(struct memrange *range,ADDR obj) {
-    if (range->base_obj_addr) {
-	/* XXX: fill in based on relocated sections. */
-	return obj;
-    }
-    else {
-	return obj;
-    }
+    return obj + range->region->phys_offset;
 }
 
 void memrange_free(struct memrange *range) {

@@ -38,7 +38,7 @@
     vdebugc((dl),(lt), \
 	    "bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
 	    "region=(%s(space=%s)),range=(0x%"PRIxADDR"-0x%"PRIxADDR";"	\
-	    "offset=0x%"PRIxADDR";base=0x%"PRIxADDR"))",		\
+	    "offset=0x%"PRIxADDR"))",					\
 	    symbol_get_name((s)->lsymbol->symbol),			\
 	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
 	    (s)->lsymbol->symbol->ref,					\
@@ -47,8 +47,7 @@
 	    (s)->region ? (s)->region->space->idstr : NULL,		\
 	    (s)->range ? (s)->range->start : 0,				\
 	    (s)->range ? (s)->range->end : 0,				\
-	    (s)->range ? (s)->range->offset : 0,			\
-	    (s)->range ? (s)->range->base_obj_addr : 0);
+	    (s)->range ? (s)->range->offset : 0);
 
 #define LOGDUMPBSYMBOL_NL(dl,lt,s) \
     LOGDUMPBSYMBOL((dl),(lt),(s)); \
@@ -57,7 +56,7 @@
 #define ERRORDUMPBSYMBOL(s) \
     verrorc("bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
 	    "region=(%s(space=%s)),range=(0x%"PRIxADDR"-0x%"PRIxADDR";"	\
-	    "offset=0x%"PRIxADDR";base=0x%"PRIxADDR"))",		\
+	    "offset=0x%"PRIxADDR"))",					\
 	    symbol_get_name((s)->lsymbol->symbol),			\
 	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
 	    (s)->lsymbol->symbol->ref,					\
@@ -66,8 +65,7 @@
 	    (s)->region ? (s)->region->space->idstr : NULL,		\
 	    (s)->range ? (s)->range->start : 0,				\
 	    (s)->range ? (s)->range->end : 0,				\
-	    (s)->range ? (s)->range->offset : 0,			\
-	    (s)->range ? (s)->range->base_obj_addr : 0);
+	    (s)->range ? (s)->range->offset : 0);
 
 #define ERRORDUMPBSYMBOL_NL(s) \
     ERRORDUMPBSYMBOL((s)); \
@@ -105,10 +103,22 @@ unsigned long target_generic_fd_write(int fd,
 				      ADDR addr,
 				      unsigned long length,
 				      unsigned char *buf);
-struct debugfile *target_associate_debugfile(struct target *target,
-					     struct memregion *region,
-					     char *filename,
-					     debugfile_type_t type);
+
+struct debugfile_load_opts *target_get_debugfile_load_opts(struct target *target,
+							   struct memregion *region,
+							   char *filename,
+							   debugfile_type_t type);
+struct debugfile *target_reuse_debugfile(struct target *target,
+					 struct memregion *region,
+					 char *filename,
+					 debugfile_type_t type);
+struct debugfile *target_create_debugfile(struct target *target,
+					  char *filename,
+					  debugfile_type_t type);
+int target_load_and_associate_debugfile(struct target *target,
+					struct memregion *region,
+					struct debugfile *debugfile,
+					struct debugfile_load_opts *opts);
 void target_disassociate_debugfile(struct debugfile *debugfile);
 
 /*
@@ -346,6 +356,29 @@ struct memregion {
 
     /* The ranges contained in this region. */
     struct list_head ranges;
+
+    /*
+     * This is the base physical address the region's code got loaded
+     * at.  We have to use this to translate addresses for the relocated
+     * object in its debuginfo.
+     */
+    ADDR base_load_addr;
+
+    /*
+     * These are the minimum phys/virt address pairs that we learn from
+     * looking at the program headers in the ELF object file.
+     */
+    ADDR base_phys_addr;
+    ADDR base_virt_addr;
+
+    /* Once we have base_virt_addr and base_phys_addr after looking at
+     * the ELF program headers (the ones of type load -- maybe we should
+     * check other ones later), we can determine the virt_to_phys
+     * offset.
+     *
+     * We later use this in virt<->phys address translation.
+     */
+    OFFSET phys_offset;
 };
 
 struct memrange {
@@ -355,19 +388,7 @@ struct memrange {
     ADDR start;
     ADDR end;
     ADDR offset;
-    /*
-     * For a shared library, this is the object-relative start address.
-     * If in userspace, the regions are not laid out back to back, or if
-     * the object-relative addresses are not contiguous (i.e., a shared
-     * lib), we must have the base address to relocate like the dynamic
-     * loader did!
-     *
-     * XXX: for now, this is unsupported, because we have no good way of
-     * figuring out what the dynamic loader did in linux userspace.
-     * Eventually, we have to load the ELF object file ourselves, and
-     * note the object relative addresses and their offsets in the file.
-     */
-    ADDR base_obj_addr;
+
     unsigned int prot_flags;
 
     /* The list node linking this into the region. */
