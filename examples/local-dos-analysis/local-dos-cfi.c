@@ -92,7 +92,7 @@ void probe_disfunc_return(char *symbol,
             {
                 ERR("Call and return do not match!: %s (0x%08lx)\n", 
                     symbol, funcstart);
-                kill_everything(domain_name);
+                //kill_everything(domain_name);
             }
 
             memset(pad, 0, sizeof(pad));
@@ -151,7 +151,7 @@ void probe_disfunc_call(char *symbol,
             LOG("%sUNKNOWN FUNCTION (0x%08lX) CALLED (BRCTR = %lld)\n", 
                    pad, ip, brctr);
 
-            kill_everything(domain_name);
+            //kill_everything(domain_name);
         }
         array_list_add(funcinfo_stack, fi);
     }
