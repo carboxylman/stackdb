@@ -679,6 +679,9 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     struct rfilter_entry *rfe;
     int accept = RF_ACCEPT;
 
+    if (!delim)
+	delim = DWDEBUG_DEF_DELIM;
+
     if (delim && strstr(name,delim)) {
 	lname = strdup(name);
 	next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr);

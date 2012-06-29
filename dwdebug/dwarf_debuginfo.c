@@ -3409,6 +3409,16 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	}
     }
 
+    if (SYMBOL_IS_FULL_INSTANCE(symbol)
+	&& SYMBOL_IS_FULL_TYPE(parentsymbol)
+	&& parentsymbol->datatype_code == DATATYPE_UNION) {
+	/*
+	 * Set a member offset of 0 for each union's member.
+	 */
+	symbol->s.ii->l.loctype = LOCTYPE_MEMBER_OFFSET;
+	symbol->s.ii->l.l.member_offset = 0;
+    }
+
     /*
      * If we have a base_addr for the symbol, insert it into the
      * addresses table.
