@@ -468,10 +468,12 @@ ADDR location_resolve(struct target *target,struct memregion *region,
     return 0;
 }
 
-int location_resolve_symbol_base(struct target *target,
-				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				 struct memrange **range_saveptr) {
-    struct symbol *symbol = bsymbol->lsymbol->symbol;
+int location_resolve_lsymbol_base(struct target *target,
+				  struct lsymbol *lsymbol,
+				  struct memregion *region,
+				  ADDR *addr_saveptr,
+				  struct memrange **range_saveptr) {
+    struct symbol *symbol = lsymbol->symbol;
     int i;
     ADDR obj_addr;
     struct symtab *symtab;
@@ -524,12 +526,12 @@ int location_resolve_symbol_base(struct target *target,
 	}
     }
     else if (SYMBOL_IS_FULL_VAR(symbol)) {
-	obj_addr = location_resolve(target,bsymbol->region,
-				    &bsymbol->lsymbol->symbol->s.ii->l,
-				    bsymbol->lsymbol->chain,range_saveptr);
+	obj_addr = location_resolve(target,region,
+				    &lsymbol->symbol->s.ii->l,
+				    lsymbol->chain,range_saveptr);
 	if (!obj_addr && errno) {
 	    verror("could not resolve location for %s!\n",
-		   bsymbol->lsymbol->symbol->name);
+		   lsymbol->symbol->name);
 	    return -1;
 	}
     }
@@ -540,12 +542,20 @@ int location_resolve_symbol_base(struct target *target,
     }
 
     /* Translate the obj address to something real in this region. */
-    *addr_saveptr = memregion_relocate(bsymbol->region,obj_addr,range_saveptr);
+    *addr_saveptr = memregion_relocate(region,obj_addr,range_saveptr);
 
     vdebug(3,LOG_T_LOC,"found base of '%s' 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
-	   bsymbol->lsymbol->symbol->name,obj_addr,*addr_saveptr);
+	   lsymbol->symbol->name,obj_addr,*addr_saveptr);
 
     return 0;
+}
+
+int location_resolve_symbol_base(struct target *target,
+				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
+				 struct memrange **range_saveptr) {
+    return location_resolve_lsymbol_base(target,bsymbol->lsymbol,
+					 bsymbol->range->region,addr_saveptr,
+					 range_saveptr);
 }
 
 int location_resolve_function_prologue_end(struct target *target,
@@ -571,4 +581,18 @@ int location_resolve_function_prologue_end(struct target *target,
 				       range_saveptr);
 
     return 0;
+}
+
+struct location *location_resolve_runtime(struct target *target,
+					  struct memregion *region,
+					  struct location *location,
+					  struct array_list *symbol_chain,
+					  struct memrange **range_saveptr) {
+
+
+    if (location->loctype != LOCTYPE_RUNTIME) {
+	errno = EINVAL;
+	return NULL;
+    }
+    
 }

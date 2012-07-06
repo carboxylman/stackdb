@@ -361,6 +361,10 @@ int main(int argc,char **argv) {
 
     struct bsymbol *init_task_bsymbol;
 
+    struct bsymbol *bs;
+    struct value *bv;
+    int i;
+
     struct dump_info udn = {
 	.stream = stderr,
 	.prefix = "",
@@ -437,9 +441,16 @@ int main(int argc,char **argv) {
 	    exit(-7);
 	}
     }
+    else if (strcmp(command,"dump") == 0) {
+	if (argc < 2) {
+	    fprintf(stderr,"ERROR: dump command must"
+		    " be followed by a list of variables to dump!\n");
+	    exit(-5);
+	}
+    }
     else {
 	fprintf(stderr,"ERROR: command must be one of"
-		" list|watch|check|zombie|stop|kill!\n");
+		" list|dump|check|zombie|stop|kill!\n");
 	exit(-6);
     }
 
@@ -467,6 +478,32 @@ int main(int argc,char **argv) {
     if (target_open(t)) {
 	fprintf(stderr,"could not open domain %s!\n",domain);
 	exit(-4);
+    }
+
+    if (strcmp(command,"dump") == 0) {
+	for (i = 1 ; i < argc; ++i) {
+	    bs = target_lookup_sym(t,argv[i],NULL,NULL,SYMBOL_TYPE_FLAG_VAR);
+	    if (!bs) {
+		fprintf(stderr,"ERROR: could not lookup %s!\n",argv[i]);
+	    }
+	    else {
+		bv = target_load_symbol(t,bs,
+					LOAD_FLAG_AUTO_STRING
+					| LOAD_FLAG_AUTO_DEREF);
+		if (!bv) {
+		    fprintf(stderr,"ERROR: could not load value for %s!\n",
+			    argv[i]);
+		}
+		else {
+		    value_dump(bv,&udn);
+		    fprintf(udn.stream,"\n");
+		    value_free(bv);
+		}
+		bsymbol_release(bs);
+	    }
+	}
+
+	goto exit;
     }
 
     init_task_bsymbol = target_lookup_sym(t,"init_task",NULL,NULL,

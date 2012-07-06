@@ -168,6 +168,10 @@ struct symtab *target_lookup_pc(struct target *target,uint64_t pc);
 struct bsymbol *target_lookup_sym(struct target *target,
 				  char *name,const char *delim,
 				  char *srcfile,symbol_type_flag_t ftype);
+struct bsymbol *target_lookup_sym_member(struct target *target,
+					 struct bsymbol *bsymbol,
+					 char *name,const char *delim);
+
 struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr);
 
 struct bsymbol *target_lookup_sym_line(struct target *target,
@@ -183,23 +187,56 @@ int target_find_memory_real(struct target *target,ADDR addr,
 			    struct memregion **region_saveptr,
 			    struct memrange **range_saveptr);
 /**
- ** Load functions.
+ ** Load functions.  Everything that gets loaded is loaded as a value
+ ** struct.
+ **
+ ** Each load function can handle a bsymbol that contains a nested
+ ** symbol chain.  Members may nest in either 1) functions, or 2)
+ ** struct/unions.  Obviously, once you are in a struct/union, the only
+ ** members of those can be variables.  Thus, all functions must come
+ ** first in the chain.  So, here are some examples of nested symbols
+ ** that can be followed by these functions:
+ **   function.subfunc.param1, function.local, function.localstructinst.x,
+ **   structinst.x.y.z, structinst->x.y.z, structinst->x->y->z
+ ** Now, since we support automatic pointer
+ ** dereferencing, you don't have to worry about actually using -> or .;
+ ** you just use . .  If the final symbol is itself a pointer to
+ ** something, if the AUTO_DEREF or AUTO_STRING load flags are set, the
+ ** pointer will be dereferenced as much as possible before loading.
+ ** Otherwise, it won't be.  The AUTO_DEREF flags do not affect the
+ ** behavior of intermediate pointer symbols in the chain; those are
+ ** always autoloaded if possible.  If you don't like this intermediate
+ ** pointer autoloading behavior, don't use it!
  **/
 ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
 			      load_flags_t flags,
 			      struct memrange **range_saveptr);
 
-struct value *target_load_value_member(struct target *target,
-				       struct value *value,const char *member,
-				       const char *delim,load_flags_t flags);
+struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
+				 load_flags_t flags);
 /*
- * Load a symbol's value, but just return a raw pointer.  If flags
- * contains LOAD_FLAGS_MMAP, we try to mmap the target's memory instead
- * of reading and copying the data; if that fails, we return NULL.  If
- * buf is not NULL, it should be sized to
- * symbol->datatype->s.ti.byte_size (best available as symbol_get
+ * You can ask for *any* nesting of variables, given some bound symbol.
+ * If @bsymbol is a function, you can ask for its args or locals.  If
+ * the locals or args are structs, you can directly ask for members --
+ * but make sure that if you want pointers followed, you set the
+ * LOAD_FLAG_AUTO_DEREF flag; otherwise a nested load across a pointer
+ * (i.e., if the current member we're working on is a pointer, and you
+ * have specified another nested member within that thing, we won't be
+ * able to follow the pointer, and hence will fail to find the next
+ * member) will fail.  If @bsymbol is a struct/union var, you can of
+ * course ask for any of its (nested) members.
+ *
+ * Your top-level @bsymbol must be either a function or a struct/union
+ * var; nothing else makes sense as far as loading memory.
  */
-struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags);
+struct value *target_load_symbol_member(struct target *target,
+					struct bsymbol *bsymbol,
+					const char *member,const char *delim,
+					load_flags_t flags);
+struct value *target_load_value_member(struct target *target,
+				       struct value *old_value,
+				       const char *member,const char *delim,
+				       load_flags_t flags);
 /*
  * This function creates a value by loading the number of bytes
  * specified by @type from a real @addr.
@@ -247,6 +284,18 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 			      struct symbol **datatype_saveptr,
 			      struct memrange **range_saveptr);
 
+/*
+ * bsymbol_load is deprecated -- use target_load_*() instead!
+ */
+/*
+ * Load a symbol's value, but just return a raw pointer.  If flags
+ * contains LOAD_FLAGS_MMAP, we try to mmap the target's memory instead
+ * of reading and copying the data; if that fails, we return NULL.  If
+ * buf is not NULL, it should be sized to
+ * symbol->datatype->s.ti.byte_size (best available as symbol_get
+ */
+struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags);
+
 /**
  ** Symbol functions.
  **/
@@ -288,6 +337,7 @@ REFCNT bsymbol_release(struct bsymbol *bsymbol);
  ** Value functions.
  **/
 void value_free(struct value *value);
+void value_dump(struct value *value,struct dump_info *ud);
 
 /**
  ** Quick value converters
@@ -303,6 +353,11 @@ int8_t           v_i8(struct value *v);
 int16_t          v_i16(struct value *v);
 int32_t          v_i32(struct value *v);
 int64_t          v_i64(struct value *v);
+int64_t          v_num(struct value *v);
+uint64_t         v_unum(struct value *v);
+float            v_f(struct value *v);
+double           v_d(struct value *v);
+long double      v_dd(struct value *v);
 ADDR             v_addr(struct value *v);
 
 /**
@@ -321,6 +376,9 @@ int value_update_i8(struct value *value,int8_t v);
 int value_update_i16(struct value *value,int16_t v);
 int value_update_i32(struct value *value,int32_t v);
 int value_update_i64(struct value *value,int64_t v);
+int value_update_f(struct value *value,float v);
+int value_update_d(struct value *value,double v);
+int value_update_dd(struct value *value,long double v);
 int value_update_addr(struct value *value,ADDR v);
 int value_update_num(struct value *value,int64_t v);
 int value_update_unum(struct value *value,uint64_t v);
@@ -374,6 +432,9 @@ int8_t           rv_i8(void *buf);
 int16_t          rv_i16(void *buf);
 int32_t          rv_i32(void *buf);
 int64_t          rv_i64(void *buf);
+float            rv_f(void *buf);
+double           rv_d(void *buf);
+long double      rv_dd(void *buf);
 ADDR             rv_addr(void *buf);
 
 /**
