@@ -37,6 +37,7 @@
 #include "probe_api.h"
 #include "probe.h"
 #include "alist.h"
+#include "list.h"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -252,12 +253,10 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
     return 0;
 }
 
-int pslist_kill(struct target *target,struct value *value,void *data) {
+int __ps_kill(struct target *target,struct value *value) {
     struct value *pid_v;
     struct value *uid_v;
     struct value *name_v;
-    struct rfilter *rf = (struct rfilter *)data;
-    int accept;
     struct value *signal_v;
     struct value *signal_pending_v;
     struct value *signal_pending_signal_v;
@@ -266,12 +265,6 @@ int pslist_kill(struct target *target,struct value *value,void *data) {
     struct value *thread_info_v;
 
     name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
-    rfilter_check(rf,name_v->buf,&accept,NULL);
-    if (accept == RF_REJECT) {
-	value_free(name_v);
-	return 0;
-    }
-
     pid_v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
     uid_v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
 
@@ -343,7 +336,136 @@ int pslist_kill(struct target *target,struct value *value,void *data) {
     return 0;
 }
 
-extern char **environ;
+int pslist_kill(struct target *target,struct value *value,void *data) {
+    struct value *name_v;
+    struct rfilter *rf = (struct rfilter *)data;
+    int accept;
+
+    name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
+    rfilter_check(rf,name_v->buf,&accept,NULL);
+    if (accept == RF_REJECT) {
+	value_free(name_v);
+	return 0;
+    }
+    value_free(name_v);
+
+    return __ps_kill(target,value);
+}
+
+struct linux_task_struct {
+    long state;
+    unsigned long flags;
+    int pid;
+    int tgid;
+    ADDR parent_addr;
+    ADDR real_parent_addr;
+    int uid;
+    int euid;
+    int suid;
+    int fsuid;
+    int gid;
+    int egid;
+    int sgid;
+    int fsgid;
+
+    char *comm;
+
+    ADDR self;
+
+    struct list_head tasks;
+
+    struct value *value;
+
+    struct linux_task_struct *real_parent;
+    struct linux_task_struct *parent;
+
+    char *comm_hier;
+};
+
+int pslist_load(struct target *target,struct value *value,void *data) {
+    struct value *v;
+
+    struct linux_task_struct **head = ((struct linux_task_struct **)data);
+    struct linux_task_struct *current = \
+	(struct linux_task_struct *)malloc(sizeof(struct linux_task_struct));
+    memset(current,0,sizeof(struct linux_task_struct));
+    INIT_LIST_HEAD(&current->tasks);
+
+    if (!*head) {
+	*head = current;
+    }
+    else
+	list_add_tail(&current->tasks,&((*head)->tasks));
+
+    current->self = value->addr;
+
+    v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
+    current->comm = strdup(v->buf);
+    value_free(v);
+
+    v = target_load_value_member(target,value,"state",NULL,LOAD_FLAG_NONE);
+    current->state = v_i32(v);
+    value_free(v);
+
+    v = target_load_value_member(target,value,"flags",NULL,LOAD_FLAG_NONE);
+    current->flags = v_u32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
+    current->pid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"parent",NULL,LOAD_FLAG_NONE);
+    current->parent_addr = v_addr(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"real_parent",NULL,
+				 LOAD_FLAG_NONE);
+    current->real_parent_addr = v_addr(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"tgid",NULL,LOAD_FLAG_NONE);
+    current->tgid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
+    current->uid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"euid",NULL,LOAD_FLAG_NONE);
+    current->euid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"suid",NULL,LOAD_FLAG_NONE);
+    current->suid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"fsuid",NULL,LOAD_FLAG_NONE);
+    current->fsuid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"gid",NULL,LOAD_FLAG_NONE);
+    current->gid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"egid",NULL,LOAD_FLAG_NONE);
+    current->egid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"sgid",NULL,LOAD_FLAG_NONE);
+    current->sgid = v_i32(v);
+    value_free(v);
+    
+    v = target_load_value_member(target,value,"fsgid",NULL,LOAD_FLAG_NONE);
+    current->fsgid = v_i32(v);
+    value_free(v);
+
+    current->value = value;
+
+    return 0;
+}
+
+extern char **environ;    
 
 int main(int argc,char **argv) {
     char *domain = NULL;
@@ -362,8 +484,13 @@ int main(int argc,char **argv) {
     struct bsymbol *init_task_bsymbol;
 
     struct bsymbol *bs;
-    struct value *bv;
+    struct value *v;
     int i;
+
+    regex_t *preg;
+    int rc;
+    char errbuf[64];
+    struct array_list *regexp_list;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -371,6 +498,12 @@ int main(int argc,char **argv) {
 	.detail = 1,
 	.meta = 1,
     };
+
+    struct linux_task_struct *init_task = NULL;
+    struct linux_task_struct *ti;
+    struct linux_task_struct *tj;
+    unsigned int csize;
+    unsigned int clen;
 
     while ((ch = getopt(argc, argv, "m:dvsl:Po:UF:")) != -1) {
 	switch (ch) {
@@ -441,6 +574,26 @@ int main(int argc,char **argv) {
 	    exit(-7);
 	}
     }
+    else if (strcmp(command,"hiercheck") == 0
+	     || strcmp(command,"hierkill") == 0) {
+	if (argc < 2) {
+	    fprintf(stderr,"ERROR: hiercheck|hierkill commands must"
+		    " be followed by one or more process hierarchy regexps!\n");
+	    exit(-5);
+	}
+	regexp_list = array_list_create(argc - 1);
+	i = 1;
+	while (i < argc) {
+	    preg = (regex_t *)malloc(sizeof(regex_t));
+	    if ((rc = regcomp(preg,argv[i],REG_EXTENDED | REG_NOSUB))) {
+		regerror(rc,preg,errbuf,64);
+		fprintf(stderr,"ERROR: bad regexp '%s': %s\n",argv[i],errbuf);
+		exit(-12);
+	    }
+	    array_list_append(regexp_list,preg);
+	    ++i;
+	}
+    }
     else if (strcmp(command,"dump") == 0) {
 	if (argc < 2) {
 	    fprintf(stderr,"ERROR: dump command must"
@@ -487,17 +640,17 @@ int main(int argc,char **argv) {
 		fprintf(stderr,"ERROR: could not lookup %s!\n",argv[i]);
 	    }
 	    else {
-		bv = target_load_symbol(t,bs,
+		v = target_load_symbol(t,bs,
 					LOAD_FLAG_AUTO_STRING
 					| LOAD_FLAG_AUTO_DEREF);
-		if (!bv) {
+		if (!v) {
 		    fprintf(stderr,"ERROR: could not load value for %s!\n",
 			    argv[i]);
 		}
 		else {
-		    value_dump(bv,&udn);
+		    value_dump(v,&udn);
 		    fprintf(udn.stream,"\n");
-		    value_free(bv);
+		    value_free(v);
 		}
 		bsymbol_release(bs);
 	    }
@@ -518,28 +671,105 @@ int main(int argc,char **argv) {
      */
     if (strcmp(command,"list") == 0) {
 	printf("PID\tUID\tProcess Name\n");
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",
+	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_list,NULL);
 	goto exit;
     }
     else if (strcmp(command,"check") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",
+	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_check,rf);
 	goto exit;
     }
     else if (strcmp(command,"zombie") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",
+	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_zombie,rf);
 	goto exit;
     }
     else if (strcmp(command,"stop") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",
+	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_stop,rf);
 	goto exit;
     }
     else if (strcmp(command,"kill") == 0) {
-	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",
+	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
 				   pslist_kill,rf);
+	goto exit;
+    }
+    else if (strcmp(command,"hiercheck") == 0
+	     || strcmp(command,"hierkill") == 0) {
+	/* Load the process list into our structs. */
+	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",1,
+				   pslist_load,&init_task);
+
+	/* Setup the parent pointers in our structs. */
+	list_for_each_entry(ti,&init_task->tasks,tasks) {
+	    list_for_each_entry(tj,&init_task->tasks,tasks) {
+		if (ti->parent_addr == tj->self) {
+		    //printf("parent of %s is %s\n",ti->comm,tj->comm);
+		    ti->parent = tj;
+		    break;
+		}
+	    }
+	    if (ti->parent_addr == ti->real_parent_addr) 
+		ti->real_parent = ti->parent;
+	    else {
+		list_for_each_entry(tj,&init_task->tasks,tasks) {
+		    if (ti->real_parent_addr == tj->self) {
+			//printf("real parent of %s is %s\n",ti->comm,tj->comm);
+			ti->real_parent = tj;
+			break;
+		    }
+		}
+	    }
+	}
+
+	/* Build the comm_hier values for each pid. */
+	list_for_each_entry(ti,&init_task->tasks,tasks) {
+	    csize = 32;
+	    clen = 0;
+	    ti->comm_hier = malloc(csize);
+	    ti->comm_hier[0] = '\0';
+
+	    tj = ti;
+	    while (tj) {
+		if ((csize - clen) < (strlen(tj->comm) + 2)) {
+		    csize += 32;
+		    realloc(ti->comm_hier,csize);
+		}
+		if (ti != tj)
+		    rc = snprintf(ti->comm_hier + clen,csize - clen,":%s",
+				  tj->comm);
+		else
+		    rc = snprintf(ti->comm_hier + clen,csize - clen,"%s",
+				  tj->comm);
+		clen += rc;
+		tj = tj->parent;
+	    }
+
+	    printf("hier: %s\n",ti->comm_hier);
+	}
+	
+	/* Check each pid's comm_hier against our regexps; if we don't find
+	 * a match, either print (hiercheck) the process, or kill
+	 * (hierkill).
+	 */
+	list_for_each_entry(ti,&init_task->tasks,tasks) {
+	    for (i = 0; i < array_list_len(regexp_list); ++i) {
+		preg = (regex_t *)array_list_item(regexp_list,i);
+		if (regexec(preg,ti->comm_hier,0,NULL,0) == 0) 
+		    break;
+	    }
+	    if (i == array_list_len(regexp_list)) {
+		if (strcmp(command,"hiercheck") == 0) {
+		    printf("Disallowed process: %d\t%d\t%s (not killing)\n",
+			   ti->pid,ti->uid,ti->comm);
+		}
+		else {
+		    __ps_kill(t,ti->value);
+		}
+	    }
+	}
+
 	goto exit;
     }
 

@@ -73,7 +73,7 @@ int linux_get_task_pid(struct target *target,struct value *task);
 typedef int (*linux_list_iterator_t)(struct target *t,struct value *value,
 				     void *data);
 int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
-			       char *list_head_member_name,
+			       char *list_head_member_name,int nofree,
 			       linux_list_iterator_t iterator,void *data);
 
 #endif /* __TARGET_XEN_VM_H__ */
