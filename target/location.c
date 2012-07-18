@@ -478,10 +478,14 @@ int location_resolve_lsymbol_base(struct target *target,
     ADDR obj_addr;
     struct symtab *symtab;
 
-    if (!addr_saveptr || !SYMBOL_IS_FULL_INSTANCE(symbol))
+    if (!addr_saveptr)
 	return -1;
 
-    if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
+    if (SYMBOL_IS_PARTIAL(symbol) && SYMBOL_IS_FUNCTION(symbol)
+	&& symbol->has_base_addr) {
+	obj_addr = symbol->base_addr;
+    }
+    else if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
 	if (symbol->s.ii->d.f.hasentrypc)
 	    obj_addr = symbol->s.ii->d.f.entry_pc;
 	else if ((symtab = symbol->s.ii->d.f.symtab)) {
@@ -536,7 +540,6 @@ int location_resolve_lsymbol_base(struct target *target,
 	}
     }
     else {
-	/* Impossible, but clears lint. */
 	verror("bad symbol type %s!\n",SYMBOL_TYPE(symbol->type));
 	return -1;
     }

@@ -1246,12 +1246,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 
     /* No need to bsymbol_hold(); __probe_register_addr() does it. */
 
-    if (!SYMBOL_IS_FULL_INSTANCE(bsymbol->lsymbol->symbol)) {
-	verror("cannot probe a partial symbol!\n");
-	goto errout;
-    }
-
-    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
+    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
 	    verror("could not resolve entry PC for function %s!\n",
 		   bsymbol->lsymbol->symbol->name);
