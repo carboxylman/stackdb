@@ -554,7 +554,7 @@ int location_resolve_symbol_base(struct target *target,
 				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
 				 struct memrange **range_saveptr) {
     return location_resolve_lsymbol_base(target,bsymbol->lsymbol,
-					 bsymbol->range->region,addr_saveptr,
+					 bsymbol->region,addr_saveptr,
 					 range_saveptr);
 }
 
