@@ -149,7 +149,7 @@ struct target_ops xen_vm_ops = {
  */
 struct target *xen_vm_attach(char *domain,
 			     struct debugfile_load_opts **dfoptlist) {
-    struct target *target;
+    struct target *target = NULL;
     struct xen_vm_state *xstate = NULL;
     struct xs_handle *xsh = NULL;
     xs_transaction_t xth = XBT_NULL;
@@ -162,7 +162,8 @@ struct target *xen_vm_attach(char *domain,
     unsigned int slen;
     int fd;
     Elf *elf = NULL;
-    char *eident = NULL;
+    int wordsize;
+    int endian;
 
     if (geteuid() != 0) {
 	verror("must be root!\n");
@@ -183,11 +184,14 @@ struct target *xen_vm_attach(char *domain,
 
     target->state = xstate;
 
-    if (!(buf = malloc(PATH_MAX*2)))
+    if (!(buf = malloc(PATH_MAX*2))) {
+	free(target);
 	return NULL;
+    }
 
     if (!(xsh = xs_domain_open())) {
 	verror("could not open xenstore!\n");
+	free(target);
 	return NULL;
     }
 
@@ -330,42 +334,21 @@ struct target *xen_vm_attach(char *domain,
 	    goto errout;
 	}
 
-	/* read the ident stuff to get wordsize and endianness info */
-	if (!(eident = elf_getident(elf,NULL))) {
-	    verror("elf_getident %s: %s\n",xstate->kernel_elf_filename,
-		   elf_errmsg(elf_errno()));
+	if (elf_get_arch_info(elf,&wordsize,&endian)) {
+	    verror("could not get ELF arch info for %s\n",
+		   xstate->kernel_elf_filename);
 	    goto errout;
 	}
-
-	if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	    target->wordsize = 4;
-	    vdebug(3,LOG_T_XV,"32-bit %s\n",xstate->kernel_elf_filename);
-	}
-	else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	    target->wordsize = 8;
-	    vdebug(3,LOG_T_XV,"64-bit %s\n",xstate->kernel_elf_filename);
-	}
-	else {
-	    verror("unknown elf class %d; not 32/64 bit!\n",
-		   (uint8_t)eident[EI_CLASS]);
-	    goto errout;
-	}
+	target->wordsize = wordsize;
+	target->endian = endian;
 	target->ptrsize = target->wordsize;
 
-	if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
-	    target->endian = DATA_LITTLE_ENDIAN;
-	    vdebug(3,LOG_T_XV,"little endian %s\n",xstate->kernel_elf_filename);
-	}
-	else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
-	    target->endian = DATA_BIG_ENDIAN;
-	    vdebug(3,LOG_T_XV,"big endian %s\n",xstate->kernel_elf_filename);
-	}
-	else {
-	    verror("unknown elf data %d; not big/little endian!\n",
-		   (uint8_t)eident[EI_DATA]);
-	    goto errout;
-	}
+	vdebug(3,LOG_T_XV,
+	       "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
+	       xstate->kernel_elf_filename,target->wordsize,
+	       (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
 
+	/* Done with the elf stuff. */
 	elf_end(elf);
 	elf = NULL;
     }
@@ -439,6 +422,8 @@ struct target *xen_vm_attach(char *domain,
 	xs_daemon_close(xsh);
     if (xstate)
 	free(xstate);
+    if (target)
+	free(target);
 
     return NULL;
 }
@@ -721,22 +706,11 @@ static int xen_vm_loaddebugfiles(struct target *target,
 				 struct addrspace *space,
 				 struct memregion *region) {
     Elf *elf = NULL;
-    Elf_Scn *scn;
-    GElf_Shdr shdr_mem;
-    GElf_Shdr *shdr;
-    char *name;
-    size_t shstrndx;
     int has_debuginfo = 0;
     char *buildid = NULL;
     char *debuglinkfile = NULL;
     uint32_t debuglinkfilecrc = 0;
-    Elf_Data *edata;
-    char *eident = NULL;
-    int is64 = 0;
-    Elf32_Nhdr *nthdr32;
-    Elf64_Nhdr *nthdr64;
-    char *ndata,*nend;
-    int fd = -1;;
+    int fd = -1;
     int i;
     int len;
     int retval = 0;
@@ -775,119 +749,19 @@ static int xen_vm_loaddebugfiles(struct target *target,
 	goto errout;
     }
 
-    /* read the ident stuff to get ELF byte size */
-    if (!(eident = elf_getident(elf,NULL))) {
-	verror("elf_getident %s: %s\n",region->name,elf_errmsg(elf_errno()));
-	goto errout;
+    /* This should be in load_regions, but we've already got the ELF
+     * binary open here... so just do it.
+     */
+    if (elf_get_base_addrs(elf,&region->base_virt_addr,&region->base_phys_addr)) {
+       verror("elf_get_base_addrs %s failed!\n",region->name);
+        goto errout;
+     }
+
+    if (elf_get_debuginfo_info(elf,&has_debuginfo,&buildid,&debuglinkfile,
+			       &debuglinkfilecrc)) {
+	verror("elf_get_debuginfo_info %s failed!\n",region->name);
+        goto errout;
     }
-
-    if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
-	is64 = 0;
-	vdebug(3,LOG_T_XV,"32-bit %s\n",region->name);
-    }
-    else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
-	is64 = 1;
-    }
-    else {
-	verror("unknown elf class %d; not 32/64 bit!\n",
-	       (uint8_t)eident[EI_CLASS]);
-	goto errout;
-    }
-
-#if _INT_ELFUTILS_VERSION >= 152
-    if (elf_getshdrstrndx(elf,&shstrndx) < 0) {
-#else 
-    if (elf_getshstrndx(elf,&shstrndx) < 0) {
-#endif
-	verror("cannot get section header string table index\n");
-	goto errout;
-    }
-
-    scn = NULL;
-    while ((scn = elf_nextscn(elf,scn)) != NULL) {
-	shdr = gelf_getshdr(scn,&shdr_mem);
-
-	if (shdr && shdr->sh_size > 0) {
-	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
-
-	    if (strcmp(name,".debug_info") == 0) {
-		vdebug(2,LOG_T_XV,
-		       "found %s section (%d) in region filename %s\n",
-		       name,shdr->sh_size,region->name);
-		has_debuginfo = 1;
-		continue;
-	    }
-	    else if (!buildid && shdr->sh_type == SHT_NOTE) {
-		vdebug(2,LOG_T_XV,
-		       "found %s note section (%d) in region filename %s\n",
-		       name,shdr->sh_size,region->name);
-		edata = elf_rawdata(scn,NULL);
-		if (!edata) {
-		    vwarn("cannot get data for valid section '%s': %s",
-			  name,elf_errmsg(-1));
-		    continue;
-		}
-
-		ndata = edata->d_buf;
-		nend = ndata + edata->d_size;
-		while (ndata < nend) {
-		    if (is64) {
-			nthdr64 = (Elf64_Nhdr *)ndata;
-			/* skip past the header and the name string and its
-			 * padding */
-			ndata += sizeof(Elf64_Nhdr);
-			vdebug(5,LOG_T_XV,"found note name '%s'\n",ndata);
-			ndata += nthdr64->n_namesz;
-			if (nthdr64->n_namesz % 4)
-			    ndata += (4 - nthdr64->n_namesz % 4);
-			vdebug(5,LOG_T_XV,"found note desc '%s'\n",ndata);
-			/* dig out the build ID */
-			if (nthdr64->n_type == NT_GNU_BUILD_ID) {
-			    buildid = strdup(ndata);
-			    break;
-			}
-			/* skip past the descriptor and padding */
-			ndata += nthdr64->n_descsz;
-			if (nthdr64->n_namesz % 4)
-			    ndata += (4 - nthdr64->n_namesz % 4);
-		    }
-		    else {
-			nthdr32 = (Elf32_Nhdr *)ndata;
-			/* skip past the header and the name string and its
-			 * padding */
-			ndata += sizeof(Elf32_Nhdr);
-			ndata += nthdr32->n_namesz;
-			if (nthdr32->n_namesz % 4)
-			    ndata += (4 - nthdr32->n_namesz % 4);
-			/* dig out the build ID */
-			if (nthdr32->n_type == NT_GNU_BUILD_ID) {
-			    buildid = strdup(ndata);
-			    break;
-			}
-			/* skip past the descriptor and padding */
-			ndata += nthdr32->n_descsz;
-			if (nthdr32->n_namesz % 4)
-			    ndata += (4 - nthdr32->n_namesz % 4);
-		    }
-		}
-	    }
-	    else if (strcmp(name,".gnu_debuglink") == 0) {
-		edata = elf_rawdata(scn,NULL);
-		if (!edata) {
-		    vwarn("cannot get data for valid section '%s': %s",
-			  name,elf_errmsg(-1));
-		    continue;
-		}
-		debuglinkfile = strdup(edata->d_buf);
-		debuglinkfilecrc = *(uint32_t *)(edata->d_buf + edata->d_size - 4);
-	    }
-	}
-    }
-
-    elf_end(elf);
-    elf = NULL;
-    close(fd);
-    fd = -1;
 
     vdebug(5,LOG_T_XV,"ELF info for region file %s:\n",region->name);
     vdebug(5,LOG_T_XV,"    has_debuginfo=%d,buildid='",has_debuginfo);
@@ -903,7 +777,8 @@ static int xen_vm_loaddebugfiles(struct target *target,
     if (has_debuginfo) {
 	finalfile = region->name;
     }
-    else if (buildid) {
+
+    if (!finalfile && buildid) {
 	for (i = 0; i < DEBUGPATHLEN; ++i) {
 	    snprintf(pbuf,PATH_MAX,"%s/.build-id/%02hhx/%s.debug",
 		     DEBUGPATH[i],*buildid,(char *)(buildid+1));
@@ -913,7 +788,8 @@ static int xen_vm_loaddebugfiles(struct target *target,
 	    }
 	}
     }
-    else if (debuglinkfile) {
+
+    if (!finalfile &&debuglinkfile) {
 	/* Find the containing dir path so we can use it in our search
 	 * of the standard debug file dir infrastructure.
 	 */
@@ -930,48 +806,48 @@ static int xen_vm_loaddebugfiles(struct target *target,
 	    }
 	}
     }
-    else {
+
+    if (!finalfile) {
 	verror("could not find any debuginfo sources from ELF file %s!\n",
 	       region->name);
 	goto errout;
     }
+    else if (!(opts = target_get_debugfile_load_opts(target,region,finalfile,
+						     DEBUGFILE_TYPE_KERNEL))
+	     && errno) {
+	vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_XV,
+	       "opts prohibit loading of debugfile for region %s\n",
+	       region->name);
+	/* "Success", fall out. */
+    }
+    else if ((debugfile = target_reuse_debugfile(target,region,finalfile,
+						 DEBUGFILE_TYPE_KERNEL))) {
+	vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_XV,
+	       "reusing debugfile %s for region %s\n",
+	       debugfile->idstr,region->name);
+	/* Success, just fall out. */
+    }
+    else {
+	/*
+	 * Need to create a new debugfile.  But first, we try to
+	 * populate the "debugfile's" ELF symtab/strtab using the ELF
+	 * binary, not debuginfo.  We want the internal ELF symbols, and
+	 * some distros put those in the debuginfo file; some put them
+	 * in the actual executable/lib.  So we check the actual binary
+	 * first.
+	 */
+	debugfile = target_create_debugfile(target,finalfile,
+					    DEBUGFILE_TYPE_KERNEL);
+	if (!debugfile)
+	    goto errout;
 
-    if (finalfile) {
-	if (!(opts =							\
-	      target_get_debugfile_load_opts(target,region,finalfile,
-					     DEBUGFILE_TYPE_KERNEL))
-	    && errno) {
-	    vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_XV,
-		   "opts prohibit loading of debugfile for region %s\n",
-		   region->name);
-	    /* "Success", fall out. */
-	}
-	else if ((debugfile =					\
-		  target_reuse_debugfile(target,region,finalfile,
-					 DEBUGFILE_TYPE_KERNEL))) {
-	    vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_XV,
-		   "reusing debugfile %s for region %s\n",
-		   debugfile->idstr,region->name);
-	    /* Success, just fall out. */
-	}
-	else {
-	    /*
-	     * Need to create a new debugfile.  But first, we try to
-	     * populate the "debugfile's" ELF symtab/strtab using the ELF
-	     * binary, not debuginfo.  We want the internal ELF symbols, and
-	     * some distros put those in the debuginfo file; some put them
-	     * in the actual executable/lib.  So we check the actual binary
-	     * first.
-	     */
-	    debugfile = target_create_debugfile(target,finalfile,
-						DEBUGFILE_TYPE_KERNEL);
-	    if (!debugfile)
-		goto errout;
+	if (elf_load_symtab(elf,region->name,debugfile))
+	    vwarn("could not load ELF symtab into debugfile %s\n",
+		  debugfile->idstr);
 
-	    if (target_load_and_associate_debugfile(target,region,debugfile,
-						    opts)) 
-		goto errout;
-	}
+	if (target_load_and_associate_debugfile(target,region,debugfile,
+						opts)) 
+	    goto errout;
     }
 
     /* Success!  Skip past errout. */
