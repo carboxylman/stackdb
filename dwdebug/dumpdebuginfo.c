@@ -24,6 +24,9 @@
 #include <sys/types.h>
 #include <regex.h>
 #include <ctype.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "log.h"
 #include "dwdebug.h"
@@ -51,6 +54,8 @@ int main(int argc,char **argv) {
 
     int dlo_idx = 0;
     struct debugfile_load_opts **dlo_list = NULL;
+    Elf *elf = NULL;
+    int fd = -1;
 
     dwdebug_init();
 
@@ -150,6 +155,23 @@ int main(int argc,char **argv) {
 	}
     }
 
+    /* Load the ELF symbols. */
+    elf_version(EV_CURRENT);
+    if ((fd = open(filename,0,O_RDONLY)) < 0) {
+	vwarn("ELF fd open %s: %s\n",filename,strerror(errno));
+    }
+    else if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
+	vwarn("elf_begin %s: %s\n",filename,elf_errmsg(elf_errno()));
+    }
+    else if (elf_load_symtab(elf,filename,debugfile))
+	vwarn("could not load ELF symtab into debugfile %s\n",
+	      debugfile->idstr);
+    if (elf)
+	elf_end(elf);
+    if (fd > -1)
+	close(fd);
+
+    /* Load the DWARF symbols. */
     if (debugfile_load(debugfile,opts)) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
 		filename);
