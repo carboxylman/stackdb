@@ -772,6 +772,12 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	}
     }
 
+    /*
+     * If we don't have a srcfile filter, check the ELF symtab.
+     */
+    if (!srcfile_filter && debugfile->elf_symtab) 
+	lsymbol = __symtab_lookup_sym(debugfile->elf_symtab,name,delim,ftype);
+
     /* If we didn't find anything in our srcfiles traversal, we're
      * done.
      */
