@@ -25,11 +25,15 @@
  * 
  */
 
+static const char *member_task_pid = "pid";
+static const char *member_task_name = "comm";
+static const char *member_regs_orig_eax = "orig_eax";
+static const char *member_regs_eip = "eip";
+	
 static struct bsymbol *bsymbol_task_prev;
 static struct bsymbol *bsymbol_task_next;
 
 static struct bsymbol *bsymbol_interrupt_regs;
-static int interrupt_no;
 
 static struct bsymbol *bsymbol_pagefault_regs;
 static struct bsymbol *bsymbol_pagefault_error_code;
@@ -46,9 +50,6 @@ static int syscall_no;
 static int probe_taskswitch(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_task_pid = "pid";
-	static const char *member_task_name = "comm";
-
 	int ret;
 	ctxtracker_context_t *context;
 	struct value *value_prev, *value_next;
@@ -78,24 +79,6 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		return -1;
 	}
 
-	value_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_AUTO_DEREF);
-	if (!value_next)
-	{
-		verror("Could not load next task symbol\n");
-		value_free(value_prev);
-		return -1;
-	}
-
-	if (context->task.prev)
-		value_free(context->task.prev);
-	context->task.prev = value_prev;
-
-	if (context->task.cur)
-		value_free(context->task.cur);
-	context->task.cur = value_next;
-
-	/* FIXME: move the following dumping code to examples/dumpcontext. */
-
 	ret = get_member_i32(probe->target, value_prev, member_task_pid, &prev_pid);
 	if (ret)
 	{
@@ -115,11 +98,20 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		return ret;
 	}
 
+	value_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_AUTO_DEREF);
+	if (!value_next)
+	{
+		verror("Could not load next task symbol\n");
+		value_free(value_prev);
+		return -1;
+	}
+
 	ret = get_member_i32(probe->target, value_next, member_task_pid, &next_pid);
 	if (ret)
 	{
 		verror("Could not load member int32 '%s.%s'\n", 
 				value_next->lsymbol->symbol->name, member_task_pid);
+		value_free(value_prev);
 		value_free(value_next);
 		return ret;
 	}
@@ -130,12 +122,22 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	{
 		verror("Could not load member string '%s.%s'\n", 
 				value_next->lsymbol->symbol->name, member_task_name);
+		value_free(value_prev);
 		value_free(value_next);
 		return ret;
 	}
 
 	vdebugc(-1, LOG_C_CTX, "Task switch: %d (%s) -> %d (%s)\n", 
 			prev_pid, prev_name, next_pid, next_name);
+
+	/* FIXME: uncomment the below code when Dave works out the problem. */
+	//if (context->task.prev)
+		//value_free(context->task.prev);
+	context->task.prev = value_prev;
+
+	if (context->task.cur)
+		value_free(context->task.cur);
+	context->task.cur = value_next;
 
 	return 0;
 }
@@ -207,12 +209,13 @@ static int probe_taskswitch_fini(struct probe *probe)
 static int probe_interrupt_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_orig_eax = "orig_eax";
-	
 	int ret;
 	ctxtracker_context_t *context;
 	struct value *value_regs;
 	REGVAL orig_eax;
+	int irq_num;
+	int task_pid;
+	char task_name[PATH_MAX];
 
 	context = (ctxtracker_context_t *)data;
 
@@ -239,12 +242,44 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 		return ret;
 	}
 
-	value_free(value_regs);
+	irq_num = ~orig_eax & 0xff;
 
-	interrupt_no = ~orig_eax & 0xff;
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			value_free(value_regs);
+			return ret;
+		}
 
-	vdebugc(-1, LOG_C_CTX, "Interrupt %d (0x%02x) requested\n", 
-			interrupt_no, interrupt_no);
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			value_free(value_regs);
+			return ret;
+		}
+	
+		vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) requested\n", 
+				task_pid, task_name, irq_num, irq_num);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Interrupt %d (0x%02x) requested\n", 
+				irq_num, irq_num);
+	}
+
+	/* TODO: implement a stack to save old trap state. */
+	context->flag = TRACK_INTERRUPT;
+
+	context->interrupt.irq_num = irq_num;
+	context->interrupt.regs = value_regs;
 
 	return 0;
 }
@@ -253,13 +288,53 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 static int probe_interrupt_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	int ret;
 	ctxtracker_context_t *context;
+	int irq_num;
+	int task_pid;
+	char task_name[PATH_MAX];
 	
 	context = (ctxtracker_context_t *)data;
 
-	vdebugc(-1, LOG_C_CTX, "Interrupt %d (0x%02x) handled\n", 
-			interrupt_no, interrupt_no);
+	irq_num = context->interrupt.irq_num;
 
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+	
+		vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) handled\n", 
+				task_pid, task_name, irq_num, irq_num);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Interrupt %d (0x%02x) handled\n", 
+				irq_num, irq_num);
+	}
+
+	context->interrupt.irq_num = 0;
+	if (context->interrupt.regs)
+		value_free(context->interrupt.regs);
+	context->interrupt.regs = NULL;
+
+	/* FIXME: restore to saved old trap state when stack is implemented. */
+	context->flag = TRACK_NONE;
+	
 	return 0;
 }
 
@@ -283,11 +358,20 @@ static int probe_interrupt_init(struct probe *probe)
 /* Called before the probe on do_IRQ entry gets deallocated. */
 static int probe_interrupt_fini(struct probe *probe)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)probe->handler_data;
+	
 	if (bsymbol_interrupt_regs)
 	{
 		bsymbol_release(bsymbol_interrupt_regs);
 		bsymbol_interrupt_regs = NULL;
 	}
+
+	context->interrupt.irq_num = 0;
+	if (context->interrupt.regs)
+		value_free(context->interrupt.regs);
+	context->interrupt.regs = NULL;
 
 	return 0;
 }
@@ -298,8 +382,6 @@ static int probe_interrupt_fini(struct probe *probe)
 static int probe_pagefault_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-
 	int ret;
 	ctxtracker_context_t *context;
 	struct value *value_regs;
@@ -465,8 +547,6 @@ struct exception_handler_data {
 static int probe_divide_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -545,8 +625,6 @@ static int probe_divide_error_exit(struct probe *probe, void *data,
 static int probe_debug_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -625,8 +703,6 @@ static int probe_debug_exit(struct probe *probe, void *data,
 static int probe_nmi_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -705,8 +781,6 @@ static int probe_nmi_exit(struct probe *probe, void *data,
 static int probe_int3_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -785,8 +859,6 @@ static int probe_int3_exit(struct probe *probe, void *data,
 static int probe_overflow_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -865,8 +937,6 @@ static int probe_overflow_exit(struct probe *probe, void *data,
 static int probe_bounds_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -945,8 +1015,6 @@ static int probe_bounds_exit(struct probe *probe, void *data,
 static int probe_invalid_op_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1077,8 +1145,6 @@ static int probe_double_fault_exit(struct probe *probe, void *data,
 static int probe_coprocessor_segment_overrun_entry(struct probe *probe, 
 		void *data, struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1157,8 +1223,6 @@ static int probe_coprocessor_segment_overrun_exit(struct probe *probe,
 static int probe_invalid_TSS_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1237,8 +1301,6 @@ static int probe_invalid_TSS_exit(struct probe *probe, void *data,
 static int probe_segment_not_present_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1317,8 +1379,6 @@ static int probe_segment_not_present_exit(struct probe *probe, void *data,
 static int probe_stack_segment_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1397,8 +1457,6 @@ static int probe_stack_segment_exit(struct probe *probe, void *data,
 static int probe_general_protection_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1503,8 +1561,6 @@ static int probe_spurious_interrupt_bug_exit(struct probe *probe, void *data,
 static int probe_coprocessor_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1583,8 +1639,6 @@ static int probe_coprocessor_error_exit(struct probe *probe, void *data,
 static int probe_alignment_check_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
@@ -1689,8 +1743,6 @@ static int probe_machine_check_exit(struct probe *probe, void *data,
 static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	static const char *member_regs_eip = "eip";
-	
 	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;

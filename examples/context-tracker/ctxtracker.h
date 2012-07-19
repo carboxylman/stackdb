@@ -74,38 +74,34 @@ typedef struct {
 	   TRACK_SYSCALL:   a system call is executing. */
 	ctxtracker_track_t flag;
 
-	/* Trap information */
-	union {
+	/* Interrupt details */
+	struct {
+		int irq_num;	// interrupt request number
+		struct value *regs;	// register values from interrupt handler
+	} interrupt;
 
-		/* Interrupt details */
-		struct {
-			int no;	// interrupt request number
-		} interrupt;
+	/* Page fault details */
+	struct {
+		ADDR addr;	// address at which page fault occurred
+		struct value *regs;		// register values from page fault handler
+		bool protection_fault;	// (T) protection fault, (F) no page found
+		bool write_access;		// (T) write access, (F) read access
+		bool user_mode;			// (T) user mode, (F) kernel mode 
+		bool reserved_bit;		// (T) reserved bit
+		bool instr_fetch;		// (T) instruction fetch
+	} pagefault;
 
-		/* Page fault details */
-		struct {
-			ADDR addr;	// address at which page fault occurred
-			struct value *regs;		// register values from page fault handler
-			bool protection_fault;	// (T) protection fault, (F) no page found
-			bool write_access;		// (T) write access, (F) read access
-			bool user_mode;			// (T) user mode, (F) kernel mode 
-			bool reserved_bit;		// (T) reserved bit
-			bool instr_fetch;		// (T) instruction fetch
-		} pagefault;
+	/* Exception details */
+	struct {
+		char type[128];	// string value that indicates the type of exception
+		struct value *regs;		// register values from exception handler
+		uint32_t error_code;	// exception info
+	} exception;
 
-		/* Exception details */
-		struct {
-			char type[128];	// string value that indicates the type of exception
-			struct value *regs;		// register values from exception handler
-			uint32_t error_code;	// exception info
-		} exception;
-
-		/* System call details */
-		struct {
-			int no;	// system call number
-		} syscall;
-
-	} trap;
+	/* System call details */
+	struct {
+		int sysc_num;	// system call index
+	} syscall;
 
 } ctxtracker_context_t;
 
