@@ -336,6 +336,16 @@ REFCNT bsymbol_release(struct bsymbol *bsymbol);
 /**
  ** Value functions.
  **/
+/*
+ * Creates a fully independent value with a copy of whatever was in
+ * @in's value buffer; also holds refs to in->type and in->lsymbol if
+ * they exist -- so you must free it with value_free like normal.
+ *
+ * Note that if you clone a value that is sharing a parent value's
+ * buffer space, the clone does not maintain this relationship; clones
+ * always have their own private buffer.
+ */
+struct value *value_clone(struct value *in);
 void value_free(struct value *value);
 void value_dump(struct value *value,struct dump_info *ud);
 

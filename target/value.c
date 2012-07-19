@@ -93,6 +93,34 @@ struct value *value_create_noalloc(struct lsymbol *lsymbol,
     return value;
 }
 
+struct value *value_clone(struct value *in) {
+    struct value *out = (struct value *)calloc(1,sizeof(*out));
+    if (!out)
+	return NULL;
+
+    if (in->type) {
+	out->type = in->type;
+	symbol_hold(out->type);
+    }
+    if (in->lsymbol) {
+	out->lsymbol = in->lsymbol;
+	lsymbol_hold(out->lsymbol);
+    }
+    out->range = in->range;
+    out->region_stamp = in->region_stamp;
+    out->mmap = in->mmap;
+    out->ismmap = in->ismmap;
+    out->isstring = in->isstring;
+    out->addr = in->addr;
+    out->addr_resolved_ip = in->addr_resolved_ip;
+
+    out->buf = malloc(in->bufsiz);
+    memcpy(out->buf,in->buf,in->bufsiz);
+    out->bufsiz = in->bufsiz;
+
+    return out;
+}
+
 void value_free(struct value *value) {
     if (value->ismmap) {
 	if (value->range)
