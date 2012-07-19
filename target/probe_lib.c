@@ -88,8 +88,13 @@ struct probe *probe_register_function_ee(struct probe *probe,
     size_t bufsiz;
     char *buf;
 
-    if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	verror("must supply a full function symbol!\n");
+    if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
+	verror("must supply a function symbol!\n");
+	goto errout;
+    }
+    else if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)
+	     && bsymbol->lsymbol->symbol->size <= 0) {
+	verror("partial function symbols must have non-zero length!\n");
 	goto errout;
     }
 
@@ -101,7 +106,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
     else 
 	probeaddr = start;
 
-    if (!force_at_entry) {
+    if (!force_at_entry && SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
 	if (location_resolve_function_prologue_end(target,bsymbol,
 						   &prologueend,&range)) {
 	    vwarn("could not resolve prologue_end for function %s!\n",
@@ -144,25 +149,38 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	return probe;
 
     /* Disassemble the function to find the return instructions. */
-    funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
-    if (!RANGE_IS_PC(funcrange)) {
-	verror("range type for function %s was %s, not PC!\n",
-	       bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
-	goto errout;
-    }
+    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
+	funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
+	if (!RANGE_IS_PC(funcrange)) {
+	    verror("range type for function %s was %s, not PC!\n",
+		   bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
+	    goto errout;
+	}
 
-    funclen = funcrange->r.a.highpc - funcrange->r.a.lowpc;
+	funclen = funcrange->r.a.highpc - funcrange->r.a.lowpc;
+	/* This should not ever happen. */
+
+	if (start != funcrange->r.a.lowpc) {
+	    vwarn("full function %s does not have matching base (0x%"PRIxADDR")"
+		  " and lowpc (0x%"PRIxADDR") values!\n",
+		  bsymbol_get_name(bsymbol),start,funcrange->r.a.lowpc);
+	    start = funcrange->r.a.lowpc;
+	    funclen = funcrange->r.a.highpc - start;
+	}
+    }
+    else
+	funclen = bsymbol->lsymbol->symbol->size;
+
     funccode = malloc(funclen);
 
-    if (!target_read_addr(target,funcrange->r.a.lowpc,
-			  funclen,funccode,NULL)) {
+    if (!target_read_addr(target,start,funclen,funccode,NULL)) {
 	verror("could not read code before disasm of function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	goto errout;
     }
 
     if (disasm_get_control_flow_offsets(target,INST_CF_RET,funccode,funclen,
-					&cflist,funcrange->r.a.lowpc,noabort)) {
+					&cflist,start,noabort)) {
 	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
 	goto errout;
     }
@@ -182,8 +200,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	/* We should be in the same range, of course; this should never
 	 * happen!
 	 */
-	if (0 && (!target_find_memory_real(target,
-					  funcrange->r.a.lowpc + idata->offset,
+	if (0 && (!target_find_memory_real(target,start + idata->offset,
 					  NULL,NULL,&newrange)
 		  || range != newrange)) {
 	    verror("could not find sane range!\n");
@@ -202,7 +219,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	free(buf);
 
 	/* Register the j-th exit probe. */
-	probeaddr = funcrange->r.a.lowpc + idata->offset;
+	probeaddr = start + idata->offset;
 	if (!__probe_register_addr(source,probeaddr,newrange,
 				   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
 				   PROBEPOINT_LAUTO,bsymbol,start)) {
@@ -261,8 +278,13 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     GHashTable *itypes = NULL;
     inst_cf_flags_t cfflags = INST_CF_NONE;
 
-    if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	verror("must supply a full function symbol!\n");
+    if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
+	verror("must supply a function symbol!\n");
+	goto errout;
+    }
+    else if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)
+	     && bsymbol->lsymbol->symbol->size <= 0) {
+	verror("partial function symbols must have non-zero length!\n");
 	goto errout;
     }
 
@@ -293,22 +315,37 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     va_end(ap);
 
     /* Disassemble the function to find the return instructions. */
-    funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
-    if (!RANGE_IS_PC(funcrange)) {
-	verror("range type for function %s was %s, not PC!\n",
-	       bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
-	goto errout;
+
+    /* Disassemble the function to find the return instructions. */
+    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
+	funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
+	if (!RANGE_IS_PC(funcrange)) {
+	    verror("range type for function %s was %s, not PC!\n",
+		   bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
+	    goto errout;
+	}
+
+	funclen = funcrange->r.a.highpc - funcrange->r.a.lowpc;
+
+	/* This should not ever happen. */
+	if (start != funcrange->r.a.lowpc) {
+	    vwarn("full function %s does not have matching base (0x%"PRIxADDR")"
+		  " and lowpc (0x%"PRIxADDR") values!\n",
+		  bsymbol_get_name(bsymbol),start,funcrange->r.a.lowpc);
+	    start = funcrange->r.a.lowpc;
+	    funclen = funcrange->r.a.highpc - start;
+	}
     }
+    else
+	funclen = bsymbol->lsymbol->symbol->size;
 
     /* We allocate an extra NULL byte on the back side because distorm
      * seems to have an off by one error (guessing, according to
      * valgrind!
      */
-    funclen = funcrange->r.a.highpc - funcrange->r.a.lowpc;
     funccode = malloc(funclen + 1);
 
-    if (!target_read_addr(target,funcrange->r.a.lowpc,
-			  funclen,funccode,NULL)) {
+    if (!target_read_addr(target,start,funclen,funccode,NULL)) {
 	verror("could not read code before disasm of function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	goto errout;
@@ -317,7 +354,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     funccode[funclen] = 0;
 
     if (disasm_get_control_flow_offsets(target,cfflags,funccode,funclen,
-					&cflist,funcrange->r.a.lowpc,noabort)) {
+					&cflist,start,noabort)) {
 	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
 	goto errout;
     }
@@ -332,8 +369,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	/* We should be in the same range, of course; this should never
 	 * happen!
 	 */
-	if (0 && (!target_find_memory_real(target,
-					  funcrange->r.a.lowpc + idata->offset,
+	if (0 && (!target_find_memory_real(target,start + idata->offset,
 					  NULL,NULL,&newrange)
 		  || range != newrange)) {
 	    verror("could not find sane range!\n");
@@ -357,7 +393,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	free(buf);
 
 	/* Register the j-th exit probe. */
-	probeaddr = funcrange->r.a.lowpc + idata->offset;
+	probeaddr = start + idata->offset;
 	if (!__probe_register_addr(source,probeaddr,newrange,
 				   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
 				   PROBEPOINT_LAUTO,bsymbol,start)) {
