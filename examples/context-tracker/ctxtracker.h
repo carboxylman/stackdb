@@ -57,6 +57,58 @@ typedef enum {
 #define TRACK_ALL (TRACK_TASKSWITCH | TRACK_INTERRUPT | TRACK_PAGEFAULT \
 		| TRACK_EXCEPTION | TRACK_SYSCALL)
 
+/* Context information */
+typedef struct {
+
+	/* Task information */
+	struct {
+		struct value *cur;	// current task info
+		struct value *prev;	// previous task info
+	} task;
+	
+	/* Trap flag, set to one of values below:
+	   TRACK_NONE:      no trap is being handled.
+	   TRACK_INTERRUPT: an interrupt is being handled.
+	   TRACK_PAGEFAULT: a page fault is being handled.
+	   TRACK_EXCEPTION: an exception is being handled.
+	   TRACK_SYSCALL:   a system call is executing. */
+	ctxtracker_track_t flag;
+
+	/* Trap information */
+	union {
+
+		/* Interrupt details */
+		struct {
+			int no;	// interrupt request number
+		} interrupt;
+
+		/* Page fault details */
+		struct {
+			ADDR addr;	// address at which page fault occurred
+			struct value *regs;		// register values from page fault handler
+			bool protection_fault;	// (T) protection fault, (F) no page found
+			bool write_access;		// (T) write access, (F) read access
+			bool user_mode;			// (T) user mode, (F) kernel mode 
+			bool reserved_bit;		// (T) reserved bit
+			bool instr_fetch;		// (T) instruction fetch
+		} pagefault;
+
+		/* Exception details */
+		struct {
+			char type[128];	// string value that indicates the type of exception
+			struct value *regs;		// register values from exception handler
+			uint32_t error_code;	// exception info
+		} exception;
+
+		/* System call details */
+		struct {
+			int no;	// system call number
+		} syscall;
+
+	} trap;
+
+} ctxtracker_context_t;
+
 /*
  * Initialize context-aware-probes for a specified target. 'sysmap_name' is the
  * name of the System.map file for the target, which we use to instrument 

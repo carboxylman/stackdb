@@ -62,7 +62,7 @@ OBJECTS := util.lo
 
 LIBRARIES := 
 
-PROGRAMS := ctxtracker_open
+PROGRAMS := dumpcontext
 
 STATICLIBS := $(OBJDIR)/examples/context-tracker/libctxtracker.a \
               $(OBJDIR)/target/libtarget.a \
@@ -85,7 +85,7 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-ctxtracker_open: $(HEADERS) $(LIBRARIES) $(OBJECTS) ctxtracker_open.lo $(STATICLIBS)
+dumpcontext: $(HEADERS) $(LIBRARIES) $(OBJECTS) dumpcontext.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -93,7 +93,7 @@ install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) ctxtracker_open.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) dumpcontext.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs

@@ -124,7 +124,7 @@ replay-pause: /usr/sbin/xm
 kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
 	sudo xm destroy $(GUEST_NAME)
 	sleep 1
-	sudo killall -9 ttd-deviced make ctxtracker_open
+	sudo killall -9 ttd-deviced make dumpcontext
 
 else
 
@@ -137,16 +137,26 @@ console: /usr/sbin/xm
 kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
 	sudo xm destroy $(GUEST_NAME)
 	sleep 1
-	sudo killall -9 make ctxtracker_open
+	sudo killall -9 make dumpcontext
 
 endif
 
 run: $(LIBRARIES) all-subdirs
-	sudo ./examples/ctxtracker_open -l C_ALL \
+	sudo ./examples/dumpcontext -l C_ALL \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 debug: $(LIBRARIES) all-subdirs
-	sudo gdb --args ./examples/ctxtracker_open -l C_ALL \
+	sudo gdb --args ./examples/dumpcontext -l C_ALL \
+	-m $(GUEST_SYSMAP) $(GUEST_NAME)
+
+run-verbose: $(LIBRARIES) all-subdirs
+	sudo ./examples/dumpcontext \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
+	-m $(GUEST_SYSMAP) $(GUEST_NAME)
+
+debug-verbose: $(LIBRARIES) all-subdirs
+	sudo gdb --args ./examples/dumpcontext \
+	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 # How to recursively descend into subdirectories to make general

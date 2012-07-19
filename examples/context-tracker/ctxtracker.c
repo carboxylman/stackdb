@@ -31,6 +31,7 @@
 #include <limits.h>
 
 #include <log.h>
+#include <target.h>
 #include <target_api.h>
 #include <target_xen_vm.h>
 #include <probe_api.h>
@@ -48,6 +49,8 @@ static GHashTable *pagefault_probes;
 static GHashTable *exception_probes;
 static GHashTable *syscall_probes;
 
+static ctxtracker_context_t *context;
+
 /* FIXME: remove this once you start using target's ELF symtab symbols. */
 static FILE *sysmap_handle;
 
@@ -64,10 +67,10 @@ static int track_taskswitch(void)
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
+		.summarize = NULL,
 		.fini = probe_taskswitch_fini
 	};
 
-	struct bsymbol *bsymbol;
 	struct probe *probe;
 
 	if (taskswitch_probes)
@@ -83,33 +86,7 @@ static int track_taskswitch(void)
 		return -ENOMEM;
 	}
 
-	bsymbol = target_lookup_sym(t, (char *)symbol, ".", NULL /* srcfile */, 
-			SYMBOL_TYPE_FLAG_NONE);
-	if (!bsymbol)
-	{
-		verror("Could not find symbol '%s' in debuginfo\n", symbol);
-		return -1;
-	}
-
-	probe = probe_create(t, (struct probe_ops *)&ops, (char *)symbol, handler, 
-			NULL /* post_handler */, NULL /* data */, 0 /* autofree */);
-	if (!probe)
-	{
-		verror("Could not create probe on '%s'\n", bsymbol_get_name(bsymbol));
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	if (!probe_register_symbol(probe, bsymbol, PROBEPOINT_SW, PROBEPOINT_EXEC,
-				PROBEPOINT_LAUTO))
-	{
-		verror("Could not register probe on '%s'\n", bsymbol_get_name(bsymbol));
-		probe_free(probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	bsymbol_release(bsymbol);
+	probe = register_probe_label(t, symbol, handler, &ops, NULL);
 
 	g_hash_table_insert(probes, (gpointer)probe /* key */, 
 			(gpointer)probe /* value */);
@@ -132,14 +109,12 @@ static int track_interrupt(void)
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
+		.summarize = NULL,
 		.fini = probe_interrupt_fini
 	};
 
-	int ret;
-	struct bsymbol *bsymbol;
 	struct probe *entry_probe;
 	struct probe *exit_probe;
-	ADDR base_addr = 0;
 
 	if (interrupt_probes)
 	{
@@ -154,88 +129,19 @@ static int track_interrupt(void)
 		return -ENOMEM;
 	}
 
-	bsymbol = target_lookup_sym(t, (char *)symbol, ".", NULL /* srcfile */, 
-			SYMBOL_TYPE_FLAG_NONE);
-	if (!bsymbol)
-	{
-		verror("Could not find symbol '%s' in debuginfo\n", symbol);
-		return -1;
-	}
-
-	/* Register a probe on the function entry. */
-
-	entry_probe = probe_create(t, (struct probe_ops *)&ops, (char *)symbol, 
-			entry_handler, NULL /* post_handler */, NULL /* data */, 
-			0 /* autofree */);
+	entry_probe = register_probe_function_entry(t, symbol, entry_handler, &ops, 
+			NULL);
 	if (!entry_probe)
-	{
-		verror("Could not create probe on '%s' entry\n", 
-				bsymbol_get_name(bsymbol));
-		bsymbol_release(bsymbol);
 		return -1;
-	}
 
-	if (!probe_register_symbol(entry_probe, bsymbol, PROBEPOINT_SW, 
-				PROBEPOINT_EXEC, PROBEPOINT_LAUTO))
-	{
-		verror("Could not register probe on '%s' entry\n", 
-				bsymbol_get_name(bsymbol));
-		probe_free(entry_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	/* Register a probe on the function exit. */
-
-	ret = location_resolve_symbol_base(t, bsymbol, &base_addr, 
-			NULL /* range */);
-	if (ret)
-	{
-		verror("Could not resolve base addr for function '%s'\n", 
-				bsymbol_get_name(bsymbol));
-		probe_unregister(entry_probe, 1 /* force */);
-		probe_free(entry_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return ret;
-	}
-
-	exit_probe = probe_create(t, NULL /* ops */, bsymbol_get_name(bsymbol), 
-			exit_handler, NULL /* post_handler */, NULL /* data */, 
-			0 /* autofree */);
+	exit_probe = register_probe_function_exit(t, symbol, exit_handler, NULL, 
+			NULL);
 	if (!exit_probe)
 	{
-		verror("Could not create probe on '%s' exit\n", 
-				bsymbol_get_name(bsymbol));
 		probe_unregister(entry_probe, 1 /* force */);
 		probe_free(entry_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
 		return -1;
 	}
-
-	if (!probe_register_function_instrs(bsymbol, PROBEPOINT_SW, 1 /* noabort */,
-				INST_RET, exit_probe, INST_NONE))
-	{
-		verror("Could not register probe on '%s' exit\n", 
-				bsymbol_get_name(bsymbol));
-		probe_unregister(entry_probe, 1 /* force */);
-		probe_free(entry_probe, 1 /* force */);
-		probe_free(exit_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	if (probe_num_sources(exit_probe) == 0)
-	{
-		verror("No return sites in '%s'\n", bsymbol_get_name(bsymbol));
-		probe_unregister(entry_probe, 1 /* force */);
-		probe_unregister(exit_probe, 1 /* force */);
-		probe_free(entry_probe, 1 /* force */);
-		probe_free(exit_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	bsymbol_release(bsymbol);
 
 	g_hash_table_insert(probes, (gpointer)entry_probe /* key */, 
 			(gpointer)entry_probe /* value */);
@@ -262,14 +168,12 @@ static int track_pagefault(void)
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
+		.summarize = NULL,
 		.fini = probe_pagefault_fini
 	};
 
-	int ret;
-	struct bsymbol *bsymbol;
 	struct probe *entry_probe;
 	struct probe *exit_probe;
-	ADDR base_addr = 0;
 
 	if (pagefault_probes)
 	{
@@ -284,88 +188,19 @@ static int track_pagefault(void)
 		return -ENOMEM;
 	}
 
-	bsymbol = target_lookup_sym(t, (char *)symbol, ".", NULL /* srcfile */, 
-			SYMBOL_TYPE_FLAG_NONE);
-	if (!bsymbol)
-	{
-		verror("Could not find symbol '%s' in debuginfo\n", symbol);
-		return -1;
-	}
-
-	/* Register a probe on the function entry. */
-
-	entry_probe = probe_create(t, (struct probe_ops *)&ops, (char *)symbol, 
-			entry_handler, NULL /* post_handler */, NULL /* data */, 
-			0 /* autofree */);
+	entry_probe = register_probe_function_entry(t, symbol, entry_handler, &ops,
+			NULL);
 	if (!entry_probe)
-	{
-		verror("Could not create probe on '%s' entry\n", 
-				bsymbol_get_name(bsymbol));
-		bsymbol_release(bsymbol);
 		return -1;
-	}
 
-	if (!probe_register_symbol(entry_probe, bsymbol, PROBEPOINT_SW, 
-				PROBEPOINT_EXEC, PROBEPOINT_LAUTO))
-	{
-		verror("Could not register probe on '%s' entry\n", 
-				bsymbol_get_name(bsymbol));
-		probe_free(entry_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	/* Register a probe on the function exit. */
-
-	ret = location_resolve_symbol_base(t, bsymbol, &base_addr, 
-			NULL /* range */);
-	if (ret)
-	{
-		verror("Could not resolve base addr for function '%s'\n", 
-				bsymbol_get_name(bsymbol));
-		probe_unregister(entry_probe, 1 /* force */);
-		probe_free(entry_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return ret;
-	}
-
-	exit_probe = probe_create(t, NULL /* ops */, bsymbol_get_name(bsymbol), 
-			exit_handler, NULL /* post_handler */, NULL /* data */, 
-			0 /* autofree */);
+	exit_probe = register_probe_function_exit(t, symbol, exit_handler, NULL, 
+			NULL);
 	if (!exit_probe)
 	{
-		verror("Could not create probe on '%s' exit\n", 
-				bsymbol_get_name(bsymbol));
 		probe_unregister(entry_probe, 1 /* force */);
 		probe_free(entry_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
 		return -1;
 	}
-
-	if (!probe_register_function_instrs(bsymbol, PROBEPOINT_SW, 1 /* noabort */,
-				INST_RET, exit_probe, INST_NONE))
-	{
-		verror("Could not register probe on '%s' exit\n", 
-				bsymbol_get_name(bsymbol));
-		probe_unregister(entry_probe, 1 /* force */);
-		probe_free(entry_probe, 1 /* force */);
-		probe_free(exit_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	if (probe_num_sources(exit_probe) == 0)
-	{
-		verror("No return sites in '%s'\n", bsymbol_get_name(bsymbol));
-		probe_unregister(entry_probe, 1 /* force */);
-		probe_unregister(exit_probe, 1 /* force */);
-		probe_free(entry_probe, 1 /* force */);
-		probe_free(exit_probe, 1 /* force */);
-		bsymbol_release(bsymbol);
-		return -1;
-	}
-
-	bsymbol_release(bsymbol);
 
 	g_hash_table_insert(probes, (gpointer)entry_probe /* key */, 
 			(gpointer)entry_probe /* value */);
@@ -382,11 +217,163 @@ static int track_pagefault(void)
 
 static int track_exception(void)
 {
+	/* Commented symbols are functions not found in both sysmap.map and 
+	   debuginfo. */
+	static const char *symbols[] = {
+		"do_divide_error",
+		"do_debug",
+		"do_nmi",
+		"do_int3",
+		"do_overflow",
+		"do_bounds",
+		"do_invalid_op",
+	//	"device_not_available",
+	//	"double_fault",
+		"do_coprocessor_segment_overrun",
+		"do_invalid_TSS",
+		"do_segment_not_present",
+		"do_stack_segment",
+		"do_general_protection",
+	//	"spurious_interrupt_bug",
+		"do_coprocessor_error",
+		"do_alignment_check",
+	//	"intel_machine_check",
+		"do_simd_coprocessor_error"
+	};
+	static const probe_handler_t entry_handlers[] = {
+		probe_divide_error_entry,
+		probe_debug_entry,
+		probe_nmi_entry,
+		probe_int3_entry,
+		probe_overflow_entry,
+		probe_bounds_entry,
+		probe_invalid_op_entry,
+	//	probe_device_not_available_entry,
+	//	probe_double_fault_entry,
+		probe_coprocessor_segment_overrun_entry,
+		probe_invalid_TSS_entry,
+		probe_segment_not_present_entry,
+		probe_stack_segment_entry,
+		probe_general_protection_entry,
+	//	probe_spurious_interrupt_bug_entry,
+		probe_coprocessor_error_entry,
+		probe_alignment_check_entry,
+	//	probe_machine_check_entry,
+		probe_simd_coprocessor_error_entry
+	};
+	static const probe_handler_t exit_handlers[] = {
+		probe_divide_error_exit,
+		probe_debug_exit,
+		probe_nmi_exit,
+		probe_int3_exit,
+		probe_overflow_exit,
+		probe_bounds_exit,
+		probe_invalid_op_exit,
+	//	probe_device_not_available_exit,
+	//	probe_double_fault_exit,
+		probe_coprocessor_segment_overrun_exit,
+		probe_invalid_TSS_exit,
+		probe_segment_not_present_exit,
+		probe_stack_segment_exit,
+		probe_general_protection_exit,
+	//	probe_spurious_interrupt_bug_exit,
+		probe_coprocessor_error_exit,
+		probe_alignment_check_exit,
+	//	probe_machine_check_exit,
+		probe_simd_coprocessor_error_exit
+	};
+	static const struct probe_ops ops = { 
+		.gettype = NULL,
+		.init = probe_exception_init,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = NULL,
+		.fini = probe_exception_fini
+	};
+
+	int i, count;
+	struct probe *entry_probe;
+	struct probe *exit_probe;
+
+	if (exception_probes)
+	{
+		verror("Exceptions are already being tracked\n");
+		return -1;
+	}
+
+	exception_probes = g_hash_table_new(g_direct_hash, g_direct_equal);
+	if (!exception_probes)
+	{
+		verror("Could not create probe table for exceptions\n");
+		return -ENOMEM;
+	}
+
+	count = sizeof(symbols) / sizeof(symbols[0]);
+
+	for (i = 0; i < count; i++)
+	{
+		entry_probe = register_probe_function_entry(t, symbols[i], 
+				entry_handlers[i], &ops, (void *)i /* data */);
+		if (!entry_probe)
+			return -1;
+
+		exit_probe = register_probe_function_exit(t, symbols[i], 
+				exit_handlers[i], NULL, NULL);
+		if (!exit_probe)
+		{
+			probe_unregister(entry_probe, 1 /* force */);
+			probe_free(entry_probe, 1 /* force */);
+			return -1;
+		}
+
+		g_hash_table_insert(probes, (gpointer)entry_probe /* key */, 
+				(gpointer)entry_probe /* value */);
+		g_hash_table_insert(probes, (gpointer)exit_probe /* key */, 
+				(gpointer)exit_probe /* value */);
+
+		g_hash_table_insert(exception_probes, (gpointer)entry_probe /* key */, 
+				(gpointer)entry_probe /* value */);
+		g_hash_table_insert(exception_probes, (gpointer)exit_probe /* key */, 
+				(gpointer)exit_probe /* value */);
+	}
+
 	return 0;
 }
 
 static int track_syscall(void)
 {
+	static const char *symbol = "system_call";
+	static const probe_handler_t entry_handler = probe_syscall_entry;
+
+	struct probe *entry_probe;
+
+	if (syscall_probes)
+	{
+		verror("System calls are already being tracked\n");
+		return -1;
+	}
+
+	syscall_probes = g_hash_table_new(g_direct_hash, g_direct_equal);
+	if (!syscall_probes)
+	{
+		verror("Could not create probe table for system calls\n");
+		return -ENOMEM;
+	}
+
+	/* FIXME: update this once you start using target's ELF symtab symbols. */
+	entry_probe = register_probe_function_sysmap(t, symbol, entry_handler, NULL,
+			NULL, sysmap_handle);
+	if (!entry_probe)
+		return -1;
+
+	g_hash_table_insert(probes, (gpointer)entry_probe /* key */, 
+			(gpointer)entry_probe /* value */);
+
+	g_hash_table_insert(syscall_probes, (gpointer)entry_probe /* key */, 
+			(gpointer)entry_probe /* value */);
+
 	return 0;
 }
 
@@ -402,6 +389,8 @@ static void untrack(GHashTable **probe_table)
 		while (g_hash_table_iter_next(&iter, (gpointer)&key, (gpointer)&probe))
 		{
 			probe_unregister(probe, 1 /* force */);
+			/* FIXME: uncomment this after fixing double faults detected by 
+			   glib. */
 			//probe_free(probe, 1 /* force */);
 
 			g_hash_table_remove(probes, key);
@@ -462,6 +451,14 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 		return -ENOMEM;
 	}
 
+	context = (ctxtracker_context_t *)malloc(sizeof(ctxtracker_context_t));
+	if (!context)
+	{
+		verror("Could not allocate memory for context info\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
 	return 0;
 }
 
@@ -471,12 +468,20 @@ void ctxtracker_cleanup(void)
 	GHashTableIter iter;
 	gpointer key;
 
+	if (context)
+	{
+		free(context);
+		context = NULL;
+	}
+
 	if (probes)
 	{
 		g_hash_table_iter_init(&iter, probes);
 		while (g_hash_table_iter_next(&iter, (gpointer)&key, (gpointer)&probe))
 		{
 			probe_unregister(probe, 1 /* force */);
+			/* FIXME: uncomment this after fixing double faults detected by 
+			   glib. */
 			//probe_free(probe, 1 /* force */);
 		}
 

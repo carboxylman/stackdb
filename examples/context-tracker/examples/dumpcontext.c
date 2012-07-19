@@ -17,10 +17,10 @@
  */
 
 /*
- *  examples/context-tracker/examples/ctxtracker_open.c
+ *  examples/context-tracker/examples/dumpcontext.c
  *
- *  An application of context-tracker written to monitor open files in 
- *  a Linux-based guest VM.
+ *  A sample application built on top of context tracker that dumps all 
+ *  context change information for a Linux guest VM.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 
@@ -150,6 +150,8 @@ int main(int argc, char *argv[])
 		return -ENOMEM;
 	}
 
+	LOG("Initializing VMI...\n");
+	
 	t = init_probes(domain_name, debug_level);
 	if (!t)
 		return -1;
@@ -161,7 +163,7 @@ int main(int argc, char *argv[])
 		return ret;
 	}
 
-    ret = ctxtracker_track(TRACK_PAGEFAULT, true);
+    ret = ctxtracker_track(TRACK_ALL, true);
 
 	if (ret)
 	{

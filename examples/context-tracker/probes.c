@@ -35,52 +35,12 @@ static struct bsymbol *bsymbol_pagefault_regs;
 static struct bsymbol *bsymbol_pagefault_error_code;
 static ADDR pagefault_addr;
 
+static struct bsymbol *bsymbol_exception_regs[64];
+static struct bsymbol *bsymbol_exception_error_code[64];
+
+static int syscall_no;
+
 /* TASK SWITCH HANDLERS */
-
-/* Called after the probe on label schedule.switch_tasks gets initialized. */
-static int probe_taskswitch_init(struct probe *probe)
-{
-	static const char *symbol_task_prev = "schedule.prev";
-	static const char *symbol_task_next = "schedule.next";
-
-	bsymbol_task_prev = target_lookup_sym(probe->target, 
-			(char *)symbol_task_prev, ".", NULL /* srcfile */, 
-			SYMBOL_TYPE_NONE);
-	if (!bsymbol_task_prev)
-	{
-		verror("Could not find symbol '%s'\n", symbol_task_prev);
-		return -1;
-	}
-
-	bsymbol_task_next = target_lookup_sym(probe->target, 
-			(char *)symbol_task_next, ".", NULL /* srcfile */, 
-			SYMBOL_TYPE_NONE);
-	if (!bsymbol_task_next)
-	{
-		verror("Could not find symbol '%s'\n", symbol_task_next);
-		return -1;
-	}
-
-	return 0;
-}
-
-/* Called before the probe on label schedule.switch_tasks gets deallocated. */
-static int probe_taskswitch_fini(struct probe *probe)
-{
-	if (bsymbol_task_prev)
-	{
-		bsymbol_release(bsymbol_task_prev);
-		bsymbol_task_prev = NULL;
-	}
-
-	if (bsymbol_task_next)
-	{
-		bsymbol_release(bsymbol_task_next);
-		bsymbol_task_next = NULL;
-	}
-
-	return 0;
-}
 
 /* Called upon the execution of label schedule.switch_tasks. */
 static int probe_taskswitch(struct probe *probe, void *data, 
@@ -171,36 +131,52 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	return 0;
 }
 
-/* INTERRUPT HANDLERS */
-
-/* Called after the probe on do_IRQ entry gets initialized. */
-static int probe_interrupt_init(struct probe *probe)
+/* Called after the probe on label schedule.switch_tasks gets initialized. */
+static int probe_taskswitch_init(struct probe *probe)
 {
-	static const char *symbol_interrupt_regs = "do_IRQ.regs";
+	static const char *symbol_task_prev = "schedule.prev";
+	static const char *symbol_task_next = "schedule.next";
 
-	bsymbol_interrupt_regs = target_lookup_sym(probe->target, 
-			(char *)symbol_interrupt_regs, ".", NULL /* srcfile */, 
+	bsymbol_task_prev = target_lookup_sym(probe->target, 
+			(char *)symbol_task_prev, ".", NULL /* srcfile */, 
 			SYMBOL_TYPE_NONE);
-	if (!bsymbol_interrupt_regs)
+	if (!bsymbol_task_prev)
 	{
-		verror("Could not find symbol '%s'\n", symbol_interrupt_regs);
+		verror("Could not find symbol '%s'\n", symbol_task_prev);
+		return -1;
+	}
+
+	bsymbol_task_next = target_lookup_sym(probe->target, 
+			(char *)symbol_task_next, ".", NULL /* srcfile */, 
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_task_next)
+	{
+		verror("Could not find symbol '%s'\n", symbol_task_next);
 		return -1;
 	}
 
 	return 0;
 }
 
-/* Called before the probe on do_IRQ entry gets deallocated. */
-static int probe_interrupt_fini(struct probe *probe)
+/* Called before the probe on label schedule.switch_tasks gets deallocated. */
+static int probe_taskswitch_fini(struct probe *probe)
 {
-	if (bsymbol_interrupt_regs)
+	if (bsymbol_task_prev)
 	{
-		bsymbol_release(bsymbol_interrupt_regs);
-		bsymbol_interrupt_regs = NULL;
+		bsymbol_release(bsymbol_task_prev);
+		bsymbol_task_prev = NULL;
+	}
+
+	if (bsymbol_task_next)
+	{
+		bsymbol_release(bsymbol_task_next);
+		bsymbol_task_next = NULL;
 	}
 
 	return 0;
 }
+
+/* INTERRUPT HANDLERS */
 
 /* Call to interrupt request handler do_IRQ */
 static int probe_interrupt_entry(struct probe *probe, void *data, 
@@ -255,46 +231,36 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 	return 0;
 }
 
+/* Called after the probe on do_IRQ entry gets initialized. */
+static int probe_interrupt_init(struct probe *probe)
+{
+	static const char *symbol_interrupt_regs = "do_IRQ.regs";
+
+	bsymbol_interrupt_regs = target_lookup_sym(probe->target, 
+			(char *)symbol_interrupt_regs, ".", NULL /* srcfile */, 
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_interrupt_regs)
+	{
+		verror("Could not find symbol '%s'\n", symbol_interrupt_regs);
+		return -1;
+	}
+
+	return 0;
+}
+
+/* Called before the probe on do_IRQ entry gets deallocated. */
+static int probe_interrupt_fini(struct probe *probe)
+{
+	if (bsymbol_interrupt_regs)
+	{
+		bsymbol_release(bsymbol_interrupt_regs);
+		bsymbol_interrupt_regs = NULL;
+	}
+
+	return 0;
+}
+
 /* PAGE FAULT HANDLERS */
-
-/* Called after the probe on do_page_fault entry gets initialized. */
-static int probe_pagefault_init(struct probe *probe)
-{
-	static const char *symbol_pagefault_regs = "do_page_fault.regs";
-	static const char *symbol_pagefault_error_code = "do_page_fault.error_code";
-
-	bsymbol_pagefault_regs = target_lookup_sym(probe->target, 
-			(char *)symbol_pagefault_regs, ".", NULL /* srcfile */, 
-			SYMBOL_TYPE_NONE);
-	if (!bsymbol_pagefault_regs)
-	{
-		verror("Could not find symbol '%s'\n", symbol_pagefault_regs);
-		return -1;
-	}
-
-	bsymbol_pagefault_error_code = target_lookup_sym(probe->target, 
-			(char *)symbol_pagefault_error_code, ".", NULL /* srcfile */, 
-			SYMBOL_TYPE_NONE);
-	if (!bsymbol_pagefault_error_code)
-	{
-		verror("Could not find symbol '%s'\n", symbol_pagefault_error_code);
-		return -1;
-	}
-
-	return 0;
-}
-
-/* Called before the probe on do_page_fault entry gets deallocated. */
-static int probe_pagefault_fini(struct probe *probe)
-{
-	if (bsymbol_pagefault_error_code)
-	{
-		bsymbol_release(bsymbol_pagefault_error_code);
-		bsymbol_pagefault_error_code = NULL;
-	}
-
-	return 0;
-}
 
 /* TRAP_page_fault -- trap gate #14; entry */
 static int probe_pagefault_entry(struct probe *probe, void *data, 
@@ -404,12 +370,113 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	return 0;
 }
 
+/* Called after the probe on do_page_fault entry gets initialized. */
+static int probe_pagefault_init(struct probe *probe)
+{
+	static const char *symbol_pagefault_regs = "do_page_fault.regs";
+	static const char *symbol_pagefault_error_code = "do_page_fault.error_code";
+
+	bsymbol_pagefault_regs = target_lookup_sym(probe->target, 
+			(char *)symbol_pagefault_regs, ".", NULL /* srcfile */, 
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_pagefault_regs)
+	{
+		verror("Could not find symbol '%s'\n", symbol_pagefault_regs);
+		return -1;
+	}
+
+	bsymbol_pagefault_error_code = target_lookup_sym(probe->target, 
+			(char *)symbol_pagefault_error_code, ".", NULL /* srcfile */, 
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_pagefault_error_code)
+	{
+		verror("Could not find symbol '%s'\n", symbol_pagefault_error_code);
+		return -1;
+	}
+
+	return 0;
+}
+
+/* Called before the probe on do_page_fault entry gets deallocated. */
+static int probe_pagefault_fini(struct probe *probe)
+{
+	if (bsymbol_pagefault_regs)
+	{
+		bsymbol_release(bsymbol_pagefault_regs);
+		bsymbol_pagefault_regs = NULL;
+	}
+
+	if (bsymbol_pagefault_error_code)
+	{
+		bsymbol_release(bsymbol_pagefault_error_code);
+		bsymbol_pagefault_error_code = NULL;
+	}
+
+	return 0;
+}
+
 /* EXCEPTION HANDLERS */
 
 /* TRAP_divide_error -- trap gate #0; entry */
 static int probe_divide_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Divide error exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+
 	return 0;
 }
 
@@ -417,6 +484,8 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 static int probe_divide_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Divide error exception handled\n");
+	
 	return 0;
 }
 
@@ -424,6 +493,62 @@ static int probe_divide_error_exit(struct probe *probe, void *data,
 static int probe_debug_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Debug exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -431,6 +556,8 @@ static int probe_debug_entry(struct probe *probe, void *data,
 static int probe_debug_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Debug exception handled\n");
+	
 	return 0;
 }
 
@@ -438,6 +565,62 @@ static int probe_debug_exit(struct probe *probe, void *data,
 static int probe_nmi_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "NMI exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -445,6 +628,8 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 static int probe_nmi_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "NMI exception handled\n");
+	
 	return 0;
 }
 
@@ -452,6 +637,62 @@ static int probe_nmi_exit(struct probe *probe, void *data,
 static int probe_int3_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Breakpoint exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -459,6 +700,8 @@ static int probe_int3_entry(struct probe *probe, void *data,
 static int probe_int3_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Breakpoint exception handled\n");
+	
 	return 0;
 }
 
@@ -466,6 +709,62 @@ static int probe_int3_exit(struct probe *probe, void *data,
 static int probe_overflow_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Overflow exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -473,6 +772,8 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 static int probe_overflow_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Overflow exception handled\n");
+	
 	return 0;
 }
 
@@ -480,6 +781,62 @@ static int probe_overflow_exit(struct probe *probe, void *data,
 static int probe_bounds_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Bounds check exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -487,6 +844,8 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 static int probe_bounds_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Bounds check exception handled\n");
+	
 	return 0;
 }
 
@@ -494,6 +853,62 @@ static int probe_bounds_exit(struct probe *probe, void *data,
 static int probe_invalid_op_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Invalid opcode exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -501,6 +916,8 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 static int probe_invalid_op_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Invalid opcode exception handled\n");
+	
 	return 0;
 }
 
@@ -508,6 +925,12 @@ static int probe_invalid_op_exit(struct probe *probe, void *data,
 static int probe_device_not_available_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_device_not_available_entry;
+	
+	vdebugc(-1, LOG_C_CTX, "Device not available exception occurred\n");
+	
 	return 0;
 }
 
@@ -515,6 +938,12 @@ static int probe_device_not_available_entry(struct probe *probe, void *data,
 static int probe_device_not_available_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_device_not_available_exit;
+	
+	vdebugc(-1, LOG_C_CTX, "Device not available exception handled\n");
+	
 	return 0;
 }
 
@@ -522,6 +951,12 @@ static int probe_device_not_available_exit(struct probe *probe, void *data,
 static int probe_double_fault_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_double_fault_entry;
+	
+	vdebugc(-1, LOG_C_CTX, "Double fault exception occurred\n");
+	
 	return 0;
 }
 
@@ -529,6 +964,12 @@ static int probe_double_fault_entry(struct probe *probe, void *data,
 static int probe_double_fault_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_double_fault_exit;
+	
+	vdebugc(-1, LOG_C_CTX, "Double fault exception handled\n");
+	
 	return 0;
 }
 
@@ -536,6 +977,62 @@ static int probe_double_fault_exit(struct probe *probe, void *data,
 static int probe_coprocessor_segment_overrun_entry(struct probe *probe, 
 		void *data, struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Coprocessor segment overrun exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -543,6 +1040,8 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 static int probe_coprocessor_segment_overrun_exit(struct probe *probe, 
 		void *data, struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Coprocessor segment overrun exception handled\n");
+	
 	return 0;
 }
 
@@ -550,6 +1049,62 @@ static int probe_coprocessor_segment_overrun_exit(struct probe *probe,
 static int probe_invalid_TSS_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Invalid TSS exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -557,6 +1112,8 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 static int probe_invalid_TSS_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Invalid TSS exception handled\n");
+	
 	return 0;
 }
 
@@ -564,6 +1121,62 @@ static int probe_invalid_TSS_exit(struct probe *probe, void *data,
 static int probe_segment_not_present_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Segment not present exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -571,6 +1184,8 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 static int probe_segment_not_present_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Segment not present exception handled\n");
+	
 	return 0;
 }
 
@@ -578,6 +1193,62 @@ static int probe_segment_not_present_exit(struct probe *probe, void *data,
 static int probe_stack_segment_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Stack exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -585,6 +1256,8 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 static int probe_stack_segment_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Stack exception handled\n");
+	
 	return 0;
 }
 
@@ -592,6 +1265,62 @@ static int probe_stack_segment_exit(struct probe *probe, void *data,
 static int probe_general_protection_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "General protection exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -599,6 +1328,8 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 static int probe_general_protection_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "General protection exception handled\n");
+	
 	return 0;
 }
 
@@ -606,6 +1337,12 @@ static int probe_general_protection_exit(struct probe *probe, void *data,
 static int probe_spurious_interrupt_bug_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_spurious_interrupt_bug_entry;
+	
+	vdebugc(-1, LOG_C_CTX, "Spurious interrupt exception occurred\n");
+	
 	return 0;
 }
 
@@ -613,6 +1350,12 @@ static int probe_spurious_interrupt_bug_entry(struct probe *probe, void *data,
 static int probe_spurious_interrupt_bug_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_spurious_interrupt_bug_exit;
+	
+	vdebugc(-1, LOG_C_CTX, "Spurious interrupt exception handled\n");
+	
 	return 0;
 }
 
@@ -620,6 +1363,62 @@ static int probe_spurious_interrupt_bug_exit(struct probe *probe, void *data,
 static int probe_coprocessor_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Floating point exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -627,6 +1426,8 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 static int probe_coprocessor_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Floating point exception handled\n");
+	
 	return 0;
 }
 
@@ -634,6 +1435,62 @@ static int probe_coprocessor_error_exit(struct probe *probe, void *data,
 static int probe_alignment_check_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "Alignment check exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -641,6 +1498,8 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 static int probe_alignment_check_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "Alignment check exception handled\n");
+	
 	return 0;
 }
 
@@ -648,6 +1507,12 @@ static int probe_alignment_check_exit(struct probe *probe, void *data,
 static int probe_machine_check_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_machine_check_entry;
+	
+	vdebugc(-1, LOG_C_CTX, "Machine check exception occurred\n");
+	
 	return 0;
 }
 
@@ -655,6 +1520,12 @@ static int probe_machine_check_entry(struct probe *probe, void *data,
 static int probe_machine_check_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_machine_check_exit;
+	
+	vdebugc(-1, LOG_C_CTX, "Machine check exception handled\n");
+	
 	return 0;
 }
 
@@ -662,6 +1533,62 @@ static int probe_machine_check_exit(struct probe *probe, void *data,
 static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_eip = "eip";
+	
+	int i, ret;
+	struct value *value_regs;
+	struct value *value_error_code;
+	REGVAL eip;
+	uint32_t error_code;
+	
+	i = (int)data;
+
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("bsymbol for exception regs is NULL\n");
+		return -1;
+	}
+
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("bsymbol for exception error code is NULL\n");
+		return -1;
+	}
+
+	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	if (!value_regs)
+	{
+		verror("Could not load exception regs symbol\n");
+		return -1;
+	}
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	value_free(value_regs);
+
+	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
+			LOAD_FLAG_AUTO_DEREF);
+	if (!value_error_code)
+	{
+		verror("Could not load exception error code symbol\n");
+		return -1;
+	}
+
+	error_code = v_u32(value_error_code);
+
+	value_free(value_error_code);
+
+	vdebugc(-1, LOG_C_CTX, "SIMD floating point exception occurred: "
+			"eip = 0x%08x, error-code = 0x%08x\n",
+			eip, error_code);
+	
 	return 0;
 }
 
@@ -669,6 +1596,65 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 static int probe_simd_coprocessor_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	vdebugc(-1, LOG_C_CTX, "SIMD floating point exception handled\n");
+	
+	return 0;
+}
+
+/* Called after a probe on an exception handler entry gets initialized. */
+static int probe_exception_init(struct probe *probe)
+{
+	char *symbol;
+	char symbol_exception_regs[128];
+	char symbol_exception_error_code[128];
+	int i;
+
+	symbol = probe->name;
+	i = (int)probe->handler_data;
+
+	sprintf(symbol_exception_regs, "%s.regs", symbol);
+	sprintf(symbol_exception_error_code, "%s.error_code", symbol);
+
+	bsymbol_exception_regs[i] = target_lookup_sym(probe->target, 
+			(char *)symbol_exception_regs, ".", NULL /* srcfile */, 
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_exception_regs[i])
+	{
+		verror("Could not find symbol '%s'\n", symbol_exception_regs);
+		return -1;
+	}
+
+	bsymbol_exception_error_code[i] = target_lookup_sym(probe->target, 
+			(char *)symbol_exception_error_code, ".", NULL /* srcfile */, 
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_exception_error_code[i])
+	{
+		verror("Could not find symbol '%s'\n", symbol_exception_error_code);
+		return -1;
+	}
+
+	return 0;
+}
+
+/* Called before the probe on an exception handler entry gets deallocated. */
+static int probe_exception_fini(struct probe *probe)
+{
+	int i;
+
+	i = (int)probe->handler_data;
+
+	if (bsymbol_exception_regs[i])
+	{
+		bsymbol_release(bsymbol_exception_regs[i]);
+		bsymbol_exception_regs[i] = NULL;
+	}
+
+	if (bsymbol_exception_error_code[i])
+	{
+		bsymbol_release(bsymbol_exception_error_code[i]);
+		bsymbol_exception_error_code[i] = NULL;
+	}
+
 	return 0;
 }
 
@@ -679,6 +1665,12 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	unsigned int eax = target_read_reg(t, 0); // system entry number
+
+	syscall_no = eax;
+
+	vdebugc(-1, LOG_C_CTX, "System call %d (0x%02x) called\n", syscall_no, 
+			syscall_no);
+
 	return 0;
 }
 
@@ -686,6 +1678,12 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 static int probe_syscall_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
-	unsigned int eax = target_read_reg(t, 0); // system entry number
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	(void)probe_syscall_exit;
+
+	vdebugc(-1, LOG_C_CTX, "System call %d (0x%02x) returned\n", syscall_no, 
+			syscall_no);
+
 	return 0;
 }
