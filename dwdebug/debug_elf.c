@@ -32,6 +32,7 @@
 #include "log.h"
 #include "output.h"
 #include "list.h"
+#include "clfit.h"
 #include "alist.h"
 #include "dwdebug.h"
 
@@ -327,6 +328,10 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
     unsigned char stt;
     struct symbol *symbol;
     int *section_flags = NULL;
+    struct array_list *prev_ral;
+    struct array_list *ral;
+    struct clf_range_data *prev_crd;
+    struct clf_range_data *crd;
 
     if (!(ehdr = gelf_getehdr(elf,&ehdr_mem))) {
 	verror("cannot read ELF header: %s",elf_errmsg(-1));
@@ -361,7 +366,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 	    if (strcmp(name,".strtab") != 0) 
 		continue;
 
-	    vdebug(2,LOG_D_DWARF,
+	    vdebug(2,LOG_D_ELF,
 		   "found .strtab section in ELF file %s\n",
 		   elf_filename);
 
@@ -411,7 +416,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 	    if (strcmp(name,".symtab") != 0) 
 		continue;
 
-	    vdebug(2,LOG_D_DWARF,
+	    vdebug(2,LOG_D_ELF,
 		   "found .symtab section in ELF file %s\n",
 		   elf_filename);
 
@@ -501,6 +506,61 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 		if (symbol->base_addr != 0)
 		    clrange_add(&debugfile->elf_ranges,symbol->base_addr,
 				symbol->base_addr + symbol->size,symbol);
+	    }
+
+	    /* Now, go through all the symbols and update their sizes 
+	     * based on the following symbol's address -- this is
+	     * definitely possibly wrong sometimes, but it hopefully
+	     * will allow disassembly of non-DWARF functions -- since we
+	     * guess their length here.  Again, could be wrong
+	     * sometimes.
+	     */
+	    ral = clrange_find_next_inc(&debugfile->elf_ranges,0);
+	    if (ral) {
+		/* XXX: assume nothing overlaps; if it did, we would
+		 * have to look for the next symbol following the
+		 * greatest *end* of all symbols in this list.
+		 */
+		prev_ral = ral;
+		prev_crd = crd =					\
+		    (struct clf_range_data *)array_list_item(ral,0);
+
+		while ((ral = clrange_find_next_exc(&debugfile->elf_ranges,
+						    CLRANGE_START(crd)))) {
+		    prev_crd = crd;
+		    vdebug(3,LOG_D_ELF,
+			   "checking end of ELF symbol %s (0x%"PRIxADDR","
+			   "0x%"PRIxADDR")\n",
+			   symbol_get_name((struct symbol *)CLRANGE_DATA(prev_crd)),
+			   CLRANGE_START(prev_crd),CLRANGE_END(prev_crd));
+		    crd = (struct clf_range_data *)array_list_item(ral,0);
+
+		    if (CLRANGE_END(prev_crd) == CLRANGE_START(prev_crd)) {
+			/* Enforce that there is only one symbol at each
+			 * start address.  If there is more than one, there
+			 * might be overlapping symbols, and we can't really
+			 * deal with that!
+			 */
+			if (array_list_len(prev_ral) == 1) {
+			    vdebug(2,LOG_D_ELF,
+				   "updating 0-length symbol %s to 0x%"PRIxADDR","
+				   "0x%"PRIxADDR"\n",
+				   symbol_get_name((struct symbol *)CLRANGE_DATA(prev_crd)),
+				   CLRANGE_START(prev_crd),CLRANGE_START(crd));
+			    
+			    clrange_update_end(&debugfile->elf_ranges,
+					       CLRANGE_START(prev_crd),
+					       CLRANGE_START(crd),
+					       CLRANGE_DATA(prev_crd));
+			}
+			else {
+			    vwarn("more than one ELF symbol at 0x%"PRIxADDR"; not updating ends!\n",
+				  CLRANGE_START(prev_crd));
+			}
+		    }
+
+		    prev_ral = ral;
+		}
 	    }
 	}
     }
