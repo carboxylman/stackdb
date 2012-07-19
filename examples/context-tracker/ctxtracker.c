@@ -463,6 +463,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
+	memset(context, 0, sizeof(ctxtracker_context_t));
 
 	return 0;
 }

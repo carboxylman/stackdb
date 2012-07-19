@@ -4,6 +4,8 @@ Save all context data to one struct object.
 
 Use probe_summarize to inform the analysis context info.
 
+Move all dumping code in ctxtracker to examples/dumpcontext.
+
 Use ELF symbols to probe functions that are currently instrumented by reading 
 raw addresses in system.map.
 	

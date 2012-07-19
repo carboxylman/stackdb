@@ -78,6 +78,24 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		return -1;
 	}
 
+	value_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_AUTO_DEREF);
+	if (!value_next)
+	{
+		verror("Could not load next task symbol\n");
+		value_free(value_prev);
+		return -1;
+	}
+
+	if (context->task.prev)
+		value_free(context->task.prev);
+	context->task.prev = value_prev;
+
+	if (context->task.cur)
+		value_free(context->task.cur);
+	context->task.cur = value_next;
+
+	/* FIXME: move the following dumping code to examples/dumpcontext. */
+
 	ret = get_member_i32(probe->target, value_prev, member_task_pid, &prev_pid);
 	if (ret)
 	{
@@ -95,16 +113,6 @@ static int probe_taskswitch(struct probe *probe, void *data,
 				value_prev->lsymbol->symbol->name, member_task_name);
 		value_free(value_prev);
 		return ret;
-	}
-
-	value_free(value_prev);
-
-	value_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_AUTO_DEREF);
-	if (!value_next)
-	{
-		verror("Could not load next task symbol\n");
-		value_free(value_prev);
-		return -1;
 	}
 
 	ret = get_member_i32(probe->target, value_next, member_task_pid, &next_pid);
@@ -125,8 +133,6 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		value_free(value_next);
 		return ret;
 	}
-
-	value_free(value_next);
 
 	vdebugc(-1, LOG_C_CTX, "Task switch: %d (%s) -> %d (%s)\n", 
 			prev_pid, prev_name, next_pid, next_name);
@@ -164,6 +170,22 @@ static int probe_taskswitch_init(struct probe *probe)
 /* Called before the probe on label schedule.switch_tasks gets deallocated. */
 static int probe_taskswitch_fini(struct probe *probe)
 {
+	ctxtracker_context_t *context;
+
+	context = (ctxtracker_context_t *)probe->handler_data;
+
+	if (context->task.cur)
+	{
+		value_free(context->task.cur);
+		context->task.cur = NULL;
+	}
+
+	if (context->task.prev)
+	{
+		value_free(context->task.prev);
+		context->task.prev = NULL;
+	}
+
 	if (bsymbol_task_prev)
 	{
 		bsymbol_release(bsymbol_task_prev);

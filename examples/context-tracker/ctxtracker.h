@@ -107,8 +107,6 @@ typedef struct {
 
 	} trap;
 
-	void *reserved; // for internal use
-
 } ctxtracker_context_t;
 
 /*
