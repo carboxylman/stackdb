@@ -18,13 +18,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "log.h"
 #include "clfit.h"
 #include "alist.h"
-
-struct clf_range_data {
-    Word_t end;
-    void *data;
-};
 
 clrange_t clrange_create() {
     return (Pvoid_t) NULL;
@@ -36,6 +32,7 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
     struct array_list *alist;
     int created = 0;
 
+    crd->start = start;
     crd->end = end;
     crd->data = data;
 
@@ -84,8 +81,8 @@ int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data) {
     alist = (struct array_list *)*pv;
     for (i = 0; i < array_list_len(alist); ++i) {
 	crd = (struct clf_range_data *)array_list_item(alist,i);
-	if (crd->end != end && crd->data == data) {
-	    crd->end = end;
+	if (CLRANGE_END(crd) != end && CLRANGE_DATA(crd) == data) {
+	    CLRANGE_END(crd) = end;
 	    break;
 	}
     }
@@ -121,30 +118,35 @@ void *clrange_find(clrange_t *clf,Word_t index) {
 	//fprintf(stderr,"looking for %lu\n",idx);
 	//fflush(stderr);
 	JLL(pv,*clf,idx);
-	//fprintf(stderr,"found %lu\n",idx);
 	if (pv == NULL)
 	    return NULL;
+	//fprintf(stderr,"found %lu\n",idx);
+	//fflush(stderr);
 	alist = (struct array_list *)*pv;
 
 	j = -1;
-	for (i = 0; i < array_list_len(alist); ++i) {
+	for (i = array_list_len(alist) - 1; i > -1; --i) {
 	    struct clf_range_data *crd = (struct clf_range_data *) \
 		array_list_item(alist,i);
-	    if (index < crd->end && (crd->end - idx) < lrlen) {
+	    if (idx < CLRANGE_END(crd) && (CLRANGE_END(crd) - idx) < lrlen) {
 		retval = crd;
-		lrlen = crd->end - idx;
+		lrlen = CLRANGE_END(crd) - idx;
 	    }
 	}
 
-	if (retval) 
+	if (retval) {
 	    /* We found a tightest bound containing @index; return! */
-	    return retval->data;
+	    //fprintf(stderr,"found %lu at %d\n",idx,i);
+	    return CLRANGE_DATA(retval);
+	}
 	else {
 	    /* If the index was zero, we can't find any previous
 	     * matches, so we're done!
 	     */
-	    if (idx == 0)
+	    if (idx == 0) {
+		//fprintf(stderr,"did not find %lu range fit!\n",idx,i);
 		return NULL;
+	    }
 	}
 
 	/* If we did not find a tightest bound containing @index, try
@@ -152,6 +154,124 @@ void *clrange_find(clrange_t *clf,Word_t index) {
 	 */
 	idx -= 1;
     }
+}
+
+struct array_list *clrange_find_prev_inc(clrange_t *clf,Word_t index) {
+    PWord_t pv;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    JLL(pv,*clf,index);
+    if (pv == NULL)
+	return NULL;
+
+    return (struct array_list *)*pv;
+}
+
+struct array_list *clrange_find_prev_exc(clrange_t *clf,Word_t index) {
+    PWord_t pv;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    JLP(pv,*clf,index);
+    if (pv == NULL)
+	return NULL;
+
+    return (struct array_list *)*pv;
+}
+
+struct array_list *clrange_find_next_inc(clrange_t *clf,Word_t index) {
+    PWord_t pv;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    JLF(pv,*clf,index);
+    if (pv == NULL)
+	return NULL;
+
+    return (struct array_list *)*pv;
+}
+
+struct array_list *clrange_find_next_exc(clrange_t *clf,Word_t index) {
+    PWord_t pv;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    JLN(pv,*clf,index);
+    if (pv == NULL)
+	return NULL;
+
+    return (struct array_list *)*pv;
+}
+
+struct array_list *clrange_find_subranges_inside(clrange_t *clf,
+						 Word_t index,
+						 unsigned int len) {
+    PWord_t pv;
+    struct array_list *retval = NULL;
+    struct array_list *alist;
+    Word_t idx_end = index + len;
+    /* Start our search here, exclusive. */
+    Word_t idx = idx_end;
+    int i;
+    struct clf_range_data *crd;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    retval = array_list_create(1);
+
+    /*
+     * We look for the previous index prior to (@index + @len),
+     * exclusive; and keep repeating this until we find an index less
+     * than @index.  For each range we find, if it is entirely inside
+     * the given range, we include it in our results.
+     */
+    while ((alist = (struct array_list *)clrange_find_prev_exc(clf,idx))) {
+	/* We do this loop backward so that we theoretically produce an
+	 * exactly reverse-sorted list of struct clrnage_data * items --
+	 * reverse of the way they are in the judy array.
+	 */
+	crd = NULL;
+	for (i = array_list_len(alist) - 1; i >= 0; --i) {
+	    crd = (struct clf_range_data *)array_list_item(alist,i);
+	    if (CLRANGE_START(crd) <= index && CLRANGE_END(crd) <= idx_end) 
+		array_list_append(retval,crd);
+	}
+	if (!crd) {
+	    /* Bad!  List was not-NULL but empty?  Corruption somewhere
+	     * is likely!
+	     */
+	    verror("CRD array list empty, but not NULL!\n");
+	    goto errout;
+	}
+	/* Update the search idx. */
+	idx = CLRANGE_START(crd);
+	/* If the new idx is the start of the target range, or is prior
+	 * to it, we're done.
+	 *
+	 * XXX: and yes, this means that the loop above is wasted for
+	 * this list of CRDs.
+	 */
+	if (idx <= index)
+	    goto out;
+    }
+
+ out:
+    /* If we didn't find anything, dealloc and leave. */
+    if (array_list_len(retval) == 0) {
+	array_list_free(retval);
+	retval = NULL;
+    }
+    return retval;
+
+ errout:
+    array_list_free(retval);
+    return NULL;
 }
 
 void clrange_free(clmatch_t clf) {

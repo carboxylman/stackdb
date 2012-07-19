@@ -24,10 +24,29 @@
 
 typedef Pvoid_t clrange_t;
 
+struct clf_range_data { 
+    Word_t start;
+    Word_t end;
+    void *data;
+};
+
+#define CLRANGE_START(crd) ((crd)->start)
+#define CLRANGE_END(crd)   ((crd)->end)
+#define CLRANGE_DATA(crd)  ((crd)->data)
+
 clrange_t clrange_create();
 int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data);
 int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data);
 void *clrange_find(clrange_t *clf,Word_t index);
+
+struct array_list *clrange_find_prev_inc(clrange_t *clf,Word_t index);
+struct array_list *clrange_find_prev_exc(clrange_t *clf,Word_t index);
+struct array_list *clrange_find_next_inc(clrange_t *clf,Word_t index);
+struct array_list *clrange_find_next_exc(clrange_t *clf,Word_t index);
+struct array_list *clrange_find_subranges_inside(clrange_t *clf,
+						 Word_t index,
+						 unsigned int len);
+
 void clrange_free(clrange_t clf);
 
 typedef Pvoid_t clmatch_t;
