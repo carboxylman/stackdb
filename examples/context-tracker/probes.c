@@ -50,9 +50,12 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	static const char *member_task_name = "comm";
 
 	int ret;
+	ctxtracker_context_t *context;
 	struct value *value_prev, *value_next;
 	int prev_pid, next_pid;
 	char prev_name[PATH_MAX], next_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)data;
 
 	if (!bsymbol_task_prev)
 	{
@@ -185,8 +188,11 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	static const char *member_regs_orig_eax = "orig_eax";
 	
 	int ret;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	REGVAL orig_eax;
+
+	context = (ctxtracker_context_t *)data;
 
 	if (!bsymbol_interrupt_regs)
 	{
@@ -225,6 +231,10 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 static int probe_interrupt_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Interrupt %d (0x%02x) handled\n", 
 			interrupt_no, interrupt_no);
 
@@ -269,6 +279,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 
 	int ret;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL cr2;
@@ -280,6 +291,8 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	bool reserved_bit;
 	bool instr_fetch;
 	char str_error_code[128];
+
+	context = (ctxtracker_context_t *)data;
 
 	if (!bsymbol_pagefault_regs)
 	{
@@ -364,6 +377,10 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 static int probe_pagefault_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Page fault handled: address = 0x%08x\n", 
 			pagefault_addr);
 
@@ -417,6 +434,11 @@ static int probe_pagefault_fini(struct probe *probe)
 
 /* EXCEPTION HANDLERS */
 
+struct exception_handler_data {
+	int index;
+	ctxtracker_context_t *context;
+};
+
 /* TRAP_divide_error -- trap gate #0; entry */
 static int probe_divide_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
@@ -424,12 +446,16 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -484,6 +510,10 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 static int probe_divide_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Divide error exception handled\n");
 	
 	return 0;
@@ -496,12 +526,16 @@ static int probe_debug_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -556,6 +590,10 @@ static int probe_debug_entry(struct probe *probe, void *data,
 static int probe_debug_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Debug exception handled\n");
 	
 	return 0;
@@ -568,12 +606,16 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -628,6 +670,10 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 static int probe_nmi_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "NMI exception handled\n");
 	
 	return 0;
@@ -640,12 +686,16 @@ static int probe_int3_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -700,6 +750,10 @@ static int probe_int3_entry(struct probe *probe, void *data,
 static int probe_int3_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Breakpoint exception handled\n");
 	
 	return 0;
@@ -712,12 +766,16 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -772,6 +830,10 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 static int probe_overflow_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Overflow exception handled\n");
 	
 	return 0;
@@ -784,12 +846,16 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -844,6 +910,10 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 static int probe_bounds_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Bounds check exception handled\n");
 	
 	return 0;
@@ -856,12 +926,16 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -916,6 +990,10 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 static int probe_invalid_op_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Invalid opcode exception handled\n");
 	
 	return 0;
@@ -980,12 +1058,16 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1040,6 +1122,10 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 static int probe_coprocessor_segment_overrun_exit(struct probe *probe, 
 		void *data, struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Coprocessor segment overrun exception handled\n");
 	
 	return 0;
@@ -1052,12 +1138,16 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1112,6 +1202,10 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 static int probe_invalid_TSS_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Invalid TSS exception handled\n");
 	
 	return 0;
@@ -1124,12 +1218,16 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1184,6 +1282,10 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 static int probe_segment_not_present_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Segment not present exception handled\n");
 	
 	return 0;
@@ -1196,12 +1298,16 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1256,6 +1362,10 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 static int probe_stack_segment_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Stack exception handled\n");
 	
 	return 0;
@@ -1268,12 +1378,16 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1328,6 +1442,10 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 static int probe_general_protection_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "General protection exception handled\n");
 	
 	return 0;
@@ -1366,12 +1484,16 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1426,6 +1548,10 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 static int probe_coprocessor_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Floating point exception handled\n");
 	
 	return 0;
@@ -1438,12 +1564,16 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1498,6 +1628,10 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 static int probe_alignment_check_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "Alignment check exception handled\n");
 	
 	return 0;
@@ -1536,12 +1670,16 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 	static const char *member_regs_eip = "eip";
 	
 	int i, ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
 	
-	i = (int)data;
+	handler_data = (struct exception_handler_data *)data;
+	i = handler_data->index;
+	context = handler_data->context;
 
 	if (!bsymbol_exception_regs[i])
 	{
@@ -1596,6 +1734,10 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 static int probe_simd_coprocessor_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)data;
+
 	vdebugc(-1, LOG_C_CTX, "SIMD floating point exception handled\n");
 	
 	return 0;
@@ -1604,13 +1746,15 @@ static int probe_simd_coprocessor_error_exit(struct probe *probe, void *data,
 /* Called after a probe on an exception handler entry gets initialized. */
 static int probe_exception_init(struct probe *probe)
 {
+	int i;
 	char *symbol;
+	struct exception_handler_data *handler_data;
 	char symbol_exception_regs[128];
 	char symbol_exception_error_code[128];
-	int i;
 
 	symbol = probe->name;
-	i = (int)probe->handler_data;
+	handler_data = (struct exception_handler_data *)probe->handler_data;
+	i = handler_data->index;
 
 	sprintf(symbol_exception_regs, "%s.regs", symbol);
 	sprintf(symbol_exception_error_code, "%s.error_code", symbol);
@@ -1640,8 +1784,10 @@ static int probe_exception_init(struct probe *probe)
 static int probe_exception_fini(struct probe *probe)
 {
 	int i;
+	struct exception_handler_data *handler_data;
 
-	i = (int)probe->handler_data;
+	handler_data = (struct exception_handler_data *)probe->handler_data;
+	i = handler_data->index;
 
 	if (bsymbol_exception_regs[i])
 	{
@@ -1664,8 +1810,12 @@ static int probe_exception_fini(struct probe *probe)
 static int probe_syscall_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	unsigned int eax = target_read_reg(t, 0); // system entry number
+	ctxtracker_context_t *context;
+	unsigned int eax;
+	
+	context = (ctxtracker_context_t *)data;
 
+	eax = target_read_reg(t, 0); // system entry number
 	syscall_no = eax;
 
 	vdebugc(-1, LOG_C_CTX, "System call %d (0x%02x) called\n", syscall_no, 

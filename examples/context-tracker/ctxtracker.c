@@ -86,7 +86,8 @@ static int track_taskswitch(void)
 		return -ENOMEM;
 	}
 
-	probe = register_probe_label(t, symbol, handler, &ops, NULL);
+	probe = register_probe_label(t, symbol, handler, &ops, 
+			context /* handler_data */);
 
 	g_hash_table_insert(probes, (gpointer)probe /* key */, 
 			(gpointer)probe /* value */);
@@ -130,12 +131,12 @@ static int track_interrupt(void)
 	}
 
 	entry_probe = register_probe_function_entry(t, symbol, entry_handler, &ops, 
-			NULL);
+			context /* handler_data */);
 	if (!entry_probe)
 		return -1;
 
-	exit_probe = register_probe_function_exit(t, symbol, exit_handler, NULL, 
-			NULL);
+	exit_probe = register_probe_function_exit(t, symbol, exit_handler, 
+			NULL /* ops */, context /* handler_data */);
 	if (!exit_probe)
 	{
 		probe_unregister(entry_probe, 1 /* force */);
@@ -189,12 +190,12 @@ static int track_pagefault(void)
 	}
 
 	entry_probe = register_probe_function_entry(t, symbol, entry_handler, &ops,
-			NULL);
+			context /* handler_data */);
 	if (!entry_probe)
 		return -1;
 
-	exit_probe = register_probe_function_exit(t, symbol, exit_handler, NULL, 
-			NULL);
+	exit_probe = register_probe_function_exit(t, symbol, exit_handler, 
+			NULL /* ops */, context /* handler_data */);
 	if (!exit_probe)
 	{
 		probe_unregister(entry_probe, 1 /* force */);
@@ -292,6 +293,7 @@ static int track_exception(void)
 		.summarize = NULL,
 		.fini = probe_exception_fini
 	};
+	static struct exception_handler_data handler_data[64];
 
 	int i, count;
 	struct probe *entry_probe;
@@ -314,13 +316,16 @@ static int track_exception(void)
 
 	for (i = 0; i < count; i++)
 	{
+		handler_data[i].index = i;
+		handler_data[i].context = context;
+
 		entry_probe = register_probe_function_entry(t, symbols[i], 
-				entry_handlers[i], &ops, (void *)i /* data */);
+				entry_handlers[i], &ops, &handler_data[i] /* handler_data */);
 		if (!entry_probe)
 			return -1;
 
 		exit_probe = register_probe_function_exit(t, symbols[i], 
-				exit_handlers[i], NULL, NULL);
+				exit_handlers[i], NULL /* ops */, context /* handler_data */);
 		if (!exit_probe)
 		{
 			probe_unregister(entry_probe, 1 /* force */);
@@ -363,8 +368,8 @@ static int track_syscall(void)
 	}
 
 	/* FIXME: update this once you start using target's ELF symtab symbols. */
-	entry_probe = register_probe_function_sysmap(t, symbol, entry_handler, NULL,
-			NULL, sysmap_handle);
+	entry_probe = register_probe_function_sysmap(t, symbol, entry_handler, 
+			NULL /* ops */, context /* handler_data */, sysmap_handle);
 	if (!entry_probe)
 		return -1;
 
