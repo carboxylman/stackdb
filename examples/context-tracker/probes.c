@@ -29,7 +29,7 @@ static const char *member_task_pid = "pid";
 static const char *member_task_name = "comm";
 static const char *member_regs_orig_eax = "orig_eax";
 static const char *member_regs_eip = "eip";
-	
+
 static struct bsymbol *bsymbol_task_prev;
 static struct bsymbol *bsymbol_task_next;
 static struct bsymbol *bsymbol_interrupt_regs;
@@ -124,7 +124,7 @@ static int probe_taskswitch(struct probe *probe, void *data,
 
 	/* FIXME: uncomment the below code when Dave works out the problem. */
 	//if (context->task.prev)
-		//value_free(context->task.prev);
+	//value_free(context->task.prev);
 	context->task.prev = value_prev;
 
 	if (context->task.cur)
@@ -205,6 +205,7 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	ctxtracker_context_t *context;
 	struct value *value_regs;
 	REGVAL orig_eax;
+	REGVAL eip;
 	int irq_num;
 	int task_pid;
 	char task_name[PATH_MAX];
@@ -234,6 +235,15 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 		return ret;
 	}
 
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
 	irq_num = ~orig_eax & 0xff;
 
 	if (context->task.cur)
@@ -257,14 +267,14 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 			value_free(value_regs);
 			return ret;
 		}
-	
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) requested\n", 
-				task_pid, task_name, irq_num, irq_num);
+
+		vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) requested "
+				"(eip = 0x%08x)\n", task_pid, task_name, irq_num, irq_num, eip);
 	}
 	else
 	{
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Interrupt %d (0x%02x) "
-				"requested\n", irq_num, irq_num);
+				"requested (eip = 0x%08x)\n", irq_num, irq_num, eip);
 	}
 
 	context->flags |= TRACK_INTERRUPT;
@@ -284,7 +294,7 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 	int irq_num;
 	int task_pid;
 	char task_name[PATH_MAX];
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	irq_num = context->interrupt.irq_num;
@@ -308,7 +318,7 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 					context->task.cur->lsymbol->symbol->name, member_task_name);
 			return ret;
 		}
-	
+
 		vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) handled\n", 
 				task_pid, task_name, irq_num, irq_num);
 	}
@@ -324,7 +334,7 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 	context->interrupt.regs = NULL;
 
 	context->flags &= ~(TRACK_INTERRUPT);
-	
+
 	return 0;
 }
 
@@ -349,9 +359,9 @@ static int probe_interrupt_init(struct probe *probe)
 static int probe_interrupt_fini(struct probe *probe)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)probe->handler_data;
-	
+
 	if (bsymbol_interrupt_regs)
 	{
 		bsymbol_release(bsymbol_interrupt_regs);
@@ -480,7 +490,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 					context->task.cur->lsymbol->symbol->name, member_task_name);
 			return ret;
 		}
-	
+
 		vdebugc(-1, LOG_C_CTX, "%d (%s): Page fault 0x%08x occurred "
 				"(eip = 0x%08x, %s)\n", 
 				task_pid, task_name, addr, eip, str_error_code);
@@ -514,7 +524,7 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	ADDR addr;
 	int task_pid;
 	char task_name[PATH_MAX];
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	addr = context->pagefault.addr;
@@ -538,7 +548,7 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 					context->task.cur->lsymbol->symbol->name, member_task_name);
 			return ret;
 		}
-	
+
 		vdebugc(-1, LOG_C_CTX, "%d (%s): Page fault 0x%08x handled\n", 
 				task_pid, task_name, addr);
 	}
@@ -559,7 +569,7 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	context->pagefault.instr_fetch = false;
 
 	context->flags &= ~(TRACK_PAGEFAULT);
-	
+
 	return 0;
 }
 
@@ -594,7 +604,7 @@ static int probe_pagefault_init(struct probe *probe)
 static int probe_pagefault_fini(struct probe *probe)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)probe->handler_data;
 
 	if (bsymbol_pagefault_regs)
@@ -620,7 +630,7 @@ static int probe_pagefault_fini(struct probe *probe)
 	context->pagefault.instr_fetch = false;
 
 	context->flags &= ~(TRACK_PAGEFAULT);
-	
+
 	return 0;
 }
 
@@ -631,18 +641,17 @@ struct exception_handler_data {
 	ctxtracker_context_t *context;
 };
 
-/* TRAP_divide_error -- trap gate #0; entry */
-static int probe_divide_error_entry(struct probe *probe, void *data, 
+/* Common handler called by all probe handlers on exception function entries. */
+static int probe_exception_entry(struct probe *probe, void *data,
 		struct probe *trigger)
 {
-	int i, ret;
+	int i;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
 	struct value *value_regs;
 	struct value *value_error_code;
-	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -666,17 +675,6 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 		return -1;
 	}
 
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	value_free(value_regs);
-
 	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
@@ -689,9 +687,100 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 
 	value_free(value_error_code);
 
-	vdebugc(-1, LOG_C_CTX, "Divide error exception occurred: "
-			"eip = 0x%08x, error-code = 0x%08x\n",
-			eip, error_code);
+	context->flags |= TRACK_EXCEPTION;
+
+	context->exception.regs = value_regs;
+	context->exception.error_code = error_code;
+
+	return 0;
+}
+
+/* Common handler called by all probe handlers on exception function exits. */
+static int probe_exception_exit(struct probe *probe, void *data,
+		struct probe *trigger)
+{
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
+
+	handler_data = (struct exception_handler_data *)data;
+	context = handler_data->context;
+
+	memset(context->exception.name, 0, sizeof(char)*128);
+	if (context->exception.regs)
+		value_free(context->exception.regs);
+	context->exception.regs = NULL;
+	context->exception.error_code = 0;
+
+	context->flags &= ~(TRACK_EXCEPTION);
+
+	return 0;
+}
+
+/* TRAP_divide_error -- trap gate #0; entry */
+static int probe_divide_error_entry(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	static const char *exception_name = "divide error";
+
+	int ret;
+	struct exception_handler_data *handler_data;
+	ctxtracker_context_t *context;
+	struct value *value_regs;
+	REGVAL eip;
+	uint32_t error_code;
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	handler_data = (struct exception_handler_data *)data;
+	context = handler_data->context;
+
+	ret = probe_exception_entry(probe, data, trigger);
+	if (ret)
+		return ret;
+
+	value_regs = context->exception.regs;
+	error_code = context->exception.error_code;
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		verror("Could not load member regval '%s.%s'\n", 
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		value_free(value_regs);
+		return ret;
+	}
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		vdebugc(-1, LOG_C_CTX, "%d (%s): Divide error exception occurred: "
+				"(eip = 0x%08x, error-code = 0x%08x)\n", 
+				task_pid, task_name, eip, error_code);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Divide error exception occurred: "
+				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
+	}
+
+	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -700,12 +789,48 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 static int probe_divide_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	int ret;
+	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	
-	context = (ctxtracker_context_t *)data;
+	int task_pid;
+	char task_name[PATH_MAX];
 
-	vdebugc(-1, LOG_C_CTX, "Divide error exception handled\n");
-	
+	handler_data = (struct exception_handler_data *)data;
+	context = handler_data->context;
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		vdebugc(-1, LOG_C_CTX, "%d (%s): Divide error exception handled\n", 
+				task_pid, task_name);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, 
+				"UNKNOWN TASK: Divide error exception handled\n");
+	}
+
+	ret = probe_exception_exit(probe, data, trigger);
+	if (ret)
+		return ret;
+
 	return 0;
 }
 
@@ -720,7 +845,7 @@ static int probe_debug_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -770,7 +895,7 @@ static int probe_debug_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Debug exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -779,11 +904,11 @@ static int probe_debug_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Debug exception handled\n");
-	
+
 	return 0;
 }
 
@@ -798,7 +923,7 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -848,7 +973,7 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "NMI exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -857,11 +982,11 @@ static int probe_nmi_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "NMI exception handled\n");
-	
+
 	return 0;
 }
 
@@ -876,7 +1001,7 @@ static int probe_int3_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -926,7 +1051,7 @@ static int probe_int3_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Breakpoint exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -935,11 +1060,11 @@ static int probe_int3_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Breakpoint exception handled\n");
-	
+
 	return 0;
 }
 
@@ -954,7 +1079,7 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1004,7 +1129,7 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Overflow exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1013,11 +1138,11 @@ static int probe_overflow_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Overflow exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1032,7 +1157,7 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1082,7 +1207,7 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Bounds check exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1091,11 +1216,11 @@ static int probe_bounds_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Bounds check exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1110,7 +1235,7 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1160,7 +1285,7 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Invalid opcode exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1169,11 +1294,11 @@ static int probe_invalid_op_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Invalid opcode exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1184,9 +1309,9 @@ static int probe_device_not_available_entry(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_device_not_available_entry;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Device not available exception occurred\n");
-	
+
 	return 0;
 }
 
@@ -1197,9 +1322,9 @@ static int probe_device_not_available_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_device_not_available_exit;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Device not available exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1210,9 +1335,9 @@ static int probe_double_fault_entry(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_double_fault_entry;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Double fault exception occurred\n");
-	
+
 	return 0;
 }
 
@@ -1223,9 +1348,9 @@ static int probe_double_fault_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_double_fault_exit;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Double fault exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1240,7 +1365,7 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1290,7 +1415,7 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 	vdebugc(-1, LOG_C_CTX, "Coprocessor segment overrun exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1299,11 +1424,11 @@ static int probe_coprocessor_segment_overrun_exit(struct probe *probe,
 		void *data, struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Coprocessor segment overrun exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1318,7 +1443,7 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1368,7 +1493,7 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Invalid TSS exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1377,11 +1502,11 @@ static int probe_invalid_TSS_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Invalid TSS exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1396,7 +1521,7 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1446,7 +1571,7 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Segment not present exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1455,11 +1580,11 @@ static int probe_segment_not_present_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Segment not present exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1474,7 +1599,7 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1524,7 +1649,7 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Stack exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1533,11 +1658,11 @@ static int probe_stack_segment_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Stack exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1552,7 +1677,7 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1602,7 +1727,7 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "General protection exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1611,11 +1736,11 @@ static int probe_general_protection_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "General protection exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1626,9 +1751,9 @@ static int probe_spurious_interrupt_bug_entry(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_spurious_interrupt_bug_entry;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Spurious interrupt exception occurred\n");
-	
+
 	return 0;
 }
 
@@ -1639,9 +1764,9 @@ static int probe_spurious_interrupt_bug_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_spurious_interrupt_bug_exit;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Spurious interrupt exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1656,7 +1781,7 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1706,7 +1831,7 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Floating point exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1715,11 +1840,11 @@ static int probe_coprocessor_error_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Floating point exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1734,7 +1859,7 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1784,7 +1909,7 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "Alignment check exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1793,11 +1918,11 @@ static int probe_alignment_check_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "Alignment check exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1808,9 +1933,9 @@ static int probe_machine_check_entry(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_machine_check_entry;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Machine check exception occurred\n");
-	
+
 	return 0;
 }
 
@@ -1821,9 +1946,9 @@ static int probe_machine_check_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_machine_check_exit;
-	
+
 	vdebugc(-1, LOG_C_CTX, "Machine check exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1838,7 +1963,7 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL eip;
 	uint32_t error_code;
-	
+
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
 	context = handler_data->context;
@@ -1888,7 +2013,7 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 	vdebugc(-1, LOG_C_CTX, "SIMD floating point exception occurred: "
 			"eip = 0x%08x, error-code = 0x%08x\n",
 			eip, error_code);
-	
+
 	return 0;
 }
 
@@ -1897,11 +2022,11 @@ static int probe_simd_coprocessor_error_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)data;
 
 	vdebugc(-1, LOG_C_CTX, "SIMD floating point exception handled\n");
-	
+
 	return 0;
 }
 
@@ -1963,6 +2088,17 @@ static int probe_exception_fini(struct probe *probe)
 		bsymbol_exception_error_code[i] = NULL;
 	}
 
+	if (i == 0)
+	{
+		memset(context->exception.name, 0, sizeof(char)*128);
+		if (context->exception.regs)
+			value_free(context->exception.regs);
+		context->exception.regs = NULL;
+		context->exception.error_code = 0;
+
+		context->flags &= ~(TRACK_EXCEPTION);
+	}
+
 	return 0;
 }
 
@@ -2003,7 +2139,7 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 					context->task.cur->lsymbol->symbol->name, member_task_name);
 			return ret;
 		}
-	
+
 		vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) called\n", 
 				task_pid, task_name, sc_num, sc_num);
 	}
@@ -2053,7 +2189,7 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 					context->task.cur->lsymbol->symbol->name, member_task_name);
 			return ret;
 		}
-	
+
 		vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) returned\n", 
 				task_pid, task_name, sc_num, sc_num);
 	}
@@ -2080,13 +2216,13 @@ static int probe_syscall_init(struct probe *probe)
 static int probe_syscall_fini(struct probe *probe)
 {
 	ctxtracker_context_t *context;
-	
+
 	context = (ctxtracker_context_t *)probe->handler_data;
 
 	context->syscall.sc_num = 0;
 
 	context->flags &= ~(TRACK_SYSCALL);
-	
+
 	return 0;
 }
 

@@ -320,12 +320,12 @@ static int track_exception(void)
 		handler_data[i].context = context;
 
 		entry_probe = register_probe_function_entry(t, symbols[i], 
-				entry_handlers[i], &ops, &handler_data[i] /* handler_data */);
+				entry_handlers[i], &ops, &handler_data[i]);
 		if (!entry_probe)
 			return -1;
 
 		exit_probe = register_probe_function_exit(t, symbols[i], 
-				exit_handlers[i], NULL /* ops */, context /* handler_data */);
+				exit_handlers[i], NULL /* ops */,  &handler_data[i]);
 		if (!exit_probe)
 		{
 			probe_unregister(entry_probe, 1 /* force */);

@@ -93,7 +93,7 @@ typedef struct {
 
 	/* Exception details */
 	struct {
-		char type[128];	// string value that indicates the type of exception
+		char name[128];	// string value that indicates the name of exception
 		struct value *regs;		// register values from exception handler
 		uint32_t error_code;	// exception info
 	} exception;
