@@ -66,13 +66,13 @@ typedef struct {
 		struct value *prev;	// previous task info
 	} task;
 	
-	/* Trap flag, set to one of values below:
-	   TRACK_NONE:      no trap is being handled.
-	   TRACK_INTERRUPT: an interrupt is being handled.
-	   TRACK_PAGEFAULT: a page fault is being handled.
-	   TRACK_EXCEPTION: an exception is being handled.
-	   TRACK_SYSCALL:   a system call is executing. */
-	ctxtracker_track_t flag;
+	/* Trap type that is being handled, set to a combination of the following:
+	   TRACK_NONE:       no trap is being handled.
+	   TRACK_INTERRUPT:  an interrupt is being handled.
+	   TRACK_PAGEFAULT:  a page fault is being handled.
+	   TRACK_EXCEPTION:  an exception is being handled.
+	   TRACK_SYSCALL:    a system call is being executed. */
+	ctxtracker_track_t flags;
 
 	/* Interrupt details */
 	struct {

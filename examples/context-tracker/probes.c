@@ -32,13 +32,9 @@ static const char *member_regs_eip = "eip";
 	
 static struct bsymbol *bsymbol_task_prev;
 static struct bsymbol *bsymbol_task_next;
-
 static struct bsymbol *bsymbol_interrupt_regs;
-
 static struct bsymbol *bsymbol_pagefault_regs;
 static struct bsymbol *bsymbol_pagefault_error_code;
-static ADDR pagefault_addr;
-
 static struct bsymbol *bsymbol_exception_regs[64];
 static struct bsymbol *bsymbol_exception_error_code[64];
 
@@ -69,8 +65,6 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		verror("bsymbol for next task is NULL\n");
 		return -1;
 	}
-
-	/* NOTE: load and free symbols one by one due to target's bug. */
 
 	value_prev = bsymbol_load(bsymbol_task_prev, LOAD_FLAG_AUTO_DEREF);
 	if (!value_prev)
@@ -275,8 +269,7 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 				irq_num, irq_num);
 	}
 
-	/* TODO: implement a stack to save old trap state. */
-	context->flag = TRACK_INTERRUPT;
+	context->flags |= TRACK_INTERRUPT;
 
 	context->interrupt.irq_num = irq_num;
 	context->interrupt.regs = value_regs;
@@ -332,8 +325,7 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 		value_free(context->interrupt.regs);
 	context->interrupt.regs = NULL;
 
-	/* FIXME: restore to saved old trap state when stack is implemented. */
-	context->flag = TRACK_NONE;
+	context->flags &= ~(TRACK_INTERRUPT);
 	
 	return 0;
 }
@@ -373,6 +365,8 @@ static int probe_interrupt_fini(struct probe *probe)
 		value_free(context->interrupt.regs);
 	context->interrupt.regs = NULL;
 
+	context->flags &= ~(TRACK_INTERRUPT);
+
 	return 0;
 }
 
@@ -388,6 +382,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	struct value *value_error_code;
 	REGVAL cr2;
 	REGVAL eip;
+	ADDR addr;
 	uint32_t error_code;
 	bool protection_fault;
 	bool write_access;
@@ -395,6 +390,8 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	bool reserved_bit;
 	bool instr_fetch;
 	char str_error_code[128];
+	int task_pid;
+	char task_name[PATH_MAX];
 
 	context = (ctxtracker_context_t *)data;
 
@@ -406,7 +403,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_pagefault_error_code)
 	{
-		verror("bsymbol for pagefault error code is NULL\n");
+		verror("bsymbol for pagefault error_code is NULL\n");
 		return -1;
 	}
 
@@ -435,13 +432,12 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 		return ret;
 	}
 
-	value_free(value_regs);
-
 	value_error_code = bsymbol_load(bsymbol_pagefault_error_code, 
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load pagefault error code symbol\n");
+		verror("Could not load pagefault error_code symbol\n");
+		value_free(value_regs);
 		return -1;
 	}
 
@@ -449,7 +445,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 
 	value_free(value_error_code);
 
-	pagefault_addr = (ADDR)cr2;
+	addr = (ADDR)cr2;
 
 	protection_fault = ((error_code & 1) != 0);
 	write_access = ((error_code & 2) != 0);
@@ -457,7 +453,6 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	reserved_bit = ((error_code & 8) != 0);
 	instr_fetch = ((error_code & 16) != 0);
 
-	/* FIXME: do not run this parsing when no need to print out context info. */
 	strcpy(str_error_code, protection_fault ? 
 			"protection-fault, " : "no-page-found, ");
 	strcat(str_error_code, write_access ? 
@@ -470,9 +465,46 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 			"instr-fetch, " : "");
 	str_error_code[strlen(str_error_code)-2] = '\0';
 
-	vdebugc(-1, LOG_C_CTX, "Page fault occurred: address = 0x%08x"
-			", eip = 0x%08x, error = (%s)\n", 
-			pagefault_addr, eip, str_error_code);
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+	
+		vdebugc(-1, LOG_C_CTX, "%d (%s): Page fault 0x%08x occurred "
+				"(eip = 0x%08x, %s)\n", 
+				task_pid, task_name, addr, eip, str_error_code);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Page fault 0x%08x occurred "
+				"(eip = 0x%08x, %s)\n", 
+				addr, eip, str_error_code);
+	}
+
+	context->flags |= TRACK_PAGEFAULT;
+
+	context->pagefault.addr = addr;
+	context->pagefault.regs = value_regs;
+	context->pagefault.protection_fault = protection_fault;
+	context->pagefault.write_access = write_access;
+	context->pagefault.user_mode = user_mode;
+	context->pagefault.reserved_bit = reserved_bit;
+	context->pagefault.instr_fetch = instr_fetch;
 
 	return 0;
 }
@@ -481,13 +513,56 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 static int probe_pagefault_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	int ret;
 	ctxtracker_context_t *context;
+	ADDR addr;
+	int task_pid;
+	char task_name[PATH_MAX];
 	
 	context = (ctxtracker_context_t *)data;
 
-	vdebugc(-1, LOG_C_CTX, "Page fault handled: address = 0x%08x\n", 
-			pagefault_addr);
+	addr = context->pagefault.addr;
 
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+	
+		vdebugc(-1, LOG_C_CTX, "%d (%s): Page fault 0x%08x handled\n", 
+				task_pid, task_name, addr);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Page fault 0x%08x handled\n", addr);
+	}
+
+	context->pagefault.addr = 0;
+	if (context->pagefault.regs)
+		value_free(context->pagefault.regs);
+	context->pagefault.regs = NULL;
+	context->pagefault.protection_fault = false;
+	context->pagefault.write_access = false;
+	context->pagefault.user_mode = false;
+	context->pagefault.reserved_bit = false;
+	context->pagefault.instr_fetch = false;
+
+	context->flags &= ~(TRACK_PAGEFAULT);
+	
 	return 0;
 }
 
@@ -521,6 +596,10 @@ static int probe_pagefault_init(struct probe *probe)
 /* Called before the probe on do_page_fault entry gets deallocated. */
 static int probe_pagefault_fini(struct probe *probe)
 {
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)probe->handler_data;
+
 	if (bsymbol_pagefault_regs)
 	{
 		bsymbol_release(bsymbol_pagefault_regs);
@@ -533,6 +612,18 @@ static int probe_pagefault_fini(struct probe *probe)
 		bsymbol_pagefault_error_code = NULL;
 	}
 
+	context->pagefault.addr = 0;
+	if (context->pagefault.regs)
+		value_free(context->pagefault.regs);
+	context->pagefault.regs = NULL;
+	context->pagefault.protection_fault = false;
+	context->pagefault.write_access = false;
+	context->pagefault.user_mode = false;
+	context->pagefault.reserved_bit = false;
+	context->pagefault.instr_fetch = false;
+
+	context->flags &= ~(TRACK_PAGEFAULT);
+	
 	return 0;
 }
 
@@ -567,7 +658,7 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -593,7 +684,7 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -645,7 +736,7 @@ static int probe_debug_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -671,7 +762,7 @@ static int probe_debug_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -723,7 +814,7 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -749,7 +840,7 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -801,7 +892,7 @@ static int probe_int3_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -827,7 +918,7 @@ static int probe_int3_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -879,7 +970,7 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -905,7 +996,7 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -957,7 +1048,7 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -983,7 +1074,7 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1035,7 +1126,7 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1061,7 +1152,7 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1165,7 +1256,7 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1191,7 +1282,7 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1243,7 +1334,7 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1269,7 +1360,7 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1321,7 +1412,7 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1347,7 +1438,7 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1399,7 +1490,7 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1425,7 +1516,7 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1477,7 +1568,7 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1503,7 +1594,7 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1581,7 +1672,7 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1607,7 +1698,7 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1659,7 +1750,7 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1685,7 +1776,7 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
@@ -1763,7 +1854,7 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 
 	if (!bsymbol_exception_error_code[i])
 	{
-		verror("bsymbol for exception error code is NULL\n");
+		verror("bsymbol for exception error_code is NULL\n");
 		return -1;
 	}
 
@@ -1789,7 +1880,7 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
-		verror("Could not load exception error code symbol\n");
+		verror("Could not load exception error_code symbol\n");
 		return -1;
 	}
 
