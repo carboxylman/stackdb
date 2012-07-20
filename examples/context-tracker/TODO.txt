@@ -1,7 +1,3 @@
-Pass context info instance to probe handlers via handler_data.
-
-Save all context data to one struct object.
-
 Use probe_summarize to inform the analysis context info.
 
 Move all dumping code in ctxtracker to examples/dumpcontext.
