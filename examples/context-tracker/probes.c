@@ -119,7 +119,7 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		return ret;
 	}
 
-	vdebugc(-1, LOG_C_CTX, "Task switch: %d (%s) -> %d (%s)\n", 
+	vdebugc(-1, LOG_C_CTX, "TASK SWITCH: %d (%s) -> %d (%s)\n", 
 			prev_pid, prev_name, next_pid, next_name);
 
 	/* FIXME: uncomment the below code when Dave works out the problem. */
@@ -263,8 +263,8 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	}
 	else
 	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Interrupt %d (0x%02x) requested\n", 
-				irq_num, irq_num);
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Interrupt %d (0x%02x) "
+				"requested\n", irq_num, irq_num);
 	}
 
 	context->flags |= TRACK_INTERRUPT;
@@ -314,7 +314,7 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 	}
 	else
 	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Interrupt %d (0x%02x) handled\n", 
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Interrupt %d (0x%02x) handled\n", 
 				irq_num, irq_num);
 	}
 
@@ -487,7 +487,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	}
 	else
 	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Page fault 0x%08x occurred "
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Page fault 0x%08x occurred "
 				"(eip = 0x%08x, %s)\n", 
 				addr, eip, str_error_code);
 	}
@@ -544,7 +544,8 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	}
 	else
 	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN: Page fault 0x%08x handled\n", addr);
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Page fault 0x%08x handled\n", 
+				addr);
 	}
 
 	context->pagefault.addr = 0;
@@ -2008,7 +2009,7 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	}
 	else
 	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN: System call %d (0x%02x) called\n", 
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: System call %d (0x%02x) called\n",
 				sc_num, sc_num);
 	}
 
@@ -2058,8 +2059,8 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 	}
 	else
 	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN: System call %d (0x%02x) returned\n", 
-				sc_num, sc_num);
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: System call %d (0x%02x) "
+				"returned\n", sc_num, sc_num);
 	}
 
 	context->syscall.sc_num = 0;
