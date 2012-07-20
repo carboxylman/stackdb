@@ -38,6 +38,16 @@ clrange_t clrange_create();
 int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data);
 int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data);
 void *clrange_find(clrange_t *clf,Word_t index);
+/*
+ * Try to find the next index, given @index is (or might be) an existing
+ * valid index in our range array -- BUT the index we find must *not* be
+ * inside of the range(s) specified by @index; it must be completely
+ * outside them.  Also, the bound we return will be the lengthiest
+ * (loosest) bound; i.e., if there are multiple things at the next
+ * index, we take the one with the widest range.
+ */
+void *clrange_find_next_loosest(clrange_t *clf,Word_t index,
+				struct array_list **al_saveptr);
 
 struct array_list *clrange_find_prev_inc(clrange_t *clf,Word_t index);
 struct array_list *clrange_find_prev_exc(clrange_t *clf,Word_t index);

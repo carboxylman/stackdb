@@ -156,6 +156,72 @@ void *clrange_find(clrange_t *clf,Word_t index) {
     }
 }
 
+void *clrange_find_next_loosest(clrange_t *clf,Word_t index,
+				struct array_list **al_saveptr) {
+    PWord_t pv;
+    struct array_list *alist;
+    Word_t idx;
+    struct clf_range_data *prev_crd = NULL;
+    Word_t widest_len = (Word_t)0;
+    struct clf_range_data *crd;
+    int i;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    /* Find the index that matches @index; if there isn't one, don't
+     * worry about it.
+     */
+    JLL(pv,*clf,index);
+    if (pv != NULL) {
+	alist = (struct array_list *)*pv;
+
+	for (i = 0; i < array_list_len(alist); ++i) {
+	    crd = (struct clf_range_data *)array_list_item(alist,i);
+	    if (CLRANGE_START(crd) <= index && CLRANGE_END(crd) >= index
+		&& (CLRANGE_END(crd) - CLRANGE_START(crd)) > widest_len) {
+		widest_len = CLRANGE_END(crd) - CLRANGE_START(crd);
+		prev_crd = crd;
+	    }
+	}
+    }
+
+    /* If we did find the widest previous range containing @index, then
+     * we want to try to find the next widest range that does *not*
+     * contain it (which is an inclusive search on the end of the widest
+     * range, since the range does not contain its end).  Otherwise, we
+     * just try to find the next range, exclusive, from @index.
+     */
+    if (prev_crd) {
+	idx = CLRANGE_END(prev_crd);
+    }
+    else {
+	idx = index + 1; /* + 1 to make "inclusive" search be right. */
+    }
+
+    JLF(pv,*clf,idx);
+    if (pv == NULL)
+	return NULL;
+    alist = (struct array_list *)*pv;
+
+    /* Again, hunt for the widest bound from this start symbol. */
+    widest_len = 0;
+    prev_crd = NULL;
+    for (i = 0; i < array_list_len(alist); ++i) {
+	crd = (struct clf_range_data *)array_list_item(alist,i);
+	if (CLRANGE_START(crd) <= idx && CLRANGE_END(crd) >= idx
+	    && (CLRANGE_END(crd) - CLRANGE_START(crd)) > widest_len) {
+	    widest_len = CLRANGE_END(crd) - CLRANGE_START(crd);
+	    prev_crd = crd;
+	}
+    }
+
+    if (al_saveptr && prev_crd)
+	*al_saveptr = alist;
+
+    return prev_crd;
+}
+
 struct array_list *clrange_find_prev_inc(clrange_t *clf,Word_t index) {
     PWord_t pv;
 
