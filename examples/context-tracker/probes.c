@@ -38,8 +38,6 @@ static struct bsymbol *bsymbol_pagefault_error_code;
 static struct bsymbol *bsymbol_exception_regs[64];
 static struct bsymbol *bsymbol_exception_error_code[64];
 
-static int syscall_no;
-
 /* TASK SWITCH HANDLERS */
 
 /* Called upon the execution of label schedule.switch_tasks. */
@@ -414,8 +412,6 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 		return -1;
 	}
 
-	/* NOTE: load and free symbols one by one due to target's bug. */
-	
 	value_regs = bsymbol_load(bsymbol_pagefault_regs, LOAD_FLAG_AUTO_DEREF);
 	if (!value_regs)
 	{
@@ -1975,16 +1971,50 @@ static int probe_exception_fini(struct probe *probe)
 static int probe_syscall_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	int ret;
 	ctxtracker_context_t *context;
 	unsigned int eax;
-	
+	int sc_num;
+	int task_pid;
+	char task_name[PATH_MAX];
+
 	context = (ctxtracker_context_t *)data;
 
-	eax = target_read_reg(t, 0); // system entry number
-	syscall_no = eax;
+	eax = target_read_reg(t, 0);
+	sc_num = eax;
 
-	vdebugc(-1, LOG_C_CTX, "System call %d (0x%02x) called\n", syscall_no, 
-			syscall_no);
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+	
+		vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) called\n", 
+				task_pid, task_name, sc_num, sc_num);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN: System call %d (0x%02x) called\n", 
+				sc_num, sc_num);
+	}
+
+	context->flags |= TRACK_SYSCALL;
+
+	context->syscall.sc_num = sc_num;
 
 	return 0;
 }
@@ -1993,12 +2023,69 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 static int probe_syscall_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
-	/* FIXME: remove the below line when machineries allow this probe function 
-	   to be registered. */
-	(void)probe_syscall_exit;
+	int ret;
+	ctxtracker_context_t *context;
+	int sc_num;
+	int task_pid;
+	char task_name[PATH_MAX];
 
-	vdebugc(-1, LOG_C_CTX, "System call %d (0x%02x) returned\n", syscall_no, 
-			syscall_no);
+	context = (ctxtracker_context_t *)data;
+
+	sc_num = context->syscall.sc_num;
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
+				&task_pid);
+		if (ret)
+		{
+			verror("Could not load member int32 '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur, 
+				member_task_name, task_name);
+		if (ret)
+		{
+			verror("Could not load member string '%s.%s'\n", 
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+	
+		vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) returned\n", 
+				task_pid, task_name, sc_num, sc_num);
+	}
+	else
+	{
+		vdebugc(-1, LOG_C_CTX, "UNKNOWN: System call %d (0x%02x) returned\n", 
+				sc_num, sc_num);
+	}
+
+	context->syscall.sc_num = 0;
+
+	context->flags &= ~(TRACK_SYSCALL);
 
 	return 0;
 }
+
+/* Called after the probe on system_call entry gets initialized. */
+static int probe_syscall_init(struct probe *probe)
+{
+	return 0;
+}
+
+/* Called before the probe on system_call entry gets deallocated. */
+static int probe_syscall_fini(struct probe *probe)
+{
+	ctxtracker_context_t *context;
+	
+	context = (ctxtracker_context_t *)probe->handler_data;
+
+	context->syscall.sc_num = 0;
+
+	context->flags &= ~(TRACK_SYSCALL);
+	
+	return 0;
+}
+

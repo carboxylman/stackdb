@@ -351,6 +351,16 @@ static int track_syscall(void)
 {
 	static const char *symbol = "system_call";
 	static const probe_handler_t entry_handler = probe_syscall_entry;
+	static const struct probe_ops ops = { 
+		.gettype = NULL,
+		.init = probe_syscall_init,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = NULL,
+		.fini = probe_syscall_fini
+	};
 
 	struct probe *entry_probe;
 
@@ -369,7 +379,7 @@ static int track_syscall(void)
 
 	/* FIXME: update this once you start using target's ELF symtab symbols. */
 	entry_probe = register_probe_function_sysmap(t, symbol, entry_handler, 
-			NULL /* ops */, context /* handler_data */, sysmap_handle);
+			&ops, context /* handler_data */, sysmap_handle);
 	if (!entry_probe)
 		return -1;
 

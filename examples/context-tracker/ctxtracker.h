@@ -100,7 +100,7 @@ typedef struct {
 
 	/* System call details */
 	struct {
-		int sysc_num;	// system call index
+		int sc_num;	// system call index
 	} syscall;
 
 } ctxtracker_context_t;
