@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "log.h"
 #include "clfit.h"
 #include "alist.h"
@@ -26,21 +27,99 @@ clrange_t clrange_create() {
     return (Pvoid_t) NULL;
 }
 
+struct clf_range_data *crd_top_containing_range(struct clf_range_data *crd) {
+    while (crd->containing_range)
+	crd = crd->containing_range;
+
+    return crd;
+}
+
+struct clf_range_data *crd_get_loosest(struct array_list *crdlist,
+				       Word_t start,Word_t end,
+				       int *contains_saveptr) {
+    int i;
+    Word_t loosest_len = 0;
+    struct clf_range_data *crd;
+    struct clf_range_data *best_crd = NULL;
+
+    if (end < start)
+	return NULL;
+
+    if (contains_saveptr)
+	*contains_saveptr = 0;
+
+    for (i = 0; i < array_list_len(crdlist); ++i) {
+	crd = (struct clf_range_data *)array_list_item(crdlist,i);
+	if ((CLRANGE_END(crd) - CLRANGE_START(crd)) > loosest_len) {
+	    loosest_len = CLRANGE_END(crd) - CLRANGE_START(crd);
+	    best_crd = crd;
+	    if (contains_saveptr 
+		&& CLRANGE_START(crd) <= start && CLRANGE_END(crd) >= end) 
+		*contains_saveptr = 1;
+	}
+    }
+
+    return best_crd;
+}
+
+struct clf_range_data *crd_get_tightest(struct array_list *crdlist,
+					Word_t start,Word_t end,
+					int *contains_saveptr) {
+    int i;
+    Word_t tightest_len = ULONG_MAX;
+    Word_t tightest_containing_len = ULONG_MAX;
+    struct clf_range_data *crd;
+    struct clf_range_data *best_crd = NULL;
+    struct clf_range_data *best_containing_crd = NULL;
+
+    if (end < start)
+	return NULL;
+
+    if (contains_saveptr)
+	*contains_saveptr = 0;
+
+    for (i = 0; i < array_list_len(crdlist); ++i) {
+	crd = (struct clf_range_data *)array_list_item(crdlist,i);
+	if ((CLRANGE_END(crd) - CLRANGE_START(crd)) < tightest_len) {
+	    tightest_len = CLRANGE_END(crd) - CLRANGE_START(crd);
+	    best_crd = crd;
+	    if (CLRANGE_START(crd) <= start && CLRANGE_END(crd) >= end
+		&& (CLRANGE_END(crd) - CLRANGE_START(crd)) 
+		   < tightest_containing_len) {
+		if (contains_saveptr) 
+		    *contains_saveptr = 1;
+		best_containing_crd = crd;
+		tightest_containing_len = CLRANGE_END(crd) - CLRANGE_START(crd);
+	    }
+	}
+    }
+
+    if (best_containing_crd)
+	return best_containing_crd;
+    else
+	return best_crd;
+}
+
 int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
     struct clf_range_data *crd = (struct clf_range_data *)malloc(sizeof(*crd));
     PWord_t pv = NULL;
     struct array_list *alist;
+    struct array_list *tmpalist;
     int created = 0;
+    struct clf_range_data *ccrd;
+    int contains = 0;
+    Word_t idx;
 
     crd->start = start;
     crd->end = end;
     crd->data = data;
+    crd->containing_range = NULL;
 
+    idx = start;
     if (*clf) 
-	JLG(pv,*clf,start);
+	JLG(pv,*clf,idx);
     if (!pv) {
-	//fprintf(stderr,"inserting new alist for 0x%lx,0x%lx\n",start,end);
-	//fflush(stderr);
+	vdebug(2,LOG_OTHER,"inserting new alist for 0x%lx,0x%lx\n",start,end);
 	alist = array_list_create(1);
 	created = 1;
 	JLI(pv,*clf,start);
@@ -48,11 +127,70 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
 	    goto errout;
 	}
 	*pv = (Word_t)alist;
+
+	/* Now we need to find the containing parent.  Basically...
+	 *
+	 * 1) If the previous range (previous, inclusive, of index - 1)
+	 * does not contain our range, we have two cases: 
+	 *   a) if that previous range is contained, we keep searching up that
+	 *      hierarchy until there is no more containing ranges to
+	 *      find one that contains our range; OR 
+	 *   b) if that previous range is not contained, our range also
+	 *      has no container.
+	 * OR
+	 * 2) If the previous range (previous, inclusive, of index - 1)
+	 * DOES contain our range, our range's container is that
+	 * previous range.
+	 *
+	 * AND, for these, we want the *tightest* containing parent.
+	 */
+	pv = NULL;
+	idx = start;
+	JLP(pv,*clf,idx);
+	if (pv && pv != PJERR) {
+	    /* Find the widest containing range in this list. */
+	    tmpalist = (struct array_list *)*pv;
+	    ccrd = crd_get_tightest(tmpalist,start,end,&contains);
+	    /* Case 1a) above: */
+	    if (!contains && ccrd->containing_range) {
+		while (ccrd->containing_range) {
+		    if (start >= CLRANGE_START(ccrd->containing_range)
+			&& end <= CLRANGE_END(ccrd->containing_range)) {
+			crd->containing_range = ccrd->containing_range;
+			break;
+		    }
+		    ccrd = ccrd->containing_range;
+		}
+	    }
+	    /* Case 1b) above: */
+	    else if (!contains && !ccrd->containing_range)
+		crd->containing_range = NULL;
+	    /* Case 2) above: */
+	    else if (contains)
+		crd->containing_range = ccrd;
+
+	    if (crd->containing_range)
+		vdebug(2,LOG_OTHER,
+		       "containing range for (0x%lx,0x%lx) is (0x%lx,0x%lx)\n",
+		       start,end,crd->containing_range->start,
+		       crd->containing_range->end);
+	    else 
+		vdebug(2,LOG_OTHER,
+		       "no containing range for (0x%lx,0x%lx) (%d)!\n",
+		       start,end,contains);
+	}
     }
     else if (pv == PJERR) 
 	goto errout;
-    else 
+    else {
+	/* Since we make the non-overlapping assumption, the container
+	 * of this new range is the same as the container of the "peer"
+	 * ranges on the alist.
+	 */
 	alist = (struct array_list *)*pv;
+	crd->containing_range = ((struct clf_range_data *) \
+				 array_list_item(alist,0))->containing_range;
+    }
 
     array_list_append(alist,crd);
 
@@ -67,9 +205,13 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
 
 int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data) {
     struct clf_range_data *crd;
+    struct clf_range_data *ccrd;
+    struct clf_range_data *tmpcrd;
     PWord_t pv;
     struct array_list *alist;
     int i;
+    Word_t idx;
+    int found;
 
     /* We look for an exact match, and update the end value if there is
      * an exact match for this start addr and data.
@@ -79,12 +221,71 @@ int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data) {
 	return -1;
 
     alist = (struct array_list *)*pv;
+    crd = NULL;
     for (i = 0; i < array_list_len(alist); ++i) {
 	crd = (struct clf_range_data *)array_list_item(alist,i);
 	if (CLRANGE_END(crd) != end && CLRANGE_DATA(crd) == data) {
 	    CLRANGE_END(crd) = end;
 	    break;
 	}
+    }
+
+    /* Now, technically, we have to update the containing_range
+     * hierarchy as well, since we might have swallowed more ranges
+     * downstream from us.
+     *
+     * What we do is keep finding next indexes from our old end
+     * (inclusive) to our new end (exclusive); if they are contained in
+     * us: 1) if they have a container, and we are not already in that
+     * hierarchy, we become their new container; 2) if the don't have a
+     * container, we become their new container.
+     *
+     * XXX: case 1 relies on the assumption that the widest ranges at
+     * any start index come first in the array_list at that index!  Fix
+     * this here and elsewhere.
+     */
+    /* Also, since ranges can't overlap, we can't "outgrow" our
+     * container.
+     */
+
+    idx = end;
+    while (1) {
+	pv = NULL;
+	JLN(pv,*clf,idx);
+	if (!pv || pv == PJERR)
+	    break;
+	alist = (struct array_list *)*pv;
+	tmpcrd = NULL;
+	for (i = 0; i < array_list_len(alist); ++i) {
+	    tmpcrd = (struct clf_range_data *)array_list_item(alist,i);
+	    /* This will break us out for good; see bottom of while loop. */
+	    if (CLRANGE_START(tmpcrd) >= end)
+		goto while_done;
+
+	    /* If they are contained in us... */
+	    if (start <= CLRANGE_START(tmpcrd) && CLRANGE_END(tmpcrd) <= end) {
+		/* Case 1) above: */
+		if (tmpcrd->containing_range) {
+		    found = 0;
+		    ccrd = tmpcrd;
+		    while (ccrd->containing_range) {
+			if (ccrd->containing_range == crd) {
+			    found = 1;
+			    break;
+			}
+			ccrd = ccrd->containing_range;
+		    }
+		    if (!found)
+			tmpcrd = crd;
+		}
+		/* Case 2) above: */
+		else 
+		    tmpcrd->containing_range = crd;
+	    }
+	}
+
+    while_done:
+	;
     }
 
     return 0;
@@ -101,8 +302,7 @@ void *clrange_find(clrange_t *clf,Word_t index) {
     if (!clf || !*clf)
 	return NULL;
 
-    //fprintf(stderr,"starting looking for %lu\n",idx);
-    //fflush(stderr);
+    vdebug(4,LOG_OTHER,"starting looking for 0x%lx\n",idx);
 
     /*
      * We look for the previous index (including @index itself).  Each
@@ -115,28 +315,26 @@ void *clrange_find(clrange_t *clf,Word_t index) {
      * match...
      */
     while (1) {
-	//fprintf(stderr,"looking for %lu\n",idx);
-	//fflush(stderr);
+	vdebug(4,LOG_OTHER,"looking for 0x%lx\n",idx);
 	JLL(pv,*clf,idx);
 	if (pv == NULL)
 	    return NULL;
-	//fprintf(stderr,"found %lu\n",idx);
-	//fflush(stderr);
+	vdebug(4,LOG_OTHER,"found 0x%lx\n",idx);
 	alist = (struct array_list *)*pv;
 
 	j = -1;
 	for (i = array_list_len(alist) - 1; i > -1; --i) {
 	    struct clf_range_data *crd = (struct clf_range_data *) \
 		array_list_item(alist,i);
-	    if (idx < CLRANGE_END(crd) && (CLRANGE_END(crd) - idx) < lrlen) {
+	    if (index < CLRANGE_END(crd) && (CLRANGE_END(crd) - CLRANGE_START(crd)) < lrlen) {
 		retval = crd;
-		lrlen = CLRANGE_END(crd) - idx;
+		lrlen = CLRANGE_END(crd) - CLRANGE_START(crd);
 	    }
 	}
 
 	if (retval) {
 	    /* We found a tightest bound containing @index; return! */
-	    //fprintf(stderr,"found %lu at %d\n",idx,i);
+	    vdebug(3,LOG_OTHER,"found 0x%lx at %d\n",idx,i);
 	    return CLRANGE_DATA(retval);
 	}
 	else {
@@ -144,7 +342,7 @@ void *clrange_find(clrange_t *clf,Word_t index) {
 	     * matches, so we're done!
 	     */
 	    if (idx == 0) {
-		//fprintf(stderr,"did not find %lu range fit!\n",idx,i);
+		vdebug(3,LOG_OTHER,"did not find 0x%lx range fit!\n",idx,i);
 		return NULL;
 	    }
 	}
@@ -156,70 +354,87 @@ void *clrange_find(clrange_t *clf,Word_t index) {
     }
 }
 
-void *clrange_find_next_loosest(clrange_t *clf,Word_t index,
-				struct array_list **al_saveptr) {
+/*
+ * Find the range that is the widest range containing index.
+ */
+struct clf_range_data *clrange_find_loosest(clrange_t *clf,Word_t index,
+					    struct array_list **al_saveptr) {
     PWord_t pv;
     struct array_list *alist;
-    Word_t idx;
-    struct clf_range_data *prev_crd = NULL;
-    Word_t widest_len = (Word_t)0;
     struct clf_range_data *crd;
-    int i;
+    int contains = 0;
+    Word_t idx;
 
     if (!clf || !*clf)
 	return NULL;
 
-    /* Find the index that matches @index; if there isn't one, don't
-     * worry about it.
+    /* Find the index that is previous to index; if that range contains
+     * us and has a containing range, follow its containing_range chain
+     * on up; otherwise return that range.
      */
-    JLL(pv,*clf,index);
-    if (pv != NULL) {
-	alist = (struct array_list *)*pv;
+    idx = index;
+    JLL(pv,*clf,idx);
+    if (pv == NULL || pv == PJERR) 
+	return NULL;
 
-	for (i = 0; i < array_list_len(alist); ++i) {
-	    crd = (struct clf_range_data *)array_list_item(alist,i);
-	    if (CLRANGE_START(crd) <= index && CLRANGE_END(crd) >= index
-		&& (CLRANGE_END(crd) - CLRANGE_START(crd)) > widest_len) {
-		widest_len = CLRANGE_END(crd) - CLRANGE_START(crd);
-		prev_crd = crd;
-	    }
-	}
-    }
-
-    /* If we did find the widest previous range containing @index, then
-     * we want to try to find the next widest range that does *not*
-     * contain it (which is an inclusive search on the end of the widest
-     * range, since the range does not contain its end).  Otherwise, we
-     * just try to find the next range, exclusive, from @index.
-     */
-    if (prev_crd) {
-	idx = CLRANGE_END(prev_crd);
+    vdebug(3,LOG_OTHER,"found 0x%lx previous to 0x%lx\n",idx,index);
+    alist = (struct array_list *)*pv;
+    crd = crd_get_tightest(alist,index,index,&contains);
+    if (crd) {
+	vdebug(3,LOG_OTHER,"found crd (0x%lx,0x%lx) (contains is %d)\n",
+	       CLRANGE_START(crd),CLRANGE_END(crd),contains);
     }
     else {
-	idx = index + 1; /* + 1 to make "inclusive" search be right. */
-    }
-
-    JLF(pv,*clf,idx);
-    if (pv == NULL)
+	verror("did not find a tightest range for 0x%lx even though we should have!\n");
 	return NULL;
-    alist = (struct array_list *)*pv;
-
-    /* Again, hunt for the widest bound from this start symbol. */
-    widest_len = 0;
-    prev_crd = NULL;
-    for (i = 0; i < array_list_len(alist); ++i) {
-	crd = (struct clf_range_data *)array_list_item(alist,i);
-	if (CLRANGE_START(crd) <= idx && CLRANGE_END(crd) >= idx
-	    && (CLRANGE_END(crd) - CLRANGE_START(crd)) > widest_len) {
-	    widest_len = CLRANGE_END(crd) - CLRANGE_START(crd);
-	    prev_crd = crd;
-	}
+    }
+    if (contains && crd->containing_range) {
+	crd = crd_top_containing_range(crd);
+	vdebug(3,LOG_OTHER,"found top containing crd (0x%lx,0x%lx)\n",
+	       CLRANGE_START(crd),CLRANGE_END(crd));
     }
 
-    if (al_saveptr && prev_crd)
+    if (al_saveptr)
 	*al_saveptr = alist;
 
-    return prev_crd;
+    return crd;
+}
+
+struct clf_range_data *clrange_find_next_loosest(clrange_t *clf,Word_t index,
+						 struct array_list **al_saveptr) {
+    PWord_t pv;
+    struct array_list *alist;
+    Word_t idx;
+    struct array_list *prev_alist = NULL;
+    struct clf_range_data *prev_crd = NULL;
+    struct clf_range_data *crd;
+    int i;
+    int contains;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    /* 
+     * Find the loosest range that contains index.  If there isn't one,
+     * just try to find the next range beyond index.
+     */
+    prev_crd = clrange_find_loosest(clf,index,&prev_alist);
+    if (!prev_crd) 
+	idx = index + 1;
+    else 
+	idx = CLRANGE_END(prev_crd);
+
+    /*
+     * Find the next index, find the loosest range at that index, and
+     * return.
+     */
+    alist = clrange_find_next_inc(clf,idx);
+    if (!alist)
+	return NULL;
+
+    crd = crd_get_loosest(alist,index,index,&contains);
+
+    return crd;
 }
 
 struct array_list *clrange_find_prev_inc(clrange_t *clf,Word_t index) {

@@ -22,22 +22,44 @@
 #include <Judy.h>
 #include "alist.h"
 
+/*
+ * We assume that clrange_t ranges DO NOT overlap -- i.e., where the
+ * start of range B is contained within range A, but the end of B is not
+ * within A.  This is a safe assumption when dealing with code segments
+ * that are associated with symbols; however, it may not be appropriate
+ * for other kinds of things.
+ */
+
 typedef Pvoid_t clrange_t;
 
 struct clf_range_data { 
     Word_t start;
     Word_t end;
     void *data;
+    struct clf_range_data *containing_range;
 };
 
 #define CLRANGE_START(crd) ((crd)->start)
 #define CLRANGE_END(crd)   ((crd)->end)
 #define CLRANGE_DATA(crd)  ((crd)->data)
 
+struct clf_range_data *crd_get_loosest(struct array_list *crdlist,
+				       Word_t start,Word_t end,
+				       int *contains_saveptr);
+struct clf_range_data *crd_get_tightest(struct array_list *crdlist,
+					Word_t start,Word_t end,
+					int *contains_saveptr);
+struct clf_range_data *crd_top_containing_range(struct clf_range_data *crd);
+
 clrange_t clrange_create();
 int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data);
 int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data);
 void *clrange_find(clrange_t *clf,Word_t index);
+/*
+ * Find the range that is the widest range containing index.
+ */
+struct clf_range_data *clrange_find_loosest(clrange_t *clf,Word_t index,
+					    struct array_list **al_saveptr);
 /*
  * Try to find the next index, given @index is (or might be) an existing
  * valid index in our range array -- BUT the index we find must *not* be
@@ -46,8 +68,8 @@ void *clrange_find(clrange_t *clf,Word_t index);
  * (loosest) bound; i.e., if there are multiple things at the next
  * index, we take the one with the widest range.
  */
-void *clrange_find_next_loosest(clrange_t *clf,Word_t index,
-				struct array_list **al_saveptr);
+struct clf_range_data *clrange_find_next_loosest(clrange_t *clf,Word_t index,
+						 struct array_list **al_saveptr);
 
 struct array_list *clrange_find_prev_inc(clrange_t *clf,Word_t index);
 struct array_list *clrange_find_prev_exc(clrange_t *clf,Word_t index);
