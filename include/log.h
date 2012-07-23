@@ -42,16 +42,18 @@
 typedef enum log_flag_bits {
     LOG_FB_NONE        = 0,
 
-    LOG_FB_D_DFILE     = 1,
-    LOG_FB_D_SYMBOL    = 2,
-    LOG_FB_D_SYMTAB    = 3,
-    LOG_FB_D_LOC       = 4,
-    LOG_FB_D_LOOKUP    = 5,
-    LOG_FB_D_DWARF     = 6,
-    LOG_FB_D_DWARFATTR = 7,
-    LOG_FB_D_DWARFOPS  = 8,
-    LOG_FB_D_OTHER     = 9,
-    LOG_FB_D_ELF       = 10,
+    LOG_FB_OTHER       = 1,
+
+    LOG_FB_D_DFILE     = 2,
+    LOG_FB_D_SYMBOL    = 3,
+    LOG_FB_D_SYMTAB    = 4,
+    LOG_FB_D_LOC       = 5,
+    LOG_FB_D_LOOKUP    = 6,
+    LOG_FB_D_DWARF     = 7,
+    LOG_FB_D_DWARFATTR = 8,
+    LOG_FB_D_DWARFOPS  = 9,
+    LOG_FB_D_OTHER     = 10,
+    LOG_FB_D_ELF       = 11,
 
     LOG_FB_T_TARGET    = 12,
     LOG_FB_T_SPACE     = 13,
@@ -77,6 +79,7 @@ typedef enum log_flag_bits {
 
 typedef enum log_flags {
     LOG_NONE           = 0,
+    LOG_OTHER          = 1 << LOG_FB_OTHER,
     LOG_D_DFILE        = 1 << LOG_FB_D_DFILE,
     LOG_D_SYMBOL       = 1 << LOG_FB_D_SYMBOL,
     LOG_D_SYMTAB       = 1 << LOG_FB_D_SYMTAB,

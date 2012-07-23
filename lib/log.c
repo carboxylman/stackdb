@@ -40,6 +40,7 @@ void vmi_set_log_flags(log_flags_t flags) {
 
 static char *log_flag_stringmap[] = {
     "NONE", 
+    "OTHER", 
     "D_DFILE", "D_SYMBOL", "D_SYMTAB", "D_LOC", "D_LOOKUP",
         "D_DWARF", "D_DWARFATTR", "D_DWARFOPS", "D_OTHER",  "D_ELF",
     "T_TARGET", "T_SPACE", "T_REGION", "T_LOOKUP", "T_LOC", "T_OTHER",
@@ -49,6 +50,7 @@ static char *log_flag_stringmap[] = {
 
 static enum log_flag_bits log_flag_map[] = {
     LOG_NONE,
+    LOG_OTHER,
     LOG_D_DFILE, LOG_D_SYMBOL, LOG_D_SYMTAB, LOG_D_LOC, LOG_D_LOOKUP,
         LOG_D_DWARF, LOG_D_DWARFATTR, LOG_D_DWARFOPS, LOG_D_OTHER, LOG_D_ELF, 
     LOG_T_TARGET, LOG_T_SPACE, LOG_T_REGION, LOG_T_LOOKUP, LOG_T_LOC, 
