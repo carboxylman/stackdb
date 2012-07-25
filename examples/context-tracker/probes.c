@@ -38,6 +38,13 @@ static struct bsymbol *bsymbol_pagefault_error_code;
 static struct bsymbol *bsymbol_exception_regs[64];
 static struct bsymbol *bsymbol_exception_error_code[64];
 
+/* GLOBALLY SHARED HANDLERS */
+
+void *probe_context_summarize(struct probe *probe)
+{
+	return context;
+}
+
 /* TASK SWITCH HANDLERS */
 
 /* Called upon the execution of label schedule.switch_tasks. */
@@ -47,8 +54,6 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	int ret;
 	ctxtracker_context_t *context;
 	struct value *value_prev, *value_next;
-	int prev_pid, next_pid;
-	char prev_name[PATH_MAX], next_name[PATH_MAX];
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
@@ -74,25 +79,6 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		return -1;
 	}
 
-	ret = get_member_i32(probe->target, value_prev, member_task_pid, &prev_pid);
-	if (ret)
-	{
-		verror("Could not load member int32 '%s.%s'\n", 
-				value_prev->lsymbol->symbol->name, member_task_pid);
-		value_free(value_prev);
-		return ret;
-	}
-
-	ret = get_member_string(probe->target, value_prev, member_task_name, 
-			prev_name);
-	if (ret)
-	{
-		verror("Could not load member string '%s.%s'\n", 
-				value_prev->lsymbol->symbol->name, member_task_name);
-		value_free(value_prev);
-		return ret;
-	}
-
 	value_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_AUTO_DEREF);
 	if (!value_next)
 	{
@@ -100,30 +86,6 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		value_free(value_prev);
 		return -1;
 	}
-
-	ret = get_member_i32(probe->target, value_next, member_task_pid, &next_pid);
-	if (ret)
-	{
-		verror("Could not load member int32 '%s.%s'\n", 
-				value_next->lsymbol->symbol->name, member_task_pid);
-		value_free(value_prev);
-		value_free(value_next);
-		return ret;
-	}
-
-	ret = get_member_string(probe->target, value_next, member_task_name, 
-			next_name);
-	if (ret)
-	{
-		verror("Could not load member string '%s.%s'\n", 
-				value_next->lsymbol->symbol->name, member_task_name);
-		value_free(value_prev);
-		value_free(value_next);
-		return ret;
-	}
-
-	vdebugc(-1, LOG_C_CTX, "TASK SWITCH: %d (%s) -> %d (%s)\n", 
-			prev_pid, prev_name, next_pid, next_name);
 
 	/* FIXME: uncomment the below code when Dave works out the problem. */
 	//if (context->task.prev)
@@ -138,7 +100,12 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
 			(gpointer)&user_handler_data))
 	{
-		user_handler(probe, user_handler_data, trigger);
+		ret = user_handler(probe, user_handler_data, trigger);
+		if (ret)
+		{
+			vwarn("User handler for task switches returned %d\n", ret);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -215,10 +182,7 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	ctxtracker_context_t *context;
 	struct value *value_regs;
 	REGVAL orig_eax;
-	REGVAL eip;
 	int irq_num;
-	int task_pid;
-	char task_name[PATH_MAX];
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
@@ -248,47 +212,7 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 		return ret;
 	}
 
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
 	irq_num = ~orig_eax & 0xff;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			value_free(value_regs);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			value_free(value_regs);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) requested "
-				"(eip = 0x%08x)\n", task_pid, task_name, irq_num, irq_num, eip);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Interrupt %d (0x%02x) "
-				"requested (eip = 0x%08x)\n", irq_num, irq_num, eip);
-	}
 
 	context->flags |= TRACK_INTERRUPT;
 
@@ -299,7 +223,12 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
 			(gpointer)&user_handler_data))
 	{
-		user_handler(probe, user_handler_data, trigger);
+		ret = user_handler(probe, user_handler_data, trigger);
+		if (ret)
+		{
+			vwarn("User handler for interrupt entries returned %d\n", ret);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -310,58 +239,28 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	int ret;
-	ctxtracker_context_t *context;
-	int irq_num;
-	int task_pid;
-	char task_name[PATH_MAX];
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
-	irq_num = context->interrupt.irq_num;
-
-	if (context->task.cur)
+	g_hash_table_iter_init(&iter, interrupt_exit_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
 	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
+		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			vwarn("User handler for interrupt exits returned %d\n", ret);
 			return ret;
 		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Interrupt %d (0x%02x) handled\n", 
-				task_pid, task_name, irq_num, irq_num);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Interrupt %d (0x%02x) handled\n", 
-				irq_num, irq_num);
 	}
 
 	context->interrupt.irq_num = 0;
 	if (context->interrupt.regs)
 		value_free(context->interrupt.regs);
 	context->interrupt.regs = NULL;
-
-	g_hash_table_iter_init(&iter, interrupt_exit_user_handlers);
-	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
-			(gpointer)&user_handler_data))
-	{
-		user_handler(probe, user_handler_data, trigger);
-	}
 
 	context->flags &= ~(TRACK_INTERRUPT);
 
@@ -419,7 +318,6 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	struct value *value_regs;
 	struct value *value_error_code;
 	REGVAL cr2;
-	REGVAL eip;
 	ADDR addr;
 	uint32_t error_code;
 	bool protection_fault;
@@ -427,9 +325,6 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	bool user_mode;
 	bool reserved_bit;
 	bool instr_fetch;
-	char str_error_code[128];
-	int task_pid;
-	char task_name[PATH_MAX];
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
@@ -462,15 +357,6 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 		return -1;
 	}
 
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
 	value_error_code = bsymbol_load(bsymbol_pagefault_error_code, 
 			LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
@@ -492,49 +378,6 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	reserved_bit = ((error_code & 8) != 0);
 	instr_fetch = ((error_code & 16) != 0);
 
-	strcpy(str_error_code, protection_fault ? 
-			"protection-fault, " : "no-page-found, ");
-	strcat(str_error_code, write_access ? 
-			"write, " : "read, ");
-	strcat(str_error_code, user_mode ?
-			"user, " : "kernel, ");
-	strcat(str_error_code, reserved_bit ?
-			"reserved-bit, " : "");
-	strcat(str_error_code, instr_fetch ?
-			"instr-fetch, " : "");
-	str_error_code[strlen(str_error_code)-2] = '\0';
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Page fault 0x%08x occurred "
-				"(eip = 0x%08x, %s)\n", 
-				task_pid, task_name, addr, eip, str_error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Page fault 0x%08x occurred "
-				"(eip = 0x%08x, %s)\n", 
-				addr, eip, str_error_code);
-	}
-
 	context->flags |= TRACK_PAGEFAULT;
 
 	context->pagefault.addr = addr;
@@ -549,7 +392,12 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
 			(gpointer)&user_handler_data))
 	{
-		user_handler(probe, user_handler_data, trigger);
+		ret = user_handler(probe, user_handler_data, trigger);
+		if (ret)
+		{
+			vwarn("User handler for page fault entries returned %d\n", ret);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -561,44 +409,22 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 {
 	int ret;
 	ctxtracker_context_t *context;
-	ADDR addr;
-	int task_pid;
-	char task_name[PATH_MAX];
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
-	addr = context->pagefault.addr;
-
-	if (context->task.cur)
+	g_hash_table_iter_init(&iter, pagefault_exit_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
 	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
+		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			vwarn("User handler for page fault exits returned %d\n", ret);
 			return ret;
 		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Page fault 0x%08x handled\n", 
-				task_pid, task_name, addr);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Page fault 0x%08x handled\n", 
-				addr);
 	}
 
 	context->pagefault.addr = 0;
@@ -610,13 +436,6 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	context->pagefault.user_mode = false;
 	context->pagefault.reserved_bit = false;
 	context->pagefault.instr_fetch = false;
-
-	g_hash_table_iter_init(&iter, pagefault_exit_user_handlers);
-	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
-			(gpointer)&user_handler_data))
-	{
-		user_handler(probe, user_handler_data, trigger);
-	}
 
 	context->flags &= ~(TRACK_PAGEFAULT);
 
@@ -695,7 +514,7 @@ struct exception_handler_data {
 static int probe_exception_entry(struct probe *probe, void *data,
 		struct probe *trigger)
 {
-	int i;
+	int i, ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
 	struct value *value_regs;
@@ -749,7 +568,12 @@ static int probe_exception_entry(struct probe *probe, void *data,
 	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
 			(gpointer)&user_handler_data))
 	{
-		user_handler(probe, user_handler_data, trigger);
+		ret = user_handler(probe, user_handler_data, trigger);
+		if (ret)
+		{
+			vwarn("User handler for exception entries returned %d\n", ret);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -759,6 +583,7 @@ static int probe_exception_entry(struct probe *probe, void *data,
 static int probe_exception_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
+	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
 	GHashTableIter iter;
@@ -768,18 +593,23 @@ static int probe_exception_exit(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	g_hash_table_iter_init(&iter, exception_exit_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		ret = user_handler(probe, user_handler_data, trigger);
+		if (ret)
+		{
+			vwarn("User handler for exception exits returned %d\n", ret);
+			return ret;
+		}
+	}
+
 	memset(context->exception.name, 0, sizeof(char)*128);
 	if (context->exception.regs)
 		value_free(context->exception.regs);
 	context->exception.regs = NULL;
 	context->exception.error_code = 0;
-
-	g_hash_table_iter_init(&iter, exception_exit_user_handlers);
-	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
-			(gpointer)&user_handler_data))
-	{
-		user_handler(probe, user_handler_data, trigger);
-	}
 
 	context->flags &= ~(TRACK_EXCEPTION);
 
@@ -795,11 +625,6 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -809,48 +634,6 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Divide error exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Divide error exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -862,40 +645,9 @@ static int probe_divide_error_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Divide error exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Divide error exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -2746,8 +2498,6 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	ctxtracker_context_t *context;
 	unsigned int eax;
 	int sc_num;
-	int task_pid;
-	char task_name[PATH_MAX];
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
@@ -2757,35 +2507,6 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	eax = target_read_reg(t, 0);
 	sc_num = eax;
 
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) called\n", 
-				task_pid, task_name, sc_num, sc_num);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: System call %d (0x%02x) called\n",
-				sc_num, sc_num);
-	}
-
 	context->flags |= TRACK_SYSCALL;
 
 	context->syscall.sc_num = sc_num;
@@ -2794,7 +2515,12 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
 			(gpointer)&user_handler_data))
 	{
-		user_handler(probe, user_handler_data, trigger);
+		ret = user_handler(probe, user_handler_data, trigger);
+		if (ret)
+		{
+			vwarn("User handler for system call entries returned %d\n", ret);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -2806,54 +2532,25 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 {
 	int ret;
 	ctxtracker_context_t *context;
-	int sc_num;
-	int task_pid;
-	char task_name[PATH_MAX];
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
-	sc_num = context->syscall.sc_num;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): System call %d (0x%02x) returned\n", 
-				task_pid, task_name, sc_num, sc_num);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: System call %d (0x%02x) "
-				"returned\n", sc_num, sc_num);
-	}
-
-	context->syscall.sc_num = 0;
-
 	g_hash_table_iter_init(&iter, syscall_exit_user_handlers);
 	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
 			(gpointer)&user_handler_data))
 	{
-		user_handler(probe, user_handler_data, trigger);
+		ret = user_handler(probe, user_handler_data, trigger);
+		if (ret)
+		{
+			vwarn("User handler for system call exits returned %d\n", ret);
+			return ret;
+		}
 	}
+
+	context->syscall.sc_num = 0;
 
 	context->flags &= ~(TRACK_SYSCALL);
 

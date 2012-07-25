@@ -17,9 +17,9 @@
  */
 
 /* 
- *  examples/context-tracker/util.c
+ *  examples/context-tracker/private.c
  *
- *  Utility functions for context tracker.
+ *  Private utility functions for context tracker.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 
@@ -32,7 +32,7 @@
 #include <target_api.h>
 #include <target_xen_vm.h>
 
-#include "util.h"
+#include "private.h"
 
 struct probe *register_probe_label(struct target *target, const char *symbol, 
 		const probe_handler_t handler, const struct probe_ops *ops, void *data)

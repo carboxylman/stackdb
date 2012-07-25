@@ -38,7 +38,7 @@
 #include "util.h"
 #include "debug.h"
 
-struct target * init_probes(const char *domain_name, int debug_level)
+struct target *init_probes(const char *domain_name, int debug_level)
 {
 	struct target *t;
 	int ret;

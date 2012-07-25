@@ -29,11 +29,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <limits.h>
+#include <ctype.h>
 
+#include <target.h>
 #include <target_api.h>
 #include <target_xen_vm.h>
 #include <probe_api.h>
+#include <probe.h>
+
 #include <ctxtracker.h>
+#include <private.h>
 
 #include "util.h"
 #include "debug.h"
@@ -41,17 +47,529 @@
 extern char *optarg;
 extern int optind, opterr, optopt;
 
-char *domain_name;
-int debug_level = -1;
-char *sysmap_file;
+static char *domain_name;
+static int debug_level = -1;
+static char *sysmap_file;
 
-struct target *t;
-GHashTable *probes;
+static struct target *t;
+static GHashTable *probes;
+
+static const char *member_task_pid = "pid";
+static const char *member_task_name = "comm";
+static const char *member_regs_eip = "eip";
 
 static int probe_taskswitch(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
-	LOG("TASK SWITCH IN USER APP\n");
+	int ret;
+	ctxtracker_context_t *context;
+	struct value *value_prev, *value_next;
+	int prev_pid, next_pid;
+	char prev_name[PATH_MAX], next_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	value_prev = context->task.prev;
+	value_next = context->task.cur;
+
+	ret = get_member_i32(probe->target, value_prev, member_task_pid, &prev_pid);
+	if (ret)
+	{
+		ERR("Could not load member int32 '%s.%s'\n",
+				value_prev->lsymbol->symbol->name, member_task_pid);
+		return ret;
+	}
+
+	ret = get_member_string(probe->target, value_prev, member_task_name,
+			prev_name);
+	if (ret)
+	{
+		ERR("Could not load member string '%s.%s'\n",
+				value_prev->lsymbol->symbol->name, member_task_name);
+		return ret;
+	}
+
+	ret = get_member_i32(probe->target, value_next, member_task_pid, &next_pid);
+	if (ret)
+	{
+		ERR("Could not load member int32 '%s.%s'\n", 
+				value_next->lsymbol->symbol->name, member_task_pid);
+		return ret;
+	}
+
+	ret = get_member_string(probe->target, value_next, member_task_name, 
+			next_name);
+	if (ret)
+	{
+		ERR("Could not load member string '%s.%s'\n", 
+				value_next->lsymbol->symbol->name, member_task_name);
+		return ret;
+	}
+
+	LOG("TASK SWITCH: %d (%s) -> %d (%s)\n", 
+			prev_pid, prev_name, next_pid, next_name);
+
+	return 0;
+}
+
+static int probe_interrupt_entry(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	struct value *value_regs;
+	REGVAL eip;
+	int irq_num;
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	irq_num = context->interrupt.irq_num;
+	value_regs = context->interrupt.regs;
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		ERR("Could not load member regval '%s.%s'\n",
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		return ret;
+	}
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): Interrupt %d (0x%02x) requested (eip = 0x%08x)\n", 
+				task_pid, task_name, irq_num, irq_num, eip);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: Interrupt %d (0x%02x) requested (eip = 0x%08x)\n", 
+				irq_num, irq_num, eip);
+	}
+
+	return 0;
+}
+
+static int probe_interrupt_exit(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	int irq_num;
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	irq_num = context->interrupt.irq_num;
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): Interrupt %d (0x%02x) handled\n", 
+				task_pid, task_name, irq_num, irq_num);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: Interrupt %d (0x%02x) handled\n", irq_num, irq_num);
+	}
+
+	return 0;
+}
+
+static int probe_pagefault_entry(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	struct value *value_regs;
+	REGVAL eip;
+	ADDR addr;
+	bool protection_fault;
+	bool write_access;
+	bool user_mode;
+	bool reserved_bit;
+	bool instr_fetch;
+	char str_error_code[128];
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	addr = context->pagefault.addr;
+	value_regs = context->pagefault.regs;
+	protection_fault = context->pagefault.protection_fault;
+	write_access = context->pagefault.write_access;
+	user_mode = context->pagefault.user_mode;
+	reserved_bit = context->pagefault.reserved_bit;
+	instr_fetch = context->pagefault.instr_fetch;
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		ERR("Could not load member regval '%s.%s'\n",
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		return ret;
+	}
+
+	strcpy(str_error_code, protection_fault ?
+			"protection-fault, " : "no-page-found, ");
+	strcat(str_error_code, write_access ?
+			"write, " : "read, ");
+	strcat(str_error_code, user_mode ?
+			"user, " : "kernel, ");
+	strcat(str_error_code, reserved_bit ?
+			"reserved-bit, " : "");
+	strcat(str_error_code, instr_fetch ?
+			"instr-fetch, " : "");
+	str_error_code[strlen(str_error_code)-2] = '\0';
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): Page fault 0x%08x occurred (eip = 0x%08x, %s)\n",
+				task_pid, task_name, addr, eip, str_error_code);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: Page fault 0x%08x occurred (eip = 0x%08x, %s)\n",
+				addr, eip, str_error_code);
+	}
+
+	return 0;
+}
+
+static int probe_pagefault_exit(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	ADDR addr;
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	addr = context->pagefault.addr;
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): Page fault 0x%08x handled\n", task_pid, task_name, addr);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: Page fault 0x%08x handled\n", addr);
+	}
+
+	return 0;
+}
+
+static int probe_exception_entry(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	char exception_name[128];
+	struct value *value_regs;
+	REGVAL eip;
+	uint32_t error_code;
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	strcpy(exception_name, context->exception.name);
+	exception_name[0] = toupper(exception_name[0]);
+	value_regs = context->exception.regs;
+	error_code = context->exception.error_code;
+
+	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
+	if (ret)
+	{
+		ERR("Could not load member regval '%s.%s'\n",
+				value_regs->lsymbol->symbol->name, member_regs_eip);
+		return ret;
+	}
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): %s exception occurred: "
+				"(eip = 0x%08x, error-code = 0x%08x)\n",
+				task_pid, task_name, exception_name, eip, error_code);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: %s exception occurred: "
+				"(eip = 0x%08x, error-code = 0x%08x)\n", 
+				exception_name, eip, error_code);
+	}
+
+	return 0;
+}
+
+static int probe_exception_exit(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	char exception_name[128];
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	strcpy(exception_name, context->exception.name);
+	exception_name[0] = toupper(exception_name[0]);
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): %s exception handled\n", 
+				task_pid, task_name, exception_name);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: %s exception handled\n", exception_name);
+	}
+
+	return 0;
+}
+
+static int probe_syscall_entry(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	int sc_num;
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	sc_num = context->syscall.sc_num;
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): System call %d (0x%02x) called\n", 
+				task_pid, task_name, sc_num, sc_num);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: System call %d (0x%02x) called\n", sc_num, sc_num);
+	}
+
+	return 0;
+}
+
+static int probe_syscall_exit(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	int ret;
+	ctxtracker_context_t *context;
+	int sc_num;
+	int task_pid;
+	char task_name[PATH_MAX];
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	sc_num = context->syscall.sc_num;
+
+	if (context->task.cur)
+	{
+		ret = get_member_i32(probe->target, context->task.cur, member_task_pid,
+				&task_pid);
+		if (ret)
+		{
+			ERR("Could not load member int32 '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_pid);
+			return ret;
+		}
+
+		ret = get_member_string(probe->target, context->task.cur,
+				member_task_name, task_name);
+		if (ret)
+		{
+			ERR("Could not load member string '%s.%s'\n",
+					context->task.cur->lsymbol->symbol->name, member_task_name);
+			return ret;
+		}
+
+		LOG("%d (%s): System call %d (0x%02x) returned\n",
+				task_pid, task_name, sc_num, sc_num);
+	}
+	else
+	{
+		LOG("UNKNOWN TASK: System call %d (0x%02x) returned\n", sc_num, sc_num);
+	}
+
 	return 0;
 }
 
@@ -65,10 +583,10 @@ static void sigh(int signo)
 		cleanup_probes(probes);
 		ctxtracker_cleanup();
 		WARN("Ended trace\n");
-		
+
 		target_close(t);
 		target_free(t);
-		
+
 		if (probes)
 			g_hash_table_destroy(probes);
 	}
@@ -158,7 +676,7 @@ int main(int argc, char *argv[])
 	}
 
 	LOG("Initializing VMI...\n");
-	
+
 	t = init_probes(domain_name, debug_level);
 	if (!t)
 		return -1;
@@ -170,7 +688,7 @@ int main(int argc, char *argv[])
 		return ret;
 	}
 
-    ret = ctxtracker_track(TRACK_ALL, true);
+	ret = ctxtracker_track(TRACK_ALL, true);
 	if (ret)
 	{
 		ERR("Could not start tracking contexts for target %s\n", domain_name);
@@ -182,6 +700,78 @@ int main(int argc, char *argv[])
 	if (ret)
 	{
 		ERR("Could not register handler on task switches for target %s\n", 
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_INTERRUPT, probe_interrupt_entry, 
+			NULL, true);
+	if (ret)
+	{
+		ERR("Could not register handler on interrupt entries for target %s\n", 
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_INTERRUPT, probe_interrupt_exit, 
+			NULL, false);
+	if (ret)
+	{
+		ERR("Could not register handler on interrupt exits for target %s\n", 
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_PAGEFAULT, probe_pagefault_entry, 
+			NULL, true);
+	if (ret)
+	{
+		ERR("Could not register handler on page fault entries for target %s\n", 
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_PAGEFAULT, probe_pagefault_exit, 
+			NULL, false);
+	if (ret)
+	{
+		ERR("Could not register handler on page fault exits for target %s\n", 
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_EXCEPTION, probe_exception_entry, 
+			NULL, true);
+	if (ret)
+	{
+		ERR("Could not register handler on exception entries for target %s\n", 
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_EXCEPTION, probe_exception_exit, 
+			NULL, false);
+	if (ret)
+	{
+		ERR("Could not register handler on exception exits for target %s\n", 
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_entry, 
+			NULL, true);
+	if (ret)
+	{
+		ERR("Could not register handler on system call entries for target %s\n",
+				domain_name);
+		return ret;
+	}
+
+	ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_exit, 
+			NULL, false);
+	if (ret)
+	{
+		ERR("Could not register handler on system call exits for target %s\n", 
 				domain_name);
 		return ret;
 	}

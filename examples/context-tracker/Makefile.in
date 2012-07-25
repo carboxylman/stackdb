@@ -68,9 +68,9 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/ctxtracker.h \
-		$(TOP_SRCDIR)/$(SUBDIR)/util.h
+		$(TOP_SRCDIR)/$(SUBDIR)/private.h
 
-OBJECTS := ctxtracker.lo util.lo
+OBJECTS := ctxtracker.lo private.lo
 
 LIBRARIES := libctxtracker.a
 
@@ -142,21 +142,21 @@ kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
 endif
 
 run: $(LIBRARIES) all-subdirs
-	sudo ./examples/dumpcontext -l C_ALL \
+	sudo ./examples/dumpcontext \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 debug: $(LIBRARIES) all-subdirs
-	sudo gdb --args ./examples/dumpcontext -l C_ALL \
+	sudo gdb --args ./examples/dumpcontext \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 run-verbose: $(LIBRARIES) all-subdirs
 	sudo ./examples/dumpcontext \
-	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 debug-verbose: $(LIBRARIES) all-subdirs
 	sudo gdb --args ./examples/dumpcontext \
-	-ddddddddddd -l T_ALL,P_ALL,C_ALL,T_XV \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 # How to recursively descend into subdirectories to make general

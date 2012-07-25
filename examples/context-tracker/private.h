@@ -17,9 +17,9 @@
  */
 
 /* 
- *  examples/context-tracker/util.h
+ *  examples/context-tracker/private.h
  *
- *  Utility functions for context tracker.
+ *  Private utility functions for context tracker.
  *
  *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
  * 

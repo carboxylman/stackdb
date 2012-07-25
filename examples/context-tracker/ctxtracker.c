@@ -38,7 +38,7 @@
 #include <probe.h>
 
 #include "ctxtracker.h"
-#include "util.h"
+#include "private.h"
 
 static struct target *t;
 
@@ -77,7 +77,7 @@ static int track_taskswitch(void)
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
-		.summarize = NULL,
+		.summarize = probe_context_summarize,
 		.fini = probe_taskswitch_fini
 	};
 
@@ -113,15 +113,25 @@ static int track_interrupt(void)
 	static const char *symbol = "do_IRQ";
 	static const probe_handler_t entry_handler = probe_interrupt_entry;
 	static const probe_handler_t exit_handler = probe_interrupt_exit;
-	static const struct probe_ops ops = { 
+	static const struct probe_ops entry_ops = { 
 		.gettype = NULL,
 		.init = probe_interrupt_init,
 		.registered = NULL,
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
-		.summarize = NULL,
+		.summarize = probe_context_summarize,
 		.fini = probe_interrupt_fini
+	};
+	static const struct probe_ops exit_ops = { 
+		.gettype = NULL,
+		.init = NULL,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = probe_context_summarize,
+		.fini = NULL
 	};
 
 	struct probe *entry_probe;
@@ -140,13 +150,13 @@ static int track_interrupt(void)
 		return -ENOMEM;
 	}
 
-	entry_probe = register_probe_function_entry(t, symbol, entry_handler, &ops, 
-			context /* handler_data */);
+	entry_probe = register_probe_function_entry(t, symbol, entry_handler, 
+			&entry_ops, context /* handler_data */);
 	if (!entry_probe)
 		return -1;
 
 	exit_probe = register_probe_function_exit(t, symbol, exit_handler, 
-			NULL /* ops */, context /* handler_data */);
+			&exit_ops, context /* handler_data */);
 	if (!exit_probe)
 	{
 		probe_unregister(entry_probe, 1 /* force */);
@@ -172,15 +182,25 @@ static int track_pagefault(void)
 	static const char *symbol = "do_page_fault";
 	static const probe_handler_t entry_handler = probe_pagefault_entry;
 	static const probe_handler_t exit_handler = probe_pagefault_exit;
-	static const struct probe_ops ops = { 
+	static const struct probe_ops entry_ops = { 
 		.gettype = NULL,
 		.init = probe_pagefault_init,
 		.registered = NULL,
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
-		.summarize = NULL,
+		.summarize = probe_context_summarize,
 		.fini = probe_pagefault_fini
+	};
+	static const struct probe_ops exit_ops = { 
+		.gettype = NULL,
+		.init = NULL,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = probe_context_summarize,
+		.fini = NULL
 	};
 
 	struct probe *entry_probe;
@@ -199,13 +219,13 @@ static int track_pagefault(void)
 		return -ENOMEM;
 	}
 
-	entry_probe = register_probe_function_entry(t, symbol, entry_handler, &ops,
-			context /* handler_data */);
+	entry_probe = register_probe_function_entry(t, symbol, entry_handler, 
+			&entry_ops, context /* handler_data */);
 	if (!entry_probe)
 		return -1;
 
 	exit_probe = register_probe_function_exit(t, symbol, exit_handler, 
-			NULL /* ops */, context /* handler_data */);
+			&exit_ops, context /* handler_data */);
 	if (!exit_probe)
 	{
 		probe_unregister(entry_probe, 1 /* force */);
@@ -293,15 +313,25 @@ static int track_exception(void)
 	//	probe_machine_check_exit,
 		probe_simd_coprocessor_error_exit
 	};
-	static const struct probe_ops ops = { 
+	static const struct probe_ops entry_ops = { 
 		.gettype = NULL,
 		.init = probe_exception_init,
 		.registered = NULL,
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
-		.summarize = NULL,
+		.summarize = probe_context_summarize,
 		.fini = probe_exception_fini
+	};
+	static const struct probe_ops exit_ops = { 
+		.gettype = NULL,
+		.init = NULL,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = probe_context_summarize,
+		.fini = NULL
 	};
 	static struct exception_handler_data handler_data[64];
 
@@ -330,12 +360,12 @@ static int track_exception(void)
 		handler_data[i].context = context;
 
 		entry_probe = register_probe_function_entry(t, symbols[i], 
-				entry_handlers[i], &ops, &handler_data[i]);
+				entry_handlers[i], &entry_ops, &handler_data[i]);
 		if (!entry_probe)
 			return -1;
 
 		exit_probe = register_probe_function_exit(t, symbols[i], 
-				exit_handlers[i], NULL /* ops */,  &handler_data[i]);
+				exit_handlers[i], &exit_ops,  &handler_data[i]);
 		if (!exit_probe)
 		{
 			probe_unregister(entry_probe, 1 /* force */);
@@ -361,15 +391,25 @@ static int track_syscall(void)
 {
 	static const char *symbol = "system_call";
 	static const probe_handler_t entry_handler = probe_syscall_entry;
-	static const struct probe_ops ops = { 
+	static const struct probe_ops entry_ops = { 
 		.gettype = NULL,
 		.init = probe_syscall_init,
 		.registered = NULL,
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
-		.summarize = NULL,
+		.summarize = probe_context_summarize,
 		.fini = probe_syscall_fini
+	};
+	static const struct probe_ops exit_ops = { 
+		.gettype = NULL,
+		.init = NULL,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = probe_context_summarize,
+		.fini = NULL
 	};
 
 	struct probe *entry_probe;
@@ -389,7 +429,7 @@ static int track_syscall(void)
 
 	/* FIXME: update this once you start using target's ELF symtab symbols. */
 	entry_probe = register_probe_function_sysmap(t, symbol, entry_handler, 
-			&ops, context /* handler_data */, sysmap_handle);
+			&entry_ops, context /* handler_data */, sysmap_handle);
 	if (!entry_probe)
 		return -1;
 
@@ -495,7 +535,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!interrupt_entry_user_handlers)
 	{
-		verror("Could not create user handler list for interrupt entry\n");
+		verror("Could not create user handler list for interrupt entries\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
@@ -504,7 +544,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!interrupt_exit_user_handlers)
 	{
-		verror("Could not create user handler list for interrupt exit\n");
+		verror("Could not create user handler list for interrupt exits\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
@@ -513,7 +553,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!pagefault_entry_user_handlers)
 	{
-		verror("Could not create user handler list for page fault entry\n");
+		verror("Could not create user handler list for page fault entries\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
@@ -522,7 +562,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!pagefault_exit_user_handlers)
 	{
-		verror("Could not create user handler list for page fault exit\n");
+		verror("Could not create user handler list for page fault exits\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
@@ -531,7 +571,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!exception_entry_user_handlers)
 	{
-		verror("Could not create user handler list for exception entry\n");
+		verror("Could not create user handler list for exception entries\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
@@ -540,7 +580,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!exception_exit_user_handlers)
 	{
-		verror("Could not create user handler list for exception exit\n");
+		verror("Could not create user handler list for exception exits\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
@@ -549,7 +589,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!syscall_entry_user_handlers)
 	{
-		verror("Could not create user handler list for system call entry\n");
+		verror("Could not create user handler list for system call entries\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
@@ -558,7 +598,7 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 			g_direct_equal);
 	if (!syscall_exit_user_handlers)
 	{
-		verror("Could not create user handler list for system call exit\n");
+		verror("Could not create user handler list for system call exits\n");
 		ctxtracker_cleanup();
 		return -ENOMEM;
 	}
