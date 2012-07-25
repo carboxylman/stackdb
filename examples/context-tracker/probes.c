@@ -103,7 +103,7 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for task switches returned %d\n", ret);
+			verror("User handler for task switches returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -226,7 +226,7 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for interrupt entries returned %d\n", ret);
+			verror("User handler for interrupt entries returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -252,7 +252,7 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for interrupt exits returned %d\n", ret);
+			verror("User handler for interrupt exits returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -395,7 +395,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for page fault entries returned %d\n", ret);
+			verror("User handler for page fault entries returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -422,7 +422,7 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for page fault exits returned %d\n", ret);
+			verror("User handler for page fault exits returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -571,7 +571,7 @@ static int probe_exception_entry(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for exception entries returned %d\n", ret);
+			verror("User handler for exception entries returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -600,7 +600,7 @@ static int probe_exception_exit(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for exception exits returned %d\n", ret);
+			verror("User handler for exception exits returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -2518,7 +2518,7 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for system call entries returned %d\n", ret);
+			verror("User handler for system call entries returned %d\n", ret);
 			return ret;
 		}
 	}
@@ -2545,7 +2545,7 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 		ret = user_handler(probe, user_handler_data, trigger);
 		if (ret)
 		{
-			vwarn("User handler for system call exits returned %d\n", ret);
+			verror("User handler for system call exits returned %d\n", ret);
 			return ret;
 		}
 	}
