@@ -28,6 +28,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 #include <limits.h>
 #include <ctype.h>
@@ -50,6 +51,7 @@ extern int optind, opterr, optopt;
 static char *domain_name;
 static int debug_level = -1;
 static char *sysmap_file;
+static ctxtracker_track_t track = TRACK_NONE;
 
 static struct target *t;
 static GHashTable *probes;
@@ -614,7 +616,7 @@ static void parse_opt(int argc, char *argv[])
 	char ch;
 	log_flags_t debug_flags;
 
-	while ((ch = getopt(argc, argv, "dl:m:")) != -1)
+	while ((ch = getopt(argc, argv, "dl:m:c:")) != -1)
 	{
 		switch(ch)
 		{
@@ -633,6 +635,21 @@ static void parse_opt(int argc, char *argv[])
 
 			case 'm':
 				sysmap_file = optarg;
+				break;
+
+			case 'c':
+				if (strcasecmp(optarg, "all") == 0)
+					track = TRACK_ALL;
+				else if (strcasecmp(optarg, "taskswitch") == 0)
+					track |= TRACK_TASKSWITCH;
+				else if (strcasecmp(optarg, "interrupt") == 0)
+					track |= TRACK_INTERRUPT;
+				else if (strcasecmp(optarg, "pagefault") == 0)
+					track |= TRACK_PAGEFAULT;
+				else if (strcasecmp(optarg, "exception") == 0)
+					track |= TRACK_EXCEPTION;
+				else if (strcasecmp(optarg, "syscall") == 0)
+					track |= TRACK_SYSCALL;
 				break;
 
 			default:
@@ -668,6 +685,13 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
+	if (track == TRACK_NONE)
+	{
+		ERR("Must specify -c "
+				"<all|taskswitch|interrupt|pagefault|exception|syscall>\n");
+		return -1;
+	}
+
 	probes = g_hash_table_new(g_direct_hash, g_direct_equal);
 	if (!probes)
 	{
@@ -675,11 +699,13 @@ int main(int argc, char *argv[])
 		return -ENOMEM;
 	}
 
-	LOG("Initializing VMI...\n");
+	LOG("Initializing target...\n");
 
 	t = init_probes(domain_name, debug_level);
 	if (!t)
 		return -1;
+
+	LOG("Initializing context tracker...\n");
 
 	ret = ctxtracker_init(t, sysmap_file);
 	if (ret)
@@ -688,98 +714,112 @@ int main(int argc, char *argv[])
 		return ret;
 	}
 
-	ret = ctxtracker_track(TRACK_ALL, true);
+	ret = ctxtracker_track(track, true);
 	if (ret)
 	{
 		ERR("Could not start tracking contexts for target %s\n", domain_name);
 		return ret;
 	}
 
-	ret = ctxtracker_register_handler(TRACK_TASKSWITCH, probe_taskswitch, NULL,
-			true);
-	if (ret)
+	if (track & TRACK_TASKSWITCH)
 	{
-		ERR("Could not register handler on task switches for target %s\n", 
-				domain_name);
-		return ret;
+		ret = ctxtracker_register_handler(TRACK_TASKSWITCH, probe_taskswitch, 
+				NULL, true);
+		if (ret)
+		{
+			ERR("Could not register handler on task switches for target %s\n", 
+					domain_name);
+			return ret;
+		}
 	}
 
-	ret = ctxtracker_register_handler(TRACK_INTERRUPT, probe_interrupt_entry, 
-			NULL, true);
-	if (ret)
+	if (track & TRACK_INTERRUPT)
 	{
-		ERR("Could not register handler on interrupt entries for target %s\n", 
-				domain_name);
-		return ret;
+		ret = ctxtracker_register_handler(TRACK_INTERRUPT, 
+				probe_interrupt_entry, NULL, true);
+		if (ret)
+		{
+			ERR("Could not register handler on interrupt entries for "
+					"target %s\n", domain_name);
+			return ret;
+		}
+
+		ret = ctxtracker_register_handler(TRACK_INTERRUPT, 
+				probe_interrupt_exit, NULL, false);
+		if (ret)
+		{
+			ERR("Could not register handler on interrupt exits for "
+					"target %s\n", domain_name);
+			return ret;
+		}
 	}
 
-	ret = ctxtracker_register_handler(TRACK_INTERRUPT, probe_interrupt_exit, 
-			NULL, false);
-	if (ret)
+	if (track & TRACK_PAGEFAULT)
 	{
-		ERR("Could not register handler on interrupt exits for target %s\n", 
-				domain_name);
-		return ret;
+		ret = ctxtracker_register_handler(TRACK_PAGEFAULT, 
+				probe_pagefault_entry, NULL, true);
+		if (ret)
+		{
+			ERR("Could not register handler on page fault entries for "
+					"target %s\n", domain_name);
+			return ret;
+		}
+
+		ret = ctxtracker_register_handler(TRACK_PAGEFAULT, 
+				probe_pagefault_exit, NULL, false);
+		if (ret)
+		{
+			ERR("Could not register handler on page fault exits for "
+					"target %s\n", domain_name);
+			return ret;
+		}
 	}
 
-	ret = ctxtracker_register_handler(TRACK_PAGEFAULT, probe_pagefault_entry, 
-			NULL, true);
-	if (ret)
+	if (track & TRACK_EXCEPTION)
 	{
-		ERR("Could not register handler on page fault entries for target %s\n", 
-				domain_name);
-		return ret;
+		ret = ctxtracker_register_handler(TRACK_EXCEPTION, 
+				probe_exception_entry, NULL, true);
+		if (ret)
+		{
+			ERR("Could not register handler on exception entries for "
+					"target %s\n", domain_name);
+			return ret;
+		}
+
+		ret = ctxtracker_register_handler(TRACK_EXCEPTION, 
+				probe_exception_exit, NULL, false);
+		if (ret)
+		{
+			ERR("Could not register handler on exception exits for "
+					"target %s\n", domain_name);
+			return ret;
+		}
 	}
 
-	ret = ctxtracker_register_handler(TRACK_PAGEFAULT, probe_pagefault_exit, 
-			NULL, false);
-	if (ret)
+	if (track & TRACK_SYSCALL)
 	{
-		ERR("Could not register handler on page fault exits for target %s\n", 
-				domain_name);
-		return ret;
-	}
+		ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_entry, 
+				NULL, true);
+		if (ret)
+		{
+			ERR("Could not register handler on system call entries for "
+					"target %s\n", domain_name);
+			return ret;
+		}
 
-	ret = ctxtracker_register_handler(TRACK_EXCEPTION, probe_exception_entry, 
-			NULL, true);
-	if (ret)
-	{
-		ERR("Could not register handler on exception entries for target %s\n", 
-				domain_name);
-		return ret;
-	}
-
-	ret = ctxtracker_register_handler(TRACK_EXCEPTION, probe_exception_exit, 
-			NULL, false);
-	if (ret)
-	{
-		ERR("Could not register handler on exception exits for target %s\n", 
-				domain_name);
-		return ret;
-	}
-
-	ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_entry, 
-			NULL, true);
-	if (ret)
-	{
-		ERR("Could not register handler on system call entries for target %s\n",
-				domain_name);
-		return ret;
-	}
-
-	ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_exit, 
-			NULL, false);
-	if (ret)
-	{
-		ERR("Could not register handler on system call exits for target %s\n", 
-				domain_name);
-		return ret;
+		ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_exit, 
+				NULL, false);
+		if (ret)
+		{
+			ERR("Could not register handler on system call exits for "
+					"target %s\n", domain_name);
+			return ret;
+		}
 	}
 
 	signals(sigh);
 
 	LOG("Monitoring started:\n");
-	//asm("int $3");
 
 	ret = run_probes(t, probes);
 	if (ret)

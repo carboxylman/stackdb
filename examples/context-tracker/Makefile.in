@@ -143,20 +143,24 @@ endif
 
 run: $(LIBRARIES) all-subdirs
 	sudo ./examples/dumpcontext \
+	-c all \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 debug: $(LIBRARIES) all-subdirs
 	sudo gdb --args ./examples/dumpcontext \
+	-c all \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 run-verbose: $(LIBRARIES) all-subdirs
 	sudo ./examples/dumpcontext \
 	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-c all \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 debug-verbose: $(LIBRARIES) all-subdirs
 	sudo gdb --args ./examples/dumpcontext \
 	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-c all \
 	-m $(GUEST_SYSMAP) $(GUEST_NAME)
 
 # How to recursively descend into subdirectories to make general
