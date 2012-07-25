@@ -28,7 +28,6 @@
 
 #include <stdio.h>
 #include <errno.h>
-#include <limits.h>
 
 #include <log.h>
 #include <target.h>

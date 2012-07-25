@@ -25,11 +25,6 @@
  * 
  */
 
-static const char *member_task_pid = "pid";
-static const char *member_task_name = "comm";
-static const char *member_regs_orig_eax = "orig_eax";
-static const char *member_regs_eip = "eip";
-
 static struct bsymbol *bsymbol_task_prev;
 static struct bsymbol *bsymbol_task_next;
 static struct bsymbol *bsymbol_interrupt_regs;
@@ -178,6 +173,8 @@ static int probe_taskswitch_fini(struct probe *probe)
 static int probe_interrupt_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
+	static const char *member_regs_orig_eax = "orig_eax";
+
 	int ret;
 	ctxtracker_context_t *context;
 	struct value *value_regs;
@@ -665,11 +662,6 @@ static int probe_debug_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -679,48 +671,6 @@ static int probe_debug_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Debug exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Debug exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -732,40 +682,9 @@ static int probe_debug_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Debug exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Debug exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -783,11 +702,6 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -797,48 +711,6 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): NMI exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: NMI exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -850,40 +722,9 @@ static int probe_nmi_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): NMI exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: NMI exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -901,11 +742,6 @@ static int probe_int3_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -915,48 +751,6 @@ static int probe_int3_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Breakpoint exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Breakpoint exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -968,40 +762,9 @@ static int probe_int3_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Breakpoint exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Breakpoint exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1019,11 +782,6 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1033,48 +791,6 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Overflow exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Overflow exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -1086,40 +802,9 @@ static int probe_overflow_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Overflow exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Overflow exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1137,11 +822,6 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1151,48 +831,6 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Bounds check exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Bounds check exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -1204,40 +842,9 @@ static int probe_bounds_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Bounds check exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Bounds check exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1255,11 +862,6 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1269,50 +871,7 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Invalid opcode exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Invalid opcode exception "
-				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
-				eip, error_code);
-	}
-
+	
 	return 0;
 }
 
@@ -1323,40 +882,9 @@ static int probe_invalid_op_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Invalid opcode exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Invalid opcode exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1426,11 +954,6 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1440,49 +963,6 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Coprocessor segment exception "
-				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Coprocessor segment exception "
-				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
-				eip, error_code);
-	}
 
 	return 0;
 }
@@ -1494,40 +974,9 @@ static int probe_coprocessor_segment_overrun_exit(struct probe *probe,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Coprocessor segment exception "
-				"handled\n", task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Coprocessor segment exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1545,11 +994,6 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1559,48 +1003,6 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Invalid TSS exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Invalid TSS exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -1612,40 +1014,9 @@ static int probe_invalid_TSS_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Invalid TSS exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Invalid TSS exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1663,11 +1034,6 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1677,48 +1043,6 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): No segment exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: No segment exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -1730,40 +1054,9 @@ static int probe_segment_not_present_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): No segment exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: No segment exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1781,11 +1074,6 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1795,48 +1083,6 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Stack error exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Stack error exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -1848,40 +1094,9 @@ static int probe_stack_segment_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Stack error exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Stack error exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -1899,11 +1114,6 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -1913,49 +1123,7 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): GP fault exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: GP fault exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
-
+	
 	return 0;
 }
 
@@ -1966,40 +1134,9 @@ static int probe_general_protection_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): GP fault exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: GP fault exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -2043,11 +1180,6 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -2057,50 +1189,7 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Coprocessor error exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Coprocessor error exception "
-				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
-				eip, error_code);
-	}
-
+	
 	return 0;
 }
 
@@ -2111,40 +1200,9 @@ static int probe_coprocessor_error_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Coprocessor error exception "
-				"handled\n", task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Coprocessor error exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -2162,11 +1220,6 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -2176,49 +1229,6 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Alignment check exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Alignment check exception "
-				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
-				eip, error_code);
-	}
 
 	return 0;
 }
@@ -2230,40 +1240,9 @@ static int probe_alignment_check_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): Alignment check exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: Alignment check exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
@@ -2307,11 +1286,6 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	struct value *value_regs;
-	REGVAL eip;
-	uint32_t error_code;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -2321,48 +1295,6 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
-
-	value_regs = context->exception.regs;
-	error_code = context->exception.error_code;
-
-	ret = get_member_regval(probe->target, value_regs, member_regs_eip, &eip);
-	if (ret)
-	{
-		verror("Could not load member regval '%s.%s'\n", 
-				value_regs->lsymbol->symbol->name, member_regs_eip);
-		value_free(value_regs);
-		return ret;
-	}
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): SIMD error exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", 
-				task_pid, task_name, eip, error_code);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: SIMD error exception occurred: "
-				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
-	}
 
 	return 0;
 }
@@ -2374,40 +1306,9 @@ static int probe_simd_coprocessor_error_exit(struct probe *probe, void *data,
 	int ret;
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
-	int task_pid;
-	char task_name[PATH_MAX];
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
-
-	if (context->task.cur)
-	{
-		ret = get_member_i32(probe->target, context->task.cur, member_task_pid, 
-				&task_pid);
-		if (ret)
-		{
-			verror("Could not load member int32 '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_pid);
-			return ret;
-		}
-
-		ret = get_member_string(probe->target, context->task.cur, 
-				member_task_name, task_name);
-		if (ret)
-		{
-			verror("Could not load member string '%s.%s'\n", 
-					context->task.cur->lsymbol->symbol->name, member_task_name);
-			return ret;
-		}
-
-		vdebugc(-1, LOG_C_CTX, "%d (%s): SIMD error exception handled\n", 
-				task_pid, task_name);
-	}
-	else
-	{
-		vdebugc(-1, LOG_C_CTX, 
-				"UNKNOWN TASK: SIMD error exception handled\n");
-	}
 
 	ret = probe_exception_exit(probe, data, trigger);
 	if (ret)
