@@ -143,4 +143,18 @@ void ctxtracker_cleanup(void);
  */
 int ctxtracker_track(ctxtracker_track_t flags, bool track);
 
+/*
+ * Register a handler on one or multiple types of context. 'flags' is a or'ed
+ * combination of TRACK_* which tells context tracker what types of contexts
+ * the 'handler' is called upon. If 'entry' is true, the 'handler' is registered
+ * on the entries of the specified types of context. Otherwise, the 'handler'
+ * is registered on the exits. For example, if the bit of TRACK_INTERRUPT is
+ * set in 'flags' and 'entry' is false, then the 'handler' is called whenever
+ * the target finishes handling the interrupt request.
+ * NOTE: The value passed to 'entry' is ignored for a TRACK_TASKSWITCH bit set
+ * in 'flags', since a task switch has not entry or exit point.
+ */
+int ctxtracker_register_handler(ctxtracker_track_t flags, 
+		probe_handler_t handler, void *handler_data, bool entry);
+
 #endif /* __CTXTRACKER_H__ */

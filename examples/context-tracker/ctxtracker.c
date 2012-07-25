@@ -51,6 +51,16 @@ static GHashTable *syscall_probes;
 
 static ctxtracker_context_t *context;
 
+static GHashTable *taskswitch_user_handlers;
+static GHashTable *interrupt_entry_user_handlers;
+static GHashTable *interrupt_exit_user_handlers;
+static GHashTable *pagefault_entry_user_handlers;
+static GHashTable *pagefault_exit_user_handlers;
+static GHashTable *exception_entry_user_handlers;
+static GHashTable *exception_exit_user_handlers;
+static GHashTable *syscall_entry_user_handlers;
+static GHashTable *syscall_exit_user_handlers;
+
 /* FIXME: remove this once you start using target's ELF symtab symbols. */
 static FILE *sysmap_handle;
 
@@ -416,6 +426,13 @@ static void untrack(GHashTable **probe_table)
 	}
 }
 
+static void register_user_handler(probe_handler_t handler, void *handler_data,
+		GHashTable *handler_list)
+{
+	g_hash_table_insert(handler_list, (gpointer)handler /* key */, 
+			(gpointer)handler_data /* value */);
+}
+
 /* FIXME: remove the sysmap_name argument once you start using target's ELF 
    symtab symbols. */
 int ctxtracker_init(struct target *target, const char *sysmap_name)
@@ -466,6 +483,86 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 		return -ENOMEM;
 	}
 
+	taskswitch_user_handlers = g_hash_table_new(g_direct_hash, g_direct_equal);
+	if (!taskswitch_user_handlers)
+	{
+		verror("Could not create user handler list for task switches\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	interrupt_entry_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!interrupt_entry_user_handlers)
+	{
+		verror("Could not create user handler list for interrupt entry\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	interrupt_exit_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!interrupt_exit_user_handlers)
+	{
+		verror("Could not create user handler list for interrupt exit\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	pagefault_entry_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!pagefault_entry_user_handlers)
+	{
+		verror("Could not create user handler list for page fault entry\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	pagefault_exit_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!pagefault_exit_user_handlers)
+	{
+		verror("Could not create user handler list for page fault exit\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	exception_entry_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!exception_entry_user_handlers)
+	{
+		verror("Could not create user handler list for exception entry\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	exception_exit_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!exception_exit_user_handlers)
+	{
+		verror("Could not create user handler list for exception exit\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	syscall_entry_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!syscall_entry_user_handlers)
+	{
+		verror("Could not create user handler list for system call entry\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
+	syscall_exit_user_handlers = g_hash_table_new(g_direct_hash, 
+			g_direct_equal);
+	if (!syscall_exit_user_handlers)
+	{
+		verror("Could not create user handler list for system call exit\n");
+		ctxtracker_cleanup();
+		return -ENOMEM;
+	}
+
 	context = (ctxtracker_context_t *)malloc(sizeof(ctxtracker_context_t));
 	if (!context)
 	{
@@ -484,12 +581,6 @@ void ctxtracker_cleanup(void)
 	GHashTableIter iter;
 	gpointer key;
 
-	if (context)
-	{
-		free(context);
-		context = NULL;
-	}
-
 	if (probes)
 	{
 		g_hash_table_iter_init(&iter, probes);
@@ -505,10 +596,64 @@ void ctxtracker_cleanup(void)
 		probes = NULL;	
 	}
 
-	if (taskswitch_probes)
+	if (context)
 	{
-		g_hash_table_destroy(taskswitch_probes);
-		taskswitch_probes = NULL;
+		free(context);
+		context = NULL;
+	}
+
+	if (taskswitch_user_handlers)
+	{
+		g_hash_table_destroy(taskswitch_user_handlers);
+		taskswitch_user_handlers = NULL;
+	}
+
+	if (interrupt_entry_user_handlers)
+	{
+		g_hash_table_destroy(interrupt_entry_user_handlers);
+		interrupt_entry_user_handlers = NULL;
+	}
+
+	if (interrupt_exit_user_handlers)
+	{
+		g_hash_table_destroy(interrupt_exit_user_handlers);
+		interrupt_exit_user_handlers = NULL;
+	}
+
+	if (pagefault_entry_user_handlers)
+	{
+		g_hash_table_destroy(pagefault_entry_user_handlers);
+		pagefault_entry_user_handlers = NULL;
+	}
+
+	if (pagefault_exit_user_handlers)
+	{
+		g_hash_table_destroy(pagefault_exit_user_handlers);
+		pagefault_exit_user_handlers = NULL;
+	}
+
+	if (exception_entry_user_handlers)
+	{
+		g_hash_table_destroy(exception_entry_user_handlers);
+		exception_entry_user_handlers = NULL;
+	}
+
+	if (exception_exit_user_handlers)
+	{
+		g_hash_table_destroy(exception_exit_user_handlers);
+		exception_exit_user_handlers = NULL;
+	}
+
+	if (syscall_entry_user_handlers)
+	{
+		g_hash_table_destroy(syscall_entry_user_handlers);
+		syscall_entry_user_handlers = NULL;
+	}
+
+	if (syscall_exit_user_handlers)
+	{
+		g_hash_table_destroy(syscall_exit_user_handlers);
+		syscall_exit_user_handlers = NULL;
 	}
 
 	if (interrupt_probes)
@@ -617,6 +762,64 @@ int ctxtracker_track(ctxtracker_track_t flags, bool track)
 		}
 		else
 			untrack(&syscall_probes);
+	}
+
+	return 0;
+}
+
+int ctxtracker_register_handler(ctxtracker_track_t flags, 
+		probe_handler_t handler, void *handler_data, bool entry)
+{
+	if (!t)
+	{
+		verror("Context tracker not initialized\n");
+		return -1;
+	}
+
+	if (flags == TRACK_NONE)
+		return 0;
+
+	if (flags & TRACK_TASKSWITCH)
+		register_user_handler(handler, handler_data, taskswitch_user_handlers);
+
+	if (flags & TRACK_INTERRUPT)
+	{
+		if (entry)
+			register_user_handler(handler, handler_data,
+					interrupt_entry_user_handlers);
+		else
+			register_user_handler(handler, handler_data,
+					interrupt_exit_user_handlers);
+	}
+
+	if (flags & TRACK_PAGEFAULT)
+	{
+		if (entry)
+			register_user_handler(handler, handler_data, 
+					pagefault_entry_user_handlers);
+		else
+			register_user_handler(handler, handler_data,
+					pagefault_exit_user_handlers);
+	}
+
+	if (flags & TRACK_EXCEPTION)
+	{
+		if (entry)
+			register_user_handler(handler, handler_data, 
+					exception_entry_user_handlers);
+		else
+			register_user_handler(handler, handler_data,
+					exception_exit_user_handlers);
+	}
+
+	if (flags & TRACK_SYSCALL)
+	{
+		if (entry)
+			register_user_handler(handler, handler_data,
+					syscall_entry_user_handlers);
+		else
+			register_user_handler(handler, handler_data,
+					syscall_exit_user_handlers);
 	}
 
 	return 0;

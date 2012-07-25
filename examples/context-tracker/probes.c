@@ -49,6 +49,9 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	struct value *value_prev, *value_next;
 	int prev_pid, next_pid;
 	char prev_name[PATH_MAX], next_name[PATH_MAX];
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -131,6 +134,13 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		value_free(context->task.cur);
 	context->task.cur = value_next;
 
+	g_hash_table_iter_init(&iter, taskswitch_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
+
 	return 0;
 }
 
@@ -209,6 +219,9 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	int irq_num;
 	int task_pid;
 	char task_name[PATH_MAX];
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -282,6 +295,13 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	context->interrupt.irq_num = irq_num;
 	context->interrupt.regs = value_regs;
 
+	g_hash_table_iter_init(&iter, interrupt_entry_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
+
 	return 0;
 }
 
@@ -294,6 +314,9 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 	int irq_num;
 	int task_pid;
 	char task_name[PATH_MAX];
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -332,6 +355,13 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 	if (context->interrupt.regs)
 		value_free(context->interrupt.regs);
 	context->interrupt.regs = NULL;
+
+	g_hash_table_iter_init(&iter, interrupt_exit_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
 
 	context->flags &= ~(TRACK_INTERRUPT);
 
@@ -400,6 +430,9 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	char str_error_code[128];
 	int task_pid;
 	char task_name[PATH_MAX];
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -512,6 +545,13 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	context->pagefault.reserved_bit = reserved_bit;
 	context->pagefault.instr_fetch = instr_fetch;
 
+	g_hash_table_iter_init(&iter, pagefault_entry_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
+
 	return 0;
 }
 
@@ -524,6 +564,9 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	ADDR addr;
 	int task_pid;
 	char task_name[PATH_MAX];
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -567,6 +610,13 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	context->pagefault.user_mode = false;
 	context->pagefault.reserved_bit = false;
 	context->pagefault.instr_fetch = false;
+
+	g_hash_table_iter_init(&iter, pagefault_exit_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
 
 	context->flags &= ~(TRACK_PAGEFAULT);
 
@@ -651,6 +701,9 @@ static int probe_exception_entry(struct probe *probe, void *data,
 	struct value *value_regs;
 	struct value *value_error_code;
 	uint32_t error_code;
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
@@ -692,6 +745,13 @@ static int probe_exception_entry(struct probe *probe, void *data,
 	context->exception.regs = value_regs;
 	context->exception.error_code = error_code;
 
+	g_hash_table_iter_init(&iter, exception_entry_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
+
 	return 0;
 }
 
@@ -701,6 +761,9 @@ static int probe_exception_exit(struct probe *probe, void *data,
 {
 	struct exception_handler_data *handler_data;
 	ctxtracker_context_t *context;
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
@@ -710,6 +773,13 @@ static int probe_exception_exit(struct probe *probe, void *data,
 		value_free(context->exception.regs);
 	context->exception.regs = NULL;
 	context->exception.error_code = 0;
+
+	g_hash_table_iter_init(&iter, exception_exit_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
 
 	context->flags &= ~(TRACK_EXCEPTION);
 
@@ -733,6 +803,8 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
+
+	strcpy(context->exception.name, exception_name);
 
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
@@ -779,8 +851,6 @@ static int probe_divide_error_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Divide error exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -852,6 +922,8 @@ static int probe_debug_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -897,8 +969,6 @@ static int probe_debug_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Debug exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -970,6 +1040,8 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1015,8 +1087,6 @@ static int probe_nmi_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: NMI exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1088,6 +1158,8 @@ static int probe_int3_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1133,8 +1205,6 @@ static int probe_int3_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Breakpoint exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1206,6 +1276,8 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1251,8 +1323,6 @@ static int probe_overflow_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Overflow exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1324,6 +1394,8 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1369,8 +1441,6 @@ static int probe_bounds_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Bounds check exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1442,6 +1512,8 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1488,8 +1560,6 @@ static int probe_invalid_op_entry(struct probe *probe, void *data,
 				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
 				eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1613,6 +1683,8 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1659,8 +1731,6 @@ static int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
 				eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1732,6 +1802,8 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1777,8 +1849,6 @@ static int probe_invalid_TSS_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Invalid TSS exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1850,6 +1920,8 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -1895,8 +1967,6 @@ static int probe_segment_not_present_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: No segment exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -1968,6 +2038,8 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -2013,8 +2085,6 @@ static int probe_stack_segment_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: Stack error exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -2086,6 +2156,8 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -2131,8 +2203,6 @@ static int probe_general_protection_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: GP fault exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -2230,6 +2300,8 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -2276,8 +2348,6 @@ static int probe_coprocessor_error_entry(struct probe *probe, void *data,
 				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
 				eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -2349,6 +2419,8 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -2395,8 +2467,6 @@ static int probe_alignment_check_entry(struct probe *probe, void *data,
 				"occurred: (eip = 0x%08x, error-code = 0x%08x)\n", 
 				eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -2494,6 +2564,8 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 	handler_data = (struct exception_handler_data *)data;
 	context = handler_data->context;
 
+	strcpy(context->exception.name, exception_name);
+
 	ret = probe_exception_entry(probe, data, trigger);
 	if (ret)
 		return ret;
@@ -2539,8 +2611,6 @@ static int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 		vdebugc(-1, LOG_C_CTX, "UNKNOWN TASK: SIMD error exception occurred: "
 				"(eip = 0x%08x, error-code = 0x%08x)\n", eip, error_code);
 	}
-
-	strcpy(context->exception.name, exception_name);
 
 	return 0;
 }
@@ -2678,6 +2748,9 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	int sc_num;
 	int task_pid;
 	char task_name[PATH_MAX];
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -2717,6 +2790,13 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 
 	context->syscall.sc_num = sc_num;
 
+	g_hash_table_iter_init(&iter, syscall_entry_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
+
 	return 0;
 }
 
@@ -2729,6 +2809,9 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 	int sc_num;
 	int task_pid;
 	char task_name[PATH_MAX];
+	GHashTableIter iter;
+	probe_handler_t user_handler;
+	void *user_handler_data;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -2764,6 +2847,13 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 	}
 
 	context->syscall.sc_num = 0;
+
+	g_hash_table_iter_init(&iter, syscall_exit_user_handlers);
+	while (g_hash_table_iter_next(&iter, (gpointer)&user_handler, 
+			(gpointer)&user_handler_data))
+	{
+		user_handler(probe, user_handler_data, trigger);
+	}
 
 	context->flags &= ~(TRACK_SYSCALL);
 

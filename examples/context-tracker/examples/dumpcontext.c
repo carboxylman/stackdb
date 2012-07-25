@@ -48,6 +48,13 @@ char *sysmap_file;
 struct target *t;
 GHashTable *probes;
 
+static int probe_taskswitch(struct probe *probe, void *data, 
+		struct probe *trigger)
+{
+	LOG("TASK SWITCH IN USER APP\n");
+	return 0;
+}
+
 static void sigh(int signo)
 {
 	if (t)
@@ -164,14 +171,20 @@ int main(int argc, char *argv[])
 	}
 
     ret = ctxtracker_track(TRACK_ALL, true);
-
 	if (ret)
 	{
 		ERR("Could not start tracking contexts for target %s\n", domain_name);
 		return ret;
 	}
 
-	// TODO: register probes here.
+	ret = ctxtracker_register_handler(TRACK_TASKSWITCH, probe_taskswitch, NULL,
+			true);
+	if (ret)
+	{
+		ERR("Could not register handler on task switches for target %s\n", 
+				domain_name);
+		return ret;
+	}
 
 	signals(sigh);
 
