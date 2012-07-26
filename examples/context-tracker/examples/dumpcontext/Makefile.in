@@ -18,24 +18,34 @@
 
 ###############################################################################
 
-PACKAGE = context-tracker
+PACKAGE = ctxtracker-examples-dumpcontext
 LIBVERSION = 0.1
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= examples/context-tracker/examples
+SUBDIR		= examples/context-tracker/examples/dumpcontext
 OBJDIR		= @top_builddir@
 
-SUBDIRS = dumpcontext
-
 include $(OBJDIR)/Makeconf
+
+# Temporary cmdline arg values hard-coded for easiness of testing.
+GUEST_SYSMAP = /boot/System.map-2.6.18-xenU
+ifeq ($(CONFIG_DETERMINISTIC_TIMETRAVEL),"1")
+	TTD_LOG    = /local/sda4/logs/ttd.log
+	GUEST_CONF = /local/sda4/vm-images/client_A_solo_with_net.conf
+	GUEST_NAME = clientA
+else
+	GUEST_CONF = /local/sda4/vm-images/a3guest-fc8.conf
+	GUEST_NAME = a3guest
+endif
 
 CFLAGS += -I$(OBJDIR) \
 	  -I$(TOP_SRCDIR)/lib \
 	  -I$(TOP_SRCDIR)/include \
 	  -I$(TOP_SRCDIR)/dwdebug \
 	  -I$(TOP_SRCDIR)/target \
-	  -I$(TOP_SRCDIR)/examples/context-tracker \
+      -I$(TOP_SRCDIR)/examples/context-tracker \
+      -I$(TOP_SRCDIR)/examples/context-tracker/examples \
 	  -I$(TOP_SRCDIR)/$(SUBDIR)
 
 CFLAGS += -DDWDEBUG_USE_STRTAB
@@ -57,12 +67,14 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/debug.h \
-		$(TOP_SRCDIR)/$(SUBDIR)/util.h
+HEADERS := $(TOP_SRCDIR)/examples/context-tracker/examples/debug.h \
+		$(TOP_SRCDIR)/examples/context-tracker/examples/util.h
 
-OBJECTS := util.lo
+OBJECTS := $(OBJDIR)/examples/context-tracker/examples/util.lo
 
 LIBRARIES := 
+
+PROGRAMS := dumpcontext
 
 STATICLIBS := $(OBJDIR)/examples/context-tracker/libctxtracker.a \
               $(OBJDIR)/target/libtarget.a \
@@ -78,20 +90,87 @@ INST_LIB = $(LIBRARIES)
 # Get libtool to shut up when compiling.
 RM=rm -f
 
-all:	$(OBJECTS) all-subdirs
+all:	$(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
+dumpcontext: $(HEADERS) $(LIBRARIES) $(OBJECTS) dumpcontext.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(LIBRARIES) $(OBJECTS)
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) dumpcontext.lo
+	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
+
+# Temporary cmdlines hard-coded for easiness of testing.
+
+ifeq ($(CONFIG_DETERMINISTIC_TIMETRAVEL),"1")
+
+daemon: /usr/sbin/ttd-deviced
+	sudo ttd-deviced -f $(TTD_LOG)
+
+record: /usr/sbin/xm
+	sudo xm create $(GUEST_CONF) time_travel="ttd_flag=1" -c
+
+replay: /usr/sbin/xm
+	sudo xm create $(GUEST_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c
+
+replay-pause: /usr/sbin/xm
+	sudo xm create $(GUEST_CONF) time_travel="ttd_flag=1, tt_replay_flag=1" -c -p
+
+kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
+	sudo xm destroy $(GUEST_NAME)
+	sleep 1
+	sudo killall -9 ttd-deviced make $(PROGRAMS)
+
+else
+
+create: /usr/sbin/xm
+	sudo xm create $(GUEST_CONF)
+
+console: /usr/sbin/xm
+	sudo xm console $(GUEST_NAME)
+
+kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
+	sudo xm destroy $(GUEST_NAME)
+	sleep 1
+	sudo killall -9 make $(PROGRAMS)
+
+endif
+
+run: $(LIBRARIES) all-subdirs
+	sudo ./dumpcontext \
+	-c all \
+	-m $(GUEST_SYSMAP) \
+	$(GUEST_NAME)
+
+debug: $(LIBRARIES) all-subdirs
+	sudo gdb --args ./dumpcontext \
+	-c all \
+	-m $(GUEST_SYSMAP) \
+	$(GUEST_NAME)
+
+run-verbose: $(LIBRARIES) all-subdirs
+	sudo ./dumpcontext \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-c all \
+	-m $(GUEST_SYSMAP) \
+	$(GUEST_NAME)
+
+debug-verbose: $(LIBRARIES) all-subdirs
+	sudo gdb --args ./dumpcontext \
+	-ddddddddddd -l T_ALL,P_ALL,T_XV \
+	-c all \
+	-m $(GUEST_SYSMAP) \
+	$(GUEST_NAME)
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.

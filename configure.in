@@ -398,6 +398,7 @@ outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           examples/context-aware-probes/Makefile \
           examples/context-tracker/Makefile \
           examples/context-tracker/examples/Makefile \
+          examples/context-tracker/examples/dumpcontext/Makefile \
           examples/null-deref-analysis/Makefile \
           examples/local-dos-analysis/Makefile"
 
