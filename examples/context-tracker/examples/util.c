@@ -112,7 +112,8 @@ int run_probes(struct target *t, GHashTable *probes)
 		}
 		else
 		{
-			cleanup_probes(probes);
+			if (probes)
+				cleanup_probes(probes);
 			ctxtracker_cleanup();
 			
 			tstat = target_close(t);

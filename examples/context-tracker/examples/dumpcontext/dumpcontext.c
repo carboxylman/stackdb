@@ -26,11 +26,13 @@
  * 
  */
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
 #include <limits.h>
+#include <signal.h>
 #include <ctype.h>
 
 #include <target.h>
@@ -53,7 +55,6 @@ static int debug_level = -1;
 static ctxtracker_track_t track = TRACK_NONE;
 
 static struct target *t;
-static GHashTable *probes;
 
 static const char *member_task_pid = "pid";
 static const char *member_task_name = "comm";
@@ -581,15 +582,11 @@ static void sigh(int signo)
 		target_pause(t);
 
 		WARN("Ending trace\n");
-		cleanup_probes(probes);
 		ctxtracker_cleanup();
 		WARN("Ended trace\n");
 
 		target_close(t);
 		target_free(t);
-
-		if (probes)
-			g_hash_table_destroy(probes);
 	}
 
 	exit(0);
@@ -681,13 +678,6 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	probes = g_hash_table_new(g_direct_hash, g_direct_equal);
-	if (!probes)
-	{
-		ERR("Could not create probe table for target %s\n", domain_name);
-		return -ENOMEM;
-	}
-
 	LOG("Initializing target...\n");
 
 	t = init_probes(domain_name, debug_level);
@@ -700,6 +690,7 @@ int main(int argc, char *argv[])
 	if (ret)
 	{
 		ERR("Could not initialize ctxtracker for target %s\n", domain_name);
+		kill(getpid(), SIGINT);
 		return ret;
 	}
 
@@ -707,6 +698,7 @@ int main(int argc, char *argv[])
 	if (ret)
 	{
 		ERR("Could not track contexts for target %s\n", domain_name);
+		kill(getpid(), SIGINT);
 		return ret;
 	}
 
@@ -718,6 +710,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on task switches for target %s\n", 
 					domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 	}
@@ -730,6 +723,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on interrupt entries for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 
@@ -739,6 +733,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on interrupt exits for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 	}
@@ -751,6 +746,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on page fault entries for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 
@@ -760,6 +756,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on page fault exits for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 	}
@@ -772,6 +769,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on exception entries for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 
@@ -781,6 +779,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on exception exits for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 	}
@@ -793,6 +792,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on system call entries for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 
@@ -802,6 +802,7 @@ int main(int argc, char *argv[])
 		{
 			ERR("Could not register handler on system call exits for "
 					"target %s\n", domain_name);
+			kill(getpid(), SIGINT);
 			return ret;
 		}
 	}
@@ -810,9 +811,12 @@ int main(int argc, char *argv[])
 
 	LOG("Monitoring started:\n");
 
-	ret = run_probes(t, probes);
+	ret = run_probes(t, NULL);
 	if (ret)
+	{
+		kill(getpid(), SIGINT);
 		return ret;
+	}
 
 	return 0;
 }

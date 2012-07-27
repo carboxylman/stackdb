@@ -25,11 +25,13 @@
  * 
  */
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
 #include <limits.h>
+#include <signal.h>
 #include <ctype.h>
 
 #include <target.h>
@@ -55,6 +57,51 @@ static GHashTable *probes;
 
 static const char *member_task_pid = "pid";
 static const char *member_task_name = "comm";
+
+static int probe_sysopen_entry(struct probe *probe, void *data,
+        struct probe *trigger)
+{
+	LOG("FILE OPEN!\n");
+
+	return 0;
+}
+
+static int probe_sysopen_init(struct probe *probe)
+{
+	return 0;
+}
+
+static int probe_sysopen_fini(struct probe *probe)
+{
+	return 0;
+}
+
+static int register_probes(struct target *t)
+{
+	static const char *symbol = "sys_open";
+	static const probe_handler_t handler = probe_sysopen_entry;
+	static const struct probe_ops ops = {
+		.gettype = NULL,
+		.init = probe_sysopen_init,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = NULL, //probe_context_summarize,
+		.fini = probe_sysopen_fini
+	};
+
+	struct probe *probe;
+
+	probe = register_probe_function_entry(t, symbol, handler, &ops, NULL);
+	if (!probe)
+		return -1;
+	
+	g_hash_table_insert(probes, (gpointer)probe /* key */,
+			(gpointer)probe /* value */);
+
+	return 0;
+}
 
 static void sigh(int signo)
 {
@@ -160,6 +207,7 @@ int main(int argc, char *argv[])
 	if (ret)
 	{
 		ERR("Could not initialize ctxtracker for target %s\n", domain_name);
+		kill(getpid(), SIGINT);
 		return ret;
 	}
 
@@ -167,10 +215,16 @@ int main(int argc, char *argv[])
 	if (ret)
 	{
 		ERR("Could not track contexts for target %s\n", domain_name);
+		kill(getpid(), SIGINT);
 		return ret;
 	}
 
-	/* TODO: register probes here. */
+	ret = register_probes(t);
+	if (ret)
+	{
+		kill(getpid(), SIGINT);
+		return ret;
+	}
 
 	signals(sigh);
 
@@ -178,7 +232,10 @@ int main(int argc, char *argv[])
 
 	ret = run_probes(t, probes);
 	if (ret)
+	{
+		kill(getpid(), SIGINT);
 		return ret;
+	}
 
 	return 0;
 }
