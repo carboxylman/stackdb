@@ -1392,7 +1392,9 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	eax = target_read_reg(t, 0);
 	sc_num = eax;
 
-	context->flags |= TRACK_SYSCALL;
+	/* FIXME: uncomment the below line when machineries allow instrumenting 
+	   system call exits. */
+	//context->flags |= TRACK_SYSCALL;
 
 	context->syscall.sc_num = sc_num;
 
@@ -1423,7 +1425,7 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
-	//(void)probe_machine_check_exit;
+	(void)probe_syscall_exit;
 
 	context = (ctxtracker_context_t *)data;
 

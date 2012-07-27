@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
 	ret = ctxtracker_track(TRACK_TASKSWITCH, true);
 	if (ret)
 	{
-		ERR("Could not start tracking contexts for target %s\n", domain_name);
+		ERR("Could not track contexts for target %s\n", domain_name);
 		return ret;
 	}
 

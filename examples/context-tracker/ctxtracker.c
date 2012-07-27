@@ -387,7 +387,7 @@ static int track_syscall(void)
 {
 	static const char *symbol = "system_call";
 	static const probe_handler_t entry_handler = probe_syscall_entry;
-	static const probe_handler_t exit_handler = probe_syscall_exit;
+//	static const probe_handler_t exit_handler = probe_syscall_exit;
 	static const struct probe_ops entry_ops = { 
 		.gettype = NULL,
 		.init = probe_syscall_init,
@@ -398,7 +398,7 @@ static int track_syscall(void)
 		.summarize = probe_context_summarize,
 		.fini = probe_syscall_fini
 	};
-	static const struct probe_ops exit_ops = { 
+/*	static const struct probe_ops exit_ops = { 
 		.gettype = NULL,
 		.init = NULL,
 		.registered = NULL,
@@ -408,9 +408,9 @@ static int track_syscall(void)
 		.summarize = probe_context_summarize,
 		.fini = NULL
 	};
-
+*/
 	struct probe *entry_probe;
-	struct probe *exit_probe;
+//	struct probe *exit_probe;
 
 	if (syscall_probes)
 	{
@@ -430,24 +430,24 @@ static int track_syscall(void)
 	if (!entry_probe)
 		return -1;
 	
-	exit_probe = register_probe_function_exit(t, symbol, exit_handler, 
-			&exit_ops, context /* handler_data */);
-	if (!exit_probe)
-	{
-		probe_unregister(entry_probe, 1 /* force */);
-		probe_free(entry_probe, 1 /* force */);
-		return -1;
-	}
+//	exit_probe = register_probe_function_exit(t, symbol, exit_handler, 
+//			&exit_ops, context /* handler_data */);
+//	if (!exit_probe)
+//	{
+//		probe_unregister(entry_probe, 1 /* force */);
+//		probe_free(entry_probe, 1 /* force */);
+//		return -1;
+//	}
 
 	g_hash_table_insert(probes, (gpointer)entry_probe /* key */, 
 			(gpointer)entry_probe /* value */);
-	g_hash_table_insert(probes, (gpointer)exit_probe /* key */, 
-			(gpointer)exit_probe /* value */);
+//	g_hash_table_insert(probes, (gpointer)exit_probe /* key */, 
+//			(gpointer)exit_probe /* value */);
 
 	g_hash_table_insert(syscall_probes, (gpointer)entry_probe /* key */, 
 			(gpointer)entry_probe /* value */);
-	g_hash_table_insert(syscall_probes, (gpointer)exit_probe /* key */, 
-			(gpointer)exit_probe /* value */);
+//	g_hash_table_insert(syscall_probes, (gpointer)exit_probe /* key */, 
+//			(gpointer)exit_probe /* value */);
 
 	return 0;
 }
