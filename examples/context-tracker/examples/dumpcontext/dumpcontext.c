@@ -17,7 +17,7 @@
  */
 
 /*
- *  examples/context-tracker/examples/dumpcontext.c
+ *  examples/context-tracker/examples/dumpcontext/dumpcontext.c
  *
  *  A sample application built on top of context tracker that dumps all 
  *  context change information for a Linux guest VM.

@@ -26,7 +26,7 @@ TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= examples/context-tracker/examples
 OBJDIR		= @top_builddir@
 
-SUBDIRS = dumpcontext
+SUBDIRS = dumpcontext null-deref-analysis
 
 include $(OBJDIR)/Makeconf
 

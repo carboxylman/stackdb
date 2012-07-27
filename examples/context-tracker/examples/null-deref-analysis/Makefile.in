@@ -18,12 +18,12 @@
 
 ###############################################################################
 
-PACKAGE = ctxtracker-examples-dumpcontext
+PACKAGE = ctxtracker-examples-null-deref-analysis
 LIBVERSION = 0.1
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= examples/context-tracker/examples/dumpcontext
+SUBDIR		= examples/context-tracker/examples/null-deref-analysis
 OBJDIR		= @top_builddir@
 
 include $(OBJDIR)/Makeconf
@@ -74,7 +74,7 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := dumpcontext
+PROGRAMS := pass1
 
 STATICLIBS := $(OBJDIR)/examples/context-tracker/examples/util.lo \
               $(OBJDIR)/examples/context-tracker/libctxtracker.a \
@@ -98,7 +98,7 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-dumpcontext: $(HEADERS) $(LIBRARIES) $(OBJECTS) dumpcontext.lo $(STATICLIBS)
+pass1: $(HEADERS) $(LIBRARIES) $(OBJECTS) pass1.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
@@ -106,7 +106,7 @@ install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) dumpcontext.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) pass1.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
@@ -147,29 +147,25 @@ kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
 
 endif
 
-run: $(LIBRARIES) all-subdirs
-	sudo ./dumpcontext \
-	-c all \
+run-pass1: $(LIBRARIES) all-subdirs
+	sudo ./pass1 \
 	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
-debug: $(LIBRARIES) all-subdirs
-	sudo gdb --args ./dumpcontext \
-	-c all \
+debug-pass1: $(LIBRARIES) all-subdirs
+	sudo gdb --args ./pass1 \
 	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
-run-verbose: $(LIBRARIES) all-subdirs
-	sudo ./dumpcontext \
+run-verbose-pass1: $(LIBRARIES) all-subdirs
+	sudo ./pass1 \
 	-ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-c all \
 	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
-debug-verbose: $(LIBRARIES) all-subdirs
-	sudo gdb --args ./dumpcontext \
+debug-verbose-pass1: $(LIBRARIES) all-subdirs
+	sudo gdb --args ./pass1 \
 	-ddddddddddd -l T_ALL,P_ALL,T_XV \
-	-c all \
 	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
