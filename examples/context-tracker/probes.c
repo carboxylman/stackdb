@@ -901,8 +901,6 @@ static int probe_device_not_available_entry(struct probe *probe, void *data,
 	   to be registered. */
 	(void)probe_device_not_available_entry;
 
-	vdebugc(-1, LOG_C_CTX, "Device not available exception occurred\n");
-
 	return 0;
 }
 
@@ -913,8 +911,6 @@ static int probe_device_not_available_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_device_not_available_exit;
-
-	vdebugc(-1, LOG_C_CTX, "Device not available exception handled\n");
 
 	return 0;
 }
@@ -927,8 +923,6 @@ static int probe_double_fault_entry(struct probe *probe, void *data,
 	   to be registered. */
 	(void)probe_double_fault_entry;
 
-	vdebugc(-1, LOG_C_CTX, "Double fault exception occurred\n");
-
 	return 0;
 }
 
@@ -939,8 +933,6 @@ static int probe_double_fault_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_double_fault_exit;
-
-	vdebugc(-1, LOG_C_CTX, "Double fault exception handled\n");
 
 	return 0;
 }
@@ -1153,8 +1145,6 @@ static int probe_spurious_interrupt_bug_entry(struct probe *probe, void *data,
 	   to be registered. */
 	(void)probe_spurious_interrupt_bug_entry;
 
-	vdebugc(-1, LOG_C_CTX, "Spurious interrupt exception occurred\n");
-
 	return 0;
 }
 
@@ -1165,8 +1155,6 @@ static int probe_spurious_interrupt_bug_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_spurious_interrupt_bug_exit;
-
-	vdebugc(-1, LOG_C_CTX, "Spurious interrupt exception handled\n");
 
 	return 0;
 }
@@ -1259,8 +1247,6 @@ static int probe_machine_check_entry(struct probe *probe, void *data,
 	   to be registered. */
 	(void)probe_machine_check_entry;
 
-	vdebugc(-1, LOG_C_CTX, "Machine check exception occurred\n");
-
 	return 0;
 }
 
@@ -1271,8 +1257,6 @@ static int probe_machine_check_exit(struct probe *probe, void *data,
 	/* FIXME: remove the below line when machineries allow this probe function 
 	   to be registered. */
 	(void)probe_machine_check_exit;
-
-	vdebugc(-1, LOG_C_CTX, "Machine check exception handled\n");
 
 	return 0;
 }
@@ -1436,6 +1420,10 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
+
+	/* FIXME: remove the below line when machineries allow this probe function 
+	   to be registered. */
+	//(void)probe_machine_check_exit;
 
 	context = (ctxtracker_context_t *)data;
 
