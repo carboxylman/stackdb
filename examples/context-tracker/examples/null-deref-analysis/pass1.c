@@ -46,6 +46,9 @@
 #include "util.h"
 #include "debug.h"
 
+#define O_WRONLY (00000001)
+#define O_RDWR   (00000002)
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
@@ -55,40 +58,133 @@ static int debug_level = -1;
 static struct target *t;
 static GHashTable *probes;
 
-static const char *member_task_pid = "pid";
-static const char *member_task_name = "comm";
+static struct bsymbol *bsymbol_open_filename;
+static struct bsymbol *bsymbol_open_flags;
+static struct bsymbol *bsymbol_open_mode;
 
-static int probe_sysopen_entry(struct probe *probe, void *data,
+//static const char *member_task_pid = "pid";
+//static const char *member_task_name = "comm";
+
+static int probe_open_entry(struct probe *probe, void *data,
         struct probe *trigger)
 {
-	LOG("FILE OPEN!\n");
+	struct value *value_filename;
+	struct value *value_flags;
+	struct value *value_mode;
+	char filename[PATH_MAX];
+	int flags;
+	int mode;
+
+	value_filename = bsymbol_load(bsymbol_open_filename, 
+			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
+			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
+	if (!value_filename)
+	{
+		ERR("Could not load 'sys_open.filename' argument\n");
+		return 0;
+	}
+	strncpy(filename, value_filename->buf, value_filename->bufsiz);
+	value_free(value_filename);
+	
+	value_flags = bsymbol_load(bsymbol_open_flags, 
+			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
+			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
+	if (!value_flags)
+	{
+		ERR("Could not load 'sys_open.flags' argument\n");
+		return 0;
+	}
+	flags = v_i32(value_flags);
+	value_free(value_flags);
+
+	value_mode = bsymbol_load(bsymbol_open_mode, 
+			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
+			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
+	if (!value_mode)
+	{
+		ERR("Could not load 'sys_open.mode' argument\n");
+		return 0;
+	}
+	mode = v_i32(value_mode);
+	value_free(value_mode);
+
+	LOG("sys_open(%s, %x, %x)\n", filename, flags, mode);
+	
+	return 0;
+}
+
+static int probe_open_init(struct probe *probe)
+{
+	static const char *symbol_open_filename = "sys_open.filename";
+	static const char *symbol_open_flags = "sys_open.flags";
+	static const char *symbol_open_mode = "sys_open.mode";
+
+	bsymbol_open_filename = target_lookup_sym(probe->target,
+			(char *)symbol_open_filename, ".", NULL /* srcfile */,
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_open_filename)
+	{
+		ERR("Could not find symbol '%s'\n", symbol_open_filename);
+		return -1;
+	}
+
+	bsymbol_open_flags = target_lookup_sym(probe->target,
+			(char *)symbol_open_flags, ".", NULL /* srcfile */,
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_open_flags)
+	{
+		ERR("Could not find symbol '%s'\n", symbol_open_flags);
+		return -1;
+	}
+
+	bsymbol_open_mode = target_lookup_sym(probe->target,
+			(char *)symbol_open_mode, ".", NULL /* srcfile */,
+			SYMBOL_TYPE_NONE);
+	if (!bsymbol_open_mode)
+	{
+		ERR("Could not find symbol '%s'\n", symbol_open_mode);
+		return -1;
+	}
 
 	return 0;
 }
 
-static int probe_sysopen_init(struct probe *probe)
+static int probe_open_fini(struct probe *probe)
 {
-	return 0;
-}
+	if (bsymbol_open_filename)
+	{
+		bsymbol_release(bsymbol_open_filename);
+		bsymbol_open_filename = NULL;
+	}
 
-static int probe_sysopen_fini(struct probe *probe)
-{
+	if (bsymbol_open_flags)
+	{
+		bsymbol_release(bsymbol_open_flags);
+		bsymbol_open_flags = NULL;
+	}
+
+	if (bsymbol_open_mode)
+	{
+		bsymbol_release(bsymbol_open_mode);
+		bsymbol_open_mode = NULL;
+	}
+
 	return 0;
 }
 
 static int register_probes(struct target *t)
 {
 	static const char *symbol = "sys_open";
-	static const probe_handler_t handler = probe_sysopen_entry;
+	static const probe_handler_t handler = probe_open_entry;
 	static const struct probe_ops ops = {
 		.gettype = NULL,
-		.init = probe_sysopen_init,
+		.init = probe_open_init,
 		.registered = NULL,
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
 		.summarize = NULL, //probe_context_summarize,
-		.fini = probe_sysopen_fini
+		.fini = probe_open_fini
 	};
 
 	struct probe *probe;
