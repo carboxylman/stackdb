@@ -29,7 +29,6 @@ OBJDIR		= @top_builddir@
 include $(OBJDIR)/Makeconf
 
 # Temporary cmdline arg values hard-coded for easiness of testing.
-GUEST_SYSMAP = /boot/System.map-2.6.18-xenU
 ifeq ($(CONFIG_DETERMINISTIC_TIMETRAVEL),"1")
 	TTD_LOG    = /local/sda4/logs/ttd.log
 	GUEST_CONF = /local/sda4/vm-images/client_A_solo_with_net.conf
@@ -150,27 +149,23 @@ endif
 run: $(LIBRARIES) all-subdirs
 	sudo ./dumpcontext \
 	-c all \
-	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
 debug: $(LIBRARIES) all-subdirs
 	sudo gdb --args ./dumpcontext \
 	-c all \
-	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
 run-verbose: $(LIBRARIES) all-subdirs
 	sudo ./dumpcontext \
 	-ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-c all \
-	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
 debug-verbose: $(LIBRARIES) all-subdirs
 	sudo gdb --args ./dumpcontext \
 	-ddddddddddd -l T_ALL,P_ALL,T_XV \
 	-c all \
-	-m $(GUEST_SYSMAP) \
 	$(GUEST_NAME)
 
 # How to recursively descend into subdirectories to make general

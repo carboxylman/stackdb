@@ -1,5 +1,2 @@
-Use ELF symbols to probe functions that are currently instrumented by reading 
-raw addresses in system.map.
-	
 Ask David to write a supporting API to help register a probe on return sites
 for a non-DWARF function.

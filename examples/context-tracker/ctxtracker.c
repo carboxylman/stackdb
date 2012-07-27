@@ -60,9 +60,6 @@ static GHashTable *exception_exit_user_handlers;
 static GHashTable *syscall_entry_user_handlers;
 static GHashTable *syscall_exit_user_handlers;
 
-/* FIXME: remove this once you start using target's ELF symtab symbols. */
-static FILE *sysmap_handle;
-
 #include "probes.c"
 
 static int track_taskswitch(void)
@@ -390,6 +387,7 @@ static int track_syscall(void)
 {
 	static const char *symbol = "system_call";
 	static const probe_handler_t entry_handler = probe_syscall_entry;
+//	static const probe_handler_t exit_handler = probe_syscall_exit;
 	static const struct probe_ops entry_ops = { 
 		.gettype = NULL,
 		.init = probe_syscall_init,
@@ -400,7 +398,7 @@ static int track_syscall(void)
 		.summarize = probe_context_summarize,
 		.fini = probe_syscall_fini
 	};
-	static const struct probe_ops exit_ops = { 
+/*	static const struct probe_ops exit_ops = { 
 		.gettype = NULL,
 		.init = NULL,
 		.registered = NULL,
@@ -410,8 +408,9 @@ static int track_syscall(void)
 		.summarize = probe_context_summarize,
 		.fini = NULL
 	};
-
+*/
 	struct probe *entry_probe;
+//	struct probe *exit_probe;
 
 	if (syscall_probes)
 	{
@@ -426,17 +425,29 @@ static int track_syscall(void)
 		return -ENOMEM;
 	}
 
-	/* FIXME: update this once you start using target's ELF symtab symbols. */
-	entry_probe = register_probe_function_sysmap(t, symbol, entry_handler, 
-			&entry_ops, context /* handler_data */, sysmap_handle);
+	entry_probe = register_probe_function_entry(t, symbol, entry_handler, 
+			&entry_ops, context /* handler_data */);
 	if (!entry_probe)
 		return -1;
-
+#if 0
+	exit_probe = register_probe_function_exit(t, symbol, exit_handler, 
+			&exit_ops, context /* handler_data */);
+	if (!exit_probe)
+	{
+		probe_unregister(entry_probe, 1 /* force */);
+		probe_free(entry_probe, 1 /* force */);
+		return -1;
+	}
+#endif
 	g_hash_table_insert(probes, (gpointer)entry_probe /* key */, 
 			(gpointer)entry_probe /* value */);
+//	g_hash_table_insert(probes, (gpointer)exit_probe /* key */, 
+//			(gpointer)exit_probe /* value */);
 
 	g_hash_table_insert(syscall_probes, (gpointer)entry_probe /* key */, 
 			(gpointer)entry_probe /* value */);
+//	g_hash_table_insert(syscall_probes, (gpointer)exit_probe /* key */, 
+//			(gpointer)exit_probe /* value */);
 
 	return 0;
 }
@@ -472,11 +483,8 @@ static void register_user_handler(probe_handler_t handler, void *handler_data,
 			(gpointer)handler_data /* value */);
 }
 
-/* FIXME: remove the sysmap_name argument once you start using target's ELF 
-   symtab symbols. */
-int ctxtracker_init(struct target *target, const char *sysmap_name)
+int ctxtracker_init(struct target *target)
 {
-	int ret;
 	struct xen_vm_state *xstate;
 	char *domain_name;
 
@@ -492,27 +500,9 @@ int ctxtracker_init(struct target *target, const char *sysmap_name)
 		return -EINVAL;
 	}
 
-	/* FIXME: remove this once you start using target's ELF symtab symbols. */
-	if (!sysmap_name)
-	{
-		verror("System.map file name is NULL\n");
-		return -EINVAL;
-	}
-
 	t = target;
 	xstate = (struct xen_vm_state *)t->state;
 	domain_name = xstate->name;
-
-	/* FIXME: remove this once you start using target's ELF symtab symbols. */
-	sysmap_handle = fopen(sysmap_name, "r");
-	if (!sysmap_handle)
-	{
-		ret = -errno;
-		verror("Could not open file %s for target %s\n", sysmap_name, 
-				domain_name);
-		ctxtracker_cleanup();
-		return ret;
-	}
 
 	probes = g_hash_table_new(g_direct_hash, g_direct_equal);
 	if (!probes)
@@ -717,13 +707,6 @@ void ctxtracker_cleanup(void)
 	{
 		g_hash_table_destroy(syscall_probes);
 		syscall_probes = NULL;
-	}
-
-	/* FIXME: remove this once you start using target's ELF symtab symbols. */
-	if (sysmap_handle)
-	{
-		fclose(sysmap_handle);
-		sysmap_handle = NULL;
 	}
 
 	t = NULL;

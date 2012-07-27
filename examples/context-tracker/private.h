@@ -41,14 +41,6 @@ struct probe *register_probe_function_exit(struct target *target,
 		const char *symbol, const probe_handler_t handler, 
 		const struct probe_ops *ops, void *data);
 
-/* FIXME: remove this once you start using target's ELF symtab symbols. */
-struct probe *register_probe_function_sysmap(struct target *target,
-		const char *symbol, const probe_handler_t handler, 
-		const struct probe_ops *ops, void *data, FILE *sysmap_handle);
-
-/* FIXME: remove this once you start using target's ELF symtab symbols. */
-ADDR read_sysmap_addr(const char *symbol, FILE *sysmap_handle);
-
 int read_ctrlreg(struct target *target, int regno, REGVAL *regval);
 
 int get_member_i32(struct target *target, struct value *value_struct, 

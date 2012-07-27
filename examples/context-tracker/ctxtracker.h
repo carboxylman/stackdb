@@ -120,7 +120,7 @@ typedef struct {
  */
 /* FIXME: remove the sysmap_name argument once you start using target's ELF 
    symtab symbols. */
-int ctxtracker_init(struct target *t, const char *sysmap_name);
+int ctxtracker_init(struct target *t);
 
 /*
  * Clean up context tracker.

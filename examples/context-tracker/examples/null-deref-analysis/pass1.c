@@ -49,7 +49,6 @@ extern int optind, opterr, optopt;
 
 static char *domain_name;
 static int debug_level = -1;
-static char *sysmap_file;
 
 static struct target *t;
 static GHashTable *probes;
@@ -98,7 +97,7 @@ static void parse_opt(int argc, char *argv[])
 	char ch;
 	log_flags_t debug_flags;
 
-	while ((ch = getopt(argc, argv, "dl:m:")) != -1)
+	while ((ch = getopt(argc, argv, "dl:")) != -1)
 	{
 		switch(ch)
 		{
@@ -113,10 +112,6 @@ static void parse_opt(int argc, char *argv[])
 					exit(-1);
 				}
 				vmi_set_log_flags(debug_flags);
-				break;
-
-			case 'm':
-				sysmap_file = optarg;
 				break;
 
 			default:
@@ -146,12 +141,6 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	if (!sysmap_file)
-	{
-		ERR("Must specify -m <System.map file name> option\n");
-		return -1;
-	}
-
 	probes = g_hash_table_new(g_direct_hash, g_direct_equal);
 	if (!probes)
 	{
@@ -167,7 +156,7 @@ int main(int argc, char *argv[])
 
 	LOG("Initializing context tracker...\n");
 
-	ret = ctxtracker_init(t, sysmap_file);
+	ret = ctxtracker_init(t);
 	if (ret)
 	{
 		ERR("Could not initialize ctxtracker for target %s\n", domain_name);

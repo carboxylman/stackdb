@@ -50,7 +50,6 @@ extern int optind, opterr, optopt;
 
 static char *domain_name;
 static int debug_level = -1;
-static char *sysmap_file;
 static ctxtracker_track_t track = TRACK_NONE;
 
 static struct target *t;
@@ -616,7 +615,7 @@ static void parse_opt(int argc, char *argv[])
 	char ch;
 	log_flags_t debug_flags;
 
-	while ((ch = getopt(argc, argv, "dl:m:c:")) != -1)
+	while ((ch = getopt(argc, argv, "dl:c:")) != -1)
 	{
 		switch(ch)
 		{
@@ -631,10 +630,6 @@ static void parse_opt(int argc, char *argv[])
 					exit(-1);
 				}
 				vmi_set_log_flags(debug_flags);
-				break;
-
-			case 'm':
-				sysmap_file = optarg;
 				break;
 
 			case 'c':
@@ -679,12 +674,6 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	if (!sysmap_file)
-	{
-		ERR("Must specify -m <System.map file name> option\n");
-		return -1;
-	}
-
 	if (track == TRACK_NONE)
 	{
 		ERR("Must specify -c "
@@ -707,7 +696,7 @@ int main(int argc, char *argv[])
 
 	LOG("Initializing context tracker...\n");
 
-	ret = ctxtracker_init(t, sysmap_file);
+	ret = ctxtracker_init(t);
 	if (ret)
 	{
 		ERR("Could not initialize ctxtracker for target %s\n", domain_name);
