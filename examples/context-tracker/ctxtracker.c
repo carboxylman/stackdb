@@ -847,3 +847,7 @@ int ctxtracker_register_handler(ctxtracker_track_t flags,
 	return 0;
 }
 
+void *ctxtracker_summarize(struct probe *probe)
+{
+	return probe_context_summarize(probe);
+}

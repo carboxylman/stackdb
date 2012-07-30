@@ -60,56 +60,114 @@ static GHashTable *probes;
 
 static struct bsymbol *bsymbol_open_filename;
 static struct bsymbol *bsymbol_open_flags;
-static struct bsymbol *bsymbol_open_mode;
-
-//static const char *member_task_pid = "pid";
-//static const char *member_task_name = "comm";
 
 static int probe_open_entry(struct probe *probe, void *data,
-        struct probe *trigger)
+		struct probe *trigger)
 {
+	int ret;
+	ctxtracker_context_t *context;
+	struct value *value_task;
+	struct value *value_parent;
 	struct value *value_filename;
 	struct value *value_flags;
-	struct value *value_mode;
+	int task_pid;
+	char task_name[PATH_MAX];
 	char filename[PATH_MAX];
 	int flags;
-	int mode;
+
+	static const char *member_task_pid = "pid";
+	static const char *member_task_name = "comm";
+	static const char *member_task_parent = "parent";
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	/* Load system call arguments. */
 
 	value_filename = bsymbol_load(bsymbol_open_filename, 
 			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
 			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
 	if (!value_filename)
-	{
-		ERR("Could not load 'sys_open.filename' argument\n");
-		return 0;
-	}
+		WARN("Could not load 'filename' argument\n");
 	strncpy(filename, value_filename->buf, value_filename->bufsiz);
 	value_free(value_filename);
-	
+
 	value_flags = bsymbol_load(bsymbol_open_flags, 
 			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
 			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
 	if (!value_flags)
-	{
-		ERR("Could not load 'sys_open.flags' argument\n");
-		return 0;
-	}
+		WARN("Could not load 'flags' argument\n");
 	flags = v_i32(value_flags);
 	value_free(value_flags);
 
-	value_mode = bsymbol_load(bsymbol_open_mode, 
-			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
-			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
-	if (!value_mode)
-	{
-		ERR("Could not load 'sys_open.mode' argument\n");
-		return 0;
-	}
-	mode = v_i32(value_mode);
-	value_free(value_mode);
+	/* Filter out information we are not interested in. */
 
-	LOG("sys_open(%s, %x, %x)\n", filename, flags, mode);
-	
+	if (context->flags == TRACK_NONE) // not handling an interrupt or a trap
+	{
+		if (strcmp(filename, "/etc/passwd") == 0) // the password file
+		{
+			if ((flags & O_WRONLY) || (flags & O_RDWR)) // write access
+			{
+				/* Load task information. */
+
+				value_task = context->task.cur;
+				value_parent = NULL;
+
+				while (true)
+				{
+					ret = get_member_i32(probe->target, value_task, 
+							member_task_pid, &task_pid);
+					if (ret)
+					{
+						ERR("Could not load task pid\n");
+						return ret;
+					}
+
+					ret = get_member_string(probe->target, value_task, 
+							member_task_name, task_name);
+					if (ret)
+					{
+						ERR("Could not load task name\n");
+						return ret;
+					}
+
+					LOG("%d (%s)\n", task_pid, task_name);
+
+					/* TODO: stop iteration when you find the swaper process. */
+
+					if (value_parent)
+					{
+						value_free(value_parent);
+						value_parent = NULL;
+					}
+
+					value_parent = target_load_value_member(probe->target, 
+							value_task, member_task_parent,	NULL /* delim */, 
+							LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
+							LOAD_FLAG_NO_CHECK_VISIBILITY | 
+							LOAD_FLAG_NO_CHECK_BOUNDS);
+					if (!value_parent)
+					{
+						ERR("Could not load task parent\n");
+						return ret;
+					}
+
+					value_task = value_parent;
+				}
+
+				if (value_parent)
+				{
+					value_free(value_parent);
+					value_parent = NULL;
+				}
+			}
+		}
+	}
+
 	return 0;
 }
 
@@ -117,7 +175,6 @@ static int probe_open_init(struct probe *probe)
 {
 	static const char *symbol_open_filename = "sys_open.filename";
 	static const char *symbol_open_flags = "sys_open.flags";
-	static const char *symbol_open_mode = "sys_open.mode";
 
 	bsymbol_open_filename = target_lookup_sym(probe->target,
 			(char *)symbol_open_filename, ".", NULL /* srcfile */,
@@ -134,15 +191,6 @@ static int probe_open_init(struct probe *probe)
 	if (!bsymbol_open_flags)
 	{
 		ERR("Could not find symbol '%s'\n", symbol_open_flags);
-		return -1;
-	}
-
-	bsymbol_open_mode = target_lookup_sym(probe->target,
-			(char *)symbol_open_mode, ".", NULL /* srcfile */,
-			SYMBOL_TYPE_NONE);
-	if (!bsymbol_open_mode)
-	{
-		ERR("Could not find symbol '%s'\n", symbol_open_mode);
 		return -1;
 	}
 
@@ -163,12 +211,6 @@ static int probe_open_fini(struct probe *probe)
 		bsymbol_open_flags = NULL;
 	}
 
-	if (bsymbol_open_mode)
-	{
-		bsymbol_release(bsymbol_open_mode);
-		bsymbol_open_mode = NULL;
-	}
-
 	return 0;
 }
 
@@ -183,7 +225,7 @@ static int register_probes(struct target *t)
 		.enabled = NULL,
 		.disabled = NULL,
 		.unregistered = NULL,
-		.summarize = NULL, //probe_context_summarize,
+		.summarize = ctxtracker_summarize,
 		.fini = probe_open_fini
 	};
 
@@ -192,7 +234,7 @@ static int register_probes(struct target *t)
 	probe = register_probe_function_entry(t, symbol, handler, &ops, NULL);
 	if (!probe)
 		return -1;
-	
+
 	g_hash_table_insert(probes, (gpointer)probe /* key */,
 			(gpointer)probe /* value */);
 

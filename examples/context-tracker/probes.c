@@ -35,7 +35,7 @@ static struct bsymbol *bsymbol_exception_error_code[64];
 
 /* GLOBALLY SHARED HANDLERS */
 
-void *probe_context_summarize(struct probe *probe)
+static void *probe_context_summarize(struct probe *probe)
 {
 	return context;
 }

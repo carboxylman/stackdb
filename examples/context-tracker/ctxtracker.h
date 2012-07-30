@@ -157,4 +157,13 @@ int ctxtracker_track(ctxtracker_track_t flags, bool track);
 int ctxtracker_register_handler(ctxtracker_track_t flags, 
 		probe_handler_t handler, void *handler_data, bool entry);
 
+/*
+ * The user MUST set this function to the 'summarize' member field of struct
+ * ops when registering a probe to get context information by calling 
+ * 'target_summarize' in the probe handler.
+ * NOTE: Type-convert the context info that 'target_summarize' returns from 
+ * 'void *' to 'ctxtracker_context_t *'.
+ */
+void *ctxtracker_summarize(struct probe *probe);
+
 #endif /* __CTXTRACKER_H__ */
