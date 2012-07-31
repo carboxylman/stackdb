@@ -58,9 +58,10 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/debug.h \
-		$(TOP_SRCDIR)/$(SUBDIR)/util.h
+		$(TOP_SRCDIR)/$(SUBDIR)/util.h \
+		$(TOP_SRCDIR)/$(SUBDIR)/perf.h
 
-OBJECTS := util.lo
+OBJECTS := util.lo perf.lo
 
 LIBRARIES := 
 

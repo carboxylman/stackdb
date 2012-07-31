@@ -67,7 +67,8 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 HEADERS := $(TOP_SRCDIR)/examples/context-tracker/examples/debug.h \
-		$(TOP_SRCDIR)/examples/context-tracker/examples/util.h
+		$(TOP_SRCDIR)/examples/context-tracker/examples/util.h \
+		$(TOP_SRCDIR)/examples/context-tracker/examples/perf.h
 
 OBJECTS :=
 
@@ -75,7 +76,8 @@ LIBRARIES :=
 
 PROGRAMS := pass1
 
-STATICLIBS := $(OBJDIR)/examples/context-tracker/examples/util.lo \
+STATICLIBS := $(OBJDIR)/examples/context-tracker/examples/perf.lo \
+              $(OBJDIR)/examples/context-tracker/examples/util.lo \
               $(OBJDIR)/examples/context-tracker/libctxtracker.a \
               $(OBJDIR)/target/libtarget.a \
               $(OBJDIR)/dwdebug/libdwdebug.a \

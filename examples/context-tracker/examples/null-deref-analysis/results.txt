@@ -1,0 +1,11 @@
+[PASS-1]
+
+PASSWORD FILE OPENED IN WRITE MODE!
+Instruction counter: 426295218 (0x1968bfb2)
+Task chain:
+  0 (swapper)
+  1 (init)
+  285 (sh)
+  292 (sh)
+  294 (vi)
+

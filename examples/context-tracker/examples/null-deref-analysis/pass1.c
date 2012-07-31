@@ -25,6 +25,10 @@
  * 
  */
 
+#ifndef CONFIG_DETERMINISTIC_TIMETRAVEL
+#error "Program runs only on Time Travel enabled Xen"
+#endif
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,8 +47,9 @@
 #include <ctxtracker.h>
 #include <private.h>
 
-#include "util.h"
-#include "debug.h"
+#include <debug.h>
+#include <util.h>
+#include <perf.h>
 
 #define O_WRONLY (00000001)
 #define O_RDWR   (00000002)
@@ -66,6 +71,10 @@ static GHashTable *probes;
 static struct bsymbol *bsymbol_open_filename;
 static struct bsymbol *bsymbol_open_flags;
 
+static const char *member_task_pid = "pid";
+static const char *member_task_name = "comm";
+static const char *member_task_parent = "parent";
+
 static int probe_open_entry(struct probe *probe, void *data,
 		struct probe *trigger)
 {
@@ -79,10 +88,7 @@ static int probe_open_entry(struct probe *probe, void *data,
 	int flags;
 	struct task_info task_chain[128];
 	int i, count;
-
-	static const char *member_task_pid = "pid";
-	static const char *member_task_name = "comm";
-	static const char *member_task_parent = "parent";
+	unsigned long long brctr;
 
 	context = (ctxtracker_context_t *)probe_summarize(probe);
 	if (!context)
@@ -175,12 +181,20 @@ static int probe_open_entry(struct probe *probe, void *data,
 					value_task = value_parent;
 				}
 
-				LOG("%d (%s): PASSWORD FILE OPENED IN WRITE MODE.\n",
-						task_chain[0].pid, task_chain[0].name);
+				/* Read instruction counter. */
 
-				LOG("TASK CHAIN:\n");
+				brctr = perf_get_brctr(probe->target);
+
+				/* Print out the result. */
+
+				LOG("PASSWORD FILE OPENED IN WRITE MODE!\n");
+				LOG("Instruction counter: %lld (0x%08llx)\n", brctr, brctr);
+				LOG("Task chain:\n");
 				for (i = count-1; i >= 0; i--)
 					LOG("  %d (%s)\n", task_chain[i].pid, task_chain[i].name);
+
+				/* Kill everything. */
+				kill_everything(domain_name);
 			}
 		}
 	}
@@ -354,6 +368,14 @@ int main(int argc, char *argv[])
 	{
 		ERR("Could not create probe table for target %s\n", domain_name);
 		return -ENOMEM;
+	}
+
+	ret = perf_init();
+	if (ret)
+	{
+		ERR("Could not initialize replay performance module for target %s\n",
+				domain_name);
+		return -1;
 	}
 
 	LOG("Initializing target...\n");

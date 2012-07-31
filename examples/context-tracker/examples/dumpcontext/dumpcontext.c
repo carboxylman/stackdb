@@ -44,8 +44,8 @@
 #include <ctxtracker.h>
 #include <private.h>
 
-#include "util.h"
-#include "debug.h"
+#include <debug.h>
+#include <util.h>
 
 extern char *optarg;
 extern int optind, opterr, optopt;

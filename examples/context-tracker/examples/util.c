@@ -26,6 +26,7 @@
  * 
  */
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -132,4 +133,18 @@ int run_probes(struct target *t, GHashTable *probes)
 	}
 
 	return 0;
+}
+
+void kill_everything(char *domain_name)
+{
+	char cmd[128];
+
+	sprintf(cmd, "/usr/sbin/xm destroy %s", domain_name);
+	system(cmd);
+
+	sleep(1);
+
+	system("/usr/bin/killall -9 ttd-deviced");
+
+	kill(getpid(), SIGINT);
 }

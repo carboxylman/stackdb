@@ -17,26 +17,26 @@
  */
 
 /*
- *  examples/context-tracker/examples/util.h
+ *  examples/context-tracker/examples/perf.h
  *
- *  Utility functions that all context tracker enabled applications 
- *  share.
+ *  Functions to access performance model during replay.
  *
- *  Authors: Chung Hwan Kim, chunghwn@cs.utah.edu
+ *  Authors: Anton Burtsev, aburtsev@flux.utah.edu
+ *  Date: April, 2012
  * 
  */
 
-#ifndef __CTXTRACKER_EXAMPLES_UTIL_H__
-#define __CTXTRACKER_EXAMPLES_UTIL_H__
+#ifndef __CTXTRACKER_EXAMPLES_PERF_H__
+#define __CTXTRACKER_EXAMPLES_PERF_H__
 
-#include <target_api.h>
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
 
-struct target *init_probes(const char *domain_name, int debug_level);
+#include <target.h>
 
-void cleanup_probes(GHashTable *probes);
+int perf_init(void);
+unsigned long long perf_get_rdtsc(struct target *t);
+unsigned long long perf_get_brctr(struct target *t);
 
-int run_probes(struct target *t, GHashTable *probes);
+#endif /* CONFIG_DETERMINISTIC_TIMETRAVEL */
 
-void kill_everything(char *domain_name);
-
-#endif /* __CTXTRACKER_EXAMPLES_UTIL_H__ */
+#endif /* __CTXTRACKER_EXAMPLES_PERF_H__ */
