@@ -652,7 +652,23 @@ static void parse_opt(int argc, char *argv[])
 
 	if (argc <= optind)
 	{
-		printf("Usage: %s [option] <domain>\n", argv[0]);
+		printf("Usage: %s [OPTION] <DOMAIN>\n", argv[0]);
+		printf("Dump context change information for a Linux guest VM.\n");
+		printf("\n");
+		printf("Options:\n");
+		printf("  -d:                    Increase debug level. Multiple d's "
+				"can be specified.\n");
+		printf("  -l <log flags>:        Show more logs by adding log "
+				"flags.\n");
+		printf("  -c <context flags>:    Dump context information by "
+				"specifying flags.\n");
+		printf("  Context flags:\n");
+		printf("    all:           Dump all context information.\n");
+		printf("    taskswitch:    Dump information about task switches.\n");
+		printf("    interrupt:     Dump information about interrupts.\n");
+		printf("    pagefault:     Dump information about page faults.\n");
+		printf("    exception:     Dump information about exceptions.\n");
+		printf("    syscall:       Dump information about system calls.\n");
 		exit(-1);
 	}
 

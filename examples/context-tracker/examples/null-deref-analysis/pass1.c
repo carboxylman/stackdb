@@ -324,7 +324,13 @@ static void parse_opt(int argc, char *argv[])
 
 	if (argc <= optind)
 	{
-		printf("Usage: %s [option] <domain>\n", argv[0]);
+		printf("Usage: %s [OPTION] <DOMAIN>\n", argv[0]);
+		printf("PASS-1: Detect the password file opened in write mode.\n");
+		printf("\n");
+		printf("Options:\n");
+		printf("  -d                Increase debug level. Multiple d's can be "
+				"specified.\n");
+		printf("  -l <log flags>    Show more logs by adding log flags.\n");
 		exit(-1);
 	}
 
