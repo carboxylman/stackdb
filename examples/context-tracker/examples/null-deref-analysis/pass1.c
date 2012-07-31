@@ -61,8 +61,13 @@ struct task_info {
 
 /* Result of the analysis pass */
 struct output {
+	// the chain of tasks who might have escalated privilege.
 	struct task_info task_chain[128];
+	
+	// number of the suspected tasks.
 	int task_count;
+
+	// instruction counter at which the password file was open in write mode.
 	unsigned long long instr_count;
 };
 
@@ -75,14 +80,14 @@ static int debug_level = -1;
 static struct target *t;
 static GHashTable *probes;
 
-static struct output out;
+static const char *member_task_pid = "pid";
+static const char *member_task_name = "comm";
+static const char *member_task_parent = "parent";
 
 static struct bsymbol *bsymbol_open_filename;
 static struct bsymbol *bsymbol_open_flags;
 
-static const char *member_task_pid = "pid";
-static const char *member_task_name = "comm";
-static const char *member_task_parent = "parent";
+static struct output out;
 
 static int probe_open_entry(struct probe *probe, void *data,
 		struct probe *trigger)

@@ -135,6 +135,40 @@ int run_probes(struct target *t, GHashTable *probes)
 	return 0;
 }
 
+struct probe *register_watchpoint(struct target *target, struct value *value, 
+		const char *name, const probe_handler_t handler, 
+		const struct probe_ops *ops, void *data, bool readwrite)
+{
+	struct probe *probe;
+	ADDR addr;
+	probepoint_whence_t whence;
+
+	addr = value->addr;
+
+	probe = probe_create(target, (struct probe_ops *)ops, (char *)name, 
+			NULL /* pre_handler */, handler /* post_handler */, 
+			data, 0 /* autofree */);
+	if (!probe)
+	{
+		ERR("Could not create probe on raw address 0x%08x\n", addr);
+		return NULL;
+	}
+
+	if (readwrite)
+		whence = PROBEPOINT_READWRITE;
+	else
+		whence = PROBEPOINT_WRITE;
+
+	if (!probe_register_addr(probe, addr, PROBEPOINT_WATCH, PROBEPOINT_SW,
+			whence, PROBEPOINT_LAUTO, NULL /* bsymbol */))
+	{
+		ERR("Could not register probe on raw address 0x%08x\n", addr);
+		return NULL;
+	}
+
+	return probe;
+}
+
 void kill_everything(char *domain_name)
 {
 	char cmd[128];

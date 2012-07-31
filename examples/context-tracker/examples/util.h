@@ -37,6 +37,10 @@ void cleanup_probes(GHashTable *probes);
 
 int run_probes(struct target *t, GHashTable *probes);
 
+struct probe *register_watchpoint(struct target *target, struct value *value, 
+		const char *name, const probe_handler_t handler, 
+		const struct probe_ops *ops, void *data, bool readwrite);
+
 void kill_everything(char *domain_name);
 
 #endif /* __CTXTRACKER_EXAMPLES_UTIL_H__ */
