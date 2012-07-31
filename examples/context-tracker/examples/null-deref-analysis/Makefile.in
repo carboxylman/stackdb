@@ -74,7 +74,7 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := pass1
+PROGRAMS := pass1 pass2
 
 STATICLIBS := $(OBJDIR)/examples/context-tracker/examples/perf.lo \
               $(OBJDIR)/examples/context-tracker/examples/util.lo \
@@ -103,11 +103,15 @@ pass1: $(HEADERS) $(LIBRARIES) $(OBJECTS) pass1.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+pass2: $(HEADERS) $(LIBRARIES) $(OBJECTS) pass2.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) pass1.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) pass1.lo pass2.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
@@ -147,24 +151,6 @@ kill: /usr/sbin/xm /bin/sleep /usr/bin/killall
 	sudo killall -9 make $(PROGRAMS)
 
 endif
-
-run-pass1: $(LIBRARIES) all-subdirs
-	sudo ./pass1 \
-	$(GUEST_NAME)
-
-debug-pass1: $(LIBRARIES) all-subdirs
-	sudo gdb --args ./pass1 \
-	$(GUEST_NAME)
-
-run-verbose-pass1: $(LIBRARIES) all-subdirs
-	sudo ./pass1 \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
-	$(GUEST_NAME)
-
-debug-verbose-pass1: $(LIBRARIES) all-subdirs
-	sudo gdb --args ./pass1 \
-	-ddddddddddd -l T_ALL,P_ALL,T_XV \
-	$(GUEST_NAME)
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.

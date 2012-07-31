@@ -59,6 +59,13 @@ struct task_info {
 	char name[PATH_MAX];
 };
 
+/* Result of the analysis pass */
+struct output {
+	struct task_info task_chain[128];
+	int task_count;
+	unsigned long long instr_count;
+};
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
@@ -67,6 +74,8 @@ static int debug_level = -1;
 
 static struct target *t;
 static GHashTable *probes;
+
+static struct output out;
 
 static struct bsymbol *bsymbol_open_filename;
 static struct bsymbol *bsymbol_open_flags;
@@ -86,9 +95,7 @@ static int probe_open_entry(struct probe *probe, void *data,
 	struct value *value_flags;
 	char filename[PATH_MAX];
 	int flags;
-	struct task_info task_chain[128];
-	int i, count;
-	unsigned long long brctr;
+	int i;
 
 	context = (ctxtracker_context_t *)probe_summarize(probe);
 	if (!context)
@@ -137,7 +144,7 @@ static int probe_open_entry(struct probe *probe, void *data,
 			{
 				/* Load task information. */
 
-				count = 0;
+				out.task_count = 0;
 
 				value_task = context->task.cur;
 				value_parent = NULL;
@@ -145,7 +152,8 @@ static int probe_open_entry(struct probe *probe, void *data,
 				while (value_task)
 				{
 					ret = get_member_i32(probe->target, value_task, 
-							member_task_pid, &task_chain[count].pid);
+							member_task_pid, 
+							&out.task_chain[out.task_count].pid);
 					if (ret)
 					{
 						ERR("Could not load task pid\n");
@@ -153,7 +161,8 @@ static int probe_open_entry(struct probe *probe, void *data,
 					}
 
 					ret = get_member_string(probe->target, value_task, 
-							member_task_name, task_chain[count].name);
+							member_task_name, 
+							out.task_chain[out.task_count].name);
 					if (ret)
 					{
 						ERR("Could not load task name\n");
@@ -166,7 +175,7 @@ static int probe_open_entry(struct probe *probe, void *data,
 				//	if (value_parent)
 				//		value_free(value_parent);
 
-					if (task_chain[count++].pid == 0)
+					if (out.task_chain[out.task_count++].pid == 0)
 						break;
 
 					value_parent = target_load_value_member(probe->target, 
@@ -183,15 +192,17 @@ static int probe_open_entry(struct probe *probe, void *data,
 
 				/* Read instruction counter. */
 
-				brctr = perf_get_brctr(probe->target);
+				out.instr_count = perf_get_brctr(probe->target);
 
-				/* Print out the result. */
-
+				/* Log the result. */
+				
 				LOG("PASSWORD FILE OPENED IN WRITE MODE!\n");
-				LOG("Instruction counter: %lld (0x%08llx)\n", brctr, brctr);
+				LOG("Instruction counter: %lld (0x%08llx)\n", 
+						out.instr_count, out.instr_count);
 				LOG("Task chain:\n");
-				for (i = count-1; i >= 0; i--)
-					LOG("  %d (%s)\n", task_chain[i].pid, task_chain[i].name);
+				for (i = out.task_count-1; i >= 0; i--)
+					LOG("  %d (%s)\n", out.task_chain[i].pid, 
+							out.task_chain[i].name);
 
 				/* Kill everything. */
 				kill_everything(domain_name);
