@@ -49,6 +49,11 @@
 #define O_WRONLY (00000001)
 #define O_RDWR   (00000002)
 
+struct task_info {
+	int pid;
+	char name[PATH_MAX];
+};
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
@@ -70,10 +75,10 @@ static int probe_open_entry(struct probe *probe, void *data,
 	struct value *value_parent;
 	struct value *value_filename;
 	struct value *value_flags;
-	int task_pid;
-	char task_name[PATH_MAX];
 	char filename[PATH_MAX];
 	int flags;
+	struct task_info task_chain[128];
+	int i, count;
 
 	static const char *member_task_pid = "pid";
 	static const char *member_task_name = "comm";
@@ -92,17 +97,29 @@ static int probe_open_entry(struct probe *probe, void *data,
 			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
 			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
 	if (!value_filename)
+	{
 		WARN("Could not load 'filename' argument\n");
-	strncpy(filename, value_filename->buf, value_filename->bufsiz);
-	value_free(value_filename);
+		filename[0] = '\0';
+	}
+	else
+	{
+		strncpy(filename, value_filename->buf, value_filename->bufsiz);
+		value_free(value_filename);
+	}
 
 	value_flags = bsymbol_load(bsymbol_open_flags, 
 			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
 			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
 	if (!value_flags)
+	{
 		WARN("Could not load 'flags' argument\n");
-	flags = v_i32(value_flags);
-	value_free(value_flags);
+		flags = 0;
+	}
+	else
+	{
+		flags = v_i32(value_flags);
+		value_free(value_flags);
+	}
 
 	/* Filter out information we are not interested in. */
 
@@ -114,13 +131,15 @@ static int probe_open_entry(struct probe *probe, void *data,
 			{
 				/* Load task information. */
 
+				count = 0;
+
 				value_task = context->task.cur;
 				value_parent = NULL;
 
-				while (true)
+				while (value_task)
 				{
 					ret = get_member_i32(probe->target, value_task, 
-							member_task_pid, &task_pid);
+							member_task_pid, &task_chain[count].pid);
 					if (ret)
 					{
 						ERR("Could not load task pid\n");
@@ -128,28 +147,25 @@ static int probe_open_entry(struct probe *probe, void *data,
 					}
 
 					ret = get_member_string(probe->target, value_task, 
-							member_task_name, task_name);
+							member_task_name, task_chain[count].name);
 					if (ret)
 					{
 						ERR("Could not load task name\n");
 						return ret;
 					}
 
-					LOG("%d (%s)\n", task_pid, task_name);
+					/* FIXME: uncomment the below code after Dave fixes the 
+					   segmentation fault that occurs when value_free and
+					   target_load_value_member are used. */
+				//	if (value_parent)
+				//		value_free(value_parent);
 
-					/* TODO: stop iteration when you find the swaper process. */
-
-					if (value_parent)
-					{
-						value_free(value_parent);
-						value_parent = NULL;
-					}
+					if (task_chain[count++].pid == 0)
+						break;
 
 					value_parent = target_load_value_member(probe->target, 
 							value_task, member_task_parent,	NULL /* delim */, 
-							LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
-							LOAD_FLAG_NO_CHECK_VISIBILITY | 
-							LOAD_FLAG_NO_CHECK_BOUNDS);
+							LOAD_FLAG_AUTO_DEREF);
 					if (!value_parent)
 					{
 						ERR("Could not load task parent\n");
@@ -159,11 +175,12 @@ static int probe_open_entry(struct probe *probe, void *data,
 					value_task = value_parent;
 				}
 
-				if (value_parent)
-				{
-					value_free(value_parent);
-					value_parent = NULL;
-				}
+				LOG("%d (%s): PASSWORD FILE OPENED IN WRITE MODE.\n",
+						task_chain[0].pid, task_chain[0].name);
+
+				LOG("TASK CHAIN:\n");
+				for (i = count-1; i >= 0; i--)
+					LOG("  %d (%s)\n", task_chain[i].pid, task_chain[i].name);
 			}
 		}
 	}
