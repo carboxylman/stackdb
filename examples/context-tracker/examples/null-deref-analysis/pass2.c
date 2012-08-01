@@ -380,7 +380,7 @@ static void parse_opt(int argc, char *argv[])
 
 	if (argc <= optind)
 	{
-		printf("Usage: %s [OPTION] <DOMAIN>\n", argv[0]);
+		printf("Usage: sudo %s [OPTION] <DOMAIN>\n", argv[0]);
 		printf("PASS-2: Find out which task of the given suspected PIDs "
 				"escalated privilege.\n");
 		printf("\n");

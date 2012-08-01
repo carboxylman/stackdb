@@ -144,7 +144,7 @@ static void parse_opt(int argc, char *argv[])
 
 	if (argc <= optind)
 	{
-		printf("Usage: %s [OPTION] <DOMAIN>\n", argv[0]);
+		printf("Usage: sudo %s [OPTION] <DOMAIN>\n", argv[0]);
 		printf("PASS-X: Explain what the analysis pass does.\n");
 		printf("\n");
 		printf("Options:\n");
