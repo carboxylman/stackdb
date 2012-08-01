@@ -74,7 +74,7 @@ OBJECTS :=
 
 LIBRARIES := 
 
-PROGRAMS := pass1 pass2
+PROGRAMS := pass1 pass2 pass3
 
 STATICLIBS := $(OBJDIR)/examples/context-tracker/examples/perf.lo \
               $(OBJDIR)/examples/context-tracker/examples/util.lo \
@@ -107,11 +107,15 @@ pass2: $(HEADERS) $(LIBRARIES) $(OBJECTS) pass2.lo $(STATICLIBS)
 	$(LIBTOOL) --mode=link \
 	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+pass3: $(HEADERS) $(LIBRARIES) $(OBJECTS) pass3.lo $(STATICLIBS)
+	$(LIBTOOL) --mode=link \
+	$(CC) -o $@ $(CFLAGS) $(OBJECTS) $@.o $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libdwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) pass1.lo pass2.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) pass1.lo pass2.lo pass3.lo
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
