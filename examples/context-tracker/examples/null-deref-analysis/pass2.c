@@ -391,7 +391,7 @@ static void parse_opt(int argc, char *argv[])
 				"flags.\n");
 		printf("  -i <instruction counter>    End analysis at this "
 				"instruction counter.\n");
-		printf("  -p <suspected PIDs>         Find which task escalted "
+		printf("  -p <suspected PIDs>         Find which task escalated "
 				"privilege among those of the\n"
 				"                              specified PIDs.\n");
 		exit(-1);
