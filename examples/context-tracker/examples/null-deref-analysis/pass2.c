@@ -55,14 +55,12 @@
 #define O_WRONLY (00000001)
 #define O_RDWR   (00000002)
 
-struct task_info {
-	int pid;
-};
-
 /* Input to the analysis pass */
 struct input {
 	// the chain of tasks who might have escalated privilege.
-	struct task_info task_chain[128];
+	struct {
+		int pid;
+	} task_chain[128];
 
 	// number of the suspected tasks.
 	int task_count;
@@ -73,6 +71,20 @@ struct input {
 
 /* Result of the analysis pass */
 struct output {
+	
+	// the set of tasks who have escalated privilege.
+	struct {
+		int pid;
+		char name[PATH_MAX];
+		int old_uid;
+		int new_uid;
+	} task_chain[128];
+
+	// number of the guilty tasks.
+	int task_count;
+	
+	// instruction counter at which privilege was escalated.
+	unsigned long long instr_counts[128];
 };
 
 extern char *optarg;
@@ -85,49 +97,123 @@ static struct target *t;
 static GHashTable *probes;
 
 static const char *member_task_pid = "pid";
-//static const char *member_task_name = "comm";
+static const char *member_task_name = "comm";
 static const char *member_task_uid = "uid";
 
 static struct input in;
 static struct output out;
 
-static bool watchpointed[128];
+static bool examined[128];
+static int old_uids[128];
 
 static int probe_watchpoint(struct probe *probe, void *data,
 		struct probe *trigger)
 {
+	int ret;
+	ctxtracker_context_t *context;
+	struct value *value_task;
+	int task_pid;
+	int task_old_uid;
+	int task_new_uid;
+	char task_name[PATH_MAX];
+	unsigned long long instr_count;
+	int i, j;
+
+	context = (ctxtracker_context_t *)probe_summarize(probe);
+	if (!context)
+	{
+		ERR("Could not load summarizing context data\n");
+		return -1;
+	}
+
+	i = (int)data;
+
+	/* Load task information. */
+
+	value_task = context->task.cur;
+
+	ret = get_member_i32(probe->target, value_task, member_task_pid, &task_pid);
+	if (ret)
+	{
+		ERR("Could not load task pid\n");
+		return ret;
+	}
+
+	ret = get_member_i32(probe->target, value_task, member_task_uid, 
+			&task_new_uid);
+	if (ret)
+	{
+		ERR("Could not load task uid\n");
+		return ret;
+	}
+
+	ret = get_member_string(probe->target, value_task, member_task_name, 
+			task_name);
+	if (ret)
+	{
+		ERR("Could not load task name\n");
+		return ret;
+	}
+
+	task_old_uid = old_uids[i];
+
+	if (task_new_uid != task_old_uid) // uid modified?
+	{
+		j = out.task_count;
+
+		/* Read instruction counter. */
+
+		instr_count = perf_get_brctr(probe->target);
+
+		/* Record the result in memory. */
+
+		out.task_chain[j].pid = task_pid;
+		strcpy(out.task_chain[j].name, task_name);
+		out.task_chain[j].old_uid = task_old_uid;
+		out.task_chain[j].new_uid = task_new_uid;
+		out.instr_counts[j] = instr_count;
+		out.task_count++;
+
+		/* Log the result. */
+
+		LOG("USER ID MODIFIED!\n");
+		LOG("Instruction counter: %lld (0x%08llx)\n", 
+				out.instr_counts[j], out.instr_counts[j]);
+		LOG("Task: %d (%s)\n", out.task_chain[j].pid, out.task_chain[j].name);
+		LOG("User ID: %d -> %d\n", out.task_chain[j].old_uid, 
+				out.task_chain[j].new_uid);
+	}
+
 	return 0;
 }
 
-static bool is_suspected(int pid)
+static int task_index(int pid)
 {
 	int i;
 
 	for (i = 0; i < in.task_count; i++)
 	{
 		if (in.task_chain[i].pid == pid)
-			return true;
+			return i;
 	}
 
-	return false;
-}
-
-static bool is_watchpointed(int pid)
-{
-	int i;
-	
-	for (i = 0; i < in.task_count; i++)
-	{
-		if (in.task_chain[i].pid == pid)
-			return watchpointed[i];
-	}
-
-	return false;
+	return -1;
 }
 
 static int probe_taskswitch(struct probe *probe, void *data,
 		struct probe *trigger)
 {
+	static const struct probe_ops ops = {
+		.gettype = NULL,
+		.init = NULL,
+		.registered = NULL,
+		.enabled = NULL,
+		.disabled = NULL,
+		.unregistered = NULL,
+		.summarize = ctxtracker_summarize,
+		.fini = NULL
+	};
+
 	int ret;
 	ctxtracker_context_t *context;
 	struct value *value_task;
@@ -135,6 +221,7 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	unsigned long long instr_count;
 	int task_pid;
 	int task_uid;
+	int i;
 
 	context = (ctxtracker_context_t *)probe_summarize(probe);
 	if (!context)
@@ -147,7 +234,7 @@ static int probe_taskswitch(struct probe *probe, void *data,
 
 	instr_count = perf_get_brctr(probe->target);
 
-	if (in.instr_count >= instr_count)
+	if (instr_count >= in.instr_count)
 		kill_everything(domain_name);
 
 	value_task = context->task.cur;
@@ -161,9 +248,10 @@ static int probe_taskswitch(struct probe *probe, void *data,
 
 	/* Filter out innocent tasks. */
 
-	if (is_suspected(task_pid))
+	i = task_index(task_pid);
+	if (i >= 0) // suspected task?
 	{
-		if (!is_watchpointed(task_pid))
+		if (!examined[i]) // not examined yet?
 		{
 			value_task_uid = target_load_value_member(probe->target, 
 					value_task, member_task_uid, NULL /* delim */, 
@@ -177,12 +265,11 @@ static int probe_taskswitch(struct probe *probe, void *data,
 
 			if (task_uid != 0) // non-root?
 			{
-				/* Set up a watchpoint on the UID. */
+				/* Set up a readwrite watchpoint on the UID. */
 				
 				probe = register_watchpoint(probe->target, value_task_uid, 
-						"" /* name */, probe_watchpoint, 
-						(const struct probe_ops *)NULL /* ops */,
-						NULL /* data */, true /* readwrite */);
+						"" /* name */, probe_watchpoint, &ops /* ops */, 
+						(void *)i /* data */, true /* readwrite */);
 				if (!probe)
 				{
 					value_free(value_task_uid);
@@ -191,9 +278,13 @@ static int probe_taskswitch(struct probe *probe, void *data,
 
 				g_hash_table_insert(probes, (gpointer)probe /* key */,
 						(gpointer)probe /* value */);
+
+				old_uids[i] = task_uid;
 			}
 
 			value_free(value_task_uid);
+
+			examined[i] = true;
 		}
 	}
 
@@ -301,7 +392,8 @@ static void parse_opt(int argc, char *argv[])
 		printf("  -i <instruction counter>    End analysis at this "
 				"instruction counter.\n");
 		printf("  -p <suspected PIDs>         Find which task escalted "
-				"privilege among those of the specified PIDs.");
+				"privilege among those of the\n"
+				"                              specified PIDs.\n");
 		exit(-1);
 	}
 
@@ -319,7 +411,6 @@ int main(int argc, char *argv[])
 		ERR("Must specify the target domain name\n");
 		return -1;
 	}
-
 
 	if (!in.task_count)
 	{

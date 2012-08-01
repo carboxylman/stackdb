@@ -9,3 +9,10 @@ Task chain:
   292 (sh)
   294 (vi)
 
+[PASS-2]
+
+USER ID MODIFIED!
+Instruction counter: 405932770 (0x18320ae2)
+Task: 292 (sh)
+User ID: 1001 -> 0
+

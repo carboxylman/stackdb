@@ -159,7 +159,7 @@ struct probe *register_watchpoint(struct target *target, struct value *value,
 	else
 		whence = PROBEPOINT_WRITE;
 
-	if (!probe_register_addr(probe, addr, PROBEPOINT_WATCH, PROBEPOINT_SW,
+	if (!probe_register_addr(probe, addr, PROBEPOINT_WATCH, PROBEPOINT_HW,
 			whence, PROBEPOINT_LAUTO, NULL /* bsymbol */))
 	{
 		ERR("Could not register probe on raw address 0x%08x\n", addr);

@@ -54,15 +54,13 @@
 #define O_WRONLY (00000001)
 #define O_RDWR   (00000002)
 
-struct task_info {
-	int pid;
-	char name[PATH_MAX];
-};
-
 /* Result of the analysis pass */
 struct output {
 	// the chain of tasks who might have escalated privilege.
-	struct task_info task_chain[128];
+	struct {
+		int pid;
+		char name[PATH_MAX];
+	} task_chain[128];
 	
 	// number of the suspected tasks.
 	int task_count;
