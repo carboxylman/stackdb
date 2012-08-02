@@ -83,7 +83,7 @@ struct clf_range_data *crd_get_tightest(struct array_list *crdlist,
 	if ((CLRANGE_END(crd) - CLRANGE_START(crd)) < tightest_len) {
 	    tightest_len = CLRANGE_END(crd) - CLRANGE_START(crd);
 	    best_crd = crd;
-	    if (CLRANGE_START(crd) <= start && CLRANGE_END(crd) >= end
+	    if (CLRANGE_START(crd) <= start && CLRANGE_END(crd) > end
 		&& (CLRANGE_END(crd) - CLRANGE_START(crd)) 
 		   < tightest_containing_len) {
 		if (contains_saveptr) 
