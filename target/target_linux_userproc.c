@@ -386,6 +386,11 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     target->live = 1;
     target->writeable = 1;
 
+    /* We attach and can't detach, and also can't attach again when the
+     * target API tells us to.
+     */
+    target->initdidattach = 1;
+
     /* Figure out some ELF stuff. */
 
     elf_version(EV_CURRENT);
@@ -677,11 +682,18 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     }
 
  out:
+    /*
+     * We can't detach; that will resume the child.  We have to leave it
+     * paused until the user starts interacting with it.  See
+     * target->initdidattach .
+     */
+    /*
     if (ptrace(PTRACE_DETACH,pid,NULL,NULL) < 0) {
 	verror("ptrace temporary detach failed (will try to kill child): %s\n",strerror(errno));
 	kill(9,pid);
 	goto errout;
     }
+    */
     return target;
 
  errout:
@@ -736,9 +748,11 @@ static int linux_userproc_attach_internal(struct target *target) {
 	return 0;
 
     errno = 0;
-    if (ptrace(PTRACE_ATTACH,pid,NULL,NULL) < 0) {
-	verror("ptrace attach pid %d failed: %s\n",pid,strerror(errno));
-	return 1;
+    if (!target->initdidattach) {
+	if (ptrace(PTRACE_ATTACH,pid,NULL,NULL) < 0) {
+	    verror("ptrace attach pid %d failed: %s\n",pid,strerror(errno));
+	    return 1;
+	}
     }
 
     snprintf(buf,256,"/proc/%d/mem",pid);
@@ -748,22 +762,24 @@ static int linux_userproc_attach_internal(struct target *target) {
 	return 1;
     }
 
-    /*
-     * Wait for the child to get the PTRACE-sent SIGSTOP, then make sure
-     * we *don't* deliver that signal to it when the library user calls
-     * target_resume!
-     */
+    if (!target->initdidattach) {
+	/*
+	 * Wait for the child to get the PTRACE-sent SIGSTOP, then make sure
+	 * we *don't* deliver that signal to it when the library user calls
+	 * target_resume!
+	 */
 
-    vdebug(3,LOG_T_LUP,"waiting for ptrace attach to hit pid %d\n",pid);
- again:
-    vdebug(5,LOG_T_LUP,"initial waitpid target %d\n",pid);
-    if (waitpid(pid,&pstatus,0) < 0) {
-	if (errno == ECHILD || errno == EINVAL)
-	    return TSTATUS_ERROR;
-	else
-	    goto again;
+	vdebug(3,LOG_T_LUP,"waiting for ptrace attach to hit pid %d\n",pid);
+    again:
+	vdebug(5,LOG_T_LUP,"initial waitpid target %d\n",pid);
+	if (waitpid(pid,&pstatus,0) < 0) {
+	    if (errno == ECHILD || errno == EINVAL)
+		return TSTATUS_ERROR;
+	    else
+		goto again;
+	}
+	vdebug(3,LOG_T_LUP,"ptrace attach has hit pid %d\n",pid);
     }
-    vdebug(3,LOG_T_LUP,"ptrace attach has hit pid %d\n",pid);
 
     lstate->attached = 1;
 
