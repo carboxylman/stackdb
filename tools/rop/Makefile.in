@@ -18,14 +18,12 @@
 
 ###############################################################################
 
-PACKAGE = tools
-
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= tools
+SUBDIR		= tools/rop
 OBJDIR		= @top_builddir@
 
-SUBDIRS = rop
+SUBDIRS = 
 
 include $(OBJDIR)/Makeconf
 
@@ -55,20 +53,14 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h
+	$(TOP_SRCDIR)/include/output.h \
+	$(TOP_SRCDIR)/tools/rop.h
 
-OBJECTS := 
-ifeq ($(ENABLE_XENACCESS),"1")
-	OBJECTS += psaction.lo
-endif
+OBJECTS := rop_util.lo rop_checkret.lo
 
 LIBRARIES := 
 
-PROGRAMS := 
-ifeq ($(ENABLE_XENACCESS),"1")
-	PROGRAMS += psaction
-endif
-
+PROGRAMS := rop_checkret
 
 STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
 	$(OBJDIR)/lib/libvmilib.a
@@ -89,11 +81,11 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-psaction: $(HEADERS) $(STATICLIBS) psaction.lo
-	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
+rop_checkret: $(HEADERS) $(STATICLIBS) rop_util.lo rop_checkret.lo
+	$(CC) -o $@ $(CFLAGS) $@.o rop_util.o $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-	$(INSTALL) psaction $(DESTDIR)$(INSTALL_BINDIR)/
+	$(INSTALL) rop_checkret $(DESTDIR)$(INSTALL_BINDIR)/
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
