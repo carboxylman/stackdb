@@ -331,6 +331,17 @@ int probe_unregister_source_one(struct probe *sink,struct probe *src,
 				int force);
 
 /*
+ * Hard enable/disable (i.e., remove the underlying probepoint).  This
+ * only works for probes that are directly attached to an address --
+ * i.e., not a sink probe attached to a source.
+ *
+ * The idea is that sometimes a higher-level probe library might want to
+ * temporarily insert/delete probes.
+ */
+int probe_hard_remove(struct probe *probe);
+int probe_hard_insert(struct probe *probe);
+
+/*
  * Enable this probe, and all its sources (all the way to the base
  * probes).
  */
@@ -395,6 +406,16 @@ int probe_is_base(struct probe *probe);
 int probe_num_sources(struct probe *probe);
 
 int probe_num_sinks(struct probe *probe);
+
+/*
+ * Returns the name of the probe, if any.
+ */
+char *probe_name(struct probe *probe);
+
+/*
+ * Returns the private data of the probe, if any.
+ */
+void *probe_priv(struct probe *probe);
 
 /*
  * Returns the address the a probe is targeting.

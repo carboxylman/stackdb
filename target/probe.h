@@ -112,6 +112,8 @@ struct probe {
 
     struct probe_ops *ops;
 
+    void *priv;
+
     /* The target this probe is associated with. */
     struct target *target;
 
@@ -124,6 +126,8 @@ struct probe {
     /* User handler to run after probe-point is executed */
     probe_handler_t post_handler;
 
+    void *handler_data;
+
     /* True when the vmprobe is enabled */
     uint8_t enabled;
 
@@ -131,8 +135,6 @@ struct probe {
 
     /* Link to the probe list  */
     struct list_head probe;
-
-    void *handler_data;
 
     /* A list of probes we listen to.
      */

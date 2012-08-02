@@ -287,7 +287,6 @@ void probepoint_free_ext(struct probepoint *probepoint) {
 /**
  ** Probe unregistration/registration.
  **/
-
 static int __probepoint_remove(struct probepoint *probepoint) {
     struct target *target;
     int ret;
@@ -647,6 +646,24 @@ void probe_rename(struct probe *probe,const char *name) {
     vdebugc(5,LOG_P_PROBE," to ");
     LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
 
+}
+
+int probe_hard_remove(struct probe *probe) {
+    if (!probe->probepoint) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    return __probepoint_remove(probe->probepoint);
+}
+
+int probe_hard_insert(struct probe *probe) {
+    if (!probe->probepoint) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    return __probepoint_insert(probe->probepoint);
 }
 
 static int __probe_unregister(struct probe *probe,int force,int onlyone) {
@@ -1085,7 +1102,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 		    && (style == PROBEPOINT_HW
 			|| style == PROBEPOINT_FASTEST))
 		   || (probepoint->style == PROBEPOINT_SW
-		       && (style == PROBEPOINT_HW
+		       && (style == PROBEPOINT_SW
 			   || style == PROBEPOINT_FASTEST))))
 	      || (type == PROBEPOINT_WATCH
 		  && type == probepoint->type
@@ -1636,6 +1653,14 @@ int probe_num_sinks(struct probe *probe) {
     if (probe->sinks)
 	return g_list_length(probe->sinks);
     return 0;
+}
+
+char *probe_name(struct probe *probe) {
+    return probe->name;
+}
+
+void *probe_priv(struct probe *probe) {
+    return probe->priv;
 }
 
 /*
