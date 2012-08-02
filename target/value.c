@@ -78,17 +78,28 @@ struct value *value_create(struct lsymbol *lsymbol,struct symbol *type) {
 
 struct value *value_create_noalloc(struct lsymbol *lsymbol,
 				   struct symbol *type) {
-    struct value *value = value_create_type(type);
+    struct value *value;
+    int len = symbol_type_full_bytesize(type);
 
-    if (!value)
+    if (len < 1) {
+	verror("type %s (ref 0x%"PRIxSMOFFSET") had 0-byte size!\n",
+	       type->name,type->ref);
 	return NULL;
+    }
+
+    if (!(value = malloc(sizeof(struct value)))) 
+	return NULL;
+    memset(value,0,sizeof(struct value));
+
+    if (type) {
+	symbol_hold(type);
+	value->type = type;
+    }
 
     if (lsymbol) {
 	lsymbol_hold(lsymbol);
 	value->lsymbol = lsymbol;
     }
-
-    value->type = type;
 
     return value;
 }
