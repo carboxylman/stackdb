@@ -44,6 +44,87 @@ const char *disasm_get_inst_name(inst_type_t type) {
     return inst_names[type];
 }
 
+int disasm_generic(struct target *target,
+		   unsigned char *inst_buf,unsigned int buf_len,
+		   struct array_list **idata_list_saveptr,int noabort) {
+    _CodeInfo ci;
+    _DInst di;
+    _DecodedInst inst;
+    unsigned int di_count = 0;
+    struct array_list *tmplist;
+    struct inst_data *idata;
+
+    if (!idata_list_saveptr) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    tmplist = array_list_create(0);
+
+    ci.code = (unsigned char *)inst_buf;
+    ci.codeLen = buf_len;
+    ci.codeOffset = 0;
+    ci.features = DF_NONE;
+    if (target->wordsize == 4)
+	ci.dt = Decode32Bits;
+    else
+	ci.dt = Decode64Bits;
+
+    while (ci.codeOffset < buf_len) {
+	memset(&di,0,sizeof(di));
+	if (distorm_decompose64(&ci,&di,1,&di_count) == DECRES_INPUTERR) {
+	    vwarn("decoding error at offset %"PRIu64"\n",ci.codeOffset);
+	    goto inst_err_out;
+	}
+	if (di_count == 0) 
+	    break;
+
+	if (di.flags == FLAG_NOT_DECODABLE) {
+	    vwarn("bad instruction at offset %"PRIu64"\n",ci.codeOffset);
+	    if (!noabort)
+		goto inst_err_out;
+	    else {
+		ci.codeOffset += 1;
+		ci.code += 1;
+		continue;
+	    }
+	}
+
+	idata = (struct inst_data *)calloc(1,sizeof(*idata));
+
+	idata->type = di.opcode;
+	idata->size = di.size;
+	idata->dtype = DECODE_TYPE_NONE;
+	idata->offset = (SMOFFSET)ci.codeOffset;
+
+	array_list_add(tmplist,idata);
+	
+	memset(&inst,0,sizeof(inst));
+	distorm_format(&ci,&di,&inst);
+	vdebug(3,LOG_T_DISASM,"decoded %s %s at %"PRIu64"\n",
+	       inst.mnemonic.p,inst.operands.p,ci.codeOffset);
+
+	/* Setup next iteration. */
+	ci.codeOffset += di.size;
+	ci.code += di.size;
+    }
+
+    if (ci.codeOffset != buf_len) {
+	vwarn("decoding stopped %"PRIi64" bytes short\n",
+	      (uint64_t)buf_len - ci.codeOffset);
+	if (!noabort)
+	    goto inst_err_out;
+    }
+
+    if (idata_list_saveptr)
+	*idata_list_saveptr = tmplist;
+    return 0;
+
+ inst_err_out:
+    array_list_deep_free(tmplist);
+    return -1;
+}
+
 /*
  * Returns offsets for a specific instruction.
  */
@@ -56,9 +137,9 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
     _DecodedInst inst;
     unsigned int di_count = 0;
     struct array_list *tmplist;
-    struct inst_data *idata;
+    struct cf_inst_data *idata;
 
-    if (!offset_list || flags == 0) {
+    if (!offset_list) {
 	errno = EINVAL;
 	return -1;
     }
@@ -98,64 +179,59 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 	 * Only decode RETs; add their offsets to the list when we find them! 
 	 */
 	memset(&inst,0,sizeof(inst));
-	if (flags & INST_CF_RET 
+	if ((!flags || flags & INST_CF_RET) 
 	    && (di.opcode == I_RET || di.opcode == I_RETF)) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
 
 	    idata->type = INST_RET;
-	    idata->offset = ci.codeOffset;
 	    array_list_add(tmplist,idata);
 
 	    goto valid_inst;
 	}
-	else if (flags & INST_CF_IRET && di.opcode == I_IRET) {
+	else if ((!flags || flags & INST_CF_IRET) && di.opcode == I_IRET) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
 
 	    idata->type = INST_IRET;
-	    idata->offset = ci.codeOffset;
 	    array_list_add(tmplist,idata);
 
 	    goto valid_inst;
 	}
-	else if (flags & INST_CF_INT && di.opcode == I_INT) {
+	else if ((!flags || flags & INST_CF_INT) && di.opcode == I_INT) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
 
 	    idata->type = INST_INT;
-	    idata->offset = ci.codeOffset;
 	    idata->cf.intnum = di.imm.byte;
 	    array_list_add(tmplist,idata);
 
 	    goto valid_inst;
 	}
-	else if (flags & INST_CF_INT3 && di.opcode == I_INT_3) {
+	else if ((!flags || flags & INST_CF_INT3) && di.opcode == I_INT_3) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
 
 	    idata->type = INST_INT3;
-	    idata->offset = ci.codeOffset;
 	    idata->cf.intnum = 3;
 	    array_list_add(tmplist,idata);
 
 	    goto valid_inst;
 	}
-	else if (flags & INST_CF_INTO && di.opcode == I_INTO) {
+	else if ((!flags || flags & INST_CF_INTO) && di.opcode == I_INTO) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
 
 	    idata->type = INST_INTO;
-	    idata->offset = ci.codeOffset;
 	    idata->cf.intnum = 4;
 	    array_list_add(tmplist,idata);
 
 	    goto valid_inst;
 	}
-	else if ((flags & INST_CF_SYSCALL && di.opcode == I_SYSCALL)
-		 || (flags & INST_CF_SYSRET && di.opcode == I_SYSRET)
-		 || (flags & INST_CF_SYSENTER && di.opcode == I_SYSENTER)
-		 || (flags & INST_CF_SYSEXIT && di.opcode == I_SYSEXIT)) {
+	else if (((!flags || flags & INST_CF_SYSCALL) && di.opcode == I_SYSCALL)
+		 || ((!flags || flags & INST_CF_SYSRET) && di.opcode == I_SYSRET)
+		 || ((!flags || flags & INST_CF_SYSENTER) && di.opcode == I_SYSENTER)
+		 || ((!flags || flags & INST_CF_SYSEXIT) && di.opcode == I_SYSEXIT)) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
 
@@ -175,26 +251,24 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 	    default:
 		break;
 	    }
-	    idata->offset = ci.codeOffset;
 	    array_list_add(tmplist,idata);
 
 	    goto valid_inst;
 	}
-	else if (flags & INST_CF_JCC && META_GET_FC(di.meta) == FC_CND_BRANCH) {
+	else if ((!flags || flags & INST_CF_JCC) && META_GET_FC(di.meta) == FC_CND_BRANCH) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
 
 	    idata->type = INST_JCC;
-	    idata->offset = ci.codeOffset;
 	    idata->cf.is_relative = 1;
 	    idata->cf.reloffset = di.imm.sqword;
 	    array_list_add(tmplist,idata);
 
 	    goto valid_inst;
 	}
-	else if ((flags & INST_CF_CALL 
+	else if (((!flags || flags & INST_CF_CALL) 
 		  && (di.opcode == I_CALL || di.opcode == I_CALL_FAR))
-		 || (flags & INST_CF_JMP 
+		 || ((!flags || flags & INST_CF_JMP) 
 		     && META_GET_FC(di.meta) == FC_UNC_BRANCH)) {
 	    idata = calloc(1,sizeof(*idata));
 	    memset(idata,0,sizeof(*idata));
@@ -203,7 +277,6 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 		idata->type = INST_JMP;
 	    else
 		idata->type = INST_CALL;
-	    idata->offset = ci.codeOffset;
 	    idata->cf.disp = di.disp;
 
 	    /*
@@ -274,6 +347,9 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 	}
 
     valid_inst:
+	idata->size = di.size;
+	idata->offset = ci.codeOffset;
+
 	if (idata->cf.is_relative) {
 	    OFFSET toff = di.size + idata->offset + idata->cf.disp + idata->cf.reloffset;
 	    if (toff >= 0 && toff < buf_len)
@@ -567,147 +643,4 @@ char *const inst_type_names[] = {
     [INST_JMP] = "JMP",
     [INST_JCC] = "JCC",
     [INST_CMOV] = "CMOV"
-};
-
-char *const reg_names[] = {
-    [RG_RAX] = "RAX",
-    [RG_RCX] = "RCX",
-    [RG_RDX] = "RDX",
-    [RG_RBX] = "RBX",
-    [RG_RSP] = "RSP",
-    [RG_RBP] = "RBP",
-    [RG_RSI] = "RSI",
-    [RG_RDI] = "RDI",
-    [RG_R8] = "R8",
-    [RG_R9] = "R9",
-    [RG_R10] = "R10",
-    [RG_R11] = "R11",
-    [RG_R12] = "R12",
-    [RG_R13] = "R13",
-    [RG_R14] = "R14",
-    [RG_R15] = "R15",
-    [RG_EAX] = "EAX",
-    [RG_ECX] = "ECX",
-    [RG_EDX] = "EDX",
-    [RG_EBX] = "EBX",
-    [RG_ESP] = "ESP",
-    [RG_EBP] = "EBP",
-    [RG_ESI] = "ESI",
-    [RG_EDI] = "EDI",
-    [RG_R8D] = "R8D",
-    [RG_R9D] = "R9D",
-    [RG_R10D] = "R10D",
-    [RG_R11D] = "R11D",
-    [RG_R12D] = "R12D",
-    [RG_R13D] = "R13D",
-    [RG_R14D] = "R14D",
-    [RG_R15D] = "R15D",
-    [RG_AX] = "AX",
-    [RG_CX] = "CX",
-    [RG_DX] = "DX",
-    [RG_BX] = "BX",
-    [RG_SP] = "SP",
-    [RG_BP] = "BP",
-    [RG_SI] = "SI",
-    [RG_DI] = "DI",
-    [RG_R8W] = "R8W",
-    [RG_R9W] = "R9W",
-    [RG_R10W] = "R10W",
-    [RG_R11W] = "R11W",
-    [RG_R12W] = "R12W",
-    [RG_R13W] = "R13W",
-    [RG_R14W] = "R14W",
-    [RG_R15W] = "R15W",
-    [RG_AL] = "AL",
-    [RG_CL] = "CL",
-    [RG_DL] = "DL",
-    [RG_BL] = "BL",
-    [RG_AH] = "AH",
-    [RG_CH] = "CH",
-    [RG_DH] = "DH",
-    [RG_BH] = "BH",
-    [RG_R8B] = "R8B",
-    [RG_R9B] = "R9B",
-    [RG_R10B] = "R10B",
-    [RG_R11B] = "R11B",
-    [RG_R12B] = "R12B",
-    [RG_R13B] = "R13B",
-    [RG_R14B] = "R14B",
-    [RG_R15B] = "R15B",
-    [RG_SPL] = "SPL",
-    [RG_BPL] = "BPL",
-    [RG_SIL] = "SIL",
-    [RG_DIL] = "DIL",
-    [RG_ES] = "ES",
-    [RG_CS] = "CS",
-    [RG_SS] = "SS",
-    [RG_DS] = "DS",
-    [RG_FS] = "FS",
-    [RG_GS] = "GS",
-    [RG_RIP] = "RIP",
-    [RG_ST0] = "ST0",
-    [RG_ST1] = "ST1",
-    [RG_ST2] = "ST2",
-    [RG_ST3] = "ST3",
-    [RG_ST4] = "ST4",
-    [RG_ST5] = "ST5",
-    [RG_ST6] = "ST6",
-    [RG_ST7] = "ST7",
-    [RG_MM0] = "MM0",
-    [RG_MM1] = "MM1",
-    [RG_MM2] = "MM2",
-    [RG_MM3] = "MM3",
-    [RG_MM4] = "MM4",
-    [RG_MM5] = "MM5",
-    [RG_MM6] = "MM6",
-    [RG_MM7] = "MM7",
-    [RG_XMM0] = "XMM0",
-    [RG_XMM1] = "XMM1",
-    [RG_XMM2] = "XMM2",
-    [RG_XMM3] = "XMM3",
-    [RG_XMM4] = "XMM4",
-    [RG_XMM5] = "XMM5",
-    [RG_XMM6] = "XMM6",
-    [RG_XMM7] = "XMM7",
-    [RG_XMM8] = "XMM8",
-    [RG_XMM9] = "XMM9",
-    [RG_XMM10] = "XMM10",
-    [RG_XMM11] = "XMM11",
-    [RG_XMM12] = "XMM12",
-    [RG_XMM13] = "XMM13",
-    [RG_XMM14] = "XMM14",
-    [RG_XMM15] = "XMM15",
-    [RG_YMM0] = "YMM0",
-    [RG_YMM1] = "YMM1",
-    [RG_YMM2] = "YMM2",
-    [RG_YMM3] = "YMM3",
-    [RG_YMM4] = "YMM4",
-    [RG_YMM5] = "YMM5",
-    [RG_YMM6] = "YMM6",
-    [RG_YMM7] = "YMM7",
-    [RG_YMM8] = "YMM8",
-    [RG_YMM9] = "YMM9",
-    [RG_YMM10] = "YMM10",
-    [RG_YMM11] = "YMM11",
-    [RG_YMM12] = "YMM12",
-    [RG_YMM13] = "YMM13",
-    [RG_YMM14] = "YMM14",
-    [RG_YMM15] = "YMM15",
-    [RG_CR0] = "CR0",
-    [RG_UNUSED0] = "UNUSED0",
-    [RG_CR2] = "CR2",
-    [RG_CR3] = "CR3",
-    [RG_CR4] = "CR4",
-    [RG_UNUSED1] = "UNUSED1",
-    [RG_UNUSED2] = "UNUSED2",
-    [RG_UNUSED3] = "UNUSED3",
-    [RG_CR8] = "CR8",
-    [RG_DR0] = "DR0",
-    [RG_DR1] = "DR1",
-    [RG_DR2] = "DR2",
-    [RG_DR3] = "DR3",
-    [RG_UNUSED4] = "UNUSED4",
-    [RG_UNUSED5] = "UNUSED5",
-    [RG_DR6] = "DR6",
-    [RG_DR7] = "DR7",
 };

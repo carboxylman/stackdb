@@ -271,6 +271,9 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
  **/
 #ifdef ENABLE_DISTORM
 const char *disasm_get_inst_name(inst_type_t type);
+int disasm_generic(struct target *target,
+		   unsigned char *inst_buf,unsigned int buf_len,
+		   struct array_list **idata_list_saveptr,int noabort);
 int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 				    unsigned char *inst_buf,unsigned int buf_len,
 				    struct array_list **offset_list,ADDR base,
