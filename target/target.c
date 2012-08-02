@@ -1867,3 +1867,204 @@ unsigned char *__target_load_addr_real(struct target *target,
 
     return target_read_addr(target,addr,bufsiz,buf,NULL);
 }
+
+int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
+				    ADDR *start,ADDR *end,void **data) {
+    struct addrspace *space;
+    struct memregion *region;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
+    struct memrange *range = NULL;
+
+    struct clf_range_data *crd;
+
+    /* Find which region contains this address. */
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    if ((range = memregion_find_range_real(region,addr)))
+		break;
+	}
+    }
+
+    if (!range) 
+	return -1;
+
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&debugfile)) {
+	if ((crd = clrange_find_loosest(&debugfile->elf_ranges,
+					memrange_unrelocate(range,addr),
+					NULL))) {
+	    if (start)
+		*start = crd->start;
+	    if (end)
+		*end = crd->end;
+	    if (data)
+		*data = crd->data;
+
+	    return 0;
+	}
+    }
+
+    return -1;
+}
+
+int target_lookup_next_safe_disasm_range(struct target *target,ADDR addr,
+					 ADDR *start,ADDR *end,void **data) {
+    struct addrspace *space;
+    struct memregion *region;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
+    struct memrange *range = NULL;
+
+    struct clf_range_data *crd;
+
+    /* Find which region contains this address. */
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    if ((range = memregion_find_range_real(region,addr)))
+		break;
+	}
+    }
+
+    if (!range)
+	return -1;
+
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&debugfile)) {
+	if ((crd = clrange_find_next_loosest(&debugfile->elf_ranges,
+					     memrange_unrelocate(range,addr),
+					     NULL))) {
+	    if (start)
+		*start = crd->start;
+	    if (end)
+		*end = crd->end;
+	    if (data)
+		*data = crd->data;
+
+	    return 0;
+	}
+    }
+
+    return -1;
+}
+
+/*
+ * CODE_CACHE_BUF_PAD -- distorm seems to have an off by one error decoding at
+ * the end of a buffer supplied to it -- so we always pad our buffers we
+ * pass to it with this many NUL bytes.
+ */
+#define CODE_CACHE_BUF_PAD 5
+
+struct code_cache_entry {
+    Word_t start;
+    unsigned int len:31,
+	         isevictable:1;
+    unsigned char *code;
+};
+
+unsigned char *target_load_code(struct target *target,
+				ADDR start,unsigned int len,
+				int nocache,int force_copy,int *caller_free) {
+    unsigned char *buf = NULL;
+    unsigned int llen = 0;
+    struct code_cache_entry *ccd;
+    ADDR nextaddr;
+    ADDR cstart,cend;
+    unsigned int tlen;
+    unsigned char *tbuf;
+
+    nextaddr = start;
+
+    if (force_copy) 
+	buf = calloc(1,len + CODE_CACHE_BUF_PAD);
+
+    while (llen < len) {
+	/*
+	 * Check the cache first.  If we find a hit, maybe we can fill
+	 * up at least part of our return buffer -- OR maybe even just
+	 * return a pointer.
+	 */
+    checkcache:
+	ccd = (struct code_cache_entry *)clrange_find(&target->code_ranges,
+						      nextaddr);
+	if (ccd) {
+	    /* At least some of the code in this cache entry is
+	     * relevant; either plop it into our current buf; return a
+	     * pointer to it, or an offset of it.
+	     */
+
+	    /* If we don't have a buf (i.e., not forcing a copy, and
+	     * have not needed a buf because we're not needing to load
+	     * multiple segments), and if the code we need is entirely
+	     * in this buf, then just return a pointer to the right
+	     * place in this buf!
+	     */
+	    if (!buf && (nextaddr + len) <= (ccd->start + ccd->len)) {
+		*caller_free = 0;
+		return ccd->code + (nextaddr - ccd->start);
+	    }
+	    /* Otherwise, we have a buf (or we *must* create one because
+	     * we are loading more code than is in this one cache entry)
+	     * and we need to copy (at least some) of the data in this
+	     * cache entry into it.
+	     */
+	    else {
+		if (!buf) 
+		    buf = calloc(1,len + CODE_CACHE_BUF_PAD);
+
+		tlen = ccd->len - (nextaddr - ccd->start);
+		if ((len - llen) < tlen)
+		    tlen = len - llen;
+
+		memcpy(buf + llen,ccd->code + (nextaddr - ccd->start),tlen);
+		llen += tlen;
+	    }
+	}
+	else {
+	    /* If it's not in the cache, we need to load the next safe
+	     * disasm chunk --- OR FILL IN THE HOLE THAT CONTAINS
+	     * nextaddr.
+	     */
+	    if (target_lookup_safe_disasm_range(target,nextaddr,&cstart,&cend,
+						NULL)) {
+		verror("no safe disasm range contains 0x%"PRIxADDR"!\n",nextaddr);
+		goto errout;
+	    }
+
+	    tbuf = target_load_raw_addr_real(target,cstart,
+					     LOAD_FLAG_NONE,NULL,cend - cstart);
+	    if (!tbuf) {
+		verror("could not load code in safe disasm range" 
+		       " 0x%"PRIxADDR",0x%"PRIxADDR"!\n",cstart,cend);
+		goto errout;
+	    }
+
+	    /* Save it in the cache! */
+	    ccd = (struct code_cache_entry *)calloc(1,sizeof(*ccd));
+	    ccd->start = cstart;
+	    ccd->len = cend - cstart;
+	    ccd->code = tbuf;
+
+	    clrange_add(&target->code_ranges,cstart,cend,ccd);
+
+	    /* Just hop back to the top of the loop and let the cache
+	     * check succeed this time!
+	     */
+	    goto checkcache;
+	}
+    }
+
+    if (caller_free)
+	*caller_free = 1;
+    return buf;
+
+ errout:
+    if (buf)
+	free(buf);
+    return NULL;
+    
+}

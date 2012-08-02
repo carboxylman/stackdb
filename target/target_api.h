@@ -135,6 +135,21 @@ int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 int target_singlestep(struct target *target);
 int target_singlestep_end(struct target *target);
 
+/**
+ ** Functions to deal with "widest range" lookup, text code loading and
+ ** caching, and safe disassembly.  We want to be sure we always start
+ ** disassembly at a safe place in the text bytes we load -- not
+ ** wherever the library use requests (which might be in some weird
+ ** place).  Plus, we want to cache well-defined chunks of code to avoid
+ ** fragmentation in the cache.
+ **/
+int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
+				    ADDR *start,ADDR *end,void **data);
+int target_lookup_next_safe_disasm_range(struct target *target,ADDR addr,
+					 ADDR *start,ADDR *end,void **data);
+unsigned char *target_load_code(struct target *target,
+				ADDR start,unsigned int len,
+				int nocache,int force_copy,int *caller_free);
 
 /**
  ** Lookup functions.
@@ -457,13 +472,14 @@ ADDR             rv_addr(void *buf);
  */
 struct target {
     char *type;
-    uint8_t live:1,
-    	    writeable:1,
-	    attached:1,
-	    endian:1,
-	    mmapable:1,
-	    wordsize:4,
-	    ptrsize:4;
+    uint16_t initdidattach:1,
+	     live:1,
+    	     writeable:1,
+	     attached:1,
+	     endian:1,
+	     mmapable:1,
+	     wordsize:4,
+	     ptrsize:4;
     REG fbregno;
     REG spregno;
     REG ipregno;
@@ -493,6 +509,9 @@ struct target {
      * A hashtable of pointers to probes.
      */
     GHashTable *probes;
+
+    /* Cache of loaded code, by address range. */
+    clrange_t code_ranges;
 
     /* One or more opcodes that create a software breakpoint */
     void *breakpoint_instrs;

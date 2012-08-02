@@ -260,6 +260,8 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
 
     retval->sstep_stack = array_list_create(4);
 
+    retval->code_ranges = clrange_create();
+
     /*
      * Hm, I think we should do this by default, and let target backends
      * override it if they need.
