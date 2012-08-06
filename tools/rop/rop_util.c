@@ -258,19 +258,19 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
     }
     if (i == array_list_len(cf_idata_list)
 	|| cf_idata_prev == NULL) {
-	vwarn("did not find a control flow instr before retaddr 0x%"PRIxADDR"!\n",
+	vwarn("no CF instr before retaddr 0x%"PRIxADDR"!\n",
 	       retaddr);
 	goto violation;
     }
     else if ((OFFSET)(retaddr - caller_start) 
 	     != (cf_idata_prev->offset + cf_idata_prev->size)) {
-	vwarn("did not find a control flow instr directly before"
+	vwarn("no CF instr directly before"
 	       " retaddr 0x%"PRIxADDR"!\n",
 	       retaddr);
 	goto violation;
     }
     else if (cf_idata_prev->type != INST_CALL) {
-	vwarn("did not find a CALL instr directly before retaddr 0x%"PRIxADDR"!\n",
+	vwarn("no CALL instr before retaddr 0x%"PRIxADDR"!\n",
 	       retaddr);
 	goto violation;
     }
@@ -287,13 +287,11 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
     if (cf_idata_prev->cf.target >= current_start
 	&& cf_idata_prev->cf.target < current_end) {
 	rop_data->status.isviolation = 0;
-	++rop_data->status.total;
     }
     else {
     violation:
 	rop_data->status.isviolation = 1;
 	++rop_data->status.violations;
-	++rop_data->status.total;
     }
 
     rop_data->status.current_ret_addr = retaddr;

@@ -100,7 +100,7 @@ int rop_handler(struct probe *probe,void *data,struct probe *trigger) {
     fflush(stderr);
 
     if (rop_status->isviolation) {
-	fprintf(stdout,"%s: CFI violation (ROP attack?)!",probe_name(probe));
+	fprintf(stdout,"%s: CFI violation (ROP?!)",probe_name(probe));
 
 	buflen = 64 + strlen(rop_data->gadget->meta);
 	buf = malloc(buflen);
@@ -328,6 +328,11 @@ int main(int argc,char **argv) {
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == TSTATUS_PAUSED) {
+	    if (linux_userproc_stopped_by_syscall(t)) {
+		target_resume(t);
+		continue;
+	    }
+
 	    fflush(stderr);
 	    fflush(stdout);
 	    printf("target interrupted at 0x%" PRIxREGVAL "\n",
