@@ -40,6 +40,7 @@
 
 #include "target_api.h"
 #include "target.h"
+#include "target_linux_userproc.h"
 
 /*
  * Prototypes.
@@ -132,35 +133,14 @@ struct target_ops linux_userspace_process_ops = {
     .singlestep = linux_userproc_singlestep,
     .singlestep_end = linux_userproc_singlestep_end,
 };
-#if __WORDSIZE == 64
-typedef unsigned long int ptrace_reg_t;
-#else
-typedef int ptrace_reg_t;
-#endif
 
-struct linux_userproc_state {
-    int pid;
-    int memfd;
-    int attached;
-    int32_t ptrace_opts;
-    enum __ptrace_request ptrace_type;
-    int last_signo;
-    int syscall;
-
-    /*
-     * On the first register read on a paused domain, we read in this,
-     * and if it gets dirty, we flush it on resume.  All other reg ops
-     * are satisfied by just writing to this struct.
-     */
-    int regs_dirty:1,
-	regs_loaded:1;
-    struct user_regs_struct regs;
-
-    /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
-     * we use this might have to change.
-     */
-    ptrace_reg_t dr[8];
-};
+/*
+ * If we ever want to support multithreaded targets, we'll have to track
+ * fork/clone/vfork via ptrace too.  For now, we just want the bare
+ * minimum so we can tell the user about it.
+ */
+#define INITIAL_PTRACE_OPTS \
+    PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT
 
 /**
  ** These are the only user-visible functions.
@@ -172,10 +152,10 @@ int linux_userproc_last_signo(struct target *target) {
     return -1;
 }
 
-int linux_userproc_stopped_by_syscall(struct target *target) {
+int linux_userproc_last_status(struct target *target) {
     if (target)
-	return ((struct linux_userproc_state *)target->state)->syscall;
-    return 0;
+	return ((struct linux_userproc_state *)target->state)->last_status;
+    return -1;
 }
 
 /*
@@ -724,9 +704,10 @@ static int linux_userproc_init(struct target *target) {
 
     lstate->memfd = -1;
     lstate->attached = 0;
-    lstate->ptrace_opts = 0;
-    lstate->ptrace_type = PTRACE_SYSCALL;
+    lstate->ptrace_opts_new = lstate->ptrace_opts = INITIAL_PTRACE_OPTS;
+    lstate->ptrace_type = PTRACE_CONT;
     lstate->last_signo = -1;
+    lstate->last_status = -1;
 
     return 0;
 }
@@ -779,6 +760,12 @@ static int linux_userproc_attach_internal(struct target *target) {
 		goto again;
 	}
 	vdebug(3,LOG_T_LUP,"ptrace attach has hit pid %d\n",pid);
+    }
+
+    /* Set the initial PTRACE opts. */
+    errno = 0;
+    if (ptrace(PTRACE_SETOPTIONS,pid,NULL,lstate->ptrace_opts) < 0) {
+	vwarn("ptrace setoptions failed: %s\n",strerror(errno));
     }
 
     lstate->attached = 1;
@@ -1243,11 +1230,13 @@ static int linux_userproc_resume(struct target *target) {
      */
     lstate->regs_loaded = 0;
 
-    int ptopts = PTRACE_O_TRACESYSGOOD;
-    ptopts |= lstate->ptrace_opts;
-    errno = 0;
-    if (ptrace(PTRACE_SETOPTIONS,linux_userproc_pid(target),NULL,ptopts) < 0) {
-	vwarn("ptrace setoptions failed: %s\n",strerror(errno));
+    if (lstate->ptrace_opts != lstate->ptrace_opts_new) {
+	lstate->ptrace_opts = lstate->ptrace_opts_new;
+	errno = 0;
+	if (ptrace(PTRACE_SETOPTIONS,linux_userproc_pid(target),NULL,
+		   lstate->ptrace_opts) < 0) {
+	    vwarn("ptrace setoptions failed: %s\n",strerror(errno));
+	}
     }
 
     if (lstate->last_signo > -1) {
@@ -1267,7 +1256,7 @@ static int linux_userproc_resume(struct target *target) {
 
     vdebug(9,LOG_T_LUP,"ptrace restart %d succeeded\n",linux_userproc_pid(target));
     lstate->last_signo = -1;
-    lstate->syscall = 0;
+    lstate->last_status = -1;
 
     return 0;
 }
@@ -1293,17 +1282,16 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	 * otherwise, don't deliver a sig, and just continue the child,
 	 * on resume.
 	 */
-	lstate->last_signo = WSTOPSIG(pstatus);
-	if (lstate->last_signo == (SIGTRAP | 0x80)) {
+	lstate->last_status = lstate->last_signo = WSTOPSIG(pstatus);
+	if (lstate->last_status == (SIGTRAP | 0x80)) {
 	    vdebug(5,LOG_T_LUP,"target %d stopped with syscall trap signo %d\n",
-		   pid,lstate->last_signo);
+		   pid,lstate->last_status);
 	    lstate->last_signo = -1;
-	    lstate->syscall = 1;
 	}
-	else if (lstate->last_signo == SIGTRAP) {
+	else if (lstate->last_status == SIGTRAP) {
 	    /* Don't deliver debug traps! */
 	    vdebug(5,LOG_T_LUP,"target %d stopped with trap signo %d\n",
-		   pid,lstate->last_signo);
+		   pid,lstate->last_status);
 	    lstate->last_signo = -1;
 
 	    /*
@@ -1432,13 +1420,14 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	}
 	else {
 	    vdebug(5,LOG_T_LUP,"target %d stopped with signo %d\n",
-		   pid,lstate->last_signo);
+		   pid,lstate->last_status);
 	}
 
 	return TSTATUS_PAUSED;
     }
     else if (WIFCONTINUED(pstatus)) {
 	lstate->last_signo = -1;
+	lstate->last_status = -1;
 	goto out_again;
     }
     else if (WIFSIGNALED(pstatus) || WIFEXITED(pstatus)) {

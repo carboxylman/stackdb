@@ -328,7 +328,7 @@ int main(int argc,char **argv) {
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == TSTATUS_PAUSED) {
-	    if (linux_userproc_stopped_by_syscall(t)) {
+	    if (LUP_AT_SYSCALL(t)) {
 		target_resume(t);
 		continue;
 	    }

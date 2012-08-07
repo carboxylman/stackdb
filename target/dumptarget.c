@@ -978,7 +978,7 @@ int main(int argc,char **argv) {
 #ifdef ENABLE_XENACCESS
 		!domain && 
 #endif
-		linux_userproc_stopped_by_syscall(t))
+		LUP_AT_SYSCALL(t))
 		goto resume;
 
 #ifdef ENABLE_XENACCESS
