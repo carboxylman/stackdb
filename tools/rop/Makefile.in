@@ -54,7 +54,7 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h \
-	$(TOP_SRCDIR)/tools/rop.h
+	$(TOP_SRCDIR)/tools/rop/rop.h
 
 OBJECTS := rop_util.lo rop_checkret.lo
 
