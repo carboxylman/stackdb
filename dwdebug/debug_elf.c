@@ -466,9 +466,9 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 		    continue;
 
 #ifdef DWDEBUG_USE_STRTAB
-		symname = strdup(&debugfile->elf_strtab[sym->st_name]);
-#else
 		symname = &debugfile->elf_strtab[sym->st_name];
+#else
+		symname = strdup(&debugfile->elf_strtab[sym->st_name]);
 #endif
 
 		symbol = symbol_create(debugfile->elf_symtab,(SMOFFSET)i,symname,
