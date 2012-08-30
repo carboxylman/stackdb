@@ -258,24 +258,28 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
     }
     if (i == array_list_len(cf_idata_list)
 	|| cf_idata_prev == NULL) {
-	vwarn("no CF instr before retaddr 0x%"PRIxADDR"!\n",
+	vwarn("no CF instr before retaddr 0x%"PRIxADDR"; "
+	      " possible false-positive violation!\n",
 	       retaddr);
 	goto violation;
     }
     else if ((OFFSET)(retaddr - caller_start) 
 	     != (cf_idata_prev->offset + cf_idata_prev->size)) {
 	vwarn("no CF instr directly before"
-	       " retaddr 0x%"PRIxADDR"!\n",
+	       " retaddr 0x%"PRIxADDR"; possible false-positive violation!\n",
 	       retaddr);
 	goto violation;
     }
-    else if (cf_idata_prev->type != INST_CALL) {
-	vwarn("no CALL instr before retaddr 0x%"PRIxADDR"!\n",
+    else if (cf_idata_prev->type != INST_CALL 
+	     || cf_idata_prev->type != INST_JMP) {
+	vwarn("no CALL/JMP instr before retaddr 0x%"PRIxADDR";"
+	      " possible false-positive violation!\n",
 	       retaddr);
 	goto violation;
     }
     else if (cf_idata_prev->cf.target == 0) {
-	vwarn("CALL instr before retaddr 0x%"PRIxADDR" does not have static target!\n",
+	vwarn("CALL/JMP instr before retaddr 0x%"PRIxADDR" does not have"
+	      " static target; not triggering violation; triggering error!\n",
 	       retaddr);
 	goto errout;
     }
