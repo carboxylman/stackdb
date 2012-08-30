@@ -271,7 +271,7 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
 	goto violation;
     }
     else if (cf_idata_prev->type != INST_CALL 
-	     || cf_idata_prev->type != INST_JMP) {
+	     && cf_idata_prev->type != INST_JMP) {
 	vwarn("no CALL/JMP instr before retaddr 0x%"PRIxADDR";"
 	      " possible false-positive violation!\n",
 	       retaddr);
