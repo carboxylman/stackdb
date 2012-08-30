@@ -226,6 +226,23 @@ typedef enum {
 } symbol_type_flag_t;
 
 typedef enum {
+    SYMBOL_VAR_TYPE_NONE      = 0,
+    SYMBOL_VAR_TYPE_ARG       = 1,
+    SYMBOL_VAR_TYPE_LOCAL     = 2,
+    SYMBOL_VAR_TYPE_GLOBAL    = 3,
+    __SYMBOL_VAR_TYPE_MAX,
+} symbol_var_type_t;
+extern char *SYMBOL_VAR_TYPE_STRINGS[];
+#define SYMBOL_VAR_TYPE(n) (((n) < __SYMBOL_VAR_TYPE_MAX) ? SYMBOL_VAR_TYPE_STRINGS[(n)] : NULL)
+
+typedef enum {
+    SYMBOL_VAR_TYPE_FLAG_NONE     = 0,
+    SYMBOL_VAR_TYPE_FLAG_ARG      = 1 << SYMBOL_VAR_TYPE_ARG,
+    SYMBOL_VAR_TYPE_FLAG_LOCAL    = 1 << SYMBOL_VAR_TYPE_LOCAL,
+    SYMBOL_VAR_TYPE_FLAG_GLOBAL   = 1 << SYMBOL_VAR_TYPE_GLOBAL,
+} symbol_var_type_flag_t;
+
+typedef enum {
     DATATYPE_VOID         = 0,
     DATATYPE_ARRAY        = 1,
     DATATYPE_STRUCT       = 2,
@@ -714,6 +731,32 @@ struct lsymbol *lsymbol_lookup_member(struct lsymbol *lsymbol,
 
 struct lsymbol *symbol_lookup_member(struct symbol *symbol,
 				     const char *name,const char *delim);
+
+/*
+ * Returns a clone of @lsymbol, with reference taken, and if @newchild
+ * is not NULL, @newchild is appended
+ */
+struct lsymbol *lsymbol_clone(struct lsymbol *lsymbol,struct symbol *newchild);
+
+/*
+ * Returns a list of lsymbols that correspond to the members of
+ * @lsymbol.  If @argsonly is set, only function argument members will
+ * be returned.  Only function or struct/enum types may have members, so
+ * expect NULL if you pass anything else!  If you do pass a valid
+ * @lsymbol, but it has no members of the kind you are looking (i.e.,
+ * how @argsonly is set), then an empty list will be returned.
+ *
+ * If @lsymbol has multiple levels (i.e., a hierarchy of nested
+ * struct/enum members), or a function with nested symtabs, only those
+ * members in the first level are returned!
+ * 
+ * This list *does* contain lsymbols that need to be released with
+ * lsymbol_release.
+ *
+ * @kinds - 0 means all, 1 means func args only, 2 means locals only
+ */
+struct array_list *lsymbol_get_members(struct lsymbol *lsymbol,
+				       symbol_var_type_flag_t kinds);
 
 /*
  * @symbol may be either a SYMBOL_TYPE_TYPE, a SYMBOL_TYPE_FUNCTION, or

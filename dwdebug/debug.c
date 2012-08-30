@@ -516,26 +516,23 @@ static struct lsymbol *__symbol_lookup_sym(struct symbol *symbol,
 struct lsymbol *lsymbol_lookup_member(struct lsymbol *lsymbol,
 				      const char *name,const char *delim) {
     struct lsymbol *ls;
-    struct array_list *chain;
     int i;
 
-    /* Very simple -- we just create a new lsymbol by cloning @lsymbol,
-     * then appending to its anon chain as we lookup members!
+    /*
+     * Very simple -- we just lookup @name in @symbol, then, prepend the
+     * first N - 1 items in @lsymbol's chain (i.e., not including
+     * @symbol itself, which is at the head of @ls's chain) to @ls, and
+     * RHOLD those N - 1 items.
      */
     ls = __symbol_lookup_sym(lsymbol->symbol,name,delim);
     if (!ls)
 	return NULL;
-    chain = array_list_clone(lsymbol->chain,array_list_len(lsymbol->chain));
-    /* We have to take refs to each symbol of the cloned chain. */
-    for (i = 0; i < array_list_len(chain); ++i)
-	symbol_hold((struct symbol *)array_list_item(chain,i));
 
-    /* Now we're going to actually use the new chain, append the old
-     * chain, replace the old chain on lsymbol, and free the old chain.
-     */
-    array_list_concat(chain,lsymbol->chain);
-    array_list_free(lsymbol->chain);
-    lsymbol->chain = chain;
+    array_list_prepend_sublist(ls->chain,lsymbol->chain,-1);
+
+    /* We have to take refs to each symbol of the cloned chain. */
+    for (i = 0; i < array_list_len(lsymbol->chain) - 1; ++i) 
+	symbol_hold((struct symbol *)array_list_item(ls->chain,i));
 
     /* This is a lookup function, so it has to hold a ref to its return
      * value.
@@ -543,6 +540,118 @@ struct lsymbol *lsymbol_lookup_member(struct lsymbol *lsymbol,
     lsymbol_hold(lsymbol);
 
     return lsymbol;
+}
+
+struct lsymbol *lsymbol_clone(struct lsymbol *lsymbol,struct symbol *newchild) {
+    struct lsymbol *ls;
+    struct array_list *chain;
+
+    chain = array_list_clone(lsymbol->chain,(newchild) ? 1 : 0);
+    ls = lsymbol_create(lsymbol->symbol,chain);
+
+    if (newchild)
+	lsymbol_append(ls,newchild);
+
+    /* This is a lookup function, so it has to hold a ref to its return
+     * value.
+     */
+    lsymbol_hold(ls);
+
+    return ls;
+}
+
+struct array_list *lsymbol_get_members(struct lsymbol *lsymbol,
+				       symbol_var_type_flag_t kinds) {
+    int numsyms = 0;
+    struct array_list *retval;
+    struct symbol *symbol = lsymbol->symbol;
+    struct symbol_instance *tmpi;
+    struct symbol *tmps;
+    struct lsymbol *lsymbol_new;
+    GHashTableIter iter;
+
+    if (!SYMBOL_IS_FULL(lsymbol->symbol)) {
+	verror("symbol %s is partial!\n",symbol_get_name(symbol));
+	return NULL;
+    }
+    else if (!SYMBOL_IST_STUN(symbol) 
+	     && !SYMBOL_IST_ENUM(symbol)
+	     && !SYMBOL_IST_FUNCTION(symbol)
+	     && !SYMBOL_IS_FUNCTION(symbol)) {
+	verror("bad symbol type %s!\n",SYMBOL_TYPE(symbol->type));
+	return NULL;
+    }
+
+    if (SYMBOL_IST_STUN(symbol)) {
+	numsyms += symbol->s.ti->d.su.count;
+    }
+    else if (SYMBOL_IST_ENUM(symbol)) {
+	numsyms += symbol->s.ti->d.e.count;
+    }
+    else if (SYMBOL_IST_FUNCTION(symbol)
+	     && ((kinds == SYMBOL_VAR_TYPE_FLAG_NONE) 
+		 || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG))) {
+	numsyms += symbol->s.ti->d.f.count;
+    }
+    else if (SYMBOL_IS_FUNCTION(symbol)) {
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG)) {
+	    numsyms += symbol->s.ii->d.f.count;
+	}
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_LOCAL)) {
+	    numsyms += g_hash_table_size(symbol->s.ii->d.f.symtab->tab) \
+		- symbol->s.ii->d.f.count;
+	}
+    }
+
+    retval = array_list_create(numsyms);
+    if (numsyms == 0)
+	return retval;
+
+    if (SYMBOL_IST_STUN(symbol)) {
+	list_for_each_entry(tmpi,&symbol->s.ti->d.su.members,d.v.member) {
+	    tmps = tmpi->d.v.member_symbol;
+	    lsymbol_new = lsymbol_clone(lsymbol,tmps);
+	    array_list_append(retval,lsymbol_new);
+	}
+    }
+    else if (SYMBOL_IST_ENUM(symbol)) {
+	list_for_each_entry(tmpi,&symbol->s.ti->d.e.members,d.v.member) {
+	    tmps = tmpi->d.v.member_symbol;
+	    lsymbol_new = lsymbol_clone(lsymbol,tmps);
+	    array_list_append(retval,lsymbol_new);
+	}
+    }
+    else if (SYMBOL_IST_FUNCTION(symbol)
+	     && ((kinds == SYMBOL_VAR_TYPE_FLAG_NONE) 
+		 || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG))) {
+	list_for_each_entry(tmpi,&symbol->s.ti->d.f.args,d.v.member) {
+	    tmps = tmpi->d.v.member_symbol;
+	    lsymbol_new = lsymbol_clone(lsymbol,tmps);
+	    array_list_append(retval,lsymbol_new);
+	}
+    }
+    else if (SYMBOL_IS_FUNCTION(symbol)) {
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG)) {
+	    list_for_each_entry(tmpi,&symbol->s.ii->d.f.args,d.v.member) {
+		tmps = tmpi->d.v.member_symbol;
+		lsymbol_new = lsymbol_clone(lsymbol,tmps);
+		array_list_append(retval,lsymbol_new);
+	    }
+	}
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_LOCAL)) {
+	    g_hash_table_iter_init(&iter,symbol->s.ii->d.f.symtab->tab);
+	    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tmps)) {
+		lsymbol_new = lsymbol_clone(lsymbol,tmps);
+		array_list_append(retval,lsymbol_new);
+	    }
+	}
+    }
+
+    return retval;
 }
 
 struct lsymbol *symbol_lookup_member(struct symbol *symbol,
@@ -3093,7 +3202,7 @@ REFCNT symbol_release(struct symbol *symbol) {
 	vdebug(10,LOG_D_SYMBOL,"symbol %s//%s at %"PRIxSMOFFSET":     ",
 	       SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
 	retval = RPUTNF(symbol);
-	retval = RPUT(symbol,symbol);
+	//retval = RPUT(symbol,symbol);
 	if (retval)
 	    vdebugc(10,LOG_D_SYMBOL,"  refcnt %d\n",retval);
 	else 
@@ -4456,6 +4565,13 @@ char *SYMBOL_TYPE_STRINGS[] = {
     "var",
     "function",
     "label"
+};
+
+char *SYMBOL_VAR_TYPE_STRINGS[] = {
+    "none",
+    "arg",
+    "local",
+    "global",
 };
 
 char *SYMBOL_SOURCE_STRINGS[] = {
