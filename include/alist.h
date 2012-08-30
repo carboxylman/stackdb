@@ -194,6 +194,41 @@ static inline int array_list_prepend(struct array_list *list,void *element) {
     return 0;
 }
 
+static inline int array_list_prepend_sublist(struct array_list *list,
+					  struct array_list *prelist,
+					  int howmany) {
+    void **lltmp;
+    int i;
+
+    if (howmany < 0)
+	howmany = prelist->len + howmany;
+    else if (howmany == 0)
+	return 0;
+    else if (howmany > prelist->len)
+	return -1;
+
+    /* allocate space for another entry if necessary */
+    if (list->len == list->alloc_len) {
+	if (!(lltmp = (void **)realloc(list->list,
+				       (list->alloc_len + howmany)*sizeof(void *)))) {
+	    return -1;
+	}
+	list->list = lltmp;
+	list->alloc_len += howmany;
+    }
+
+    /* shift the whole list over by howmany, ugh */
+    for (i = list->len - 1; i > -1; --i) {
+	list->list[i + howmany] = list->list[i];
+    }
+
+    memcpy(list->list,prelist->list,howmany * (sizeof(void *)));
+
+    list->len += howmany;
+
+    return 0;
+}
+
 static inline void *array_list_remove(struct array_list *list) {
     if (list->len) 
 	return list->list[--list->len];
