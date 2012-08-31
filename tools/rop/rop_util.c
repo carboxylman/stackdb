@@ -188,6 +188,9 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
     int i;
     int retval;
 
+    if (!rop_data->status.ingadget)
+	return 0;
+
     sp = target_read_reg(target,target->spregno);
     if (errno) {
 	verror("could not read SP!\n");
