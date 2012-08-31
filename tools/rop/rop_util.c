@@ -151,6 +151,14 @@ int probe_rop_checkret_entry_pre(struct probe *probe,void *data,
     rop_data->status.current_ret_addr = 0;
     ++rop_data->status.total;
 
+    /*
+     * If the gadget type is MID_MID, we need to insert the gadget's ret
+     * probe; the ret_post handler will then remove it after it has
+     * single stepped through the exit probe's original instruction.
+     */
+    if (rop_data->type == GADGET_TYPE_MID_MID) 
+	probe_hard_insert(rop_data->ret_probe);
+
     return rop_probe->pre_handler(rop_data->rop_probe,
 				  rop_data->rop_probe->handler_data,trigger);
 }
@@ -261,20 +269,61 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
 	vwarn("no CF instr before retaddr 0x%"PRIxADDR"; "
 	      " possible false-positive violation!\n",
 	       retaddr);
+
+	rop_data->status.isfpviolation = 1;
+	++rop_data->status.fpviolations;
 	goto violation;
     }
     else if ((OFFSET)(retaddr - caller_start) 
 	     != (cf_idata_prev->offset + cf_idata_prev->size)) {
-	vwarn("no CF instr directly before"
-	       " retaddr 0x%"PRIxADDR"; possible false-positive violation!\n",
-	       retaddr);
+	//vwarn("no CF instr directly before retaddr 0x%"PRIxADDR"!\n",
+	//       retaddr);
+
 	goto violation;
     }
     else if (cf_idata_prev->type != INST_CALL 
-	     && cf_idata_prev->type != INST_JMP) {
-	vwarn("no CALL/JMP instr before retaddr 0x%"PRIxADDR";"
+	     && cf_idata_prev->type != INST_JMP
+	     && cf_idata_prev->type != INST_JCC) {
+	vwarn("no CALL/JMP/Jcc instr before retaddr 0x%"PRIxADDR";"
 	      " possible false-positive violation!\n",
 	       retaddr);
+
+	rop_data->status.isfpviolation = 1;
+	++rop_data->status.fpviolations;
+	goto violation;
+    }
+    else if (cf_idata_prev->type == INST_JMP) {
+	/* Do not warn about these, but count them up and list them
+	 * later.
+	 */
+	if (!rop_data->status.jmpfpviolations) 
+	    vwarn("JMP instr before retaddr 0x%"PRIxADDR";"
+		  " possible false-positive violation; only warning once!\n",
+		  retaddr);
+
+	rop_data->status.isjmpfpviolation = 1;
+	++rop_data->status.jmpfpviolations;
+
+	rop_data->status.isfpviolation = 1;
+	++rop_data->status.fpviolations;
+
+	goto violation;
+    }
+    else if (cf_idata_prev->type == INST_JCC) {
+	/* Do not warn about these, but count them up and list them
+	 * later.
+	 */
+	if (!rop_data->status.jccfpviolations) 
+	    vwarn("Jcc instr before retaddr 0x%"PRIxADDR";"
+		  " possible false-positive violation; only warning once!\n",
+		  retaddr);
+
+	rop_data->status.isjccfpviolation = 1;
+	++rop_data->status.jccfpviolations;
+
+	rop_data->status.isfpviolation = 1;
+	++rop_data->status.fpviolations;
+
 	goto violation;
     }
     else if (cf_idata_prev->cf.target == 0) {
@@ -325,7 +374,13 @@ int probe_rop_checkret_ret_post(struct probe *probe,void *data,
     rop_data->status.isviolation = 0;
     rop_data->status.current_ret_addr = 0;
 
-    return 0;
+    /*
+     * If this is a GADGET_TYPE_MID_MID, we remove the exit probe, too!
+     */
+    if (rop_data->type == GADGET_TYPE_MID_MID)
+	return 2;
+    else 
+	return 0;
 }
 
 int probe_rop_checkret_cont_pre(struct probe *probe,void *data,
@@ -532,6 +587,15 @@ struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
 	    verror("could not register %s!\n",namebuf);
 	    goto errout;
 	}
+
+	/*
+	 * Now, suddenly, if the gadget is MID_MID, we *remove* the
+	 * probepoint for the exit probe.  It gets dynamically inserted
+	 * if we hit the gadget entry point probe, and it removes itself
+	 * in its post handler.
+	 */
+	if (rop_data->type == GADGET_TYPE_MID_MID) 
+	    probe_hard_remove(rop_data->ret_probe);
     }
 
     return rop_probe;

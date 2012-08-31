@@ -96,7 +96,8 @@ int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
 	    ptmp = (struct probe *)list->data;
 	    /* Signal each of the sinks. */
 	    if (ptmp->pre_handler) {
-		if ((rc = ptmp->pre_handler(ptmp,ptmp->handler_data,trigger))) {
+		rc = ptmp->pre_handler(ptmp,ptmp->handler_data,trigger);
+		if (rc == 1) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
@@ -124,7 +125,8 @@ int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
 	    ptmp = (struct probe *)list->data;
 	    /* Signal each of the sinks. */
 	    if (ptmp->post_handler) {
-		if ((rc = ptmp->post_handler(ptmp,ptmp->handler_data,trigger))) {
+		rc = ptmp->post_handler(ptmp,ptmp->handler_data,trigger);
+		if (rc == 1) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
@@ -353,15 +355,17 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	probepoint->debugregnum = -1;
     }
     /* Otherwise do software. */
-    else if (probepoint->breakpoint_orig_mem
-	     && probepoint->breakpoint_orig_mem_len > 0) {
-	/* restore the original instruction */
-	if (target_write_addr(target,probepoint->addr,
-			      probepoint->breakpoint_orig_mem_len,
-			      probepoint->breakpoint_orig_mem,NULL) \
-	    != probepoint->breakpoint_orig_mem_len) {
-	    verror("could not restore orig instrs for bp remove");
-	    return 1;
+    else {
+	if (probepoint->breakpoint_orig_mem
+	    && probepoint->breakpoint_orig_mem_len > 0) {
+	    /* restore the original instruction */
+	    if (target_write_addr(target,probepoint->addr,
+				  probepoint->breakpoint_orig_mem_len,
+				  probepoint->breakpoint_orig_mem,NULL) \
+		!= probepoint->breakpoint_orig_mem_len) {
+		verror("could not restore orig instrs for bp remove");
+		return 1;
+	    }
 	}
 
 	if (target_notify_sw_breakpoint(target,probepoint->addr,0)) 
@@ -1725,6 +1729,7 @@ int probepoint_bp_handler(struct target *target,
     struct probe *probe;
     REGVAL ipval;
     int doit = 0;
+    int rc;
 
     vdebug(5,LOG_P_PROBEPOINT,"handling bp at ");
     LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
@@ -1777,7 +1782,8 @@ int probepoint_bp_handler(struct target *target,
 		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
 		vdebugc(4,LOG_P_PROBEPOINT,"\n");
 
-		if (probe->pre_handler(probe,probe->handler_data,probe))
+		rc = probe->pre_handler(probe,probe->handler_data,probe);
+		if (rc == 1) 
 		    probe_disable(probe);
 	    }
 	    else if (0 && probe->sinks) {
@@ -2074,6 +2080,8 @@ int probepoint_ss_handler(struct target *target,
     struct probe *probe;
     struct action *action;
     struct action *taction;
+    int noreinject = 0;
+    int rc;
 
     /* First, if we were running an action that needed single stepping,
      * decrement the single step counter.
@@ -2136,8 +2144,12 @@ int probepoint_ss_handler(struct target *target,
 		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
 		vdebugc(4,LOG_P_PROBEPOINT,"\n");
 
-		if (probe->post_handler(probe,probe->handler_data,probe)) 
+		rc = probe->post_handler(probe,probe->handler_data,probe);
+		if (rc == 1) 
 		    probe_disable(probe);
+		else if (rc == 2) 
+		    /* don't reinject the probe! */
+		    noreinject = 1;
 	    }
 	    else if (0 && probe->sinks) {
 		vdebug(4,LOG_P_PROBEPOINT,
@@ -2164,21 +2176,28 @@ int probepoint_ss_handler(struct target *target,
 	    array_list_item(target->sstep_stack,
 			    array_list_len(target->sstep_stack) - 1);
 
-    if (probepoint->style == PROBEPOINT_SW) {
-	/* Re-inject a breakpoint for the next round */
-	if (target_write_addr(target,probepoint->addr,
-			      target->breakpoint_instrs_len,
-			      target->breakpoint_instrs,NULL) \
-	    != target->breakpoint_instrs_len) {
-	    verror("could not write breakpoint instrs for bp re-insert, disabling!\n");
-	    probepoint->state = PROBE_DISABLED;
-	    free(probepoint->breakpoint_orig_mem);
+    if (!noreinject) {
+	if (probepoint->style == PROBEPOINT_SW) {
+	    /* Re-inject a breakpoint for the next round */
+	    if (target_write_addr(target,probepoint->addr,
+				  target->breakpoint_instrs_len,
+				  target->breakpoint_instrs,NULL)	\
+		!= target->breakpoint_instrs_len) {
+		verror("could not write breakpoint instrs for bp re-insert, disabling!\n");
+		probepoint->state = PROBE_DISABLED;
+		free(probepoint->breakpoint_orig_mem);
+	    }
+	    else 
+		probepoint->state = PROBE_BP_SET;
 	}
 	else 
 	    probepoint->state = PROBE_BP_SET;
     }
-    else 
-	probepoint->state = PROBE_BP_SET;
+    else {
+	free(probepoint->breakpoint_orig_mem);
+	probepoint->breakpoint_orig_mem = NULL;
+	__probepoint_remove(probepoint);
+    }
 
     /* cleanup oneshot actions! */
     list_for_each_entry_safe(action,taction,&probepoint->actions,action) {

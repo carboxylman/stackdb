@@ -32,15 +32,45 @@ struct rop_gadget {
 
 struct rop_checkret_status {
     uint8_t ingadget:1,
-	    isviolation:1;
+	    isviolation:1,
+	    isfpviolation:1,
+	    isjmpfpviolation:1,
+	    isjccfpviolation:1;
     uint16_t violations;
+    uint16_t fpviolations;
+    uint16_t jmpfpviolations;
+    uint16_t jccfpviolations;
     uint16_t total;
     ADDR current_ret_addr;
 };
 
 typedef enum {
+    /*
+     * Starts at start of real instr, and ends at end of real instr.
+     * This means the entry/exit probes are always in place, never get
+     * removed, and are always hit whether the gadget is validly used or
+     * not.
+     */
     GADGET_TYPE_REAL = 1,
+    /*
+     * Starts in middle of real instr, and ends at end of real instr.
+     * This means that we need a guard probe on the real instruction
+     * that includes the gadget's first instruction, so that we can
+     * remove the entry probe until we have executed the real
+     * instruction.  Once we have done so, we put both the guard probe
+     * and entry probe back in.
+     */
     GADGET_TYPE_MID_REAL,
+    /*
+     * Starts in the middle of a real instr, and ends in the middle of a
+     * real instr.
+     *
+     * This means that we need a guard probe on the real instr
+     * containing the gadget's first instr, so that we can remove the
+     * entry point.  Initially, the gadget exit probe will NOT be
+     * inserted.  If the gadget entry probe is inserted, we'll insert
+     * the gadget exit probe; otherwise we won't!
+     */
     GADGET_TYPE_MID_MID,
 } rop_gadget_t;
 

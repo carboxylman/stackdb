@@ -100,7 +100,8 @@ int rop_handler(struct probe *probe,void *data,struct probe *trigger) {
     fflush(stderr);
 
     if (rop_status->isviolation) {
-	fprintf(stdout,"%s: CFI violation (ROP?!)",probe_name(probe));
+	fprintf(stdout,"%s: CFI violation %s",probe_name(probe),
+		rop_status->isfpviolation ? "(false pos?)" : "");
 
 	buflen = 64 + strlen(rop_data->gadget->meta);
 	buf = malloc(buflen);
@@ -112,9 +113,10 @@ int rop_handler(struct probe *probe,void *data,struct probe *trigger) {
     }
     else
 	fprintf(stdout,"%s: CFI clean",probe_name(probe));
-    fprintf(stdout," (retaddr=0x%"PRIxADDR",violations=%d,total=%d)\n",
+    fprintf(stdout," (retaddr=0x%"PRIxADDR",violations=%d,total=%d,fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d)\n",
 	    rop_status->current_ret_addr,rop_status->violations,
-	    rop_status->total);
+	    rop_status->total,rop_status->fpviolations,
+	    rop_status->jmpfpviolations,rop_status->jccfpviolations);
 
     fflush(stdout);
 
