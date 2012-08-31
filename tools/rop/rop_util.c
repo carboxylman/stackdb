@@ -493,9 +493,9 @@ struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
     /* Disassemble gadget, looking for exactly one RET. */
     if (disasm_get_control_flow_offsets(target,INST_CF_RET,gbuf,glen,
 					&cf_idata_list,rg->start,1)) {
-	verror("could not disassemble code in range 0x%"PRIxADDR"-0x%"PRIxADDR
+	verror("could not disassemble code at 0x%"PRIxADDR"-0x%"PRIxADDR
 	       " containing gadget at 0x%"PRIxADDR"!\n",
-	       cont_start,cont_end,rg->start);
+	       rg->start,rg->end,rg->start);
 	goto errout;
     }
     if (array_list_len(cf_idata_list) == 0) {
