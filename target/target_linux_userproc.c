@@ -795,15 +795,15 @@ static int linux_userproc_detach(struct target *target) {
 
     errno = 0;
     if (ptrace(PTRACE_DETACH,linux_userproc_pid(target),NULL,NULL) < 0) {
-	verror("ptrace detach %d failed: %s\n",linux_userproc_pid(target),
-	       strerror(errno));
+	vdebug(3,LOG_T_LUP,"ptrace detach %d failed: %s\n",
+	       linux_userproc_pid(target),strerror(errno));
 	kill(linux_userproc_pid(target),SIGCONT);
-	return 1;
+	//return 1;
     }
 
     kill(linux_userproc_pid(target),SIGCONT);
 
-    vdebug(3,LOG_T_LUP,"ptrace detach %d succeeded.\n",linux_userproc_pid(target));
+    vdebug(3,LOG_T_LUP,"ptrace detach %d done.\n",linux_userproc_pid(target));
     lstate->attached = 0;
 
     return 0;
@@ -1287,6 +1287,13 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	    vdebug(5,LOG_T_LUP,"target %d stopped with syscall trap signo %d\n",
 		   pid,lstate->last_status);
 	    lstate->last_signo = -1;
+	}
+	else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
+	    vdebug(5,LOG_T_LUP,"target %d exiting (%d)! detaching now.\n",
+		   pid,lstate->last_status);
+	    lstate->last_signo = -1;
+	    linux_userproc_detach(target);
+	    return TSTATUS_DONE;
 	}
 	else if (lstate->last_status == SIGTRAP) {
 	    /* Don't deliver debug traps! */
