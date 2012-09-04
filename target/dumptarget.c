@@ -54,21 +54,23 @@ struct array_list *shadow_stack;
 
 int doit = 0;
 
-target_status_t cleanup() {
+void cleanup() {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
     target_status_t retval;
     struct bsymbol *bsymbol;
 
-    g_hash_table_iter_init(&iter,probes);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,
-				  (gpointer)&probe)) {
-	probe_unregister(probe,1);
-	probe_free(probe,1);
+    if (probes) {
+	g_hash_table_iter_init(&iter,probes);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer)&key,
+				      (gpointer)&probe)) {
+	    probe_unregister(probe,1);
+	    probe_free(probe,1);
+	}
     }
-    retval = target_close(t);
+    target_close(t);
     target_free(t);
 
     if (probes) 
@@ -1032,7 +1034,7 @@ int main(int argc,char **argv) {
 	exit:
 	    fflush(stderr);
 	    fflush(stdout);
-	    tstat = cleanup();
+	    cleanup();
 	    if (tstat == TSTATUS_DONE)  {
 		printf("pid %d finished.\n",pid);
 		exit(0);
