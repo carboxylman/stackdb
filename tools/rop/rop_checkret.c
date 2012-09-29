@@ -132,9 +132,7 @@ int main(int argc,char **argv) {
     char **exeargs = NULL;
     char *exeoutfile = NULL;
     char *exeerrfile = NULL;
-#ifdef ENABLE_XENACCESS
     char *domain = NULL;
-#endif
     char ch;
     int debug = -1;
     char *optargc;
@@ -151,13 +149,17 @@ int main(int argc,char **argv) {
     struct probe *probe;
     int i;
     GHashTable *gadgets;
-
+    struct target_opts topts = {
+	.bpmode = THREAD_BPMODE_STRICT,
+    };
+    /*
     struct dump_info udn = {
 	.stream = stderr,
 	.prefix = "",
 	.detail = 1,
 	.meta = 1,
     };
+    */
 
     /* Find the '--' and save the remaining args so they can be passed
      * to linux_userproc_launch below.  Truncate argc and argv to just
@@ -174,7 +176,7 @@ int main(int argc,char **argv) {
 	}
     }
 
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dvsl:F:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:eE:O:dvsl:F:L")) != -1) {
 	switch (ch) {
 	case 'd':
 	    ++debug;
@@ -185,6 +187,9 @@ int main(int argc,char **argv) {
 	case 'm':
 #ifdef ENABLE_XENACCESS
 	    domain = optarg;
+	    /* Xen does not support STRICT! */
+	    if (topts.bpmode == THREAD_BPMODE_STRICT)
+		++topts.bpmode;
 #else
 	    verror("xen support not compiled on this host!\n");
 	    exit(-1);
@@ -226,6 +231,13 @@ int main(int argc,char **argv) {
 	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
 	    free(optargc);
 	    exit(-1);
+	case 'L':
+	    ++topts.bpmode;
+	    if (topts.bpmode > THREAD_BPMODE_LOOSE) {
+		fprintf(stderr,"ERROR: bad bpmode!\n");
+		exit(-1);
+	    }
+	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -286,7 +298,7 @@ int main(int argc,char **argv) {
 	exit(-2);
     }
 
-    if (target_open(t)) {
+    if (target_open(t,&topts)) {
 	fprintf(stderr,"could not open target!\n");
 	exit(-4);
     }
@@ -309,7 +321,7 @@ int main(int argc,char **argv) {
     gadgets = rop_load_gadget_file(filename);
     g_hash_table_iter_init(&iter,gadgets);
     while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&gadget)) {
-	probe = probe_rop_checkret(t,gadget,NULL,rop_handler,NULL);
+	probe = probe_rop_checkret(t,TID_GLOBAL,gadget,NULL,rop_handler,NULL);
 	if (!probe) {
 	    fprintf(stderr,"could not install probe on gadget at 0x%"PRIxADDR"\n",
 		    gadget->start);
@@ -330,7 +342,7 @@ int main(int argc,char **argv) {
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == TSTATUS_PAUSED) {
-	    if (LUP_AT_SYSCALL(t)) {
+	    if (!domain && linux_userproc_at_syscall(t,TID_GLOBAL)) {
 		target_resume(t);
 		continue;
 	    }
@@ -338,7 +350,7 @@ int main(int argc,char **argv) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    printf("target interrupted at 0x%" PRIxREGVAL "\n",
-		   target_read_reg(t,t->ipregno));
+		   target_read_reg(t,TID_GLOBAL,t->ipregno));
 
 	    if (target_resume(t)) {
 		fprintf(stderr,"could not resume target\n");
@@ -359,7 +371,7 @@ int main(int argc,char **argv) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    printf("target interrupted at 0x%"PRIxREGVAL" -- NOT PAUSED (%d)\n",
-		   target_read_reg(t,t->ipregno),tstat);
+		   target_read_reg(t,TID_GLOBAL,t->ipregno),tstat);
 	    goto err;
 	}
     }

@@ -37,16 +37,13 @@ struct symbol *target_create_synthetic_type_pointer(struct target *target,
     return retval;
 }
 
-
 struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
-			       struct memregion *region,
-			       struct memrange *range) {
+			       struct memregion *region) {
     struct bsymbol *bsymbol = (struct bsymbol *)malloc(sizeof(struct bsymbol));
     memset(bsymbol,0,sizeof(struct bsymbol *));
 
     bsymbol->lsymbol = lsymbol;
     bsymbol->region = region;
-    bsymbol->range = range;
     bsymbol->refcnt = 0;
 
     lsymbol_hold(lsymbol);

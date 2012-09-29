@@ -99,7 +99,8 @@ struct rop_checkret_data {
 };
 
 GHashTable *rop_load_gadget_file(char *filename);
-struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
+struct probe *probe_rop_checkret(struct target *target,tid_t tid,
+				 struct rop_gadget *rg,
 				 probe_handler_t pre_handler,
 				 probe_handler_t post_handler,
 				 void *handler_data);

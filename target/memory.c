@@ -99,6 +99,32 @@ struct memregion *addrspace_find_region(struct addrspace *space,char *name) {
     return region;
 }
 
+struct memregion *addrspace_match_region_name(struct addrspace *space,
+					      region_type_t rtype,char *name) {
+    struct memregion *region;
+
+    list_for_each_entry(region,&space->regions,region) {
+	if (region->type == rtype && strcmp(name,region->name) == 0)
+	    goto out;
+    }
+    return NULL;
+ out:
+    return region;
+}
+
+struct memregion *addrspace_match_region_start(struct addrspace *space,
+					       region_type_t rtype,ADDR start) {
+    struct memregion *region;
+
+    list_for_each_entry(region,&space->regions,region) {
+	if (region->type == rtype && region->base_load_addr == start)
+	    goto out;
+    }
+    return NULL;
+ out:
+    return region;
+}
+
 int addrspace_find_range_real(struct addrspace *space,ADDR addr,
 			      struct memregion **region_saveptr,
 			      struct memrange **range_saveptr) {
@@ -204,6 +230,15 @@ struct memregion *memregion_create(struct addrspace *space,
 
 struct target *memregion_target(struct memregion *region) {
     return (region->space) ? region->space->target : NULL;
+}
+
+struct memrange *memregion_match_range(struct memregion *region,ADDR start) {
+    struct memrange *range;
+    list_for_each_entry(range,&region->ranges,range) {
+	if (range->start == start)
+	    return range;
+    }
+    return NULL;
 }
 
 int memregion_contains_real(struct memregion *region,ADDR addr) {

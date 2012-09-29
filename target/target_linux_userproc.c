@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
+#include <dirent.h>
 
 #include <gelf.h>
 #include <elf.h>
@@ -42,6 +43,8 @@
 #include "target.h"
 #include "target_linux_userproc.h"
 
+#define EF_RF (0x00010000)
+
 /*
  * Prototypes.
  */
@@ -52,6 +55,7 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 				     struct debugfile_load_opts **dfoptlist);
 
 static int linux_userproc_init(struct target *target);
+static int linux_userproc_postloadinit(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
 static int linux_userproc_detach(struct target *target);
 static int linux_userproc_fini(struct target *target);
@@ -62,7 +66,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region);
 static target_status_t linux_userproc_status(struct target *target);
-static int linux_userproc_pause(struct target *target);
+static int linux_userproc_pause(struct target *target,int nowait);
 static int linux_userproc_resume(struct target *target);
 static target_status_t linux_userproc_monitor(struct target *target);
 static target_status_t linux_userproc_poll(struct target *target,
@@ -71,34 +75,53 @@ static target_status_t linux_userproc_poll(struct target *target,
 static unsigned char *linux_userproc_read(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
-					  unsigned char *buf,
-					  void *targetspecdata);
+					  unsigned char *buf);
 static unsigned long linux_userproc_write(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
-					  unsigned char *buf,
-					  void *targetspecdata);
+					  unsigned char *buf);
 static char *linux_userproc_reg_name(struct target *target,REG reg);
-static REGVAL linux_userproc_read_reg(struct target *target,REG reg);
-static int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value);
-static int linux_userproc_flush_context(struct target *target);
-static REG linux_userproc_get_unused_debug_reg(struct target *target);
-static int linux_userproc_set_hw_breakpoint(struct target *target,
+static REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg);
+
+static tid_t linux_userproc_gettid(struct target *target);
+static void linux_userproc_free_thread_state(struct target *target,void *state);
+static struct target_thread *linux_userproc_load_thread(struct target *target,
+							tid_t tid,int force);
+static struct target_thread *linux_userproc_load_current_thread(struct target *target,
+								int force);
+static int linux_userproc_load_all_threads(struct target *target,int force);
+static int linux_userproc_pause_thread(struct target *target,tid_t tid,
+				       int nowait);
+static int linux_userproc_flush_thread(struct target *target,tid_t tid);
+static int linux_userproc_flush_current_thread(struct target *target);
+static int linux_userproc_flush_all_threads(struct target *target);
+static char *linux_userproc_thread_tostring(struct target *target,tid_t tid,int detail,
+					    char *buf,int bufsiz);
+
+static REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg);
+static int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
+				    REGVAL value);
+static REG linux_userproc_get_unused_debug_reg(struct target *target,tid_t tid);
+static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG num,ADDR addr);
-static int linux_userproc_set_hw_watchpoint(struct target *target,
+static int linux_userproc_set_hw_watchpoint(struct target *target,tid_t tid,
 					    REG num,ADDR addr,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize);
-static int linux_userproc_unset_hw_breakpoint(struct target *target,
+static int linux_userproc_unset_hw_breakpoint(struct target *target,tid_t tid,
 					      REG num);
-static int linux_userproc_unset_hw_watchpoint(struct target *target,
+static int linux_userproc_unset_hw_watchpoint(struct target *target,tid_t tid,
 					      REG num);
-int linux_userproc_disable_hw_breakpoints(struct target *target);
-int linux_userproc_enable_hw_breakpoints(struct target *target);
+int linux_userproc_disable_hw_breakpoints(struct target *target,tid_t tid);
+int linux_userproc_enable_hw_breakpoints(struct target *target,tid_t tid);
+int linux_userproc_disable_hw_breakpoint(struct target *target,tid_t tid,
+					 REG dreg);
+int linux_userproc_enable_hw_breakpoint(struct target *target,tid_t tid,
+					REG dreg);
 int linux_userproc_notify_sw_breakpoint(struct target *target,ADDR addr,
 					int notification);
-int linux_userproc_singlestep(struct target *target);
-int linux_userproc_singlestep_end(struct target *target);
+int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp);
+int linux_userproc_singlestep_end(struct target *target,tid_t tid);
 
 /*
  * Set up the target interface for this library.
@@ -111,6 +134,7 @@ struct target_ops linux_userspace_process_ops = {
     .loadspaces = linux_userproc_loadspaces,
     .loadregions = linux_userproc_loadregions,
     .loaddebugfiles = linux_userproc_loaddebugfiles,
+    .postloadinit = linux_userproc_postloadinit,
     .status = linux_userproc_status,
     .pause = linux_userproc_pause,
     .resume = linux_userproc_resume,
@@ -119,9 +143,25 @@ struct target_ops linux_userspace_process_ops = {
     .read = linux_userproc_read,
     .write = linux_userproc_write,
     .regname = linux_userproc_reg_name,
+    .dwregno = linux_userproc_dw_reg_no,
+
+    .gettid = linux_userproc_gettid,
+    .free_thread_state = linux_userproc_free_thread_state,
+    /* There are never any untracked threads in this target. */
+    .list_available_tids = target_list_tids,
+    /* There are never any untracked threads in this target. */
+    .load_available_threads = linux_userproc_load_all_threads,
+    .load_thread = linux_userproc_load_thread,
+    .load_current_thread = linux_userproc_load_current_thread,
+    .load_all_threads = linux_userproc_load_all_threads,
+    .pause_thread = linux_userproc_pause_thread,
+    .flush_thread = linux_userproc_flush_thread,
+    .flush_current_thread = linux_userproc_flush_current_thread,
+    .flush_all_threads = linux_userproc_flush_all_threads,
+    .thread_tostring = linux_userproc_thread_tostring,
+
     .readreg = linux_userproc_read_reg,
     .writereg = linux_userproc_write_reg,
-    .flush_context = linux_userproc_flush_context,
     .get_unused_debug_reg = linux_userproc_get_unused_debug_reg,
     .set_hw_breakpoint = linux_userproc_set_hw_breakpoint,
     .set_hw_watchpoint = linux_userproc_set_hw_watchpoint,
@@ -129,6 +169,8 @@ struct target_ops linux_userspace_process_ops = {
     .unset_hw_watchpoint = linux_userproc_unset_hw_watchpoint,
     .disable_hw_breakpoints = linux_userproc_disable_hw_breakpoints,
     .enable_hw_breakpoints = linux_userproc_enable_hw_breakpoints,
+    .disable_hw_breakpoint = linux_userproc_disable_hw_breakpoint,
+    .enable_hw_breakpoint = linux_userproc_enable_hw_breakpoint,
     .notify_sw_breakpoint = linux_userproc_notify_sw_breakpoint,
     .singlestep = linux_userproc_singlestep,
     .singlestep_end = linux_userproc_singlestep_end,
@@ -140,22 +182,103 @@ struct target_ops linux_userspace_process_ops = {
  * minimum so we can tell the user about it.
  */
 #define INITIAL_PTRACE_OPTS \
-    PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT
+    PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXIT
 
 /**
  ** These are the only user-visible functions.
  **/
 
-int linux_userproc_last_signo(struct target *target) {
-    if (target)
-	return ((struct linux_userproc_state *)target->state)->last_signo;
-    return -1;
+int linux_userproc_last_signo(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    if (!target)
+	return -1;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    return ((struct linux_userproc_thread_state *)tthread->state)->last_signo;
 }
 
-int linux_userproc_last_status(struct target *target) {
-    if (target)
-	return ((struct linux_userproc_state *)target->state)->last_status;
-    return -1;
+int linux_userproc_last_status(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    if (!target)
+	return -1;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    return ((struct linux_userproc_thread_state *)tthread->state)->last_status;
+}
+
+int linux_userproc_at_syscall(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    if (!target)
+	return -1;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    return ((struct linux_userproc_thread_state *)tthread->state)->last_status \
+	== (SIGTRAP | 0x80);
+}
+
+int linux_userproc_at_exec(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    if (!target)
+	return -1;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    return ((struct linux_userproc_thread_state *)tthread->state)->last_status \
+	== (SIGTRAP | (PTRACE_EVENT_EXEC << 8));
+}
+
+int linux_userproc_at_exit(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    if (!target)
+	return -1;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    return ((struct linux_userproc_thread_state *)tthread->state)->last_status \
+	== (SIGTRAP | (PTRACE_EVENT_EXIT<<8));
+}
+
+int linux_userproc_pid(struct target *target) {
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
+
+    if (!lstate)
+	return -1;
+
+    return lstate->pid;
 }
 
 /*
@@ -295,6 +418,7 @@ struct target *linux_userproc_attach(int pid,
     memset(lstate,0,sizeof(*lstate));
 
     lstate->pid = pid;
+    lstate->current_tid = 0;
 
     target->state = lstate;
 
@@ -452,6 +576,7 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 
     if ((pid = fork()) > 0) {
 	lstate->pid = pid;
+	lstate->current_tid = 0;
 	
 	/* Parent; wait for ptrace to signal us. */
 	vdebug(3,LOG_T_LUP,"waiting for ptrace traceme pid %d to exec\n",pid);
@@ -648,7 +773,11 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     else if (WIFCONTINUED(pstatus)) {
 	goto again2;
     }
-    else if (WIFSIGNALED(pstatus) || WIFEXITED(pstatus)) {
+    else if (WIFSIGNALED(pstatus)) {
+	verror("pid %d signaled (%d) in initial tracing!\n",pid,WTERMSIG(pstatus));
+	goto again2;
+    }
+    else if (WIFEXITED(pstatus)) {
 	/* yikes, it was sigkill'd out from under us! */
 	/* XXX: is error good enough?  The pid is gone; we should
 	 * probably dump this target.
@@ -674,6 +803,19 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 	goto errout;
     }
     */
+
+    /* Clear the status bits right now. */
+    errno = 0;
+    if (ptrace(PTRACE_POKEUSER,pid,offsetof(struct user,u_debugreg[6]),0)) {
+	verror("could not clear status debug reg, continuing anyway: %s!\n",
+	       strerror(errno));
+	errno = 0;
+    }
+    else {
+	vdebug(5,LOG_T_LUP,
+	       "cleared status debug reg 6 for pid %d\n",pid);
+    }
+
     return target;
 
  errout:
@@ -686,29 +828,661 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     return NULL;
 }
 
+int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child) {
+    struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    char buf[256];
+    int pid;
+    struct linux_userproc_thread_state *tstate;
+    struct stat sbuf;
+
+    lstate = (struct linux_userproc_state *)target->state;
+
+    if (!lstate) {
+	errno = EFAULT;
+	return 1;
+    }
+    if (!lstate->attached) {
+	verror("cannot attach to thread until process is attached to!\n");
+	errno = EINVAL;
+	return 1;
+    }
+
+    pid = lstate->pid;
+
+    vdebug(5,LOG_T_LUP,
+	   "pid %d parent thread %"PRIiTID" child thread %"PRIiTID"\n",
+	   pid,parent,child);
+
+    snprintf(buf,256,"/proc/%d/task/%d",pid,child);
+    if (stat(buf,&sbuf)) {
+	errno = EINVAL;
+	verror("thread %d in pid %d does not exist!\n",child,pid);
+	return 1;
+    }
+
+    /*
+     * Don't wait for the child to get the PTRACE-sent SIGSTOP; just
+     * note that a fake control signal is going to hit the thread; then
+     * the monitor/poll stuff will wait for it and process it correctly.
+     */
+
+    /*
+     * Create the thread.
+     */
+    tstate = (struct linux_userproc_thread_state *)calloc(1,sizeof(*tstate));
+
+    tstate->last_status = 0;
+    tstate->last_signo = 0;
+    /*
+     * ptrace is going to start the new thread with sigstop, which we
+     * don't want to deliver!!
+     */
+    tstate->ctl_sig_sent = 1;
+    tstate->ctl_sig_recv = 0;
+    tstate->ctl_sig_pause_all = 0;
+
+    tthread = target_create_thread(target,child,tstate);
+    tthread->status = THREAD_STATUS_PAUSED;
+
+    return 0;
+}
+
+
+static int __handle_internal_detaching(struct target *target,
+				       struct target_thread *tthread,
+				       int pstatus) {
+    REG dreg = -1;
+    struct probepoint *dpp;
+    REGVAL ipval;
+#if __WORDSIZE == 64
+    unsigned long cdr;
+#else
+    int cdr;
+#endif
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
+    int pid = lstate->pid;
+    struct linux_userproc_thread_state *tstate = \
+	(struct linux_userproc_thread_state *)tthread->state;
+    tid_t tid = tthread->tid;
+
+    if (!WIFSTOPPED(pstatus)) {
+	vdebug(5,LOG_T_LUP,
+	       "pid %d thread %"PRIiTID" not stopped; ignoring\n",pid,tid);
+	return 0;
+    }
+
+    /*
+     * Don't handle a just-cloning thread if we are detaching from
+     * the parent doing the clone().
+     */
+    if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_CLONE << 8)) {
+	;
+    }
+
+    if (!linux_userproc_load_thread(target,tid,0)) {
+	verror("could not load thread %"PRIiTID"!\n",tid);
+	return -1;
+    }
+
+    tstate->last_status = tstate->last_signo = WSTOPSIG(pstatus);
+    if (tstate->last_status == (SIGTRAP | 0x80)) {
+	vdebug(8,LOG_T_LUP,
+	       "thread %"PRIiTID" stopped with syscall trap signo %d, ignoring\n",
+	       tid,tstate->last_status);
+	tstate->last_signo = -1;
+    }
+    else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
+	vdebug(5,LOG_T_LUP,"target %d exiting (%d), ignoring on detach\n",
+	       pid,tstate->last_status);
+	tstate->last_signo = -1;
+    }
+    else if (tstate->last_status == SIGTRAP) {
+	/* Don't deliver debug traps! */
+	vdebug(5,LOG_T_LUP,
+	       "thread %"PRIiTID" stopped with trap %d, minimal handling\n",
+	       tid,tstate->last_status);
+	tstate->last_signo = -1;
+
+	/*
+	 * This is where we handle breakpoint or single step
+	 * events.
+	 */
+
+	/* Check the hw debug status reg first */
+	errno = 0;
+	cdr = ptrace(PTRACE_PEEKUSER,tid,
+		     offsetof(struct user,u_debugreg[6]),NULL);
+	if (errno) {
+	    vwarn("could not read current val of status debug reg;"
+		  " don't know which handler to call; fatal!\n");
+	    return -1;
+	}
+
+	if (cdr & 0x4000) {
+	    vdebug(5,LOG_T_LUP,
+		   "ignoring single step event pid %d thread %"PRIiTID"\n",
+		   pid,tid);
+	}
+	else {
+	    /* Only check the 4 low-order bits */
+	    if (cdr & 15) {
+		if (cdr & 0x1)
+		    dreg = 0;
+		else if (cdr & 0x2)
+		    dreg = 1;
+		else if (cdr & 0x4)
+		    dreg = 2;
+		else if (cdr & 0x8)
+		    dreg = 3;
+
+		/* If we are relying on the status reg to tell us,
+		 * then also read the actual hw debug reg to get the
+		 * address we broke on.
+		 */
+		errno = 0;
+		ipval = ptrace(PTRACE_PEEKUSER,tid,
+			       offsetof(struct user,u_debugreg[dreg]),NULL );
+		if (errno) {
+		    verror("could not read current val of debug reg %d after up status!\n",dreg);
+		    return -1;
+		}
+
+		vdebug(6,LOG_T_LUP,
+		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
+		       dreg,ipval);
+	    }
+	    else {
+		ipval = linux_userproc_read_reg(target,tid,target->ipregno);
+		if (errno) {
+		    verror("could not read EIP while finding probepoint: %s\n",
+			   strerror(errno));
+		    return -1;
+		}
+
+		if (tstate->dr[0] == (ptrace_reg_t)ipval)
+		    dreg = 0;
+		else if (tstate->dr[1] == (ptrace_reg_t)ipval)
+		    dreg = 1;
+		else if (tstate->dr[2] == (ptrace_reg_t)ipval)
+		    dreg = 2;
+		else if (tstate->dr[3] == (ptrace_reg_t)ipval)
+		    dreg = 3;
+
+		if (dreg > -1) 
+		    vdebug(4,LOG_T_LUP,
+			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
+			   dreg,ipval);
+	    }
+
+	    if (dreg > -1) {
+		/* Found HW breakpoint! */
+		dpp = (struct probepoint *) \
+		    g_hash_table_lookup(tthread->hard_probepoints,
+					(gpointer)ipval);
+
+		if (!dpp) {
+		    verror("found hw breakpoint 0x%"PRIxADDR
+			   " in debug reg %d, BUT no probepoint!\n",
+			   ipval,dreg);
+		    return -1;
+		}
+
+		vdebug(5,LOG_T_LUP,
+		       "hw bp %d pid %d thread %"PRIiTID", not resetting EIP\n",
+		       dreg,pid,tid);
+	    }
+	    /* catch glib bug in hash table init; check for empty hashtable */
+	    else if ((dpp = (struct probepoint *) \
+		      g_hash_table_lookup(target->soft_probepoints,
+					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+		vdebug(5,LOG_T_LUP,
+		       "sw bp pid %d thread %"PRIiTID", resetting EIP\n",
+		       pid,tid);
+
+		ipval -= target->breakpoint_instrs_len;
+		errno = 0;
+		target_write_reg(target,tid,target->ipregno,ipval);
+		if (errno) {
+		    verror("could not reset EIP; thread will crash\n");
+		    return -1;
+		}
+		target_flush_thread(target,tid);
+	    }
+	    else {
+		vwarn("could not find bp and not in sstep; letting thread"
+		      " pid %d thread %"PRIiTID" detach without handling"
+		      " (at 0x%"PRIxADDR"!\n",
+		      pid,tid,ipval);
+		return 0;
+	    }
+	}
+    }
+    else {
+	vwarn("unknown waitpid event pid %d thread %"PRIiTID"\n",
+	      pid,tid);
+	return 0;
+    }
+
+    return 1;
+}
+
+int __poll_and_handle_detaching(struct target *target,
+				struct target_thread *tthread) {
+    int status = 0;
+    int retval;
+    struct linux_userproc_state *lstate;
+    int pid;
+    struct linux_userproc_thread_state *tstate;
+    tid_t tid = tthread->tid;
+
+    lstate = (struct linux_userproc_state *)target->state;
+    pid = lstate->pid;
+
+    tthread = target_lookup_thread(target,tid);
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    retval = waitpid(tid,&status,WNOHANG | __WALL);
+    if (retval == 0) {
+	vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID" running\n",pid,tid);
+	return 0;
+    }
+    else if (retval < 0) {
+	verror("pid %d thread %"PRIiTID": %s\n",pid,tid,strerror(errno));
+	return retval;
+    }
+
+    /*
+     * Handle in a basic way so as to remove our presence from the
+     * thread -- which means if the thread just hit a breakpoint, remove
+     * the breakpoint and reset EIP, and flush.
+     *
+     * If we're at a single step, nothing to worry about!
+     */
+
+    vdebug(5,LOG_T_LUP,"polling pid %d thread %"PRIiTID"\n",pid,tid);
+    return __handle_internal_detaching(target,tthread,status);
+}
+
+int linux_userproc_detach_thread(struct target *target,tid_t tid) {
+    struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    char buf[256];
+    int pid;
+    struct linux_userproc_thread_state *tstate;
+    struct stat sbuf;
+
+    if (tid == target->global_thread->tid) {
+	verror("cannot detach from the primary thread; use target_close()!\n");
+	errno = EINVAL;
+	return 1;
+    }
+
+    lstate = (struct linux_userproc_state *)target->state;
+    if (!lstate) {
+	errno = EFAULT;
+	return 1;
+    }
+    pid = lstate->pid;
+
+    vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID"\n",pid,tid);
+
+    if (!lstate->attached) {
+	verror("cannot detach from thread until process is attached to!\n");
+	errno = EINVAL;
+	return 1;
+    }
+
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("thread %"PRIiTID" does not exist!\n",tid);
+	errno = EINVAL;
+	return 1;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    /*
+     * If it exists, actually detach.  Else, just clean up our state.
+     */
+    snprintf(buf,256,"/proc/%d/task/%d",pid,tid);
+    if (stat(buf,&sbuf) == 0) {
+	/*
+	 * If the thread is stopped with status, check it and handle it
+	 * in a basic way -- like if it's stopped at a breakpoint, reset
+	 * EIP and replace orig code -- don't handle it more.
+	 */
+	if (__poll_and_handle_detaching(target,tthread) == 0) {
+	    /* 
+	     * Sleep the child first if it's still running; otherwise
+	     * we'll end up sending it a trace trap, which will kill it.
+	     */
+	    kill(tid,SIGSTOP);
+	}
+
+	ptrace(PTRACE_DETACH,tid,NULL,NULL);
+
+	kill(tid,SIGCONT);
+	errno = 0;
+    }
+
+    target_delete_thread(target,tthread,0);
+
+    return 0;
+}
+
 /**
  ** These are all functions supporting the target API.
  **/
+static tid_t linux_userproc_gettid(struct target *target) {
+    struct target_thread *tthread;
 
-int linux_userproc_pid(struct target *target) {
-    if (target && target->state)
-	return ((struct linux_userproc_state *)target->state)->pid;
-    return -1;
+    /*
+     * Note: this is really all the same as target->state->current_tid
+     * -- but we also make sure we load the current thread.
+     */
+
+    if (target->current_thread && target->current_thread->valid)
+	return target->current_thread->tid;
+
+    tthread = linux_userproc_load_current_thread(target,0);
+    if (!tthread) {
+	verror("could not load current thread to get TID!\n");
+	return 0;
+    }
+
+    return tthread->tid;
+}
+
+static void linux_userproc_free_thread_state(struct target *target,void *state) {
+    free(state);
+}
+
+static struct target_thread *linux_userproc_load_thread(struct target *target,
+							tid_t tid,int force) {
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+    struct linux_userproc_state *lstate;
+    int pid;
+    char buf[64];
+    FILE *statf;
+    char pstate;
+    int rc;
+    tid_t rtid = 0;
+
+    lstate = (struct linux_userproc_state *)target->state;
+    pid = lstate->pid;
+
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("thread %"PRIiTID" does not exist; forgot to attach?\n",tid);
+	errno = EINVAL;
+	return NULL;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    if (tthread->valid && !force) {
+	vdebug(9,LOG_T_LUP,"pid %d thread %"PRIiTID" already valid\n",pid,tid);
+	return tthread;
+    }
+
+    vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID" (%"PRIiTID")\n",
+	   pid,tid,tthread->tid);
+
+    /* Load its status from /proc */
+    snprintf(buf,64,"/proc/%d/task/%d/stat",pid,tthread->tid);
+ again:
+    statf = fopen(buf,"r");
+    if (!statf) {
+	verror("statf(%s): %s\n",buf,strerror(errno));
+	tthread->status = THREAD_STATUS_UNKNOWN;
+    }
+
+    if ((rc = fscanf(statf,"%d (%s %c",&rtid,buf,&pstate))) {
+	if (pstate == 'R' || pstate == 'r')
+	    tthread->status = THREAD_STATUS_RUNNING;
+	else if (pstate == 'W' || pstate == 'w')
+	    tthread->status = THREAD_STATUS_PAGING;
+	else if (pstate == 'S' || pstate == 's')
+	    tthread->status = THREAD_STATUS_STOPPED;
+	else if (pstate == 'D' || pstate == 'd')
+	    tthread->status = THREAD_STATUS_BLOCKEDIO;
+	else if (pstate == 'Z' || pstate == 'z')
+	    tthread->status = THREAD_STATUS_ZOMBIE;
+	else if (pstate == 'T' || pstate == 't')
+	    tthread->status = THREAD_STATUS_PAUSED;
+	else if (pstate == 'X' || pstate == 'x')
+	    tthread->status = THREAD_STATUS_DEAD;
+	else {
+	    vwarn("fscanf returned %d; read tid %d (%s) %c; THREAD_STATUS_UNKNOWN!\n",
+		  rc,rtid,buf,pstate);
+	    tthread->status = THREAD_STATUS_UNKNOWN;
+	}
+    }
+    else if (rc < 0 && errno == EINTR) {
+	fclose(statf);
+	goto again;
+    }
+    fclose(statf);
+
+    vdebug(3,LOG_T_LUP,"pid %d tid %"PRIiTID" status %d\n",
+	   pid,tthread->tid,tthread->status);
+
+    if (tthread->status == THREAD_STATUS_PAUSED) {
+	errno = 0;
+	if (ptrace(PTRACE_GETREGS,tthread->tid,NULL,&(tstate->regs)) == -1) {
+	    verror("ptrace(GETREGS): %s\n",strerror(errno));
+	    tthread->valid = 0;
+	    tthread->dirty = 0;
+	    return NULL;
+	}
+	tthread->valid = 1;
+    }
+    else {
+	memset(&tstate->regs,0,sizeof(tstate->regs));
+	tthread->valid = 0;
+    }
+
+    tthread->dirty = 0;
+
+    return tthread;
+}
+
+static struct target_thread *linux_userproc_load_current_thread(struct target *target,
+								int force) {
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
+
+    return linux_userproc_load_thread(target,lstate->current_tid,force);
+}
+
+static int linux_userproc_load_all_threads(struct target *target,int force) {
+    int retval = 0;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    gpointer key;
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) {
+	if (key == (gpointer)TID_GLOBAL)
+	    continue;
+
+	if (!linux_userproc_load_thread(target,tthread->tid,force)) {
+	    verror("could not load thread %"PRIiTID"\n",tthread->tid);
+	    ++retval;
+	}
+    }
+
+    return retval;
+}
+
+static int linux_userproc_flush_thread(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    vdebug(5,LOG_T_XV | LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
+
+    if ((tthread = target_lookup_thread(target,tid))) {
+	tstate = (struct linux_userproc_thread_state *)tthread->state;
+    }
+    else {
+	verror("cannot flush unknown thread %"PRIiTID"; forgot to load?\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (!tthread->valid || !tthread->dirty)
+	return 0;
+
+    errno = 0;
+    if (ptrace(PTRACE_SETREGS,tthread->tid,NULL,&(tstate->regs)) == -1) {
+	verror("ptrace(SETREGS): %s\n",strerror(errno));
+	return -1;
+    }
+    tthread->dirty = 0;
+
+    return 0;
+}
+
+static int linux_userproc_flush_current_thread(struct target *target) {
+    if (!target->current_thread && linux_userproc_load_current_thread(target,0))
+	return -1;
+	
+    return linux_userproc_flush_thread(target,target->current_thread->tid);
+}
+
+static int linux_userproc_flush_all_threads(struct target *target) {
+    int rc, retval = 0;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    gpointer key;
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) {
+	if (key == (gpointer)TID_GLOBAL)
+	    continue;
+
+	rc = linux_userproc_flush_thread(target,tthread->tid);
+	if (rc) {
+	    verror("could not flush thread %"PRIiTID"\n",tthread->tid);
+	    ++retval;
+	}
+    }
+
+    return retval;
+}
+
+static char *linux_userproc_thread_tostring(struct target *target,tid_t tid,int detail,
+					    char *buf,int bufsiz) {
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+    struct user_regs_struct *r;
+
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("thread %"PRIiTID" does not exist?\n",tid);
+	return NULL;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+    r = &tstate->regs;
+
+    if (!buf) {
+#if __WORDSIZE == 64
+	bufsiz = 33*3*16 + 1;
+	buf = malloc(sizeof(char)*bufsiz);
+#else
+	bufsiz = 25*3*8 + 1;
+	buf = malloc(sizeof(char)*bufsiz);
+#endif
+    }
+
+#if __WORDSIZE == 64
+#define RF "%lx"
+#define DRF "%lx"
+#else
+#define RF "%lx"
+#define DRF "%x"
+#endif
+
+    if (detail < 1)
+	snprintf(buf,bufsiz,
+		 "ip="RF" bp="RF" sp="RF" flags="RF" orig_ax="RF
+		 " ax="RF" bx="RF" cx="RF" dx="RF" di="RF" si="RF
+		 " cs="RF" ss="RF" ds="RF" es="RF" fs="RF" gs="RF
+		 " dr0="DRF" dr1="DRF" dr2="DRF" dr3="DRF" dr6="DRF" dr7="DRF,
+#if __WORDSIZE == 64
+		 r->rip,r->rbp,r->rsp,r->eflags,r->orig_rax,
+		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
+		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
+#else
+		 r->eip,r->ebp,r->esp,r->eflags,r->orig_eax,
+		 r->eax,r->ebx,r->ecx,r->edx,r->edi,r->esi,
+		 r->xcs,r->xss,r->xds,r->xes,r->xfs,r->xgs,
+#endif
+		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
+		 tstate->dr[6],tstate->dr[7]);
+    else 
+	snprintf(buf,bufsiz,
+		 "ip="RF" bp="RF" sp="RF" flags="RF" orig_ax="RF"\n"
+		 " ax="RF" bx="RF" cx="RF" dx="RF" di="RF" si="RF"\n"
+		 " cs="RF" ss="RF" ds="RF" es="RF" fs="RF" gs="RF"\n"
+		 " dr0="DRF" dr1="DRF" dr2="DRF" dr3="DRF" dr6="DRF" dr7="DRF,
+#if __WORDSIZE == 64
+		 r->rip,r->rbp,r->rsp,r->eflags,r->orig_rax,
+		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
+		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
+#else
+		 r->eip,r->ebp,r->esp,r->eflags,r->orig_eax,
+		 r->eax,r->ebx,r->ecx,r->edx,r->edi,r->esi,
+		 r->xcs,r->xss,r->xds,r->xes,r->xfs,r->xgs,
+#endif
+		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
+		 tstate->dr[6],tstate->dr[7]);
+
+    return buf;
 }
 
 static int linux_userproc_init(struct target *target) {
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
+    struct linux_userproc_thread_state *tstate;
+    struct target_thread *tthread;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    /*
+     * We must single step hardware breakpoints; we can't set the RF
+     * flag and thus disable them if we don't technically need a single
+     * step (i.e., no post handlers nor actions).  So we have to disable
+     * the hw breakpoint, single step it, then reenable it.  See
+     * linux_userproc_singlestep() below.
+     */
+    target->nodisablehwbponss = 0;
+    target->threadctl = 1;
+
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
 
     lstate->memfd = -1;
     lstate->attached = 0;
     lstate->ptrace_opts_new = lstate->ptrace_opts = INITIAL_PTRACE_OPTS;
     lstate->ptrace_type = PTRACE_CONT;
-    lstate->last_signo = -1;
-    lstate->last_status = -1;
 
+    /* Create the default thread. */
+    tstate = (struct linux_userproc_thread_state *)calloc(1,sizeof(*tstate));
+
+    tstate->last_status = -1;
+    tstate->last_signo = -1;
+
+    tthread = target_create_thread(target,lstate->pid,tstate);
+    /* Default thread is always starts paused. */
+    tthread->status = THREAD_STATUS_PAUSED;
+
+    /* Reuse the pid's primary thread as the global thread. */
+    target_reuse_thread_as_global(target,tthread);
+
+    /* Set thread->current_thread to our primary thread! */
+    target->current_thread = tthread;
+    lstate->current_tid = tthread->tid;
+
+    return 0;
+}
+
+static int linux_userproc_postloadinit(struct target *target) {
     return 0;
 }
 
@@ -716,15 +1490,25 @@ static int linux_userproc_attach_internal(struct target *target) {
     struct linux_userproc_state *lstate;
     char buf[256];
     int pstatus;
-    int pid = linux_userproc_pid(target);
+    int pid;
+    struct dirent *dirent;
+    DIR *dirp;
+    char *endp;
+    tid_t tid;
+    int rc = 0;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)target->state;
+    pid = lstate->pid;
 
     vdebug(5,LOG_T_LUP,"pid %d\n",pid);
 
-    lstate = (struct linux_userproc_state *)(target->state);
     if (!lstate) {
 	errno = EFAULT;
 	return 1;
     }
+    pid = lstate->pid;
     if (lstate->attached)
 	return 0;
 
@@ -768,17 +1552,92 @@ static int linux_userproc_attach_internal(struct target *target) {
 	vwarn("ptrace setoptions failed: %s\n",strerror(errno));
     }
 
+    /*
+     * Try to attach to any other threads.  For a process we spawned,
+     * there should not be any.  But it's harmless to check.
+     */
+    snprintf(buf,256,"/proc/%d/task",pid);
+    if (!(dirp = opendir(buf))) {
+	verror("could not opendir %s to attach to threads: %s!\n",
+	       buf,strerror(errno));
+	return TSTATUS_ERROR;
+    }
+
+    errno = 0;
+    while ((dirent = readdir(dirp))) {
+	if (dirent->d_name[0] == '.')
+	    continue;
+
+	tid = (tid_t)strtol(dirent->d_name,&endp,10);
+	if (endp == dirent->d_name || errno == ERANGE || errno == EINVAL) {
+	    verror("weird error parsing thread id out of '%s': %s; skipping!\n",
+		   dirent->d_name,strerror(errno));
+	    errno = 0;
+	    continue;
+	}
+
+	if (tid == pid)
+	    continue;
+
+	if (ptrace(PTRACE_ATTACH,tid,NULL,NULL) < 0) {
+	    verror("ptrace attach tid %d failed: %s\n",tid,strerror(errno));
+	    ++rc;
+	    continue;
+	}
+
+	vdebug(3,LOG_T_LUP,"waiting for ptrace attach to hit tid %d\n",tid);
+    again2:
+	vdebug(5,LOG_T_LUP,"initial waitpid tid %d\n",tid);
+	if (waitpid(tid,&pstatus,__WALL) < 0) {
+	    if (errno == ECHILD || errno == EINVAL) {
+		verror("waitpid tid %d failed: %s\n",tid,strerror(errno));
+		++rc;
+		continue;
+	    }
+	    else
+		goto again2;
+	}
+	vdebug(3,LOG_T_LUP,"ptrace attach has hit tid %d\n",tid);
+
+	if (ptrace(PTRACE_SETOPTIONS,tid,NULL,lstate->ptrace_opts) < 0) {
+	    vwarn("ptrace setoptions failed, continuing: %s\n",strerror(errno));
+	    errno = 0;
+	}
+
+	/*
+	 * Create the thread.
+	 */
+	tstate = (struct linux_userproc_thread_state *)calloc(1,sizeof(*tstate));
+
+	tstate->last_status = 0;
+	tstate->last_signo = 0;
+
+	tstate->ctl_sig_sent = 0;
+	tstate->ctl_sig_recv = 0;
+	tstate->ctl_sig_pause_all = 0;
+
+	tthread = target_create_thread(target,tid,tstate);
+	tthread->status = THREAD_STATUS_PAUSED;
+    }
+
+    closedir(dirp);
+
     lstate->attached = 1;
 
-    return 0;
+    return rc;
 }
 
 static int linux_userproc_detach(struct target *target) {
     struct linux_userproc_state *lstate;
-
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    int rc, retval = 0;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    struct array_list *threadlist;
+    int i;
 
     lstate = (struct linux_userproc_state *)(target->state);
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+
     if (!lstate) {
 	errno = EFAULT;
 	return 1;
@@ -786,24 +1645,61 @@ static int linux_userproc_detach(struct target *target) {
     if (!lstate->attached)
 	return 0;
 
-    if (lstate->memfd > 0)
-	close(lstate->memfd);
+    /*
+     * Detach from all the threads first.  We push them onto a list
+     * first because we can't trust detach_thread not to delete them
+     * from the hashtable, which we can't do while we're iterating
+     * through it.
+     */
+    threadlist = array_list_create(g_hash_table_size(target->threads));
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread)
+	    continue;
 
-    /* Sleep the child first; otherwise we'll end up sending it a trace
-       trap, which will kill it. */
-    kill(linux_userproc_pid(target),SIGSTOP);
+	array_list_append(threadlist,tthread);
+    }
+    for (i = 0; i < array_list_len(threadlist); ++i) {
+	tthread = (struct target_thread *)array_list_item(threadlist,i);
+
+	rc = linux_userproc_detach_thread(target,tthread->tid);
+	if (rc) {
+	    verror("could not detach thread %"PRIiTID"\n",tthread->tid);
+	    ++retval;
+	}
+    }
+    array_list_free(threadlist);
+
+    /*
+     * Now detach from the primary process thread.
+     */
+
+    /*
+     * If the thread is stopped with status, check it and handle it
+     * in a basic way -- like if it's stopped at a breakpoint, reset
+     * EIP and replace orig code -- don't handle it more.
+     */
+    if (__poll_and_handle_detaching(target,target->global_thread) == 0) {
+	/* 
+	 * Sleep the child first if it's still running; otherwise
+	 * we'll end up sending it a trace trap, which will kill it.
+	 */
+	kill(lstate->pid,SIGSTOP);
+    }
 
     errno = 0;
-    if (ptrace(PTRACE_DETACH,linux_userproc_pid(target),NULL,NULL) < 0) {
-	vdebug(3,LOG_T_LUP,"ptrace detach %d failed: %s\n",
-	       linux_userproc_pid(target),strerror(errno));
-	kill(linux_userproc_pid(target),SIGCONT);
+    if (ptrace(PTRACE_DETACH,lstate->pid,NULL,NULL) < 0) {
+	verror("ptrace detach %d failed: %s\n",lstate->pid,strerror(errno));
+	kill(lstate->pid,SIGCONT);
 	//return 1;
     }
 
-    kill(linux_userproc_pid(target),SIGCONT);
+    kill(lstate->pid,SIGCONT);
 
-    vdebug(3,LOG_T_LUP,"ptrace detach %d done.\n",linux_userproc_pid(target));
+    if (lstate->memfd > 0)
+	close(lstate->memfd);
+
+    vdebug(3,LOG_T_LUP,"ptrace detach %d done.\n",lstate->pid);
     lstate->attached = 0;
 
     return 0;
@@ -812,9 +1708,9 @@ static int linux_userproc_detach(struct target *target) {
 static int linux_userproc_fini(struct target *target) {
     struct linux_userproc_state *lstate;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
-
     lstate = (struct linux_userproc_state *)(target->state);
+
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
 
     if (lstate->attached) 
 	linux_userproc_detach(target);
@@ -825,8 +1721,10 @@ static int linux_userproc_fini(struct target *target) {
 }
 
 static int linux_userproc_loadspaces(struct target *target) {
-    struct addrspace *space = addrspace_create(target,"NULL",0,
-					       linux_userproc_pid(target));
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
+    struct addrspace *space = addrspace_create(target,"NULL",0,lstate->pid);
+
     RHOLD(space);
 
     space->target = target;
@@ -848,16 +1746,18 @@ static int linux_userproc_loadregions(struct target *target,
     region_type_t rtype;
     int rc;
     char *ret;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
 
     /* first, find the pathname of our main exe */
-    snprintf(buf,PATH_MAX*2,"/proc/%d/exe",linux_userproc_pid(target));
+    snprintf(buf,PATH_MAX*2,"/proc/%d/exe",lstate->pid);
     if ((rc = readlink(buf,main_exe,PATH_MAX - 1)) < 1)
 	return -1;
     main_exe[rc] = '\0';
 
-    snprintf(buf,PATH_MAX,"/proc/%d/maps",linux_userproc_pid(target));
+    snprintf(buf,PATH_MAX,"/proc/%d/maps",lstate->pid);
     f = fopen(buf,"r");
     if (!f)
 	return 1;
@@ -899,7 +1799,8 @@ static int linux_userproc_loadregions(struct target *target,
 	    /* Create a region for this map entry if it doesn't already
 	     * exist.
 	     */
-	    if (!(region = addrspace_find_region(space,buf))) {
+	    if (rtype == REGION_TYPE_ANON 
+		|| !(region = addrspace_find_region(space,buf))) {
 		if (!(region = memregion_create(space,rtype,buf)))
 		    goto err;
 	    }
@@ -945,6 +1846,182 @@ static int linux_userproc_loadregions(struct target *target,
     return -1;
 }
 
+static int linux_userproc_updateregions(struct target *target,
+					struct addrspace *space) {
+    char buf[PATH_MAX*2];
+    char main_exe[PATH_MAX];
+    FILE *f;
+    char p[4];
+    struct memregion *region,*tregion;
+    struct memrange *range,*trange;
+    unsigned long long start,end,offset;
+    region_type_t rtype;
+    int rc;
+    char *ret;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
+    uint32_t prot_flags;
+    int exists;
+
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+
+    /* first, find the pathname of our main exe */
+    snprintf(buf,PATH_MAX*2,"/proc/%d/exe",lstate->pid);
+    if ((rc = readlink(buf,main_exe,PATH_MAX - 1)) < 1)
+	return -1;
+    main_exe[rc] = '\0';
+
+    snprintf(buf,PATH_MAX,"/proc/%d/maps",lstate->pid);
+    f = fopen(buf,"r");
+    if (!f)
+	return 1;
+
+    while (1) {
+	errno = 0;
+	if (!(ret = fgets(buf,PATH_MAX*2,f)) && !errno)
+	    break;
+	else if (!ret && errno) {
+	    verror("fgets: %s",strerror(errno));
+	    break;
+	}
+
+	vdebug(9,LOG_T_LUP,"scanning mmap line %s",buf);
+
+	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*d:%*d %*d %s",&start,&end,
+		    &p[0],&p[1],&p[2],&p[3],&offset,buf);
+	if (rc == 8 || rc == 7) {
+	    if (rc == 8) {
+		/* we got the whole thing, including a path */
+		if (strncmp(main_exe,buf,PATH_MAX) == 0) 
+		    rtype = REGION_TYPE_MAIN;
+		else if (strcmp(buf,"[heap]") == 0) 
+		    rtype = REGION_TYPE_HEAP;
+		else if (strcmp(buf,"[stack]") == 0) 
+		    rtype = REGION_TYPE_STACK;
+		else if (strcmp(buf,"[vdso]") == 0) 
+		    rtype = REGION_TYPE_VDSO;
+		else if (strcmp(buf,"[vsyscall]") == 0) 
+		    rtype = REGION_TYPE_VSYSCALL;
+		else
+		    rtype = REGION_TYPE_LIB;
+	    }
+	    else {
+		rtype = REGION_TYPE_ANON;
+		buf[0] = '\0';
+	    }
+
+	    /* Create a region for this map entry if it doesn't already
+	     * exist.
+	     */
+	    if ((rtype != REGION_TYPE_ANON 
+		 && !(region = addrspace_match_region_name(space,rtype,buf)))
+		|| (rtype == REGION_TYPE_ANON
+		    && !(region = addrspace_match_region_start(space,rtype,start)))) {
+		if (!(region = memregion_create(space,rtype,buf)))
+		    goto err;
+		region->new = 1;
+	    }
+	    else {
+		region->exists = 1;
+	    }
+
+	    prot_flags = 0;
+	    if (p[0] == 'r')
+		prot_flags |= PROT_READ;
+	    if (p[1] == 'w')
+		prot_flags |= PROT_WRITE;
+	    if (p[2] == 'x')
+		prot_flags |= PROT_EXEC;
+	    if (p[3] == 's')
+		prot_flags |= PROT_SHARED;
+
+	    if (!(range = memregion_match_range(region,start))) {
+		if (!(range = memrange_create(region,start,end,offset,0))) {
+		    goto err;
+		}
+		range->new = 1;
+	    }
+	    else {
+		if (range->end == end 
+		    && range->offset == offset 
+		    && range->prot_flags == prot_flags)
+		    range->same = 1;
+		else {
+		    range->end = end;
+		    range->offset = offset;
+		    range->prot_flags = prot_flags;
+		    range->updated = 1;
+
+		    if (start < region->base_load_addr)
+			region->base_load_addr = start;
+		}
+	    }
+
+	    range = NULL;
+	    region = NULL;
+	}
+	else if (rc > 0 && !errno) {
+	    vwarn("weird content in /proc/pid/maps (%d)!\n",rc);
+	}
+	else if (rc > 0 && errno) {
+	    vwarn("weird content in /proc/pid/maps (%d): %s!\n",rc,strerror(errno));
+	}
+    }
+    fclose(f);
+
+    /*
+     * Now, for all the regions/ranges, check if they were newly added
+     * or modified or still exist; if none of those, then they vanished
+     * and we have to purge them.
+     */
+
+    list_for_each_entry_safe(region,tregion,&space->regions,region) {
+	exists = 0;
+	list_for_each_entry_safe(range,trange,&region->ranges,range) {
+	    if (range->new) {
+		vdebug(3,LOG_T_LUP,
+		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		       range->start,range->end,range->offset);
+		exists = 1;
+	    }
+	    else if (range->same) {
+		vdebug(9,LOG_T_LUP,
+		       "same range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		       range->start,range->end,range->offset);
+		exists = 1;
+	    }
+	    else if (range->updated) {
+		vdebug(3,LOG_T_LUP,
+		       "updated range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		       range->start,range->end,range->offset);
+		exists = 1;
+	    }
+	    else {
+		vdebug(3,LOG_T_LUP,
+		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		       range->start,range->end,range->offset);
+		memrange_free(range);
+	    }
+	    range->new = range->same = range->updated = 0;
+	}
+	if (!exists || list_empty(&region->ranges)) {
+	    vdebug(3,LOG_T_LUP,"removing stale region (%s:%s:%s)\n",
+		   region->space->idstr,region->name,REGION_TYPE(region->type));
+	    memregion_free(region);
+	}
+	else {
+	    region->exists = region->new = 0;
+	}
+    }
+
+    return 0;
+
+ err:
+    fclose(f);
+    // XXX cleanup the regions we added/modified??
+    return -1;
+}
+
 static int DEBUGPATHLEN = 2;
 static char *DEBUGPATH[] = { 
     "/usr/lib/debug",
@@ -970,8 +2047,10 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     struct stat stbuf;
     struct debugfile *debugfile = NULL;
     struct debugfile_load_opts *opts = NULL;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
 
     if (!(region->type == REGION_TYPE_MAIN 
 	  || region->type == REGION_TYPE_LIB)) {
@@ -1137,10 +2216,12 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 static target_status_t linux_userproc_status(struct target *target) {
     char buf[256];
     FILE *statf;
-    int pid = linux_userproc_pid(target);
     char pstate;
     target_status_t retval = TSTATUS_ERROR;
     int rc;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
+    int pid = lstate->pid;
 
     vdebug(5,LOG_T_LUP,"pid %d\n",pid);
 
@@ -1172,99 +2253,298 @@ static target_status_t linux_userproc_status(struct target *target) {
 	goto again;
     }
 
-    vdebug(3,LOG_T_LUP,"pid %d status %d\n",linux_userproc_pid(target),retval);
+    vdebug(3,LOG_T_LUP,"pid %d status %d\n",lstate->pid,retval);
 
     fclose(statf);
     return retval;
 }
 
-static int linux_userproc_pause(struct target *target) {
-    int pid = linux_userproc_pid(target);
-    target_status_t status;
+static int linux_userproc_pause(struct target *target,int nowait) {
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    gpointer key;
     int pstatus;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
+    int rc = 0;
+    struct linux_userproc_thread_state *tstate;
+    siginfo_t sinfo;
     
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
 
     /*
-     * We send a stop to the traced pid, and wait until it is delivered
+     * We send a stop to each traced tid, and wait until it is delivered
      * to us!  We do not save it for redelivery to the child!
      *
      * Only do this if the target is not currently paused, because it
      * might need to be restarted with whatever last_signo state it had
      * previously been paused with.
      */
-    status = linux_userproc_status(target);
-    if (status == TSTATUS_PAUSED) 
-	return 0;
 
-    if (kill(pid,SIGSTOP) < 0) {
-	verror("kill(%d,SIGSTOP): %s\n",pid,strerror(errno));
-	return -1;
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) {
+	if (key == (gpointer)TID_GLOBAL)
+	    continue;
+
+	if (!linux_userproc_load_thread(target,tthread->tid,0)) {
+	    verror("could not load thread %"PRIiTID"; pausing anyway!\n",
+		   tthread->tid);
+	}
+	else if (tthread->status == THREAD_STATUS_PAUSED) {
+	    vdebug(3,LOG_T_LUP,"tid %d already paused\n",tthread->tid);
+	    continue;
+	}
+	/*
+	 * Since thread load is slow (goes through libc and /proc to
+	 * check status, we try a last-ditch means to avoid stomping on
+	 * pending signal info that we need to handle to detect a ptrace
+	 * stop event.
+	 */
+	else if (waitid(P_PID,tthread->tid,&sinfo,WNOHANG | WNOWAIT) == 0
+		 && sinfo.si_pid == tthread->tid) {
+	    vdebug(3,LOG_T_LUP,
+		   "tid %d has pending siginfo to waitpid on; not pausing here\n",
+		   tthread->tid);
+	    continue;
+	}
+
+	tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+	if (kill(tthread->tid,SIGSTOP) < 0) {
+	    verror("kill(%d,SIGSTOP): %s\n",tthread->tid,strerror(errno));
+	    --rc;
+	    continue;
+	}
+	tstate->ctl_sig_sent = 1;
+
+	if (nowait) {
+	    vdebug(3,LOG_T_LUP,"not waiting for pause to hit tid %d\n",
+		   tthread->tid);
+	    continue;
+	}
+
+	vdebug(3,LOG_T_LUP,"waiting for pause SIGSTOP to hit tid %d\n",
+	       tthread->tid);
+    again:
+	if (waitpid(tthread->tid,&pstatus,__WALL) < 0) {
+	    if (errno == ECHILD || errno == EINVAL) {
+		verror("waitpid(%"PRIiTID"): %s\n",tthread->tid,strerror(errno));
+		--rc;
+		continue;
+	    }
+	    else
+		goto again;
+	}
+	vdebug(3,LOG_T_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
+	tthread->status = THREAD_STATUS_PAUSED;
+	tstate->ctl_sig_sent = 0;
     }
 
-    vdebug(3,LOG_T_LUP,"waiting for pause SIGSTOP to hit pid %d\n",pid);
+    return rc;
+}
+
+static int linux_userproc_pause_thread(struct target *target,tid_t tid,
+				       int nowait) {
+    int pstatus;
+    int pid;
+    struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    /*
+     * The global thread doesn't really exist, so we can't pause it.
+     */
+    if (tid == TID_GLOBAL)
+	return 0;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    pid = lstate->pid;
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("thread %"PRIiTID" does not exist!\n",tid);
+	errno = EINVAL;
+	return 1;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+    
+    vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID"\n",lstate->pid,tid);
+
+    /*
+     * We send a stop to each traced tid, and wait until it is delivered
+     * to us!  We do not save it for redelivery to the child!
+     *
+     * Only do this if the target is not currently paused, because it
+     * might need to be restarted with whatever last_signo state it had
+     * previously been paused with.
+     */
+
+    if (!linux_userproc_load_thread(target,tthread->tid,0)) {
+	verror("could not load thread %"PRIiTID"; pausing anyway!\n",
+	       tthread->tid);
+    }
+    else if (tthread->status == THREAD_STATUS_PAUSED) {
+	vdebug(3,LOG_T_LUP,"tid %d already paused\n",tthread->tid);
+	return 0;
+    }
+
+    if (kill(tthread->tid,SIGSTOP) < 0) {
+	verror("kill(%d,SIGSTOP): %s\n",tthread->tid,strerror(errno));
+	return 1;
+    }
+    tstate->ctl_sig_sent = 1;
+
+    if (nowait) {
+	vdebug(3,LOG_T_LUP,"not waiting for pause to hit tid %d\n",tthread->tid);
+	return 0;
+    }
+
+    vdebug(3,LOG_T_LUP,"waiting for pause SIGSTOP to hit tid %d\n",tthread->tid);
  again:
-    if (waitpid(pid,&pstatus,0) < 0) {
-	if (errno == ECHILD || errno == EINVAL)
-	    return TSTATUS_ERROR;
+    if (waitpid(tthread->tid,&pstatus,__WALL) < 0) {
+	if (errno == ECHILD || errno == EINVAL) {
+	    verror("waitpid(%"PRIiTID"): %s\n",tthread->tid,strerror(errno));
+	    return 1;
+	}
 	else
 	    goto again;
     }
-    vdebug(3,LOG_T_LUP,"pause SIGSTOP has hit pid %d\n",pid);
+    vdebug(3,LOG_T_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
+    tthread->status = THREAD_STATUS_PAUSED;
+    tstate->ctl_sig_sent = 0;
 
     return 0;
 }
 
 static int linux_userproc_resume(struct target *target) {
     struct linux_userproc_state *lstate;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+    gpointer key;
+    int rc = 0;
 
     lstate = (struct linux_userproc_state *)(target->state);
 
-    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(9,LOG_T_LUP,"pid %d\n",lstate->pid);
 
-    /* First, flush back registers if they're dirty! */
-    linux_userproc_flush_context(target);
-
-    /* ALWAYS invalidate our cached copy of registers; flush_context may
-     * not do this!
+    /*
+     * First, on resume, try to keep handling any threads that were
+     * "paused" (by the probe layer not restarting them) at some point
+     * in the breakpoint handling process -- but only if the probepoint
+     * they needed has freed up.
      */
-    lstate->regs_loaded = 0;
 
-    if (lstate->ptrace_opts != lstate->ptrace_opts_new) {
+    /* Flush back registers if they're dirty, for paused threads. */
+    linux_userproc_flush_all_threads(target);
+    /* Always invalidate all threads so their status (and state) is
+     * re-read each time we waitpid.
+     */
+    target_invalidate_all_threads(target);
+
+    /*
+     * Then, go through all the threads and figure out which ones we can
+     * restart, and which ones we can't.  Invalidate only the ones we
+     * are restarting.
+     */
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) {
+	if (key == (gpointer)TID_GLOBAL)
+	    continue;
+
+	/*
+	 * We have several cases.  First, we might have tried to pause
+	 * all threads except target->blocking_thread; blocking_thread
+	 * always gets restarted, and all others are ignored.  (Well, if
+	 * the blocking thread has a single step scheduled, it may
+	 * already be running -- this is target specific).  Second, if a
+	 * thread is not paused, don't restart it (doh).  Otherwise, all
+	 * other paused threads get restarted.
+	 */
+	if (target->blocking_thread && tthread != target->blocking_thread) 
+	    continue;
+
+	if (tthread->status != THREAD_STATUS_PAUSED)
+	    continue;
+	else if (tthread->resumeat != THREAD_RESUMEAT_NONE)
+	    continue;
+
+	/*
+	 * Do the restart.
+	 */
+
+	if (lstate->ptrace_opts != lstate->ptrace_opts_new) {
+	    errno = 0;
+	    if (ptrace(PTRACE_SETOPTIONS,tthread->tid,NULL,
+		       lstate->ptrace_opts_new) < 0) {
+		vwarn("ptrace setoptions on tid %"PRIiTID" failed: %s\n",
+		      tthread->tid,strerror(errno));
+	    }
+	}
+	tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+	if (tstate->last_signo > -1) {
+	    if (ptrace(lstate->ptrace_type,tthread->tid,NULL,
+		       tstate->last_signo) < 0) {
+		verror("ptrace signo %d restart of tid %"PRIiTID" failed: %s\n",
+		       tstate->last_signo,tthread->tid,strerror(errno));
+		--rc;
+		continue;
+	    }
+	}
+	else {
+	    if (ptrace(lstate->ptrace_type,tthread->tid,NULL,NULL) < 0) {
+		verror("ptrace restart of tid %"PRIiTID" (status %d) failed: %s\n",
+		       tthread->tid,tthread->status,strerror(errno));
+		--rc;
+		continue;
+	    }
+	}
+
+	vdebug(8,LOG_T_LUP,"ptrace restart pid %d tid %"PRIiTID" succeeded\n",
+	       lstate->pid,tthread->tid);
+	tthread->status = THREAD_STATUS_RUNNING;
+
+	tstate->last_signo = -1;
+	tstate->last_status = -1;
+    }
+
+    if (lstate->ptrace_opts != lstate->ptrace_opts_new) 
 	lstate->ptrace_opts = lstate->ptrace_opts_new;
-	errno = 0;
-	if (ptrace(PTRACE_SETOPTIONS,linux_userproc_pid(target),NULL,
-		   lstate->ptrace_opts) < 0) {
-	    vwarn("ptrace setoptions failed: %s\n",strerror(errno));
-	}
-    }
 
-    if (lstate->last_signo > -1) {
-	if (ptrace(lstate->ptrace_type,linux_userproc_pid(target),NULL,
-		   lstate->last_signo) < 0) {
-	    verror("ptrace signo %d restart failed: %s\n",
-		   lstate->last_signo,strerror(errno));
-	    return 1;
-	}
-    }
-    else {
-	if (ptrace(lstate->ptrace_type,linux_userproc_pid(target),NULL,NULL) < 0) {
-	    verror("ptrace restart failed: %s\n",strerror(errno));
-	    return 1;
-	}
-    }
+    /*
+     * If there's a blocking thread, we can't do anything here, yet.
+     */
+    if (!target->blocking_thread) {
+	g_hash_table_iter_init(&iter,target->threads);
+	while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) {
+	    if (key == (gpointer)TID_GLOBAL)
+		continue;
 
-    vdebug(9,LOG_T_LUP,"ptrace restart %d succeeded\n",linux_userproc_pid(target));
-    lstate->last_signo = -1;
-    lstate->last_status = -1;
+	    /*
+	     * If the thread was needing to be resumed because it could not
+	     * own the probepoint, and the probepoint it needed is now free,
+	     * then let it go!  Also, as soon as one of these happens
+	     * successfully and sets target->blocking, break out of the
+	     * loop, because once a resumeat thread calls target_pause,
+	     * we can't try to do anything else that would call
+	     * target_pause and thus set target->blocking_thread.
+	     */
+	    if (tthread->status == THREAD_STATUS_PAUSED
+		&& tthread->resumeat != THREAD_RESUMEAT_NONE) {
+		probepoint_resumeat_handler(target,tthread);
+	    }
+
+	    if (target->blocking_thread)
+		break;
+	}
+    }
 
     return 0;
 }
 
 static target_status_t linux_userproc_handle_internal(struct target *target,
+						      tid_t tid,
 						      int pstatus,int *again) {
     struct linux_userproc_state *lstate;
-    pid_t pid = linux_userproc_pid(target);
     REG dreg = -1;
     struct probepoint *dpp;
     REGVAL ipval;
@@ -1273,8 +2553,21 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 #else
     int cdr;
 #endif
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+    tid_t newtid;
+    int pid;
+    long int newstatus;
+    struct addrspace *space;
 
     lstate = (struct linux_userproc_state *)(target->state);
+    pid = lstate->pid;
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("thread %"PRIiTID" does not exist!\n",tid);
+	errno = EINVAL;
+	goto out_err;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     if (WIFSTOPPED(pstatus)) {
 	/* Ok, this was a ptrace event; figure out which sig (or if it
@@ -1282,24 +2575,60 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	 * otherwise, don't deliver a sig, and just continue the child,
 	 * on resume.
 	 */
-	lstate->last_status = lstate->last_signo = WSTOPSIG(pstatus);
-	if (lstate->last_status == (SIGTRAP | 0x80)) {
-	    vdebug(5,LOG_T_LUP,"target %d stopped with syscall trap signo %d\n",
-		   pid,lstate->last_status);
-	    lstate->last_signo = -1;
+
+	/*
+	 * Handle clone before loading the current thread; we don't need
+	 * the extra overhead of loading the current thread in this
+	 * case; we just want to attach to the new thread right away.
+	 */
+	if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_CLONE << 8)) {
+	    ptrace(PTRACE_GETEVENTMSG,tid,NULL,&newstatus);
+	    newtid = (tid_t)newstatus;
+	    vdebug(5,LOG_T_LUP,
+		   "target %d thread %d cloned new thread %d; attaching now.\n",
+		   pid,tid,newtid);
+
+	    linux_userproc_attach_thread(target,tid,newtid);
+	    /*
+	     * Flush, invalidate, and restart the parent.
+	     */
+	    if (ptrace(lstate->ptrace_type,tid,NULL,NULL) < 0) {
+		vwarn("ptrace parent restart failed: %s\n",strerror(errno));
+	    }
+	    goto out_again;
+	}
+
+	list_for_each_entry(space,&target->spaces,space) {
+	    linux_userproc_updateregions(target,space);
+	}
+
+	if (!linux_userproc_load_thread(target,tid,0)) {
+	    verror("could not load thread %"PRIiTID"!\n",tid);
+	    goto out_err;
+	}
+
+	target->current_thread = tthread;
+	lstate->current_tid = tthread->tid;
+
+	tstate->last_status = tstate->last_signo = WSTOPSIG(pstatus);
+	if (tstate->last_status == (SIGTRAP | 0x80)) {
+	    vdebug(5,LOG_T_LUP,
+		   "thread %"PRIiTID" stopped with syscall trap signo %d\n",
+		   tid,tstate->last_status);
+	    tstate->last_signo = -1;
 	}
 	else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
 	    vdebug(5,LOG_T_LUP,"target %d exiting (%d)! detaching now.\n",
-		   pid,lstate->last_status);
-	    lstate->last_signo = -1;
+		   pid,tstate->last_status);
+	    tstate->last_signo = -1;
 	    linux_userproc_detach(target);
 	    return TSTATUS_DONE;
 	}
-	else if (lstate->last_status == SIGTRAP) {
+	else if (tstate->last_status == SIGTRAP) {
 	    /* Don't deliver debug traps! */
-	    vdebug(5,LOG_T_LUP,"target %d stopped with trap signo %d\n",
-		   pid,lstate->last_status);
-	    lstate->last_signo = -1;
+	    vdebug(5,LOG_T_LUP,"thread %"PRIiTID" stopped with trap signo %d\n",
+		   tid,tstate->last_status);
+	    tstate->last_signo = -1;
 
 	    /*
 	     * This is where we handle breakpoint or single step
@@ -1323,118 +2652,192 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	     * matches, return to the user, and let THEM handle it!
 	     */
 
-	    if (target->sstep_probepoint) {
-		target->ss_handler(target,target->sstep_probepoint);
-		goto out_again;
+	    /* Check the hw debug status reg first */
+	    errno = 0;
+	    cdr = ptrace(PTRACE_PEEKUSER,tid,
+			 offsetof(struct user,u_debugreg[6]),NULL);
+	    if (errno) {
+		vwarn("could not read current val of status debug reg;"
+		      " don't know which handler to call; fatal!\n");
+		return TSTATUS_ERROR;
+	    }
+
+	    /*
+	     * Check the breakpoints first; starting with the debug
+	     * status register.
+	     */
+	    if (cdr & 15) {
+		if (cdr & 0x1)
+		    dreg = 0;
+		else if (cdr & 0x2)
+		    dreg = 1;
+		else if (cdr & 0x4)
+		    dreg = 2;
+		else if (cdr & 0x8)
+		    dreg = 3;
+
+		/* If we are relying on the status reg to tell us,
+		 * then also read the actual hw debug reg to get the
+		 * address we broke on.
+		 */
+		errno = 0;
+		ipval = ptrace(PTRACE_PEEKUSER,tid,
+			       offsetof(struct user,u_debugreg[dreg]),NULL );
+		if (errno) {
+		    verror("could not read current val of debug reg %d after up status!\n",dreg);
+		    return TSTATUS_ERROR;
+		}
+
+		vdebug(4,LOG_T_LUP,
+		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
+		       dreg,ipval);
 	    }
 	    else {
-		/* Check the hw debug status reg first */
-		errno = 0;
-		cdr = ptrace(PTRACE_PEEKUSER,pid,
-			     offsetof(struct user,u_debugreg[6]),NULL);
+		ipval = linux_userproc_read_reg(target,tid,target->ipregno);
 		if (errno) {
-		    vwarn("could not read current val of status debug reg; skipping to EIP check!\n");
-		    errno = 0;
-		    cdr = 0;
+		    verror("could not read EIP while finding probepoint: %s\n",
+			   strerror(errno));
+		    return TSTATUS_ERROR;
 		}
 
-		/* Only check the 4 low-order bits */
-		if (cdr & 15) {
-		    if (cdr & 0x1)
-			dreg = 0;
-		    else if (cdr & 0x2)
-			dreg = 1;
-		    else if (cdr & 0x4)
-			dreg = 2;
-		    else if (cdr & 0x8)
-			dreg = 3;
+		if (tstate->dr[0] == (ptrace_reg_t)ipval)
+		    dreg = 0;
+		else if (tstate->dr[1] == (ptrace_reg_t)ipval)
+		    dreg = 1;
+		else if (tstate->dr[2] == (ptrace_reg_t)ipval)
+		    dreg = 2;
+		else if (tstate->dr[3] == (ptrace_reg_t)ipval)
+		    dreg = 3;
 
-		    /* If we are relying on the status reg to tell us,
-		     * then also read the actual hw debug reg to get the
-		     * address we broke on.
-		     */
-		    errno = 0;
-		    ipval = ptrace(PTRACE_PEEKUSER,pid,
-				   offsetof(struct user,u_debugreg[dreg]),NULL );
-		    if (errno) {
-			verror("could not read current val of debug reg %d after up status!\n",dreg);
-			return TSTATUS_ERROR;
-		    }
-
-		    vdebug(4,LOG_T_LUP,
-			   "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
-			   dreg,ipval);
-		}
-		else {
-		    ipval = linux_userproc_read_reg(target,target->ipregno);
-		    if (errno) {
-			verror("could not read EIP while finding probepoint: %s\n",
-			       strerror(errno));
-			return TSTATUS_ERROR;
-		    }
-
-		    if (lstate->dr[0] == (ptrace_reg_t)ipval)
-			dreg = 0;
-		    else if (lstate->dr[1] == (ptrace_reg_t)ipval)
-			dreg = 1;
-		    else if (lstate->dr[2] == (ptrace_reg_t)ipval)
-			dreg = 2;
-		    else if (lstate->dr[3] == (ptrace_reg_t)ipval)
-			dreg = 3;
-
+		if (dreg > -1)
 		    vdebug(4,LOG_T_LUP,
 			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
 			   dreg,ipval);
-		}
+		else
+		    vdebug(4,LOG_T_LUP,
+			   "checking for SS or sw break on 0x%"PRIxADDR"\n",
+			   ipval - target->breakpoint_instrs_len);
+	    }
 
-		if (dreg > -1) {
-		    /* Found HW breakpoint! */
-		    /* Clear the status bits right now. */
+	    /*
+	     * Handle the hardware breakpoint if we found one.
+	     */
+	    if (dreg > -1) {
+		/* Found HW breakpoint! */
+		/* Clear the status bits right now. */
+		errno = 0;
+		if (ptrace(PTRACE_POKEUSER,tid,
+			   offsetof(struct user,u_debugreg[6]),0)) {
+		    verror("could not clear status debug reg, continuing"
+			   " anyway: %s!\n",strerror(errno));
 		    errno = 0;
-		    if (ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-			       offsetof(struct user,u_debugreg[6]),0)) {
-			verror("could not clear status debug reg, continuing"
-			       " anyway: %s!\n",strerror(errno));
-			errno = 0;
-		    }
-		    else {
-			vdebug(5,LOG_T_LUP,"cleared status debug reg 6\n",pid);
-		    }
-
-		    dpp = (struct probepoint *)g_hash_table_lookup(target->probepoints,
-								   (gpointer)ipval);
-
-		    if (!dpp) {
-			verror("found hw breakpoint with no probe!\n");
-			return TSTATUS_ERROR;
-		    }
-
-		    target->bp_handler(target,dpp);
-		    goto out_again;
 		}
-		else if ((dpp = (struct probepoint *) \
-			  g_hash_table_lookup(target->probepoints,
-					      (gpointer)(ipval - target->breakpoint_instrs_len)))) {
-		    target->bp_handler(target,dpp);
+		else {
+		    vdebug(5,LOG_T_LUP,"cleared status debug reg 6\n");
+		}
+
+		dpp = (struct probepoint *)				\
+		    g_hash_table_lookup(tthread->hard_probepoints,
+					(gpointer)ipval);
+
+		if (!dpp) {
+		    verror("found hw breakpoint 0x%"PRIxADDR
+			   " in debug reg %d, BUT no probepoint!\n",
+			   ipval,dreg);
+		    return TSTATUS_ERROR;
+		}
+
+		if (target->bp_handler(target,tthread,dpp,cdr & 0x4000)
+		    != RESULT_SUCCESS)
+		    return TSTATUS_ERROR;
+		goto out_again;
+	    }
+	    /*
+	     * Try to handle a single step.
+	     *
+	     * NOTE NOTE NOTE: we must do this before checking the
+	     * software breakpoint.  Suppose we are single stepping
+	     * something at the breakpoint location; if we take the
+	     * single step interrupt, but check the software probepoint
+	     * below first, we'll think we're at a breakpoint, but we're
+	     * at a single step.
+	     *
+	     * Similarly, but differently, we cannot check single step
+	     * before hardware brekapoint, because we don't catch
+	     * the case where we single step into a hardware breakpoint
+	     * -- we miss the single step because the hw bp seems to
+	     * dominate the single step exception.  bp_handler handles
+	     * this...
+	     */
+	    else if (cdr & 0x4000) {
+		if (tthread->tpc) {
+		    if (target->ss_handler(target,tthread,tthread->tpc->probepoint)
+			!= RESULT_SUCCESS)
+			return TSTATUS_ERROR;
 		    goto out_again;
 		}
 		else {
-		    vwarn("could not find hardware bp and not sstep'ing;"
-			  " letting user handle fault at 0x%"PRIxADDR"!\n",
-			  ipval);
+		    if (target->ss_handler(target,tthread,NULL)
+			!= RESULT_SUCCESS)
+			return TSTATUS_ERROR;
+		    goto out_again;
 		}
+	    }
+	    /* Try to handle a software breakpoint. */
+	    else if ((dpp = (struct probepoint *)			\
+		      g_hash_table_lookup(target->soft_probepoints,
+					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+		if (target->bp_handler(target,tthread,dpp,cdr & 0x4000)
+		    != RESULT_SUCCESS)
+		    return TSTATUS_ERROR;
+		goto out_again;
+	    }
+	    else {
+		vwarn("could not find hardware bp and not sstep'ing;"
+		      " letting user handle fault at 0x%"PRIxADDR"!\n",
+		      ipval);
 	    }
 	}
 	else {
-	    vdebug(5,LOG_T_LUP,"target %d stopped with signo %d\n",
-		   pid,lstate->last_status);
+	    if (tstate->ctl_sig_sent) {
+		vdebug(5,LOG_T_LUP,
+		       "thread %"PRIiTID" stopped with (our) signo %d\n",
+		       tid,tstate->last_status);
+		/*
+		 * Don't reinject this signal!
+		 */
+		tstate->last_signo = -1;
+		tstate->ctl_sig_sent = 0;
+
+		/*
+		 * If we were trying to sigstop all threads, let all the
+		 * stop sigs get recv'd...
+		 */
+		if (lstate->ctl_sig_pausing_all) {
+		    tstate->ctl_sig_recv = 1;
+		    goto out_again;
+		}
+		else {
+		    tstate->ctl_sig_recv = 0;
+		    /* Restart just this thread. */
+		    if (ptrace(lstate->ptrace_type,tid,NULL,NULL) < 0) {
+			verror("ptrace restart of tid %"PRIiTID" failed: %s\n",
+			       tid,strerror(errno));
+		    }
+		    goto out_again;
+		}
+	    }
+	    else
+		vdebug(5,LOG_T_LUP,
+		       "thread %"PRIiTID" stopped with (ext) signo %d\n",
+		       tid,tstate->last_status);
 	}
 
 	return TSTATUS_PAUSED;
     }
     else if (WIFCONTINUED(pstatus)) {
-	lstate->last_signo = -1;
-	lstate->last_status = -1;
+	tstate->last_signo = -1;
+	tstate->last_status = -1;
 	goto out_again;
     }
     else if (WIFSIGNALED(pstatus) || WIFEXITED(pstatus)) {
@@ -1450,9 +2853,18 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	return TSTATUS_ERROR;
     }
 
+ out_err:
     return TSTATUS_ERROR;
 
  out_again:
+    /*
+     * If this is not returning to the user (i.e., not going back
+     * through target_resume()), we must flush and invalidate our
+     * threads ourself!
+     */
+    //linux_userproc_flush_all_threads(target);
+    //target_invalidate_all_threads(target);
+    target_resume(target);
     if (again)
 	*again = 1;
     return TSTATUS_RUNNING;
@@ -1461,13 +2873,15 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 static target_status_t linux_userproc_poll(struct target *target,
 					   target_poll_outcome_t *outcome,
 					   int *pstatus) {
-    pid_t pid = linux_userproc_pid(target);
+    int tid;
     int status;
     target_status_t retval;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
 
-    vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
-    pid = waitpid(pid,&status,WNOHANG);
-    if (pid < 0) {
+    vdebug(9,LOG_T_LUP,"waitpid target %d\n",lstate->pid);
+    tid = waitpid(-1,&status,WNOHANG | __WALL);
+    if (tid < 0) {
 	/* We always do this on error; these two errnos are the only
 	 * ones we should see, though.
 	 */
@@ -1477,13 +2891,13 @@ static target_status_t linux_userproc_poll(struct target *target,
 	    return TSTATUS_ERROR;
 	}
     }
-    else if (pid == 0) {
+    else if (tid == 0) {
 	if (outcome)
 	    *outcome = POLL_NOTHING;
 	/* Assume it is running!  Is this right? */
 	return TSTATUS_RUNNING;
     }
-    else if (pid == linux_userproc_pid(target)) {
+    else if (target_lookup_thread(target,tid)) {
 	if (outcome)
 	    *outcome = POLL_SUCCESS;
 	if (pstatus)
@@ -1493,7 +2907,7 @@ static target_status_t linux_userproc_poll(struct target *target,
 	 * Ok, handle whatever happened.  If we can't handle it, pass
 	 * control to the user, just like monitor() would.
 	 */
-	retval = linux_userproc_handle_internal(target,status,NULL);
+	retval = linux_userproc_handle_internal(target,tid,status,NULL);
 
 	return retval;
     }
@@ -1505,27 +2919,29 @@ static target_status_t linux_userproc_poll(struct target *target,
 }
 
 static target_status_t linux_userproc_monitor(struct target *target) {
-    pid_t pid = linux_userproc_pid(target);
+    int tid;
     int pstatus;
-    int again;
+    int again = 0;
     target_status_t retval;
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
 
-    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(9,LOG_T_LUP,"pid %d\n",lstate->pid);
 
     /* do the whole ptrace waitpid dance */
 
  again:
+    vdebug(9,LOG_T_LUP,"monitor pid %d (again %d)\n",lstate->pid,again);
     again = 0;
-    vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
-    pid = waitpid(pid,&pstatus,0);
-    if (pid < 0) {
+    tid = waitpid(-1,&pstatus,__WALL);
+    if (tid < 0) {
 	if (errno == ECHILD || errno == EINVAL)
 	    return TSTATUS_ERROR;
 	else
 	    goto again;
     }
 
-    retval = linux_userproc_handle_internal(target,pstatus,&again);
+    retval = linux_userproc_handle_internal(target,tid,pstatus,&again);
     if (again)
 	goto again;
 
@@ -1539,12 +2955,11 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 static unsigned char *linux_userproc_read(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
-					  unsigned char *buf,
-					  void *targetspecdata) {
-    struct linux_userproc_state *lstate;
-    lstate = (struct linux_userproc_state *)(target->state);
+					  unsigned char *buf) {
+    struct linux_userproc_state *lstate = \
+	(struct linux_userproc_state *)target->state;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
 
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
@@ -1555,8 +2970,7 @@ static unsigned char *linux_userproc_read(struct target *target,
 unsigned long linux_userproc_write(struct target *target,
 				   ADDR addr,
 				   unsigned long length,
-				   unsigned char *buf,
-				   void *targetspecdata) {
+				   unsigned char *buf) {
     struct linux_userproc_state *lstate;
     lstate = (struct linux_userproc_state *)(target->state);
 #if __WORDSIZE == 64
@@ -1568,7 +2982,7 @@ unsigned long linux_userproc_write(struct target *target,
     unsigned int i = 0;
     unsigned int j;
 
-    vdebug(5,LOG_T_LUP,"pid %d length %lu ",linux_userproc_pid(target),length);
+    vdebug(5,LOG_T_LUP,"pid %d length %lu ",lstate->pid,length);
     for (j = 0; j < length && j < 16; ++j)
 	vdebugc(5,LOG_T_LUP,"%02hhx ",buf[j]);
     vdebugc(5,LOG_T_LUP,"\n");
@@ -1597,7 +3011,7 @@ unsigned long linux_userproc_write(struct target *target,
      */
     if (length % (__WORDSIZE / 8)) {
 	errno = 0;
-	word = ptrace(PTRACE_PEEKTEXT,linux_userproc_pid(target),
+	word = ptrace(PTRACE_PEEKTEXT,lstate->current_tid,
 		      (addr + length) - (length % (__WORDSIZE / 8)),
 		      NULL);
 	if (errno) {
@@ -1622,7 +3036,7 @@ unsigned long linux_userproc_write(struct target *target,
     if (length / (__WORDSIZE / 8)) {
 	for (i = 0; i < length; i += (__WORDSIZE / 8)) {
 	    errno = 0;
-	    if (ptrace(PTRACE_POKETEXT,linux_userproc_pid(target),
+	    if (ptrace(PTRACE_POKETEXT,lstate->current_tid,
 #if __WORDSIZE == 64
 		       addr + i,*(uint64_t *)(buf + i)) == -1) {
 #else
@@ -1636,7 +3050,7 @@ unsigned long linux_userproc_write(struct target *target,
 
     if (length % (__WORDSIZE / 8)) {
 	errno = 0;
-	if (ptrace(PTRACE_POKETEXT,linux_userproc_pid(target),
+	if (ptrace(PTRACE_POKETEXT,lstate->current_tid,
 		   (i) ? addr + i - (__WORDSIZE / 8) : addr,
 		   word) == -1) {
 	    verror("ptrace(POKETEXT) last word: %s\n",strerror(errno));
@@ -1732,15 +3146,66 @@ static char *dreg_to_name64[X86_64_DWREG_COUNT] = {
     NULL, NULL,
     NULL, NULL, NULL, NULL, NULL,
 };
+static int creg_to_dreg64[COMMON_REG_COUNT] = { 
+    [CREG_AX] = 0,
+    [CREG_BX] = 3,
+    [CREG_CX] = 2,
+    [CREG_DX] = 1,
+    [CREG_DI] = 5,
+    [CREG_SI] = 4,
+    [CREG_BP] = 6,
+    [CREG_SP] = 7,
+    [CREG_IP] = 16,
+    [CREG_FLAGS] = 49,
+    [CREG_CS] = 51,
+    [CREG_SS] = 52,
+    [CREG_DS] = 53,
+    [CREG_ES] = 50,
+    [CREG_FS] = 54,
+    [CREG_GS] = 55,
+};
 
-#define X86_32_DWREG_COUNT 10
+#define X86_32_DWREG_COUNT 59
 static int dreg_to_ptrace_idx32[X86_32_DWREG_COUNT] = { 
     6, 1, 2, 0, 15, 5, 3, 4,
     12, 14,
+    -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1, -1, -1, -1, 
+    -1, -1, -1, -1, -1,
+    /* These are "fake" DWARF regs. */
+    13, 16, 7, 8, 9, 10,
 };
 static char *dreg_to_name32[X86_32_DWREG_COUNT] = { 
     "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
     "eip", "eflags",
+    NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 
+    NULL, NULL, NULL, NULL, NULL,
+    "cs", "ss", "ds", "es", "fs", "gs",
+};
+static int creg_to_dreg32[COMMON_REG_COUNT] = { 
+    [CREG_AX] = 0,
+    [CREG_BX] = 3,
+    [CREG_CX] = 1,
+    [CREG_DX] = 2,
+    [CREG_DI] = 7,
+    [CREG_SI] = 6,
+    [CREG_BP] = 5,
+    [CREG_SP] = 4,
+    [CREG_IP] = 8,
+    [CREG_FLAGS] = 9,
+    [CREG_CS] = 53,
+    [CREG_SS] = 54,
+    [CREG_DS] = 55,
+    [CREG_ES] = 56,
+    [CREG_FS] = 57,
+    [CREG_GS] = 58,
 };
 
 /*
@@ -1762,11 +3227,33 @@ char *linux_userproc_reg_name(struct target *target,REG reg) {
 #endif
 }
 
-REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
+REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg) {
+    if (reg >= COMMON_REG_COUNT) {
+	verror("common regnum %d does not have an x86 mapping!\n",reg);
+	errno = EINVAL;
+	return 0;
+    }
+#if __WORDSIZE == 64
+    return creg_to_dreg64[reg];
+#else
+    return creg_to_dreg32[reg];
+#endif
+}
+
+REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
     int ptrace_idx;
     struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
 
     lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     vdebug(5,LOG_T_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
 
@@ -1786,31 +3273,28 @@ REGVAL linux_userproc_read_reg(struct target *target,REG reg) {
     ptrace_idx = dreg_to_ptrace_idx32[reg];
 #endif
 
-    /* Don't bother checking if process is stopped! */
-    if (!lstate->regs_loaded) {
-	errno = 0;
-	if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),
-		   NULL,&(lstate->regs)) == -1) {
-	    verror("ptrace(GETREGS): %s\n",strerror(errno));
-	    return 0;
-	}
-	lstate->regs_loaded = 1;
-	lstate->regs_dirty = 0;
-    }
-
-    errno = 0;
 #if __WORDSIZE == 64
-    return (REGVAL)(((unsigned long *)&(lstate->regs))[ptrace_idx]);
+    return (REGVAL)(((unsigned long *)&(tstate->regs))[ptrace_idx]);
 #else 
-    return (REGVAL)(((long int *)&(lstate->regs))[ptrace_idx]);
+    return (REGVAL)(((long int *)&(tstate->regs))[ptrace_idx]);
 #endif
 }
 
-int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
+int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
+			     REGVAL value) {
     int ptrace_idx;
     struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
 
     lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     vdebug(5,LOG_T_LUP,"writing reg %s 0x%"PRIxREGVAL"\n",
 	   linux_userproc_reg_name(target,reg),value);
@@ -1831,48 +3315,14 @@ int linux_userproc_write_reg(struct target *target,REG reg,REGVAL value) {
     ptrace_idx = dreg_to_ptrace_idx32[reg];
 #endif
 
-    /* Don't bother checking if process is stopped! */
-    if (!lstate->regs_loaded) {
-	errno = 0;
-	if (ptrace(PTRACE_GETREGS,linux_userproc_pid(target),
-		   NULL,&(lstate->regs)) == -1) {
-	    verror("ptrace(GETREGS): %s\n",strerror(errno));
-	    return 0;
-	}
-	lstate->regs_loaded = 1;
-	lstate->regs_dirty = 0;
-    }
-
 #if __WORDSIZE == 64
-    ((unsigned long *)&(lstate->regs))[ptrace_idx] = (unsigned long)value;
+    ((unsigned long *)&(tstate->regs))[ptrace_idx] = (unsigned long)value;
 #else 
-    ((long int*)&(lstate->regs))[ptrace_idx] = (long int)value;
+    ((long int*)&(tstate->regs))[ptrace_idx] = (long int)value;
 #endif
 
     /* Flush the registers in target_resume! */
-    lstate->regs_dirty = 1;
-
-    return 0;
-}
-
-static int linux_userproc_flush_context(struct target *target) {
-    struct linux_userproc_state *lstate;
-    lstate = (struct linux_userproc_state *)(target->state);
-
-    vdebug(9,LOG_T_LUP,"pid %d\n",linux_userproc_pid(target));
-
-    /* Flush back registers if they're dirty! */
-    if (lstate->regs_dirty) {
-	errno = 0;
-	if (ptrace(PTRACE_SETREGS,linux_userproc_pid(target),
-		   NULL,&(lstate->regs)) == -1) {
-	    verror("ptrace(SETREGS): %s\n",strerror(errno));
-	    return -1;
-	}
-	/* Invalidate our cache. */
-	lstate->regs_dirty = 0;
-	lstate->regs_loaded = 0;
-    }
+    tthread->dirty = 1;
 
     return 0;
 }
@@ -1880,16 +3330,25 @@ static int linux_userproc_flush_context(struct target *target) {
 /*
  * Hardware breakpoint support.
  */
-static REG linux_userproc_get_unused_debug_reg(struct target *target) {
+static REG linux_userproc_get_unused_debug_reg(struct target *target,tid_t tid) {
     struct linux_userproc_state *lstate;
     REG retval = -1;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
 
     lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
-    if (!lstate->dr[0]) { retval = 0; }
-    else if (!lstate->dr[1]) { retval = 1; }
-    else if (!lstate->dr[2]) { retval = 2; }
-    else if (!lstate->dr[3]) { retval = 3; }
+    if (!tstate->dr[0]) { retval = 0; }
+    else if (!tstate->dr[1]) { retval = 1; }
+    else if (!tstate->dr[2]) { retval = 2; }
+    else if (!tstate->dr[3]) { retval = 3; }
 
     vdebug(5,LOG_T_LUP,"returning unused debug reg %d\n",retval);
 
@@ -1925,48 +3384,57 @@ static int read_ptrace_debug_reg(int pid,int *array) {
     return 0;
 }
 
-struct x86_dr_format {
-    int dr0_l:1;
-    int dr0_g:1;
-    int dr1_l:1;
-    int dr1_g:1;
-    int dr2_l:1;
-    int dr2_g:1;
-    int dr3_l:1;
-    int dr3_g:1;
-    int exact_l:1;
-    int exact_g:1;
-    int reserved:6;
-    probepoint_whence_t dr0_break:2;
-    probepoint_watchsize_t dr0_len:2;
-    probepoint_whence_t dr1_break:2;
-    probepoint_watchsize_t dr1_len:2;
-    probepoint_whence_t dr2_break:2;
-    probepoint_watchsize_t dr2_len:2;
-    probepoint_whence_t dr3_break:2;
-    probepoint_watchsize_t dr3_len:2;
-};
+/*
+ * struct x86_dr_format {
+ *     int dr0_l:1;
+ *     int dr0_g:1;
+ *     int dr1_l:1;
+ *     int dr1_g:1;
+ *     int dr2_l:1;
+ *     int dr2_g:1;
+ *     int dr3_l:1;
+ *     int dr3_g:1;
+ *     int exact_l:1;
+ *     int exact_g:1;
+ *     int reserved:6;
+ *     probepoint_whence_t dr0_break:2;
+ *     probepoint_watchsize_t dr0_len:2;
+ *     probepoint_whence_t dr1_break:2;
+ *     probepoint_watchsize_t dr1_len:2;
+ *     probepoint_whence_t dr2_break:2;
+ *     probepoint_watchsize_t dr2_len:2;
+ *     probepoint_whence_t dr3_break:2;
+ *     probepoint_watchsize_t dr3_len:2;
+ * };
+ */
 
-static int linux_userproc_set_hw_breakpoint(struct target *target,
+static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG reg,ADDR addr) {
     struct linux_userproc_state *lstate;
-    int pid;
 #if __WORDSIZE == 64
     unsigned long cdr;
 #else
-    int cdr;
+    int cdr = 0;
 #endif
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     if (reg < 0 || reg > 3) {
 	errno = EINVAL;
 	return -1;
     }
 
-    lstate = (struct linux_userproc_state *)(target->state);
-    pid = linux_userproc_pid(target);
-
     errno = 0;
-    ptrace(PTRACE_PEEKUSER,pid,
+    ptrace(PTRACE_PEEKUSER,tid,
 	   offsetof(struct user,u_debugreg[reg]),(void *)&cdr);
     if (errno) {
 	vwarn("could not read current val of debug reg %"PRIiREG": %s!\n",
@@ -1980,16 +3448,16 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,
     }
 
     /* Set the address, then the control bits. */
-    lstate->dr[reg] = addr;
+    tstate->dr[reg] = addr;
 
     /* Clear the status bits */
-    lstate->dr[6] = 0; //&= ~(1 << reg);
+    tstate->dr[6] = 0; //&= ~(1 << reg);
 
     /* Set the local control bit, and unset the global bit. */
-    lstate->dr[7] |= (1 << (reg * 2));
-    lstate->dr[7] &= ~(1 << (reg * 2 + 1));
+    tstate->dr[7] |= (1 << (reg * 2));
+    tstate->dr[7] &= ~(1 << (reg * 2 + 1));
     /* Set the break to be on execution (00b). */
-    lstate->dr[7] &= ~(3 << (16 + (reg * 4)));
+    tstate->dr[7] &= ~(3 << (16 + (reg * 4)));
 
     /*
     if (reg == 0) {
@@ -2002,23 +3470,23 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,
 
     /* Now write these values! */
     errno = 0;
-    ptrace(PTRACE_POKEUSER,pid,
-	   offsetof(struct user,u_debugreg[reg]),(void *)(lstate->dr[reg]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)(tstate->dr[reg]));
     if (errno) {
 	verror("could not update debug reg %"PRIiREG", aborting: %s!\n",
 	       reg,strerror(errno));
 	goto errout;
     }
 
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-	   offsetof(struct user,u_debugreg[6]),(void *)(lstate->dr[6]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[6]),(void *)(tstate->dr[6]));
     if (errno) {
 	verror("could not update status debug reg, aborting: %s!\n",
 	       strerror(errno));
 	goto errout;
     }
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-	   offsetof(struct user,u_debugreg[7]),(void *)(lstate->dr[7]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[7]),(void *)(tstate->dr[7]));
     if (errno) {
 	verror("could not update control debug reg, aborting: %s!\n",
 	       strerror(errno));
@@ -2028,33 +3496,40 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,
     return 0;
 
  errout:
-    lstate->dr[reg] = 0;
+    tstate->dr[reg] = 0;
 
     return -1;
 }
 
-static int linux_userproc_set_hw_watchpoint(struct target *target,
+ static int linux_userproc_set_hw_watchpoint(struct target *target,tid_t tid,
 					    REG reg,ADDR addr,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize) {
     struct linux_userproc_state *lstate;
-    int pid;
 #if __WORDSIZE == 64
     unsigned long cdr;
 #else
     int cdr;
 #endif
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     if (reg < 0 || reg > 3) {
 	errno = EINVAL;
 	return -1;
     }
 
-    lstate = (struct linux_userproc_state *)(target->state);
-    pid = linux_userproc_pid(target);
-
     errno = 0;
-    ptrace(PTRACE_PEEKUSER,pid,
+    ptrace(PTRACE_PEEKUSER,tid,
 	   offsetof(struct user,u_debugreg[reg]),(void *)&cdr);
     if (errno) {
 	vwarn("could not read current val of debug reg %"PRIiREG"!\n",reg);
@@ -2067,102 +3542,110 @@ static int linux_userproc_set_hw_watchpoint(struct target *target,
     }
 
     /* Set the address, then the control bits. */
-    lstate->dr[reg] = addr;
+    tstate->dr[reg] = addr;
 
     /* Clear the status bits */
-    lstate->dr[6] = 0; //&= ~(1 << reg);
+    tstate->dr[6] = 0; //&= ~(1 << reg);
 
     /* Set the local control bit, and unset the global bit. */
-    lstate->dr[7] |= (1 << (reg * 2));
-    lstate->dr[7] &= ~(1 << (reg * 2 + 1));
+    tstate->dr[7] |= (1 << (reg * 2));
+    tstate->dr[7] &= ~(1 << (reg * 2 + 1));
     /* Set the break to be on whatever whence was) (clear the bits first!). */
-    lstate->dr[7] &= ~(3 << (16 + (reg * 4)));
-    lstate->dr[7] |= (whence << (16 + (reg * 4)));
+    tstate->dr[7] &= ~(3 << (16 + (reg * 4)));
+    tstate->dr[7] |= (whence << (16 + (reg * 4)));
     /* Set the watchsize to be whatever watchsize was). */
-    lstate->dr[7] &= ~(3 << (18 + (reg * 4)));
-    lstate->dr[7] |= (watchsize << (18 + (reg * 4)));
+    tstate->dr[7] &= ~(3 << (18 + (reg * 4)));
+    tstate->dr[7] |= (watchsize << (18 + (reg * 4)));
 
     /* Enable the LE bit to slow the processor! */
-    lstate->dr[7] |= (1 << 8);
+    tstate->dr[7] |= (1 << 8);
     /* Enable the GE bit to slow the processor! */
-    /* lstate->dr[7] |= (1 << 9); */
+    /* tstate->dr[7] |= (1 << 9); */
 
     vdebug(4,LOG_T_LUP,"dreg6 = 0x%"PRIxADDR"; dreg7 = 0x%"PRIxADDR", w = %d, ws = 0x%x\n",
-	   lstate->dr[6],lstate->dr[7],whence,watchsize);
+	   tstate->dr[6],tstate->dr[7],whence,watchsize);
 
     /* Now write these values! */
     errno = 0;
-    ptrace(PTRACE_POKEUSER,pid,
-	   offsetof(struct user,u_debugreg[reg]),(void *)(lstate->dr[reg]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)(tstate->dr[reg]));
     if (errno) {
 	verror("could not update debug reg %"PRIiREG" (%p), aborting: %s!\n",reg,
-	       (void *)(lstate->dr[reg]),strerror(errno));
+	       (void *)(tstate->dr[reg]),strerror(errno));
 	goto errout;
     }
 
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-	   offsetof(struct user,u_debugreg[6]),(void *)(lstate->dr[6]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[6]),(void *)(tstate->dr[6]));
     if (errno) {
 	verror("could not update status debug reg (%p), aborting: %s!\n",
-	       (void *)(lstate->dr[6]),strerror(errno));
+	       (void *)(tstate->dr[6]),strerror(errno));
 	goto errout;
     }
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-	   offsetof(struct user,u_debugreg[7]),(void *)(lstate->dr[7]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[7]),(void *)(tstate->dr[7]));
     if (errno) {
 	verror("could not update control debug reg (%p), aborting: %s!\n",
-	       (void *)(lstate->dr[7]),strerror(errno));
+	       (void *)(tstate->dr[7]),strerror(errno));
 	goto errout;
     }
 
     return 0;
 
  errout:
-    lstate->dr[reg] = 0;
+    tstate->dr[reg] = 0;
 
     return -1;
 }
 
-static int linux_userproc_unset_hw_breakpoint(struct target *target,REG reg) {
+static int linux_userproc_unset_hw_breakpoint(struct target *target,tid_t tid,
+					      REG reg) {
     struct linux_userproc_state *lstate;
-    int pid;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     if (reg < 0 || reg > 3) {
 	errno = EINVAL;
 	return -1;
     }
 
-    lstate = (struct linux_userproc_state *)(target->state);
-    pid = linux_userproc_pid(target);
-
     /* Set the address, then the control bits. */
-    lstate->dr[reg] = 0;
+    tstate->dr[reg] = 0;
 
     /* Clear the status bits */
-    lstate->dr[6] = 0; //&= ~(1 << reg);
+    tstate->dr[6] = 0; //&= ~(1 << reg);
 
     /* Unset the local control bit, and unset the global bit. */
-    lstate->dr[7] &= ~(3 << (reg * 2));
+    tstate->dr[7] &= ~(3 << (reg * 2));
 
     errno = 0;
     /* Now write these values! */
-    ptrace(PTRACE_POKEUSER,pid,
-	   offsetof(struct user,u_debugreg[reg]),(void *)(lstate->dr[reg]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[reg]),(void *)(tstate->dr[reg]));
     if (errno) {
 	verror("could not update debug reg %"PRIiREG", aborting: %s!\n",
 	       reg,strerror(errno));
 	goto errout;
     }
 
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-	   offsetof(struct user,u_debugreg[6]),(void *)(lstate->dr[6]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[6]),(void *)(tstate->dr[6]));
     if (errno) {
 	verror("could not update status debug reg, aborting: %s!\n",
 	       strerror(errno));
 	goto errout;
     }
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-	   offsetof(struct user,u_debugreg[7]),(void *)(lstate->dr[7]));
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[7]),(void *)(tstate->dr[7]));
     if (errno) {
 	verror("could not update control debug reg,aborting: %s!\n",
 	       strerror(errno));
@@ -2175,13 +3658,14 @@ static int linux_userproc_unset_hw_breakpoint(struct target *target,REG reg) {
     return -1;
 }
 
-static int linux_userproc_unset_hw_watchpoint(struct target *target,REG reg) {
+static int linux_userproc_unset_hw_watchpoint(struct target *target,tid_t tid,
+					      REG reg) {
     /* It's the exact same thing, yay! */
-    return linux_userproc_unset_hw_breakpoint(target,reg);
+    return linux_userproc_unset_hw_breakpoint(target,tid,reg);
 }
 
-int linux_userproc_disable_hw_breakpoints(struct target *target) {
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
+int linux_userproc_disable_hw_breakpoints(struct target *target,tid_t tid) {
+    ptrace(PTRACE_POKEUSER,tid,
 	   offsetof(struct user,u_debugreg[7]),(void *)0);
     if (errno) {
 	verror("could not update control debug reg, aborting: %s!\n",
@@ -2191,12 +3675,22 @@ int linux_userproc_disable_hw_breakpoints(struct target *target) {
     return 0;
 }
 
-int linux_userproc_enable_hw_breakpoints(struct target *target) {
-    struct linux_userproc_state *lstate = \
-	(struct linux_userproc_state *)(target->state);
+int linux_userproc_enable_hw_breakpoints(struct target *target,tid_t tid) {
+    struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
     
-    ptrace(PTRACE_POKEUSER,linux_userproc_pid(target),
-	   offsetof(struct user,u_debugreg[7]),(void *)lstate->dr[7]);
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[7]),(void *)tstate->dr[7]);
     if (errno) {
 	verror("could not update control debug reg, aborting: %s!\n",
 	       strerror(errno));
@@ -2205,25 +3699,204 @@ int linux_userproc_enable_hw_breakpoints(struct target *target) {
     return 0;
 }
 
+int linux_userproc_disable_hw_breakpoint(struct target *target,tid_t tid,
+					 REG dreg) {
+    struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    if (dreg < 0 || dreg > 3) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    /* Clear the status bits */
+    tstate->dr[6] = 0; //&= ~(1 << reg);
+
+    /* Unset the local control bit, and unset the global bit. */
+    tstate->dr[7] &= ~(3 << (dreg * 2));
+
+    errno = 0;
+    /* Now write these values! */
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[6]),(void *)(tstate->dr[6]));
+    if (errno) {
+	verror("could not update status debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[7]),(void *)(tstate->dr[7]));
+    if (errno) {
+	verror("could not update control debug reg,aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+
+    return 0;
+
+ errout:
+    return -1;
+}
+
+int linux_userproc_enable_hw_breakpoint(struct target *target,tid_t tid,
+					REG dreg) {
+    struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    if (dreg < 0 || dreg > 3) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    /* Clear the status bits */
+    tstate->dr[6] = 0; //&= ~(1 << reg);
+
+    /* Set the local control bit, and unset the global bit. */
+    tstate->dr[7] |= (1 << (dreg * 2));
+    tstate->dr[7] &= ~(1 << (dreg * 2 + 1));
+
+    /* Now write these values! */
+    errno = 0;
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[6]),(void *)(tstate->dr[6]));
+    if (errno) {
+	verror("could not update status debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[7]),(void *)(tstate->dr[7]));
+    if (errno) {
+	verror("could not update control debug reg, aborting: %s!\n",
+	       strerror(errno));
+	goto errout;
+    }
+
+    return 0;
+
+ errout:
+    return -1;
+}
+
 int linux_userproc_notify_sw_breakpoint(struct target *target,ADDR addr,
 					int notification) {
     return 0;
 }
 
-int linux_userproc_singlestep(struct target *target) {
-    if (target_flush_context(target) < 0) {
-	verror("could not flush context; not single stepping!\n");
+int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp) {
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    /* Clear the status bits */
+    tstate->dr[6] = 0; //&= ~(1 << reg);
+
+    /* Now write these values! */
+    errno = 0;
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[6]),(void *)(tstate->dr[6]));
+    if (errno) {
+	verror("could not update status debug reg, aborting: %s!\n",
+	       strerror(errno));
 	return -1;
     }
 
-    ptrace(PTRACE_SINGLESTEP,linux_userproc_pid(target),NULL,NULL);
-    if (errno) {
-	verror("could not ptrace single step: %s\n",strerror(errno));
+    /*
+     * If this is a single step of an instruction for which a breakpoint
+     * is set, set the RF flag.  Why?  Because then we don't have to
+     * disable the hw breakpoint at this instruction if there is one.
+     * The x86 clears it after one instruction anyway, so it's safe.
+     *
+     * Actually (and leaving this in so nobody else tries it), with
+     * ptrace, we can't set the RF flag... it's masked out.
+     */
+    /*
+    if (isbp) {
+	flagsregno = linux_userproc_dw_reg_no(target,CREG_FLAGS);
+	flags = linux_userproc_read_reg(target,tid,flagsregno);
+	flags |= EF_RF;
+	if (linux_userproc_write_reg(target,tid,flagsregno,flags)) 
+	    verror("could not set RF flag to single step breakpoint'd instr!\n");
+    }
+    */
+
+    if (linux_userproc_flush_thread(target,tid) < 0) {
+	verror("could not flush thread; not single stepping!\n");
 	return -1;
     }
+
+    ptrace(PTRACE_SINGLESTEP,tid,NULL,NULL);
+    if (errno) {
+	verror("could not ptrace single step thread %"PRIiTID": %s\n",
+	       tid,strerror(errno));
+	return -1;
+    }
+
+    /*
+     * PTRACE_SINGLESTEP runs the thread right away, so we have make
+     * sure to do all the things _resume() would have done to it.
+     */
+    target_invalidate_thread(target,tthread);
+    tthread->status = THREAD_STATUS_RUNNING;
+
     return 0;
 }
 
-int linux_userproc_singlestep_end(struct target *target) {
+int linux_userproc_singlestep_end(struct target *target,tid_t tid) {
+    struct linux_userproc_state *lstate;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    /* Clear the status bits */
+    tstate->dr[6] = 0; //&= ~(1 << reg);
+
+    /* Now write these values! */
+    errno = 0;
+    ptrace(PTRACE_POKEUSER,tid,
+	   offsetof(struct user,u_debugreg[6]),(void *)(tstate->dr[6]));
+    if (errno) {
+	verror("could not update status debug reg, aborting: %s!\n",
+	       strerror(errno));
+	return -1;
+    }
+
+    tthread->status = THREAD_STATUS_PAUSED;
+
     return 0;
 }

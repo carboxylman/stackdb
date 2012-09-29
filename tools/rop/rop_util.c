@@ -172,6 +172,8 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
      * (rop_data->cont_start).
      */
     struct target *target = probe->target;
+    struct target_thread *tthread = probe->thread;
+    tid_t tid = tthread->tid;
     REGVAL sp;
     REGVAL ip;
     ADDR retaddr;
@@ -191,12 +193,12 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
     if (!rop_data->status.ingadget)
 	return 0;
 
-    sp = target_read_reg(target,target->spregno);
+    sp = target_read_reg(target,tid,target->spregno);
     if (errno) {
 	verror("could not read SP!\n");
 	goto errout;
     }
-    ip = target_read_reg(target,target->ipregno);
+    ip = target_read_reg(target,tid,target->ipregno);
     if (errno) {
 	verror("could not read IP!\n");
 	goto errout;
@@ -204,7 +206,7 @@ int probe_rop_checkret_ret_pre(struct probe *probe,void *data,
 
     /* Grab the return address on the top of the stack */
     if (!target_read_addr(target,(ADDR)sp,sizeof(ADDR),
-			  (unsigned char *)&retaddr,NULL)) {
+			  (unsigned char *)&retaddr)) {
 	verror("could not read top of stack\n");
 	goto errout;
     }
@@ -410,7 +412,8 @@ int probe_rop_checkret_cont_post(struct probe *probe,void *data,
     return 0;
 }
 
-struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
+struct probe *probe_rop_checkret(struct target *target,tid_t tid,
+				 struct rop_gadget *rg,
 				 probe_handler_t pre_handler,
 				 probe_handler_t post_handler,
 				 void *handler_data) {
@@ -441,7 +444,7 @@ struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
      */
     rop_data = (struct rop_checkret_data *)calloc(1,sizeof(*rop_data));
     snprintf(namebuf,32,"rop_checkret_0x%"PRIxADDR,rg->start);
-    rop_probe = probe_create(target,&probe_ops_rop_checkret,namebuf,
+    rop_probe = probe_create(target,tid,&probe_ops_rop_checkret,namebuf,
 			     pre_handler ? pre_handler : probe_do_sink_pre_handlers,
 			     post_handler ? post_handler : probe_do_sink_post_handlers,
 			     handler_data,0);
@@ -542,7 +545,7 @@ struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
      * mess with the stack.
      */
     snprintf(namebuf,32,"rop_checkret_entry_0x%"PRIxADDR,rg->start);
-    rop_data->entry_probe = probe_create(target,NULL,namebuf,
+    rop_data->entry_probe = probe_create(target,tid,NULL,namebuf,
 					 probe_rop_checkret_entry_pre,
 					 NULL,
 					 rop_data,0);
@@ -553,7 +556,7 @@ struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
 	goto errout;
     }
     snprintf(namebuf,32,"rop_checkret_ret_0x%"PRIxADDR,gadget_ret_addr);
-    rop_data->ret_probe = probe_create(target,NULL,namebuf,
+    rop_data->ret_probe = probe_create(target,tid,NULL,namebuf,
 				       probe_rop_checkret_ret_pre,
 				       probe_rop_checkret_ret_post,
 				       rop_data,0);
@@ -580,7 +583,7 @@ struct probe *probe_rop_checkret(struct target *target,struct rop_gadget *rg,
 
 	/* Add a probe on the real instr preceding the gadget. */
 	snprintf(namebuf,32,"rop_checkret_cont_0x%"PRIxADDR,cont_addr);
-	rop_data->cont_probe = probe_create(target,NULL,namebuf,
+	rop_data->cont_probe = probe_create(target,tid,NULL,namebuf,
 					    probe_rop_checkret_cont_pre,
 					    probe_rop_checkret_cont_post,
 					    rop_data,0);

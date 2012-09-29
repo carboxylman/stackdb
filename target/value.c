@@ -16,14 +16,70 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "target_api.h"
 #include "target.h"
 
-struct value *value_create_raw(int len) {
+int value_set_addr(struct value *value,ADDR addr) {
+    value->res.addr = addr;
+    value->region_stamp = value->range->region->stamp;
+    value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
+				     CREG_IP);
+    return 0;
+}
+
+int value_set_mmap(struct value *value,ADDR addr,struct mmap_entry *mmap,
+		   char *offset_ptr) {
+    value->buf = offset_ptr;
+    value->res.addr = addr;
+    value->mmap = mmap;
+    value->region_stamp = value->range->region->stamp;
+    value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
+				     CREG_IP);
+    return 0;
+}
+
+int value_set_reg(struct value *value,REG reg) {
+    value->res.reg = reg;
+    value->region_stamp = value->range->region->stamp;
+    value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
+				     CREG_IP);
+    return 0;
+}
+
+int value_set_child(struct value *value,struct value *parent_value,ADDR addr) {
+    if (addr < parent_value->res.addr 
+	|| addr >= (parent_value->res.addr + parent_value->bufsiz))
+	return -1;
+
+    value->parent_value = parent_value;
+    value->buf = parent_value->buf + (addr - parent_value->res.addr);
+    value->res.addr = addr;
+    value->region_stamp = value->range->region->stamp;
+    value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
+				     CREG_IP);
+
+    return 0;
+}
+
+void value_set_strlen(struct value *value,int len) {
+    value->bufsiz = len;
+    value->isstring = 1;
+}
+
+struct value *value_create_raw(struct target *target,
+			       struct target_thread *tthread,
+			       struct memrange *range,int len) {
     struct value *value;
 
     if (!(value = malloc(sizeof(struct value)))) 
 	return NULL;
     memset(value,0,sizeof(struct value));
+
+    if (tthread)
+	value->thread = tthread;
+    else
+	value->thread = target->global_thread;
+    value->range = range;
 
     value->buf = malloc(len);
     if (!value->buf) {
@@ -35,7 +91,8 @@ struct value *value_create_raw(int len) {
     return value;
 }
 
-struct value *value_create_type(struct symbol *type) {
+struct value *value_create_type(struct target_thread *thread,
+				struct memrange *range,struct symbol *type) {
     struct value *value;
     int len = symbol_type_full_bytesize(type);
 
@@ -49,9 +106,15 @@ struct value *value_create_type(struct symbol *type) {
 	return NULL;
     memset(value,0,sizeof(struct value));
 
-    symbol_hold(type);
+    if (thread)
+	value->thread = thread;
+    else
+	value->thread = range->region->space->target->global_thread;
+    value->range = range;
 
+    symbol_hold(type);
     value->type = type;
+
     value->buf = malloc(len);
     if (!value->buf) {
 	free(value);
@@ -62,8 +125,9 @@ struct value *value_create_type(struct symbol *type) {
     return value;
 }
 
-struct value *value_create(struct lsymbol *lsymbol,struct symbol *type) {
-    struct value *value = value_create_type(type);
+struct value *value_create(struct target_thread *thread,struct memrange *range,
+			   struct lsymbol *lsymbol,struct symbol *type) {
+    struct value *value = value_create_type(thread,range,type);
 
     if (!value)
 	return NULL;
@@ -76,8 +140,9 @@ struct value *value_create(struct lsymbol *lsymbol,struct symbol *type) {
     return value;
 }
 
-struct value *value_create_noalloc(struct lsymbol *lsymbol,
-				   struct symbol *type) {
+struct value *value_create_noalloc(struct target_thread *thread,
+				   struct memrange *range,
+				   struct lsymbol *lsymbol,struct symbol *type) {
     struct value *value;
     int len = symbol_type_full_bytesize(type);
 
@@ -91,6 +156,12 @@ struct value *value_create_noalloc(struct lsymbol *lsymbol,
 	return NULL;
     memset(value,0,sizeof(struct value));
 
+    if (thread)
+	value->thread = thread;
+    else
+	value->thread = thread->target->global_thread;
+    value->range = range;
+
     if (type) {
 	symbol_hold(type);
 	value->type = type;
@@ -100,6 +171,8 @@ struct value *value_create_noalloc(struct lsymbol *lsymbol,
 	lsymbol_hold(lsymbol);
 	value->lsymbol = lsymbol;
     }
+
+    value->bufsiz = len;
 
     return value;
 }
@@ -117,13 +190,16 @@ struct value *value_clone(struct value *in) {
 	out->lsymbol = in->lsymbol;
 	lsymbol_hold(out->lsymbol);
     }
+    out->thread = in->thread;
     out->range = in->range;
     out->region_stamp = in->region_stamp;
     out->mmap = in->mmap;
     out->ismmap = in->ismmap;
+    out->isreg = in->isreg;
     out->isstring = in->isstring;
-    out->addr = in->addr;
-    out->addr_resolved_ip = in->addr_resolved_ip;
+    out->res.addr = in->res.addr;
+    out->res.reg = in->res.reg;
+    out->res_ip = in->res_ip;
 
     out->buf = malloc(in->bufsiz);
     memcpy(out->buf,in->buf,in->bufsiz);
@@ -154,6 +230,15 @@ void value_free(struct value *value) {
     free(value);
 }
 
+ADDR value_addr(struct value *value) {
+    if (value->isreg) {
+	errno = EINVAL;
+	return 0;
+    }
+
+    return value->res.addr;
+}
+
 signed char      v_c(struct value *v)   { return *((signed char *)v->buf); }
 unsigned char    v_uc(struct value *v)  { return *((unsigned char *)v->buf); }
 wchar_t          v_wc(struct value *v)  { return *((wchar_t *)v->buf); }
@@ -165,7 +250,7 @@ int8_t           v_i8(struct value *v)  { return *((int8_t *)v->buf); }
 int16_t          v_i16(struct value *v) { return *((int16_t *)v->buf); }
 int32_t          v_i32(struct value *v) { return *((int32_t *)v->buf); }
 int64_t          v_i64(struct value *v) { return *((int64_t *)v->buf); }
-int64_t          v_num(struct value *v) {
+num_t            v_num(struct value *v) {
     if (v->bufsiz == (signed)sizeof(int64_t))
 	return v_i64(v);
     else if (v->bufsiz == (signed)sizeof(int32_t))
@@ -180,7 +265,7 @@ int64_t          v_num(struct value *v) {
     }
     return 0;
 }
-uint64_t         v_unum(struct value *v){
+unum_t           v_unum(struct value *v){
     if (v->bufsiz == (signed)sizeof(uint64_t))
 	return v_u64(v);
     else if (v->bufsiz == (signed)sizeof(uint32_t))
@@ -354,7 +439,7 @@ int value_update_addr(struct value *value,ADDR v) {
     }
     return 0;
 }
-int value_update_num(struct value *value,int64_t v) {
+int value_update_num(struct value *value,num_t v) {
     if (value->bufsiz == (signed)sizeof(int64_t))
 	return value_update_i64(value,v);
     else if (value->bufsiz == (signed)sizeof(int32_t))
@@ -369,7 +454,7 @@ int value_update_num(struct value *value,int64_t v) {
     }
     return 0;
 }
-int value_update_unum(struct value *value,uint64_t v) {
+int value_update_unum(struct value *value,unum_t v) {
     if (value->bufsiz == (signed)sizeof(uint64_t))
 	return value_update_u64(value,v);
     else if (value->bufsiz == (signed)sizeof(uint32_t))
@@ -580,7 +665,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    }
 	}
 	if (!found)
-	    fprintf(ud->stream,"%"PRIu64" (0x%"PRIx64")",
+	    fprintf(ud->stream,"%"PRIuNUM" (0x%"PRIxNUM")",
 		    v_unum(value),v_unum(value));
 	break;
     case DATATYPE_BITFIELD:

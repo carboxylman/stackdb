@@ -153,14 +153,14 @@ int main(int argc, char *argv[])
     vmi_set_log_level(debug_level);
     xa_set_debug_level(debug_level);
 
-    t = xen_vm_attach(dom_name);
+    t = xen_vm_attach(dom_name,NULL);
     if (!t)
     {
         ERR("Can't attach to dom %s!\n", dom_name);
         exit(-3);
     }
 
-    if (target_open(t))
+    if (target_open(t,NULL))
     {
         ERR("Can't open target %s!\n", dom_name);
         exit(-4);
@@ -199,7 +199,7 @@ int main(int argc, char *argv[])
         if (tstat == TSTATUS_PAUSED)
         {
             printf("domain %s interrupted at 0x%" PRIxREGVAL "\n", dom_name, 
-                    target_read_reg(t,t->ipregno));
+		   target_read_reg(t,TID_GLOBAL,t->ipregno));
             if (target_resume(t))
             {
                 ERR("Can't resume target dom %s\n", dom_name);

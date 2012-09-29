@@ -57,7 +57,7 @@ struct target *init_probes(const char *domain_name, int debug_level)
 		return NULL;
 	}
 
-	ret = target_open(t);
+	ret = target_open(t,NULL);
 	if (ret)
 	{
 		ERR("Can't open target %s\n", domain_name);
@@ -102,7 +102,7 @@ int run_probes(struct target *t, GHashTable *probes)
 		if (tstat == TSTATUS_PAUSED)
 		{
 			WARN("Domain %s interrupted at 0x%" PRIxREGVAL "\n", 
-					domain_name, target_read_reg(t, t->ipregno));
+			     domain_name, target_read_reg(t, TID_GLOBAL, t->ipregno));
 
 			if (target_resume(t))
 			{
@@ -143,9 +143,9 @@ struct probe *register_watchpoint(struct target *target, struct value *value,
 	ADDR addr;
 	probepoint_whence_t whence;
 
-	addr = value->addr;
+	addr = value_addr(value);
 
-	probe = probe_create(target, (struct probe_ops *)ops, (char *)name, 
+	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, (char *)name, 
 			NULL /* pre_handler */, handler /* post_handler */, 
 			data, 0 /* autofree */);
 	if (!probe)

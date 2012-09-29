@@ -45,6 +45,8 @@ extern char *optarg;
 extern int optind, opterr, optopt;
 
 struct target *t = NULL;
+int islinux = 0;
+int isxen = 0;
 
 int len = 0;
 struct bsymbol **symbols = NULL;
@@ -58,8 +60,6 @@ void cleanup() {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
-    target_status_t retval;
-    struct bsymbol *bsymbol;
 
     if (probes) {
 	g_hash_table_iter_init(&iter,probes);
@@ -69,12 +69,12 @@ void cleanup() {
 	    probe_unregister(probe,1);
 	    probe_free(probe,1);
 	}
+	g_hash_table_destroy(probes);
+	probes = NULL;
     }
     target_close(t);
     target_free(t);
 
-    if (probes) 
-	g_hash_table_destroy(probes);
     if (disfuncs)
 	g_hash_table_destroy(disfuncs);
 
@@ -83,8 +83,6 @@ void cleanup() {
 
     if (symbols)
 	free(symbols);
-
-    return retval;
 }
 
 int nonrootsethits = 0;
@@ -93,8 +91,9 @@ void sigh(int signo) {
 
     if (t) {
 	target_pause(t);
-	fprintf(stderr,"Ending trace (hits on probes not from root set: %d).\n",
-		nonrootsethits);
+	fprintf(stderr,
+		"Ending trace (%d) (hits on probes not from root set: %d).\n",
+		signo,nonrootsethits);
 	cleanup();
 	fprintf(stderr,"Ended trace.\n");
     }
@@ -110,7 +109,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
     ADDR funcstart = 0;
 
-    if (location_resolve_symbol_base(t,bsymbol,&funcstart,NULL)) {
+    if (target_resolve_symbol_base(t,TID_GLOBAL,bsymbol,&funcstart,NULL)) {
 	fprintf(stderr,
 		"Could not resolve base addr for function %s!\n",
 		bsymbol->lsymbol->symbol->name);
@@ -126,8 +125,8 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
 	int bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+4+1+2+1;
 	char *buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"call_in_%s",bsymbol->lsymbol->symbol->name);
-	struct probe *cprobe = probe_create(t,NULL,buf,NULL,retaddr_save,
-					    NULL,0);
+	struct probe *cprobe = probe_create(t,TID_GLOBAL,NULL,buf,
+					    NULL,retaddr_save,NULL,0);
 	cprobe->handler_data = cprobe->name;
 	free(buf);
 	struct probe *rprobe;
@@ -135,8 +134,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
 	    bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
 	    buf = malloc(bufsiz);
 	    snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
-	    rprobe = probe_create(t,NULL,buf,retaddr_check,NULL,
-					    buf,0);
+	    rprobe = probe_create(t,TID_GLOBAL,NULL,buf,retaddr_check,NULL,buf,0);
 	    rprobe->handler_data = rprobe->name;
 	    free(buf);
 	}
@@ -199,12 +197,13 @@ int retaddr_save(struct probe *probe,void *handler_data,
     REGVAL sp;
     REGVAL ip;
     ADDR *retaddr;
+    tid_t tid = target_gettid(t);
 
     fflush(stderr);
     fflush(stdout);
 
     errno = 0;
-    sp = target_read_reg(t,t->spregno);
+    sp = target_read_reg(t,tid,t->spregno);
     if (errno) {
 	fprintf(stderr,"Could not read SP in retaddr_save!\n");
 	return 0;
@@ -213,13 +212,13 @@ int retaddr_save(struct probe *probe,void *handler_data,
     /* Grab the return address on the top of the stack */
     retaddr = malloc(sizeof(*retaddr));
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
-			  (unsigned char *)retaddr,NULL)) {
+			  (unsigned char *)retaddr)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_save!\n");
 	return 0;
     }
 
     /* Grab the current IP -- the post-call IP */
-    ip = target_read_reg(t,t->ipregno);
+    ip = target_read_reg(t,tid,t->ipregno);
     if (errno) {
 	fprintf(stderr,"Could not read IP in retaddr_save!\n");
 	fflush(stderr);
@@ -240,9 +239,11 @@ int retaddr_save(struct probe *probe,void *handler_data,
 	fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
 #ifdef ENABLE_XENACCESS
-	struct value *value = linux_load_current_task(t);
-	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
-	value_free(value);
+	if (isxen) {
+	    struct value *value = linux_load_current_task(t);
+	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+	    value_free(value);
+	}
 	fflush(stderr);
 	fflush(stdout);
 #endif
@@ -258,9 +259,11 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		*retaddr,(char *)handler_data,array_list_len(shadow_stack));
 	
 #ifdef ENABLE_XENACCESS
-	struct value *value = linux_load_current_task(t);
-	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
-	value_free(value);
+	if (isxen) {
+	    struct value *value = linux_load_current_task(t);
+	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+	    value_free(value);
+	}
 	fflush(stderr);
 	fflush(stdout);
 #endif
@@ -286,6 +289,7 @@ int retaddr_check(struct probe *probe,void *handler_data,
     REGVAL sp;
     ADDR newretaddr;
     ADDR *oldretaddr = NULL;
+    tid_t tid = target_gettid(t);
 
     fflush(stderr);
     fflush(stdout);
@@ -299,7 +303,7 @@ int retaddr_check(struct probe *probe,void *handler_data,
     }
 
     errno = 0;
-    sp = target_read_reg(t,t->spregno);
+    sp = target_read_reg(t,tid,t->spregno);
     if (errno) {
 	fprintf(stderr,"Could not read SP in retaddr_check!\n");
 	return 0;
@@ -308,7 +312,7 @@ int retaddr_check(struct probe *probe,void *handler_data,
     oldretaddr = (ADDR *)array_list_remove(shadow_stack);
 
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
-			  (unsigned char *)&newretaddr,NULL)) {
+			  (unsigned char *)&newretaddr)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_check!\n");
 	free(oldretaddr);
 	return 0;
@@ -334,16 +338,18 @@ int retaddr_check(struct probe *probe,void *handler_data,
     }
 
 #ifdef ENABLE_XENACCESS
-    struct value *value = linux_load_current_task(t);
-    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
-    value_free(value);
+    if (isxen) {
+	struct value *value = linux_load_current_task(t);
+	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+	value_free(value);
+    }
     fflush(stderr);
     fflush(stdout);
 #endif
 
     if (doit) {
 	if (!target_write_addr(t,(ADDR)sp,sizeof(ADDR),
-			       (unsigned char *)oldretaddr,NULL)) {
+			       (unsigned char *)oldretaddr)) {
 	    fprintf(stderr,"Could not reset top of stack in retaddr_check!\n");
 	    free(oldretaddr);
 	    return 0;
@@ -366,16 +372,10 @@ int function_dump_args(struct probe *probe,void *handler_data,
     int j;
     ADDR probeaddr;
     struct probepoint *probepoint;
+    tid_t tid = target_gettid(t);
 
     fflush(stderr);
     fflush(stdout);
-
-    struct dump_info udn = {
-	.stream = stderr,
-	.prefix = "",
-	.detail = 1,
-	.meta = 1,
-    };
 
     if (!probe->probepoint && trigger) {
 	probepoint = trigger->probepoint;
@@ -392,62 +392,38 @@ int function_dump_args(struct probe *probe,void *handler_data,
     fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",
 	    probe->bsymbol->lsymbol->symbol->name,probeaddr);
 
-    //bsymbol_dump(bsymbol,&udn);
+    struct array_list *args;
+    int i;
+    struct lsymbol *arg;
+    struct bsymbol *bs;
 
-    /* Make a chain with room for one more -- the
-     * one more is each arg we're going to process.
-     */
-    struct symbol_instance *tsym_instance;
-    struct symbol *tsym;
-    struct array_list *tmp;
-    if (!probe->bsymbol->lsymbol->chain
-	|| array_list_len(probe->bsymbol->lsymbol->chain) == 0) {
-	tmp = array_list_clone(probe->bsymbol->lsymbol->chain,2);
-	array_list_add(tmp,probe->bsymbol->lsymbol->symbol);
-    }
-    else
-	tmp = array_list_clone(probe->bsymbol->lsymbol->chain,1);
-    int len = tmp->len;
-
-    struct lsymbol tlsym = {
-	.chain = tmp,
-	// hack to prevent value_free from trying to release us!
-	.refcnt = 1,
-    };
-    struct bsymbol tbsym = {
-	.lsymbol = &tlsym,
-	.region = probepoint->range->region,
-    };
-
-    ++tmp->len;
-    list_for_each_entry(tsym_instance,&probe->bsymbol->lsymbol->symbol->s.ii->d.f.args,
-			d.v.member) {
-	tsym = tsym_instance->d.v.member_symbol;
-	fflush(stderr);
-	fflush(stdout);
-	array_list_item_set(tmp,len,tsym);
-	tlsym.symbol = tsym;
-
-	if ((value = bsymbol_load(&tbsym,
-				  LOAD_FLAG_AUTO_DEREF | 
-				  LOAD_FLAG_AUTO_STRING |
-				  LOAD_FLAG_NO_CHECK_VISIBILITY |
-				  LOAD_FLAG_NO_CHECK_BOUNDS))) {
-	    printf("%s = ",tsym->name);
-	    symbol_rvalue_print(stdout,tsym,value->buf,value->bufsiz,
-				LOAD_FLAG_AUTO_DEREF |
-				LOAD_FLAG_AUTO_STRING |
-				LOAD_FLAG_NO_CHECK_VISIBILITY |
-				LOAD_FLAG_NO_CHECK_BOUNDS,
-				t);
-	    printf(" (0x");
-	    for (j = 0; j < value->bufsiz; ++j) {
-		printf("%02hhx",value->buf[j]);
+    args = lsymbol_get_members(probe->bsymbol->lsymbol,SYMBOL_VAR_TYPE_FLAG_ARG);
+    if (args) {
+	for (i = 0; i < array_list_len(args); ++i) {
+	    arg = (struct lsymbol *)array_list_item(args,i);
+	    bs = bsymbol_create(arg,probe->bsymbol->region);
+	    if ((value = target_load_symbol(t,tid,bs,
+					    LOAD_FLAG_AUTO_DEREF | 
+					    LOAD_FLAG_AUTO_STRING |
+					    LOAD_FLAG_NO_CHECK_VISIBILITY |
+					    LOAD_FLAG_NO_CHECK_BOUNDS))) {
+		printf("%s = ",lsymbol_get_name(arg));
+		symbol_rvalue_print(stdout,arg->symbol,value->buf,value->bufsiz,
+				    LOAD_FLAG_AUTO_DEREF |
+				    LOAD_FLAG_AUTO_STRING |
+				    LOAD_FLAG_NO_CHECK_VISIBILITY |
+				    LOAD_FLAG_NO_CHECK_BOUNDS,
+				    t);
+		printf(" (0x");
+		for (j = 0; j < value->bufsiz; ++j) {
+		    printf("%02hhx",value->buf[j]);
+		}
+		printf(")");
+		value_free(value);
 	    }
-	    printf(")");
-	    value_free(value);
+	    bsymbol_free(bs,0);
+	    printf(", ");
 	}
-	printf(", ");
     }
 
     fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
@@ -455,12 +431,18 @@ int function_dump_args(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    array_list_free(tmp);
+    if (args) {
+	for (i = 0; i < array_list_len(args); ++i) 
+	    lsymbol_release((struct lsymbol *)array_list_item(args,i));
+	array_list_free(args);
+    }
 
 #ifdef ENABLE_XENACCESS
-    value = linux_load_current_task(t);
-    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
-    value_free(value);
+    if (isxen) {
+	value = linux_load_current_task(t);
+	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+	value_free(value);
+    }
     fflush(stderr);
     fflush(stdout);
 #endif
@@ -501,15 +483,16 @@ int var_pre(struct probe *probe,void *handler_data,
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
+    tid_t tid = target_gettid(t);
 
     fflush(stderr);
     fflush(stdout);
 
-    if ((value = bsymbol_load(bsymbol,
-			      LOAD_FLAG_AUTO_DEREF | 
-			      LOAD_FLAG_AUTO_STRING |
-			      LOAD_FLAG_NO_CHECK_VISIBILITY |
-			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
+    if ((value = target_load_symbol(t,tid,bsymbol,
+				    LOAD_FLAG_AUTO_DEREF | 
+				    LOAD_FLAG_AUTO_STRING |
+				    LOAD_FLAG_NO_CHECK_VISIBILITY |
+				    LOAD_FLAG_NO_CHECK_BOUNDS))) {
 	fprintf(stdout,"%s (0x%"PRIxADDR") (pre) = ",
 		probe->bsymbol->lsymbol->symbol->name,
 		probe_addr(probe));
@@ -545,15 +528,16 @@ int var_post(struct probe *probe,void *handler_data,
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
+    tid_t tid = target_gettid(t);
 
     fflush(stderr);
     fflush(stdout);
 
-    if ((value = bsymbol_load(bsymbol,
-			      LOAD_FLAG_AUTO_DEREF | 
-			      LOAD_FLAG_AUTO_STRING |
-			      LOAD_FLAG_NO_CHECK_VISIBILITY |
-			      LOAD_FLAG_NO_CHECK_BOUNDS))) {
+    if ((value = target_load_symbol(t,tid,bsymbol,
+				    LOAD_FLAG_AUTO_DEREF | 
+				    LOAD_FLAG_AUTO_STRING |
+				    LOAD_FLAG_NO_CHECK_VISIBILITY |
+				    LOAD_FLAG_NO_CHECK_BOUNDS))) {
 	fprintf(stdout,"%s (0x%"PRIxADDR") (post) = ",
 		probe->bsymbol->lsymbol->symbol->name,probe_addr(probe));
 
@@ -583,9 +567,36 @@ int var_post(struct probe *probe,void *handler_data,
     return 0;
 }
 
+result_t ss_handler(struct action *action,struct probe *probe,
+		    struct probepoint *probepoint,
+		    handler_msg_t msg,void *handler_data) {
+    tid_t tid = target_gettid(t);
+    REGVAL ipval = target_read_reg(t,tid,t->ipregno);
+    struct bsymbol *func = target_lookup_sym_addr(t,ipval);
+    ADDR func_phys_base = 0;
+    if (func)
+	target_resolve_symbol_base(t,tid,func,&func_phys_base,NULL);
+
+    if (func) {
+	fprintf(stdout,"Single step (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR" (%s:+%d)!\n",
+		tid,msg,ipval,bsymbol_get_name(func),
+		(int)(ipval - func_phys_base));
+	bsymbol_release(func);
+    }
+    else
+	fprintf(stdout,"Single step (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR"!\n",
+		tid,msg,ipval);
+
+    fflush(stderr);
+    fflush(stdout);
+
+    return RESULT_SUCCESS;
+}
+
 extern char **environ;
 
 int main(int argc,char **argv) {
+    char targetstr[128];
     int pid = -1;
     int doexe = 0;
     char *exe = NULL;
@@ -597,6 +608,7 @@ int main(int argc,char **argv) {
 #endif
     char ch;
     int debug = -1;
+    int xadebug = -1;
     target_status_t tstat;
     int raw = 0;
     ADDR *addrs = NULL;
@@ -612,6 +624,9 @@ int main(int argc,char **argv) {
     int dlo_idx = 0;
     char *optargc;
     struct debugfile_load_opts *opts;
+    struct target_opts topts = {
+	.bpmode = THREAD_BPMODE_STRICT,
+    };
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -635,7 +650,7 @@ int main(int argc,char **argv) {
 	}
     }
 
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dvsl:Po:UF:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:eE:O:dxvsl:Po:UFL")) != -1) {
 	switch(ch) {
 	case 'U':
 	    /* Don't use auto prologue guess. */
@@ -647,12 +662,18 @@ int main(int argc,char **argv) {
 	case 'd':
 	    ++debug;
 	    break;
+	case 'x':
+	    ++xadebug;
+	    break;
 	case 'p':
 	    pid = atoi(optarg);
 	    break;
 	case 'm':
 #ifdef ENABLE_XENACCESS
 	    domain = optarg;
+	    /* Xen does not support STRICT! */
+	    if (topts.bpmode == THREAD_BPMODE_STRICT)
+		++topts.bpmode;
 #else
 	    verror("xen support not compiled on this host!\n");
 	    exit(-1);
@@ -700,6 +721,9 @@ int main(int argc,char **argv) {
 	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
 	    free(optargc);
 	    exit(-1);
+	case 'L':
+	    ++topts.bpmode;
+	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -715,26 +739,31 @@ int main(int argc,char **argv) {
 
     vmi_set_log_level(debug);
 #if defined(ENABLE_XENACCESS) && defined(XA_DEBUG)
-    xa_set_debug_level(debug);
+    xa_set_debug_level(xadebug);
 #endif
 
     if (pid > 0) {
+	islinux = 1;
 	t = linux_userproc_attach(pid,dlo_list);
 	if (!t) {
 	    fprintf(stderr,"could not attach to pid %d!\n",pid);
 	    exit(-3);
 	}
+	snprintf(targetstr,128,"pid %d",pid);
     }
 #ifdef ENABLE_XENACCESS
     else if (domain) {
+	isxen = 1;
 	t = xen_vm_attach(domain,dlo_list);
 	if (!t) {
 	    fprintf(stderr,"could not attach to dom %s!\n",domain);
 	    exit(-3);
 	}
+	snprintf(targetstr,128,"domain %s",domain);
     }
 #endif
     else if (doexe) {
+	islinux = 1;
 	if (!exe) {
 	    fprintf(stderr,"must supply at least an executable to launch (%d)!\n",i);
 	    exit(-1);
@@ -746,14 +775,17 @@ int main(int argc,char **argv) {
 	    fprintf(stderr,"could not launch exe %s!\n",exe);
 	    exit(-3);
 	}
+
+	pid = linux_userproc_pid(t);
+	snprintf(targetstr,128,"pid %d",pid);
     }
     else {
 	fprintf(stderr,"ERROR: must specify a target!\n");
 	exit(-2);
     }
 
-    if (target_open(t)) {
-	fprintf(stderr,"could not open pid %d!\n",pid);
+    if (target_open(t,&topts)) {
+	fprintf(stderr,"could not open %s!\n",targetstr);
 	exit(-4);
     }
 
@@ -802,6 +834,12 @@ int main(int argc,char **argv) {
 		    *retcode_str = '\0';
 		    ++retcode_str;
 		    line = retcodes[i] = atoi(retcode_str + 1);
+		    retcode_strs[i] = retcode_str;
+		}
+		else if (*(retcode_str+1) == 's') {
+		    *retcode_str = '\0';
+		    ++retcode_str;
+		    retcodes[i] = atoi(retcode_str + 1);
 		    retcode_strs[i] = retcode_str;
 		}
 		else {
@@ -873,7 +911,7 @@ int main(int argc,char **argv) {
 		}
 	    }
 	    else {
-		probe = probe_create(t,NULL,bsymbol_get_name(bsymbol),
+		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
 				     pre,post,NULL,0);
 		probe->handler_data = probe->name;
 		if (!probe)
@@ -913,13 +951,27 @@ int main(int argc,char **argv) {
 		    
 		    /* Add the retcode action, if any! */
 		    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
-			if (i < argc && retcode_strs[i]) {
+			if (i < argc && retcode_strs[i]
+			    && *retcode_strs[i] == 's') {
+			    struct action *action = action_singlestep(retcodes[i]);
+			    if (!action) {
+				fprintf(stderr,"could not create action!\n");
+				goto err_unreg;
+			    }
+			    if (action_sched(probe,action,ACTION_REPEATPRE,1,
+					     ss_handler,NULL)) {
+				fprintf(stderr,"could not schedule action!\n");
+				goto err_unreg;
+			    }
+			}
+			else if (i < argc && retcode_strs[i]) {
 			    struct action *action = action_return(retcodes[i]);
 			    if (!action) {
 				fprintf(stderr,"could not create action!\n");
 				goto err_unreg;
 			    }
-			    if (action_sched(probe,action,ACTION_REPEATPRE,1)) {
+			    if (action_sched(probe,action,ACTION_REPEATPRE,1,
+					     NULL,NULL)) {
 				fprintf(stderr,"could not schedule action!\n");
 				goto err_unreg;
 			    }
@@ -976,42 +1028,24 @@ int main(int argc,char **argv) {
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == TSTATUS_PAUSED) {
-	    if (
-#ifdef ENABLE_XENACCESS
-		!domain && 
-#endif
-		LUP_AT_SYSCALL(t))
+	    tid_t tid = target_gettid(t);
+	    if (islinux && linux_userproc_at_syscall(t,tid))
 		goto resume;
 
-#ifdef ENABLE_XENACCESS
-	    if (!domain)
-		printf("pid %d interrupted at 0x%" PRIxREGVAL "\n",pid,
-		       target_read_reg(t,t->ipregno));
-	    else 
-		printf("domain %s interrupted at 0x%" PRIxREGVAL "\n",domain,
-		       target_read_reg(t,t->ipregno));
-#else
-	    printf("pid %d interrupted at 0x%" PRIxREGVAL "\n",pid,
-		   target_read_reg(t,t->ipregno));
-#endif
+	    printf("%s thread %"PRIiTID" interrupted at 0x%" PRIxREGVAL "\n",
+		   targetstr,tid,target_read_reg(t,tid,CREG_IP));
 
-	    if (!raw
-#ifdef ENABLE_XENACCESS
-		&& !domain
-#endif
-		)
+	    if (!raw && islinux)
 		goto resume;
-#ifdef ENABLE_XENACCESS
-	    else if (domain) { // && !raw) {
+	    else if (isxen) { // && !raw) {
 		goto resume;
 		//fprintf(stderr,"ERROR: unexpected Xen interrupt; trying to cleanup!\n");
 		//goto exit;
 	    }
-#endif
 	    else {
 		for (i = 0; i < argc; ++i) {
 		    if (target_read_addr(t,addrs[i],t->wordsize,
-					 (unsigned char *)word,NULL) != NULL) {
+					 (unsigned char *)word) != NULL) {
 			printf("0x%" PRIxADDR " = ",addrs[i]);
 			for (j = 0; j < t->wordsize; ++j) {
 			    printf("%02hhx",word[j]);
@@ -1025,26 +1059,27 @@ int main(int argc,char **argv) {
 	    }
 	resume:
 	    if (target_resume(t)) {
-		fprintf(stderr,"could not resume target pid %d\n",pid);
+		fprintf(stderr,"could not resume target %s thread %"PRIiTID"\n",
+			targetstr,tid);
+
 		cleanup();
 		exit(-16);
 	    }
 	}
 	else {
-	exit:
 	    fflush(stderr);
 	    fflush(stdout);
 	    cleanup();
 	    if (tstat == TSTATUS_DONE)  {
-		printf("pid %d finished.\n",pid);
+		printf("%s finished.\n",targetstr);
 		exit(0);
 	    }
 	    else if (tstat == TSTATUS_ERROR) {
-		printf("pid %d monitoring failed!\n",pid);
+		printf("%s monitoring failed!\n",targetstr);
 		exit(-9);
 	    }
 	    else {
-		printf("pid %d monitoring failed with %d!\n",pid,tstat);
+		printf("%s monitoring failed with %d!\n",targetstr,tstat);
 		exit(-10);
 	    }
 	}

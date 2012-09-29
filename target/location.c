@@ -42,7 +42,7 @@ struct mmap_entry *location_mmap(struct target *target,
     return NULL;
 }
 
-char *location_load(struct target *target,struct memregion *region,
+char *location_load(struct target *target,tid_t tid,struct memregion *region,
 		    struct location *location,load_flags_t flags,
 		    void *buf,int bufsiz,
 		    struct array_list *symbol_chain,
@@ -55,7 +55,7 @@ char *location_load(struct target *target,struct memregion *region,
 
     if (location->loctype == LOCTYPE_REG
 	|| (location->loctype == LOCTYPE_LOCLIST
-	    && ((loclistloc = location_resolve_loclist(target,region,location))
+	    && ((loclistloc = location_resolve_loclist(target,tid,region,location))
 		&& loclistloc->loctype == LOCTYPE_REG))) {
 	/* They must supply a buffer if the value is in a register. */
 	if (!buf) {
@@ -70,7 +70,7 @@ char *location_load(struct target *target,struct memregion *region,
 	}
 
         /* just read the register directly */
-        regval = target_read_reg(target,
+        regval = target_read_reg(target,tid,
 				 (loclistloc) ? loclistloc->l.reg : location->l.reg);
         if (errno)
             return NULL;
@@ -92,7 +92,7 @@ char *location_load(struct target *target,struct memregion *region,
 	return buf;
     }
     else {
-        final_location = location_resolve(target,region,location,symbol_chain,
+        final_location = location_resolve(target,tid,region,location,symbol_chain,
 					  &range);
 
         if (errno)
@@ -136,7 +136,7 @@ int location_can_mmap(struct location *location,struct target *target) {
  * register (which has no address!).  So this function works in tandem
  * with the one below in location_load().
  */
-struct location *location_resolve_loclist(struct target *target,
+struct location *location_resolve_loclist(struct target *target,tid_t tid,
 					  struct memregion *region,
 					  struct location *location) {
     int i;
@@ -152,7 +152,7 @@ struct location *location_resolve_loclist(struct target *target,
     /* We load EIP, scan the location list for a match, and run the
      * matching location op recursively via location_resolve!
      */
-    eip = target_read_reg(target,target->ipregno);
+    eip = target_read_reg(target,tid,target->ipregno);
     if (errno)
 	return NULL;
     errno = 0;
@@ -200,7 +200,7 @@ struct location *location_resolve_loclist(struct target *target,
  * memory addresses.
  */
 
-ADDR location_resolve(struct target *target,struct memregion *region,
+ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 		      struct location *location,
 		      struct array_list *symbol_chain,
 		      struct memrange **range_saveptr) {
@@ -248,7 +248,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    errno = EINVAL;
 	    return 0;
 	}
-	regval = target_read_reg(target,location->l.reg);
+	regval = target_read_reg(target,tid,location->l.reg);
 	if (errno)
 	    return 0;
 	errno = 0;
@@ -261,7 +261,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    errno = EINVAL;
 	    return 0;
 	}
-	regval = target_read_reg(target,location->l.regoffset.reg);
+	regval = target_read_reg(target,tid,location->l.regoffset.reg);
 	if (errno)
 	    return 0;
 	errno = 0;
@@ -315,7 +315,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	 * via location_resolve!
 	 */
 	if (fblist) {
-	    eip = target_read_reg(target,target->ipregno);
+	    eip = target_read_reg(target,tid,target->ipregno);
 	    if (errno)
 		return 0;
 	    errno = 0;
@@ -366,7 +366,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	/* now resolve the frame base value */
 	if (final_fb_loc && final_fb_loc->loctype == LOCTYPE_REG) {
 	    /* just read the register directly */
-	    frame_base = target_read_reg(target,final_fb_loc->l.reg);
+	    frame_base = target_read_reg(target,tid,final_fb_loc->l.reg);
 	    if (errno) {
 		verror("FBREG_OFFSET frame base location description resolution failed when reading reg directly: %s\n",strerror(errno));
 		errno = EINVAL;
@@ -374,7 +374,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	    }
 	}
 	else {
-	    frame_base = location_resolve(target,region,final_fb_loc,NULL,NULL);
+	    frame_base = location_resolve(target,tid,region,final_fb_loc,NULL,NULL);
 	    if (errno) {
 		verror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
 		errno = EINVAL;
@@ -395,10 +395,10 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 	//return (ADDR)(frame_base - (ADDR)location->l.fboffset);
     case LOCTYPE_LOCLIST:
 	/* XXX: reuse fbloc to save a stack word */
-	if (!(fbloc = location_resolve_loclist(target,region,location)))
+	if (!(fbloc = location_resolve_loclist(target,tid,region,location)))
 	    return 0;
 
-	return location_resolve(target,region,fbloc,
+	return location_resolve(target,tid,region,fbloc,
 				/* XXX: is this correct, or should we
 				 * pass NULL?
 				 */
@@ -432,7 +432,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
 		array_list_item_set(tmp_symbol_chain,i,
 				    array_list_item(symbol_chain,i));
 	}
-	top_addr = location_resolve(target,region,&top_enclosing_symbol->s.ii->l,
+	top_addr = location_resolve(target,tid,region,&top_enclosing_symbol->s.ii->l,
 				    tmp_symbol_chain,NULL);
 	if (tmp_symbol_chain)
 	    array_list_free(tmp_symbol_chain);
@@ -468,7 +468,7 @@ ADDR location_resolve(struct target *target,struct memregion *region,
     return 0;
 }
 
-int location_resolve_lsymbol_base(struct target *target,
+int location_resolve_lsymbol_base(struct target *target,tid_t tid,
 				  struct lsymbol *lsymbol,
 				  struct memregion *region,
 				  ADDR *addr_saveptr,
@@ -530,7 +530,7 @@ int location_resolve_lsymbol_base(struct target *target,
 	}
     }
     else if (SYMBOL_IS_FULL_VAR(symbol)) {
-	obj_addr = location_resolve(target,region,
+	obj_addr = location_resolve(target,tid,region,
 				    &lsymbol->symbol->s.ii->l,
 				    lsymbol->chain,range_saveptr);
 	if (!obj_addr && errno) {
@@ -553,12 +553,69 @@ int location_resolve_lsymbol_base(struct target *target,
     return 0;
 }
 
-int location_resolve_symbol_base(struct target *target,
+int location_resolve_symbol_base(struct target *target,tid_t tid,
 				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
 				 struct memrange **range_saveptr) {
-    return location_resolve_lsymbol_base(target,bsymbol->lsymbol,
+    return location_resolve_lsymbol_base(target,tid,bsymbol->lsymbol,
 					 bsymbol->region,addr_saveptr,
 					 range_saveptr);
+}
+
+int location_resolve_function_base(struct target *target,
+				   struct lsymbol *lsymbol,
+				   struct memregion *region,
+				   ADDR *addr_saveptr,
+				   struct memrange **range_saveptr) {
+    struct symbol *symbol = lsymbol->symbol;
+    int i;
+    ADDR obj_addr;
+    struct symtab *symtab;
+
+    if (!addr_saveptr)
+	return -1;
+
+    if (SYMBOL_IS_PARTIAL(symbol) && SYMBOL_IS_FUNCTION(symbol)
+	&& symbol->has_base_addr) {
+	obj_addr = symbol->base_addr;
+    }
+    else if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	if (symbol->s.ii->d.f.hasentrypc)
+	    obj_addr = symbol->s.ii->d.f.entry_pc;
+	else if ((symtab = symbol->s.ii->d.f.symtab)) {
+	    if (RANGE_IS_PC(&symtab->range)) 
+		obj_addr = symtab->range.r.a.lowpc;
+	    else if (RANGE_IS_LIST(&symtab->range)) {
+		/* Find the lowest addr! */
+		obj_addr = ADDRMAX;
+		for (i = 0; i < symtab->range.r.rlist.len; ++i) {
+		    if (symtab->range.r.rlist.list[i]->start < obj_addr)
+			obj_addr = symtab->range.r.rlist.list[i]->start;
+		}
+		vwarn("assuming function %s entry is lowest address in list 0x%"PRIxADDR"!\n",
+		      symbol->name,obj_addr);
+	    }
+	    else {
+		vwarn("function %s range is not PC/list!\n",symbol->name);
+		return -1;
+	    }
+	}
+	else {
+	    vwarn("function %s has no entry_pc nor symtab!\n",symbol->name);
+	    return -1;
+	}
+    }
+    else {
+	verror("bad symbol type %s!\n",SYMBOL_TYPE(symbol->type));
+	return -1;
+    }
+
+    /* Translate the obj address to something real in this region. */
+    *addr_saveptr = memregion_relocate(region,obj_addr,range_saveptr);
+
+    vdebug(3,LOG_T_LOC,"found base of '%s' 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
+	   lsymbol->symbol->name,obj_addr,*addr_saveptr);
+
+    return 0;
 }
 
 int location_resolve_function_prologue_end(struct target *target,
@@ -586,7 +643,7 @@ int location_resolve_function_prologue_end(struct target *target,
     return 0;
 }
 
-struct location *location_resolve_runtime(struct target *target,
+struct location *location_resolve_runtime(struct target *target,tid_t tid,
 					  struct memregion *region,
 					  struct location *location,
 					  struct array_list *symbol_chain,

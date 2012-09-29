@@ -99,6 +99,8 @@ static int probe_open_entry(struct probe *probe, void *data,
 	char filename[PATH_MAX];
 	int flags;
 	int i;
+	struct target *target = probe->target;
+	tid_t tid = probe->thread->tid;
 
 	context = (ctxtracker_context_t *)probe_summarize(probe);
 	if (!context)
@@ -109,7 +111,7 @@ static int probe_open_entry(struct probe *probe, void *data,
 
 	/* Load system call arguments. */
 
-	value_filename = bsymbol_load(bsymbol_open_filename, 
+	value_filename = target_load_symbol(target,tid,bsymbol_open_filename, 
 			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
 			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
 	if (!value_filename)
@@ -123,7 +125,7 @@ static int probe_open_entry(struct probe *probe, void *data,
 		value_free(value_filename);
 	}
 
-	value_flags = bsymbol_load(bsymbol_open_flags, 
+	value_flags = target_load_symbol(target,tid,bsymbol_open_flags, 
 			LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING | 
 			LOAD_FLAG_NO_CHECK_VISIBILITY | LOAD_FLAG_NO_CHECK_BOUNDS);
 	if (!value_flags)

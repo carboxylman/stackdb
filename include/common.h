@@ -22,6 +22,21 @@
 #include <stdint.h>
 #include <inttypes.h>
 
+typedef enum {
+    RESULT_SUCCESS = 0,
+    RESULT_ERROR = 1,
+    RESULT_ABORT = 2,
+    RESULT_DISABLE = 3,
+} result_t;
+
+/*
+ * For now, thread ids are a 32-bit int.  This is enough, for instance,
+ * to do TIDs on Linux (because pids on 64-bit are still int32_ts. Note
+ * that we have reserved INT32_MAX as our "global" identifier.
+ */
+typedef int32_t tid_t;
+#define PRIiTID PRIi32
+
 /* Might have to split these out into platform-specific stuff later; for
  * now, just make them big enough for anything.
  *
@@ -59,8 +74,43 @@ typedef uint32_t REGVAL;
 #define OFFSETMAX UINT32_MAX
 #endif
 
+#ifndef ptr_t
+#define ptr_t unsigned long int
+#endif
+
+/*
+ * Define a "numeric" type; size should be the largest int for any
+ * target, for now.  Later we might need something more
+ * flexible... sigh.
+ */
+typedef int64_t num_t;
+typedef uint64_t unum_t;
+#define PRIuNUM PRIu64
+#define PRIiNUM PRIi64
+#define PRIxNUM PRIx64
+
 typedef int8_t REG;
 #define PRIiREG PRIi8
+
+typedef enum {
+    CREG_AX = 0,
+    CREG_BX,
+    CREG_CX,
+    CREG_DX,
+    CREG_DI,
+    CREG_SI,
+    CREG_BP,
+    CREG_SP,
+    CREG_IP,
+    CREG_FLAGS,
+    CREG_CS,
+    CREG_SS,
+    CREG_DS,
+    CREG_ES,
+    CREG_FS,
+    CREG_GS,
+} common_reg_t;
+#define COMMON_REG_COUNT 16
 
 /*
  * We use small offsets for DWARF offset addrs.  Saves mem in symbol

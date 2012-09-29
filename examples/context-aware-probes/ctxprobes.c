@@ -1429,9 +1429,10 @@ static int probe_task_switch(struct probe *probe,
     ctxprobes_task_t *task_prev, *task_next;
     int ret;
 
-    lvalue_task_prev = bsymbol_load(bsymbol_task_prev, 
-                                    LOAD_FLAG_NO_CHECK_BOUNDS | 
-                                    LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lvalue_task_prev = target_load_symbol(probe->target,probe->thread->tid,
+					  bsymbol_task_prev, 
+					  LOAD_FLAG_NO_CHECK_BOUNDS | 
+					  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lvalue_task_prev)
     {
         verror("Cannot access value of schedule.prev\n");
@@ -1439,9 +1440,10 @@ static int probe_task_switch(struct probe *probe,
         return 0;
     }
 
-    lvalue_task_next = bsymbol_load(bsymbol_task_next,  
-                                    LOAD_FLAG_NO_CHECK_BOUNDS | 
-                                    LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lvalue_task_next = target_load_symbol(probe->target,probe->thread->tid,
+					  bsymbol_task_next,  
+					  LOAD_FLAG_NO_CHECK_BOUNDS | 
+					  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lvalue_task_next)
     {
         verror("Cannot access value of schedule.next\n");

@@ -45,15 +45,23 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 				     int keepstdin,char *outfile,char *errfile,
 				     struct debugfile_load_opts **dfoptlist);
 
-int linux_userproc_last_signo(struct target *target);
-int linux_userproc_last_status(struct target *target);
 
-#define LUP_AT_SYSCALL(t) (((struct linux_userproc_state *)(t)->state)->last_status \
-			   == (SIGTRAP | 0x80))
-#define LUP_AT_EXEC(t) (((struct linux_userproc_state *)(t)->state)->last_status \
-			== (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
-#define LUP_AT_EXIT(t) (((struct linux_userproc_state *)(t)->state)->last_status \
-			== (SIGTRAP | (PTRACE_EVENT_EXIT<<8)))
+int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t tid);
+int linux_userproc_detach_thread(struct target *target,tid_t tid);
+
+/*
+ * Once attached to a process, attach to one of its threads.
+ */
+
+
+int linux_userproc_last_signo(struct target *target,tid_t tid);
+int linux_userproc_last_status(struct target *target,tid_t tid);
+
+int linux_userproc_at_syscall(struct target *target,tid_t tid);
+int linux_userproc_at_exec(struct target *target,tid_t tid);
+int linux_userproc_at_exit(struct target *target,tid_t tid);
+
+int linux_userproc_pid(struct target *target);
 
 #if __WORDSIZE == 64
 typedef unsigned long int ptrace_reg_t;
@@ -61,31 +69,39 @@ typedef unsigned long int ptrace_reg_t;
 typedef int ptrace_reg_t;
 #endif
 
-struct linux_userproc_state {
-    int pid;
-    int memfd;
-
-    int attached;
+struct linux_userproc_thread_state {
+    int8_t ctl_sig_sent:1, /* If set, don't reinject a signal on restart. */
+	   ctl_sig_recv:1, /* If set, don't reinject a signal on restart. */
+	   ctl_sig_pause_all:1;
     int last_status;
     int last_signo;
 
-    int32_t ptrace_opts;
-    int32_t ptrace_opts_new;
-    enum __ptrace_request ptrace_type;
-
-    /*
-     * On the first register read on a paused domain, we read in this,
-     * and if it gets dirty, we flush it on resume.  All other reg ops
-     * are satisfied by just writing to this struct.
-     */
-    int regs_dirty:1,
-	regs_loaded:1;
     struct user_regs_struct regs;
 
     /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
      * we use this might have to change.
      */
     ptrace_reg_t dr[8];
+};
+
+struct linux_userproc_state {
+    int pid;
+    int memfd;
+
+    int8_t attached:1,
+	   ctl_sig_pausing_all:1;
+
+    /*
+     * This is weird, but for the ptrace target, we always "know" which
+     * thread is the current one, because wait() tells us.  BUT, we need
+     * to communicate this to various other target API functions like
+     * load_current_thread(), so save it off here.
+     */
+    int current_tid;
+
+    int32_t ptrace_opts;
+    int32_t ptrace_opts_new;
+    enum __ptrace_request ptrace_type;
 };
 
 #endif /* __TARGET_LINUX_USERPROC_H__ */

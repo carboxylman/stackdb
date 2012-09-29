@@ -65,6 +65,7 @@ typedef enum log_flag_bits {
     LOG_FB_T_LUP       = 19,
     LOG_FB_T_XV        = 20,
     LOG_FB_T_DISASM    = 21,
+    LOG_FB_T_THREAD    = 22,
 
     LOG_FB_P_PROBE     = 24,
     LOG_FB_P_PROBEPOINT= 25,
@@ -94,6 +95,7 @@ typedef enum log_flags {
     LOG_T_LUP          = 1 << LOG_FB_T_LUP,
     LOG_T_XV           = 1 << LOG_FB_T_XV,
     LOG_T_DISASM       = 1 << LOG_FB_T_DISASM,
+    LOG_T_THREAD       = 1 << LOG_FB_T_THREAD,
     LOG_P_PROBE        = 1 << LOG_FB_P_PROBE,
     LOG_P_PROBEPOINT   = 1 << LOG_FB_P_PROBEPOINT,
     LOG_P_ACTION       = 1 << LOG_FB_P_ACTION,
@@ -103,7 +105,8 @@ typedef enum log_flags {
 		   | LOG_D_LOOKUP | LOG_D_DWARF | LOG_D_DWARFATTR \
 		   | LOG_D_DWARFOPS | LOG_D_OTHER| LOG_D_ELF )
 #define LOG_T_ALL (LOG_T_TARGET | LOG_T_SPACE | LOG_T_REGION | LOG_T_LOOKUP \
-		   | LOG_T_LOC | LOG_T_OTHER | LOG_T_SYMBOL | LOG_T_DISASM)
+		   | LOG_T_LOC | LOG_T_OTHER | LOG_T_SYMBOL | LOG_T_DISASM \
+		   | LOG_T_THREAD)
 #define LOG_P_ALL (LOG_P_PROBE | LOG_P_PROBEPOINT | LOG_P_ACTION)
 
 void vmi_set_log_level(int level);

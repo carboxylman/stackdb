@@ -32,16 +32,31 @@
  ** The generic target API!
  **/
 
-int target_open(struct target *target) {
+static struct target_opts default_topts = {
+    .bpmode = THREAD_BPMODE_STRICT,
+};
+
+int target_open(struct target *target,struct target_opts *topts) {
     int rc;
     struct addrspace *space;
     struct memregion *region;
+
+    if (!topts) 
+	topts = &default_topts;
+    target->opts = topts;
 
     vdebug(5,LOG_T_TARGET,"opening target type %s\n",target->type);
 
     vdebug(5,LOG_T_TARGET,"target type %s: init\n",target->type);
     if ((rc = target->ops->init(target))) {
 	return rc;
+    }
+
+    if (target->opts->bpmode == THREAD_BPMODE_STRICT && !target->threadctl) {
+	verror("cannot init a target in BPMODE_STRICT that does not have"
+	       " threadctl!\n");
+	errno = ENOTSUP;
+	return -1;
     }
 
     vdebug(5,LOG_T_TARGET,"target type %s: loadspaces\n",target->type);
@@ -98,6 +113,11 @@ int target_open(struct target *target) {
 	}
     }
 
+    vdebug(5,LOG_T_TARGET,"postloadinit target(%s)\n",target->type);
+    if ((rc = target->ops->postloadinit(target))) {
+	return rc;
+    }
+
     vdebug(5,LOG_T_TARGET,"attach target(%s)\n",target->type);
     if ((rc = target->ops->attach(target))) {
 	return rc;
@@ -124,7 +144,7 @@ int target_resume(struct target *target) {
     
 int target_pause(struct target *target) {
     vdebug(5,LOG_T_TARGET,"pausing target(%s)\n",target->type);
-    return target->ops->pause(target);
+    return target->ops->pause(target,0);
 }
 
 target_status_t target_status(struct target *target) {
@@ -132,22 +152,18 @@ target_status_t target_status(struct target *target) {
     return target->ops->status(target);
 }
 
-unsigned char *target_read_addr(struct target *target,
-				ADDR addr,
-				unsigned long length,
-				unsigned char *buf,
-				void *targetspecdata) {
+unsigned char *target_read_addr(struct target *target,ADDR addr,
+				unsigned long length,unsigned char *buf) {
     vdebug(5,LOG_T_TARGET,"reading target(%s) at 0x%"PRIxADDR" into %p (%d)\n",
 	   target->type,addr,buf,length);
-    return target->ops->read(target,addr,length,buf,targetspecdata);
+    return target->ops->read(target,addr,length,buf);
 }
 
 unsigned long target_write_addr(struct target *target,ADDR addr,
-				unsigned long length,unsigned char *buf,
-				void *targetspecdata) {
+				unsigned long length,unsigned char *buf) {
     vdebug(5,LOG_T_TARGET,"writing target(%s) at 0x%"PRIxADDR" (%d)\n",
 	   target->type,addr,length);
-    return target->ops->write(target,addr,length,buf,targetspecdata);
+    return target->ops->write(target,addr,length,buf);
 }
 
 char *target_reg_name(struct target *target,REG reg) {
@@ -155,34 +171,178 @@ char *target_reg_name(struct target *target,REG reg) {
     return target->ops->regname(target,reg);
 }
 
-REGVAL target_read_reg(struct target *target,REG reg) {
-    vdebug(5,LOG_T_TARGET,"reading target(%s) reg %d)\n",target->type,reg);
-    return target->ops->readreg(target,reg);
+REG target_dw_reg_no(struct target *target,common_reg_t reg) {
+    vdebug(5,LOG_T_TARGET,"target(%s) common reg %d)\n",target->type,reg);
+    return target->ops->dwregno(target,reg);
 }
 
-int target_write_reg(struct target *target,REG reg,REGVAL value) {
-    vdebug(5,LOG_T_TARGET,"writing target(%s) reg %d 0x%" PRIxREGVAL ")\n",
-	   target->type,reg,value);
-    return target->ops->writereg(target,reg,value);
+REGVAL target_read_reg(struct target *target,tid_t tid,REG reg) {
+    vdebug(5,LOG_T_TARGET,"reading target(%s:%"PRIiTID") reg %d)\n",
+	   target->type,tid,reg);
+    return target->ops->readreg(target,tid,reg);
 }
 
-int target_flush_context(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"flushing target(%s) cpu context\n",target->type);
-    return target->ops->flush_context(target);
+int target_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
+    vdebug(5,LOG_T_TARGET,
+	   "writing target(%s:%"PRIiTID") reg %d 0x%"PRIxREGVAL")\n",
+	   target->type,tid,reg,value);
+    return target->ops->writereg(target,tid,reg,value);
+}
+
+REGVAL target_read_creg(struct target *target,tid_t tid,common_reg_t reg) {
+    REG treg;
+
+    errno = 0;
+    treg = target_dw_reg_no(target,reg);
+    if (errno)
+	return 0;
+
+    return target_read_reg(target,tid,treg);
+}
+
+int target_write_creg(struct target *target,tid_t tid,common_reg_t reg,
+		      REGVAL value) {
+    REG treg;
+
+    errno = 0;
+    treg = target_dw_reg_no(target,reg);
+    if (errno)
+	return 0;
+
+    return target_write_reg(target,tid,treg,value);
+}
+
+struct array_list *target_list_tids(struct target *target) {
+    struct array_list *retval;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+
+    retval = array_list_create(g_hash_table_size(target->threads));
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) 
+	array_list_append(retval,(void *)(ptr_t)tthread->tid);
+
+    return retval;
+}
+
+struct array_list *target_list_threads(struct target *target) {
+    struct array_list *retval;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+
+    retval = array_list_create(g_hash_table_size(target->threads));
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) 
+	array_list_append(retval,tthread);
+
+    return retval;
+}
+
+struct array_list *target_list_available_tids(struct target *target) {
+    vdebug(9,LOG_T_TARGET,"target(%s)\n",target->type);
+    return target->ops->list_available_tids(target);
+}
+
+int target_load_available_threads(struct target *target,int force) {
+    vdebug(9,LOG_T_TARGET,"target(%s)\n",target->type);
+    return target->ops->load_available_threads(target,force);
+}
+
+struct target_thread *target_load_current_thread(struct target *target,
+						 int force) {
+    vdebug(5,LOG_T_TARGET,"loading target(%s) current thread\n",target->type);
+    return target->ops->load_current_thread(target,force);
+}
+
+struct target_thread *target_load_thread(struct target *target,tid_t tid,
+					 int force) {
+    vdebug(5,LOG_T_TARGET,"loading target(%s:%"PRIiTID") thread\n",
+	   target->type,tid);
+    return target->ops->load_thread(target,tid,force);
+}
+
+int target_load_all_threads(struct target *target,int force) {
+    vdebug(5,LOG_T_TARGET,"loading all target(%s) threads\n",target->type);
+    return target->ops->load_all_threads(target,force);
+}
+
+int target_pause_thread(struct target *target,tid_t tid,int nowait) {
+    vdebug(5,LOG_T_TARGET,"pausing target(%s) thread %"PRIiTID" (nowait=%d)\n",
+	   target->type,tid,nowait);
+    return target->ops->pause_thread(target,tid,nowait);
+}
+
+int target_flush_current_thread(struct target *target) {
+    vdebug(5,LOG_T_TARGET,"flushing target(%s) current thread\n",target->type);
+    return target->ops->flush_current_thread(target);
+}
+
+int target_flush_thread(struct target *target,tid_t tid) {
+    vdebug(5,LOG_T_TARGET,"flushing target(%s:%"PRIiTID") thread\n",
+	   target->type,tid);
+    return target->ops->flush_thread(target,tid);
+}
+
+int target_flush_all_threads(struct target *target) {
+    vdebug(5,LOG_T_TARGET,"flushing all target(%s) threads\n",target->type);
+    return target->ops->flush_all_threads(target);
+}
+
+char *target_thread_tostring(struct target *target,tid_t tid,int detail,
+			     char *buf,int bufsiz) {
+    vdebug(5,LOG_T_TARGET,"target(%s:%"PRIiTID") thread\n",target->type,tid);
+    return target->ops->thread_tostring(target,tid,detail,buf,bufsiz);
+}
+
+void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail) {
+    char *buf;
+    vdebug(5,LOG_T_TARGET,"dumping target(%s:%"PRIiTID") thread\n",
+	   target->type,tid);
+
+    if (!target_lookup_thread(target,tid))
+	verror("thread %"PRIiTID" does not exist?\n",tid);
+
+    if ((buf = target_thread_tostring(target,tid,detail,NULL,0))) 
+	fprintf(stream ? stream : stdout,"tid(%"PRIiTID"): %s\n",tid,buf);
+    else 
+	fprintf(stream ? stream : stdout,"tid(%"PRIiTID"): <API ERROR>\n",tid);
+
+    free(buf);
+}
+
+void target_dump_all_threads(struct target *target,FILE *stream,int detail) {
+    struct target_thread *tthread;
+    GHashTableIter iter;
+
+    vdebug(5,LOG_T_TARGET,"dumping all target(%s) threads\n",target->type);
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) 
+	target_dump_thread(target,tthread->tid,stream,detail);
 }
 
 int target_close(struct target *target) {
     int rc;
+    GHashTableIter iter;
+    struct probepoint *probepoint;
 
     vdebug(5,LOG_T_TARGET,"closing target(%s)\n",target->type);
 
-    vdebug(6,LOG_T_TARGET,"detach target(%s)\n",target->type);
-    if ((rc = target->ops->detach(target))) {
-	return rc;
+    /* 
+     * We have to free the soft probepoints manually, then remove all.  We
+     * can't remove an element during an iteration, but we *can* free
+     * the data :).
+     */
+    g_hash_table_iter_init(&iter,target->soft_probepoints);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&probepoint)) {
+	probepoint_free_ext(probepoint);
     }
+    g_hash_table_destroy(target->soft_probepoints);
 
-    vdebug(6,LOG_T_TARGET,"fini target(%s)\n",target->type);
-    if ((rc = target->ops->fini(target))) {
+    vdebug(5,LOG_T_TARGET,"detach target(%s)\n",target->type);
+    if ((rc = target->ops->detach(target))) {
 	return rc;
     }
 
@@ -190,30 +350,41 @@ int target_close(struct target *target) {
 }
 
 void target_free(struct target *target) {
-    GHashTableIter iter;
-    gpointer key;
-    struct probepoint *probepoint;
     struct addrspace *space;
     struct addrspace *tmp;
+    struct target_thread *tthread;
+    GHashTableIter iter;
+    gpointer key;
+    int rc;
 
     vdebug(5,LOG_T_TARGET,"freeing target(%s)\n",target->type);
 
-    g_hash_table_destroy(target->mmaps);
-
-    /* We have to free the probepoints manually, then remove all.  We
-     * can't remove an element during an iteration, but we *can* free
-     * the data :).
-     */
-    g_hash_table_iter_init(&iter,target->probepoints);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&probepoint)) {
-	probepoint_free_ext(probepoint);
+    vdebug(5,LOG_T_TARGET,"fini target(%s)\n",target->type);
+    if ((rc = target->ops->fini(target))) {
+	verror("fini target(%s) failed; not finishing free!\n",target->type);
+	return;
     }
 
-    g_hash_table_destroy(target->probepoints);
-    g_hash_table_destroy(target->probes);
+    /* Delete all the threads except the global thread (which we remove 
+     * manually because targets are allowed to "reuse" one of their real
+     * threads as the "global" thread.
+     */
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&tthread)) {
+	if (tthread == target->global_thread) {
+	    g_hash_table_iter_remove(&iter);
+	    continue;
+	}
+	else {
+	    target_delete_thread(target,tthread,1);
+	    g_hash_table_iter_remove(&iter);
+	}
+    }
+    target_delete_thread(target,target->global_thread,1);
+    g_hash_table_destroy(target->threads);
 
-    array_list_free(target->sstep_stack);
+    g_hash_table_destroy(target->mmaps);
 
     /* Unload the debugfiles we might hold, if we can */
     list_for_each_entry_safe(space,tmp,&target->spaces,space) {
@@ -254,13 +425,16 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
 					  /* No names to free! */
 					  NULL,ghash_mmap_entry_free);
 
-    retval->probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
-
-    retval->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
-
-    retval->sstep_stack = array_list_create(4);
-
     retval->code_ranges = clrange_create();
+
+    retval->threads = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					    /* No names to free! */
+					    NULL,NULL);
+
+    retval->soft_probepoints = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+						     NULL,NULL);
+    //*(((gint *)retval->soft_probepoints)+1) = 1;
+    //*(((gint *)retval->soft_probepoints)) = 0;
 
     /*
      * Hm, I think we should do this by default, and let target backends
@@ -290,56 +464,69 @@ void target_release_mmap_entry(struct target *target,
     return;
 }
 
-REG target_get_unused_debug_reg(struct target *target) {
+REG target_get_unused_debug_reg(struct target *target,tid_t tid) {
     REG retval;
-    vdebug(5,LOG_T_TARGET,"getting unused debug reg for target(%s)\n",
-	   target->type);
-    retval = target->ops->get_unused_debug_reg(target);
-    vdebug(5,LOG_T_TARGET,"got unused debug reg for target(%s): %"PRIiREG"\n",
-	   target->type,retval);
+    vdebug(5,LOG_T_TARGET,"getting unused debug reg for target(%s):0x%"PRIx64"\n",
+	   target->type,tid);
+    retval = target->ops->get_unused_debug_reg(target,tid);
+    vdebug(5,LOG_T_TARGET,"got unused debug reg for target(%s):0x%"PRIx64": %"PRIiREG"\n",
+	   target->type,tid,retval);
     return retval;
 }
 
-int target_set_hw_breakpoint(struct target *target,REG reg,ADDR addr) {
+int target_set_hw_breakpoint(struct target *target,tid_t tid,REG reg,ADDR addr) {
     vdebug(5,LOG_T_TARGET,
-	   "setting hw breakpoint at 0x%"PRIxADDR" on target(%s) dreg %d\n",
-	   addr,target->type,reg);
-    return target->ops->set_hw_breakpoint(target,reg,addr);
+	   "setting hw breakpoint at 0x%"PRIxADDR" on target(%s:%"PRIiTID") dreg %d\n",
+	   addr,target->type,tid,reg);
+    return target->ops->set_hw_breakpoint(target,tid,reg,addr);
 }
 
-int target_set_hw_watchpoint(struct target *target,REG reg,ADDR addr,
+int target_set_hw_watchpoint(struct target *target,tid_t tid,REG reg,ADDR addr,
 			     probepoint_whence_t whence,int watchsize) {
     vdebug(5,LOG_T_TARGET,
-	   "setting hw watchpoint at 0x%"PRIxADDR" on target(%s) dreg %d (%d)\n",
-	   addr,target->type,reg,watchsize);
-    return target->ops->set_hw_watchpoint(target,reg,addr,whence,watchsize);
+	   "setting hw watchpoint at 0x%"PRIxADDR" on target(%s:%"PRIiTID") dreg %d (%d)\n",
+	   addr,target->type,tid,reg,watchsize);
+    return target->ops->set_hw_watchpoint(target,tid,reg,addr,whence,watchsize);
 }
 
-int target_unset_hw_breakpoint(struct target *target,REG reg) {
+int target_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
     vdebug(5,LOG_T_TARGET,
-	   "removing hw breakpoint on target(%s) dreg %d\n",
-	   target->type,reg);
-    return target->ops->unset_hw_breakpoint(target,reg);
+	   "removing hw breakpoint on target(%s:%"PRIiTID") dreg %d\n",
+	   target->type,tid,reg);
+    return target->ops->unset_hw_breakpoint(target,tid,reg);
 }
 
-int target_unset_hw_watchpoint(struct target *target,REG reg) {
+int target_unset_hw_watchpoint(struct target *target,tid_t tid,REG reg) {
     vdebug(5,LOG_T_TARGET,
-	   "removing hw watchpoint on target(%s) dreg %d\n",
-	   target->type,reg);
-    return target->ops->unset_hw_watchpoint(target,reg);
+	   "removing hw watchpoint on target(%s:%"PRIiTID") dreg %d\n",
+	   target->type,tid,reg);
+    return target->ops->unset_hw_watchpoint(target,tid,reg);
 }
 
-
-int target_disable_hw_breakpoints(struct target *target) {
+int target_disable_hw_breakpoints(struct target *target,tid_t tid) {
     vdebug(5,LOG_T_TARGET,
-	   "disable hw breakpoints on target(%s)\n",target->type);
-    return target->ops->disable_hw_breakpoints(target);
+	   "disable hw breakpoints on target(%s:%"PRIiTID")\n",target->type,tid);
+    return target->ops->disable_hw_breakpoints(target,tid);
 }
 
-int target_enable_hw_breakpoints(struct target *target) {
+int target_enable_hw_breakpoints(struct target *target,tid_t tid) {
     vdebug(5,LOG_T_TARGET,
-	   "enable hw breakpoints on target(%s)\n",target->type);
-    return target->ops->enable_hw_breakpoints(target);
+	   "enable hw breakpoints on target(%s:%"PRIiTID")\n",target->type,tid);
+    return target->ops->enable_hw_breakpoints(target,tid);
+}
+
+int target_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
+    vdebug(5,LOG_T_TARGET,
+	   "disable hw breakpoint %"PRIiREG" on target(%s:%"PRIiTID")\n",
+	   dreg,target->type,tid);
+    return target->ops->disable_hw_breakpoint(target,tid,dreg);
+}
+
+int target_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
+    vdebug(5,LOG_T_TARGET,
+	   "enable hw breakpoint %"PRIiREG" on target(%s:%"PRIiTID")\n",
+	   dreg,target->type,tid);
+    return target->ops->enable_hw_breakpoint(target,tid,dreg);
 }
 
 int target_notify_sw_breakpoint(struct target *target,ADDR addr,
@@ -350,19 +537,71 @@ int target_notify_sw_breakpoint(struct target *target,ADDR addr,
     return target->ops->notify_sw_breakpoint(target,addr,notification);
 }
 
-int target_singlestep(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"single stepping target(%s)\n",target->type);
-    return target->ops->singlestep(target);
+int target_singlestep(struct target *target,tid_t tid,int isbp) {
+    vdebug(5,LOG_T_TARGET,"single stepping target(%s:%"PRIiTID") isbp=%d\n",
+	   target->type,tid,isbp);
+    return target->ops->singlestep(target,tid,isbp);
 }
 
-int target_singlestep_end(struct target *target) {
+int target_singlestep_end(struct target *target,tid_t tid) {
     if (target->ops->singlestep_end) {
-	vdebug(5,LOG_T_TARGET,"ending single stepping of target(%s)\n",
-	       target->type);
-	return target->ops->singlestep_end(target);
+	vdebug(5,LOG_T_TARGET,"ending single stepping of target(%s:%"PRIiTID")\n",
+	       target->type,tid);
+	return target->ops->singlestep_end(target,tid);
     }
     return 0;
 }
+
+tid_t target_gettid(struct target *target) {
+    tid_t retval = 0;
+
+    vdebug(9,LOG_T_TARGET,"gettid target(%s)\n",target->type);
+    retval = target->ops->gettid(target);
+    vdebug(5,LOG_T_TARGET,"gettid target(%s) -> 0x%"PRIx64" \n",
+	   target->type,retval);
+
+    return retval;
+}
+
+int target_thread_is_valid(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("no such thread %"PRIiTID"\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    return tthread->valid;
+}
+
+int target_thread_is_dirty(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("no such thread %"PRIiTID"\n",tid);
+	errno = EINVAL;
+	return -1;
+    }
+
+    return tthread->dirty;
+}
+
+thread_status_t target_thread_status(struct target *target,tid_t tid) {
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("no such thread %"PRIiTID"\n",tid);
+	errno = EINVAL;
+	return THREAD_STATUS_UNKNOWN;
+    }
+
+    return tthread->status;
+}
+
 
 
 /*

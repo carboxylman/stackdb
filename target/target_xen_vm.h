@@ -23,9 +23,123 @@
 #include <xenctrl.h>
 #include <xenaccess/xenaccess.h>
 
+#define THREAD_SIZE 8192
+
 /*
  * target-specific state for xen vms.
  */
+
+#define THREAD_INFO_GET_CPL(tid) (((tid) & (0x3 << 62)) >> 62)
+#define THREAD_INFO_GET_TID(tid) ((tid) & 0xffffffff)
+#define THREAD_INFO_SET_CPL(tid,cpl) (tid) |= (((cpl) & 0x3) << 62)
+#define THREAD_INFO_SET_TID(tid,pid) (tid) |= (0xffffffff & (pid))
+
+#define TIF_32_SYSCALL_TRACE       0       /* syscall trace active */
+#define TIF_32_NOTIFY_RESUME       1       /* resumption notification requested */
+#define TIF_32_SIGPENDING          2       /* signal pending */
+#define TIF_32_NEED_RESCHED        3       /* rescheduling necessary */
+#define TIF_32_SINGLESTEP          4       /* restore singlestep on return to user mode */
+#define TIF_32_IRET                5       /* return with iret */
+#define TIF_32_SYSCALL_EMU         6       /* syscall emulation active */
+#define TIF_32_SYSCALL_AUDIT       7       /* syscall auditing active */
+#define TIF_32_SECCOMP             8       /* secure computing */
+#define TIF_32_RESTORE_SIGMASK     9       /* restore signal mask in do_signal() */
+#define TIF_32_MEMDIE              16
+#define TIF_32_DEBUG               17      /* uses debug registers */
+#define TIF_32_IO_BITMAP           18      /* uses I/O bitmap */
+
+#define _TIF_32_SYSCALL_TRACE      (1<<TIF_32_SYSCALL_TRACE)
+#define _TIF_32_NOTIFY_RESUME      (1<<TIF_32_NOTIFY_RESUME)
+#define _TIF_32_SIGPENDING         (1<<TIF_32_SIGPENDING)
+#define _TIF_32_NEED_RESCHED       (1<<TIF_32_NEED_RESCHED)
+#define _TIF_32_SINGLESTEP         (1<<TIF_32_SINGLESTEP)
+#define _TIF_32_IRET               (1<<TIF_32_IRET)
+#define _TIF_32_SYSCALL_EMU        (1<<TIF_32_SYSCALL_EMU)
+#define _TIF_32_SYSCALL_AUDIT      (1<<TIF_32_SYSCALL_AUDIT)
+#define _TIF_32_SECCOMP            (1<<TIF_32_SECCOMP)
+#define _TIF_32_RESTORE_SIGMASK    (1<<TIF_32_RESTORE_SIGMASK)
+#define _TIF_32_DEBUG              (1<<TIF_32_DEBUG)
+#define _TIF_32_IO_BITMAP          (1<<TIF_32_IO_BITMAP)
+
+
+#define TIF_64_SYSCALL_TRACE       0       /* syscall trace active */
+#define TIF_64_NOTIFY_RESUME       1       /* resumption notification requested */
+#define TIF_64_SIGPENDING          2       /* signal pending */
+#define TIF_64_NEED_RESCHED        3       /* rescheduling necessary */
+#define TIF_64_SINGLESTEP          4       /* reenable singlestep on user return*/
+#define TIF_64_IRET                5       /* force IRET */
+#define TIF_64_SYSCALL_AUDIT       7       /* syscall auditing active */
+#define TIF_64_SECCOMP             8       /* secure computing */
+/* 16 free */
+#define TIF_64_IA32                17      /* 32bit process */ 
+#define TIF_64_FORK                18      /* ret_from_fork */
+#define TIF_64_ABI_PENDING         19
+#define TIF_64_MEMDIE              20
+
+#define _TIF_64_SYSCALL_TRACE      (1<<TIF_64_SYSCALL_TRACE)
+#define _TIF_64_NOTIFY_RESUME      (1<<TIF_64_NOTIFY_RESUME)
+#define _TIF_64_SIGPENDING         (1<<TIF_64_SIGPENDING)
+#define _TIF_64_SINGLESTEP         (1<<TIF_64_SINGLESTEP)
+#define _TIF_64_NEED_RESCHED       (1<<TIF_64_NEED_RESCHED)
+#define _TIF_64_IRET               (1<<TIF_64_IRET)
+#define _TIF_64_SYSCALL_AUDIT      (1<<TIF_64_SYSCALL_AUDIT)
+#define _TIF_64_SECCOMP            (1<<TIF_64_SECCOMP)
+#define _TIF_64_IA32               (1<<TIF_64_IA32)
+#define _TIF_64_FORK               (1<<TIF_64_FORK)
+#define _TIF_64_ABI_PENDING        (1<<TIF_64_ABI_PENDING)
+
+struct xen_vm_thread_state {
+    ADDR task_struct_addr;
+
+    /* 
+     * This state all comes from the Linux PCB.  It is always blown away
+     * on target_resume or target_singlestep .
+     */
+    /* The task struct is always valid unless we are in interrupt
+     * context.
+     */
+    struct value *task_struct;
+    num_t tgid;                      /* Read-only; not flushed */
+    num_t task_flags;
+    /* The thread_info is always at the bottom of the kernel stack. */
+    struct value *thread_info;
+    unum_t thread_info_flags;
+    num_t thread_info_preempt_count; /* Read-only; not flushed */
+    /* The thread struct comes out of the task struct. */
+    struct value *thread_struct;
+    ADDR ptregs_stack_addr;
+
+    /*
+     * These are information about the task's kernel stack.  esp0 is the
+     * ring 0 stack pointer; stack_base is the bottom of the stack.
+     */
+    ADDR stack_base;
+    ADDR esp0;
+
+    /*
+     * These are all for kernel threads, specifically.  The only time a
+     * kernel thread will have saved context info is when it has been 
+     * preempted or interrupted.  Otherwise, the kernel thread has been
+     * context-switched out of, and this does not save its current
+     * register set; context switching only saves esp/eip, fs/gs in the
+     * task's thread struct; eflags and ebp were pushed on the stack
+     * before context switch.
+     */
+    ADDR esp;
+    ADDR eip;
+    uint16_t fs;
+    uint16_t gs;
+    uint32_t eflags;
+    ADDR ebp;
+    
+    vcpu_guest_context_t context;
+
+    /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
+     * we use this might have to change.
+     */
+    unsigned long dr[8];
+};
+
 struct xen_vm_state {
     domid_t id;
     char *name;
@@ -35,26 +149,17 @@ struct xen_vm_state {
     char *kernel_version;
     char *kernel_elf_filename;
 
-    int context_dirty;
-    int context_valid;
-    vcpu_guest_context_t context;
+    struct bsymbol *init_task;
+    struct symbol *task_struct_type;
+    struct symbol *task_struct_type_ptr;
+    ADDR init_task_addr;
+    struct symbol *thread_info_type;
 
     xc_dominfo_t dominfo;
     int dominfo_valid;
 
     /* XenAccess instance used to read/write domain's memory */
     xa_instance_t xa_instance;
-
-    /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
-     * we use this might have to change.
-     */
-    unsigned long dr[8];
-
-#if __WORDSIZE == 32
-    uint32_t eflags;
-#else
-    uint64_t rflags;
-#endif
 };
 
 /*
@@ -67,9 +172,41 @@ struct xen_vm_state {
 struct target *xen_vm_attach(char *domain,
 			     struct debugfile_load_opts **dfoptlist);
 
+struct symbol *linux_get_task_struct_type_ptr(struct target *target);
 struct value *linux_load_current_task(struct target *target);
+struct value *linux_load_current_task_as_type(struct target *target,
+					      struct symbol *datatype);
 int linux_get_task_pid(struct target *target,struct value *task);
+int linux_get_task_tid(struct target *target,struct value *task);
+struct value *linux_get_task(struct target *target,tid_t tid);
 
+struct symbol *linux_get_thread_info_type(struct target *target);
+struct value *linux_load_current_thread_as_type(struct target *target,
+						struct symbol *datatype);
+
+#define PREEMPT_MASK   0x000000ff
+#define SOFTIRQ_MASK   0x0000ff00
+#define HARDIRQ_MASK   0x0fff0000
+#define PREEMPT_ACTIVE 0x10000000
+#define PREEMPT_BITSHIFT 0
+#define SOFTIRQ_BITSHIFT 8
+#define HARDIRQ_BITSHIFT 16
+
+/*
+ * These macros are different than the kernel's!
+ */
+#define PREEMPT_COUNT(p) (((p) & PREEMPT_MASK) >> PREEMPT_BITSHIFT)
+#define SOFTIRQ_COUNT(p) (((p) & SOFTIRQ_MASK) >> SOFTIRQ_BITSHIFT)
+#define HARDIRQ_COUNT(p) (((p) & HARDIRQ_MASK) >> HARDIRQ_BITSHIFT)
+
+struct value *linux_get_preempt_count(struct target *target,
+				      struct value *current_thread_info);
+
+/*
+ * If the iterator returns 1, we break out of the loop.
+ * If the iterator returns -1, we break out of the loop, AND do NOT free
+ * @value (so the caller can save it).
+ */
 typedef int (*linux_list_iterator_t)(struct target *t,struct value *value,
 				     void *data);
 int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,

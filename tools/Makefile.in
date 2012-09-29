@@ -57,14 +57,14 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
-OBJECTS := 
+OBJECTS := dumpthreads.lo 
 ifeq ($(ENABLE_XENACCESS),"1")
 	OBJECTS += psaction.lo
 endif
 
 LIBRARIES := 
 
-PROGRAMS := 
+PROGRAMS := dumpthreads 
 ifeq ($(ENABLE_XENACCESS),"1")
 	PROGRAMS += psaction
 endif
@@ -88,6 +88,9 @@ include $(TOP_SRCDIR)/Makerules
 
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+dumpthreads: $(HEADERS) $(STATICLIBS) dumpthreads.lo
+	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
 
 psaction: $(HEADERS) $(STATICLIBS) psaction.lo
 	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)

@@ -52,6 +52,9 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
+	struct target *target = probe->target;
+	struct target_thread *tthread = probe->thread;
+	tid_t tid = tthread->tid;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -67,14 +70,16 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		return -1;
 	}
 
-	value_prev = bsymbol_load(bsymbol_task_prev, LOAD_FLAG_AUTO_DEREF);
+	value_prev = target_load_symbol(target,tid,bsymbol_task_prev,
+					LOAD_FLAG_AUTO_DEREF);
 	if (!value_prev)
 	{
 		verror("Could not load previous task symbol\n");
 		return -1;
 	}
 
-	value_next = bsymbol_load(bsymbol_task_next, LOAD_FLAG_AUTO_DEREF);
+	value_next = target_load_symbol(target,tid,bsymbol_task_next,
+					LOAD_FLAG_AUTO_DEREF);
 	if (!value_next)
 	{
 		verror("Could not load next task symbol\n");
@@ -183,6 +188,9 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
+	struct target *target = probe->target;
+	struct target_thread *tthread = probe->thread;
+	tid_t tid = tthread->tid;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -192,7 +200,8 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 		return -1;
 	}
 
-	value_regs = bsymbol_load(bsymbol_interrupt_regs, LOAD_FLAG_AUTO_DEREF);
+	value_regs = target_load_symbol(target,tid,bsymbol_interrupt_regs,
+					LOAD_FLAG_AUTO_DEREF);
 	if (!value_regs)
 	{
 		verror("Could not load interrupt regs symbol\n");
@@ -325,6 +334,9 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
+	struct target *target = probe->target;
+	struct target_thread *tthread = probe->thread;
+	tid_t tid = tthread->tid;
 
 	context = (ctxtracker_context_t *)data;
 
@@ -347,15 +359,17 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 		return -1;
 	}
 
-	value_regs = bsymbol_load(bsymbol_pagefault_regs, LOAD_FLAG_AUTO_DEREF);
+	value_regs = target_load_symbol(target,tid,bsymbol_pagefault_regs,
+					LOAD_FLAG_AUTO_DEREF);
 	if (!value_regs)
 	{
 		verror("Could not load pagefault regs symbol\n");
 		return -1;
 	}
 
-	value_error_code = bsymbol_load(bsymbol_pagefault_error_code, 
-			LOAD_FLAG_AUTO_DEREF);
+	value_error_code = target_load_symbol(target,tid,
+					      bsymbol_pagefault_error_code, 
+					      LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
 		verror("Could not load pagefault error_code symbol\n");
@@ -520,6 +534,9 @@ static int probe_exception_entry(struct probe *probe, void *data,
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
+	struct target *target = probe->target;
+	struct target_thread *tthread = probe->thread;
+	tid_t tid = tthread->tid;
 
 	handler_data = (struct exception_handler_data *)data;
 	i = handler_data->index;
@@ -537,15 +554,17 @@ static int probe_exception_entry(struct probe *probe, void *data,
 		return -1;
 	}
 
-	value_regs = bsymbol_load(bsymbol_exception_regs[i], LOAD_FLAG_AUTO_DEREF);
+	value_regs = target_load_symbol(target,tid,bsymbol_exception_regs[i],
+					LOAD_FLAG_AUTO_DEREF);
 	if (!value_regs)
 	{
 		verror("Could not load exception regs symbol\n");
 		return -1;
 	}
 
-	value_error_code = bsymbol_load(bsymbol_exception_error_code[i], 
-			LOAD_FLAG_AUTO_DEREF);
+	value_error_code = target_load_symbol(target,tid,
+					      bsymbol_exception_error_code[i], 
+					      LOAD_FLAG_AUTO_DEREF);
 	if (!value_error_code)
 	{
 		verror("Could not load exception error_code symbol\n");
@@ -1386,10 +1405,11 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
+	tid_t tid = probe->thread->tid;
 
 	context = (ctxtracker_context_t *)data;
 
-	eax = target_read_reg(t, 0);
+	eax = target_read_reg(t,tid,0);
 	sc_num = eax;
 
 	/* FIXME: uncomment the below line when machineries allow instrumenting 

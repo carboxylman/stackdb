@@ -32,11 +32,11 @@
 #include "probe_api.h"
 #include "probe.h"
 
-struct probe *probe_simple(struct target *target,char *name,
+struct probe *probe_simple(struct target *target,tid_t tid,char *name,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
 			   void *handler_data) {
-    struct probe *probe = probe_create(target,NULL,name,pre_handler,
+    struct probe *probe = probe_create(target,tid,NULL,name,pre_handler,
 				       post_handler,handler_data,0);
     if (!probe)
 	return NULL;
@@ -87,6 +87,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
     struct cf_inst_data *idata;
     size_t bufsiz;
     char *buf;
+    struct target_thread *tthread = probe->thread;
+    tid_t tid = tthread->tid;
 
     if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	verror("must supply a function symbol!\n");
@@ -98,7 +100,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	goto errout;
     }
 
-    if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+    if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
 	verror("could not resolve entry PC for function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	return NULL;
@@ -123,7 +125,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+5+1;
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s_entry",bsymbol->lsymbol->symbol->name);
-	source = probe_create(target,NULL,buf,probe_do_sink_pre_handlers,
+	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
 			      NULL,NULL,1);
 	free(buf);
 	if (!__probe_register_addr(source,probeaddr,range,
@@ -173,7 +175,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 
     funccode = malloc(funclen);
 
-    if (!target_read_addr(target,start,funclen,funccode,NULL)) {
+    if (!target_read_addr(target,start,funclen,funccode)) {
 	verror("could not read code before disasm of function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	goto errout;
@@ -214,8 +216,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+4+1+11+1;
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s_exit_%d",bsymbol->lsymbol->symbol->name,j);
-	source = probe_create(target,NULL,buf,probe_do_sink_post_handlers,NULL,
-			      NULL,1);
+	source = probe_create(target,tid,NULL,buf,probe_do_sink_post_handlers,
+			      NULL,NULL,1);
 	free(buf);
 
 	/* Register the j-th exit probe. */
@@ -277,6 +279,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     char *buf;
     GHashTable *itypes = NULL;
     inst_cf_flags_t cfflags = INST_CF_ANY;
+    tid_t tid;
 
     if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	verror("must supply a function symbol!\n");
@@ -292,7 +295,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
      * best information to __probe_register_addr as possible to make
      * debug output clearer.
      */
-    if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+    if (location_resolve_function_base(target,bsymbol->lsymbol,
+				       bsymbol->region,&start,&range)) {
 	verror("could not resolve entry PC for function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	return NULL;
@@ -345,7 +349,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
      */
     funccode = malloc(funclen + 1);
 
-    if (!target_read_addr(target,start,funclen,funccode,NULL)) {
+    if (!target_read_addr(target,start,funclen,funccode)) {
 	verror("could not read code before disasm of function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	goto errout;
@@ -380,6 +384,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	}
 
 	probe = (struct probe *)g_hash_table_lookup(itypes,(gpointer)idata->type);
+	tid = probe->thread->tid;
 
 	/* Create the j-th instruction probe.  Assume that all
 	 * instruction names fit in 16 bytes.
@@ -388,7 +393,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s_%s_%d",bsymbol->lsymbol->symbol->name,
 		 disasm_get_inst_name(idata->type),j);
-	source = probe_create(target,NULL,buf,probe_do_sink_pre_handlers,
+	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
 			      probe_do_sink_post_handlers,NULL,1);
 	free(buf);
 
@@ -453,6 +458,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     size_t bufsiz;
     char *buf;
     struct array_list *cprobes = NULL;
+    tid_t tid = probe->thread->tid;
 
     if (!SYMBOL_IS_FULL_INSTANCE(symbol)) {
 	verror("cannot probe a partial symbol!\n");
@@ -462,12 +468,13 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     /* We only try to register on the primary if it has an address
      * (i.e., is not ONLY inlined).
      */
-    if (do_primary && !location_resolve_symbol_base(target,bsymbol,NULL,NULL)) {
+    if (do_primary
+	&& !location_resolve_symbol_base(target,tid,bsymbol,NULL,NULL)) {
 	bufsiz = strlen(symbol->name)+1+2+1+2+16+1;
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s"PRIxADDR,bsymbol_get_name(bsymbol));
 
-	pcprobe = probe_create(target,NULL,buf,probe_do_sink_pre_handlers,
+	pcprobe = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
 			       probe_do_sink_post_handlers,NULL,1);
 	free(buf);
 
@@ -503,9 +510,9 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 		array_list_item(iilist,i);
 	    struct bsymbol *ibsymbol = (struct bsymbol *) \
 		bsymbol_create(lsymbol_create_from_symbol(isymbol),
-			       bsymbol->region,NULL);
+			       bsymbol->region);
 
-	    cprobe = probe_create(target,NULL,bsymbol_get_name(ibsymbol),
+	    cprobe = probe_create(target,tid,NULL,bsymbol_get_name(ibsymbol),
 				  probe_do_sink_pre_handlers,
 				  probe_do_sink_post_handlers,NULL,1);
 	    /* Register the i-th instance probe. */

@@ -25,26 +25,82 @@
 
 #include <glib.h>
 
+#define PROBE_SAFE_OP(probe,op) (((probe)->ops && (probe)->ops->op) \
+                                 ? (probe)->ops->op((probe)) \
+                                 : 0)
+
 /*
- * probepoint_state_t -- various states of a probe point
+ * probepoint_state_t -- various states of a probe point.  Probepoint
+ * state is about how target state is altered to support the
+ * probepoint.  For instance, a probepoint may be set, handling, or
+ * disabled (inserting/removing are very temporary states, and are
+ * meaningless since this library is not reentrant).
+ *
+ * Probepoints *must* be handled atomically -- we only can single step
+ * one instruction after the breakpoint is hit.  This means that any
+ * action that happens before the one single step (or replaces it) must
+ * be able to do all its dirty work before/during that one single step.
+ * The result of that single step is that the breakpoint *must* be
+ * replaced -- before any other threads have a chance to hit the
+ * breakpoint.
+ *
+ * Fire-and-forget actions, like a command to single step, or a complex
+ * action, like custom code, are still permitted -- but the custom code
+ * action must be a call or jump that is single stepped.
  */
 typedef enum {
     PROBE_INSERTING = 1,    /* domain quiescing prior to breakpoint insertion */
     PROBE_BP_SET,           /* breakpoint in place */
-    PROBE_BP_HANDLING,      /* handling a breakpoint */
-    PROBE_BP_HANDLING_POST, /* handling a breakpoint, after
-			       single-stepping the original instr */
+    PROBE_BP_PREHANDLING,   /* handling a breakpoint's pre handlers */
+    PROBE_BP_ACTIONHANDLING,/* handling a breakpoint's actions */
+    PROBE_BP_POSTHANDLING,  /* handling a breakpoint's post handlers */
     PROBE_REMOVING,         /* domain quiescing prior to breakpoint removal */
     PROBE_DISABLED,         /* breakpoint removal completed */
     PROBE_ACTION_RUNNING,   /* executing an action */
     PROBE_ACTION_DONE,      /* finished an action */
 } probepoint_state_t;
 
-int probepoint_bp_handler(struct target *target,
-			  struct probepoint *probepoint);
-int probepoint_ss_handler(struct target *target,
-			  struct probepoint *probepoint);
+/*
+ * Prototypes of functions that probe type implementers may want to
+ * use.  Probes are hierarchical, and if the type does not have a
+ * complex handler for pre/post events, it might just pass these
+ * functions to the probes it builds on.  They simply invoke any
+ * handlers for any sink probes registered on @probe.
+ */
+int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
+				struct probe *trigger);
+int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
+				struct probe *trigger);
 
+/*
+ * Prototypes of the standard breakpoint and single step debug event
+ * handlers.  Target implementers probably want to set the bp_handler
+ * and ss_handler of the `struct target_ops` representing their target
+ * type to these functions.  Without them, the standard probe API is
+ * useless, unless the target implements similar semantics.
+ */
+result_t probepoint_bp_handler(struct target *target,
+			       struct target_thread *tthread,
+			       struct probepoint *probepoint,
+			       int was_stepping);
+result_t probepoint_ss_handler(struct target *target,
+			       struct target_thread *tthread,
+			       struct probepoint *probepoint);
+/*
+ * For targets providing thread control, the probe API may choose to
+ * "pause" the handling of a thread A at a debug exception, if another
+ * thread B already owns the probepoint (i.e., is handling and modifying
+ * it).  The thread will not be unpaused, but the probe API will try to
+ * handle it in this function.  The idea is that target implementers
+ * should call it just before the target is resumed for additional
+ * monitoring.
+ */
+result_t probepoint_resumeat_handler(struct target *target,
+				     struct target_thread *tthread);
+
+/*
+ * Local prototypes.
+ */
 struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 				    struct memrange *range,
 				    probepoint_type_t type,
@@ -57,20 +113,94 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
  * A probe point is the address site where an actual break/watch point
  * is registered.  We associate multiple logical probes with a single
  * probe point.
+ *
+ * Currently, the model is that hardware probepoints are per-thread, and
+ * are only "alive" in the thread that requested them.  However,
+ * software probepoints are shared, since memory is shared, amongst
+ * threads.  BUT, how this is realized is target-specific.  Some targets
+ * are in control of all threads in the target (i.e., ptrace), and they
+ * must pause all threads in the process BEFORE single-stepping past a
+ * probepoint, or handling its actions -- since another thread could
+ * "miss" a breakpoint if the breakpoint is changed into the real
+ * instruction and another thread runs the real thing before the single
+ * step can occur.  But in other targets, like the Xen target, we cannot
+ * pause threads.  The only thing we can do is disable interrupts while
+ * the single step happens (and this won't disable NMIs, of course).
+ * This effectively pauses all other threads, unless we are single
+ * stepping the context switch itself, or an NMI occurs.
+ *
+ * In any case, the *probepoint* infrastructure does *not* maintain
+ * per-thread probepoint state, nor probe action state.  To support
+ * THREAD_BPMODE_STRICT, targets must guarantee that when a probepoint
+ * is being handled, only the thread that hit it first will execute
+ * until we are finished handling the probepoint for that thread.
+ * See also the documentation for THREAD_BPMODE_SEMI_STRICT and
+ * THREAD_BPMODE_LOOSE for less safe modes of operation.
+ *
+ * BUT, we do need to handle multiple probepoint and action states per
+ * thread.  Threads could hit one probepoint, and then hit another
+ * before completely handling of the previous one.  And we need to track
+ * action contexts per thread probepoint context, AND for single step
+ * actions, we need to track those on a per-thread basis.
+ *
+ * To support these goals, we have the thread_probepoint_context; a new
+ * one of these is pushed onto the thread's probepoint context stack
+ * each time a probepoint is hit by a thread.  We also have the
+ * thread_action_context struct, which keeps track of which action is
+ * executing at a probepoint context, AND for single step actions, how
+ * many steps have executed for that action (note that single step
+ * thread_action_contexts are not probepoint-specific -- they accumulate
+ * on a thread's list, and the thread stays in single step mode until
+ * all actions have finished.  Handling single step actions is separate
+ * from handling probepoint contexts.
  */
+
+struct target_thread;
+struct action;
+
+struct thread_action_context {
+    struct action *action;
+    int stepped;
+
+    /* If this context is on a list, this is the element's next/prev ptrs. */
+    struct list_head tac;
+};
+
+struct thread_probepoint_context {
+    struct target_thread *thread;
+    struct probepoint *probepoint;
+
+    /* The currently executing complex action. */
+    struct thread_action_context tac;
+
+    int action_obviated_orig;
+    int did_orig_instr;
+
+    /* Saved instructions (which were replaced with action's code) */
+    void *action_orig_mem;
+    unsigned int action_orig_mem_len;
+};
+
 struct probepoint {
     /* Location of the probe point */
     ADDR addr;
+
+    probepoint_state_t state;
 
     probepoint_type_t type;
     probepoint_style_t style;
     probepoint_whence_t whence;
     probepoint_watchsize_t watchsize;
 
-    probepoint_state_t state;
-
-    /* backref to the target this probe point is associated with */
+    /* 
+     * The target context (target,thread) this probe point is associated
+     * with.  @thread is only valid if the probepoint is a hardware
+     * probepoint, since right now, only hardware debug registers are
+     * per-thread (i.e., software breakpoints are not, since
+     * fundamentally, threads, share code pages).
+     */
     struct target *target;
+    struct target_thread *thread;
 
     /* If this probepoint is associated with a symbol, save it! */
     struct bsymbol *bsymbol;
@@ -85,26 +215,49 @@ struct probepoint {
     /* list of probes at this probe-point */
     struct list_head probes;
 
-    /* Lists of actions that may be executed at this probepoint. */
-    struct list_head actions;
-
-    /* Currently executing action. */
-    struct action *action;
-    int action_obviates_orig;
-    int action_needs_ssteps;
+    /*
+     * Lists of actions that may be executed at this probepoint.
+     * Simple actions are REGMOD and MEMMOD, for now.
+     * Complex actions are RETURN, SINGLESTEP, and CUSTOMCODE, for now.
+     *
+     * Simple actions can all be run immediately post-breakpoint,
+     * pre-singlestep, because they just quickly change machine state.
+     *
+     * Complex actions either run back-to-back, or there is only one of
+     * them.
+     */
+    struct list_head simple_actions;
+    struct list_head complex_actions;
+    struct list_head ss_actions;
     
     /* Saved opcode (which has been replaced with breakpoint) */
     void *breakpoint_orig_mem;
-    /* Saved instructions (which were replaced with action's code) */
-    void *action_orig_mem;
-
     unsigned int breakpoint_orig_mem_len;
-    unsigned int action_orig_mem_len;
+
+    /*
+     * If we ever have to change the instruction at the probepoint
+     * address while we handle it, or disable the hw breakpoint
+     * register, this is the thread probepoint context struct with the
+     * info we need -- and says which thread "holds" this probepoint.
+     * Only one thread can be adjusting a probepoint at once.
+     *
+     * We have to "share" the probepoint anytime we can't boost either
+     * the one instruction we have to single step, or if we had to run
+     * action code at the breakpoint instead of somewhere else in the
+     * target.
+     *
+     * So, this field is only valid when @state is PROBE_BP_PREHANDLING,
+     * PROBE_BP_ACTIONHANDLING, PROBE_BP_POSTHANDLING, and
+     * PROBE_ACTION_RUNNING (if the action is not boosted -- i.e., is
+     * happening inline at the breakpoint).
+     */
+    struct thread_probepoint_context *tpc;
 
     /* If this is a hardware-assisted probepoint, this is the debug
      * register number.
      */
     REG debugregnum;
+    int debugregdisabled;
 };
 
 struct probe {
@@ -114,8 +267,11 @@ struct probe {
 
     void *priv;
 
-    /* The target this probe is associated with. */
+    /* 
+     * The target context this probe is associated with.
+     */
     struct target *target;
+    struct target_thread *thread;
 
     /* The target probe-point */
     struct probepoint *probepoint;
@@ -148,8 +304,17 @@ struct probe {
 };
 
 struct action {
+    /*
+     * Since actions can be on shared probepoints, and might be being
+     * performed on multiple threads at once (i.e., one thread starts a
+     * single step action, is switched out, and another thread starts
+     * the same single step action before the first thread can finish)
+     */
+    REFCNT refcnt;
+
     action_type_t type;
     action_whence_t whence;
+
     union {
 	struct {
 	    REGVAL retval;
@@ -158,9 +323,10 @@ struct action {
 	    int prologue_sp_offset;
 	} ret;
 	struct {
-	    void **instrs;
-	    uint32_t instrs_count;
+	    unsigned char *buf;
+	    uint32_t buflen;
 	    action_flag_t flags;
+	    unsigned int instr_count;
 	} code;
 	struct {
 	    REG regnum;
@@ -168,22 +334,29 @@ struct action {
 	} regmod;
 	struct {
 	    ADDR destaddr;
-	    void *data;
+	    unsigned char *data;
 	    uint32_t len;
 	} memmod;
     } detail;
 
-    ADDR ss_dst_eip;
-
-    int executed_this_pass;
-
+    int boosted;
+    int obviates;
+    /* Only set when the action is scheduled. */
     int autofree;
+    action_handler_t handler;
+    void *handler_data;
 
-    /* An action can only be attached to one vmprobe at a time. */
+    int steps;
+    ADDR start_addr;
+
+    /*
+     * An action can only be attached to one probepoint at a time.
+     *
+     * An action is on a probepoint's list, but it is added for a probe
+     * attached to that probepoint.
+     */
     struct list_head action;
-
     struct probe *probe;
-
 };
 
 /* The target_api code needs to call this, but we don't want it exposed

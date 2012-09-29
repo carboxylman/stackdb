@@ -51,7 +51,7 @@ struct probe *register_probe_label(struct target *target, const char *symbol,
 		return NULL;
 	}
 
-	probe = probe_create(target, (struct probe_ops *)ops, 
+	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, 
 			bsymbol_get_name(bsymbol), handler, NULL /* post_handler */, 
 			data, 0 /* autofree */);
 	if (!probe)
@@ -95,7 +95,7 @@ struct probe *register_probe_function_entry(struct target *target,
 		return NULL;
 	}
 
-	probe = probe_create(target, (struct probe_ops *)ops, 
+	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, 
 			bsymbol_get_name(bsymbol), handler, NULL /* post_handler */, 
 			data, 0 /* autofree */);
 	if (!probe)
@@ -141,7 +141,7 @@ struct probe *register_probe_function_exit(struct target *target,
 		return NULL;
 	}
 
-	ret = location_resolve_symbol_base(target, bsymbol, &base_addr, 
+	ret = location_resolve_symbol_base(target, TID_GLOBAL, bsymbol, &base_addr, 
 			NULL /* range */);
 	if (ret)
 	{
@@ -151,7 +151,7 @@ struct probe *register_probe_function_exit(struct target *target,
 		return NULL;
 	}
 
-	probe = probe_create(target, (struct probe_ops *)ops, 
+	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, 
 			bsymbol_get_name(bsymbol), handler, NULL /* post_handler */, 
 			data, 0 /* autofree */);
 	if (!probe)

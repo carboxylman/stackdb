@@ -19,6 +19,7 @@
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
+#include "probe.h"
 
 /**
  ** Globals.
@@ -296,7 +297,7 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
 				  (gpointer)&key,(gpointer)&debugfile)) {
 	if ((lsymbol = debugfile_lookup_addr(debugfile,
 					     memrange_unrelocate(range,addr)))) {
-	    bsymbol = bsymbol_create(lsymbol,region,NULL);
+	    bsymbol = bsymbol_create(lsymbol,region);
 	    /* bsymbol_create took a ref to lsymbol, so we release it! */
 	    lsymbol_release(lsymbol);
 	    /* Take a ref to bsymbol on the user's behalf, since this is
@@ -311,7 +312,7 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
 }
 
 struct bsymbol *target_lookup_sym(struct target *target,
-				  char *name,const char *delim,
+				  const char *name,const char *delim,
 				  char *srcfile,symbol_type_flag_t ftype) {
     struct addrspace *space;
     struct bsymbol *bsymbol;
@@ -339,7 +340,7 @@ struct bsymbol *target_lookup_sym(struct target *target,
     return NULL;
 
  out:
-    bsymbol = bsymbol_create(lsymbol,region,NULL);
+    bsymbol = bsymbol_create(lsymbol,region);
     /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym
      * took one on our behalf, so we release one!
      */
@@ -355,7 +356,7 @@ struct bsymbol *target_lookup_sym(struct target *target,
 
 struct bsymbol *target_lookup_sym_member(struct target *target,
 					 struct bsymbol *bsymbol,
-					 char *name,const char *delim) {
+					 const char *name,const char *delim) {
     struct bsymbol *bsymbol_new;
     struct lsymbol *lsymbol;
 
@@ -363,7 +364,7 @@ struct bsymbol *target_lookup_sym_member(struct target *target,
     if (!lsymbol)
 	return NULL;
 
-    bsymbol_new = bsymbol_create(lsymbol,bsymbol->region,NULL);
+    bsymbol_new = bsymbol_create(lsymbol,bsymbol->region);
     /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym
      * took one on our behalf, so we release one!
      */
@@ -406,7 +407,7 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
     return NULL;
 
  out:
-    bsymbol = bsymbol_create(lsymbol,region,NULL);
+    bsymbol = bsymbol_create(lsymbol,region);
     /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym_line
      * took one on our behalf, so we release one!
      */
@@ -434,7 +435,7 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
  * caller doesn't have to track whether the final pointer was autoloaded
  * or not.
  */
-ADDR __target_lsymbol_compute_address(struct target *target,
+ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 				      struct lsymbol *lsymbol,
 				      ADDR addr,struct memregion *region,
 				      load_flags_t flags,
@@ -477,7 +478,7 @@ ADDR __target_lsymbol_compute_address(struct target *target,
     symbol = (struct symbol *)array_list_item(symbol_chain,alen - 1);
     if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
 	datatype = symbol_type_skip_qualifiers(symbol->datatype);
-	if ((rc = location_resolve_lsymbol_base(target,lsymbol,current_region,
+	if ((rc = location_resolve_lsymbol_base(target,tid,lsymbol,current_region,
 						&retval,&current_range))) {
 	    verror("could not resolve base addr for function %s!\n",
 		   symbol_get_name(symbol));
@@ -596,7 +597,7 @@ ADDR __target_lsymbol_compute_address(struct target *target,
 		}
 	    }
 	    else {
-		retval = location_resolve(target,current_region,
+		retval = location_resolve(target,tid,current_region,
 					  &symbol->s.ii->l,
 					  tchain,&current_range);
 		if (errno) {
@@ -673,12 +674,12 @@ ADDR __target_lsymbol_compute_address(struct target *target,
  * caller doesn't have to track whether the final pointer was autoloaded
  * or not.
  */
-ADDR __target_bsymbol_compute_address(struct target *target,
+ADDR __target_bsymbol_compute_address(struct target *target,tid_t tid,
 				      struct bsymbol *bsymbol,
 				      load_flags_t flags,
 				      struct symbol **final_type_saveptr,
 				      struct memrange **range_saveptr) {
-    return __target_lsymbol_compute_address(target,bsymbol->lsymbol,
+    return __target_lsymbol_compute_address(target,tid,bsymbol->lsymbol,
 					    0,bsymbol->region,flags,
 					    final_type_saveptr,range_saveptr);
 }
@@ -691,6 +692,8 @@ struct value *target_load_type(struct target *target,struct symbol *type,
     struct memrange *range;
     ADDR ptraddr;
     struct location ptrloc;
+    struct mmap_entry *mmap;
+    char *offset_buf;
 
     datatype = symbol_type_skip_qualifiers(type);
 
@@ -742,7 +745,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	&& flags & LOAD_FLAG_AUTO_STRING
 	&& symbol_type_is_char(datatype)) {
 	/* XXX: should we use datatype, or the last pointer to datatype? */
-	value = value_create_noalloc(NULL,datatype);
+	value = value_create_noalloc(NULL,range,NULL,datatype);
 
 	if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							   ptraddr,flags,
@@ -751,10 +754,8 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 		   symbol_get_name(type),addr);
 	    goto errout;
 	}
-	value->bufsiz = strlen(value->buf) + 1;
-	value->isstring = 1;
-	value->range = range;
-	value->addr = ptraddr;
+	value_set_strlen(value,strlen(value->buf) + 1);
+	value_set_addr(value,ptraddr);
 
 	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
 
@@ -765,9 +766,9 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	ptrloc.loctype = LOCTYPE_REALADDR;
 	ptrloc.l.addr = ptraddr != addr ? ptraddr : addr;
 
-	value = value_create_noalloc(NULL,datatype);
-	value->mmap = location_mmap(target,region,&ptrloc,
-				    flags,&value->buf,NULL,&range);
+	mmap = location_mmap(target,region,&ptrloc,
+			     flags,&offset_buf,NULL,&range);
+	value = value_create_noalloc(NULL,range,NULL,datatype);
 	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
 	    value->buf = NULL;
 	    goto errout;
@@ -781,20 +782,22 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 		goto errout;
 	    }
 
-	    if (!__target_load_addr_real(target,range,ptraddr,flags,
+	    if (!__target_load_addr_real(target,range,ptrloc.l.addr,flags,
 					 (unsigned char *)value->buf,
 					 value->bufsiz)) 
 		goto errout;
-	}
 
-	value->addr = ptrloc.l.addr;
-	value->range = range;
+	    value_set_addr(value,ptrloc.l.addr);
+	}
+	else {
+	    value_set_mmap(value,ptrloc.l.addr,mmap,offset_buf);
+	}
 
 	/* success! */
 	goto out;
     }
     else {
-	value = value_create_type(datatype);
+	value = value_create_type(NULL,range,datatype);
 	if (!value) {
 	    verror("could not create value for type (ptr is %p) %s\n",
 		   datatype,datatype ? datatype->name : NULL);
@@ -806,14 +809,11 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 				     value->bufsiz))
 	    goto errout;
 
-	value->addr = ptraddr;
-	value->range = range;
+
+	value_set_addr(value,ptraddr);
     }
 
  out:
-    if (value->range)
-	value->region_stamp = value->range->region->stamp;
-
     return value;
 
  errout:
@@ -824,7 +824,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 
 }
 
-struct value *target_load_symbol_member(struct target *target,
+struct value *target_load_symbol_member(struct target *target,tid_t tid,
 					struct bsymbol *bsymbol,
 					const char *member,const char *delim,
 					load_flags_t flags) {
@@ -838,7 +838,7 @@ struct value *target_load_symbol_member(struct target *target,
 	return NULL;
     }
 
-    retval = target_load_symbol(target,bmember,flags);
+    retval = target_load_symbol(target,tid,bmember,flags);
 
     bsymbol_release(bmember);
 
@@ -860,6 +860,8 @@ struct value *target_load_value_member(struct target *target,
     struct array_list *symbol_chain;
     char *rbuf = NULL;
     ADDR addr;
+    struct target_thread *tthread = old_value->thread;
+    tid_t tid = tthread->tid;
 
     /*
      * We have to handle two levels of pointers, potentially.  Suppose
@@ -887,7 +889,7 @@ struct value *target_load_value_member(struct target *target,
 	}
     }
     else
-	addr = old_value->addr;
+	addr = old_value->res.addr;
 
     if (!SYMBOL_IST_FULL_STUN(tdatatype)) {
 	vwarn("symbol %s is not a full struct/union type (is %s)!\n",
@@ -929,7 +931,7 @@ struct value *target_load_value_member(struct target *target,
 
 	datatype = symbol_type_skip_qualifiers(symbol->datatype);
 	rbuf = malloc(datatype->size);
-	if (!location_load(target,old_value->range->region,&(symbol->s.ii->l),
+	if (!location_load(target,tid,old_value->range->region,&(symbol->s.ii->l),
 			   flags,rbuf,datatype->size,symbol_chain,NULL,&range)) {
 	    verror("could not load register location for symbol %s!\n",
 		   symbol_get_name(symbol));
@@ -954,7 +956,7 @@ struct value *target_load_value_member(struct target *target,
 	    if (flags & LOAD_FLAG_AUTO_STRING 
 		&& symbol_type_is_char(datatype)) {
 		/* XXX: should we use datatype, or last pointer to datatype? */
-		value = value_create_noalloc(ls,datatype);
+		value = value_create_noalloc(tthread,range,ls,datatype);
 
 		if (!(value->buf = (char *)__target_load_addr_real(target,range,
 								   addr,flags,
@@ -963,16 +965,15 @@ struct value *target_load_value_member(struct target *target,
 			   symbol_get_name(symbol));
 		    goto errout;
 		}
-		value->bufsiz = strlen(value->buf) + 1;
-		value->isstring = 1;
-		value->range = range;
-		value->addr = addr;
+
+		value_set_strlen(value,strlen(value->buf) + 1);
+		value_set_addr(value,addr);
 
 		vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
 		       value->bufsiz);
 	    }
 	    else {
-		value = value_create(ls,datatype);
+		value = value_create(tthread,range,ls,datatype);
 
 		if (!__target_load_addr_real(target,range,addr,flags,
 					     (unsigned char *)value->buf,
@@ -981,8 +982,7 @@ struct value *target_load_value_member(struct target *target,
 		    goto out;
 		}
 		else {
-		    value->range = range;
-		    value->addr = addr;
+		    value_set_addr(value,addr);
 
 		    vdebug(5,LOG_T_SYMBOL,
 			   "autoloaded pointer value with len %d\n",
@@ -992,17 +992,19 @@ struct value *target_load_value_member(struct target *target,
 	}
 	else {
 	    /* Just create the value based on the register value. */
-	    value = value_create_noalloc(ls,datatype);
+	    /* XXX: is @range really correct here?  Should we set NULL? */
+	    value = value_create_noalloc(tthread,range,ls,datatype);
 	    value->buf = rbuf;
 	    value->bufsiz = datatype->size;
-	    value->range = range;
+
+	    value_set_reg(value,symbol->s.ii->l.l.reg);
 	}
     }
     /*
      * Second, get the address for the lsymbol chain.
      */
     else {
-	addr = __target_lsymbol_compute_address(target,ls,addr,
+	addr = __target_lsymbol_compute_address(target,tid,ls,addr,
 						old_value->range->region,
 						flags,&datatype,&range);
 	if (addr == 0 && errno)
@@ -1014,13 +1016,10 @@ struct value *target_load_value_member(struct target *target,
 	 * the value from within the old value.  Otherwise, we have to
 	 * load it from the final address.
 	 */
-	if (addr >= old_value->addr 
-	    && (addr - old_value->addr) < (unsigned)old_value->bufsiz) {
-	    value = value_create_noalloc(ls,datatype);
-	    value->buf = old_value->buf + (addr - old_value->addr);
-	    value->parent_value = old_value;
-	    value->range = range;
-	    value->addr = addr;
+	if (addr >= old_value->res.addr 
+	    && (addr - old_value->res.addr) < (unsigned)old_value->bufsiz) {
+	    value = value_create_noalloc(tthread,range,ls,datatype);
+	    value_set_child(value,old_value,addr);
 
 	    goto out;
 	}
@@ -1031,7 +1030,7 @@ struct value *target_load_value_member(struct target *target,
 	    && symbol_type_is_char(symbol_type_skip_ptrs(tdatatype))) {
 	    datatype = symbol_type_skip_ptrs(tdatatype);
 	    /* XXX: should we use datatype, or the last pointer to datatype? */
-	    value = value_create_noalloc(ls,datatype);
+	    value = value_create_noalloc(tthread,range,ls,datatype);
 
 	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							       addr,flags,
@@ -1040,16 +1039,14 @@ struct value *target_load_value_member(struct target *target,
 		      symbol_get_name(symbol));
 		goto errout;
 	    }
-	    value->bufsiz = strlen(value->buf) + 1;
-	    value->isstring = 1;
-	    value->range = range;
-	    value->addr = addr;
+	    value_set_strlen(value,strlen(value->buf) + 1);
+	    value_set_addr(value,addr);
 
 	    vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
 		   value->bufsiz);
 	}
 	else {
-	    value = value_create(ls,datatype);
+	    value = value_create(tthread,range,ls,datatype);
 
 	    if (!__target_load_addr_real(target,range,addr,flags,
 					 (unsigned char *)value->buf,
@@ -1058,8 +1055,7 @@ struct value *target_load_value_member(struct target *target,
 		goto errout;
 	    }
 	    else {
-		value->range = range;
-		value->addr = addr;
+		value_set_addr(value,addr);
 
 		vdebug(5,LOG_T_SYMBOL,"loaded value with len %d\n",
 		       value->bufsiz);
@@ -1082,18 +1078,26 @@ struct value *target_load_value_member(struct target *target,
     return NULL;
 }
 
-struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
-				 load_flags_t flags) {
+struct value *target_load_symbol(struct target *target,tid_t tid,
+				 struct bsymbol *bsymbol,load_flags_t flags) {
     ADDR addr;
     int alen;
     struct symbol *symbol;
     struct array_list *symbol_chain;
     struct symbol *datatype;
     struct memregion *region = bsymbol->region;
-    struct memrange *range = bsymbol->range;
+    struct memrange *range;
     struct value *value = NULL;
     char *rbuf;
     struct symbol *tdatatype;
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	errno = EINVAL;
+	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	return NULL;
+    }
 
     symbol_chain = bsymbol->lsymbol->chain;
     alen = array_list_len(symbol_chain);
@@ -1121,7 +1125,7 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 
 	datatype = symbol_type_skip_qualifiers(symbol->datatype);
 	rbuf = malloc(datatype->size);
-	if (!location_load(target,region,&(symbol->s.ii->l),flags,
+	if (!location_load(target,tid,region,&(symbol->s.ii->l),flags,
 			   rbuf,datatype->size,symbol_chain,NULL,&range)) {
 	    verror("could not load register location for symbol %s!\n",
 		   symbol_get_name(symbol));
@@ -1145,7 +1149,8 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 	    /* Actually do the load. */
 	    if (flags & LOAD_FLAG_AUTO_STRING && symbol_type_is_char(datatype)) {
 		/* XXX: should we use datatype, or the last pointer to datatype? */
-		value = value_create_noalloc(bsymbol->lsymbol,datatype);
+		value = value_create_noalloc(tthread,range,bsymbol->lsymbol,
+					     datatype);
 
 		if (!(value->buf = (char *)__target_load_addr_real(target,range,
 								   addr,flags,
@@ -1156,16 +1161,14 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 		    value = NULL;
 		    goto errout;
 		}
-		value->bufsiz = strlen(value->buf) + 1;
-		value->isstring = 1;
-		value->range = range;
-		value->addr = addr;
+		value_set_strlen(value,strlen(value->buf) + 1);
+		value_set_addr(value,addr);
 
 		vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
 		       value->bufsiz);
 	    }
 	    else {
-		value = value_create(bsymbol->lsymbol,datatype);
+		value = value_create(tthread,range,bsymbol->lsymbol,datatype);
 
 		if (!__target_load_addr_real(target,range,addr,flags,
 					     (unsigned char *)value->buf,
@@ -1176,8 +1179,7 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 		    goto out;
 		}
 		else {
-		    value->range = range;
-		    value->addr = addr;
+		    value_set_addr(value,addr);
 
 		    vdebug(5,LOG_T_SYMBOL,
 			   "autoloaded pointer value with len %d\n",
@@ -1187,10 +1189,11 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 	}
 	else {
 	    /* Just create the value based on the register value. */
-	    value = value_create_noalloc(bsymbol->lsymbol,datatype);
+	    value = value_create_noalloc(tthread,NULL,bsymbol->lsymbol,datatype);
 	    value->buf = rbuf;
 	    value->bufsiz = datatype->size;
-	    value->range = range;
+
+	    value_set_reg(value,symbol->s.ii->l.l.reg);
 	}
     }
     /*
@@ -1200,7 +1203,7 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
      * loading case for AUTO_STRING.
      */
     else {
-	addr = __target_bsymbol_compute_address(target,bsymbol,flags,&datatype,
+	addr = __target_bsymbol_compute_address(target,tid,bsymbol,flags,&datatype,
 						&range);
 	if (addr == 0 && errno)
 	    goto errout;
@@ -1211,7 +1214,7 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 	    && symbol_type_is_char(symbol_type_skip_ptrs(tdatatype))) {
 	    datatype = symbol_type_skip_ptrs(tdatatype);
 	    /* XXX: should we use datatype, or the last pointer to datatype? */
-	    value = value_create_noalloc(bsymbol->lsymbol,datatype);
+	    value = value_create_noalloc(tthread,range,bsymbol->lsymbol,datatype);
 
 	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							       addr,flags,
@@ -1222,16 +1225,14 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 		value = NULL;
 		goto errout;
 	    }
-	    value->bufsiz = strlen(value->buf) + 1;
-	    value->isstring = 1;
-	    value->range = range;
-	    value->addr = addr;
+	    value_set_strlen(value,strlen(value->buf) + 1);
+	    value_set_addr(value,addr);
 
 	    vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
 		   value->bufsiz);
 	}
 	else {
-	    value = value_create(bsymbol->lsymbol,datatype);
+	    value = value_create(tthread,range,bsymbol->lsymbol,datatype);
 
 	    if (!__target_load_addr_real(target,range,addr,flags,
 					 (unsigned char *)value->buf,
@@ -1242,8 +1243,7 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
 		goto out;
 	    }
 	    else {
-		value->range = range;
-		value->addr = addr;
+		value_set_addr(value,addr);
 
 		vdebug(5,LOG_T_SYMBOL,"loaded value with len %d\n",
 		       value->bufsiz);
@@ -1252,8 +1252,6 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
     }
 
  out:
-    if (value)
-	value->region_stamp = value->range->region->stamp;
     return value;
 
  errout:
@@ -1262,15 +1260,23 @@ struct value *target_load_symbol(struct target *target,struct bsymbol *bsymbol,
     return NULL;
 }
 
+int target_resolve_symbol_base(struct target *target,tid_t tid,
+			       struct bsymbol *bsymbol,ADDR *addr_saveptr,
+			       struct memrange **range_saveptr) {
+    return location_resolve_lsymbol_base(target,tid,bsymbol->lsymbol,
+					 bsymbol->region,addr_saveptr,
+					 range_saveptr);
+}
+
 /*
  * What we do here is traverse @bsymbol's lsymbol chain.  For each var
  * we encounter, try to resolve its address.  If the chain is
  * interrupted by pointers, load those and continue loading any
  * subsequent variables.
  */
-ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
-			      load_flags_t flags,
-			      struct memrange **range_saveptr) {
+ADDR target_addressof_symbol(struct target *target,tid_t tid,
+			     struct bsymbol *bsymbol,load_flags_t flags,
+			     struct memrange **range_saveptr) {
     ADDR retval;
     int i = 0;
     int alen;
@@ -1280,7 +1286,7 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
     struct symbol *datatype;
     OFFSET offset;
     struct memregion *current_region = bsymbol->region;
-    struct memrange *current_range = bsymbol->range;
+    struct memrange *current_range;
     load_flags_t tflags = flags | LOAD_FLAG_AUTO_DEREF;
     struct array_list *tchain = NULL;
 
@@ -1293,7 +1299,7 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
      * base address.  So do that.
      */
     if (i == alen && SYMBOL_IS_FULL_FUNCTION(symbol)) {
-	if ((rc = location_resolve_symbol_base(target,bsymbol,
+	if ((rc = location_resolve_symbol_base(target,tid,bsymbol,
 					       &retval,&current_range))) {
 	    verror("could not resolve base addr for function %s!\n",
 		   symbol_get_name(symbol));
@@ -1331,7 +1337,7 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
      */
     while (1) {
 	symbol = (struct symbol *)array_list_item(symbol_chain,i);
-	++i;
+	++i; 
 	tchain->len = i;
 
 	if (!SYMBOL_IS_FULL_VAR(symbol)) {
@@ -1380,7 +1386,7 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
 		}
 	    }
 	    else {
-		retval = location_resolve(target,current_region,
+		retval = location_resolve(target,tid,current_region,
 					  &symbol->s.ii->l,
 					  tchain,&current_range);
 		if (errno) {
@@ -1433,6 +1439,10 @@ ADDR target_addressof_bsymbol(struct target *target,struct bsymbol *bsymbol,
     return retval;
 }
 
+/*
+ * This is deprecated; just keeping code around in case.
+ */
+#if 0
 struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     struct value *value = NULL;
     struct symbol *symbol = bsymbol->lsymbol->symbol;
@@ -1473,9 +1483,9 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     /* Check if this symbol is currently visible to us! */
     if (!(flags & LOAD_FLAG_NO_CHECK_VISIBILITY)) {
 	if (sizeof(REGVAL) == sizeof(ADDR))
-	    ip_addr = (ADDR)target_read_reg(target,target->ipregno);
+	    ip_addr = (ADDR)target_read_reg(target,TID_GLOBAL,target->ipregno);
 	else if (sizeof(ADDR) < sizeof(REGVAL)) {
-	    ip = target_read_reg(target,target->ipregno);
+	    ip = target_read_reg(target,TID_GLOBAL,target->ipregno);
 	    memcpy(&ip_addr,&ip,sizeof(ADDR));
 	}
 	else {
@@ -1580,7 +1590,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	value->bufsiz = strlen(value->buf) + 1;
 	value->isstring = 1;
 	value->range = ptrrange;
-	value->addr = ptraddr;
+	value->res.addr = ptraddr;
 
 	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
 
@@ -1616,7 +1626,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 		goto errout;
 	}
 
-	value->addr = finaladdr;
+	value->res.addr = finaladdr;
 
 	/* success! */
 	goto out;
@@ -1638,7 +1648,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 			   &finaladdr,&value->range))
 	    goto errout;
 
-	value->addr = finaladdr;
+	value->res.addr = finaladdr;
     }
 
  out:
@@ -1653,16 +1663,23 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 
     return NULL;
 }
+#endif
 
 int target_store_value(struct target *target,struct value *value) {
     /* mmap'd values were stored whenever they were value_update_*'d */
-    if (value->mmap)
+    if (value->ismmap)
 	return 0;
-
-    if (target_write_addr(target,value->addr,(unsigned long)value->bufsiz,
-			  (unsigned char *)value->buf,NULL)
-	!= (unsigned long)value->bufsiz)
+    else if (value->isreg) {
+	return target_write_reg(target,value->thread->tid,value->res.reg,
+				*(REGVAL *)value->buf);
+    }
+    else if (target_write_addr(target,value->res.addr,
+			       (unsigned long)value->bufsiz,
+			       (unsigned char *)value->buf)
+	     != (unsigned long)value->bufsiz) {
 	return -1;
+    }
+
     return 0;
 }
 
@@ -1703,6 +1720,55 @@ int target_contains_real(struct target *target,ADDR addr) {
     return 0;
 }
 
+ADDR target_load_pointers(struct target *target,ADDR addr,int count,
+			  struct memrange **range_saveptr) {
+    ADDR paddr = addr;
+    struct memrange *range = NULL;
+    int i;
+
+    for (i = 0; i < count; ++i ) {
+	if (paddr == 0) {
+	    verror("failed to follow NULL pointer #%d\n",i);
+	    errno = EFAULT;
+	    goto errout;
+	}
+
+	vdebug(5,LOG_T_SYMBOL,"loading ptr #%d at 0x%"PRIxADDR"\n",i,paddr);
+
+	/*
+	 * The pointer may be in another region!  We *have* to
+	 * switch regions -- and thus the memrange for the value we
+	 * return may not be in @addr's region/range!
+	 */
+	if (!target_find_memory_real(target,paddr,NULL,NULL,&range)) {
+	    verror("could not find range for ptr 0x%"PRIxADDR"\n",paddr);
+	    errno = EFAULT;
+	    goto errout;
+	}
+
+	if (!__target_load_addr_real(target,range,paddr,LOAD_FLAG_NONE,
+				     (unsigned char *)&paddr,target->ptrsize)) {
+	    verror("could not load ptr #%d at 0x%"PRIxADDR"\n",i,paddr);
+	    errno = EFAULT;
+	    goto errout;
+	}
+
+	vdebug(5,LOG_T_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
+	       paddr,i);
+    }
+
+    if (i == count && range) {
+	if (range_saveptr)
+	    *range_saveptr = range;
+    }
+
+    errno = 0;
+    return paddr;
+
+ errout:
+    return 0;
+}
+
 ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 			      ADDR addr,load_flags_t flags,
 			      struct symbol **datatype_saveptr,
@@ -1737,7 +1803,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 	     * switch regions -- and thus the memrange for the value we
 	     * return may not be in @addr's region/range!
 	     */
-	    if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
+	    if (!target_find_memory_real(target,paddr,NULL,NULL,&range)) {
 		verror("could not find range for ptr 0x%"PRIxADDR"\n",paddr);
 		errno = EFAULT;
 		goto errout;
@@ -1825,17 +1891,17 @@ struct value *target_load_addr_real(struct target *target,ADDR addr,
 	return NULL;
     }
 
-    if (!(value = value_create_raw(len))) {
+    if (!(value = value_create_raw(target,NULL,range,len))) {
 	return NULL;
     }
-    value->range = range;
-    value->addr = addr;
 
     if (!__target_load_addr_real(target,range,addr,flags,
 				 (unsigned char *)value->buf,value->bufsiz)) {
 	value_free(value);
 	return NULL;
     }
+
+    value_set_addr(value,addr);
 
     return value;
 }
@@ -1865,7 +1931,7 @@ unsigned char *__target_load_addr_real(struct target *target,
 	return NULL;
     }
 
-    return target_read_addr(target,addr,bufsiz,buf,NULL);
+    return target_read_addr(target,addr,bufsiz,buf);
 }
 
 int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
@@ -2067,4 +2133,110 @@ unsigned char *target_load_code(struct target *target,
 	free(buf);
     return NULL;
     
+}
+
+struct target_thread *target_lookup_thread(struct target *target,tid_t tid) {
+    vdebug(9,LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
+    return (struct target_thread *)g_hash_table_lookup(target->threads,
+						       (gpointer)(ptr_t)tid);
+}
+
+struct target_thread *target_create_thread(struct target *target,tid_t tid,
+					   void *tstate) {
+    struct target_thread *t = (struct target_thread *)calloc(1,sizeof(*t));
+
+    vdebug(3,LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
+
+    t->target = target;
+    t->tid = tid;
+    t->state = tstate;
+
+    t->hard_probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
+    t->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
+    t->autofree_probes = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    t->tpc = NULL;
+    t->tpc_stack = array_list_create(4);
+    INIT_LIST_HEAD(&t->ss_actions);
+
+    g_hash_table_insert(target->threads,(gpointer)(ptr_t)tid,t);
+
+    return t;
+}
+
+void target_reuse_thread_as_global(struct target *target,
+				   struct target_thread *thread) {
+    vdebug(3,LOG_T_THREAD,"thread %"PRIiTID" as global %"PRIiTID"\n",
+	   thread->tid,TID_GLOBAL);
+    g_hash_table_insert(target->threads,(gpointer)TID_GLOBAL,thread);
+    target->global_thread = thread;
+}
+
+void target_delete_thread(struct target *target,struct target_thread *tthread,
+			  int nohashdelete) {
+    GHashTableIter iter;
+    gpointer key;
+    struct probepoint *probepoint;
+    struct thread_action_context *tac,*ttac;
+
+    vdebug(3,LOG_T_THREAD,"thread %"PRIiTID"\n",tthread->tid);
+
+    /* We have to free the probepoints manually, then remove all.  We
+     * can't remove an element during an iteration, but we *can* free
+     * the data :).
+     */
+    g_hash_table_iter_init(&iter,tthread->hard_probepoints);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&probepoint)) {
+	probepoint_free_ext(probepoint);
+    }
+
+    g_hash_table_destroy(tthread->hard_probepoints);
+    g_hash_table_destroy(tthread->probes);
+    g_hash_table_destroy(tthread->autofree_probes);
+
+    array_list_free(tthread->tpc_stack);
+
+    if (!list_empty(&tthread->ss_actions)) {
+	list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
+	    action_free(tac->action,0);
+	    free(tac);
+	}
+    }
+
+    if (tthread->state) {
+	if (tthread->target->ops->free_thread_state) 
+	    tthread->target->ops->free_thread_state(tthread->target,
+						    tthread->state);
+	else
+	    free(tthread->state);
+    }
+
+    free(tthread);
+
+    if (!nohashdelete) 
+	g_hash_table_remove(target->threads,(gpointer)(ptr_t)tthread->tid);
+}
+
+int target_invalidate_all_threads(struct target *target) {
+    GHashTableIter iter;
+    struct target_thread *tthread;
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	tthread->valid = 0;
+	if (tthread->dirty)
+	    vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);
+    }
+
+    return 0;
+}
+
+int target_invalidate_thread(struct target *target,
+			     struct target_thread *tthread) {
+    tthread->valid = 0;
+    if (tthread->dirty)
+	vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);
+
+    return 0;
 }

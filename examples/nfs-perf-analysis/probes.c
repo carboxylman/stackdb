@@ -90,10 +90,13 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
     struct request *req;
     struct value   *lval_skb;
     unsigned long  req_id;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("netif_poll at label skb_dequeue called\n");
 
-    lval_skb = bsymbol_load(bsymbol_netif_poll_lvar_skb, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_skb = target_load_symbol(target,tid,bsymbol_netif_poll_lvar_skb,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_skb) {
         ERR("Cannot access value of skb\n");
         return -1;
@@ -140,10 +143,13 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
     struct request *req;
     unsigned long   req_id;
     struct value   *lval_skb;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("netif_receive_skb called\n");
 
-    lval_skb = bsymbol_load(bsymbol_netif_receive_skb_lvar_skb, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_skb = target_load_symbol(target,tid,bsymbol_netif_receive_skb_lvar_skb,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_skb) {
         ERR("Cannot access value of skb\n");
         return -1;
@@ -181,10 +187,13 @@ int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
     struct value   *lval_skb;
     struct request *req;
     unsigned long   req_id;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("ip_rcv called\n");
 
-    lval_skb = bsymbol_load(bsymbol_ip_rcv_lvar_skb, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_skb = target_load_symbol(target,tid,bsymbol_ip_rcv_lvar_skb,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_skb) {
         ERR("Cannot access value of skb\n");
         return -1;
@@ -222,10 +231,13 @@ int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trig
     struct value   *lval_skb;
     struct request *req;
     unsigned long   req_id;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("tcp_v4_rcv called\n");
 
-    lval_skb = bsymbol_load(bsymbol_tcp_v4_rcv_lvar_skb, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_skb = target_load_symbol(target,tid,bsymbol_tcp_v4_rcv_lvar_skb,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_skb) {
         ERR("Cannot access value of skb\n");
         return -1;
@@ -263,10 +275,13 @@ int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *
     struct value   *lval_skb;
     struct request *req;
     unsigned long   req_id;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("tcp_data_queue called\n");
 
-    lval_skb = bsymbol_load(bsymbol_tcp_data_queue_lvar_skb, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_skb = target_load_symbol(target,tid,bsymbol_tcp_data_queue_lvar_skb,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_skb) {
         ERR("Cannot access value of skb\n");
         return -1;
@@ -311,10 +326,13 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
     struct request *req;
     unsigned long   req_id, new_req_id;
     int             ret;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("skb_copy_datagram_iovec called\n");
 
-    lval_skb = bsymbol_load(bsymbol_skb_copy_datagram_iovec_lvar_skb, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_skb = target_load_symbol(target,tid,bsymbol_skb_copy_datagram_iovec_lvar_skb,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_skb) {
         ERR("Cannot access value of skb\n");
         return -1;
@@ -323,7 +341,8 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
     req_id = *(unsigned long*)lval_skb->buf;
     DBG("skb = 0x%lx\n", req_id);
 
-    lval_to = bsymbol_load(bsymbol_skb_copy_datagram_iovec_lvar_to, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_to = target_load_symbol(target,tid,bsymbol_skb_copy_datagram_iovec_lvar_to,
+				 LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_to) {
         ERR("Cannot access value of to\n");
         return -1;
@@ -397,10 +416,13 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
     struct request *req;
     unsigned long   req_id, new_req_id;
     int             ret;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("do_readv_writev.ttd_copy_from_user called\n");
 
-    lval_uvector = bsymbol_load(bsymbol_do_readv_writev_lvar_uvector, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_uvector = target_load_symbol(target,tid,bsymbol_do_readv_writev_lvar_uvector,
+				      LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_uvector) {
         ERR("Cannot access value of uvector\n");
         return -1;
@@ -408,7 +430,8 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
     req_id = *(unsigned long*)lval_uvector->buf;
     DBG("uvector = 0x%lx\n", req_id);
 
-    lval_iov = bsymbol_load(bsymbol_do_readv_writev_lvar_iov, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_iov = target_load_symbol(target,tid,bsymbol_do_readv_writev_lvar_iov,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_iov) {
         ERR("Cannot access value of iov\n");
         return -1;
@@ -451,10 +474,13 @@ int probe_generic_file_writev(struct probe *probe, void *handler_data, struct pr
     struct value   *lval_iov;
     unsigned long   req_id;
     struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("generic_file_writev called\n");
 
-    lval_iov = bsymbol_load(bsymbol_generic_file_writev_lvar_iov, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_iov = target_load_symbol(target,tid,bsymbol_generic_file_writev_lvar_iov,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_iov) {
         ERR("Cannot access value of iov\n");
         return -1;
@@ -498,9 +524,12 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
     unsigned long   req_id, new_req_id;
     int             ret;
     struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("generic_file_buffered_write called\n");
-    lval_iov = bsymbol_load(bsymbol_generic_file_buffered_write_lvar_iov, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_iov = target_load_symbol(target,tid,bsymbol_generic_file_buffered_write_lvar_iov,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_iov) {
         ERR("Cannot access value of iov\n");
         return -1;
@@ -508,7 +537,8 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
     req_id = *(unsigned long*)lval_iov->buf;
     DBG("iov = 0x%lx\n", req_id);
 
-    lval_page = bsymbol_load(bsymbol_generic_file_buffered_write_lvar_page, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_page = target_load_symbol(target,tid,bsymbol_generic_file_buffered_write_lvar_page,
+				   LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_page) {
         ERR("Cannot access value of page\n");
         return -1;
@@ -551,9 +581,12 @@ int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, str
     struct value   *lval_page;
     unsigned long   req_id;
     struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("ext3_journalled_writepage called\n");
-    lval_page = bsymbol_load(bsymbol_ext3_journalled_writepage_lvar_page, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_page = target_load_symbol(target,tid,bsymbol_ext3_journalled_writepage_lvar_page,
+				   LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_page) {
         ERR("Cannot access value of page\n");
         return -1;
@@ -598,10 +631,13 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
     unsigned long   req_id, new_req_id;
     int             ret;
     struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("__block_write_full_page called\n");
 
-    lval_page = bsymbol_load(bsymbol___block_write_full_page_lvar_page, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_page = target_load_symbol(target,tid,bsymbol___block_write_full_page_lvar_page,
+				   LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_page) {
         ERR("Cannot access value of page\n");
         return -1;
@@ -609,7 +645,8 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
     req_id = *(unsigned long*)lval_page->buf;
     DBG("page = 0x%lx\n", req_id);
 
-    lval_bh = bsymbol_load(bsymbol___block_write_full_page_lvar_bh, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_bh = target_load_symbol(target,tid,bsymbol___block_write_full_page_lvar_bh,
+				 LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_bh) {
         ERR("Cannot access value of page\n");
         return -1;
@@ -662,10 +699,13 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
     unsigned long   req_id, new_req_id;
     int             ret;
     struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("submit_bh called\n");
     
-    lval_bh  = bsymbol_load(bsymbol_submit_bh_lvar_bh, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_bh  = target_load_symbol(target,tid,bsymbol_submit_bh_lvar_bh,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_bh) {
         ERR("Cannot access value of bh\n");
         return -1;
@@ -673,7 +713,8 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
     req_id = *(unsigned long*)lval_bh->buf;
     DBG("bh = 0x%lx\n", req_id);
 
-    lval_bio  = bsymbol_load(bsymbol_submit_bh_lvar_bio, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_bio  = target_load_symbol(target,tid,bsymbol_submit_bh_lvar_bio,
+				   LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_bio) {
         ERR("Cannot access value of bio\n");
         return -1;
@@ -726,10 +767,13 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
     unsigned long   req_id, new_req_id;
     int             ret;
     struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("blkif_queue_request called\n");
 
-    lval_bio  = bsymbol_load(bsymbol_blkif_queue_request_lvar_bio, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_bio  = target_load_symbol(target,tid,bsymbol_blkif_queue_request_lvar_bio,
+				   LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_bio) {
         ERR("Cannot access value of bh\n");
         return -1;
@@ -737,7 +781,8 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
     req_id = *(unsigned long*)lval_bio->buf;
     DBG("bio = 0x%lx\n", req_id);
 
-    lval_id  = bsymbol_load(bsymbol_blkif_queue_request_lvar_id, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_id  = target_load_symbol(target,tid,bsymbol_blkif_queue_request_lvar_id,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_id) {
         ERR("Cannot access value of id\n");
         return -1;
@@ -780,10 +825,13 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
     struct value   *lval_id;
     unsigned long   req_id;
     struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
 
     DBG("blkif_int called\n");
 
-    lval_id  = bsymbol_load(bsymbol_blkif_int_lvar_id, LOAD_FLAG_NO_CHECK_VISIBILITY);
+    lval_id  = target_load_symbol(target,tid,bsymbol_blkif_int_lvar_id,
+				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_id) {
         ERR("Cannot access value of id\n");
         return -1;
@@ -873,7 +921,7 @@ int register_probes(struct target *t, GHashTable *probes) {
 
         //bsymbol_dump(bsymbol, &udn);
 
-        probe = probe_create(t, &probe_list[i].ops, 
+        probe = probe_create(t, TID_GLOBAL, &probe_list[i].ops, 
                              bsymbol->lsymbol->symbol->name,
                              probe_list[i].handler, NULL, NULL, 0);
         if (!probe)

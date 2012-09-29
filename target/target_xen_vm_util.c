@@ -17,11 +17,91 @@
  */
 
 #include "target_api.h"
+#include "target.h"
 #include "dwdebug.h"
 #include "target_xen_vm.h"
 
-#define THREAD_SIZE 8192
+struct value *linux_get_preempt_count(struct target *target,
+				      struct value *current_thread_info) {
+    struct symbol *ti_type;
+
+    if (!current_thread_info) {
+	ti_type = linux_get_thread_info_type(target);
+	current_thread_info = linux_load_current_thread_as_type(target,ti_type);
+    }
+
+    return target_load_value_member(target,current_thread_info,
+				    "preempt_count",NULL,LOAD_FLAG_NONE);
+}
+
+/*
+ * The bottom of each kernel stack has the thread_info struct; the first
+ * pointer in the thread info struct is to the task_struct associated
+ * with the thread_info (i.e., thread_info->task).  So, if we want
+ * thread_info, just load the value at current_thread_ptr; if we want
+ * the current task_struct, load the first pointer at
+ * current_thread_ptr, and deref it to load the current task_struct's
+ * value.
+ */
 #define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
+
+struct symbol *linux_get_task_struct_type_ptr(struct target *target) {
+    struct bsymbol *it_type;
+    struct symbol *itptr_type;
+
+    it_type = target_lookup_sym(target,"struct task_struct",
+				NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
+    if (!it_type) {
+	verror("could not find type for struct task_struct!\n");
+	return NULL;
+    }
+
+    itptr_type = \
+	target_create_synthetic_type_pointer(target,
+					     bsymbol_get_symbol(it_type));
+
+    bsymbol_release(it_type);
+
+    return itptr_type;
+}
+
+struct symbol *linux_get_thread_info_type(struct target *target) {
+    struct bsymbol *it_type;
+    struct symbol *it_type_symbol;
+
+    it_type = target_lookup_sym(target,"struct thread_info",
+				NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
+    if (!it_type) {
+	verror("could not find type for struct thread_info!\n");
+	return NULL;
+    }
+
+    it_type_symbol = it_type->lsymbol->symbol;
+    symbol_hold(it_type_symbol);
+    bsymbol_release(it_type);
+
+    return it_type_symbol;
+}
+
+struct value *linux_load_current_task_as_type(struct target *target,
+					      struct symbol *datatype) {
+    struct value *value;
+    ADDR tptr;
+    REGVAL esp;
+
+    errno = 0;
+    esp = target_read_reg(target,TID_GLOBAL,target->spregno);
+    if (errno) {
+	verror("could not read ESP!\n");
+	return NULL;
+    }
+
+    tptr = current_thread_ptr(esp);
+
+    value = target_load_type(target,datatype,tptr,LOAD_FLAG_AUTO_DEREF);
+
+    return value;
+}
 
 struct value *linux_load_current_task(struct target *target) {
     struct value *value;
@@ -42,7 +122,7 @@ struct value *linux_load_current_task(struct target *target) {
 					   bsymbol_get_symbol(it_type));
 
     errno = 0;
-    esp = target_read_reg(target,target->spregno);
+    esp = target_read_reg(target,TID_GLOBAL,target->spregno);
     if (errno) {
 	verror("could not read ESP!\n");
 	return NULL;
@@ -55,6 +135,26 @@ struct value *linux_load_current_task(struct target *target) {
 
     symbol_release(itptr_type);
     bsymbol_release(it_type);
+
+    return value;
+}
+
+struct value *linux_load_current_thread_as_type(struct target *target,
+						struct symbol *datatype) {
+    struct value *value;
+    ADDR tptr;
+    REGVAL esp;
+
+    errno = 0;
+    esp = target_read_reg(target,TID_GLOBAL,target->spregno);
+    if (errno) {
+	verror("could not read ESP!\n");
+	return NULL;
+    }
+
+    tptr = current_thread_ptr(esp);
+
+    value = target_load_type(target,datatype,tptr,LOAD_FLAG_NONE);
 
     return value;
 }
@@ -77,6 +177,49 @@ int linux_get_task_pid(struct target *target,struct value *task) {
     value_free(value);
 
     return pid;
+}
+
+struct match_pid_data {
+    tid_t tid;
+    struct value *match;
+};
+
+static int match_pid(struct target *target,struct value *value,void *data) {
+    struct match_pid_data *mpd = (struct match_pid_data *)data;
+    struct value *mv = NULL;
+
+    mv = target_load_value_member(target,value,"pid",NULL,
+				  LOAD_FLAG_NONE);
+    if (!mv) {
+	vwarn("could not load pid from task; skipping!\n");
+	return 0;
+    }
+    else if (mpd->tid != v_i32(mv)) {
+	value_free(mv);
+	return 0;
+    }
+    else {
+	mpd->match = value;
+	value_free(mv);
+	return -1;
+    }
+}
+
+struct value *linux_get_task(struct target *target,tid_t tid) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct match_pid_data mpd;
+
+    mpd.tid = tid;
+    mpd.match = NULL;
+    linux_list_for_each_struct(target,xstate->init_task,"tasks",0,match_pid,&mpd);
+
+    if (!mpd.match) {
+	vwarn("no task matching %"PRIiTID"\n",tid);
+
+	return NULL;
+    }
+
+    return mpd.match;
 }
 
 /*
@@ -102,6 +245,7 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
     struct value *value = NULL;
     int i = 0;
     int retval = -1;
+    int rc;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -133,8 +277,13 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
 	goto out;
     }
 
+    /* We just blindly use TID_GLOBAL because init_task is the symbol
+     * they are supposed to pass, and resolving that is not going to
+     * depend on any registers, so it doesn't matter which thread we
+     * use.
+     */
     current_struct_addr = head = \
-	target_addressof_bsymbol(t,bsymbol,LOAD_FLAG_NONE,NULL);
+	target_addressof_symbol(t,TID_GLOBAL,bsymbol,LOAD_FLAG_NONE,NULL);
     if (errno) {
 	verror("could not get the address of bsymbol %s!\n",
 	       bsymbol_get_name(bsymbol));
@@ -153,8 +302,13 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
 	    goto out;
 	}
 
-	if (iterator(t,value,data))
+	rc = iterator(t,value,data);
+	if (rc == 1)
 	    break;
+	else if (rc == -1) {
+	    nofree = 1;
+	    break;
+	}
 
 	next_head = *((ADDR *)(value->buf + list_head_member_offset));
 	if (next_head == head)

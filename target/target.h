@@ -37,17 +37,13 @@
 #define LOGDUMPBSYMBOL(dl,lt,s) \
     vdebugc((dl),(lt), \
 	    "bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
-	    "region=(%s(space=%s)),range=(0x%"PRIxADDR"-0x%"PRIxADDR";"	\
-	    "offset=0x%"PRIxADDR"))",					\
+	    "region=(%s(space=%s)))",					\
 	    symbol_get_name((s)->lsymbol->symbol),			\
 	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
 	    (s)->lsymbol->symbol->ref,					\
 	    array_list_len((s)->lsymbol->chain),			\
 	    (s)->region ? (s)->region->name : NULL,			\
-	    (s)->region ? (s)->region->space->idstr : NULL,		\
-	    (s)->range ? (s)->range->start : 0,				\
-	    (s)->range ? (s)->range->end : 0,				\
-	    (s)->range ? (s)->range->offset : 0);
+	    (s)->region ? (s)->region->space->idstr : NULL);
 
 #define LOGDUMPBSYMBOL_NL(dl,lt,s) \
     LOGDUMPBSYMBOL((dl),(lt),(s)); \
@@ -55,17 +51,13 @@
 
 #define ERRORDUMPBSYMBOL(s) \
     verrorc("bsymbol(lsymbol(%s,%s,%"PRIxSMOFFSET";chainlen=%d),"	\
-	    "region=(%s(space=%s)),range=(0x%"PRIxADDR"-0x%"PRIxADDR";"	\
-	    "offset=0x%"PRIxADDR"))",					\
+	    "region=(%s(space=%s)))",					\
 	    symbol_get_name((s)->lsymbol->symbol),			\
 	    SYMBOL_TYPE((s)->lsymbol->symbol->type),			\
 	    (s)->lsymbol->symbol->ref,					\
 	    array_list_len((s)->lsymbol->chain),			\
 	    (s)->region ? (s)->region->name : NULL,			\
-	    (s)->region ? (s)->region->space->idstr : NULL,		\
-	    (s)->range ? (s)->range->start : 0,				\
-	    (s)->range ? (s)->range->end : 0,				\
-	    (s)->range ? (s)->range->offset : 0);
+	    (s)->region ? (s)->region->space->idstr : NULL);
 
 #define ERRORDUMPBSYMBOL_NL(s) \
     ERRORDUMPBSYMBOL((s)); \
@@ -131,11 +123,30 @@ unsigned char *__target_load_addr_real(struct target *target,
 				       unsigned char *buf,int bufsiz);
 
 /**
+ ** Threads.
+ **/
+struct target_thread *target_lookup_thread(struct target *target,tid_t tid);
+struct target_thread *target_create_thread(struct target *target,tid_t tid,
+					   void *tstate);
+void target_reuse_thread_as_global(struct target *target,
+				   struct target_thread *thread);
+void target_delete_thread(struct target *target,struct target_thread *thread,
+			  int nohashdelete);
+
+int target_invalidate_all_threads(struct target *target);
+int target_invalidate_thread(struct target *target,
+			     struct target_thread *tthread);
+
+/**
  ** Address spaces.
  **/
 struct addrspace *addrspace_create(struct target *target,
 				   char *name,int id,int pid);
 struct memregion *addrspace_find_region(struct addrspace *space,char *name);
+struct memregion *addrspace_match_region_name(struct addrspace *space,
+					      region_type_t rtype,char *name);
+struct memregion *addrspace_match_region_start(struct addrspace *space,
+					       region_type_t rtype,ADDR start);
 int addrspace_find_range_real(struct addrspace *space,ADDR addr,
 			      struct memregion **region_saveptr,
 			      struct memrange **range_saveptr);
@@ -155,6 +166,7 @@ struct memrange *memregion_find_range_obj(struct memregion *region,
 ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 			struct memrange **range_saveptr);
 struct target *memregion_target(struct memregion *region);
+struct memrange *memregion_match_range(struct memregion *region,ADDR start);
 void memregion_dump(struct memregion *region,struct dump_info *ud);
 void memregion_free(struct memregion *region);
 
@@ -186,8 +198,7 @@ void target_release_mmap_entry(struct target *target,
  * their code.
  */
 struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
-			       struct memregion *region,
-			       struct memrange *range);
+			       struct memregion *region);
 /* 
  * Frees a bsymbol.  Users should never call this; call bsymbol_release
  * instead.
@@ -207,22 +218,27 @@ REFCNT bsymbol_free(struct bsymbol *bsymbol,int force);
  * memory address, we return 0 and set errno EADDRNOTAVAIL.  On other
  * errors, we return 0 with errno set appropriately.
  */
-ADDR location_resolve(struct target *target,struct memregion *region,
+ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 		      struct location *location,
 		      struct array_list *symbol_chain,
 		      struct memrange **range_saveptr);
-struct location *location_resolve_loclist(struct target *target,
+struct location *location_resolve_loclist(struct target *target,tid_t tid,
 					  struct memregion *region,
 					  struct location *location);
 int location_can_mmap(struct location *location,struct target *target);
-int location_resolve_lsymbol_base(struct target *target,
+int location_resolve_lsymbol_base(struct target *target,tid_t tid,
 				  struct lsymbol *lsymbol,
 				  struct memregion *region,
 				  ADDR *addr_saveptr,
 				  struct memrange **range_saveptr);
-int location_resolve_symbol_base(struct target *target,
+int location_resolve_symbol_base(struct target *target,tid_t tid,
 				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
 				 struct memrange **range_saveptr);
+int location_resolve_function_base(struct target *target,
+				   struct lsymbol *lsymbol,
+				   struct memregion *region,
+				   ADDR *addr_saveptr,
+				   struct memrange **range_saveptr);
 int location_resolve_function_prologue_end(struct target *target,
 					   struct bsymbol *bsymbol,
 					   ADDR *addr_saveptr,
@@ -231,7 +247,7 @@ int location_resolve_function_prologue_end(struct target *target,
 /**
  ** Location loading functions.
  **/
-char *location_load(struct target *target,struct memregion *region,
+char *location_load(struct target *target,tid_t tid,struct memregion *region,
 		    struct location *location,load_flags_t flags,
 		    void *buf,int bufsiz,
 		    struct array_list *symbol_chain,
@@ -256,11 +272,24 @@ struct mmap_entry *location_mmap(struct target *target,
 /*
  * Values.
  */
-int value_alloc_buf(struct value *value,int len);
-struct value *value_create_raw(int len);
-struct value *value_create_type(struct symbol *type);
-struct value *value_create(struct lsymbol *lsymbol,struct symbol *type);
-struct value *value_create_noalloc(struct lsymbol *lsymbol,struct symbol *type);
+struct value *value_create_raw(struct target *target,
+			       struct target_thread *thread,
+			       struct memrange *range,int len);
+struct value *value_create_type(struct target_thread *thread,
+				struct memrange *range,struct symbol *type);
+struct value *value_create(struct target_thread *thread,struct memrange *range,
+			   struct lsymbol *lsymbol,struct symbol *type);
+struct value *value_create_noalloc(struct target_thread *thread,
+				   struct memrange *range,
+				   struct lsymbol *lsymbol,struct symbol *type);
+
+void value_set_strlen(struct value *value,int len);
+
+int value_set_addr(struct value *value,ADDR addr);
+int value_set_mmap(struct value *value,ADDR addr,struct mmap_entry *mmap,
+		   char *offset_ptr);
+int value_set_reg(struct value *value,REG reg);
+int value_set_child(struct value *value,struct value *parent_value,ADDR addr);
 
 void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
 			 void *buf,int bufsiz,
@@ -350,6 +379,8 @@ struct memregion {
 
     char *name;
     region_type_t type;
+    int8_t exists:1,
+	   new:1;
 
     /*
      * Debugfiles associated with this region.
@@ -404,6 +435,9 @@ struct memrange {
     ADDR offset;
 
     unsigned int prot_flags;
+    int8_t same:1,
+	   updated:1,
+	   new:1;
 
     /* The list node linking this into the region. */
     struct list_head range;
@@ -427,7 +461,7 @@ struct bsymbol {
 
     /* Binding to a target region/range pair. */
     struct memregion *region;
-    struct memrange *range;
+    //struct memrange *range;
 
     REFCNT refcnt;
 };

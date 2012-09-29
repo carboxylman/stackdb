@@ -62,7 +62,7 @@ HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/probes.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/perf.h \
 	   $(TOP_SRCDIR)/$(SUBDIR)/debug.h
 
-OBJECTS := probes.lo request.lo pref.lo
+OBJECTS := probes.lo request.lo perf.lo
 
 LIBRARIES := $(OBJDIR)/target/libtarget.a 
 

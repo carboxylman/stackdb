@@ -74,6 +74,11 @@
     vdebugc((dl),(lt),"\n");
 
 /*
+ * Local prototypes.
+ */
+static void action_finish_handling(struct action *action);
+
+/*
  * If the user doesn't supply pre/post handlers, and the probe has sinks
  * attached to it, we invoke these handlers to pass the event to the
  * sinks.  Users that write their own handlers should call these
@@ -138,13 +143,20 @@ int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
     return retval;
 }
 
-static struct probepoint *probepoint_lookup(struct target *target,ADDR addr) {
-    struct probepoint *retval = \
-	(struct probepoint *)g_hash_table_lookup(target->probepoints,
-						 (gpointer)addr);
+static struct probepoint *probepoint_lookup(struct target *target,
+					    struct target_thread *tthread,
+					    ADDR addr) {
+    struct probepoint *retval;
 
-    if (retval) {
-	vdebug(9,LOG_P_PROBEPOINT,"found ");
+    if (tthread 
+	&& (retval = (struct probepoint *) \
+	    g_hash_table_lookup(tthread->hard_probepoints,(gpointer)addr))) {
+	vdebug(9,LOG_P_PROBEPOINT,"found hard ");
+	LOGDUMPPROBEPOINT_NL(9,LOG_P_PROBEPOINT,retval);
+    }
+    else if ((retval = (struct probepoint *) \
+	      g_hash_table_lookup(target->soft_probepoints,(gpointer)addr))) {
+	vdebug(9,LOG_P_PROBEPOINT,"found soft ");
 	LOGDUMPPROBEPOINT_NL(9,LOG_P_PROBEPOINT,retval);
     }
     else
@@ -174,6 +186,7 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     probepoint->addr = addr;
     probepoint->range = range;
     probepoint->target = target;
+    probepoint->thread = NULL;
     probepoint->state = PROBE_DISABLED;
 
     probepoint->type = type;
@@ -190,9 +203,9 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     probepoint->debugregnum = -1;
 
     INIT_LIST_HEAD(&probepoint->probes);
-    INIT_LIST_HEAD(&probepoint->actions);
-
-    g_hash_table_insert(target->probepoints,(gpointer)addr,probepoint);
+    INIT_LIST_HEAD(&probepoint->simple_actions);
+    INIT_LIST_HEAD(&probepoint->ss_actions);
+    INIT_LIST_HEAD(&probepoint->complex_actions);
 
     vdebug(5,LOG_P_PROBEPOINT,"created ");
     LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
@@ -240,9 +253,21 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
     /* Destroy any actions it might have (probe_free does this too,
      * but this is much more efficient.
      */
-    list_for_each_entry_safe(action,atmp,&probepoint->actions,action) {
+    list_for_each_entry_safe(action,atmp,&probepoint->simple_actions,action) {
 	if (action->autofree)
-	    action_destroy(action);
+	    action_free(action,0);
+	else
+	    action_cancel(action);
+    }
+    list_for_each_entry_safe(action,atmp,&probepoint->ss_actions,action) {
+	if (action->autofree)
+	    action_free(action,0);
+	else
+	    action_cancel(action);
+    }
+    list_for_each_entry_safe(action,atmp,&probepoint->complex_actions,action) {
+	if (action->autofree)
+	    action_free(action,0);
 	else
 	    action_cancel(action);
     }
@@ -264,8 +289,12 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
 static void probepoint_free(struct probepoint *probepoint) {
     probepoint_free_internal(probepoint);
 
-    g_hash_table_remove(probepoint->target->probepoints,
-			(gpointer)probepoint->addr);
+    if (probepoint->style == PROBEPOINT_HW)
+	g_hash_table_remove(probepoint->thread->hard_probepoints,
+			    (gpointer)probepoint->addr);
+    else
+	g_hash_table_remove(probepoint->target->soft_probepoints,
+			    (gpointer)probepoint->addr);
 
     vdebug(5,LOG_P_PROBEPOINT,"freed ");
     LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
@@ -291,6 +320,7 @@ void probepoint_free_ext(struct probepoint *probepoint) {
  **/
 static int __probepoint_remove(struct probepoint *probepoint) {
     struct target *target;
+    tid_t tid;
     int ret;
 
     target = probepoint->target;
@@ -328,8 +358,10 @@ static int __probepoint_remove(struct probepoint *probepoint) {
      */
     if (probepoint->style == PROBEPOINT_HW
 	&& probepoint->debugregnum > -1) {
+	tid = probepoint->thread->tid;
+
 	if (probepoint->type == PROBEPOINT_BREAK) {
-	    if ((ret = target_unset_hw_breakpoint(target,
+	    if ((ret = target_unset_hw_breakpoint(target,tid,
 						  probepoint->debugregnum))) {
 		verror("failure while removing hw breakpoint; cannot recover!\n");
 	    }
@@ -339,7 +371,7 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	    }
 	}
 	else {
-	    if ((ret = target_unset_hw_watchpoint(target,
+	    if ((ret = target_unset_hw_watchpoint(target,tid,
 						  probepoint->debugregnum))) {
 		verror("failure while removing hw watchpoint; cannot recover!\n");
 	    }
@@ -361,7 +393,7 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	    /* restore the original instruction */
 	    if (target_write_addr(target,probepoint->addr,
 				  probepoint->breakpoint_orig_mem_len,
-				  probepoint->breakpoint_orig_mem,NULL) \
+				  probepoint->breakpoint_orig_mem) \
 		!= probepoint->breakpoint_orig_mem_len) {
 		verror("could not restore orig instrs for bp remove");
 		return 1;
@@ -386,12 +418,15 @@ static int __probepoint_remove(struct probepoint *probepoint) {
     return 0;
 }
 
-static int __probepoint_insert(struct probepoint *probepoint) {
+static int __probepoint_insert(struct probepoint *probepoint,
+			       struct target_thread *tthread) {
     struct target *target;
+    tid_t tid;
     int ret;
     REG reg;
 
     target = probepoint->target;
+    tid = tthread->tid;
 
     vdebug(5,LOG_P_PROBEPOINT,"inserting ");
     LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
@@ -414,7 +449,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
      * Check to see if there are any hardware resources; use them if so.
      */
     if (probepoint->style == PROBEPOINT_FASTEST) {
-	if ((reg = target_get_unused_debug_reg(target)) > -1) {
+	if ((reg = target_get_unused_debug_reg(target,tid)) > -1) {
 	    probepoint->style = PROBEPOINT_HW;
 	    probepoint->debugregnum = reg;
 
@@ -429,7 +464,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	}
     }
     else if (probepoint->style == PROBEPOINT_HW) {
-	if ((reg = target_get_unused_debug_reg(target)) > -1) {
+	if ((reg = target_get_unused_debug_reg(target,tid)) > -1) {
 	    probepoint->debugregnum = reg;
 
 	    vdebug(3,LOG_P_PROBEPOINT,"using HW reg %d for ",reg);
@@ -451,6 +486,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	&& probepoint->type == PROBEPOINT_WATCH) {
 	verror("no software watchpoint support!\n");
 	errno = EINVAL;
+	probepoint->state = PROBE_DISABLED;
 	return 1;
     }
 
@@ -459,7 +495,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
      */
     if (probepoint->style == PROBEPOINT_HW) {
 	if (probepoint->type == PROBEPOINT_BREAK) {
-	    if ((ret = target_set_hw_breakpoint(target,probepoint->debugregnum,
+	    if ((ret = target_set_hw_breakpoint(target,tid,probepoint->debugregnum,
 						probepoint->addr))) {
 		verror("failure inserting hw breakpoint!\n");
 	    }
@@ -469,7 +505,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    }
 	}
 	else {
-	    if ((ret = target_set_hw_watchpoint(target,probepoint->debugregnum,
+	    if ((ret = target_set_hw_watchpoint(target,tid,probepoint->debugregnum,
 						probepoint->addr,
 						probepoint->whence,
 						probepoint->watchsize))) {
@@ -485,6 +521,10 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 	    probepoint->state = PROBE_DISABLED;
 	    return 1;
 	}
+
+	g_hash_table_insert(tthread->hard_probepoints,
+			    (gpointer)probepoint->addr,(gpointer)probepoint);
+	probepoint->thread = tthread;
     }
     /* Otherwise do software. */
     else {
@@ -499,7 +539,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 
 	unsigned char ibuf[7];
 	if (!target_read_addr(target,probepoint->addr,
-			      6,ibuf,NULL)) {
+			      6,ibuf)) {
 	    verror("could not check orig instrs for bp insert\n");
 	}
 	vdebug(7,LOG_P_PROBEPOINT,
@@ -508,7 +548,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 
 	if (!target_read_addr(target,probepoint->addr,
 			      probepoint->breakpoint_orig_mem_len,
-			      probepoint->breakpoint_orig_mem,NULL)) {
+			      probepoint->breakpoint_orig_mem)) {
 	    verror("could not save orig instrs for bp insert\n");
 	    probepoint->state = PROBE_DISABLED;
 	    free(probepoint->breakpoint_orig_mem);
@@ -521,7 +561,7 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 
 	if (target_write_addr(target,probepoint->addr,
 			      target->breakpoint_instrs_len,
-			      target->breakpoint_instrs,NULL) \
+			      target->breakpoint_instrs) \
 	    != target->breakpoint_instrs_len) {
 	    verror("could not write breakpoint instrs for bp insert\n");
 	    probepoint->state = PROBE_DISABLED;
@@ -535,6 +575,10 @@ static int __probepoint_insert(struct probepoint *probepoint) {
 
 	vdebug(3,LOG_P_PROBEPOINT,"inserted SW ");
 	LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
+
+	g_hash_table_insert(target->soft_probepoints,
+			    (gpointer)probepoint->addr,(gpointer)probepoint);
+	probepoint->thread = NULL;
     }
 
     probepoint->state = PROBE_BP_SET;
@@ -545,12 +589,18 @@ static int __probepoint_insert(struct probepoint *probepoint) {
     return 0;
 }
 
-struct probe *probe_create(struct target *target, struct probe_ops *pops,
+struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pops,
 			   const char *name,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
 			   void *handler_data,int autofree) {
     struct probe *probe;
+    struct target_thread *tthread;
+
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("thread %"PRIiTID" not loaded yet?\n",tid);
+	return NULL;
+    }
 
     probe = (struct probe *)malloc(sizeof(*probe));
     if (!probe) {
@@ -560,6 +610,7 @@ struct probe *probe_create(struct target *target, struct probe_ops *pops,
     memset(probe,0,sizeof(*probe));
 
     probe->target = target;
+    probe->thread = tthread;
     probe->name = (name) ? strdup(name) : NULL;
     probe->pre_handler = pre_handler;
     probe->post_handler = post_handler;
@@ -667,7 +718,7 @@ int probe_hard_insert(struct probe *probe) {
 	return -1;
     }
 
-    return __probepoint_insert(probe->probepoint);
+    return __probepoint_insert(probe->probepoint,probe->thread);
 }
 
 static int __probe_unregister(struct probe *probe,int force,int onlyone) {
@@ -679,6 +730,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     struct action *tmp;
     struct probe *ptmp;
     GList *list;
+    struct thread_probepoint_context *tpc;
 
     vdebug(5,LOG_P_PROBE,"");
     LOGDUMPPROBE(5,LOG_P_PROBE,probe);
@@ -715,11 +767,26 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	probe->probepoint = NULL;
 
 	/* Cancel (and possibly destroy) any actions it might have. */
-	list_for_each_entry_safe(action,tmp,&probepoint->actions,
-				 action) {
+	list_for_each_entry_safe(action,tmp,&probepoint->simple_actions,action) {
 	    if (probe == action->probe) {
 		if (action->autofree) 
-		    action_destroy(action);
+		    action_free(action,0);
+		else
+		    action_cancel(action);
+	    }
+	}
+	list_for_each_entry_safe(action,tmp,&probepoint->ss_actions,action) {
+	    if (probe == action->probe) {
+		if (action->autofree)
+		    action_free(action,0);
+		else
+		    action_cancel(action);
+	    }
+	}
+	list_for_each_entry_safe(action,tmp,&probepoint->complex_actions,action) {
+	    if (probe == action->probe) {
+		if (action->autofree)
+		    action_free(action,0);
 		else
 		    action_cancel(action);
 	    }
@@ -818,11 +885,13 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	return -1;
     }
     else {
-	if (probepoint->state == PROBE_BP_HANDLING) {
-	    vwarn("force unregister probe while its breakpoint is being handled; trying to clean up normally!\n");
+	if (probepoint->state == PROBE_BP_ACTIONHANDLING) {
+	    vwarn("force unregister probe while handling an action;"
+		  " trying to clean up normally!\n");
 	}
-	else if (probepoint->state == PROBE_BP_HANDLING_POST) {
-	    vwarn("force unregister probe while its breakpoint is being post handled; trying to clean up normally!\n");
+	else if (probepoint->state == PROBE_BP_POSTHANDLING) {
+	    vwarn("force unregister probe while handling an action;"
+		  " trying to clean up normally!\n");
 	}
 	else if (probepoint->state == PROBE_INSERTING) {
 	    vwarn("forced unregister probe while it is inserting; trying to clean up normally!\n");
@@ -838,42 +907,43 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	     * to what it would have been if we had just hit the BP, and
 	     * then do the normal breakpoint removal.
 	     */
-	    if (probepoint->action
-		&& probepoint->action_orig_mem
-		&& probepoint->action_orig_mem_len) {
+	    tpc = probepoint->tpc;
+
+	    if (tpc->action_orig_mem
+		&& tpc->action_orig_mem_len) {
 		if (target_write_addr(target,probepoint->addr,
-				      probepoint->action_orig_mem_len,
-				      probepoint->action_orig_mem,NULL) \
-		    != probepoint->action_orig_mem_len) {
+				      tpc->action_orig_mem_len,
+				      tpc->action_orig_mem) \
+		    != tpc->action_orig_mem_len) {
 		    verror("could not write orig code for forced action remove; badness will probably ensue!\n");
 		    probepoint->state = PROBE_DISABLED;
 		}
 		else {
 		    probepoint->state = PROBE_BP_SET;
 		}
-		free(probepoint->action_orig_mem);
-		probepoint->action_orig_mem = NULL;
+		free(tpc->action_orig_mem);
+		tpc->action_orig_mem = NULL;
 	    }
 	    else {
 		vwarn("action running, but no orig mem to restore (might be ok)!\n");
 		probepoint->state = PROBE_BP_SET;
 	    }
 	    
-	    if (probepoint->action && probepoint->action_obviates_orig)
+	    if (tpc->action_obviated_orig)
 		action_did_obviate = 1;
 
 	    /* NULL these out to be safe. */
-	    probepoint->action_orig_mem = NULL;
-	    probepoint->action_orig_mem_len = 0;
-	    probepoint->action = NULL;
-	    probepoint->action_obviates_orig = 0;
-	    probepoint->action_needs_ssteps = 0;
+	    tpc->action_orig_mem = NULL;
+	    tpc->action_orig_mem_len = 0;
+	    tpc->tac.action = NULL;
+	    tpc->tac.stepped = 0;
+	    tpc->action_obviated_orig = 0;
 	}
 
 	/*
 	 * Coming out of the above checks, the probepoint must be in either
-	 * the PROBE_DISABLED, PROBE_BP_SET, PROBE_BP_HANDLING, or
-	 * PROBE_BP_HANDLING_POST states.  If it's disabled, we do nothing.
+	 * the PROBE_DISABLED, PROBE_BP_SET, PROBE_BP_HANDLING 
+	 * states.  If it's disabled, we do nothing.
 	 * If it's set, we replace the breakpoint instructions with the
 	 * original contents; and if we're doing initial BP handling, reset
 	 * EIP to the probepoint addr; else if we're doing BP handling after
@@ -892,7 +962,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 		&& probepoint->breakpoint_orig_mem_len) {
 		if (target_write_addr(target,probepoint->addr,
 				      probepoint->breakpoint_orig_mem_len,
-				      probepoint->breakpoint_orig_mem,NULL) \
+				      probepoint->breakpoint_orig_mem) \
 		    != probepoint->breakpoint_orig_mem_len) {
 		    verror("could not write orig code for forced breakpoint remove; badness will probably ensue!\n");
 		}
@@ -902,28 +972,27 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 		}
 	    }
 	    else if (probepoint->style == PROBEPOINT_HW) {
-		if (target_unset_hw_breakpoint(target,probepoint->debugregnum)) {
+		if (target_unset_hw_breakpoint(target,probepoint->thread->tid,
+					       probepoint->debugregnum)) {
 		    verror("could not remove hardware breakpoint; cannot repair!\n");
 		}
 	    }
 
 	    /* Reset EIP to the right thing. */
-	    if (probepoint->state == PROBE_BP_HANDLING && !action_did_obviate
+	    if ((probepoint->state == PROBE_BP_ACTIONHANDLING 
+		 || probepoint->state == PROBE_ACTION_RUNNING
+		 || probepoint->state == PROBE_ACTION_DONE)
+		&& !action_did_obviate
 		&& probepoint->type != PROBEPOINT_WATCH) {
 		/* We still must execute the original instruction. */
 		/* BUT NOT for watchpoints!  We do not know anything
 		 * about the original instruction.
 		 */
-		if (target_write_reg(target,target->ipregno,probepoint->addr)) {
+		if (target_write_reg(target,probe->thread->tid,
+				     target->ipregno,probepoint->addr)) {
 		    verror("could not reset IP to bp addr 0x%"PRIxADDR" for forced breakpoint remove; badness will probably ensue!\n",
 			   probepoint->addr);
 		}
-	    }
-	    else if (probepoint->state == PROBE_BP_HANDLING_POST) {
-		/* We already replaced and reset the original instruction, so
-		 * don't reset IP!
-		 */
-		;
 	    }
 
 	    /* At this point, the probepoint will be "disabled" no
@@ -1081,7 +1150,8 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
      * if we can).
      */
     if (bsymbol) {
-	location_resolve_symbol_base(target,bsymbol,&symbol_addr,
+	location_resolve_symbol_base(target,probe->thread->tid,
+				     bsymbol,&symbol_addr,
 				     (!range) ? &range : NULL);
 	probe->bsymbol = bsymbol;
     }
@@ -1096,7 +1166,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     }
 
     /* Create a probepoint if this is a new addr. */
-    if ((probepoint = probepoint_lookup(target,addr))) {
+    if ((probepoint = probepoint_lookup(target,probe->thread,addr))) {
 	/* If the style matches for breakpoints, and if the style,
 	 * whence, and watchsize match for watchpoints, reuse it!
 	 */
@@ -1139,12 +1209,10 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 	}
 
 	created = 1;
-
-	g_hash_table_insert(target->probepoints,(gpointer)addr,probepoint);
     }
 
     /* Inject the probepoint. */
-    if (__probepoint_insert(probepoint)) {
+    if (__probepoint_insert(probepoint,probe->thread)) {
 	verror("could not insert probepoint at 0x%"PRIxADDR"\n",addr);
 	if (created) 
 	    probepoint_free(probepoint);
@@ -1197,6 +1265,7 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
 				  probepoint_whence_t whence,
 				  probepoint_watchsize_t watchsize) {
     struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
     struct memrange *range;
     ADDR start = 0;
     ADDR probeaddr;
@@ -1216,7 +1285,7 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
     }
 
     if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
 	    verror("could not resolve entry PC for function %s!\n",
 		   bsymbol->lsymbol->symbol->name);
 	    goto errout;
@@ -1227,7 +1296,7 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
 				      bsymbol,start);
     }
     else if (SYMBOL_IS_FULL_LABEL(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
 	    verror("could not resolve base addr for label %s!\n",
 		   bsymbol->lsymbol->symbol->name);
 	    goto errout;
@@ -1259,6 +1328,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 				    probepoint_whence_t whence,
 				    probepoint_watchsize_t watchsize) {
     struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
     struct memrange *range;
     ADDR start;
     ADDR prologueend;
@@ -1268,7 +1338,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     /* No need to bsymbol_hold(); __probe_register_addr() does it. */
 
     if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,bsymbol,&start,&range)) {
+	if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
 	    verror("could not resolve entry PC for function %s!\n",
 		   bsymbol->lsymbol->symbol->name);
 	    goto errout;
@@ -1289,7 +1359,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 				      bsymbol,start);
     }
     else if (SYMBOL_IS_FULL_LABEL(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,bsymbol,&probeaddr,&range)) {
+	if (location_resolve_symbol_base(target,tid,bsymbol,&probeaddr,&range)) {
 	    verror("could not resolve base addr for label %s!\n",
 		   bsymbol->lsymbol->symbol->name);
 	    goto errout;
@@ -1311,7 +1381,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	    watchsize = probepoint_closest_watchsize(ssize);
 	}
 
-	if (location_resolve_symbol_base(target,bsymbol,&probeaddr,&range)) {
+	if (location_resolve_symbol_base(target,tid,bsymbol,&probeaddr,&range)) {
 	    verror("could not resolve base addr for var %s!\n",
 		   bsymbol->lsymbol->symbol->name);
 	    goto errout;
@@ -1419,7 +1489,8 @@ struct probe *probe_register_sources(struct probe *sink,struct probe *src,...) {
     return sink;
 }
 
-int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
+int probe_register_batch(struct target *target,tid_t tid,
+			 ADDR *addrlist,int listlen,
 			 probepoint_type_t type,probepoint_style_t style,
 			 probepoint_whence_t whence,
 			 probepoint_watchsize_t watchsize,
@@ -1458,7 +1529,7 @@ int probe_register_batch(struct target *target,ADDR *addrlist,int listlen,
 
 	buf = malloc(5+1+16+1);
 	sprintf(buf,"probe@%"PRIxADDR,addrlist[i]);
-	probe = probe_create(target,NULL,buf,pre_handler,post_handler,
+	probe = probe_create(target,tid,NULL,buf,pre_handler,post_handler,
 			     handler_data,0);
 
 	if (!(probelist[i] = probe_register_addr(probe,addrlist[i],
@@ -1698,7 +1769,575 @@ probepoint_whence_t probe_whence(struct probe *probe) {
     return probe->probepoint->whence;
 }
 
-static int handle_actions(struct probepoint *probepoint);
+
+static int run_post_handlers(struct target *target,
+			     struct target_thread *tthread,
+			     struct probepoint *probepoint);
+static int setup_post_single_step(struct target *target,
+				  struct target_thread *tthread,
+				  struct probepoint *probepoint);
+static int handle_simple_actions(struct target *target,
+				 struct target_thread *tthread,
+				 struct probepoint *probepoint);
+static int handle_complex_actions(struct target *target,
+				  struct target_thread *tthread,
+				  struct probepoint *probepoint);
+
+/*
+ * Runs and cleans up any simple actions that should happen at this
+ * probepoint.  We run all simple actions after the probe prehandlers
+ * have been run, but before the singlestep of the probepoint happens.
+ */
+static int handle_simple_actions(struct target *target,
+				 struct target_thread *tthread,
+				 struct probepoint *probepoint) {
+    struct action *action;
+    struct action *taction;
+    int retval = 0;
+    int rc;
+    unsigned long rcb;
+
+    list_for_each_entry_safe(action,taction,&probepoint->simple_actions,action) {
+	rc = 0;
+
+	if (!probe_enabled(action->probe)) {
+	    vdebug(3,LOG_P_ACTION,"skipping disabled probe at ");
+	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	    vdebugc(3,LOG_P_ACTION,"\n");
+	    continue;
+	}
+
+	if (action->type == ACTION_REGMOD) {
+	    rc = target_write_reg(tthread->target,tthread->tid,
+				  action->detail.regmod.regnum,
+				  action->detail.regmod.regval);
+	    if (rc)
+		vwarn("could not write reg %"PRIiREG"!\n",
+		      action->detail.regmod.regnum);
+	    else 
+		vdebug(4,LOG_P_ACTION,"wrote 0x%"PRIxREGVAL" to %"PRIiREG"\n",
+		       action->detail.regmod.regval,action->detail.regmod.regnum);
+	}
+	else if (action->type == ACTION_MEMMOD) {
+	    rcb = target_write_addr(tthread->target,
+				    action->detail.memmod.destaddr,
+				    action->detail.memmod.len,
+				    (unsigned char *)action->detail.memmod.data);
+	    if (rcb != action->detail.memmod.len) {
+		vwarn("could not write %d bytes to 0x%"PRIxADDR"!\n",
+		      action->detail.memmod.len,action->detail.memmod.destaddr);
+		rc = 1;
+	    }
+	    else
+		vdebug(4,LOG_P_ACTION,"wrote %d bytes to 0x%"PRIxADDR"\n",
+		       action->detail.memmod.len,action->detail.memmod.destaddr);
+	}
+	else {
+	    verror("BUG: unsupported action type %d -- not doing it!\n",
+		   action->type);
+	    rc = 1;
+	}
+
+	if (rc) {
+	    ++retval;
+	    if (action->handler)
+		action->handler(action,action->probe,probepoint,
+				MSG_FAILURE,action->handler_data);
+	}
+	else if (action->handler) 
+	    action->handler(action,action->probe,probepoint,
+			    MSG_SUCCESS,action->handler_data);
+
+
+	/* cleanup oneshot actions! */
+	action_finish_handling(action);
+    }
+
+    return retval;
+}
+/*
+ * Returns: <0 on error; 0 if not stepping; 1 if stepping.
+ */
+static int setup_single_step_actions(struct target *target,
+				     struct target_thread *tthread,
+				     struct probepoint *probepoint,
+				     int isbp,int stepping) {
+    tid_t tid = tthread->tid;
+    struct action *action, *taction;
+
+    /*
+     * If we need to do any single step actions, set that up if
+     * handle_complex_actions didn't already.  This should be pretty
+     * rare, but if some injected code doesn't need single stepping
+     * because it "notifies" when it's done via breakpoint, we can
+     * save a lot of debug interrupts.
+     */
+    if (list_empty(&probepoint->ss_actions)) 
+	return 0;
+
+    /*
+     * If the action was not boosted (i.e. is running at the
+     * probepoint), and we're not already single stepping, we need
+     * to tell the single step routine that we're stepping at a
+     * breakpoint location.
+     */
+    if (!stepping) {
+	vdebug(4,LOG_P_PROBEPOINT,"setting up single step actions for ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+	if (probepoint->style == PROBEPOINT_HW
+	    && isbp
+	    && !target->nodisablehwbponss) {
+	    /*
+	     * We need to disable the hw breakpoint before we single
+	     * step because the target can't do it.
+	     */
+	    target_disable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	    probepoint->debugregdisabled = 1;
+	}
+
+	if (target_singlestep(target,tid,isbp) < 0) {
+	    verror("could not keep single stepping target!\n");
+
+	    if (probepoint->style == PROBEPOINT_HW
+		&& isbp
+		&& !target->nodisablehwbponss) {
+		/*
+		 * Reenable the hw breakpoint we just disabled.
+		 */
+		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		probepoint->debugregdisabled = 0;
+	    }
+
+	    if (target_singlestep_end(target,tid))
+		verror("could not stop single stepping target"
+		       " after failed sstep!\n");
+
+	    /*
+	     * All we can really do is notify all the single step
+	     * actions that we had an error, and nuke them, and keep
+	     * going.
+	     */
+	    list_for_each_entry_safe(action,taction,&probepoint->ss_actions,
+				     action) {
+		if (action->handler) 
+		    action->handler(action,action->probe,probepoint,
+				    MSG_FAILURE,action->handler_data);
+
+		action_finish_handling(action);
+	    }
+
+	    stepping = -1;
+	}
+	else {
+	    vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for ");
+	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+	    stepping = 1;
+	}
+    }
+    else {
+	vdebug(4,LOG_P_PROBEPOINT,
+	       "already stepping; building tacs for single step actions for ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+    }
+
+    /* 
+     * If single step init succeeded, let the ss handler take over.
+     * Also, take a reference to all the ss_actions actions and
+     * place contexts for them on our thread's list.
+     */
+    if (stepping == 1) {
+	list_for_each_entry_safe(action,taction,&probepoint->ss_actions,action) {
+	    struct thread_action_context *tac = \
+		(struct thread_action_context *)calloc(1,sizeof(*tac));
+	    action_hold(action);
+	    tac->action = action;
+	    tac->stepped = 0;
+	    INIT_LIST_HEAD(&tac->tac);
+
+	    list_add_tail(&tac->tac,&tthread->ss_actions);
+	}
+    }
+
+    return stepping;
+}
+
+static int run_post_handlers(struct target *target,
+			     struct target_thread *tthread,
+			     struct probepoint *probepoint) {
+    int rc;
+    int noreinject = 0;
+    struct probe *probe;
+    int i = 0;
+
+    /*
+     * Run post-handlers
+     */
+    list_for_each_entry(probe,&probepoint->probes,probe) {
+	++i;
+	if (probe->enabled) {
+	    if (probe->post_handler) {
+		vdebug(4,LOG_P_PROBEPOINT,"running post handler at ");
+		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+		rc = probe->post_handler(probe,probe->handler_data,probe);
+		if (rc == 1) 
+		    probe_disable(probe);
+		else if (rc == 2) 
+		    /* don't reinject the probe! */
+		    noreinject = 1;
+	    }
+	    else if (0 && probe->sinks) {
+		vdebug(4,LOG_P_PROBEPOINT,
+		       "running default probe sink post_handler at ");
+		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+		probe_do_sink_post_handlers(probe,NULL,probe);
+	    }
+	}
+    }
+
+    if (i > 1 && noreinject) {
+	vwarn("cannot skip reinjection of breakpoint because multiple probes present!\n");
+	noreinject = 0;
+    }
+
+    return noreinject;
+}
+
+void probepoint_release(struct target *target,struct target_thread *tthread,
+			struct probepoint *probepoint) {
+    /* Only release if we owned it! */
+    if (probepoint->tpc == tthread->tpc)
+	probepoint->tpc = NULL;
+}
+
+struct thread_probepoint_context *probepoint_hold(struct target *target,
+						  struct target_thread *tthread,
+						  struct probepoint *probepoint,
+						  struct thread_probepoint_context *tpc) {
+    if (probepoint->style == PROBEPOINT_SW
+	&& probepoint->tpc != NULL
+	&& probepoint->tpc->thread != tthread)
+	return probepoint->tpc;
+
+    probepoint->tpc = tpc;
+    return tpc;
+}
+
+int probepoint_pause_handling(struct target *target,
+			      struct target_thread *tthread,
+			      struct probepoint *probepoint,
+			      thread_resumeat_t resumeat) {
+    if (target->threadctl) {
+	vdebug(5,LOG_T_THREAD | LOG_P_PROBEPOINT,
+	       "pausing thread %"PRIiTID" (%d) until thread %"PRIiTID" finishes"
+	       " handling ",tthread->tid,resumeat,probepoint->tpc->thread->tid);
+	LOGDUMPPROBEPOINT_NL(3,LOG_T_THREAD | LOG_P_PROBEPOINT,probepoint);
+
+	tthread->resumeat = resumeat;
+	return 0;
+    }
+
+    return -1;
+}
+
+static struct thread_probepoint_context *tpc_new(struct target_thread *tthread,
+						 struct probepoint *probepoint) {
+    struct thread_probepoint_context *tpc = (struct thread_probepoint_context *) \
+	calloc(1,sizeof(*tpc));
+    tpc->thread = tthread;
+    tpc->probepoint = probepoint;
+
+    return tpc;
+}
+
+void tpc_free(struct thread_probepoint_context *tpc) {
+    free(tpc);
+}
+
+/*
+ * We will not run a single step of the real instruction in two cases.
+ * First, if any complex action obviated the real instruction, we skip
+ * the real instruction, and do nothing to EIP.  We just run
+ * post-handlers, if there are any.
+ * Second, if there are no post-handlers
+ *
+ * Return <0 on error; 0 if we skipped a sstep because the action
+ * obviated it; 1 if we setup a single step; 2 if we "paused" the thread
+ * because we couldn't hold the probepoint to do the single step.
+ */
+static int setup_post_single_step(struct target *target,
+				  struct target_thread *tthread,
+				  struct probepoint *probepoint) {
+    int doit = 0;
+    struct probe *probe;
+    tid_t tid = tthread->tid;
+    struct thread_probepoint_context *tpc = tthread->tpc;
+    int noreinject;
+    struct thread_probepoint_context *htpc;
+
+    /*
+     * We're now handling post stuff at the breakpoint.
+     *
+     * But, note that we don't change state to POSTHANDLING until we
+     * know we're going to single step the real instruction.  If we
+     * don't do that, we don't change -- and we only adjust the state of
+     * the probepoint if we own the probepoint.  Otherwise we have to
+     * pause this thread until we do own it.
+     */
+
+    if (tpc->action_obviated_orig) {
+	vdebug(4,LOG_P_PROBEPOINT,"skipping sstep due to action obviation of ");
+	LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+
+	/* Just run the posthandlers; don't single step the orig. */
+	noreinject = run_post_handlers(target,tthread,probepoint);
+
+	if (!noreinject) {
+	    /*
+	     * If the action was boosted, we have nothing to replace.
+	     * If it wasn't, when we removed it, we put the BP back in.
+	     * So don't do anything here, because if the action was
+	     * boosted, some other thread might hold the probepoint!
+	     *
+	     * But, if we had disabled a hw breakpoint, reenable it!
+	     */
+	    if (probepoint->style == PROBEPOINT_HW 
+		&& probepoint->debugregdisabled) {
+		/*
+		 * Enable hardware bp here!
+		 */
+		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		probepoint->debugregdisabled = 0;
+
+		probepoint->state = PROBE_BP_SET;
+	    }
+	}
+	else {
+	    free(probepoint->breakpoint_orig_mem);
+	    probepoint->breakpoint_orig_mem = NULL;
+	    __probepoint_remove(probepoint);
+	}
+
+	/*
+	 * Only release our hold on the probepoint if we actually held
+	 * it; if we had been running a boosted action, we might not
+	 * hold the probepoint.
+	 */
+	probepoint_release(target,tthread,probepoint);
+
+	return 0;
+    }
+
+    /*
+     * Now that we've handled the case where an action might have
+     * replaced the real instruction, we have to figure out if we should
+     * single step the original instruction or not.
+     *
+     * If we're hardware and there are no enabled probes with
+     * post-handlers, single step; otherwise, just proceed.  If we're
+     * software, *always* single step after replacing the original
+     * instruction.
+     */
+    if (probepoint->style == PROBEPOINT_HW) {
+	list_for_each_entry(probe,&probepoint->probes,probe) {
+	    if (probe->enabled && (probe->post_handler || probe->sinks)) {
+		doit = 1;
+		break;
+	    }
+	}
+
+	/*
+	 * XXX: for now, always force single step even for HW
+	 * breakpoints, since the Xen VM backend will get stuck in
+	 * an infinite loop at the breakpoint location.
+	 *
+	 * For whatever reason, this does not happen for the Linux
+	 * userspace process target.  Until we know why, just always
+	 * single step here.
+	 */
+	doit = 1;
+
+	if (!doit) {
+	    probepoint->state = PROBE_BP_SET;
+
+	    vdebug(4,LOG_P_PROBEPOINT,"skipping sstep for HW ");
+	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	    vdebugc(4,LOG_P_PROBEPOINT,"; no post handlers\n");
+
+	    /*
+	     * Don't run posthandlers because we haven't done the
+	     * breakpointed instruction!  Well, this is not quite true
+	     * for watchpoints, but...
+	     */
+	}
+	else {
+	    /* We already own the probepoint because it's hardware. */
+	    probepoint->state = PROBE_BP_POSTHANDLING;
+	}
+    }
+    /*
+     * If we're software, replace the original.
+     */
+    else if (probepoint->style == PROBEPOINT_SW) {
+	/* Restore the original instruction. */
+	vdebug(4,LOG_P_PROBEPOINT,"restoring orig instr for SW ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+	doit = 1;
+
+	/*
+	 * Grab hold of the probepoint, since we might have run boosted
+	 * instructions in the past.  If we can't grab the probepoint,
+	 * we have to pause this thread until we can grab it.
+	 */
+	if ((htpc = probepoint_hold(target,tthread,probepoint,tpc)) != tpc) {
+	    if (probepoint_pause_handling(target,tthread,probepoint,
+					  THREAD_RESUMEAT_SSR)) {
+		verror("thread %"PRIiTID" hit ss when thread %"PRIiTID" already"
+		       " handling it; target failed to ctl thread!\n",
+		       tthread->tid,htpc->thread->tid);
+		/*
+		 * There literally is nothing we can do -- we cannot
+		 * handle this breakpoint interrupt.
+		 */
+		return -1;
+	    }
+	    else 
+		return 2;
+	}
+	else {
+	    /*
+	     * If we're in BPMODE_STRICT, we have to pause all the other
+	     * threads.
+	     */
+	    if (target->opts->bpmode == THREAD_BPMODE_STRICT) {
+		if (target_pause(target)) {
+		    vwarn("could not pause the target for blocking thread"
+			  " %"PRIiTID"!\n",tthread->tid);
+		    return -1;
+		}
+		target->blocking_thread = tthread;
+	    }
+
+	    if (target_write_addr(target,probepoint->addr,
+				  probepoint->breakpoint_orig_mem_len,
+				  probepoint->breakpoint_orig_mem)	\
+		!= probepoint->breakpoint_orig_mem_len) {
+		verror("could not restore orig code that breakpoint"
+		       " replaced; assuming breakpoint is left in place and"
+		       " skipping single step, but badness will ensue!");
+
+		if (target->blocking_thread == tthread)
+		    target->blocking_thread = NULL;
+		probepoint->state = PROBE_BP_SET;
+		probepoint_release(target,tthread,probepoint);
+		tpc_free(tthread->tpc);
+		tthread->tpc = (struct thread_probepoint_context *) \
+		    array_list_remove(tthread->tpc_stack);
+
+		return -1;
+	    }
+	    else {
+		/* We already own it. */
+		probepoint->state = PROBE_BP_POSTHANDLING;
+	    }
+	}
+    }
+
+    if (!doit) {
+	/*
+	 * Only release our hold on the probepoint if we actually held
+	 * it; if we had been running a boosted action, we might not
+	 * hold the probepoint.
+	 */
+	if (probepoint->tpc == tthread->tpc) {
+	    probepoint->state = PROBE_BP_SET;
+	    probepoint_release(target,tthread,probepoint);
+	}
+
+	return 0;
+    }
+
+    /* 
+     * Command the single step to happen.  We hold the probepoint now,
+     * so we can do anything.
+     */
+    vdebug(4,LOG_P_PROBEPOINT,"doing sstep for ");
+    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+    if (probepoint->style == PROBEPOINT_HW && !target->nodisablehwbponss) {
+	/*
+	 * We need to disable the hw breakpoint before we single
+	 * step because the target can't do it.
+	 */
+	target_disable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	probepoint->debugregdisabled = 1;
+    }
+
+    if (target_singlestep(target,tid,1) < 0) {
+	verror("could not single step target after BP!\n");
+
+	if (target_singlestep_end(target,tid))
+	    verror("could not stop single stepping target"
+		   " after failed sstep for breakpoint!\n");
+
+	if (probepoint->style == PROBEPOINT_HW && !target->nodisablehwbponss) {
+	    /*
+	     * Reenable the hw breakpoint we just disabled.
+	     */
+	    target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	    probepoint->debugregdisabled = 0;
+	}
+
+	if (probepoint->style != PROBEPOINT_HW) {
+	    if (target_write_addr(target,probepoint->addr,
+				  probepoint->breakpoint_orig_mem_len,
+				  probepoint->breakpoint_orig_mem)	\
+		!= probepoint->breakpoint_orig_mem_len) {
+		verror("could not restore orig code that breakpoint"
+		       " replaced; assuming breakpoint is left in place and"
+		       " skipping single step, but badness will ensue!");
+	    }
+	}
+
+	/*
+	 * If we were supposed to single step, and it failed,
+	 * the best we can do is act like the BP is still set.
+	 */
+	if (target->blocking_thread == tthread)
+	    target->blocking_thread = NULL;
+	probepoint->state = PROBE_BP_SET;
+	probepoint_release(target,tthread,probepoint);
+	tpc_free(tthread->tpc);
+	tthread->tpc = (struct thread_probepoint_context *) \
+	    array_list_remove(tthread->tpc_stack);
+
+	return -1;
+    }
+    else {
+	/* 
+	 * If single step init succeeded, let the ss handler take
+	 * over.
+	 *
+	 * Don't call target_resume after a successful target_singlestep.
+	 */
+	vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+	return 1;
+    }
+}
 
 /*
  * In many ways, the goal of this function is to figure out if we need
@@ -1724,27 +2363,168 @@ static int handle_actions(struct probepoint *probepoint);
  * them.  HW breakpoints are re-enabled in the ss handler below once
  * we're sure we don't need to do any more single steps.
  */
-int probepoint_bp_handler(struct target *target,
-			  struct probepoint *probepoint) {
+result_t probepoint_bp_handler(struct target *target,
+			       struct target_thread *tthread,
+			       struct probepoint *probepoint,
+			       int was_stepping) {
     struct probe *probe;
     REGVAL ipval;
     int doit = 0;
     int rc;
+    tid_t tid = tthread->tid;
+    struct thread_probepoint_context *tpc, *htpc;
+    int stepping = 0;
+    struct action *action;
+    struct thread_action_context *tac,*ttac;
 
     vdebug(5,LOG_P_PROBEPOINT,"handling bp at ");
     LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
     vdebugc(5,LOG_P_PROBEPOINT,"\n");
 
-    /* We move into the HANDLING state while we run the pre-handlers. */
-    probepoint->state = PROBE_BP_HANDLING;
+    /*
+     * If the thread is already handling this probepoint, the cause is
+     * almost certainly that some action we ran recursed, running some
+     * code that triggered the breakpoint again.
+     *
+     * We keep trying to handle it if we can below...
+     */
+    if (tthread->tpc && tthread->tpc->probepoint == probepoint)
+	vwarn("existing thread probepoint same as bp probepoint;"
+	      " BUG or recursion due to action?\n");
 
-    /* Save the original ip value in case something bad happens. */
+    /*
+     * If we were single stepping when we hit the breakpoint, and we hit
+     * a hardware breakpoint, we need to fire the single step action
+     * handlers off.  If it's a software breakpoint, the trap after the
+     * last instruction was allowed to happen before the breakpoint was
+     * executed.  But with hardware breakpoints, the single step trap
+     * for the instruction preceding the breakpoint, and the breakpoint,
+     * seem to happen in the same interrupt.
+     */
+    if (probepoint->style == PROBEPOINT_HW 
+	&& was_stepping 
+	&& !list_empty(&tthread->ss_actions)) {
+	list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
+	    action = tac->action;
+	    ++tac->stepped;
+
+	    if (action->steps == -2 
+		|| (action->steps > 0 && tac->stepped >= action->steps)) {
+		if (action->handler)
+		    action->handler(action,action->probe,action->probe->probepoint,
+				    MSG_SUCCESS,action->handler_data);
+
+		action_finish_handling(action);
+
+		list_del(&tac->tac);
+		free(tac);
+	    }
+	    else {
+		if (action->handler) 
+		    action->handler(action,action->probe,action->probe->probepoint,
+				    MSG_STEPPING_AT_BP,action->handler_data);
+	    }
+	}
+
+	if (list_empty(&tthread->ss_actions)) 
+	    was_stepping = 0;
+    }
+
+    /*
+     * Push a new context for handling this probepoint.
+     */
+    tpc = tpc_new(tthread,probepoint);
+    if (tthread->tpc)
+	array_list_append(tthread->tpc_stack,tthread->tpc);
+    tthread->tpc = tpc;
+
+    /*
+     * Check: do we need to hold the probepoint?  That depends on:
+     *  - is the probepoint software?  hardware probepoints can always
+     *    be held, although which tpc the thread is handling may change
+     *    (i.e. if we are recursing trhough the same breakpoint again)
+     *  - do we have unboosted complex actions?
+     *  - do we have need to run the original instruction at the
+     *    probepoint?
+     * But we can't even answer the second one until we know that the
+     * pre-handlers haven't added any actions (which they must be able
+     * to do), so we have no choice -- we must hold the breakpoint
+     * before handling it at all.  We may be able to release it sooner
+     * than we think at the moment, but we can't know.  The only time we
+     * can just automatically hold the probepoint is if 
+     */
+    if ((htpc = probepoint_hold(target,tthread,probepoint,tpc)) != tpc) {
+	/*
+	 * If the BP is in some unset state, it might be being handled
+	 * for another thread.  If not, we have a bug, because the state
+	 * is wrong, but we obviously hit the BP so it *is* set and we
+	 * just "handle" it.
+	 *
+	 * If it *is* being handled by another thread -- this could only
+	 * have happened if this thread hit the BP at about the same
+	 * time another thread did, but if we have scheduled the single
+	 * step for the other thread and executed it -- and then the
+	 * next time the target checked for debug interrupts, it checked
+	 * this thread first instead of the single-stepping thread.
+	 *
+	 * In this case, if we have thread control, we pause this thread
+	 * until we can handle the breakpoint (i.e., until nothing else
+	 * is).  Of course, if we have thread control, we assume the
+	 * thread is already paused (it's at a debug interrupt, after
+	 * all); we just have to be careful not to unpause it until we
+	 * have handled its interrupt.
+	 *
+	 * If we don't have thread control, there's really nothing we
+	 * can do.  Sometimes loose mode sucks :).
+	 */
+	if (probepoint->state != PROBE_BP_SET) {
+	    if (!probepoint->tpc) {
+		verror("probepoint state is not BP_SET; BUG!\n");
+
+		probepoint->state = PROBE_BP_SET;
+	    }
+	    else if (probepoint_pause_handling(target,tthread,probepoint,
+					       THREAD_RESUMEAT_BPH)) {
+		verror("thread %"PRIiTID" hit bp when thread %"PRIiTID" already"
+		       " handling it; target could not pause thread!\n",
+		       tthread->tid,probepoint->tpc->thread->tid);
+		/*
+		 * There literally is nothing we can do -- we cannot
+		 * handle this breakpoint interrupt.
+		 */
+		return RESULT_ERROR;
+	    }
+	    else 
+		return RESULT_SUCCESS;
+	}
+    }
+
+    /*
+     * We own this probepoint now.  BUT, we might still have to pause
+     * other threads in the target if we have to adjust the probepoint.
+     */
+
+    /* We move into the HANDLING state while we run the pre-handlers. */
+    probepoint->state = PROBE_BP_PREHANDLING;
+
+    if (array_list_len(tthread->tpc_stack)) 
+	vwarn("already handling %d probepoints in thread %d; watch for errors!\n",
+	      array_list_len(tthread->tpc_stack),tthread->tid);
+
+    /*
+     * Prepare for handling: save the original ip value in case
+     * something bad happens during the pre-handlers.
+     */
     errno = 0;
-    ipval = target_read_reg(target,target->ipregno);
+    ipval = target_read_reg(target,tid,target->ipregno);
     if (probepoint->style == PROBEPOINT_SW && errno) {
 	verror("could not read EIP to reset it for SW probepoint; skipping!");
 	probepoint->state = PROBE_BP_SET;
-	return -1;
+	probepoint_release(target,tthread,probepoint);
+	tpc_free(tthread->tpc);
+	tthread->tpc = (struct thread_probepoint_context *) \
+	    array_list_remove(tthread->tpc_stack);
+	return RESULT_ERROR;
     }
 
     vdebug(5,LOG_P_PROBEPOINT,"EIP is 0x%"PRIxREGVAL" at ",ipval);
@@ -1758,11 +2538,15 @@ int probepoint_bp_handler(struct target *target,
     if (probepoint->style == PROBEPOINT_SW) {
 	ipval -= target->breakpoint_instrs_len;
 	errno = 0;
-	target_write_reg(target,target->ipregno,ipval);
+	target_write_reg(target,tid,target->ipregno,ipval);
 	if (errno) {
 	    verror("could not reset EIP before pre handlers; skipping!\n");
 	    probepoint->state = PROBE_BP_SET;
-	    return -1;
+	    probepoint_release(target,tthread,probepoint);
+	    tpc_free(tthread->tpc);
+	    tthread->tpc = (struct thread_probepoint_context *) \
+		array_list_remove(tthread->tpc_stack);
+	    return RESULT_ERROR;
 	}
 
 	vdebug(4,LOG_P_PROBEPOINT,"reset EIP to 0x%"PRIxREGVAL" for SW ",ipval);
@@ -1800,708 +2584,1091 @@ int probepoint_bp_handler(struct target *target,
     /* Restore ip register if we ran a handler. */
     if (doit) {
 	errno = 0;
-	target_write_reg(target,target->ipregno,ipval);
+	target_write_reg(target,tid,target->ipregno,ipval);
 	if (errno) {
-	    verror("could not reset EIP after pre handlers; skipping!\n");
+	    verror("could not reset EIP after pre handlers!\n");
 	    probepoint->state = PROBE_BP_SET;
-	    return -1;
+	    probepoint_release(target,tthread,probepoint);
+	    tpc_free(tthread->tpc);
+	    tthread->tpc = (struct thread_probepoint_context *) \
+		array_list_remove(tthread->tpc_stack);
+	    return RESULT_ERROR;
 	}
         
-	vdebug(5,LOG_P_PROBEPOINT,
+	vdebug(9,LOG_P_PROBEPOINT,
 	       "ip 0x%"PRIxREGVAL" restored after pre handlers at ",ipval);
 	LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
 	vdebugc(5,LOG_P_PROBEPOINT,"\n");
     }
 
-    /* We move back into the SET state before we do the next things. */
-    probepoint->state = PROBE_BP_SET;
+    /* Now we're handling actions. */
+    probepoint->state = PROBE_BP_ACTIONHANDLING;
 
     /*
-     * If we might have to run an action, do it!
+     * Run the simple actions now.
      */
-    handle_actions(probepoint);
+    if ((rc = handle_simple_actions(target,tthread,probepoint))) 
+	vwarn("failed to handle %d simple actions!\n",rc);
 
     /*
-     * If we did an action and its effects took the place of the
-     * original instruction (obviated it), enable single stepping if needed.
+     * Set up complex actions.  The output of the setup is what code we
+     * need to place at the breakpoint site; the min single steps before
+     * we can replace that code with 1) the original code, if the tmp
+     * code does not replace the orig; or 2) the breakpoint again, if
+     * the tmp code *does* replace the orig.  Or, it could be nothing.
+     *
+     * (If the complex action requires more than one single step, we
+     * cannot support it unless the target is capable of pausing all
+     * other threads (i.e., ensuring that the current thread cannot be
+     * preempted).  We need this because we can basically assume that
+     * the first single step will not be "interrupted" after a
+     * breakpoint unless an interrupt happened to fire at the same time
+     * as the breakpoint.  But, we can't assume that N single steps
+     * won't be interrupted; if they are, the probepoint is storing
+     * per-thread context, and it could get messed up bad.  Plus, the
+     * probepoint might have arbitrary code at its location, instead of
+     * the breakpoint or original instruction.)
+     *
+     * If the output is nothing (i.e., no complex actions), we decide if
+     * we need to single step (always do for SW; if HW, and no probes
+     * are enabled, or none of the enalbed probes have posthandlers, we
+     * can skip the SW breakpoint; OR ALSO do if we have one or more
+     * single step actions).
+     *
+     * Then in the ss handler, we have to check what state we're in.
+     * First, if we are called with no probepoint, we must be sstep'ing
+     * for an sstep action(s).  Otherwise, if probepoint->action is set,
+     * we must be sstep'ing a complex action (or on behalf of it).
+     * Otherwise, we must just be sstep'ing the original instr under the
+     * breakpoint.
+     *
+     * In the first case, just hanlde the ss_actions list.
+     *
+     * In the second case, continue sstep'ing if the action requires it;
+     * otherwise, either setup another complex action, or replace the
+     * underlying code if the action didn't obviate it -- and single
+     * step the orig code.  Then put the breakpoint back in.
+     *
+     * In the third case, just put the breakpoint back in.
+     *
+     * In all cases, leave single step enabled if there are still
+     * ss_actions running for the thread.
      */
-    if (probepoint->action) {
-	/* If our action needs single steps to execute (i.e., we added
-	 * some code and we want to step through it), do those.
-	 */
-	if (probepoint->action_needs_ssteps) {
-	    /* NOTE: do the single step here; decrement the ssteps
-	     * counter in the ss handler below.
+    if ((stepping = handle_complex_actions(target,tthread,probepoint)) < 0) 
+	vwarn("failed to handle %d complex actions!\n",rc);
+
+    /*
+     * If there is a complex action, just setup single step actions (and
+     * we might already be single stepping for the complex action).
+     * handle_complex_actions also paused all other threads if we needed to.
+     */
+    if (tpc->tac.action) {
+	vdebug(4,LOG_P_PROBEPOINT,"setup complex action for ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+	int _isbp = 0;
+	if (!tpc->tac.action->boosted)
+	    _isbp = 1;
+
+	rc = setup_single_step_actions(target,tthread,probepoint,_isbp,stepping);
+	if (rc == 1)
+	    rc = 0;
+    }
+    /*
+     * Otherwise, if we did not perform a complex action, or if the
+     * complex action did not require any single steps, figure out if we
+     * should re-execute the original instructions -- and do we boost
+     * them or replace them at the breakpoint and single step it.
+     */
+    else {
+	tpc->did_orig_instr = 1;
+
+	vdebug(4,LOG_P_PROBEPOINT,"setting up post handling single step for ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	rc = setup_post_single_step(target,tthread,probepoint);
+
+	if (rc == 0) {
+	    /*
+	     * No single step scheduled, but no error, so we're done
+	     * handling the probepoint in this thread; pop the stack.
 	     */
-	    /* Before we single step, we temporarily disable any
-	     * hardware breakpoints!
+	    if (target->blocking_thread == tthread)
+		target->blocking_thread = NULL;
+	    probepoint_release(target,tthread,probepoint);
+	    tpc_free(tthread->tpc);
+	    tthread->tpc = (struct thread_probepoint_context *) \
+		array_list_remove(tthread->tpc_stack);
+
+	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		   "thread %"PRIiTID" skipped orig instruction; clearing tpc!\n",
+		   tthread->tid);
+
+	    /*
+	     * We need to setup single step actions to happen because we
+	     * are not stepping yet, and we might need to.
 	     */
-	    vdebug(4,LOG_P_PROBEPOINT,"%d ssteps to do for ",
-		   probepoint->action_needs_ssteps);
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
-
-	    if (target_disable_hw_breakpoints(target) < 0) {
-		verror("could not temporarily disable hw breakpoints while"
-		       " sstep'ing; proceeding anyway!\n");
-	    }
-	    if (target_singlestep(target) < 0) {
-		verror("could not single step target for action;"
-		       " restoring BP if necessary!\n");
-	
-		if (target_singlestep_end(target))
-		    verror("could not stop single stepping target"
-			   " after failed sstep for action!\n");
-
-		if (probepoint->action_orig_mem
-		    && target_write_addr(target,probepoint->addr,
-					 probepoint->action_orig_mem_len,
-					 probepoint->action_orig_mem,NULL) \
-		    != probepoint->action_orig_mem_len) {
-		    verror("could not restore orig code that action"
-			   " replaced; assuming breakpoint is left in place and"
-			   " skipping single step, but badness will ensue!");
-		}
-
-		if (target_enable_hw_breakpoints(target) < 0) {
-		    verror("could not enable hw breakpoints after failed"
-			   " sstep; proceeding anyway!\n");
-		}
-
-		probepoint->action_needs_ssteps = 0;
-		probepoint->state = PROBE_BP_SET;
-	    }
-	    else {
-		/* leave the state as action running */
-		probepoint->state = PROBE_ACTION_RUNNING;
-		target->sstep_probepoint = probepoint;
-		array_list_append(target->sstep_stack,probepoint);
-
-		vdebug(4,LOG_P_PROBEPOINT,"sstep for ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
-
-		return 0;
+	    rc = setup_single_step_actions(target,tthread,probepoint,1,0);
+	    if (rc == 1) {
+		/*
+		 * Don't call target_resume; we've already called
+		 * target_singlestep.
+		 */
+		return RESULT_SUCCESS;
 	    }
 	}
-	else if (0) {
+	else if (rc == 1) {
 	    /*
-	     * Actually, we don't need to do this because handle_actions
-	     * would have removed any code it inserted, unless there was
-	     * an error.  I think.
+	     * If we need to keep single stepping, just let that happen
+	     * -- it's already been set up (or might have been setup in
+	     * setup_post_single_step).
+	     *
+	     * We need to setup single step actions to happen even if
+	     * we're already stepping (bookkeeping).
 	     */
+	    rc = setup_single_step_actions(target,tthread,probepoint,1,1);
 
-	    /* If there was an action and it modified code, restore the
-	     * original code it replaced.  This might not include the
-	     * breakpoint if it was software (well, it should because
-	     * this is the first action handled that replaced code
-	     * because we're in the BP handler; the ss handler will have
-	     * to replace the saved code, and replace the breakpoint --
-	     * yes, this is correct).
+	    /*
+	     * Don't call target_resume; we've already called
+	     * target_singlestep.
 	     */
-	    if (probepoint->action_orig_mem) {
-		if (target_write_addr(target,probepoint->addr,
-				      probepoint->action_orig_mem_len,
-				      probepoint->action_orig_mem,NULL) \
-		    != probepoint->action_orig_mem_len) {
-		    verror("could not restore orig code that action replaced;"
-			   " continuing, but badness will ensue!");
-		    free(probepoint->action_orig_mem);
-		    probepoint->action_orig_mem = NULL;
-		}
-		probepoint->state = PROBE_BP_SET;
-	    }
+	    return RESULT_SUCCESS;
+	}
+	else if (rc == 2) {
+	    /* The thread blocked because it could not hold the probepoint. */
+	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		   "thread %"PRIiTID" blocked before single step; thread"
+		   " %"PRIiTID" owned probepoint -- BUG!!!\n",
+		   tthread->tid,probepoint->tpc->thread->tid);
+	}
+	else if (rc < 0) {
+	    verror("could not setup single step; badness will probably ensue!\n");
 	}
     }
-    else {
-	/* Now it is simple, now that we've handled actions.  If we're
-	 * hardware and there are no enabled probes with post-handlers,
-	 * single step; otherwise, just proceed.  If we're software,
-	 * *always* single step after replacing the original
-	 * instruction.
+
+    return RESULT_SUCCESS;
+}
+
+/*
+ * This function handles single step events.  It broadly handles a few
+ * cases.  First, are there pending single step actions; if so, stay in
+ * single step mode after we're done.  Second, try to handle any complex
+ * actions that might be needing single steps, if there are, let that
+ * keep going.  Finally, if we're done with any complex actions, and we
+ * still haven't run the original instruction (and if none of hte
+ * complex actions obviated (replaced) the original one), we run the
+ * original instruction via single step (if necessary -- it might not be
+ * necessary if we don't have posthandlers and if the breakpoint is hw,
+ * or if the orig instruction was boostable.
+ */
+result_t probepoint_ss_handler(struct target *target,
+			       struct target_thread *tthread,
+			       struct probepoint *probepoint) {
+    struct thread_action_context *tac,*ttac;
+    struct action *action;
+    tid_t tid = tthread->tid;
+    int rc;
+    int handled_ss_actions = 0;
+    int keep_stepping = 0;
+    struct thread_probepoint_context *tpc = tthread->tpc;
+    int noreinject;
+    handler_msg_t amsg;
+    struct probepoint *aprobepoint;
+
+    /*
+     * If we had to disable a hw breakpoint before we single stepped it,
+     * reenable it now.  If it's a hardware breakpoint, we own it, so
+     * that's why we don't check that.
+     */
+    if (probepoint
+	&& probepoint->style == PROBEPOINT_HW
+	&& probepoint->debugregdisabled
+	&& !target->nodisablehwbponss) {
+	/*
+	 * Reenable the hw breakpoint we just disabled.
 	 */
-	doit = 0;
-	if (probepoint->style == PROBEPOINT_HW) {
-	    list_for_each_entry(probe,&probepoint->probes,probe) {
-		if (probe->enabled && (probe->post_handler || probe->sinks)) {
-		    doit = 1;
-		    break;
-		}
-	    }
+	target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	probepoint->debugregdisabled = 0;
+    }
 
-	    /*
-	     * XXX: for now, always force single step even for HW
-	     * breakpoints, since the Xen VM backend will get stuck in
-	     * an infinite loop at the breakpoint location.
-	     *
-	     * For whatever reason, this does not happen for the Linux
-	     * userspace process target.  Until we know why, just always
-	     * single step here.
-	     */
-	    doit = 1;
-	    
-	    if (!doit) {
-		probepoint->state = PROBE_BP_SET;
+    /*
+     * First, if there is no probepoint (or if there is and we have
+     * single step actions pending) and if this thread has pending
+     * ss_actions.  If one or the other, go through that list, increment
+     * the counts, notify the handlers, and remove any ss_actions that
+     * are done.  If all are done, end singlestep mode and resume.
+     * Otherwise, stay in single step mode.
+     */
+    if (!list_empty(&tthread->ss_actions)) {
+	handled_ss_actions = 1;
 
-		vdebug(4,LOG_P_PROBEPOINT,"skipping sstep for HW ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"; no post handlers\n");
-	    }
-	}
-
-	/* If we're software, replace the original; AND (and if we're
-	 * hardware and there and enabled post-handlers) single step.
+	/*
+	 * If this address is an enalbed breakpiont, we need to send
+	 * MSG_STEPPING_AT_BP instead.  This covers the software
+	 * breakpiont case; for the hardware one, see bp_handler.
 	 */
-	if (probepoint->style == PROBEPOINT_SW) {
-	    /* Restore the original instruction. */
-	    vdebug(4,LOG_P_PROBEPOINT,"restoring orig instr for SW ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	amsg = MSG_STEPPING;
+	if ((aprobepoint = \
+	     probepoint_lookup(target,tthread,
+			       target_read_reg(target,tthread->tid,target->ipregno))) 
+	    && aprobepoint->state != PROBE_DISABLED)
+	    amsg = MSG_STEPPING_AT_BP;
 
-	    if (target_write_addr(target,probepoint->addr,
-				  probepoint->breakpoint_orig_mem_len,
-				  probepoint->breakpoint_orig_mem,NULL) \
-		!= probepoint->breakpoint_orig_mem_len) {
-		verror("could not restore orig code that breakpoint"
-		       " replaced; assuming breakpoint is left in place and"
-		       " skipping single step, but badness will ensue!");
-		probepoint->state = PROBE_BP_SET;
-	    }
-	    else
-		doit = 1;
-	}
+	list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
+	    action = tac->action;
+	    ++tac->stepped;
 
-	if (doit) {
-	    /* NOTE: do the single step here; decrement the ssteps
-	     * counter in the ss handler below.
-	     */
-	    vdebug(4,LOG_P_PROBEPOINT,"doing sstep for ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
-
-	    /* Before we single step, we temporarily disable any
-	     * hardware breakpoints!
-	     */
-	    if (target_disable_hw_breakpoints(target) < 0) {
-		verror("could not temporarily disable hw breakpoints before"
-		       " sstep'ing; proceeding anyway!\n");
-	    }
-
-	    probepoint->state = PROBE_BP_HANDLING;
-	    target->sstep_probepoint = probepoint;
-	    array_list_append(target->sstep_stack,probepoint);
-
-	    if (target_singlestep(target) < 0) {
-		if (probepoint->style == PROBEPOINT_HW) {
-		    verror("could not single step target after BP;"
-			   " stopping single step and restoring BP!\n");
-
-		    if (target_singlestep_end(target))
-			verror("could not stop single stepping target"
-			       " after failed sstep for breakpoint!\n");
-
-		    probepoint->state = PROBE_BP_SET;
-		}
-		else {
-		    verror("could not single step target after BP;"
-			   " stopping single step and restoring BP!\n");
-
-		    if (target_singlestep_end(target))
-			verror("could not stop single stepping target"
-			       " after failed sstep for breakpoint!\n");
-
-		    if (target_enable_hw_breakpoints(target) < 0) {
-			verror("could not enable hw breakpoints after failed"
-			       " sstep; proceeding anyway!\n");
-		    }
-
-		    if (target_write_addr(target,probepoint->addr,
-					  probepoint->breakpoint_orig_mem_len,
-					  probepoint->breakpoint_orig_mem,NULL) \
-			!= probepoint->breakpoint_orig_mem_len) {
-			verror("could not restore orig code that breakpoint"
-			       " replaced; assuming breakpoint is left in place and"
-			       " skipping single step, but badness will ensue!");
-		    }
-		}
-		/* If we were supposed to single step, and it failed,
-		 * the best we can do is act like the BP is still set.
-		 */
-		probepoint->state = PROBE_BP_SET;
-		target->sstep_probepoint = NULL;
-		array_list_remove(target->sstep_stack);
-		if (array_list_len(target->sstep_stack))
-		    target->sstep_probepoint = (struct probepoint *) \
-			array_list_item(target->sstep_stack,
-					array_list_len(target->sstep_stack) - 1);
+	    if (action->steps < 0 || tac->stepped < action->steps) {
+		if (action->handler) 
+		    action->handler(action,action->probe,action->probe->probepoint,
+				    amsg,action->handler_data);
 	    }
 	    else {
-		/* If single step init succeeded, let the ss handler take
-		 * over.
+		if (action->handler) 
+		    action->handler(action,action->probe,action->probe->probepoint,
+				    MSG_SUCCESS,action->handler_data);
+
+		action_finish_handling(action);
+
+		list_del(&tac->tac);
+		free(tac);
+	    }
+	}
+
+	if (!list_empty(&tthread->ss_actions)) 
+	    keep_stepping = 1;
+    }
+    /*
+     * If there is no probepoint, we return to the caller without
+     * unpausing the target.
+     */
+    else if (!probepoint) {
+	vwarn("thread %"PRIiTID" unexpected single step!\n",tthread->tid);
+	return RESULT_ERROR;
+    }
+
+    /*
+     * If we're done handling actions and the post single step of the
+     * original instruction, AND if we were the owners of the
+     * probepoint, nuke the tpc state!
+     *
+     * BUT, we have to check if we should keep single stepping for
+     * pending single step actions.
+     */
+    if (probepoint 
+	&& probepoint->tpc == tpc
+	&& probepoint->state == PROBE_BP_POSTHANDLING 
+	&& tpc->did_orig_instr) {
+	noreinject = run_post_handlers(target,tthread,probepoint);
+
+	if (!noreinject) {
+	    if (probepoint->style == PROBEPOINT_SW) {
+		/* Re-inject a breakpoint for the next round */
+		if (target_write_addr(target,probepoint->addr,
+				      target->breakpoint_instrs_len,
+				      target->breakpoint_instrs)	\
+		    != target->breakpoint_instrs_len) {
+		    verror("could not write breakpoint instrs for bp re-insert, disabling!\n");
+		    probepoint->state = PROBE_DISABLED;
+		    free(probepoint->breakpoint_orig_mem);
+		    return RESULT_ERROR;
+		}
+		else 
+		    probepoint->state = PROBE_BP_SET;
+	    }
+	    else if (probepoint->debugregdisabled) {
+		/*
+		 * Enable hardware bp here!
 		 */
+		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		probepoint->debugregdisabled = 0;
+
+		probepoint->state = PROBE_BP_SET;
+	    }
+	    else {
+		probepoint->state = PROBE_BP_SET;
+	    }
+	}
+	else {
+	    free(probepoint->breakpoint_orig_mem);
+	    probepoint->breakpoint_orig_mem = NULL;
+	    __probepoint_remove(probepoint);
+	}
+
+	if (target_singlestep_end(target,tid))
+	    verror("could not stop single stepping target"
+		   " after failed sstep!\n");
+
+	if (target->blocking_thread == tthread)
+	    target->blocking_thread = NULL;
+	probepoint_release(target,tthread,probepoint);
+	tpc_free(tthread->tpc);
+	tthread->tpc = (struct thread_probepoint_context *) \
+	    array_list_remove(tthread->tpc_stack);
+	tpc = NULL;
+
+	vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+	       "thread %"PRIiTID" ran orig instruction; cleared tpc!\n",
+	       tthread->tid);
+
+	if (keep_stepping)
+	    goto keep_stepping;
+	else 
+	    /* We're done with this, and don't want anything else below. */
+	    return RESULT_SUCCESS;
+    }
+
+    /* 
+     * Handle complex actions.  This function does everything it might
+     * need; if it leaves an action in tpc->tac.action, we just call
+     * target_resume and trust that it did all the setup it needs.
+     */
+    if (tpc) 
+	rc = handle_complex_actions(target,tthread,probepoint);
+
+    /*
+     * NOTE: after this giant if stmt, the default return case is
+     * RESULT_SUCCESS, unless another return stmt occurs.
+     */
+
+    if (tpc && tpc->tac.action) {
+	/*
+	 * If handle_complex_actions left something in tpc->tac.action,
+	 * we just want to return success and wait and see what happens
+	 * with the action via future debug expections.
+	 */
+	;
+    }
+    /*
+     * If we stepped an action first, we might still need to single step
+     * the original instruction; do that if so.  Or at least attempt it
+     * -- if the action obviated the orig instruction,
+     * setup_post_single_step handles that case and does the right things.
+     */
+    else if (tpc && !tpc->did_orig_instr) {
+	vdebug(4,LOG_P_PROBEPOINT,"setting up post handling single step for ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	rc = setup_post_single_step(target,tthread,probepoint);
+
+	if (rc == 0) {
+	    /*
+	     * No single step scheduled, but no error, so we're done
+	     * handling the probepoint in this thread; pop the stack.
+	     */
+	    if (target->blocking_thread == tthread)
+		target->blocking_thread = NULL;
+	    probepoint_release(target,tthread,probepoint);
+	    tpc_free(tthread->tpc);
+	    tthread->tpc = (struct thread_probepoint_context *) \
+		array_list_remove(tthread->tpc_stack);
+
+	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		   "thread %"PRIiTID" skipping orig instruction; clearing tpc!\n",
+		   tthread->tid);
+
+	    /*
+	     * If we need to keep stepping for single step actions, do
+	     * that here.
+	     */
+	    if (keep_stepping)
+		goto keep_stepping;
+	    /*
+	    else {
+	        return RESULT_SUCCESS;
+	    }
+	    */
+	}
+	else if (rc == 1) {
+	    /* Stepping, so just return without target_resume! */
+	    tpc->did_orig_instr = 1;
+	    //return RESULT_SUCCESS;
+	}
+	else if (rc == 2) {
+	    /* The thread blocked because it could not hold the probepoint. */
+	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		   "thread %"PRIiTID" blocked before single step real; thread"
+		   " %"PRIiTID" owned probepoint\n",
+		   tthread->tid,probepoint->tpc->thread->tid);
+	    //return RESULT_SUCCESS;
+	}
+	else if (rc < 0) {
+	    verror("could not setup single step; badness will probably ensue!\n");
+	    //return RESULT_SUCCESS;
+	}
+    }
+    /*
+     * If we don't have any complex actions to handle, we might still
+     * need to stay in single step mode if any singlestep actions were
+     * in progress for this thread.  So check that.
+     *
+     * The difference between this single step and a single step at the
+     * probepoint is that we don't disable hardware breakpoints before
+     * single stepping!
+     */
+    else if (keep_stepping) {
+    keep_stepping:
+	if (probepoint) {
+	    vdebug(4,LOG_P_PROBEPOINT,"continuing single step for ");
+	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	}
+	else 
+	    vdebug(4,LOG_P_PROBEPOINT,
+		   "continuing single step after probepoint\n");
+
+	if (target_singlestep(target,tid,0) < 0) {
+	    verror("could not keep single stepping target!\n");
+
+	    if (target_singlestep_end(target,tid))
+		verror("could not stop single stepping target"
+		       " after failed sstep!\n");
+
+	    /*
+	     * All we can really do is notify all the single step
+	     * actions that we had an error, and nuke them, and keep
+	     * going.
+	     */
+	    list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
+		if (tac->action->handler) 
+		    tac->action->handler(tac->action,tac->action->probe,
+					 tac->action->probe->probepoint,
+					 MSG_FAILURE,tac->action->handler_data);
+
+		action_finish_handling(tac->action);
+
+		list_del(&tac->tac);
+		free(tac);
+	    }
+
+	    return RESULT_ERROR;
+	}
+	else {
+	    /* 
+	     * If single step init succeeded, let the ss handler take
+	     * over.
+	     *
+	     * Don't call target_resume after a successful target_singlestep.
+	     */
+	    if (probepoint) {
 		vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for ");
 		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
 		vdebugc(4,LOG_P_PROBEPOINT,"\n");
-
-		return 0;
 	    }
+	    else 
+		vdebug(4,LOG_P_PROBEPOINT,
+		       "sstep command succeeded after probepoint\n");
 	}
     }
+    /*
+    else if (tpc->did_orig_instr) {
+         *
+	 * We're totally done with this probepoint.
+	 *
+	rc = 0;
+	goto out;
+    }
+    */
+    else if (!probepoint && !tpc && handled_ss_actions && !keep_stepping) {
+	vdebug(4,LOG_P_PROBEPOINT,
+	       "finished single step actions after probepoint\n");
+
+	if (target_singlestep_end(target,tid))
+	    verror("could not stop single stepping target after single step"
+		   " actions after probepoint!\n");
+    }
+    else {
+	verror("unexpected state!  BUG?\n");
+	return RESULT_ERROR;
+    }
+
+    return RESULT_SUCCESS;
+}
+
+/*
+ * This function should be called for each thread that has been left
+ * paused before target_resume completes; if bp_handler or ss_handler
+ * cleared 
+ */
+result_t probepoint_resumeat_handler(struct target *target,
+				     struct target_thread *tthread) {
+    struct probepoint *probepoint;
+    struct thread_probepoint_context *tpc = tthread->tpc;
+    int rc;
+    tid_t tid = tthread->tid;
+    struct thread_action_context *tac,*ttac;
+
+    switch (tthread->resumeat) {
+    case THREAD_RESUMEAT_NONE:
+	return RESULT_ERROR;
+    case THREAD_RESUMEAT_BPH:
+	return probepoint_bp_handler(target,tthread,tthread->tpc->probepoint,0);
+    case THREAD_RESUMEAT_SSR:
+	return setup_post_single_step(target,tthread,tthread->tpc->probepoint);
+    case THREAD_RESUMEAT_NA:
+	/*
+	 * This could have only been interrupted comoing from the ss
+	 * handler, so we know that if it does not do an action and does
+	 * not stay in single step, we have to try to do the post single
+	 * step too (?)
+	 */
+	probepoint = tthread->tpc->probepoint;
+	handle_complex_actions(target,tthread,probepoint);
+	if (!tpc->tac.action && !tpc->did_orig_instr) {
+	    vdebug(4,LOG_P_PROBEPOINT,"setting up post handling single step for ");
+	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	    rc = setup_post_single_step(target,tthread,probepoint);
+
+	    if (rc == 0) {
+		/*
+		 * No single step scheduled, but no error, so we're done
+		 * handling the probepoint in this thread; pop the stack.
+		 */
+		if (target->blocking_thread == tthread)
+		    target->blocking_thread = NULL;
+		probepoint_release(target,tthread,probepoint);
+		tpc_free(tthread->tpc);
+		tthread->tpc = (struct thread_probepoint_context *)	\
+		    array_list_remove(tthread->tpc_stack);
+
+		vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		       "thread %"PRIiTID" skipping orig instruction; clearing tpc!\n",
+		       tthread->tid);
+
+	    }
+	    else if (rc == 1) {
+		/* Stepping, so just return without target_resume! */
+		tpc->did_orig_instr = 1;
+		//return RESULT_SUCCESS;
+	    }
+	    else if (rc == 2) {
+		/* The thread blocked because it could not hold the probepoint. */
+		vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		       "thread %"PRIiTID" blocked before single step real; thread"
+		       " %"PRIiTID" owned probepoint\n",
+		       tthread->tid,probepoint->tpc->thread->tid);
+		//return RESULT_SUCCESS;
+	    }
+	    else if (rc < 0) {
+		verror("could not setup single step; badness will probably ensue!\n");
+		//return RESULT_SUCCESS;
+	    }
+	}
+	else if (!tpc->tac.action && !tpc->tac.action->steps 
+		 && !list_empty(&tthread->ss_actions)) {
+	    vdebug(4,LOG_P_PROBEPOINT,
+		   "continuing single step after probepoint\n");
+
+	    if (target_singlestep(target,tid,0) < 0) {
+		verror("could not keep single stepping target!\n");
+
+		if (target_singlestep_end(target,tid))
+		    verror("could not stop single stepping target"
+			   " after failed sstep!\n");
+
+		/*
+		 * All we can really do is notify all the single step
+		 * actions that we had an error, and nuke them, and keep
+		 * going.
+		 */
+		list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
+		    if (tac->action->handler) 
+			tac->action->handler(tac->action,tac->action->probe,
+					     tac->action->probe->probepoint,
+					     MSG_FAILURE,tac->action->handler_data);
+
+		    action_finish_handling(tac->action);
+
+		    list_del(&tac->tac);
+		    free(tac);
+		}
+
+		return RESULT_ERROR;
+	    }
+	    else {
+		/* 
+		 * If single step init succeeded, let the ss handler take
+		 * over.
+		 *
+		 * Don't call target_resume after a successful target_singlestep.
+		 */
+		vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for resumeat ");
+		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	    }
+	}
+	else {
+	    vdebug(4,LOG_P_PROBEPOINT,
+		   "finished handling after resumeat\n");
+
+	    if (target_singlestep_end(target,tid))
+		verror("could not stop single stepping target after single step"
+		       " actions after probepoint!\n");
+	}
+	return RESULT_SUCCESS;
+    case THREAD_RESUMEAT_PH:
+	return RESULT_ERROR;
+    default:
+	return RESULT_ERROR;
+    }
+}
+
+static int __remove_action(struct target *target,struct probepoint *probepoint,
+			   struct action *action) {
+    struct thread_probepoint_context *tpc;
 
     /*
-     * Just continue on...
+     * If it was boosted, it will be removed when the action is destroyed.
      */
-    target_resume(target);
+    if (action->boosted)
+	return 0;
+
+    tpc = probepoint->tpc;
+
+    if (tpc->action_orig_mem && tpc->action_orig_mem_len) {
+	if (target_write_addr(target,action->start_addr,
+			      tpc->action_orig_mem_len,tpc->action_orig_mem)
+	    != tpc->action_orig_mem_len) {
+	    verror("could not write back orig code for action remove;"
+		   " badness will probably ensue!\n");
+	    return -1;
+	}
+	free(tpc->action_orig_mem);
+	tpc->action_orig_mem = NULL;
+    }
+
+    probepoint->state = PROBE_ACTION_DONE;
 
     return 0;
 }
 
-/*
- * The goal of this function is to handle our single step.  We can
- * arrive here due to 1) an action that needed a single step; 2) a
- * software breakpoint that needed a single step; or 3) a hardware
- * breakpoint that needed a single step because it had enabled probes
- * with post-handlers.  2) and 3) are handled the same way.
- *
- * Basically, if our action needs more single steps, just keep doing
- * them and return.
- *
- * Otherwise, if we have more actions, do whatever they need us to do,
- * just like in the breakpoint handler.
- *
- * Otherwise, run our post handlers, then if software, re-insert the
- * breakpoint.
- *
- * Finally, once we know we aren't doing *more* single stepping,
- * re-enable hardware breakpoints.
- */
-int probepoint_ss_handler(struct target *target,
-			  struct probepoint *probepoint) {
-    struct probe *probe;
-    struct action *action;
-    struct action *taction;
-    int noreinject = 0;
-    int rc;
+static int __insert_action(struct target *target,struct target_thread *tthread,
+			   struct probepoint *probepoint,struct action *action) {
+    struct thread_probepoint_context *tpc;
+    unsigned int buflen;
+    unsigned char *buf;
+    REGVAL rval;
 
-    /* First, if we were running an action that needed single stepping,
-     * decrement the single step counter.
+    /* Set EIP to the address of our code. */
+    if (target_write_reg(target,tthread->tid,target->ipregno,action->start_addr)) {
+	verror("could not set EIP to action's first instruction (0x%"PRIxADDR")!\n",
+	       action->start_addr);
+	return -1;
+    }
+
+    /*
+     * If it was boosted, it was inserted when it was scheduled.
      */
-    if (probepoint->action && probepoint->action_needs_ssteps)
-	--probepoint->action_needs_ssteps;
+    if (action->boosted)
+	return 0;
 
-    /* Otherwise, find more actions.  If we need to do more single steps
-     * to support them, do it.
-     */
-    handle_actions(probepoint);
-    if (probepoint->action_needs_ssteps) {
-	/* Force a singlestep. */
-	if (target_singlestep(target) < 0) {
-	    verror("could not single step target for action;"
-		   " removing action!\n");
-	
-	    if (target_singlestep_end(target))
-		verror("could not stop single stepping target"
-		       " after failed sstep for action!\n");
+    tpc = probepoint->tpc;
 
-	    if (probepoint->action_orig_mem) {
-		if (target_write_addr(target,probepoint->addr,
-				      probepoint->action_orig_mem_len,
-				      probepoint->action_orig_mem,NULL) \
-		    != probepoint->action_orig_mem_len) {
-		    verror("could not restore orig code that action replaced;"
-			   " continuing, but badness will ensue!");
-		    free(probepoint->action_orig_mem);
-		    probepoint->action_orig_mem = NULL;
+    if (action->type == ACTION_RETURN) {
+	/*
+	 * If we have executed a prologue: if the prologue contains
+	 * a save of the frame pointer (0x55), all we have to do is
+	 * set rsp to rbp, call leaveq, and call retq.
+	 * If the prologue does not contain a save of the frame
+	 * pointer, we have to track all modifications to rsp during
+	 * the prologue, undo them, and call leaveq, and retq.
+	 */
+	if (action->detail.ret.prologue) {
+	    if (action->detail.ret.prologue_uses_bp) {
+		vdebug(3,LOG_P_ACTION,
+		       "setting ESP to EBP and returning (prologue uses EBP) at ");
+		LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+		vdebugc(3,LOG_P_ACTION,"\n");
+
+		errno = 0;
+		rval = target_read_reg(target,tthread->tid,target->fbregno);
+		if (errno) {
+		    verror("read EBP failed; action failed!\n");
+		    return -1;
 		}
+
+		if (target_write_reg(target,tthread->tid,target->spregno,rval)) {
+		    verror("set ESP to EBP failed; action failed and badness will ensue!\n");
+		    return -1;
+		}
+
+		buf = target->full_ret_instrs;
+		buflen = target->full_ret_instrs_len;
+		action->steps = target->full_ret_instr_count;
+	    }
+	    else {
+		vdebug(3,LOG_P_ACTION,
+		       "undoing prologue ESP changes (%d) and returning at ",
+		       action->detail.ret.prologue_sp_offset);
+		LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+		vdebugc(3,LOG_P_ACTION,"\n");
+
+		errno = 0;
+		rval = target_read_reg(target,tthread->tid,target->spregno);
+		if (errno) {
+		    verror("read ESP failed; action failed!\n");
+		    return -1;
+		}
+
+		if (target_write_reg(target,tthread->tid,target->spregno,
+				     rval + (REGVAL)-action->detail.ret.prologue_sp_offset)) {
+		    verror("undoing prologue ESP changes failed; action failed!\n");
+		    return -1;
+		}
+
+		buf = target->ret_instrs;
+		buflen = target->ret_instrs_len;
+		action->steps = target->ret_instr_count;
+	    }
+	}
+	else {
+	    buf = target->ret_instrs;
+	    buflen = target->ret_instrs_len;
+	    action->steps = target->ret_instr_count;
+	}
+    }
+    else if (action->type == ACTION_CUSTOMCODE) {
+	buf = action->detail.code.buf;
+	buflen = action->detail.code.buflen;
+    }
+    else {
+	verror("cannot handle unknown action type %d!\n",action->type);
+	return -1;
+    }
+
+    tpc->action_orig_mem = malloc(buflen);
+    tpc->action_orig_mem_len = buflen;
+    if (!target_read_addr(target,action->start_addr,
+			  tpc->action_orig_mem_len,
+			  tpc->action_orig_mem)) {
+	verror("could not save original under-action code at 0x%"PRIxADDR"!\n",
+	       action->start_addr);
+	free(tpc->action_orig_mem);
+	tpc->action_orig_mem = NULL;
+	return -1;
+    }
+    if (target_write_addr(target,action->start_addr,buflen,buf) != buflen) {
+	if (action->type == ACTION_RETURN && action->detail.ret.prologue)
+	    verror("could not insert action code; action failed (and badness will ensue)!\n");
+	else 
+	    verror("could not insert action code; action failed!\n");
+	free(tpc->action_orig_mem);
+	tpc->action_orig_mem = NULL;
+	return -1;
+    }
+
+    probepoint->state = PROBE_ACTION_RUNNING;
+
+    return 0;
+}
+
+struct action *__get_next_complex_action(struct probepoint *probepoint,
+					 struct action *current) {
+    struct list_head *head = &probepoint->complex_actions;
+
+    if (list_empty(head))
+	return NULL;
+    else if (!current) 
+	return list_entry(head->next,typeof(*current),action);
+    else if (current->action.next == head)
+	return NULL;
+    else
+	return list_entry(current->action.next,struct action,action);
+}
+
+/*
+ * This copies code into the breakpoint as necessary and single steps as
+ * necessary, or sets things up to handle boosted instructions if that's
+ * what we're doing.  It also handles single step events it has set up.
+ * Basically, anything to do with complex actions, it handles.
+ *
+ * It does setup only; it does not resume the target; only its callers
+ * should do that.
+ *
+ * If we setup a complex action, we are going to have to single step at
+ * least one instruction (and maybe more).  If we did not set up an
+ * action, we have to replace the original instruction by the real thing
+ * and single step -- OR if it was boostable and target supported it, we
+ * set EIP to the boosted location, and single step there if necessary,
+ * and mess with EIP again afterward (or let the boosted instruction JMP
+ * back to the real instruction following the real boosted
+ * instruction.and its effects took the place of the original
+ * instruction (obviated it), enable single stepping if needed.
+ *
+ * Returns: <0 on error; 0 if no actions requiring single step were
+ * setup; 1 if actions requiring single step were setup (and thus single
+ * step mode was enabled).
+ */
+static int handle_complex_actions(struct target *target,
+				  struct target_thread *tthread,
+				  struct probepoint *probepoint) {
+    struct action *action,*nextaction = NULL;
+    struct thread_probepoint_context *tpc;
+    tid_t tid = tthread->tid;
+    struct thread_action_context *tac,*ttac;
+    struct thread_probepoint_context *htpc;
+
+    tpc = tthread->tpc;
+
+    /*
+     * If we had paused this thread before handling an action because we
+     * needed to hold the probepoint, but couldn't, jump straight to
+     * that part.
+     */
+    if (tthread->resumeat == THREAD_RESUMEAT_NA) {
+	action = nextaction = tpc->tac.action;
+	goto nextaction;
+    }
+
+    /* 
+     * If we just arrived here after hitting the breakpoint, reset our
+     * state, and try to start an action.
+     */
+    if (probepoint->tpc == tpc 
+	&& probepoint->state == PROBE_BP_ACTIONHANDLING) {
+	vdebug(5,LOG_P_ACTION,
+	       "resetting actions state after bp hit at ");
+	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	vdebugc(5,LOG_P_ACTION,"\n");
+
+	tpc->tac.action = NULL;
+	tpc->tac.stepped = 0;
+	tpc->action_obviated_orig = 0;
+	tpc->action_orig_mem = NULL;
+	tpc->action_orig_mem_len = 0;
+
+	/* 
+	 * XXX: this could fail bad if whatever the current action
+	 * points to on the probepoint's list is removed from the list.
+	 * What to do???
+	 */
+	nextaction = action = __get_next_complex_action(probepoint,NULL);
+	if (!action) {
+	    vdebug(3,LOG_P_ACTION,"no actions to run at ");
+	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	    vdebugc(3,LOG_P_ACTION,"\n");
+
+	    return 0;
+	}
+    }
+    /*
+     * If we need to keep stepping through this action, keep stepping.
+     */
+    else if (tpc->tac.action && tpc->tac.action->steps) {
+	action = tpc->tac.action;
+	/*
+	 * Increment the single step count no matter what.
+	 */
+	++tpc->tac.stepped;
+
+	if (action->steps < 0 || tpc->tac.stepped < action->steps) {
+	    vdebug(5,LOG_P_ACTION,
+		   "did %d steps; still more at ",tpc->tac.stepped);
+	    LOGDUMPPROBEPOINT(5,LOG_P_ACTION,probepoint);
+	    vdebugc(5,LOG_P_ACTION,"\n");
+
+	    if (action->handler) 
+		action->handler(action,action->probe,probepoint,
+				MSG_STEPPING,action->handler_data);
+	}
+	else {
+	    vdebug(5,LOG_P_ACTION,
+		   "finished %d steps; done and removing action at ",
+		   tpc->tac.stepped);
+	    LOGDUMPPROBEPOINT(5,LOG_P_ACTION,probepoint);
+	    vdebugc(5,LOG_P_ACTION,"\n");
+	    /*
+	     * If we know the action is done because it has finished its
+	     * set amount of single steps, we need to "finish" it:
+	     */
+	    if (action->handler) 
+		action->handler(action,action->probe,probepoint,
+				MSG_SUCCESS,action->handler_data);
+
+	    __remove_action(target,probepoint,action);
+
+	    if (target_singlestep_end(target,tid))
+		verror("could not stop single stepping target"
+		       " after single stepped action!\n");
+
+	    /* Grab the next one before we destroy this one. */
+	    nextaction = __get_next_complex_action(probepoint,action);
+
+	    action_finish_handling(action);
+
+	    action = nextaction;
+
+	    if (!nextaction) {
+		tpc->tac.action = NULL;
+		tpc->tac.stepped = 0;
+	    }
+	}
+    }
+    /*
+     * If we have a current action, but don't need single steps, we
+     * don't want to do *anything* -- because we didn't initiate this
+     * single step!  In future, we could warn the user...
+     */
+    else if (tpc->tac.action) {
+	vwarn("unexpected single step!\n");
+	return 0;
+    }
+    else if (!tpc->tac.action) {
+	vdebug(5,LOG_P_ACTION,"no action being handled at ");
+	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
+	vdebugc(5,LOG_P_ACTION,"\n");
+	return 0;
+    }
+
+ nextaction:
+    if (nextaction) {
+	/*
+	 * Start this action up!
+	 */
+
+	/* Clean up state, then setup next action if there is one. */
+	tpc->action_orig_mem = NULL;
+	tpc->action_orig_mem_len = 0;
+
+	if (!nextaction->boosted) {
+	    /*
+	     * We need to grab the probepoint before we run this one!
+	     */
+	    if ((htpc = probepoint_hold(target,tthread,probepoint,tpc)) != tpc) {
+		if (probepoint_pause_handling(target,tthread,probepoint,
+					      THREAD_RESUMEAT_NA)) {
+		    verror("thread %"PRIiTID" hit nextaction when thread %"PRIiTID" already"
+			   " handling it; target does not support thread ctl!\n",
+			   tthread->tid,htpc->thread->tid);
+		    /*
+		     * There literally is nothing we can do -- we cannot
+		     * handle this breakpoint interrupt.
+		     */
+		    return -1;
+		}
+		else 
+		    return 0;
 	    }
 
-	    if (target_enable_hw_breakpoints(target) < 0) {
-		verror("could not enable hw breakpoints after failed"
-		       " sstep; proceeding anyway!\n");
+	    /*
+	     * If the action requires more than one single step, has
+	     * more than one instruction, and we're in the right BPMODE,
+	     * we have to pause all the other threads.
+	     */
+	    if (target->opts->bpmode == THREAD_BPMODE_STRICT
+		|| (target->opts->bpmode == THREAD_BPMODE_SEMI_STRICT
+		    && (action->steps > 1
+			|| (action->type == ACTION_CUSTOMCODE 
+			    && action->detail.code.instr_count > 1)))) {
+		if (target_pause(target)) {
+		    vwarn("could not pause the target for blocking thread"
+			  " %"PRIiTID"!\n",tthread->tid);
+		    return -1;
+		}
+		target->blocking_thread = tthread;
+	    }
+	    else {
+		if (target->blocking_thread == tthread)
+		    target->blocking_thread = NULL;
 	    }
 
-	    probepoint->action_needs_ssteps = 0;
-	    probepoint->state = PROBE_BP_SET;
+	    probepoint->state = PROBE_ACTION_RUNNING;
+	}
+	else {
+	    if (target->blocking_thread == tthread)
+		target->blocking_thread = NULL;
+	}
 
-	    /* Don't run post handlers on error! */
-	    target_resume(target);
+	__insert_action(target,tthread,probepoint,nextaction);
+
+	tpc->tac.action = nextaction;
+
+	tpc->action_obviated_orig |= nextaction->obviates;
+
+	action = nextaction;
+    }
+
+    /*
+     * Single step if the current action needs it.
+     */
+    if (tpc->tac.action && tpc->tac.action->steps) {
+	vdebug(4,LOG_P_PROBEPOINT,"single step for action at ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
+	int _isbp = 0;
+	if (!tpc->tac.action->boosted && !tpc->tac.stepped) 
+	    _isbp = 1;
+
+	if (probepoint->style == PROBEPOINT_HW
+	    && _isbp
+	    && !target->nodisablehwbponss) {
+	    /*
+	     * We need to disable the hw breakpoint before we single
+	     * step because the target can't do it.
+	     */
+	    target_disable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	    probepoint->debugregdisabled = 1;
+	}
+
+	if (target_singlestep(target,tid,_isbp) < 0) {
+	    verror("could not keep single stepping target!\n");
+
+	    if (probepoint->style == PROBEPOINT_HW
+		&& _isbp
+		&& !target->nodisablehwbponss) {
+		/*
+		 * Reenable the hw breakpoint we just disabled.
+		 */
+		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		probepoint->debugregdisabled = 0;
+	    }
+
+	    if (target_singlestep_end(target,tid))
+		verror("could not stop single stepping target"
+		       " after failed sstep!\n");
+
+	    /*
+	     * All we can really do is notify all the single step
+	     * actions that we had an error, and nuke them, and keep
+	     * going.
+	     */
+	    list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
+		if (tac->action->handler) 
+		    tac->action->handler(tac->action,tac->action->probe,
+					 action->probe->probepoint,
+					 MSG_FAILURE,tac->action->handler_data);
+
+		action_finish_handling(action);
+
+		list_del(&tac->tac);
+		free(tac);
+	    }
 
 	    return -1;
 	}
 	else {
-	    /* Next single step is in place, so let it keep going. */
+	    /* 
+	     * If single step init succeeded, let the ss handler take
+	     * over.
+	     *
+	     * Don't call target_resume after a successful target_singlestep.
+	     */
+	    vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for action at ");
+	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+
 	    return 0;
 	}
+
+	return 1;
     }
-
-    /*
-     * Run post-handlers
-     */
-    list_for_each_entry(probe,&probepoint->probes,probe) {
-	if (probe->enabled) {
-	    if (probe->post_handler) {
-		vdebug(4,LOG_P_PROBEPOINT,"running post handler at ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
-
-		rc = probe->post_handler(probe,probe->handler_data,probe);
-		if (rc == 1) 
-		    probe_disable(probe);
-		else if (rc == 2) 
-		    /* don't reinject the probe! */
-		    noreinject = 1;
-	    }
-	    else if (0 && probe->sinks) {
-		vdebug(4,LOG_P_PROBEPOINT,
-		       "running default probe sink pre_handler at ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
-
-		probe_do_sink_post_handlers(probe,NULL,probe);
-	    }
-	}
-    }
-    
-    /*
-     * We're done handling this breakpoint!  Leave single step; if SW
-     * probepoint, replace breakpoint; reenable hardware breakpoints.
-     */
-    if (target_singlestep_end(target))
-	verror("could not stop single stepping target; continuing anyway!\n");
-
-    target->sstep_probepoint = NULL;
-    array_list_remove(target->sstep_stack);
-    if (array_list_len(target->sstep_stack))
-	target->sstep_probepoint = (struct probepoint *)	\
-	    array_list_item(target->sstep_stack,
-			    array_list_len(target->sstep_stack) - 1);
-
-    if (!noreinject) {
-	if (probepoint->style == PROBEPOINT_SW) {
-	    /* Re-inject a breakpoint for the next round */
-	    if (target_write_addr(target,probepoint->addr,
-				  target->breakpoint_instrs_len,
-				  target->breakpoint_instrs,NULL)	\
-		!= target->breakpoint_instrs_len) {
-		verror("could not write breakpoint instrs for bp re-insert, disabling!\n");
-		probepoint->state = PROBE_DISABLED;
-		free(probepoint->breakpoint_orig_mem);
-	    }
-	    else 
-		probepoint->state = PROBE_BP_SET;
-	}
-	else 
-	    probepoint->state = PROBE_BP_SET;
-    }
-    else {
-	free(probepoint->breakpoint_orig_mem);
-	probepoint->breakpoint_orig_mem = NULL;
-	__probepoint_remove(probepoint);
-    }
-
-    /* cleanup oneshot actions! */
-    list_for_each_entry_safe(action,taction,&probepoint->actions,action) {
-	if (action->whence == ACTION_ONESHOT) {
-	    if (action->autofree)
-		action_destroy(action);
-	    else 
-		action_cancel(action);
-	}
-    }
-
-    /*
-     * Enable hw breakpoints since we're done single stepping...
-     */
-    if (target_enable_hw_breakpoints(target) < 0) {
-	verror("could not enable hw breakpoints after failed"
-	       " sstep; proceeding anyway!\n");
-    }
-
-    /*
-     * Just continue on...
-     */
-    target_resume(target);
-
-    return 0;
-}
-
-/*
- * Basically, we insert and remove action code as necessary.  We don't
- * do any single stepping.  If the action executing is done, we remove
- * its code, if any.  If there is another to execute, we do it,
- * inserting its code as necessary.
- *
- * Do we need to handle changing EIP as we execute code?  Probably
- * should just reset it to the probepoint addr (i.e., wherever we load
- * code!).
- */
-static int handle_actions(struct probepoint *probepoint) {
-    struct target *target = probepoint->target;
-    struct action *action;
-    REGVAL rval;
-    void *local_ret_instrs;
-    unsigned int local_ret_instrs_len;
-    unsigned int local_ret_instr_count;
-
-    /* Reset if we are executing actions for this BP right after hit. */
-    if (probepoint->state == PROBE_BP_SET) {
-	vdebug(3,LOG_P_ACTION,
-	       "resetting actions state after bp hit at ");
-	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	vdebugc(3,LOG_P_ACTION,"\n");
-
-	probepoint->action = NULL;
-	probepoint->action_obviates_orig = 0;
-	probepoint->action_needs_ssteps = 0;
-	probepoint->action_orig_mem = NULL;
-    }
-
-    /*
-     * If we need to keep stepping through this action, OR if it is
-     * done, but there are more actions to do... then do them right
-     * away!
-     */
-    if (probepoint->state == PROBE_ACTION_RUNNING) {
-	/* XXX: check later if other kinds are "done" */
-	if (!probepoint->action_needs_ssteps
-	    && probepoint->action_orig_mem) {
-	    /* Restore whatever was under the action code (i.e., the
-	     * breakpoint and anything else).
-	     */
-	    vdebug(3,LOG_P_ACTION,
-		   "action finished at ");
-	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	    vdebugc(3,LOG_P_ACTION,"; restoring code\n");
-
-	    if (target_write_addr(target,probepoint->addr,
-				  probepoint->action_orig_mem_len,
-				  probepoint->action_orig_mem,NULL) \
-		!= probepoint->action_orig_mem_len) {
-		verror("could not restore orignal under-action code, disabling probe!\n");
-		probepoint->state = PROBE_DISABLED;
-		free(probepoint->action_orig_mem);
-		probepoint->action_orig_mem = NULL;
-	    }
-	    else {
-		probepoint->state = PROBE_ACTION_DONE;
-	    }
-	}
-	else if (probepoint->action_needs_ssteps) {
-	    vdebug(3,LOG_P_ACTION,
-		   "action single step continues at ");
-	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	    vdebug(3,LOG_P_ACTION,"\n");
-	    return 1;
-	}
-    }
-
-    if (list_empty(&probepoint->actions)) {
-	vdebug(3,LOG_P_ACTION,
-	       "no actions to run at ");
-	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	vdebugc(3,LOG_P_ACTION,"\n");
-	return 0;
-    }
-
-    /*
-     * If there is a "current" action, we want to continue with the action
-     * after that. Otherwise we want to start with the first action on the
-     * list.
-     *
-     * XXX the "otherwise" case is why the first param of the list_entry
-     * is strange: we treat the header embedded in the probepoint struct
-     * as though it were embedded in an action struct so that when the
-     * list_blahblah_continue() operator takes the "next" element, it
-     * actually gets the first action on the probepoint list. This is a
-     * note to myself so that I don't try to "fix" this code again,
-     * thereby breaking it!
-     */
-    if (probepoint->action) 
-	action = probepoint->action;
-    else 
-	action = list_entry(&probepoint->actions,typeof(*action),action);
-    list_for_each_entry_continue(action,&probepoint->actions,action) {
-	if (!action->probe->enabled) {
-	    vdebug(3,LOG_P_ACTION,
-		   "skipping disabled probe at ");
-	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	    vdebugc(3,LOG_P_ACTION,"\n");
-	    continue;
-	}
-
-	if (action->type == ACTION_CUSTOMCODE) {
-	    /*
-	     * Need to:
-	     *  - copy code in
-	     *  - single step until we're to the IP of
-	     *    breakpoint+codelen, then restore orig code and BP;
-	     *  <OR>
-	     *  - restore breakpoint and just let code exec (no
-	     *    post handler or any other actions!)
-	     */
-	}
-	else if (action->type == ACTION_RETURN) {
-	    if (probepoint->action_obviates_orig) {
-		vwarn("WARNING: cannot run return action; something else"
-		      " already changed control flow!\n");
-		continue;
-	    }
-
-	    vdebug(3,LOG_P_ACTION,
-		   "starting return action at ");
-	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	    vdebugc(3,LOG_P_ACTION,"\n");
-
-	    /*
-	     * If we have executed a prologue: if the prologue contains
-	     * a save of the frame pointer (0x55), all we have to do is
-	     * set rsp to rbp, call leaveq, and call retq.
-	     * If the prologue does not contain a save of the frame
-	     * pointer, we have to track all modifications to rsp during
-	     * the prologue, undo them, and call leaveq, and retq.
-	     */
-	    if (action->detail.ret.prologue) {
-		if (action->detail.ret.prologue_uses_bp) {
-		    vdebug(3,LOG_P_ACTION,
-			   "setting ESP to EBP and returning (prologue uses EBP) at ");
-		    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-		    vdebugc(3,LOG_P_ACTION,"\n");
-
-		    errno = 0;
-		    rval = target_read_reg(target,target->fbregno);
-		    if (errno) {
-			verror("read EBP failed; disabling probepoint!\n");
-			probepoint->state = PROBE_DISABLED;
-			free(probepoint->action_orig_mem);
-			probepoint->action = NULL;
-			probepoint->action_orig_mem = NULL;
-			probepoint->action_needs_ssteps = 0;
-
-			return 0;
-		    }
-
-		    if (target_write_reg(target,target->spregno,rval)) {
-			verror("set ESP to EBP failed; disabling probepoint!\n");
-			probepoint->state = PROBE_DISABLED;
-			free(probepoint->action_orig_mem);
-			probepoint->action = NULL;
-			probepoint->action_orig_mem = NULL;
-			probepoint->action_needs_ssteps = 0;
-
-			return 0;
-		    }
-
-		    local_ret_instrs = target->full_ret_instrs;
-		    local_ret_instrs_len = target->full_ret_instrs_len;
-		    local_ret_instr_count = target->full_ret_instr_count;
-		}
-		else {
-		    vdebug(3,LOG_P_ACTION,
-			   "undoing prologue ESP changes (%d) and returning at ",
-			   action->detail.ret.prologue_sp_offset);
-		    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-		    vdebugc(3,LOG_P_ACTION,"\n");
-
-		    errno = 0;
-		    rval = target_read_reg(target,target->spregno);
-		    if (errno) {
-			verror("read ESP failed; disabling probepoint!\n");
-			probepoint->state = PROBE_DISABLED;
-			free(probepoint->action_orig_mem);
-			probepoint->action = NULL;
-			probepoint->action_orig_mem = NULL;
-			probepoint->action_needs_ssteps = 0;
-
-			return 0;
-		    }
-
-		    if (target_write_reg(target,target->spregno,
-					 rval + (REGVAL)-action->detail.ret.prologue_sp_offset)) {
-			verror("undoing prologue ESP changes failed; disabling probepoint!\n");
-			probepoint->state = PROBE_DISABLED;
-			free(probepoint->action_orig_mem);
-			probepoint->action = NULL;
-			probepoint->action_orig_mem = NULL;
-			probepoint->action_needs_ssteps = 0;
-
-			return 0;
-		    }
-
-		    local_ret_instrs = target->ret_instrs;
-		    local_ret_instrs_len = target->ret_instrs_len;
-		    local_ret_instr_count = target->ret_instr_count;
-		}
-	    }
-	    else {
-		local_ret_instrs = target->ret_instrs;
-		local_ret_instrs_len = target->ret_instrs_len;
-		local_ret_instr_count = target->ret_instr_count;
-	    }
-
-	    /*
-	     * Save the original code at the probepoint, and replace it
-	     * with the action code, and set EIP to the probepoint.
-	     */
-
-	    /*
-	     * If our prologue used a frame pointer, we have to do a
-	     * full return (LEAVE,RET).  Otherwise, just RET.
-	     */
-
-	    probepoint->action_orig_mem = malloc(local_ret_instrs_len);
-	    probepoint->action_orig_mem_len = local_ret_instrs_len;
-	    if (!target_read_addr(target,probepoint->addr,
-				  probepoint->action_orig_mem_len,
-				  probepoint->action_orig_mem,NULL)) {
-		verror("could not save original under-action code; disabling probepoint!\n");
-		probepoint->state = PROBE_DISABLED;
-		free(probepoint->action_orig_mem);
-		probepoint->action = NULL;
-		probepoint->action_orig_mem = NULL;
-		probepoint->action_needs_ssteps = 0;
-
-		return 0;
-	    }
-	    if (target_write_addr(target,probepoint->addr,
-				  local_ret_instrs_len,
-				  local_ret_instrs,NULL) \
-		!= probepoint->action_orig_mem_len) {
-		verror("could not insert action code; disabling probepoint!\n");
-		probepoint->state = PROBE_DISABLED;
-		free(probepoint->action_orig_mem);
-		probepoint->action = NULL;
-		probepoint->action_orig_mem = NULL;
-		probepoint->action_needs_ssteps = 0;
-
-		return 0;
-	    }
-	    if (target_write_reg(target,target->ipregno,probepoint->addr)) {
-		verror("could not reset EIP for action code; disabling probepoint!\n");
-		probepoint->state = PROBE_DISABLED;
-		free(probepoint->action_orig_mem);
-		probepoint->action = NULL;
-		probepoint->action_orig_mem = NULL;
-		probepoint->action_needs_ssteps = 0;
-
-		return 0;
-	    }
-
-	    vdebug(3,LOG_P_ACTION,"ret(0x%"PRIxREGVAL") inserted at ",
-		   action->detail.ret.retval);
-	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	    vdebugc(3,LOG_P_ACTION,"\n");
-
-	    /*
-	     * Break out of this loop, and don't do any more
-	     * actions.  This action is the final one.
-	     */
-	    probepoint->action_obviates_orig = 1;
-	    probepoint->action_needs_ssteps = local_ret_instr_count;
-	    probepoint->action = action;
-	    probepoint->state = PROBE_ACTION_RUNNING;
-
-	    return 1;
-	}
+    else if (tpc->tac.action) {
+	vdebug(4,LOG_P_PROBEPOINT,"NOT single stepping for action at ");
+	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(4,LOG_P_PROBEPOINT,"\n");
     }
 
     return 0;
@@ -2528,14 +3695,13 @@ static int handle_actions(struct probepoint *probepoint) {
  * Actions do not have priorities; they are executed in the order scheduled.
  */
 int action_sched(struct probe *probe,struct action *action,
-		 action_whence_t whence,int autofree) {
+		 action_whence_t whence,int autofree,
+		 action_handler_t handler,void *handler_data) {
     struct action *lpc;
     unsigned char *code;
     unsigned int code_len = 0;
     struct probepoint *probepoint;
     struct target *target;
-
-    action->autofree = autofree;
 
     if (action->probe != NULL) {
 	verror("action already associated with probe!\n");
@@ -2548,14 +3714,38 @@ int action_sched(struct probe *probe,struct action *action,
 	return -1;
     }
 
+    if (whence != ACTION_ONESHOT && whence != ACTION_REPEATPRE
+	&& whence != ACTION_REPEATPOST) {
+	verror("unknown whence %d for action\n",whence);
+	errno = EINVAL;
+	return -1;
+    }
+
     probepoint = probe->probepoint;
     target = probepoint->target;
 
+    /*
+     * If it's boosted, it's already set.
+     */
+    if (!action->boosted)
+	action->start_addr = probepoint->addr;
+
+    if (action->type == ACTION_REGMOD || action->type == ACTION_MEMMOD) {
+	list_add_tail(&action->action,&probe->probepoint->simple_actions);
+    }
+    /* right now you can always enable singlestep actions */
+    else if (action->type == ACTION_SINGLESTEP) {
+	list_add_tail(&action->action,&probe->probepoint->ss_actions);
+    }
     /* only allow one return action per probepoint */
-    if (action->type == ACTION_RETURN) {
-	list_for_each_entry(lpc,&probe->probepoint->actions,action) {
+    else if (action->type == ACTION_RETURN) {
+	list_for_each_entry(lpc,&probe->probepoint->complex_actions,action) {
 	    if (lpc->type == ACTION_RETURN) {
 		verror("probepoint already has return action\n");
+		return -1;
+	    }
+	    else if (lpc->type == ACTION_CUSTOMCODE) {
+		verror("probepoint already has customcode action\n");
 		return -1;
 	    }
 	}
@@ -2580,7 +3770,7 @@ int action_sched(struct probe *probe,struct action *action,
 		memset(code,0,code_len);
 
 		if (!target_read_addr(target,probepoint->symbol_addr,
-				      code_len,code,NULL)) {
+				      code_len,code)) {
 		    vwarn("could not read prologue code; skipping disasm!\n");
 		    free(code);
 		    code = NULL;
@@ -2608,35 +3798,160 @@ int action_sched(struct probe *probe,struct action *action,
 		}
 	    }
 	}
-    }
 
-    if (whence != ACTION_ONESHOT && whence != ACTION_REPEATPRE
-	&& whence != ACTION_REPEATPOST) {
-	verror("unknown whence %d for action\n",whence);
-	return -1;
+	/*
+	 * First check is redundant due to check in target_open, but
+	 * in case that goes away, it's here too.
+	 */
+	if (target->opts->bpmode == THREAD_BPMODE_STRICT && !target->threadctl) {
+	    verror("cannot do return on strict target without threadctl!\n");
+	    errno = ENOTSUP;
+	    return -1;
+	}
+	else if (action->detail.ret.prologue && action->detail.ret.prologue_uses_bp
+		 && !action->boosted
+		 && !target->threadctl
+		 && target->full_ret_instr_count > 1
+		 && target->opts->bpmode == THREAD_BPMODE_SEMI_STRICT) {
+	    verror("cannot do non-boosted, multi-instruction return"
+		   " on strict target without threadctl!\n");
+	    errno = ENOTSUP;
+	    return -1;
+	}
+
+	/*
+	 * We do not need to manually boost return instructions; if the
+	 * target supported it and had room, these are added to the
+	 * target when we attach.  BUT, return instructions ALWAYS must
+	 * be single stepped, because otherwise we don't know when we're
+	 * done returning (and thus can't call action handlers,
+	 * probepoint post handlers, garbage collect anything, etc).
+	 */
+
+	list_add_tail(&action->action,&probe->probepoint->complex_actions);
     }
-    action->whence = whence;
+    /* only allow one customcode action per probepoint */
+    else if (action->type == ACTION_CUSTOMCODE) {
+
+	/*
+	 * For now, we always boost custom code so that it doesn't
+	 * interfere with the handling of the probepoint.  So, we
+	 * assemble our code buf according to the flags, copy in the
+	 * user's code, and end the code frag with a special breakpoint
+	 * probepoint so that we know when we're done with the custom
+	 * code.
+	 *
+	 * We have to assemble the code buf before we ask the target for
+	 * space from its boostable memory (if there is any -- there
+	 * might not be, or might not be enough).
+	 */
+
+	list_for_each_entry(lpc,&probe->probepoint->complex_actions,action) {
+	    if (lpc->type == ACTION_RETURN) {
+		verror("probepoint already has return action\n");
+		return -1;
+	    }
+	    else if (lpc->type == ACTION_CUSTOMCODE) {
+		verror("probepoint already has customcode action\n");
+		return -1;
+	    }
+	}
+
+	/* XXX: this check should really let 1-instr actions go through */
+	if ((target->opts->bpmode == THREAD_BPMODE_STRICT 
+	     || target->opts->bpmode == THREAD_BPMODE_SEMI_STRICT)
+	    && !action->boosted
+	    && !target->threadctl) {
+	    verror("cannot do return on strict target without threadctl!\n");
+	    errno = ENOTSUP;
+	    return -1;
+	}
+
+	list_add_tail(&action->action,&probe->probepoint->complex_actions);
+    }
 
     /*
-     * Ok, we're safe; add to list!
+     * Ok, we're safe; memo-ize all the sched info into the action struct.
      */
-    list_add_tail(&action->action,&probe->probepoint->actions);
+    action->whence = whence;
+
+    action->autofree = autofree;
+    action->handler = handler;
+    action->handler_data = handler_data;
+
     action->probe = probe;
 
     return 0;
 }
 
 /*
+void __action_cancel_in_thread(struct target_thread *tthread,
+			       struct action *action) {
+    int i;
+    struct thread_probepoint_context *tpc;
+
+    if (!array_list_len(tthread->tpc_stack))
+	return;
+
+    for (i = 0; i < array_list_len(tthread->tpc_stack); ++i) {
+	tpc = (struct thread_probepoint_context *) \
+	    array_list_item(tthread->tpc_stack,i);
+
+	if (tpc->tac.action == action) {
+	    if (!action->isboosted) 
+		vwarn("canceling a non-boosted action running in"
+		      " thread %"PRIiTID"; badness!!!\n",tthread->tid);
+
+	    // We have to mark it as canceled
+	    tpc->tac.canceled = 1;
+	    tpc->tac.nextaction = \
+		__get_next_complex_action(action->probe->probepoint,action);
+
+	    action_release(action);
+	}
+    }
+
+    // XXX: but we still have the problem of what happens when an
+    //	   action still has code at the breakpoint
+}
+*/
+
+/*
  * Cancel an action.
  */
-void action_cancel(struct action *action) {
-    if (!action->probe)
-	return;
+int action_cancel(struct action *action) {
+    if (!action->probe) {
+	verror("cannot cancel action not associated with a probe!\n");
+	return 1;
+    }
+
+    /*
+     * XXX: this is bad, but correct.  We have to check all threads and
+     * make sure that this action is not the one they are currently
+     * executing; if so, we have to go mark the
+     * thread_probepoint_context that was holding it as deleted, and
+     * "release" the action manually.  I guess this means that actions
+     * don't really need refcnting...
+     */
+    /*
+    target = action->probe->probepoint->target;
+    
+
+    if (action->probe 
+	&& action->probe->probepoint
+	&& action->probe->probepoint->action == action) {
+	verror("cannot cancel a currently-running action!\n");
+	return 1;
+    }
+    */
+
+    action->handler = NULL;
+    action->handler_data = NULL;
 
     list_del(&action->action);
     action->probe = NULL;
 
-    return;
+    return 0;
 }
 
 /*
@@ -2645,18 +3960,19 @@ void action_cancel(struct action *action) {
 struct action *action_return(REGVAL retval) {
     struct action *action;
 
-    action = (struct action *)malloc(sizeof(struct action));
+    action = (struct action *)calloc(1,sizeof(struct action));
     if (!action) {
 	verror("could not malloc action: %s\n",strerror(errno));
 	return NULL;
     }
-    memset((void *)action,0,sizeof(*action));
 
     action->type = ACTION_RETURN;
     action->whence = ACTION_UNSCHED;
     INIT_LIST_HEAD(&action->action);
 
     action->detail.ret.retval = retval;
+
+    action->obviates = 1;
 
     return action;
 }
@@ -2665,34 +3981,138 @@ struct action *action_return(REGVAL retval) {
  * Low-level actions that require little ASM knowledge, and may or may
  * not be permitted.
  */
-struct action *action_code(void **code,uint32_t len,uint32_t flags) {
-    /* XXX: fill */
-    return NULL;
+struct action *action_singlestep(int nsteps) {
+    struct action *action;
+
+    if (nsteps == 0 || (nsteps < 0 && nsteps != SINGLESTEP_INFINITE 
+			           && nsteps != SINGLESTEP_NEXTBP)) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    action = (struct action *)calloc(1,sizeof(struct action));
+    if (!action) {
+	verror("could not malloc action: %s\n",strerror(errno));
+	return NULL;
+    }
+
+    action->type = ACTION_SINGLESTEP;
+    action->whence = ACTION_UNSCHED;
+    INIT_LIST_HEAD(&action->action);
+
+    action->steps = nsteps;
+
+    return action;
 }
+
+struct action *action_code(char *buf,uint32_t buflen,action_flag_t flags) {
+    struct action *action;
+
+    action = (struct action *)calloc(1,sizeof(struct action));
+    if (!action) {
+	verror("could not malloc action: %s\n",strerror(errno));
+	return NULL;
+    }
+
+    action->type = ACTION_CUSTOMCODE;
+    action->whence = ACTION_UNSCHED;
+    INIT_LIST_HEAD(&action->action);
+
+    action->detail.code.buf = malloc(buflen);
+    memcpy(action->detail.code.buf,buf,buflen);
+    action->detail.code.buflen = buflen;
+    action->detail.code.flags = flags;
+
+    return action;
+}
+
 struct action *action_regmod(REG regnum,REGVAL regval) {
-    /* XXX: fill */
-    return NULL;
+    struct action *action;
+
+    action = (struct action *)calloc(1,sizeof(struct action));
+    if (!action) {
+	verror("could not malloc action: %s\n",strerror(errno));
+	return NULL;
+    }
+
+    action->type = ACTION_REGMOD;
+    action->whence = ACTION_UNSCHED;
+    INIT_LIST_HEAD(&action->action);
+
+    action->detail.regmod.regnum = regnum;
+    action->detail.regmod.regval = regval;
+
+    return action;
 }
-struct action *action_memmod(ADDR destaddr,void *data,uint32_t len) {
-    /* XXX: fill */
-    return NULL;
+
+struct action *action_memmod(ADDR dest,char *data,uint32_t len) {
+    struct action *action;
+
+    action = (struct action *)calloc(1,sizeof(struct action));
+    if (!action) {
+	verror("could not malloc action: %s\n",strerror(errno));
+	return NULL;
+    }
+
+    action->type = ACTION_MEMMOD;
+    action->whence = ACTION_UNSCHED;
+    INIT_LIST_HEAD(&action->action);
+
+    action->detail.memmod.destaddr = dest;
+    action->detail.memmod.data = malloc(len);
+    memcpy(action->detail.memmod.data,data,len);
+    action->detail.memmod.len = len;
+
+    return action;
+}
+
+void action_hold(struct action *action) {
+    RHOLD(action);
+}
+
+REFCNT action_release(struct action *action) {
+    return RPUT(action,action);
+}
+
+static void action_finish_handling(struct action *action) {
+    /*
+     * If the action is oneshot, cancel it.
+     */
+    if (action->whence == ACTION_ONESHOT) {
+	//action_release(action);
+	action_cancel(action);
+
+	if (action->autofree)
+	    action_free(action,0);
+    }
 }
 
 /*
  * Destroy an action (and cancel it first if necessary!).
  */
-void action_destroy(struct action *action) {
-    unsigned int i;
+REFCNT action_free(struct action *action,int force) {
+    int retval = action->refcnt;
 
-    if (action->probe) 
-	action_cancel(action);
+    if (action->probe) {
+	if (action_cancel(action)) {
+	    verror("could not cancel action; cannot destroy!\n");
+	    return 1;
+	}
+    }
+
+    if (retval) {
+	if (!force) {
+	    vwarn("cannot free action (%d refs)!\n",retval);
+	    return retval;
+	}
+	else {
+	    verror("forced free action (%d refs)\n",retval);
+	}
+    }
 
     if (action->type == ACTION_CUSTOMCODE
-	&& action->detail.code.instrs) {
-	for (i = 0; i < action->detail.code.instrs_count; ++i) {
-	    free(action->detail.code.instrs[i]);
-	}
-	free(action->detail.code.instrs);
+	&& action->detail.code.buf) {
+	free(action->detail.code.buf);
     }
     else if (action->type == ACTION_MEMMOD
 	     && action->detail.memmod.len) {
@@ -2700,5 +4120,6 @@ void action_destroy(struct action *action) {
     }
 
     free(action);
-    return;
+
+    return retval;
 }

@@ -397,7 +397,7 @@ int pslist_load(struct target *target,struct value *value,void *data) {
     else
 	list_add_tail(&current->tasks,&((*head)->tasks));
 
-    current->self = value->addr;
+    current->self = value_addr(value);
 
     v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
     current->comm = strdup(v->buf);
@@ -504,14 +504,20 @@ int main(int argc,char **argv) {
     struct linux_task_struct *tj;
     unsigned int csize;
     unsigned int clen;
+    struct target_opts topts = {
+	.bpmode = THREAD_BPMODE_STRICT,
+    };
 
-    while ((ch = getopt(argc, argv, "m:dvsl:Po:UF:")) != -1) {
+    while ((ch = getopt(argc, argv, "m:dvsl:Po:UF:L")) != -1) {
 	switch (ch) {
 	case 'd':
 	    ++debug;
 	    break;
 	case 'm':
 	    domain = optarg;
+	    /* Xen does not support STRICT! */
+	    if (topts.bpmode == THREAD_BPMODE_STRICT)
+		++topts.bpmode;
 	    break;
 	case 's':
 	    style = PROBEPOINT_SW;
@@ -540,6 +546,13 @@ int main(int argc,char **argv) {
 	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
 	    free(optargc);
 	    exit(-1);
+	case 'L':
+	    ++topts.bpmode;
+	    if (topts.bpmode > THREAD_BPMODE_LOOSE) {
+		fprintf(stderr,"ERROR: bad bpmode!\n");
+		exit(-1);
+	    }
+	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -628,7 +641,7 @@ int main(int argc,char **argv) {
 	exit(-2);
     }
 
-    if (target_open(t)) {
+    if (target_open(t,&topts)) {
 	fprintf(stderr,"could not open domain %s!\n",domain);
 	exit(-4);
     }
@@ -640,7 +653,7 @@ int main(int argc,char **argv) {
 		fprintf(stderr,"ERROR: could not lookup %s!\n",argv[i]);
 	    }
 	    else {
-		v = target_load_symbol(t,bs,
+		v = target_load_symbol(t,TID_GLOBAL,bs,
 					LOAD_FLAG_AUTO_STRING
 					| LOAD_FLAG_AUTO_DEREF);
 		if (!v) {
@@ -806,7 +819,7 @@ int main(int argc,char **argv) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    printf("domain %s interrupted at 0x%" PRIxREGVAL "\n",domain,
-		   target_read_reg(t,t->ipregno));
+		   target_read_reg(t,TID_GLOBAL,t->ipregno));
 	    goto resume;
 
 

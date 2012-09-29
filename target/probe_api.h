@@ -19,30 +19,55 @@
 #ifndef __PROBE_API_H__
 #define __PROBE_API_H__
 
-/*
- *
- * probes and probepoints:
- *   types: hardware or software (flags should control whether it must
- *     have hw, or must have sw, or would like hw)
- *   breakpoitns and watchpoints
- *   should associate the "containing" symbol, if any, with teh address
- *   should be built on a mechanism for saving and replacing and
- *     restoring arbitrary memory chunks.
- */
+#include "common.h"
+
+/**
+ ** This file defines a probe API for active target debugging
+ ** (breakpoints, watchpoints).  You can probe on symbols if they are
+ ** available; or on target addresses.  You can schedule actions to
+ ** occur when probes are hit.  You can probe different threads,
+ ** depending on the thread support in your target's backend.
+ **/
 
 struct probepoint;
 struct probe;
 struct probeset;
 struct action;
 struct target;
+struct target_thread;
 struct memrange;
 struct lsymbol;
 struct bsymbol;
 
+/*
+ * Messages sent to handlers.
+ */
+typedef enum {
+    MSG_NONE          = 0,
+    MSG_SUCCESS       = 1,
+    MSG_FAILURE       = 2,
+    MSG_STEPPING      = 3,
+    MSG_STEPPING_AT_BP= 4,
+} handler_msg_t;
+
+/*
+ * The type of function to be used for probe pre- and post-handlers.
+ */
 typedef int (*probe_handler_t)(struct probe *probe,void *handler_data,
 			       struct probe *trigger);
+/*
+ * The type of function to be used for action handlers.
+ */
+typedef result_t (*action_handler_t)(struct action *action,struct probe *probe,
+				     struct probepoint *probepoint,
+				     handler_msg_t msg,void *handler_data);
 
+/*
+ * Each probe type must define this operations table.  The operations
+ * may be called at the appropriate times during the probe's lifecycle.
+ */
 struct probe_ops {
+    tid_t (*gettid)(struct probe *probe);
     /* Should return a unique type string. */
     const char *(*gettype)(struct probe *probe);
     /* Called after a probe has been freshly malloc'd and its base
@@ -69,20 +94,24 @@ struct probe_ops {
     int (*fini)(struct probe *probe);
 };
 
-#define PROBE_SAFE_OP(probe,op) (((probe)->ops && (probe)->ops->op) \
-                                 ? (probe)->ops->op((probe)) \
-                                 : 0)
-
-int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
-				struct probe *trigger);
-int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
-				struct probe *trigger);
-
+/*
+ * Is the probepoint a breakpoint or a watchpoint.
+ */
 typedef enum {
     PROBEPOINT_BREAK = 1,
     PROBEPOINT_WATCH,
 } probepoint_type_t;
 
+/*
+ * If when registering a probe, you want either a hardware or software
+ * probe specifically, use PROBEPOINT_HW or PROBEPOINT_SW.  If you want
+ * the fastest available *at time of registration*, use
+ * PROBEPOINT_FASTEST (if you do, the choice the library makes (HW or
+ * SW) at registration sticks with the probe forever, and never changes
+ * again.
+ *
+ * XXX: this is bad, of course.
+ */
 typedef enum {
     PROBEPOINT_HW = 1,
     PROBEPOINT_SW,
@@ -109,6 +138,7 @@ typedef enum {
     ACTION_REGMOD     = 1,
     ACTION_MEMMOD     = 2,
     ACTION_CUSTOMCODE = 3,
+    ACTION_SINGLESTEP = 4,
 } action_type_t;
 
 typedef enum {
@@ -118,10 +148,15 @@ typedef enum {
     ACTION_REPEATPOST = 3,
 } action_whence_t;
 
+/*
+ * Future flags for actions.
+ */
 typedef enum {
+    ACTION_FLAG_NONE    = 0,
     ACTION_FLAG_NOINT   = 1,
     ACTION_FLAG_SAVECTX = 2,
-    ACTION_FLAG_DOBREAKREPLACEATEND = 4,
+    ACTION_FLAG_CALL    = 4,
+    ACTION_FLAG_NORET   = 8, /* action does not return */
 } action_flag_t;
 
 /**
@@ -143,7 +178,7 @@ typedef enum {
  * later!  Or they can probe_unregister() it and probe_register*() it
  * later before probe_free()'ing it.
  */
-struct probe *probe_simple(struct target *target,char *name,
+struct probe *probe_simple(struct target *target,tid_t tid,char *name,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
 			   void *handler_data);
@@ -252,7 +287,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
  *
  * This is syntactic sugar, and may be too complicated to be useful.
  */
-struct probe *probe_create(struct target *target,struct probe_ops *pops,
+struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pops,
 			   const char *name,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
@@ -354,7 +389,8 @@ int probe_enable_all(struct probe *probe);
  */
 int probe_disable(struct probe *probe);
 
-int probe_register_batch(struct target *target,ADDR *addrlist,int count,
+int probe_register_batch(struct target *target,tid_t tid,
+			 ADDR *addrlist,int count,
 			 probepoint_type_t type,probepoint_style_t style,
 			 probepoint_whence_t whence,
 			 probepoint_watchsize_t watchsize,
@@ -469,12 +505,13 @@ probepoint_whence_t probe_whence(struct probe *probe);
  * the user cancels it, it will be freed.
  */
 int action_sched(struct probe *probe,struct action *action,
-		 action_whence_t whence,int autofree);
+		 action_whence_t whence,int autofree,
+		 action_handler_t handler,void *handler_data);
 
 /*
  * Cancel an action.
  */
-void action_cancel(struct action *action);
+int action_cancel(struct action *action);
 
 /*
  * High-level actions that require little ASM knowledge.
@@ -485,13 +522,39 @@ struct action *action_return(REGVAL retval);
  * Low-level actions that require little ASM knowledge, and may or may
  * not be permitted.
  */
-struct action *action_code(void **code,uint32_t len,uint32_t flags);
 struct action *action_regmod(REG regnum,REGVAL regval);
-struct action *action_memmod(ADDR destaddr,void *data,uint32_t len);
+struct action *action_memmod(ADDR destaddr,char *data,uint32_t len);
+
+#define SINGLESTEP_INFINITE -1
+#define SINGLESTEP_NEXTBP   -2
+
+/*
+ * Single steps @nsteps unless canceled first.  If @nsteps is -1, it
+ * single steps until canceled.
+ */
+struct action *action_singlestep(int nsteps);
+/*
+ * XXX: this is not yet implemented!
+ *
+ * Writes the @code into a scratch buf.  How this works: (we must have a
+ * scratch text segment) we singlestep a JMP to the scratch buf.  The
+ * scratch buf has a little prefix that disables interrupts if
+ * requested; CALLs the user code; and the postfix reenables interrupts
+ * if necessary and triggers an int 0x3 to let the debugger know that
+ * the custom code is done and can be garbage collected.
+ *
+ * This does not help if an NMI fires; we would have to override the NMI
+ * handler to maintain control, which we don't care enough to do.
+ */
+struct action *action_code(char *buf,uint32_t len,uint32_t flags);
 
 /*
  * Destroy an action (and cancel it first if necessary!).
  */
-void action_destroy(struct action *action);
+REFCNT action_free(struct action *action,int force);
+
+
+void action_hold(struct action *action);
+REFCNT action_release(struct action *action);
 
 #endif /* __PROBE_API_H__ */
