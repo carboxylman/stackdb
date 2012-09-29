@@ -385,7 +385,7 @@ struct clf_range_data *clrange_find_loosest(clrange_t *clf,Word_t index,
 	       CLRANGE_START(crd),CLRANGE_END(crd),contains);
     }
     else {
-	verror("did not find a tightest range for 0x%lx even though we should have!\n");
+	verror("did not find a tightest range for 0x%lx even though we should have!\n",index);
 	return NULL;
     }
     if (contains && crd->containing_range) {
@@ -402,13 +402,11 @@ struct clf_range_data *clrange_find_loosest(clrange_t *clf,Word_t index,
 
 struct clf_range_data *clrange_find_next_loosest(clrange_t *clf,Word_t index,
 						 struct array_list **al_saveptr) {
-    PWord_t pv;
     struct array_list *alist;
     Word_t idx;
     struct array_list *prev_alist = NULL;
     struct clf_range_data *prev_crd = NULL;
     struct clf_range_data *crd;
-    int i;
     int contains;
 
     if (!clf || !*clf)
@@ -492,7 +490,6 @@ struct array_list *clrange_find_next_exc(clrange_t *clf,Word_t index) {
 struct array_list *clrange_find_subranges_inside(clrange_t *clf,
 						 Word_t index,
 						 unsigned int len) {
-    PWord_t pv;
     struct array_list *retval = NULL;
     struct array_list *alist;
     Word_t idx_end = index + len;
@@ -559,7 +556,7 @@ void clrange_free(clmatch_t clf) {
     PWord_t pv;
     int rci;
     Word_t index;
-    Word_t bytes_freed;
+    int bytes_freed;
 
     if (!clf)
 	return;
@@ -571,10 +568,14 @@ void clrange_free(clmatch_t clf) {
 	if (pv == NULL)
 	    break;
 	array_list_deep_free((struct array_list *)*pv);
-	*pv = NULL;
+	*pv = (Word_t)NULL;
 	JLD(rci,clf,index);
     }
 
+    /*
+     * Man page says bytes_freed should be Word_t (unsigned), but
+     * compiler disagrees!
+     */
     JLFA(bytes_freed,clf);
 }
 
@@ -643,7 +644,7 @@ void clmatch_free(clmatch_t clf) {
     PWord_t pv;
     int rci;
     Word_t index;
-    Word_t bytes_freed;
+    int bytes_freed;
 
     if (!clf)
 	return;
@@ -655,9 +656,13 @@ void clmatch_free(clmatch_t clf) {
 	if (pv == NULL)
 	    break;
 	array_list_free((struct array_list *)*pv);
-	*pv = NULL;
+	*pv = (Word_t)NULL;
 	JLD(rci,clf,index);
     }
 
+    /*
+     * Man page says bytes_freed should be Word_t (unsigned), but
+     * compiler disagrees!
+     */
     JLFA(bytes_freed,clf);
 }
