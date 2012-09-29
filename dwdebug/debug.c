@@ -508,7 +508,7 @@ static struct lsymbol *__symbol_lookup_sym(struct symbol *symbol,
     if (lname)
 	free(lname);
     if (lsymbol)
-	lsymbol_release(lsymbol);
+	lsymbol_free(lsymbol,0);
 
     return NULL;
 }
