@@ -190,7 +190,7 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     probepoint->state = PROBE_DISABLED;
 
     probepoint->type = type;
-    probepoint->style = style;
+    probepoint->style = probepoint->orig_style = style;
     probepoint->whence = whence;
     probepoint->watchsize = watchsize;
 
@@ -413,7 +413,20 @@ static int __probepoint_remove(struct probepoint *probepoint) {
     probepoint->state = PROBE_DISABLED;
 
     vdebug(2,LOG_P_PROBEPOINT,"removed ");
-    LOGDUMPPROBEPOINT_NL(2,LOG_P_PROBEPOINT,probepoint);
+    LOGDUMPPROBEPOINT(2,LOG_P_PROBEPOINT,probepoint);
+    /*
+     * This is just in case it was registered with PROBEPOINT_FASTEST;
+     * we need to make sure if it gets re-registered that we make the
+     * choice of FASTEST again at that time.
+     */
+    if (probepoint->style != probepoint->orig_style) {
+	vdebug(2,LOG_P_PROBEPOINT,"removed (style was %d; now %d)",
+	       probepoint->style,probepoint->orig_style);
+
+	probepoint->style = probepoint->orig_style;
+    }
+    else
+	vdebug(2,LOG_P_PROBEPOINT,"\n");
 
     return 0;
 }

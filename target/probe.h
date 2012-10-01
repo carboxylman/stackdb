@@ -189,6 +189,13 @@ struct probepoint {
 
     probepoint_type_t type;
     probepoint_style_t style;
+    /*
+     * If the user registered the probepoint with PROBEPOINT_FASTEST, we
+     * need to save the original style so if it is
+     * unregistered/re-registered, we can still make the FASTEST choice,
+     * instead of sticking with what we got at last registration.
+     */
+    probepoint_style_t orig_style;
     probepoint_whence_t whence;
     probepoint_watchsize_t watchsize;
 
