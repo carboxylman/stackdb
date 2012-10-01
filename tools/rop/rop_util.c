@@ -157,7 +157,7 @@ int probe_rop_checkret_entry_pre(struct probe *probe,void *data,
      * single stepped through the exit probe's original instruction.
      */
     if (rop_data->type == GADGET_TYPE_MID_MID) 
-	probe_hard_insert(rop_data->ret_probe);
+	probe_hard_enable(rop_data->ret_probe);
 
     return rop_probe->pre_handler(rop_data->rop_probe,
 				  rop_data->rop_probe->handler_data,trigger);
@@ -395,7 +395,7 @@ int probe_rop_checkret_cont_pre(struct probe *probe,void *data,
     /* Have to hot-remove the probe inside this instruction before we
      * execute it!
      */
-    probe_hard_remove(rop_data->entry_probe);
+    probe_hard_disable(rop_data->entry_probe,0);
 
     return 0;
 }
@@ -407,7 +407,7 @@ int probe_rop_checkret_cont_post(struct probe *probe,void *data,
     /* Have to hot-insert the probe back into the instruction so it is
      * ready for the next iteration.
      */
-    probe_hard_insert(rop_data->entry_probe);
+    probe_hard_enable(rop_data->entry_probe);
 
     return 0;
 }
@@ -601,7 +601,7 @@ struct probe *probe_rop_checkret(struct target *target,tid_t tid,
 	 * in its post handler.
 	 */
 	if (rop_data->type == GADGET_TYPE_MID_MID) 
-	    probe_hard_remove(rop_data->ret_probe);
+	    probe_hard_disable(rop_data->ret_probe,0);
     }
 
     return rop_probe;

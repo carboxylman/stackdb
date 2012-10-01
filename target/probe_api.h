@@ -366,15 +366,23 @@ int probe_unregister_source_one(struct probe *sink,struct probe *src,
 				int force);
 
 /*
+ * For the following functions: when a probe is disabled, its handlers
+ * will not be invoked.  When a probe is hard disabled, its underlying
+ * sources/probepoints are all disabled/removed.
+ */
+
+/*
  * Hard enable/disable (i.e., remove the underlying probepoint).  This
  * only works for probes that are directly attached to an address --
  * i.e., not a sink probe attached to a source.
  *
  * The idea is that sometimes a higher-level probe library might want to
- * temporarily insert/delete probes.
+ * temporarily insert/delete probes.  Of course, since we allow probes
+ * to be shared, we have to be careful about who can call
+ * probe_hard_disable with @force set!
  */
-int probe_hard_remove(struct probe *probe);
-int probe_hard_insert(struct probe *probe);
+int probe_hard_disable(struct probe *probe,int force);
+int probe_hard_enable(struct probe *probe);
 
 /*
  * Enable this probe, and all its sources (all the way to the base

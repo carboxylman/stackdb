@@ -325,20 +325,20 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 
     target = probepoint->target;
 
-    vdebug(5,LOG_P_PROBEPOINT,"removing ");
-    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
-
     /* Check if the probepoint has already been inserted; we do not want
      * to backup a previously inserted breakpoint.
      */
     if (probepoint->state == PROBE_DISABLED) {
 	/* return success, the probepoint is already removed */
-	vdebug(7,LOG_P_PROBEPOINT,"");
+	vdebug(11,LOG_P_PROBEPOINT,"");
 	LOGDUMPPROBEPOINT(7,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(7,LOG_P_PROBEPOINT," already disabled\n");
+	vdebugc(11,LOG_P_PROBEPOINT," already disabled\n");
 
         return 0;
     }
+
+    vdebug(5,LOG_P_PROBEPOINT,"removing ");
+    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
     /*
      * If the style is software, and it's a watchpoint, forget it; we
@@ -441,20 +441,20 @@ static int __probepoint_insert(struct probepoint *probepoint,
     target = probepoint->target;
     tid = tthread->tid;
 
-    vdebug(5,LOG_P_PROBEPOINT,"inserting ");
-    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
-
     /* Check if the probepoint has already been inserted; we do not want
      * to backup a previously inserted breakpoint.
      */
     if (probepoint->state != PROBE_DISABLED) {
 	/* return success, the probepoint is already being managed */
-	vdebug(9,LOG_P_PROBEPOINT,"");
+	vdebug(11,LOG_P_PROBEPOINT,"");
 	LOGDUMPPROBEPOINT(9,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(9,LOG_P_PROBEPOINT," already inserted\n");
+	vdebugc(11,LOG_P_PROBEPOINT," already inserted\n");
 
         return 0;
     }
+
+    vdebug(5,LOG_P_PROBEPOINT,"inserting ");
+    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
     probepoint->state = PROBE_INSERTING;
 
@@ -716,22 +716,78 @@ void probe_rename(struct probe *probe,const char *name) {
 
 }
 
-int probe_hard_remove(struct probe *probe) {
-    if (!probe->probepoint) {
-	errno = EINVAL;
-	return -1;
+int probe_hard_disable(struct probe *probe,int force) {
+    struct probe *ptmp;
+    GList *list;
+    GList *list2;
+    int anyenabled = 0;
+    int rc = 0;
+
+    list = probe->sources;
+    while (list) {
+	ptmp = (struct probe *)list->data;
+
+	/* Disable recursively *if* the source doesn't have any
+	 * enabled sinks.
+	 */
+	if (probe_enabled(ptmp)) {
+	    list2 = ptmp->sinks;
+	    anyenabled = 0;
+	    while (list2) {
+		if (((struct probe *)(list->data))->enabled) {
+		    ++anyenabled;
+		}
+		list2 = g_list_next(list2);
+	    }
+	    if (!anyenabled || force) {
+		if (force) {
+		    vdebug(3,LOG_P_PROBE,"forcibly hard disabling source probe");
+		    LOGDUMPPROBE(3,LOG_P_PROBE,ptmp);
+		    vdebug(3,LOG_P_PROBE," although it has enabled sink!\n");
+		}
+		rc += probe_hard_disable(ptmp,force);
+	    }
+	    else if (anyenabled) {
+		vdebug(3,LOG_P_PROBE,"not forcibly hard disabling source probe");
+		LOGDUMPPROBE(3,LOG_P_PROBE,ptmp);
+		vdebug(3,LOG_P_PROBE," because it has enabled sink(s)!\n");
+		++rc;
+	    }
+	    list = g_list_next(list);
+	}
     }
 
-    return __probepoint_remove(probe->probepoint);
+    if (probe_is_base(probe) && __probepoint_remove(probe->probepoint)) {
+	verror("failed to remove probepoint under probe (%d)\n!",force);
+	++rc;
+    }
+
+    return rc;
 }
 
-int probe_hard_insert(struct probe *probe) {
-    if (!probe->probepoint) {
-	errno = EINVAL;
-	return -1;
+int probe_hard_enable(struct probe *probe) {
+    struct probe *ptmp;
+    GList *list;
+    int rc = 0;
+
+    /* Do it for all the sources. */
+    list = probe->sources;
+    while (list) {
+	ptmp = (struct probe *)list->data;
+
+	rc += probe_hard_enable(ptmp);
+
+	list = g_list_next(list);
     }
 
-    return __probepoint_insert(probe->probepoint,probe->thread);
+    /* If we have a probepoint directly underneath, do it. */
+    if (probe_is_base(probe) 
+	&& __probepoint_insert(probe->probepoint,probe->thread)) {
+	verror("failed to insert probepoint under probe\n!");
+	++rc;
+    }
+
+    return rc;
 }
 
 static int __probe_unregister(struct probe *probe,int force,int onlyone) {
