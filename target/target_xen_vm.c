@@ -2177,8 +2177,7 @@ static int xen_vm_flush_all_threads(struct target *target) {
 	    ++retval;
 	}
     }
-
-    if (target->current_thread != target->global_thread) {
+    else if (target->current_thread == target->global_thread) {
 	rc = xen_vm_flush_global_thread(target);
 	if (rc) {
 	    verror("could not flush global thread %"PRIiTID"\n",
