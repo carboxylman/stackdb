@@ -54,6 +54,7 @@ int value_set_child(struct value *value,struct value *parent_value,ADDR addr) {
     value->parent_value = parent_value;
     value->buf = parent_value->buf + (addr - parent_value->res.addr);
     value->res.addr = addr;
+    value->range = parent_value->range;
     value->region_stamp = value->range->region->stamp;
     value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
 				     CREG_IP);
