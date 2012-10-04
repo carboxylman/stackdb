@@ -93,7 +93,7 @@ char *location_load(struct target *target,tid_t tid,struct memregion *region,
     }
     else {
         final_location = location_resolve(target,tid,region,location,symbol_chain,
-					  &range);
+					  NULL,addr_saveptr,&range);
 
         if (errno)
             return NULL;
@@ -200,11 +200,13 @@ struct location *location_resolve_loclist(struct target *target,tid_t tid,
  * memory addresses.
  */
 
-ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
+int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 		      struct location *location,
 		      struct array_list *symbol_chain,
+		      REG *reg_saveptr,ADDR *addr_saveptr,
 		      struct memrange **range_saveptr) {
     REGVAL regval;
+    int rc;
     int i;
     ADDR eip;
     ADDR frame_base;
@@ -218,62 +220,69 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
     struct location *fbloc = NULL;
     struct array_list *tmp_symbol_chain = NULL;
     struct memrange *range;
+    REG frame_base_reg;
 
     switch (location->loctype) {
     case LOCTYPE_UNKNOWN:
 	vwarn("cannot resolve LOCTYPE_UNKNOWN; invalid!\n");
 	errno = EINVAL;
-	return 0;
+	return -1;
     case LOCTYPE_REG:
-	vwarn("cannot resolve LOCTYPE_REG; invalid!\n");
-	errno = EADDRNOTAVAIL;
-	return 0;
+	if (reg_saveptr)
+	    *reg_saveptr = location->l.reg;
+	return 2;
     case LOCTYPE_ADDR:
 	errno = 0;
 	range = memregion_find_range_obj(region,location->l.addr);
 	/* The address should be in this region; it cannot change. */
 	if (range_saveptr)
 	    *range_saveptr = range;
-	return memrange_relocate(range,location->l.addr);
+	if (addr_saveptr)
+	    *addr_saveptr = memrange_relocate(range,location->l.addr);
+	return 1;
     case LOCTYPE_REALADDR:
 	errno = 0;
 	range = memregion_find_range_real(region,location->l.addr);
 	/* The address should be in this region; it cannot change. */
 	if (range_saveptr)
 	    *range_saveptr = range;
-	return location->l.addr;
+	if (addr_saveptr)
+	    *addr_saveptr = location->l.addr;
+	return 1;
     case LOCTYPE_REG_ADDR:
 	/* load the register value */
 	if (!target) {
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 	regval = target_read_reg(target,tid,location->l.reg);
 	if (errno)
-	    return 0;
-	errno = 0;
+	    return -1;
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
 	    target_find_memory_real(target,regval,NULL,NULL,range_saveptr);
-	return regval;
+	if (addr_saveptr)
+	    *addr_saveptr = regval;
+	return 1;
     case LOCTYPE_REG_OFFSET:
 	if (!target) {
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 	regval = target_read_reg(target,tid,location->l.regoffset.reg);
 	if (errno)
-	    return 0;
-	errno = 0;
+	    return -1;
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
 	    target_find_memory_real(target,location->l.regoffset.offset + regval,
 				   NULL,NULL,range_saveptr);
-	return (ADDR)(location->l.regoffset.offset + regval);
+	if (addr_saveptr)
+	    *addr_saveptr = (ADDR)(location->l.regoffset.offset + regval);
+	return 1;
     case LOCTYPE_FBREG_OFFSET:
 	if (!target) {
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 	/*
 	 * We must have a symbol_chain so we can figure out the value of
@@ -285,7 +294,7 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	if (!symbol_chain) {
 	    verror("FBREG_OFFSET, but no symbol chain!\n");
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 
 	chlen = array_list_len(symbol_chain);
@@ -307,7 +316,7 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	if (!fblist && !fbloc) {
 	    verror("FBREG_OFFSET, but no fblist or fbloc to calc frame base (%d)!\n",chlen);
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 
 	/* If we have an fblist, we load EIP, scan the location list
@@ -317,8 +326,7 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	if (fblist) {
 	    eip = target_read_reg(target,tid,target->ipregno);
 	    if (errno)
-		return 0;
-	    errno = 0;
+		return -1;
 	    vdebug(5,LOG_T_LOC,"eip = 0x%" PRIxADDR "\n",eip);
 
 	    /*
@@ -331,7 +339,7 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 		verror("FBREG_OFFSET eip not in region %s!!\n",
 		       region->name);
 		errno = EINVAL;
-		return 0;
+		return -1;
 	    }
 	    ADDR obj_eip = memrange_unrelocate(range,(ADDR)eip);
 
@@ -346,12 +354,12 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    if (i == fblist->len) {
 		verror("FBREG_OFFSET location not currently valid!\n");
 		errno = EINVAL;
-		return 0;
+		return -1;
 	    }
 	    else if (!fblist->list[i]->loc) {
 		verror("FBREG_OFFSET frame base in loclist does not have a location description!\n");
 		errno = EINVAL;
-		return 0;
+		return -1;
 	    }
 	}
 	else if (fbloc) {
@@ -360,26 +368,33 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	else {
 	    verror("FBREG_OFFSET, but no frame base loclist/loc!\n");
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 
 	/* now resolve the frame base value */
-	if (final_fb_loc && final_fb_loc->loctype == LOCTYPE_REG) {
+	frame_base = 0;
+	frame_base_reg = 0;
+	rc = location_resolve(target,tid,region,final_fb_loc,
+			      NULL,&frame_base_reg,&frame_base,NULL);
+	if (rc == 2) {
 	    /* just read the register directly */
-	    frame_base = target_read_reg(target,tid,final_fb_loc->l.reg);
+	    frame_base = target_read_reg(target,tid,frame_base_reg);
 	    if (errno) {
-		verror("FBREG_OFFSET frame base location description resolution failed when reading reg directly: %s\n",strerror(errno));
+		verror("FBREG_OFFSET frame base location description"
+		       " resolution failed when reading reg directly: %s\n",
+		       strerror(errno));
 		errno = EINVAL;
-		return 0;
+		return -1;
 	    }
 	}
+	else if (rc == 1) {
+	    /* address already in frame_base */
+	}
 	else {
-	    frame_base = location_resolve(target,tid,region,final_fb_loc,NULL,NULL);
-	    if (errno) {
-		verror("FBREG_OFFSET frame base location description recursive resolution failed: %s\n",strerror(errno));
-		errno = EINVAL;
-		return 0;
-	    }
+	    verror("FBREG_OFFSET frame base location description recursive"
+		   " resolution failed: %s\n",strerror(errno));
+	    errno = EINVAL;
+	    return -1;
 	}
 
 	vdebug(5,LOG_T_LOC,"frame_base = 0x%" PRIxADDR "\n",frame_base);
@@ -391,24 +406,27 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 				   (ADDR)(frame_base + (ADDR)location->l.fboffset),
 				   NULL,NULL,range_saveptr);
 
-	return (ADDR)(frame_base + (ADDR)location->l.fboffset);
-	//return (ADDR)(frame_base - (ADDR)location->l.fboffset);
+	if (addr_saveptr)
+	    *addr_saveptr = (ADDR)(frame_base + (ADDR)location->l.fboffset);
+
+	return 1;
     case LOCTYPE_LOCLIST:
 	/* XXX: reuse fbloc to save a stack word */
 	if (!(fbloc = location_resolve_loclist(target,tid,region,location)))
-	    return 0;
+	    return -1;
 
 	return location_resolve(target,tid,region,fbloc,
 				/* XXX: is this correct, or should we
 				 * pass NULL?
 				 */
 				symbol_chain,
+				reg_saveptr,addr_saveptr,
 				range_saveptr);
     case LOCTYPE_MEMBER_OFFSET:
 	totaloffset = location_resolve_offset(location,symbol_chain,
 					      &top_enclosing_symbol,&i);
 	if (errno)
-	    return 0;
+	    return -1;
 
 	chlen = array_list_len(symbol_chain);
 	symbol = array_list_item(symbol_chain,chlen - 1);
@@ -417,7 +435,7 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    verror("could not find top enclosing symbol for MEMBER_OFFSET for symbol %s!\n",
 		   symbol_get_name(symbol));
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 
 	/*
@@ -432,15 +450,20 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 		array_list_item_set(tmp_symbol_chain,i,
 				    array_list_item(symbol_chain,i));
 	}
-	top_addr = location_resolve(target,tid,region,&top_enclosing_symbol->s.ii->l,
-				    tmp_symbol_chain,NULL);
+	rc = location_resolve(target,tid,region,&top_enclosing_symbol->s.ii->l,
+			      tmp_symbol_chain,NULL,&top_addr,NULL);
 	if (tmp_symbol_chain)
 	    array_list_free(tmp_symbol_chain);
-	if (errno) {
+	if (rc == 2) {
+	    verror("MEMBER_OFFSET value in register???\n");
+	    errno = EINVAL;
+	    return -1;
+	}
+	else if (rc < 0) {
 	    verror("could not resolve location for top S/U for MEMBER_OFFSET: %s\n",
 		   strerror(errno));
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 
 	/* The region/range may have changed; find the new range! */
@@ -448,16 +471,19 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    target_find_memory_real(target,top_addr + totaloffset,
 				   NULL,NULL,range_saveptr);
 
-	return top_addr + totaloffset;
+	if (addr_saveptr) 
+	    *addr_saveptr = top_addr + totaloffset;
+
+	return 1;
     case LOCTYPE_RUNTIME:
 	if (!target) {
 	    errno = EINVAL;
-	    return 0;
+	    return -1;
 	}
 	vwarn("currently unsupported location type %s\n",
 	      LOCTYPE(location->loctype));
-	errno = EINVAL;
-	return 0;
+	errno = ENOTSUP;
+	return -1;
     default:
 	vwarn("unknown location type %d\n",location->loctype);
 	errno = EINVAL;
@@ -465,7 +491,7 @@ ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
     }
 
     /* never reached */
-    return 0;
+    return -1;
 }
 
 int location_resolve_lsymbol_base(struct target *target,tid_t tid,
@@ -530,12 +556,10 @@ int location_resolve_lsymbol_base(struct target *target,tid_t tid,
 	}
     }
     else if (SYMBOL_IS_FULL_VAR(symbol)) {
-	obj_addr = location_resolve(target,tid,region,
-				    &lsymbol->symbol->s.ii->l,
-				    lsymbol->chain,range_saveptr);
-	if (!obj_addr && errno) {
-	    verror("could not resolve location for %s!\n",
-		   lsymbol->symbol->name);
+	if (location_resolve(target,tid,region,&lsymbol->symbol->s.ii->l,
+			     lsymbol->chain,NULL,&obj_addr,range_saveptr) < 0) {
+	    verror("could not resolve location for %s: %s!\n",
+		   lsymbol->symbol->name,strerror(errno));
 	    return -1;
 	}
     }

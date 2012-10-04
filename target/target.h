@@ -209,18 +209,24 @@ REFCNT bsymbol_free(struct bsymbol *bsymbol,int force);
  ** Location resolution.
  **/
 /*
- * Resolves @location to an address.  If necessary, uses @symbol_chain
+ * Resolves @location to an address or register.  If necessary, uses @symbol_chain
  * to do the resolution (i.e., sometimes local vars need a virtual
  * frame base register value that is computed by looking up the
  * containing symbol hierarchy).
  *
+ * If the location resolves to an address, we return 1 and set
+ * @addr_saveptr and @range_saveptr if they are not NULL.
+ *
  * If you pass a location that would "resolve" to a register, not a
- * memory address, we return 0 and set errno EADDRNOTAVAIL.  On other
- * errors, we return 0 with errno set appropriately.
+ * memory address, we return 2 and set @reg_saveptr if it is not NULL.
+ *
+ *we return 0 and set errno EADDRNOTAVAIL.  On other
+ * errors, we return nonzero with errno set appropriately.
  */
-ADDR location_resolve(struct target *target,tid_t tid,struct memregion *region,
+int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 		      struct location *location,
 		      struct array_list *symbol_chain,
+		      REG *reg_saveptr,ADDR *addr_saveptr,
 		      struct memrange **range_saveptr);
 struct location *location_resolve_loclist(struct target *target,tid_t tid,
 					  struct memregion *region,

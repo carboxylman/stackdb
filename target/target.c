@@ -454,6 +454,8 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
     load_flags_t tflags = flags | LOAD_FLAG_AUTO_DEREF;
     struct array_list *tchain = NULL;
     struct symbol *tdatatype;
+    REG reg;
+    int in_reg;
 
     symbol_chain = lsymbol->chain;
     alen = array_list_len(symbol_chain);
@@ -511,6 +513,7 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
      * not a pointer, we return the computed address of the last var.
      */
     while (1) {
+	in_reg = 0;
 	symbol = (struct symbol *)array_list_item(symbol_chain,i);
 	++i;
 	tchain->len = i;
@@ -535,7 +538,7 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 
 	    if (SYMBOL_IST_PTR(tdatatype)) {
 		datatype = tdatatype;
-		goto do_pointer;
+		goto check_pointer;
 	    }
 	    else if (SYMBOL_IST_STUN(tdatatype))
 		continue;
@@ -577,37 +580,57 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 	 * the info in the symbol.
 	 */
 	else {
-	    if (LOCATION_IN_REG(&symbol->s.ii->l)) {
-		/* If this var is in a register, and it's the last
-		 * symbol on the chain, we can't provide an address for
-		 * it!
-		 *
-		 * Actually, this situation can never happen; we could
-		 * never give an address for a member of a struct inside
-		 * a register; and if the value inside the register is a
-		 * pointer, location_resolve handles that case for us.
-		 *
-		 * So, this should never happen.
-		 *
-		 * Well, it will happen when we're loading function.local
+	    rc = location_resolve(target,tid,current_region,&symbol->s.ii->l,
+				  tchain,&reg,&retval,&current_range);
+	    if (rc == 2) {
+		/* Try to load some value from a register; might or
+		 * might not be an address; only is if the current
+		 * symbol was a pointer; we handle that below.  There's
+		 * a termination condition below this loop that if we
+		 * end after having resolved the location to a register,
+		 * we can't calculate the address for it.
 		 */
-		if (1 || i == alen) {
-		    errno = EADDRNOTAVAIL;
+		in_reg = 1;
+		if (SYMBOL_IST_PTR(datatype)) {
+		    retval = target_read_reg(target,tid,reg);
+		    if (errno) {
+			verror("could not read reg %"PRIiREG" that ptr symbol %s"
+			       " resolved to: %s!\n",
+			       reg,symbol->name,strerror(errno));
+			goto errout;
+		    }
+
+		    /* We might have changed ranges... */
+		    target_find_memory_real(target,retval,NULL,NULL,
+					    &current_range);
+		    current_region = current_range->region;
+		    vdebug(5,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),retval);
+
+		    /* We have to skip one pointer type */
+		    datatype = symbol_type_skip_qualifiers(datatype->datatype);
+
+		    goto check_pointer;
+		}
+		else {
+		    /*
+		     * Not sure how this could happen...
+		     */
+		    verror("could not handle non-ptr symbol %s being in a reg!\n",
+			   symbol->name);
+		    errno = EINVAL;
 		    goto errout;
 		}
 	    }
-	    else {
-		retval = location_resolve(target,tid,current_region,
-					  &symbol->s.ii->l,
-					  tchain,&current_range);
-		if (errno) {
-		    verror("could not resolve location for symbol %s\n",
-			   symbol_get_name(symbol));
-		    goto errout;
-		}
+	    else if (rc == 1) {
 		current_region = current_range->region;
 		vdebug(5,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
+	    }
+	    else {
+		verror("could not resolve location for symbol %s: %s!\n",
+		       symbol_get_name(symbol),strerror(errno));
+		goto errout;
 	    }
 	}
 
@@ -617,8 +640,8 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 	 * the final pointer(s), and return the value.  Otherwise, just
 	 * return the address of the final pointer.
 	 */
+    check_pointer:
 	if (SYMBOL_IST_PTR(datatype)) {
-	 do_pointer:
 	    if (i < alen 
 		|| (i == alen 
 		    && (flags & LOAD_FLAG_AUTO_DEREF
@@ -637,12 +660,33 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 		       symbol_get_name(symbol),retval);
 	    }
 
-	    if (i == alen)
+	    /*
+	    if (i == alen) {
+		if (in_reg) {
+		    verror("last symbol %s was in a register; cannot compute addr!\n",
+			   symbol_get_name(symbol));
+		    errno = EINVAL;
+		    goto errout;
+		}
 		goto out;
+	    }
+	    */
 	}
 
-	if (i >= alen) 
+	if (i >= alen) {
+	    if (in_reg
+		&& (SYMBOL_IST_PTR(datatype)
+		    && !(flags & LOAD_FLAG_AUTO_DEREF)
+		    && !(flags & LOAD_FLAG_AUTO_STRING
+			 && symbol_type_is_char(symbol_type_skip_ptrs(datatype))))) {
+		verror("last symbol (ptr) %s was in a register and auto deref"
+		       " not set; cannot compute addr!\n",
+		       symbol_get_name(symbol));
+		errno = EINVAL;
+		goto errout;
+	    }
 	    goto out;
+	}
     }
 
  errout:
@@ -1289,6 +1333,8 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
     struct memrange *current_range;
     load_flags_t tflags = flags | LOAD_FLAG_AUTO_DEREF;
     struct array_list *tchain = NULL;
+    REG reg;
+    int in_reg;
 
     symbol_chain = bsymbol->lsymbol->chain;
     alen = array_list_len(symbol_chain);
@@ -1336,6 +1382,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
      * struct members.
      */
     while (1) {
+	in_reg = 0;
 	symbol = (struct symbol *)array_list_item(symbol_chain,i);
 	++i; 
 	tchain->len = i;
@@ -1368,35 +1415,56 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		   symbol_get_name(symbol),offset,retval);
 	}
 	else {
-	    if (LOCATION_IN_REG(&symbol->s.ii->l)) {
-		/* If this var is in a register, and it's the last
-		 * symbol on the chain, we can't provide an address for
-		 * it!
-		 *
-		 * Actually, this situation can never happen; we could
-		 * never give an address for a member of a struct inside
-		 * a register; and if the value inside the register is a
-		 * pointer, location_resolve handles that case for us.
-		 *
-		 * So, this should never happen.
+	    rc = location_resolve(target,tid,current_region,&symbol->s.ii->l,
+				  tchain,&reg,&retval,&current_range);
+	    if (rc == 2) {
+		/* Try to load some value from a register; might or
+		 * might not be an address; only is if the current
+		 * symbol was a pointer; we handle that below.  There's
+		 * a termination condition below this loop that if we
+		 * end after having resolved the location to a register,
+		 * we can't calculate the address for it.
 		 */
-		if (1 || i == alen) {
-		    errno = EADDRNOTAVAIL;
+		in_reg = 1;
+		if (SYMBOL_IST_PTR(datatype)) {
+		    retval = target_read_reg(target,tid,reg);
+		    if (errno) {
+			verror("could not read reg %"PRIiREG" that ptr symbol %s"
+			       " resolved to: %s!\n",
+			       reg,symbol->name,strerror(errno));
+			goto errout;
+		    }
+
+		    /* We might have changed ranges... */
+		    target_find_memory_real(target,retval,NULL,NULL,
+					    &current_range);
+		    current_region = current_range->region;
+		    vdebug(5,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),retval);
+		    /* We have to skip one pointer type */
+		    datatype = symbol_type_skip_qualifiers(datatype->datatype);
+
+		    goto check_pointer;
+		}
+		else {
+		    /*
+		     * Not sure how this could happen...
+		     */
+		    verror("could not handle non-ptr symbol %s being in a reg!\n",
+			   symbol->name);
+		    errno = EINVAL;
 		    goto errout;
 		}
 	    }
-	    else {
-		retval = location_resolve(target,tid,current_region,
-					  &symbol->s.ii->l,
-					  tchain,&current_range);
-		if (errno) {
-		    verror("could not resolve location for symbol %s\n",
-			   symbol_get_name(symbol));
-		    goto errout;
-		}
+	    else if (rc == 1) {
 		current_region = current_range->region;
 		vdebug(5,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
+	    }
+	    else {
+		verror("could not resolve location for symbol %s: %s!\n",
+		       symbol_get_name(symbol),strerror(errno));
+		goto errout;
 	    }
 	}
 
@@ -1406,10 +1474,14 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	 * the final pointer(s), and return the value.  Otherwise, just
 	 * return the address of the final pointer.
 	 */
+    check_pointer:
 	if (SYMBOL_IST_PTR(datatype)) {
-	    if (i < alen || (i == alen && flags & LOAD_FLAG_AUTO_DEREF)) {
+	    if (i < alen 
+		|| (i == alen && (flags & LOAD_FLAG_AUTO_DEREF
+				  || (flags & LOAD_FLAG_AUTO_STRING
+				      && symbol_type_is_char(symbol_type_skip_ptrs(datatype)))))) {
 		retval = target_autoload_pointers(target,datatype,retval,tflags,
-						  NULL,&current_range);
+						  &datatype,&current_range);
 		if (errno) {
 		    verror("could not load pointer for symbol %s\n",
 			   symbol_get_name(symbol));
@@ -1420,13 +1492,22 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		       "autoloaded pointer(s) for var %s now at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
-
-	    if (i == alen)
-		goto out;
 	}
 
-	if (i >= alen) 
+	if (i >= alen) {
+	    if (in_reg
+		&& (SYMBOL_IST_PTR(datatype)
+		    && !(flags & LOAD_FLAG_AUTO_DEREF)
+		    && !(flags & LOAD_FLAG_AUTO_STRING
+			 && symbol_type_is_char(symbol_type_skip_ptrs(datatype))))) {
+		verror("last symbol (ptr) %s was in a register and auto deref"
+		       " not set; cannot compute addr!\n",
+		       symbol_get_name(symbol));
+		errno = EINVAL;
+		goto errout;
+	    }
 	    goto out;
+	}
     }
 
  errout:
