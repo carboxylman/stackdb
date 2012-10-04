@@ -1303,6 +1303,11 @@ static int xen_vm_init(struct target *target) {
 
     vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
 
+    if (target->opts->bpmode == THREAD_BPMODE_STRICT) {
+	vwarn("auto-enabling SEMI_STRICT bpmode on Xen target.\n");
+	target->opts->bpmode = THREAD_BPMODE_SEMI_STRICT;
+    }
+
     /*
      * We can use the RF flag to temporarily disable the hw breakpoint
      * if we don't need to single step the breaked instruction (i.e.,
