@@ -2136,7 +2136,7 @@ unsigned char *target_load_code(struct target *target,
 }
 
 struct target_thread *target_lookup_thread(struct target *target,tid_t tid) {
-    vdebug(9,LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
+    vdebug(16,LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
     return (struct target_thread *)g_hash_table_lookup(target->threads,
 						       (gpointer)(ptr_t)tid);
 }

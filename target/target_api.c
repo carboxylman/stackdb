@@ -240,9 +240,47 @@ struct array_list *target_list_threads(struct target *target) {
     return retval;
 }
 
+GHashTable *target_hash_threads(struct target *target) {
+    GHashTable *retval;
+    GHashTableIter iter;
+    gpointer key;
+    struct target_thread *tthread;
+
+    retval = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) 
+	g_hash_table_insert(retval,key,tthread);
+
+    return retval;
+}
+
 struct array_list *target_list_available_tids(struct target *target) {
     vdebug(9,LOG_T_TARGET,"target(%s)\n",target->type);
     return target->ops->list_available_tids(target);
+}
+
+GHashTable *target_hash_available_tids(struct target *target) {
+    int i;
+    struct array_list *tids;
+    GHashTable *retval;
+    tid_t tid;
+
+    tids = target_list_available_tids(target);
+    if (!tids) {
+	verror("could not load available tids!\n");
+	return NULL;
+    }
+
+    retval = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
+    for (i = 0; i < array_list_len(tids); ++i) {
+	tid = (tid_t)(ptr_t)array_list_item(tids,i);
+	g_hash_table_insert(retval,(gpointer)(ptr_t)tid,(gpointer)(ptr_t)tid);
+    }
+    array_list_free(tids);
+
+    return retval;
 }
 
 int target_load_available_threads(struct target *target,int force) {
@@ -288,6 +326,57 @@ int target_flush_thread(struct target *target,tid_t tid) {
 int target_flush_all_threads(struct target *target) {
     vdebug(5,LOG_T_TARGET,"flushing all target(%s) threads\n",target->type);
     return target->ops->flush_all_threads(target);
+}
+
+int target_gc_threads(struct target *target) {
+    int rc = 0;
+    int i;
+    struct array_list *cached_tids;
+    GHashTable *real_tids;
+    tid_t tid;
+    struct target_thread *tthread;
+
+    vdebug(5,LOG_T_TARGET,"garbage collecting cached threads (%s)\n",target->type);
+    if (target->ops->gc_threads) 
+	return target->ops->gc_threads(target);
+
+
+    cached_tids = target_list_tids(target);
+    if (!cached_tids) {
+	verror("could not list cached threads!\n");
+	return -1;
+    }
+
+    real_tids = target_hash_available_tids(target);
+    if (!real_tids) {
+	verror("could not load currently available threads!\n");
+	array_list_free(cached_tids);
+	return -1;
+    }
+
+    for (i = 0; i < array_list_len(cached_tids); ++i) {
+	tid = (tid_t)(ptr_t)array_list_item(cached_tids,i);
+
+	if (tid == TID_GLOBAL)
+	    continue;
+
+	if (!g_hash_table_lookup_extended(real_tids,(gpointer)(ptr_t)tid,
+					  NULL,NULL)) {
+	    vdebug(5,LOG_T_TARGET | LOG_T_THREAD,
+		   "cached thread %"PRIiTID" no longer exists; removing!\n",tid);
+	    tthread = target_lookup_thread(target,tid);
+	    target_delete_thread(target,tthread,0);
+	    ++rc;
+	}
+    }
+    array_list_free(cached_tids);
+    g_hash_table_destroy(real_tids);
+
+    if (rc)
+	vdebug(5,LOG_T_TARGET,"garbage collected %d cached threads (%s)\n",
+	       rc,target->type);
+
+    return rc;
 }
 
 char *target_thread_tostring(struct target *target,tid_t tid,int detail,

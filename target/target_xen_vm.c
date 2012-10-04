@@ -1984,7 +1984,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     struct xen_vm_thread_state *tstate = NULL;
     struct value *v;
 
-    vdebug(5,LOG_T_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
+    vdebug(16,LOG_T_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
 
     /*
      * If we are flushing the global thread (TID_GLOBAL), do it right
@@ -2006,9 +2006,10 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
      * modified.
      */
     if (!target->current_thread	|| !target->current_thread->valid) {
-	vwarn("BUG: current thread not loaded or not valid (%d) to compare with"
-	      " tid %"PRIiTID"!\n",
-	      target->current_thread->valid,tid);
+	vdebug(9,LOG_T_XV,
+	       "current thread not loaded or not valid (%d) to compare with"
+	       " tid %"PRIiTID"; exiting or BUG?\n",
+	       target->current_thread->valid,tid);
     }
 
     /*
@@ -2209,7 +2210,11 @@ static struct array_list *xen_vm_list_available_tids(struct target *target) {
     struct array_list *retval;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
-    retval = array_list_create(32);
+    /* Try to be smart about the size of the list we create. */
+    if (xstate->last_thread_count)
+	retval = array_list_create((xstate->last_thread_count + 16) & ~15);
+    else
+	retval = array_list_create(64);
 
     if (linux_list_for_each_struct(target,xstate->init_task,"tasks",0,
 				   __value_get_append_tid,retval)) {
@@ -2218,6 +2223,11 @@ static struct array_list *xen_vm_list_available_tids(struct target *target) {
 	array_list_free(retval);
 	return NULL;
     }
+
+    xstate->last_thread_count = array_list_len(retval);
+
+    vdebug(5,LOG_T_XV | LOG_T_THREAD,"%d current threads\n",
+	   xstate->last_thread_count);
 
     return retval;
 }
@@ -2508,6 +2518,23 @@ static target_status_t xen_vm_monitor(struct target *target) {
 	    if (!(tthread = target->current_thread)) {
 		verror("could not read current thread!\n");
 		goto again;
+	    }
+
+	    /*
+	     * Next, if auto garbage collection is enabled, do it.
+	     *
+	     * We need to only do this every N interrupts, or something,
+	     * but what we really want is something that is related to
+	     * how many cycles have eclipsed in the target -- i.e., if
+	     * more than one second's worth of wallclock time has
+	     * elapsed in the target, we should garbage collect.
+	     *
+	     * But I don't know how to grab the current cycle counter
+	     * off the top of my head, so just do it every 8 interrupts
+	     * for now.
+	     */
+	    if (++xstate->thread_auto_gc_counter == 8) {
+		target_gc_threads(target);
 	    }
 
 	    xtstate = (struct xen_vm_thread_state *)tthread->state;

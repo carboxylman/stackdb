@@ -155,6 +155,9 @@ struct xen_vm_state {
     ADDR init_task_addr;
     struct symbol *thread_info_type;
 
+    unsigned int last_thread_count;
+    uint8_t thread_auto_gc_counter;
+
     xc_dominfo_t dominfo;
     int dominfo_valid;
 

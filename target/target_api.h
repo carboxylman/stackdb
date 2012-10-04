@@ -376,7 +376,6 @@ tid_t target_gettid(struct target *target);
  * @return: an array_list of TIDs that are in our cache.  In this case,
  * use (tid_t)array_list_item(list,i) to get the value.
  */
-
 struct array_list *target_list_tids(struct target *target);
 
 /*
@@ -386,10 +385,28 @@ struct array_list *target_list_tids(struct target *target);
 struct array_list *target_list_threads(struct target *target);
 
 /*
+ * @return: a GHashTable of TIDs->threads that are in our cache.  The
+ * hashtable keys are tid_t types, not ptr_t types!
+ *
+ * You might wonder why you need to call this; after all,
+ * target->threads is a perfectly good hashtable.  But, if you ever need
+ * to loop over the keys in the hash and maybe delete a thread, you need
+ * to be really careful.  This eliminates the need for such caution by
+ * basically duplicating the hashtable.
+ */
+GHashTable *target_hash_threads(struct target *target);
+
+/*
  * @return: an array_list of TIDs that are part of the target, whether
  * they are loaded or not.
  */
 struct array_list *target_list_available_tids(struct target *target);
+
+/*
+ * @return: a GHashTable of TIDs that are part of the target, whether
+ * they are loaded or not.  Just a map of tid_t to tid_t .
+ */
+GHashTable *target_hash_available_tids(struct target *target);
 
 /*
  * Load the currently executing thread (may also load the "global"
@@ -443,6 +460,16 @@ int target_flush_thread(struct target *target,tid_t tid);
  * Flush all our cached threads' contexts back to target.
  */
 int target_flush_all_threads(struct target *target);
+
+/*
+ * Garbage collects cached threads.  If !target->ops->gc_threads, it
+ * grabs the list of available thread ids, and compares those to the
+ * current cache, evicting any stale members of the cache and destroying
+ * those threads.
+ *
+ * @return the number of threads evicted/destroyed, or < 0 on error.
+ */
+int target_gc_threads(struct target *target);
 
 char *target_thread_tostring(struct target *target,tid_t tid,int detail,
 			     char *buf,int bufsiz);
@@ -1191,6 +1218,7 @@ struct target_ops {
     int (*flush_thread)(struct target *target,tid_t tid);
     int (*flush_current_thread)(struct target *target);
     int (*flush_all_threads)(struct target *target);
+    int (*gc_threads)(struct target *target);
     char *(*thread_tostring)(struct target *target,tid_t tid,int detail,
 			     char *buf,int bufsiz);
 
