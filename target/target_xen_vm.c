@@ -1094,6 +1094,10 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
 	tid = TID_GLOBAL;
 	tgid = TID_GLOBAL;
 	taskv = NULL;
+
+	vdebug(5,LOG_T_XV,
+	       "loading global thread cause in hard/soft irq (0x%"PRIx64")\n",
+	       preempt_count);
     }
     else {
 	/* Now, load the current task_struct. */
@@ -1114,6 +1118,8 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
 	tid = v_i32(v);
 	value_free(v);
 	v = NULL;
+
+	vdebug(5,LOG_T_XV,"loading thread %"PRIiTID"\n",tid);
 
 	v = target_load_value_member(target,taskv,"tgid",NULL,LOAD_FLAG_NONE);
 	if (!v) {
@@ -1168,6 +1174,10 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
 	else {
 	    /* Update its flags. */
 	    tstate->thread_info_flags = tiflags;
+
+	    vdebug(5,LOG_T_XV,
+		   "found matching cached thread %"PRIiTID" (thread %p, tpc %p)\n",
+		   tid,tthread,tthread->tpc);
 	}
     }
 
@@ -1175,6 +1185,10 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
 	/* Build a new one. */
 	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 	tthread = target_create_thread(target,tid,tstate);
+
+	vdebug(5,LOG_T_XV,
+	       "built new thread %"PRIiTID" (thread %p, tpc %p)\n",
+		   tid,tthread,tthread->tpc);
     }
 
     target->current_thread = tthread;
@@ -1922,63 +1936,152 @@ static int xen_vm_flush_current_thread(struct target *target) {
 /*
  * Very similar to flush_current_thread -- BUT it doesn't flush anything
  * but CPU context.
+ *
+ * Also, if @current_thread is not NULL, we do a funny thing -- we use
+ * the cpu context from @current_thread as our base, and overlay ONLY the
+ * debug registers from the global thread -- and set the context to
+ * that.  If @current_thread is NULL, we upload the full CPU context we
+ * have.  @current_thread must not be the global thread itself.
+ *
+ * We do things this way because the only time we use the global thread
+ * to pass to bp/ss handlers in the probe library is when Xen is in
+ * interrupt context.  In that case, there is no current_thread -- the
+ * current_thread is the global thread.  So in reality, the only thing
+ * that gets stored in the global thread is hardware probepoints that
+ * were set for TID_GLOBAL.  However, when the bp/ss handlers handle
+ * those probepoints, they do so in the context of the thread -- which
+ * is either current_thread (if in task context) or global_thread (if in
+ * interrupt context, because there is no task thread, just an interrupt
+ * stack).  So, even when a TID_GLOBAL hardware probepoint is being
+ * handled, all the non-debug-register modifications to it happen in the
+ * current_thread CPU state.
  */
-static int xen_vm_flush_global_thread(struct target *target) {
+static int xen_vm_flush_global_thread(struct target *target,
+				      struct target_thread *current_thread) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    struct target_thread *tthread;
+    struct target_thread *gthread;
     struct xen_vm_thread_state *tstate;
+    struct xen_vm_thread_state *gtstate;
+    vcpu_guest_context_t *ctxp;
+    vcpu_guest_context_t context;
+    int i;
 
     if (!target->global_thread) {
 	verror("BUG: no global thread loaded!!!\n");
 	errno = EINVAL;
 	return -1;
     }
+    if (current_thread == target->global_thread)
+	current_thread = NULL;
 
-    tthread = target->global_thread;
-    tstate = (struct xen_vm_thread_state *)tthread->state;
+    gthread = target->global_thread;
+    gtstate = (struct xen_vm_thread_state *)gthread->state;
+    if (current_thread)
+	tstate = (struct xen_vm_thread_state *)current_thread->state;
+    else
+	tstate = NULL;
 
-    vdebug(5,LOG_T_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tthread->tid);
-
-    if (!tthread->valid || !tthread->dirty) {
+    if (!gthread->valid || !gthread->dirty) {
 	vdebug(8,LOG_T_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       xstate->id,tthread->tid,tthread->valid,tthread->dirty);
+	       xstate->id,gthread->tid,gthread->valid,gthread->dirty);
 	return 0;
     }
 
-    vdebug(3,LOG_T_XV,
-	   "EIP is 0x%"PRIxREGVAL" before flush (dom %d tid %"PRIiTID")\n",
-	   xen_vm_read_reg(target,TID_GLOBAL,target->ipregno),
-	   xstate->id,tthread->tid);
+    if (!current_thread) {
+	/* Flush the global thread's CPU context directly. */
+
+	vdebug(5,LOG_T_XV,"dom %d tid %"PRIiTID" (full global vCPU flush)\n",
+	       xstate->id,gthread->tid);
+
+	ctxp = &gtstate->context;
+    }
+    else {
+	/* We have to merge the hardware debug register state from the
+	 * current thread with the state for the global thread.
+	 */
+	ctxp = &context;
+
+	/* Copy the current_thread's whole context in; then overlay teh
+	 * global thread's debugreg values *that are in use*.
+	 */
+	memcpy(ctxp,&tstate->context,sizeof(tstate->context));
+
+	/* Unilaterally NULL status register out; we're about to flush. */
+	ctxp->debugreg[6] = 0;
+
+	/* For any TID_GLOBAL debugreg that is in use, copy the register
+	 * and its control bits into the merged ctxp.
+	 */
+	for (i = 0; i < 4; ++i) {
+	    if (gtstate->context.debugreg[i] == 0)
+		continue;
+
+	    vdebug(5,LOG_T_XV,"merging global debug reg %d in!\n",i);
+	    /* Copy in the break address */
+	    ctxp->debugreg[i] = gtstate->context.debugreg[i];
+	    /* Overwrite the control bits; unset them first, then set. */
+	    ctxp->debugreg[7] &= ~(0x3 << (i * 2));
+	    ctxp->debugreg[7] |= ((0x3 << (i * 2)) & gtstate->context.debugreg[7]);
+	    /* Overwrite the break-on bits; unset them first, then set. */
+	    ctxp->debugreg[7] &= ~(0x3 << (16 + (i * 4)));
+	    ctxp->debugreg[7] |= ((0x3 << (16 + (i * 4))) & gtstate->context.debugreg[7]);
+	}
+
+	/* Unilaterally set the break-exact bits. */
+	ctxp->debugreg[7] |= 0x3 << 8;
+	
+    }
+
+    if (!current_thread) {
+	vdebug(3,LOG_T_XV,
+	       "EIP is 0x%"PRIxREGVAL" before flush (dom %d tid %"PRIiTID")\n",
+	       xen_vm_read_reg(target,TID_GLOBAL,target->ipregno),
+	       xstate->id,gthread->tid);
+    }
+    else {
+	vdebug(3,LOG_T_XV,
+	       "EIP is 0x%"PRIxREGVAL" (in thread %"PRIiTID") before flush (dom %d tid %"PRIiTID")\n",
+	       xen_vm_read_reg(target,current_thread->tid,target->ipregno),
+	       current_thread->tid,
+	       xstate->id,gthread->tid);
+    }
 
     /*
      * Flush Xen machine context.
      */
     if (xc_vcpu_setcontext(xc_handle,xstate->id,xstate->dominfo.max_vcpu_id,
-			   &tstate->context) < 0) {
+			   ctxp) < 0) {
 	verror("could not set vcpu context (dom %d tid %"PRIiTID")\n",
-	       xstate->id,tthread->tid);
+	       xstate->id,gthread->tid);
 	errno = EINVAL;
 	return -1;
     }
 
     /* Mark cached copy as clean. */
-    tthread->dirty = 0;
+    gthread->dirty = 0;
 
-    vdebug(4,LOG_T_XV,
-	   "debug registers (vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
-	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
-	   tstate->context.debugreg[0],tstate->context.debugreg[1],
-	   tstate->context.debugreg[2],tstate->context.debugreg[3],
-	   tstate->context.debugreg[6],tstate->context.debugreg[7]);
+    if (!current_thread)
+	vdebug(4,LOG_T_XV,
+	       "debug registers (setting full vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
+	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
+	       gtstate->context.debugreg[0],gtstate->context.debugreg[1],
+	       gtstate->context.debugreg[2],gtstate->context.debugreg[3],
+	       gtstate->context.debugreg[6],gtstate->context.debugreg[7]);
+    else
+	vdebug(4,LOG_T_XV,
+	       "debug registers (setting MERGED!!! vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
+	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
+	       ctxp->debugreg[0],ctxp->debugreg[1],
+	       ctxp->debugreg[2],ctxp->debugreg[3],
+	       ctxp->debugreg[6],ctxp->debugreg[7]);
 
-    vdebug(4,LOG_T_XV,
-	   "debug registers (our copy): 0x%"PRIxADDR",0x%"PRIxADDR
-	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
-	   tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
-	   tstate->dr[6],tstate->dr[7]);
-
-    tthread->dirty = 0;
+    if (!current_thread) 
+	vdebug(4,LOG_T_XV,
+	       "debug registers (our copy): 0x%"PRIxADDR",0x%"PRIxADDR
+	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
+	       gtstate->dr[0],gtstate->dr[1],gtstate->dr[2],gtstate->dr[3],
+	       gtstate->dr[6],gtstate->dr[7]);
 
     return 0;
 }
@@ -2160,6 +2263,7 @@ static int xen_vm_flush_all_threads(struct target *target) {
     int rc, retval = 0;
     GHashTableIter iter;
     struct target_thread *tthread;
+    struct target_thread *current_thread = NULL;
 
     g_hash_table_iter_init(&iter,target->threads);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
@@ -2174,8 +2278,22 @@ static int xen_vm_flush_all_threads(struct target *target) {
 	}
     }
 
+    /*
+     * If the current thread is not the global thread, we have to try to
+     * flush it.
+     */
     if (target->current_thread
 	&& target->current_thread != target->global_thread) {
+	/* Save this off to tell flush_global_thread below that
+	 * it must merge its state with this thread's state.
+	 *
+	 * So if the current thread is not the global thread itself, and
+	 * its state is valid (whether it is dirty or not!!), we must
+	 * merge.
+	 */
+	if (target->current_thread->valid)
+	    current_thread = target->current_thread;
+
 	rc = xen_vm_flush_current_thread(target);
 	if (rc) {
 	    verror("could not flush current thread %"PRIiTID"\n",
@@ -2183,13 +2301,33 @@ static int xen_vm_flush_all_threads(struct target *target) {
 	    ++retval;
 	}
     }
-    else if (target->current_thread == target->global_thread) {
-	rc = xen_vm_flush_global_thread(target);
-	if (rc) {
-	    verror("could not flush global thread %"PRIiTID"\n",
-		   target->current_thread->tid);
-	    ++retval;
-	}
+
+    /*
+     * Also, we always have to try to flush the "global" thread.
+     * Remember, the global thread is a fake thread; it never maps to
+     * anything real; it is just the current CPU registers.  If the user
+     * sets any probes or modifies registers with TID_GLOBAL, they only
+     * get flushed if we flush the global thread.
+     *
+     * OF COURSE, this means that if you mix per-thread probing/register
+     * modification and global thread modification, your changes to the
+     * current hardware state will almost certainly stomp on each
+     * other.  OK, this is no longer permitted; get_unused_debug_reg now
+     * makes sure this cannot happen.
+     *
+     * If we were handling a software breakpoint, we would have modified
+     * cpu context in the current thread; if we were hanlding a hardware
+     * probe or modifying a hardware probe, we would have written the
+     * the global thread's cpu state (AND the current thread's CPU state
+     * too, like EIP, etc).  So what we need to is arbitrate between the
+     * two contexts depending on what we're doing.  For instance, if we
+     * handled a hardware probepoint, we'll always need to flush the
+     * global thread -- see monitor() and flush_global_thread().
+    */
+    rc = xen_vm_flush_global_thread(target,current_thread);
+    if (rc) {
+	verror("could not flush global thread %"PRIiTID"\n",TID_GLOBAL);
+	++retval;
     }
 
     return retval;
@@ -2456,8 +2594,10 @@ static target_status_t xen_vm_monitor(struct target *target) {
     int dreg = -1;
     struct probepoint *dpp;
     struct target_thread *tthread;
+    struct xen_vm_thread_state *gtstate;
     struct xen_vm_thread_state *xtstate;
     tid_t tid;
+    struct probepoint *spp;
 
     /* get a select()able file descriptor of the event channel */
     fd = xc_evtchn_fd(xce_handle);
@@ -2542,6 +2682,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		target_gc_threads(target);
 	    }
 
+	    gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
 	    xtstate = (struct xen_vm_thread_state *)tthread->state;
 	    tid = tthread->tid;
 
@@ -2553,16 +2694,32 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		return TSTATUS_ERROR;
 	    }
 
-	sstepcheck:
 	    /* handle the triggered probe based on its event type */
 	    if (xtstate->context.debugreg[6] & 0x4000) {
-		if (tthread->tpc && xtstate->context.user_regs.eflags & 0x00000100) {
+		if (xtstate->context.user_regs.eflags & 0x00000100) {
+		    /* Save the currently hanlding probepoint;
+		     * ss_handler may clear tpc.
+		     */
+		    spp = tthread->tpc->probepoint;
+
 		    target->ss_handler(target,tthread,tthread->tpc->probepoint);
 
 		    /* Clear the status bits right now. */
 		    xtstate->context.debugreg[6] = 0;
 		    tthread->dirty = 1;
-		    xen_vm_flush_thread(target,tthread->tid);
+		    /*
+		     * MUST DO THIS.  If we are going to modify both the
+		     * current thread's CPU state possibly, and possibly
+		     * operate on the global thread's CPU state, we need
+		     * to clear the global thread's debug reg status
+		     * here; this also has the important side effect of
+		     * forcing a merge of the global thread's debug reg
+		     * state; see flush_global_thread !
+		     */
+		    if (spp->style == PROBEPOINT_HW) {
+			gtstate->context.debugreg[6] = 0;
+			target->global_thread->dirty = 1;
+		    }
 		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
 
 		    goto again;
@@ -2574,13 +2731,11 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		    xtstate->context.debugreg[6] = 0;
 		    tthread->dirty = 1;
 		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
-		    xen_vm_flush_thread(target,tthread->tid);
 
 		    goto again;
 		}
 	    }
 	    else {
-	    bpcheck:
 		dreg = -1;
 
 		/* Check the hw debug status reg first */
@@ -2639,19 +2794,39 @@ static target_status_t xen_vm_monitor(struct target *target) {
 			g_hash_table_lookup(tthread->hard_probepoints,
 					    (gpointer)ipval);
 
-		    if (dreg > -1 && !dpp) {
+		    if (dpp) {
+			vdebug(4,LOG_T_XV,
+			       "found hw break in thread %"PRIiTID"\n",
+			       tthread->tid);
+		    }
+		    else {
 			/* Check the global thread if not already checking it! */
-			if (tthread != target->global_thread) {
-			    tthread = target->global_thread;
-			    xtstate = (struct xen_vm_thread_state *)tthread->state;
-			    tid = tthread->tid;
-			    goto sstepcheck;
-			}
-			else {
+			dpp = (struct probepoint *)			\
+			    g_hash_table_lookup(target->global_thread->hard_probepoints,
+						(gpointer)ipval);
+			if (!dpp) {
 			    verror("could not find probepoint for hw dbg reg %d"
 				   " in current or global threads!\n",dreg);
 			    return TSTATUS_ERROR;
 			}
+			else {
+			    vdebug(4,LOG_T_XV,
+				   "found hw break in global thread!\n");
+
+			    /*
+			     * MUST DO THIS.  If we are going to modify
+			     * both the current thread's CPU state
+			     * possibly, and possibly operate on the
+			     * global thread's CPU state, we need to
+			     * clear the global thread's debug reg
+			     * status here; this also has the important
+			     * side effect of forcing a merge of the
+			     * global thread's debug reg state; see
+			     * flush_global_thread !
+			     */
+			    gtstate->context.debugreg[6] = 0;
+			    target->global_thread->dirty = 1;
+			}			    
 		    }
 
 		    /* BEFORE we run the bp handler: 
@@ -2672,7 +2847,6 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		    /* Clear the status bits right now. */
 		    xtstate->context.debugreg[6] = 0;
 		    tthread->dirty = 1;
-		    xen_vm_flush_thread(target,tthread->tid);
 		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
 
 		    goto again;
@@ -2687,40 +2861,21 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		    /* Clear the status bits right now. */
 		    xtstate->context.debugreg[6] = 0;
 		    tthread->dirty = 1;
-		    xen_vm_flush_thread(target,tthread->tid);
 		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
 
 		    goto again;
 		}
 		else if (xtstate->context.user_regs.eflags & 0x00000100) {
-		    /* Check the global thread if not already checking it! */
-		    if (tthread != target->global_thread) {
-			tthread = target->global_thread;
-			xtstate = (struct xen_vm_thread_state *)tthread->state;
-			tid = tthread->tid;
-			goto sstepcheck;
-		    }
-		    else {
-			vwarn("phantom single step for dom %d (no breakpoint"
-			      " set either!); letting user handle fault at"
-			      " 0x%"PRIxADDR"!\n",xstate->id,ipval);
-			return TSTATUS_PAUSED;
-		    }
+		    vwarn("phantom single step for dom %d (no breakpoint"
+			  " set either!); letting user handle fault at"
+			  " 0x%"PRIxADDR"!\n",xstate->id,ipval);
+		    return TSTATUS_PAUSED;
 		}
 		else {
-		    /* Check the global thread if not already checking it! */
-		    if (tthread != target->global_thread) {
-			tthread = target->global_thread;
-			xtstate = (struct xen_vm_thread_state *)tthread->state;
-			tid = tthread->tid;
-			goto sstepcheck;
-		    }
-		    else {
-			vwarn("could not find hardware bp and not sstep'ing;"
-			      " letting user handle fault at 0x%"PRIxADDR"!\n",
-			      ipval);
-			return TSTATUS_PAUSED;
-		    }
+		    vwarn("could not find hardware bp and not sstep'ing;"
+			  " letting user handle fault at 0x%"PRIxADDR"!\n",
+			  ipval);
+		    return TSTATUS_PAUSED;
 		}
 	    }
 	}
@@ -3217,6 +3372,11 @@ static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
+    if (tid != TID_GLOBAL) {
+	verror("currently must use TID_GLOBAL for hardware probepoints!\n");
+	return -1;
+    }
+
     xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
@@ -3657,11 +3817,6 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp) {
 #endif
     tthread->dirty = 1;
 
-    if (target_flush_thread(target,tid) < 0) {
-	verror("could not flush thread; single step start will probably fail!\n");
-	return -1;
-    }
-
     return 0;
 }
 
@@ -3684,11 +3839,6 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid) {
 #endif
 
     tthread->dirty = 1;
-
-    if (target_flush_thread(target,tid) < 0) {
-	verror("could not flush thread; single step end will probably fail!\n");
-	return -1;
-    }
 
     return 0;
 }
