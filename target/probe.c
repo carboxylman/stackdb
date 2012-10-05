@@ -320,7 +320,7 @@ void probepoint_free_ext(struct probepoint *probepoint) {
  **/
 static int __probepoint_remove(struct probepoint *probepoint) {
     struct target *target;
-    tid_t tid;
+    tid_t tid,htid;
     int ret;
 
     target = probepoint->target;
@@ -358,10 +358,10 @@ static int __probepoint_remove(struct probepoint *probepoint) {
      */
     if (probepoint->style == PROBEPOINT_HW
 	&& probepoint->debugregnum > -1) {
-	tid = probepoint->thread->tid;
+	htid = probepoint->thread->tid;
 
 	if (probepoint->type == PROBEPOINT_BREAK) {
-	    if ((ret = target_unset_hw_breakpoint(target,tid,
+	    if ((ret = target_unset_hw_breakpoint(target,htid,
 						  probepoint->debugregnum))) {
 		verror("failure while removing hw breakpoint; cannot recover!\n");
 	    }
@@ -371,7 +371,7 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	    }
 	}
 	else {
-	    if ((ret = target_unset_hw_watchpoint(target,tid,
+	    if ((ret = target_unset_hw_watchpoint(target,htid,
 						  probepoint->debugregnum))) {
 		verror("failure while removing hw watchpoint; cannot recover!\n");
 	    }
@@ -431,6 +431,21 @@ static int __probepoint_remove(struct probepoint *probepoint) {
     return 0;
 }
 
+/*
+ * Note: you *must* pass the target_thread whose debug registers need to
+ * be written -- that means if TID_GLOBAL means a "real" thread on a
+ * target, like Xen, we need to modify the global thread's debug
+ * register state.  For the ptrace target, where the TID_GLOBAL thread
+ * might be an alias for a real "primary" thread, we need to *not* have
+ * the global thread supplied here, but instead the real thread that is
+ * being aliased.
+ *
+ * So, this comment is just to highlight this issue for
+ * __probepoint_insert.  In other functions in this probe library, once
+ * a probe is inserted, we carefully use the probepoint->thread->tid tid
+ * value for making hardware debug register state changes, if the
+ * probepoint is hardware.
+ */
 static int __probepoint_insert(struct probepoint *probepoint,
 			       struct target_thread *tthread) {
     struct target *target;
@@ -1962,7 +1977,7 @@ static int setup_single_step_actions(struct target *target,
 	     * We need to disable the hw breakpoint before we single
 	     * step because the target can't do it.
 	     */
-	    target_disable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	    target_disable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 	    probepoint->debugregdisabled = 1;
 	}
 
@@ -1975,7 +1990,7 @@ static int setup_single_step_actions(struct target *target,
 		/*
 		 * Reenable the hw breakpoint we just disabled.
 		 */
-		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 		probepoint->debugregdisabled = 0;
 	    }
 
@@ -2183,7 +2198,7 @@ static int setup_post_single_step(struct target *target,
 		/*
 		 * Enable hardware bp here!
 		 */
-		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 		probepoint->debugregdisabled = 0;
 
 		probepoint->state = PROBE_BP_SET;
@@ -2349,7 +2364,7 @@ static int setup_post_single_step(struct target *target,
 	 * We need to disable the hw breakpoint before we single
 	 * step because the target can't do it.
 	 */
-	target_disable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	target_disable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 	probepoint->debugregdisabled = 1;
     }
 
@@ -2364,7 +2379,7 @@ static int setup_post_single_step(struct target *target,
 	    /*
 	     * Reenable the hw breakpoint we just disabled.
 	     */
-	    target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	    target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 	    probepoint->debugregdisabled = 0;
 	}
 
@@ -2857,7 +2872,7 @@ result_t probepoint_ss_handler(struct target *target,
 	/*
 	 * Reenable the hw breakpoint we just disabled.
 	 */
-	target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 	probepoint->debugregdisabled = 0;
     }
 
@@ -2950,7 +2965,7 @@ result_t probepoint_ss_handler(struct target *target,
 		/*
 		 * Enable hardware bp here!
 		 */
-		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 		probepoint->debugregdisabled = 0;
 
 		probepoint->state = PROBE_BP_SET;
@@ -3678,7 +3693,7 @@ static int handle_complex_actions(struct target *target,
 	     * We need to disable the hw breakpoint before we single
 	     * step because the target can't do it.
 	     */
-	    target_disable_hw_breakpoint(target,tid,probepoint->debugregnum);
+	    target_disable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 	    probepoint->debugregdisabled = 1;
 	}
 
@@ -3691,7 +3706,7 @@ static int handle_complex_actions(struct target *target,
 		/*
 		 * Reenable the hw breakpoint we just disabled.
 		 */
-		target_enable_hw_breakpoint(target,tid,probepoint->debugregnum);
+		target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
 		probepoint->debugregdisabled = 0;
 	    }
 
