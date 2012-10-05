@@ -260,15 +260,21 @@ struct target *xen_vm_attach(char *domain,
 		errno = 0;
 		xstate->id = (domid_t)strtol(domains[i],NULL,10);
 		if (errno) {
+		    if (have_id) {
+			free(tmp);
+			break;
+		    }
 		    verror("matching domain name for %s; but bad domain id %s: %s\n",
 			   tmp,domains[i],strerror(errno));
+		    free(tmp);
 		    goto errout;
 		}
-		xstate->name = tmp;
+		if (have_id)
+		    free(xstate->name);
+		xstate->name = strdup(tmp);
 		have_id = 1;
 		vdebug(4,LOG_T_XV,"dom %d (from %s) matches id\n",
 		       xstate->id,domain);
-		break;
 	    }
 	    free(tmp);
         }
@@ -1001,7 +1007,7 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
     struct value *threadinfov = NULL;
     int preempt_count;
     unum_t tiflags;
-    struct value *taskv;
+    struct value *taskv = NULL;
     num_t tgid;
     num_t task_flags = 0;
     struct target_thread *tthread = NULL;
@@ -2714,7 +2720,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
 	    /* handle the triggered probe based on its event type */
 	    if (xtstate->context.debugreg[6] & 0x4000) {
-		if (xtstate->context.user_regs.eflags & 0x00000100) {
+		if (xtstate->context.user_regs.eflags & EF_TF) {
 		    /* Save the currently hanlding probepoint;
 		     * ss_handler may clear tpc.
 		     */
@@ -2854,7 +2860,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		     * handle the breakpoint, singlestep ourselves, AND
 		     * THEN leave the processor in single step mode.
 		     */
-		    if (0 && xtstate->context.user_regs.eflags & 0x00000100) {
+		    if (0 && xtstate->context.user_regs.eflags & EF_TF) {
 			//target->sstep_leave_enabled = 1;
 		    }
 
@@ -2883,7 +2889,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
 		    goto again;
 		}
-		else if (xtstate->context.user_regs.eflags & 0x00000100) {
+		else if (xtstate->context.user_regs.eflags & EF_TF) {
 		    vwarn("phantom single step for dom %d (no breakpoint"
 			  " set either!); letting user handle fault at"
 			  " 0x%"PRIxADDR"!\n",xstate->id,ipval);
