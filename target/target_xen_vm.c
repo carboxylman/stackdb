@@ -3447,9 +3447,6 @@ static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid) {
 static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG reg,ADDR addr) {
     struct xen_vm_state *xstate;
-#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    int ret;
-#endif
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -3494,15 +3491,19 @@ static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
+    assert(xstate->dominfo_valid);
+    if (xstate->dominfo.ttd_replay_flag) {
+	int ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
 
-    if (ret) {
-        verror("failed to register probe [dom%d:%"PRIxADDR" (%d)\n",
-	       xstate->id,addr,ret);
-        return ret;
+	if (ret) {
+	    verror("failed to register probe [dom%d:%"PRIxADDR" (%d)\n",
+		   xstate->id,addr,ret);
+	    return ret;
+	}
+	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	       "registered probe in replay domain [dom%d:%"PRIxADDR"]\n",
+	       xstate->id,addr);
     }
-    vdebug(4,LOG_T_XV | LOG_P_PROBE,"registered probe [dom%d:%"PRIxADDR"]\n",
-	   xstate->id,addr);
 #endif
 
     return 0;
@@ -3513,9 +3514,6 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize) {
     struct xen_vm_state *xstate;
-#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    int ret;
-#endif
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -3568,15 +3566,19 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
+    assert(xstate->dominfo_valid);
+    if (xstate->dominfo.ttd_replay_flag) {
+	int ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
 
-    if (ret) {
-        verror("failed to register probe [dom%d:%"PRIxADDR" (%d)\n",
-	       xstate->id,addr,ret);
-        return ret;
+	if (ret) {
+	    verror("failed to register probe [dom%d:%"PRIxADDR" (%d)\n",
+		   xstate->id,addr,ret);
+	    return ret;
+	}
+	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	       "registered probe in replay domain [dom%d:%"PRIxADDR"]\n",
+	       xstate->id,addr);
     }
-    vdebug(4,LOG_T_XV | LOG_P_PROBE,"registered probe [dom%d:%"PRIxADDR"]\n",
-	   xstate->id,addr);
 #endif
 
     return 0;
@@ -3585,7 +3587,6 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
     struct xen_vm_state *xstate;
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    int ret;
     ADDR addr;
 #endif
     struct target_thread *tthread;
@@ -3626,15 +3627,19 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,addr);
+    assert(xstate->dominfo_valid);
+    if (xstate->dominfo.ttd_replay_flag) {
+	int ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,addr);
 
-    if (ret) {
-        verror("failed to unregister probe [dom%d:%"PRIxADDR" (%d)\n",
-	       xstate->id,addr,ret);
-        return ret;
+	if (ret) {
+	    verror("failed to unregister probe [dom%d:%"PRIxADDR" (%d)\n",
+		   xstate->id,addr,ret);
+	    return ret;
+	}
+	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	       "unregistered probe in replay domain [dom%d:%"PRIxADDR"]\n",
+	       xstate->id,addr);
     }
-    vdebug(4,LOG_T_XV | LOG_P_PROBE,"unregistered probe [dom%d:%"PRIxADDR"]\n",
-	   xstate->id,addr);
 #endif
 
     return 0;
@@ -3685,9 +3690,6 @@ int xen_vm_enable_hw_breakpoints(struct target *target,tid_t tid) {
 
 int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     struct xen_vm_state *xstate;
-#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    int ret;
-#endif
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -3718,15 +3720,19 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,xtstate->dr[dreg]);
+    assert(xstate->dominfo_valid);
+    if (xstate->dominfo.ttd_replay_flag) {
+	int ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,xtstate->dr[dreg]);
 
-    if (ret) {
-        verror("failed to unregister probe [dom%d:%lx (%d)\n",
-	       xstate->id,xtstate->dr[dreg],ret);
-        return ret;
+	if (ret) {
+	    verror("failed to unregister probe [dom%d:%lx (%d)\n",
+		   xstate->id,xtstate->dr[dreg],ret);
+	    return ret;
+	}
+	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	       "unregistered probe in replay domain [dom%d:%lx]\n",
+	       xstate->id,xtstate->dr[dreg]);
     }
-    vdebug(4,LOG_T_XV | LOG_P_PROBE,"unregistered probe [dom%d:%lx]\n",
-	   xstate->id,xtstate->dr[dreg]);
 #endif
 
     return 0;
@@ -3734,9 +3740,6 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 
 int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     struct xen_vm_state *xstate;
-#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    int ret;
-#endif
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -3768,15 +3771,19 @@ int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
-    ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,xtstate->dr[dreg]);
+    assert(xstate->dominfo_valid);
+    if (xstate->dominfo.ttd_replay_flag) {
+	int ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,xtstate->dr[dreg]);
 
-    if (ret) {
-        verror("failed to register probe [dom%d:%lx (%d)\n",
-	       xstate->id,xtstate->dr[dreg],ret);
-        return ret;
+	if (ret) {
+	    verror("failed to register probe [dom%d:%lx (%d)\n",
+		   xstate->id,xtstate->dr[dreg],ret);
+	    return ret;
+	}
+	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	       "registered probe in replay domain [dom%d:%lx]\n",
+	       xstate->id,xtstate->dr[dreg]);
     }
-    vdebug(4,LOG_T_XV | LOG_P_PROBE,"registered probe [dom%d:%lx]\n",
-	   xstate->id,xtstate->dr[dreg]);
 #endif
 
     return 0;
@@ -3791,6 +3798,11 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 
     xstate = (struct xen_vm_state *)(target->state);
 
+    /* SW breakpoints are only implemented for replay domains right now */
+    assert(xstate->dominfo_valid);
+    if (!xstate->dominfo.ttd_replay_flag)
+	return 0;
+
     if (notification) {
 	msg = "register";
 	ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
@@ -3804,7 +3816,8 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 	       msg,xstate->id,addr,ret);
         return ret;
     }
-    vdebug(4,LOG_T_XV | LOG_P_PROBE,"%sed probe [dom%d:%"PRIxADDR"]\n",
+    vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	   "%sed probe in replay domain [dom%d:%"PRIxADDR"]\n",
 	   msg,xstate->id,addr);
 #endif
     return 0;
@@ -3866,3 +3879,11 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid) {
 
     return 0;
 }
+
+/*
+ * Local variables:
+ * mode: C
+ * c-set-style: "BSD"
+ * c-basic-offset: 4
+ * End:
+ */
