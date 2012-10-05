@@ -289,13 +289,6 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
 static void probepoint_free(struct probepoint *probepoint) {
     probepoint_free_internal(probepoint);
 
-    if (probepoint->style == PROBEPOINT_HW)
-	g_hash_table_remove(probepoint->thread->hard_probepoints,
-			    (gpointer)probepoint->addr);
-    else
-	g_hash_table_remove(probepoint->target->soft_probepoints,
-			    (gpointer)probepoint->addr);
-
     vdebug(5,LOG_P_PROBEPOINT,"freed ");
     LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
 
@@ -383,6 +376,9 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 
 	if (ret) 
 	    return 1;
+	else
+	    g_hash_table_remove(probepoint->thread->hard_probepoints,
+				(gpointer)probepoint->addr);
 
 	probepoint->debugregnum = -1;
     }
@@ -408,6 +404,9 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 
 	free(probepoint->breakpoint_orig_mem);
 	probepoint->breakpoint_orig_mem = NULL;
+
+	g_hash_table_remove(probepoint->target->soft_probepoints,
+			    (gpointer)probepoint->addr);
     }
 
     probepoint->state = PROBE_DISABLED;

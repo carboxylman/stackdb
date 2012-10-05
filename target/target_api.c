@@ -415,6 +415,8 @@ void target_dump_all_threads(struct target *target,FILE *stream,int detail) {
 int target_close(struct target *target) {
     int rc;
     GHashTableIter iter;
+    gpointer key;
+    struct target_thread *tthread;
     struct probepoint *probepoint;
 
     vdebug(5,LOG_T_TARGET,"closing target(%s)\n",target->type);
@@ -430,6 +432,26 @@ int target_close(struct target *target) {
     }
     g_hash_table_destroy(target->soft_probepoints);
 
+    /* Delete all the threads except the global thread (which we remove 
+     * manually because targets are allowed to "reuse" one of their real
+     * threads as the "global" thread.
+     */
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&tthread)) {
+	if (tthread == target->global_thread) {
+	    g_hash_table_iter_remove(&iter);
+	}
+	else {
+	    target_delete_thread(target,tthread,1);
+	    g_hash_table_iter_remove(&iter);
+	}
+    }
+    target_delete_thread(target,target->global_thread,0);
+
+    /* Target should not mess with these after close! */
+    target->global_thread = target->current_thread = NULL;
+
     vdebug(5,LOG_T_TARGET,"detach target(%s)\n",target->type);
     if ((rc = target->ops->detach(target))) {
 	return rc;
@@ -441,9 +463,6 @@ int target_close(struct target *target) {
 void target_free(struct target *target) {
     struct addrspace *space;
     struct addrspace *tmp;
-    struct target_thread *tthread;
-    GHashTableIter iter;
-    gpointer key;
     int rc;
 
     vdebug(5,LOG_T_TARGET,"freeing target(%s)\n",target->type);
@@ -454,23 +473,6 @@ void target_free(struct target *target) {
 	return;
     }
 
-    /* Delete all the threads except the global thread (which we remove 
-     * manually because targets are allowed to "reuse" one of their real
-     * threads as the "global" thread.
-     */
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&tthread)) {
-	if (tthread == target->global_thread) {
-	    g_hash_table_iter_remove(&iter);
-	    continue;
-	}
-	else {
-	    target_delete_thread(target,tthread,1);
-	    g_hash_table_iter_remove(&iter);
-	}
-    }
-    target_delete_thread(target,target->global_thread,1);
     g_hash_table_destroy(target->threads);
 
     g_hash_table_destroy(target->mmaps);
