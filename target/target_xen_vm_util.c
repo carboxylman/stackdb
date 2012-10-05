@@ -311,13 +311,17 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
 	}
 
 	next_head = *((ADDR *)(value->buf + list_head_member_offset));
+
+	if (!nofree) {
+	    value_free(value);
+	    value = NULL;
+	}
+
 	if (next_head == head)
 	    break;
 
 	current_struct_addr = next_head - list_head_member_offset;
 	++i;
-	if (!nofree)
-	    value_free(value);
     }
 
     retval = 0;
