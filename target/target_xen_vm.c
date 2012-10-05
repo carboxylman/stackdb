@@ -62,6 +62,7 @@ static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
 static int xen_vm_postloadinit(struct target *target);
 static target_status_t xen_vm_status(struct target *target);
 static int xen_vm_pause(struct target *target,int nowait);
+static int __xen_vm_resume(struct target *target,int detaching);
 static int xen_vm_resume(struct target *target);
 static target_status_t xen_vm_monitor(struct target *target);
 static target_status_t xen_vm_poll(struct target *target,
@@ -1428,8 +1429,12 @@ static int xen_vm_detach(struct target *target) {
     if (!target->attached)
 	return 0;
 
-    if (xen_vm_status(target) == TSTATUS_PAUSED) {
-	/* Flush back registers if they're dirty! */
+    if (xen_vm_status(target) == TSTATUS_PAUSED
+	&& (g_hash_table_size(target->threads) || target->global_thread)) {
+	/* Flush back registers if they're dirty, but if we don't have
+	 * any threads (i.e. because we're closing/detaching), don't
+	 * flush all, which would load the global thread!
+	 */
 	xen_vm_flush_all_threads(target);
     }
 
@@ -1439,7 +1444,7 @@ static int xen_vm_detach(struct target *target) {
     }
 
     if (xen_vm_status(target) == TSTATUS_PAUSED) {
-	xen_vm_resume(target);
+	__xen_vm_resume(target,1);
     }
 
     --xc_refcnt;
@@ -2561,7 +2566,7 @@ static int xen_vm_invalidate_all_threads(struct target *target) {
     return 0;
 }
 
-static int xen_vm_resume(struct target *target) {
+static int __xen_vm_resume(struct target *target,int detaching) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
     vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
@@ -2572,16 +2577,29 @@ static int xen_vm_resume(struct target *target) {
     if (!xstate->dominfo.paused)
 	return -1;
 
-    /* Flush back registers if they're dirty! */
-    xen_vm_flush_all_threads(target);
+    /*
+     * Only call this if we have threads still, or we are not detaching;
+     * if we're detaching and the target_api has already deleted our
+     * threads, flush_all_threads will end up loading at least the
+     * global thread... which is counterproductive.
+     */
+    if (!detaching 
+	|| g_hash_table_size(target->threads) || target->global_thread) {
+	/* Flush back registers if they're dirty! */
+	xen_vm_flush_all_threads(target);
 
-    /* Invalidate our cached copies of threads. */
-    xen_vm_invalidate_all_threads(target);
+	/* Invalidate our cached copies of threads. */
+	xen_vm_invalidate_all_threads(target);
+    }
 
     /* flush_context will not have done this necessarily! */
     xstate->dominfo_valid = 0;
 
     return xc_domain_unpause(xc_handle,xstate->id);
+}
+
+static int xen_vm_resume(struct target *target) {
+    return __xen_vm_resume(target,0);
 }
 
 static target_status_t xen_vm_monitor(struct target *target) {
@@ -2881,7 +2899,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
 	}
 
     again:
-	xen_vm_resume(target);
+	__xen_vm_resume(target,0);
 	continue;
     }
 
