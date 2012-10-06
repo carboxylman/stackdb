@@ -1269,7 +1269,8 @@ struct symbol {
 	ismember:1,
 	isenumval:1,
 	isinlineinstance:1,
-	has_base_addr:1;
+	has_base_addr:1,
+	guessed_size:1;
 
     /* Our refcnt. */
     REFCNT refcnt;
