@@ -434,11 +434,19 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
  * the value at the address we return in @final_type_saveptr so that the
  * caller doesn't have to track whether the final pointer was autoloaded
  * or not.
+ *
+ * @return 1 if the location is an address; 2 if the location is a
+ * register; or nonzero on error.
+ *
+ * If an address and @addr_saveptr is set, the address is placed in
+ * @addr_saveptr.  If in a register and @reg_saveptr is set, the
+ * register number is placed in @reg_saveptr.
  */
-ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
+int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 				      struct lsymbol *lsymbol,
 				      ADDR addr,struct memregion *region,
 				      load_flags_t flags,
+				      REG *reg_saveptr,ADDR *addr_saveptr,
 				      struct symbol **final_type_saveptr,
 				      struct memrange **range_saveptr) {
     ADDR retval = addr;
@@ -446,7 +454,7 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
     struct symbol *datatype;
     struct array_list *symbol_chain;
     int alen;
-    int i = 0;
+    int i;
     int rc;
     OFFSET offset;
     struct memregion *current_region = region;
@@ -455,7 +463,7 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
     struct array_list *tchain = NULL;
     struct symbol *tdatatype;
     REG reg;
-    int in_reg;
+    int in_reg = 0;
 
     symbol_chain = lsymbol->chain;
     alen = array_list_len(symbol_chain);
@@ -491,13 +499,25 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 	       symbol_get_name(symbol),retval);
 	goto out;
     }
+    /*
+     * If the final symbol on the chain is in a register, we skip
+     * immediately to handling it; there is no need to handle anything
+     * prior to it.
+     */
+    else if (LOCATION_IN_REG(&symbol->s.ii->l)) {
+	i = alen - 1;
+    }
+    else {
+	i = 0;
+    }
+
 
     /*
      * We maintain a "slice" of the lsymbol chain, because we only want
      * to pass the subset of it that is our current value of i -- the
      * part of the list we have traversed.
      */
-    tchain = array_list_clone(symbol_chain,0);
+    tchain = array_list_clone(symbol_chain,i);
 
     /*
      * We traverse through the lsymbol, loading nested chunks.  If the
@@ -583,44 +603,10 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 	    rc = location_resolve(target,tid,current_region,&symbol->s.ii->l,
 				  tchain,&reg,&retval,&current_range);
 	    if (rc == 2) {
-		/* Try to load some value from a register; might or
-		 * might not be an address; only is if the current
-		 * symbol was a pointer; we handle that below.  There's
-		 * a termination condition below this loop that if we
-		 * end after having resolved the location to a register,
-		 * we can't calculate the address for it.
-		 */
 		in_reg = 1;
-		if (SYMBOL_IST_PTR(datatype)) {
-		    retval = target_read_reg(target,tid,reg);
-		    if (errno) {
-			verror("could not read reg %"PRIiREG" that ptr symbol %s"
-			       " resolved to: %s!\n",
-			       reg,symbol->name,strerror(errno));
-			goto errout;
-		    }
-
-		    /* We might have changed ranges... */
-		    target_find_memory_real(target,retval,NULL,NULL,
-					    &current_range);
-		    current_region = current_range->region;
-		    vdebug(5,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
-			   symbol_get_name(symbol),retval);
-
-		    /* We have to skip one pointer type */
-		    datatype = symbol_type_skip_qualifiers(datatype->datatype);
-
-		    goto check_pointer;
-		}
-		else {
-		    /*
-		     * Not sure how this could happen...
-		     */
-		    verror("could not handle non-ptr symbol %s being in a reg!\n",
-			   symbol->name);
-		    errno = EINVAL;
-		    goto errout;
-		}
+		/* See below inside the pointer check where we will try
+		 * to load the pointer across this register.
+		 */
 	    }
 	    else if (rc == 1) {
 		current_region = current_range->region;
@@ -647,17 +633,62 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 		    && (flags & LOAD_FLAG_AUTO_DEREF
 			|| (flags & LOAD_FLAG_AUTO_STRING
 			    && symbol_type_is_char(symbol_type_skip_ptrs(datatype)))))) {
-		retval = target_autoload_pointers(target,datatype,retval,tflags,
-						  &datatype,&current_range);
-		if (errno) {
-		    verror("could not load pointer for symbol %s\n",
-			   symbol_get_name(symbol));
-		    goto errout;
+
+		if (in_reg) {
+		    /* Try to load the ptr value from a register; might or
+		     * might not be an address; only is if the current
+		     * symbol was a pointer; we handle that below.  There's
+		     * a termination condition below this loop that if we
+		     * end after having resolved the location to a register,
+		     * we can't calculate the address for it.
+		     */
+		    retval = target_read_reg(target,tid,reg);
+		    if (errno) {
+			verror("could not read reg %"PRIiREG" that ptr symbol %s"
+			       " resolved to: %s!\n",
+			       reg,symbol->name,strerror(errno));
+			goto errout;
+		    }
+
+		    /* We might have changed ranges... */
+		    target_find_memory_real(target,retval,NULL,NULL,
+					    &current_range);
+		    current_region = current_range->region;
+		    vdebug(5,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),retval);
+
+		    /* We have to skip one pointer type */
+		    datatype = symbol_type_skip_qualifiers(datatype->datatype);
+
+		    /* Clear the in_reg bit, since we were able to
+		     * autoload the pointer!
+		     */
+		    in_reg = 0;
+
+		    vdebug(5,LOG_T_SYMBOL,
+			   "autoloaded REG (%d) pointer(s) for var %s ="
+			   " 0x%"PRIxADDR"\n",
+			   reg,symbol_get_name(symbol),retval);
+
+		    /* Do we need to keep trying to load through the pointer? */
+		    if (SYMBOL_IST_PTR(datatype))
+			goto check_pointer;
 		}
-		current_region = current_range->region;
-		vdebug(5,LOG_T_SYMBOL,
-		       "autoloaded pointer(s) for var %s now at 0x%"PRIxADDR"\n",
-		       symbol_get_name(symbol),retval);
+		else {
+		    retval = target_autoload_pointers(target,datatype,retval,
+						      tflags,&datatype,
+						      &current_range);
+		    if (errno) {
+			verror("could not load pointer for symbol %s\n",
+			       symbol_get_name(symbol));
+			goto errout;
+		    }
+		    current_region = current_range->region;
+
+		    vdebug(5,LOG_T_SYMBOL,
+			   "autoloaded pointer(s) for var %s = 0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),retval);
+		}
 	    }
 
 	    /*
@@ -674,6 +705,7 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 	}
 
 	if (i >= alen) {
+	    /*
 	    if (in_reg
 		&& (SYMBOL_IST_PTR(datatype)
 		    && !(flags & LOAD_FLAG_AUTO_DEREF)
@@ -685,23 +717,35 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
 		errno = EINVAL;
 		goto errout;
 	    }
+	    */
 	    goto out;
 	}
     }
 
  errout:
-    retval = 0;
     array_list_free(tchain);
-    return retval;
+    return -1;
 
  out:
     array_list_free(tchain);
-    if (range_saveptr)
-	*range_saveptr = current_range;
+
     if (final_type_saveptr)
 	*final_type_saveptr = datatype;
-    return retval;
 
+    if (in_reg) {
+	if (reg_saveptr)
+	    *reg_saveptr = reg;
+	return 2;
+    }
+    else {
+	if (range_saveptr)
+	    *range_saveptr = current_range;
+	if (addr_saveptr)
+	    *addr_saveptr = retval;
+	return 1;
+    }
+
+    return 0;
 }
 
 /*
@@ -718,14 +762,16 @@ ADDR __target_lsymbol_compute_address(struct target *target,tid_t tid,
  * caller doesn't have to track whether the final pointer was autoloaded
  * or not.
  */
-ADDR __target_bsymbol_compute_address(struct target *target,tid_t tid,
+int __target_bsymbol_compute_location(struct target *target,tid_t tid,
 				      struct bsymbol *bsymbol,
 				      load_flags_t flags,
+				      REG *reg_saveptr,ADDR *addr_saveptr,
 				      struct symbol **final_type_saveptr,
 				      struct memrange **range_saveptr) {
-    return __target_lsymbol_compute_address(target,tid,bsymbol->lsymbol,
-					    0,bsymbol->region,flags,
-					    final_type_saveptr,range_saveptr);
+    return __target_lsymbol_compute_location(target,tid,bsymbol->lsymbol,
+					     0,bsymbol->region,flags,
+					     reg_saveptr,addr_saveptr,
+					     final_type_saveptr,range_saveptr);
 }
 
 struct value *target_load_type(struct target *target,struct symbol *type,
@@ -901,11 +947,13 @@ struct value *target_load_value_member(struct target *target,
     struct memrange *range;
     struct symbol *symbol;
     struct symbol *datatype;
-    struct array_list *symbol_chain;
     char *rbuf = NULL;
     ADDR addr;
     struct target_thread *tthread = old_value->thread;
     tid_t tid = tthread->tid;
+    int rc;
+    REG reg;
+    REGVAL regval;
 
     /*
      * We have to handle two levels of pointers, potentially.  Suppose
@@ -958,102 +1006,21 @@ struct value *target_load_value_member(struct target *target,
     }
     mdatatype = symbol_type_skip_qualifiers(ls->symbol->datatype);
 
-    /*
-     * First, if the final symbol has a register location, don't bother
-     * trying to compute its address.  Realistically, no bsymbol chain
-     * that contains intermediate pointer vars should terminate with a
-     * value in a register!
-     */
     symbol = ls->symbol;
-    symbol_chain = ls->chain;
 
-    if (LOCATION_IN_REG(&symbol->s.ii->l)) {
-	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    errno = EINVAL;
-	    goto errout;
-	}
-
-	datatype = symbol_type_skip_qualifiers(symbol->datatype);
-	rbuf = malloc(datatype->size);
-	if (!location_load(target,tid,old_value->range->region,&(symbol->s.ii->l),
-			   flags,rbuf,datatype->size,symbol_chain,NULL,&range)) {
-	    verror("could not load register location for symbol %s!\n",
-		   symbol_get_name(symbol));
-	    goto errout;
-	}
-	/* This is a special case; if this symbol is a pointer and we
-	 * need to auto deref, do it.
-	 */
-	if (SYMBOL_IST_PTR(datatype)) {
-	    memcpy(&addr,rbuf,datatype->size);
-	    free(rbuf);
-	    rbuf = NULL;
-	    addr = target_autoload_pointers(target,datatype,addr,flags,
-					    &datatype,&range);
-	    if (errno) {
-		verror("failed to autoload pointers for symbol %s\n",
-		       symbol_get_name(symbol));
-		goto errout;
-	    }
-
-	    /* Actually do the load. */
-	    if (flags & LOAD_FLAG_AUTO_STRING 
-		&& symbol_type_is_char(datatype)) {
-		/* XXX: should we use datatype, or last pointer to datatype? */
-		value = value_create_noalloc(tthread,range,ls,datatype);
-
-		if (!(value->buf = (char *)__target_load_addr_real(target,range,
-								   addr,flags,
-								   NULL,0))) {
-		    verror("failed to autostring char pointer for symbol %s\n",
-			   symbol_get_name(symbol));
-		    goto errout;
-		}
-
-		value_set_strlen(value,strlen(value->buf) + 1);
-		value_set_addr(value,addr);
-
-		vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
-		       value->bufsiz);
-	    }
-	    else {
-		value = value_create(tthread,range,ls,datatype);
-
-		if (!__target_load_addr_real(target,range,addr,flags,
-					     (unsigned char *)value->buf,
-					     value->bufsiz)) {
-		    verror("failed to load value at 0x%"PRIxADDR"\n",addr);
-		    goto out;
-		}
-		else {
-		    value_set_addr(value,addr);
-
-		    vdebug(5,LOG_T_SYMBOL,
-			   "autoloaded pointer value with len %d\n",
-			   value->bufsiz);
-		}
-	    }
-	}
-	else {
-	    /* Just create the value based on the register value. */
-	    /* XXX: is @range really correct here?  Should we set NULL? */
-	    value = value_create_noalloc(tthread,range,ls,datatype);
-	    value->buf = rbuf;
-	    value->bufsiz = datatype->size;
-
-	    value_set_reg(value,symbol->s.ii->l.l.reg);
-	}
-    }
     /*
-     * Second, get the address for the lsymbol chain.
+     * Compute either an address or register location, and load!
      */
-    else {
-	addr = __target_lsymbol_compute_address(target,tid,ls,addr,
-						old_value->range->region,
-						flags,&datatype,&range);
-	if (addr == 0 && errno)
-	    goto errout;
 
+    rc = __target_lsymbol_compute_location(target,tid,ls,addr,
+					   old_value->range->region,flags,
+					   &reg,&addr,&datatype,&range);
+    if (rc < 0) {
+	verror("failed to compute location for var %s\n",
+	       symbol_get_name(symbol));
+	goto errout;
+    }
+    else if (rc == 1) {
 	/*
 	 * If __target_lsymbol_compute_address_at returns an address
 	 * entirely contained inside of value->buf, we can just clone
@@ -1081,6 +1048,8 @@ struct value *target_load_value_member(struct target *target,
 							       NULL,0))) {
 		vwarn("failed to autostring char pointer for symbol %s\n",
 		      symbol_get_name(symbol));
+		value_free(value);
+		value = NULL;
 		goto errout;
 	    }
 	    value_set_strlen(value,strlen(value->buf) + 1);
@@ -1096,6 +1065,8 @@ struct value *target_load_value_member(struct target *target,
 					 (unsigned char *)value->buf,
 					 value->bufsiz)) {
 		verror("failed to load value at 0x%"PRIxADDR"\n",addr);
+		value_free(value);
+		value = NULL;
 		goto errout;
 	    }
 	    else {
@@ -1105,7 +1076,46 @@ struct value *target_load_value_member(struct target *target,
 		       value->bufsiz);
 	    }
 	}
+    }
+    else if (rc == 2) {
+	if (flags & LOAD_FLAG_MUST_MMAP) {
+	    verror("cannot mmap register value for var %s!\n",
+		   symbol_get_name(symbol));
+	    errno = EINVAL;
+	    goto errout;
+	}
 
+        regval = target_read_reg(target,tid,reg);
+        if (errno) {
+	    verror("could not read reg %d value in tid %"PRIiTID"\n",reg,tid);
+            goto errout;
+	}
+
+	datatype = symbol_type_skip_qualifiers(symbol->datatype);
+	rbuf = malloc(datatype->size);
+
+        if (target->wordsize == 4 && __WORDSIZE == 64) {
+            /* If the target is 32-bit on 64-bit host, we have to grab
+             * the lower 32 bits of the regval.
+             */
+            memcpy(rbuf,((int32_t *)&regval),datatype->size);
+        }
+	else if (__WORDSIZE == 32)
+	    memcpy(rbuf,&regval,(datatype->size < 4) ? datatype->size : 4);
+        else
+            memcpy(rbuf,&regval,datatype->size);
+
+	/* Just create the value based on the register value. */
+	value = value_create_noalloc(tthread,NULL,ls,datatype);
+	value->buf = rbuf;
+	value->bufsiz = datatype->size;
+
+	value_set_reg(value,symbol->s.ii->l.l.reg);
+    }
+    else {
+	verror("computed location not register nor address (%d) -- BUG!\n",rc);
+	errno = EINVAL;
+	goto errout;
     }
 
  out:
@@ -1125,16 +1135,19 @@ struct value *target_load_value_member(struct target *target,
 struct value *target_load_symbol(struct target *target,tid_t tid,
 				 struct bsymbol *bsymbol,load_flags_t flags) {
     ADDR addr;
-    int alen;
+    REG reg;
     struct symbol *symbol;
-    struct array_list *symbol_chain;
     struct symbol *datatype;
     struct memregion *region = bsymbol->region;
     struct memrange *range;
     struct value *value = NULL;
+    REGVAL regval;
     char *rbuf;
     struct symbol *tdatatype;
     struct target_thread *tthread;
+    struct array_list *symbol_chain;
+    int alen;
+    int rc;
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -1145,7 +1158,6 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 
     symbol_chain = bsymbol->lsymbol->chain;
     alen = array_list_len(symbol_chain);
-
     symbol = (struct symbol *)array_list_item(symbol_chain,alen - 1);
 
     if (!SYMBOL_IS_FULL_VAR(symbol)) {
@@ -1156,102 +1168,16 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     }
 
     /*
-     * If the final symbol has a register location, don't bother trying
-     * to compute its address.  Realistically, no bsymbol chain that
-     * contains intermediate pointer vars should terminate with a value
-     * in a register!
+     * Compute the symbol's location (reg or addr) and load that!
      */
-    if (LOCATION_IN_REG(&symbol->s.ii->l)) {
-	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    errno = EINVAL;
-	    return NULL;
-	}
-
-	datatype = symbol_type_skip_qualifiers(symbol->datatype);
-	rbuf = malloc(datatype->size);
-	if (!location_load(target,tid,region,&(symbol->s.ii->l),flags,
-			   rbuf,datatype->size,symbol_chain,NULL,&range)) {
-	    verror("could not load register location for symbol %s!\n",
-		   symbol_get_name(symbol));
-	    value = NULL;
-	    free(rbuf);
-	    goto errout;
-	}
-	/* This is a special case; if this symbol is a pointer and we
-	 * need to auto deref, do it.
-	 */
-	if (SYMBOL_IST_PTR(datatype)) {
-	    memcpy(&addr,rbuf,datatype->size);
-	    addr = target_autoload_pointers(target,datatype,addr,flags,&datatype,
-					    &range);
-	    if (errno) {
-		vwarn("failed to autoload pointers for symbol %s\n",
-		      symbol_get_name(symbol));
-		goto errout;
-	    }
-
-	    /* Actually do the load. */
-	    if (flags & LOAD_FLAG_AUTO_STRING && symbol_type_is_char(datatype)) {
-		/* XXX: should we use datatype, or the last pointer to datatype? */
-		value = value_create_noalloc(tthread,range,bsymbol->lsymbol,
-					     datatype);
-
-		if (!(value->buf = (char *)__target_load_addr_real(target,range,
-								   addr,flags,
-								   NULL,0))) {
-		    vwarn("failed to autostring char pointer for symbol %s\n",
-			  symbol_get_name(symbol));
-		    value_free(value);
-		    value = NULL;
-		    goto errout;
-		}
-		value_set_strlen(value,strlen(value->buf) + 1);
-		value_set_addr(value,addr);
-
-		vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
-		       value->bufsiz);
-	    }
-	    else {
-		value = value_create(tthread,range,bsymbol->lsymbol,datatype);
-
-		if (!__target_load_addr_real(target,range,addr,flags,
-					     (unsigned char *)value->buf,
-					     value->bufsiz)) {
-		    verror("failed to load value at 0x%"PRIxADDR"\n",addr);
-		    value_free(value);
-		    value = NULL;
-		    goto out;
-		}
-		else {
-		    value_set_addr(value,addr);
-
-		    vdebug(5,LOG_T_SYMBOL,
-			   "autoloaded pointer value with len %d\n",
-			   value->bufsiz);
-		}
-	    }
-	}
-	else {
-	    /* Just create the value based on the register value. */
-	    value = value_create_noalloc(tthread,NULL,bsymbol->lsymbol,datatype);
-	    value->buf = rbuf;
-	    value->bufsiz = datatype->size;
-
-	    value_set_reg(value,symbol->s.ii->l.l.reg);
-	}
+    rc = __target_bsymbol_compute_location(target,tid,bsymbol,flags,
+					   &reg,&addr,&datatype,&range);
+    if (rc < 0) {
+	verror("failed to compute location for var %s\n",
+	       symbol_get_name(symbol));
+	goto errout;
     }
-    /*
-     * Otherwise, just compute the symbol's address and load that!
-     * __target_bsymbol_compute_address handles all the AUTO_DEREF /
-     * AUTO_STRING cases for us; all we have to note is the special
-     * loading case for AUTO_STRING.
-     */
-    else {
-	addr = __target_bsymbol_compute_address(target,tid,bsymbol,flags,&datatype,
-						&range);
-	if (addr == 0 && errno)
-	    goto errout;
-
+    else if (rc == 1) {
 	tdatatype = symbol_type_skip_qualifiers(symbol->datatype);
 	if (flags & LOAD_FLAG_AUTO_STRING
 	    && SYMBOL_IST_PTR(tdatatype) 
@@ -1293,6 +1219,46 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 		       value->bufsiz);
 	    }
 	}
+    }
+    else if (rc == 2) {
+	if (flags & LOAD_FLAG_MUST_MMAP) {
+	    verror("cannot mmap register value for var %s!\n",
+		   symbol_get_name(symbol));
+	    errno = EINVAL;
+	    goto errout;
+	}
+
+        regval = target_read_reg(target,tid,reg);
+        if (errno) {
+	    verror("could not read reg %d value in tid %"PRIiTID"\n",reg,tid);
+            goto errout;
+	}
+
+	datatype = symbol_type_skip_qualifiers(symbol->datatype);
+	rbuf = malloc(datatype->size);
+
+        if (target->wordsize == 4 && __WORDSIZE == 64) {
+            /* If the target is 32-bit on 64-bit host, we have to grab
+             * the lower 32 bits of the regval.
+             */
+            memcpy(rbuf,((int32_t *)&regval),datatype->size);
+        }
+	else if (__WORDSIZE == 32)
+	    memcpy(rbuf,&regval,(datatype->size < 4) ? datatype->size : 4);
+        else
+            memcpy(rbuf,&regval,datatype->size);
+
+	/* Just create the value based on the register value. */
+	value = value_create_noalloc(tthread,NULL,bsymbol->lsymbol,datatype);
+	value->buf = rbuf;
+	value->bufsiz = datatype->size;
+
+	value_set_reg(value,symbol->s.ii->l.l.reg);
+    }
+    else {
+	verror("computed location not register nor address (%d) -- BUG!\n",rc);
+	errno = EINVAL;
+	goto errout;
     }
 
  out:
