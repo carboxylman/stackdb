@@ -40,7 +40,7 @@ int value_set_mmap(struct value *value,ADDR addr,struct mmap_entry *mmap,
 
 int value_set_reg(struct value *value,REG reg) {
     value->res.reg = reg;
-    value->region_stamp = value->range->region->stamp;
+    value->region_stamp = 0;
     value->res_ip = target_read_creg(value->thread->target,value->thread->tid,
 				     CREG_IP);
     return 0;
