@@ -87,9 +87,8 @@ static int probe_taskswitch(struct probe *probe, void *data,
 		return -1;
 	}
 
-	/* FIXME: uncomment the below code when Dave works out the problem. */
-	//if (context->task.prev)
-	//value_free(context->task.prev);
+	if (context->task.prev)
+	    value_free(context->task.prev);
 	context->task.prev = value_prev;
 
 	if (context->task.cur)
