@@ -2356,6 +2356,7 @@ static int __value_get_append_tid(struct target *target,struct value *value,
 	return -1;
     }
     array_list_append(list,(void *)v_i32(v));
+    value_free(v);
 
     return 0;
 }
