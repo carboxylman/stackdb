@@ -225,6 +225,9 @@ int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data) {
     for (i = 0; i < array_list_len(alist); ++i) {
 	crd = (struct clf_range_data *)array_list_item(alist,i);
 	if (CLRANGE_END(crd) != end && CLRANGE_DATA(crd) == data) {
+	    vdebug(5,LOG_OTHER,
+		   "updated alist %p crd %p start %lx end %lx (old end %lx)"
+		   " i %d data %p\n",alist,crd,start,end,CLRANGE_END(crd),i,data);
 	    CLRANGE_END(crd) = end;
 	    break;
 	}
