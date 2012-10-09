@@ -321,7 +321,11 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
     Ebl *ebl;
     Elf_Data *edata;
     unsigned int i;
-    int j;
+    int j,k;
+    Word_t nextstart = -1;
+    Word_t tmpstart = -1;
+    Word_t start = -1;
+    Word_t end = -1;
     int class;
     char *name;
     GElf_Shdr shdr_mem;
@@ -333,9 +337,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
     unsigned char stt;
     struct symbol *symbol;
     GElf_Shdr *sections = NULL;
-    struct array_list *prev_ral;
     struct array_list *ral;
-    struct clf_range_data *prev_crd;
     struct clf_range_data *crd;
     struct array_list *tmp_ral;
     struct clf_range_data *tmp_crd;
@@ -530,68 +532,65 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 	 * that we are not checking to make sure the guessed length
 	 * is still in the same section as the symbol :).
 	 */
-	ral = clrange_find_next_inc(&debugfile->elf_ranges,0);
-	if (!ral) 
-	    continue;
-
-	/* XXX: assume nothing overlaps; if it did, we would
-	 * have to look for the next symbol following the
-	 * greatest *end* of all symbols in this list.
-	 */
-	prev_ral = ral;
-	prev_crd = crd = (struct clf_range_data *)array_list_item(ral,0);
-
-	while ((ral = clrange_find_next_exc(&debugfile->elf_ranges,
-					    CLRANGE_START(crd)))) {
-	    prev_crd = crd;
-	    symbol = (struct symbol *)CLRANGE_DATA(prev_crd);
-
-	    vdebug(3,LOG_D_ELF,
-		   "checking end of ELF symbol %s (0x%"PRIxADDR","
-		   "0x%"PRIxADDR")\n",
-		   symbol_get_name(symbol),
-		   CLRANGE_START(prev_crd),CLRANGE_END(prev_crd));
-
-	    crd = (struct clf_range_data *)array_list_item(ral,0);
-
-	    if (CLRANGE_END(prev_crd) == CLRANGE_START(prev_crd)) {
-		/* Enforce that there is only one symbol at each
-		 * start address.  If there is more than one, there
-		 * might be overlapping symbols, and we can't really
-		 * deal with that!
+	nextstart = 0;
+	ral = clrange_find_next_inc(&debugfile->elf_ranges,nextstart);
+	while (ral) {
+	    /*
+	     * Go through each crd (symbol + metadata) at this start
+	     * address, and if the CRD is 0-length, try to find the next
+	     * symbol.
+	     *
+	     * One optimization (maybe) we *chould* do is if any symbols
+	     * on the list are nonzero-length, just make the symbols
+	     * that are 0-length be the value of the nonzero length, if
+	     * their attributes match.
+	     */
+	    for (j = 0; j < array_list_len(ral); ++j) {
+		crd = (struct clf_range_data *)array_list_item(ral,j);
+		symbol = (struct symbol *)CLRANGE_DATA(crd);
+		/* Doesn't matter which crd we take the next start value
+		 * from; they are all the same.
 		 */
-		if (array_list_len(prev_ral) != 1) {
-		    vwarn("more than one ELF symbol at 0x%lx"
-			  " ; not updating ends!\n",
-			  CLRANGE_START(prev_crd));
-		    goto lcontinue;
-		}
+		nextstart = start = CLRANGE_START(crd);
+		end = CLRANGE_END(crd);
+
+		vdebug(16,LOG_D_ELF,
+		       "checking end of ELF symbol %s (0x%"PRIxADDR","
+		       "0x%"PRIxADDR")\n",
+		       symbol_get_name(symbol),
+		       CLRANGE_START(crd),CLRANGE_END(crd));
+
+		if (start != end) 
+		    continue;
 
 		/*
-		 * If the 0-length *function* symbol is global,
-		 * and the next symbol is NOT global, we need to
-		 * try to find the next global symbol!
+		 * Find the next nearest start range, such that
+		 * attributes match.
+		 *
+		 * If the 0-length *function* symbol is global, and the
+		 * next symbol is NOT global, we need to try to find the
+		 * next global symbol!
 		 */
-		if (SYMBOL_IS_FUNCTION(symbol)
-		    && symbol->isexternal 
-		    && !((struct symbol *)CLRANGE_DATA(crd))->isexternal) {
-		    tmp_crd = crd;
+		if (SYMBOL_IS_FUNCTION(symbol) && symbol->isexternal) {
 		    gcrd = NULL;
+		    tmpstart = start;
 		    while ((tmp_ral = \
 			    clrange_find_next_exc(&debugfile->elf_ranges,
-						  CLRANGE_START(tmp_crd)))) {
-			/* Need to find *any* global symbol at
-			 * this ral, so check the whole list!
+						  tmpstart))) {
+			/* Need to find *any* global symbol at this ral,
+			 * so check the whole list!
 			 */
-			gcrd = NULL;
-			for (j = 0; j < array_list_len(tmp_ral); ++j) {
-			    tmp_crd = (struct clf_range_data *) \
-				array_list_item(tmp_ral,j);
+			for (k = 0; k < array_list_len(tmp_ral); ++k) {
+			    tmp_crd = (struct clf_range_data *)	\
+				array_list_item(tmp_ral,k);
 			    tmp_symbol = (struct symbol *)CLRANGE_DATA(tmp_crd);
 			    if (tmp_symbol->isexternal) {
 				gcrd = tmp_crd;
 				break;
 			    }
+
+			    /* Doesn't matter which one; all same. */
+			    tmpstart = CLRANGE_START(tmp_crd);
 			}
 
 			if (gcrd)
@@ -600,42 +599,49 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 
 		    if (!gcrd) {
 			vwarn("could not find next global symbol after %s;"
-			      " not updating!\n",symbol_get_name(symbol));
+			      " not updating 0-length GLOBAL!\n",
+			      symbol_get_name(symbol));
 			goto lcontinue;
 		    }
 
 		    vdebug(2,LOG_D_ELF,
 			   "updating 0-length GLOBAL symbol %s to"
 			   " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
-			   symbol_get_name(symbol),
-			   CLRANGE_START(prev_crd),CLRANGE_START(gcrd));
+			   symbol_get_name(symbol),start,CLRANGE_START(gcrd));
 		    
-		    clrange_update_end(&debugfile->elf_ranges,
-				       CLRANGE_START(prev_crd),
-				       CLRANGE_START(gcrd),
-				       symbol);
+		    clrange_update_end(&debugfile->elf_ranges,start,
+				       CLRANGE_START(gcrd),symbol);
 
-		    symbol->size = CLRANGE_START(gcrd) - CLRANGE_START(prev_crd);
+		    symbol->size = CLRANGE_START(gcrd) - start;
 		    symbol->guessed_size = 1;
 		}
 		else {
+		    tmp_ral = clrange_find_next_exc(&debugfile->elf_ranges,start);
+		    if (!tmp_ral) {
+			vwarn("could not find a next range after %s;"
+			      " not updating 0-length symbol!\n",
+			      symbol_get_name(symbol));
+			goto lcontinue;
+		    }
+
+		    /* Just take the first one! */
+		    gcrd = (struct clf_range_data *)array_list_item(tmp_ral,0);
+
 		    vdebug(2,LOG_D_ELF,
 			   "updating 0-length symbol %s to 0x%"PRIxADDR","
 			   "0x%"PRIxADDR"\n",
-			   symbol_get_name(symbol),
-			   CLRANGE_START(prev_crd),CLRANGE_START(crd));
-		    
-		    clrange_update_end(&debugfile->elf_ranges,
-				       CLRANGE_START(prev_crd),
-				       CLRANGE_START(crd),symbol);
+			   symbol_get_name(symbol),start,CLRANGE_START(gcrd));
 
-		    symbol->size = CLRANGE_START(crd) - CLRANGE_START(prev_crd);
+		    clrange_update_end(&debugfile->elf_ranges,start,
+				       CLRANGE_START(gcrd),symbol);
+
+		    symbol->size = CLRANGE_START(gcrd) - start;
 		    symbol->guessed_size = 1;
 		}
 	    }
 
 	lcontinue:
-	    prev_ral = ral;
+	    ral = clrange_find_next_exc(&debugfile->elf_ranges,nextstart);
 	}
     }
 
