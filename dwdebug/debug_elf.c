@@ -321,6 +321,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
     Ebl *ebl;
     Elf_Data *edata;
     unsigned int i;
+    int j;
     int class;
     char *name;
     GElf_Shdr shdr_mem;
@@ -338,6 +339,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
     struct clf_range_data *crd;
     struct array_list *tmp_ral;
     struct clf_range_data *tmp_crd;
+    struct symbol *tmp_symbol;
     struct clf_range_data *gcrd;
 
     if (!(ehdr = gelf_getehdr(elf,&ehdr_mem))) {
@@ -412,231 +414,228 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
     while ((scn = elf_nextscn(elf,scn)) != NULL) {
 	shdr = gelf_getshdr(scn,&shdr_mem);
 
-	if (shdr && shdr->sh_size > 0 && shdr->sh_type == SHT_SYMTAB) {
-	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
+	if (!shdr || shdr->sh_size <= 0 || shdr->sh_type != SHT_SYMTAB) 
+	    continue;
 
-	    if (strcmp(name,".symtab") != 0) 
+	name = elf_strptr(elf,shstrndx,shdr->sh_name);
+
+	if (strcmp(name,".symtab") != 0) 
+	    continue;
+
+	vdebug(2,LOG_D_ELF,"found .symtab section in ELF file %s\n",elf_filename);
+
+	edata = elf_getdata(scn,NULL);
+	if (!edata || !edata->d_size || !edata->d_buf) {
+	    verror("cannot get data for valid section %s in %s: %s",
+		   name,elf_filename,elf_errmsg(-1));
+	    goto errout;
+	}
+
+	nsyms = edata->d_size / (class == ELFCLASS32 ? sizeof (Elf32_Sym) \
+				                     : sizeof (Elf64_Sym));
+
+	vdebug(2,LOG_D_DWARF,".symtab section in ELF file %s has %d symbols\n",
+	       elf_filename,nsyms);
+
+	/* Load the symtab */
+	for (i = 0; i < nsyms; ++i) {
+	    sym = gelf_getsym(edata,i,&sym_mem);
+	    if (sym->st_name >= debugfile->elf_strtablen) {
+		vwarn("skipping ELF symbol with bad name strtab idx %d\n",
+		      (int)sym->st_name);
+		continue;
+	    }
+
+	    stt = GELF_ST_TYPE(sym->st_info);
+
+	    /*
+	     * If the symbol type is NOTYPE, check to see which
+	     * section the symbol is in, and try to dynamically
+	     * "set" the type to STT_OBJECT or STT_FUNC.  This will
+	     * result in symbols that should not be in the ELF
+	     * symtab, probably, but hopefully it will reduce the
+	     * amount of missing symbols in our ELF symtab.
+	     */
+	    if (stt == STT_NOTYPE && sym->st_shndx < ehdr->e_shnum) {
+		if (sections[sym->st_shndx].sh_flags & SHF_EXECINSTR)
+		    stt = STT_FUNC;
+		else if (sections[sym->st_shndx].sh_flags & SHF_ALLOC)
+		    stt = STT_OBJECT;
+	    }
+
+	    if (!(stt == STT_OBJECT || stt == STT_COMMON || stt == STT_TLS
+		  || stt == STT_FUNC))
+		/* Skip all non-code symbols */
 		continue;
 
-	    vdebug(2,LOG_D_ELF,
-		   "found .symtab section in ELF file %s\n",
-		   elf_filename);
-
-	    edata = elf_getdata(scn,NULL);
-	    if (!edata || !edata->d_size || !edata->d_buf) {
-		verror("cannot get data for valid section %s in %s: %s",
-		       name,elf_filename,elf_errmsg(-1));
-		goto errout;
-	    }
-
-	    nsyms = edata->d_size / (class == ELFCLASS32 ? sizeof (Elf32_Sym) \
-				                         : sizeof (Elf64_Sym));
-
-	    vdebug(2,LOG_D_DWARF,
-		   ".symtab section in ELF file %s has %d symbols\n",
-		   elf_filename,nsyms);
-
-	    /* Load the symtab */
-	    for (i = 0; i < nsyms; ++i) {
-		sym = gelf_getsym(edata,i,&sym_mem);
-		if (sym->st_name >= debugfile->elf_strtablen) {
-		    vwarn("skipping ELF symbol with bad name strtab idx %d\n",
-			  (int)sym->st_name);
-		    continue;
-		}
-
-		stt = GELF_ST_TYPE(sym->st_info);
-
-		/*
-		 * If the symbol type is NOTYPE, check to see which
-		 * section the symbol is in, and try to dynamically
-		 * "set" the type to STT_OBJECT or STT_FUNC.  This will
-		 * result in symbols that should not be in the ELF
-		 * symtab, probably, but hopefully it will reduce the
-		 * amount of missing symbols in our ELF symtab.
-		 */
-		if (stt == STT_NOTYPE && sym->st_shndx < ehdr->e_shnum) {
-		    if (sections[sym->st_shndx].sh_flags & SHF_EXECINSTR)
-			stt = STT_FUNC;
-		    else if (sections[sym->st_shndx].sh_flags & SHF_ALLOC)
-			stt = STT_OBJECT;
-		}
-
-		if (!(stt == STT_OBJECT || stt == STT_COMMON || stt == STT_TLS
-		      || stt == STT_FUNC))
-		    /* Skip all non-code symbols */
-		    continue;
-
 #ifdef DWDEBUG_USE_STRTAB
-		symname = &debugfile->elf_strtab[sym->st_name];
+	    symname = &debugfile->elf_strtab[sym->st_name];
 #else
-		symname = strdup(&debugfile->elf_strtab[sym->st_name]);
+	    symname = strdup(&debugfile->elf_strtab[sym->st_name]);
 #endif
 
-		symbol = symbol_create(debugfile->elf_symtab,(SMOFFSET)i,symname,
-				       (stt == STT_OBJECT || stt == STT_TLS
-					|| stt == STT_COMMON)	\
-				       ? SYMBOL_TYPE_VAR	\
-				       : SYMBOL_TYPE_FUNCTION,
-				       SYMBOL_SOURCE_ELF,0);
+	    symbol = symbol_create(debugfile->elf_symtab,(SMOFFSET)i,symname,
+				   (stt == STT_OBJECT || stt == STT_TLS
+				    || stt == STT_COMMON)	\
+				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNCTION,
+				   SYMBOL_SOURCE_ELF,0);
 
-		if (GELF_ST_BIND(sym->st_info) == STB_GLOBAL
-		    || GELF_ST_BIND(sym->st_info) == STB_WEAK)
-		    symbol->isexternal = 1;
+	    if (GELF_ST_BIND(sym->st_info) == STB_GLOBAL
+		|| GELF_ST_BIND(sym->st_info) == STB_WEAK)
+		symbol->isexternal = 1;
 
-		symbol->size = sym->st_size;
+	    symbol->size = sym->st_size;
 
-		symbol->base_addr = (ADDR)sym->st_value;
-		symbol->has_base_addr = 1;
+	    symbol->base_addr = (ADDR)sym->st_value;
+	    symbol->has_base_addr = 1;
 
-		symtab_insert(debugfile->elf_symtab,symbol,0);
+	    symtab_insert(debugfile->elf_symtab,symbol,0);
+
+	    /*
+	     * Insert into debugfile->addresses IF the hashtable is
+	     * empty (i.e., if we load the symtab first, before the
+	     * debuginfo file), or if there is not anything already
+	     * at this location.  We want debuginfo symbols to trump
+	     * ELF symbols in this table.
+	     */
+	    if (g_hash_table_size(debugfile->addresses) == 0
+		|| !g_hash_table_lookup(debugfile->addresses,
+					(gpointer)symbol->base_addr))
+		g_hash_table_insert(debugfile->addresses,
+				    (gpointer)symbol->base_addr,
+				    (gpointer)symbol);
+
+	    if (symbol->base_addr != 0)
+		clrange_add(&debugfile->elf_ranges,symbol->base_addr,
+			    symbol->base_addr + symbol->size,symbol);
+	}
+
+	/* Now, go through all the address ranges and update their sizes 
+	 * based on the following range's address -- this is
+	 * definitely possibly wrong sometimes.  Could be wrong!
+	 *
+	 * The idea is, for any 0-length isexternal (GLOBAL ELF sym)
+	 * function symbol, don't just look for the next symbol; look
+	 * for the next global function symbol (or end of section).
+	 *
+	 * (This strategy is informed by how the Linux kernel does
+	 * its i386 asm files; "functions" are declared global;
+	 * labels are not, so they appear as LOCAL ELF symbols.)
+	 *
+	 * This will hopefully will allow disassembly of non-DWARF
+	 * functions -- since we guess their length here.  Could be
+	 * wrong sometimes.
+	 *
+	 * XXX: one thing that will almost certainly be wrong is
+	 * that we are not checking to make sure the guessed length
+	 * is still in the same section as the symbol :).
+	 */
+	ral = clrange_find_next_inc(&debugfile->elf_ranges,0);
+	if (!ral) 
+	    continue;
+
+	/* XXX: assume nothing overlaps; if it did, we would
+	 * have to look for the next symbol following the
+	 * greatest *end* of all symbols in this list.
+	 */
+	prev_ral = ral;
+	prev_crd = crd = (struct clf_range_data *)array_list_item(ral,0);
+
+	while ((ral = clrange_find_next_exc(&debugfile->elf_ranges,
+					    CLRANGE_START(crd)))) {
+	    prev_crd = crd;
+	    symbol = (struct symbol *)CLRANGE_DATA(prev_crd);
+
+	    vdebug(3,LOG_D_ELF,
+		   "checking end of ELF symbol %s (0x%"PRIxADDR","
+		   "0x%"PRIxADDR")\n",
+		   symbol_get_name(symbol),
+		   CLRANGE_START(prev_crd),CLRANGE_END(prev_crd));
+
+	    crd = (struct clf_range_data *)array_list_item(ral,0);
+
+	    if (CLRANGE_END(prev_crd) == CLRANGE_START(prev_crd)) {
+		/* Enforce that there is only one symbol at each
+		 * start address.  If there is more than one, there
+		 * might be overlapping symbols, and we can't really
+		 * deal with that!
+		 */
+		if (array_list_len(prev_ral) != 1) {
+		    vwarn("more than one ELF symbol at 0x%lx"
+			  " ; not updating ends!\n",
+			  CLRANGE_START(prev_crd));
+		    goto lcontinue;
+		}
 
 		/*
-		 * Insert into debugfile->addresses IF the hashtable is
-		 * empty (i.e., if we load the symtab first, before the
-		 * debuginfo file), or if there is not anything already
-		 * at this location.  We want debuginfo symbols to trump
-		 * ELF symbols in this table.
+		 * If the 0-length *function* symbol is global,
+		 * and the next symbol is NOT global, we need to
+		 * try to find the next global symbol!
 		 */
-		if (g_hash_table_size(debugfile->addresses) == 0
-		    || !g_hash_table_lookup(debugfile->addresses,
-					    (gpointer)symbol->base_addr))
-		    g_hash_table_insert(debugfile->addresses,
-					(gpointer)symbol->base_addr,
-					(gpointer)symbol);
-
-		if (symbol->base_addr != 0)
-		    clrange_add(&debugfile->elf_ranges,symbol->base_addr,
-				symbol->base_addr + symbol->size,symbol);
-	    }
-
-	    /* Now, go through all the address ranges and update their sizes 
-	     * based on the following range's address -- this is
-	     * definitely possibly wrong sometimes.  Could be wrong!
-	     *
-	     * The idea is, for any 0-length isexternal (GLOBAL ELF sym)
-	     * function symbol, don't just look for the next symbol;
-	     * look for the next global function symbol (or end of
-	     * section).
-	     *
-	     * (This strategy is informed by how the Linux kernel does
-	     * its i386 asm files; "functions" are declared global;
-	     * labels are not, so they appear as LOCAL ELF symbols.)
-	     *
-	     * This will hopefully will allow disassembly of non-DWARF
-	     * functions -- since we guess their length here.  Could be
-	     * wrong sometimes.
-	     *
-	     * XXX: one thing that will almost certainly be wrong is
-	     * that we are not checking to make sure the guessed length
-	     * is still in the same section as the symbol :).
-	     */
-	    ral = clrange_find_next_inc(&debugfile->elf_ranges,0);
-	    if (ral) {
-		/* XXX: assume nothing overlaps; if it did, we would
-		 * have to look for the next symbol following the
-		 * greatest *end* of all symbols in this list.
-		 */
-		prev_ral = ral;
-		prev_crd = crd =					\
-		    (struct clf_range_data *)array_list_item(ral,0);
-
-		while ((ral = clrange_find_next_exc(&debugfile->elf_ranges,
-						    CLRANGE_START(crd)))) {
-		    prev_crd = crd;
-		    symbol = (struct symbol *)CLRANGE_DATA(prev_crd);
-
-		    vdebug(3,LOG_D_ELF,
-			   "checking end of ELF symbol %s (0x%"PRIxADDR","
-			   "0x%"PRIxADDR")\n",
-			   symbol_get_name(symbol),
-			   CLRANGE_START(prev_crd),CLRANGE_END(prev_crd));
-
-		    crd = (struct clf_range_data *)array_list_item(ral,0);
-
-		    if (CLRANGE_END(prev_crd) == CLRANGE_START(prev_crd)) {
-			/* Enforce that there is only one symbol at each
-			 * start address.  If there is more than one, there
-			 * might be overlapping symbols, and we can't really
-			 * deal with that!
+		if (SYMBOL_IS_FUNCTION(symbol)
+		    && symbol->isexternal 
+		    && !((struct symbol *)CLRANGE_DATA(crd))->isexternal) {
+		    tmp_crd = crd;
+		    gcrd = NULL;
+		    while ((tmp_ral = \
+			    clrange_find_next_exc(&debugfile->elf_ranges,
+						  CLRANGE_START(tmp_crd)))) {
+			/* Need to find *any* global symbol at
+			 * this ral, so check the whole list!
 			 */
-			if (array_list_len(prev_ral) != 1) {
-			    vwarn("more than one ELF symbol at 0x%"PRIxADDR
-				  "; not updating ends!\n",
-				  CLRANGE_START(prev_crd));
-			    goto lcontinue;
-			}
-
-			/*
-			 * If the 0-length *function* symbol is global,
-			 * and the next symbol is NOT global, we need to
-			 * try to find the next global symbol!
-			 */
-			if (SYMBOL_IS_FUNCTION(symbol)
-			    && symbol->isexternal 
-			    && !((struct symbol *)CLRANGE_DATA(crd))->isexternal) {
-			    tmp_crd = crd;
-			    gcrd = NULL;
-			    while ((tmp_ral = clrange_find_next_exc(&debugfile->elf_ranges,
-								    CLRANGE_START(tmp_crd)))) {
-				/* Need to find *any* global symbol at
-				 * this ral, so check the whole list!
-				 */
-				gcrd = NULL;
-				for (i = 0; i < array_list_len(tmp_ral); ++i) {
-				    tmp_crd = (struct clf_range_data *)array_list_item(tmp_ral,i);
-				    if (((struct symbol *)CLRANGE_DATA(tmp_crd))->isexternal) {
-					gcrd = tmp_crd;
-					break;
-				    }
-				}
-
-				if (gcrd)
-				    break;
+			gcrd = NULL;
+			for (j = 0; j < array_list_len(tmp_ral); ++j) {
+			    tmp_crd = (struct clf_range_data *) \
+				array_list_item(tmp_ral,j);
+			    tmp_symbol = (struct symbol *)CLRANGE_DATA(tmp_crd);
+			    if (tmp_symbol->isexternal) {
+				gcrd = tmp_crd;
+				break;
 			    }
-
-			    if (!gcrd) {
-				vwarn("could not find next global symbol after %s; not updating!\n",
-				      symbol_get_name(symbol));
-				goto lcontinue;
-			    }
-
-			    vdebug(2,LOG_D_ELF,
-				   "updating 0-length GLOBAL symbol %s to"
-				   " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
-				   symbol_get_name(symbol),
-				   CLRANGE_START(prev_crd),CLRANGE_START(gcrd));
-			    
-			    clrange_update_end(&debugfile->elf_ranges,
-					       CLRANGE_START(prev_crd),
-					       CLRANGE_START(gcrd),
-					       symbol);
-
-			    symbol->size = CLRANGE_START(gcrd) - CLRANGE_START(prev_crd);
-			    symbol->guessed_size = 1;
-					       
 			}
-			else {
-			    vdebug(2,LOG_D_ELF,
-				   "updating 0-length symbol %s to 0x%"PRIxADDR","
-				   "0x%"PRIxADDR"\n",
-				   symbol_get_name(symbol),
-				   CLRANGE_START(prev_crd),CLRANGE_START(crd));
-			    
-			    clrange_update_end(&debugfile->elf_ranges,
-					       CLRANGE_START(prev_crd),
-					       CLRANGE_START(crd),
-					       symbol);
 
-			    symbol->size = CLRANGE_START(crd) - CLRANGE_START(prev_crd);
-			    symbol->guessed_size = 1;
-			}
+			if (gcrd)
+			    break;
 		    }
 
-		lcontinue:
-		    prev_ral = ral;
+		    if (!gcrd) {
+			vwarn("could not find next global symbol after %s;"
+			      " not updating!\n",symbol_get_name(symbol));
+			goto lcontinue;
+		    }
+
+		    vdebug(2,LOG_D_ELF,
+			   "updating 0-length GLOBAL symbol %s to"
+			   " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),
+			   CLRANGE_START(prev_crd),CLRANGE_START(gcrd));
+		    
+		    clrange_update_end(&debugfile->elf_ranges,
+				       CLRANGE_START(prev_crd),
+				       CLRANGE_START(gcrd),
+				       symbol);
+
+		    symbol->size = CLRANGE_START(gcrd) - CLRANGE_START(prev_crd);
+		    symbol->guessed_size = 1;
+		}
+		else {
+		    vdebug(2,LOG_D_ELF,
+			   "updating 0-length symbol %s to 0x%"PRIxADDR","
+			   "0x%"PRIxADDR"\n",
+			   symbol_get_name(symbol),
+			   CLRANGE_START(prev_crd),CLRANGE_START(crd));
+		    
+		    clrange_update_end(&debugfile->elf_ranges,
+				       CLRANGE_START(prev_crd),
+				       CLRANGE_START(crd),symbol);
+
+		    symbol->size = CLRANGE_START(crd) - CLRANGE_START(prev_crd);
+		    symbol->guessed_size = 1;
 		}
 	    }
+
+	lcontinue:
+	    prev_ral = ral;
 	}
     }
 
