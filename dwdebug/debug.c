@@ -3516,6 +3516,21 @@ struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol) {
     return lsymbol->symbol;
 }
 
+struct symbol *lsymbol_get_noninline_parent_symbol(struct lsymbol *lsymbol) {
+    int i = array_list_len(lsymbol->chain) - 1;
+    struct symbol *s = lsymbol->symbol;
+
+    for ( ; i >= 0; --i) {
+	s = (struct symbol *)array_list_item(lsymbol->chain,i);
+	if (!s->isinlineinstance)
+	    break;
+    }
+    if (s->isinlineinstance)
+	return NULL;
+
+    return s;
+}
+
 void lsymbol_hold_int(struct lsymbol *lsymbol) {
     int i;
     for (i = 0; i < array_list_len(lsymbol->chain); ++i) {

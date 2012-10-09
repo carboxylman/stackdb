@@ -555,6 +555,12 @@ void lsymbol_append(struct lsymbol *lsymbol,struct symbol *symbol);
 void lsymbol_prepend(struct lsymbol *lsymbol,struct symbol *symbol);
 char *lsymbol_get_name(struct lsymbol *lsymbol);
 struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol);
+/*
+ * Returns the deepest non-inline-instance symbol in the lookup chain.
+ * So if you want the first function that contains one (or more nested)
+ * inline instance, you can use this function.
+ */
+struct symbol *lsymbol_get_noninline_parent_symbol(struct lsymbol *lsymbol);
 void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
 /*
  * Takes a reference to the lsymbol (NOT to the symbols on the chain!).

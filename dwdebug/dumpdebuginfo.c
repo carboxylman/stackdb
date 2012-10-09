@@ -258,6 +258,12 @@ int main(int argc,char **argv) {
 		lsymbol_dump(s,&ud);
 		fprintf(stdout,"\n");
 		is = s->symbol;
+		if (s->symbol->isinlineinstance) {
+		    fprintf(stdout,"first noninline parent %s: \n",argv[i]);
+		    ud.prefix = "  ";
+		    symbol_dump(lsymbol_get_noninline_parent_symbol(s),&ud);
+		    fprintf(stdout,"\n");
+		}
 		/* We release this one because we got it through a
 		 * lookup function, so a ref was taken to it on our
 		 * behalf.
@@ -266,6 +272,7 @@ int main(int argc,char **argv) {
 
 		s2 = lsymbol_create_from_symbol(is);
 		fprintf(stdout,"reverse lookup %s: ",argv[i]);
+		ud.prefix = "";
 		lsymbol_dump(s2,&ud);
 		/* We free this one instead of releasing because we
 		 * created it instead of looked it up, so a ref to it was
