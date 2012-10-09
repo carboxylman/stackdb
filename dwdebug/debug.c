@@ -756,6 +756,12 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
 	}
     }
 
+    /*
+     * If we still didn't find it, check the ELF symtab.
+     */
+    if (!s && debugfile->elf_symtab) 
+	s = (struct symbol *)clrange_find(&debugfile->elf_ranges,addr);
+
     if (s) {
 	ls = lsymbol_create_from_symbol(s);
 
@@ -915,7 +921,8 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	/* If we found a match, fully load it (and its children and
 	 * dependent DIEs if it hasn't been yet!).
 	 */
-	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL) {
+	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL
+	    && lsymbol->symbol->source == SYMBOL_SOURCE_DWARF) {
 	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial lsymbol %s\n",
 		   symbol_get_name(lsymbol->symbol));
 	    debugfile_expand_symbol(debugfile,lsymbol->symbol);
@@ -939,7 +946,8 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	/* If we found a match, fully load it (and its children and
 	 * dependent DIEs if it hasn't been yet!).
 	 */
-	if (symbol->loadtag == LOADTYPE_PARTIAL) {
+	if (symbol->loadtag == LOADTYPE_PARTIAL
+	    && symbol->source == SYMBOL_SOURCE_DWARF) {
 	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial symbol %s\n",
 		   symbol_get_name(symbol));
 	    debugfile_expand_symbol(debugfile,symbol);
@@ -958,7 +966,8 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	/* If we found a match, fully load it (and its children and
 	 * dependent DIEs if it hasn't been yet!).
 	 */
-	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL) {
+	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL
+	    && lsymbol->symbol->source == SYMBOL_SOURCE_DWARF) {
 	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial lsymbol %s\n",
 		   symbol_get_name(lsymbol->symbol));
 	    debugfile_expand_symbol(debugfile,lsymbol->symbol);
@@ -2148,6 +2157,8 @@ struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
     symbol_set_name(symbol,name);
     symbol_set_type(symbol,symtype);
 
+    symbol->source = source;
+
     symbol->refcnt = 0;
 
     /* Only insert the symbol automatically if we have a name.  This
@@ -2820,7 +2831,8 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	}
 
 	/* Make sure the datatype is fully loaded before we search it. */
-	if (tsymbol->loadtag == LOADTYPE_PARTIAL) {
+	if (tsymbol->loadtag == LOADTYPE_PARTIAL
+	    && tsymbol->source == SYMBOL_SOURCE_DWARF) {
 	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
 		   "expanding partial type symbol %s\n",
 		   symbol_get_name(tsymbol));
