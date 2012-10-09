@@ -51,7 +51,7 @@ struct clf_range_data *crd_get_tightest(struct array_list *crdlist,
 					int *contains_saveptr);
 struct clf_range_data *crd_top_containing_range(struct clf_range_data *crd);
 
-clrange_t clrange_create();
+clrange_t clrange_create(void);
 int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data);
 int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data);
 void *clrange_find(clrange_t *clf,Word_t index);
@@ -83,7 +83,7 @@ void clrange_free(clrange_t clf);
 
 typedef Pvoid_t clmatch_t;
 
-clmatch_t clmatch_create();
+clmatch_t clmatch_create(void);
 int clmatch_add(clmatch_t *clf,Word_t index,void *data);
 struct array_list *clmatch_find(clmatch_t *clf,Word_t index);
 void clmatch_free(clmatch_t clf);
