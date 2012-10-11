@@ -570,9 +570,10 @@ struct array_list *lsymbol_get_members(struct lsymbol *lsymbol,
     struct lsymbol *lsymbol_new;
     GHashTableIter iter;
 
-    if (!SYMBOL_IS_FULL(lsymbol->symbol) 
-	&& lsymbol->symbol->source != SYMBOL_SOURCE_ELF) {
-	vwarn("symbol %s is partial!\n",symbol_get_name(symbol));
+    if (!SYMBOL_IS_FULL(lsymbol->symbol)) {
+	if (lsymbol->symbol->source != SYMBOL_SOURCE_ELF) {
+	    vwarn("symbol %s is partial!\n",symbol_get_name(symbol));
+	}
 	return NULL;
     }
     else if (!SYMBOL_IST_STUN(symbol) 
