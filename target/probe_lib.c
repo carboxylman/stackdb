@@ -134,7 +134,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	    goto errout;
 	}
 
-	if (probe_register_source(probe,source)) {
+	if (!probe_register_source(probe,source)) {
 	    probe_free(source,1);
 	    goto errout;
 	}
@@ -181,7 +181,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	goto errout;
     }
 
-    if (disasm_get_control_flow_offsets(target,INST_CF_RET,funccode,funclen,
+    if (disasm_get_control_flow_offsets(target,INST_CF_RET | INST_CF_IRET,
+					funccode,funclen,
 					&cflist,start,noabort)) {
 	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
 	goto errout;
@@ -194,8 +195,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
     for (j = 0; j < array_list_len(cflist); ++j) {
 	idata = (struct cf_inst_data *)array_list_item(cflist,j);
 
-	if (idata->type != INST_RET) {
-	    verror("disasm instr was not RET!\n");
+	if (idata->type != INST_RET && idata->type != INST_IRET) {
+	    verror("disasm instr was not RET/IRET!\n");
 	    goto errout;
 	}
 
@@ -228,7 +229,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	    goto errout;
 	}
 
-	if (probe_register_source(probe,source)) {
+	if (!probe_register_source(probe,source)) {
 	    probe_free(source,1);
 	    goto errout;
 	}
