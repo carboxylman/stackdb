@@ -389,8 +389,8 @@ int function_dump_args(struct probe *probe,void *handler_data,
     //struct bsymbol *bsymbol = target_lookup_sym_addr(t,probeaddr);
     //ip = target_read_reg(t,t->ipregno);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR")\n  ",
-	    probe->bsymbol->lsymbol->symbol->name,probeaddr);
+    fprintf(stdout,"%s (0x%"PRIxADDR") (thread %"PRIiTID")\n  ",
+	    probe->bsymbol->lsymbol->symbol->name,probeaddr,tid);
 
     struct array_list *args;
     int i;
@@ -454,6 +454,7 @@ int function_post(struct probe *probe,void *handler_data,
 		  struct probe *trigger) {
     ADDR probeaddr;
     struct probepoint *probepoint;
+    tid_t tid = target_gettid(probe->target);
 
     if (!probe->probepoint && trigger) {
 	probepoint = trigger->probepoint;
@@ -467,9 +468,9 @@ int function_post(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR") post handler",
+    fprintf(stdout,"%s (0x%"PRIxADDR") post handler (thread %"PRIiTID")",
 	    probe->bsymbol->lsymbol->symbol->name,
-	    probeaddr);
+	    probeaddr,tid);
     fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stderr);
@@ -909,6 +910,25 @@ int main(int argc,char **argv) {
 			    bsymbol->lsymbol->symbol->name,funcstart);
 		    goto err_unreg;
 		}
+	    }
+	    else if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)
+		     && ((i < argc && retcode_strs[i] 
+			  && (*retcode_strs[i] == 'e'
+			      || *retcode_strs[i] == 'E')))) {
+		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
+				     pre,post,NULL,0);
+		probe->handler_data = probe->name;
+		if (!probe)
+		    goto err_unreg;
+
+		if (!probe_register_function_ee(probe,PROBEPOINT_SW,bsymbol,0,1)) {
+		    fprintf(stderr,
+			    "Could not instrument function %s entry/returns!\n",
+			    bsymbol->lsymbol->symbol->name);
+		    goto err_unreg;
+		}
+
+		g_hash_table_insert(probes,(gpointer)probe,(gpointer)probe);
 	    }
 	    else {
 		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
