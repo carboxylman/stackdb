@@ -18,19 +18,18 @@
 
 ###############################################################################
 
-PACKAGE = tools
-
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= tools
+SUBDIR		= tools/bts
 OBJDIR		= @top_builddir@
 
-SUBDIRS = bts rop
+SUBDIRS = 
 
 include $(OBJDIR)/Makeconf
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
-	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
+	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug \
+	-I$(TOP_SRCDIR)/$(SUBDIR) -I$(TOP_SRCDIR)/xentt
 CFLAGS += -DDWDEBUG_USE_STRTAB
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
@@ -51,29 +50,18 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h
+	$(TOP_SRCDIR)/tools/bts/bts.h
 
-OBJECTS := dumpthreads.lo 
-ifeq ($(ENABLE_XENACCESS),"1")
-	OBJECTS += psaction.lo
-endif
+OBJECTS := io.lo symbol.lo bts_dump.lo bts_extract.lo
 
 LIBRARIES := 
 
-PROGRAMS := dumpthreads 
-ifeq ($(ENABLE_XENACCESS),"1")
-	PROGRAMS += psaction
-endif
-
+PROGRAMS := bts_dump bts_extract trace_task
 
 STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
 	$(OBJDIR)/lib/libvmilib.a
 ifeq ($(ENABLE_XENACCESS),"1")
-	STATICLIBS += $(XENACCESS_A)
+	STATICLIBS += $(OBJDIR)/xentt/libxentt.a $(XENACCESS_A)
 endif
 
 INST_INC = 
@@ -89,14 +77,21 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-dumpthreads: $(HEADERS) $(STATICLIBS) dumpthreads.lo
+bts_extract: $(HEADERS) $(STATICLIBS) bts_extract.lo
 	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
 
-psaction: $(HEADERS) $(STATICLIBS) psaction.lo
-	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
+bts_dump: $(HEADERS) $(STATICLIBS) io.lo symbol.lo bts_dump.lo
+	$(CC) -o $@ $(CFLAGS) $@.o io.o symbol.o $(STATICLIBS) $(LDFLAGS)
+
+replay.o: $(TOP_SRCDIR)/xentt/replay.c
+	$(CC) -c -o replay.o $(CFLAGS) $<
+
+trace_task: $(HEADERS) $(STATICLIBS) replay.o trace_task.o
+	$(CC) -o $@ $(CFLAGS) $@.o replay.o $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-	$(INSTALL) psaction $(DESTDIR)$(INSTALL_BINDIR)/
+	$(INSTALL) bts_dump $(DESTDIR)$(INSTALL_BINDIR)/
+	$(INSTALL) bts_extract $(DESTDIR)$(INSTALL_BINDIR)/
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)

@@ -27,7 +27,7 @@ include Makeconf
 
 SUBDIRS = lib dwdebug
 ifeq ($(ENABLE_XENACCESS),"1")
-	SUBDIRS += xenaccess vmprobes # vmps vmfs vmtap
+	SUBDIRS += xentt xenaccess vmprobes # vmps vmfs vmtap
 endif
 SUBDIRS += target
 SUBDIRS += tests

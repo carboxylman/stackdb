@@ -391,9 +391,10 @@ AC_ARG_ENABLE(vmi-debug,
 AC_SUBST(ENABLE_VMI_DEBUG)
 
 outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
-          target/Makefile tests/Makefile tools/Makefile tools/rop/Makefile \
+          target/Makefile tests/Makefile
+	  tools/Makefile tools/rop/Makefile tools/bts/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
-          vmfs/Makefile vmps/Makefile vmtap/Makefile \
+          vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \
           examples/nfs-perf-analysis/Makefile \
           examples/context-aware-probes/Makefile \
           examples/context-tracker/Makefile \

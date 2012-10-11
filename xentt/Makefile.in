@@ -18,19 +18,19 @@
 
 ###############################################################################
 
-PACKAGE = tools
+PACKAGE = xentt
+LIBVERSION = 0.1
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= tools
+SUBDIR		= xentt
 OBJDIR		= @top_builddir@
 
-SUBDIRS = bts rop
+SUBDIRS = 
 
 include $(OBJDIR)/Makeconf
 
-CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
-	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
+CFLAGS += -I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/xentt
 CFLAGS += -DDWDEBUG_USE_STRTAB
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
@@ -50,31 +50,16 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
-	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
-	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
-	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h
+HEADERS := $(SRCDIR)/xentt.h \
+	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h
 
-OBJECTS := dumpthreads.lo 
-ifeq ($(ENABLE_XENACCESS),"1")
-	OBJECTS += psaction.lo
-endif
+OBJECTS := xentt.lo replay.lo logfile.lo
 
-LIBRARIES := 
+LIBRARIES := libxentt.a libxentt.so.$(LIBVERSION)
 
-PROGRAMS := dumpthreads 
-ifeq ($(ENABLE_XENACCESS),"1")
-	PROGRAMS += psaction
-endif
+PROGRAMS := test_replay
 
-
-STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
-	$(OBJDIR)/lib/libvmilib.a
-ifeq ($(ENABLE_XENACCESS),"1")
-	STATICLIBS += $(XENACCESS_A)
-endif
+STATICLIBS := libxentt.a $(XENACCESS_A)
 
 INST_INC = 
 INST_LIB = $(LIBRARIES)
@@ -89,21 +74,51 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-dumpthreads: $(HEADERS) $(STATICLIBS) dumpthreads.lo
+libxentt.a:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libxentt.a $(OBJECTS)
+
+libxentt.lo:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
+
+libxentt.so.$(LIBVERSION):	xentt.lo
+	$(CP) -f xentt.lo $@
+
+libxentt.so:	libxentt.so.$(LIBVERSION)
+	$(LN_S) $< $@
+
+test_replay: $(HEADERS) test_replay.lo $(STATICLIBS)
 	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
 
-psaction: $(HEADERS) $(STATICLIBS) psaction.lo
-	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
-
-install: def-install install-subdirs
-	$(INSTALL) psaction $(DESTDIR)$(INSTALL_BINDIR)/
+install: def-install install-subdirs setup
+	install -c -m 755 $(SRCDIR)/tt_record.pl $(DESTDIR)$(INSTALL_BINDIR)/tt_record
+	install -c -m 755 $(SRCDIR)/tt_replay.pl $(DESTDIR)$(INSTALL_BINDIR)/tt_replay
+	install -c -m 644 $(SRCDIR)/tt_dom.pm $(DESTDIR)/usr/lib/perl5/vendor_perl/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
-	$(RM) -f $(LIBRARIES) 
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
+		target.lo dumptarget.lo 
+	$(RM) -f $(LIBRARIES) target.o libtarget.so libtarget.so.$(LIBVERSION)
 	$(RM) -f $(PROGRAMS)
 
 distclean: distclean-subdirs
+
+#
+# XXX Populate a Xen + Linux domU "template" directory
+# for tt_record and tt_replay.
+#
+setup:
+	-@if [ ! -f "/boot/xen-3.0-unstable.gz" ]; then \
+		echo "Not a XenTT-based OS"; \
+	elif [ ! -d "/local/sda4/xentt" ]; then \
+		mkdir -p /local/sda4/xentt /local/sda4/xentt-state; \
+		cp -p /boot/initrd-2.6.18.8-xenU.img /local/sda4/xentt/; \
+		cp -p /boot/vmlinuz-2.6.18-xenU /local/sda4/xentt/; \
+		cp -p /boot/vmlinux-syms-2.6.18-xenU /local/sda4/xentt/; \
+		cp -p $(SRCDIR)/xm.conf.template /local/sda4/xentt/; \
+		cp -p /proj/a3/vm-images/initrd-frisbee-linux-pristine-no-emulab.img /local/sda4/xentt/ramdisk.img; \
+	else \
+		echo "/local/sda4/xentt already installed"; \
+	fi
 
 # How to recursively descend into subdirectories to make general
 # targets such as `all'.

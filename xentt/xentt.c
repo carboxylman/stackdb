@@ -16,9 +16,13 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
-int xentt_run_replay(struct xentt_analysis *analysis, 
-                     struct xentt_replay_session *replay_session)
+/*
+ * Couple Xen TT replay runs with analyses.
+ * XXX not defined yet.
+ */
+int xentt_replay_run_analysis(struct xentt_replay_session *replay_session,
+			      struct xentt_analysis *analysis)
 {
-
     return 0; 
-};
+}
+
