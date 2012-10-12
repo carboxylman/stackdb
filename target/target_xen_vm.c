@@ -107,8 +107,23 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 int xen_vm_singlestep(struct target *target,tid_t tid,int isbp);
 int xen_vm_singlestep_end(struct target *target,tid_t tid);
 
+uint64_t xen_vm_get_tsc(struct target *target);
+uint64_t xen_vm_get_time(struct target *target);
+uint64_t xen_vm_get_counter(struct target *target);
+
+int xen_vm_instr_can_switch_context(struct target *target,ADDR addr);
+
 /* Internal prototypes. */
 static int xen_vm_invalidate_all_threads(struct target *target);
+
+/* Format chars to print context registers. */
+#if __WORDSIZE == 64
+#define RF "lx"
+#define DRF "lx"
+#else
+#define RF "x"
+#define DRF "lx"
+#endif
 
 /*
  * Globals.
@@ -172,6 +187,10 @@ struct target_ops xen_vm_ops = {
     .notify_sw_breakpoint = xen_vm_notify_sw_breakpoint,
     .singlestep = xen_vm_singlestep,
     .singlestep_end = xen_vm_singlestep_end,
+    .instr_can_switch_context = xen_vm_instr_can_switch_context,
+    .get_tsc = xen_vm_get_tsc,
+    .get_time = xen_vm_get_time,
+    .get_counter = xen_vm_get_counter,
 };
 
 /**
@@ -477,6 +496,7 @@ struct target *xen_vm_attach(char *domain,
 
 static int xen_vm_load_dominfo(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
+    shared_info_t *live_shinfo = NULL;
 
     if (!xstate->dominfo_valid) {
         vdebug(4,LOG_T_XV,
@@ -487,6 +507,28 @@ static int xen_vm_load_dominfo(struct target *target) {
 	    errno = EINVAL;
 	    return -1;
 	}
+	/*
+	 * Have to grab vcpuinfo out of shared frame, argh!  This can't
+	 * be the only way to access the tsc, but I can't find a better
+	 * libxc way to do it!
+	 *
+	 * XXX: Do we really have to do this every time the domain is
+	 * interrupted?
+	 */
+	live_shinfo = xa_mmap_mfn(&xstate->xa_instance,PROT_READ,
+				  xstate->dominfo.shared_info_frame);
+        if (!live_shinfo) {
+            verror("failed to mmap shared_info_frame!\n");
+            errno = EINVAL;
+	    return -1;
+        }
+	/*
+	 * Copy the vcpu_info_t out, then munmap.
+	 */
+	memcpy(&xstate->vcpuinfo,&live_shinfo->vcpu_info[0],
+	       sizeof(xstate->vcpuinfo));
+	munmap(live_shinfo,PAGE_SIZE);
+
 	xstate->dominfo_valid = 1;
     } else {
         vdebug(8,LOG_T_XV,
@@ -1000,8 +1042,9 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
     return NULL;
 }
 
-static struct target_thread *xen_vm_load_current_thread(struct target *target,
-							int force) {
+static struct target_thread *__xen_vm_load_current_thread(struct target *target,
+							  int force,
+							  int globalonly) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     tid_t tid = 0;
     struct value *threadinfov = NULL;
@@ -1051,6 +1094,12 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
     }
     target->global_thread->valid = 1;
     target->global_thread->status = THREAD_STATUS_RUNNING;
+
+    /*
+     * If only loading the global thread, stop here.
+     */
+    if (globalonly) 
+	return target->global_thread;
 
     /* We need to load in the current task_struct, AND if it's already
      * in target->threads, CHECK if it really matches one of our cached
@@ -1278,6 +1327,10 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
     return target->global_thread;
 }
 
+static struct target_thread *xen_vm_load_current_thread(struct target *target,
+							int force) {
+    return __xen_vm_load_current_thread(target,force,0);
+}
 
 /**
  ** Target API implementation.
@@ -2496,20 +2549,12 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 #endif
     }
 
-#if __WORDSIZE == 64
-#define RF "%lx"
-#define DRF "%lx"
-#else
-#define RF "%x"
-#define DRF "%lx"
-#endif
-
     if (detail < 1)
 	snprintf(buf,bufsiz,
-		 "ip="RF" bp="RF" sp="RF" flags="RF
-		 " ax="RF" bx="RF" cx="RF" dx="RF" di="RF" si="RF
-		 " cs="RF" ss="RF" ds="RF" es="RF" fs="RF" gs="RF
-		 " dr0="DRF" dr1="DRF" dr2="DRF" dr3="DRF" dr6="DRF" dr7="DRF,
+		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
+		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF
+		 " cs=%"RF" ss=%"RF" ds=%"RF" es=%"RF" fs=%"RF" gs=%"RF
+		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF,
 #if __WORDSIZE == 64
 		 r->rip,r->rbp,r->rsp,r->eflags,
 		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
@@ -2523,10 +2568,10 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 		 tstate->dr[6],tstate->dr[7]);
     else 
 	snprintf(buf,bufsiz,
-		 "ip="RF" bp="RF" sp="RF" flags="RF
-		 " ax="RF" bx="RF" cx="RF" dx="RF" di="RF" si="RF"\n"
-		 " cs="RF" ss="RF" ds="RF" es="RF" fs="RF" gs="RF"\n"
-		 " dr0="DRF" dr1="DRF" dr2="DRF" dr3="DRF" dr6="DRF" dr7="DRF,
+		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
+		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF"\n"
+		 " cs=%"RF" ss=%"RF" ds=%"RF" es=%"RF" fs=%"RF" gs=%"RF"\n"
+		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF,
 #if __WORDSIZE == 64
 		 r->rip,r->rbp,r->rsp,r->eflags,
 		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
@@ -2623,6 +2668,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
     struct xen_vm_thread_state *xtstate;
     tid_t tid;
     struct probepoint *spp;
+    struct target_thread *sstep_thread;
 
     /* get a select()able file descriptor of the event channel */
     fd = xc_evtchn_fd(xce_handle);
@@ -2667,60 +2713,113 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
 	/* Reload our dominfo */
 	xstate->dominfo_valid = 0;
-	xen_vm_load_dominfo(target);
+	if (xen_vm_load_dominfo(target)) {
+	    verror("could not load dominfo; returning to user!\n");
+	    return TSTATUS_ERROR;
+	}
+
+	vdebug(3,LOG_T_XV,
+	       "new debug event (brctr = %"PRIx64", tsc = %"PRIx64")\n",
+	       xen_vm_get_counter(target),xen_vm_get_tsc(target));
 
 	if (target_status(target) == TSTATUS_PAUSED) {
-	    /* 
-	     * Reload the current thread.  We don't force it because we
-	     * flush all threads before continuing the loop via again:,
-	     * or in target_resume/target_singlestep.
-	     */
-	    target->current_thread = NULL;
-	    xen_vm_load_current_thread(target,0);
-
 	    /*
-	     * First, we check the current thread's state/registers to
-	     * try to handle the exception in the current thread.  If
-	     * there is no information (and the current thread was not
-	     * the global thread), we try the global thread.
+	     * Grab EIP first so we can see if we're in user or kernel
+	     * space.
 	     */
-
-	    if (!(tthread = target->current_thread)) {
-		verror("could not read current thread!\n");
-		goto again;
-	    }
-
-	    /*
-	     * Next, if auto garbage collection is enabled, do it.
-	     *
-	     * We need to only do this every N interrupts, or something,
-	     * but what we really want is something that is related to
-	     * how many cycles have eclipsed in the target -- i.e., if
-	     * more than one second's worth of wallclock time has
-	     * elapsed in the target, we should garbage collect.
-	     *
-	     * But I don't know how to grab the current cycle counter
-	     * off the top of my head, so just do it every 8 interrupts
-	     * for now.
-	     */
-	    if (++xstate->thread_auto_gc_counter == 8) {
-		target_gc_threads(target);
-	    }
-
-	    gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
-	    xtstate = (struct xen_vm_thread_state *)tthread->state;
-	    tid = tthread->tid;
-
 	    errno = 0;
 	    ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
 	    if (errno) {
-		verror("could not read EIP while finding probepoint: %s\n",
+		verror("could not read EIP while checking debug event: %s\n",
 		       strerror(errno));
 		return TSTATUS_ERROR;
 	    }
 
+	    /*
+	     * Only try to load the kernel thread if we're in kernel
+	     * space.  We might not be if we single stepped an IRET, for
+	     * instance.  If we're in user space, just load the "global"
+	     * thread so we have something.
+	     *
+	     * XXX: probably later we should load a "dummy" user thread
+	     * to eliminate bugs/confusion later on with populating
+	     * user-mode state into the global thread?  Shouldn't be a
+	     * problem, but if it got stale or something, might
+	     * introduce a bug...
+	     */
+	    if (ipval < 0xc0000000) {
+		vdebug(3,LOG_T_XV | LOG_T_THREAD,
+		       "user-mode debug event at EIP 0x%"PRIxADDR"; not loading"
+		       " thread; will try to handle it if it is single step!\n",
+		       ipval);
+		target->current_thread = NULL;
+		if (!__xen_vm_load_current_thread(target,0,1)) {
+		    verror("could not read global thread in user mode context!\n");
+		    goto again;
+		}
+		tthread = target->global_thread;
+		gtstate = (struct xen_vm_thread_state *) \
+		    target->global_thread->state;
+		xtstate = gtstate;
+		tid = target->global_thread->tid;
+	    }
+	    else {
+		/* 
+		 * Reload the current thread.  We don't force it because we
+		 * flush all threads before continuing the loop via again:,
+		 * or in target_resume/target_singlestep.
+		 */
+		target->current_thread = NULL;
+		xen_vm_load_current_thread(target,0);
+
+		/*
+		 * First, we check the current thread's state/registers to
+		 * try to handle the exception in the current thread.  If
+		 * there is no information (and the current thread was not
+		 * the global thread), we try the global thread.
+		 */
+
+		if (!(tthread = target->current_thread)) {
+		    verror("could not read current thread!\n");
+		    goto again;
+		}
+
+		/*
+		 * Next, if auto garbage collection is enabled, do it.
+		 *
+		 * We need to only do this every N interrupts, or something,
+		 * but what we really want is something that is related to
+		 * how many cycles have eclipsed in the target -- i.e., if
+		 * more than one second's worth of wallclock time has
+		 * elapsed in the target, we should garbage collect.
+		 *
+		 * But I don't know how to grab the current cycle counter
+		 * off the top of my head, so just do it every 8 interrupts
+		 * for now.
+		 */
+		if (++xstate->thread_auto_gc_counter == 8) {
+		    target_gc_threads(target);
+		}
+
+		gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
+		xtstate = (struct xen_vm_thread_state *)tthread->state;
+		tid = tthread->tid;
+	    }
+
 	    /* handle the triggered probe based on its event type */
 	    if (xtstate->context.debugreg[6] & 0x4000) {
+		vdebug(3,LOG_T_XV,"new single step debug event\n");
+
+		if (target->sstep_thread 
+		    && target->sstep_thread->tpc
+		    && target->sstep_thread->tpc->probepoint->can_switch_context) {
+		    sstep_thread = target->sstep_thread;
+		}
+		else
+		    sstep_thread = NULL;
+
+		target->sstep_thread = NULL;
+
 		if (xtstate->context.user_regs.eflags & EF_TF) {
 		    /* Save the currently hanlding probepoint;
 		     * ss_handler may clear tpc.
@@ -2749,6 +2848,30 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
 		    goto again;
 		}
+		else if (sstep_thread) {
+		    vdebug(3,LOG_T_XV | LOG_T_THREAD,
+			   "thread %"PRIiTID" single stepped can_context_switch"
+			   " instr; trying to handle exception in old thread!\n",
+			   sstep_thread->tid);
+
+		    target->ss_handler(target,sstep_thread,
+				       sstep_thread->tpc->probepoint);
+
+		    /* Clear the status bits right now. */
+		    xtstate->context.debugreg[6] = 0;
+		    tthread->dirty = 1;
+		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+
+		    goto again;
+		}
+		else if (ipval < 0xc0000000) {
+		    verror("user-mode debug event (single step) at 0x%"PRIxADDR
+			   "; debug status reg 0x%"DRF"; eflags 0x%"RF
+			   "; skipping handling!\n",
+			   ipval,xtstate->context.debugreg[6],
+			   xtstate->context.user_regs.eflags);
+		    goto again;
+		}
 		else {
 		    target->ss_handler(target,tthread,NULL);
 
@@ -2760,7 +2883,18 @@ static target_status_t xen_vm_monitor(struct target *target) {
 		    goto again;
 		}
 	    }
+	    else if (ipval < 0xc0000000) {
+		verror("user-mode debug event (not single step) at 0x%"PRIxADDR
+		       "; debug status reg 0x%"DRF"; eflags 0x%"RF
+		       "; skipping handling!\n",
+		       ipval,xtstate->context.debugreg[6],
+		       xtstate->context.user_regs.eflags);
+		goto again;
+	    }
 	    else {
+		vdebug(3,LOG_T_XV,"new (breakpoint?) debug event\n");
+		target->sstep_thread = NULL;
+
 		dreg = -1;
 
 		/* Check the hw debug status reg first */
@@ -3298,7 +3432,7 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    vdebug(5,LOG_T_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
+    vdebug(16,LOG_T_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
 
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
@@ -3345,7 +3479,7 @@ int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    vdebug(5,LOG_T_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
+    vdebug(16,LOG_T_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
 	   xen_vm_reg_name(target,reg),value);
 
 #if __WORDSIZE == 64
@@ -3855,6 +3989,8 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp) {
 #endif
     tthread->dirty = 1;
 
+    target->sstep_thread = tthread;
+
     return 0;
 }
 
@@ -3878,7 +4014,100 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid) {
 
     tthread->dirty = 1;
 
+    target->sstep_thread = NULL;
+
     return 0;
+}
+
+int xen_vm_instr_can_switch_context(struct target *target,ADDR addr) {
+    unsigned char buf[2];
+
+    if (!target_read_addr(target,addr,2,buf)) {
+	verror("could not read 2 bytes at 0x%"PRIxADDR"!\n",addr);
+	return -1;
+    }
+
+    /* For now, if it's an IRET, or INT, return 1; otherwise, don't. */
+    if (buf[0] == 0xcf) 
+	return (int)buf[0];
+    else if (buf[0] == 0xcc || buf[0] == 0xcd || buf[1] == 0xce)
+	return (int)buf[0];
+
+    return 0;
+}
+
+uint64_t xen_vm_get_tsc(struct target *target) {
+    struct target_thread *gthread;
+    struct xen_vm_thread_state *gtstate;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    assert(xstate->dominfo_valid);
+
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    if (xstate->dominfo.ttd_guest) {
+	if (target->global_thread && target->global_thread->valid)
+	    gthread = target->global_thread;
+	else if (!(gthread = __xen_vm_load_current_thread(target,0,1))) {
+	    verror("could not load global thread!\n");
+	    return UINT64_MAX;
+	}
+
+	gtstate = (struct xen_vm_thread_state *)gthread->state;
+
+	return gtstate->context.ttd_perf.tsc;
+    }
+    else {
+#endif
+	if (xstate->vcpuinfo.time.version & 0x1) 
+	    vwarn("tsc update in progress; tsc may be wrong?!\n");
+
+	return xstate->vcpuinfo.time.tsc_timestamp;
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    }
+#endif
+}
+
+uint64_t xen_vm_get_time(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    assert(xstate->dominfo_valid);
+
+    if (xstate->vcpuinfo.time.version & 0x1) 
+	vwarn("tsc update in progress; time may be wrong?!\n");
+
+    return xstate->vcpuinfo.time.system_time;
+}
+
+uint64_t xen_vm_get_counter(struct target *target) {
+    struct target_thread *gthread;
+    struct xen_vm_thread_state *gtstate;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    assert(xstate->dominfo_valid);
+
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    if (xstate->dominfo.ttd_guest) {
+	if (target->global_thread && target->global_thread->valid)
+	    gthread = target->global_thread;
+	else if (!(gthread = __xen_vm_load_current_thread(target,0,1))) {
+	    verror("could not load global thread!\n");
+	    return UINT64_MAX;
+	}
+
+	gtstate = (struct xen_vm_thread_state *)gthread->state;
+
+	return gtstate->context.ttd_perf.brctr;
+    }
+    else {
+#endif
+	if (xstate->vcpuinfo.time.version & 0x1) 
+	    vwarn("time (subbing for counter) update in progress; time/counter"
+		  " may be wrong?!\n");
+
+	return xstate->vcpuinfo.time.system_time;
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    }
+#endif
 }
 
 /*

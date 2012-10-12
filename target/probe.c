@@ -207,8 +207,23 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
     INIT_LIST_HEAD(&probepoint->ss_actions);
     INIT_LIST_HEAD(&probepoint->complex_actions);
 
+    if (target->ops->instr_can_switch_context) {
+	if ((probepoint->can_switch_context = \
+	     target->ops->instr_can_switch_context(target,addr)) < 0) {
+	    vwarn("could not determine if instr at 0x%"PRIxADDR" can switch"
+		  " context; but continuing!\n",addr);
+	    probepoint->can_switch_context = 0;
+	}
+    }
+
     vdebug(5,LOG_P_PROBEPOINT,"created ");
-    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
+    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
+    if (probepoint->can_switch_context) {
+	vdebugc(5,LOG_P_PROBEPOINT," (instr can switch context (0x%x)\n",
+	       probepoint->can_switch_context);
+    }
+    else
+	vdebugc(5,LOG_P_PROBEPOINT,"\n");
 
     return probepoint;
 }
@@ -2418,6 +2433,13 @@ static int setup_post_single_step(struct target *target,
 	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
 	vdebugc(4,LOG_P_PROBEPOINT,"\n");
 
+	if (probepoint->can_switch_context) {
+	    vdebug(4,LOG_P_PROBEPOINT,"can_switch_context (%d) -- ",
+		   probepoint->can_switch_context);
+	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
+	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	}
+
 	return 1;
     }
 }
@@ -2517,8 +2539,15 @@ result_t probepoint_bp_handler(struct target *target,
      * Push a new context for handling this probepoint.
      */
     tpc = tpc_new(tthread,probepoint);
-    if (tthread->tpc)
+    if (tthread->tpc) {
 	array_list_append(tthread->tpc_stack,tthread->tpc);
+
+	vdebug(3,LOG_T_XV,
+	       "already handling %d probepoints in thread %d; most recent"
+	       " (tpc %p) was ",
+	       array_list_len(tthread->tpc_stack),tthread->tid,tthread->tpc);
+	LOGDUMPPROBEPOINT_NL(3,LOG_T_XV,tthread->tpc->probepoint);
+    }
     tthread->tpc = tpc;
 
     /*
@@ -2589,10 +2618,6 @@ result_t probepoint_bp_handler(struct target *target,
 
     /* We move into the HANDLING state while we run the pre-handlers. */
     probepoint->state = PROBE_BP_PREHANDLING;
-
-    if (array_list_len(tthread->tpc_stack)) 
-	vwarn("already handling %d probepoints in thread %d; watch for errors!\n",
-	      array_list_len(tthread->tpc_stack),tthread->tid);
 
     /*
      * Prepare for handling: save the original ip value in case
@@ -2680,8 +2705,8 @@ result_t probepoint_bp_handler(struct target *target,
         
 	vdebug(9,LOG_P_PROBEPOINT,
 	       "ip 0x%"PRIxREGVAL" restored after pre handlers at ",ipval);
-	LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(5,LOG_P_PROBEPOINT,"\n");
+	LOGDUMPPROBEPOINT(9,LOG_P_PROBEPOINT,probepoint);
+	vdebugc(9,LOG_P_PROBEPOINT,"\n");
     }
 
     /* Now we're handling actions. */

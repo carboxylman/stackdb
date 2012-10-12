@@ -159,6 +159,7 @@ struct xen_vm_state {
     uint8_t thread_auto_gc_counter;
 
     xc_dominfo_t dominfo;
+    vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
 
     /* XenAccess instance used to read/write domain's memory */

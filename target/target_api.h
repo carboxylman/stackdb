@@ -503,6 +503,10 @@ int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 int target_singlestep(struct target *target,tid_t tid,int isbp);
 int target_singlestep_end(struct target *target,tid_t tid);
 
+uint64_t target_get_tsc(struct target *target);
+uint64_t target_get_time(struct target *target);
+uint64_t target_get_counter(struct target *target);
+
 /*
  * @return: nonzero if the target thread is valid (loaded).
  */
@@ -1103,6 +1107,26 @@ struct target {
      */
     struct target_thread *blocking_thread;
 
+    /*
+     * This is for target backends to use if they wish.
+     *
+     * The idea is, each time we single step a thread, we make a note of
+     * it here; each time we run the monitor loop looking for debug
+     * exceptions, after we find one, clear this variable after checking
+     * any state related to it, so that we know how to handle the debug
+     * exception -- but then CLEAR it before handling the exception via
+     * the probe library.  The Xen target does this; the linux ptrace
+     * target does not.
+     *
+     * This is not completely trustworthy on targets that do not provide
+     * good thread control.  It is here for the case in which we single
+     * step an instruction that might switch contexts.  If we have just
+     * done that, and this var is set, a target's monitor loop should
+     * notice and try to "handle" the singlestep in the previous thread,
+     * even though the thread is no longer running.
+     */
+    struct target_thread *sstep_thread;
+
     GHashTable *soft_probepoints;
 
     /*
@@ -1242,6 +1266,23 @@ struct target_ops {
 				int notification);
     int (*singlestep)(struct target *target,tid_t tid,int isbp);
     int (*singlestep_end)(struct target *target,tid_t tid);
+
+    /* Instruction-specific stuff for stepping. */
+    /*
+     * Returns > 0 if the instruction might switch contexts; 0
+     * if not; -1 on error.
+     */
+    int (*instr_can_switch_context)(struct target *target,ADDR addr);
+
+    /*
+     * Stuff for counters.  Each target should provide its TSC
+     * timestamp, an internal notion of time since boot in nanoseconds,
+     * and if they support indexed execution, a "cycle counter" or
+     * something.
+     */
+    uint64_t (*get_tsc)(struct target *target);
+    uint64_t (*get_time)(struct target *target);
+    uint64_t (*get_counter)(struct target *target);
 };
 
 struct value {

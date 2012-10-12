@@ -127,63 +127,63 @@ int target_open(struct target *target,struct target_opts *topts) {
 }
     
 target_status_t target_monitor(struct target *target) {
-    vdebug(9,LOG_T_TARGET,"monitoring target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"monitoring target(%s)\n",target->type);
     return target->ops->monitor(target);
 }
 
 target_status_t target_poll(struct target *target,
 			    target_poll_outcome_t *outcome,int *pstatus) {
-    vdebug(10,LOG_T_TARGET,"polling target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"polling target(%s)\n",target->type);
     return target->ops->poll(target,outcome,pstatus);
 }
     
 int target_resume(struct target *target) {
-    vdebug(9,LOG_T_TARGET,"resuming target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"resuming target(%s)\n",target->type);
     return target->ops->resume(target);
 }
     
 int target_pause(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"pausing target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"pausing target(%s)\n",target->type);
     return target->ops->pause(target,0);
 }
 
 target_status_t target_status(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"getting target(%s) status\n",target->type);
+    vdebug(16,LOG_T_TARGET,"getting target(%s) status\n",target->type);
     return target->ops->status(target);
 }
 
 unsigned char *target_read_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf) {
-    vdebug(5,LOG_T_TARGET,"reading target(%s) at 0x%"PRIxADDR" into %p (%d)\n",
+    vdebug(16,LOG_T_TARGET,"reading target(%s) at 0x%"PRIxADDR" into %p (%d)\n",
 	   target->type,addr,buf,length);
     return target->ops->read(target,addr,length,buf);
 }
 
 unsigned long target_write_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf) {
-    vdebug(5,LOG_T_TARGET,"writing target(%s) at 0x%"PRIxADDR" (%d)\n",
+    vdebug(16,LOG_T_TARGET,"writing target(%s) at 0x%"PRIxADDR" (%d)\n",
 	   target->type,addr,length);
     return target->ops->write(target,addr,length,buf);
 }
 
 char *target_reg_name(struct target *target,REG reg) {
-    vdebug(5,LOG_T_TARGET,"target(%s) reg name %d)\n",target->type,reg);
+    vdebug(16,LOG_T_TARGET,"target(%s) reg name %d)\n",target->type,reg);
     return target->ops->regname(target,reg);
 }
 
 REG target_dw_reg_no(struct target *target,common_reg_t reg) {
-    vdebug(5,LOG_T_TARGET,"target(%s) common reg %d)\n",target->type,reg);
+    vdebug(16,LOG_T_TARGET,"target(%s) common reg %d)\n",target->type,reg);
     return target->ops->dwregno(target,reg);
 }
 
 REGVAL target_read_reg(struct target *target,tid_t tid,REG reg) {
-    vdebug(5,LOG_T_TARGET,"reading target(%s:%"PRIiTID") reg %d)\n",
+    vdebug(16,LOG_T_TARGET,"reading target(%s:%"PRIiTID") reg %d)\n",
 	   target->type,tid,reg);
     return target->ops->readreg(target,tid,reg);
 }
 
 int target_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
-    vdebug(5,LOG_T_TARGET,
+    vdebug(16,LOG_T_TARGET,
 	   "writing target(%s:%"PRIiTID") reg %d 0x%"PRIxREGVAL")\n",
 	   target->type,tid,reg,value);
     return target->ops->writereg(target,tid,reg,value);
@@ -256,7 +256,7 @@ GHashTable *target_hash_threads(struct target *target) {
 }
 
 struct array_list *target_list_available_tids(struct target *target) {
-    vdebug(9,LOG_T_TARGET,"target(%s)\n",target->type);
+    vdebug(12,LOG_T_TARGET,"target(%s)\n",target->type);
     return target->ops->list_available_tids(target);
 }
 
@@ -284,47 +284,47 @@ GHashTable *target_hash_available_tids(struct target *target) {
 }
 
 int target_load_available_threads(struct target *target,int force) {
-    vdebug(9,LOG_T_TARGET,"target(%s)\n",target->type);
+    vdebug(12,LOG_T_TARGET,"target(%s)\n",target->type);
     return target->ops->load_available_threads(target,force);
 }
 
 struct target_thread *target_load_current_thread(struct target *target,
 						 int force) {
-    vdebug(5,LOG_T_TARGET,"loading target(%s) current thread\n",target->type);
+    vdebug(8,LOG_T_TARGET,"loading target(%s) current thread\n",target->type);
     return target->ops->load_current_thread(target,force);
 }
 
 struct target_thread *target_load_thread(struct target *target,tid_t tid,
 					 int force) {
-    vdebug(5,LOG_T_TARGET,"loading target(%s:%"PRIiTID") thread\n",
+    vdebug(8,LOG_T_TARGET,"loading target(%s:%"PRIiTID") thread\n",
 	   target->type,tid);
     return target->ops->load_thread(target,tid,force);
 }
 
 int target_load_all_threads(struct target *target,int force) {
-    vdebug(5,LOG_T_TARGET,"loading all target(%s) threads\n",target->type);
+    vdebug(8,LOG_T_TARGET,"loading all target(%s) threads\n",target->type);
     return target->ops->load_all_threads(target,force);
 }
 
 int target_pause_thread(struct target *target,tid_t tid,int nowait) {
-    vdebug(5,LOG_T_TARGET,"pausing target(%s) thread %"PRIiTID" (nowait=%d)\n",
+    vdebug(12,LOG_T_TARGET,"pausing target(%s) thread %"PRIiTID" (nowait=%d)\n",
 	   target->type,tid,nowait);
     return target->ops->pause_thread(target,tid,nowait);
 }
 
 int target_flush_current_thread(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"flushing target(%s) current thread\n",target->type);
+    vdebug(8,LOG_T_TARGET,"flushing target(%s) current thread\n",target->type);
     return target->ops->flush_current_thread(target);
 }
 
 int target_flush_thread(struct target *target,tid_t tid) {
-    vdebug(5,LOG_T_TARGET,"flushing target(%s:%"PRIiTID") thread\n",
+    vdebug(8,LOG_T_TARGET,"flushing target(%s:%"PRIiTID") thread\n",
 	   target->type,tid);
     return target->ops->flush_thread(target,tid);
 }
 
 int target_flush_all_threads(struct target *target) {
-    vdebug(5,LOG_T_TARGET,"flushing all target(%s) threads\n",target->type);
+    vdebug(8,LOG_T_TARGET,"flushing all target(%s) threads\n",target->type);
     return target->ops->flush_all_threads(target);
 }
 
@@ -336,7 +336,7 @@ int target_gc_threads(struct target *target) {
     tid_t tid;
     struct target_thread *tthread;
 
-    vdebug(5,LOG_T_TARGET,"garbage collecting cached threads (%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"garbage collecting cached threads (%s)\n",target->type);
     if (target->ops->gc_threads) 
 	return target->ops->gc_threads(target);
 
@@ -381,13 +381,13 @@ int target_gc_threads(struct target *target) {
 
 char *target_thread_tostring(struct target *target,tid_t tid,int detail,
 			     char *buf,int bufsiz) {
-    vdebug(5,LOG_T_TARGET,"target(%s:%"PRIiTID") thread\n",target->type,tid);
+    vdebug(16,LOG_T_TARGET,"target(%s:%"PRIiTID") thread\n",target->type,tid);
     return target->ops->thread_tostring(target,tid,detail,buf,bufsiz);
 }
 
 void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail) {
     char *buf;
-    vdebug(5,LOG_T_TARGET,"dumping target(%s:%"PRIiTID") thread\n",
+    vdebug(16,LOG_T_TARGET,"dumping target(%s:%"PRIiTID") thread\n",
 	   target->type,tid);
 
     if (!target_lookup_thread(target,tid))
@@ -405,7 +405,7 @@ void target_dump_all_threads(struct target *target,FILE *stream,int detail) {
     struct target_thread *tthread;
     GHashTableIter iter;
 
-    vdebug(5,LOG_T_TARGET,"dumping all target(%s) threads\n",target->type);
+    vdebug(16,LOG_T_TARGET,"dumping all target(%s) threads\n",target->type);
 
     g_hash_table_iter_init(&iter,target->threads);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) 
@@ -652,6 +652,27 @@ tid_t target_gettid(struct target *target) {
 	   target->type,retval);
 
     return retval;
+}
+
+uint64_t target_get_tsc(struct target *target) {
+    if (target->ops->get_tsc)
+	return target->ops->get_tsc(target);
+    errno = EINVAL;
+    return UINT64_MAX;
+}
+
+uint64_t target_get_time(struct target *target) {
+    if (target->ops->get_time)
+	return target->ops->get_time(target);
+    errno = EINVAL;
+    return UINT64_MAX;
+}
+
+uint64_t target_get_counter(struct target *target) {
+    if (target->ops->get_counter)
+	return target->ops->get_counter(target);
+    errno = EINVAL;
+    return UINT64_MAX;
 }
 
 int target_thread_is_valid(struct target *target,tid_t tid) {

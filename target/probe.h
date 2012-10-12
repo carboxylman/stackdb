@@ -265,6 +265,11 @@ struct probepoint {
      */
     REG debugregnum;
     int debugregdisabled;
+
+    /* If the instruction at this probepoint might context switch, mark
+     * it here.  We try to set this in __probepoint_create.
+     */
+    int can_switch_context;
 };
 
 struct probe {
