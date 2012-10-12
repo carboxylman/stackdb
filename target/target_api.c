@@ -421,6 +421,8 @@ int target_close(struct target *target) {
 
     vdebug(5,LOG_T_TARGET,"closing target(%s)\n",target->type);
 
+    target_flush_all_threads(target);
+
     /* 
      * We have to free the soft probepoints manually, then remove all.  We
      * can't remove an element during an iteration, but we *can* free
@@ -673,6 +675,20 @@ uint64_t target_get_counter(struct target *target) {
 	return target->ops->get_counter(target);
     errno = EINVAL;
     return UINT64_MAX;
+}
+
+int target_enable_feature(struct target *target,int feature,void *arg) {
+    if (target->ops->enable_feature)
+	return target->ops->enable_feature(target,feature,arg);
+    errno = EINVAL;
+    return -1;
+}
+
+int target_disable_feature(struct target *target,int feature) {
+    if (target->ops->disable_feature)
+	return target->ops->disable_feature(target,feature);
+    errno = EINVAL;
+    return -1;
 }
 
 int target_thread_is_valid(struct target *target,tid_t tid) {

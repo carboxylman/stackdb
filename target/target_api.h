@@ -521,6 +521,13 @@ uint64_t target_get_time(struct target *target);
 uint64_t target_get_counter(struct target *target);
 
 /*
+ * Feature functions.  Enable/disable a specific feature on a target.
+ * Feature flags are target-specific.
+ */
+int target_enable_feature(struct target *target,int feature,void *arg);
+int target_disable_feature(struct target *target,int feature);
+
+/*
  * @return: nonzero if the target thread is valid (loaded).
  */
 int target_thread_is_valid(struct target *target,tid_t tid);
@@ -1296,6 +1303,9 @@ struct target_ops {
     uint64_t (*get_tsc)(struct target *target);
     uint64_t (*get_time)(struct target *target);
     uint64_t (*get_counter)(struct target *target);
+
+    int (*enable_feature)(struct target *target,int feature,void *arg);
+    int (*disable_feature)(struct target *target,int feature);
 };
 
 struct value {

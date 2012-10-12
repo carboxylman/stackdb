@@ -25,6 +25,10 @@
 
 #define THREAD_SIZE 8192
 
+typedef enum {
+    XV_FEATURE_BTS = 1,
+} xen_vm_feature_t;
+
 /*
  * target-specific state for xen vms.
  */

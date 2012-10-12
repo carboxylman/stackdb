@@ -111,6 +111,9 @@ uint64_t xen_vm_get_tsc(struct target *target);
 uint64_t xen_vm_get_time(struct target *target);
 uint64_t xen_vm_get_counter(struct target *target);
 
+int xen_vm_enable_feature(struct target *target,int feature,void *arg);
+int xen_vm_disable_feature(struct target *target,int feature);
+
 int xen_vm_instr_can_switch_context(struct target *target,ADDR addr);
 
 /* Internal prototypes. */
@@ -191,6 +194,8 @@ struct target_ops xen_vm_ops = {
     .get_tsc = xen_vm_get_tsc,
     .get_time = xen_vm_get_time,
     .get_counter = xen_vm_get_counter,
+    .enable_feature = xen_vm_enable_feature,
+    .disable_feature = xen_vm_disable_feature,
 };
 
 /**
@@ -4207,6 +4212,44 @@ uint64_t xen_vm_get_counter(struct target *target) {
 	return xstate->vcpuinfo.time.system_time;
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     }
+#endif
+}
+
+int xen_vm_enable_feature(struct target *target,int feature,void *arg) {
+    struct xen_vm_state *xstate;
+
+    if (feature != XV_FEATURE_BTS)
+	return -1;
+
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    xstate = (struct xen_vm_state *)(target->state);
+
+    assert(xstate->dominfo_valid);
+    if (!xstate->dominfo.ttd_replay_flag)
+	return 0;
+
+    return xc_ttd_set_bts_on(xc_handle,xstate->id);
+#else
+    return -1;
+#endif
+}
+
+int xen_vm_disable_feature(struct target *target,int feature) {
+    struct xen_vm_state *xstate;
+
+    if (feature != XV_FEATURE_BTS)
+	return -1;
+
+#ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    xstate = (struct xen_vm_state *)(target->state);
+
+    assert(xstate->dominfo_valid);
+    if (!xstate->dominfo.ttd_replay_flag)
+	return 0;
+
+    return xc_ttd_set_bts_off(xc_handle,xstate->id);
+#else
+    return -1;
 #endif
 }
 
