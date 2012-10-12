@@ -447,7 +447,24 @@ int symtab_str_in_dbg_strtab(struct symtab *symtab,char *strp);
 struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
 			     char *name,symbol_type_t symtype,
 			     symbol_source_t source,int full);
+/*
+ * Returns the name of the symbol.  Might be modified if it was an
+ * inline instance (in which case call symbol_get_name_inline() to get
+ * the inlined function's real name), or if it was an enum/struct/union
+ * (in which case we prefix the enum/struct/union part -- see
+ * symbol_build_extname).
+ */
 char *symbol_get_name(struct symbol *symbol);
+/*
+ * If this is an inline instance, we try to return the real name of the
+ * inlined function -- instead of the modified, unique inline instance
+ * name.
+ */
+char *symbol_get_name_inline(struct symbol *symbol);
+/*
+ * If this symbol's name was modified by symbol_build_extname (i.e., if
+ * it is an enum/struct/union type), this returns the base name.
+ */
 char *symbol_get_name_orig(struct symbol *symbol);
 void symbol_set_name(struct symbol *symbol,char *name);
 void symbol_build_extname(struct symbol *symbol);

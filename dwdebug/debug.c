@@ -2178,6 +2178,16 @@ char *symbol_get_name(struct symbol *symbol) {
     return symbol->name;
 }
 
+char *symbol_get_name_inline(struct symbol *symbol) {
+    if (symbol->isinlineinstance 
+	&& SYMBOL_IS_FULL(symbol)
+	&& symbol->s.ii->origin) {
+	return symbol_get_name(symbol->s.ii->origin);
+    }
+
+    return symbol_get_name(symbol);
+}
+
 char *symbol_get_name_orig(struct symbol *symbol) {
     return symbol->name + symbol->orig_name_offset;
 }
@@ -4140,6 +4150,24 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"INLINED_PARAM(<PUNKNOWN>)");
 	}
     }
+    else if (symbol->isinlineinstance) {
+	/* Only print a space if we printed the var's type above! */
+	if (ud->detail)
+	    fprintf(ud->stream," ");
+
+	if (SYMBOL_IS_FULL(symbol)) {
+	    if (symbol->s.ii->origin) {
+		fprintf(ud->stream,"INLINED_INSTANCE(");
+		symbol_var_dump(symbol->s.ii->origin,&udn);
+		fprintf(ud->stream,") (%s)",symbol->name);
+	    }
+	    else
+		fprintf(ud->stream,"INLINED_ANON_INSTANCE(%s)",symbol->name);
+	}
+	else {
+	    fprintf(ud->stream,"INLINED_INSTANCE(%s)",symbol->name);
+	}
+    }
     else if (symbol->name) {
 	/* Only print a space if we printed the var's type above! */
 	if (ud->detail)
@@ -4209,10 +4237,10 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    if (symbol->s.ii->origin) {
 		fprintf(ud->stream,"INLINED_FUNC(");
 		symbol_var_dump(symbol->s.ii->origin,&udn);
-		fprintf(ud->stream,")");
+		fprintf(ud->stream,") (%s)",symbol->name);
 	    }
 	    else
-		fprintf(ud->stream,"INLINED_ANON_FUNC()");
+		fprintf(ud->stream,"INLINED_ANON_FUNC() (%s)",symbol->name);
 	}
 	else {
 	    fprintf(ud->stream,"INLINED_FUNC(<PUNKNOWN>)");
