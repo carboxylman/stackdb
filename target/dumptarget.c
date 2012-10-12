@@ -56,7 +56,14 @@ struct array_list *shadow_stack;
 
 int doit = 0;
 
-int pause_at_symbol_hit = 0;
+int at_symbol_hit = 0;
+char *at_symbol = NULL;
+struct bsymbol *at_bsymbol = NULL;
+
+int until_symbol_hit = 0;
+char *until_symbol = NULL;
+struct bsymbol *until_bsymbol = NULL;
+struct probe *until_probe = NULL;
 
 void cleanup() {
     GHashTableIter iter;
@@ -368,8 +375,8 @@ int retaddr_check(struct probe *probe,void *handler_data,
     return 0;
 }
 
-int pause_at_handler(struct probe *probe,void *handler_data,
-		     struct probe *trigger) {
+int at_handler(struct probe *probe,void *handler_data,
+	       struct probe *trigger) {
     ADDR probeaddr;
     struct probepoint *probepoint;
     tid_t tid = target_gettid(t);
@@ -387,10 +394,39 @@ int pause_at_handler(struct probe *probe,void *handler_data,
     }
 
     fprintf(stdout,
-	    "%s (0x%"PRIxADDR") (thread %"PRIiTID") (pause_at_symbol hit)\n",
-	    bsymbol_get_name(probe->bsymbol),probeaddr,tid);
+	    "%s (0x%"PRIxADDR") (thread %"PRIiTID") (at_symbol hit)\n",
+	    at_symbol,probeaddr,tid);
+    fflush(stdout);
 
-    pause_at_symbol_hit = 1;
+    at_symbol_hit = 1;
+
+    return 0;
+}
+
+int until_handler(struct probe *probe,void *handler_data,
+		  struct probe *trigger) {
+    ADDR probeaddr;
+    struct probepoint *probepoint;
+    tid_t tid = target_gettid(t);
+
+    fflush(stderr);
+    fflush(stdout);
+
+    if (!probe->probepoint && trigger) {
+	probepoint = trigger->probepoint;
+	probeaddr = probe_addr(trigger);
+    }
+    else {
+	probeaddr = probe_addr(probe);
+	probepoint = probe->probepoint;
+    }
+
+    fprintf(stdout,
+	    "%s (0x%"PRIxADDR") (thread %"PRIiTID") (until_symbol hit)\n",
+	    until_symbol,probeaddr,tid);
+    fflush(stdout);
+
+    until_symbol_hit = 1;
 
     return 0;
 }
@@ -638,7 +674,6 @@ int main(int argc,char **argv) {
     probepoint_style_t style = PROBEPOINT_FASTEST;
     int do_post = 1;
     int offset = 0;
-    int upg = 1;
     struct probe *probe;
     struct debugfile_load_opts **dlo_list = NULL;
     int dlo_idx = 0;
@@ -647,10 +682,12 @@ int main(int argc,char **argv) {
     struct target_opts topts = {
 	.bpmode = THREAD_BPMODE_STRICT,
     };
-    char *pause_at_symbol = NULL;
-    struct bsymbol *pause_at_bsymbol = NULL;
     target_poll_outcome_t poutcome;
     int pstatus;
+    ADDR paddr;
+    char *endptr;
+    int until_stop_probing = 0;
+    int do_bts = 0;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -674,14 +711,19 @@ int main(int argc,char **argv) {
 	}
     }
 
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dxvsl:Po:UFLA:B")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:eE:O:dxvsl:Po:FLA:U:BS")) != -1) {
 	switch(ch) {
 	case 'A':
-	    pause_at_symbol = optarg;
+	    at_symbol = optarg;
 	    break;
 	case 'U':
-	    /* Don't use auto prologue guess. */
-	    upg = 0;
+	    until_symbol = optarg;
+	    break;
+	case 'B':
+	    do_bts = 1;
+	    break;
+	case 'S':
+	    until_stop_probing = 1;
 	    break;
 	case 'o':
 	    offset = atoi(optarg);
@@ -909,43 +951,60 @@ int main(int argc,char **argv) {
 	    array_list_add(symlist,bsymbol);
 	}
 
-	if (pause_at_symbol) {
-	    if (!(pause_at_bsymbol = target_lookup_sym(t,pause_at_symbol,".",NULL,
-						       SYMBOL_TYPE_FLAG_NONE))) {
-		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-		cleanup();
-		exit(-1);
+	if (at_symbol) {
+	    if (strncmp(at_symbol,"0x",2) == 0) {
+		paddr = (ADDR)strtoll(at_symbol,&endptr,16);
+		if (endptr == at_symbol) {
+		    fprintf(stderr,"Could not convert %s to address!\n",at_symbol);
+		    cleanup();
+		    exit(-1);
+		}
+
+		probe = probe_create(t,TID_GLOBAL,NULL,at_symbol,
+				     function_dump_args,at_handler,NULL,0);
+		probe->handler_data = &at_symbol;
+		if (!probe)
+		    goto err_unreg;
+
+		if (!probe_register_addr(probe,paddr,PROBEPOINT_BREAK,style,
+					 PROBEPOINT_EXEC,PROBEPOINT_LAUTO,NULL)) {
+		    goto err_unreg;
+		}
 	    }
+	    else {
+		if (!(at_bsymbol = target_lookup_sym(t,at_symbol,".",NULL,
+						     SYMBOL_TYPE_FLAG_NONE))) {
+		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
 
-	    /*
-	     * Just do this one, wait until it hits, remove it, and
-	     * monitor again.
-	     */
-	    if (!SYMBOL_IS_FUNCTION(pause_at_bsymbol->lsymbol->symbol)) {
-		fprintf(stderr,"pause at symbol %s is not a function!\n",argv[i]);
-		cleanup();
-		exit(-1);
-	    }
+		if (!SYMBOL_IS_FUNCTION(at_bsymbol->lsymbol->symbol)) {
+		    fprintf(stderr,"pause at symbol %s is not a function!\n",
+			    argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
 
-	    probe = probe_create(t,TID_GLOBAL,NULL,
-				 bsymbol_get_name(pause_at_bsymbol),
-				 function_dump_args,pause_at_handler,NULL,0);
-	    probe->handler_data = probe->name;
-	    if (!probe)
-		goto err_unreg;
+		probe = probe_create(t,TID_GLOBAL,NULL,at_symbol,
+				     function_dump_args,at_handler,NULL,0);
+		probe->handler_data = &at_symbol;
+		if (!probe)
+		    goto err_unreg;
 
-	    if (!probe_register_symbol(probe,pause_at_bsymbol,style,
-				       PROBEPOINT_EXEC,PROBEPOINT_LAUTO)) {
-		goto err_unreg;
+		if (!probe_register_symbol(probe,at_bsymbol,style,
+					   PROBEPOINT_EXEC,PROBEPOINT_LAUTO)) {
+		    goto err_unreg;
+		}
 	    }
 
 	    target_resume(t);
 
-	    fprintf(stdout,"Starting looking for pause_at_symbol %s!\n",
-		    pause_at_symbol);
+	    fprintf(stdout,"Starting looking for at_symbol %s!\n",
+		    at_symbol);
 	    fflush(stdout);
 
-	    while (!pause_at_symbol_hit) {
+	    while (!at_symbol_hit) {
 		struct timeval tv;
 
 		tv.tv_sec = 0;
@@ -972,20 +1031,85 @@ int main(int argc,char **argv) {
 			exit(-10);
 		    }
 		}
-		if (!pause_at_symbol_hit)
+		if (!at_symbol_hit)
 		    target_resume(t);
 	    }
 
-	    printf("%s monitoring found pause_at_symbol %s; removing "
+	    printf("%s monitoring found at_symbol %s; removing "
 		   " pause probe and doing the real thing.\n",
-		   targetstr,pause_at_symbol);
+		   targetstr,at_symbol);
 	    fflush(stdout);
 
 	    /*
-	     * Yank out the probe and continuing to real probing...
+	     * Yank out the at probe.
 	     */
 	    probe_free(probe,1);
 	    probe = NULL;
+	}
+#if defined(ENABLE_XEN) && defined(CONFIG_DETERMINISTIC_TIMETRAVEL)
+	else if (isxen && do_bts) {
+	    printf("Enabling BTS!\n");
+	    fflush(stdout);
+	    if (target_enable_feature(t,XV_FEATURE_BTS,NULL))
+		verror("failed to enable BTS!\n");
+	}
+#endif
+
+	if (until_symbol) {
+	    /*
+	     * Insert the until probe.
+	     */
+	    if (strncmp(until_symbol,"0x",2) == 0) {
+		paddr = (ADDR)strtoll(until_symbol,&endptr,16);
+		if (endptr == until_symbol) {
+		    fprintf(stderr,"Could not convert %s to address!\n",until_symbol);
+		    cleanup();
+		    exit(-1);
+		}
+
+		probe = probe_create(t,TID_GLOBAL,NULL,until_symbol,
+				     function_dump_args,until_handler,NULL,0);
+		probe->handler_data = &until_symbol;
+		if (!probe)
+		    goto err_unreg;
+
+		if (!probe_register_addr(probe,paddr,PROBEPOINT_BREAK,style,
+					 PROBEPOINT_EXEC,PROBEPOINT_LAUTO,NULL)) {
+		    goto err_unreg;
+		}
+	    }
+	    else {
+		if (!(until_bsymbol = target_lookup_sym(t,until_symbol,".",NULL,
+						     SYMBOL_TYPE_FLAG_NONE))) {
+		    fprintf(stderr,"Could not find until_symbol %s!\n",argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
+
+		if (!SYMBOL_IS_FUNCTION(until_bsymbol->lsymbol->symbol)) {
+		    fprintf(stderr,"util_symbol %s is not a function!\n",
+			    argv[i]);
+		    cleanup();
+		    exit(-1);
+		}
+
+		probe = probe_create(t,TID_GLOBAL,NULL,until_symbol,
+				     function_dump_args,until_handler,NULL,0);
+		probe->handler_data = &until_symbol;
+		if (!probe)
+		    goto err_unreg;
+
+		if (!probe_register_symbol(probe,until_bsymbol,style,
+					   PROBEPOINT_EXEC,PROBEPOINT_LAUTO)) {
+		    goto err_unreg;
+		}
+	    }
+
+	    until_probe = probe;
+
+	    fprintf(stdout,"Starting looking for until_symbol %s!\n",
+		    until_symbol);
+	    fflush(stdout);
 	}
 
 	/* Now move through symlist (we may add to it!) */
@@ -1129,8 +1253,10 @@ int main(int argc,char **argv) {
 	    continue;
 
 	err_unreg:
-	    if (pause_at_bsymbol)
-		bsymbol_release(pause_at_bsymbol);
+	    if (at_bsymbol)
+		bsymbol_release(at_bsymbol);
+	    if (until_bsymbol)
+		bsymbol_release(until_bsymbol);
 	    bsymbol_release(bsymbol);
 	    array_list_free(symlist);
 	    free(retcodes);
@@ -1145,17 +1271,60 @@ int main(int argc,char **argv) {
     }
 
     /* The target is paused after the attach; we have to resume it now
-     * that we've registered probes.
+     * that we've registered probes (or hit the at_symbol).
      */
     target_resume(t);
 
     fprintf(stdout,"Starting main debugging loop!\n");
     fflush(stdout);
 
+    struct timeval poll_tv = { 0,0 };
+
     while (1) {
-	tstat = target_monitor(t);
-	if (tstat == TSTATUS_PAUSED) {
+	if (until_probe) {
+	    poll_tv.tv_usec = 10000;
+	    tstat = target_poll(t,&poll_tv,NULL,NULL);
+	}
+	else
+	    tstat = target_monitor(t);
+
+	if (tstat == TSTATUS_RUNNING && until_probe)
+	    continue;
+	else if (tstat == TSTATUS_PAUSED) {
 	    tid_t tid = target_gettid(t);
+
+	    if (until_probe && until_symbol_hit) {
+		printf("%s monitoring found at_symbol %s; removing"
+		       " until probe.\n",
+		       targetstr,until_symbol);
+		fflush(stdout);
+
+		probe_free(until_probe,1);
+		until_probe = NULL;
+
+		/*
+		 * If we've hit our stopping point, do what we're
+		 * supposed to do -- maybe stop branch trace, maybe stop
+		 * all probes.
+		 */
+#if defined(ENABLE_XEN) && defined(CONFIG_DETERMINISTIC_TIMETRAVEL)
+		if (isxen && do_bts) {
+		    printf("Disabling BTS at until probe.\n");
+		    fflush(stdout);
+		    if (target_disable_feature(t,XV_FEATURE_BTS))
+			verror("failed to disable BTS!\n");
+		}
+#endif
+		if (until_stop_probing) {
+		    printf("Stopping monitoring at until probe.\n");
+		    fflush(stdout);
+		    tstat = TSTATUS_DONE;
+		    goto out;
+		}
+	    }
+	    else if (until_probe)
+		goto resume;
+
 	    if (islinux && linux_userproc_at_syscall(t,tid))
 		goto resume;
 
@@ -1194,6 +1363,7 @@ int main(int argc,char **argv) {
 	    }
 	}
 	else {
+	out:
 	    fflush(stderr);
 	    fflush(stdout);
 	    cleanup();
