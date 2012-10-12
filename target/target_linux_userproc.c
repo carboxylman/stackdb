@@ -32,6 +32,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <dirent.h>
+#include <sys/time.h>
 
 #include <gelf.h>
 #include <elf.h>
@@ -70,6 +71,7 @@ static int linux_userproc_pause(struct target *target,int nowait);
 static int linux_userproc_resume(struct target *target);
 static target_status_t linux_userproc_monitor(struct target *target);
 static target_status_t linux_userproc_poll(struct target *target,
+					   struct timeval *tv,
 					   target_poll_outcome_t *outcome,
 					   int *pstatus);
 static unsigned char *linux_userproc_read(struct target *target,
@@ -2871,6 +2873,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 }
 
 static target_status_t linux_userproc_poll(struct target *target,
+					   struct timeval *tv,
 					   target_poll_outcome_t *outcome,
 					   int *pstatus) {
     int tid;
@@ -2878,8 +2881,27 @@ static target_status_t linux_userproc_poll(struct target *target,
     target_status_t retval;
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
+    struct timespec req, rem;
+    unsigned int usec_thresh = 100; // 100 us is the least we'll sleep
+    uint64_t total_us;
+    uint64_t total_ns = 0;
+
+    if (tv) {
+	total_us = tv->tv_sec * 1000000 + tv->tv_usec;
+	total_ns = total_us * 1000;
+
+	if (total_us < usec_thresh) {
+	    req.tv_sec = 0;
+	    req.tv_nsec = total_ns;
+	}
+	else {
+	    req.tv_sec = 0;
+	    req.tv_nsec = usec_thresh * 1000;
+	}
+    }
 
     vdebug(9,LOG_T_LUP,"waitpid target %d\n",lstate->pid);
+ again:
     tid = waitpid(-1,&status,WNOHANG | __WALL);
     if (tid < 0) {
 	/* We always do this on error; these two errnos are the only
@@ -2892,10 +2914,37 @@ static target_status_t linux_userproc_poll(struct target *target,
 	}
     }
     else if (tid == 0) {
-	if (outcome)
-	    *outcome = POLL_NOTHING;
-	/* Assume it is running!  Is this right? */
-	return TSTATUS_RUNNING;
+	if (!tv) {
+	    if (outcome)
+		*outcome = POLL_NOTHING;
+	    /* Assume it is running!  Is this right? */
+	    return TSTATUS_RUNNING;
+	}
+	else {
+	    /* Try to sleep for a bit. */
+	    rem.tv_sec = 0;
+	    rem.tv_nsec = 0;
+	    nanosleep(&req,&rem);
+	    if (rem.tv_nsec)
+		total_ns -= req.tv_nsec - rem.tv_nsec;
+	    else
+		total_ns -= req.tv_nsec;
+
+	    if (total_ns > 0) {
+		if (total_ns > usec_thresh * 1000)
+		    req.tv_nsec = usec_thresh * 1000;
+		else
+		    req.tv_nsec = total_ns;
+
+		goto again;
+	    }
+	    else {
+		if (outcome)
+		    *outcome = POLL_NOTHING;
+		/* Assume it is running!  Is this right? */
+		return TSTATUS_RUNNING;
+	    }
+	}
     }
     else if (target_lookup_thread(target,tid)) {
 	if (outcome)

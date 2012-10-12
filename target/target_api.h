@@ -280,8 +280,21 @@ target_status_t target_monitor(struct target *target);
  * and the target backend may populate it however it wishes.  Finally,
  * like target_monitor, target_poll will return control to the user for
  * any exceptions it encounters that it can't handle.
+ *
+ * You must always call target_resume() following a poll, if you choose
+ * to continue.
+ *
+ * NOTE: @tv may be modified during the poll, as described in the
+ * select(2) manual page.  This gives you a hint of how long the poll
+ * had to wait.
+ *
+ * ALSO NOTE: the behavior of @tv is different that described in
+ * select(2).  If you pass NULL, we auto-fill a struct timeval with 0s,
+ * meaning that select and thus target_poll() will return immediately if
+ * nothing is pending; select blocks if you pass NULL.  We don't need
+ * that behavior, since target_monitor() sort of provides it.
  */
-target_status_t target_poll(struct target *target,
+target_status_t target_poll(struct target *target,struct timeval *tv,
 			    target_poll_outcome_t *outcome,int *pstatus);
 
 /*
@@ -1206,7 +1219,7 @@ struct target_ops {
     int (*resume)(struct target *target);
     /* wait for something to happen to the target */
     target_status_t (*monitor)(struct target *target);
-    target_status_t (*poll)(struct target *target,
+    target_status_t (*poll)(struct target *target,struct timeval *tv,
 			    target_poll_outcome_t *outcome,int *pstatus);
 
     /* read some memory, potentially into a supplied buffer. */

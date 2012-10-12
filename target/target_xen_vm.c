@@ -65,7 +65,7 @@ static int xen_vm_pause(struct target *target,int nowait);
 static int __xen_vm_resume(struct target *target,int detaching);
 static int xen_vm_resume(struct target *target);
 static target_status_t xen_vm_monitor(struct target *target);
-static target_status_t xen_vm_poll(struct target *target,
+static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 				   target_poll_outcome_t *outcome,int *pstatus);
 static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf);
@@ -2654,12 +2654,16 @@ static int xen_vm_resume(struct target *target) {
     return __xen_vm_resume(target,0);
 }
 
-static target_status_t xen_vm_monitor(struct target *target) {
+/*
+ * If again is not NULL, we set again
+ *   to -1 if there was an error, but we should try again;
+ *   to 0 if not again;
+ *   to 1 if just handled a bp and should try again;
+ *   to 2 if just handled an ss and should try again.
+ */
+static target_status_t xen_vm_handle_internal(struct target *target,
+					      int *again) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    int ret, fd;
-    XC_EVTCHN_PORT_T port = -1;
-    struct timeval tv;
-    fd_set inset;
     REGVAL ipval;
     int dreg = -1;
     struct probepoint *dpp;
@@ -2669,6 +2673,370 @@ static target_status_t xen_vm_monitor(struct target *target) {
     tid_t tid;
     struct probepoint *spp;
     struct target_thread *sstep_thread;
+
+    /* From previous */
+    xa_destroy_cache(&xstate->xa_instance);
+    xa_destroy_pid_cache(&xstate->xa_instance);
+
+    /* Reload our dominfo */
+    xstate->dominfo_valid = 0;
+    if (xen_vm_load_dominfo(target)) {
+	verror("could not load dominfo; returning to user!\n");
+	goto out_err;
+    }
+
+    vdebug(3,LOG_T_XV,
+	   "new debug event (brctr = %"PRIx64", tsc = %"PRIx64")\n",
+	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
+
+    if (target_status(target) == TSTATUS_PAUSED) {
+	/*
+	 * Grab EIP first so we can see if we're in user or kernel
+	 * space.
+	 */
+	errno = 0;
+	ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
+	if (errno) {
+	    verror("could not read EIP while checking debug event: %s\n",
+		   strerror(errno));
+	    goto out_err;
+	}
+
+	/*
+	 * Only try to load the kernel thread if we're in kernel
+	 * space.  We might not be if we single stepped an IRET, for
+	 * instance.  If we're in user space, just load the "global"
+	 * thread so we have something.
+	 *
+	 * XXX: probably later we should load a "dummy" user thread
+	 * to eliminate bugs/confusion later on with populating
+	 * user-mode state into the global thread?  Shouldn't be a
+	 * problem, but if it got stale or something, might
+	 * introduce a bug...
+	 */
+	if (ipval < 0xc0000000) {
+	    vdebug(3,LOG_T_XV | LOG_T_THREAD,
+		   "user-mode debug event at EIP 0x%"PRIxADDR"; not loading"
+		   " thread; will try to handle it if it is single step!\n",
+		   ipval);
+	    target->current_thread = NULL;
+	    if (!__xen_vm_load_current_thread(target,0,1)) {
+		verror("could not read global thread in user mode context!\n");
+		goto out_err_again;
+	    }
+	    tthread = target->global_thread;
+	    gtstate = (struct xen_vm_thread_state *) \
+		target->global_thread->state;
+	    xtstate = gtstate;
+	    tid = target->global_thread->tid;
+	}
+	else {
+	    /* 
+	     * Reload the current thread.  We don't force it because we
+	     * flush all threads before continuing the loop via again:,
+	     * or in target_resume/target_singlestep.
+	     */
+	    target->current_thread = NULL;
+	    xen_vm_load_current_thread(target,0);
+
+	    /*
+	     * First, we check the current thread's state/registers to
+	     * try to handle the exception in the current thread.  If
+	     * there is no information (and the current thread was not
+	     * the global thread), we try the global thread.
+	     */
+	    if (!(tthread = target->current_thread)) {
+		verror("could not read current thread!\n");
+		goto out_err_again;
+	    }
+
+	    /*
+	     * Next, if auto garbage collection is enabled, do it.
+	     *
+	     * We need to only do this every N interrupts, or something,
+	     * but what we really want is something that is related to
+	     * how many cycles have eclipsed in the target -- i.e., if
+	     * more than one second's worth of wallclock time has
+	     * elapsed in the target, we should garbage collect.
+	     *
+	     * But I don't know how to grab the current cycle counter
+	     * off the top of my head, so just do it every 8 interrupts
+	     * for now.
+	     */
+	    if (++xstate->thread_auto_gc_counter == 8) {
+		target_gc_threads(target);
+	    }
+
+	    gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
+	    xtstate = (struct xen_vm_thread_state *)tthread->state;
+	    tid = tthread->tid;
+	}
+
+	/* handle the triggered probe based on its event type */
+	if (xtstate->context.debugreg[6] & 0x4000) {
+	    vdebug(3,LOG_T_XV,"new single step debug event\n");
+
+	    if (target->sstep_thread 
+		&& target->sstep_thread->tpc
+		&& target->sstep_thread->tpc->probepoint->can_switch_context) {
+		sstep_thread = target->sstep_thread;
+	    }
+	    else
+		sstep_thread = NULL;
+
+	    target->sstep_thread = NULL;
+
+	    if (xtstate->context.user_regs.eflags & EF_TF) {
+		/* Save the currently hanlding probepoint;
+		 * ss_handler may clear tpc.
+		 */
+		spp = tthread->tpc->probepoint;
+
+		target->ss_handler(target,tthread,tthread->tpc->probepoint);
+
+		/* Clear the status bits right now. */
+		xtstate->context.debugreg[6] = 0;
+		tthread->dirty = 1;
+		/*
+		 * MUST DO THIS.  If we are going to modify both the
+		 * current thread's CPU state possibly, and possibly
+		 * operate on the global thread's CPU state, we need
+		 * to clear the global thread's debug reg status
+		 * here; this also has the important side effect of
+		 * forcing a merge of the global thread's debug reg
+		 * state; see flush_global_thread !
+		 */
+		if (spp->style == PROBEPOINT_HW) {
+		    gtstate->context.debugreg[6] = 0;
+		    target->global_thread->dirty = 1;
+		}
+		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+
+		goto out_ss_again;
+	    }
+	    else if (sstep_thread) {
+		vdebug(3,LOG_T_XV | LOG_T_THREAD,
+		       "thread %"PRIiTID" single stepped can_context_switch"
+		       " instr; trying to handle exception in old thread!\n",
+		       sstep_thread->tid);
+
+		target->ss_handler(target,sstep_thread,
+				   sstep_thread->tpc->probepoint);
+
+		/* Clear the status bits right now. */
+		xtstate->context.debugreg[6] = 0;
+		tthread->dirty = 1;
+		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+
+		goto out_ss_again;
+	    }
+	    else if (ipval < 0xc0000000) {
+		verror("user-mode debug event (single step) at 0x%"PRIxADDR
+		       "; debug status reg 0x%"DRF"; eflags 0x%"RF
+		       "; skipping handling!\n",
+		       ipval,xtstate->context.debugreg[6],
+		       xtstate->context.user_regs.eflags);
+		goto out_err_again;
+	    }
+	    else {
+		target->ss_handler(target,tthread,NULL);
+
+		/* Clear the status bits right now. */
+		xtstate->context.debugreg[6] = 0;
+		tthread->dirty = 1;
+		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+
+		goto out_ss_again;
+	    }
+	}
+	else if (ipval < 0xc0000000) {
+	    verror("user-mode debug event (not single step) at 0x%"PRIxADDR
+		   "; debug status reg 0x%"DRF"; eflags 0x%"RF
+		   "; skipping handling!\n",
+		   ipval,xtstate->context.debugreg[6],
+		   xtstate->context.user_regs.eflags);
+	    goto out_err_again;
+	}
+	else {
+	    vdebug(3,LOG_T_XV,"new (breakpoint?) debug event\n");
+	    target->sstep_thread = NULL;
+
+	    dreg = -1;
+
+	    /* Check the hw debug status reg first */
+
+	    /* Only check the 4 low-order bits */
+	    if (xtstate->context.debugreg[6] & 15) {
+		if (xtstate->context.debugreg[6] & 0x1)
+		    dreg = 0;
+		else if (xtstate->context.debugreg[6] & 0x2)
+		    dreg = 1;
+		else if (xtstate->context.debugreg[6] & 0x4)
+		    dreg = 2;
+		else if (xtstate->context.debugreg[6] & 0x8)
+		    dreg = 3;
+	    }
+
+	    if (dreg > -1) {
+		/* If we are relying on the status reg to tell us,
+		 * then also read the actual hw debug reg to get the
+		 * address we broke on.
+		 */
+		errno = 0;
+		ipval = xtstate->context.debugreg[dreg];
+
+		vdebug(4,LOG_T_XV,
+		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
+		       dreg,ipval);
+	    }
+	    else {
+		vdebug(4,LOG_T_XV,
+		       "dreg status was 0x%"PRIxREGVAL"; trying eip method\n",
+		       (ADDR)xtstate->context.debugreg[6]);
+
+		if (xtstate->dr[0] == ipval)
+		    dreg = 0;
+		else if (xtstate->dr[1] == ipval)
+		    dreg = 1;
+		else if (xtstate->dr[2] == ipval)
+		    dreg = 2;
+		else if (xtstate->dr[3] == ipval)
+		    dreg = 3;
+
+		if (dreg > -1) 
+		    vdebug(4,LOG_T_XV,
+			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
+			   dreg,ipval);
+		else
+		    vdebug(6,LOG_T_XV,
+			   "did NOT find hw break (eip) on 0x%"PRIxADDR"\n",
+			   ipval);
+	    }
+
+	    if (dreg > -1) {
+		/* Found HW breakpoint! */
+		dpp = (struct probepoint *) \
+		    g_hash_table_lookup(tthread->hard_probepoints,
+					(gpointer)ipval);
+
+		if (dpp) {
+		    vdebug(4,LOG_T_XV,
+			   "found hw break in thread %"PRIiTID"\n",
+			   tthread->tid);
+		}
+		else {
+		    /* Check the global thread if not already checking it! */
+		    dpp = (struct probepoint *) \
+			g_hash_table_lookup(target->global_thread->hard_probepoints,
+					    (gpointer)ipval);
+		    if (!dpp) {
+			verror("could not find probepoint for hw dbg reg %d"
+			       " in current or global threads!\n",dreg);
+			goto out_err;
+		    }
+		    else {
+			vdebug(4,LOG_T_XV,
+			       "found hw break in global thread!\n");
+
+			/*
+			 * MUST DO THIS.  If we are going to modify both
+			 * the current thread's CPU state possibly, and
+			 * possibly operate on the global thread's CPU
+			 * state, we need to clear the global thread's
+			 * debug reg status here; this also has the
+			 * important side effect of forcing a merge of
+			 * the global thread's debug reg state; see
+			 * flush_global_thread !
+			 */
+			gtstate->context.debugreg[6] = 0;
+			target->global_thread->dirty = 1;
+		    }			    
+		}
+
+		/* BEFORE we run the bp handler: 
+		 *
+		 * If the domain happens to be in singlestep mode, and
+		 * we are hitting a breakpoint anyway... we have to
+		 * handle the breakpoint, singlestep ourselves, AND
+		 * THEN leave the processor in single step mode.
+		 */
+		if (0 && xtstate->context.user_regs.eflags & EF_TF) {
+		    //target->sstep_leave_enabled = 1;
+		}
+
+		/* Run the breakpoint handler. */
+		target->bp_handler(target,tthread,dpp,
+				   xtstate->context.debugreg[6] & 0x4000);
+
+		/* Clear the status bits right now. */
+		xtstate->context.debugreg[6] = 0;
+		tthread->dirty = 1;
+		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+
+		goto out_bp_again;
+	    }
+	    else if ((dpp = (struct probepoint *) \
+		      g_hash_table_lookup(target->soft_probepoints,
+					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
+		/* Run the breakpoint handler. */
+		target->bp_handler(target,tthread,dpp,
+				   xtstate->context.debugreg[6] & 0x4000);
+
+		/* Clear the status bits right now. */
+		xtstate->context.debugreg[6] = 0;
+		tthread->dirty = 1;
+		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+
+		goto out_bp_again;
+	    }
+	    else if (xtstate->context.user_regs.eflags & EF_TF) {
+		vwarn("phantom single step for dom %d (no breakpoint"
+		      " set either!); letting user handle fault at"
+		      " 0x%"PRIxADDR"!\n",xstate->id,ipval);
+		goto out_paused;
+	    }
+	    else {
+		vwarn("could not find hardware bp and not sstep'ing;"
+		      " letting user handle fault at 0x%"PRIxADDR"!\n",
+		      ipval);
+		goto out_paused;
+	    }
+	}
+    }
+
+ out_err:
+    if (again)
+	*again = 0;
+    return TSTATUS_ERROR;
+
+ out_err_again:
+    if (again)
+	*again = -1;
+    return TSTATUS_ERROR;
+
+ out_paused:
+    if (again)
+	*again = 0;
+    return TSTATUS_PAUSED;
+
+ out_bp_again:
+    if (again)
+	*again = 1;
+    return TSTATUS_PAUSED;
+
+ out_ss_again:
+    if (again)
+	*again = 2;
+    return TSTATUS_PAUSED;
+}
+
+static target_status_t xen_vm_monitor(struct target *target) {
+    int ret, fd;
+    XC_EVTCHN_PORT_T port = -1;
+    struct timeval tv;
+    fd_set inset;
+    int again;
+    target_status_t retval;
 
     /* get a select()able file descriptor of the event channel */
     fd = xc_evtchn_fd(xce_handle);
@@ -2690,11 +3058,6 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
         if (!FD_ISSET(fd, &inset)) 
             continue; // nothing in eventchn
-	else {
-	    /* From previous */
-	    xa_destroy_cache(&xstate->xa_instance);
-	    xa_destroy_pid_cache(&xstate->xa_instance);
-	}
 
         /* we've got something from eventchn. let's see what it is! */
         port = xc_evtchn_pending(xce_handle);
@@ -2711,345 +3074,82 @@ static target_status_t xen_vm_monitor(struct target *target) {
         if (port != dbg_port)
             continue; // not the event that we are looking for
 
-	/* Reload our dominfo */
-	xstate->dominfo_valid = 0;
-	if (xen_vm_load_dominfo(target)) {
-	    verror("could not load dominfo; returning to user!\n");
-	    return TSTATUS_ERROR;
-	}
+	again = 0;
+	retval = xen_vm_handle_internal(target,&again);
+	if (retval == TSTATUS_ERROR && again == 0)
+	    return retval;
 
-	vdebug(3,LOG_T_XV,
-	       "new debug event (brctr = %"PRIx64", tsc = %"PRIx64")\n",
-	       xen_vm_get_counter(target),xen_vm_get_tsc(target));
-
-	if (target_status(target) == TSTATUS_PAUSED) {
-	    /*
-	     * Grab EIP first so we can see if we're in user or kernel
-	     * space.
-	     */
-	    errno = 0;
-	    ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
-	    if (errno) {
-		verror("could not read EIP while checking debug event: %s\n",
-		       strerror(errno));
-		return TSTATUS_ERROR;
-	    }
-
-	    /*
-	     * Only try to load the kernel thread if we're in kernel
-	     * space.  We might not be if we single stepped an IRET, for
-	     * instance.  If we're in user space, just load the "global"
-	     * thread so we have something.
-	     *
-	     * XXX: probably later we should load a "dummy" user thread
-	     * to eliminate bugs/confusion later on with populating
-	     * user-mode state into the global thread?  Shouldn't be a
-	     * problem, but if it got stale or something, might
-	     * introduce a bug...
-	     */
-	    if (ipval < 0xc0000000) {
-		vdebug(3,LOG_T_XV | LOG_T_THREAD,
-		       "user-mode debug event at EIP 0x%"PRIxADDR"; not loading"
-		       " thread; will try to handle it if it is single step!\n",
-		       ipval);
-		target->current_thread = NULL;
-		if (!__xen_vm_load_current_thread(target,0,1)) {
-		    verror("could not read global thread in user mode context!\n");
-		    goto again;
-		}
-		tthread = target->global_thread;
-		gtstate = (struct xen_vm_thread_state *) \
-		    target->global_thread->state;
-		xtstate = gtstate;
-		tid = target->global_thread->tid;
-	    }
-	    else {
-		/* 
-		 * Reload the current thread.  We don't force it because we
-		 * flush all threads before continuing the loop via again:,
-		 * or in target_resume/target_singlestep.
-		 */
-		target->current_thread = NULL;
-		xen_vm_load_current_thread(target,0);
-
-		/*
-		 * First, we check the current thread's state/registers to
-		 * try to handle the exception in the current thread.  If
-		 * there is no information (and the current thread was not
-		 * the global thread), we try the global thread.
-		 */
-
-		if (!(tthread = target->current_thread)) {
-		    verror("could not read current thread!\n");
-		    goto again;
-		}
-
-		/*
-		 * Next, if auto garbage collection is enabled, do it.
-		 *
-		 * We need to only do this every N interrupts, or something,
-		 * but what we really want is something that is related to
-		 * how many cycles have eclipsed in the target -- i.e., if
-		 * more than one second's worth of wallclock time has
-		 * elapsed in the target, we should garbage collect.
-		 *
-		 * But I don't know how to grab the current cycle counter
-		 * off the top of my head, so just do it every 8 interrupts
-		 * for now.
-		 */
-		if (++xstate->thread_auto_gc_counter == 8) {
-		    target_gc_threads(target);
-		}
-
-		gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
-		xtstate = (struct xen_vm_thread_state *)tthread->state;
-		tid = tthread->tid;
-	    }
-
-	    /* handle the triggered probe based on its event type */
-	    if (xtstate->context.debugreg[6] & 0x4000) {
-		vdebug(3,LOG_T_XV,"new single step debug event\n");
-
-		if (target->sstep_thread 
-		    && target->sstep_thread->tpc
-		    && target->sstep_thread->tpc->probepoint->can_switch_context) {
-		    sstep_thread = target->sstep_thread;
-		}
-		else
-		    sstep_thread = NULL;
-
-		target->sstep_thread = NULL;
-
-		if (xtstate->context.user_regs.eflags & EF_TF) {
-		    /* Save the currently hanlding probepoint;
-		     * ss_handler may clear tpc.
-		     */
-		    spp = tthread->tpc->probepoint;
-
-		    target->ss_handler(target,tthread,tthread->tpc->probepoint);
-
-		    /* Clear the status bits right now. */
-		    xtstate->context.debugreg[6] = 0;
-		    tthread->dirty = 1;
-		    /*
-		     * MUST DO THIS.  If we are going to modify both the
-		     * current thread's CPU state possibly, and possibly
-		     * operate on the global thread's CPU state, we need
-		     * to clear the global thread's debug reg status
-		     * here; this also has the important side effect of
-		     * forcing a merge of the global thread's debug reg
-		     * state; see flush_global_thread !
-		     */
-		    if (spp->style == PROBEPOINT_HW) {
-			gtstate->context.debugreg[6] = 0;
-			target->global_thread->dirty = 1;
-		    }
-		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
-
-		    goto again;
-		}
-		else if (sstep_thread) {
-		    vdebug(3,LOG_T_XV | LOG_T_THREAD,
-			   "thread %"PRIiTID" single stepped can_context_switch"
-			   " instr; trying to handle exception in old thread!\n",
-			   sstep_thread->tid);
-
-		    target->ss_handler(target,sstep_thread,
-				       sstep_thread->tpc->probepoint);
-
-		    /* Clear the status bits right now. */
-		    xtstate->context.debugreg[6] = 0;
-		    tthread->dirty = 1;
-		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
-
-		    goto again;
-		}
-		else if (ipval < 0xc0000000) {
-		    verror("user-mode debug event (single step) at 0x%"PRIxADDR
-			   "; debug status reg 0x%"DRF"; eflags 0x%"RF
-			   "; skipping handling!\n",
-			   ipval,xtstate->context.debugreg[6],
-			   xtstate->context.user_regs.eflags);
-		    goto again;
-		}
-		else {
-		    target->ss_handler(target,tthread,NULL);
-
-		    /* Clear the status bits right now. */
-		    xtstate->context.debugreg[6] = 0;
-		    tthread->dirty = 1;
-		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
-
-		    goto again;
-		}
-	    }
-	    else if (ipval < 0xc0000000) {
-		verror("user-mode debug event (not single step) at 0x%"PRIxADDR
-		       "; debug status reg 0x%"DRF"; eflags 0x%"RF
-		       "; skipping handling!\n",
-		       ipval,xtstate->context.debugreg[6],
-		       xtstate->context.user_regs.eflags);
-		goto again;
-	    }
-	    else {
-		vdebug(3,LOG_T_XV,"new (breakpoint?) debug event\n");
-		target->sstep_thread = NULL;
-
-		dreg = -1;
-
-		/* Check the hw debug status reg first */
-
-		/* Only check the 4 low-order bits */
-		if (xtstate->context.debugreg[6] & 15) {
-		    if (xtstate->context.debugreg[6] & 0x1)
-			dreg = 0;
-		    else if (xtstate->context.debugreg[6] & 0x2)
-			dreg = 1;
-		    else if (xtstate->context.debugreg[6] & 0x4)
-			dreg = 2;
-		    else if (xtstate->context.debugreg[6] & 0x8)
-			dreg = 3;
-		}
-
-		if (dreg > -1) {
-		    /* If we are relying on the status reg to tell us,
-		     * then also read the actual hw debug reg to get the
-		     * address we broke on.
-		     */
-		    errno = 0;
-		    ipval = xtstate->context.debugreg[dreg];
-
-		    vdebug(4,LOG_T_XV,
-			   "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
-			   dreg,ipval);
-		}
-		else {
-		    vdebug(4,LOG_T_XV,
-			   "dreg status was 0x%"PRIxREGVAL"; trying eip method\n",
-			   (ADDR)xtstate->context.debugreg[6]);
-
-		    if (xtstate->dr[0] == ipval)
-			dreg = 0;
-		    else if (xtstate->dr[1] == ipval)
-			dreg = 1;
-		    else if (xtstate->dr[2] == ipval)
-			dreg = 2;
-		    else if (xtstate->dr[3] == ipval)
-			dreg = 3;
-
-		    if (dreg > -1) 
-			vdebug(4,LOG_T_XV,
-			       "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
-			       dreg,ipval);
-		    else
-			vdebug(6,LOG_T_XV,
-			       "did NOT find hw break (eip) on 0x%"PRIxADDR"\n",
-			       ipval);
-		}
-
-		if (dreg > -1) {
-		    /* Found HW breakpoint! */
-		    dpp = (struct probepoint *) \
-			g_hash_table_lookup(tthread->hard_probepoints,
-					    (gpointer)ipval);
-
-		    if (dpp) {
-			vdebug(4,LOG_T_XV,
-			       "found hw break in thread %"PRIiTID"\n",
-			       tthread->tid);
-		    }
-		    else {
-			/* Check the global thread if not already checking it! */
-			dpp = (struct probepoint *)			\
-			    g_hash_table_lookup(target->global_thread->hard_probepoints,
-						(gpointer)ipval);
-			if (!dpp) {
-			    verror("could not find probepoint for hw dbg reg %d"
-				   " in current or global threads!\n",dreg);
-			    return TSTATUS_ERROR;
-			}
-			else {
-			    vdebug(4,LOG_T_XV,
-				   "found hw break in global thread!\n");
-
-			    /*
-			     * MUST DO THIS.  If we are going to modify
-			     * both the current thread's CPU state
-			     * possibly, and possibly operate on the
-			     * global thread's CPU state, we need to
-			     * clear the global thread's debug reg
-			     * status here; this also has the important
-			     * side effect of forcing a merge of the
-			     * global thread's debug reg state; see
-			     * flush_global_thread !
-			     */
-			    gtstate->context.debugreg[6] = 0;
-			    target->global_thread->dirty = 1;
-			}			    
-		    }
-
-		    /* BEFORE we run the bp handler: 
-		     *
-		     * If the domain happens to be in singlestep mode, and
-		     * we are hitting a breakpoint anyway... we have to
-		     * handle the breakpoint, singlestep ourselves, AND
-		     * THEN leave the processor in single step mode.
-		     */
-		    if (0 && xtstate->context.user_regs.eflags & EF_TF) {
-			//target->sstep_leave_enabled = 1;
-		    }
-
-		    /* Run the breakpoint handler. */
-		    target->bp_handler(target,tthread,dpp,
-				       xtstate->context.debugreg[6] & 0x4000);
-
-		    /* Clear the status bits right now. */
-		    xtstate->context.debugreg[6] = 0;
-		    tthread->dirty = 1;
-		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
-
-		    goto again;
-		}
-		else if ((dpp = (struct probepoint *) \
-			  g_hash_table_lookup(target->soft_probepoints,
-					      (gpointer)(ipval - target->breakpoint_instrs_len)))) {
-		    /* Run the breakpoint handler. */
-		    target->bp_handler(target,tthread,dpp,
-				       xtstate->context.debugreg[6] & 0x4000);
-
-		    /* Clear the status bits right now. */
-		    xtstate->context.debugreg[6] = 0;
-		    tthread->dirty = 1;
-		    vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
-
-		    goto again;
-		}
-		else if (xtstate->context.user_regs.eflags & EF_TF) {
-		    vwarn("phantom single step for dom %d (no breakpoint"
-			  " set either!); letting user handle fault at"
-			  " 0x%"PRIxADDR"!\n",xstate->id,ipval);
-		    return TSTATUS_PAUSED;
-		}
-		else {
-		    vwarn("could not find hardware bp and not sstep'ing;"
-			  " letting user handle fault at 0x%"PRIxADDR"!\n",
-			  ipval);
-		    return TSTATUS_PAUSED;
-		}
-	    }
-	}
-
-    again:
 	__xen_vm_resume(target,0);
 	continue;
     }
 
-    return TSTATUS_ERROR;
+    return TSTATUS_ERROR; /* Never hit, just compiler foo */
 }
 
-static target_status_t xen_vm_poll(struct target *target,
+static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 				   target_poll_outcome_t *outcome,int *pstatus) {
-    return TSTATUS_ERROR;
+    int ret, fd;
+    XC_EVTCHN_PORT_T port = -1;
+    struct timeval itv;
+    fd_set inset;
+    int again;
+    target_status_t retval;
+
+    /* get a select()able file descriptor of the event channel */
+    fd = xc_evtchn_fd(xce_handle);
+    if (fd == -1) {
+        verror("event channel not initialized\n");
+        return TSTATUS_ERROR;
+    }
+
+    if (!tv) {
+	itv.tv_sec = 0;
+	itv.tv_usec = 0;
+	tv = &itv;
+    }
+    FD_ZERO(&inset);
+    FD_SET(fd,&inset);
+
+    /* see if the VIRQ is lit for this domain */
+    ret = select(fd+1,&inset,NULL,NULL,tv);
+    if (ret == 0) {
+	if (outcome)
+	    *outcome = POLL_NOTHING;
+	return TSTATUS_RUNNING;
+    }
+
+    if (!FD_ISSET(fd, &inset)) {
+	if (outcome)
+	    *outcome = POLL_NOTHING;
+	return TSTATUS_RUNNING;
+    }
+
+    /* we've got something from eventchn. let's see what it is! */
+    port = xc_evtchn_pending(xce_handle);
+
+    /* unmask the event channel BEFORE doing anything else,
+     * like unpausing the target!
+     */
+    ret = xc_evtchn_unmask(xce_handle, port);
+    if (ret == -1) {
+	verror("failed to unmask event channel\n");
+	if (outcome)
+	    *outcome = POLL_ERROR;
+	return TSTATUS_ERROR;
+    }
+
+    if (port != dbg_port) {
+	if (outcome)
+	    *outcome = POLL_NOTHING;
+	return TSTATUS_RUNNING;
+    }
+
+    again = 0;
+    retval = xen_vm_handle_internal(target,&again);
+    if (pstatus)
+	*pstatus = again;
+
+    return retval;
 }
 
 static unsigned char *mmap_pages(xa_instance_t *xa_instance,ADDR addr, 
