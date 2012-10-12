@@ -56,6 +56,8 @@ struct array_list *shadow_stack;
 
 int doit = 0;
 
+int pause_at_symbol_hit = 0;
+
 void cleanup() {
     GHashTableIter iter;
     gpointer key;
@@ -366,6 +368,33 @@ int retaddr_check(struct probe *probe,void *handler_data,
     return 0;
 }
 
+int pause_at_handler(struct probe *probe,void *handler_data,
+		     struct probe *trigger) {
+    ADDR probeaddr;
+    struct probepoint *probepoint;
+    tid_t tid = target_gettid(t);
+
+    fflush(stderr);
+    fflush(stdout);
+
+    if (!probe->probepoint && trigger) {
+	probepoint = trigger->probepoint;
+	probeaddr = probe_addr(trigger);
+    }
+    else {
+	probeaddr = probe_addr(probe);
+	probepoint = probe->probepoint;
+    }
+
+    fprintf(stdout,
+	    "%s (0x%"PRIxADDR") (thread %"PRIiTID") (pause_at_symbol hit)\n",
+	    bsymbol_get_name(probe->bsymbol),probeaddr,tid);
+
+    pause_at_symbol_hit = 1;
+
+    return 0;
+}
+
 int function_dump_args(struct probe *probe,void *handler_data,
 		       struct probe *trigger) {
     struct value *value;
@@ -389,7 +418,7 @@ int function_dump_args(struct probe *probe,void *handler_data,
     //struct bsymbol *bsymbol = target_lookup_sym_addr(t,probeaddr);
     //ip = target_read_reg(t,t->ipregno);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR") (thread %"PRIiTID")\n  ",
+    fprintf(stdout,"%s (0x%"PRIxADDR") (thread %"PRIiTID") ",
 	    probe->bsymbol->lsymbol->symbol->name,probeaddr,tid);
 
     struct array_list *args;
@@ -426,7 +455,7 @@ int function_dump_args(struct probe *probe,void *handler_data,
 	}
     }
 
-    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
+    fprintf(stdout," (handler_data = %s)\n",(char *)handler_data);
 
     fflush(stderr);
     fflush(stdout);
@@ -436,16 +465,6 @@ int function_dump_args(struct probe *probe,void *handler_data,
 	    lsymbol_release((struct lsymbol *)array_list_item(args,i));
 	array_list_free(args);
     }
-
-#ifdef ENABLE_XENACCESS
-    if (isxen) {
-	value = linux_load_current_task(t);
-	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
-	value_free(value);
-    }
-    fflush(stderr);
-    fflush(stdout);
-#endif
 
     return 0;
 }
@@ -628,6 +647,10 @@ int main(int argc,char **argv) {
     struct target_opts topts = {
 	.bpmode = THREAD_BPMODE_STRICT,
     };
+    char *pause_at_symbol = NULL;
+    struct bsymbol *pause_at_bsymbol = NULL;
+    target_poll_outcome_t poutcome;
+    int pstatus;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -651,8 +674,11 @@ int main(int argc,char **argv) {
 	}
     }
 
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dxvsl:Po:UFL")) != -1) {
+    while ((ch = getopt(argc, argv, "m:p:eE:O:dxvsl:Po:UFLA:B")) != -1) {
 	switch(ch) {
+	case 'A':
+	    pause_at_symbol = optarg;
+	    break;
 	case 'U':
 	    /* Don't use auto prologue guess. */
 	    upg = 0;
@@ -785,6 +811,18 @@ int main(int argc,char **argv) {
 	exit(-2);
     }
 
+    signal(SIGHUP,sigh);
+    signal(SIGINT,sigh);
+    signal(SIGQUIT,sigh);
+    signal(SIGABRT,sigh);
+    signal(SIGKILL,sigh);
+    signal(SIGSEGV,sigh);
+    signal(SIGPIPE,sigh);
+    signal(SIGALRM,sigh);
+    signal(SIGTERM,sigh);
+    signal(SIGUSR1,sigh);
+    signal(SIGUSR2,sigh);
+
     if (target_open(t,&topts)) {
 	fprintf(stderr,"could not open %s!\n",targetstr);
 	exit(-4);
@@ -869,6 +907,85 @@ int main(int argc,char **argv) {
 	    }
 
 	    array_list_add(symlist,bsymbol);
+	}
+
+	if (pause_at_symbol) {
+	    if (!(pause_at_bsymbol = target_lookup_sym(t,pause_at_symbol,".",NULL,
+						       SYMBOL_TYPE_FLAG_NONE))) {
+		fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		cleanup();
+		exit(-1);
+	    }
+
+	    /*
+	     * Just do this one, wait until it hits, remove it, and
+	     * monitor again.
+	     */
+	    if (!SYMBOL_IS_FUNCTION(pause_at_bsymbol->lsymbol->symbol)) {
+		fprintf(stderr,"pause at symbol %s is not a function!\n",argv[i]);
+		cleanup();
+		exit(-1);
+	    }
+
+	    probe = probe_create(t,TID_GLOBAL,NULL,
+				 bsymbol_get_name(pause_at_bsymbol),
+				 function_dump_args,pause_at_handler,NULL,0);
+	    probe->handler_data = probe->name;
+	    if (!probe)
+		goto err_unreg;
+
+	    if (!probe_register_symbol(probe,pause_at_bsymbol,style,
+				       PROBEPOINT_EXEC,PROBEPOINT_LAUTO)) {
+		goto err_unreg;
+	    }
+
+	    target_resume(t);
+
+	    fprintf(stdout,"Starting looking for pause_at_symbol %s!\n",
+		    pause_at_symbol);
+	    fflush(stdout);
+
+	    while (!pause_at_symbol_hit) {
+		struct timeval tv;
+
+		tv.tv_sec = 0;
+		tv.tv_usec = 10000;
+
+		tstat = target_poll(t,&tv,&poutcome,&pstatus);
+		if (tstat != TSTATUS_PAUSED && tstat != TSTATUS_RUNNING) {
+		    fflush(stderr);
+		    fflush(stdout);
+		    cleanup();
+		    if (tstat == TSTATUS_DONE)  {
+			printf("%s finished (did not find pause point!\n",
+			       targetstr);
+			exit(0);
+		    }
+		    else if (tstat == TSTATUS_ERROR) {
+			printf("%s monitoring failed (did not find pause"
+			       " point)!\n",targetstr);
+			exit(-9);
+		    }
+		    else {
+			printf("%s monitoring failed with %d (did not find"
+			       " pause point)!\n",targetstr,tstat);
+			exit(-10);
+		    }
+		}
+		if (!pause_at_symbol_hit)
+		    target_resume(t);
+	    }
+
+	    printf("%s monitoring found pause_at_symbol %s; removing "
+		   " pause probe and doing the real thing.\n",
+		   targetstr,pause_at_symbol);
+	    fflush(stdout);
+
+	    /*
+	     * Yank out the probe and continuing to real probing...
+	     */
+	    probe_free(probe,1);
+	    probe = NULL;
 	}
 
 	/* Now move through symlist (we may add to it!) */
@@ -1012,6 +1129,8 @@ int main(int argc,char **argv) {
 	    continue;
 
 	err_unreg:
+	    if (pause_at_bsymbol)
+		bsymbol_release(pause_at_bsymbol);
 	    bsymbol_release(bsymbol);
 	    array_list_free(symlist);
 	    free(retcodes);
@@ -1024,18 +1143,6 @@ int main(int argc,char **argv) {
 	free(retcodes);
 	free(retcode_strs);
     }
-
-    signal(SIGHUP,sigh);
-    signal(SIGINT,sigh);
-    signal(SIGQUIT,sigh);
-    signal(SIGABRT,sigh);
-    signal(SIGKILL,sigh);
-    signal(SIGSEGV,sigh);
-    signal(SIGPIPE,sigh);
-    signal(SIGALRM,sigh);
-    signal(SIGTERM,sigh);
-    signal(SIGUSR1,sigh);
-    signal(SIGUSR2,sigh);
 
     /* The target is paused after the attach; we have to resume it now
      * that we've registered probes.
