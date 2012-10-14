@@ -49,6 +49,7 @@ int main(int argc,char **argv) {
     int doglobals = 1;
     int dosymtabs = 1;
     int doelfsymtab = 1;
+    int doreverse = 0;
     char *endptr = NULL;
     int nofree = 0;
 
@@ -59,7 +60,7 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "dwgDMl:F:TGSNE")) != -1) {
+    while ((ch = getopt(argc, argv, "dwgDMl:F:TGSNEr")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
@@ -114,6 +115,9 @@ int main(int argc,char **argv) {
 	    break;
 	case 'N':
 	    nofree = 1;
+	    break;
+	case 'r':
+	    doreverse = 1;
 	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
@@ -270,16 +274,18 @@ int main(int argc,char **argv) {
 		 */
 		lsymbol_release(s);
 
-		s2 = lsymbol_create_from_symbol(is);
-		fprintf(stdout,"reverse lookup %s: ",argv[i]);
-		ud.prefix = "";
-		lsymbol_dump(s2,&ud);
-		/* We free this one instead of releasing because we
-		 * created it instead of looked it up, so a ref to it was
-		 * not taken on our behalf.
-		 */
-		lsymbol_free(s2,0);
-		fprintf(stdout,"\n");
+		if (doreverse) {
+		    s2 = lsymbol_create_from_symbol(is);
+		    fprintf(stdout,"reverse lookup %s: ",argv[i]);
+		    ud.prefix = "";
+		    lsymbol_dump(s2,&ud);
+		    /* We free this one instead of releasing because we
+		     * created it instead of looked it up, so a ref to it was
+		     * not taken on our behalf.
+		     */
+		    lsymbol_free(s2,0);
+		    fprintf(stdout,"\n");
+		}
 	    }
 	}
     }
