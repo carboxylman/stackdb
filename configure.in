@@ -396,6 +396,7 @@ outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \
           examples/nfs-perf-analysis/Makefile \
+          examples/perf-model-test/Makefile \
           examples/context-aware-probes/Makefile \
           examples/context-tracker/Makefile \
           examples/context-tracker/examples/Makefile \
