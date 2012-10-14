@@ -55,6 +55,8 @@ int debug_level = -1;
 struct target *t;
 GHashTable *probes;
 
+extern unsigned long long request_count;
+
 void sigh(int signo)
 {
     if (t)
@@ -76,34 +78,52 @@ error_t cmd_parser(int key, char *arg, struct argp_state *state)
 
     switch ( key )
     {
-        case 'm': 
-		{
-			dom_name = arg;
-			break;
-		}
+           case 'c': 
+                {
+                        int res;
 
-	    case 'v': 
-		{
-			verbose = 1; 
-			break;
-		}
+                         res = sscanf(arg, "%llu", &request_count);
 
-	    case 'd': 
-		{
-			++debug_level; 
-			break;
-		}
+                         DBG("Process up to %llu requests\n", request_count);
 
-	    case 'l': 
-		{
-			log_flags_t flags;
-			if (vmi_log_get_flag_mask(arg,&flags)) {
-				fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",arg);
-				exit(-1);
-			}
-			vmi_set_log_flags(flags);
-			break;
-		}
+                         if(res != 1){
+                             ERR("Something is wrong with the command line, "
+                                 "can't read request counter (-c param)\n");
+                             break;
+                         }
+
+                        break;
+                }
+
+
+            case 'm': 
+                {
+                        dom_name = arg;
+                        break;
+                }
+
+            case 'v': 
+                {
+                        verbose = 1; 
+                        break;
+                }
+
+            case 'd': 
+                {
+                        ++debug_level; 
+                        break;
+                }
+
+            case 'l': 
+                {
+                        log_flags_t flags;
+                        if (vmi_log_get_flag_mask(arg,&flags)) {
+                                fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",arg);
+                                exit(-1);
+                        }
+                        vmi_set_log_flags(flags);
+                        break;
+                }
 
         default:
             return ARGP_ERR_UNKNOWN;
@@ -114,17 +134,20 @@ error_t cmd_parser(int key, char *arg, struct argp_state *state)
 
 const struct argp_option cmd_opts[] =
 {
+    { .name = "request-count",  .key = 'c', .arg = "FILE",  .flags = 0,
+                .doc = "Process up to <request count> requests and exit" },
+
     { .name = "domain-name",  .key = 'm', .arg = "FILE",  .flags = 0,
-		.doc = "Domain name" },
+                .doc = "Domain name" },
 
     { .name = "verbose",  .key = 'v', .arg = 0, .flags = 0, 
-		.doc = "Verbose" },
+                .doc = "Verbose" },
 
     { .name = "logtypes",  .key = 'l', .arg = "FILE", .flags = 0, 
-		.doc = "Log types" },
+                .doc = "Log types" },
 
     { .name = "debug",  .key = 'd', .arg = 0, .flags = 0, 
-		.doc = "Debug level" },
+                .doc = "Debug level" },
 
     {0}
 };
@@ -199,7 +222,7 @@ int main(int argc, char *argv[])
         if (tstat == TSTATUS_PAUSED)
         {
             printf("domain %s interrupted at 0x%" PRIxREGVAL "\n", dom_name, 
-		   target_read_reg(t,TID_GLOBAL,t->ipregno));
+                   target_read_reg(t,TID_GLOBAL,t->ipregno));
             if (target_resume(t))
             {
                 ERR("Can't resume target dom %s\n", dom_name);

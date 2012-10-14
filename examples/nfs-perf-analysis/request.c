@@ -215,10 +215,12 @@ gboolean request_hash_print_and_free(gpointer key, gpointer value, gpointer user
     return 1;
 };
 
-void request_analysis_done(void) {
+void request_analysis_done(struct probe *probe) {
     DBG("Print out all requests\n");
     g_hash_table_foreach_remove(request_hash, request_hash_print_and_free, NULL);
-    DBG("Done.\n");
+    DBG("Done...unregistering\n");
+
+    target_close(probe->target);
     return;
 };
 

@@ -40,6 +40,9 @@
 #include "debug.h"
 #include "request.h"
 
+unsigned long long request_count = 0;
+unsigned long long requests_seen = 0;
+
 struct bsymbol *bsymbol_netif_poll_lvar_skb = NULL;
 struct bsymbol *bsymbol_netif_receive_skb_lvar_skb = NULL;
 struct bsymbol *bsymbol_ip_rcv_lvar_skb = NULL;
@@ -95,6 +98,12 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
 
     DBG("netif_poll at label skb_dequeue called\n");
 
+    if (request_count && (request_count < requests_seen)) {
+        DBG("We've processed %llu requests, exit\n", requests_seen);
+        request_analysis_done(probe);
+        return 0;
+    };
+
     lval_skb = target_load_symbol(target,tid,bsymbol_netif_poll_lvar_skb,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_skb) {
@@ -112,6 +121,8 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
         ERR("Failed to allocate request\n");
         return 0;
     }
+
+    requests_seen ++;
 
     request_hash_add(req, req_id);
 
@@ -848,14 +859,14 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
 
 int probe_kernel_halt_fini(struct probe *probe) {
     DBG("kernel_halt_fini called\n");
-    request_analysis_done();
+    request_analysis_done(probe);
     return 0;
 };
 
 int probe_kernel_halt(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     DBG("kernel_halt called\n");
-    request_analysis_done();
+    request_analysis_done(probe);
     return 0;
 }
 
