@@ -91,6 +91,11 @@ int request_hash_change_id(struct request *req, unsigned long new_req_id) {
 
 int request_hash_remove(struct request *req) {
     int ret; 
+    if(!req) {
+        ERR("request is NULL, that's bad\n");
+	return -1;
+    }
+
     ret = (int)g_hash_table_remove(request_hash, (gpointer)req->req_id);
     if (!ret) {
         ERR("Failed to remove request from the hash, req_id:0x%lx\n", req->req_id);
@@ -211,7 +216,9 @@ gboolean request_hash_print_and_free(gpointer key, gpointer value, gpointer user
 };
 
 void request_analysis_done(void) {
+    DBG("Print out all requests\n");
     g_hash_table_foreach_remove(request_hash, request_hash_print_and_free, NULL);
+    DBG("Done.\n");
     return;
 };
 

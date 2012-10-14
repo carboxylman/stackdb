@@ -119,7 +119,6 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
     if(!req) {
         ERR("Failed to move request on its processing path to stage:%s\n", 
             stage_id_to_name(STAGE_ID_NETIF_POLL_SKB_DEQUEUE));
-        request_done(req);
         return -1;
     }
     
@@ -162,7 +161,6 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_NETIF_RECEIVE_SKB));
-        request_done(req);
         return -1;
     }
     
@@ -207,7 +205,6 @@ int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_IP_RCV));
-        request_done(req);
         return -1;
     }
 
@@ -251,7 +248,6 @@ int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trig
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_TCP_V4_RCV));
-        request_done(req);
         return -1;
     }
 
@@ -295,7 +291,6 @@ int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *
     if(!req) {
         ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
             req_id, stage_id_to_name(STAGE_ID_TCP_DATA_QUEUE));
-        request_done(req);
         return -1;
     }
     return 0;
@@ -933,7 +928,7 @@ int register_probes(struct target *t, GHashTable *probes) {
         }
 
         if (!probe_register_symbol(probe, 
-                                   bsymbol, PROBEPOINT_FASTEST,
+                                   bsymbol, PROBEPOINT_SW /*PROBEPOINT_FASTEST*/,
                                    PROBEPOINT_EXEC, PROBEPOINT_LAUTO))
         {
             ERR("could not register probe on '%s'\n",
