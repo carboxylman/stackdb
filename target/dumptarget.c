@@ -1047,7 +1047,7 @@ int main(int argc,char **argv) {
 	    probe = NULL;
 	}
 #if defined(ENABLE_XEN) && defined(CONFIG_DETERMINISTIC_TIMETRAVEL)
-	else if (isxen && do_bts) {
+	if (isxen && do_bts) {
 	    printf("Enabling BTS!\n");
 	    fflush(stdout);
 	    if (target_enable_feature(t,XV_FEATURE_BTS,NULL))
