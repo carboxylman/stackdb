@@ -1885,6 +1885,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 			 range_type_t rt_hint) {
     struct range *r = &symtab->range;
     int i;
+    ADDR base = ADDRMAX;
 
     if (r->rtype == RANGE_TYPE_NONE) {
 	if (rt_hint == RANGE_TYPE_LIST) {
@@ -1898,6 +1899,9 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	    if (symtab->debugfile)
 		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
 
+	    if (start < base)
+		base = start;
+
 	    vdebug(8,LOG_D_DWARF,
 		   "init RANGE_LIST(0x%"PRIxADDR",0x%"PRIxADDR")"
 		   " for symtab 0x%"PRIxSMOFFSET"\n",start,end,symtab->ref);
@@ -1910,6 +1914,9 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 
 	    if (symtab->debugfile)
 		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
+
+	    if (start < base)
+		base = start;
 
 	    vdebug(8,LOG_D_DWARF,
 		   "init RANGE_PC(0x%"PRIxADDR",0x%"PRIxADDR")"
@@ -1963,6 +1970,9 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	    if (symtab->debugfile)
 		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
 
+	    if (start < base)
+		base = start;
+
 	    vdebug(7,LOG_D_DWARF,
 		   "converting RANGE_PC to LIST; new entry (0x%"PRIxADDR
 		   ",0x%"PRIxADDR") for symtab 0x%"PRIxSMOFFSET"\n",
@@ -2002,7 +2012,21 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 		   "added RANGE_LIST entry (0x%"PRIxADDR",0x%"PRIxADDR
 		   ") for symtab 0x%"PRIxSMOFFSET")\n",start,end,symtab->ref);
 	}
+
+	if (start < base)
+	    base = start;
     }
+
+    /*
+     * Update the base address of the symtab's symbol if we have one,
+     * and the base from this range update is lower.
+     *
+     * This is important to do for inline instances, or for any
+     * subroutine whose code ranges are usually described as a list of
+     * ranges, instead of by lowpc/highpc DWARF attrs.
+     */
+    if (symtab->symtab_symbol && base < symtab->symtab_symbol->base_addr)
+	symtab->symtab_symbol->base_addr = base;
 
     return;
 }
@@ -4019,6 +4043,18 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 
     if (symtab->name)
 	fprintf(ud->stream,"%ssymtab(%s) (",p,symtab->name);
+    else if (symtab->symtab_symbol) {
+	if (symtab->symtab_symbol->isinlineinstance) 
+	    fprintf(ud->stream,
+		    "%ssymtab(%s (inline instance: %s,baseaddr=0x%"PRIxADDR")) (",
+		    p,symbol_get_name_inline(symtab->symtab_symbol),
+		    symbol_get_name(symtab->symtab_symbol),
+		    symtab->symtab_symbol->base_addr);
+	else 
+	    fprintf(ud->stream,"%ssymtab(%s (baseaddr=0x%"PRIxADDR")) (",
+		    p,symbol_get_name(symtab->symtab_symbol),
+		    symtab->symtab_symbol->base_addr);
+    }
     else
 	fprintf(ud->stream,"%ssymtab() (",p);
     if (SYMTAB_IS_CU(symtab)) {
@@ -4236,7 +4272,7 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	if (SYMBOL_IS_FULL_INSTANCE(symbol)) {
 	    if (symbol->s.ii->origin) {
 		fprintf(ud->stream,"INLINED_FUNC(");
-		symbol_var_dump(symbol->s.ii->origin,&udn);
+		symbol_function_dump(symbol->s.ii->origin,&udn);
 		fprintf(ud->stream,") (%s)",symbol->name);
 	    }
 	    else
@@ -4269,8 +4305,11 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
     }
 
     if (ud->meta) {
-	fprintf(ud->stream," (external=%d,declaration=%d,prototyped=%d",
-		symbol->isexternal,symbol->isdeclaration,symbol->isprototyped);
+	fprintf(ud->stream,
+		" (baseaddr=0x%"PRIxADDR",external=%d,declaration=%d,"
+		" prototyped=%d",
+		symbol->base_addr,symbol->isexternal,symbol->isdeclaration,
+		symbol->isprototyped);
 	if (SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream,",declinline=%d,inlined=%d",
 		    symbol->s.ii->isdeclinline,symbol->s.ii->isinlined);
