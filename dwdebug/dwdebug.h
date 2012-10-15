@@ -502,6 +502,20 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
 
 int symbol_get_location_offset(struct symbol *symbol,OFFSET *offset_saveptr);
 int symbol_get_location_addr(struct symbol *symbol,ADDR *addr_saveptr);
+/*
+ * For an instance function symbol, returns 0 and sets @low_addr_saveptr
+ * and @high_addr_saveptr appropriately.  If @symbol is a function with
+ * code at multiple ranges, and if those ranges are noncontiguous, and
+ * @is_noncontiguous is not NULL, we set it to 1.
+ *
+ * If @symbol is not a full instance function symbol, we return -1.  If
+ * the function was a prototype only (a declaration), we return -2.  If
+ * the function has no symbol table, we return -3.  If the function has
+ * a lowpc, but no highpc, we return 1, and set @low_addr_saveptr, but
+ * do not touch @high_addr_saveptr nor @is_noncontiguous.
+ */
+int symbol_get_location_range(struct symbol *symbol,ADDR *low_addr_saveptr,
+			      ADDR *high_addr_saveptr,int *is_noncontiguous);
 
 /*
  * Takes a reference to the symbol.  Users should not call this.
