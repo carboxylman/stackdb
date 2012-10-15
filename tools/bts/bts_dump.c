@@ -33,12 +33,13 @@ struct symmap symmap[] = {
 int debug = 0;
 int symbolic = 0;
 int gdbstyle = 0;
+char *userbin = NULL;
 
 int main(int argc, char **argv)
 {
     char ch;
 
-    while ((ch = getopt(argc, argv, "dSG")) != -1) {
+    while ((ch = getopt(argc, argv, "dSGU:")) != -1) {
 	switch(ch) {
 	case 'd':
 	    debug++;
@@ -49,6 +50,9 @@ int main(int argc, char **argv)
 	case 'G':
 	    gdbstyle++;
 	    break;
+	case 'U':
+	    userbin = optarg;
+	    break;
 	}
     }
     argc -= optind;
@@ -58,6 +62,9 @@ int main(int argc, char **argv)
 	fprintf(stderr, "Usage: bts-dump [-dS] filename ...\n");
 	exit(1);
     }
+
+    if (userbin)
+	symmap[0].symfile = userbin;
 
     /*
      * Open symbol files.

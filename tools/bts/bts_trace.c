@@ -38,12 +38,13 @@ struct symmap symmap[] = {
 
 int debug = 0;
 int doinlined = 0;
+char *userbin = NULL;
 
 int main(int argc, char **argv)
 {
     char ch;
 
-    while ((ch = getopt(argc, argv, "dI")) != -1) {
+    while ((ch = getopt(argc, argv, "dIU:")) != -1) {
 	switch(ch) {
 	case 'd':
 	    debug++;
@@ -51,15 +52,21 @@ int main(int argc, char **argv)
 	case 'I':
 	    doinlined++;
 	    break;
+	case 'U':
+	    userbin = optarg;
+	    break;
 	}
     }
     argc -= optind;
     argv += optind;
 
     if (argc < 1) {
-	fprintf(stderr, "Usage: bts-trace [-d] filename ...\n");
+	fprintf(stderr, "Usage: bts-trace [-dI] [-U userbin] filename ...\n");
 	exit(1);
     }
+
+    if (userbin)
+	symmap[0].symfile = userbin;
 
     /*
      * Open symbol files.
