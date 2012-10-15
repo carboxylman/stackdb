@@ -26,16 +26,19 @@
 #include <alist.h>
 
 #include <xentt.h>
+#include <bts.h>
 
 int debug = 0;
 static struct xentt_replay_session *session;
 static char *symfile;
 static struct target *target;
+static struct bsymbol ssymbol, esymbol;
+static int xc = -1;
 GHashTable *probes;
 
-static int init_symbols(char *statedir, char *ssym, char *esym);
-static int register_probes(struct target *t, GHashTable *probes,
-			   char *ssym, char *esym);
+static int check_symbols(char *statedir, char *ssym, char *esym);
+static int register_probe(struct target *t, GHashTable *probes, char *symname,
+			  struct bsymbol *sym);
 static void unregister_probes(GHashTable *probes);
 
 static void
@@ -48,7 +51,21 @@ onexit(int sig)
     }
     if (session != NULL)
 	xentt_replay_destroy(session);
+    if (xc != -1)
+	xc_interface_close(xc);
     exit(sig);
+}
+
+static int
+handler(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    fprintf(stderr, "handler called\n");
+
+    /* turn on BTS */
+    /* use VMI to put a probe on the end point and run til then */
+    /* turn off BTS */
+
+    return 0;
 }
 
 int
@@ -57,6 +74,7 @@ main(int argc, char **argv)
     char *name, *statedir;
     char *s_sym, *e_sym;
     unsigned long long s_brctr, e_brctr;
+    target_status_t tstat;
     char ch, *cp;
 
     while ((ch = getopt(argc, argv, "d")) != -1) {
@@ -112,18 +130,25 @@ main(int argc, char **argv)
     /*
      * Make sure the symbols are legit for the replay OS.
      */
-    if (init_symbols(statedir, s_sym, e_sym)) {
+    if (check_symbols(statedir, s_sym, e_sym)) {
 	fprintf(stderr, "Could not resolve start/end symbols\n");
 	exit(1);
     }
-
-    exit(0);
 
     /*
      * Don't leave behind unsightly domains.
      */
     signal(SIGINT, onexit);
     signal(SIGTERM, onexit);
+    signal(SIGHUP, onexit);
+    signal(SIGQUIT, onexit);
+    signal(SIGABRT, onexit);
+    signal(SIGKILL, onexit);
+    signal(SIGSEGV, onexit);
+    signal(SIGPIPE, onexit);
+    signal(SIGALRM, onexit);
+    signal(SIGUSR1, onexit);
+    signal(SIGUSR2, onexit); 
 
     /*
      * Create a replay session.
@@ -131,8 +156,6 @@ main(int argc, char **argv)
     if (debug)
 	fprintf(stderr, "Creating replay session %s from %s\n",
 		name, statedir);
-
-    exit(0);
 
     session = xentt_replay_create(name, statedir);
     if (session == NULL) {
@@ -157,81 +180,123 @@ main(int argc, char **argv)
         fprintf(stderr, "cannot open target %s!\n", name);
 	onexit(1);
     }
-    if (register_probes(target, probes, s_sym, e_sym) != 0) {
-        fprintf(stderr, "failed to register probes\n");
+
+    /* use VMI to put a probe on the start point and run til then */
+    if (register_probe(target, probes, s_sym, &ssymbol) != 0) {
+        fprintf(stderr, "failed to register start probe\n");
         exit(1);
     }
 
-    /* use VMI to put a probe on the start point and run til then */
-    /* turn on BTS */
-    /* use VMI to put a probe on the end point and run til then */
-    /* turn off BTS */
+    xc = xc_interface_open();
+    if (xc == -1) {
+	fprintf(stderr, "Could not get xc handle\n");
+	exit(1);
+    }
 
-    /* kill the replay session */
-    xentt_replay_destroy(session);
+    target_resume(target);
+    while (1) {
+        tstat = target_monitor(target);
+	if (tstat != TSTATUS_PAUSED)
+	    break;
 
-    /* extract the branch trace from the replay log, dump to file */
+	printf("domain %s interrupted at 0x%" PRIxREGVAL "\n", name,
+	       target_read_reg(target, TID_GLOBAL, target->ipregno));
+	if (target_resume(target)) {
+	    fprintf(stderr, "Can't resume target dom %s\n", name);
+	    tstat = TSTATUS_ERROR;
+	    break;
+	}
+    }
 
-    exit(0);
+    if (tstat == TSTATUS_DONE) {
+	/* extract the branch trace from the replay log, dump to file */
+	onexit(0);
+    }
+
+    onexit(-1);
 }
 
-static int init_symbols(char *statedir, char *ssym, char *esym)
+static int check_symbols(char *statedir, char *ssym, char *esym)
 {
     char buf[256], *bp;
     FILE *fd;
+    struct symmap map[1];
+    struct lsymbol *s = 0, *e = 0;
+    int rv;
 	
     snprintf(buf, sizeof buf, "%s/symfile", statedir);
     if ((fd = fopen(buf, "r")) == NULL) {
 	perror(buf);
 	return -1;
     }
-    if (fscanf(fd, "%s", buf) != 1) {
+    rv = fscanf(fd, "%s", buf);
+    fclose(fd);
+    if (rv != 1) {
 	perror("fscanf");
-	fclose(fd);
 	return -1;
     }
+
     if ((bp = index(buf, '\n')) != 0)
 	*bp = '\0';
     symfile = strdup(buf);
+
+    memset(map, 0, sizeof(struct symmap));
+    map[0].symfile = symfile;
+    if (symlist_init(map, 1))
+	return -1;
+
     if (debug)
 	fprintf(stderr, "Looking up symbols in '%s'\n", symfile);
 
-#if 0
-    ssymbol = target_lookup_sym(target, ssym, ".", NULL,
-				SYMBOL_TYPE_FLAG_NONE);
-    esymbol = target_lookup_sym(target, esym, ".", NULL,
-				SYMBOL_TYPE_FLAG_NONE);
-    if (!ssymbol || !esymbol) {
-	fprintf(stderr, "Could not find one of symbols %s/%s!\n",
-		ssym, esym);
-	exit(1);
+    rv = 1;
+    s = symlist_lookup_name(ssym);
+    if (s) {
+	if (debug)
+	    fprintf(stderr, "Found %s\n", ssym);
+	e = symlist_lookup_name(esym);
+	if (e) {
+	    if (debug)
+		fprintf(stderr, "Found %s\n", esym);
+	    rv = 0;
+	}
     }
-#endif
-    return 0;
+    if (s) {
+	if (debug)
+	    fprintf(stderr, "Releasing %s\n", ssym);
+	lsymbol_release(s);
+    }
+    if (e) {
+	if (debug)
+	    fprintf(stderr, "Releasing %s\n", esym);
+	lsymbol_release(e);
+    }
+    symlist_deinit();
+
+    return rv;
 }
 
-static int register_probes(struct target *target, GHashTable *probes,
-			   char *ssym, char *esym)
+static int
+register_probe(struct target *target, GHashTable *probes, char *symname,
+	       struct bsymbol *sym)
 {
-#if 0
     struct probe *probe;
     struct bsymbol *bsymbol;
 
-    bsymbol = target_lookup_sym(target, ssym, ".", NULL,
+    bsymbol = target_lookup_sym(target, symname, ".", NULL,
 				SYMBOL_TYPE_FLAG_NONE);
     if (!bsymbol) {
-	fprintf(stderr, "Could not find symbol %s!\n", ssym);
+	fprintf(stderr, "Could not find symbol %s!\n", symname);
 	return -1;
     }
 
     //bsymbol_dump(bsymbol, &udn);
 
     /* Create a probe for the given EIP */
-    probe = probe_create(target, TID_GLOBAL, NULL, "start",
-			 start_handler, NULL, NULL, 0);
+    probe = probe_create(target, TID_GLOBAL, NULL, symname,
+			 handler, NULL, NULL, 0);
     if (!probe) {
 	fprintf(stderr,
-		"could not create probe for start address 0x%lx\n", saddr);
+		"could not create probe for '%s'\n", symname);
 	unregister_probes(probes);
 	return -1;
     }
@@ -239,8 +304,8 @@ static int register_probes(struct target *target, GHashTable *probes,
     if (!probe_register_symbol(probe, 
 			       bsymbol, PROBEPOINT_FASTEST,
 			       PROBEPOINT_EXEC, PROBEPOINT_LAUTO)) {
-	ERR("could not register probe on '%s'\n",
-	    bsymbol->lsymbol->symbol->name);
+	fprintf(stderr, "could not register probe on '%s'\n",
+		bsymbol->lsymbol->symbol->name);
 	probe_free(probe, 1);
 	unregister_probes(probes);
 	return -1;
@@ -248,13 +313,12 @@ static int register_probes(struct target *target, GHashTable *probes,
     g_hash_table_insert(probes, 
 			(gpointer)probe->probepoint->addr, 
 			(gpointer)probe);
-#endif
+
     return 0;
 }
 
 static void unregister_probes(GHashTable *probes)
 {
-#if 0
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
@@ -263,7 +327,6 @@ static void unregister_probes(GHashTable *probes)
     while (g_hash_table_iter_next(&iter, (gpointer)&key, (gpointer)&probe)) {
 	probe_unregister(probe,1);
     }
-#endif
 }
 
 /*
