@@ -3,6 +3,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 
 #include <bts.h>
@@ -95,6 +96,7 @@ bts_trace(const char *file)
     int n, i;
     long long tot = 0;
     uint32_t curlo = 0, curhi = ~0;
+    int currangedepth = 0;
 
     BTSFD fd = bts_open(file);
     if (fd == 0) {
@@ -118,12 +120,18 @@ bts_trace(const char *file)
 	    i++;
 	}
 
+	callstack[0].name = strdup("<TOP>");
+
 	while (i < n) {
 	    int inlined = 0;
 	    uint32_t lo, hi;
 	    uint32_t addr = recs[i].to;
 	    char *name = NULL;
 
+	    /*
+	     * Check it the target of the branch is a function entry point.
+	     * If so, push another level on the call stack.
+	     */
 	    if (symlist_isfunc_2(addr, &name, &inlined, &lo, &hi)) {
 		/* ignore inlined functions */
 		if (inlined && !doinlined) {
@@ -148,6 +156,7 @@ bts_trace(const char *file)
 		    if (lo != 0 || hi != 0) {
 			callstack[depth].loaddr = curlo = lo;
 			callstack[depth].hiaddr = curhi = hi;
+			currangedepth = depth;
 			if (debug) {
 			    fprintf(stderr, "[%d]: Range is [0x%x-0x%x]\n",
 				    depth, curlo, curhi);
@@ -159,9 +168,19 @@ bts_trace(const char *file)
 				    addr);
 			}
 		    }
+		    if (inlined)
+			callstack[depth].flags |= F_IS_INLINED;
 		}
+		goto next;
 	    }
-	    else if (depth > 0) {
+
+	    /*
+	     * If we are not at the top level, see if the branch might
+	     * be a return. A "return" is a branch to anywhere within
+	     * 5 bytes following a higher-level call site. We check more
+	     * that just one level up to catch tail-call optimization.
+	     */
+	    if (depth > 0) {
 		int d;
 
 		/*
@@ -172,12 +191,12 @@ bts_trace(const char *file)
 		for (d = depth - 1; d >= 0; d--) {
 		    uint32_t raddr = callstack[d].calladdr;
 		    if (debug > 1)
-			fprintf(stderr, "  rstack[%d]=0x%x\n",
-				d, raddr);
+			fprintf(stderr, "  rstack[%d]=0x%x (in %s)\n",
+				d, raddr, callstack[d].name);
 		    if (addr > raddr && addr <= raddr+5) {
 			if (debug) {
-			    fprintf(stderr, "[%d]: Found return to depth %d (%x) ",
-				    depth, d, raddr);
+			    fprintf(stderr, "[%d]: Found return to depth %d (%x in %s) ",
+				    depth, d, raddr, callstack[d].name);
 			    printone(stderr, 0, "", &recs[i], 0);
 			    fprintf(stderr, "\n");
 			}
@@ -190,6 +209,7 @@ bts_trace(const char *file)
 			}
 			curlo = callstack[d].loaddr;
 			curhi = callstack[d].hiaddr;
+			currangedepth = d;
 			if (debug > 1)
 			    fprintf(stderr, "[%d]: Range is [0x%x-0x%x]\n",
 				    depth, curlo, curhi);
@@ -204,8 +224,9 @@ bts_trace(const char *file)
 		if (d == -1) {
 		    if (debug > 1)
 			fprintf(stderr,
-				"[%d]: checking branch 0x%x against range [0x%x-0x%x]\n",
-				depth, addr, curlo, curhi);
+				"[%d]: checking branch 0x%x against range [0x%x-0x%x] (from depth %d (%s))\n",
+				depth, addr, curlo, curhi, currangedepth,
+				callstack[currangedepth].name);
 		    if (addr < curlo || addr >= curhi) {
 			printboth(stdout, depth, "*** branch ", &recs[i]);
 			printf(" out of range [0x%x-0x%x]\n", curlo, curhi-1);
@@ -213,6 +234,7 @@ bts_trace(const char *file)
 		}
 	    }
 
+	next:
 	    if (name)
 		free(name);
 	    i++;
@@ -228,7 +250,10 @@ printone(FILE *fd, int depth, char *str, struct bts_rec *rec, int src)
 {
     char buf[256];
 
-    symlist_string(src ? rec->from :rec->to, buf, sizeof(buf));
+    if (!doinlined)
+	symlist_gdb_string(src ? rec->from :rec->to, buf, sizeof(buf));
+    else
+	symlist_string(src ? rec->from :rec->to, buf, sizeof(buf));
     while (depth-- > 0)
 	fprintf(fd, "  ");
     fprintf(fd, "%s%s", str, buf);
@@ -241,8 +266,13 @@ printboth(FILE *fd, int depth, char *str, struct bts_rec *rec)
 {
     char buf1[256], buf2[256];
 
-    symlist_string(rec->from, buf1, sizeof(buf1));
-    symlist_string(rec->to, buf2, sizeof(buf2));
+    if (!doinlined) {
+	symlist_gdb_string(rec->from, buf1, sizeof(buf1));
+	symlist_gdb_string(rec->to, buf2, sizeof(buf2));
+    } else {
+	symlist_string(rec->from, buf1, sizeof(buf1));
+	symlist_string(rec->to, buf2, sizeof(buf2));
+    }
     while (depth-- > 0)
 	fprintf(fd, "  ");
     fprintf(fd, "%sfrom %s to %s", str, buf1, buf2);

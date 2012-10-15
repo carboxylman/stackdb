@@ -100,17 +100,17 @@ symlist_isfunc_2(uint32_t addr, char **namep, int *isinlined,
 	saddr == addr) {
 	char *name = lsymbol_get_name(lsymbol);
 #if 0
-	printf("addr=%x, name='%s'/%x\n",
+	printf("isfunc_2: addr=%x, name='%s'/%x\n",
 	       addr, name, lsymbol->symbol->base_addr);
 #endif
 	if (isinlined) {
 	    struct symbol *s = lsymbol_get_noninline_parent_symbol(lsymbol);
-	    if (s)
-		name = symbol_get_name(s);
 	    if (strncmp(name, "__INLINED", 9) == 0)
 		*isinlined = 1;
 	    else
 		*isinlined = 0;
+	    if (s)
+		name = symbol_get_name(s);
 	}
 	if (namep)
 	    *namep = strdup(name);
@@ -186,23 +186,24 @@ __symlist_string(uint32_t addr, char *buf, int bufsize, int gdbstyle)
      * XXX this is apparently some sort of inlined anonomous symbol
      */
     if (lsymbol->symbol->name == NULL) {
-#if 0
+#if 1
         struct dump_info udn = {
             .stream = stderr,
             .prefix = "",
             .detail = 1,
             .meta = 1,
         };
-	fprintf(stderr, "======== ADDR 0x%lx\n", addr);
+	fprintf(stderr, "======== ADDR 0x%x\n", addr);
 	lsymbol_dump(lsymbol, &udn);
 	fprintf(stderr, "\n========\n");
 	osymbol = lsymbol_get_noninline_parent_symbol(lsymbol);
 	fprintf(stderr, "non-inline returns %p (%s)\n",
 		osymbol, osymbol ? osymbol->name : "<UNDEF>");
 	assert(lsymbol->symbol->name != NULL);
-#endif
+#else
 	snprintf(buf, bufsize, "0x%08x", addr);
 	goto done;
+#endif
     }
 #endif
 
@@ -232,9 +233,23 @@ __symlist_string(uint32_t addr, char *buf, int bufsize, int gdbstyle)
 	    saddr = addr;
 	ooffset = addr - saddr;
     } else {
-	oname = name;
-	ooffset = offset;
+	/*
+	 * XXX if the name is __INLINED(...) then we have
+	 * an inline-able function that was not actually inlined.
+	 * Extract the true name and run with that.
+	 */
+	if (strncmp(name, "__INLINED", 9) == 0) {
+#if 0
+	    printf("addr=%x, name=%s...hacking!\n", addr, name);
+#endif
+	    name = oname = symbol_get_name_inline(lsymbol->symbol);
+	    ooffset = offset;
+	} else {
+	    oname = name;
+	    ooffset = offset;
+	}
     }
+    assert(strncmp(oname, "__INLINED", 9) != 0);
 
 #if 0
     printf("addr=%x, name='%s'/%x, outername='%s'/%x, innername='%s'\n",
@@ -244,7 +259,7 @@ __symlist_string(uint32_t addr, char *buf, int bufsize, int gdbstyle)
 	   symbol_get_name_inline(lsymbol->symbol));
 #endif
 #if 0
-    if (lsymbol->symbol->name == NULL /* || addr == 0xc011e520 */) {
+    if (/*lsymbol->symbol->name == NULL || */addr == 0xc011e552) {
         struct dump_info udn = {
             .stream = stderr,
             .prefix = "",
