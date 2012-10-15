@@ -65,7 +65,7 @@ int probe_ttd_test_perf_model_ ## name ## _init \
 int probe_ttd_test_perf_model_ ## name ## _start \
 (struct probe *probe, void *handler_data, struct probe *trigger)\
 { \
-    DBG("called\n"); \
+    DBG("called at brctr:%llu\n", perf_get_brctr(probe->target)); \
     name ## _start = perf_get_rdtsc(probe->target); \
     return 0; \
 } \
@@ -74,8 +74,8 @@ int probe_ttd_test_perf_model_ ## name ## _end \
 (struct probe *probe, void *handler_data, struct probe *trigger) \
 { \
     name ## _end = perf_get_rdtsc(probe->target); \
-    DBG("Time to do a  ## name ##  measurement:%llu (%llu:%llu)\n", \
-        name ## _end - name ## _start, name ## _start, name ## _end); \
+    DBG("Time to do a  ## name ##  measurement:%llu (%llu:%llu) at brctr:%llu\n", \
+        name ## _end - name ## _start, name ## _start, name ## _end, perf_get_brctr(probe->target)); \
     return 0; \
 }
 
