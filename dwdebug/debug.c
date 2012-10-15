@@ -3219,6 +3219,78 @@ int symbol_get_location_addr(struct symbol *symbol,ADDR *addr_saveptr) {
     return retval;
 }
 
+int symbol_get_location_range(struct symbol *symbol,ADDR *low_addr_saveptr,
+			      ADDR *high_addr_saveptr,int *is_noncontiguous) {
+    ADDR lowaddr = ADDRMAX;
+    ADDR highaddr = 0;
+    struct symtab *symtab;
+    ADDR len = 0;
+    int i;
+
+    if (!SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (symbol->isdeclaration) {
+	errno = EADDRNOTAVAIL;
+	return -2;
+    }
+
+    symtab = symbol->s.ii->d.f.symtab;
+
+    if (!symtab) {
+	errno = EADDRNOTAVAIL;
+	return -3;
+    }
+
+    if (RANGE_IS_PC(&symtab->range)) {
+	if (low_addr_saveptr)
+	    *low_addr_saveptr = symtab->range.r.a.lowpc;
+	if (high_addr_saveptr)
+	    *high_addr_saveptr = symtab->range.r.a.highpc;
+	if (is_noncontiguous)
+	    *is_noncontiguous = 0;
+
+	return 0;
+    }
+    else if (RANGE_IS_LIST(&symtab->range)) {
+	for (i = 0; i < symtab->range.r.rlist.len; ++i) {
+	    if (symtab->range.r.rlist.list[i]->start < lowaddr)
+		lowaddr = symtab->range.r.rlist.list[i]->start;
+
+	    if (symtab->range.r.rlist.list[i]->end > highaddr)
+		highaddr = symtab->range.r.rlist.list[i]->end;
+
+	    len += symtab->range.r.rlist.list[i]->end - \
+		symtab->range.r.rlist.list[i]->start;
+	}
+
+	if (low_addr_saveptr)
+	    *low_addr_saveptr = lowaddr;
+	if (high_addr_saveptr)
+	    *high_addr_saveptr = highaddr;
+	if (len != (highaddr - lowaddr) && is_noncontiguous)
+	    *is_noncontiguous = 1;
+
+	return 0;
+    }
+    else if (symbol->has_base_addr) {
+	if (low_addr_saveptr)
+	    *low_addr_saveptr = symbol->base_addr;
+	return 1;
+    }
+    else if (symbol->s.ii->d.f.hasentrypc) {
+	if (low_addr_saveptr)
+	    *low_addr_saveptr = symbol->s.ii->d.f.entry_pc;
+	return 1;
+    }
+    else {
+	errno = EINVAL;
+	return -4;
+    }
+}
+
 REFCNT symbol_hold(struct symbol *symbol) {
     vdebug(10,LOG_D_SYMBOL,"holding symbol %s//%s at %"PRIxSMOFFSET"\n",
 	   SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);

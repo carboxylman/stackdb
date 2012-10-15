@@ -124,7 +124,7 @@ static uint64_t curbrctr[NCPU];
 static void bts_dump(const char *fname, char *outfile)
 {
     struct ttd_rec *rec;
-    unsigned long nrec;
+    unsigned long nrec, nbtsrec;
     uint64_t lofound = UINT64_MAX, hifound = 0;
     FILE *fd, *ofd;
 
@@ -184,6 +184,7 @@ static void bts_dump(const char *fname, char *outfile)
 		    hifound = rec->cpu_state.brctr_virt;
 	    }
 	    nrec++;
+	    nbtsrec += rec->data_len / sizeof(struct bts_rec);
 	    break;
 	default:
 	    break;
@@ -193,9 +194,14 @@ static void bts_dump(const char *fname, char *outfile)
 
     fclose(fd);
 
-    if (debug)
-	fprintf(stderr, "Found %lu records in range [%llu-%llu]\n",
-		nrec, lofound, hifound);
+    if (debug) {
+	fprintf(stderr, "Found %lu log records ", nrec);
+	if (nrec)
+	    fprintf(stderr, "with range [%llu-%llu] ", lofound, hifound);
+	if (nbtsrec)
+	    fprintf(stderr, "containing %lu BTS records", nbtsrec);
+	fprintf(stderr, "\n");
+    }
 }
 
 static int bts_dump_branch(struct ttd_rec *rec, FILE *ofd)

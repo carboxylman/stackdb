@@ -52,11 +52,11 @@ endif
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/tools/bts/bts.h
 
-OBJECTS := io.lo symbol.lo bts_dump.lo bts_extract.lo
+OBJECTS := io.lo symbol.lo bts_dump.lo bts_extract.lo bts_trace.lo
 
 LIBRARIES := 
 
-PROGRAMS := bts_dump bts_extract trace_task
+PROGRAMS := bts_dump bts_extract bts_trace trace_task
 
 STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
 	$(OBJDIR)/lib/libvmilib.a
@@ -83,11 +83,14 @@ bts_extract: $(HEADERS) $(STATICLIBS) bts_extract.lo
 bts_dump: $(HEADERS) $(STATICLIBS) io.lo symbol.lo bts_dump.lo
 	$(CC) -o $@ $(CFLAGS) $@.o io.o symbol.o $(STATICLIBS) $(LDFLAGS)
 
+bts_trace: $(HEADERS) $(STATICLIBS) io.lo symbol.o bts_trace.lo
+	$(CC) -o $@ $(CFLAGS) $@.o io.o symbol.o $(STATICLIBS) $(LDFLAGS)
+
 replay.o: $(TOP_SRCDIR)/xentt/replay.c
 	$(CC) -c -o replay.o $(CFLAGS) $<
 
-trace_task: $(HEADERS) $(STATICLIBS) replay.o trace_task.o
-	$(CC) -o $@ $(CFLAGS) $@.o replay.o $(STATICLIBS) $(LDFLAGS)
+trace_task: $(HEADERS) $(STATICLIBS) replay.o symbol.o trace_task.o
+	$(CC) -o $@ $(CFLAGS) $@.o replay.o symbol.o $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
 	$(INSTALL) bts_dump $(DESTDIR)$(INSTALL_BINDIR)/

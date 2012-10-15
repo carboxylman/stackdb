@@ -12,8 +12,12 @@ struct symmap {
     void *dbfile;
 };
 
-extern int symbol_init(struct symmap[], int);
-void symbol_string(uint32_t, char *, int);
+int symlist_init(struct symmap[], int);
+void symlist_deinit(void);
+int symlist_isfunc(uint32_t addr);
+struct lsymbol *symlist_lookup_name(char *name);
+void symlist_string(uint32_t, char *, int);
+void symlist_gdb_string(uint32_t, char *, int);
 
 /* Records as logged by the TT engine */
 struct bts_rec {

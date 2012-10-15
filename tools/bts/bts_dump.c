@@ -32,18 +32,22 @@ struct symmap symmap[] = {
 
 int debug = 0;
 int symbolic = 0;
+int gdbstyle = 0;
 
 int main(int argc, char **argv)
 {
     char ch;
 
-    while ((ch = getopt(argc, argv, "dS")) != -1) {
+    while ((ch = getopt(argc, argv, "dSG")) != -1) {
 	switch(ch) {
 	case 'd':
 	    debug++;
 	    break;
 	case 'S':
 	    symbolic++;
+	    break;
+	case 'G':
+	    gdbstyle++;
 	    break;
 	}
     }
@@ -58,7 +62,7 @@ int main(int argc, char **argv)
     /*
      * Open symbol files.
      */
-    if (symbolic && symbol_init(symmap, sizeof(symmap)/sizeof(symmap[0])))
+    if (symbolic && symlist_init(symmap, sizeof(symmap)/sizeof(symmap[0])))
 	exit(1);
 
     while (argc) {
@@ -102,8 +106,13 @@ static void bts_show(const char *fname)
 		printf("%lld: ", tot+i);
 	    if (symbolic) {
 		char s1[256], s2[256];
-		symbol_string(recs[i].from, s1, sizeof(s1));
-		symbol_string(recs[i].to, s2, sizeof(s2));
+		if (gdbstyle) {
+		    symlist_gdb_string(recs[i].from, s1, sizeof(s1));
+		    symlist_gdb_string(recs[i].to, s2, sizeof(s2));
+		} else {
+		    symlist_string(recs[i].from, s1, sizeof(s1));
+		    symlist_string(recs[i].to, s2, sizeof(s2));
+		}
 		printf("%s -> %s\n", s1, s2);
 	    } else {
 		printf("0x%08llx -> 0x%08llx\n", recs[i].from, recs[i].to);
