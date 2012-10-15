@@ -2792,6 +2792,13 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    target->sstep_thread = NULL;
 
 	    if (xtstate->context.user_regs.eflags & EF_TF) {
+		if (!tthread->tpc) {
+		    verror("single step event (status reg and eflags), but"
+			   " no handling context in thread %"PRIiTID"!"
+			   "  letting user handle.",tthread->tid);
+		    goto out_paused;
+		}
+		    
 		/* Save the currently hanlding probepoint;
 		 * ss_handler may clear tpc.
 		 */

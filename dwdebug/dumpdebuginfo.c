@@ -57,6 +57,10 @@ int main(int argc,char **argv) {
     struct debugfile_load_opts **dlo_list = NULL;
     Elf *elf = NULL;
     int fd = -1;
+    struct lsymbol *s;
+    struct lsymbol *s2;
+    struct symbol *is;
+    struct symbol *ps;
 
     dwdebug_init();
 
@@ -193,9 +197,6 @@ int main(int argc,char **argv) {
 	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs,doelfsymtab);
     else {
 	for (i = 1; i < argc; ++i) {
-	    struct lsymbol *s;
-	    struct lsymbol *s2;
-	    struct symbol *is;
 	    ADDR addr = (ADDR)strtoull(argv[i],&endptr,0);
 	    char *cptr = NULL;
 
@@ -265,8 +266,13 @@ int main(int argc,char **argv) {
 		if (s->symbol->isinlineinstance) {
 		    fprintf(stdout,"first noninline parent %s: \n",argv[i]);
 		    ud.prefix = "  ";
-		    symbol_dump(lsymbol_get_noninline_parent_symbol(s),&ud);
-		    fprintf(stdout,"\n");
+		    ps = lsymbol_get_noninline_parent_symbol(s);
+		    if (ps) {
+			symbol_dump(ps,&ud);
+			fprintf(stdout,"\n");
+		    }
+		    else
+			fprintf(stdout,"NO PARENT! (fake inline of itself?)\n");
 		}
 		/* We release this one because we got it through a
 		 * lookup function, so a ref was taken to it on our

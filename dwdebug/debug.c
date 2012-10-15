@@ -4272,7 +4272,7 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	if (SYMBOL_IS_FULL_INSTANCE(symbol)) {
 	    if (symbol->s.ii->origin) {
 		fprintf(ud->stream,"INLINED_FUNC(");
-		symbol_function_dump(symbol->s.ii->origin,&udn);
+		symbol_var_dump(symbol->s.ii->origin,&udn);
 		fprintf(ud->stream,") (%s)",symbol->name);
 	    }
 	    else
