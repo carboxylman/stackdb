@@ -87,6 +87,9 @@ DECLARE_PROBE_FUNCS(nop10000);
 DECLARE_PROBE_FUNCS(nop100000);
 DECLARE_PROBE_FUNCS(nop1000000);
 
+DECLARE_PROBE_FUNCS(sys_execve);
+
+
 typedef struct probe_registration {
     char                *symbol;
     probe_handler_t     handler; 
@@ -108,6 +111,8 @@ const probe_registration_t probe_list[] = {
     {"ttd_test_perf_model_perf_nop100000_end", PROBE_FUNC_END(nop100000), {.init = PROBE_FUNC_INIT(nop100000)}},
     {"ttd_test_perf_model_perf_nop1000000_start", PROBE_FUNC_START(nop1000000), {.init = PROBE_FUNC_INIT(nop1000000)}},
     {"ttd_test_perf_model_perf_nop1000000_end", PROBE_FUNC_END(nop1000000), {.init = PROBE_FUNC_INIT(nop1000000)}},
+    {"ttd_test_perf_model_sys_execve_start", PROBE_FUNC_START(sys_execve), {.init = PROBE_FUNC_INIT(sys_execve)}},
+    {"ttd_test_perf_model_sys_execve_end", PROBE_FUNC_END(sys_execve), {.init = PROBE_FUNC_INIT(sys_execve)}},
 
 };
 
