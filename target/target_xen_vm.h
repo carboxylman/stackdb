@@ -92,6 +92,30 @@ typedef enum {
 #define _TIF_64_FORK               (1<<TIF_64_FORK)
 #define _TIF_64_ABI_PENDING        (1<<TIF_64_ABI_PENDING)
 
+/*
+ * Platform-specific registers for Xen VMs.
+ */
+#define XV_TSREG_START_INDEX 126
+#define XV_TSREG_COUNT 14
+#define XV_TSREG_END_INDEX (XV_TSREG_START_INDEX - XV_TSREG_COUNT + 1)
+typedef enum {
+    XV_TSREG_DR0 = XV_TSREG_START_INDEX,
+    XV_TSREG_DR1 = XV_TSREG_START_INDEX - 1,
+    XV_TSREG_DR2 = XV_TSREG_START_INDEX - 2,
+    XV_TSREG_DR3 = XV_TSREG_START_INDEX - 3,
+    XV_TSREG_DR6 = XV_TSREG_START_INDEX - 4,
+    XV_TSREG_DR7 = XV_TSREG_START_INDEX - 5,
+
+    XV_TSREG_CR0 = XV_TSREG_START_INDEX - 6,
+    XV_TSREG_CR1 = XV_TSREG_START_INDEX - 7,
+    XV_TSREG_CR2 = XV_TSREG_START_INDEX - 8,
+    XV_TSREG_CR3 = XV_TSREG_START_INDEX - 9,
+    XV_TSREG_CR4 = XV_TSREG_START_INDEX - 10,
+    XV_TSREG_CR5 = XV_TSREG_START_INDEX - 11,
+    XV_TSREG_CR6 = XV_TSREG_START_INDEX - 12,
+    XV_TSREG_CR7 = XV_TSREG_START_INDEX - 13,
+} xen_vm_tsreg_t;
+
 struct xen_vm_thread_state {
     ADDR task_struct_addr;
 

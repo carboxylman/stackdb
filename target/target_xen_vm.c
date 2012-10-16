@@ -16,6 +16,7 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include <errno.h>
 #include <assert.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -3540,6 +3541,23 @@ static int creg_to_dreg32[COMMON_REG_COUNT] = {
     [CREG_GS] = 58,
 };
 
+static int tsreg_to_offset[XV_TSREG_COUNT] = { 
+    offsetof(struct vcpu_guest_context,debugreg[0]),
+    offsetof(struct vcpu_guest_context,debugreg[1]),
+    offsetof(struct vcpu_guest_context,debugreg[2]),
+    offsetof(struct vcpu_guest_context,debugreg[3]),
+    offsetof(struct vcpu_guest_context,debugreg[6]),
+    offsetof(struct vcpu_guest_context,debugreg[7]),
+    offsetof(struct vcpu_guest_context,ctrlreg[0]),
+    offsetof(struct vcpu_guest_context,ctrlreg[1]),
+    offsetof(struct vcpu_guest_context,ctrlreg[2]),
+    offsetof(struct vcpu_guest_context,ctrlreg[3]),
+    offsetof(struct vcpu_guest_context,ctrlreg[4]),
+    offsetof(struct vcpu_guest_context,ctrlreg[5]),
+    offsetof(struct vcpu_guest_context,ctrlreg[6]),
+    offsetof(struct vcpu_guest_context,ctrlreg[7]),
+};
+
 /*
  * Register functions.
  */
@@ -3581,20 +3599,24 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
 
     vdebug(16,LOG_T_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
 
+    if (reg >= XV_TSREG_END_INDEX && reg <= XV_TSREG_START_INDEX) 
+	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
 #if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
+    else if (reg >= X86_64_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
     }
-    offset = dreg_to_offset64[reg];
+    else
+	offset = dreg_to_offset64[reg];
 #else
-    if (reg >= X86_32_DWREG_COUNT) {
+    else if (reg >= X86_32_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return 0;
     }
-    offset = dreg_to_offset32[reg];
+    else 
+	offset = dreg_to_offset32[reg];
 #endif
 
     xstate = (struct xen_vm_state *)(target->state);
@@ -3607,7 +3629,7 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
     xtstate = (struct xen_vm_thread_state *)tthread->state;
 
 #if __WORDSIZE == 64
-    if (likely(reg < 50))
+    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
 	retval = (REGVAL)*(uint64_t *)(((char *)&(xtstate->context)) + offset);
     else
 	retval = (REGVAL)*(uint16_t *)(((char *)&(xtstate->context)) + offset);
@@ -3629,20 +3651,29 @@ int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     vdebug(16,LOG_T_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
 	   xen_vm_reg_name(target,reg),value);
 
+    if (reg >= XV_TSREG_DR0 && reg <= XV_TSREG_DR7) {
+	errno = EACCES;
+	verror("cannot write debug registers directly!");
+	return -1;
+    }
+    else if (reg >= XV_TSREG_CR0 && reg <= XV_TSREG_CR7) 
+	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
 #if __WORDSIZE == 64
-    if (reg >= X86_64_DWREG_COUNT) {
+    else if (reg >= X86_64_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return -1;
     }
-    offset = dreg_to_offset64[reg];
+    else 
+	offset = dreg_to_offset64[reg];
 #else
-    if (reg >= X86_32_DWREG_COUNT) {
+    else if (reg >= X86_32_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
 	errno = EINVAL;
 	return -1;
     }
-    offset = dreg_to_offset32[reg];
+    else 
+	offset = dreg_to_offset32[reg];
 #endif
 
     xstate = (struct xen_vm_state *)(target->state);
@@ -3655,7 +3686,7 @@ int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     xtstate = (struct xen_vm_thread_state *)tthread->state;
 
 #if __WORDSIZE == 64
-    if (likely(reg < 50))
+    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
 	*(uint64_t *)(((char *)&(xtstate->context)) + offset) = (uint64_t)value;
     else
 	*(uint16_t *)(((char *)&(xtstate->context)) + offset) = (uint16_t)value;
