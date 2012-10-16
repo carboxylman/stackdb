@@ -87,7 +87,7 @@ int register_call_probe(char *symbol,
     //if (bsymbol)
     //    bsymbol_dump(bsymbol, &udn);
 
-    probe = probe_create(t, 
+    probe = probe_create(t, TID_GLOBAL,
                          ops,
                          (bsymbol) ? bsymbol_get_name(bsymbol) : symbol,
                          handler, /* pre_handler */
@@ -178,7 +178,7 @@ int register_prologue_probe(char *symbol,
 
     //bsymbol_dump(bsymbol, &udn);
 
-    if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL))
+    if (location_resolve_symbol_base(t, TID_GLOBAL, bsymbol, &funcstart, NULL))
     {
         verror("Could not resolve base addr for function %s!\n",
                bsymbol_get_name(bsymbol));
@@ -194,7 +194,7 @@ int register_prologue_probe(char *symbol,
         return 0;
     }
 
-    probe = probe_create(t, 
+    probe = probe_create(t, TID_GLOBAL,
                          ops,
                          bsymbol_get_name(bsymbol),
                          NULL, /* pre_handler */
@@ -269,7 +269,7 @@ int register_return_probe(char *symbol,
 
     //bsymbol_dump(bsymbol, &udn);
 
-    if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL))
+    if (location_resolve_symbol_base(t, TID_GLOBAL, bsymbol, &funcstart, NULL))
     {
         verror("Could not resolve base addr for function %s!\n",
                bsymbol_get_name(bsymbol));
@@ -290,7 +290,7 @@ int register_return_probe(char *symbol,
      * breakpoints.
      */
 
-    probe = probe_create(t, 
+    probe = probe_create(t, TID_GLOBAL,
                          ops,
                          bsymbol_get_name(bsymbol),
                          handler, /* pre_handler */
@@ -356,7 +356,7 @@ int register_var_probe(char *symbol,
     //if (bsymbol)
     //    bsymbol_dump(bsymbol, &udn);
 
-    probe = probe_create(t, 
+    probe = probe_create(t, TID_GLOBAL,
                          ops,
                          bsymbol_get_name(bsymbol), 
                          NULL, /* pre_handler */
@@ -396,7 +396,7 @@ int register_raw_probe(unsigned long addr,
 {
     struct probe *probe;
     
-    probe = probe_create(t, 
+    probe = probe_create(t, TID_GLOBAL,
                          NULL, /* ops */
                          name, 
                          NULL, /* pre_handler */
@@ -434,7 +434,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,
 {
     ADDR funcstart = 0;
 
-    if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL)) 
+    if (location_resolve_symbol_base(t, TID_GLOBAL, bsymbol, &funcstart, NULL)) 
     {
         verror("Could not resolve base addr for function %s!\n",
                bsymbol->lsymbol->symbol->name);
@@ -451,7 +451,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,
         int bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+4+1+2+1;
         char *buf = malloc(bufsiz);
         snprintf(buf, bufsiz, "call_in_%s", bsymbol->lsymbol->symbol->name);
-        struct probe *cprobe = probe_create(t, NULL, buf, NULL, call_handler,
+        struct probe *cprobe = probe_create(t, TID_GLOBAL, NULL, buf, NULL, call_handler,
                                             call_data, 0);
         cprobe->handler_data = call_data;
         free(buf);
@@ -462,7 +462,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,
             bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
             buf = malloc(bufsiz);
             snprintf(buf, bufsiz, "ret_in_%s", bsymbol->lsymbol->symbol->name);
-            rprobe = probe_create(t, NULL, buf, return_handler, NULL,
+            rprobe = probe_create(t, TID_GLOBAL, NULL, buf, return_handler, NULL,
                                   return_data, 0);
             rprobe->handler_data = return_data;
             free(buf);
@@ -580,8 +580,7 @@ int load_regs(struct pt_regs *regs, unsigned long regs_addr)
     if (!target_read_addr(t, 
                           regs_addr, 
                           sizeof(struct pt_regs), 
-                          (unsigned char *)regs, 
-                          NULL))
+                          (unsigned char *)regs))
     {
         return -1;
     }
@@ -592,15 +591,14 @@ int load_regs(struct pt_regs *regs, unsigned long regs_addr)
 
 unsigned long current_task_addr(void)
 {
-    unsigned long esp = target_read_reg(t, 4);
+    unsigned long esp = target_read_reg(t, TID_GLOBAL, 4);
     unsigned long thread_info_ptr = current_thread_ptr(esp);
     unsigned long task_addr = 0;
     
-    if (!target_read_addr(t,
+    if (!target_read_addr(t, 
                           thread_info_ptr,
                           sizeof(unsigned long),
-                          (unsigned char *)&task_addr,
-                          NULL))
+                          (unsigned char *)&task_addr))
     {
         return 0;
     }
@@ -623,8 +621,7 @@ int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
     if (!target_read_addr(t, 
                           task_struct_addr, 
                           TASK_STRUCT_SIZE, 
-                          task_struct_buf, 
-                          NULL))
+                          task_struct_buf)) 
     {
         free(task_struct_buf);
         return -1;
@@ -675,8 +672,7 @@ int load_task_info(ctxprobes_task_t **ptask, unsigned long task_struct_addr)
         if (!target_read_addr(t, 
                               parent_addr, 
                               TASK_STRUCT_SIZE, 
-                              task_struct_buf, 
-                              NULL))
+                              task_struct_buf)) 
         {
             free(task_struct_buf);
             unload_task_info(current);
@@ -821,11 +817,11 @@ int load_func_args(ctxprobes_var_t **arg_list,
         array_list_item_set(tmp, len, tsym);
         tlsym.symbol = tsym;
 
-        value = bsymbol_load(&tbsym,
-                             LOAD_FLAG_AUTO_DEREF |
-                             LOAD_FLAG_AUTO_STRING |
-                             LOAD_FLAG_NO_CHECK_VISIBILITY |
-                             LOAD_FLAG_NO_CHECK_BOUNDS);
+	value = target_load_symbol(t, TID_GLOBAL, &tbsym,
+				   LOAD_FLAG_AUTO_DEREF |
+				   LOAD_FLAG_AUTO_STRING |
+				   LOAD_FLAG_NO_CHECK_VISIBILITY |
+				   LOAD_FLAG_NO_CHECK_BOUNDS);
         if (!value)
         {
             ret = -1;
@@ -914,7 +910,7 @@ int load_func_retval(ctxprobes_var_t **retval, struct probe *probe)
         unload_func_retval(value);
         return -4;
     }
-    eax = target_read_reg(t, 0);
+    eax = target_read_reg(t, TID_GLOBAL, 0);
     memcpy(value->buf, &eax, value->size);
 
     *retval = value;

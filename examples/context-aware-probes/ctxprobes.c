@@ -119,7 +119,7 @@ static int probe_func_prologue(struct probe *probe,
             context_string(context_current));
   
     errno = 0;
-    sp = target_read_reg(t, t->spregno);
+    sp = target_read_reg(t, TID_GLOBAL, t->spregno);
     if (errno)
         verror("Could not read SP!\n");
     vdebug(8, LOG_C_FUNC, "SP: 0x%08x\n", sp);
@@ -129,7 +129,7 @@ static int probe_func_prologue(struct probe *probe,
     
     /* Grab the return address on the top of the stack */
     if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
-                          (unsigned char *)&retaddr, NULL))
+                          (unsigned char *)&retaddr))
     {
         verror("Could not read top of stack!\n");
     }
@@ -282,7 +282,7 @@ static int probe_func_return(struct probe *probe,
     {
         /* Grab the return address on the top of the stack */
         if (!target_read_addr(t, (ADDR)sp, sizeof(ADDR), 
-                              (unsigned char *)&retaddr, NULL))
+                              (unsigned char *)&retaddr))
         {
             verror("Could not read top of stack!\n");
         }
@@ -330,8 +330,7 @@ static int probe_var(struct probe *probe,
     if (!target_read_addr(t, 
                           probe_addr(probe), 
                           4, /* FIXME: size hard-coded */ 
-                          (unsigned char *)&tmp, 
-                          NULL))
+                          (unsigned char *)&tmp))
     {
         verror("Could not read memory for %s (0x%08x)\n", 
                probe->name, probe_addr(probe));
@@ -376,7 +375,7 @@ static int probe_disfunc_return(struct probe *probe,
             task_current->pid, task_current->comm, 
             probe->name, context_string(context_current));
     
-    ip = target_read_reg(t, t->ipregno);
+    ip = target_read_reg(t, TID_GLOBAL, t->ipregno);
     if (errno)
     {
         verror("Could not read IP!\n");
@@ -432,7 +431,7 @@ static int probe_disfunc_call(struct probe *probe,
             task_current->pid, task_current->comm, 
             probe->name, context_string(context_current));
     
-    ip = target_read_reg(t, t->ipregno);
+    ip = target_read_reg(t, TID_GLOBAL, t->ipregno);
     if (errno)
     {
         verror("Could not read IP!\n");
@@ -1293,7 +1292,7 @@ static int probe_syscall_call(struct probe *probe,
                               void *data, 
                               struct probe *trigger)
 {
-    unsigned int eax = target_read_reg(t, 0);
+    unsigned int eax = target_read_reg(t, TID_GLOBAL, 0);
     
     if (!user_pidlist || 
         array_list_contains(user_pidlist, (void *)task_current->pid))
@@ -1633,7 +1632,7 @@ int ctxprobes_init(char *domain_name,
         return -3;
     }
 
-    if (target_open(t))
+    if (target_open(t, NULL))
     {
         verror("Can't open target %s!\n", dom_name);
         ctxprobes_cleanup();
@@ -1852,7 +1851,7 @@ int ctxprobes_wait(void)
         {
             vdebugc(-1, LOG_C_WARN, "Warning: Domain %s interrupted "
                     "at 0x%" PRIxREGVAL "\n",
-                    dom_name, target_read_reg(t, t->ipregno));
+                    dom_name, target_read_reg(t, TID_GLOBAL, t->ipregno));
             if (target_resume(t))
             {
                 verror("Can't resume target domain %s\n", dom_name);
@@ -2031,7 +2030,7 @@ void ctxprobes_unreg_func_prologue(char *symbol,
                                 SYMBOL_TYPE_FLAG_FUNCTION);
     if (bsymbol)
     {
-        if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL) == 0)
+        if (location_resolve_symbol_base(t, TID_GLOBAL, bsymbol, &funcstart, NULL) == 0)
             g_hash_table_remove(cprobes, (gpointer)funcstart);
     }
 
@@ -2064,7 +2063,7 @@ void ctxprobes_unreg_func_return(char *symbol,
                                 SYMBOL_TYPE_FLAG_FUNCTION);
     if (bsymbol)
     {
-        if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL) == 0)
+	if (location_resolve_symbol_base(t, TID_GLOBAL, bsymbol, &funcstart, NULL) == 0)
             g_hash_table_remove(rprobes, (gpointer)funcstart);
     }
 
@@ -2159,7 +2158,7 @@ unsigned long ctxprobes_funcstart(char *symbol)
         return 0;
     }
 
-    if (location_resolve_symbol_base(t, bsymbol, &funcstart, NULL)) 
+    if (location_resolve_symbol_base(t, TID_GLOBAL, bsymbol, &funcstart, NULL)) 
     {
         verror("Could not resolve base addr for function %s!\n",
                bsymbol->lsymbol->symbol->name);

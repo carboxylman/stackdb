@@ -29,7 +29,6 @@
 #ifndef __CTXPROBES_PRIVATE_H__
 #define __CTXPROBES_PRIVATE_H__
 
-#define THREAD_SIZE (8192)
 #define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
 
 /* FIXME: remove this and get size and offsets from debug-info. */
@@ -127,5 +126,12 @@ int load_func_args(ctxprobes_var_t **arg_list,
 void unload_func_args(ctxprobes_var_t *arg_list, int arg_count);
 int load_func_retval(ctxprobes_var_t **retval, struct probe *probe);
 void unload_func_retval(ctxprobes_var_t *retval);
+
+/* XXX */
+#define LOG_C_CTX          (1 << 27)
+#define LOG_C_FUNC         (1 << 28)
+#define LOG_C_VAR          (1 << 29)
+#define LOG_C_DISASM       (1 << 30)
+#define LOG_C_WARN         (1 << 31)
 
 #endif /* __CTXPROBES_PRIVATE_H__  */
