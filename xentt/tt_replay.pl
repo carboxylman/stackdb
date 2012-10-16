@@ -23,6 +23,7 @@ sub usage()
     print STDERR
 	"Usage: tt_record [-dfpK] [-s statedir] name\n",
 	"  'name'       String identifying the VM\n",
+	"  -c           Start up attached to console\n",
 	"  -d           Additional debug output\n",
 	"  -f           Force creation\n",
 	"  -p           Create it in the paused state\n",
@@ -42,6 +43,7 @@ if ($UID) {
     die "Must run as root\n";
 }
 
+my $console = 0;
 my $debug = 0;
 my $force = 0;
 my $killit = 0;
@@ -52,6 +54,7 @@ my %options = ();
 if (!getopts("cdfpKs:", \%options)) {
     usage();
 }
+$console = 1 if (defined($options{'c'}));
 $debug = 1 if (defined($options{'d'}));
 $force = 1 if (defined($options{'f'}));
 $paused = 1 if (defined($options{'p'}));
@@ -130,15 +133,16 @@ sub start_domain($$$)
 
     #
     # NB: we don't wait for the start, since it may not run long
-    # and it could start and die between our checks.
+    # and it could start and die between our checks. That is almost
+    # certainly the case if we are attaching to the console.
     #
-    my $waitforit = $paused ? 1 : 0;
+    my $waitforit = ($paused && !$console) ? 1 : 0;
 
     # and start the domain
     if (!$waitforit) {
 	print "WARNING: not waiting for domain to start\n";
     }
-    if (!dom_start($name, $cfile, $paused, $waitforit, 0)) {
+    if (!dom_start($name, $cfile, $paused, $waitforit, $console)) {
 	dom_stop($name, 1, 0);
 	print STDERR "could not start $name\n";
 	return 0;
@@ -147,6 +151,11 @@ sub start_domain($$$)
     # record the domid in the statedir
     my $domid = dom_exists($name);
     if (!$domid) {
+	# If we were interactively connected to the console,
+	# the dom is quite likely gone by now, so don't get bent about it.
+	if ($console) {
+	    return 1;
+	}
 	dom_stop($name, 1, 0);
 	print STDERR "could not find domid for $name!?\n";
 	return 0;
