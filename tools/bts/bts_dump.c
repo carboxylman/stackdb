@@ -11,7 +11,7 @@ struct symmap symmap[] = {
     {
 	.symfile = NULL,
 	.prefix  = "User:",
-	.loaddr	 = 0x00000000,
+	.loaddr	 = 0x08000000,
 	.hiaddr	 = 0xBFFFFFFF
     },
     /* Linux kernel */
@@ -76,6 +76,8 @@ int main(int argc, char **argv)
 	bts_show(*argv);
 	argc--, argv++;
     }
+
+    exit(0);
 }
 
 static void bts_show(const char *fname)
@@ -108,7 +110,7 @@ static void bts_show(const char *fname)
 
 	while (i < n) {
 	    if (extended)
-		printf("%012d: ", recs[i].format);
+		printf("%012lld: ", recs[i].format);
 	    else
 		printf("%lld: ", tot+i);
 	    if (symbolic) {

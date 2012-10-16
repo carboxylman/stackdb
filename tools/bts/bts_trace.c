@@ -17,7 +17,7 @@ struct symmap symmap[] = {
     {
 	.symfile = NULL,
 	.prefix  = "User:",
-	.loaddr	 = 0x00000000,
+	.loaddr	 = 0x08000000,
 	.hiaddr	 = 0xBFFFFFFF
     },
     /* Linux kernel */
