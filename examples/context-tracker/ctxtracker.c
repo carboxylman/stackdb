@@ -462,9 +462,7 @@ static void untrack(GHashTable **probe_table)
 		while (g_hash_table_iter_next(&iter, (gpointer)&key, (gpointer)&probe))
 		{
 			probe_unregister(probe, 1 /* force */);
-			/* FIXME: uncomment this after fixing double faults detected by 
-			   glib. */
-			//probe_free(probe, 1 /* force */);
+			probe_free(probe, 1 /* force */);
 
 			g_hash_table_remove(probes, key);
 		}
@@ -614,9 +612,7 @@ void ctxtracker_cleanup(void)
 		while (g_hash_table_iter_next(&iter, (gpointer)&key, (gpointer)&probe))
 		{
 			probe_unregister(probe, 1 /* force */);
-			/* FIXME: uncomment this after fixing double faults detected by 
-			   glib. */
-			//probe_free(probe, 1 /* force */);
+			probe_free(probe, 1 /* force */);
 		}
 
 		g_hash_table_destroy(probes);
