@@ -25,6 +25,8 @@
  * 
  */
 
+#include "target_xen_vm.h"
+
 static struct bsymbol *bsymbol_task_prev;
 static struct bsymbol *bsymbol_task_next;
 static struct bsymbol *bsymbol_interrupt_regs;
@@ -1411,9 +1413,7 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	eax = target_read_reg(t,tid,0);
 	sc_num = eax;
 
-	/* FIXME: uncomment the below line when machineries allow instrumenting 
-	   system call exits. */
-	//context->flags |= TRACK_SYSCALL;
+	context->flags |= TRACK_SYSCALL;
 
 	context->syscall.sc_num = sc_num;
 
@@ -1441,10 +1441,52 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 	GHashTableIter iter;
 	probe_handler_t user_handler;
 	void *user_handler_data;
+	struct target *target = probe->target;
+	tid_t tid;
+	struct target_thread *tthread;
+	struct xen_vm_thread_state *xtstate;
+	REGVAL espval;
+	unsigned long cs;
+	unsigned long eip;
 
-	/* FIXME: remove the below line when machineries allow this probe function 
-	   to be registered. */
-	(void)probe_syscall_exit;
+	tthread = target->current_thread;
+	tid = tthread->tid;
+	xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+	/*
+	 * If we're coming from interrupt mode, this is not an exit.
+	 *
+	 * If we're returning to a kernel thread (ring < 3), not a
+	 * syscall.
+	 */
+	if (SOFTIRQ_COUNT(xtstate->thread_info_preempt_count)
+	    || SOFTIRQ_COUNT(xtstate->thread_info_preempt_count)) {
+	    vdebug(5,LOG_T_THREAD,"in interrupt context, not syscall ret\n");
+	    return 0;
+	}
+	else {
+	    /* Load esp + 4 (CS register), and read CPL; if it's not
+	     * 0x3, this is not a syscall return.
+	     */
+	    espval = target_read_creg(target,tid,CREG_SP);
+	    if (!target_read_addr(target,espval + 4,sizeof(unsigned long),
+				  (unsigned char *)&cs)) 
+		vwarn("could not read which CPL returning to; not checking!\n");
+	    else if (!target_read_addr(target,espval,sizeof(unsigned long),
+				  (unsigned char *)&eip)) 
+		vwarn("could not read which EIP returning to; not checking!\n");
+	    else if ((cs & 0x3) < 0x3) {
+		vdebug(5,LOG_T_THREAD,
+		       "not ret to user (EIP 0x%lx,CS 0x%lx); not syscall ret\n",
+		       eip);
+		return 0;
+	    }
+	    else {
+		vdebug(5,LOG_T_THREAD,
+		       "ret to user (EIP 0x%lx, CS 0x%lx); is syscall ret!\n",
+		       eip,cs);
+	    }
+	}
 
 	context = (ctxtracker_context_t *)data;
 

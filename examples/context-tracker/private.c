@@ -163,7 +163,7 @@ struct probe *register_probe_function_exit(struct target *target,
 	}
 
 	if (!probe_register_function_instrs(bsymbol, PROBEPOINT_SW, 1 /* noabort */,
-				INST_RET, probe, INST_NONE))
+				INST_RET, probe, INST_IRET, probe, INST_NONE))
 	{
 		verror("Could not register probe on function '%s' exit\n", 
 				bsymbol_get_name(bsymbol));
