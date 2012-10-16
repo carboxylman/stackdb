@@ -41,8 +41,6 @@ struct probe *register_probe_function_exit(struct target *target,
 		const char *symbol, const probe_handler_t handler, 
 		const struct probe_ops *ops, void *data);
 
-int read_ctrlreg(struct target *target, int regno, REGVAL *regval);
-
 int get_member_i32(struct target *target, struct value *value_struct, 
 		const char *member, int32_t *i32);
 

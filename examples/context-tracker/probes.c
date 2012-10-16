@@ -25,6 +25,7 @@
  * 
  */
 
+#include <errno.h>
 #include "target_xen_vm.h"
 
 static struct bsymbol *bsymbol_task_prev;
@@ -353,8 +354,8 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 		return -1;
 	}
 
-	ret = read_ctrlreg(probe->target, 2, &cr2);
-	if (ret)
+	cr2 = target_read_reg(target,TID_GLOBAL,XV_TSREG_CR2);
+	if (errno)
 	{
 		verror("Could not read cr2 register\n");
 		return -1;

@@ -186,46 +186,6 @@ struct probe *register_probe_function_exit(struct target *target,
 	return probe;
 }
 
-int read_ctrlreg(struct target *target, int regno, REGVAL *regval)
-{
-	int ret;
-	struct xen_vm_state *xstate;
-	int xc_handle;
-	xc_dominfo_t dominfo;
-	vcpu_guest_context_t context;
-
-	if (!target || !target->state)
-		return -1;
-
-	xstate = (struct xen_vm_state *)target->state;
-
-	xc_handle = xc_interface_open();
-	if (xc_handle < 0)
-	{
-		verror("Could not open xc interface: %s\n", strerror(errno));
-		return xc_handle;
-	}
-
-	ret = xc_domain_getinfo(xc_handle, xstate->id, 1, &dominfo);
-	if (ret <= 0)
-	{
-		verror("Could not get domain info for target '%s'\n", xstate->name);
-		return -2;
-	}
-
-	ret = xc_vcpu_getcontext(xc_handle, xstate->id, dominfo.max_vcpu_id, 
-			&context);
-	if (ret)
-	{
-		verror("Could not get vcpu context for target '%s'\n", xstate->name);
-		return ret;
-	}
-
-	*regval = context.ctrlreg[regno];
-
-	return 0;
-}
-
 int get_member_i32(struct target *target, struct value *value_struct, 
 		const char *member, int32_t *i32)
 {
