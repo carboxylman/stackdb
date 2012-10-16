@@ -255,7 +255,7 @@ struct memrange *memregion_find_range_real(struct memregion *region,
     struct memrange *range;
     list_for_each_entry(range,&region->ranges,range) {
 	if (memrange_contains_real(range,real_addr)) {
-	    vdebug(3,LOG_T_REGION,"lookup real(0x%"PRIxADDR") found memrange"
+	    vdebug(9,LOG_T_REGION,"lookup real(0x%"PRIxADDR") found memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
 		   real_addr,range->region->name,REGION_TYPE(range->region->type),
 		   range->start,range->end,range->offset,range->prot_flags);
@@ -270,7 +270,7 @@ struct memrange *memregion_find_range_obj(struct memregion *region,
     struct memrange *range;
     list_for_each_entry(range,&region->ranges,range) {
 	if (memrange_contains_obj(range,obj_addr)) {
-	    vdebug(3,LOG_T_REGION,"lookup obj(0x%"PRIxADDR") found memrange"
+	    vdebug(9,LOG_T_REGION,"lookup obj(0x%"PRIxADDR") found memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
 		   obj_addr,range->region->name,REGION_TYPE(range->region->type),
 		   range->start,range->end,range->offset,range->prot_flags);
@@ -285,7 +285,7 @@ ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
     struct memrange *range;
     list_for_each_entry(range,&region->ranges,range) {
 	if (memrange_contains_obj(range,obj_addr)) {
-	    vdebug(3,LOG_T_REGION,"relocate obj(0x%"PRIxADDR") found memrange"
+	    vdebug(9,LOG_T_REGION,"relocate obj(0x%"PRIxADDR") found memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
 		   obj_addr,range->region->name,REGION_TYPE(range->region->type),
 		   range->start,range->end,range->offset,range->prot_flags);
@@ -294,7 +294,7 @@ ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 	    return memrange_relocate(range,obj_addr);
 	}
 	else {
-	    vdebug(3,LOG_T_REGION,"obj(0x%"PRIxADDR") not found in memrange"
+	    vdebug(9,LOG_T_REGION,"obj(0x%"PRIxADDR") not found in memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
 		   obj_addr,range->region->name,REGION_TYPE(range->region->type),
 		   range->start,range->end,range->offset,range->prot_flags);

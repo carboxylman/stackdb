@@ -592,7 +592,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		goto errout;
 	    }
 	    retval += offset;
-	    vdebug(5,LOG_T_SYMBOL,
+	    vdebug(9,LOG_T_SYMBOL,
 		   "member %s at offset 0x%"PRIxOFFSET"; addr 0x%"PRIxADDR"\n",
 		   symbol_get_name(symbol),offset,retval);
 	}
@@ -610,7 +610,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	    }
 	    else if (rc == 1) {
 		current_region = current_range->region;
-		vdebug(5,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		vdebug(9,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
 	    else {
@@ -654,7 +654,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		    target_find_memory_real(target,retval,NULL,NULL,
 					    &current_range);
 		    current_region = current_range->region;
-		    vdebug(5,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+		    vdebug(9,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 
 		    /* We have to skip one pointer type */
@@ -665,7 +665,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		     */
 		    in_reg = 0;
 
-		    vdebug(5,LOG_T_SYMBOL,
+		    vdebug(9,LOG_T_SYMBOL,
 			   "autoloaded REG (%d) pointer(s) for var %s ="
 			   " 0x%"PRIxADDR"\n",
 			   reg,symbol_get_name(symbol),retval);
@@ -685,7 +685,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		    }
 		    current_region = current_range->region;
 
-		    vdebug(5,LOG_T_SYMBOL,
+		    vdebug(9,LOG_T_SYMBOL,
 			   "autoloaded pointer(s) for var %s = 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 		}
