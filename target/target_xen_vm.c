@@ -1062,6 +1062,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     struct xen_vm_thread_state *tstate = NULL;;
     struct xen_vm_thread_state *gtstate;
     struct value *v = NULL;
+    REGVAL ipval;
 
     if (target->current_thread && target->current_thread->valid && !force)
 	return target->current_thread;
@@ -1091,20 +1092,50 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 
     gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
 
-    if (xc_vcpu_getcontext(xc_handle,xstate->id,
-			   xstate->dominfo.max_vcpu_id,
-			   &gtstate->context) < 0) {
-	verror("could not get vcpu context for %d\n",xstate->id);
-	goto errout;
+    /*
+     * Only need to call xc if we haven't loaded this thread.
+     */
+    if (!target->global_thread->valid) {
+	if (xc_vcpu_getcontext(xc_handle,xstate->id,
+			       xstate->dominfo.max_vcpu_id,
+			       &gtstate->context) < 0) {
+	    verror("could not get vcpu context for %d\n",xstate->id);
+	    goto errout;
+	}
+	target->global_thread->valid = 1;
+	target->global_thread->status = THREAD_STATUS_RUNNING;
     }
-    target->global_thread->valid = 1;
-    target->global_thread->status = THREAD_STATUS_RUNNING;
+
+    /*
+     * Load EIP for later user-mode check.
+     */
+    errno = 0;
+    ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
+    if (errno) {
+	vwarn("could not read EIP for user-mode check; continuing anyway.\n");
+	errno = 0;
+    }
 
     /*
      * If only loading the global thread, stop here.
      */
     if (globalonly) 
 	return target->global_thread;
+
+    /*
+     * If in user-mode, we can't load kernel thread; just return the
+     * global thread -- but DO NOT set target->current_thread (that
+     * would be incorrect).
+     *
+     * XXX: maybe returning global thread is too :).
+     */
+    if (ipval < 0xc0000000) {
+	vdebug(9,LOG_T_XV,
+	       "at user-mode EIP 0x%"PRIxADDR"; not loading current thread;"
+	       " returning global thread.\n",
+	       ipval);
+	return target->global_thread;
+    }
 
     /* We need to load in the current task_struct, AND if it's already
      * in target->threads, CHECK if it really matches one of our cached
@@ -1870,8 +1901,6 @@ static target_status_t xen_vm_status(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     target_status_t retval = TSTATUS_UNKNOWN;
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
-
     if (xen_vm_load_dominfo(target)) {
 	verror("could not load dominfo for dom %d\n",xstate->id);
 	return retval;
@@ -1890,7 +1919,7 @@ static target_status_t xen_vm_status(struct target *target) {
     else
 	retval = TSTATUS_ERROR;
 
-    vdebug(3,LOG_T_XV,"dom %d status %d\n",xstate->id,retval);
+    vdebug(9,LOG_T_XV,"dom %d status %d\n",xstate->id,retval);
 
     return retval;
 }
@@ -2182,11 +2211,17 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
      * a thread create which would result in the hashtable being
      * modified.
      */
-    if (!target->current_thread	|| !target->current_thread->valid) {
+    if (!target->current_thread) {
 	vdebug(9,LOG_T_XV,
-	       "current thread not loaded or not valid (%d) to compare with"
-	       " tid %"PRIiTID"; exiting or BUG?\n",
-	       target->current_thread->valid,tid);
+	       "current thread not loaded to compare with"
+	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
+	       tid);
+    }
+    else if (!target->current_thread->valid) {
+	vdebug(9,LOG_T_XV,
+	       "current thread not valid to compare with"
+	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
+	       tid);
     }
 
     /*
@@ -3248,7 +3283,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
     page_size = xstate->xa_instance.page_size;
     page_offset = addr & (page_size - 1);
 
-    vdebug(5,LOG_T_XV,
+    vdebug(16,LOG_T_XV,
 	   "read dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
 	   xstate->id,addr,page_offset,target_length,pid);
 
@@ -3261,7 +3296,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 	    return NULL;
 
 	assert(offset == page_offset);
-	vdebug(3,LOG_T_XV,
+	vdebug(9,LOG_T_XV,
 	       "read dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d len=%d mapped pages=%d\n",
 	       xstate->id,addr,page_offset,pid,length,no_pages);
     }
@@ -3272,7 +3307,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 
 	while (1) {
 	    if (1 || size > page_size) 
-		vdebug(6,LOG_T_XV,
+		vdebug(16,LOG_T_XV,
 		       "increasing size to %d (dom=%d,addr=%"PRIxADDR",pid=%d)\n",
 		       size,xstate->id,addr,pid);
 	    pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,size,
@@ -3283,7 +3318,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 
 	    length = strnlen((const char *)(pages + offset), size);
 	    if (length < size) {
-		vdebug(3,LOG_T_XV,"got string of length %d, mapped %d pages\n",
+		vdebug(9,LOG_T_XV,"got string of length %d, mapped %d pages\n",
 		       length,no_pages);
 		break;
 	    }
@@ -3326,7 +3361,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,
     page_size = xstate->xa_instance.page_size;
     page_offset = addr & (page_size - 1);
 
-    vdebug(5,LOG_T_XV,
+    vdebug(16,LOG_T_XV,
 	   "write dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
 	   xstate->id,addr,page_offset,length,pid);
 
@@ -3351,7 +3386,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,
     }
 
     assert(offset == page_offset);
-    vdebug(3,LOG_T_XV,
+    vdebug(9,LOG_T_XV,
 	   "write dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d len=%d mapped pages=%d\n",
 	   xstate->id,addr,page_offset,pid,length,no_pages);
 
