@@ -326,10 +326,12 @@ void probepoint_free_ext(struct probepoint *probepoint) {
 /**
  ** Probe unregistration/registration.
  **/
-static int __probepoint_remove(struct probepoint *probepoint) {
+static int __probepoint_remove(struct probepoint *probepoint,int force) {
     struct target *target;
     tid_t tid,htid;
     int ret;
+    struct thread_probepoint_context *tpc;
+    int action_did_obviate = 0;
 
     target = probepoint->target;
 
@@ -359,35 +361,153 @@ static int __probepoint_remove(struct probepoint *probepoint) {
 	return 1;
     }
 
-    probepoint->state = PROBE_REMOVING;
+    /* 
+     * If the probepoint is not currently being handled, simply remove
+     * it.  Otherwise, we have to handle complex cases!
+     */
+    if (probepoint->state == PROBE_BP_SET) {
+	vdebug(7,LOG_P_PROBE,"doing easy removal of ");
+	LOGDUMPPROBEPOINT(7,LOG_P_PROBE,probepoint);
+	vdebugc(7,LOG_P_PROBE,"; removing probepoint!\n");
+    }
+    /*
+     * Handle complex stuff :).
+     */
+    else if (!force) {
+	vwarn("probepoint being handled (state %d); not forcing removal yet!\n",
+	      probepoint->state);
+	errno = EAGAIN;
+	return -1;
+    }
+    else {
+	if (probepoint->state == PROBE_ACTION_RUNNING) {
+	    vwarn("forced probepoint removal while it is running action;"
+		  " trying to clean up normally!\n");
+	    /* We need to remove the action code, if any, reset the EIP
+	     * to what it would have been if we had just hit the BP, and
+	     * then do the normal breakpoint removal.
+	     */
+	    tpc = probepoint->tpc;
+
+	    if (tpc->action_orig_mem && tpc->action_orig_mem_len) {
+		if (target_write_addr(target,probepoint->addr,
+				      tpc->action_orig_mem_len,
+				      tpc->action_orig_mem)	\
+		    != tpc->action_orig_mem_len) {
+		    verror("could not write orig code for forced action remove;"
+			   " badness will probably ensue!\n");
+		    probepoint->state = PROBE_DISABLED;
+		}
+		else {
+		    probepoint->state = PROBE_BP_SET;
+		}
+		free(tpc->action_orig_mem);
+		tpc->action_orig_mem = NULL;
+	    }
+	    else {
+		vwarn("action running, but no orig mem to restore (maybe ok)!\n");
+		probepoint->state = PROBE_BP_SET;
+	    }
+
+	    if (tpc->action_obviated_orig)
+		action_did_obviate = 1;
+
+	    /* NULL these out to be safe. */
+	    tpc->action_orig_mem = NULL;
+	    tpc->action_orig_mem_len = 0;
+	    tpc->tac.action = NULL;
+	    tpc->tac.stepped = 0;
+	    tpc->action_obviated_orig = 0;
+	}
+	else if (probepoint->state == PROBE_BP_PREHANDLING) {
+	    vwarn("force probepoint removal while prehandling it;"
+		  " trying to clean up normally!\n");
+	}
+	else if (probepoint->state == PROBE_BP_ACTIONHANDLING) {
+	    vwarn("force probepoint removal while handling an action;"
+		  " trying to clean up normally!\n");
+	}
+	else if (probepoint->state == PROBE_BP_POSTHANDLING) {
+	    vwarn("force probepoint removal while posthandling it;"
+		  " trying to clean up normally!\n");
+	}
+	else if (probepoint->state == PROBE_INSERTING) {
+	    vwarn("forced probepoint removal while it is inserting;"
+		  " trying to clean up normally!\n");
+	    probepoint->state = PROBE_BP_SET;
+	}
+
+	/*
+	 * If we're doing initial BP handling, reset EIP to the
+	 * probepoint addr; else if we're doing BP handling after the
+	 * single step, *don't* reset IP, since we already did the
+	 * original instruction.  UNLESS we were executing an action
+	 * that obviated the original code control flow -- then we
+	 * replace the original code below, BUT DO NOT update EIP!
+	 */
+	if (probepoint->state != PROBE_DISABLED) {
+	    /* Reset EIP to the right thing. */
+	    if ((probepoint->state == PROBE_BP_PREHANDLING 
+		 || probepoint->state == PROBE_BP_ACTIONHANDLING 
+		 || probepoint->state == PROBE_ACTION_RUNNING
+		 || probepoint->state == PROBE_ACTION_DONE)
+		&& !action_did_obviate
+		&& probepoint->type != PROBEPOINT_WATCH) {
+		/* We still must execute the original instruction. */
+		/* BUT NOT for watchpoints!  We do not know anything
+		 * about the original instruction.
+		 */
+		if (probepoint->style == PROBEPOINT_HW) {
+		    tid = probepoint->thread->tid;
+		}
+		else
+		    tid = TID_GLOBAL;
+
+		if (target_write_reg(target,tid,
+				     target->ipregno,probepoint->addr)) {
+		    verror("could not reset IP to bp addr 0x%"PRIxADDR" for"
+			   " forced breakpoint remove; badness will probably"
+			   " ensue!\n",
+			   probepoint->addr);
+		}
+	    }
+	}
+    }
+
+    /*
+     * If we're going to remove it, do it!
+     */
 
     /*
      * If it's hardware, use the target API to remove it.
      */
-    if (probepoint->style == PROBEPOINT_HW
-	&& probepoint->debugregnum > -1) {
-	htid = probepoint->thread->tid;
+    if (probepoint->style == PROBEPOINT_HW) {
+	if (probepoint->debugregnum > -1) {
+	    htid = probepoint->thread->tid;
 
-	if (probepoint->type == PROBEPOINT_BREAK) {
-	    if ((ret = target_unset_hw_breakpoint(target,htid,
-						  probepoint->debugregnum))) {
-		verror("failure while removing hw breakpoint; cannot recover!\n");
+	    if (probepoint->type == PROBEPOINT_BREAK) {
+		if ((ret = target_unset_hw_breakpoint(target,htid,
+						      probepoint->debugregnum))) {
+		    verror("failure while removing hw breakpoint; cannot recover!\n");
+		}
+		else {
+		    vdebug(4,LOG_P_PROBEPOINT,"removed HW break ");
+		    LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+		}
 	    }
 	    else {
-		vdebug(4,LOG_P_PROBEPOINT,"removed HW break ");
-		LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+		if ((ret = target_unset_hw_watchpoint(target,htid,
+						      probepoint->debugregnum))) {
+		    verror("failure while removing hw watchpoint; cannot recover!\n");
+		}
+		else {
+		    vdebug(4,LOG_P_PROBEPOINT,"removed HW watch ");
+		    LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+		}
 	    }
 	}
-	else {
-	    if ((ret = target_unset_hw_watchpoint(target,htid,
-						  probepoint->debugregnum))) {
-		verror("failure while removing hw watchpoint; cannot recover!\n");
-	    }
-	    else {
-		vdebug(4,LOG_P_PROBEPOINT,"removed HW watch ");
-		LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
-	    }
-	}
+	else 
+	    ret = 0;
 
 	if (ret) 
 	    return 1;
@@ -786,7 +906,7 @@ int probe_hard_disable(struct probe *probe,int force) {
 	}
     }
 
-    if (probe_is_base(probe) && __probepoint_remove(probe->probepoint)) {
+    if (probe_is_base(probe) && __probepoint_remove(probe->probepoint,force)) {
 	verror("failed to remove probepoint under probe (%d)\n!",force);
 	++rc;
     }
@@ -822,13 +942,11 @@ int probe_hard_enable(struct probe *probe) {
 static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     struct probepoint *probepoint = probe->probepoint;
     struct target *target = probe->target;
-    int action_did_obviate = 0;
     target_status_t status;
     struct action *action;
     struct action *tmp;
     struct probe *ptmp;
     GList *list;
-    struct thread_probepoint_context *tpc;
 
     vdebug(5,LOG_P_PROBE,"");
     LOGDUMPPROBE(5,LOG_P_PROBE,probe);
@@ -959,150 +1077,17 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probepoint);
     vdebugc(5,LOG_P_PROBE,"; removing probepoint!\n");
 
-    /* 
-     * If the probepoint is not currently being handled, simply remove
-     * it.  Otherwise, we have to handle complex cases!
-     */
-    if (probepoint->state == PROBE_BP_SET || probepoint->state == PROBE_DISABLED) {
-	vdebug(7,LOG_P_PROBE,"doing easy removal of ");
-	LOGDUMPPROBEPOINT(7,LOG_P_PROBE,probepoint);
-	vdebugc(7,LOG_P_PROBE,"; removing probepoint!\n");
-
-	__probepoint_remove(probepoint);
+    if (!__probepoint_remove(probepoint,force))
 	probepoint_free(probepoint);
-
-	return 0;
-    }
-    /*
-     * Handle complex stuff :).
-     */
-    else if (!force) {
-	vwarn("probepoint being handled (state %d); not forcing unregister yet!\n",
-	      probepoint->state);
-	errno = EAGAIN;
+    else if (force) {
+	verror("probepoint_remove failed, but force freeing!\n");
+	probepoint_free(probepoint);
 	return -1;
     }
     else {
-	if (probepoint->state == PROBE_BP_ACTIONHANDLING) {
-	    vwarn("force unregister probe while handling an action;"
-		  " trying to clean up normally!\n");
-	}
-	else if (probepoint->state == PROBE_BP_POSTHANDLING) {
-	    vwarn("force unregister probe while handling an action;"
-		  " trying to clean up normally!\n");
-	}
-	else if (probepoint->state == PROBE_INSERTING) {
-	    vwarn("forced unregister probe while it is inserting; trying to clean up normally!\n");
-	    probepoint->state = PROBE_BP_SET;
-	}
-	else if (probepoint->state == PROBE_REMOVING) {
-	    vwarn("forced unregister probe while it is removing; trying to clean up normally!\n");
-	    probepoint->state = PROBE_BP_SET;
-	}
-	else if (probepoint->state == PROBE_ACTION_RUNNING) {
-	    vwarn("forced unregister probe while it is running action; trying to clean up normally!\n");
-	    /* We need to remove the action code, if any, reset the EIP
-	     * to what it would have been if we had just hit the BP, and
-	     * then do the normal breakpoint removal.
-	     */
-	    tpc = probepoint->tpc;
-
-	    if (tpc->action_orig_mem
-		&& tpc->action_orig_mem_len) {
-		if (target_write_addr(target,probepoint->addr,
-				      tpc->action_orig_mem_len,
-				      tpc->action_orig_mem) \
-		    != tpc->action_orig_mem_len) {
-		    verror("could not write orig code for forced action remove; badness will probably ensue!\n");
-		    probepoint->state = PROBE_DISABLED;
-		}
-		else {
-		    probepoint->state = PROBE_BP_SET;
-		}
-		free(tpc->action_orig_mem);
-		tpc->action_orig_mem = NULL;
-	    }
-	    else {
-		vwarn("action running, but no orig mem to restore (might be ok)!\n");
-		probepoint->state = PROBE_BP_SET;
-	    }
-	    
-	    if (tpc->action_obviated_orig)
-		action_did_obviate = 1;
-
-	    /* NULL these out to be safe. */
-	    tpc->action_orig_mem = NULL;
-	    tpc->action_orig_mem_len = 0;
-	    tpc->tac.action = NULL;
-	    tpc->tac.stepped = 0;
-	    tpc->action_obviated_orig = 0;
-	}
-
-	/*
-	 * Coming out of the above checks, the probepoint must be in either
-	 * the PROBE_DISABLED, PROBE_BP_SET, PROBE_BP_HANDLING 
-	 * states.  If it's disabled, we do nothing.
-	 * If it's set, we replace the breakpoint instructions with the
-	 * original contents; and if we're doing initial BP handling, reset
-	 * EIP to the probepoint addr; else if we're doing BP handling after
-	 * the single step, *don't* reset IP, since we already did the
-	 * original instruction.  UNLESS we were executing an action that
-	 * obviated the original code control flow -- then we replace the
-	 * original code, BUT DO NOT update EIP!!!
-	 *
-	 * Man, I hope that's everything.
-	 */
-
-	if (probepoint->state != PROBE_DISABLED) {
-	    /* Replace the original code. */
-	    if (probepoint->style == PROBEPOINT_SW
-		&& probepoint->breakpoint_orig_mem
-		&& probepoint->breakpoint_orig_mem_len) {
-		if (target_write_addr(target,probepoint->addr,
-				      probepoint->breakpoint_orig_mem_len,
-				      probepoint->breakpoint_orig_mem) \
-		    != probepoint->breakpoint_orig_mem_len) {
-		    verror("could not write orig code for forced breakpoint remove; badness will probably ensue!\n");
-		}
-		else {
-		    free(probepoint->breakpoint_orig_mem);
-		    probepoint->breakpoint_orig_mem = NULL;
-		}
-	    }
-	    else if (probepoint->style == PROBEPOINT_HW) {
-		if (target_unset_hw_breakpoint(target,probepoint->thread->tid,
-					       probepoint->debugregnum)) {
-		    verror("could not remove hardware breakpoint; cannot repair!\n");
-		}
-	    }
-
-	    /* Reset EIP to the right thing. */
-	    if ((probepoint->state == PROBE_BP_ACTIONHANDLING 
-		 || probepoint->state == PROBE_ACTION_RUNNING
-		 || probepoint->state == PROBE_ACTION_DONE)
-		&& !action_did_obviate
-		&& probepoint->type != PROBEPOINT_WATCH) {
-		/* We still must execute the original instruction. */
-		/* BUT NOT for watchpoints!  We do not know anything
-		 * about the original instruction.
-		 */
-		if (target_write_reg(target,probe->thread->tid,
-				     target->ipregno,probepoint->addr)) {
-		    verror("could not reset IP to bp addr 0x%"PRIxADDR" for forced breakpoint remove; badness will probably ensue!\n",
-			   probepoint->addr);
-		}
-	    }
-
-	    /* At this point, the probepoint will be "disabled" no
-	     * matter what happens; we can't repair anything that goes
-	     * wrong.
-	     */
-	    probepoint->state = PROBE_DISABLED;
-	}
+	verror("probepoint_remove failed; not force freeing!\n");
+	return -1;
     }
-
-    /* Now, actually free the probepoint! */
-    probepoint_free(probepoint);
 
     return 0;
 }
@@ -2221,7 +2206,7 @@ static int setup_post_single_step(struct target *target,
 	else {
 	    free(probepoint->breakpoint_orig_mem);
 	    probepoint->breakpoint_orig_mem = NULL;
-	    __probepoint_remove(probepoint);
+	    __probepoint_remove(probepoint,0);
 	}
 
 	/*
@@ -3001,7 +2986,7 @@ result_t probepoint_ss_handler(struct target *target,
 	else {
 	    free(probepoint->breakpoint_orig_mem);
 	    probepoint->breakpoint_orig_mem = NULL;
-	    __probepoint_remove(probepoint);
+	    __probepoint_remove(probepoint,0);
 	}
 
 	if (target_singlestep_end(target,tid))

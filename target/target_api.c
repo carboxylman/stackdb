@@ -428,6 +428,8 @@ int target_close(struct target *target) {
      * can't remove an element during an iteration, but we *can* free
      * the data :).
      */
+    vdebug(2,LOG_P_PROBEPOINT,"%d soft probepoints to free!\n",
+	   g_hash_table_size(target->soft_probepoints));
     g_hash_table_iter_init(&iter,target->soft_probepoints);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&probepoint)) {
 	probepoint_free_ext(probepoint);
