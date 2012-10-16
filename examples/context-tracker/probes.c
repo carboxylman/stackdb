@@ -1460,7 +1460,7 @@ static int probe_syscall_exit(struct probe *probe, void *data,
 	 * If we're returning to a kernel thread (ring < 3), not a
 	 * syscall.
 	 */
-	if (SOFTIRQ_COUNT(xtstate->thread_info_preempt_count)
+	if (HARDIRQ_COUNT(xtstate->thread_info_preempt_count)
 	    || SOFTIRQ_COUNT(xtstate->thread_info_preempt_count)) {
 	    vdebug(5,LOG_T_THREAD,"in interrupt context, not syscall ret\n");
 	    return 0;
