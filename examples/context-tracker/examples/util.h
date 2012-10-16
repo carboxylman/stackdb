@@ -31,7 +31,8 @@
 
 #include <target_api.h>
 
-struct target *init_probes(const char *domain_name, int debug_level);
+struct target *init_probes(const char *domain_name, int debug_level,
+			   int xa_debug_level);
 
 void cleanup_probes(GHashTable *probes);
 

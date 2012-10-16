@@ -52,6 +52,7 @@ extern int optind, opterr, optopt;
 
 static char *domain_name;
 static int debug_level = -1;
+static int xa_debug_level = -1;
 static ctxtracker_track_t track = TRACK_NONE;
 
 static struct target *t;
@@ -612,12 +613,16 @@ static void parse_opt(int argc, char *argv[])
 	char ch;
 	log_flags_t debug_flags;
 
-	while ((ch = getopt(argc, argv, "dl:c:")) != -1)
+	while ((ch = getopt(argc, argv, "dxl:c:")) != -1)
 	{
 		switch(ch)
 		{
 			case 'd':
 				++debug_level;
+				break;
+
+			case 'x':
+				++xa_debug_level;
 				break;
 
 			case 'l':
@@ -696,7 +701,7 @@ int main(int argc, char *argv[])
 
 	LOG("Initializing target...\n");
 
-	t = init_probes(domain_name, debug_level);
+	t = init_probes(domain_name, debug_level, xa_debug_level);
 	if (!t)
 		return -1;
 

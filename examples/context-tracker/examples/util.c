@@ -39,7 +39,8 @@
 #include "util.h"
 #include "debug.h"
 
-struct target *init_probes(const char *domain_name, int debug_level)
+struct target *init_probes(const char *domain_name, int debug_level,
+			   int xa_debug_level)
 {
 	struct target *t;
 	int ret;
@@ -47,7 +48,7 @@ struct target *init_probes(const char *domain_name, int debug_level)
 	dwdebug_init();
 	vmi_set_log_level(debug_level);
 #ifdef XA_DEBUG
-	xa_set_debug_level(debug_level);
+	xa_set_debug_level(xa_debug_level);
 #endif
 
 	t = xen_vm_attach((char *)domain_name, NULL);
