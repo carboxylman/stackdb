@@ -39,7 +39,7 @@
 #include "ctxtracker.h"
 #include "private.h"
 
-static struct target *t;
+struct target *t;
 
 static GHashTable *probes;
 static GHashTable *taskswitch_probes;
@@ -48,19 +48,17 @@ static GHashTable *pagefault_probes;
 static GHashTable *exception_probes;
 static GHashTable *syscall_probes;
 
-static ctxtracker_context_t *context;
+ctxtracker_context_t *context;
 
-static GHashTable *taskswitch_user_handlers;
-static GHashTable *interrupt_entry_user_handlers;
-static GHashTable *interrupt_exit_user_handlers;
-static GHashTable *pagefault_entry_user_handlers;
-static GHashTable *pagefault_exit_user_handlers;
-static GHashTable *exception_entry_user_handlers;
-static GHashTable *exception_exit_user_handlers;
-static GHashTable *syscall_entry_user_handlers;
-static GHashTable *syscall_exit_user_handlers;
-
-#include "probes.c"
+GHashTable *taskswitch_user_handlers;
+GHashTable *interrupt_entry_user_handlers;
+GHashTable *interrupt_exit_user_handlers;
+GHashTable *pagefault_entry_user_handlers;
+GHashTable *pagefault_exit_user_handlers;
+GHashTable *exception_entry_user_handlers;
+GHashTable *exception_exit_user_handlers;
+GHashTable *syscall_entry_user_handlers;
+GHashTable *syscall_exit_user_handlers;
 
 static int track_taskswitch(void)
 {

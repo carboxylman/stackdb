@@ -59,7 +59,7 @@ endif
 HEADERS := $(TOP_SRCDIR)/$(SUBDIR)/ctxtracker.h \
 		$(TOP_SRCDIR)/$(SUBDIR)/private.h
 
-OBJECTS := ctxtracker.lo private.lo
+OBJECTS := ctxtracker.lo private.lo probes.lo
 
 LIBRARIES := libctxtracker.a
 

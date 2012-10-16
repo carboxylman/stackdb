@@ -46,7 +46,6 @@
 #include <probe.h>
 
 #include <ctxtracker.h>
-#include <private.h>
 
 #include <debug.h>
 #include <util.h>
@@ -200,7 +199,7 @@ static int task_index(int pid)
 	return -1;
 }
 
-static int probe_taskswitch(struct probe *probe, void *data,
+static int taskswitch(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	static const struct probe_ops ops = {
@@ -295,7 +294,7 @@ static int register_probes(struct target *t)
 {
 	int ret;
 
-	ret = ctxtracker_register_handler(TRACK_TASKSWITCH, probe_taskswitch, 
+	ret = ctxtracker_register_handler(TRACK_TASKSWITCH, taskswitch, 
 			NULL, true);
 	if (ret)
 	{

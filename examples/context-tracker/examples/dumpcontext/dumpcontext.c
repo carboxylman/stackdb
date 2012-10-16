@@ -42,7 +42,7 @@
 #include <probe.h>
 
 #include <ctxtracker.h>
-#include <private.h>
+//#include <private.h>
 
 #include <debug.h>
 #include <util.h>
@@ -61,7 +61,7 @@ static const char *member_task_pid = "pid";
 static const char *member_task_name = "comm";
 static const char *member_regs_eip = "eip";
 
-static int probe_taskswitch(struct probe *probe, void *data, 
+static int taskswitch(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -120,7 +120,7 @@ static int probe_taskswitch(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_interrupt_entry(struct probe *probe, void *data, 
+static int interrupt_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -181,7 +181,7 @@ static int probe_interrupt_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_interrupt_exit(struct probe *probe, void *data, 
+static int interrupt_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -230,7 +230,7 @@ static int probe_interrupt_exit(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_pagefault_entry(struct probe *probe, void *data, 
+static int pagefault_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -314,7 +314,7 @@ static int probe_pagefault_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_pagefault_exit(struct probe *probe, void *data, 
+static int pagefault_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -362,7 +362,7 @@ static int probe_pagefault_exit(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_exception_entry(struct probe *probe, void *data, 
+static int exception_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -428,7 +428,7 @@ static int probe_exception_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_exception_exit(struct probe *probe, void *data, 
+static int exception_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -478,7 +478,7 @@ static int probe_exception_exit(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_syscall_entry(struct probe *probe, void *data, 
+static int syscall_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -527,7 +527,7 @@ static int probe_syscall_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int probe_syscall_exit(struct probe *probe, void *data, 
+static int syscall_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -725,7 +725,7 @@ int main(int argc, char *argv[])
 
 	if (track & TRACK_TASKSWITCH)
 	{
-		ret = ctxtracker_register_handler(TRACK_TASKSWITCH, probe_taskswitch, 
+		ret = ctxtracker_register_handler(TRACK_TASKSWITCH, taskswitch, 
 				NULL, true);
 		if (ret)
 		{
@@ -739,7 +739,7 @@ int main(int argc, char *argv[])
 	if (track & TRACK_INTERRUPT)
 	{
 		ret = ctxtracker_register_handler(TRACK_INTERRUPT, 
-				probe_interrupt_entry, NULL, true);
+				interrupt_entry, NULL, true);
 		if (ret)
 		{
 			ERR("Could not register handler on interrupt entries for "
@@ -749,7 +749,7 @@ int main(int argc, char *argv[])
 		}
 
 		ret = ctxtracker_register_handler(TRACK_INTERRUPT, 
-				probe_interrupt_exit, NULL, false);
+				interrupt_exit, NULL, false);
 		if (ret)
 		{
 			ERR("Could not register handler on interrupt exits for "
@@ -762,7 +762,7 @@ int main(int argc, char *argv[])
 	if (track & TRACK_PAGEFAULT)
 	{
 		ret = ctxtracker_register_handler(TRACK_PAGEFAULT, 
-				probe_pagefault_entry, NULL, true);
+				pagefault_entry, NULL, true);
 		if (ret)
 		{
 			ERR("Could not register handler on page fault entries for "
@@ -772,7 +772,7 @@ int main(int argc, char *argv[])
 		}
 
 		ret = ctxtracker_register_handler(TRACK_PAGEFAULT, 
-				probe_pagefault_exit, NULL, false);
+				pagefault_exit, NULL, false);
 		if (ret)
 		{
 			ERR("Could not register handler on page fault exits for "
@@ -785,7 +785,7 @@ int main(int argc, char *argv[])
 	if (track & TRACK_EXCEPTION)
 	{
 		ret = ctxtracker_register_handler(TRACK_EXCEPTION, 
-				probe_exception_entry, NULL, true);
+				exception_entry, NULL, true);
 		if (ret)
 		{
 			ERR("Could not register handler on exception entries for "
@@ -795,7 +795,7 @@ int main(int argc, char *argv[])
 		}
 
 		ret = ctxtracker_register_handler(TRACK_EXCEPTION, 
-				probe_exception_exit, NULL, false);
+				exception_exit, NULL, false);
 		if (ret)
 		{
 			ERR("Could not register handler on exception exits for "
@@ -807,7 +807,7 @@ int main(int argc, char *argv[])
 
 	if (track & TRACK_SYSCALL)
 	{
-		ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_entry, 
+		ret = ctxtracker_register_handler(TRACK_SYSCALL, syscall_entry, 
 				NULL, true);
 		if (ret)
 		{
@@ -817,7 +817,7 @@ int main(int argc, char *argv[])
 			return ret;
 		}
 
-		ret = ctxtracker_register_handler(TRACK_SYSCALL, probe_syscall_exit, 
+		ret = ctxtracker_register_handler(TRACK_SYSCALL, syscall_exit, 
 				NULL, false);
 		if (ret)
 		{

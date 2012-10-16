@@ -45,7 +45,6 @@
 #include <probe.h>
 
 #include <ctxtracker.h>
-#include <private.h>
 
 #include <debug.h>
 #include <util.h>
