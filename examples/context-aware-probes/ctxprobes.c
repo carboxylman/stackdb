@@ -1827,6 +1827,7 @@ int ctxprobes_wait(void)
      * creation of the suspended guest VM.
      */
     sleep(1);
+    target_pause(t);
     task_struct_addr = current_task_addr();
     ret = load_task_info(&task_current, task_struct_addr);
     if (ret)
@@ -1841,6 +1842,8 @@ int ctxprobes_wait(void)
         vdebugc(0, LOG_C_CTX, "Initial task: %d (%s)\n", 
                 task_current->pid, task_current->comm);
     }
+
+    target_resume(t);
 
     vdebugc(-1, LOG_C_WARN, "Warning: Starting main debugging loop!\n");
 
