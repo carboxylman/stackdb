@@ -2801,10 +2801,10 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	     * elapsed in the target, we should garbage collect.
 	     *
 	     * But I don't know how to grab the current cycle counter
-	     * off the top of my head, so just do it every 8 interrupts
-	     * for now.
+	     * off the top of my head, so just do it when we accumulate
+	     * at least 32 threads.
 	     */
-	    if (++xstate->thread_auto_gc_counter == 8) {
+	    if (g_hash_table_size(target->threads) > 32) {
 		target_gc_threads(target);
 	    }
 
