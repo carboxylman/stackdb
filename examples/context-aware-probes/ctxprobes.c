@@ -1599,7 +1599,8 @@ static void sigh(int signo)
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
-                   int debug_level)
+                   int debug_level,
+		   int xa_debug_level)
 {
     int ret;
 
@@ -1621,7 +1622,7 @@ int ctxprobes_init(char *domain_name,
     dwdebug_init();
     vmi_set_log_level(debug_level);
 #ifdef XA_DEBUG
-    xa_set_debug_level(debug_level);
+    xa_set_debug_level(xa_debug_level);
 #endif
 
     t = xen_vm_attach(dom_name, NULL);
@@ -1805,8 +1806,9 @@ int ctxprobes_track(ctxprobes_task_switch_handler_t task_switch_handler,
 int ctxprobes_wait(void)
 {
     target_status_t tstat;
-    unsigned task_struct_addr;
+    ADDR task_struct_addr;
     int ret;
+    struct bsymbol *init_task;
 
     if (!t)
     {
@@ -1814,22 +1816,27 @@ int ctxprobes_wait(void)
         return -1;
     }
 
-    /* 
-     * The target is paused after the attach; we have to resume it now
-     * that we've registered probes.
-     */
-    target_resume(t);
-
     /*
      * Run the target for a little while so that it creates the first 
      * task, and get the task info after that.  This is a "stupid" way
      * of fixing the problem caused by starting VMI right after the
      * creation of the suspended guest VM.
      */
-    sleep(1);
-    target_pause(t);
-    task_struct_addr = current_task_addr();
-    ret = load_task_info(&task_current, task_struct_addr);
+    init_task = target_lookup_sym(t,"init_task",NULL,NULL,SYMBOL_TYPE_FLAG_VAR);
+    if (!init_task) {
+	vwarn("could not lookup init_task in debuginfo!\n");
+	return -1;
+    }
+
+    if (target_resolve_symbol_base(t,TID_GLOBAL,init_task,&task_struct_addr,
+				   NULL)) {
+	vwarn("could not resolve addr of init_task!\n");
+	return -1;
+    }
+
+    bsymbol_release(init_task);
+
+    ret = load_task_info(&task_current, (unsigned)task_struct_addr);
     if (ret)
     {
         vdebugc(-1, LOG_C_WARN, "Warning: Failed to load initial task info!\n");
@@ -1843,6 +1850,10 @@ int ctxprobes_wait(void)
                 task_current->pid, task_current->comm);
     }
 
+    /* 
+     * The target is paused after the attach; we have to resume it now
+     * that we've registered probes.
+     */
     target_resume(t);
 
     vdebugc(-1, LOG_C_WARN, "Warning: Starting main debugging loop!\n");

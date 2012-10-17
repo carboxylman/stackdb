@@ -107,7 +107,8 @@ typedef void (*ctxprobes_page_fault_handler_t)(unsigned long ip,
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
-                   int debug_level);
+                   int debug_level,
+		   int xa_debug_level);
 
 void ctxprobes_cleanup(void);
 

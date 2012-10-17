@@ -45,6 +45,7 @@ extern int optind, opterr, optopt;
 
 static char *domain_name = NULL; 
 static int debug_level = -1; 
+static int xa_debug_level = -1; 
 static char *sysmap_file = NULL;
 static int concise = 0;
 static int interactive = 0;
@@ -229,12 +230,16 @@ void parse_opt(int argc, char *argv[])
     char ch;
     log_flags_t debug_flags;
     
-    while ((ch = getopt(argc, argv, "dl:m:cib:p:s:")) != -1)
+    while ((ch = getopt(argc, argv, "dxl:m:cib:p:s:")) != -1)
     {
         switch(ch)
         {
             case 'd':
                 ++debug_level;
+                break;
+
+            case 'x':
+                ++xa_debug_level;
                 break;
 
             case 'l':
@@ -304,7 +309,8 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         debug_level);
+                         debug_level,
+			 xa_debug_level);
     if (ret)
     {
         ERR("Could not initialize context-aware probes\n");
