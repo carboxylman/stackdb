@@ -2125,6 +2125,9 @@ static int xen_vm_flush_global_thread(struct target *target,
 	    /* Overwrite the break-on bits; unset them first, then set. */
 	    ctxp->debugreg[7] &= ~(0x3 << (16 + (i * 4)));
 	    ctxp->debugreg[7] |= ((0x3 << (16 + (i * 4))) & gtstate->context.debugreg[7]);
+	    /* Overwrite the break-on size bits (watchpoint size) */
+	    ctxp->debugreg[7] &= ~(0x3 << (18 + (i * 4)));
+	    ctxp->debugreg[7] |= ((0x3 << (18 + (i * 4))) & gtstate->context.debugreg[7]);
 	}
 
 	/* Unilaterally set the break-exact bits. */
@@ -2831,7 +2834,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		if (!tthread->tpc) {
 		    verror("single step event (status reg and eflags), but"
 			   " no handling context in thread %"PRIiTID"!"
-			   "  letting user handle.",tthread->tid);
+			   "  letting user handle.\n",tthread->tid);
 		    goto out_paused;
 		}
 		    
@@ -3126,6 +3129,8 @@ static target_status_t xen_vm_monitor(struct target *target) {
 	retval = xen_vm_handle_internal(target,&again);
 	if (retval == TSTATUS_ERROR && again == 0)
 	    return retval;
+	//else if (retval == TSTATUS_PAUSED && again == 0)
+	//    return retval;
 
 	__xen_vm_resume(target,0);
 	continue;
