@@ -29,6 +29,7 @@
 #define __NFS_PERF_DEBUG_H__
 
 #include <stdio.h>
+#include "perf.h"
 
 /*
  * Escape codes for controlling text color, brightness, etc.
