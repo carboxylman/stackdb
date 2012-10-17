@@ -57,12 +57,14 @@
 
 #define TXT_FG_COLOR            TXT_FG_WHITE
 
+extern struct target *t;
+
 #define ERR(_f, _a...)   do {                                                   \
-        fprintf(stderr, TXT_FG_RED"Error" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);  \
+        fprintf(stderr, TXT_FG_RED"Error" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t),  __FUNCTION__, ## _a);  \
     } while (0)
 
 #define WARN(_f, _a...)  do {                                                   \
-        fprintf(stderr, TXT_FG_YELLOW "Warrning" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);  \
+        fprintf(stderr, TXT_FG_YELLOW "Warrning" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t), __FUNCTION__, ## _a);  \
     } while (0)
 
 #define WARN_ON(_g, _f, _a...) do {                                             \
@@ -72,7 +74,7 @@
     } while (0)
 
 #define DBG(_f, _a...)   do {                                                   \
-        fprintf(stderr, TXT_FG_COLOR "DBG" TXT_FG_WHITE ":%s " _f, __FUNCTION__, ## _a);       \
+        fprintf(stderr, TXT_FG_COLOR "DBG" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t), __FUNCTION__, ## _a);       \
     } while (0)
 
 #define DBG_ON(_g, _f, _a...) do {                                              \
