@@ -362,6 +362,12 @@ int target_gc_threads(struct target *target) {
 
 	if (!g_hash_table_lookup_extended(real_tids,(gpointer)(ptr_t)tid,
 					  NULL,NULL)) {
+	    if (target->current_thread && target->current_thread->tid == tid) {
+		vwarn("thread %d seems to no longer exist, but is the"
+		      " current thread; not removing!\n",tid);
+		continue;
+	    }
+
 	    vdebug(5,LOG_T_TARGET | LOG_T_THREAD,
 		   "cached thread %"PRIiTID" no longer exists; removing!\n",tid);
 	    tthread = target_lookup_thread(target,tid);
