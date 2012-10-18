@@ -42,6 +42,7 @@ extern int optind, opterr, optopt;
 
 static char *domain_name = NULL; 
 static int debug_level = -1; 
+static int xa_debug_level = -1; 
 static char *sysmap_file = NULL;
 
 static struct array_list *tasklist;
@@ -309,6 +310,10 @@ void parse_opt(int argc, char *argv[])
                 ++debug_level;
                 break;
 
+            case 'x':
+                ++xa_debug_level;
+                break;
+
             case 'l':
                 if (vmi_log_get_flag_mask(optarg, &debug_flags))
                 {
@@ -347,7 +352,8 @@ int main(int argc, char *argv[])
 
     ret = ctxprobes_init(domain_name, 
                          sysmap_file, 
-                         debug_level);
+                         debug_level,
+			 xa_debug_level);
     if (ret)
     {
         fprintf(stderr, "failed to init ctxprobes\n");
