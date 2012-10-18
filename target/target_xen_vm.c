@@ -2131,7 +2131,7 @@ static int xen_vm_flush_global_thread(struct target *target,
 	}
 
 	/* Unilaterally set the break-exact bits. */
-	ctxp->debugreg[7] |= 0x3 << 8;
+	//ctxp->debugreg[7] |= 0x3 << 8;
 	
     }
 
@@ -2730,7 +2730,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     }
 
     vdebug(3,LOG_T_XV,
-	   "new debug event (brctr = %"PRIx64", tsc = %"PRIx64")\n",
+	   "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
 	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
 
     if (target_status(target) == TSTATUS_PAUSED) {
@@ -2900,14 +2900,6 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		goto out_ss_again;
 	    }
 	}
-	else if (ipval < 0xc0000000) {
-	    verror("user-mode debug event (not single step) at 0x%"PRIxADDR
-		   "; debug status reg 0x%"DRF"; eflags 0x%"RF
-		   "; skipping handling!\n",
-		   ipval,xtstate->context.debugreg[6],
-		   xtstate->context.user_regs.eflags);
-	    goto out_err_again;
-	}
 	else {
 	    vdebug(3,LOG_T_XV,"new (breakpoint?) debug event\n");
 	    target->sstep_thread = NULL;
@@ -2929,6 +2921,14 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    }
 
 	    if (dreg > -1) {
+		if (ipval < 0xc0000000) {
+		    vwarn("user-mode debug event (hw dbg reg)"
+			  " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
+			  " 0x%"RF"; trying to handle in global thread!\n",
+			  ipval,xtstate->context.debugreg[6],
+			  xtstate->context.user_regs.eflags);
+		}
+
 		/* If we are relying on the status reg to tell us,
 		 * then also read the actual hw debug reg to get the
 		 * address we broke on.
@@ -2939,6 +2939,14 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		vdebug(4,LOG_T_XV,
 		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
 		       dreg,ipval);
+	    }
+	    else if (ipval < 0xc0000000) {
+		verror("user-mode debug event (not single step, not hw dbg reg)"
+		       " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
+		       " 0x%"RF"; skipping handling!\n",
+		       ipval,xtstate->context.debugreg[6],
+		       xtstate->context.user_regs.eflags);
+		goto out_err_again;
 	    }
 	    else {
 		vdebug(4,LOG_T_XV,
