@@ -2820,9 +2820,16 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	if (xtstate->context.debugreg[6] & 0x4000) {
 	    vdebug(3,LOG_T_XV,"new single step debug event\n");
 
+	    /*
+	     * Two cases: either we single-stepped an instruction that
+	     * could have taken us to a userspace EIP, or somehow the
+	     * kernel jumped to one!  Either way, if we had been
+	     * expecting this, try to handle it.
+	     */
 	    if (target->sstep_thread 
-		&& target->sstep_thread->tpc
-		&& target->sstep_thread->tpc->probepoint->can_switch_context) {
+		&& ((target->sstep_thread->tpc
+		     && target->sstep_thread->tpc->probepoint->can_switch_context)
+		    || ipval < 0xc000000)) {
 		sstep_thread = target->sstep_thread;
 	    }
 	    else
@@ -2832,10 +2839,18 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 
 	    if (xtstate->context.user_regs.eflags & EF_TF) {
 		if (!tthread->tpc) {
-		    verror("single step event (status reg and eflags), but"
-			   " no handling context in thread %"PRIiTID"!"
-			   "  letting user handle.\n",tthread->tid);
-		    goto out_paused;
+		    if (sstep_thread && ipval < 0xc0000000) {
+			vwarn("single step event (status reg and eflags) into"
+			      " userspace; trying to handle in sstep thread"
+			      " %"PRIiTID"!\n",sstep_thread->tid);
+			goto handle_sstep_thread;
+		    }
+		    else {
+			verror("single step event (status reg and eflags), but"
+			       " no handling context in thread %"PRIiTID"!"
+			       "  letting user handle.\n",tthread->tid);
+			goto out_paused;
+		    }
 		}
 		    
 		/* Save the currently hanlding probepoint;
@@ -2871,6 +2886,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		       " instr; trying to handle exception in old thread!\n",
 		       sstep_thread->tid);
 
+	    handle_sstep_thread:
 		target->ss_handler(target,sstep_thread,
 				   sstep_thread->tpc->probepoint);
 
