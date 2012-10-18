@@ -156,6 +156,7 @@ static int probe_func_call(struct probe *probe,
     int arg_count = 0;
     int i, j, len;
     char buf[256];
+    int blen = 256;
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
@@ -178,12 +179,19 @@ static int probe_func_call(struct probe *probe,
     else if (arg_list && arg_count > 0)
     {
         vdebugc(-1, LOG_C_FUNC, "- Function arguments (count = %d):\n", 
-                arg_count);
+	       arg_count);
+
         for (i = 0; i < arg_count; i++)
         {
+	    if (!arg_list[i].buf)
+		continue;
+
             len = arg_list[i].size;
-            for (j = 0; j < len; j++)
-                sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+            for (j = 0; j < len; j++) {
+		if (2 * j >= blen)
+		    break;
+                snprintf(buf+2*j, blen - 2*j, "%02hhx", arg_list[i].buf[j]);
+	    }
             if (is_string(arg_list[i].buf, len))
                 vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
@@ -221,6 +229,7 @@ static int probe_func_return(struct probe *probe,
     int arg_count = 0;
     int i, j, len;
     char buf[256];
+    int blen = 256;
     ADDR retaddr = 0;
     REGVAL sp;
 
@@ -247,9 +256,15 @@ static int probe_func_return(struct probe *probe,
         vdebugc(-1, LOG_C_FUNC, "- Function arguments:\n");
         for (i = 0; i < arg_count; i++)
         {
+	    if (!arg_list[i].buf)
+		continue;
+
             len = arg_list[i].size;
-            for (j = 0; j < len; j++)
-                sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+            for (j = 0; j < len; j++) {
+		if (2 * j >= blen)
+		    break;
+                snprintf(buf+2*j, blen - 2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+	    }
             if (is_string(arg_list[i].buf, len))
                 vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
