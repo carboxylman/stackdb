@@ -553,6 +553,13 @@ struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
 struct lsymbol *lsymbol_create_from_member(struct lsymbol *parent,
 					   struct symbol *member);
 /*
+ * Clones the non-inlineinstance part of @lsymbol.
+ *
+ * This function takes a ref to each symbol in @chain, BUT NOT to
+ * @return (call lsymbol_hold() to get that ref).
+ */
+struct lsymbol *lsymbol_create_noninline(struct lsymbol *lsymbol);
+/*
  * Creates an lsymbol from an existing symbol.  This is a best-effort
  * process that may not lead to what you want.  Why?  Suppose that you
  * lookup 'struct mystruct.mymember'.  In this case, your lsymbol will

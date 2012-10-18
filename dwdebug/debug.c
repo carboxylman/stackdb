@@ -3639,6 +3639,38 @@ struct symbol *lsymbol_get_noninline_parent_symbol(struct lsymbol *lsymbol) {
     return s;
 }
 
+struct lsymbol *lsymbol_create_noninline(struct lsymbol *lsymbol) {
+    int i;
+    struct symbol *s = NULL;
+    struct symbol *ps = NULL;
+    struct lsymbol *ls;
+    struct array_list *chain;
+
+    if (!lsymbol->symbol->isinlineinstance)
+	return NULL;
+
+    chain = array_list_create(array_list_len(lsymbol->chain) - 1);
+
+    for (i = 0; i < array_list_len(lsymbol->chain); ++i) {
+	s = (struct symbol *)array_list_item(lsymbol->chain,i);
+	if (!s->isinlineinstance)
+	    array_list_append(chain,s);
+	else
+	    break;
+	ps = s;
+    }
+
+    if (i == 0) {
+	array_list_free(chain);
+	return NULL;
+    }
+
+    ls = lsymbol_create(ps,chain);
+    lsymbol_hold_int(ls);
+
+    return ls;
+}
+
 void lsymbol_hold_int(struct lsymbol *lsymbol) {
     int i;
     for (i = 0; i < array_list_len(lsymbol->chain); ++i) {
