@@ -58,7 +58,7 @@ static unsigned long long brctr_end;
 static unsigned int pid_root;
 
 typedef struct funcinfo {
-    char symbol[128];
+    struct bsymbol *bsymbol;
     unsigned long ip;
     unsigned long startaddr;
     int task_uid;
@@ -67,12 +67,18 @@ typedef struct funcinfo {
 
 static struct array_list *funcinfo_stack;
 
-void probe_disfunc_return(char *symbol,
+void probe_disfunc_return(struct bsymbol *bsymbol,
                           unsigned long ip,
                           ctxprobes_task_t *task,
                           ctxprobes_context_t context)
 {
     unsigned long long brctr = ctxprobes_get_brctr();
+    char *symbol = NULL;
+
+    if (bsymbol) {
+	symbol = bsymbol_get_name(bsymbol);
+    }
+
     if (!brctr)
     {
         ERR("Failed to get branch counter\n");
@@ -82,8 +88,8 @@ void probe_disfunc_return(char *symbol,
     if (task->pid == pid_root)
     {
         unsigned long funcstart = 0;
-        if (symbol)
-            funcstart = ctxprobes_funcstart(symbol);
+        if (bsymbol)
+            funcstart = ctxprobes_funcstart(bsymbol);
 
         char pad[128];
         int i, depth;
@@ -124,12 +130,17 @@ void probe_disfunc_return(char *symbol,
         kill_everything(domain_name);
 }
 
-void probe_disfunc_call(char *symbol,
+void probe_disfunc_call(struct bsymbol *bsymbol,
                         unsigned long ip,
                         ctxprobes_task_t *task,
                         ctxprobes_context_t context)
 {
     unsigned long long brctr = ctxprobes_get_brctr();
+    char *symbol = NULL;
+
+    if (bsymbol)
+	symbol = bsymbol_get_name(bsymbol);
+
     if (!brctr)
     {
         ERR("Failed to get branch counter\n");
@@ -147,6 +158,7 @@ void probe_disfunc_call(char *symbol,
         memset(fi, 0, sizeof(funcinfo_t));
         fi->ip = ip;
         fi->brctr = brctr;
+	fi->bsymbol = bsymbol;
 
         if (concise)
         {
@@ -156,10 +168,9 @@ void probe_disfunc_call(char *symbol,
             fflush(stdout);
         }
 
-        if (symbol)
+        if (bsymbol)
         {
-            strcpy(fi->symbol, symbol);
-            fi->startaddr = ctxprobes_funcstart(symbol);
+            fi->startaddr = ctxprobes_funcstart(bsymbol);
         
             if (!concise)
             {
@@ -200,7 +211,7 @@ void probe_suspected_syscall(char *symbol,
                              ctxprobes_context_t context)
 {
     int ret;
-
+    struct bsymbol *bsymbol;
     unsigned long long brctr = ctxprobes_get_brctr();
     if (!brctr)
     {
@@ -218,7 +229,7 @@ void probe_suspected_syscall(char *symbol,
             printf("%s called (brctr = %lld)\n", syscall_name, brctr);
         fflush(stdout);
 
-        ret = ctxprobes_instrument_func(syscall_name, 
+        ret = ctxprobes_instrument_func_name(symbol, 
                                         probe_disfunc_call, 
                                         probe_disfunc_return);
         if (ret)

@@ -34,6 +34,7 @@
 #define __CTXPROBES_H__
 
 #include <alist.h>
+#include <target_api.h>
 
 typedef enum {
     CTXPROBES_CONTEXT_NORMAL,
@@ -83,7 +84,7 @@ typedef void (*ctxprobes_var_handler_t)(unsigned long addr,
                                         ctxprobes_task_t *task,
                                         ctxprobes_context_t context);
 
-typedef void (*ctxprobes_disfunc_handler_t)(char *symbol,
+typedef void (*ctxprobes_disfunc_handler_t)(struct bsymbol *bsymbol,
                                             unsigned long ip,
                                             ctxprobes_task_t *task,
                                             ctxprobes_context_t context);
@@ -139,11 +140,15 @@ void ctxprobes_unreg_func_return(char *symbol,
 void ctxprobes_unreg_var(char *symbol,
                          ctxprobes_var_handler_t handler);
 
-int ctxprobes_instrument_func(char *symbol,
+int ctxprobes_instrument_func_name(char *symbol,
+				   ctxprobes_disfunc_handler_t call_handler,
+				   ctxprobes_disfunc_handler_t return_handler);
+int ctxprobes_instrument_func(struct bsymbol *bsymbol,
                               ctxprobes_disfunc_handler_t call_handler,
                               ctxprobes_disfunc_handler_t return_handler);
 
-unsigned long ctxprobes_funcstart(char *symbol);
+unsigned long ctxprobes_funcstart_name(char *symbol);
+unsigned long ctxprobes_funcstart(struct bsymbol *bsymbol);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
 
