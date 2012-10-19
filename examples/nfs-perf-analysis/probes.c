@@ -55,7 +55,7 @@ struct bsymbol *bsymbol_svc_tcp_recvfrom_lvar_vec = NULL;
 struct bsymbol *bsymbol_svc_tcp_recvfrom_lvar_rqstp = NULL;
 
 
-struct bsymbol *bsymbol_nfsd3_proc_write_lvar_argp = NULL;
+struct bsymbol *bsymbol_nfsd3_proc_write_lvar_rqstp = NULL;
 struct bsymbol *bsymbol_nfsd3_proc_write_lvar_argp_vec = NULL;
 
 struct bsymbol *bsymbol_do_readv_writev_lvar_iov = NULL;
@@ -437,7 +437,7 @@ int probe_svc_tcp_recvfrom(struct probe *probe, void *handler_data, struct probe
     DBG("vec = 0x%lx\n", req_id);
 
     lval_rqstp = target_load_symbol(target, tid, bsymbol_svc_tcp_recvfrom_lvar_rqstp,
-				      LOAD_FLAG_AUTO_DEREF);
+				      LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_rqstp) {
         ERR("Cannot access value of argp->vec\n");
         return -1;
@@ -467,9 +467,9 @@ int probe_svc_tcp_recvfrom(struct probe *probe, void *handler_data, struct probe
 int probe_nfsd3_proc_write_init(struct probe *probe) {
     DBG("nfsd3_proc_write_init called\n");
 
-    bsymbol_nfsd3_proc_write_lvar_argp = target_lookup_sym(probe->target, "nfsd3_proc_write.argp", ".", NULL, SYMBOL_TYPE_NONE); 
-    if (!bsymbol_nfsd3_proc_write_lvar_argp) {
-        ERR("Failed to create a bsymbol for nfsd3_proc_write.argp\n");
+    bsymbol_nfsd3_proc_write_lvar_rqstp = target_lookup_sym(probe->target, "nfsd3_proc_write.rqstp", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_nfsd3_proc_write_lvar_rqstp) {
+        ERR("Failed to create a bsymbol for nfsd3_proc_write.rqstp\n");
         return -1;
     }
 
@@ -484,7 +484,7 @@ int probe_nfsd3_proc_write_init(struct probe *probe) {
 
 int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe *trigger)
 {
-    struct value   *lval_argp;
+    struct value   *lval_rqstp;
     struct value   *lval_argp_vec;
     struct request *req;
     unsigned long   req_id, new_req_id;
@@ -494,14 +494,14 @@ int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe
  
     DBG("nfsd3_proc_write called\n");
 
-    lval_argp = target_load_symbol(target, tid, bsymbol_nfsd3_proc_write_lvar_argp,
+    lval_rqstp = target_load_symbol(target, tid, bsymbol_nfsd3_proc_write_lvar_rqstp,
 				      LOAD_FLAG_NO_CHECK_VISIBILITY);
-    if (!lval_argp) {
+    if (!lval_rqstp) {
         ERR("Cannot access value of argp->vec\n");
         return -1;
     }
 
-    req_id = *(unsigned long*)lval_argp->buf;
+    req_id = *(unsigned long*)lval_rqstp->buf;
     DBG("argp = 0x%lx\n", req_id);
 
     lval_argp_vec = target_load_symbol(target, tid, bsymbol_nfsd3_proc_write_lvar_argp_vec,
@@ -1011,28 +1011,29 @@ typedef struct probe_registration {
     probe_handler_t     handler; 
     struct probe_ops    ops;
     unsigned long       line_number;
+    unsigned long       addr;
 } probe_registration_t;
 
 const probe_registration_t probe_list[] = {
-    {"netif_poll",                                  probe_netif_poll, {.init = probe_netif_poll_init}, 0},
-    {"netif_poll.ttd_skb_dequeue",                  probe_netif_poll_lb_skb_dequeue, {.init = probe_netif_poll_lb_skb_dequeue_init}, 0},
-    {"netif_receive_skb",                           probe_netif_receive_skb, {.init = probe_netif_receive_skb_init}, 0},
-    {"ip_rcv",                                      probe_ip_rcv, {.init = probe_ip_rcv_init}, 0},
-    {"tcp_v4_rcv",                                  probe_tcp_v4_rcv, {.init = probe_tcp_v4_rcv_init}, 0},
-    {"tcp_data_queue",                              probe_tcp_data_queue, {.init = probe_tcp_data_queue_init}, 0},
-    {"skb_copy_datagram_iovec",                     probe_skb_copy_datagram_iovec, {.init = probe_skb_copy_datagram_iovec_init}, 0},
-    {"svcsock.c",                                   probe_svc_tcp_recvfrom, {.init = probe_svc_tcp_recvfrom_init}, 995},
-    {"svc_process",                                 probe_svc_process, {.init = probe_svc_process_init}, 0},
-    {"nfsd3_proc_write",                            probe_nfsd3_proc_write, {.init = probe_nfsd3_proc_write_init}, 0},
-    {"do_readv_writev.ttd_iov_label",               probe_do_readv_writev_ttd_copy_from_user, {.init = probe_do_readv_writev_ttd_copy_from_user_init}, 0},
-    {"generic_file_writev",                         probe_generic_file_writev, {.init = probe_generic_file_writev_init}, 0},
-    {"generic_file_buffered_write.ttd_page_label",  probe_generic_file_buffered_write, {.init = probe_generic_file_buffered_write_init}, 0},
-    {"ext3_journalled_writepage",                   probe_ext3_journalled_writepage, {.init = probe_ext3_journalled_writepage_init}, 0},
-    {"__block_write_full_page.ttd_bh_label",        probe___block_write_full_page, {.init = probe___block_write_full_page_init}, 0},
-    {"submit_bh",                                   probe_submit_bh, {.init = probe_submit_bh_init}, 0},
+    {"netif_poll",                                  probe_netif_poll, {.init = probe_netif_poll_init}, 0, 0},
+    {"netif_poll.ttd_skb_dequeue",                  probe_netif_poll_lb_skb_dequeue, {.init = probe_netif_poll_lb_skb_dequeue_init}, 0, 0},
+    {"netif_receive_skb",                           probe_netif_receive_skb, {.init = probe_netif_receive_skb_init}, 0, 0},
+    {"ip_rcv",                                      probe_ip_rcv, {.init = probe_ip_rcv_init}, 0, 0},
+    {"tcp_v4_rcv",                                  probe_tcp_v4_rcv, {.init = probe_tcp_v4_rcv_init}, 0, 0},
+    {"tcp_data_queue",                              probe_tcp_data_queue, {.init = probe_tcp_data_queue_init}, 0, 0},
+    {"skb_copy_datagram_iovec",                     probe_skb_copy_datagram_iovec, {.init = probe_skb_copy_datagram_iovec_init}, 0, 0},
+    {"svcsock.c",                                   probe_svc_tcp_recvfrom, {.init = probe_svc_tcp_recvfrom_init}, 0 /* 995 */, 0xc04e8abf},
+    {"svc_process",                                 probe_svc_process, {.init = probe_svc_process_init}, 0, 0},
+    {"nfsd3_proc_write",                            probe_nfsd3_proc_write, {.init = probe_nfsd3_proc_write_init}, 0, 0},
+    {"do_readv_writev.ttd_iov_label",               probe_do_readv_writev_ttd_copy_from_user, {.init = probe_do_readv_writev_ttd_copy_from_user_init}, 0, 0},
+    {"generic_file_writev",                         probe_generic_file_writev, {.init = probe_generic_file_writev_init}, 0, 0},
+    {"generic_file_buffered_write.ttd_page_label",  probe_generic_file_buffered_write, {.init = probe_generic_file_buffered_write_init}, 0, 0},
+    {"ext3_journalled_writepage",                   probe_ext3_journalled_writepage, {.init = probe_ext3_journalled_writepage_init}, 0, 0},
+    {"__block_write_full_page.ttd_bh_label",        probe___block_write_full_page, {.init = probe___block_write_full_page_init}, 0, 0},
+    {"submit_bh",                                   probe_submit_bh, {.init = probe_submit_bh_init}, 0, 0},
 //    {"blkif_queue_request",                         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
-    {"blkif_int",                                   probe_blkif_int, {.init = probe_blkif_int_init}, 0},
-    {"kernel_halt",                                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}, 0},
+    {"blkif_int",                                   probe_blkif_int, {.init = probe_blkif_int_init}, 0, 0},
+    {"kernel_halt",                                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}, 0, 0},
 
 };
 
@@ -1055,6 +1056,33 @@ int register_probes(struct target *t, GHashTable *probes) {
     for (i = 0; i < probe_count; i++)
     {
 
+        if (probe_list[i].addr) {
+            
+                probe = probe_create(t, TID_GLOBAL, &probe_list[i].ops, 
+                                     NULL,
+                                     probe_list[i].handler, NULL, NULL, 0);
+                if (!probe)
+                {
+                        ERR("could not create probe on raw addr:%lx\n",
+                            probe_list[i].addr);
+
+                        unregister_probes(probes);
+                        return -1;
+                }
+
+
+                if (!probe_register_addr(probe, 
+                                   probe_list[i].addr, 
+                                   PROBEPOINT_BREAK, PROBEPOINT_SW /*PROBEPOINT_FASTEST*/,
+                                   PROBEPOINT_EXEC, PROBEPOINT_LAUTO, NULL))
+                {
+                        ERR("could not register probe on raw addr: %lx\n",
+                            probe_list[i].addr);
+                        probe_free(probe, 1);
+                        unregister_probes(probes);
+                        return -1;
+               }
+        } else 
         if (probe_list[i].line_number) {
             
                 probe = probe_create(t, TID_GLOBAL, &probe_list[i].ops, 
