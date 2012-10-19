@@ -43,6 +43,8 @@
 unsigned long long request_count = 0;
 unsigned long long requests_seen = 0;
 
+unsigned long last_seen_req_id;
+
 struct bsymbol *bsymbol_netif_poll_lvar_skb = NULL;
 struct bsymbol *bsymbol_netif_receive_skb_lvar_skb = NULL;
 struct bsymbol *bsymbol_ip_rcv_lvar_skb = NULL;
@@ -66,6 +68,10 @@ struct bsymbol *bsymbol_generic_file_buffered_write_lvar_page = NULL;
 struct bsymbol *bsymbol_ext3_journalled_writepage_lvar_page = NULL;
 struct bsymbol *bsymbol___block_write_full_page_lvar_page = NULL;
 struct bsymbol *bsymbol___block_write_full_page_lvar_bh = NULL;
+
+struct bsymbol *bsymbol___block_commit_write_lvar_page = NULL;
+struct bsymbol *bsymbol___block_commit_write_lvar_bh = NULL;
+
 struct bsymbol *bsymbol_submit_bh_lvar_bh = NULL;
 struct bsymbol *bsymbol_submit_bh_lvar_bio = NULL;
 struct bsymbol *bsymbol_blkif_queue_request_lvar_bio = NULL;
@@ -505,7 +511,7 @@ int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe
     DBG("argp = 0x%lx\n", req_id);
 
     lval_argp_vec = target_load_symbol(target, tid, bsymbol_nfsd3_proc_write_lvar_argp_vec,
-				      LOAD_FLAG_AUTO_DEREF);
+				      LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_argp_vec) {
         ERR("Cannot access value of argp->vec\n");
         return -1;
@@ -519,6 +525,8 @@ int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe
             req_id, stage_id_to_name(STAGE_ID_NFSD3_PROC_WRITE));
         return -1;
     }
+
+    last_seen_req_id = new_req_id;
 
     ret = request_hash_change_id(req, new_req_id);
     if(ret) {
@@ -568,7 +576,9 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
         return -1;
     }
     req_id = *(unsigned long*)lval_uvector->buf;
-    DBG("uvector = 0x%lx\n", req_id);
+    //DBG("uvector = 0x%lx\n", req_id);
+    DBG("uvector = 0x%lx, last_seen = 0x%lx\n", req_id, last_seen_req_id);
+    req_id = last_seen_req_id;
 
     lval_iov = target_load_symbol(target,tid,bsymbol_do_readv_writev_lvar_iov,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -626,7 +636,8 @@ int probe_generic_file_writev(struct probe *probe, void *handler_data, struct pr
         return -1;
     }
     req_id = *(unsigned long*)lval_iov->buf;
-    DBG("iov = 0x%lx\n", req_id);
+    DBG("iov = 0x%lx, last_seen = 0x%lx\n", req_id, last_seen_req_id);
+   // req_id = last_seen_req_id;
 
     req = request_move_on_path(probe, req_id, STAGE_ID_GENERIC_FILE_WRITEV);
     if(!req) {
@@ -786,6 +797,74 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
     DBG("page = 0x%lx\n", req_id);
 
     lval_bh = target_load_symbol(target,tid,bsymbol___block_write_full_page_lvar_bh,
+				 LOAD_FLAG_NO_CHECK_VISIBILITY);
+    if (!lval_bh) {
+        ERR("Cannot access value of page\n");
+        return -1;
+    }
+    new_req_id = *(unsigned long*)lval_bh->buf;
+    DBG("bh = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID___BLOCK_WRITE_FULL_PAGE);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID___BLOCK_WRITE_FULL_PAGE));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID___BLOCK_WRITE_FULL_PAGE));
+        request_done(req);
+        return -1;
+    }
+
+    return 0;
+}
+
+int probe___block_commit_write_init(struct probe *probe) {
+    DBG("called\n");
+
+    bsymbol___block_commit_write_lvar_page
+        = target_lookup_sym(probe->target, "__block_commit_write.page", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol___block_commit_write_lvar_page) {
+        ERR("Failed to create a bsymbol for __block_commit_write.page\n");
+        return -1;
+    }
+
+    bsymbol___block_commit_write_lvar_bh
+        = target_lookup_sym(probe->target, "__block_commit_write.bh", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol___block_commit_write_lvar_bh) {
+        ERR("Failed to create a bsymbol for __block_commit_write.bh\n");
+        return -1;
+    }
+
+    return 0;
+};
+
+int probe___block_commit_write(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    struct value   *lval_page;
+    struct value   *lval_bh;
+    unsigned long   req_id, new_req_id;
+    int             ret;
+    struct request *req;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
+
+    DBG("__block_commit_write called\n");
+
+    lval_page = target_load_symbol(target,tid,bsymbol___block_commit_write_lvar_page,
+				   LOAD_FLAG_NO_CHECK_VISIBILITY);
+    if (!lval_page) {
+        ERR("Cannot access value of page\n");
+        return -1;
+    }
+    req_id = *(unsigned long*)lval_page->buf;
+    DBG("page = 0x%lx\n", req_id);
+
+    lval_bh = target_load_symbol(target,tid,bsymbol___block_commit_write_lvar_bh,
 				 LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_bh) {
         ERR("Cannot access value of page\n");
@@ -1030,6 +1109,8 @@ const probe_registration_t probe_list[] = {
     {"generic_file_buffered_write.ttd_page_label",  probe_generic_file_buffered_write, {.init = probe_generic_file_buffered_write_init}, 0, 0},
     {"ext3_journalled_writepage",                   probe_ext3_journalled_writepage, {.init = probe_ext3_journalled_writepage_init}, 0, 0},
     {"__block_write_full_page.ttd_bh_label",        probe___block_write_full_page, {.init = probe___block_write_full_page_init}, 0, 0},
+    {"__block_commit_write",                        probe___block_commit_write, {.init = probe___block_commit_write_init}, 0, 0xc0362216},
+
     {"submit_bh",                                   probe_submit_bh, {.init = probe_submit_bh_init}, 0, 0},
 //    {"blkif_queue_request",                         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
     {"blkif_int",                                   probe_blkif_int, {.init = probe_blkif_int_init}, 0, 0},
