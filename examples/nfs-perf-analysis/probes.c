@@ -1066,6 +1066,7 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
         return -1;
     }
 
+    WARN("FULL PATH");
     request_done(req);
     return 0;
 }
@@ -1112,8 +1113,8 @@ const probe_registration_t probe_list[] = {
     {"__block_commit_write",                        probe___block_commit_write, {.init = probe___block_commit_write_init}, 0, 0xc0362216},
 
     {/*"submit_bh"*/ "buffer.c",                    probe_submit_bh, {.init = probe_submit_bh_init}, 0, 0xc0361716},
-//    {"blkif_queue_request",                         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
-    {"blkif_int",                                   probe_blkif_int, {.init = probe_blkif_int_init}, 0, 0},
+    {"blkif_queue_request",                         probe_blkif_queue_request, {.init = probe_blkif_queue_request_init}, 0, 0xc0465590},
+    {"blkif_int.ttd_id_label",                      probe_blkif_int, {.init = probe_blkif_int_init}, 0, 0},
     {"kernel_halt",                                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}, 0, 0},
 
 };
