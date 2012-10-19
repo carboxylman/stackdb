@@ -2711,6 +2711,7 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 		symbol_dump(tsymbol,&udn);
 
 	    symbol = tsymbol;
+	    type = symbol;
 	}
     }
 
@@ -4250,6 +4251,7 @@ void symbol_label_dump(struct symbol *symbol,struct dump_info *ud) {
 }
 
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
+    int i;
     struct symbol *datatype = symbol_get_datatype(symbol);
     struct dump_info udn = {
 	.stream = ud->stream,
@@ -4332,9 +4334,25 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream," = %d",*((int *)symbol->s.ii->constval));
     }
 
-    if (ud->meta && !symbol->isparam && !symbol->ismember) {
-	fprintf(ud->stream," (external=%d,declaration=%d)",
-		symbol->isexternal,symbol->isdeclaration);
+    if (ud->meta) {
+	fprintf(ud->stream," (");
+	if (!symbol->isparam && !symbol->ismember) {
+	    fprintf(ud->stream,"external=%d,declaration=%d",
+		    symbol->isexternal,symbol->isdeclaration);
+	}
+	if (SYMBOL_IS_FULL(symbol)) {
+	    fprintf(ud->stream,",declinline=%d,inlined=%d",
+		    symbol->s.ii->isdeclinline,symbol->s.ii->isinlined);
+	    if (symbol->s.ii->inline_instances) {
+		fprintf(ud->stream,",inlineinstances=(");
+		for (i = 0; i < array_list_len(symbol->s.ii->inline_instances); ++i) {
+		    fprintf(ud->stream,"0x%"PRIxADDR",",
+			    ((struct symbol *)(array_list_item(symbol->s.ii->inline_instances,i)))->base_addr);
+		}
+		fprintf(ud->stream,")");
+	    }
+	}
+	fprintf(ud->stream,")");
     }
 
     if (ud->detail && SYMBOL_IS_FULL_INSTANCE(symbol) 
