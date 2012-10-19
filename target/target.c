@@ -1148,6 +1148,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     struct array_list *symbol_chain;
     int alen;
     int rc;
+    struct lsymbol *ii_lsymbol;
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -1165,6 +1166,33 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	       symbol_get_name(symbol),SYMBOL_TYPE(symbol->type));
 	errno = EINVAL;
 	return NULL;
+    }
+
+    /*
+     * If this is an inlined symbol that has no location info, and it
+     * only has one inline instance, try to autoload the inlined instance!!
+     */
+    if (SYMBOL_IS_FULL_VAR(symbol)
+	&& symbol->s.ii->l.loctype == LOCTYPE_UNKNOWN
+	&& array_list_len(symbol->s.ii->inline_instances) == 1) {
+	ii_lsymbol = lsymbol_create_from_symbol((struct symbol *) \
+						array_list_item(symbol->s.ii->inline_instances,0));
+
+	if (ii_lsymbol) {
+	    vwarn("trying to load inlined symbol %s with no location info;"
+		  " found sole instance %s; will try to load that.\n",
+		  symbol_get_name(symbol),symbol_get_name(ii_lsymbol->symbol));
+	    bsymbol = bsymbol_create(ii_lsymbol,bsymbol->region);
+	    
+	    symbol_chain = bsymbol->lsymbol->chain;
+	    alen = array_list_len(symbol_chain);
+	    symbol = (struct symbol *)array_list_item(symbol_chain,alen - 1);
+	}
+	else {
+	    vwarn("trying to load inlined symbol %s with no location info;"
+		  " could not find instance; will fail!\n",
+		  symbol_get_name(symbol));
+	}
     }
 
     /*
