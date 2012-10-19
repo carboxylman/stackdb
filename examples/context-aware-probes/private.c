@@ -758,108 +758,90 @@ int load_func_args(ctxprobes_var_t **arg_list,
 {
     int ret = 0;
     struct value *value;
-    struct symbol_instance *tsym_instance;
-    struct symbol *tsym;
-    struct array_list *tmp;
+    struct lsymbol *arg;
+    struct bsymbol *bs;
+    struct array_list *tmp = NULL;
     int len, i = 0;
-    ctxprobes_var_t *args;
-    int arglen;
-    struct probepoint *ppt;
+    ctxprobes_var_t *args = NULL;
 
-    if (probe->probepoint)
-        ppt = probe->probepoint;
-    else
-    {
-        vdebugc(-1, LOG_C_WARN, "Warning: probe->probepoint is NULL, "
-                "try using trigger->probepoint\n");
-        ppt = trigger->probepoint;
+    tmp = lsymbol_get_members(probe->bsymbol->lsymbol,SYMBOL_VAR_TYPE_FLAG_ARG);
+    if (!tmp) {
+	verror("Could not get args for function!\n");
+	ret = -1;
+	goto error_exit;
     }
 
-    if (!probe->bsymbol->lsymbol->chain || 
-        array_list_len(probe->bsymbol->lsymbol->chain) == 0)
-    {
-        tmp = array_list_clone(probe->bsymbol->lsymbol->chain, 2);
-        array_list_add(tmp, probe->bsymbol->lsymbol->symbol);
-    }
-    else
-    {
-        tmp = array_list_clone(probe->bsymbol->lsymbol->chain, 1);
-    }
-    len = tmp->len;
+    len = array_list_len(tmp);
+    if (!len)
+	goto error_exit;
 
-    struct lsymbol tlsym = {
-        .chain = tmp,
-        /* hack to prevent value_free from trying to release us! */
-        .refcnt = 1,
-    };
-    struct bsymbol tbsym = {
-        .lsymbol = &tlsym,
-        .region = ppt->range->region
-    };
-
-    arglen = probe->bsymbol->lsymbol->symbol->s.ii->d.f.count;
-    args = (ctxprobes_var_t *)malloc(sizeof(ctxprobes_var_t) * arglen);
+    args = (ctxprobes_var_t *)malloc(sizeof(ctxprobes_var_t) * len);
     if (!args)
     {
         ret = -4;
         verror("Cannot allocate memory for function arg!\n");
         goto error_exit;
     }
-    memset(args, 0, sizeof(ctxprobes_var_t) * arglen);
+    memset(args, 0, sizeof(ctxprobes_var_t) * len);
 
-    ++tmp->len;
-    list_for_each_entry(tsym_instance,
-                        &probe->bsymbol->lsymbol->symbol->s.ii->d.f.args,
-                        d.v.member)
-    {
-        tsym = tsym_instance->d.v.member_symbol;
+    for (i = 0; i < len; ++i) {
+	arg = (struct lsymbol *)array_list_item(tmp,i);
+	bs = bsymbol_create(arg,probe->bsymbol->region);
+	if ((value = target_load_symbol(t,TID_GLOBAL,bs,
+					LOAD_FLAG_AUTO_DEREF | 
+					LOAD_FLAG_AUTO_STRING |
+					LOAD_FLAG_NO_CHECK_VISIBILITY |
+					LOAD_FLAG_NO_CHECK_BOUNDS))) {
 
-        array_list_item_set(tmp, len, tsym);
-        tlsym.symbol = tsym;
+	    args[i].size = value->bufsiz;
+	    if (!value->bufsiz) {
+		bsymbol_free(bs,0);
+		ret = -1;
+		vdebugc(-1, LOG_C_WARN, "Cannot load zero-len function symbol!\n");
+		goto error_exit;
+	    }
 
-	value = target_load_symbol(t, TID_GLOBAL, &tbsym,
-				   LOAD_FLAG_AUTO_DEREF |
-				   LOAD_FLAG_AUTO_STRING |
-				   LOAD_FLAG_NO_CHECK_VISIBILITY |
-				   LOAD_FLAG_NO_CHECK_BOUNDS);
-        if (!value)
-        {
+	    args[i].name = strdup(lsymbol_get_name(arg));
+	    if (!args[i].name)
+	    {
+		value_free(value);
+		bsymbol_free(bs,0);
+		ret = -4;
+		verror("Cannot duplicate function arg name!\n");
+		goto error_exit;
+	    }
+
+	    args[i].buf = (char *)malloc(args[i].size);
+	    if (!args[i].buf)
+	    {
+		value_free(value);
+		bsymbol_free(bs,0);
+		ret = -4;
+		verror("Cannot allocate memory for function arg buf!\n");
+		goto error_exit;
+	    }
+	    memcpy(args[i].buf, value->buf, args[i].size);
+
+	    value_free(value);
+	    bsymbol_free(bs,0);
+	}
+	else {
+	    bsymbol_free(bs,0);
             ret = -1;
             vdebugc(-1, LOG_C_WARN, "Cannot load function arg symbol!\n");
             goto error_exit;
         }
-
-        args[i].size = value->bufsiz;
-
-        args[i].name = strdup(tsym->name);
-        if (!args[i].name)
-        {
-            value_free(value);
-            ret = -4;
-            verror("Cannot duplicate function arg name!\n");
-            goto error_exit;
-        }
-
-        args[i].buf = (char *)malloc(args[i].size);
-        if (!args[i].buf)
-        {
-            value_free(value);
-            ret = -4;
-            verror("Cannot allocate memory for function arg buf!\n");
-            goto error_exit;
-        }
-        memcpy(args[i].buf, value->buf, args[i].size);
-
-        value_free(value);
-
-        i++;
     }
 
     *arg_list = args;
-    *arg_count = arglen;
+    *arg_count = len;
 
 error_exit:
-    array_list_free(tmp);
+    if (tmp) {
+	for (i = 0; i < array_list_len(tmp); ++i) 
+	    lsymbol_release((struct lsymbol *)array_list_item(tmp,i));
+	array_list_free(tmp);
+    }
     return ret;
 }
 

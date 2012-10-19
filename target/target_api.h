@@ -766,6 +766,16 @@ typedef result_t (*target_debug_handler_t)(struct target *target,
 char *bsymbol_get_name(struct bsymbol *bsymbol);
 struct symbol *bsymbol_get_symbol(struct bsymbol *bsymbol);
 struct lsymbol *bsymbol_get_lsymbol(struct bsymbol *bsymbol);
+int bsymbol_is_inline(struct bsymbol *bsymbol);
+/*
+ * Creates a bsymbol that basically is the deepest non-inline instance
+ * part of @bsymbol.
+ *
+ * This function does not take a reference to the returned bsymbol;
+ * (call bsymbol_hold() to get that ref if you need it; otherwise free
+ * it as soon as you are done with it and don't pass it to anyone).
+ */
+struct bsymbol *bsymbol_create_noninline(struct bsymbol *bsymbol);
 void bsymbol_dump(struct bsymbol *bsymbol,struct dump_info *ud);
 /*
  * Takes a reference to the bsymbol.  Users should not call this; target

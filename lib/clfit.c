@@ -119,7 +119,7 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
     if (*clf) 
 	JLG(pv,*clf,idx);
     if (!pv) {
-	vdebug(2,LOG_OTHER,"inserting new alist for 0x%lx,0x%lx\n",start,end);
+	vdebug(10,LOG_OTHER,"inserting new alist for 0x%lx,0x%lx\n",start,end);
 	alist = array_list_create(1);
 	created = 1;
 	JLI(pv,*clf,start);
@@ -170,12 +170,12 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
 		crd->containing_range = ccrd;
 
 	    if (crd->containing_range)
-		vdebug(2,LOG_OTHER,
+		vdebug(10,LOG_OTHER,
 		       "containing range for (0x%lx,0x%lx) is (0x%lx,0x%lx)\n",
 		       start,end,crd->containing_range->start,
 		       crd->containing_range->end);
 	    else 
-		vdebug(2,LOG_OTHER,
+		vdebug(10,LOG_OTHER,
 		       "no containing range for (0x%lx,0x%lx) (%d)!\n",
 		       start,end,contains);
 	}
@@ -225,7 +225,7 @@ int clrange_update_end(clrange_t *clf,Word_t start,Word_t end,void *data) {
     for (i = 0; i < array_list_len(alist); ++i) {
 	crd = (struct clf_range_data *)array_list_item(alist,i);
 	if (CLRANGE_END(crd) != end && CLRANGE_DATA(crd) == data) {
-	    vdebug(5,LOG_OTHER,
+	    vdebug(10,LOG_OTHER,
 		   "updated alist %p crd %p start %lx end %lx (old end %lx)"
 		   " i %d data %p\n",alist,crd,start,end,CLRANGE_END(crd),i,data);
 	    CLRANGE_END(crd) = end;
@@ -305,7 +305,7 @@ void *clrange_find(clrange_t *clf,Word_t index) {
     if (!clf || !*clf)
 	return NULL;
 
-    vdebug(4,LOG_OTHER,"starting looking for 0x%lx\n",idx);
+    vdebug(10,LOG_OTHER,"starting looking for 0x%lx\n",idx);
 
     /*
      * We look for the previous index (including @index itself).  Each
@@ -318,11 +318,11 @@ void *clrange_find(clrange_t *clf,Word_t index) {
      * match...
      */
     while (1) {
-	vdebug(4,LOG_OTHER,"looking for 0x%lx\n",idx);
+	vdebug(10,LOG_OTHER,"looking for 0x%lx\n",idx);
 	JLL(pv,*clf,idx);
 	if (pv == NULL)
 	    return NULL;
-	vdebug(4,LOG_OTHER,"found 0x%lx\n",idx);
+	vdebug(10,LOG_OTHER,"found 0x%lx\n",idx);
 	alist = (struct array_list *)*pv;
 
 	j = -1;
@@ -337,7 +337,7 @@ void *clrange_find(clrange_t *clf,Word_t index) {
 
 	if (retval) {
 	    /* We found a tightest bound containing @index; return! */
-	    vdebug(3,LOG_OTHER,"found 0x%lx at %d\n",idx,i);
+	    vdebug(10,LOG_OTHER,"found 0x%lx at %d\n",idx,i);
 	    return CLRANGE_DATA(retval);
 	}
 	else {
@@ -345,7 +345,7 @@ void *clrange_find(clrange_t *clf,Word_t index) {
 	     * matches, so we're done!
 	     */
 	    if (idx == 0) {
-		vdebug(3,LOG_OTHER,"did not find 0x%lx range fit!\n",idx,i);
+		vdebug(10,LOG_OTHER,"did not find 0x%lx range fit!\n",idx,i);
 		return NULL;
 	    }
 	}
@@ -380,11 +380,11 @@ struct clf_range_data *clrange_find_loosest(clrange_t *clf,Word_t index,
     if (pv == NULL || pv == PJERR) 
 	return NULL;
 
-    vdebug(3,LOG_OTHER,"found 0x%lx previous to 0x%lx\n",idx,index);
+    vdebug(10,LOG_OTHER,"found 0x%lx previous to 0x%lx\n",idx,index);
     alist = (struct array_list *)*pv;
     crd = crd_get_tightest(alist,index,index,&contains);
     if (crd) {
-	vdebug(3,LOG_OTHER,"found crd (0x%lx,0x%lx) (contains is %d)\n",
+	vdebug(10,LOG_OTHER,"found crd (0x%lx,0x%lx) (contains is %d)\n",
 	       CLRANGE_START(crd),CLRANGE_END(crd),contains);
     }
     else {
@@ -393,7 +393,7 @@ struct clf_range_data *clrange_find_loosest(clrange_t *clf,Word_t index,
     }
     if (contains && crd->containing_range) {
 	crd = crd_top_containing_range(crd);
-	vdebug(3,LOG_OTHER,"found top containing crd (0x%lx,0x%lx)\n",
+	vdebug(10,LOG_OTHER,"found top containing crd (0x%lx,0x%lx)\n",
 	       CLRANGE_START(crd),CLRANGE_END(crd));
     }
 

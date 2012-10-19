@@ -2125,10 +2125,13 @@ static int xen_vm_flush_global_thread(struct target *target,
 	    /* Overwrite the break-on bits; unset them first, then set. */
 	    ctxp->debugreg[7] &= ~(0x3 << (16 + (i * 4)));
 	    ctxp->debugreg[7] |= ((0x3 << (16 + (i * 4))) & gtstate->context.debugreg[7]);
+	    /* Overwrite the break-on size bits (watchpoint size) */
+	    ctxp->debugreg[7] &= ~(0x3 << (18 + (i * 4)));
+	    ctxp->debugreg[7] |= ((0x3 << (18 + (i * 4))) & gtstate->context.debugreg[7]);
 	}
 
 	/* Unilaterally set the break-exact bits. */
-	ctxp->debugreg[7] |= 0x3 << 8;
+	//ctxp->debugreg[7] |= 0x3 << 8;
 	
     }
 
@@ -2727,7 +2730,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     }
 
     vdebug(3,LOG_T_XV,
-	   "new debug event (brctr = %"PRIx64", tsc = %"PRIx64")\n",
+	   "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
 	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
 
     if (target_status(target) == TSTATUS_PAUSED) {
@@ -2801,10 +2804,10 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	     * elapsed in the target, we should garbage collect.
 	     *
 	     * But I don't know how to grab the current cycle counter
-	     * off the top of my head, so just do it every 8 interrupts
-	     * for now.
+	     * off the top of my head, so just do it when we accumulate
+	     * at least 32 threads.
 	     */
-	    if (++xstate->thread_auto_gc_counter == 8) {
+	    if (g_hash_table_size(target->threads) > 32) {
 		target_gc_threads(target);
 	    }
 
@@ -2817,9 +2820,16 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	if (xtstate->context.debugreg[6] & 0x4000) {
 	    vdebug(3,LOG_T_XV,"new single step debug event\n");
 
+	    /*
+	     * Two cases: either we single-stepped an instruction that
+	     * could have taken us to a userspace EIP, or somehow the
+	     * kernel jumped to one!  Either way, if we had been
+	     * expecting this, try to handle it.
+	     */
 	    if (target->sstep_thread 
-		&& target->sstep_thread->tpc
-		&& target->sstep_thread->tpc->probepoint->can_switch_context) {
+		&& ((target->sstep_thread->tpc
+		     && target->sstep_thread->tpc->probepoint->can_switch_context)
+		    || ipval < 0xc000000)) {
 		sstep_thread = target->sstep_thread;
 	    }
 	    else
@@ -2829,10 +2839,18 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 
 	    if (xtstate->context.user_regs.eflags & EF_TF) {
 		if (!tthread->tpc) {
-		    verror("single step event (status reg and eflags), but"
-			   " no handling context in thread %"PRIiTID"!"
-			   "  letting user handle.",tthread->tid);
-		    goto out_paused;
+		    if (sstep_thread && ipval < 0xc0000000) {
+			vwarn("single step event (status reg and eflags) into"
+			      " userspace; trying to handle in sstep thread"
+			      " %"PRIiTID"!\n",sstep_thread->tid);
+			goto handle_sstep_thread;
+		    }
+		    else {
+			verror("single step event (status reg and eflags), but"
+			       " no handling context in thread %"PRIiTID"!"
+			       "  letting user handle.\n",tthread->tid);
+			goto out_paused;
+		    }
 		}
 		    
 		/* Save the currently hanlding probepoint;
@@ -2868,6 +2886,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		       " instr; trying to handle exception in old thread!\n",
 		       sstep_thread->tid);
 
+	    handle_sstep_thread:
 		target->ss_handler(target,sstep_thread,
 				   sstep_thread->tpc->probepoint);
 
@@ -2897,14 +2916,6 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		goto out_ss_again;
 	    }
 	}
-	else if (ipval < 0xc0000000) {
-	    verror("user-mode debug event (not single step) at 0x%"PRIxADDR
-		   "; debug status reg 0x%"DRF"; eflags 0x%"RF
-		   "; skipping handling!\n",
-		   ipval,xtstate->context.debugreg[6],
-		   xtstate->context.user_regs.eflags);
-	    goto out_err_again;
-	}
 	else {
 	    vdebug(3,LOG_T_XV,"new (breakpoint?) debug event\n");
 	    target->sstep_thread = NULL;
@@ -2926,6 +2937,14 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    }
 
 	    if (dreg > -1) {
+		if (ipval < 0xc0000000) {
+		    vwarn("user-mode debug event (hw dbg reg)"
+			  " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
+			  " 0x%"RF"; trying to handle in global thread!\n",
+			  ipval,xtstate->context.debugreg[6],
+			  xtstate->context.user_regs.eflags);
+		}
+
 		/* If we are relying on the status reg to tell us,
 		 * then also read the actual hw debug reg to get the
 		 * address we broke on.
@@ -2936,6 +2955,14 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		vdebug(4,LOG_T_XV,
 		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
 		       dreg,ipval);
+	    }
+	    else if (ipval < 0xc0000000) {
+		verror("user-mode debug event (not single step, not hw dbg reg)"
+		       " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
+		       " 0x%"RF"; skipping handling!\n",
+		       ipval,xtstate->context.debugreg[6],
+		       xtstate->context.user_regs.eflags);
+		goto out_err_again;
 	    }
 	    else {
 		vdebug(4,LOG_T_XV,
@@ -3126,6 +3153,8 @@ static target_status_t xen_vm_monitor(struct target *target) {
 	retval = xen_vm_handle_internal(target,&again);
 	if (retval == TSTATUS_ERROR && again == 0)
 	    return retval;
+	//else if (retval == TSTATUS_PAUSED && again == 0)
+	//    return retval;
 
 	__xen_vm_resume(target,0);
 	continue;

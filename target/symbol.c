@@ -63,6 +63,22 @@ struct lsymbol *bsymbol_get_lsymbol(struct bsymbol *bsymbol) {
     return bsymbol->lsymbol;
 }
 
+int bsymbol_is_inline(struct bsymbol *bsymbol) {
+    if (bsymbol->lsymbol->symbol->isinlineinstance)
+	return 1;
+    return 0;
+}
+
+struct bsymbol *bsymbol_create_noninline(struct bsymbol *bsymbol) {
+    struct lsymbol *lsymbol;
+
+    lsymbol = lsymbol_create_noninline(bsymbol->lsymbol);
+    if (!lsymbol) 
+	return NULL;
+
+    return bsymbol_create(lsymbol,bsymbol->region);
+}
+
 void bsymbol_hold(struct bsymbol *bsymbol) {
     RHOLD(bsymbol);
 }

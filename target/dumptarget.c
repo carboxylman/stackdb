@@ -534,6 +534,80 @@ int function_post(struct probe *probe,void *handler_data,
     return 0;
 }
 
+int addr_code_pre(struct probe *probe,void *handler_data,struct probe *trigger) {
+    tid_t tid;
+
+    fflush(stderr);
+    fflush(stdout);
+
+    tid = target_gettid(t);
+
+    fprintf(stdout,"%s (0x%"PRIxADDR") (pre)\n",
+	    probe_name(probe),probe_addr(probe));
+
+    fflush(stderr);
+    fflush(stdout);
+
+    return 0;
+}
+
+int addr_code_post(struct probe *probe,void *handler_data,struct probe *trigger) {
+    tid_t tid;
+
+    fflush(stderr);
+    fflush(stdout);
+
+    tid = target_gettid(t);
+
+    fprintf(stdout,"%s (0x%"PRIxADDR") (post)\n",
+	    probe_name(probe),probe_addr(probe));
+
+    fflush(stderr);
+    fflush(stdout);
+
+    return 0;
+}
+
+int addr_var_pre(struct probe *probe,void *handler_data,struct probe *trigger) {
+    tid_t tid;
+    uint32_t word;
+
+    fflush(stderr);
+    fflush(stdout);
+
+    tid = target_gettid(t);
+
+    target_read_addr(probe->target,probe_addr(probe),4,(unsigned char *)&word);
+
+    fprintf(stdout,"%s (0x%"PRIxADDR") (pre): watched raw value: 0x%x\n",
+	    probe_name(probe),probe_addr(probe),word);
+
+    fflush(stderr);
+    fflush(stdout);
+
+    return 0;
+}
+
+int addr_var_post(struct probe *probe,void *handler_data,struct probe *trigger) {
+    tid_t tid;
+    uint32_t word;
+
+    fflush(stderr);
+    fflush(stdout);
+
+    tid = target_gettid(t);
+
+    target_read_addr(probe->target,probe_addr(probe),4,(unsigned char *)&word);
+
+    fprintf(stdout,"%s (0x%"PRIxADDR") (post): watched raw value: 0x%x\n",
+	    probe_name(probe),probe_addr(probe),word);
+
+    fflush(stderr);
+    fflush(stdout);
+
+    return 0;
+}
+
 int var_pre(struct probe *probe,void *handler_data,
 	    struct probe *trigger) {
     int j;
@@ -897,8 +971,9 @@ int main(int argc,char **argv) {
 	}
     }
     else {
+	struct array_list *addrlist = array_list_create(0);
 	struct array_list *symlist = array_list_create(0);
-	struct bsymbol *bsymbol;
+	struct bsymbol *bsymbol = NULL;
 	int *retcodes = (int *)malloc(sizeof(int)*argc);
 	char **retcode_strs = (char **)malloc(sizeof(char *)*argc);
 
@@ -931,24 +1006,31 @@ int main(int argc,char **argv) {
 		}
 	    }
 
-	    if (line > 0) {
-		if (!(bsymbol = target_lookup_sym_line(t,argv[i],line,
-						       NULL,NULL))) {
-		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-		    cleanup();
-		    exit(-1);
-		}
+	    if (strncmp(argv[i],"0x",2) == 0) {
+		array_list_add(addrlist,argv[i]);
+		array_list_add(symlist,NULL);
 	    }
 	    else {
-		if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
-						  SYMBOL_TYPE_FLAG_NONE))) {
-		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
-		    cleanup();
-		    exit(-1);
+		if (line > 0) {
+		    if (!(bsymbol = target_lookup_sym_line(t,argv[i],line,
+							   NULL,NULL))) {
+			fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+			cleanup();
+			exit(-1);
+		    }
 		}
-	    }
+		else {
+		    if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
+						      SYMBOL_TYPE_FLAG_NONE))) {
+			fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+			cleanup();
+			exit(-1);
+		    }
+		}
 
-	    array_list_add(symlist,bsymbol);
+		array_list_add(symlist,bsymbol);
+		array_list_add(addrlist,NULL);
+	    }
 	}
 
 	if (at_symbol) {
@@ -1116,6 +1198,9 @@ int main(int argc,char **argv) {
 	for (i = 0; i < array_list_len(symlist); ++i) {
 	    bsymbol = (struct bsymbol *)array_list_item(symlist,i);
 
+	    if (!bsymbol)
+		continue;
+
 	    bsymbol_dump(bsymbol,&udn);
 
 	    probepoint_whence_t whence;
@@ -1259,6 +1344,84 @@ int main(int argc,char **argv) {
 		bsymbol_release(until_bsymbol);
 	    bsymbol_release(bsymbol);
 	    array_list_free(symlist);
+	    array_list_free(addrlist);
+	    free(retcodes);
+	    free(retcode_strs);
+	    cleanup();
+	    exit(-1);
+	}
+
+	/* Now move through addrlist (we may add to it!) */
+	for (i = 0; i < array_list_len(addrlist); ++i) {
+	    char *rawaddr = (char *)array_list_item(addrlist,i);
+	    char *endptr = NULL;
+	    ADDR paddr = (ADDR)strtoull(rawaddr,&endptr,16);
+
+	    if (!endptr) {
+		fprintf(stderr,"Bad address %s!\n",rawaddr);
+		goto err_unreg;
+	    }
+
+	    if (!rawaddr)
+		continue;
+
+	    probepoint_type_t type;
+	    probepoint_style_t rstyle;
+	    probepoint_whence_t whence;
+	    probe_handler_t pre;
+	    probe_handler_t post = NULL;
+
+	    if (i < argc && retcode_strs[i] && *retcode_strs[i] == 'w') {
+		pre = addr_var_pre;
+		if (do_post)
+		    post = addr_var_post;
+		whence = PROBEPOINT_WRITE;
+		type = PROBEPOINT_WATCH;
+		rstyle = PROBEPOINT_HW;
+	    }
+	    else if (i < argc && retcode_strs[i] && *retcode_strs[i] == 'r') {
+		pre = addr_var_pre;
+		if (do_post)
+		    post = addr_var_post;
+		whence = PROBEPOINT_READWRITE;
+		type = PROBEPOINT_WATCH;
+		rstyle = PROBEPOINT_HW;
+	    }
+	    else {
+		whence = PROBEPOINT_EXEC;
+		type = PROBEPOINT_BREAK;
+		rstyle = style;
+		pre = addr_code_pre;
+		if (do_post)
+		    post = addr_code_post;
+	    }
+
+	    probe = probe_create(t,TID_GLOBAL,NULL,rawaddr,pre,post,NULL,0);
+	    probe->handler_data = rawaddr;
+	    if (!probe)
+		goto err_unreg2;
+
+	    if (!probe_register_addr(probe,paddr,type,rstyle,whence,
+				     PROBEPOINT_L4,NULL)) {
+		probe_free(probe,1);
+		goto err_unreg2;
+	    }
+
+	    g_hash_table_insert(probes,(gpointer)probe,(gpointer)probe);
+
+	    fprintf(stderr,
+		    "Registered probe %s at 0x%"PRIxADDR".\n",rawaddr,paddr);
+
+	    continue;
+
+	err_unreg2:
+	    if (at_bsymbol)
+		bsymbol_release(at_bsymbol);
+	    if (until_bsymbol)
+		bsymbol_release(until_bsymbol);
+	    bsymbol_release(bsymbol);
+	    array_list_free(symlist);
+	    array_list_free(addrlist);
 	    free(retcodes);
 	    free(retcode_strs);
 	    cleanup();
@@ -1266,6 +1429,7 @@ int main(int argc,char **argv) {
 	}
 
 	array_list_free(symlist);
+	array_list_free(addrlist);
 	free(retcodes);
 	free(retcode_strs);
     }

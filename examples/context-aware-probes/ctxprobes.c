@@ -156,6 +156,7 @@ static int probe_func_call(struct probe *probe,
     int arg_count = 0;
     int i, j, len;
     char buf[256];
+    int blen = 256;
 
     ctxprobes_func_call_handler_t handler 
         = (ctxprobes_func_call_handler_t) data;
@@ -178,12 +179,19 @@ static int probe_func_call(struct probe *probe,
     else if (arg_list && arg_count > 0)
     {
         vdebugc(-1, LOG_C_FUNC, "- Function arguments (count = %d):\n", 
-                arg_count);
+	       arg_count);
+
         for (i = 0; i < arg_count; i++)
         {
+	    if (!arg_list[i].buf)
+		continue;
+
             len = arg_list[i].size;
-            for (j = 0; j < len; j++)
-                sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+            for (j = 0; j < len; j++) {
+		if (2 * j >= blen)
+		    break;
+                snprintf(buf+2*j, blen - 2*j, "%02hhx", arg_list[i].buf[j]);
+	    }
             if (is_string(arg_list[i].buf, len))
                 vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
@@ -221,6 +229,7 @@ static int probe_func_return(struct probe *probe,
     int arg_count = 0;
     int i, j, len;
     char buf[256];
+    int blen = 256;
     ADDR retaddr = 0;
     REGVAL sp;
 
@@ -247,9 +256,15 @@ static int probe_func_return(struct probe *probe,
         vdebugc(-1, LOG_C_FUNC, "- Function arguments:\n");
         for (i = 0; i < arg_count; i++)
         {
+	    if (!arg_list[i].buf)
+		continue;
+
             len = arg_list[i].size;
-            for (j = 0; j < len; j++)
-                sprintf(buf+2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+            for (j = 0; j < len; j++) {
+		if (2 * j >= blen)
+		    break;
+                snprintf(buf+2*j, blen - 2*j, "%02hhx", arg_list[i].buf[len-j-1]);
+	    }
             if (is_string(arg_list[i].buf, len))
                 vdebugc(-1, LOG_C_FUNC, "  %s = %s (0x%s)\n", arg_list[i].name, 
                         arg_list[i].buf, buf); 
@@ -359,8 +374,9 @@ static int probe_disfunc_return(struct probe *probe,
                                 struct probe *trigger)
 { 
     REGVAL ip;
-    char *symbol = NULL;
+    tid_t tid = target_gettid(probe->target);
     struct bsymbol *bsymbol;
+    struct bsymbol *tbsymbol;
 
     ctxprobes_disfunc_handler_t handler = (ctxprobes_disfunc_handler_t) data;
     
@@ -375,7 +391,7 @@ static int probe_disfunc_return(struct probe *probe,
             task_current->pid, task_current->comm, 
             probe->name, context_string(context_current));
     
-    ip = target_read_reg(t, TID_GLOBAL, t->ipregno);
+    ip = target_read_reg(t, tid, t->ipregno);
     if (errno)
     {
         verror("Could not read IP!\n");
@@ -388,20 +404,28 @@ static int probe_disfunc_return(struct probe *probe,
         vdebugc(-1, LOG_C_WARN, "Warning: Unknown function returned: "
                 "ip = 0x%08x\n", ip);
     }
-    else
-    {
-        symbol = bsymbol_get_name(bsymbol);
-        bsymbol_release(bsymbol);
+    else {
+	/* Don't instrument inline instances! */
+	if (bsymbol_is_inline(bsymbol)) {
+	    tbsymbol = bsymbol_create_noninline(bsymbol);
+	    vdebug(2,LOG_C_WARN,"switching from inline %s to noninline %s\n",
+		   bsymbol_get_name(bsymbol),bsymbol_get_name(tbsymbol));
+	    bsymbol_release(bsymbol);
+	    bsymbol = tbsymbol;
+	    bsymbol_hold(bsymbol);
+	}
     }
-    
+
     vdebug(3, LOG_C_DISASM, "Calling user probe handler 0x%08x\n", 
            (uint32_t)handler);
-    handler(symbol,
+    handler(bsymbol,
             ip,
             task_current, 
             context_current);
     vdebug(3, LOG_C_DISASM, "Returned from user probe handler 0x%08x\n", 
            (uint32_t)handler);
+
+    bsymbol_release(bsymbol);
 
     return 0;
 }
@@ -411,9 +435,10 @@ static int probe_disfunc_call(struct probe *probe,
                               struct probe *trigger)
 {
     REGVAL ip;
-    char *symbol = NULL;
     struct bsymbol *bsymbol;
+    struct bsymbol *tbsymbol;
     ADDR funcstart = 0;
+    struct symbol *symbol;
 
     ctxprobes_disfunc_handler_t call_handler = (ctxprobes_disfunc_handler_t) data;
 
@@ -446,7 +471,15 @@ static int probe_disfunc_call(struct probe *probe,
     }
     else
     {
-        symbol = bsymbol_get_name(bsymbol);
+	/* Don't instrument inline instances! */
+	if (bsymbol_is_inline(bsymbol)) {
+	    tbsymbol = bsymbol_create_noninline(bsymbol);
+	    vdebug(2,LOG_C_WARN,"switching from inline %s to noninline %s\n",
+		   bsymbol_get_name(bsymbol),bsymbol_get_name(tbsymbol));
+	    bsymbol_release(bsymbol);
+	    bsymbol = tbsymbol;
+	    bsymbol_hold(bsymbol);
+	}
 
         if ((funcstart = instrument_func(bsymbol, 
                                          probe_disfunc_call, 
@@ -458,18 +491,18 @@ static int probe_disfunc_call(struct probe *probe,
             verror("Could not instrument function %s (0x%08x)!\n",
                    bsymbol->lsymbol->symbol->name, funcstart);
         }
-        
-        bsymbol_release(bsymbol);
     }
 
     vdebugc(3, LOG_C_DISASM, "Calling user probe handler 0x%08x\n", 
             (uint32_t)call_handler);
-    call_handler(symbol,
+    call_handler(bsymbol,
                  ip,
                  task_current, 
                  context_current);
     vdebugc(3, LOG_C_DISASM, "Returned from user probe handler 0x%08x\n", 
             (uint32_t)call_handler);
+        
+    bsymbol_release(bsymbol);
 
     return 0;
 }
@@ -1599,7 +1632,8 @@ static void sigh(int signo)
 
 int ctxprobes_init(char *domain_name, 
                    char *sysmap_file, 
-                   int debug_level)
+                   int debug_level,
+		   int xa_debug_level)
 {
     int ret;
 
@@ -1621,7 +1655,7 @@ int ctxprobes_init(char *domain_name,
     dwdebug_init();
     vmi_set_log_level(debug_level);
 #ifdef XA_DEBUG
-    xa_set_debug_level(debug_level);
+    xa_set_debug_level(xa_debug_level);
 #endif
 
     t = xen_vm_attach(dom_name, NULL);
@@ -1805,8 +1839,9 @@ int ctxprobes_track(ctxprobes_task_switch_handler_t task_switch_handler,
 int ctxprobes_wait(void)
 {
     target_status_t tstat;
-    unsigned task_struct_addr;
+    ADDR task_struct_addr;
     int ret;
+    struct bsymbol *init_task;
 
     if (!t)
     {
@@ -1814,21 +1849,27 @@ int ctxprobes_wait(void)
         return -1;
     }
 
-    /* 
-     * The target is paused after the attach; we have to resume it now
-     * that we've registered probes.
-     */
-    target_resume(t);
-
     /*
      * Run the target for a little while so that it creates the first 
      * task, and get the task info after that.  This is a "stupid" way
      * of fixing the problem caused by starting VMI right after the
      * creation of the suspended guest VM.
      */
-    sleep(1);
-    task_struct_addr = current_task_addr();
-    ret = load_task_info(&task_current, task_struct_addr);
+    init_task = target_lookup_sym(t,"init_task",NULL,NULL,SYMBOL_TYPE_FLAG_VAR);
+    if (!init_task) {
+	vwarn("could not lookup init_task in debuginfo!\n");
+	return -1;
+    }
+
+    if (target_resolve_symbol_base(t,TID_GLOBAL,init_task,&task_struct_addr,
+				   NULL)) {
+	vwarn("could not resolve addr of init_task!\n");
+	return -1;
+    }
+
+    bsymbol_release(init_task);
+
+    ret = load_task_info(&task_current, (unsigned)task_struct_addr);
     if (ret)
     {
         vdebugc(-1, LOG_C_WARN, "Warning: Failed to load initial task info!\n");
@@ -1841,6 +1882,12 @@ int ctxprobes_wait(void)
         vdebugc(0, LOG_C_CTX, "Initial task: %d (%s)\n", 
                 task_current->pid, task_current->comm);
     }
+
+    /* 
+     * The target is paused after the attach; we have to resume it now
+     * that we've registered probes.
+     */
+    target_resume(t);
 
     vdebugc(-1, LOG_C_WARN, "Warning: Starting main debugging loop!\n");
 
@@ -2106,11 +2153,11 @@ void ctxprobes_unreg_var(char *symbol,
     }
 }
 
-int ctxprobes_instrument_func(char *symbol,
-                              ctxprobes_disfunc_handler_t call_handler,
-                              ctxprobes_disfunc_handler_t return_handler)
+int ctxprobes_instrument_func_name(char *symbol,
+				   ctxprobes_disfunc_handler_t call_handler,
+				   ctxprobes_disfunc_handler_t return_handler)
 {
-    struct bsymbol *bsymbol = NULL;
+    struct bsymbol *bsymbol;
     ADDR funcstart;
 
     //struct dump_info udn = {
@@ -2120,11 +2167,12 @@ int ctxprobes_instrument_func(char *symbol,
     //    .meta = 1,
     //};
 
-    bsymbol = target_lookup_sym(t, symbol, ".", NULL, SYMBOL_TYPE_FLAG_FUNCTION);
+    bsymbol = target_lookup_sym(t, symbol, ".", NULL,
+				SYMBOL_TYPE_FLAG_FUNCTION);
     if (!bsymbol)
     {
-        verror("Could not find symbol %s!\n", symbol);
-        return -1;
+	verror("Could not find symbol %s!\n", symbol);
+	return 0;
     }
 
     //bsymbol_dump(bsymbol, &udn);
@@ -2146,7 +2194,53 @@ int ctxprobes_instrument_func(char *symbol,
     return 0;
 }
 
-unsigned long ctxprobes_funcstart(char *symbol)
+int ctxprobes_instrument_func(struct bsymbol *bsymbol,
+                              ctxprobes_disfunc_handler_t call_handler,
+                              ctxprobes_disfunc_handler_t return_handler)
+{
+    ADDR funcstart;
+
+    //struct dump_info udn = {
+    //    .stream = stderr,
+    //    .prefix = "",
+    //    .detail = 1,
+    //    .meta = 1,
+    //};
+
+    //bsymbol_dump(bsymbol, &udn);
+
+    if ((funcstart = instrument_func(bsymbol, 
+                                     probe_disfunc_call, 
+                                     probe_disfunc_return, 
+                                     call_handler, /* data <- ctxprobes handler */
+                                     return_handler, /* data <- ctxprobes handler */
+                                     1 /* root */)) == 0) 
+    {
+        verror("Could not instrument function %s (0x%08x)!\n",
+               bsymbol->lsymbol->symbol->name, funcstart);
+        return -1;
+    }
+
+    user_disfunc_return_handler = return_handler;
+
+    return 0;
+}
+
+unsigned long ctxprobes_funcstart(struct bsymbol *bsymbol)
+{
+    ADDR funcstart;
+
+    if (location_resolve_symbol_base(t, TID_GLOBAL, bsymbol, &funcstart, NULL)) 
+    {
+        verror("Could not resolve base addr for function %s!\n",
+               bsymbol->lsymbol->symbol->name);
+        return 0;
+    }
+
+    return (unsigned long)funcstart;
+}
+
+unsigned long ctxprobes_funcstart_name(char *symbol)
 {
     struct bsymbol *bsymbol = NULL;
     ADDR funcstart;
