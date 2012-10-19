@@ -1066,7 +1066,7 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
         return -1;
     }
 
-    WARN("FULL PATH");
+    WARN("FULL PATH\n");
     request_done(req);
     return 0;
 }

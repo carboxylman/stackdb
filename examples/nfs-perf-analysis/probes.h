@@ -61,6 +61,8 @@ static inline char *stage_id_to_name(nfs_perf_stage_id_t id) {
     case STAGE_ID_TCP_V4_RCV: return "tcp_v4_rcv";
     case STAGE_ID_TCP_DATA_QUEUE: return "tcp_data_queue";
     case STAGE_ID_SKB_COPY_DATAGRAM_IOVEC: return "skb_copy_datagram_iovec";
+    case STAGE_ID_SVC_RECVFROM: return "svc_recvfrom";
+    case STAGE_ID_NFSD3_PROC_WRITE: return "nfsd3_proc_write";
     case STAGE_ID_DO_READV_WRITEV: return "do_readv_writev";
     case STAGE_ID_GENERIC_FILE_WRITEV: return "generic_file_writev";
     case STAGE_ID_GENERIC_FILE_BUFFERED_WRITE: return "generic_file_buffered_write";
