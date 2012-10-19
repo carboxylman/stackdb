@@ -811,7 +811,7 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
             req_id, stage_id_to_name(STAGE_ID___BLOCK_WRITE_FULL_PAGE));
         return -1;
     }
-
+#if 0
     ret = request_hash_change_id(req, new_req_id);
     if(ret) {
         ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
@@ -819,7 +819,7 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
         request_done(req);
         return -1;
     }
-
+#endif
     return 0;
 }
 
@@ -880,14 +880,14 @@ int probe___block_commit_write(struct probe *probe, void *handler_data, struct p
         return -1;
     }
 
-    ret = request_hash_change_id(req, new_req_id);
+/*    ret = request_hash_change_id(req, new_req_id);
     if(ret) {
         ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
              req_id, new_req_id, stage_id_to_name(STAGE_ID___BLOCK_WRITE_FULL_PAGE));
         request_done(req);
         return -1;
     }
-
+*/
     return 0;
 }
 
@@ -895,7 +895,7 @@ int probe_submit_bh_init(struct probe *probe) {
     DBG("submit_bh_init called\n");
 
     bsymbol_submit_bh_lvar_bh
-        = target_lookup_sym(probe->target, "submit_bh.bh", ".", NULL, SYMBOL_TYPE_NONE); 
+        = target_lookup_sym(probe->target, "submit_bh.bh.b_page", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_submit_bh_lvar_bh) {
         ERR("Failed to create a bsymbol for submit_bh.bh\n");
         return -1;
@@ -930,7 +930,7 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
         return -1;
     }
     req_id = *(unsigned long*)lval_bh->buf;
-    DBG("bh = 0x%lx\n", req_id);
+    DBG("bh.page = 0x%lx\n", req_id);
 
     lval_bio  = target_load_symbol(target,tid,bsymbol_submit_bh_lvar_bio,
 				   LOAD_FLAG_NO_CHECK_VISIBILITY);
