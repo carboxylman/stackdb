@@ -679,7 +679,11 @@ struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
     while (g_hash_table_iter_next(&iter,&key,&value)) {
 	srcfile = (char *)key;
 	clf = (clmatch_t)value;
+	vdebug(9,LOG_D_LOOKUP,"checking srcfile %s for filename %s\n",
+	       srcfile,filename);
 	if (strstr(srcfile,filename)) {
+	    vdebug(9,LOG_D_LOOKUP,"found match: srcfile %s for filename %s\n",
+		   srcfile,filename);
 	    return clmatch_find(&clf,line);
 	}
     }

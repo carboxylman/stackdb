@@ -260,6 +260,11 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 	     */
 	    clmatch_add(&currentclf,line,(void *)(ADDR)address);
 
+	    if (strcmp(currentfile,"/local/sda4/xen-tt/linux-2.6.18-xen/net/sunrpc/svcsock.c") == 0) {
+		vdebug(5,LOG_OTHER,"storeline %d 0x%"PRIxADDR"\n",
+		       line,(ADDR)address);
+	    }
+
 	    if (orig_key) {
 		/* If it had been in the hash, we have to get the
 		 * orig key and use its exact value again so we
@@ -538,8 +543,10 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			      u128);
 			goto invalid_unit_out;
 		    }
-		    currentfile = array_list_item(filelist,(int)u128);
+		    currentfile = array_list_item(filelist,((int)u128) - 1);
 		    currentclf = NULL;
+
+		    vdebug(9,LOG_OTHER,"set file to %s\n",currentfile);
 
 		    linep = (unsigned char *)clinep;
 		    break;
