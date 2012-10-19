@@ -50,6 +50,14 @@ struct bsymbol *bsymbol_tcp_v4_rcv_lvar_skb = NULL;
 struct bsymbol *bsymbol_tcp_data_queue_lvar_skb = NULL;
 struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_skb = NULL;
 struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_to = NULL;
+
+struct bsymbol *bsymbol_svc_tcp_recvfrom_lvar_vec = NULL;
+struct bsymbol *bsymbol_svc_tcp_recvfrom_lvar_rqstp = NULL;
+
+
+struct bsymbol *bsymbol_nfsd3_proc_write_lvar_argp = NULL;
+struct bsymbol *bsymbol_nfsd3_proc_write_lvar_argp_vec = NULL;
+
 struct bsymbol *bsymbol_do_readv_writev_lvar_iov = NULL;
 struct bsymbol *bsymbol_do_readv_writev_lvar_uvector = NULL;
 struct bsymbol *bsymbol_generic_file_writev_lvar_iov = NULL;
@@ -316,7 +324,7 @@ int probe_skb_copy_datagram_iovec_init(struct probe *probe) {
         return -1;
     }
 
-    bsymbol_skb_copy_datagram_iovec_lvar_to = target_lookup_sym(probe->target, "skb_copy_datagram_iovec.to", ".", NULL, SYMBOL_TYPE_NONE); 
+    bsymbol_skb_copy_datagram_iovec_lvar_to = target_lookup_sym(probe->target, "skb_copy_datagram_iovec.to.iov_base", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_skb_copy_datagram_iovec_lvar_to) {
         ERR("Failed to create a bsymbol for skb_copy_datagram_iovec.to\n");
         return -1;
@@ -386,14 +394,140 @@ int probe_svc_process(struct probe *probe, void *handler_data, struct probe *tri
     return 0;
 }
 
+int probe_svc_tcp_recvfrom_init(struct probe *probe) {
+    DBG("called\n");
+
+    bsymbol_svc_tcp_recvfrom_lvar_vec = target_lookup_sym(probe->target, 
+            "svc_tcp_recvfrom.vec", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_svc_tcp_recvfrom_lvar_vec) {
+        ERR("Failed to create a bsymbol for svc_tcp_recvfrom.vec\n");
+        return -1;
+    }
+
+    bsymbol_svc_tcp_recvfrom_lvar_rqstp = target_lookup_sym(probe->target, 
+            "svc_tcp_recvfrom.rqstp", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_svc_tcp_recvfrom_lvar_rqstp) {
+        ERR("Failed to create a bsymbol for svc_tcp_recvfrom.rqstp\n");
+        return -1;
+    }
+
+    return 0;
+};
+
+int probe_svc_tcp_recvfrom(struct probe *probe, void *handler_data, struct probe *trigger)
+{
+    struct value   *lval_vec;
+    struct value   *lval_rqstp;
+    struct request *req;
+    unsigned long   req_id, new_req_id;
+    int             ret;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
+ 
+    DBG("called\n");
+
+    lval_vec = target_load_symbol(target, tid, bsymbol_svc_tcp_recvfrom_lvar_vec,
+				      LOAD_FLAG_NO_CHECK_VISIBILITY);
+    if (!lval_vec) {
+        ERR("Cannot access value of vec\n");
+        return -1;
+    }
+
+    req_id = *(unsigned long*)lval_vec->buf;
+    DBG("vec = 0x%lx\n", req_id);
+
+    lval_rqstp = target_load_symbol(target, tid, bsymbol_svc_tcp_recvfrom_lvar_rqstp,
+				      LOAD_FLAG_AUTO_DEREF);
+    if (!lval_rqstp) {
+        ERR("Cannot access value of argp->vec\n");
+        return -1;
+    }
+    new_req_id = *(unsigned long*)lval_rqstp->buf;
+    DBG("rqstp = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_SVC_RECVFROM);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_SVC_RECVFROM));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID_SVC_RECVFROM));
+        request_done(req);
+        return -1;
+    }
+
+
+    return 0;
+}
+
 int probe_nfsd3_proc_write_init(struct probe *probe) {
     DBG("nfsd3_proc_write_init called\n");
+
+    bsymbol_nfsd3_proc_write_lvar_argp = target_lookup_sym(probe->target, "nfsd3_proc_write.argp", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_nfsd3_proc_write_lvar_argp) {
+        ERR("Failed to create a bsymbol for nfsd3_proc_write.argp\n");
+        return -1;
+    }
+
+    bsymbol_nfsd3_proc_write_lvar_argp_vec = target_lookup_sym(probe->target, "nfsd3_proc_write.argp.vec", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_nfsd3_proc_write_lvar_argp_vec) {
+        ERR("Failed to create a bsymbol for nfsd3_proc_write.argp.vec\n");
+        return -1;
+    }
+
     return 0;
 };
 
 int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe *trigger)
 {
+    struct value   *lval_argp;
+    struct value   *lval_argp_vec;
+    struct request *req;
+    unsigned long   req_id, new_req_id;
+    int             ret;
+    struct target *target = probe->target;
+    tid_t tid = probe->thread->tid;
+ 
     DBG("nfsd3_proc_write called\n");
+
+    lval_argp = target_load_symbol(target, tid, bsymbol_nfsd3_proc_write_lvar_argp,
+				      LOAD_FLAG_NO_CHECK_VISIBILITY);
+    if (!lval_argp) {
+        ERR("Cannot access value of argp->vec\n");
+        return -1;
+    }
+
+    req_id = *(unsigned long*)lval_argp->buf;
+    DBG("argp = 0x%lx\n", req_id);
+
+    lval_argp_vec = target_load_symbol(target, tid, bsymbol_nfsd3_proc_write_lvar_argp_vec,
+				      LOAD_FLAG_AUTO_DEREF);
+    if (!lval_argp_vec) {
+        ERR("Cannot access value of argp->vec\n");
+        return -1;
+    }
+    new_req_id = *(unsigned long*)lval_argp_vec->buf;
+    DBG("argp.vec = 0x%lx\n", new_req_id);
+
+    req = request_move_on_path(probe, req_id, STAGE_ID_NFSD3_PROC_WRITE);
+    if(!req) {
+        ERR("Failed to move request (id:0x%lx) on its processing path to stage:%s\n", 
+            req_id, stage_id_to_name(STAGE_ID_NFSD3_PROC_WRITE));
+        return -1;
+    }
+
+    ret = request_hash_change_id(req, new_req_id);
+    if(ret) {
+        ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
+             req_id, new_req_id, stage_id_to_name(STAGE_ID_NFSD3_PROC_WRITE));
+        request_done(req);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -870,31 +1004,35 @@ int probe_kernel_halt(struct probe *probe, void *handler_data, struct probe *tri
     return 0;
 }
 
+#define PROBE_ON_LINE (1<<1)
+
 typedef struct probe_registration {
     char                *symbol;
     probe_handler_t     handler; 
     struct probe_ops    ops;
+    unsigned long       line_number;
 } probe_registration_t;
 
 const probe_registration_t probe_list[] = {
-    {"netif_poll",                                  probe_netif_poll, {.init = probe_netif_poll_init}},
-    {"netif_poll.ttd_skb_dequeue",                  probe_netif_poll_lb_skb_dequeue, {.init = probe_netif_poll_lb_skb_dequeue_init}},
-    {"netif_receive_skb",                           probe_netif_receive_skb, {.init = probe_netif_receive_skb_init}},
-    {"ip_rcv",                                      probe_ip_rcv, {.init = probe_ip_rcv_init}},
-    {"tcp_v4_rcv",                                  probe_tcp_v4_rcv, {.init = probe_tcp_v4_rcv_init}},
-    {"tcp_data_queue",                              probe_tcp_data_queue, {.init = probe_tcp_data_queue_init}},
-    {"skb_copy_datagram_iovec",                     probe_skb_copy_datagram_iovec, {.init = probe_skb_copy_datagram_iovec_init}},
-    {"svc_process",                                 probe_svc_process, {.init = probe_svc_process_init}},
-    {"nfsd3_proc_write",                            probe_nfsd3_proc_write, {.init = probe_nfsd3_proc_write_init}},
-    {"do_readv_writev.ttd_iov_label",               probe_do_readv_writev_ttd_copy_from_user, {.init = probe_do_readv_writev_ttd_copy_from_user_init}},
-    {"generic_file_writev",                         probe_generic_file_writev, {.init = probe_generic_file_writev_init}},
-    {"generic_file_buffered_write.ttd_page_label",  probe_generic_file_buffered_write, {.init = probe_generic_file_buffered_write_init}},
-    {"ext3_journalled_writepage",                   probe_ext3_journalled_writepage, {.init = probe_ext3_journalled_writepage_init}},
-    {"__block_write_full_page.ttd_bh_label",        probe___block_write_full_page, {.init = probe___block_write_full_page_init}},
-    {"submit_bh",                                   probe_submit_bh, {.init = probe_submit_bh_init}},
+    {"netif_poll",                                  probe_netif_poll, {.init = probe_netif_poll_init}, 0},
+    {"netif_poll.ttd_skb_dequeue",                  probe_netif_poll_lb_skb_dequeue, {.init = probe_netif_poll_lb_skb_dequeue_init}, 0},
+    {"netif_receive_skb",                           probe_netif_receive_skb, {.init = probe_netif_receive_skb_init}, 0},
+    {"ip_rcv",                                      probe_ip_rcv, {.init = probe_ip_rcv_init}, 0},
+    {"tcp_v4_rcv",                                  probe_tcp_v4_rcv, {.init = probe_tcp_v4_rcv_init}, 0},
+    {"tcp_data_queue",                              probe_tcp_data_queue, {.init = probe_tcp_data_queue_init}, 0},
+    {"skb_copy_datagram_iovec",                     probe_skb_copy_datagram_iovec, {.init = probe_skb_copy_datagram_iovec_init}, 0},
+    {"svcsock.c",                                   probe_svc_tcp_recvfrom, {.init = probe_svc_tcp_recvfrom_init}, 995},
+    {"svc_process",                                 probe_svc_process, {.init = probe_svc_process_init}, 0},
+    {"nfsd3_proc_write",                            probe_nfsd3_proc_write, {.init = probe_nfsd3_proc_write_init}, 0},
+    {"do_readv_writev.ttd_iov_label",               probe_do_readv_writev_ttd_copy_from_user, {.init = probe_do_readv_writev_ttd_copy_from_user_init}, 0},
+    {"generic_file_writev",                         probe_generic_file_writev, {.init = probe_generic_file_writev_init}, 0},
+    {"generic_file_buffered_write.ttd_page_label",  probe_generic_file_buffered_write, {.init = probe_generic_file_buffered_write_init}, 0},
+    {"ext3_journalled_writepage",                   probe_ext3_journalled_writepage, {.init = probe_ext3_journalled_writepage_init}, 0},
+    {"__block_write_full_page.ttd_bh_label",        probe___block_write_full_page, {.init = probe___block_write_full_page_init}, 0},
+    {"submit_bh",                                   probe_submit_bh, {.init = probe_submit_bh_init}, 0},
 //    {"blkif_queue_request",                         probe_blkif_queue_request, {.init = blkif_queue_request_init}},
-    {"blkif_int",                                   probe_blkif_int, {.init = probe_blkif_int_init}},
-    {"kernel_halt",                                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}},
+    {"blkif_int",                                   probe_blkif_int, {.init = probe_blkif_int_init}, 0},
+    {"kernel_halt",                                 probe_kernel_halt, {.fini = probe_kernel_halt_fini}, 0},
 
 };
 
@@ -916,37 +1054,68 @@ int register_probes(struct target *t, GHashTable *probes) {
     probe_count = sizeof(probe_list) / sizeof(probe_list[0]);
     for (i = 0; i < probe_count; i++)
     {
-        bsymbol = target_lookup_sym(t, probe_list[i].symbol, ".", NULL, SYMBOL_TYPE_FLAG_NONE);
-        if (!bsymbol)
-        {
-            ERR("Could not find symbol %s!\n", probe_list[i].symbol);
-            unregister_probes(probes);
-            target_close(t);
-            return -1;
-        }
 
-        //bsymbol_dump(bsymbol, &udn);
+        if (probe_list[i].line_number) {
+            
+                probe = probe_create(t, TID_GLOBAL, &probe_list[i].ops, 
+                                     NULL,
+                                     probe_list[i].handler, NULL, NULL, 0);
+                if (!probe)
+                {
+                        ERR("could not create probe on line number: %s:%lu\n",
+                            probe_list[i].symbol, probe_list[i].line_number);
 
-        probe = probe_create(t, TID_GLOBAL, &probe_list[i].ops, 
-                             bsymbol->lsymbol->symbol->name,
-                             probe_list[i].handler, NULL, NULL, 0);
-        if (!probe)
-        {
-            ERR("could not create probe on '%s'\n", 
-                bsymbol->lsymbol->symbol->name);
-            unregister_probes(probes);
-            return -1;
-        }
+                        unregister_probes(probes);
+                        return -1;
+                }
 
-        if (!probe_register_symbol(probe, 
+
+                if (!probe_register_line(probe, 
+                                   probe_list[i].symbol, 
+                                   probe_list[i].line_number, 
+                                   PROBEPOINT_SW /*PROBEPOINT_FASTEST*/,
+                                   PROBEPOINT_EXEC, PROBEPOINT_LAUTO))
+                {
+                        ERR("could not register probe on line number: %s:%lu\n",
+                            probe_list[i].symbol, probe_list[i].line_number);
+                        probe_free(probe, 1);
+                        unregister_probes(probes);
+                        return -1;
+               }
+        } else {
+
+                bsymbol = target_lookup_sym(t, probe_list[i].symbol, ".", NULL, SYMBOL_TYPE_FLAG_NONE);
+                if (!bsymbol)
+                {
+                        ERR("Could not find symbol %s!\n", probe_list[i].symbol);
+                             unregister_probes(probes);
+                        target_close(t);
+                        return -1;
+                }
+
+                //bsymbol_dump(bsymbol, &udn);
+
+                probe = probe_create(t, TID_GLOBAL, &probe_list[i].ops, 
+                                     bsymbol->lsymbol->symbol->name,
+                                     probe_list[i].handler, NULL, NULL, 0);
+                if (!probe)
+                {
+                        ERR("could not create probe on '%s'\n", 
+                            bsymbol->lsymbol->symbol->name);
+                        unregister_probes(probes);
+                        return -1;
+                }
+
+                if (!probe_register_symbol(probe, 
                                    bsymbol, PROBEPOINT_SW /*PROBEPOINT_FASTEST*/,
                                    PROBEPOINT_EXEC, PROBEPOINT_LAUTO))
-        {
-            ERR("could not register probe on '%s'\n",
-                bsymbol->lsymbol->symbol->name);
-            probe_free(probe, 1);
-            unregister_probes(probes);
-            return -1;
+                {
+                        ERR("could not register probe on '%s'\n",
+                                bsymbol->lsymbol->symbol->name);
+                        probe_free(probe, 1);
+                        unregister_probes(probes);
+                        return -1;
+                }
         }
         g_hash_table_insert(probes, 
                             (gpointer)probe->probepoint->addr, 
