@@ -61,11 +61,11 @@
 extern struct target *t;
 
 #define ERR(_f, _a...)   do {                                                   \
-        fprintf(stderr, TXT_FG_RED"Error" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t),  __FUNCTION__, ## _a);  \
+        printf(TXT_FG_RED"Error" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t),  __FUNCTION__, ## _a);  \
     } while (0)
 
 #define WARN(_f, _a...)  do {                                                   \
-        fprintf(stderr, TXT_FG_YELLOW "Warrning" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t), __FUNCTION__, ## _a);  \
+        printf(TXT_FG_YELLOW "Warrning" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t), __FUNCTION__, ## _a);  \
     } while (0)
 
 #define WARN_ON(_g, _f, _a...) do {                                             \
@@ -75,7 +75,7 @@ extern struct target *t;
     } while (0)
 
 #define DBG(_f, _a...)   do {                                                   \
-        fprintf(stderr, TXT_FG_COLOR "DBG" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t), __FUNCTION__, ## _a);       \
+        printf(TXT_FG_COLOR "DBG" TXT_FG_WHITE "(brctr:%llu):%s " _f, perf_get_brctr(t), __FUNCTION__, ## _a);       \
     } while (0)
 
 #define DBG_ON(_g, _f, _a...) do {                                              \
@@ -106,16 +106,16 @@ extern struct target *t;
                                                                                     \
         if ( (_max_len) && (_len > _max_len)) {                                     \
             _len = _max_len;                                                        \
-            fprintf(stderr, "Buffer exceeds max length, dumping first %i bytes\n", _max_len); \
+            fprintf("Buffer exceeds max length, dumping first %i bytes\n", _max_len); \
         }                                                                           \
                                                                                     \
         for ( _i = 0; _i < (_len); ) {                                              \
             for ( _j = 0; ( _j < 16) && (_i < (_len)); _j++, _i++ ) {               \
-                fprintf(stderr, "%02x ", (unsigned char)*((char *)(_p) + _i) );     \
+                fprintf("%02x ", (unsigned char)*((char *)(_p) + _i) );             \
             }                                                                       \
             fprintf(stderr, "\n");                                                  \
         }                                                                           \
-        fprintf(stderr, "\n");                                                      \
+        fprintf("\n");                                                              \
     } while (0)
 
     #define DBG_DUMP_ON(_g, _p, _len_p, _max_len) do {                              \
