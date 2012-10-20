@@ -43,7 +43,7 @@
 unsigned long long request_count = 0;
 unsigned long long requests_seen = 0;
 
-unsigned long last_seen_req_id;
+unsigned long last_seen_req_id, last_seen_skb_req;
 
 struct bsymbol *bsymbol_netif_poll_lvar_skb = NULL;
 struct bsymbol *bsymbol_netif_receive_skb_lvar_skb = NULL;
@@ -52,6 +52,7 @@ struct bsymbol *bsymbol_tcp_v4_rcv_lvar_skb = NULL;
 struct bsymbol *bsymbol_tcp_data_queue_lvar_skb = NULL;
 struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_skb = NULL;
 struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_to = NULL;
+struct bsymbol *bsymbol_skb_copy_datagram_iovec_lvar_to_dbg = NULL;
 
 struct bsymbol *bsymbol_svc_tcp_recvfrom_lvar_vec = NULL;
 struct bsymbol *bsymbol_svc_tcp_recvfrom_lvar_rqstp = NULL;
@@ -332,6 +333,12 @@ int probe_skb_copy_datagram_iovec_init(struct probe *probe) {
 
     bsymbol_skb_copy_datagram_iovec_lvar_to = target_lookup_sym(probe->target, "skb_copy_datagram_iovec.to.iov_base", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_skb_copy_datagram_iovec_lvar_to) {
+        ERR("Failed to create a bsymbol for skb_copy_datagram_iovec.to.iov_base\n");
+        return -1;
+    }
+
+    bsymbol_skb_copy_datagram_iovec_lvar_to_dbg = target_lookup_sym(probe->target, "skb_copy_datagram_iovec.to", ".", NULL, SYMBOL_TYPE_NONE); 
+    if (!bsymbol_skb_copy_datagram_iovec_lvar_to_dbg) {
         ERR("Failed to create a bsymbol for skb_copy_datagram_iovec.to\n");
         return -1;
     }
@@ -342,9 +349,9 @@ int probe_skb_copy_datagram_iovec_init(struct probe *probe) {
 int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struct probe *trigger)
 {
     struct value   *lval_skb;
-    struct value   *lval_to;
+    struct value   *lval_to, *lval_to_dbg;
     struct request *req;
-    unsigned long   req_id, new_req_id;
+    unsigned long   req_id, new_req_id, new_req_id_dbg;
     int             ret;
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
@@ -360,6 +367,7 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
 
     req_id = *(unsigned long*)lval_skb->buf;
     DBG("skb = 0x%lx\n", req_id);
+    last_seen_skb_req = req_id;
 
     lval_to = target_load_symbol(target,tid,bsymbol_skb_copy_datagram_iovec_lvar_to,
 				 LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -368,8 +376,17 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
         return -1;
     }
     
+    lval_to_dbg = target_load_symbol(target,tid,bsymbol_skb_copy_datagram_iovec_lvar_to_dbg,
+				 LOAD_FLAG_NO_CHECK_VISIBILITY);
+    if (!lval_to_dbg) {
+        ERR("Cannot access value of to\n");
+        return -1;
+    }
+    
     new_req_id = *(unsigned long*)lval_to->buf;
-    DBG("iovec to = 0x%lx\n", new_req_id);
+    new_req_id_dbg = *(unsigned long*)lval_to_dbg->buf;
+
+    DBG("iovec to = 0x%lx, to_dbg = 0x%lx\n", new_req_id, new_req_id_dbg);
 
     req = request_move_on_path(probe, req_id, STAGE_ID_SKB_COPY_DATAGRAM_IOVEC);
     if(!req) {
@@ -378,14 +395,16 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
         return -1;
     }
 
-    ret = request_hash_change_id(req, new_req_id);
+#if 0
+
+    ret = request_hash_change_id(req, new_req_id_dbg);
     if(ret) {
         ERR("Failed to change request id in the hash, id:0x%lx -> 0x%lx, stage:%s\n",
              req_id, new_req_id, stage_id_to_name(STAGE_ID_SKB_COPY_DATAGRAM_IOVEC));
         request_done(req);
         return -1;
     }
-
+#endif
     return 0;
 }
 
@@ -440,7 +459,8 @@ int probe_svc_tcp_recvfrom(struct probe *probe, void *handler_data, struct probe
     }
 
     req_id = *(unsigned long*)lval_vec->buf;
-    DBG("vec = 0x%lx\n", req_id);
+    DBG("vec = 0x%lx, last_seen_skb = 0x%lx\n", req_id, last_seen_skb_req);
+    req_id = last_seen_skb_req;
 
     lval_rqstp = target_load_symbol(target, tid, bsymbol_svc_tcp_recvfrom_lvar_rqstp,
 				      LOAD_FLAG_NO_CHECK_VISIBILITY);
