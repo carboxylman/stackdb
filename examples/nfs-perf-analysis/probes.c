@@ -80,18 +80,18 @@ struct bsymbol *bsymbol_blkif_int_lvar_id = NULL;
 
 
 int probe_netif_poll_init(struct probe *probe) {
-    DBG("netif_poll_init called\n");
+    DBG("called\n");
     return 0;
 };
 
 int probe_netif_poll(struct probe *probe, void *handler_data, struct probe *trigger)
 {
-    DBG("netif_poll called\n");
+    DBG("called\n");
     return 0;
 }
 
 int probe_netif_poll_lb_skb_dequeue_init(struct probe *probe) {
-    DBG("netif_poll_lb_skb_dequeue_init at label skb_dequeue called\n");
+    DBG("called\n");
 
     bsymbol_netif_poll_lvar_skb = target_lookup_sym(probe->target, "netif_poll.skb", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_netif_poll_lvar_skb) {
@@ -110,7 +110,7 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("netif_poll at label skb_dequeue called\n");
+    DBG("called\n");
 
     if (request_count && (request_count < requests_seen)) {
         DBG("We've processed %llu requests, exit\n", requests_seen);
@@ -151,7 +151,7 @@ int probe_netif_poll_lb_skb_dequeue(struct probe *probe, void *handler_data, str
 }
 
 int probe_netif_receive_skb_init(struct probe *probe) {
-    DBG("netif_receive_skb_init called\n");
+    DBG("called\n");
 
     bsymbol_netif_receive_skb_lvar_skb = target_lookup_sym(probe->target, "netif_receive_skb.skb", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_netif_receive_skb_lvar_skb) {
@@ -170,7 +170,7 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("netif_receive_skb called\n");
+    DBG("called\n");
 
     lval_skb = target_load_symbol(target,tid,bsymbol_netif_receive_skb_lvar_skb,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -194,7 +194,7 @@ int probe_netif_receive_skb(struct probe *probe, void *handler_data, struct prob
 
 int probe_ip_rcv_init(struct probe *probe) {
 
-    DBG("ip_rcv called\n");
+    DBG("called\n");
 
     bsymbol_ip_rcv_lvar_skb = target_lookup_sym(probe->target, "ip_rcv.skb", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_ip_rcv_lvar_skb) {
@@ -213,7 +213,7 @@ int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("ip_rcv called\n");
+    DBG("called\n");
 
     lval_skb = target_load_symbol(target,tid,bsymbol_ip_rcv_lvar_skb,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -237,7 +237,7 @@ int probe_ip_rcv(struct probe *probe, void *handler_data, struct probe *trigger)
 }
 
 int probe_tcp_v4_rcv_init(struct probe *probe) {
-    DBG("tcp_v4_rcv_init called\n");
+    DBG("called\n");
 
     bsymbol_tcp_v4_rcv_lvar_skb = target_lookup_sym(probe->target, "tcp_v4_rcv.skb", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_tcp_v4_rcv_lvar_skb) {
@@ -256,7 +256,7 @@ int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trig
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("tcp_v4_rcv called\n");
+    DBG("called\n");
 
     lval_skb = target_load_symbol(target,tid,bsymbol_tcp_v4_rcv_lvar_skb,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -280,7 +280,7 @@ int probe_tcp_v4_rcv(struct probe *probe, void *handler_data, struct probe *trig
 }
 
 int probe_tcp_data_queue_init(struct probe *probe) {
-    DBG("tcp_data_queue_init called\n");
+    DBG("called\n");
 
     bsymbol_tcp_data_queue_lvar_skb = target_lookup_sym(probe->target, "tcp_data_queue.skb", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_tcp_data_queue_lvar_skb) {
@@ -299,7 +299,7 @@ int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("tcp_data_queue called\n");
+    DBG("called\n");
 
     lval_skb = target_load_symbol(target,tid,bsymbol_tcp_data_queue_lvar_skb,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -322,7 +322,7 @@ int probe_tcp_data_queue(struct probe *probe, void *handler_data, struct probe *
 }
 
 int probe_skb_copy_datagram_iovec_init(struct probe *probe) {
-    DBG("skb_copy_datagram_iovec_init called\n");
+    DBG("called\n");
 
     bsymbol_skb_copy_datagram_iovec_lvar_skb = target_lookup_sym(probe->target, "skb_copy_datagram_iovec.skb", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_skb_copy_datagram_iovec_lvar_skb) {
@@ -349,7 +349,7 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("skb_copy_datagram_iovec called\n");
+    DBG("called\n");
 
     lval_skb = target_load_symbol(target,tid,bsymbol_skb_copy_datagram_iovec_lvar_skb,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -390,13 +390,13 @@ int probe_skb_copy_datagram_iovec(struct probe *probe, void *handler_data, struc
 }
 
 int probe_svc_process_init(struct probe *probe) {
-    DBG("svc_process_init called\n");
+    DBG("called\n");
     return 0;
 };
 
 int probe_svc_process(struct probe *probe, void *handler_data, struct probe *trigger)
 {
-    DBG("svc_process called\n");
+    DBG("called\n");
     return 0;
 }
 
@@ -471,7 +471,7 @@ int probe_svc_tcp_recvfrom(struct probe *probe, void *handler_data, struct probe
 }
 
 int probe_nfsd3_proc_write_init(struct probe *probe) {
-    DBG("nfsd3_proc_write_init called\n");
+    DBG("called\n");
 
     bsymbol_nfsd3_proc_write_lvar_rqstp = target_lookup_sym(probe->target, "nfsd3_proc_write.rqstp", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_nfsd3_proc_write_lvar_rqstp) {
@@ -498,7 +498,7 @@ int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
  
-    DBG("nfsd3_proc_write called\n");
+    DBG("called\n");
 
     lval_rqstp = target_load_symbol(target, tid, bsymbol_nfsd3_proc_write_lvar_rqstp,
 				      LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -540,7 +540,7 @@ int probe_nfsd3_proc_write(struct probe *probe, void *handler_data, struct probe
 }
 
 int probe_do_readv_writev_ttd_copy_from_user_init(struct probe *probe) {
-    DBG("do_readv_writev_ttd_copy_from_user_init called\n");
+    DBG("called\n");
 
     bsymbol_do_readv_writev_lvar_uvector = target_lookup_sym(probe->target, "do_readv_writev.uvector", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_do_readv_writev_lvar_uvector) {
@@ -567,7 +567,7 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("do_readv_writev.ttd_copy_from_user called\n");
+    DBG("called\n");
 
     lval_uvector = target_load_symbol(target,tid,bsymbol_do_readv_writev_lvar_uvector,
 				      LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -608,7 +608,7 @@ int probe_do_readv_writev_ttd_copy_from_user(struct probe *probe, void *handler_
 }
 
 int probe_generic_file_writev_init(struct probe *probe) {
-    DBG("generic_file_writev_init called\n");
+    DBG("called\n");
 
     bsymbol_generic_file_writev_lvar_iov = target_lookup_sym(probe->target, "generic_file_writev.iov", ".", NULL, SYMBOL_TYPE_NONE); 
     if (!bsymbol_generic_file_writev_lvar_iov) {
@@ -627,7 +627,7 @@ int probe_generic_file_writev(struct probe *probe, void *handler_data, struct pr
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("generic_file_writev called\n");
+    DBG("called\n");
 
     lval_iov = target_load_symbol(target,tid,bsymbol_generic_file_writev_lvar_iov,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -650,7 +650,7 @@ int probe_generic_file_writev(struct probe *probe, void *handler_data, struct pr
 }
 
 int probe_generic_file_buffered_write_init(struct probe *probe) {
-    DBG("generic_file_buffered_write_init called\n");
+    DBG("called\n");
 
     bsymbol_generic_file_buffered_write_lvar_iov 
         = target_lookup_sym(probe->target, "generic_file_buffered_write.iov", ".", NULL, SYMBOL_TYPE_NONE); 
@@ -678,7 +678,7 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("generic_file_buffered_write called\n");
+    DBG("called\n");
     lval_iov = target_load_symbol(target,tid,bsymbol_generic_file_buffered_write_lvar_iov,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_iov) {
@@ -715,7 +715,7 @@ int probe_generic_file_buffered_write(struct probe *probe, void *handler_data, s
 }
 
 int probe_ext3_journalled_writepage_init(struct probe *probe) {
-    DBG("ext3_journalled_writepage_init called\n");
+    DBG("called\n");
 
     bsymbol_ext3_journalled_writepage_lvar_page 
         = target_lookup_sym(probe->target, "ext3_journalled_writepage.page", ".", NULL, SYMBOL_TYPE_NONE); 
@@ -735,7 +735,7 @@ int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, str
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("ext3_journalled_writepage called\n");
+    DBG("called\n");
     lval_page = target_load_symbol(target,tid,bsymbol_ext3_journalled_writepage_lvar_page,
 				   LOAD_FLAG_NO_CHECK_VISIBILITY);
     if (!lval_page) {
@@ -756,7 +756,7 @@ int probe_ext3_journalled_writepage(struct probe *probe, void *handler_data, str
 }
 
 int probe___block_write_full_page_init(struct probe *probe) {
-    DBG("__block_write_full_page_init called\n");
+    DBG("called\n");
 
     bsymbol___block_write_full_page_lvar_page
         = target_lookup_sym(probe->target, "__block_write_full_page.page", ".", NULL, SYMBOL_TYPE_NONE); 
@@ -785,7 +785,7 @@ int probe___block_write_full_page(struct probe *probe, void *handler_data, struc
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("__block_write_full_page called\n");
+    DBG("called\n");
 
     lval_page = target_load_symbol(target,tid,bsymbol___block_write_full_page_lvar_page,
 				   LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -853,7 +853,7 @@ int probe___block_commit_write(struct probe *probe, void *handler_data, struct p
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("__block_commit_write called\n");
+    DBG("called\n");
 
     lval_page = target_load_symbol(target,tid,bsymbol___block_commit_write_lvar_page,
 				   LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -892,7 +892,7 @@ int probe___block_commit_write(struct probe *probe, void *handler_data, struct p
 }
 
 int probe_submit_bh_init(struct probe *probe) {
-    DBG("submit_bh_init called\n");
+    DBG("called\n");
 
     bsymbol_submit_bh_lvar_bh
         = target_lookup_sym(probe->target, "submit_bh.bh.b_page", ".", NULL, SYMBOL_TYPE_NONE); 
@@ -921,7 +921,7 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("submit_bh called\n");
+    DBG("called\n");
     
     lval_bh  = target_load_symbol(target,tid,bsymbol_submit_bh_lvar_bh,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -960,7 +960,7 @@ int probe_submit_bh(struct probe *probe, void *handler_data, struct probe *trigg
 }
 
 int probe_blkif_queue_request_init(struct probe *probe) {
-    DBG("blkif_queue_request_init called\n");
+    DBG("called\n");
 
     bsymbol_blkif_queue_request_lvar_bio
         = target_lookup_sym(probe->target, "blkif_queue_request.bio", ".", NULL, SYMBOL_TYPE_NONE); 
@@ -989,7 +989,7 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("blkif_queue_request called\n");
+    DBG("called\n");
 
     lval_bio  = target_load_symbol(target,tid,bsymbol_blkif_queue_request_lvar_bio,
 				   LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -1028,7 +1028,7 @@ int probe_blkif_queue_request(struct probe *probe, void *handler_data, struct pr
 }
 
 int probe_blkif_int_init(struct probe *probe) {
-    DBG("blkif_int_init called\n");
+    DBG("called\n");
 
     bsymbol_blkif_int_lvar_id
         = target_lookup_sym(probe->target, "blkif_int.id", ".", NULL, SYMBOL_TYPE_NONE); 
@@ -1047,7 +1047,7 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
     struct target *target = probe->target;
     tid_t tid = probe->thread->tid;
 
-    DBG("blkif_int called\n");
+    DBG("called\n");
 
     lval_id  = target_load_symbol(target,tid,bsymbol_blkif_int_lvar_id,
 				  LOAD_FLAG_NO_CHECK_VISIBILITY);
@@ -1066,20 +1066,19 @@ int probe_blkif_int(struct probe *probe, void *handler_data, struct probe *trigg
         return -1;
     }
 
-    WARN("FULL PATH\n");
     request_done(req);
     return 0;
 }
 
 int probe_kernel_halt_fini(struct probe *probe) {
-    DBG("kernel_halt_fini called\n");
+    DBG("called\n");
     request_analysis_done(probe);
     return 0;
 };
 
 int probe_kernel_halt(struct probe *probe, void *handler_data, struct probe *trigger)
 {
-    DBG("kernel_halt called\n");
+    DBG("called\n");
     request_analysis_done(probe);
     return 0;
 }
