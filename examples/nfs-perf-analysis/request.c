@@ -205,7 +205,7 @@ struct request *request_move_on_path(struct probe *probe, unsigned long req_id, 
     /* XXX: read the time stamp here */
     req_stage->timestamp = perf_get_rdtsc(probe->target);
     request_add_stage(req, req_stage);
-    printf("Success:");
+    printf("Success: timestamp:%llu\n", req_stage->timestamp);
     request_print(req);
     return req;
 }
