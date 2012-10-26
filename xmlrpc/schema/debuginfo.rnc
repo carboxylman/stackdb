@@ -1,95 +1,176 @@
 
-default namespace = "urn:flux.utah.edu:a3:vmi:debuginfo:1"
+default namespace = "http://anathema.flux.utah.edu/schema/vmi/1"
 
 include "common.rnc"
 
-Symbol = element symbol {
-    SymbolContents
+SymtabRef = element symtabRef { xsd:IDREF }
+
+ParentSymtabRef = element parentSymtabRef { xsd:IDREF }
+
+SymbolRef = element symbolRef { xsd:IDREF }
+
+DebugInfoFile = element debuginfoMeta {
+    element filename { text } &
+    element compilationDir { text } &
+    element producer { text } &
+    element language { text } &
+
+    element sourceFileTab {
+        element entry {
+            element filename { text },
+	    SymtabRef
+        }*
+    } &
+
+    element globaltab {
+        element entry {
+            element name { text },
+	    SymbolRef
+        }*
+    }
 }
 
-SymbolContents = 
+Symtab = element symtab {
+    attribute id { xsd:ID },
+    attribute name { text }?,
+    Ranges,
+    ParentSymtabRef,
+    element subtabs {
+        SymtabRef*
+    },
+    element tab {
+        element entry {
+            element name { text },
+	    element symbolRef { xsd:IDREF }
+        }*
+    },
+    element anontab {
+	element symbolRef { xsd:IDREF }*
+    }
+}
+
+Addr = element addr { attribute addr { ADDR } }
+Reg = element reg { attribute reg { REG } }
+RegAddr = element regAddr { attribute reg { REG } }
+RegOffset = element regOffset {
+    attribute reg { REG } &
+    attribute offset { OFFSET }
+}
+MemberOffset = element memberOffset { attribute offset { OFFSET } }
+FbRegOffset = element fbRegOffset { attribute offset { OFFSET } }
+ListLoc = element listLoc { element rangeLoc { Range, Location }+ }
+RuntimeLoc = element runtimeLoc { text }
+
+Location = element location {
+    attribute type { "none" | "addr" | "reg" | "regaddr" | "regOffset" 
+                     | "memberOffset"| "fbregOffset" | "list" | "runtime" }, 
+    ( Addr | Reg | RegAddr | RegOffset | MemberOffset | FbRegOffset 
+      | ListLoc | RuntimeLoc )?
+}
+
+Variable = element variable {
+    attribute id { xsd:ID },
+    attribute name { text }?,
+    attribute source { "dwarf" | "elf" },
+
+    attribute external { xsd:boolean },
+    attribute declaration { xsd:boolean },
+    attribute prototyped { xsd:boolean },
+
+    attribute param { xsd:boolean },
+    attribute member { xsd:boolean },
+    attribute enumval { xsd:boolean },
+
+    attribute size { xsd:unsignedInt },
+    attribute addr { ADDR },
+
+    attribute typeRef { xsd:IDREF },
+
+    attribute bitOffset { xsd:unsignedShort },
+    attribute bitSize { xsd:unsignedShort },
+    attribute constValue { text }?,
+
+    attribute inlineInstance { xsd:boolean },
+    attribute declaredInline { xsd:boolean },
+    attribute inlined { xsd:boolean },
+
+    element abstractOriginRef { xsd:IDREF }?,
+    element inlineInstances { SymbolRef* }?,
+
+    Location
+}
+
+Function = element function {
     attribute id { xsd:ID } &
     attribute name { text }? &
-    attribute size { xsd:unsignedInt }? &
     attribute source { "dwarf" | "elf" } &
 
     attribute external { xsd:boolean } &
     attribute declaration { xsd:boolean } &
     attribute prototyped { xsd:boolean } &
+
+    attribute param { xsd:boolean } &
+    attribute member { xsd:boolean } &
+    attribute enumval { xsd:boolean } &
+
+    attribute size { xsd:unsignedInt } &
+    attribute addr { ADDR } &
+
+    attribute typeRef { xsd:IDREF } &
+
+    attribute inlineInstance { xsd:boolean } &
+    attribute declaredInline { xsd:boolean } &
+    attribute inlined { xsd:boolean } &
+
+    attribute argCount { xsd:unsignedShort } &
+    attribute hasUnspecifiedParams { xsd:boolean } &
+    attribute entryPC { ADDR } &
+    attribute prologueEnd { ADDR } &
+    attribute epilogueBegin { ADDR } &
+    attribute constValue { text }? &
+
+    (element abstractOriginRef { xsd:IDREF }?,
+     element inlineInstances { SymbolRef* }?,
+
+     element arguments { SymbolRef* },
+     Ranges,
+     SymtabRef)
+}
+
+Label = element label {
+    attribute id { xsd:ID } &
+    attribute name { text }? &
+    attribute source { "dwarf" | "elf" } &
+
+    attribute external { xsd:boolean } &
+    attribute declaration { xsd:boolean } &
+    attribute prototyped { xsd:boolean } &
+
     attribute param { xsd:boolean } &
     attribute member { xsd:boolean } &
     attribute enumval { xsd:boolean } &
     attribute inlineInstance { xsd:boolean } &
 
-    attribute baseAddr { ADDR }
+    attribute size { xsd:unsignedInt } &
+    attribute addr { ADDR } &
 
-InstanceInfo = 
-    attribute typeRef { xsd:IDREF }? &
+    attribute typeRef { xsd:IDREF } &
+
     attribute declaredInline { xsd:boolean } &
     attribute inlined { xsd:boolean } &
-    attribute originRef { xsd:IDREF }? &
-    element inlineInstances {
-        SymbolRef+
-    }?
 
-Variable = element variable {
-    SymbolContents & 
-    attribute bitOffset { xsd:unsignedShort }? &
-    attribute bitSize { xsd:unsignedShort }? &
-    attribute locationType { "fixed" | "offset" | "runtime" }? &
-    attribute constValue { text }? &
-    LocationKinds? &
-    InstanceInfo
-}
-
-LocationKinds = 
-    FixedLocation | OffsetLocation
-
-FixedLocation = element fixedLocation {
-    attribute address { ADDR }
-}
-
-OffsetLocation = element offsetLocation {
-    attribute offset { OFFSET }
-}
-
-SymbolRef = element symbolRef { xsd:IDREF }
-
-Function = element function {
-    SymbolContents &
-
-    attribute argCount { xsd:unsignedShort } &
-    attribute hasUnspecifiedParams { xsd:boolean } &
-    attribute prologueEnd { ADDR }? &
-    attribute epilogueBegin { ADDR }? &
-    attribute entryPC { ADDR }? &
-    attribute constValue { text }? &
-
-    element arguments { SymbolRef* }? &
-    Ranges? &
-
-    InstanceInfo
-}
-
-Ranges = element ranges {
-    element range {
-        attribute start { ADDR },
-	attribute end { ADDR }
-    }+
-}
-
-Label = element label {
-    SymbolContents &
-    InstanceInfo &
-    Ranges
-}
-
-Type = element type {
-    TypeContents
+    element abstractOriginRef { xsd:IDREF }? &
+    element inlineInstances { SymbolRef* }?
 }
 
 TypeContents = 
-    SymbolContents
+    attribute id { xsd:ID } &
+    attribute name { text }? &
+    attribute source { "dwarf" | "elf" } &
+
+    attribute external { xsd:boolean } &
+    attribute declaration { xsd:boolean } &
+    attribute prototyped { xsd:boolean }
 
 VoidType = element voidType { empty }
 
@@ -119,7 +200,7 @@ ConstType = element constType {
     attribute typeRef { xsd:IDREF }
 }
 
-VolatileType = element constType {
+VolatileType = element volatileType {
     TypeContents &
     attribute typeRef { xsd:IDREF }
 }
@@ -138,18 +219,44 @@ EnumType = element enumType {
     element members { SymbolRef+ }
 }
 
-SUContents = 
+StructType = element structType {
     TypeContents &
     attribute memberCount { xsd:int } &
     element members { SymbolRef+ }
+}
 
-StructType = element structType { SUContents }
-
-UnionType = element structType { SUContents }
+UnionType = element unionType {
+    TypeContents &
+    attribute memberCount { xsd:int } &
+    element members { SymbolRef+ }
+}
 
 FunctionType = element functionType {
     TypeContents &
     attribute argCount { xsd:unsignedShort } &
     attribute hasUnspecifiedParams { xsd:boolean} &
     element arguments { SymbolRef* }
+}
+
+
+TypeChoice = 
+    VoidType | BaseType | PointerType | TypedefType | ConstType 
+    | VolatileType | ArrayType | EnumType | StructType | UnionType 
+    | FunctionType
+
+SymbolChoice = 
+    Variable | Function | Label | VoidType | BaseType | PointerType 
+        | TypedefType | ConstType | VolatileType | ArrayType | EnumType 
+	| StructType | UnionType | FunctionType
+
+Type = element type {
+    VoidType | BaseType | PointerType | TypedefType | ConstType 
+    | VolatileType | ArrayType | EnumType | StructType | UnionType 
+    | FunctionType
+}
+
+Symbol = element symbol {
+    Variable | Function | Label | VoidType | BaseType | PointerType 
+        | TypedefType | ConstType | VolatileType | ArrayType | EnumType 
+	| StructType | UnionType | FunctionType
 }

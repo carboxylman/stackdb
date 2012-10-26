@@ -1,18 +1,20 @@
 
 ADDR = xsd:unsignedLong
+REG = xsd:string
+REGNO = xsd:short
 OFFSET = xsd:long
 SMOFFSET = xsd:int
 
 Param = element param {
-    attribute name { text } &
-    attribute longName { text }? &
-    attribute description { text } &
+    element name { text },
+    element longName { text }?,
+    element description { text },
     element defaultValue { text }?
 }
 
 OutValue = element outValue {
-    attribute name { text } &
-    attribute longName { text }? &
+    (element name { text }
+     | element longName { text }),
     element value { text }
 }
 
@@ -21,3 +23,11 @@ KeyValue = element keyValue {
     element value { text }
 }
 
+Range = element range {
+    attribute start { ADDR },
+    attribute end { ADDR }
+}
+
+Ranges = element ranges {
+    Range*
+}
