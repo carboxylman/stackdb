@@ -133,7 +133,7 @@ endif
 CFLAGS += $(PYCFLAGS)
 
 # Swig/python doesn't get warning flags.
-CFLAGS += -Wall -Wextra -Wno-unused-parameter
+CFLAGS += -Wall -Wextra -Wno-unused-parameter -Wno-unused-function
 #-Wswitch-default -Wswitch-enum -Wtrampolines -Wtraditional-conversion -Wdeclaration-after-statement -Wshadow -Wbad-function-cast -Wcast-qual -Wcast-align -Wconversion -Wlogical-op -Wstrict-prototypes -Wold-style-definition -Wmissing-parameter-type -Wmissing-prototypes -Wmissing-declarations -Wmissing-field-initializers -Wmissing-format-attribute -Winline 
 
 CFLAGS += -O2
