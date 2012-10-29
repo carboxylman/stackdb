@@ -50,10 +50,10 @@ Symtab = element symtab {
 }
 
 Addr = element addr { attribute addr { ADDR } }
-Reg = element reg { attribute reg { REG } }
-RegAddr = element regAddr { attribute reg { REG } }
+Reg = element reg { attribute reg { REGNO } }
+RegAddr = element regAddr { attribute reg { REGNO } }
 RegOffset = element regOffset {
-    attribute reg { REG } &
+    attribute reg { REGNO } &
     attribute offset { OFFSET }
 }
 MemberOffset = element memberOffset { attribute offset { OFFSET } }
@@ -62,8 +62,8 @@ ListLoc = element listLoc { element rangeLoc { Range, Location }+ }
 RuntimeLoc = element runtimeLoc { text }
 
 Location = element location {
-    attribute type { "none" | "addr" | "reg" | "regaddr" | "regOffset" 
-                     | "memberOffset"| "fbregOffset" | "list" | "runtime" }, 
+    attribute type { "none" | "addr" | "reg" | "regAddr" | "regOffset" 
+                     | "memberOffset"| "fbRegOffset" | "list" | "runtime" }, 
     ( Addr | Reg | RegAddr | RegOffset | MemberOffset | FbRegOffset 
       | ListLoc | RuntimeLoc )?
 }
@@ -238,17 +238,6 @@ FunctionType = element functionType {
     element arguments { SymbolRef* }
 }
 
-
-TypeChoice = 
-    VoidType | BaseType | PointerType | TypedefType | ConstType 
-    | VolatileType | ArrayType | EnumType | StructType | UnionType 
-    | FunctionType
-
-SymbolChoice = 
-    Variable | Function | Label | VoidType | BaseType | PointerType 
-        | TypedefType | ConstType | VolatileType | ArrayType | EnumType 
-	| StructType | UnionType | FunctionType
-
 Type = element type {
     VoidType | BaseType | PointerType | TypedefType | ConstType 
     | VolatileType | ArrayType | EnumType | StructType | UnionType 
@@ -259,4 +248,10 @@ Symbol = element symbol {
     Variable | Function | Label | VoidType | BaseType | PointerType 
         | TypedefType | ConstType | VolatileType | ArrayType | EnumType 
 	| StructType | UnionType | FunctionType
+}
+
+NestedSymbol = element nestedSymbol {
+    (Variable | Function | Label | VoidType | BaseType | PointerType 
+        | TypedefType | ConstType | VolatileType | ArrayType | EnumType 
+	| StructType | UnionType | FunctionType)+
 }
