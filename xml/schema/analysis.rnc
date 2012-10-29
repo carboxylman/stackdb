@@ -15,9 +15,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
 #
+
 default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
-include "common.rnc"
+include "target.rnc"
 
 #start = Analysis
 
@@ -40,20 +41,50 @@ KeyValue = element keyValue {
 }
 
 Analysis = element analysis {
-    element name { text } &
-    element id { xsd:ID } &
+    attribute name { text } &
+    attribute id { xsd:ID } &
     element description { text } &
     element author { text } &
     element authorContactEmail { text } &
 
     element requiresWriteMode { xsd:boolean } &
     element requiresControlMode { xsd:boolean } &
-    element reportsProgress { xsd:boolean } &
+    element reportsAnnotations { xsd:boolean } &
+    element reportsEvents { xsd:boolean } &
+    element reportsMarkers { xsd:boolean } &
     element reportsIntermediateResults { xsd:boolean } &
     element reportsFinalResults { xsd:boolean } &
 
+    element annotationTypes {
+        AnnotationType*
+    } &
+
     element inputParams { Param* } &
     element outputParams { Param* }
+}
+
+AnnotationType = element annotationType {
+    attribute name { text },
+    attribute id { xsd:ID },
+
+    element annotationField {
+        attribute name { text },
+	attribute type { text }
+    }+
+}
+
+Annotation = element annotation {
+    attribute event { xsd:boolean },
+    attribute marker { xsd:boolean },
+    attribute discovery { xsd:boolean },
+
+    attribute annotationTypeRef { xsd:IDREF },
+
+    attribute ns { xsd:unsignedLong },
+    attribute tsc { xsd:unsignedLong },
+    attribute counter { xsd:unsignedLong },
+
+    KeyValue+
 }
 
 AnalysisResult = element analysisResult {
@@ -61,3 +92,13 @@ AnalysisResult = element analysisResult {
     element msg { text } &
     element outputValues { OutValue* }
 }
+
+AnalysisStatus = element analysisStatus {
+    "running" | "paused" | "done"
+}
+
+AnalysisInstance = element analysisInstance {
+    AnalysisStatus,
+    Target
+}
+

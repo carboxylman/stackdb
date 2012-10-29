@@ -1,0 +1,79 @@
+#
+# Copyright (c) 2011, 2012 The University of Utah
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation; either version 2 of
+# the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+#
+
+default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
+
+include "debuginfo.rnc"
+
+threadId = xsd:int
+sessionId = xsd:int
+
+TargetThreadStatus = element threadStatus {
+    "unknown" | "running" | "stopped" | "sleeping" | "zombie" | "dead" 
+    | "blockedio" | "paging" | "paused"
+}
+
+TargetStatus = element targetStatus {
+    "unknown" | "running" | "paused" | "dead" | "stopped" | "error" | "done"
+}
+
+Thread = element thread {
+    attribute tid { threadId },
+    TargetThreadStatus
+}
+
+Target = element target {
+    attribute name { text },
+    attribute id { xsd:int },
+    attribute type { "ptrace" | "xen" },
+    attribute live { xsd:boolean },
+    attribute writeable { xsd:boolean },
+    TargetStatus,
+    Thread*
+}
+
+TargetSpec = element targetSpec {
+    attribute type { "ptrace" | "xen" },
+    element config {
+        element threadBPMode { "strict" | "semiStrict" | "loose" }?,
+        (TargetXenSpec | TargetPtraceSpec)
+    }
+}
+
+TargetXenSpec = element targetXenSpec {
+    (element domain { text })
+    | (element configFile { text },
+       element replayLogFile { text }?)
+}
+
+TargetPtraceSpec = element targetPtraceSpec {
+    (element pid { xsd:int })
+    | (element filename { text },
+       element arguments {
+           element argument { xsd:string }*
+       },
+       element environment {
+           element envVar { 
+               attribute var { text },
+               attribute value { text }
+           }*
+       },
+       element stdoutFilename { text }?,
+       element stderrFilename { text }?,
+       element closeStdin { xsd:boolean }?)
+}
