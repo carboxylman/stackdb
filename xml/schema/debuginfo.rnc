@@ -1,5 +1,5 @@
 
-default namespace = "http://anathema.flux.utah.edu/schema/vmi/1"
+default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
 include "common.rnc"
 
