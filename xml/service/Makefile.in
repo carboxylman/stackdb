@@ -1,0 +1,129 @@
+## -*- mode: Makefile -*-
+##
+## Copyright (c) 2012 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+
+###############################################################################
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= xml/service
+OBJDIR		= @top_builddir@
+
+SUBDIRS = 
+
+include $(OBJDIR)/Makeconf
+
+WSDL2H = wsdl2h
+SOAPCPP2 = soapcpp2
+
+CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
+	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug -I.
+CFLAGS += -DDWDEBUG_USE_STRTAB
+CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS)
+	CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
+	CFLAGS += -I$(DISTORM)/include
+endif
+
+LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS) -lgsoap
+ifeq ($(ENABLE_XENACCESS),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
+endif
+STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
+	$(OBJDIR)/lib/libvmilib.a
+ifeq ($(ENABLE_XENACCESS),"1")
+	STATICLIBS += $(XENACCESS_A)
+endif
+
+HEADERS := $(SRCDIR)/debuginfo_xml.h $(SRCDIR)/debuginfo_rpc.h
+OBJECTS := debuginfo_xml.lo debuginfo_rpc.lo debuginfo.lo \
+	debuginfo_soapC.lo debuginfo_soapServer.lo debuginfo_soapServerLib.lo
+PROGRAMS := debuginfo
+
+INST_INC = 
+INST_SBIN = $(PROGRAMS)
+
+NS = vmi1
+NAMESPACE = http://anathema.flux.utah.edu/schema/vmi/1
+
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(PROGRAMS) all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+%.gs.h: $(SRCDIR)/../schema/%.xsd
+	$(WSDL2H) -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y -o $@
+	sed -i 's/gsoapopt cw/gsoapopt c/' $@
+
+%.wsdl: %.gs.h $(SRCDIR)/%.h.extra.h
+	cat $(@:.wsdl=).gs.h $(SRCDIR)/$(@:.wsdl=).h.extra.h \
+		| $(SOAPCPP2) -2 -c -d . -p debuginfo_soap -x 
+	cp -p $@ $@.nostrip
+	$(SRCDIR)/strip-gsoap-wsdl.pl $(NAMESPACE)::$(NAMESPACE)/$(@:.wsdl=).xsd \
+		< $@.nostrip > $@
+
+debuginfo_soapC.lo: debuginfo_soapC.c $(HEADERS) debuginfo.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+
+debuginfo_soapServer.lo: debuginfo_soapServer.c $(HEADERS) debuginfo.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+debuginfo_soapServerLib.lo: debuginfo_soapServerLib.c $(HEADERS) debuginfo.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+debuginfo%.lo: $(SRCDIR)/debuginfo%.c $(HEADERS) debuginfo.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+debuginfo.lo: $(SRCDIR)/debuginfo.c $(HEADERS) debuginfo.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+#%.c.lo: $(SRCDIR)/%.c $(HEADERS)
+#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+debuginfo: $(OBJECTS) $(STATICLIBS)
+	$(CC) -o $@ debuginfo_xml.o debuginfo_rpc.o debuginfo.o \
+		debuginfo_soapC.o debuginfo_soapServer.o \
+		$(STATICLIBS) $(LDFLAGS)
+
+install: $(PROGRAMS) def-install install-subdirs
+
+clean: clean-subdirs
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
+	$(RM) -f $(PROGRAMS)
+	$(RM) *.gs.h debuginfo_soap* *.nsmap *.wsdl *.wsdl.nostrip *.xsd
+
+distclean: distclean-subdirs
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:
