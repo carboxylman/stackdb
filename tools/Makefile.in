@@ -25,9 +25,13 @@ TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= tools
 OBJDIR		= @top_builddir@
 
-SUBDIRS = bts rop
+SUBDIRS = rop
 
 include $(OBJDIR)/Makeconf
+
+ifeq ($(ENABLE_XENACCESS),"1")
+	SUBDIRS += bts
+endif
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
 	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
