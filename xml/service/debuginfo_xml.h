@@ -19,25 +19,85 @@
 #ifndef __DEBUGINFO_XML_H__
 #define __DEBUGINFO_XML_H__
 
-#include "debuginfo_soapH.h" 
+#include "debuginfo_soapStub.h"
 #include "dwdebug.h"
+#include <glib.h>
 
-struct _vmi1__location *d_location_to_x_location(struct location *l);
-struct _vmi1__variable *d_symbol_to_x_variable(struct symbol *s);
-struct _vmi1__function *d_symbol_to_x_function(struct symbol *symbol);
-struct _vmi1__label *d_symbol_to_x_label(struct symbol *symbol);
-struct _vmi1__voidType *d_symbol_to_x_voidType(struct symbol *symbol);
-struct _vmi1__baseType *d_symbol_to_x_baseType(struct symbol *symbol);
-struct _vmi1__pointerType *d_symbol_to_x_pointerType(struct symbol *symbol);
-struct _vmi1__typedefType *d_symbol_to_x_typedefType(struct symbol *symbol);
-struct _vmi1__constType *d_symbol_to_x_constType(struct symbol *symbol);
-struct _vmi1__volatileType *d_symbol_to_x_volatileType(struct symbol *symbol);
-struct _vmi1__arrayType *d_symbol_to_x_arrayType(struct symbol *symbol);
-struct _vmi1__enumType *d_symbol_to_x_enumType(struct symbol *symbol);
-struct _vmi1__structType *d_symbol_to_x_structType(struct symbol *symbol);
-struct _vmi1__unionType *d_symbol_to_x_unionType(struct symbol *symbol);
-struct _vmi1__functionType *d_symbol_to_x_functionType(struct symbol *symbol);
-int d_symbol_to_x_symbolchoice(struct symbol *s,
-			       union vmi1__symbolChoice *sc,int *sc_which);
+extern struct vmi1__DebugFileOptsT defDebugFileOpts;
+
+struct vmi1__LocationT *
+d_location_to_x_LocationT(struct location *l,
+			  struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			  int depth);
+struct vmi1__RangesT *
+d_range_to_x_RangesT(struct range *r,
+		     struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+		     int depth);
+struct vmi1__VariableT *
+d_symbol_to_x_VariableT(struct symbol *s,
+			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			int depth);
+struct vmi1__FunctionT *
+d_symbol_to_x_FunctionT(struct symbol *symbol,
+			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			int depth);
+struct vmi1__LabelT *
+d_symbol_to_x_LabelT(struct symbol *symbol,
+		     struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+		     int depth);
+struct vmi1__VoidTypeT *
+d_symbol_to_x_VoidTypeT(struct symbol *symbol,
+			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			int depth);
+struct vmi1__BaseTypeT *
+d_symbol_to_x_BaseTypeT(struct symbol *symbol,
+			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			int depth);
+struct vmi1__PointerTypeT *
+d_symbol_to_x_PointerTypeT(struct symbol *symbol,
+			   struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			   int depth);
+struct vmi1__TypedefTypeT *
+d_symbol_to_x_TypedefTypeT(struct symbol *symbol,
+			   struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			   int depth);
+struct vmi1__ConstTypeT *
+d_symbol_to_x_ConstTypeT(struct symbol *symbol,
+			 struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			 int depth);
+struct vmi1__VolatileTypeT *
+d_symbol_to_x_VolatileTypeT(struct symbol *symbol,
+			    struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			   int depth);
+struct vmi1__ArrayTypeT *
+d_symbol_to_x_ArrayTypeT(struct symbol *symbol,
+			 struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			 int depth);
+struct vmi1__EnumTypeT *
+d_symbol_to_x_EnumTypeT(struct symbol *symbol,
+			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			int depth);
+struct vmi1__StructTypeT *
+d_symbol_to_x_StructTypeT(struct symbol *symbol,
+			  struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			  int depth);
+struct vmi1__UnionTypeT *
+d_symbol_to_x_UnionTypeT(struct symbol *symbol,
+			 struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			 int depth);
+struct vmi1__FunctionTypeT *
+d_symbol_to_x_FunctionTypeT(struct symbol *symbol,
+			    struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
+			    int depth);
+
+struct vmi1__SymbolsOrSymbolRefs *
+d_symbol_array_list_to_x_SymbolsOrSymbolRefs(struct array_list *list,
+					     struct vmi1__DebugFileOptsT *opts,
+					     GHashTable *reftab,int depth);
+
+struct vmi1__SymbolOrSymbolRef *
+d_symbol_to_x_SymbolOrSymbolRef(struct symbol *s,
+				struct vmi1__DebugFileOptsT *opts,
+				GHashTable *reftab,int depth);
 
 #endif /* __DEBUGINFO_XML_H__ */

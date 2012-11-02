@@ -8,33 +8,52 @@
 //gsoap vmi1 service method-style: document
 //gsoap vmi1 service method-encoding: literal
 
-union vmi1__symbolChoice {
-    struct _vmi1__variable*              variable                       1;	///< Required element.
-    struct _vmi1__function*              function                       1;	///< Required element.
-    struct _vmi1__label*                 label                          1;	///< Required element.
-    struct _vmi1__voidType*              voidType                       1;	///< Required element.
-    struct _vmi1__baseType*              baseType                       1;	///< Required element.
-    struct _vmi1__pointerType*           pointerType                    1;	///< Required element.
-    struct _vmi1__typedefType*           typedefType                    1;	///< Required element.
-    struct _vmi1__constType*             constType                      1;	///< Required element.
-    struct _vmi1__volatileType*          volatileType                   1;	///< Required element.
-    struct _vmi1__arrayType*             arrayType                      1;	///< Required element.
-    struct _vmi1__enumType*              enumType                       1;	///< Required element.
-    struct _vmi1__structType*            structType                     1;	///< Required element.
-    struct _vmi1__unionType*             unionType                      1;	///< Required element.
-    struct _vmi1__functionType*          functionType                   1;	///< Required element.
+struct vmi1__DebugFile {
+    struct vmi1__DebugFileT *vmi1__debugFile;
+};
+struct vmi1__DebugFileList {
+    $int __size_debugFileList;
+    struct vmi1__DebugFile **debugFileList;
+};
+struct vmi1__Symbol {
+    struct vmi1__SymbolOrSymbolRef *symbol;
+};
+struct vmi1__NestedSymbol {
+    struct vmi1__SymbolsOrSymbolRefs *vmi1__nestedSymbol;
 };
 
-struct vmi1__lookupSymbolResponse {
-    $int __sc;
-    union vmi1__symbolChoice sc;
-};
+//gsoap vmi1 service method-documentation: returns an array of loaded DebugFiles
+int vmi1__ListDebugFiles(void *_,
+			 struct vmi1__DebugFileList *r);
+int vmi1__LoadDebugFile(char *filename,
+			struct vmi1__DebugFile *r);
+int vmi1__LoadDebugFileForBinary(char *filename,
+				 struct vmi1__DebugFile *r);
+
+int vmi1__LookupSymbolSimple(char *filename,char *name,
+			     struct vmi1__DebugFileOptsT *opts,
+			     struct vmi1__Symbol *r);
+int vmi1__LookupSymbol(char *filename,char *name,
+		       struct vmi1__DebugFileOptsT *opts,
+		       struct vmi1__NestedSymbol *r);
+int vmi1__LookupAddrSimple(char *filename,vmi1__ADDR addr,
+			   struct vmi1__DebugFileOptsT *opts,
+			   struct vmi1__Symbol *r);
+int vmi1__LookupAddr(char *filename,vmi1__ADDR addr,
+		     struct vmi1__DebugFileOptsT *opts,
+		     struct vmi1__NestedSymbol *r);
+int vmi1__LookupAllSymbols(char *filename,
+			   struct vmi1__DebugFileOptsT *opts,
+			   struct vmi1__NestedSymbol *r);
 
 /*
-struct vmi1__lookupSymbolResponse {
-    struct _vmi1__symbol *result;
-};
-*/
+int vmi1__LookupAddrsByLine(debugfile,line_no)
+int vmi1__LookupSymbolByLine(debugfile,line_no) -> Symbol and Addr
 
-int vmi1__lookupSymbol(char *debugfile,char *name,char *filter,char *flags,
-		       struct vmi1__lookupSymbolResponse *r);
+int vmi1__ListSourceCodeFiles(debugfile)
+int vmi1__ListPublicSymbols(debugfile)
+int vmi1__ListGlobalSymbols(debugfile)
+int vmi1__ListGlobalTypes(debugfile)
+int vmi1__ListSharedTypes(debugfile)
+int vmi1__ListElfSymbols(debugfile)
+*/

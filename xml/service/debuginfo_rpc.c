@@ -17,12 +17,48 @@
  */
 
 #include "debuginfo_xml.h"
+#include <glib.h>
 
-int vmi1__lookupSymbol(struct soap *soap,
-		       char *filename,char *name,char *filter,char *flags,
-		       struct vmi1__lookupSymbolResponse *r) {
+/*
+ * Overall note about how we handle multi-ref data: gsoap would handle
+ * this if it we didn't have this middle layer of translation between
+ * our native data structs/unions and the "nice" ones for the XML
+ * server; so we have to do an additional layer to help gsoap handle
+ * multi-ref data.  Each time we encode one of our data structs that has
+ * a unique memory location, we store it in a per-invocation hashtable
+ * mapping it to its gsoap C data struct.  Then each time we encode one
+ * of our data structs, we check the hashtable quick and simply return
+ * the already-encoded version.
+ */
+
+int vmi1__ListDebugFiles(struct soap *soap,
+			 void *_,
+			 struct vmi1__DebugFileList *r) {
+    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+}
+
+int vmi1__LoadDebugFile(struct soap *soap,
+			char *filename,
+			struct vmi1__DebugFile *r) {
+    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+}
+
+int vmi1__LoadDebugFileForBinary(struct soap *soap,
+				 char *filename,
+				 struct vmi1__DebugFile *r) {
+    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+}
+
+int vmi1__LookupSymbolSimple(struct soap *soap,
+			     char *filename,char *name,
+			     struct vmi1__DebugFileOptsT *opts,
+			     struct vmi1__Symbol *r) {
     struct debugfile *debugfile;
     struct lsymbol *lsymbol;
+    GHashTable *reftab;
+
+    if (!opts)
+	opts = &defDebugFileOpts;
 
     if (filename == NULL || name == NULL
 	|| strcmp(filename,"") == 0 || strcmp(name,"") == 0) {
@@ -47,9 +83,88 @@ int vmi1__lookupSymbol(struct soap *soap,
 	return soap_receiver_fault(soap,"Could not find symbol!",
 				   "Could not find symbol!");
 
-    d_symbol_to_x_symbolchoice(lsymbol->symbol,&r->sc,&r->__sc);
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    r->symbol = d_symbol_to_x_SymbolOrSymbolRef(lsymbol->symbol,opts,reftab,0);
+    g_hash_table_destroy(reftab);
 
     lsymbol_release(lsymbol);
 
     return SOAP_OK;
+}
+
+
+int vmi1__LookupSymbol(struct soap *soap,
+		       char *filename,char *name,
+		       struct vmi1__DebugFileOptsT *opts,
+		       struct vmi1__NestedSymbol *r) {
+    struct debugfile *debugfile;
+    struct lsymbol *lsymbol;
+    GHashTable *reftab;
+    char errbuf[64];
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (filename == NULL || name == NULL
+	|| strcmp(filename,"") == 0 || strcmp(name,"") == 0) {
+	return soap_receiver_fault(soap,"Bad debugfile or name!",
+				   "Bad debugfile or name!");
+    }
+
+    debugfile = debugfile_filename_create(filename,DEBUGFILE_TYPE_MAIN);
+    if (!debugfile) 
+	return soap_receiver_fault(soap,"Could not create debugfile!",
+				   "Could not create debugfile!");
+
+    /* Load the DWARF symbols. */
+    if (debugfile_load(debugfile,NULL)) {
+	return soap_receiver_fault(soap,"Could not load debugfile!",
+				   "Could not load debugfile!");
+    }
+
+    lsymbol = debugfile_lookup_sym(debugfile,name,NULL,NULL,SYMBOL_TYPE_NONE);
+
+    if (!lsymbol)
+	return soap_receiver_fault(soap,"Could not find symbol!",
+				   "Could not find symbol!");
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    r->vmi1__nestedSymbol = \
+	d_symbol_array_list_to_x_SymbolsOrSymbolRefs(lsymbol->chain,
+						     opts,reftab,0);
+    if (r->vmi1__nestedSymbol) 
+	vwarn("%d %d %d %p %p\n",g_hash_table_size(reftab),
+	      r->vmi1__nestedSymbol->__size_SymbolsOrSymbolRefs_,
+	      r->vmi1__nestedSymbol->__sizesymbolRef,
+	      r->vmi1__nestedSymbol->__union_SymbolsOrSymbolRefs_,
+	      r->vmi1__nestedSymbol->symbolRef);
+    else
+	vwarn("%d\n",g_hash_table_size(reftab));
+
+    g_hash_table_destroy(reftab);
+
+    lsymbol_release(lsymbol);
+
+    return SOAP_OK;
+}
+
+int vmi1__LookupAddrSimple(struct soap *soap,
+			   char *filename,vmi1__ADDR addr,
+			   struct vmi1__DebugFileOptsT *opts,
+			   struct vmi1__Symbol *r) {
+    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+}
+
+int vmi1__LookupAddr(struct soap *soap,
+		     char *filename,vmi1__ADDR addr,
+		     struct vmi1__DebugFileOptsT *opts,
+		     struct vmi1__NestedSymbol *r) {
+    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+}
+
+int vmi1__LookupAllSymbols(struct soap *soap,
+			   char *filename,
+			   struct vmi1__DebugFileOptsT *opts,
+			   struct vmi1__NestedSymbol *r) {
+    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }

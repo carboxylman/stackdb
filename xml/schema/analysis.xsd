@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  
+  Copyright (c) 2012 The University of Utah
+  
+  This program is free software; you can redistribute it and/or
+  modify it under the terms of the GNU General Public License as
+  published by the Free Software Foundation; either version 2 of
+  the License, or (at your option) any later version.
+  
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+  
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified" targetNamespace="http://anathema.flux.utah.edu/schema/vmi/1" xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
+  <xs:include schemaLocation="target.xsd"/>
+  <!-- start = Analysis -->
+  <xs:element name="param">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:name"/>
+        <xs:element minOccurs="0" ref="vmi1:longName"/>
+        <xs:element ref="vmi1:description"/>
+        <xs:element minOccurs="0" ref="vmi1:defaultValue"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="name" type="xs:string"/>
+  <xs:element name="longName" type="xs:string"/>
+  <xs:element name="description" type="xs:string"/>
+  <xs:element name="defaultValue" type="xs:string"/>
+  <xs:element name="outValue">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:choice>
+          <xs:element ref="vmi1:name"/>
+          <xs:element ref="vmi1:longName"/>
+        </xs:choice>
+        <xs:element ref="vmi1:value"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="value" type="xs:string"/>
+  <xs:element name="keyValue">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:key"/>
+        <xs:element ref="vmi1:value"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="key" type="xs:string"/>
+  <xs:element name="analysis">
+    <xs:complexType>
+      <xs:all>
+        <xs:element ref="vmi1:description"/>
+        <xs:element ref="vmi1:author"/>
+        <xs:element ref="vmi1:authorContactEmail"/>
+        <xs:element ref="vmi1:requiresWriteMode"/>
+        <xs:element ref="vmi1:requiresControlMode"/>
+        <xs:element ref="vmi1:reportsAnnotations"/>
+        <xs:element ref="vmi1:reportsEvents"/>
+        <xs:element ref="vmi1:reportsMarkers"/>
+        <xs:element ref="vmi1:reportsIntermediateResults"/>
+        <xs:element ref="vmi1:reportsFinalResults"/>
+        <xs:element ref="vmi1:annotationTypes"/>
+        <xs:element ref="vmi1:inputParams"/>
+        <xs:element ref="vmi1:outputParams"/>
+      </xs:all>
+      <xs:attribute name="name" use="required"/>
+      <xs:attribute name="id" use="required" type="xs:ID"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="author" type="xs:string"/>
+  <xs:element name="authorContactEmail" type="xs:string"/>
+  <xs:element name="requiresWriteMode" type="xs:boolean"/>
+  <xs:element name="requiresControlMode" type="xs:boolean"/>
+  <xs:element name="reportsAnnotations" type="xs:boolean"/>
+  <xs:element name="reportsEvents" type="xs:boolean"/>
+  <xs:element name="reportsMarkers" type="xs:boolean"/>
+  <xs:element name="reportsIntermediateResults" type="xs:boolean"/>
+  <xs:element name="reportsFinalResults" type="xs:boolean"/>
+  <xs:element name="annotationTypes">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:annotationType"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="inputParams">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:param"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="outputParams">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:param"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="annotationType">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element maxOccurs="unbounded" ref="vmi1:annotationField"/>
+      </xs:sequence>
+      <xs:attribute name="name" use="required"/>
+      <xs:attribute name="id" use="required" type="xs:ID"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="annotationField">
+    <xs:complexType>
+      <xs:attribute name="name" use="required"/>
+      <xs:attribute name="type" use="required"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="annotation">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element maxOccurs="unbounded" ref="vmi1:keyValue"/>
+      </xs:sequence>
+      <xs:attribute name="event" use="required" type="xs:boolean"/>
+      <xs:attribute name="marker" use="required" type="xs:boolean"/>
+      <xs:attribute name="discovery" use="required" type="xs:boolean"/>
+      <xs:attribute name="annotationTypeRef" use="required" type="xs:IDREF"/>
+      <xs:attribute name="ns" use="required" type="xs:unsignedLong"/>
+      <xs:attribute name="tsc" use="required" type="xs:unsignedLong"/>
+      <xs:attribute name="counter" use="required" type="xs:unsignedLong"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="analysisResult">
+    <xs:complexType>
+      <xs:all>
+        <xs:element ref="vmi1:value"/>
+        <xs:element ref="vmi1:msg"/>
+        <xs:element ref="vmi1:outputValues"/>
+      </xs:all>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="msg" type="xs:string"/>
+  <xs:element name="outputValues">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:outValue"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="analysisStatus">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="running"/>
+        <xs:enumeration value="paused"/>
+        <xs:enumeration value="done"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="analysisInstance">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:analysisStatus"/>
+        <xs:element ref="vmi1:target"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

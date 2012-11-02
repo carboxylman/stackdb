@@ -79,7 +79,7 @@ all:	$(PROGRAMS) all-subdirs
 include $(TOP_SRCDIR)/Makerules
 
 %.gs.h: $(SRCDIR)/../schema/%.xsd
-	$(WSDL2H) -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y -o $@
+	$(WSDL2H) -g -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y -o $@
 	sed -i 's/gsoapopt cw/gsoapopt c/' $@
 
 %.wsdl: %.gs.h $(SRCDIR)/%.h.extra.h

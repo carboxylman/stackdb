@@ -23,12 +23,3 @@ REG = xsd:string
 REGNO = xsd:short
 OFFSET = xsd:long
 SMOFFSET = xsd:int
-
-Range = element range {
-    attribute start { ADDR },
-    attribute end { ADDR }
-}
-
-Ranges = element ranges {
-    Range*
-}

@@ -22,6 +22,11 @@ else
   TRANGCMD = trang
 endif
 
+#
+# gSOAP does not handle substitutionGroups very well, and we "need" them.
+#
+TRANGCMD += -o disable-abstract-elements
+
 SCHEMAS = debuginfo.xsd target.xsd analysis.xsd
 
 all: $(SCHEMAS)

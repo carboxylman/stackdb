@@ -21,8 +21,36 @@
 
 #include "debuginfo_soapH.h"
 
-int vmi1__lookupSymbol(struct soap *soap,
-		       char *filename,char *name,char *filter,char *flags,
-		       struct vmi1__lookupSymbolResponse *r);
+int vmi1__ListDebugFiles(struct soap *soap,
+			 void *_,
+			 struct vmi1__DebugFileList *r);
+int vmi1__LoadDebugFile(struct soap *soap,
+			char *filename,
+			struct vmi1__DebugFile *r);
+int vmi1__LoadDebugFileForBinary(struct soap*,
+				 char *filename,
+				 struct vmi1__DebugFile *r);
+
+int vmi1__LookupSymbolSimple(struct soap *soap,
+			     char *filename,char *name,
+			     struct vmi1__DebugFileOptsT *opts,
+			     struct vmi1__Symbol *r);
+
+int vmi1__LookupSymbol(struct soap *soap,
+		       char *filename,char *name,
+		       struct vmi1__DebugFileOptsT *opts,
+		       struct vmi1__NestedSymbol *r);
+int vmi1__LookupAddrSimple(struct soap *soap,
+			   char *filename,vmi1__ADDR addr,
+			   struct vmi1__DebugFileOptsT *opts,
+			   struct vmi1__Symbol *r);
+int vmi1__LookupAddr(struct soap *soap,
+		     char *filename,vmi1__ADDR addr,
+		     struct vmi1__DebugFileOptsT *opts,
+		     struct vmi1__NestedSymbol *r);
+int vmi1__LookupAllSymbols(struct soap *soap,
+			   char *filename,
+			   struct vmi1__DebugFileOptsT *opts,
+			   struct vmi1__NestedSymbol *r);
 
 #endif /* __DEBUGINFO_RPC_H__ */

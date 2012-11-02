@@ -1,257 +1,345 @@
+#
+# Copyright (c) 2012 The University of Utah
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation; either version 2 of
+# the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+#
 
 default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
 include "common.rnc"
 
-SymtabRef = element symtabRef { xsd:IDREF }
+SymtabRef = xsd:IDREF
+SymbolRef = xsd:IDREF
 
-ParentSymtabRef = element parentSymtabRef { xsd:IDREF }
+#
+# Basically, the rule is that any vmi1 elements/types you need to
+# reference in WSDL *must* be expressed as named complexTypes in the
+# converted RNC produced by trang.  If this does not happen, the WSDL
+# produced by gsoap will reference complexTypes that do not exist.  You
+# can get into this situation a few different ways via trang's
+# conversion of RNC (the situation being that trang will produce lots
+# of elements (that are referenced later) with anonymous complexTypes).
+# gsoap doesn't like this, even when you feed it those XSDs; it
+# converts those anonymous types to named complexTypes.  Then, when it
+# uses those type refs in WSDL messages, they aren't valid in the trang
+# XSD schemas.
+#
+# So you need to avoid the situations that make trang produce anonymous
+# complexTypes for the the types that get used in the WSDL directly.
+# For debuginfo, that basically means the following patterns:
+#
+# SymbolOrSymbolRef, SymbolsOrSymbolRefs, SymbolsOrSymbolRefsOpt,
+# SymtabOrSymtabRef, SymtabsOrSymtabRefs, SymtabsOrSymtabRefsOpt,
+# DebugFile ...
+#
+# You avoid this situation by 1) avoiding attribute-only elements (these
+# become attributeGroups in trang XSD, and gsoap doesn't handle groups
+# nearly the same way that trang does; it seems to read XSDs with
+# them and convert the groups to complexType-related stuff); and 2) if
+# you need to reuse an element's type in a SOAP msg, provide a pattern
+# group for just the element's *contents* without the 'element {' '}'
+# bits around it.  If you put the element bits in, trang will generate
+# an element that is ref'd elsewhere, that has an inline anonymous
+# complexType... then when gsoap tries to reference that type in the
+# WSDL, it cannot be found.
+#
+# This situation is going to force us to eventually either 1) write both
+# our own RNC and WSDL files (so that the type/element refs are the
+# same); 2) describe our data structs not in XML, but in gsoap's C-like
+# header format (painful, but uniform); 3) use our own XSD, but don't
+# strip gsoap's version of it that it inlines in the WSDL file out.
+# This means we get schema control, BUT that anybody who pulls our WSDL
+# doesn't really use our XSD files!  On the other hand, they are
+# available for use outside of WSDL/SOAP/gsoap.  Maybe that is enough.
+#
 
-SymbolRef = element symbolRef { xsd:IDREF }
+SymbolOrSymbolRef = 
+    ((element variable { VariableT } | element function { FunctionT }
+      | element label { LabelT } | element voidType { VoidTypeT } 
+      | element baseType { BaseTypeT } 
+      | element pointerType { PointerTypeT }
+      | element typedefType { TypedefTypeT } 
+      | element constType { ConstTypeT }
+      | element volatileType { VolatileTypeT } 
+      | element arrayType { ArrayTypeT } 
+      | element enumType { EnumTypeT } 
+      | element structType { StructTypeT }
+      | element unionType { UnionTypeT } 
+      | element functionType { FunctionTypeT }) 
+     | element symbolRef { SymbolRef })
 
-DebugInfoFile = element debuginfoMeta {
+SymbolsOrSymbolRefs = 
+    ((element variable { VariableT } | element function { FunctionT }
+      | element label { LabelT } | element voidType { VoidTypeT } 
+      | element baseType { BaseTypeT } 
+      | element pointerType { PointerTypeT }
+      | element typedefType { TypedefTypeT } 
+      | element constType { ConstTypeT }
+      | element volatileType { VolatileTypeT } 
+      | element arrayType { ArrayTypeT } 
+      | element enumType { EnumTypeT } 
+      | element structType { StructTypeT }
+      | element unionType { UnionTypeT } 
+      | element functionType { FunctionTypeT })+ 
+     | element symbolRef { SymbolRef }+)
+
+SymbolsOrSymbolRefsOpt = 
+    ((element variable { VariableT } | element function { FunctionT }
+      | element label { LabelT } | element voidType { VoidTypeT } 
+      | element baseType { BaseTypeT } 
+      | element pointerType { PointerTypeT }
+      | element typedefType { TypedefTypeT } 
+      | element constType { ConstTypeT }
+      | element volatileType { VolatileTypeT } 
+      | element arrayType { ArrayTypeT } 
+      | element enumType { EnumTypeT } 
+      | element structType { StructTypeT }
+      | element unionType { UnionTypeT } 
+      | element functionType { FunctionTypeT })* 
+     | element symbolRef { SymbolRef }*)
+
+NestedSymbolT = SymbolsOrSymbolRefs
+
+NestedSymbol = element nestedSymbol { NestedSymbolT }
+
+#
+# The following two patterns cause trang to spit xs:groups instead of 
+# complex types, so we can't use them with gsoap, and must inline them.
+#
+#SymtabOrSymtabRef = 
+#    (element symtab { SymtabT } | element symtabRef { SymtabRef })
+#SymtabsOrSymtabRefs = (element symtab { SymtabT }+ 
+#                       | element symtabRef { SymtabRef }+)
+#
+# ... but this pattern causes a complex type, so it's safe!
+#
+SymtabsOrSymtabRefsOpt = (element symtab { SymtabT }* 
+                          | element symtabRef { SymtabRef }*)
+
+DebugFileT = 
     element filename { text } &
     element compilationDir { text } &
     element producer { text } &
     element language { text } &
 
     element sourceFileTab {
-        element entry {
+        element sourceFile {
             element filename { text },
-	    SymtabRef
+	    (element symtab { SymtabT } | element symtabRef { SymtabRef })
+#SymtabOrSymtabRef
         }*
     } &
 
-    element globaltab {
-        element entry {
-            element name { text },
-	    SymbolRef
-        }*
+    element globalSymbols {
+         SymbolsOrSymbolRefs
     }
-}
 
-Symtab = element symtab {
+DebugFile = element debugFile { DebugFileT }
+
+DebugFileOptsT = 
+    element symbolRefDepth { xsd:int },
+    element symtabRefDepth { xsd:int }
+
+DebugOpts = element debugFileOpts { DebugFileOptsT }
+
+RangesT = 
+    element range { 
+        element start { ADDR },
+        element end { ADDR }
+    }*
+
+Ranges = element ranges { RangesT }
+
+SymtabT = 
     attribute id { xsd:ID },
     attribute name { text }?,
-    Ranges,
-    ParentSymtabRef,
-    element subtabs {
-        SymtabRef*
+    element ranges { RangesT },
+    element parent {
+        (element symtab { SymtabT } | element symtabRef { SymtabRef })
+        #SymtabOrSymtabRef
+    }?,
+    element subTabs {
+        SymtabsOrSymtabRefsOpt
     },
-    element tab {
-        element entry {
-            element name { text },
-	    element symbolRef { xsd:IDREF }
-        }*
+    element symbols {
+        SymbolsOrSymbolRefsOpt
     },
-    element anontab {
-	element symbolRef { xsd:IDREF }*
+    element anonSymbols {
+        SymbolsOrSymbolRefsOpt
     }
-}
 
-Addr = element addr { attribute addr { ADDR } }
-Reg = element reg { attribute reg { REGNO } }
-RegAddr = element regAddr { attribute reg { REGNO } }
+Symtab = element symtab { SymtabT }
+
+Addr = element addr { ADDR }
+Reg = element reg { REGNO }
+RegAddr = element regAddr { REGNO }
 RegOffset = element regOffset {
-    attribute reg { REGNO } &
-    attribute offset { OFFSET }
+    element reg { REGNO },
+    element offset { OFFSET }
 }
-MemberOffset = element memberOffset { attribute offset { OFFSET } }
-FbRegOffset = element fbRegOffset { attribute offset { OFFSET } }
-ListLoc = element listLoc { element rangeLoc { Range, Location }+ }
+MemberOffset = element memberOffset { OFFSET }
+FbRegOffset = element fbRegOffset { OFFSET }
+ListLoc = element rangeLocList {
+    element rangeLoc {
+        attribute start { ADDR },
+	attribute end { ADDR },
+        element location { LocationT }
+    }+
+}
 RuntimeLoc = element runtimeLoc { text }
 
-Location = element location {
+LocationT =
     attribute type { "none" | "addr" | "reg" | "regAddr" | "regOffset" 
                      | "memberOffset"| "fbRegOffset" | "list" | "runtime" }, 
     ( Addr | Reg | RegAddr | RegOffset | MemberOffset | FbRegOffset 
       | ListLoc | RuntimeLoc )?
-}
 
-Variable = element variable {
+SymbolHeaderT = 
     attribute id { xsd:ID },
     attribute name { text }?,
-    attribute source { "dwarf" | "elf" },
+    element meta {
+        attribute source { "dwarf" | "elf" },
+        attribute external { xsd:boolean },
+        attribute declaration { xsd:boolean },
+        attribute prototyped { xsd:boolean }
+    }
 
-    attribute external { xsd:boolean },
-    attribute declaration { xsd:boolean },
-    attribute prototyped { xsd:boolean },
+InstanceSymbolT = 
+    attribute inlineInstance { xsd:boolean },
+    attribute declaredInline { xsd:boolean },
+    attribute inlined { xsd:boolean },
+
+    element size { xsd:unsignedInt }?,
+    element addr { ADDR }?,
+
+    element type {
+        SymbolOrSymbolRef
+    }?,
+    element constValue { text }?,
+    element abstractOrigin {
+        SymbolOrSymbolRef
+    }?,
+    element inlineInstances {
+        SymbolsOrSymbolRefs
+    }?
+
+VariableT = 
+    SymbolHeaderT,
 
     attribute param { xsd:boolean },
     attribute member { xsd:boolean },
     attribute enumval { xsd:boolean },
 
-    attribute size { xsd:unsignedInt },
-    attribute addr { ADDR },
-
-    attribute typeRef { xsd:IDREF },
-
     attribute bitOffset { xsd:unsignedShort },
     attribute bitSize { xsd:unsignedShort },
-    attribute constValue { text }?,
 
-    attribute inlineInstance { xsd:boolean },
-    attribute declaredInline { xsd:boolean },
-    attribute inlined { xsd:boolean },
+    InstanceSymbolT,
+    element location { LocationT }?
 
-    element abstractOriginRef { xsd:IDREF }?,
-    element inlineInstances { SymbolRef* }?,
+FunctionT = 
+    SymbolHeaderT,
 
-    Location
-}
+    attribute argCount { xsd:unsignedShort },
+    attribute hasUnspecifiedParams { xsd:boolean },
+    attribute entryPC { ADDR },
+    attribute prologueEnd { ADDR },
+    attribute epilogueBegin { ADDR },
 
-Function = element function {
-    attribute id { xsd:ID } &
-    attribute name { text }? &
-    attribute source { "dwarf" | "elf" } &
+    InstanceSymbolT,
 
-    attribute external { xsd:boolean } &
-    attribute declaration { xsd:boolean } &
-    attribute prototyped { xsd:boolean } &
+    element arguments {
+        SymbolsOrSymbolRefsOpt
+    },
+    element ranges { RangesT },
+    (element symtab { SymtabT } | element symtabRef { SymtabRef })
+    #SymtabOrSymtabRef
 
-    attribute param { xsd:boolean } &
-    attribute member { xsd:boolean } &
-    attribute enumval { xsd:boolean } &
+LabelT = 
+    SymbolHeaderT,
+    InstanceSymbolT
 
-    attribute size { xsd:unsignedInt } &
-    attribute addr { ADDR } &
+VoidTypeT =
+    SymbolHeaderT
 
-    attribute typeRef { xsd:IDREF } &
-
-    attribute inlineInstance { xsd:boolean } &
-    attribute declaredInline { xsd:boolean } &
-    attribute inlined { xsd:boolean } &
-
-    attribute argCount { xsd:unsignedShort } &
-    attribute hasUnspecifiedParams { xsd:boolean } &
-    attribute entryPC { ADDR } &
-    attribute prologueEnd { ADDR } &
-    attribute epilogueBegin { ADDR } &
-    attribute constValue { text }? &
-
-    (element abstractOriginRef { xsd:IDREF }?,
-     element inlineInstances { SymbolRef* }?,
-
-     element arguments { SymbolRef* },
-     Ranges,
-     SymtabRef)
-}
-
-Label = element label {
-    attribute id { xsd:ID } &
-    attribute name { text }? &
-    attribute source { "dwarf" | "elf" } &
-
-    attribute external { xsd:boolean } &
-    attribute declaration { xsd:boolean } &
-    attribute prototyped { xsd:boolean } &
-
-    attribute param { xsd:boolean } &
-    attribute member { xsd:boolean } &
-    attribute enumval { xsd:boolean } &
-    attribute inlineInstance { xsd:boolean } &
-
-    attribute size { xsd:unsignedInt } &
-    attribute addr { ADDR } &
-
-    attribute typeRef { xsd:IDREF } &
-
-    attribute declaredInline { xsd:boolean } &
-    attribute inlined { xsd:boolean } &
-
-    element abstractOriginRef { xsd:IDREF }? &
-    element inlineInstances { SymbolRef* }?
-}
-
-TypeContents = 
-    attribute id { xsd:ID } &
-    attribute name { text }? &
-    attribute source { "dwarf" | "elf" } &
-
-    attribute external { xsd:boolean } &
-    attribute declaration { xsd:boolean } &
-    attribute prototyped { xsd:boolean }
-
-VoidType = element voidType { empty }
-
-BaseType = element baseType {
-    TypeContents &
-    attribute bitSize { xsd:unsignedShort }? &
+BaseTypeT = 
+    SymbolHeaderT,
     attribute encoding { 
         "address" | "boolean" | "complexFloat" | "float" | "signed"
 	| "signedChar" | "unsigned" | "unsignedChar" | "imaginaryFloat"
 	| "packedDecimal" | "numericString" | "edited" | "signedFixed"
 	| "unsignedFixed"
+    },
+    attribute bitSize { xsd:unsignedShort }?
+
+PointerTypeT = 
+    SymbolHeaderT,
+    element type {
+        SymbolOrSymbolRef
     }
-}
 
-PointerType = element pointerType {
-    TypeContents &
-    attribute typeRef { xsd:IDREF }
-}
+TypedefTypeT = 
+    SymbolHeaderT,
+    element type {
+        SymbolOrSymbolRef
+    }
 
-TypedefType = element typedefType {
-    TypeContents &
-    attribute typeRef { xsd:IDREF }
-}
+ConstTypeT = 
+    SymbolHeaderT,
+    element type {
+        SymbolOrSymbolRef
+    }
 
-ConstType = element constType {
-    TypeContents &
-    attribute typeRef { xsd:IDREF }
-}
+VolatileTypeT = 
+    SymbolHeaderT,
+    element type {
+        SymbolOrSymbolRef
+    }
 
-VolatileType = element volatileType {
-    TypeContents &
-    attribute typeRef { xsd:IDREF }
-}
-
-ArrayType = element arrayType {
-    TypeContents &
-    attribute subrangeCount { xsd:int } &
+ArrayTypeT = 
+    SymbolHeaderT,
+    attribute subrangeCount { xsd:int },
     element subranges {
-        element subrange { xsd:int }+
+        element subrange { xsd:int }*
     }
-}
 
-EnumType = element enumType {
-    TypeContents &
-    attribute memberCount { xsd:int } &
-    element members { SymbolRef+ }
-}
+EnumTypeT = 
+    SymbolHeaderT,
+    attribute memberCount { xsd:int },
+    element members {
+        SymbolsOrSymbolRefs
+    }
 
-StructType = element structType {
-    TypeContents &
-    attribute memberCount { xsd:int } &
-    element members { SymbolRef+ }
-}
+StructTypeT = 
+    SymbolHeaderT,
+    attribute memberCount { xsd:int },
+    element members {
+        SymbolsOrSymbolRefs
+    }
 
-UnionType = element unionType {
-    TypeContents &
-    attribute memberCount { xsd:int } &
-    element members { SymbolRef+ }
-}
+UnionTypeT = 
+    SymbolHeaderT,
+    attribute memberCount { xsd:int },
+    element members {
+        SymbolsOrSymbolRefs
+    }
 
-FunctionType = element functionType {
-    TypeContents &
-    attribute argCount { xsd:unsignedShort } &
-    attribute hasUnspecifiedParams { xsd:boolean} &
-    element arguments { SymbolRef* }
-}
+FunctionTypeT = 
+    SymbolHeaderT,
+    attribute argCount { xsd:unsignedShort },
+    attribute hasUnspecifiedParams { xsd:boolean},
+    element arguments {
+        SymbolsOrSymbolRefsOpt
+    }
 
-Type = element type {
-    VoidType | BaseType | PointerType | TypedefType | ConstType 
-    | VolatileType | ArrayType | EnumType | StructType | UnionType 
-    | FunctionType
-}
-
-Symbol = element symbol {
-    Variable | Function | Label | VoidType | BaseType | PointerType 
-        | TypedefType | ConstType | VolatileType | ArrayType | EnumType 
-	| StructType | UnionType | FunctionType
-}
-
-NestedSymbol = element nestedSymbol {
-    (Variable | Function | Label | VoidType | BaseType | PointerType 
-        | TypedefType | ConstType | VolatileType | ArrayType | EnumType 
-	| StructType | UnionType | FunctionType)+
-}

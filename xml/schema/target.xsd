@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  
+  Copyright (c) 2011, 2012 The University of Utah
+  
+  This program is free software; you can redistribute it and/or
+  modify it under the terms of the GNU General Public License as
+  published by the Free Software Foundation; either version 2 of
+  the License, or (at your option) any later version.
+  
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+  
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified" targetNamespace="http://anathema.flux.utah.edu/schema/vmi/1" xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
+  <xs:include schemaLocation="debuginfo.xsd"/>
+  <xs:simpleType name="threadId">
+    <xs:restriction base="xs:int"/>
+  </xs:simpleType>
+  <xs:simpleType name="sessionId">
+    <xs:restriction base="xs:int"/>
+  </xs:simpleType>
+  <xs:complexType name="TargetThreadStatus">
+    <xs:sequence>
+      <xs:element ref="vmi1:threadStatus"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="threadStatus">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="unknown"/>
+        <xs:enumeration value="running"/>
+        <xs:enumeration value="stopped"/>
+        <xs:enumeration value="sleeping"/>
+        <xs:enumeration value="zombie"/>
+        <xs:enumeration value="dead"/>
+        <xs:enumeration value="blockedio"/>
+        <xs:enumeration value="paging"/>
+        <xs:enumeration value="paused"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="targetStatus">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="unknown"/>
+        <xs:enumeration value="running"/>
+        <xs:enumeration value="paused"/>
+        <xs:enumeration value="dead"/>
+        <xs:enumeration value="stopped"/>
+        <xs:enumeration value="error"/>
+        <xs:enumeration value="done"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="thread">
+    <xs:complexType>
+      <xs:complexContent>
+        <xs:extension base="vmi1:TargetThreadStatus">
+          <xs:attribute name="tid" use="required" type="vmi1:threadId"/>
+        </xs:extension>
+      </xs:complexContent>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="target">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:targetStatus"/>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:thread"/>
+      </xs:sequence>
+      <xs:attribute name="name" use="required"/>
+      <xs:attribute name="id" use="required" type="xs:int"/>
+      <xs:attribute name="type" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:token">
+            <xs:enumeration value="ptrace"/>
+            <xs:enumeration value="xen"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+      <xs:attribute name="live" use="required" type="xs:boolean"/>
+      <xs:attribute name="writeable" use="required" type="xs:boolean"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="targetSpec">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:config"/>
+      </xs:sequence>
+      <xs:attribute name="type" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:token">
+            <xs:enumeration value="ptrace"/>
+            <xs:enumeration value="xen"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="config">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" ref="vmi1:threadBPMode"/>
+        <xs:choice>
+          <xs:element ref="vmi1:targetXenSpec"/>
+          <xs:element ref="vmi1:targetPtraceSpec"/>
+        </xs:choice>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="threadBPMode">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="strict"/>
+        <xs:enumeration value="semiStrict"/>
+        <xs:enumeration value="loose"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="targetXenSpec">
+    <xs:complexType>
+      <xs:choice>
+        <xs:element ref="vmi1:domain"/>
+        <xs:sequence>
+          <xs:element ref="vmi1:configFile"/>
+          <xs:element minOccurs="0" ref="vmi1:replayLogFile"/>
+        </xs:sequence>
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="domain" type="xs:string"/>
+  <xs:element name="configFile" type="xs:string"/>
+  <xs:element name="replayLogFile" type="xs:string"/>
+  <xs:element name="targetPtraceSpec">
+    <xs:complexType>
+      <xs:choice>
+        <xs:element ref="vmi1:pid"/>
+        <xs:sequence>
+          <xs:element ref="vmi1:filename"/>
+          <xs:element name="arguments">
+            <xs:complexType>
+              <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:argument"/>
+              </xs:sequence>
+            </xs:complexType>
+          </xs:element>
+          <xs:element ref="vmi1:environment"/>
+          <xs:element minOccurs="0" ref="vmi1:stdoutFilename"/>
+          <xs:element minOccurs="0" ref="vmi1:stderrFilename"/>
+          <xs:element minOccurs="0" ref="vmi1:closeStdin"/>
+        </xs:sequence>
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="pid" type="xs:int"/>
+  <xs:element name="filename" type="xs:string"/>
+  <xs:element name="argument" type="xs:string"/>
+  <xs:element name="environment">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:envVar"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="envVar">
+    <xs:complexType>
+      <xs:attribute name="var" use="required"/>
+      <xs:attribute name="value" use="required"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="stdoutFilename" type="xs:string"/>
+  <xs:element name="stderrFilename" type="xs:string"/>
+  <xs:element name="closeStdin" type="xs:boolean"/>
+</xs:schema>
