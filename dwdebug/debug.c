@@ -30,6 +30,7 @@
 #include <inttypes.h>
 #include <stdarg.h>
 #include <glib.h>
+#include <dwarf.h>
 
 #include "log.h"
 #include "output.h"
@@ -1778,7 +1779,76 @@ void symtab_set_language(struct symtab *symtab,int language) {
     if (!SYMTAB_IS_CU(symtab))
 	return;
 
-    symtab->meta->language = language;
+    switch (language) {
+    case DW_LANG_C89:
+	symtab->meta->language = "C89";
+	break;
+    case DW_LANG_C:
+	symtab->meta->language = "C";
+	break;
+    case DW_LANG_Ada83:
+	symtab->meta->language = "Ada83";
+	break;
+    case DW_LANG_C_plus_plus:
+	symtab->meta->language = "C++";
+	break;
+    case DW_LANG_Cobol74:
+	symtab->meta->language = "Cobol74";
+	break;
+    case DW_LANG_Cobol85:
+	symtab->meta->language = "Cobol85";
+	break;
+    case DW_LANG_Fortran77:
+	symtab->meta->language = "Fortran77";
+	break;
+    case DW_LANG_Fortran90:
+	symtab->meta->language = "Fortran90";
+	break;
+    case DW_LANG_Pascal83:
+	symtab->meta->language = "Pascal83";
+	break;
+    case DW_LANG_Modula2:
+	symtab->meta->language = "Modula2";
+	break;
+    case DW_LANG_Java:
+	symtab->meta->language = "Java";
+	break;
+    case DW_LANG_C99:
+	symtab->meta->language = "C99";
+	break;
+    case DW_LANG_Ada95:
+	symtab->meta->language = "Ada95";
+	break;
+    case DW_LANG_Fortran95:
+	symtab->meta->language = "Fortran95";
+	break;
+    case DW_LANG_PL1:
+	symtab->meta->language = "PL/1";
+	break;
+    case DW_LANG_Objc:
+	symtab->meta->language = "ObjectiveC";
+	break;
+    case DW_LANG_ObjC_plus_plus:
+	symtab->meta->language = "ObjectiveC++";
+	break;
+    case DW_LANG_UPC:
+	symtab->meta->language = "UnifiedParallelC";
+	break;
+    case DW_LANG_D:
+	symtab->meta->language = "D";
+	break;
+    case DW_LANG_Python:
+	symtab->meta->language = "Python";
+	break;
+    case DW_LANG_Go:
+	symtab->meta->language = "Go";
+	break;
+    default:
+	symtab->meta->language = NULL;
+	break;
+    }
+
+    symtab->meta->lang_code = language;
 }
 
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
@@ -4171,8 +4241,8 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud) {
 	    fprintf(ud->stream,"compdirname=%s ",symtab->meta->compdirname);
 	if (symtab->meta->producer)
 	    fprintf(ud->stream,"producer=%s ",symtab->meta->producer);
-	if (symtab->meta->language)
-	    fprintf(ud->stream,"language=%d ",symtab->meta->language);
+	fprintf(ud->stream,"language=%s (%d) ",symtab->meta->language,
+		symtab->meta->lang_code);
     }
     range_dump(&symtab->range,&udn3);
     fprintf(ud->stream,")");

@@ -1179,7 +1179,8 @@ struct dwarf_cu_meta {
     GHashTable *pubnames;
 
     char *producer;
-    short int language;
+    char *language;
+    short int lang_code;
 
     /* Right now, this is only set for top-level CU symtabs. */
     load_type_t loadtag:LOAD_TYPE_BITS;
