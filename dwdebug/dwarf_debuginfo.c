@@ -676,8 +676,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
      */
     case DW_AT_byte_size:
 	if (num_set) {
-	    cbargs->symbol->size = num;
-	    cbargs->symbol->size_is_bytes = 1;
+	    if (cbargs->symbol->size_is_bits) {
+		vwarnopt(3,LOG_D_DWARFATTR,
+			 "[DIE %" PRIx64 "] attr %s: already saw bit_size;"
+			 " ignoring this!\n",
+			 cbargs->die_offset,dwarf_attr_string(attr));
+	    }
+	    else {
+		cbargs->symbol->size = num;
+		cbargs->symbol->size_is_bytes = 1;
+	    }
 	}
 	else {
 	    vwarnopt(3,LOG_D_DWARFATTR,
@@ -690,6 +698,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set) {
 	    cbargs->symbol->size = num;
 	    cbargs->symbol->size_is_bits = 1;
+	    cbargs->symbol->size_is_bytes = 0;
 
 	    if (SYMBOL_IS_VAR(cbargs->symbol)) 
 		cbargs->symbol->s.ii->d.v.bit_size = num;
