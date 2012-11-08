@@ -1354,6 +1354,10 @@ int main(int argc,char **argv) {
 	/* Now move through addrlist (we may add to it!) */
 	for (i = 0; i < array_list_len(addrlist); ++i) {
 	    char *rawaddr = (char *)array_list_item(addrlist,i);
+
+	    if (!rawaddr)
+		continue;
+
 	    char *endptr = NULL;
 	    ADDR paddr = (ADDR)strtoull(rawaddr,&endptr,16);
 
