@@ -2737,10 +2737,6 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
     case DATATYPE_CONST:
     case DATATYPE_VOL:
 	return 0;
-    case DATATYPE_BITFIELD:
-	if (ti1->d.t.bit_size != ti2->d.t.bit_size)
-	    return 1;
-	return 0;
     default:
 	return -1;
     }
@@ -4779,9 +4775,6 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream," (encoding=%d)",symbol->s.ti->d.t.encoding);
 	}
 	break;
-    case DATATYPE_BITFIELD:
-	fprintf(ud->stream,"bitfield %s",symbol->name);
-	break;
     default:
 	vwarn("unknown datatype_code %d!\n",symbol->datatype_code);
     }
@@ -4933,7 +4926,6 @@ char *DATATYPE_STRINGS[] = {
     "base",
     "const",
     "volatile",
-    "bitfield"
 };
 
 char *LOCTYPE_STRINGS[] = {

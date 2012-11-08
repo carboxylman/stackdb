@@ -254,7 +254,6 @@ typedef enum {
     DATATYPE_BASE         = 8,
     DATATYPE_CONST        = 9,
     DATATYPE_VOL          = 10,
-    DATATYPE_BITFIELD     = 11,
     __DATATYPE_MAX,
 } datatype_code_t;
 extern char *DATATYPE_STRINGS[];
@@ -289,9 +288,6 @@ extern char *DATATYPE_STRINGS[];
 			          && (sym)->datatype_code == DATATYPE_CONST)
 #define SYMBOL_IST_VOL(sym)      (SYMBOL_IS_TYPE(sym) \
 			          && (sym)->datatype_code == DATATYPE_VOL)
-#define SYMBOL_IST_BITFIELD(sym) (SYMBOL_IS_TYPE(sym) \
-				  && (sym)->datatype_code \
-				                == DATATYPE_BITFIELD)
 /* convenient! */
 #define SYMBOL_IST_STUN(sym)     (SYMBOL_IS_TYPE(sym) \
 	                          && ((sym)->datatype_code \
