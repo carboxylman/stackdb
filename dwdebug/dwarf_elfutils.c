@@ -311,6 +311,8 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			vdebug(3,LOG_D_LOC,
 			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
+
+			candidate_symbol->s.ii->d.f.epilogue_known = 1;
 		    }
 		    else {
 			vdebug(5,LOG_D_LOC,
@@ -334,6 +336,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			/* Unset auto detected flag; we have one for
 			   sure. */
 			candidate_symbol->s.ii->d.f.prologue_guessed = 0;
+			candidate_symbol->s.ii->d.f.prologue_known = 1;
 
 			/* Unset symbol so we don't try to use "auto"
 			   detection. */

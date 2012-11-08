@@ -1429,7 +1429,9 @@ struct symbol_instance {
 		       /* If the fb loc is a list or single loc. */
 		    fbisloclist:1,
 		    fbissingleloc:1,
-		    prologue_guessed:1;
+	   	    prologue_guessed:1,
+                    prologue_known:1,
+		    epilogue_known:1;
 		       /* The frame base location.  Can be a list or
 		        * single location.
 			*/
