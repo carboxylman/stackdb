@@ -714,13 +714,18 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (block_set) {
 	    if (SYMBOL_IS_VAR(cbargs->symbol)
 		&& cbargs->symbol->ismember) {
-		if (get_static_ops(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
-				   cbargs->meta->addrsize,cbargs->meta->offsize,
-				   block.length,block.data,attr,
-				   &cbargs->symbol->s.ii->l)) {
-		    verror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
-			   cbargs->die_offset,num,dwarf_attr_string(attr),
-			   dwarf_form_string(form));
+		if (SYMBOL_IS_FULL(cbargs->symbol)) {
+		    if (get_static_ops(cbargs->dwflmod,cbargs->dbg,
+				       cbargs->meta->version,
+				       cbargs->meta->addrsize,
+				       cbargs->meta->offsize,
+				       block.length,block.data,attr,
+				       &cbargs->symbol->s.ii->d.v.l)) {
+			verror("[DIE %" PRIx64 "] failed get_static_ops at"
+			       " attrval %" PRIx64 " for attr %s // form %s\n",
+			       cbargs->die_offset,num,dwarf_attr_string(attr),
+			       dwarf_form_string(form));
+		    }
 		}
 	    }
 	    else {
@@ -734,17 +739,22 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			     || form == DW_FORM_data8)) {
 	    if (SYMBOL_IS_VAR(cbargs->symbol)
 		&& cbargs->symbol->ismember) {
-		cbargs->symbol->s.ii->l.loctype = LOCTYPE_LOCLIST;
+		if (SYMBOL_IS_FULL(cbargs->symbol)) {
+		    cbargs->symbol->s.ii->d.v.l.loctype = LOCTYPE_LOCLIST;
 
-		cbargs->symbol->s.ii->l.l.loclist = loc_list_create(0);
+		    cbargs->symbol->s.ii->d.v.l.l.loclist = loc_list_create(0);
 
-		if (get_loclist(cbargs->dwflmod,cbargs->dbg,cbargs->meta->version,
-				cbargs->meta->addrsize,cbargs->meta->offsize,
-				attr,num,cbargs->debugfile,cbargs->cu_base,
-				cbargs->symbol->s.ii->l.l.loclist)) {
-		    verror("[DIE %" PRIx64 "] failed get_static_ops at attrval %" PRIx64 " for attr %s // form %s\n",
-			   cbargs->die_offset,num,dwarf_attr_string(attr),
-			   dwarf_form_string(form));
+		    if (get_loclist(cbargs->dwflmod,cbargs->dbg,
+				    cbargs->meta->version,
+				    cbargs->meta->addrsize,
+				    cbargs->meta->offsize,
+				    attr,num,cbargs->debugfile,cbargs->cu_base,
+				    cbargs->symbol->s.ii->d.v.l.l.loclist)) {
+			verror("[DIE %" PRIx64 "] failed get_static_ops at"
+			       " attrval %" PRIx64 " for attr %s // form %s\n",
+			       cbargs->die_offset,num,dwarf_attr_string(attr),
+			       dwarf_form_string(form));
+		    }
 		}
 	    }
 	    else {
@@ -763,9 +773,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		|| (form != DW_FORM_data4 
 		    && form != DW_FORM_data8))) {
 	    /* it's a constant */
-	    if (cbargs->symbol) {
-		cbargs->symbol->s.ii->l.loctype = LOCTYPE_MEMBER_OFFSET;
-		cbargs->symbol->s.ii->l.l.member_offset = (int32_t)num;
+	    if (SYMBOL_IS_VAR(cbargs->symbol)) {
+		if (SYMBOL_IS_FULL(cbargs->symbol)) {
+		    cbargs->symbol->s.ii->d.v.l.loctype = LOCTYPE_MEMBER_OFFSET;
+		    cbargs->symbol->s.ii->d.v.l.l.member_offset = (int32_t)num;
+		}
 	    }
 	    else {
 		vwarnopt(3,LOG_D_DWARFATTR,
@@ -895,9 +907,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			    || form == DW_FORM_data8)) {
 		struct loc_list *loclist;
 		if (SYMBOL_IS_FULL(cbargs->symbol)) {
-		    cbargs->symbol->s.ii->l.loctype = LOCTYPE_LOCLIST;
-		    cbargs->symbol->s.ii->l.l.loclist = loc_list_create(0);
-		    loclist = cbargs->symbol->s.ii->l.l.loclist;
+		    cbargs->symbol->s.ii->d.v.l.loctype = LOCTYPE_LOCLIST;
+		    cbargs->symbol->s.ii->d.v.l.l.loclist = loc_list_create(0);
+		    loclist = cbargs->symbol->s.ii->d.v.l.l.loclist;
 		}
 		else {
 		    loclist = loc_list_create(0);
@@ -914,8 +926,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			   symbol_get_name_orig(cbargs->symbol));
 		    loc_list_free(loclist);
 		    if (SYMBOL_IS_FULL(cbargs->symbol)) {
-			cbargs->symbol->s.ii->l.loctype = LOCTYPE_UNKNOWN;
-			cbargs->symbol->s.ii->l.l.loclist = NULL;
+			cbargs->symbol->s.ii->d.v.l.loctype = LOCTYPE_UNKNOWN;
+			cbargs->symbol->s.ii->d.v.l.l.loclist = NULL;
 		    }
 		}
 
@@ -937,14 +949,15 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    else if (block_set) {
 		struct location *loc;
 		if (SYMBOL_IS_FULL(cbargs->symbol)) {
-		    loc = &cbargs->symbol->s.ii->l;
+		    loc = &cbargs->symbol->s.ii->d.v.l;
 		}
 		else {
 		    loc = (struct location *)malloc(sizeof(struct location));
 		    memset(loc,0,sizeof(*loc));
 		}
 		get_static_ops(cbargs->dwflmod,cbargs->dbg,
-			       cbargs->meta->version,cbargs->meta->addrsize,cbargs->meta->offsize,
+			       cbargs->meta->version,cbargs->meta->addrsize,
+			       cbargs->meta->offsize,
 			       block.length,block.data,attr,
 			       loc);
 
@@ -2798,13 +2811,12 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    //	   sizeof(struct location));
 
 		    vdebug(4,LOG_D_SYMBOL,
-			   "copied datatype %s//%s (0x%"PRIxSMOFFSET"),"
-			   " loctype=%s for inline instance %s//%s"
+			   "copied datatype %s//%s (0x%"PRIxSMOFFSET")"
+			   " for inline instance %s//%s"
 			   " (0x%"PRIxSMOFFSET"\n",
 			   rsymbol->datatype ? DATATYPE(rsymbol->datatype->datatype_code) : NULL,
 			   rsymbol->datatype ? symbol_get_name(rsymbol->datatype) : NULL,
 			   rsymbol->datatype ? rsymbol->datatype->ref : 0,
-			   LOCTYPE(rsymbol->s.ii->l.loctype),
 			   SYMBOL_TYPE(rsymbol->type),symbol_get_name(rsymbol),
 			   rsymbol->ref);
 		}
@@ -3409,14 +3421,14 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	}
     }
 
-    if (SYMBOL_IS_FULL_INSTANCE(symbol)
+    if (SYMBOL_IS_FULL_VAR(symbol)
 	&& SYMBOL_IS_FULL_TYPE(parentsymbol)
 	&& parentsymbol->datatype_code == DATATYPE_UNION) {
 	/*
 	 * Set a member offset of 0 for each union's member.
 	 */
-	symbol->s.ii->l.loctype = LOCTYPE_MEMBER_OFFSET;
-	symbol->s.ii->l.l.member_offset = 0;
+	symbol->s.ii->d.v.l.loctype = LOCTYPE_MEMBER_OFFSET;
+	symbol->s.ii->d.v.l.l.member_offset = 0;
     }
 
     /*

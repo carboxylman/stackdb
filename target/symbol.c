@@ -259,7 +259,7 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	    if (likely(i))
 		fprintf(stream,", ");
 	    if (type->datatype_code == DATATYPE_STRUCT 
-		&& member->s.ii->l.loctype != LOCTYPE_MEMBER_OFFSET) {
+		&& member->s.ii->d.v.l.loctype != LOCTYPE_MEMBER_OFFSET) {
 		vwarn("type %s member %s did not have a MEMBER_OFFSET location, skipping!\n",type->name,member->name);
 		if (member->name)
 		    fprintf(stream,".%s = ???",member->name);
@@ -272,8 +272,8 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 		symbol_rvalue_print(stream,member,buf,bufsiz,flags,target);
 	    else
 		symbol_rvalue_print(stream,member,
-				    buf + member->s.ii->l.l.member_offset,
-				    bufsiz - member->s.ii->l.l.member_offset,
+				    buf + member->s.ii->d.v.l.l.member_offset,
+				    bufsiz - member->s.ii->d.v.l.l.member_offset,
 				    flags,target);
 	    ++i;
 	}

@@ -504,7 +504,8 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
      * immediately to handling it; there is no need to handle anything
      * prior to it.
      */
-    else if (LOCATION_IN_REG(&symbol->s.ii->l)) {
+    else if (SYMBOL_IS_FULL_VAR(symbol) 
+	     && LOCATION_IN_REG(&symbol->s.ii->d.v.l)) {
 	i = alen - 1;
     }
     else {
@@ -600,7 +601,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	 * the info in the symbol.
 	 */
 	else {
-	    rc = location_resolve(target,tid,current_region,&symbol->s.ii->l,
+	    rc = location_resolve(target,tid,current_region,&symbol->s.ii->d.v.l,
 				  tchain,&reg,&retval,&current_range);
 	    if (rc == 2) {
 		in_reg = 1;
@@ -997,10 +998,10 @@ struct value *target_load_value_member(struct target *target,
     ls = symbol_lookup_member(tdatatype,member,delim);
     if (!ls)
 	goto errout;
-    if (ls->symbol->s.ii->l.loctype != LOCTYPE_MEMBER_OFFSET) {
+    if (ls->symbol->s.ii->d.v.l.loctype != LOCTYPE_MEMBER_OFFSET) {
 	verror("loctype for symbol %s is %s, not MEMBER_OFFSET!\n",
 	       symbol_get_name(ls->symbol),
-	       LOCTYPE(ls->symbol->s.ii->l.loctype));
+	       LOCTYPE(ls->symbol->s.ii->d.v.l.loctype));
 	errno = EINVAL;
 	goto errout;
     }
@@ -1110,7 +1111,7 @@ struct value *target_load_value_member(struct target *target,
 	value->buf = rbuf;
 	value->bufsiz = datatype->size;
 
-	value_set_reg(value,symbol->s.ii->l.l.reg);
+	value_set_reg(value,symbol->s.ii->d.v.l.l.reg);
     }
     else {
 	verror("computed location not register nor address (%d) -- BUG!\n",rc);
@@ -1173,7 +1174,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
      * only has one inline instance, try to autoload the inlined instance!!
      */
     if (SYMBOL_IS_FULL_VAR(symbol)
-	&& symbol->s.ii->l.loctype == LOCTYPE_UNKNOWN
+	&& symbol->s.ii->d.v.l.loctype == LOCTYPE_UNKNOWN
 	&& array_list_len(symbol->s.ii->inline_instances) == 1) {
 	ii_lsymbol = lsymbol_create_from_symbol((struct symbol *) \
 						array_list_item(symbol->s.ii->inline_instances,0));
@@ -1281,7 +1282,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	value->buf = rbuf;
 	value->bufsiz = datatype->size;
 
-	value_set_reg(value,symbol->s.ii->l.l.reg);
+	value_set_reg(value,symbol->s.ii->d.v.l.l.reg);
     }
     else {
 	verror("computed location not register nor address (%d) -- BUG!\n",rc);
@@ -1395,7 +1396,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	    continue;
 	}
 	else if (symbol->ismember) {
-	    offset = location_resolve_offset(&symbol->s.ii->l,
+	    offset = location_resolve_offset(&symbol->s.ii->d.v.l,
 					     tchain,NULL,NULL);
 	    if (errno) {
 		verror("could not resolve offset for member %s\n",
@@ -1409,7 +1410,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		   symbol_get_name(symbol),offset,retval);
 	}
 	else {
-	    rc = location_resolve(target,tid,current_region,&symbol->s.ii->l,
+	    rc = location_resolve(target,tid,current_region,&symbol->s.ii->d.v.l,
 				  tchain,&reg,&retval,&current_range);
 	    if (rc == 2) {
 		/* Try to load some value from a register; might or

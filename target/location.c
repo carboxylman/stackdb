@@ -450,7 +450,7 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 		array_list_item_set(tmp_symbol_chain,i,
 				    array_list_item(symbol_chain,i));
 	}
-	rc = location_resolve(target,tid,region,&top_enclosing_symbol->s.ii->l,
+	rc = location_resolve(target,tid,region,&top_enclosing_symbol->s.ii->d.v.l,
 			      tmp_symbol_chain,NULL,&top_addr,NULL);
 	if (tmp_symbol_chain)
 	    array_list_free(tmp_symbol_chain);
@@ -556,7 +556,7 @@ int location_resolve_lsymbol_base(struct target *target,tid_t tid,
 	}
     }
     else if (SYMBOL_IS_FULL_VAR(symbol)) {
-	if (location_resolve(target,tid,region,&lsymbol->symbol->s.ii->l,
+	if (location_resolve(target,tid,region,&lsymbol->symbol->s.ii->d.v.l,
 			     lsymbol->chain,NULL,&obj_addr,range_saveptr) < 0) {
 	    verror("could not resolve location for %s: %s!\n",
 		   lsymbol->symbol->name,strerror(errno));

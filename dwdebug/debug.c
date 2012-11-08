@@ -3262,10 +3262,10 @@ unsigned int symbol_type_full_bytesize(struct symbol *type) {
 }
 
 int symbol_get_location_offset(struct symbol *symbol,OFFSET *offset_saveptr) {
-    if (SYMBOL_IS_FULL_INSTANCE(symbol)
-	     && symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
+    if (SYMBOL_IS_FULL_VAR(symbol)
+	     && symbol->s.ii->d.v.l.loctype == LOCTYPE_MEMBER_OFFSET) {
 	if (offset_saveptr)
-	    *offset_saveptr = symbol->s.ii->l.l.member_offset;
+	    *offset_saveptr = symbol->s.ii->d.v.l.l.member_offset;
 	return 0;
     }
     return -1;
@@ -3278,9 +3278,9 @@ int symbol_get_location_addr(struct symbol *symbol,ADDR *addr_saveptr) {
     if (symbol->has_base_addr) {
 	addr = symbol->base_addr;
     }
-    else if (SYMBOL_IS_FULL_INSTANCE(symbol)
-	     && symbol->s.ii->l.loctype == LOCTYPE_ADDR) {
-	addr = symbol->s.ii->l.l.addr;
+    else if (SYMBOL_IS_FULL_VAR(symbol)
+	     && symbol->s.ii->d.v.l.loctype == LOCTYPE_ADDR) {
+	addr = symbol->s.ii->d.v.l.l.addr;
     }
     else {
 	retval = -1;
@@ -3520,8 +3520,8 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     /*
      * Also have to free location data, potentially.
      */
-    if (SYMBOL_IS_FULL_INSTANCE(symbol))
-	location_internal_free(&symbol->s.ii->l);
+    if (SYMBOL_IS_FULL_VAR(symbol))
+	location_internal_free(&symbol->s.ii->d.v.l);
     
     if (symbol->name
 #ifdef DWDEBUG_USE_STRTAB
@@ -3868,8 +3868,8 @@ OFFSET location_resolve_offset(struct location *location,
 	}
 	else if (SYMBOL_IS_FULL_VAR(symbol)
 	    && symbol->ismember
-	    && symbol->s.ii->l.loctype == LOCTYPE_MEMBER_OFFSET) {
-	    totaloffset += symbol->s.ii->l.l.member_offset;
+	    && symbol->s.ii->d.v.l.loctype == LOCTYPE_MEMBER_OFFSET) {
+	    totaloffset += symbol->s.ii->d.v.l.l.member_offset;
 	    continue;
 	}
 	else if (SYMBOL_IS_VAR(symbol)
@@ -4425,17 +4425,21 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream,")");
     }
 
-    if (ud->detail && SYMBOL_IS_FULL_INSTANCE(symbol) 
-	&& symbol->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
-	fprintf(ud->stream," @@ ");
-	location_dump(&symbol->s.ii->l,&udn2);
+    if (ud->detail) {
+	if (SYMBOL_IS_FULL_VAR(symbol) 
+	    && symbol->s.ii->d.v.l.loctype != LOCTYPE_UNKNOWN) {
+	    fprintf(ud->stream," @@ ");
+	    location_dump(&symbol->s.ii->d.v.l,&udn2);
+	}
 
-	if (symbol->s.ii->constval)
+	if (SYMBOL_IS_FULL_INSTANCE(symbol) && symbol->s.ii->constval)
 	    fprintf(ud->stream," @@ CONST(%p)",symbol->s.ii->constval);
+
+	if (symbol->has_base_addr)
+	    fprintf(ud->stream," @@ 0x%"PRIxADDR,symbol->base_addr);
+
+	fprintf(ud->stream," (size=%d)",symbol->size);
     }
-    else if (ud->detail)
-	fprintf(ud->stream," @@ 0x%"PRIxADDR" (size=%d)",
-		symbol->base_addr,symbol->size);
 }
 
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
@@ -4610,9 +4614,9 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 			 && !member->datatype->name) {
 		    symbol_type_dump(member->datatype,ud);
 
-		    if (ud->detail && member->s.ii->l.loctype != LOCTYPE_UNKNOWN) {
+		    if (ud->detail && member->s.ii->d.v.l.loctype != LOCTYPE_UNKNOWN) {
 			fprintf(ud->stream," @@ ");
-			location_dump(&member->s.ii->l,ud);
+			location_dump(&member->s.ii->d.v.l,ud);
 
 			if (member->s.ii->constval)
 			    fprintf(ud->stream," @@ CONST(%p)",

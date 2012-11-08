@@ -1457,13 +1457,13 @@ struct symbol_instance {
 	    struct symbol *parent_symbol;
 	    uint16_t bit_offset;
 	    uint16_t bit_size;
+
+	    struct location l;
 	} v;
 	struct {
 	    struct range range;
 	} l;
     } d;
-
-    struct location l;
 };
 
 /*
