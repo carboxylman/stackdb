@@ -486,10 +486,10 @@ int symbol_is_inlined(struct symbol *symbol);
 int symbol_type_equal(struct symbol *t1,struct symbol *t2,
 		      GHashTable *updated_datatype_refs);
 int symbol_type_is_char(struct symbol *type);
-/*
- * For a SYMBOL_TYPE_TYPE symbol, return the type's byte size.
- */
-int symbol_type_bytesize(struct symbol *symbol);
+int symbol_is_bitsize(struct symbol *symbol);
+int symbol_is_bytesize(struct symbol *symbol);
+uint32_t symbol_bytesize(struct symbol *symbol);
+uint32_t symbol_bitsize(struct symbol *symbol);
 unsigned int symbol_type_array_bytesize(struct symbol *type);
 /* Return either type_array_bytesize or type_bytesize */
 unsigned int symbol_type_full_bytesize(struct symbol *type);
@@ -1315,6 +1315,8 @@ struct symbol {
 	isenumval:1,
 	isinlineinstance:1,
 	has_base_addr:1,
+	size_is_bytes:1,
+	size_is_bits:1,
 	guessed_size:1;
 
     /* Our refcnt. */
@@ -1340,6 +1342,9 @@ struct symbol {
     /*
      * If this is a type or var debug symbol, or an ELF symbol, it may
      * be nonzero.
+     *
+     * It is either a byte size or a bit size, according to the flags
+     * above.
      */
     uint32_t size;
 

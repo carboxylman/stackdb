@@ -637,9 +637,9 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && cbargs->parentsymbol->datatype_code == DATATYPE_ENUM
 	    && cbargs->parentsymbol->size > 0) {
 	    cbargs->symbol->s.ii->constval = \
-		malloc(cbargs->parentsymbol->size);
+		malloc(symbol_bytesize(cbargs->parentsymbol));
 	    memcpy(cbargs->symbol->s.ii->constval,&num,
-		   cbargs->parentsymbol->size);
+		   symbol_bytesize(cbargs->parentsymbol));
 	    cbargs->symbol->isenumval = 1;
 	}
 	else if (num_set && SYMBOL_IS_FULL_INSTANCE(cbargs->symbol)) {
@@ -675,8 +675,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
      * consts for C!
      */
     case DW_AT_byte_size:
-	if (num_set) 
+	if (num_set) {
 	    cbargs->symbol->size = num;
+	    cbargs->symbol->size_is_bytes = 1;
+	}
 	else {
 	    vwarnopt(3,LOG_D_DWARFATTR,
 		     "[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
@@ -685,8 +687,12 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
 	break;
     case DW_AT_bit_size:
-	if (num_set && SYMBOL_IS_VAR(cbargs->symbol)) {
-	    cbargs->symbol->s.ii->d.v.bit_size = num;
+	if (num_set) {
+	    cbargs->symbol->size = num;
+	    cbargs->symbol->size_is_bits = 1;
+
+	    if (SYMBOL_IS_VAR(cbargs->symbol)) 
+		cbargs->symbol->s.ii->d.v.bit_size = num;
 	}
 	else {
 	    vwarnopt(3,LOG_D_DWARFATTR,

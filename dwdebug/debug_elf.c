@@ -487,6 +487,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 		symbol->isexternal = 1;
 
 	    symbol->size = sym->st_size;
+	    symbol->size_is_bytes = 1;
 
 	    symbol->base_addr = (ADDR)sym->st_value;
 	    symbol->has_base_addr = 1;
@@ -613,6 +614,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 				       CLRANGE_START(gcrd),symbol);
 
 		    symbol->size = CLRANGE_START(gcrd) - start;
+		    symbol->size_is_bytes = 1;
 		    symbol->guessed_size = 1;
 		}
 		else {
@@ -636,6 +638,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 				       CLRANGE_START(gcrd),symbol);
 
 		    symbol->size = CLRANGE_START(gcrd) - start;
+		    symbol->size_is_bytes = 1;
 		    symbol->guessed_size = 1;
 		}
 	    }
