@@ -26,78 +26,90 @@
 extern struct vmi1__DebugFileOptsT defDebugFileOpts;
 
 struct vmi1__LocationT *
-d_location_to_x_LocationT(struct location *l,
+d_location_to_x_LocationT(struct soap *soap,struct location *l,
 			  struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			  int depth);
 struct vmi1__RangesT *
-d_range_to_x_RangesT(struct range *r,
+d_range_to_x_RangesT(struct soap *soap,struct range *r,
 		     struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 		     int depth);
 struct vmi1__VariableT *
-d_symbol_to_x_VariableT(struct symbol *s,
+d_symbol_to_x_VariableT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth);
 struct vmi1__FunctionT *
-d_symbol_to_x_FunctionT(struct symbol *symbol,
+d_symbol_to_x_FunctionT(struct soap *soap,struct symbol *symbol,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth);
 struct vmi1__LabelT *
-d_symbol_to_x_LabelT(struct symbol *symbol,
+d_symbol_to_x_LabelT(struct soap *soap,struct symbol *symbol,
 		     struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 		     int depth);
 struct vmi1__VoidTypeT *
-d_symbol_to_x_VoidTypeT(struct symbol *symbol,
+d_symbol_to_x_VoidTypeT(struct soap *soap,struct symbol *symbol,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth);
 struct vmi1__BaseTypeT *
-d_symbol_to_x_BaseTypeT(struct symbol *symbol,
+d_symbol_to_x_BaseTypeT(struct soap *soap,struct symbol *symbol,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth);
 struct vmi1__PointerTypeT *
-d_symbol_to_x_PointerTypeT(struct symbol *symbol,
+d_symbol_to_x_PointerTypeT(struct soap *soap,struct symbol *symbol,
 			   struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			   int depth);
 struct vmi1__TypedefTypeT *
-d_symbol_to_x_TypedefTypeT(struct symbol *symbol,
+d_symbol_to_x_TypedefTypeT(struct soap *soap,struct symbol *symbol,
 			   struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			   int depth);
 struct vmi1__ConstTypeT *
-d_symbol_to_x_ConstTypeT(struct symbol *symbol,
+d_symbol_to_x_ConstTypeT(struct soap *soap,struct symbol *symbol,
 			 struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			 int depth);
 struct vmi1__VolatileTypeT *
-d_symbol_to_x_VolatileTypeT(struct symbol *symbol,
+d_symbol_to_x_VolatileTypeT(struct soap *soap,struct symbol *symbol,
 			    struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			   int depth);
 struct vmi1__ArrayTypeT *
-d_symbol_to_x_ArrayTypeT(struct symbol *symbol,
+d_symbol_to_x_ArrayTypeT(struct soap *soap,struct symbol *symbol,
 			 struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			 int depth);
 struct vmi1__EnumTypeT *
-d_symbol_to_x_EnumTypeT(struct symbol *symbol,
+d_symbol_to_x_EnumTypeT(struct soap *soap,struct symbol *symbol,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth);
 struct vmi1__StructTypeT *
-d_symbol_to_x_StructTypeT(struct symbol *symbol,
+d_symbol_to_x_StructTypeT(struct soap *soap,struct symbol *symbol,
 			  struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			  int depth);
 struct vmi1__UnionTypeT *
-d_symbol_to_x_UnionTypeT(struct symbol *symbol,
+d_symbol_to_x_UnionTypeT(struct soap *soap,struct symbol *symbol,
 			 struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			 int depth);
 struct vmi1__FunctionTypeT *
-d_symbol_to_x_FunctionTypeT(struct symbol *symbol,
+d_symbol_to_x_FunctionTypeT(struct soap *soap,struct symbol *symbol,
 			    struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			    int depth);
 
 struct vmi1__SymbolsOrSymbolRefs *
-d_symbol_array_list_to_x_SymbolsOrSymbolRefs(struct array_list *list,
+d_symbol_array_list_to_x_SymbolsOrSymbolRefs(struct soap *soap,
+					     struct array_list *list,
 					     struct vmi1__DebugFileOptsT *opts,
 					     GHashTable *reftab,int depth);
 
 struct vmi1__SymbolOrSymbolRef *
-d_symbol_to_x_SymbolOrSymbolRef(struct symbol *s,
+d_symbol_to_x_SymbolOrSymbolRef(struct soap *soap,struct symbol *s,
 				struct vmi1__DebugFileOptsT *opts,
 				GHashTable *reftab,int depth);
+
+struct vmi1__DebugFileT *
+d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,
+			    struct vmi1__DebugFileOptsT *opts,
+			    GHashTable *reftab,int depth);
+
+struct vmi1__SymtabT *
+d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *s,
+		      struct vmi1__DebugFileOptsT *opts,
+		      GHashTable *reftab,int depth,
+		      struct vmi1__SymtabT *ir);
 
 #endif /* __DEBUGINFO_XML_H__ */

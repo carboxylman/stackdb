@@ -17,7 +17,9 @@
  */
 
 #include "debuginfo_xml.h"
+#include <pthread.h>
 #include <glib.h>
+#include <errno.h>
 
 /*
  * Overall note about how we handle multi-ref data: gsoap would handle
@@ -31,20 +33,58 @@
  * the already-encoded version.
  */
 
+extern GHashTable *debugfiles;
+extern GHashTable *binaries;
+/*
+ * We don't check error codes for locking this mutex; don't need to
+ * since the only way it could fail (unless the mutex structure gets
+ * corrupted) is if the calling thread already owns it.
+ */
+extern pthread_mutex_t debugfile_mutex;
+
 int vmi1__ListDebugFiles(struct soap *soap,
-			 void *_,
-			 struct vmi1__DebugFileList *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+			 struct vmi1__DebugFileOptsT *opts,
+			 struct vmi1__DebugFiles *r) {
+    GHashTableIter iter;
+    gpointer key, value;
+    struct debugfile *df;
+    int i;
+    GHashTable *reftab;
+    
+    pthread_mutex_lock(&debugfile_mutex);
+
+    r->__size_debugFile = g_hash_table_size(debugfiles);
+    if (r->__size_debugFile == 0) {
+	r->debugFile = NULL;
+	pthread_mutex_unlock(&debugfile_mutex);
+	return SOAP_OK;
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    r->debugFile = soap_malloc(soap,r->__size_debugFile * sizeof(*r->debugFile));
+
+    g_hash_table_iter_init(&iter,debugfiles);
+    i = 0;
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df)) {
+	r->debugFile[i] = d_debugfile_to_x_DebugFileT(soap,df,opts,reftab,0);
+	++i;
+    }
+
+    g_hash_table_destroy(reftab);
+
+    pthread_mutex_unlock(&debugfile_mutex);
+    return SOAP_OK;
 }
 
 int vmi1__LoadDebugFile(struct soap *soap,
-			char *filename,
+			char *filename,struct vmi1__DebugFileOptsT *opts,
 			struct vmi1__DebugFile *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
 int vmi1__LoadDebugFileForBinary(struct soap *soap,
 				 char *filename,
+				 struct vmi1__DebugFileOptsT *opts,
 				 struct vmi1__DebugFile *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
@@ -84,7 +124,8 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
 				   "Could not find symbol!");
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-    r->symbol = d_symbol_to_x_SymbolOrSymbolRef(lsymbol->symbol,opts,reftab,0);
+    r->symbol = d_symbol_to_x_SymbolOrSymbolRef(soap,lsymbol->symbol,
+						opts,reftab,0);
     g_hash_table_destroy(reftab);
 
     lsymbol_release(lsymbol);
@@ -130,7 +171,7 @@ int vmi1__LookupSymbol(struct soap *soap,
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
     r->vmi1__nestedSymbol = \
-	d_symbol_array_list_to_x_SymbolsOrSymbolRefs(lsymbol->chain,
+	d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,lsymbol->chain,
 						     opts,reftab,0);
     if (r->vmi1__nestedSymbol) 
 	vwarn("%d %d %d %p %p\n",g_hash_table_size(reftab),

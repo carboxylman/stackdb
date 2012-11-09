@@ -22,13 +22,14 @@
 #include "debuginfo_soapH.h"
 
 int vmi1__ListDebugFiles(struct soap *soap,
-			 void *_,
-			 struct vmi1__DebugFileList *r);
+			 struct vmi1__DebugFileOptsT *opts,
+			 struct vmi1__DebugFiles *debugFile);
 int vmi1__LoadDebugFile(struct soap *soap,
-			char *filename,
-			struct vmi1__DebugFile *r);
+			char *filename,struct vmi1__DebugFileOptsT *opts,
+			struct vmi1__DebugFile *debugFile);
 int vmi1__LoadDebugFileForBinary(struct soap*,
 				 char *filename,
+				 struct vmi1__DebugFileOptsT *opts,
 				 struct vmi1__DebugFile *r);
 
 int vmi1__LookupSymbolSimple(struct soap *soap,

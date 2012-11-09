@@ -17,6 +17,7 @@
  */
 
 #include <pthread.h>
+#include <glib.h>
 
 #include "log.h"
 
@@ -25,6 +26,10 @@
 
 /* Pull in gsoap-generated namespace array. */
 #include "debuginfo.nsmap"
+
+GHashTable *debugfiles;
+GHashTable *binaries;
+pthread_mutex_t debugfile_mutex;
 
 void *do_request(void *arg) {
     struct soap *soap = (struct soap *)arg;
@@ -50,6 +55,11 @@ int main(int argc, char **argv) {
 
     soap_init(&soap);
 
+    pthread_mutex_init(&debugfile_mutex,NULL);
+
+    debugfiles = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    binaries = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
     /*
      * If no args, assume this is CGI coming in on stdin.
      */
@@ -72,7 +82,9 @@ int main(int argc, char **argv) {
     m = soap_bind(&soap,NULL,port,64);
 
     if (!soap_valid_socket(m)) {
-	verror("Could not bind to port %d!\n",port);
+	verror("Could not bind to port %d: ",port);
+	soap_print_fault(&soap,stderr);
+	verrorc("\n");
 	exit(1);
     }
 

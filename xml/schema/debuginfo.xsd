@@ -166,29 +166,37 @@
     ... but this pattern causes a complex type, so it's safe!
     
   -->
-  <xs:complexType name="SymtabsOrSymtabRefsOpt">
+  <xs:group name="SymtabsOrSymtabRefsOpt">
     <xs:choice>
       <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:symtab"/>
       <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:symtabRef"/>
     </xs:choice>
-  </xs:complexType>
+  </xs:group>
   <xs:element name="symtab" type="vmi1:SymtabT"/>
   <xs:element name="symtabRef" type="vmi1:SymtabRef"/>
   <xs:complexType name="DebugFileT">
-    <xs:choice minOccurs="0" maxOccurs="unbounded">
+    <xs:sequence>
       <xs:element ref="vmi1:filename"/>
-      <xs:element ref="vmi1:compilationDir"/>
-      <xs:element ref="vmi1:producer"/>
-      <xs:element ref="vmi1:language"/>
-      <xs:element ref="vmi1:sourceFileTab"/>
+      <xs:element ref="vmi1:name"/>
+      <xs:element ref="vmi1:version"/>
+      <xs:element name="type">
+        <xs:simpleType>
+          <xs:restriction base="xs:token">
+            <xs:enumeration value="kernel"/>
+            <xs:enumeration value="kmod"/>
+            <xs:enumeration value="static"/>
+            <xs:enumeration value="sharedlib"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element ref="vmi1:sourceFiles"/>
       <xs:element ref="vmi1:globalSymbols"/>
-    </xs:choice>
+    </xs:sequence>
   </xs:complexType>
   <xs:element name="filename" type="xs:string"/>
-  <xs:element name="compilationDir" type="xs:string"/>
-  <xs:element name="producer" type="xs:string"/>
-  <xs:element name="language" type="xs:string"/>
-  <xs:element name="sourceFileTab">
+  <xs:element name="name" type="xs:string"/>
+  <xs:element name="version" type="xs:string"/>
+  <xs:element name="sourceFiles">
     <xs:complexType>
       <xs:sequence>
         <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:sourceFile"/>
@@ -199,10 +207,7 @@
     <xs:complexType>
       <xs:sequence>
         <xs:element ref="vmi1:filename"/>
-        <xs:choice>
-          <xs:element ref="vmi1:symtab"/>
-          <xs:element ref="vmi1:symtabRef"/>
-        </xs:choice>
+        <xs:element ref="vmi1:symtab"/>
       </xs:sequence>
     </xs:complexType>
   </xs:element>
@@ -234,25 +239,37 @@
   <xs:element name="end" type="vmi1:ADDR"/>
   <xs:element name="ranges" type="vmi1:RangesT"/>
   <xs:complexType name="SymtabT">
-    <xs:sequence>
+    <xs:sequence minOccurs="0">
       <xs:element ref="vmi1:ranges"/>
+      <xs:element minOccurs="0" ref="vmi1:rootMeta"/>
       <xs:element minOccurs="0" ref="vmi1:parent"/>
-      <xs:element ref="vmi1:subTabs"/>
+      <xs:element ref="vmi1:symtabs"/>
       <xs:element ref="vmi1:symbols"/>
       <xs:element ref="vmi1:anonSymbols"/>
     </xs:sequence>
     <xs:attribute name="id" use="required" type="xs:ID"/>
     <xs:attribute name="name"/>
   </xs:complexType>
-  <xs:element name="parent">
+  <xs:element name="rootMeta">
     <xs:complexType>
-      <xs:choice>
-        <xs:element ref="vmi1:symtab"/>
-        <xs:element ref="vmi1:symtabRef"/>
-      </xs:choice>
+      <xs:sequence>
+        <xs:element ref="vmi1:compilationDir"/>
+        <xs:element ref="vmi1:producer"/>
+        <xs:element ref="vmi1:language"/>
+      </xs:sequence>
     </xs:complexType>
   </xs:element>
-  <xs:element name="subTabs" type="vmi1:SymtabsOrSymtabRefsOpt"/>
+  <xs:element name="compilationDir" type="xs:string"/>
+  <xs:element name="producer" type="xs:string"/>
+  <xs:element name="language" type="xs:string"/>
+  <xs:element name="parent" type="vmi1:SymtabT"/>
+  <xs:element name="symtabs">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:symtab"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
   <xs:element name="symbols" type="vmi1:SymbolsOrSymbolRefsOpt"/>
   <xs:element name="anonSymbols" type="vmi1:SymbolsOrSymbolRefsOpt"/>
   <xs:element name="addr" type="vmi1:ADDR"/>
@@ -316,12 +333,20 @@
   </xs:complexType>
   <xs:complexType name="SymbolHeaderT">
     <xs:sequence>
-      <xs:element ref="vmi1:meta"/>
+      <xs:element ref="vmi1:symbolMeta"/>
+      <xs:choice minOccurs="0">
+        <xs:element ref="vmi1:size"/>
+        <xs:sequence>
+          <xs:element ref="vmi1:bitSize"/>
+          <xs:element ref="vmi1:bitOffset"/>
+          <xs:element ref="vmi1:containingTypeByteSize"/>
+        </xs:sequence>
+      </xs:choice>
     </xs:sequence>
     <xs:attribute name="id" use="required" type="xs:ID"/>
     <xs:attribute name="name"/>
   </xs:complexType>
-  <xs:element name="meta">
+  <xs:element name="symbolMeta">
     <xs:complexType>
       <xs:attribute name="source" use="required">
         <xs:simpleType>
@@ -336,18 +361,19 @@
       <xs:attribute name="prototyped" use="required" type="xs:boolean"/>
     </xs:complexType>
   </xs:element>
+  <xs:element name="size" type="xs:unsignedInt"/>
+  <xs:element name="bitSize" type="xs:unsignedInt"/>
+  <xs:element name="bitOffset" type="xs:unsignedInt"/>
+  <xs:element name="containingTypeByteSize" type="xs:unsignedInt"/>
   <xs:group name="InstanceSymbolT">
     <xs:sequence>
-      <xs:element minOccurs="0" ref="vmi1:size"/>
       <xs:element minOccurs="0" ref="vmi1:addr"/>
-      <xs:element minOccurs="0" ref="vmi1:type"/>
+      <xs:element minOccurs="0" name="type" type="vmi1:SymbolOrSymbolRef"/>
       <xs:element minOccurs="0" ref="vmi1:constValue"/>
       <xs:element minOccurs="0" ref="vmi1:abstractOrigin"/>
       <xs:element minOccurs="0" ref="vmi1:inlineInstances"/>
     </xs:sequence>
   </xs:group>
-  <xs:element name="size" type="xs:unsignedInt"/>
-  <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
   <xs:element name="constValue" type="xs:string"/>
   <xs:element name="abstractOrigin" type="vmi1:SymbolOrSymbolRef"/>
   <xs:element name="inlineInstances" type="vmi1:SymbolsOrSymbolRefs"/>
@@ -366,8 +392,6 @@
         <xs:attribute name="param" use="required" type="xs:boolean"/>
         <xs:attribute name="member" use="required" type="xs:boolean"/>
         <xs:attribute name="enumval" use="required" type="xs:boolean"/>
-        <xs:attribute name="bitOffset" use="required" type="xs:unsignedShort"/>
-        <xs:attribute name="bitSize" use="required" type="xs:unsignedShort"/>
         <xs:attributeGroup ref="vmi1:InstanceSymbolT"/>
       </xs:extension>
     </xs:complexContent>
@@ -377,24 +401,23 @@
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
           <xs:group ref="vmi1:InstanceSymbolT"/>
+          <xs:element minOccurs="0" ref="vmi1:entryPC"/>
+          <xs:element minOccurs="0" ref="vmi1:prologueEnd"/>
+          <xs:element minOccurs="0" ref="vmi1:epilogueBegin"/>
           <xs:element ref="vmi1:arguments"/>
           <xs:element ref="vmi1:ranges"/>
-          <xs:choice>
-            <xs:element ref="vmi1:symtab"/>
-            <xs:element ref="vmi1:symtabRef"/>
-          </xs:choice>
+          <xs:element ref="vmi1:symtab"/>
         </xs:sequence>
         <xs:attribute name="argCount" use="required" type="xs:unsignedShort"/>
         <xs:attribute name="hasUnspecifiedParams" use="required" type="xs:boolean"/>
-        <xs:attribute name="entryPC" use="required" type="vmi1:ADDR"/>
-        <xs:attribute name="prologueEnd" use="required" type="vmi1:ADDR"/>
-        <xs:attribute name="epilogueBegin" use="required" type="vmi1:ADDR"/>
         <xs:attributeGroup ref="vmi1:InstanceSymbolT"/>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
+  <xs:element name="entryPC" type="vmi1:ADDR"/>
+  <xs:element name="prologueEnd" type="vmi1:ADDR"/>
+  <xs:element name="epilogueBegin" type="vmi1:ADDR"/>
   <xs:element name="arguments" type="vmi1:SymbolsOrSymbolRefsOpt"/>
-  <!-- SymtabOrSymtabRef -->
   <xs:complexType name="LabelT">
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
@@ -411,35 +434,38 @@
   <xs:complexType name="BaseTypeT">
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:attribute name="encoding" use="required">
-          <xs:simpleType>
-            <xs:restriction base="xs:token">
-              <xs:enumeration value="address"/>
-              <xs:enumeration value="boolean"/>
-              <xs:enumeration value="complexFloat"/>
-              <xs:enumeration value="float"/>
-              <xs:enumeration value="signed"/>
-              <xs:enumeration value="signedChar"/>
-              <xs:enumeration value="unsigned"/>
-              <xs:enumeration value="unsignedChar"/>
-              <xs:enumeration value="imaginaryFloat"/>
-              <xs:enumeration value="packedDecimal"/>
-              <xs:enumeration value="numericString"/>
-              <xs:enumeration value="edited"/>
-              <xs:enumeration value="signedFixed"/>
-              <xs:enumeration value="unsignedFixed"/>
-            </xs:restriction>
-          </xs:simpleType>
-        </xs:attribute>
-        <xs:attribute name="bitSize" type="xs:unsignedShort"/>
+        <xs:sequence>
+          <xs:element ref="vmi1:encoding"/>
+        </xs:sequence>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
+  <xs:element name="encoding">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="address"/>
+        <xs:enumeration value="boolean"/>
+        <xs:enumeration value="complexFloat"/>
+        <xs:enumeration value="float"/>
+        <xs:enumeration value="signed"/>
+        <xs:enumeration value="signedChar"/>
+        <xs:enumeration value="unsigned"/>
+        <xs:enumeration value="unsignedChar"/>
+        <xs:enumeration value="imaginaryFloat"/>
+        <xs:enumeration value="packedDecimal"/>
+        <xs:enumeration value="numericString"/>
+        <xs:enumeration value="edited"/>
+        <xs:enumeration value="signedFixed"/>
+        <xs:enumeration value="unsignedFixed"/>
+        <xs:enumeration value="unknown"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
   <xs:complexType name="PointerTypeT">
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
-          <xs:element ref="vmi1:type"/>
+          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
@@ -448,7 +474,7 @@
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
-          <xs:element ref="vmi1:type"/>
+          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
@@ -457,7 +483,7 @@
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
-          <xs:element ref="vmi1:type"/>
+          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
@@ -466,7 +492,7 @@
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
-          <xs:element ref="vmi1:type"/>
+          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
@@ -484,7 +510,7 @@
   <xs:element name="subranges">
     <xs:complexType>
       <xs:sequence>
-        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:subrange"/>
+        <xs:element maxOccurs="unbounded" ref="vmi1:subrange"/>
       </xs:sequence>
     </xs:complexType>
   </xs:element>
@@ -493,18 +519,17 @@
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
-          <xs:element ref="vmi1:members"/>
+          <xs:element name="members" type="vmi1:SymbolsOrSymbolRefs"/>
         </xs:sequence>
         <xs:attribute name="memberCount" use="required" type="xs:int"/>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
-  <xs:element name="members" type="vmi1:SymbolsOrSymbolRefs"/>
   <xs:complexType name="StructTypeT">
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
-          <xs:element ref="vmi1:members"/>
+          <xs:element name="members" type="vmi1:SymbolsOrSymbolRefsOpt"/>
         </xs:sequence>
         <xs:attribute name="memberCount" use="required" type="xs:int"/>
       </xs:extension>
@@ -514,7 +539,7 @@
     <xs:complexContent>
       <xs:extension base="vmi1:SymbolHeaderT">
         <xs:sequence>
-          <xs:element ref="vmi1:members"/>
+          <xs:element name="members" type="vmi1:SymbolsOrSymbolRefsOpt"/>
         </xs:sequence>
         <xs:attribute name="memberCount" use="required" type="xs:int"/>
       </xs:extension>

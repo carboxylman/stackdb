@@ -129,18 +129,17 @@ SymtabsOrSymtabRefsOpt = (element symtab { SymtabT }*
                           | element symtabRef { SymtabRef }*)
 
 DebugFileT = 
-    element filename { text } &
-    element compilationDir { text } &
-    element producer { text } &
-    element language { text } &
+    element filename { text },
+    element name { text },
+    element version { text },
+    element type { "kernel" | "kmod" | "static" | "sharedlib" },
 
-    element sourceFileTab {
+    element sourceFiles {
         element sourceFile {
             element filename { text },
-	    (element symtab { SymtabT } | element symtabRef { SymtabRef })
-#SymtabOrSymtabRef
+	    element symtab { SymtabT }
         }*
-    } &
+    },
 
     element globalSymbols {
          SymbolsOrSymbolRefs
@@ -165,20 +164,22 @@ Ranges = element ranges { RangesT }
 SymtabT = 
     attribute id { xsd:ID },
     attribute name { text }?,
-    element ranges { RangesT },
-    element parent {
-        (element symtab { SymtabT } | element symtabRef { SymtabRef })
-        #SymtabOrSymtabRef
-    }?,
-    element subTabs {
-        SymtabsOrSymtabRefsOpt
-    },
-    element symbols {
-        SymbolsOrSymbolRefsOpt
-    },
-    element anonSymbols {
-        SymbolsOrSymbolRefsOpt
-    }
+    (element ranges { RangesT },
+     element rootMeta {
+         element compilationDir { text },
+         element producer { text },
+         element language { text }
+     }?,
+     element parent { SymtabT }?,
+     element symtabs {
+         element symtab { SymtabT }*
+     },
+     element symbols {
+         SymbolsOrSymbolRefsOpt
+     },
+     element anonSymbols {
+         SymbolsOrSymbolRefsOpt
+     })?
 
 Symtab = element symtab { SymtabT }
 
@@ -209,19 +210,22 @@ LocationT =
 SymbolHeaderT = 
     attribute id { xsd:ID },
     attribute name { text }?,
-    element meta {
+    element symbolMeta {
         attribute source { "dwarf" | "elf" },
         attribute external { xsd:boolean },
         attribute declaration { xsd:boolean },
         attribute prototyped { xsd:boolean }
-    }
+    },
+    (element size { xsd:unsignedInt }
+     | (element bitSize { xsd:unsignedInt },
+        element bitOffset { xsd:unsignedInt },
+        element containingTypeByteSize { xsd:unsignedInt }))?
 
 InstanceSymbolT = 
     attribute inlineInstance { xsd:boolean },
     attribute declaredInline { xsd:boolean },
     attribute inlined { xsd:boolean },
 
-    element size { xsd:unsignedInt }?,
     element addr { ADDR }?,
 
     element type {
@@ -242,9 +246,6 @@ VariableT =
     attribute member { xsd:boolean },
     attribute enumval { xsd:boolean },
 
-    attribute bitOffset { xsd:unsignedShort },
-    attribute bitSize { xsd:unsignedShort },
-
     InstanceSymbolT,
     element location { LocationT }?
 
@@ -253,18 +254,18 @@ FunctionT =
 
     attribute argCount { xsd:unsignedShort },
     attribute hasUnspecifiedParams { xsd:boolean },
-    attribute entryPC { ADDR },
-    attribute prologueEnd { ADDR },
-    attribute epilogueBegin { ADDR },
 
     InstanceSymbolT,
+
+    element entryPC { ADDR }?,
+    element prologueEnd { ADDR }?,
+    element epilogueBegin { ADDR }?,
 
     element arguments {
         SymbolsOrSymbolRefsOpt
     },
     element ranges { RangesT },
-    (element symtab { SymtabT } | element symtabRef { SymtabRef })
-    #SymtabOrSymtabRef
+    element symtab { SymtabT }
 
 LabelT = 
     SymbolHeaderT,
@@ -275,13 +276,12 @@ VoidTypeT =
 
 BaseTypeT = 
     SymbolHeaderT,
-    attribute encoding { 
+    element encoding { 
         "address" | "boolean" | "complexFloat" | "float" | "signed"
 	| "signedChar" | "unsigned" | "unsignedChar" | "imaginaryFloat"
 	| "packedDecimal" | "numericString" | "edited" | "signedFixed"
-	| "unsignedFixed"
-    },
-    attribute bitSize { xsd:unsignedShort }?
+	| "unsignedFixed" | "unknown"
+    }
 
 PointerTypeT = 
     SymbolHeaderT,
@@ -311,7 +311,7 @@ ArrayTypeT =
     SymbolHeaderT,
     attribute subrangeCount { xsd:int },
     element subranges {
-        element subrange { xsd:int }*
+        element subrange { xsd:int }+
     }
 
 EnumTypeT = 
@@ -325,14 +325,14 @@ StructTypeT =
     SymbolHeaderT,
     attribute memberCount { xsd:int },
     element members {
-        SymbolsOrSymbolRefs
+        SymbolsOrSymbolRefsOpt
     }
 
 UnionTypeT = 
     SymbolHeaderT,
     attribute memberCount { xsd:int },
     element members {
-        SymbolsOrSymbolRefs
+        SymbolsOrSymbolRefsOpt
     }
 
 FunctionTypeT = 
