@@ -23,8 +23,6 @@
 #include "dwdebug.h"
 #include <glib.h>
 
-extern struct vmi1__DebugFileOptsT defDebugFileOpts;
-
 struct vmi1__LocationT *
 d_location_to_x_LocationT(struct soap *soap,struct location *l,
 			  struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,

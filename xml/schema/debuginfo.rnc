@@ -149,7 +149,8 @@ DebugFile = element debugFile { DebugFileT }
 
 DebugFileOptsT = 
     element symbolRefDepth { xsd:int },
-    element symtabRefDepth { xsd:int }
+    element symtabRefDepth { xsd:int },
+    element doMultiRef { xsd:boolean }
 
 DebugOpts = element debugFileOpts { DebugFileOptsT }
 
@@ -162,7 +163,7 @@ RangesT =
 Ranges = element ranges { RangesT }
 
 SymtabT = 
-    attribute id { xsd:ID },
+    attribute sid { xsd:ID },
     attribute name { text }?,
     (element ranges { RangesT },
      element rootMeta {
@@ -208,7 +209,7 @@ LocationT =
       | ListLoc | RuntimeLoc )?
 
 SymbolHeaderT = 
-    attribute id { xsd:ID },
+    attribute sid { xsd:ID },
     attribute name { text }?,
     element symbolMeta {
         attribute source { "dwarf" | "elf" },

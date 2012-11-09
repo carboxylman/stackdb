@@ -23,9 +23,10 @@
 #define __UUSCORE 1
 #endif
 
-struct vmi1__DebugFileOptsT defDebugFileOpts = {
+static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .symbolRefDepth = 1,
     .symtabRefDepth = 1,
+    .doMultiRef = 0,
 };
 
 void *_soap_calloc(struct soap *soap,size_t size) {
@@ -195,8 +196,8 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 									\
 	_rc = snprintf(_idbuf,_idblen,"%d",(s)->ref);			\
 	_rc = (_rc > _idblen) ? _idblen : (_rc + 1);			\
-	(r)->id = _soap_calloc(soap,_rc);				\
-	strncpy((r)->id,_idbuf,_rc);					\
+	(r)->sid = _soap_calloc(soap,_rc);				\
+	strncpy((r)->sid,_idbuf,_rc);					\
 	if (symbol_get_name(s)) {					\
 	    _name = symbol_get_name((s));				\
 	    _rc = strlen(_name) + 1;					\
@@ -359,7 +360,7 @@ d_symbol_to_x_FunctionT(struct soap *soap,struct symbol *s,
 	    }
 	    r->arguments = (struct vmi1__SymbolsOrSymbolRefsOpt *) \
 		d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-							     opts,reftab,depth);
+							     opts,reftab,depth+1);
 	    array_list_free(gslist);
 	}
 	else {
@@ -667,7 +668,7 @@ d_symbol_to_x_EnumTypeT(struct soap *soap,struct symbol *s,
 	    tmps = tmpi->d.v.member_symbol;
 	    array_list_append(gslist,tmps);
 	}
-	r->members = (struct vmi1__SymbolsOrSymbolRefsOpt *) \
+	r->members = (struct vmi1__SymbolsOrSymbolRefs *) \
 	    d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
 							 opts,reftab,depth+1);
 	array_list_free(gslist);
@@ -831,11 +832,28 @@ d_symbol_to_x_SymbolOrSymbolRef(struct soap *soap,struct symbol *s,
 	r->union_SymbolOrSymbolRef.symbolRef = _soap_calloc(soap,rc);
 	strncpy(r->union_SymbolOrSymbolRef.symbolRef,idbuf,rc);
 
+	vdebug(5,LOG_X_XML,
+	       "encoding %s(%"PRIiSMOFFSET") at (d=%d,%d/%d) as ref\n",
+	       symbol_get_name(s),s->ref,depth,
+	       opts->symbolRefDepth,opts->symtabRefDepth);
+
 	return r;
     }
 
-    if (reftab)
+    if (reftab) {
 	cached = g_hash_table_lookup(reftab,(gpointer)s);
+
+	vdebug(5,LOG_X_XML,
+	       "found %s(%"PRIiSMOFFSET") at (d=%d,%d/%d) in reftab; multiref\n",
+	       symbol_get_name(s),s->ref,depth,
+	       opts->symbolRefDepth,opts->symtabRefDepth);
+    }
+    else {
+	vdebug(5,LOG_X_XML,
+	       "encoding %s(%"PRIiSMOFFSET") at (d=%d,%d/%d) as full symbol\n",
+	       symbol_get_name(s),s->ref,depth,
+	       opts->symbolRefDepth,opts->symtabRefDepth);
+    }
 
     if (SYMBOL_IS_VAR(s)) {
 	if (cached)
@@ -1382,8 +1400,8 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
 
     rc = snprintf(idbuf,idblen,"%d",st->ref);
     rc = (rc > idblen) ? idblen : (rc + 1);
-    r->id = _soap_calloc(soap,rc);
-    strncpy(r->id,idbuf,rc);
+    r->sid = _soap_calloc(soap,rc);
+    strncpy(r->sid,idbuf,rc);
     SOAP_STRCPY(soap,r->name,st->name);
 
     /*

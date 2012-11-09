@@ -217,10 +217,12 @@
     <xs:sequence>
       <xs:element ref="vmi1:symbolRefDepth"/>
       <xs:element ref="vmi1:symtabRefDepth"/>
+      <xs:element ref="vmi1:doMultiRef"/>
     </xs:sequence>
   </xs:complexType>
   <xs:element name="symbolRefDepth" type="xs:int"/>
   <xs:element name="symtabRefDepth" type="xs:int"/>
+  <xs:element name="doMultiRef" type="xs:boolean"/>
   <xs:element name="debugFileOpts" type="vmi1:DebugFileOptsT"/>
   <xs:complexType name="RangesT">
     <xs:sequence>
@@ -247,7 +249,7 @@
       <xs:element ref="vmi1:symbols"/>
       <xs:element ref="vmi1:anonSymbols"/>
     </xs:sequence>
-    <xs:attribute name="id" use="required" type="xs:ID"/>
+    <xs:attribute name="sid" use="required" type="xs:ID"/>
     <xs:attribute name="name"/>
   </xs:complexType>
   <xs:element name="rootMeta">
@@ -343,7 +345,7 @@
         </xs:sequence>
       </xs:choice>
     </xs:sequence>
-    <xs:attribute name="id" use="required" type="xs:ID"/>
+    <xs:attribute name="sid" use="required" type="xs:ID"/>
     <xs:attribute name="name"/>
   </xs:complexType>
   <xs:element name="symbolMeta">

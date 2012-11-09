@@ -42,6 +42,12 @@ extern GHashTable *binaries;
  */
 extern pthread_mutex_t debugfile_mutex;
 
+static struct vmi1__DebugFileOptsT defDebugFileOpts = {
+    .symbolRefDepth = 1,
+    .symtabRefDepth = 1,
+    .doMultiRef = 0,
+};
+
 int vmi1__ListDebugFiles(struct soap *soap,
 			 struct vmi1__DebugFileOptsT *opts,
 			 struct vmi1__DebugFiles *r) {
@@ -50,7 +56,13 @@ int vmi1__ListDebugFiles(struct soap *soap,
     struct debugfile *df;
     int i;
     GHashTable *reftab;
-    
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
     pthread_mutex_lock(&debugfile_mutex);
 
     r->__size_debugFile = g_hash_table_size(debugfiles);
@@ -100,6 +112,9 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
     if (!opts)
 	opts = &defDebugFileOpts;
 
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
     if (filename == NULL || name == NULL
 	|| strcmp(filename,"") == 0 || strcmp(name,"") == 0) {
 	return soap_receiver_fault(soap,"Bad debugfile or name!",
@@ -145,6 +160,9 @@ int vmi1__LookupSymbol(struct soap *soap,
 
     if (!opts)
 	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
 
     if (filename == NULL || name == NULL
 	|| strcmp(filename,"") == 0 || strcmp(name,"") == 0) {
