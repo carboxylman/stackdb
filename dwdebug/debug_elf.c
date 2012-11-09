@@ -486,7 +486,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 		|| GELF_ST_BIND(sym->st_info) == STB_WEAK)
 		symbol->isexternal = 1;
 
-	    symbol->size = sym->st_size;
+	    symbol->size.bytes = sym->st_size;
 	    symbol->size_is_bytes = 1;
 
 	    symbol->base_addr = (ADDR)sym->st_value;
@@ -510,7 +510,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 
 	    if (symbol->base_addr != 0)
 		clrange_add(&debugfile->elf_ranges,symbol->base_addr,
-			    symbol->base_addr + symbol->size,symbol);
+			    symbol->base_addr + symbol->size.bytes,symbol);
 	}
 
 	/* Now, go through all the address ranges and update their sizes 
@@ -613,7 +613,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 		    clrange_update_end(&debugfile->elf_ranges,start,
 				       CLRANGE_START(gcrd),symbol);
 
-		    symbol->size = CLRANGE_START(gcrd) - start;
+		    symbol->size.bytes = CLRANGE_START(gcrd) - start;
 		    symbol->size_is_bytes = 1;
 		    symbol->guessed_size = 1;
 		}
@@ -637,7 +637,7 @@ int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
 		    clrange_update_end(&debugfile->elf_ranges,start,
 				       CLRANGE_START(gcrd),symbol);
 
-		    symbol->size = CLRANGE_START(gcrd) - start;
+		    symbol->size.bytes = CLRANGE_START(gcrd) - start;
 		    symbol->size_is_bytes = 1;
 		    symbol->guessed_size = 1;
 		}

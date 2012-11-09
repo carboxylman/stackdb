@@ -635,7 +635,8 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    && cbargs->parentsymbol
 	    && SYMBOL_IS_FULL_TYPE(cbargs->parentsymbol)
 	    && cbargs->parentsymbol->datatype_code == DATATYPE_ENUM
-	    && cbargs->parentsymbol->size > 0) {
+	    && cbargs->parentsymbol->size_is_bytes
+	    && cbargs->parentsymbol->size.bytes > 0) {
 	    cbargs->symbol->s.ii->constval = \
 		malloc(symbol_bytesize(cbargs->parentsymbol));
 	    memcpy(cbargs->symbol->s.ii->constval,&num,
@@ -677,13 +678,20 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_byte_size:
 	if (num_set) {
 	    if (cbargs->symbol->size_is_bits) {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(5,LOG_D_DWARFATTR,
 			 "[DIE %" PRIx64 "] attr %s: already saw bit_size;"
-			 " ignoring this!\n",
+			 " setting ctbytes.\n",
 			 cbargs->die_offset,dwarf_attr_string(attr));
+
+		if (num > (1 << SIZE_CTBYTES_SIZE)) 
+		    verror("[DIE %" PRIx64 "] attr %s: ctbytes too large,"
+			   " truncating!\n",
+			   cbargs->die_offset,dwarf_attr_string(attr));
+
+		cbargs->symbol->size.ctbytes = num;
 	    }
 	    else {
-		cbargs->symbol->size = num;
+		cbargs->symbol->size.bytes = num;
 		cbargs->symbol->size_is_bytes = 1;
 	    }
 	}
@@ -696,12 +704,36 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_bit_size:
 	if (num_set) {
-	    cbargs->symbol->size = num;
-	    cbargs->symbol->size_is_bits = 1;
-	    cbargs->symbol->size_is_bytes = 0;
+	    /*
+	     * If a type or variable has both a byte_size and a bit_size
+	     * (gcc does this for bitfields -- in its DWARF output,
+	     * byte_size is the size of the type containing the
+	     * bitfield; bit_size is the actual size of the bitfield),
+	     * and byte_size is moved into ctbytes (size of containing
+	     * integral type).
+	     */
+	    if (cbargs->symbol->size_is_bytes) {
+		uint32_t tmpbytes = cbargs->symbol->size.bytes;
+		/* Clear old bytes. */
+		cbargs->symbol->size.bytes = 0;
+		cbargs->symbol->size_is_bytes = 0;
 
-	    if (SYMBOL_IS_VAR(cbargs->symbol)) 
-		cbargs->symbol->s.ii->d.v.bit_size = num;
+		if (tmpbytes * 8 > ((1 << SIZE_CTBYTES_SIZE) - 1)) 
+		    verror("[DIE %" PRIx64 "] byte_size does not fit into"
+			   " ctbytes (triggered by bit_offset); truncating!\n",
+			   cbargs->die_offset);
+		
+		/* Set new (containing) bytes. */
+		cbargs->symbol->size.ctbytes = tmpbytes;
+	    }
+
+	    if (num > ((1 << SIZE_BITS_SIZE) - 1)) 
+		verror("[DIE %" PRIx64 "] bit_size does not fit into"
+		       " uint16_t; truncating!\n",
+		       cbargs->die_offset);
+
+	    cbargs->symbol->size.bits = num;
+	    cbargs->symbol->size_is_bits = 1;
 	}
 	else {
 	    vwarnopt(3,LOG_D_DWARFATTR,
@@ -711,8 +743,37 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
 	break;
     case DW_AT_bit_offset:
-	if (num_set && SYMBOL_IS_VAR(cbargs->symbol)) {
-	    cbargs->symbol->s.ii->d.v.bit_offset = num;
+	if (num_set) {
+	    /*
+	     * If a type or variable has both a byte_size and a bit_size
+	     * (gcc does this for bitfields -- in its DWARF output,
+	     * byte_size is the size of the type containing the
+	     * bitfield; bit_size is the actual size of the bitfield),
+	     * and byte_size is moved into ctbytes (size of containing
+	     * integral type).
+	     */
+	    if (cbargs->symbol->size_is_bytes) {
+		uint32_t tmpbytes = cbargs->symbol->size.bytes;
+		/* Clear old bytes. */
+		cbargs->symbol->size.bytes = 0;
+		cbargs->symbol->size_is_bytes = 0;
+
+		if (tmpbytes * 8 > ((1 << SIZE_CTBYTES_SIZE) - 1)) 
+		    verror("[DIE %" PRIx64 "] byte_size does not fit into"
+			   " ctbytes (triggered by bit_offset); truncating!\n",
+			   cbargs->die_offset);
+		
+		/* Set new (containing) bytes. */
+		cbargs->symbol->size.ctbytes = tmpbytes;
+	    }
+
+	    if (num > ((1 << SIZE_OFFSET_SIZE) - 1)) 
+		verror("[DIE %" PRIx64 "] bit_offset does not fit into"
+		       " offset; truncating!\n",
+		       cbargs->die_offset);
+
+	    cbargs->symbol->size.offset = num;
+	    cbargs->symbol->size_is_bits = 1;
 	}
 	else {
 	    vwarnopt(3,LOG_D_DWARFATTR,

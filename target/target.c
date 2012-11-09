@@ -1093,23 +1093,24 @@ struct value *target_load_value_member(struct target *target,
 	}
 
 	datatype = symbol_type_skip_qualifiers(symbol->datatype);
-	rbuf = malloc(datatype->size);
+	rbuf = malloc(symbol_bytesize(datatype));
 
         if (target->wordsize == 4 && __WORDSIZE == 64) {
             /* If the target is 32-bit on 64-bit host, we have to grab
              * the lower 32 bits of the regval.
              */
-            memcpy(rbuf,((int32_t *)&regval),datatype->size);
+            memcpy(rbuf,((int32_t *)&regval),symbol_bytesize(datatype));
         }
 	else if (__WORDSIZE == 32)
-	    memcpy(rbuf,&regval,(datatype->size < 4) ? datatype->size : 4);
+	    memcpy(rbuf,&regval,(symbol_bytesize(datatype) < 4) \
+		   ? symbol_bytesize(datatype) : 4);
         else
-            memcpy(rbuf,&regval,datatype->size);
+            memcpy(rbuf,&regval,symbol_bytesize(datatype));
 
 	/* Just create the value based on the register value. */
 	value = value_create_noalloc(tthread,NULL,ls,datatype);
 	value->buf = rbuf;
-	value->bufsiz = datatype->size;
+	value->bufsiz = symbol_bytesize(datatype);
 
 	value_set_reg(value,symbol->s.ii->d.v.l.l.reg);
     }
@@ -1264,23 +1265,24 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	}
 
 	datatype = symbol_type_skip_qualifiers(symbol->datatype);
-	rbuf = malloc(datatype->size);
+	rbuf = malloc(symbol_bytesize(datatype));
 
         if (target->wordsize == 4 && __WORDSIZE == 64) {
             /* If the target is 32-bit on 64-bit host, we have to grab
              * the lower 32 bits of the regval.
              */
-            memcpy(rbuf,((int32_t *)&regval),datatype->size);
+            memcpy(rbuf,((int32_t *)&regval),symbol_bytesize(datatype));
         }
 	else if (__WORDSIZE == 32)
-	    memcpy(rbuf,&regval,(datatype->size < 4) ? datatype->size : 4);
+	    memcpy(rbuf,&regval,(symbol_bytesize(datatype) < 4) \
+		                 ? symbol_bytesize(datatype) : 4);
         else
-            memcpy(rbuf,&regval,datatype->size);
+            memcpy(rbuf,&regval,symbol_bytesize(datatype));
 
 	/* Just create the value based on the register value. */
 	value = value_create_noalloc(tthread,NULL,bsymbol->lsymbol,datatype);
 	value->buf = rbuf;
-	value->bufsiz = datatype->size;
+	value->bufsiz = symbol_bytesize(datatype);
 
 	value_set_reg(value,symbol->s.ii->d.v.l.l.reg);
     }

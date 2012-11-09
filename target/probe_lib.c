@@ -95,7 +95,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	goto errout;
     }
     else if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)
-	     && bsymbol->lsymbol->symbol->size <= 0) {
+	     && symbol_bytesize(bsymbol->lsymbol->symbol) <= 0) {
 	verror("partial function symbols must have non-zero length!\n");
 	goto errout;
     }
@@ -171,7 +171,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	}
     }
     else
-	funclen = bsymbol->lsymbol->symbol->size;
+	funclen = symbol_bytesize(bsymbol->lsymbol->symbol);
 
     funccode = malloc(funclen);
 
@@ -287,7 +287,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	goto errout;
     }
     else if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)
-	     && bsymbol->lsymbol->symbol->size <= 0) {
+	     && symbol_bytesize(bsymbol->lsymbol->symbol) <= 0) {
 	verror("partial function symbols must have non-zero length!\n");
 	goto errout;
     }
@@ -342,7 +342,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	}
     }
     else
-	funclen = bsymbol->lsymbol->symbol->size;
+	funclen = symbol_bytesize(bsymbol->lsymbol->symbol);
 
     /* We allocate an extra NULL byte on the back side because distorm
      * seems to have an off by one error (guessing, according to

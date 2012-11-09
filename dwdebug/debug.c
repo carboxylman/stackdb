@@ -2462,13 +2462,13 @@ int symbol_is_bytesize(struct symbol *symbol) {
 
 uint32_t symbol_bytesize(struct symbol *symbol) {
     if (symbol->size_is_bytes)
-	return symbol->size;
+	return symbol->size.bytes;
     else if (symbol->size_is_bits) {
-	if (symbol->size % 8)
+	if (symbol->size.bits % 8)
 	    /* Overestimate. */
-	    return symbol->size / 8 + 1;
+	    return symbol->size.bits / 8 + 1;
 	else
-	    return symbol->size / 8;
+	    return symbol->size.bits / 8;
     }
 
     return 0;
@@ -2476,9 +2476,9 @@ uint32_t symbol_bytesize(struct symbol *symbol) {
 
 uint32_t symbol_bitsize(struct symbol *symbol) {
     if (symbol->size_is_bytes)
-	return symbol->size * 8;
+	return symbol->size.bytes * 8;
 
-    return symbol->size;
+    return symbol->size.bits;
 }
 
 static inline int __check_type_in_list(struct symbol *type,
@@ -2546,7 +2546,8 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
     ti1 = t1->s.ti;
     ti2 = t2->s.ti;
 
-    if (t1->size != t2->size 
+    /* Cheat bad -- the t1->size union is a uint32_t! */
+    if (*(uint32_t *)&t1->size != *(uint32_t *)&t2->size 
 	|| t1->size_is_bytes != t2->size_is_bytes
 	|| t1->size_is_bits != t2->size_is_bits)
 	return 1;
@@ -3236,7 +3237,7 @@ int symbol_type_is_char(struct symbol *type) {
 	return 0;
 
     if (type->datatype_code == DATATYPE_BASE
-	&& type->size == 1
+	&& symbol_bytesize(type) == 1
 	&& (type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR
 	    || type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR)) 
 	return 1;
@@ -4415,11 +4416,10 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream,"%s",symbol->name);
     }
 
-    if (SYMBOL_IS_FULL_VAR(symbol)
-	&& symbol->s.ii->d.v.bit_size > 0) {
+    if (SYMBOL_IS_VAR(symbol) && symbol->size_is_bits) {
 	/* this is a bitfield */
-	fprintf(ud->stream,":%hd(%hd)",symbol->s.ii->d.v.bit_size,
-		symbol->s.ii->d.v.bit_offset);
+	fprintf(ud->stream,":%hd(%hd)(ct %d B)",symbol->size.bits,
+		symbol->size.offset,symbol->size.ctbytes);
     }
     if (SYMBOL_IS_FULL_VAR(symbol)
 	&& symbol->isenumval) {
@@ -4462,9 +4462,9 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream," @@ 0x%"PRIxADDR,symbol->base_addr);
 
 	if (symbol->size_is_bytes)
-	    fprintf(ud->stream," (size=%d B)",symbol->size);
+	    fprintf(ud->stream," (size=%d B)",symbol->size.bytes);
 	else if (symbol->size_is_bits)
-	    fprintf(ud->stream," (size=%d b)",symbol->size);
+	    fprintf(ud->stream," (size=%d b)",symbol->size.bits);
     }
 }
 
@@ -4566,9 +4566,9 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	if (symbol->has_base_addr)
 	    fprintf(ud->stream," @@ 0x%"PRIxADDR,symbol->base_addr);
 	if (symbol->size_is_bytes)
-	    fprintf(ud->stream," (size=%d B)",symbol->size);
+	    fprintf(ud->stream," (size=%d B)",symbol->size.bytes);
 	else if (symbol->size_is_bits)
-	    fprintf(ud->stream," (size=%d b)",symbol->size);
+	    fprintf(ud->stream," (size=%d b)",symbol->size.bits);
 	fprintf(ud->stream,"\n");
 
 	if (SYMBOL_IS_FULL_INSTANCE(symbol))
@@ -4628,9 +4628,9 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"%s",symbol->name);
 	if (ud->meta) {
 	    if (symbol->size_is_bytes)
-		fprintf(ud->stream," (size=%d B)",symbol->size);
+		fprintf(ud->stream," (size=%d B)",symbol->size.bytes);
 	    else if (symbol->size_is_bits)
-		fprintf(ud->stream," (size=%d b)",symbol->size);
+		fprintf(ud->stream," (size=%d b)",symbol->size.bits);
 	}
 	if (ud->detail && SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream," { ");
@@ -4672,9 +4672,9 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"%s",symbol_get_name(symbol));
 	if (ud->meta) {
 	    if (symbol->size_is_bytes)
-		fprintf(ud->stream," (size=%d B)",symbol->size);
+		fprintf(ud->stream," (size=%d B)",symbol->size.bytes);
 	    else if (symbol->size_is_bits)
-		fprintf(ud->stream," (size=%d b)",symbol->size);
+		fprintf(ud->stream," (size=%d b)",symbol->size.bits);
 	}
 	if (ud->detail && SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream," { ");
@@ -4769,9 +4769,9 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"%s",symbol->name);
 	else  {
 	    if (symbol->size_is_bytes)
-		fprintf(ud->stream," (size=%d B)",symbol->size);
+		fprintf(ud->stream," (size=%d B)",symbol->size.bytes);
 	    else if (symbol->size_is_bits)
-		fprintf(ud->stream," (size=%d b)",symbol->size);
+		fprintf(ud->stream," (size=%d b)",symbol->size.bits);
 	    fprintf(ud->stream," (encoding=%d)",symbol->s.ti->d.t.encoding);
 	}
 	break;

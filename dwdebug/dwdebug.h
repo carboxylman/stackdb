@@ -1339,10 +1339,29 @@ struct symbol {
      * If this is a type or var debug symbol, or an ELF symbol, it may
      * be nonzero.
      *
-     * It is either a byte size or a bit size, according to the flags
-     * above.
+     * If @size.bytes is set, @size_is_bytes will be set above.
+     * If @size.bits and/or @size.offset is set, @size_is_bits will be
+     * set above (and if both a byte_size and bit_size are present,
+     * ctbytes will inherit the byte_size).
+     *
+     * If a type or variable has both a byte_size and a bit_size (gcc
+     * does this for bitfields -- in its DWARF output, byte_size is the
+     * size of the type containing the bitfield; bit_size is the actual
+     * size of the bitfield), bit_size is given precedence, and
+     * byte_size is "lost" -- which is what we care about.  WHOOPS --
+     * actually we do care about it for printing values at least.
      */
-    uint32_t size;
+    union {
+	uint32_t bytes;
+	struct {
+#define SIZE_BITS_SIZE     10
+#define SIZE_OFFSET_SIZE   10
+#define SIZE_CTBYTES_SIZE   12
+	    uint32_t bits:SIZE_BITS_SIZE,
+		     offset:SIZE_OFFSET_SIZE,
+		     ctbytes:SIZE_CTBYTES_SIZE;
+	};
+    } size;
 
     /* If not a SYMBOL_TYPE_TYPE, our data type.
      * For functions, it is the return type; for anything else, its data
@@ -1364,8 +1383,7 @@ struct symbol {
 struct symbol_type {
     union {
 	struct {
-	    uint16_t bit_size;
-	    encoding_t encoding:16;
+	    encoding_t encoding;
 	} t;
 	struct {
 	    struct list_head members;
@@ -1456,8 +1474,6 @@ struct symbol_instance {
 	    struct list_head member;
 	    struct symbol *member_symbol;
 	    struct symbol *parent_symbol;
-	    uint16_t bit_offset;
-	    uint16_t bit_size;
 
 	    struct location l;
 	} v;

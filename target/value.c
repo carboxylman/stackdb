@@ -480,6 +480,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     int i;
     int j;
     int found;
+    uint32_t tbytesize;
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
@@ -487,100 +488,102 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	goto out;
     }
 
+    tbytesize = symbol_bytesize(value->type);
+
     switch (value->type->datatype_code) {
     case DATATYPE_BASE:
 	if (value->type->s.ti->d.t.encoding == ENCODING_ADDRESS) {
-	    if (value->type->size == 1) 
+	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%"PRIx8,v_u8(value));
-	    else if (value->type->size == 2) 
+	    else if (tbytesize == 2) 
 		fprintf(ud->stream,"%"PRIx16,v_u16(value));
-	    else if (value->type->size == 4) 
+	    else if (tbytesize == 4) 
 		fprintf(ud->stream,"%"PRIx32,v_u32(value));
-	    else if (value->type->size == 8) 
+	    else if (tbytesize == 8) 
 		fprintf(ud->stream,"%"PRIx64,v_u64(value));
 	    else
-		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",value->type->size);
+		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_BOOLEAN
 	    || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED) {
-	    if (value->type->size == 1) 
+	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%"PRIu8,v_u8(value));
-	    else if (value->type->size == 2) 
+	    else if (tbytesize == 2) 
 		fprintf(ud->stream,"%"PRIu16,v_u16(value));
-	    else if (value->type->size == 4) 
+	    else if (tbytesize == 4) 
 		fprintf(ud->stream,"%"PRIu32,v_u32(value));
-	    else if (value->type->size == 8) 
+	    else if (tbytesize == 8) 
 		fprintf(ud->stream,"%"PRIu64,v_u64(value));
 	    else
-		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",value->type->size);
+		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 			}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED) {
-	    if (value->type->size == 1) 
+	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%"PRIi8,v_i8(value));
-	    else if (value->type->size == 2) 
+	    else if (tbytesize == 2) 
 		fprintf(ud->stream,"%"PRIi16,v_i16(value));
-	    else if (value->type->size == 4) 
+	    else if (tbytesize == 4) 
 		fprintf(ud->stream,"%"PRIi32,v_i32(value));
-	    else if (value->type->size == 8) 
+	    else if (tbytesize == 8) 
 		fprintf(ud->stream,"%"PRIi64,v_i64(value));
 	    else
-		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",value->type->size);
+		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_FLOAT) {
-	    if (value->type->size == 4) 
+	    if (tbytesize == 4) 
 		fprintf(ud->stream,"%f",(double)v_f(value));
-	    else if (value->type->size == 8) 
+	    else if (tbytesize == 8) 
 		fprintf(ud->stream,"%f",v_d(value));
-	    else if (value->type->size == 16) 
+	    else if (tbytesize == 16) 
 		fprintf(ud->stream,"%Lf",v_dd(value));
 	    else
-		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",value->type->size);
+		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR
 		 || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR) {
-	    if (value->type->size == 1) 
+	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%c",(int)v_c(value));
-	    else if (value->type->size == 2) 
+	    else if (tbytesize == 2) 
 		fprintf(ud->stream,"%lc",(wint_t)v_wc(value));
 	    else
-		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",value->type->size);
+		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_COMPLEX_FLOAT) {
 	    fprintf(ud->stream,"<UNSUPPORTED_COMPLEX_FLOAT_%d>",
-		    value->type->size);
+		    tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_IMAGINARY_FLOAT) {
 	    fprintf(ud->stream,"<UNSUPPORTED_IMAGINARY_FLOAT_%d>",
-		    value->type->size);
+		    tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_PACKED_DECIMAL) {
 	    fprintf(ud->stream,"<UNSUPPORTED_PACKED_DECIMAL_%d>",
-		    value->type->size);
+		    tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_NUMERIC_STRING) {
 	    fprintf(ud->stream,"<UNSUPPORTED_NUMERIC_STRING_%d>",
-		    value->type->size);
+		    tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_EDITED) {
 	    fprintf(ud->stream,"<UNSUPPORTED_EDITED_%d>",
-		    value->type->size);
+		    tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_FIXED) {
 	    fprintf(ud->stream,"<UNSUPPORTED_SIGNED_FIXED_%d>",
-		    value->type->size);
+		    tbytesize);
 	}
 	else if (value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_FIXED) {
 	    fprintf(ud->stream,"<UNSUPPORTED_UNSIGNED_FIXED_%d>",
-		    value->type->size);
+		    tbytesize);
 	}
 	break;
     case DATATYPE_PTR:
-	if (value->type->size == 4)
+	if (tbytesize == 4)
 	    fprintf(ud->stream,"0x%"PRIx32,v_u32(value));
-	else if (value->type->size == 8)
+	else if (tbytesize == 8)
 	    fprintf(ud->stream,"0x%"PRIx64,v_u64(value));
 	else 
-	    fprintf(ud->stream,"<UNSUPPORTED_PTR_%d>",value->type->size);
+	    fprintf(ud->stream,"<UNSUPPORTED_PTR_%d>",tbytesize);
 	break;
     case DATATYPE_ARRAY:
 	/* First, if it's a single-index char array, print as a string
@@ -599,7 +602,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    indicies[i] = 0;
 	    fprintf(ud->stream,"[ ");
 	}
-	fake_value.bufsiz = value->type->datatype->size;
+	fake_value.bufsiz = symbol_bytesize(value->type->datatype);
 	fake_value.buf = value->buf;
 	fake_value.type = value->type->datatype;
     again:
@@ -608,7 +611,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    fprintf(ud->stream,", ");
 
 	    /* calc current offset */
-	    fake_value.buf += value->type->datatype->size;
+	    fake_value.buf += symbol_bytesize(value->type->datatype);
 
 	    /* close brackets */
 	    for (j = value->type->s.ti->d.a.count - 1; j > -1; --j) {
@@ -648,7 +651,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    fake_value.buf = value->buf + offset;
 	    fake_value.type = symbol_type_skip_qualifiers(tmpsym->datatype);
 	    fake_value.lsymbol = NULL;
-	    fake_value.bufsiz = fake_value.type->size;
+	    fake_value.bufsiz = symbol_bytesize(fake_value.type);
 	    __value_dump(&fake_value,ud);
 	    fputs(",",ud->stream);
 	}
@@ -668,9 +671,6 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	if (!found)
 	    fprintf(ud->stream,"%"PRIuNUM" (0x%"PRIxNUM")",
 		    v_unum(value),v_unum(value));
-	break;
-    case DATATYPE_BITFIELD:
-
 	break;
     case DATATYPE_CONST:
 	fprintf(ud->stream,"<UNSUPPORTED_CONST_%s>",symbol_get_name(value->type));
