@@ -1775,7 +1775,7 @@ static int linux_userproc_loadregions(struct target *target,
 
 	vdebug(8,LOG_T_LUP,"scanning mmap line %s",buf);
 
-	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*d:%*d %*d %s",&start,&end,
+	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*x:%*x %*d %s",&start,&end,
 		    &p[0],&p[1],&p[2],&p[3],&offset,buf);
 	if (rc == 8 || rc == 7) {
 	    if (rc == 8) {
@@ -1889,7 +1889,7 @@ static int linux_userproc_updateregions(struct target *target,
 
 	vdebug(9,LOG_T_LUP,"scanning mmap line %s",buf);
 
-	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*d:%*d %*d %s",&start,&end,
+	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*x:%*x %*d %s",&start,&end,
 		    &p[0],&p[1],&p[2],&p[3],&offset,buf);
 	if (rc == 8 || rc == 7) {
 	    if (rc == 8) {
