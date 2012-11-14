@@ -35,23 +35,23 @@ int vmi1__LoadDebugFileForBinary(struct soap*,
 int vmi1__LookupSymbolSimple(struct soap *soap,
 			     char *filename,char *name,
 			     struct vmi1__DebugFileOptsT *opts,
-			     struct vmi1__Symbol *r);
+			     struct vmi1__SymbolResponse *r);
 
 int vmi1__LookupSymbol(struct soap *soap,
 		       char *filename,char *name,
 		       struct vmi1__DebugFileOptsT *opts,
-		       struct vmi1__NestedSymbol *r);
+		       struct vmi1__NestedSymbolResponse *r);
 int vmi1__LookupAddrSimple(struct soap *soap,
 			   char *filename,vmi1__ADDR addr,
 			   struct vmi1__DebugFileOptsT *opts,
-			   struct vmi1__Symbol *r);
+			   struct vmi1__SymbolResponse *r);
 int vmi1__LookupAddr(struct soap *soap,
 		     char *filename,vmi1__ADDR addr,
 		     struct vmi1__DebugFileOptsT *opts,
-		     struct vmi1__NestedSymbol *r);
+		     struct vmi1__NestedSymbolResponse *r);
 int vmi1__LookupAllSymbols(struct soap *soap,
 			   char *filename,
 			   struct vmi1__DebugFileOptsT *opts,
-			   struct vmi1__NestedSymbol *r);
+			   struct vmi1__NestedSymbolResponse *r);
 
 #endif /* __DEBUGINFO_RPC_H__ */

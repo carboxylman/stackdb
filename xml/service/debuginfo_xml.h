@@ -88,16 +88,22 @@ d_symbol_to_x_FunctionTypeT(struct soap *soap,struct symbol *symbol,
 			    struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			    int depth);
 
-struct vmi1__SymbolsOrSymbolRefs *
-d_symbol_array_list_to_x_SymbolsOrSymbolRefs(struct soap *soap,
-					     struct array_list *list,
-					     struct vmi1__DebugFileOptsT *opts,
-					     GHashTable *reftab,int depth);
+struct vmi1__SymbolT *
+d_symbol_to_x_SymbolT(struct soap *soap,struct symbol *s,
+		      struct vmi1__DebugFileOptsT *opts,
+		      GHashTable *reftab,int depth);
 
-struct vmi1__SymbolOrSymbolRef *
-d_symbol_to_x_SymbolOrSymbolRef(struct soap *soap,struct symbol *s,
-				struct vmi1__DebugFileOptsT *opts,
-				GHashTable *reftab,int depth);
+struct vmi1__SymbolsT *
+d_symbol_array_list_to_x_SymbolsT(struct soap *soap,
+				  struct array_list *list,
+				  struct vmi1__DebugFileOptsT *opts,
+				  GHashTable *reftab,int depth);
+
+struct vmi1__SymbolsOptT *
+d_symbol_array_list_to_x_SymbolsOptT(struct soap *soap,
+				     struct array_list *list,
+				     struct vmi1__DebugFileOptsT *opts,
+				     GHashTable *reftab,int depth);
 
 struct vmi1__DebugFileT *
 d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,

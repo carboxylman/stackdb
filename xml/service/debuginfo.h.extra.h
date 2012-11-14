@@ -17,11 +17,12 @@ struct vmi1__DebugFiles {
     $int __size_debugFile;
     struct vmi1__DebugFileT **debugFile;
 };
-struct vmi1__Symbol {
-    struct vmi1__SymbolOrSymbolRef *symbol;
+
+struct vmi1__SymbolResponse {
+    struct vmi1__SymbolT *symbol;
 };
-struct vmi1__NestedSymbol {
-    struct vmi1__SymbolsOrSymbolRefs *vmi1__nestedSymbol;
+struct vmi1__NestedSymbolResponse {
+    struct vmi1__SymbolsT *nestedSymbol;
 };
 
 //gsoap vmi1 service method-documentation: returns an array of loaded DebugFiles
@@ -35,19 +36,19 @@ int vmi1__LoadDebugFileForBinary(char *filename,
 
 int vmi1__LookupSymbolSimple(char *filename,char *name,
 			     struct vmi1__DebugFileOptsT *opts,
-			     struct vmi1__Symbol *r);
+			     struct vmi1__SymbolResponse *r);
 int vmi1__LookupSymbol(char *filename,char *name,
 		       struct vmi1__DebugFileOptsT *opts,
-		       struct vmi1__NestedSymbol *r);
+		       struct vmi1__NestedSymbolResponse *r);
 int vmi1__LookupAddrSimple(char *filename,vmi1__ADDR addr,
 			   struct vmi1__DebugFileOptsT *opts,
-			   struct vmi1__Symbol *r);
+			   struct vmi1__SymbolResponse *r);
 int vmi1__LookupAddr(char *filename,vmi1__ADDR addr,
 		     struct vmi1__DebugFileOptsT *opts,
-		     struct vmi1__NestedSymbol *r);
+		     struct vmi1__NestedSymbolResponse *r);
 int vmi1__LookupAllSymbols(char *filename,
 			   struct vmi1__DebugFileOptsT *opts,
-			   struct vmi1__NestedSymbol *r);
+			   struct vmi1__NestedSymbolResponse *r);
 
 /*
 int vmi1__LookupAddrsByLine(debugfile,line_no)

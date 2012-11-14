@@ -38,11 +38,6 @@ SymbolRef = xsd:IDREF
 #
 # So you need to avoid the situations that make trang produce anonymous
 # complexTypes for the the types that get used in the WSDL directly.
-# For debuginfo, that basically means the following patterns:
-#
-# SymbolOrSymbolRef, SymbolsOrSymbolRefs, SymbolsOrSymbolRefsOpt,
-# SymtabOrSymtabRef, SymtabsOrSymtabRefs, SymtabsOrSymtabRefsOpt,
-# DebugFile ...
 #
 # You avoid this situation by 1) avoiding attribute-only elements (these
 # become attributeGroups in trang XSD, and gsoap doesn't handle groups
@@ -64,56 +59,7 @@ SymbolRef = xsd:IDREF
 # doesn't really use our XSD files!  On the other hand, they are
 # available for use outside of WSDL/SOAP/gsoap.  Maybe that is enough.
 #
-
-SymbolOrSymbolRef = 
-    ((element variable { VariableT } | element function { FunctionT }
-      | element label { LabelT } | element voidType { VoidTypeT } 
-      | element baseType { BaseTypeT } 
-      | element pointerType { PointerTypeT }
-      | element typedefType { TypedefTypeT } 
-      | element constType { ConstTypeT }
-      | element volatileType { VolatileTypeT } 
-      | element arrayType { ArrayTypeT } 
-      | element enumType { EnumTypeT } 
-      | element structType { StructTypeT }
-      | element unionType { UnionTypeT } 
-      | element functionType { FunctionTypeT }) 
-     | element symbolRef { SymbolRef })
-
-SymbolsOrSymbolRefs = 
-    ((element variable { VariableT } | element function { FunctionT }
-      | element label { LabelT } | element voidType { VoidTypeT } 
-      | element baseType { BaseTypeT } 
-      | element pointerType { PointerTypeT }
-      | element typedefType { TypedefTypeT } 
-      | element constType { ConstTypeT }
-      | element volatileType { VolatileTypeT } 
-      | element arrayType { ArrayTypeT } 
-      | element enumType { EnumTypeT } 
-      | element structType { StructTypeT }
-      | element unionType { UnionTypeT } 
-      | element functionType { FunctionTypeT })+ 
-     | element symbolRef { SymbolRef }+)
-
-SymbolsOrSymbolRefsOpt = 
-    ((element variable { VariableT } | element function { FunctionT }
-      | element label { LabelT } | element voidType { VoidTypeT } 
-      | element baseType { BaseTypeT } 
-      | element pointerType { PointerTypeT }
-      | element typedefType { TypedefTypeT } 
-      | element constType { ConstTypeT }
-      | element volatileType { VolatileTypeT } 
-      | element arrayType { ArrayTypeT } 
-      | element enumType { EnumTypeT } 
-      | element structType { StructTypeT }
-      | element unionType { UnionTypeT } 
-      | element functionType { FunctionTypeT })* 
-     | element symbolRef { SymbolRef }*)
-
-NestedSymbolT = SymbolsOrSymbolRefs
-
-NestedSymbol = element nestedSymbol { NestedSymbolT }
-
+# Examples: 
 #
 # The following two patterns cause trang to spit xs:groups instead of 
 # complex types, so we can't use them with gsoap, and must inline them.
@@ -125,8 +71,55 @@ NestedSymbol = element nestedSymbol { NestedSymbolT }
 #
 # ... but this pattern causes a complex type, so it's safe!
 #
-SymtabsOrSymtabRefsOpt = (element symtab { SymtabT }* 
-                          | element symtabRef { SymtabRef }*)
+#SymtabsOrSymtabRefsOpt = (element symtab { SymtabT }* 
+#                          | element symtabRef { SymtabRef }*)
+#
+
+SymbolT = 
+    (element variable { VariableT } | element function { FunctionT }
+     | element label { LabelT } | element voidType { VoidTypeT } 
+     | element baseType { BaseTypeT } 
+     | element pointerType { PointerTypeT }
+     | element typedefType { TypedefTypeT } 
+     | element constType { ConstTypeT }
+     | element volatileType { VolatileTypeT } 
+     | element arrayType { ArrayTypeT } 
+     | element enumType { EnumTypeT } 
+     | element structType { StructTypeT }
+     | element unionType { UnionTypeT } 
+     | element functionType { FunctionTypeT })
+
+SymbolsT = 
+    (element variable { VariableT } | element function { FunctionT }
+     | element label { LabelT } | element voidType { VoidTypeT } 
+     | element baseType { BaseTypeT } 
+     | element pointerType { PointerTypeT }
+     | element typedefType { TypedefTypeT } 
+     | element constType { ConstTypeT }
+     | element volatileType { VolatileTypeT } 
+     | element arrayType { ArrayTypeT } 
+     | element enumType { EnumTypeT } 
+     | element structType { StructTypeT }
+     | element unionType { UnionTypeT } 
+     | element functionType { FunctionTypeT })+
+
+SymbolsOptT = 
+    (element variable { VariableT } | element function { FunctionT }
+     | element label { LabelT } | element voidType { VoidTypeT } 
+     | element baseType { BaseTypeT } 
+     | element pointerType { PointerTypeT }
+     | element typedefType { TypedefTypeT } 
+     | element constType { ConstTypeT }
+     | element volatileType { VolatileTypeT } 
+     | element arrayType { ArrayTypeT } 
+     | element enumType { EnumTypeT } 
+     | element structType { StructTypeT }
+     | element unionType { UnionTypeT } 
+     | element functionType { FunctionTypeT })*
+
+#NestedSymbolT = SymbolsT
+
+NestedSymbol = element nestedSymbol { SymbolsT }
 
 DebugFileT = 
     element filename { text },
@@ -142,7 +135,7 @@ DebugFileT =
     },
 
     element globalSymbols {
-         SymbolsOrSymbolRefs
+         SymbolsT
     }
 
 DebugFile = element debugFile { DebugFileT }
@@ -150,7 +143,8 @@ DebugFile = element debugFile { DebugFileT }
 DebugFileOptsT = 
     element symbolRefDepth { xsd:int },
     element symtabRefDepth { xsd:int },
-    element doMultiRef { xsd:boolean }
+    element doMultiRef { xsd:boolean },
+    element doManualRef { xsd:boolean }
 
 DebugOpts = element debugFileOpts { DebugFileOptsT }
 
@@ -165,22 +159,17 @@ Ranges = element ranges { RangesT }
 SymtabT = 
     attribute sid { xsd:ID },
     attribute name { text }?,
-    (element ranges { RangesT },
-     element rootMeta {
-         element compilationDir { text },
-         element producer { text },
-         element language { text }
-     }?,
-     element parent { SymtabT }?,
-     element symtabs {
-         element symtab { SymtabT }*
-     },
-     element symbols {
-         SymbolsOrSymbolRefsOpt
-     },
-     element anonSymbols {
-         SymbolsOrSymbolRefsOpt
-     })?
+    (element sref { xsd:IDREF }
+     | (element ranges { RangesT },
+        element rootMeta {
+            element compilationDir { text },
+            element producer { text },
+            element language { text }
+        }?,
+        element parent { SymtabT }?,
+        element symtabs { element symtab { SymtabT }* },
+        element symbols { SymbolsOptT },
+        element anonSymbols { SymbolsOptT }))
 
 Symtab = element symtab { SymtabT }
 
@@ -208,139 +197,150 @@ LocationT =
     ( Addr | Reg | RegAddr | RegOffset | MemberOffset | FbRegOffset 
       | ListLoc | RuntimeLoc )?
 
-SymbolHeaderT = 
+SymbolHeader = 
     attribute sid { xsd:ID },
-    attribute name { text }?,
-    element symbolMeta {
-        attribute source { "dwarf" | "elf" },
-        attribute external { xsd:boolean },
-        attribute declaration { xsd:boolean },
-        attribute prototyped { xsd:boolean }
+    attribute name { text }?
+
+SymbolCommon = 
+    element source { "dwarf" | "elf" },
+    element declaration {
+        attribute isExternal { xsd:boolean },
+        attribute isDeclaration { xsd:boolean },
+        attribute isPrototyped { xsd:boolean }
     },
-    (element size { xsd:unsignedInt }
-     | (element bitSize { xsd:unsignedInt },
-        element bitOffset { xsd:unsignedInt },
-        element containingTypeByteSize { xsd:unsignedInt }))?
+    #
+    # byteSize will always be set if the symbol has a size; if the size
+    # is really a fraction of a byte, then bitSize, bitOffset, and
+    # containingTypeByteSize will be set, and byteSize is the bitSize
+    # rounded up to the nearest byte (which may not be the same as the
+    # containingTypeByteSize; that value is the byte size of the integer
+    # used to hold the bitfield).
+    #
+    element byteSize { xsd:unsignedInt }?,
+    (element bitSize { xsd:unsignedInt },
+     element bitOffset { xsd:unsignedInt },
+     element containingTypeByteSize { xsd:unsignedInt })?
 
-InstanceSymbolT = 
-    attribute inlineInstance { xsd:boolean },
-    attribute declaredInline { xsd:boolean },
-    attribute inlined { xsd:boolean },
-
+InstanceSymbol = 
     element addr { ADDR }?,
+    element inline {
+        attribute isInlineInstance { xsd:boolean },
+        attribute isDeclaredInline { xsd:boolean },
+        attribute isInlined { xsd:boolean },
+        element instances { SymbolsT }?,
+        element origin { SymbolT }?
+    }
 
-    element type {
-        SymbolOrSymbolRef
-    }?,
-    element constValue { text }?,
-    element abstractOrigin {
-        SymbolOrSymbolRef
-    }?,
-    element inlineInstances {
-        SymbolsOrSymbolRefs
-    }?
-
-VariableT = 
-    SymbolHeaderT,
-
-    attribute param { xsd:boolean },
-    attribute member { xsd:boolean },
-    attribute enumval { xsd:boolean },
-
-    InstanceSymbolT,
-    element location { LocationT }?
+VariableT =
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        InstanceSymbol,
+        element type { SymbolT }?,
+        element constValue { text }?,
+        element kind { "variable" | "parameter" | "member" | "enumerator" },
+        element location { LocationT }?))
 
 FunctionT = 
-    SymbolHeaderT,
-
-    attribute argCount { xsd:unsignedShort },
-    attribute hasUnspecifiedParams { xsd:boolean },
-
-    InstanceSymbolT,
-
-    element entryPC { ADDR }?,
-    element prologueEnd { ADDR }?,
-    element epilogueBegin { ADDR }?,
-
-    element arguments {
-        SymbolsOrSymbolRefsOpt
-    },
-    element ranges { RangesT },
-    element symtab { SymtabT }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        InstanceSymbol,
+        element type { SymbolT }?,
+        element constValue { text }?,
+        element argCount { xsd:unsignedShort },
+        element hasUnspecifiedParams { xsd:boolean },
+        element arguments { SymbolsOptT },
+        element entryPC { ADDR }?,
+        element prologueEnd { ADDR }?,
+        element epilogueBegin { ADDR }?,
+        element ranges { RangesT },
+        element symtab { SymtabT }))
 
 LabelT = 
-    SymbolHeaderT,
-    InstanceSymbolT
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        InstanceSymbol))
 
 VoidTypeT =
-    SymbolHeaderT
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | SymbolCommon)
 
 BaseTypeT = 
-    SymbolHeaderT,
-    element encoding { 
-        "address" | "boolean" | "complexFloat" | "float" | "signed"
-	| "signedChar" | "unsigned" | "unsignedChar" | "imaginaryFloat"
-	| "packedDecimal" | "numericString" | "edited" | "signedFixed"
-	| "unsignedFixed" | "unknown"
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element encoding { 
+            "address" | "boolean" | "complexFloat" | "float" | "signed"
+            | "signedChar" | "unsigned" | "unsignedChar" | "imaginaryFloat"
+ 	    | "packedDecimal" | "numericString" | "edited" | "signedFixed"
+            | "unsignedFixed" | "unknown"
+        }))
 
 PointerTypeT = 
-    SymbolHeaderT,
-    element type {
-        SymbolOrSymbolRef
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT }))
 
 TypedefTypeT = 
-    SymbolHeaderT,
-    element type {
-        SymbolOrSymbolRef
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT }))
 
 ConstTypeT = 
-    SymbolHeaderT,
-    element type {
-        SymbolOrSymbolRef
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT }))
 
 VolatileTypeT = 
-    SymbolHeaderT,
-    element type {
-        SymbolOrSymbolRef
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT }))
 
 ArrayTypeT = 
-    SymbolHeaderT,
-    attribute subrangeCount { xsd:int },
-    element subranges {
-        element subrange { xsd:int }+
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT },
+        element subrangeCount { xsd:int },
+        element subranges { element subrange { xsd:int }+ }))
 
 EnumTypeT = 
-    SymbolHeaderT,
-    attribute memberCount { xsd:int },
-    element members {
-        SymbolsOrSymbolRefs
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT },
+        element memberCount { xsd:int },
+        element members { SymbolsT }))
 
 StructTypeT = 
-    SymbolHeaderT,
-    attribute memberCount { xsd:int },
-    element members {
-        SymbolsOrSymbolRefsOpt
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT },
+        element memberCount { xsd:int },
+        element members { SymbolsOptT }))
 
 UnionTypeT = 
-    SymbolHeaderT,
-    attribute memberCount { xsd:int },
-    element members {
-        SymbolsOrSymbolRefsOpt
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT },
+        element memberCount { xsd:int },
+        element members { SymbolsOptT }))
 
 FunctionTypeT = 
-    SymbolHeaderT,
-    attribute argCount { xsd:unsignedShort },
-    attribute hasUnspecifiedParams { xsd:boolean},
-    element arguments {
-        SymbolsOrSymbolRefsOpt
-    }
+    SymbolHeader,
+    (element sref { xsd:IDREF }
+     | (SymbolCommon,
+        element type { SymbolT },
+        element argCount { xsd:unsignedShort },
+        element hasUnspecifiedParams { xsd:boolean},
+        element arguments { SymbolsOptT }))
 

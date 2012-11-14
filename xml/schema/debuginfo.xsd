@@ -42,11 +42,6 @@
     
     So you need to avoid the situations that make trang produce anonymous
     complexTypes for the the types that get used in the WSDL directly.
-    For debuginfo, that basically means the following patterns:
-    
-    SymbolOrSymbolRef, SymbolsOrSymbolRefs, SymbolsOrSymbolRefsOpt,
-    SymtabOrSymtabRef, SymtabsOrSymtabRefs, SymtabsOrSymtabRefsOpt,
-    DebugFile ...
     
     You avoid this situation by 1) avoiding attribute-only elements (these
     become attributeGroups in trang XSD, and gsoap doesn't handle groups
@@ -68,26 +63,38 @@
     doesn't really use our XSD files!  On the other hand, they are
     available for use outside of WSDL/SOAP/gsoap.  Maybe that is enough.
     
+    Examples: 
+    
+    The following two patterns cause trang to spit xs:groups instead of 
+    complex types, so we can't use them with gsoap, and must inline them.
+    
+    SymtabOrSymtabRef = 
+       (element symtab { SymtabT } | element symtabRef { SymtabRef })
+    SymtabsOrSymtabRefs = (element symtab { SymtabT }+ 
+                          | element symtabRef { SymtabRef }+)
+    
+    ... but this pattern causes a complex type, so it's safe!
+    
+    SymtabsOrSymtabRefsOpt = (element symtab { SymtabT }* 
+                             | element symtabRef { SymtabRef }*)
+    
   -->
-  <xs:complexType name="SymbolOrSymbolRef">
+  <xs:complexType name="SymbolT">
     <xs:choice>
-      <xs:choice>
-        <xs:element ref="vmi1:variable"/>
-        <xs:element ref="vmi1:function"/>
-        <xs:element ref="vmi1:label"/>
-        <xs:element ref="vmi1:voidType"/>
-        <xs:element ref="vmi1:baseType"/>
-        <xs:element ref="vmi1:pointerType"/>
-        <xs:element ref="vmi1:typedefType"/>
-        <xs:element ref="vmi1:constType"/>
-        <xs:element ref="vmi1:volatileType"/>
-        <xs:element ref="vmi1:arrayType"/>
-        <xs:element ref="vmi1:enumType"/>
-        <xs:element ref="vmi1:structType"/>
-        <xs:element ref="vmi1:unionType"/>
-        <xs:element ref="vmi1:functionType"/>
-      </xs:choice>
-      <xs:element ref="vmi1:symbolRef"/>
+      <xs:element ref="vmi1:variable"/>
+      <xs:element ref="vmi1:function"/>
+      <xs:element ref="vmi1:label"/>
+      <xs:element ref="vmi1:voidType"/>
+      <xs:element ref="vmi1:baseType"/>
+      <xs:element ref="vmi1:pointerType"/>
+      <xs:element ref="vmi1:typedefType"/>
+      <xs:element ref="vmi1:constType"/>
+      <xs:element ref="vmi1:volatileType"/>
+      <xs:element ref="vmi1:arrayType"/>
+      <xs:element ref="vmi1:enumType"/>
+      <xs:element ref="vmi1:structType"/>
+      <xs:element ref="vmi1:unionType"/>
+      <xs:element ref="vmi1:functionType"/>
     </xs:choice>
   </xs:complexType>
   <xs:element name="variable" type="vmi1:VariableT"/>
@@ -104,76 +111,44 @@
   <xs:element name="structType" type="vmi1:StructTypeT"/>
   <xs:element name="unionType" type="vmi1:UnionTypeT"/>
   <xs:element name="functionType" type="vmi1:FunctionTypeT"/>
-  <xs:element name="symbolRef" type="vmi1:SymbolRef"/>
-  <xs:complexType name="SymbolsOrSymbolRefs">
-    <xs:choice>
-      <xs:choice maxOccurs="unbounded">
-        <xs:element ref="vmi1:variable"/>
-        <xs:element ref="vmi1:function"/>
-        <xs:element ref="vmi1:label"/>
-        <xs:element ref="vmi1:voidType"/>
-        <xs:element ref="vmi1:baseType"/>
-        <xs:element ref="vmi1:pointerType"/>
-        <xs:element ref="vmi1:typedefType"/>
-        <xs:element ref="vmi1:constType"/>
-        <xs:element ref="vmi1:volatileType"/>
-        <xs:element ref="vmi1:arrayType"/>
-        <xs:element ref="vmi1:enumType"/>
-        <xs:element ref="vmi1:structType"/>
-        <xs:element ref="vmi1:unionType"/>
-        <xs:element ref="vmi1:functionType"/>
-      </xs:choice>
-      <xs:element maxOccurs="unbounded" ref="vmi1:symbolRef"/>
+  <xs:complexType name="SymbolsT">
+    <xs:choice maxOccurs="unbounded">
+      <xs:element ref="vmi1:variable"/>
+      <xs:element ref="vmi1:function"/>
+      <xs:element ref="vmi1:label"/>
+      <xs:element ref="vmi1:voidType"/>
+      <xs:element ref="vmi1:baseType"/>
+      <xs:element ref="vmi1:pointerType"/>
+      <xs:element ref="vmi1:typedefType"/>
+      <xs:element ref="vmi1:constType"/>
+      <xs:element ref="vmi1:volatileType"/>
+      <xs:element ref="vmi1:arrayType"/>
+      <xs:element ref="vmi1:enumType"/>
+      <xs:element ref="vmi1:structType"/>
+      <xs:element ref="vmi1:unionType"/>
+      <xs:element ref="vmi1:functionType"/>
     </xs:choice>
   </xs:complexType>
-  <xs:complexType name="SymbolsOrSymbolRefsOpt">
-    <xs:choice>
-      <xs:choice minOccurs="0" maxOccurs="unbounded">
-        <xs:element ref="vmi1:variable"/>
-        <xs:element ref="vmi1:function"/>
-        <xs:element ref="vmi1:label"/>
-        <xs:element ref="vmi1:voidType"/>
-        <xs:element ref="vmi1:baseType"/>
-        <xs:element ref="vmi1:pointerType"/>
-        <xs:element ref="vmi1:typedefType"/>
-        <xs:element ref="vmi1:constType"/>
-        <xs:element ref="vmi1:volatileType"/>
-        <xs:element ref="vmi1:arrayType"/>
-        <xs:element ref="vmi1:enumType"/>
-        <xs:element ref="vmi1:structType"/>
-        <xs:element ref="vmi1:unionType"/>
-        <xs:element ref="vmi1:functionType"/>
-      </xs:choice>
-      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:symbolRef"/>
+  <xs:complexType name="SymbolsOptT">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element ref="vmi1:variable"/>
+      <xs:element ref="vmi1:function"/>
+      <xs:element ref="vmi1:label"/>
+      <xs:element ref="vmi1:voidType"/>
+      <xs:element ref="vmi1:baseType"/>
+      <xs:element ref="vmi1:pointerType"/>
+      <xs:element ref="vmi1:typedefType"/>
+      <xs:element ref="vmi1:constType"/>
+      <xs:element ref="vmi1:volatileType"/>
+      <xs:element ref="vmi1:arrayType"/>
+      <xs:element ref="vmi1:enumType"/>
+      <xs:element ref="vmi1:structType"/>
+      <xs:element ref="vmi1:unionType"/>
+      <xs:element ref="vmi1:functionType"/>
     </xs:choice>
   </xs:complexType>
-  <xs:complexType name="NestedSymbolT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolsOrSymbolRefs"/>
-    </xs:complexContent>
-  </xs:complexType>
-  <xs:element name="nestedSymbol" type="vmi1:NestedSymbolT"/>
-  <!--
-    
-    The following two patterns cause trang to spit xs:groups instead of 
-    complex types, so we can't use them with gsoap, and must inline them.
-    
-    SymtabOrSymtabRef = 
-       (element symtab { SymtabT } | element symtabRef { SymtabRef })
-    SymtabsOrSymtabRefs = (element symtab { SymtabT }+ 
-                          | element symtabRef { SymtabRef }+)
-    
-    ... but this pattern causes a complex type, so it's safe!
-    
-  -->
-  <xs:group name="SymtabsOrSymtabRefsOpt">
-    <xs:choice>
-      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:symtab"/>
-      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:symtabRef"/>
-    </xs:choice>
-  </xs:group>
-  <xs:element name="symtab" type="vmi1:SymtabT"/>
-  <xs:element name="symtabRef" type="vmi1:SymtabRef"/>
+  <!-- NestedSymbolT = SymbolsT -->
+  <xs:element name="nestedSymbol" type="vmi1:SymbolsT"/>
   <xs:complexType name="DebugFileT">
     <xs:sequence>
       <xs:element ref="vmi1:filename"/>
@@ -211,18 +186,21 @@
       </xs:sequence>
     </xs:complexType>
   </xs:element>
-  <xs:element name="globalSymbols" type="vmi1:SymbolsOrSymbolRefs"/>
+  <xs:element name="symtab" type="vmi1:SymtabT"/>
+  <xs:element name="globalSymbols" type="vmi1:SymbolsT"/>
   <xs:element name="debugFile" type="vmi1:DebugFileT"/>
   <xs:complexType name="DebugFileOptsT">
     <xs:sequence>
       <xs:element ref="vmi1:symbolRefDepth"/>
       <xs:element ref="vmi1:symtabRefDepth"/>
       <xs:element ref="vmi1:doMultiRef"/>
+      <xs:element ref="vmi1:doManualRef"/>
     </xs:sequence>
   </xs:complexType>
   <xs:element name="symbolRefDepth" type="xs:int"/>
   <xs:element name="symtabRefDepth" type="xs:int"/>
   <xs:element name="doMultiRef" type="xs:boolean"/>
+  <xs:element name="doManualRef" type="xs:boolean"/>
   <xs:element name="debugFileOpts" type="vmi1:DebugFileOptsT"/>
   <xs:complexType name="RangesT">
     <xs:sequence>
@@ -241,17 +219,21 @@
   <xs:element name="end" type="vmi1:ADDR"/>
   <xs:element name="ranges" type="vmi1:RangesT"/>
   <xs:complexType name="SymtabT">
-    <xs:sequence minOccurs="0">
-      <xs:element ref="vmi1:ranges"/>
-      <xs:element minOccurs="0" ref="vmi1:rootMeta"/>
-      <xs:element minOccurs="0" ref="vmi1:parent"/>
-      <xs:element ref="vmi1:symtabs"/>
-      <xs:element ref="vmi1:symbols"/>
-      <xs:element ref="vmi1:anonSymbols"/>
-    </xs:sequence>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:element ref="vmi1:ranges"/>
+        <xs:element minOccurs="0" ref="vmi1:rootMeta"/>
+        <xs:element minOccurs="0" ref="vmi1:parent"/>
+        <xs:element ref="vmi1:symtabs"/>
+        <xs:element ref="vmi1:symbols"/>
+        <xs:element ref="vmi1:anonSymbols"/>
+      </xs:sequence>
+    </xs:choice>
     <xs:attribute name="sid" use="required" type="xs:ID"/>
     <xs:attribute name="name"/>
   </xs:complexType>
+  <xs:element name="sref" type="xs:IDREF"/>
   <xs:element name="rootMeta">
     <xs:complexType>
       <xs:sequence>
@@ -272,8 +254,8 @@
       </xs:sequence>
     </xs:complexType>
   </xs:element>
-  <xs:element name="symbols" type="vmi1:SymbolsOrSymbolRefsOpt"/>
-  <xs:element name="anonSymbols" type="vmi1:SymbolsOrSymbolRefsOpt"/>
+  <xs:element name="symbols" type="vmi1:SymbolsOptT"/>
+  <xs:element name="anonSymbols" type="vmi1:SymbolsOptT"/>
   <xs:element name="addr" type="vmi1:ADDR"/>
   <xs:element name="reg" type="vmi1:REGNO"/>
   <xs:element name="regAddr" type="vmi1:REGNO"/>
@@ -333,114 +315,137 @@
       </xs:simpleType>
     </xs:attribute>
   </xs:complexType>
-  <xs:complexType name="SymbolHeaderT">
-    <xs:sequence>
-      <xs:element ref="vmi1:symbolMeta"/>
-      <xs:choice minOccurs="0">
-        <xs:element ref="vmi1:size"/>
-        <xs:sequence>
-          <xs:element ref="vmi1:bitSize"/>
-          <xs:element ref="vmi1:bitOffset"/>
-          <xs:element ref="vmi1:containingTypeByteSize"/>
-        </xs:sequence>
-      </xs:choice>
-    </xs:sequence>
+  <xs:attributeGroup name="SymbolHeader">
     <xs:attribute name="sid" use="required" type="xs:ID"/>
     <xs:attribute name="name"/>
-  </xs:complexType>
-  <xs:element name="symbolMeta">
+  </xs:attributeGroup>
+  <xs:group name="SymbolCommon">
+    <xs:sequence>
+      <xs:element ref="vmi1:source"/>
+      <xs:element ref="vmi1:declaration"/>
+      <xs:element minOccurs="0" ref="vmi1:byteSize"/>
+      <xs:sequence minOccurs="0">
+        <xs:element ref="vmi1:bitSize"/>
+        <xs:element ref="vmi1:bitOffset"/>
+        <xs:element ref="vmi1:containingTypeByteSize"/>
+      </xs:sequence>
+    </xs:sequence>
+  </xs:group>
+  <xs:element name="source">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="dwarf"/>
+        <xs:enumeration value="elf"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="declaration">
     <xs:complexType>
-      <xs:attribute name="source" use="required">
-        <xs:simpleType>
-          <xs:restriction base="xs:token">
-            <xs:enumeration value="dwarf"/>
-            <xs:enumeration value="elf"/>
-          </xs:restriction>
-        </xs:simpleType>
-      </xs:attribute>
-      <xs:attribute name="external" use="required" type="xs:boolean"/>
-      <xs:attribute name="declaration" use="required" type="xs:boolean"/>
-      <xs:attribute name="prototyped" use="required" type="xs:boolean"/>
+      <xs:attribute name="isExternal" use="required" type="xs:boolean"/>
+      <xs:attribute name="isDeclaration" use="required" type="xs:boolean"/>
+      <xs:attribute name="isPrototyped" use="required" type="xs:boolean"/>
     </xs:complexType>
   </xs:element>
-  <xs:element name="size" type="xs:unsignedInt"/>
+  <xs:element name="byteSize" type="xs:unsignedInt"/>
   <xs:element name="bitSize" type="xs:unsignedInt"/>
   <xs:element name="bitOffset" type="xs:unsignedInt"/>
   <xs:element name="containingTypeByteSize" type="xs:unsignedInt"/>
-  <xs:group name="InstanceSymbolT">
+  <xs:group name="InstanceSymbol">
     <xs:sequence>
       <xs:element minOccurs="0" ref="vmi1:addr"/>
-      <xs:element minOccurs="0" name="type" type="vmi1:SymbolOrSymbolRef"/>
-      <xs:element minOccurs="0" ref="vmi1:constValue"/>
-      <xs:element minOccurs="0" ref="vmi1:abstractOrigin"/>
-      <xs:element minOccurs="0" ref="vmi1:inlineInstances"/>
+      <xs:element ref="vmi1:inline"/>
     </xs:sequence>
   </xs:group>
-  <xs:element name="constValue" type="xs:string"/>
-  <xs:element name="abstractOrigin" type="vmi1:SymbolOrSymbolRef"/>
-  <xs:element name="inlineInstances" type="vmi1:SymbolsOrSymbolRefs"/>
-  <xs:attributeGroup name="InstanceSymbolT">
-    <xs:attribute name="inlineInstance" use="required" type="xs:boolean"/>
-    <xs:attribute name="declaredInline" use="required" type="xs:boolean"/>
-    <xs:attribute name="inlined" use="required" type="xs:boolean"/>
-  </xs:attributeGroup>
+  <xs:element name="inline">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" ref="vmi1:instances"/>
+        <xs:element minOccurs="0" ref="vmi1:origin"/>
+      </xs:sequence>
+      <xs:attribute name="isInlineInstance" use="required" type="xs:boolean"/>
+      <xs:attribute name="isDeclaredInline" use="required" type="xs:boolean"/>
+      <xs:attribute name="isInlined" use="required" type="xs:boolean"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="instances" type="vmi1:SymbolsT"/>
+  <xs:element name="origin" type="vmi1:SymbolT"/>
   <xs:complexType name="VariableT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:group ref="vmi1:InstanceSymbolT"/>
-          <xs:element minOccurs="0" ref="vmi1:location"/>
-        </xs:sequence>
-        <xs:attribute name="param" use="required" type="xs:boolean"/>
-        <xs:attribute name="member" use="required" type="xs:boolean"/>
-        <xs:attribute name="enumval" use="required" type="xs:boolean"/>
-        <xs:attributeGroup ref="vmi1:InstanceSymbolT"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:group ref="vmi1:InstanceSymbol"/>
+        <xs:element minOccurs="0" name="type" type="vmi1:SymbolT"/>
+        <xs:element minOccurs="0" ref="vmi1:constValue"/>
+        <xs:element ref="vmi1:kind"/>
+        <xs:element minOccurs="0" ref="vmi1:location"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
+  <xs:element name="constValue" type="xs:string"/>
+  <xs:element name="kind">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="variable"/>
+        <xs:enumeration value="parameter"/>
+        <xs:enumeration value="member"/>
+        <xs:enumeration value="enumerator"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
   <xs:complexType name="FunctionT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:group ref="vmi1:InstanceSymbolT"/>
-          <xs:element minOccurs="0" ref="vmi1:entryPC"/>
-          <xs:element minOccurs="0" ref="vmi1:prologueEnd"/>
-          <xs:element minOccurs="0" ref="vmi1:epilogueBegin"/>
-          <xs:element ref="vmi1:arguments"/>
-          <xs:element ref="vmi1:ranges"/>
-          <xs:element ref="vmi1:symtab"/>
-        </xs:sequence>
-        <xs:attribute name="argCount" use="required" type="xs:unsignedShort"/>
-        <xs:attribute name="hasUnspecifiedParams" use="required" type="xs:boolean"/>
-        <xs:attributeGroup ref="vmi1:InstanceSymbolT"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:group ref="vmi1:InstanceSymbol"/>
+        <xs:element minOccurs="0" name="type" type="vmi1:SymbolT"/>
+        <xs:element minOccurs="0" ref="vmi1:constValue"/>
+        <xs:element ref="vmi1:argCount"/>
+        <xs:element ref="vmi1:hasUnspecifiedParams"/>
+        <xs:element ref="vmi1:arguments"/>
+        <xs:element minOccurs="0" ref="vmi1:entryPC"/>
+        <xs:element minOccurs="0" ref="vmi1:prologueEnd"/>
+        <xs:element minOccurs="0" ref="vmi1:epilogueBegin"/>
+        <xs:element ref="vmi1:ranges"/>
+        <xs:element ref="vmi1:symtab"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
+  <xs:element name="argCount" type="xs:unsignedShort"/>
+  <xs:element name="hasUnspecifiedParams" type="xs:boolean"/>
+  <xs:element name="arguments" type="vmi1:SymbolsOptT"/>
   <xs:element name="entryPC" type="vmi1:ADDR"/>
   <xs:element name="prologueEnd" type="vmi1:ADDR"/>
   <xs:element name="epilogueBegin" type="vmi1:ADDR"/>
-  <xs:element name="arguments" type="vmi1:SymbolsOrSymbolRefsOpt"/>
   <xs:complexType name="LabelT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:group ref="vmi1:InstanceSymbolT"/>
-        <xs:attributeGroup ref="vmi1:InstanceSymbolT"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:group ref="vmi1:InstanceSymbol"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="VoidTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT"/>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:group ref="vmi1:SymbolCommon"/>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="BaseTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element ref="vmi1:encoding"/>
-        </xs:sequence>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element ref="vmi1:encoding"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:element name="encoding">
     <xs:simpleType>
@@ -464,51 +469,58 @@
     </xs:simpleType>
   </xs:element>
   <xs:complexType name="PointerTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
-        </xs:sequence>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="TypedefTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
-        </xs:sequence>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="ConstTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
-        </xs:sequence>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="VolatileTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element name="type" type="vmi1:SymbolOrSymbolRef"/>
-        </xs:sequence>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="ArrayTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element ref="vmi1:subranges"/>
-        </xs:sequence>
-        <xs:attribute name="subrangeCount" use="required" type="xs:int"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+        <xs:element ref="vmi1:subrangeCount"/>
+        <xs:element ref="vmi1:subranges"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
+  <xs:element name="subrangeCount" type="xs:int"/>
   <xs:element name="subranges">
     <xs:complexType>
       <xs:sequence>
@@ -518,44 +530,53 @@
   </xs:element>
   <xs:element name="subrange" type="xs:int"/>
   <xs:complexType name="EnumTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element name="members" type="vmi1:SymbolsOrSymbolRefs"/>
-        </xs:sequence>
-        <xs:attribute name="memberCount" use="required" type="xs:int"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+        <xs:element ref="vmi1:memberCount"/>
+        <xs:element name="members" type="vmi1:SymbolsT"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
+  <xs:element name="memberCount" type="xs:int"/>
   <xs:complexType name="StructTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element name="members" type="vmi1:SymbolsOrSymbolRefsOpt"/>
-        </xs:sequence>
-        <xs:attribute name="memberCount" use="required" type="xs:int"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+        <xs:element ref="vmi1:memberCount"/>
+        <xs:element name="members" type="vmi1:SymbolsOptT"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="UnionTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element name="members" type="vmi1:SymbolsOrSymbolRefsOpt"/>
-        </xs:sequence>
-        <xs:attribute name="memberCount" use="required" type="xs:int"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+        <xs:element ref="vmi1:memberCount"/>
+        <xs:element name="members" type="vmi1:SymbolsOptT"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
   <xs:complexType name="FunctionTypeT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:SymbolHeaderT">
-        <xs:sequence>
-          <xs:element ref="vmi1:arguments"/>
-        </xs:sequence>
-        <xs:attribute name="argCount" use="required" type="xs:unsignedShort"/>
-        <xs:attribute name="hasUnspecifiedParams" use="required" type="xs:boolean"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:choice>
+      <xs:element ref="vmi1:sref"/>
+      <xs:sequence>
+        <xs:group ref="vmi1:SymbolCommon"/>
+        <xs:element name="type" type="vmi1:SymbolT"/>
+        <xs:element ref="vmi1:argCount"/>
+        <xs:element ref="vmi1:hasUnspecifiedParams"/>
+        <xs:element ref="vmi1:arguments"/>
+      </xs:sequence>
+    </xs:choice>
+    <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>
 </xs:schema>

@@ -27,6 +27,7 @@ static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .symbolRefDepth = 1,
     .symtabRefDepth = 1,
     .doMultiRef = 0,
+    .doManualRef = 0,
 };
 
 void *_soap_calloc(struct soap *soap,size_t size) {
@@ -187,7 +188,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
     return vr;
 }
 
-#define FILL_SYMBOLHEADERCONTENTS(s,r)					\
+#define FILL_SYMBOLHEADER(s,r)						\
     do {								\
 	int _rc;							\
 	char *_name;							\
@@ -204,79 +205,205 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 	    (r)->name = _soap_calloc(soap,_rc);				\
 	    strncpy((r)->name,_name,_rc);				\
 	}								\
-	(r)->symbolMeta = _soap_calloc(soap,1*sizeof(*(r)->symbolMeta));	\
-	if (SYMBOL_IS_DWARF((s)))					\
-	    (r)->symbolMeta->source = _vmi1__symbolMeta_source__dwarf;	\
-	else if (SYMBOL_IS_ELF((s)))					\
-	    (r)->symbolMeta->source = _vmi1__symbolMeta_source__elf;	\
-	(r)->symbolMeta->external = (enum xsd__boolean)((s)->isexternal & 1); \
-	(r)->symbolMeta->declaration = (enum xsd__boolean)((s)->isdeclaration & 1); \
-	(r)->symbolMeta->prototyped = (enum xsd__boolean)((s)->isprototyped & 1); \
-	if ((s)->size_is_bytes) {					\
-	    (r)->size = _soap_calloc(soap,sizeof(*(r)->size));		\
-	    *(r)->size = symbol_bytesize((s));				\
-	}								\
-	if ((s)->size_is_bits) {					\
-	    (r)->bitSize = _soap_calloc(soap,sizeof(*(r)->bitSize));	\
-	    *(r)->bitSize = symbol_bitsize(s);				\
-	    (r)->bitOffset = _soap_calloc(soap,sizeof(*(r)->bitOffset)); \
-	    *(r)->bitOffset = s->size.offset;				\
-	    (r)->containingTypeByteSize =				\
-		_soap_calloc(soap,sizeof(*(r)->containingTypeByteSize)); \
-	    *(r)->containingTypeByteSize = s->size.ctbytes;		\
-	}								\
     } while (0);
 
+#define FILL_SYMBOLCOMMON(typename,s,r)					\
+    (r)->source = _soap_calloc(soap,1*sizeof(*(r)->source));		\
+    if (SYMBOL_IS_DWARF((s)))						\
+	*(r)->source = _vmi1__source__dwarf;				\
+    else if (SYMBOL_IS_ELF((s)))					\
+	*(r)->source = _vmi1__source__elf;				\
+    (r)->declaration = _soap_calloc(soap,1*sizeof(*(r)->declaration));  \
+    (r)->declaration->isExternal = (enum xsd__boolean)((s)->isexternal & 1); \
+    (r)->declaration->isDeclaration = (enum xsd__boolean)((s)->isdeclaration & 1); \
+    (r)->declaration->isPrototyped = (enum xsd__boolean)((s)->isprototyped & 1); \
+    if ((s)->size_is_bytes || (s)->size_is_bits) {			\
+	(r)->byteSize = _soap_calloc(soap,sizeof(*(r)->byteSize));	\
+	*(r)->byteSize = symbol_bytesize((s));				\
+    }									\
+    if ((s)->size_is_bits) {						\
+	(r)->__size_ ## typename ## _sequence = 1;			\
+	(r)->__ ## typename ## _sequence =				\
+	    _soap_calloc(soap,sizeof(*(r)->__ ## typename ## _sequence)); \
+	(r)->__ ## typename ## _sequence->bitSize =			\
+	    _soap_calloc(soap,sizeof(*(r)->__ ## typename ## _sequence->bitSize)); \
+	*(r)->__ ## typename ## _sequence->bitSize = symbol_bitsize(s);	\
+	(r)->__ ## typename ## _sequence->bitOffset =			\
+	    _soap_calloc(soap,sizeof(*(r)->__ ## typename ## _sequence->bitOffset)); \
+	*(r)->__ ## typename ## _sequence->bitOffset = s->size.offset;	\
+	(r)->__ ## typename ## _sequence->containingTypeByteSize =	\
+	    _soap_calloc(soap,sizeof(*(r)->__ ## typename ## _sequence->containingTypeByteSize)); \
+	*(r)->__ ## typename ## _sequence->containingTypeByteSize =	\
+	    s->size.ctbytes;						\
+    }
+
+#define FILL_SYMBOLTYPE(s,r)						\
+    if ((s)->datatype)							\
+	(r)->type = d_symbol_to_x_SymbolT(soap,(s)->datatype,(opts),	\
+					  (reftab),(depth)+1);
+    
 #define FILL_INSTANCESYMBOLCONTENTS(s,opts,reftab,depth,r)		\
     if ((s)->has_base_addr) {						\
        (r)->addr = _soap_calloc(soap,sizeof(*(r)->addr));		\
        *(r)->addr = s->base_addr;					\
     }			 	      					\
-    r->inlineInstance = (enum xsd__boolean)(s->isinlineinstance & 1);   \
-    if (SYMBOL_IS_FULL((s))) {						\
-	r->declaredInline = (enum xsd__boolean)((s)->s.ii->isdeclinline & 1); \
-	r->inlined = (enum xsd__boolean)((s)->s.ii->isinlined & 1); 	\
-    }									\
-    if ((s)->datatype)							\
-	(r)->type = d_symbol_to_x_SymbolOrSymbolRef(soap,(s)->datatype,(opts), \
-						    (reftab),(depth)+1); \
     /* XXX: do constValue!!! */						\
+    (r)->inline_ = _soap_calloc(soap,sizeof(*(r)->inline_));		\
     if (SYMBOL_IS_FULL((s)) && (s)->s.ii->origin) {			\
-	r->abstractOrigin =						\
-	    d_symbol_to_x_SymbolOrSymbolRef(soap,(s)->s.ii->origin,(opts), \
-					    (reftab),(depth)+1);	\
+	r->inline_->origin =						\
+	    d_symbol_to_x_SymbolT(soap,(s)->s.ii->origin,(opts),	\
+				  (reftab),(depth)+1);			\
+    }									\
+    (r)->inline_->isInlineInstance = (enum xsd__boolean)		\
+	(s->isinlineinstance & 1);					\
+    if (SYMBOL_IS_FULL((s))) {						\
+	(r)->inline_->isDeclaredInline = (enum xsd__boolean)		\
+	    ((s)->s.ii->isdeclinline & 1);				\
+	(r)->inline_->isInlined = (enum xsd__boolean)			\
+	    ((s)->s.ii->isinlined & 1);					\
     }									\
     if (SYMBOL_IS_FULL((s)) && (s)->s.ii->inline_instances		\
 	&& array_list_len((s)->s.ii->inline_instances)) {		\
-	r->inlineInstances =						\
-	    d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,(s)->s.ii->inline_instances, \
-							 (opts),(reftab), \
-							 (depth)+1);	\
+	(r)->inline_->instances =					\
+	    d_symbol_array_list_to_x_SymbolsT(soap,			\
+					      (s)->s.ii->inline_instances, \
+					      (opts),(reftab),(depth)+1); \
     }
+
+#define RETURN_REF_OR_ALLOC(objtype,s,opts,reftab,depth,r)		\
+    do {								\
+        typeof(r) _r = NULL;						\
+	int _rc;							\
+	char *_name;							\
+	char _idbuf[16];						\
+	int _idblen = 16;						\
+									\
+	/*								\
+	 * If it is in the reftab, and if multi-ref encoding is enabled,\
+	 * or we have reached the max depth but manual multi-ref is	\
+	 * disabled (or we haven't reached the max depth), just return  \
+	 * the gsoap serialization struct we already encoded for this	\
+	 * symbol so gsoap can fully render it again.			\
+	 */								\
+        if (reftab							\
+	    && (_r = (typeof(r))g_hash_table_lookup(reftab,(gpointer)s)) \
+	    && ((opts)->doMultiRef					\
+		|| (depth < (opts)-> objtype ## RefDepth		\
+		    && !(opts)->doManualRef))) {			\
+									\
+	    if (!(r)) {							\
+		vdebug(5,LOG_X_XML,					\
+		       "reusing encoded %s(%"PRIiSMOFFSET") at (d=%d,%d/%d)" \
+		       " (multiref=%d)\n",				\
+		       objtype ## _get_name(s),(s)->ref,depth,		\
+		       (opts)->symbolRefDepth,(opts)->symtabRefDepth,	\
+		       (opts)->doMultiRef);				\
+		  							\
+		return (typeof(r))_r;					\
+	    }								\
+	    else {							\
+		/* Must memcpy contents into existing buffer. */	\
+		vdebug(5,LOG_X_XML,					\
+		       "copying encoded %s(%"PRIiSMOFFSET") at (d=%d,%d/%d)" \
+		       " (multiref=%d)\n",				\
+		       objtype ## _get_name(s),(s)->ref,depth,		\
+		       (opts)->symbolRefDepth,(opts)->symtabRefDepth,	\
+		       (opts)->doMultiRef);				\
+									\
+		memcpy(r,_r,sizeof(r));					\
+									\
+		return (typeof(r))_r;					\
+	    }								\
+	}								\
+	else {								\
+	    /*								\
+	     * Need to encode it as a ref and return immediately.	\
+	     */								\
+	    if (_r && ((opts)->doManualRef)) {				\
+		if (!(r))						\
+		    (r) = _soap_calloc(soap,sizeof(*(r)));		\
+									\
+		_rc = snprintf(_idbuf,_idblen,"%d",(s)->ref);		\
+		_rc = (_rc > _idblen) ? _idblen : (_rc + 1);		\
+		(r)->sref = _soap_calloc(soap,_rc);			\
+		strncpy((r)->sref,_idbuf,_rc);				\
+									\
+		vdebug(5,LOG_X_XML,					\
+		       "encoding manual ref for %s(%"PRIiSMOFFSET")"    \
+		       " at (d=%d,%d/%d)\n",				\
+		       objtype ## _get_name(s),s->ref,depth,		\
+		       opts->symbolRefDepth,opts->symtabRefDepth);	\
+									\
+		return (typeof(r))r;					\
+	    }								\
+	    else if (depth >= (opts)-> objtype ## RefDepth) {		\
+		if (!(r))						\
+		    (r) = _soap_calloc(soap,sizeof(*(r)));		\
+									\
+		_rc = snprintf(_idbuf,_idblen,"%d",(s)->ref);		\
+		_rc = (_rc > _idblen) ? _idblen : (_rc + 1);		\
+		(r)->sref = _soap_calloc(soap,_rc);			\
+		strncpy((r)->sref,_idbuf,_rc);				\
+									\
+		if (objtype ## _get_name(s)) {				\
+		    _name = objtype ## _get_name((s));			\
+		    _rc = strlen(_name) + 1;				\
+		    (r)->name = _soap_calloc(soap,_rc);			\
+		    strncpy((r)->name,_name,_rc);			\
+		}							\
+									\
+		vdebug(5,LOG_X_XML,					\
+		       "encoding fetchable ref for %s(%"PRIiSMOFFSET")" \
+		       " at (d=%d,%d/%d)\n",				\
+		       objtype ## _get_name(s),s->ref,depth,		\
+		       opts->symbolRefDepth,opts->symtabRefDepth);	\
+									\
+		return (typeof(r))r;					\
+	    }								\
+	    /*								\
+	     * Need to fully encode it, so just malloc it, place it in  \ 
+	     * the reftab, and let caller take over.			\
+	     */								\
+	    else {							\
+		if (!(r))						\
+		    (r) = _soap_calloc(soap,sizeof(*(r)));		\
+									\
+		vdebug(5,LOG_X_XML,					\
+		       "encoding full %s(%"PRIiSMOFFSET")"		\
+		       " at (d=%d,%d/%d)\n",				\
+		       objtype ## _get_name(s),s->ref,depth,		\
+		       opts->symbolRefDepth,opts->symtabRefDepth);	\
+									\
+		if (reftab)						\
+		    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);\
+	    }								\
+	}								\
+    } while (0);
 
 struct vmi1__VariableT *
 d_symbol_to_x_VariableT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth) {
-    struct vmi1__VariableT *r;
-
-    if (reftab && (r = (struct vmi1__VariableT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s))) 
-	return r;
+    struct vmi1__VariableT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    r = _soap_calloc(soap,sizeof(*r));
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    if (reftab)
-	g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(VariableT,s,r);
+    FILL_SYMBOLTYPE(s,r);
 
-    FILL_SYMBOLHEADERCONTENTS(s,r)
-
-    r->param = (enum xsd__boolean)(s->isparam & 1);
-    r->member = (enum xsd__boolean)(s->ismember & 1);
-    r->enumval = (enum xsd__boolean)(s->isenumval & 1);
+    r->kind = _soap_calloc(soap,sizeof(*r->kind));
+    if (s->isparam)
+	*r->kind = _vmi1__kind__parameter;
+    else if (s->ismember)
+	*r->kind = _vmi1__kind__member;
+    else if (s->isenumval)
+	*r->kind = _vmi1__kind__enumerator;
+    else
+	*r->kind = _vmi1__kind__variable;
 
     FILL_INSTANCESYMBOLCONTENTS(s,opts,reftab,depth,r);
 
@@ -298,28 +425,26 @@ struct vmi1__FunctionT *
 d_symbol_to_x_FunctionT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth) {
-    struct vmi1__FunctionT *r;
+    struct vmi1__FunctionT *r = NULL;
     struct symbol *arg;
     struct symbol_instance *argi;
     struct array_list *gslist;
 
-    if (reftab && (r = (struct vmi1__FunctionT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    r = _soap_calloc(soap,sizeof(*r));
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    if (reftab)
-	g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(FunctionT,s,r);
+    FILL_SYMBOLTYPE(s,r);
 
     if (SYMBOL_IS_FULL(s)) {
-	r->argCount = s->s.ii->d.f.count;
+	r->argCount = _soap_calloc(soap,sizeof(*r->argCount));
+	*r->argCount = s->s.ii->d.f.count;
 	r->hasUnspecifiedParams = \
+	    _soap_calloc(soap,sizeof(*r->hasUnspecifiedParams));
+	*r->hasUnspecifiedParams = \
 	    (s->s.ii->d.f.hasunspec) ? xsd__boolean__true_ : xsd__boolean__false_;
 	if (s->s.ii->d.f.hasentrypc) {
 	    r->entryPC = _soap_calloc(soap,sizeof(*r->entryPC));
@@ -347,20 +472,13 @@ d_symbol_to_x_FunctionT(struct soap *soap,struct symbol *s,
 	if (s->s.ii->d.f.count) {
 	    /* Make a tmp array list of the symbols */
 	    gslist = array_list_create(s->s.ii->d.f.count);
-	    /*
-	     * This is a nasty hack, but if you look at the stub,
-	     * vmi1__SymbolsOrSymbolRefs and vmi1__SymbolsOrSymbolRefsOpt are
-	     * identical except in name.
-	     *
-	     * I expect SymbolRefs to go away soon anyway, so cheat for now.
-	     */
 	    list_for_each_entry(argi,&s->s.ii->d.f.args,d.v.member) {
 		arg = argi->d.v.member_symbol;
 		array_list_append(gslist,arg);
 	    }
-	    r->arguments = (struct vmi1__SymbolsOrSymbolRefsOpt *) \
-		d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-							     opts,reftab,depth+1);
+	    r->arguments = \
+		d_symbol_array_list_to_x_SymbolsOptT(soap,gslist,
+						     opts,reftab,depth+1);
 	    array_list_free(gslist);
 	}
 	else {
@@ -382,21 +500,15 @@ struct vmi1__LabelT *
 d_symbol_to_x_LabelT(struct soap *soap,struct symbol *s,
 		     struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 		     int depth) {
-    struct vmi1__LabelT *r;
-
-    if (reftab && (r = (struct vmi1__LabelT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
+    struct vmi1__LabelT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
+
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(LabelT,s,r);
     FILL_INSTANCESYMBOLCONTENTS(s,opts,reftab,depth,r);
 
     return r;
@@ -406,21 +518,15 @@ struct vmi1__VoidTypeT *
 d_symbol_to_x_VoidTypeT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth) {
-    struct vmi1__VoidTypeT *r;
-
-    if (reftab && (r = (struct vmi1__VoidTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
+    struct vmi1__VoidTypeT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
+
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(VoidTypeT,s,r);
 
     return r;
 }
@@ -429,68 +535,63 @@ struct vmi1__BaseTypeT *
 d_symbol_to_x_BaseTypeT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth) {
-    struct vmi1__BaseTypeT *r;
-
-    if (reftab && (r = (struct vmi1__BaseTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
+    struct vmi1__BaseTypeT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
+
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(BaseTypeT,s,r);
 
     if (SYMBOL_IS_FULL(s)) {
+	r->encoding = _soap_calloc(soap,sizeof(*r->encoding));
 	switch (s->s.ti->d.t.encoding) {
 	case ENCODING_ADDRESS:
-	    r->encoding = _vmi1__encoding__address;
+	    *r->encoding = _vmi1__encoding__address;
 	    break;
 	case ENCODING_BOOLEAN:
-	    r->encoding = _vmi1__encoding__boolean;
+	    *r->encoding = _vmi1__encoding__boolean;
 	    break;
 	case ENCODING_COMPLEX_FLOAT:
-	    r->encoding = _vmi1__encoding__complexFloat;
+	    *r->encoding = _vmi1__encoding__complexFloat;
 	    break;
 	case ENCODING_FLOAT:
-	    r->encoding = _vmi1__encoding__float_;
+	    *r->encoding = _vmi1__encoding__float_;
 	    break;
 	case ENCODING_SIGNED:
-	    r->encoding = _vmi1__encoding__signed_;
+	    *r->encoding = _vmi1__encoding__signed_;
 	    break;
 	case ENCODING_SIGNED_CHAR:
-	    r->encoding = _vmi1__encoding__signedChar;
+	    *r->encoding = _vmi1__encoding__signedChar;
 	    break;
 	case ENCODING_UNSIGNED:
-	    r->encoding = _vmi1__encoding__unsigned_;
+	    *r->encoding = _vmi1__encoding__unsigned_;
 	    break;
 	case ENCODING_UNSIGNED_CHAR:
-	    r->encoding = _vmi1__encoding__unsignedChar;
+	    *r->encoding = _vmi1__encoding__unsignedChar;
 	    break;
 	case ENCODING_IMAGINARY_FLOAT:
-	    r->encoding = _vmi1__encoding__imaginaryFloat;
+	    *r->encoding = _vmi1__encoding__imaginaryFloat;
 	    break;
 	case ENCODING_PACKED_DECIMAL:
-	    r->encoding = _vmi1__encoding__packedDecimal;
+	    *r->encoding = _vmi1__encoding__packedDecimal;
 	    break;
 	case ENCODING_NUMERIC_STRING:
-	    r->encoding = _vmi1__encoding__numericString;
+	    *r->encoding = _vmi1__encoding__numericString;
 	    break;
 	case ENCODING_EDITED:
-	    r->encoding = _vmi1__encoding__edited;
+	    *r->encoding = _vmi1__encoding__edited;
 	    break;
 	case ENCODING_SIGNED_FIXED:
-	    r->encoding = _vmi1__encoding__signedFixed;
+	    *r->encoding = _vmi1__encoding__signedFixed;
 	    break;
 	case ENCODING_UNSIGNED_FIXED:
-	    r->encoding = _vmi1__encoding__unsignedFixed;
+	    *r->encoding = _vmi1__encoding__unsignedFixed;
 	    break;
 	default:
-	    r->encoding = _vmi1__encoding__unknown;
+	    *r->encoding = _vmi1__encoding__unknown;
 	    break;
 	}
     }
@@ -502,24 +603,16 @@ struct vmi1__PointerTypeT *
 d_symbol_to_x_PointerTypeT(struct soap *soap,struct symbol *s,
 			   struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			   int depth) {
-    struct vmi1__PointerTypeT *r;
-
-    if (reftab && (r = (struct vmi1__PointerTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
+    struct vmi1__PointerTypeT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->type = d_symbol_to_x_SymbolOrSymbolRef(soap,s->datatype,
-					      opts,reftab,depth+1);
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(PointerTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
 
     return r;
 }
@@ -528,24 +621,16 @@ struct vmi1__TypedefTypeT *
 d_symbol_to_x_TypedefTypeT(struct soap *soap,struct symbol *s,
 			  struct vmi1__DebugFileOptsT *opts,
 			  GHashTable *reftab,int depth) {
-    struct vmi1__TypedefTypeT *r;
-
-    if (reftab && (r = (struct vmi1__TypedefTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
+    struct vmi1__TypedefTypeT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->type = d_symbol_to_x_SymbolOrSymbolRef(soap,s->datatype,
-					      opts,reftab,depth+1);
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(TypedefTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
 
     return r;
 }
@@ -554,24 +639,16 @@ struct vmi1__ConstTypeT *
 d_symbol_to_x_ConstTypeT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth) {
-    struct vmi1__ConstTypeT *r;
-
-    if (reftab && (r = (struct vmi1__ConstTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
+    struct vmi1__ConstTypeT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->type = d_symbol_to_x_SymbolOrSymbolRef(soap,s->datatype,
-					      opts,reftab,depth+1);
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(ConstTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
 
     return r;
 }
@@ -580,24 +657,16 @@ struct vmi1__VolatileTypeT *
 d_symbol_to_x_VolatileTypeT(struct soap *soap,struct symbol *s,
 			   struct vmi1__DebugFileOptsT *opts,
 			   GHashTable *reftab,int depth) {
-    struct vmi1__VolatileTypeT *r;
-
-    if (reftab && (r = (struct vmi1__VolatileTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
+    struct vmi1__VolatileTypeT *r = NULL;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->type = d_symbol_to_x_SymbolOrSymbolRef(soap,s->datatype,
-					      opts,reftab,depth+1);
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(VolatileTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
 
     return r;
 }
@@ -606,24 +675,20 @@ struct vmi1__ArrayTypeT *
 d_symbol_to_x_ArrayTypeT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth) {
-    struct vmi1__ArrayTypeT *r;
+    struct vmi1__ArrayTypeT *r = NULL;
     int i;
-
-    if (reftab && (r = (struct vmi1__ArrayTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->subrangeCount = s->s.ti->d.a.count;
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(ArrayTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
+
+    r->subrangeCount = _soap_calloc(soap,sizeof(*r->subrangeCount));
+    *r->subrangeCount = s->s.ti->d.a.count;
     if (s->s.ti->d.a.count) {
 	r->subranges = _soap_calloc(soap,sizeof(*r->subranges));
 	r->subranges->__sizesubrange = s->s.ti->d.a.count;
@@ -642,35 +707,30 @@ struct vmi1__EnumTypeT *
 d_symbol_to_x_EnumTypeT(struct soap *soap,struct symbol *s,
 		       struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 		       int depth) {
-    struct vmi1__EnumTypeT *r;
+    struct vmi1__EnumTypeT *r = NULL;
     struct symbol_instance *tmpi;
     struct symbol *tmps;
     struct array_list *gslist;
 
-    if (reftab && (r = (struct vmi1__EnumTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
-
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->memberCount = s->s.ti->d.e.count;
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(EnumTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
+
+    r->memberCount = _soap_calloc(soap,sizeof(*r->memberCount));
+    *r->memberCount = s->s.ti->d.e.count;
     if (s->s.ti->d.e.count) {
 	gslist = array_list_create(s->s.ti->d.e.count);
 	list_for_each_entry(tmpi,&s->s.ti->d.e.members,d.v.member) {
 	    tmps = tmpi->d.v.member_symbol;
 	    array_list_append(gslist,tmps);
 	}
-	r->members = (struct vmi1__SymbolsOrSymbolRefs *) \
-	    d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-							 opts,reftab,depth+1);
+	r->members = d_symbol_array_list_to_x_SymbolsT(soap,gslist,
+						       opts,reftab,depth+1);
 	array_list_free(gslist);
     }
 
@@ -681,35 +741,30 @@ struct vmi1__StructTypeT *
 d_symbol_to_x_StructTypeT(struct soap *soap,struct symbol *s,
 			 struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			 int depth) {
-    struct vmi1__StructTypeT *r;
+    struct vmi1__StructTypeT *r = NULL;
     struct symbol_instance *tmpi;
     struct symbol *tmps;
     struct array_list *gslist;
 
-    if (reftab && (r = (struct vmi1__StructTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
-
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->memberCount = s->s.ti->d.su.count;
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(StructTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
+
+    r->memberCount = _soap_calloc(soap,sizeof(*r->memberCount));
+    *r->memberCount = s->s.ti->d.su.count;
     if (s->s.ti->d.su.count) {
 	gslist = array_list_create(s->s.ti->d.su.count);
 	list_for_each_entry(tmpi,&s->s.ti->d.su.members,d.v.member) {
 	    tmps = tmpi->d.v.member_symbol;
 	    array_list_append(gslist,tmps);
 	}
-	r->members = (struct vmi1__SymbolsOrSymbolRefsOpt *)		\
-	    d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-							 opts,reftab,depth+1);
+	r->members = (struct vmi1__SymbolsOptT *)			\
+	    d_symbol_array_list_to_x_SymbolsT(soap,gslist,opts,reftab,depth+1);
 	array_list_free(gslist);
     }
 
@@ -720,35 +775,30 @@ struct vmi1__UnionTypeT *
 d_symbol_to_x_UnionTypeT(struct soap *soap,struct symbol *s,
 			struct vmi1__DebugFileOptsT *opts,GHashTable *reftab,
 			int depth) {
-    struct vmi1__UnionTypeT *r;
+    struct vmi1__UnionTypeT *r = NULL;
     struct symbol_instance *tmpi;
     struct symbol *tmps;
     struct array_list *gslist;
 
-    if (reftab && (r = (struct vmi1__UnionTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
-
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->memberCount = s->s.ti->d.su.count;
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(UnionTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
+
+    r->memberCount = _soap_calloc(soap,sizeof(*r->memberCount));
+    *r->memberCount = s->s.ti->d.su.count;
     if (s->s.ti->d.su.count) {
 	gslist = array_list_create(s->s.ti->d.su.count);
 	list_for_each_entry(tmpi,&s->s.ti->d.su.members,d.v.member) {
 	    tmps = tmpi->d.v.member_symbol;
 	    array_list_append(gslist,tmps);
 	}
-	r->members = (struct vmi1__SymbolsOrSymbolRefsOpt *)		\
-	    d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-							 opts,reftab,depth+1);
+	r->members = (struct vmi1__SymbolsOptT *)			\
+	    d_symbol_array_list_to_x_SymbolsT(soap,gslist,opts,reftab,depth+1);
 	array_list_free(gslist);
     }
 
@@ -759,242 +809,138 @@ struct vmi1__FunctionTypeT *
 d_symbol_to_x_FunctionTypeT(struct soap *soap,struct symbol *s,
 			   struct vmi1__DebugFileOptsT *opts,
 			   GHashTable *reftab,int depth) {
-    struct vmi1__FunctionTypeT *r;
+    struct vmi1__FunctionTypeT *r = NULL;
     struct symbol_instance *tmpi;
     struct symbol *tmps;
     struct array_list *gslist;
 
-    if (reftab && (r = (struct vmi1__FunctionTypeT *) \
-		   g_hash_table_lookup(reftab,(gpointer)s)))
-	return r;
-    else {
-	r = _soap_calloc(soap,sizeof(*r));
-	if (reftab)
-	    g_hash_table_insert(reftab,(gpointer)s,(gpointer)r);
-    }
-
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    FILL_SYMBOLHEADERCONTENTS(s,r);
+    RETURN_REF_OR_ALLOC(symbol,s,opts,reftab,depth,r);
 
-    r->argCount = s->s.ti->d.f.count;
+    FILL_SYMBOLHEADER(s,r);
+    FILL_SYMBOLCOMMON(FunctionTypeT,s,r);
+    FILL_SYMBOLTYPE(s,r);
+
+    r->argCount = _soap_calloc(soap,sizeof(*r->argCount));
+    *r->argCount = s->s.ti->d.f.count;
     if (s->s.ti->d.f.count) {
 	gslist = array_list_create(s->s.ti->d.f.count);
 	list_for_each_entry(tmpi,&s->s.ti->d.f.args,d.v.member) {
 	    tmps = tmpi->d.v.member_symbol;
 	    array_list_append(gslist,tmps);
 	}
-	r->arguments = (struct vmi1__SymbolsOrSymbolRefsOpt *)		\
-	    d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-							 opts,reftab,depth+1);
+	r->arguments = (struct vmi1__SymbolsOptT *)			\
+	    d_symbol_array_list_to_x_SymbolsT(soap,gslist,opts,reftab,depth+1);
 	array_list_free(gslist);
     }
+    r->hasUnspecifiedParams = \
+	_soap_calloc(soap,sizeof(*r->hasUnspecifiedParams));
     if (s->s.ti->d.f.hasunspec) 
-	r->hasUnspecifiedParams = xsd__boolean__true_;
+	*r->hasUnspecifiedParams = xsd__boolean__true_;
     else
-	r->hasUnspecifiedParams = xsd__boolean__false_;
+	*r->hasUnspecifiedParams = xsd__boolean__false_;
 
     return r;
 }
 
-struct vmi1__SymbolOrSymbolRef *
-d_symbol_to_x_SymbolOrSymbolRef(struct soap *soap,struct symbol *s,
-				struct vmi1__DebugFileOptsT *opts,
-				GHashTable *reftab,int depth) {
-    struct vmi1__SymbolOrSymbolRef *r;
-    gpointer cached = NULL;
-    char idbuf[16];
-    int rc;
+struct vmi1__SymbolT *
+d_symbol_to_x_SymbolT(struct soap *soap,struct symbol *s,
+		      struct vmi1__DebugFileOptsT *opts,
+		      GHashTable *reftab,int depth) {
+    struct vmi1__SymbolT *r;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    r = (struct vmi1__SymbolOrSymbolRef *)_soap_calloc(soap,sizeof(*r));
-
-    /*
-     * If we've hit the max depth, encode Refs, not Symbols/Symtabs.
-     *
-     * NOTE: we do *not* cache SymbolOrSymbolRef choices, nor do we
-     * cache symbolRef/symtabRef elements.  Why?  Because the choice of
-     * whether to encode a symbol or not is depth-dependent, so at some
-     * depths we might encode a ref, not a symbol/symtab.
-     *
-     * BUT, perhaps, we should always return the full symbol if it has
-     * already been encoded, instead of a ref to it, even if we've
-     * reached the max depth?  For now, we don't for consistency.
-     */
-    if (depth >= opts->symbolRefDepth) {
-	rc = snprintf(idbuf,16,"%d",(s)->ref);
-	rc = (rc > 16) ? 16 : (rc + 1);
-	r->__union_SymbolOrSymbolRef = \
-	    SOAP_UNION__vmi1__union_SymbolOrSymbolRef_symbolRef;
-	r->union_SymbolOrSymbolRef.symbolRef = _soap_calloc(soap,rc);
-	strncpy(r->union_SymbolOrSymbolRef.symbolRef,idbuf,rc);
-
-	vdebug(5,LOG_X_XML,
-	       "encoding %s(%"PRIiSMOFFSET") at (d=%d,%d/%d) as ref\n",
-	       symbol_get_name(s),s->ref,depth,
-	       opts->symbolRefDepth,opts->symtabRefDepth);
-
-	return r;
-    }
-
-    if (reftab) {
-	cached = g_hash_table_lookup(reftab,(gpointer)s);
-
-	vdebug(5,LOG_X_XML,
-	       "found %s(%"PRIiSMOFFSET") at (d=%d,%d/%d) in reftab; multiref\n",
-	       symbol_get_name(s),s->ref,depth,
-	       opts->symbolRefDepth,opts->symtabRefDepth);
-    }
-    else {
-	vdebug(5,LOG_X_XML,
-	       "encoding %s(%"PRIiSMOFFSET") at (d=%d,%d/%d) as full symbol\n",
-	       symbol_get_name(s),s->ref,depth,
-	       opts->symbolRefDepth,opts->symtabRefDepth);
-    }
+    r = (struct vmi1__SymbolT *)_soap_calloc(soap,sizeof(*r));
 
     if (SYMBOL_IS_VAR(s)) {
-	if (cached)
-	    r->union_SymbolOrSymbolRef.variable = \
-		(struct vmi1__VariableT *)cached;
-	else
-	    r->union_SymbolOrSymbolRef.variable = \
-		d_symbol_to_x_VariableT(soap,s,opts,reftab,depth);
-	r->__union_SymbolOrSymbolRef = \
-	    SOAP_UNION__vmi1__union_SymbolOrSymbolRef_variable;
+	r->union_SymbolT.variable =					\
+	    d_symbol_to_x_VariableT(soap,s,opts,reftab,depth);
+	r->__union_SymbolT =				\
+	    SOAP_UNION__vmi1__union_SymbolT_variable;
     }
     else if (SYMBOL_IS_FUNCTION(s)) {
-	if (cached)
-	    r->union_SymbolOrSymbolRef.function = \
-		(struct vmi1__FunctionT *)cached;
-	else
-	    r->union_SymbolOrSymbolRef.function = \
-		d_symbol_to_x_FunctionT(soap,s,opts,reftab,depth);
-	r->__union_SymbolOrSymbolRef = \
-	    SOAP_UNION__vmi1__union_SymbolOrSymbolRef_function;
+	r->union_SymbolT.function =					\
+	    d_symbol_to_x_FunctionT(soap,s,opts,reftab,depth);
+	r->__union_SymbolT =				\
+	    SOAP_UNION__vmi1__union_SymbolT_function;
     }
     else if (SYMBOL_IS_LABEL(s)) {
-	if (cached)
-	    r->union_SymbolOrSymbolRef.label = (struct vmi1__LabelT *)cached;
-	else
-	    r->union_SymbolOrSymbolRef.label = \
-		d_symbol_to_x_LabelT(soap,s,opts,reftab,depth);
-	r->__union_SymbolOrSymbolRef = \
-	    SOAP_UNION__vmi1__union_SymbolOrSymbolRef_label;
+	r->union_SymbolT.label =				\
+	    d_symbol_to_x_LabelT(soap,s,opts,reftab,depth);
+	r->__union_SymbolT =				\
+	    SOAP_UNION__vmi1__union_SymbolT_label;
     }
     else if (SYMBOL_IS_TYPE(s)) {
 	switch (s->datatype_code) {
 	case DATATYPE_VOID:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.voidType = \
-		    (struct vmi1__VoidTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.voidType = \
-		    d_symbol_to_x_VoidTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_voidType;
+	    r->union_SymbolT.voidType =					\
+		d_symbol_to_x_VoidTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_voidType;
 	    break;
 	case DATATYPE_ARRAY:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.arrayType = \
-		    (struct vmi1__ArrayTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.arrayType = \
-		    d_symbol_to_x_ArrayTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_arrayType;
+	    r->union_SymbolT.arrayType =				\
+		d_symbol_to_x_ArrayTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_arrayType;
 	    break;
 	case DATATYPE_STRUCT:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.structType = \
-		    (struct vmi1__StructTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.structType = \
-		    d_symbol_to_x_StructTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_structType;
+	    r->union_SymbolT.structType =				\
+		d_symbol_to_x_StructTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT = \
+		SOAP_UNION__vmi1__union_SymbolT_structType;
 	    break;
 	case DATATYPE_ENUM:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.enumType = \
-		    (struct vmi1__EnumTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.enumType = \
-		    d_symbol_to_x_EnumTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_enumType;
+	    r->union_SymbolT.enumType =					\
+		d_symbol_to_x_EnumTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_enumType;
 	    break;
 	case DATATYPE_PTR:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.pointerType = \
-		    (struct vmi1__PointerTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.pointerType = \
-		    d_symbol_to_x_PointerTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_pointerType;
+	    r->union_SymbolT.pointerType =				\
+		d_symbol_to_x_PointerTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_pointerType;
 	    break;
 	case DATATYPE_FUNCTION:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.functionType = \
-		    (struct vmi1__FunctionTypeT *)cached;
-	    else 
-		r->union_SymbolOrSymbolRef.functionType = \
-		    d_symbol_to_x_FunctionTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_functionType;
+	    r->union_SymbolT.functionType =				\
+		d_symbol_to_x_FunctionTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_functionType;
 	    break;
 	case DATATYPE_TYPEDEF:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.typedefType = \
-		    (struct vmi1__TypedefTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.typedefType = \
-		    d_symbol_to_x_TypedefTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_typedefType;
+	    r->union_SymbolT.typedefType =				\
+		d_symbol_to_x_TypedefTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_typedefType;
 	    break;
 	case DATATYPE_UNION:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.unionType = \
-		    (struct vmi1__UnionTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.unionType = \
-		    d_symbol_to_x_UnionTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_unionType;
+	    r->union_SymbolT.unionType =				\
+		d_symbol_to_x_UnionTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_unionType;
 	    break;
 	case DATATYPE_BASE:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.baseType = \
-		    (struct vmi1__BaseTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.baseType = \
-		    d_symbol_to_x_BaseTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_baseType;
+	    r->union_SymbolT.baseType =					\
+		d_symbol_to_x_BaseTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_baseType;
 	    break;
 	case DATATYPE_CONST:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.constType = \
-		    (struct vmi1__ConstTypeT *)cached;
-	    else 
-		r->union_SymbolOrSymbolRef.constType = \
-		    d_symbol_to_x_ConstTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_constType;
+	    r->union_SymbolT.constType =				\
+		d_symbol_to_x_ConstTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_constType;
 	    break;
 	case DATATYPE_VOL:
-	    if (cached)
-		r->union_SymbolOrSymbolRef.volatileType = \
-		    (struct vmi1__VolatileTypeT *)cached;
-	    else
-		r->union_SymbolOrSymbolRef.volatileType = \
-		    d_symbol_to_x_VolatileTypeT(soap,s,opts,reftab,depth);
-	    r->__union_SymbolOrSymbolRef = \
-		SOAP_UNION__vmi1__union_SymbolOrSymbolRef_volatileType;
+	    r->union_SymbolT.volatileType =				\
+		d_symbol_to_x_VolatileTypeT(soap,s,opts,reftab,depth);
+	    r->__union_SymbolT =				\
+		SOAP_UNION__vmi1__union_SymbolT_volatileType;
 	    break;
 	default:
 	    verror("bad datatype code %d!\n",s->datatype_code);
@@ -1015,259 +961,108 @@ _vmi1__nestedSymbol *
 d_lsymbol_to_x_nestedSymbol(struct soap *soap,struct lsymbol *ls,
 			    struct vmi1__DebugFileOptsT *opts,
 			    GHashTable *reftab,int depth) {
-    /* Weird that we have to cast here... */
     return (_vmi1__nestedSymbol *) \
-	d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,ls->chain,
-						     opts,reftab,depth);
+	d_symbol_array_list_to_x_SymbolsT(soap,ls->chain,
+					  opts,reftab,depth);
 }
 
-struct vmi1__SymbolsOrSymbolRefs *
-d_symbol_array_list_to_x_SymbolsOrSymbolRefs(struct soap *soap,
-					     struct array_list *list,
-					     struct vmi1__DebugFileOptsT *opts,
-					     GHashTable *reftab,int depth) {
+struct vmi1__SymbolsT *
+d_symbol_array_list_to_x_SymbolsT(struct soap *soap,
+				  struct array_list *list,
+				  struct vmi1__DebugFileOptsT *opts,
+				  GHashTable *reftab,int depth) {
     int i;
     int len = array_list_len(list);
     struct symbol *s;
-    gpointer cached = NULL;
-    struct vmi1__SymbolsOrSymbolRefs *r;
-    char idbuf[16];
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-    union _vmi1__union_SymbolsOrSymbolRefs_ *ui;
-#else
-    union _vmi1__union_SymbolsOrSymbolRefs *ui;
-#endif
+    struct vmi1__SymbolsT *r;
+    union _vmi1__union_SymbolsT *ui;
     int *uw;
-    int rc;
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    r = calloc(1,sizeof(*r));
+    r = _soap_calloc(soap,sizeof(*r));
 
-    if (depth >= opts->symbolRefDepth) {
-	r->__sizesymbolRef = len;
-	r->symbolRef = calloc(len,sizeof(*r->symbolRef));
-    }
-    else {
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-	r->__size_SymbolsOrSymbolRefs_ = len;
-	r->__union_SymbolsOrSymbolRefs_ = \
-	    calloc(len,sizeof(*r->__union_SymbolsOrSymbolRefs_));
-#else
-	r->__size_SymbolsOrSymbolRefs = len;
-	r->__union_SymbolsOrSymbolRefs = \
-	    calloc(len,sizeof(*r->__union_SymbolsOrSymbolRefs));
-#endif
-    }
+    r->__size_SymbolsT = len;
+    r->__union_SymbolsT = _soap_calloc(soap,len*sizeof(*r->__union_SymbolsT));
 
     for (i = 0; i < len; ++i) {
 	s = (struct symbol *)array_list_item(list,i);
 
-	/* If we are too deep, do ref first and continue... */
-	if (depth >= opts->symbolRefDepth) {
-	    rc = snprintf(idbuf,16,"%d",(s)->ref);
-	    rc = (rc > 16) ? 16 : (rc + 1);
-	    r->symbolRef[i] = _soap_calloc(soap,rc);
-	    strncpy(r->symbolRef[i],idbuf,rc);
-	    continue;
-	}
-	/* Else, keep going and do a full symbol */
-
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-	uw = &r->__union_SymbolsOrSymbolRefs_[i].__union_SymbolsOrSymbolRefs_;
-	ui = &r->__union_SymbolsOrSymbolRefs_[i].union_SymbolsOrSymbolRefs_;
-#else
-	uw = &r->__union_SymbolsOrSymbolRefs[i].__union_SymbolsOrSymbolRefs;
-	ui = &r->__union_SymbolsOrSymbolRefs[i].union_SymbolsOrSymbolRefs;
-#endif
-
-	cached = NULL;
-	if (reftab)
-	    cached = g_hash_table_lookup(reftab,(gpointer)s);
+	uw = &r->__union_SymbolsT[i].__union_SymbolsT;
+	ui = &r->__union_SymbolsT[i].union_SymbolsT;
 
 	if (SYMBOL_IS_VAR(s)) {
-	    if (cached) 
-		ui->variable = (struct vmi1__VariableT *)cached;
-	    else
-		ui->variable = \
-		    d_symbol_to_x_VariableT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-	    *uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__variable;
-#else
-	    *uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_variable;
-#endif
+	    ui->variable =						\
+		d_symbol_to_x_VariableT(soap,s,opts,reftab,depth);
+	    *uw = SOAP_UNION__vmi1__union_SymbolsT_variable;
 	}
 	else if (SYMBOL_IS_FUNCTION(s)) {
-	    if (cached)
-		ui->function = \
-		    (struct vmi1__FunctionT *)cached;
-	    else
-		ui->function = \
-		    d_symbol_to_x_FunctionT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-	    *uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__function;
-#else
-	    *uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_function;
-#endif
+	    ui->function =						\
+		d_symbol_to_x_FunctionT(soap,s,opts,reftab,depth);
+	    *uw = SOAP_UNION__vmi1__union_SymbolsT_function;
 	}
 	else if (SYMBOL_IS_LABEL(s)) {
-	    if (cached) 
-		ui->label = \
-		    (struct vmi1__LabelT *)cached;
-	    else 
-		ui->label =	\
-		    d_symbol_to_x_LabelT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-	    *uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__label;
-#else
-	    *uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_label;
-#endif
+	    ui->label =							\
+		d_symbol_to_x_LabelT(soap,s,opts,reftab,depth);
+	    *uw = SOAP_UNION__vmi1__union_SymbolsT_label;
 	}
 	else if (SYMBOL_IS_TYPE(s)) {
 	    switch (s->datatype_code) {
 	    case DATATYPE_VOID:
-		if (cached)
-		    ui->voidType = \
-			(struct vmi1__VoidTypeT *)cached;
-		else
-		    ui->voidType =	\
-			d_symbol_to_x_VoidTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__voidType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_voidType;
-#endif
+		ui->voidType =						\
+		    d_symbol_to_x_VoidTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_voidType;
 		break;
 	    case DATATYPE_ARRAY:
-		if (cached)
-		    ui->arrayType = \
-			(struct vmi1__ArrayTypeT *)cached;
-		else
-		    ui->arrayType =	\
-			d_symbol_to_x_ArrayTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__arrayType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_arrayType;
-#endif
+		ui->arrayType =						\
+		    d_symbol_to_x_ArrayTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_arrayType;
 		break;
 	    case DATATYPE_STRUCT:
-		if (cached)
-		    ui->structType = \
-			(struct vmi1__StructTypeT *)cached;
-		else
-		    ui->structType =	\
-			d_symbol_to_x_StructTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__structType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_structType;
-#endif
+		ui->structType =					\
+		    d_symbol_to_x_StructTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_structType;
 		break;
 	    case DATATYPE_ENUM:
-		if (cached)
-		    ui->enumType = \
-			(struct vmi1__EnumTypeT *)cached;
-		else
-		    ui->enumType =	\
-			d_symbol_to_x_EnumTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__enumType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_enumType;
-#endif
+		ui->enumType =						\
+		    d_symbol_to_x_EnumTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_enumType;
 		break;
 	    case DATATYPE_PTR:
-		if (cached)
-		    ui->pointerType = \
-			(struct vmi1__PointerTypeT *)cached;
-		else
-		    ui->pointerType =	\
-			d_symbol_to_x_PointerTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__pointerType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_pointerType;
-#endif
+		ui->pointerType =					\
+		    d_symbol_to_x_PointerTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_pointerType;
 		break;
 	    case DATATYPE_FUNCTION:
-		if (cached)
-		    ui->functionType = \
-			(struct vmi1__FunctionTypeT *)cached;
-		else
-		    ui->functionType = \
-			d_symbol_to_x_FunctionTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__functionType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_functionType;
-#endif
+		ui->functionType =					\
+		    d_symbol_to_x_FunctionTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_functionType;
 		break;
 	    case DATATYPE_TYPEDEF:
-		if (cached)
-		    ui->typedefType = \
-			(struct vmi1__TypedefTypeT *)cached;
-		else
-		    ui->typedefType =	\
-			d_symbol_to_x_TypedefTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__typedefType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_typedefType;
-#endif
+		ui->typedefType =					\
+		    d_symbol_to_x_TypedefTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_typedefType;
 		break;
 	    case DATATYPE_UNION:
-		if (cached)
-		    ui->unionType = \
-			(struct vmi1__UnionTypeT *)cached;
-		else
-		    ui->unionType =	\
-			d_symbol_to_x_UnionTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__unionType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_unionType;
-#endif
+		ui->unionType =						\
+		    d_symbol_to_x_UnionTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_unionType;
 		break;
 	    case DATATYPE_BASE:
-		if (cached)
-		    ui->baseType = \
-			(struct vmi1__BaseTypeT *)cached;
-		else
-		    ui->baseType =	\
-			d_symbol_to_x_BaseTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__baseType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_baseType;
-#endif
+		ui->baseType =						\
+		    d_symbol_to_x_BaseTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_baseType;
 		break;
 	    case DATATYPE_CONST:
-		if (cached)
-		    ui->constType = \
-			(struct vmi1__ConstTypeT *)cached;
-		else
-		    ui->constType =	\
-			d_symbol_to_x_ConstTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__constType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_constType;
-#endif
+		ui->constType =						\
+		    d_symbol_to_x_ConstTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_constType;
 		break;
 	    case DATATYPE_VOL:
-		if (cached)
-		    ui->volatileType = \
-			(struct vmi1__VolatileTypeT *)cached;
-		else
-		    ui->volatileType = \
-			d_symbol_to_x_VolatileTypeT(soap,s,opts,reftab,depth);
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs__volatileType;
-#else
-		*uw = SOAP_UNION__vmi1__union_SymbolsOrSymbolRefs_volatileType;
-#endif
+		ui->volatileType =					\
+		    d_symbol_to_x_VolatileTypeT(soap,s,opts,reftab,depth);
+		*uw = SOAP_UNION__vmi1__union_SymbolsT_volatileType;
 		break;
 	    default:
 		verror("BUG: bad datatype code %d; skipping!\n",
@@ -1284,6 +1079,22 @@ d_symbol_array_list_to_x_SymbolsOrSymbolRefs(struct soap *soap,
     }
 
     return r;
+}
+
+struct vmi1__SymbolsOptT *
+d_symbol_array_list_to_x_SymbolsOptT(struct soap *soap,
+				     struct array_list *list,
+				     struct vmi1__DebugFileOptsT *opts,
+				     GHashTable *reftab,int depth) {
+    /*
+     * This is nasty.  We just return a vmi1__SymbolsT because gSOAP
+     * gives us the same C structs/unions/enums types for
+     * vmi1__SymbolsOptT as vmi1__SymbolsT.
+     *
+     * It just saves some code.
+     */
+    return (struct vmi1__SymbolsOptT *) \
+        d_symbol_array_list_to_x_SymbolsT(soap,list,opts,reftab,depth);
 }
 
 #define SOAP_STRCPY(soap,d,s)			\
@@ -1360,7 +1171,7 @@ d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&symbol))
 	array_list_append(gslist,symbol);
 
-    d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
+    d_symbol_array_list_to_x_SymbolsT(soap,gslist,
 						 opts,reftab,depth);
 
     array_list_free(gslist);
@@ -1373,8 +1184,7 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
 		      struct vmi1__DebugFileOptsT *opts,
 		      GHashTable *reftab,int depth,
 		      struct vmi1__SymtabT *ir) {
-    struct vmi1__SymtabT *r;
-    gpointer cached = NULL;
+    struct vmi1__SymtabT *r = NULL;
     GHashTableIter iter;
     struct symtab *symtab;
     char idbuf[16];
@@ -1389,14 +1199,7 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    if (reftab &&
-	(cached = g_hash_table_lookup(reftab,(gpointer)st))) 
-	return (struct vmi1__SymtabT *)cached;
-
-    if (!ir)
-	r = (struct vmi1__SymtabT *)_soap_calloc(soap,sizeof(*r));
-    else
-	r = ir;
+    RETURN_REF_OR_ALLOC(symtab,st,opts,reftab,depth,r);
 
     rc = snprintf(idbuf,idblen,"%d",st->ref);
     rc = (rc > idblen) ? idblen : (rc + 1);
@@ -1404,57 +1207,31 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
     strncpy(r->sid,idbuf,rc);
     SOAP_STRCPY(soap,r->name,st->name);
 
-    /*
-     * If we've hit the max depth, stop here without dumping it into the
-     * reftab; we only want full symtabs in there.
-     */
-    if (depth >= opts->symtabRefDepth)
-	return r;
-    /*
-     * Else dump this into our reftab, since we're encoding the full
-     * thing.
-     *
-     * XXX: not sure how gSOAP handles the multi-ref stuff when we pass
-     * it a ref into an array of values.  Hopefully this won't result in
-     * too much duplication...
-     */
-    else if (reftab)
-	g_hash_table_insert(reftab,(gpointer)st,(gpointer)r);
-
-    r->__SymtabT_sequence = _soap_calloc(soap,sizeof(*r->__SymtabT_sequence));
-
-    r->__SymtabT_sequence->ranges = \
-	d_range_to_x_RangesT(soap,&st->range,opts,reftab,depth);
+    r->ranges = d_range_to_x_RangesT(soap,&st->range,opts,reftab,depth);
 
     if (st->meta) {
-	r->__SymtabT_sequence->rootMeta = \
-	    _soap_calloc(soap,sizeof(*r->__SymtabT_sequence->rootMeta));
-	SOAP_STRCPY(soap,r->__SymtabT_sequence->rootMeta->compilationDir,
-		    st->meta->compdirname);
-	SOAP_STRCPY(soap,r->__SymtabT_sequence->rootMeta->producer,
-		    st->meta->producer);
-	SOAP_STRCPY(soap,r->__SymtabT_sequence->rootMeta->language,
-		    st->meta->language);
+	r->rootMeta = _soap_calloc(soap,sizeof(*r->rootMeta));
+	SOAP_STRCPY(soap,r->rootMeta->compilationDir,st->meta->compdirname);
+	SOAP_STRCPY(soap,r->rootMeta->producer,st->meta->producer);
+	SOAP_STRCPY(soap,r->rootMeta->language,st->meta->language);
     }
 
     if (st->parent) 
-	r->__SymtabT_sequence->parent = \
+	r->parent = \
 	    d_symtab_to_x_SymtabT(soap,st->parent,opts,reftab,depth+1,NULL);
 
     len = 0;
     list_for_each(pos,&st->subtabs) 
 	++len;
 
-    r->__SymtabT_sequence->symtabs = \
-	_soap_calloc(soap,sizeof(r->__SymtabT_sequence->symtabs));
-    r->__SymtabT_sequence->symtabs->__sizesymtab = len;
-    r->__SymtabT_sequence->symtabs->symtab = \
-	_soap_calloc(soap,len*sizeof(*r->__SymtabT_sequence->symtabs->symtab));
+    r->symtabs = _soap_calloc(soap,sizeof(r->symtabs));
+    r->symtabs->__sizesymtab = len;
+    r->symtabs->symtab = _soap_calloc(soap,len*sizeof(*r->symtabs->symtab));
 
     i = 0;
     list_for_each_entry(symtab,&st->subtabs,member) {
 	d_symtab_to_x_SymtabT(soap,symtab,opts,reftab,depth+1,
-			      &r->__SymtabT_sequence->symtabs->symtab[i]);
+			      &r->symtabs->symtab[i]);
 	++i;
     }
 
@@ -1463,16 +1240,8 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
     g_hash_table_iter_init(&iter,st->tab);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&symbol))
 	array_list_append(gslist,symbol);
-    /*
-     * This is a nasty hack, but if you look at the stub,
-     * vmi1__SymbolsOrSymbolRefs and vmi1__SymbolsOrSymbolRefsOpt are
-     * identical except in name.
-     *
-     * I expect SymbolRefs to go away soon anyway, so cheat for now.
-     */
-    r->__SymtabT_sequence->symbols = (struct vmi1__SymbolsOrSymbolRefsOpt *) \
-	d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-						     opts,reftab,depth);
+    r->symbols = \
+	d_symbol_array_list_to_x_SymbolsOptT(soap,gslist,opts,reftab,depth);
     array_list_free(gslist);
 
     /* Make a tmp array list of the anon symbols */
@@ -1480,16 +1249,8 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
     g_hash_table_iter_init(&iter,st->anontab);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&symbol))
 	array_list_append(gslist,symbol);
-    /*
-     * This is a nasty hack, but if you look at the stub,
-     * vmi1__SymbolsOrSymbolRefs and vmi1__SymbolsOrSymbolRefsOpt are
-     * identical except in name.
-     *
-     * I expect SymbolRefs to go away soon anyway, so cheat for now.
-     */
-    r->__SymtabT_sequence->anonSymbols = (struct vmi1__SymbolsOrSymbolRefsOpt *) \
-	d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,gslist,
-						     opts,reftab,depth);
+    r->anonSymbols = \
+	d_symbol_array_list_to_x_SymbolsOptT(soap,gslist,opts,reftab,depth);
     array_list_free(gslist);
 
     return r;

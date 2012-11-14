@@ -104,7 +104,7 @@ int vmi1__LoadDebugFileForBinary(struct soap *soap,
 int vmi1__LookupSymbolSimple(struct soap *soap,
 			     char *filename,char *name,
 			     struct vmi1__DebugFileOptsT *opts,
-			     struct vmi1__Symbol *r) {
+			     struct vmi1__SymbolResponse *r) {
     struct debugfile *debugfile;
     struct lsymbol *lsymbol;
     GHashTable *reftab;
@@ -139,8 +139,8 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
 				   "Could not find symbol!");
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-    r->symbol = d_symbol_to_x_SymbolOrSymbolRef(soap,lsymbol->symbol,
-						opts,reftab,0);
+    r->symbol = d_symbol_to_x_SymbolT(soap,lsymbol->symbol,
+				      opts,reftab,0);
     g_hash_table_destroy(reftab);
 
     lsymbol_release(lsymbol);
@@ -152,7 +152,7 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
 int vmi1__LookupSymbol(struct soap *soap,
 		       char *filename,char *name,
 		       struct vmi1__DebugFileOptsT *opts,
-		       struct vmi1__NestedSymbol *r) {
+		       struct vmi1__NestedSymbolResponse *r) {
     struct debugfile *debugfile;
     struct lsymbol *lsymbol;
     GHashTable *reftab;
@@ -188,15 +188,13 @@ int vmi1__LookupSymbol(struct soap *soap,
 				   "Could not find symbol!");
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-    r->vmi1__nestedSymbol = \
-	d_symbol_array_list_to_x_SymbolsOrSymbolRefs(soap,lsymbol->chain,
-						     opts,reftab,0);
-    if (r->vmi1__nestedSymbol) 
-	vwarn("%d %d %d %p %p\n",g_hash_table_size(reftab),
-	      r->vmi1__nestedSymbol->__size_SymbolsOrSymbolRefs_,
-	      r->vmi1__nestedSymbol->__sizesymbolRef,
-	      r->vmi1__nestedSymbol->__union_SymbolsOrSymbolRefs_,
-	      r->vmi1__nestedSymbol->symbolRef);
+    r->nestedSymbol = \
+	d_symbol_array_list_to_x_SymbolsT(soap,lsymbol->chain,
+					  opts,reftab,0);
+    if (r->nestedSymbol) 
+	vwarn("%d %d %p\n",g_hash_table_size(reftab),
+	      r->nestedSymbol->__size_SymbolsT,
+	      r->nestedSymbol->__union_SymbolsT);
     else
 	vwarn("%d\n",g_hash_table_size(reftab));
 
@@ -210,20 +208,20 @@ int vmi1__LookupSymbol(struct soap *soap,
 int vmi1__LookupAddrSimple(struct soap *soap,
 			   char *filename,vmi1__ADDR addr,
 			   struct vmi1__DebugFileOptsT *opts,
-			   struct vmi1__Symbol *r) {
+			   struct vmi1__SymbolResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
 int vmi1__LookupAddr(struct soap *soap,
 		     char *filename,vmi1__ADDR addr,
 		     struct vmi1__DebugFileOptsT *opts,
-		     struct vmi1__NestedSymbol *r) {
+		     struct vmi1__NestedSymbolResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
 int vmi1__LookupAllSymbols(struct soap *soap,
 			   char *filename,
 			   struct vmi1__DebugFileOptsT *opts,
-			   struct vmi1__NestedSymbol *r) {
+			   struct vmi1__NestedSymbolResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
