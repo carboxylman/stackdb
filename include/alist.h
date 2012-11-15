@@ -263,6 +263,20 @@ static inline void *array_list_remove_item(struct array_list *list,void *item) {
     return NULL;
 }
 
+static inline int array_list_find(struct array_list *list,void *item) {
+    int i;
+
+    if (!list->list || list->len < 1)
+	return -1;
+
+    for (i = 0; i < list->len; ++i) {
+	if (list->list[i] == item) 
+	    return i;
+    }
+
+    return -1;
+}
+
 static inline void *array_list_item(struct array_list *list,int i) {
     if (!list->list || i < 0 || i >= list->alloc_len) {
 	errno = EINVAL;
