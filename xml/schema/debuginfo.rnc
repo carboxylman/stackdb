@@ -157,19 +157,18 @@ RangesT =
 Ranges = element ranges { RangesT }
 
 SymtabT = 
-    attribute sid { xsd:ID },
+    (attribute sid { xsd:ID } | attribute sref { xsd:IDREF }),
     attribute name { text }?,
-    (element sref { xsd:IDREF }
-     | (element ranges { RangesT },
-        element rootMeta {
-            element compilationDir { text },
-            element producer { text },
-            element language { text }
-        }?,
-        element parent { SymtabT }?,
-        element symtabs { element symtab { SymtabT }* },
-        element symbols { SymbolsOptT },
-        element anonSymbols { SymbolsOptT }))
+    (element ranges { RangesT },
+     element rootMeta {
+         element compilationDir { text },
+         element producer { text },
+         element language { text }
+     }?,
+     element parent { SymtabT }?,
+     element symtabs { element symtab { SymtabT }* },
+     element symbols { SymbolsOptT },
+     element anonSymbols { SymbolsOptT })?
 
 Symtab = element symtab { SymtabT }
 
@@ -198,16 +197,19 @@ LocationT =
       | ListLoc | RuntimeLoc )?
 
 SymbolHeader = 
-    attribute sid { xsd:ID },
+    #
+    # If this symbol is a manual ref, only sref will be set.
+    # If this symbol is a fetchable ref, sref and source, and maybe
+    # name, will be set.
+    # Otherwise, sid and source will be set, and maybe name.
+    #
+    # Names are set only if they exist; some symbols are anonymous.
+    #
+    (attribute sid { xsd:ID } | attribute sref { xsd:IDREF }),
     attribute name { text }?
 
-SymbolCommon = 
-    element source { "dwarf" | "elf" },
-    element declaration {
-        attribute isExternal { xsd:boolean },
-        attribute isDeclaration { xsd:boolean },
-        attribute isPrototyped { xsd:boolean }
-    },
+SizeT = 
+    attribute sizeType { "byte" | "bit" },
     #
     # byteSize will always be set if the symbol has a size; if the size
     # is really a fraction of a byte, then bitSize, bitOffset, and
@@ -216,10 +218,20 @@ SymbolCommon =
     # containingTypeByteSize; that value is the byte size of the integer
     # used to hold the bitfield).
     #
-    element byteSize { xsd:unsignedInt }?,
+    element byteSize { xsd:unsignedInt },
     (element bitSize { xsd:unsignedInt },
      element bitOffset { xsd:unsignedInt },
      element containingTypeByteSize { xsd:unsignedInt })?
+    
+
+SymbolCommon = 
+    element declaration {
+        attribute isExternal { xsd:boolean },
+        attribute isDeclaration { xsd:boolean },
+        attribute isPrototyped { xsd:boolean }
+    },
+    element size { SizeT }?,
+    element source { "dwarf" | "elf" }
 
 InstanceSymbol = 
     element addr { ADDR }?,
@@ -233,114 +245,100 @@ InstanceSymbol =
 
 VariableT =
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        InstanceSymbol,
-        element type { SymbolT }?,
-        element constValue { text }?,
-        element kind { "variable" | "parameter" | "member" | "enumerator" },
-        element location { LocationT }?))
+    (SymbolCommon,
+     InstanceSymbol,
+     element type { SymbolT }?,
+     element constValue { text }?,
+     element kind { "variable" | "parameter" | "member" | "enumerator" },
+     element location { LocationT }?)?
 
 FunctionT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        InstanceSymbol,
-        element type { SymbolT }?,
-        element constValue { text }?,
-        element argCount { xsd:unsignedShort },
-        element hasUnspecifiedParams { xsd:boolean },
-        element arguments { SymbolsOptT },
-        element entryPC { ADDR }?,
-        element prologueEnd { ADDR }?,
-        element epilogueBegin { ADDR }?,
-        element ranges { RangesT },
-        element symtab { SymtabT }))
+    (SymbolCommon,
+     InstanceSymbol,
+     element type { SymbolT }?,
+     element constValue { text }?,
+     element argCount { xsd:unsignedShort },
+     element hasUnspecifiedParams { xsd:boolean },
+     element arguments { SymbolsOptT },
+     element entryPC { ADDR }?,
+     element prologueEnd { ADDR }?,
+     element epilogueBegin { ADDR }?,
+     element ranges { RangesT },
+     element symtab { SymtabT })?
 
 LabelT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        InstanceSymbol))
+    (SymbolCommon,
+     InstanceSymbol)?
 
 VoidTypeT =
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | SymbolCommon)
+    element source { "dwarf" | "elf" }
 
 BaseTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element encoding { 
-            "address" | "boolean" | "complexFloat" | "float" | "signed"
-            | "signedChar" | "unsigned" | "unsignedChar" | "imaginaryFloat"
- 	    | "packedDecimal" | "numericString" | "edited" | "signedFixed"
-            | "unsignedFixed" | "unknown"
-        }))
+    (SymbolCommon,
+     element encoding { 
+         "address" | "boolean" | "complexFloat" | "float" | "signed"
+         | "signedChar" | "unsigned" | "unsignedChar" | "imaginaryFloat"
+         | "packedDecimal" | "numericString" | "edited" | "signedFixed"
+         | "unsignedFixed" | "unknown"
+     })?
 
 PointerTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT }))
+    (SymbolCommon,
+     element type { SymbolT })?
 
 TypedefTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT }))
+    (SymbolCommon,
+     element type { SymbolT })?
 
 ConstTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT }))
+    (SymbolCommon,
+     element type { SymbolT })?
 
 VolatileTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT }))
+    (SymbolCommon,
+     element type { SymbolT })?
 
 ArrayTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT },
-        element subrangeCount { xsd:int },
-        element subranges { element subrange { xsd:int }+ }))
+    (SymbolCommon,
+     element type { SymbolT },
+     element subrangeCount { xsd:int },
+     element subranges { element subrange { xsd:int }+ })?
 
 EnumTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT },
-        element memberCount { xsd:int },
-        element members { SymbolsT }))
+    (SymbolCommon,
+     element type { SymbolT },
+     element memberCount { xsd:int },
+     element members { SymbolsT })?
 
 StructTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT },
-        element memberCount { xsd:int },
-        element members { SymbolsOptT }))
+    (SymbolCommon,
+     element type { SymbolT },
+     element memberCount { xsd:int },
+     element members { SymbolsOptT })?
 
 UnionTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT },
-        element memberCount { xsd:int },
-        element members { SymbolsOptT }))
+    (SymbolCommon,
+     element type { SymbolT },
+     element memberCount { xsd:int },
+     element members { SymbolsOptT })?
 
 FunctionTypeT = 
     SymbolHeader,
-    (element sref { xsd:IDREF }
-     | (SymbolCommon,
-        element type { SymbolT },
-        element argCount { xsd:unsignedShort },
-        element hasUnspecifiedParams { xsd:boolean},
-        element arguments { SymbolsOptT }))
+    (SymbolCommon,
+     element type { SymbolT },
+     element argCount { xsd:unsignedShort },
+     element hasUnspecifiedParams { xsd:boolean},
+     element arguments { SymbolsOptT })?
 
