@@ -386,6 +386,10 @@ struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr);
 void debugfile_load_opts_free(struct debugfile_load_opts *opts);
 
 char *debugfile_build_idstr(char *filename,char *name,char *version);
+char *debugfile_get_idstr(struct debugfile *debugfile);
+char *debugfile_get_name(struct debugfile *debugfile);
+char *debugfile_get_version(struct debugfile *debugfile);
+char *debugfile_build_idstr(char *filename,char *name,char *version);
 int debugfile_filename_info(char *filename,char **realfilename,
 			    char **name,char **version);
 int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab);

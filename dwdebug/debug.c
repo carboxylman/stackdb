@@ -1330,6 +1330,18 @@ char *debugfile_build_idstr(char *filename,char *name,char *version) {
     return idstr;
 }
 
+char *debugfile_get_idstr(struct debugfile *debugfile) {
+    return debugfile->idstr;
+}
+
+char *debugfile_get_name(struct debugfile *debugfile) {
+    return debugfile->name;
+}
+
+char *debugfile_get_version(struct debugfile *debugfile) {
+    return debugfile->version;
+}
+
 int debugfile_filename_info(char *filename,char **realfilename,
 			    char **name,char **version) {
     size_t rc;
