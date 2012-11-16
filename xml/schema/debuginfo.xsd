@@ -151,25 +151,29 @@
   <xs:element name="nestedSymbol" type="vmi1:SymbolsT"/>
   <xs:complexType name="DebugFileT">
     <xs:sequence>
-      <xs:element ref="vmi1:filename"/>
-      <xs:element ref="vmi1:name"/>
-      <xs:element ref="vmi1:version"/>
-      <xs:element name="type">
-        <xs:simpleType>
-          <xs:restriction base="xs:token">
-            <xs:enumeration value="kernel"/>
-            <xs:enumeration value="kmod"/>
-            <xs:enumeration value="static"/>
-            <xs:enumeration value="sharedlib"/>
-          </xs:restriction>
-        </xs:simpleType>
-      </xs:element>
-      <xs:element ref="vmi1:sourceFiles"/>
-      <xs:element ref="vmi1:globalSymbols"/>
+      <xs:element minOccurs="0" ref="vmi1:name"/>
+      <xs:sequence minOccurs="0">
+        <xs:element ref="vmi1:filename"/>
+        <xs:element ref="vmi1:version"/>
+        <xs:element name="type">
+          <xs:simpleType>
+            <xs:restriction base="xs:token">
+              <xs:enumeration value="kernel"/>
+              <xs:enumeration value="kmod"/>
+              <xs:enumeration value="static"/>
+              <xs:enumeration value="sharedlib"/>
+            </xs:restriction>
+          </xs:simpleType>
+        </xs:element>
+        <xs:element ref="vmi1:sourceFiles"/>
+        <xs:element ref="vmi1:globalSymbols"/>
+      </xs:sequence>
     </xs:sequence>
+    <xs:attribute name="sid" type="xs:ID"/>
+    <xs:attribute name="sref" type="xs:IDREF"/>
   </xs:complexType>
-  <xs:element name="filename" type="xs:string"/>
   <xs:element name="name" type="xs:string"/>
+  <xs:element name="filename" type="xs:string"/>
   <xs:element name="version" type="xs:string"/>
   <xs:element name="sourceFiles">
     <xs:complexType>
@@ -191,12 +195,14 @@
   <xs:element name="debugFile" type="vmi1:DebugFileT"/>
   <xs:complexType name="DebugFileOptsT">
     <xs:sequence>
+      <xs:element ref="vmi1:debugfileRefDepth"/>
       <xs:element ref="vmi1:symbolRefDepth"/>
       <xs:element ref="vmi1:symtabRefDepth"/>
       <xs:element ref="vmi1:doMultiRef"/>
       <xs:element ref="vmi1:doManualRef"/>
     </xs:sequence>
   </xs:complexType>
+  <xs:element name="debugfileRefDepth" type="xs:int"/>
   <xs:element name="symbolRefDepth" type="xs:int"/>
   <xs:element name="symtabRefDepth" type="xs:int"/>
   <xs:element name="doMultiRef" type="xs:boolean"/>

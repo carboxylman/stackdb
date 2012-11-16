@@ -17,6 +17,7 @@
  */
 
 #include "debuginfo_xml.h"
+#include "alist.h"
 #include <pthread.h>
 #include <glib.h>
 #include <errno.h>
@@ -48,6 +49,8 @@ static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .doMultiRef = 0,
 };
 
+#define DEF_REFSTACK_SIZE 32
+
 int vmi1__ListDebugFiles(struct soap *soap,
 			 struct vmi1__DebugFileOptsT *opts,
 			 struct vmi1__DebugFiles *r) {
@@ -56,6 +59,7 @@ int vmi1__ListDebugFiles(struct soap *soap,
     struct debugfile *df;
     int i;
     GHashTable *reftab;
+    struct array_list *refstack;
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -73,15 +77,17 @@ int vmi1__ListDebugFiles(struct soap *soap,
     }
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
     r->debugFile = soap_malloc(soap,r->__size_debugFile * sizeof(*r->debugFile));
 
     g_hash_table_iter_init(&iter,debugfiles);
     i = 0;
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df)) {
-	r->debugFile[i] = d_debugfile_to_x_DebugFileT(soap,df,opts,reftab,0);
+	r->debugFile[i] = d_debugfile_to_x_DebugFileT(soap,df,opts,reftab,refstack,0);
 	++i;
     }
 
+    array_list_free(refstack);
     g_hash_table_destroy(reftab);
 
     pthread_mutex_unlock(&debugfile_mutex);
@@ -108,6 +114,7 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
     struct debugfile *debugfile;
     struct lsymbol *lsymbol;
     GHashTable *reftab;
+    struct array_list *refstack;
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -139,8 +146,10 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
 				   "Could not find symbol!");
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
     r->symbol = d_symbol_to_x_SymbolT(soap,lsymbol->symbol,
-				      opts,reftab,0);
+				      opts,reftab,refstack,0);
+    array_list_free(refstack);
     g_hash_table_destroy(reftab);
 
     lsymbol_release(lsymbol);
@@ -156,6 +165,7 @@ int vmi1__LookupSymbol(struct soap *soap,
     struct debugfile *debugfile;
     struct lsymbol *lsymbol;
     GHashTable *reftab;
+    struct array_list *refstack;
     char errbuf[64];
 
     if (!opts)
@@ -188,9 +198,10 @@ int vmi1__LookupSymbol(struct soap *soap,
 				   "Could not find symbol!");
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
     r->nestedSymbol = \
 	d_symbol_array_list_to_x_SymbolsT(soap,lsymbol->chain,
-					  opts,reftab,0);
+					  opts,reftab,refstack,0);
     if (r->nestedSymbol) 
 	vwarn("%d %d %p\n",g_hash_table_size(reftab),
 	      r->nestedSymbol->__size_SymbolsT,
@@ -198,6 +209,7 @@ int vmi1__LookupSymbol(struct soap *soap,
     else
 	vwarn("%d\n",g_hash_table_size(reftab));
 
+    array_list_free(refstack);
     g_hash_table_destroy(reftab);
 
     lsymbol_release(lsymbol);

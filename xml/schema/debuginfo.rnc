@@ -122,25 +122,27 @@ SymbolsOptT =
 NestedSymbol = element nestedSymbol { SymbolsT }
 
 DebugFileT = 
-    element filename { text },
-    element name { text },
-    element version { text },
-    element type { "kernel" | "kmod" | "static" | "sharedlib" },
+    (attribute sid { xsd:ID } | attribute sref { xsd:IDREF }),
+    element name { text }?,
+    (element filename { text },
+     element version { text },
+     element type { "kernel" | "kmod" | "static" | "sharedlib" },
 
-    element sourceFiles {
-        element sourceFile {
-            element filename { text },
-	    element symtab { SymtabT }
-        }*
-    },
+     element sourceFiles {
+         element sourceFile {
+             element filename { text },
+             element symtab { SymtabT }
+         }*
+     },
 
-    element globalSymbols {
-         SymbolsT
-    }
+     element globalSymbols {
+          SymbolsT
+     })?
 
 DebugFile = element debugFile { DebugFileT }
 
 DebugFileOptsT = 
+    element debugfileRefDepth { xsd:int },
     element symbolRefDepth { xsd:int },
     element symtabRefDepth { xsd:int },
     element doMultiRef { xsd:boolean },
