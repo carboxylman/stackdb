@@ -1,0 +1,69 @@
+
+Sharing debuginfo amongst multiple processes:
+
+  * We need a library interface in dwdebug that facilitates sharing
+    debugfile data.  This interface will use some slab/other allocator that we
+    can target to a specific mmap range.
+
+  * When loading a debugfile, a user can choose to say if it is
+    "publicly" accessible (read-only); if so, the slab malloc in mmap'd
+    region will be used.
+
+  * There needs to be a system-wide dir of known mmap regions (a
+    registry) so that processes can use them on the cheap by mapping
+    them directly into place so pointers still work.  Need to make sure
+    to tightly control address space layout by the linker to make this
+    work (but what about stack, heap?)... we'll have to disable ASLR.
+
+  * Then, any process could open and load in one or more debuginfo
+    files, register with the registry, and just sleep() forever.
+
+  * Debugfiles that will be shared must be fully loaded.  We are not
+    going to mess with partial loading support because it will require
+    growing a shared region -- dicey when we need to make sure we can 
+
+
+  * CRAP: the glib, judy, and libelf data.  Maybe we'd better just
+    figure a way to shm_open and mmap the heap of each process, and
+    figure out how to control where the heap is created.
+
+    * ok, with glib we have a way, as long as we have a malloc()
+      interface -- g_mem_set_vtable()!  But this is global to all glib
+      data allocated in a single process.  So as long as none of the
+      other libs we link with use glib, we should be ok.
+
+    * Judy we might have to hack to use a different malloc() --
+      actually, if we change the JudyCommon/JudyMalloc.c interface,
+      we're good.  However, this is also per-process-global, like glib.
+
+    * we should not care about sharing any libelf/elfutils data!  strip
+      it out if we currently do.
+
+    * THUS... we don't even have to share the heap, as long as we can
+      target glib and judy to a shared mem region.
+
+  * SO, conclusion from above: a single process could load multiple
+    debugfiles to share, but all file data will be in one mmap segment
+    -- which means any "clients" would get *all* debugfiles allocated in
+    that "server" process if they wanted any one of them!
+
+    * Probably the best way to deal with this is for the interface to
+      loading a shared debugfile do a possible fork before loading: the
+      new process would load, register the debugfile with the registry,
+      have the registry map it via shm_open and mmap, then exit (leaving
+      the shm-created segment in place until it is munmap'd by the
+      registry).
+
+    * Actually, a better way would be to ask the registry to load the
+      debugfile.  The registry could fork (thus changing malloc impls if
+      needed, as discussed above), pick a new addr to load the debugfile
+      at, load it, and share the new segment with the registry.
+
+      * This would definitely work fine if the registry itself does not
+        use glib; otherwise we would have to see if g_mem_set_vtable
+        works after a fork, before an exec.
+
+  * We can use MM, or any of the slab allocators that present us a
+    malloc interface that we can target at a specific address (that
+    holds for MM too).
+
