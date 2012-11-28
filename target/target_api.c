@@ -65,10 +65,12 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = linux_userproc_build_spec();
     }
+#ifdef ENABLE_XENACCESS
     else if (type == TARGET_TYPE_XEN) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = xen_vm_build_spec();
     }
+#endif
     else {
 	errno = EINVAL;
 	return NULL;
