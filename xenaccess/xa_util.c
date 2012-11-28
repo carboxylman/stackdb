@@ -332,6 +332,10 @@ void xa_set_debug_level(int level) {
     xa_debug_level = level;
 }
 
+int xa_get_debug_level(void) {
+    return xa_debug_level;
+}
+
 void _xa_dbprint(int level,char* format, ...) {
     va_list args;
     if (xa_debug_level < level)

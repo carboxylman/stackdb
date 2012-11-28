@@ -53,6 +53,7 @@
 
 #ifdef XA_DEBUG
 void xa_set_debug_level(int level);
+int xa_get_debug_level(void);
 #endif
 
 /**
