@@ -28,22 +28,67 @@
 #include <string.h>
 #include <inttypes.h>
 
+#include "target_linux_userproc.h"
+#ifdef ENABLE_XENACCESS
+#include "target_xen_vm.h"
+#endif
+
 /**
  ** The generic target API!
  **/
 
-static struct target_opts default_topts = {
-    .bpmode = THREAD_BPMODE_STRICT,
-};
+/*
+ * Generic function that launches or attaches to a target, given @spec.
+ */
+struct target *target_instantiate(struct target_spec *spec) {
 
-int target_open(struct target *target,struct target_opts *topts) {
+    if (spec->target_type == TARGET_TYPE_PTRACE) {
+	return linux_userproc_instantiate(spec);
+    }
+#ifdef ENABLE_XENACCESS
+    else if (spec->target_type == TARGET_TYPE_XEN) {
+	return xen_vm_instantiate(spec);
+    }
+#endif
+
+    errno = EINVAL;
+    return NULL;
+}
+
+struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
+    struct target_spec *tspec;
+
+    if (type == TARGET_TYPE_NONE) {
+	tspec = calloc(1,sizeof(*tspec));
+    }
+    else if (type == TARGET_TYPE_PTRACE) {
+	tspec = calloc(1,sizeof(*tspec));
+	tspec->backend_spec = linux_userproc_build_spec();
+    }
+    else if (type == TARGET_TYPE_XEN) {
+	tspec = calloc(1,sizeof(*tspec));
+	tspec->backend_spec = xen_vm_build_spec();
+    }
+    else {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    tspec->target_type = type;
+    tspec->target_mode = mode;
+    tspec->style = PROBEPOINT_FASTEST;
+
+    return tspec;
+}
+
+target_type_t target_type(struct target *target) {
+    return target->spec->target_type;
+}
+
+int target_open(struct target *target) {
     int rc;
     struct addrspace *space;
     struct memregion *region;
-
-    if (!topts) 
-	topts = &default_topts;
-    target->opts = topts;
 
     vdebug(5,LOG_T_TARGET,"opening target type %s\n",target->type);
 
@@ -52,7 +97,13 @@ int target_open(struct target *target,struct target_opts *topts) {
 	return rc;
     }
 
-    if (target->opts->bpmode == THREAD_BPMODE_STRICT && !target->threadctl) {
+    if (!target->spec) {
+	verror("cannot open a target without a specification!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (target->spec->bpmode == THREAD_BPMODE_STRICT && !target->threadctl) {
 	verror("cannot init a target in BPMODE_STRICT that does not have"
 	       " threadctl!\n");
 	errno = ENOTSUP;
@@ -124,6 +175,11 @@ int target_open(struct target *target,struct target_opts *topts) {
     }
 
     return 0;
+}
+
+char *target_tostring(struct target *target,char *buf,int bufsiz) {
+    vdebug(16,LOG_T_TARGET,"target(%s)\n",target->type);
+    return target->ops->tostring(target,buf,bufsiz);
 }
     
 target_status_t target_monitor(struct target *target) {
@@ -511,14 +567,14 @@ void ghash_mmap_entry_free(gpointer data) {
 }
 
 struct target *target_create(char *type,void *state,struct target_ops *ops,
-			     struct debugfile_load_opts **dfoptlist) {
+			     struct target_spec *spec) {
     struct target *retval = malloc(sizeof(struct target));
     memset(retval,0,sizeof(struct target));
 
     retval->type = type;
     retval->state = state;
     retval->ops = ops;
-    retval->debugfile_opts_list = dfoptlist;
+    retval->spec = spec;
 
     INIT_LIST_HEAD(&retval->spaces);
 

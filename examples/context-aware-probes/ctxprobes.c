@@ -1636,6 +1636,7 @@ int ctxprobes_init(char *domain_name,
 		   int xa_debug_level)
 {
     int ret;
+    struct target_spec *tspec;
 
     if (t)
     {
@@ -1658,7 +1659,12 @@ int ctxprobes_init(char *domain_name,
     xa_set_debug_level(xa_debug_level);
 #endif
 
-    t = xen_vm_attach(dom_name, NULL);
+    tspec = target_build_spec(TARGET_TYPE_XEN,TARGET_MODE_LIVE);
+    ((struct xen_vm_spec *)tspec->backend_spec)->domain = domain_name;
+    /* Just set this for completeness for the future. */
+    ((struct xen_vm_spec *)tspec->backend_spec)->xenaccess_debug_level = xa_debug_level;
+
+    t = xen_vm_instantiate(tspec);
     if (!t)
     {
         verror("Can't attach to domain %s!\n", dom_name);
@@ -1666,7 +1672,7 @@ int ctxprobes_init(char *domain_name,
         return -3;
     }
 
-    if (target_open(t, NULL))
+    if (target_open(t))
     {
         verror("Can't open target %s!\n", dom_name);
         ctxprobes_cleanup();

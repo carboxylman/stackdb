@@ -20,6 +20,9 @@
 #define __LOG_H__
 
 #include <stdio.h>
+#include <error.h>
+#include <stdlib.h>
+#include <argp.h>
 
 #define verror(format,...) fprintf(stderr, "VERROR:   %s:%d: "format, \
 				   __FUNCTION__, __LINE__, ## __VA_ARGS__)
@@ -126,6 +129,8 @@ void _vmi_debug(int level,log_flags_t flags,char *format,...);
 void _vmi_warn(int level,log_flags_t flags,char *format,...);
 
 int vdebug_is_on(int level,log_flags_t flags);
+
+error_t log_argp_parse_opt(int key,char *arg,struct argp_state *state);
 
 #ifdef VMI_DEBUG
 #define vdebug(level,flags,format,...) _vmi_debug(level,flags,"VDEBUG: %s:%d: "format, __FUNCTION__, __LINE__, ## __VA_ARGS__)

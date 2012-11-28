@@ -116,6 +116,14 @@ typedef enum {
     XV_TSREG_CR7 = XV_TSREG_START_INDEX - 13,
 } xen_vm_tsreg_t;
 
+struct xen_vm_spec {
+    char *domain;
+    char *config_file;
+    char *replay_dir;
+    int xenaccess_debug_level;
+    char *console_logfile;
+};
+
 struct xen_vm_thread_state {
     ADDR task_struct_addr;
 
@@ -194,15 +202,8 @@ struct xen_vm_state {
     xa_instance_t xa_instance;
 };
 
-/*
- * Attaches to @domain (which may be paused or running) (@domain may be
- * a name string or a domain id number).  @dfoptlist is a
- * NULL-terminated list of debugfile_load_opts structs (ideally parsed
- * from debugfile_load_opts_parse if you're coming from the command
- * line).
- */
-struct target *xen_vm_attach(char *domain,
-			     struct debugfile_load_opts **dfoptlist);
+struct target *xen_vm_instantiate(struct target_spec *spec);
+struct xen_vm_spec *xen_vm_build_spec(void);
 
 struct symbol *linux_get_task_struct_type_ptr(struct target *target);
 struct value *linux_load_current_task(struct target *target);

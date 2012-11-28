@@ -76,6 +76,7 @@ main(int argc, char **argv)
     unsigned long long s_brctr, e_brctr;
     target_status_t tstat;
     char ch, *cp;
+    struct target_spec *tspec;
 
     while ((ch = getopt(argc, argv, "d")) != -1) {
 	switch(ch) {
@@ -172,11 +173,16 @@ main(int argc, char **argv)
     vmi_set_log_level(debug);
     xa_set_debug_level(debug);
 
-    if ((target = xen_vm_attach(name, 0)) == NULL) {
+    tspec = target_build_spec(TARGET_TYPE_XEN,TARGET_MODE_REPLAY);
+    ((struct xen_vm_spec *)tspec->backend_spec)->domain = name;
+    /* Just set this for completeness for the future. */
+    ((struct xen_vm_spec *)tspec->backend_spec)->xenaccess_debug_level = debug;
+
+    if ((target = xen_vm_instantiate(tspec)) == NULL) {
 	fprintf(stderr, "xen_vm_attach failed for %s\n", name);
 	onexit(1);
     }
-    if (target_open(target, NULL) != 0) {
+    if (target_open(target) != 0) {
         fprintf(stderr, "cannot open target %s!\n", name);
 	onexit(1);
     }

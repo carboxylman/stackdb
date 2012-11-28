@@ -2302,7 +2302,7 @@ static int setup_post_single_step(struct target *target,
 	     * If we're in BPMODE_STRICT, we have to pause all the other
 	     * threads.
 	     */
-	    if (target->opts->bpmode == THREAD_BPMODE_STRICT) {
+	    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
 		if (target_pause(target)) {
 		    vwarn("could not pause the target for blocking thread"
 			  " %"PRIiTID"!\n",tthread->tid);
@@ -3650,8 +3650,8 @@ static int handle_complex_actions(struct target *target,
 	     * more than one instruction, and we're in the right BPMODE,
 	     * we have to pause all the other threads.
 	     */
-	    if (target->opts->bpmode == THREAD_BPMODE_STRICT
-		|| (target->opts->bpmode == THREAD_BPMODE_SEMI_STRICT
+	    if (target->spec->bpmode == THREAD_BPMODE_STRICT
+		|| (target->spec->bpmode == THREAD_BPMODE_SEMI_STRICT
 		    && (action->steps > 1
 			|| (action->type == ACTION_CUSTOMCODE 
 			    && action->detail.code.instr_count > 1)))) {
@@ -3896,7 +3896,7 @@ int action_sched(struct probe *probe,struct action *action,
 	 * First check is redundant due to check in target_open, but
 	 * in case that goes away, it's here too.
 	 */
-	if (target->opts->bpmode == THREAD_BPMODE_STRICT && !target->threadctl) {
+	if (target->spec->bpmode == THREAD_BPMODE_STRICT && !target->threadctl) {
 	    verror("cannot do return on strict target without threadctl!\n");
 	    errno = ENOTSUP;
 	    return -1;
@@ -3905,7 +3905,7 @@ int action_sched(struct probe *probe,struct action *action,
 		 && !action->boosted
 		 && !target->threadctl
 		 && target->full_ret_instr_count > 1
-		 && target->opts->bpmode == THREAD_BPMODE_SEMI_STRICT) {
+		 && target->spec->bpmode == THREAD_BPMODE_SEMI_STRICT) {
 	    verror("cannot do non-boosted, multi-instruction return"
 		   " on strict target without threadctl!\n");
 	    errno = ENOTSUP;
@@ -3951,8 +3951,8 @@ int action_sched(struct probe *probe,struct action *action,
 	}
 
 	/* XXX: this check should really let 1-instr actions go through */
-	if ((target->opts->bpmode == THREAD_BPMODE_STRICT 
-	     || target->opts->bpmode == THREAD_BPMODE_SEMI_STRICT)
+	if ((target->spec->bpmode == THREAD_BPMODE_STRICT 
+	     || target->spec->bpmode == THREAD_BPMODE_SEMI_STRICT)
 	    && !action->boosted
 	    && !target->threadctl) {
 	    verror("cannot do return on strict target without threadctl!\n");

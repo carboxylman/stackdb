@@ -78,6 +78,9 @@ error_t cmd_parser(int key, char *arg, struct argp_state *state)
 
     switch ( key )
     {
+           case ARGP_KEY_INIT:
+	       target_driver_argp_init_children(state);
+	       break;
            case 'c': 
                 {
                         int res;
@@ -168,13 +171,45 @@ int main(int argc, char *argv[])
 {
     target_status_t tstat;
     int ret;
+    struct target_spec *tspec;
+    char targetstr[128];
 
+    dwdebug_init();
+    atexit(dwdebug_fini);
+
+    memset(&opts,0,sizeof(opts));
+
+    target_argp_driver_parse(&parser_def,NULL,argc,argv,TARGET_TYPE_XEN,1);
+
+    if (!opts.tspec) {
+	verror("could not parse target arguments!\n");
+	exit(-1);
+    }
+
+    if (!opts.argc) {
+	fprintf(stderr,"ERROR: must supply a gadget file!\n");
+	exit(-5);
+    }
+
+    filename = opts.argv[0];
+
+    t = target_instantiate(opts.tspec);
+    if (!t) {
+	verror("could not instantiate target!\n");
+	exit(-1);
+    }
+    target_tostring(t,targetstr,sizeof(targetstr));
 
     argp_parse(&parser_def, argc, argv, 0, 0, NULL);
 
     dwdebug_init();
     vmi_set_log_level(debug_level);
     xa_set_debug_level(debug_level);
+
+    tspec = target_build_spec(TARGET_TYPE_XEN,TARGET_MODE_LIVE);
+    ((struct xen_vm_spec *)tspec->backend_spec)->domain = domain_name;
+    /* Just set this for completeness for the future. */
+    ((struct xen_vm_spec *)tspec->backend_spec)->xenaccess_debug_level = debug_level;
 
     t = xen_vm_attach(dom_name,NULL);
     if (!t)

@@ -31,6 +31,227 @@ LIST_HEAD(targets);
 /* These are the known, loaded (maybe partially) debuginfo files. */
 LIST_HEAD(debugfiles);
 
+/**
+ ** Target argp parsing stuff.  This loosely wraps argp.  The idea is
+ ** that target library users want to write target-backend-independent
+ ** programs that use the library.  So this function helps them
+ ** automatically instantiate a target from standard options.
+ **
+ ** The reason we can't use exactly the argp style is because 1) child
+ ** parsers cannot see arguments (and the Ptrace parser will eat quoted
+ ** arguments (i.e., those following '--') if possible, so we want to
+ ** make this work); 2) and because the top-level target argp parser
+ ** will optionally only include the target backend argp children
+ ** according to user choice (i.e., a program might only support ptrace,
+ ** not xen) -- and we have to keep track of that state.
+ **
+ ** For these reasons, it ends up making more sense to use the driver
+ ** program's argp parser as the top-level parser, and glue on our
+ ** target argp child parsers -- but then to pass all parsers a 
+ ** struct target_driver_argp_parser_state as the input.  Clients can
+ ** retrieve their state via target_driver_argp_state().
+ **/
+error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state);
+
+struct argp_option target_argp_opts[] = {
+    { "start-paused",'P',0,0,"Leave target paused after launch.",-3 },
+    { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 },
+    { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 },
+    { "breakpoint-mode",'L',"STRICT-LEVEL",0,"Set/increase the breakpoint mode level.",-3 },
+    { 0,0,0,0,0,0 }
+};
+
+/*
+ * The children this library will utilize.
+ */
+extern struct argp linux_userproc_argp;
+extern char *linux_userproc_argp_header;
+#ifdef ENABLE_XENACCESS
+extern struct argp xen_vm_argp;
+extern char *xen_vm_argp_header;
+#endif
+
+struct target_spec *target_argp_target_spec(struct argp_state *state) {
+    if (!state)
+	return NULL;
+
+    return ((struct target_argp_parser_state *) \
+	    state->input)->spec;
+}
+void *target_argp_driver_state(struct argp_state *state) {
+    if (!state)
+	return NULL;
+
+    return ((struct target_argp_parser_state *) \
+	    state->input)->driver_state;
+}
+
+struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
+					     void *driver_state,
+					     int argc,char **argv,
+					     target_type_t target_types,
+					     int filter_quoted) {
+    error_t retval;
+    int i;
+    struct target_argp_parser_state tstate;
+    /*
+     * These are our subparsers.  They are optional, so we have to build
+     * them manually.
+     */
+    struct argp_child target_argp_children[3];
+    /*
+     * This is the "main" target arg parser, to be used if the caller
+     * has no arguments.
+     */
+    struct argp target_argp = { 
+	target_argp_opts,target_argp_parse_opt,
+	NULL,NULL,target_argp_children,NULL,NULL
+    };
+    /*
+     * This is the main child target arg parser, to be used if the
+     * caller has its own arguments.
+     */
+    struct argp_child target_argp_child[] = {
+	{ &target_argp,0,"Generic Target Options",0 },
+	{ 0,0,0,0 },
+    };
+
+    if (!target_types) {
+	return EINVAL;
+    }
+
+    tstate.driver_state = driver_state;
+    tstate.spec = target_build_spec(TARGET_TYPE_NONE,TARGET_MODE_NONE);
+
+    if (filter_quoted) {
+	for (i = 0; i < argc; ++i) {
+	    if (strncmp("--",argv[i],2) == 0 && argv[i][2] == '\0') {
+		argv[i] = NULL;
+		if (++i < argc) {
+		    tstate.quoted_start = i;
+		    tstate.quoted_argc = argc - i;
+		    tstate.quoted_argv = &argv[i];
+		}
+		argc = i - 1;
+		break;
+	    }
+	}
+    }
+
+    tstate.num_children = 0;
+    if (target_types & TARGET_TYPE_PTRACE) {
+	target_argp_children[tstate.num_children].argp = &linux_userproc_argp;
+	target_argp_children[tstate.num_children].flags = 0;
+	target_argp_children[tstate.num_children].header = linux_userproc_argp_header;
+	target_argp_children[tstate.num_children].group = 0;
+	++tstate.num_children;
+    }
+#ifdef ENABLE_XENACCESS
+    if (target_types & TARGET_TYPE_XEN) {
+	target_argp_children[tstate.num_children].argp = &xen_vm_argp;
+	target_argp_children[tstate.num_children].flags = 0;
+	target_argp_children[tstate.num_children].header = xen_vm_argp_header;
+	target_argp_children[tstate.num_children].group = 0;
+	++tstate.num_children;
+    }
+#endif
+
+    target_argp_children[tstate.num_children].argp = NULL;
+    target_argp_children[tstate.num_children].flags = 0;
+    target_argp_children[tstate.num_children].header = NULL;
+    target_argp_children[tstate.num_children].group = 0;
+
+    driver_parser->children = target_argp_child;
+
+    retval = argp_parse(driver_parser,argc,argv,0,NULL,&tstate);
+
+    if (retval) {
+	if (tstate.spec && tstate.spec->backend_spec)
+	    free(tstate.spec->backend_spec);
+	if (tstate.spec)
+	    free(tstate.spec);
+	tstate.spec = NULL;
+    }
+
+    driver_parser->children = NULL;
+
+    return tstate.spec;
+}
+
+void target_driver_argp_init_children(struct argp_state *state) {
+    state->child_inputs[0] = state->input;
+}
+
+error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct target_argp_parser_state *tstate = \
+	(struct target_argp_parser_state *)state->input;
+    struct target_spec *spec = NULL;
+    char *argcopy;
+    struct debugfile_load_opts *opts;
+    int i;
+
+    if (tstate)
+	spec = tstate->spec;
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+    case ARGP_KEY_ARGS:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_INIT:
+	for (i = 0; i < tstate->num_children; ++i) 
+	    state->child_inputs[i] = tstate;
+	break;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+    case ARGP_KEY_ERROR:
+	return 0;
+    case ARGP_KEY_FINI:
+	/*
+	 * Check for at least *something*.
+	 */
+	if (spec && spec->target_type == TARGET_TYPE_NONE) {
+	    verror("you must specify at least one kind of target!\n");
+	    return EINVAL;
+	}
+	return 0;
+    case 's':
+	spec->style = PROBEPOINT_SW;
+	break;
+    case 'F':
+	argcopy = strdup(arg);
+
+	opts = debugfile_load_opts_parse(argcopy);
+
+	if (!opts) {
+	    verror("bad debugfile_load_opts '%s'!\n",argcopy);
+	    free(argcopy);
+	    for (i = 0; i < array_list_len(spec->debugfile_load_opts_list); ++i)
+		debugfile_load_opts_free((struct debugfile_load_opts *) \
+					 array_list_item(spec->debugfile_load_opts_list,i));
+	    array_list_free(spec->debugfile_load_opts_list);
+	    spec->debugfile_load_opts_list = NULL;
+
+	    return EINVAL;
+	}
+	else {
+	    if (!spec->debugfile_load_opts_list) 
+		spec->debugfile_load_opts_list = array_list_create(4);
+	    array_list_append(spec->debugfile_load_opts_list,opts);
+	    break;
+	}
+    case 'L':
+	++spec->bpmode;
+	break;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+
 extern struct target_ops linux_userspace_process_ops;
 
 struct debugfile_load_opts *target_get_debugfile_load_opts(struct target *target,
@@ -40,32 +261,37 @@ struct debugfile_load_opts *target_get_debugfile_load_opts(struct target *target
     struct debugfile_load_opts *opts = NULL;
     int accept;
     int i;
+    int len;
 
     /*
      * If the target has debugfile load opts, match one of them with the
      * filename if possible, then parse or not parse it.  We set errno = 0
      * even if we return NULL in this case.
      */
-    if (target->debugfile_opts_list) {
+    if (target->spec->debugfile_load_opts_list) {
 	vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
-	       "checking debugfile optlist\n");
-	for (i = 0; target->debugfile_opts_list[i]; ++i) {
+	       "checking debugfile load opts list\n");
+	len = array_list_len(target->spec->debugfile_load_opts_list);
+	for (i = 0; i < len; ++i) {
 	    /* We only care if there was a match (or no match and the
 	     * filter defaulted to accept) that accepted our filename
 	     * for processing.
 	     */
-	    rfilter_check(target->debugfile_opts_list[i]->debugfile_filter,
+	    opts = (struct debugfile_load_opts *)\
+		array_list_item(target->spec->debugfile_load_opts_list,i);
+	    rfilter_check(opts->debugfile_filter,
 			  filename,&accept,NULL);
 	    if (accept == RF_ACCEPT) {
-		opts = target->debugfile_opts_list[i];
 		vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
 		       "using debugfile opts %p\n",opts);
 		errno = 0;
 		return opts;
 	    }
-	    vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
-		   "not using debugfile opts %p\n",
-		   target->debugfile_opts_list[i]);
+	    else {
+		vdebug(2,LOG_D_DFILE | LOG_T_TARGET,
+		       "not using debugfile opts %p\n",opts);
+		opts = NULL;
+	    }
 	}
 
 	/* If we didn't find an opts that allowed us to load the file,

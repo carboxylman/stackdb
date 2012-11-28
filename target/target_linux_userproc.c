@@ -33,6 +33,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include <sys/time.h>
+#include <argp.h>
 
 #include <gelf.h>
 #include <elf.h>
@@ -49,12 +50,13 @@
 /*
  * Prototypes.
  */
-struct target *linux_userproc_attach(int pid,
-				     struct debugfile_load_opts **dfoptlist);
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
-				     int keepstdin,char *outfile,char *errfile,
-				     struct debugfile_load_opts **dfoptlist);
+struct target *linux_userproc_instantiate(struct target_spec *spec);
 
+static struct target *linux_userproc_attach(struct target_spec *spec);
+static struct target *linux_userproc_launch(struct target_spec *spec);
+
+static char *linux_userproc_tostring(struct target *target,
+				     char *buf,int bufsiz);
 static int linux_userproc_init(struct target *target);
 static int linux_userproc_postloadinit(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
@@ -129,6 +131,8 @@ int linux_userproc_singlestep_end(struct target *target,tid_t tid);
  * Set up the target interface for this library.
  */
 struct target_ops linux_userspace_process_ops = {
+    .tostring = linux_userproc_tostring,
+
     .init = linux_userproc_init,
     .fini = linux_userproc_fini,
     .attach = linux_userproc_attach_internal,
@@ -177,6 +181,176 @@ struct target_ops linux_userspace_process_ops = {
     .singlestep = linux_userproc_singlestep,
     .singlestep_end = linux_userproc_singlestep_end,
 };
+
+struct argp_option linux_userproc_argp_opts[] = {
+    /* These options set a flag. */
+    { "pid",'p',"PID",0,"A target process to attach to.",-4 },
+    { "program",'b',"FILE",0,"A program to launch as the target.",-4 },
+    { "args",'a',"LIST",0,"A comma-separated argument list.",-4 },
+    { "envvars",'e',"LIST",0,"A comma-separated envvar list.",-4 },
+    { "no-stdin",'I',NULL,0,"Close stdin when launching a program.",-4 },
+    { "stdout-logfile",'O',"FILE",0,"Log stdout to FILE.",-4 },
+    { "stderr-logfile",'E',"FILE",0,"Log stderr to FILE.",-4 },
+    { 0,0,0,0,0,0 },
+};
+
+error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct target_argp_parser_state *tstate = \
+	(struct target_argp_parser_state *)state->input;
+    struct target_spec *spec;
+    struct linux_userproc_spec *lspec;
+    struct argp_option *opti;
+    int ourkey;
+    int count;
+    int i;
+
+    if (key == ARGP_KEY_INIT)
+	return 0;
+    else if (!state->input)
+	return ARGP_ERR_UNKNOWN;
+
+    if (tstate)
+	spec = tstate->spec;
+
+    /*
+     * Check to see if this is really one of our keys.  If it is, we
+     * need to see if some other backend has already started parsing
+     * args; if it has, we throw an error.  Otherwise, we assume we are
+     * using this backend, and process the arg.
+     */
+    ourkey = 0;
+    for (opti = &linux_userproc_argp_opts[0]; opti->key != 0; ++opti) {
+	if (key == opti->key) {
+	    ourkey = 1;
+	    break;
+	}
+    }
+
+    if (ourkey) {
+	if (spec->target_type == TARGET_TYPE_NONE) {
+	    spec->target_type = TARGET_TYPE_PTRACE;
+	    lspec = calloc(1,sizeof(*lspec));
+	    spec->backend_spec = lspec;
+	}
+	else if (spec->target_type != TARGET_TYPE_PTRACE) {
+	    verror("cannot mix arguments for ptrace target (%c) with non-ptrace"
+		   " target!\n",key);
+	    return EINVAL;
+	}
+
+	/* Only claim this as ours if it was one of our keys. */
+	if (spec->target_type == TARGET_TYPE_NONE) {
+	    spec->target_type = TARGET_TYPE_PTRACE;
+	    lspec = calloc(1,sizeof(*lspec));
+	    spec->backend_spec = lspec;
+	}
+	else if (spec->target_type != TARGET_TYPE_PTRACE) {
+	    verror("cannot mix arguments for ptrace target with non-ptrace target!\n");
+	    return EINVAL;
+	}
+    }
+
+    if (spec->target_type == TARGET_TYPE_PTRACE)
+	lspec = (struct linux_userproc_spec *)spec->backend_spec;
+    else
+	lspec = NULL;
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+    case ARGP_KEY_ARGS:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_INIT:
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+	return 0;
+    case ARGP_KEY_SUCCESS:
+	/*
+	 * Steal any quoted args here...
+	 */
+	if (spec->target_type == TARGET_TYPE_PTRACE && tstate->quoted_argc) {
+	    if (lspec->program) {
+		verror("cannot specify both binary to launch and an argv!\n");
+		return EINVAL;
+	    }
+	    lspec->program = tstate->quoted_argv[0];
+	    lspec->argv = calloc(tstate->quoted_argc + 1,sizeof(char *));
+	    memcpy(lspec->argv,tstate->quoted_argv,
+		   tstate->quoted_argc * sizeof(char *));
+	    lspec->argv[tstate->quoted_argc] = NULL;
+
+	    /* Report our theft :). */
+	    tstate->quoted_argc = 0;
+	}
+	return 0;
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	if (lspec && lspec->pid && lspec->program) {
+	    verror("cannot specify both pid (to attach) and binary (to launch!)\n");
+	    return EINVAL;
+	}
+	return 0;
+
+    case 'p':
+	lspec->pid = atoi(arg);
+	break;
+    case 'b':
+	lspec->program = arg;
+	break;
+    case 'a':
+	count = 1;
+	for (i = 0; arg[i] != '\0'; ++i) {
+	    if (arg[i] == ',')
+		++count;
+	}
+	lspec->argv = calloc(count+2,sizeof(char *));
+	lspec->argv[0] = lspec->program;
+	count = 1;
+	for (i = 0; arg[i] != '\0'; ++i) {
+	    if (arg[i] == ',') {
+		arg[i] = '\0';
+		lspec->argv[count++] = &arg[i+1];
+	    }
+	}
+	lspec->argv[count+1] = NULL;
+	break;
+    case 'e':
+	count = 1;
+	for (i = 0; arg[i] != '\0'; ++i) {
+	    if (arg[i] == ',')
+		++count;
+	}
+	lspec->envp = calloc(count+1,sizeof(char *));
+	lspec->envp[0] = arg;
+	count = 1;
+	for (i = 0; arg[i] != '\0'; ++i) {
+	    if (arg[i] == ',') {
+		arg[i] = '\0';
+		lspec->envp[count] = &arg[i+1];
+	    }
+	}
+	lspec->envp[count] = NULL;
+	break;
+    case 'I':
+	lspec->close_stdin = 1;
+	break;
+    case 'E':
+	lspec->stderr_logfile = arg;
+	break;
+    case 'O':
+	lspec->stdout_logfile = arg;
+	break;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp linux_userproc_argp = { 
+    linux_userproc_argp_opts,linux_userproc_argp_parse_opt,NULL,NULL,NULL,NULL,NULL
+};
+char *linux_userproc_argp_header = "Ptrace Backend Options";
 
 /*
  * If we ever want to support multithreaded targets, we'll have to track
@@ -283,12 +457,31 @@ int linux_userproc_pid(struct target *target) {
     return lstate->pid;
 }
 
+struct target *linux_userproc_instantiate(struct target_spec *spec) {
+    struct linux_userproc_spec *lspec = \
+	(struct linux_userproc_spec *)spec->backend_spec;
+
+    if (lspec->pid > 0) {
+	return linux_userproc_attach(spec);
+    }
+    else {
+	return linux_userproc_launch(spec);
+    }
+}
+
+struct linux_userproc_spec *linux_userproc_build_spec(void) {
+    struct linux_userproc_spec *lspec;
+
+    lspec = calloc(1,sizeof(*lspec));
+
+    return lspec;
+}
+
 /*
  * Attaches to @pid.  The caller does all of the normal ptrace
  * interaction; we just facilitate debuginfo-assisted data operations.
  */
-struct target *linux_userproc_attach(int pid,
-				     struct debugfile_load_opts **dfoptlist) {
+static struct target *linux_userproc_attach(struct target_spec *spec) {
     struct linux_userproc_state *lstate;
     struct target *target;
     char buf[256];
@@ -301,6 +494,9 @@ struct target *linux_userproc_attach(int pid,
     int rc;
     int wordsize;
     int endian;
+    struct linux_userproc_spec *lspec = \
+	(struct linux_userproc_spec *)spec->backend_spec;
+    int pid = lspec->pid;
 
     vdebug(5,LOG_T_LUP,"opening pid %d\n",pid);
 
@@ -346,7 +542,7 @@ struct target *linux_userproc_attach(int pid,
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,dfoptlist);
+			   &linux_userspace_process_ops,spec);
     if (!target) 
 	return NULL;
 
@@ -429,9 +625,7 @@ struct target *linux_userproc_attach(int pid,
     return target;
 }
 
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
-				     int keepstdin,char *outfile,char *errfile,
-				     struct debugfile_load_opts **dfoptlist) {
+static struct target *linux_userproc_launch(struct target_spec *spec) {
     struct linux_userproc_state *lstate;
     struct target *target;
     int pid;
@@ -442,6 +636,13 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     int endian;
     int fd = -1;
     int pstatus;
+    struct linux_userproc_spec *lspec;
+    char *filename;
+    char **argv;
+    char **envp;
+    int keepstdin;
+    char *outfile;
+    char *errfile;
 
 #if __WORDSIZE == 64
 #define LUP_SC_EXEC             59
@@ -471,6 +672,16 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
 #endif
     REGVAL syscall = 0;
 
+    lspec = (struct linux_userproc_spec *)spec->backend_spec;
+
+    filename = lspec->program;
+    argv = lspec->argv;
+    envp = lspec->envp;
+    keepstdin = !lspec->close_stdin;
+    outfile = lspec->stdout_logfile;
+    errfile = lspec->stderr_logfile;
+	
+
     /* Read the binary and see if it is a dynamic or statically-linked
      * executable.  If it's dynamic, we look for one sequence of
      * syscalls to infer when the the fully-linked program is in
@@ -483,7 +694,7 @@ struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,dfoptlist);
+			   &linux_userspace_process_ops,spec);
     if (!target) {
 	errno = ENOMEM;
 	return NULL;
@@ -1175,6 +1386,29 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid) {
 /**
  ** These are all functions supporting the target API.
  **/
+static char *linux_userproc_tostring(struct target *target,
+				     char *buf,int bufsiz) {
+    struct linux_userproc_spec *lspec = \
+	(struct linux_userproc_spec *)target->spec->backend_spec;
+
+    if (lspec->program) {
+	if (!buf) {
+	    bufsiz = 64;
+	    buf = malloc(bufsiz*sizeof(char));
+	}
+	snprintf(buf,bufsiz,"ptrace(%d,%s)",lspec->pid,lspec->program);
+    }
+    else {
+	if (!buf) {
+	    bufsiz = 16;
+	    buf = malloc(bufsiz*sizeof(char));
+	}
+	snprintf(buf,bufsiz,"ptrace(%d)",lspec->pid);
+    }
+
+    return buf;
+}
+
 static tid_t linux_userproc_gettid(struct target *target) {
     struct target_thread *tthread;
 

@@ -18,7 +18,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <getopt.h>
 #include <errno.h>
 #include <string.h>
 
@@ -27,6 +26,8 @@
 #include <inttypes.h>
 
 #include <signal.h>
+
+#include <argp.h>
 
 #include "log.h"
 #include "dwdebug.h"
@@ -41,12 +42,7 @@
 #include "probe.h"
 #include "alist.h"
 
-extern char *optarg;
-extern int optind, opterr, optopt;
-
 struct target *t = NULL;
-int islinux = 0;
-int isxen = 0;
 
 int len = 0;
 struct bsymbol **symbols = NULL;
@@ -248,7 +244,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 	fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
 #ifdef ENABLE_XENACCESS
-	if (isxen) {
+	if (target_type(t) == TARGET_TYPE_XEN) {
 	    struct value *value = linux_load_current_task(t);
 	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
 	    value_free(value);
@@ -268,7 +264,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 		*retaddr,(char *)handler_data,array_list_len(shadow_stack));
 	
 #ifdef ENABLE_XENACCESS
-	if (isxen) {
+	if (target_type(t) == TARGET_TYPE_XEN) {
 	    struct value *value = linux_load_current_task(t);
 	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
 	    value_free(value);
@@ -347,7 +343,7 @@ int retaddr_check(struct probe *probe,void *handler_data,
     }
 
 #ifdef ENABLE_XENACCESS
-    if (isxen) {
+    if (target_type(t) == TARGET_TYPE_XEN) {
 	struct value *value = linux_load_current_task(t);
 	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
 	value_free(value);
@@ -723,45 +719,104 @@ result_t ss_handler(struct action *action,struct probe *probe,
     return RESULT_SUCCESS;
 }
 
-extern char **environ;
+struct dt_argp_state {
+    char *at_symbol;
+    char *until_symbol;
+    int do_bts;
+    int until_stop_probing;
+    int raw;
+    int do_post;
+    int argc;
+    char **argv;
+};
+
+struct argp_option dt_argp_opts[] = {
+    { "at-symbol",'A',"SYMBOL",0,"Wait for a probe on this symbol/address to be hit before inserting all the other probes.",0 },
+    { "until-symbol",'U',"SYMBOL",0,"Remove all probes once a probe on this symbol/address is hit.",0 },
+    { "bts",'B',0,0,"Enable BTS (if XenTT) (starting at at-symbol if one was provided; otherwise, enable immediately).",0 },
+    { "stop-at-until",'S',0,0,"Stop probing once the until symbol/address is reached.",0 },
+    { "raw",'v',0,0,"Enable raw mode.",0 },
+    { "post",'P',0,0,"Enable post handlers.",0 },
+    { 0,0,0,0,0,0 },
+};
+
+error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
+    struct dt_argp_state *opts = \
+	(struct dt_argp_state *)target_argp_driver_state(state);
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+	/* We want to process all the remaining args, so bounce to the
+	 * next case by returning this value.
+	 */
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_ARGS:
+	/* Eat all the remaining args. */
+	if (state->quoted > 0)
+	    opts->argc = state->quoted - state->next;
+	else
+	    opts->argc = state->argc - state->next;
+	if (opts->argc > 0) {
+	    opts->argv = calloc(opts->argc,sizeof(char *));
+	    memcpy(opts->argv,&state->argv[state->next],opts->argc*sizeof(char *));
+	    state->next += opts->argc;
+	}
+	return 0;
+    case ARGP_KEY_INIT:
+	target_driver_argp_init_children(state);
+	return 0;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+	return 0;
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+
+    case 'A':
+	opts->at_symbol = arg;
+	break;
+    case 'U':
+	opts->until_symbol = arg;
+	break;
+    case 'B':
+	opts->do_bts = 1;
+	break;
+    case 'S':
+	opts->until_stop_probing = 1;
+	break;
+    case 'v':
+	opts->raw = 1;
+	break;
+    case 'P':
+	opts->do_post = 1;
+	break;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp dt_argp = {
+    dt_argp_opts,dt_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
+};
 
 int main(int argc,char **argv) {
-    char targetstr[128];
-    int pid = -1;
-    int doexe = 0;
-    char *exe = NULL;
-    char **exeargs = NULL;
-    char *exeoutfile = NULL;
-    char *exeerrfile = NULL;
-#ifdef ENABLE_XENACCESS
-    char *domain = NULL;
-#endif
-    char ch;
-    int debug = -1;
-    int xadebug = -1;
+    struct target_spec *tspec;
+    struct dt_argp_state opts;
     target_status_t tstat;
-    int raw = 0;
     ADDR *addrs = NULL;
     char *word;
     int i, j;
-    log_flags_t flags;
     probepoint_style_t style = PROBEPOINT_FASTEST;
-    int do_post = 1;
-    int offset = 0;
     struct probe *probe;
-    struct debugfile_load_opts **dlo_list = NULL;
-    int dlo_idx = 0;
-    char *optargc;
-    struct debugfile_load_opts *opts;
-    struct target_opts topts = {
-	.bpmode = THREAD_BPMODE_STRICT,
-    };
     target_poll_outcome_t poutcome;
     int pstatus;
     ADDR paddr;
     char *endptr;
-    int until_stop_probing = 0;
-    int do_bts = 0;
+    char targetstr[128];
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -770,161 +825,14 @@ int main(int argc,char **argv) {
 	.meta = 1,
     };
 
-    /* Find the '--' and save the remaining args so they can be passed
-     * to linux_userproc_launch below.  Truncate argc and argv to just
-     * include any function/variable breakpoint/watchpoint params, and
-     * any other args, to be parsed later.
-     */
-    for (i = 0; i < argc; ++i) {
-	if (!strcmp(argv[i],"--") && (i + 1) < argc) {
-	    exe = argv[i + 1];
-	    argv[i] = NULL;
-	    argc = i;
-	    exeargs = &argv[i + 2];
-	    break;
-	}
-    }
+    memset(&opts,0,sizeof(opts));
 
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dxvsl:Po:FLA:U:BS")) != -1) {
-	switch(ch) {
-	case 'A':
-	    at_symbol = optarg;
-	    break;
-	case 'U':
-	    until_symbol = optarg;
-	    break;
-	case 'B':
-	    do_bts = 1;
-	    break;
-	case 'S':
-	    until_stop_probing = 1;
-	    break;
-	case 'o':
-	    offset = atoi(optarg);
-	    break;
-	case 'd':
-	    ++debug;
-	    break;
-	case 'x':
-	    ++xadebug;
-	    break;
-	case 'p':
-	    pid = atoi(optarg);
-	    break;
-	case 'm':
-#ifdef ENABLE_XENACCESS
-	    domain = optarg;
-	    /* Xen does not support STRICT! */
-	    if (topts.bpmode == THREAD_BPMODE_STRICT)
-		++topts.bpmode;
-#else
-	    verror("xen support not compiled on this host!\n");
-	    exit(-1);
-#endif
-	    break;
-	case 'e':
-	    doexe = 1;
-	    break;
-	case 'E':
-	    exeerrfile = optarg;
-	    break;
-	case 'O':
-	    exeoutfile = optarg;
-	    break;
-	case 'v':
-	    raw = 1;
-	    break;
-	case 's':
-	    style = PROBEPOINT_SW;
-	    break;
-	case 'l':
-	    if (vmi_log_get_flag_mask(optarg,&flags)) {
-		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
-		exit(-1);
-	    }
-	    vmi_set_log_flags(flags);
-	    break;
-	case 'P':
-	    do_post = 0;
-	    break;
-	case 'F':
-	    optargc = strdup(optarg);
+    tspec = target_argp_driver_parse(&dt_argp,&opts,argc,argv,
+				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
 
-	    opts = debugfile_load_opts_parse(optarg);
-
-	    if (!opts)
-		goto dlo_err;
-
-	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlo_idx + 2));
-	    dlo_list[dlo_idx] = opts;
-	    ++dlo_idx;
-	    dlo_list[dlo_idx] = NULL;
-	    break;
-    dlo_err:
-	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
-	    free(optargc);
-	    exit(-1);
-	case 'L':
-	    ++topts.bpmode;
-	    break;
-	default:
-	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
-	    exit(-1);
-	}
-    }
-
-    argc -= optind;
-    argv += optind;
-
-    dwdebug_init();
-
-    atexit(dwdebug_fini);
-
-    vmi_set_log_level(debug);
-#if defined(ENABLE_XENACCESS) && defined(XA_DEBUG)
-    xa_set_debug_level(xadebug);
-#endif
-
-    if (pid > 0) {
-	islinux = 1;
-	t = linux_userproc_attach(pid,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not attach to pid %d!\n",pid);
-	    exit(-3);
-	}
-	snprintf(targetstr,128,"pid %d",pid);
-    }
-#ifdef ENABLE_XENACCESS
-    else if (domain) {
-	isxen = 1;
-	t = xen_vm_attach(domain,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not attach to dom %s!\n",domain);
-	    exit(-3);
-	}
-	snprintf(targetstr,128,"domain %s",domain);
-    }
-#endif
-    else if (doexe) {
-	islinux = 1;
-	if (!exe) {
-	    fprintf(stderr,"must supply at least an executable to launch (%d)!\n",i);
-	    exit(-1);
-	}
-
-	t = linux_userproc_launch(exe,exeargs,environ,0,
-				  exeoutfile,exeerrfile,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not launch exe %s!\n",exe);
-	    exit(-3);
-	}
-
-	pid = linux_userproc_pid(t);
-	snprintf(targetstr,128,"pid %d",pid);
-    }
-    else {
-	fprintf(stderr,"ERROR: must specify a target!\n");
-	exit(-2);
+    if (!tspec) {
+	verror("could not parse target arguments!\n");
+	exit(-1);
     }
 
     signal(SIGHUP,sigh);
@@ -939,7 +847,17 @@ int main(int argc,char **argv) {
     signal(SIGUSR1,sigh);
     signal(SIGUSR2,sigh);
 
-    if (target_open(t,&topts)) {
+    dwdebug_init();
+    atexit(dwdebug_fini);
+
+    t = target_instantiate(tspec);
+    if (!t) {
+	verror("could not instantiate target!\n");
+	exit(-1);
+    }
+    target_tostring(t,targetstr,sizeof(targetstr));
+
+    if (target_open(t)) {
 	fprintf(stderr,"could not open %s!\n",targetstr);
 	exit(-4);
     }
@@ -947,15 +865,15 @@ int main(int argc,char **argv) {
     /* Now that we have loaded any symbols we might need, process the
      * rest of our args.
      */
-    if (argc) {
-	len = argc;
-	if (raw) {
-	    addrs = (ADDR *)malloc(sizeof(ADDR)*argc);
-	    memset(addrs,0,sizeof(ADDR)*argc);
+    if (opts.argc) {
+	len = opts.argc;
+	if (opts.raw) {
+	    addrs = (ADDR *)malloc(sizeof(ADDR)*opts.argc);
+	    memset(addrs,0,sizeof(ADDR)*opts.argc);
 	}
 	else {
-	    symbols = (struct bsymbol **)malloc(sizeof(struct bsymbol *)*argc);
-	    memset(symbols,0,sizeof(struct bsymbol *)*argc);
+	    symbols = (struct bsymbol **)malloc(sizeof(struct bsymbol *)*opts.argc);
+	    memset(symbols,0,sizeof(struct bsymbol *)*opts.argc);
 
 	    shadow_stack = array_list_create(64);
 
@@ -964,25 +882,25 @@ int main(int argc,char **argv) {
 	}
     }
 
-    if (raw) {
+    if (opts.raw) {
 	word = malloc(t->wordsize);
-	for (i = 0; i < argc; ++i) {
-	    addrs[i] = strtoll(argv[i],NULL,16);
+	for (i = 0; i < opts.argc; ++i) {
+	    addrs[i] = strtoll(opts.argv[i],NULL,16);
 	}
     }
     else {
 	struct array_list *addrlist = array_list_create(0);
 	struct array_list *symlist = array_list_create(0);
 	struct bsymbol *bsymbol = NULL;
-	int *retcodes = (int *)malloc(sizeof(int)*argc);
-	char **retcode_strs = (char **)malloc(sizeof(char *)*argc);
+	int *retcodes = (int *)malloc(sizeof(int)*opts.argc);
+	char **retcode_strs = (char **)malloc(sizeof(char *)*opts.argc);
 
-	memset(retcodes,0,sizeof(int)*argc);
-	memset(retcode_strs,0,sizeof(char *)*argc);
+	memset(retcodes,0,sizeof(int)*opts.argc);
+	memset(retcode_strs,0,sizeof(char *)*opts.argc);
 
-	for (i = 0; i < argc; ++i) {
+	for (i = 0; i < opts.argc; ++i) {
 	    /* Look for retval code */
-	    char *retcode_str = index(argv[i],':');
+	    char *retcode_str = index(opts.argv[i],':');
 	    int line = -1;
 	    if (retcode_str) {
 		if (*(retcode_str+1) == 'L') {
@@ -1006,23 +924,23 @@ int main(int argc,char **argv) {
 		}
 	    }
 
-	    if (strncmp(argv[i],"0x",2) == 0) {
-		array_list_add(addrlist,argv[i]);
+	    if (strncmp(opts.argv[i],"0x",2) == 0) {
+		array_list_add(addrlist,opts.argv[i]);
 		array_list_add(symlist,NULL);
 	    }
 	    else {
 		if (line > 0) {
-		    if (!(bsymbol = target_lookup_sym_line(t,argv[i],line,
+		    if (!(bsymbol = target_lookup_sym_line(t,opts.argv[i],line,
 							   NULL,NULL))) {
-			fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+			fprintf(stderr,"Could not find symbol %s!\n",opts.argv[i]);
 			cleanup();
 			exit(-1);
 		    }
 		}
 		else {
-		    if (!(bsymbol = target_lookup_sym(t,argv[i],".",NULL,
+		    if (!(bsymbol = target_lookup_sym(t,opts.argv[i],".",NULL,
 						      SYMBOL_TYPE_FLAG_NONE))) {
-			fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+			fprintf(stderr,"Could not find symbol %s!\n",opts.argv[i]);
 			cleanup();
 			exit(-1);
 		    }
@@ -1056,14 +974,14 @@ int main(int argc,char **argv) {
 	    else {
 		if (!(at_bsymbol = target_lookup_sym(t,at_symbol,".",NULL,
 						     SYMBOL_TYPE_FLAG_NONE))) {
-		    fprintf(stderr,"Could not find symbol %s!\n",argv[i]);
+		    fprintf(stderr,"Could not find symbol %s!\n",opts.argv[i]);
 		    cleanup();
 		    exit(-1);
 		}
 
 		if (!SYMBOL_IS_FUNCTION(at_bsymbol->lsymbol->symbol)) {
 		    fprintf(stderr,"pause at symbol %s is not a function!\n",
-			    argv[i]);
+			    opts.argv[i]);
 		    cleanup();
 		    exit(-1);
 		}
@@ -1129,7 +1047,7 @@ int main(int argc,char **argv) {
 	    probe = NULL;
 	}
 #if defined(ENABLE_XEN) && defined(CONFIG_DETERMINISTIC_TIMETRAVEL)
-	if (isxen && do_bts) {
+	if (target_type(t) == TARGET_TYPE_XEN && opts.do_bts) {
 	    printf("Enabling BTS!\n");
 	    fflush(stdout);
 	    if (target_enable_feature(t,XV_FEATURE_BTS,NULL))
@@ -1163,14 +1081,14 @@ int main(int argc,char **argv) {
 	    else {
 		if (!(until_bsymbol = target_lookup_sym(t,until_symbol,".",NULL,
 						     SYMBOL_TYPE_FLAG_NONE))) {
-		    fprintf(stderr,"Could not find until_symbol %s!\n",argv[i]);
+		    fprintf(stderr,"Could not find until_symbol %s!\n",opts.argv[i]);
 		    cleanup();
 		    exit(-1);
 		}
 
 		if (!SYMBOL_IS_FUNCTION(until_bsymbol->lsymbol->symbol)) {
 		    fprintf(stderr,"util_symbol %s is not a function!\n",
-			    argv[i]);
+			    opts.argv[i]);
 		    cleanup();
 		    exit(-1);
 		}
@@ -1210,14 +1128,14 @@ int main(int argc,char **argv) {
 	    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 		whence = PROBEPOINT_EXEC;
 		pre = function_dump_args;
-		if (do_post)
+		if (opts.do_post)
 		    post = function_post;
 	    }
 	    else {
 		pre = var_pre;
-		if (do_post)
+		if (opts.do_post)
 		    post = var_post;
-		if (i < argc && retcode_strs[i] 
+		if (i < opts.argc && retcode_strs[i] 
 		    && *retcode_strs[i] == 'w') {
 		    whence = PROBEPOINT_WRITE;
 		}
@@ -1226,7 +1144,7 @@ int main(int argc,char **argv) {
 	    }
 
 	    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)
-		&& ((i < argc && retcode_strs[i] 
+		&& ((i < opts.argc && retcode_strs[i] 
 		     && (*retcode_strs[i] == 'c'
 			 || *retcode_strs[i] == 'C')))) {
 		ADDR funcstart;
@@ -1238,7 +1156,7 @@ int main(int argc,char **argv) {
 		}
 	    }
 	    else if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)
-		     && ((i < argc && retcode_strs[i] 
+		     && ((i < opts.argc && retcode_strs[i] 
 			  && (*retcode_strs[i] == 'e'
 			      || *retcode_strs[i] == 'E')))) {
 		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
@@ -1263,8 +1181,8 @@ int main(int argc,char **argv) {
 		if (!probe)
 		    goto err_unreg;
 
-		if (i < argc && retcode_strs[i] && *retcode_strs[i] == 'L') {
-		    if (!probe_register_line(probe,argv[i],retcodes[i],
+		if (i < opts.argc && retcode_strs[i] && *retcode_strs[i] == 'L') {
+		    if (!probe_register_line(probe,opts.argv[i],retcodes[i],
 					     style,whence,PROBEPOINT_LAUTO)) {
 			probe_free(probe,1);
 			goto err_unreg;
@@ -1297,7 +1215,7 @@ int main(int argc,char **argv) {
 		    
 		    /* Add the retcode action, if any! */
 		    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
-			if (i < argc && retcode_strs[i]
+			if (i < opts.argc && retcode_strs[i]
 			    && *retcode_strs[i] == 's') {
 			    struct action *action = action_singlestep(retcodes[i]);
 			    if (!action) {
@@ -1310,7 +1228,7 @@ int main(int argc,char **argv) {
 				goto err_unreg;
 			    }
 			}
-			else if (i < argc && retcode_strs[i]) {
+			else if (i < opts.argc && retcode_strs[i]) {
 			    struct action *action = action_return(retcodes[i]);
 			    if (!action) {
 				fprintf(stderr,"could not create action!\n");
@@ -1375,17 +1293,17 @@ int main(int argc,char **argv) {
 	    probe_handler_t pre;
 	    probe_handler_t post = NULL;
 
-	    if (i < argc && retcode_strs[i] && *retcode_strs[i] == 'w') {
+	    if (i < opts.argc && retcode_strs[i] && *retcode_strs[i] == 'w') {
 		pre = addr_var_pre;
-		if (do_post)
+		if (opts.do_post)
 		    post = addr_var_post;
 		whence = PROBEPOINT_WRITE;
 		type = PROBEPOINT_WATCH;
 		rstyle = PROBEPOINT_HW;
 	    }
-	    else if (i < argc && retcode_strs[i] && *retcode_strs[i] == 'r') {
+	    else if (i < opts.argc && retcode_strs[i] && *retcode_strs[i] == 'r') {
 		pre = addr_var_pre;
-		if (do_post)
+		if (opts.do_post)
 		    post = addr_var_post;
 		whence = PROBEPOINT_READWRITE;
 		type = PROBEPOINT_WATCH;
@@ -1396,7 +1314,7 @@ int main(int argc,char **argv) {
 		type = PROBEPOINT_BREAK;
 		rstyle = style;
 		pre = addr_code_pre;
-		if (do_post)
+		if (opts.do_post)
 		    post = addr_code_post;
 	    }
 
@@ -1476,14 +1394,14 @@ int main(int argc,char **argv) {
 		 * all probes.
 		 */
 #if defined(ENABLE_XEN) && defined(CONFIG_DETERMINISTIC_TIMETRAVEL)
-		if (isxen && do_bts) {
+		if (target_type(t) == TARGET_TYPE_XEN && opts.do_bts) {
 		    printf("Disabling BTS at until probe.\n");
 		    fflush(stdout);
 		    if (target_disable_feature(t,XV_FEATURE_BTS))
 			verror("failed to disable BTS!\n");
 		}
 #endif
-		if (until_stop_probing) {
+		if (opts.until_stop_probing) {
 		    printf("Stopping monitoring at until probe.\n");
 		    fflush(stdout);
 		    tstat = TSTATUS_DONE;
@@ -1493,21 +1411,21 @@ int main(int argc,char **argv) {
 	    else if (until_probe)
 		goto resume;
 
-	    if (islinux && linux_userproc_at_syscall(t,tid))
+	    if (target_type(t) == TARGET_TYPE_PTRACE && linux_userproc_at_syscall(t,tid))
 		goto resume;
 
 	    printf("%s thread %"PRIiTID" interrupted at 0x%" PRIxREGVAL "\n",
 		   targetstr,tid,target_read_reg(t,tid,CREG_IP));
 
-	    if (!raw && islinux)
+	    if (!opts.raw && target_type(t) == TARGET_TYPE_PTRACE)
 		goto resume;
-	    else if (isxen) { // && !raw) {
+	    else if (target_type(t) == TARGET_TYPE_XEN) { // && !opts.raw) {
 		goto resume;
 		//fprintf(stderr,"ERROR: unexpected Xen interrupt; trying to cleanup!\n");
 		//goto exit;
 	    }
 	    else {
-		for (i = 0; i < argc; ++i) {
+		for (i = 0; i < opts.argc; ++i) {
 		    if (target_read_addr(t,addrs[i],t->wordsize,
 					 (unsigned char *)word) != NULL) {
 			printf("0x%" PRIxADDR " = ",addrs[i]);

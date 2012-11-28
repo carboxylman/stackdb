@@ -20,31 +20,13 @@
 #define __TARGET_LINUX_USERPROC_H__
 
 #include <sys/ptrace.h>
+#include <sys/user.h>
 #include "target_api.h"
 
 /* linux userproc target ops */
-/*
- * Attaches to @pid, a current process id.  @dfoptlist is a
- * NULL-terminated list of debugfile_load_opts structs (ideally parsed
- * from debugfile_load_opts_parse if you're coming from the command
- * line).
- */
-struct target *linux_userproc_attach(int pid,
-				     struct debugfile_load_opts **dfoptlist);
-/*
- * Executes @filename with the given @argv and @envp NULL-terminated
- * lists.  If @keepstdin is set, we don't close it before the call to
- * exec in the child.  If @outfile and/or @errfile are set, those files
- * are opened and the standard file descriptors for the child process
- * are redirected appropriately (you cannot use the same filename for
- * both!).  @dfoptlist is a NULL-terminated list of debugfile_load_opts
- * structs (ideally parsed from debugfile_load_opts_parse if you're
- * coming from the command line).
- */
-struct target *linux_userproc_launch(char *filename,char **argv,char **envp,
-				     int keepstdin,char *outfile,char *errfile,
-				     struct debugfile_load_opts **dfoptlist);
 
+struct target *linux_userproc_instantiate(struct target_spec *spec);
+struct linux_userproc_spec *linux_userproc_build_spec(void);
 
 int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t tid);
 int linux_userproc_detach_thread(struct target *target,tid_t tid);
@@ -68,6 +50,16 @@ typedef unsigned long int ptrace_reg_t;
 #else
 typedef int ptrace_reg_t;
 #endif
+
+struct linux_userproc_spec {
+    int pid;
+    char *program;
+    char **argv;
+    char **envp;
+    char *stdout_logfile;
+    char *stderr_logfile;
+    int8_t close_stdin:1;
+};
 
 struct linux_userproc_thread_state {
     int8_t ctl_sig_sent:1, /* If set, don't reinject a signal on restart. */

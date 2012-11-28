@@ -18,10 +18,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <getopt.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#include <argp.h>
 
 #include <sys/user.h>
 #include <sys/ptrace.h>
@@ -43,15 +43,16 @@
 #include "alist.h"
 #include "list.h"
 
-extern char *optarg;
-extern int optind, opterr, optopt;
-extern char **environ;
+struct dt_argp_state {
+    int loopint;
+};
+
+struct dt_argp_state opts;
 
 struct target *t = NULL;
 
 GHashTable *probes = NULL;
 target_status_t tstat;
-int loopint = 0;
 
 void cleanup() {
     GHashTableIter iter;
@@ -90,191 +91,63 @@ void siga(int signo) {
 	target_dump_all_threads(t,stdout,0);
 	target_resume(t);
     }
-    alarm(loopint);
+    alarm(opts.loopint);
 }
 
+struct argp_option dt_argp_opts[] = {
+    { "loop-interval",'i',"INTERVAL",0,"Loop infinitely using the given interval.",0 },
+    { 0,0,0,0,0,0 },
+};
+
+error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
+    struct dt_argp_state *opts = \
+	(struct dt_argp_state *)target_argp_driver_state(state);
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_ARGS:
+	return 0;
+    case ARGP_KEY_INIT:
+	target_driver_argp_init_children(state);
+	return 0;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+	return 0;
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+
+    case 'i':
+	opts->loopint = atoi(arg);
+	break;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp dt_argp = {
+    dt_argp_opts,dt_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
+};
+
 int main(int argc,char **argv) {
+    struct target_spec *tspec;
     char targetstr[128];
-    int pid = -1;
-    int i;
-    int doexe = 0;
-    char *exe = NULL;
-    char **exeargs = NULL;
-    char *exeoutfile = NULL;
-    char *exeerrfile = NULL;
-    char *domain = NULL;
-    int islinux = 0,isxen = 0;
-    char ch;
-    int debug = -1;
-    int xadebug = -1;
-    char *optargc;
-    log_flags_t flags;
-    probepoint_style_t style = PROBEPOINT_FASTEST;
-    struct debugfile_load_opts **dlo_list = NULL;
-    int dlo_idx = 0;
-    struct debugfile_load_opts *opts;
-    struct target_opts topts = {
-	.bpmode = THREAD_BPMODE_STRICT,
-    };
-    /*
-    struct dump_info udn = {
-	.stream = stderr,
-	.prefix = "",
-	.detail = 1,
-	.meta = 1,
-    };
-    */
 
-    /* Find the '--' and save the remaining args so they can be passed
-     * to linux_userproc_launch below.  Truncate argc and argv to just
-     * include any function/variable breakpoint/watchpoint params, and
-     * any other args, to be parsed later.
-     */
-    for (i = 0; i < argc; ++i) {
-	if (!strcmp(argv[i],"--") && (i + 1) < argc) {
-	    exe = argv[i + 1];
-	    argv[i] = NULL;
-	    argc = i;
-	    exeargs = &argv[i + 2];
-	    break;
-	}
+    memset(&opts,0,sizeof(opts));
+
+    tspec = target_argp_driver_parse(&dt_argp,&opts,argc,argv,
+				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
+
+    if (!tspec) {
+	verror("could not parse target arguments!\n");
+	exit(-1);
     }
 
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dxsl:F:Li:")) != -1) {
-	switch (ch) {
-	case 'd':
-	    ++debug;
-	    break;
-	case 'x':
-	    ++xadebug;
-	    break;
-	case 'p':
-	    pid = atoi(optarg);
-	    break;
-	case 'm':
-#ifdef ENABLE_XENACCESS
-	    domain = optarg;
-	    /* Xen does not support STRICT! */
-	    if (topts.bpmode == THREAD_BPMODE_STRICT)
-		++topts.bpmode;
-#else
-	    verror("xen support not compiled on this host!\n");
-	    exit(-1);
-#endif
-	    break;
-	case 'e':
-	    doexe = 1;
-	    break;
-	case 'E':
-	    exeerrfile = optarg;
-	    break;
-	case 'O':
-	    exeoutfile = optarg;
-	    break;
-	case 's':
-	    style = PROBEPOINT_SW;
-	    break;
-	case 'l':
-	    if (vmi_log_get_flag_mask(optarg,&flags)) {
-		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
-		exit(-1);
-	    }
-	    vmi_set_log_flags(flags);
-	    break;
-	case 'F':
-	    optargc = strdup(optarg);
-
-	    opts = debugfile_load_opts_parse(optarg);
-
-	    if (!opts)
-		goto dlo_err;
-
-	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlo_idx + 2));
-	    dlo_list[dlo_idx] = opts;
-	    ++dlo_idx;
-	    dlo_list[dlo_idx] = NULL;
-	    break;
-	dlo_err:
-	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
-	    free(optargc);
-	    exit(-1);
-	case 'L':
-	    ++topts.bpmode;
-	    if (topts.bpmode > THREAD_BPMODE_LOOSE) {
-		fprintf(stderr,"ERROR: bad bpmode!\n");
-		exit(-1);
-	    }
-	    break;
-	case 'i':
-	    loopint = atoi(optarg);
-	    break;
-	default:
-	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
-	    exit(-1);
-	}
-    }
-
-    argc -= optind;
-    argv += optind;
-
-    dwdebug_init();
-    atexit(dwdebug_fini);
-
-    vmi_set_log_level(debug);
-#if defined(ENABLE_XENACCESS) && defined(XA_DEBUG)
-    xa_set_debug_level(xadebug);
-#endif
-
-    if (pid > 0) {
-	islinux = 1;
-	t = linux_userproc_attach(pid,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not attach to pid %d!\n",pid);
-	    exit(-3);
-	}
-	snprintf(targetstr,128,"pid %d",pid);
-    }
-#ifdef ENABLE_XENACCESS
-    else if (domain) {
-	isxen = 1;
-	t = xen_vm_attach(domain,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not attach to dom %s!\n",domain);
-	    exit(-3);
-	}
-	snprintf(targetstr,128,"domain %s",domain);
-    }
-#endif
-    else if (doexe) {
-	islinux = 1;
-	if (!exe) {
-	    fprintf(stderr,"must supply at least an executable to launch!\n");
-	    exit(-1);
-	}
-
-	t = linux_userproc_launch(exe,exeargs,environ,0,
-				  exeoutfile,exeerrfile,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not launch exe %s!\n",exe);
-	    exit(-3);
-	}
-
-	pid = linux_userproc_pid(t);
-	snprintf(targetstr,128,"pid %d",pid);
-    }
-    else {
-	fprintf(stderr,"ERROR: must specify a target!\n");
-	exit(-2);
-    }
-
-    if (target_open(t,&topts)) {
-	fprintf(stderr,"could not open domain %s!\n",domain);
-	exit(-4);
-    }
-
-    /*
-     * If we are going to watch for processes, set up monitoring.
-     */
     signal(SIGHUP,sigh);
     signal(SIGINT,sigh);
     signal(SIGQUIT,sigh);
@@ -282,11 +155,27 @@ int main(int argc,char **argv) {
     signal(SIGKILL,sigh);
     signal(SIGSEGV,sigh);
     signal(SIGPIPE,sigh);
+    signal(SIGALRM,sigh);
     signal(SIGTERM,sigh);
     signal(SIGUSR1,sigh);
     signal(SIGUSR2,sigh);
 
     signal(SIGALRM,siga);
+
+    dwdebug_init();
+    atexit(dwdebug_fini);
+
+    t = target_instantiate(tspec);
+    if (!t) {
+	verror("could not instantiate target!\n");
+	exit(-1);
+    }
+    target_tostring(t,targetstr,sizeof(targetstr));
+
+    if (target_open(t)) {
+	fprintf(stderr,"could not open %s!\n",targetstr);
+	exit(-4);
+    }
 
     /* Install probes... */
 
@@ -294,12 +183,12 @@ int main(int argc,char **argv) {
     target_load_available_threads(t,1);
     target_dump_all_threads(t,stdout,0);
 
-    if (!loopint) {
+    if (!opts.loopint) {
 	tstat = TSTATUS_DONE;
 	goto exit;
     }
     tstat = TSTATUS_RUNNING;
-    alarm(loopint);
+    alarm(opts.loopint);
 
     /* The target is paused after the attach; we have to resume it now
      * that we've registered probes.

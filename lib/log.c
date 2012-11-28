@@ -1,4 +1,4 @@
-/*
+;/*
  * Copyright (c) 2012 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
@@ -19,6 +19,9 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <unistd.h>
+#include <error.h>
+#include <argp.h>
 
 #include "log.h"
 
@@ -136,4 +139,63 @@ void _vmi_warn(int level,log_flags_t flags,char *format,...) {
     vfprintf(stderr, format, args);
     fflush(stderr);
     va_end(args);
+}
+
+/*
+ * Log arg parsing stuff.
+ */
+struct argp_option log_argp_opts[] = {
+    { "debug",'d',"LEVEL",OPTION_ARG_OPTIONAL,
+      "Set/increase the debugging level.",-2 },
+    //{ "debug",'d',0,0,"Increase the debugging level.",-2 },
+    { "log-flags",'l',"FLAG,FLAG,...",0,"Set the debugging flags",-2 },
+    { "warn",'w',"LEVEL",OPTION_ARG_OPTIONAL,
+      "Set/increase the warning level.",-2 },
+    //{ "warn",'w',0,0,"Increase the warning level.",-2 },
+    { 0,0,0,0,0,0 }
+};
+
+struct argp log_argp = { log_argp_opts,log_argp_parse_opt,
+			 NULL,NULL,NULL,NULL,NULL };
+
+error_t log_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    log_flags_t flags;
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+    case ARGP_KEY_ARGS:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_INIT:
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+
+    case 'd':
+	if (arg)
+	    vmi_log_level = atoi(arg);
+	else
+	    ++vmi_log_level;
+	break;
+    case 'w':
+	if (arg)
+	    vmi_warn_level = atoi(arg);
+	else
+	    ++vmi_warn_level;
+	break;
+    case 'l':
+	if (vmi_log_get_flag_mask(arg,&flags)) {
+	    verror("bad log level flag in '%s'!\n",arg);
+	    return EINVAL;
+	}
+	vmi_log_flags = flags;
+	break;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
 }

@@ -20,6 +20,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <getopt.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -30,6 +31,7 @@
 #include <gelf.h>
 #include <elf.h>
 #include <libelf.h>
+#include <argp.h>
 
 #include "config.h"
 #include "common.h"
@@ -49,9 +51,11 @@
 /*
  * Prototypes.
  */
-struct target *xen_vm_attach(char *domain,
-			     struct debugfile_load_opts **dfoptlist);
+struct target *xen_vm_instantiate(struct target_spec *spec);
 
+static struct target *xen_vm_attach(struct target_spec *spec);
+
+static char *xen_vm_tostring(struct target *target,char *buf,int bufsiz);
 static int xen_vm_init(struct target *target);
 static int xen_vm_attach_internal(struct target *target);
 static int xen_vm_detach(struct target *target);
@@ -149,6 +153,7 @@ static XC_EVTCHN_PORT_T dbg_port = -1;
  * Set up the target interface for this library.
  */
 struct target_ops xen_vm_ops = {
+    .tostring = xen_vm_tostring,
     .init = xen_vm_init,
     .fini = xen_vm_fini,
     .attach = xen_vm_attach_internal,
@@ -199,9 +204,146 @@ struct target_ops xen_vm_ops = {
     .disable_feature = xen_vm_disable_feature,
 };
 
+struct argp_option xen_vm_argp_opts[] = {
+    /* These options set a flag. */
+    { "domain",'m',"DOMAIN",0,"The Xen domain ID or name.",-4 },
+    { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
+    { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
+#ifdef ENABLE_XENACCESS
+    { "xadebug",'x',"LEVEL",0,"Increase/set the XenAccess debug level.",-4 },
+#endif
+    { "console-logfile",'C',"FILE",0,"Log the console to FILE.",-4 },
+    { 0,0,0,0,0,0 }
+};
+
+error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct target_argp_parser_state *tstate = \
+	(struct target_argp_parser_state *)state->input;
+    struct target_spec *spec;
+    struct xen_vm_spec *xspec;
+    struct argp_option *opti;
+    int ourkey;
+
+    if (key == ARGP_KEY_INIT)
+	return 0;
+    else if (!state->input)
+	return ARGP_ERR_UNKNOWN;
+
+    if (tstate)
+	spec = tstate->spec;
+
+    /*
+     * Check to see if this is really one of our keys.  If it is, we
+     * need to see if some other backend has already started parsing
+     * args; if it has, we throw an error.  Otherwise, we assume we are
+     * using this backend, and process the arg.
+     */
+    ourkey = 0;
+    for (opti = &xen_vm_argp_opts[0]; opti->key != 0; ++opti) {
+	if (key == opti->key) {
+	    ourkey = 1;
+	    break;
+	}
+    }
+
+    if (ourkey) {
+	if (spec->target_type == TARGET_TYPE_NONE) {
+	    spec->target_type = TARGET_TYPE_XEN;
+	    xspec = calloc(1,sizeof(*xspec));
+	    spec->backend_spec = xspec;
+	}
+	else if (spec->target_type != TARGET_TYPE_XEN) {
+	    verror("cannot mix arguments for Xen target (%c) with non-Xen"
+		   " target!\n",key);
+	    return EINVAL;
+	}
+
+	/* Only "claim" these args if this is our key. */
+	if (spec->target_type == TARGET_TYPE_NONE) {
+	    spec->target_type = TARGET_TYPE_XEN;
+	    xspec = calloc(1,sizeof(*xspec));
+	    spec->backend_spec = xspec;
+	}
+	else if (spec->target_type != TARGET_TYPE_XEN) {
+	    verror("cannot mix arguments for Xen target with non-Xen target!\n");
+	    return EINVAL;
+	}
+    }
+
+    if (spec->target_type == TARGET_TYPE_XEN)
+	xspec = (struct xen_vm_spec *)spec->backend_spec;
+    else
+	xspec = NULL;
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+    case ARGP_KEY_ARGS:
+	/* Only handle these if you need arguments. */
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_INIT:
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+	/* Nothing to do unless you malloc something in _INIT. */
+	return 0;
+    case ARGP_KEY_SUCCESS:
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	/* Check spec for sanity if necessary. */
+	return 0;
+
+    case 'm':
+	xspec->domain = arg;
+	break;
+    case 'c':
+	xspec->config_file = arg;
+	break;
+    case 'r':
+	xspec->replay_dir = arg;
+	break;
+    case 'C':
+	xspec->console_logfile = arg;
+	break;
+    case 'x':
+#if defined(ENABLE_XENACCESS)
+#if defined(XA_DEBUG)
+	if (arg)
+	    xa_set_debug_level(atoi(arg));
+	else
+	    xa_set_debug_level(xa_get_debug_level() + 1);
+#endif
+#else
+	verror("Xen support not compiled in!\n");
+	return EINVAL;
+#endif
+	break;
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp xen_vm_argp = { 
+    xen_vm_argp_opts,xen_vm_argp_parse_opt,NULL,NULL,NULL,NULL,NULL
+};
+char *xen_vm_argp_header = "Xen Backend Options";
+
 /**
  ** These are the only user-visible functions.
  **/
+
+struct target *xen_vm_instantiate(struct target_spec *spec) {
+    return xen_vm_attach(spec);
+}
+
+struct xen_vm_spec *xen_vm_build_spec(void) {
+    struct xen_vm_spec *xspec;
+
+    xspec = calloc(1,sizeof(*xspec));
+    xspec->xenaccess_debug_level = -1;
+
+    return xspec;
+}
 
 /*
  * Attaches to domid.  We basically check the xenstore to figure out
@@ -209,8 +351,8 @@ struct target_ops xen_vm_ops = {
  * that.  We also read how much mem the domain has; if it is
  * PAE-enabled; 
  */
-struct target *xen_vm_attach(char *domain,
-			     struct debugfile_load_opts **dfoptlist) {
+struct target *xen_vm_attach(struct target_spec *spec) {
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)spec->backend_spec;
     struct target *target = NULL;
     struct xen_vm_state *xstate = NULL;
     struct xs_handle *xsh = NULL;
@@ -226,7 +368,10 @@ struct target *xen_vm_attach(char *domain,
     Elf *elf = NULL;
     int wordsize;
     int endian;
+    char *domain;
 
+    domain = xspec->domain;
+    
     if (geteuid() != 0) {
 	verror("must be root!\n");
 	errno = EPERM;
@@ -235,7 +380,7 @@ struct target *xen_vm_attach(char *domain,
 
     vdebug(5,LOG_T_XV,"attaching to domain %s\n",domain);
 
-    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,dfoptlist)))
+    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,spec)))
 	return NULL;
 
     if (!(xstate = (struct xen_vm_state *)malloc(sizeof(*xstate)))) {
@@ -1408,15 +1553,28 @@ void xen_vm_free_thread_state(struct target *target,void *state) {
     free(state);
 }
 
+static char *xen_vm_tostring(struct target *target,char *buf,int bufsiz) {
+    struct xen_vm_spec *xspec = \
+	(struct xen_vm_spec *)target->spec->backend_spec;
+
+    if (!buf) {
+	bufsiz = strlen("domain()") + strlen(xspec->domain) + 1;
+	buf = malloc(bufsiz*sizeof(char));
+    }
+    snprintf(buf,bufsiz,"domain(%s)",xspec->domain);
+
+    return buf;
+}
+
 static int xen_vm_init(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_thread_state *tstate;
 
     vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
 
-    if (target->opts->bpmode == THREAD_BPMODE_STRICT) {
+    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
 	vwarn("auto-enabling SEMI_STRICT bpmode on Xen target.\n");
-	target->opts->bpmode = THREAD_BPMODE_SEMI_STRICT;
+	target->spec->bpmode = THREAD_BPMODE_SEMI_STRICT;
     }
 
     /*

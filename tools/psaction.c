@@ -18,7 +18,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <getopt.h>
 #include <errno.h>
 #include <string.h>
 
@@ -27,6 +26,8 @@
 #include <inttypes.h>
 
 #include <signal.h>
+
+#include <argp.h>
 
 #include "log.h"
 #include "dwdebug.h"
@@ -38,9 +39,6 @@
 #include "probe.h"
 #include "alist.h"
 #include "list.h"
-
-extern char *optarg;
-extern int optind, opterr, optopt;
 
 struct target *t = NULL;
 
@@ -465,20 +463,64 @@ int pslist_load(struct target *target,struct value *value,void *data) {
     return 0;
 }
 
-extern char **environ;    
+struct psa_argp_state {
+    int argc;
+    char **argv;
+    /* Grab this from the child parser. */
+    struct target_spec *tspec;
+};
+
+struct psa_argp_state opts;
+
+struct argp_option psa_argp_opts[] = {
+    { 0,0,0,0,0,0 },
+};
+
+error_t psa_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct psa_argp_state *opts = \
+	(struct psa_argp_state *)target_argp_driver_state(state);
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_ARGS:
+	/* Eat all the remaining args. */
+	if (state->quoted > 0)
+	    opts->argc = state->quoted - state->next;
+	else
+	    opts->argc = state->argc - state->next;
+	if (opts->argc > 0) {
+	    opts->argv = calloc(opts->argc,sizeof(char *));
+	    memcpy(opts->argv,&state->argv[state->next],opts->argc*sizeof(char *));
+	    state->next += opts->argc;
+	}
+	return 0;
+    case ARGP_KEY_INIT:
+	target_driver_argp_init_children(state);
+	return 0;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+	opts->tspec = target_argp_target_spec(state);
+	return 0;
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp psa_argp = {
+    psa_argp_opts,psa_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
+};
 
 int main(int argc,char **argv) {
-    char *domain = NULL;
     char *command;
-    char ch;
-    int debug = -1;
-    char *optargc;
     target_status_t tstat;
-    log_flags_t flags;
-    probepoint_style_t style = PROBEPOINT_FASTEST;
-    struct debugfile_load_opts **dlo_list = NULL;
-    int dlo_idx = 0;
-    struct debugfile_load_opts *opts;
     struct rfilter *rf = NULL;
 
     struct bsymbol *init_task_bsymbol;
@@ -504,70 +546,28 @@ int main(int argc,char **argv) {
     struct linux_task_struct *tj;
     unsigned int csize;
     unsigned int clen;
-    struct target_opts topts = {
-	.bpmode = THREAD_BPMODE_STRICT,
-    };
 
-    while ((ch = getopt(argc, argv, "m:dvsl:Po:UF:L")) != -1) {
-	switch (ch) {
-	case 'd':
-	    ++debug;
-	    break;
-	case 'm':
-	    domain = optarg;
-	    /* Xen does not support STRICT! */
-	    if (topts.bpmode == THREAD_BPMODE_STRICT)
-		++topts.bpmode;
-	    break;
-	case 's':
-	    style = PROBEPOINT_SW;
-	    break;
-	case 'l':
-	    if (vmi_log_get_flag_mask(optarg,&flags)) {
-		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
-		exit(-1);
-	    }
-	    vmi_set_log_flags(flags);
-	    break;
-	case 'F':
-	    optargc = strdup(optarg);
+    struct target_spec *tspec;
+    char targetstr[128];
 
-	    opts = debugfile_load_opts_parse(optarg);
+    dwdebug_init();
+    atexit(dwdebug_fini);
 
-	    if (!opts)
-		goto dlo_err;
+    memset(&opts,0,sizeof(opts));
 
-	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlo_idx + 2));
-	    dlo_list[dlo_idx] = opts;
-	    ++dlo_idx;
-	    dlo_list[dlo_idx] = NULL;
-	    break;
-	dlo_err:
-	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
-	    free(optargc);
-	    exit(-1);
-	case 'L':
-	    ++topts.bpmode;
-	    if (topts.bpmode > THREAD_BPMODE_LOOSE) {
-		fprintf(stderr,"ERROR: bad bpmode!\n");
-		exit(-1);
-	    }
-	    break;
-	default:
-	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
-	    exit(-1);
-	}
+    tspec = target_argp_driver_parse(&psa_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
+
+    if (!tspec) {
+	verror("could not parse target arguments!\n");
+	exit(-1);
     }
 
-    argc -= optind;
-    argv += optind;
-
-    if (!argc) {
+    if (!opts.argc) {
 	fprintf(stderr,"ERROR: must supply a command!\n");
 	exit(-5);
     }
 
-    command = argv[0];
+    command = opts.argv[0];
 
     if (strcmp(command,"list") == 0 
 	|| strcmp(command,"watch") == 0)
@@ -576,31 +576,31 @@ int main(int argc,char **argv) {
 	     || strcmp(command,"zombie") == 0
 	     || strcmp(command,"stop") == 0
 	     || strcmp(command,"kill") == 0) {
-	if (argc < 2) {
+	if (opts.argc < 2) {
 	    fprintf(stderr,"ERROR: check|zombie|stop|kill commands must"
 		    " be followed by an rfilter!\n");
 	    exit(-5);
 	}
-	rf = rfilter_create_parse(argv[1]);
+	rf = rfilter_create_parse(opts.argv[1]);
 	if (!rf) {
-	    fprintf(stderr,"ERROR: bad rfilter '%s'!\n",argv[1]);
+	    fprintf(stderr,"ERROR: bad rfilter '%s'!\n",opts.argv[1]);
 	    exit(-7);
 	}
     }
     else if (strcmp(command,"hiercheck") == 0
 	     || strcmp(command,"hierkill") == 0) {
-	if (argc < 2) {
+	if (opts.argc < 2) {
 	    fprintf(stderr,"ERROR: hiercheck|hierkill commands must"
 		    " be followed by one or more process hierarchy regexps!\n");
 	    exit(-5);
 	}
-	regexp_list = array_list_create(argc - 1);
+	regexp_list = array_list_create(opts.argc - 1);
 	i = 1;
-	while (i < argc) {
+	while (i < opts.argc) {
 	    preg = (regex_t *)malloc(sizeof(regex_t));
-	    if ((rc = regcomp(preg,argv[i],REG_EXTENDED | REG_NOSUB))) {
+	    if ((rc = regcomp(preg,opts.argv[i],REG_EXTENDED | REG_NOSUB))) {
 		regerror(rc,preg,errbuf,64);
-		fprintf(stderr,"ERROR: bad regexp '%s': %s\n",argv[i],errbuf);
+		fprintf(stderr,"ERROR: bad regexp '%s': %s\n",opts.argv[i],errbuf);
 		exit(-12);
 	    }
 	    array_list_append(regexp_list,preg);
@@ -608,7 +608,7 @@ int main(int argc,char **argv) {
 	}
     }
     else if (strcmp(command,"dump") == 0) {
-	if (argc < 2) {
+	if (opts.argc < 2) {
 	    fprintf(stderr,"ERROR: dump command must"
 		    " be followed by a list of variables to dump!\n");
 	    exit(-5);
@@ -620,37 +620,23 @@ int main(int argc,char **argv) {
 	exit(-6);
     }
 
-    dwdebug_init();
-
-    atexit(dwdebug_fini);
-
-    vmi_set_log_level(debug);
-#if defined(ENABLE_XENACCESS) && defined(XA_DEBUG)
-    xa_set_debug_level(debug);
-#endif
-
-    if (domain) {
-	t = xen_vm_attach(domain,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not attach to dom %s!\n",domain);
-	    exit(-3);
-	}
+    t = target_instantiate(tspec);
+    if (!t) {
+	verror("could not instantiate target!\n");
+	exit(-1);
     }
-    else {
-	fprintf(stderr,"ERROR: must specify a target!\n");
-	exit(-2);
-    }
+    target_tostring(t,targetstr,sizeof(targetstr));
 
-    if (target_open(t,&topts)) {
-	fprintf(stderr,"could not open domain %s!\n",domain);
+    if (target_open(t)) {
+	fprintf(stderr,"could not open %s!\n",targetstr);
 	exit(-4);
     }
 
     if (strcmp(command,"dump") == 0) {
-	for (i = 1 ; i < argc; ++i) {
-	    bs = target_lookup_sym(t,argv[i],NULL,NULL,SYMBOL_TYPE_FLAG_VAR);
+	for (i = 1 ; i < opts.argc; ++i) {
+	    bs = target_lookup_sym(t,opts.argv[i],NULL,NULL,SYMBOL_TYPE_FLAG_VAR);
 	    if (!bs) {
-		fprintf(stderr,"ERROR: could not lookup %s!\n",argv[i]);
+		fprintf(stderr,"ERROR: could not lookup %s!\n",opts.argv[i]);
 	    }
 	    else {
 		v = target_load_symbol(t,TID_GLOBAL,bs,
@@ -658,7 +644,7 @@ int main(int argc,char **argv) {
 					| LOAD_FLAG_AUTO_DEREF);
 		if (!v) {
 		    fprintf(stderr,"ERROR: could not load value for %s!\n",
-			    argv[i]);
+			    opts.argv[i]);
 		}
 		else {
 		    value_dump(v,&udn);
@@ -818,14 +804,14 @@ int main(int argc,char **argv) {
 	if (tstat == TSTATUS_PAUSED) {
 	    fflush(stderr);
 	    fflush(stdout);
-	    printf("domain %s interrupted at 0x%" PRIxREGVAL "\n",domain,
+	    printf("%s interrupted at 0x%" PRIxREGVAL "\n",targetstr,
 		   target_read_reg(t,TID_GLOBAL,t->ipregno));
 	    goto resume;
 
 
 	resume:
 	    if (target_resume(t)) {
-		fprintf(stderr,"could not resume target domain %s\n",domain);
+		fprintf(stderr,"could not resume target domain %s\n",targetstr);
 		cleanup();
 		exit(-16);
 	    }
@@ -840,15 +826,15 @@ int main(int argc,char **argv) {
     fflush(stdout);
     tstat = cleanup();
     if (tstat == TSTATUS_DONE)  {
-	printf("domain %s finished.\n",domain);
+	printf("%s finished.\n",targetstr);
 	exit(0);
     }
     else if (tstat == TSTATUS_ERROR) {
-	printf("domain %s monitoring failed!\n",domain);
+	printf("%s monitoring failed!\n",targetstr);
 	exit(-9);
     }
     else {
-	printf("domain %s monitoring failed with %d!\n",domain,tstat);
+	printf("%s monitoring failed with %d!\n",targetstr,tstat);
 	exit(-10);
     }
 }

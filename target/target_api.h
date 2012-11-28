@@ -121,10 +121,26 @@
 
 struct target;
 struct target_ops;
-struct target_opts;
+struct target_spec;
 struct addrspace;
 struct memregion;
 struct memrange;
+
+/*
+ * These are flags; we need to create masks of them sometimes.
+ */
+typedef enum {
+    TARGET_TYPE_NONE   = 0,
+    TARGET_TYPE_PTRACE = 1 << 0,
+    TARGET_TYPE_XEN    = 1 << 1,
+} target_type_t;
+
+typedef enum {
+    TARGET_MODE_NONE = 0,
+    TARGET_MODE_LIVE = 1,
+    TARGET_MODE_RECORD = 2,
+    TARGET_MODE_REPLAY = 3,
+} target_mode_t;
 
 typedef enum {
     TSTATUS_UNKNOWN        = 0,
@@ -255,6 +271,34 @@ typedef enum {
  **/
 
 /*
+ * Returns a target specification by parsing command line arguments.
+ * Assumes that the caller is also a driver program that requires its
+ * own arguments.  Caller must fully specify @program_parser (we fill it
+ * with child argp parsers).  Caller must specify at least one target
+ * type in @target_types.
+ */
+struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
+					     void *driver_state,
+					     int argc,char **argv,
+					     target_type_t target_types,
+					     int filter_quoted);
+
+struct target_spec *target_argp_target_spec(struct argp_state *state);
+
+void *target_argp_driver_state(struct argp_state *state);
+
+void target_driver_argp_init_children(struct argp_state *state);
+
+/*
+ * Generic function that creates a target, given @spec.
+ */
+struct target *target_instantiate(struct target_spec *spec);
+
+struct target_spec *target_build_spec(target_type_t type,target_mode_t mode);
+
+target_type_t target_type(struct target *target);
+
+/*
  * Opens a target.  If returns 0, the target is paused and ready for API
  * calls.  If it returns nonzero, it failed.
  *
@@ -262,7 +306,14 @@ typedef enum {
  * loadregions(space), loaddebugfiles(space,region), postloadinit(),
  * attach().)
  */
-int target_open(struct target *target,struct target_opts *topts);
+int target_open(struct target *target);
+
+/*
+ * Returns a pointer to a string representation of the given target.  If
+ * @buf is non-NULL, the representation is written to buf (for @bufsiz
+ * characters, not including a trailing NULL character).
+ */
+char *target_tostring(struct target *target,char *buf,int bufsiz);
 
 /*
  * Monitors (blocking) a target for debug/exception events, tries to handle any
@@ -491,7 +542,7 @@ void target_dump_all_threads(struct target *target,FILE *stream,int detail);
 
 void target_free(struct target *target);
 struct target *target_create(char *type,void *state,struct target_ops *ops,
-			     struct debugfile_load_opts **dfoptlist);
+			     struct target_spec *spec);
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr);
 void target_attach_mmap_entry(struct target *target,
@@ -1078,8 +1129,26 @@ struct target_thread {
     struct list_head ss_actions;
 };
 
-struct target_opts {
+struct target_spec {
+    target_type_t target_type;
+
+    target_mode_t target_mode;
     thread_bpmode_t bpmode;
+    probepoint_style_t style;
+    int8_t start_paused:1;
+    /* struct array_list of struct debugfile_load_opts * */
+    struct array_list *debugfile_load_opts_list;
+
+    void *backend_spec;
+};
+
+struct target_argp_parser_state {
+    int num_children;
+    void *driver_state;
+    struct target_spec *spec;
+    int quoted_argc;
+    int quoted_start;
+    char **quoted_argv;
 };
 
 /*
@@ -1105,9 +1174,7 @@ struct target {
 
     void *state;
     struct target_ops *ops;
-    struct target_opts *opts;
-
-    struct debugfile_load_opts **debugfile_opts_list;
+    struct target_spec *spec;
 
     /* Targets can have multiple address spaces, but not sure how we're
      * going to use this yet.
@@ -1198,6 +1265,8 @@ struct target {
 };
 
 struct target_ops {
+    char *(*tostring)(struct target *target,char *buf,int bufsiz);
+
     /* init any target state, like a private per-target state struct */
     int (*init)(struct target *target);
     /* init any target state, like a private per-target state struct */

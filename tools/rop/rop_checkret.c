@@ -18,7 +18,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <getopt.h>
 #include <errno.h>
 #include <string.h>
 
@@ -27,6 +26,8 @@
 #include <inttypes.h>
 
 #include <signal.h>
+
+#include <argp.h>
 
 #include "log.h"
 #include "dwdebug.h"
@@ -43,9 +44,6 @@
 #include "list.h"
 
 #include "rop.h"
-
-extern char *optarg;
-extern int optind, opterr, optopt;
 
 struct target *t = NULL;
 
@@ -123,25 +121,60 @@ int rop_handler(struct probe *probe,void *data,struct probe *trigger) {
     return 0;
 }
 
-extern char **environ;
+struct rc_argp_state {
+    int argc;
+    char **argv;
+};
+
+struct rc_argp_state opts;
+
+struct argp_option rc_argp_opts[] = {
+    { 0,0,0,0,0,0 },
+};
+
+error_t rc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct rc_argp_state *opts = \
+	(struct rc_argp_state *)target_argp_driver_state(state);
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_ARGS:
+	/* Eat all the remaining args. */
+	if (state->quoted > 0)
+	    opts->argc = state->quoted - state->next;
+	else
+	    opts->argc = state->argc - state->next;
+	if (opts->argc > 0) {
+	    opts->argv = calloc(opts->argc,sizeof(char *));
+	    memcpy(opts->argv,&state->argv[state->next],opts->argc*sizeof(char *));
+	    state->next += opts->argc;
+	}
+	return 0;
+    case ARGP_KEY_INIT:
+	target_driver_argp_init_children(state);
+	return 0;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+	return 0;
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp rc_argp = {
+    rc_argp_opts,rc_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
+};
 
 int main(int argc,char **argv) {
-    int pid = -1;
-    int doexe = 0;
-    char *exe = NULL;
-    char **exeargs = NULL;
-    char *exeoutfile = NULL;
-    char *exeerrfile = NULL;
-    char *domain = NULL;
-    char ch;
-    int debug = -1;
-    char *optargc;
     target_status_t tstat;
-    log_flags_t flags;
-    probepoint_style_t style = PROBEPOINT_FASTEST;
-    struct debugfile_load_opts **dlo_list = NULL;
-    int dlo_idx = 0;
-    struct debugfile_load_opts *opts;
     char *filename;
     GHashTableIter iter;
     gpointer key;
@@ -149,157 +182,37 @@ int main(int argc,char **argv) {
     struct probe *probe;
     int i;
     GHashTable *gadgets;
-    struct target_opts topts = {
-	.bpmode = THREAD_BPMODE_STRICT,
-    };
-    /*
-    struct dump_info udn = {
-	.stream = stderr,
-	.prefix = "",
-	.detail = 1,
-	.meta = 1,
-    };
-    */
-
-    /* Find the '--' and save the remaining args so they can be passed
-     * to linux_userproc_launch below.  Truncate argc and argv to just
-     * include any function/variable breakpoint/watchpoint params, and
-     * any other args, to be parsed later.
-     */
-    for (i = 0; i < argc; ++i) {
-	if (!strcmp(argv[i],"--") && (i + 1) < argc) {
-	    exe = argv[i + 1];
-	    argv[i] = NULL;
-	    argc = i;
-	    exeargs = &argv[i + 1];
-	    break;
-	}
-    }
-
-    while ((ch = getopt(argc, argv, "m:p:eE:O:dvsl:F:L")) != -1) {
-	switch (ch) {
-	case 'd':
-	    ++debug;
-	    break;
-	case 'p':
-	    pid = atoi(optarg);
-	    break;
-	case 'm':
-#ifdef ENABLE_XENACCESS
-	    domain = optarg;
-	    /* Xen does not support STRICT! */
-	    if (topts.bpmode == THREAD_BPMODE_STRICT)
-		++topts.bpmode;
-#else
-	    verror("xen support not compiled on this host!\n");
-	    exit(-1);
-#endif
-	    break;
-	case 'e':
-	    doexe = 1;
-	    break;
-	case 'E':
-	    exeerrfile = optarg;
-	    break;
-	case 'O':
-	    exeoutfile = optarg;
-	    break;
-	case 's':
-	    style = PROBEPOINT_SW;
-	    break;
-	case 'l':
-	    if (vmi_log_get_flag_mask(optarg,&flags)) {
-		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
-		exit(-1);
-	    }
-	    vmi_set_log_flags(flags);
-	    break;
-	case 'F':
-	    optargc = strdup(optarg);
-
-	    opts = debugfile_load_opts_parse(optarg);
-
-	    if (!opts)
-		goto dlo_err;
-
-	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlo_idx + 2));
-	    dlo_list[dlo_idx] = opts;
-	    ++dlo_idx;
-	    dlo_list[dlo_idx] = NULL;
-	    break;
-	dlo_err:
-	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
-	    free(optargc);
-	    exit(-1);
-	case 'L':
-	    ++topts.bpmode;
-	    if (topts.bpmode > THREAD_BPMODE_LOOSE) {
-		fprintf(stderr,"ERROR: bad bpmode!\n");
-		exit(-1);
-	    }
-	    break;
-	default:
-	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
-	    exit(-1);
-	}
-    }
-
-    argc -= optind;
-    argv += optind;
-
-    if (!argc) {
-	fprintf(stderr,"ERROR: must supply a gadget file!\n");
-	exit(-5);
-    }
-
-    filename = argv[0];
-
-    /* XXX check args */
+    struct target_spec *tspec;
+    char targetstr[128];
 
     dwdebug_init();
     atexit(dwdebug_fini);
 
-    vmi_set_log_level(debug);
-#if defined(ENABLE_XENACCESS) && defined(XA_DEBUG)
-    xa_set_debug_level(debug);
-#endif
+    memset(&opts,0,sizeof(opts));
 
-    if (pid > 0) {
-	t = linux_userproc_attach(pid,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not attach to pid %d!\n",pid);
-	    exit(-3);
-	}
-    }
-#ifdef ENABLE_XENACCESS
-    else if (domain) {
-	t = xen_vm_attach(domain,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not attach to domain %s!\n",domain);
-	    exit(-3);
-	}
-    }
-#endif
-    else if (doexe) {
-	if (!exe) {
-	    fprintf(stderr,"must supply at least an executable to launch (%d)!\n",i);
-	    exit(-1);
-	}
+    tspec = target_argp_driver_parse(&rc_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
 
-	t = linux_userproc_launch(exe,exeargs,environ,0,
-				  exeoutfile,exeerrfile,dlo_list);
-	if (!t) {
-	    fprintf(stderr,"could not launch exe %s!\n",exe);
-	    exit(-3);
-	}
-    }
-    else {
-	fprintf(stderr,"ERROR: must specify a target!\n");
-	exit(-2);
+    if (!tspec) {
+	verror("could not parse target arguments!\n");
+	exit(-1);
     }
 
-    if (target_open(t,&topts)) {
-	fprintf(stderr,"could not open target!\n");
+    if (!opts.argc) {
+	fprintf(stderr,"ERROR: must supply a gadget file!\n");
+	exit(-5);
+    }
+
+    filename = opts.argv[0];
+
+    t = target_instantiate(tspec);
+    if (!t) {
+	verror("could not instantiate target!\n");
+	exit(-1);
+    }
+    target_tostring(t,targetstr,sizeof(targetstr));
+
+    if (target_open(t)) {
+	fprintf(stderr,"could not open %s!\n",targetstr);
 	exit(-4);
     }
 
@@ -342,7 +255,7 @@ int main(int argc,char **argv) {
     while (1) {
 	tstat = target_monitor(t);
 	if (tstat == TSTATUS_PAUSED) {
-	    if (!domain && linux_userproc_at_syscall(t,TID_GLOBAL)) {
+	    if (target_type(t) == TARGET_TYPE_PTRACE && linux_userproc_at_syscall(t,TID_GLOBAL)) {
 		target_resume(t);
 		continue;
 	    }
@@ -396,15 +309,15 @@ int main(int argc,char **argv) {
     }
 
     if (tstat == TSTATUS_DONE)  {
-	printf("target finished.\n");
+	printf("%s finished.\n",targetstr);
 	exit(0);
     }
     else if (tstat == TSTATUS_ERROR) {
-	printf("domain %s monitoring failed!\n",domain);
+	printf("%s monitoring failed!\n",targetstr);
 	exit(-9);
     }
     else {
-	printf("domain %s monitoring failed with %d!\n",domain,tstat);
+	printf("%s monitoring failed with %d!\n",targetstr,tstat);
 	exit(-10);
     }
 }
