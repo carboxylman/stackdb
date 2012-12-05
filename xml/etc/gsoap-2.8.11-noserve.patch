@@ -1,0 +1,21 @@
+diff -ur gsoap-2.8.orig/gsoap/src/symbol2.c gsoap-2.8/gsoap/src/symbol2.c
+--- gsoap-2.8.orig/gsoap/src/symbol2.c	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/src/symbol2.c	2012-12-03 08:44:18.914759434 -0700
+@@ -5379,7 +5379,8 @@
+   char *catch_action = NULL;
+   if (!Cflag)
+   {
+-  fprintf(fserver,"\n\nSOAP_FMAC5 int SOAP_FMAC6 %s_serve(struct soap *soap)", nflag?prefix:"soap"); 
++  fprintf(fserver,"\n\n#ifdef WITH_NOSERVE\n");
++  fprintf(fserver,"SOAP_FMAC5 int SOAP_FMAC6 %s_serve(struct soap *soap)", nflag?prefix:"soap"); 
+ 
+   fprintf(fserver,"\n{\n#ifndef WITH_FASTCGI\n\tunsigned int k = soap->max_keep_alive;\n#endif\n\tdo\n\t{");
+   fprintf(fserver,"\n#ifndef WITH_FASTCGI\n\t\tif (soap->max_keep_alive > 0 && !--k)\n\t\t\tsoap->keep_alive = 0;\n#endif");
+@@ -5392,6 +5393,7 @@
+ 
+   fprintf(fserver,"\n\treturn SOAP_OK;");
+   fprintf(fserver,"\n}");
++  fprintf(fserver,"\n#endif /* WITH_NOSERVE */\n");
+ 
+   fprintf(fserver,"\n\n#ifndef WITH_NOSERVEREQUEST\nSOAP_FMAC5 int SOAP_FMAC6 %s_serve_request(struct soap *soap)\n{", nflag?prefix:"soap");
+   fprintf(fserver, "\n\tsoap_peek_element(soap);");
