@@ -19,10 +19,6 @@
 #include "debuginfo_xml.h"
 #include <string.h>
 
-#if V_GSOAP_VERSION_MAJOR >= 2 && V_GSOAP_VERSION_MINOR >= 8
-#define __UUSCORE 1
-#endif
-
 static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .debugfileRefDepth = 1,
     .symbolRefDepth = 1,
@@ -1046,16 +1042,6 @@ d_symbol_to_x_SymbolT(struct soap *soap,struct symbol *s,
     }
 
     return r;
-}
-
-_vmi1__nestedSymbol *
-d_lsymbol_to_x_nestedSymbol(struct soap *soap,struct lsymbol *ls,
-			    struct vmi1__DebugFileOptsT *opts,
-			    GHashTable *reftab,struct array_list *refstack,
-			    int depth) {
-    return (_vmi1__nestedSymbol *) \
-	d_symbol_array_list_to_x_SymbolsT(soap,ls->chain,
-					  opts,reftab,refstack,depth);
 }
 
 struct vmi1__SymbolsT *

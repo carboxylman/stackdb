@@ -1,5 +1,8 @@
 
-//gsoapopt c
+#module "dbgr" "debuginfo_rpc_module"
+
+#import "xsdc.gsm.h"
+#import "debuginfo_xml.gsm.h"
 
 //gsoap vmi1 service name: debuginfo
 //gsoap vmi1 service port: http://anathema.flux.utah.edu/cgi-bin/debuginfo.cgi
@@ -46,7 +49,7 @@ int vmi1__LookupAddrSimple(char *filename,vmi1__ADDR addr,
 int vmi1__LookupAddr(char *filename,vmi1__ADDR addr,
 		     struct vmi1__DebugFileOptsT *opts,
 		     struct vmi1__NestedSymbolResponse *r);
-int vmi1__LookupAllSymbols(char *filename,
+int vmi1__LookupAllSymbols(char *filename,char *name,
 			   struct vmi1__DebugFileOptsT *opts,
 			   struct vmi1__NestedSymbolResponse *r);
 

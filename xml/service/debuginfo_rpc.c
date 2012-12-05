@@ -16,7 +16,7 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
-#include "debuginfo_xml.h"
+#include "debuginfo_rpc.h"
 #include "alist.h"
 #include <pthread.h>
 #include <glib.h>
@@ -34,14 +34,14 @@
  * the already-encoded version.
  */
 
-extern GHashTable *debugfiles;
-extern GHashTable *binaries;
+GHashTable *debuginfo_rpc_debugfiles;
+GHashTable *debuginfo_rpc_binaries;
 /*
  * We don't check error codes for locking this mutex; don't need to
  * since the only way it could fail (unless the mutex structure gets
  * corrupted) is if the calling thread already owns it.
  */
-extern pthread_mutex_t debugfile_mutex;
+pthread_mutex_t debuginfo_rpc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .symbolRefDepth = 1,
@@ -49,17 +49,44 @@ static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .doMultiRef = 0,
 };
 
+void debuginfo_rpc_init(void) {
+    if (!debuginfo_rpc_debugfiles)
+	debuginfo_rpc_debugfiles = \
+	    g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    if (!debuginfo_rpc_binaries) 
+	debuginfo_rpc_binaries = \
+	    g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+}
+
+void debuginfo_rpc_fini(void) {
+    GHashTableIter iter;
+    struct debugfile *df;
+
+    if (debuginfo_rpc_debugfiles) {
+	g_hash_table_iter_init(&iter,debuginfo_rpc_debugfiles);
+	while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df))
+	    debugfile_free(df,1);
+	g_hash_table_destroy(debuginfo_rpc_debugfiles);
+	debuginfo_rpc_debugfiles = NULL;
+    }
+    if (!debuginfo_rpc_binaries) {
+	g_hash_table_destroy(debuginfo_rpc_binaries);
+	debuginfo_rpc_binaries = NULL;
+    }
+}
+
 #define DEF_REFSTACK_SIZE 32
 
 int vmi1__ListDebugFiles(struct soap *soap,
 			 struct vmi1__DebugFileOptsT *opts,
 			 struct vmi1__DebugFiles *r) {
     GHashTableIter iter;
-    gpointer key, value;
     struct debugfile *df;
     int i;
     GHashTable *reftab;
     struct array_list *refstack;
+
+    debuginfo_rpc_init();
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -67,12 +94,12 @@ int vmi1__ListDebugFiles(struct soap *soap,
     if (opts->doMultiRef)
 	soap_set_omode(soap,SOAP_XML_GRAPH);
 
-    pthread_mutex_lock(&debugfile_mutex);
+    pthread_mutex_lock(&debuginfo_rpc_mutex);
 
-    r->__size_debugFile = g_hash_table_size(debugfiles);
+    r->__size_debugFile = g_hash_table_size(debuginfo_rpc_debugfiles);
     if (r->__size_debugFile == 0) {
 	r->debugFile = NULL;
-	pthread_mutex_unlock(&debugfile_mutex);
+	pthread_mutex_unlock(&debuginfo_rpc_mutex);
 	return SOAP_OK;
     }
 
@@ -80,7 +107,7 @@ int vmi1__ListDebugFiles(struct soap *soap,
     refstack = array_list_create(DEF_REFSTACK_SIZE);
     r->debugFile = soap_malloc(soap,r->__size_debugFile * sizeof(*r->debugFile));
 
-    g_hash_table_iter_init(&iter,debugfiles);
+    g_hash_table_iter_init(&iter,debuginfo_rpc_debugfiles);
     i = 0;
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df)) {
 	r->debugFile[i] = d_debugfile_to_x_DebugFileT(soap,df,opts,reftab,refstack,0);
@@ -90,13 +117,15 @@ int vmi1__ListDebugFiles(struct soap *soap,
     array_list_free(refstack);
     g_hash_table_destroy(reftab);
 
-    pthread_mutex_unlock(&debugfile_mutex);
+    pthread_mutex_unlock(&debuginfo_rpc_mutex);
     return SOAP_OK;
 }
 
 int vmi1__LoadDebugFile(struct soap *soap,
 			char *filename,struct vmi1__DebugFileOptsT *opts,
 			struct vmi1__DebugFile *r) {
+    debuginfo_rpc_init();
+
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
@@ -104,6 +133,8 @@ int vmi1__LoadDebugFileForBinary(struct soap *soap,
 				 char *filename,
 				 struct vmi1__DebugFileOptsT *opts,
 				 struct vmi1__DebugFile *r) {
+    debuginfo_rpc_init();
+
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
@@ -232,7 +263,7 @@ int vmi1__LookupAddr(struct soap *soap,
 }
 
 int vmi1__LookupAllSymbols(struct soap *soap,
-			   char *filename,
+			   char *filename,char *name,
 			   struct vmi1__DebugFileOptsT *opts,
 			   struct vmi1__NestedSymbolResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");

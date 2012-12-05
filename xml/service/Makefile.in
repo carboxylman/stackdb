@@ -28,8 +28,12 @@ SUBDIRS =
 
 include $(OBJDIR)/Makeconf
 
-WSDL2H = wsdl2h
-SOAPCPP2 = soapcpp2
+WSDL2H = @WSDL2H@
+GSOAPIMPORTDIR = @GSOAP@/share/gsoap/import
+# Note, we only don't pass -2 to enable soap 1.2 because we manually
+# include s2.gsm.h and make it into a module, so that
+# all our other module linkage works out.
+SOAPCPP2 = @SOAPCPP2@ -2 -I$(GSOAPIMPORTDIR):$(SRCDIR) -c -d . -x
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
 	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug -I.
@@ -58,12 +62,48 @@ ifeq ($(ENABLE_XENACCESS),"1")
 endif
 
 HEADERS := $(SRCDIR)/debuginfo_xml.h $(SRCDIR)/debuginfo_rpc.h \
+	$(SRCDIR)/target_xml.h $(SRCDIR)/target_rpc.h \
 	$(SRCDIR)/analysis_xml.h $(SRCDIR)/analysis_rpc.h
-OBJECTS := debuginfo_xml.lo debuginfo_rpc.lo debuginfo.lo \
-	debuginfo_soapC.lo debuginfo_soapServer.lo debuginfo_soapServerLib.lo \
-	analysis_xml.lo analysis_rpc.lo analysis.lo \
-	analysis_soapC.lo analysis_soapServer.lo analysis_soapServerLib.lo
-PROGRAMS := debuginfo analysis
+
+OBJECTS-COMMON-LIB := common_xml_moduleC.lo
+
+OBJECTS-XSD-LIB := xsdcC.lo
+
+OBJECTS-ENV-LIB := #envC.lo
+
+OBJECTS-DEBUGINFO-XMLLIB := debuginfo_xml.lo
+OBJECTS-DEBUGINFO-RPCLIB := debuginfo_rpc.lo
+OBJECTS-DEBUGINFO-MODULE := debuginfo_xml_moduleC.lo \
+	debuginfo_rpc_moduleC.lo debuginfo_rpc_moduleServer.lo 
+#debuginfo_rpc_moduleServerLib.lo # 
+OBJECTS-DEBUGINFO-SERVER := debuginfo.lo debuginfoC.lo debuginfoServer.lo 
+OBJECTS-DEBUGINFO-SERVERLIB := debuginfoServerLib.lo
+OBJECTS-DEBUGINFO := $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	$(OBJECTS-DEBUGINFO-MODULE) \
+	$(OBJECTS-DEBUGINFO-SERVER) $(OBJECTS-DEBUGINFO-SERVERLIB)
+
+OBJECTS-TARGET-XMLLIB := target_xml.lo
+OBJECTS-TARGET-RPCLIB := target_rpc.lo
+OBJECTS-TARGET-MODULE := target_xml_moduleC.lo \
+	target_rpc_moduleC.lo target_rpc_moduleServer.lo 
+OBJECTS-TARGET-SERVER := target.lo targetC.lo targetServer.lo 
+OBJECTS-TARGET-SERVERLIB := targetServerLib.lo
+OBJECTS-TARGET := $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-XMLLIB) \
+	$(OBJECTS-TARGET-MODULE) \
+	$(OBJECTS-TARGET-SERVER) $(OBJECTS-TARGET-SERVERLIB)
+
+OBJECTS-ANALYSIS-XMLLIB := analysis_xml.lo
+OBJECTS-ANALYSIS-RPCLIB := analysis_rpc.lo
+OBJECTS-ANALYSIS-MODULE := analysis_xml_moduleC.lo \
+	analysis_rpc_moduleC.lo analysis_rpc_moduleServer.lo 
+OBJECTS-ANALYSIS-SERVER := analysis.lo analysisC.lo analysisServer.lo 
+OBJECTS-ANALYSIS-SERVERLIB := analysisServerLib.lo
+OBJECTS-ANALYSIS := $(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB)\
+	$(OBJECTS-ANALYSIS-MODULE) \
+	$(OBJECTS-ANALYSIS-SERVER) $(OBJECTS-ANALYSIS-SERVERLIB)
+
+OBJECTS := $(OBJECTS-DEBUGINFO)	$(OBJECTS-TARGET) $(OBJECTS-ANALYSIS)
+PROGRAMS := debuginfo target analysis
 
 INST_INC = 
 INST_SBIN = $(PROGRAMS)
@@ -78,33 +118,107 @@ all:	$(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-%.gs.h: $(SRCDIR)/../schema/%.xsd
-	$(WSDL2H) -g -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y -o $@
-	sed -i 's/gsoapopt cw/gsoapopt c/' $@
+#env.h: $(SRCDIR)/xsdc.gsm.h
+##	echo '#import "xsdc.gsm.h"' > env.h
+#	touch env.h
+#envH.h: env.h
+#	$(SOAPCPP2) -w -p env $<
+#soap12H.h: $(GSOAPIMPORTDIR)/soap12.h
+#	$(SOAPCPP2) -w $<
+#stwoH.h: $(SRCDIR)/stwo.gsm.h
+#	$(SOAPCPP2) -w $<
 
-%.wsdl: %.gs.h $(SRCDIR)/%.h.extra.h
-	cat $(@:.wsdl=).gs.h $(SRCDIR)/$(@:.wsdl=).h.extra.h \
-		| $(SOAPCPP2) -2 -c -d . -p $(@:.wsdl=)_soap -x 
+xsdcH.h: $(SRCDIR)/xsdc.gsm.h
+	$(SOAPCPP2) -w $<
+
+#
+# The following rule needs this first, so special case it.  Common is common, 
+# but has nothing to do with WSDL.
+#
+common_xml.gsm.h: $(SRCDIR)/../schema/common.xsd xsdcH.h
+	$(WSDL2H) -v -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y \
+		-I$(SRCDIR) -o $@.tmp
+	cat $(SRCDIR)/$(@:_xml.gsm.h=)_xml.gsm.header.h > $@
+	cat $@.tmp >> $@
+	rm -f $@.tmp
+	sed -i 's/gsoapopt cw//' $@
+
+%_xml.gsm.h: $(SRCDIR)/../schema/%.xsd common_xml.gsm.h $(SRCDIR)/%_xml.gsm.header.h xsdcH.h
+	$(WSDL2H) -v -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y \
+		-I$(SRCDIR) -M $(SRCDIR)/incmodmap.dat -o $@.tmp
+	cat $(SRCDIR)/$(@:_xml.gsm.h=)_xml.gsm.header.h > $@
+	cat $@.tmp >> $@
+	rm -f $@.tmp
+	sed -i 's/gsoapopt cw//' $@
+
+%_xml_moduleH.h: %_xml.gsm.h
+	$(SOAPCPP2) -w $< 
+#-p $(@:.gsm.h=)_module $@
+
+%_rpc_moduleH.h: $(SRCDIR)/%_rpc.gsm.h
+	$(SOAPCPP2) -w $< 
+
+%.wsdl: %_xml_moduleH.h %_rpc_moduleH.h 
+	echo "#import \"$(@:.wsdl=)_xml.gsm.h\"" > $(@:.wsdl=).gs.h
+	echo "#import \"$(@:.wsdl=)_rpc.gsm.h\"" >> $(@:.wsdl=).gs.h
+	$(SOAPCPP2) -p $(@:.wsdl=) $(@:.wsdl=).gs.h
+#	sed -i -e 's/\(#define $(@:.wsdl=)_srvStub_H\)/\1\n#include "envH.h"/' \
+#		$(@:.wsdl=)_srvStub.h
 	cp -p $@ $@.nostrip
 	$(SRCDIR)/strip-gsoap-wsdl.pl $(NAMESPACE)::$(NAMESPACE)/$(@:.wsdl=).xsd \
 		< $@.nostrip > $@
 
-%_soapC.c: %.wsdl
+xsdcC.lo: xsdcH.h
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
+		-c $(@:.lo=).c
+
+#envC.lo: envH.h
+#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
+#		-c $(@:.lo=).c
+
+%_rpc_moduleServerLib.c: %.wsdl
 	@echo -n ""
 
-%_soapServer.c: %.wsdl
+%_rpc_moduleServer.c: %.wsdl
 	@echo -n ""
 
-%_soapServerLib.c: %.wsdl
+%_xml_moduleC.c: %_xml_moduleH.h
 	@echo -n ""
 
-%_soapC.lo: %_soapC.c
+%_rpc_moduleC.c: %_rpc_moduleH.h
+	@echo -n ""
+
+%_rpc_moduleServerLib.lo: %_rpc_moduleServerLib.c
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOSERVERREQUEST -c $<
+
+%_rpc_moduleServer.lo: %_rpc_moduleServer.c
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOGLOBAL -DWITH_NOSERVEREQUEST -DWITH_NOSERVE -c $<
+
+%_rpc_moduleC.lo: %_rpc_moduleC.c
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-%_soapServer.lo: %_soapServer.c
+%_xml_moduleC.lo: %_xml_moduleC.c
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-%_soapServerLib.lo: %_soapServerLib.c
+#%_rpc_moduleServer.lo: %_rpc_moduleServer.c
+#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOGLOBAL -c $<
+
+%C.c: %.wsdl 
+	@echo -n ""
+
+%Server.c: %.wsdl
+	@echo -n ""
+
+%C.lo: %C.c 
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+%Server.lo: %Server.c
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+#%ServerLib.lo: %ServerLib.c
+#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+%_lib.lo: $(SRCDIR)/%_lib.c $(SRCDIR)/%_lib.h %.wsdl
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
 %_xml.lo: $(SRCDIR)/%_xml.c $(SRCDIR)/%_xml.h %.wsdl
@@ -116,29 +230,85 @@ include $(TOP_SRCDIR)/Makerules
 debuginfo.lo: $(SRCDIR)/debuginfo.c $(HEADERS) debuginfo.wsdl
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
+target.lo: $(SRCDIR)/target.c $(HEADERS) target.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
 analysis.lo: $(SRCDIR)/analysis.c $(HEADERS) analysis.wsdl
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
 #%.c.lo: $(SRCDIR)/%.c $(HEADERS)
 #	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-debuginfo: debuginfo.wsdl $(OBJECTS) $(STATICLIBS)
-	$(CC) -o $@ debuginfo_xml.o debuginfo_rpc.o debuginfo.o \
-		debuginfo_soapC.o debuginfo_soapServer.o \
+debuginfo: debuginfo.wsdl \
+	   $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	   $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	   $(OBJECTS-DEBUGINFO-MODULE) $(OBJECTS-DEBUGINFO-SERVER) \
+	   $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+	   $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB)  \
+	   $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	   $(OBJECTS-DEBUGINFO-MODULE) $(OBJECTS-DEBUGINFO-SERVER) \
+	   $(STATICLIBS) $(LDFLAGS)
+
+target: target.wsdl \
+	$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
+	$(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVER) \
+	$(OBJECTS-DEBUGINFO-MODULE) \
+	$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+		$(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
+		$(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVER) \
+		$(OBJECTS-DEBUGINFO-MODULE) \
+		$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 		$(STATICLIBS) $(LDFLAGS)
 
-analysis: analysis.wsdl $(OBJECTS) $(STATICLIBS)
-	$(CC) -o $@ analysis_xml.o analysis_rpc.o analysis.o \
-		analysis_soapC.o analysis_soapServer.o \
+analysis: analysis.wsdl \
+	$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	$(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB) \
+	$(OBJECTS-ANALYSIS-MODULE) $(OBJECTS-ANALYSIS-SERVER) \
+	$(OBJECTS-DEBUGINFO-MODULE) \
+	$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	$(OBJECTS-TARGET-MODULE) \
+	$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
+		$(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+		$(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB) \
+		$(OBJECTS-ANALYSIS-MODULE) $(OBJECTS-ANALYSIS-SERVER) \
+		$(OBJECTS-DEBUGINFO-MODULE) \
+		$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+		$(OBJECTS-TARGET-MODULE) \
+		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 		$(STATICLIBS) $(LDFLAGS)
 
 install: $(PROGRAMS) def-install install-subdirs
 
-clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
-	$(RM) -f $(PROGRAMS)
-	$(RM) *.gs.h debuginfo_soap* analysis_soap*
-	$(RM) *.nsmap *.wsdl *.wsdl.nostrip *.xsd
+clean-common:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-COMMON-LIB)
+	$(RM) common*
+
+clean-xsdc:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-XSD-LIB)
+	$(RM) xsdc*
+
+clean-debuginfo:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-DEBUGINFO)
+	$(RM) debuginfo*
+
+clean-target:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-TARGET)
+	$(RM) target*
+
+clean-analysis:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-ANALYSIS)
+	$(RM) analysis*
+
+clean: clean-common clean-xsdc clean-debuginfo clean-target clean-analysis clean-subdirs
+	$(RM) *.nsmap *.xsd
+	$(RM) RECV.log TEST.log
 
 distclean: distclean-subdirs
 

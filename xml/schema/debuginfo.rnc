@@ -122,7 +122,7 @@ SymbolsOptT =
 NestedSymbol = element nestedSymbol { SymbolsT }
 
 DebugFileT = 
-    (attribute sid { xsd:ID } | attribute sref { xsd:IDREF }),
+    (attribute sid { DebugFileIdT } | attribute sref { xsd:IDREF }),
     element name { text }?,
     (element filename { text },
      element version { text },

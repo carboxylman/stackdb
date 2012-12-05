@@ -18,87 +18,153 @@
 
 default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
-include "target.rnc"
+include "common.rnc"
 
 #start = Analysis
 
-Param = element param {
-    element name { text },
-    element longName { text }?,
+DataTypeT = 
+    "none" | "bool" | "byte" | "short" | "int" | "long"
+    | "ubyte" | "ushort" | "uint" | "ulong" | "float" | "double" | "string"
+    | "time" | "date" | "datetime"
+
+ParamT = 
+    (element name { text } | element longName { text }),
     element description { text },
     element defaultValue { text }?
-}
+Param = element param { ParamT }
 
-OutValue = element outValue {
-    (element name { text }
-     | element longName { text }),
+ParamValueT = 
+    (element name { text } | element longName { text }),
     element value { text }
-}
+ParamValue = element paramValue { ParamValueT }
 
-KeyValue = element keyValue {
-    element key { text },
+NameValueT = 
+    element name { text },
     element value { text }
-}
+NameValue = element NameValue { NameValueT }
 
-Analysis = element analysis {
-    attribute name { text } &
-    attribute id { xsd:ID } &
-    element description { text } &
-    element author { text } &
-    element authorContactEmail { text } &
+TypedNameValueT = 
+    element name { text },
+    element value { text },
+    element type { DataTypeT }
+TypedNameValue = element typedNameValue { TypedNameValueT }
 
-    element requiresWriteMode { xsd:boolean } &
-    element requiresControlMode { xsd:boolean } &
-    element reportsAnnotations { xsd:boolean } &
-    element reportsEvents { xsd:boolean } &
-    element reportsMarkers { xsd:boolean } &
-    element reportsIntermediateResults { xsd:boolean } &
-    element reportsFinalResults { xsd:boolean } &
+AnalysisConfigT = 
+    element logStdout { xsd:boolean },
+    element logStderr { xsd:boolean },
+    element reportStdout { xsd:boolean },
+    element reportStderr { xsd:boolean },
 
-    element annotationTypes {
-        AnnotationType*
-    } &
+    element inputParams { NameValue* }
+AnalysisConfig = element analysisConfig { AnalysisConfigT }
 
-    element inputParams { Param* } &
-    element outputParams { Param* }
-}
-
-AnnotationType = element annotationType {
+AnalysisT = 
+    attribute id { AnalysisIdT },
     attribute name { text },
+
+    element description { text },
+    element author { text },
+    element authorContactEmail { text },
+
+    element requiresWrite { xsd:boolean },
+    element requiresControl { xsd:boolean },
+    element reportsAnnotations { xsd:boolean },
+    element reportsEvents { xsd:boolean },
+    element reportsIntermediateResults { xsd:boolean },
+    element reportsFinalResults { xsd:boolean },
+
+    element supportsExternalControlProtocol { xsd:boolean },
+
+    element autoparseSimpleResults { xsd:boolean },
+
+    element annotations {
+        (element annotationTypeId { xsd:ID }
+         | AnnotationType)*
+    },
+
+    element inputParams { Param* },
+    element outputParams { Param* }
+Analysis = element analysis { AnalysisT }
+
+AnalysisStatusT = "running" | "paused" | "done"
+AnalysisStatus = element analysisStatus { AnalysisStatusT }
+
+AnalysisInstanceT = 
+    attribute id { AnalysisInstanceIdT },
+    #
+    # Only library-based analyses (either binary shared libs, or Python
+    # higher-level libs, eventually) have targetIds.  Standalone
+    # analyses do not have targetIds because the analysis server does
+    # not launch a target for them.
+
+    #
+    element targetId { TargetIdT }?,
+    AnalysisStatus
+
+AnalysisInstance = element analysisInstance { AnalysisInstanceT }
+
+AnnotationTypeT = 
     attribute id { xsd:ID },
+    attribute name { text },
 
     element annotationField {
         attribute name { text },
-	attribute type { text }
+	attribute type { DataTypeT }
     }+
-}
+AnnotationType = element annotationType { AnnotationTypeT }
 
-Annotation = element annotation {
-    attribute event { xsd:boolean },
-    attribute marker { xsd:boolean },
-    attribute discovery { xsd:boolean },
+AnnotationHeaderT = 
+    attribute annotationTypeId { xsd:ID },
 
-    attribute annotationTypeRef { xsd:IDREF },
+    attribute isEvent { xsd:boolean },
+    attribute isMarker { xsd:boolean },
+    attribute isDiscovery { xsd:boolean },
 
     attribute ns { xsd:unsignedLong },
     attribute tsc { xsd:unsignedLong },
-    attribute counter { xsd:unsignedLong },
+    attribute counter { xsd:unsignedLong }
 
-    KeyValue+
-}
+AnnotationT = 
+    AnnotationHeaderT,
+    element fieldValues { TypedNameValue+ }
+Annotation = element annotation { AnnotationT }
 
-AnalysisResult = element analysisResult {
-    element value { text } &
-    element msg { text } &
-    element outputValues { OutValue* }
-}
+#
+# Analyses can report SimpleResults, TypedResults, or CustomResults.
+#
+# SimpleResults are named sets of text key/value pairs (and 
+# have an overall text value, and an overall text msg summary).  The
+# name of a SimpleResult is not a unique identifier; applications that
+# use SimpleResults must be prepared to deal with this situation.
+#
+# TypedResults are similar to annotations.  They have an arbitrary
+# number of named, typed fields (standard VMI datatypes), and also a
+# name, value, and msg.  However, unlike a SimpleResult:name field, the
+# TypedResult:name field should be unique.
+#
+# CustomResults have a unique name
+#
+SimpleResultT = 
+    element name { text },
+    element value { text },
+    element msg { text },
+    element outputValues { NameValue* }
+SimpleResult = element simpleResult { SimpleResultT }
 
-AnalysisStatus = element analysisStatus {
-    "running" | "paused" | "done"
-}
+TypedResultT = 
+    element name { text },
+    element value { text },
+    element msg { text },
+    element outputValues { TypedNameValue* }
+TypedResult = element typedResult { TypedResultT }
 
-AnalysisInstance = element analysisInstance {
-    AnalysisStatus,
-    Target
-}
+CustomResultT = 
+    attribute id { xsd:ID },
+    attribute name { text },
+    AnyExtension
+CustomResult = element customResult { CustomResultT }
 
+AnalysisResultT = 
+    SimpleResult | TypedResult | CustomResult
+
+AnalysisResult = element analysisResult { AnalysisResultT }

@@ -1,1 +1,6 @@
 vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
+
+xsd__boolean =  | enum xsd__boolean | 
+xsd__ID =  | xsd__ID | char *
+xsd__IDREF =  | xsd__IDREF | char *
+xsd__token =  | xsd__token | char *

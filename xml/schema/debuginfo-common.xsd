@@ -19,6 +19,7 @@
   
 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified" targetNamespace="http://anathema.flux.utah.edu/schema/vmi/1" xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
+  <xs:include schemaLocation="any-extension-schema.xsd"/>
   <xs:simpleType name="ADDR">
     <xs:restriction base="xs:unsignedLong"/>
   </xs:simpleType>
@@ -33,5 +34,23 @@
   </xs:simpleType>
   <xs:simpleType name="SMOFFSET">
     <xs:restriction base="xs:int"/>
+  </xs:simpleType>
+  <xs:simpleType name="DebugFileIdT">
+    <xs:restriction base="xs:ID"/>
+  </xs:simpleType>
+  <xs:simpleType name="ThreadIdT">
+    <xs:restriction base="xs:ID"/>
+  </xs:simpleType>
+  <xs:simpleType name="TargetIdT">
+    <xs:restriction base="xs:ID"/>
+  </xs:simpleType>
+  <xs:simpleType name="SessionIdT">
+    <xs:restriction base="xs:ID"/>
+  </xs:simpleType>
+  <xs:simpleType name="AnalysisIdT">
+    <xs:restriction base="xs:ID"/>
+  </xs:simpleType>
+  <xs:simpleType name="AnalysisInstanceIdT">
+    <xs:restriction base="xs:ID"/>
   </xs:simpleType>
 </xs:schema>

@@ -1,0 +1,4 @@
+common.xsd = common_xml.gsm.h | false
+debuginfo.xsd = debuginfo_xml.gsm.h | false
+target.xsd = target_xml.gsm.h | false
+analysis.xsd = analysis_xml.gsm.h | false

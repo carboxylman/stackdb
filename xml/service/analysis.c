@@ -22,9 +22,14 @@
 
 #include "analysis_xml.h"
 #include "analysis_rpc.h"
+#include "debuginfo_rpc.h"
+#include "target_rpc.h"
 
 /* Pull in gsoap-generated namespace array. */
 #include "analysis.nsmap"
+
+extern char *optarg;
+extern int optind, opterr, optopt;
 
 void *do_request(void *arg) {
     struct soap *soap = (struct soap *)arg;
@@ -32,6 +37,11 @@ void *do_request(void *arg) {
     pthread_detach(pthread_self());
 
     soap_serve(soap);
+
+    vdebug(8,LOG_X_RPC,"finished request from %d.%d.%d.%d\n",
+	   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+	   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+
     soap_destroy(soap);
     soap_end(soap);
     soap_done(soap);
@@ -45,15 +55,63 @@ int main(int argc, char **argv) {
     struct soap soap;
     struct soap *tsoap;
     pthread_t tid;
-    int port;
+    int port = 0;
     SOAP_SOCKET m, s;
+    char ch;
+    int debug = 0;
+    int warn = 0;
+    log_flags_t flags;
+    int doelfsymtab = 1;
+
+    while ((ch = getopt(argc, argv, "dwl:Ep:")) != -1) {
+	switch(ch) {
+	case 'd':
+	    ++debug;
+	    vmi_set_log_level(debug);
+	    break;
+	case 'w':
+	    ++warn;
+	    vmi_set_warn_level(warn);
+	    break;
+	case 'l':
+	    if (vmi_log_get_flag_mask(optarg,&flags)) {
+		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
+		exit(-1);
+	    }
+	    vmi_set_log_flags(flags);
+	    break;
+	case 'E':
+	    doelfsymtab = 0;
+	    break;
+	case 'p':
+	    port = atoi(optarg);
+	    break;
+	default:
+	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
+	    exit(-1);
+	}
+    }
+
+    argc -= optind;
+    argv += optind;
+
+    dwdebug_init();
+    debuginfo_rpc_init();
+    target_rpc_init();
+    analysis_rpc_init();
+
+    atexit(analysis_rpc_fini);
+    atexit(target_rpc_fini);
+    atexit(debuginfo_rpc_fini);
+    atexit(dwdebug_fini);
 
     soap_init(&soap);
+    //soap_set_omode(&soap,SOAP_XML_GRAPH);
 
     /*
      * If no args, assume this is CGI coming in on stdin.
      */
-    if (argc < 2) {
+    if (!port) {
 	soap_serve(&soap);
 	soap_destroy(&soap);
 	soap_end(&soap);
@@ -68,15 +126,15 @@ int main(int argc, char **argv) {
     soap.accept_timeout = 0;
     soap.max_keep_alive = 100;
 
-    port = atoi(argv[1]);
     m = soap_bind(&soap,NULL,port,64);
-
     if (!soap_valid_socket(m)) {
-	verror("Could not bind to port %d!\n",port);
+	verror("Could not bind to port %d: ",port);
+	soap_print_fault(&soap,stderr);
+	verrorc("\n");
 	exit(1);
     }
 
-    vdebug(9,LOG_OTHER,"bound to port %d\n",port);
+    vdebug(5,LOG_X_RPC,"bound to port %d\n",port);
 
     while (1) {
 	s = soap_accept(&soap);
@@ -89,7 +147,7 @@ int main(int argc, char **argv) {
             verror("SOAP: server timed out\n");
             break;
 	}
-	vdebug(8,LOG_OTHER,"connection from %d.%d.%d.%d\n",
+	vdebug(8,LOG_X_RPC,"connection from %d.%d.%d.%d\n",
 	       (soap.ip >> 24) & 0xff,(soap.ip >> 16) & 0xff,
 	       (soap.ip >> 8) & 0xff,soap.ip & 0xff);
 

@@ -18,57 +18,66 @@
 
 #include "analysis_rpc.h"
 
+void analysis_rpc_init(void) {
+    return;
+}
+
+void analysis_rpc_fini(void) {
+    return;
+}
+
 int vmi1__listAvailableAnalyses(struct soap *soap,void *_,
-				struct vmi1__availableAnalysesResponse *r) {
+				struct vmi1__AnalysesResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
 int vmi1__listAnalysisInstances(struct soap *soap,void *_,
-				struct vmi1__analysisInstancesResponse *r) {
+				struct vmi1__AnalysisInstancesResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__createAnalysis(struct soap *soap,struct _vmi1__targetSpec *targetSpec,
-			 vmi1__sessionId *sessionId) {
+int vmi1__createAnalysis(struct soap *soap,struct vmi1__TargetSpecT *targetSpec,
+			 xsd__ID analysisId,enum xsd__boolean autorun,
+			 vmi1__SessionIdT *sessionId) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__runAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-		      struct vmi1__runAnalysisNoneResponse  *r) {
+int vmi1__runAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+		      struct vmi1__NoneResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__pauseAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-			struct vmi1__pauseAnalysisNoneResponse  *r) {
+int vmi1__pauseAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+			struct vmi1__NoneResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__endAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-		      struct vmi1__endAnalysisNoneResponse  *r) {
+int vmi1__endAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+		      struct vmi1__NoneResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__getAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-		      struct vmi1__analysisResponse *r) {
+int vmi1__getAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+		      struct vmi1__AnalysisInstanceResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__getAnalysisStatus(struct soap *soap,vmi1__sessionId sessionId,
-			    struct vmi1__analysisStatusResponse *r) {
+int vmi1__getAnalysisStatus(struct soap *soap,vmi1__SessionIdT sessionId,
+			    struct vmi1__AnalysisStatusResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__getAnalysisResults(struct soap *soap,vmi1__sessionId sessionId,
-			     struct vmi1__analysisResultsResponse *r) {
+int vmi1__getAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
+			     struct vmi1__AnalysisResultsResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__pollAnalysisResults(struct soap *soap,vmi1__sessionId sessionId,
-			      struct vmi1__analysisResultsResponse *r) {
+int vmi1__pollAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
+			      struct vmi1__AnalysisResultsResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__pollAnalysisAnnotations(struct soap *soap,vmi1__sessionId sessionId,
-				  struct vmi1__analysisAnnotationsResponse *r) {
+int vmi1__pollAnalysisAnnotations(struct soap *soap,vmi1__SessionIdT sessionId,
+				  struct vmi1__AnalysisAnnotationsResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }

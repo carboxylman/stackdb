@@ -27,20 +27,37 @@ endif
 #
 TRANGCMD += -o disable-abstract-elements
 
-SCHEMAS = debuginfo.xsd target.xsd analysis.xsd
+SCHEMAS = common.xsd debuginfo.xsd target.xsd analysis.xsd
 
-all: $(SCHEMAS)
+all: $(SCHEMAS) check
+
+check:
+	diff -u common.xsd debuginfo-common.xsd
+	diff -u debuginfo-common.xsd analysis-common.xsd
+	diff -u debuginfo-common.xsd target-common.xsd
 
 clean:
-	rm $(SCHEMAS) *common.xsd
+	rm -f $(SCHEMAS) *common.xsd
+
+common.xsd: common.rnc
+	mkdir -p tmp
+	$(TRANGCMD) $< tmp/$@
+	rm tmp/any-extension.xsd
+	sed "s/any-extension.xsd/any-extension-schema.xsd/" tmp/$@ > $@
+	rm tmp/$@
+	rmdir tmp
 
 %.xsd: %.rnc common.rnc
 	mkdir -p tmp
 	$(TRANGCMD) $< tmp/$@
-	mv tmp/common.xsd $(@:.xsd=)-common.xsd
-	sed "s/common.xsd/$(@:.xsd=)-common.xsd/" tmp/$@ > $@
+	sed "s/any-extension.xsd/any-extension-schema.xsd/" tmp/common.xsd > $(@:.xsd=)-common.xsd
+	rm tmp/common.xsd
+	#mv tmp/common.xsd tmp/$(@:.xsd=)-common.xsd
+	#sed "s/common.xsd/$(@:.xsd=)-common.xsd/" tmp/$@ > $@
+	#rm tmp/$@
+	sed "s/any-extension.xsd/any-extension-schema.xsd/" tmp/$@ > $@
 	rm tmp/$@
-	#mv tmp/$@ $@
+	rm tmp/any-extension.xsd
 	rmdir tmp
 
 .PHONY: clean

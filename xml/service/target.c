@@ -21,11 +21,11 @@
 
 #include "log.h"
 
-#include "debuginfo_xml.h"
+#include "target_rpc.h"
 #include "debuginfo_rpc.h"
 
 /* Pull in gsoap-generated namespace array. */
-#include "debuginfo.nsmap"
+#include "target.nsmap"
 
 extern char *optarg;
 extern int optind, opterr, optopt;
@@ -96,7 +96,9 @@ int main(int argc, char **argv) {
 
     dwdebug_init();
     debuginfo_rpc_init();
+    target_rpc_init();
 
+    atexit(target_rpc_fini);
     atexit(debuginfo_rpc_fini);
     atexit(dwdebug_fini);
 

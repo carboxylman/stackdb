@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2012 The University of Utah
+# Copyright (c) 2011, 2012 The University of Utah
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as
@@ -18,17 +18,7 @@
 
 default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
-include "any-extension.rnc"
-
-ADDR = xsd:unsignedLong
-REG = xsd:string
-REGNO = xsd:short
-OFFSET = xsd:long
-SMOFFSET = xsd:int
-
-DebugFileIdT = xsd:ID
-ThreadIdT = xsd:ID
-TargetIdT = xsd:ID
-SessionIdT = xsd:ID
-AnalysisIdT = xsd:ID
-AnalysisInstanceIdT = xsd:ID
+AnyExtension =
+    attribute * - vmi1:* { text }* &
+    element * - vmi1:* { text }* &
+    element * - vmi1:* { AnyExtension }*

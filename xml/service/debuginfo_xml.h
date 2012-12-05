@@ -19,7 +19,7 @@
 #ifndef __DEBUGINFO_XML_H__
 #define __DEBUGINFO_XML_H__
 
-#include "debuginfo_soapStub.h"
+#include "debuginfo_xml_moduleStub.h"
 #include "dwdebug.h"
 #include <glib.h>
 

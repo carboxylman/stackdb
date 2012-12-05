@@ -19,7 +19,11 @@
 #ifndef __DEBUGINFO_RPC_H__
 #define __DEBUGINFO_RPC_H__
 
-#include "debuginfo_soapH.h"
+#include "debuginfo_rpc_moduleStub.h"
+#include "debuginfo_xml.h"
+
+void debuginfo_rpc_init(void);
+void debuginfo_rpc_fini(void);
 
 int vmi1__ListDebugFiles(struct soap *soap,
 			 struct vmi1__DebugFileOptsT *opts,
@@ -50,7 +54,7 @@ int vmi1__LookupAddr(struct soap *soap,
 		     struct vmi1__DebugFileOptsT *opts,
 		     struct vmi1__NestedSymbolResponse *r);
 int vmi1__LookupAllSymbols(struct soap *soap,
-			   char *filename,
+			   char *filename,char *name,
 			   struct vmi1__DebugFileOptsT *opts,
 			   struct vmi1__NestedSymbolResponse *r);
 

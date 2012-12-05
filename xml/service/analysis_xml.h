@@ -19,7 +19,13 @@
 #ifndef __ANALYSIS_XML_H__
 #define __ANALYSIS_XML_H__
 
-#include "analysis_soapH.h" 
+#include "analysis_xml_moduleStub.h" 
+#include "target_xml_moduleStub.h"
+#include "debuginfo_xml_moduleStub.h"
+#include "dwdebug.h"
 #include "target_api.h"
+#include <glib.h>
+
+
 
 #endif /* __ANALYSIS_XML_H__ */

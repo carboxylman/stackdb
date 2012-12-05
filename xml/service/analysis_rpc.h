@@ -19,32 +19,36 @@
 #ifndef __ANALYSIS_RPC_H__
 #define __ANALYSIS_RPC_H__
 
-#include "analysis_soapH.h"
+#include "analysis_rpc_moduleStub.h"
+
+void analysis_rpc_init(void);
+void analysis_rpc_fini(void);
 
 int vmi1__listAvailableAnalyses(struct soap *soap,void *_,
-				struct vmi1__availableAnalysesResponse *r);
+				struct vmi1__AnalysesResponse *r);
 int vmi1__listAnalysisInstances(struct soap *soap,void *_,
-				struct vmi1__analysisInstancesResponse *r);
+				struct vmi1__AnalysisInstancesResponse *r);
 
-int vmi1__createAnalysis(struct soap *soap,struct _vmi1__targetSpec *targetSpec,
-			 vmi1__sessionId *sessionId);
-int vmi1__runAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-		      struct vmi1__runAnalysisNoneResponse  *r);
-int vmi1__pauseAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-			struct vmi1__pauseAnalysisNoneResponse  *r);
-int vmi1__endAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-		      struct vmi1__endAnalysisNoneResponse  *r);
+int vmi1__createAnalysis(struct soap *soap,struct vmi1__TargetSpecT *targetSpec,
+			 xsd__ID analysisId,enum xsd__boolean autorun,
+			 vmi1__SessionIdT *sessionId);
+int vmi1__runAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+		      struct vmi1__NoneResponse *r);
+int vmi1__pauseAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+			struct vmi1__NoneResponse *r);
+int vmi1__endAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+		      struct vmi1__NoneResponse *r);
 
-int vmi1__getAnalysis(struct soap *soap,vmi1__sessionId sessionId,
-		      struct vmi1__analysisResponse *r);
-int vmi1__getAnalysisStatus(struct soap *soap,vmi1__sessionId sessionId,
-			    struct vmi1__analysisStatusResponse *r);
+int vmi1__getAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+		      struct vmi1__AnalysisInstanceResponse *r);
+int vmi1__getAnalysisStatus(struct soap *soap,vmi1__SessionIdT sessionId,
+			    struct vmi1__AnalysisStatusResponse *r);
 
-int vmi1__getAnalysisResults(struct soap *soap,vmi1__sessionId sessionId,
-			     struct vmi1__analysisResultsResponse *r);
-int vmi1__pollAnalysisResults(struct soap *soap,vmi1__sessionId sessionId,
-			      struct vmi1__analysisResultsResponse *r);
-int vmi1__pollAnalysisAnnotations(struct soap *soap,vmi1__sessionId sessionId,
-				  struct vmi1__analysisAnnotationsResponse *r);
+int vmi1__getAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
+			     struct vmi1__AnalysisResultsResponse *r);
+int vmi1__pollAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
+			      struct vmi1__AnalysisResultsResponse *r);
+int vmi1__pollAnalysisAnnotations(struct soap *soap,vmi1__SessionIdT sessionId,
+				  struct vmi1__AnalysisAnnotationsResponse *r);
 
 #endif /* __ANALYSIS_RPC_H__ */

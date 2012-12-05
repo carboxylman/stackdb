@@ -19,7 +19,7 @@
   
 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified" targetNamespace="http://anathema.flux.utah.edu/schema/vmi/1" xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
-  <xs:include schemaLocation="debuginfo-common.xsd"/>
+  <xs:include schemaLocation="common.xsd"/>
   <xs:simpleType name="SymtabRef">
     <xs:restriction base="xs:IDREF"/>
   </xs:simpleType>
@@ -169,7 +169,7 @@
         <xs:element ref="vmi1:globalSymbols"/>
       </xs:sequence>
     </xs:sequence>
-    <xs:attribute name="sid" type="xs:ID"/>
+    <xs:attribute name="sid" type="vmi1:DebugFileIdT"/>
     <xs:attribute name="sref" type="xs:IDREF"/>
   </xs:complexType>
   <xs:element name="name" type="xs:string"/>
