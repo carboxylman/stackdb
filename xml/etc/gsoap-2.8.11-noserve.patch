@@ -6,7 +6,7 @@ diff -ur gsoap-2.8.orig/gsoap/src/symbol2.c gsoap-2.8/gsoap/src/symbol2.c
    if (!Cflag)
    {
 -  fprintf(fserver,"\n\nSOAP_FMAC5 int SOAP_FMAC6 %s_serve(struct soap *soap)", nflag?prefix:"soap"); 
-+  fprintf(fserver,"\n\n#ifdef WITH_NOSERVE\n");
++  fprintf(fserver,"\n\n#ifndef WITH_NOSERVE\n");
 +  fprintf(fserver,"SOAP_FMAC5 int SOAP_FMAC6 %s_serve(struct soap *soap)", nflag?prefix:"soap"); 
  
    fprintf(fserver,"\n{\n#ifndef WITH_FASTCGI\n\tunsigned int k = soap->max_keep_alive;\n#endif\n\tdo\n\t{");
