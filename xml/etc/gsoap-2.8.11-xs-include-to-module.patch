@@ -1,0 +1,812 @@
+diff -ur gsoap-2.8.orig/gsoap/wsdl/includes.h gsoap-2.8/gsoap/wsdl/includes.h
+--- gsoap-2.8.orig/gsoap/wsdl/includes.h	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/wsdl/includes.h	2012-12-04 18:41:59.172283927 -0700
+@@ -117,7 +117,7 @@
+ 
+ extern int infiles;
+ extern char *infile[MAXINFILES], *outfile, *proxy_host, *proxy_userid, *proxy_passwd;
+-extern const char *mapfile, *import_path, *cwd_path, *cppnamespace;
++extern const char *mapfile, *incmapfile, *import_path, *cwd_path, *cppnamespace;
+ 
+ extern int proxy_port;
+ 
+diff -ur gsoap-2.8.orig/gsoap/wsdl/schema.cpp gsoap-2.8/gsoap/wsdl/schema.cpp
+--- gsoap-2.8.orig/gsoap/wsdl/schema.cpp	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/wsdl/schema.cpp	2012-12-04 22:08:51.512140950 -0700
+@@ -44,6 +44,11 @@
+ extern const char *qname_token(const char*, const char*);
+ extern int is_builtin_qname(const char*);
+ 
++// only read from include locations not read already, uses static std::map
++std::map<const char*, xs__schema*, ltstr> included;
++std::map<const xs__schema*, const char*> revIncluded;
++
++
+ ////////////////////////////////////////////////////////////////////////////////
+ //
+ //	schema
+@@ -168,7 +173,7 @@
+     }
+     if (!found)
+     { attribute.push_back(*at);
+-      attribute.back().schemaPtr(this);
++      attribute.back().schemaPtr(this,&schema);
+     }
+   }
+   // insert elements, but only add elements with new name (limited conflict check)
+@@ -187,7 +192,7 @@
+     }
+     if (!found)
+     { element.push_back(*el);
+-      element.back().schemaPtr(this);
++      element.back().schemaPtr(this,&schema);
+     }
+   }
+   // insert groups, but only add groups with new name (no conflict check)
+@@ -203,7 +208,7 @@
+     }
+     if (!found)
+     { group.push_back(*gp);
+-      group.back().schemaPtr(this);
++      group.back().schemaPtr(this,&schema);
+     }
+   }
+   // insert attributeGroups, but only add attributeGroups with new name (no conflict check)
+@@ -219,7 +224,7 @@
+     }
+     if (!found)
+     { attributeGroup.push_back(*ag);
+-      attributeGroup.back().schemaPtr(this);
++      attributeGroup.back().schemaPtr(this,&schema);
+     }
+   }
+   // insert simpleTypes, but only add simpleTypes with new name (no conflict check)
+@@ -235,7 +240,7 @@
+     }
+     if (!found)
+     { simpleType.push_back(*st);
+-      simpleType.back().schemaPtr(this);
++      simpleType.back().schemaPtr(this,&schema);
+     }
+   }
+   // insert complexTypes, but only add complexTypes with new name (no conflict check)
+@@ -251,7 +256,7 @@
+     }
+     if (!found)
+     { complexType.push_back(*ct);
+-      complexType.back().schemaPtr(this);
++      complexType.back().schemaPtr(this,&schema);
+     }
+   }
+   return SOAP_OK;
+@@ -470,14 +475,44 @@
+ 
+ xs__include::xs__include()
+ { schemaLocation = NULL;
+-  schemaRef = NULL;
++  schemaRef = origSchemaRef = NULL;
++}
++
++void xs__include::schemaIncludeLocation(xs__schema *schema,const char *location) {
++    if (revIncluded.count(schema) == 0)
++	revIncluded[schema] = location;
++}
++
++char *xs__include::schemaIncludeLocation(xs__schema *schema) {
++    if (!schema) {
++	if (vflag)
++	    fprintf(stderr,"schemaIncludeLocation(): NULL schema!\n");
++	return NULL;
++    }
++
++    if (vflag)
++	fprintf(stderr,"schemaIncludeLocation: checking %s, %d\n",schema->sourceLocation(),revIncluded.size());
++    if (revIncluded.count(schema) > 0)
++	return (char *)revIncluded[schema];
++    return NULL;
+ }
+ 
++xs__schema *xs__include::includeLocationSchema(const char *location) {
++    if (vflag)
++	fprintf(stderr,"includeLocationSchema: checking %s, %d\n",location,included.size());
++    if (included.count(location) > 0)
++	return included[location];
++    return NULL;
++}
++
++void xs__include::includeLocationSchema(const char *location,xs__schema *schema) {
++    if (included.count(location) == 0)
++	included[location] = schema;
++}
++	  
+ int xs__include::preprocess(xs__schema &schema)
+ { if (!schemaRef && schemaLocation)
+-  { // only read from include locations not read already, uses static std::map
+-    static map<const char*, xs__schema*, ltstr> included;
+-    map<const char*, xs__schema*, ltstr>::iterator i = included.end();
++  { map<const char*, xs__schema*, ltstr>::iterator i = included.end();
+     if (schema.targetNamespace)
+       for (i = included.begin(); i != included.end(); ++i)
+         if ((*i).second->targetNamespace
+@@ -487,7 +522,11 @@
+     if (i == included.end())
+     { if (vflag)
+         cerr << "Preprocessing schema include '" << (schemaLocation?schemaLocation:"") << "' into schema '" << (schema.targetNamespace?schema.targetNamespace:"") << "'" << endl;
+-      included[schemaLocation] = schemaRef = new xs__schema(schema.soap);
++      schemaRef = origSchemaRef = new xs__schema(schema.soap);
++
++      xs__include::includeLocationSchema(schemaLocation,schemaRef);
++      xs__include::schemaIncludeLocation(schemaRef,schemaLocation);
++
+       schemaRef->read(schema.sourceLocation(), schemaLocation);
+       schemaRef->targetNamespace = schema.targetNamespace;
+     }
+@@ -504,14 +543,20 @@
+ { return SOAP_OK;
+ }
+ 
+-void xs__include::schemaPtr(xs__schema *schema)
++void xs__include::schemaPtr(xs__schema *schema,xs__schema* origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
+ }
+ 
+ xs__schema *xs__include::schemaPtr() const
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__include::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ xs__redefine::xs__redefine()
+ { schemaLocation = NULL;
+   schemaRef = NULL;
+@@ -638,7 +683,7 @@
+ }
+ 
+ xs__attribute::xs__attribute()
+-{ schemaRef = NULL;
++{ schemaRef = origSchemaRef = NULL;
+   attributeRef = NULL;
+   simpleTypeRef = NULL;
+ }
+@@ -732,14 +777,20 @@
+   return SOAP_OK;
+ }
+ 
+-void xs__attribute::schemaPtr(xs__schema *schema)
++void xs__attribute::schemaPtr(xs__schema *schema,xs__schema *origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
+ }
+ 
+ xs__schema* xs__attribute::schemaPtr() const
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__attribute::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ void xs__attribute::attributePtr(xs__attribute *attribute)
+ { attributeRef = attribute;
+ }
+@@ -757,7 +808,7 @@
+ }
+ 
+ xs__element::xs__element()
+-{ schemaRef = NULL;
++{ schemaRef = origSchemaRef = NULL;
+   elementRef = NULL;
+   simpleTypeRef = NULL;
+   complexTypeRef = NULL;
+@@ -915,14 +966,20 @@
+   return SOAP_OK;
+ }
+ 
+-void xs__element::schemaPtr(xs__schema *schema)
++void xs__element::schemaPtr(xs__schema *schema,xs__schema *origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
+ }
+ 
+ xs__schema* xs__element::schemaPtr() const
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__element::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ void xs__element::elementPtr(xs__element *element)
+ { elementRef = element;
+ }
+@@ -952,13 +1009,17 @@
+ }
+ 
+ xs__simpleType::xs__simpleType()
+-{ schemaRef = NULL;
++{ schemaRef = origSchemaRef = NULL;
+   level = 0;
+ }
+ 
+ int xs__simpleType::traverse(xs__schema &schema)
+ { if (vflag)
+     cerr << "   Analyzing schema simpleType '" << (name?name:"") << "'" << endl;
++    if (vflag) {
++	const char *sl = schema.sourceLocation();
++    	cerr << "       simpleType '" << (name?name:"") << "' (" << sl << ")" << endl;
++    }
+   schemaRef = &schema;
+   if (list)
+     list->traverse(schema);
+@@ -969,14 +1030,29 @@
+   return SOAP_OK;
+ }
+ 
+-void xs__simpleType::schemaPtr(xs__schema *schema)
++void xs__simpleType::schemaPtr(xs__schema *schema,xs__schema *origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
++
++  if (vflag) {
++      const char *old_sl = NULL;
++      if (origSchemaRef)
++	  old_sl = origSchemaRef->sourceLocation();
++      const char *sl = schema->sourceLocation();
++      fprintf(stderr,"  REPARENTING simpleType '%s' (%s) -> (%s)\n",
++	      (name?name:""),old_sl,sl);
++  }
+ }
+ 
+ xs__schema *xs__simpleType::schemaPtr() const
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__simpleType::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ int xs__simpleType::baseLevel()
+ { if (!level)
+   { if (restriction)
+@@ -1003,7 +1079,7 @@
+ }
+ 
+ xs__complexType::xs__complexType()
+-{ schemaRef = NULL;
++{ schemaRef = origSchemaRef = NULL;
+   level = 0;
+ }
+ 
+@@ -1030,14 +1106,20 @@
+   return SOAP_OK;
+ }
+ 
+-void xs__complexType::schemaPtr(xs__schema *schema)
++void xs__complexType::schemaPtr(xs__schema *schema,xs__schema *origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
+ }
+ 
+ xs__schema *xs__complexType::schemaPtr() const
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__complexType::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ int xs__complexType::baseLevel()
+ { if (!level)
+   { if (simpleContent)
+@@ -1439,7 +1521,7 @@
+ }
+ 
+ xs__seqchoice::xs__seqchoice()
+-{ schemaRef = NULL;
++{ schemaRef = origSchemaRef = NULL;
+ }
+ 
+ int xs__seqchoice::traverse(xs__schema &schema)
+@@ -1451,16 +1533,22 @@
+   return SOAP_OK;
+ }
+ 
+-void xs__seqchoice::schemaPtr(xs__schema *schema)
++void xs__seqchoice::schemaPtr(xs__schema *schema,xs__schema *origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
+ }
+ 
+ xs__schema *xs__seqchoice::schemaPtr() const
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__seqchoice::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ xs__attributeGroup::xs__attributeGroup()
+-{ schemaRef = NULL;
++{ schemaRef = origSchemaRef = NULL;
+   attributeGroupRef = NULL;
+ }
+ 
+@@ -1511,8 +1599,10 @@
+   return SOAP_OK;
+ }
+ 
+-void xs__attributeGroup::schemaPtr(xs__schema *schema)
++void xs__attributeGroup::schemaPtr(xs__schema *schema,xs__schema *origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
+ }
+ 
+ void xs__attributeGroup::attributeGroupPtr(xs__attributeGroup *attributeGroup)
+@@ -1523,6 +1613,10 @@
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__attributeGroup::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ xs__attributeGroup *xs__attributeGroup::attributeGroupPtr() const
+ { return attributeGroupRef;
+ }
+@@ -1536,7 +1630,7 @@
+ }
+ 
+ xs__group::xs__group()
+-{ schemaRef = NULL;
++{ schemaRef = origSchemaRef = NULL;
+   groupRef = NULL;
+ }
+ 
+@@ -1589,14 +1683,20 @@
+   return SOAP_OK;
+ }
+ 
+-void xs__group::schemaPtr(xs__schema *schema)
++void xs__group::schemaPtr(xs__schema *schema,xs__schema *origSchema)
+ { schemaRef = schema;
++  if (!origSchemaRef)
++    origSchemaRef = origSchema;
+ }
+ 
+ xs__schema* xs__group::schemaPtr() const
+ { return schemaRef;
+ }
+ 
++xs__schema *xs__group::origSchemaPtr() const
++{ return origSchemaRef;
++}
++
+ void xs__group::groupPtr(xs__group *group)
+ { groupRef = group;
+ }
+diff -ur gsoap-2.8.orig/gsoap/wsdl/schema.h gsoap-2.8/gsoap/wsdl/schema.h
+--- gsoap-2.8.orig/gsoap/wsdl/schema.h	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/wsdl/schema.h	2012-12-04 21:50:05.987063238 -0700
+@@ -81,6 +81,7 @@
+ 	xs__complexType			*complexType;		// choice
+   private:
+ 	xs__schema			*schemaRef;		// schema to which this belongs
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+   	xs__element			*elementRef;		// traverse() finds ref
+   	xs__simpleType			*simpleTypeRef;		// traverse() finds type or = simpleType above
+   	xs__complexType			*complexTypeRef;	// traverse() finds type or = complexType above
+@@ -88,11 +89,12 @@
+   public:
+ 					xs__element();
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	void				elementPtr(xs__element*);
+ 	void				simpleTypePtr(xs__simpleType*);
+ 	void				complexTypePtr(xs__complexType*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
+ 	xs__element			*elementPtr() const;
+ 	xs__simpleType			*simpleTypePtr() const;
+ 	xs__complexType			*complexTypePtr() const;
+@@ -117,15 +119,17 @@
+ 	xs__simpleType			*simpleType;
+   private:
+ 	xs__schema			*schemaRef;		// schema to which this belongs
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+   	xs__attribute			*attributeRef;		// traverse() finds ref
+   	xs__simpleType			*simpleTypeRef;		// traverse() finds type or = simpleType above
+   public:
+ 					xs__attribute();
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	void				attributePtr(xs__attribute*);
+ 	void				simpleTypePtr(xs__simpleType*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
+ 	xs__attribute			*attributePtr() const;
+ 	xs__simpleType			*simpleTypePtr() const;
+ };
+@@ -174,11 +178,13 @@
+ 	std::vector<xs__contents>	__contents;
+   private:
+ 	xs__schema			*schemaRef;		// schema to which this belongs
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+   public:
+ 					xs__seqchoice();
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
+ };
+ 
+ class xs__group
+@@ -193,13 +199,15 @@
+ 	xs__seqchoice			*sequence;
+   private:
+ 	xs__schema			*schemaRef;		// schema to which this belongs
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+   	xs__group			*groupRef;		// traverse() finds ref
+   public:
+   					xs__group();
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	void				groupPtr(xs__group*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
+ 	xs__group			*groupPtr() const;
+ };
+ 
+@@ -219,13 +227,15 @@
+ 	xs__anyAttribute		*anyAttribute;
+   private:
+ 	xs__schema			*schemaRef;
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+   	xs__attributeGroup		*attributeGroupRef;
+   public:
+ 					xs__attributeGroup();
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	void				attributeGroupPtr(xs__attributeGroup*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
+ 	xs__attributeGroup		*attributeGroupPtr() const;
+ };
+ 
+@@ -262,12 +272,14 @@
+  	xs__union			*union_;	// choice
+   private:
+ 	xs__schema			*schemaRef;
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+ 	int				level;
+   public:
+ 					xs__simpleType();
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
+ 	int				baseLevel();
+ };
+ 
+@@ -390,12 +402,14 @@
+ 	xs__anyAttribute		*anyAttribute;
+   private:
+ 	xs__schema			*schemaRef;
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+   	int				level;
+   public:
+ 					xs__complexType();
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
+ 	int				baseLevel();
+ };
+ 
+@@ -417,12 +431,18 @@
+ 	@xsd__anyURI			schemaLocation;
+   private:
+   	xs__schema			*schemaRef;
++	xs__schema			*origSchemaRef;		// original schema to which this belonged
+   public:
+ 					xs__include();
+   	int				preprocess(xs__schema&);
+   	int				traverse(xs__schema&);
+-	void				schemaPtr(xs__schema*);
++	void				schemaPtr(xs__schema*,xs__schema*);
+ 	xs__schema			*schemaPtr() const;
++	xs__schema			*origSchemaPtr() const;
++	static char			*schemaIncludeLocation(xs__schema *schema);
++	static void			schemaIncludeLocation(xs__schema *schema,const char *location);
++	static xs__schema		*includeLocationSchema(const char *location);
++	static void			includeLocationSchema(const char *location,xs__schema *schema);
+ };
+ 	
+ class xs__redefine
+@@ -492,4 +512,3 @@
+ 
+ extern ostream &operator<<(ostream &o, const xs__schema &e);
+ extern istream &operator>>(istream &i, xs__schema &e);
+-
+diff -ur gsoap-2.8.orig/gsoap/wsdl/service.cpp gsoap-2.8/gsoap/wsdl/service.cpp
+--- gsoap-2.8.orig/gsoap/wsdl/service.cpp	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/wsdl/service.cpp	2012-12-04 20:58:23.785849042 -0700
+@@ -791,6 +791,21 @@
+       fprintf(stream, "#import \"%s.h\"\t// %s = <%s>\n", types.nsprefix(NULL, *u), types.nsprefix(NULL, *u), *u);
+     }
+   }
++  // Generate imports for <xs:include> statements that want it
++  if (definitions.types) {
++      for (MapOfStringToString::const_iterator inci = types.modnameincmap.begin(); inci != types.modnameincmap.end(); ++inci) {
++	  const xs__schema *isch = xs__include::includeLocationSchema((*inci).first);
++	  if (vflag)
++	      fprintf(stderr, "checking if we should do an #import for xs:include %s\n",(*inci).first);
++	  if (isch) {
++	      const char *modname = (*inci).second;
++	      if (vflag)
++		  fprintf(stderr, "doing #import '%s' for xs:include %s\n",modname,(*inci).first);
++	      fprintf(stream, "#import \"%s\"\t// %s replacing xs:include <%s>\n",
++		      modname,modname,(*inci).first);
++	  }
++      }
++  }
+   banner("Schema Namespaces");
+   // Determine if bindings use SOAP 1.2
+   soap12 = false;
+@@ -1025,7 +1040,7 @@
+     { if (vflag)
+         fprintf(stderr, "\nDefining types in %s\n", (*schema4)->targetNamespace);
+       for (vector<xs__complexType>::const_iterator complexType = (*schema4)->complexType.begin(); complexType != (*schema4)->complexType.end(); ++complexType)
+-        types.define((*schema4)->targetNamespace, NULL, *complexType);
++	types.define((*schema4)->targetNamespace, NULL, *complexType);
+       if (vflag)
+         fprintf(stderr, "\nDefining elements in %s\n", (*schema4)->targetNamespace);
+       for (vector<xs__element>::const_iterator element = (*schema4)->element.begin(); element != (*schema4)->element.end(); ++element)
+@@ -1061,7 +1076,7 @@
+         for (vector<xs__simpleType>::iterator simpleType = (*schema)->simpleType.begin(); simpleType != (*schema)->simpleType.end(); ++simpleType)
+         { if ((*simpleType).baseLevel() == baseLevel)
+           { found = true;
+-            types.gen((*schema)->targetNamespace, NULL, *simpleType, false);
++	    types.gen((*schema)->targetNamespace, NULL, *simpleType, false);
+           }
+         }
+         for (vector<xs__element>::iterator element = (*schema)->element.begin(); element != (*schema)->element.end(); ++element)
+diff -ur gsoap-2.8.orig/gsoap/wsdl/types.cpp gsoap-2.8/gsoap/wsdl/types.cpp
+--- gsoap-2.8.orig/gsoap/wsdl/types.cpp	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/wsdl/types.cpp	2012-12-04 22:56:32.642338499 -0700
+@@ -263,6 +263,61 @@
+   return SOAP_OK;
+ }
+ 
++int Types::readIncMap(const char *file)
++{ FILE *fd;
++  char buf[1024], xsd[1024], hname[1024], autogen[1024];
++  const char *s;
++  const char *ss;
++  short copy = 0;
++  strncpy(buf, file, sizeof(buf));
++  fd = fopen(buf, "r");
++  if (!fd && import_path)
++  { strncpy(buf, import_path, sizeof(buf));
++    strncat(buf, "/", sizeof(buf));
++    strncat(buf, file, sizeof(buf));
++    fd = fopen(buf, "r");
++  }
++  if (!fd)
++  { fprintf(stderr, "Cannot open file '%s'\n", buf);
++    return SOAP_EOF;
++  }
++  fprintf(stderr, "Reading xs:include import mappings from map file '%s'\n", buf);
++  while (getline(buf, sizeof(buf), fd))
++  { s = buf;
++    if (copy)
++    { if (*s == ']')
++        copy = 0;
++      else
++        fprintf(stream, "%s\n", buf);
++    }
++    else if (*s == '[')
++      copy = 1;
++    else if (*s && *s != '#')
++    { s = fill(xsd, sizeof(xsd), s, '=');
++      if (*xsd && s && *s != '\0')
++      { s = fill(hname, sizeof(hname), s, '|');
++        if (*xsd && *hname)
++        { ss = estrdup(xsd);
++          modnameincmap[ss] = estrdup(hname);
++	  if (vflag)
++	      fprintf(stderr,"incmodmap: %s %s\n",xsd,hname);
++	  s = fill(autogen, sizeof(autogen), s, 0);
++	  if (*autogen)
++	  { if (strstr(autogen,"true") || strstr(autogen,"True") || strstr(autogen,"TRUE")) 
++	      autogenincmap[ss] = true;
++	    else
++	      autogenincmap[ss] = false;
++	  }
++	  else
++	    autogenincmap[ss] = false;
++	}
++      }
++    }
++  }
++  fclose(fd);
++  return SOAP_OK;
++}
++
+ void Types::init()
+ { snum = 1;
+   unum = 1;
+@@ -471,6 +526,10 @@
+   usetypemap["SOAP_ENV__Reason"] = "struct SOAP_ENV__Reason";
+   if (read(mapfile))
+     fprintf(stderr, "Problem reading type map file '%s'.\nUsing internal type definitions for %s instead.\n\n", mapfile, cflag?"C":"C++");
++
++  if (incmapfile) 
++    if (readIncMap(incmapfile))
++      fprintf(stderr, "Problem reading xs:include map file '%s'; skipping.\n\n", incmapfile);
+ }
+ 
+ const char *Types::nsprefix(const char *prefix, const char *URI)
+@@ -941,6 +1000,19 @@
+ void Types::define(const char *URI, const char *name, const xs__complexType& complexType)
+ { // generate prototype for structs/classes and store name
+   const char *prefix = NULL;
++
++  const char *osl;
++  if (complexType.schemaPtr() && complexType.schemaPtr() != complexType.origSchemaPtr()
++      && (osl = xs__include::schemaIncludeLocation(complexType.origSchemaPtr()))
++      && modnameincmap.count(osl) > 0) {
++      if (vflag)
++	  fprintf(stderr,"NOT defining '%s': assuming in module %s (from xs:include %s)\n",
++		  complexType.name,modnameincmap[osl],osl);
++      fprintf(stream,"// Skipping '%s': assuming in module %s (from xs:include %s)\n",
++	      complexType.name,modnameincmap[osl],osl);
++      return;
++  }
++
+   if (complexType.name)
+     name = complexType.name;
+   else
+@@ -992,6 +1064,19 @@
+ void Types::gen(const char *URI, const char *name, const xs__simpleType& simpleType, bool anonymous)
+ { const char *t = NULL;
+   const char *prefix = NULL;
++
++  const char *osl;
++  if (simpleType.schemaPtr() && simpleType.schemaPtr() != simpleType.origSchemaPtr()
++      && (osl = xs__include::schemaIncludeLocation(simpleType.origSchemaPtr()))
++      && modnameincmap.count(osl) > 0) {
++      if (vflag)
++	  fprintf(stderr,"NOT defining '%s': assuming in module %s (from xs:include %s)\n",
++		  simpleType.name,modnameincmap[osl],osl);
++      fprintf(stream,"// Skipping '%s': assuming in module %s (from xs:include %s)\n",
++	      simpleType.name,modnameincmap[osl],osl);
++      return;
++  }
++
+   if (simpleType.name)
+     name = simpleType.name;
+   else
+@@ -1001,8 +1086,9 @@
+     if (t)
+     { fprintf(stream, "\n/// Imported simpleType \"%s\":%s from typemap %s.\n", URI, name, mapfile?mapfile:"");
+       document(simpleType.annotation);
+-      if (*t)
+-        format(t);
++      if (*t) {
++	  format(t);
++      }
+       else
+         fprintf(stream, "// simpleType definition intentionally left blank.\n");
+       return;
+@@ -1417,7 +1503,7 @@
+       if (!anonymous)
+         t = deftname(TYPEDEF, NULL, strchr(s, '*') != NULL, prefix, URI, name);
+       fprintf(stream, "\n/// union of values \"%s\"\n", simpleType.union_->memberTypes);
+-      if (t)
++      if (t) 
+         fprintf(stream, "typedef %s %s;\n", s, t);
+       else
+       { fprintf(stream, elementformat, s, "");
+@@ -1452,6 +1538,19 @@
+ { const char *t = NULL;
+   const char *prefix = NULL;
+   bool soapflag = false;
++
++  const char *osl;
++  if (complexType.schemaPtr() && complexType.schemaPtr() != complexType.origSchemaPtr()
++      && (osl = xs__include::schemaIncludeLocation(complexType.origSchemaPtr()))
++      && modnameincmap.count(osl) > 0) {
++      if (vflag)
++	  fprintf(stderr,"NOT defining '%s': assuming in module %s (from xs:include %s)\n",
++		  complexType.name,modnameincmap[osl],osl);
++      fprintf(stream,"// Skipping '%s': assuming in module %s (from xs:include %s)\n",
++	      complexType.name,modnameincmap[osl],osl);
++      return;
++  }
++
+   if (complexType.name)
+     name = complexType.name;
+   else
+diff -ur gsoap-2.8.orig/gsoap/wsdl/types.h gsoap-2.8/gsoap/wsdl/types.h
+--- gsoap-2.8.orig/gsoap/wsdl/types.h	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/wsdl/types.h	2012-12-04 16:05:05.253633934 -0700
+@@ -50,6 +50,8 @@
+     MapOfStringToString usetypemap;
+     MapOfStringToString ptrtypemap;
+     MapOfStringToString eqvtypemap;
++    MapOfStringToString modnameincmap;
++    map<const char *,bool> autogenincmap;
+     MapOfPairToString	qnames;	// (URI,name) -> name
+     MapOfStringToString	uris;	// URI -> prefix
+     MapOfStringToNum	syms;	// prefix -> count (ns1, ns2, ...)
+@@ -65,6 +67,7 @@
+     Types();
+     void init();
+     int read(const char *file);
++    int readIncMap(const char *file);
+   private:
+     const char *fname(const char *prefix, const char *URI, const char *qname, SetOfString *reserved, enum Lookup lookup, bool isqname);
+   public:
+diff -ur gsoap-2.8.orig/gsoap/wsdl/wsdl2h.cpp gsoap-2.8/gsoap/wsdl/wsdl2h.cpp
+--- gsoap-2.8.orig/gsoap/wsdl/wsdl2h.cpp	2012-10-13 14:59:39.000000000 -0600
++++ gsoap-2.8/gsoap/wsdl/wsdl2h.cpp	2012-12-04 16:20:16.314696840 -0700
+@@ -87,6 +87,7 @@
+      *proxy_passwd = NULL;
+ const char
+      *mapfile = WSDL_TYPEMAP_FILE,
++     *incmapfile = NULL,
+      *import_path = WSDL2H_IMPORT_PATH,
+      *cwd_path = NULL,
+      *cppnamespace = NULL;
+@@ -354,6 +355,16 @@
+             else
+               fprintf(stderr, "wsdl2h: Option -t requires a type map file argument\n");
+ 	    break;
++          case 'M':
++            a++;
++            g = 0;
++            if (*a)
++              incmapfile = a;
++            else if (i < argc && argv[++i])
++              incmapfile = argv[i];
++            else
++              fprintf(stderr, "wsdl2h: Option -M requires an xs:include map file argument\n");
++	    break;
+ 	  case 'u':
+ 	    uflag = 1;
+ 	    break;
+@@ -384,7 +395,7 @@
+ 	    break;
+           case '?':
+           case 'h':
+-            fprintf(stderr, "Usage: wsdl2h [-a] [-b] [-c] [-d] [-e] [-f] [-g] [-h] [-I path] [-i] [-j] [-k] [-l] [-m] [-N name] [-n name] [-P|-p] [-q name] [-r proxyhost[:port[:uid:pwd]]] [-s] [-t typemapfile] [-u] [-v] [-w] [-W] [-x] [-y] [-z#] [-_] [-o outfile.h] infile.wsdl infile.xsd http://www... ...\n\n");
++            fprintf(stderr, "Usage: wsdl2h [-a] [-b] [-c] [-d] [-e] [-f] [-g] [-h] [-I path] [-i] [-j] [-k] [-l] [-m] [-M incmapfile] [-N name] [-n name] [-P|-p] [-q name] [-r proxyhost[:port[:uid:pwd]]] [-s] [-t typemapfile] [-u] [-v] [-w] [-W] [-x] [-y] [-z#] [-_] [-o outfile.h] infile.wsdl infile.xsd http://www... ...\n\n");
+             fprintf(stderr, "\
+ -a      generate indexed struct names for local elements with anonymous types\n\
+ -b	bi-directional operations to serve one-way response messages (duplex)\n\
+@@ -400,6 +411,8 @@
+ -k      don't generate SOAP_ENV__Header mustUnderstand qualifiers\n\
+ -l      display license information\n\
+ -m      use xsd.h module to import primitive types\n\
++-Mfile  use xs:include map file to prevent included types from being generated\n\
++        (and possibly import'd instead)\n\
+ -Nname  use name for service namespace prefixes and multiple bindings\n\
+ -nname  use name as the base namespace prefix instead of 'ns'\n\
+ -ofile  output to file\n\
