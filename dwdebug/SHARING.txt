@@ -1,6 +1,16 @@
 
 Sharing debuginfo amongst multiple processes:
 
+
+  * (Actually, one shortcut to sharing is to lockdown shared debugfiles
+    -- i.e., to have two modes of sharing.  The first is SHARE_FORK, in
+    which the debugfile must be fully loaded prior to sharing, and then
+    refcnt usage must be disabled by all users -- thus the pages will
+    (mostly) stay shared by the processes (given a CoW fork
+    implementation), especially for large debugfiles.  The second mode
+    would be SHARE_MMAP, which is described below.)
+
+
   * We need a library interface in dwdebug that facilitates sharing
     debugfile data.  This interface will use some slab/other allocator that we
     can target to a specific mmap range.
@@ -22,6 +32,10 @@ Sharing debuginfo amongst multiple processes:
     going to mess with partial loading support because it will require
     growing a shared region -- dicey when we need to make sure we can 
 
+  * Also, we will not do refcnts within shared debugfiles -- the mmaps
+    are read-only, so we can't.  We will rely on a single "refcnt" --
+    the fact that the process has mmap'd the debugfile; the server will
+    know this and not change anything about the debugfile.
 
   * CRAP: the glib, judy, and libelf data.  Maybe we'd better just
     figure a way to shm_open and mmap the heap of each process, and
