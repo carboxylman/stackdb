@@ -34,8 +34,6 @@
  * the already-encoded version.
  */
 
-GHashTable *debuginfo_rpc_debugfiles;
-GHashTable *debuginfo_rpc_binaries;
 /*
  * We don't check error codes for locking this mutex; don't need to
  * since the only way it could fail (unless the mutex structure gets
@@ -49,30 +47,24 @@ static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .doMultiRef = 0,
 };
 
+static int init_done = 0;
+
 void debuginfo_rpc_init(void) {
-    if (!debuginfo_rpc_debugfiles)
-	debuginfo_rpc_debugfiles = \
-	    g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-    if (!debuginfo_rpc_binaries) 
-	debuginfo_rpc_binaries = \
-	    g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    if (init_done)
+	return;
+
+    dwdebug_init();
+
+    init_done = 1;
 }
 
 void debuginfo_rpc_fini(void) {
-    GHashTableIter iter;
-    struct debugfile *df;
+    if (!init_done)
+	return;
 
-    if (debuginfo_rpc_debugfiles) {
-	g_hash_table_iter_init(&iter,debuginfo_rpc_debugfiles);
-	while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df))
-	    debugfile_free(df,1);
-	g_hash_table_destroy(debuginfo_rpc_debugfiles);
-	debuginfo_rpc_debugfiles = NULL;
-    }
-    if (!debuginfo_rpc_binaries) {
-	g_hash_table_destroy(debuginfo_rpc_binaries);
-	debuginfo_rpc_binaries = NULL;
-    }
+    dwdebug_fini();
+
+    init_done = 0;
 }
 
 #define DEF_REFSTACK_SIZE 32
@@ -80,11 +72,11 @@ void debuginfo_rpc_fini(void) {
 int vmi1__ListDebugFiles(struct soap *soap,
 			 struct vmi1__DebugFileOptsT *opts,
 			 struct vmi1__DebugFiles *r) {
-    GHashTableIter iter;
     struct debugfile *df;
     int i;
     GHashTable *reftab;
     struct array_list *refstack;
+    struct array_list *loaded_list;
 
     debuginfo_rpc_init();
 
@@ -96,7 +88,8 @@ int vmi1__ListDebugFiles(struct soap *soap,
 
     pthread_mutex_lock(&debuginfo_rpc_mutex);
 
-    r->__size_debugFile = g_hash_table_size(debuginfo_rpc_debugfiles);
+    loaded_list = debugfile_get_loaded_debugfiles();
+    r->__size_debugFile = loaded_list ? array_list_len(loaded_list) : 0;
     if (r->__size_debugFile == 0) {
 	r->debugFile = NULL;
 	pthread_mutex_unlock(&debuginfo_rpc_mutex);
@@ -107,15 +100,13 @@ int vmi1__ListDebugFiles(struct soap *soap,
     refstack = array_list_create(DEF_REFSTACK_SIZE);
     r->debugFile = soap_malloc(soap,r->__size_debugFile * sizeof(*r->debugFile));
 
-    g_hash_table_iter_init(&iter,debuginfo_rpc_debugfiles);
-    i = 0;
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df)) {
+    array_list_foreach(loaded_list,i,df) 
 	r->debugFile[i] = d_debugfile_to_x_DebugFileT(soap,df,opts,reftab,refstack,0);
-	++i;
-    }
 
     array_list_free(refstack);
     g_hash_table_destroy(reftab);
+
+    array_list_free(loaded_list);
 
     pthread_mutex_unlock(&debuginfo_rpc_mutex);
     return SOAP_OK;
@@ -159,16 +150,9 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
 				   "Bad debugfile or name!");
     }
 
-    debugfile = debugfile_filename_create(filename,DEBUGFILE_TYPE_MAIN);
-    if (!debugfile) 
-	return soap_receiver_fault(soap,"Could not create debugfile!",
-				   "Could not create debugfile!");
-
-    /* Load the DWARF symbols. */
-    if (debugfile_load(debugfile,NULL)) {
+    if (!(debugfile = debugfile_get(filename,NULL,NULL))) 
 	return soap_receiver_fault(soap,"Could not load debugfile!",
 				   "Could not load debugfile!");
-    }
 
     lsymbol = debugfile_lookup_sym(debugfile,name,NULL,NULL,SYMBOL_TYPE_NONE);
 
@@ -210,17 +194,9 @@ int vmi1__LookupSymbol(struct soap *soap,
 	return soap_receiver_fault(soap,"Bad debugfile or name!",
 				   "Bad debugfile or name!");
     }
-
-    debugfile = debugfile_filename_create(filename,DEBUGFILE_TYPE_MAIN);
-    if (!debugfile) 
-	return soap_receiver_fault(soap,"Could not create debugfile!",
-				   "Could not create debugfile!");
-
-    /* Load the DWARF symbols. */
-    if (debugfile_load(debugfile,NULL)) {
+    if (!(debugfile = debugfile_get(filename,NULL,NULL))) 
 	return soap_receiver_fault(soap,"Could not load debugfile!",
 				   "Could not load debugfile!");
-    }
 
     lsymbol = debugfile_lookup_sym(debugfile,name,NULL,NULL,SYMBOL_TYPE_NONE);
 

@@ -26,15 +26,9 @@ symlist_init(struct symmap map[], int nmap)
 
     for (i = 0; i < nmap; i++) {
 	if (map[i].symfile) {
-	    dbfile = debugfile_filename_create(map[i].symfile,
-					       DEBUGFILE_TYPE_MAIN);
+	    dbfile = debugfile_get(map[i].symfile,NULL,NULL);
 	    if (!dbfile) {
-		fprintf(stderr, "ERROR: could not create debugfile from %s!\n",
-			map[i].symfile);
-		goto bad;
-	    }
-	    if (debugfile_load(dbfile, &opts)) {
-		fprintf(stderr, "ERROR: could not read symbols from %s!\n",
+		fprintf(stderr, "ERROR: could not load debugfile from %s!\n",
 			map[i].symfile);
 		goto bad;
 	    }

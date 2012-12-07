@@ -44,6 +44,26 @@
 
 #include "memory-access.h"
 
+debugfile_type_t elf_get_debugfile_type_t(Elf *elf) {
+    GElf_Ehdr ehdr;
+
+    if (!gelf_getehdr(elf,&ehdr)) {
+	verror("gelf_getehdr: %s\n",elf_errmsg(elf_errno()));
+	return DEBUGFILE_TYPE_NONE;
+    }
+
+    if (ehdr.e_type == ET_EXEC)
+	return DEBUGFILE_TYPE_MAIN;
+    else if (ehdr.e_type == ET_DYN)
+	return DEBUGFILE_TYPE_SHAREDLIB;
+    else if (ehdr.e_type == ET_REL)
+	return DEBUGFILE_TYPE_LIB;
+    else {
+	verror("unrecognized ELF type %d!\n",ehdr.e_type);
+	return DEBUGFILE_TYPE_NONE;
+    }
+}
+
 int elf_get_base_addrs(Elf *elf,
 		       ADDR *base_virt_addr_saveptr,
 		       ADDR *base_phys_addr_saveptr) {
@@ -308,12 +328,8 @@ int elf_is_dynamic_exe(Elf *elf) {
     return 0;
 }
 
-struct section {
-    int flags;
-    
-};
-
-int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile) {
+int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
+			     char *elf_filename) {
     Elf_Scn *scn = NULL;
     size_t shstrndx;
     GElf_Ehdr ehdr_mem;

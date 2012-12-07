@@ -4329,6 +4329,11 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	      debugfile->filename);
     }
 
+    /*
+     * For now, the symtab is loaded outside.  Leave this in case we
+     * need it.
+     */
+#if 0
     if (!symtab_get_size_simple(debugfile->elf_symtab)) {
 	/* If we couldn't load from the actual ELF binary, load from the
 	 * debuginfo file instead.  Neither may work...
@@ -4341,6 +4346,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		   "elf_symtab load succeeded for debugfile %s!\n",
 		   debugfile->filename);
     }
+#endif
 
     /* now rescan for debug_info sections */
     scn = NULL;
@@ -4409,40 +4415,21 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     return DWARF_CB_ABORT;
 }
 
-static struct debugfile_load_opts default_load_opts = {
-    .debugfile_filter = NULL,
-    .srcfile_filter = NULL,
-    .symbol_filter = NULL,
-    .flags = DEBUGFILE_LOAD_FLAG_NONE
-};
-
 /*
  * Primary debuginfo interface.  Given an ELF filename, load all its
  * debuginfo into the supplied debugfile using elfutils libs.
  */
-int debugfile_load(struct debugfile *debugfile,
-		   struct debugfile_load_opts *opts) {
+int debugfile_load_debuginfo(struct debugfile *debugfile) {
     int fd;
     Dwfl *dwfl;
     Dwfl_Module *mod;
     char *filename = debugfile->filename;
+    struct debugfile_load_opts *opts = debugfile->opts;
 
     if ((fd = open(filename,0,O_RDONLY)) < 0) {
 	verror("open %s: %s\n",filename,strerror(errno));
 	return -1;
     }
-
-    /* Set some defaults so we don't have to keep checking opts == NULL. */
-    if (!opts) {
-	opts = &default_load_opts;
-	/*
-	opts = (struct debugfile_load_opts *)malloc(sizeof(*opts));
-	memset(opts,0,sizeof(*debugfile->opts));
-	opts->flags = DEBUGFILE_LOAD_FLAG_NONE;
-	*/
-    }
-    /* Save our load options. */
-    debugfile->opts = opts;
 
     /* 
      * Don't try to find any extra debuginfo; we'll handle that elsewhere.

@@ -147,10 +147,12 @@ typedef enum {
 } debugfile_load_flags_t;
 
 typedef enum {
-    DEBUGFILE_TYPE_KERNEL      = 0,
-    DEBUGFILE_TYPE_KMOD        = 1,
-    DEBUGFILE_TYPE_MAIN        = 2,
-    DEBUGFILE_TYPE_SHAREDLIB   = 3,
+    DEBUGFILE_TYPE_NONE        = 0,
+    DEBUGFILE_TYPE_KERNEL      = 1,
+    DEBUGFILE_TYPE_KMOD        = 2,
+    DEBUGFILE_TYPE_MAIN        = 3,
+    DEBUGFILE_TYPE_LIB         = 4,
+    DEBUGFILE_TYPE_SHAREDLIB   = 5,
     __DEBUGFILE_TYPE_MAX,
 } debugfile_type_t;
 extern char *DEBUGFILE_TYPE_STRINGS[];
@@ -372,17 +374,36 @@ extern char *RANGE_TYPE_STRINGS[];
 /**
  ** Debugfiles.
  **/
-struct debugfile *debugfile_filename_create(char *filename,debugfile_type_t type);
-struct debugfile *debugfile_create(char *filename,debugfile_type_t type,
-				   char *name,char *version,char *idstr);
-/* Populate a libsymd debugfile with DWARF debuginfo from an ELF file. */
-int debugfile_load(struct debugfile *debugfile,
-		   struct debugfile_load_opts *opts);
+/*
+ * This is the only function users should call to create debugfiles.  It
+ * tries to share already-loaded debugfiles based off a global cache;
+ * handles the case where the user passes in a file with debuginfo
+ * embedded in it, OR the case when they pass in an executable or
+ * library (by attempting to track down the debuginfo file).  In the
+ * latter case, @debug_filename_saveptr will be set if it is non-NULL.
+ */
+struct debugfile *debugfile_get(char *filename,
+				struct array_list *opts_list,
+				char **debug_filename_saveptr);
+struct array_list *debugfile_get_loaded_debugfiles();
+
+/* Internal lib function. */
+struct debugfile *debugfile_create(debugfile_type_t dftype,char *filename,
+				   struct debugfile_load_opts *opts,
+				   char *name,char *version,char *binfile);
+/* Load DWARF debuginfo into a debugfile. */
+int debugfile_load_debuginfo(struct debugfile *debugfile);
+/* Load ELF symtab info into a debugfile. */
+int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
+			     char *elf_filename);
+
 int debugfile_expand_symbol(struct debugfile *debugfile,struct symbol *symbol);
 int debugfile_expand_cu(struct debugfile *debugfile,struct symtab *cu_symtab,
 			struct array_list *die_offsets,int expand_dies);
 
 struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr);
+int debugfile_load_opts_checklist(struct array_list *opts_list,char *name,
+				  struct debugfile_load_opts **match_saveptr);
 void debugfile_load_opts_free(struct debugfile_load_opts *opts);
 
 char *debugfile_build_idstr(char *filename,char *name,char *version);
@@ -877,6 +898,7 @@ const char *dwarf_discr_list_string(unsigned int code);
 /*
  * Elf util stuff.
  */
+debugfile_type_t elf_get_debugfile_type_t(Elf *elf);
 int elf_get_base_addrs(Elf *elf,
 		       ADDR *base_virt_addr_saveptr,
 		       ADDR *base_phys_addr_saveptr);
@@ -887,7 +909,6 @@ int elf_get_debuginfo_info(Elf *elf,
 			   uint32_t *gnu_debuglinkfile_crc_saveptr);
 int elf_get_arch_info(Elf *elf,int *wordsize,int *endian);
 int elf_is_dynamic_exe(Elf *elf);
-int elf_load_symtab(Elf *elf,char *elf_filename,struct debugfile *debugfile);
 
 /**
  ** Data structure definitions.
@@ -953,16 +974,6 @@ struct debugfile {
      * Programs probably won't have versions
      */
     char *version;
-
-    struct list_head debugfile;
-
-    /* 
-     * If this debugfile is for a kernel mod, its
-     * "parent" is pointed to here.  We need this so that we can share
-     * type info for the kernel modules, which seems like a perfectly
-     * valid thing to do.
-     */
-    struct debugfile *kernel_debugfile;
 
     /*
      * The string table for this file.  All ELF string pointers are

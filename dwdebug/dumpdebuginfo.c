@@ -52,15 +52,12 @@ int main(int argc,char **argv) {
     int doreverse = 0;
     char *endptr = NULL;
     int nofree = 0;
-
-    int dlo_idx = 0;
-    struct debugfile_load_opts **dlo_list = NULL;
-    Elf *elf = NULL;
-    int fd = -1;
     struct lsymbol *s;
     struct lsymbol *s2;
     struct symbol *is;
     struct symbol *ps;
+    struct array_list *opts_list = NULL;
+    struct debugfile_load_opts *opts;
 
     dwdebug_init();
 
@@ -90,16 +87,24 @@ int main(int argc,char **argv) {
 	case 'F':
 	    optargc = strdup(optarg);
 
-	    struct debugfile_load_opts *opts = \
-		debugfile_load_opts_parse(optarg);
+	    opts = debugfile_load_opts_parse(optargc);
 
-	    if (!opts)
+	    if (!opts) {
+		verror("bad debugfile_load_opts '%s'!\n",optargc);
+		free(optargc);
+		array_list_foreach(opts_list,i,opts) {
+		    debugfile_load_opts_free(opts);
+		}
+		array_list_free(opts_list);
+
 		goto dlo_err;
+	    }
+	    else {
+		if (!opts_list)
+		    opts_list = array_list_create(4);
 
-	    dlo_list = realloc(dlo_list,sizeof(opts)*(dlo_idx + 2));
-	    dlo_list[dlo_idx] = opts;
-	    ++dlo_idx;
-	    dlo_list[dlo_idx] = NULL;
+		array_list_append(opts_list,opts);
+	    }
 	    break;
     dlo_err:
 	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
@@ -139,48 +144,8 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
-    debugfile = debugfile_filename_create(filename,DEBUGFILE_TYPE_MAIN);
+    debugfile = debugfile_get(filename,opts_list,NULL);
     if (!debugfile) {
-	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
-		filename);
-	exit(-1);
-    }
-
-    /* Figure out which of them applies to our debugfile. */
-    struct debugfile_load_opts *opts = NULL;
-    if (dlo_list) {
-	int accept;
-	for (i = 0; dlo_list[i]; ++i) {
-	    /* We only care if there was a match (or no match and the
-	     * filter defaulted to accept) that accepted our filename
-	     * for processing.
-	     */
-	    rfilter_check(dlo_list[i]->debugfile_filter,filename,&accept,NULL);
-	    if (accept == RF_ACCEPT) {
-		opts = dlo_list[i];
-		break;
-	    }
-	}
-    }
-
-    /* Load the ELF symbols. */
-    elf_version(EV_CURRENT);
-    if ((fd = open(filename,0,O_RDONLY)) < 0) {
-	vwarn("ELF fd open %s: %s\n",filename,strerror(errno));
-    }
-    else if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	vwarn("elf_begin %s: %s\n",filename,elf_errmsg(elf_errno()));
-    }
-    else if (elf_load_symtab(elf,filename,debugfile))
-	vwarn("could not load ELF symtab into debugfile %s\n",
-	      debugfile->idstr);
-    if (elf)
-	elf_end(elf);
-    if (fd > -1)
-	close(fd);
-
-    /* Load the DWARF symbols. */
-    if (debugfile_load(debugfile,opts)) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
 		filename);
 	exit(-1);

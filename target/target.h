@@ -107,11 +107,9 @@ struct debugfile *target_reuse_debugfile(struct target *target,
 struct debugfile *target_create_debugfile(struct target *target,
 					  char *filename,
 					  debugfile_type_t type);
-int target_load_and_associate_debugfile(struct target *target,
-					struct memregion *region,
-					struct debugfile *debugfile,
-					struct debugfile_load_opts *opts);
-void target_disassociate_debugfile(struct debugfile *debugfile);
+int target_associate_debugfile(struct target *target,
+			       struct memregion *region,
+			       struct debugfile *debugfile);
 
 /*
  * Given a range and some flags, does the actual target_addr_read after

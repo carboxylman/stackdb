@@ -2258,31 +2258,13 @@ static int linux_userproc_updateregions(struct target *target,
     return -1;
 }
 
-static int DEBUGPATHLEN = 2;
-static char *DEBUGPATH[] = { 
-    "/usr/lib/debug",
-    "/usr/local/lib/debug"
-};
-
 static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region) {
     Elf *elf = NULL;
-    int has_debuginfo = 0;
-    char *buildid = NULL;
-    char *debuglinkfile = NULL;
-    uint32_t debuglinkfilecrc = 0;
     int fd = -1;
-    int i;
-    int len;
-    int retval = 0;
-    char pbuf[PATH_MAX];
-    char *finalfile = NULL;
-    char *regionfiledir = NULL;
-    char *tmp;
-    struct stat stbuf;
+    int retval = -1;
     struct debugfile *debugfile = NULL;
-    struct debugfile_load_opts *opts = NULL;
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
 
@@ -2295,16 +2277,6 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	return 0;
     }
 
-    /*
-     * Open up the actual ELF binary and look for three sections to inform
-     * our search.  First, if there is a nonzero .debug_info section,
-     * load that.  Second, if there is a .note.gnu.build-id section,
-     * read the build id and decompose it into a two-byte dir/file.debug
-     * string that we look for in our search path (i.e., we look for
-     * $PATH/.build-id/b1/b2..bX.debug).  Otherwise, if there is a
-     * .gnu_debuglink section, we read that section and try to find a
-     * matching debug file. 
-     */
     if (!region->name || strlen(region->name) == 0)
 	return -1;
 
@@ -2316,7 +2288,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     elf_version(EV_CURRENT);
     if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
 	verror("elf_begin %s: %s\n",region->name,elf_errmsg(elf_errno()));
-	goto errout;
+	goto out;
     }
 
     /* This should be in load_regions, but we've already got the ELF
@@ -2324,127 +2296,24 @@ static int linux_userproc_loaddebugfiles(struct target *target,
      */
     if (elf_get_base_addrs(elf,&region->base_virt_addr,&region->base_phys_addr)) {
 	verror("elf_get_base_addrs %s failed!\n",region->name);
-	goto errout;
+	goto out;
     }
 
-    if (elf_get_debuginfo_info(elf,&has_debuginfo,&buildid,&debuglinkfile,
-			       &debuglinkfilecrc)) {
-	verror("elf_get_debuginfo_info %s failed!\n",region->name);
-	goto errout;
-    }
+    debugfile = debugfile_get(region->name,
+			      target->spec->debugfile_load_opts_list,NULL);
+    if (!debugfile)
+	goto out;
 
-    vdebug(5,LOG_T_LUP,"ELF info for region file %s:\n",region->name);
-    vdebug(5,LOG_T_LUP,"    has_debuginfo=%d,buildid='",has_debuginfo);
-    if (buildid) {
-	len = (int)strlen(buildid);
-	for (i = 0; i < len; ++i)
-	    vdebugc(5,LOG_T_LUP,"%hhx",buildid[i]);
-    }
-    vdebugc(5,LOG_T_LUP,"'\n");
-    vdebug(5,LOG_T_LUP,"    debuglinkfile=%s,debuglinkfilecrc=0x%x\n",
-	   debuglinkfile,debuglinkfilecrc);
+    if (target_associate_debugfile(target,region,debugfile)) 
+	goto out;
 
-    if (has_debuginfo) {
-	finalfile = region->name;
-    }
-
-    if (!finalfile && buildid) {
-	for (i = 0; i < DEBUGPATHLEN; ++i) {
-	    snprintf(pbuf,PATH_MAX,"%s/.build-id/%02hhx/%s.debug",
-		     DEBUGPATH[i],*buildid,(char *)(buildid+1));
-	    if (stat(pbuf,&stbuf) == 0) {
-		finalfile = pbuf;
-		break;
-	    }
-	}
-    }
-
-    if (!finalfile && debuglinkfile) {
-	/* Find the containing dir path so we can use it in our search
-	 * of the standard debug file dir infrastructure.
-	 */
-	regionfiledir = strdup(region->name);
-	tmp = rindex(regionfiledir,'/');
-	if (tmp)
-	    *tmp = '\0';
-	for (i = 0; i < DEBUGPATHLEN; ++i) {
-	    snprintf(pbuf,PATH_MAX,"%s/%s/%s",
-		     DEBUGPATH[i],regionfiledir,debuglinkfile);
-	    if (stat(pbuf,&stbuf) == 0) {
-		finalfile = pbuf;
-		break;
-	    }
-	}
-    }
-
-    if (!finalfile) {
-	verror("could not find any debuginfo sources from ELF file %s!\n",
-	       region->name);
-	goto errout;
-    }
-    else if (!(opts = \
-	       target_get_debugfile_load_opts(target,region,finalfile,
-					      region->type == REGION_TYPE_MAIN ? \
-					      DEBUGFILE_TYPE_MAIN :	\
-					      DEBUGFILE_TYPE_SHAREDLIB))
-	     && errno) {
-	vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_LUP,
-	       "opts prohibit loading of debugfile for region %s\n",
-	       region->name);
-	/* "Success", fall out. */
-    }
-    else if ((debugfile = \
-	      target_reuse_debugfile(target,region,finalfile,
-				     region->type == REGION_TYPE_MAIN ? \
-				     DEBUGFILE_TYPE_MAIN :		\
-				     DEBUGFILE_TYPE_SHAREDLIB))) {
-	vdebug(2,LOG_D_DFILE | LOG_T_TARGET | LOG_T_LUP,
-	       "reusing debugfile %s for region %s\n",
-	       debugfile->idstr,region->name);
-	/* Success, just fall out. */
-    }
-    else {
-	/*
-	 * Need to create a new debugfile.  But first, we try to
-	 * populate the "debugfile's" ELF symtab/strtab using the ELF
-	 * binary, not debuginfo.  We want the internal ELF symbols, and
-	 * some distros put those in the debuginfo file; some put them
-	 * in the actual executable/lib.  So we check the actual binary
-	 * first.
-	 */
-	debugfile = target_create_debugfile(target,finalfile,
-					    region->type == REGION_TYPE_MAIN ? \
-					    DEBUGFILE_TYPE_MAIN :	\
-					    DEBUGFILE_TYPE_SHAREDLIB);
-	if (!debugfile)
-	    goto errout;
-
-	if (elf_load_symtab(elf,region->name,debugfile))
-	    vwarn("could not load ELF symtab into debugfile %s\n",
-		  debugfile->idstr);
-
-	if (target_load_and_associate_debugfile(target,region,debugfile,opts)) 
-	    goto errout;
-    }
-
-    /* Success!  Skip past errout. */
     retval = 0;
-    goto out;
-
- errout:
-    retval = -1;
 
  out:
     if (elf)
 	elf_end(elf);
     if (fd > -1)
 	close(fd);
-    if (regionfiledir) 
-	free(regionfiledir);
-    if (buildid)
-	free(buildid);
-    if (debuglinkfile)
-	free(debuglinkfile);
 
     return retval;
 }
