@@ -312,4 +312,14 @@ static inline void array_list_deep_free(struct array_list *list) {
     array_list_free(list);
 }
 
+#define array_list_foreach(alist,lpc,placeholder)			\
+    for (lpc = 0, (placeholder) = (typeof(placeholder))alist->list[lpc]; \
+	 alist->len - lpc > 0;						\
+	 ++lpc) 
+
+#define array_list_foreach_continue(alist,lpc,placeholder)		\
+    for ((placeholder) = (typeof(placeholder))alist->list[lpc];		\
+	 alist->len - lpc > 0;						\
+	 ++lpc) 
+
 #endif
