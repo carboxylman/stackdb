@@ -152,6 +152,8 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 	return EINVAL;
     }
 
+    memset(&tstate,0,sizeof(tstate));
+
     tstate.driver_state = driver_state;
     tstate.spec = target_build_spec(TARGET_TYPE_NONE,TARGET_MODE_NONE);
 
