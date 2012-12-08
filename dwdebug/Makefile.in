@@ -47,8 +47,8 @@ HEADERS := $(SRCDIR)/dwdebug.h \
 
 OBJECTS := debug.lo dwarf_debuginfo.lo dwarf_elfutils.lo debug_elf.lo
 LIBRARIES := libdwdebug.a libdwdebug.so.$(LIBVERSION)
-STATICLIBS := libdwdebug.a $(OBJDIR)/lib/libvmilib.a 
-DYNAMICLIBS := $(OBJDIR)/lib/libvmilib.so libdwdebug.so
+STATICLIBS :=  $(OBJDIR)/lib/libvmilib.a 
+DYNAMICLIBS := $(OBJDIR)/lib/libvmilib.so
 SWIGLIBS := _dwdebug.so
 
 PROGRAMS := dumpdebuginfo
@@ -66,7 +66,7 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-libdwdebug.a:	$(HEADERS) $(OBJECTS)
+libdwdebug.a:	$(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libdwdebug.a $(OBJECTS)
 
 dwdebug.lo:	$(HEADERS) $(OBJECTS)
@@ -88,10 +88,10 @@ dwdebug_wrap_py.o: dwdebug_wrap_py.c $(SRCDIR)/dwdebug.h
 	$(CC) -fPIC -c $(PYCFLAGS) $<
 
 _dwdebug.so:	dwdebug_wrap_py.o
-	ld -shared $^ $(DYNAMICLIBS) $(LDFLAGS) -o $@
+	ld -shared $^ $(DYNAMICLIBS) libdwdebug.so $(LDFLAGS) -o $@
 
 dumpdebuginfo: $(HEADERS) $(LIBRARIES) dumpdebuginfo.lo $(STATICLIBS)
-	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
+	$(CC) -o $@ $(CFLAGS) $@.o libdwdebug.a $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd dwdebug.so $(DESTDIR)$(INSTALL_LIBDIR)/

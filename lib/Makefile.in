@@ -32,7 +32,8 @@ include $(OBJDIR)/Makeconf
 CFLAGS += -I$(TOP_SRCDIR)/include -I$(OBJDIR)
 
 HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
-	$(TOP_SRCDIR)/include/log.h $(TOP_SRCDIR)/include/clfit.h
+	$(TOP_SRCDIR)/include/log.h $(TOP_SRCDIR)/include/clfit.h \
+	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/output.h
 
 OBJECTS := log.lo clfit.lo
 LIBRARIES := libvmilib.a libvmilib.so
@@ -50,10 +51,10 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-libvmilib.a:	$(HEADERS) $(OBJECTS)
+libvmilib.a:	$(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libvmilib.a $(OBJECTS)
 
-vmilib.lo:	$(HEADERS) $(OBJECTS)
+vmilib.lo:	$(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
 
 libvmilib.so.$(LIBVERSION): vmilib.lo
