@@ -30,6 +30,8 @@
 /* These are the targets we know about. */
 static GHashTable *target_tab = NULL;
 
+static int next_target_id = 1;
+
 static int init_done = 0;
 
 void target_init(void) {
@@ -283,6 +285,125 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     }
 
     return 0;
+}
+
+void target_free(struct target *target) {
+    struct addrspace *space;
+    struct addrspace *tmp;
+    int rc;
+
+    vdebug(5,LOG_T_TARGET,"freeing target(%s)\n",target->type);
+
+    if (target_tab)
+	g_hash_table_remove(target_tab,(gpointer)(uintptr_t)target->id);
+
+    vdebug(5,LOG_T_TARGET,"fini target(%s)\n",target->type);
+    if ((rc = target->ops->fini(target))) {
+	verror("fini target(%s) failed; not finishing free!\n",target->type);
+	return;
+    }
+
+    g_hash_table_destroy(target->threads);
+
+    g_hash_table_destroy(target->mmaps);
+
+    /* Unload the debugfiles we might hold, if we can */
+    list_for_each_entry_safe(space,tmp,&target->spaces,space) {
+	RPUT(space,addrspace);
+    }
+
+    if (target->breakpoint_instrs)
+	free(target->breakpoint_instrs);
+
+    if (target->ret_instrs)
+	free(target->ret_instrs);
+
+    if (target->full_ret_instrs)
+	free(target->full_ret_instrs);
+
+    free(target);
+}
+
+void ghash_mmap_entry_free(gpointer data) {
+    struct mmap_entry *mme = (struct mmap_entry *)data;
+
+    free(mme);
+}
+
+struct target *target_create(char *type,void *state,struct target_ops *ops,
+			     struct target_spec *spec) {
+    struct target *retval = malloc(sizeof(struct target));
+    memset(retval,0,sizeof(struct target));
+
+    retval->id = next_target_id++;
+
+    if (target_tab)
+	g_hash_table_insert(target_tab,(gpointer)(uintptr_t)retval->id,retval);
+
+    retval->type = type;
+    retval->state = state;
+    retval->ops = ops;
+    retval->spec = spec;
+
+    INIT_LIST_HEAD(&retval->spaces);
+
+    retval->mmaps = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					  /* No names to free! */
+					  NULL,ghash_mmap_entry_free);
+
+    retval->code_ranges = clrange_create();
+
+    retval->threads = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					    /* No names to free! */
+					    NULL,NULL);
+
+    retval->soft_probepoints = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+						     NULL,NULL);
+    //*(((gint *)retval->soft_probepoints)+1) = 1;
+    //*(((gint *)retval->soft_probepoints)) = 0;
+
+    /*
+     * Hm, I think we should do this by default, and let target backends
+     * override it if they need.
+     */
+    retval->bp_handler = probepoint_bp_handler;
+    retval->ss_handler = probepoint_ss_handler;
+
+    return retval;
+}
+
+struct array_list *target_get_existing_targets(void) {
+    struct array_list *retval;
+    GHashTableIter iter;
+    struct target *t;
+
+    if (!target_tab || g_hash_table_size(target_tab) == 0)
+	return NULL;
+
+    retval = array_list_create(g_hash_table_size(target_tab));
+    g_hash_table_iter_init(&iter,target_tab);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&t)) 
+	array_list_append(retval,t);
+
+    return retval;
+}
+
+struct mmap_entry *target_lookup_mmap_entry(struct target *target,
+					    ADDR base_addr) {
+    /* XXX: fill later. */
+    return NULL;
+}
+
+void target_attach_mmap_entry(struct target *target,
+			      struct mmap_entry *mme) {
+    /* XXX: fill later. */
+    return;
+}
+
+void target_release_mmap_entry(struct target *target,
+			       struct mmap_entry *mme) {
+    /* XXX: fill later. */
+    return;
 }
 
 /*

@@ -540,15 +540,6 @@ char *target_thread_tostring(struct target *target,tid_t tid,int detail,
 void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail);
 void target_dump_all_threads(struct target *target,FILE *stream,int detail);
 
-void target_free(struct target *target);
-struct target *target_create(char *type,void *state,struct target_ops *ops,
-			     struct target_spec *spec);
-struct mmap_entry *target_lookup_mmap_entry(struct target *target,
-					    ADDR base_addr);
-void target_attach_mmap_entry(struct target *target,
-			      struct mmap_entry *mme);
-void target_release_mmap_entry(struct target *target,
-			       struct mmap_entry *mme);
 REG target_get_unused_debug_reg(struct target *target,tid_t tid);
 int target_set_hw_breakpoint(struct target *target,tid_t tid,REG reg,ADDR addr);
 int target_set_hw_watchpoint(struct target *target,tid_t tid,REG reg,ADDR addr,
@@ -1171,6 +1162,12 @@ struct target {
     REG fbregno;
     REG spregno;
     REG ipregno;
+
+    /*
+     * Each target has a unique integer ID; this is the key into the
+     * target hashtable, for instance.
+     */
+    int id;
 
     void *state;
     struct target_ops *ops;

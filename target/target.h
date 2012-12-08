@@ -87,6 +87,16 @@ extern char *REGION_TYPE_STRINGS[];
 /**
  ** Target functions.
  **/
+struct target *target_create(char *type,void *state,struct target_ops *ops,
+			     struct target_spec *spec);
+void target_free(struct target *target);
+struct mmap_entry *target_lookup_mmap_entry(struct target *target,
+					    ADDR base_addr);
+void target_attach_mmap_entry(struct target *target,
+			      struct mmap_entry *mme);
+void target_release_mmap_entry(struct target *target,
+			       struct mmap_entry *mme);
+
 unsigned char *target_generic_fd_read(int fd,
 				      ADDR addr,
 				      unsigned long length,
