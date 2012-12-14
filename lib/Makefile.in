@@ -30,12 +30,16 @@ SUBDIRS =
 include $(OBJDIR)/Makeconf
 
 CFLAGS += -I$(TOP_SRCDIR)/include -I$(OBJDIR)
+CFLAGS += $(GLIB_CFLAGS)
+
+LDFLAGS += $(GLIB_LDFLAGS)
 
 HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/log.h $(TOP_SRCDIR)/include/clfit.h \
+	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/output.h
 
-OBJECTS := log.lo clfit.lo
+OBJECTS := log.lo clfit.lo waitpipe.lo evloop.lo
 LIBRARIES := libvmilib.a libvmilib.so
 
 INST_INC = 
@@ -52,10 +56,10 @@ include $(TOP_SRCDIR)/Makerules
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
 libvmilib.a:	$(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libvmilib.a $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libvmilib.a $(OBJECTS) ${LDFLAGS}
 
 vmilib.lo:	$(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS) ${LDFLAGS}
 
 libvmilib.so.$(LIBVERSION): vmilib.lo
 	$(CP) -f vmilib.lo $@

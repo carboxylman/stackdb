@@ -53,9 +53,10 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
+	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
 
-TESTS := clrange clmatch
+TESTS := clrange clmatch evloop_waitpipe
 
 STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a \
 	 $(OBJDIR)/target/libtarget.a
@@ -73,6 +74,7 @@ include $(TOP_SRCDIR)/Makerules
 test:	$(TESTS)
 	./clrange
 	./clmatch
+	./evloop_waitpipe
 
 install: def-install install-subdirs
 
