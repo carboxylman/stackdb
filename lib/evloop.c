@@ -29,11 +29,13 @@
 #include <errno.h>
 #include <string.h>
 
-struct evloop *evloop_create(void) {
+struct evloop *evloop_create(evloop_error_handler_t ehandler) {
     struct evloop *evloop = calloc(1,sizeof(*evloop));
 
     evloop->tab = g_hash_table_new(g_direct_hash,g_direct_equal);
     evloop->nfds = -1;
+
+    evloop->eh = ehandler;
 
     FD_ZERO(&evloop->rfds_master);
     FD_ZERO(&evloop->wfds_master);
@@ -43,7 +45,7 @@ struct evloop *evloop_create(void) {
 }
 
 int evloop_set_fd(struct evloop *evloop,int fd,int fdtype,
-	       evloop_handler_t handler,void *state) {
+		  evloop_handler_t handler,void *state) {
     struct evloop_fdinfo *fdinfo;
 
     if (!handler) {
@@ -220,6 +222,8 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 			if (error_fdinfo) 
 			    *error_fdinfo = fdinfo;
 			verror("immediately fatal error on rfd %d\n",i);
+			if (evloop->eh)
+			    evloop->eh(hrc,i,EVLOOP_FDTYPE_R,fdinfo);
 			return -1;
 		    }
 		    else if (hrc == EVLOOP_HRET_ERROR) {
@@ -227,10 +231,16 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 			    *error_fdinfo = fdinfo;
 			    verror("triggering fatal error on rfd %d;"
 				   " finishing this pass\n",i);
+			    if (evloop->eh)
+				evloop->eh(hrc,i,EVLOOP_FDTYPE_R,fdinfo);
+
 			}
 			else {
 			    verror("fatal error on rfd %d;"
 				   " finishing this pass\n",i);
+			    if (evloop->eh)
+				evloop->eh(hrc,i,EVLOOP_FDTYPE_R,fdinfo);
+
 			}
 		    }
 		    else if (hrc == EVLOOP_HRET_REMOVETYPE) {
@@ -255,6 +265,8 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 			if (error_fdinfo) 
 			    *error_fdinfo = fdinfo;
 			verror("immediately fatal error on wfd %d\n",i);
+			if (evloop->eh)
+			    evloop->eh(hrc,i,EVLOOP_FDTYPE_W,fdinfo);
 			return -1;
 		    }
 		    else if (hrc == EVLOOP_HRET_ERROR) {
@@ -262,10 +274,14 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 			    *error_fdinfo = fdinfo;
 			    verror("triggering fatal error on wfd %d;"
 				   " finishing this pass\n",i);
+			    if (evloop->eh)
+				evloop->eh(hrc,i,EVLOOP_FDTYPE_W,fdinfo);
 			}
 			else {
 			    verror("fatal error on wfd %d;"
 				   " finishing this pass\n",i);
+			    if (evloop->eh)
+				evloop->eh(hrc,i,EVLOOP_FDTYPE_W,fdinfo);
 			}
 		    }
 		    else if (hrc == EVLOOP_HRET_REMOVETYPE) {
@@ -290,6 +306,8 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 			if (error_fdinfo) 
 			    *error_fdinfo = fdinfo;
 			verror("immediately fatal error on xfd %d\n",i);
+			if (evloop->eh)
+			    evloop->eh(hrc,i,EVLOOP_FDTYPE_X,fdinfo);
 			return -1;
 		    }
 		    else if (hrc == EVLOOP_HRET_ERROR) {
@@ -297,10 +315,14 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 			    *error_fdinfo = fdinfo;
 			    verror("triggering fatal error on xfd %d;"
 				   " finishing this pass\n",i);
+			    if (evloop->eh)
+				evloop->eh(hrc,i,EVLOOP_FDTYPE_X,fdinfo);
 			}
 			else {
 			    verror("fatal error on xfd %d;"
 				   " finishing this pass\n",i);
+			    if (evloop->eh)
+				evloop->eh(hrc,i,EVLOOP_FDTYPE_X,fdinfo);
 			}
 		    }
 		    else if (hrc == EVLOOP_HRET_REMOVETYPE) {

@@ -14,6 +14,13 @@
  * waitpipe stuff to monitor child death in a loop.  Good enough.
  */
 
+int evloop_error_handler(int errortype,int fd,int fdtype,
+			 struct evloop_fdinfo *error_fdinfo) {
+    printf("ERROR: type %d on fd %d (fdtype %d)\n",
+	   errortype,fd,fdtype);
+    return 0;
+}
+
 int evloop_handler(int fd,int evloop_fdtype,void *state) {
     int pid = (int)(uintptr_t)state;
     int status = 0;
@@ -52,7 +59,7 @@ int main(int argc,char **argv) {
 
     waitpipe_init(alt_sigchld_handler);
 
-    evloop = evloop_create();
+    evloop = evloop_create(evloop_error_handler);
 
     for (i = 0; i < n; ++i) {
 	if ((pid = fork())) {

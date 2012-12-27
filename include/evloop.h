@@ -37,6 +37,9 @@
 #define EVLOOP_HRET_REMOVETYPE     1
 #define EVLOOP_HRET_REMOVEALLTYPES 2
 
+struct evloop;
+struct evloop_fdinfo;
+
 /*
  * Event loop handlers return 0 on success; 1 if they want the caller to
  * remove the fd/fdtype tuple from the set; 2 if they want the caller to
@@ -51,9 +54,13 @@
  * this true?
  */
 typedef int (*evloop_handler_t)(int fd,int fdtype,void *state);
+typedef int (*evloop_error_handler_t)(int errortype,int fd,int fdtype,
+				      struct evloop_fdinfo *error_fdinfo);
 
 struct evloop {
     int nfds;
+
+    evloop_error_handler_t eh;
 
     fd_set rfds;
     fd_set wfds;
@@ -77,16 +84,16 @@ struct evloop_fdinfo {
     void *xhstate;
 };
 
-struct evloop *evloop_create(void);
+struct evloop *evloop_create(evloop_error_handler_t ehandler);
 
 int evloop_maxsize(struct evloop *evloop);
 
 int evloop_set_fd(struct evloop *evloop,int fd,int fdtype,
-	       evloop_handler_t handler,void *state);
+		  evloop_handler_t handler,void *state);
 int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype);
 
 int evloop_run(struct evloop *evloop,struct timeval *timeout,
-	    struct evloop_fdinfo **error_fdinfo);
+	       struct evloop_fdinfo **error_fdinfo);
 int evloop_handleone(struct evloop *evloop,struct timeval *timeout);
 
 void evloop_free(struct evloop *evloop);
