@@ -97,6 +97,13 @@ int waitpipe_init(void (*alt_handler)(int,siginfo_t *,void *)) {
     return 0;
 }
 
+int waitpipe_init_default(void) {
+    if (waitpipe.pids) 
+	return 0;
+
+    return waitpipe_init(NULL);
+}
+
 int waitpipe_fini(void) {
     if (waitpipe.pids) {
 	g_hash_table_destroy(waitpipe.pids);
@@ -193,6 +200,26 @@ int waitpipe_remove(int pid) {
 	return 0;
     }
     else {
+	errno = ESRCH;
+	return -1;
+    }
+}
+
+int waitpipe_get(int pid) {
+    int readfd;
+
+    if (!waitpipe.pids) {
+	verror("waitpipe not initialized!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    readfd = (int)(uintptr_t)g_hash_table_lookup(waitpipe.pids,
+						 (gpointer)(uintptr_t)pid);
+    if (readfd) 
+	return readfd;
+    else {
+	verror("cannot find readfd for pid %d\n",pid);
 	errno = ESRCH;
 	return -1;
     }

@@ -39,6 +39,8 @@ struct waitpipectl {
 int waitpipe_init(void (*alt_handler)(int,siginfo_t *,void *));
 int waitpipe_fini(void);
 
+int waitpipe_init_default(void);
+
 /*
  * Returns half of a pipe -- the end that will receive the write when a
  * SIGCHLD comes in for one of our pids.
@@ -56,6 +58,11 @@ int waitpipe_remove(int pid);
  * signals).
  */
 int waitpipe_drain(int pid);
+
+/*
+ * Returns the readfd associated with this pid, if one already exists.
+ */
+int waitpipe_get(int readfd);
 
 /*
  * Returns the pid associated with this read half of the pipe.
