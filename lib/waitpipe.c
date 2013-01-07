@@ -73,7 +73,7 @@ void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
 
 int waitpipe_init(void (*alt_handler)(int,siginfo_t *,void *)) {
     if (waitpipe.pids) {
-	//vwarnopt("global waitpipe already initialized!\n");
+	vwarn("global waitpipe already initialized!\n");
 	errno = EBUSY;
 	return -1;
     }
