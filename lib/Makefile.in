@@ -39,7 +39,7 @@ HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/output.h
 
-OBJECTS := log.lo clfit.lo waitpipe.lo evloop.lo
+OBJECTS := log.lo clfit.lo waitpipe.lo evloop.lo monitor.lo
 LIBRARIES := libvmilib.a libvmilib.so
 
 INST_INC = 
