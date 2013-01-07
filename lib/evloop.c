@@ -170,9 +170,9 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
     struct evloop_fdinfo *fdinfo;
 
     if (evloop->nfds < 0) {
-	verror("no file descriptors to monitor!\n");
-	errno = EINVAL;
-	return -1;
+	vwarn("no file descriptors to monitor!\n");
+	//errno = EINVAL;
+	return 0;
     }
 
     while (1) {
