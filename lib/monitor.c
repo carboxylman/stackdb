@@ -62,6 +62,25 @@ struct monitor *monitor_lookup(void *obj) {
     }
 }
 
+struct monitor *monitor_lookup_and_lock(void *obj) {
+    struct monitor *m;
+
+    if (!monitor_obj_tab) {
+	pthread_mutex_lock(&monitor_mutex);
+	monitor_obj_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
+	pthread_mutex_unlock(&monitor_mutex);
+	return NULL;
+    }
+    else {
+	pthread_mutex_lock(&monitor_mutex);
+	m = (struct monitor *)g_hash_table_lookup(monitor_obj_tab,obj);
+	if (m)
+	    pthread_mutex_lock(&m->mutex);
+	pthread_mutex_unlock(&monitor_mutex);
+        return m;
+    }
+}
+
 static void monitor_insert(struct monitor *monitor) {
     pthread_mutex_lock(&monitor_mutex);
 
@@ -127,7 +146,8 @@ int __monitor_recv_evh(int fd,int fdtype,void *state) {
 	       msg->id,msg->seqno,msg->len,msg->msg);
     }
 
-    monitor_msg_free(msg);
+    if (msg)
+	monitor_msg_free(msg);
 
     return EVLOOP_HRET_SUCCESS;
 }
@@ -160,6 +180,11 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
 	errno = EINVAL;
 	return NULL;
     }
+    else if (type == MONITOR_TYPE_PROCESS) 
+	/*
+	 * Need to ensure init waitpipe().  We don't need an extra sighandler.
+	 */
+	waitpipe_init_default();
 
     monitor = calloc(1,sizeof(*monitor));
 
@@ -486,6 +511,12 @@ int monitor_setup_stdout(struct monitor *monitor,
     monitor->p.stdout_c_fd = pipefds[1];
     monitor->p.stdout_m_fd = pipefds[0];
     fcntl(monitor->p.stdout_m_fd,F_SETFD,FD_CLOEXEC);
+    /*
+     * Also open this one nonblocking because we don't want the monitor
+     * thread to block while reading output from the child.
+     */
+    fcntl(monitor->p.stdout_m_fd,F_SETFL,
+	  fcntl(monitor->p.stdout_m_fd,F_GETFL) | O_NONBLOCK);
 
     /*
     if (maxbufsiz > 0) 
@@ -527,6 +558,12 @@ int monitor_setup_stderr(struct monitor *monitor,
     monitor->p.stderr_c_fd = pipefds[1];
     monitor->p.stderr_m_fd = pipefds[0];
     fcntl(monitor->p.stderr_m_fd,F_SETFD,FD_CLOEXEC);
+    /*
+     * Also open this one nonblocking because we don't want the monitor
+     * thread to block while reading output from the child.
+     */
+    fcntl(monitor->p.stderr_m_fd,F_SETFL,
+	  fcntl(monitor->p.stderr_m_fd,F_GETFL) | O_NONBLOCK);
 
     /*
     if (maxbufsiz > 0) 
@@ -554,21 +591,123 @@ static int __monitor_pid_evh(int fd,int fdtype,void *state) {
     /* nuke the pipe */
     waitpipe_remove(pid);
 
-    /* remove ALL the fds from the event loop */
-    return EVLOOP_HRET_REMOVEALLFDS;
+    /* save status */
+    monitor->p.status = status;
 
+    /* remove ALL the fds from the event loop */
+    return EVLOOP_HRET_DONE_SUCCESS;
 }
+
+int __safe_write(int fd,char *buf,int count) {
+    int rc = 0;
+    int retval;
+
+    while (rc < count) {
+        retval = write(fd,buf + rc,count - rc);
+	if (retval < 0) {
+	    if (errno == EINTR)
+		continue;
+	    else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		return rc;
+	    }
+	    else {
+	        verror("read(%d): %s\n",fd,strerror(errno));
+		return retval;
+	    }
+	}
+	else 
+	    rc += retval;
+    }
+
+    return rc;
+}
+
+static int __monitor_stdio_evh(int fd,int fdtype,void *state) {
+    struct monitor *monitor = (struct monitor *)state;
+    int logfd;
+    int (*callback)(int fd,char *buf,int len);
+    char buf[64];
+    int rc = 0;
+    int retval;
+
+    if (fd == monitor->p.stdout_m_fd) {
+	logfd = monitor->p.stdout_log_fd;
+	callback = monitor->p.stdout_callback;
+    }
+    else if (fd == monitor->p.stderr_m_fd) {
+	logfd = monitor->p.stderr_log_fd;
+	callback = monitor->p.stderr_callback;
+    }
+    else {
+	vwarn("unknown stdio fd %d!\n",fd);
+	return EVLOOP_HRET_SUCCESS;
+    }
+
+    while (rc < (int)sizeof(buf)) {
+        retval = read(fd,buf + rc,sizeof(buf) - rc);
+	if (retval < 0) {
+	    if (errno == EINTR)
+		continue;
+	    else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		/* Stop here; fire callback if we need */
+		if (callback && rc) 
+		    callback(fd,buf,rc);
+		__safe_write(logfd,buf,rc);
+		return EVLOOP_HRET_SUCCESS;
+	    }
+	    else {
+	        verror("read(%d): %s\n",logfd,strerror(errno));
+		return EVLOOP_HRET_BADERROR;
+	    }
+	}
+	else if (retval == 0) {
+	    if (rc && callback)
+		callback(fd,buf,rc);
+	    __safe_write(logfd,buf,rc);
+	    return EVLOOP_HRET_SUCCESS;
+	}
+	else {
+	    rc += retval;
+	    if (retval == sizeof(buf)) {
+		if (callback)
+		    callback(fd,buf,rc);
+		__safe_write(logfd,buf,rc);
+		rc = 0;
+	    }
+	}
+    }
+
+
+    return EVLOOP_HRET_SUCCESS;
+}
+
+extern char **environ;
 
 int monitor_spawn(struct monitor *monitor,char *filename,
 		  char *const argv[],char *const envp[],char *dir) {
     int pid;
     char envvarbuf[64];
     int fd;
+    int envlen;
+    char **envp_actual;
+    char cwd[PATH_MAX];
+    int i;
 
     if (monitor->type != MONITOR_TYPE_PROCESS) {
 	verror("cannot handle a non-MONITOR_TYPE_PROCESS!\n");
 	errno = EINVAL;
 	return -1;
+    }
+
+    if (dir) {
+	if (!getcwd(cwd,PATH_MAX)) {
+	    verror("getcwd: %s\n",strerror(errno));
+	    return -1;
+	}
+	if (chdir(dir)) {
+	    verror("chdir(%s): %s!\n",dir,strerror(errno));
+	    return -1;
+	}
     }
 
     pid = fork();
@@ -578,25 +717,107 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 	return pid;
     }
     else if (!pid) {
-	/* Tell the child it is monitored, and tell it its FDs. */
-	if (monitor->child_recv_fd > -1) {
-	    snprintf(envvarbuf,sizeof(envvarbuf),"%s=%d",
-		     MONITOR_CHILD_RECV_FD_ENVVAR,monitor->child_recv_fd);
-	    putenv(envvarbuf);
+	/* Setup env vars.  If they are not passing in a new env, we
+	 * can just use putenv() with the old one in the child.
+	 * Otherwise, we have to manually extend the env they passed.
+	 */
+	if (!envp) {
+	    /* Tell the child it is monitored, and tell it its FDs. */
+	    if (monitor->child_recv_fd > -1) {
+		snprintf(envvarbuf,sizeof(envvarbuf),"%s=%d",
+			 MONITOR_CHILD_RECV_FD_ENVVAR,monitor->child_recv_fd);
+		putenv(envvarbuf);
+	    }
+	    if (monitor->child_send_fd > -1) {
+		snprintf(envvarbuf,sizeof(envvarbuf),"%s=%d",
+			 MONITOR_CHILD_SEND_FD_ENVVAR,monitor->child_send_fd);
+		putenv(envvarbuf);
+	    }
+
+	    envp_actual = environ;
 	}
-	if (monitor->child_send_fd > -1) {
-	    snprintf(envvarbuf,sizeof(envvarbuf),"%s=%d",
-		     MONITOR_CHILD_SEND_FD_ENVVAR,monitor->child_send_fd);
-	    putenv(envvarbuf);
+	else {
+	    envlen = 0;
+	    i = 0;
+	    while (envp[i]) 
+		++envlen;
+
+	    envp_actual = calloc(envlen + 3,sizeof(char *));
+
+	    i = 0;
+	    while (i < envlen) {
+		envp_actual[i] = envp[i];
+		++i;
+	    }
+
+	    /* Tell the child it is monitored, and tell it its FDs. */
+	    if (monitor->child_recv_fd > -1) {
+		snprintf(envvarbuf,sizeof(envvarbuf),"%s=%d",
+			 MONITOR_CHILD_RECV_FD_ENVVAR,monitor->child_recv_fd);
+		envp_actual[i] = strdup(envvarbuf);
+		++i;
+		envp_actual[i] = NULL;
+	    }
+	    if (monitor->child_send_fd > -1) {
+		snprintf(envvarbuf,sizeof(envvarbuf),"%s=%d",
+			 MONITOR_CHILD_SEND_FD_ENVVAR,monitor->child_send_fd);
+		envp_actual[i] = strdup(envvarbuf);
+		++i;
+		envp_actual[i] = NULL;
+	    }
 	}
 
 	/*
-	 * Cleanup any monitor-only state; caller must clean up other
-	 * state in parent process if it is not going to immediately
-	 * exec()!
+	 * Setup stdio streams.
 	 */
+	if (monitor->p.stdin_c_fd > -1) {
+	    if (dup2(monitor->p.stdin_c_fd,STDIN_FILENO)) {
+		verror("dup2(%d,stdin): %s; closing stdin!\n",
+		       monitor->p.stdin_c_fd,strerror(errno));
+		close(STDIN_FILENO);
+	    }
+	}
+
+	if (monitor->p.stdout_c_fd > -1) {
+	    if (dup2(monitor->p.stdout_c_fd,STDOUT_FILENO) < 0) {
+		verror("dup2(%d,stdout): %s; ignoring!\n",
+		       monitor->p.stdout_c_fd,strerror(errno));
+	    }
+	}
+
+	if (monitor->p.stderr_c_fd > -1) {
+	    if (dup2(monitor->p.stderr_c_fd,STDERR_FILENO) < 0) {
+		verror("dup2(%d,stderr): %s; ignoring!\n",
+		       monitor->p.stderr_c_fd,strerror(errno));
+	    }
+	}
+
+	/*
+	 * XXX: cleanup any monitor-only state!
+	 */
+
+	if (execve(filename,argv,envp_actual)) {
+	    verror("execve(%s): %s!\n",filename,strerror(errno));
+	    return -1;
+	}
     }
     else {
+	monitor->p.pid = pid;
+
+	/* Change dir back if we need. */
+	if (dir && chdir(cwd)) {
+	    verror("chdir(%s): %s!\n",cwd,strerror(errno));
+	    // XXX: do not exit; this should not happen; trust it won't.
+	}
+
+	/*
+	 * Add our default handler for stderr/stdout if necessary.
+	 */
+	if (monitor->p.stdout_m_fd > -1) {
+	    evloop_set_fd(monitor->evloop,monitor->p.stdout_m_fd,
+			  EVLOOP_FDTYPE_R,__monitor_stdio_evh,monitor);
+	}
+
 	/*
 	 * Add a waitpipe handler for the child.
 	 */
@@ -615,6 +836,18 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 	    close(monitor->child_send_fd);
 	    monitor->child_send_fd = -1;
 	}
+	if (monitor->p.stdin_c_fd > -1) {
+	    close(monitor->p.stdin_c_fd);
+	    monitor->p.stdin_c_fd = -1;
+	}
+	if (monitor->p.stdout_c_fd > -1) {
+	    close(monitor->p.stdout_c_fd);
+	    monitor->p.stdout_c_fd = -1;
+	}
+	if (monitor->p.stderr_c_fd > -1) {
+	    close(monitor->p.stderr_c_fd);
+	    monitor->p.stderr_c_fd = -1;
+	}
     }
 
     return pid;
@@ -626,6 +859,10 @@ static int __monitor_error_evh(int errortype,int fd,int fdtype,
      * Basically, we have to check all our FDs, see which one the error
      * happened for, then decide what to do!
      */
+    vdebug(5,LOG_OTHER,"errortype %d fd %d fdtype %d\n",
+	   errortype,fd,fdtype);
+
+    return EVLOOP_HRET_SUCCESS;
 }
 
 /*
@@ -651,26 +888,101 @@ int monitor_run(struct monitor *monitor) {
 
 	    return -1;
 	}
-
-	if (evloop_maxsize(monitor->evloop) < 1) {
-	    /* Hm, somehow all the file descriptors are gone; ? */
-	    verror("nothing left in evloop -- what?! -- fatal, cleaning up!\n");
-	    if (monitor->objtype_ops && monitor->objtype_ops->fatal_error)
-		monitor->objtype_ops->fatal_error(MONITOR_ERROR_UNKNOWN,
-						  monitor->obj);
-	    monitor_free(monitor);
-
-	    return -1;
-	}
-
-	if (error_fdinfo) {
-	    verror("nonfatal error on fd %d!\n",error_fdinfo->fd);
-	    error_fdinfo = NULL;
+	else {
+	    return 0;
 	}
     }
 
     /* Never reached. */
     return -1;
+}
+
+void monitor_cleanup(struct monitor *monitor) {
+    if (!pthread_equal(pthread_self(),monitor->mtid)) {
+	verror("only monitor thread can clean itself!\n");
+	errno = EPERM;
+	return;
+    }
+
+    pthread_mutex_lock(&monitor->mutex);
+
+    if (monitor->monitor_send_fd > -1) {
+	close(monitor->monitor_send_fd);
+	monitor->monitor_send_fd = -1;
+    }
+    if (monitor->child_recv_fd > -1) {
+	if (monitor->flags & MONITOR_FLAG_BIDI) {
+	    /* This should have been closed when we forked the child... */
+	    vwarn("BUG: child_recv_fd still live!\n");
+	}
+	close(monitor->child_recv_fd);
+	monitor->child_recv_fd = -1;
+    }
+
+    if (monitor->flags & MONITOR_FLAG_BIDI) {
+	if (monitor->child_send_fd > -1) {
+	    /* This should have been closed when we forked the child... */
+	    vwarn("BUG: child_send_fd still live!\n");
+	    close(monitor->child_send_fd);
+	    monitor->child_send_fd = -1;
+	}
+	if (monitor->monitor_recv_fd > -1)  {
+	    close(monitor->monitor_recv_fd);
+	    monitor->monitor_recv_fd = -1;
+	}
+    }
+
+    if (monitor->type == MONITOR_TYPE_PROCESS) {
+	if (monitor->p.stdin_buf) {
+	    free(monitor->p.stdin_buf);
+	    monitor->p.stdin_buf = NULL;
+	}
+
+	if (monitor->p.stdin_m_fd > -1) {
+	    close(monitor->p.stdin_m_fd);
+	    monitor->p.stdin_m_fd = -1;
+	}
+	if (monitor->p.stdin_c_fd > -1) {
+	    /* This should have been closed when we forked the child... */
+	    vwarn("BUG: p.stdin_c_fd still live!\n");
+	    close(monitor->p.stdin_c_fd);
+	    monitor->p.stdin_c_fd = -1;
+	}
+
+	if (monitor->p.stdout_m_fd > -1) {
+	    close(monitor->p.stdout_m_fd);
+	    monitor->p.stdout_m_fd = -1;
+	}
+	if (monitor->p.stdout_c_fd > -1) {
+	    /* This should have been closed when we forked the child... */
+	    vwarn("BUG: p.stdout_c_fd still live!\n");
+	    close(monitor->p.stdout_c_fd);
+	    monitor->p.stdout_c_fd = -1;
+	}
+	if (monitor->p.stdout_log_fd > -1) {
+	    close(monitor->p.stdout_log_fd);
+	    monitor->p.stdout_log_fd = -1;
+	}
+
+	if (monitor->p.stderr_m_fd > -1) {
+	    close(monitor->p.stderr_m_fd);
+	    monitor->p.stderr_m_fd = -1;
+	}
+	if (monitor->p.stderr_c_fd > -1) {
+	    /* This should have been closed when we forked the child... */
+	    vwarn("BUG: p.stderr_c_fd still live!\n");
+	    close(monitor->p.stderr_c_fd);
+	    monitor->p.stderr_c_fd = -1;
+	}
+	if (monitor->p.stderr_log_fd > -1) {
+	    close(monitor->p.stderr_log_fd);
+	    monitor->p.stderr_log_fd = -1;
+	}
+    }
+
+    pthread_mutex_unlock(&monitor->mutex);
+
+    return;
 }
 
 /*
@@ -684,74 +996,24 @@ void monitor_free(struct monitor *monitor) {
 	return;
     }
 
+    monitor_cleanup(monitor);
+
     monitor_remove(monitor);
 
     g_hash_table_destroy(monitor->msg_obj_tab);
 
     evloop_free(monitor->evloop);
 
-    if (monitor->monitor_send_fd > -1)
-	close(monitor->monitor_send_fd);
-    if (monitor->child_recv_fd > -1) {
-	if (monitor->type == MONITOR_TYPE_PROCESS) {
-	    /* This should have been closed when we forked the child... */
-	    vwarn("BUG: child_recv_fd still live!\n");
-	}
-	close(monitor->child_recv_fd);
-    }
-
     if (monitor->type == MONITOR_TYPE_PROCESS) {
-	if (monitor->child_send_fd > -1) {
-	    /* This should have been closed when we forked the child... */
-	    vwarn("BUG: child_send_fd still live!\n");
-	    close(monitor->child_send_fd);
-
-	if (monitor->monitor_recv_fd > -1)
-	    close(monitor->monitor_recv_fd);
-	}
-    }
-
-    if (monitor->type == MONITOR_TYPE_PROCESS) {
-	if (monitor->p.stdin_buf)
-	    free(monitor->p.stdin_buf);
-
-	if (monitor->p.stdin_m_fd > -1)
-	    close(monitor->p.stdin_m_fd);
-	if (monitor->p.stdin_c_fd > -1) {
-	    /* This should have been closed when we forked the child... */
-	    vwarn("BUG: p.stdin_c_fd still live!\n");
-	    close(monitor->p.stdin_c_fd);
-	}
-
 	/*
 	if (monitor->p.stdout_cbuf)
 	    free(monitor->p.stdout_cbuf);
 	*/
 
-	if (monitor->p.stdout_m_fd > -1)
-	    close(monitor->p.stdout_m_fd);
-	if (monitor->p.stdout_c_fd > -1) {
-	    /* This should have been closed when we forked the child... */
-	    vwarn("BUG: p.stdout_c_fd still live!\n");
-	    close(monitor->p.stdout_c_fd);
-	}
-	if (monitor->p.stdout_log_fd > -1)
-	    close(monitor->p.stdout_log_fd);
-
 	/*
 	if (monitor->p.stderr_cbuf)
 	    cbuf_free(monitor->p.stderr_cbuf);
 	*/
-
-	if (monitor->p.stderr_m_fd > -1)
-	    close(monitor->p.stderr_m_fd);
-	if (monitor->p.stderr_c_fd > -1) {
-	    /* This should have been closed when we forked the child... */
-	    vwarn("BUG: p.stderr_c_fd still live!\n");
-	    close(monitor->p.stderr_c_fd);
-	}
-	if (monitor->p.stderr_log_fd > -1)
-	    close(monitor->p.stderr_log_fd);
     }
 
     /* XXX: free results! */
@@ -819,11 +1081,21 @@ void monitor_del_msg_obj(struct monitor *monitor,int msg_id) {
     while (_rc < _left) {						\
         _rc = fn((fd),_p,_left);					\
 	if (_rc < 0) {							\
-	    if (errno != EINTR && errno != EAGAIN) {			\
+	    if (errno == EAGAIN || errno == EWOULDBLOCK) {		\
+		goto errout_wouldblock;					\
+	    }								\
+	    else if (errno != EINTR) {					\
 	        verror(fns "(%d,%d): %s\n",				\
 		       fd,buflen,strerror(errno));			\
 		goto errout_fatal;					\
 	    }								\
+	    else {							\
+	        verror(fns "(%d,%d): %s\n",				\
+		       fd,buflen,strerror(errno));			\
+	    }								\
+	}								\
+	else if (_rc == 0) {						\
+	    goto errout_wouldblock;					\
 	}								\
 	else {								\
 	    _left -= _rc;						\
@@ -832,21 +1104,38 @@ void monitor_del_msg_obj(struct monitor *monitor,int msg_id) {
     }									\
 }
 
-int monitor_send(struct monitor *monitor,struct monitor_msg *msg,void *obj) {
+int monitor_sendfor(void *obj,struct monitor_msg *msg,void *msg_obj) {
+    struct monitor *monitor;
+    int rc = 0;
+    int len;
+
+    /*
+     * We have to lookup the monitor and hold its lock to make sure
+     * the monitor thread does not monitor_free() it out from under us!
+     */
+    monitor = monitor_lookup_and_lock(obj);
+    if (!monitor) {
+	errno = ESRCH;
+	return -1;
+    }
+
     /*
      * Insert the object and release the lock first so receiver does not
      * block on it if it reads the msg before the sender releases the
      * lock.
      */
     pthread_mutex_lock(&monitor->msg_obj_tab_mutex);
-    g_hash_table_insert(monitor->msg_obj_tab,(gpointer)(uintptr_t)msg->id,obj);
+    g_hash_table_insert(monitor->msg_obj_tab,(gpointer)(uintptr_t)msg->id,
+			msg_obj);
     pthread_mutex_unlock(&monitor->msg_obj_tab_mutex);
+
+    len = (int)sizeof(msg->id) + (int)sizeof(msg->seqno) + (int)sizeof(msg->len);
+    if (msg->len > 0)
+	len += msg->len;
 
     /*
      * Now send the message.
      */
-    pthread_mutex_lock(&monitor->mutex);
-
     if (monitor->monitor_send_fd < 1) {
 	if (monitor->type == MONITOR_TYPE_THREAD) {
 	    verror("no way to send to thread %lu!\n",monitor->mtid);
@@ -861,22 +1150,32 @@ int monitor_send(struct monitor *monitor,struct monitor_msg *msg,void *obj) {
     /* Write the msg id */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
 		&msg->id,(int)sizeof(msg->id));
+    rc += (int)sizeof(msg->id);
 
     /* Write the msg seqno */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
 		&msg->seqno,(int)sizeof(msg->seqno));
+    rc += (int)sizeof(msg->seqno);
 
     /* Write the msg payload len */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
 		&msg->len,(int)sizeof(msg->len));
+    rc += (int)sizeof(msg->len);
 
     if (msg->len > 0) {
 	/* Write the msg payload, if any */
 	__M_SAFE_IO(write,"write",monitor->monitor_send_fd,msg->msg,msg->len);
+	rc += msg->len;
     }
 
     pthread_mutex_unlock(&monitor->mutex);
     return 0;
+
+ errout_wouldblock:
+    if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+	verror("would have blocked after %d of %d bytes!\n",rc,len);
+	goto errout;
+    }
 
  errout_fatal:
     /*
@@ -886,43 +1185,66 @@ int monitor_send(struct monitor *monitor,struct monitor_msg *msg,void *obj) {
      *
      * Actually, we can't nuke the pipe, because the caller may not be
      * the thread monitoring the monitor's evloop -- so we cannot alter
-     * the evloop.  The only thing we *could* do is close() the pipe
-     * FDs, but for now let's not, and let's let the evloop handle that
-     * normally (it should see an error condition too, if it's a real
-     * problem?).
+     * the evloop.
+     *
+     * The only thing we *can* do is close() the pipe FD; do that for
+     * now and let the evloop handle that normally (it should see an
+     * error condition too, if it's a real problem?).
      */
+    if (errno == EPIPE) {
+	close(monitor->monitor_send_fd);
+	monitor->monitor_send_fd = -1;
+    }
 
  errout:
     pthread_mutex_unlock(&monitor->mutex);
     pthread_mutex_lock(&monitor->msg_obj_tab_mutex);
-    g_hash_table_remove(monitor->msg_obj_tab,(gpointer)(uintptr_t)msg->id);
+    if (msg_obj)
+	g_hash_table_remove(monitor->msg_obj_tab,(gpointer)(uintptr_t)msg->id);
     pthread_mutex_unlock(&monitor->msg_obj_tab_mutex);
     return -1;
 }
 
 struct monitor_msg *monitor_recv(struct monitor *monitor) {
     struct monitor_msg *msg = monitor_msg_create(0,0,0,NULL);
+    int rc = 0;
+    int len;
+
+    len = (int)sizeof(msg->id) + (int)sizeof(msg->seqno) + (int)sizeof(msg->len);
 
     /* Read the msg id */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,
 		&msg->id,(int)sizeof(msg->id));
+    rc += (int)sizeof(msg->id);
 
     /* Read the msg seqno */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,&msg->seqno,
 		(int)sizeof(msg->seqno));
+    rc += (int)sizeof(msg->seqno);
 
     /* Read the msg payload len */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,
 		&msg->len,(int)sizeof(msg->len));
+    rc += (int)sizeof(msg->len);
+
+    if (msg->len > 0)
+	len += msg->len;
 
     /* Read the msg payload */
     if (msg->len > 0) {
 	msg->msg = malloc(msg->len);
 	__M_SAFE_IO(read,"read",monitor->monitor_recv_fd,
 		    msg->msg,(int)sizeof(msg->len));
+	rc += msg->len;
     }
 
     return msg;
+
+ errout_wouldblock:
+    if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+	verror("would have blocked after %d of (at least) %d bytes !\n",rc,len);
+	goto errout_fatal;
+    }
 
  errout_fatal:
     monitor_msg_free(msg);
@@ -930,8 +1252,25 @@ struct monitor_msg *monitor_recv(struct monitor *monitor) {
     return NULL;
 }
 
-int monitor_child_send(struct monitor *monitor,struct monitor_msg *msg,
-		       void *obj) {
+int monitor_child_sendfor(void *obj,struct monitor_msg *msg,void *msg_obj) {
+    struct monitor *monitor;
+    int rc = 0;
+    int len;
+
+    /*
+     * We have to lookup the monitor and hold its lock to make sure
+     * the monitor thread does not monitor_free() it out from under us!
+     */
+    monitor = monitor_lookup_and_lock(obj);
+    if (!monitor) {
+	errno = ESRCH;
+	return -1;
+    }
+
+    len = (int)sizeof(msg->id) + (int)sizeof(msg->seqno) + (int)sizeof(msg->len);
+    if (msg->len > 0)
+	len += msg->len;
+
     /*
      * If this is a process-based monitor, we allow multiple threads in
      * the child!  So we have to lock to ensure our sends are
@@ -944,7 +1283,7 @@ int monitor_child_send(struct monitor *monitor,struct monitor_msg *msg,
     if (monitor->type == MONITOR_TYPE_PROCESS) {
 	pthread_mutex_lock(&monitor->msg_obj_tab_mutex);
 	g_hash_table_insert(monitor->msg_obj_tab,
-			    (gpointer)(uintptr_t)msg->id,obj);
+			    (gpointer)(uintptr_t)msg->id,msg_obj);
 	pthread_mutex_unlock(&monitor->msg_obj_tab_mutex);
     }
 
@@ -965,21 +1304,32 @@ int monitor_child_send(struct monitor *monitor,struct monitor_msg *msg,
     /* Write the msg id */
     __M_SAFE_IO(write,"write",monitor->child_send_fd,
 		&msg->id,(int)sizeof(msg->id));
+    rc += (int)sizeof(msg->id);
 
     /* Write the msg seqno */
     __M_SAFE_IO(write,"write",monitor->child_send_fd,
 		&msg->seqno,(int)sizeof(msg->seqno));
+    rc += (int)sizeof(msg->seqno);
 
     /* Write the msg payload len */
     __M_SAFE_IO(write,"write",monitor->child_send_fd,
 		&msg->len,(int)sizeof(msg->len));
+    rc += (int)sizeof(msg->len);
 
     if (msg->len > 0) {
 	/* Write the msg payload, if any */
 	__M_SAFE_IO(write,"write",monitor->child_send_fd,msg->msg,msg->len);
+	rc += msg->len;
     }
 
+    pthread_mutex_unlock(&monitor->mutex);
     return 0;
+
+ errout_wouldblock:
+    if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+	verror("would have blocked after %d of %d bytes!\n",rc,len);
+	goto errout;
+    }
 
  errout_fatal:
     /*
@@ -996,32 +1346,54 @@ int monitor_child_send(struct monitor *monitor,struct monitor_msg *msg,
      */
 
  errout:
+    pthread_mutex_unlock(&monitor->mutex);
+    pthread_mutex_lock(&monitor->msg_obj_tab_mutex);
+    if (msg_obj)
+	g_hash_table_remove(monitor->msg_obj_tab,(gpointer)(uintptr_t)msg->id);
+    pthread_mutex_unlock(&monitor->msg_obj_tab_mutex);
     return -1;
 }
 
 struct monitor_msg *monitor_child_recv(struct monitor *monitor) {
     struct monitor_msg *msg = monitor_msg_create(0,0,0,NULL);
+    int rc = 0;
+    int len;
+
+    len = (int)sizeof(msg->id) + (int)sizeof(msg->seqno) + (int)sizeof(msg->len);
 
     /* Read the msg id */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,
 		&msg->id,(int)sizeof(msg->id));
+    rc += (int)sizeof(msg->id);
 
     /* Read the msg seqno */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,&msg->seqno,
 		(int)sizeof(msg->seqno));
+    rc += (int)sizeof(msg->seqno);
 
     /* Read the msg payload len */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,
 		&msg->len,(int)sizeof(msg->len));
+    rc += (int)sizeof(msg->len);
+
+    if (msg->len > 0)
+	len += msg->len;
 
     /* Read the msg payload */
     if (msg->len > 0) {
 	msg->msg = malloc(msg->len);
 	__M_SAFE_IO(read,"read",monitor->child_recv_fd,
 		    msg->msg,(int)sizeof(msg->len));
+	rc += msg->len;
     }
 
     return msg;
+
+ errout_wouldblock:
+    if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+	verror("would have blocked after %d of (at least) %d bytes !\n",rc,len);
+	goto errout_fatal;
+    }
 
  errout_fatal:
     monitor_msg_free(msg);

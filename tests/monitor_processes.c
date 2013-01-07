@@ -21,6 +21,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <string.h>
+#include <signal.h>
 
 #include "common.h"
 #include "log.h"
@@ -30,6 +32,10 @@
 struct dummy {
     unsigned long id;
     int fd;
+    char *stdin_buf;
+    int stdin_bufsiz;
+    char *stdout_logfile;
+    char *stderr_logfile;
 };
 
 struct dummy_msg_obj {
@@ -90,24 +96,39 @@ struct monitor_objtype_ops dummy_ops = {
 
 int dummy_objtype = -1;
 
+int dummy_stdio_callback(int fd,char *buf,int len) {
+    vdebug(0,LOG_OTHER,"read '%s' (%d) on fd %d\n",buf,len,fd);
+    return 0;
+}
+
 void *new_thread(void *obj) {
     struct dummy *d = (struct dummy *)obj;
     struct monitor *m;
+    char *argv[] = { "/bin/cat",NULL };
 
     //pthread_detach(pthread_self());
 
-    m = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,dummy_objtype,d);
+    m = monitor_create(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,dummy_objtype,d);
+
+    monitor_setup_stdin(m,d->stdin_buf,d->stdin_bufsiz);
+    monitor_setup_stdout(m,4096,d->stdout_logfile,dummy_stdio_callback);
+    monitor_setup_stderr(m,4096,d->stderr_logfile,dummy_stdio_callback);
+
+    monitor_spawn(m,"/bin/cat",argv,NULL,"/tmp");
 
     monitor_run(m);
 
+    monitor_cleanup(m);
+
     // normally would have to clean up obj?
 
+    // normally, we might save the object around, sort of like with
+    // waitpid(), until something waits for it!
     monitor_free(m);
 
     return NULL;
 }
     
-
 int main(int argc,char **argv) {
     struct dummy d1;
     struct dummy_msg_obj d1m = { .msg = "dummy1", };
@@ -119,23 +140,34 @@ int main(int argc,char **argv) {
     pthread_t tid2;
     void *retval;
 
+    signal(SIGPIPE,SIG_IGN);
+
     vmi_set_log_level(16);
     vmi_set_log_flags(LOG_OTHER);
-
-    d1.id = 111;
-    d1.fd = open("/tmp/d1.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
-    fcntl(d1.fd,F_SETFL,fcntl(d1.fd,F_GETFL) | O_NONBLOCK);
-    d2.id = 222;
-    d2.fd = open("/tmp/d2.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
-    fcntl(d2.fd,F_SETFL,fcntl(d2.fd,F_GETFL) | O_NONBLOCK);
 
     dummy_objtype = monitor_register_objtype(dummy_objtype,&dummy_ops);
     vdebug(0,LOG_OTHER,"registered dummy objtype %d\n",dummy_objtype);
 
+    d1.id = 111;
+    d1.fd = open("/tmp/d1.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
+    fcntl(d1.fd,F_SETFL,fcntl(d1.fd,F_GETFL) | O_NONBLOCK);
+    d1.stdin_buf = strdup("dummy1");
+    d1.stdin_bufsiz = strlen(d1.stdin_buf) + 1;
+    d1.stdout_logfile = "/tmp/d1.stdout.log";
+    d1.stderr_logfile = "/tmp/d1.stderr.log";
+
+    d2.id = 222;
+    d2.fd = open("/tmp/d2.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
+    fcntl(d2.fd,F_SETFL,fcntl(d2.fd,F_GETFL) | O_NONBLOCK);
+    d2.stdin_buf = strdup("dummy2");
+    d2.stdin_bufsiz = strlen(d2.stdin_buf) + 1;
+    d2.stdout_logfile = "/tmp/d2.stdout.log";
+    d2.stderr_logfile = "/tmp/d2.stderr.log";
+
     pthread_create(&tid1,NULL,new_thread,&d1);
     pthread_create(&tid2,NULL,new_thread,&d2);
 
-    sleep(1);
+    sleep(4);
 
     m1 = monitor_msg_create(111,1,5,"m111");
     monitor_sendfor(&d1,m1,&d1m);

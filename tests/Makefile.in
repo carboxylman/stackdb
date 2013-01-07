@@ -58,7 +58,7 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/monitor.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
 
-TESTS := clrange clmatch evloop_waitpipe monitor_threads
+TESTS := clrange clmatch evloop_waitpipe monitor_threads monitor_processes
 
 STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a \
 	 $(OBJDIR)/target/libtarget.a
@@ -78,6 +78,7 @@ test:	$(TESTS)
 	./clmatch
 	./evloop_waitpipe
 	./monitor_threads
+	./monitor_processes
 
 install: def-install install-subdirs
 

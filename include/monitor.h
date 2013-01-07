@@ -192,6 +192,7 @@ struct monitor {
      */
     struct {
 	int pid;
+	int status;
 
 	/*
 	 * Input/output buffers for the monitored process.
@@ -240,6 +241,13 @@ int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops);
  * Return the monitor struct corresponding to @obj, if any.
  */
 struct monitor *monitor_lookup(void *obj);
+
+/*
+ * Return the monitor struct corresponding to @obj, with it locked.
+ * This allows the caller to ensure that the monitor thread will not
+ * monitor_free @obj's monitor out from under it!
+ */
+struct monitor *monitor_lookup_and_lock(void *obj);
 
 /*
  * Creates a monitor of @type, for a valid @objtype.
@@ -314,6 +322,13 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 int monitor_run(struct monitor *monitor);
 
 /*
+ * Cleans up a monitor, but does not free it.  In particular, it closes
+ * open sockets with the child so that _sendfor()/recv() do not hang or
+ * error.
+ */
+void monitor_cleanup(struct monitor *monitor);
+
+/*
  * Cleans up and frees a monitor.
  */
 void monitor_free(struct monitor *monitor);
@@ -335,17 +350,17 @@ void *monitor_get_msg_obj(struct monitor *monitor,int msg_id);
 void monitor_del_msg_obj(struct monitor *monitor,int msg_id);
 
 /*
- * Send @msg to @monitor (blocking), and associated @obj with @msg->id
- * in our internal table.
+ * Send @msg to the monitor associated with @obj, storing
+ * @msg->id/@msg_obj in our internal table.
  *
- * (The point of associating an object with a message id is so that if
+ * (The point of associating @msg_obj with a message id is so that if
  * the monitor user wants to associate a custom request handler (with a
  * thread-based monitor child), or a custom request handler for a
  * monitor_child and a custom reply handler for the monitor (with a
  * process-based monitor), the handlers will have a stateful object that
  * they can work on, if necessary.)
  */
-int monitor_send(struct monitor *monitor,struct monitor_msg *msg,void *obj);
+int monitor_sendfor(void *obj,struct monitor_msg *msg,void *msg_obj);
 
 /*
  * Receive a msg from @monitor (blocking).
@@ -356,8 +371,7 @@ struct monitor_msg *monitor_recv(struct monitor *monitor);
  * A monitored child must call this to send a message to its parent
  * (blocking).
  */
-int monitor_child_send(struct monitor *monitor,struct monitor_msg *msg,
-		       void *obj);
+int monitor_child_sendfor(void *obj,struct monitor_msg *msg,void *msg_obj);
 
 /*
  * A monitored child must call this to read a message from its parent
