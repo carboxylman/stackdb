@@ -36,6 +36,8 @@
 #define EVLOOP_HRET_SUCCESS        0
 #define EVLOOP_HRET_REMOVETYPE     1
 #define EVLOOP_HRET_REMOVEALLTYPES 2
+#define EVLOOP_HRET_DONE_SUCCESS   3
+#define EVLOOP_HRET_DONE_FAILURE   4
 
 struct evloop;
 struct evloop_fdinfo;

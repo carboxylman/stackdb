@@ -94,10 +94,10 @@ int evloop_set_fd(struct evloop *evloop,int fd,int fdtype,
     return 0;
 }
 
-int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
-    int new_max_fd = -2;
+static int __evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
     struct evloop_fdinfo *fdinfo;
     GHashTableIter iter;
+    int new_max_fd = -2;
 
     fdinfo = (struct evloop_fdinfo *)g_hash_table_lookup(evloop->tab,
 						     (gpointer)(uintptr_t)fd);
@@ -137,11 +137,8 @@ int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
 	FD_CLR(fd,&evloop->xfds);
     }
 
-    /* Remove the fd if we have no handlers left. */
+    /* Recalculate evloop->nfds if we have no handlers left. */
     if (!fdinfo->rh && !fdinfo->wh && !fdinfo->xh) {
-	g_hash_table_remove(evloop->tab,(gpointer)(uintptr_t)fd);
-	free(fdinfo);
-
 	/* Recalculate evloop->nfds. */
 	g_hash_table_iter_init(&iter,evloop->tab);
 	while (g_hash_table_iter_next(&iter,NULL,(gpointer)&fdinfo)) {
@@ -150,6 +147,33 @@ int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
 	}
 
 	evloop->nfds = new_max_fd;
+
+	vdebug(9,LOG_OTHER,"removed fd %d (except from hashtable); nfds = %d\n",
+	       fd,evloop->nfds);
+    }
+
+    return 0;
+}
+
+int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
+    struct evloop_fdinfo *fdinfo;
+
+    fdinfo = (struct evloop_fdinfo *)g_hash_table_lookup(evloop->tab,
+						     (gpointer)(uintptr_t)fd);
+    if (!fdinfo) {
+	verror("no such fd %d\n",fd);
+	errno = EINVAL;
+	return -1;
+    }
+
+    __evloop_unset_fd(evloop,fd,fdtype);
+
+    vdebug(9,LOG_OTHER,"fd %d fdtype %d\n",fd,fdtype);
+
+    /* Remove the fd if we have no handlers left. */
+    if (!fdinfo->rh && !fdinfo->wh && !fdinfo->xh) {
+	g_hash_table_remove(evloop->tab,(gpointer)(uintptr_t)fd);
+	free(fdinfo);
 
 	vdebug(9,LOG_OTHER,"removed fd %d completely; nfds = %d\n",
 	       fd,evloop->nfds);
@@ -168,6 +192,7 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
     int hrc;
     int i;
     struct evloop_fdinfo *fdinfo;
+    GHashTableIter iter;
 
     if (evloop->nfds < 0) {
 	vwarn("no file descriptors to monitor!\n");
@@ -217,6 +242,8 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    FD_CLR(i,&evloop->rfds_master);
 		}
 		else {
+		    vdebug(9,LOG_OTHER,"rfd %d\n",i);
+
 		    hrc = fdinfo->rh(i,EVLOOP_FDTYPE_R,fdinfo->rhstate);
 		    if (hrc == EVLOOP_HRET_BADERROR) {
 			if (error_fdinfo) 
@@ -249,6 +276,10 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    else if (hrc == EVLOOP_HRET_REMOVEALLTYPES) {
 			evloop_unset_fd(evloop,i,EVLOOP_FDTYPE_A);
 		    }
+		    else if (hrc == EVLOOP_HRET_DONE_SUCCESS
+			     || hrc == EVLOOP_HRET_DONE_FAILURE) {
+			goto done_removeall;
+		    }
 		}
 	    }
 	    else if (FD_ISSET(i,&evloop->wfds)) {
@@ -260,6 +291,8 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    FD_CLR(i,&evloop->wfds_master);
 		}
 		else {
+		    vdebug(9,LOG_OTHER,"wfd %d\n",i);
+
 		    hrc = fdinfo->wh(i,EVLOOP_FDTYPE_W,fdinfo->whstate);
 		    if (hrc == EVLOOP_HRET_BADERROR) {
 			if (error_fdinfo) 
@@ -290,6 +323,10 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    else if (hrc == EVLOOP_HRET_REMOVEALLTYPES) {
 			evloop_unset_fd(evloop,i,EVLOOP_FDTYPE_A);
 		    }
+		    else if (hrc == EVLOOP_HRET_DONE_SUCCESS
+			     || hrc == EVLOOP_HRET_DONE_FAILURE) {
+			goto done_removeall;
+		    }
 		}
 	    }
 	    else if (FD_ISSET(i,&evloop->xfds)) {
@@ -301,6 +338,8 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    FD_CLR(i,&evloop->xfds_master);
 		}
 		else {
+		    vdebug(9,LOG_OTHER,"xfd %d\n",i);
+
 		    hrc = fdinfo->xh(i,EVLOOP_FDTYPE_X,fdinfo->xhstate);
 		    if (hrc == EVLOOP_HRET_BADERROR) {
 			if (error_fdinfo) 
@@ -331,6 +370,10 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    else if (hrc == EVLOOP_HRET_REMOVEALLTYPES) {
 			evloop_unset_fd(evloop,i,EVLOOP_FDTYPE_A);
 		    }
+		    else if (hrc == EVLOOP_HRET_DONE_SUCCESS
+			     || hrc == EVLOOP_HRET_DONE_FAILURE) {
+			goto done_removeall;
+		    }
 		}
 	    }
 	}
@@ -338,6 +381,28 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 
     /* Never reached. */
     return -1;
+
+ done_removeall:
+    /* Remove all FDs; don't signal any though! */
+    g_hash_table_iter_init(&iter,evloop->tab);
+
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&fdinfo)) {
+	__evloop_unset_fd(evloop,fdinfo->fd,EVLOOP_FDTYPE_A);
+	g_hash_table_iter_remove(&iter);
+
+	vdebug(9,LOG_OTHER,"removed fd %d completely; nfds = %d\n",
+	       fdinfo->fd,evloop->nfds);
+	free(fdinfo);
+    }
+
+    if (hrc == EVLOOP_HRET_DONE_SUCCESS) {
+	vdebug(5,LOG_OTHER,"evloop finished success\n");
+	return 0;
+    }
+    else {
+	vdebug(5,LOG_OTHER,"evloop finished failure\n");
+	return -1;
+    }
 }
 
 int evloop_handleone(struct evloop *evloop,struct timeval *timeout) {
