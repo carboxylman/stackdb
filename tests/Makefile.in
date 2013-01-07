@@ -47,6 +47,7 @@ endif
 ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
+LDFLAGS += -lpthread
 
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
@@ -54,9 +55,10 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/waitpipe.h $(TOP_SRCDIR)/include/evloop.h \
+	$(TOP_SRCDIR)/include/monitor.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
 
-TESTS := clrange clmatch evloop_waitpipe
+TESTS := clrange clmatch evloop_waitpipe monitor_threads
 
 STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a \
 	 $(OBJDIR)/target/libtarget.a
@@ -75,6 +77,7 @@ test:	$(TESTS)
 	./clrange
 	./clmatch
 	./evloop_waitpipe
+	./monitor_threads
 
 install: def-install install-subdirs
 
