@@ -67,13 +67,54 @@ typedef enum {
 #define MONITOR_CHILD_SEND_FD_ENVVAR "MONITOR_CHILD_SEND_FD"
 
 /*
- * Object types 
+ * Object type-specific functions.
  */
 struct monitor_objtype_ops {
+    /*
+     * When the monitor is created, and the evloop is built, we call
+     * this function to allow @obj to add any of the FDs it needs to our
+     * @evloop.
+     */
     int (*evloop_attach)(struct evloop *evloop,void *obj);
+    /*
+     * When the monitor is freed, and the evloop is built, we call
+     * this function to allow @obj to add any of the FDs it needs to our
+     * @evloop.
+     */
     int (*evloop_detach)(struct evloop *evloop,void *obj);
     int (*error)(monitor_error_t error,void *obj);
     int (*fatal_error)(monitor_error_t error,void *obj);
+    /*
+     * Replace the built-in handler for the child read end of the
+     * monitor pipe.  This function can choose to call the below msg
+     * callback functions, or not; the built-in handlers call the msg
+     * callback functions, if specified.
+     *
+     * (@state will be the the monitor associated with this @fd.)
+     */
+    int (*child_recv_evh)(int fd,int fdtype,void *state);
+    /*
+     * Replace the built-in handler for the monitor read end of the
+     * monitor pipe.  This function can choose to call the below msg
+     * callback functions, or not; the built-in handlers call the msg
+     * callback functions, if specified.
+     *
+     * (@state will be the the monitor associated with this @fd.)
+     */
+    int (*recv_evh)(int fd,int fdtype,void *state);
+    /*
+     * For ease of use, we allow library users to specify callbacks to
+     * receive just the msgs without having to specify an evloop handler
+     * (above).  Our built-in handlers call these callbacks by default;
+     * as noted above, if the user overrides our handlers via the above
+     * two fields, these callbacks will only be called if the
+     * user-supplied ones call them.
+     *
+     * (Note: these functions must clone the msg if they need its
+     * contents to persist after the handler returns.)
+     */
+    int (*child_recv_msg)(struct monitor *monitor,struct monitor_msg *msg);
+    int (*recv_msg)(struct monitor *monitor,struct monitor_msg *msg);
 };
 
 /*

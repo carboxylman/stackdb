@@ -81,11 +81,27 @@ int dummy_fatal_error(monitor_error_t error,void *obj) {
     return 0;
 }
 
+int dummy_child_recv_msg(struct monitor *monitor,struct monitor_msg *msg) {
+    vdebug(0,LOG_OTHER,"msg(%d:%d,%d) = '%s'\n",
+	   msg->id,msg->seqno,msg->len,msg->msg);
+    return 0;
+}
+
+int dummy_recv_msg(struct monitor *monitor,struct monitor_msg *msg) {
+    vdebug(0,LOG_OTHER,"msg(%d:%d,%d) = '%s'\n",
+	   msg->id,msg->seqno,msg->len,msg->msg);
+    return 0;
+}
+
 struct monitor_objtype_ops dummy_ops = {
     .evloop_attach = dummy_evloop_attach,
     .evloop_detach = dummy_evloop_detach,
     .error = dummy_error,
     .fatal_error = dummy_fatal_error,
+    .child_recv_evh = NULL,
+    .recv_evh = NULL,
+    .child_recv_msg = dummy_child_recv_msg,
+    .recv_msg = dummy_recv_msg,
 };
 
 int dummy_objtype = -1;

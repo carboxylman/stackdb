@@ -144,6 +144,9 @@ int __monitor_recv_evh(int fd,int fdtype,void *state) {
     if (msg) {
 	vdebug(9,LOG_OTHER,"defhandler: monitor recv %d:%d %d '%s'\n",
 	       msg->id,msg->seqno,msg->len,msg->msg);
+
+	if (monitor->objtype_ops && monitor->objtype_ops->recv_msg) 
+	    monitor->objtype_ops->recv_msg(monitor,msg);
     }
 
     if (msg)
@@ -162,9 +165,13 @@ int __monitor_child_recv_evh(int fd,int fdtype,void *state) {
     if (msg) {
 	vdebug(9,LOG_OTHER,"defhandler: recv %d:%d %d '%s'\n",
 	       msg->id,msg->seqno,msg->len,msg->msg);
+
+	if (monitor->objtype_ops && monitor->objtype_ops->child_recv_msg) 
+	    monitor->objtype_ops->child_recv_msg(monitor,msg);
     }
 
-    monitor_msg_free(msg);
+    if (msg)
+	monitor_msg_free(msg);
 
     return EVLOOP_HRET_SUCCESS;
 }
@@ -241,8 +248,15 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
      * same thread :).  For processes, we do nothing.
      */
     if (type == MONITOR_TYPE_THREAD && monitor->child_recv_fd > -1) {
-	evloop_set_fd(monitor->evloop,monitor->child_recv_fd,EVLOOP_FDTYPE_R,
-		      __monitor_child_recv_evh,monitor);
+	if (monitor->objtype_ops && monitor->objtype_ops->child_recv_evh)
+	    evloop_set_fd(monitor->evloop,
+			  monitor->child_recv_fd,EVLOOP_FDTYPE_R,
+			  monitor->objtype_ops->child_recv_evh,monitor);
+	else
+	    evloop_set_fd(monitor->evloop,
+			  monitor->child_recv_fd,EVLOOP_FDTYPE_R,
+			  __monitor_child_recv_evh,monitor);
+
     }
 	
     /*
@@ -250,8 +264,14 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
      * bidirectional monitor.
      */
     if (monitor->monitor_recv_fd > -1) {
-	evloop_set_fd(monitor->evloop,monitor->monitor_recv_fd,EVLOOP_FDTYPE_R,
-		      __monitor_recv_evh,monitor);
+	if (monitor->objtype_ops && monitor->objtype_ops->recv_evh)
+	    evloop_set_fd(monitor->evloop,
+			  monitor->monitor_recv_fd,EVLOOP_FDTYPE_R,
+			  monitor->objtype_ops->recv_evh,monitor);
+	else 
+	    evloop_set_fd(monitor->evloop,
+			  monitor->monitor_recv_fd,EVLOOP_FDTYPE_R,
+			  __monitor_recv_evh,monitor);
     }
 
     /* These are initialized by calling monitor_setup_io if necessary. */
@@ -374,9 +394,16 @@ struct monitor *monitor_attach(monitor_type_t type,monitor_flags_t flags,
     /* Only process-based monitor children can call this, so we do not
      * listen on anything else.
      */
-    if (monitor->child_recv_fd > -1)
-	evloop_set_fd(monitor->evloop,monitor->child_recv_fd,EVLOOP_FDTYPE_R,
-		      __monitor_child_recv_evh,monitor);
+    if (monitor->child_recv_fd > -1) {
+	if (monitor->objtype_ops && monitor->objtype_ops->child_recv_evh)
+	    evloop_set_fd(monitor->evloop,
+			  monitor->child_recv_fd,EVLOOP_FDTYPE_R,
+			  monitor->objtype_ops->child_recv_evh,monitor);
+	else
+	    evloop_set_fd(monitor->evloop,
+			  monitor->child_recv_fd,EVLOOP_FDTYPE_R,
+			  __monitor_child_recv_evh,monitor);
+    }
 
     monitor->p.stdin_m_fd = -1;
     monitor->p.stdin_c_fd = -1;
@@ -997,6 +1024,13 @@ void monitor_free(struct monitor *monitor) {
     }
 
     monitor_cleanup(monitor);
+
+    if (monitor->objtype_ops && monitor->objtype_ops->evloop_detach) {
+	if (monitor->objtype_ops->evloop_detach(monitor->evloop,
+						monitor->obj) < 0) {
+	    vwarn("could not detach evloop from obj!\n");
+	}
+    }
 
     monitor_remove(monitor);
 
