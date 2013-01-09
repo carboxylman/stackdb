@@ -313,17 +313,17 @@ static inline void array_list_deep_free(struct array_list *list) {
 }
 
 #define array_list_foreach(alist,lpc,placeholder)			\
-    for (lpc = 0, (placeholder) = (typeof(placeholder))alist->list[lpc]; \
+    for (lpc = 0, (placeholder) = alist->len ? (typeof(placeholder))alist->list[lpc] : (typeof(placeholder))NULL; \
 	 alist->len - lpc > 0;						\
 	 ++lpc) 
 
 #define array_list_foreach_continue(alist,lpc,placeholder)		\
-    for ((placeholder) = (typeof(placeholder))alist->list[lpc];	\
+    for ((placeholder) = (alist->len - lpc > 0) ? (typeof(placeholder))alist->list[lpc] : (typeof(placeholder))NULL; \
 	 alist->len - lpc > 0;						\
 	 ++lpc) 
 
 #define array_list_foreach_fakeptr_t(alist,lpc,placeholder,intertype)	\
-    for (lpc = 0, (placeholder) = (typeof(placeholder))(intertype)alist->list[lpc]; \
+    for (lpc = 0, (placeholder) = alist->len ? (typeof(placeholder))(intertype)alist->list[lpc] : (typeof(placeholder))(intertype)NULL; \
 	 alist->len - lpc > 0;						\
 	 ++lpc) 
 
