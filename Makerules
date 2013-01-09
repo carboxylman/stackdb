@@ -58,6 +58,11 @@ $(INSTALL_ETCDIR)/%: %
 	-mkdir -p $(INSTALL_ETCDIR)
 	$(INSTALL_DATA) $< $@
 
+$(INSTALL_SHAREDIR)/%: %
+	@echo "Installing $<"
+	-mkdir -p $(INSTALL_SHAREDIR)
+	$(INSTALL_DATA) $< $@
+
 $(addprefix $(INSTALL_SBINDIR)/, $(INST_SBIN_SETUID)): $(INSTALL_SBINDIR)/%: %
 	echo "Installing (setuid) $<"
 	-mkdir -p $(INSTALL_SBINDIR)
@@ -81,7 +86,8 @@ def-install:	$(addprefix $(INSTALL_BINDIR)/, $(INST_BIN)) \
 	 $(addprefix $(INSTALL_INCDIR)/, $(INST_INC)) \
 	 $(addprefix $(INSTALL_LIBDIR)/, $(INST_LIB)) \
 	 $(addprefix $(INSTALL_LIBEXECDIR)/, $(INST_LIBEXEC)) \
-	 $(addprefix $(INSTALL_ETCDIR)/, $(INST_ETC))
+	 $(addprefix $(INSTALL_ETCDIR)/, $(INST_ETC)) \
+	 $(addprefix $(INSTALL_SHAREDIR)/, $(INST_SHARE))
 
 
 CFLAGS += $(LOCALCFLAGS)

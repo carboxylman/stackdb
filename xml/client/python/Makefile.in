@@ -18,17 +18,16 @@
 
 ###############################################################################
 
-PACKAGE = xml
-LIBVERSION = 0.1
-
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= xml
+SUBDIR		= xml/client/python
 OBJDIR		= @top_builddir@
 
-SUBDIRS = service client
+SUBDIRS = 
 
 include $(OBJDIR)/Makeconf
+
+PROGRAMS = target_test.py debuginfo_test.py
 
 all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 

@@ -18,19 +18,16 @@
 
 ###############################################################################
 
-PACKAGE = xml
-LIBVERSION = 0.1
-
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= xml
+SUBDIR		= xml/client
 OBJDIR		= @top_builddir@
 
-SUBDIRS = service client
+SUBDIRS = python
 
 include $(OBJDIR)/Makeconf
 
-all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
+all:	all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 

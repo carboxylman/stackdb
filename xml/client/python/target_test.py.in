@@ -1,0 +1,36 @@
+#!/usr/bin/env python
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('suds.client').setLevel(logging.DEBUG)
+logging.getLogger('suds.transport').setLevel(logging.DEBUG)
+logging.getLogger('suds.xsd.schema').setLevel(logging.DEBUG)
+logging.getLogger('suds.wsdl').setLevel(logging.DEBUG)
+
+from suds.client import Client
+
+import os.path
+
+objdir = os.path.abspath("@top_builddir@")
+url = 'file://%s/xml/service/target.wsdl.test' % (objdir,)
+client = Client(url,cache=None)
+
+ttypes = client.service.ListTargetTypes()
+
+tspec = client.factory.create('TargetSpecT')
+tspec._type = "ptrace"
+tspec.mode = "live"
+tspec.startPaused = True
+tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
+tspec.backendSpec.targetPtraceSpec.program = "/bin/ls"
+tspec.backendSpec.targetPtraceSpec.arguments = None
+tspec.backendSpec.targetPtraceSpec.environment = None
+tspec.backendSpec.targetPtraceSpec.closeStdin = False
+tspec.backendSpec.targetPtraceSpec.stdoutLogfile = None
+tspec.backendSpec.targetPtraceSpec.stderrLogfile = None
+
+target = client.service.InstantiateTarget(tspec)
+
+paused = client.service.PauseTarget(1)
+
+resumed = client.service.ResumeTarget(1)

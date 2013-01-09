@@ -435,6 +435,8 @@ AC_SUBST(ENABLE_VMI_DEBUG)
 
 outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           target/Makefile tests/Makefile xml/Makefile xml/service/Makefile \
+	  xml/client/Makefile xml/client/python/Makefile \
+	  xml/client/python/debuginfo_test.py xml/client/python/target_test.py \
 	  tools/Makefile tools/rop/Makefile tools/bts/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \

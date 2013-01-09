@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('suds.client').setLevel(logging.DEBUG)
+logging.getLogger('suds.transport').setLevel(logging.DEBUG)
+logging.getLogger('suds.xsd.schema').setLevel(logging.DEBUG)
+logging.getLogger('suds.wsdl').setLevel(logging.DEBUG)
+
+from suds.client import Client
+
+import os.path
+
+objdir = os.path.abspath("@top_builddir@")
+url = 'file://%s/xml/service/debuginfo.wsdl.test' % (objdir,)
+client = Client(url,cache=None)
+
+opts = client.factory.create('DebugFileOptsT')
+opts.symbolRefDepth = 8
+opts.symtabRefDepth = 8
+opts.doMultiRef = False
+opts.doManualRef = False
+opts.debugfileRefDepth = 8
+
+result = client.service.LookupSymbol('/usr/lib/debug/bin/cat.debug','main.argc',opts)
