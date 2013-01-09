@@ -26,9 +26,21 @@
 #include "dwdebug.h"
 #include "target_api.h"
 #include <glib.h>
+#include <pthread.h>
 
 void target_rpc_init(void);
 void target_rpc_fini(void);
+
+/*
+ * Handle a new request.  Frees/queues the soap struct as necessary; the
+ * caller must not free it!
+ */
+int target_rpc_handle_request(struct soap *soap);
+
+/*
+ * Get a target by ID.  Locks/unlocks the target_rpc master mutex.
+ */
+struct target *target_lookup(int id);
 
 int vmi1__ListTargetTypes(struct soap *soap,
 			  void *_,
@@ -37,7 +49,7 @@ int vmi1__ListTargetTypes(struct soap *soap,
 //gsoap vmi1 service method-documentation: 
 int vmi1__ListTargets(struct soap *soap,
 		      void *_,
-		      struct vmi1__TargetResponse *r);
+		      struct vmi1__TargetsResponse *r);
 
 int vmi1__GetTarget(struct soap *soap,
 		    vmi1__TargetIdT tid,
@@ -54,11 +66,8 @@ int vmi1__ResumeTarget(struct soap *soap,
 		       vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
 int vmi1__CloseTarget(struct soap *soap,
-		      vmi1__TargetIdT tid,
+		      vmi1__TargetIdT tid,enum xsd__boolean kill,
 		      struct vmi1__NoneResponse *r);
-int vmi1__KillTarget(struct soap *soap,
-		     vmi1__TargetIdT tid,
-		     struct vmi1__NoneResponse *r);
 
 int vmi1__PauseThread(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,

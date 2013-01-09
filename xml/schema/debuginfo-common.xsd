@@ -39,13 +39,13 @@
     <xs:restriction base="xs:ID"/>
   </xs:simpleType>
   <xs:simpleType name="ThreadIdT">
-    <xs:restriction base="xs:ID"/>
+    <xs:restriction base="xs:int"/>
   </xs:simpleType>
   <xs:simpleType name="TargetIdT">
-    <xs:restriction base="xs:ID"/>
+    <xs:restriction base="xs:int"/>
   </xs:simpleType>
   <xs:simpleType name="SessionIdT">
-    <xs:restriction base="xs:ID"/>
+    <xs:restriction base="xs:int"/>
   </xs:simpleType>
   <xs:simpleType name="AnalysisIdT">
     <xs:restriction base="xs:ID"/>

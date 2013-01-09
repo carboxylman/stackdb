@@ -23,32 +23,44 @@
 
 #include "target_rpc.h"
 #include "debuginfo_rpc.h"
+#include "util.h"
+#include "monitor.h"
+#include "proxyreq.h"
 
 /* Pull in gsoap-generated namespace array. */
 #include "target.nsmap"
 
-extern char *optarg;
-extern int optind, opterr, optopt;
+/*
+ * How we use proxy requests:
+ *
+ *   - do_request creates a proxyreq to record the request
+ *   - soap_serve demuxes to the RPC, which associates an existing
+ *     monitor or creates a new one
+ *     - if existing, call proxyreq_send_req
+ *       - if process, wait for a response
+ *       - if thread, don't wait, but don't GC the soap struct
+ *     - if new
+ *       - if thread, call proxyreq_monitor() (which must use evloop and
+ *         target_monitor stuff to loop in the control thread, handling
+ *         both the target(s?) and new requests), and return success.
+ *       - if process, return success after inserting monitor object.
+ *         no control thread for this case.
+ */
 
-void *do_request(void *arg) {
-    struct soap *soap = (struct soap *)arg;
+void *handle_request(void *arg) {
+    struct soap *soap = (struct soap *)arg; //trs->soap;
 
+    /* Server never waits for us. */
     pthread_detach(pthread_self());
 
-    soap_serve(soap);
-
-    vdebug(8,LOG_X_RPC,"finished request from %d.%d.%d.%d\n",
-	   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
-	   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
-
-    soap_destroy(soap);
-    soap_end(soap);
-    soap_done(soap);
-
-    free(soap);
+    /* This does all the work. */
+    target_rpc_handle_request(soap);
 
     return NULL;
 }
+
+extern char *optarg;
+extern int optind, opterr, optopt;
 
 int main(int argc, char **argv) {
     struct soap soap;
@@ -154,7 +166,7 @@ int main(int argc, char **argv) {
 	    break;
 	}
 
-	pthread_create(&tid,NULL,do_request,(void *)tsoap);
+	pthread_create(&tid,NULL,handle_request,(void *)tsoap);
     }
 
     soap_done(&soap);

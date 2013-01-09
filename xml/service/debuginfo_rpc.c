@@ -50,21 +50,34 @@ static struct vmi1__DebugFileOptsT defDebugFileOpts = {
 static int init_done = 0;
 
 void debuginfo_rpc_init(void) {
-    if (init_done)
+    pthread_mutex_lock(&debuginfo_rpc_mutex);
+
+    if (init_done) {
+	pthread_mutex_unlock(&debuginfo_rpc_mutex);
 	return;
+    }
 
     dwdebug_init();
 
     init_done = 1;
+
+    pthread_mutex_unlock(&debuginfo_rpc_mutex);
 }
 
 void debuginfo_rpc_fini(void) {
     if (!init_done)
 	return;
 
+    pthread_mutex_lock(&debuginfo_rpc_mutex);
+
+    if (!init_done)
+	return;
+
     dwdebug_fini();
 
     init_done = 0;
+
+    pthread_mutex_unlock(&debuginfo_rpc_mutex);
 }
 
 #define DEF_REFSTACK_SIZE 32

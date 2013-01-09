@@ -27,6 +27,7 @@
 
 struct target *linux_userproc_instantiate(struct target_spec *spec);
 struct linux_userproc_spec *linux_userproc_build_spec(void);
+void linux_userproc_free_spec(struct linux_userproc_spec *lspec);
 
 int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t tid);
 int linux_userproc_detach_thread(struct target *target,tid_t tid);

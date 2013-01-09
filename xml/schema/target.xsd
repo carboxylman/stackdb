@@ -22,8 +22,24 @@
   <xs:include schemaLocation="common.xsd"/>
   <xs:simpleType name="TargetTypeT">
     <xs:restriction base="xs:token">
+      <xs:enumeration value="none"/>
       <xs:enumeration value="ptrace"/>
       <xs:enumeration value="xen"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="TargetModeT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="none"/>
+      <xs:enumeration value="live"/>
+      <xs:enumeration value="replay"/>
+      <xs:enumeration value="record"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="ThreadBPModeT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="strict"/>
+      <xs:enumeration value="semiStrict"/>
+      <xs:enumeration value="loose"/>
     </xs:restriction>
   </xs:simpleType>
   <xs:complexType name="TargetSpecT">
@@ -31,33 +47,13 @@
       <xs:element ref="vmi1:mode"/>
       <xs:element ref="vmi1:threadBPMode"/>
       <xs:element ref="vmi1:startPaused"/>
-      <xs:element minOccurs="0" ref="vmi1:logDir"/>
-      <xs:element minOccurs="0" ref="vmi1:logFilePrefix"/>
       <xs:element ref="vmi1:backendSpec"/>
     </xs:sequence>
     <xs:attribute name="type" use="required" type="vmi1:TargetTypeT"/>
   </xs:complexType>
-  <xs:element name="mode">
-    <xs:simpleType>
-      <xs:restriction base="xs:token">
-        <xs:enumeration value="live"/>
-        <xs:enumeration value="replay"/>
-        <xs:enumeration value="record"/>
-      </xs:restriction>
-    </xs:simpleType>
-  </xs:element>
-  <xs:element name="threadBPMode">
-    <xs:simpleType>
-      <xs:restriction base="xs:token">
-        <xs:enumeration value="strict"/>
-        <xs:enumeration value="semiStrict"/>
-        <xs:enumeration value="loose"/>
-      </xs:restriction>
-    </xs:simpleType>
-  </xs:element>
+  <xs:element name="mode" type="vmi1:TargetModeT"/>
+  <xs:element name="threadBPMode" type="vmi1:ThreadBPModeT"/>
   <xs:element name="startPaused" type="xs:boolean"/>
-  <xs:element name="logDir" type="xs:string"/>
-  <xs:element name="logFilePrefix" type="xs:string"/>
   <xs:element name="backendSpec">
     <xs:complexType>
       <xs:choice>
@@ -87,9 +83,9 @@
         <xs:element ref="vmi1:program"/>
         <xs:element ref="vmi1:arguments"/>
         <xs:element ref="vmi1:environment"/>
-        <xs:element minOccurs="0" ref="vmi1:logStdout"/>
-        <xs:element minOccurs="0" ref="vmi1:logStderr"/>
-        <xs:element minOccurs="0" ref="vmi1:closeStdin"/>
+        <xs:element minOccurs="0" ref="vmi1:stdoutLogfile"/>
+        <xs:element minOccurs="0" ref="vmi1:stderrLogfile"/>
+        <xs:element ref="vmi1:closeStdin"/>
       </xs:sequence>
     </xs:choice>
   </xs:complexType>
@@ -106,18 +102,13 @@
   <xs:element name="environment">
     <xs:complexType>
       <xs:sequence>
-        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:envVar"/>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:envvar"/>
       </xs:sequence>
     </xs:complexType>
   </xs:element>
-  <xs:element name="envVar">
-    <xs:complexType>
-      <xs:attribute name="var" use="required"/>
-      <xs:attribute name="value" use="required"/>
-    </xs:complexType>
-  </xs:element>
-  <xs:element name="logStdout" type="xs:boolean"/>
-  <xs:element name="logStderr" type="xs:boolean"/>
+  <xs:element name="envvar" type="xs:string"/>
+  <xs:element name="stdoutLogfile" type="xs:string"/>
+  <xs:element name="stderrLogfile" type="xs:string"/>
   <xs:element name="closeStdin" type="xs:boolean"/>
   <xs:element name="targetPtraceSpec" type="vmi1:TargetPtraceSpecT"/>
   <xs:simpleType name="TargetThreadStatusT">
@@ -162,15 +153,13 @@
   <xs:element name="targetStatus" type="vmi1:TargetStatusT"/>
   <xs:complexType name="TargetT">
     <xs:sequence>
+      <xs:element ref="vmi1:targetSpec"/>
       <xs:element ref="vmi1:targetStatus"/>
-      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:thread"/>
+      <xs:element maxOccurs="unbounded" ref="vmi1:thread"/>
       <xs:element maxOccurs="unbounded" ref="vmi1:addrSpace"/>
     </xs:sequence>
     <xs:attribute name="name" use="required"/>
     <xs:attribute name="tid" use="required" type="vmi1:TargetIdT"/>
-    <xs:attribute name="type" use="required" type="vmi1:TargetTypeT"/>
-    <xs:attribute name="live" use="required" type="xs:boolean"/>
-    <xs:attribute name="writeable" use="required" type="xs:boolean"/>
   </xs:complexType>
   <xs:element name="target" type="vmi1:TargetT"/>
   <xs:complexType name="AddrSpaceT">
@@ -178,11 +167,13 @@
       <xs:element maxOccurs="unbounded" ref="vmi1:memRegion"/>
     </xs:sequence>
     <xs:attribute name="name" use="required"/>
-    <xs:attribute name="targetId" use="required" type="vmi1:TargetIdT"/>
+    <xs:attribute name="id" use="required" type="xs:int"/>
+    <xs:attribute name="tid" use="required" type="vmi1:TargetIdT"/>
   </xs:complexType>
   <xs:element name="addrSpace" type="vmi1:AddrSpaceT"/>
   <xs:simpleType name="MemRegionTypeT">
     <xs:restriction base="xs:token">
+      <xs:enumeration value="unknown"/>
       <xs:enumeration value="heap"/>
       <xs:enumeration value="stack"/>
       <xs:enumeration value="vdso"/>
@@ -201,7 +192,7 @@
       <xs:element ref="vmi1:physOffset"/>
       <xs:element ref="vmi1:memRegionType"/>
       <xs:element maxOccurs="unbounded" ref="vmi1:memRange"/>
-      <xs:element minOccurs="0" ref="vmi1:debugFileId"/>
+      <xs:element maxOccurs="unbounded" ref="vmi1:debugFileId"/>
     </xs:sequence>
     <xs:attribute name="name" use="required"/>
   </xs:complexType>

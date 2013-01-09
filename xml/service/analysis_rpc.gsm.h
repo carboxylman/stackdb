@@ -9,7 +9,6 @@
 #import "analysis_xml.gsm.h"
 
 //gsoap vmi1 service name: analysis
-//gsoap vmi1 service port: http://anathema.flux.utah.edu/cgi-bin/analysis.cgi
 //gsoap vmi1 service namespace: http://anathema.flux.utah.edu/schema/vmi/1
 
 //gsoap vmi1 service method-style: document

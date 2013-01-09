@@ -63,7 +63,10 @@ endif
 
 HEADERS := $(SRCDIR)/debuginfo_xml.h $(SRCDIR)/debuginfo_rpc.h \
 	$(SRCDIR)/target_xml.h $(SRCDIR)/target_rpc.h \
-	$(SRCDIR)/analysis_xml.h $(SRCDIR)/analysis_rpc.h
+	$(SRCDIR)/analysis_xml.h $(SRCDIR)/analysis_rpc.h \
+	util.h proxyreq.h
+
+OBJECTS-LIB := proxyreq.lo # util.lo
 
 OBJECTS-COMMON-LIB := common_xml_moduleC.lo
 
@@ -102,11 +105,13 @@ OBJECTS-ANALYSIS := $(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB)\
 	$(OBJECTS-ANALYSIS-MODULE) \
 	$(OBJECTS-ANALYSIS-SERVER) $(OBJECTS-ANALYSIS-SERVERLIB)
 
-OBJECTS := $(OBJECTS-DEBUGINFO)	$(OBJECTS-TARGET) $(OBJECTS-ANALYSIS)
+OBJECTS := $(OBJECTS-LIB) $(OBJECTS-DEBUGINFO) $(OBJECTS-TARGET) \
+	$(OBJECTS-ANALYSIS) 
+
 PROGRAMS := debuginfo target analysis
 
 INST_INC = 
-INST_SBIN = $(PROGRAMS)
+INST_LIBEXEC = $(PROGRAMS)
 
 NS = vmi1
 NAMESPACE = http://anathema.flux.utah.edu/schema/vmi/1
@@ -158,15 +163,47 @@ common_xml.gsm.h: $(SRCDIR)/../schema/common.xsd xsdcH.h
 %_rpc_moduleH.h: $(SRCDIR)/%_rpc.gsm.h
 	$(SOAPCPP2) -w $< 
 
+DEFPORT-debuginfo =  3901
+DEFPORT-target = 3902
+DEFPORT-analysis = 3903
+
 %.wsdl: %_xml_moduleH.h %_rpc_moduleH.h 
 	echo "#import \"$(@:.wsdl=)_xml.gsm.h\"" > $(@:.wsdl=).gs.h
 	echo "#import \"$(@:.wsdl=)_rpc.gsm.h\"" >> $(@:.wsdl=).gs.h
+	echo '//gsoap vmi1 service portName: http' >> $(@:.wsdl=).gs.h
+	echo "//gsoap vmi1 service port: http://localhost:$(DEFPORT-$*)" >> $(@:.wsdl=).gs.h
 	$(SOAPCPP2) -p $(@:.wsdl=) $(@:.wsdl=).gs.h
 #	sed -i -e 's/\(#define $(@:.wsdl=)_srvStub_H\)/\1\n#include "envH.h"/' \
 #		$(@:.wsdl=)_srvStub.h
 	cp -p $@ $@.nostrip
-	$(SRCDIR)/strip-gsoap-wsdl.pl $(NAMESPACE)::$(NAMESPACE)/$(@:.wsdl=).xsd \
-		< $@.nostrip > $@
+	@if [ "$(@:.wsdl=)" = "target" ]; then \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			< $@.nostrip > $@; \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			< $@.nostrip > $@.test; \
+	elif [ "$(@:.wsdl=)" = "analysis" ]; then \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			< $@.nostrip > $@; \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			< $@.nostrip > $@.test; \
+	else \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			< $@.nostrip > $@; \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			< $@.nostrip > $@.test; \
+	fi
 
 xsdcC.lo: xsdcH.h
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
@@ -236,28 +273,32 @@ target.lo: $(SRCDIR)/target.c $(HEADERS) target.wsdl
 analysis.lo: $(SRCDIR)/analysis.c $(HEADERS) analysis.wsdl
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-#%.c.lo: $(SRCDIR)/%.c $(HEADERS)
-#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+%.lo: $(SRCDIR)/%.c 
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
 debuginfo: debuginfo.wsdl \
-	   $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
-	   $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
-	   $(OBJECTS-DEBUGINFO-MODULE) $(OBJECTS-DEBUGINFO-SERVER) \
-	   $(STATICLIBS)
+	  $(OBJECTS-LIB) \
+	  $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	  $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	  $(OBJECTS-DEBUGINFO-MODULE) $(OBJECTS-DEBUGINFO-SERVER) \
+	  $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+	   $(OBJECTS-LIB) \
 	   $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB)  \
 	   $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 	   $(OBJECTS-DEBUGINFO-MODULE) $(OBJECTS-DEBUGINFO-SERVER) \
 	   $(STATICLIBS) $(LDFLAGS)
 
 target: target.wsdl \
-	$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
-	$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
-	$(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVER) \
-	$(OBJECTS-DEBUGINFO-MODULE) \
-	$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
-		$(STATICLIBS)
+	  $(OBJECTS-LIB) \
+	  $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	  $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
+	  $(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVER) \
+	  $(OBJECTS-DEBUGINFO-MODULE) \
+	  $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	  $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+		$(OBJECTS-LIB) \
 		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
 		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 		$(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVER) \
@@ -266,15 +307,17 @@ target: target.wsdl \
 		$(STATICLIBS) $(LDFLAGS)
 
 analysis: analysis.wsdl \
-	$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
-	$(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB) \
-	$(OBJECTS-ANALYSIS-MODULE) $(OBJECTS-ANALYSIS-SERVER) \
-	$(OBJECTS-DEBUGINFO-MODULE) \
-	$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
-	$(OBJECTS-TARGET-MODULE) \
-	$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
-		$(STATICLIBS)
+	  $(OBJECTS-LIB) \
+	  $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	  $(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB) \
+	  $(OBJECTS-ANALYSIS-MODULE) $(OBJECTS-ANALYSIS-SERVER) \
+	  $(OBJECTS-DEBUGINFO-MODULE) \
+	  $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	  $(OBJECTS-TARGET-MODULE) \
+	  $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
+	  $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+		$(OBJECTS-LIB) \
 		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
 		$(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB) \
 		$(OBJECTS-ANALYSIS-MODULE) $(OBJECTS-ANALYSIS-SERVER) \
@@ -285,9 +328,16 @@ analysis: analysis.wsdl \
 		$(STATICLIBS) $(LDFLAGS)
 
 install: $(PROGRAMS) def-install install-subdirs
+	mkdir -p $(INSTALL_SHAREDIR)/vmi
+	mkdir -p $(INSTALL_SHAREDIR)/share/vmi/wsdl
+	$(INSTALL) -m 644 debuginfo.wsdl ${INSTALL_SHAREDIR}/share/vmi/wsdl
+	$(INSTALL) -m 644 target.wsdl $(INSTALL_SHAREDIR)/share/vmi/wsdl
+	$(INSTALL) -m 644 analysis.wsdl $(INSTALL_SHAREDIR)/share/vmi/wsdl
+	mkdir -p $(INSTALL_SHAREDIR)/share/vmi/schema
+	$(INSTALL) -m 644 $(SRCDIR)/../schema/*.xsd $(INSTALL_SHAREDIR)/share/vmi/schema
 
 clean-common:
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-COMMON-LIB)
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-COMMON-LIB) $(OBJECTS-LIB)
 	$(RM) common*
 
 clean-xsdc:

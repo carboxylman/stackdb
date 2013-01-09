@@ -204,6 +204,7 @@ struct xen_vm_state {
 
 struct target *xen_vm_instantiate(struct target_spec *spec);
 struct xen_vm_spec *xen_vm_build_spec(void);
+void xen_vm_free_spec(struct xen_vm_spec *xspec);
 
 struct symbol *linux_get_task_struct_type_ptr(struct target *target);
 struct value *linux_load_current_task(struct target *target);

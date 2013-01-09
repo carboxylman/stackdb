@@ -39,6 +39,8 @@
 #include <elf.h>
 #include <libelf.h>
 
+#include "waitpipe.h"
+
 #include "dwdebug.h"
 
 #include "target_api.h"
@@ -62,6 +64,7 @@ static int linux_userproc_postloadinit(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
 static int linux_userproc_detach(struct target *target);
 static int linux_userproc_fini(struct target *target);
+static int linux_userproc_kill(struct target *target);
 static int linux_userproc_loadspaces(struct target *target);
 static int linux_userproc_loadregions(struct target *target,
 				      struct addrspace *space);
@@ -76,6 +79,8 @@ static target_status_t linux_userproc_poll(struct target *target,
 					   struct timeval *tv,
 					   target_poll_outcome_t *outcome,
 					   int *pstatus);
+int linux_userproc_attach_evloop(struct target *target,struct evloop *evloop);
+int linux_userproc_detach_evloop(struct target *target);
 static unsigned char *linux_userproc_read(struct target *target,
 					  ADDR addr,
 					  unsigned long length,
@@ -127,6 +132,10 @@ int linux_userproc_notify_sw_breakpoint(struct target *target,ADDR addr,
 int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp);
 int linux_userproc_singlestep_end(struct target *target,tid_t tid);
 
+
+static int linux_userproc_evloop_add_tid(struct target *target,int tid);
+static int linux_userproc_evloop_del_tid(struct target *target,int tid);
+
 /*
  * Set up the target interface for this library.
  */
@@ -137,6 +146,7 @@ struct target_ops linux_userspace_process_ops = {
     .fini = linux_userproc_fini,
     .attach = linux_userproc_attach_internal,
     .detach = linux_userproc_detach,
+    .kill = linux_userproc_kill,
     .loadspaces = linux_userproc_loadspaces,
     .loadregions = linux_userproc_loadregions,
     .loaddebugfiles = linux_userproc_loaddebugfiles,
@@ -165,6 +175,9 @@ struct target_ops linux_userspace_process_ops = {
     .flush_current_thread = linux_userproc_flush_current_thread,
     .flush_all_threads = linux_userproc_flush_all_threads,
     .thread_tostring = linux_userproc_thread_tostring,
+
+    .attach_evloop = linux_userproc_attach_evloop,
+    .detach_evloop = linux_userproc_detach_evloop,
 
     .readreg = linux_userproc_read_reg,
     .writereg = linux_userproc_write_reg,
@@ -477,6 +490,31 @@ struct linux_userproc_spec *linux_userproc_build_spec(void) {
     return lspec;
 }
 
+void linux_userproc_free_spec(struct linux_userproc_spec *lspec) {
+    char **ptr;
+
+    if (lspec->program)
+	free(lspec->program);
+    if (lspec->argv) {
+	ptr = lspec->argv;
+	while (*ptr)
+	    free(*ptr);
+	free(lspec->argv);
+    }
+    if (lspec->envp) {
+	ptr = lspec->envp;
+	while (*ptr)
+	    free(*ptr);
+	free(lspec->envp);
+    }
+    if (lspec->stdout_logfile)
+	free(lspec->stdout_logfile);
+    if (lspec->stderr_logfile)
+	free(lspec->stderr_logfile);
+
+    free(lspec);
+}
+
 /*
  * Attaches to @pid.  The caller does all of the normal ptrace
  * interaction; we just facilitate debuginfo-assisted data operations.
@@ -542,7 +580,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,spec);
+			   &linux_userspace_process_ops,spec,-1);
     if (!target) 
 	return NULL;
 
@@ -694,7 +732,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,spec);
+			   &linux_userspace_process_ops,spec,-1);
     if (!target) {
 	errno = ENOMEM;
 	return NULL;
@@ -1098,6 +1136,9 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     tthread = target_create_thread(target,child,tstate);
     tthread->status = THREAD_STATUS_PAUSED;
 
+    if (target->evloop)
+	linux_userproc_evloop_add_tid(target,child);
+
     return 0;
 }
 
@@ -1353,6 +1394,9 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid) {
 	return 1;
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    if (target->evloop)
+	linux_userproc_evloop_del_tid(target,tid);
 
     /*
      * If it exists, actually detach.  Else, just clean up our state.
@@ -1715,6 +1759,9 @@ static int linux_userproc_init(struct target *target) {
     target->current_thread = tthread;
     lstate->current_tid = tthread->tid;
 
+    if (target->evloop)
+	linux_userproc_evloop_add_tid(target,tthread->tid);
+
     return 0;
 }
 
@@ -1854,6 +1901,9 @@ static int linux_userproc_attach_internal(struct target *target) {
 
 	tthread = target_create_thread(target,tid,tstate);
 	tthread->status = THREAD_STATUS_PAUSED;
+
+	if (target->evloop)
+	    linux_userproc_evloop_add_tid(target,tid);
     }
 
     closedir(dirp);
@@ -1956,10 +2006,32 @@ static int linux_userproc_fini(struct target *target) {
     return 0;
 }
 
+static int linux_userproc_kill(struct target *target) {
+    struct linux_userproc_state *lstate;
+    int retval = 0;
+
+    lstate = (struct linux_userproc_state *)(target->state);
+    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+
+    if (!lstate) {
+	errno = EFAULT;
+	return 1;
+    }
+    if (lstate->attached) {
+	errno = EBUSY;
+	return 1;
+    }
+
+    if (kill(lstate->pid,SIGKILL))
+	return 1;
+
+    return 0;
+}
+
 static int linux_userproc_loadspaces(struct target *target) {
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
-    struct addrspace *space = addrspace_create(target,"NULL",0,lstate->pid);
+    struct addrspace *space = addrspace_create(target,"NULL",lstate->pid);
 
     RHOLD(space);
 
@@ -2973,6 +3045,172 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
     if (again)
 	*again = 1;
     return TSTATUS_RUNNING;
+}
+
+int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
+    int tid;
+    int retval;
+    int status;
+    int again = 0;
+    struct target *target = (struct target *)state;
+    struct target_thread *tthread;
+
+    if ((tid = waitpipe_get_pid(readfd)) < 0) {
+	verror("could not find thread tid for readfd %d!\n",readfd);
+	errno = ESRCH;
+	return TSTATUS_UNKNOWN;
+    }
+
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("cound not find thread %d!\n",tid);
+	errno = ESRCH;
+	return TSTATUS_UNKNOWN;
+    }
+
+    /* Need to waitpid(tid) to grab status, then can call handle_internal(). */
+ again:
+    retval = waitpid(tid,&status,WNOHANG | __WALL);
+    if (retval < 0) {
+	if (errno == ECHILD || errno == EINVAL) {
+	    verror("waitpid(%"PRIiTID"): %s\n",tid,strerror(errno));
+	    return TSTATUS_ERROR;
+	}
+	else
+	    goto again;
+    }
+
+    vdebug(5,LOG_T_LUP,
+	   "tid %"PRIiTID" running; handling evloop sig\n",tid);
+
+    /*
+     * Ok, handle whatever happened.  If we can't handle it, pass
+     * control to the user, just like monitor() would.
+     */
+    retval = linux_userproc_handle_internal(target,tid,status,&again);
+
+    if (retval == TSTATUS_ERROR || retval == TSTATUS_UNKNOWN) {
+	/* invoke user error handler... ? */
+	verror("unexpected error/unknown on thread %d; bad!\n",tid);
+	return EVLOOP_HRET_ERROR;
+    }
+    else if (retval == TSTATUS_RUNNING) {
+	/* target_resume() has been called, so return success */
+	return EVLOOP_HRET_SUCCESS;
+    }
+    else if (retval == TSTATUS_DONE) {
+	/* remove FD from set */
+	vdebug(5,LOG_T_LUP,
+	       "tid %"PRIiTID" done; handling evloop sig\n",tid);
+	return EVLOOP_HRET_REMOVEALLTYPES;
+    }
+    else if (retval == TSTATUS_PAUSED) {
+	/* user must handle fault; invoke error handler */
+	vwarn("unexpected pause on thread %d; bad!\n",tid);
+	return EVLOOP_HRET_ERROR;
+    }
+    else {
+	/* user must handle unexpected fault; invoke error handler */
+	verror("unexpected error on thread %d; bad!\n",tid);
+	return EVLOOP_HRET_BADERROR;
+    }
+}
+
+/*
+ * We need to add waitpipe FDs for any tids we are monitoring.  Also,
+ * once we setup an evloop, we need to keep tracking tid
+ * addition/subtraction and add/remove waitpipes as the tids come and
+ * go.
+ */
+static int linux_userproc_evloop_add_tid(struct target *target,int tid) {
+    int readfd;
+
+    if (!target->evloop) {
+	verror("no evloop attached!\n");
+	return -1;
+    }
+
+    if ((readfd = waitpipe_get(tid)) > 0) {
+	vdebug(9,LOG_T_LUP,
+	       "not adding waitpipe readfd %d for tid %d\n",readfd,tid);
+    }
+    else {
+	readfd = waitpipe_add(tid);
+	if (readfd < 0) {
+	    verror("could not add tid %d to waitpipe!\n",tid);
+	    return -1;
+	}
+
+	evloop_set_fd(target->evloop,readfd,EVLOOP_FDTYPE_R,
+		      linux_userproc_evloop_handler,target);
+
+	vdebug(5,LOG_T_LUP,
+	       "added waitpipe/evloop readfd %d for tid %d\n",readfd,tid);
+    }
+
+    return 0;
+}
+
+/*
+ * We need to remove the waitpipe FDs for each tid we are monitoring!
+ */
+static int linux_userproc_evloop_del_tid(struct target *target,int tid) {
+    int readfd;
+
+    if (!target->evloop) {
+	verror("no evloop attached!\n");
+	return -1;
+    }
+
+    if ((readfd = waitpipe_get(tid)) > 0) {
+	evloop_unset_fd(target->evloop,readfd,EVLOOP_FDTYPE_A);
+	waitpipe_remove(tid);
+
+	vdebug(9,LOG_T_LUP,
+	       "removed waitpipe/evloop readfd %d for tid %d\n",
+	       readfd,tid);
+    }
+
+    return 0;
+}
+
+int linux_userproc_attach_evloop(struct target *target,struct evloop *evloop) {
+    struct array_list *tids;
+    int tid;
+    int i;
+
+    waitpipe_init_default();
+
+    tids = target_list_tids(target);
+    if (!tids)
+	return 0;
+
+    array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
+	linux_userproc_evloop_add_tid(target,tid);
+    }
+
+    array_list_free(tids);
+
+    return 0;
+}
+
+int linux_userproc_detach_evloop(struct target *target) {
+    struct array_list *tids;
+    int tid;
+    int i;
+
+    waitpipe_init_default();
+
+    tids = target_list_tids(target);
+    if (!tids)
+	return 0;
+
+    array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
+	linux_userproc_evloop_del_tid(target,tid);
+    }
+
+    array_list_free(tids);
+
+    return 0;
 }
 
 static target_status_t linux_userproc_poll(struct target *target,

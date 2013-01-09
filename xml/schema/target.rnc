@@ -20,16 +20,18 @@ default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
 include "common.rnc"
 
-TargetTypeT = "ptrace" | "xen"
+TargetTypeT = "none" | "ptrace" | "xen"
+TargetModeT = "none" | "live" | "replay" | "record"
+ThreadBPModeT = "strict" | "semiStrict" | "loose"
 
 TargetSpecT = 
     attribute type { TargetTypeT },
 
-    element mode { "live" | "replay" | "record" },
-    element threadBPMode { "strict" | "semiStrict" | "loose" },
+    element mode { TargetModeT },
+    element threadBPMode { ThreadBPModeT },
     element startPaused { xsd:boolean },
-    element logDir { text }?,
-    element logFilePrefix { text }?,
+#    element logDir { text }?,
+#    element logFilePrefix { text }?,
 
     element backendSpec {
         (TargetXenSpec | TargetPtraceSpec)
@@ -38,27 +40,24 @@ TargetSpecT =
 TargetSpec = element targetSpec { TargetSpecT }
 
 TargetXenSpecT = 
-    (element domain { text })
+    (element domain { text }
     | (element configFile { text },
-       element replayLogFile { text }?)
+       element replayLogFile { text }?))
 
 TargetXenSpec = element targetXenSpec { TargetXenSpecT }
 
 TargetPtraceSpecT = 
-    (element pid { xsd:int })
+    (element pid { xsd:int }
     | (element program { text },
        element arguments {
            element argument { xsd:string }*
        },
        element environment {
-           element envVar { 
-               attribute var { text },
-               attribute value { text }
-           }*
+           element envvar { xsd:string }*
        },
-       element logStdout { xsd:boolean }?,
-       element logStderr { xsd:boolean }?,
-       element closeStdin { xsd:boolean }?)
+       element stdoutLogfile { text }?,
+       element stderrLogfile { text }?,
+       element closeStdin { xsd:boolean }))
 
 TargetPtraceSpec = element targetPtraceSpec { TargetPtraceSpecT }
 
@@ -80,22 +79,21 @@ TargetStatus = element targetStatus { TargetStatusT }
 TargetT = 
     attribute name { text },
     attribute tid { TargetIdT },
-    attribute type { TargetTypeT },
-    attribute live { xsd:boolean },
-    attribute writeable { xsd:boolean },
+    TargetSpec,
     TargetStatus,
-    Thread*,
+    Thread+,
     AddrSpace+
 Target = element target { TargetT }
 
 AddrSpaceT = 
     attribute name { text },
-    attribute targetId { TargetIdT },
+    attribute id { xsd:int },
+    attribute tid { TargetIdT },
     MemRegion+
 AddrSpace = element addrSpace { AddrSpaceT }
 
 MemRegionTypeT = 
-    "heap" | "stack" | "vdso" | "vsyscall" | "anon" | "main" | "lib"
+    "unknown" | "heap" | "stack" | "vdso" | "vsyscall" | "anon" | "main" | "lib"
 MemRegionType = element memRegionType { MemRegionTypeT }
 
 MemRegionT = 
@@ -106,7 +104,7 @@ MemRegionT =
     element physOffset   { OFFSET },
     MemRegionType,
     MemRange+,
-    element debugFileId { DebugFileIdT }?
+    element debugFileId { DebugFileIdT }+
 MemRegion = element memRegion { MemRegionT }
 
 MemRangeT =

@@ -60,6 +60,7 @@ static int xen_vm_init(struct target *target);
 static int xen_vm_attach_internal(struct target *target);
 static int xen_vm_detach(struct target *target);
 static int xen_vm_fini(struct target *target);
+static int xen_vm_kill(struct target *target);
 static int xen_vm_loadspaces(struct target *target);
 static int xen_vm_loadregions(struct target *target,struct addrspace *space);
 static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
@@ -158,6 +159,7 @@ struct target_ops xen_vm_ops = {
     .fini = xen_vm_fini,
     .attach = xen_vm_attach_internal,
     .detach = xen_vm_detach,
+    .kill = xen_vm_kill,
     .loadspaces = xen_vm_loadspaces,
     .loadregions = xen_vm_loadregions,
     .loaddebugfiles = xen_vm_loaddebugfiles,
@@ -345,6 +347,19 @@ struct xen_vm_spec *xen_vm_build_spec(void) {
     return xspec;
 }
 
+void xen_vm_free_spec(struct xen_vm_spec *xspec) {
+    if (xspec->domain)
+	free(xspec->domain);
+    if (xspec->config_file)
+	free(xspec->config_file);
+    if(xspec->replay_dir)
+	free(xspec->replay_dir);
+    if (xspec->console_logfile)
+	free(xspec->console_logfile);
+
+    free(xspec);
+}
+
 /*
  * Attaches to domid.  We basically check the xenstore to figure out
  * what kernel the domain is running, and try to find vmlinux based on
@@ -380,7 +395,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 
     vdebug(5,LOG_T_XV,"attaching to domain %s\n",domain);
 
-    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,spec)))
+    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,spec,-1)))
 	return NULL;
 
     if (!(xstate = (struct xen_vm_state *)malloc(sizeof(*xstate)))) {
@@ -1757,12 +1772,26 @@ static int xen_vm_fini(struct target *target) {
     return 0;
 }
 
+static int xen_vm_kill(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
+
+    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+
+    if (target->attached) {
+	errno = EBUSY;
+	return 1;
+    }
+
+    /* XXX: fill in! */
+    return 0;
+}
+
 /*
  * For now, just one big address space.
  */
 static int xen_vm_loadspaces(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    struct addrspace *space = addrspace_create(target,"NULL",0,xstate->id);
+    struct addrspace *space = addrspace_create(target,"NULL",xstate->id);
 
     RHOLD(space);
 

@@ -18,6 +18,7 @@
 
 #include "debuginfo_xml.h"
 #include <string.h>
+#include "util.h"
 
 static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .debugfileRefDepth = 1,
@@ -27,7 +28,7 @@ static struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .doManualRef = 0,
 };
 
-void *_soap_calloc(struct soap *soap,size_t size) {
+static void *_soap_calloc(struct soap *soap,size_t size) {
     void *r;
 
     r = soap_malloc(soap,size);
@@ -1176,20 +1177,6 @@ d_symbol_array_list_to_x_SymbolsOptT(struct soap *soap,
     return (struct vmi1__SymbolsOptT *) \
         d_symbol_array_list_to_x_SymbolsT(soap,list,opts,reftab,refstack,depth);
 }
-
-#define SOAP_STRCPY(soap,d,s)			\
-    do {					\
-	char *_ss = (s);			\
-	int _rc;				\
-						\
-	if (!_ss)				\
-	    (d) = NULL;				\
-	else {					\
-	    _rc = strlen(_ss) + 1;		\
-	    (d) = _soap_calloc((soap),_rc);	\
-	    strncpy((d),_ss,_rc);		\
-	}					\
-    } while (0);
 
 struct vmi1__DebugFileT *
 d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,

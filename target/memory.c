@@ -26,7 +26,7 @@
 /*
  * Creates an address space.
  *
- * You must supply some sort of unique combo of name:id:pid -- these
+ * You must supply some sort of unique combo of name:id -- these
  * values form the unique internal ID for an address space.  They don't
  * actually have to mean anything, unless you are using a target that
  * cares about those values.
@@ -37,21 +37,20 @@
  * pid (0 means kernel; > 0 means a userspace process in the guest).
  */
 struct addrspace *addrspace_create(struct target *target,
-				   char *name,int id,int pid) {
+				   char *name,int id) {
     struct addrspace *retval;
     struct addrspace *lpc;
     char *idstr;
     int idstrlen;
 
     assert(name);
-    assert(pid > 0);
 
     /* make sure this space doesn't already exist: */
     if (target) {
 	list_for_each_entry(lpc,&target->spaces,space) {
 	    if (((name && strcmp(name,lpc->name) == 0)
 		 || (name == NULL && lpc->name == NULL))
-		&& id == lpc->id && pid == lpc->pid) {
+		&& id == lpc->id) {
 		return lpc;
 	    }
 	}
@@ -63,7 +62,7 @@ struct addrspace *addrspace_create(struct target *target,
 	errno = ENOMEM;
 	return NULL;
     }
-    snprintf(idstr,idstrlen,"%s:%d:%d",name,id,pid);
+    snprintf(idstr,idstrlen,"%s:%d",name,id);
 
     retval = (struct addrspace *)malloc(sizeof(struct addrspace));
     if (!retval) {
@@ -77,7 +76,6 @@ struct addrspace *addrspace_create(struct target *target,
     retval->idstr = idstr;
     retval->name = strdup(name);
     retval->id = id;
-    retval->pid = pid;
     retval->refcnt = 0;
 
     INIT_LIST_HEAD(&retval->regions);

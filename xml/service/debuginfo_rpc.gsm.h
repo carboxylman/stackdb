@@ -5,8 +5,6 @@
 #import "debuginfo_xml.gsm.h"
 
 //gsoap vmi1 service name: debuginfo
-//gsoap vmi1 service port: http://anathema.flux.utah.edu/cgi-bin/debuginfo.cgi
-//gsoap vmi1 service portName: http
 //gsoap vmi1 service namespace: http://anathema.flux.utah.edu/schema/vmi/1
 
 //gsoap vmi1 service method-style: document

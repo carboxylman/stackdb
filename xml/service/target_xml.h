@@ -23,18 +23,45 @@
 #include "debuginfo_xml_moduleStub.h"
 #include "dwdebug.h"
 #include "target_api.h"
+#include "target.h"
+#include "target_linux_userproc.h"
+#ifdef ENABLE_XENACCESS
+#include "target_xen_vm.h"
+#endif
 #include <glib.h>
 
-enum target_type_t 
+target_type_t 
 x_TargetTypeT_to_t_target_type_t(struct soap *soap,
 				 enum vmi1__TargetTypeT type,
 				 GHashTable *reftab,
-				 enum target_type_t *out);
-enum vmi1__TargetTypeT *
+				 target_type_t *out);
+enum vmi1__TargetTypeT 
 t_target_type_t_to_x_TargetTypeT(struct soap *soap,
-				 enum target_type_t type,
+				 target_type_t type,
 				 GHashTable *reftab,
 				 enum vmi1__TargetTypeT *out);
+
+target_mode_t 
+x_TargetModeT_to_t_target_mode_t(struct soap *soap,
+				 enum vmi1__TargetModeT mode,
+				 GHashTable *reftab,
+				 target_mode_t *out);
+enum vmi1__TargetModeT 
+t_target_mode_t_to_x_TargetModeT(struct soap *soap,
+				 target_mode_t mode,
+				 GHashTable *reftab,
+				 enum vmi1__TargetModeT *out);
+
+thread_bpmode_t 
+x_ThreadBPModeT_to_t_thread_bpmode_t(struct soap *soap,
+				     enum vmi1__ThreadBPModeT mode,
+				     GHashTable *reftab,
+				     thread_bpmode_t *out);
+enum vmi1__ThreadBPModeT 
+t_thread_bpmode_t_to_x_ThreadBPModeT(struct soap *soap,
+				     thread_bpmode_t mode,
+				     GHashTable *reftab,
+				     enum vmi1__ThreadBPModeT *out);
 
 struct target_spec *
 x_TargetSpecT_to_t_target_spec(struct soap *soap,
@@ -71,15 +98,68 @@ t_linux_userproc_spec_to_x_TargetPtraceSpecT(struct soap *soap,
 					     GHashTable *reftab,
 					     struct vmi1__TargetPtraceSpecT *out);
 
-struct target *
-x_TargetT_to_t_target(struct soap *soap,
-		      struct vmi1__TargetT *target,
-		      GHashTable *reftab,
-		      struct target *out);
 struct vmi1__TargetT *
 t_target_to_x_TargetT(struct soap *soap,
 		      struct target *target,
 		      GHashTable *reftab,
 		      struct vmi1__TargetT *out);
+
+thread_status_t 
+x_TargetThreadStatusT_to_t_thread_status_t(struct soap *soap,
+					   enum vmi1__TargetThreadStatusT status,
+					   GHashTable *reftab,
+					   thread_status_t *out);
+enum vmi1__TargetThreadStatusT 
+t_thread_status_t_to_x_TargetThreadStatusT(struct soap *soap,
+					   thread_status_t status,
+					   GHashTable *reftab,
+					   enum vmi1__TargetThreadStatusT *out);
+
+target_status_t 
+x_TargetStatusT_to_t_target_status_t(struct soap *soap,
+				     enum vmi1__TargetStatusT status,
+				     GHashTable *reftab,
+				     target_status_t *out);
+enum vmi1__TargetStatusT 
+t_target_status_t_to_x_TargetStatusT(struct soap *soap,
+				     target_status_t status,
+				     GHashTable *reftab,
+				     enum vmi1__TargetStatusT *out);
+
+struct vmi1__ThreadT *
+t_target_thread_to_x_TargetThreadT(struct soap *soap,
+				   struct target_thread *thread,
+				   GHashTable *reftab,
+				   struct vmi1__ThreadT *out);
+
+struct vmi1__TargetT *
+t_target_to_x_TargetT(struct soap *soap,
+		      struct target *target,
+		      GHashTable *reftab,
+		      struct vmi1__TargetT *out);
+
+struct vmi1__AddrSpaceT *
+t_addrspace_to_x_AddrSpaceT(struct soap *soap,
+			    struct addrspace *space,
+			    GHashTable *reftab,
+			    struct vmi1__AddrSpaceT *out);
+
+enum vmi1__MemRegionTypeT 
+t_region_type_t_to_x_MemRegionTypeT(struct soap *soap,
+				    region_type_t rtype,
+				    GHashTable *reftab,
+				    enum vmi1__MemRegionTypeT *out);
+
+struct vmi1__MemRegionT *
+t_memregion_to_x_MemRegionT(struct soap *soap,
+			    struct memregion *memregion,
+			    GHashTable *reftab,
+			    struct vmi1__MemRegionT *out);
+
+struct vmi1__MemRangeT *
+t_memrange_to_x_MemRangeT(struct soap *soap,
+			  struct memrange *range,
+			  GHashTable *reftab,
+			  struct vmi1__MemRangeT *out);
 
 #endif /* __TARGET_XML_H__ */

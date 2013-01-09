@@ -41,15 +41,21 @@
  * Generic function that launches or attaches to a target, given @spec.
  */
 struct target *target_instantiate(struct target_spec *spec) {
+    struct target *target = NULL;
 
     if (spec->target_type == TARGET_TYPE_PTRACE) {
-	return linux_userproc_instantiate(spec);
+	target = linux_userproc_instantiate(spec);
     }
 #ifdef ENABLE_XENACCESS
     else if (spec->target_type == TARGET_TYPE_XEN) {
-	return xen_vm_instantiate(spec);
+	target = xen_vm_instantiate(spec);
     }
 #endif
+
+    if (target) {
+	target->spec = spec;
+	return target;
+    }
 
     errno = EINVAL;
     return NULL;
@@ -83,8 +89,31 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
     return tspec;
 }
 
+void target_free_spec(struct target_spec *spec) {
+    if (spec->backend_spec) {
+	if (spec->target_type == TARGET_TYPE_PTRACE) {
+	    linux_userproc_free_spec((struct linux_userproc_spec *)spec->backend_spec);
+	}
+#ifdef ENABLE_XENACCESS
+	else if (spec->target_type == TARGET_TYPE_XEN) {
+	    xen_vm_free_spec((struct xen_vm_spec *)spec->backend_spec);
+	}
+#endif
+    }
+
+    free(spec);
+}
+
 target_type_t target_type(struct target *target) {
     return target->spec->target_type;
+}
+
+char *target_name(struct target *target) {
+    return target->name;
+}
+
+int target_id(struct target *target) {
+    return target->id;
 }
 
 int target_open(struct target *target) {
@@ -92,12 +121,14 @@ int target_open(struct target *target) {
     struct addrspace *space;
     struct memregion *region;
 
-    vdebug(5,LOG_T_TARGET,"opening target type %s\n",target->type);
+    vdebug(5,LOG_T_TARGET,"opening target type(%d)\n",target_type(target));
 
-    vdebug(5,LOG_T_TARGET,"target type %s: init\n",target->type);
+    vdebug(5,LOG_T_TARGET,"target type(%d): init\n",target_type(target));
     if ((rc = target->ops->init(target))) {
 	return rc;
     }
+
+    target->name = target_tostring(target,NULL,0);
 
     if (!target->spec) {
 	verror("cannot open a target without a specification!\n");
@@ -112,13 +143,13 @@ int target_open(struct target *target) {
 	return -1;
     }
 
-    vdebug(5,LOG_T_TARGET,"target type %s: loadspaces\n",target->type);
+    vdebug(5,LOG_T_TARGET,"target(%s): loadspaces\n",target->name);
     if ((rc = target->ops->loadspaces(target))) {
 	return rc;
     }
 
     list_for_each_entry(space,&target->spaces,space) {
-	vdebug(5,LOG_T_TARGET,"target type %s: loadregions\n",target->type);
+	vdebug(5,LOG_T_TARGET,"target(%s): loadregions\n",target->name);
 	if ((rc = target->ops->loadregions(target,space))) {
 	    return rc;
 	}
@@ -134,7 +165,7 @@ int target_open(struct target *target) {
 
 	    vdebug(5,LOG_T_TARGET,
 		   "loaddebugfiles target(%s:%s):region(%s:%s)\n",
-		   target->type,space->idstr,
+		   target->name,space->idstr,
 		   region->name,REGION_TYPE(region->type));
 	    if ((rc = target->ops->loaddebugfiles(target,space,region))) {
 		vwarn("could not open debuginfo for region %s (%d)\n",
@@ -157,8 +188,8 @@ int target_open(struct target *target) {
 		   "target(%s:%s) finished region(%s:%s,"
 		   "base_load_addr=0x%"PRIxADDR",base_phys_addr=0x%"PRIxADDR
 		   ",base_virt_addr=0x%"PRIxADDR
-		   ",phys_offset=%"PRIiOFFSET" (0x%"PRIxOFFSET"))",
-		   target->type,space->idstr,
+		   ",phys_offset=%"PRIiOFFSET" (0x%"PRIxOFFSET"))\n",
+		   target->name,space->idstr,
 		   region->name,REGION_TYPE(region->type),
 		   region->base_load_addr,region->base_phys_addr,
 		   region->base_virt_addr,region->phys_offset,
@@ -166,12 +197,12 @@ int target_open(struct target *target) {
 	}
     }
 
-    vdebug(5,LOG_T_TARGET,"postloadinit target(%s)\n",target->type);
+    vdebug(5,LOG_T_TARGET,"postloadinit target(%s)\n",target->name);
     if ((rc = target->ops->postloadinit(target))) {
 	return rc;
     }
 
-    vdebug(5,LOG_T_TARGET,"attach target(%s)\n",target->type);
+    vdebug(5,LOG_T_TARGET,"attach target(%s)\n",target->name);
     if ((rc = target->ops->attach(target))) {
 	return rc;
     }
@@ -180,70 +211,99 @@ int target_open(struct target *target) {
 }
 
 char *target_tostring(struct target *target,char *buf,int bufsiz) {
-    vdebug(16,LOG_T_TARGET,"target(%s)\n",target->type);
+    vdebug(16,LOG_T_TARGET,"target(%s)\n",target->name);
     return target->ops->tostring(target,buf,bufsiz);
+}
+
+int target_attach_evloop(struct target *target,struct evloop *evloop) {
+    if (target->evloop) {
+	verror("an evloop is already associated with target(%s)!\n",
+	       target->name);
+	errno = EINVAL;
+	return -1;
+    }
+    vdebug(16,LOG_T_TARGET,"target(%s)\n",target->name);
+    target->evloop = evloop;
+    return target->ops->attach_evloop(target,evloop);
+}    
+
+int target_detach_evloop(struct target *target) {
+    int rc;
+
+    if (!target->evloop) {
+	vwarn("no evloop is associated with target(%s)!\n",
+	       target->name);
+	return -1;
+    }
+
+    vdebug(16,LOG_T_TARGET,"target(%s)\n",target->name);
+    rc = target->ops->detach_evloop(target);
+
+    target->evloop = NULL;
+
+    return rc;
 }
     
 target_status_t target_monitor(struct target *target) {
-    vdebug(8,LOG_T_TARGET,"monitoring target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"monitoring target(%s)\n",target->name);
     return target->ops->monitor(target);
 }
 
 target_status_t target_poll(struct target *target,struct timeval *tv,
 			    target_poll_outcome_t *outcome,int *pstatus) {
-    vdebug(8,LOG_T_TARGET,"polling target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"polling target(%s)\n",target->name);
     return target->ops->poll(target,tv,outcome,pstatus);
 }
     
 int target_resume(struct target *target) {
-    vdebug(8,LOG_T_TARGET,"resuming target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"resuming target(%s)\n",target->name);
     return target->ops->resume(target);
 }
     
 int target_pause(struct target *target) {
-    vdebug(8,LOG_T_TARGET,"pausing target(%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"pausing target(%s)\n",target->name);
     return target->ops->pause(target,0);
 }
 
 target_status_t target_status(struct target *target) {
-    vdebug(16,LOG_T_TARGET,"getting target(%s) status\n",target->type);
+    vdebug(16,LOG_T_TARGET,"getting target(%s) status\n",target->name);
     return target->ops->status(target);
 }
 
 unsigned char *target_read_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf) {
     vdebug(16,LOG_T_TARGET,"reading target(%s) at 0x%"PRIxADDR" into %p (%d)\n",
-	   target->type,addr,buf,length);
+	   target->name,addr,buf,length);
     return target->ops->read(target,addr,length,buf);
 }
 
 unsigned long target_write_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf) {
     vdebug(16,LOG_T_TARGET,"writing target(%s) at 0x%"PRIxADDR" (%d)\n",
-	   target->type,addr,length);
+	   target->name,addr,length);
     return target->ops->write(target,addr,length,buf);
 }
 
 char *target_reg_name(struct target *target,REG reg) {
-    vdebug(16,LOG_T_TARGET,"target(%s) reg name %d)\n",target->type,reg);
+    vdebug(16,LOG_T_TARGET,"target(%s) reg name %d)\n",target->name,reg);
     return target->ops->regname(target,reg);
 }
 
 REG target_dw_reg_no(struct target *target,common_reg_t reg) {
-    vdebug(16,LOG_T_TARGET,"target(%s) common reg %d)\n",target->type,reg);
+    vdebug(16,LOG_T_TARGET,"target(%s) common reg %d)\n",target->name,reg);
     return target->ops->dwregno(target,reg);
 }
 
 REGVAL target_read_reg(struct target *target,tid_t tid,REG reg) {
     vdebug(16,LOG_T_TARGET,"reading target(%s:%"PRIiTID") reg %d)\n",
-	   target->type,tid,reg);
+	   target->name,tid,reg);
     return target->ops->readreg(target,tid,reg);
 }
 
 int target_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     vdebug(16,LOG_T_TARGET,
 	   "writing target(%s:%"PRIiTID") reg %d 0x%"PRIxREGVAL")\n",
-	   target->type,tid,reg,value);
+	   target->name,tid,reg,value);
     return target->ops->writereg(target,tid,reg,value);
 }
 
@@ -314,7 +374,7 @@ GHashTable *target_hash_threads(struct target *target) {
 }
 
 struct array_list *target_list_available_tids(struct target *target) {
-    vdebug(12,LOG_T_TARGET,"target(%s)\n",target->type);
+    vdebug(12,LOG_T_TARGET,"target(%s)\n",target->name);
     return target->ops->list_available_tids(target);
 }
 
@@ -342,47 +402,47 @@ GHashTable *target_hash_available_tids(struct target *target) {
 }
 
 int target_load_available_threads(struct target *target,int force) {
-    vdebug(12,LOG_T_TARGET,"target(%s)\n",target->type);
+    vdebug(12,LOG_T_TARGET,"target(%s)\n",target->name);
     return target->ops->load_available_threads(target,force);
 }
 
 struct target_thread *target_load_current_thread(struct target *target,
 						 int force) {
-    vdebug(8,LOG_T_TARGET,"loading target(%s) current thread\n",target->type);
+    vdebug(8,LOG_T_TARGET,"loading target(%s) current thread\n",target->name);
     return target->ops->load_current_thread(target,force);
 }
 
 struct target_thread *target_load_thread(struct target *target,tid_t tid,
 					 int force) {
     vdebug(8,LOG_T_TARGET,"loading target(%s:%"PRIiTID") thread\n",
-	   target->type,tid);
+	   target->name,tid);
     return target->ops->load_thread(target,tid,force);
 }
 
 int target_load_all_threads(struct target *target,int force) {
-    vdebug(8,LOG_T_TARGET,"loading all target(%s) threads\n",target->type);
+    vdebug(8,LOG_T_TARGET,"loading all target(%s) threads\n",target->name);
     return target->ops->load_all_threads(target,force);
 }
 
 int target_pause_thread(struct target *target,tid_t tid,int nowait) {
     vdebug(12,LOG_T_TARGET,"pausing target(%s) thread %"PRIiTID" (nowait=%d)\n",
-	   target->type,tid,nowait);
+	   target->name,tid,nowait);
     return target->ops->pause_thread(target,tid,nowait);
 }
 
 int target_flush_current_thread(struct target *target) {
-    vdebug(8,LOG_T_TARGET,"flushing target(%s) current thread\n",target->type);
+    vdebug(8,LOG_T_TARGET,"flushing target(%s) current thread\n",target->name);
     return target->ops->flush_current_thread(target);
 }
 
 int target_flush_thread(struct target *target,tid_t tid) {
     vdebug(8,LOG_T_TARGET,"flushing target(%s:%"PRIiTID") thread\n",
-	   target->type,tid);
+	   target->name,tid);
     return target->ops->flush_thread(target,tid);
 }
 
 int target_flush_all_threads(struct target *target) {
-    vdebug(8,LOG_T_TARGET,"flushing all target(%s) threads\n",target->type);
+    vdebug(8,LOG_T_TARGET,"flushing all target(%s) threads\n",target->name);
     return target->ops->flush_all_threads(target);
 }
 
@@ -394,7 +454,7 @@ int target_gc_threads(struct target *target) {
     tid_t tid;
     struct target_thread *tthread;
 
-    vdebug(8,LOG_T_TARGET,"garbage collecting cached threads (%s)\n",target->type);
+    vdebug(8,LOG_T_TARGET,"garbage collecting cached threads (%s)\n",target->name);
     if (target->ops->gc_threads) 
 	return target->ops->gc_threads(target);
 
@@ -438,21 +498,21 @@ int target_gc_threads(struct target *target) {
 
     if (rc)
 	vdebug(5,LOG_T_TARGET,"garbage collected %d cached threads (%s)\n",
-	       rc,target->type);
+	       rc,target->name);
 
     return rc;
 }
 
 char *target_thread_tostring(struct target *target,tid_t tid,int detail,
 			     char *buf,int bufsiz) {
-    vdebug(16,LOG_T_TARGET,"target(%s:%"PRIiTID") thread\n",target->type,tid);
+    vdebug(16,LOG_T_TARGET,"target(%s:%"PRIiTID") thread\n",target->name,tid);
     return target->ops->thread_tostring(target,tid,detail,buf,bufsiz);
 }
 
 void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail) {
     char *buf;
     vdebug(16,LOG_T_TARGET,"dumping target(%s:%"PRIiTID") thread\n",
-	   target->type,tid);
+	   target->name,tid);
 
     if (!target_lookup_thread(target,tid))
 	verror("thread %"PRIiTID" does not exist?\n",tid);
@@ -469,7 +529,7 @@ void target_dump_all_threads(struct target *target,FILE *stream,int detail) {
     struct target_thread *tthread;
     GHashTableIter iter;
 
-    vdebug(16,LOG_T_TARGET,"dumping all target(%s) threads\n",target->type);
+    vdebug(16,LOG_T_TARGET,"dumping all target(%s) threads\n",target->name);
 
     g_hash_table_iter_init(&iter,target->threads);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) 
@@ -483,7 +543,7 @@ int target_close(struct target *target) {
     struct target_thread *tthread;
     struct probepoint *probepoint;
 
-    vdebug(5,LOG_T_TARGET,"closing target(%s)\n",target->type);
+    vdebug(5,LOG_T_TARGET,"closing target(%s)\n",target->name);
 
     target_flush_all_threads(target);
 
@@ -520,7 +580,7 @@ int target_close(struct target *target) {
     /* Target should not mess with these after close! */
     target->global_thread = target->current_thread = NULL;
 
-    vdebug(5,LOG_T_TARGET,"detach target(%s)\n",target->type);
+    vdebug(5,LOG_T_TARGET,"detach target(%s)\n",target->name);
     if ((rc = target->ops->detach(target))) {
 	return rc;
     }
@@ -528,20 +588,25 @@ int target_close(struct target *target) {
     return 0;
 }
 
+int target_kill(struct target *target) {
+    vdebug(5,LOG_T_TARGET,"killing target(%s)\n",target->name);
+    return target->ops->kill(target);
+}
+
 REG target_get_unused_debug_reg(struct target *target,tid_t tid) {
     REG retval;
     vdebug(5,LOG_T_TARGET,"getting unused debug reg for target(%s):0x%"PRIx64"\n",
-	   target->type,tid);
+	   target->name,tid);
     retval = target->ops->get_unused_debug_reg(target,tid);
     vdebug(5,LOG_T_TARGET,"got unused debug reg for target(%s):0x%"PRIx64": %"PRIiREG"\n",
-	   target->type,tid,retval);
+	   target->name,tid,retval);
     return retval;
 }
 
 int target_set_hw_breakpoint(struct target *target,tid_t tid,REG reg,ADDR addr) {
     vdebug(5,LOG_T_TARGET,
 	   "setting hw breakpoint at 0x%"PRIxADDR" on target(%s:%"PRIiTID") dreg %d\n",
-	   addr,target->type,tid,reg);
+	   addr,target->name,tid,reg);
     return target->ops->set_hw_breakpoint(target,tid,reg,addr);
 }
 
@@ -549,47 +614,47 @@ int target_set_hw_watchpoint(struct target *target,tid_t tid,REG reg,ADDR addr,
 			     probepoint_whence_t whence,int watchsize) {
     vdebug(5,LOG_T_TARGET,
 	   "setting hw watchpoint at 0x%"PRIxADDR" on target(%s:%"PRIiTID") dreg %d (%d)\n",
-	   addr,target->type,tid,reg,watchsize);
+	   addr,target->name,tid,reg,watchsize);
     return target->ops->set_hw_watchpoint(target,tid,reg,addr,whence,watchsize);
 }
 
 int target_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
     vdebug(5,LOG_T_TARGET,
 	   "removing hw breakpoint on target(%s:%"PRIiTID") dreg %d\n",
-	   target->type,tid,reg);
+	   target->name,tid,reg);
     return target->ops->unset_hw_breakpoint(target,tid,reg);
 }
 
 int target_unset_hw_watchpoint(struct target *target,tid_t tid,REG reg) {
     vdebug(5,LOG_T_TARGET,
 	   "removing hw watchpoint on target(%s:%"PRIiTID") dreg %d\n",
-	   target->type,tid,reg);
+	   target->name,tid,reg);
     return target->ops->unset_hw_watchpoint(target,tid,reg);
 }
 
 int target_disable_hw_breakpoints(struct target *target,tid_t tid) {
     vdebug(5,LOG_T_TARGET,
-	   "disable hw breakpoints on target(%s:%"PRIiTID")\n",target->type,tid);
+	   "disable hw breakpoints on target(%s:%"PRIiTID")\n",target->name,tid);
     return target->ops->disable_hw_breakpoints(target,tid);
 }
 
 int target_enable_hw_breakpoints(struct target *target,tid_t tid) {
     vdebug(5,LOG_T_TARGET,
-	   "enable hw breakpoints on target(%s:%"PRIiTID")\n",target->type,tid);
+	   "enable hw breakpoints on target(%s:%"PRIiTID")\n",target->name,tid);
     return target->ops->enable_hw_breakpoints(target,tid);
 }
 
 int target_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     vdebug(5,LOG_T_TARGET,
 	   "disable hw breakpoint %"PRIiREG" on target(%s:%"PRIiTID")\n",
-	   dreg,target->type,tid);
+	   dreg,target->name,tid);
     return target->ops->disable_hw_breakpoint(target,tid,dreg);
 }
 
 int target_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     vdebug(5,LOG_T_TARGET,
 	   "enable hw breakpoint %"PRIiREG" on target(%s:%"PRIiTID")\n",
-	   dreg,target->type,tid);
+	   dreg,target->name,tid);
     return target->ops->enable_hw_breakpoint(target,tid,dreg);
 }
 
@@ -597,20 +662,20 @@ int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 				int notification) {
     vdebug(5,LOG_T_TARGET,
 	   "notify sw breakpoint (%d) on target(%s)\n",
-	   notification,target->type);
+	   notification,target->name);
     return target->ops->notify_sw_breakpoint(target,addr,notification);
 }
 
 int target_singlestep(struct target *target,tid_t tid,int isbp) {
     vdebug(5,LOG_T_TARGET,"single stepping target(%s:%"PRIiTID") isbp=%d\n",
-	   target->type,tid,isbp);
+	   target->name,tid,isbp);
     return target->ops->singlestep(target,tid,isbp);
 }
 
 int target_singlestep_end(struct target *target,tid_t tid) {
     if (target->ops->singlestep_end) {
 	vdebug(5,LOG_T_TARGET,"ending single stepping of target(%s:%"PRIiTID")\n",
-	       target->type,tid);
+	       target->name,tid);
 	return target->ops->singlestep_end(target,tid);
     }
     return 0;
@@ -619,10 +684,10 @@ int target_singlestep_end(struct target *target,tid_t tid) {
 tid_t target_gettid(struct target *target) {
     tid_t retval = 0;
 
-    vdebug(9,LOG_T_TARGET,"gettid target(%s)\n",target->type);
+    vdebug(9,LOG_T_TARGET,"gettid target(%s)\n",target->name);
     retval = target->ops->gettid(target);
     vdebug(5,LOG_T_TARGET,"gettid target(%s) -> 0x%"PRIx64" \n",
-	   target->type,retval);
+	   target->name,retval);
 
     return retval;
 }

@@ -27,9 +27,16 @@
  ** Globals.
  **/
 
-/* These are the targets we know about. */
-static GHashTable *target_tab = NULL;
-
+/*
+ * A simple global target ID counter.  Callers of target_instantiate or
+ * target_create are free to supply their own IDs; if they do not, we
+ * generate IDs starting at 1.
+ *
+ * The target RPC server makes use of this, but calls it with locks
+ * held, so its use in that server is thread-safe.  The reason the
+ * counter is here, then, and not there, is because the ID must be
+ * strongly associated with the target object.  Silly.
+ */
 static int next_target_id = 1;
 
 static int init_done = 0;
@@ -40,25 +47,12 @@ void target_init(void) {
 
     dwdebug_init();
 
-    target_tab = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,NULL);
-
     init_done = 1;
 }
 
 void target_fini(void) {
-    GHashTableIter iter;
-    struct target *target;
-
     if (!init_done)
 	return;
-
-    g_hash_table_iter_init(&iter,target_tab);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&target)) {
-	target_close(target);
-	target_free(target);
-    }
-    g_hash_table_destroy(target_tab);
-    target_tab = NULL;
 
     dwdebug_fini();
 
@@ -292,14 +286,11 @@ void target_free(struct target *target) {
     struct addrspace *tmp;
     int rc;
 
-    vdebug(5,LOG_T_TARGET,"freeing target(%s)\n",target->type);
+    vdebug(5,LOG_T_TARGET,"freeing target(%s)\n",target->name);
 
-    if (target_tab)
-	g_hash_table_remove(target_tab,(gpointer)(uintptr_t)target->id);
-
-    vdebug(5,LOG_T_TARGET,"fini target(%s)\n",target->type);
+    vdebug(5,LOG_T_TARGET,"fini target(%s)\n",target->name);
     if ((rc = target->ops->fini(target))) {
-	verror("fini target(%s) failed; not finishing free!\n",target->type);
+	verror("fini target(%s) failed; not finishing free!\n",target->name);
 	return;
     }
 
@@ -321,6 +312,9 @@ void target_free(struct target *target) {
     if (target->full_ret_instrs)
 	free(target->full_ret_instrs);
 
+    if (target->name)
+	free(target->name);
+
     free(target);
 }
 
@@ -331,16 +325,15 @@ void ghash_mmap_entry_free(gpointer data) {
 }
 
 struct target *target_create(char *type,void *state,struct target_ops *ops,
-			     struct target_spec *spec) {
+			     struct target_spec *spec,int id) {
     struct target *retval = malloc(sizeof(struct target));
     memset(retval,0,sizeof(struct target));
 
-    retval->id = next_target_id++;
+    if (id < 0)
+	retval->id = next_target_id++;
+    else
+	retval->id = id;
 
-    if (target_tab)
-	g_hash_table_insert(target_tab,(gpointer)(uintptr_t)retval->id,retval);
-
-    retval->type = type;
     retval->state = state;
     retval->ops = ops;
     retval->spec = spec;
@@ -368,22 +361,6 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
      */
     retval->bp_handler = probepoint_bp_handler;
     retval->ss_handler = probepoint_ss_handler;
-
-    return retval;
-}
-
-struct array_list *target_get_existing_targets(void) {
-    struct array_list *retval;
-    GHashTableIter iter;
-    struct target *t;
-
-    if (!target_tab || g_hash_table_size(target_tab) == 0)
-	return NULL;
-
-    retval = array_list_create(g_hash_table_size(target_tab));
-    g_hash_table_iter_init(&iter,target_tab);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&t)) 
-	array_list_append(retval,t);
 
     return retval;
 }
@@ -428,10 +405,10 @@ int target_associate_debugfile(struct target *target,
     vdebug(1,LOG_T_TARGET,
 	   "loaded and associated debugfile(%s) for region(%s,"
 	   "base_phys=0x%"PRIxADDR",base_virt=0x%"PRIxADDR")"
-	   " in space (%s,%d,%d)\n",
+	   " in space (%s,%d)\n",
 	   debugfile->idstr,region->name,
 	   region->base_phys_addr,region->base_virt_addr,
-	   region->space->name,region->space->id,region->space->pid);
+	   region->space->name,region->space->id);
 
     return 0;
 }

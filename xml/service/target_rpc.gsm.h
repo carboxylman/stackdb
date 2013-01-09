@@ -6,8 +6,6 @@
 #import "target_xml.gsm.h"
 
 //gsoap vmi1 service name: target
-//gsoap vmi1 service port: http://anathema.flux.utah.edu/cgi-bin/target.cgi
-//gsoap vmi1 service portName: http
 //gsoap vmi1 service namespace: http://anathema.flux.utah.edu/schema/vmi/1
 
 //gsoap vmi1 service method-style: document
@@ -21,6 +19,10 @@ struct vmi1__TargetTypesResponse {
 struct vmi1__TargetResponse {
     struct vmi1__TargetT *target;
 };
+struct vmi1__TargetsResponse {
+    $int __size_target;
+    struct vmi1__TargetT **target;
+};
 struct vmi1__NoneResponse { };
 
 //gsoap vmi1 service method-documentation: 
@@ -29,7 +31,7 @@ int vmi1__ListTargetTypes(void *_,
 
 //gsoap vmi1 service method-documentation: 
 int vmi1__ListTargets(void *_,
-		      struct vmi1__TargetResponse *r);
+		      struct vmi1__TargetsResponse *r);
 
 int vmi1__GetTarget(vmi1__TargetIdT tid,
 		    struct vmi1__TargetResponse *r);
@@ -41,10 +43,8 @@ int vmi1__PauseTarget(vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
 int vmi1__ResumeTarget(vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
-int vmi1__CloseTarget(vmi1__TargetIdT tid,
+int vmi1__CloseTarget(vmi1__TargetIdT tid,enum xsd__boolean kill,
 		      struct vmi1__NoneResponse *r);
-int vmi1__KillTarget(vmi1__TargetIdT tid,
-		     struct vmi1__NoneResponse *r);
 
 int vmi1__PauseThread(vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		      struct vmi1__NoneResponse *r);

@@ -27,8 +27,8 @@ OFFSET = xsd:long
 SMOFFSET = xsd:int
 
 DebugFileIdT = xsd:ID
-ThreadIdT = xsd:ID
-TargetIdT = xsd:ID
-SessionIdT = xsd:ID
+ThreadIdT = xsd:int
+TargetIdT = xsd:int
+SessionIdT = xsd:int
 AnalysisIdT = xsd:ID
 AnalysisInstanceIdT = xsd:ID

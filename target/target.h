@@ -72,13 +72,14 @@ struct memrange;
 struct value;
 
 typedef enum {
-    REGION_TYPE_HEAP           = 0,
-    REGION_TYPE_STACK          = 1,
-    REGION_TYPE_VDSO           = 2,
-    REGION_TYPE_VSYSCALL       = 3,
-    REGION_TYPE_ANON           = 4,
-    REGION_TYPE_MAIN           = 5,
-    REGION_TYPE_LIB            = 6,
+    REGION_TYPE_UNKNOWN        = 0,
+    REGION_TYPE_HEAP           = 1,
+    REGION_TYPE_STACK          = 2,
+    REGION_TYPE_VDSO           = 3,
+    REGION_TYPE_VSYSCALL       = 4,
+    REGION_TYPE_ANON           = 5,
+    REGION_TYPE_MAIN           = 6,
+    REGION_TYPE_LIB            = 7,
     __REGION_TYPE_MAX,
 } region_type_t;
 extern char *REGION_TYPE_STRINGS[];
@@ -88,7 +89,7 @@ extern char *REGION_TYPE_STRINGS[];
  ** Target functions.
  **/
 struct target *target_create(char *type,void *state,struct target_ops *ops,
-			     struct target_spec *spec);
+			     struct target_spec *spec,int id);
 void target_free(struct target *target);
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr);
@@ -148,8 +149,7 @@ int target_invalidate_thread(struct target *target,
 /**
  ** Address spaces.
  **/
-struct addrspace *addrspace_create(struct target *target,
-				   char *name,int id,int pid);
+struct addrspace *addrspace_create(struct target *target,char *name,int id);
 struct memregion *addrspace_find_region(struct addrspace *space,char *name);
 struct memregion *addrspace_match_region_name(struct addrspace *space,
 					      region_type_t rtype,char *name);
@@ -354,7 +354,6 @@ struct addrspace {
 
     char *name;
     int id;
-    int pid;
 
     /* Our member node on the global spaces list */
     struct list_head space;

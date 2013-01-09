@@ -816,7 +816,7 @@ int main(int argc,char **argv) {
     int pstatus;
     ADDR paddr;
     char *endptr;
-    char targetstr[128];
+    char *targetstr;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -855,10 +855,10 @@ int main(int argc,char **argv) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    target_tostring(t,targetstr,sizeof(targetstr));
+    targetstr = target_name(t);
 
     if (target_open(t)) {
-	fprintf(stderr,"could not open %s!\n",targetstr);
+	fprintf(stderr,"could not open target!\n");
 	exit(-4);
     }
 
