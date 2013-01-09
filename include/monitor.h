@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <pthread.h>
 
+#include "evloop.h"
+
 struct monitor;
 struct monitor_msg;
 
@@ -377,6 +379,9 @@ void monitor_free(struct monitor *monitor);
 /* Free @msg, and its buffer (if non-NULL). */
 void monitor_msg_free(struct monitor_msg *msg);
 
+/* Free @msg, but not its buffer. */
+void monitor_msg_free_save_buffer(struct monitor_msg *msg);
+
 /* Returns a monitor_msg consisting of the argument values. */
 struct monitor_msg *monitor_msg_create(int id,int seqno,int buflen,char *buf);
 
@@ -391,7 +396,7 @@ void *monitor_get_msg_obj(struct monitor *monitor,int msg_id);
 void monitor_del_msg_obj(struct monitor *monitor,int msg_id);
 
 /*
- * Send @msg to the monitor associated with @obj, storing
+ * Send @msg to the monitored child associated with @obj, storing
  * @msg->id/@msg_obj in our internal table.
  *
  * (The point of associating @msg_obj with a message id is so that if

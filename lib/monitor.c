@@ -1076,6 +1076,10 @@ void monitor_msg_free(struct monitor_msg *msg) {
     free(msg);
 }
 
+void monitor_msg_free_save_buffer(struct monitor_msg *msg) {
+    free(msg);
+}
+
 struct monitor_msg *monitor_msg_create(int id,int seqno,int buflen,char *buf) {
     struct monitor_msg *msg = calloc(1,sizeof(*msg));
 
