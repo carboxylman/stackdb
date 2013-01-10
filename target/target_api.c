@@ -334,11 +334,16 @@ struct array_list *target_list_tids(struct target *target) {
     struct array_list *retval;
     GHashTableIter iter;
     struct target_thread *tthread;
+    gpointer key;
 
     retval = array_list_create(g_hash_table_size(target->threads));
 
     g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) 
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) 
+	if ((tid_t)(uintptr_t)key == TID_GLOBAL
+	    && tthread->tid != TID_GLOBAL)
+	    continue;
+
 	array_list_append(retval,(void *)(ptr_t)tthread->tid);
 
     return retval;
@@ -348,12 +353,18 @@ struct array_list *target_list_threads(struct target *target) {
     struct array_list *retval;
     GHashTableIter iter;
     struct target_thread *tthread;
+    gpointer key;
 
     retval = array_list_create(g_hash_table_size(target->threads));
 
     g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) 
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) {
+	if ((tid_t)(uintptr_t)key == TID_GLOBAL
+	    && tthread->tid != TID_GLOBAL)
+	    continue;
+
 	array_list_append(retval,tthread);
+    }
 
     return retval;
 }
@@ -368,6 +379,10 @@ GHashTable *target_hash_threads(struct target *target) {
 
     g_hash_table_iter_init(&iter,target->threads);
     while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) 
+	if ((tid_t)(uintptr_t)key == TID_GLOBAL
+	    && tthread->tid != TID_GLOBAL)
+	    continue;
+
 	g_hash_table_insert(retval,key,tthread);
 
     return retval;
