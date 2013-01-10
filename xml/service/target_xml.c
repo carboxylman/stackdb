@@ -665,7 +665,6 @@ t_target_to_x_TargetT(struct soap *soap,
     list_for_each_entry(space,&target->spaces,space)
 	++len;
     if (len) {
-	++len;
 	otarget->__sizeaddrSpace = len;
 	otarget->addrSpace = SOAP_CALLOC(soap,len,sizeof(*(otarget->addrSpace)));
 	i = 0;
@@ -706,7 +705,6 @@ t_addrspace_to_x_AddrSpaceT(struct soap *soap,
     list_for_each_entry(region,&space->regions,region)
 	++len;
     if (len) {
-	++len;
 	ospace->__sizememRegion = len;
 	ospace->memRegion = SOAP_CALLOC(soap,len,sizeof(*(ospace->memRegion)));
 	i = 0;
@@ -800,7 +798,6 @@ t_memregion_to_x_MemRegionT(struct soap *soap,
     list_for_each_entry(range,&region->ranges,range)
 	++len;
     if (len) {
-	++len;
 	oregion->__sizememRange = len;
 	oregion->memRange = SOAP_CALLOC(soap,len,sizeof(*(oregion->memRange)));
 	i = 0;
