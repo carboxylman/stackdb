@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -393,7 +393,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 	return NULL;
     }
 
-    vdebug(5,LOG_T_XV,"attaching to domain %s\n",domain);
+    vdebug(5,LA_TARGET,LF_XV,"attaching to domain %s\n",domain);
 
     if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,spec,-1)))
 	return NULL;
@@ -427,7 +427,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
     else if (errno == EINVAL || tmp == domain) 
 	have_id = 0;
     else {
-	vdebug(4,LOG_T_XV,"found id %d (from %s)\n",xstate->id,domain);
+	vdebug(4,LA_TARGET,LF_XV,"found id %d (from %s)\n",xstate->id,domain);
 	have_id = 1;
     }
     tmp = NULL;
@@ -441,7 +441,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 	    tmp = xs_read(xsh,xth,buf,NULL);
 
 	    if (tmp && strcmp(domain,tmp) == 0) {
-		vdebug(9,LOG_T_XV,"dom %s (from %s) matches\n",tmp,domain);
+		vdebug(9,LA_TARGET,LF_XV,"dom %s (from %s) matches\n",tmp,domain);
 		errno = 0;
 		xstate->id = (domid_t)strtol(domains[i],NULL,10);
 		if (errno) {
@@ -458,7 +458,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 		    free(xstate->name);
 		xstate->name = strdup(tmp);
 		have_id = 1;
-		vdebug(4,LOG_T_XV,"dom %d (from %s) matches id\n",
+		vdebug(4,LA_TARGET,LF_XV,"dom %d (from %s) matches id\n",
 		       xstate->id,domain);
 	    }
 	    free(tmp);
@@ -571,7 +571,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 	target->endian = endian;
 	target->ptrsize = target->wordsize;
 
-	vdebug(3,LOG_T_XV,
+	vdebug(3,LA_TARGET,LF_XV,
 	       "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
 	       xstate->kernel_elf_filename,target->wordsize,
 	       (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
@@ -629,7 +629,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
     target->full_ret_instrs_len = 2;
     target->full_ret_instr_count = 2;
 
-    vdebug(5,LOG_T_XV,"opened dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"opened dom %d\n",xstate->id);
 
     return target;
 
@@ -665,7 +665,7 @@ static int xen_vm_load_dominfo(struct target *target) {
     shared_info_t *live_shinfo = NULL;
 
     if (!xstate->dominfo_valid) {
-        vdebug(4,LOG_T_XV,
+        vdebug(4,LA_TARGET,LF_XV,
 	       "load dominfo; current dominfo is invalid\n");
 	if (xc_domain_getinfo(xc_handle,xstate->id,1,
 			      &xstate->dominfo) <= 0) {
@@ -697,7 +697,7 @@ static int xen_vm_load_dominfo(struct target *target) {
 
 	xstate->dominfo_valid = 1;
     } else {
-        vdebug(8,LOG_T_XV,
+        vdebug(8,LA_TARGET,LF_XV,
 	       "did not need to load dominfo; current dominfo is valid\n");
     }
 
@@ -762,7 +762,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     int iskernel = 0;
     ADDR stack_top;
 
-    vdebug(5,LOG_T_XV,"loading\n");
+    vdebug(5,LA_TARGET,LF_XV,"loading\n");
 
     v = target_load_value_member(target,taskv,"pid",NULL,LOAD_FLAG_NONE);
     if (!v) {
@@ -953,7 +953,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
-    vdebug(5,LOG_T_XV,
+    vdebug(5,LA_TARGET,LF_XV,
 	   "esp=%"PRIxADDR",stack_base=%"PRIxADDR",stack_top=%"PRIxADDR
 	   ",ptregs_stack_addr=%"PRIxADDR"\n",
 	   tstate->esp,stack_top,tstate->stack_base,tstate->ptregs_stack_addr);
@@ -1079,7 +1079,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
-    vdebug(4,LOG_T_XV,
+    vdebug(4,LA_TARGET,LF_XV,
 	   "debug registers (kernel context): 0x%"PRIxADDR",0x%"PRIxADDR
 	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	   tstate->context.debugreg[0],tstate->context.debugreg[1],
@@ -1155,7 +1155,7 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
      */
     else if ((tthread = target_lookup_thread(target,tid))) {
 	if (tthread->valid && !force) {
-	    vdebug(4,LOG_T_XV,"did not need to load thread; copy is valid\n");
+	    vdebug(4,LA_TARGET,LF_XV,"did not need to load thread; copy is valid\n");
 	    return tthread;
 	}
     }
@@ -1188,7 +1188,7 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
 	vwarn("no task matching %"PRIiTID"\n",tid);
 
 	if (tthread) {
-	    vdebug(3,LOG_T_XV,
+	    vdebug(3,LA_TARGET,LF_XV,
 		   "evicting old thread %"PRIiTID"; no longer exists!\n",tid);
 	    target_delete_thread(target,tthread,0);
 	}
@@ -1291,7 +1291,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      * XXX: maybe returning global thread is too :).
      */
     if (ipval < 0xc0000000) {
-	vdebug(9,LOG_T_XV,
+	vdebug(9,LA_TARGET,LF_XV,
 	       "at user-mode EIP 0x%"PRIxADDR"; not loading current thread;"
 	       " returning global thread.\n",
 	       ipval);
@@ -1342,13 +1342,13 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     v = NULL;
 
     if (SOFTIRQ_COUNT(preempt_count) || HARDIRQ_COUNT(preempt_count)) {
-	vdebug(3,LOG_T_XV,"in interrupt context (hardirq=%d,softirq=%d)\n",
+	vdebug(3,LA_TARGET,LF_XV,"in interrupt context (hardirq=%d,softirq=%d)\n",
 	       HARDIRQ_COUNT(preempt_count),SOFTIRQ_COUNT(preempt_count));
 	tid = TID_GLOBAL;
 	tgid = TID_GLOBAL;
 	taskv = NULL;
 
-	vdebug(5,LOG_T_XV,
+	vdebug(5,LA_TARGET,LF_XV,
 	       "loading global thread cause in hard/soft irq (0x%"PRIx64")\n",
 	       preempt_count);
     }
@@ -1372,7 +1372,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	value_free(v);
 	v = NULL;
 
-	vdebug(5,LOG_T_XV,"loading thread %"PRIiTID"\n",tid);
+	vdebug(5,LA_TARGET,LF_XV,"loading thread %"PRIiTID"\n",tid);
 
 	v = target_load_value_member(target,taskv,"tgid",NULL,LOAD_FLAG_NONE);
 	if (!v) {
@@ -1428,7 +1428,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    /* Update its flags. */
 	    tstate->thread_info_flags = tiflags;
 
-	    vdebug(5,LOG_T_XV,
+	    vdebug(5,LA_TARGET,LF_XV,
 		   "found matching cached thread %"PRIiTID" (thread %p, tpc %p)\n",
 		   tid,tthread,tthread->tpc);
 	}
@@ -1439,7 +1439,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 	tthread = target_create_thread(target,tid,tstate);
 
-	vdebug(5,LOG_T_XV,
+	vdebug(5,LA_TARGET,LF_XV,
 	       "built new thread %"PRIiTID" (thread %p, tpc %p)\n",
 		   tid,tthread,tthread->tpc);
     }
@@ -1493,7 +1493,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	gtstate->thread_info_preempt_count = preempt_count;
     }
 
-    vdebug(4,LOG_T_XV,
+    vdebug(4,LA_TARGET,LF_XV,
 	   "debug registers (vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
 	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	   tstate->context.debugreg[0],tstate->context.debugreg[1],
@@ -1585,7 +1585,7 @@ static int xen_vm_init(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_thread_state *tstate;
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
 	vwarn("auto-enabling SEMI_STRICT bpmode on Xen target.\n");
@@ -1636,7 +1636,7 @@ static int xen_vm_attach_internal(struct target *target) {
     domctl.domain = xstate->id;
     domctl.u.setdebugging.enable = true;
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (xc_handle == -1) {
 	xc_handle = xc_interface_open();
@@ -1693,7 +1693,7 @@ static int xen_vm_detach(struct target *target) {
     domctl.domain = xstate->id;
     domctl.u.setdebugging.enable = false;
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (!target->attached)
 	return 0;
@@ -1735,11 +1735,11 @@ static int xen_vm_detach(struct target *target) {
 	}
 	xc_handle = -1;
 
-	vdebug(4,LOG_T_XV,"xc detach dom %d succeeded.\n",xstate->id);
+	vdebug(4,LA_TARGET,LF_XV,"xc detach dom %d succeeded.\n",xstate->id);
 	target->attached = 0;
     }
 
-    vdebug(3,LOG_T_XV,"detach dom %d succeeded.\n",xstate->id);
+    vdebug(3,LA_TARGET,LF_XV,"detach dom %d succeeded.\n",xstate->id);
     target->attached = 0;
 
     return 0;
@@ -1748,7 +1748,7 @@ static int xen_vm_detach(struct target *target) {
 static int xen_vm_fini(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (target->attached) 
 	xen_vm_detach(target);
@@ -1775,7 +1775,7 @@ static int xen_vm_fini(struct target *target) {
 static int xen_vm_kill(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (target->attached) {
 	errno = EBUSY;
@@ -1853,7 +1853,7 @@ static int xen_vm_loaddebugfiles(struct target *target,
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct debugfile *debugfile;
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     /*
      * Open up the actual ELF binary and look for three sections to inform
@@ -1993,7 +1993,7 @@ static target_status_t xen_vm_status(struct target *target) {
     else
 	retval = TSTATUS_ERROR;
 
-    vdebug(9,LOG_T_XV,"dom %d status %d\n",xstate->id,retval);
+    vdebug(9,LA_TARGET,LF_XV,"dom %d status %d\n",xstate->id,retval);
 
     return retval;
 }
@@ -2001,7 +2001,7 @@ static target_status_t xen_vm_status(struct target *target) {
 static int xen_vm_pause(struct target *target,int nowait) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (xen_vm_load_dominfo(target)) 
 	vwarn("could not load dominfo for dom %d, trying to pause anyway!\n",xstate->id);
@@ -2038,16 +2038,16 @@ static int xen_vm_flush_current_thread(struct target *target) {
     tid = tthread->tid;
     tstate = (struct xen_vm_thread_state *)tthread->state;
 
-    vdebug(5,LOG_T_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tthread->tid);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tthread->tid);
 
     if (!tthread->valid || !tthread->dirty) {
-	vdebug(8,LOG_T_XV,
+	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
 	       xstate->id,tthread->tid,tthread->valid,tthread->dirty);
 	return 0;
     }
 
-    vdebug(3,LOG_T_XV,
+    vdebug(3,LA_TARGET,LF_XV,
 	   "EIP is 0x%"PRIxREGVAL" before flush (dom %d tid %"PRIiTID")\n",
 	   xen_vm_read_reg(target,TID_GLOBAL,target->ipregno),
 	   xstate->id,tthread->tid);
@@ -2089,14 +2089,14 @@ static int xen_vm_flush_current_thread(struct target *target) {
     /* Mark cached copy as clean. */
     tthread->dirty = 0;
 
-    vdebug(4,LOG_T_XV,
+    vdebug(4,LA_TARGET,LF_XV,
 	   "debug registers (vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
 	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	   tstate->context.debugreg[0],tstate->context.debugreg[1],
 	   tstate->context.debugreg[2],tstate->context.debugreg[3],
 	   tstate->context.debugreg[6],tstate->context.debugreg[7]);
 
-    vdebug(4,LOG_T_XV,
+    vdebug(4,LA_TARGET,LF_XV,
 	   "debug registers (our copy): 0x%"PRIxADDR",0x%"PRIxADDR
 	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	   tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
@@ -2154,7 +2154,7 @@ static int xen_vm_flush_global_thread(struct target *target,
 	tstate = NULL;
 
     if (!gthread->valid || !gthread->dirty) {
-	vdebug(8,LOG_T_XV,
+	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
 	       xstate->id,gthread->tid,gthread->valid,gthread->dirty);
 	return 0;
@@ -2163,7 +2163,7 @@ static int xen_vm_flush_global_thread(struct target *target,
     if (!current_thread) {
 	/* Flush the global thread's CPU context directly. */
 
-	vdebug(5,LOG_T_XV,"dom %d tid %"PRIiTID" (full global vCPU flush)\n",
+	vdebug(5,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID" (full global vCPU flush)\n",
 	       xstate->id,gthread->tid);
 
 	ctxp = &gtstate->context;
@@ -2189,7 +2189,7 @@ static int xen_vm_flush_global_thread(struct target *target,
 	    if (gtstate->context.debugreg[i] == 0)
 		continue;
 
-	    vdebug(5,LOG_T_XV,"merging global debug reg %d in!\n",i);
+	    vdebug(5,LA_TARGET,LF_XV,"merging global debug reg %d in!\n",i);
 	    /* Copy in the break address */
 	    ctxp->debugreg[i] = gtstate->context.debugreg[i];
 	    /* Overwrite the control bits; unset them first, then set. */
@@ -2209,13 +2209,13 @@ static int xen_vm_flush_global_thread(struct target *target,
     }
 
     if (!current_thread) {
-	vdebug(3,LOG_T_XV,
+	vdebug(3,LA_TARGET,LF_XV,
 	       "EIP is 0x%"PRIxREGVAL" before flush (dom %d tid %"PRIiTID")\n",
 	       xen_vm_read_reg(target,TID_GLOBAL,target->ipregno),
 	       xstate->id,gthread->tid);
     }
     else {
-	vdebug(3,LOG_T_XV,
+	vdebug(3,LA_TARGET,LF_XV,
 	       "EIP is 0x%"PRIxREGVAL" (in thread %"PRIiTID") before flush (dom %d tid %"PRIiTID")\n",
 	       xen_vm_read_reg(target,current_thread->tid,target->ipregno),
 	       current_thread->tid,
@@ -2237,14 +2237,14 @@ static int xen_vm_flush_global_thread(struct target *target,
     gthread->dirty = 0;
 
     if (!current_thread)
-	vdebug(4,LOG_T_XV,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "debug registers (setting full vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
 	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	       gtstate->context.debugreg[0],gtstate->context.debugreg[1],
 	       gtstate->context.debugreg[2],gtstate->context.debugreg[3],
 	       gtstate->context.debugreg[6],gtstate->context.debugreg[7]);
     else
-	vdebug(4,LOG_T_XV,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "debug registers (setting MERGED!!! vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
 	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	       ctxp->debugreg[0],ctxp->debugreg[1],
@@ -2252,7 +2252,7 @@ static int xen_vm_flush_global_thread(struct target *target,
 	       ctxp->debugreg[6],ctxp->debugreg[7]);
 
     if (!current_thread) 
-	vdebug(4,LOG_T_XV,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "debug registers (our copy): 0x%"PRIxADDR",0x%"PRIxADDR
 	       ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	       gtstate->dr[0],gtstate->dr[1],gtstate->dr[2],gtstate->dr[3],
@@ -2267,7 +2267,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     struct xen_vm_thread_state *tstate = NULL;
     struct value *v;
 
-    vdebug(16,LOG_T_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
+    vdebug(16,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
 
     /*
      * If we are flushing the global thread (TID_GLOBAL), do it right
@@ -2289,13 +2289,13 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
      * modified.
      */
     if (!target->current_thread) {
-	vdebug(9,LOG_T_XV,
+	vdebug(9,LA_TARGET,LF_XV,
 	       "current thread not loaded to compare with"
 	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
 	       tid);
     }
     else if (!target->current_thread->valid) {
-	vdebug(9,LOG_T_XV,
+	vdebug(9,LA_TARGET,LF_XV,
 	       "current thread not valid to compare with"
 	       " tid %"PRIiTID"; exiting, user-mode EIP, or BUG?\n",
 	       tid);
@@ -2326,7 +2326,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     }
 
     if (!tthread->valid || !tthread->dirty) {
-	vdebug(8,LOG_T_XV,
+	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
 	       xstate->id,tthread->tid,tthread->valid,tthread->dirty);
 	return 0;
@@ -2551,7 +2551,7 @@ static struct array_list *xen_vm_list_available_tids(struct target *target) {
 
     xstate->last_thread_count = array_list_len(retval);
 
-    vdebug(5,LOG_T_XV | LOG_T_THREAD,"%d current threads\n",
+    vdebug(5,LA_TARGET,LF_XV | LF_THREAD,"%d current threads\n",
 	   xstate->last_thread_count);
 
     return retval;
@@ -2631,7 +2631,7 @@ static int xen_vm_load_available_threads(struct target *target,int force) {
 	for (i = 0; i < array_list_len(cthreads); ++i) {
 	    tthread = (struct target_thread *)array_list_item(cthreads,i);
 	    if (!tthread->valid) {
-		vdebug(5,LOG_T_XV | LOG_T_THREAD,
+		vdebug(5,LA_TARGET,LF_XV | LF_THREAD,
 		       "evicting invalid thread %"PRIiTID"; no longer exists\n",
 		       tthread->tid);
 		target_delete_thread(target,tthread,0);
@@ -2738,7 +2738,7 @@ static int xen_vm_invalidate_all_threads(struct target *target) {
 static int __xen_vm_resume(struct target *target,int detaching) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
-    vdebug(5,LOG_T_XV,"dom %d\n",xstate->id);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
     if (xen_vm_load_dominfo(target)) 
 	vwarn("could not load dominfo for dom %d, trying to pause anyway!\n",xstate->id);
@@ -2802,7 +2802,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	goto out_err;
     }
 
-    vdebug(3,LOG_T_XV,
+    vdebug(3,LA_TARGET,LF_XV,
 	   "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
 	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
 
@@ -2832,7 +2832,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	 * introduce a bug...
 	 */
 	if (ipval < 0xc0000000) {
-	    vdebug(3,LOG_T_XV | LOG_T_THREAD,
+	    vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
 		   "user-mode debug event at EIP 0x%"PRIxADDR"; not loading"
 		   " thread; will try to handle it if it is single step!\n",
 		   ipval);
@@ -2891,7 +2891,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 
 	/* handle the triggered probe based on its event type */
 	if (xtstate->context.debugreg[6] & 0x4000) {
-	    vdebug(3,LOG_T_XV,"new single step debug event\n");
+	    vdebug(3,LA_TARGET,LF_XV,"new single step debug event\n");
 
 	    /*
 	     * Two cases: either we single-stepped an instruction that
@@ -2949,12 +2949,12 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		    gtstate->context.debugreg[6] = 0;
 		    target->global_thread->dirty = 1;
 		}
-		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_ss_again;
 	    }
 	    else if (sstep_thread) {
-		vdebug(3,LOG_T_XV | LOG_T_THREAD,
+		vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
 		       "thread %"PRIiTID" single stepped can_context_switch"
 		       " instr; trying to handle exception in old thread!\n",
 		       sstep_thread->tid);
@@ -2966,7 +2966,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
 		tthread->dirty = 1;
-		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_ss_again;
 	    }
@@ -2984,13 +2984,13 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
 		tthread->dirty = 1;
-		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_ss_again;
 	    }
 	}
 	else {
-	    vdebug(3,LOG_T_XV,"new (breakpoint?) debug event\n");
+	    vdebug(3,LA_TARGET,LF_XV,"new (breakpoint?) debug event\n");
 	    target->sstep_thread = NULL;
 
 	    dreg = -1;
@@ -3025,7 +3025,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		errno = 0;
 		ipval = xtstate->context.debugreg[dreg];
 
-		vdebug(4,LOG_T_XV,
+		vdebug(4,LA_TARGET,LF_XV,
 		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
 		       dreg,ipval);
 	    }
@@ -3038,7 +3038,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		goto out_err_again;
 	    }
 	    else {
-		vdebug(4,LOG_T_XV,
+		vdebug(4,LA_TARGET,LF_XV,
 		       "dreg status was 0x%"PRIxREGVAL"; trying eip method\n",
 		       (ADDR)xtstate->context.debugreg[6]);
 
@@ -3052,11 +3052,11 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		    dreg = 3;
 
 		if (dreg > -1) 
-		    vdebug(4,LOG_T_XV,
+		    vdebug(4,LA_TARGET,LF_XV,
 			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
 			   dreg,ipval);
 		else
-		    vdebug(6,LOG_T_XV,
+		    vdebug(6,LA_TARGET,LF_XV,
 			   "did NOT find hw break (eip) on 0x%"PRIxADDR"\n",
 			   ipval);
 	    }
@@ -3068,7 +3068,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 					(gpointer)ipval);
 
 		if (dpp) {
-		    vdebug(4,LOG_T_XV,
+		    vdebug(4,LA_TARGET,LF_XV,
 			   "found hw break in thread %"PRIiTID"\n",
 			   tthread->tid);
 		}
@@ -3083,7 +3083,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 			goto out_err;
 		    }
 		    else {
-			vdebug(4,LOG_T_XV,
+			vdebug(4,LA_TARGET,LF_XV,
 			       "found hw break in global thread!\n");
 
 			/*
@@ -3119,7 +3119,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
 		tthread->dirty = 1;
-		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_bp_again;
 	    }
@@ -3133,7 +3133,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
 		tthread->dirty = 1;
-		vdebug(5,LOG_T_XV,"cleared status debug reg 6\n");
+		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
 
 		goto out_bp_again;
 	    }
@@ -3352,7 +3352,7 @@ static unsigned char *mmap_pages(xa_instance_t *xa_instance,ADDR addr,
 	    (*npages)++;
     }
 
-    vdebug(4,LOG_T_XV,"%ld bytes at %lx mapped (%s)\n",size,addr,dstr);
+    vdebug(4,LA_TARGET,LF_XV,"%ld bytes at %lx mapped (%s)\n",size,addr,dstr);
 
     return pages; /* munmap it later */
 }
@@ -3386,7 +3386,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
     page_size = xstate->xa_instance.page_size;
     page_offset = addr & (page_size - 1);
 
-    vdebug(16,LOG_T_XV,
+    vdebug(16,LA_TARGET,LF_XV,
 	   "read dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
 	   xstate->id,addr,page_offset,target_length,pid);
 
@@ -3399,7 +3399,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 	    return NULL;
 
 	assert(offset == page_offset);
-	vdebug(9,LOG_T_XV,
+	vdebug(9,LA_TARGET,LF_XV,
 	       "read dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d len=%d mapped pages=%d\n",
 	       xstate->id,addr,page_offset,pid,length,no_pages);
     }
@@ -3410,7 +3410,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 
 	while (1) {
 	    if (1 || size > page_size) 
-		vdebug(16,LOG_T_XV,
+		vdebug(16,LA_TARGET,LF_XV,
 		       "increasing size to %d (dom=%d,addr=%"PRIxADDR",pid=%d)\n",
 		       size,xstate->id,addr,pid);
 	    pages = (unsigned char *)mmap_pages(&xstate->xa_instance,addr,size,
@@ -3421,7 +3421,7 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 
 	    length = strnlen((const char *)(pages + offset), size);
 	    if (length < size) {
-		vdebug(9,LOG_T_XV,"got string of length %d, mapped %d pages\n",
+		vdebug(9,LA_TARGET,LF_XV,"got string of length %d, mapped %d pages\n",
 		       length,no_pages);
 		break;
 	    }
@@ -3464,7 +3464,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,
     page_size = xstate->xa_instance.page_size;
     page_offset = addr & (page_size - 1);
 
-    vdebug(16,LOG_T_XV,
+    vdebug(16,LA_TARGET,LF_XV,
 	   "write dom %d: addr=0x%"PRIxADDR" offset=%d len=%d pid=%d\n",
 	   xstate->id,addr,page_offset,length,pid);
 
@@ -3489,7 +3489,7 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,
     }
 
     assert(offset == page_offset);
-    vdebug(9,LOG_T_XV,
+    vdebug(9,LA_TARGET,LF_XV,
 	   "write dom %d: addr=0x%"PRIxADDR" offset=%d pid=%d len=%d mapped pages=%d\n",
 	   xstate->id,addr,page_offset,pid,length,no_pages);
 
@@ -3699,7 +3699,7 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    vdebug(16,LOG_T_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
+    vdebug(16,LA_TARGET,LF_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
 
     if (reg >= XV_TSREG_END_INDEX && reg <= XV_TSREG_START_INDEX) 
 	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
@@ -3738,7 +3738,7 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
 #else 
     retval = (REGVAL)*(uint32_t *)(((char *)&(xtstate->context)) + offset);
 #endif
-    vdebug(5,LOG_T_XV,"read reg %s 0x%"PRIxREGVAL"\n",
+    vdebug(5,LA_TARGET,LF_XV,"read reg %s 0x%"PRIxREGVAL"\n",
 	   xen_vm_reg_name(target,reg),retval);
 
     return retval;
@@ -3750,7 +3750,7 @@ int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
-    vdebug(16,LOG_T_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
+    vdebug(16,LA_TARGET,LF_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
 	   xen_vm_reg_name(target,reg),value);
 
     if (reg >= XV_TSREG_DR0 && reg <= XV_TSREG_DR7) {
@@ -3830,7 +3830,7 @@ static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid) {
     else if (!xtstate->dr[2]) { retval = 2; }
     else if (!xtstate->dr[3]) { retval = 3; }
 
-    vdebug(5,LOG_T_XV,"returning unused debug reg %d\n",retval);
+    vdebug(5,LA_TARGET,LF_XV,"returning unused debug reg %d\n",retval);
 
     return retval;
 }
@@ -3915,7 +3915,7 @@ static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
 		   xstate->id,addr,ret);
 	    return ret;
 	}
-	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "registered probe in replay domain [dom%d:%"PRIxADDR"]\n",
 	       xstate->id,addr);
     }
@@ -3969,7 +3969,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
     xtstate->dr[7] &= ~(3 << (18 + (reg * 4)));
     xtstate->dr[7] |= (watchsize << (18 + (reg * 4)));
 
-    vdebug(4,LOG_T_XV,
+    vdebug(4,LA_TARGET,LF_XV,
 	   "dreg6 = 0x%"PRIxADDR"; dreg7 = 0x%"PRIxADDR", w = %d, ws = 0x%x\n",
 	   xtstate->dr[6],xtstate->dr[7],whence,watchsize);
 
@@ -3990,7 +3990,7 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 		   xstate->id,addr,ret);
 	    return ret;
 	}
-	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "registered probe in replay domain [dom%d:%"PRIxADDR"]\n",
 	       xstate->id,addr);
     }
@@ -4051,7 +4051,7 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
 		   xstate->id,addr,ret);
 	    return ret;
 	}
-	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "unregistered probe in replay domain [dom%d:%"PRIxADDR"]\n",
 	       xstate->id,addr);
     }
@@ -4144,7 +4144,7 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 		   xstate->id,xtstate->dr[dreg],ret);
 	    return ret;
 	}
-	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "unregistered probe in replay domain [dom%d:%lx]\n",
 	       xstate->id,xtstate->dr[dreg]);
     }
@@ -4195,7 +4195,7 @@ int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 		   xstate->id,xtstate->dr[dreg],ret);
 	    return ret;
 	}
-	vdebug(4,LOG_T_XV | LOG_P_PROBE,
+	vdebug(4,LA_TARGET,LF_XV,
 	       "registered probe in replay domain [dom%d:%lx]\n",
 	       xstate->id,xtstate->dr[dreg]);
     }
@@ -4231,7 +4231,7 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 	       msg,xstate->id,addr,ret);
         return ret;
     }
-    vdebug(4,LOG_T_XV | LOG_P_PROBE,
+    vdebug(4,LA_TARGET,LF_XV,
 	   "%sed probe in replay domain [dom%d:%"PRIxADDR"]\n",
 	   msg,xstate->id,addr);
 #endif

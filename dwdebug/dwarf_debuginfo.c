@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -114,7 +114,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	goto errout;
     }
 
-    vdebug(4,LOG_D_DWARFATTR,"\t\t[DIE %" PRIx64 "] %d %s (%s) (as=%d,os=%d)\n",
+    vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t[DIE %" PRIx64 "] %d %s (%s) (as=%d,os=%d)\n",
 	   (int)level,cbargs->die_offset,dwarf_attr_string(attr),
 	   dwarf_form_string(form),cbargs->meta->addrsize,cbargs->meta->offsize);
 
@@ -228,7 +228,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	flag_set = 1;
 	break;
     default:
-	vwarnopt(2,LOG_D_DWARFATTR,
+	vwarnopt(2,LA_DEBUG,LF_DWARFATTR,
 		 "[DIE %" PRIx64 "] unrecognized form %s (0x%x) for attr %s\n",
 		 cbargs->die_offset,dwarf_form_string(form),form,
 		 dwarf_attr_string(attr));
@@ -267,7 +267,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 
     switch (attr) {
     case DW_AT_name:
-	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %s\n",str);
+	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %s\n",str);
 
 	if (cbargs->reloading) 
 	    break;
@@ -282,7 +282,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		symtab_set_name(cbargs->symtab,str,0);
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %s for attr %s in bad context\n",
 		     cbargs->die_offset,str,dwarf_attr_string(attr));
 	}
@@ -292,43 +292,43 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (num_set) {
 	    cbargs->stmt_list_offset = num;
 	    cbargs->have_stmt_list_offset = true;
-	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %d\n",num);
+	    vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %d\n",num);
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attr %s in bad context\n",
 		     cbargs->die_offset,dwarf_attr_string(attr));
 	}
 	break;
     case DW_AT_producer:
-	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %s\n",str);
+	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %s\n",str);
 	if (level == 0) 
 	    symtab_set_producer(cbargs->cu_symtab,str);
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %s for attr %s in bad context\n",
 		     cbargs->die_offset,str,dwarf_attr_string(attr));
 	break;
     case DW_AT_comp_dir:
-	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %s\n",str);
+	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %s\n",str);
 	if (level == 0) 
 	    symtab_set_compdirname(cbargs->cu_symtab,str);
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %s for attr %s in bad context\n",
 		     cbargs->die_offset,str,dwarf_attr_string(attr));
 	break;
     case DW_AT_language:
-	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = %d\n",num);
+	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %d\n",num);
 	if (level == 0) 
 	    symtab_set_language(cbargs->cu_symtab,num);
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
     case DW_AT_low_pc:
-	vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
+	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
 
 	/* If we see a new compilation unit, save its low pc separately
 	 * for use in loclist calculations.  CUs can have both a low pc
@@ -364,13 +364,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context (symbol)\n",
 		     cbargs->die_offset,addr,dwarf_attr_string(attr));
 	break;
     case DW_AT_high_pc:
 	if (num_set) {
-	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = " PRIu64 "\n",num);
+	    vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = " PRIu64 "\n",num);
 
 	    /* it's a relative offset from low_pc; if we haven't seen
 	     * low_pc yet, just bail.
@@ -389,7 +389,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    cbargs->symbol->s.ii->d.l.range.r.a.highpc = cbargs->symbol->s.ii->d.l.range.r.a.lowpc + num;
 		}
 		else {
-		    vwarnopt(3,LOG_D_DWARFATTR,
+		    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			     "[DIE %" PRIx64 "] attrval %" PRIu64 " (num) for"
 			     " attr %s in bad context (%s %s -- no lowpc yet)!\n",
 			     cbargs->die_offset,num,dwarf_attr_string(attr),
@@ -399,7 +399,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else if (addr_set) {
-	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
+	    vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
 
 	    cbargs->highpc = addr;
 	    cbargs->highpc_is_offset = 0;
@@ -424,14 +424,14 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] bad attr type for attr %s\n",
 		     cbargs->die_offset,dwarf_attr_string(attr));
 	}
 	break;
     case DW_AT_entry_pc:
 	if (addr_set) {
-	    vdebug(4,LOG_D_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
+	    vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = 0x%p\n",addr);
 
 	    if (level == 0) {
 		/* Don't bother recording this for CUs. */
@@ -450,13 +450,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		}
 	    }
 	    else 
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] attrval 0x%" PRIx64 " for"
 			 " attr %s in bad context (symbol)\n",
 			 cbargs->die_offset,addr,dwarf_attr_string(attr));
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] bad attr form for attr %s // form %s\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -467,7 +467,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ; // XXX
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
@@ -476,7 +476,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    symbol_set_srcline(cbargs->symbol,(int)num);
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
@@ -492,7 +492,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->s.ti->d.t.encoding = (encoding_t)num;
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,(int)num,dwarf_attr_string(attr));
 	break;
@@ -501,7 +501,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->isdeclaration = flag;
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
@@ -516,7 +516,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->isexternal = flag;
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
@@ -529,7 +529,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->isprototyped = flag;
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
@@ -546,7 +546,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval 0x%" PRIu64 " for attr %s in bad context\n",
 		     cbargs->die_offset,num,dwarf_attr_string(attr));
 	break;
@@ -572,7 +572,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    array_list_add(iilist,(void *)cbargs->symbol);
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %" PRIxSMOFFSET " for attr %s"
 		     " in bad context\n",
 		     cbargs->die_offset,ref,dwarf_attr_string(attr));
@@ -603,7 +603,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		           cbargs->symbol->datatype = datatype; */
 		}
 		else 
-		    vwarnopt(3,LOG_D_DWARFATTR,
+		    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			     "[DIE %" PRIx64 "] bogus: type ref for unknown"
 			     " type symbol\n",
 			     cbargs->die_offset);
@@ -623,7 +623,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    ;
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %" PRIxSMOFFSET " for attr %s"
 		     " in bad context\n",
 		     cbargs->die_offset,ref,dwarf_attr_string(attr));
@@ -666,7 +666,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    memcpy(cbargs->symbol->s.ii->constval,block.data,block.length);
 	}
 	else 
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attr %s form %s in bad context\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -678,7 +678,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_byte_size:
 	if (num_set) {
 	    if (cbargs->symbol->size_is_bits) {
-		vwarnopt(5,LOG_D_DWARFATTR,
+		vwarnopt(5,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] attr %s: already saw bit_size;"
 			 " setting ctbytes.\n",
 			 cbargs->die_offset,dwarf_attr_string(attr));
@@ -696,7 +696,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -736,7 +736,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->size_is_bits = 1;
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -776,7 +776,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    cbargs->symbol->size_is_bits = 1;
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] unrecognized attr %s // form %s mix!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -805,7 +805,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		}
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] no/bad symbol for attr %s // form %s\n",
 			 cbargs->die_offset,dwarf_attr_string(attr),
 			 dwarf_form_string(form));
@@ -834,7 +834,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		}
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] no/bad symbol for attr %s // form %s\n",
 			 cbargs->die_offset,dwarf_attr_string(attr),
 			 dwarf_form_string(form));
@@ -856,7 +856,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		}
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
 			 cbargs->die_offset,num,dwarf_attr_string(attr));
 	    }
@@ -883,7 +883,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		}
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] no/bad symbol for loclist for attr %s\n",
 			 cbargs->die_offset,dwarf_attr_string(attr));
 	    }
@@ -907,14 +907,14 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		}
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] no/bad symbol for single loc for"
 			 " attr %s\n",
 			 cbargs->die_offset,dwarf_attr_string(attr));
 	    }
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] frame_base not num/block; attr %s //"
 		     " form %s mix!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
@@ -969,7 +969,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    }
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] bad rangelist attr %s // form %s!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -1047,14 +1047,14 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    free(loc);
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] loclist: bad attr %s // form %s!\n",
 			 cbargs->die_offset,dwarf_attr_string(attr),
 			 dwarf_form_string(form));
 	    }
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] bad attr %s // form %s!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -1062,20 +1062,20 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_lower_bound:
 	if (num_set && num) {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] we only support lower_bound attrs"
 		     " of 0 (%" PRIu64 ")!\n",
 		     cbargs->die_offset,num);
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] unsupported attr %s // form %s!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
 	}
 	break;
     case DW_AT_count:
-	vwarnopt(3,LOG_D_DWARFATTR,
+	vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		 "[DIE %" PRIx64 "] interpreting AT_count as AT_upper_bound!\n",
 		 cbargs->die_offset);
     case DW_AT_upper_bound:
@@ -1098,7 +1098,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		++cbargs->parentsymbol->s.ti->d.a.count;
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFATTR,
+		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 			 "[DIE %" PRIx64 "] attrval %" PRIx64 " for"
 			 " attr %s in bad context\n",
 			 cbargs->die_offset,num,dwarf_attr_string(attr));
@@ -1106,7 +1106,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    break;
 	}
 	else {
-	    vwarnopt(3,LOG_D_DWARFATTR,
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] unsupported attr %s // form %s!\n",
 		     cbargs->die_offset,dwarf_attr_string(attr),
 		     dwarf_form_string(form));
@@ -1122,7 +1122,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
 
     default:
-	vwarnopt(3,LOG_D_DWARFATTR,
+	vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		 "[DIE %" PRIx64 "] unrecognized attr %s (%d)\n",
 		 cbargs->die_offset,dwarf_attr_string(attr),attr);
 	//goto errout;
@@ -1166,7 +1166,7 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     readp = debugfile->rangetab + offset;
     endp = debugfile->rangetab + debugfile->rangetablen;
 
-    vdebug(5,LOG_D_LOC,"starting (rangetab len %d, offset %d)\n",
+    vdebug(5,LA_DEBUG,LF_DLOC,"starting (rangetab len %d, offset %d)\n",
 	   debugfile->rangetablen,offset);
 
     while (readp < endp) {
@@ -1190,7 +1190,7 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 
 	if (begin == (Dwarf_Addr)-1l) {
 	    /* Base address entry.  */
-	    vdebug(5,LOG_D_LOC,"[%6tx] base address 0x%" PRIxADDR "\n",
+	    vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] base address 0x%" PRIxADDR "\n",
 		   loffset,end);
 	    have_base = 1;
 	    base = end;
@@ -1200,7 +1200,7 @@ static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    if (len == 0)
 		vwarn("[%6tx] empty list\n",loffset);
 	    else 
-		vdebug(5,LOG_D_LOC,"[%6tx] end of list\n");
+		vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] end of list\n");
 	    break;
 	}
 	else {
@@ -1247,7 +1247,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     readp = debugfile->loctab + offset;
     endp = debugfile->loctab + debugfile->loctablen;
 
-    vdebug(5,LOG_D_LOC,"starting (loctab len %d, offset %d)\n",
+    vdebug(5,LA_DEBUG,LF_DLOC,"starting (loctab len %d, offset %d)\n",
 	   debugfile->loctablen,offset);
 
     while (readp < endp) {
@@ -1271,7 +1271,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 
 	if (begin == (Dwarf_Addr)-1l) {
 	    /* Base address entry.  */
-	    vdebug(5,LOG_D_LOC,"[%6tx] base address 0x%" PRIxADDR "\n",
+	    vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] base address 0x%" PRIxADDR "\n",
 		   loffset,end);
 	    have_base = 1;
 	    base = end;
@@ -1279,10 +1279,10 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	else if (begin == 0 && end == 0) {
 	    /* End of list entry.  */
 	    if (len == 0)
-		vwarnopt(4,LOG_D_DWARF | LOG_D_LOC,
+		vwarnopt(4,LA_DEBUG,LF_DWARF | LF_DLOC,
 			 "[%6tx] empty list\n",loffset);
 	    else 
-		vdebug(5,LOG_D_LOC,"[%6tx] end of list\n");
+		vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] end of list\n");
 	    break;
 	}
 	else {
@@ -1291,7 +1291,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    /* We have a location expression entry.  */
 	    exprlen = read_2ubyte_unaligned_inc(obo,readp);
 
-	    vdebug(5,LOG_D_LOC,"[%6tx] loc expr range 0x%" PRIxADDR ",0x%" PRIxADDR ", len %hd\n",
+	    vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] loc expr range 0x%" PRIxADDR ",0x%" PRIxADDR ", len %hd\n",
 		   loffset,begin,end,exprlen);
 
 	    if (endp - readp <= (ptrdiff_t) exprlen) {
@@ -1299,7 +1299,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 		break;
 	    }
 	    else {
-		vdebug(5,LOG_D_LOC,"[%6tx] loc expr len (%hd) in entry\n",
+		vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] loc expr len (%hd) in entry\n",
 		       loffset,exprlen);
 	    }
 
@@ -1313,7 +1313,7 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 		return -1;
 	    }
 	    else {
-		vdebug(5,LOG_D_LOC,"get_loclist (%d) succeeded!\n",exprlen);
+		vdebug(5,LA_DEBUG,LF_DLOC,"get_loclist (%d) succeeded!\n",exprlen);
 	    }
 
 	    if (loc_list_add(list,
@@ -1537,7 +1537,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	goto out;			  \
     }					  \
     else {				  \
-	vwarnopt(3,LOG_D_DWARFOPS,					\
+	vwarnopt(3,LA_DEBUG,LF_DWARFOPS,					\
 		 "unsupported %s op with other ops!\n",known[op]);	\
     }
 
@@ -1546,13 +1546,13 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     u64 = (uint64_t)*((tt *)data);			\
     data += size;					\
     CONSUME(size);					\
-    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);	\
+    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);	\
     if (attr == DW_AT_data_member_location) {		\
 	ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,		\
 	       member_offset,(int32_t)u64);		\
     }							\
     else {					       	\
-	vwarnopt(3,LOG_D_DWARFOPS,				\
+	vwarnopt(3,LA_DEBUG,LF_DWARFOPS,				\
 		 "assuming constXu is for loctype_addr!\n");	\
 	ONLYOP(retval,LOCTYPE_ADDR,addr,u64);		\
     }
@@ -1562,13 +1562,13 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
     s64 = (int64_t)*((tt *)data);			\
     data += size;					\
     CONSUME(size);					\
-    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIxMAX "\n",known[op],s64);	\
+    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> 0x%" PRIxMAX "\n",known[op],s64);	\
     if (attr == DW_AT_data_member_location) {		\
 	ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,		\
 	       member_offset,(int32_t)s64);		\
     }							\
     else {					       	\
-	vwarnopt(3,LOG_D_DWARFOPS,			\
+	vwarnopt(3,LA_DEBUG,LF_DWARFOPS,			\
 		 "assuming constXs is for loctype_addr!\n");	\
 	ONLYOP(retval,LOCTYPE_ADDR,addr,(uint64_t)s64);		\
     }
@@ -1578,9 +1578,9 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	const unsigned char *start = data;
 
 	if (op < sizeof known / sizeof known[0] && known[op] != NULL) 
-	    vdebug(6,LOG_D_DWARFOPS,"%s with len = %d\n",known[op],len);
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s with len = %d\n",known[op],len);
 	else
-	    vwarnopt(2,LOG_D_DWARF | LOG_D_DWARFOPS,
+	    vwarnopt(2,LA_DEBUG,LF_DWARF | LF_DWARFOPS,
 		     "unknown op 0x%hhx with len = %d\n",op,len);
 
 	Dwarf_Word addr;
@@ -1599,14 +1599,14 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    }
 	    data += addrsize;
 	    CONSUME(addrsize);
-	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIx64 "\n",known[op],addr);
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> 0x%" PRIx64 "\n",known[op],addr);
 	    if (start == (origdata + 1) && len == 0) {
 		retval->loctype = LOCTYPE_ADDR;
 		retval->l.addr = addr;
 		goto out;
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFOPS,
+		vwarnopt(3,LA_DEBUG,LF_DWARFOPS,
 			 "unsupported %s op with other ops!\n",known[op]);
 	    }
 	    //ONLYOP(retval,LOCTYPE_ADDR,addr,((uint64_t)addr));
@@ -1615,7 +1615,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	case DW_OP_reg0...DW_OP_reg31:
 	    reg = op - (uint8_t)DW_OP_reg0;
 
-	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIu8 "\n",known[op],reg);
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> 0x%" PRIu8 "\n",known[op],reg);
 	    ONLYOP(retval,LOCTYPE_REG,reg,reg);
 	    break;
 	//case DW_OP_piece:
@@ -1623,7 +1623,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    NEED(1);
 	    get_uleb128(u64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
 	    ONLYOP(retval,LOCTYPE_REG,reg,(uint8_t)u64);
 	    break;
 
@@ -1632,13 +1632,13 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    NEED(1);
 	    get_uleb128(u64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> 0x%" PRIuMAX "\n",known[op],u64);
 	    if (attr == DW_AT_data_member_location) {
 		ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,
 		       member_offset,(int32_t)u64);
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFOPS,
+		vwarnopt(3,LA_DEBUG,LF_DWARFOPS,
 			 "assuming uconst/constu is for loctype_addr!\n");
 		ONLYOP(retval,LOCTYPE_ADDR,
 		       addr,(uint64_t)u64);
@@ -1648,13 +1648,13 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    NEED(1);
 	    get_sleb128(s64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARFOPS,"%s -> 0x%" PRIxMAX "\n",known[op],s64);
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> 0x%" PRIxMAX "\n",known[op],s64);
 	    if (attr == DW_AT_data_member_location) {
 		ONLYOP(retval,LOCTYPE_MEMBER_OFFSET,
 		       member_offset,(int32_t)s64);
 	    }
 	    else {
-		vwarnopt(3,LOG_D_DWARFOPS,
+		vwarnopt(3,LA_DEBUG,LF_DWARFOPS,
 			 "assuming consts is for loctype_addr!\n");
 		ONLYOP(retval,LOCTYPE_ADDR,
 		       addr,(uint64_t)s64);
@@ -1700,14 +1700,14 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	  NEED(1);
 	  get_sleb128(s64,data); /* XXX check overrun */
 	  CONSUME(data - start);
-	  vdebug(6,LOG_D_DWARFOPS,"%s -> fbreg offset %ld\n",known[op],s64);
+	  vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> fbreg offset %ld\n",known[op],s64);
 	  ONLYOP(retval,LOCTYPE_FBREG_OFFSET,fboffset,s64);
 	  break;
 	case DW_OP_breg0 ... DW_OP_breg31:
 	    NEED(1);
 	    get_sleb128(s64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARFOPS,"%s -> reg (%d) offset %ld\n",known[op],
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> reg (%d) offset %ld\n",known[op],
 		   (uint8_t)(op - DW_OP_breg0),s64);
 	    retval->l.regoffset.offset = s64;
 	    ONLYOP(retval,LOCTYPE_REG_OFFSET,regoffset.reg,
@@ -1718,7 +1718,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    get_uleb128(u64,data); /* XXX check overrun */
 	    get_sleb128(s64,data); /* XXX check overrun */
 	    CONSUME(data - start);
-	    vdebug(6,LOG_D_DWARFOPS,"%s -> reg%" PRId8 ", offset %ld\n",known[op],
+	    vdebug(6,LA_DEBUG,LF_DWARFOPS,"%s -> reg%" PRId8 ", offset %ld\n",known[op],
 		   (uint8_t)u64,s64);
 	    retval->l.regoffset.offset = s64;
 	    ONLYOP(retval,LOCTYPE_REG_OFFSET,regoffset.reg,(uint8_t)u64);
@@ -1739,7 +1739,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	continue;
     }
 
-    vwarnopt(3,LOG_D_DWARFOPS,"had to save dwarf ops for runtime!\n");
+    vwarnopt(3,LA_DEBUG,LF_DWARFOPS,"had to save dwarf ops for runtime!\n");
     retval->loctype = LOCTYPE_RUNTIME;
     retval->l.runtime.data = malloc(origlen);
     memcpy(retval->l.runtime.data,origdata,origlen);
@@ -1877,7 +1877,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    goto errout;
 	}
 
-	vdebug(5,LOG_D_DWARF,
+	vdebug(5,LA_DEBUG,LF_DWARF,
 	       "creating new CU symtab at offset 0x%"PRIx64"!\n",offset);
 
 	/* attr_callback has to fill cu_symtab, and *MUST* fill at least
@@ -1889,7 +1889,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	cu_symtab->meta = meta;
     }
     else {
-	vdebug(5,LOG_D_DWARF,
+	vdebug(5,LA_DEBUG,LF_DWARF,
 	       "using existing CU symtab %s (offset 0x%"PRIx64")!\n",
 	       cu_symtab->name,offset);
 
@@ -1912,7 +1912,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 					  (gpointer *)&key,(gpointer *)&value)) {
 		tsymbol = (struct symbol *)value;
 		g_hash_table_insert(reftab,key,(gpointer *)tsymbol);
-		vdebug(6,LOG_D_DWARF,
+		vdebug(6,LA_DEBUG,LF_DWARF,
 		       "inserted %s into reuse reftab\n",tsymbol->name);
 	    }
 	    g_hash_table_iter_init(&iter,cu_symtab->tab);
@@ -1921,7 +1921,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		tsymbol = (struct symbol *)value;
 		g_hash_table_insert(reftab,(gpointer)(uintptr_t)tsymbol->ref,
 				    (gpointer)tsymbol);
-		vdebug(6,LOG_D_DWARF,
+		vdebug(6,LA_DEBUG,LF_DWARF,
 		       "inserted %s (0x%"PRIxSMOFFSET") into reuse reftab\n",
 		       tsymbol->name,tsymbol->ref);
 	    }
@@ -1933,7 +1933,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    tsymbol = (struct symbol *)array_list_item(duplist,i);
 		    g_hash_table_insert(reftab,(gpointer)(uintptr_t)tsymbol->ref,
 					(gpointer)tsymbol);
-		    vdebug(6,LOG_D_DWARF,
+		    vdebug(6,LA_DEBUG,LF_DWARF,
 			   "inserted dup %s (0x%"PRIxSMOFFSET") into reuse reftab\n",
 			   tsymbol->name,tsymbol->ref);
 		}
@@ -2057,7 +2057,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     */
 	    symbols[level] = ts;
 	    symtabs[level] = ts->symtab;
-	    vdebug(6,LOG_D_DWARF,
+	    vdebug(6,LA_DEBUG,LF_DWARF,
 		   "existing reftab symbol (full) %s 0x%"PRIxSMOFFSET" on"
 		   " symtab %s 0x%"PRIxSMOFFSET"; skip to sibling\n",
 		   symbol_get_name(ts),ts->ref,ts->symtab->name,ts->symtab->ref);
@@ -2081,7 +2081,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		symbols[level] = ts;
 		symtabs[level] = ts->symtab;
 
-		vdebug(6,LOG_D_DWARF,
+		vdebug(6,LA_DEBUG,LF_DWARF,
 		       "existing reftab symbol (partial) %s 0x%"PRIxSMOFFSET
 		       " on symtab %s 0x%"PRIxSMOFFSET"; expanding"
 		       " attrs and children\n",
@@ -2111,7 +2111,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		symbols[level] = NULL;
 		symtabs[level] = ts->symtab;
 
-		vdebug(6,LOG_D_DWARF,
+		vdebug(6,LA_DEBUG,LF_DWARF,
 		       "existing reftab symbol (partial) %s 0x%"PRIxSMOFFSET
 		       " on symtab %s 0x%"PRIxSMOFFSET"; skip to sibling\n",
 		       symbol_get_name(ts),ts->ref,
@@ -2138,7 +2138,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    goto errout;
 	}
 
-	vdebug(4,LOG_D_DWARF," [%6Lx] %d %s\n",(uint64_t)offset,(int)level,
+	vdebug(4,LA_DEBUG,LF_DWARF," [%6Lx] %d %s\n",(uint64_t)offset,(int)level,
 	       dwarf_tag_string(tag));
 
 	/* Figure out what type of symbol (or symtab?) to create! */
@@ -2319,7 +2319,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	}
 	else {
 	    if (tag != DW_TAG_compile_unit)
-		vwarnopt(3,LOG_D_DWARF,
+		vwarnopt(3,LA_DEBUG,LF_DWARF,
 			 "unknown dwarf tag %s!\n",dwarf_tag_string(tag));
 	    symbols[level] = NULL;
 	    if (tag != DW_TAG_compile_unit) 
@@ -2382,7 +2382,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    }
 	    else {
 		if (debugfile_add_cu_symtab(debugfile,cu_symtab)) {
-		    vwarnopt(2,LOG_D_DWARF,
+		    vwarnopt(2,LA_DEBUG,LF_DWARF,
 			     "could not add CU symtab %s to debugfile;"
 			     " aborting processing!\n",
 			     symtab_get_name(cu_symtab));
@@ -2413,7 +2413,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 			      symtab_get_name(cu_symtab),
 			      &accept,NULL);
 		if (accept == RF_REJECT) {
-		    vdebug(3,LOG_D_DWARF,"skipping CU '%s'\n",
+		    vdebug(3,LA_DEBUG,LF_DWARF,"skipping CU '%s'\n",
 			   symtab_get_name(cu_symtab));
 		    goto out;
 		}
@@ -2440,7 +2440,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 			   " during partial CU load: %s\n",offset,dwarf_errmsg(-1));
 		    goto errout;
 		}
-		vdebug(5,LOG_D_DWARF,"skipping to first DIE 0x%x\n",offset);
+		vdebug(5,LA_DEBUG,LF_DWARF,"skipping to first DIE 0x%x\n",offset);
 		symtabs[level] = symtabs[level-1];
 		continue;
 	    }
@@ -2501,7 +2501,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 					(gpointer)(uintptr_t)symbols[level]->ref,
 					tsymbol);
 
-		    vdebug(4,LOG_D_SYMBOL,
+		    vdebug(4,LA_DEBUG,LF_SYMBOL,
 			   "inserting shared symbol (quick check) %s (%s"
 			   " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
 			   PRIxSMOFFSET" into reftab\n",
@@ -2533,7 +2533,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		}
 	    }
 	    else {
-		vdebug(4,LOG_D_SYMBOL,
+		vdebug(4,LA_DEBUG,LF_SYMBOL,
 		       "sharing symbol (quick check) %s (%s) of type %s\n",
 		       symbol_get_name(symbols[level]),
 		       symbol_get_name_orig(symbols[level]),
@@ -2573,7 +2573,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 				  && symbols[level]->isparam)
 			      || (level > 0 && SYMBOL_IST_STUN(symbols[level-1])
 				  && symbols[level]->ismember)))))
-		    vwarnopt(4,LOG_D_DWARF,
+		    vwarnopt(4,LA_DEBUG,LF_DWARF,
 			     "anonymous symbol of type %s at DIE 0x%"PRIx64"!\n",
 			     SYMBOL_TYPE(symbols[level]->type),offset);
 	}
@@ -2672,7 +2672,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * processed this DIE.
 	     */
 	    if (i >= alen) {
-		vdebug(5,LOG_D_DWARF,"end of partial load DIE list!\n");
+		vdebug(5,LA_DEBUG,LF_DWARF,"end of partial load DIE list!\n");
 		return 0;
 	    }
 	    offset = (SMOFFSET)(uintptr_t)array_list_item(die_offsets,i);
@@ -2689,7 +2689,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		       i - 1,offset,*cu_offset,dwarf_errmsg(-1));
 		return -1;
 	    }
-	    vdebug(5,LOG_D_DWARF,"skipping to DIE %d at 0x%x in CU 0x%"PRIx64"\n",
+	    vdebug(5,LA_DEBUG,LF_DWARF,"skipping to DIE %d at 0x%x in CU 0x%"PRIx64"\n",
 		   i,offset,*cu_offset);
 	    return 1;
 	}
@@ -2861,7 +2861,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		symbol_hold(rsymbol->datatype);
 		rsymbol->usesshareddatatype = 1;
 
-		vdebug(4,LOG_D_SYMBOL,
+		vdebug(4,LA_DEBUG,LF_SYMBOL,
 		       "using shared symbol (quick check) %s (%s 0x%"PRIxSMOFFSET
 		       ") of type %s at offset 0x%"PRIxSMOFFSET"\n",
 		       symbol_get_name(rsymbol->datatype),
@@ -2886,7 +2886,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    //memcpy(&rsymbol->s.ii->l,&rsymbol->s.ii->origin->s.ii->l,
 		    //	   sizeof(struct location));
 
-		    vdebug(4,LOG_D_SYMBOL,
+		    vdebug(4,LA_DEBUG,LF_SYMBOL,
 			   "copied datatype %s//%s (0x%"PRIxSMOFFSET")"
 			   " for inline instance %s//%s"
 			   " (0x%"PRIxSMOFFSET"\n",
@@ -2967,7 +2967,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      */
     if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
 	GHashTable *updated = g_hash_table_new(g_direct_hash,g_direct_equal);
-	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2a\n");
+	vdebug(3,LA_DEBUG,LF_SYMBOL | LF_DWARF,"type compression 2a\n");
 	g_hash_table_iter_init(&iter,reftab);
 	while (g_hash_table_iter_next(&iter,
 				      (gpointer *)&key,(gpointer *)&value)) {
@@ -2999,7 +2999,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    g_hash_table_insert(updated,(gpointer)(uintptr_t)offset,
 					(gpointer)tsymbol);
 
-		    vdebug(4,LOG_D_SYMBOL,
+		    vdebug(4,LA_DEBUG,LF_SYMBOL,
 			   "inserting shared symbol (slow check) %s (%s"
 			   " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
 			   PRIxSMOFFSET" into reftab\n",
@@ -3058,7 +3058,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      * least it's only the datatype pointers.
      */
     if (opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
-	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2b\n");
+	vdebug(3,LA_DEBUG,LF_SYMBOL | LF_DWARF,"type compression 2b\n");
 	g_hash_table_iter_init(&iter,reftab);
 	while (g_hash_table_iter_next(&iter,
 				      (gpointer *)&key,(gpointer *)&value)) {
@@ -3089,7 +3089,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    //if (tsymbol->datatype && tsymbol->datatype->isshared)
 		    //	symbol_hold(tsymbol->datatype);
 
-		    vdebug(4,LOG_D_SYMBOL,
+		    vdebug(4,LA_DEBUG,LF_SYMBOL,
 			   "using shared symbol (slow check) %s (%s 0x%"PRIxSMOFFSET
 			   ") of type %s instead of 0x%"PRIxSMOFFSET
 			   " at offset 0x%"PRIxSMOFFSET"\n",
@@ -3107,7 +3107,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	 * needless types like double or whatever that even if the code
 	 * didn't use, the user could still want.
 	 */
-	vdebug(3,LOG_D_SYMBOL | LOG_D_DWARF,"type compression 2c\n");
+	vdebug(3,LA_DEBUG,LF_SYMBOL | LF_DWARF,"type compression 2c\n");
 	g_hash_table_iter_init(&iter,reftab);
 	while (g_hash_table_iter_next(&iter,
 				      (gpointer *)&key,(gpointer *)&value)) {
@@ -3143,7 +3143,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	get_lines(debugfile,cu_symtab,args.stmt_list_offset,meta->addrsize);
     }
     else {
-	vwarnopt(4,LOG_D_DWARF,"not doing get_lines for offset 0x%"PRIx64"\n",
+	vwarnopt(4,LA_DEBUG,LF_DWARF,"not doing get_lines for offset 0x%"PRIx64"\n",
 	      args.stmt_list_offset);
     }
 
@@ -3153,7 +3153,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 				      (gpointer *)&key,(gpointer *)&value)) {
 	offset = (uintptr_t)key;
 	iilist = (struct array_list *)value;
-	vwarnopt(4,LOG_D_DWARF,
+	vwarnopt(4,LA_DEBUG,LF_DWARF,
 		 "did not use abstract origins list (%d) for offset 0x%"PRIx64"!\n",
 		 array_list_len(iilist),offset);
 	/* GHashTable thankfully does not depend on the value pointer
@@ -3194,13 +3194,13 @@ int debugfile_expand_symbol(struct debugfile *debugfile,struct symbol *symbol) {
     die_offset = cu_symtab->ref;
 
     if (cu_symtab->meta && cu_symtab->meta->loadtag == LOADTYPE_FULL) {
-	vwarnopt(4,LOG_D_DWARF,"cu %s already fully loaded!\n",cu_symtab->name);
+	vwarnopt(4,LA_DEBUG,LF_DWARF,"cu %s already fully loaded!\n",cu_symtab->name);
 	return 0;
     }
 
     array_list_append(sal,(void *)(uintptr_t)symbol->ref);
 
-    vdebug(5,LOG_D_DWARF,
+    vdebug(5,LA_DEBUG,LF_DWARF,
 	   "expanding symbol %s at offset 0x%"PRIxOFFSET"\n",
 	   symbol_get_name(symbol),die_offset);
 
@@ -3216,17 +3216,17 @@ int debugfile_expand_cu(struct debugfile *debugfile,struct symtab *cu_symtab,
     Dwarf_Off cu_offset = cu_symtab->ref;
 
     if (cu_symtab->meta && cu_symtab->meta->loadtag == LOADTYPE_FULL) {
-	vwarnopt(4,LOG_D_DWARF,"cu %s already fully loaded!\n",cu_symtab->name);
+	vwarnopt(4,LA_DEBUG,LF_DWARF,"cu %s already fully loaded!\n",cu_symtab->name);
 	return 0;
     }
 
     if (die_offsets) {
-	vdebug(5,LOG_D_DWARF,
+	vdebug(5,LA_DEBUG,LF_DWARF,
 	       "loading %d DIEs from CU symtab %s (offset 0x%"PRIxOFFSET")!\n",
 	       array_list_len(die_offsets),cu_symtab->name,cu_offset);
     }
     else {
-	vdebug(5,LOG_D_DWARF,
+	vdebug(5,LA_DEBUG,LF_DWARF,
 	       "loading entire CU symtab %s (offset 0x%"PRIxOFFSET")!\n",
 	       cu_symtab->name,cu_offset);
     }
@@ -3285,7 +3285,7 @@ static int debuginfo_load(struct debugfile *debugfile,
     struct rfilter_entry *rfe;
     int accept = RF_ACCEPT;
 
-    vdebug(1,LOG_D_DWARF,"starting on %s \n",debugfile->filename);
+    vdebug(1,LA_DEBUG,LF_DWARF,"starting on %s \n",debugfile->filename);
 
     if (debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_PUBNAMES) {
 	offset = OFFSETMAX;
@@ -3330,13 +3330,13 @@ static int debuginfo_load(struct debugfile *debugfile,
 	g_hash_table_iter_init(&iter,cu_die_offsets);
 	while (g_hash_table_iter_next(&iter,&cu_offset,&value)) {
 	    tmpal = (struct array_list *)value;
-	    vdebug(5,LOG_D_DWARF,"preloading offsets for CU 0x%"PRIxSMOFFSET": ",
+	    vdebug(5,LA_DEBUG,LF_DWARF,"preloading offsets for CU 0x%"PRIxSMOFFSET": ",
 		   (SMOFFSET)(uintptr_t)cu_offset);
 	    for (i = 0; i < array_list_len(tmpal); ++i) {
-		vdebugc(5,LOG_D_DWARF,"0x%"PRIxSMOFFSET" ",
+		vdebugc(5,LA_DEBUG,LF_DWARF,"0x%"PRIxSMOFFSET" ",
 			(SMOFFSET)(uintptr_t)array_list_item(tmpal,i));
 	    }
-	    vdebugc(5,LOG_D_DWARF,"\n");
+	    vdebugc(5,LA_DEBUG,LF_DWARF,"\n");
 	}
 
 	/* Get the first one to seed the loop below. */
@@ -3361,7 +3361,7 @@ static int debuginfo_load(struct debugfile *debugfile,
 	    goto errout;
 	}
 	else if (rc > 0) {
-	    vdebug(2,LOG_D_DWARF,
+	    vdebug(2,LA_DEBUG,LF_DWARF,
 		   "dwarf_next_unit returned (%d), aborting successfully.\n",rc);
 	    free(meta);
 	    goto out;
@@ -3375,13 +3375,13 @@ static int debuginfo_load(struct debugfile *debugfile,
 	    goto errout;
 	}
 	else if (rc > 0) {
-	    vdebug(2,LOG_D_DWARF,
+	    vdebug(2,LA_DEBUG,LF_DWARF,
 		   "dwarf_nextcu returned (%d), aborting successfully.\n",rc);
 	    free(meta);
 	    goto out;
 	}
 
-	vwarnopt(4,LOG_D_DWARF,"assuming DWARF version 4; old elfutils!\n");
+	vwarnopt(4,LA_DEBUG,LF_DWARF,"assuming DWARF version 4; old elfutils!\n");
 	meta->version = 4;
 #endif
 
@@ -3475,7 +3475,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		|| symbol->datatype_code == DATATYPE_CONST
 		|| symbol->datatype_code == DATATYPE_VOL
 		|| symbol->datatype_code == DATATYPE_FUNCTION)) {
-	    vdebug(3,LOG_D_DWARF,
+	    vdebug(3,LA_DEBUG,LF_DWARF,
 		   "[DIE %" PRIx64 "] assuming %s type %s without type is void\n",
 		   die_offset,DATATYPE(symbol->datatype_code),
 		   symbol_get_name_orig(symbol));
@@ -3488,7 +3488,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	    if (symbol->s.ti->d.a.alloc > symbol->s.ti->d.a.count) {
 		if (!(new_subranges = realloc(symbol->s.ti->d.a.subranges,
 					      sizeof(int)*symbol->s.ti->d.a.count))) 
-		    vwarnopt(4,LOG_D_DWARF,
+		    vwarnopt(4,LA_DEBUG,LF_DWARF,
 			     "harmless subrange realloc failure: %s\n",
 			     strerror(errno));
 		else 
@@ -3531,13 +3531,13 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			if (symtab->range.r.rlist.list[i]->start < fminaddr)
 			    fminaddr = symtab->range.r.rlist.list[i]->start;
 		    }
-		    vwarnopt(4,LOG_D_DWARF,
+		    vwarnopt(4,LA_DEBUG,LF_DWARF,
 			     "assuming function %s entry is lowest address"
 			     " in list 0x%"PRIxADDR"!\n",
 			     symbol_get_name_orig(symbol),fminaddr);
 		}
 		else if (!symbol->s.ii->isinlined) {
-		    vwarnopt(4,LOG_D_DWARF,
+		    vwarnopt(4,LA_DEBUG,LF_DWARF,
 			     "function %s range is not PC/list!\n",
 			     symbol_get_name_orig(symbol));
 		}
@@ -3546,7 +3546,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 
 	if (fminaddr != 0 && fminaddr != ADDRMAX) {
 	    g_hash_table_insert(debugfile->addresses,(gpointer)fminaddr,symbol);
-	    vdebug(4,LOG_D_DWARF,
+	    vdebug(4,LA_DEBUG,LF_DWARF,
 		   "inserted %s %s with minaddr 0x%"PRIxADDR" into debugfile addresses table\n",
 		   SYMBOL_TYPE(symbol->type),symbol_get_name_orig(symbol),fminaddr);
 	}
@@ -3622,7 +3622,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * later!
 		 */
 		if (!strcmp("unsigned int",symbol_get_name(symbol)) == 0)
-		    vwarnopt(3,LOG_D_DWARF,
+		    vwarnopt(3,LA_DEBUG,LF_DWARF,
 			     "duplicate symbol %s (orig %s) at offset %"PRIx64
 			     " (symtab %s)\n",
 			     symbol_get_name(symbol),
@@ -3652,7 +3652,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	if (symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    if (symbol->datatype == NULL
 		&& symbol->datatype_ref == 0) {
-		vdebug(3,LOG_D_DWARF,
+		vdebug(3,LA_DEBUG,LF_DWARF,
 		       "[DIE %" PRIx64 "] assuming function %s without type is void\n",
 		       die_offset,symbol_get_name_orig(symbol));
 		symbol->datatype = voidsymbol;
@@ -3663,7 +3663,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarnopt(3,LOG_D_DWARF,
+		vwarnopt(3,LA_DEBUG,LF_DWARF,
 			 "duplicate symbol %s at offset %"PRIx64" (symtab %s)\n",
 			 symbol_get_name_orig(symbol),die_offset,
 			 symbol->symtab->name);
@@ -3679,7 +3679,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	else if (symbol->type == SYMBOL_TYPE_VAR) {
 	    if (symbol->datatype == NULL
 		&& symbol->datatype_ref == 0) {
-		vdebug(3,LOG_D_DWARF,
+		vdebug(3,LA_DEBUG,LF_DWARF,
 		       "assuming var %s without type is void at %"PRIx64"\n",
 		       symbol_get_name_orig(symbol),die_offset);
 		symbol->datatype = voidsymbol;
@@ -3692,7 +3692,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		     * table; put it in the anontable so it can get freed
 		     * later!
 		     */
-		    vwarnopt(3,LOG_D_DWARF,
+		    vwarnopt(3,LA_DEBUG,LF_DWARF,
 			     "duplicate symbol %s at offset %"PRIx64" (symtab %s)\n",
 			     symbol_get_name_orig(symbol),die_offset,
 			     symbol->symtab->name);
@@ -3712,7 +3712,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		 * table; put it in the anontable so it can get freed
 		 * later!
 		 */
-		vwarnopt(4,LOG_D_DWARF,
+		vwarnopt(4,LA_DEBUG,LF_DWARF,
 			 "duplicate symbol %s at offset %"PRIx64" (symtab %s)\n",
 			 symbol_get_name_orig(symbol),die_offset,
 			 symbol->symtab->name);
@@ -3817,7 +3817,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	retval = 1;
     }
 
-    vdebug(5,LOG_D_SYMBOL,"finalized symbol at %lx %s//%s %p\n",
+    vdebug(5,LA_DEBUG,LF_SYMBOL,"finalized symbol at %lx %s//%s %p\n",
 	   die_offset,SYMBOL_TYPE(symbol->type),symbol_get_name_orig(symbol),
 	   symbol);
 
@@ -3857,12 +3857,12 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 			   DATATYPE(symbol->datatype_code),
 			   symbol_get_name(symbol));
 		else {
-		    vdebug(3,LOG_D_DWARF,
+		    vdebug(3,LA_DEBUG,LF_DWARF,
 			   "resolved ref 0x%"PRIxSMOFFSET" %s type symbol %s\n",
 			   symbol->datatype_ref,
 			   DATATYPE(symbol->datatype_code),symbol_get_name(symbol));
 
-		    vdebug(3,LOG_D_DWARF,
+		    vdebug(3,LA_DEBUG,LF_DWARF,
 			   "rresolving just-resolved %s type symbol %s\n",
 			   DATATYPE(symbol->datatype->datatype_code),
 			   symbol_get_name(symbol->datatype),
@@ -3875,7 +3875,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		 * further down the type chain may not have been
 		 * resolved!
 		 */
-		vdebug(3,LOG_D_DWARF,
+		vdebug(3,LA_DEBUG,LF_DWARF,
 		       "rresolving known %s type symbol %s ref 0x%"PRIxSMOFFSET"\n",
 		       DATATYPE(symbol->datatype->datatype_code),
 		       symbol_get_name(symbol->datatype),
@@ -3891,7 +3891,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		list_for_each_entry(member_instance,&(symbol->s.ti->d.f.args),
 				    d.v.member) {
 		    member = member_instance->d.v.member_symbol;
-		    vdebug(3,LOG_D_DWARF,
+		    vdebug(3,LA_DEBUG,LF_DWARF,
 			   "rresolving function type %s arg %s ref 0x%"PRIxSMOFFSET"\n",
 			   symbol_get_name(symbol),symbol_get_name(member),member->datatype_ref);
 		    resolve_refs(NULL,member,reftab);
@@ -3919,7 +3919,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		member = member_instance->d.v.member_symbol;
 		if (member->datatype)
 		    continue;
-		vdebug(3,LOG_D_DWARF,
+		vdebug(3,LA_DEBUG,LF_DWARF,
 		       "rresolving s/u %s member %s ref 0x%"PRIxSMOFFSET"\n",
 		       symbol_get_name(symbol),symbol_get_name(member),member->datatype_ref);
 		resolve_refs(NULL,member,reftab);
@@ -3935,7 +3935,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		verror("could not resolve ref %"PRIxSMOFFSET" for var/func symbol %s\n",
 		       symbol->datatype_ref,symbol_get_name(symbol));
 	    else {
-		vdebug(3,LOG_D_DWARF,
+		vdebug(3,LA_DEBUG,LF_DWARF,
 		       "resolved ref %"PRIxSMOFFSET" non-type symbol %s\n",
 		       symbol->datatype_ref,symbol_get_name(symbol));
 	    }
@@ -3945,7 +3945,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 	 * that need resolution.
 	 */
 	if (symbol->datatype) {
-	    vdebug(3,LOG_D_DWARF,
+	    vdebug(3,LA_DEBUG,LF_DWARF,
 		   "rresolving ref 0x%"PRIxSMOFFSET" %s type symbol %s\n",
 		   symbol->datatype->datatype_ref,
 		   DATATYPE(symbol->datatype->datatype_code),
@@ -3959,7 +3959,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 				d.v.member) {
 		member = member_instance->d.v.member_symbol;
 		if (member->datatype) {
-		    vdebug(3,LOG_D_DWARF,
+		    vdebug(3,LA_DEBUG,LF_DWARF,
 			   "rresolving ref 0x%"PRIxSMOFFSET" function %s arg %s\n",
 			   member->datatype_ref,symbol_get_name(symbol),symbol_get_name(member));
 		    resolve_refs(NULL,member,reftab);
@@ -3985,7 +3985,7 @@ void resolve_refs(gpointer key __attribute__ ((unused)),
 		   symbol->s.ii->origin_ref,SYMBOL_TYPE(symbol->type));
 	}
 	else {
-	    vdebug(3,LOG_D_DWARF,
+	    vdebug(3,LA_DEBUG,LF_DWARF,
 		   "resolved ref 0x%"PRIxSMOFFSET" inlined %s to %s\n",
 		   symbol->s.ii->origin_ref,
 		   SYMBOL_TYPE(symbol->type),
@@ -4026,19 +4026,19 @@ int get_pubnames(struct debugfile *debugfile,unsigned char *buf,unsigned int len
 	int is64 = 0;
 
 	if (length == DWARF3_LENGTH_64_BIT) {
-	    vwarnopt(4,LOG_D_DWARF,
+	    vwarnopt(4,LA_DEBUG,LF_DWARF,
 		     "64-bit DWARF length %"PRIu64"; continuing.\n",length);
 	    length = read_8ubyte_unaligned_inc(obo,readp);
 	    is64 = 1;
 	}
 	else if (unlikely(length >= DWARF3_LENGTH_MIN_ESCAPE_CODE
 			  && length <= DWARF3_LENGTH_MAX_ESCAPE_CODE))
-	    vwarnopt(2,LOG_D_DWARF,
+	    vwarnopt(2,LA_DEBUG,LF_DWARF,
 		     "bad DWARF length %"PRIu64"; continuing anyway!\n",length);
 
 	unsigned int version = read_2ubyte_unaligned_inc(obo,readp);
 	if (version != 2) 
-	    vwarnopt(2,LOG_D_DWARF,
+	    vwarnopt(2,LA_DEBUG,LF_DWARF,
 		     "bad DWARF arange version %u; continuing anyway!\n",
 		     version);
 
@@ -4115,18 +4115,18 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	Dwarf_Word length = read_4ubyte_unaligned_inc(obo,readp);
 
 	if (length == DWARF3_LENGTH_64_BIT) {
-	    vwarnopt(4,LOG_D_DWARF,
+	    vwarnopt(4,LA_DEBUG,LF_DWARF,
 		     "64-bit DWARF length %"PRIu64"; continuing.\n",length);
 	    length = read_8ubyte_unaligned_inc(obo,readp);
 	}
 	else if (unlikely(length >= DWARF3_LENGTH_MIN_ESCAPE_CODE
 			  && length <= DWARF3_LENGTH_MAX_ESCAPE_CODE))
-	    vwarnopt(2,LOG_D_DWARF,
+	    vwarnopt(2,LA_DEBUG,LF_DWARF,
 		     "bad DWARF length %"PRIu64"; continuing anyway!\n",length);
 
 	unsigned int version = read_2ubyte_unaligned_inc(obo,readp);
 	if (version != 2) 
-	    vwarnopt(2,LOG_D_DWARF,
+	    vwarnopt(2,LA_DEBUG,LF_DWARF,
 		     "bad DWARF arange version %u; continuing anyway!\n",
 		     version);
 
@@ -4134,7 +4134,7 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 
 	unsigned int address_size = *readp++;
 	if (address_size != 4 && address_size != 8)
-	    vwarnopt(4,LOG_D_DWARF,
+	    vwarnopt(4,LA_DEBUG,LF_DWARF,
 		     "bad DWARF address size %u; continuing anyway!\n",
 		     address_size);
 
@@ -4285,7 +4285,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		continue;
 	    }
 
-	    vdebug(2,LOG_D_DWARF,"found %s section (%d) in debugfile %s\n",name,
+	    vdebug(2,LA_DEBUG,LF_DWARF,"found %s section (%d) in debugfile %s\n",name,
 		   shdr->sh_size,debugfile->idstr);
 
 	    Elf_Data *edata = elf_rawdata(scn,NULL);
@@ -4321,7 +4321,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	    }
 	}
 	else if (shdr && shdr->sh_size == 0) {
-	    vdebug(2,LOG_D_DWARF,"section empty, which is fine!\n");
+	    vdebug(2,LA_DEBUG,LF_DWARF,"section empty, which is fine!\n");
 	}
     }
     if (!debugfile->dbg_strtab) {
@@ -4342,7 +4342,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	    vwarn("elf_symtab load failed for debugfile %s!\n",
 		  debugfile->filename);
 	else
-	    vdebug(4,LOG_D_DWARF | LOG_D_ELF,
+	    vdebug(4,LA_DEBUG,LF_DWARF | LF_ELF,
 		   "elf_symtab load succeeded for debugfile %s!\n",
 		   debugfile->filename);
     }
@@ -4358,7 +4358,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	    const char *name = elf_strptr(elf,shstrndx,shdr->sh_name);
 
 	    if (strcmp(name,".debug_info") == 0) {
-		vdebug(2,LOG_D_DWARF,
+		vdebug(2,LA_DEBUG,LF_DWARF,
 		       "found .debug_info section in debugfile %s\n",
 		       debugfile->idstr);
 		debuginfo_load(debugfile,dwflmod,dbg);

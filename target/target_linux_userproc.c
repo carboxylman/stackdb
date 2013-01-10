@@ -536,7 +536,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
 	(struct linux_userproc_spec *)spec->backend_spec;
     int pid = lspec->pid;
 
-    vdebug(5,LOG_T_LUP,"opening pid %d\n",pid);
+    vdebug(5,LA_TARGET,LF_LUP,"opening pid %d\n",pid);
 
     /* This is not strictly true; if they have the right capability they
      * can trace... but this is easier to check.
@@ -602,7 +602,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
     }
     target->wordsize = wordsize;
     target->endian = endian;
-    vdebug(3,LOG_T_LUP,
+    vdebug(3,LA_TARGET,LF_LUP,
 	   "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
 	   main_exe,target->wordsize,
 	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
@@ -658,7 +658,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
 
     target->state = lstate;
 
-    vdebug(5,LOG_T_LUP,"opened pid %d\n",pid);
+    vdebug(5,LA_TARGET,LF_LUP,"opened pid %d\n",pid);
 
     return target;
 }
@@ -760,7 +760,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     }
     target->wordsize = wordsize;
     target->endian = endian;
-    vdebug(3,LOG_T_LUP,
+    vdebug(3,LA_TARGET,LF_LUP,
 	   "loaded ELF arch info (wordsize=%d;endian=%s)\n",
 	   target->wordsize,
 	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
@@ -774,9 +774,9 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	goto errout;
     }
     else if (!dynamic)
-	vdebug(2,LOG_T_LUP,"executable %s is static\n",filename);
+	vdebug(2,LA_TARGET,LF_LUP,"executable %s is static\n",filename);
     else 
-	vdebug(2,LOG_T_LUP,"executable %s is dynamic\n",filename);
+	vdebug(2,LA_TARGET,LF_LUP,"executable %s is dynamic\n",filename);
 
     /* Done with ELF stuff. */
     elf_end(elf);
@@ -830,9 +830,9 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	lstate->current_tid = 0;
 	
 	/* Parent; wait for ptrace to signal us. */
-	vdebug(3,LOG_T_LUP,"waiting for ptrace traceme pid %d to exec\n",pid);
+	vdebug(3,LA_TARGET,LF_LUP,"waiting for ptrace traceme pid %d to exec\n",pid);
      again:
-	vdebug(9,LOG_T_LUP,"waitpid target %d\n",pid);
+	vdebug(9,LA_TARGET,LF_LUP,"waitpid target %d\n",pid);
 	if (waitpid(pid,&pstatus,0) < 0) {
 	    if (errno == ECHILD || errno == EINVAL) {
 		verror("waitpid(%d): %s\n",pid,strerror(errno));
@@ -851,7 +851,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	     * which one.
 	     */
 	    if (WSTOPSIG(pstatus) == SIGTRAP) {
-		vdebug(3,LOG_T_LUP,"ptrace traceme: pid %d has exec'd\n",pid);
+		vdebug(3,LA_TARGET,LF_LUP,"ptrace traceme: pid %d has exec'd\n",pid);
 		if (ptrace(PTRACE_GETREGS,pid,0,&uregs) < 0) {
 		    vwarn("could not read EAX to deciper exec syscall!\n");
 		}
@@ -861,11 +861,11 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 #else
 		    orig_eax = uregs.orig_eax;
 #endif
-		    vdebug(5,LOG_T_LUP,"exec syscall: %lu\n",orig_eax);
+		    vdebug(5,LA_TARGET,LF_LUP,"exec syscall: %lu\n",orig_eax);
 		}
 	    }
 	    else {
-		vdebug(5,LOG_T_LUP,"exec hunt sig (no trap)\n");
+		vdebug(5,LA_TARGET,LF_LUP,"exec hunt sig (no trap)\n");
 		if (ptrace(PTRACE_SYSCALL,pid,NULL,NULL) < 0) {
 		    verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
 		    goto errout;
@@ -940,7 +940,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	verror("ptrace syscall pid %d failed: %s\n",pid,strerror(errno));
 	goto errout;
     }
-    vdebug(9,LOG_T_LUP,"waitpid target %d (syscall inference)\n",pid);
+    vdebug(9,LA_TARGET,LF_LUP,"waitpid target %d (syscall inference)\n",pid);
     if (waitpid(pid,&pstatus,0) < 0) {
 	if (errno == ECHILD || errno == EINVAL) {
 	    verror("waitpid(%d): %s\n",pid,strerror(errno));
@@ -966,7 +966,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	    orig_eax = uregs.orig_eax;
 #endif
 
-	    vdebug(5,LOG_T_LUP,"syscall: %ld (%ld)\n",orig_eax,syscall);
+	    vdebug(5,LA_TARGET,LF_LUP,"syscall: %ld (%ld)\n",orig_eax,syscall);
 
 	    if (dynamic) {
 		/* syscall state machine for the dynamic case: */
@@ -1000,21 +1000,21 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 		else if (syscall == LUP_SC_MUNMAP
 			 && orig_eax == LUP_SC_MUNMAP) {
 		    syscall = orig_eax;
-		    vdebug(5,LOG_T_LUP,"found end of munmap to end dynamic load sequence!\n");
+		    vdebug(5,LA_TARGET,LF_LUP,"found end of munmap to end dynamic load sequence!\n");
 		    goto out;
 		}
 	    }
 	    else {
 		if (orig_eax == LUP_SC_PRCTL) {
-		    vdebug(5,LOG_T_LUP,"found prctl to end static load sequence!\n");
+		    vdebug(5,LA_TARGET,LF_LUP,"found prctl to end static load sequence!\n");
 		    goto out;
 		}
 		else if (orig_eax == LUP_SC_ARCH_PRCTL) {
-		    vdebug(5,LOG_T_LUP,"found arch_prctl to end static load sequence!\n");
+		    vdebug(5,LA_TARGET,LF_LUP,"found arch_prctl to end static load sequence!\n");
 		    goto out;
 		}
 		else if (orig_eax == LUP_SC_SET_THREAD_AREA) {
-		    vdebug(5,LOG_T_LUP,"found set_thread_area to end static load sequence!\n");
+		    vdebug(5,LA_TARGET,LF_LUP,"found set_thread_area to end static load sequence!\n");
 		    goto out;
 		}
 	    }
@@ -1063,7 +1063,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	errno = 0;
     }
     else {
-	vdebug(5,LOG_T_LUP,
+	vdebug(5,LA_TARGET,LF_LUP,
 	       "cleared status debug reg 6 for pid %d\n",pid);
     }
 
@@ -1101,7 +1101,7 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
 
     pid = lstate->pid;
 
-    vdebug(5,LOG_T_LUP,
+    vdebug(5,LA_TARGET,LF_LUP,
 	   "pid %d parent thread %"PRIiTID" child thread %"PRIiTID"\n",
 	   pid,parent,child);
 
@@ -1162,7 +1162,7 @@ static int __handle_internal_detaching(struct target *target,
     tid_t tid = tthread->tid;
 
     if (!WIFSTOPPED(pstatus)) {
-	vdebug(5,LOG_T_LUP,
+	vdebug(5,LA_TARGET,LF_LUP,
 	       "pid %d thread %"PRIiTID" not stopped; ignoring\n",pid,tid);
 	return 0;
     }
@@ -1182,19 +1182,19 @@ static int __handle_internal_detaching(struct target *target,
 
     tstate->last_status = tstate->last_signo = WSTOPSIG(pstatus);
     if (tstate->last_status == (SIGTRAP | 0x80)) {
-	vdebug(8,LOG_T_LUP,
+	vdebug(8,LA_TARGET,LF_LUP,
 	       "thread %"PRIiTID" stopped with syscall trap signo %d, ignoring\n",
 	       tid,tstate->last_status);
 	tstate->last_signo = -1;
     }
     else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
-	vdebug(5,LOG_T_LUP,"target %d exiting (%d), ignoring on detach\n",
+	vdebug(5,LA_TARGET,LF_LUP,"target %d exiting (%d), ignoring on detach\n",
 	       pid,tstate->last_status);
 	tstate->last_signo = -1;
     }
     else if (tstate->last_status == SIGTRAP) {
 	/* Don't deliver debug traps! */
-	vdebug(5,LOG_T_LUP,
+	vdebug(5,LA_TARGET,LF_LUP,
 	       "thread %"PRIiTID" stopped with trap %d, minimal handling\n",
 	       tid,tstate->last_status);
 	tstate->last_signo = -1;
@@ -1215,7 +1215,7 @@ static int __handle_internal_detaching(struct target *target,
 	}
 
 	if (cdr & 0x4000) {
-	    vdebug(5,LOG_T_LUP,
+	    vdebug(5,LA_TARGET,LF_LUP,
 		   "ignoring single step event pid %d thread %"PRIiTID"\n",
 		   pid,tid);
 	}
@@ -1243,7 +1243,7 @@ static int __handle_internal_detaching(struct target *target,
 		    return -1;
 		}
 
-		vdebug(6,LOG_T_LUP,
+		vdebug(6,LA_TARGET,LF_LUP,
 		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
 		       dreg,ipval);
 	    }
@@ -1265,7 +1265,7 @@ static int __handle_internal_detaching(struct target *target,
 		    dreg = 3;
 
 		if (dreg > -1) 
-		    vdebug(4,LOG_T_LUP,
+		    vdebug(4,LA_TARGET,LF_LUP,
 			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
 			   dreg,ipval);
 	    }
@@ -1283,7 +1283,7 @@ static int __handle_internal_detaching(struct target *target,
 		    return -1;
 		}
 
-		vdebug(5,LOG_T_LUP,
+		vdebug(5,LA_TARGET,LF_LUP,
 		       "hw bp %d pid %d thread %"PRIiTID", not resetting EIP\n",
 		       dreg,pid,tid);
 	    }
@@ -1291,7 +1291,7 @@ static int __handle_internal_detaching(struct target *target,
 	    else if ((dpp = (struct probepoint *) \
 		      g_hash_table_lookup(target->soft_probepoints,
 					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
-		vdebug(5,LOG_T_LUP,
+		vdebug(5,LA_TARGET,LF_LUP,
 		       "sw bp pid %d thread %"PRIiTID", resetting EIP\n",
 		       pid,tid);
 
@@ -1339,7 +1339,7 @@ int __poll_and_handle_detaching(struct target *target,
 
     retval = waitpid(tid,&status,WNOHANG | __WALL);
     if (retval == 0) {
-	vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID" running\n",pid,tid);
+	vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" running\n",pid,tid);
 	return 0;
     }
     else if (retval < 0) {
@@ -1355,7 +1355,7 @@ int __poll_and_handle_detaching(struct target *target,
      * If we're at a single step, nothing to worry about!
      */
 
-    vdebug(5,LOG_T_LUP,"polling pid %d thread %"PRIiTID"\n",pid,tid);
+    vdebug(5,LA_TARGET,LF_LUP,"polling pid %d thread %"PRIiTID"\n",pid,tid);
     return __handle_internal_detaching(target,tthread,status);
 }
 
@@ -1380,7 +1380,7 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid) {
     }
     pid = lstate->pid;
 
-    vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID"\n",pid,tid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID"\n",pid,tid);
 
     if (!lstate->attached) {
 	verror("cannot detach from thread until process is attached to!\n");
@@ -1500,11 +1500,11 @@ static struct target_thread *linux_userproc_load_thread(struct target *target,
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     if (tthread->valid && !force) {
-	vdebug(9,LOG_T_LUP,"pid %d thread %"PRIiTID" already valid\n",pid,tid);
+	vdebug(9,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" already valid\n",pid,tid);
 	return tthread;
     }
 
-    vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID" (%"PRIiTID")\n",
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" (%"PRIiTID")\n",
 	   pid,tid,tthread->tid);
 
     /* Load its status from /proc */
@@ -1543,7 +1543,7 @@ static struct target_thread *linux_userproc_load_thread(struct target *target,
     }
     fclose(statf);
 
-    vdebug(3,LOG_T_LUP,"pid %d tid %"PRIiTID" status %d\n",
+    vdebug(3,LA_TARGET,LF_LUP,"pid %d tid %"PRIiTID" status %d\n",
 	   pid,tthread->tid,tthread->status);
 
     if (tthread->status == THREAD_STATUS_PAUSED) {
@@ -1598,7 +1598,7 @@ static int linux_userproc_flush_thread(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    vdebug(5,LOG_T_XV | LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
+    vdebug(5,LA_TARGET,LF_LUP | LF_THREAD,"thread %"PRIiTID"\n",tid);
 
     if ((tthread = target_lookup_thread(target,tid))) {
 	tstate = (struct linux_userproc_thread_state *)tthread->state;
@@ -1735,7 +1735,7 @@ static int linux_userproc_init(struct target *target) {
     target->nodisablehwbponss = 0;
     target->threadctl = 1;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     lstate->memfd = -1;
     lstate->attached = 0;
@@ -1785,7 +1785,7 @@ static int linux_userproc_attach_internal(struct target *target) {
     lstate = (struct linux_userproc_state *)target->state;
     pid = lstate->pid;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",pid);
 
     if (!lstate) {
 	errno = EFAULT;
@@ -1817,16 +1817,16 @@ static int linux_userproc_attach_internal(struct target *target) {
 	 * target_resume!
 	 */
 
-	vdebug(3,LOG_T_LUP,"waiting for ptrace attach to hit pid %d\n",pid);
+	vdebug(3,LA_TARGET,LF_LUP,"waiting for ptrace attach to hit pid %d\n",pid);
     again:
-	vdebug(5,LOG_T_LUP,"initial waitpid target %d\n",pid);
+	vdebug(5,LA_TARGET,LF_LUP,"initial waitpid target %d\n",pid);
 	if (waitpid(pid,&pstatus,0) < 0) {
 	    if (errno == ECHILD || errno == EINVAL)
 		return TSTATUS_ERROR;
 	    else
 		goto again;
 	}
-	vdebug(3,LOG_T_LUP,"ptrace attach has hit pid %d\n",pid);
+	vdebug(3,LA_TARGET,LF_LUP,"ptrace attach has hit pid %d\n",pid);
     }
 
     /* Set the initial PTRACE opts. */
@@ -1868,9 +1868,9 @@ static int linux_userproc_attach_internal(struct target *target) {
 	    continue;
 	}
 
-	vdebug(3,LOG_T_LUP,"waiting for ptrace attach to hit tid %d\n",tid);
+	vdebug(3,LA_TARGET,LF_LUP,"waiting for ptrace attach to hit tid %d\n",tid);
     again2:
-	vdebug(5,LOG_T_LUP,"initial waitpid tid %d\n",tid);
+	vdebug(5,LA_TARGET,LF_LUP,"initial waitpid tid %d\n",tid);
 	if (waitpid(tid,&pstatus,__WALL) < 0) {
 	    if (errno == ECHILD || errno == EINVAL) {
 		verror("waitpid tid %d failed: %s\n",tid,strerror(errno));
@@ -1880,7 +1880,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 	    else
 		goto again2;
 	}
-	vdebug(3,LOG_T_LUP,"ptrace attach has hit tid %d\n",tid);
+	vdebug(3,LA_TARGET,LF_LUP,"ptrace attach has hit tid %d\n",tid);
 
 	if (ptrace(PTRACE_SETOPTIONS,tid,NULL,lstate->ptrace_opts) < 0) {
 	    vwarn("ptrace setoptions failed, continuing: %s\n",strerror(errno));
@@ -1922,7 +1922,7 @@ static int linux_userproc_detach(struct target *target) {
     int i;
 
     lstate = (struct linux_userproc_state *)(target->state);
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     if (!lstate) {
 	errno = EFAULT;
@@ -1985,7 +1985,7 @@ static int linux_userproc_detach(struct target *target) {
     if (lstate->memfd > 0)
 	close(lstate->memfd);
 
-    vdebug(3,LOG_T_LUP,"ptrace detach %d done.\n",lstate->pid);
+    vdebug(3,LA_TARGET,LF_LUP,"ptrace detach %d done.\n",lstate->pid);
     lstate->attached = 0;
 
     return 0;
@@ -1996,7 +1996,7 @@ static int linux_userproc_fini(struct target *target) {
 
     lstate = (struct linux_userproc_state *)(target->state);
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     if (lstate->attached) 
 	linux_userproc_detach(target);
@@ -2011,7 +2011,7 @@ static int linux_userproc_kill(struct target *target) {
     int retval = 0;
 
     lstate = (struct linux_userproc_state *)(target->state);
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     if (!lstate) {
 	errno = EFAULT;
@@ -2057,7 +2057,7 @@ static int linux_userproc_loadregions(struct target *target,
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     /* first, find the pathname of our main exe */
     snprintf(buf,PATH_MAX*2,"/proc/%d/exe",lstate->pid);
@@ -2079,7 +2079,7 @@ static int linux_userproc_loadregions(struct target *target,
 	    break;
 	}
 
-	vdebug(8,LOG_T_LUP,"scanning mmap line %s",buf);
+	vdebug(8,LA_TARGET,LF_LUP,"scanning mmap line %s",buf);
 
 	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*x:%*x %*d %s",&start,&end,
 		    &p[0],&p[1],&p[2],&p[3],&offset,buf);
@@ -2171,7 +2171,7 @@ static int linux_userproc_updateregions(struct target *target,
     uint32_t prot_flags;
     int exists;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     /* first, find the pathname of our main exe */
     snprintf(buf,PATH_MAX*2,"/proc/%d/exe",lstate->pid);
@@ -2193,7 +2193,7 @@ static int linux_userproc_updateregions(struct target *target,
 	    break;
 	}
 
-	vdebug(9,LOG_T_LUP,"scanning mmap line %s",buf);
+	vdebug(9,LA_TARGET,LF_LUP,"scanning mmap line %s",buf);
 
 	rc = sscanf(buf,"%Lx-%Lx %c%c%c%c %Lx %*x:%*x %*d %s",&start,&end,
 		    &p[0],&p[1],&p[2],&p[3],&offset,buf);
@@ -2287,25 +2287,25 @@ static int linux_userproc_updateregions(struct target *target,
 	exists = 0;
 	list_for_each_entry_safe(range,trange,&region->ranges,range) {
 	    if (range->new) {
-		vdebug(3,LOG_T_LUP,
+		vdebug(3,LA_TARGET,LF_LUP,
 		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
 	    }
 	    else if (range->same) {
-		vdebug(9,LOG_T_LUP,
+		vdebug(9,LA_TARGET,LF_LUP,
 		       "same range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
 	    }
 	    else if (range->updated) {
-		vdebug(3,LOG_T_LUP,
+		vdebug(3,LA_TARGET,LF_LUP,
 		       "updated range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
 	    }
 	    else {
-		vdebug(3,LOG_T_LUP,
+		vdebug(3,LA_TARGET,LF_LUP,
 		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		memrange_free(range);
@@ -2313,7 +2313,7 @@ static int linux_userproc_updateregions(struct target *target,
 	    range->new = range->same = range->updated = 0;
 	}
 	if (!exists || list_empty(&region->ranges)) {
-	    vdebug(3,LOG_T_LUP,"removing stale region (%s:%s:%s)\n",
+	    vdebug(3,LA_TARGET,LF_LUP,"removing stale region (%s:%s:%s)\n",
 		   region->space->idstr,region->name,REGION_TYPE(region->type));
 	    memregion_free(region);
 	}
@@ -2340,11 +2340,11 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     if (!(region->type == REGION_TYPE_MAIN 
 	  || region->type == REGION_TYPE_LIB)) {
-	vdebug(4,LOG_T_LUP,"region %s is not MAIN nor LIB; skipping!\n",
+	vdebug(4,LA_TARGET,LF_LUP,"region %s is not MAIN nor LIB; skipping!\n",
 	       region->name);
 	return 0;
     }
@@ -2400,7 +2400,7 @@ static target_status_t linux_userproc_status(struct target *target) {
 	(struct linux_userproc_state *)target->state;
     int pid = lstate->pid;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",pid);
 
  again:
     snprintf(buf,256,"/proc/%d/stat",pid);
@@ -2430,7 +2430,7 @@ static target_status_t linux_userproc_status(struct target *target) {
 	goto again;
     }
 
-    vdebug(3,LOG_T_LUP,"pid %d status %d\n",lstate->pid,retval);
+    vdebug(3,LA_TARGET,LF_LUP,"pid %d status %d\n",lstate->pid,retval);
 
     fclose(statf);
     return retval;
@@ -2447,7 +2447,7 @@ static int linux_userproc_pause(struct target *target,int nowait) {
     struct linux_userproc_thread_state *tstate;
     siginfo_t sinfo;
     
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     /*
      * We send a stop to each traced tid, and wait until it is delivered
@@ -2468,7 +2468,7 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 		   tthread->tid);
 	}
 	else if (tthread->status == THREAD_STATUS_PAUSED) {
-	    vdebug(3,LOG_T_LUP,"tid %d already paused\n",tthread->tid);
+	    vdebug(3,LA_TARGET,LF_LUP,"tid %d already paused\n",tthread->tid);
 	    continue;
 	}
 	/*
@@ -2479,7 +2479,7 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 	 */
 	else if (waitid(P_PID,tthread->tid,&sinfo,WNOHANG | WNOWAIT) == 0
 		 && sinfo.si_pid == tthread->tid) {
-	    vdebug(3,LOG_T_LUP,
+	    vdebug(3,LA_TARGET,LF_LUP,
 		   "tid %d has pending siginfo to waitpid on; not pausing here\n",
 		   tthread->tid);
 	    continue;
@@ -2495,12 +2495,12 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 	tstate->ctl_sig_sent = 1;
 
 	if (nowait) {
-	    vdebug(3,LOG_T_LUP,"not waiting for pause to hit tid %d\n",
+	    vdebug(3,LA_TARGET,LF_LUP,"not waiting for pause to hit tid %d\n",
 		   tthread->tid);
 	    continue;
 	}
 
-	vdebug(3,LOG_T_LUP,"waiting for pause SIGSTOP to hit tid %d\n",
+	vdebug(3,LA_TARGET,LF_LUP,"waiting for pause SIGSTOP to hit tid %d\n",
 	       tthread->tid);
     again:
 	if (waitpid(tthread->tid,&pstatus,__WALL) < 0) {
@@ -2512,7 +2512,7 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 	    else
 		goto again;
 	}
-	vdebug(3,LOG_T_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
+	vdebug(3,LA_TARGET,LF_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
 	tthread->status = THREAD_STATUS_PAUSED;
 	tstate->ctl_sig_sent = 0;
     }
@@ -2543,7 +2543,7 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
     
-    vdebug(5,LOG_T_LUP,"pid %d thread %"PRIiTID"\n",lstate->pid,tid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID"\n",lstate->pid,tid);
 
     /*
      * We send a stop to each traced tid, and wait until it is delivered
@@ -2559,7 +2559,7 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
 	       tthread->tid);
     }
     else if (tthread->status == THREAD_STATUS_PAUSED) {
-	vdebug(3,LOG_T_LUP,"tid %d already paused\n",tthread->tid);
+	vdebug(3,LA_TARGET,LF_LUP,"tid %d already paused\n",tthread->tid);
 	return 0;
     }
 
@@ -2570,11 +2570,11 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
     tstate->ctl_sig_sent = 1;
 
     if (nowait) {
-	vdebug(3,LOG_T_LUP,"not waiting for pause to hit tid %d\n",tthread->tid);
+	vdebug(3,LA_TARGET,LF_LUP,"not waiting for pause to hit tid %d\n",tthread->tid);
 	return 0;
     }
 
-    vdebug(3,LOG_T_LUP,"waiting for pause SIGSTOP to hit tid %d\n",tthread->tid);
+    vdebug(3,LA_TARGET,LF_LUP,"waiting for pause SIGSTOP to hit tid %d\n",tthread->tid);
  again:
     if (waitpid(tthread->tid,&pstatus,__WALL) < 0) {
 	if (errno == ECHILD || errno == EINVAL) {
@@ -2584,7 +2584,7 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
 	else
 	    goto again;
     }
-    vdebug(3,LOG_T_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
+    vdebug(3,LA_TARGET,LF_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
     tthread->status = THREAD_STATUS_PAUSED;
     tstate->ctl_sig_sent = 0;
 
@@ -2601,7 +2601,7 @@ static int linux_userproc_resume(struct target *target) {
 
     lstate = (struct linux_userproc_state *)(target->state);
 
-    vdebug(9,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(9,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     /*
      * First, on resume, try to keep handling any threads that were
@@ -2676,7 +2676,7 @@ static int linux_userproc_resume(struct target *target) {
 	    }
 	}
 
-	vdebug(8,LOG_T_LUP,"ptrace restart pid %d tid %"PRIiTID" succeeded\n",
+	vdebug(8,LA_TARGET,LF_LUP,"ptrace restart pid %d tid %"PRIiTID" succeeded\n",
 	       lstate->pid,tthread->tid);
 	tthread->status = THREAD_STATUS_RUNNING;
 
@@ -2761,7 +2761,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_CLONE << 8)) {
 	    ptrace(PTRACE_GETEVENTMSG,tid,NULL,&newstatus);
 	    newtid = (tid_t)newstatus;
-	    vdebug(5,LOG_T_LUP,
+	    vdebug(5,LA_TARGET,LF_LUP,
 		   "target %d thread %d cloned new thread %d; attaching now.\n",
 		   pid,tid,newtid);
 
@@ -2789,13 +2789,13 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 
 	tstate->last_status = tstate->last_signo = WSTOPSIG(pstatus);
 	if (tstate->last_status == (SIGTRAP | 0x80)) {
-	    vdebug(5,LOG_T_LUP,
+	    vdebug(5,LA_TARGET,LF_LUP,
 		   "thread %"PRIiTID" stopped with syscall trap signo %d\n",
 		   tid,tstate->last_status);
 	    tstate->last_signo = -1;
 	}
 	else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
-	    vdebug(5,LOG_T_LUP,"target %d exiting (%d)! detaching now.\n",
+	    vdebug(5,LA_TARGET,LF_LUP,"target %d exiting (%d)! detaching now.\n",
 		   pid,tstate->last_status);
 	    tstate->last_signo = -1;
 	    linux_userproc_detach(target);
@@ -2803,7 +2803,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	}
 	else if (tstate->last_status == SIGTRAP) {
 	    /* Don't deliver debug traps! */
-	    vdebug(5,LOG_T_LUP,"thread %"PRIiTID" stopped with trap signo %d\n",
+	    vdebug(5,LA_TARGET,LF_LUP,"thread %"PRIiTID" stopped with trap signo %d\n",
 		   tid,tstate->last_status);
 	    tstate->last_signo = -1;
 
@@ -2865,7 +2865,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		    return TSTATUS_ERROR;
 		}
 
-		vdebug(4,LOG_T_LUP,
+		vdebug(4,LA_TARGET,LF_LUP,
 		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
 		       dreg,ipval);
 	    }
@@ -2887,11 +2887,11 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		    dreg = 3;
 
 		if (dreg > -1)
-		    vdebug(4,LOG_T_LUP,
+		    vdebug(4,LA_TARGET,LF_LUP,
 			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
 			   dreg,ipval);
 		else
-		    vdebug(4,LOG_T_LUP,
+		    vdebug(4,LA_TARGET,LF_LUP,
 			   "checking for SS or sw break on 0x%"PRIxADDR"\n",
 			   ipval - target->breakpoint_instrs_len);
 	    }
@@ -2910,7 +2910,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		    errno = 0;
 		}
 		else {
-		    vdebug(5,LOG_T_LUP,"cleared status debug reg 6\n");
+		    vdebug(5,LA_TARGET,LF_LUP,"cleared status debug reg 6\n");
 		}
 
 		dpp = (struct probepoint *)				\
@@ -2977,7 +2977,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	}
 	else {
 	    if (tstate->ctl_sig_sent) {
-		vdebug(5,LOG_T_LUP,
+		vdebug(5,LA_TARGET,LF_LUP,
 		       "thread %"PRIiTID" stopped with (our) signo %d\n",
 		       tid,tstate->last_status);
 		/*
@@ -3005,7 +3005,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		}
 	    }
 	    else
-		vdebug(5,LOG_T_LUP,
+		vdebug(5,LA_TARGET,LF_LUP,
 		       "thread %"PRIiTID" stopped with (ext) signo %d\n",
 		       tid,tstate->last_status);
 	}
@@ -3079,7 +3079,7 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
 	    goto again;
     }
 
-    vdebug(5,LOG_T_LUP,
+    vdebug(5,LA_TARGET,LF_LUP,
 	   "tid %"PRIiTID" running; handling evloop sig\n",tid);
 
     /*
@@ -3099,7 +3099,7 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
     }
     else if (retval == TSTATUS_DONE) {
 	/* remove FD from set */
-	vdebug(5,LOG_T_LUP,
+	vdebug(5,LA_TARGET,LF_LUP,
 	       "tid %"PRIiTID" done; handling evloop sig\n",tid);
 	return EVLOOP_HRET_REMOVEALLTYPES;
     }
@@ -3130,7 +3130,7 @@ static int linux_userproc_evloop_add_tid(struct target *target,int tid) {
     }
 
     if ((readfd = waitpipe_get(tid)) > 0) {
-	vdebug(9,LOG_T_LUP,
+	vdebug(9,LA_TARGET,LF_LUP,
 	       "not adding waitpipe readfd %d for tid %d\n",readfd,tid);
     }
     else {
@@ -3143,7 +3143,7 @@ static int linux_userproc_evloop_add_tid(struct target *target,int tid) {
 	evloop_set_fd(target->evloop,readfd,EVLOOP_FDTYPE_R,
 		      linux_userproc_evloop_handler,target);
 
-	vdebug(5,LOG_T_LUP,
+	vdebug(5,LA_TARGET,LF_LUP,
 	       "added waitpipe/evloop readfd %d for tid %d\n",readfd,tid);
     }
 
@@ -3165,7 +3165,7 @@ static int linux_userproc_evloop_del_tid(struct target *target,int tid) {
 	evloop_unset_fd(target->evloop,readfd,EVLOOP_FDTYPE_A);
 	waitpipe_remove(tid);
 
-	vdebug(9,LOG_T_LUP,
+	vdebug(9,LA_TARGET,LF_LUP,
 	       "removed waitpipe/evloop readfd %d for tid %d\n",
 	       readfd,tid);
     }
@@ -3241,7 +3241,7 @@ static target_status_t linux_userproc_poll(struct target *target,
 	}
     }
 
-    vdebug(9,LOG_T_LUP,"waitpid target %d\n",lstate->pid);
+    vdebug(9,LA_TARGET,LF_LUP,"waitpid target %d\n",lstate->pid);
  again:
     tid = waitpid(-1,&status,WNOHANG | __WALL);
     if (tid < 0) {
@@ -3316,12 +3316,12 @@ static target_status_t linux_userproc_monitor(struct target *target) {
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
 
-    vdebug(9,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(9,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     /* do the whole ptrace waitpid dance */
 
  again:
-    vdebug(9,LOG_T_LUP,"monitor pid %d (again %d)\n",lstate->pid,again);
+    vdebug(9,LA_TARGET,LF_LUP,"monitor pid %d (again %d)\n",lstate->pid,again);
     again = 0;
     tid = waitpid(-1,&pstatus,__WALL);
     if (tid < 0) {
@@ -3349,7 +3349,7 @@ static unsigned char *linux_userproc_read(struct target *target,
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
 
-    vdebug(5,LOG_T_LUP,"pid %d\n",lstate->pid);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     /* Don't bother checking if process is stopped!  We can't send it a
      * STOP without interfering with its execution, so we don't!
@@ -3372,10 +3372,10 @@ unsigned long linux_userproc_write(struct target *target,
     unsigned int i = 0;
     unsigned int j;
 
-    vdebug(5,LOG_T_LUP,"pid %d length %lu ",lstate->pid,length);
+    vdebug(5,LA_TARGET,LF_LUP,"pid %d length %lu ",lstate->pid,length);
     for (j = 0; j < length && j < 16; ++j)
-	vdebugc(5,LOG_T_LUP,"%02hhx ",buf[j]);
-    vdebugc(5,LOG_T_LUP,"\n");
+	vdebugc(5,LA_TARGET,LF_LUP,"%02hhx ",buf[j]);
+    vdebugc(5,LA_TARGET,LF_LUP,"\n");
 
     target_find_memory_real(target,addr,NULL,NULL,&range);
 
@@ -3409,18 +3409,18 @@ unsigned long linux_userproc_write(struct target *target,
 	    return 0;
 	}
 
-	vdebug(9,LOG_T_LUP,"last word was ");
+	vdebug(9,LA_TARGET,LF_LUP,"last word was ");
 	for (j = 0; j < __WORDSIZE / 8; ++j)
-	    vdebugc(9,LOG_T_LUP,"%02hhx ",*(((char *)&word) + j));
-	vdebugc(9,LOG_T_LUP,"\n");
+	    vdebugc(9,LA_TARGET,LF_LUP,"%02hhx ",*(((char *)&word) + j));
+	vdebugc(9,LA_TARGET,LF_LUP,"\n");
 
 	memcpy(&word,(buf + length) - (length % (__WORDSIZE / 8)),
 	       length % (__WORDSIZE / 8));
 
-	vdebug(9,LOG_T_LUP,"new last word is ");
+	vdebug(9,LA_TARGET,LF_LUP,"new last word is ");
 	for (j = 0; j < __WORDSIZE / 8; ++j)
-	    vdebugc(9,LOG_T_LUP,"%02hhx ",*(((char *)&word) + j));
-	vdebugc(9,LOG_T_LUP,"\n");
+	    vdebugc(9,LA_TARGET,LF_LUP,"%02hhx ",*(((char *)&word) + j));
+	vdebugc(9,LA_TARGET,LF_LUP,"\n");
     }
 
     if (length / (__WORDSIZE / 8)) {
@@ -3645,7 +3645,7 @@ REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
-    vdebug(5,LOG_T_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
+    vdebug(5,LA_TARGET,LF_LUP,"reading reg %s\n",linux_userproc_reg_name(target,reg));
 
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
@@ -3686,7 +3686,7 @@ int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
-    vdebug(5,LOG_T_LUP,"writing reg %s 0x%"PRIxREGVAL"\n",
+    vdebug(5,LA_TARGET,LF_LUP,"writing reg %s 0x%"PRIxREGVAL"\n",
 	   linux_userproc_reg_name(target,reg),value);
 
 #if __WORDSIZE == 64
@@ -3740,7 +3740,7 @@ static REG linux_userproc_get_unused_debug_reg(struct target *target,tid_t tid) 
     else if (!tstate->dr[2]) { retval = 2; }
     else if (!tstate->dr[3]) { retval = 3; }
 
-    vdebug(5,LOG_T_LUP,"returning unused debug reg %d\n",retval);
+    vdebug(5,LA_TARGET,LF_LUP,"returning unused debug reg %d\n",retval);
 
     return retval;
 }
@@ -3952,7 +3952,7 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
     /* Enable the GE bit to slow the processor! */
     /* tstate->dr[7] |= (1 << 9); */
 
-    vdebug(4,LOG_T_LUP,"dreg6 = 0x%"PRIxADDR"; dreg7 = 0x%"PRIxADDR", w = %d, ws = 0x%x\n",
+    vdebug(4,LA_TARGET,LF_LUP,"dreg6 = 0x%"PRIxADDR"; dreg7 = 0x%"PRIxADDR", w = %d, ws = 0x%x\n",
 	   tstate->dr[6],tstate->dr[7],whence,watchsize);
 
     /* Now write these values! */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -463,7 +463,7 @@ struct probe *probe_rop_checkret(struct target *target,tid_t tid,
     }
     rop_data->cont_start = cont_start;
 
-    vdebug(3,LOG_OTHER,"safe disasm range for gadget 0x%"PRIxADDR":"
+    vdebug(3,LA_USER,LF_U_ALL,"safe disasm range for gadget 0x%"PRIxADDR":"
 	   " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
 	   rg->start,cont_start,cont_end);
 

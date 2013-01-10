@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -31,47 +31,47 @@
 #include "probe_api.h"
 #include "probe.h"
 
-#define LOGDUMPPROBEPOINT(dl,lt,pp) \
+#define LOGDUMPPROBEPOINT(dl,la,lt,pp)	      \
     if ((pp)->bsymbol && (pp)->symbol_addr) { \
-	vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR" %s:%+d) ", \
+	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR" %s:%+d) ",	\
 		(pp)->addr,(pp)->bsymbol->lsymbol->symbol->name, \
 		(pp)->symbol_addr - (pp)->addr);	\
     } \
     else if ((pp)->bsymbol) { \
-        vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR" %s) ", \
+	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR" %s) ",	 \
 	       (pp)->addr,(pp)->bsymbol->lsymbol->symbol->name); \
     } \
     else { \
-        vdebugc((dl),(lt),"probepoint(0x%"PRIxADDR") ", \
+	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR") ",	\
 	       (pp)->addr); \
     }
 
-#define LOGDUMPPROBEPOINT_NL(dl,lt,p) \
-    LOGDUMPPROBEPOINT((dl),(lt),(p)); \
-    vdebugc((dl),(lt),"\n");
+#define LOGDUMPPROBEPOINT_NL(dl,la,lt,p)	\
+    LOGDUMPPROBEPOINT((dl),(la),(lt),(p));	\
+    vdebugc((dl),(la),(lt),"\n");
 
-#define LOGDUMPPROBE(dl,lt,p) \
-    vdebugc((dl),(lt),"probe(%s) ",probe->name); \
+#define LOGDUMPPROBE(dl,la,lt,p)		 \
+    vdebugc((dl),(la),(lt),"probe(%s) ",probe->name);	\
     if ((p)->bsymbol) { \
-	vdebugc((dl),(lt),"(on %s) ", \
+	vdebugc((dl),(la),(lt),"(on %s) ",		\
 		(p)->bsymbol->lsymbol->symbol->name);	\
     } \
     else { \
-        vdebugc((dl),(lt),"(on <UNKNOWN>) ");	\
+	vdebugc((dl),(la),(lt),"(on <UNKNOWN>) ");	\
     } \
     if ((p)->probepoint) { 			  \
-	LOGDUMPPROBEPOINT(dl,lt,(p)->probepoint); \
+	LOGDUMPPROBEPOINT(dl,la,lt,(p)->probepoint);	\
     } \
     if ((p)->sources) { 			\
-	vdebugc((dl),(lt)," (%d sources)",g_list_length((p)->sources));	\
+	vdebugc((dl),(la),(lt)," (%d sources)",g_list_length((p)->sources)); \
     } \
     if ((p)->sinks) { 			\
-	vdebugc((dl),(lt)," (%d sinks)",g_list_length((p)->sources)); \
+	vdebugc((dl),(la),(lt)," (%d sinks)",g_list_length((p)->sources)); \
     }
 
-#define LOGDUMPPROBE_NL(dl,lt,p) \
-    LOGDUMPPROBE((dl),(lt),(p)); \
-    vdebugc((dl),(lt),"\n");
+#define LOGDUMPPROBE_NL(dl,la,lt,p)		\
+    LOGDUMPPROBE((dl),(la),(lt),(p));		\
+    vdebugc((dl),(la),(lt),"\n");
 
 /*
  * Local prototypes.
@@ -93,8 +93,8 @@ int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
     int rc;
 
     if (probe->sinks) {
-	vdebug(5,LOG_P_PROBE,"");
-	LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+	vdebug(5,LA_PROBE,LF_PROBE,"");
+	LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
 	list = probe->sinks;
 	while (list) {
@@ -122,8 +122,8 @@ int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
     int rc;
 
     if (probe->sinks) {
-	vdebug(5,LOG_P_PROBE,"");
-	LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+	vdebug(5,LA_PROBE,LF_PROBE,"");
+	LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
 	list = probe->sinks;
 	while (list) {
@@ -151,16 +151,16 @@ static struct probepoint *probepoint_lookup(struct target *target,
     if (tthread 
 	&& (retval = (struct probepoint *) \
 	    g_hash_table_lookup(tthread->hard_probepoints,(gpointer)addr))) {
-	vdebug(9,LOG_P_PROBEPOINT,"found hard ");
-	LOGDUMPPROBEPOINT_NL(9,LOG_P_PROBEPOINT,retval);
+	vdebug(9,LA_PROBE,LF_PROBEPOINT,"found hard ");
+	LOGDUMPPROBEPOINT_NL(9,LA_PROBE,LF_PROBEPOINT,retval);
     }
     else if ((retval = (struct probepoint *) \
 	      g_hash_table_lookup(target->soft_probepoints,(gpointer)addr))) {
-	vdebug(9,LOG_P_PROBEPOINT,"found soft ");
-	LOGDUMPPROBEPOINT_NL(9,LOG_P_PROBEPOINT,retval);
+	vdebug(9,LA_PROBE,LF_PROBEPOINT,"found soft ");
+	LOGDUMPPROBEPOINT_NL(9,LA_PROBE,LF_PROBEPOINT,retval);
     }
     else
-	vdebug(9,LOG_P_PROBEPOINT,"did not find probepoint at 0x%"PRIxADDR"\n",
+	vdebug(9,LA_PROBE,LF_PROBEPOINT,"did not find probepoint at 0x%"PRIxADDR"\n",
 	       addr);
 
     return retval;
@@ -216,14 +216,14 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
 	}
     }
 
-    vdebug(5,LOG_P_PROBEPOINT,"created ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"created ");
+    LOGDUMPPROBEPOINT(5,LA_PROBE,LF_PROBEPOINT,probepoint);
     if (probepoint->can_switch_context) {
-	vdebugc(5,LOG_P_PROBEPOINT," (instr can switch context (0x%x)\n",
+	vdebugc(5,LA_PROBE,LF_PROBEPOINT," (instr can switch context (0x%x)\n",
 	       probepoint->can_switch_context);
     }
     else
-	vdebugc(5,LOG_P_PROBEPOINT,"\n");
+	vdebugc(5,LA_PROBE,LF_PROBEPOINT,"\n");
 
     return probepoint;
 }
@@ -304,8 +304,8 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
 static void probepoint_free(struct probepoint *probepoint) {
     probepoint_free_internal(probepoint);
 
-    vdebug(5,LOG_P_PROBEPOINT,"freed ");
-    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"freed ");
+    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
 
     free(probepoint);
 }
@@ -317,8 +317,8 @@ static void probepoint_free(struct probepoint *probepoint) {
 void probepoint_free_ext(struct probepoint *probepoint) {
     probepoint_free_internal(probepoint);
 
-    vdebug(5,LOG_P_PROBEPOINT,"freed (ext) ");
-    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"freed (ext) ");
+    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
 
     free(probepoint);
 }
@@ -340,15 +340,15 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
      */
     if (probepoint->state == PROBE_DISABLED) {
 	/* return success, the probepoint is already removed */
-	vdebug(11,LOG_P_PROBEPOINT,"");
-	LOGDUMPPROBEPOINT(7,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(11,LOG_P_PROBEPOINT," already disabled\n");
+	vdebug(11,LA_PROBE,LF_PROBEPOINT,"");
+	LOGDUMPPROBEPOINT(7,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(11,LA_PROBE,LF_PROBEPOINT," already disabled\n");
 
         return 0;
     }
 
-    vdebug(5,LOG_P_PROBEPOINT,"removing ");
-    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"removing ");
+    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
 
     /*
      * If the style is software, and it's a watchpoint, forget it; we
@@ -366,9 +366,9 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
      * it.  Otherwise, we have to handle complex cases!
      */
     if (probepoint->state == PROBE_BP_SET) {
-	vdebug(7,LOG_P_PROBE,"doing easy removal of ");
-	LOGDUMPPROBEPOINT(7,LOG_P_PROBE,probepoint);
-	vdebugc(7,LOG_P_PROBE,"; removing probepoint!\n");
+	vdebug(7,LA_PROBE,LF_PROBE,"doing easy removal of ");
+	LOGDUMPPROBEPOINT(7,LA_PROBE,LF_PROBE,probepoint);
+	vdebugc(7,LA_PROBE,LF_PROBE,"; removing probepoint!\n");
     }
     /*
      * Handle complex stuff :).
@@ -491,8 +491,8 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
 		    verror("failure while removing hw breakpoint; cannot recover!\n");
 		}
 		else {
-		    vdebug(4,LOG_P_PROBEPOINT,"removed HW break ");
-		    LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+		    vdebug(4,LA_PROBE,LF_PROBEPOINT,"removed HW break ");
+		    LOGDUMPPROBEPOINT_NL(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 		}
 	    }
 	    else {
@@ -501,8 +501,8 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
 		    verror("failure while removing hw watchpoint; cannot recover!\n");
 		}
 		else {
-		    vdebug(4,LOG_P_PROBEPOINT,"removed HW watch ");
-		    LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+		    vdebug(4,LA_PROBE,LF_PROBEPOINT,"removed HW watch ");
+		    LOGDUMPPROBEPOINT_NL(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 		}
 	    }
 	}
@@ -534,8 +534,8 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
 	if (target_notify_sw_breakpoint(target,probepoint->addr,0)) 
 	    verror("target sw breakpoint removal notification failed; nonfatal!\n");
 
-	vdebug(4,LOG_P_PROBEPOINT,"removed SW break ");
-	LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"removed SW break ");
+	LOGDUMPPROBEPOINT_NL(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 
 	free(probepoint->breakpoint_orig_mem);
 	probepoint->breakpoint_orig_mem = NULL;
@@ -546,21 +546,21 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
 
     probepoint->state = PROBE_DISABLED;
 
-    vdebug(2,LOG_P_PROBEPOINT,"removed ");
-    LOGDUMPPROBEPOINT(2,LOG_P_PROBEPOINT,probepoint);
+    vdebug(2,LA_PROBE,LF_PROBEPOINT,"removed ");
+    LOGDUMPPROBEPOINT(2,LA_PROBE,LF_PROBEPOINT,probepoint);
     /*
      * This is just in case it was registered with PROBEPOINT_FASTEST;
      * we need to make sure if it gets re-registered that we make the
      * choice of FASTEST again at that time.
      */
     if (probepoint->style != probepoint->orig_style) {
-	vdebug(2,LOG_P_PROBEPOINT,"removed (style was %d; now %d)",
+	vdebug(2,LA_PROBE,LF_PROBEPOINT,"removed (style was %d; now %d)",
 	       probepoint->style,probepoint->orig_style);
 
 	probepoint->style = probepoint->orig_style;
     }
     else
-	vdebug(2,LOG_P_PROBEPOINT,"\n");
+	vdebug(2,LA_PROBE,LF_PROBEPOINT,"\n");
 
     return 0;
 }
@@ -595,15 +595,15 @@ static int __probepoint_insert(struct probepoint *probepoint,
      */
     if (probepoint->state != PROBE_DISABLED) {
 	/* return success, the probepoint is already being managed */
-	vdebug(11,LOG_P_PROBEPOINT,"");
-	LOGDUMPPROBEPOINT(9,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(11,LOG_P_PROBEPOINT," already inserted\n");
+	vdebug(11,LA_PROBE,LF_PROBEPOINT,"");
+	LOGDUMPPROBEPOINT(9,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(11,LA_PROBE,LF_PROBEPOINT," already inserted\n");
 
         return 0;
     }
 
-    vdebug(5,LOG_P_PROBEPOINT,"inserting ");
-    LOGDUMPPROBEPOINT_NL(5,LOG_P_PROBEPOINT,probepoint);
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"inserting ");
+    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
 
     probepoint->state = PROBE_INSERTING;
 
@@ -615,22 +615,22 @@ static int __probepoint_insert(struct probepoint *probepoint,
 	    probepoint->style = PROBEPOINT_HW;
 	    probepoint->debugregnum = reg;
 
-	    vdebug(3,LOG_P_PROBEPOINT,"using HW reg %d for ",reg);
-	    LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
+	    vdebug(3,LA_PROBE,LF_PROBEPOINT,"using HW reg %d for ",reg);
+	    LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
 	}
 	else {
 	    probepoint->style = PROBEPOINT_SW;
 
-	    vdebug(3,LOG_P_PROBEPOINT,"using SW for FASTEST ");
-	    LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
+	    vdebug(3,LA_PROBE,LF_PROBEPOINT,"using SW for FASTEST ");
+	    LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
 	}
     }
     else if (probepoint->style == PROBEPOINT_HW) {
 	if ((reg = target_get_unused_debug_reg(target,tid)) > -1) {
 	    probepoint->debugregnum = reg;
 
-	    vdebug(3,LOG_P_PROBEPOINT,"using HW reg %d for ",reg);
-	    LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
+	    vdebug(3,LA_PROBE,LF_PROBEPOINT,"using HW reg %d for ",reg);
+	    LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
 	}
 	else {
 	    vwarn("could not get a debug reg!\n");
@@ -662,8 +662,8 @@ static int __probepoint_insert(struct probepoint *probepoint,
 		verror("failure inserting hw breakpoint!\n");
 	    }
 	    else {
-		vdebug(7,LOG_P_PROBEPOINT,"inserted hw break at ");
-		LOGDUMPPROBEPOINT_NL(7,LOG_P_PROBEPOINT,probepoint);
+		vdebug(7,LA_PROBE,LF_PROBEPOINT,"inserted hw break at ");
+		LOGDUMPPROBEPOINT_NL(7,LA_PROBE,LF_PROBEPOINT,probepoint);
 	    }
 	}
 	else {
@@ -674,8 +674,8 @@ static int __probepoint_insert(struct probepoint *probepoint,
 		verror("failure inserting hw watchpoint!\n");
 	    }
 	    else {
-		vdebug(7,LOG_P_PROBEPOINT,"inserted hw watch at ");
-		LOGDUMPPROBEPOINT_NL(7,LOG_P_PROBEPOINT,probepoint);
+		vdebug(7,LA_PROBE,LF_PROBEPOINT,"inserted hw watch at ");
+		LOGDUMPPROBEPOINT_NL(7,LA_PROBE,LF_PROBEPOINT,probepoint);
 	    }
 	}
 
@@ -704,7 +704,7 @@ static int __probepoint_insert(struct probepoint *probepoint,
 			      6,ibuf)) {
 	    verror("could not check orig instrs for bp insert\n");
 	}
-	vdebug(7,LOG_P_PROBEPOINT,
+	vdebug(7,LA_PROBE,LF_PROBEPOINT,
 	       "orig bytes: %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx\n",
 	      (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],(int)ibuf[4],(int)ibuf[5]);
 
@@ -718,8 +718,8 @@ static int __probepoint_insert(struct probepoint *probepoint,
 	    return 1;
 	}
 
-	vdebug(3,LOG_P_PROBEPOINT,"saved orig mem under SW ");
-	LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
+	vdebug(3,LA_PROBE,LF_PROBEPOINT,"saved orig mem under SW ");
+	LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
 
 	if (target_write_addr(target,probepoint->addr,
 			      target->breakpoint_instrs_len,
@@ -735,8 +735,8 @@ static int __probepoint_insert(struct probepoint *probepoint,
 	if (target_notify_sw_breakpoint(target,probepoint->addr,1)) 
 	    verror("target sw breakpoint insertion notification failed; nonfatal!\n");
 
-	vdebug(3,LOG_P_PROBEPOINT,"inserted SW ");
-	LOGDUMPPROBEPOINT_NL(3,LOG_P_PROBEPOINT,probepoint);
+	vdebug(3,LA_PROBE,LF_PROBEPOINT,"inserted SW ");
+	LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
 
 	g_hash_table_insert(target->soft_probepoints,
 			    (gpointer)probepoint->addr,(gpointer)probepoint);
@@ -745,8 +745,8 @@ static int __probepoint_insert(struct probepoint *probepoint,
 
     probepoint->state = PROBE_BP_SET;
 
-    vdebug(2,LOG_P_PROBEPOINT,"inserted ");
-    LOGDUMPPROBEPOINT_NL(2,LOG_P_PROBEPOINT,probepoint);
+    vdebug(2,LA_PROBE,LF_PROBEPOINT,"inserted ");
+    LOGDUMPPROBEPOINT_NL(2,LA_PROBE,LF_PROBEPOINT,probepoint);
 
     return 0;
 }
@@ -790,15 +790,15 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
 	return NULL;
     }
 
-    vdebug(5,LOG_P_PROBE,"initialized ");
-    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+    vdebug(5,LA_PROBE,LF_PROBE,"initialized ");
+    LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
     return probe;
 }
 
 int probe_free(struct probe *probe,int force) {
-    vdebug(5,LOG_P_PROBE,"");
-    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+    vdebug(5,LA_PROBE,LF_PROBE,"");
+    LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
     if (probe->sinks && !force) {
 	verror("could not free probe %s with sinks remaining!\n",
@@ -841,8 +841,8 @@ int probe_free(struct probe *probe,int force) {
 	return -1;
     }
 
-    vdebug(5,LOG_P_PROBE,"almost done: ");
-    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+    vdebug(5,LA_PROBE,LF_PROBE,"almost done: ");
+    LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
     if (probe->name)
 	free(probe->name);
@@ -852,16 +852,16 @@ int probe_free(struct probe *probe,int force) {
 }
 
 void probe_rename(struct probe *probe,const char *name) {
-    vdebug(5,LOG_P_PROBE,"renaming ");
-    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+    vdebug(5,LA_PROBE,LF_PROBE,"renaming ");
+    LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
     if (probe->name)
 	free(probe->name);
 
     probe->name = (name) ? strdup(name) : NULL;
 
-    vdebugc(5,LOG_P_PROBE," to ");
-    LOGDUMPPROBE_NL(5,LOG_P_PROBE,probe);
+    vdebugc(5,LA_PROBE,LF_PROBE," to ");
+    LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
 }
 
@@ -890,16 +890,16 @@ int probe_hard_disable(struct probe *probe,int force) {
 	    }
 	    if (!anyenabled || force) {
 		if (force) {
-		    vdebug(3,LOG_P_PROBE,"forcibly hard disabling source probe");
-		    LOGDUMPPROBE(3,LOG_P_PROBE,ptmp);
-		    vdebug(3,LOG_P_PROBE," although it has enabled sink!\n");
+		    vdebug(3,LA_PROBE,LF_PROBE,"forcibly hard disabling source probe");
+		    LOGDUMPPROBE(3,LA_PROBE,LF_PROBE,ptmp);
+		    vdebug(3,LA_PROBE,LF_PROBE," although it has enabled sink!\n");
 		}
 		rc += probe_hard_disable(ptmp,force);
 	    }
 	    else if (anyenabled) {
-		vdebug(3,LOG_P_PROBE,"not forcibly hard disabling source probe");
-		LOGDUMPPROBE(3,LOG_P_PROBE,ptmp);
-		vdebug(3,LOG_P_PROBE," because it has enabled sink(s)!\n");
+		vdebug(3,LA_PROBE,LF_PROBE,"not forcibly hard disabling source probe");
+		LOGDUMPPROBE(3,LA_PROBE,LF_PROBE,ptmp);
+		vdebug(3,LA_PROBE,LF_PROBE," because it has enabled sink(s)!\n");
 		++rc;
 	    }
 	    list = g_list_next(list);
@@ -948,12 +948,12 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     struct probe *ptmp;
     GList *list;
 
-    vdebug(5,LOG_P_PROBE,"");
-    LOGDUMPPROBE(5,LOG_P_PROBE,probe);
-    vdebugc(5,LOG_P_PROBE,"(force=%d,onlyone=%d)\n",force,onlyone);
+    vdebug(5,LA_PROBE,LF_PROBE,"");
+    LOGDUMPPROBE(5,LA_PROBE,LF_PROBE,probe);
+    vdebugc(5,LA_PROBE,LF_PROBE,"(force=%d,onlyone=%d)\n",force,onlyone);
 
     if (probe->sources) 
-	vdebug(5,LOG_P_PROBE,"detaching probe %s from sources\n",probe->name);
+	vdebug(5,LA_PROBE,LF_PROBE,"detaching probe %s from sources\n",probe->name);
 
     if (probe->sinks && !force) {
 	verror("could not unregister a probe that had sinks remaining!\n");
@@ -1024,7 +1024,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     if (probe->sources) {
 	list = probe->sources;
 	while (list) {
-	vdebug(5,LOG_P_PROBE,"removing source\n");
+	vdebug(5,LA_PROBE,LF_PROBE,"removing source\n");
 	    ptmp = (struct probe *)list->data;
 	    /* We MUST get the next ptr before calling the
 	     * probe_unregister_source* functions, because they will
@@ -1039,7 +1039,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	}
 	g_list_free(probe->sources);
 	probe->sources = NULL;
-	vdebug(5,LOG_P_PROBE,"probe sources removed\n");
+	vdebug(5,LA_PROBE,LF_PROBE,"probe sources removed\n");
     }
 
     if (probe->bsymbol) {
@@ -1073,9 +1073,9 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     if (!list_empty(&probepoint->probes)) 
 	return 0;
 
-    vdebug(5,LOG_P_PROBE,"no more probes at ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probepoint);
-    vdebugc(5,LOG_P_PROBE,"; removing probepoint!\n");
+    vdebug(5,LA_PROBE,LF_PROBE,"no more probes at ");
+    LOGDUMPPROBEPOINT(5,LA_PROBE,LF_PROBE,probepoint);
+    vdebugc(5,LA_PROBE,LF_PROBE,"; removing probepoint!\n");
 
     if (!__probepoint_remove(probepoint,force))
 	probepoint_free(probepoint);
@@ -1317,9 +1317,9 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 	goto errout;
     }
 
-    vdebug(5,LOG_P_PROBE,"probe %s attached to ",probe->name);
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBE,probe->probepoint);
-    vdebugc(5,LOG_P_PROBE,"\n");
+    vdebug(5,LA_PROBE,LF_PROBE,"probe %s attached to ",probe->name);
+    LOGDUMPPROBEPOINT(5,LA_PROBE,LF_PROBE,probe->probepoint);
+    vdebugc(5,LA_PROBE,LF_PROBE,"\n");
 
     return probe;
 
@@ -1480,7 +1480,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	goto errout;
     }
 
-    vdebug(5,LOG_P_PROBE,"registered probe on %s at 0x%"PRIxADDR"\n",
+    vdebug(5,LA_PROBE,LF_PROBE,"registered probe on %s at 0x%"PRIxADDR"\n",
 	   bsymbol->lsymbol->symbol->name,probeaddr);
 
     return probe;
@@ -1884,9 +1884,9 @@ static int handle_simple_actions(struct target *target,
 	rc = 0;
 
 	if (!probe_enabled(action->probe)) {
-	    vdebug(3,LOG_P_ACTION,"skipping disabled probe at ");
-	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	    vdebugc(3,LOG_P_ACTION,"\n");
+	    vdebug(3,LA_PROBE,LF_ACTION,"skipping disabled probe at ");
+	    LOGDUMPPROBEPOINT(3,LA_PROBE,LF_ACTION,probepoint);
+	    vdebugc(3,LA_PROBE,LF_ACTION,"\n");
 	    continue;
 	}
 
@@ -1898,7 +1898,7 @@ static int handle_simple_actions(struct target *target,
 		vwarn("could not write reg %"PRIiREG"!\n",
 		      action->detail.regmod.regnum);
 	    else 
-		vdebug(4,LOG_P_ACTION,"wrote 0x%"PRIxREGVAL" to %"PRIiREG"\n",
+		vdebug(4,LA_PROBE,LF_ACTION,"wrote 0x%"PRIxREGVAL" to %"PRIiREG"\n",
 		       action->detail.regmod.regval,action->detail.regmod.regnum);
 	}
 	else if (action->type == ACTION_MEMMOD) {
@@ -1912,7 +1912,7 @@ static int handle_simple_actions(struct target *target,
 		rc = 1;
 	    }
 	    else
-		vdebug(4,LOG_P_ACTION,"wrote %d bytes to 0x%"PRIxADDR"\n",
+		vdebug(4,LA_PROBE,LF_ACTION,"wrote %d bytes to 0x%"PRIxADDR"\n",
 		       action->detail.memmod.len,action->detail.memmod.destaddr);
 	}
 	else {
@@ -1965,9 +1965,9 @@ static int setup_single_step_actions(struct target *target,
      * breakpoint location.
      */
     if (!stepping) {
-	vdebug(4,LOG_P_PROBEPOINT,"setting up single step actions for ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"setting up single step actions for ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 	if (probepoint->style == PROBEPOINT_HW
 	    && isbp
@@ -2014,18 +2014,18 @@ static int setup_single_step_actions(struct target *target,
 	    stepping = -1;
 	}
 	else {
-	    vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"sstep command succeeded for ");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 	    stepping = 1;
 	}
     }
     else {
-	vdebug(4,LOG_P_PROBEPOINT,
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,
 	       "already stepping; building tacs for single step actions for ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
     }
 
     /* 
@@ -2064,9 +2064,9 @@ static int run_post_handlers(struct target *target,
 	++i;
 	if (probe->enabled) {
 	    if (probe->post_handler) {
-		vdebug(4,LOG_P_PROBEPOINT,"running post handler at ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		vdebug(4,LA_PROBE,LF_PROBEPOINT,"running post handler at ");
+		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 		rc = probe->post_handler(probe,probe->handler_data,probe);
 		if (rc == 1) 
@@ -2076,10 +2076,10 @@ static int run_post_handlers(struct target *target,
 		    noreinject = 1;
 	    }
 	    else if (0 && probe->sinks) {
-		vdebug(4,LOG_P_PROBEPOINT,
+		vdebug(4,LA_PROBE,LF_PROBEPOINT,
 		       "running default probe sink post_handler at ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 		probe_do_sink_post_handlers(probe,NULL,probe);
 	    }
@@ -2119,10 +2119,10 @@ int probepoint_pause_handling(struct target *target,
 			      struct probepoint *probepoint,
 			      thread_resumeat_t resumeat) {
     if (target->threadctl) {
-	vdebug(5,LOG_T_THREAD | LOG_P_PROBEPOINT,
+	vdebug(5,LA_PROBE,LF_PROBEPOINT,
 	       "pausing thread %"PRIiTID" (%d) until thread %"PRIiTID" finishes"
 	       " handling ",tthread->tid,resumeat,probepoint->tpc->thread->tid);
-	LOGDUMPPROBEPOINT_NL(3,LOG_T_THREAD | LOG_P_PROBEPOINT,probepoint);
+	LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
 
 	tthread->resumeat = resumeat;
 	return 0;
@@ -2177,8 +2177,8 @@ static int setup_post_single_step(struct target *target,
      */
 
     if (tpc->action_obviated_orig) {
-	vdebug(4,LOG_P_PROBEPOINT,"skipping sstep due to action obviation of ");
-	LOGDUMPPROBEPOINT_NL(4,LOG_P_PROBEPOINT,probepoint);
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"skipping sstep due to action obviation of ");
+	LOGDUMPPROBEPOINT_NL(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 
 	/* Just run the posthandlers; don't single step the orig. */
 	noreinject = run_post_handlers(target,tthread,probepoint);
@@ -2251,9 +2251,9 @@ static int setup_post_single_step(struct target *target,
 	if (!doit) {
 	    probepoint->state = PROBE_BP_SET;
 
-	    vdebug(4,LOG_P_PROBEPOINT,"skipping sstep for HW ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"; no post handlers\n");
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"skipping sstep for HW ");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"; no post handlers\n");
 
 	    /*
 	     * Don't run posthandlers because we haven't done the
@@ -2271,9 +2271,9 @@ static int setup_post_single_step(struct target *target,
      */
     else if (probepoint->style == PROBEPOINT_SW) {
 	/* Restore the original instruction. */
-	vdebug(4,LOG_P_PROBEPOINT,"restoring orig instr for SW ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"restoring orig instr for SW ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 	doit = 1;
 
@@ -2354,9 +2354,9 @@ static int setup_post_single_step(struct target *target,
      * Command the single step to happen.  We hold the probepoint now,
      * so we can do anything.
      */
-    vdebug(4,LOG_P_PROBEPOINT,"doing sstep for ");
-    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+    vdebug(4,LA_PROBE,LF_PROBEPOINT,"doing sstep for ");
+    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
     if (probepoint->style == PROBEPOINT_HW && !target->nodisablehwbponss) {
 	/*
@@ -2414,15 +2414,15 @@ static int setup_post_single_step(struct target *target,
 	 *
 	 * Don't call target_resume after a successful target_singlestep.
 	 */
-	vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"sstep command succeeded for ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 	if (probepoint->can_switch_context) {
-	    vdebug(4,LOG_P_PROBEPOINT,"can_switch_context (%d) -- ",
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"can_switch_context (%d) -- ",
 		   probepoint->can_switch_context);
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 	}
 
 	return 1;
@@ -2467,9 +2467,9 @@ result_t probepoint_bp_handler(struct target *target,
     struct action *action;
     struct thread_action_context *tac,*ttac;
 
-    vdebug(5,LOG_P_PROBEPOINT,"handling bp at ");
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(5,LOG_P_PROBEPOINT,"\n");
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"handling bp at ");
+    LOGDUMPPROBEPOINT(5,LA_PROBE,LF_PROBEPOINT,probepoint);
+    vdebugc(5,LA_PROBE,LF_PROBEPOINT,"\n");
 
     /*
      * If the thread is already handling this probepoint, the cause is
@@ -2527,11 +2527,11 @@ result_t probepoint_bp_handler(struct target *target,
     if (tthread->tpc) {
 	array_list_append(tthread->tpc_stack,tthread->tpc);
 
-	vdebug(3,LOG_T_XV,
+	vdebug(3,LA_PROBE,LF_PROBEPOINT,
 	       "already handling %d probepoints in thread %d; most recent"
 	       " (tpc %p) was ",
 	       array_list_len(tthread->tpc_stack),tthread->tid,tthread->tpc);
-	LOGDUMPPROBEPOINT_NL(3,LOG_T_XV,tthread->tpc->probepoint);
+	LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,tthread->tpc->probepoint);
     }
     tthread->tpc = tpc;
 
@@ -2620,9 +2620,9 @@ result_t probepoint_bp_handler(struct target *target,
 	return RESULT_ERROR;
     }
 
-    vdebug(5,LOG_P_PROBEPOINT,"EIP is 0x%"PRIxREGVAL" at ",ipval);
-    LOGDUMPPROBEPOINT(5,LOG_P_PROBEPOINT,probepoint);
-    vdebugc(5,LOG_P_PROBEPOINT,"\n");
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"EIP is 0x%"PRIxREGVAL" at ",ipval);
+    LOGDUMPPROBEPOINT(5,LA_PROBE,LF_PROBEPOINT,probepoint);
+    vdebugc(5,LA_PROBE,LF_PROBEPOINT,"\n");
 
 
     /* If SW bp, reset EIP and write it back *now*, because it's easy
@@ -2642,9 +2642,9 @@ result_t probepoint_bp_handler(struct target *target,
 	    return RESULT_ERROR;
 	}
 
-	vdebug(4,LOG_P_PROBEPOINT,"reset EIP to 0x%"PRIxREGVAL" for SW ",ipval);
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"reset EIP to 0x%"PRIxREGVAL" for SW ",ipval);
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
     }
 
     /*
@@ -2655,19 +2655,19 @@ result_t probepoint_bp_handler(struct target *target,
     list_for_each_entry(probe,&probepoint->probes,probe) {
 	if (probe->enabled) {
 	    if (probe->pre_handler) {
-		vdebug(4,LOG_P_PROBEPOINT,"running pre handler at ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		vdebug(4,LA_PROBE,LF_PROBEPOINT,"running pre handler at ");
+		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 		rc = probe->pre_handler(probe,probe->handler_data,probe);
 		if (rc == 1) 
 		    probe_disable(probe);
 	    }
 	    else if (0 && probe->sinks) {
-		vdebug(4,LOG_P_PROBEPOINT,
+		vdebug(4,LA_PROBE,LF_PROBEPOINT,
 		       "running default probe sink pre_handler at ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 		probe_do_sink_pre_handlers(probe,NULL,probe);
 	    }
 	    doit = 1;
@@ -2688,10 +2688,10 @@ result_t probepoint_bp_handler(struct target *target,
 	    return RESULT_ERROR;
 	}
         
-	vdebug(9,LOG_P_PROBEPOINT,
+	vdebug(9,LA_PROBE,LF_PROBEPOINT,
 	       "ip 0x%"PRIxREGVAL" restored after pre handlers at ",ipval);
-	LOGDUMPPROBEPOINT(9,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(9,LOG_P_PROBEPOINT,"\n");
+	LOGDUMPPROBEPOINT(9,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(9,LA_PROBE,LF_PROBEPOINT,"\n");
     }
 
     /* Now we're handling actions. */
@@ -2756,9 +2756,9 @@ result_t probepoint_bp_handler(struct target *target,
      * handle_complex_actions also paused all other threads if we needed to.
      */
     if (tpc->tac.action) {
-	vdebug(4,LOG_P_PROBEPOINT,"setup complex action for ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"setup complex action for ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 	int _isbp = 0;
 	if (!tpc->tac.action->boosted)
@@ -2777,9 +2777,9 @@ result_t probepoint_bp_handler(struct target *target,
     else {
 	tpc->did_orig_instr = 1;
 
-	vdebug(4,LOG_P_PROBEPOINT,"setting up post handling single step for ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"setting up post handling single step for ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 	rc = setup_post_single_step(target,tthread,probepoint);
 
 	if (rc == 0) {
@@ -2794,7 +2794,7 @@ result_t probepoint_bp_handler(struct target *target,
 	    tthread->tpc = (struct thread_probepoint_context *) \
 		array_list_remove(tthread->tpc_stack);
 
-	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+	    vdebug(5,LA_PROBE,LF_PROBEPOINT,
 		   "thread %"PRIiTID" skipped orig instruction; clearing tpc!\n",
 		   tthread->tid);
 
@@ -2830,7 +2830,7 @@ result_t probepoint_bp_handler(struct target *target,
 	}
 	else if (rc == 2) {
 	    /* The thread blocked because it could not hold the probepoint. */
-	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+	    vdebug(5,LA_PROBE,LF_PROBEPOINT,
 		   "thread %"PRIiTID" blocked before single step; thread"
 		   " %"PRIiTID" owned probepoint -- BUG!!!\n",
 		   tthread->tid,probepoint->tpc->thread->tid);
@@ -3001,7 +3001,7 @@ result_t probepoint_ss_handler(struct target *target,
 	    array_list_remove(tthread->tpc_stack);
 	tpc = NULL;
 
-	vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+	vdebug(5,LA_PROBE,LF_PROBEPOINT,
 	       "thread %"PRIiTID" ran orig instruction; cleared tpc!\n",
 	       tthread->tid);
 
@@ -3040,9 +3040,9 @@ result_t probepoint_ss_handler(struct target *target,
      * setup_post_single_step handles that case and does the right things.
      */
     else if (tpc && !tpc->did_orig_instr) {
-	vdebug(4,LOG_P_PROBEPOINT,"setting up post handling single step for ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"setting up post handling single step for ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 	rc = setup_post_single_step(target,tthread,probepoint);
 
 	if (rc == 0) {
@@ -3057,7 +3057,7 @@ result_t probepoint_ss_handler(struct target *target,
 	    tthread->tpc = (struct thread_probepoint_context *) \
 		array_list_remove(tthread->tpc_stack);
 
-	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+	    vdebug(5,LA_PROBE,LF_PROBEPOINT,
 		   "thread %"PRIiTID" skipping orig instruction; clearing tpc!\n",
 		   tthread->tid);
 
@@ -3080,7 +3080,7 @@ result_t probepoint_ss_handler(struct target *target,
 	}
 	else if (rc == 2) {
 	    /* The thread blocked because it could not hold the probepoint. */
-	    vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+	    vdebug(5,LA_PROBE,LF_PROBEPOINT,
 		   "thread %"PRIiTID" blocked before single step real; thread"
 		   " %"PRIiTID" owned probepoint\n",
 		   tthread->tid,probepoint->tpc->thread->tid);
@@ -3103,12 +3103,12 @@ result_t probepoint_ss_handler(struct target *target,
     else if (keep_stepping) {
     keep_stepping:
 	if (probepoint) {
-	    vdebug(4,LOG_P_PROBEPOINT,"continuing single step for ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"continuing single step for ");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 	}
 	else 
-	    vdebug(4,LOG_P_PROBEPOINT,
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,
 		   "continuing single step after probepoint\n");
 
 	if (target_singlestep(target,tid,0) < 0) {
@@ -3145,12 +3145,12 @@ result_t probepoint_ss_handler(struct target *target,
 	     * Don't call target_resume after a successful target_singlestep.
 	     */
 	    if (probepoint) {
-		vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		vdebug(4,LA_PROBE,LF_PROBEPOINT,"sstep command succeeded for ");
+		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 	    }
 	    else 
-		vdebug(4,LOG_P_PROBEPOINT,
+		vdebug(4,LA_PROBE,LF_PROBEPOINT,
 		       "sstep command succeeded after probepoint\n");
 	}
     }
@@ -3164,7 +3164,7 @@ result_t probepoint_ss_handler(struct target *target,
     }
     */
     else if (!probepoint && !tpc && handled_ss_actions && !keep_stepping) {
-	vdebug(4,LOG_P_PROBEPOINT,
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,
 	       "finished single step actions after probepoint\n");
 
 	if (target_singlestep_end(target,tid))
@@ -3209,9 +3209,9 @@ result_t probepoint_resumeat_handler(struct target *target,
 	probepoint = tthread->tpc->probepoint;
 	handle_complex_actions(target,tthread,probepoint);
 	if (!tpc->tac.action && !tpc->did_orig_instr) {
-	    vdebug(4,LOG_P_PROBEPOINT,"setting up post handling single step for ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"setting up post handling single step for ");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 	    rc = setup_post_single_step(target,tthread,probepoint);
 
 	    if (rc == 0) {
@@ -3226,7 +3226,7 @@ result_t probepoint_resumeat_handler(struct target *target,
 		tthread->tpc = (struct thread_probepoint_context *)	\
 		    array_list_remove(tthread->tpc_stack);
 
-		vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		vdebug(5,LA_PROBE,LF_PROBEPOINT,
 		       "thread %"PRIiTID" skipping orig instruction; clearing tpc!\n",
 		       tthread->tid);
 
@@ -3238,7 +3238,7 @@ result_t probepoint_resumeat_handler(struct target *target,
 	    }
 	    else if (rc == 2) {
 		/* The thread blocked because it could not hold the probepoint. */
-		vdebug(5,LOG_P_PROBEPOINT | LOG_T_THREAD,
+		vdebug(5,LA_PROBE,LF_PROBEPOINT,
 		       "thread %"PRIiTID" blocked before single step real; thread"
 		       " %"PRIiTID" owned probepoint\n",
 		       tthread->tid,probepoint->tpc->thread->tid);
@@ -3251,7 +3251,7 @@ result_t probepoint_resumeat_handler(struct target *target,
 	}
 	else if (!tpc->tac.action && !tpc->tac.action->steps 
 		 && !list_empty(&tthread->ss_actions)) {
-	    vdebug(4,LOG_P_PROBEPOINT,
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,
 		   "continuing single step after probepoint\n");
 
 	    if (target_singlestep(target,tid,0) < 0) {
@@ -3287,13 +3287,13 @@ result_t probepoint_resumeat_handler(struct target *target,
 		 *
 		 * Don't call target_resume after a successful target_singlestep.
 		 */
-		vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for resumeat ");
-		LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-		vdebugc(4,LOG_P_PROBEPOINT,"\n");
+		vdebug(4,LA_PROBE,LF_PROBEPOINT,"sstep command succeeded for resumeat ");
+		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 	    }
 	}
 	else {
-	    vdebug(4,LOG_P_PROBEPOINT,
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,
 		   "finished handling after resumeat\n");
 
 	    if (target_singlestep_end(target,tid))
@@ -3370,10 +3370,10 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 	 */
 	if (action->detail.ret.prologue) {
 	    if (action->detail.ret.prologue_uses_bp) {
-		vdebug(3,LOG_P_ACTION,
+		vdebug(3,LA_PROBE,LF_ACTION,
 		       "setting ESP to EBP and returning (prologue uses EBP) at ");
-		LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-		vdebugc(3,LOG_P_ACTION,"\n");
+		LOGDUMPPROBEPOINT(3,LA_PROBE,LF_ACTION,probepoint);
+		vdebugc(3,LA_PROBE,LF_ACTION,"\n");
 
 		errno = 0;
 		rval = target_read_reg(target,tthread->tid,target->fbregno);
@@ -3392,11 +3392,11 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 		action->steps = target->full_ret_instr_count;
 	    }
 	    else {
-		vdebug(3,LOG_P_ACTION,
+		vdebug(3,LA_PROBE,LF_ACTION,
 		       "undoing prologue ESP changes (%d) and returning at ",
 		       action->detail.ret.prologue_sp_offset);
-		LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-		vdebugc(3,LOG_P_ACTION,"\n");
+		LOGDUMPPROBEPOINT(3,LA_PROBE,LF_ACTION,probepoint);
+		vdebugc(3,LA_PROBE,LF_ACTION,"\n");
 
 		errno = 0;
 		rval = target_read_reg(target,tthread->tid,target->spregno);
@@ -3521,10 +3521,10 @@ static int handle_complex_actions(struct target *target,
      */
     if (probepoint->tpc == tpc 
 	&& probepoint->state == PROBE_BP_ACTIONHANDLING) {
-	vdebug(5,LOG_P_ACTION,
+	vdebug(5,LA_PROBE,LF_ACTION,
 	       "resetting actions state after bp hit at ");
-	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	vdebugc(5,LOG_P_ACTION,"\n");
+	LOGDUMPPROBEPOINT(3,LA_PROBE,LF_ACTION,probepoint);
+	vdebugc(5,LA_PROBE,LF_ACTION,"\n");
 
 	tpc->tac.action = NULL;
 	tpc->tac.stepped = 0;
@@ -3539,9 +3539,9 @@ static int handle_complex_actions(struct target *target,
 	 */
 	nextaction = action = __get_next_complex_action(probepoint,NULL);
 	if (!action) {
-	    vdebug(3,LOG_P_ACTION,"no actions to run at ");
-	    LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	    vdebugc(3,LOG_P_ACTION,"\n");
+	    vdebug(3,LA_PROBE,LF_ACTION,"no actions to run at ");
+	    LOGDUMPPROBEPOINT(3,LA_PROBE,LF_ACTION,probepoint);
+	    vdebugc(3,LA_PROBE,LF_ACTION,"\n");
 
 	    return 0;
 	}
@@ -3557,21 +3557,21 @@ static int handle_complex_actions(struct target *target,
 	++tpc->tac.stepped;
 
 	if (action->steps < 0 || tpc->tac.stepped < action->steps) {
-	    vdebug(5,LOG_P_ACTION,
+	    vdebug(5,LA_PROBE,LF_ACTION,
 		   "did %d steps; still more at ",tpc->tac.stepped);
-	    LOGDUMPPROBEPOINT(5,LOG_P_ACTION,probepoint);
-	    vdebugc(5,LOG_P_ACTION,"\n");
+	    LOGDUMPPROBEPOINT(5,LA_PROBE,LF_ACTION,probepoint);
+	    vdebugc(5,LA_PROBE,LF_ACTION,"\n");
 
 	    if (action->handler) 
 		action->handler(action,action->probe,probepoint,
 				MSG_STEPPING,action->handler_data);
 	}
 	else {
-	    vdebug(5,LOG_P_ACTION,
+	    vdebug(5,LA_PROBE,LF_ACTION,
 		   "finished %d steps; done and removing action at ",
 		   tpc->tac.stepped);
-	    LOGDUMPPROBEPOINT(5,LOG_P_ACTION,probepoint);
-	    vdebugc(5,LOG_P_ACTION,"\n");
+	    LOGDUMPPROBEPOINT(5,LA_PROBE,LF_ACTION,probepoint);
+	    vdebugc(5,LA_PROBE,LF_ACTION,"\n");
 	    /*
 	     * If we know the action is done because it has finished its
 	     * set amount of single steps, we need to "finish" it:
@@ -3609,9 +3609,9 @@ static int handle_complex_actions(struct target *target,
 	return 0;
     }
     else if (!tpc->tac.action) {
-	vdebug(5,LOG_P_ACTION,"no action being handled at ");
-	LOGDUMPPROBEPOINT(3,LOG_P_ACTION,probepoint);
-	vdebugc(5,LOG_P_ACTION,"\n");
+	vdebug(5,LA_PROBE,LF_ACTION,"no action being handled at ");
+	LOGDUMPPROBEPOINT(3,LA_PROBE,LF_ACTION,probepoint);
+	vdebugc(5,LA_PROBE,LF_ACTION,"\n");
 	return 0;
     }
 
@@ -3687,9 +3687,9 @@ static int handle_complex_actions(struct target *target,
      * Single step if the current action needs it.
      */
     if (tpc->tac.action && tpc->tac.action->steps) {
-	vdebug(4,LOG_P_PROBEPOINT,"single step for action at ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"single step for action at ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 	int _isbp = 0;
 	if (!tpc->tac.action->boosted && !tpc->tac.stepped) 
@@ -3749,9 +3749,9 @@ static int handle_complex_actions(struct target *target,
 	     *
 	     * Don't call target_resume after a successful target_singlestep.
 	     */
-	    vdebug(4,LOG_P_PROBEPOINT,"sstep command succeeded for action at ");
-	    LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	    vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"sstep command succeeded for action at ");
+	    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 	    return 0;
 	}
@@ -3759,9 +3759,9 @@ static int handle_complex_actions(struct target *target,
 	return 1;
     }
     else if (tpc->tac.action) {
-	vdebug(4,LOG_P_PROBEPOINT,"NOT single stepping for action at ");
-	LOGDUMPPROBEPOINT(4,LOG_P_PROBEPOINT,probepoint);
-	vdebugc(4,LOG_P_PROBEPOINT,"\n");
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,"NOT single stepping for action at ");
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
     }
 
     return 0;
@@ -3872,7 +3872,7 @@ int action_sched(struct probe *probe,struct action *action,
 		    if (*code == 0x55) {
 			free(code);
 			action->detail.ret.prologue_uses_bp = 1;
-			vdebug(3,LOG_P_ACTION,
+			vdebug(3,LA_PROBE,LF_ACTION,
 			       "skipping prologue disassembly for function %s: first instr push EBP\n",
 			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>");
 		    }
@@ -3883,7 +3883,7 @@ int action_sched(struct probe *probe,struct action *action,
 			return -1;
 		    }
 		    else {
-			vdebug(3,LOG_P_ACTION,
+			vdebug(3,LA_PROBE,LF_ACTION,
 			       "disassembled prologue for function %s: sp moved %d\n",
 			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>",
 			       action->detail.ret.prologue_sp_offset);

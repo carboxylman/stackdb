@@ -330,13 +330,13 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 
 	/* XXX: get rid of these!  They pollute child STDERR! */
 	if (soap->error == SOAP_OK) {
-	    vdebug(5,LOG_X_RPC,
+	    vdebug(5,LA_XML,LF_RPC,
 		   "finished proxied request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 	}
 	else {
-	    vdebug(5,LOG_X_RPC,
+	    vdebug(5,LA_XML,LF_RPC,
 		   "failingly finished proxy request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
@@ -362,13 +362,13 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 	soap_serve(soap);
 
 	if (soap->error == SOAP_OK) {
-	    vdebug(5,LOG_X_RPC,
+	    vdebug(5,LA_XML,LF_RPC,
 		   "finished proxy request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 	}
 	else {
-	    vdebug(5,LOG_X_RPC,
+	    vdebug(5,LA_XML,LF_RPC,
 		   "failingly finished proxy request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);

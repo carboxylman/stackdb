@@ -54,13 +54,13 @@ static int target_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
 }
 
 static int target_rpc_monitor_error(monitor_error_t error,void *obj) {
-    vdebug(5,LOG_X_RPC,"target id %d (error %d)\n",((struct target *)obj)->id,
+    vdebug(5,LA_XML,LF_RPC,"target id %d (error %d)\n",((struct target *)obj)->id,
 	   error);
     return 0;
 }
 
 static int target_rpc_monitor_fatal_error(monitor_error_t error,void *obj) {
-    vdebug(5,LOG_X_RPC,"target id %d (error %d)\n",((struct target *)obj)->id,
+    vdebug(5,LA_XML,LF_RPC,"target id %d (error %d)\n",((struct target *)obj)->id,
 	   error);
     //free(dummy);
     return 0;
@@ -70,7 +70,7 @@ static int target_rpc_monitor_child_recv_msg(struct monitor *monitor,
 					     struct monitor_msg *msg) {
     struct target *target = (struct target *)monitor->obj;
 
-    vdebug(9,LOG_X_RPC,"msg(%d:%d,%d) = '%s' (target %id)\n",
+    vdebug(9,LA_XML,LF_RPC,"msg(%d:%d,%d) = '%s' (target %id)\n",
 	   msg->id,msg->seqno,msg->len,msg->msg,target->id);
 
     return proxyreq_recv_request(monitor,msg);
@@ -80,7 +80,7 @@ static int target_rpc_monitor_recv_msg(struct monitor *monitor,
 				       struct monitor_msg *msg) {
     struct target *target = (struct target *)monitor->obj;
 
-    vdebug(9,LOG_X_RPC,"msg(%d:%d,%d) = '%s' (target->id)\n",
+    vdebug(9,LA_XML,LF_RPC,"msg(%d:%d,%d) = '%s' (target->id)\n",
 	   msg->id,msg->seqno,msg->len,msg->msg,target->id);
 
     return proxyreq_recv_response(monitor,msg);
@@ -180,7 +180,7 @@ int target_rpc_handle_request(struct soap *soap) {
     soap_serve(soap);
 
     if (soap->error == SOAP_STOP) {
-	vdebug(8,LOG_X_RPC,"proxying request from %d.%d.%d.%d\n",
+	vdebug(8,LA_XML,LF_RPC,"proxying request from %d.%d.%d.%d\n",
 	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 
@@ -192,7 +192,7 @@ int target_rpc_handle_request(struct soap *soap) {
     }
     else if (soap->error == SOAP_OK) {
 	if (pr->monitor && pr->monitor_is_new) {
-	    vdebug(5,LOG_X_RPC,
+	    vdebug(5,LA_XML,LF_RPC,
 		   "finished request from %d.%d.%d.%d; new monitor thread %lu\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff,
@@ -209,7 +209,7 @@ int target_rpc_handle_request(struct soap *soap) {
 	    return monitor_run(monitor);
 	}
 	else {
-	    vdebug(5,LOG_X_RPC,
+	    vdebug(5,LA_XML,LF_RPC,
 		   "finished request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
@@ -224,7 +224,7 @@ int target_rpc_handle_request(struct soap *soap) {
 	free(soap);
     }
     else {
-	vdebug(8,LOG_X_RPC,"finished request from %d.%d.%d.%d with status %d\n",
+	vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d with status %d\n",
 	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 	       (soap->ip >> 8) & 0xff,soap->ip & 0xff,soap->error);
 
@@ -308,7 +308,7 @@ void *do_thread_split_request(void *arg) {
     soap_serve(soap);
 
     if (soap->error != SOAP_STOP) {
-	vdebug(8,LOG_X_RPC,"finished request from %d.%d.%d.%d\n",
+	vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d\n",
 	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 

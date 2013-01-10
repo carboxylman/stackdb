@@ -142,7 +142,7 @@ int __monitor_recv_evh(int fd,int fdtype,void *state) {
     msg = monitor_recv(monitor);
 
     if (msg) {
-	vdebug(9,LOG_OTHER,"defhandler: monitor recv %d:%d %d '%s'\n",
+	vdebug(9,LA_LIB,LF_MONITOR,"defhandler: monitor recv %d:%d %d '%s'\n",
 	       msg->id,msg->seqno,msg->len,msg->msg);
 
 	if (monitor->objtype_ops && monitor->objtype_ops->recv_msg) 
@@ -163,7 +163,7 @@ int __monitor_child_recv_evh(int fd,int fdtype,void *state) {
     msg = monitor_child_recv(monitor);
 
     if (msg) {
-	vdebug(9,LOG_OTHER,"defhandler: recv %d:%d %d '%s'\n",
+	vdebug(9,LA_LIB,LF_MONITOR,"defhandler: recv %d:%d %d '%s'\n",
 	       msg->id,msg->seqno,msg->len,msg->msg);
 
 	if (monitor->objtype_ops && monitor->objtype_ops->child_recv_msg) 
@@ -452,12 +452,12 @@ int __monitor_send_stdin_evh(int fd,int fdtype,void *state) {
     }
     else {
 	monitor->p.stdin_left -= retval;
-	vdebug(8,LOG_OTHER,"wrote %d of %d bytes stdin\n",
+	vdebug(8,LA_LIB,LF_MONITOR,"wrote %d of %d bytes stdin\n",
 	       monitor->p.stdin_bufsiz - monitor->p.stdin_left,
 	       monitor->p.stdin_bufsiz);
 
 	if (monitor->p.stdin_left <= 0) {
-	    vdebug(8,LOG_OTHER,"finished writing %d bytes stdin\n",
+	    vdebug(8,LA_LIB,LF_MONITOR,"finished writing %d bytes stdin\n",
 		   monitor->p.stdin_bufsiz);
 
 	    monitor->p.stdin_left = monitor->p.stdin_bufsiz = -1;
@@ -611,9 +611,9 @@ static int __monitor_pid_evh(int fd,int fdtype,void *state) {
      * status.
      */
 
-    vdebug(9,LOG_OTHER,"pid %d finished\n",pid);
+    vdebug(9,LA_LIB,LF_MONITOR,"pid %d finished\n",pid);
     waitpid(pid,&status,0);
-    vdebug(9,LOG_OTHER,"pid %d finished status %d\n",pid,WEXITSTATUS(status));
+    vdebug(9,LA_LIB,LF_MONITOR,"pid %d finished status %d\n",pid,WEXITSTATUS(status));
 
     /* nuke the pipe */
     waitpipe_remove(pid);
@@ -886,7 +886,7 @@ static int __monitor_error_evh(int errortype,int fd,int fdtype,
      * Basically, we have to check all our FDs, see which one the error
      * happened for, then decide what to do!
      */
-    vdebug(5,LOG_OTHER,"errortype %d fd %d fdtype %d\n",
+    vdebug(5,LA_LIB,LF_MONITOR,"errortype %d fd %d fdtype %d\n",
 	   errortype,fd,fdtype);
 
     return EVLOOP_HRET_SUCCESS;

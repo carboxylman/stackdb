@@ -88,7 +88,7 @@ int evloop_set_fd(struct evloop *evloop,int fd,int fdtype,
 	FD_SET(fd,&evloop->xfds_master);
     }
 
-    vdebug(9,LOG_OTHER,"fd %d fdtype %d handler %p state %p\n",
+    vdebug(9,LA_LIB,LF_EVLOOP,"fd %d fdtype %d handler %p state %p\n",
 	   fd,fdtype,handler,state);
 
     return 0;
@@ -107,7 +107,7 @@ static int __evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
 	return -1;
     }
 
-    vdebug(9,LOG_OTHER,"fd %d fdtype %d\n",fd,fdtype);
+    vdebug(9,LA_LIB,LF_EVLOOP,"fd %d fdtype %d\n",fd,fdtype);
 
     /*
      * Note that below we clear both fdsets in case we're removing an fd
@@ -148,7 +148,7 @@ static int __evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
 
 	evloop->nfds = new_max_fd;
 
-	vdebug(9,LOG_OTHER,"removed fd %d (except from hashtable); nfds = %d\n",
+	vdebug(9,LA_LIB,LF_EVLOOP,"removed fd %d (except from hashtable); nfds = %d\n",
 	       fd,evloop->nfds);
     }
 
@@ -168,14 +168,14 @@ int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
 
     __evloop_unset_fd(evloop,fd,fdtype);
 
-    vdebug(9,LOG_OTHER,"fd %d fdtype %d\n",fd,fdtype);
+    vdebug(9,LA_LIB,LF_EVLOOP,"fd %d fdtype %d\n",fd,fdtype);
 
     /* Remove the fd if we have no handlers left. */
     if (!fdinfo->rh && !fdinfo->wh && !fdinfo->xh) {
 	g_hash_table_remove(evloop->tab,(gpointer)(uintptr_t)fd);
 	free(fdinfo);
 
-	vdebug(9,LOG_OTHER,"removed fd %d completely; nfds = %d\n",
+	vdebug(9,LA_LIB,LF_EVLOOP,"removed fd %d completely; nfds = %d\n",
 	       fd,evloop->nfds);
     }
 
@@ -230,7 +230,7 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 	    }
 	}
 
-	vdebug(9,LOG_OTHER,"select() -> %d\n",rc);
+	vdebug(9,LA_LIB,LF_EVLOOP,"select() -> %d\n",rc);
 
 	for (i = 0; i < evloop->nfds + 1; ++i) {
 	    if (FD_ISSET(i,&evloop->rfds)) {
@@ -242,7 +242,7 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    FD_CLR(i,&evloop->rfds_master);
 		}
 		else {
-		    vdebug(9,LOG_OTHER,"rfd %d\n",i);
+		    vdebug(9,LA_LIB,LF_EVLOOP,"rfd %d\n",i);
 
 		    hrc = fdinfo->rh(i,EVLOOP_FDTYPE_R,fdinfo->rhstate);
 		    if (hrc == EVLOOP_HRET_BADERROR) {
@@ -291,7 +291,7 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    FD_CLR(i,&evloop->wfds_master);
 		}
 		else {
-		    vdebug(9,LOG_OTHER,"wfd %d\n",i);
+		    vdebug(9,LA_LIB,LF_EVLOOP,"wfd %d\n",i);
 
 		    hrc = fdinfo->wh(i,EVLOOP_FDTYPE_W,fdinfo->whstate);
 		    if (hrc == EVLOOP_HRET_BADERROR) {
@@ -338,7 +338,7 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 		    FD_CLR(i,&evloop->xfds_master);
 		}
 		else {
-		    vdebug(9,LOG_OTHER,"xfd %d\n",i);
+		    vdebug(9,LA_LIB,LF_EVLOOP,"xfd %d\n",i);
 
 		    hrc = fdinfo->xh(i,EVLOOP_FDTYPE_X,fdinfo->xhstate);
 		    if (hrc == EVLOOP_HRET_BADERROR) {
@@ -390,17 +390,17 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
 	__evloop_unset_fd(evloop,fdinfo->fd,EVLOOP_FDTYPE_A);
 	g_hash_table_iter_remove(&iter);
 
-	vdebug(9,LOG_OTHER,"removed fd %d completely; nfds = %d\n",
+	vdebug(9,LA_LIB,LF_EVLOOP,"removed fd %d completely; nfds = %d\n",
 	       fdinfo->fd,evloop->nfds);
 	free(fdinfo);
     }
 
     if (hrc == EVLOOP_HRET_DONE_SUCCESS) {
-	vdebug(5,LOG_OTHER,"evloop finished success\n");
+	vdebug(5,LA_LIB,LF_EVLOOP,"evloop finished success\n");
 	return 0;
     }
     else {
-	vdebug(5,LOG_OTHER,"evloop finished failure\n");
+	vdebug(5,LA_LIB,LF_EVLOOP,"evloop finished failure\n");
 	return -1;
     }
 }

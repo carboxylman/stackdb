@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -101,7 +101,7 @@ int disasm_generic(struct target *target,
 	
 	memset(&inst,0,sizeof(inst));
 	distorm_format(&ci,&di,&inst);
-	vdebug(3,LOG_T_DISASM,"decoded %s %s at %"PRIu64"\n",
+	vdebug(3,LA_TARGET,LF_DISASM,"decoded %s %s at %"PRIu64"\n",
 	       inst.mnemonic.p,inst.operands.p,ci.codeOffset);
 
 	/* Setup next iteration. */
@@ -341,7 +341,7 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 	}
 	else {
 	    distorm_format(&ci,&di,&inst);
-	    vdebug(6,LOG_T_DISASM,"decoded ignored inst %s %s at %"PRIu64"\n",
+	    vdebug(6,LA_TARGET,LF_DISASM,"decoded ignored inst %s %s at %"PRIu64"\n",
 		   inst.mnemonic.p,inst.operands.p,ci.codeOffset);
 	    goto invalid_inst;
 	}
@@ -363,7 +363,7 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 	}
 
 	distorm_format(&ci,&di,&inst);
-	vdebug(3,LOG_T_DISASM,"decoded %s %s at %"PRIu64"\n",
+	vdebug(3,LA_TARGET,LF_DISASM,"decoded %s %s at %"PRIu64"\n",
 	       inst.mnemonic.p,inst.operands.p,ci.codeOffset);
 
     invalid_inst:
@@ -440,7 +440,7 @@ int disasm_get_prologue_stack_size(struct target *target,
 	}
 
 	distorm_format(&ci,&di,&inst);
-	vdebug(3,LOG_T_DISASM,"decoded %s %s\n",inst.mnemonic.p,inst.operands.p);
+	vdebug(3,LA_TARGET,LF_DISASM,"decoded %s %s\n",inst.mnemonic.p,inst.operands.p);
 
 	/*
 	 * XXX: all the inc/decrements for ENTER, POP/PUSH are affected

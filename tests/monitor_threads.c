@@ -47,7 +47,7 @@ int dummy_evh(int fd,int fdtype,void *state) {
     else
 	buf[rc] = '\0';
 
-    vdebug(0,LOG_OTHER,"fd %d fdtype %d d->id %d d->fd %d rc %d buf %s\n",
+    vdebug(0,LA_USER,LF_U_ALL,"fd %d fdtype %d d->id %d d->fd %d rc %d buf %s\n",
 	   fd,fdtype,d->id,d->fd,rc,buf);
 
     return 0;
@@ -57,7 +57,7 @@ int dummy_evloop_attach(struct evloop *evloop,void *obj) {
     struct dummy *d = (struct dummy *)obj;
 
     //evloop_set_fd(evloop,d->fd,EVLOOP_FDTYPE_R,dummy_evh,d);
-    vdebug(0,LOG_OTHER,"dummy id %d\n",d->id);
+    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d\n",d->id);
 
     return 0;
 }
@@ -65,30 +65,30 @@ int dummy_evloop_detach(struct evloop *evloop,void *obj) {
     struct dummy *d = (struct dummy *)obj;
 
     //evloop_unset_fd(evloop,d->fd,EVLOOP_FDTYPE_R);
-    vdebug(0,LOG_OTHER,"dummy id %d\n",d->id);
+    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d\n",d->id);
 
     return 0;
 }
 int dummy_error(monitor_error_t error,void *obj) {
-    vdebug(0,LOG_OTHER,"dummy id %d (error %d)\n",((struct dummy *)obj)->id,
+    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d (error %d)\n",((struct dummy *)obj)->id,
 	   error);
     return 0;
 }
 int dummy_fatal_error(monitor_error_t error,void *obj) {
-    vdebug(0,LOG_OTHER,"dummy id %d (error %d)\n",((struct dummy *)obj)->id,
+    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d (error %d)\n",((struct dummy *)obj)->id,
 	   error);
     //free(dummy);
     return 0;
 }
 
 int dummy_child_recv_msg(struct monitor *monitor,struct monitor_msg *msg) {
-    vdebug(0,LOG_OTHER,"msg(%d:%d,%d) = '%s'\n",
+    vdebug(0,LA_USER,LF_U_ALL,"msg(%d:%d,%d) = '%s'\n",
 	   msg->id,msg->seqno,msg->len,msg->msg);
     return 0;
 }
 
 int dummy_recv_msg(struct monitor *monitor,struct monitor_msg *msg) {
-    vdebug(0,LOG_OTHER,"msg(%d:%d,%d) = '%s'\n",
+    vdebug(0,LA_USER,LF_U_ALL,"msg(%d:%d,%d) = '%s'\n",
 	   msg->id,msg->seqno,msg->len,msg->msg);
     return 0;
 }
@@ -136,7 +136,7 @@ int main(int argc,char **argv) {
     void *retval;
 
     vmi_set_log_level(16);
-    vmi_set_log_flags(LOG_OTHER);
+    vmi_set_log_area_flags(LA_LIB,LF_MONITOR | LF_EVLOOP);
 
     d1.id = 111;
     d1.fd = open("/tmp/d1.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
@@ -146,7 +146,7 @@ int main(int argc,char **argv) {
     fcntl(d2.fd,F_SETFL,fcntl(d2.fd,F_GETFL) | O_NONBLOCK);
 
     dummy_objtype = monitor_register_objtype(dummy_objtype,&dummy_ops);
-    vdebug(0,LOG_OTHER,"registered dummy objtype %d\n",dummy_objtype);
+    vdebug(0,LA_USER,1,"registered dummy objtype %d\n",dummy_objtype);
 
     pthread_create(&tid1,NULL,new_thread,&d1);
     pthread_create(&tid2,NULL,new_thread,&d2);

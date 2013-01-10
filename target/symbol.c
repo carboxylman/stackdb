@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -346,7 +346,7 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
     }
     /* If it's a bitfield, select those bits and print them. */
     else if (symbol->size_is_bits ) {
-	vdebug(5,LOG_T_SYMBOL,
+	vdebug(5,LA_TARGET,LF_SYMBOL,
 	       "doing bitfield for symbol %s: size=%d,offset=%d\n",
 	       symbol->name,symbol->size.bits,
 	       symbol->size.offset);

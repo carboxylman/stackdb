@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -78,11 +78,10 @@ int main(int argc,char **argv) {
 	    ++meta;
 	    break;
 	case 'l':
-	    if (vmi_log_get_flag_mask(optarg,&flags)) {
+	    if (vmi_set_log_area_flaglist(optarg,NULL)) {
 		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
 		exit(-1);
 	    }
-	    vmi_set_log_flags(flags);
 	    break;
 	case 'F':
 	    optargc = strdup(optarg);

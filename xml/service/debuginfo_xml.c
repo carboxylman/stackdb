@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -311,7 +311,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 		    && (_rfound = array_list_find(refstack,_r)) < 0))) { \
 									\
 	    if (!(r)) {							\
-		vdebug(5,LOG_X_XML,					\
+		vdebug(5,LA_XML,LF_XML,					\
 		       "reusing encoded %s(%s) at (d=%d,%d/%d)" \
 		       " (multiref=%d)\n",				\
 		       _name,_r->sid,depth,				\
@@ -322,7 +322,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 	    }								\
 	    else {							\
 		/* Must memcpy contents into existing buffer. */	\
-		vdebug(5,LOG_X_XML,					\
+		vdebug(5,LA_XML,LF_XML,					\
 		       "copying encoded %s(%s) at (d=%d,%d/%d)" \
 		       " (multiref=%d)\n",				\
 		       _name,_r->sid,depth,				\
@@ -344,7 +344,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 									\
 		(r)->sref = idstr;					\
 									\
-		vdebug(5,LOG_X_XML,					\
+		vdebug(5,LA_XML,LF_XML,					\
 		       "encoding manual ref for %s(%s)"    \
 		       " at (d=%d,%d/%d)\n",				\
 		       _name,(r)->sref,depth,				\
@@ -358,7 +358,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 									\
 		(r)->sref = idstr;					\
 									\
-		vdebug(5,LOG_X_XML,					\
+		vdebug(5,LA_XML,LF_XML,					\
 		       "forcing (cyclic) manual ref for %s(%s)" \
 		       " at (d=%d,%d/%d)\n",				\
 		       _name,(r)->sref,depth,				\
@@ -378,7 +378,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 		    strncpy((r)->name,_name,_rc);			\
 		}							\
 									\
-		vdebug(5,LOG_X_XML,					\
+		vdebug(5,LA_XML,LF_XML,					\
 		       "encoding fetchable ref for %s(%s)" \
 		       " at (d=%d,%d/%d)\n",				\
 		       _name,(r)->sref,depth,				\
@@ -397,7 +397,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 									\
 		(r)->sref = idstr;					\
 									\
-		vdebug(5,LOG_X_XML,					\
+		vdebug(5,LA_XML,LF_XML,					\
 		       "encoding full %s(%"PRIiSMOFFSET")"		\
 		       " at (d=%d,%d/%d)\n",				\
 		       _name,(r)->sref,depth,				\

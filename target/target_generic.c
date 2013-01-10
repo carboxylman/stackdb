@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -41,7 +41,7 @@ unsigned char *target_generic_fd_read(int fd,
     int retval;
     int len;
 
-    vdebug(5,LOG_T_OTHER,"reading fd %d at 0x%"PRIxADDR" into %p (%d)\n",
+    vdebug(5,LA_TARGET,LF_TOTHER,"reading fd %d at 0x%"PRIxADDR" into %p (%d)\n",
 	   fd,addr,buf,length);
 
     /* We must malloc their buffer if they want us to read a NUL-term

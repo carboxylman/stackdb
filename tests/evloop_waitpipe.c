@@ -73,7 +73,7 @@ int main(int argc,char **argv) {
     int fd;
 
     vmi_set_log_level(16);
-    vmi_set_log_flags(LOG_OTHER);
+    vmi_set_log_area_flags(LA_LIB,LF_EVLOOP | LF_WAITPIPE);
 
     waitpipe_init(alt_sigchld_handler);
 

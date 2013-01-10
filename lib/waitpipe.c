@@ -56,14 +56,14 @@ void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
 	     * NB: we could also write the code or status, but waitpid()
 	     * can get those things too, so why bother?
 	     */
-	    vdebug(9,LOG_OTHER,"writing to writefd %d for pid %d\n",
+	    vdebug(9,LA_LIB,LF_WAITPIPE,"writing to writefd %d for pid %d\n",
 		   pipefds[1],pid);
 
 	    if (write(pipefds[1],"",1) < 0) 
 		verror("write(fd %d): %s\n",pipefds[1],strerror(errno));
 	}
 	else if (waitpipe.alt_handler) {
-	    vdebug(9,LOG_OTHER,"invoking alt sigchld handler for pid %d\n",
+	    vdebug(9,LA_LIB,LF_WAITPIPE,"invoking alt sigchld handler for pid %d\n",
 		   pid);
 
 	    waitpipe.alt_handler(signo,siginfo,ucontext);
@@ -78,7 +78,7 @@ int waitpipe_init(void (*alt_handler)(int,siginfo_t *,void *)) {
 	return -1;
     }
 
-    vdebug(9,LOG_OTHER,"alt_handler = %p\n",alt_handler);
+    vdebug(9,LA_LIB,LF_WAITPIPE,"alt_handler = %p\n",alt_handler);
 
     waitpipe.pids = g_hash_table_new(g_direct_hash,g_direct_equal);
     waitpipe.readfds = g_hash_table_new(g_direct_hash,g_direct_equal);
@@ -113,7 +113,7 @@ int waitpipe_fini(void) {
     waitpipe.readfds = NULL;
     waitpipe.alt_handler = NULL;
 
-    vdebug(9,LOG_OTHER,"fini\n");
+    vdebug(9,LA_LIB,LF_WAITPIPE,"fini\n");
 
     return 0;
 }
@@ -173,7 +173,7 @@ int waitpipe_add(int pid) {
 			(gpointer)(uintptr_t)pipefds[0],
 			(gpointer)(uintptr_t)pid);
 
-    vdebug(9,LOG_OTHER,"pid %d wfd %d rfd %d\n",pid,pipefds[1],pipefds[0]);
+    vdebug(9,LA_LIB,LF_WAITPIPE,"pid %d wfd %d rfd %d\n",pid,pipefds[1],pipefds[0]);
 
     /* Return the read half of the pipe for a select()-based loop to wait on. */
     return pipefds[0];
@@ -195,7 +195,7 @@ int waitpipe_remove(int pid) {
 	close(pipefds[1]);
 	close(pipefds[0]);
 
-	vdebug(9,LOG_OTHER,"pid %d wfd %d rfd %d\n",pid,pipefds[1],pipefds[0]);
+	vdebug(9,LA_LIB,LF_WAITPIPE,"pid %d wfd %d rfd %d\n",pid,pipefds[1],pipefds[0]);
 
 	return 0;
     }
@@ -276,7 +276,7 @@ int waitpipe_drain(int pid) {
 		retval += rc;
 	}
 
-	vdebug(9,LOG_OTHER,"pid %d wfd %d rfd %d: %d bytes\n",
+	vdebug(9,LA_LIB,LF_WAITPIPE,"pid %d wfd %d rfd %d: %d bytes\n",
 	       pid,pipefds[1],pipefds[0],retval);
 
 	return retval;

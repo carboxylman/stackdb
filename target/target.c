@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -286,9 +286,9 @@ void target_free(struct target *target) {
     struct addrspace *tmp;
     int rc;
 
-    vdebug(5,LOG_T_TARGET,"freeing target(%s)\n",target->name);
+    vdebug(5,LA_TARGET,LF_TARGET,"freeing target(%s)\n",target->name);
 
-    vdebug(5,LOG_T_TARGET,"fini target(%s)\n",target->name);
+    vdebug(5,LA_TARGET,LF_TARGET,"fini target(%s)\n",target->name);
     if ((rc = target->ops->fini(target))) {
 	verror("fini target(%s) failed; not finishing free!\n",target->name);
 	return;
@@ -402,7 +402,7 @@ int target_associate_debugfile(struct target *target,
 
     g_hash_table_insert(region->debugfiles,debugfile->idstr,debugfile);
 
-    vdebug(1,LOG_T_TARGET,
+    vdebug(1,LA_TARGET,LF_TARGET,
 	   "loaded and associated debugfile(%s) for region(%s,"
 	   "base_phys=0x%"PRIxADDR",base_virt=0x%"PRIxADDR")"
 	   " in space (%s,%d)\n",
@@ -461,7 +461,7 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     if (list_empty(&target->spaces))
 	return NULL;
 
-    vdebug(3,LOG_T_SYMBOL,
+    vdebug(3,LA_TARGET,LF_SYMBOL,
 	   "trying to find symbol at address 0x%"PRIxADDR"\n",
 	   addr);
 
@@ -678,7 +678,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	    errno = rc;
 	    goto errout;
 	}
-	vdebug(5,LOG_T_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
 	       symbol_get_name(symbol),retval);
 	goto out;
     }
@@ -776,7 +776,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		goto errout;
 	    }
 	    retval += offset;
-	    vdebug(9,LOG_T_SYMBOL,
+	    vdebug(9,LA_TARGET,LF_SYMBOL,
 		   "member %s at offset 0x%"PRIxOFFSET"; addr 0x%"PRIxADDR"\n",
 		   symbol_get_name(symbol),offset,retval);
 	}
@@ -794,7 +794,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	    }
 	    else if (rc == 1) {
 		current_region = current_range->region;
-		vdebug(9,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		vdebug(9,LA_TARGET,LF_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
 	    else {
@@ -838,7 +838,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		    target_find_memory_real(target,retval,NULL,NULL,
 					    &current_range);
 		    current_region = current_range->region;
-		    vdebug(9,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+		    vdebug(9,LA_TARGET,LF_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 
 		    /* We have to skip one pointer type */
@@ -849,7 +849,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		     */
 		    in_reg = 0;
 
-		    vdebug(9,LOG_T_SYMBOL,
+		    vdebug(9,LA_TARGET,LF_SYMBOL,
 			   "autoloaded REG (%d) pointer(s) for var %s ="
 			   " 0x%"PRIxADDR"\n",
 			   reg,symbol_get_name(symbol),retval);
@@ -869,7 +869,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		    }
 		    current_region = current_range->region;
 
-		    vdebug(9,LOG_T_SYMBOL,
+		    vdebug(9,LA_TARGET,LF_SYMBOL,
 			   "autoloaded pointer(s) for var %s = 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 		}
@@ -979,11 +979,11 @@ struct value *target_load_type(struct target *target,struct symbol *type,
     }
 
     if (datatype != type)
-	vdebug(5,LOG_T_SYMBOL,"skipped from %s to %s for type %s\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"skipped from %s to %s for type %s\n",
 	       DATATYPE(type->datatype_code),
 	       DATATYPE(datatype->datatype_code),symbol_get_name(type));
     else 
-	vdebug(5,LOG_T_SYMBOL,"no skip; type for type %s is %s\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"no skip; type for type %s is %s\n",
 	       symbol_get_name(type),DATATYPE(datatype->datatype_code));
 
     /* Get range/region info for the addr. */
@@ -1031,7 +1031,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	value_set_strlen(value,strlen(value->buf) + 1);
 	value_set_addr(value,ptraddr);
 
-	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
+	vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
 
 	/* success! */
 	goto out;
@@ -1239,7 +1239,7 @@ struct value *target_load_value_member(struct target *target,
 	    value_set_strlen(value,strlen(value->buf) + 1);
 	    value_set_addr(value,addr);
 
-	    vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
+	    vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * value with len %d\n",
 		   value->bufsiz);
 	}
 	else {
@@ -1256,7 +1256,7 @@ struct value *target_load_value_member(struct target *target,
 	    else {
 		value_set_addr(value,addr);
 
-		vdebug(5,LOG_T_SYMBOL,"loaded value with len %d\n",
+		vdebug(5,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
 		       value->bufsiz);
 	    }
 	}
@@ -1411,7 +1411,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    value_set_strlen(value,strlen(value->buf) + 1);
 	    value_set_addr(value,addr);
 
-	    vdebug(5,LOG_T_SYMBOL,"autoloaded char * value with len %d\n",
+	    vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * value with len %d\n",
 		   value->bufsiz);
 	}
 	else {
@@ -1428,7 +1428,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    else {
 		value_set_addr(value,addr);
 
-		vdebug(5,LOG_T_SYMBOL,"loaded value with len %d\n",
+		vdebug(5,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
 		       value->bufsiz);
 	    }
 	}
@@ -1532,7 +1532,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	    errno = rc;
 	    goto errout;
 	}
-	vdebug(5,LOG_T_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
 	       symbol_get_name(symbol),retval);
 	goto out;
     }
@@ -1576,7 +1576,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 
 	datatype = symbol_type_skip_qualifiers(symbol->datatype);
 	if (symbol->ismember && SYMBOL_IST_STUN(datatype)) {
-	    vdebug(5,LOG_T_SYMBOL,"skipping member %s in stun type %s\n",
+	    vdebug(5,LA_TARGET,LF_SYMBOL,"skipping member %s in stun type %s\n",
 		   symbol_get_name(symbol),symbol_get_name(datatype));
 	    continue;
 	}
@@ -1589,7 +1589,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		goto errout;
 	    }
 	    retval += offset;
-	    vdebug(5,LOG_T_SYMBOL,
+	    vdebug(5,LA_TARGET,LF_SYMBOL,
 		   "member %s at offset 0x%"PRIxOFFSET"; really at 0x%"PRIxADDR
 		   "\n",
 		   symbol_get_name(symbol),offset,retval);
@@ -1619,7 +1619,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		    target_find_memory_real(target,retval,NULL,NULL,
 					    &current_range);
 		    current_region = current_range->region;
-		    vdebug(5,LOG_T_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+		    vdebug(5,LA_TARGET,LF_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 		    /* We have to skip one pointer type */
 		    datatype = symbol_type_skip_qualifiers(datatype->datatype);
@@ -1638,7 +1638,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	    }
 	    else if (rc == 1) {
 		current_region = current_range->region;
-		vdebug(5,LOG_T_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		vdebug(5,LA_TARGET,LF_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
 	    else {
@@ -1668,7 +1668,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		    goto errout;
 		}
 		current_region = current_range->region;
-		vdebug(5,LOG_T_SYMBOL,
+		vdebug(5,LA_TARGET,LF_SYMBOL,
 		       "autoloaded pointer(s) for var %s now at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
@@ -1734,11 +1734,11 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     datatype = symbol_type_skip_qualifiers(startdatatype);
 
     if (startdatatype != datatype)
-	vdebug(5,LOG_T_SYMBOL,"skipped from %s to %s for symbol %s\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"skipped from %s to %s for symbol %s\n",
 	       DATATYPE(startdatatype->datatype_code),
 	       DATATYPE(datatype->datatype_code),symbol->name);
     else 
-	vdebug(5,LOG_T_SYMBOL,"no skip; type for symbol %s is %s\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"no skip; type for symbol %s is %s\n",
 	       symbol->name,DATATYPE(datatype->datatype_code));
 
     /* Check if this symbol is currently visible to us! */
@@ -1780,7 +1780,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	|| ((flags & LOAD_FLAG_AUTO_STRING) 
 	    && SYMBOL_IST_PTR(datatype) 
 	    && symbol_type_is_char(datatype->datatype))) {
-	vdebug(5,LOG_T_SYMBOL,"auto_deref: starting ptr symbol %s\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"auto_deref: starting ptr symbol %s\n",
 	       symbol->name);
 
 	/* First, load the symbol's primary location -- the pointer
@@ -1798,7 +1798,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	    goto errout;
 	}
 
-	vdebug(5,LOG_T_SYMBOL,"loaded ptr value 0x%"PRIxADDR"for symbol %s\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"loaded ptr value 0x%"PRIxADDR"for symbol %s\n",
 	       ptraddr,symbol->name);
 
 	/* Skip past the pointer we just loaded. */
@@ -1853,7 +1853,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	value->range = ptrrange;
 	value->res.addr = ptraddr;
 
-	vdebug(5,LOG_T_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
+	vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
 
 	/* success! */
 	goto out;
@@ -1994,7 +1994,7 @@ ADDR target_load_pointers(struct target *target,ADDR addr,int count,
 	    goto errout;
 	}
 
-	vdebug(5,LOG_T_SYMBOL,"loading ptr #%d at 0x%"PRIxADDR"\n",i,paddr);
+	vdebug(5,LA_TARGET,LF_SYMBOL,"loading ptr #%d at 0x%"PRIxADDR"\n",i,paddr);
 
 	/*
 	 * The pointer may be in another region!  We *have* to
@@ -2014,7 +2014,7 @@ ADDR target_load_pointers(struct target *target,ADDR addr,int count,
 	    goto errout;
 	}
 
-	vdebug(5,LOG_T_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
+	vdebug(5,LA_TARGET,LF_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
 	       paddr,i);
     }
 
@@ -2057,7 +2057,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 		goto errout;
 	    }
 
-	    vdebug(5,LOG_T_SYMBOL,"loading ptr at 0x%"PRIxADDR"\n",paddr);
+	    vdebug(5,LA_TARGET,LF_SYMBOL,"loading ptr at 0x%"PRIxADDR"\n",paddr);
 
 	    /*
 	     * The pointer may be in another region!  We *have* to
@@ -2079,7 +2079,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 	    }
 
 	    ++nptrs;
-	    vdebug(5,LOG_T_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
+	    vdebug(5,LA_TARGET,LF_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
 		   paddr,nptrs);
 
 	    /* Skip past the pointer we just loaded. */
@@ -2397,7 +2397,7 @@ unsigned char *target_load_code(struct target *target,
 }
 
 struct target_thread *target_lookup_thread(struct target *target,tid_t tid) {
-    vdebug(16,LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
+    vdebug(16,LA_TARGET,LF_THREAD,"thread %"PRIiTID"\n",tid);
     return (struct target_thread *)g_hash_table_lookup(target->threads,
 						       (gpointer)(ptr_t)tid);
 }
@@ -2406,7 +2406,7 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
 					   void *tstate) {
     struct target_thread *t = (struct target_thread *)calloc(1,sizeof(*t));
 
-    vdebug(3,LOG_T_THREAD,"thread %"PRIiTID"\n",tid);
+    vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID"\n",tid);
 
     t->target = target;
     t->tid = tid;
@@ -2427,7 +2427,7 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
 
 void target_reuse_thread_as_global(struct target *target,
 				   struct target_thread *thread) {
-    vdebug(3,LOG_T_THREAD,"thread %"PRIiTID" as global %"PRIiTID"\n",
+    vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID" as global %"PRIiTID"\n",
 	   thread->tid,TID_GLOBAL);
     g_hash_table_insert(target->threads,(gpointer)TID_GLOBAL,thread);
     target->global_thread = thread;
@@ -2440,7 +2440,7 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
     struct probepoint *probepoint;
     struct thread_action_context *tac,*ttac;
 
-    vdebug(3,LOG_T_THREAD,"thread %"PRIiTID"\n",tthread->tid);
+    vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID"\n",tthread->tid);
 
     /* We have to free the probepoints manually, then remove all.  We
      * can't remove an element during an iteration, but we *can* free

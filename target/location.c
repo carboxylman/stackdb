@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -105,7 +105,7 @@ char *location_load(struct target *target,tid_t tid,struct memregion *region,
 	if (addr_saveptr)
 	    *addr_saveptr = final_location;
 
-        vdebug(5,LOG_T_LOC,"final_location = 0x%" PRIxADDR "\n",final_location);
+        vdebug(5,LA_TARGET,LF_TLOC,"final_location = 0x%" PRIxADDR "\n",final_location);
 
         return (char *)__target_load_addr_real(target,range,final_location,
 					       flags,buf,bufsiz);
@@ -156,7 +156,7 @@ struct location *location_resolve_loclist(struct target *target,tid_t tid,
     if (errno)
 	return NULL;
     errno = 0;
-    vdebug(5,LOG_T_LOC,"eip = 0x%" PRIxADDR "\n",eip);
+    vdebug(5,LA_TARGET,LF_TLOC,"eip = 0x%" PRIxADDR "\n",eip);
 
     /*
      * Find out which range in the region this address is in,
@@ -327,7 +327,7 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    eip = target_read_reg(target,tid,target->ipregno);
 	    if (errno)
 		return -1;
-	    vdebug(5,LOG_T_LOC,"eip = 0x%" PRIxADDR "\n",eip);
+	    vdebug(5,LA_TARGET,LF_TLOC,"eip = 0x%" PRIxADDR "\n",eip);
 
 	    /*
 	     * Find out which range in the region this address is in,
@@ -397,8 +397,8 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    return -1;
 	}
 
-	vdebug(5,LOG_T_LOC,"frame_base = 0x%" PRIxADDR "\n",frame_base);
-	vdebug(5,LOG_T_LOC,"fboffset = %"PRIiOFFSET"\n",location->l.fboffset);
+	vdebug(5,LA_TARGET,LF_TLOC,"frame_base = 0x%" PRIxADDR "\n",frame_base);
+	vdebug(5,LA_TARGET,LF_TLOC,"fboffset = %"PRIiOFFSET"\n",location->l.fboffset);
 
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
@@ -571,7 +571,7 @@ int location_resolve_lsymbol_base(struct target *target,tid_t tid,
     /* Translate the obj address to something real in this region. */
     *addr_saveptr = memregion_relocate(region,obj_addr,range_saveptr);
 
-    vdebug(3,LOG_T_LOC,"found base of '%s' 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
+    vdebug(3,LA_TARGET,LF_TLOC,"found base of '%s' 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
 	   lsymbol->symbol->name,obj_addr,*addr_saveptr);
 
     return 0;
@@ -636,7 +636,7 @@ int location_resolve_function_base(struct target *target,
     /* Translate the obj address to something real in this region. */
     *addr_saveptr = memregion_relocate(region,obj_addr,range_saveptr);
 
-    vdebug(3,LOG_T_LOC,"found base of '%s' 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
+    vdebug(3,LA_TARGET,LF_TLOC,"found base of '%s' 0x%"PRIxADDR" -> 0x%"PRIxADDR"\n",
 	   lsymbol->symbol->name,obj_addr,*addr_saveptr);
 
     return 0;
@@ -656,7 +656,7 @@ int location_resolve_function_prologue_end(struct target *target,
 	return -1;
     }
 
-    vdebug(5,LOG_T_LOC,"prologue_end of %s is 0x%"PRIxADDR"\n",symbol->name,
+    vdebug(5,LA_TARGET,LF_TLOC,"prologue_end of %s is 0x%"PRIxADDR"\n",symbol->name,
 	   symbol->s.ii->d.f.prologue_end);
 
     /* Translate the obj address to something real in this region. */

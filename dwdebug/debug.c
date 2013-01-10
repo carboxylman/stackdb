@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -114,7 +114,7 @@ gboolean always_remove(gpointer key __attribute__((unused)),
 static void ghash_symtab_free(gpointer data) {
     struct symtab *symtab = (struct symtab *)data;
 
-    vdebug(5,LOG_D_SYMTAB,"freeing symtab(%s:%s)\n",
+    vdebug(5,LA_DEBUG,LF_SYMTAB,"freeing symtab(%s:%s)\n",
 	   symtab->debugfile->idstr,symtab->name);
     symtab_free(symtab);
 }
@@ -122,7 +122,7 @@ static void ghash_symtab_free(gpointer data) {
 static void ghash_symbol_free(gpointer data) {
     struct symbol *symbol = (struct symbol *)data;
 
-    vdebug(5,LOG_D_SYMBOL,"freeing symbol(%s:%s:%s) %p\n",
+    vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing symbol(%s:%s:%s) %p\n",
 	   symbol->symtab->debugfile->idstr,symbol->symtab->name,
 	   symbol->name,data);
     /* We force-free the symbol; this function is only called if its
@@ -241,13 +241,13 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	     */
 	symbol = svalue;
 	if (SYMBOL_IS_TYPE(svalue)) 
-	    vdebug(3,LOG_D_LOOKUP,
+	    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 		   "found top-level symtab type %s\n",symbol->name);
 	else if (!svalue->isdeclaration) 
-	    vdebug(3,LOG_D_LOOKUP,
+	    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 		   "found top-level symtab definition %s\n",symbol->name);
 	else 
-	    vdebug(3,LOG_D_LOOKUP,
+	    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 		   "found top-level symtab non-type, non-definition %s; saving\n",
 		   symbol->name);
     }
@@ -273,19 +273,19 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 		 */
 		if (SYMBOL_IS_TYPE(svalue)) {
 		    symbol = svalue;
-		    vdebug(3,LOG_D_LOOKUP,
+		    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 			   "found top-level dup symtab type %s\n",symbol->name);
 		    break;
 		}
 		else if (!svalue->isdeclaration) {
 		    symbol = svalue;
-		    vdebug(3,LOG_D_LOOKUP,
+		    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 			   "found top-level dup symtab definition %s\n",symbol->name);
 		    break;
 		}
 		else if (!symbol) {
 		    symbol = svalue;
-		    vdebug(3,LOG_D_LOOKUP,
+		    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 			   "found top-level dup symtab non-type, non-definition"
 			   " %s; saving and continuing search\n",
 			   symbol->name);
@@ -302,7 +302,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
     if ((!symbol || (symbol && !SYMBOL_IS_TYPE(symbol) 
 		     && symbol->isdeclaration))
 	&& !list_empty(&symtab->subtabs)) {
-	vdebug(3,LOG_D_LOOKUP,
+	vdebug(3,LA_DEBUG,LF_DLOOKUP,
 	       "checking symtab anon subtabs\n");
 	//!SYMBOL_IS_FULL(symbol) || symbol->s.ii->l.loctype == LOCTYPE_UNKNOWN)
 	list_for_each_entry(subtab,&symtab->subtabs,member) {
@@ -323,7 +323,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 		if (lsymbol_tmp) {
 		    if (SYMBOL_IS_TYPE(lsymbol_tmp->symbol)) {
 			lsymbol = lsymbol_tmp;
-			vdebug(3,LOG_D_LOOKUP,
+			vdebug(3,LA_DEBUG,LF_DLOOKUP,
 			       "found anon symtab type %s\n",
 			       lsymbol->symbol->name);
 			goto recout;
@@ -333,14 +333,14 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 			     // && lsymbol_tmp->symbol->s.ii->l.loctype 
 			     //    != LOCTYPE_UNKNOWN) {
 			lsymbol = lsymbol_tmp;
-			vdebug(3,LOG_D_LOOKUP,
+			vdebug(3,LA_DEBUG,LF_DLOOKUP,
 			       "found anon symtab definition %s\n",
 			       lsymbol->symbol->name);
 			goto recout;
 		    }
 		    else if (!lsymbol) {
 			lsymbol = lsymbol_tmp;
-			vdebug(3,LOG_D_LOOKUP,
+			vdebug(3,LA_DEBUG,LF_DLOOKUP,
 			       "found anon symtab non-type, non-definition %s; saving\n",
 			       lsymbol->symbol->name);
 		    }
@@ -365,7 +365,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 		chain = NULL;
 	    }
 
-	    vdebug(3,LOG_D_LOOKUP,
+	    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 		   "returning best subtab symbol %s\n",
 		   lsymbol->symbol->name);
 
@@ -380,7 +380,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 
     /* If it's not a delimited string, stop now, successfully. */
     if (!lname) {
-	vdebug(3,LOG_D_LOOKUP,"found plain %s\n",
+	vdebug(3,LA_DEBUG,LF_DLOOKUP,"found plain %s\n",
 	       lsymbol->symbol->name);
 
 	/* Make sure the chain is not NULL and that we take a ref to
@@ -391,7 +391,7 @@ static struct lsymbol *__symtab_lookup_sym(struct symtab *symtab,
 	return lsymbol;
     }
 
-    vdebug(3,LOG_D_LOOKUP,
+    vdebug(3,LA_DEBUG,LF_DLOOKUP,
 	   "found top-level %s; checking members\n",lsymbol->symbol->name);
 
     /* Otherwise, add the first one to our chain and start looking up
@@ -519,7 +519,7 @@ static struct lsymbol *__symbol_lookup_sym(struct symbol *symbol,
     lsymbol = lsymbol_create(symbol,chain);
     lsymbol_append(lsymbol,symbol);
 
-    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
 	   "starting at top-level %s: checking members\n",
 	   symbol_get_name(symbol));
 
@@ -728,10 +728,10 @@ struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
     while (g_hash_table_iter_next(&iter,&key,&value)) {
 	srcfile = (char *)key;
 	clf = (clmatch_t)value;
-	vdebug(9,LOG_D_LOOKUP,"checking srcfile %s for filename %s\n",
+	vdebug(9,LA_DEBUG,LF_DLOOKUP,"checking srcfile %s for filename %s\n",
 	       srcfile,filename);
 	if (strstr(srcfile,filename)) {
-	    vdebug(9,LOG_D_LOOKUP,"found match: srcfile %s for filename %s\n",
+	    vdebug(9,LA_DEBUG,LF_DLOOKUP,"found match: srcfile %s for filename %s\n",
 		   srcfile,filename);
 	    return clmatch_find(&clf,line);
 	}
@@ -779,7 +779,7 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
 	symtab = (struct symtab *)clrange_find(&debugfile->ranges,addr);
 
 	if (symtab) 
-	    vdebug(6,LOG_D_LOOKUP,
+	    vdebug(6,LA_DEBUG,LF_DLOOKUP,
 		   "found symtab %s 0x%"PRIxSMOFFSET"\n",
 		   symtab->name,symtab->ref);
 
@@ -869,13 +869,13 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	if (srcfile_filter) {
 	    rfilter_check(srcfile_filter,symbol->symtab->name,&accept,&rfe);
 	    if (accept == RF_ACCEPT) {
-		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found rf global %s\n",
+		vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"found rf global %s\n",
 		       symbol->name);
 		goto found;
 	    }
 	}
 	else {
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found global %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"found global %s\n",
 		   symbol->name);
 	    goto found;
 	}
@@ -886,13 +886,13 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	if (srcfile_filter) {
 	    rfilter_check(srcfile_filter,symbol->symtab->name,&accept,&rfe);
 	    if (accept == RF_ACCEPT) {
-		vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found rf type %s\n",
+		vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"found rf type %s\n",
 		       symbol->name);
 		goto found;
 	    }
 	}
 	else {
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found type %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"found type %s\n",
 		   symbol->name);
 	    goto found;
 	}
@@ -971,17 +971,17 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
      * something.
      */
     if (lsymbol	&& !lsymbol->symbol->isdeclaration) {
-	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found best %s in symtab\n",
+	vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"found best %s in symtab\n",
 	       lsymbol->symbol->name);
 	/* If we found a match, fully load it (and its children and
 	 * dependent DIEs if it hasn't been yet!).
 	 */
 	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL
 	    && lsymbol->symbol->source == SYMBOL_SOURCE_DWARF) {
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial lsymbol %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"expanding partial lsymbol %s\n",
 		   symbol_get_name(lsymbol->symbol));
 	    debugfile_expand_symbol(debugfile,lsymbol->symbol);
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanded partial lsymbol %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"expanded partial lsymbol %s\n",
 		   symbol_get_name(lsymbol->symbol));
 	}
 
@@ -1003,16 +1003,16 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	 */
 	if (symbol->loadtag == LOADTYPE_PARTIAL
 	    && symbol->source == SYMBOL_SOURCE_DWARF) {
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial symbol %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"expanding partial symbol %s\n",
 		   symbol_get_name(symbol));
 	    debugfile_expand_symbol(debugfile,symbol);
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanded partial symbol %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"expanded partial symbol %s\n",
 		   symbol_get_name(symbol));
 	}
 
 	lsymbol = lsymbol_create(symbol,chain);
 
-	vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"found plain %s\n",
+	vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"found plain %s\n",
 	       lsymbol->symbol->name);
 
 	lsymbol_append(lsymbol,symbol);
@@ -1023,10 +1023,10 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	 */
 	if (lsymbol->symbol->loadtag == LOADTYPE_PARTIAL
 	    && lsymbol->symbol->source == SYMBOL_SOURCE_DWARF) {
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanding partial lsymbol %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"expanding partial lsymbol %s\n",
 		   symbol_get_name(lsymbol->symbol));
 	    debugfile_expand_symbol(debugfile,lsymbol->symbol);
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,"expanded partial lsymbol %s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,"expanded partial lsymbol %s\n",
 		   symbol_get_name(lsymbol->symbol));
 	}
     }
@@ -1037,7 +1037,7 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 	goto out;
     }
 
-    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
 	   "found top-level %s; checking members\n",lsymbol->symbol->name);
 
     if (!delim)
@@ -1045,7 +1045,7 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
 
     while ((next = strtok_r(!saveptr ? lname : NULL,delim,&saveptr))) {
 	if (!(symbol = __symbol_get_one_member(symbol,next,&anonchain))) {
-	    vwarnopt(3,LOG_D_LOOKUP,"did not find symbol for %s\n",next);
+	    vwarnopt(3,LA_DEBUG,LF_DLOOKUP,"did not find symbol for %s\n",next);
 	    goto errout;
 	}
 	else if (anonchain && array_list_len(anonchain)) {
@@ -1267,7 +1267,7 @@ debugfile_load_flags_t debugfile_load_flags_parse(char *flagstr,char *delim) {
 	delim = ",";
 
     while ((token2 = strtok_r((!token2)?flagstr:NULL,delim,&saveptr2))) {
-	vdebug(7,LOG_D_DFILE,"token2 = '%s'\n",token2);
+	vdebug(7,LA_DEBUG,LF_DFILE,"token2 = '%s'\n",token2);
 	if (strcmp(token2,"NONE") == 0 || strcmp(token2,"*") == 0) {
 	    flags = DEBUGFILE_LOAD_FLAG_NONE;
 	    return 0;
@@ -1308,13 +1308,13 @@ struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr) {
 	(struct debugfile_load_opts *)malloc(sizeof(*opts));
     memset(opts,0,sizeof(*opts));
 
-    vdebug(5,LOG_D_DFILE,"starting\n");
+    vdebug(5,LA_DEBUG,LF_DFILE,"starting\n");
 
     token = NULL;
     saveptr = NULL;
     i = 0;
     while ((token = strtok_r((!token)?optstr:NULL,"||",&saveptr))) {
-	vdebug(7,LOG_D_DFILE,"token = '%s' at %d\n",token,i);
+	vdebug(7,LA_DEBUG,LF_DFILE,"token = '%s' at %d\n",token,i);
 
 	if (i == 0) {
 	    opts->flags = debugfile_load_flags_parse(token,NULL);
@@ -1351,7 +1351,7 @@ int debugfile_load_opts_checklist(struct array_list *opts_list,char *name,
     int accept = RF_REJECT;
     int i;
 
-    vdebug(2,LOG_D_DFILE,"checking debugfile load opts list against '%s'\n",
+    vdebug(2,LA_DEBUG,LF_DFILE,"checking debugfile load opts list against '%s'\n",
 	   name);
     array_list_foreach(opts_list,i,opts) {
 	/* 
@@ -1361,7 +1361,7 @@ int debugfile_load_opts_checklist(struct array_list *opts_list,char *name,
 	 */
 	rfilter_check(opts->debugfile_filter,name,&accept,NULL);
 	if (accept == RF_ACCEPT) {
-	    vdebug(5,LOG_D_DFILE,
+	    vdebug(5,LA_DEBUG,LF_DFILE,
 		   "debugfile opts %p matched '%s'\n",opts,name);
 	    if (match_saveptr) {
 		*match_saveptr = opts;
@@ -1369,7 +1369,7 @@ int debugfile_load_opts_checklist(struct array_list *opts_list,char *name,
 	    }
 	}
 	else 
-	    vdebug(9,LOG_D_DFILE,
+	    vdebug(9,LA_DEBUG,LF_DFILE,
 		   "not using debugfile opts %p for '%s'\n",opts,name);
     }
 
@@ -1636,7 +1636,7 @@ struct debugfile *debugfile_get(char *filename,
      */
     _filename_info(filename,&realname,&name,&version);
     if (realname) {
-	vdebug(2,LOG_D_DFILE,"using %s instead of symlink %s\n",
+	vdebug(2,LA_DEBUG,LF_DFILE,"using %s instead of symlink %s\n",
 	       realname,filename);
 	filename = realname;
     }
@@ -1670,15 +1670,15 @@ struct debugfile *debugfile_get(char *filename,
 	goto out;
     }
 
-    vdebug(5,LOG_D_DFILE,"ELF info for file %s:\n",filename);
-    vdebug(5,LOG_D_DFILE,"    has_debuginfo=%d,buildid='",has_debuginfo);
+    vdebug(5,LA_DEBUG,LF_DFILE,"ELF info for file %s:\n",filename);
+    vdebug(5,LA_DEBUG,LF_DFILE,"    has_debuginfo=%d,buildid='",has_debuginfo);
     if (buildid) {
 	len = (int)strlen(buildid);
 	for (i = 0; i < len; ++i)
-	    vdebugc(5,LOG_T_LUP,"%hhx",buildid[i]);
+	    vdebugc(5,LA_DEBUG,LF_DFILE,"%hhx",buildid[i]);
     }
-    vdebugc(5,LOG_D_DFILE,"'\n");
-    vdebug(5,LOG_D_DFILE,"    debuglinkfile=%s,debuglinkfilecrc=0x%x\n",
+    vdebugc(5,LA_DEBUG,LF_DFILE,"'\n");
+    vdebug(5,LA_DEBUG,LF_DFILE,"    debuglinkfile=%s,debuglinkfilecrc=0x%x\n",
 	   debuglinkfile,debuglinkfilecrc);
 
     if (has_debuginfo) {
@@ -1731,12 +1731,12 @@ struct debugfile *debugfile_get(char *filename,
     else if (opts_list 
 	     && debugfile_load_opts_checklist(opts_list,finalfile,&opts) \
 	          == RF_ACCEPT) {
-	vdebug(2,LOG_D_DFILE,"opts prohibit loading of debugfile '%s'\n",name);
+	vdebug(2,LA_DEBUG,LF_DFILE,"opts prohibit loading of debugfile '%s'\n",name);
 	goto out;
     }
     else if ((debugfile = (struct debugfile *) \
 	      g_hash_table_lookup(debugfile_tab,finalfile))) {
-	vdebug(2,LOG_D_DFILE,"reusing debugfile %s (%s)\n",
+	vdebug(2,LA_DEBUG,LF_DFILE,"reusing debugfile %s (%s)\n",
 	       debugfile->idstr,finalfile);
 	RHOLD(debugfile);
 	goto out;
@@ -1812,7 +1812,7 @@ int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab) {
 	else if (retp == symtab)
 	    return 0;
 	else {
-	    vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:%s\n",
+	    vdebug(3,LA_DEBUG,LF_DFILE,"adding top-level symtab %s:%s\n",
 		   debugfile->idstr,symtab->name);
 	    g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
 	}
@@ -1827,7 +1827,7 @@ int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab) {
     else {
 	g_hash_table_insert(debugfile->cuoffsets,
 			    (gpointer)(uintptr_t)symtab->ref,symtab);
-	vdebug(3,LOG_D_DFILE,"adding top-level symtab %s:0x%"PRIxSMOFFSET"\n",
+	vdebug(3,LA_DEBUG,LF_DFILE,"adding top-level symtab %s:0x%"PRIxSMOFFSET"\n",
 	       debugfile->idstr,symtab->ref);
     }
 
@@ -1875,7 +1875,7 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 	}
     }
 
-    vdebug(5,LOG_D_DFILE,"freeing debugfile(%s)\n",debugfile->idstr);
+    vdebug(5,LA_DEBUG,LF_DFILE,"freeing debugfile(%s)\n",debugfile->idstr);
 
     /*
      * Remove it from our global hashtable.  Also remove any binfile
@@ -1945,7 +1945,7 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     free(debugfile->idstr);
     free(debugfile);
 
-    vdebug(5,LOG_D_DFILE,"freed debugfile\n");
+    vdebug(5,LA_DEBUG,LF_DFILE,"freed debugfile\n");
 
     return retval;
 }
@@ -2159,7 +2159,7 @@ int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
 		      g_hash_table_lookup(symtab->duptab,name)))) {
 	    array_list_append(exlist,symbol);
 
-	    vdebug(5,LOG_D_DWARF | LOG_D_SYMBOL,
+	    vdebug(5,LA_DEBUG,LF_DWARF | LF_SYMBOL,
 		   "duplicate symbol %s (%d)\n",
 		   symbol->name,array_list_len(exlist));
 	}
@@ -2171,7 +2171,7 @@ int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr) {
 	    g_hash_table_steal(symtab->tab,name);
 	    g_hash_table_insert(symtab->duptab,name,exlist);
 
-	    vdebug(5,LOG_D_DWARF | LOG_D_SYMBOL,
+	    vdebug(5,LA_DEBUG,LF_DWARF | LF_SYMBOL,
 		   "duplicate symbol %s (2)\n",symbol->name);
 	}
 	else {
@@ -2274,7 +2274,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	    if (start < base)
 		base = start;
 
-	    vdebug(8,LOG_D_DWARF,
+	    vdebug(8,LA_DEBUG,LF_DWARF,
 		   "init RANGE_LIST(0x%"PRIxADDR",0x%"PRIxADDR")"
 		   " for symtab 0x%"PRIxSMOFFSET"\n",start,end,symtab->ref);
 	}
@@ -2290,7 +2290,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	    if (start < base)
 		base = start;
 
-	    vdebug(8,LOG_D_DWARF,
+	    vdebug(8,LA_DEBUG,LF_DWARF,
 		   "init RANGE_PC(0x%"PRIxADDR",0x%"PRIxADDR")"
 		   " for symtab 0x%"PRIxSMOFFSET"\n",start,end,symtab->ref);
 	}
@@ -2301,7 +2301,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 
 	/* If the start/end range matches the current thing, do nothing! */
 	if (olowpc == start && ohighpc == end) {
-	    vdebug(8,LOG_D_DWARF,
+	    vdebug(8,LA_DEBUG,LF_DWARF,
 		   "RANGE_PC(0x%"PRIxADDR",0x%"PRIxADDR") matched for symtab"
 		   " %s at 0x%"PRIxSMOFFSET"; not updating\n",start,end,
 		   symtab->name,symtab->ref);
@@ -2335,7 +2335,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 
 	    /* And the new thing. */
 	    range_list_add(&r->r.rlist,start,end);
-	    vdebug(5,LOG_D_DWARF,
+	    vdebug(5,LA_DEBUG,LF_DWARF,
 		   "converted RANGE_PC to LIST with new entry (0x%"PRIxADDR
 		   ",0x%"PRIxADDR")\n",start,end);
 
@@ -2345,7 +2345,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	    if (start < base)
 		base = start;
 
-	    vdebug(7,LOG_D_DWARF,
+	    vdebug(7,LA_DEBUG,LF_DWARF,
 		   "converting RANGE_PC to LIST; new entry (0x%"PRIxADDR
 		   ",0x%"PRIxADDR") for symtab 0x%"PRIxSMOFFSET"\n",
 		   start,end,symtab->ref);
@@ -2380,7 +2380,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	    if (symtab->debugfile)
 		clrange_add(&symtab->debugfile->ranges,start,end,symtab);
 
-	    vdebug(8,LOG_D_DWARF,
+	    vdebug(8,LA_DEBUG,LF_DWARF,
 		   "added RANGE_LIST entry (0x%"PRIxADDR",0x%"PRIxADDR
 		   ") for symtab 0x%"PRIxSMOFFSET")\n",start,end,symtab->ref);
 	}
@@ -2412,7 +2412,7 @@ void symtab_free(struct symtab *symtab) {
     struct symbol *exsym;
     gpointer key, value;
 
-    vdebug(5,LOG_D_SYMTAB,"freeing symtab(%s:%s)\n",
+    vdebug(5,LA_DEBUG,LF_SYMTAB,"freeing symtab(%s:%s)\n",
 	   symtab->debugfile->idstr,symtab->name);
 
     if (!list_empty(&symtab->subtabs))
@@ -2565,7 +2565,7 @@ struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
     if (0 && name)
 	g_hash_table_insert(symtab->tab,name,symbol);
 
-    vdebug(LOG_D_SYMBOL,5,"offset %"PRIxSMOFFSET"\n",offset);
+    vdebug(LA_DEBUG,LF_SYMBOL,5,"offset %"PRIxSMOFFSET"\n",offset);
 
     return symbol;
 }
@@ -3081,8 +3081,8 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	.detail = 1,
 	.meta = 1
     };
-    vdebug(4,LOG_D_LOOKUP,"symbol: ");
-    if (vdebug_is_on(4,LOG_D_LOOKUP))
+    vdebug(4,LA_DEBUG,LF_DLOOKUP,"symbol: ");
+    if (vdebug_is_on(4,LA_DEBUG,LF_DLOOKUP))
 	symbol_dump(symbol,&udn);
     
 
@@ -3097,9 +3097,9 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     if (SYMBOL_IS_TYPE(symbol)) {
 	tsymbol = symbol_type_skip_qualifiers(symbol);
 	if (tsymbol != symbol) {
-	    vdebug(4,LOG_D_LOOKUP,"skipped type symbol %s, now: ",
+	    vdebug(4,LA_DEBUG,LF_DLOOKUP,"skipped type symbol %s, now: ",
 		   symbol_get_name(symbol));
-	    if (vdebug_is_on(4,LOG_D_LOOKUP))
+	    if (vdebug_is_on(4,LA_DEBUG,LF_DLOOKUP))
 		symbol_dump(tsymbol,&udn);
 
 	    symbol = tsymbol;
@@ -3147,8 +3147,8 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	    list_for_each_entry(retval_instance,&type->s.ti->d.su.members,
 				d.v.member) {
 		retval = retval_instance->d.v.member_symbol;
-		vdebug(5,LOG_D_SYMBOL,"checking symbol: ");
-		if (vdebug_is_on(4,LOG_D_SYMBOL))
+		vdebug(5,LA_DEBUG,LF_SYMBOL,"checking symbol: ");
+		if (vdebug_is_on(4,LA_DEBUG,LF_SYMBOL))
 		    symbol_dump(retval,&udn);
 
 		if (SYMBOL_IST_STUN(retval->datatype) 
@@ -3184,10 +3184,10 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 		}
 	    }
 	    if (stackalen > 8) 
-		vwarnopt(4,LOG_D_LOOKUP,"big stackalen=%d, stack=%d\n",
+		vwarnopt(4,LA_DEBUG,LF_DLOOKUP,"big stackalen=%d, stack=%d\n",
 			 stackalen,stacklen);
 	    else 
-		vdebug(4,LOG_D_SYMBOL,"stackalen=%d, stack=%d\n",
+		vdebug(4,LA_DEBUG,LF_SYMBOL,"stackalen=%d, stack=%d\n",
 		       stackalen,stacklen);
 	    /* If we're out of stuff on our stack, bail. */
 	    if (i == stacklen) {
@@ -3257,27 +3257,27 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
 	 */
 	tsymbol = symbol_type_skip_qualifiers(symbol->datatype);
 	if (tsymbol != symbol->datatype) {
-	    vdebug(4,LOG_D_LOOKUP,"skipped type symbol for %s, now: ",
+	    vdebug(4,LA_DEBUG,LF_DLOOKUP,"skipped type symbol for %s, now: ",
 		   symbol_get_name(symbol->datatype));
-	    if (vdebug_is_on(4,LOG_D_LOOKUP))
+	    if (vdebug_is_on(4,LA_DEBUG,LF_DLOOKUP))
 		symbol_dump(tsymbol,&udn);
 	}
 
 	/* Make sure the datatype is fully loaded before we search it. */
 	if (tsymbol->loadtag == LOADTYPE_PARTIAL
 	    && tsymbol->source == SYMBOL_SOURCE_DWARF) {
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
 		   "expanding partial type symbol %s\n",
 		   symbol_get_name(tsymbol));
 	    debugfile_expand_symbol(tsymbol->symtab->debugfile,tsymbol);
-	    vdebug(3,LOG_D_DFILE | LOG_D_LOOKUP,
+	    vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
 		   "expanded partial type symbol %s\n",
 		   symbol_get_name(tsymbol));
 	}
 
 	if (SYMBOL_IST_STUN(tsymbol)) {
-	    vdebug(4,LOG_D_SYMBOL,"returning result of searching S/U type symbol: ");
-	    if (vdebug_is_on(4,LOG_D_SYMBOL))
+	    vdebug(4,LA_DEBUG,LF_SYMBOL,"returning result of searching S/U type symbol: ");
+	    if (vdebug_is_on(4,LA_DEBUG,LF_SYMBOL))
 		symbol_dump(tsymbol,&udn);
 
 	    return __symbol_get_one_member(tsymbol,member,chainptr);
@@ -3302,8 +3302,8 @@ static struct symbol *__symbol_get_one_member(struct symbol *symbol,char *member
     return NULL;
 
  out:
-    vdebug(3,LOG_D_SYMBOL | LOG_D_LOOKUP,"returning symbol: ");
-    if (vdebug_is_on(3,LOG_D_LOOKUP | LOG_D_LOOKUP))
+    vdebug(3,LA_DEBUG,LF_SYMBOL | LF_DLOOKUP,"returning symbol: ");
+    if (vdebug_is_on(3,LA_DEBUG,LF_DLOOKUP))
 	symbol_dump(retval,&udn);
     /*
      * If type points to something other than the top-level symbol, that
@@ -3561,12 +3561,12 @@ unsigned int symbol_type_array_bytesize(struct symbol *type) {
     size = symbol_bytesize(type->datatype);
 
     for (i = 0; i < type->s.ti->d.a.count; ++i) {
-	vdebug(5,LOG_D_SYMBOL,"subrange length is %d\n",
+	vdebug(5,LA_DEBUG,LF_SYMBOL,"subrange length is %d\n",
 	       type->s.ti->d.a.subranges[i] + 1);
 	size = size * (type->s.ti->d.a.subranges[i] + 1);
     }
 
-    vdebug(5,LOG_D_SYMBOL,"full array size is %d for array type %s\n",size,
+    vdebug(5,LA_DEBUG,LF_SYMBOL,"full array size is %d for array type %s\n",size,
 	   type->name);
 
     return size;
@@ -3689,7 +3689,7 @@ int symbol_get_location_range(struct symbol *symbol,ADDR *low_addr_saveptr,
 }
 
 REFCNT symbol_hold(struct symbol *symbol) {
-    vdebug(10,LOG_D_SYMBOL,"holding symbol %s//%s at %"PRIxSMOFFSET"\n",
+    vdebug(10,LA_DEBUG,LF_SYMBOL,"holding symbol %s//%s at %"PRIxSMOFFSET"\n",
 	   SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
     return RHOLD(symbol);
 }
@@ -3706,24 +3706,24 @@ REFCNT symbol_release(struct symbol *symbol) {
      * Actually, we only free dynamic symbols automatically on release!
      */
     if (symbol->issynthetic || symbol->isshared) {
-	vdebug(10,LOG_D_SYMBOL,
+	vdebug(10,LA_DEBUG,LF_SYMBOL,
 	       "dynamic/shared symbol %s//%s at %"PRIxSMOFFSET":     ",
 	       SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
 	retval = RPUT(symbol,symbol);
 	if (retval)
-	    vdebugc(10,LOG_D_SYMBOL,"  refcnt %d\n",retval);
+	    vdebugc(10,LA_DEBUG,LF_SYMBOL,"  refcnt %d\n",retval);
 	else 
-	    vdebug(10,LOG_D_SYMBOL,"dynamic/shared symbol %s refcnt 0\n",name);
+	    vdebug(10,LA_DEBUG,LF_SYMBOL,"dynamic/shared symbol %s refcnt 0\n",name);
     }
     else {
-	vdebug(10,LOG_D_SYMBOL,"symbol %s//%s at %"PRIxSMOFFSET":     ",
+	vdebug(10,LA_DEBUG,LF_SYMBOL,"symbol %s//%s at %"PRIxSMOFFSET":     ",
 	       SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),symbol->ref);
 	retval = RPUTNF(symbol);
 	//retval = RPUT(symbol,symbol);
 	if (retval)
-	    vdebugc(10,LOG_D_SYMBOL,"  refcnt %d\n",retval);
+	    vdebugc(10,LA_DEBUG,LF_SYMBOL,"  refcnt %d\n",retval);
 	else 
-	    vdebug(10,LOG_D_SYMBOL,"symbol %s refcnt 0\n",name);
+	    vdebug(10,LA_DEBUG,LF_SYMBOL,"symbol %s refcnt 0\n",name);
     }
     if (name)
 	free(name);
@@ -3753,10 +3753,10 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     }
 
     if (symbol->name)
-	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//%s at %"PRIxSMOFFSET"\n",
+	vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing symbol %s//%s at %"PRIxSMOFFSET"\n",
 	       SYMBOL_TYPE(symbol->type),symbol->name,symbol->ref);
     else 
-	vdebug(5,LOG_D_SYMBOL,"freeing symbol %s//(null) at %"PRIxSMOFFSET"\n",
+	vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing symbol %s//(null) at %"PRIxSMOFFSET"\n",
 	       SYMBOL_TYPE(symbol->type),symbol->ref);
 
     /*
@@ -3852,7 +3852,7 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 		     && !symtab_str_in_elf_strtab(symbol->symtab,symbol->name)))
 #endif
 	     ) {
-	vdebug(5,LOG_D_SYMBOL,"freeing name %s\n",symbol->name);
+	vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing name %s\n",symbol->name);
 	free(symbol->name);
     }
 
@@ -3863,7 +3863,7 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	free(symbol->s.ii);
     }
 
-    vdebug(5,LOG_D_SYMBOL,"freeing %p\n",symbol);
+    vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing %p\n",symbol);
     free(symbol);
 
     return retval;

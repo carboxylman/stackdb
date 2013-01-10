@@ -1,6 +1,6 @@
 /* Print information from ELF file in human-readable form.
    Copyright (C) 1999-2012 Red Hat, Inc.
-   Copyright (c) 2011, 2012 The University of Utah
+   Copyright (c) 2011, 2012, 2013 The University of Utah
 
    ELF utility functions, adapted from Red Hat elfutils.
 
@@ -110,7 +110,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
     if (g_hash_table_size(debugfile->addresses) == 0) 
 	return 0;
 
-    vdebug(5,LOG_D_LOC,"processing lines at offset 0x%lx!\n",offset);
+    vdebug(5,LA_DEBUG,LF_DLOC,"processing lines at offset 0x%lx!\n",offset);
 
     while (linep < lineendp) {
 	start_offset = linep - linestartp;
@@ -261,7 +261,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 	    clmatch_add(&currentclf,line,(void *)(ADDR)address);
 
 	    if (strcmp(currentfile,"/local/sda4/xen-tt/linux-2.6.18-xen/net/sunrpc/svcsock.c") == 0) {
-		vdebug(5,LOG_OTHER,"storeline %d 0x%"PRIxADDR"\n",
+		vdebug(5,LA_DEBUG,LF_DOTHER,"storeline %d 0x%"PRIxADDR"\n",
 		       line,(ADDR)address);
 	    }
 
@@ -308,14 +308,14 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    if (symbol_contains_addr(candidate_symbol,address)) {
 			candidate_symbol->s.ii->d.f.epilogue_begin =	\
 			    (ADDR)address;
-			vdebug(3,LOG_D_LOC,
+			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 
 			candidate_symbol->s.ii->d.f.epilogue_known = 1;
 		    }
 		    else {
-			vdebug(5,LOG_D_LOC,
+			vdebug(5,LA_DEBUG,LF_DLOC,
 			       "set_epilogue_begin: address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
@@ -329,7 +329,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    /* Use it if the address is in the function range. */
 		    if (symbol_contains_addr(candidate_symbol,address)) {
 			candidate_symbol->s.ii->d.f.prologue_end = (ADDR)address;
-			vdebug(3,LOG_D_LOC,
+			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "set_prologue_end: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 
@@ -343,7 +343,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			symbol = NULL;
 		    }
 		    else {
-			vdebug(5,LOG_D_LOC,
+			vdebug(5,LA_DEBUG,LF_DLOC,
 			       "set_prologue_end: address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
@@ -366,7 +366,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		     */
 		    if (symbol_contains_addr(symbol,address)) {
 			symbol->s.ii->d.f.prologue_end = (ADDR)address;
-			vdebug(3,LOG_D_LOC,
+			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "assuming prologue_end of %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
 
@@ -374,7 +374,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			symbol->s.ii->d.f.prologue_guessed = 1;
 		    }
 		    else {
-			vdebug(5,LOG_D_LOC,
+			vdebug(5,LA_DEBUG,LF_DLOC,
 			       "address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(symbol));
 		    }
@@ -391,13 +391,13 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			g_hash_table_lookup(debugfile->addresses,
 					    (gpointer)(ADDR)address);
 		    if (symbol) {
-			vdebug(3,LOG_D_LOC,
+			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
 			candidate_symbol = symbol;
 		    }
 		    else 
-			vdebug(5,LOG_D_LOC,
+			vdebug(5,LA_DEBUG,LF_DLOC,
 			       "did not find function at 0x%"PRIxADDR"\n",
 			       (ADDR)address);
 		}
@@ -442,7 +442,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			    g_hash_table_lookup(debugfile->addresses,
 						(gpointer)(ADDR)address);
 			if (symbol) {
-			    vdebug(3,LOG_D_LOC,
+			    vdebug(3,LA_DEBUG,LF_DLOC,
 				   "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 				   symbol_get_name(symbol),(ADDR)address);
 			    candidate_symbol = symbol;
@@ -549,7 +549,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    currentfile = array_list_item(filelist,((int)u128) - 1);
 		    currentclf = NULL;
 
-		    vdebug(9,LOG_OTHER,"set file to %s\n",currentfile);
+		    vdebug(9,LA_DEBUG,LF_DOTHER,"set file to %s\n",currentfile);
 
 		    linep = (unsigned char *)clinep;
 		    break;

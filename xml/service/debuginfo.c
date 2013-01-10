@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -37,7 +37,7 @@ void *do_request(void *arg) {
 
     soap_serve(soap);
 
-    vdebug(8,LOG_X_RPC,"finished request from %d.%d.%d.%d\n",
+    vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d\n",
 	   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 	   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 
@@ -59,7 +59,6 @@ int main(int argc, char **argv) {
     char ch;
     int debug = 0;
     int warn = 0;
-    log_flags_t flags;
     int doelfsymtab = 1;
 
     while ((ch = getopt(argc, argv, "dwl:Ep:")) != -1) {
@@ -73,11 +72,10 @@ int main(int argc, char **argv) {
 	    vmi_set_warn_level(warn);
 	    break;
 	case 'l':
-	    if (vmi_log_get_flag_mask(optarg,&flags)) {
+	    if (vmi_set_log_area_flaglist(optarg,NULL)) {
 		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
 		exit(-1);
 	    }
-	    vmi_set_log_flags(flags);
 	    break;
 	case 'E':
 	    doelfsymtab = 0;
@@ -129,7 +127,7 @@ int main(int argc, char **argv) {
 	exit(1);
     }
 
-    vdebug(5,LOG_X_RPC,"bound to port %d\n",port);
+    vdebug(5,LA_XML,LF_RPC,"bound to port %d\n",port);
 
     while (1) {
 	s = soap_accept(&soap);
@@ -142,7 +140,7 @@ int main(int argc, char **argv) {
             verror("SOAP: server timed out\n");
             break;
 	}
-	vdebug(8,LOG_X_RPC,"connection from %d.%d.%d.%d\n",
+	vdebug(8,LA_XML,LF_RPC,"connection from %d.%d.%d.%d\n",
 	       (soap.ip >> 24) & 0xff,(soap.ip >> 16) & 0xff,
 	       (soap.ip >> 8) & 0xff,soap.ip & 0xff);
 

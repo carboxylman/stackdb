@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -161,13 +161,13 @@ int elf_get_debuginfo_info(Elf *elf,
 	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
 
 	    if (strcmp(name,".debug_info") == 0) {
-		vdebug(2,LOG_T_LUP,
+		vdebug(2,LA_DEBUG,LF_DFILE,
 		       "found %s section (%d)\n",name,shdr->sh_size);
 		has_debuginfo = 1;
 		continue;
 	    }
 	    else if (!buildid && shdr->sh_type == SHT_NOTE) {
-		vdebug(2,LOG_T_LUP,
+		vdebug(2,LA_DEBUG,LF_DFILE,
 		       "found %s note section (%d)\n",name,shdr->sh_size);
 		edata = elf_rawdata(scn,NULL);
 		if (!edata) {
@@ -184,11 +184,11 @@ int elf_get_debuginfo_info(Elf *elf,
 			/* skip past the header and the name string and its
 			 * padding */
 			ndata += sizeof(Elf64_Nhdr);
-			vdebug(5,LOG_T_LUP,"found note name '%s'\n",ndata);
+			vdebug(5,LA_DEBUG,LF_DFILE,"found note name '%s'\n",ndata);
 			ndata += nthdr64->n_namesz;
 			if (nthdr64->n_namesz % 4)
 			    ndata += (4 - nthdr64->n_namesz % 4);
-			vdebug(5,LOG_T_LUP,"found note desc '%s'\n",ndata);
+			vdebug(5,LA_DEBUG,LF_DFILE,"found note desc '%s'\n",ndata);
 			/* dig out the build ID */
 			if (nthdr64->n_type == NT_GNU_BUILD_ID) {
 			    buildid = strdup(ndata);
@@ -260,12 +260,12 @@ int elf_get_arch_info(Elf *elf,int *wordsize,int *endian) {
     if ((uint8_t)eident[EI_CLASS] == ELFCLASS32) {
 	if (wordsize)
 	    *wordsize = 4;
-	vdebug(3,LOG_D_ELF,"32-bit\n");
+	vdebug(3,LA_DEBUG,LF_ELF,"32-bit\n");
     }
     else if ((uint8_t)eident[EI_CLASS] == ELFCLASS64) {
 	if (wordsize) 
 	    *wordsize = 8;
-	vdebug(3,LOG_D_ELF,"64-bit\n");
+	vdebug(3,LA_DEBUG,LF_ELF,"64-bit\n");
     }
     else {
 	verror("unknown elf class %d; not 32/64 bit!\n",
@@ -276,12 +276,12 @@ int elf_get_arch_info(Elf *elf,int *wordsize,int *endian) {
     if ((uint8_t)eident[EI_DATA] == ELFDATA2LSB) {
 	if (endian)
 	    *endian = DATA_LITTLE_ENDIAN;
-	vdebug(3,LOG_T_LUP,"little endian\n");
+	vdebug(3,LA_DEBUG,LF_DFILE,"little endian\n");
     }
     else if ((uint8_t)eident[EI_DATA] == ELFDATA2MSB) {
 	if (endian)
 	    *endian = DATA_BIG_ENDIAN;
-	vdebug(3,LOG_T_LUP,"big endian\n");
+	vdebug(3,LA_DEBUG,LF_DFILE,"big endian\n");
     }
     else {
 	verror("unknown elf data %d; not big/little endian!\n",
@@ -316,7 +316,7 @@ int elf_is_dynamic_exe(Elf *elf) {
 	    name = elf_strptr(elf,shstrndx,shdr->sh_name);
 
 	    if (strcmp(name,".dynamic") == 0) {
-		vdebug(2,LOG_D_ELF,
+		vdebug(2,LA_DEBUG,LF_ELF,
 		       "found %s section (%d); ELF file is dynamic\n",
 		       name,shdr->sh_size);
 		return 1;
@@ -324,7 +324,7 @@ int elf_is_dynamic_exe(Elf *elf) {
 	}
     }
 
-    vdebug(2,LOG_D_ELF,"ELF file is static\n");
+    vdebug(2,LA_DEBUG,LF_ELF,"ELF file is static\n");
     return 0;
 }
 
@@ -393,7 +393,7 @@ int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 	    if (strcmp(name,".strtab") != 0) 
 		continue;
 
-	    vdebug(2,LOG_D_ELF,
+	    vdebug(2,LA_DEBUG,LF_ELF,
 		   "found .strtab section in ELF file %s\n",
 		   elf_filename);
 
@@ -440,7 +440,7 @@ int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 	if (strcmp(name,".symtab") != 0) 
 	    continue;
 
-	vdebug(2,LOG_D_ELF,"found .symtab section in ELF file %s\n",elf_filename);
+	vdebug(2,LA_DEBUG,LF_ELF,"found .symtab section in ELF file %s\n",elf_filename);
 
 	edata = elf_getdata(scn,NULL);
 	if (!edata || !edata->d_size || !edata->d_buf) {
@@ -452,7 +452,7 @@ int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 	nsyms = edata->d_size / (class == ELFCLASS32 ? sizeof (Elf32_Sym) \
 				                     : sizeof (Elf64_Sym));
 
-	vdebug(2,LOG_D_DWARF,".symtab section in ELF file %s has %d symbols\n",
+	vdebug(2,LA_DEBUG,LF_DWARF,".symtab section in ELF file %s has %d symbols\n",
 	       elf_filename,nsyms);
 
 	/* Load the symtab */
@@ -571,7 +571,7 @@ int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 		nextstart = start = CLRANGE_START(crd);
 		end = CLRANGE_END(crd);
 
-		vdebug(16,LOG_D_ELF,
+		vdebug(16,LA_DEBUG,LF_ELF,
 		       "checking end of ELF symbol %s (0x%"PRIxADDR","
 		       "0x%"PRIxADDR")\n",
 		       symbol_get_name(symbol),
@@ -621,7 +621,7 @@ int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 			goto lcontinue;
 		    }
 
-		    vdebug(2,LOG_D_ELF,
+		    vdebug(2,LA_DEBUG,LF_ELF,
 			   "updating 0-length GLOBAL symbol %s to"
 			   " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),start,CLRANGE_START(gcrd));
@@ -645,7 +645,7 @@ int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 		    /* Just take the first one! */
 		    gcrd = (struct clf_range_data *)array_list_item(tmp_ral,0);
 
-		    vdebug(2,LOG_D_ELF,
+		    vdebug(2,LA_DEBUG,LF_ELF,
 			   "updating 0-length symbol %s to 0x%"PRIxADDR","
 			   "0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),start,CLRANGE_START(gcrd));

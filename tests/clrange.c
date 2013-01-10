@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -82,7 +82,7 @@ int main(int argc,char **argv) {
     struct clf_range_data *crd;
 
     vmi_set_log_level(10);
-    vmi_set_log_flags(LOG_OTHER);
+    vmi_set_log_area_flags(LA_LIB,LF_CLRANGE);
 
     ADDRANGE(cl,0x00,0xff);
       ADDRANGE(cl,0x0d,0x10);

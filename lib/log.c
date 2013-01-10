@@ -1,5 +1,5 @@
 ;/*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -27,7 +27,9 @@
 
 static int vmi_log_level = -1;
 static int vmi_warn_level = -1;
-static log_flags_t vmi_log_flags = 0;
+static log_flags_t vmi_log_flags[32] = {
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+};
 
 void vmi_set_log_level(int level) {
     vmi_log_level = level;
@@ -37,93 +39,298 @@ void vmi_set_warn_level(int level) {
     vmi_warn_level = level;
 }
 
-void vmi_set_log_flags(log_flags_t flags) {
-    vmi_log_flags = flags;
+void vmi_set_log_area_flags(log_areas_t areas,log_flags_t flags) {
+    if (areas & LA_LIB)
+	vmi_log_flags[LAB_LIB] = flags;
+    if (areas & LA_DEBUG)
+	vmi_log_flags[LAB_DEBUG] = flags;
+    if (areas & LA_TARGET)
+	vmi_log_flags[LAB_TARGET] = flags;
+    if (areas & LA_PROBE)
+	vmi_log_flags[LAB_PROBE] = flags;
+    if (areas & LA_XML)
+	vmi_log_flags[LAB_XML] = flags;
+    if (areas & LA_USER)
+	vmi_log_flags[LAB_USER] = flags;
 }
 
-static char *log_flag_stringmap[] = {
-    "NONE", 
-    "OTHER", 
-    "D_DFILE", "D_SYMBOL", "D_SYMTAB", "D_LOC", "D_LOOKUP",
-        "D_DWARF", "D_DWARFATTR", "D_DWARFOPS", "D_OTHER",  "D_ELF",
-    "T_TARGET", "T_SPACE", "T_REGION", "T_LOOKUP", "T_LOC", "T_OTHER",
-        "T_SYMBOL", "T_LUP", "T_XV", "T_DISASM", "T_THREAD",
-    "P_PROBE", "P_PROBEPOINT", "P_ACTION",
-    "X_XML", "X_RPC",
-};
-
-static enum log_flag_bits log_flag_map[] = {
-    LOG_NONE,
-    LOG_OTHER,
-    LOG_D_DFILE, LOG_D_SYMBOL, LOG_D_SYMTAB, LOG_D_LOC, LOG_D_LOOKUP,
-        LOG_D_DWARF, LOG_D_DWARFATTR, LOG_D_DWARFOPS, LOG_D_OTHER, LOG_D_ELF, 
-    LOG_T_TARGET, LOG_T_SPACE, LOG_T_REGION, LOG_T_LOOKUP, LOG_T_LOC, 
-        LOG_T_OTHER, LOG_T_SYMBOL, LOG_T_LUP, LOG_T_XV, LOG_T_DISASM, 
-        LOG_T_THREAD,
-    LOG_P_PROBE, LOG_P_PROBEPOINT, LOG_P_ACTION, 
-    LOG_X_XML, LOG_X_RPC,
-};
-
-int vmi_log_get_flag_val(char *flag,log_flags_t *flagval) {
-    unsigned int i;
-
-    /* Check the LOG_*_ALL flags first. */
-    if (strcmp("D_ALL",flag) == 0) {
-	*flagval = LOG_D_ALL;
-	return 0;
-    }
-    else if (strcmp("T_ALL",flag) == 0) {
-	*flagval = LOG_T_ALL;
-	return 0;
-    }
-    else if (strcmp("P_ALL",flag) == 0) {
-	*flagval = LOG_P_ALL;
-	return 0;
-    }
-    else if (strcmp("X_ALL",flag) == 0) {
-	*flagval = LOG_X_ALL;
-	return 0;
-    }
-
-    for (i = 0; i < sizeof(log_flag_stringmap) / sizeof(char *); ++i) {
-	if (!strcmp(log_flag_stringmap[i],flag))
-	    break;
-    }
-
-    if (i < sizeof(log_flag_stringmap) / sizeof(char *)) {
-	*flagval = log_flag_map[i];
-	return 0;
-    }
-
-    verror("Unknown log flag string '%s'!\n",flag);
-    return -1;
+void vmi_add_log_area_flags(log_areas_t areas,log_flags_t flags) {
+    if (areas & LA_LIB)
+	vmi_log_flags[LAB_LIB] |= flags;
+    if (areas & LA_DEBUG)
+	vmi_log_flags[LAB_DEBUG] |= flags;
+    if (areas & LA_TARGET)
+	vmi_log_flags[LAB_TARGET] |= flags;
+    if (areas & LA_PROBE)
+	vmi_log_flags[LAB_PROBE] |= flags;
+    if (areas & LA_XML)
+	vmi_log_flags[LAB_XML] |= flags;
+    if (areas & LA_USER)
+	vmi_log_flags[LAB_USER] |= flags;
 }
 
-int vmi_log_get_flag_mask(char *flaglist,log_flags_t *flagmask) {
+int vmi_set_log_area_flaglist(char *flaglist,char *separator) {
     char *flag = NULL;
     char *saveptr = NULL;
-    log_flags_t retval = LOG_NONE;
-    log_flags_t tmp;
+    log_areas_t areas;
+    log_flags_t flags;
 
-    while ((flag = strtok_r(!saveptr ? flaglist : NULL,",",&saveptr))) {
-	if (vmi_log_get_flag_val(flag,&tmp))
+    if (!separator)
+	separator = ",";
+
+    while ((flag = strtok_r(!saveptr ? flaglist : NULL,separator,&saveptr))) {
+	if (vmi_log_get_flag_val(flag,&areas,&flags)) 
 	    return -1;
-	retval |= tmp;
+	else 
+	    vmi_set_log_area_flags(areas,flags);
     }
 
-    *flagmask = retval;
     return 0;
 }
 
-int vdebug_is_on(int level,log_flags_t flags) {
-    if (vmi_log_level < level || !(flags & vmi_log_flags))
-	return 0;
-    return 1;
+int vmi_add_log_area_flaglist(char *flaglist,char *separator) {
+    char *flag = NULL;
+    char *saveptr = NULL;
+    log_areas_t areas;
+    log_flags_t flags;
+
+    if (!separator)
+	separator = ",";
+
+    while ((flag = strtok_r(!saveptr ? flaglist : NULL,separator,&saveptr))) {
+	if (vmi_log_get_flag_val(flag,&areas,&flags)) 
+	    return -1;
+	else 
+	    vmi_add_log_area_flags(areas,flags);
+    }
+
+    return 0;
 }
 
-void _vmi_debug(int level,log_flags_t flags,char *format,...) {
+static char *log_flag_stringmap_none[] = { "NONE",NULL };
+static char *log_flag_stringmap_lib[] = {
+    "CLMATCH","CLRANGE","RFILTER","WAITPIPE","EVLOOP","MONITOR",NULL
+};
+static char *log_flag_stringmap_debug[] = { 
+    "DFILE","SYMBOL","SYMTAB","LOC","LOOKUP","DWARF","DWARFATTR",
+    "DWARFOPS","OTHER", "ELF",NULL
+};
+static char *log_flag_stringmap_target[] = { 
+    "TARGET","SPACE","REGION","LOOKUP","LOC","OTHER","SYMBOL",
+    "LUP","XV","DISASM","THREAD",NULL
+};
+static char *log_flag_stringmap_probe[] = { 
+    "PROBE","PROBEPOINT","ACTION",NULL
+};
+static char *log_flag_stringmap_xml[] = { 
+    "XML","RPC","SVC","PROXYREQ",NULL
+};
+
+static char **log_flag_stringmap[32] = {
+    log_flag_stringmap_none,
+    log_flag_stringmap_lib,
+    log_flag_stringmap_debug,
+    log_flag_stringmap_target,
+    log_flag_stringmap_probe,
+    log_flag_stringmap_xml,
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+    /* Will get set to an array of user flags if they call
+     * vmi_set_user_area_flags().
+     */
+    NULL,
+};
+
+void vmi_set_user_area_flags(char **names) {
+    log_flag_stringmap[LAB_USER] = names;
+}
+
+int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
+    unsigned int i;
+    int found;
+    int _len;
+    char *_dup = NULL;
+    char *_area;
+    char *_flag;
+    char **_rflag;
+    char *_idx;
+    char **subarray = NULL;
+    log_area_bits_t areabits = 0;
+
+    /* Check the LOG_*_ALL flags first. */
+    if (strcmp("ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_ALL;
+	if (areaval)
+	    *areaval = LA_ALL;
+	return 0;
+    }
+    else if (strcmp("D_ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_D_ALL;
+	if (areaval)
+	    *areaval = LA_DEBUG;
+	return 0;
+    }
+    else if (strcmp("T_ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_T_ALL;
+	if (areaval)
+	    *areaval = LA_TARGET;
+	return 0;
+    }
+    else if (strcmp("P_ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_P_ALL;
+	if (areaval)
+	    *areaval = LA_PROBE;
+	return 0;
+    }
+    else if (strcmp("X_ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_X_ALL;
+	if (areaval)
+	    *areaval = LA_XML;
+	return 0;
+    }
+    else if (strcmp("U_ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_U_ALL;
+	if (areaval)
+	    *areaval = LA_USER;
+	return 0;
+    }
+
+    if ((_idx = index(flag,'_'))) {
+	_dup = strdup(flag);
+	_len = strlen(_dup);
+
+	*_idx = '\0';
+	_area = _dup;
+	_flag = _idx + 1;
+
+	if (*_area == 'L') 
+	    areabits = LAB_LIB;
+	else if (*_area == 'D') 
+	    areabits = LAB_DEBUG;
+	else if (*_area == 'T') 
+	    areabits = LAB_TARGET;
+	else if (*_area == 'P') 
+	    areabits = LAB_PROBE;
+	else if (*_area == 'X') 
+	    areabits = LAB_XML;
+	else if (*_area == 'U') 
+	    areabits = LAB_USER;
+	else {
+	    verror("bad flag '%s': no such area prefix '%s'!\n",flag,_area);
+	    return -1;
+	}
+
+	subarray = log_flag_stringmap[areabits];
+
+	if (!subarray) {
+	    verror("bad flag '%s': area '%s' has no flags!\n",flag,_area);
+	    return -1;
+	}
+
+	i = 0;
+	found = 0;
+	while ((_rflag = subarray++) && *_rflag) {
+	    if (strcmp(_flag,*_rflag) == 0) {
+		found = 1;
+		break;
+	    }
+	    ++i;
+	}
+
+	if (!found) {
+	    verror("area '%s' has no flag '%s'!\n",_area,_flag);
+	    free(_dup);
+	    return -1;
+	}
+	else {
+	    if (areaval)
+		*areaval = 1 << areabits;
+	    if (flagval)
+		*flagval = 1 << i;
+	    free(_dup);
+	    return 0;
+	}
+    }
+    else {
+	/* Assume it is a user-specific flag. */
+	areabits = LAB_USER;
+	subarray = log_flag_stringmap[areabits];
+	_area = "U";
+	_flag = flag;
+
+	i = 0;
+	found = 0;
+	while ((_rflag = ++subarray) && *_rflag) {
+	    if (strcmp(_flag,*_rflag) == 0) {
+		found = 1;
+		break;
+	    }
+	    ++i;
+	}
+
+	if (!found) {
+	    verror("area '%s' has no flag '%s'!\n",_area,_flag);
+	    return -1;
+	}
+	else {
+	    if (areaval)
+		*areaval = 1 << areabits;
+	    if (flagval)
+		*flagval = 1 << i;
+	    return 0;
+	}
+    }
+}
+
+int vdebug_is_on(int level,log_areas_t areas,log_flags_t flags) {
+    if (vmi_log_level < level)
+	return 0;
+    else {
+	if (areas & LA_LIB && vmi_log_flags[LAB_LIB] & flags)
+	    return 1;
+	else if (areas & LA_DEBUG && vmi_log_flags[LAB_DEBUG] & flags)
+	    return 1;
+	else if (areas & LA_TARGET && vmi_log_flags[LAB_TARGET] & flags)
+	    return 1;
+	else if (areas & LA_PROBE && vmi_log_flags[LAB_PROBE] & flags)
+	    return 1;
+	else if (areas & LA_XML && vmi_log_flags[LAB_XML] & flags)
+	    return 1;
+	else if (areas & LA_USER && vmi_log_flags[LAB_USER] & flags)
+	    return 1;
+    }
+    return 0;
+}
+
+int vwarn_is_on(int level,log_areas_t areas,log_flags_t flags) {
+    if (vmi_warn_level < level)
+	return 0;
+    else {
+	if (areas & LA_LIB && vmi_log_flags[LAB_LIB] & flags)
+	    return 1;
+	else if (areas & LA_DEBUG && vmi_log_flags[LAB_DEBUG] & flags)
+	    return 1;
+	else if (areas & LA_TARGET && vmi_log_flags[LAB_TARGET] & flags)
+	    return 1;
+	else if (areas & LA_PROBE && vmi_log_flags[LAB_PROBE] & flags)
+	    return 1;
+	else if (areas & LA_XML && vmi_log_flags[LAB_XML] & flags)
+	    return 1;
+	else if (areas & LA_USER && vmi_log_flags[LAB_USER] & flags)
+	    return 1;
+    }
+    return 0;
+}
+
+void _vmi_debug(int level,log_areas_t areas,log_flags_t flags,char *format,...) {
     va_list args;
-    if (vmi_log_level < level || !(flags & vmi_log_flags))
+    if (!vdebug_is_on(level,areas,flags))
 	return;
     va_start(args, format);
     vfprintf(stderr, format, args);
@@ -131,9 +338,9 @@ void _vmi_debug(int level,log_flags_t flags,char *format,...) {
     va_end(args);
 }
 
-void _vmi_warn(int level,log_flags_t flags,char *format,...) {
+void _vmi_warn(int level,log_areas_t areas,log_flags_t flags,char *format,...) {
     va_list args;
-    if (vmi_warn_level < level || !(flags & vmi_log_flags))
+    if (!vwarn_is_on(level,areas,flags))
 	return;
     va_start(args, format);
     vfprintf(stderr, format, args);
@@ -159,8 +366,6 @@ struct argp log_argp = { log_argp_opts,log_argp_parse_opt,
 			 NULL,NULL,NULL,NULL,NULL };
 
 error_t log_argp_parse_opt(int key,char *arg,struct argp_state *state) {
-    log_flags_t flags;
-
     switch (key) {
     case ARGP_KEY_ARG:
     case ARGP_KEY_ARGS:
@@ -186,11 +391,10 @@ error_t log_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    ++vmi_warn_level;
 	break;
     case 'l':
-	if (vmi_log_get_flag_mask(arg,&flags)) {
+	if (vmi_add_log_area_flaglist(arg,NULL)) {
 	    verror("bad log level flag in '%s'!\n",arg);
 	    return EINVAL;
 	}
-	vmi_log_flags = flags;
 	break;
 
     default:

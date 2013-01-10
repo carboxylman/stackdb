@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -172,7 +172,7 @@ static inline struct rfilter *rfilter_create_parse(char *fstr) {
     rf = rfilter_create(pol);
 
     while ((token = strtok_r((!token)?fstr:NULL,";",&saveptr))) {
-	vdebug(7,LOG_D_DFILE,"token = '%s'\n",token);
+	vdebug(7,LA_LIB,LF_RFILTER,"token = '%s'\n",token);
 
 	if ((*token == '1' || *token == 'A' || *token == 'a') 
 	    && *(token+1) == ':') {

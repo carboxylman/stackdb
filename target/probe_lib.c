@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -139,7 +139,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	    goto errout;
 	}
 
-	vdebug(3,LOG_P_PROBE,
+	vdebug(3,LA_PROBE,LF_PROBE,
 	       "registered entry addr probe at %s%+d\n",
 	       bsymbol->lsymbol->symbol->name,(int)(probeaddr - start));
     }
@@ -234,7 +234,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	    goto errout;
 	}
 
-	vdebug(3,LOG_P_PROBE,
+	vdebug(3,LA_PROBE,LF_PROBE,
 	       "registered return addr probe at %s%+d\n",
 	       bsymbol->lsymbol->symbol->name,(int)idata->offset);
     }
@@ -415,7 +415,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	    goto errout;
 	}
 
-	vdebug(3,LOG_P_PROBE,
+	vdebug(3,LA_PROBE,LF_PROBE,
 	       "registered %s probe at %s%+d\n",
 	       disasm_get_inst_name(idata->type),
 	       bsymbol->lsymbol->symbol->name,(int)idata->offset);
@@ -487,7 +487,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	    goto errout;
 	}
 
-	vdebug(3,LOG_P_PROBE,"registered %s probe at 0x%"PRIxADDR"\n",
+	vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe at 0x%"PRIxADDR"\n",
 	       pcprobe->name,probe_addr(pcprobe));
 
 	if (!probe_register_source(probe,pcprobe)) {
@@ -498,7 +498,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	    goto errout;
 	}
 
-	vdebug(3,LOG_P_PROBE,"registered %s probe on source %s\n",
+	vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe on source %s\n",
 	       probe->name,pcprobe->name);
     }
 
@@ -531,7 +531,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	    probe_rename(probe,buf);
 	    free(buf);
 
-	    vdebug(3,LOG_P_PROBE,"registered %s probe at 0x%"PRIxADDR"\n",
+	    vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe at 0x%"PRIxADDR"\n",
 		   cprobe->name,probe_addr(cprobe));
 
 	    if (!probe_register_source(probe,cprobe)) {
@@ -541,7 +541,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 		goto errout;
 	    }
 
-	    vdebug(3,LOG_P_PROBE,"registered %s probe on source %s\n",
+	    vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe on source %s\n",
 		   probe->name,cprobe->name);
 
 	    array_list_append(cprobes,cprobe);
