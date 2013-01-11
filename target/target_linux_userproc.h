@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -21,6 +21,8 @@
 
 #include <sys/ptrace.h>
 #include <sys/user.h>
+#include <glib.h>
+
 #include "target_api.h"
 
 /* linux userproc target ops */
@@ -95,6 +97,17 @@ struct linux_userproc_state {
     int32_t ptrace_opts;
     int32_t ptrace_opts_new;
     enum __ptrace_request ptrace_type;
+
+    /*
+     * If a newly-cloned thread signals its initial ptrace SIGSTOP, and
+     * we get that signal before we get notified about the clone event
+     * via SIGCHLD, don't die on error IF the thread exists in /proc.
+     *
+     * We also have to save its waitpid status here so we can know if we
+     * saw it when we actually DO get the SIGCHLD and add the new thread
+     * -- so we don't try to wait for the SIGSTOP again.
+     */
+    GHashTable *new_racy_threads;
 };
 
 #endif /* __TARGET_LINUX_USERPROC_H__ */

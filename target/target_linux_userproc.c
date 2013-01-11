@@ -1104,6 +1104,8 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     struct target_thread *tthread;
     int pid;
     struct linux_userproc_thread_state *tstate;
+    gpointer value;
+    int racy_status;
 
     lstate = (struct linux_userproc_state *)target->state;
 
@@ -1129,12 +1131,6 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
 	   pid,parent,child);
 
     /*
-     * Don't wait for the child to get the PTRACE-sent SIGSTOP; just
-     * note that a fake control signal is going to hit the thread; then
-     * the monitor/poll stuff will wait for it and process it correctly.
-     */
-
-    /*
      * Create the thread.
      */
     tstate = (struct linux_userproc_thread_state *)calloc(1,sizeof(*tstate));
@@ -1142,11 +1138,61 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     tstate->last_status = 0;
     tstate->last_signo = 0;
     /*
-     * ptrace is going to start the new thread with sigstop, which we
-     * don't want to deliver!!
+     * Don't wait for the child to get the PTRACE-sent SIGSTOP; just
+     * note that a fake control signal is going to hit the thread; then
+     * the monitor/poll stuff will wait for it and process it
+     * correctly.  We don't want to deliver that signal.
+     *
+     * But, if the thread signaled its SIGSTOP before we were notified
+     * about the clone() via SIGCHLD, that was recorded in
+     * lstate->new_racy_threads; in this case, we do not want to wait to
+     * recv the SIGSTOP!
      */
-    tstate->ctl_sig_sent = 1;
-    tstate->ctl_sig_recv = 0;
+    if (g_hash_table_lookup_extended(lstate->new_racy_threads,
+				     (gpointer)(uintptr_t)child,NULL,&value)) {
+	racy_status = (int)(uintptr_t)value;
+
+	g_hash_table_remove(lstate->new_racy_threads,(gpointer)(uintptr_t)child);
+
+	if (WIFSTOPPED(racy_status) && WSTOPSIG(racy_status) == SIGSTOP) {
+	    vdebug(5,LA_TARGET,LF_LUP,"new racy thread %d already hit sigstop\n",
+		   child);
+	}
+	else {
+	    vwarn("new racy thread %d had status %d (but not SIGSTOP);"
+		  " assuming it is stopped though!\n",child,racy_status);
+	}
+
+	tstate->ctl_sig_sent = 0;
+	tstate->ctl_sig_recv = 0;
+
+	/*
+	 * Don't reinject this signal!
+	 */
+	tstate->last_signo = -1;
+
+	/* Set the initial PTRACE opts. */
+	lstate->ptrace_opts_new = lstate->ptrace_opts = INITIAL_PTRACE_OPTS;
+	errno = 0;
+	if (ptrace(PTRACE_SETOPTIONS,pid,NULL,INITIAL_PTRACE_OPTS) < 0) {
+	    vwarn("ptrace setoptions failed: %s\n",strerror(errno));
+	}
+
+	/* Restart just this thread. */
+	if (ptrace(lstate->ptrace_type,child,NULL,NULL) < 0) {
+	    verror("ptrace restart of tid %"PRIiTID" failed: %s\n",
+		   child,strerror(errno));
+	    free(tstate);
+	    return 1;
+	}
+	//kill(child,SIGCONT);
+
+	vdebug(5,LA_TARGET,LF_LUP,"restarted new racy thread %d\n",child);
+    }
+    else {
+	tstate->ctl_sig_sent = 1;
+	tstate->ctl_sig_recv = 0;
+    }
     tstate->ctl_sig_pause_all = 0;
 
     tthread = target_create_thread(target,child,tstate);
@@ -1757,6 +1803,8 @@ static int linux_userproc_init(struct target *target) {
     lstate->attached = 0;
     lstate->ptrace_opts_new = lstate->ptrace_opts = INITIAL_PTRACE_OPTS;
     lstate->ptrace_type = PTRACE_CONT;
+
+    lstate->new_racy_threads = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     /* Create the default thread. */
     tstate = (struct linux_userproc_thread_state *)calloc(1,sizeof(*tstate));
@@ -2760,6 +2808,9 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	if (__tid_exists(pid,tid)) {
 	    vdebug(5,LA_TARGET,LF_LUP,
 		   "thread %d does not YET exist; might be new!\n",tid);
+	    g_hash_table_insert(lstate->new_racy_threads,
+				(gpointer)(uintptr_t)tid,
+				(gpointer)(uintptr_t)pstatus);
 	    goto out_again;
 	}
 	verror("thread %"PRIiTID" does not exist!\n",tid);
