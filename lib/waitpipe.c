@@ -219,7 +219,7 @@ int waitpipe_get(int pid) {
     if (readfd) 
 	return readfd;
     else {
-	verror("cannot find readfd for pid %d\n",pid);
+	vdebug(9,LA_LIB,LF_WAITPIPE,"cannot find readfd for pid %d\n",pid);
 	errno = ESRCH;
 	return -1;
     }
@@ -239,7 +239,7 @@ int waitpipe_get_pid(int readfd) {
     if (pid) 
 	return pid;
     else {
-	verror("cannot find pid for readfd %d\n",readfd);
+	vdebug(9,LA_LIB,LF_WAITPIPE,"cannot find pid for readfd %d\n",readfd);
 	errno = ESRCH;
 	return -1;
     }
