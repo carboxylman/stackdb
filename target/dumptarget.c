@@ -865,6 +865,8 @@ int main(int argc,char **argv) {
     /* Now that we have loaded any symbols we might need, process the
      * rest of our args.
      */
+    style = tspec->style;
+
     if (opts.argc) {
 	len = opts.argc;
 	if (opts.raw) {
