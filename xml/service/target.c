@@ -69,19 +69,15 @@ int main(int argc, char **argv) {
     int port = 0;
     SOAP_SOCKET m, s;
     char ch;
-    int debug = 0;
-    int warn = 0;
     int doelfsymtab = 1;
 
     while ((ch = getopt(argc, argv, "dwl:Ep:")) != -1) {
 	switch(ch) {
 	case 'd':
-	    ++debug;
-	    vmi_set_log_level(debug);
+	    vmi_inc_log_level();
 	    break;
 	case 'w':
-	    ++warn;
-	    vmi_set_warn_level(warn);
+	    vmi_inc_warn_level();
 	    break;
 	case 'l':
 	    if (vmi_set_log_area_flaglist(optarg,NULL)) {
