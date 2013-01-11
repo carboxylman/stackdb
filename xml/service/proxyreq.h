@@ -284,12 +284,12 @@ int proxyreq_send_response(struct proxyreq *pr);
 	    pthread_mutex_unlock(mutex);				\
 	    return SOAP_ERR;						\
 	}								\
-	if ((_rc = proxyreq_send_request(_pr))) {			\
-	    verror("proxyreq_send_request error %d\n",_rc);		\
-	    pthread_mutex_unlock(mutex);				\
-	    return SOAP_ERR;						\
-	}								\
-	pthread_mutex_unlock(mutex);					\
+	/*								\
+	 * WARNING: the thing that handles SOAP_STOP must		\
+	 *   1) call proxyreq_send_request; and				\
+	 *   2) unlock the mutex!					\
+	 */								\
+	//pthread_mutex_unlock(mutex);					\
 	return SOAP_STOP;						\
     }									\
     else if (_pr->state == PROXYREQ_STATE_PROCESSING) {			\
@@ -314,5 +314,15 @@ int proxyreq_send_response(struct proxyreq *pr);
 	return SOAP_ERR;						\
     }									\
 }
+
+#define PROXY_REQUEST_LOCKED_HANDLE_STOP(soap,mutex,retval) {		\
+    struct proxyreq *_pr;						\
+    _pr = (struct proxyreq *)(soap)->user;				\
+    (soap)->error = SOAP_OK;						\
+    if ((retval = proxyreq_send_request(_pr))) {			\
+	verror("proxyreq_send_request error %d\n",retval);		\
+    }									\
+    pthread_mutex_unlock(mutex);					\
+}									\
 
 #endif /* __PROXY_H__ */

@@ -177,12 +177,24 @@ int target_rpc_handle_request(struct soap *soap) {
      */
     pr = proxyreq_create(soap);
 
-    soap_serve(soap);
+    retval = soap_serve(soap);
 
-    if (soap->error == SOAP_STOP) {
+    if (retval == SOAP_STOP) {
 	vdebug(8,LA_XML,LF_RPC,"proxying request from %d.%d.%d.%d\n",
 	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+
+	PROXY_REQUEST_LOCKED_HANDLE_STOP(soap,&target_rpc_mutex,retval);
+
+	if (retval) {
+	    verror("could not handle SOAP_STOP by proxing request!\n");
+	    // XXX: need to send SOAP error!;
+	    proxyreq_free(pr);
+	    soap_destroy(soap);
+	    soap_end(soap);
+	    soap_done(soap);
+	    free(soap);
+	}
 
 	/*
 	 * Don't destroy the soap context; the monitor thread will
