@@ -204,9 +204,17 @@ typedef enum log_flags_ {
  */
 void vmi_set_log_level(int level);
 /*
+ * Increase the debug log level by 1.
+ */
+void vmi_inc_log_level(void);
+/*
  * Set the warn log level.
  */
 void vmi_set_warn_level(int level);
+/*
+ * Increase the warn level by 1.
+ */
+void vmi_inc_warn_level(void);
 /*
  * Reinitialize the flags for one or more areas.
  */

@@ -35,8 +35,16 @@ void vmi_set_log_level(int level) {
     vmi_log_level = level;
 }
 
+void vmi_inc_log_level(void) {
+    ++vmi_log_level;
+}
+
 void vmi_set_warn_level(int level) {
     vmi_warn_level = level;
+}
+
+void vmi_inc_warn_level(void) {
+    ++vmi_warn_level;
 }
 
 void vmi_set_log_area_flags(log_areas_t areas,log_flags_t flags) {
