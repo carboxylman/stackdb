@@ -1055,6 +1055,13 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     }
     */
 
+    /* Set the initial PTRACE opts. */
+    lstate->ptrace_opts_new = lstate->ptrace_opts = INITIAL_PTRACE_OPTS;
+    errno = 0;
+    if (ptrace(PTRACE_SETOPTIONS,pid,NULL,lstate->ptrace_opts) < 0) {
+	vwarn("ptrace setoptions failed: %s\n",strerror(errno));
+    }
+
     /* Clear the status bits right now. */
     errno = 0;
     if (ptrace(PTRACE_POKEUSER,pid,offsetof(struct user,u_debugreg[6]),0)) {
@@ -1079,13 +1086,24 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     return NULL;
 }
 
+static int __tid_exists(int pid,tid_t tid) {
+    char buf[256];
+    struct stat sbuf;
+
+    snprintf(buf,256,"/proc/%d/task/%d",pid,tid);
+    if (stat(buf,&sbuf)) {
+	errno = EINVAL;
+	return 0;
+    }
+
+    return 1;
+}
+
 int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child) {
     struct linux_userproc_state *lstate;
     struct target_thread *tthread;
-    char buf[256];
     int pid;
     struct linux_userproc_thread_state *tstate;
-    struct stat sbuf;
 
     lstate = (struct linux_userproc_state *)target->state;
 
@@ -1101,16 +1119,14 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
 
     pid = lstate->pid;
 
-    vdebug(5,LA_TARGET,LF_LUP,
-	   "pid %d parent thread %"PRIiTID" child thread %"PRIiTID"\n",
-	   pid,parent,child);
-
-    snprintf(buf,256,"/proc/%d/task/%d",pid,child);
-    if (stat(buf,&sbuf)) {
-	errno = EINVAL;
+    if (!__tid_exists(pid,child)) {
 	verror("thread %d in pid %d does not exist!\n",child,pid);
 	return 1;
     }
+
+    vdebug(5,LA_TARGET,LF_LUP,
+	   "pid %d parent thread %"PRIiTID" child thread %"PRIiTID"\n",
+	   pid,parent,child);
 
     /*
      * Don't wait for the child to get the PTRACE-sent SIGSTOP; just
@@ -1965,7 +1981,8 @@ static int linux_userproc_detach(struct target *target) {
      * in a basic way -- like if it's stopped at a breakpoint, reset
      * EIP and replace orig code -- don't handle it more.
      */
-    if (__poll_and_handle_detaching(target,target->global_thread) == 0) {
+    if (target->global_thread 
+	&& __poll_and_handle_detaching(target,target->global_thread) == 0) {
 	/* 
 	 * Sleep the child first if it's still running; otherwise
 	 * we'll end up sending it a trace trap, which will kill it.
@@ -2740,6 +2757,11 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
     lstate = (struct linux_userproc_state *)(target->state);
     pid = lstate->pid;
     if (!(tthread = target_lookup_thread(target,tid))) {
+	if (__tid_exists(pid,tid)) {
+	    vdebug(5,LA_TARGET,LF_LUP,
+		   "thread %d does not YET exist; might be new!\n",tid);
+	    goto out_again;
+	}
 	verror("thread %"PRIiTID" does not exist!\n",tid);
 	errno = EINVAL;
 	goto out_err;
