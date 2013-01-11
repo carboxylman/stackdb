@@ -82,6 +82,9 @@ void target_fini(void) {
 error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state);
 
 struct argp_option target_argp_opts[] = {
+    { "debug",'d',"LEVEL",0,"Set/increase the debugging level.",-3 },
+    { "log-flags",'l',"FLAG,FLAG,...",0,"Set the debugging flags",-3 },
+    { "warn",'w',"LEVEL",0,"Set/increase the warning level.",-3 },
     { "start-paused",'P',0,0,"Leave target paused after launch.",-3 },
     { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 },
     { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 },
@@ -145,7 +148,8 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
     };
 
     if (!target_types) {
-	return EINVAL;
+	errno = EINVAL;
+	return NULL;
     }
 
     memset(&tstate,0,sizeof(tstate));
@@ -245,6 +249,31 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    return EINVAL;
 	}
 	return 0;
+
+    case 'd':
+	if (arg) {
+	    vmi_inc_log_level();
+	    while (*arg == 'd') {
+		vmi_inc_log_level();
+		arg = &arg[1];
+	    }
+	}
+	else
+	    vmi_inc_log_level();
+	break;
+    case 'w':
+	if (arg)
+	    vmi_set_warn_level(atoi(arg));
+	else
+	    vmi_inc_warn_level();
+	break;
+    case 'l':
+	if (vmi_add_log_area_flaglist(arg,NULL)) {
+	    verror("bad log level flag in '%s'!\n",arg);
+	    return EINVAL;
+	}
+	break;
+
     case 's':
 	spec->style = PROBEPOINT_SW;
 	break;
