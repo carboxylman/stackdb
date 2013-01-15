@@ -67,6 +67,7 @@ struct linux_userproc_spec {
 struct linux_userproc_thread_state {
     int8_t ctl_sig_sent:1, /* If set, don't reinject a signal on restart. */
 	   ctl_sig_recv:1, /* If set, don't reinject a signal on restart. */
+	   ctl_sig_synch:1,/* If set, don't handle any signals in evloop. */
 	   ctl_sig_pause_all:1;
     int last_status;
     int last_signo;

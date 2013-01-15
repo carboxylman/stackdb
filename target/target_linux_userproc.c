@@ -2552,12 +2552,21 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 
 	tstate = (struct linux_userproc_thread_state *)tthread->state;
 
+	tstate->ctl_sig_sent = 1;
+	/* If we have an evloop attached, we might get interrupted
+	 * before the synchronous waitpid() below is run.
+	 *
+	 * Of course, this is only an issue for multithread uses of this
+	 * library, and we technically would have a race by setting the
+	 * signal state bits like we do here :).
+	 */
+	if (!nowait) 
+	    tstate->ctl_sig_synch = 1;
 	if (kill(tthread->tid,SIGSTOP) < 0) {
 	    verror("kill(%d,SIGSTOP): %s\n",tthread->tid,strerror(errno));
 	    --rc;
 	    continue;
 	}
-	tstate->ctl_sig_sent = 1;
 
 	if (nowait) {
 	    vdebug(3,LA_TARGET,LF_LUP,"not waiting for pause to hit tid %d\n",
@@ -2580,6 +2589,7 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 	vdebug(3,LA_TARGET,LF_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
 	tthread->status = THREAD_STATUS_PAUSED;
 	tstate->ctl_sig_sent = 0;
+	tstate->ctl_sig_synch = 0;
     }
 
     return rc;
@@ -3128,6 +3138,7 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
     int again = 0;
     struct target *target = (struct target *)state;
     struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
 
     if ((tid = waitpipe_get_pid(readfd)) < 0) {
 	verror("could not find thread tid for readfd %d!\n",readfd);
@@ -3144,6 +3155,16 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
 	verror("cound not find thread %d!\n",tid);
 	errno = ESRCH;
 	return EVLOOP_HRET_BADERROR;
+    }
+
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+    if (tstate->ctl_sig_sent && tstate->ctl_sig_synch) {
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "synchronous ctl sig sent to tid %d; not calling waitpid; ignoring"
+	       " (probable multithread bug!)\n",
+	       tid);
+	return EVLOOP_HRET_SUCCESS;
     }
 
     /* Need to waitpid(tid) to grab status, then can call handle_internal(). */
