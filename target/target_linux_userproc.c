@@ -2783,7 +2783,7 @@ static int linux_userproc_resume(struct target *target) {
     return 0;
 }
 
-static target_status_t linux_userproc_handle_internal(struct target *target,
+static thread_status_t linux_userproc_handle_internal(struct target *target,
 						      tid_t tid,
 						      int pstatus,int *again) {
     struct linux_userproc_state *lstate;
@@ -2868,11 +2868,12 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	    tstate->last_signo = -1;
 	}
 	else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
-	    vdebug(5,LA_TARGET,LF_LUP,"target %d exiting (%d)! detaching now.\n",
-		   pid,tstate->last_status);
+	    vdebug(5,LA_TARGET,LF_LUP,
+		   "target %d (via tid %d) exiting (%d)! detaching now.\n",
+		   pid,tid,tstate->last_status);
 	    tstate->last_signo = -1;
 	    linux_userproc_detach(target);
-	    return TSTATUS_DONE;
+	    return THREAD_STATUS_DONE;
 	}
 	else if (tstate->last_status == SIGTRAP) {
 	    /* Don't deliver debug traps! */
@@ -2909,7 +2910,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	    if (errno) {
 		vwarn("could not read current val of status debug reg;"
 		      " don't know which handler to call; fatal!\n");
-		return TSTATUS_ERROR;
+		return THREAD_STATUS_ERROR;
 	    }
 
 	    /*
@@ -2935,7 +2936,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 			       offsetof(struct user,u_debugreg[dreg]),NULL );
 		if (errno) {
 		    verror("could not read current val of debug reg %d after up status!\n",dreg);
-		    return TSTATUS_ERROR;
+		    return THREAD_STATUS_ERROR;
 		}
 
 		vdebug(4,LA_TARGET,LF_LUP,
@@ -2947,7 +2948,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		if (errno) {
 		    verror("could not read EIP while finding probepoint: %s\n",
 			   strerror(errno));
-		    return TSTATUS_ERROR;
+		    return THREAD_STATUS_ERROR;
 		}
 
 		if (tstate->dr[0] == (ptrace_reg_t)ipval)
@@ -2994,12 +2995,12 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		    verror("found hw breakpoint 0x%"PRIxADDR
 			   " in debug reg %d, BUT no probepoint!\n",
 			   ipval,dreg);
-		    return TSTATUS_ERROR;
+		    return THREAD_STATUS_ERROR;
 		}
 
 		if (target->bp_handler(target,tthread,dpp,cdr & 0x4000)
 		    != RESULT_SUCCESS)
-		    return TSTATUS_ERROR;
+		    return THREAD_STATUS_ERROR;
 		goto out_again;
 	    }
 	    /*
@@ -3023,13 +3024,13 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		if (tthread->tpc) {
 		    if (target->ss_handler(target,tthread,tthread->tpc->probepoint)
 			!= RESULT_SUCCESS)
-			return TSTATUS_ERROR;
+			return THREAD_STATUS_ERROR;
 		    goto out_again;
 		}
 		else {
 		    if (target->ss_handler(target,tthread,NULL)
 			!= RESULT_SUCCESS)
-			return TSTATUS_ERROR;
+			return THREAD_STATUS_ERROR;
 		    goto out_again;
 		}
 	    }
@@ -3039,7 +3040,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
 		if (target->bp_handler(target,tthread,dpp,cdr & 0x4000)
 		    != RESULT_SUCCESS)
-		    return TSTATUS_ERROR;
+		    return THREAD_STATUS_ERROR;
 		goto out_again;
 	    }
 	    else {
@@ -3083,7 +3084,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 		       tid,tstate->last_status);
 	}
 
-	return TSTATUS_PAUSED;
+	return THREAD_STATUS_PAUSED;
     }
     else if (WIFCONTINUED(pstatus)) {
 	tstate->last_signo = -1;
@@ -3095,16 +3096,16 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
 	/* XXX: is error good enough?  The pid is gone; we should
 	 * probably dump this target.
 	 */
-	return TSTATUS_DONE;
+	return THREAD_STATUS_DONE;
     }
     else {
 	vwarn("unexpected child process status event: %08x; bailing!\n",
 	      pstatus);
-	return TSTATUS_ERROR;
+	return THREAD_STATUS_ERROR;
     }
 
  out_err:
-    return TSTATUS_ERROR;
+    return THREAD_STATUS_ERROR;
 
  out_again:
     /*
@@ -3117,7 +3118,7 @@ static target_status_t linux_userproc_handle_internal(struct target *target,
     target_resume(target);
     if (again)
 	*again = 1;
-    return TSTATUS_RUNNING;
+    return THREAD_STATUS_RUNNING;
 }
 
 int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
@@ -3131,13 +3132,18 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
     if ((tid = waitpipe_get_pid(readfd)) < 0) {
 	verror("could not find thread tid for readfd %d!\n",readfd);
 	errno = ESRCH;
-	return TSTATUS_UNKNOWN;
+	return EVLOOP_HRET_BADERROR;
+    }
+
+    if ((waitpipe_drain(tid)) < 0) {
+	verror("waitpipe_drain: %s\n",strerror(errno));
+	return EVLOOP_HRET_BADERROR;
     }
 
     if (!(tthread = target_lookup_thread(target,tid))) {
 	verror("cound not find thread %d!\n",tid);
 	errno = ESRCH;
-	return TSTATUS_UNKNOWN;
+	return EVLOOP_HRET_BADERROR;
     }
 
     /* Need to waitpid(tid) to grab status, then can call handle_internal(). */
@@ -3146,10 +3152,16 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
     if (retval < 0) {
 	if (errno == ECHILD || errno == EINVAL) {
 	    verror("waitpid(%"PRIiTID"): %s\n",tid,strerror(errno));
-	    return TSTATUS_ERROR;
+	    return EVLOOP_HRET_ERROR;
 	}
 	else
 	    goto again;
+    }
+    else if (retval == 0) {
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "tid %"PRIiTID" running; waitpid has nothing to report; ignoring!\n",
+	       tid);
+	return EVLOOP_HRET_SUCCESS;
     }
 
     vdebug(5,LA_TARGET,LF_LUP,
@@ -3161,9 +3173,18 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
      */
     retval = linux_userproc_handle_internal(target,tid,status,&again);
 
-    if (retval == TSTATUS_ERROR || retval == TSTATUS_UNKNOWN) {
+    if (THREAD_SPECIFIC_STATUS(retval)) {
+	verror("thread-specific status %d tid %d; bad!\n",retval,tid);
+	return EVLOOP_HRET_BADERROR;
+    }
+    else if (retval == TSTATUS_ERROR) {
 	/* invoke user error handler... ? */
-	verror("unexpected error/unknown on thread %d; bad!\n",tid);
+	verror("unexpected error on thread %d; bad!\n",tid);
+	return EVLOOP_HRET_ERROR;
+    }
+    else if (retval == TSTATUS_UNKNOWN) {
+	/* invoke user error handler... ? */
+	verror("unexpected unknown on thread %d; bad!\n",tid);
 	return EVLOOP_HRET_ERROR;
     }
     else if (retval == TSTATUS_RUNNING) {
@@ -3173,7 +3194,8 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
     else if (retval == TSTATUS_DONE) {
 	/* remove FD from set */
 	vdebug(5,LA_TARGET,LF_LUP,
-	       "tid %"PRIiTID" done; handling evloop sig\n",tid);
+	       "tid %"PRIiTID" done; removing its fd (%d) from evloop\n",
+	       tid,readfd);
 	return EVLOOP_HRET_REMOVEALLTYPES;
     }
     else if (retval == TSTATUS_PAUSED) {
@@ -3372,6 +3394,10 @@ static target_status_t linux_userproc_poll(struct target *target,
 	 */
 	retval = linux_userproc_handle_internal(target,tid,status,NULL);
 
+	if (THREAD_SPECIFIC_STATUS(retval)) {
+	    vwarn("unhandled thread-specific status %d!\n",retval);
+	}
+
 	return retval;
     }
     else {
@@ -3385,7 +3411,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
     int tid;
     int pstatus;
     int again = 0;
-    target_status_t retval;
+    thread_status_t retval;
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
 
@@ -3411,6 +3437,10 @@ static target_status_t linux_userproc_monitor(struct target *target) {
     // xxx write!  then write generic target functions, clean up the
     // headers and makefile, and get it to compile.  then add debug code
     // and try to actually load regions and monitor a process!
+
+    if (THREAD_SPECIFIC_STATUS(retval)) {
+	vwarn("unhandled thread-specific status %d!\n",retval);
+    }
 
     return retval;
 }
