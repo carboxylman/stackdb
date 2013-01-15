@@ -48,6 +48,8 @@ void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
 	 * code = siginfo->si_code;
 	 * status = siginfo->si_status;
 	 */
+	vdebug(9,LA_LIB,LF_WAITPIPE,"pid %d code 0x%08x status 0x%08x\n",
+	       pid,siginfo->si_code,siginfo->si_status);
 
 	pipefds = (int *)g_hash_table_lookup(waitpipe.pids,
 					     (gpointer)(uintptr_t)pid);
