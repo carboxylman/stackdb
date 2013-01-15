@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -161,20 +161,33 @@ typedef enum {
 } target_status_t;
 
 typedef enum {
-    THREAD_STATUS_UNKNOWN = 0,
-    THREAD_STATUS_RUNNING,
-    THREAD_STATUS_STOPPED,
+    /*
+     * The first few status bits are deliberately the same as the target
+     * status bits.
+     */
+    THREAD_STATUS_UNKNOWN  = 0,
+    THREAD_STATUS_RUNNING  = 1,
+    THREAD_STATUS_PAUSED   = 2,
+    THREAD_STATUS_DEAD     = 3,
+    THREAD_STATUS_STOPPED  = 4,
+    THREAD_STATUS_ERROR    = 5,
+    THREAD_STATUS_DONE     = 6,
+
+    /*
+     * These are thread-specific.
+     */
     THREAD_STATUS_SLEEPING,
     THREAD_STATUS_ZOMBIE,
-    THREAD_STATUS_DEAD,
     THREAD_STATUS_BLOCKEDIO,
     THREAD_STATUS_PAGING,
     THREAD_STATUS_RETURNING_USER,
     THREAD_STATUS_RETURNING_KERNEL,
-    THREAD_STATUS_PAUSED,
 } thread_status_t;
 
 #define THREAD_STATUS_BITS  5
+
+#define THREAD_SPECIFIC_STATUS(status) \
+    ((thread_status_t)(status) >= THREAD_STATUS_SLEEPING)
 
 /*
  * When we handle a breakpoint, we *have* to single step some
