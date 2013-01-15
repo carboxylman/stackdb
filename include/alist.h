@@ -236,6 +236,30 @@ static inline void *array_list_remove(struct array_list *list) {
     return NULL;
 }
 
+static inline void *array_list_remove_item_at(struct array_list *list,int i) {
+    void *item;
+
+    if (!list->list || list->len < 1)
+	return NULL;
+
+    if (i == (list->len - 1)) {
+	item = list->list[i];
+	--list->len;
+	return item;
+    }
+    else if (i < list->len) {
+	item = list->list[i];
+	/* shift the list over one after i, ugh */
+	for ( ; i < list->len - 1; ++i) {
+	    list->list[i] = list->list[i + 1];
+	}
+	--list->len;
+	return item;
+    }
+
+    return NULL;
+}
+
 static inline void *array_list_remove_item(struct array_list *list,void *item) {
     int i;
 
@@ -247,20 +271,10 @@ static inline void *array_list_remove_item(struct array_list *list,void *item) {
 	    break;
     }
 
-    if (i == (list->len - 1)) {
-	--list->len;
-	return item;
-    }
-    else if (i < list->len) {
-	/* shift the list over one after i, ugh */
-	for ( ; i < list->len - 1; ++i) {
-	    list->list[i] = list->list[i + 1];
-	}
-	--list->len;
-	return item;
-    }
-
-    return NULL;
+    if (i < list->len) 
+	return array_list_remove_item_at(list,i);
+    else
+	return NULL;
 }
 
 static inline int array_list_find(struct array_list *list,void *item) {
