@@ -16,14 +16,17 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include <string.h>
 #include <pthread.h>
 #include <getopt.h>
+#include <signal.h>
 
 #include "log.h"
 
 #include "target_rpc.h"
 #include "debuginfo_rpc.h"
 #include "util.h"
+#include "waitpipe.h"
 #include "monitor.h"
 #include "proxyreq.h"
 
@@ -59,6 +62,42 @@ void *handle_request(void *arg) {
     return NULL;
 }
 
+void *sight(void *arg) {
+    sigset_t *sigset = (sigset_t *)arg;
+    int rc;
+    siginfo_t siginfo;
+
+    while (1) {
+	memset(&siginfo,0,sizeof(siginfo));
+	rc = sigwaitinfo(sigset,&siginfo);
+	if (rc < 0) {
+	    if (errno == EINTR || errno == EAGAIN)
+		continue;
+	    else {
+		vwarn("sigwait: %s!\n",strerror(errno));
+		exit(4);
+	    }
+	}
+	else if (rc == SIGINT) {
+	    vwarn("interrupted, exiting!\n");
+	    exit(0);
+	}
+	else if (rc == SIGCHLD) {
+	    waitpipe_sigchld(rc,&siginfo,NULL);
+	    sigaddset(sigset,SIGCHLD);
+	}
+	else if (rc == SIGPIPE) {
+	    vdebug(15,LA_XML,LF_SVC,"sigpipe!\n");
+	    sigaddset(sigset,SIGPIPE);
+	}
+	else {
+	    vwarn("unexpected signal %d; ignoring!\n",rc);
+	}
+    }
+
+    return NULL;
+}
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
@@ -66,10 +105,13 @@ int main(int argc, char **argv) {
     struct soap soap;
     struct soap *tsoap;
     pthread_t tid;
+    pthread_t sigtid;
     int port = 0;
     SOAP_SOCKET m, s;
     char ch;
     int doelfsymtab = 1;
+    sigset_t sigset;
+    int rc;
 
     while ((ch = getopt(argc, argv, "dwl:Ep:")) != -1) {
 	switch(ch) {
@@ -128,6 +170,24 @@ int main(int argc, char **argv) {
     soap.recv_timeout = 60;
     soap.accept_timeout = 0;
     soap.max_keep_alive = 100;
+
+    /*
+     * Create a thread for handling SIGINT, SIGCHLD, and SIGPIPE; the
+     * other threads block all sigs.
+     */
+    sigemptyset(&sigset);
+    //sigaddset(&sigset,SIGINT);
+    sigaddset(&sigset,SIGCHLD);
+    sigaddset(&sigset,SIGPIPE);
+    if ((rc = pthread_sigmask(SIG_BLOCK,&sigset,NULL))) {
+	verror("pthread_sigmask: %s\n",strerror(rc));
+	exit(2);
+    }
+
+    if ((rc = pthread_create(&sigtid,NULL,&sight,(void *)&sigset))) {
+	verror("pthread: %s\n",strerror(rc));
+	exit(3);
+    }
 
     m = soap_bind(&soap,NULL,port,64);
     if (!soap_valid_socket(m)) {
