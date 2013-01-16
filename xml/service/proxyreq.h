@@ -289,7 +289,7 @@ int proxyreq_send_response(struct proxyreq *pr);
 	 *   1) call proxyreq_send_request; and				\
 	 *   2) unlock the mutex!					\
 	 */								\
-	//pthread_mutex_unlock(mutex);					\
+	/* pthread_mutex_unlock(mutex); */				\
 	return SOAP_STOP;						\
     }									\
     else if (_pr->state == PROXYREQ_STATE_PROCESSING) {			\
