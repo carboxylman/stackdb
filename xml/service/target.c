@@ -83,7 +83,7 @@ void *sight(void *arg) {
 	    exit(0);
 	}
 	else if (rc == SIGCHLD) {
-	    waitpipe_sigchld(rc,&siginfo,NULL);
+	    waitpipe_notify(rc,&siginfo);
 	    sigaddset(sigset,SIGCHLD);
 	}
 	else if (rc == SIGPIPE) {
@@ -142,6 +142,7 @@ int main(int argc, char **argv) {
     argc -= optind;
     argv += optind;
 
+    waitpipe_init_ext(NULL);
     dwdebug_init();
     debuginfo_rpc_init();
     target_rpc_init();

@@ -3294,7 +3294,8 @@ int linux_userproc_attach_evloop(struct target *target,struct evloop *evloop) {
     int tid;
     int i;
 
-    waitpipe_init_default();
+    if (!waitpipe_is_initialized())
+	waitpipe_init_auto(NULL);
 
     tids = target_list_tids(target);
     if (!tids)
@@ -3314,7 +3315,8 @@ int linux_userproc_detach_evloop(struct target *target) {
     int tid;
     int i;
 
-    waitpipe_init_default();
+    if (!waitpipe_is_initialized())
+	waitpipe_init_auto(NULL);
 
     tids = target_list_tids(target);
     if (!tids)

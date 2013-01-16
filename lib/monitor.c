@@ -187,11 +187,13 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
 	errno = EINVAL;
 	return NULL;
     }
-    else if (type == MONITOR_TYPE_PROCESS) 
+    else if (type == MONITOR_TYPE_PROCESS) {
 	/*
 	 * Need to ensure init waitpipe().  We don't need an extra sighandler.
 	 */
-	waitpipe_init_default();
+	if (!waitpipe_is_initialized()) 
+	    waitpipe_init_auto(NULL);
+    }
 
     monitor = calloc(1,sizeof(*monitor));
 

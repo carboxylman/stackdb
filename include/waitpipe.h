@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -30,16 +30,28 @@
  * be any process's child.
  */
 
-struct waitpipectl {
-    GHashTable *pids;
-    GHashTable *readfds;
-    void (*alt_handler)(int,siginfo_t *,void *);
-};
+/* @return 1 if the waitpipe is initialized; 0 otherwise. */
+int waitpipe_is_initialized(void);
 
-int waitpipe_init(void (*alt_handler)(int,siginfo_t *,void *));
+/*
+ * Initialize the waitpipe, but do not install a SIGCHLD handler via
+ * sigaction.  We expect to be notified via waitpipe_notify() by some
+ * external signal handler.
+ */
+int waitpipe_init_ext(void (*alt_handler)(int,siginfo_t *,void *));
+
+/*
+ * Initialize the waitpipe and install a SIGCHLD handler via sigaction.
+ */
+int waitpipe_init_auto(void (*alt_handler)(int,siginfo_t *,void *));
+
+/*
+ * External SIGCHLD handlers should call this, if the waitpipe was
+ * initialized via waitpipe_init_ext() above.
+ */
+void waitpipe_notify(int signo,siginfo_t *siginfo);
+
 int waitpipe_fini(void);
-
-int waitpipe_init_default(void);
 
 /*
  * Returns half of a pipe -- the end that will receive the write when a
@@ -71,8 +83,5 @@ int waitpipe_get(int readfd);
  * own lookup structure at all.
  */
 int waitpipe_get_pid(int readfd);
-
-/* Our internal sighandler. */
-void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext);
 
 #endif /* __WAITPIPE_H__ */

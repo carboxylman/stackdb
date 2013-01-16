@@ -26,6 +26,15 @@
 #include <string.h>
 #include <fcntl.h>
 
+struct waitpipectl {
+    GHashTable *pids;
+    GHashTable *readfds;
+    void (*alt_handler)(int,siginfo_t *,void *);
+};
+
+/* Our internal sighandler. */
+static void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext);
+
 /*
  * There can only be one waitpipe per process, so this is safe.
  */
@@ -35,7 +44,11 @@ static struct sigaction waitpipe_act = {
     .sa_flags = SA_SIGINFO,
 };
 
-void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
+void waitpipe_notify(int signo,siginfo_t *siginfo) {
+    return waitpipe_sigchld(signo,siginfo,NULL);
+}
+
+static void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
     pid_t pid;
     /* int code; */
     /* int status; */
@@ -73,7 +86,30 @@ void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
     }
 }
 
-int waitpipe_init(void (*alt_handler)(int,siginfo_t *,void *)) {
+int waitpipe_is_initialized(void) {
+    if (waitpipe.pids)
+	return 1;
+
+    return 0;
+}
+
+int waitpipe_init_ext(void (*alt_handler)(int,siginfo_t *,void *)) {
+    if (waitpipe.pids) {
+	vwarn("global waitpipe already initialized!\n");
+	errno = EBUSY;
+	return -1;
+    }
+
+    vdebug(9,LA_LIB,LF_WAITPIPE,"alt_handler = %p\n",alt_handler);
+
+    waitpipe.pids = g_hash_table_new(g_direct_hash,g_direct_equal);
+    waitpipe.readfds = g_hash_table_new(g_direct_hash,g_direct_equal);
+    waitpipe.alt_handler = alt_handler;
+
+    return 0;
+}
+
+int waitpipe_init_auto(void (*alt_handler)(int,siginfo_t *,void *)) {
     if (waitpipe.pids) {
 	vwarn("global waitpipe already initialized!\n");
 	errno = EBUSY;
@@ -97,13 +133,6 @@ int waitpipe_init(void (*alt_handler)(int,siginfo_t *,void *)) {
     }
 
     return 0;
-}
-
-int waitpipe_init_default(void) {
-    if (waitpipe.pids) 
-	return 0;
-
-    return waitpipe_init(NULL);
 }
 
 int waitpipe_fini(void) {
