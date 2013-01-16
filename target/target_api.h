@@ -495,6 +495,14 @@ int target_write_creg(struct target *target,tid_t tid,common_reg_t reg,
 		      REGVAL value);
 
 /*
+ * @return a copy of current values of @target/@tid's registers.
+ *
+ * Keys are strings corresponding to the target's register names; values
+ * are REGVAL *'s.
+ */
+GHashTable *target_copy_registers(struct target *target,tid_t tid);
+
+/*
  * Returns the currently executing thread's TID.  Only valid when the
  * target's current thread is paused; returns 0 and sets errno EBUSY if
  * that is not true.
@@ -1425,6 +1433,7 @@ struct target_ops {
     /* get/set contents of a register */
     REGVAL (*readreg)(struct target *target,tid_t tid,REG reg);
     int (*writereg)(struct target *target,tid_t tid,REG reg,REGVAL value);
+    GHashTable *(*copy_registers)(struct target *target,tid_t tid);
 
     /* breakpoint/watchpoint stuff */
     REG (*get_unused_debug_reg)(struct target *target,tid_t tid);

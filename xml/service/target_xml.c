@@ -883,6 +883,11 @@ t_probe_to_x_ProbeEventT(struct soap *soap,
 			 GHashTable *reftab,
 			 struct vmi1__ProbeEventT *out) {
     struct vmi1__ProbeEventT *oevent;
+    GHashTable *regs;
+    GHashTableIter iter;
+    REGVAL *rvp;
+    char *rname;
+    int i;
 
     if (out)
 	oevent = out;
@@ -893,11 +898,33 @@ t_probe_to_x_ProbeEventT(struct soap *soap,
 	oevent->eventType = _vmi1__ProbeEventT_eventType__pre;
     else if (type == 1) 
 	oevent->eventType = _vmi1__ProbeEventT_eventType__post;
+
     oevent->probe = t_probe_to_x_ProbeT(soap,probe,reftab,NULL);
     oevent->thread = t_target_thread_to_x_ThreadT(soap,probe->thread,reftab,NULL);
+
     oevent->registerValues = SOAP_CALLOC(soap,1,sizeof(*oevent->registerValues));
-    oevent->registerValues->__sizeregisterValue = 0;
-    oevent->registerValues->registerValue = NULL;
+
+    regs = target_copy_registers(probe->target,probe->thread->tid);
+    if (regs) {
+	g_hash_table_iter_init(&iter,regs);
+
+	oevent->registerValues->__sizeregisterValue = g_hash_table_size(regs);
+	oevent->registerValues->registerValue = 
+	    SOAP_CALLOC(soap,g_hash_table_size(regs),
+			sizeof(*oevent->registerValues->registerValue));
+	i = 0;
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer *)&rname,(gpointer *)&rvp)) {
+	    oevent->registerValues->registerValue[i].name = rname;
+	    oevent->registerValues->registerValue[i].value = *rvp;
+	    ++i;
+	}
+	g_hash_table_destroy(regs);
+    }
+    else {
+	oevent->registerValues->__sizeregisterValue = 0;
+	oevent->registerValues->registerValue = NULL;
+    }
 
     return oevent;
 }

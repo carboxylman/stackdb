@@ -330,6 +330,13 @@ int target_write_creg(struct target *target,tid_t tid,common_reg_t reg,
     return target_write_reg(target,tid,treg,value);
 }
 
+GHashTable *target_copy_registers(struct target *target,tid_t tid) {
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "copying target(%s:%"PRIiTID") regs\n",
+	   target->name,tid);
+    return target->ops->copy_registers(target,tid);
+}
+
 struct array_list *target_list_tids(struct target *target) {
     struct array_list *retval;
     GHashTableIter iter;

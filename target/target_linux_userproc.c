@@ -110,6 +110,7 @@ static char *linux_userproc_thread_tostring(struct target *target,tid_t tid,int 
 static REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg);
 static int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
 				    REGVAL value);
+static GHashTable *linux_userproc_copy_registers(struct target *target,tid_t tid);
 static REG linux_userproc_get_unused_debug_reg(struct target *target,tid_t tid);
 static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG num,ADDR addr);
@@ -181,6 +182,7 @@ struct target_ops linux_userspace_process_ops = {
 
     .readreg = linux_userproc_read_reg,
     .writereg = linux_userproc_write_reg,
+    .copy_registers = linux_userproc_copy_registers,
     .get_unused_debug_reg = linux_userproc_get_unused_debug_reg,
     .set_hw_breakpoint = linux_userproc_set_hw_breakpoint,
     .set_hw_watchpoint = linux_userproc_set_hw_watchpoint,
@@ -3841,6 +3843,54 @@ int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
     tthread->dirty = 1;
 
     return 0;
+}
+
+GHashTable *linux_userproc_copy_registers(struct target *target,tid_t tid) {
+    GHashTable *retval;
+    int i;
+    int count;
+    REGVAL *rvp;
+    int *dregs;
+    char **dregnames;
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+
+    tthread = linux_userproc_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
+	errno = EINVAL;
+	return 0;
+    }
+    tstate = (struct linux_userproc_thread_state *)tthread->state;
+
+#if __WORDSIZE == 64
+    count = X86_64_DWREG_COUNT;
+    dregs = dreg_to_ptrace_idx64;
+    dregnames = dreg_to_name64;
+#else 
+    count = X86_32_DWREG_COUNT;
+    dregs = dreg_to_ptrace_idx32;
+    dregnames = dreg_to_name32;
+#endif
+
+    retval = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,free);
+
+    for (i = 0; i < count; ++i) {
+	if (dregs[i] == -1) 
+	    continue;
+
+	rvp = malloc(sizeof(*rvp));
+	
+#if __WORDSIZE == 64
+	memcpy(rvp,&((unsigned long *)&(tstate->regs))[i],sizeof(unsigned long));
+#else 
+	memcpy(rvp,&((long int *)&(tstate->regs))[i],sizeof(long int));
+#endif
+
+	g_hash_table_insert(retval,dregnames[i],rvp);
+    }
+
+    return retval;
 }
 
 /*
