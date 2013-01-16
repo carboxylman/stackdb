@@ -775,9 +775,8 @@ int vmi1__LookupTargetAllSymbols(struct soap *soap,
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-
-int _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
-				 struct probe *trigger) {
+int _target_rpc_probe_handler(int type,struct probe *probe,void *handler_data,
+			      struct probe *trigger) {
     struct soap soap;
     GHashTable *reftab;
     struct array_list *tll;
@@ -807,7 +806,7 @@ int _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
 
 
 	reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-	t_probe_to_x_ProbeEventT(&soap,probe,0,trigger,reftab,&event);
+	t_probe_to_x_ProbeEventT(&soap,probe,type,trigger,reftab,&event);
 	g_hash_table_destroy(reftab);
 
 	array_list_foreach(tll,i,tl) {
@@ -836,10 +835,15 @@ int _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
     return 0;
 };
 
+int _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
+				 struct probe *trigger) {
+    return _target_rpc_probe_handler(0,probe,handler_data,trigger);
+};
+
 
 int _target_rpc_probe_posthandler(struct probe *probe,void *handler_data,
 				  struct probe *trigger) {
-    return 0;
+    return _target_rpc_probe_handler(1,probe,handler_data,trigger);
 };
 
 int vmi1__ProbeSymbol(struct soap *soap,
