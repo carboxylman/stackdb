@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2011, 2012 The University of Utah
+# Copyright (c) 2011, 2012, 2013 The University of Utah
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as
@@ -61,15 +61,15 @@ TargetPtraceSpecT =
 
 TargetPtraceSpec = element targetPtraceSpec { TargetPtraceSpecT }
 
-TargetThreadStatusT = 
+ThreadStatusT = 
     "unknown" | "running" | "stopped" | "sleeping" | "zombie" | "dead" 
     | "blockedio" | "paging" | "paused"
-TargetThreadStatus = element threadStatus { TargetThreadStatusT }
+ThreadStatus = element threadStatus { ThreadStatusT }
 
 ThreadT = 
     attribute thid { ThreadIdT },
     attribute tid { TargetIdT },
-    TargetThreadStatus
+    ThreadStatus
 Thread = element thread { ThreadT }
 
 TargetStatusT = 
@@ -115,4 +115,51 @@ MemRangeT =
     element end { ADDR },
     element offset { ADDR }
 MemRange = element memRange { MemRangeT }
-    
+
+##
+## Probe stuff.
+##
+ProbepointTypeT = "break" | "watch"
+ProbepointType = element probepointType { ProbepointTypeT }
+
+ProbepointStyleT = "fastest" | "hw" | "sw"
+ProbepointStyle = element probepointStyle { ProbepointStyleT }
+
+ProbepointWhenceT = "auto" | "exec" | "write" | "readwrite"
+ProbepointWhence = element probepointWhence { ProbepointWhenceT }
+
+ProbepointSizeT = "auto" | "0" | "2" | "4" | "8"
+ProbepointSize = element probepointSize { ProbepointSizeT }
+
+ProbeT = 
+    element name { xsd:string },
+    element addr { ADDR },
+    element type { ProbepointTypeT },
+    element style { ProbepointTypeT },
+    element whence { ProbepointWhenceT },
+    element size { ProbepointSizeT },
+
+    element tid { TargetIdT },
+    element thid { ThreadIdT }
+Probe = element probe { ProbeT }
+
+RegisterValueT = 
+    element name { xsd:token },
+    element value { xsd:unsignedLong }
+RegisterValue = element registerValue { RegisterValueT }
+
+ProbeEventT = 
+    attribute eventType { "pre" | "post" },
+    element probe { ProbeT },
+    element thread { ThreadT },
+    element registerValues {
+        element registerValue { RegisterValueT }*
+    }
+ProbeEvent = element probeEvent { ProbeEventT }
+
+SinglestepEventT = 
+    element thread { ThreadT },
+    element registerValues {
+        element registerValue { RegisterValueT }*
+    }
+SinglestepEvent = element singlestepEvent { SinglestepEventT }    

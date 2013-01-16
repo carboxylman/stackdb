@@ -1,0 +1,94 @@
+#!/usr/bin/env python
+##
+## Copyright (c) 2012, 2013 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+##
+
+import os
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger('pysimplesoap').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.server').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.simplexml').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.transport').setLevel(logging.DEBUG)
+
+events = []
+
+from pysimplesoap.server import SoapDispatcher,SOAPHandler
+from BaseHTTPServer import HTTPServer
+
+#         <ns1:event>
+#            <ns1:thread thid="1236" tid="1234">
+#               <ns1:threadStatus>running</ns1:threadStatus>
+#            </ns1:thread>
+#            <ns1:registerValues>
+#               <ns1:registerValue>
+#                  <ns1:name>eip</ns1:name>
+#                  <ns1:value>3735928559</ns1:value>
+#               </ns1:registerValue>
+#            </ns1:registerValues>
+#         </ns1:event>
+
+        # types is a dict of {tag name: convertion function}
+        # strict=False to use default type conversion if not specified
+        # example: types={'p': {'a': int,'b': int}, 'c': [{'d':str}]}
+        #   expected xml: <p><a>1</a><b>2</b></p><c><d>hola</d><d>chau</d>
+        #   returnde value: {'p': {'a':1,'b':2}, `'c':[{'d':'hola'},{'d':'chau'}]}
+
+
+probeEventArgs = dict({
+    'event' : {
+        'thread' : { 'tid' : int,'thid' : int,'threadStatus' : str, },
+        'registerValues' : [ { 'registerValue' : { 'name' : str,'value' : str, } } ]
+    }
+})
+def probeEvent(event,request=None):
+    "Handle a ProbeEvent"
+    events.append(event)
+    print "ProbeEvent: %s" % (str(event),)
+    print "ProbeEvent (raw): %s" % (str(request),)
+    return None
+
+def SinglestepEvent(event):
+    "Handle a SingleStepEvent"
+    events.append(event)
+    print "SinglestepEvent: %s" % (str(event),)
+    return None
+
+objdir = os.path.abspath("@top_builddir@")
+url = 'file://%s/xml/service/targetListener.wsdl.test' % (objdir,)
+
+dispatcher = SoapDispatcher(
+    'targetListener',
+    location = "http://localhost:3952/",
+    action = 'http://localhost:3952/', # SOAPAction
+    namespace = 'http://anathema.flux.utah.edu/schema/vmi/1', prefix="vmi1",
+    debug = True,
+    trace = True,
+    ns = True)
+
+dispatcher.register_function('ProbeEvent',probeEvent,
+                             returns=dict(), 
+                             args=probeEventArgs)
+
+dispatcher.register_function('SinglestepEvent',SinglestepEvent,
+                             returns={ 'NoneResponse' : None}, 
+                             args={ 'event' : dict })
+
+print "Starting server..."
+httpd = HTTPServer(("",3952), SOAPHandler)
+httpd.dispatcher = dispatcher
+httpd.serve_forever()

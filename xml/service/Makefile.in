@@ -94,6 +94,7 @@ OBJECTS-TARGET-SERVERLIB := targetServerLib.lo
 OBJECTS-TARGET := $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-XMLLIB) \
 	$(OBJECTS-TARGET-MODULE) \
 	$(OBJECTS-TARGET-SERVER) $(OBJECTS-TARGET-SERVERLIB)
+OBJECTS-TARGETLISTENER-CLIENTLIB := target_listener_moduleClientLib.lo
 
 OBJECTS-ANALYSIS-XMLLIB := analysis_xml.lo
 OBJECTS-ANALYSIS-RPCLIB := analysis_rpc.lo
@@ -205,6 +206,44 @@ DEFPORT-analysis = 3903
 			< $@.nostrip > $@.test; \
 	fi
 
+%_listener.wsdl: $(SRCDIR)/../schema/%.xsd common_xml.gsm.h $(SRCDIR)/%_listener.gsm.h %_xml.gsm.h $(SRCDIR)/%_rpc.gsm.h xsdcH.h
+	#echo "#import \"$(@:.wsdl=)_xml.gsm.h\"" > $(@:.wsdl=).gs.h
+	#echo "#import \"$(@:.wsdl=)_rpc.gsm.h\"" >> $(@:.wsdl=).gs.h
+	#echo '//gsoap vmi1 service portName: http' >> $(@:.wsdl=).gs.h
+	#echo "//gsoap vmi1 service port: http://localhost:$(DEFPORT-$*)" >> $(@:.wsdl=).gs.h
+	$(SOAPCPP2) -p $(@:.wsdl=) $(SRCDIR)/$(@:.wsdl=).gsm.h
+#	sed -i -e 's/\(#define $(@:.wsdl=)_srvStub_H\)/\1\n#include "envH.h"/' \
+#		$(@:.wsdl=)_srvStub.h
+	cp -p $(@:_listener.wsdl=)Listener.wsdl $(@:_listener.wsdl=)Listener.wsdl.nostrip
+	@if [ "$(@:_listener.wsdl=)" = "target" ]; then \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl; \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl.test; \
+	elif [ "$(@:.wsdl=)" = "analysis" ]; then \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl; \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl.test; \
+	else \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl; \
+		$(SRCDIR)/strip-gsoap-wsdl.pl \
+			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl.test; \
+	fi
+
 xsdcC.lo: xsdcH.h
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
 		-c $(@:.lo=).c
@@ -224,6 +263,12 @@ xsdcC.lo: xsdcH.h
 
 %_rpc_moduleC.c: %_rpc_moduleH.h
 	@echo -n ""
+
+%_listener_moduleClientLib.c: %_listener.wsdl
+	@echo -n ""
+
+%_listener_moduleClientLib.lo: %_listener_moduleClientLib.c
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOSERVERREQUEST -c $<
 
 %_rpc_moduleServerLib.lo: %_rpc_moduleServerLib.c
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -DWITH_NOSERVERREQUEST -c $<
@@ -292,6 +337,7 @@ debuginfo: debuginfo.wsdl \
 target: target.wsdl \
 	  $(OBJECTS-LIB) \
 	  $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	  $(OBJECTS-TARGETLISTENER-CLIENTLIB) \
 	  $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 	  $(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVER) \
 	  $(OBJECTS-DEBUGINFO-MODULE) \
@@ -300,6 +346,7 @@ target: target.wsdl \
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
 		$(OBJECTS-LIB) \
 		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+		$(OBJECTS-TARGETLISTENER-CLIENTLIB) \
 		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 		$(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVER) \
 		$(OBJECTS-DEBUGINFO-MODULE) \
@@ -314,6 +361,7 @@ analysis: analysis.wsdl \
 	  $(OBJECTS-DEBUGINFO-MODULE) \
 	  $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 	  $(OBJECTS-TARGET-MODULE) \
+	  $(OBJECTS-TARGETLISTENER-CLIENTLIB) \
 	  $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 	  $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
@@ -324,6 +372,7 @@ analysis: analysis.wsdl \
 		$(OBJECTS-DEBUGINFO-MODULE) \
 		$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 		$(OBJECTS-TARGET-MODULE) \
+		$(OBJECTS-TARGETLISTENER-CLIENTLIB) \
 		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 		$(STATICLIBS) $(LDFLAGS)
 

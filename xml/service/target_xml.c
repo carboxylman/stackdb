@@ -420,43 +420,43 @@ t_linux_userproc_spec_to_x_TargetPtraceSpecT(struct soap *soap,
 
 
 thread_status_t 
-x_TargetThreadStatusT_to_t_thread_status_t(struct soap *soap,
-					   enum vmi1__TargetThreadStatusT status,
-					   GHashTable *reftab,
-					   thread_status_t *out) {
+x_ThreadStatusT_to_t_thread_status_t(struct soap *soap,
+				     enum vmi1__ThreadStatusT status,
+				     GHashTable *reftab,
+				     thread_status_t *out) {
     thread_status_t retval;
 
     switch (status) {
-    case vmi1__TargetThreadStatusT__unknown:
+    case vmi1__ThreadStatusT__unknown:
 	retval = THREAD_STATUS_UNKNOWN;
 	break;
-    case vmi1__TargetThreadStatusT__running:
+    case vmi1__ThreadStatusT__running:
 	retval = THREAD_STATUS_RUNNING;
 	break;
-    case vmi1__TargetThreadStatusT__stopped:
+    case vmi1__ThreadStatusT__stopped:
 	retval = THREAD_STATUS_STOPPED;
 	break;
-    case vmi1__TargetThreadStatusT__sleeping:
+    case vmi1__ThreadStatusT__sleeping:
 	retval = THREAD_STATUS_SLEEPING;
 	break;
-    case vmi1__TargetThreadStatusT__zombie:
+    case vmi1__ThreadStatusT__zombie:
 	retval = THREAD_STATUS_ZOMBIE;
 	break;
-    case vmi1__TargetThreadStatusT__dead:
+    case vmi1__ThreadStatusT__dead:
 	retval = THREAD_STATUS_DEAD;
 	break;
-    case vmi1__TargetThreadStatusT__blockedio:
+    case vmi1__ThreadStatusT__blockedio:
 	retval = THREAD_STATUS_BLOCKEDIO;
 	break;
-    case vmi1__TargetThreadStatusT__paging:
+    case vmi1__ThreadStatusT__paging:
 	retval = THREAD_STATUS_PAGING;
 	break;
-    case vmi1__TargetThreadStatusT__paused:
+    case vmi1__ThreadStatusT__paused:
 	retval = THREAD_STATUS_PAUSED;
 	break;
 
     default:
-	verror("unknown TargetThreadStatusT %d\n",status);
+	verror("unknown ThreadStatusT %d\n",status);
 	retval = THREAD_STATUS_UNKNOWN;
 	break;
     }
@@ -467,44 +467,44 @@ x_TargetThreadStatusT_to_t_thread_status_t(struct soap *soap,
     return retval;
 }
 
-enum vmi1__TargetThreadStatusT 
-t_thread_status_t_to_x_TargetThreadStatusT(struct soap *soap,
-					   thread_status_t status,
-					   GHashTable *reftab,
-					   enum vmi1__TargetThreadStatusT *out) {
-    enum vmi1__TargetThreadStatusT retval;
+enum vmi1__ThreadStatusT 
+t_thread_status_t_to_x_ThreadStatusT(struct soap *soap,
+				     thread_status_t status,
+				     GHashTable *reftab,
+				     enum vmi1__ThreadStatusT *out) {
+    enum vmi1__ThreadStatusT retval;
 
     switch (status) {
     case THREAD_STATUS_UNKNOWN:
-	retval = vmi1__TargetThreadStatusT__unknown;
+	retval = vmi1__ThreadStatusT__unknown;
 	break;
     case THREAD_STATUS_RUNNING:
-	retval = vmi1__TargetThreadStatusT__running;
+	retval = vmi1__ThreadStatusT__running;
 	break;
     case THREAD_STATUS_STOPPED:
-	retval = vmi1__TargetThreadStatusT__stopped;
+	retval = vmi1__ThreadStatusT__stopped;
 	break;
     case THREAD_STATUS_SLEEPING:
-	retval = vmi1__TargetThreadStatusT__sleeping;
+	retval = vmi1__ThreadStatusT__sleeping;
 	break;
     case THREAD_STATUS_ZOMBIE:
-	retval = vmi1__TargetThreadStatusT__zombie;
+	retval = vmi1__ThreadStatusT__zombie;
 	break;
     case THREAD_STATUS_DEAD:
-	retval = vmi1__TargetThreadStatusT__dead;
+	retval = vmi1__ThreadStatusT__dead;
 	break;
     case THREAD_STATUS_BLOCKEDIO:
-	retval = vmi1__TargetThreadStatusT__blockedio;
+	retval = vmi1__ThreadStatusT__blockedio;
 	break;
     case THREAD_STATUS_PAGING:
-	retval = vmi1__TargetThreadStatusT__paging;
+	retval = vmi1__ThreadStatusT__paging;
 	break;
     case THREAD_STATUS_PAUSED:
-	retval = vmi1__TargetThreadStatusT__paused;
+	retval = vmi1__ThreadStatusT__paused;
 	break;
     default:
 	verror("unknown thread_status_t %d\n",status);
-	retval = vmi1__TargetThreadStatusT__unknown;
+	retval = vmi1__ThreadStatusT__unknown;
 	break;
     }
 
@@ -598,10 +598,10 @@ t_target_status_t_to_x_TargetStatusT(struct soap *soap,
 }
 
 struct vmi1__ThreadT *
-t_target_thread_to_x_TargetThreadT(struct soap *soap,
-				   struct target_thread *thread,
-				   GHashTable *reftab,
-				   struct vmi1__ThreadT *out) {
+t_target_thread_to_x_ThreadT(struct soap *soap,
+			     struct target_thread *thread,
+			     GHashTable *reftab,
+			     struct vmi1__ThreadT *out) {
     struct vmi1__ThreadT *othread;
 
     if (out)
@@ -612,8 +612,8 @@ t_target_thread_to_x_TargetThreadT(struct soap *soap,
     othread->thid = thread->tid;
     othread->tid = thread->target->id;
     othread->threadStatus = \
-	t_thread_status_t_to_x_TargetThreadStatusT(soap,thread->status,
-						   reftab,NULL);
+	t_thread_status_t_to_x_ThreadStatusT(soap,thread->status,
+					     reftab,NULL);
 
     return othread;
 }
@@ -656,7 +656,7 @@ t_target_to_x_TargetT(struct soap *soap,
 	otarget->thread = SOAP_CALLOC(soap,array_list_len(threads),
 				      sizeof(*(otarget->thread)));
 	array_list_foreach(threads,i,thread) {
-	    t_target_thread_to_x_TargetThreadT(soap,thread,reftab,
+	    t_target_thread_to_x_ThreadT(soap,thread,reftab,
 					       &otarget->thread[i]);
 	}
     }
@@ -854,3 +854,51 @@ t_memrange_to_x_MemRangeT(struct soap *soap,
 
     return orange;
 }
+
+struct vmi1__ProbeT *
+t_probe_to_x_ProbeT(struct soap *soap,
+		    struct probe *probe,
+		    GHashTable *reftab,
+		    struct vmi1__ProbeT *out) {
+    struct vmi1__ProbeT *oprobe;
+
+    if (out)
+	oprobe = out;
+    else
+	oprobe = SOAP_CALLOC(soap,1,sizeof(*oprobe));
+
+    SOAP_STRCPY(soap,oprobe->name,probe_name(probe));
+    oprobe->addr = probe_addr(probe);
+    if (probe->target)
+	oprobe->tid = probe->target->id;
+    if (probe->thread)
+	oprobe->thid = probe->thread->tid;
+
+    return oprobe;
+}
+
+struct vmi1__ProbeEventT *
+t_probe_to_x_ProbeEventT(struct soap *soap,
+			 struct probe *probe,int type,struct probe *trigger,
+			 GHashTable *reftab,
+			 struct vmi1__ProbeEventT *out) {
+    struct vmi1__ProbeEventT *oevent;
+
+    if (out)
+	oevent = out;
+    else
+	oevent = SOAP_CALLOC(soap,1,sizeof(*oevent));
+
+    if (type == 0) 
+	oevent->eventType = _vmi1__ProbeEventT_eventType__pre;
+    else if (type == 1) 
+	oevent->eventType = _vmi1__ProbeEventT_eventType__post;
+    oevent->probe = t_probe_to_x_ProbeT(soap,probe,reftab,NULL);
+    oevent->thread = t_target_thread_to_x_ThreadT(soap,probe->thread,reftab,NULL);
+    oevent->registerValues = SOAP_CALLOC(soap,1,sizeof(*oevent->registerValues));
+    oevent->registerValues->__sizeregisterValue = 0;
+    oevent->registerValues->registerValue = NULL;
+
+    return oevent;
+}
+

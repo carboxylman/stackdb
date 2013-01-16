@@ -16,6 +16,10 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include <pthread.h>
+#include <glib.h>
+#include <errno.h>
+
 #include "target_rpc.h"
 #include "debuginfo_rpc.h"
 #include "target_xml.h"
@@ -28,15 +32,15 @@
 #include "monitor.h"
 #include "proxyreq.h"
 
-#include <pthread.h>
-#include <glib.h>
-#include <errno.h>
+#include "target_listener_moduleStub.h"
 
 static pthread_mutex_t target_rpc_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int init_done = 0;
 /* These are the targets we know about. */
 static GHashTable *target_tab = NULL;
-static GHashTable *session_tab = NULL;
+
+/* Map target id to an array_list of target listeners. */
+static GHashTable *target_listener_tab = NULL;
 
 /**
  ** A bunch of stuff for per-target monitor interactions.
@@ -117,7 +121,8 @@ void target_rpc_init(void) {
     target_init();
 
     target_tab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-    session_tab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    target_listener_tab = 
+	g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
 
     init_done = 1;
 
@@ -127,6 +132,7 @@ void target_rpc_init(void) {
 void target_rpc_fini(void) {
     GHashTableIter iter;
     struct target *target;
+    struct target_rpc_listener *tl;
 
     pthread_mutex_lock(&target_rpc_mutex);
 
@@ -134,6 +140,14 @@ void target_rpc_fini(void) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return;
     }
+
+    /* Nuke any existing target listeners. */
+    g_hash_table_iter_init(&iter,target_listener_tab);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tl)) {
+	free(tl);
+    }
+    g_hash_table_destroy(target_listener_tab);
+    target_listener_tab = NULL;
 
     /* Nuke any existing targets. */
     g_hash_table_iter_init(&iter,target_tab);
@@ -143,8 +157,6 @@ void target_rpc_fini(void) {
     }
     g_hash_table_destroy(target_tab);
     target_tab = NULL;
-
-    /* Remove any lingering sessions. */
 
     target_fini();
     debuginfo_rpc_fini();
@@ -254,7 +266,7 @@ int target_rpc_handle_request(struct soap *soap) {
 }
 
 /**
- ** These are locking/nonlocking accessors to the global target hashtable.
+ ** These are locking/nonlocking accessors to the global target hashtables.
  **
  ** Call the _ variants if you already hold the target_rpc_mutex; else,
  ** call the normal functions!
@@ -291,6 +303,105 @@ void target_rpc_remove(struct target *target) {
     pthread_mutex_lock(&target_rpc_mutex);
     _target_rpc_remove(target);
     pthread_mutex_unlock(&target_rpc_mutex);
+}
+
+struct target_rpc_listener *_target_rpc_lookup_listener(int target_id,
+							char *hostname,int port) {
+    struct array_list *tll;
+    int i;
+    struct target_rpc_listener *tl = NULL;
+
+    tll = (struct array_list *)						\
+	g_hash_table_lookup(target_listener_tab,(gpointer)(uintptr_t)target_id);
+
+    if (tll) {
+	array_list_foreach(tll,i,tl) {
+	    if (strcmp(hostname,tl->hostname) == 0 && tl->port == port)
+		break;
+	    else
+		tl = NULL;
+	}
+    }
+
+    return tl;
+}
+struct target_rpc_listener *target_rpc_lookup_listener(int target_id,
+						       char *hostname,int port) {
+    struct target_rpc_listener *tl;
+
+    pthread_mutex_lock(&target_rpc_mutex);
+    tl = _target_rpc_lookup_listener(target_id,hostname,port);
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return tl;
+}
+
+int _target_rpc_insert_listener(int target_id,char *hostname,int port) {
+    struct array_list *tll;
+    struct target_rpc_listener *tl = calloc(1,sizeof(*tl));
+
+    tl->target_id = target_id;
+    tl->hostname = strdup(hostname);
+    tl->port = port;
+
+    tll = (struct array_list *)						\
+	g_hash_table_lookup(target_listener_tab,(gpointer)(uintptr_t)target_id);
+
+    if (!tll) {
+	tll = array_list_create(1);
+	g_hash_table_insert(target_listener_tab,
+			    (gpointer)(uintptr_t)target_id,tll);
+    }
+
+    array_list_append(tll,tl);
+
+    return 0;
+}
+int target_rpc_insert_listener(int target_id,char *hostname,int port) {
+    int rc;
+
+    pthread_mutex_lock(&target_rpc_mutex);
+    rc = _target_rpc_insert_listener(target_id,hostname,port);
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return rc;
+}
+
+int _target_rpc_remove_listener(int target_id,char *hostname,int port) {
+    struct array_list *tll;
+    int i;
+    struct target_rpc_listener *tl;
+
+    tll = (struct array_list *)						\
+	g_hash_table_lookup(target_listener_tab,(gpointer)(uintptr_t)target_id);
+
+    if (!tll) 
+	return -1;
+
+    array_list_foreach(tll,i,tl) {
+	if (strcmp(hostname,tl->hostname) == 0 && tl->port == port)
+	    break;
+	else
+	    tl = NULL;
+    }
+
+    if (tl) {
+	array_list_remove_item_at(tll,i);
+	free(tl->hostname);
+	free(tl);
+	return 0;
+    }
+
+    return -1;
+}
+int target_rpc_remove_listener(int target_id,char *hostname,int port) {
+    int rc;
+
+    pthread_mutex_lock(&target_rpc_mutex);
+    rc = _target_rpc_remove_listener(target_id,hostname,port);
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return rc;
 }
 
 /*
@@ -553,6 +664,7 @@ int vmi1__PauseTarget(struct soap *soap,
 
     return SOAP_OK;
 }
+
 int vmi1__ResumeTarget(struct soap *soap,
 		       vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r) {
@@ -633,7 +745,7 @@ int vmi1__ResumeThread(struct soap *soap,
 }
 
 int vmi1__SinglestepThread(struct soap *soap,
-			   vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+			   vmi1__TargetIdT tid,vmi1__ThreadIdT thid,int steps,
 			   struct vmi1__NoneResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
@@ -663,14 +775,197 @@ int vmi1__LookupTargetAllSymbols(struct soap *soap,
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__OpenSession(struct soap *soap,
-		      vmi1__TargetIdT tid,
-		      vmi1__SessionIdT *sid) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+
+int _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
+				 struct probe *trigger) {
+    struct soap soap;
+    GHashTable *reftab;
+    struct array_list *tll;
+    int i;
+    struct target_rpc_listener *tl = NULL;
+    struct target *target = probe->target;
+    int target_id;
+    char urlbuf[SOAP_TAGLEN];
+    struct vmi1__ProbeEventT event;
+    struct vmi1__NoneResponse nr;
+    int rc;
+
+    if (target)
+	target_id = target->id;
+    else {
+	verror("probe not associated with target!\n");
+	return -1;
+    }
+
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    tll = (struct array_list *)	\
+	g_hash_table_lookup(target_listener_tab,(gpointer)(uintptr_t)target_id);
+
+    if (tll) {
+	soap_init(&soap);
+
+
+	reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+	t_probe_to_x_ProbeEventT(&soap,probe,0,trigger,reftab,&event);
+	g_hash_table_destroy(reftab);
+
+	array_list_foreach(tll,i,tl) {
+	    snprintf(urlbuf,sizeof(urlbuf),"http://%s:%d",tl->hostname,tl->port);
+
+	    soap.connect_timeout = 4;
+	    soap.send_timeout = 4;
+	    soap.recv_timeout = 4;
+
+	    rc = soap_call_vmi1__ProbeEvent(&soap,urlbuf,NULL,&event,&nr);
+	    if (rc != SOAP_OK) {
+		verrorc("ProbeEvent client call: ");
+		soap_print_fault(&soap,stderr);
+	    }
+	    soap_closesock(&soap);
+
+	    vdebug(5,LA_XML,LF_RPC,"notified listener %s\n",urlbuf);
+	}
+	soap_destroy(&soap);
+	soap_end(&soap);
+	soap_done(&soap);
+    }
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return 0;
+};
+
+
+int _target_rpc_probe_posthandler(struct probe *probe,void *handler_data,
+				  struct probe *trigger) {
+    return 0;
+};
+
+int vmi1__ProbeSymbol(struct soap *soap,
+		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		      char *probeName,char *symbol,
+		      struct vmi1__ProbeResponse *r) {
+    struct target *t;
+    struct probe *p;
+    target_status_t status;
+    GHashTable *reftab;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (thid == -1)
+	thid = TID_GLOBAL;
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+	if (target_pause(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not pause target!",
+				       "Could not pause target before adding probe!");
+	}
+    }
+    vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
+
+    p = probe_simple(t,thid,symbol,_target_rpc_probe_prehandler,
+		     _target_rpc_probe_posthandler,NULL);
+
+    probe_rename(p,probeName);
+
+    if (status != TSTATUS_PAUSED) {
+	if (target_resume(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not resume target!",
+				       "Could not resume target after adding probe!");
+	}
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    r->probe = t_probe_to_x_ProbeT(soap,p,reftab,NULL);
+    g_hash_table_destroy(reftab);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
-int vmi1__CloseSession(struct soap *soap,
-		       vmi1__TargetIdT tid,
-		       vmi1__SessionIdT *sid) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+int vmi1__ProbeAddr(struct soap *soap,
+		    vmi1__TargetIdT tid,char *probeName,vmi1__ADDR addr,
+		    vmi1__ProbepointTypeT *probepointType,
+		    vmi1__ProbepointStyleT *probepointStyle,
+		    vmi1__ProbepointWhenceT *probepointWhence,
+		    vmi1__ProbepointSizeT *probepointSize,
+		    struct vmi1__ProbeResponse *r) {
+
+}
+
+int vmi1__ProbeLine(struct soap *soap,
+		    vmi1__TargetIdT tid,char *probeName,char *filename,int line,
+		    vmi1__ProbepointStyleT *probepointStyle,
+		    struct vmi1__ProbeResponse *r) {
+
+}
+
+int vmi1__EnableProbe(struct soap *soap,
+		      vmi1__TargetIdT tid,char *probeName,
+		      struct vmi1__NoneResponse *r) {
+
+}
+
+int vmi1__DisableProbe(struct soap *soap,
+		       vmi1__TargetIdT tid,char *probeName,
+		       struct vmi1__NoneResponse *r) {
+
+}
+
+int vmi1__RemoveProbe(struct soap *soap,
+		      vmi1__TargetIdT tid,char *probeName,
+		      struct vmi1__NoneResponse *r) {
+
+}
+
+int vmi1__RegisterTargetListener(struct soap *soap,
+				 vmi1__TargetIdT tid,
+				 char *host,int port,enum xsd__boolean ssl,
+				 struct vmi1__NoneResponse *r) {
+    struct target_rpc_listener *tl = calloc(1,sizeof(*tl));
+
+    target_rpc_init();
+
+    if (target_rpc_lookup_listener(tid,host,port)) 
+	return soap_receiver_fault(soap,"Could not register listener!",
+				   "Could not register listener: duplicate!");
+
+    if (target_rpc_insert_listener(tid,host,port)) 
+	return soap_receiver_fault(soap,"Could not register listener!",
+				   "Could not register listener: insert()!");
+
+    return SOAP_OK;
+}
+
+int vmi1__UnregisterTargetListener(struct soap *soap,
+				   vmi1__TargetIdT tid,
+				   char *host,int port,
+				   struct vmi1__NoneResponse *r) {
+    struct target_rpc_listener *tl = calloc(1,sizeof(*tl));
+
+    target_rpc_init();
+
+    if (!target_rpc_lookup_listener(tid,host,port)) 
+	return soap_receiver_fault(soap,"Could not find listener!",
+				   "Could not find listener!");
+
+    if (!target_rpc_remove_listener(tid,host,port)) 
+	return soap_receiver_fault(soap,"Could not remove listener!",
+				   "Could not remove listener!");
+
+    return SOAP_OK;
 }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   
-  Copyright (c) 2011, 2012 The University of Utah
+  Copyright (c) 2011, 2012, 2013 The University of Utah
   
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -111,7 +111,7 @@
   <xs:element name="stderrLogfile" type="xs:string"/>
   <xs:element name="closeStdin" type="xs:boolean"/>
   <xs:element name="targetPtraceSpec" type="vmi1:TargetPtraceSpecT"/>
-  <xs:simpleType name="TargetThreadStatusT">
+  <xs:simpleType name="ThreadStatusT">
     <xs:restriction base="xs:token">
       <xs:enumeration value="unknown"/>
       <xs:enumeration value="running"/>
@@ -124,15 +124,15 @@
       <xs:enumeration value="paused"/>
     </xs:restriction>
   </xs:simpleType>
-  <xs:complexType name="TargetThreadStatus">
+  <xs:complexType name="ThreadStatus">
     <xs:sequence>
       <xs:element ref="vmi1:threadStatus"/>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="threadStatus" type="vmi1:TargetThreadStatusT"/>
+  <xs:element name="threadStatus" type="vmi1:ThreadStatusT"/>
   <xs:complexType name="ThreadT">
     <xs:complexContent>
-      <xs:extension base="vmi1:TargetThreadStatus">
+      <xs:extension base="vmi1:ThreadStatus">
         <xs:attribute name="thid" use="required" type="vmi1:ThreadIdT"/>
         <xs:attribute name="tid" use="required" type="vmi1:TargetIdT"/>
       </xs:extension>
@@ -216,4 +216,101 @@
   <xs:element name="end" type="vmi1:ADDR"/>
   <xs:element name="offset" type="vmi1:ADDR"/>
   <xs:element name="memRange" type="vmi1:MemRangeT"/>
+  <xs:simpleType name="ProbepointTypeT">
+    <xs:annotation>
+      <xs:documentation>
+Probe stuff.
+</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="break"/>
+      <xs:enumeration value="watch"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="probepointType" type="vmi1:ProbepointTypeT"/>
+  <xs:simpleType name="ProbepointStyleT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="fastest"/>
+      <xs:enumeration value="hw"/>
+      <xs:enumeration value="sw"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="probepointStyle" type="vmi1:ProbepointStyleT"/>
+  <xs:simpleType name="ProbepointWhenceT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="auto"/>
+      <xs:enumeration value="exec"/>
+      <xs:enumeration value="write"/>
+      <xs:enumeration value="readwrite"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="probepointWhence" type="vmi1:ProbepointWhenceT"/>
+  <xs:simpleType name="ProbepointSizeT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="auto"/>
+      <xs:enumeration value="0"/>
+      <xs:enumeration value="2"/>
+      <xs:enumeration value="4"/>
+      <xs:enumeration value="8"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="probepointSize" type="vmi1:ProbepointSizeT"/>
+  <xs:complexType name="ProbeT">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element ref="vmi1:addr"/>
+      <xs:element ref="vmi1:type"/>
+      <xs:element ref="vmi1:style"/>
+      <xs:element ref="vmi1:whence"/>
+      <xs:element ref="vmi1:size"/>
+      <xs:element ref="vmi1:tid"/>
+      <xs:element ref="vmi1:thid"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="addr" type="vmi1:ADDR"/>
+  <xs:element name="type" type="vmi1:ProbepointTypeT"/>
+  <xs:element name="style" type="vmi1:ProbepointTypeT"/>
+  <xs:element name="whence" type="vmi1:ProbepointWhenceT"/>
+  <xs:element name="size" type="vmi1:ProbepointSizeT"/>
+  <xs:element name="tid" type="vmi1:TargetIdT"/>
+  <xs:element name="thid" type="vmi1:ThreadIdT"/>
+  <xs:element name="probe" type="vmi1:ProbeT"/>
+  <xs:complexType name="RegisterValueT">
+    <xs:sequence>
+      <xs:element name="name" type="xs:token"/>
+      <xs:element ref="vmi1:value"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="value" type="xs:unsignedLong"/>
+  <xs:element name="registerValue" type="vmi1:RegisterValueT"/>
+  <xs:complexType name="ProbeEventT">
+    <xs:sequence>
+      <xs:element ref="vmi1:probe"/>
+      <xs:element ref="vmi1:thread"/>
+      <xs:element ref="vmi1:registerValues"/>
+    </xs:sequence>
+    <xs:attribute name="eventType" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:token">
+          <xs:enumeration value="pre"/>
+          <xs:enumeration value="post"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:element name="registerValues">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:registerValue"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="probeEvent" type="vmi1:ProbeEventT"/>
+  <xs:complexType name="SinglestepEventT">
+    <xs:sequence>
+      <xs:element ref="vmi1:thread"/>
+      <xs:element ref="vmi1:registerValues"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="singlestepEvent" type="vmi1:SinglestepEventT"/>
 </xs:schema>

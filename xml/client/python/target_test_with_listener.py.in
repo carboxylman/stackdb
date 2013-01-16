@@ -1,0 +1,125 @@
+#!/usr/bin/env python
+##
+## Copyright (c) 2012, 2013 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+##
+
+import logging
+import os
+import os.path
+from suds.client import Client
+from pysimplesoap.server import SoapDispatcher,SOAPHandler
+from BaseHTTPServer import HTTPServer
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('suds.client').setLevel(logging.DEBUG)
+logging.getLogger('suds.transport').setLevel(logging.DEBUG)
+logging.getLogger('suds.xsd.schema').setLevel(logging.DEBUG)
+logging.getLogger('suds.wsdl').setLevel(logging.DEBUG)
+
+logging.getLogger('pysimplesoap').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.server').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.simplexml').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.transport').setLevel(logging.DEBUG)
+
+objdir = os.path.abspath("@top_builddir@")
+url = 'file://%s/xml/service/target.wsdl.test' % (objdir,)
+clienturl = 'file://%s/xml/service/targetListener.wsdl.test' % (objdir,)
+
+#
+# Setup SOAP listener interface
+#
+events = []
+
+probeEventArgs = dict({
+    'probeEvent' : {
+        'probe' : { 'name' : str,'addr' : int,'type' : str,'style' : str,
+                    'whence' : str,'size' : str, 'tid' : int,'thid' : int, },
+        'thread' : { 'tid' : int,'thid' : int,'threadStatus' : str, },
+        'registerValues' : [ { 'registerValue' : { 'name' : str,'value' : str, } } ]
+    }
+})
+def probeEvent(probeEvent,request=None):
+    "Handle a ProbeEvent"
+    events.append(probeEvent)
+    print "ProbeEvent: %s" % (str(probeEvent),)
+    print "ProbeEvent (raw): %s" % (str(request),)
+    return None
+def singlestepEvent(singlestepEvent):
+    "Handle a SingleStepEvent"
+    events.append(singlestepEvent)
+    print "SinglestepEvent: %s" % (str(singlestepEvent),)
+    return None
+
+_namespaces = {
+    'SOAP-ENV' : "http://www.w3.org/2003/05/soap-envelope",
+    'SOAP-ENC' : "http://www.w3.org/2003/05/soap-encoding",
+    'xsi' : "http://www.w3.org/2001/XMLSchema-instance",
+    'xsd' : "http://www.w3.org/2001/XMLSchema",
+}
+dispatcher = SoapDispatcher(
+    'targetListener',
+    location = "http://localhost/",
+    action = 'http://localhost/', # SOAPAction
+    namespace = 'http://anathema.flux.utah.edu/schema/vmi/1', prefix="vmi1",
+    debug = True,
+    trace = True,
+    ns = True,
+    namespaces=_namespaces)
+
+dispatcher.register_function('ProbeEvent',probeEvent,
+                             returns=dict(), 
+                             args=probeEventArgs)
+dispatcher.register_function('SinglestepEvent',singlestepEvent,
+                             returns={ 'NoneResponse' : None}, 
+                             args={ 'event' : dict })
+httpd = HTTPServer(("",0), SOAPHandler)
+httpd.dispatcher = dispatcher
+print "Starting server (%s:%d)..." % (httpd.server_name,httpd.server_port)
+
+#
+# Setup SOAP client
+#
+client = Client(url,cache=None)
+
+#
+# Start running commands
+#
+ttypes = client.service.ListTargetTypes()
+
+tspec = client.factory.create('TargetSpecT')
+tspec._type = "ptrace"
+tspec.mode = "live"
+tspec.startPaused = True
+tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
+#tspec.backendSpec.targetPtraceSpec.program = "/bin/ls"
+tspec.backendSpec.targetPtraceSpec.program = "/home/johnsond/git/a3/vmi.obj/dummy.threads"
+tspec.backendSpec.targetPtraceSpec.arguments = None
+tspec.backendSpec.targetPtraceSpec.environment = None
+tspec.backendSpec.targetPtraceSpec.closeStdin = False
+tspec.backendSpec.targetPtraceSpec.stdoutLogfile = None
+tspec.backendSpec.targetPtraceSpec.stderrLogfile = None
+
+target = client.service.InstantiateTarget(tspec)
+client.service.PauseTarget(target._tid)
+client.service.ResumeTarget(target._tid)
+
+client.service.RegisterTargetListener(target._tid,httpd.server_name,
+                                      httpd.server_port,False)
+
+probe = client.service.ProbeSymbol(target._tid,-1,"foo","f10")
+
+httpd.serve_forever()

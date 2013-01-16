@@ -28,6 +28,15 @@
 #include <glib.h>
 #include <pthread.h>
 
+struct target_rpc_listener {
+    int target_id;
+    char *hostname;
+    int port;
+};
+
+/*
+ * Module init stuff.
+ */
 void target_rpc_init(void);
 void target_rpc_fini(void);
 
@@ -77,7 +86,7 @@ int vmi1__ResumeThread(struct soap *soap,
 		       struct vmi1__NoneResponse *r);
 
 int vmi1__SinglestepThread(struct soap *soap,
-			   vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+			   vmi1__TargetIdT tid,vmi1__ThreadIdT thid,int steps,
 			   struct vmi1__NoneResponse *r);
 
 int vmi1__LookupTargetSymbol(struct soap *soap,
@@ -97,12 +106,38 @@ int vmi1__LookupTargetAllSymbols(struct soap *soap,
 				 struct vmi1__DebugFileOptsT *opts,
 				 struct vmi1__NestedSymbolResponse *r);
 
-int vmi1__OpenSession(struct soap *soap,
-		      vmi1__TargetIdT tid,
-		      vmi1__SessionIdT *sid);
+int vmi1__ProbeSymbol(struct soap *soap,
+		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		      char *probeName,char *symbol,
+		      struct vmi1__ProbeResponse *r);
+int vmi1__ProbeAddr(struct soap *soap,
+		    vmi1__TargetIdT tid,char *probeName,vmi1__ADDR addr,
+		    vmi1__ProbepointTypeT *probepointType,
+		    vmi1__ProbepointStyleT *probepointStyle,
+		    vmi1__ProbepointWhenceT *probepointWhence,
+		    vmi1__ProbepointSizeT *probepointSize,
+		    struct vmi1__ProbeResponse *r);
+int vmi1__ProbeLine(struct soap *soap,
+		    vmi1__TargetIdT tid,char *probeName,char *filename,int line,
+		    vmi1__ProbepointStyleT *probepointStyle,
+		    struct vmi1__ProbeResponse *r);
+int vmi1__EnableProbe(struct soap *soap,
+		      vmi1__TargetIdT tid,char *probeName,
+		      struct vmi1__NoneResponse *r);
+int vmi1__DisableProbe(struct soap *soap,
+		       vmi1__TargetIdT tid,char *probeName,
+		       struct vmi1__NoneResponse *r);
+int vmi1__RemoveProbe(struct soap *soap,
+		      vmi1__TargetIdT tid,char *probeName,
+		      struct vmi1__NoneResponse *r);
 
-int vmi1__CloseSession(struct soap *soap,
-		       vmi1__TargetIdT tid,
-		       vmi1__SessionIdT *sid);
+int vmi1__RegisterTargetListener(struct soap *soap,
+				 vmi1__TargetIdT tid,
+				 char *host,int port,enum xsd__boolean ssl,
+				 struct vmi1__NoneResponse *r);
+int vmi1__UnregisterTargetListener(struct soap *soap,
+				   vmi1__TargetIdT tid,
+				   char *host,int port,
+				   struct vmi1__NoneResponse *r);
 
 #endif /* __TARGET_RPC_H__ */

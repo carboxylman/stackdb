@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -105,15 +105,15 @@ t_target_to_x_TargetT(struct soap *soap,
 		      struct vmi1__TargetT *out);
 
 thread_status_t 
-x_TargetThreadStatusT_to_t_thread_status_t(struct soap *soap,
-					   enum vmi1__TargetThreadStatusT status,
-					   GHashTable *reftab,
-					   thread_status_t *out);
-enum vmi1__TargetThreadStatusT 
-t_thread_status_t_to_x_TargetThreadStatusT(struct soap *soap,
-					   thread_status_t status,
-					   GHashTable *reftab,
-					   enum vmi1__TargetThreadStatusT *out);
+x_ThreadStatusT_to_t_thread_status_t(struct soap *soap,
+				     enum vmi1__ThreadStatusT status,
+				     GHashTable *reftab,
+				     thread_status_t *out);
+enum vmi1__ThreadStatusT 
+t_thread_status_t_to_x_ThreadStatusT(struct soap *soap,
+				     thread_status_t status,
+				     GHashTable *reftab,
+				     enum vmi1__ThreadStatusT *out);
 
 target_status_t 
 x_TargetStatusT_to_t_target_status_t(struct soap *soap,
@@ -127,10 +127,10 @@ t_target_status_t_to_x_TargetStatusT(struct soap *soap,
 				     enum vmi1__TargetStatusT *out);
 
 struct vmi1__ThreadT *
-t_target_thread_to_x_TargetThreadT(struct soap *soap,
-				   struct target_thread *thread,
-				   GHashTable *reftab,
-				   struct vmi1__ThreadT *out);
+t_target_thread_to_x_ThreadT(struct soap *soap,
+			     struct target_thread *thread,
+			     GHashTable *reftab,
+			     struct vmi1__ThreadT *out);
 
 struct vmi1__TargetT *
 t_target_to_x_TargetT(struct soap *soap,
@@ -161,5 +161,17 @@ t_memrange_to_x_MemRangeT(struct soap *soap,
 			  struct memrange *range,
 			  GHashTable *reftab,
 			  struct vmi1__MemRangeT *out);
+
+struct vmi1__ProbeT *
+t_probe_to_x_ProbeT(struct soap *soap,
+		    struct probe *probe,
+		    GHashTable *reftab,
+		    struct vmi1__ProbeT *out);
+
+struct vmi1__ProbeEventT *
+t_probe_to_x_ProbeEventT(struct soap *soap,
+			 struct probe *probe,int type,struct probe *trigger,
+			 GHashTable *reftab,
+			 struct vmi1__ProbeEventT *out);
 
 #endif /* __TARGET_XML_H__ */

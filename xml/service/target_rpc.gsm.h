@@ -23,6 +23,9 @@ struct vmi1__TargetsResponse {
     $int __size_target;
     struct vmi1__TargetT **target;
 };
+struct vmi1__ProbeResponse {
+    struct vmi1__ProbeT *probe;
+};
 struct vmi1__NoneResponse { };
 
 //gsoap vmi1 service method-documentation: 
@@ -51,7 +54,7 @@ int vmi1__PauseThread(vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 int vmi1__ResumeThread(vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		       struct vmi1__NoneResponse *r);
 
-int vmi1__SinglestepThread(vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+int vmi1__SinglestepThread(vmi1__TargetIdT tid,vmi1__ThreadIdT thid,int steps,
 			   struct vmi1__NoneResponse *r);
 
 int vmi1__LookupTargetSymbol(vmi1__TargetIdT tid,char *name,
@@ -67,10 +70,28 @@ int vmi1__LookupTargetAllSymbols(vmi1__TargetIdT tid,char *name,
 				 struct vmi1__DebugFileOptsT *opts,
 				 struct vmi1__NestedSymbolResponse *r);
 
+int vmi1__ProbeSymbol(vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		      char *probeName,char *symbol,
+		      struct vmi1__ProbeResponse *r);
+int vmi1__ProbeAddr(vmi1__TargetIdT tid,char *probeName,vmi1__ADDR addr,
+		    vmi1__ProbepointTypeT *probepointType,
+		    vmi1__ProbepointStyleT *probepointStyle,
+		    vmi1__ProbepointWhenceT *probepointWhence,
+		    vmi1__ProbepointSizeT *probepointSize,
+		    struct vmi1__ProbeResponse *r);
+int vmi1__ProbeLine(vmi1__TargetIdT tid,char *probeName,char *filename,int line,
+		    vmi1__ProbepointStyleT *probepointStyle,
+		    struct vmi1__ProbeResponse *r);
+int vmi1__EnableProbe(vmi1__TargetIdT tid,char *probeName,
+		      struct vmi1__NoneResponse *r);
+int vmi1__DisableProbe(vmi1__TargetIdT tid,char *probeName,
+		       struct vmi1__NoneResponse *r);
+int vmi1__RemoveProbe(vmi1__TargetIdT tid,char *probeName,
+		      struct vmi1__NoneResponse *r);
 
-int vmi1__OpenSession(vmi1__TargetIdT tid,
-		      vmi1__SessionIdT *sid);
-
-int vmi1__CloseSession(vmi1__TargetIdT tid,
-		       vmi1__SessionIdT *sid);
-
+int vmi1__RegisterTargetListener(vmi1__TargetIdT tid,
+				 char *host,int port,enum xsd__boolean ssl,
+				 struct vmi1__NoneResponse *r);
+int vmi1__UnregisterTargetListener(vmi1__TargetIdT tid,
+				   char *host,int port,
+				   struct vmi1__NoneResponse *r);
