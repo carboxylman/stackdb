@@ -1,19 +1,20 @@
-name   = %NAME%
+name   = "%NAME%"
 kernel = "/boot/vmlinuz-2.6.18-xenU"
 
 memory = %MEM%
+shadow_memory = (memory + 255) / 256
 #cpu = 1
 #nics = 1
 
-ramdisk = %RAMDISK%
+ramdisk = "%RAMDISK%"
 disk = ['phy:/dev/%LVM%,sda1,w']
 vif = [ 'bridge=xenbr0']
 
 root = "/dev/sda1 ro"
-extra = "ro selinux=0 3 initcall_debug"
+extra = "selinux=0 3"
 
 time_travel = [
-    %TTOPTS%
+    "%TTOPTS%"
 ]
 
 features = "auto_translated_physmap"

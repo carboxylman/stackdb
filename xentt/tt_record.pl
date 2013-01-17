@@ -299,10 +299,10 @@ sub make_xmconfig($$)
 		    $line = "#$line";
 		    $rline = $line;
 		} elsif ($tag eq "TTOPTS") {
-		    $line =~ s/$tagstr/\"$values{$tag}\"/;
-		    $rline =~ s/$tagstr/\"$values{$tag},tt_replay_flag=1\"/;
+		    $line =~ s/$tagstr/$values{$tag}/;
+		    $rline =~ s/$tagstr/$values{$tag},tt_replay_flag=1/;
 		} else {
-		    $line =~ s/$tagstr/\"$values{$tag}\"/g;
+		    $line =~ s/$tagstr/$values{$tag}/g;
 		    $rline = $line;
 		}
 		last;
