@@ -2,7 +2,6 @@ name   = "%NAME%"
 kernel = "/boot/vmlinuz-2.6.18-xenU"
 
 memory = %MEM%
-shadow_memory = (memory + 255) / 256
 #cpu = 1
 #nics = 1
 
@@ -16,5 +15,12 @@ extra = "selinux=0 3"
 time_travel = [
     "%TTOPTS%"
 ]
+
+#
+# Memory for shadow page tables.
+# Recommended: 1 page per MB of memory + 128 pages for other uses
+# So ((num_pages+255) / 256) == MB of shadow memory (rounded up).
+#
+shadow_memory = ((memory + 128 + 255) / 256)
 
 features = "auto_translated_physmap"
