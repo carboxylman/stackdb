@@ -75,7 +75,7 @@ int main(int argc,char **argv) {
     vmi_set_log_level(16);
     vmi_set_log_area_flags(LA_LIB,LF_EVLOOP | LF_WAITPIPE);
 
-    waitpipe_init(alt_sigchld_handler);
+    waitpipe_init_auto(alt_sigchld_handler);
 
     evloop = evloop_create(evloop_error_handler);
 
