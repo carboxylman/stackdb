@@ -46,8 +46,10 @@ events = []
 
 probeEventArgs = dict({
     'probeEvent' : {
-        'probe' : { 'name' : str,'addr' : int,'type' : str,'style' : str,
-                    'whence' : str,'size' : str, 'tid' : int,'thid' : int, },
+        'eventType' : str,
+        'probe' : { 'pid' : int,'name' : str,'addr' : int,'type' : str,
+                    'style' : str,'whence' : str,'size' : str,
+                    'tid' : int,'thid' : int, },
         'thread' : { 'tid' : int,'thid' : int,'threadStatus' : str, },
         'registerValues' : [ { 'registerValue' : { 'name' : str,'value' : str, } } ]
     }
@@ -56,12 +58,26 @@ def probeEvent(probeEvent,request=None):
     "Handle a ProbeEvent"
     events.append(probeEvent)
     print "ProbeEvent: %s" % (str(probeEvent),)
-    print "ProbeEvent (raw): %s" % (str(request),)
-    return None
-def singlestepEvent(singlestepEvent):
-    "Handle a SingleStepEvent"
-    events.append(singlestepEvent)
-    print "SinglestepEvent: %s" % (str(singlestepEvent),)
+    #print "ProbeEvent (raw): %s" % (str(request),)
+    return { 'result' : 0 }
+actionEventArgs = dict({
+    'actionEvent' : {
+        'handlerMsg' : str,
+        'actionDetail' : { 'stepCount' : int },
+        'action' : { 'tid' : int,'pid' : int,'type' : str,'whence' : str,
+                     'return' : { 'code' : int },
+                     'regmod' : { 'registerValue' : { 'name' : str,'value' : str, } },
+                     'memmod' : { 'addr' : int,'data' : str },
+                     'singlestep' : { 'stepCount' : int }
+                     },
+        'thread' : { 'tid' : int,'thid' : int,'threadStatus' : str, },
+        'registerValues' : [ { 'registerValue' : { 'name' : str,'value' : str, } } ]
+    }
+})
+def actionEvent(actionEvent):
+    "Handle a ActionEvent"
+    events.append(actionEvent)
+    print "ActionEvent: %s" % (str(actionEvent),)
     return None
 
 _namespaces = {
@@ -81,11 +97,12 @@ dispatcher = SoapDispatcher(
     namespaces=_namespaces)
 
 dispatcher.register_function('ProbeEvent',probeEvent,
-                             returns=dict(), 
+                             returns={ 'result' : int,
+                                       'actionSpecs' : [ ] },
                              args=probeEventArgs)
-dispatcher.register_function('SinglestepEvent',singlestepEvent,
-                             returns={ 'NoneResponse' : None}, 
-                             args={ 'event' : dict })
+dispatcher.register_function('ActionEvent',actionEvent,
+                             returns={ 'result' : int }, 
+                             args=actionEventArgs)
 httpd = HTTPServer(("",0), SOAPHandler)
 httpd.dispatcher = dispatcher
 print "Starting server (%s:%d)..." % (httpd.server_name,httpd.server_port)
@@ -105,8 +122,7 @@ tspec._type = "ptrace"
 tspec.mode = "live"
 tspec.startPaused = True
 tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
-#tspec.backendSpec.targetPtraceSpec.program = "/bin/ls"
-tspec.backendSpec.targetPtraceSpec.program = "/home/johnsond/git/a3/vmi.obj/dummy.threads"
+tspec.backendSpec.targetPtraceSpec.program = "../../../tests/dummy.threads"
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 tspec.backendSpec.targetPtraceSpec.closeStdin = False
@@ -114,12 +130,12 @@ tspec.backendSpec.targetPtraceSpec.stdoutLogfile = None
 tspec.backendSpec.targetPtraceSpec.stderrLogfile = None
 
 target = client.service.InstantiateTarget(tspec)
-client.service.PauseTarget(target._tid)
-client.service.ResumeTarget(target._tid)
+client.service.PauseTarget(target.tid)
+client.service.ResumeTarget(target.tid)
 
-client.service.RegisterTargetListener(target._tid,httpd.server_name,
+client.service.RegisterTargetListener(target.tid,httpd.server_name,
                                       httpd.server_port,False)
 
-probe = client.service.ProbeSymbol(target._tid,-1,"foo","f10")
+probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")
 
 httpd.serve_forever()

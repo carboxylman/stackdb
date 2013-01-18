@@ -39,7 +39,8 @@ tspec._type = "ptrace"
 tspec.mode = "live"
 tspec.startPaused = True
 tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
-tspec.backendSpec.targetPtraceSpec.program = "/bin/ls"
+#tspec.backendSpec.targetPtraceSpec.program = "/bin/ls"
+tspec.backendSpec.targetPtraceSpec.program = "/home/johnsond/git/a3/vmi.obj/dummy.threads"
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 tspec.backendSpec.targetPtraceSpec.closeStdin = False
@@ -51,3 +52,5 @@ target = client.service.InstantiateTarget(tspec)
 paused = client.service.PauseTarget(1)
 
 resumed = client.service.ResumeTarget(1)
+
+probe = client.service.ProbeSymbolSimple(1,-1,"foo","f10")
