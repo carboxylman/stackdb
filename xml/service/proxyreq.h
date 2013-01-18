@@ -268,7 +268,6 @@ int proxyreq_send_response(struct proxyreq *pr);
  */
 #define PROXY_REQUEST_LOCKED(soap,mobj,mobjid,mutex) {			\
     struct proxyreq *_pr;						\
-    int _rc;								\
     _pr = (struct proxyreq *)(soap)->user;				\
     if (!_pr) {								\
         verror("no proxyreq state!\n");					\
