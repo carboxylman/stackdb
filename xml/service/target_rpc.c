@@ -1149,14 +1149,14 @@ int _target_rpc_probe_handler(int type,struct probe *probe,void *handler_data,
     return 0;
 };
 
-int _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
-				 struct probe *trigger) {
+result_t _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
+				      struct probe *trigger) {
     return _target_rpc_probe_handler(0,probe,handler_data,trigger);
 };
 
 
-int _target_rpc_probe_posthandler(struct probe *probe,void *handler_data,
-				  struct probe *trigger) {
+result_t _target_rpc_probe_posthandler(struct probe *probe,void *handler_data,
+				       struct probe *trigger) {
     return _target_rpc_probe_handler(1,probe,handler_data,trigger);
 };
 

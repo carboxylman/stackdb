@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -106,10 +106,10 @@ void sigh(int signo) {
     exit(0);
 }
 
-int retaddr_check(struct probe *probe,void *handler_data,
-		  struct probe *trigger);
-int retaddr_save(struct probe *probe,void *handler_data,
-		 struct probe *trigger);
+result_t retaddr_check(struct probe *probe,void *handler_data,
+		       struct probe *trigger);
+result_t retaddr_save(struct probe *probe,void *handler_data,
+		      struct probe *trigger);
 
 ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
     ADDR funcstart = 0;
@@ -196,8 +196,8 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
     return funcstart;
 }
 
-int retaddr_save(struct probe *probe,void *handler_data,
-		 struct probe *trigger) {
+result_t retaddr_save(struct probe *probe,void *handler_data,
+		      struct probe *trigger) {
     struct target *t = probe->target;
     REGVAL sp;
     REGVAL ip;
@@ -211,7 +211,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
     sp = target_read_reg(t,tid,t->spregno);
     if (errno) {
 	fprintf(stderr,"Could not read SP in retaddr_save!\n");
-	return 0;
+	return RESULT_SUCCESS;
     }
 
     /* Grab the return address on the top of the stack */
@@ -219,7 +219,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
     if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
 			  (unsigned char *)retaddr)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_save!\n");
-	return 0;
+	return RESULT_SUCCESS;
     }
 
     /* Grab the current IP -- the post-call IP */
@@ -228,7 +228,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 	fprintf(stderr,"Could not read IP in retaddr_save!\n");
 	fflush(stderr);
 	fflush(stdout);
-	return 0;
+	return RESULT_SUCCESS;
     }
 
     struct bsymbol *bsymbol = target_lookup_sym_addr(t,ip);
@@ -252,7 +252,7 @@ int retaddr_save(struct probe *probe,void *handler_data,
 	fflush(stderr);
 	fflush(stdout);
 #endif
-	return 0;
+	return RESULT_SUCCESS;
     }
     else {
 	fprintf(stdout,
@@ -286,11 +286,11 @@ int retaddr_save(struct probe *probe,void *handler_data,
     instrument_func(bsymbol,0);
     bsymbol_release(bsymbol);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int retaddr_check(struct probe *probe,void *handler_data,
-		  struct probe *trigger) {
+result_t retaddr_check(struct probe *probe,void *handler_data,
+		       struct probe *trigger) {
     REGVAL sp;
     ADDR newretaddr;
     ADDR *oldretaddr = NULL;
@@ -304,14 +304,14 @@ int retaddr_check(struct probe *probe,void *handler_data,
      */
     if (array_list_len(shadow_stack) == 0) {
 	++nonrootsethits;
-	return 0;
+	return RESULT_SUCCESS;
     }
 
     errno = 0;
     sp = target_read_reg(t,tid,t->spregno);
     if (errno) {
 	fprintf(stderr,"Could not read SP in retaddr_check!\n");
-	return 0;
+	return RESULT_SUCCESS;
     }
 
     oldretaddr = (ADDR *)array_list_remove(shadow_stack);
@@ -320,7 +320,7 @@ int retaddr_check(struct probe *probe,void *handler_data,
 			  (unsigned char *)&newretaddr)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_check!\n");
 	free(oldretaddr);
-	return 0;
+	return RESULT_SUCCESS;
     }
 
     if (newretaddr != *oldretaddr) {
@@ -357,7 +357,7 @@ int retaddr_check(struct probe *probe,void *handler_data,
 			       (unsigned char *)oldretaddr)) {
 	    fprintf(stderr,"Could not reset top of stack in retaddr_check!\n");
 	    free(oldretaddr);
-	    return 0;
+	    return RESULT_SUCCESS;
 	}
 	else 
 	    fprintf(stdout,"Reset stack after corruption!\n");
@@ -368,11 +368,11 @@ int retaddr_check(struct probe *probe,void *handler_data,
 
     free(oldretaddr);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int at_handler(struct probe *probe,void *handler_data,
-	       struct probe *trigger) {
+result_t at_handler(struct probe *probe,void *handler_data,
+		    struct probe *trigger) {
     ADDR probeaddr;
     struct probepoint *probepoint;
     tid_t tid = target_gettid(t);
@@ -396,11 +396,11 @@ int at_handler(struct probe *probe,void *handler_data,
 
     at_symbol_hit = 1;
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int until_handler(struct probe *probe,void *handler_data,
-		  struct probe *trigger) {
+result_t until_handler(struct probe *probe,void *handler_data,
+		       struct probe *trigger) {
     ADDR probeaddr;
     struct probepoint *probepoint;
     tid_t tid = target_gettid(t);
@@ -424,11 +424,11 @@ int until_handler(struct probe *probe,void *handler_data,
 
     until_symbol_hit = 1;
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int function_dump_args(struct probe *probe,void *handler_data,
-		       struct probe *trigger) {
+result_t function_dump_args(struct probe *probe,void *handler_data,
+			    struct probe *trigger) {
     struct value *value;
     int j;
     ADDR probeaddr;
@@ -498,11 +498,11 @@ int function_dump_args(struct probe *probe,void *handler_data,
 	array_list_free(args);
     }
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int function_post(struct probe *probe,void *handler_data,
-		  struct probe *trigger) {
+result_t function_post(struct probe *probe,void *handler_data,
+		       struct probe *trigger) {
     ADDR probeaddr;
     struct probepoint *probepoint;
     tid_t tid = target_gettid(probe->target);
@@ -527,10 +527,11 @@ int function_post(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int addr_code_pre(struct probe *probe,void *handler_data,struct probe *trigger) {
+result_t addr_code_pre(struct probe *probe,void *handler_data,
+		       struct probe *trigger) {
     tid_t tid;
 
     fflush(stderr);
@@ -544,10 +545,11 @@ int addr_code_pre(struct probe *probe,void *handler_data,struct probe *trigger) 
     fflush(stderr);
     fflush(stdout);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int addr_code_post(struct probe *probe,void *handler_data,struct probe *trigger) {
+result_t addr_code_post(struct probe *probe,void *handler_data,
+			struct probe *trigger) {
     tid_t tid;
 
     fflush(stderr);
@@ -561,10 +563,11 @@ int addr_code_post(struct probe *probe,void *handler_data,struct probe *trigger)
     fflush(stderr);
     fflush(stdout);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int addr_var_pre(struct probe *probe,void *handler_data,struct probe *trigger) {
+result_t addr_var_pre(struct probe *probe,void *handler_data,
+		      struct probe *trigger) {
     tid_t tid;
     uint32_t word;
 
@@ -581,10 +584,11 @@ int addr_var_pre(struct probe *probe,void *handler_data,struct probe *trigger) {
     fflush(stderr);
     fflush(stdout);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int addr_var_post(struct probe *probe,void *handler_data,struct probe *trigger) {
+result_t addr_var_post(struct probe *probe,void *handler_data,
+		       struct probe *trigger) {
     tid_t tid;
     uint32_t word;
 
@@ -601,11 +605,11 @@ int addr_var_post(struct probe *probe,void *handler_data,struct probe *trigger) 
     fflush(stderr);
     fflush(stdout);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int var_pre(struct probe *probe,void *handler_data,
-	    struct probe *trigger) {
+result_t var_pre(struct probe *probe,void *handler_data,
+		 struct probe *trigger) {
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
@@ -646,11 +650,11 @@ int var_pre(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
-int var_post(struct probe *probe,void *handler_data,
-	     struct probe *trigger) {
+result_t var_post(struct probe *probe,void *handler_data,
+		  struct probe *trigger) {
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
@@ -690,7 +694,7 @@ int var_post(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    return 0;
+    return RESULT_SUCCESS;
 }
 
 result_t ss_handler(struct action *action,struct probe *probe,

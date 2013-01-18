@@ -85,8 +85,8 @@ static void action_finish_handling(struct action *action);
  * handlers from within their handler, so that sinks can attach to their
  * handlers if desired.
  */
-int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
-				struct probe *trigger) {
+result_t probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
+				     struct probe *trigger) {
     struct probe *ptmp;
     GList *list;
     int retval = 0;
@@ -102,7 +102,7 @@ int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
 	    /* Signal each of the sinks. */
 	    if (ptmp->pre_handler) {
 		rc = ptmp->pre_handler(ptmp,ptmp->handler_data,trigger);
-		if (rc == 1) {
+		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
@@ -114,8 +114,8 @@ int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
     return retval;
 }
 
-int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
-				struct probe *trigger) {
+result_t probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
+				     struct probe *trigger) {
     struct probe *ptmp;
     GList *list;
     int retval = 0;
@@ -131,7 +131,7 @@ int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
 	    /* Signal each of the sinks. */
 	    if (ptmp->post_handler) {
 		rc = ptmp->post_handler(ptmp,ptmp->handler_data,trigger);
-		if (rc == 1) {
+		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
@@ -2073,9 +2073,9 @@ static int run_post_handlers(struct target *target,
 		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 		rc = probe->post_handler(probe,probe->handler_data,probe);
-		if (rc == 1) 
+		if (rc == RESULT_ERROR) 
 		    probe_disable(probe);
-		else if (rc == 2) 
+		else if (rc == RESULT_ABORT) 
 		    /* don't reinject the probe! */
 		    noreinject = 1;
 	    }
@@ -2664,7 +2664,7 @@ result_t probepoint_bp_handler(struct target *target,
 		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
 		rc = probe->pre_handler(probe,probe->handler_data,probe);
-		if (rc == 1) 
+		if (rc == RESULT_ERROR) 
 		    probe_disable(probe);
 	    }
 	    else if (0 && probe->sinks) {

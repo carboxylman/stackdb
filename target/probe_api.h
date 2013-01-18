@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -53,8 +53,8 @@ typedef enum {
 /*
  * The type of function to be used for probe pre- and post-handlers.
  */
-typedef int (*probe_handler_t)(struct probe *probe,void *handler_data,
-			       struct probe *trigger);
+typedef result_t (*probe_handler_t)(struct probe *probe,void *handler_data,
+				    struct probe *trigger);
 /*
  * The type of function to be used for action handlers.
  */

@@ -67,10 +67,10 @@ typedef enum {
  * functions to the probes it builds on.  They simply invoke any
  * handlers for any sink probes registered on @probe.
  */
-int probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
-				struct probe *trigger);
-int probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
-				struct probe *trigger);
+result_t probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
+				     struct probe *trigger);
+result_t probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
+				     struct probe *trigger);
 
 /*
  * Prototypes of the standard breakpoint and single step debug event
