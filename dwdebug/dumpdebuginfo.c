@@ -43,7 +43,6 @@ int main(int argc,char **argv) {
     int detail = 0;
     int meta = 0;
     int i;
-    log_flags_t flags;
     char *optargc;
     int dotypes = 1;
     int doglobals = 1;
