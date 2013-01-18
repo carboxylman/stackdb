@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -24,6 +24,8 @@
 
 void debuginfo_rpc_init(void);
 void debuginfo_rpc_fini(void);
+
+#define DEF_REFSTACK_SIZE 32
 
 int vmi1__ListDebugFiles(struct soap *soap,
 			 struct vmi1__DebugFileOptsT *opts,

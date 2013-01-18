@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -41,7 +41,7 @@
  */
 pthread_mutex_t debuginfo_rpc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static struct vmi1__DebugFileOptsT defDebugFileOpts = {
+struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .symbolRefDepth = 1,
     .symtabRefDepth = 1,
     .doMultiRef = 0,
@@ -79,8 +79,6 @@ void debuginfo_rpc_fini(void) {
 
     pthread_mutex_unlock(&debuginfo_rpc_mutex);
 }
-
-#define DEF_REFSTACK_SIZE 32
 
 int vmi1__ListDebugFiles(struct soap *soap,
 			 struct vmi1__DebugFileOptsT *opts,
