@@ -437,6 +437,16 @@ int target_close(struct target *target);
 int target_kill(struct target *target);
 
 /*
+ * Returns the probe attached to this target with ID @probe_id, if any.
+ */
+struct probe *target_lookup_probe(struct target *target,int probe_id);
+
+/*
+ * Returns the action attached to this target with ID @probe_id, if any.
+ */
+struct action *target_lookup_action(struct target *target,int action_id);
+
+/*
  * Reads a block of memory from the target.  If @buf is non-NULL, we
  * assume it is at least @length bytes long; the result is placed into
  * @buf and @buf is returned.  If @buf is NULL, we allocate a buffer
@@ -1120,16 +1130,6 @@ struct target_thread {
     GHashTable *hard_probepoints;
 
     /*
-     * A hashtable of pointers to (non-autofree) probes.
-     */
-    GHashTable *probes;
-
-    /*
-     * A hashtable of pointers to (autofree) probes.
-     */
-    GHashTable *autofree_probes;
-
-    /*
      * Info about the probepoint we are handling.  A single thread can
      * only be directly handling one probepoint at once.  The only case
      * where we could stack up two breakpoints is when we single step
@@ -1305,6 +1305,32 @@ struct target {
     struct target_thread *sstep_thread;
 
     GHashTable *soft_probepoints;
+
+    /*
+     * A hashtable of probe IDs to probes that were created on this
+     * target.
+     *
+     * Probes may be attached to specific threads, but we track them
+     * globally here, mostly for the XML RPC server.
+     */
+    GHashTable *probes;
+
+    /*
+     * A hashtable of (scheduled) action IDs to actions.
+     *
+     * Although (scheduled) actions are attached to probepoints, we
+     * track them by ID on a per-target basis.  Right now, this is only
+     * used for XML RPCs; internally, the IDs are unused.
+     *
+     * Also note that we do not explicitly "free" actions; users 
+     */
+    GHashTable *actions;
+
+    /*
+     * Counters for the IDs for probes/actions.
+     */
+    int probe_id_counter;
+    int action_id_counter;
 
     /*
      * If we mmap any of the target's memory, this hashtable will have

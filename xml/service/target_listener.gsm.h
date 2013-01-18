@@ -19,5 +19,5 @@ struct vmi1__NoneResponse { };
 int vmi1__ProbeEvent(struct vmi1__ProbeEventT *probeEvent,
 		     struct vmi1__NoneResponse *r);
 
-int vmi1__SinglestepEvent(struct vmi1__SinglestepEventT *singlestepEvent,
-			  struct vmi1__NoneResponse *r);
+int vmi1__ActionEvent(struct vmi1__ActionEventT *actionEvent,
+		      struct vmi1__NoneResponse *r);

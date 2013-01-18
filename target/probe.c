@@ -770,9 +770,10 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
         return NULL;
     }
     memset(probe,0,sizeof(*probe));
+    probe->id = -1;
 
-    probe->target = target;
-    probe->thread = tthread;
+    target_attach_probe(target,tthread,probe);
+
     probe->name = (name) ? strdup(name) : NULL;
     probe->pre_handler = pre_handler;
     probe->post_handler = post_handler;
@@ -835,6 +836,9 @@ int probe_free(struct probe *probe,int force) {
 	    }
 	}
     }
+
+    if (probe->target) 
+	target_detach_probe(probe->target,probe);
 
     if (PROBE_SAFE_OP(probe,fini)) {
 	verror("probe %s fini failed, aborting!\n",probe->name);
@@ -3974,6 +3978,8 @@ int action_sched(struct probe *probe,struct action *action,
 
     action->probe = probe;
 
+    target_attach_action(target,action);
+
     return 0;
 }
 
@@ -4043,6 +4049,8 @@ int action_cancel(struct action *action) {
 
     list_del(&action->action);
     action->probe = NULL;
+
+    target_detach_action(action->target,action);
 
     return 0;
 }

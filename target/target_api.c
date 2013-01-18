@@ -615,6 +615,16 @@ int target_kill(struct target *target) {
     return target->ops->kill(target);
 }
 
+struct probe *target_lookup_probe(struct target *target,int probe_id) {
+    return (struct probe *)g_hash_table_lookup(target->probes,
+					       (gpointer)(uintptr_t)probe_id);
+}
+
+struct action *target_lookup_action(struct target *target,int action_id) {
+    return (struct action *)g_hash_table_lookup(target->actions,
+						(gpointer)(uintptr_t)action_id);
+}
+
 REG target_get_unused_debug_reg(struct target *target,tid_t tid) {
     REG retval;
     vdebug(5,LA_TARGET,LF_TARGET,"getting unused debug reg for target(%s):0x%"PRIx64"\n",

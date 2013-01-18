@@ -78,7 +78,7 @@
   <xs:element name="targetXenSpec" type="vmi1:TargetXenSpecT"/>
   <xs:complexType name="TargetPtraceSpecT">
     <xs:choice>
-      <xs:element ref="vmi1:pid"/>
+      <xs:element name="pid" type="xs:int"/>
       <xs:sequence>
         <xs:element ref="vmi1:program"/>
         <xs:element ref="vmi1:arguments"/>
@@ -89,7 +89,6 @@
       </xs:sequence>
     </xs:choice>
   </xs:complexType>
-  <xs:element name="pid" type="xs:int"/>
   <xs:element name="program" type="xs:string"/>
   <xs:element name="arguments">
     <xs:complexType>
@@ -124,20 +123,16 @@
       <xs:enumeration value="paused"/>
     </xs:restriction>
   </xs:simpleType>
-  <xs:complexType name="ThreadStatus">
+  <xs:element name="threadStatus" type="vmi1:ThreadStatusT"/>
+  <xs:complexType name="ThreadT">
     <xs:sequence>
+      <xs:element ref="vmi1:thid"/>
+      <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:threadStatus"/>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="threadStatus" type="vmi1:ThreadStatusT"/>
-  <xs:complexType name="ThreadT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:ThreadStatus">
-        <xs:attribute name="thid" use="required" type="vmi1:ThreadIdT"/>
-        <xs:attribute name="tid" use="required" type="vmi1:TargetIdT"/>
-      </xs:extension>
-    </xs:complexContent>
-  </xs:complexType>
+  <xs:element name="thid" type="vmi1:ThreadIdT"/>
+  <xs:element name="tid" type="vmi1:TargetIdT"/>
   <xs:element name="thread" type="vmi1:ThreadT"/>
   <xs:simpleType name="TargetStatusT">
     <xs:restriction base="xs:token">
@@ -153,22 +148,22 @@
   <xs:element name="targetStatus" type="vmi1:TargetStatusT"/>
   <xs:complexType name="TargetT">
     <xs:sequence>
+      <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:targetSpec"/>
       <xs:element ref="vmi1:targetStatus"/>
       <xs:element maxOccurs="unbounded" ref="vmi1:thread"/>
       <xs:element maxOccurs="unbounded" ref="vmi1:addrSpace"/>
     </xs:sequence>
     <xs:attribute name="name" use="required"/>
-    <xs:attribute name="tid" use="required" type="vmi1:TargetIdT"/>
   </xs:complexType>
   <xs:element name="target" type="vmi1:TargetT"/>
   <xs:complexType name="AddrSpaceT">
     <xs:sequence>
+      <xs:element ref="vmi1:tid"/>
       <xs:element maxOccurs="unbounded" ref="vmi1:memRegion"/>
     </xs:sequence>
     <xs:attribute name="name" use="required"/>
     <xs:attribute name="id" use="required" type="xs:int"/>
-    <xs:attribute name="tid" use="required" type="vmi1:TargetIdT"/>
   </xs:complexType>
   <xs:element name="addrSpace" type="vmi1:AddrSpaceT"/>
   <xs:simpleType name="MemRegionTypeT">
@@ -216,12 +211,15 @@
   <xs:element name="end" type="vmi1:ADDR"/>
   <xs:element name="offset" type="vmi1:ADDR"/>
   <xs:element name="memRange" type="vmi1:MemRangeT"/>
-  <xs:simpleType name="ProbepointTypeT">
+  <xs:simpleType name="ProbeIdT">
     <xs:annotation>
       <xs:documentation>
 Probe stuff.
 </xs:documentation>
     </xs:annotation>
+    <xs:restriction base="xs:int"/>
+  </xs:simpleType>
+  <xs:simpleType name="ProbepointTypeT">
     <xs:restriction base="xs:token">
       <xs:enumeration value="break"/>
       <xs:enumeration value="watch"/>
@@ -257,23 +255,20 @@ Probe stuff.
   <xs:element name="probepointSize" type="vmi1:ProbepointSizeT"/>
   <xs:complexType name="ProbeT">
     <xs:sequence>
+      <xs:element name="pid" type="vmi1:ProbeIdT"/>
       <xs:element name="name" type="xs:string"/>
       <xs:element ref="vmi1:addr"/>
-      <xs:element ref="vmi1:type"/>
+      <xs:element name="type" type="vmi1:ProbepointTypeT"/>
       <xs:element ref="vmi1:style"/>
-      <xs:element ref="vmi1:whence"/>
+      <xs:element name="whence" type="vmi1:ProbepointWhenceT"/>
       <xs:element ref="vmi1:size"/>
       <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:thid"/>
     </xs:sequence>
   </xs:complexType>
   <xs:element name="addr" type="vmi1:ADDR"/>
-  <xs:element name="type" type="vmi1:ProbepointTypeT"/>
   <xs:element name="style" type="vmi1:ProbepointTypeT"/>
-  <xs:element name="whence" type="vmi1:ProbepointWhenceT"/>
   <xs:element name="size" type="vmi1:ProbepointSizeT"/>
-  <xs:element name="tid" type="vmi1:TargetIdT"/>
-  <xs:element name="thid" type="vmi1:ThreadIdT"/>
   <xs:element name="probe" type="vmi1:ProbeT"/>
   <xs:complexType name="RegisterValueT">
     <xs:sequence>
@@ -282,6 +277,11 @@ Probe stuff.
     </xs:sequence>
   </xs:complexType>
   <xs:element name="value" type="xs:unsignedLong"/>
+  <xs:complexType name="RegisterValue">
+    <xs:sequence>
+      <xs:element ref="vmi1:registerValue"/>
+    </xs:sequence>
+  </xs:complexType>
   <xs:element name="registerValue" type="vmi1:RegisterValueT"/>
   <xs:complexType name="ProbeEventT">
     <xs:sequence>
@@ -306,11 +306,92 @@ Probe stuff.
     </xs:complexType>
   </xs:element>
   <xs:element name="probeEvent" type="vmi1:ProbeEventT"/>
-  <xs:complexType name="SinglestepEventT">
+  <xs:simpleType name="ActionIdT">
+    <xs:annotation>
+      <xs:documentation>
+Action stuff (including single step stuff).
+</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:int"/>
+  </xs:simpleType>
+  <xs:simpleType name="ActionTypeT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="return"/>
+      <xs:enumeration value="regmod"/>
+      <xs:enumeration value="memmod"/>
+      <xs:enumeration value="singlestep"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="actionType" type="vmi1:ActionTypeT"/>
+  <xs:simpleType name="ActionWhenceT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="oneshot"/>
+      <xs:enumeration value="repeatpre"/>
+      <xs:enumeration value="repeatpost"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="actionWhence" type="vmi1:ActionWhenceT"/>
+  <xs:complexType name="ActionT">
     <xs:sequence>
+      <xs:element ref="vmi1:aid"/>
+      <xs:element name="type" type="vmi1:ActionTypeT"/>
+      <xs:element name="whence" type="vmi1:ActionWhenceT"/>
+      <xs:choice>
+        <xs:element ref="vmi1:return"/>
+        <xs:element ref="vmi1:regmod"/>
+        <xs:element ref="vmi1:memmod"/>
+      </xs:choice>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="aid" type="vmi1:ActionIdT"/>
+  <xs:element name="return">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:code"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="code" type="xs:unsignedLong"/>
+  <xs:element name="regmod" type="vmi1:RegisterValue"/>
+  <xs:element name="memmod">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:addr"/>
+        <xs:element ref="vmi1:data"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="data" type="xs:hexBinary"/>
+  <xs:complexType name="ActionEventT">
+    <xs:sequence>
+      <xs:element ref="vmi1:eventMsg"/>
+      <xs:element ref="vmi1:eventType"/>
+      <xs:element ref="vmi1:eventDetail"/>
+      <xs:element ref="vmi1:action"/>
+      <xs:element ref="vmi1:probe"/>
       <xs:element ref="vmi1:thread"/>
       <xs:element ref="vmi1:registerValues"/>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="singlestepEvent" type="vmi1:SinglestepEventT"/>
+  <xs:element name="eventMsg">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="success"/>
+        <xs:enumeration value="failure"/>
+        <xs:enumeration value="stepping"/>
+        <xs:enumeration value="stepping_at_bp"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="eventType" type="vmi1:ActionTypeT"/>
+  <xs:element name="eventDetail">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" ref="vmi1:stepCount"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="stepCount" type="xs:int"/>
+  <xs:element name="action" type="vmi1:ActionT"/>
+  <xs:element name="actionEvent" type="vmi1:ActionEventT"/>
 </xs:schema>

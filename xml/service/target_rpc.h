@@ -81,13 +81,24 @@ int vmi1__CloseTarget(struct soap *soap,
 int vmi1__PauseThread(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		      struct vmi1__NoneResponse *r);
+/*
+ * Resuming a single thread is not yet supported.
+ */
+/*
 int vmi1__ResumeThread(struct soap *soap,
 		       vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		       struct vmi1__NoneResponse *r);
+*/
 
+/*
+ * Single stepping a single thread (without having hit a probepoint) is
+ * not supported by the target library.  Not sure if it ever will be.
+ */
+/*
 int vmi1__SinglestepThread(struct soap *soap,
 			   vmi1__TargetIdT tid,vmi1__ThreadIdT thid,int steps,
 			   struct vmi1__NoneResponse *r);
+*/
 
 int vmi1__LookupTargetSymbol(struct soap *soap,
 			     vmi1__TargetIdT tid,char *name,
@@ -106,29 +117,40 @@ int vmi1__LookupTargetAllSymbols(struct soap *soap,
 				 struct vmi1__DebugFileOptsT *opts,
 				 struct vmi1__NestedSymbolResponse *r);
 
+int vmi1__ProbeSymbolSimple(struct soap *soap,
+			    vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+			    char *probeName,char *symbol,
+			    struct vmi1__ProbeResponse *r);
 int vmi1__ProbeSymbol(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		      char *probeName,char *symbol,
+		      vmi1__ProbepointStyleT *probepointStyle,
+		      vmi1__ProbepointWhenceT *probepointWhence,
+		      vmi1__ProbepointSizeT *probepointSize,
 		      struct vmi1__ProbeResponse *r);
 int vmi1__ProbeAddr(struct soap *soap,
-		    vmi1__TargetIdT tid,char *probeName,vmi1__ADDR addr,
+		    vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		    char *probeName,vmi1__ADDR addr,
 		    vmi1__ProbepointTypeT *probepointType,
 		    vmi1__ProbepointStyleT *probepointStyle,
 		    vmi1__ProbepointWhenceT *probepointWhence,
 		    vmi1__ProbepointSizeT *probepointSize,
 		    struct vmi1__ProbeResponse *r);
 int vmi1__ProbeLine(struct soap *soap,
-		    vmi1__TargetIdT tid,char *probeName,char *filename,int line,
+		    vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		    char *probeName,char *filename,int line,
 		    vmi1__ProbepointStyleT *probepointStyle,
+		    vmi1__ProbepointWhenceT *probepointWhence,
+		    vmi1__ProbepointSizeT *probepointSize,
 		    struct vmi1__ProbeResponse *r);
 int vmi1__EnableProbe(struct soap *soap,
-		      vmi1__TargetIdT tid,char *probeName,
+		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r);
 int vmi1__DisableProbe(struct soap *soap,
-		       vmi1__TargetIdT tid,char *probeName,
+		       vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		       struct vmi1__NoneResponse *r);
 int vmi1__RemoveProbe(struct soap *soap,
-		      vmi1__TargetIdT tid,char *probeName,
+		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r);
 
 int vmi1__RegisterTargetListener(struct soap *soap,

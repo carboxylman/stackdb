@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -273,6 +273,11 @@ struct probepoint {
 };
 
 struct probe {
+    /*
+     * This is a per-target id.
+     */
+    int id;
+
     char *name;
 
     struct probe_ops *ops;
@@ -316,6 +321,11 @@ struct probe {
 };
 
 struct action {
+    /*
+     * This is a per-target id.
+     */
+    int id;
+
     /*
      * Since actions can be on shared probepoints, and might be being
      * performed on multiple threads at once (i.e., one thread starts a
@@ -369,6 +379,8 @@ struct action {
      */
     struct list_head action;
     struct probe *probe;
+
+    struct target *target;
 };
 
 /* The target_api code needs to call this, but we don't want it exposed

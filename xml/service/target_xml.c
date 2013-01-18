@@ -861,18 +861,29 @@ t_probe_to_x_ProbeT(struct soap *soap,
 		    GHashTable *reftab,
 		    struct vmi1__ProbeT *out) {
     struct vmi1__ProbeT *oprobe;
+    struct probepoint *pp;
 
     if (out)
 	oprobe = out;
     else
 	oprobe = SOAP_CALLOC(soap,1,sizeof(*oprobe));
 
+    oprobe->pid = probe->id;
     SOAP_STRCPY(soap,oprobe->name,probe_name(probe));
     oprobe->addr = probe_addr(probe);
     if (probe->target)
 	oprobe->tid = probe->target->id;
     if (probe->thread)
 	oprobe->thid = probe->thread->tid;
+
+    if (probe->probepoint) {
+	pp = probe->probepoint;
+
+	oprobe->type = t_probepoint_type_t_to_x_ProbepointTypeT(soap,pp->type);
+	oprobe->style = t_probepoint_style_t_to_x_ProbepointStyleT(soap,pp->style);
+	oprobe->whence = t_probepoint_whence_t_to_x_ProbepointWhenceT(soap,pp->whence);
+	oprobe->size = t_probepoint_watchsize_t_to_x_ProbepointSizeT(soap,pp->watchsize);
+    }
 
     return oprobe;
 }
@@ -929,3 +940,134 @@ t_probe_to_x_ProbeEventT(struct soap *soap,
     return oevent;
 }
 
+probepoint_type_t
+x_ProbepointTypeT_to_t_probepoint_type_t(struct soap *soap,
+					 enum vmi1__ProbepointTypeT in) {
+    switch (in) {
+    case vmi1__ProbepointTypeT__break_:
+	return PROBEPOINT_BREAK;
+    case vmi1__ProbepointTypeT__watch:
+	return PROBEPOINT_WATCH;
+    default:
+	verror("unknown ProbepointTypeT %d!\n",in);
+	return -1;
+    }
+}
+enum vmi1__ProbepointTypeT 
+t_probepoint_type_t_to_x_ProbepointTypeT(struct soap *soap,
+					 probepoint_type_t in) {
+    switch (in) {
+    case PROBEPOINT_BREAK:
+	return vmi1__ProbepointTypeT__break_;
+    case PROBEPOINT_WATCH:
+	return vmi1__ProbepointTypeT__watch;
+    default:
+	verror("unknown probepoint_type_t %d!\n",in);
+	return -1;
+    }
+}
+
+probepoint_style_t
+x_ProbepointStyleT_to_t_probepoint_style_t(struct soap *soap,
+					   enum vmi1__ProbepointStyleT in) {
+    switch (in) {
+    case vmi1__ProbepointStyleT__hw:
+	return PROBEPOINT_HW;
+    case vmi1__ProbepointStyleT__sw:
+	return PROBEPOINT_SW;
+    case vmi1__ProbepointStyleT__fastest:
+	return PROBEPOINT_FASTEST;
+    default:
+	verror("unknown ProbepointStyleT %d!\n",in);
+	return -1;
+    }
+}
+enum vmi1__ProbepointStyleT 
+t_probepoint_style_t_to_x_ProbepointStyleT(struct soap *soap,
+					   probepoint_style_t in) {
+    switch (in) {
+    case PROBEPOINT_HW:
+	return vmi1__ProbepointStyleT__hw;
+    case PROBEPOINT_SW:
+	return vmi1__ProbepointStyleT__sw;
+    case PROBEPOINT_FASTEST:
+	return vmi1__ProbepointStyleT__fastest;
+    default:
+	verror("unknown probepoint_style_t %d!\n",in);
+	return -1;
+    }
+}
+
+probepoint_whence_t
+x_ProbepointWhenceT_to_t_probepoint_whence_t(struct soap *soap,
+					     enum vmi1__ProbepointWhenceT in) {
+    switch (in) {
+    case vmi1__ProbepointWhenceT__auto_:
+	return PROBEPOINT_WAUTO;
+    case vmi1__ProbepointWhenceT__exec:
+	return PROBEPOINT_EXEC;
+    case vmi1__ProbepointWhenceT__write:
+	return PROBEPOINT_WRITE;
+    case vmi1__ProbepointWhenceT__readwrite:
+	return PROBEPOINT_READWRITE;
+    default:
+	verror("unknown ProbepointWhenceT %d!\n",in);
+	return -1;
+    }
+}
+enum vmi1__ProbepointWhenceT 
+t_probepoint_whence_t_to_x_ProbepointWhenceT(struct soap *soap,
+					     probepoint_whence_t in) {
+    switch (in) {
+    case PROBEPOINT_WAUTO:
+	return vmi1__ProbepointWhenceT__auto_;
+    case PROBEPOINT_EXEC:
+	return vmi1__ProbepointWhenceT__exec;
+    case PROBEPOINT_WRITE:
+	return vmi1__ProbepointWhenceT__write;
+    case PROBEPOINT_READWRITE:
+	return vmi1__ProbepointWhenceT__readwrite;
+    default:
+	verror("unknown probepoint_whence_t %d!\n",in);
+	return -1;
+    }
+}
+
+probepoint_watchsize_t
+x_ProbepointSizeT_to_t_probepoint_watchsize_t(struct soap *soap,
+					      enum vmi1__ProbepointSizeT in) {
+    switch (in) {
+    case vmi1__ProbepointSizeT__auto_:
+	return PROBEPOINT_LAUTO;
+    case vmi1__ProbepointSizeT__0:
+	return PROBEPOINT_L0;
+    case vmi1__ProbepointSizeT__2:
+	return PROBEPOINT_L2;
+    case vmi1__ProbepointSizeT__4:
+	return PROBEPOINT_L4;
+    case vmi1__ProbepointSizeT__8:
+	return PROBEPOINT_L8;
+    default:
+	verror("unknown ProbepointSizeT %d!\n",in);
+	return -1;
+    }
+}
+enum vmi1__ProbepointSizeT 
+t_probepoint_watchsize_t_to_x_ProbepointSizeT(struct soap *soap,
+					      probepoint_watchsize_t in) {
+    switch (in) {
+    case PROBEPOINT_LAUTO:
+	return vmi1__ProbepointSizeT__auto_;
+    case PROBEPOINT_L0:
+	return vmi1__ProbepointSizeT__0;
+    case PROBEPOINT_L2:
+	return vmi1__ProbepointSizeT__2;
+    case PROBEPOINT_L4:
+	return vmi1__ProbepointSizeT__4;
+    case PROBEPOINT_L8:
+	return vmi1__ProbepointSizeT__8;
+    default:
+	verror("unknown probepoint_watchsize_t %d!\n",in);
+	return -1;
+    }
+}

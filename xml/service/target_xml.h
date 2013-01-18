@@ -174,4 +174,32 @@ t_probe_to_x_ProbeEventT(struct soap *soap,
 			 GHashTable *reftab,
 			 struct vmi1__ProbeEventT *out);
 
+probepoint_type_t
+x_ProbepointTypeT_to_t_probepoint_type_t(struct soap *soap,
+					 enum vmi1__ProbepointTypeT in);
+enum vmi1__ProbepointTypeT 
+t_probepoint_type_t_to_x_ProbepointTypeT(struct soap *soap,
+					 probepoint_type_t in);
+
+probepoint_style_t
+x_ProbepointStyleT_to_t_probepoint_style_t(struct soap *soap,
+					   enum vmi1__ProbepointStyleT in);
+enum vmi1__ProbepointStyleT 
+t_probepoint_style_t_to_x_ProbepointStyleT(struct soap *soap,
+					   probepoint_style_t in);
+
+probepoint_whence_t
+x_ProbepointWhenceT_to_t_probepoint_whence_t(struct soap *soap,
+					     enum vmi1__ProbepointWhenceT in);
+enum vmi1__ProbepointWhenceT 
+t_probepoint_whence_t_to_x_ProbepointWhenceT(struct soap *soap,
+					     probepoint_whence_t in);
+
+probepoint_watchsize_t
+x_ProbepointSizeT_to_t_probepoint_watchsize_t(struct soap *soap,
+					      enum vmi1__ProbepointSizeT in);
+enum vmi1__ProbepointSizeT 
+t_probepoint_watchsize_t_to_x_ProbepointSizeT(struct soap *soap,
+					      probepoint_watchsize_t in);
+
 #endif /* __TARGET_XML_H__ */

@@ -27,6 +27,7 @@
 #include "alist.h"
 #include "target.h"
 #include "target_api.h"
+#include "probe_api.h"
 
 #include "evloop.h"
 #include "monitor.h"
@@ -41,6 +42,8 @@ static GHashTable *target_tab = NULL;
 
 /* Map target id to an array_list of target listeners. */
 static GHashTable *target_listener_tab = NULL;
+
+extern struct vmi1__DebugFileOptsT defDebugFileOpts;
 
 /**
  ** A bunch of stuff for per-target monitor interactions.
@@ -736,43 +739,354 @@ int vmi1__CloseTarget(struct soap *soap,
 int vmi1__PauseThread(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		      struct vmi1__NoneResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
-}
-int vmi1__ResumeThread(struct soap *soap,
-		       vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
-		       struct vmi1__NoneResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct target *t;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (target_pause_thread(t,thid,0)) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not pause target thread!",
+				   "Could not pause target thread!");
+    }
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
-int vmi1__SinglestepThread(struct soap *soap,
-			   vmi1__TargetIdT tid,vmi1__ThreadIdT thid,int steps,
-			   struct vmi1__NoneResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+int vmi1__LookupTargetSymbolSimple(struct soap *soap,
+				   vmi1__TargetIdT tid,char *name,
+				   struct vmi1__DebugFileOptsT *opts,
+				   struct vmi1__SymbolResponse *r) {
+    struct bsymbol *bsymbol;
+    GHashTable *reftab;
+    struct array_list *refstack;
+    struct target *t;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
+    bsymbol = target_lookup_sym(t,name,NULL,NULL,SYMBOL_TYPE_NONE);
+
+    if (!bsymbol) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find symbol!",
+				   "Could not find symbol!");
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
+
+    r->symbol = d_symbol_to_x_SymbolT(soap,bsymbol->lsymbol->symbol,
+				      opts,reftab,refstack,0);
+
+    array_list_free(refstack);
+    g_hash_table_destroy(reftab);
+
+    bsymbol_release(bsymbol);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
 int vmi1__LookupTargetSymbol(struct soap *soap,
 			     vmi1__TargetIdT tid,char *name,
 			     struct vmi1__DebugFileOptsT *opts,
 			     struct vmi1__NestedSymbolResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct bsymbol *bsymbol;
+    GHashTable *reftab;
+    struct array_list *refstack;
+    struct target *t;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
+    bsymbol = target_lookup_sym(t,name,NULL,NULL,SYMBOL_TYPE_NONE);
+
+    if (!bsymbol) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find symbol!",
+				   "Could not find symbol!");
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
+    r->nestedSymbol = \
+	d_symbol_array_list_to_x_SymbolsT(soap,bsymbol->lsymbol->chain,
+					  opts,reftab,refstack,0);
+    if (r->nestedSymbol) 
+	vwarn("%d %d %p\n",g_hash_table_size(reftab),
+	      r->nestedSymbol->__size_SymbolsT,
+	      r->nestedSymbol->__union_SymbolsT);
+    else
+	vwarn("%d\n",g_hash_table_size(reftab));
+
+    array_list_free(refstack);
+    g_hash_table_destroy(reftab);
+
+    bsymbol_release(bsymbol);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
+
 int vmi1__LookupTargetAddrSimple(struct soap *soap,
 				 vmi1__TargetIdT tid,vmi1__ADDR addr,
 				 struct vmi1__DebugFileOptsT *opts,
 				 struct vmi1__SymbolResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct bsymbol *bsymbol;
+    GHashTable *reftab;
+    struct array_list *refstack;
+    struct target *t;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
+    bsymbol = target_lookup_sym_addr(t,addr);
+
+    if (!bsymbol) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find address!",
+				   "Could not find address!");
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
+
+    r->symbol = d_symbol_to_x_SymbolT(soap,bsymbol->lsymbol->symbol,
+				      opts,reftab,refstack,0);
+
+    array_list_free(refstack);
+    g_hash_table_destroy(reftab);
+
+    bsymbol_release(bsymbol);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
+
 int vmi1__LookupTargetAddr(struct soap *soap,
 			   vmi1__TargetIdT tid,vmi1__ADDR addr,
 			   struct vmi1__DebugFileOptsT *opts,
 			   struct vmi1__NestedSymbolResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct bsymbol *bsymbol;
+    GHashTable *reftab;
+    struct array_list *refstack;
+    struct target *t;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
+    bsymbol = target_lookup_sym_addr(t,addr);
+
+    if (!bsymbol) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find address!",
+				   "Could not find address!");
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
+    r->nestedSymbol = \
+	d_symbol_array_list_to_x_SymbolsT(soap,bsymbol->lsymbol->chain,
+					  opts,reftab,refstack,0);
+    if (r->nestedSymbol) 
+	vwarn("%d %d %p\n",g_hash_table_size(reftab),
+	      r->nestedSymbol->__size_SymbolsT,
+	      r->nestedSymbol->__union_SymbolsT);
+    else
+	vwarn("%d\n",g_hash_table_size(reftab));
+
+    array_list_free(refstack);
+    g_hash_table_destroy(reftab);
+
+    bsymbol_release(bsymbol);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
-int vmi1__LookupTargetAllSymbols(struct soap *soap,
-				 vmi1__TargetIdT tid,char *name,
+
+int vmi1__LookupTargetLineSimple(struct soap *soap,
+				 vmi1__TargetIdT tid,char *filename,int line,
 				 struct vmi1__DebugFileOptsT *opts,
-				 struct vmi1__NestedSymbolResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+				 struct vmi1__SymbolResponse *r) {
+    struct bsymbol *bsymbol;
+    GHashTable *reftab;
+    struct array_list *refstack;
+    struct target *t;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
+    bsymbol = target_lookup_sym_line(t,filename,line,NULL,NULL);
+
+    if (!bsymbol) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find line!",
+				   "Could not find line!");
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
+
+    r->symbol = d_symbol_to_x_SymbolT(soap,bsymbol->lsymbol->symbol,
+				      opts,reftab,refstack,0);
+
+    array_list_free(refstack);
+    g_hash_table_destroy(reftab);
+
+    bsymbol_release(bsymbol);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
+
+}
+
+int vmi1__LookupTargetLine(struct soap *soap,
+			   vmi1__TargetIdT tid,char *filename,int line,
+			   struct vmi1__DebugFileOptsT *opts,
+			   struct vmi1__NestedSymbolResponse *r) {
+    struct bsymbol *bsymbol;
+    GHashTable *reftab;
+    struct array_list *refstack;
+    struct target *t;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (!opts)
+	opts = &defDebugFileOpts;
+
+    if (opts->doMultiRef)
+	soap_set_omode(soap,SOAP_XML_GRAPH);
+
+    bsymbol = target_lookup_sym_line(t,filename,line,NULL,NULL);
+
+    if (!bsymbol) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find line!",
+				   "Could not find line!");
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    refstack = array_list_create(DEF_REFSTACK_SIZE);
+    r->nestedSymbol = \
+	d_symbol_array_list_to_x_SymbolsT(soap,bsymbol->lsymbol->chain,
+					  opts,reftab,refstack,0);
+    if (r->nestedSymbol) 
+	vwarn("%d %d %p\n",g_hash_table_size(reftab),
+	      r->nestedSymbol->__size_SymbolsT,
+	      r->nestedSymbol->__union_SymbolsT);
+    else
+	vwarn("%d\n",g_hash_table_size(reftab));
+
+    array_list_free(refstack);
+    g_hash_table_destroy(reftab);
+
+    bsymbol_release(bsymbol);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
 int _target_rpc_probe_handler(int type,struct probe *probe,void *handler_data,
@@ -846,10 +1160,10 @@ int _target_rpc_probe_posthandler(struct probe *probe,void *handler_data,
     return _target_rpc_probe_handler(1,probe,handler_data,trigger);
 };
 
-int vmi1__ProbeSymbol(struct soap *soap,
-		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
-		      char *probeName,char *symbol,
-		      struct vmi1__ProbeResponse *r) {
+int vmi1__ProbeSymbolSimple(struct soap *soap,
+			    vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+			    char *probeName,char *symbol,
+			    struct vmi1__ProbeResponse *r) {
     struct target *t;
     struct probe *p;
     target_status_t status;
@@ -901,39 +1215,437 @@ int vmi1__ProbeSymbol(struct soap *soap,
     return SOAP_OK;
 }
 
+int vmi1__ProbeSymbol(struct soap *soap,
+		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		      char *probeName,char *symbol,
+		      vmi1__ProbepointStyleT *probepointStyle,
+		      vmi1__ProbepointWhenceT *probepointWhence,
+		      vmi1__ProbepointSizeT *probepointSize,
+		      struct vmi1__ProbeResponse *r) {
+    struct target *t;
+    target_status_t status;
+    struct bsymbol *bsymbol;
+    GHashTable *reftab;
+    struct probe *probe;
+    probepoint_style_t ppstyle = PROBEPOINT_FASTEST;
+    probepoint_whence_t ppwhence = PROBEPOINT_EXEC;
+    probepoint_watchsize_t ppsize = PROBEPOINT_WAUTO;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (thid == -1)
+	thid = TID_GLOBAL;
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+	if (target_pause(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not pause target!",
+				       "Could not pause target before adding probe!");
+	}
+    }
+    vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
+
+    bsymbol = target_lookup_sym(t,symbol,NULL,NULL,SYMBOL_TYPE_NONE);
+
+    if (!bsymbol) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find symbol!",
+				   "Could not find symbol!");
+    }
+
+    probe = probe_create(t,tid,NULL,probeName,_target_rpc_probe_prehandler,
+			 _target_rpc_probe_posthandler,NULL,0);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not create probe!",
+				   "Could not create probe!");
+    }
+
+    if (probepointStyle) 
+	ppstyle = x_ProbepointStyleT_to_t_probepoint_style_t(soap,*probepointStyle);
+    if (probepointWhence) 
+	ppwhence = x_ProbepointWhenceT_to_t_probepoint_whence_t(soap,*probepointWhence);
+    if (probepointSize) 
+	ppsize = x_ProbepointSizeT_to_t_probepoint_watchsize_t(soap,*probepointSize);
+
+    if (probe_register_symbol(probe,bsymbol,ppstyle,ppwhence,ppsize)) {
+	probe_free(probe,1);
+	bsymbol_release(bsymbol);
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not register probe!",
+				   "Could not register probe!");
+    }
+
+    bsymbol_release(bsymbol);
+
+    if (status != TSTATUS_PAUSED) {
+	if (target_resume(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not resume target!",
+				       "Could not resume target after adding probe!");
+	}
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    r->probe = t_probe_to_x_ProbeT(soap,probe,reftab,NULL);
+    g_hash_table_destroy(reftab);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
+}
+
 int vmi1__ProbeAddr(struct soap *soap,
-		    vmi1__TargetIdT tid,char *probeName,vmi1__ADDR addr,
+		    vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		    char *probeName,vmi1__ADDR addr,
 		    vmi1__ProbepointTypeT *probepointType,
 		    vmi1__ProbepointStyleT *probepointStyle,
 		    vmi1__ProbepointWhenceT *probepointWhence,
 		    vmi1__ProbepointSizeT *probepointSize,
 		    struct vmi1__ProbeResponse *r) {
+    struct target *t;
+    target_status_t status;
+    GHashTable *reftab;
+    struct probe *probe;
+    probepoint_type_t pptype = PROBEPOINT_BREAK;
+    probepoint_style_t ppstyle = PROBEPOINT_FASTEST;
+    probepoint_whence_t ppwhence = PROBEPOINT_EXEC;
+    probepoint_watchsize_t ppsize = PROBEPOINT_WAUTO;
 
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (thid == -1)
+	thid = TID_GLOBAL;
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+	if (target_pause(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not pause target!",
+				       "Could not pause target before adding probe!");
+	}
+    }
+    vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
+
+    probe = probe_create(t,thid,NULL,probeName,_target_rpc_probe_prehandler,
+			 _target_rpc_probe_posthandler,NULL,0);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not create probe!",
+				   "Could not create probe!");
+    }
+
+    if (probepointType)
+	pptype = x_ProbepointTypeT_to_t_probepoint_type_t(soap,*probepointType);
+    if (probepointStyle) 
+	ppstyle = x_ProbepointStyleT_to_t_probepoint_style_t(soap,*probepointStyle);
+    if (probepointWhence) 
+	ppwhence = x_ProbepointWhenceT_to_t_probepoint_whence_t(soap,*probepointWhence);
+    if (probepointSize) 
+	ppsize = x_ProbepointSizeT_to_t_probepoint_watchsize_t(soap,*probepointSize);
+
+    if (!probe_register_addr(probe,addr,pptype,ppstyle,ppwhence,ppsize,NULL)) {
+	probe_free(probe,1);
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not register probe!",
+				   "Could not register probe!");
+    }
+
+    if (status != TSTATUS_PAUSED) {
+	if (target_resume(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not resume target!",
+				       "Could not resume target after adding probe!");
+	}
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    r->probe = t_probe_to_x_ProbeT(soap,probe,reftab,NULL);
+    g_hash_table_destroy(reftab);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
 int vmi1__ProbeLine(struct soap *soap,
-		    vmi1__TargetIdT tid,char *probeName,char *filename,int line,
+		    vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
+		    char *probeName,char *filename,int line,
 		    vmi1__ProbepointStyleT *probepointStyle,
+		    vmi1__ProbepointWhenceT *probepointWhence,
+		    vmi1__ProbepointSizeT *probepointSize,
 		    struct vmi1__ProbeResponse *r) {
+    struct target *t;
+    target_status_t status;
+    GHashTable *reftab;
+    struct probe *probe;
+    probepoint_style_t ppstyle = PROBEPOINT_FASTEST;
+    probepoint_whence_t ppwhence = PROBEPOINT_EXEC;
+    probepoint_watchsize_t ppsize = PROBEPOINT_WAUTO;
 
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    if (thid == -1)
+	thid = TID_GLOBAL;
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+	if (target_pause(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not pause target!",
+				       "Could not pause target before adding probe!");
+	}
+    }
+    vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
+
+    probe = probe_create(t,thid,NULL,probeName,_target_rpc_probe_prehandler,
+			 _target_rpc_probe_posthandler,NULL,0);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not create probe!",
+				   "Could not create probe!");
+    }
+
+    if (probepointStyle) 
+	ppstyle = x_ProbepointStyleT_to_t_probepoint_style_t(soap,*probepointStyle);
+    if (probepointWhence) 
+	ppwhence = x_ProbepointWhenceT_to_t_probepoint_whence_t(soap,*probepointWhence);
+    if (probepointSize) 
+	ppsize = x_ProbepointSizeT_to_t_probepoint_watchsize_t(soap,*probepointSize);
+
+    if (!probe_register_line(probe,filename,line,ppstyle,ppwhence,ppsize)) {
+	probe_free(probe,1);
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not register probe!",
+				   "Could not register probe!");
+    }
+
+    if (status != TSTATUS_PAUSED) {
+	if (target_resume(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not resume target!",
+				       "Could not resume target after adding probe!");
+	}
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    r->probe = t_probe_to_x_ProbeT(soap,probe,reftab,NULL);
+    g_hash_table_destroy(reftab);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
 int vmi1__EnableProbe(struct soap *soap,
-		      vmi1__TargetIdT tid,char *probeName,
+		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r) {
+    struct target *t;
+    target_status_t status;
+    struct probe *probe;
 
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    probe = target_lookup_probe(t,pid);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find probe!",
+				   "Could not find probe!");
+    }
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+	if (target_pause(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not pause target!",
+				       "Could not pause target before adding probe!");
+	}
+    }
+    vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
+
+    probe = target_lookup_probe(t,pid);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find probe!",
+				   "Could not find probe!");
+    }
+
+    if (probe_enable(probe)) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not enable probe!",
+				   "Could not enable probe!");
+    }
+
+    if (status != TSTATUS_PAUSED) {
+	if (target_resume(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not resume target!",
+				       "Could not resume target after adding probe!");
+	}
+    }
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
 int vmi1__DisableProbe(struct soap *soap,
-		       vmi1__TargetIdT tid,char *probeName,
+		       vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		       struct vmi1__NoneResponse *r) {
+    struct target *t;
+    target_status_t status;
+    struct probe *probe;
 
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    probe = target_lookup_probe(t,pid);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find probe!",
+				   "Could not find probe!");
+    }
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+	if (target_pause(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not pause target!",
+				       "Could not pause target before adding probe!");
+	}
+    }
+    vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
+
+    probe = target_lookup_probe(t,pid);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find probe!",
+				   "Could not find probe!");
+    }
+
+    if (probe_disable(probe)) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not disable probe!",
+				   "Could not disable probe!");
+    }
+
+    if (status != TSTATUS_PAUSED) {
+	if (target_resume(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not resume target!",
+				       "Could not resume target after adding probe!");
+	}
+    }
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
 int vmi1__RemoveProbe(struct soap *soap,
-		      vmi1__TargetIdT tid,char *probeName,
+		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r) {
+    struct target *t;
+    target_status_t status;
+    struct probe *probe;
 
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    t = _target_rpc_lookup(tid);
+    if (!t) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+
+    probe = target_lookup_probe(t,pid);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find probe!",
+				   "Could not find probe!");
+    }
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+	if (target_pause(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not pause target!",
+				       "Could not pause target before adding probe!");
+	}
+    }
+    vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
+
+    probe = target_lookup_probe(t,pid);
+    if (!probe) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not find probe!",
+				   "Could not find probe!");
+    }
+
+    if (probe_free(probe,1)) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not remove probe!",
+				   "Could not remove probe!");
+    }
+
+    if (status != TSTATUS_PAUSED) {
+	if (target_resume(t)) {
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not resume target!",
+				       "Could not resume target after adding probe!");
+	}
+    }
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
 }
 
 int vmi1__RegisterTargetListener(struct soap *soap,

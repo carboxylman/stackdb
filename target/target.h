@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -32,7 +32,7 @@
 #include "target_api.h"
 #include "dwdebug.h"
 #include "disasm.h"
-
+#include "probe.h"
 
 #define LOGDUMPBSYMBOL(dl,lt,s) \
     vdebugc((dl),(lt), \
@@ -196,6 +196,32 @@ void target_attach_mmap_entry(struct target *target,
 			      struct mmap_entry *mme);
 void target_release_mmap_entry(struct target *target,
 			       struct mmap_entry *mme);
+
+/**
+ ** Probes and actions.
+ **/
+/*
+ * Attaches a probe to a target.  For now, simply returns a target-wide
+ * probe ID, and places the probe in the target's hashtable with that ID.
+ */
+int target_attach_probe(struct target *target,struct target_thread *thread,
+			struct probe *probe);
+
+/*
+ * Detaches a probe from a target.
+ */
+int target_detach_probe(struct target *target,struct probe *probe);
+
+/*
+ * Attaches an action to a target.  For now, simply returns a target-wide
+ * action ID, and places the action in the target's hashtable with that ID.
+ */
+int target_attach_action(struct target *target,struct action *action);
+
+/*
+ * Detaches a action from a target.
+ */
+int target_detach_action(struct target *target,struct action *action);
 
 /**
  ** Bound symbols.

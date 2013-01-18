@@ -67,8 +67,8 @@ ThreadStatusT =
 ThreadStatus = element threadStatus { ThreadStatusT }
 
 ThreadT = 
-    attribute thid { ThreadIdT },
-    attribute tid { TargetIdT },
+    element thid { ThreadIdT },
+    element tid { TargetIdT },
     ThreadStatus
 Thread = element thread { ThreadT }
 
@@ -78,7 +78,7 @@ TargetStatus = element targetStatus { TargetStatusT }
 
 TargetT = 
     attribute name { text },
-    attribute tid { TargetIdT },
+    element tid { TargetIdT },
     TargetSpec,
     TargetStatus,
     Thread+,
@@ -88,7 +88,7 @@ Target = element target { TargetT }
 AddrSpaceT = 
     attribute name { text },
     attribute id { xsd:int },
-    attribute tid { TargetIdT },
+    element tid { TargetIdT },
     MemRegion+
 AddrSpace = element addrSpace { AddrSpaceT }
 
@@ -119,6 +119,7 @@ MemRange = element memRange { MemRangeT }
 ##
 ## Probe stuff.
 ##
+ProbeIdT = xsd:int
 ProbepointTypeT = "break" | "watch"
 ProbepointType = element probepointType { ProbepointTypeT }
 
@@ -132,6 +133,7 @@ ProbepointSizeT = "auto" | "0" | "2" | "4" | "8"
 ProbepointSize = element probepointSize { ProbepointSizeT }
 
 ProbeT = 
+    element pid { ProbeIdT },
     element name { xsd:string },
     element addr { ADDR },
     element type { ProbepointTypeT },
@@ -157,9 +159,32 @@ ProbeEventT =
     }
 ProbeEvent = element probeEvent { ProbeEventT }
 
-SinglestepEventT = 
+##
+## Action stuff (including single step stuff).
+##
+ActionIdT = xsd:int
+ActionTypeT = "return" | "regmod" | "memmod" | "singlestep"
+ActionType = element actionType { ActionTypeT }
+
+ActionWhenceT = "oneshot" | "repeatpre" | "repeatpost"
+ActionWhence = element actionWhence { ActionWhenceT }
+ActionT = 
+    element aid { ActionIdT },
+    element type { ActionTypeT },
+    element whence { ActionWhenceT },
+    (element return { element code { xsd:unsignedLong } }
+     | element regmod { RegisterValue }
+     | element memmod { element addr { ADDR },
+       	       	      	element data { xsd:hexBinary } })
+
+ActionEventT = 
+    element eventMsg { "success" | "failure" | "stepping" | "stepping_at_bp" },
+    element eventType { ActionTypeT },
+    element eventDetail { element stepCount { xsd:int }? },
+    element action { ActionT },
+    element probe { ProbeT },
     element thread { ThreadT },
     element registerValues {
         element registerValue { RegisterValueT }*
     }
-SinglestepEvent = element singlestepEvent { SinglestepEventT }    
+ActionEvent = element actionEvent { ActionEventT }    

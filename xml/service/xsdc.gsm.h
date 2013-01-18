@@ -9,7 +9,7 @@ typedef char *	_xsd__schema;
 typedef char *  xsd__anyType;
 typedef char *	xsd__anyURI;
 typedef char *  xsd__base64Binary;
-typedef char *  xsd__hexBinary;
+//typedef char *  xsd__hexBinary;
 typedef char		xsd__byte;
 typedef char *		xsd__date;
 typedef double  	xsd__decimal;

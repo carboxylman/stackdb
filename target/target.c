@@ -314,6 +314,10 @@ void target_free(struct target *target) {
     struct addrspace *space;
     struct addrspace *tmp;
     int rc;
+    int i;
+    struct action *action;
+    struct probe *probe;
+    struct array_list *list;
 
     vdebug(5,LA_TARGET,LF_TARGET,"freeing target(%s)\n",target->name);
 
@@ -322,6 +326,25 @@ void target_free(struct target *target) {
 	verror("fini target(%s) failed; not finishing free!\n",target->name);
 	return;
     }
+
+    /*
+     * Free actions, then probes,  We cannot call probe_free/action_free
+     * from a GHashTableIter, because those functions call our
+     * target_detach_(action|probe) functions -- which remove the
+     * action/probe from its hashtable.  So we copy values to a temp
+     * list to avoid this problem.
+     */
+    list = array_list_create_from_g_hash_table(target->actions);
+    array_list_foreach(list,i,action) 
+	action_free(action,1);
+    g_hash_table_destroy(target->actions);
+    array_list_free(list);
+
+    list = array_list_create_from_g_hash_table(target->probes);
+    array_list_foreach(list,i,probe) 
+	probe_free(probe,1);
+    g_hash_table_destroy(target->probes);
+    array_list_free(list);
 
     g_hash_table_destroy(target->threads);
 
@@ -379,8 +402,16 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
 					    /* No names to free! */
 					    NULL,NULL);
 
+    retval->actions = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					    NULL,NULL);
+    retval->probes = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					   NULL,NULL);
+    retval->action_id_counter = 1;
+    retval->probe_id_counter = 1;
+
     retval->soft_probepoints = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 						     NULL,NULL);
+
     //*(((gint *)retval->soft_probepoints)+1) = 1;
     //*(((gint *)retval->soft_probepoints)) = 0;
 
@@ -2442,8 +2473,6 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
     t->state = tstate;
 
     t->hard_probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
-    t->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
-    t->autofree_probes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     t->tpc = NULL;
     t->tpc_stack = array_list_create(4);
@@ -2482,8 +2511,6 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
     }
 
     g_hash_table_destroy(tthread->hard_probepoints);
-    g_hash_table_destroy(tthread->probes);
-    g_hash_table_destroy(tthread->autofree_probes);
 
     array_list_free(tthread->tpc_stack);
 
@@ -2530,3 +2557,43 @@ int target_invalidate_thread(struct target *target,
 
     return 0;
 }
+
+int target_attach_probe(struct target *target,struct target_thread *thread,
+			struct probe *probe) {
+    probe->id = target->probe_id_counter++;
+    probe->target = target;
+    probe->thread = thread;
+
+    g_hash_table_insert(target->probes,(gpointer)(uintptr_t)probe->id,probe);
+
+    return probe->id;
+}
+
+int target_detach_probe(struct target *target,struct probe *probe) {
+    g_hash_table_remove(target->probes,(gpointer)(uintptr_t)probe->id);
+
+    probe->id = -1;
+    probe->target = NULL;
+    probe->thread = NULL;
+
+    return 0;
+}
+
+int target_attach_action(struct target *target,struct action *action) {
+    action->id = target->action_id_counter++;
+    action->target = target;
+
+    g_hash_table_insert(target->actions,(gpointer)(uintptr_t)action->id,action);
+
+    return action->id;
+}
+
+int target_detach_action(struct target *target,struct action *action) {
+    g_hash_table_remove(target->actions,(gpointer)(uintptr_t)action->id);
+
+    action->id = -1;
+    action->target = NULL;
+
+    return 0;
+}
+
