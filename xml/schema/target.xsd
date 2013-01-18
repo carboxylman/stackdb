@@ -323,6 +323,15 @@ Action stuff (including single step stuff).
     </xs:restriction>
   </xs:simpleType>
   <xs:element name="actionType" type="vmi1:ActionTypeT"/>
+  <xs:simpleType name="HandlerMsgT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="success"/>
+      <xs:enumeration value="failure"/>
+      <xs:enumeration value="stepping"/>
+      <xs:enumeration value="stepping_at_bp"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="handlerMsg" type="vmi1:HandlerMsgT"/>
   <xs:simpleType name="ActionWhenceT">
     <xs:restriction base="xs:token">
       <xs:enumeration value="oneshot"/>
@@ -331,19 +340,20 @@ Action stuff (including single step stuff).
     </xs:restriction>
   </xs:simpleType>
   <xs:element name="actionWhence" type="vmi1:ActionWhenceT"/>
-  <xs:complexType name="ActionT">
+  <xs:complexType name="ActionSpecT">
     <xs:sequence>
-      <xs:element ref="vmi1:aid"/>
+      <xs:element ref="vmi1:tid"/>
+      <xs:element name="pid" type="vmi1:ProbeIdT"/>
       <xs:element name="type" type="vmi1:ActionTypeT"/>
       <xs:element name="whence" type="vmi1:ActionWhenceT"/>
       <xs:choice>
         <xs:element ref="vmi1:return"/>
         <xs:element ref="vmi1:regmod"/>
         <xs:element ref="vmi1:memmod"/>
+        <xs:element ref="vmi1:singlestep"/>
       </xs:choice>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="aid" type="vmi1:ActionIdT"/>
   <xs:element name="return">
     <xs:complexType>
       <xs:sequence>
@@ -362,36 +372,44 @@ Action stuff (including single step stuff).
     </xs:complexType>
   </xs:element>
   <xs:element name="data" type="xs:hexBinary"/>
+  <xs:element name="singlestep">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="vmi1:stepCount"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="stepCount" type="xs:int"/>
+  <xs:element name="actionSpec" type="vmi1:ActionSpecT"/>
+  <xs:complexType name="ActionSpecsT">
+    <xs:sequence>
+      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:actionSpec"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="actionSpecs" type="vmi1:ActionSpecsT"/>
+  <xs:complexType name="ActionT">
+    <xs:sequence>
+      <xs:element ref="vmi1:aid"/>
+      <xs:element ref="vmi1:actionSpec"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="aid" type="vmi1:ActionIdT"/>
+  <xs:element name="action" type="vmi1:ActionT"/>
   <xs:complexType name="ActionEventT">
     <xs:sequence>
-      <xs:element ref="vmi1:eventMsg"/>
-      <xs:element ref="vmi1:eventType"/>
-      <xs:element ref="vmi1:eventDetail"/>
+      <xs:element ref="vmi1:handlerMsg"/>
+      <xs:element ref="vmi1:actionDetail"/>
       <xs:element ref="vmi1:action"/>
-      <xs:element ref="vmi1:probe"/>
       <xs:element ref="vmi1:thread"/>
       <xs:element ref="vmi1:registerValues"/>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="eventMsg">
-    <xs:simpleType>
-      <xs:restriction base="xs:token">
-        <xs:enumeration value="success"/>
-        <xs:enumeration value="failure"/>
-        <xs:enumeration value="stepping"/>
-        <xs:enumeration value="stepping_at_bp"/>
-      </xs:restriction>
-    </xs:simpleType>
-  </xs:element>
-  <xs:element name="eventType" type="vmi1:ActionTypeT"/>
-  <xs:element name="eventDetail">
+  <xs:element name="actionDetail">
     <xs:complexType>
       <xs:sequence>
         <xs:element minOccurs="0" ref="vmi1:stepCount"/>
       </xs:sequence>
     </xs:complexType>
   </xs:element>
-  <xs:element name="stepCount" type="xs:int"/>
-  <xs:element name="action" type="vmi1:ActionT"/>
   <xs:element name="actionEvent" type="vmi1:ActionEventT"/>
 </xs:schema>

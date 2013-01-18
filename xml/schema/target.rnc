@@ -165,24 +165,34 @@ ProbeEvent = element probeEvent { ProbeEventT }
 ActionIdT = xsd:int
 ActionTypeT = "return" | "regmod" | "memmod" | "singlestep"
 ActionType = element actionType { ActionTypeT }
-
+HandlerMsgT = "success" | "failure" | "stepping" | "stepping_at_bp"
+HandlerMsg = element handlerMsg { HandlerMsgT }
 ActionWhenceT = "oneshot" | "repeatpre" | "repeatpost"
 ActionWhence = element actionWhence { ActionWhenceT }
-ActionT = 
-    element aid { ActionIdT },
+
+ActionSpecT = 
+    element tid { TargetIdT },
+    element pid { ProbeIdT },
     element type { ActionTypeT },
     element whence { ActionWhenceT },
     (element return { element code { xsd:unsignedLong } }
      | element regmod { RegisterValue }
      | element memmod { element addr { ADDR },
-       	       	      	element data { xsd:hexBinary } })
+       	       	      	element data { xsd:hexBinary } }
+     | element singlestep { element stepCount { xsd:int } })
+ActionSpec = element actionSpec { ActionSpecT }
+ActionSpecsT = ActionSpec*
+ActionSpecs = element actionSpecs { ActionSpecsT }
+
+ActionT = 
+    element aid { ActionIdT },
+    ActionSpec
+Action = element action { ActionT }
 
 ActionEventT = 
-    element eventMsg { "success" | "failure" | "stepping" | "stepping_at_bp" },
-    element eventType { ActionTypeT },
-    element eventDetail { element stepCount { xsd:int }? },
+    HandlerMsg,
+    element actionDetail { element stepCount { xsd:int }? },
     element action { ActionT },
-    element probe { ProbeT },
     element thread { ThreadT },
     element registerValues {
         element registerValue { RegisterValueT }*

@@ -12,12 +12,19 @@
 //gsoap vmi1 service method-style: document
 //gsoap vmi1 service method-encoding: literal
 
-struct vmi1__NoneResponse { };
+struct vmi1__ProbeEventResponse {
+    enum vmi1__ResultT result;
+    struct vmi1__ActionSpecsT actionSpecs;
+};
+
+struct vmi1__ActionEventResponse {
+    enum vmi1__ResultT result;
+};
 
 //gsoap vmi1 service method-documentation: 
 
 int vmi1__ProbeEvent(struct vmi1__ProbeEventT *probeEvent,
-		     struct vmi1__NoneResponse *r);
+		     struct vmi1__ProbeEventResponse *r);
 
 int vmi1__ActionEvent(struct vmi1__ActionEventT *actionEvent,
-		      struct vmi1__NoneResponse *r);
+		      struct vmi1__ActionEventResponse *r);

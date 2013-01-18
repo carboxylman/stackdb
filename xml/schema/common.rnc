@@ -32,3 +32,6 @@ TargetIdT = xsd:int
 SessionIdT = xsd:int
 AnalysisIdT = xsd:ID
 AnalysisInstanceIdT = xsd:ID
+
+ResultT = "success" | "error" | "abort"
+Result = element result { ResultT }

@@ -202,4 +202,39 @@ enum vmi1__ProbepointSizeT
 t_probepoint_watchsize_t_to_x_ProbepointSizeT(struct soap *soap,
 					      probepoint_watchsize_t in);
 
+
+action_type_t
+x_ActionTypeT_to_t_action_type_t(struct soap *soap,
+				 enum vmi1__ActionTypeT in);
+enum vmi1__ActionTypeT 
+t_action_type_t_to_x_ActionTypeT(struct soap *soap,
+				 action_type_t in);
+
+action_whence_t
+x_ActionWhenceT_to_t_action_whence_t(struct soap *soap,
+				     enum vmi1__ActionWhenceT in);
+enum vmi1__ActionWhenceT 
+t_action_whence_t_to_x_ActionWhenceT(struct soap *soap,
+				     action_whence_t in);
+
+handler_msg_t
+x_HandlerMsgT_to_t_handler_msg_t(struct soap *soap,
+				 enum vmi1__HandlerMsgT in);
+enum vmi1__HandlerMsgT 
+t_handler_msg_t_to_x_HandlerMsgT(struct soap *soap,
+				 handler_msg_t in);
+
+struct vmi1__ActionT *
+t_action_to_x_ActionT(struct soap *soap,
+		      struct action *action,
+		      GHashTable *reftab,
+		      struct vmi1__ActionT *out);
+
+struct vmi1__ActionEventT *
+t_action_to_x_ActionEventT(struct soap *soap,
+			   struct action *action,struct target_thread *tthread,
+			   handler_msg_t msg,int msg_detail,
+			   GHashTable *reftab,
+			   struct vmi1__ActionEventT *out);
+
 #endif /* __TARGET_XML_H__ */

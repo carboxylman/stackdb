@@ -90,6 +90,7 @@ static unsigned long linux_userproc_write(struct target *target,
 					  unsigned long length,
 					  unsigned char *buf);
 static char *linux_userproc_reg_name(struct target *target,REG reg);
+static REG linux_userproc_dwregno_targetname(struct target *target,char *name);
 static REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg);
 
 static tid_t linux_userproc_gettid(struct target *target);
@@ -160,6 +161,7 @@ struct target_ops linux_userspace_process_ops = {
     .read = linux_userproc_read,
     .write = linux_userproc_write,
     .regname = linux_userproc_reg_name,
+    .dwregno_targetname = linux_userproc_dwregno_targetname,
     .dwregno = linux_userproc_dw_reg_no,
 
     .gettid = linux_userproc_gettid,
@@ -3743,6 +3745,39 @@ char *linux_userproc_reg_name(struct target *target,REG reg) {
     }
     return dreg_to_name32[reg];
 #endif
+}
+
+REG linux_userproc_dwregno_targetname(struct target *target,char *name) {
+    /* This sucks. */
+    REG retval = 0;
+    int i;
+    int count;
+    char **dregname;
+
+#if __WORDSIZE == 64
+    count = X86_64_DWREG_COUNT;
+    dregname = dreg_to_name64;
+#else
+    count = X86_32_DWREG_COUNT;
+    dregname = dreg_to_name32;
+#endif
+
+    for (i = 0; i < count; ++i) {
+	if (dregname[i] == NULL)
+	    continue;
+	else if (strcmp(name,dregname[i]) == 0) {
+	    retval = i;
+	    break;
+	}
+    }
+
+    if (i == count) {
+	verror("could not find register number for name %s!\n",name);
+	errno = EINVAL;
+	return 0;
+    }
+
+    return retval;
 }
 
 REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg) {

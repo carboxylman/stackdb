@@ -1071,3 +1071,235 @@ t_probepoint_watchsize_t_to_x_ProbepointSizeT(struct soap *soap,
 	return -1;
     }
 }
+
+action_type_t
+x_ActionTypeT_to_t_action_type_t(struct soap *soap,
+				 enum vmi1__ActionTypeT in) {
+    switch (in) {
+    case vmi1__ActionTypeT__return_:
+	return ACTION_RETURN;
+    case vmi1__ActionTypeT__regmod:
+	return ACTION_REGMOD;
+    case vmi1__ActionTypeT__memmod:
+	return ACTION_MEMMOD;
+    case vmi1__ActionTypeT__singlestep:
+	return ACTION_SINGLESTEP;
+    default:
+	verror("unknown ActionTypeT %d!\n",in);
+	return -1;
+    }
+}
+enum vmi1__ActionTypeT 
+t_action_type_t_to_x_ActionTypeT(struct soap *soap,
+				 action_type_t in) {
+    switch (in) {
+    case ACTION_RETURN:
+	return vmi1__ActionTypeT__return_;
+    case ACTION_REGMOD:
+	return vmi1__ActionTypeT__regmod;
+    case ACTION_MEMMOD:
+	return vmi1__ActionTypeT__memmod;
+    case ACTION_SINGLESTEP:
+	return vmi1__ActionTypeT__singlestep;
+    default:
+	verror("unknown action_type_t %d!\n",in);
+	return -1;
+    }
+}
+
+action_whence_t
+x_ActionWhenceT_to_t_action_whence_t(struct soap *soap,
+				     enum vmi1__ActionWhenceT in) {
+    switch (in) {
+    case vmi1__ActionWhenceT__oneshot:
+	return ACTION_ONESHOT;
+    case vmi1__ActionWhenceT__repeatpre:
+	return ACTION_REPEATPRE;
+    case vmi1__ActionWhenceT__repeatpost:
+	return ACTION_REPEATPOST;
+    default:
+	verror("unknown ActionWhenceT %d!\n",in);
+	return -1;
+    }
+}
+enum vmi1__ActionWhenceT 
+t_action_whence_t_to_x_ActionWhenceT(struct soap *soap,
+				     action_whence_t in) {
+    switch (in) {
+    case ACTION_ONESHOT:
+	return vmi1__ActionWhenceT__oneshot;
+    case ACTION_REPEATPRE:
+	return vmi1__ActionWhenceT__repeatpre;
+    case ACTION_REPEATPOST:
+	return vmi1__ActionWhenceT__repeatpost;
+    default:
+	verror("unknown action_whence_t %d!\n",in);
+	return -1;
+    }
+}
+
+handler_msg_t
+x_HandlerMsgT_to_t_handler_msg_t(struct soap *soap,
+				 enum vmi1__HandlerMsgT in) {
+    switch (in) {
+    case vmi1__HandlerMsgT__success:
+	return MSG_SUCCESS;
+    case vmi1__HandlerMsgT__failure:
+	return MSG_FAILURE;
+    case vmi1__HandlerMsgT__stepping:
+	return MSG_STEPPING;
+    case vmi1__HandlerMsgT__stepping_USCOREat_USCOREbp:
+	return MSG_STEPPING_AT_BP;
+    default:
+	verror("unknown HandlerMsgT %d!\n",in);
+	return -1;
+    }
+}
+enum vmi1__HandlerMsgT 
+t_handler_msg_t_to_x_HandlerMsgT(struct soap *soap,
+				 handler_msg_t in) {
+    switch (in) {
+    case MSG_SUCCESS:
+	return vmi1__HandlerMsgT__success;
+    case MSG_FAILURE:
+	return vmi1__HandlerMsgT__failure;
+    case MSG_STEPPING:
+	return vmi1__HandlerMsgT__stepping;
+    case MSG_STEPPING_AT_BP:
+	return vmi1__HandlerMsgT__stepping_USCOREat_USCOREbp;
+    default:
+	verror("unknown handler_msg_t %d!\n",in);
+	return -1;
+    }
+}
+
+struct vmi1__ActionT *
+t_action_to_x_ActionT(struct soap *soap,
+		      struct action *action,
+		      GHashTable *reftab,
+		      struct vmi1__ActionT *out) {
+    struct vmi1__ActionT *oaction;
+
+    if (out)
+	oaction = out;
+    else
+	oaction = SOAP_CALLOC(soap,1,sizeof(*oaction));
+
+    oaction->aid = action->id;
+    oaction->actionSpec = SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec));
+    oaction->actionSpec->tid = action->target->id;
+    oaction->actionSpec->pid = action->probe->id;
+    oaction->actionSpec->type = \
+	t_action_type_t_to_x_ActionTypeT(soap,action->type);
+    oaction->actionSpec->whence = \
+	t_action_whence_t_to_x_ActionWhenceT(soap,action->whence);
+    switch (action->type) {
+    case ACTION_RETURN:
+	oaction->actionSpec->__union_ActionSpecT = \
+	    SOAP_UNION__vmi1__union_ActionSpecT_return_;
+	oaction->actionSpec->union_ActionSpecT.return_ = \
+	    SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec->union_ActionSpecT.return_));
+	oaction->actionSpec->union_ActionSpecT.return_->code = \
+	    action->detail.ret.retval;
+	break;
+    case ACTION_REGMOD:
+	oaction->actionSpec->__union_ActionSpecT = \
+	    SOAP_UNION__vmi1__union_ActionSpecT_regmod;
+	oaction->actionSpec->union_ActionSpecT.regmod = \
+	    SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec->union_ActionSpecT.regmod));
+	oaction->actionSpec->union_ActionSpecT.regmod->registerValue = \
+	    SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec->union_ActionSpecT.regmod->registerValue));
+	SOAP_STRCPY(soap,
+		    oaction->actionSpec->union_ActionSpecT.regmod->registerValue->name,
+		    target_reg_name(action->target,action->detail.regmod.regnum));
+	oaction->actionSpec->union_ActionSpecT.regmod->registerValue->value = \
+	    action->detail.regmod.regval;
+	break;
+    case ACTION_MEMMOD:
+	oaction->actionSpec->__union_ActionSpecT = \
+	    SOAP_UNION__vmi1__union_ActionSpecT_memmod;
+	oaction->actionSpec->union_ActionSpecT.memmod = \
+	    SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec->union_ActionSpecT.memmod));
+	oaction->actionSpec->union_ActionSpecT.memmod->addr = \
+	    action->detail.memmod.destaddr;
+	/* Convert to a hexBinary string */
+	oaction->actionSpec->union_ActionSpecT.memmod->data.__ptr = \
+	    (unsigned char *)action->detail.memmod.data;
+	oaction->actionSpec->union_ActionSpecT.memmod->data.__size = \
+	    action->detail.memmod.len;
+	/*
+	oaction->actionSpec->union_ActionSpecT.memmod->data = \
+	    SOAP_CALLOC(soap,2 * action->detail.memmod.len + 1,1);
+	for (i = 0; i < action->detail.memmod.len; ++i) 
+	    sprintf(oaction->actionSpec->union_ActionSpecT.memmod->data + i * 2,
+		    "%02x",action->detail.memmod.data[i]);
+	oaction->actionSpec->union_ActionSpecT.memmod->data[action->detail.memmod.len] = '\0';
+	*/
+	break;
+    case ACTION_SINGLESTEP:
+
+	break;
+    default:
+	verror("unknown action type %d!\n",action->type);
+	return NULL;
+    }
+
+    return oaction;
+}
+
+struct vmi1__ActionEventT *
+t_action_to_x_ActionEventT(struct soap *soap,
+			   struct action *action,struct target_thread *tthread,
+			   handler_msg_t msg,int msg_detail,
+			   GHashTable *reftab,
+			   struct vmi1__ActionEventT *out) {
+    struct vmi1__ActionEventT *oevent;
+    GHashTable *regs;
+    GHashTableIter iter;
+    REGVAL *rvp;
+    char *rname;
+    int i;
+
+    if (out)
+	oevent = out;
+    else
+	oevent = SOAP_CALLOC(soap,1,sizeof(*oevent));
+
+    oevent->handlerMsg = t_handler_msg_t_to_x_HandlerMsgT(soap,msg);
+
+    if (action->type == ACTION_SINGLESTEP) {
+	oevent->actionDetail = SOAP_CALLOC(soap,1,sizeof(*oevent->actionDetail));
+	oevent->actionDetail->stepCount = \
+	    SOAP_CALLOC(soap,1,sizeof(*oevent->actionDetail->stepCount));
+	*oevent->actionDetail->stepCount = msg_detail;
+    }
+
+    oevent->action = t_action_to_x_ActionT(soap,action,reftab,NULL);
+    oevent->thread = t_target_thread_to_x_ThreadT(soap,tthread,reftab,NULL);
+
+    oevent->registerValues = SOAP_CALLOC(soap,1,sizeof(*oevent->registerValues));
+
+    regs = target_copy_registers(tthread->target,tthread->tid);
+    if (regs) {
+	g_hash_table_iter_init(&iter,regs);
+
+	oevent->registerValues->__sizeregisterValue = g_hash_table_size(regs);
+	oevent->registerValues->registerValue = 
+	    SOAP_CALLOC(soap,g_hash_table_size(regs),
+			sizeof(*oevent->registerValues->registerValue));
+	i = 0;
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer *)&rname,(gpointer *)&rvp)) {
+	    oevent->registerValues->registerValue[i].name = rname;
+	    oevent->registerValues->registerValue[i].value = *rvp;
+	    ++i;
+	}
+	g_hash_table_destroy(regs);
+    }
+    else {
+	oevent->registerValues->__sizeregisterValue = 0;
+	oevent->registerValues->registerValue = NULL;
+    }
+
+    return oevent;
+}

@@ -1928,12 +1928,12 @@ static int handle_simple_actions(struct target *target,
 	if (rc) {
 	    ++retval;
 	    if (action->handler)
-		action->handler(action,action->probe,probepoint,
-				MSG_FAILURE,action->handler_data);
+		action->handler(action,tthread,action->probe,probepoint,
+				MSG_FAILURE,0,action->handler_data);
 	}
 	else if (action->handler) 
-	    action->handler(action,action->probe,probepoint,
-			    MSG_SUCCESS,action->handler_data);
+	    action->handler(action,tthread,action->probe,probepoint,
+			    MSG_SUCCESS,0,action->handler_data);
 
 
 	/* cleanup oneshot actions! */
@@ -2009,8 +2009,8 @@ static int setup_single_step_actions(struct target *target,
 	    list_for_each_entry_safe(action,taction,&probepoint->ss_actions,
 				     action) {
 		if (action->handler) 
-		    action->handler(action,action->probe,probepoint,
-				    MSG_FAILURE,action->handler_data);
+		    action->handler(action,tthread,action->probe,probepoint,
+				    MSG_FAILURE,0,action->handler_data);
 
 		action_finish_handling(action);
 	    }
@@ -2505,8 +2505,8 @@ result_t probepoint_bp_handler(struct target *target,
 	    if (action->steps == -2 
 		|| (action->steps > 0 && tac->stepped >= action->steps)) {
 		if (action->handler)
-		    action->handler(action,action->probe,action->probe->probepoint,
-				    MSG_SUCCESS,action->handler_data);
+		    action->handler(action,tthread,action->probe,action->probe->probepoint,
+				    MSG_SUCCESS,tac->stepped,action->handler_data);
 
 		action_finish_handling(action);
 
@@ -2515,8 +2515,9 @@ result_t probepoint_bp_handler(struct target *target,
 	    }
 	    else {
 		if (action->handler) 
-		    action->handler(action,action->probe,action->probe->probepoint,
-				    MSG_STEPPING_AT_BP,action->handler_data);
+		    action->handler(action,tthread,action->probe,action->probe->probepoint,
+				    MSG_STEPPING_AT_BP,tac->stepped,
+				    action->handler_data);
 	    }
 	}
 
@@ -2918,13 +2919,13 @@ result_t probepoint_ss_handler(struct target *target,
 
 	    if (action->steps < 0 || tac->stepped < action->steps) {
 		if (action->handler) 
-		    action->handler(action,action->probe,action->probe->probepoint,
-				    amsg,action->handler_data);
+		    action->handler(action,tthread,action->probe,action->probe->probepoint,
+				    amsg,tac->stepped,action->handler_data);
 	    }
 	    else {
 		if (action->handler) 
-		    action->handler(action,action->probe,action->probe->probepoint,
-				    MSG_SUCCESS,action->handler_data);
+		    action->handler(action,tthread,action->probe,action->probe->probepoint,
+				    MSG_SUCCESS,tac->stepped,action->handler_data);
 
 		action_finish_handling(action);
 
@@ -3129,9 +3130,10 @@ result_t probepoint_ss_handler(struct target *target,
 	     */
 	    list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
 		if (tac->action->handler) 
-		    tac->action->handler(tac->action,tac->action->probe,
+		    tac->action->handler(tac->action,tthread,tac->action->probe,
 					 tac->action->probe->probepoint,
-					 MSG_FAILURE,tac->action->handler_data);
+					 MSG_FAILURE,tac->stepped,
+					 tac->action->handler_data);
 
 		action_finish_handling(tac->action);
 
@@ -3272,9 +3274,11 @@ result_t probepoint_resumeat_handler(struct target *target,
 		 */
 		list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
 		    if (tac->action->handler) 
-			tac->action->handler(tac->action,tac->action->probe,
+			tac->action->handler(tac->action,tthread,
+					     tac->action->probe,
 					     tac->action->probe->probepoint,
-					     MSG_FAILURE,tac->action->handler_data);
+					     MSG_FAILURE,tac->stepped,
+					     tac->action->handler_data);
 
 		    action_finish_handling(tac->action);
 
@@ -3567,8 +3571,9 @@ static int handle_complex_actions(struct target *target,
 	    vdebugc(5,LA_PROBE,LF_ACTION,"\n");
 
 	    if (action->handler) 
-		action->handler(action,action->probe,probepoint,
-				MSG_STEPPING,action->handler_data);
+		action->handler(action,tthread,action->probe,probepoint,
+				MSG_STEPPING,tpc->tac.stepped,
+				action->handler_data);
 	}
 	else {
 	    vdebug(5,LA_PROBE,LF_ACTION,
@@ -3581,8 +3586,9 @@ static int handle_complex_actions(struct target *target,
 	     * set amount of single steps, we need to "finish" it:
 	     */
 	    if (action->handler) 
-		action->handler(action,action->probe,probepoint,
-				MSG_SUCCESS,action->handler_data);
+		action->handler(action,tthread,action->probe,probepoint,
+				MSG_SUCCESS,tpc->tac.stepped,
+				action->handler_data);
 
 	    __remove_action(target,probepoint,action);
 
@@ -3734,9 +3740,10 @@ static int handle_complex_actions(struct target *target,
 	     */
 	    list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
 		if (tac->action->handler) 
-		    tac->action->handler(tac->action,tac->action->probe,
+		    tac->action->handler(tac->action,tthread,tac->action->probe,
 					 action->probe->probepoint,
-					 MSG_FAILURE,tac->action->handler_data);
+					 MSG_FAILURE,tac->stepped,
+					 tac->action->handler_data);
 
 		action_finish_handling(action);
 

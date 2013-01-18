@@ -474,6 +474,12 @@ unsigned long target_write_addr(struct target *target,ADDR addr,
 char *target_reg_name(struct target *target,REG reg);
 
 /*
+ * Returns the target-specific DWARF register number for the
+ * target-specific register name @name.
+ */
+REG target_dw_reg_no_targetname(struct target *target,char *name);
+
+/*
  * Returns the target-specific DWARF register number for the common
  * register @reg.
  */
@@ -1428,6 +1434,8 @@ struct target_ops {
 
     /* Get target-specific register name. */
     char *(*regname)(struct target *target,REG reg);
+    /* Get target-specific DWARF reg number for the target-specific name. */
+    REG (*dwregno_targetname)(struct target *target,char *name);
     /* Get target-specific DWARF reg number for the "common" register. */
     REG (*dwregno)(struct target *target,common_reg_t reg);
 

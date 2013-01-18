@@ -289,6 +289,11 @@ char *target_reg_name(struct target *target,REG reg) {
     return target->ops->regname(target,reg);
 }
 
+REG target_dw_reg_no_targetname(struct target *target,char *name) {
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s) target reg %s)\n",target->name,name);
+    return target->ops->dwregno_targetname(target,name);
+}
+
 REG target_dw_reg_no(struct target *target,common_reg_t reg) {
     vdebug(16,LA_TARGET,LF_TARGET,"target(%s) common reg %d)\n",target->name,reg);
     return target->ops->dwregno(target,reg);

@@ -53,4 +53,12 @@
   <xs:simpleType name="AnalysisInstanceIdT">
     <xs:restriction base="xs:ID"/>
   </xs:simpleType>
+  <xs:simpleType name="ResultT">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="success"/>
+      <xs:enumeration value="error"/>
+      <xs:enumeration value="abort"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="result" type="vmi1:ResultT"/>
 </xs:schema>

@@ -68,7 +68,7 @@ HEADERS := $(SRCDIR)/debuginfo_xml.h $(SRCDIR)/debuginfo_rpc.h \
 
 OBJECTS-LIB := proxyreq.lo # util.lo
 
-OBJECTS-COMMON-LIB := common_xml_moduleC.lo
+OBJECTS-COMMON-LIB := common_xml_moduleC.lo common_xml.lo
 
 OBJECTS-XSD-LIB := xsdcC.lo
 
@@ -301,6 +301,9 @@ xsdcC.lo: xsdcH.h
 #	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
 %_lib.lo: $(SRCDIR)/%_lib.c $(SRCDIR)/%_lib.h %.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+common_xml.lo: $(SRCDIR)/common_xml.c $(SRCDIR)/common_xml.h common_xml.gsm.h
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
 %_xml.lo: $(SRCDIR)/%_xml.c $(SRCDIR)/%_xml.h %.wsdl

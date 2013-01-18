@@ -58,9 +58,12 @@ typedef result_t (*probe_handler_t)(struct probe *probe,void *handler_data,
 /*
  * The type of function to be used for action handlers.
  */
-typedef result_t (*action_handler_t)(struct action *action,struct probe *probe,
+typedef result_t (*action_handler_t)(struct action *action,
+				     struct target_thread *thread,
+				     struct probe *probe,
 				     struct probepoint *probepoint,
-				     handler_msg_t msg,void *handler_data);
+				     handler_msg_t msg,int msg_detail,
+				     void *handler_data);
 
 /*
  * Each probe type must define this operations table.  The operations

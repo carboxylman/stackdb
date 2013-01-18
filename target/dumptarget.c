@@ -697,9 +697,9 @@ result_t var_post(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t ss_handler(struct action *action,struct probe *probe,
-		    struct probepoint *probepoint,
-		    handler_msg_t msg,void *handler_data) {
+result_t ss_handler(struct action *action,struct target_thread *thread,
+		    struct probe *probe,struct probepoint *probepoint,
+		    handler_msg_t msg,int msg_detail,void *handler_data) {
     tid_t tid = target_gettid(t);
     REGVAL ipval = target_read_reg(t,tid,t->ipregno);
     struct bsymbol *func = target_lookup_sym_addr(t,ipval);
@@ -708,14 +708,14 @@ result_t ss_handler(struct action *action,struct probe *probe,
 	target_resolve_symbol_base(t,tid,func,&func_phys_base,NULL);
 
     if (func) {
-	fprintf(stdout,"Single step (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR" (%s:+%d)!\n",
-		tid,msg,ipval,bsymbol_get_name(func),
+	fprintf(stdout,"Single step %d (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR" (%s:+%d)!\n",
+		msg_detail,tid,msg,ipval,bsymbol_get_name(func),
 		(int)(ipval - func_phys_base));
 	bsymbol_release(func);
     }
     else
-	fprintf(stdout,"Single step (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR"!\n",
-		tid,msg,ipval);
+	fprintf(stdout,"Single step %d (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR"!\n",
+		msg_detail,tid,msg,ipval);
 
     fflush(stderr);
     fflush(stdout);

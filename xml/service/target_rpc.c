@@ -20,6 +20,7 @@
 #include <glib.h>
 #include <errno.h>
 
+#include "common_xml.h"
 #include "target_rpc.h"
 #include "debuginfo_rpc.h"
 #include "target_xml.h"
@@ -1089,8 +1090,131 @@ int vmi1__LookupTargetLine(struct soap *soap,
     return SOAP_OK;
 }
 
-int _target_rpc_probe_handler(int type,struct probe *probe,void *handler_data,
-			      struct probe *trigger) {
+struct action *x_ActionSpecT_to_t_action(struct soap *soap,
+					 struct vmi1__ActionSpecT *spec,
+					 struct target *target) {
+    struct action *action = NULL;
+    action_type_t atype;
+    REG reg;
+    char *ddata;
+
+    atype = x_ActionTypeT_to_t_action_type_t(soap,spec->type);
+    if (atype == ACTION_RETURN && spec->union_ActionSpecT.return_) 
+	action = action_return(spec->union_ActionSpecT.return_->code);
+    else if (atype == ACTION_REGMOD && spec->union_ActionSpecT.regmod
+	&& spec->union_ActionSpecT.regmod->registerValue
+	&& spec->union_ActionSpecT.regmod->registerValue->name) {
+	reg = target_dw_reg_no_targetname(target,spec->union_ActionSpecT.regmod->registerValue->name);
+	if (reg == 0 && errno == EINVAL) {
+	    verror("bad register number in regmod action!\n");
+	    return NULL;
+	}
+	action = \
+	    action_regmod(reg,
+			  spec->union_ActionSpecT.regmod->registerValue->value);
+    }
+    else if (atype == ACTION_MEMMOD && spec->union_ActionSpecT.memmod
+	     && spec->union_ActionSpecT.memmod->data.__ptr) {
+	ddata = calloc(1,spec->union_ActionSpecT.memmod->data.__size);
+	memcpy(ddata,spec->union_ActionSpecT.memmod->data.__ptr,
+	       spec->union_ActionSpecT.memmod->data.__size);
+	action = \
+	    action_memmod(spec->union_ActionSpecT.memmod->addr,ddata,
+			  spec->union_ActionSpecT.memmod->data.__size);
+    }
+    else if (atype == ACTION_SINGLESTEP && spec->union_ActionSpecT.singlestep) {
+	action = action_singlestep(spec->union_ActionSpecT.singlestep->stepCount);
+    }
+    else {
+	verror("bad action spec -- could not attempt action creation!!\n");
+	return NULL;
+    }
+
+    if (!action) 
+	verror("bad action spec -- failure in action creation!\n");
+
+    return action;
+}
+
+result_t _target_rpc_action_handler(struct action *action,
+				    struct target_thread *thread,
+				    struct probe *probe,
+				    struct probepoint *probepoint,
+				    handler_msg_t msg,int msg_detail,
+				    void *handler_data) {
+    struct soap soap;
+    GHashTable *reftab;
+    struct array_list *tll;
+    int i;
+    struct target_rpc_listener *tl = NULL;
+    struct target *target = thread->target;
+    int target_id;
+    char urlbuf[SOAP_TAGLEN];
+    struct vmi1__ActionEventT event;
+    struct vmi1__ActionEventResponse aer;
+    int rc;
+    result_t retval = RESULT_SUCCESS;
+    result_t retval2;
+
+    if (target)
+	target_id = target->id;
+    else {
+	verror("probe not associated with target!\n");
+	return RESULT_ERROR;
+    }
+
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    tll = (struct array_list *)	\
+	g_hash_table_lookup(target_listener_tab,(gpointer)(uintptr_t)target_id);
+
+    if (tll) {
+	soap_init(&soap);
+
+	reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+	t_action_to_x_ActionEventT(&soap,action,thread,msg,msg_detail,reftab,
+				   &event);
+	g_hash_table_destroy(reftab);
+
+	array_list_foreach(tll,i,tl) {
+	    snprintf(urlbuf,sizeof(urlbuf),"http://%s:%d",tl->hostname,tl->port);
+
+	    soap.connect_timeout = 4;
+	    soap.send_timeout = 4;
+	    soap.recv_timeout = 4;
+
+	    rc = soap_call_vmi1__ActionEvent(&soap,urlbuf,NULL,&event,&aer);
+	    if (rc != SOAP_OK) {
+		verrorc("ActionEvent client call: ");
+		soap_print_fault(&soap,stderr);
+	    }
+	    /*
+	     * This is a bit crazy at the moment: if we have more than
+	     * one listener, let them all fight for the handler outcome.
+	     * Eventually, we have to restrict the outcome to only the
+	     * RPC client that created the probe, or something.
+	     */
+	    retval2 = x_ResultT_to_t_result_t(&soap,aer.result);
+	    if (retval2 > retval)
+		retval = retval2;
+
+	    soap_closesock(&soap);
+
+	    vdebug(5,LA_XML,LF_RPC,
+		   "notified listener %s (which returned %d)\n",urlbuf,retval2);
+	}
+	soap_destroy(&soap);
+	soap_end(&soap);
+	soap_done(&soap);
+    }
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return retval;
+}
+
+result_t _target_rpc_probe_handler(int type,struct probe *probe,
+				   void *handler_data,struct probe *trigger) {
     struct soap soap;
     GHashTable *reftab;
     struct array_list *tll;
@@ -1100,14 +1224,18 @@ int _target_rpc_probe_handler(int type,struct probe *probe,void *handler_data,
     int target_id;
     char urlbuf[SOAP_TAGLEN];
     struct vmi1__ProbeEventT event;
-    struct vmi1__NoneResponse nr;
+    struct vmi1__ProbeEventResponse per;
     int rc;
+    result_t retval = RESULT_SUCCESS;
+    result_t retval2;
+    struct action *action;
+    action_whence_t aw;
 
     if (target)
 	target_id = target->id;
     else {
 	verror("probe not associated with target!\n");
-	return -1;
+	return RESULT_ERROR;
     }
 
     pthread_mutex_lock(&target_rpc_mutex);
@@ -1130,14 +1258,48 @@ int _target_rpc_probe_handler(int type,struct probe *probe,void *handler_data,
 	    soap.send_timeout = 4;
 	    soap.recv_timeout = 4;
 
-	    rc = soap_call_vmi1__ProbeEvent(&soap,urlbuf,NULL,&event,&nr);
+	    rc = soap_call_vmi1__ProbeEvent(&soap,urlbuf,NULL,&event,&per);
 	    if (rc != SOAP_OK) {
 		verrorc("ProbeEvent client call: ");
 		soap_print_fault(&soap,stderr);
 	    }
+	    /*
+	     * This is a bit crazy at the moment: if we have more than
+	     * one listener, let them all fight for the handler outcome.
+	     * Eventually, we have to restrict the outcome to only the
+	     * RPC client that created the probe, or something.
+	     */
+	    retval2 = x_ResultT_to_t_result_t(&soap,per.result);
+	    if (retval2 > retval)
+		retval = retval2;
+
 	    soap_closesock(&soap);
 
-	    vdebug(5,LA_XML,LF_RPC,"notified listener %s\n",urlbuf);
+	    vdebug(5,LA_XML,LF_RPC,
+		   "notified listener %s (which returned %d)\n",urlbuf,retval2);
+
+	    if (retval == RESULT_SUCCESS) {
+		for (i = 0; i < per.actionSpecs.__sizeactionSpec; ++i) {
+		    /*
+		     * Create the new action.
+		     */
+		    action = \
+			x_ActionSpecT_to_t_action(&soap,
+						  &per.actionSpecs.actionSpec[i],
+						  action->target);
+		    if (!action) {
+			verror("bad ActionSpec in probe response!\n");
+			continue;
+		    }
+
+		    aw = x_ActionWhenceT_to_t_action_whence_t(&soap,per.actionSpecs.actionSpec[i].whence);
+		    if (action_sched(probe,action,aw,1,
+				     _target_rpc_action_handler,NULL)) {
+			verror("could not schedule action!\n");
+			action_free(action,1);
+		    }
+		}
+	    }
 	}
 	soap_destroy(&soap);
 	soap_end(&soap);
@@ -1146,7 +1308,7 @@ int _target_rpc_probe_handler(int type,struct probe *probe,void *handler_data,
 
     pthread_mutex_unlock(&target_rpc_mutex);
 
-    return 0;
+    return retval;
 };
 
 result_t _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
