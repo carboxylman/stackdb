@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <glib.h> 
 
 struct array_list {
     int32_t len;
@@ -340,5 +341,25 @@ static inline void array_list_deep_free(struct array_list *list) {
     for (lpc = 0, (placeholder) = alist->len ? (typeof(placeholder))(intertype)alist->list[lpc] : (typeof(placeholder))(intertype)NULL; \
 	 alist->len - lpc > 0;						\
 	 ++lpc) 
+
+static inline struct array_list *array_list_create_from_g_hash_table(GHashTable *ht) {
+    GHashTableIter iter;
+    gpointer value;
+    int len;
+    struct array_list *list;
+
+    len = g_hash_table_size(ht);
+    list = (struct array_list *)malloc(sizeof(struct array_list));
+    memset(list,0,sizeof(struct array_list));
+    if (len) {
+	list->alloc_len = len;
+	list->list = (void **)malloc(sizeof(void *)*len);
+    }
+    g_hash_table_iter_init(&iter,ht);
+    while (g_hash_table_iter_next(&iter,NULL,&value)) 
+	array_list_append(list,value);
+
+    return list;
+}
 
 #endif
