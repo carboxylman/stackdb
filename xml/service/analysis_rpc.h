@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -24,31 +24,31 @@
 void analysis_rpc_init(void);
 void analysis_rpc_fini(void);
 
-int vmi1__listAvailableAnalyses(struct soap *soap,void *_,
+int vmi1__ListAvailableAnalyses(struct soap *soap,void *_,
 				struct vmi1__AnalysesResponse *r);
-int vmi1__listAnalysisInstances(struct soap *soap,void *_,
+int vmi1__ListAnalysisInstances(struct soap *soap,void *_,
 				struct vmi1__AnalysisInstancesResponse *r);
 
-int vmi1__createAnalysis(struct soap *soap,struct vmi1__TargetSpecT *targetSpec,
+int vmi1__CreateAnalysis(struct soap *soap,struct vmi1__TargetSpecT *targetSpec,
 			 xsd__ID analysisId,enum xsd__boolean autorun,
 			 vmi1__SessionIdT *sessionId);
-int vmi1__runAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__RunAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
 		      struct vmi1__NoneResponse *r);
-int vmi1__pauseAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__PauseAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
 			struct vmi1__NoneResponse *r);
-int vmi1__endAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__EndAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
 		      struct vmi1__NoneResponse *r);
 
-int vmi1__getAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__GetAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
 		      struct vmi1__AnalysisInstanceResponse *r);
-int vmi1__getAnalysisStatus(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__GetAnalysisStatus(struct soap *soap,vmi1__SessionIdT sessionId,
 			    struct vmi1__AnalysisStatusResponse *r);
 
-int vmi1__getAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__GetAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
 			     struct vmi1__AnalysisResultsResponse *r);
-int vmi1__pollAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__PollAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
 			      struct vmi1__AnalysisResultsResponse *r);
-int vmi1__pollAnalysisAnnotations(struct soap *soap,vmi1__SessionIdT sessionId,
+int vmi1__PollAnalysisAnnotations(struct soap *soap,vmi1__SessionIdT sessionId,
 				  struct vmi1__AnalysisAnnotationsResponse *r);
 
 #endif /* __ANALYSIS_RPC_H__ */
