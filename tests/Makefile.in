@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012 The University of Utah
+## Copyright (c) 2012, 2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -60,13 +60,21 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 
 TESTS := clrange clmatch evloop_waitpipe monitor_threads monitor_processes
 
+ASSISTANTS := dummy dummy.threads
+
 STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a \
 	 $(OBJDIR)/target/libtarget.a
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
 
-all:	$(TESTS) all-subdirs
+all:	$(ASSISTANTS) $(TESTS) all-subdirs
+
+dummy: $(SRCDIR)/dummy.c
+	$(CC) -o $@ $(SRCDIR)/$@.c -g 
+
+dummy.threads : $(SRCDIR)/dummy.threads.c
+	$(CC) -o $@ $(SRCDIR)/$@.c -g -lpthread
 
 include $(TOP_SRCDIR)/Makerules
 
@@ -83,7 +91,7 @@ test:	$(TESTS)
 install: def-install install-subdirs
 
 clean: clean-subdirs
-	rm -f $(TESTS)
+	rm -f $(ASSISTANTS) $(TESTS)
 
 distclean: distclean-subdirs
 
