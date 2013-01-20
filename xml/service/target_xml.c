@@ -268,6 +268,7 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	    t_xen_vm_spec_to_x_TargetXenSpecT(soap,
 					      (struct xen_vm_spec *)spec->backend_spec,
 					      reftab,NULL);
+    }
 #endif
 
     return ospec;
@@ -290,8 +291,6 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 	ospec->domain = strdup(spec->domain);
     if (spec->configFile) 
 	ospec->config_file = strdup(spec->configFile);
-    if (spec->replay_dir)
-	ospec->replay_dir = strdup(spec->replayDir);
 
     return ospec;
 }
@@ -312,8 +311,6 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 	SOAP_STRCPY(soap,ospec->domain,spec->domain);
     if (spec->config_file)
 	SOAP_STRCPY(soap,ospec->configFile,spec->config_file);
-    if (spec->replay_dir)
-	SOAP_STRCPY(soap,ospec->replayDir,spec->replay_dir);
 
     return ospec;
 }
