@@ -1,0 +1,52 @@
+import vmi1.debuginfo.*;
+import vmi1.debuginfo.DebuginfoStub.*;
+import org.apache.axis2.*;
+import org.apache.axis2.engine.*;
+import org.apache.axis2.context.*;
+
+public class DebuginfoTest {
+    public static final String NS = 
+	"http://anathema.flux.utah.edu/schema/vmi/1";
+    public static final String WSDL = 
+	"@top_builddir@/xml/service/debuginfo.wsdl.test";
+    public static final String SVR = 
+	"http://localhost:3901";
+	
+    public DebuginfoTest() throws Exception {
+	LookupSymbol ls = new LookupSymbol(); //of.createLookupSymbol();
+	
+	ls.setFilename("/usr/lib/debug/bin/ls.debug");
+	ls.setName("main.argc");
+	DebugFileOptsT odfot = new DebugFileOptsT();
+	odfot.setDebugfileRefDepth(1);
+	odfot.setSymbolRefDepth(2);
+	odfot.setSymtabRefDepth(1);
+	odfot.setDoMultiRef(false);
+	odfot.setDoManualRef(true);
+	ls.setOpts(odfot);
+
+	System.out.format("call lookup symbol\n");		
+	AxisConfiguration ac = new AxisConfiguration();
+	ConfigurationContext cc = new ConfigurationContext(ac);
+	DebuginfoStub dis = new DebuginfoStub(SVR);
+	//ServiceClient sc = dis._getServiceClient();
+	NestedSymbolResponse nsr = dis.lookupSymbol(ls);
+	dis.cleanup();			
+    }
+    
+    public static void main (String [] args) {
+        try {
+            DebuginfoTest test = new DebuginfoTest();
+        } catch (AxisFault af) {
+	    af.printStackTrace();
+	    System.out.println(af.getLocalizedMessage() 
+			       + " " + af.getFaultNode() 
+			       + " " + af.getFaultAction() 
+			       + " " + af.getFaultRole() 
+			       + " " + af.getFaultType() 
+			       + " " + af.getReason());
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+}

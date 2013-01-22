@@ -1,6 +1,6 @@
 ## -*- mode: Autoconf -*-
 ##
-## Copyright (c) 2011, 2012 The University of Utah
+## Copyright (c) 2011, 2012, 2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -433,10 +433,112 @@ AC_ARG_ENABLE(vmi-debug,
 	      [ENABLE_VMI_DEBUG=1])
 AC_SUBST(ENABLE_VMI_DEBUG)
 
+#
+# Check for disabled java support
+#
+ENABLE_JAVA=1
+AC_ARG_ENABLE(java,
+	      AS_HELP_STRING([--disable-java],
+                             [Disable java XML SOAP client support]),
+	      [if test "x$enableval" = "xno"; then \
+	           ENABLE_JAVA=0; \
+	       else \
+	           ENABLE_JAVA=1; \
+	       fi],
+	      [ENABLE_JAVA=1])
+AC_SUBST(ENABLE_JAVA)
+
+#
+# If enabled, we need javac, java, and ant; JAVA_HOME, AXIS2_HOME, and 
+# $AXIS2_HOME/bin/wsdl2java.sh .
+#
+if test "${ENABLE_JAVA}" = "1"; then
+    #
+    # --with-java
+    #
+    AC_ARG_WITH([java],
+                 AS_HELP_STRING([--with-java=DIRECTORY],
+                                [find java install in DIRECTORY]),
+                 [JAVA_HOME="$with_java"])
+
+    #
+    # JAVA_HOME, java, javac
+    #
+    if test -z "${JAVA_HOME}" ; then
+        AC_PATH_PROG(JAVA,java)
+	if test -z "$JAVA" ; then
+	    AC_MSG_ERROR([no java found in \$PATH])
+        fi
+        AC_PATH_PROG(JAVAC,javac)
+	if test -z "${JAVAC}" ; then
+	    AC_MSG_ERROR([no javac found in \$PATH])
+        fi
+
+	# assuming we don't error out, extract JAVA_HOME, we need it set
+	JAVA_HOME=`echo "${JAVA}" | sed -e 's/\(\/bin\/java\)//'`
+    else
+        #
+        # Check for bin/java and bin/javac
+        #
+	if ! test -x "${JAVA_HOME}/bin/java"; then
+	    AC_MSG_ERROR("No java in ${JAVA_HOME}/bin!")
+        fi
+        JAVA="${JAVA_HOME}/bin/java"
+	if ! test -x "${JAVA_HOME}/bin/javac"; then
+	    AC_MSG_ERROR("No javac in ${JAVA_HOME}/bin!")
+        fi
+	JAVAC="${JAVA_HOME}/bin/javac"
+    fi
+    AC_SUBST(JAVA_HOME)
+    AC_SUBST(JAVA)
+    AC_SUBST(JAVAC)
+
+    #
+    # ant
+    #
+    AC_PATH_PROG(ANT,ant)
+    if test -z "$ANT" ; then
+        AC_MSG_ERROR([no ant found in \$PATH])
+    fi
+    AC_SUBST(ANT)
+
+    #
+    # axis2
+    #
+    AC_ARG_WITH([axis2],
+                 AS_HELP_STRING([--with-axis2=DIRECTORY],
+                                [find axis2 install in DIRECTORY]),
+                 [AXIS2_HOME="$with_axis2"])
+    if test -d "${AXIS2_HOME}" ; then
+	if ! test -x "${AXIS2_HOME}/bin/wsdl2java.sh" ; then
+	    AC_MSG_ERROR([no wsdl2java.sh found in ${AXIS2_HOME}/bin])
+        fi
+    else
+        #
+        # Check /usr/local/axis* and /opt/axis*
+        #
+	for axis in /usr/local/axis* /opt/axis*; do
+	   if test -x "$axis/bin/wsdl2java.sh"; then
+	       AXIS2_HOME="$axis"
+               break
+           fi
+        done
+	if test -z "${AXIS2_HOME}"; then
+	    AC_MSG_ERROR("Cannot find axis2 install in /usr/local or /opt!")
+        fi
+    fi
+    AC_SUBST(AXIS2_HOME)
+fi
+
+
+#
+# Check for JAVA_HOME/AXIS2_HOME, and $AXIS2_HOME/bin/wsdl2java.sh .
+#
+
 outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           target/Makefile tests/Makefile xml/Makefile xml/service/Makefile \
 	  xml/client/Makefile xml/client/python/Makefile \
-	  xml/client/python/debuginfo_test.py xml/client/python/target_test.py \
+          xml/client/java/Makefile \
 	  tools/Makefile tools/rop/Makefile tools/bts/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \

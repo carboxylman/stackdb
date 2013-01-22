@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012, 2013 The University of Utah
+## Copyright (c) 2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -20,23 +20,60 @@
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= xml/client
+SUBDIR		= xml/client/java
 OBJDIR		= @top_builddir@
 
-SUBDIRS = python 
-ifeq ($(ENABLE_JAVA),"1")
-	SUBDIRS += java
-endif
+SUBDIRS = 
 
 include $(OBJDIR)/Makeconf
 
-all:	all-subdirs
+JAVA = @JAVA@
+JAVAC = @JAVAC@
+JAVA_HOME = @JAVA_HOME@
+AXIS2_HOME = @AXIS2_HOME@
+AXIS2_CLASSPATH := $(shell $(SRCDIR)/dump_axis2_env.sh | grep AXIS2_CLASSPATH= | sed -e s/AXIS2_CLASSPATH=//)
+LOCAL_CLASSPATH := ./debuginfo/build/lib/debuginfo-test-client.jar:./target/build/lib/target-test-client.jar
+
+ifneq ($(CLASSPATH),"")
+    CLASSPATH = $(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
+else
+    CLASSPATH = $(CLASSPATH):$(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
+endif
+
+STUBS = debuginfo.stub #target.stub
+
+PROGRAMS = DebuginfoTest.class
+
+all:	run.sh $(STUBS) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
+
+run.sh:
+	echo "#/bin/sh" > $@
+	echo "" >> $@
+	echo "$(JAVA) -classpath $(CLASSPATH) " '$$1' >> $@
+	chmod ug+x $@
+
+%.stub: $(OBJDIR)/xml/service/%.wsdl.test
+	rm -f $@
+	# Clean out the generated stubs if the build failed
+	rm -rf $(@:.stub=)
+	mkdir -p $(@:.stub=)
+	${AXIS2_HOME}/bin/wsdl2java.sh -o $(@:.stub=) -p vmi1.$(@:.stub=) \
+		-uri $<
+	(cd $(@:.stub=) ; ant)
+	touch $@
+
+DebuginfoTest.class: debuginfo.stub DebuginfoTest.java
+	javac -classpath $(CLASSPATH) DebuginfoTest.java
 
 install: def-install install-subdirs
 
 clean: clean-subdirs
+	rm -rf $(STUBS) 
+	rm -f $(PROGRAMS)
+	rm -rf debuginfo target
+	rm -f run.sh
 
 distclean: distclean-subdirs
 
