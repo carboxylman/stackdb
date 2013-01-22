@@ -261,14 +261,14 @@ Probe stuff.
       <xs:element name="type" type="vmi1:ProbepointTypeT"/>
       <xs:element ref="vmi1:style"/>
       <xs:element name="whence" type="vmi1:ProbepointWhenceT"/>
-      <xs:element ref="vmi1:size"/>
+      <xs:element ref="vmi1:psize"/>
       <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:thid"/>
     </xs:sequence>
   </xs:complexType>
   <xs:element name="addr" type="vmi1:ADDR"/>
   <xs:element name="style" type="vmi1:ProbepointTypeT"/>
-  <xs:element name="size" type="vmi1:ProbepointSizeT"/>
+  <xs:element name="psize" type="vmi1:ProbepointSizeT"/>
   <xs:element name="probe" type="vmi1:ProbeT"/>
   <xs:complexType name="RegisterValueT">
     <xs:sequence>

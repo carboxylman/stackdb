@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2012 The University of Utah
+# Copyright (c) 2012, 2013 The University of Utah
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as
@@ -262,7 +262,7 @@ FunctionT =
      element constValue { text }?,
      element argCount { xsd:unsignedShort },
      element hasUnspecifiedParams { xsd:boolean },
-     element arguments { SymbolsOptT },
+     element parameters { SymbolsOptT },
      element entryPC { ADDR }?,
      element prologueEnd { ADDR }?,
      element epilogueBegin { ADDR }?,
@@ -342,5 +342,5 @@ FunctionTypeT =
      element type { SymbolT },
      element argCount { xsd:unsignedShort },
      element hasUnspecifiedParams { xsd:boolean},
-     element arguments { SymbolsOptT })?
+     element parameters { SymbolsOptT })?
 

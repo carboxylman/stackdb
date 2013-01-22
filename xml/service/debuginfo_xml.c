@@ -165,10 +165,10 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
     do {								\
 	int _rc;							\
 	char *_name;							\
-	char _idbuf[16];						\
-	int _idblen = 16;						\
+	char _idbuf[17];						\
+	int _idblen = 17;						\
 									\
-	_rc = snprintf(_idbuf,_idblen,"%d",(s)->ref);			\
+	_rc = snprintf(_idbuf,_idblen,"i%d",(s)->ref);			\
 	_rc = (_rc > _idblen) ? _idblen : (_rc + 1);			\
 	(r)->sid = _soap_calloc(soap,_rc);				\
 	strncpy((r)->sid,_idbuf,_rc);					\
@@ -295,6 +295,8 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 	int _rc;							\
 	char *_name = objtype ## _get_name(s);				\
 	int _rfound = -1;						\
+	char _idbuf[17];						\
+	int _idblen = 17;						\
 									\
 	/*								\
 	 * If it is in the reftab, and if multi-ref encoding is enabled,\
@@ -342,7 +344,12 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 		if (!(r))						\
 		    (r) = _soap_calloc(soap,sizeof(*(r)));		\
 									\
-		(r)->sref = idstr;					\
+		_rc = snprintf(_idbuf,_idblen,"i%s",idstr);		\
+		_rc = (_rc > _idblen) ? _idblen : (_rc + 1);		\
+		(r)->sref = _soap_calloc(soap,_rc);			\
+		strncpy((r)->sref,_idbuf,_rc);				\
+									\
+		/* (r)->sref = idstr; */				\
 									\
 		vdebug(5,LA_XML,LF_XML,					\
 		       "encoding manual ref for %s(%s)"    \
@@ -356,7 +363,12 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 		if (!(r))						\
 		    (r) = _soap_calloc(soap,sizeof(*(r)));		\
 									\
-		(r)->sref = idstr;					\
+		_rc = snprintf(_idbuf,_idblen,"i%s",idstr);		\
+		_rc = (_rc > _idblen) ? _idblen : (_rc + 1);		\
+		(r)->sref = _soap_calloc(soap,_rc);			\
+		strncpy((r)->sref,_idbuf,_rc);				\
+									\
+		/* (r)->sref = idstr; */				\
 									\
 		vdebug(5,LA_XML,LF_XML,					\
 		       "forcing (cyclic) manual ref for %s(%s)" \
@@ -370,7 +382,12 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 		if (!(r))						\
 		    (r) = _soap_calloc(soap,sizeof(*(r)));		\
 									\
-		(r)->sref = idstr;					\
+		_rc = snprintf(_idbuf,_idblen,"i%s",idstr);		\
+		_rc = (_rc > _idblen) ? _idblen : (_rc + 1);		\
+		(r)->sref = _soap_calloc(soap,_rc);			\
+		strncpy((r)->sref,_idbuf,_rc);				\
+									\
+		/* (r)->sref = idstr; */				\
 									\
 		if (objtype ## _get_name(s)) {				\
 		    _rc = strlen(_name) + 1;				\
@@ -395,7 +412,12 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 		    (r) = _soap_calloc(soap,sizeof(*(r)));		\
 		}							\
 									\
-		(r)->sref = idstr;					\
+		_rc = snprintf(_idbuf,_idblen,"i%s",idstr);		\
+		_rc = (_rc > _idblen) ? _idblen : (_rc + 1);		\
+		(r)->sref = _soap_calloc(soap,_rc);			\
+		strncpy((r)->sref,_idbuf,_rc);				\
+									\
+		/* (r)->sref = idstr; */				\
 									\
 		vdebug(5,LA_XML,LF_XML,					\
 		       "encoding full %s(%"PRIiSMOFFSET")"		\
@@ -522,13 +544,13 @@ d_symbol_to_x_FunctionT(struct soap *soap,struct symbol *s,
 		arg = argi->d.v.member_symbol;
 		array_list_append(gslist,arg);
 	    }
-	    rs->arguments = \
+	    rs->parameters = \
 		d_symbol_array_list_to_x_SymbolsOptT(soap,gslist,
 						     opts,reftab,refstack,depth+1);
 	    array_list_free(gslist);
 	}
 	else {
-	    rs->arguments = _soap_calloc(soap,sizeof(*rs->arguments));
+	    rs->parameters = _soap_calloc(soap,sizeof(*rs->parameters));
 	}
 
 	if (s->s.ii->d.f.symtab) {
@@ -919,7 +941,7 @@ d_symbol_to_x_FunctionTypeT(struct soap *soap,struct symbol *s,
 	    tmps = tmpi->d.v.member_symbol;
 	    array_list_append(gslist,tmps);
 	}
-	rs->arguments = \
+	rs->parameters = \
 	    d_symbol_array_list_to_x_SymbolsOptT(soap,gslist,opts,reftab,refstack,depth+1);
 	array_list_free(gslist);
     }
@@ -1253,8 +1275,8 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
     struct __vmi1__SymtabT_sequence *rs;
     GHashTableIter iter;
     struct symtab *symtab;
-    char idbuf[16];
-    int idblen = 16;
+    char idbuf[17];
+    int idblen = 17;
     int rc;
     int len;
     int i;
@@ -1268,7 +1290,7 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
     RETURN_REF_OR_ALLOC(symtab,SymtabT,st,_ref_build_int(soap,st->ref),opts,reftab,refstack,depth,r);
     REF_ALLOC_SEQ(SymtabT,r,rs);
 
-    rc = snprintf(idbuf,idblen,"%d",st->ref);
+    rc = snprintf(idbuf,idblen,"i%d",st->ref);
     rc = (rc > idblen) ? idblen : (rc + 1);
     r->sid = _soap_calloc(soap,rc);
     strncpy(r->sid,idbuf,rc);

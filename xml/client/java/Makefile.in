@@ -31,7 +31,7 @@ JAVA = @JAVA@
 JAVAC = @JAVAC@
 JAVA_HOME = @JAVA_HOME@
 AXIS2_HOME = @AXIS2_HOME@
-AXIS2_CLASSPATH := $(shell $(SRCDIR)/dump_axis2_env.sh | grep AXIS2_CLASSPATH= | sed -e s/AXIS2_CLASSPATH=//)
+AXIS2_CLASSPATH := $(shell AXIS2_HOME=$(AXIS2_HOME) $(SRCDIR)/dump_axis2_env.sh | grep AXIS2_CLASSPATH= | sed -e s/AXIS2_CLASSPATH=//)
 LOCAL_CLASSPATH := ./debuginfo/build/lib/debuginfo-test-client.jar:./target/build/lib/target-test-client.jar
 
 ifneq ($(CLASSPATH),"")
@@ -40,7 +40,7 @@ else
     CLASSPATH = $(CLASSPATH):$(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
 endif
 
-STUBS = debuginfo.stub #target.stub
+STUBS = debuginfo.stub target.stub
 
 PROGRAMS = DebuginfoTest.class
 

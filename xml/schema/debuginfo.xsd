@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   
-  Copyright (c) 2012 The University of Utah
+  Copyright (c) 2012, 2013 The University of Utah
   
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -417,7 +417,7 @@
       <xs:element minOccurs="0" ref="vmi1:constValue"/>
       <xs:element ref="vmi1:argCount"/>
       <xs:element ref="vmi1:hasUnspecifiedParams"/>
-      <xs:element ref="vmi1:arguments"/>
+      <xs:element ref="vmi1:parameters"/>
       <xs:element minOccurs="0" ref="vmi1:entryPC"/>
       <xs:element minOccurs="0" ref="vmi1:prologueEnd"/>
       <xs:element minOccurs="0" ref="vmi1:epilogueBegin"/>
@@ -428,7 +428,7 @@
   </xs:complexType>
   <xs:element name="argCount" type="xs:unsignedShort"/>
   <xs:element name="hasUnspecifiedParams" type="xs:boolean"/>
-  <xs:element name="arguments" type="vmi1:SymbolsOptT"/>
+  <xs:element name="parameters" type="vmi1:SymbolsOptT"/>
   <xs:element name="entryPC" type="vmi1:ADDR"/>
   <xs:element name="prologueEnd" type="vmi1:ADDR"/>
   <xs:element name="epilogueBegin" type="vmi1:ADDR"/>
@@ -553,7 +553,7 @@
       <xs:element name="type" type="vmi1:SymbolT"/>
       <xs:element ref="vmi1:argCount"/>
       <xs:element ref="vmi1:hasUnspecifiedParams"/>
-      <xs:element ref="vmi1:arguments"/>
+      <xs:element ref="vmi1:parameters"/>
     </xs:sequence>
     <xs:attributeGroup ref="vmi1:SymbolHeader"/>
   </xs:complexType>

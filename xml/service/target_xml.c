@@ -879,7 +879,7 @@ t_probe_to_x_ProbeT(struct soap *soap,
 	oprobe->type = t_probepoint_type_t_to_x_ProbepointTypeT(soap,pp->type);
 	oprobe->style = t_probepoint_style_t_to_x_ProbepointStyleT(soap,pp->style);
 	oprobe->whence = t_probepoint_whence_t_to_x_ProbepointWhenceT(soap,pp->whence);
-	oprobe->size = t_probepoint_watchsize_t_to_x_ProbepointSizeT(soap,pp->watchsize);
+	oprobe->psize = t_probepoint_watchsize_t_to_x_ProbepointSizeT(soap,pp->watchsize);
     }
 
     return oprobe;

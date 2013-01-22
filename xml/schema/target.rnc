@@ -139,7 +139,7 @@ ProbeT =
     element type { ProbepointTypeT },
     element style { ProbepointTypeT },
     element whence { ProbepointWhenceT },
-    element size { ProbepointSizeT },
+    element psize { ProbepointSizeT },
 
     element tid { TargetIdT },
     element thid { ThreadIdT }
