@@ -59,9 +59,10 @@ run.sh:
 	# Clean out the generated stubs if the build failed
 	rm -rf $(@:.stub=)
 	mkdir -p $(@:.stub=)
-	${AXIS2_HOME}/bin/wsdl2java.sh -o $(@:.stub=) -p vmi1.$(@:.stub=) \
-		-uri $<
-	(cd $(@:.stub=) ; ant)
+	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
+		${AXIS2_HOME}/bin/wsdl2java.sh -o $(@:.stub=) \
+			-p vmi1.$(@:.stub=) -uri $<
+	(cd $(@:.stub=) ; AXIS2_HOME=$(AXIS2_HOME) ant)
 	touch $@
 
 DebuginfoTest.class: debuginfo.stub DebuginfoTest.java

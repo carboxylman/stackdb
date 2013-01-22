@@ -24,7 +24,7 @@ SUBDIR		= xml/client
 OBJDIR		= @top_builddir@
 
 SUBDIRS = python 
-ifeq ($(ENABLE_JAVA),"1")
+ifeq ("@ENABLE_JAVA@","1")
 	SUBDIRS += java
 endif
 
