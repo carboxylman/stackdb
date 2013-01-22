@@ -903,9 +903,9 @@ t_probe_to_x_ProbeEventT(struct soap *soap,
 	oevent = SOAP_CALLOC(soap,1,sizeof(*oevent));
 
     if (type == 0) 
-	oevent->eventType = _vmi1__ProbeEventT_eventType__pre;
+	oevent->probeEventType = _vmi1__probeEventType__pre;
     else if (type == 1) 
-	oevent->eventType = _vmi1__ProbeEventT_eventType__post;
+	oevent->probeEventType = _vmi1__probeEventType__post;
 
     oevent->probe = t_probe_to_x_ProbeT(soap,probe,reftab,NULL);
     oevent->thread = t_target_thread_to_x_ThreadT(soap,probe->thread,reftab,NULL);

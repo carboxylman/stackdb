@@ -151,7 +151,7 @@ RegisterValueT =
 RegisterValue = element registerValue { RegisterValueT }
 
 ProbeEventT = 
-    attribute eventType { "pre" | "post" },
+    element probeEventType { "pre" | "post" },
     element probe { ProbeT },
     element thread { ThreadT },
     element registerValues {

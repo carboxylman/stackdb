@@ -1276,7 +1276,8 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
 	    soap_closesock(&soap);
 
 	    vdebug(5,LA_XML,LF_RPC,
-		   "notified listener %s (which returned %d)\n",urlbuf,retval2);
+		   "notified listener %s (which returned %d -- %d actions)\n",
+		   urlbuf,retval2,per.actionSpecs.__sizeactionSpec);
 
 	    if (retval == RESULT_SUCCESS) {
 		for (i = 0; i < per.actionSpecs.__sizeactionSpec; ++i) {

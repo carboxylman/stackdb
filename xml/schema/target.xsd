@@ -285,19 +285,20 @@ Probe stuff.
   <xs:element name="registerValue" type="vmi1:RegisterValueT"/>
   <xs:complexType name="ProbeEventT">
     <xs:sequence>
+      <xs:element ref="vmi1:probeEventType"/>
       <xs:element ref="vmi1:probe"/>
       <xs:element ref="vmi1:thread"/>
       <xs:element ref="vmi1:registerValues"/>
     </xs:sequence>
-    <xs:attribute name="eventType" use="required">
-      <xs:simpleType>
-        <xs:restriction base="xs:token">
-          <xs:enumeration value="pre"/>
-          <xs:enumeration value="post"/>
-        </xs:restriction>
-      </xs:simpleType>
-    </xs:attribute>
   </xs:complexType>
+  <xs:element name="probeEventType">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="pre"/>
+        <xs:enumeration value="post"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
   <xs:element name="registerValues">
     <xs:complexType>
       <xs:sequence>
