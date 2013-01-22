@@ -27,6 +27,8 @@ SUBDIRS =
 
 include $(OBJDIR)/Makeconf
 
+NS=http://anathema.flux.utah.edu/schema/vmi/1
+
 JAVA = @JAVA@
 JAVAC = @JAVAC@
 JAVA_HOME = @JAVA_HOME@
@@ -41,10 +43,11 @@ else
 endif
 
 STUBS = debuginfo.stub target.stub
+SERVERSTUBS = targetListener.stub
 
 PROGRAMS = DebuginfoTest.class
 
-all:	run.sh $(STUBS) $(PROGRAMS) all-subdirs
+all:	run.sh $(STUBS) $(SERVERSTUBS) $(PROGRAMS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
@@ -54,6 +57,17 @@ run.sh:
 	echo "$(JAVA) -classpath $(CLASSPATH) " '$$1' >> $@
 	chmod ug+x $@
 
+%Listener.stub: $(OBJDIR)/xml/service/%Listener.wsdl.test
+	rm -f $@
+	# Clean out the generated stubs if the build failed
+	rm -rf $(@:.stub=)
+	mkdir -p $(@:.stub=)
+	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
+		${AXIS2_HOME}/bin/wsdl2java.sh -o $(@:.stub=) \
+			-ns2p $(NS)=vmi1 -p vmi1 -ss -uri $<
+	(cd $(@:.stub=) ; AXIS2_HOME=$(AXIS2_HOME) ant)
+	touch $@
+
 %.stub: $(OBJDIR)/xml/service/%.wsdl.test
 	rm -f $@
 	# Clean out the generated stubs if the build failed
@@ -61,7 +75,7 @@ run.sh:
 	mkdir -p $(@:.stub=)
 	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
 		${AXIS2_HOME}/bin/wsdl2java.sh -o $(@:.stub=) \
-			-p vmi1.$(@:.stub=) -uri $<
+			-ns2p $(NS)=vmi1 -p vmi1 -uri $<
 	(cd $(@:.stub=) ; AXIS2_HOME=$(AXIS2_HOME) ant)
 	touch $@
 
@@ -71,9 +85,9 @@ DebuginfoTest.class: debuginfo.stub DebuginfoTest.java
 install: def-install install-subdirs
 
 clean: clean-subdirs
-	rm -rf $(STUBS) 
+	rm -rf $(STUBS) $(SERVERSTUBS) 
 	rm -f $(PROGRAMS)
-	rm -rf debuginfo target
+	rm -rf debuginfo target targetListener
 	rm -f run.sh
 
 distclean: distclean-subdirs

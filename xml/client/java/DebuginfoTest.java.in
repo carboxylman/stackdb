@@ -1,5 +1,5 @@
-import vmi1.debuginfo.*;
-import vmi1.debuginfo.DebuginfoStub.*;
+import vmi1.*;
+import vmi1.DebuginfoStub.*;
 import org.apache.axis2.*;
 import org.apache.axis2.engine.*;
 import org.apache.axis2.context.*;
