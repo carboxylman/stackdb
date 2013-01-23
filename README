@@ -13,7 +13,16 @@ Optionally, you could also install
   * xenaccess (which requires Xen libs like xenctrl, xs)
 
 to include support for x86 and x86_64 disassembly, and Xen target
-backends, respectively.
+backends, respectively;
+
+and/or 
+
+  * gsoap-2.8.11 (for SOAP XML service generation; also necessary for
+    clients; must apply our patches);
+  * python-suds and pysimplesoap (for SOAP XML python clients; must
+    apply our patch to pysimplesoap);
+  * a 1.6-era Java SDK, Apache Ant, and Apache Axis2 (for SOAP XML java
+    clients)
 
 In the following two sections, we provide instructions for building
 dependencies, followed by instructions for building this package.
@@ -90,6 +99,46 @@ http://downloads.sourceforge.net/project/judy/judy/Judy-1.0.5/Judy-1.0.5.tar.gz 
 configure, make, install (if you change the build prefix to anything
 other than /usr or /usr/local, tell vmi's configure about it via
 --with-judy=/my/prefix .
+
+
+  gsoap:
+
+Grab either /proj/a3/vmi-deps/gsoap_2.8.11.zip or get it from
+http://www.cs.fsu.edu/~engelen/soap.html .  Apply the
+gsoap-2.8.11-noserve.patch and gsoap-2.8.11-xs-include-to-module.patch
+in the VMI src in vmi/xml/etc .  Then configure, make, install (if you
+change the build prefix to anything other than /usr, tell vmi's
+configure about it via --with-gsoap=/my/prefix .
+
+
+  python-suds:
+
+Grab either /proj/a3/vmi-deps/python-suds-0.4.tar.gz or get it from
+https://fedorahosted.org/suds/ , or install it via your distro's package
+management tool.  If installing from source, install *using python 2.x*
+via the standard dance of (cd python-suds-0.4 ; python2 setup.py build ;
+python2 setup.py install).
+
+
+  pysimplesoap:
+
+Grab either /proj/a3/vmi-deps/pysimplesoap-HG.tar.gz, or clone
+the latest pysimplesoap from http://code.google.com/p/pysimplesoap/ .
+Unpack it, then apply pysimplesoap-soap-env.patch in vmi/xml/etc in the
+VMI src dir.  Then install *using python2* via the standard dance of 
+(cd pysimplesoap ; python2 setup.py build ; python2 setup.py install).
+
+
+  Apache Ant and Axis2:
+
+Grab them from
+/proj/a3/vmi-deps/{apache-ant-1.8.4-bin.zip,axis2-1.6.2-bin.zip}, or
+from http://ant.apache.org/ and http://axis.apache.org/axis2/java/core/ .
+Unpack them and place them anywhere (/usr/local or /opt are checked by
+the VMI configure script, or tell vmi where they are via --with-ant and
+--with-axis2).  If there is no Java in your $PATH, you'll also have to
+tell VMI's configure --with-java .
+
 
 
 BUILDING vmi.
