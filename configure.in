@@ -359,45 +359,57 @@ AC_SUBST(XC_EVTCHN_PORT_T)
 #
 # Check for gsoap
 #
-GSOAP=/usr
-AC_ARG_WITH([gsoap],
-  AS_HELP_STRING([--with-gsoap=DIRECTORY],
-    [find gsoap install in DIRECTORY]),
-  [GSOAP="$with_gsoap"])
-if test ! "$GSOAP" = "/usr" ; then
-    old_PATH="$PATH"
-    export PATH="${GSOAP}:$PATH"
-else
-    old_PATH="$PATH"
-fi
-AC_PATH_PROG(SOAPCPP2, soapcpp2)
-if test -z "$SOAPCPP2" ; then
-    AC_MSG_ERROR([no acceptable soapcpp2 found in \$PATH])
-fi
-AC_PATH_PROG(WSDL2H, wsdl2h)
-if test -z "$WSDL2H" ; then
-    AC_MSG_ERROR([no acceptable wsdl2h found in \$PATH])
-fi
-export PATH="${old_PATH}"
-AC_SUBST(GSOAP)
-AC_SUBST(SOAPCPP2)
-AC_SUBST(WSDL2H)
-#
-# Grab gsoap version number -- I suck
-#
-V_GSOAP_VERSION=`${SOAPCPP2} -v 2>&1 | grep 'soapcpp2 release' | sed -e 's/\(.* release \)\(.*\)/\2/'`
-AC_DEFINE_UNQUOTED(V_GSOAP_VERSION,${V_GSOAP_VERSION})
-AC_SUBST(V_GSOAP_VERSION)
-V_GSOAP_VERSION_MAJOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 1`
-AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MAJOR,${V_GSOAP_VERSION_MAJOR})
-AC_SUBST(V_GSOAP_VERSION_MAJOR)
-V_GSOAP_VERSION_MINOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 2`
-AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MINOR,${V_GSOAP_VERSION_MINOR})
-AC_SUBST(V_GSOAP_VERSION_MINOR)
-V_GSOAP_VERSION_PATCH=`echo "${V_GSOAP_VERSION}" | cut -d . -f 3`
-AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_PATCH,${V_GSOAP_VERSION_PATCH})
-AC_SUBST(V_GSOAP_VERSION_PATCH)
+AC_ARG_ENABLE(soap,
+	      AS_HELP_STRING([--disable-soap],
+                             [Disable SOAP XML services and clients]),
+	      [if test "x$enableval" = "xno"; then \
+	           ENABLE_SOAP=0; \
+	       else \
+	           ENABLE_SOAP=1; \
+	       fi],
+	      [ENABLE_SOAP=1])
+AC_SUBST(ENABLE_SOAP)
 
+if test "${ENABLE_SOAP}" = "1"; then
+    GSOAP=/usr
+    AC_ARG_WITH([gsoap],
+      AS_HELP_STRING([--with-gsoap=DIRECTORY],
+        [find gsoap install in DIRECTORY]),
+      [GSOAP="$with_gsoap"])
+    if test ! "$GSOAP" = "/usr" ; then
+        old_PATH="$PATH"
+        export PATH="${GSOAP}:$PATH"
+    else
+        old_PATH="$PATH"
+    fi
+    AC_PATH_PROG(SOAPCPP2, soapcpp2)
+    if test -z "$SOAPCPP2" ; then
+        AC_MSG_ERROR([no acceptable soapcpp2 found in \$PATH])
+    fi
+    AC_PATH_PROG(WSDL2H, wsdl2h)
+    if test -z "$WSDL2H" ; then
+        AC_MSG_ERROR([no acceptable wsdl2h found in \$PATH])
+    fi
+    export PATH="${old_PATH}"
+    AC_SUBST(GSOAP)
+    AC_SUBST(SOAPCPP2)
+    AC_SUBST(WSDL2H)
+    #
+    # Grab gsoap version number -- I suck
+    #
+    V_GSOAP_VERSION=`${SOAPCPP2} -v 2>&1 | grep 'soapcpp2 release' | sed -e 's/\(.* release \)\(.*\)/\2/'`
+    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION,${V_GSOAP_VERSION})
+    AC_SUBST(V_GSOAP_VERSION)
+    V_GSOAP_VERSION_MAJOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 1`
+    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MAJOR,${V_GSOAP_VERSION_MAJOR})
+    AC_SUBST(V_GSOAP_VERSION_MAJOR)
+    V_GSOAP_VERSION_MINOR=`echo "${V_GSOAP_VERSION}" | cut -d . -f 2`
+    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_MINOR,${V_GSOAP_VERSION_MINOR})
+    AC_SUBST(V_GSOAP_VERSION_MINOR)
+    V_GSOAP_VERSION_PATCH=`echo "${V_GSOAP_VERSION}" | cut -d . -f 3`
+    AC_DEFINE_UNQUOTED(V_GSOAP_VERSION_PATCH,${V_GSOAP_VERSION_PATCH})
+    AC_SUBST(V_GSOAP_VERSION_PATCH)
+fi
 
 #
 # Control CFLAGS setting in Makeconf.
