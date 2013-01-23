@@ -33,8 +33,9 @@ JAVA = @JAVA@
 JAVAC = @JAVAC@
 JAVA_HOME = @JAVA_HOME@
 AXIS2_HOME = @AXIS2_HOME@
-AXIS2_CLASSPATH := $(shell AXIS2_HOME=$(AXIS2_HOME) $(SRCDIR)/dump_axis2_env.sh | grep AXIS2_CLASSPATH= | sed -e s/AXIS2_CLASSPATH=//)
+AXIS2_CLASSPATH := $(shell JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) $(SRCDIR)/dump_axis2_env.sh | grep AXIS2_CLASSPATH= | sed -e s/AXIS2_CLASSPATH=//)
 LOCAL_CLASSPATH := ./debuginfo/build/lib/debuginfo-test-client.jar:./target/build/lib/target-test-client.jar
+ANT = @ANT@
 
 ifneq ($(CLASSPATH),"")
     CLASSPATH = $(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
@@ -65,7 +66,7 @@ run.sh:
 	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
 		${AXIS2_HOME}/bin/wsdl2java.sh -o $(@:.stub=) \
 			-ns2p $(NS)=vmi1 -p vmi1 -ss -uri $<
-	(cd $(@:.stub=) ; AXIS2_HOME=$(AXIS2_HOME) ant)
+	(cd $(@:.stub=) ; JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) $(ANT))
 	touch $@
 
 %.stub: $(OBJDIR)/xml/service/%.wsdl.test
@@ -76,11 +77,11 @@ run.sh:
 	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
 		${AXIS2_HOME}/bin/wsdl2java.sh -o $(@:.stub=) \
 			-ns2p $(NS)=vmi1 -p vmi1 -uri $<
-	(cd $(@:.stub=) ; AXIS2_HOME=$(AXIS2_HOME) ant)
+	(cd $(@:.stub=) ; JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) $(ANT))
 	touch $@
 
 DebuginfoTest.class: debuginfo.stub DebuginfoTest.java
-	javac -classpath $(CLASSPATH) DebuginfoTest.java
+	$(JAVAC) -classpath $(CLASSPATH) DebuginfoTest.java
 
 install: def-install install-subdirs
 

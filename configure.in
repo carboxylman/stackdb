@@ -496,10 +496,29 @@ if test "${ENABLE_JAVA}" = "1"; then
     #
     # ant
     #
-    AC_PATH_PROG(ANT,ant)
-    if test -z "$ANT" ; then
-        AC_MSG_ERROR([no ant found in \$PATH])
+    AC_ARG_WITH([ant],
+                 AS_HELP_STRING([--with-ant=DIRECTORY],
+                                [find ant install in DIRECTORY]),
+                 [ANT_HOME="$with_ant"])
+    if test -d "${ANT_HOME}" ; then
+	if ! test -x "${ANT_HOME}/bin/ant" ; then
+	    AC_MSG_ERROR([no ant found in ${ANT_HOME}/bin])
+        fi
+    else
+        #
+        # Check /usr/local/apache-ant* and /opt/apache-ant*
+        #
+	for ant in /usr/local/apache-ant* /opt/apache-ant*; do
+	   if test -x "$ant/bin/ant"; then
+	       ANT_HOME="$ant"
+               break
+           fi
+        done
+	if test -z "${ANT_HOME}"; then
+	    AC_MSG_ERROR("Cannot find ant install in /usr/local or /opt!")
+        fi
     fi
+    ANT="${ANT_HOME}/bin/ant"
     AC_SUBST(ANT)
 
     #
