@@ -3,7 +3,7 @@
 #undef LIBDW_HAVE_NEXT_UNIT 0
 #define ELFUTILS_NO_VERSION_H 0
 #define ELFUTILS_BIN_VERSION 0
-#undef XC_EVTCHN_PORT_T evtchn_port_or_error_t
+#define XC_EVTCHN_PORT_T evtchn_port_t
 
 #undef V_GSOAP_VERSION
 #undef V_GSOAP_VERSION_MAJOR
