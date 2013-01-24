@@ -46,29 +46,64 @@ events = []
 
 probeEventArgs = dict({
     'probeEvent' : {
-        'eventType' : str,
+        'probeEventType' : str,
         'probe' : { 'pid' : int,'name' : str,'addr' : int,'type' : str,
-                    'style' : str,'whence' : str,'size' : str,
+                    'style' : str,'whence' : str,'psize' : str,
                     'tid' : int,'thid' : int, },
         'thread' : { 'tid' : int,'thid' : int,'threadStatus' : str, },
         'registerValues' : [ { 'registerValue' : { 'name' : str,'value' : str, } } ]
     }
 })
+
+probeEventReturns = dict({
+    'vmi1:result' : int,
+    'vmi1:actionSpecs' : [ { 'vmi1:actionSpec' : {
+        'vmi1:tid' : int,'vmi1:pid' : int,'vmi1:type' : str,'vmi1:whence' : str,
+        'vmi1:singlestep' : { 'vmi1:stepCount' : int } 
+    }, } ],
+})
 def probeEvent(probeEvent,request=None):
     "Handle a ProbeEvent"
     events.append(probeEvent)
-    print "ProbeEvent: %s" % (str(probeEvent),)
+    print "ProbeEvent: %s\n" % (str(probeEvent),)
     #print "ProbeEvent (raw): %s" % (str(request),)
-    return { 'result' : 0 }
+    pid = probeEvent['probe']['pid']
+    tid = probeEvent['probe']['tid']
+    name = probeEvent['probe']['name']
+    addr = int(probeEvent['probe']['addr'])
+    pet = probeEvent['probeEventType']
+    rip = 0
+    for rv in probeEvent['registerValues']:
+        if rv['registerValue']['name'] == 'rip':
+            rip = int(rv['registerValue']['value'])
+            break
+        pass
+    print "ProbeEvent(%s 0x%08x): rip 0x%08x, %s" % (name,addr,rip,pet)
+    if probeEvent.has_key('probeEventType') and probeEvent['probeEventType'] == 'pre':
+        return { 'vmi1:result' : 0,
+                 'vmi1:actionSpecs' : [
+                     { 'vmi1:actionSpec' : {
+                         'vmi1:tid' : tid,'vmi1:pid' : pid,'vmi1:type':'singlestep',
+                         'vmi1:whence' : 'oneshot','vmi1:singlestep' : { 'vmi1:stepCount' : 5 }
+                         } }
+                     ]
+                 }
+    else:
+        return { 'vmi1:result' : 0,
+                 'vmi1:actionSpecs' : [ ] }
+    pass
 actionEventArgs = dict({
     'actionEvent' : {
         'handlerMsg' : str,
         'actionDetail' : { 'stepCount' : int },
-        'action' : { 'tid' : int,'pid' : int,'type' : str,'whence' : str,
-                     'return' : { 'code' : int },
-                     'regmod' : { 'registerValue' : { 'name' : str,'value' : str, } },
-                     'memmod' : { 'addr' : int,'data' : str },
-                     'singlestep' : { 'stepCount' : int }
+        'action' : { 'aid' : int,
+                     'actionSpec' : { 'tid' : int,'pid' : int,'type' : str,
+                                      'whence' : str,
+                                      'return' : { 'code' : int },
+                                      'regmod' : { 'registerValue' : { 'name' : str,'value' : str, } },
+                                      'memmod' : { 'addr' : int,'data' : str },
+                                      'singlestep' : { 'stepCount' : int }
+                                      },
                      },
         'thread' : { 'tid' : int,'thid' : int,'threadStatus' : str, },
         'registerValues' : [ { 'registerValue' : { 'name' : str,'value' : str, } } ]
@@ -77,8 +112,19 @@ actionEventArgs = dict({
 def actionEvent(actionEvent):
     "Handle a ActionEvent"
     events.append(actionEvent)
-    print "ActionEvent: %s" % (str(actionEvent),)
-    return None
+    print "ActionEvent: %s\n" % (str(actionEvent),)
+    aid = actionEvent['action']['aid']
+    pid = actionEvent['action']['actionSpec']['pid']
+    atype = actionEvent['action']['actionSpec']['type']
+    msg = actionEvent['handlerMsg']
+    rip = 0
+    for rv in actionEvent['registerValues']:
+        if rv['registerValue']['name'] == 'rip':
+            rip = int(rv['registerValue']['value'])
+            break
+        pass
+    print "ActionEvent(%d,%d,%s): rip 0x%08x, %s" % (aid,pid,atype,rip,msg)
+    return { 'result' : 0 }
 
 _namespaces = {
     'SOAP-ENV' : "http://www.w3.org/2003/05/soap-envelope",
@@ -97,8 +143,7 @@ dispatcher = SoapDispatcher(
     namespaces=_namespaces)
 
 dispatcher.register_function('ProbeEvent',probeEvent,
-                             returns={ 'result' : int,
-                                       'actionSpecs' : [ ] },
+                             returns=probeEventReturns,
                              args=probeEventArgs)
 dispatcher.register_function('ActionEvent',actionEvent,
                              returns={ 'result' : int }, 
@@ -122,7 +167,7 @@ tspec._type = "ptrace"
 tspec.mode = "live"
 tspec.startPaused = True
 tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
-tspec.backendSpec.targetPtraceSpec.program = "../../../tests/dummy.threads"
+tspec.backendSpec.targetPtraceSpec.program = "../../tests/dummy.threads"
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 tspec.backendSpec.targetPtraceSpec.closeStdin = False
