@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -190,7 +190,8 @@ int main(int argc,char **argv) {
 
     memset(&opts,0,sizeof(opts));
 
-    tspec = target_argp_driver_parse(&rc_argp,&opts,argc,argv,TARGET_TYPE_XEN,1);
+    tspec = target_argp_driver_parse(&rc_argp,&opts,argc,argv,
+				     TARGET_TYPE_PTRACE | TARGET_TYPE_XEN,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
