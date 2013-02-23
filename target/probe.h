@@ -306,6 +306,18 @@ struct probe {
 
     uint8_t autofree;
 
+    /*
+     * True when the target is tracking this probe; such probes will be
+     * automatically freed on target_free().
+     *
+     * This is useful for cleanup on unexpected target exit, or
+     * application crash.  BUT, if you are building probe libraries and
+     * use lower-level probes to build higher-level probes, you should
+     * only track the higher-level probes; those should free/unregister
+     * the probes they use internally themselves.
+     */
+    uint8_t tracked;
+
     /* Link to the probe list  */
     struct list_head probe;
 

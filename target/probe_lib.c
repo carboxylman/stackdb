@@ -37,7 +37,7 @@ struct probe *probe_simple(struct target *target,tid_t tid,char *name,
 			   probe_handler_t post_handler,
 			   void *handler_data) {
     struct probe *probe = probe_create(target,tid,NULL,name,pre_handler,
-				       post_handler,handler_data,0);
+				       post_handler,handler_data,0,1);
     if (!probe)
 	return NULL;
 
@@ -126,7 +126,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s_entry",bsymbol->lsymbol->symbol->name);
 	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
-			      NULL,NULL,1);
+			      NULL,NULL,1,1);
 	free(buf);
 	if (!__probe_register_addr(source,probeaddr,range,
 				   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
@@ -218,7 +218,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s_exit_%d",bsymbol->lsymbol->symbol->name,j);
 	source = probe_create(target,tid,NULL,buf,probe_do_sink_post_handlers,
-			      NULL,NULL,1);
+			      NULL,NULL,1,1);
 	free(buf);
 
 	/* Register the j-th exit probe. */
@@ -395,7 +395,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	snprintf(buf,bufsiz,"%s_%s_%d",bsymbol->lsymbol->symbol->name,
 		 disasm_get_inst_name(idata->type),j);
 	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
-			      probe_do_sink_post_handlers,NULL,1);
+			      probe_do_sink_post_handlers,NULL,1,1);
 	free(buf);
 
 	/* Register the j-th exit probe. */
@@ -476,7 +476,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	snprintf(buf,bufsiz,"%s"PRIxADDR,bsymbol_get_name(bsymbol));
 
 	pcprobe = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
-			       probe_do_sink_post_handlers,NULL,1);
+			       probe_do_sink_post_handlers,NULL,1,1);
 	free(buf);
 
 	/* Register the i-th instance probe. */
@@ -515,7 +515,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 
 	    cprobe = probe_create(target,tid,NULL,bsymbol_get_name(ibsymbol),
 				  probe_do_sink_pre_handlers,
-				  probe_do_sink_post_handlers,NULL,1);
+				  probe_do_sink_post_handlers,NULL,1,1);
 	    /* Register the i-th instance probe. */
 	    if (!probe_register_symbol(cprobe,ibsymbol,style,whence,watchsize)) {
 		verror("could not register probe %s!\n",cprobe->name);

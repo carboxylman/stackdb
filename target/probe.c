@@ -755,7 +755,7 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
 			   const char *name,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
-			   void *handler_data,int autofree) {
+			   void *handler_data,int autofree,int tracked) {
     struct probe *probe;
     struct target_thread *tthread;
 
@@ -780,6 +780,7 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
     probe->handler_data = handler_data;
     probe->enabled = 0; // disabled at first
     probe->autofree = autofree;
+    probe->tracked = tracked;
     probe->ops = pops;
 
     if (PROBE_SAFE_OP(probe,init)) {
@@ -1617,7 +1618,7 @@ int probe_register_batch(struct target *target,tid_t tid,
 	buf = malloc(5+1+16+1);
 	sprintf(buf,"probe@%"PRIxADDR,addrlist[i]);
 	probe = probe_create(target,tid,NULL,buf,pre_handler,post_handler,
-			     handler_data,0);
+			     handler_data,0,1);
 
 	if (!(probelist[i] = probe_register_addr(probe,addrlist[i],
 						 type,style,whence,watchsize,

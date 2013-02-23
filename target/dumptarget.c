@@ -131,7 +131,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
 	char *buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"call_in_%s",bsymbol->lsymbol->symbol->name);
 	struct probe *cprobe = probe_create(t,TID_GLOBAL,NULL,buf,
-					    NULL,retaddr_save,NULL,0);
+					    NULL,retaddr_save,NULL,0,1);
 	cprobe->handler_data = cprobe->name;
 	free(buf);
 	struct probe *rprobe;
@@ -139,7 +139,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
 	    bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+3+1+2+1;
 	    buf = malloc(bufsiz);
 	    snprintf(buf,bufsiz,"ret_in_%s",bsymbol->lsymbol->symbol->name);
-	    rprobe = probe_create(t,TID_GLOBAL,NULL,buf,retaddr_check,NULL,buf,0);
+	    rprobe = probe_create(t,TID_GLOBAL,NULL,buf,retaddr_check,NULL,buf,0,1);
 	    rprobe->handler_data = rprobe->name;
 	    free(buf);
 	}
@@ -967,7 +967,7 @@ int main(int argc,char **argv) {
 		}
 
 		probe = probe_create(t,TID_GLOBAL,NULL,at_symbol,
-				     function_dump_args,at_handler,NULL,0);
+				     function_dump_args,at_handler,NULL,0,1);
 		probe->handler_data = &at_symbol;
 		if (!probe)
 		    goto err_unreg;
@@ -993,7 +993,7 @@ int main(int argc,char **argv) {
 		}
 
 		probe = probe_create(t,TID_GLOBAL,NULL,at_symbol,
-				     function_dump_args,at_handler,NULL,0);
+				     function_dump_args,at_handler,NULL,0,1);
 		probe->handler_data = &at_symbol;
 		if (!probe)
 		    goto err_unreg;
@@ -1074,7 +1074,7 @@ int main(int argc,char **argv) {
 		}
 
 		probe = probe_create(t,TID_GLOBAL,NULL,until_symbol,
-				     function_dump_args,until_handler,NULL,0);
+				     function_dump_args,until_handler,NULL,0,1);
 		probe->handler_data = &until_symbol;
 		if (!probe)
 		    goto err_unreg;
@@ -1100,7 +1100,7 @@ int main(int argc,char **argv) {
 		}
 
 		probe = probe_create(t,TID_GLOBAL,NULL,until_symbol,
-				     function_dump_args,until_handler,NULL,0);
+				     function_dump_args,until_handler,NULL,0,1);
 		probe->handler_data = &until_symbol;
 		if (!probe)
 		    goto err_unreg;
@@ -1166,7 +1166,7 @@ int main(int argc,char **argv) {
 			  && (*retcode_strs[i] == 'e'
 			      || *retcode_strs[i] == 'E')))) {
 		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
-				     pre,post,NULL,0);
+				     pre,post,NULL,0,1);
 		probe->handler_data = probe->name;
 		if (!probe)
 		    goto err_unreg;
@@ -1182,7 +1182,7 @@ int main(int argc,char **argv) {
 	    }
 	    else {
 		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
-				     pre,post,NULL,0);
+				     pre,post,NULL,0,1);
 		probe->handler_data = probe->name;
 		if (!probe)
 		    goto err_unreg;
@@ -1324,7 +1324,7 @@ int main(int argc,char **argv) {
 		    post = addr_code_post;
 	    }
 
-	    probe = probe_create(t,TID_GLOBAL,NULL,rawaddr,pre,post,NULL,0);
+	    probe = probe_create(t,TID_GLOBAL,NULL,rawaddr,pre,post,NULL,0,1);
 	    probe->handler_data = rawaddr;
 	    if (!probe)
 		goto err_unreg2;

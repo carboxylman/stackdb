@@ -2564,13 +2564,15 @@ int target_attach_probe(struct target *target,struct target_thread *thread,
     probe->target = target;
     probe->thread = thread;
 
-    g_hash_table_insert(target->probes,(gpointer)(uintptr_t)probe->id,probe);
+    if (probe->tracked)
+	g_hash_table_insert(target->probes,(gpointer)(uintptr_t)probe->id,probe);
 
     return probe->id;
 }
 
 int target_detach_probe(struct target *target,struct probe *probe) {
-    g_hash_table_remove(target->probes,(gpointer)(uintptr_t)probe->id);
+    if (probe->tracked)
+	g_hash_table_remove(target->probes,(gpointer)(uintptr_t)probe->id);
 
     probe->id = -1;
     probe->target = NULL;

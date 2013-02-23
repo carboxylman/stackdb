@@ -294,7 +294,7 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
 			   const char *name,
 			   probe_handler_t pre_handler,
 			   probe_handler_t post_handler,
-			   void *handler_data,int autofree);
+			   void *handler_data,int autofree,int tracked);
 
 void probe_rename(struct probe *probe,const char *name);
 

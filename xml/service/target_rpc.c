@@ -1427,7 +1427,7 @@ int vmi1__ProbeSymbol(struct soap *soap,
     }
 
     probe = probe_create(t,tid,NULL,probeName,_target_rpc_probe_prehandler,
-			 _target_rpc_probe_posthandler,NULL,0);
+			 _target_rpc_probe_posthandler,NULL,0,1);
     if (!probe) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Could not create probe!",
@@ -1510,7 +1510,7 @@ int vmi1__ProbeAddr(struct soap *soap,
     vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
 
     probe = probe_create(t,thid,NULL,probeName,_target_rpc_probe_prehandler,
-			 _target_rpc_probe_posthandler,NULL,0);
+			 _target_rpc_probe_posthandler,NULL,0,1);
     if (!probe) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Could not create probe!",
@@ -1590,7 +1590,7 @@ int vmi1__ProbeLine(struct soap *soap,
     vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
 
     probe = probe_create(t,thid,NULL,probeName,_target_rpc_probe_prehandler,
-			 _target_rpc_probe_posthandler,NULL,0);
+			 _target_rpc_probe_posthandler,NULL,0,1);
     if (!probe) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Could not create probe!",
