@@ -626,7 +626,6 @@ struct probe *probe_rop_checkret(struct target *target,tid_t tid,
 	    probe_unregister(rop_data->ret_probe,0);
 	    probe_free(rop_data->ret_probe,0);
 	}
-	free(rop_data);
     }
     if (rop_probe)
 	probe_free(rop_probe,0);
