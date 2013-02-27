@@ -379,10 +379,6 @@ struct target *xen_vm_attach(struct target_spec *spec) {
     unsigned int i;
     int have_id = 0;
     unsigned int slen;
-    int fd;
-    Elf *elf = NULL;
-    int wordsize;
-    int endian;
     char *domain;
 
     domain = xspec->domain;
@@ -550,35 +546,20 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 
     if (xstate->kernel_elf_filename) {
 	/* Then grab stuff from the ELF binary itself. */
-	if ((fd = open(xstate->kernel_elf_filename,0,O_RDONLY)) < 0) {
-	    verror("open %s: %s\n",xstate->kernel_elf_filename,strerror(errno));
+	if (!(target->binfile = binfile_open(xstate->kernel_elf_filename,NULL))) {
+	    verror("binfile_open %s: %s\n",
+		   xstate->kernel_elf_filename,strerror(errno));
 	    goto errout;
 	}
 
-	elf_version(EV_CURRENT);
-	if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	    verror("elf_begin %s: %s\n",xstate->kernel_elf_filename,
-		   elf_errmsg(elf_errno()));
-	    goto errout;
-	}
-
-	if (elf_get_arch_info(elf,&wordsize,&endian)) {
-	    verror("could not get ELF arch info for %s\n",
-		   xstate->kernel_elf_filename);
-	    goto errout;
-	}
-	target->wordsize = wordsize;
-	target->endian = endian;
+	target->wordsize = target->binfile->wordsize;
+	target->endian = target->binfile->endian;
 	target->ptrsize = target->wordsize;
 
 	vdebug(3,LA_TARGET,LF_XV,
 	       "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
 	       xstate->kernel_elf_filename,target->wordsize,
 	       (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
-
-	/* Done with the elf stuff. */
-	elf_end(elf);
-	elf = NULL;
     }
     else {
 	vwarn("could not find kernel ELF (vmlinux) file for %s; assuming"
@@ -634,8 +615,6 @@ struct target *xen_vm_attach(struct target_spec *spec) {
     return target;
 
  errout:
-    if (elf)
-	elf_end(elf);
     if (domains) {
 	for (i = 0; i < size; ++i) {
 	    free(domains[i]);
@@ -1847,8 +1826,6 @@ static int xen_vm_loadregions(struct target *target,struct addrspace *space) {
 static int xen_vm_loaddebugfiles(struct target *target,
 				 struct addrspace *space,
 				 struct memregion *region) {
-    Elf *elf = NULL;
-    int fd = -1;
     int retval = -1;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct debugfile *debugfile;
@@ -1868,41 +1845,38 @@ static int xen_vm_loaddebugfiles(struct target *target,
     if (!region->name || strlen(region->name) == 0)
 	return -1;
 
-    if ((fd = open(region->name,0,O_RDONLY)) < 0) {
-	verror("open %s: %s\n",region->name,strerror(errno));
-	return -1;
-    }
-
-    elf_version(EV_CURRENT);
-    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	verror("elf_begin %s: %s\n",region->name,elf_errmsg(elf_errno()));
-	goto out;
-    }
-
-    /* This should be in load_regions, but we've already got the ELF
-     * binary open here... so just do it.
-     */
-    if (elf_get_base_addrs(elf,&region->base_virt_addr,&region->base_phys_addr)) {
-       verror("elf_get_base_addrs %s failed!\n",region->name);
-        goto out;
-     }
-
-    debugfile = debugfile_get(region->name,
-			      target->spec->debugfile_load_opts_list,NULL);
+    debugfile = debugfile_from_file(region->name,
+				    target->spec->debugfile_load_opts_list);
     if (!debugfile)
 	goto out;
 
     if (target_associate_debugfile(target,region,debugfile)) 
 	goto out;
 
+    /*
+     * Try to figure out which binfile has the info we need.  On
+     * different distros, they're stripped different ways.
+     */
+    if (debugfile->binfile_pointing 
+	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
+	> symtab_get_size_simple(debugfile->binfile->symtab)) {
+	RHOLD(debugfile->binfile_pointing);
+	region->binfile = debugfile->binfile_pointing;
+    }
+    else {
+	RHOLD(debugfile->binfile);
+	region->binfile = debugfile->binfile;
+    }
+
+    /*
+     * Propagate some binfile info...
+     */
+    region->base_phys_addr = region->binfile->base_phys_addr;
+    region->base_virt_addr = region->binfile->base_virt_addr;
+
     retval = 0;
 
  out:
-    if (elf)
-	elf_end(elf);
-    if (fd > -1)
-	close(fd);
-
     return retval;
 }
 

@@ -1267,6 +1267,12 @@ struct target {
      */
     struct list_head spaces;
 
+    /*
+     * Each target has a primary binfile associated with it; think
+     * "main" for userspace, the kernel for kernels.
+     */
+    struct binfile *binfile;
+
     GHashTable *threads;
     /*
      * For single-threaded targets, this will always be the global

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -93,6 +93,9 @@ void dwdebug_fini(void);
 /**
  ** Some forward declarations.
  **/
+struct binfile;
+struct binfile_ops;
+struct binfile_instance;
 struct debugfile;
 struct debugfile_load_opts;
 struct symtab;
@@ -105,6 +108,31 @@ struct range;
 struct loc_list_entry;
 struct loc_list;
 struct dwarf_cu_die;
+
+/*
+ * For now, these just match ELF types that we support.  As we add more
+ * backends, we might need to add more types.
+ */
+typedef enum {
+    BINFILE_TYPE_NONE        = 0,
+    BINFILE_TYPE_REL         = 1,
+    BINFILE_TYPE_EXEC        = 2,
+    BINFILE_TYPE_DYN         = 3,
+    BINFILE_TYPE_CORE        = 4,
+} binfile_type_t;
+extern char *BINFILE_TYPE_STRINGS[];
+#define BINFILE_TYPE(n) (((n) < (sizeof(BINFILE_TYPE_STRINGS) / sizeof(char *))) \
+			  ? BINFILE_TYPE_STRINGS[(n)] : NULL)
+
+/*
+ * These are "specializations" of the ELF types.
+ */
+typedef enum {
+    DEBUGFILE_TYPE_FLAG_NONE   = 0,
+    DEBUGFILE_TYPE_FLAG_KERNEL = 1 << 0,
+    DEBUGFILE_TYPE_FLAG_KMOD   = 1 << 1,
+} debugfile_type_flag_t;
+typedef int debugfile_type_flags_t;
 
 /*
  * Our default load strategy is to always load the basic info for each
@@ -145,18 +173,6 @@ typedef enum {
      */
     DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV = 1 << 18,
 } debugfile_load_flags_t;
-
-typedef enum {
-    DEBUGFILE_TYPE_NONE        = 0,
-    DEBUGFILE_TYPE_KERNEL      = 1,
-    DEBUGFILE_TYPE_KMOD        = 2,
-    DEBUGFILE_TYPE_MAIN        = 3,
-    DEBUGFILE_TYPE_LIB         = 4,
-    DEBUGFILE_TYPE_SHAREDLIB   = 5,
-    __DEBUGFILE_TYPE_MAX,
-} debugfile_type_t;
-extern char *DEBUGFILE_TYPE_STRINGS[];
-#define DEBUGFILE_TYPE(n) (((n) < __DEBUGFILE_TYPE_MAX) ? DEBUGFILE_TYPE_STRINGS[(n)] : NULL)
 
 typedef enum {
     SYMBOL_TYPE_NONE      = 0,
@@ -375,22 +391,40 @@ extern char *RANGE_TYPE_STRINGS[];
  ** Debugfiles.
  **/
 /*
- * This is the only function users should call to create debugfiles.  It
+ * This is the only function users should call to obtain debugfiles.  It
  * tries to share already-loaded debugfiles based off a global cache;
  * handles the case where the user passes in a file with debuginfo
  * embedded in it, OR the case when they pass in an executable or
- * library (by attempting to track down the debuginfo file).  In the
- * latter case, @debug_filename_saveptr will be set if it is non-NULL.
+ * library (by attempting to track down the debuginfo file).
+ *
+ * There are several scenarios in which we want to load a debugfile.
+ *  1)  We have a filename, and we want to load the debuginfo that it
+ *      contains, or that it points to (via symlink, or internal
+ *      content).
+ *  2a) We have a binfile_instance with a binfile associated with it.
+ *      In this case, we must first open a copy of the binfile
+ *      associated with the instance data, UNLESS the binfile is already
+ *      associated with this exact instance (if that is true, we just
+ *      return the binfile).
+ *  2b) We have a binfile_instance with a filename, and no associated
+ *      binfile.  We just open the filename against the instance.
+ *  3)  We have a binfile; just load debuginfo from that file, or from
+ *      the file that that binfile points to.
  */
-struct debugfile *debugfile_get(char *filename,
-				struct array_list *opts_list,
-				char **debug_filename_saveptr);
+struct debugfile *debugfile_from_file(char *filename,
+				      struct array_list *debugfile_load_opts_list);
+struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
+					  struct array_list *debugfile_load_opts_list);
+struct debugfile *debugfile_from_binfile(struct binfile *binfile,
+					 struct array_list *debugfile_load_opts_list);
+
 struct array_list *debugfile_get_loaded_debugfiles();
 
 /* Internal lib function. */
-struct debugfile *debugfile_create(debugfile_type_t dftype,char *filename,
+struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
+				   struct binfile *binfile,
 				   struct debugfile_load_opts *opts,
-				   char *name,char *version,char *binfile);
+				   struct binfile *binfile_pointing);
 /* Load DWARF debuginfo into a debugfile. */
 int debugfile_load_debuginfo(struct debugfile *debugfile);
 /* Load ELF symtab info into a debugfile. */
@@ -406,11 +440,8 @@ int debugfile_load_opts_checklist(struct array_list *opts_list,char *name,
 				  struct debugfile_load_opts **match_saveptr);
 void debugfile_load_opts_free(struct debugfile_load_opts *opts);
 
-char *debugfile_build_idstr(char *filename,char *name,char *version);
-char *debugfile_get_idstr(struct debugfile *debugfile);
 char *debugfile_get_name(struct debugfile *debugfile);
 char *debugfile_get_version(struct debugfile *debugfile);
-char *debugfile_build_idstr(char *filename,char *name,char *version);
 int debugfile_filename_info(char *filename,char **realfilename,
 			    char **name,char **version);
 int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab);
@@ -426,9 +457,10 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force);
 /**
  ** Symbol tables.
  **/
-struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
-			     char *name,struct symbol *symtab_symtab,
-			     int noautoinsert);
+struct symtab *symtab_create(struct binfile *binfile,
+			     struct debugfile *debugfile,
+			     SMOFFSET offset,char *name,
+			     struct symbol *symtab_symbol,int noautoinsert);
 int symtab_get_size_simple(struct symtab *symtab);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 struct symbol *symtab_get_sym(struct symtab *symtab,const char *name);
@@ -458,8 +490,7 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 			 range_type_t rt_hint);
 void symtab_free(struct symtab *symtab);
 #ifdef DWDEBUG_USE_STRTAB
-int symtab_str_in_elf_strtab(struct symtab *symtab,char *strp);
-int symtab_str_in_dbg_strtab(struct symtab *symtab,char *strp);
+int symtab_str_in_binfile_strtab(struct symtab *symtab,char *strp);
 #endif
 
 /**
@@ -895,20 +926,229 @@ const char *dwarf_calling_convention_string(unsigned int code);
 const char *dwarf_ordering_string(unsigned int code);
 const char *dwarf_discr_list_string(unsigned int code);
 
+/**
+ ** binfile stuff.
+ **/
 /*
- * Elf util stuff.
+ * Library init/fini routines.
  */
-debugfile_type_t elf_get_debugfile_type_t(Elf *elf);
-int elf_get_base_addrs(Elf *elf,
-		       ADDR *base_virt_addr_saveptr,
-		       ADDR *base_phys_addr_saveptr);
-int elf_get_debuginfo_info(Elf *elf,
-			   int *has_debuginfo_saveptr,
-			   char **buildid_saveptr,
-			   char **gnu_debuglinkfile_saveptr,
-			   uint32_t *gnu_debuglinkfile_crc_saveptr);
-int elf_get_arch_info(Elf *elf,int *wordsize,int *endian);
-int elf_is_dynamic_exe(Elf *elf);
+void binfile_init(void);
+void binfile_fini(void);
+struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
+			       void *priv);
+struct binfile *binfile_lookup(char *filename);
+int binfile_cache(struct binfile *binfile);
+int binfile_uncache(struct binfile *binfile);
+int binfile_cache_clean(void);
+/*
+ * Tries all backends, or the one referred to by @bfinst, to open
+ * @filename.  @returns a struct binfile if successful; NULL otherwise.
+ *
+ * If successful, and if the resulting binfile is shareable (not created
+ * based on an instance), the returned binfile has a ref taken on the
+ * caller's behalf, so the caller must call RPUT(binfile) to release
+ * (and free) it.
+ */
+struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst);
+struct binfile *binfile_open_debuginfo(struct binfile *binfile,
+				       struct binfile_instance *bfinst,
+				       const char *DFPATH[]);
+/*
+ * Tries to load @filename as a binfile, then use that binfile backend's
+ * ops to infer a default program layout, informed by the @base load
+ * address.
+ *
+ * (For instance, with the ELF backend, this just generates a simple
+ * layout 
+ */
+struct binfile_instance *binfile_infer_instance(char *filename,ADDR base);
+const char *binfile_get_backend_name(struct binfile *binfile);
+binfile_type_t binfile_get_type(struct binfile *binfile);
+int binfile_close(struct binfile *binfile);
+REFCNT binfile_free(struct binfile *binfile,int force);
+
+/*
+ * Each binfile supports a simple per-backend lifecycle.  @open (invoked
+ * via binfile_open) creates the binfile datastructures, opens a
+ * binfile, loads its metadata and symbols).  @close closes any open
+ * files and releases any resources related to processing the file.
+ * @free release any other releases that were independent of processing
+ * -- such as symbols, metadata, etc.  binfile backends must keep enough
+ * state around to support their symbol table until @free is called.
+ */
+struct binfile_ops {
+    const char *(*get_backend_name)(void);
+    struct binfile *(*open)(char *filename,struct binfile_instance *bfinst);
+    struct binfile *(*open_debuginfo)(struct binfile *binfile,
+				      struct binfile_instance *bfinst,
+				      const char *DFPATH[]);
+    struct binfile_instance *(*infer_instance)(struct binfile *binfile,ADDR base);
+    int (*close)(struct binfile *bfile);
+    void (*free)(struct binfile *bfile);
+};
+
+/*
+ * binfiles store basic information about compiled binary files.  They
+ * provide basic string table, symbol table, and address range
+ * abstractions.  Any binary file that is the result of a compilation
+ * will have such tables; some binary files might have more information
+ * regarding loading and layout, and/or relocation.  For now, this
+ * information must be stored in the backend-specific @priv field.
+ */
+struct binfile {
+    /* Our reference count. */
+    REFCNT refcnt;
+
+    uint8_t is_dynamic:1,
+	    has_debuginfo:1;
+
+    int wordsize;
+    int endian;
+
+    /*
+     * The binfile_instance that was used to load and relocate this
+     * binfile.
+     *
+     * If @binfile_instance is set, this binfile cannot be shared
+     * (because we relocated bits in the binfile using the instance
+     * info).
+     *
+     * If we loaded a binfile that does not depend on the instance,
+     * this field should NOT be set.
+     *
+     * The backend is in charge of setting this field correctly!
+     */
+    struct binfile_instance *instance;
+
+    /*
+     * Opened binfiles have either @fd > 0, or non-NULL @image (right
+     * now, image is used when the binfile has to be loaded into memory
+     * for whatever reason -- initially, relocation in the backend).
+     */
+    int fd;
+    char *image;
+
+    binfile_type_t type;
+
+    /*
+     * This must be an absolute path; binfile_create will try to resolve
+     * its @filename argument and place the result here; but if the
+     * backend updates it, the backend must enforce this constraint.
+     *
+     * This is a unique ID used for caching.
+     */
+    char *filename;
+
+    /*
+     * Currently unused.
+     */
+    time_t load_time;
+    time_t mod_time;
+    
+    /*
+     * binfile_open does a best-effort pass at these fields via regexps;
+     * however, backends are free to update these fields via free() and
+     * malloc() during @binfile_ops->open.
+     *
+     * @name is the name of the binfile, minus any path and version info.
+     * For shared libs, this is "libz"; for the kernel, it
+     * is literally just the name "vmlinux"; for kernel modules,
+     * it is the module name; for programs, it is the executable name.
+     *
+     * @version: the kernel, kmods, and shared libs should all have versions.
+     * Programs probably won't have versions.
+     */
+    char *name;
+    char *version;
+
+    /*
+     * Backend info.
+     */
+    struct binfile_ops *ops;
+    void *priv;
+
+    /*
+     * The string table for this file.  All binfile string pointers are
+     * checked for presence in this table before freeing.
+     *
+     * This table persists until the binfile is freed.
+     */
+    char *strtab;
+    unsigned int strtablen;
+
+    /*
+     * The symtab for this binfile; all symbols in this table are
+     * per-backend symbols, not DWARF symbols.  They cannot be expanded
+     * into fully-loaded symbols.
+     */
+    struct symtab *symtab;
+
+    /* 
+     * We keep a separate range structure for binfile symbols, because
+     * the normal debugfile->ranges range structure contains symtabs,
+     * not symbols.  So they can't be mixed... unfortunate.
+     */
+    clrange_t ranges;
+
+    /*
+     * These are the minimum phys/virt address pairs that we learn from
+     * looking at the program headers.
+     */
+    ADDR base_phys_addr;
+    ADDR base_virt_addr;
+};
+
+struct binfile_elf {
+    int class;
+    size_t shstrndx;
+    char *buildid;
+    char *gnu_debuglinkfile;
+    uint32_t gnu_debuglinkfile_crc;
+
+    unsigned int num_symbols;
+
+    /*
+     * We save off full copies of this stuff so that even if the ELF
+     * file is closed, we still have it.
+     */
+    GElf_Ehdr ehdr;
+    GElf_Phdr *phdrs;
+    GElf_Shdr *shdrs;
+
+    /*
+     * Save off the elfutils info until we're done with it.
+     */
+    Elf *elf;
+    Ebl *ebl;
+    Dwfl *dwfl;
+    int dwfl_fd;
+};
+
+/*
+ * Instances are simple.  They map a binfile filename to a loaded
+ * instance of it.  We do not necessarily map struct binfile to the
+ * instance, because we might not have loaded the binfile yet!  In other
+ * words, the instance might be used to load a (relocated) version of
+ * the binfile; or it might be simply used to load a shareable
+ * (non-relocated) version of the binfile, and then discarded.
+ */
+struct binfile_instance {
+    char *filename;
+    ADDR base;
+    ADDR start;
+    ADDR end;
+    struct binfile_ops *ops;
+    void *priv;
+};
+
+struct binfile_instance_elf {
+    unsigned int num_sections;
+    unsigned int num_symbols;
+    /* A map of ELF section index to an address in the instance. */
+    ADDR *section_tab;
+    /* A map of ELF symtab index to an address in the instance. */
+    ADDR *symbol_tab;
+};
 
 /**
  ** Data structure definitions.
@@ -921,8 +1161,7 @@ struct debugfile_load_opts {
 };
 
 struct debugfile {
-    /* The type of debugfile */
-    debugfile_type_t type;
+    debugfile_type_flags_t flags;
 
     /* Our reference count. */
     REFCNT refcnt;
@@ -931,76 +1170,25 @@ struct debugfile {
     struct debugfile_load_opts *opts;
 
     /*
-     * If the symtab was loaded partially (or not loaded beyond the CU
-     * header), we keep the debuginfo file loaded), so we have to save
-     * off the elfutils info.
+     * The binfile we are extracting debuginfo and ELF info from.
      */
-    int fd;
-    Dwfl *dwfl;
-    Ebl *ebl;
+    struct binfile *binfile;
 
-    /* filename:name:version string.  If version is null, we use __NULL
-       instead. */
-    char *idstr;
-    /* 
-     * The source filename.  This is a unique ID.  We support internal
-     * reuse of already-loaded debugfiles, and if the user tries to open
-     * one, if the filename matches an already-loaded one, we assume
-     * that we can use that one.  In other words, we don't try to
-     * version on individual filenames.  This means that if you update a
-     * debuginfo file after it has been loaded, IT WILL NOT BE RELOADED
-     * until it is garbage-collected!
+    /*
+     * This should be a copy of @binfile->filename; this way, we still
+     * have the name of the file even if binfile is binfile_close()d or
+     * binfile_free()d.
+     *
+     * This is a unique ID used for caching.
      */
     char *filename;
 
     /*
-     * Currently unused -- we always garbage collect unused debugfiles.
-     * We'll do persistence later.
+     * The binfile that pointed us to @binfile; if set, it is likely a
+     * stripped executable, library, or object file that points to a
+     * non-stripped, or debuginfo-only, binfile.
      */
-    /* the time this file was loaded */
-    time_t ltime;
-    /* the last mtime of this file */
-    time_t mtime;
-    
-    /*
-     * The name of the program or lib, minus any version info.
-     * For shared libs, this is "libz"; for the kernel, it
-     * is literally just the name "vmlinux"; for kernel modules,
-     * it is the module name; for programs, it is the executable name.
-     */
-    char *name;
-    /*
-     * The kernel, kmods, and shared libs should all have versions.
-     * Programs probably won't have versions
-     */
-    char *version;
-
-    /*
-     * The string table for this file.  All ELF string pointers are
-     * checked for presence in this table before freeing.
-     *
-     * This table persists until the debugfile is freed.
-     *
-     * NOTE: this may either come from the debuginfo file, OR the ELF
-     * binary.  Different distros fragment out the symtab into those
-     * files differently; we check the ELF binary first, then the
-     * debuginfo file.
-     */
-    char *elf_strtab;
-
-    /*
-     * The ELF symtab for this file; all symbols in this table are ELF
-     * symbols, not DWARF symbols.  They cannot be expanded into
-     * fully-loaded symbols.
-     */
-    struct symtab *elf_symtab;
-
-    /* 
-     * We keep a separate range structure for ELF symbols, because the
-     * normal debugfile->ranges range structure contains symtabs, not
-     * symbols.  So they can't be mixed... unfortunate.
-     */
-    clrange_t elf_ranges;
+    struct binfile *binfile_pointing;
 
     /*
      * The debug string table for this file.  All debuginfo string pointers are
@@ -1032,7 +1220,6 @@ struct debugfile {
     char *linetab;
 
     /* Table lengths -- moved here for struct packing. */
-    unsigned int elf_strtablen;
     unsigned int dbg_strtablen;
     unsigned int loctablen;
     unsigned int rangetablen;
@@ -1204,6 +1391,13 @@ struct dwarf_cu_meta {
  * itself.
  */
 struct symtab {
+    /*
+     * Some symbol tables are associated with a binfile; others are
+     * associated with a debugfile.  Basically, the difference is if the
+     * symbol came from the binary's symbol table (i.e., the ELF symbol
+     * table), or the debug information's symbol info (i.e., DWARF).
+     */
+    struct binfile *binfile;
     struct debugfile *debugfile;
 
     /* If this is a top-level (CU) symtab, we need some extra info. */

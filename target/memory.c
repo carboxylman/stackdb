@@ -324,6 +324,11 @@ void memregion_free(struct memregion *region) {
 
     list_del(&region->region);
 
+    if (region->binfile) {
+	RPUT(region->binfile,binfile);
+	region->binfile = NULL;
+    }
+
     if (region->debugfiles) {
 	g_hash_table_iter_init(&iter,region->debugfiles);
 	while (g_hash_table_iter_next(&iter,

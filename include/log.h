@@ -105,6 +105,7 @@ typedef enum log_flag_bits_debug {
     LFB_DWARFOPS      = 7,
     LFB_DOTHER        = 8,
     LFB_ELF           = 9,
+    LFB_BFILE         = 10,
 } log_flag_bits_debug_t;
 typedef enum log_flags_debug {
     LF_DFILE          = 1 << LFB_DFILE,
@@ -117,6 +118,7 @@ typedef enum log_flags_debug {
     LF_DWARFOPS       = 1 << LFB_DWARFOPS,
     LF_DOTHER         = 1 << LFB_DOTHER,
     LF_ELF            = 1 << LFB_ELF,
+    LF_BFILE          = 1 << LFB_BFILE,
 } log_flags_debug_t;
 
 typedef enum log_flag_bits_target {
@@ -190,7 +192,7 @@ typedef enum log_flags_ {
 #define LF_ALL        INT_MAX
 #define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SYMTAB | LF_DLOC \
 		  | LF_DLOOKUP | LF_DWARF | LF_DWARFATTR	\
-		  | LF_DWARFOPS | LF_DOTHER | LF_ELF )
+		  | LF_DWARFOPS | LF_DOTHER | LF_ELF | LF_BFILE )
 #define LF_T_ALL (LF_TARGET | LF_SPACE | LF_REGION | LF_TLOOKUP \
 		  | LF_TLOC | LF_TOTHER | LF_TSYMBOL | LF_DISASM \
 		  | LF_THREAD)
@@ -243,6 +245,7 @@ void _vmi_debug(int level,log_areas_t areas,log_flags_t flags,char *format,...);
 void _vmi_warn(int level,log_areas_t areas,log_flags_t flags,char *format,...);
 
 int vdebug_is_on(int level,log_areas_t areas,log_flags_t flags);
+int vwarn_is_on(int level,log_areas_t areas,log_flags_t flags);
 
 error_t log_argp_parse_opt(int key,char *arg,struct argp_state *state);
 

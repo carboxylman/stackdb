@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2011, 2012 The University of Utah
+## Copyright (c) 2011, 2012, 2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -45,7 +45,8 @@ HEADERS := $(SRCDIR)/dwdebug.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
 
-OBJECTS := debug.lo dwarf_debuginfo.lo dwarf_elfutils.lo debug_elf.lo
+OBJECTS := binfile.lo binfile_elf.lo debug.lo dwarf_debuginfo.lo dwarf_elfutils.lo 
+
 LIBRARIES := libdwdebug.a libdwdebug.so.$(LIBVERSION)
 STATICLIBS :=  $(OBJDIR)/lib/libvmilib.a 
 DYNAMICLIBS := $(OBJDIR)/lib/libvmilib.so

@@ -26,7 +26,7 @@ symlist_init(struct symmap map[], int nmap)
 
     for (i = 0; i < nmap; i++) {
 	if (map[i].symfile) {
-	    dbfile = debugfile_get(map[i].symfile,NULL,NULL);
+	    dbfile = debugfile_from_file(map[i].symfile,NULL);
 	    if (!dbfile) {
 		fprintf(stderr, "ERROR: could not load debugfile from %s!\n",
 			map[i].symfile);

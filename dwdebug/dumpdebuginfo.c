@@ -31,6 +31,8 @@
 #include "log.h"
 #include "dwdebug.h"
 
+extern struct binfile_ops elf_binfile_ops;
+
 extern char *optarg;
 extern int optind, opterr, optopt;
 
@@ -57,10 +59,18 @@ int main(int argc,char **argv) {
     struct symbol *ps;
     struct array_list *opts_list = NULL;
     struct debugfile_load_opts *opts;
+    struct binfile_instance *bfi = NULL;
+    struct binfile_instance_elf *bfelfi = NULL;
+    char *saveptr = NULL;
+    char *mapi;
+    int sec;
+    ADDR addr;
+    ADDR base = 0;
+    int infer = 0;
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "dwgDMl:F:TGSNEr")) != -1) {
+    while ((ch = getopt(argc, argv, "dwgDMl:F:TGSNErI:i:")) != -1) {
 	switch(ch) {
 	case 'd':
 	    ++debug;
@@ -126,6 +136,30 @@ int main(int argc,char **argv) {
 	case 'r':
 	    doreverse = 1;
 	    break;
+	case 'i':
+	    infer = 1;
+	    base = (ADDR)strtoul(optarg,NULL,0);
+	    break;
+	case 'I':
+	    bfi = calloc(1,sizeof(*bfi));
+	    bfi->ops = &elf_binfile_ops;
+	    bfi->priv = bfelfi = calloc(1,sizeof(*bfelfi));
+
+	    bfelfi->num_sections = 0;
+	    bfelfi->section_tab = NULL;
+
+	    while ((mapi = strtok_r(!saveptr ? optarg : NULL,",",&saveptr))) {
+		if (sscanf(mapi,"%u:%lx",&sec,&addr) == 2) {
+		    if ((sec + 1) > bfelfi->num_sections) {
+			bfelfi->num_sections = sec + 1;
+			bfelfi->section_tab = realloc(bfelfi->section_tab,
+						      (sec + 1)*sizeof(ADDR));
+		    }
+		    bfelfi->section_tab[sec] = addr;
+		}
+	    }
+	    
+	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -142,7 +176,16 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
-    debugfile = debugfile_get(filename,opts_list,NULL);
+    if (infer) {
+	bfi = binfile_infer_instance(filename,base);
+	debugfile = debugfile_from_instance(bfi,opts_list);
+    }
+    else if (bfi) {
+	bfi->filename = filename;
+	debugfile = debugfile_from_instance(bfi,opts_list);
+    }
+    else
+	debugfile = debugfile_from_file(filename,opts_list);
     if (!debugfile) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
 		filename);
@@ -260,7 +303,7 @@ int main(int argc,char **argv) {
     }
 
     if (!nofree)
-	debugfile_free(debugfile,0);
+	RPUT(debugfile,debugfile);
 
     dwdebug_fini();
 

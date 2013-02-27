@@ -40,17 +40,9 @@
 #include "rfilter.h"
 #include "dwdebug.h"
 
-static char *LIBFORMAT1 = "([\\w\\d_\\.\\-]+[\\w\\d]).so.([\\d\\.]+)";
-static char *LIBFORMAT2 = "([\\w\\d_\\.\\-]+[\\w\\d]).so";
-static int init_done = 0;
-static regex_t LIBREGEX1;
-static regex_t LIBREGEX2;
-
 /* These are the known, loaded (maybe partially) debuginfo files. */
 /* debug filename -> struct debugfile */
 static GHashTable *debugfile_tab = NULL;
-/* binary filename to debug filename */
-static GHashTable *binfile_tab = NULL;
 
 struct debugfile_load_opts default_debugfile_load_opts = {
     .debugfile_filter = NULL,
@@ -59,23 +51,22 @@ struct debugfile_load_opts default_debugfile_load_opts = {
     .flags = DEBUGFILE_LOAD_FLAG_NONE
 };
 
-static char *DEBUGPATHS[] = { 
+static const char *DEBUGPATHS[] = { 
     "/usr/lib/debug",
     "/usr/local/lib/debug",
     NULL
 };
 
+static int init_done = 0;
+
 void dwdebug_init(void) {
     if (init_done)
 	return;
 
-    regcomp(&LIBREGEX1,LIBFORMAT1,REG_EXTENDED);
-    regcomp(&LIBREGEX2,LIBFORMAT2,REG_EXTENDED);
+    binfile_init();
 
     debugfile_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
 					  NULL,NULL);
-    binfile_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
-					NULL,NULL);
 
     init_done = 1;
 }
@@ -88,16 +79,13 @@ void dwdebug_fini(void) {
 	return;
 
     g_hash_table_iter_init(&iter,debugfile_tab);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&df)) {
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df)) {
 	debugfile_free(df,1);
     }
     g_hash_table_destroy(debugfile_tab);
     debugfile_tab = NULL;
 
-    g_hash_table_destroy(binfile_tab);
-
-    regfree(&LIBREGEX1);
-    regfree(&LIBREGEX2);
+    binfile_fini();
 
     init_done = 0;
 }
@@ -113,17 +101,29 @@ gboolean always_remove(gpointer key __attribute__((unused)),
 
 static void ghash_symtab_free(gpointer data) {
     struct symtab *symtab = (struct symtab *)data;
+    char *filename = NULL;
+
+    if (symtab->debugfile)
+	filename = symtab->debugfile->filename;
+    else if (symtab->binfile)
+	filename = symtab->binfile->filename;
 
     vdebug(5,LA_DEBUG,LF_SYMTAB,"freeing symtab(%s:%s)\n",
-	   symtab->debugfile->idstr,symtab->name);
+	   filename,symtab->name);
     symtab_free(symtab);
 }
 
 static void ghash_symbol_free(gpointer data) {
     struct symbol *symbol = (struct symbol *)data;
+    char *filename = NULL;
+
+    if (symbol->symtab->debugfile)
+	filename = symbol->symtab->debugfile->filename;
+    else if (symbol->symtab->binfile)
+	filename = symbol->symtab->binfile->filename;
 
     vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing symbol(%s:%s:%s) %p\n",
-	   symbol->symtab->debugfile->idstr,symbol->symtab->name,
+	   filename,symbol->symtab->name,
 	   symbol->name,data);
     /* We force-free the symbol; this function is only called if its
      * symtab is going away.  All symbols have to be on a symtab, so
@@ -812,10 +812,15 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr) {
     }
 
     /*
-     * If we still didn't find it, check the ELF symtab.
+     * If we still didn't find it, check the binfile and
+     * binfile_pointing symtabs as necessary.
      */
-    if (!s && debugfile->elf_symtab) 
-	s = (struct symbol *)clrange_find(&debugfile->elf_ranges,addr);
+    if (!s && debugfile->binfile && debugfile->binfile->ranges) 
+	s = (struct symbol *)clrange_find(&debugfile->binfile->ranges,addr);
+    else if (!s && debugfile->binfile_pointing 
+	     && debugfile->binfile_pointing->ranges) 
+	s = (struct symbol *)clrange_find(&debugfile->binfile_pointing->ranges,
+					  addr);
 
     if (s) {
 	ls = lsymbol_create_from_symbol(s);
@@ -943,10 +948,17 @@ static struct lsymbol *__debugfile_lookup_sym(struct debugfile *debugfile,
     }
 
     /*
-     * If we don't have a srcfile filter, check the ELF symtab.
+     * If we don't have a srcfile filter, check the binfile and
+     * binfile_pointing symtabs.
      */
-    if (!lsymbol && !srcfile_filter && debugfile->elf_symtab) 
-	lsymbol = __symtab_lookup_sym(debugfile->elf_symtab,name,delim,ftype);
+    if (!lsymbol && !srcfile_filter && debugfile->binfile 
+	&& debugfile->binfile->symtab) 
+	lsymbol = __symtab_lookup_sym(debugfile->binfile->symtab,
+				      name,delim,ftype);
+    else if (!lsymbol && !srcfile_filter && debugfile->binfile_pointing 
+	&& debugfile->binfile_pointing->symtab) 
+	lsymbol = __symtab_lookup_sym(debugfile->binfile_pointing->symtab,
+				      name,delim,ftype);
 
     /* If we didn't find anything in our srcfiles traversal, we're
      * done.
@@ -1387,116 +1399,10 @@ void debugfile_load_opts_free(struct debugfile_load_opts *opts) {
     free(opts);
 }
 
-char *debugfile_build_idstr(char *filename,char *name,char *version) {
-    char *idstr;
-    int idstrlen;
-
-    idstrlen = strlen(filename) + 1;
-    if (!name)
-	idstrlen += strlen("__NULLNAME__") + 1;
-    else 
-	idstrlen += strlen(name) + 1;
-    if (!version)
-	idstrlen += strlen("__NULLVERS__") + 1;
-    else 
-	idstrlen += strlen(version) + 1;
-    idstr = (char *)malloc(idstrlen);
-    if (!idstr)
-	return NULL;
-    snprintf(idstr,idstrlen,"%s:%s:%s",filename,name ? name : "__NULLNAME__",
-	     version ? version : "__NULLVERS__");
-
-    return idstr;
-}
-
-char *debugfile_get_idstr(struct debugfile *debugfile) {
-    return debugfile->idstr;
-}
-
-char *debugfile_get_name(struct debugfile *debugfile) {
-    return debugfile->name;
-}
-
-char *debugfile_get_version(struct debugfile *debugfile) {
-    return debugfile->version;
-}
-
-int _filename_info(char *filename,char **realfilename,
-		   char **name,char **version) {
-    size_t rc;
-    char buf[PATH_MAX];
-    regmatch_t matches[2];
-    int match_len;
-    char *realname;
-    struct stat sbuf;
-
-    buf[0] = '\0';
-
-    if (stat(filename,&sbuf) < 0) {
-	verror("stat(%s): %s\n",filename,strerror(errno));
-	return -1;
-    }
-
-    while (S_ISLNK(sbuf.st_mode)) {
-	if ((rc = readlink(filename,buf,PATH_MAX - 1)) == (size_t)-1) {
-	    verror("readlink(%s): %s\n",filename,strerror(errno));
-	    realname = NULL;
-	    return -1;
-	}
-	buf[rc] = '\0';
-	if (stat(buf,&sbuf) < 0) {
-	    verror("stat(%s): %s\n",buf,strerror(errno));
-	    return -1;
-	}
-    }
-
-    if (buf[0]) {
-	if (realfilename)
-	    *realfilename = strdup(buf);
-	realname = *realfilename;
-    }
-    else {
-	realname = filename;
-    }
-
-    if (!name && !version) 
-	return 0;
-
-    if (regexec(&LIBREGEX1,realname,2,matches,0) == 0) {
-	if (name) {
-	    match_len = matches[0].rm_eo - matches[0].rm_so;
-	    *name = malloc(match_len + 1);
-	    memcpy(*name,realname + matches[0].rm_so,match_len);
-	    *name[match_len] = '\0';
-	}
-
-	if (version) {
-	    match_len = matches[1].rm_eo - matches[1].rm_so;
-	    *version = malloc(match_len + 1);
-	    memcpy(*name,realname + matches[1].rm_so,match_len);
-	    *version[match_len] = '\0';
-	}
-    }
-    else if (regexec(&LIBREGEX2,realname,1,matches,0) == 0) {
-	if (name) {
-	    match_len = matches[0].rm_eo - matches[0].rm_so;
-	    *name = malloc(match_len + 1);
-	    memcpy(*name,realname + matches[0].rm_so,match_len);
-	    *name[match_len] = '\0';
-	}
-
-	if (version) {
-	    *version = NULL;
-	    vwarn("cannot extract version from %s!\n",realname);
-	}
-    }
-
-    return 0;
-}
-
-struct debugfile *debugfile_create(debugfile_type_t dftype,char *filename,
+struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
+				   struct binfile *binfile,
 				   struct debugfile_load_opts *opts,
-				   char *name,char *version,char *binfile) {
+				   struct binfile *binfile_pointing) {
     struct debugfile *debugfile;
 
     /* create a new one */
@@ -1511,19 +1417,17 @@ struct debugfile *debugfile_create(debugfile_type_t dftype,char *filename,
 
     debugfile->opts = opts;
 
-    debugfile->idstr = debugfile_build_idstr(filename,name,version);
-    debugfile->filename = strdup(filename);
-    debugfile->type = dftype;
-    if (name)
-	debugfile->name = strdup(name);
-    if (version)
-	debugfile->version = strdup(version);
+    debugfile->filename = strdup(binfile->filename);
+    debugfile->flags = dtflags;
     debugfile->refcnt = 0;
 
-    /* Create the ELF symtab. */
-    debugfile->elf_symtab = symtab_create(debugfile,0,".symtab",NULL,1);
+    debugfile->binfile = binfile;
+    RHOLD(binfile);
 
-    debugfile->elf_ranges = clrange_create();
+    if (binfile_pointing) {
+	debugfile->binfile_pointing = binfile_pointing;
+	RHOLD(binfile_pointing);
+    }
 
     /* initialize hashtables */
 
@@ -1553,7 +1457,7 @@ struct debugfile *debugfile_create(debugfile_type_t dftype,char *filename,
      */
     debugfile->types = g_hash_table_new(g_str_hash,g_str_equal);
 
-    debugfile->shared_types = symtab_create(debugfile,0,"__sharedtypes__",
+    debugfile->shared_types = symtab_create(binfile,debugfile,0,"__sharedtypes__",
 					    NULL,1);
 
     /* This is an optimization lookup hashtable, so we don't provide
@@ -1583,187 +1487,113 @@ struct debugfile *debugfile_create(debugfile_type_t dftype,char *filename,
     if (debugfile_tab)
 	g_hash_table_insert(debugfile_tab,debugfile->filename,debugfile);
 
-    if (binfile && binfile_tab)
-	g_hash_table_insert(binfile_tab,strdup(binfile),filename);
-
     return debugfile;
 }
 
+static int _debugfile_filename_info(char *filename,char **realfilename,
+				    debugfile_type_flags_t *dtflags) {
+    struct stat sbuf;
+    char *realname;
+
+    realname = realpath(filename,NULL);
+    if (realname && strcmp(realname,filename) == 0) {
+	free(realname);
+	realname = filename;
+    }
+    else if (!realname) {
+	verror("realpath(%s): %s\n",filename,strerror(errno));
+	return -1;
+    }
+
+    if (stat(realname,&sbuf) < 0) {
+	verror("stat(%s): %s\n",realname,strerror(errno));
+	if (realname != filename)
+	    free(realname);
+	return -1;
+    }
+
+    if (realfilename)
+	*realfilename = realname;
+
+    return 0;
+}
+
 /*
- * Creates and returns a struct debugfile by loading debug symbols
- * associated with @filename.  @filename may be either 1) a binary file
- * that points to another file with debug symbols; 2) a binary file
- * containing debug symbols; 3) a binary file with no debug symbols and
- * no pointers to other files.
- *
- * If 1) is true, and the caller sets @real_filename_saveptr,
- * @real_filename_saveptr will be set to the pointed-to file that has
- * the debug symbols (because that is the file that actually seeds the
- * struct debugfile -- @filename was probably just a binary executable
- * or library).  If 2) or 3), @real_filename_saveptr will be set to
- * @filename.
+ * There are several scenarios in which we want to load a debugfile.
+ *  1)  We have a filename, and we want to load the debuginfo that it
+ *      contains, or that it points to (via symlink, or internal
+ *      content).
+ *  2a) We have a binfile_instance with a binfile associated with it.
+ *      In this case, we must first open a copy of the binfile
+ *      associated with the instance data, UNLESS the binfile is already
+ *      associated with this exact instance (if that is true, we just
+ *      return the binfile).
+ *  2b) We have a binfile_instance with a filename, and no associated
+ *      binfile.  We just open the filename against the instance.
+ *  3)  We have a binfile; just load debuginfo from that file, or from
+ *      the file that that binfile points to.
  */
-struct debugfile *debugfile_get(char *filename,
-				struct array_list *opts_list,
-				char **debug_filename_saveptr) {
-    struct debugfile *debugfile = NULL;
-    int fd = -1;
-    Elf *elf = NULL;
-    debugfile_type_t dftype;
-    int has_debuginfo = 0;
-    char *buildid = NULL;
-    char *debuglinkfile = NULL;
-    uint32_t debuglinkfilecrc = 0;
-    char pbuf[PATH_MAX];
-    char *filedir;
+struct debugfile *debugfile_from_file(char *filename,
+				      struct array_list *debugfile_load_opts_list) {
+    char *realname = filename;
     struct debugfile_load_opts *opts = NULL;
-    char *name = NULL;
-    char *version = NULL;
-    char *realname = NULL;
-    int nodwarf = 0;
-    int len;
-    int i;
-    char *finalfile = NULL;
-    char *tmp;
-    struct stat stbuf;
-    int isbinfile = 0;
+    struct debugfile *debugfile = NULL;
+    struct binfile *binfile = NULL;
+    struct binfile *binfile_debuginfo = NULL;
+    debugfile_type_flags_t dtflags = DEBUGFILE_TYPE_FLAG_NONE;
 
-    /*
-     * Before starting, trace through any symlink chains (i.e., for
-     * shared libs), and extract lib versions based on regexps if
-     * possible (we could also do this by reading all the ELF version
-     * stuff, but we'll save that fun for later).
-     */
-    _filename_info(filename,&realname,&name,&version);
-    if (realname) {
-	vdebug(2,LA_DEBUG,LF_DFILE,"using %s instead of symlink %s\n",
-	       realname,filename);
-	filename = realname;
+    if (_debugfile_filename_info(filename,&realname,&dtflags)) {
+	vwarnopt(1,LA_DEBUG,LF_DFILE,
+		 "failed to get filename info for (%s): %s\n",
+		 filename,strerror(errno));
     }
 
-    /*
-     * First, open an ELF handle to filename to get the file's type.
-     */
-    elf_version(EV_CURRENT);
-    if ((fd = open(filename,0,O_RDONLY)) < 0) {
-	verror("ELF fd open %s: %s\n",filename,strerror(errno));
+    if (debugfile_load_opts_list 
+	&& debugfile_load_opts_checklist(debugfile_load_opts_list,
+					 realname,&opts) == RF_ACCEPT) {
+	vdebug(2,LA_DEBUG,LF_DFILE,
+	       "opts prohibit loading of debugfile '%s'\n",realname);
 	goto out;
     }
-    else if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	verror("elf_begin %s: %s\n",filename,elf_errmsg(elf_errno()));
-	goto out;
-    }
-
-    if ((dftype = elf_get_debugfile_type_t(elf)) == DEBUGFILE_TYPE_NONE) {
-	verror("could not get debugfile type from ELF file %s!\n",filename);
-	goto out;
-    }
-
-    /*
-     * Second, read the debuginfo info from the given binary and figure
-     * out if we should keep loading from this file, or load from a
-     * pointed-to debugfile.
-     */
-    if (elf_get_debuginfo_info(elf,&has_debuginfo,&buildid,&debuglinkfile,
-			       &debuglinkfilecrc)) {
-	verror("elf_get_debuginfo_info %s failed!\n",filename);
-	goto out;
-    }
-
-    vdebug(5,LA_DEBUG,LF_DFILE,"ELF info for file %s:\n",filename);
-    vdebug(5,LA_DEBUG,LF_DFILE,"    has_debuginfo=%d,buildid='",has_debuginfo);
-    if (buildid) {
-	len = (int)strlen(buildid);
-	for (i = 0; i < len; ++i)
-	    vdebugc(5,LA_DEBUG,LF_DFILE,"%hhx",buildid[i]);
-    }
-    vdebugc(5,LA_DEBUG,LF_DFILE,"'\n");
-    vdebug(5,LA_DEBUG,LF_DFILE,"    debuglinkfile=%s,debuglinkfilecrc=0x%x\n",
-	   debuglinkfile,debuglinkfilecrc);
-
-    if (has_debuginfo) {
-	finalfile = filename;
-    }
-
-    if (!finalfile && buildid) {
-	for (i = 0; DEBUGPATHS[i]; ++i) {
-	    snprintf(pbuf,PATH_MAX,"%s/.build-id/%02hhx/%s.debug",
-		     DEBUGPATHS[i],*buildid,(char *)(buildid+1));
-	    if (stat(pbuf,&stbuf) == 0) {
-		finalfile = pbuf;
-		break;
-	    }
-	}
-
-	if (finalfile)
-	    isbinfile = 1;
-    }
-
-    if (!finalfile && debuglinkfile) {
-	/* Find the containing dir path so we can use it in our search
-	 * of the standard debug file dir infrastructure.
-	 */
-	filedir = strdup(filename);
-	tmp = rindex(filedir,'/');
-	if (tmp)
-	    *tmp = '\0';
-	for (i = 0; DEBUGPATHS[i]; ++i) {
-	    snprintf(pbuf,PATH_MAX,"%s/%s/%s",
-		     DEBUGPATHS[i],filedir,debuglinkfile);
-	    if (stat(pbuf,&stbuf) == 0) {
-		finalfile = pbuf;
-		break;
-	    }
-	}
-	free(filedir);
-
-	if (finalfile)
-	    isbinfile = 1;
-    }
-
-    if (!finalfile) {
-	vwarn("could not find any debuginfo sources from ELF file %s;"
-	      " loading ELF symbols only!\n",
-	      filename);
-	finalfile = filename;
-	nodwarf = 1;
-    }
-    else if (opts_list 
-	     && debugfile_load_opts_checklist(opts_list,finalfile,&opts) \
-	          == RF_ACCEPT) {
-	vdebug(2,LA_DEBUG,LF_DFILE,"opts prohibit loading of debugfile '%s'\n",name);
-	goto out;
-    }
-    else if ((debugfile = (struct debugfile *) \
-	      g_hash_table_lookup(debugfile_tab,finalfile))) {
+    else if ((debugfile = (struct debugfile *)			\
+	      g_hash_table_lookup(debugfile_tab,realname))) {
 	vdebug(2,LA_DEBUG,LF_DFILE,"reusing debugfile %s (%s)\n",
-	       debugfile->idstr,finalfile);
+	       debugfile->filename,filename);
 	RHOLD(debugfile);
 	goto out;
     }
 
     /*
-     * Need to create a new debugfile.
+     * Load realname.  Then ask it to load a binfile with its debuginfo;
+     * might be the same binfile.
      */
-    debugfile = debugfile_create(dftype,finalfile,opts,name,version,
-				 isbinfile ? filename : NULL );
-    if (!debugfile)
-	goto out;
+    binfile = binfile_open(realname,NULL);
+    if (!binfile)
+	goto errout;
+    binfile_debuginfo = binfile_open_debuginfo(binfile,NULL,DEBUGPATHS);
+    if (!binfile_debuginfo) {
+	if (errno != ENODATA) {
+	    verror("could not open debuginfo for binfile %s: %s!\n",
+		   binfile->filename,strerror(errno));
+	    goto errout;
+	}
+	else
+	    /* Do the best we can. */
+	    binfile_debuginfo = binfile;
+    }
 
     /*
-     * First, we try to populate the "debugfile's" ELF symtab/strtab
-     * using the ELF binary, not debuginfo.
-     *
-     * There may be a conflict w.r.t. how different distos strip symbols
-     * -- whether they are in the debug file, or in the binary.  We load
-     * only from within the debuginfo file for now, unless there is no
-     * file with debuginfo.
+     * Need to create a new debugfile.
      */
-    if (debugfile_load_elfsymtab(debugfile,elf,finalfile))
-	vwarn("could not load ELF symtab into debugfile %s\n",
-	      debugfile->idstr);
+    debugfile = debugfile_create(dtflags,
+				 binfile_debuginfo ? binfile_debuginfo : binfile,
+				 opts,
+				 (binfile_debuginfo && binfile_debuginfo != binfile) \
+				      ? binfile : NULL);
+    if (!debugfile)
+	goto errout;
 
-    if (!nodwarf) {
+    if (binfile_debuginfo) {
 	/*
 	 * Now, actually load its debuginfo, according to options.
 	 */
@@ -1772,16 +1602,102 @@ struct debugfile *debugfile_get(char *filename,
 
     RHOLD(debugfile);
 
- out:
-    if (elf)
-	elf_end(elf);
-    if (fd > -1)
-	close(fd);
+    goto out;
 
-    if (debugfile && debug_filename_saveptr)
-	*debug_filename_saveptr = finalfile;
+ errout:
+    if (binfile_debuginfo && binfile_debuginfo != binfile)
+	RPUT(binfile_debuginfo,binfile);
+    if (binfile)
+	RPUT(binfile,binfile);
+
+ out:
+    if (realname != filename)
+	free(realname);
 
     return debugfile;
+}
+
+struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
+					  struct array_list *debugfile_load_opts_list) {
+    char *filename = bfinst->filename;
+    char *realname = filename;
+    struct debugfile_load_opts *opts = NULL;
+    struct debugfile *debugfile = NULL;
+    struct binfile *binfile = NULL;
+    struct binfile *binfile_debuginfo = NULL;
+    debugfile_type_flags_t dtflags = DEBUGFILE_TYPE_FLAG_NONE;
+
+    if (_debugfile_filename_info(filename,&realname,&dtflags)) {
+	vwarnopt(1,LA_DEBUG,LF_DFILE,
+		 "failed to get filename info for (%s): %s\n",
+		 filename,strerror(errno));
+    }
+
+    if (debugfile_load_opts_list 
+	&& debugfile_load_opts_checklist(debugfile_load_opts_list,
+					 realname,&opts) == RF_ACCEPT) {
+	vdebug(2,LA_DEBUG,LF_DFILE,
+	       "opts prohibit loading of debugfile '%s'\n",realname);
+	goto out;
+    }
+
+    /*
+     * Load realname.  Then ask it to load a binfile with its debuginfo;
+     * might be the same binfile.
+     */
+    binfile = binfile_open(realname,bfinst);
+    if (!binfile)
+	goto errout;
+    binfile_debuginfo = binfile_open_debuginfo(binfile,bfinst,DEBUGPATHS);
+    if (!binfile_debuginfo) {
+	if (errno != ENODATA) {
+	    verror("could not open debuginfo for binfile %s: %s!\n",
+		   binfile->filename,strerror(errno));
+	    goto errout;
+	}
+	else
+	    /* Do the best we can. */
+	    binfile_debuginfo = binfile;
+    }
+
+    /*
+     * Need to create a new debugfile.
+     */
+    debugfile = debugfile_create(dtflags,
+				 binfile_debuginfo ? binfile_debuginfo : binfile,
+				 opts,
+				 (binfile_debuginfo && binfile_debuginfo != binfile) \
+				      ? binfile : NULL);
+    if (!debugfile)
+	goto errout;
+
+    if (binfile_debuginfo) {
+	/*
+	 * Now, actually load its debuginfo, according to options.
+	 */
+	debugfile_load_debuginfo(debugfile);
+    }
+
+    RHOLD(debugfile);
+
+    goto out;
+
+ errout:
+    if (binfile_debuginfo && binfile_debuginfo != binfile)
+	RPUT(binfile_debuginfo,binfile);
+    if (binfile)
+	RPUT(binfile,binfile);
+
+ out:
+    if (realname != filename)
+	free(realname);
+
+    return debugfile;
+}
+
+struct debugfile *debugfile_from_binfile(struct binfile *binfile,
+					 struct array_list *debugfile_load_opts_list) {
+
 }
 
 struct array_list *debugfile_get_loaded_debugfiles(void) {
@@ -1794,7 +1710,7 @@ struct array_list *debugfile_get_loaded_debugfiles(void) {
 
     retval = array_list_create(g_hash_table_size(debugfile_tab));
     g_hash_table_iter_init(&iter,debugfile_tab);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&df)) 
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&df)) 
 	array_list_append(retval,df);
 
     return retval;
@@ -1813,7 +1729,7 @@ int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab) {
 	    return 0;
 	else {
 	    vdebug(3,LA_DEBUG,LF_DFILE,"adding top-level symtab %s:%s\n",
-		   debugfile->idstr,symtab->name);
+		   debugfile->filename,symtab->name);
 	    g_hash_table_insert(debugfile->srcfiles,symtab->name,symtab);
 	}
     }
@@ -1828,7 +1744,7 @@ int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab) {
 	g_hash_table_insert(debugfile->cuoffsets,
 			    (gpointer)(uintptr_t)symtab->ref,symtab);
 	vdebug(3,LA_DEBUG,LF_DFILE,"adding top-level symtab %s:0x%"PRIxSMOFFSET"\n",
-	       debugfile->idstr,symtab->ref);
+	       debugfile->filename,symtab->ref);
     }
 
     return 0;
@@ -1860,36 +1776,30 @@ int debugfile_add_type_name(struct debugfile *debugfile,
 
 REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     int retval = debugfile->refcnt;
-    GHashTableIter iter;
-    char *key,*value;
 
     if (debugfile->refcnt) {
 	if (!force) {
 	    verror("cannot free (%d refs) debugfile(%s)",
-		   debugfile->refcnt,debugfile->idstr);
+		   debugfile->refcnt,debugfile->filename);
 	    return debugfile->refcnt;
 	}
 	else {
 	    vwarn("forced free (%d refs) debugfile(%s)",
-		  debugfile->refcnt,debugfile->idstr);
+		  debugfile->refcnt,debugfile->filename);
 	}
     }
 
-    vdebug(5,LA_DEBUG,LF_DFILE,"freeing debugfile(%s)\n",debugfile->idstr);
+    vdebug(5,LA_DEBUG,LF_DFILE,"freeing debugfile(%s)\n",debugfile->filename);
 
     /*
-     * Remove it from our global hashtable.  Also remove any binfile
-     * pointers to this debugfile.
+     * Only remove it if the value matches us.  This is necessary
+     * because if we loaded debugfile against a binfile_instance, and
+     * there were relocations, this debugfile will not be in the
+     * hashtable -- but another debugfile (that was NOT relocated!)
+     * could still be in the hashtable.  :)
      */
-    g_hash_table_iter_init(&iter,binfile_tab);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer *)&key,(gpointer *)&value)) {
-	if (strcmp(value,debugfile->filename) == 0) {
-	    g_hash_table_iter_remove(&iter);
-	    free(key);
-	}
-    }
-    g_hash_table_remove(debugfile_tab,debugfile->filename);
+    if (g_hash_table_lookup(debugfile_tab,debugfile->filename) == debugfile)
+	g_hash_table_remove(debugfile_tab,debugfile->filename);
 
     g_hash_table_destroy(debugfile->pubnames);
     g_hash_table_destroy(debugfile->addresses);
@@ -1910,12 +1820,6 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 
     g_hash_table_destroy(debugfile->srclines);
 
-    symtab_free(debugfile->elf_symtab);
-
-    clrange_free(debugfile->elf_ranges);
-
-    if (debugfile->elf_strtab)
-	free(debugfile->elf_strtab);
     if (debugfile->dbg_strtab)
 	free(debugfile->dbg_strtab);
     if (debugfile->loctab)
@@ -1925,24 +1829,11 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     if (debugfile->linetab)
 	free(debugfile->linetab);
 
-    if (debugfile->ebl) {
-	ebl_closebackend(debugfile->ebl);
-	debugfile->ebl = NULL;
-    }
-    if (debugfile->dwfl) {
-	dwfl_end(debugfile->dwfl);
-	debugfile->dwfl = NULL;
-    }
-    if (debugfile->fd) {
-	close(debugfile->fd);
-	debugfile->fd = 0;
-    }
+    RPUT(debugfile->binfile,binfile);
+    if (debugfile->binfile_pointing) 
+	RPUT(debugfile->binfile_pointing,binfile);
 
-    if (debugfile->version)
-	free(debugfile->version);
-    free(debugfile->name);
     free(debugfile->filename);
-    free(debugfile->idstr);
     free(debugfile);
 
     vdebug(5,LA_DEBUG,LF_DFILE,"freed debugfile\n");
@@ -1953,9 +1844,10 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 /**
  ** Symtabs.
  **/
-struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
-			     char *name,struct symbol *symtab_symbol,
-			     int noautoinsert) {
+struct symtab *symtab_create(struct binfile *binfile,
+			     struct debugfile *debugfile,
+			     SMOFFSET offset,char *name,
+			     struct symbol *symtab_symbol,int noautoinsert) {
     struct symtab *symtab;
 
     symtab = (struct symtab *)malloc(sizeof(*symtab));
@@ -1963,6 +1855,7 @@ struct symtab *symtab_create(struct debugfile *debugfile,SMOFFSET offset,
 	return NULL;
     memset(symtab,0,sizeof(*symtab));
 
+    symtab->binfile = binfile;
     symtab->debugfile = debugfile;
 
     symtab_set_name(symtab,name,noautoinsert);
@@ -2005,6 +1898,32 @@ int symtab_get_size_simple(struct symtab *symtab) {
 	    + g_hash_table_size(symtab->duptab));
 }
 
+#ifdef DWDEBUG_USE_STRTAB
+/* Returns 1 if string is in a strtab; else 0 */
+int symtab_str_in_strtab(struct symtab *symtab,char *strp) {
+    if ((symtab->debugfile && symtab->debugfile->dbg_strtab
+	    && strp >= symtab->debugfile->dbg_strtab
+	    && strp < (symtab->debugfile->dbg_strtab	\
+		       + symtab->debugfile->dbg_strtablen))
+	|| (symtab->binfile && symtab->binfile->strtab
+	    && strp >= symtab->binfile->strtab
+	    && strp < (symtab->binfile->strtab		\
+		       + symtab->binfile->strtablen))
+	|| (symtab->debugfile && symtab->debugfile->binfile
+	    && symtab->debugfile->binfile->strtab
+	    && strp >= symtab->debugfile->binfile->strtab
+	    && strp < (symtab->debugfile->binfile->strtab	\
+		       + symtab->debugfile->binfile->strtablen))
+	|| (symtab->debugfile && symtab->debugfile->binfile_pointing
+	    && symtab->debugfile->binfile_pointing->strtab
+	    && strp >= symtab->debugfile->binfile_pointing->strtab
+	    && strp < (symtab->debugfile->binfile_pointing->strtab	\
+		       + symtab->debugfile->binfile_pointing->strtablen)))
+	return 1;
+    return 0;
+}
+#endif
+
 void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
     if (symtab->name && strcmp(symtab->name,name) == 0)
 	return;
@@ -2012,14 +1931,12 @@ void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
     /* If this top-level symtab is being renamed, remove it from our
      * debugfile!
      */
-    if (name && SYMTAB_IS_CU(symtab) && symtab->debugfile && symtab->name)
+    if (name && symtab->debugfile && SYMTAB_IS_CU(symtab) && symtab->name)
 	g_hash_table_remove(symtab->debugfile->srcfiles,symtab->name);
 
     if (name 
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symtab->debugfile 
-	    || (!symtab_str_in_dbg_strtab(symtab,name)
-		&& !symtab_str_in_elf_strtab(symtab,name)))
+	&& !symtab_str_in_strtab(symtab,name)
 #endif
 	)
 	symtab->name = strdup(name);
@@ -2029,7 +1946,7 @@ void symtab_set_name(struct symtab *symtab,char *name,int noautoinsert) {
     /* If this top-level symtab wasn't in our debugfile srcfiles
      * hash, add it!
      */
-    if (name && !noautoinsert && SYMTAB_IS_CU(symtab) && symtab->debugfile 
+    if (name && !noautoinsert && symtab->debugfile && SYMTAB_IS_CU(symtab) 
 	&& !g_hash_table_lookup(symtab->debugfile->srcfiles,symtab->name)) 
 	g_hash_table_insert(symtab->debugfile->srcfiles,symtab->name,symtab);
 }
@@ -2048,7 +1965,7 @@ void symtab_set_compdirname(struct symtab *symtab,char *compdirname) {
 
     if (compdirname
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symtab->debugfile || !symtab_str_in_dbg_strtab(symtab,compdirname))
+	&& !symtab_str_in_strtab(symtab,compdirname)
 #endif
 	)
 	symtab->meta->compdirname = strdup(compdirname);
@@ -2065,7 +1982,7 @@ void symtab_set_producer(struct symtab *symtab,char *producer) {
 
     if (producer 
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symtab->debugfile || !symtab_str_in_dbg_strtab(symtab,producer))
+	&& !symtab_str_in_strtab(symtab,producer)
 #endif
 	)
 	symtab->meta->producer = strdup(producer);
@@ -2411,9 +2328,15 @@ void symtab_free(struct symtab *symtab) {
     int i;
     struct symbol *exsym;
     gpointer key, value;
+    char *filename = NULL;
+
+    if (symtab->debugfile)
+	filename = symtab->debugfile->filename;
+    else if (symtab->binfile)
+	filename = symtab->binfile->filename;
 
     vdebug(5,LA_DEBUG,LF_SYMTAB,"freeing symtab(%s:%s)\n",
-	   symtab->debugfile->idstr,symtab->name);
+	   filename,symtab->name);
 
     if (!list_empty(&symtab->subtabs))
 	list_for_each_entry_safe(tmp,tmp2,&symtab->subtabs,member) 
@@ -2425,7 +2348,7 @@ void symtab_free(struct symtab *symtab) {
     /* Release the duplicates first. */
     g_hash_table_iter_init(&iter,symtab->duptab);
     while (g_hash_table_iter_next(&iter,
-				  (gpointer *)&key,(gpointer *)&value)) {
+				  (gpointer)&key,(gpointer)&value)) {
 	exlist = (struct array_list *)value;
 	for (i = 0; i < array_list_len(exlist); ++i) {
 	    exsym = (struct symbol *)array_list_item(exlist,i);
@@ -2435,7 +2358,7 @@ void symtab_free(struct symtab *symtab) {
 	/* This should not be necessary, but just so the hash lib
 	 * doesn't try to reuse the freed list pointer...
 	 */
-	g_hash_table_iter_replace(&iter,NULL);
+	//g_hash_table_iter_replace(&iter,NULL);
     }
     g_hash_table_destroy(symtab->duptab);
 
@@ -2444,21 +2367,20 @@ void symtab_free(struct symtab *symtab) {
 
     if (symtab->name
 #ifdef DWDEBUG_USE_STRTAB
-	&& !symtab_str_in_dbg_strtab(symtab,symtab->name)
-	&& !symtab_str_in_elf_strtab(symtab,symtab->name)
+	&& !symtab_str_in_strtab(symtab,symtab->name)
 #endif
 	)
 	free(symtab->name);
     if (SYMTAB_IS_CU(symtab)) {
 	if (symtab->meta->compdirname
 #ifdef DWDEBUG_USE_STRTAB
-	    && !symtab_str_in_dbg_strtab(symtab,symtab->meta->compdirname)
+	    && !symtab_str_in_strtab(symtab,symtab->meta->compdirname)
 #endif
 	    )
 	    free(symtab->meta->compdirname);
 	if (symtab->meta->producer
 #ifdef DWDEBUG_USE_STRTAB
-	    && !symtab_str_in_dbg_strtab(symtab,symtab->meta->producer)
+	    && !symtab_str_in_strtab(symtab,symtab->meta->producer)
 #endif
 	    )
 	    free(symtab->meta->producer);
@@ -2466,25 +2388,6 @@ void symtab_free(struct symtab *symtab) {
     }
     free(symtab);
 }
-
-#ifdef DWDEBUG_USE_STRTAB
-/* Returns 1 if string is in elf_strtab; else 0 */
-int symtab_str_in_elf_strtab(struct symtab *symtab,char *strp) {
-    if (symtab->debugfile && symtab->debugfile->elf_strtab
-	&& strp >= symtab->debugfile->elf_strtab
-	&& strp < (symtab->debugfile->elf_strtab + symtab->debugfile->elf_strtablen))
-	return 1;
-    return 0;
-}
-/* Returns 1 if string is in debuginfo strtab; else 0 */
-int symtab_str_in_dbg_strtab(struct symtab *symtab,char *strp) {
-    if (symtab->debugfile && symtab->debugfile->dbg_strtab
-	&& strp >= symtab->debugfile->dbg_strtab
-	&& strp < (symtab->debugfile->dbg_strtab + symtab->debugfile->dbg_strtablen))
-	return 1;
-    return 0;
-}
-#endif
 
 /**
  ** Functions for symbols.
@@ -2594,9 +2497,7 @@ void symbol_set_name(struct symbol *symbol,char *name) {
 
     if (name 
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symbol->symtab || !symbol->symtab->debugfile 
-	    || (!symtab_str_in_dbg_strtab(symbol->symtab,name)
-		&& !symtab_str_in_elf_strtab(symbol->symtab,name)))
+	&& (!symbol->symtab || !symtab_str_in_strtab(symbol->symtab,name))
 #endif
 	) {
 	symbol->name = strdup(name);
@@ -2640,8 +2541,7 @@ void symbol_build_extname(struct symbol *symbol) {
     if (symbol_name
 #ifdef DWDEBUG_USE_STRTAB
 	&& (!symbol->symtab 
-	    || (!symtab_str_in_dbg_strtab(symbol->symtab,symbol_name)
-		&& !symtab_str_in_elf_strtab(symbol->symtab,symbol_name)))
+	    || !symtab_str_in_strtab(symbol->symtab,symbol_name))
 #endif
 	)
 	free(symbol_name);
@@ -3827,8 +3727,9 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     if (SYMBOL_IS_FULL_INSTANCE(symbol)
 	&& symbol->s.ii->constval
 #ifdef DWDEBUG_USE_STRTAB
-	&& (!symbol->symtab || !symtab_str_in_dbg_strtab(symbol->symtab,
-						     symbol->s.ii->constval))
+	&& (!symbol->symtab 
+	    || !symtab_str_in_strtab(symbol->symtab,
+					     symbol->s.ii->constval))
 #endif
 	)
 	free(symbol->s.ii->constval);
@@ -3848,8 +3749,7 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     if (symbol->name
 #ifdef DWDEBUG_USE_STRTAB
 	     && (!symbol->symtab 
-		 || (!symtab_str_in_dbg_strtab(symbol->symtab,symbol->name)
-		     && !symtab_str_in_elf_strtab(symbol->symtab,symbol->name)))
+		 || !symtab_str_in_strtab(symbol->symtab,symbol->name))
 #endif
 	     ) {
 	vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing name %s\n",symbol->name);
@@ -4374,7 +4274,7 @@ void g_hash_foreach_dump_duplist(gpointer key,gpointer value,gpointer userdata) 
     int i;
     struct dump_info udn;
 
-    udn.prefix = malloc(strlen(ud->prefix)+2);
+    udn.prefix = malloc(strlen(ud->prefix)+2+1);
     sprintf(udn.prefix,"%s%s",ud->prefix,"  ");
     udn.stream = ud->stream;
     udn.meta = ud->meta;
@@ -4386,6 +4286,7 @@ void g_hash_foreach_dump_duplist(gpointer key,gpointer value,gpointer userdata) 
 	 fprintf(ud->stream,"\n");
     }
     fprintf(ud->stream,"\n");
+    free(udn.prefix);
 }
 
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
@@ -4410,12 +4311,9 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
     udn.meta = ud->meta;
     udn.detail = ud->detail;
 
-    fprintf(ud->stream,"%sdebugfile(%s):\n",p,debugfile->idstr);
-    fprintf(ud->stream,"%s    filename: %s\n",p,debugfile->filename);
-    fprintf(ud->stream,"%s    type:     %s (%d)\n",p,
-	    DEBUGFILE_TYPE(debugfile->type),debugfile->type);
-    fprintf(ud->stream,"%s    name:     %s\n",p,debugfile->name);
-    fprintf(ud->stream,"%s    version:  %s\n",p,debugfile->version);
+    fprintf(ud->stream,"%sdebugfile(%s):\n",p,debugfile->filename);
+    fprintf(ud->stream,"%s    flags:  0x%x\n",p,
+	    debugfile->flags);
     fprintf(ud->stream,"%s    refcnt:   %d\n",p,debugfile->refcnt);
     fprintf(ud->stream,"%s  types: (%d)\n",p,g_hash_table_size(debugfile->types));
     if (types) 
@@ -4444,14 +4342,32 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 	if (g_hash_table_size(debugfile->srcfiles))
 	    fprintf(ud->stream,"\n");
     }
-    fprintf(ud->stream,"%s  ELF symtab: (tab=%d,anontab=%d,duptab=%d)\n",p,
-	    g_hash_table_size(debugfile->elf_symtab->tab),
-	    g_hash_table_size(debugfile->elf_symtab->anontab),
-	    g_hash_table_size(debugfile->elf_symtab->duptab));
-    if (elfsymtab) {
-	symtab_dump(debugfile->elf_symtab,&udn);
+    if (debugfile->binfile && debugfile->binfile->symtab) {
+	fprintf(ud->stream,
+		"%s  binfile symtab: (tab=%d,anontab=%d,duptab=%d)\n",p,
+		g_hash_table_size(debugfile->binfile->symtab->tab),
+		g_hash_table_size(debugfile->binfile->symtab->anontab),
+		g_hash_table_size(debugfile->binfile->symtab->duptab));
+	symtab_dump(debugfile->binfile->symtab,&udn);
 	fprintf(ud->stream,"\n");
     }
+    else 
+	fprintf(ud->stream,
+		"%s  binfile symtab: (tab=%d,anontab=%d,duptab=%d)\n",
+		p,0,0,0);
+    if (debugfile->binfile_pointing && debugfile->binfile_pointing->symtab) {
+	fprintf(ud->stream,
+		"%s  binfile_pointing symtab: (tab=%d,anontab=%d,duptab=%d)\n",p,
+		g_hash_table_size(debugfile->binfile_pointing->symtab->tab),
+		g_hash_table_size(debugfile->binfile_pointing->symtab->anontab),
+		g_hash_table_size(debugfile->binfile_pointing->symtab->duptab));
+	symtab_dump(debugfile->binfile_pointing->symtab,&udn);
+	fprintf(ud->stream,"\n");
+    }
+    else
+	fprintf(ud->stream,
+		"%s  binfile_pointing symtab: (tab=%d,anontab=%d,duptab=%d)\n",
+		p,0,0,0);
 
     if (ud->prefix) {
 	free(np1);
@@ -4867,7 +4783,7 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream," (size=%d B)",symbol->size.bytes);
 	else if (symbol->size_is_bits)
 	    fprintf(ud->stream," (size=%d b)",symbol->size.bits);
-	fprintf(ud->stream,"\n");
+	//fprintf(ud->stream,"\n");
 
 	if (SYMBOL_IS_FULL_INSTANCE(symbol))
 	    symtab_dump(symbol->s.ii->d.f.symtab,&udn);
@@ -5185,13 +5101,12 @@ char *REGION_TYPE_STRINGS[] = {
     "lib"
 };
 
-char *DEBUGFILE_TYPE_STRINGS[] = {
+char *BINFILE_TYPE_STRINGS[] = {
     "none",
-    "kernel",
-    "kmod",
-    "main",
-    "lib",
-    "sharedlib"
+    "relocatable",
+    "executable",
+    "dynamic",
+    "corefile"
 };
 
 char *SYMBOL_TYPE_STRINGS[] = {

@@ -107,17 +107,6 @@ unsigned long target_generic_fd_write(int fd,
 				      unsigned long length,
 				      unsigned char *buf);
 
-struct debugfile_load_opts *target_get_debugfile_load_opts(struct target *target,
-							   struct memregion *region,
-							   char *filename,
-							   debugfile_type_t type);
-struct debugfile *target_reuse_debugfile(struct target *target,
-					 struct memregion *region,
-					 char *filename,
-					 debugfile_type_t type);
-struct debugfile *target_create_debugfile(struct target *target,
-					  char *filename,
-					  debugfile_type_t type);
 int target_associate_debugfile(struct target *target,
 			       struct memregion *region,
 			       struct debugfile *debugfile);
@@ -384,7 +373,15 @@ struct addrspace {
     /* Our member node on the global spaces list */
     struct list_head space;
 
-    /* The regions contained in this address space. */
+    /*
+     * The regions contained in this address space.
+     *
+     * Regions may overlap; thus, lookup functions should query
+     * binfiles/debugfiles based on tightest region match, then fall
+     * back to next tightest, and so on.  This was added to account for
+     * a single giant kernel region, but then to have "sub" regions for
+     * modules.  Process address spaces do not need this.
+     */
     struct list_head regions;
 
     /* A backref to the target containing this address space. */
@@ -423,8 +420,17 @@ struct memregion {
 
     /*
      * Debugfiles associated with this region.
+     *
+     * Really, there should be only one, but I guess this does allow the
+     * debuginfo to be split into multiple files.  I doubt this ever
+     * happens.
      */
     GHashTable *debugfiles;
+
+    /*
+     * A ref to the primary binfile
+     */
+    struct binfile *binfile;
 
     /* This is an identifier that must be changed every time this
      * memrange changes status, and something about it has been
@@ -450,7 +456,10 @@ struct memregion {
 
     /*
      * These are the minimum phys/virt address pairs that we learn from
-     * looking at the program headers in the ELF object file.
+     * looking at the program headers in the binfile (in fact, these
+     * should be propagated from the binfile backing the code loaded
+     * into this region -- target backend should set it when it loads
+     * the debugfile(s) for the region).
      */
     ADDR base_phys_addr;
     ADDR base_virt_addr;

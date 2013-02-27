@@ -355,6 +355,10 @@ void target_free(struct target *target) {
 	RPUT(space,addrspace);
     }
 
+    /* Unload the binfile */
+    if (target->binfile)
+	RPUT(target->binfile,binfile);
+
     if (target->breakpoint_instrs)
 	free(target->breakpoint_instrs);
 
@@ -451,22 +455,22 @@ int target_associate_debugfile(struct target *target,
 			       struct debugfile *debugfile) {
 
     /* if they already loaded this debugfile into this region, error */
-    if (g_hash_table_lookup(region->debugfiles,debugfile->idstr)) {
+    if (g_hash_table_lookup(region->debugfiles,debugfile->filename)) {
 	verror("debugfile(%s) already in use in region(%s) in space (%s)!\n",
-	       debugfile->idstr,region->name,region->space->idstr);
+	       debugfile->filename,region->name,region->space->idstr);
 	errno = EBUSY;
 	return -1;
     }
 
     RHOLD(debugfile);
 
-    g_hash_table_insert(region->debugfiles,debugfile->idstr,debugfile);
+    g_hash_table_insert(region->debugfiles,debugfile->filename,debugfile);
 
     vdebug(1,LA_TARGET,LF_TARGET,
 	   "loaded and associated debugfile(%s) for region(%s,"
 	   "base_phys=0x%"PRIxADDR",base_virt=0x%"PRIxADDR")"
 	   " in space (%s,%d)\n",
-	   debugfile->idstr,region->name,
+	   debugfile->filename,region->name,
 	   region->base_phys_addr,region->base_virt_addr,
 	   region->space->name,region->space->id);
 
@@ -2259,9 +2263,6 @@ int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
 				    ADDR *start,ADDR *end,void **data) {
     struct addrspace *space;
     struct memregion *region;
-    GHashTableIter iter;
-    gpointer key;
-    struct debugfile *debugfile;
     struct memrange *range = NULL;
 
     struct clf_range_data *crd;
@@ -2277,21 +2278,17 @@ int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
     if (!range) 
 	return -1;
 
-    g_hash_table_iter_init(&iter,region->debugfiles);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&debugfile)) {
-	if ((crd = clrange_find_loosest(&debugfile->elf_ranges,
-					memrange_unrelocate(range,addr),
-					NULL))) {
-	    if (start)
-		*start = crd->start;
-	    if (end)
-		*end = crd->end;
-	    if (data)
-		*data = crd->data;
+    if ((crd = clrange_find_loosest(&region->binfile->ranges,
+				    memrange_unrelocate(range,addr),
+				    NULL))) {
+	if (start)
+	    *start = crd->start;
+	if (end)
+	    *end = crd->end;
+	if (data)
+	    *data = crd->data;
 
-	    return 0;
-	}
+	return 0;
     }
 
     return -1;
@@ -2301,9 +2298,6 @@ int target_lookup_next_safe_disasm_range(struct target *target,ADDR addr,
 					 ADDR *start,ADDR *end,void **data) {
     struct addrspace *space;
     struct memregion *region;
-    GHashTableIter iter;
-    gpointer key;
-    struct debugfile *debugfile;
     struct memrange *range = NULL;
 
     struct clf_range_data *crd;
@@ -2319,21 +2313,17 @@ int target_lookup_next_safe_disasm_range(struct target *target,ADDR addr,
     if (!range)
 	return -1;
 
-    g_hash_table_iter_init(&iter,region->debugfiles);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&debugfile)) {
-	if ((crd = clrange_find_next_loosest(&debugfile->elf_ranges,
-					     memrange_unrelocate(range,addr),
-					     NULL))) {
-	    if (start)
-		*start = crd->start;
-	    if (end)
-		*end = crd->end;
-	    if (data)
-		*data = crd->data;
+    if ((crd = clrange_find_next_loosest(&region->binfile->ranges,
+					 memrange_unrelocate(range,addr),
+					 NULL))) {
+	if (start)
+	    *start = crd->start;
+	if (end)
+	    *end = crd->end;
+	if (data)
+	    *data = crd->data;
 
-	    return 0;
-	}
+	return 0;
     }
 
     return -1;

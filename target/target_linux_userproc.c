@@ -528,14 +528,11 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
     struct target *target;
     char buf[256];
     struct stat sbuf;
-    FILE *debugfile;
+    FILE *stfile;
     char pbuf[PATH_MAX*2];
     char main_exe[PATH_MAX];
-    int fd;
-    Elf *elf;
     int rc;
-    int wordsize;
-    int endian;
+    struct binfile *binfile;
     struct linux_userproc_spec *lspec = \
 	(struct linux_userproc_spec *)spec->backend_spec;
     int pid = lspec->pid;
@@ -558,15 +555,19 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
 	return NULL;
     }
     else {
-	debugfile = fopen(buf,"r");
-	if (!debugfile || !fgets(buf,256,debugfile)) {
+	stfile = fopen(buf,"r");
+	if (!stfile) {
 	    verror("fopen %s: %s\n",buf,strerror(errno));
-	    fclose(debugfile);
 	    return NULL;
 	}
+	else if (!fgets(buf,256,stfile)) {
+	    verror("fgets %s: %s\n",buf,strerror(errno));
+	    fclose(stfile);
+	    return NULL;
+	}	    
 	if (strlen(buf) && buf[strlen(buf)-1] == '\n')
 	    buf[strlen(buf)-1] = '\0';
-	fclose(debugfile);
+	fclose(stfile);
     }
 
     /* Discover the wordsize and endianness of the process, based off
@@ -578,8 +579,8 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
 	return NULL;
     main_exe[rc] = '\0';
 
-    if ((fd = open(main_exe,0,O_RDONLY)) < 0) {
-	verror("open %s: %s\n",main_exe,strerror(errno));
+    if (!(binfile = binfile_open(pbuf,NULL))) {
+	verror("binfile_open %s: %s\n",pbuf,strerror(errno));
 	return NULL;
     }
 
@@ -591,28 +592,13 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
     target->live = 1;
     target->writeable = 1;
 
-    elf_version(EV_CURRENT);
-    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	verror("elf_begin %s: %s\n",main_exe,elf_errmsg(elf_errno()));
-	target_free(target);
-	return NULL;
-    }
+    /*
+     * Save off the binfile, and some stuff from it.
+     */
+    target->binfile = binfile;
 
-    if (elf_get_arch_info(elf,&wordsize,&endian)) {
-	verror("could not get ELF arch info for %s\n",main_exe);
-	target_free(target);
-	elf_end(elf);
-	return NULL;
-    }
-    target->wordsize = wordsize;
-    target->endian = endian;
-    vdebug(3,LA_TARGET,LF_LUP,
-	   "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
-	   main_exe,target->wordsize,
-	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
-
-    /* Done with the elf stuff. */
-    elf_end(elf);
+    target->wordsize = binfile->wordsize;
+    target->endian = binfile->endian;
 
     /* Wordsize and ptrsize the same, obviously... */
     target->ptrsize = target->wordsize;
@@ -672,11 +658,6 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     struct target *target;
     int pid;
     int newfd;
-    int dynamic = 0;
-    Elf *elf = NULL;
-    int wordsize;
-    int endian;
-    int fd = -1;
     int pstatus;
     struct linux_userproc_spec *lspec;
     char *filename;
@@ -685,6 +666,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     int keepstdin;
     char *outfile;
     char *errfile;
+    struct binfile *binfile;
 
 #if __WORDSIZE == 64
 #define LUP_SC_EXEC             59
@@ -722,71 +704,51 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     keepstdin = !lspec->close_stdin;
     outfile = lspec->stdout_logfile;
     errfile = lspec->stderr_logfile;
-	
 
-    /* Read the binary and see if it is a dynamic or statically-linked
+    /*
+     * Read the binary and see if it is a dynamic or statically-linked
      * executable.  If it's dynamic, we look for one sequence of
      * syscalls to infer when the the fully-linked program is in
      * memory.  If it's static, we look for another (much simpler)
      * sequence.
      */
-    if ((fd = open(filename,0,O_RDONLY)) < 0) {
-	verror("open %s: %s\n",filename,strerror(errno));
+    if (!(binfile = binfile_open(filename,NULL))) {
+	verror("binfile_open %s: %s\n",filename,strerror(errno));
 	return NULL;
     }
 
     target = target_create("linux_userspace_process",NULL,
 			   &linux_userspace_process_ops,spec,-1);
-    if (!target) {
-	errno = ENOMEM;
-	return NULL;
-    }
+    if (!target) 
+	goto errout;
 
     target->live = 1;
     target->writeable = 1;
+
+    /*
+     * Save off the binfile, and some stuff from it.
+     */
+    target->binfile = binfile;
+
+    target->wordsize = binfile->wordsize;
+    target->endian = binfile->endian;
 
     /* We attach and can't detach, and also can't attach again when the
      * target API tells us to.
      */
     target->initdidattach = 1;
 
-    /* Figure out some ELF stuff. */
-
-    elf_version(EV_CURRENT);
-    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	verror("elf_begin %s: %s\n",filename,elf_errmsg(elf_errno()));
-	goto errout;
-    }
-
-    if (elf_get_arch_info(elf,&wordsize,&endian)) {
-	verror("could not get ELF arch info\n");
-	goto errout;
-    }
-    target->wordsize = wordsize;
-    target->endian = endian;
-    vdebug(3,LA_TARGET,LF_LUP,
-	   "loaded ELF arch info (wordsize=%d;endian=%s)\n",
-	   target->wordsize,
-	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
-
     target->ptrsize = target->wordsize;
 
-    dynamic = elf_is_dynamic_exe(elf);
-    if (dynamic < 0) {
+    if (binfile->is_dynamic < 0) {
 	verror("could not check if %s is static/dynamic exe; aborting!\n",
 	       filename);
 	goto errout;
     }
-    else if (!dynamic)
+    else if (!binfile->is_dynamic)
 	vdebug(2,LA_TARGET,LF_LUP,"executable %s is static\n",filename);
     else 
 	vdebug(2,LA_TARGET,LF_LUP,"executable %s is dynamic\n",filename);
-
-    /* Done with ELF stuff. */
-    elf_end(elf);
-    elf = NULL;
-    close(fd);
-    fd = -1;
 
     /* Which register is the fbreg is dependent on host cpu type, not
      * target cpu type.
@@ -972,7 +934,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 
 	    vdebug(5,LA_TARGET,LF_LUP,"syscall: %ld (%ld)\n",orig_eax,syscall);
 
-	    if (dynamic) {
+	    if (binfile->is_dynamic) {
 		/* syscall state machine for the dynamic case: */
 		if ((syscall == 0 
 		     || ((syscall == LUP_SC_MPROTECT
@@ -1083,10 +1045,8 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
  errout:
     if (target)
 	target_free(target);
-    if (elf)
-	elf_end(elf);
-    if (fd > 1)
-	close(fd);
+    else if (binfile)
+	RPUT(binfile,binfile);
     return NULL;
 }
 
@@ -2402,8 +2362,6 @@ static int linux_userproc_updateregions(struct target *target,
 static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region) {
-    Elf *elf = NULL;
-    int fd = -1;
     int retval = -1;
     struct debugfile *debugfile = NULL;
     struct linux_userproc_state *lstate = \
@@ -2421,41 +2379,38 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     if (!region->name || strlen(region->name) == 0)
 	return -1;
 
-    if ((fd = open(region->name,0,O_RDONLY)) < 0) {
-	verror("open %s: %s\n",region->name,strerror(errno));
-	return -1;
-    }
-
-    elf_version(EV_CURRENT);
-    if (!(elf = elf_begin(fd,ELF_C_READ,NULL))) {
-	verror("elf_begin %s: %s\n",region->name,elf_errmsg(elf_errno()));
-	goto out;
-    }
-
-    /* This should be in load_regions, but we've already got the ELF
-     * binary open here... so just do it.
-     */
-    if (elf_get_base_addrs(elf,&region->base_virt_addr,&region->base_phys_addr)) {
-	verror("elf_get_base_addrs %s failed!\n",region->name);
-	goto out;
-    }
-
-    debugfile = debugfile_get(region->name,
-			      target->spec->debugfile_load_opts_list,NULL);
+    debugfile = debugfile_from_file(region->name,
+				    target->spec->debugfile_load_opts_list);
     if (!debugfile)
 	goto out;
 
     if (target_associate_debugfile(target,region,debugfile)) 
 	goto out;
 
+    /*
+     * Try to figure out which binfile has the info we need.  On
+     * different distros, they're stripped different ways.
+     */
+    if (debugfile->binfile_pointing 
+	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
+	> symtab_get_size_simple(debugfile->binfile->symtab)) {
+	RHOLD(debugfile->binfile_pointing);
+	region->binfile = debugfile->binfile_pointing;
+    }
+    else {
+	RHOLD(debugfile->binfile);
+	region->binfile = debugfile->binfile;
+    }
+
+    /*
+     * Propagate some binfile info...
+     */
+    region->base_phys_addr = region->binfile->base_phys_addr;
+    region->base_virt_addr = region->binfile->base_virt_addr;
+
     retval = 0;
 
  out:
-    if (elf)
-	elf_end(elf);
-    if (fd > -1)
-	close(fd);
-
     return retval;
 }
 

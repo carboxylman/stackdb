@@ -1883,7 +1883,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	/* attr_callback has to fill cu_symtab, and *MUST* fill at least
 	 * the name field; otherwise we can't add the symtab to our hash table.
 	 */
-	cu_symtab = symtab_create(debugfile,offset,NULL,NULL,0);
+	cu_symtab = symtab_create(NULL,debugfile,offset,NULL,NULL,0);
 	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
 			    (gpointer)cu_symtab);
 	cu_symtab->meta = meta;
@@ -2275,7 +2275,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 * subprogram, or until we need another child scope.
 		 */
 		if (!quick || expand_dies) {
-		    newscope = symtab_create(debugfile,offset,NULL,symbols[level],0);
+		    newscope = symtab_create(NULL,debugfile,offset,NULL,symbols[level],0);
 		    newscope->parent = symtabs[level];
 		    // XXX: should we wait to do this until we level up after
 		    // successfully completing this new child scope?
@@ -2287,7 +2287,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    else if (SYMBOL_IS_FULL_FUNCTION(symbols[level])
 		     && !symbols[level]->s.ii->d.f.symtab) {
 		/* This happens when we are expanding a func symbol. */
-		newscope = symtab_create(debugfile,offset,NULL,symbols[level],0);
+		newscope = symtab_create(NULL,debugfile,offset,NULL,symbols[level],0);
 		newscope->parent = symtabs[level];
 		// XXX: should we wait to do this until we level up after
 		// successfully completing this new child scope?
@@ -2308,7 +2308,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * block, or until we need another child scope.
 	     */
 	    if (!quick || expand_dies) {
-		newscope = symtab_create(debugfile,offset,NULL,NULL,0);
+		newscope = symtab_create(NULL,debugfile,offset,NULL,NULL,0);
 		newscope->parent = symtabs[level];
 		// XXX: should we wait to do this until we level up after
 		// successfully completing this new child scope?
@@ -3790,16 +3790,19 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 	retval = 1;
     }
     else {
-	verror("non-anonymous symbol of type %s without a name at %"PRIx64"!\n",
-	       SYMBOL_TYPE(symbol->type),die_offset);
-	struct dump_info udn = {
-	    .stream = stderr,
-	    .prefix = "  ",
-	    .detail = 1,
-	    .meta = 1
-	};
-	symbol_var_dump(symbol,&udn);
-	fprintf(stderr,"\n");
+	vwarnoptc(9,LA_DEBUG,LF_DWARF,
+		  "non-anonymous symbol of type %s without a name at %"PRIx64"!\n",
+		  SYMBOL_TYPE(symbol->type),die_offset);
+	if (vwarn_is_on(9,LA_DEBUG,LF_DWARF)) {
+	    struct dump_info udn = {
+		.stream = stderr,
+		.prefix = "  ",
+		.detail = 1,
+		.meta = 1
+	    };
+	    symbol_var_dump(symbol,&udn);
+	    fprintf(stderr,"\n");
+	}
 
 	/*
 	 * XXX: we cannot free any symbols in this function; they are
@@ -4150,7 +4153,7 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	 */
 	if (!(cu_symtab = (struct symtab *)\
 	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
-	    cu_symtab = symtab_create(debugfile,(SMOFFSET)offset,NULL,NULL,0);
+	    cu_symtab = symtab_create(NULL,debugfile,(SMOFFSET)offset,NULL,NULL,0);
 	    debugfile_add_cu_symtab(debugfile,cu_symtab);
 	}
 
@@ -4181,81 +4184,43 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
     return 0;
 }
 
-/*
- * Stub callback telling 
- */
-static int find_no_debuginfo(Dwfl_Module *mod __attribute__ ((unused)),
-			     void **userdata __attribute__ ((unused)),
-			     const char *modname __attribute__ ((unused)),
-			     Dwarf_Addr base __attribute__ ((unused)),
-			     const char *file_name __attribute__ ((unused)),
-			     const char *debuglink_file __attribute__ ((unused)),
-			     GElf_Word debuglink_crc __attribute__ ((unused)),
-			     char **debuginfo_file_name __attribute__ ((unused))) {
-    return -1;
-}
-
 static int process_dwflmod (Dwfl_Module *dwflmod,
 			    void **userdata __attribute__ ((unused)),
-			    const char *name __attribute__ ((unused)),
+			    const char *uname __attribute__ ((unused)),
 			    Dwarf_Addr base __attribute__ ((unused)),
 			    void *arg) {
     struct debugfile *debugfile = (struct debugfile *)arg;
-
+    struct binfile *binfile = debugfile->binfile;
+    struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
     GElf_Addr dwflbias;
-    Elf *elf = dwfl_module_getelf(dwflmod,&dwflbias);
+    Dwarf_Addr dwbias;
+    Dwarf *dbg;
+    GElf_Shdr *shdr;
+    Elf_Scn *scn;
+    int i;
+    char *name;
+    char **saveptr;
+    unsigned int *saveptrlen;
+    Elf_Data *edata;
 
-    GElf_Ehdr ehdr_mem;
-    GElf_Ehdr *ehdr = gelf_getehdr(elf,&ehdr_mem);
-
-    if (ehdr == NULL) {
-	verror("cannot read ELF header: %s",elf_errmsg(-1));
-	return DWARF_CB_ABORT;
-    }
-
-    Ebl *ebl = NULL;
-    if (!debugfile->ebl) {
-	ebl = ebl_openbackend(elf);
-	if (ebl == NULL) {
-	    verror("cannot create EBL handle: %s",strerror(errno));
-	    return DWARF_CB_ABORT;
-	}
-	debugfile->ebl = ebl;
-    }
-    else
-	ebl = debugfile->ebl;
+    dwfl_module_getelf(dwflmod,&dwflbias);
 
     /*
      * Last setup before parsing DWARF stuff!
      */
-    Dwarf_Addr dwbias;
-    Dwarf *dbg = dwfl_module_getdwarf(dwflmod,&dwbias);
+    dbg = dwfl_module_getdwarf(dwflmod,&dwbias);
     if (!dbg) {
 	verror("could not get dwarf module!\n");
 	goto errout;
     }
 
-    size_t shstrndx;
-#if _INT_ELFUTILS_VERSION >= 152
-    if (elf_getshdrstrndx(elf,&shstrndx) < 0) {
-#else 
-    if (elf_getshstrndx(elf,&shstrndx) < 0) {
-#endif
-	verror("cannot get section header string table index\n");
-	goto errout;
-    }
-
-    Elf_Scn *scn = NULL;
-    while ((scn = elf_nextscn(elf,scn)) != NULL) {
-	GElf_Shdr shdr_mem;
-	GElf_Shdr *shdr = gelf_getshdr(scn,&shdr_mem);
-
+    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+	shdr = &bfelf->shdrs[i];
+	scn = elf_getscn(bfelf->elf,i);
 
 	if (shdr && shdr->sh_size > 0) { // &&shdr->sh_type != SHT_PROGBITS) {
 	    //shdr_mem.sh_flags & SHF_STRINGS) {
-	    const char *name = elf_strptr(elf,shstrndx,shdr->sh_name);
-	    char **saveptr;
-	    unsigned int *saveptrlen;
+	    name = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
 
 	    if (strcmp(name,".debug_str") == 0) {
 		saveptr = &debugfile->dbg_strtab;
@@ -4285,14 +4250,15 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		continue;
 	    }
 
-	    vdebug(2,LA_DEBUG,LF_DWARF,"found %s section (%d) in debugfile %s\n",name,
-		   shdr->sh_size,debugfile->idstr);
+	    vdebug(2,LA_DEBUG,LF_DWARF,
+		   "found %s section (%d) (%p) in debugfile %s\n",
+		   name,shdr->sh_size,scn,debugfile->filename);
 
-	    Elf_Data *edata = elf_rawdata(scn,NULL);
+	    edata = elf_rawdata(scn,NULL);
 	    if (!edata) {
-		verror("cannot get data for valid section '%s': %s",
+		verror("cannot get data for valid section '%s': %s\n",
 		       name,elf_errmsg(-1));
-		goto errout;
+		continue;
 	    }
 
 	    /*
@@ -4329,38 +4295,18 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	      debugfile->filename);
     }
 
-    /*
-     * For now, the symtab is loaded outside.  Leave this in case we
-     * need it.
-     */
-#if 0
-    if (!symtab_get_size_simple(debugfile->elf_symtab)) {
-	/* If we couldn't load from the actual ELF binary, load from the
-	 * debuginfo file instead.  Neither may work...
-	 */
-	if (elf_load_symtab(elf,debugfile->filename,debugfile))
-	    vwarn("elf_symtab load failed for debugfile %s!\n",
-		  debugfile->filename);
-	else
-	    vdebug(4,LA_DEBUG,LF_DWARF | LF_ELF,
-		   "elf_symtab load succeeded for debugfile %s!\n",
-		   debugfile->filename);
-    }
-#endif
-
     /* now rescan for debug_info sections */
-    scn = NULL;
-    while ((scn = elf_nextscn(elf,scn)) != NULL) {
-	GElf_Shdr shdr_mem;
-	GElf_Shdr *shdr = gelf_getshdr(scn,&shdr_mem);
+    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+	shdr = &bfelf->shdrs[i];
+	scn = elf_getscn(bfelf->elf,i);
 
 	if (shdr && shdr->sh_size > 0 && shdr->sh_type == SHT_PROGBITS) {
-	    const char *name = elf_strptr(elf,shstrndx,shdr->sh_name);
+	    name = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
 
 	    if (strcmp(name,".debug_info") == 0) {
 		vdebug(2,LA_DEBUG,LF_DWARF,
 		       "found .debug_info section in debugfile %s\n",
-		       debugfile->idstr);
+		       debugfile->filename);
 		debuginfo_load(debugfile,dwflmod,dbg);
 		//break;
 	    }
@@ -4402,17 +4348,99 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     }
 #endif
 
-    /* Let caller (or debugfile free) free ebl later. */
-    //ebl_closebackend(ebl);
-
  out:
+    /* Let caller (or debugfile free) free ebl later. */
     return DWARF_CB_OK;
 
  errout:
-    debugfile->ebl = NULL;
-    ebl_closebackend(ebl);
-
+    /* Let caller (or debugfile free) free ebl later. */
     return DWARF_CB_ABORT;
+}
+
+
+/*
+ * Stub callback telling 
+ */
+static int find_no_debuginfo(Dwfl_Module *mod __attribute__ ((unused)),
+			     void **userdata __attribute__ ((unused)),
+			     const char *modname __attribute__ ((unused)),
+			     Dwarf_Addr base __attribute__ ((unused)),
+			     const char *file_name __attribute__ ((unused)),
+			     const char *debuglink_file __attribute__ ((unused)),
+			     GElf_Word debuglink_crc __attribute__ ((unused)),
+			     char **debuginfo_file_name __attribute__ ((unused))) {
+    return -1;
+}
+
+static int bfi_find_elf(Dwfl_Module *mod __attribute__ ((unused)),
+			void **userdata,
+			const char *modname __attribute__ ((unused)),
+			Dwarf_Addr base __attribute__ ((unused)),
+			char **file_name __attribute__ ((unused)),
+			Elf **elfp) {
+    struct binfile *binfile;
+    struct binfile_instance *bfi;
+    struct binfile_elf *bfelf;
+
+    if (!(binfile = (struct binfile *)*userdata)) {
+	verror("no binfile; bug!?\n");
+	return -1;
+    }
+
+    if (!(bfi = binfile->instance)) {
+	verror("no instance info for binfile %s!\n",binfile->filename);
+	return -1;
+    }
+
+    if (!(bfelf = (struct binfile_elf *)binfile->priv)) {
+	verror("no ELF info for binfile %s!\n",binfile->filename);
+	return -1;
+    }
+
+    if (elfp)
+	*elfp = bfelf->elf;
+    
+    return -1;
+}
+
+static int bfi_find_section_address(Dwfl_Module *mod __attribute__ ((unused)),
+				    void **userdata,
+				    const char *modname __attribute__ ((unused)),
+				    Dwarf_Addr base,
+				    const char *secname __attribute__ ((unused)),
+				    GElf_Word shndx,
+				    const GElf_Shdr *shdr __attribute__ ((unused)),
+				    Dwarf_Addr *addr) {
+    struct binfile *binfile;
+    struct binfile_instance *bfi;
+    struct binfile_instance_elf *bfielf;
+
+    if (!(binfile = (struct binfile *)*userdata)) {
+	verror("no binfile; bug!?\n");
+	return -1;
+    }
+
+    if (!(bfi = binfile->instance)) {
+	verror("no instance info for binfile %s!\n",binfile->filename);
+	return -1;
+    }
+
+    if (!(bfielf = (struct binfile_instance_elf *)bfi->priv)) {
+	verror("no ELF instance info for binfile %s!\n",binfile->filename);
+	return -1;
+    }
+
+    if (addr) {
+	if (shndx >= bfielf->num_sections) {
+	    verror("section index %d out of range (%d) in binfile instance %s!\n",
+		   shndx,bfielf->num_sections,bfi->filename);
+	    return -1;
+	}
+	/* XXX: subtract base since we already relocated it in bfielf! */
+	*addr = bfielf->section_tab[shndx] - base;
+    }
+
+    return 0;
 }
 
 /*
@@ -4420,60 +4448,98 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
  * debuginfo into the supplied debugfile using elfutils libs.
  */
 int debugfile_load_debuginfo(struct debugfile *debugfile) {
-    int fd;
-    Dwfl *dwfl;
-    Dwfl_Module *mod;
-    char *filename = debugfile->filename;
     struct debugfile_load_opts *opts = debugfile->opts;
+    struct binfile *binfile = debugfile->binfile;
+    struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
+    struct binfile_instance *bfi = binfile->instance;
+    struct binfile_instance_elf *bfielf = NULL;
+    void **userdata = NULL;
+    Dwfl_Module *mod;
 
-    if ((fd = open(filename,0,O_RDONLY)) < 0) {
-	verror("open %s: %s\n",filename,strerror(errno));
-	return -1;
-    }
+    if (bfi)
+	bfielf = (struct binfile_instance_elf *)bfi->priv;
 
-    /* 
-     * Don't try to find any extra debuginfo; we'll handle that elsewhere.
-     *
-     * XXX This takes care of applying relocations to DWARF data in
-     * ET_REL files.  Do we want this???
-     *
-     * I think not -- what I'd rather have is a post-pass to apply
-     * section relocation information when we decode, so that we can
-     * share debuginfo-loaded data structs.
-     */
-    static const Dwfl_Callbacks callbacks = {
-	.section_address = dwfl_offline_section_address,
-	.find_debuginfo  = find_no_debuginfo,
+    Dwfl_Callbacks callbacks = {
+	.find_debuginfo = find_no_debuginfo,
     };
 
-    dwfl = dwfl_begin(&callbacks);
-    if (dwfl == NULL) {
+    bfelf->dwfl = dwfl_begin(&callbacks);
+    if (bfelf->dwfl == NULL) {
 	verror("could not init libdwfl: %s\n",dwfl_errmsg(dwfl_errno()));
-	close(fd);
 	return -1;
     }
 
-    // XXX do we really need this?  Can't have it without libdwflP.h
-    //dwfl->offline_next_address = 0;
+    /*
+     * For relocatable files that are in binfile->image, binfile->elf is
+     * already open on them.  But, we can't exactly dup or clone ->image
+     * (at least I'm not sure it's safe), so when dwfl_close gets
+     * called, elf_end will get called too.  Catch that and set
+     * bfelf->elf = NULL in those cases...
+     */
 
-    if (!(mod = dwfl_report_offline(dwfl,filename,filename,fd))) {
-	verror("dwfl_report_offline: %s\n",dwfl_errmsg(dwfl_errno()));
-	dwfl_end(dwfl);
-	close(fd);
+    if (bfi && bfielf && binfile->image) {
+	callbacks.section_address = bfi_find_section_address;
+	callbacks.find_elf = bfi_find_elf;
+
+	/*
+	 * Handle via relocation; must do this specially and manually.
+	 */
+	dwfl_report_begin(bfelf->dwfl);
+	mod = dwfl_report_module(bfelf->dwfl,bfi->filename,bfi->start,bfi->end);
+	if (!mod) {
+	    verror("could not report relocatable module in binfile instance %s!\n",
+		   bfi->filename);
+	    dwfl_end(bfelf->dwfl);
+	    bfelf->dwfl = NULL;
+	    bfelf->dwfl_fd = -1;
+	    bfelf->elf = NULL;
+	    return -1;
+	}
+	dwfl_module_info(mod,&userdata,NULL,NULL,NULL,NULL,NULL,NULL);
+	*userdata = binfile;
+    }
+    else if (binfile->fd > -1) {
+	callbacks.section_address = dwfl_offline_section_address;
+
+	if (bfelf->dwfl_fd < 0) {
+	    bfelf->dwfl_fd = dup(binfile->fd);
+	    if (bfelf->dwfl_fd == -1) {
+		verror("dup(%d): %s\n",binfile->fd,strerror(errno));
+		return -1;
+	    }
+	}
+
+	// XXX do we really need this?  Can't have it without libdwflP.h
+	//dwfl->offline_next_address = 0;
+	if (!dwfl_report_offline(bfelf->dwfl,debugfile->filename,
+				 debugfile->filename,bfelf->dwfl_fd)) {
+	    verror("dwfl_report_offline: %s\n",dwfl_errmsg(dwfl_errno()));
+	    dwfl_end(bfelf->dwfl);
+	    bfelf->dwfl = NULL;
+	    bfelf->dwfl_fd = -1;
+	    return -1;
+	}
+    }
+    else {
+	verror("binfile %s had no fd nor memory image!\n",binfile->filename);
+	dwfl_end(bfelf->dwfl);
+	bfelf->dwfl = NULL;
+	bfelf->dwfl_fd = -1;
 	return -1;
     }
 
-    dwfl_report_end(dwfl,NULL,NULL);
+    dwfl_report_end(bfelf->dwfl,NULL,NULL);
 
     /*
      * This is where the guts of the work happen -- and that stuff all
      * happens in the callback.
      */
-    debugfile->fd = fd;
-    debugfile->dwfl = dwfl;
-
-    if (dwfl_getmodules(dwfl,&process_dwflmod,debugfile,0) < 0) {
+    if (dwfl_getmodules(bfelf->dwfl,&process_dwflmod,debugfile,0) < 0) {
 	verror("getting dwarf modules: %s\n",dwfl_errmsg(dwfl_errno()));
+	dwfl_end(bfelf->dwfl);
+	bfelf->dwfl = NULL;
+	if (bfi && bfielf && binfile->image) 
+	    bfelf->elf = NULL;
 	return -1;
     }
 
@@ -4481,15 +4547,70 @@ int debugfile_load_debuginfo(struct debugfile *debugfile) {
     if (!(opts->flags & DEBUGFILE_LOAD_FLAG_PARTIALSYM
 	  || opts->flags & DEBUGFILE_LOAD_FLAG_CUHEADERS
 	  || opts->flags & DEBUGFILE_LOAD_FLAG_PUBNAMES)) {
-	ebl_closebackend(debugfile->ebl);
-	debugfile->ebl = NULL;
-	dwfl_end(debugfile->dwfl);
-	debugfile->dwfl = NULL;
-	close(debugfile->fd);
-	debugfile->fd = 0;
+	dwfl_end(bfelf->dwfl);
+	bfelf->dwfl = NULL;
+	if (bfi && bfielf && binfile->image) 
+	    bfelf->elf = NULL;
     }
 
     return 0;
 }
 
 
+
+
+/*
+* Report the open ELF file as a module.  Always consumes ELF and FD.  *
+static Dwfl_Module *
+process_elf (Dwfl *dwfl, const char *name, const char *file_name, int fd,
+	     Elf *elf)
+{
+  Dwfl_Module *mod = __libdwfl_report_elf (dwfl, name, file_name, fd, elf,
+					   dwfl->offline_next_address, false);
+  if (mod != NULL)
+    {
+      * If this is an ET_EXEC file with fixed addresses, the address range
+	 it consumed may or may not intersect with the arbitrary range we
+	 will use for relocatable modules.  Make sure we always use a free
+	 range for the offline allocations.  If this module did use
+	 offline_next_address, it may have rounded it up for the module's
+	 alignment requirements.  *
+      if ((dwfl->offline_next_address >= mod->low_addr
+	   || mod->low_addr - dwfl->offline_next_address < OFFLINE_REDZONE)
+	  && dwfl->offline_next_address < mod->high_addr + OFFLINE_REDZONE)
+	dwfl->offline_next_address = mod->high_addr + OFFLINE_REDZONE;
+
+      * Don't keep the file descriptor around.  *
+      if (mod->main.fd != -1 && elf_cntl (mod->main.elf, ELF_C_FDREAD) == 0)
+	{
+	  close (mod->main.fd);
+	  mod->main.fd = -1;
+	}
+    }
+
+  return mod;
+}
+
+Dwfl_Module *
+libdwfl_report_offline_custom (Dwfl *dwfl, const char *name,
+			       const char *file_name, int fd, bool closefd)
+{
+  Elf *elf;
+  *
+  Dwfl_Error error = __libdw_open_file (&fd, &elf, closefd, true);
+  if (error != DWFL_E_NOERROR)
+    {
+      __libdwfl_seterrno (error);
+      return NULL;
+    }
+  *
+  Dwfl_Module *mod = process_elf (dwfl, name, file_name, fd, elf);
+  if (mod == NULL)
+    {
+      elf_end (elf);
+      if (closefd)
+	close (fd);
+    }
+  return mod;
+}
+*/
