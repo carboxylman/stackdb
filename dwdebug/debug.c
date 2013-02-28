@@ -5091,16 +5091,6 @@ char *STATUS_STRINGS[] = {
     "done"
 };
 
-char *REGION_TYPE_STRINGS[] = {
-    "heap",
-    "stack",
-    "vdso",
-    "vsyscall",
-    "anon",
-    "main",
-    "lib"
-};
-
 char *BINFILE_TYPE_STRINGS[] = {
     "none",
     "relocatable",

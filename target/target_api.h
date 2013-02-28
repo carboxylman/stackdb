@@ -959,6 +959,7 @@ float            v_f(struct value *v);
 double           v_d(struct value *v);
 long double      v_dd(struct value *v);
 ADDR             v_addr(struct value *v);
+char *           v_string(struct value *v);
 
 /**
  ** Value update functions.
@@ -1256,6 +1257,13 @@ struct target {
     void *state;
     struct target_ops *ops;
     struct target_spec *spec;
+
+    /*
+     * A simple key/value store for generic target configuration
+     * options.  Anything keys/values placed in it will be free()d when
+     * the hashtable is freed, so be careful!
+     */
+    GHashTable *config;
 
     /*
      * If the target is attached to an evloop, this is that evloop.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -296,6 +296,123 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
      * the symbol arg itself.
      */
     while (1) {
+	value = target_load_type(t,type,current_struct_addr,LOAD_FLAG_NONE);
+	if (!value) {
+	    verror("could not load value in list position %d, aborting!\n",i);
+	    goto out;
+	}
+
+	rc = iterator(t,value,data);
+	if (rc == 1)
+	    break;
+	else if (rc == -1) {
+	    nofree = 1;
+	    break;
+	}
+
+	next_head = *((ADDR *)(value->buf + list_head_member_offset));
+
+	if (!nofree) {
+	    value_free(value);
+	    value = NULL;
+	}
+
+	if (next_head == head)
+	    break;
+
+	current_struct_addr = next_head - list_head_member_offset;
+	++i;
+    }
+
+    retval = 0;
+
+ out:
+    if (list_head_member_symbol)
+	symbol_release(list_head_member_symbol);
+    if (!nofree && value)
+	value_free(value);
+
+    return retval;
+}
+
+/*
+ * Since linux linked lists are formed by chaining C structs together
+ * using struct members as the list next/prev pointers, we provide a
+ * generic function to traverse them.
+ *
+ * This function is different from the one above in the sense that the
+ * input to this one is a struct type, plus a list_head variable
+ * (instead of having a struct instance that is the "head" of the
+ * list).  So, for the task list, whose head is the init_task
+ * task_struct, the above function is more appropriate.  For the modules
+ * list_head, which might have nothing in it, this function is more
+ * appropriate.
+ *
+ * Basically, we calculate the offset of the list head member name in
+ * the type, and then, starting with the struct at the @head - offset,
+ * we load that value.  We then continue looping by loading the next
+ * struct specified in the list head member's next field.
+ */
+int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
+			      struct bsymbol *list_head,
+			      char *list_head_member_name,int nofree,
+			      linux_list_iterator_t iterator,void *data) {
+    struct symbol *type;
+    struct symbol *list_head_member_symbol = NULL;
+    OFFSET list_head_member_offset;
+    ADDR head;
+    ADDR next_head;
+    ADDR current_struct_addr;
+    struct value *value = NULL;
+    struct value *value_next;
+    int i = 0;
+    int retval = -1;
+    int rc;
+
+    type = bsymbol_get_symbol(btype);
+
+    list_head_member_symbol = symbol_get_one_member(type,
+						    list_head_member_name);
+    if (!list_head_member_symbol) {
+	verror("no such member %s in symbol %s!\n",list_head_member_name,
+	       symbol_get_name(type));
+	goto out;
+    }
+
+    if (symbol_get_location_offset(list_head_member_symbol,
+				   &list_head_member_offset)) {
+	verror("could not get offset for member %s in symbol %s!\n",
+	       symbol_get_name(list_head_member_symbol),symbol_get_name(type));
+	goto out;
+    }
+
+    /*
+     * We just blindly use TID_GLOBAL because init_task is the symbol
+     * they are supposed to pass, and resolving that is not going to
+     * depend on any registers, so it doesn't matter which thread we
+     * use.
+     */
+
+    value = target_load_symbol(t,TID_GLOBAL,list_head,LOAD_FLAG_NONE);
+    if (!value) {
+	verror("could not load list_head for symbol %s!\n",bsymbol_get_name(list_head));
+	goto out;
+    }
+    head = value_addr(value);
+    value_next = target_load_value_member(t,value,"next",NULL,LOAD_FLAG_NONE);
+    next_head = *((ADDR *)value->buf);
+
+    value_free(value_next);
+    value_free(value);
+    value = NULL;
+
+    /*
+     * Now, start loading the struct values one by one, starting with next_head.
+     */
+    while (next_head != head) {
+	/* The real head is plus the member offset. */
+	current_struct_addr = next_head - list_head_member_offset;
+
 	value = target_load_type(t,type,current_struct_addr,LOAD_FLAG_NONE);
 	if (!value) {
 	    verror("could not load value in list position %d, aborting!\n",i);

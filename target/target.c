@@ -355,6 +355,9 @@ void target_free(struct target *target) {
 	RPUT(space,addrspace);
     }
 
+    g_hash_table_destroy(target->config);
+    target->config = NULL;
+
     /* Unload the binfile */
     if (target->binfile)
 	RPUT(target->binfile,binfile);
@@ -393,6 +396,8 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
     retval->state = state;
     retval->ops = ops;
     retval->spec = spec;
+
+    retval->config = g_hash_table_new_full(g_str_hash,g_str_equal,free,free);
 
     INIT_LIST_HEAD(&retval->spaces);
 
@@ -2589,3 +2594,7 @@ int target_detach_action(struct target *target,struct action *action) {
     return 0;
 }
 
+
+char *REGION_TYPE_STRINGS[] = {
+    "unknown","heap","stack","vdso","vsyscall","anon","main","lib",
+};

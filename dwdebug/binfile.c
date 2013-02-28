@@ -191,7 +191,8 @@ int binfile_cache_clean(void) {
     return retval;
 }
 
-struct binfile_instance *binfile_infer_instance(char *filename,ADDR base) {
+struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
+						GHashTable *config) {
     struct binfile *bf;
     struct binfile_instance *bfi;
 
@@ -204,7 +205,7 @@ struct binfile_instance *binfile_infer_instance(char *filename,ADDR base) {
 	return NULL;
     }
 
-    if (!(bfi = bf->ops->infer_instance(bf,base))) {
+    if (!(bfi = bf->ops->infer_instance(bf,base,config))) {
 	verror("could not build instance from binfile %s!\n",bf->filename);
 	return NULL;
     }
@@ -304,6 +305,11 @@ REFCNT binfile_free(struct binfile *binfile,int force) {
     if (binfile->fd > -1 || binfile->image) 
 	binfile_close(binfile);
 
+    if (binfile->instance) {
+	binfile_instance_free(binfile->instance);
+	binfile->instance = NULL;
+    }
+
     binfile->ops->free(binfile);
 
     if (binfile->ranges) {
@@ -335,6 +341,16 @@ REFCNT binfile_free(struct binfile *binfile,int force) {
     free(binfile);
 
     return retval;
+}
+
+void binfile_instance_free(struct binfile_instance *bfi) {
+    bfi->ops->free_instance(bfi);
+
+    if (bfi->filename) {
+	free(bfi->filename);
+	bfi->filename = NULL;
+    }
+    free(bfi);
 }
 
 static int _filename_info(char *filename,

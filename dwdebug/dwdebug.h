@@ -961,11 +961,13 @@ struct binfile *binfile_open_debuginfo(struct binfile *binfile,
  * (For instance, with the ELF backend, this just generates a simple
  * layout 
  */
-struct binfile_instance *binfile_infer_instance(char *filename,ADDR base);
+struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
+						GHashTable *config);
 const char *binfile_get_backend_name(struct binfile *binfile);
 binfile_type_t binfile_get_type(struct binfile *binfile);
 int binfile_close(struct binfile *binfile);
 REFCNT binfile_free(struct binfile *binfile,int force);
+void binfile_instance_free(struct binfile_instance *bfi);
 
 /*
  * Each binfile supports a simple per-backend lifecycle.  @open (invoked
@@ -982,9 +984,11 @@ struct binfile_ops {
     struct binfile *(*open_debuginfo)(struct binfile *binfile,
 				      struct binfile_instance *bfinst,
 				      const char *DFPATH[]);
-    struct binfile_instance *(*infer_instance)(struct binfile *binfile,ADDR base);
+    struct binfile_instance *(*infer_instance)(struct binfile *binfile,ADDR base,
+					       GHashTable *config);
     int (*close)(struct binfile *bfile);
     void (*free)(struct binfile *bfile);
+    void (*free_instance)(struct binfile_instance *bfi);
 };
 
 /*
@@ -1148,6 +1152,12 @@ struct binfile_instance_elf {
     ADDR *section_tab;
     /* A map of ELF symtab index to an address in the instance. */
     ADDR *symbol_tab;
+
+    /*
+     * When loading an instance, we might modify the section headers.
+     * If we do, this has the mods for us to apply.
+     */
+    GElf_Shdr *shdrs;
 };
 
 /**

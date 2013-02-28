@@ -63,6 +63,8 @@ static int xen_vm_fini(struct target *target);
 static int xen_vm_kill(struct target *target);
 static int xen_vm_loadspaces(struct target *target);
 static int xen_vm_loadregions(struct target *target,struct addrspace *space);
+static int xen_vm_updateregions(struct target *target,
+				struct addrspace *space);
 static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
 				 struct memregion *region);
 static int xen_vm_postloadinit(struct target *target);
@@ -535,6 +537,13 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 	    snprintf(xstate->kernel_elf_filename,PATH_MAX * 2,
 		     "/boot/%s%s","vmlinux-syms",
 		     xstate->kernel_filename + (tmp - xstate->kernel_filename) + 7);
+	}
+
+	/* Figure out where the modules are. */
+	if ((tmp = strstr(xstate->kernel_filename,"vmlinuz-"))) {
+	    xstate->kernel_module_dir = malloc(PATH_MAX);
+	    snprintf(xstate->kernel_module_dir,PATH_MAX,
+		     "/lib/modules/%s",tmp+strlen("vmlinuz-"));
 	}
     }
 
@@ -1566,6 +1575,14 @@ static int xen_vm_init(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
+    /*
+     * We really should read all the kernel CONFIG_* stuff, but for now,
+     * this is a hack for handling kernel module loading!  It affects
+     * module program layout and ELF relocation.  If your kernel doesn't
+     * support it, this will screw up all that stuff.
+     */
+    g_hash_table_insert(target->config,strdup("CONFIG_KALLSYMS"),strdup("y"));
+
     if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
 	vwarn("auto-enabling SEMI_STRICT bpmode on Xen target.\n");
 	target->spec->bpmode = THREAD_BPMODE_SEMI_STRICT;
@@ -1610,6 +1627,8 @@ static int xen_vm_init(struct target *target) {
 static int xen_vm_attach_internal(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_domctl domctl;
+    struct addrspace *space;
+    struct addrspace *tspace;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
@@ -1654,6 +1673,13 @@ static int xen_vm_attach_internal(struct target *target) {
 
     if (target_pause(target)) {
 	verror("could not pause target before attaching; letting user handle!\n");
+    }
+
+    /*
+     * Make sure to pull in our modules!
+     */
+    list_for_each_entry_safe(space,tspace,&target->spaces,space) {
+	xen_vm_updateregions(target,space);
     }
 
     /* Null out current state so we reload and see that it's paused! */
@@ -1740,6 +1766,10 @@ static int xen_vm_fini(struct target *target) {
 	symbol_release(xstate->task_struct_type_ptr);
     if (xstate->thread_info_type)
 	symbol_release(xstate->thread_info_type);
+    if (xstate->modules)
+	bsymbol_release(xstate->modules);
+    if (xstate->module_type)
+	bsymbol_release(xstate->module_type);
 
     if (xstate->vmpath)
 	free(xstate->vmpath);
@@ -1770,7 +1800,7 @@ static int xen_vm_kill(struct target *target) {
  */
 static int xen_vm_loadspaces(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    struct addrspace *space = addrspace_create(target,"NULL",xstate->id);
+    struct addrspace *space = addrspace_create(target,"kernel",xstate->id);
 
     RHOLD(space);
 
@@ -1941,6 +1971,17 @@ static int xen_vm_postloadinit(struct target *target) {
 	return 0;
     }
     xstate->thread_info_type = thread_info_type->lsymbol->symbol;
+
+    if (!(xstate->module_type = target_lookup_sym(target,"struct module",
+						  NULL,NULL,
+						  SYMBOL_TYPE_FLAG_TYPE))) {
+	vwarn("could not lookup 'struct module'; no module debuginfo support!\n");
+    }
+    else if (!(xstate->modules = target_lookup_sym(target,"modules",NULL,NULL,
+						   SYMBOL_TYPE_FLAG_VAR))) {
+	vwarn("could not lookup modules; not updating modules list!\n");
+	return 0;
+    }
 
     return 0;
 }
@@ -2745,6 +2786,273 @@ static int xen_vm_resume(struct target *target) {
     return __xen_vm_resume(target,0);
 }
 
+struct __update_module_data {
+    struct addrspace *space;
+    GHashTable *moddep;
+    GHashTable *config;
+};
+
+static int __update_module(struct target *target,struct value *value,void *data) {
+    struct value *mod_name = NULL;
+    struct value *vt = NULL;
+    ADDR mod_core_addr;
+    ADDR mod_init_addr;
+    unum_t mod_core_size;
+    unum_t mod_init_size;
+    struct __update_module_data *ud = (struct __update_module_data *)data;
+    struct list_head *pos;
+    struct memregion *tregion = NULL;
+    struct memrange *range;
+    char *modfilename;
+    int retval;
+    struct binfile_instance *bfi = NULL;
+    struct debugfile *debugfile = NULL;
+    struct addrspace *space = ud->space;
+
+    if (!ud) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    mod_name = target_load_value_member(target,value,"name",NULL,
+					LOAD_FLAG_NONE);
+    if (!mod_name) {
+	verror("could not load name for module!\n");
+	goto errout;
+    }
+
+    vt = target_load_value_member(target,value,"module_core",NULL,
+				     LOAD_FLAG_NONE);
+    if (!vt) {
+	verror("could not load module_core addr!\n");
+	goto errout;
+    }
+    mod_core_addr = v_addr(vt);
+    value_free(vt);
+
+    vt = target_load_value_member(target,value,"module_init",NULL,
+				     LOAD_FLAG_NONE);
+    if (!vt) {
+	verror("could not load module_init addr!\n");
+	goto errout;
+    }
+    mod_init_addr = v_addr(vt);
+    value_free(vt);
+
+    vt = target_load_value_member(target,value,"core_size",NULL,
+				     LOAD_FLAG_NONE);
+    if (!vt) {
+	verror("could not load module core_size!\n");
+	goto errout;
+    }
+    mod_core_size = v_unum(vt);
+    value_free(vt);
+
+    vt = target_load_value_member(target,value,"init_size",NULL,
+				     LOAD_FLAG_NONE);
+    if (!vt) {
+	verror("could not load module init_size!\n");
+	goto errout;
+    }
+    mod_init_size = v_unum(vt);
+    value_free(vt);
+
+    vdebug(2,LA_TARGET,LF_XV,
+	   "module %s (core=0x%"PRIxADDR"(%u),init=0x%"PRIxADDR"(%u))\n",
+	   v_string(mod_name),mod_core_addr,(unsigned)mod_core_size,
+	   mod_init_addr,(unsigned)mod_init_size);
+
+    modfilename = g_hash_table_lookup(ud->moddep,v_string(mod_name));
+    if (!modfilename) {
+	retval = -1;
+	goto errout;
+    }
+
+    list_for_each(pos,&space->regions) {
+	tregion = list_entry(pos,typeof(*tregion),region);
+	if (strcmp(tregion->name,modfilename) == 0) {
+	    if (tregion->base_load_addr == mod_core_addr)
+		break;
+	}
+	tregion = NULL;
+    }
+
+    if (tregion) {
+	tregion->exists = 1;
+    }
+    else {
+	/*
+	 * Create a new one!  Anything could have happened.
+	 */
+	tregion = memregion_create(ud->space,REGION_TYPE_LIB,
+				   strdup(modfilename));
+	tregion->new = 1;
+
+	/*
+	 * Create a new range for the region.
+	 */
+	range = memrange_create(tregion,mod_core_addr,
+				mod_core_addr + mod_core_size,0,0);
+
+	/*
+	 * Load its debuginfo.
+	 */
+	bfi = binfile_infer_instance(tregion->name,mod_core_addr,target->config);
+	if (!bfi) {
+	    verror("could not infer instance for module %s!\n",tregion->name);
+	    retval = -1;
+	    goto errout;
+	}
+
+	debugfile = 
+	    debugfile_from_instance(bfi,target->spec->debugfile_load_opts_list);
+	if (!debugfile) {
+	    retval = -1;
+	    goto errout;
+	}
+
+	if (target_associate_debugfile(target,tregion,debugfile)) {
+	    retval = -1;
+	    goto errout;
+	}
+    }
+
+    retval = 0;
+
+    if (mod_name)
+	value_free(mod_name);
+
+    return retval;
+
+ errout:
+    if (debugfile)
+	debugfile_free(debugfile,0);
+    if (bfi)
+	binfile_instance_free(bfi);
+    if (tregion)
+	memregion_free(tregion);
+
+    return retval;
+}
+
+static int xen_vm_updateregions(struct target *target,
+				struct addrspace *space) {
+    struct xen_vm_state *xstate = \
+	(struct xen_vm_state *)target->state;
+    GHashTable *moddep;
+    FILE *moddep_file;
+    char moddep_path[PATH_MAX];
+    char buf[PATH_MAX * 2];
+    char *colon;
+    char *slash;
+    char *newline;
+    char *extension;
+    char *modname;
+    char *modfilename;
+    struct __update_module_data ud;
+    struct memregion *region;
+    struct memregion *tmp;
+
+    vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
+
+    /*
+     * We never update the main kernel region.  Instead, we update the
+     * module subregions as needed.
+     *
+     * XXX: in this first version, we don't worry about module init
+     * sections that can be removed after the kernel initializes the
+     * module.
+     */
+
+    if (!xstate->module_type || !xstate->modules || !xstate->kernel_module_dir) {
+	/*	
+	 * Don't return an error; would upset target_open.
+	 */
+	return 0;
+    }
+
+    /*
+     * Read the current modules.dep file and build up the name->file map.
+     */
+    snprintf(moddep_path,PATH_MAX,"%s/modules.dep",xstate->kernel_module_dir);
+    if (!(moddep_file = fopen(moddep_path,"r"))) {
+	verror("fopen(%s): %s\n",moddep_path,strerror(errno));
+	return 0;
+    }
+    moddep = g_hash_table_new_full(g_str_hash,g_str_equal,free,free);
+
+    while (fgets(buf,sizeof(buf),moddep_file)) {
+	newline = index(buf,'\n');
+
+	/*
+	 * Find lines starting with "<module_filename>:", and split them
+	 * into a map of <module_name> -> <module_filename>
+	 */
+	if ((colon = index(buf,':'))) {
+	    *colon = '\0';
+	    if ((slash = rindex(buf,'/'))) {
+		modfilename = strdup(buf);
+		modname = strdup(slash+1);
+		if ((extension = rindex(modname,'.')))
+		    *extension = '\0';
+		g_hash_table_insert(moddep,modname,modfilename);
+		vdebug(8,LA_TARGET,LF_XV,
+		       "modules.dep: %s -> %s\n",modname,modfilename);
+	    }
+	}
+
+	/*
+	 * Drain until we get a newline.
+	 */
+	if (!newline) {
+	    while (fgets(buf,sizeof(buf),moddep_file)) {
+		if (index(buf,'\n'))
+		    break;
+	    }
+	}
+    }
+
+    ud.space = space;
+    ud.moddep = moddep;
+
+    /*
+     * Clear out the current modules region bits.
+     *
+     * We don't bother checking ranges.  No need.
+     */
+    list_for_each_entry(region,&space->regions,region) {
+	if (region->type == REGION_TYPE_LIB) {
+	    region->exists = 0;
+	    region->new = 0;
+	}
+    }
+
+    /*
+     * Handle the modules via callback via iterator.
+     */
+    linux_list_for_each_entry(target,xstate->module_type,xstate->modules,"list",0,
+			      __update_module,&ud);
+
+    /*
+     * Garbage-collect stale modules.
+     *
+     * XXX: eventually, we need to check any target stuff in a region we
+     * delete -- values, probes, etc.
+     */
+    list_for_each_entry_safe(region,tmp,&space->regions,region) {
+	if (region->type == REGION_TYPE_LIB
+	    && !region->exists && !region->new) {
+	    vdebug(3,LA_TARGET,LF_XV,"removing stale region (%s:%s:%s)\n",
+		   region->space->idstr,region->name,REGION_TYPE(region->type));
+	    memregion_free(region);
+	}
+    }
+
+    g_hash_table_destroy(moddep);
+
+    return 0;
+}
+
 /*
  * If again is not NULL, we set again
  *   to -1 if there was an error, but we should try again;
@@ -2764,6 +3072,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     tid_t tid;
     struct probepoint *spp;
     struct target_thread *sstep_thread;
+    struct addrspace *space;
 
     /* From previous */
     xa_destroy_cache(&xstate->xa_instance);
@@ -2791,6 +3100,10 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    verror("could not read EIP while checking debug event: %s\n",
 		   strerror(errno));
 	    goto out_err;
+	}
+
+	list_for_each_entry(space,&target->spaces,space) {
+	    xen_vm_updateregions(target,space);
 	}
 
 	/*

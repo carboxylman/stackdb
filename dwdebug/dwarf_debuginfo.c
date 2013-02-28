@@ -4437,7 +4437,14 @@ static int bfi_find_section_address(Dwfl_Module *mod __attribute__ ((unused)),
 	    return -1;
 	}
 	/* XXX: subtract base since we already relocated it in bfielf! */
-	*addr = bfielf->section_tab[shndx] - base;
+	/*
+	 * So, for whatever reason, this is what this callback expects!
+	 * Ugh.  I guess what it really wants is a virtual offset from
+	 * base.  Actually, this *is* base itself.  Weird.  But, it
+	 * works!
+	 */
+	*addr = bfielf->section_tab[shndx] - base 
+	    - (bfielf->section_tab[shndx] - base);
     }
 
     return 0;

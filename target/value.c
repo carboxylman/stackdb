@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -285,6 +285,7 @@ float            v_f(struct value *v)   { return *((float *)v->buf); }
 double           v_d(struct value *v)   { return *((double *)v->buf); }
 long double      v_dd(struct value *v)  { return *((long double *)v->buf); }
 ADDR             v_addr(struct value *v){ return *((ADDR *)v->buf); }
+char *           v_string(struct value *v){ return v->buf; }
 
 int value_update(struct value *value,const char *buf,int bufsiz) {
     if (bufsiz < 0) {

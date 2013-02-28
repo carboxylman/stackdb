@@ -52,9 +52,11 @@ static struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
 						  struct binfile_instance *bfinst,
 						  const char *DFPATH[]);
 static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfile,
-							   ADDR base);
+							   ADDR base,
+							   GHashTable *config);
 static int elf_binfile_close(struct binfile *binfile);
 static void elf_binfile_free(struct binfile *binfile);
+static void elf_binfile_free_instance(struct binfile_instance *bfi);
 
 struct binfile_ops elf_binfile_ops = {
     .get_backend_name = elf_binfile_get_backend_name,
@@ -63,6 +65,7 @@ struct binfile_ops elf_binfile_ops = {
     .infer_instance = elf_binfile_infer_instance,
     .close = elf_binfile_close,
     .free = elf_binfile_free,
+    .free_instance = elf_binfile_free_instance,
 };
 
 static int elf_get_arch_info(Elf *elf,int *wordsize,int *endian) {
@@ -142,8 +145,27 @@ static int elf_binfile_close(struct binfile *binfile) {
 
 static void elf_binfile_free(struct binfile *binfile) {
     struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
+    struct binfile_instance *bfi = (struct binfile_instance *)binfile->instance;
+    struct binfile_instance_elf *bfielf = NULL;
 
     elf_binfile_close(binfile);
+
+    if (bfi) {
+	bfielf = (struct binfile_instance_elf *)bfi->priv;
+
+	if (bfielf) {
+	    if (bfielf->section_tab) {
+		free(bfielf->section_tab);
+		bfielf->section_tab = NULL;
+	    }
+	    if (bfielf->symbol_tab) {
+		free(bfielf->symbol_tab);
+		bfielf->symbol_tab = NULL;
+	    }
+	    free(bfielf);
+	    bfi->priv = NULL;
+	}
+    }
 
     if (bfelf->shdrs) {
 	free(bfelf->shdrs);
@@ -163,6 +185,28 @@ static void elf_binfile_free(struct binfile *binfile) {
     }
 
     free(binfile->priv);
+}
+
+static void elf_binfile_free_instance(struct binfile_instance *bfi) {
+    struct binfile_instance_elf *bfielf = \
+	(struct binfile_instance_elf *)bfi->priv;
+
+    if (bfielf) {
+	if (bfielf->shdrs) {
+	    free(bfielf->shdrs);
+	    bfielf->shdrs = NULL;
+	}
+	if (bfielf->section_tab) {
+	    free(bfielf->section_tab);
+	    bfielf->section_tab = NULL;
+	}
+	if (bfielf->symbol_tab) {
+	    free(bfielf->symbol_tab);
+	    bfielf->symbol_tab = NULL;
+	}
+	free(bfielf);
+	bfi->priv = NULL;
+    }
 }
 
 struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
@@ -242,7 +286,8 @@ struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
 }
 
 static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfile,
-							   ADDR base) {
+							   ADDR base,
+							   GHashTable *config) {
     struct binfile_elf *bfelf;
     struct binfile_instance *bfi;
     struct binfile_instance_elf *bfielf;
@@ -274,6 +319,8 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     Elf_Scn *scn;
     Elf_Data *edata;
     uint8_t *done_sections;
+    char *kallsyms_str;
+    int kallsyms = 0;
 
     if (!(bfelf = (struct binfile_elf *)binfile->priv)) {
 	verror("no ELF info for source binfile %s!\n",binfile->filename);
@@ -295,18 +342,58 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     done_sections = calloc(bfielf->num_sections,sizeof(uint8_t));
 
     /*
+     * Some special kernel hacks!  Don't load modinfo, and load
+     * symtab/strtab if CONFIG_KALLSYMS was set.  Need to tweak the
+     * shdrs to stop modinfo from being alloc'd, and to alloc
+     * symtab/strtab.
+     */
+    if (config) {
+	kallsyms_str = g_hash_table_lookup(config,"CONFIG_KALLSYMS");
+	if (kallsyms_str && (*kallsyms_str == 'y' || *kallsyms_str == 'Y'))
+	    kallsyms = 1;
+    }
+
+    /*
+     * This is very bad of us -- because we edit the cached section
+     * headers in memory, and the underlying ELF descriptor does not
+     * know.
+     *
+     * So, we save a copy in the instance, and edit that copy.  Anything
+     * that uses our instance needs to know this.  We only use this for
+     * relocatable ELF files that we relocate (and load into memory to
+     * do the relocations on -- so we modify the relocated, in-memory
+     * ELF descriptor in that case.  See elf_binfile_open...
+     *
+     * But, for this function, note that we use the edited shdrs!!
+     */
+    bfielf->shdrs = calloc(bfelf->ehdr.e_shnum,sizeof(*bfelf->shdrs));
+    memcpy(bfielf->shdrs,bfelf->shdrs,bfelf->ehdr.e_shnum*sizeof(*bfelf->shdrs));
+
+    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+	shdr = &bfielf->shdrs[i];
+	secname = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
+
+	if (kallsyms && (strcmp(secname,".symtab") == 0
+			 || strcmp(secname,".strtab") == 0))
+	    bfielf->shdrs[i].sh_flags |= SHF_ALLOC;
+	else if (strcmp(secname,".modinfo") == 0) 
+	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
+    }
+
+    /*
      * For now, the default layout is the kernel's layout :).  Those are
      * the only relocatable files we have to handle initially.
      */
     for (fm = 0; fm < sizeof(shfm)/(2*sizeof(unsigned long)); ++fm) {
 	for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
-	    shdr = &bfelf->shdrs[i];
+	    shdr = &bfielf->shdrs[i];
 	    secname = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
 
 	    if ((shdr->sh_flags & shfm[fm][0]) != shfm[fm][0]
 		|| shdr->sh_flags & shfm[fm][1]
 		|| done_sections[i] != 0
-		|| !secname || strncmp(secname,".init",5) == 0)
+		|| !secname
+		|| strncmp(secname,".init",5) == 0)
 		continue;
 
 	    align = shdr->sh_addralign ? shdr->sh_addralign : 1;
@@ -333,7 +420,7 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 
     for (fm = 0; fm < sizeof(shfm)/(2*sizeof(unsigned long)); ++fm) {
 	for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
-	    shdr = &bfelf->shdrs[i];
+	    shdr = &bfielf->shdrs[i];
 	    secname = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
 
 	    if ((shdr->sh_flags & shfm[fm][0]) != shfm[fm][0]
@@ -372,7 +459,7 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
      * but I suppose the user might not do that.  So do it here... sigh.
      */
     for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
-	shdr = &bfelf->shdrs[i];
+	shdr = &bfielf->shdrs[i];
 
 	if (!shdr || shdr->sh_size <= 0 || shdr->sh_type != SHT_SYMTAB) 
 	    continue;
@@ -473,6 +560,8 @@ static struct binfile *elf_binfile_open(char *filename,
     int rcoffset;
     GElf_Addr rvalue;
     struct binfile_instance_elf *bfelfinst = NULL;
+    GElf_Shdr *shdr_new;
+    GElf_Shdr shdr_new_mem;
 
     /*
      * Set up our data structures.
@@ -597,11 +686,17 @@ static struct binfile *elf_binfile_open(char *filename,
 	 * Now load all the section headers and build up a tmp array.
 	 */
 	bfelf->shdrs = (GElf_Shdr *)calloc(bfelf->ehdr.e_shnum,sizeof(GElf_Shdr));
-	for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
-	    scn = elf_getscn(bfelf->elf,i);
-	    if (!gelf_getshdr(scn,&bfelf->shdrs[i])) {
-		verror("could not load section header for section %d!\n",i);
-		goto errout;
+	if (bfelfinst->shdrs) {
+	    memcpy(bfelf->shdrs,bfelfinst->shdrs,
+		   bfelf->ehdr.e_shnum*sizeof(GElf_Shdr));
+	}
+	else {
+	    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+		scn = elf_getscn(bfelf->elf,i);
+		if (!gelf_getshdr(scn,&bfelf->shdrs[i])) {
+		    verror("could not load section header for section %d!\n",i);
+		    goto errout;
+		}
 	    }
 	}
 
@@ -760,6 +855,28 @@ static struct binfile *elf_binfile_open(char *filename,
 	close(bf->fd);
 	bf->fd = -1;
 	bfelf->elf = elf_memory(bf->image,stbuf.st_size);
+
+	/*
+	 * Also, update sh_flags from the instance's headers if they
+	 * exist.
+	 */
+	if (bfelfinst->shdrs) {
+	    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+		scn = elf_getscn(bfelf->elf,i);
+		if (!(shdr_new = gelf_getshdr(scn,&shdr_new_mem))) {
+		    verror("could not load section header for section %d!\n",i);
+		    goto errout;
+		}
+
+		shdr_new->sh_flags = bfelfinst->shdrs[i].sh_flags;
+
+		if (gelf_update_shdr(scn,shdr_new)) {
+		    verror("could not update sh_flags for section %d;"
+			   " skipping but debuginfo reloc might be broken!\n",i);
+		    continue;
+		}
+	    }
+	}
 
 	vdebug(3,LA_DEBUG,LF_ELF,
 	       "opened relocated ELF file %s in memory\n",bf->filename);

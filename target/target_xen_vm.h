@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -184,12 +184,15 @@ struct xen_vm_state {
     char *kernel_filename;
     char *kernel_version;
     char *kernel_elf_filename;
+    char *kernel_module_dir;
 
     struct bsymbol *init_task;
     struct symbol *task_struct_type;
     struct symbol *task_struct_type_ptr;
     ADDR init_task_addr;
     struct symbol *thread_info_type;
+    struct bsymbol *module_type;
+    struct bsymbol *modules;
 
     unsigned int last_thread_count;
     uint8_t thread_auto_gc_counter;
@@ -246,5 +249,10 @@ typedef int (*linux_list_iterator_t)(struct target *t,struct value *value,
 int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
 			       char *list_head_member_name,int nofree,
 			       linux_list_iterator_t iterator,void *data);
+
+int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
+			      struct bsymbol *list_head,
+			      char *list_head_member_name,int nofree,
+			      linux_list_iterator_t iterator,void *data);
 
 #endif /* __TARGET_XEN_VM_H__ */
