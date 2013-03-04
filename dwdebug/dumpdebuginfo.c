@@ -177,7 +177,7 @@ int main(int argc,char **argv) {
     }
 
     if (infer) {
-	bfi = binfile_infer_instance(filename,base);
+	bfi = binfile_infer_instance(filename,base,NULL);
 	debugfile = debugfile_from_instance(bfi,opts_list);
     }
     else if (bfi) {
