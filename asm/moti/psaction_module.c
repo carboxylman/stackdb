@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -22,6 +22,7 @@
 #include <linux/init.h>
 #include <linux/kthread.h>
 #include <linux/sched.h> 
+#include <asm/thread_info.h>
 #include <asm/signal.h>
 #include <asm/siginfo.h>
 
@@ -46,8 +47,6 @@ int pid;
 
 module_param(pid, int , S_IRUGO|S_IWUSR);
 
-#define TIF_SIGPENDING 2
-
 int check_func(int * pid) {
     struct task_struct *task;
     int found_flag = 0;
@@ -60,24 +59,21 @@ int check_func(int * pid) {
     /* Iterate over all the tasks and check for a matching PID*/
     for_each_process(task) {
         if (task->pid == *pid) {
-            int group_exit_code = 9;
-            int group_stop_count = 0;
-            unsigned int signal_group_exit = 0x00000008;
             /* We have found the task_struct for the process*/
             printk("Found process %s with PID = %d\n", task->comm, task->pid);
 
             sigaddset(&task->signal->shared_pending.signal, SIGKILL);
 
-            task->signal->flags = signal_group_exit;
+            task->signal->flags = SIGNAL_GROUP_EXIT;
 
-            task->signal->group_exit_code = group_exit_code;
+            task->signal->group_exit_code = SIGKILL;
 
-            task->signal->group_stop_count = group_stop_count;
+            task->signal->group_stop_count = 0;
 
             /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
 
             task->thread_info->flags =
-                    task->thread_info->flags | TIF_SIGPENDING;
+		task->thread_info->flags | TIF_SIGPENDING;
             printk("Killed process\n");
             found_flag = 1;
         }
@@ -85,19 +81,18 @@ int check_func(int * pid) {
     /*remove the lock.
      *write_unlock_irq(&tasklist_lock);
      */
-    if (!found_flag) {
+    if (!found_flag) 
         printk("Process with PID = %d not found", *pid);
-    }
-    while ((!kthread_should_stop())) {
+    while ((!kthread_should_stop())) 
         yield();
-    }
+
     return 0;
 }
 
 static int __init variable_check_init(void) {
     printk("Creating a kthread in the init function\n");
     thread = kthread_run(&check_func, &pid, "__ps_kill");
-    if(IS_ERR(thread)) {
+    if (IS_ERR(thread)) {
         printk("Kthread creation failed\n");
         return -ENOMEM;
     }
@@ -109,11 +104,10 @@ static void __exit variable_check_exit(void) {
 
     printk("In the exit function \n");
     result = kthread_stop(thread);
-    if(result == -EINTR) {
+    if (result == -EINTR) 
         printk("Kthread_stop failed\n");
-    } else {
+    else 
         printk(" Check_func returned %d\n",result);
-    }
 }
 
 module_init( variable_check_init);

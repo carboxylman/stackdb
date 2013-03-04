@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011, 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -36,7 +36,8 @@ int check_func(int * check_value) {
     while ((!kthread_should_stop())) {
         if (counter == *check_value) {
             printk("The counter has changed to the required value \n");
-        } else {
+        }
+	else {
             printk("Calling yield \n");
             yield();
         }
@@ -51,7 +52,7 @@ static int __init variable_check_init(void) {
     printk("Initializing the counter variable to 10 \n");
     printk("Creating a kthread in the init function\n");
     thread = kthread_run(&check_func, &check_value, "check_func_thread");
-    if(IS_ERR(thread)) {
+    if (IS_ERR(thread)) {
         printk("Kthread_run error\n");
         return -ENOMEM;
     }
@@ -63,9 +64,10 @@ static void __exit variable_check_exit(void) {
 
     printk("In the exit function, killing the kthread\n");
     result = kthread_stop(thread);
-    if(result == -EINTR) {
+    if (result == -EINTR) {
         printk("Kthread_stop failed\n");
-    } else {
+    }
+    else {
         printk(" check_func returned %d\n",result);
     }
 }
