@@ -103,18 +103,18 @@ SymbolsT =
      | element unionType { UnionTypeT } 
      | element functionType { FunctionTypeT })+
 
-SymbolsOptT = 
+SymbolsOptT =
     (element variable { VariableT } | element function { FunctionT }
-     | element label { LabelT } | element voidType { VoidTypeT } 
-     | element baseType { BaseTypeT } 
+     | element label { LabelT } | element voidType { VoidTypeT }
+     | element baseType { BaseTypeT }
      | element pointerType { PointerTypeT }
-     | element typedefType { TypedefTypeT } 
+     | element typedefType { TypedefTypeT }
      | element constType { ConstTypeT }
-     | element volatileType { VolatileTypeT } 
-     | element arrayType { ArrayTypeT } 
-     | element enumType { EnumTypeT } 
+     | element volatileType { VolatileTypeT }
+     | element arrayType { ArrayTypeT }
+     | element enumType { EnumTypeT }
      | element structType { StructTypeT }
-     | element unionType { UnionTypeT } 
+     | element unionType { UnionTypeT }
      | element functionType { FunctionTypeT })*
 
 #NestedSymbolT = SymbolsT
@@ -124,13 +124,16 @@ NestedSymbol = element nestedSymbol { SymbolsT }
 DebugFileT = 
     (attribute sid { DebugFileIdT } | attribute sref { xsd:IDREF }),
     element name { text }?,
-    (element filename { text },
-     element version { text },
-     element type { "kernel" | "kmod" | "static" | "sharedlib" },
+    (element version { xsd:token },
+     element debugfileType { "none" | "kernel" | "kmod" | "executable" 
+                             | "dynamic" | "relocatable" | "corefile" },
 
      element sourceFiles {
          element sourceFile {
-             element filename { text },
+             element filename { xsd:token },
+             element compilationDir { xsd:token },
+             element producer { xsd:token },
+             element language { xsd:token },
              element symtab { SymtabT }
          }*
      },
@@ -160,13 +163,8 @@ Ranges = element ranges { RangesT }
 
 SymtabT = 
     (attribute sid { xsd:ID } | attribute sref { xsd:IDREF }),
-    attribute name { text }?,
+    attribute name { xsd:token }?,
     (element ranges { RangesT },
-     element rootMeta {
-         element compilationDir { text },
-         element producer { text },
-         element language { text }
-     }?,
      element parent { SymtabT }?,
      element symtabs { element symtab { SymtabT }* },
      element symbols { SymbolsOptT },
@@ -190,11 +188,12 @@ ListLoc = element rangeLocList {
         element location { LocationT }
     }+
 }
-RuntimeLoc = element runtimeLoc { text }
+RuntimeLoc = element runtimeLoc { xsd:string }
 
 LocationT =
-    attribute type { "none" | "addr" | "reg" | "regAddr" | "regOffset" 
-                     | "memberOffset"| "fbRegOffset" | "list" | "runtime" }, 
+    attribute locationType { "none" | "addr" | "reg" | "regAddr" | "regOffset" 
+                             | "memberOffset"| "fbRegOffset" | "list"
+			     | "runtime" }, 
     ( Addr | Reg | RegAddr | RegOffset | MemberOffset | FbRegOffset 
       | ListLoc | RuntimeLoc )?
 
@@ -208,7 +207,7 @@ SymbolHeader =
     # Names are set only if they exist; some symbols are anonymous.
     #
     (attribute sid { xsd:ID } | attribute sref { xsd:IDREF }),
-    attribute name { text }?
+    attribute name { xsd:token }?
 
 SizeT = 
     attribute sizeType { "byte" | "bit" },
@@ -237,7 +236,7 @@ SymbolCommon =
 
 InstanceSymbol = 
     element addr { ADDR }?,
-    element inline {
+    element inlineInfo {
         attribute isInlineInstance { xsd:boolean },
         attribute isDeclaredInline { xsd:boolean },
         attribute isInlined { xsd:boolean },
@@ -249,8 +248,8 @@ VariableT =
     SymbolHeader,
     (SymbolCommon,
      InstanceSymbol,
-     element type { SymbolT }?,
-     element constValue { text }?,
+     element symtype { SymbolT }?,
+     element constValue { xsd:token }?,
      element kind { "variable" | "parameter" | "member" | "enumerator" },
      element location { LocationT }?)?
 
@@ -258,15 +257,15 @@ FunctionT =
     SymbolHeader,
     (SymbolCommon,
      InstanceSymbol,
-     element type { SymbolT }?,
-     element constValue { text }?,
-     element argCount { xsd:unsignedShort },
+     element symtype { SymbolT }?,
+     element constValue { xsd:token }?,
+     element parameterCount { xsd:unsignedShort },
      element hasUnspecifiedParams { xsd:boolean },
      element parameters { SymbolsOptT },
      element entryPC { ADDR }?,
      element prologueEnd { ADDR }?,
      element epilogueBegin { ADDR }?,
-     element ranges { RangesT },
+     Ranges,
      element symtab { SymtabT })?
 
 LabelT = 
@@ -291,56 +290,56 @@ BaseTypeT =
 PointerTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT })?
+     element symtype { SymbolT })?
 
 TypedefTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT })?
+     element symtype { SymbolT })?
 
 ConstTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT })?
+     element symtype { SymbolT })?
 
 VolatileTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT })?
+     element symtype { SymbolT })?
 
 ArrayTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT },
+     element symtype { SymbolT },
      element subrangeCount { xsd:int },
      element subranges { element subrange { xsd:int }+ })?
 
 EnumTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT },
+     element symtype { SymbolT },
      element memberCount { xsd:int },
-     element members { SymbolsT })?
+     element members { SymbolsOptT })?
 
 StructTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT },
+     element symtype { SymbolT },
      element memberCount { xsd:int },
      element members { SymbolsOptT })?
 
 UnionTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT },
+     element symtype { SymbolT },
      element memberCount { xsd:int },
      element members { SymbolsOptT })?
 
 FunctionTypeT = 
     SymbolHeader,
     (SymbolCommon,
-     element type { SymbolT },
-     element argCount { xsd:unsignedShort },
+     element symtype { SymbolT },
+     element parameterCount { xsd:unsignedShort },
      element hasUnspecifiedParams { xsd:boolean},
      element parameters { SymbolsOptT })?
 

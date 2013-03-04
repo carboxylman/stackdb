@@ -52,22 +52,22 @@ d_location_to_x_LocationT(struct soap *soap,struct location *l,
     switch(l->loctype) {
     case LOCTYPE_ADDR:
     case LOCTYPE_REALADDR:
-	vl->type = _vmi1__LocationT_type__addr;
+	vl->locationType = _vmi1__LocationT_locationType__addr;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_addr;
 	vl->union_LocationT.addr = l->l.addr;
 	break;
     case LOCTYPE_REG:
-	vl->type = _vmi1__LocationT_type__reg;
+	vl->locationType = _vmi1__LocationT_locationType__reg;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_reg;
 	vl->union_LocationT.reg = l->l.reg;
 	break;
     case LOCTYPE_REG_ADDR:
-	vl->type = _vmi1__LocationT_type__regAddr;
+	vl->locationType = _vmi1__LocationT_locationType__regAddr;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_regAddr;
 	vl->union_LocationT.regAddr = l->l.reg;
 	break;
     case LOCTYPE_REG_OFFSET:
-	vl->type = _vmi1__LocationT_type__regOffset;
+	vl->locationType = _vmi1__LocationT_locationType__regOffset;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_regOffset;
 	vl->union_LocationT.regOffset = \
 	    _soap_calloc(soap,1*sizeof(*vl->union_LocationT.regOffset));
@@ -75,22 +75,22 @@ d_location_to_x_LocationT(struct soap *soap,struct location *l,
 	vl->union_LocationT.regOffset->offset = l->l.regoffset.offset;
 	break;
     case LOCTYPE_FBREG_OFFSET:
-	vl->type = _vmi1__LocationT_type__fbRegOffset;
+	vl->locationType = _vmi1__LocationT_locationType__fbRegOffset;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_fbRegOffset;
 	vl->union_LocationT.fbRegOffset = l->l.fboffset;
 	break;
     case LOCTYPE_MEMBER_OFFSET:
-	vl->type = _vmi1__LocationT_type__memberOffset;
+	vl->locationType = _vmi1__LocationT_locationType__memberOffset;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_memberOffset;
 	vl->union_LocationT.memberOffset = l->l.member_offset;
 	break;
     case LOCTYPE_RUNTIME:
-	vl->type = _vmi1__LocationT_type__runtime;
+	vl->locationType = _vmi1__LocationT_locationType__runtime;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_runtimeLoc;
 	vl->union_LocationT.runtimeLoc = "";
 	break;
     case LOCTYPE_LOCLIST:
-	vl->type = _vmi1__LocationT_type__list;
+	vl->locationType = _vmi1__LocationT_locationType__list;
 	vl->__union_LocationT = SOAP_UNION__vmi1__union_LocationT_rangeLocList;
 	vl->union_LocationT.rangeLocList = \
 	    _soap_calloc(soap,1*sizeof(*vl->union_LocationT.rangeLocList));
@@ -115,7 +115,7 @@ d_location_to_x_LocationT(struct soap *soap,struct location *l,
 	break;
     case LOCTYPE_UNKNOWN:
     case __LOCTYPE_MAX:
-	vl->type = _vmi1__LocationT_type__none;
+	vl->locationType = _vmi1__LocationT_locationType__none;
 	vl->__union_LocationT = 0;
 	break;
     }
@@ -223,14 +223,14 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 
 #define FILL_SYMBOLTYPE(typename,s,r)					\
     if ((s)->datatype)							\
-	(r)->__ ## typename ## _sequence->type =			\
+	(r)->__ ## typename ## _sequence->symtype =			\
 	    d_symbol_to_x_SymbolT(soap,(s)->datatype,(opts),		\
 				  (reftab),(refstack),(depth)+1);
     
 #define FILL_INSTANCESYMBOLCONTENTS(typename,s,opts,reftab,refstack,depth,r) \
     do {								\
         struct __vmi1__ ## typename ## _sequence *guts;			\
-	struct _vmi1__inline *_inline;					\
+	struct _vmi1__inlineInfo *_inline;				\
 									\
 	guts = (r)->__ ## typename ## _sequence;			\
 									\
@@ -239,7 +239,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 	    *guts->addr = s->base_addr;					\
 	}								\
 	/* XXX: do constValue!!! */					\
-	_inline = _soap_calloc(soap,sizeof(*guts->inline_));		\
+	_inline = _soap_calloc(soap,sizeof(*guts->inlineInfo));		\
 	if (SYMBOL_IS_FULL((s)) && (s)->s.ii->origin) {			\
 	    _inline->origin =						\
 		d_symbol_to_x_SymbolT(soap,(s)->s.ii->origin,(opts),	\
@@ -260,7 +260,7 @@ d_range_to_x_RangesT(struct soap *soap,struct range *r,
 						  (s)->s.ii->inline_instances, \
 						  (opts),(reftab),(refstack),(depth)+1); \
 	}								\
-	guts->inline_ = _inline;					\
+	guts->inlineInfo = _inline;					\
     } while (0);
 
 #define REF_ALLOC_SEQ(typename,r,rs)					\
@@ -482,7 +482,7 @@ d_symbol_to_x_VariableT(struct soap *soap,struct symbol *s,
 	/* Schema requires us to have one, so we'd better */
 	rs->location = _soap_calloc(soap,sizeof(*rs->location));
 	rs->location->__union_LocationT = 0;
-	rs->location->type = _vmi1__LocationT_type__none;
+	rs->location->locationType = _vmi1__LocationT_locationType__none;
     }
 
     CLEANUP_REF(symbol,VariableT,s,opts,reftab,refstack,depth,r);
@@ -511,7 +511,7 @@ d_symbol_to_x_FunctionT(struct soap *soap,struct symbol *s,
     FILL_SYMBOLTYPE(FunctionT,s,r);
 
     if (SYMBOL_IS_FULL(s)) {
-	rs->argCount = s->s.ii->d.f.count;
+	rs->parameterCount = s->s.ii->d.f.count;
 	rs->hasUnspecifiedParams =					\
 	    (s->s.ii->d.f.hasunspec) ? xsd__boolean__true_ : xsd__boolean__false_;
 	if (s->s.ii->d.f.hasentrypc) {
@@ -934,7 +934,7 @@ d_symbol_to_x_FunctionTypeT(struct soap *soap,struct symbol *s,
     FILL_SYMBOLCOMMON(FunctionTypeT,s,r);
     FILL_SYMBOLTYPE(FunctionTypeT,s,r);
 
-    rs->argCount = s->s.ti->d.f.count;
+    rs->parameterCount = s->s.ti->d.f.count;
     if (s->s.ti->d.f.count) {
 	gslist = array_list_create(s->s.ti->d.f.count);
 	list_for_each_entry(tmpi,&s->s.ti->d.f.args,d.v.member) {
@@ -1220,19 +1220,31 @@ d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,
     RETURN_REF_OR_ALLOC(debugfile,DebugFileT,df,df->filename,opts,reftab,refstack,depth,r);
     REF_ALLOC_SEQ(DebugFileT,r,rs);
 
-    if (df->type == DEBUGFILE_TYPE_KERNEL)
-	rs->type = _vmi1__DebugFileT_type__kernel;
-    else if (df->type == DEBUGFILE_TYPE_KMOD)
-	rs->type = _vmi1__DebugFileT_type__kmod;
-    else if (df->type == DEBUGFILE_TYPE_MAIN)
-	rs->type = _vmi1__DebugFileT_type__static_;
-    else if (df->type == DEBUGFILE_TYPE_SHAREDLIB)
-	rs->type = _vmi1__DebugFileT_type__sharedlib;
+    if (df->binfile && df->binfile->type != BINFILE_TYPE_NONE) {
+	if (df->binfile->type == BINFILE_TYPE_EXEC
+	    && df->flags & DEBUGFILE_TYPE_FLAG_KERNEL)
+	    rs->debugfileType = _vmi1__debugfileType__kernel;
+	else if (df->binfile->type == BINFILE_TYPE_EXEC
+		 && df->flags & DEBUGFILE_TYPE_FLAG_KMOD) 
+	    rs->debugfileType = _vmi1__debugfileType__kmod;
+	else if (df->binfile->type == BINFILE_TYPE_EXEC)
+	    rs->debugfileType = _vmi1__debugfileType__executable;
+	else if (df->binfile->type == BINFILE_TYPE_DYN)
+	    rs->debugfileType = _vmi1__debugfileType__dynamic;
+	else if (df->binfile->type == BINFILE_TYPE_REL)
+	    rs->debugfileType = _vmi1__debugfileType__relocatable;
+	else if (df->binfile->type == BINFILE_TYPE_CORE)
+	    rs->debugfileType = _vmi1__debugfileType__corefile;
+    }
+    else {
+	/* This should never happen... */
+	rs->debugfileType = _vmi1__debugfileType__none;
+    }
 
-    SOAP_STRCPY(soap,rs->filename,df->filename);
     /* Done in RETURN_REF_OR_ALLOC above. */
     /*SOAP_STRCPY(soap,rs->name,df->name);*/
-    SOAP_STRCPY(soap,rs->version,df->version);
+    if (df->binfile)
+	SOAP_STRCPY(soap,rs->version,df->binfile->version);
 
     rs->sourceFiles = _soap_calloc(soap,sizeof(*rs->sourceFiles));
     rs->sourceFiles->__sizesourceFile = g_hash_table_size(df->srcfiles);
@@ -1246,6 +1258,16 @@ d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,
 	SOAP_STRCPY(soap,rs->sourceFiles->sourceFile[i].filename,sfn);
 	rs->sourceFiles->sourceFile[i].symtab =				\
 	    d_symtab_to_x_SymtabT(soap,symtab,opts,reftab,refstack,depth,NULL);
+
+
+	if (symtab->meta) {
+	    SOAP_STRCPY(soap,rs->sourceFiles->sourceFile[i].compilationDir,
+			symtab->meta->compdirname);
+	    SOAP_STRCPY(soap,rs->sourceFiles->sourceFile[i].producer,
+			symtab->meta->producer);
+	    SOAP_STRCPY(soap,rs->sourceFiles->sourceFile[i].language,
+			symtab->meta->language);
+	}
 
 	++i;
     }
@@ -1297,13 +1319,6 @@ d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *st,
     SOAP_STRCPY(soap,r->name,st->name);
 
     rs->ranges = d_range_to_x_RangesT(soap,&st->range,opts,reftab,refstack,depth);
-
-    if (st->meta) {
-	rs->rootMeta = _soap_calloc(soap,sizeof(*rs->rootMeta));
-	SOAP_STRCPY(soap,rs->rootMeta->compilationDir,st->meta->compdirname);
-	SOAP_STRCPY(soap,rs->rootMeta->producer,st->meta->producer);
-	SOAP_STRCPY(soap,rs->rootMeta->language,st->meta->language);
-    }
 
     if (st->parent) 
 	rs->parent = \

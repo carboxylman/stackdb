@@ -812,7 +812,7 @@ t_memregion_to_x_MemRegionT(struct soap *soap,
 	g_hash_table_iter_init(&iter,region->debugfiles);
 	i = 0;
 	while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&df)) {
-	    SOAP_STRCPY(soap,oregion->debugFileId[i],df->idstr);
+	    SOAP_STRCPY(soap,oregion->debugFileId[i],df->filename);
 	    ++i;
 	}
     }

@@ -161,7 +161,7 @@ int vmi1__LookupSymbolSimple(struct soap *soap,
 				   "Bad debugfile or name!");
     }
 
-    if (!(debugfile = debugfile_get(filename,NULL,NULL))) 
+    if (!(debugfile = debugfile_from_file(filename,NULL))) 
 	return soap_receiver_fault(soap,"Could not load debugfile!",
 				   "Could not load debugfile!");
 
@@ -205,7 +205,7 @@ int vmi1__LookupSymbol(struct soap *soap,
 	return soap_receiver_fault(soap,"Bad debugfile or name!",
 				   "Bad debugfile or name!");
     }
-    if (!(debugfile = debugfile_get(filename,NULL,NULL))) 
+    if (!(debugfile = debugfile_from_file(filename,NULL))) 
 	return soap_receiver_fault(soap,"Could not load debugfile!",
 				   "Could not load debugfile!");
 
