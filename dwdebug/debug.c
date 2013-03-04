@@ -1399,6 +1399,17 @@ void debugfile_load_opts_free(struct debugfile_load_opts *opts) {
     free(opts);
 }
 
+char * debugfile_get_name(struct debugfile *debugfile) {
+    return debugfile->filename;
+}
+
+char *debugfile_get_version(struct debugfile *debugfile) {
+    if (debugfile->binfile)
+	return debugfile->binfile->version;
+    return NULL;
+}
+
+
 struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
 				   struct binfile *binfile,
 				   struct debugfile_load_opts *opts,
