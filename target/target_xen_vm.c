@@ -3011,6 +3011,7 @@ static int xen_vm_updateregions(struct target *target,
 	    }
 	}
     }
+    fclose(moddep_file);
 
     ud.space = space;
     ud.moddep = moddep;
