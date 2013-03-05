@@ -997,9 +997,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 				cbargs->debugfile,
 				cbargs->cu_base,
 				loclist)) {
-		    verror("[DIE %" PRIx64 "] failed to get loclist attrval %" PRIx64 " for attr %s in var symbol %s\n",
-			   cbargs->die_offset,num,dwarf_attr_string(attr),
-			   symbol_get_name_orig(cbargs->symbol));
+		    vwarnopt(9,LA_DEBUG,LF_DWARFATTR,
+			     "[DIE %" PRIx64 "] failed to get loclist"
+			     " attrval %" PRIx64 " for attr %s in var symbol %s\n",
+			     cbargs->die_offset,num,dwarf_attr_string(attr),
+			     symbol_get_name_orig(cbargs->symbol));
 		    loc_list_free(loclist);
 		    if (SYMBOL_IS_FULL(cbargs->symbol)) {
 			cbargs->symbol->s.ii->d.v.l.loctype = LOCTYPE_UNKNOWN;
@@ -1308,7 +1310,8 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    if (get_static_ops(dwflmod,dbg,3,addrsize,offsetsize,
 			       exprlen,(unsigned char *)readp,attr,
 			       tmploc)) {
-		verror("get_loclist (%d) failed!\n",exprlen);
+		vwarnopt(9,LA_DEBUG,LF_DWARF,
+			 "get_loclist (%d) failed!\n",exprlen);
 		location_free(tmploc);
 		return -1;
 	    }

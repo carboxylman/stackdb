@@ -2287,10 +2287,11 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	for (i = 0; i < r->r.rlist.len; ++i) {
 	    if (r->r.rlist.list[i]->start == start
 		&& r->r.rlist.list[i]->end != end) {
-		verror("inconsistent RANGE_LIST entry end: 0x%"PRIxADDR
-		       ",0x%"PRIxADDR" (new end 0x%"PRIxADDR
-		       ") for symtab 0x%"PRIxSMOFFSET"; updating!\n",
-		       start,r->r.rlist.list[i]->end,end,symtab->ref);
+		vwarn("inconsistent RANGE_LIST entry end: 0x%"PRIxADDR
+		      ",0x%"PRIxADDR" (new end 0x%"PRIxADDR
+		      ") for symtab 0x%"PRIxSMOFFSET" (%s); updating!\n",
+		      start,r->r.rlist.list[i]->end,end,symtab->ref,
+		      symtab_get_name(symtab));
 
 		r->r.rlist.list[i]->end = end;
 		

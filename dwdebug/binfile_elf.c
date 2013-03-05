@@ -1277,9 +1277,10 @@ static struct binfile *elf_binfile_open(char *filename,
 		else {
 		    tmp_ral = clrange_find_next_exc(&bf->ranges,start);
 		    if (!tmp_ral) {
-			vwarn("could not find a next range after %s;"
-			      " not updating 0-length symbol!\n",
-			      symbol_get_name(symbol));
+			vwarnopt(9,LA_DEBUG,LF_ELF,
+				 "could not find a next range after %s;"
+				 " not updating 0-length symbol!\n",
+				 symbol_get_name(symbol));
 			goto lcontinue;
 		    }
 

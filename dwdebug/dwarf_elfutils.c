@@ -1,5 +1,5 @@
 /* Print information from ELF file in human-readable form.
-   Copyright (C) 1999-2012 Red Hat, Inc.
+   Copyright (C) 1999-2013 Red Hat, Inc.
    Copyright (c) 2011, 2012, 2013 The University of Utah
 
    ELF utility functions, adapted from Red Hat elfutils.
@@ -542,8 +542,9 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 
 		    /* Update the current line and currentclf stuff. */
 		    if (u128 >= (unsigned int)array_list_len(filelist)) {
-			vwarn("set_file index %u out of bounds; aborting!\n",
-			      u128);
+			vwarnopt(5,LA_DEBUG,LF_DOTHER,
+				 "set_file index %u out of bounds; aborting!\n",
+				 u128);
 			goto invalid_unit_out;
 		    }
 		    currentfile = array_list_item(filelist,((int)u128) - 1);
@@ -625,7 +626,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
     goto out;
 
  invalid_unit_out:
-    verror("invalid data at offset %tu\n",linep - linestartp);
+    vwarn("invalid DWARF line info at offset %tu\n",linep - linestartp);
     retval = -1;
     goto out;
 
