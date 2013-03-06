@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -117,7 +117,6 @@ static void signals(sighandler_t handler)
 static void parse_opt(int argc, char *argv[])
 {
 	char ch;
-	log_flags_t debug_flags;
 
 	while ((ch = getopt(argc, argv, "dl:")) != -1)
 	{
@@ -128,12 +127,11 @@ static void parse_opt(int argc, char *argv[])
 				break;
 
 			case 'l':
-				if (vmi_log_get_flag_mask(optarg, &debug_flags))
+				if (vmi_set_log_area_flaglist(optarg, NULL))
 				{
 					ERR("Bad debug flag in '%s'\n", optarg);
 					exit(-1);
 				}
-				vmi_set_log_flags(debug_flags);
 				break;
 
 			default:

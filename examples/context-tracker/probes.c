@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -70,7 +70,7 @@ void *probe_context_summarize(struct probe *probe)
 /* TASK SWITCH HANDLERS */
 
 /* Called upon the execution of label schedule.switch_tasks. */
-int probe_taskswitch(struct probe *probe, void *data, 
+result_t probe_taskswitch(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -138,7 +138,7 @@ int probe_taskswitch(struct probe *probe, void *data,
 }
 
 /* Called after the probe on label schedule.switch_tasks gets initialized. */
-int probe_taskswitch_init(struct probe *probe)
+result_t probe_taskswitch_init(struct probe *probe)
 {
 	static const char *symbol_task_prev = "schedule.prev";
 	static const char *symbol_task_next = "schedule.next";
@@ -165,7 +165,7 @@ int probe_taskswitch_init(struct probe *probe)
 }
 
 /* Called before the probe on label schedule.switch_tasks gets deallocated. */
-int probe_taskswitch_fini(struct probe *probe)
+result_t probe_taskswitch_fini(struct probe *probe)
 {
 	ctxtracker_context_t *context;
 
@@ -201,7 +201,7 @@ int probe_taskswitch_fini(struct probe *probe)
 /* INTERRUPT HANDLERS */
 
 /* Call to interrupt request handler do_IRQ */
-int probe_interrupt_entry(struct probe *probe, void *data, 
+result_t probe_interrupt_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *member_regs_orig_eax = "orig_eax";
@@ -267,7 +267,7 @@ int probe_interrupt_entry(struct probe *probe, void *data,
 }
 
 /* Return from interrupt request handler do_IRQ */
-int probe_interrupt_exit(struct probe *probe, void *data, 
+result_t probe_interrupt_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -300,7 +300,7 @@ int probe_interrupt_exit(struct probe *probe, void *data,
 }
 
 /* Called after the probe on do_IRQ entry gets initialized. */
-int probe_interrupt_init(struct probe *probe)
+result_t probe_interrupt_init(struct probe *probe)
 {
 	static const char *symbol_interrupt_regs = "do_IRQ.regs";
 
@@ -317,7 +317,7 @@ int probe_interrupt_init(struct probe *probe)
 }
 
 /* Called before the probe on do_IRQ entry gets deallocated. */
-int probe_interrupt_fini(struct probe *probe)
+result_t probe_interrupt_fini(struct probe *probe)
 {
 	ctxtracker_context_t *context;
 
@@ -342,7 +342,7 @@ int probe_interrupt_fini(struct probe *probe)
 /* PAGE FAULT HANDLERS */
 
 /* TRAP_page_fault -- trap gate #14; entry */
-int probe_pagefault_entry(struct probe *probe, void *data, 
+result_t probe_pagefault_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -441,7 +441,7 @@ int probe_pagefault_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_page_fault -- trap gate #14; exit */
-int probe_pagefault_exit(struct probe *probe, void *data, 
+result_t probe_pagefault_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -480,7 +480,7 @@ int probe_pagefault_exit(struct probe *probe, void *data,
 }
 
 /* Called after the probe on do_page_fault entry gets initialized. */
-int probe_pagefault_init(struct probe *probe)
+result_t probe_pagefault_init(struct probe *probe)
 {
 	static const char *symbol_pagefault_regs = "do_page_fault.regs";
 	static const char *symbol_pagefault_error_code = "do_page_fault.error_code";
@@ -507,7 +507,7 @@ int probe_pagefault_init(struct probe *probe)
 }
 
 /* Called before the probe on do_page_fault entry gets deallocated. */
-int probe_pagefault_fini(struct probe *probe)
+result_t probe_pagefault_fini(struct probe *probe)
 {
 	ctxtracker_context_t *context;
 
@@ -541,7 +541,7 @@ int probe_pagefault_fini(struct probe *probe)
 }
 
 /* Common handler called by all probe handlers on exception function entries. */
-int probe_exception_entry(struct probe *probe, void *data,
+result_t probe_exception_entry(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	int i, ret;
@@ -615,7 +615,7 @@ int probe_exception_entry(struct probe *probe, void *data,
 }
 
 /* Common handler called by all probe handlers on exception function exits. */
-int probe_exception_exit(struct probe *probe, void *data,
+result_t probe_exception_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	int ret;
@@ -652,7 +652,7 @@ int probe_exception_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_divide_error -- trap gate #0; entry */
-int probe_divide_error_entry(struct probe *probe, void *data, 
+result_t probe_divide_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "divide error";
@@ -674,7 +674,7 @@ int probe_divide_error_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_divide_error -- trap gate #0; exit */
-int probe_divide_error_exit(struct probe *probe, void *data, 
+result_t probe_divide_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -692,7 +692,7 @@ int probe_divide_error_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_debug -- interrupt gate #1; entry */
-int probe_debug_entry(struct probe *probe, void *data, 
+result_t probe_debug_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "debug";
@@ -714,7 +714,7 @@ int probe_debug_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_debug -- interrupt gate #1; exit */
-int probe_debug_exit(struct probe *probe, void *data, 
+result_t probe_debug_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -732,7 +732,7 @@ int probe_debug_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_nmi -- interrupt gate #2; entry */
-int probe_nmi_entry(struct probe *probe, void *data, 
+result_t probe_nmi_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "nmi";
@@ -754,7 +754,7 @@ int probe_nmi_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_nmi -- interrupt gate #2; exit */
-int probe_nmi_exit(struct probe *probe, void *data, 
+result_t probe_nmi_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -772,7 +772,7 @@ int probe_nmi_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_int3 -- system interrupt gate #3; entry */
-int probe_int3_entry(struct probe *probe, void *data, 
+result_t probe_int3_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "breakpoint";
@@ -794,7 +794,7 @@ int probe_int3_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_int3 -- system interrupt gate #3; exit */
-int probe_int3_exit(struct probe *probe, void *data, 
+result_t probe_int3_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -812,7 +812,7 @@ int probe_int3_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_overflow -- system gate #4; entry */
-int probe_overflow_entry(struct probe *probe, void *data, 
+result_t probe_overflow_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "overflow";
@@ -834,7 +834,7 @@ int probe_overflow_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_overflow -- system gate #4; exit */
-int probe_overflow_exit(struct probe *probe, void *data, 
+result_t probe_overflow_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -852,7 +852,7 @@ int probe_overflow_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_bounds -- trap gate #5; entry */
-int probe_bounds_entry(struct probe *probe, void *data, 
+result_t probe_bounds_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "bounds";
@@ -874,7 +874,7 @@ int probe_bounds_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_bounds -- trap gate #5; exit */
-int probe_bounds_exit(struct probe *probe, void *data, 
+result_t probe_bounds_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -892,7 +892,7 @@ int probe_bounds_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_invalid_op -- trap gate #6; entry */
-int probe_invalid_op_entry(struct probe *probe, void *data, 
+result_t probe_invalid_op_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "invalid opcode";
@@ -914,7 +914,7 @@ int probe_invalid_op_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_invalid_op -- trap gate #6; exit */
-int probe_invalid_op_exit(struct probe *probe, void *data, 
+result_t probe_invalid_op_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -932,7 +932,7 @@ int probe_invalid_op_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_no_device -- trap gate #7; entry */
-int probe_device_not_available_entry(struct probe *probe, void *data, 
+result_t probe_device_not_available_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -943,7 +943,7 @@ int probe_device_not_available_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_no_device -- trap gate #7; exit */
-int probe_device_not_available_exit(struct probe *probe, void *data, 
+result_t probe_device_not_available_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -954,7 +954,7 @@ int probe_device_not_available_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_double_fault -- trap gate #8; entry */
-int probe_double_fault_entry(struct probe *probe, void *data, 
+result_t probe_double_fault_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -965,7 +965,7 @@ int probe_double_fault_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_double_fault -- trap gate #8; exit */
-int probe_double_fault_exit(struct probe *probe, void *data, 
+result_t probe_double_fault_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -976,7 +976,7 @@ int probe_double_fault_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_copro_seg -- trap gate #9; entry */
-int probe_coprocessor_segment_overrun_entry(struct probe *probe, 
+result_t probe_coprocessor_segment_overrun_entry(struct probe *probe, 
 		void *data, struct probe *trigger)
 {
 	static const char *exception_name = "coprocessor segment";
@@ -998,7 +998,7 @@ int probe_coprocessor_segment_overrun_entry(struct probe *probe,
 }
 
 /* TRAP_copro_seg -- trap gate #9; exit */
-int probe_coprocessor_segment_overrun_exit(struct probe *probe, 
+result_t probe_coprocessor_segment_overrun_exit(struct probe *probe, 
 		void *data, struct probe *trigger)
 {
 	int ret;
@@ -1016,7 +1016,7 @@ int probe_coprocessor_segment_overrun_exit(struct probe *probe,
 }
 
 /* TRAP_invalid_tss -- trap gate #10; entry */
-int probe_invalid_TSS_entry(struct probe *probe, void *data, 
+result_t probe_invalid_TSS_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "invalid tss";
@@ -1038,7 +1038,7 @@ int probe_invalid_TSS_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_invalid_tss -- trap gate #10; exit */
-int probe_invalid_TSS_exit(struct probe *probe, void *data, 
+result_t probe_invalid_TSS_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1056,7 +1056,7 @@ int probe_invalid_TSS_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_no_segment -- trap gate #11; entry */
-int probe_segment_not_present_entry(struct probe *probe, void *data, 
+result_t probe_segment_not_present_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "no segment";
@@ -1078,7 +1078,7 @@ int probe_segment_not_present_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_no_segment -- trap gate #11; exit */
-int probe_segment_not_present_exit(struct probe *probe, void *data, 
+result_t probe_segment_not_present_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1096,7 +1096,7 @@ int probe_segment_not_present_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_stack_error -- trap gate #12; entry */
-int probe_stack_segment_entry(struct probe *probe, void *data, 
+result_t probe_stack_segment_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "stack error";
@@ -1118,7 +1118,7 @@ int probe_stack_segment_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_stack_error -- trap gate #12; exit */
-int probe_stack_segment_exit(struct probe *probe, void *data, 
+result_t probe_stack_segment_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1136,7 +1136,7 @@ int probe_stack_segment_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_gp_fault -- trap gate #13; entry */
-int probe_general_protection_entry(struct probe *probe, void *data, 
+result_t probe_general_protection_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "gp fault";
@@ -1158,7 +1158,7 @@ int probe_general_protection_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_gp_fault -- trap gate #13; exit */
-int probe_general_protection_exit(struct probe *probe, void *data, 
+result_t probe_general_protection_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1176,7 +1176,7 @@ int probe_general_protection_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_spurious_int -- trap gate #15; entry */
-int probe_spurious_interrupt_bug_entry(struct probe *probe, void *data, 
+result_t probe_spurious_interrupt_bug_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -1187,7 +1187,7 @@ int probe_spurious_interrupt_bug_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_spurious_int -- trap gate #15; exit */
-int probe_spurious_interrupt_bug_exit(struct probe *probe, void *data, 
+result_t probe_spurious_interrupt_bug_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -1198,7 +1198,7 @@ int probe_spurious_interrupt_bug_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_copro_error -- trap gate #16; entry */
-int probe_coprocessor_error_entry(struct probe *probe, void *data, 
+result_t probe_coprocessor_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "coprocessor error";
@@ -1220,7 +1220,7 @@ int probe_coprocessor_error_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_copro_error -- trap gate #16; exit */
-int probe_coprocessor_error_exit(struct probe *probe, void *data, 
+result_t probe_coprocessor_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1238,7 +1238,7 @@ int probe_coprocessor_error_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_alignment_check -- trap gate #17; entry */
-int probe_alignment_check_entry(struct probe *probe, void *data, 
+result_t probe_alignment_check_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "alignment check";
@@ -1260,7 +1260,7 @@ int probe_alignment_check_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_alignment_check -- trap gate #17; exit */
-int probe_alignment_check_exit(struct probe *probe, void *data, 
+result_t probe_alignment_check_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1278,7 +1278,7 @@ int probe_alignment_check_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_machine_check -- trap gate #18; entry */
-int probe_machine_check_entry(struct probe *probe, void *data, 
+result_t probe_machine_check_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -1289,7 +1289,7 @@ int probe_machine_check_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_machine_check -- trap gate #18; exit */
-int probe_machine_check_exit(struct probe *probe, void *data, 
+result_t probe_machine_check_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	/* FIXME: remove the below line when machineries allow this probe function 
@@ -1300,7 +1300,7 @@ int probe_machine_check_exit(struct probe *probe, void *data,
 }
 
 /* TRAP_simd_error -- trap gate #19; entry */
-int probe_simd_coprocessor_error_entry(struct probe *probe, void *data, 
+result_t probe_simd_coprocessor_error_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	static const char *exception_name = "simd error";
@@ -1322,7 +1322,7 @@ int probe_simd_coprocessor_error_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_simd_error -- trap gate #19; exit */
-int probe_simd_coprocessor_error_exit(struct probe *probe, void *data, 
+result_t probe_simd_coprocessor_error_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1340,7 +1340,7 @@ int probe_simd_coprocessor_error_exit(struct probe *probe, void *data,
 }
 
 /* Called after a probe on an exception handler entry gets initialized. */
-int probe_exception_init(struct probe *probe)
+result_t probe_exception_init(struct probe *probe)
 {
 	int i;
 	char *symbol;
@@ -1377,7 +1377,7 @@ int probe_exception_init(struct probe *probe)
 }
 
 /* Called before the probe on an exception handler entry gets deallocated. */
-int probe_exception_fini(struct probe *probe)
+result_t probe_exception_fini(struct probe *probe)
 {
 	int i;
 	struct exception_handler_data *handler_data;
@@ -1414,7 +1414,7 @@ int probe_exception_fini(struct probe *probe)
 /* SYSTEM CALL HANDLERS */
 
 /* TRAP_sysentry -- system gate #256; entry */
-int probe_syscall_entry(struct probe *probe, void *data, 
+result_t probe_syscall_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -1451,7 +1451,7 @@ int probe_syscall_entry(struct probe *probe, void *data,
 }
 
 /* TRAP_sysentry -- system gate #256; exit */
-int probe_syscall_exit(struct probe *probe, void *data,
+result_t probe_syscall_exit(struct probe *probe, void *data,
 		struct probe *trigger)
 {
 	int ret;
@@ -1479,7 +1479,7 @@ int probe_syscall_exit(struct probe *probe, void *data,
 	 */
 	if (HARDIRQ_COUNT(xtstate->thread_info_preempt_count)
 	    || SOFTIRQ_COUNT(xtstate->thread_info_preempt_count)) {
-	    vdebug(5,LOG_T_THREAD,"in interrupt context, not syscall ret\n");
+	    vdebug(5,LA_USER,1,"in interrupt context, not syscall ret\n");
 	    return 0;
 	}
 	else {
@@ -1494,13 +1494,13 @@ int probe_syscall_exit(struct probe *probe, void *data,
 				  (unsigned char *)&eip)) 
 		vwarn("could not read which EIP returning to; not checking!\n");
 	    else if ((cs & 0x3) < 0x3) {
-		vdebug(5,LOG_T_THREAD,
+		vdebug(5,LA_USER,1,
 		       "not ret to user (EIP 0x%lx,CS 0x%lx); not syscall ret\n",
 		       eip);
 		return 0;
 	    }
 	    else {
-		vdebug(5,LOG_T_THREAD,
+		vdebug(5,LA_USER,1,
 		       "ret to user (EIP 0x%lx, CS 0x%lx); is syscall ret!\n",
 		       eip,cs);
 	    }
@@ -1528,13 +1528,13 @@ int probe_syscall_exit(struct probe *probe, void *data,
 }
 
 /* Called after the probe on system_call entry gets initialized. */
-int probe_syscall_init(struct probe *probe)
+result_t probe_syscall_init(struct probe *probe)
 {
 	return 0;
 }
 
 /* Called before the probe on system_call entry gets deallocated. */
-int probe_syscall_fini(struct probe *probe)
+result_t probe_syscall_fini(struct probe *probe)
 {
 	ctxtracker_context_t *context;
 

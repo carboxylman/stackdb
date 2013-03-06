@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -61,7 +61,7 @@ static const char *member_task_pid = "pid";
 static const char *member_task_name = "comm";
 static const char *member_regs_eip = "eip";
 
-static int taskswitch(struct probe *probe, void *data, 
+static result_t taskswitch(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -120,7 +120,7 @@ static int taskswitch(struct probe *probe, void *data,
 	return 0;
 }
 
-static int interrupt_entry(struct probe *probe, void *data, 
+static result_t interrupt_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -181,7 +181,7 @@ static int interrupt_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int interrupt_exit(struct probe *probe, void *data, 
+static result_t interrupt_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -230,7 +230,7 @@ static int interrupt_exit(struct probe *probe, void *data,
 	return 0;
 }
 
-static int pagefault_entry(struct probe *probe, void *data, 
+static result_t pagefault_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -314,7 +314,7 @@ static int pagefault_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int pagefault_exit(struct probe *probe, void *data, 
+static result_t pagefault_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -362,7 +362,7 @@ static int pagefault_exit(struct probe *probe, void *data,
 	return 0;
 }
 
-static int exception_entry(struct probe *probe, void *data, 
+static result_t exception_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -428,7 +428,7 @@ static int exception_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int exception_exit(struct probe *probe, void *data, 
+static result_t exception_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -478,7 +478,7 @@ static int exception_exit(struct probe *probe, void *data,
 	return 0;
 }
 
-static int syscall_entry(struct probe *probe, void *data, 
+static result_t syscall_entry(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -527,7 +527,7 @@ static int syscall_entry(struct probe *probe, void *data,
 	return 0;
 }
 
-static int syscall_exit(struct probe *probe, void *data, 
+static result_t syscall_exit(struct probe *probe, void *data, 
 		struct probe *trigger)
 {
 	int ret;
@@ -611,7 +611,6 @@ static void signals(sighandler_t handler)
 static void parse_opt(int argc, char *argv[])
 {
 	char ch;
-	log_flags_t debug_flags;
 
 	while ((ch = getopt(argc, argv, "dxl:c:")) != -1)
 	{
@@ -626,12 +625,11 @@ static void parse_opt(int argc, char *argv[])
 				break;
 
 			case 'l':
-				if (vmi_log_get_flag_mask(optarg, &debug_flags))
+				if (vmi_set_log_area_flaglist(optarg,NULL))
 				{
 					ERR("Bad debug flag in '%s'\n", optarg);
 					exit(-1);
 				}
-				vmi_set_log_flags(debug_flags);
 				break;
 
 			case 'c':

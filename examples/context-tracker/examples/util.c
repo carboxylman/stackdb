@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -43,6 +43,7 @@ struct target *init_probes(const char *domain_name, int debug_level,
 			   int xa_debug_level)
 {
 	struct target *t;
+	struct target_spec *ts;
 	int ret;
 
 	dwdebug_init();
@@ -51,14 +52,17 @@ struct target *init_probes(const char *domain_name, int debug_level,
 	xa_set_debug_level(xa_debug_level);
 #endif
 
-	t = xen_vm_attach((char *)domain_name, NULL);
+	ts = target_build_spec(TARGET_TYPE_XEN,TARGET_MODE_LIVE);
+	((struct xen_vm_spec *)ts->backend_spec)->domain = strdup(domain_name);
+
+	t = target_instantiate(ts);
 	if (!t)
 	{
 		ERR("Can't attach to domain %s\n", domain_name);
 		return NULL;
 	}
 
-	ret = target_open(t,NULL);
+	ret = target_open(t);
 	if (ret)
 	{
 		ERR("Can't open target %s\n", domain_name);
@@ -148,7 +152,7 @@ struct probe *register_watchpoint(struct target *target, struct value *value,
 
 	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, (char *)name, 
 			NULL /* pre_handler */, handler /* post_handler */, 
-			data, 0 /* autofree */);
+			     data, 0 /* autofree */, 0);
 	if (!probe)
 	{
 		ERR("Could not create probe on raw address 0x%08x\n", addr);

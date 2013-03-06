@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -53,7 +53,7 @@ struct probe *register_probe_label(struct target *target, const char *symbol,
 
 	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, 
 			bsymbol_get_name(bsymbol), handler, NULL /* post_handler */, 
-			data, 0 /* autofree */);
+			     data, 0 /* autofree */, 0);
 	if (!probe)
 	{
 		verror("Could not create probe on label '%s'\n", 
@@ -97,7 +97,7 @@ struct probe *register_probe_function_entry(struct target *target,
 
 	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, 
 			bsymbol_get_name(bsymbol), handler, NULL /* post_handler */, 
-			data, 0 /* autofree */);
+			data, 0 /* autofree */, 0);
 	if (!probe)
 	{
 		verror("Could not create probe on function '%s' entry\n", 
@@ -153,7 +153,7 @@ struct probe *register_probe_function_exit(struct target *target,
 
 	probe = probe_create(target, TID_GLOBAL, (struct probe_ops *)ops, 
 			bsymbol_get_name(bsymbol), handler, NULL /* post_handler */, 
-			data, 0 /* autofree */);
+			data, 0 /* autofree */, 0);
 	if (!probe)
 	{
 		verror("Could not create probe on function '%s' exit\n", 

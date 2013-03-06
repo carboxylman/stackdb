@@ -437,6 +437,11 @@ int target_close(struct target *target);
 int target_kill(struct target *target);
 
 /*
+ * Frees a target.
+ */
+void target_free(struct target *target);
+
+/*
  * Returns the probe attached to this target with ID @probe_id, if any.
  */
 struct probe *target_lookup_probe(struct target *target,int probe_id);

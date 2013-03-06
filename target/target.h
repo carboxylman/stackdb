@@ -90,7 +90,6 @@ extern char *REGION_TYPE_STRINGS[];
  **/
 struct target *target_create(char *type,void *state,struct target_ops *ops,
 			     struct target_spec *spec,int id);
-void target_free(struct target *target);
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr);
 void target_attach_mmap_entry(struct target *target,
