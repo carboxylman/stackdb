@@ -1086,8 +1086,11 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	value_free(v);
     if (threadinfov)
 	value_free(threadinfov);
+    tstate->thread_info = NULL;
     if (threadv)
 	value_free(threadv);
+    tstate->thread_struct = NULL;
+    tstate->task_struct = NULL;
 
     return NULL;
 }
@@ -1501,8 +1504,11 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	value_free(v);
     if (threadinfov)
 	value_free(threadinfov);
+    tstate->thread_info = NULL;
     if (taskv)
 	value_free(taskv);
+    tstate->thread_struct = NULL;
+    tstate->task_struct = NULL;
 
     /* XXX: should we really set this here? */
     target->current_thread = target->global_thread;
@@ -2728,8 +2734,8 @@ static int xen_vm_invalidate_all_threads(struct target *target) {
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
 	tstate = (struct xen_vm_thread_state *)tthread->state;
 
-	if (!tthread->valid) 
-	    continue;
+	//if (!tthread->valid) 
+	//    continue;
 
 	if (tstate->thread_struct) {
 	    value_free(tstate->thread_struct);
