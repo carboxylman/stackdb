@@ -871,8 +871,9 @@ static struct binfile *elf_binfile_open(char *filename,
 		shdr_new->sh_flags = bfelfinst->shdrs[i].sh_flags;
 
 		if (gelf_update_shdr(scn,shdr_new)) {
-		    verror("could not update sh_flags for section %d;"
-			   " skipping but debuginfo reloc might be broken!\n",i);
+		    vwarnopt(3,LA_DEBUG,LF_ELF,
+			     "could not update sh_flags for section %d; skipping"
+			     " but debuginfo reloc might be broken!\n",i);
 		    continue;
 		}
 	    }

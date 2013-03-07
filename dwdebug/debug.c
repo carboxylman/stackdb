@@ -2287,9 +2287,10 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 	for (i = 0; i < r->r.rlist.len; ++i) {
 	    if (r->r.rlist.list[i]->start == start
 		&& r->r.rlist.list[i]->end != end) {
-		vwarn("inconsistent RANGE_LIST entry end: 0x%"PRIxADDR
-		      ",0x%"PRIxADDR" (new end 0x%"PRIxADDR
-		      ") for symtab 0x%"PRIxSMOFFSET" (%s); updating!\n",
+		vwarnopt(4,LA_DEBUG,LF_DFILE,
+			 "inconsistent RANGE_LIST entry end: 0x%"PRIxADDR
+			 ",0x%"PRIxADDR" (new end 0x%"PRIxADDR
+			 ") for symtab 0x%"PRIxSMOFFSET" (%s); updating!\n",
 		      start,r->r.rlist.list[i]->end,end,symtab->ref,
 		      symtab_get_name(symtab));
 
