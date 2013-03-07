@@ -3381,10 +3381,37 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		    vdebug(4,LA_TARGET,LF_XV,
 			   "found hw break (eip) in dreg %d on 0x%"PRIxADDR"\n",
 			   dreg,ipval);
-		else
-		    vdebug(6,LA_TARGET,LF_XV,
-			   "did NOT find hw break (eip) on 0x%"PRIxADDR"\n",
-			   ipval);
+		else {
+		    if (xtstate != gtstate) {
+			/*
+			 * Check the global thread too; might be a
+			 * global breakpoint/watchpoint.
+			 */
+			if (gtstate->dr[0] == ipval)
+			    dreg = 0;
+			else if (gtstate->dr[1] == ipval)
+			    dreg = 1;
+			else if (gtstate->dr[2] == ipval)
+			    dreg = 2;
+			else if (gtstate->dr[3] == ipval)
+			    dreg = 3;
+
+			if (dreg > -1) 
+			    vdebug(4,LA_TARGET,LF_XV,
+				   "found hw break (eip) in GLOBAL dreg %d on 0x%"PRIxADDR"\n",
+				   dreg,ipval);
+			else
+			    vdebug(6,LA_TARGET,LF_XV,
+				   "did NOT find hw break (eip) on 0x%"PRIxADDR
+				   " (neither global nor per-thread!)\n",
+				   ipval);
+		    }
+		    else {
+			vdebug(6,LA_TARGET,LF_XV,
+			       "did NOT find hw break (eip) on 0x%"PRIxADDR"\n",
+			       ipval);
+		    }
+		}
 	    }
 
 	    if (dreg > -1) {
