@@ -73,7 +73,7 @@ int check_func(int * pid) {
             /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
 
             task->thread_info->flags =
-		task->thread_info->flags | TIF_SIGPENDING;
+		task->thread_info->flags | _TIF_SIGPENDING | _TIF_NEED_RESCHED;
             printk("Killed process\n");
             found_flag = 1;
         }
