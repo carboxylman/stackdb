@@ -867,8 +867,13 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		       symbol_get_name(symbol),retval);
 	    }
 	    else {
-		verror("could not resolve location for symbol %s: %s!\n",
-		       symbol_get_name(symbol),strerror(errno));
+		if (errno == ENOTSUP) 
+		    vwarnopt(8,LA_TARGET,LF_SYMBOL,
+			     "could not resolve location for symbol %s: %s!\n",
+			     symbol_get_name(symbol),strerror(errno));
+		else
+		    verror("could not resolve location for symbol %s: %s!\n",
+			   symbol_get_name(symbol),strerror(errno));
 		goto errout;
 	    }
 	}
@@ -1455,8 +1460,13 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     rc = __target_bsymbol_compute_location(target,tid,bsymbol,flags,
 					   &reg,&addr,&datatype,&range);
     if (rc < 0) {
-	verror("failed to compute location for var %s\n",
-	       symbol_get_name(symbol));
+	if (errno == ENOTSUP)
+	    vwarnopt(8,LA_TARGET,LF_SYMBOL,
+		     "failed to compute location for var %s\n",
+		     symbol_get_name(symbol));
+	else
+	    verror("failed to compute location for var %s\n",
+		   symbol_get_name(symbol));
 	goto errout;
     }
     else if (rc == 1) {

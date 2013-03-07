@@ -480,8 +480,8 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    errno = EINVAL;
 	    return -1;
 	}
-	vwarn("currently unsupported location type %s\n",
-	      LOCTYPE(location->loctype));
+	vwarnopt(7,LA_TARGET,LF_TLOC,"currently unsupported location type %s\n",
+		 LOCTYPE(location->loctype));
 	errno = ENOTSUP;
 	return -1;
     default:
