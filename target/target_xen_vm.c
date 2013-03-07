@@ -3074,6 +3074,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     struct probepoint *spp;
     struct target_thread *sstep_thread;
     struct addrspace *space;
+    struct target_thread *bogus_sstep_thread;
+    ADDR bogus_sstep_probepoint_addr;
 
     /* From previous */
     xa_destroy_cache(&xstate->xa_instance);
@@ -3199,6 +3201,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    target->sstep_thread = NULL;
 
 	    if (xtstate->context.user_regs.eflags & EF_TF) {
+	    handle_inferred_sstep:
 		if (!tthread->tpc) {
 		    if (sstep_thread && ipval < 0xc0000000) {
 			vwarn("single step event (status reg and eflags) into"
@@ -3279,6 +3282,17 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	}
 	else {
 	    vdebug(3,LA_TARGET,LF_XV,"new (breakpoint?) debug event\n");
+	    /*
+	     * Some Xen kernels send us a debug event after a successful
+	     * singlestep, but they do not set the right flag to notify
+	     * us.  So, if the TF flag is set, and we were expecting a
+	     * singlestep to happen, and there is not a breakpoint
+	     * exception instead -- assume that it is a singlestep
+	     * event.
+	     *
+	     * So, save it off in a special variable and handle below.
+	     */
+	    bogus_sstep_thread = target->sstep_thread;
 	    target->sstep_thread = NULL;
 
 	    dreg = -1;
@@ -3425,7 +3439,37 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 
 		goto out_bp_again;
 	    }
+	    else if (xtstate->context.user_regs.eflags & EF_TF
+		     && bogus_sstep_thread
+		     && bogus_sstep_thread->tpc
+		     && bogus_sstep_thread->tpc->probepoint) {
+		bogus_sstep_probepoint_addr = 
+		    bogus_sstep_thread->tpc->probepoint->addr;
+
+		/*
+		 * If the single step took us <= 15 bytes (max x86 instr
+		 * len), assume this is a single step on a bad Xen.
+		 */
+		if ((ipval - bogus_sstep_probepoint_addr) <= 15) {
+		    vdebug(2,LA_DEBUG,LF_XV,
+			   "inferred single step for dom %d (TF set, but not"
+			   " dreg status!) at 0x%"PRIxADDR" (stepped %d bytes"
+			   " from probepoint)!\n",
+			   xstate->id,ipval,ipval - bogus_sstep_probepoint_addr);
+		    sstep_thread = bogus_sstep_thread;
+		    goto handle_inferred_sstep;
+		}
+		else {
+		    vdebug(2,LA_DEBUG,LF_XV,
+			   "tried to infer single step for dom %d (TF set, but not"
+			   " dreg status!) at 0x%"PRIxADDR" -- BUT stepped %d bytes"
+			   " from probepoint -- TOO FAR!\n",
+			   xstate->id,ipval,ipval - bogus_sstep_probepoint_addr);
+		    goto phantom;
+		}
+	    }
 	    else if (xtstate->context.user_regs.eflags & EF_TF) {
+	    phantom:
 		vwarn("phantom single step for dom %d (no breakpoint"
 		      " set either!); letting user handle fault at"
 		      " 0x%"PRIxADDR"!\n",xstate->id,ipval);
