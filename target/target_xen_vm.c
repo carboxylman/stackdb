@@ -2952,6 +2952,7 @@ static int xen_vm_updateregions(struct target *target,
     struct __update_module_data ud;
     struct memregion *region;
     struct memregion *tmp;
+    struct stat statbuf;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -2992,9 +2993,25 @@ static int xen_vm_updateregions(struct target *target,
 	    *colon = '\0';
 	    if ((slash = rindex(buf,'/'))) {
 		modfilename = strdup(buf);
+		if (stat(modfilename,&statbuf)) {
+		    vdebug(3,LA_TARGET,LF_XV,
+			   "could not find modules.dep file %s; trying abs path\n",
+			   modfilename);
+		    free(modfilename);
+		    modfilename = calloc(1,sizeof(char)*(strlen(xstate->kernel_module_dir)+1+strlen(buf)+1));
+		    sprintf(modfilename,"%s/%s",xstate->kernel_module_dir,buf);
+		    if (stat(modfilename,&statbuf)) {
+			vwarnopt(3,LA_TARGET,LF_XV,
+				 "could not find modules.dep file %s at all!\n",
+				 modfilename);
+			free(modfilename);
+			goto drain;
+		    }
+		}
 		modname = strdup(slash+1);
 		if ((extension = rindex(modname,'.')))
 		    *extension = '\0';
+
 		g_hash_table_insert(moddep,modname,modfilename);
 		vdebug(8,LA_TARGET,LF_XV,
 		       "modules.dep: %s -> %s\n",modname,modfilename);
@@ -3004,6 +3021,7 @@ static int xen_vm_updateregions(struct target *target,
 	/*
 	 * Drain until we get a newline.
 	 */
+    drain:
 	if (!newline) {
 	    while (fgets(buf,sizeof(buf),moddep_file)) {
 		if (index(buf,'\n'))
