@@ -34,7 +34,7 @@
 #include "target_api.h"
 #include "target.h"
 #include "target_linux_userproc.h"
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
 #endif
 
@@ -248,7 +248,7 @@ result_t retaddr_save(struct probe *probe,void *handler_data,
 	free(retaddr);
 	fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 	if (target_type(t) == TARGET_TYPE_XEN) {
 	    struct value *value = linux_load_current_task(t);
 	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
@@ -268,7 +268,7 @@ result_t retaddr_save(struct probe *probe,void *handler_data,
 		probe->bsymbol->lsymbol->symbol->name,
 		*retaddr,(char *)handler_data,array_list_len(shadow_stack));
 	
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 	if (target_type(t) == TARGET_TYPE_XEN) {
 	    struct value *value = linux_load_current_task(t);
 	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
@@ -347,7 +347,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
 		(char *)handler_data,array_list_len(shadow_stack));
     }
 
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     if (target_type(t) == TARGET_TYPE_XEN) {
 	struct value *value = linux_load_current_task(t);
 	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));

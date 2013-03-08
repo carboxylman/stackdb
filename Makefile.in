@@ -29,6 +29,8 @@ SUBDIRS = lib dwdebug
 ifeq ($(ENABLE_XENACCESS),"1")
 	SUBDIRS += xenaccess xentt vmprobes # vmps vmfs vmtap
 endif
+ifeq ($(ENABLE_LIBVMI),"1")
+endif
 SUBDIRS += target
 SUBDIRS += tests
 SUBDIRS += tools

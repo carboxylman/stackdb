@@ -97,7 +97,7 @@ struct argp_option target_argp_opts[] = {
  */
 extern struct argp linux_userproc_argp;
 extern char *linux_userproc_argp_header;
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 extern struct argp xen_vm_argp;
 extern char *xen_vm_argp_header;
 #endif
@@ -180,7 +180,7 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 	target_argp_children[tstate.num_children].group = 0;
 	++tstate.num_children;
     }
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     if (target_types & TARGET_TYPE_XEN) {
 	target_argp_children[tstate.num_children].argp = &xen_vm_argp;
 	target_argp_children[tstate.num_children].flags = 0;

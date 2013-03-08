@@ -43,8 +43,10 @@
 #include <xenctrl.h>
 #include <xen/xen.h>
 #include <xs.h>
+#ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
+#endif
 
 #include "target_xen_vm.h"
 
@@ -141,8 +143,16 @@ static int xen_vm_invalidate_all_threads(struct target *target);
  */
 static int xc_refcnt = 0;
 
+#ifdef XENCTRL_HAS_XC_INTERFACE
+static xc_interface *xc_handle = NULL;
+static xc_interface *xce_handle = NULL;
+#define XC_IF_INVALID (NULL)
+#else
 static int xc_handle = -1;
 static int xce_handle = -1;
+#define XC_IF_INVALID (-1)
+#endif
+
 #if !defined(XC_EVTCHN_PORT_T)
 #error "XC_EVTCHN_PORT_T undefined!"
 #endif
@@ -496,6 +506,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 		  xstate->id);
     }
 
+#ifdef ENABLE_XENACCESS
     /* Now load up our xa_instance as much as we can now; we'll try to
        do more when we load the debuginfo file for the kernel. */
     xstate->xa_instance.os_type = XA_OS_LINUX;
@@ -505,6 +516,49 @@ struct target *xen_vm_attach(struct target_spec *spec) {
         verror("failed to init xa instance for dom %d\n",xstate->id);
         return NULL;
     }
+#endif
+#ifdef ENABLE_LIBVMI
+    if (vmi_init(&xstate->vmi_instance,
+		 VMI_XEN|VMI_INIT_PARTIAL, xstate->name) == VMI_FAILURE) {
+        verror("failed to init vmi instance for dom %d\n", xstate->id);
+        return NULL;
+    }
+    /*
+     * XXX total hack. The offsets are really a function of both word size
+     * and OS version. But right now 32-bit implies Linux 2.6 and 64-bit
+     * implies 3.2. We should just get these values from the debuginfo.
+     */
+    if (vmi_get_page_mode(xstate->vmi_instance) == VMI_PM_IA32E) {
+	tmp = "{"
+	    /* from gdb on a Linux kernel */
+	    "ostype=\"Linux\"; "
+	    "sysmap=\"/boot/System.map-3.2.16emulab1\"; "
+	    "linux_tasks=0x238; "
+	    "linux_mm=0x270; "
+	    "linux_pid=0x2ac; "
+	    "linux_pgd=0x0;"
+	    "}";
+    } else {
+	/* from vmprobes/vmprobes.c */
+	tmp = "{"
+	    "ostype=\"Linux\"; "
+	    "sysmap=\"/boot/System.map-2.6.18.8-xenU\"; "
+	    "linux_tasks=108; "
+	    "linux_mm=132; "
+	    "linux_pid=168; "
+	    "linux_pgd=36;"
+	    "}";
+    }
+    if (vmi_init_complete(&xstate->vmi_instance, tmp) == VMI_FAILURE) {
+	verror("failed to complete init of vmi instance for dom %d\n",
+	       xstate->id);
+	vmi_destroy(xstate->vmi_instance);
+	return NULL;
+    }
+
+    /* XXX this is in the vmi_instance, but they don't expose it! */
+    xstate->vmi_page_size = XC_PAGE_SIZE;
+#endif
 
     target->live = 1;
     target->writeable = 1;
@@ -669,19 +723,37 @@ static int xen_vm_load_dominfo(struct target *target) {
 	 * XXX: Do we really have to do this every time the domain is
 	 * interrupted?
 	 */
+#ifdef ENABLE_XENACCESS
 	live_shinfo = xa_mmap_mfn(&xstate->xa_instance,PROT_READ,
 				  xstate->dominfo.shared_info_frame);
-        if (!live_shinfo) {
-            verror("failed to mmap shared_info_frame!\n");
-            errno = EINVAL;
+	if (!live_shinfo) {
+	    verror("failed to mmap shared_info_frame!\n");
+	    errno = EINVAL;
 	    return -1;
-        }
+	}
 	/*
 	 * Copy the vcpu_info_t out, then munmap.
 	 */
 	memcpy(&xstate->vcpuinfo,&live_shinfo->vcpu_info[0],
 	       sizeof(xstate->vcpuinfo));
 	munmap(live_shinfo,PAGE_SIZE);
+#endif
+#ifdef ENABLE_LIBVMI
+	live_shinfo = malloc(xstate->vmi_page_size);
+	if (!live_shinfo ||
+	    vmi_read_pa(xstate->vmi_instance,
+			(xstate->dominfo.shared_info_frame*(addr_t)xstate->vmi_page_size),
+			live_shinfo, xstate->vmi_page_size) != xstate->vmi_page_size) {
+            verror("failed to read shared_info!\n");
+	    if (live_shinfo)
+		free(live_shinfo);
+            errno = EINVAL;
+	    return -1;
+	}
+	memcpy(&xstate->vcpuinfo,&live_shinfo->vcpu_info[0],
+	       sizeof(xstate->vcpuinfo));
+	free(live_shinfo);
+#endif
 
 	xstate->dominfo_valid = 1;
     } else {
@@ -1281,7 +1353,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      *
      * XXX: maybe returning global thread is too :).
      */
-    if (ipval < 0xc0000000) {
+    if (ipval < xstate->kernel_start_addr) {
 	vdebug(9,LA_TARGET,LF_XV,
 	       "at user-mode EIP 0x%"PRIxADDR"; not loading current thread;"
 	       " returning global thread.\n",
@@ -1642,15 +1714,23 @@ static int xen_vm_attach_internal(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
-    if (xc_handle == -1) {
+    if (xc_handle == XC_IF_INVALID) {
+#ifdef XENCTRL_HAS_XC_INTERFACE
+	xc_handle = xc_interface_open(NULL, NULL, 0);
+#else
 	xc_handle = xc_interface_open();
-	if (xc_handle < 0) {
+#endif
+	if (xc_handle == XC_IF_INVALID) {
 	    verror("failed to open xc interface: %s\n",strerror(errno));
 	    return -1;
 	}
 
+#ifdef XENCTRL_HAS_XC_INTERFACE
+	xce_handle = xc_evtchn_open(NULL, 0);
+#else
 	xce_handle = xc_evtchn_open();
-	if (xce_handle < 0) {
+#endif
+	if (xce_handle == XC_IF_INVALID) {
 	    xc_interface_close(xc_handle);
 	    verror("failed to open event channel: %s\n",strerror(errno));
 	    return -1;
@@ -1739,12 +1819,12 @@ static int xen_vm_detach(struct target *target) {
 	if (xc_evtchn_close(xce_handle)) {
 	    verror("failed to close event channel\n");
 	}
-	xce_handle = -1;
+	xce_handle = XC_IF_INVALID;
     
 	if (xc_interface_close(xc_handle)) {
 	    verror("failed to close xc interface\n");
 	}
-	xc_handle = -1;
+	xc_handle = XC_IF_INVALID;
 
 	vdebug(4,LA_TARGET,LF_XV,"xc detach dom %d succeeded.\n",xstate->id);
 	target->attached = 0;
@@ -1934,6 +2014,32 @@ static int xen_vm_postloadinit(struct target *target) {
      *
      */
 
+    /* Find the kernel start address */
+    xstate->kernel_start_addr = 0xC0000000;
+#if __WORDSIZE == 64
+    if (target->wordsize == 8)
+	xstate->kernel_start_addr = 0xFFFFFFFF81000000ULL;
+#endif
+#if 0
+    {
+	struct bsymbol *kernaddr;
+
+	kernaddr = target_lookup_sym(target, "_text", NULL, NULL,
+				     SYMBOL_TYPE_VAR);
+	if (kernaddr) {
+	    if (symbol_get_location_addr(kernaddr->lsymbol->symbol,
+					 &xstate->kernel_start_addr)) {
+		vwarn("could not resolve addr of _text!\n");
+	    }
+	    bsymbol_release(kernaddr);
+	} else {
+	    vwarn("could not find symbol _text!\n");
+	}
+    }
+#endif
+    vdebug(3,LA_TARGET,LF_XV,"kernel start addr is 0x%"PRIxREGVAL"\n",
+	   xstate->kernel_start_addr);
+
     xstate->init_task = target_lookup_sym(target,"init_task",NULL,NULL,
 					  SYMBOL_TYPE_FLAG_VAR);
     if (!xstate->init_task) {
@@ -1949,7 +2055,7 @@ static int xen_vm_postloadinit(struct target *target) {
 	vwarn("could not resolve addr of init_task!\n");
     }
 
-    /* Fill in the init_task addr in teh default thread. */
+    /* Fill in the init_task addr in the default thread. */
     ((struct xen_vm_thread_state *)(target->global_thread->state))->task_struct_addr = \
 	xstate->init_task_addr;
 
@@ -2059,19 +2165,19 @@ static int xen_vm_flush_current_thread(struct target *target) {
     tid = tthread->tid;
     tstate = (struct xen_vm_thread_state *)tthread->state;
 
-    vdebug(5,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tthread->tid);
+    vdebug(5,LA_TARGET,LF_XV,"dom %d tid %"PRIiTID"\n",xstate->id,tid);
 
     if (!tthread->valid || !tthread->dirty) {
 	vdebug(8,LA_TARGET,LF_XV,
 	       "dom %d tid %"PRIiTID" not valid (%d) or not dirty (%d)\n",
-	       xstate->id,tthread->tid,tthread->valid,tthread->dirty);
+	       xstate->id,tid,tthread->valid,tthread->dirty);
 	return 0;
     }
 
     vdebug(3,LA_TARGET,LF_XV,
 	   "EIP is 0x%"PRIxREGVAL" before flush (dom %d tid %"PRIiTID")\n",
 	   xen_vm_read_reg(target,TID_GLOBAL,target->ipregno),
-	   xstate->id,tthread->tid);
+	   xstate->id,tid);
 
     /*
      * Flush Xen machine context.
@@ -2079,7 +2185,7 @@ static int xen_vm_flush_current_thread(struct target *target) {
     if (xc_vcpu_setcontext(xc_handle,xstate->id,xstate->dominfo.max_vcpu_id,
 			   &tstate->context) < 0) {
 	verror("could not set vcpu context (dom %d tid %"PRIiTID")\n",
-	       xstate->id,tthread->tid);
+	       xstate->id,tid);
 	errno = EINVAL;
 	return -1;
     }
@@ -2110,6 +2216,15 @@ static int xen_vm_flush_current_thread(struct target *target) {
     /* Mark cached copy as clean. */
     tthread->dirty = 0;
 
+#if __WORDSIZE == 32
+    vdebug(4,LA_TARGET,LF_XV,
+	   "eflags (vcpu context): 0x%"PRIxADDR"\n",
+	   tstate->context.user_regs.eflags);
+#else
+    vdebug(4,LA_TARGET,LF_XV,
+	   "rflags (vcpu context): 0x%"PRIxADDR"\n",
+	   tstate->context.user_regs.rflags);
+#endif
     vdebug(4,LA_TARGET,LF_XV,
 	   "debug registers (vcpu context): 0x%"PRIxADDR",0x%"PRIxADDR
 	   ",0x%"PRIxADDR",0x%"PRIxADDR",0,0,0x%"PRIxADDR",0x%"PRIxADDR"\n",
@@ -3101,9 +3216,17 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     struct target_thread *bogus_sstep_thread;
     ADDR bogus_sstep_probepoint_addr;
 
+#ifdef ENABLE_XENACCESS
     /* From previous */
     xa_destroy_cache(&xstate->xa_instance);
     xa_destroy_pid_cache(&xstate->xa_instance);
+#endif
+#ifdef ENABLE_LIBVMI
+    /* XXX is this right? */
+    vmi_v2pcache_flush(xstate->vmi_instance);
+    vmi_symcache_flush(xstate->vmi_instance);
+    vmi_pidcache_flush(xstate->vmi_instance);
+#endif
 
     /* Reload our dominfo */
     xstate->dominfo_valid = 0;
@@ -3145,7 +3268,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	 * problem, but if it got stale or something, might
 	 * introduce a bug...
 	 */
-	if (ipval < 0xc0000000) {
+	if (ipval < xstate->kernel_start_addr) {
 	    vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
 		   "user-mode debug event at EIP 0x%"PRIxADDR"; not loading"
 		   " thread; will try to handle it if it is single step!\n",
@@ -3203,6 +3326,12 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    tid = tthread->tid;
 	}
 
+	vdebug(6,LA_TARGET,LF_XV,
+	       "thread %d at EIP 0x%"PRIxADDR": "
+	       "dbgreg[6]=0x%"DRF", eflags=0x%"RF"\n",
+	       tid, ipval, xtstate->context.debugreg[6],
+	       xtstate->context.user_regs.eflags);
+
 	/* handle the triggered probe based on its event type */
 	if (xtstate->context.debugreg[6] & 0x4000) {
 	    vdebug(3,LA_TARGET,LF_XV,"new single step debug event\n");
@@ -3216,7 +3345,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    if (target->sstep_thread 
 		&& ((target->sstep_thread->tpc
 		     && target->sstep_thread->tpc->probepoint->can_switch_context)
-		    || ipval < 0xc000000)) {
+		    || ipval < xstate->kernel_start_addr)) {
 		sstep_thread = target->sstep_thread;
 	    }
 	    else
@@ -3227,7 +3356,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    if (xtstate->context.user_regs.eflags & EF_TF) {
 	    handle_inferred_sstep:
 		if (!tthread->tpc) {
-		    if (sstep_thread && ipval < 0xc0000000) {
+		    if (sstep_thread && ipval < xstate->kernel_start_addr) {
 			vwarn("single step event (status reg and eflags) into"
 			      " userspace; trying to handle in sstep thread"
 			      " %"PRIiTID"!\n",sstep_thread->tid);
@@ -3285,7 +3414,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 
 		goto out_ss_again;
 	    }
-	    else if (ipval < 0xc0000000) {
+	    else if (ipval < xstate->kernel_start_addr) {
 		verror("user-mode debug event (single step) at 0x%"PRIxADDR
 		       "; debug status reg 0x%"DRF"; eflags 0x%"RF
 		       "; skipping handling!\n",
@@ -3336,7 +3465,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    }
 
 	    if (dreg > -1) {
-		if (ipval < 0xc0000000) {
+		if (ipval < xstate->kernel_start_addr) {
 		    vwarn("user-mode debug event (hw dbg reg)"
 			  " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
 			  " 0x%"RF"; trying to handle in global thread!\n",
@@ -3355,7 +3484,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		       "found hw break (status) in dreg %d on 0x%"PRIxADDR"\n",
 		       dreg,ipval);
 	    }
-	    else if (ipval < 0xc0000000) {
+	    else if (ipval < xstate->kernel_start_addr) {
 		verror("user-mode debug event (not single step, not hw dbg reg)"
 		       " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
 		       " 0x%"RF"; skipping handling!\n",
@@ -3502,7 +3631,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		 * len), assume this is a single step on a bad Xen.
 		 */
 		if ((ipval - bogus_sstep_probepoint_addr) <= 15) {
-		    vdebug(2,LA_DEBUG,LF_XV,
+		    vdebug(2,LA_TARGET,LF_XV,
 			   "inferred single step for dom %d (TF set, but not"
 			   " dreg status!) at 0x%"PRIxADDR" (stepped %d bytes"
 			   " from probepoint)!\n",
@@ -3511,7 +3640,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		    goto handle_inferred_sstep;
 		}
 		else {
-		    vdebug(2,LA_DEBUG,LF_XV,
+		    vdebug(2,LA_TARGET,LF_XV,
 			   "tried to infer single step for dom %d (TF set, but not"
 			   " dreg status!) at 0x%"PRIxADDR" -- BUT stepped %d bytes"
 			   " from probepoint -- TOO FAR!\n",
@@ -3685,6 +3814,7 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
     return retval;
 }
 
+#ifdef ENABLE_XENACCESS
 static unsigned char *mmap_pages(xa_instance_t *xa_instance,ADDR addr, 
 				 unsigned long size,uint32_t *offset,
 				 int *npages,int prot,int pid) {
@@ -3883,6 +4013,78 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,
 
     return length;
 }
+#endif
+
+#ifdef ENABLE_LIBVMI
+/*
+ * Reads a block of memory from the target.  If @buf is non-NULL, we
+ * assume it is at least @length bytes long; the result is placed into
+ * @buf and @buf is returned.  If @buf is NULL, we allocate a buffer
+ * large enough to hold the result (@length if @length >0; if @length is
+ * 0 we attempt to read a string at that address; we stop when we hit a
+ * NULL byte).
+ *
+ * On error, returns NULL, and sets errno.
+ */
+static unsigned char *xen_vm_read(struct target *target, ADDR addr,
+				  unsigned long target_length,
+				  unsigned char *buf)
+{
+    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
+    vmi_instance_t vmi = xstate->vmi_instance;
+    int pid = 0, alloced = 0;
+    size_t cc;
+
+    vdebug(16,LA_TARGET,LF_XV,
+	   "read dom %d: addr=0x%"PRIxADDR" len=%d pid=%d\n",
+	   xstate->id,addr,target_length,pid);
+
+    /* if length == 0, we are copying in a string. */
+    if (target_length == 0)
+	return (unsigned char *)vmi_read_str_va(vmi, (addr_t)addr, pid);
+
+    /* allocate buffer if necessary */
+    if (!buf) {
+	buf = malloc(target_length + 1);
+	alloced = 1;
+    }
+
+    /* read the data */
+    if (buf) {
+	cc = vmi_read_va(vmi, (addr_t)addr, pid, buf, target_length);
+
+	/* there is no provision for a partial read, assume an error */
+	if ((unsigned long)cc != target_length) {
+	    vwarn("vmi_read_va returns partial data (%lu of %lu)\n",
+		  (unsigned long)cc, target_length);
+	    if (alloced)
+		free(buf);
+	    return NULL;
+	}
+    }
+
+    return buf;
+}
+
+/*
+ * Writes @length bytes from @buf to @addr.  Returns the number of bytes
+ * written (and sets errno nonzero if there is an error).  Successful if
+ * @return == @length.
+ */
+unsigned long xen_vm_write(struct target *target, ADDR addr,
+			   unsigned long length, unsigned char *buf)
+{
+    struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
+    int pid = 0;
+
+    vdebug(16,LA_TARGET,LF_XV,
+	   "write dom %d: addr=0x%"PRIxADDR" len=%d pid=%d\n",
+	   xstate->id,addr,length,pid);
+
+    return (unsigned long)vmi_write_va(xstate->vmi_instance, (addr_t)addr,
+				       pid, buf, (size_t)length);
+}
+#endif
 
 /*
  * The register mapping between x86_64 registers is defined by AMD in

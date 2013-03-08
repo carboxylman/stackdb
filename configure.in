@@ -297,15 +297,24 @@ else
 fi
 AC_SUBST(JUDY)
 
+#
+# VMI support, via either xenaccess or libvmi.
+# Right now the default is VMI enabled with xenaccess.
+#    --enable-libvmi	  will enable VMI via libvmi instead
+#    --disable-xenaccess  will disable all VMI
+#
+ENABLE_XENACCESS=1
+ENABLE_LIBVMI=0
+ENABLE_XENACCESS_DEBUG=1
+
 AC_ARG_ENABLE(xenaccess,
 	      AS_HELP_STRING([--disable-xenaccess],
                              [Disable xenaccess support]),
 	      [if test "x$enableval" = "xno"; then \
 	           ENABLE_XENACCESS=0; \
 	       else \
-	           ENABLE_XENACCESS=1; \
-	       fi],
-	      [ENABLE_XENACCESS=1])
+	           ENABLE_XENACCESS=1; ENABLE_LIBVMI=0; \
+	       fi])
 AC_SUBST(ENABLE_XENACCESS)
 AC_ARG_ENABLE(xenaccess-debug,
 	      AS_HELP_STRING([--disable-xenaccess-debug],
@@ -314,9 +323,26 @@ AC_ARG_ENABLE(xenaccess-debug,
 	           ENABLE_XENACCESS_DEBUG=0; \
 	       else \
 	           ENABLE_XENACCESS_DEBUG=1; \
-	       fi],
-	      [ENABLE_XENACCESS_DEBUG=1])
+	       fi])
 AC_SUBST(ENABLE_XENACCESS_DEBUG)
+
+LIBVMI=/usr/local
+AC_ARG_ENABLE(libvmi,
+	      AS_HELP_STRING([--disable-libvmi],
+                             [Disable libvmi support]),
+	      [if test "x$enableval" = "xno"; then \
+	           ENABLE_LIBVMI=0; \
+	       else \
+	           ENABLE_LIBVMI=1; ENABLE_XENACCESS=0; ENABLE_XENACCESS_DEBUG=0; \
+	       fi])
+if test "$ENABLE_LIBVMI" = "1"; then 
+    AC_ARG_WITH([libvmi],
+      AS_HELP_STRING([--with-libvmi=DIRECTORY],
+        [find libvmi install in DIRECTORY]),
+        [LIBVMI="$with_libvmi"])
+fi
+AC_SUBST(LIBVMI)
+AC_SUBST(ENABLE_LIBVMI)
 
 #
 # Support older versions of xenctrl that don't have xc_map_foreign_pages.

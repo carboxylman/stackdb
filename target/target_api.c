@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -29,7 +29,7 @@
 #include <inttypes.h>
 
 #include "target_linux_userproc.h"
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
 #endif
 
@@ -46,7 +46,7 @@ struct target *target_instantiate(struct target_spec *spec) {
     if (spec->target_type == TARGET_TYPE_PTRACE) {
 	target = linux_userproc_instantiate(spec);
     }
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     else if (spec->target_type == TARGET_TYPE_XEN) {
 	target = xen_vm_instantiate(spec);
     }
@@ -71,7 +71,7 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = linux_userproc_build_spec();
     }
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     else if (type == TARGET_TYPE_XEN) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = xen_vm_build_spec();
@@ -94,7 +94,7 @@ void target_free_spec(struct target_spec *spec) {
 	if (spec->target_type == TARGET_TYPE_PTRACE) {
 	    linux_userproc_free_spec((struct linux_userproc_spec *)spec->backend_spec);
 	}
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 	else if (spec->target_type == TARGET_TYPE_XEN) {
 	    xen_vm_free_spec((struct xen_vm_spec *)spec->backend_spec);
 	}

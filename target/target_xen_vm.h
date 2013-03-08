@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -21,7 +21,12 @@
 
 
 #include <xenctrl.h>
+#ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
+#endif
+#ifdef ENABLE_LIBVMI
+#include <libvmi/libvmi.h>
+#endif
 
 #define THREAD_SIZE 8192
 
@@ -185,6 +190,7 @@ struct xen_vm_state {
     char *kernel_version;
     char *kernel_elf_filename;
     char *kernel_module_dir;
+    ADDR kernel_start_addr;
 
     struct bsymbol *init_task;
     struct symbol *task_struct_type;
@@ -201,8 +207,15 @@ struct xen_vm_state {
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
 
+#ifdef ENABLE_XENACCESS
     /* XenAccess instance used to read/write domain's memory */
     xa_instance_t xa_instance;
+#endif
+#ifdef ENABLE_LIBVMI
+    /* VMI instance used to read/write domain's memory */
+    vmi_instance_t vmi_instance;
+    int vmi_page_size;
+#endif
 };
 
 struct target *xen_vm_instantiate(struct target_spec *spec);

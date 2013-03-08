@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2011, 2012 The University of Utah
+## Copyright (c) 2011-2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -81,7 +81,7 @@ export SHELL = /bin/sh
 ELFUTILS = @ELFUTILS@
 
 ELFUTILS_CFLAGS = -I$(ELFUTILS)/include
-ELFUTILS_LDFLAGS = -L$(ELFUTILS)/lib -L$(ELFUTILS)/lib/elfutils -ldw -lelf -lebl
+ELFUTILS_LDFLAGS = -L$(ELFUTILS)/lib -L$(ELFUTILS)/lib/elfutils -ldw -lelf -lebl -ldl
 
 # need this to pick up pkg-config files in wherever glib might be
 GLIB            = @GLIB@
@@ -107,6 +107,9 @@ XENACCESS_SO    = $(XENACCESS_LIBDIR)/libxenaccess.so
 XENACCESS_INC   = $(TOP_SRCDIR)/
 
 ENABLE_XENACCESS = "@ENABLE_XENACCESS@"
+
+ENABLE_LIBVMI    = "@ENABLE_LIBVMI@"
+LIBVMI		 = @LIBVMI@
 
 ENABLE_DISTORM   = "@ENABLE_DISTORM@"
 DISTORM          = @DISTORM@
