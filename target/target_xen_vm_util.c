@@ -125,6 +125,8 @@ struct value *linux_load_current_task(struct target *target) {
     esp = target_read_reg(target,TID_GLOBAL,target->spregno);
     if (errno) {
 	verror("could not read ESP!\n");
+	symbol_release(itptr_type);
+	bsymbol_release(it_type);
 	return NULL;
     }
 
