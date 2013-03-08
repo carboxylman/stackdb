@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -23,8 +23,8 @@
 #include <distorm.h>
 #include "common.h"
 
-typedef _InstructionType inst_t;
-typedef _RegisterType reg_t;
+typedef _InstructionType dis_inst_t;
+typedef _RegisterType dis_reg_t;
 
 typedef enum {
     DECODE_TYPE_NONE = 0,
@@ -33,7 +33,7 @@ typedef enum {
 
 struct inst_data {
     SMOFFSET offset;
-    inst_t type;
+    dis_inst_t type;
     decode_t dtype;
     uint8_t size;
 };
@@ -113,8 +113,8 @@ struct cf_inst_data {
 	     * contains the target address.
 	     */
 	    struct {
-		reg_t base_reg;
-		reg_t index_reg;
+		dis_reg_t base_reg;
+		dis_reg_t index_reg;
 		uint8_t scale;
 	    };
 	    ADDR mem;
