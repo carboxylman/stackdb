@@ -1948,6 +1948,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
 	    value->buf = NULL;
 	    value_free(value);
+	    value = NULL;
 	    goto errout;
 	}
 	else if (!value->mmap) {
