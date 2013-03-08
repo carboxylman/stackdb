@@ -65,7 +65,12 @@ void cleanup() {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
+    static int cleaning = 0;
 
+    if (cleaning)
+	return;
+    cleaning = 1;
+	    
     if (probes) {
 	g_hash_table_iter_init(&iter,probes);
 	while (g_hash_table_iter_next(&iter,
