@@ -29,6 +29,7 @@
 #include <regex.h>
 
 #include "config.h"
+#include "common.h"
 #include "log.h"
 #include "output.h"
 #include "list.h"
@@ -91,6 +92,7 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 			  unsigned int addrsize,unsigned int offset_size,
 			  Dwarf_Word len,const unsigned char *data,
 			  unsigned int attr,struct location *retval);
+static inline void set_language(struct dwarf_cu_meta *meta,int language);
 
 static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     struct attrcb_args *cbargs = (struct attrcb_args *)arg;
@@ -114,7 +116,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	goto errout;
     }
 
-    vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t[DIE %" PRIx64 "] %d %s (%s) (as=%d,os=%d)\n",
+    vdebug(4,LA_DEBUG,LF_DWARFATTR,"%d 0x%x %s (%s) (as=%d,os=%d)\n",
 	   (int)level,cbargs->die_offset,dwarf_attr_string(attr),
 	   dwarf_form_string(form),cbargs->meta->addrsize,cbargs->meta->offsize);
 
@@ -129,6 +131,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     Dwarf_Die rref;
 
     uint8_t str_set = 0;
+    uint8_t str_copy = 0;
     uint8_t num_set = 0;
     uint8_t addr_set = 0;
     uint8_t flag_set = 0;
@@ -142,6 +145,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	// XXX: do we need to strcpy this one?  It's not in our dbg_strtab...
 	str = (char *)attrp->valp;
 	str_set = 1;
+	str_copy = 1;
 	break;
     case DW_FORM_strp:
     case DW_FORM_indirect:
@@ -149,17 +153,21 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	//str_set = 1;
 	//break;
 	if (*(attrp->valp) > (debugfile->dbg_strtablen - 1)) {
-	    verror("[DIE %" PRIx64 "] dwarf str at 0x%lx not in dbg_strtab for attr %s!\n",
+	    vwarn("[DIE %" PRIx64 "] dwarf str at 0x%lx not in dbg_strtab for attr %s; copying!\n",
 		   cbargs->die_offset,(unsigned long int)*(attrp->valp),
 		   dwarf_attr_string(attr));
-	    goto errout;
+	    str_copy = 1;
 	}
 	// XXX relocation...
-	// XXX: make sure to only use this pointer if DWDEBUG_USE_STRTAB!
 	if (cbargs->meta->offsize == 4)
 	    str = &debugfile->dbg_strtab[*((uint32_t *)attrp->valp)];
 	else 
 	    str = &debugfile->dbg_strtab[*((uint64_t *)attrp->valp)];
+#ifdef DWDEBUG_NOUSE_STRTAB
+	str_copy = 1;
+#else
+	str_copy = 0;
+#endif
 	str_set = 1;
 	break;
     case DW_FORM_addr:
@@ -273,13 +281,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    break;
 
 	if (level == 0) {
-	    symtab_set_name(cbargs->cu_symtab,str,0);
+	    symtab_set_name(cbargs->cu_symtab,str,str_copy,0);
 	}
 	else if (cbargs->symbol) {
-	    symbol_set_name(cbargs->symbol,str);
+	    symbol_set_name(cbargs->symbol,str,str_copy);
 	    /* Only full functions have a symtab! */
 	    if (SYMBOL_IS_FULL_FUNCTION(cbargs->symbol))
-		symtab_set_name(cbargs->symtab,str,0);
+		symtab_set_name(cbargs->symtab,str,str_copy,0);
 	}
 	else {
 	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
@@ -302,8 +310,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_producer:
 	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %s\n",str);
-	if (level == 0) 
-	    symtab_set_producer(cbargs->cu_symtab,str);
+	if (level == 0) {
+	    if (str_copy) {
+		cbargs->meta->producer = strdup(str);
+		cbargs->meta->producer_nofree = 0;
+	    }
+	    else {
+		cbargs->meta->producer = str;
+		cbargs->meta->producer_nofree = 1;
+	    }
+	}
 	else 
 	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %s for attr %s in bad context\n",
@@ -311,8 +327,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_comp_dir:
 	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %s\n",str);
-	if (level == 0) 
-	    symtab_set_compdirname(cbargs->cu_symtab,str);
+	if (level == 0) {
+	    if (str_copy) {
+		cbargs->meta->compdirname = strdup(str);
+		cbargs->meta->compdirname_nofree = 0;
+	    }
+	    else {
+		cbargs->meta->compdirname = str;
+		cbargs->meta->compdirname_nofree = 1;
+	    }
+	}
 	else 
 	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %s for attr %s in bad context\n",
@@ -321,7 +345,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_language:
 	vdebug(4,LA_DEBUG,LF_DWARFATTR,"\t\t\tvalue = %d\n",num);
 	if (level == 0) 
-	    symtab_set_language(cbargs->cu_symtab,num);
+	    set_language(cbargs->cu_symtab->meta,num);
 	else 
 	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
@@ -554,8 +578,12 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (ref_set && SYMBOL_IS_INSTANCE(cbargs->symbol)) {
 	    cbargs->symbol->isinlineinstance = 1;
 	    if (SYMBOL_IS_FULL(cbargs->symbol)) {
-		cbargs->symbol->s.ii->origin = (struct symbol *)	\
-		    g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref);
+		/*
+		 * Do this in the CU post-pass; it copies additional
+		 * stuff into cbargs->symbol (like datatype).
+		 */
+		//cbargs->symbol->s.ii->origin = (struct symbol *)	
+		//    g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref);
 		/* Always set the ref so we can generate a unique name for 
 		 * the symbol; see finalize_die_symbol!!
 		 */
@@ -653,13 +681,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
 	else if (str_set && SYMBOL_IS_FULL_INSTANCE(cbargs->symbol)) {
 	    /* Don't malloc; use our copy of the string table. */
-#ifdef DWDEBUG_USE_STRTAB
-	    cbargs->symbol->s.ii->constval = str;
-#else
-	    int slen = strlen(str);
-	    cbargs->symbol->s.ii->constval = malloc(slen+1);
-	    strncpy(cbargs->symbol->s.ii->constval,str,slen+1);
-#endif
+	    if (str_copy) {
+		int slen = strlen(str);
+		cbargs->symbol->s.ii->constval = malloc(slen+1);
+		strncpy(cbargs->symbol->s.ii->constval,str,slen+1);
+		cbargs->symbol->s.ii->constval_nofree = 0;
+	    }
+	    else {
+		cbargs->symbol->s.ii->constval = str;
+		cbargs->symbol->s.ii->constval_nofree = 1;
+	    }
 	}
 	else if (block_set && SYMBOL_IS_FULL_INSTANCE(cbargs->symbol)) {
 	    cbargs->symbol->s.ii->constval = malloc(block.length);
@@ -1137,6 +1168,79 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     return DWARF_CB_ABORT;
  out:
     return 0;
+}
+
+static inline void set_language(struct dwarf_cu_meta *meta,int language) {
+    switch (language) {
+    case DW_LANG_C89:
+	meta->language = "C89";
+	break;
+    case DW_LANG_C:
+	meta->language = "C";
+	break;
+    case DW_LANG_Ada83:
+	meta->language = "Ada83";
+	break;
+    case DW_LANG_C_plus_plus:
+	meta->language = "C++";
+	break;
+    case DW_LANG_Cobol74:
+	meta->language = "Cobol74";
+	break;
+    case DW_LANG_Cobol85:
+	meta->language = "Cobol85";
+	break;
+    case DW_LANG_Fortran77:
+	meta->language = "Fortran77";
+	break;
+    case DW_LANG_Fortran90:
+	meta->language = "Fortran90";
+	break;
+    case DW_LANG_Pascal83:
+	meta->language = "Pascal83";
+	break;
+    case DW_LANG_Modula2:
+	meta->language = "Modula2";
+	break;
+    case DW_LANG_Java:
+	meta->language = "Java";
+	break;
+    case DW_LANG_C99:
+	meta->language = "C99";
+	break;
+    case DW_LANG_Ada95:
+	meta->language = "Ada95";
+	break;
+    case DW_LANG_Fortran95:
+	meta->language = "Fortran95";
+	break;
+    case DW_LANG_PL1:
+	meta->language = "PL/1";
+	break;
+    case DW_LANG_Objc:
+	meta->language = "ObjectiveC";
+	break;
+    case DW_LANG_ObjC_plus_plus:
+	meta->language = "ObjectiveC++";
+	break;
+    case DW_LANG_UPC:
+	meta->language = "UnifiedParallelC";
+	break;
+    case DW_LANG_D:
+	meta->language = "D";
+	break;
+    case DW_LANG_Python:
+	meta->language = "Python";
+	break;
+    case DW_LANG_Go:
+	meta->language = "Go";
+	break;
+    default:
+	meta->language = NULL;
+	break;
+    }
+
+    meta->lang_code = language;
 }
 
 static int get_rangelist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
@@ -1776,8 +1880,11 @@ struct symbol *do_void_symbol(struct debugfile *debugfile,
 						       (gpointer)"void")))
 	return symbol;
 
-    symbol = symbol_create(symtab,0,"void",SYMBOL_TYPE_TYPE,SYMBOL_SOURCE_DWARF,1);
+    symbol = symbol_create(symtab,0,"void",0,SYMBOL_TYPE_TYPE,SYMBOL_SOURCE_DWARF,1);
     symbol->datatype_code = DATATYPE_VOID;
+
+    /* RHOLD; this debugfile owns symbol. */
+    RHOLD(symbol,debugfile);
 
     /* Always put it in its primary symtab, of course -- probably the CU's. */
     symtab_insert(symbol->symtab,symbol,0);
@@ -1851,6 +1958,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
     gpointer key;
     gpointer value;
     struct array_list *duplist;
+    int trefcnt;
 
     /*
      * If we only want to load specific die offsets, clone the incoming
@@ -1886,7 +1994,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	/* attr_callback has to fill cu_symtab, and *MUST* fill at least
 	 * the name field; otherwise we can't add the symtab to our hash table.
 	 */
-	cu_symtab = symtab_create(NULL,debugfile,offset,NULL,NULL,0);
+	cu_symtab = symtab_create(NULL,debugfile,offset,NULL,0,NULL,0);
 	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
 			    (gpointer)cu_symtab);
 	cu_symtab->meta = meta;
@@ -2149,9 +2257,11 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    || tag == DW_TAG_formal_parameter
 	    || tag == DW_TAG_enumerator) {
 	    if (!symbols[level]) {
-		symbols[level] = symbol_create(symtabs[level],offset,NULL,
+		symbols[level] = symbol_create(symtabs[level],offset,NULL,0,
 					       SYMBOL_TYPE_VAR,SYMBOL_SOURCE_DWARF,
 					       (!quick || expand_dies));
+		/* RHOLD; this debugfile owns symbol. */
+		RHOLD(symbols[level],debugfile);
 		if (tag == DW_TAG_formal_parameter) {
 		    symbols[level]->isparam = 1;
 		}
@@ -2169,23 +2279,28 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		if (symbols[level-1] && SYMBOL_IS_TYPE(symbols[level-1])
 		    && symbols[level-1]->isshared)
 		    symbols[level] = symbol_create(symbols[level-1]->symtab,offset,
-						   NULL,SYMBOL_TYPE_VAR,
+						   NULL,0,SYMBOL_TYPE_VAR,
 						   SYMBOL_SOURCE_DWARF,
 						   (!quick || expand_dies));
 		else 
-		    symbols[level] = symbol_create(symtabs[level],offset,NULL,
+		    symbols[level] = symbol_create(symtabs[level],offset,NULL,0,
 						   SYMBOL_TYPE_VAR,
 						   SYMBOL_SOURCE_DWARF,
 						   (!quick || expand_dies));
+		/* RHOLD; this debugfile owns symbol. */
+		RHOLD(symbols[level],debugfile);
 		symbols[level]->ismember = 1;
 	    }
 	}
 	else if (tag == DW_TAG_label) {
-	    if (!symbols[level])
-		symbols[level] = symbol_create(symtabs[level],offset,NULL,
+	    if (!symbols[level]) {
+		symbols[level] = symbol_create(symtabs[level],offset,NULL,0,
 					       SYMBOL_TYPE_LABEL,
 					       SYMBOL_SOURCE_DWARF,
 					       (!quick || expand_dies));
+		/* RHOLD; this debugfile owns symbol. */
+		RHOLD(symbols[level],debugfile);
+	    }
 	}
 	else if (tag == DW_TAG_unspecified_parameters) {
 	    if (!symbols[level-1])
@@ -2210,9 +2325,11 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 || tag == DW_TAG_subroutine_type) {
 	    if (!symbols[level])
 		symbols[level] = symbol_create(symtabs[level],offset,
-					       NULL,SYMBOL_TYPE_TYPE,
+					       NULL,0,SYMBOL_TYPE_TYPE,
 					       SYMBOL_SOURCE_DWARF,
 					       (!quick || expand_dies));
+		/* RHOLD; this debugfile owns symbol. */
+		RHOLD(symbols[level],debugfile);
 	    switch (tag) {
 	    case DW_TAG_base_type:
 		symbols[level]->datatype_code = DATATYPE_BASE; break;
@@ -2267,18 +2384,20 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    */
 	    ;
 	}
-	else if (tag == DW_TAG_subprogram
-		 || tag == DW_TAG_inlined_subroutine) {
+	else if (tag == DW_TAG_subprogram) {
+		 //|| tag == DW_TAG_inlined_subroutine) {
 	    if (!symbols[level]) {
-		symbols[level] = symbol_create(symtabs[level],offset,NULL,
+		symbols[level] = symbol_create(symtabs[level],offset,NULL,0,
 					       SYMBOL_TYPE_FUNCTION,
 					       SYMBOL_SOURCE_DWARF,
 					       (!quick || expand_dies));
+		/* RHOLD; this debugfile owns symbol. */
+		RHOLD(symbols[level],debugfile);
 		/* Build a new symtab and use it until we finish this
 		 * subprogram, or until we need another child scope.
 		 */
 		if (!quick || expand_dies) {
-		    newscope = symtab_create(NULL,debugfile,offset,NULL,symbols[level],0);
+		    newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
 		    newscope->parent = symtabs[level];
 		    // XXX: should we wait to do this until we level up after
 		    // successfully completing this new child scope?
@@ -2290,7 +2409,47 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    else if (SYMBOL_IS_FULL_FUNCTION(symbols[level])
 		     && !symbols[level]->s.ii->d.f.symtab) {
 		/* This happens when we are expanding a func symbol. */
-		newscope = symtab_create(NULL,debugfile,offset,NULL,symbols[level],0);
+		newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
+		newscope->parent = symtabs[level];
+		// XXX: should we wait to do this until we level up after
+		// successfully completing this new child scope?
+		list_add_tail(&newscope->member,&symtabs[level]->subtabs);
+	    }
+	    else {
+		newscope = symbols[level]->s.ii->d.f.symtab;
+	    }
+
+	    if (((!quick || expand_dies) && !ts) 
+		|| (expand_dies && ts && ts->loadtag == LOADTYPE_PARTIAL)) {
+		symbols[level]->s.ii->d.f.symtab = newscope;
+		INIT_LIST_HEAD(&(symbols[level]->s.ii->d.f.args));
+	    }
+	}
+	else if (tag == DW_TAG_inlined_subroutine) {
+	    if (!symbols[level]) {
+		symbols[level] = symbol_create(symtabs[level],offset,NULL,0,
+					       SYMBOL_TYPE_FUNCTION,
+					       SYMBOL_SOURCE_DWARF,
+					       (!quick || expand_dies));
+		/* RHOLD; this debugfile owns symbol. */
+		RHOLD(symbols[level],debugfile);
+		/* Build a new symtab and use it until we finish this
+		 * subprogram, or until we need another child scope.
+		 */
+		if (!quick || expand_dies) {
+		    newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
+		    newscope->parent = symtabs[level];
+		    // XXX: should we wait to do this until we level up after
+		    // successfully completing this new child scope?
+		    list_add_tail(&newscope->member,&symtabs[level]->subtabs);
+		}
+		else 
+		    args.symtab = NULL;
+	    }
+	    else if (SYMBOL_IS_FULL_FUNCTION(symbols[level])
+		     && !symbols[level]->s.ii->d.f.symtab) {
+		/* This happens when we are expanding a func symbol. */
+		newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
 		newscope->parent = symtabs[level];
 		// XXX: should we wait to do this until we level up after
 		// successfully completing this new child scope?
@@ -2311,7 +2470,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * block, or until we need another child scope.
 	     */
 	    if (!quick || expand_dies) {
-		newscope = symtab_create(NULL,debugfile,offset,NULL,NULL,0);
+		newscope = symtab_create(NULL,debugfile,offset,NULL,0,NULL,0);
 		newscope->parent = symtabs[level];
 		// XXX: should we wait to do this until we level up after
 		// successfully completing this new child scope?
@@ -2525,9 +2684,10 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		     * a ref each time we actually use it; see below in
 		     * the datatype_ref resolution code!
 		     */
-		    /* symbol_hold(tsymbol); */
+		    /* RHOLD(tsymbol); */
 		    /* Free ourself! */
-		    symbol_free(symbols[level],0);
+		    /* (and release the ref we took after symbol_create) */
+		    RPUT(symbols[level],symbol,debugfile,trefcnt);
 		    symbols[level] = NULL;
 		    /* Skip to the next sibling, or to the next DIE if
 		     * we're doing a partial CU load.
@@ -2542,7 +2702,12 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		       symbol_get_name_orig(symbols[level]),
 		       SYMBOL_TYPE(symbols[level]->type));
 		symbols[level]->isshared = 1;
-		symbol_hold(symbols[level]);
+		/*
+		 * NOTE: no longer hold a ref here; we have to hold a
+		 * ref each time we actually use it; see below in the
+		 * datatype_ref resolution code!
+		 */
+		//RHOLD(symbols[level],debugfile);
 		//symtab_insert(debugfile->shared_types,symbols[level],0);
 		/* We have to change its symtab, AND later on (after
 		 * we've processed any symbols it or its members (i.e.,
@@ -2595,6 +2760,15 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	 * we don't need to check if the parents are full symbols is
 	 * because we can never load a child symbol unless we fully load
 	 * a parent, in which case we also fully load the child.
+	 *
+	 * XXX: Don't have the parent hold a ref to the child.  This
+	 * could cause problems, but the idea is that a user looking up
+	 * a symbol should never take a ref only to a member.  Hm, this
+	 * probably isn't exactly true; we do support member-only
+	 * lookup.  Hm, probably have to take a ref.  The problem is
+	 * that if the parent gets released and the child doesn't,
+	 * things will break.  But we have this problem going all the
+	 * way up to the symtab hierarchy of parents.
 	 */
 	if ((!quick || expand_dies) && level > 1 && symbols[level-1]) {
 	    if (tag == DW_TAG_member) {
@@ -2861,7 +3035,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		&& SYMTAB_IS_ROOT(rsymbol->datatype->symtab)
 		&& rsymbol->datatype->symtab != cu_symtab)
 		*/
-		symbol_hold(rsymbol->datatype);
+		RHOLD(rsymbol->datatype,rsymbol);
 		rsymbol->usesshareddatatype = 1;
 
 		vdebug(4,LA_DEBUG,LF_SYMBOL,
@@ -2875,12 +3049,30 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    }
 	}
 
+	/*
+	 * Technically, we don't need to RHOLD refs to any of these
+	 * things, since they are all within a single CU -- but for
+	 * completeness (and thus easier optimization later), RHOLD
+	 * anyway.
+	 */
 	if (SYMBOL_IS_FULL_INSTANCE(rsymbol)) {
-	    if (rsymbol->isinlineinstance
-		&& !rsymbol->s.ii->origin && rsymbol->s.ii->origin_ref) {
-		rsymbol->s.ii->origin = (struct symbol *)	\
-		    g_hash_table_lookup(reftab,
-					(gpointer)(uintptr_t)rsymbol->s.ii->origin_ref);
+	    if (rsymbol->isinlineinstance) {
+		if (!rsymbol->s.ii->origin && rsymbol->s.ii->origin_ref) {
+		    rsymbol->s.ii->origin = (struct symbol *)	\
+			g_hash_table_lookup(reftab,
+			    (gpointer)(uintptr_t)rsymbol->s.ii->origin_ref);
+
+		    /*
+		     * NB NB NB: we cannot have objects referencing each other;
+		     * such objects might not get deleted.
+		     *
+		     * (See comments in common.h about ref usage.)
+		     */
+		    /*if (rsymbol->s.ii->origin) {
+		     *    RHOLD(rsymbol->s.ii->origin,rsymbol);
+		     *}
+		     */
+		}
 
 		if (rsymbol->s.ii->origin) {
 		    /* Autoset the instance's datatype attrs! */
@@ -2888,6 +3080,9 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    rsymbol->datatype_ref = rsymbol->s.ii->origin->datatype_ref;
 		    //memcpy(&rsymbol->s.ii->l,&rsymbol->s.ii->origin->s.ii->l,
 		    //	   sizeof(struct location));
+
+		    if (rsymbol->datatype)
+			RHOLD(rsymbol->datatype,rsymbol);
 
 		    vdebug(4,LA_DEBUG,LF_SYMBOL,
 			   "copied datatype %s//%s (0x%"PRIxSMOFFSET")"
@@ -2910,8 +3105,17 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    iilist = (struct array_list *)g_hash_table_lookup(cu_abstract_origins,
 							      (gpointer)(uintptr_t)offset);
 	    if (iilist) {
+		int iii;
+		struct symbol *iisymbol;
 		g_hash_table_remove(cu_abstract_origins,(gpointer)(uintptr_t)offset);
 		rsymbol->s.ii->inline_instances = iilist;
+
+		/*
+		 * Need to take a ref to each symbol.
+		 */
+		array_list_foreach(iilist,iii,iisymbol) {
+		    RHOLD(iisymbol,rsymbol);
+		}
 	    }
 	}
     }
@@ -2981,7 +3185,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 
 	    if (rsymbol->freenextpass) {
 		rsymbol->freenextpass = 0;
-		symbol_free(rsymbol,0);
+		RPUT(rsymbol,symbol,debugfile,trefcnt);
 		g_hash_table_iter_replace(&iter,NULL);
 		continue;
 	    }
@@ -3023,7 +3227,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		     * a ref each time we actually use it; see below in
 		     * the datatype_ref resolution code!
 		     */
-		    /* symbol_hold(tsymbol); */
+		    /* RHOLD(tsymbol); */
 		    /* Mark all the symbols that symbol_free would
 		     * free as "free next pass" symbols, so that we just
 		     * free them and don't process them anymore in our
@@ -3031,14 +3235,20 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		     */
 		    /* Free ourself, but not our members! */
 		    symbol_type_mark_members_free_next_pass(rsymbol,0);
-		    /* Remove ourself from our symtab (and destroy ourself). */
-		    symtab_remove(rsymbol->symtab,rsymbol);
+		    /* Remove ourself from our symtab. */
+		    symtab_remove_symbol(rsymbol->symtab,rsymbol);
+		    /* Free ourself. */
+		    RPUT(rsymbol,symbol,debugfile,trefcnt);
 		    continue;
 		}
 	    }
 	    else if (rsymbol != tsymbol) {
-		/* zzz XXXX: must also change its members' symtabs,
+		/* XXX: must also change its members' symtabs,
 		 * recursively -- all of them!!
+		 *
+		 * Well, see the comment about members above.  We don't
+		 * RHOLD on members right now either.  If we ever do, we
+		 * have to do this (^^) too!
 		 */
 		rsymbol->isshared = 1;
 		/* For now, don't set the recurse-on-type bit.  Don't
@@ -3046,7 +3256,12 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 * symbol into the new symbol and remove it from the
 		 * old.
 		 */
-		symbol_hold(rsymbol);
+		/*
+		 * NOTE: no longer hold a ref here; we have to hold
+		 * a ref each time we actually use it; see below in
+		 * the datatype_ref resolution code!
+		 */
+		/* RHOLD(rsymbol,debugfile); */
 		symbol_change_symtab(rsymbol,debugfile->shared_types,0,0);
 		continue;
 	    }
@@ -3072,7 +3287,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 
 	    if (rsymbol->freenextpass) {
 		rsymbol->freenextpass = 0;
-		symbol_free(rsymbol,0);
+		RPUT(rsymbol,symbol,debugfile,trefcnt);
 		g_hash_table_iter_replace(&iter,NULL);
 		continue;
 	    }
@@ -3086,11 +3301,11 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 */
 		if (tsymbol != rsymbol && tsymbol && tsymbol->isshared) {
 		    rsymbol->datatype = tsymbol;
-		    symbol_hold(tsymbol);
+		    RHOLD(tsymbol,rsymbol);
 		    rsymbol->usesshareddatatype = 1;
 
 		    //if (tsymbol->datatype && tsymbol->datatype->isshared)
-		    //	symbol_hold(tsymbol->datatype);
+		    //	RHOLD(tsymbol->datatype);
 
 		    vdebug(4,LA_DEBUG,LF_SYMBOL,
 			   "using shared symbol (slow check) %s (%s 0x%"PRIxSMOFFSET
@@ -3130,11 +3345,11 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     */
 	    if (rsymbol->symtab != cu_symtab 
 		&& rsymbol->isshared && rsymbol->refcnt == 1)
-		//symbol_hold(rsymbol);
+		//RHOLD(rsymbol);
 
 	    if (rsymbol->freenextpass) {
 		rsymbol->freenextpass = 0;
-		symbol_free(rsymbol,0);
+		RPUT(rsymbol,symbol,debugfile,trefcnt);
 		g_hash_table_iter_replace(&iter,NULL);
 		continue;
 	    }
@@ -3355,6 +3570,8 @@ static int debuginfo_load(struct debugfile *debugfile,
 	memset(meta,0,sizeof(*meta));
 	meta->dwflmod = dwflmod;
 	meta->dbg = dbg;
+	meta->addrsize = 0;
+	meta->offsize = 0;
 #if defined(LIBDW_HAVE_NEXT_UNIT) && LIBDW_HAVE_NEXT_UNIT == 1
 	if ((rc = dwarf_next_unit(dbg,offset,&meta->nextcu,&meta->cuhl,
 				  &meta->version,&meta->abbroffset,&meta->addrsize,
@@ -3754,7 +3971,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 			symbol->s.ii->origin_ref);
 	    }
 
-	    symbol_set_name(symbol,inname);
+	    symbol_set_name(symbol,inname,1);
 	    free(inname);
 	}
 
@@ -4156,7 +4373,7 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	 */
 	if (!(cu_symtab = (struct symtab *)\
 	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
-	    cu_symtab = symtab_create(NULL,debugfile,(SMOFFSET)offset,NULL,NULL,0);
+	    cu_symtab = symtab_create(NULL,debugfile,(SMOFFSET)offset,NULL,0,NULL,0);
 	    debugfile_add_cu_symtab(debugfile,cu_symtab);
 	}
 
@@ -4343,7 +4560,7 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     /*
      * Only save dbg_strtab if we're gonna use it.
      */
-#ifndef DWDEBUG_USE_STRTAB
+#ifdef DWDEBUG_NOUSE_STRTAB
     if (debugfile->dbg_strtab) {
 	free(debugfile->dbg_strtab);
 	debugfile->dbg_strtablen = 0;

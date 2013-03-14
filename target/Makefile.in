@@ -32,7 +32,6 @@ include $(OBJDIR)/Makeconf
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
 	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
-CFLAGS += -DDWDEBUG_USE_STRTAB
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
 	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
@@ -58,7 +57,7 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
+HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h \
 	$(SRCDIR)/target.h $(SRCDIR)/target_api.h \
 	$(SRCDIR)/probe.h $(SRCDIR)/probe_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \

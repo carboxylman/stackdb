@@ -24,6 +24,7 @@
 #include "log.h"
 
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 #include "target_api.h"
 #include "target.h"
@@ -76,7 +77,8 @@
 /*
  * Local prototypes.
  */
-static void action_finish_handling(struct action *action);
+static void action_finish_handling(struct action *action,
+				   struct thread_action_context *tac);
 
 /*
  * If the user doesn't supply pre/post handlers, and the probe has sinks
@@ -196,7 +198,7 @@ static struct probepoint *__probepoint_create(struct target *target,ADDR addr,
 
     if (bsymbol) {
 	probepoint->bsymbol = bsymbol;
-	bsymbol_hold(bsymbol);
+	RHOLD(bsymbol,probepoint);
     }
     probepoint->symbol_addr = symbol_addr;
     
@@ -264,6 +266,7 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
     struct probe *ptmp;
     struct action *action;
     struct action *atmp;
+    REFCNT trefcnt;
 
     /* Destroy any actions it might have (probe_free does this too,
      * but this is much more efficient.
@@ -296,7 +299,7 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
      */
 
     if (probepoint->bsymbol) {
-	bsymbol_release(probepoint->bsymbol);
+	RPUT(probepoint->bsymbol,bsymbol,probepoint,trefcnt);
 	probepoint->bsymbol = NULL;
     }
 }
@@ -799,6 +802,8 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
 }
 
 int probe_free(struct probe *probe,int force) {
+    REFCNT trefcnt;
+
     vdebug(5,LA_PROBE,LF_PROBE,"");
     LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
@@ -844,6 +849,11 @@ int probe_free(struct probe *probe,int force) {
     if (PROBE_SAFE_OP(probe,fini)) {
 	verror("probe %s fini failed, aborting!\n",probe->name);
 	return -1;
+    }
+
+    if (probe->bsymbol) {
+	RPUT(probe->bsymbol,bsymbol,probe,trefcnt);
+	probe->bsymbol = NULL;
     }
 
     vdebug(5,LA_PROBE,LF_PROBE,"almost done: ");
@@ -1217,9 +1227,6 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     int created = 0;
     struct target *target = probe->target;
 
-    if (bsymbol) 
-	bsymbol_hold(bsymbol);
-
     if (type == PROBEPOINT_WATCH && style == PROBEPOINT_SW) {
 	verror("software watchpoints are unsupported!\n");
 	errno = EINVAL;
@@ -1242,6 +1249,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
 				     bsymbol,&symbol_addr,
 				     (!range) ? &range : NULL);
 	probe->bsymbol = bsymbol;
+	RHOLD(bsymbol,probe);
     }
 
     /* If we don't have a range yet, get it. */
@@ -1363,7 +1371,7 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
     if (!bsymbol)
 	return NULL;
 
-    /* No need to bsymbol_hold(); __probe_register_addr() does it. 
+    /* No need to RHOLD(); __probe_register_addr() does it. 
      * IN FACT, we need to release when we exit!
      */
 
@@ -1423,7 +1431,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     ADDR probeaddr;
     int ssize;
 
-    /* No need to bsymbol_hold(); __probe_register_addr() does it. */
+    /* No need to RHOLD(); __probe_register_addr() does it. */
 
     if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
@@ -1459,7 +1467,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     }
     else if (SYMBOL_IS_FULL_VAR(bsymbol->lsymbol->symbol)) {
 	if (watchsize == PROBEPOINT_LAUTO) {
-	    ssize = symbol_type_full_bytesize(symbol_get_datatype(bsymbol->lsymbol->symbol));
+	    ssize = symbol_type_full_bytesize(symbol_get_datatype__int(bsymbol->lsymbol->symbol));
 	    if (ssize <= 0) {
 		verror("bad size (%d) for type of %s!\n",
 		       ssize,bsymbol->lsymbol->symbol->name);
@@ -1498,13 +1506,16 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 
 struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     struct target *target = sink->target;
+    int held_src_bsymbol = 0;
+    REFCNT trefcnt;
 
     /* XXX: should we do this?  Steal the src's bsymbol if we don't have
      * one!
      */
     if (!sink->bsymbol && src->bsymbol) {
-	bsymbol_hold(src->bsymbol);
 	sink->bsymbol = src->bsymbol;
+	RHOLD(src->bsymbol,sink);
+	held_src_bsymbol = 1;
     }
 
     if (sink->target != src->target) {
@@ -1537,8 +1548,8 @@ struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     return sink;
 
  errout:
-    if (sink->bsymbol) {
-	bsymbol_release(sink->bsymbol);
+    if (held_src_bsymbol) {
+	RPUT(sink->bsymbol,bsymbol,sink,trefcnt);
 	sink->bsymbol = NULL;
     }
     if (sink->autofree)
@@ -1938,7 +1949,7 @@ static int handle_simple_actions(struct target *target,
 
 
 	/* cleanup oneshot actions! */
-	action_finish_handling(action);
+	action_finish_handling(action,NULL);
     }
 
     return retval;
@@ -2013,7 +2024,7 @@ static int setup_single_step_actions(struct target *target,
 		    action->handler(action,tthread,action->probe,probepoint,
 				    MSG_FAILURE,0,action->handler_data);
 
-		action_finish_handling(action);
+		action_finish_handling(action,NULL);
 	    }
 
 	    stepping = -1;
@@ -2042,8 +2053,8 @@ static int setup_single_step_actions(struct target *target,
 	list_for_each_entry_safe(action,taction,&probepoint->ss_actions,action) {
 	    struct thread_action_context *tac = \
 		(struct thread_action_context *)calloc(1,sizeof(*tac));
-	    action_hold(action);
 	    tac->action = action;
+	    RHOLD(action,tac);
 	    tac->stepped = 0;
 	    INIT_LIST_HEAD(&tac->tac);
 
@@ -2509,7 +2520,7 @@ result_t probepoint_bp_handler(struct target *target,
 		    action->handler(action,tthread,action->probe,action->probe->probepoint,
 				    MSG_SUCCESS,tac->stepped,action->handler_data);
 
-		action_finish_handling(action);
+		action_finish_handling(action,tac);
 
 		list_del(&tac->tac);
 		free(tac);
@@ -2928,7 +2939,7 @@ result_t probepoint_ss_handler(struct target *target,
 		    action->handler(action,tthread,action->probe,action->probe->probepoint,
 				    MSG_SUCCESS,tac->stepped,action->handler_data);
 
-		action_finish_handling(action);
+		action_finish_handling(action,tac);
 
 		list_del(&tac->tac);
 		free(tac);
@@ -3136,7 +3147,7 @@ result_t probepoint_ss_handler(struct target *target,
 					 MSG_FAILURE,tac->stepped,
 					 tac->action->handler_data);
 
-		action_finish_handling(tac->action);
+		action_finish_handling(tac->action,tac);
 
 		list_del(&tac->tac);
 		free(tac);
@@ -3281,7 +3292,7 @@ result_t probepoint_resumeat_handler(struct target *target,
 					     MSG_FAILURE,tac->stepped,
 					     tac->action->handler_data);
 
-		    action_finish_handling(tac->action);
+		    action_finish_handling(tac->action,tac);
 
 		    list_del(&tac->tac);
 		    free(tac);
@@ -3600,7 +3611,7 @@ static int handle_complex_actions(struct target *target,
 	    /* Grab the next one before we destroy this one. */
 	    nextaction = __get_next_complex_action(probepoint,action);
 
-	    action_finish_handling(action);
+	    action_finish_handling(action,tac);
 
 	    action = nextaction;
 
@@ -3746,7 +3757,7 @@ static int handle_complex_actions(struct target *target,
 					 MSG_FAILURE,tac->stepped,
 					 tac->action->handler_data);
 
-		action_finish_handling(action);
+		action_finish_handling(action,tac);
 
 		list_del(&tac->tac);
 		free(tac);
@@ -4175,20 +4186,22 @@ struct action *action_memmod(ADDR dest,char *data,uint32_t len) {
     return action;
 }
 
-void action_hold(struct action *action) {
-    RHOLD(action);
-}
-
 REFCNT action_release(struct action *action) {
-    return RPUT(action,action);
+    REFCNT refcnt;
+    RPUT(action,action,action,refcnt);
+    return refcnt;
 }
 
-static void action_finish_handling(struct action *action) {
+static void action_finish_handling(struct action *action,
+				   struct thread_action_context *tac) {
+    REFCNT trefcnt;
+
     /*
      * If the action is oneshot, cancel it.
      */
     if (action->whence == ACTION_ONESHOT) {
-	//action_release(action);
+	if (tac)
+	    RPUT(action,action,tac,trefcnt);
 	action_cancel(action);
 
 	if (action->autofree)

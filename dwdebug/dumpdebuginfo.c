@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "common.h"
 #include "log.h"
 #include "dwdebug.h"
 
@@ -295,7 +296,7 @@ int main(int argc,char **argv) {
 		     * created it instead of looked it up, so a ref to it was
 		     * not taken on our behalf.
 		     */
-		    lsymbol_free(s2,0);
+		    lsymbol_release(s2);
 		    fprintf(stdout,"\n");
 		}
 	    }
@@ -303,9 +304,13 @@ int main(int argc,char **argv) {
     }
 
     if (!nofree)
-	RPUT(debugfile,debugfile);
+	debugfile_release(debugfile);
 
     dwdebug_fini();
+
+#ifdef REF_DEBUG
+    REF_DEBUG_REPORT_FINISH();
+#endif
 
     return 0;
 }

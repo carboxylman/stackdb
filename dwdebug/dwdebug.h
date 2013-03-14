@@ -452,27 +452,25 @@ int debugfile_add_type_name(struct debugfile *debugfile,
 			    char *name,struct symbol *symbol);
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 		    int types,int globals,int symtabs,int elfsymtab);
-REFCNT debugfile_free(struct debugfile *debugfile,int force);
+REFCNT debugfile_release(struct debugfile *debugfile);
 
 /**
  ** Symbol tables.
  **/
 struct symtab *symtab_create(struct binfile *binfile,
 			     struct debugfile *debugfile,
-			     SMOFFSET offset,char *name,
+			     SMOFFSET offset,char *name,int name_copy,
 			     struct symbol *symtab_symbol,int noautoinsert);
 int symtab_get_size_simple(struct symtab *symtab);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 struct symbol *symtab_get_sym(struct symtab *symtab,const char *name);
 int symtab_insert_fakename(struct symtab *symtab,char *fakename,
 			   struct symbol *symbol,OFFSET anonaddr);
-void symtab_remove(struct symtab *symtab,struct symbol *symbol);
+void symtab_remove_symbol(struct symtab *symtab,struct symbol *symbol);
 void symtab_steal(struct symtab *symtab,struct symbol *symbol);
 char *symtab_get_name(struct symtab *symtab);
-void symtab_set_name(struct symtab *symtab,char *srcfilename,int noautoinsert);
-void symtab_set_compdirname(struct symtab *symtab,char *compdirname);
-void symtab_set_producer(struct symtab *symtab,char *producer);
-void symtab_set_language(struct symtab *symtab,int language);
+void symtab_set_name(struct symtab *symtab,char *srcfilename,int name_copy,
+		     int noautoinsert);
 void symtab_dump(struct symtab *symtab,struct dump_info *ud);
 /*
  * Since we can get symtab info from multiple places (i.e.,
@@ -489,15 +487,12 @@ void symtab_dump(struct symtab *symtab,struct dump_info *ud);
 void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
 			 range_type_t rt_hint);
 void symtab_free(struct symtab *symtab);
-#ifdef DWDEBUG_USE_STRTAB
-int symtab_str_in_binfile_strtab(struct symtab *symtab,char *strp);
-#endif
 
 /**
  ** Symbols.
  **/
 struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
-			     char *name,symbol_type_t symtype,
+			     char *name,int name_copy,symbol_type_t symtype,
 			     symbol_source_t source,int full);
 /*
  * Returns the name of the symbol.  Might be modified if it was an
@@ -518,17 +513,11 @@ char *symbol_get_name_inline(struct symbol *symbol);
  * it is an enum/struct/union type), this returns the base name.
  */
 char *symbol_get_name_orig(struct symbol *symbol);
-void symbol_set_name(struct symbol *symbol,char *name);
+void symbol_set_name(struct symbol *symbol,char *name,int name_copy);
 void symbol_build_extname(struct symbol *symbol);
 struct symtab *symbol_get_root_symtab(struct symbol *symbol);
 void symbol_change_symtab(struct symbol *symbol,struct symtab *symtab,
 			  int noinsert,int typerecurse);
-/*
- * Returns a real, valid type for the symbol.  If it is an inline
- * instance, we skip to the abstract origin root and use that datatype.
- * If not, for now we just return @symbol->type.
- */
-struct symbol *symbol_get_datatype(struct symbol *symbol);
 void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
 void symbol_set_srcline(struct symbol *symbol,int srcline);
 
@@ -570,10 +559,6 @@ int symbol_get_location_range(struct symbol *symbol,ADDR *low_addr_saveptr,
 			      ADDR *high_addr_saveptr,int *is_noncontiguous);
 
 /*
- * Takes a reference to the symbol.  Users should not call this.
- */
-REFCNT symbol_hold(struct symbol *symbol);
-/*
  * Releases a reference to the symbol and tries to free it.
  */
 REFCNT symbol_release(struct symbol *symbol);
@@ -584,13 +569,6 @@ REFCNT symbol_release(struct symbol *symbol);
 REFCNT symbol_free(struct symbol *symbol,int force);
 void symbol_type_mark_members_free_next_pass(struct symbol *symbol,int force);
 
-/* Creates an lsymbol data structure and takes references to all its
- * symbols.  Users probably never should call this function.
- *
- * This function takes a ref to each symbol in @chain, BUT NOT to
- * @return (call lsymbol_hold() to get that ref).
- */
-struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
 /* If we already know that @member is a member of @symbol -- i.e., it is
  * a nested var in a struct or function, or a function/function type
  * param, etc... we can just clone @parent's chain and extend it by one
@@ -599,16 +577,14 @@ struct lsymbol *lsymbol_create(struct symbol *symbol,struct array_list *chain);
  * Users might sometimes wish to call this function to obtain an lsymbol
  * structure, but they shouldn't need to.
  *
- * This function takes a ref to each symbol in @chain, BUT NOT to
- * @return (call lsymbol_hold() to get that ref).
+ * You must call lsymbol_release() to unhold the return value.
  */
 struct lsymbol *lsymbol_create_from_member(struct lsymbol *parent,
 					   struct symbol *member);
 /*
  * Clones the non-inlineinstance part of @lsymbol.
  *
- * This function takes a ref to each symbol in @chain, BUT NOT to
- * @return (call lsymbol_hold() to get that ref).
+ * You must call lsymbol_release() to unhold the return value.
  */
 struct lsymbol *lsymbol_create_noninline(struct lsymbol *lsymbol);
 /*
@@ -628,21 +604,9 @@ struct lsymbol *lsymbol_create_noninline(struct lsymbol *lsymbol);
  * instance chains.  We cannot know *which* instance of 'struct
  * mystruct' you want to have as the parent of 'mymember'.
  *
- * This function takes a ref to each symbol in its chain, BUT NOT to
- * @return (call lsymbol_hold() to get that ref).
+ * You must call lsymbol_release() to unhold the return value.
  */
 struct lsymbol *lsymbol_create_from_symbol(struct symbol *symbol);
-/*
- * Add another symbol to the end of our lookup chain and make it the
- * primary symbol (i.e, @lsymbol->symbol = symbol), and hold a ref on
- * @symbol.  Users should not need to call this.
- */
-void lsymbol_append(struct lsymbol *lsymbol,struct symbol *symbol);
-/*
- * Add a symbol to the start of our lookup chain and hold a ref on
- * @symbol.  Users should not need to call this.
- */
-void lsymbol_prepend(struct lsymbol *lsymbol,struct symbol *symbol);
 char *lsymbol_get_name(struct lsymbol *lsymbol);
 struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol);
 /*
@@ -653,29 +617,10 @@ struct symbol *lsymbol_get_symbol(struct lsymbol *lsymbol);
 struct symbol *lsymbol_get_noninline_parent_symbol(struct lsymbol *lsymbol);
 void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
 /*
- * Takes a reference to the lsymbol (NOT to the symbols on the chain!).
- * Users should never call this function; the lookup functions return
- * lsymbols that have been held.  The user should only call
- * lsymbol_release on them.
- */
-void lsymbol_hold(struct lsymbol *lsymbol);
-/*
- * Takes references to the symbols on the lsymbol chain!.  Users should
- * never call this function unless they call lsymbol_create*(); the
- * lookup functions return lsymbols that have been held.  The user
- * should only call lsymbol_release on them.
- */
-void lsymbol_hold_int(struct lsymbol *lsymbol);
-/*
  * Releases the reference to the lsymbol, and frees it if its refcnt is
  * 0.
  */
-void lsymbol_release(struct lsymbol *lsymbol);
-/*
- * Releases references to the symbols on the chain and tries to free the
- * lsymbol (not the underlying symbols!).
- */
-REFCNT lsymbol_free(struct lsymbol *lsymbol,int force);
+REFCNT lsymbol_release(struct lsymbol *lsymbol);
 
 /**
  ** Locations.
@@ -767,7 +712,7 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
  * only partially loaded), this list may not be used.
  *
  * The items on this list are struct symbol *, and if you want to use
- * them, you MUST symbol_hold() them!  This function does not do it for
+ * them, you MUST RHOLD() them!  This function does not do it for
  * you!
  */
 GList *debugfile_match_syms(struct debugfile *debugfile,
@@ -822,11 +767,11 @@ struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
 				  const char *name,const char *delim,
 				  symbol_type_flag_t ftype);
 
-struct lsymbol *lsymbol_lookup_member(struct lsymbol *lsymbol,
-				      const char *name,const char *delim);
+struct lsymbol *lsymbol_lookup_sym(struct lsymbol *lsymbol,
+				   const char *name,const char *delim);
 
-struct lsymbol *symbol_lookup_member(struct symbol *symbol,
-				     const char *name,const char *delim);
+struct lsymbol *symbol_lookup_sym(struct symbol *symbol,
+				  const char *name,const char *delim);
 
 /*
  * Returns a clone of @lsymbol, with reference taken, and if @newchild
@@ -886,6 +831,15 @@ struct symbol *symbol_get_one_member(struct symbol *symbol,char *member);
 struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
 				 const char *delim);
 /*
+ * Returns a real, valid type for the symbol.  If it is an inline
+ * instance, we skip to the abstract origin root and use that datatype.
+ * If not, for now we just return @symbol->type.
+ *
+ * If this function returns a symbol, it takes a reference to it.
+ * symbol_release is the correct way to release these refs.
+ */
+struct symbol *symbol_get_datatype(struct symbol *symbol);
+/*
  * Given an IP (as an object-relative address), check and see if this
  * symbol is currently visible (in scope).  To do this we, check if the
  * IP is in the symtab's range; or if it is in any child symtab's range
@@ -936,9 +890,6 @@ void binfile_init(void);
 void binfile_fini(void);
 struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
 			       void *priv);
-struct binfile *binfile_lookup(char *filename);
-int binfile_cache(struct binfile *binfile);
-int binfile_uncache(struct binfile *binfile);
 int binfile_cache_clean(void);
 /*
  * Tries all backends, or the one referred to by @bfinst, to open
@@ -953,20 +904,52 @@ struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst);
 struct binfile *binfile_open_debuginfo(struct binfile *binfile,
 				       struct binfile_instance *bfinst,
 				       const char *DFPATH[]);
+
 /*
- * Tries to load @filename as a binfile, then use that binfile backend's
- * ops to infer a default program layout, informed by the @base load
- * address.
+ * Loads @filename as a binfile, then uses that binfile backend's ops to
+ * infer a default program layout, informed by the @base load address,
+ * and any key/value pairs in @config.
  *
- * (For instance, with the ELF backend, this just generates a simple
- * layout 
+ * @param filename  A path to a binary file.
+ * @param base      The base load address as the program image is or was
+ *     constructed.
+ * @param config    A simple char *->char * hash of key/value pairs; its use
+ *     is backend-specific. 
+ *
+ * @returns  A binfile_instance that represents a program image.
  */
 struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
 						GHashTable *config);
+/*
+ * @param binfile  A loaded binfile.
+ * @returns  The name of the backend that loaded @binfile.
+ */
 const char *binfile_get_backend_name(struct binfile *binfile);
+/*
+ * @param binfile  A loaded binfile.
+ * @returns  The type of @binfile.
+ */
 binfile_type_t binfile_get_type(struct binfile *binfile);
+/*
+ * Closes all resources associated with loading @binfile, but does not
+ * free the result of loading the binfile -- i.e., any symbols or
+ * metadata that were cached into internal structures after "load".
+ *
+ * @param binfile  A loaded binfile.
+ *
+ * @returns  A result code.
+ */
 int binfile_close(struct binfile *binfile);
-REFCNT binfile_free(struct binfile *binfile,int force);
+/*
+ * Releases a reference @binfile.  If this is the last reference, the
+ * binfile is freed.  At this point, the caller must not use any symbols
+ * or data obtained from the binfile.
+ */
+REFCNT binfile_release(struct binfile *binfile);
+/*
+ * Frees a binfile_instance.  These are not refcnt'd, so can be freed
+ * directly (no release).
+ */
 void binfile_instance_free(struct binfile_instance *bfi);
 
 /*
@@ -1002,37 +985,33 @@ struct binfile_ops {
 struct binfile {
     /* Our reference count. */
     REFCNT refcnt;
+    /* Our weak reference count. */
+    REFCNT refcntw;
+
+    binfile_type_t type;
 
     uint8_t is_dynamic:1,
 	    has_debuginfo:1;
-
-    int wordsize;
-    int endian;
-
-    /*
-     * The binfile_instance that was used to load and relocate this
-     * binfile.
-     *
-     * If @binfile_instance is set, this binfile cannot be shared
-     * (because we relocated bits in the binfile using the instance
-     * info).
-     *
-     * If we loaded a binfile that does not depend on the instance,
-     * this field should NOT be set.
-     *
-     * The backend is in charge of setting this field correctly!
-     */
-    struct binfile_instance *instance;
 
     /*
      * Opened binfiles have either @fd > 0, or non-NULL @image (right
      * now, image is used when the binfile has to be loaded into memory
      * for whatever reason -- initially, relocation in the backend).
      */
-    int fd;
     char *image;
+    int fd;
 
-    binfile_type_t type;
+    int wordsize;
+    int endian;
+
+    /*
+     * The string table for this file.  All binfile string pointers are
+     * checked for presence in this table before freeing.
+     *
+     * This table persists until the binfile is freed.
+     */
+    unsigned int strtablen;
+    char *strtab;
 
     /*
      * This must be an absolute path; binfile_create will try to resolve
@@ -1042,12 +1021,6 @@ struct binfile {
      * This is a unique ID used for caching.
      */
     char *filename;
-
-    /*
-     * Currently unused.
-     */
-    time_t load_time;
-    time_t mod_time;
     
     /*
      * binfile_open does a best-effort pass at these fields via regexps;
@@ -1072,15 +1045,6 @@ struct binfile {
     void *priv;
 
     /*
-     * The string table for this file.  All binfile string pointers are
-     * checked for presence in this table before freeing.
-     *
-     * This table persists until the binfile is freed.
-     */
-    char *strtab;
-    unsigned int strtablen;
-
-    /*
      * The symtab for this binfile; all symbols in this table are
      * per-backend symbols, not DWARF symbols.  They cannot be expanded
      * into fully-loaded symbols.
@@ -1100,6 +1064,27 @@ struct binfile {
      */
     ADDR base_phys_addr;
     ADDR base_virt_addr;
+
+    /*
+     * The binfile_instance that was used to load and relocate this
+     * binfile.
+     *
+     * If @binfile_instance is set, this binfile cannot be shared
+     * (because we relocated bits in the binfile using the instance
+     * info).
+     *
+     * If we loaded a binfile that does not depend on the instance,
+     * this field should NOT be set.
+     *
+     * The backend is in charge of setting this field correctly!
+     */
+    struct binfile_instance *instance;
+
+    /*
+     * Currently unused.
+     */
+    time_t load_time;
+    time_t mod_time;
 };
 
 struct binfile_elf {
@@ -1173,8 +1158,13 @@ struct debugfile_load_opts {
 struct debugfile {
     debugfile_type_flags_t flags;
 
+    /* does this file get automatically garbage collected? */
+    uint8_t infinite;
+
     /* Our reference count. */
     REFCNT refcnt;
+    /* Our weak reference count. */
+    REFCNT refcntw;
 
     /* Save the options we were loaded with, forever. */
     struct debugfile_load_opts *opts;
@@ -1234,9 +1224,6 @@ struct debugfile {
     unsigned int loctablen;
     unsigned int rangetablen;
     unsigned int linetablen;
-
-    /* does this file get automatically garbage collected? */
-    uint8_t infinite;
 
     /*
      * Each srcfile in a debugfile gets its own symtable.  The symtable
@@ -1392,6 +1379,10 @@ struct dwarf_cu_meta {
 
     /* Right now, this is only set for top-level CU symtabs. */
     load_type_t loadtag:LOAD_TYPE_BITS;
+
+    uint8_t compdirname_nofree:1,
+            producer_nofree:1,
+	    language_nofree:1;
 };
 
 /*
@@ -1421,10 +1412,17 @@ struct symtab {
      */
     struct range range;
 
+    /* Our refcnt. */
+    REFCNT refcnt;
+    /* Our weak reference count. */
+    REFCNT refcntw;
+
     /* The offset where this symtab came from.  For CU symtabs, it is
      * the CU; for function symtabs, it is the function's DIE.
      */
     SMOFFSET ref;
+
+    uint8_t name_nofree:1;
 
     /*
      * If this is a symtab for symbol (i.e., for a function), this is
@@ -1532,10 +1530,13 @@ struct symbol {
 	has_base_addr:1,
 	size_is_bytes:1,
 	size_is_bits:1,
-	guessed_size:1;
+	guessed_size:1,
+	name_nofree:1;
 
     /* Our refcnt. */
     REFCNT refcnt;
+    /* Our weak reference count. */
+    REFCNT refcntw;
 
     /* Our offset location in the debugfile. */
     SMOFFSET ref;
@@ -1635,7 +1636,8 @@ struct symbol_type {
 
 struct symbol_instance {
     uint8_t isdeclinline:1,
-	    isinlined:1;
+	    isinlined:1,
+	    constval_nofree:1;
 
     /* If this instance is inlined, these point back to the
      * source for the inlined instance.  If it was a forward ref
@@ -1717,6 +1719,8 @@ struct symbol_instance {
 struct lsymbol {
     /* Our refcnt. */
     REFCNT refcnt;
+    /* Our weak reference count. */
+    REFCNT refcntw;
 
     /*
      * If it is not a nested symbol, only the symbol itself.  Otherwise,

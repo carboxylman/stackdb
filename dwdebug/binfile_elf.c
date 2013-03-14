@@ -29,12 +29,14 @@
 #include <regex.h>
 
 #include "config.h"
+#include "common.h"
 #include "log.h"
 #include "output.h"
 #include "list.h"
 #include "clfit.h"
 #include "alist.h"
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 #include <dwarf.h>
 #include <gelf.h>
@@ -282,7 +284,7 @@ struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
     /*
      * Open the file!
      */
-    return binfile_open(finalfile,bfinst);
+    return binfile_open__int(finalfile,bfinst);
 }
 
 static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfile,
@@ -1123,17 +1125,22 @@ static struct binfile *elf_binfile_open(char *filename,
 		/* Skip all non-code symbols */
 		continue;
 
-#ifdef DWDEBUG_USE_STRTAB
-	    symname = &bf->strtab[sym->st_name];
-#else
+	    /*
+	     * Either way, don't have symbol_create copy symname; we do
+	     * it here if we need to.
+	     */
+#ifdef DWDEBUG_NOUSE_STRTAB
 	    symname = strdup(&bf->strtab[sym->st_name]);
+#else
+	    symname = &bf->strtab[sym->st_name];
 #endif
 
-	    symbol = symbol_create(bf->symtab,(SMOFFSET)i,symname,
+	    symbol = symbol_create(bf->symtab,(SMOFFSET)i,symname,0,
 				   (stt == STT_OBJECT || stt == STT_TLS
 				    || stt == STT_COMMON)	\
 				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNCTION,
 				   SYMBOL_SOURCE_ELF,0);
+	    RHOLD(symbol,bf);
 
 	    if (GELF_ST_BIND(sym->st_info) == STB_GLOBAL
 		|| GELF_ST_BIND(sym->st_info) == STB_WEAK)
@@ -1307,7 +1314,7 @@ static struct binfile *elf_binfile_open(char *filename,
 	}
     }
 
-#ifndef DWDEBUG_USE_STRTAB
+#ifdef DWDEBUG_NOUSE_STRTAB
     /*
      * Only save elf_strtab if we're gonna use it.
      */

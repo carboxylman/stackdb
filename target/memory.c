@@ -19,6 +19,8 @@
 #include <assert.h>
 
 #include "target.h"
+#include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 /*
  * Address spaces.
@@ -313,6 +315,7 @@ void memregion_free(struct memregion *region) {
     GHashTableIter iter;
     gpointer key;
     struct debugfile *debugfile;
+    REFCNT trefcnt;
 
     vdebug(5,LA_TARGET,LF_REGION,"freeing memregion(%s:%s:%s)\n",
 	   region->space->idstr,
@@ -325,7 +328,7 @@ void memregion_free(struct memregion *region) {
     list_del(&region->region);
 
     if (region->binfile) {
-	RPUT(region->binfile,binfile);
+	RPUT(region->binfile,binfile,region,trefcnt);
 	region->binfile = NULL;
     }
 
@@ -333,8 +336,7 @@ void memregion_free(struct memregion *region) {
 	g_hash_table_iter_init(&iter,region->debugfiles);
 	while (g_hash_table_iter_next(&iter,
 				      (gpointer)&key,(gpointer)&debugfile)) {
-	    /* Don't force; somebody else might have a ref! */
-	    RPUT(debugfile,debugfile);
+	    RPUT(debugfile,debugfile,region,trefcnt);
 	    /* This is probably a violation of the hashtable usage
 	     * principles, but oh well!
 	     */

@@ -18,6 +18,8 @@
 
 #include "target_api.h"
 #include "target.h"
+#include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 int value_set_addr(struct value *value,ADDR addr) {
     value->res.addr = addr;
@@ -113,7 +115,7 @@ struct value *value_create_type(struct target_thread *thread,
 	value->thread = range->region->space->target->global_thread;
     value->range = range;
 
-    symbol_hold(type);
+    RHOLD(type,value);
     value->type = type;
 
     value->buf = malloc(len);
@@ -134,7 +136,7 @@ struct value *value_create(struct target_thread *thread,struct memrange *range,
 	return NULL;
 
     if (lsymbol) {
-	lsymbol_hold(lsymbol);
+	RHOLD(lsymbol,value);
 	value->lsymbol = lsymbol;
     }
 
@@ -164,12 +166,12 @@ struct value *value_create_noalloc(struct target_thread *thread,
     value->range = range;
 
     if (type) {
-	symbol_hold(type);
+	RHOLD(type,value);
 	value->type = type;
     }
 
     if (lsymbol) {
-	lsymbol_hold(lsymbol);
+	RHOLD(lsymbol,value);
 	value->lsymbol = lsymbol;
     }
 
@@ -185,11 +187,11 @@ struct value *value_clone(struct value *in) {
 
     if (in->type) {
 	out->type = in->type;
-	symbol_hold(out->type);
+	RHOLD(out->type,out);
     }
     if (in->lsymbol) {
 	out->lsymbol = in->lsymbol;
-	lsymbol_hold(out->lsymbol);
+	RHOLD(out->lsymbol,out);
     }
     out->thread = in->thread;
     out->range = in->range;
@@ -210,6 +212,8 @@ struct value *value_clone(struct value *in) {
 }
 
 void value_free(struct value *value) {
+    REFCNT trefcnt;
+
     if (value->ismmap) {
 	if (value->range)
 	    target_release_mmap_entry(value->range->region->space->target,
@@ -223,10 +227,10 @@ void value_free(struct value *value) {
 	free(value->buf);
 
     if (value->type)
-	symbol_release(value->type);
+	RPUT(value->type,symbol,value,trefcnt);
 
     if (value->lsymbol)
-	lsymbol_release(value->lsymbol);
+	RPUT(value->lsymbol,lsymbol,value,trefcnt);
 
     free(value);
 }

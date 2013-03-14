@@ -17,10 +17,12 @@
  */
 
 #include "target.h"
+#include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 struct symbol *target_create_synthetic_type_pointer(struct target *target,
 						  struct symbol *type) {
-    struct symbol *retval = symbol_create(type->symtab,0,NULL,SYMBOL_TYPE_TYPE,
+    struct symbol *retval = symbol_create(type->symtab,0,NULL,0,SYMBOL_TYPE_TYPE,
 					  SYMBOL_SOURCE_DWARF,1);
 
     retval->datatype_code = DATATYPE_PTR;
@@ -32,8 +34,8 @@ struct symbol *target_create_synthetic_type_pointer(struct target *target,
     retval->size.bytes = target->ptrsize;
     retval->size_is_bytes = 1;
 
-    symbol_hold(type);
-    symbol_hold(retval);
+    RHOLD(type,retval);
+    RHOLD(retval,retval);
 
     return retval;
 }
@@ -47,7 +49,7 @@ struct bsymbol *bsymbol_create(struct lsymbol *lsymbol,
     bsymbol->region = region;
     bsymbol->refcnt = 0;
 
-    lsymbol_hold(lsymbol);
+    RHOLD(lsymbol,bsymbol);
 
     return bsymbol;
 }
@@ -80,16 +82,15 @@ struct bsymbol *bsymbol_create_noninline(struct bsymbol *bsymbol) {
     return bsymbol_create(lsymbol,bsymbol->region);
 }
 
-void bsymbol_hold(struct bsymbol *bsymbol) {
-    RHOLD(bsymbol);
-}
-
 REFCNT bsymbol_release(struct bsymbol *bsymbol) {
-    return RPUT(bsymbol,bsymbol);
+    REFCNT retval;
+    RPUT(bsymbol,bsymbol,bsymbol,retval);
+    return retval;
 }
 
 REFCNT bsymbol_free(struct bsymbol *bsymbol,int force) {
     int retval = bsymbol->refcnt;
+    REFCNT trefcnt;
 
     if (retval) {
 	if (!force) {
@@ -104,7 +105,7 @@ REFCNT bsymbol_free(struct bsymbol *bsymbol,int force) {
     }
 
     if (bsymbol->lsymbol) 
-	lsymbol_release(bsymbol->lsymbol);
+	RPUT(bsymbol->lsymbol,lsymbol,bsymbol,trefcnt);
 
     free(bsymbol);
 
@@ -336,7 +337,7 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
     if (!SYMBOL_IS_VAR(symbol))
 	return;
 
-    type = symbol_type_skip_qualifiers(symbol_get_datatype(symbol));
+    type = symbol_type_skip_qualifiers(symbol_get_datatype__int(symbol));
 
     if (symbol->size_is_bits
 	&& type->datatype_code != DATATYPE_BASE) {

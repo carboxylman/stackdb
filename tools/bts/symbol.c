@@ -42,10 +42,10 @@ symlist_init(struct symmap map[], int nmap)
 
  bad:
     if (dbfile)
-	debugfile_free(dbfile, 0);
+	debugfile_release(dbfile);
     for (j = 0; j < i; j++) {
 	if (map[j].dbfile) {
-	    debugfile_free(map[j].dbfile, 0);
+	    debugfile_release(map[j].dbfile);
 	    map[j].dbfile = NULL;
 	}
     }
@@ -362,7 +362,7 @@ symlist_deinit(void)
 
     for (i = 0; i < mymapsize; i++) {
 	if (mymap[i].dbfile) {
-	    debugfile_free(mymap[i].dbfile, 0);
+	    debugfile_release(mymap[i].dbfile);
 	    mymap[i].dbfile = NULL;
 	}
     }

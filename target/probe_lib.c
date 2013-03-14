@@ -25,6 +25,7 @@
 #include "alist.h"
 
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 #include "target_api.h"
 #include "target.h"
@@ -509,9 +510,14 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	for (i = 0; i < array_list_len(iilist); ++i) {
 	    struct symbol *isymbol = (struct symbol *) \
 		array_list_item(iilist,i);
-	    struct bsymbol *ibsymbol = (struct bsymbol *) \
-		bsymbol_create(lsymbol_create_from_symbol(isymbol),
-			       bsymbol->region);
+	    /* Use __int() version to not RHOLD(); bsymbol_create RHOLDS it. */
+	    struct lsymbol *ilsymbol = lsymbol_create_from_symbol__int(isymbol);
+	    if (!ilsymbol) {
+		verror("could not create lsymbol for inline instance symbol %s!\n",
+		       symbol_get_name(isymbol));
+		goto errout;
+	    }
+	    struct bsymbol *ibsymbol = bsymbol_create(ilsymbol,bsymbol->region);
 
 	    cprobe = probe_create(target,tid,NULL,bsymbol_get_name(ibsymbol),
 				  probe_do_sink_pre_handlers,

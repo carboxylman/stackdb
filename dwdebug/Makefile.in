@@ -32,7 +32,6 @@ SUBDIRS =
 include $(OBJDIR)/Makeconf
 
 LCFLAGS := -I$(SRCDIR) -I$(OBJDIR) -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include
-LCFLAGS += -DDWDEBUG_USE_STRTAB
 LCFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 
 CFLAGS += $(LCFLAGS)
@@ -40,7 +39,7 @@ PYCFLAGS += -I@PYTHON_INCLUDE@ $(LCFLAGS)
 
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
 
-HEADERS := $(SRCDIR)/dwdebug.h \
+HEADERS := $(SRCDIR)/dwdebug.h $(SRCDIR)/dwdebug_priv.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h

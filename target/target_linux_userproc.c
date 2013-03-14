@@ -42,6 +42,7 @@
 #include "waitpipe.h"
 
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 #include "target_api.h"
 #include "target.h"
@@ -579,7 +580,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
 	return NULL;
     main_exe[rc] = '\0';
 
-    if (!(binfile = binfile_open(pbuf,NULL))) {
+    if (!(binfile = binfile_open__int(pbuf,NULL))) {
 	verror("binfile_open %s: %s\n",pbuf,strerror(errno));
 	return NULL;
     }
@@ -596,6 +597,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
      * Save off the binfile, and some stuff from it.
      */
     target->binfile = binfile;
+    RHOLD(target->binfile,target);
 
     target->wordsize = binfile->wordsize;
     target->endian = binfile->endian;
@@ -667,6 +669,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     char *outfile;
     char *errfile;
     struct binfile *binfile;
+    REFCNT trefcnt;
 
 #if __WORDSIZE == 64
 #define LUP_SC_EXEC             59
@@ -712,7 +715,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
      * memory.  If it's static, we look for another (much simpler)
      * sequence.
      */
-    if (!(binfile = binfile_open(filename,NULL))) {
+    if (!(binfile = binfile_open__int(filename,NULL))) {
 	verror("binfile_open %s: %s\n",filename,strerror(errno));
 	return NULL;
     }
@@ -729,6 +732,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
      * Save off the binfile, and some stuff from it.
      */
     target->binfile = binfile;
+    RHOLD(target->binfile,target);
 
     target->wordsize = binfile->wordsize;
     target->endian = binfile->endian;
@@ -1046,7 +1050,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     if (target)
 	target_free(target);
     else if (binfile)
-	RPUT(binfile,binfile);
+	RPUT(binfile,binfile,target,trefcnt);
     return NULL;
 }
 
@@ -2062,9 +2066,8 @@ static int linux_userproc_loadspaces(struct target *target) {
 	(struct linux_userproc_state *)target->state;
     struct addrspace *space = addrspace_create(target,"NULL",lstate->pid);
 
-    RHOLD(space);
-
     space->target = target;
+    RHOLD(space,target);
 
     list_add_tail(&space->space,&target->spaces);
 
@@ -2394,11 +2397,11 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     if (debugfile->binfile_pointing 
 	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
 	> symtab_get_size_simple(debugfile->binfile->symtab)) {
-	RHOLD(debugfile->binfile_pointing);
+	RHOLD(debugfile->binfile_pointing,region);
 	region->binfile = debugfile->binfile_pointing;
     }
     else {
-	RHOLD(debugfile->binfile);
+	RHOLD(debugfile->binfile,region);
 	region->binfile = debugfile->binfile;
     }
 

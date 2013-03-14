@@ -61,6 +61,39 @@ char *until_symbol = NULL;
 struct bsymbol *until_bsymbol = NULL;
 struct probe *until_probe = NULL;
 
+int nonrootsethits = 0;
+
+struct dt_argp_state {
+    char *at_symbol;
+    char *until_symbol;
+    int do_bts;
+    int until_stop_probing;
+    int raw;
+    int do_post;
+    int argc;
+    char **argv;
+};
+
+error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state);
+
+struct argp_option dt_argp_opts[] = {
+    { "at-symbol",'A',"SYMBOL",0,"Wait for a probe on this symbol/address to be hit before inserting all the other probes.",0 },
+    { "until-symbol",'U',"SYMBOL",0,"Remove all probes once a probe on this symbol/address is hit.",0 },
+    { "bts",'B',0,0,"Enable BTS (if XenTT) (starting at at-symbol if one was provided; otherwise, enable immediately).",0 },
+    { "stop-at-until",'S',0,0,"Stop probing once the until symbol/address is reached.",0 },
+    { "raw",'v',0,0,"Enable raw mode.",0 },
+    { "post",'P',0,0,"Enable post handlers.",0 },
+    { 0,0,0,0,0,0 },
+};
+
+struct argp dt_argp = {
+    dt_argp_opts,dt_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
+};
+
+struct dt_argp_state opts;
+
+struct target_spec *tspec;
+
 void cleanup() {
     GHashTableIter iter;
     gpointer key;
@@ -93,9 +126,18 @@ void cleanup() {
 
     if (symbols)
 	free(symbols);
-}
 
-int nonrootsethits = 0;
+    target_free_spec(tspec);
+
+    if (opts.argv)
+	free(opts.argv);
+
+    dwdebug_fini();
+
+#ifdef REF_DEBUG
+    REF_DEBUG_REPORT_FINISH();
+#endif
+}
 
 void sigh(int signo) {
 
@@ -728,27 +770,6 @@ result_t ss_handler(struct action *action,struct target_thread *thread,
     return RESULT_SUCCESS;
 }
 
-struct dt_argp_state {
-    char *at_symbol;
-    char *until_symbol;
-    int do_bts;
-    int until_stop_probing;
-    int raw;
-    int do_post;
-    int argc;
-    char **argv;
-};
-
-struct argp_option dt_argp_opts[] = {
-    { "at-symbol",'A',"SYMBOL",0,"Wait for a probe on this symbol/address to be hit before inserting all the other probes.",0 },
-    { "until-symbol",'U',"SYMBOL",0,"Remove all probes once a probe on this symbol/address is hit.",0 },
-    { "bts",'B',0,0,"Enable BTS (if XenTT) (starting at at-symbol if one was provided; otherwise, enable immediately).",0 },
-    { "stop-at-until",'S',0,0,"Stop probing once the until symbol/address is reached.",0 },
-    { "raw",'v',0,0,"Enable raw mode.",0 },
-    { "post",'P',0,0,"Enable post handlers.",0 },
-    { 0,0,0,0,0,0 },
-};
-
 error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
     struct dt_argp_state *opts = \
 	(struct dt_argp_state *)target_argp_driver_state(state);
@@ -808,13 +829,7 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
     return 0;
 }
 
-struct argp dt_argp = {
-    dt_argp_opts,dt_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
-};
-
 int main(int argc,char **argv) {
-    struct target_spec *tspec;
-    struct dt_argp_state opts;
     target_status_t tstat;
     ADDR *addrs = NULL;
     char *word;
@@ -892,6 +907,9 @@ int main(int argc,char **argv) {
 	    disfuncs = g_hash_table_new(g_direct_hash,g_direct_equal);
 	}
     }
+
+    at_symbol = opts.at_symbol;
+    until_symbol = opts.until_symbol;
 
     if (opts.raw) {
 	word = malloc(t->wordsize);
@@ -1464,6 +1482,7 @@ int main(int argc,char **argv) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    cleanup();
+
 	    if (tstat == TSTATUS_DONE)  {
 		printf("%s finished.\n",targetstr);
 		exit(0);

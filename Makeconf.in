@@ -51,6 +51,7 @@ exec_prefix	= @exec_prefix@
 
 CPPFLAGS	= @CPPFLAGS@
 CFLAGS	       += @CFLAGS@
+#CFLAGS         += -DREF_DEBUG
 CXXFLAGS       += @CXXFLAGS@
 LDFLAGS		= @LDFLAGS@
 

@@ -387,6 +387,7 @@ struct addrspace {
     struct target *target;
 
     REFCNT refcnt;
+    REFCNT refcntw;
 };
 
 /*
@@ -511,6 +512,7 @@ struct bsymbol {
     //struct memrange *range;
 
     REFCNT refcnt;
+    REFCNT refcntw;
 };
 
 /*

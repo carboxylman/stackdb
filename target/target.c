@@ -17,6 +17,7 @@
  */
 
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 #include "target_api.h"
 #include "target.h"
 #include "probe.h"
@@ -318,6 +319,7 @@ void target_free(struct target *target) {
     struct action *action;
     struct probe *probe;
     struct array_list *list;
+    REFCNT trefcnt;
 
     vdebug(5,LA_TARGET,LF_TARGET,"freeing target(%s)\n",target->name);
 
@@ -352,15 +354,17 @@ void target_free(struct target *target) {
 
     /* Unload the debugfiles we might hold, if we can */
     list_for_each_entry_safe(space,tmp,&target->spaces,space) {
-	RPUT(space,addrspace);
+	RPUT(space,addrspace,target,trefcnt);
     }
 
     g_hash_table_destroy(target->config);
     target->config = NULL;
 
     /* Unload the binfile */
-    if (target->binfile)
-	RPUT(target->binfile,binfile);
+    if (target->binfile) {
+	RPUT(target->binfile,binfile,target,trefcnt);
+	target->binfile = NULL;
+    }
 
     if (target->breakpoint_instrs)
 	free(target->breakpoint_instrs);
@@ -467,7 +471,7 @@ int target_associate_debugfile(struct target *target,
 	return -1;
     }
 
-    RHOLD(debugfile);
+    RHOLD(debugfile,region);
 
     g_hash_table_insert(region->debugfiles,debugfile->filename,debugfile);
 
@@ -547,15 +551,13 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     g_hash_table_iter_init(&iter,region->debugfiles);
     while (g_hash_table_iter_next(&iter,
 				  (gpointer)&key,(gpointer)&debugfile)) {
-	if ((lsymbol = debugfile_lookup_addr(debugfile,
-					     memrange_unrelocate(range,addr)))) {
+	if ((lsymbol = debugfile_lookup_addr__int(debugfile,
+						  memrange_unrelocate(range,addr)))) {
 	    bsymbol = bsymbol_create(lsymbol,region);
-	    /* bsymbol_create took a ref to lsymbol, so we release it! */
-	    lsymbol_release(lsymbol);
 	    /* Take a ref to bsymbol on the user's behalf, since this is
 	     * a lookup function.
 	    */
-	    bsymbol_hold(bsymbol);
+	    RHOLD(bsymbol,bsymbol);
 	    return bsymbol;
 	}
     }
@@ -582,8 +584,8 @@ struct bsymbol *target_lookup_sym(struct target *target,
 	    g_hash_table_iter_init(&iter,region->debugfiles);
 	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
 					  (gpointer)&debugfile)) {
-		lsymbol = debugfile_lookup_sym(debugfile,name,
-					       delim,NULL,ftype);
+		lsymbol = debugfile_lookup_sym__int(debugfile,name,
+						    delim,NULL,ftype);
 		if (lsymbol) 
 		    goto out;
 	    }
@@ -593,15 +595,10 @@ struct bsymbol *target_lookup_sym(struct target *target,
 
  out:
     bsymbol = bsymbol_create(lsymbol,region);
-    /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym
-     * took one on our behalf, so we release one!
-     */
-    lsymbol_release(lsymbol);
-
     /* Take a ref to bsymbol on the user's behalf, since this is
      * a lookup function.
      */
-    bsymbol_hold(bsymbol);
+    RHOLD(bsymbol,bsymbol);
 
     return bsymbol;
 }
@@ -612,20 +609,15 @@ struct bsymbol *target_lookup_sym_member(struct target *target,
     struct bsymbol *bsymbol_new;
     struct lsymbol *lsymbol;
 
-    lsymbol = lsymbol_lookup_member(bsymbol->lsymbol,name,delim);
+    lsymbol = lsymbol_lookup_sym__int(bsymbol->lsymbol,name,delim);
     if (!lsymbol)
 	return NULL;
 
     bsymbol_new = bsymbol_create(lsymbol,bsymbol->region);
-    /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym
-     * took one on our behalf, so we release one!
-     */
-    lsymbol_release(lsymbol);
-
     /* Take a ref to bsymbol_new on the user's behalf, since this is
      * a lookup function.
      */
-    bsymbol_hold(bsymbol_new);
+    RHOLD(bsymbol_new,bsymbol_new);
 
     return bsymbol_new;
 }
@@ -649,8 +641,8 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
 	    g_hash_table_iter_init(&iter,region->debugfiles);
 	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
 					  (gpointer)&debugfile)) {
-		lsymbol = debugfile_lookup_sym_line(debugfile,filename,line,
-						    offset,addr);
+		lsymbol = debugfile_lookup_sym_line__int(debugfile,filename,line,
+							 offset,addr);
 		if (lsymbol) 
 		    goto out;
 	    }
@@ -660,15 +652,10 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
 
  out:
     bsymbol = bsymbol_create(lsymbol,region);
-    /* bsymbol_create took a ref to lsymbol, and debugfile_lookup_sym_line
-     * took one on our behalf, so we release one!
-     */
-    lsymbol_release(lsymbol);
-
     /* Take a ref to bsymbol on the user's behalf, since this is
      * a lookup function.
      */
-    bsymbol_hold(bsymbol);
+    RHOLD(bsymbol,bsymbol);
 
     return bsymbol;
 }
@@ -1094,6 +1081,10 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	&& symbol_type_is_char(datatype)) {
 	/* XXX: should we use datatype, or the last pointer to datatype? */
 	value = value_create_noalloc(NULL,range,NULL,datatype);
+	if (!value) {
+	    verror("could not create value: %s\n",strerror(errno));
+	    goto errout;
+	}
 
 	if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							   ptraddr,flags,
@@ -1117,6 +1108,10 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	mmap = location_mmap(target,region,&ptrloc,
 			     flags,&offset_buf,NULL,&range);
 	value = value_create_noalloc(NULL,range,NULL,datatype);
+	if (!value) {
+	    verror("could not create value: %s\n",strerror(errno));
+	    goto errout;
+	}
 	if (!value->mmap && flags & LOAD_FLAG_MUST_MMAP) {
 	    value->buf = NULL;
 	    goto errout;
@@ -1198,8 +1193,8 @@ struct value *target_load_value_member(struct target *target,
 				       const char *member,const char *delim,
 				       load_flags_t flags) {
     struct value *value = NULL;
-    struct symbol *vstartdatatype = symbol_type_skip_qualifiers(old_value->type);
-    struct symbol *tdatatype = vstartdatatype;
+    struct symbol *vstartdatatype;
+    struct symbol *tdatatype;
     struct symbol *mdatatype;
     struct lsymbol *ls = NULL;
     struct memrange *range;
@@ -1212,6 +1207,10 @@ struct value *target_load_value_member(struct target *target,
     int rc;
     REG reg;
     REGVAL regval;
+    int newlen;
+
+    vstartdatatype = symbol_type_skip_qualifiers(old_value->type);
+    tdatatype = vstartdatatype;
 
     /*
      * We have to handle two levels of pointers, potentially.  Suppose
@@ -1250,11 +1249,14 @@ struct value *target_load_value_member(struct target *target,
 
     /*
      * Resolve the member symbol within tdatatype, the struct/union real
-     * datatype.
+     * datatype.  Take a self-ref to it, and release it at the end
+     * whether we succeed or fail!  If we succeed, value_create takes a
+     * ref to it too, and we don't need ours.
      */
-    ls = symbol_lookup_member(tdatatype,member,delim);
+    ls = symbol_lookup_sym(tdatatype,member,delim);
     if (!ls)
 	goto errout;
+
     if (ls->symbol->s.ii->d.v.l.loctype != LOCTYPE_MEMBER_OFFSET) {
 	verror("loctype for symbol %s is %s, not MEMBER_OFFSET!\n",
 	       symbol_get_name(ls->symbol),
@@ -1285,10 +1287,41 @@ struct value *target_load_value_member(struct target *target,
 	 * the value from within the old value.  Otherwise, we have to
 	 * load it from the final address.
 	 */
+	/*
+	 * XXX: this stinks; if you change value_create_type, change
+	 * this size calculation too :(.  We do it this way so we don't
+	 * create a value needlessly if the member value isn't fully
+	 * contained in the parent.
+	 */
+	newlen = symbol_type_full_bytesize(datatype);
 	if (addr >= old_value->res.addr 
-	    && (addr - old_value->res.addr) < (unsigned)old_value->bufsiz) {
-	    value = value_create_noalloc(tthread,range,ls,datatype);
-	    value_set_child(value,old_value,addr);
+	    && ((addr + newlen) - old_value->res.addr) < (unsigned)old_value->bufsiz) {
+	    if (flags & LOAD_FLAG_VALUE_FORCE_COPY) {
+		value = value_create(tthread,range,ls,datatype);
+		if (!value) {
+		    verror("could not create value: %s\n",strerror(errno));
+		    goto errout;
+		}
+		memcpy(value->buf,old_value->buf + (addr - old_value->res.addr),
+		       newlen);
+		value_set_addr(value,addr);
+
+		vdebug(5,LA_TARGET,LF_SYMBOL,
+		       "forced member value copy with len %d\n",
+		       value->bufsiz);
+	    }
+	    else {
+		value = value_create_noalloc(tthread,range,ls,datatype);
+		if (!value) {
+		    verror("could not create value: %s\n",strerror(errno));
+		    goto errout;
+		}
+		value_set_child(value,old_value,addr);
+
+		vdebug(5,LA_TARGET,LF_SYMBOL,
+		       "loaded member value as child with len %d\n",
+		       value->bufsiz);
+	    }
 
 	    goto out;
 	}
@@ -1300,6 +1333,10 @@ struct value *target_load_value_member(struct target *target,
 	    datatype = symbol_type_skip_ptrs(tdatatype);
 	    /* XXX: should we use datatype, or the last pointer to datatype? */
 	    value = value_create_noalloc(tthread,range,ls,datatype);
+	    if (!value) {
+		verror("could not create value: %s\n",strerror(errno));
+		goto errout;
+	    }
 
 	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							       addr,flags,
@@ -1318,6 +1355,10 @@ struct value *target_load_value_member(struct target *target,
 	}
 	else {
 	    value = value_create(tthread,range,ls,datatype);
+	    if (!value) {
+		verror("could not create value: %s\n",strerror(errno));
+		goto errout;
+	    }
 
 	    if (!__target_load_addr_real(target,range,addr,flags,
 					 (unsigned char *)value->buf,
@@ -1366,6 +1407,10 @@ struct value *target_load_value_member(struct target *target,
 
 	/* Just create the value based on the register value. */
 	value = value_create_noalloc(tthread,NULL,ls,datatype);
+	if (!value) {
+	    verror("could not create value: %s\n",strerror(errno));
+	    goto errout;
+	}
 	value->buf = rbuf;
 	value->bufsiz = symbol_bytesize(datatype);
 
@@ -1434,8 +1479,9 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     if (SYMBOL_IS_FULL_VAR(symbol)
 	&& symbol->s.ii->d.v.l.loctype == LOCTYPE_UNKNOWN
 	&& array_list_len(symbol->s.ii->inline_instances) == 1) {
-	ii_lsymbol = lsymbol_create_from_symbol((struct symbol *) \
-						array_list_item(symbol->s.ii->inline_instances,0));
+	/* Use __int() version to not RHOLD(); bsymbol_create RHOLDS it. */
+	ii_lsymbol = lsymbol_create_from_symbol__int((struct symbol *) \
+						     array_list_item(symbol->s.ii->inline_instances,0));
 
 	if (ii_lsymbol) {
 	    vwarn("trying to load inlined symbol %s with no location info;"
@@ -1477,6 +1523,10 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    datatype = symbol_type_skip_ptrs(tdatatype);
 	    /* XXX: should we use datatype, or the last pointer to datatype? */
 	    value = value_create_noalloc(tthread,range,bsymbol->lsymbol,datatype);
+	    if (!value) {
+		verror("could not create value: %s\n",strerror(errno));
+		goto errout;
+	    }
 
 	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							       addr,flags,
@@ -1495,6 +1545,10 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	}
 	else {
 	    value = value_create(tthread,range,bsymbol->lsymbol,datatype);
+	    if (!value) {
+		verror("could not create value: %s\n",strerror(errno));
+		goto errout;
+	    }
 
 	    if (!__target_load_addr_real(target,range,addr,flags,
 					 (unsigned char *)value->buf,
@@ -1543,6 +1597,10 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 
 	/* Just create the value based on the register value. */
 	value = value_create_noalloc(tthread,NULL,bsymbol->lsymbol,datatype);
+	if (!value) {
+	    verror("could not create value: %s\n",strerror(errno));
+	    goto errout;
+	}
 	value->buf = rbuf;
 	value->bufsiz = symbol_bytesize(datatype);
 
@@ -1809,7 +1867,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 
     /* Get its real type. */
 
-    startdatatype = symbol_get_datatype(symbol);
+    startdatatype = symbol_get_datatype__int(symbol);
     datatype = symbol_type_skip_qualifiers(startdatatype);
 
     if (startdatatype != datatype)
@@ -1881,7 +1939,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	       ptraddr,symbol->name);
 
 	/* Skip past the pointer we just loaded. */
-	datatype = symbol_get_datatype(datatype);
+	datatype = symbol_get_datatype__int(datatype);
 
 	/* Skip past any qualifiers! */
 	datatype = symbol_type_skip_qualifiers(datatype);
@@ -1919,6 +1977,10 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	&& symbol_type_is_char(datatype)) {
 	/* XXX: should we use datatype, or the last pointer to datatype? */
 	value = value_create_noalloc(bsymbol->lsymbol,datatype);
+	if (!value) {
+	    verror("could not create value: %s\n",strerror(errno));
+	    goto errout;
+	}
 
 	if (!(value->buf = (char *)__target_load_addr_real(target,ptrrange,
 							   ptraddr,flags,
@@ -1942,6 +2004,11 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	ptrloc.l.addr = ptraddr;
 
 	value = value_create_noalloc(bsymbol->lsymbol,datatype);
+	if (!value) {
+	    verror("could not create value: %s\n",strerror(errno));
+	    goto errout;
+	}
+
 	value->mmap = location_mmap(target,(ptraddr) ? ptrregion : region,
 				    (ptraddr) ? &ptrloc : &(symbol->s.ii->l),
 				    flags,&value->buf,symbol_chain,NULL);
@@ -2163,7 +2230,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 		   paddr,nptrs);
 
 	    /* Skip past the pointer we just loaded. */
-	    datatype = symbol_get_datatype(datatype);
+	    datatype = symbol_get_datatype__int(datatype);
 
 	    /* Skip past any qualifiers! */
 	    datatype = symbol_type_skip_qualifiers(datatype);

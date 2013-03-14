@@ -222,7 +222,9 @@ struct target *xen_vm_instantiate(struct target_spec *spec);
 struct xen_vm_spec *xen_vm_build_spec(void);
 void xen_vm_free_spec(struct xen_vm_spec *xspec);
 
+struct symbol *linux_get_task_struct_type(struct target *target);
 struct symbol *linux_get_task_struct_type_ptr(struct target *target);
+struct symbol *linux_get_thread_info_type(struct target *target);
 struct value *linux_load_current_task(struct target *target);
 struct value *linux_load_current_task_as_type(struct target *target,
 					      struct symbol *datatype);
@@ -230,7 +232,6 @@ int linux_get_task_pid(struct target *target,struct value *task);
 int linux_get_task_tid(struct target *target,struct value *task);
 struct value *linux_get_task(struct target *target,tid_t tid);
 
-struct symbol *linux_get_thread_info_type(struct target *target);
 struct value *linux_load_current_thread_as_type(struct target *target,
 						struct symbol *datatype);
 
@@ -249,8 +250,7 @@ struct value *linux_load_current_thread_as_type(struct target *target,
 #define SOFTIRQ_COUNT(p) (((p) & SOFTIRQ_MASK) >> SOFTIRQ_BITSHIFT)
 #define HARDIRQ_COUNT(p) (((p) & HARDIRQ_MASK) >> HARDIRQ_BITSHIFT)
 
-struct value *linux_get_preempt_count(struct target *target,
-				      struct value *current_thread_info);
+num_t linux_get_preempt_count(struct target *target);
 
 /*
  * If the iterator returns 1, we break out of the loop.

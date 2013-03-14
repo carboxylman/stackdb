@@ -19,19 +19,28 @@
 #include "target_api.h"
 #include "target.h"
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 #include "target_xen_vm.h"
 
-struct value *linux_get_preempt_count(struct target *target,
-				      struct value *current_thread_info) {
-    struct symbol *ti_type;
+num_t linux_get_preempt_count(struct target *target) {
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *tstate;
 
-    if (!current_thread_info) {
-	ti_type = linux_get_thread_info_type(target);
-	current_thread_info = linux_load_current_thread_as_type(target,ti_type);
+    tthread = target->current_thread;
+    if (!tthread) {
+	verror("no current thread!\n");
+	errno = EINVAL;
+	return 0;
+    }
+    else if (!tthread->valid) {
+	verror("current thread not valid; forgot to load it?\n");
+	errno = EINVAL;
+	return 0;
     }
 
-    return target_load_value_member(target,current_thread_info,
-				    "preempt_count",NULL,LOAD_FLAG_NONE);
+    tstate = (struct xen_vm_thread_state *)tthread->state;
+
+    return tstate->thread_info_preempt_count;
 }
 
 /*
@@ -45,42 +54,46 @@ struct value *linux_get_preempt_count(struct target *target,
  */
 #define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
 
-struct symbol *linux_get_task_struct_type_ptr(struct target *target) {
-    struct bsymbol *it_type;
-    struct symbol *itptr_type;
+struct symbol *linux_get_task_struct_type(struct target *target) {
+    struct xen_vm_state *xstate;
 
-    it_type = target_lookup_sym(target,"struct task_struct",
-				NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
-    if (!it_type) {
-	verror("could not find type for struct task_struct!\n");
+    xstate = (struct xen_vm_state *)target->state;
+    if (!xstate || !xstate->task_struct_type) {
+	verror("target does not seem to be loaded!\n");
 	return NULL;
     }
 
-    itptr_type = \
-	target_create_synthetic_type_pointer(target,
-					     bsymbol_get_symbol(it_type));
+    RHOLD(xstate->task_struct_type,xstate->task_struct_type);
 
-    bsymbol_release(it_type);
+    return xstate->task_struct_type;
+}
 
-    return itptr_type;
+struct symbol *linux_get_task_struct_type_ptr(struct target *target) {
+    struct xen_vm_state *xstate;
+
+    xstate = (struct xen_vm_state *)target->state;
+    if (!xstate || !xstate->task_struct_type_ptr) {
+	verror("target does not seem to be loaded!\n");
+	return NULL;
+    }
+
+    RHOLD(xstate->task_struct_type_ptr,xstate->task_struct_type_ptr);
+
+    return xstate->task_struct_type_ptr;
 }
 
 struct symbol *linux_get_thread_info_type(struct target *target) {
-    struct bsymbol *it_type;
-    struct symbol *it_type_symbol;
+    struct xen_vm_state *xstate;
 
-    it_type = target_lookup_sym(target,"struct thread_info",
-				NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
-    if (!it_type) {
-	verror("could not find type for struct thread_info!\n");
+    xstate = (struct xen_vm_state *)target->state;
+    if (!xstate || !xstate->thread_info_type) {
+	verror("target does not seem to be loaded!\n");
 	return NULL;
     }
 
-    it_type_symbol = it_type->lsymbol->symbol;
-    symbol_hold(it_type_symbol);
-    bsymbol_release(it_type);
+    RHOLD(xstate->thread_info_type,xstate->thread_info_type);
 
-    return it_type_symbol;
+    return xstate->thread_info_type;
 }
 
 struct value *linux_load_current_task_as_type(struct target *target,
@@ -107,26 +120,19 @@ struct value *linux_load_current_task(struct target *target) {
     struct value *value;
     ADDR itptr;
     REGVAL esp;
-    struct bsymbol *it_type;
     struct symbol *itptr_type;
 
-    it_type = target_lookup_sym(target,"struct task_struct",
-				NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
-    if (!it_type) {
+    itptr_type = linux_get_task_struct_type_ptr(target);
+    if (!itptr_type) {
 	verror("could not find type for struct task_struct!\n");
 	return NULL;
     }
-
-    itptr_type = \
-	target_create_synthetic_type_pointer(target,
-					   bsymbol_get_symbol(it_type));
 
     errno = 0;
     esp = target_read_reg(target,TID_GLOBAL,target->spregno);
     if (errno) {
 	verror("could not read ESP!\n");
 	symbol_release(itptr_type);
-	bsymbol_release(it_type);
 	return NULL;
     }
 
@@ -136,7 +142,6 @@ struct value *linux_load_current_task(struct target *target) {
 			     LOAD_FLAG_AUTO_DEREF);
 
     symbol_release(itptr_type);
-    bsymbol_release(it_type);
 
     return value;
 }
@@ -257,7 +262,7 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
     };
 
     symbol = bsymbol_get_symbol(bsymbol);
-    type = symbol_get_datatype(symbol);
+    type = symbol_get_datatype__int(symbol);
     if (!type) {
 	verror("no type for bsymbol %s!\n",bsymbol_get_name(bsymbol));
 	goto out;

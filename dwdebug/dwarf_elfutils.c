@@ -34,6 +34,7 @@
 #include <inttypes.h>
 #include <assert.h>
 
+#include "common.h"
 #include "dwdebug.h"
 #include "clfit.h"
 #include "alist.h"

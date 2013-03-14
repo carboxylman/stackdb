@@ -27,9 +27,11 @@
 #include <inttypes.h>
 
 #include "config.h"
+#include "common.h"
 #include "log.h"
 #include "output.h"
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 #include <dwarf.h>
 #include <gelf.h>
@@ -128,7 +130,7 @@ struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
     else if (binfile->filename == filename)
 	binfile->filename = strdup(filename);
 
-    binfile->symtab = symtab_create(binfile,NULL,0,"symtab",NULL,0);
+    binfile->symtab = symtab_create(binfile,NULL,0,"symtab",0,NULL,0);
     binfile->ranges = clrange_create();
 
     return binfile;
@@ -213,7 +215,7 @@ struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
     return bfi;
 }
 
-struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst) {
+struct binfile *binfile_open__int(char *filename,struct binfile_instance *bfinst) {
     struct binfile *retval = NULL;
     struct binfile_ops **ops;
 
@@ -224,7 +226,6 @@ struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst) {
 	return bfinst->ops->open(filename,bfinst);
     }
     else if ((retval = binfile_lookup(filename))) {
-	RHOLD(retval);
 	return retval;
     }
 
@@ -236,7 +237,6 @@ struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst) {
 	if (retval) {
 	    if (!retval->instance) {
 		binfile_cache(retval);
-		RHOLD(retval);
 	    }
 	    return retval;
 	}
@@ -246,12 +246,35 @@ struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst) {
     return NULL;
 }
 
+struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst) {
+    struct binfile *retval;
+
+    retval = binfile_open__int(filename,bfinst);
+    if (retval)
+	RHOLD(retval,retval);
+
+    return retval;
+}
+
+struct binfile *binfile_open_debuginfo__int(struct binfile *binfile,
+					    struct binfile_instance *bfinst,
+					    const char *DFPATH[]) {
+    if (binfile->ops->open_debuginfo)
+	return binfile->ops->open_debuginfo(binfile,bfinst,DFPATH);
+
+    return NULL;
+}
+
 struct binfile *binfile_open_debuginfo(struct binfile *binfile,
 				       struct binfile_instance *bfinst,
 				       const char *DFPATH[]) {
-    if (binfile->ops->open_debuginfo)
-	return binfile->ops->open_debuginfo(binfile,bfinst,DFPATH);
-    return NULL;
+    struct binfile *retval;
+
+    retval = binfile_open_debuginfo__int(binfile,bfinst,DFPATH);
+    if (retval)
+	RHOLD(retval,retval);
+
+    return retval;
 }
 
 const char *binfile_get_backend_name(struct binfile *binfile) {
@@ -273,6 +296,12 @@ int binfile_close(struct binfile *binfile) {
     retval = binfile->ops->close(binfile);
 
     return retval;
+}
+
+REFCNT binfile_release(struct binfile *binfile) {
+    REFCNT refcnt;
+    RPUT(binfile,binfile,binfile,refcnt);
+    return refcnt;
 }
 
 REFCNT binfile_free(struct binfile *binfile,int force) {
