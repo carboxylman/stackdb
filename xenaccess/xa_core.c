@@ -2,7 +2,7 @@
  * The libxa library provides access to resources in domU machines.
  * 
  * Copyright (C) 2005 - 2007  Bryan D. Payne (bryan@thepaynes.cc)
- * Copyright (C) 2011, 2012 The University of Utah
+ * Copyright (C) 2011, 2012, 2013 The University of Utah
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -62,6 +62,7 @@ int get_memory_size (xa_instance_t *instance)
         struct xs_handle *xsh = NULL;
         xs_transaction_t xth = XBT_NULL;
         char *tmp = malloc(100);
+	void *xsr;
         if (NULL == tmp){
             printf("ERROR: failed to allocate memory for tmp variable\n");
             ret = XA_FAILURE;
@@ -71,8 +72,14 @@ int get_memory_size (xa_instance_t *instance)
         sprintf(tmp, "/local/domain/%d/memory/target",
             instance->m.xen.domain_id);
         xsh = xs_domain_open();
-        instance->m.xen.size =
-            strtol(xs_read(xsh, xth, tmp, NULL), NULL, 10) * 1000;
+	xsr = xs_read(xsh, xth, tmp, NULL);
+	if (!xsr) {
+	    printf("ERROR: failed to get memory size for Xen domain.\n");
+            ret = XA_FAILURE;
+            goto error_exit;
+	}
+        instance->m.xen.size = strtol(xsr, NULL, 10) * 1000;
+	free(xsr);
 	free(tmp);
         if (0 == instance->m.xen.size){
             printf("ERROR: failed to get memory size for Xen domain.\n");
