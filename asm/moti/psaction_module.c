@@ -43,11 +43,12 @@ static struct task_struct *thread;
  * Later on a command interface needs to be implemented which
  * can accept commands a respective parameters from the user.
  */
-int pid;
+volatile int pid = 0;
+volatile int iflag = 0;
 
-module_param(pid, int , S_IRUGO|S_IWUSR);
+//module_param(pid, int , S_IRUGO|S_IWUSR);
 
-int check_func(int * pid) {
+int check_func() {
     struct task_struct *task;
     int found_flag = 0;
 
@@ -56,9 +57,15 @@ int check_func(int * pid) {
      * write_lock_irq(&tasklist_lock);
      */
 
+    /*wait till vmi seets the pid value*/ 
+    while ((!iflag)) {
+        yield();
+    }
+    printk("Changed value of pid %d\n",pid);
+    printk("Changed value of iflag %d\n",iflag);
     /* Iterate over all the tasks and check for a matching PID*/
     for_each_process(task) {
-        if (task->pid == *pid) {
+        if (task->pid == pid) {
             /* We have found the task_struct for the process*/
             printk("Found process %s with PID = %d\n", task->comm, task->pid);
 
@@ -82,7 +89,7 @@ int check_func(int * pid) {
      *write_unlock_irq(&tasklist_lock);
      */
     if (!found_flag) 
-        printk("Process with PID = %d not found", *pid);
+        printk("Process with PID = %d not found", pid);
     while ((!kthread_should_stop())) 
         yield();
 
@@ -91,7 +98,7 @@ int check_func(int * pid) {
 
 static int __init variable_check_init(void) {
     printk("Creating a kthread in the init function\n");
-    thread = kthread_run(&check_func, &pid, "__ps_kill");
+    thread = kthread_run(&check_func, NULL, "__ps_kill");
     if (IS_ERR(thread)) {
         printk("Kthread creation failed\n");
         return -ENOMEM;
