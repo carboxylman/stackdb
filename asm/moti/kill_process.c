@@ -20,9 +20,9 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
-
 #include <sys/ptrace.h>
 #include <argp.h>
+
 #include "log.h"
 #include "dwdebug.h"
 #include "target_api.h"
@@ -36,7 +36,55 @@
 struct target *t = NULL;
 struct bsymbol *bs;
 struct value *v;
+
+struct psa_argp_state {
+    int argc;
+    char ** argv;
+    struct target_spec *tspec;
+};
 struct psa_argp_state opts;
+struct argp_option psa_argp_opts[] = { { 0, 0, 0, 0, 0, 0 }, };
+
+error_t psa_argp_parse_opt(int key, char *arg, struct argp_state *state) {
+    struct psa_argp_state *opts =
+            (struct psa_argp_state *) target_argp_driver_state(state);
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+        return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_ARGS:
+        if (state->quoted > 0)
+            opts->argc = state->quoted - state->next;
+        else
+            opts->argc = state->argc - state->next;
+        if (opts->argc > 0) {
+            opts->argv = calloc(opts->argc, sizeof(char *));
+            memcpy(opts->argv, &state->argv[state->next],
+                    opts->argc * sizeof(char *));
+            state->next += opts->argc;
+        }
+        return 0;
+    case ARGP_KEY_INIT:
+        target_driver_argp_init_children(state);
+        return 0;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+        opts->tspec = target_argp_target_spec(state);
+        return 0;
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+        return 0;
+
+    default:
+        return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp psa_argp = { psa_argp_opts, psa_argp_parse_opt, NULL, NULL, NULL,
+        NULL, NULL, };
 
 int main(int argc, char **argv) {
 
@@ -50,19 +98,19 @@ int main(int argc, char **argv) {
     target_status_t tstat;
 
     memset(&opts, 0, sizeof(opts));
+
     /* parse the command line arguments and get the
-     * tspec struct variable. not sure if this function can be used as
-     * a general function
+     * tspec struct variable.
      */
     tspec = target_argp_driver_parse(&psa_argp, &opts, argc, argv,
             TARGET_TYPE_XEN, 1);
 
     if (!tspec) {
-        verror("could not parse target arguments!\n");
+        verror("Could not parse target arguments!\n");
         exit(-1);
     }
 
-    /* Pass process id of the process that needs to be killed*/
+    /* Make sure that the process ID is passed.*/
     if (opts.argc < 1) {
         fprintf(stderr, "ERROR: PID  not passed.\n");
         exit(-1);
@@ -78,17 +126,19 @@ int main(int argc, char **argv) {
         exit(-1);
     }
 
-    /* Open connection to the target. Is the target VM paused ? */
+    /* Open connection to the target.*/
     if (target_open(t)) {
         fprintf(stderr, "Could not open the target\n");
         exit(-1);
     }
 
-    /* not sure if i have to use a bsymbol or lsymbol here*/
-    bs = target_lookup_sym(t, "psaction_module.pid", ".", NULL,
+    sscanf(opts.argv[0], "%d", &new_val);
+    fprintf(stderr, "Pid value passed %d\n", new_val);
+
+    bs = target_lookup_sym(t, "pid", NULL, "psaction_module",
             SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-        fprintf(stderr, "Error: could not lookup symbol pid",);
+        fprintf(stderr, "Error: could not lookup symbol pid\n");
         goto exit;
     }
 
@@ -99,28 +149,31 @@ int main(int argc, char **argv) {
     v = target_load_symbol(t, TID_GLOBAL, bs,
             LOAD_FLAG_AUTO_STRING | LOAD_FLAG_AUTO_DEREF);
     if (!v) {
-        fprintf(stderr, "ERROR: could not load value of symbol pid\n");
         goto exit;
     }
 
-    new_val = opts.argv[1];
-    memcpy(v->buf, &new_val, sizeof(new_val));
+    //memcpy(v->buf, &new_val, sizeof(new_val));
+    result = value_update_i32(v, new_val);
+    if (result == -1) {
+        fprintf(stderr, "Error: failed to update value\n");
+        goto exit;
+    }
 
     /*finally write the new value back */
-    resut = target_store_value(t, v);
-    if (!result) {
+    result = target_store_value(t, v);
+    if (result == -1) {
         fprintf(stderr, "Error: failed to write the new value\n");
         goto exit;
     }
 
     value_free(v);
-    bsymbol_free(bs, 0);
+    bsymbol_release(bs);
 
     /* Now we need to set the input flag, indicating
      * that the pid value is set.
      */
 
-    bs = target_lookup_sym(t, "psaction_module.iflag", ".", NULL,
+    bs = target_lookup_sym(t, "iflag", NULL, "psaction_module",
             SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
         fprintf(stderr, "Error: could not lookup symbol iflag\n");
@@ -134,14 +187,20 @@ int main(int argc, char **argv) {
         goto exit;
     }
 
-    new_val = 1;
-    memcpy(v->buf, &new_val, sizeof(new_val));
-
+    /* set the iflag */
+    result = value_update_i32(v, 1);
+    if (result == -1) {
+        fprintf(stderr, "Error: failed to update value\n");
+        goto exit;
+    }
     result = target_store_value(t, v);
-    if (!result) {
+    if (result == -1) {
         fprintf(stderr, "Error: failed to set the iflag\n");
         goto exit;
     }
+
+    value_free(v);
+    bsymbol_release(bs);
 
     /* If we need an ack form the module that the process has been killed
      * the we need to add code here that waits on some flag set by the kernel module.
