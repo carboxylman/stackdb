@@ -117,6 +117,8 @@ int main(int argc, char **argv) {
     }
 
     dwdebug_init();
+    target_init();
+    atexit(target_fini);
     atexit(dwdebug_fini);
 
     /* now initialize the target */
@@ -135,10 +137,10 @@ int main(int argc, char **argv) {
     sscanf(opts.argv[0], "%d", &new_val);
     fprintf(stderr, "Pid value passed %d\n", new_val);
 
-    bs = target_lookup_sym(t, "pid", NULL, "psaction_module",
+    bs = target_lookup_sym(t, "psaction_pid", NULL, "psaction_module",
             SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-        fprintf(stderr, "Error: could not lookup symbol pid\n");
+        fprintf(stderr, "Error: could not lookup symbol psaction_pid\n");
         goto exit;
     }
 
@@ -146,11 +148,11 @@ int main(int argc, char **argv) {
      * in the value structure. Second argument is the thread id.
      * Which thread id needs to be passed here ?
      */
-    v = target_load_symbol(t, TID_GLOBAL, bs,
-            LOAD_FLAG_AUTO_STRING | LOAD_FLAG_AUTO_DEREF);
+    v = target_load_symbol(t, TID_GLOBAL, bs, LOAD_FLAG_NONE);
     if (!v) {
         goto exit;
     }
+    fprintf(stderr, "psaction_pid = %d\n",v_i32(v));
 
     //memcpy(v->buf, &new_val, sizeof(new_val));
     result = value_update_i32(v, new_val);
@@ -165,6 +167,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: failed to write the new value\n");
         goto exit;
     }
+    fprintf(stderr, "psaction_pid = %d\n",v_i32(v));
 
     value_free(v);
     bsymbol_release(bs);
@@ -173,31 +176,32 @@ int main(int argc, char **argv) {
      * that the pid value is set.
      */
 
-    bs = target_lookup_sym(t, "iflag", NULL, "psaction_module",
+    bs = target_lookup_sym(t, "psaction_iflag", NULL, "psaction_module",
             SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-        fprintf(stderr, "Error: could not lookup symbol iflag\n");
+        fprintf(stderr, "Error: could not lookup symbol psaction_iflag\n");
         goto exit;
     }
 
-    v = target_load_symbol(t, TID_GLOBAL, bs,
-            LOAD_FLAG_AUTO_STRING | LOAD_FLAG_AUTO_DEREF);
+    v = target_load_symbol(t, TID_GLOBAL, bs, LOAD_FLAG_NONE);
     if (!v) {
-        fprintf(stderr, "ERROR: could not load value of symbol iflag\n");
+        fprintf(stderr, "ERROR: could not load value of symbol psaction_iflag\n");
         goto exit;
     }
+    fprintf(stderr, "psaction_iflag = %d\n",v_i32(v));
 
-    /* set the iflag */
-    result = value_update_i32(v, 1);
+    /* set the psaction_iflag */
+    result = value_update_i32(v, v_i32(v) + 1);
     if (result == -1) {
         fprintf(stderr, "Error: failed to update value\n");
         goto exit;
     }
     result = target_store_value(t, v);
     if (result == -1) {
-        fprintf(stderr, "Error: failed to set the iflag\n");
+        fprintf(stderr, "Error: failed to set the psaction_iflag\n");
         goto exit;
     }
+    fprintf(stderr, "psaction_iflag = %d\n",v_i32(v));
 
     value_free(v);
     bsymbol_release(bs);
@@ -211,6 +215,7 @@ int main(int argc, char **argv) {
     exit: fflush(stderr);
     fflush(stdout);
     tstat = target_close(t);
+    target_free(t);
     if (tstat == TSTATUS_DONE) {
         printf("Finished.\n");
         exit(0);
