@@ -452,7 +452,7 @@ void *do_thread_split_request(void *arg) {
 int vmi1__ListTargetTypes(struct soap *soap,
 			  void *_,
 			  struct vmi1__TargetTypesResponse *r) {
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     r->__size_targetType = 2;
 #else
     r->__size_targetType = 1;
@@ -462,7 +462,7 @@ int vmi1__ListTargetTypes(struct soap *soap,
 	SOAP_CALLOC(soap,r->__size_targetType,sizeof(*(r->targetType)));
 
     r->targetType[0] = vmi1__TargetTypeT__ptrace;
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     r->targetType[1] = vmi1__TargetTypeT__xen;
 #endif
 

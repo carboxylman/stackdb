@@ -40,8 +40,12 @@ CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
 CFLAGS += -DDWDEBUG_USE_STRTAB
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
-	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS)
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
 	CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	CFLAGS += -D ENABLE_LIBVMI -D ENABLE_XENSUPPORT
+	CFLAGS += -I$(LIBVMI)/include/libvmi
 endif
 ifeq ($(ENABLE_DISTORM),"1")
 	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
@@ -52,6 +56,9 @@ LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS) -lgsoap -lpthread
 ifeq ($(ENABLE_XENACCESS),"1")
 	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
 endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
+endif
 ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
@@ -59,6 +66,9 @@ STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
 	$(OBJDIR)/lib/libvmilib.a
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	STATICLIBS += $(LIBVMI)/lib/libvmi.a
 endif
 
 HEADERS := $(SRCDIR)/debuginfo_xml.h $(SRCDIR)/debuginfo_rpc.h \

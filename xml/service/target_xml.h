@@ -25,7 +25,7 @@
 #include "target_api.h"
 #include "target.h"
 #include "target_linux_userproc.h"
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
 #endif
 #include <glib.h>
@@ -74,7 +74,7 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 			       GHashTable *reftab,
 			       struct vmi1__TargetSpecT *out);
 
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 struct xen_vm_spec *
 x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 				  struct vmi1__TargetXenSpecT *xspec,

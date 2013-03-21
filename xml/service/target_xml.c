@@ -209,7 +209,7 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 						     (struct vmi1__TargetPtraceSpecT *)spec->backendSpec->union_backendSpec.targetPtraceSpec,
 						     reftab,
 						     ospec->backend_spec);
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     else if (type == TARGET_TYPE_XEN
 	&& spec->backendSpec 
 	&& spec->backendSpec->__union_backendSpec \
@@ -259,7 +259,7 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 							 (struct linux_userproc_spec *)spec->backend_spec,
 							 reftab,NULL);
     }
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
     else if (spec->target_type == TARGET_TYPE_XEN) {
 	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
 	ospec->backendSpec->__union_backendSpec = \
@@ -274,7 +274,7 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
     return ospec;
 }
 
-#ifdef ENABLE_XENACCESS
+#ifdef ENABLE_XENSUPPORT
 struct xen_vm_spec *
 x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 				  struct vmi1__TargetXenSpecT *spec,
