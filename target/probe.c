@@ -3611,7 +3611,7 @@ static int handle_complex_actions(struct target *target,
 	    /* Grab the next one before we destroy this one. */
 	    nextaction = __get_next_complex_action(probepoint,action);
 
-	    action_finish_handling(action,tac);
+	    action_finish_handling(action,&tpc->tac);
 
 	    action = nextaction;
 
@@ -4201,7 +4201,8 @@ static void action_finish_handling(struct action *action,
      */
     if (action->whence == ACTION_ONESHOT) {
 	if (tac)
-	    RPUT(action,action,tac,trefcnt);
+	    RPUTNF(action,action,tac);
+
 	action_cancel(action);
 
 	if (action->autofree)

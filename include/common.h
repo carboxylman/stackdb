@@ -448,7 +448,7 @@ extern GHashTable *grefwstab;
  * using refcnts appropriately.  Do not enable them without talking to
  * David, and you better have a darn good reason.
  */
-#if 0
+//#if 0
 #define RPUTFF(x,objtype,hx,rc)						\
     do {								\
         typeof(x) _x = (x);						\
@@ -534,7 +534,7 @@ extern GHashTable *grefwstab;
 	    }								\
 	}								\
     } while (0);
-#endif /* 0 */
+//#endif /* 0 */
 /*
  * You should call this when your main program terminates.
  */
