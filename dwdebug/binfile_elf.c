@@ -404,8 +404,8 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	    bfielf->section_tab[i] += base;
 
 	    vdebug(3,LA_DEBUG,LF_ELF,
-		   "section %s placed at 0x%"PRIxADDR" (0x%"PRIxADDR"+%ld)\n",
-		   secname,bfielf->section_tab[i],base,
+		   "section %d (%s) placed at 0x%"PRIxADDR" (0x%"PRIxADDR"+%ld)\n",
+		   i,secname,bfielf->section_tab[i],base,
 		   bfielf->section_tab[i] - base);
 
 	    done_sections[i] = 1;
@@ -437,8 +437,8 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	    bfielf->section_tab[i] += base;
 
 	    vdebug(3,LA_DEBUG,LF_ELF,
-		   "section %s placed at 0x%"PRIxADDR" (0x%"PRIxADDR"+%ld)\n",
-		   secname,bfielf->section_tab[i],base,
+		   "section %d (%s) placed at 0x%"PRIxADDR" (0x%"PRIxADDR"+%ld)\n",
+		   i,secname,bfielf->section_tab[i],base,
 		   bfielf->section_tab[i] - base);
 
 	    done_sections[i] = 1;
@@ -750,6 +750,17 @@ static struct binfile *elf_binfile_open(char *filename,
 	    vdebug(3,LA_DEBUG,LF_ELF,
 		   "found %d relocations in %d in ELF file %s\n",
 		   nrels,i,bf->filename);
+
+	    /*
+	     * Don't realloc sections that are not getting loaded; we
+	     * are not a linker that needs to recombine sections.
+	     */
+	    if (!(bfelf->shdrs[rsec].sh_flags & SHF_ALLOC)) {
+		vdebug(3,LA_DEBUG,LF_ELF,
+		       "skipping reloc section %d for non-alloc section %d\n",
+		       i,rsec);
+		continue;
+	    }
 
 	    for (j = 0; j < nrels; ++j) {
 		if (!gelf_getrel(edata,j,&rel)) {

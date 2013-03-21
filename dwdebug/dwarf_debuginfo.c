@@ -4623,17 +4623,14 @@ static int bfi_find_elf(Dwfl_Module *mod __attribute__ ((unused)),
     return -1;
 }
 
-static int bfi_find_section_address(Dwfl_Module *mod __attribute__ ((unused)),
-				    void **userdata,
-				    const char *modname __attribute__ ((unused)),
-				    Dwarf_Addr base,
-				    const char *secname __attribute__ ((unused)),
-				    GElf_Word shndx,
-				    const GElf_Shdr *shdr __attribute__ ((unused)),
-				    Dwarf_Addr *addr) {
+static int bfi_find_section_address(Dwfl_Module *mod,void **userdata,
+				    const char *modname,Dwarf_Addr base,
+				    const char *secname,GElf_Word shndx,
+				    const GElf_Shdr *shdr,Dwarf_Addr *addr) {
     struct binfile *binfile;
     struct binfile_instance *bfi;
     struct binfile_instance_elf *bfielf;
+    ADDR tmp;
 
     if (!(binfile = (struct binfile *)*userdata)) {
 	verror("no binfile; bug!?\n");
@@ -4645,7 +4642,7 @@ static int bfi_find_section_address(Dwfl_Module *mod __attribute__ ((unused)),
 	return -1;
     }
 
-    if (!(bfielf = (struct binfile_instance_elf *)bfi->priv)) {
+    if (!(bfielf = (struct binfile_instance_elf *)(bfi->priv))) {
 	verror("no ELF instance info for binfile %s!\n",binfile->filename);
 	return -1;
     }
@@ -4656,18 +4653,24 @@ static int bfi_find_section_address(Dwfl_Module *mod __attribute__ ((unused)),
 		   shndx,bfielf->num_sections,bfi->filename);
 	    return -1;
 	}
-	/* XXX: subtract base since we already relocated it in bfielf! */
-	/*
-	 * So, for whatever reason, this is what this callback expects!
-	 * Ugh.  I guess what it really wants is a virtual offset from
-	 * base.  Actually, this *is* base itself.  Weird.  But, it
-	 * works!
-	 */
-	*addr = bfielf->section_tab[shndx] - base 
-	    - (bfielf->section_tab[shndx] - base);
+
+	tmp = ((struct binfile_instance_elf *)(bfi->priv))->section_tab[shndx];
+
+	vdebug(8,LA_DEBUG,LF_ELF,
+	       "shndx = %d addr = %"PRIxADDR" base = %x\n",
+	       shndx,tmp,base);
+
+	if (tmp == 0)
+	    /*
+	     * If the section was not mapped, this is how we tell
+	     * elfutils.
+	     */
+	    *addr = (Dwarf_Addr)-1L;
+	else
+	    *addr = (Dwarf_Addr)tmp;
     }
 
-    return 0;
+    return DWARF_CB_OK;
 }
 
 /*
