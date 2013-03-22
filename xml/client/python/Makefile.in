@@ -28,7 +28,8 @@ SUBDIRS =
 include $(OBJDIR)/Makeconf
 
 PROGRAMS = debuginfo_test.py target_test.py target_test_with_listener.py \
-	target_listener_server_test.py target_listener_client_test.py
+	target_listener_server_test.py target_listener_client_test.py \
+	target_test_with_listener_xen.py
 
 all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
 
