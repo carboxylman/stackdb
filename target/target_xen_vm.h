@@ -207,6 +207,8 @@ struct xen_vm_state {
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
 
+    int evloop_fd;
+
 #ifdef ENABLE_XENACCESS
     /* XenAccess instance used to read/write domain's memory */
     xa_instance_t xa_instance;

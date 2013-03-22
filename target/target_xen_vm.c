@@ -36,6 +36,8 @@
 #include "config.h"
 #include "common.h"
 
+#include "evloop.h"
+
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 #include "target_api.h"
@@ -78,11 +80,14 @@ static int xen_vm_resume(struct target *target);
 static target_status_t xen_vm_monitor(struct target *target);
 static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 				   target_poll_outcome_t *outcome,int *pstatus);
+int xen_vm_attach_evloop(struct target *target,struct evloop *evloop);
+int xen_vm_detach_evloop(struct target *target);
 static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf);
 static unsigned long xen_vm_write(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf);
 static char *xen_vm_reg_name(struct target *target,REG reg);
+static REG xen_vm_dwregno_targetname(struct target *target,char *name);
 static REG xen_vm_dw_reg_no(struct target *target,common_reg_t reg);
 
 static tid_t xen_vm_gettid(struct target *target);
@@ -94,6 +99,7 @@ static struct target_thread *xen_vm_load_current_thread(struct target *target,
 							int force);
 static int xen_vm_load_all_threads(struct target *target,int force);
 static int xen_vm_load_available_threads(struct target *target,int force);
+static int xen_vm_pause_thread(struct target *target,tid_t tid,int nowait);
 static int xen_vm_flush_thread(struct target *target,tid_t tid);
 static int xen_vm_flush_current_thread(struct target *target);
 static int xen_vm_flush_all_threads(struct target *target);
@@ -102,6 +108,7 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 
 static REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg);
 static int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value);
+static GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid);
 static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid);
 static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,REG num,ADDR addr);
 static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,REG num,ADDR addr,
@@ -168,6 +175,7 @@ static XC_EVTCHN_PORT_T dbg_port = -1;
  */
 struct target_ops xen_vm_ops = {
     .tostring = xen_vm_tostring,
+
     .init = xen_vm_init,
     .fini = xen_vm_fini,
     .attach = xen_vm_attach_internal,
@@ -185,20 +193,28 @@ struct target_ops xen_vm_ops = {
     .read = xen_vm_read,
     .write = xen_vm_write,
     .regname = xen_vm_reg_name,
+    .dwregno_targetname = xen_vm_dwregno_targetname,
     .dwregno = xen_vm_dw_reg_no,
-    .readreg = xen_vm_read_reg,
-    .writereg = xen_vm_write_reg,
+
     .gettid = xen_vm_gettid,
     .free_thread_state = xen_vm_free_thread_state,
     .list_available_tids = xen_vm_list_available_tids,
+    .load_available_threads = xen_vm_load_available_threads,
     .load_thread = xen_vm_load_thread,
     .load_current_thread = xen_vm_load_current_thread,
     .load_all_threads = xen_vm_load_all_threads,
-    .load_available_threads = xen_vm_load_available_threads,
+    .pause_thread = xen_vm_pause_thread,
     .flush_thread = xen_vm_flush_thread,
     .flush_current_thread = xen_vm_flush_current_thread,
     .flush_all_threads = xen_vm_flush_all_threads,
     .thread_tostring = xen_vm_thread_tostring,
+
+    .attach_evloop = xen_vm_attach_evloop,
+    .detach_evloop = xen_vm_detach_evloop,
+
+    .readreg = xen_vm_read_reg,
+    .writereg = xen_vm_write_reg,
+    .copy_registers = xen_vm_copy_registers,
     .get_unused_debug_reg = xen_vm_get_unused_debug_reg,
     .set_hw_breakpoint = xen_vm_set_hw_breakpoint,
     .set_hw_watchpoint = xen_vm_set_hw_watchpoint,
@@ -425,6 +441,8 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 	free(target);
 	return NULL;
     }
+
+    xstate->evloop_fd = -1;
 
     /* First figure out whether we need to resolve the ID, or the name. */
     errno = 0;
@@ -1841,6 +1859,9 @@ static int xen_vm_attach_internal(struct target *target) {
     /* Null out current state so we reload and see that it's paused! */
     xstate->dominfo_valid = 0;
 
+    if (target->evloop)
+	xen_vm_attach_evloop(target,target->evloop);
+
     target->attached = 1;
 
     return 0;
@@ -1867,6 +1888,9 @@ static int xen_vm_detach(struct target *target) {
 	 */
 	xen_vm_flush_all_threads(target);
     }
+
+    if (target->evloop && xstate->evloop_fd > -1)
+	xen_vm_detach_evloop(target);
 
     if (xc_domctl(xc_handle,&domctl)) {
 	verror("could not disable debugging of dom %d!\n",xstate->id);
@@ -2481,6 +2505,12 @@ static int xen_vm_flush_global_thread(struct target *target,
 	       gtstate->dr[6],gtstate->dr[7]);
 
     return 0;
+}
+
+static int xen_vm_pause_thread(struct target *target,tid_t tid,int nowait) {
+    verror("cannot pause individual threads in guests!\n");
+    errno = EINVAL;
+    return -1;
 }
 
 static int xen_vm_flush_thread(struct target *target,tid_t tid) {
@@ -3458,10 +3488,31 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 			goto handle_sstep_thread;
 		    }
 		    else {
+			target->ss_handler(target,tthread,NULL);
+
+			/* Clear the status bits right now. */
+			xtstate->context.debugreg[6] = 0;
+			tthread->dirty = 1;
+			/*
+			 * MUST DO THIS.  If we are going to modify both the
+			 * current thread's CPU state possibly, and possibly
+			 * operate on the global thread's CPU state, we need
+			 * to clear the global thread's debug reg status
+			 * here; this also has the important side effect of
+			 * forcing a merge of the global thread's debug reg
+			 * state; see flush_global_thread !
+			 */
+			gtstate->context.debugreg[6] = 0;
+			target->global_thread->dirty = 1;
+			vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
+
+			goto out_ss_again;
+			/*
 			verror("single step event (status reg and eflags), but"
 			       " no handling context in thread %"PRIiTID"!"
 			       "  letting user handle.\n",tthread->tid);
 			goto out_paused;
+			*/
 		    }
 		}
 		    
@@ -3783,6 +3834,80 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     if (again)
 	*again = 2;
     return TSTATUS_PAUSED;
+}
+
+int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
+    struct target *target = (struct target *)state;
+    int again;
+    int retval;
+    XC_EVTCHN_PORT_T port = -1;
+
+    /* we've got something from eventchn. let's see what it is! */
+    port = xc_evtchn_pending(xce_handle);
+
+    /* unmask the event channel BEFORE doing anything else,
+     * like unpausing the target!
+     */
+    retval = xc_evtchn_unmask(xce_handle, port);
+    if (retval == -1) {
+	verror("failed to unmask event channel\n");
+	return EVLOOP_HRET_BADERROR;
+    }
+
+    if (port != dbg_port)
+	return EVLOOP_HRET_SUCCESS;
+
+    again = 0;
+    retval = xen_vm_handle_internal(target,&again);
+    if (retval == TSTATUS_ERROR && again == 0)
+	return EVLOOP_HRET_ERROR;
+    /*
+     * XXX: this is the "abort to user handler" case -- but in this
+     * case, we have no user, basically.  Fix this.
+     */
+    //else if (retval == TSTATUS_PAUSED && again == 0)
+    //    return EVLOOP_HRET_SUCCESS;
+
+    __xen_vm_resume(target,0);
+
+    return EVLOOP_HRET_SUCCESS;
+}
+
+int xen_vm_attach_evloop(struct target *target,struct evloop *evloop) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    if (!target->evloop) {
+	verror("no evloop attached!\n");
+	return -1;
+    }
+
+    /* get a select()able file descriptor of the event channel */
+    xstate->evloop_fd = xc_evtchn_fd(xce_handle);
+    if (xstate->evloop_fd == -1) {
+        verror("event channel not initialized\n");
+        return -1;
+    }
+
+    evloop_set_fd(target->evloop,xstate->evloop_fd,EVLOOP_FDTYPE_R,
+		  xen_vm_evloop_handler,target);
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "added evloop readfd %d event channel\n",xstate->evloop_fd);
+
+    return 0;
+}
+
+int xen_vm_detach_evloop(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    if (xstate->evloop_fd < 0)
+	return 0;
+
+    evloop_unset_fd(target->evloop,xstate->evloop_fd,EVLOOP_FDTYPE_A);
+
+    xstate->evloop_fd = -1;
+
+    return 0;
 }
 
 static target_status_t xen_vm_monitor(struct target *target) {
@@ -4359,6 +4484,39 @@ char *xen_vm_reg_name(struct target *target,REG reg) {
 #endif
 }
 
+REG xen_vm_dwregno_targetname(struct target *target,char *name) {
+    /* This sucks. */
+    REG retval = 0;
+    int i;
+    int count;
+    char **dregname;
+
+#if __WORDSIZE == 64
+    count = X86_64_DWREG_COUNT;
+    dregname = dreg_to_name64;
+#else
+    count = X86_32_DWREG_COUNT;
+    dregname = dreg_to_name32;
+#endif
+
+    for (i = 0; i < count; ++i) {
+	if (dregname[i] == NULL)
+	    continue;
+	else if (strcmp(name,dregname[i]) == 0) {
+	    retval = i;
+	    break;
+	}
+    }
+
+    if (i == count) {
+	verror("could not find register number for name %s!\n",name);
+	errno = EINVAL;
+	return 0;
+    }
+
+    return retval;
+}
+
 REG xen_vm_dw_reg_no(struct target *target,common_reg_t reg) {
     if (reg >= COMMON_REG_COUNT) {
 	verror("common regnum %d does not have an x86 mapping!\n",reg);
@@ -4480,6 +4638,57 @@ int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     tthread->dirty = 1;
 
     return 0;
+}
+
+GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid) {
+    GHashTable *retval;
+    int i;
+    int count;
+    REGVAL *rvp;
+    int *dregs;
+    char **dregnames;
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *xtstate;
+
+    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+	if (!errno) 
+	    errno = EINVAL;
+	verror("could not load cached thread %"PRIiTID"\n",tid);
+	return 0;
+    }
+    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+#if __WORDSIZE == 64
+    count = X86_64_DWREG_COUNT;
+    dregs = dreg_to_offset64;
+    dregnames = dreg_to_name64;
+#else 
+    count = X86_32_DWREG_COUNT;
+    dregs = dreg_to_offset32;
+    dregnames = dreg_to_name32;
+#endif
+
+    retval = g_hash_table_new_full(g_str_hash,g_str_equal,NULL,free);
+
+    for (i = 0; i < count; ++i) {
+	if (dregs[i] == -1) 
+	    continue;
+
+	rvp = malloc(sizeof(*rvp));
+	
+#if __WORDSIZE == 64
+    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
+	*rvp = (REGVAL)*(uint64_t *)(((char *)&xtstate->context) + dregs[i]);
+    else
+	*rvp = (REGVAL)*(uint16_t *)(((char *)&(xtstate->context)) + dregs[i]);
+#else 
+    *rvp = (REGVAL)*(uint32_t *)(((char *)&(xtstate->context)) + dregs[i]);
+#endif
+
+	g_hash_table_insert(retval,dregnames[i],rvp);
+    }
+
+    return retval;
 }
 
 /*
