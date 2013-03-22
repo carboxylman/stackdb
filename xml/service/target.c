@@ -172,6 +172,9 @@ int main(int argc, char **argv) {
     soap.accept_timeout = 0;
     soap.max_keep_alive = 100;
 
+    /* Disable this once stability is reached. */
+    soap.bind_flags=SO_REUSEADDR;
+
     /*
      * Create a thread for handling SIGINT, SIGCHLD, and SIGPIPE; the
      * other threads block all sigs.

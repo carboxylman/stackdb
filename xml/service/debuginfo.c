@@ -119,6 +119,9 @@ int main(int argc, char **argv) {
     soap.accept_timeout = 0;
     soap.max_keep_alive = 100;
 
+    /* Disable this once stability is reached. */
+    soap.bind_flags=SO_REUSEADDR;
+
     m = soap_bind(&soap,NULL,port,64);
     if (!soap_valid_socket(m)) {
 	verror("Could not bind to port %d: ",port);
