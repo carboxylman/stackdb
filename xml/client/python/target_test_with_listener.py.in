@@ -39,6 +39,8 @@ objdir = os.path.abspath("@top_builddir@")
 url = 'file://%s/xml/service/target.wsdl.test' % (objdir,)
 clienturl = 'file://%s/xml/service/targetListener.wsdl.test' % (objdir,)
 
+dummy_threads = os.path.abspath("@top_builddir@/tests/dummy.threads")
+
 #
 # Setup SOAP listener interface
 #
@@ -167,7 +169,7 @@ tspec._type = "ptrace"
 tspec.mode = "live"
 tspec.startPaused = True
 tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
-tspec.backendSpec.targetPtraceSpec.program = "../../tests/dummy.threads"
+tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 tspec.backendSpec.targetPtraceSpec.closeStdin = False
