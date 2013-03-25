@@ -106,6 +106,8 @@ int vmi_add_log_area_flaglist(char *flaglist,char *separator) {
 	separator = ",";
 
     while ((flag = strtok_r(!saveptr ? flaglist : NULL,separator,&saveptr))) {
+	areas = 0;
+	flags = 0;
 	if (vmi_log_get_flag_val(flag,&areas,&flags)) 
 	    return -1;
 	else 
@@ -173,6 +175,13 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 	    *areaval = LA_ALL;
 	return 0;
     }
+    else if (strcmp("L_ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_L_ALL;
+	if (areaval)
+	    *areaval = LA_LIB;
+	return 0;
+    }
     else if (strcmp("D_ALL",flag) == 0) {
 	if (flagval)
 	    *flagval = LF_D_ALL;
@@ -231,6 +240,7 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 	    areabits = LAB_USER;
 	else {
 	    verror("bad flag '%s': no such area prefix '%s'!\n",flag,_area);
+	    free(_dup);
 	    return -1;
 	}
 
@@ -238,6 +248,7 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 
 	if (!subarray) {
 	    verror("bad flag '%s': area '%s' has no flags!\n",flag,_area);
+	    free(_dup);
 	    return -1;
 	}
 
@@ -284,6 +295,7 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 
 	if (!found) {
 	    verror("area '%s' has no flag '%s'!\n",_area,_flag);
+	    free(_dup);
 	    return -1;
 	}
 	else {
@@ -291,6 +303,7 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 		*areaval = 1 << areabits;
 	    if (flagval)
 		*flagval = 1 << i;
+	    free(_dup);
 	    return 0;
 	}
     }

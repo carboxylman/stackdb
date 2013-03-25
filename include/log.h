@@ -190,6 +190,7 @@ typedef enum log_flags_ {
  */
 /* Set every last bit for a specific area. */
 #define LF_ALL        INT_MAX
+#define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR)
 #define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SYMTAB | LF_DLOC \
 		  | LF_DLOOKUP | LF_DWARF | LF_DWARFATTR	\
 		  | LF_DWARFOPS | LF_DOTHER | LF_ELF | LF_BFILE )
