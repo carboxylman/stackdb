@@ -143,6 +143,7 @@ int main(int argc, char **argv) {
     argv += optind;
 
     waitpipe_init_ext(NULL);
+    monitor_init();
     dwdebug_init();
     debuginfo_rpc_init();
     target_rpc_init();
@@ -150,6 +151,7 @@ int main(int argc, char **argv) {
     atexit(target_rpc_fini);
     atexit(debuginfo_rpc_fini);
     atexit(dwdebug_fini);
+    atexit(monitor_fini);
 
     soap_init(&soap);
     //soap_set_omode(&soap,SOAP_XML_GRAPH);

@@ -57,7 +57,13 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/monitor.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
 
-TESTS := clrange clmatch evloop_waitpipe monitor_threads monitor_processes
+LIBRARIES := libtest.a
+
+OBJECTS := monitor_dummy.lo
+
+TESTS := clrange clmatch evloop_waitpipe monitor_threads monitor_processes \
+	monitored_dummy_child
+TESTOBJECTS := $(addsuffix .lo,$(TESTS))
 
 ASSISTANTS := dummy dummy.threads
 
@@ -66,8 +72,14 @@ STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a \
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	STATICLIBS += $(LIBVMI)/lib/libvmi.a
+endif
 
-all:	$(ASSISTANTS) $(TESTS) all-subdirs
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(LIBRARIES) $(ASSISTANTS) $(TESTOBJECTS) $(TESTS) all-subdirs
 
 dummy: $(SRCDIR)/dummy.c
 	$(CC) -o $@ $(SRCDIR)/$@.c -g 
@@ -77,8 +89,15 @@ dummy.threads : $(SRCDIR)/dummy.threads.c
 
 include $(TOP_SRCDIR)/Makerules
 
-.c:	$(HEADERS) $(STATICLIBS)
-	$(CC) -o $@ $(CFLAGS) $(SRCDIR)/$@.c $(STATICLIBS) $(LDFLAGS)
+.c.lo:	$(HEADERS) $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+libtest.a:	$(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS)
+
+.c:	$(LIBRARIES) $(STATICLIBS)
+	@$(LIBTOOL)  --tag=CC --mode=link ${CC} -o $@ $@.lo \
+		$(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 test:	$(TESTS)
 	./clrange
@@ -90,7 +109,8 @@ test:	$(TESTS)
 install: def-install install-subdirs
 
 clean: clean-subdirs
-	rm -f $(ASSISTANTS) $(TESTS)
+	rm -f $(LIBRARIES) $(ASSISTANTS) $(TESTS)
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(TESTOBJECTS) 
 
 distclean: distclean-subdirs
 

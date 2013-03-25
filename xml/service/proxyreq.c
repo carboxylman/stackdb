@@ -136,7 +136,7 @@ struct proxyreq *proxyreq_create(struct soap *soap) {
     return pr;
 }
 
-struct proxyreq *proxyreq_create_proxied(char *buf,int buflen) {
+struct proxyreq *proxyreq_create_proxied(int objid,char *buf,int buflen) {
     struct proxyreq *pr;
     struct soap *soap;
 
@@ -148,6 +148,8 @@ struct proxyreq *proxyreq_create_proxied(char *buf,int buflen) {
     pr->tid = pthread_self();
     pr->state = PROXYREQ_STATE_BUFFERED;
     pr->soap = soap;
+
+    pr->objid = objid;
 
     pr->buf = buf;
     pr->len = buflen;
@@ -179,7 +181,29 @@ int proxyreq_switchto_proxied(struct proxyreq *pr) {
     return 0;
 }
 
-int proxyreq_attach_monitor(struct proxyreq *pr,struct monitor *monitor) {
+int proxyreq_attach_objid(struct proxyreq *pr,int objid) {
+    if (pr->monitor) {
+	verror("proxyreq already attached to a monitor!\n");
+	return SOAP_ERR;
+    }
+
+    if (!monitor_lookup_objid(objid,NULL,NULL,&pr->monitor)) {
+	verror("no monitor for object %d!\n",objid);
+	return SOAP_ERR;
+    }
+
+    /*
+     * We save off the object separately in case the monitor disappears
+     * asynchronous w.r.t. our functions; this helps us avoid locking
+     * the monitor's (and the global monitor lock).
+     */
+    pr->objid = objid;
+
+    return SOAP_OK;
+}
+
+int proxyreq_attach_new_objid(struct proxyreq *pr,int objid,
+			      struct monitor *monitor) {
     if (pr->monitor) {
 	verror("proxyreq already attached to a monitor!\n");
 	return SOAP_ERR;
@@ -189,28 +213,20 @@ int proxyreq_attach_monitor(struct proxyreq *pr,struct monitor *monitor) {
     /*
      * We save off the object separately in case the monitor disappears
      * asynchronous w.r.t. our functions; this helps us avoid locking
-     * the monitor's (and the global monitor lock) lock prior to send.
-     * This way, if the monitored object has vanished during the call
-     * chain that got us here, we still safely error.
-     *
-     * See monitor_sendfor
+     * the monitor's (and the global monitor lock).
      */
-    pr->obj = monitor->obj;
-
-    return SOAP_OK;
-}
-
-int proxyreq_attach_new(struct proxyreq *pr,struct monitor *monitor) {
-    int rc;
-
-    rc = proxyreq_attach_monitor(pr,monitor);
-    if (rc != SOAP_OK)
-	return rc;
+    pr->objid = objid;
 
     pr->monitor_is_new = 1;
 
     return SOAP_OK;
 }
+
+/*
+ * Msg commands.
+ */
+#define PROXYREQ_REQUEST  1
+#define PROXYREQ_RESPONSE 2
 
 int proxyreq_send_request(struct proxyreq *pr) {
     struct monitor *monitor;
@@ -239,23 +255,26 @@ int proxyreq_send_request(struct proxyreq *pr) {
      * @pr in its address space, so don't send the request over the
      * pipe; trust that it can retrieve pr as a msg_obj later.
      */
-    if (!(monitor->flags & MONITOR_FLAG_BIDI)) {
-	msg = monitor_msg_create(pr->tid,1,0,NULL);
+    if (monitor->type == MONITOR_TYPE_THREAD) {
+	msg = monitor_msg_create(pr->objid,-1,PROXYREQ_REQUEST,1,
+				 0,NULL,pr);
     }
     else {
-	msg = monitor_msg_create(pr->tid,1,pr->len,pr->buf);
+	/*
+	 * Associate pr as the "msg_obj" in the monitor's hashtable, for
+	 * later use.
+	 */
+	msg = monitor_msg_create(pr->objid,-1,PROXYREQ_REQUEST,1,
+				 pr->len,pr->buf,pr);
 
 	pr->buf = NULL;
 	pr->len = pr->bufsiz = pr->bufidx = 0;
     }
 
-    /*
-     * Associate pr as the "msg_obj" in the monitor's hashtable, for
-     * later use.
-     */
-    rc = monitor_sendfor(pr->obj,msg,pr);
+    rc = monitor_send(msg);
 
-    /* This results in the buffer being freed for msgs over BIDI pipes;
+    /* This results in the buffer being freed for msgs to
+     * MONITOR_TYPE_PROCESS monitored children;
      * in the other case, we assume that whoever uses @pr (the receiver
      * of our 0-len notification msg will free it).
      */
@@ -296,16 +315,17 @@ int proxyreq_send_response(struct proxyreq *pr) {
      * *after* sending, and the child happens to respond to it first, it
      * could get overwritten before we can free it.  Of course, that is
      * all but impossible, but we're careful.
+     *
+     * DO NOT associate pr as the "msg_obj" in the monitor's hashtable;
+     * there is no later use.
      */
-    msg = monitor_msg_create(pr->tid,2,pr->len,pr->buf);
+    msg = monitor_msg_create(pr->objid,-1,PROXYREQ_RESPONSE,1,
+			     pr->len,pr->buf,NULL);
 
     pr->buf = NULL;
     pr->len = pr->bufsiz = pr->bufidx = 0;
 
-    /* DO NOT associate pr as the "msg_obj" in the monitor's hashtable;
-     * there is no later use.
-     */
-    rc = monitor_child_sendfor(pr->obj,NULL,msg);
+    rc = monitor_child_send(msg);
     monitor_msg_free(msg);
     if (rc) {
 	verror("could not send msg to monitor!\n");
@@ -319,8 +339,11 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
     struct proxyreq *pr;
     struct soap *soap;
 
-    if (!(pr = (struct proxyreq *)monitor_get_msg_obj(monitor,msg->id))) {
-	pr = proxyreq_create_proxied(msg->msg,msg->len);
+    if (!(pr = (struct proxyreq *)msg->msg_obj)) {
+	pr = proxyreq_create_proxied(msg->objid,msg->msg,msg->len);
+	/* Steal the message's buf in proxyreq_create_proxied. */
+	msg->len = 0;
+	msg->msg = NULL;
 
 	soap = pr->soap;
 
@@ -343,13 +366,6 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 	}
 
 	proxyreq_send_response(pr);
-
-	proxyreq_free(pr);
-
-	soap_destroy(soap);
-	soap_end(soap);
-	soap_done(soap);
-	free(soap);
     }
     else {
 	/* Use the soap struct in the existing proxyreq. */
@@ -373,14 +389,16 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 	}
-
-	proxyreq_free(pr);
-
-	soap_destroy(soap);
-	soap_end(soap);
-	soap_done(soap);
-	free(soap);
     }
+
+    //monitor_msg_free(msg);
+
+    proxyreq_free(pr);
+
+    soap_destroy(soap);
+    soap_end(soap);
+    soap_done(soap);
+    free(soap);
 
     return 0;
 }
@@ -421,8 +439,9 @@ void proxyreq_free(struct proxyreq *pr) {
 
     proxyreq_free_buffer(pr);
 
+    pr->tid = -1;
     pr->monitor = NULL;
-    pr->obj = NULL;
+    pr->objid = -1;
 
     free(pr);
 }

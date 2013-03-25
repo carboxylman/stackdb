@@ -134,7 +134,12 @@ struct proxyreq {
      * destined to an existing object, must set the @monitor field.
      */
     struct monitor *monitor;
-    void *obj;
+    /*
+     * We save off the object separately in case the monitor disappears
+     * asynchronous w.r.t. our functions; this helps us avoid locking
+     * the monitor's (and the global monitor lock).
+     */
+    int objid;
 
     /*
      * If this request instantiated the monitor, @monitor_is_new is
@@ -180,19 +185,20 @@ struct proxyreq *proxyreq_create(struct soap *soap);
  * (Must be called before a soap_serve() call so it can replay the whole
  * incoming request.)
  */
-struct proxyreq *proxyreq_create_proxied(char *buf,int buflen);
+struct proxyreq *proxyreq_create_proxied(int objid,char *buf,int buflen);
 
 /*
- * Attaches @monitor to @pr.  Must be called before actually proxying a
- * request!
+ * Attaches @objid's monitor to @pr (@objid must be a monitored object).
+ * Must be called before actually proxying a request!
  */
-int proxyreq_attach(struct proxyreq *pr,struct monitor *monitor);
+int proxyreq_attach_objid(struct proxyreq *pr,int objid);
 
 /*
- * Attaches a new @monitor to @pr.  Must be called before actually proxying a
- * request!
+ * Attaches a new @monitor to @pr (@objid should be the object created
+ * by/for @monitor).  Must be called before actually proxying a request!
  */
-int proxyreq_attach_new(struct proxyreq *pr,struct monitor *monitor);
+int proxyreq_attach_new_objid(struct proxyreq *pr,int objid,
+			      struct monitor *monitor);
 
 /*
  * Frees a proxy request.
@@ -266,8 +272,9 @@ int proxyreq_send_response(struct proxyreq *pr);
  *
  * Also unlocks @mutex if non-NULL if it returns an error.
  */
-#define PROXY_REQUEST_LOCKED(soap,mobj,mobjid,mutex) {			\
+#define PROXY_REQUEST_LOCKED(soap,mobjid,mutex) {			\
     struct proxyreq *_pr;						\
+    int _rc;								\
     _pr = (struct proxyreq *)(soap)->user;				\
     if (!_pr) {								\
         verror("no proxyreq state!\n");					\
@@ -276,12 +283,10 @@ int proxyreq_send_response(struct proxyreq *pr);
     }									\
     if (_pr->state == PROXYREQ_STATE_NEW) {				\
 	_pr->state = PROXYREQ_STATE_BUFFERED;				\
-	_pr->obj = mobj;						\
-	_pr->monitor = monitor_lookup(mobj);				\
-	if (!_pr->monitor) {						\
-	    verror("no monitor for object %d!\n",(mobjid));		\
+	_rc = proxyreq_attach_objid(_pr,mobjid);			\
+	if (_rc != SOAP_OK) {						\
 	    pthread_mutex_unlock(mutex);				\
-	    return SOAP_ERR;						\
+	    return _rc;							\
 	}								\
 	/*								\
 	 * WARNING: the thing that handles SOAP_STOP must		\

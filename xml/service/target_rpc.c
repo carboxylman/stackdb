@@ -78,8 +78,8 @@ static int target_rpc_monitor_child_recv_msg(struct monitor *monitor,
 					     struct monitor_msg *msg) {
     struct target *target = (struct target *)monitor->obj;
 
-    vdebug(9,LA_XML,LF_RPC,"msg(%d:%d,%d) = '%s' (target %id)\n",
-	   msg->id,msg->seqno,msg->len,msg->msg,target->id);
+    vdebug(9,LA_XML,LF_RPC,"msg(%d:%hd,%hd,%d) = '%s' (target %d (%p))\n",
+	   msg->id,msg->cmd,msg->seqno,msg->len,msg->msg,msg->objid,target);
 
     return proxyreq_recv_request(monitor,msg);
 }
@@ -88,8 +88,8 @@ static int target_rpc_monitor_recv_msg(struct monitor *monitor,
 				       struct monitor_msg *msg) {
     struct target *target = (struct target *)monitor->obj;
 
-    vdebug(9,LA_XML,LF_RPC,"msg(%d:%d,%d) = '%s' (target->id)\n",
-	   msg->id,msg->seqno,msg->len,msg->msg,target->id);
+    vdebug(9,LA_XML,LF_RPC,"msg(%d:%hd,%hd,%d) = '%s' (target %d (%p))\n",
+	   msg->id,msg->cmd,msg->seqno,msg->len,msg->msg,msg->objid,target);
 
     return proxyreq_recv_response(monitor,msg);
 }
@@ -99,8 +99,6 @@ static struct monitor_objtype_ops target_rpc_monitor_objtype_ops = {
     .evloop_detach = target_rpc_monitor_evloop_detach,
     .error = target_rpc_monitor_error,
     .fatal_error = target_rpc_monitor_fatal_error,
-    .child_recv_evh = NULL,
-    .recv_evh = NULL,
     .child_recv_msg = target_rpc_monitor_child_recv_msg,
     .recv_msg = target_rpc_monitor_recv_msg,
 };
@@ -427,28 +425,6 @@ struct array_list *_target_rpc_get_existing_targets(void) {
     return retval;
 }
 
-void *do_thread_split_request(void *arg) {
-    struct soap *soap = (struct soap *)arg;
-
-    pthread_detach(pthread_self());
-
-    soap_serve(soap);
-
-    if (soap->error != SOAP_STOP) {
-	vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d\n",
-	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
-	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
-
-	soap_destroy(soap);
-	soap_end(soap);
-	soap_done(soap);
-
-	free(soap);
-    }
-
-    return NULL;
-}
-
 int vmi1__ListTargetTypes(struct soap *soap,
 			  void *_,
 			  struct vmi1__TargetTypesResponse *r) {
@@ -618,7 +594,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	 * second buffering when passing a result back.
 	 */
 	monitor = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,
-				 monitor_objtype_target,t);
+				 t->id,monitor_objtype_target,t);
 	if (!monitor) {
 	    target_free_spec(s);
 	    g_hash_table_destroy(reftab);
@@ -627,7 +603,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 				       "Could not create monitor!");
 	}
 
-	proxyreq_attach_new(pr,monitor);
+	proxyreq_attach_new_objid(pr,t->id,monitor);
 
 	_target_rpc_insert(t);
 
@@ -656,7 +632,7 @@ int vmi1__PauseTarget(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (target_pause(t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -684,7 +660,7 @@ int vmi1__ResumeTarget(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (target_resume(t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -712,7 +688,7 @@ int vmi1__CloseTarget(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (target_close(t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -752,7 +728,7 @@ int vmi1__PauseThread(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (target_pause_thread(t,thid,0)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -784,7 +760,7 @@ int vmi1__LookupTargetSymbolSimple(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -835,7 +811,7 @@ int vmi1__LookupTargetSymbol(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -892,7 +868,7 @@ int vmi1__LookupTargetAddrSimple(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -943,7 +919,7 @@ int vmi1__LookupTargetAddr(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -1000,7 +976,7 @@ int vmi1__LookupTargetLineSimple(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -1052,7 +1028,7 @@ int vmi1__LookupTargetLine(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -1287,7 +1263,7 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
 		    action = \
 			x_ActionSpecT_to_t_action(&soap,
 						  &per.actionSpecs.actionSpec[i],
-						  action->target);
+						  target);
 		    if (!action) {
 			verror("bad ActionSpec in probe response!\n");
 			continue;
@@ -1342,7 +1318,7 @@ int vmi1__ProbeSymbolSimple(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1404,7 +1380,7 @@ int vmi1__ProbeSymbol(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1495,7 +1471,7 @@ int vmi1__ProbeAddr(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1575,7 +1551,7 @@ int vmi1__ProbeLine(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1645,7 +1621,7 @@ int vmi1__EnableProbe(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     probe = target_lookup_probe(t,pid);
     if (!probe) {
@@ -1706,7 +1682,7 @@ int vmi1__DisableProbe(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     probe = target_lookup_probe(t,pid);
     if (!probe) {
@@ -1767,7 +1743,7 @@ int vmi1__RemoveProbe(struct soap *soap,
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
 
     probe = target_lookup_probe(t,pid);
     if (!probe) {

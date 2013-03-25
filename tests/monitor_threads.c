@@ -27,84 +27,9 @@
 #include "evloop.h"
 #include "monitor.h"
 
-struct dummy {
-    unsigned long id;
-    int fd;
-};
+#include "monitor_dummy.h"
 
-struct dummy_msg_obj {
-    char *msg;
-};
-
-int dummy_evh(int fd,int fdtype,void *state) {
-    struct dummy *d = (struct dummy *)state;
-    char buf[64];
-    int rc;
-
-    rc = read(fd,buf,sizeof(buf));
-    if (rc < 0) 
-	buf[0] = '\0';
-    else
-	buf[rc] = '\0';
-
-    vdebug(0,LA_USER,LF_U_ALL,"fd %d fdtype %d d->id %d d->fd %d rc %d buf %s\n",
-	   fd,fdtype,d->id,d->fd,rc,buf);
-
-    return 0;
-}
-
-int dummy_evloop_attach(struct evloop *evloop,void *obj) {
-    struct dummy *d = (struct dummy *)obj;
-
-    //evloop_set_fd(evloop,d->fd,EVLOOP_FDTYPE_R,dummy_evh,d);
-    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d\n",d->id);
-
-    return 0;
-}
-int dummy_evloop_detach(struct evloop *evloop,void *obj) {
-    struct dummy *d = (struct dummy *)obj;
-
-    //evloop_unset_fd(evloop,d->fd,EVLOOP_FDTYPE_R);
-    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d\n",d->id);
-
-    return 0;
-}
-int dummy_error(monitor_error_t error,void *obj) {
-    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d (error %d)\n",((struct dummy *)obj)->id,
-	   error);
-    return 0;
-}
-int dummy_fatal_error(monitor_error_t error,void *obj) {
-    vdebug(0,LA_USER,LF_U_ALL,"dummy id %d (error %d)\n",((struct dummy *)obj)->id,
-	   error);
-    //free(dummy);
-    return 0;
-}
-
-int dummy_child_recv_msg(struct monitor *monitor,struct monitor_msg *msg) {
-    vdebug(0,LA_USER,LF_U_ALL,"msg(%d:%d,%d) = '%s'\n",
-	   msg->id,msg->seqno,msg->len,msg->msg);
-    return 0;
-}
-
-int dummy_recv_msg(struct monitor *monitor,struct monitor_msg *msg) {
-    vdebug(0,LA_USER,LF_U_ALL,"msg(%d:%d,%d) = '%s'\n",
-	   msg->id,msg->seqno,msg->len,msg->msg);
-    return 0;
-}
-
-struct monitor_objtype_ops dummy_ops = {
-    .evloop_attach = dummy_evloop_attach,
-    .evloop_detach = dummy_evloop_detach,
-    .error = dummy_error,
-    .fatal_error = dummy_fatal_error,
-    .child_recv_evh = NULL,
-    .recv_evh = NULL,
-    .child_recv_msg = dummy_child_recv_msg,
-    .recv_msg = dummy_recv_msg,
-};
-
-int dummy_objtype = -1;
+extern struct monitor_objtype_ops monitor_dummy_ops;
 
 void *new_thread(void *obj) {
     struct dummy *d = (struct dummy *)obj;
@@ -112,13 +37,14 @@ void *new_thread(void *obj) {
 
     //pthread_detach(pthread_self());
 
-    m = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,dummy_objtype,d);
+    m = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,
+		       d->id,MONITOR_DUMMY_OBJTYPE,d);
 
     monitor_run(m);
 
     // normally would have to clean up obj?
 
-    monitor_free(m);
+    monitor_destroy(m);
 
     return NULL;
 }
@@ -126,38 +52,55 @@ void *new_thread(void *obj) {
 
 int main(int argc,char **argv) {
     struct dummy d1;
-    struct dummy_msg_obj d1m = { .msg = "dummy1", };
+    struct monitor_dummy_msg_obj d1m = { .msg = "dummy1", };
     struct dummy d2;
-    struct dummy_msg_obj d2m = { .msg = "dummy2", };
-    struct monitor_msg *m1;
-    struct monitor_msg *m2;
+    struct monitor_dummy_msg_obj d2m = { .msg = "dummy2", };
+    struct monitor_msg *mm1;
+    struct monitor_msg *mm2;
     pthread_t tid1;
     pthread_t tid2;
     void *retval;
+    struct monitor *m1;
+    struct monitor *m2;
 
     vmi_set_log_level(16);
-    vmi_set_log_area_flags(LA_LIB,LF_MONITOR | LF_EVLOOP);
+    vmi_add_log_area_flags(LA_LIB,LF_MONITOR | LF_EVLOOP);
+    vmi_add_log_area_flags(LA_USER,0xffffffff);
+
+    monitor_init();
 
     d1.id = 111;
+    d1.seqno_limit = 2;
     d1.fd = open("/tmp/d1.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
     fcntl(d1.fd,F_SETFL,fcntl(d1.fd,F_GETFL) | O_NONBLOCK);
     d2.id = 222;
+    d1.seqno_limit = 8;
     d2.fd = open("/tmp/d2.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
     fcntl(d2.fd,F_SETFL,fcntl(d2.fd,F_GETFL) | O_NONBLOCK);
 
-    dummy_objtype = monitor_register_objtype(dummy_objtype,&dummy_ops);
-    vdebug(0,LA_USER,1,"registered dummy objtype %d\n",dummy_objtype);
+    if (monitor_register_objtype(MONITOR_DUMMY_OBJTYPE,&monitor_dummy_ops)
+	!= MONITOR_DUMMY_OBJTYPE) {
+	verror("registration of dummy objtype %d failed!\n",
+	       MONITOR_DUMMY_OBJTYPE);
+	exit(-9);
+    }
+    else
+	vdebug(0,LA_USER,1,"registered dummy objtype %d\n",
+	       MONITOR_DUMMY_OBJTYPE);
 
     pthread_create(&tid1,NULL,new_thread,&d1);
     pthread_create(&tid2,NULL,new_thread,&d2);
 
-    sleep(1);
+    sleep(2);
 
-    m1 = monitor_msg_create(111,1,5,"m111");
-    monitor_sendfor(&d1,m1,&d1m);
+    monitor_lookup_objid(d1.id,NULL,NULL,&m1);
+    monitor_lookup_objid(d2.id,NULL,NULL,&m2);
 
-    m2 = monitor_msg_create(222,1,5,"m222");
-    monitor_sendfor(&d2,m2,&d2m);
+    mm1 = monitor_msg_create(d1.id,-1,DUMMY_ECHO,1,4,"m111",&d1m);
+    monitor_send(mm1);
+
+    mm2 = monitor_msg_create(d2.id,2,DUMMY_MUTATE,1,4,"m222",&d2m);
+    monitor_send(mm2);
 
     pthread_join(tid1,&retval);
     pthread_join(tid2,&retval);

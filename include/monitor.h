@@ -21,6 +21,7 @@
 
 #include <stdlib.h>
 #include <pthread.h>
+#include <limits.h>
 
 #include "evloop.h"
 
@@ -63,10 +64,15 @@ typedef enum {
  * These are the environment var names.  To be a monitored child, at
  * least MONITOR_CHILD_RECV_FD must be set; MONITOR_CHILD_SEND_FD may
  * also be set if the monitor is listening for replies.
+ *
+ * We also set an object id so that the parent and child can refer to
+ * the same object.
  */
 
 #define MONITOR_CHILD_RECV_FD_ENVVAR "MONITOR_CHILD_RECV_FD"
 #define MONITOR_CHILD_SEND_FD_ENVVAR "MONITOR_CHILD_SEND_FD"
+#define MONITOR_OBJID_ENVVAR         "MONITOR_OBJID"
+#define MONITOR_OBJTYPE_ENVVAR       "MONITOR_OBJTYPE"
 
 /*
  * Object type-specific functions.
@@ -86,24 +92,6 @@ struct monitor_objtype_ops {
     int (*evloop_detach)(struct evloop *evloop,void *obj);
     int (*error)(monitor_error_t error,void *obj);
     int (*fatal_error)(monitor_error_t error,void *obj);
-    /*
-     * Replace the built-in handler for the child read end of the
-     * monitor pipe.  This function can choose to call the below msg
-     * callback functions, or not; the built-in handlers call the msg
-     * callback functions, if specified.
-     *
-     * (@state will be the the monitor associated with this @fd.)
-     */
-    int (*child_recv_evh)(int fd,int fdtype,void *state);
-    /*
-     * Replace the built-in handler for the monitor read end of the
-     * monitor pipe.  This function can choose to call the below msg
-     * callback functions, or not; the built-in handlers call the msg
-     * callback functions, if specified.
-     *
-     * (@state will be the the monitor associated with this @fd.)
-     */
-    int (*recv_evh)(int fd,int fdtype,void *state);
     /*
      * For ease of use, we allow library users to specify callbacks to
      * receive just the msgs without having to specify an evloop handler
@@ -148,6 +136,10 @@ struct monitor {
      */
     pthread_mutex_t mutex;
 
+    uint8_t running:1,
+	    interrupt:1,
+	    halfdead:1;
+
     /*
      * Each sent monitor message can be associated with an object.
      * These are stored in this hashtable.  It is up to the user of the
@@ -179,12 +171,17 @@ struct monitor {
     pthread_mutex_t msg_obj_tab_mutex;
 
     /*
-     * The object we are monitoring.  Either a target or analysis, for
+     * Auto-assign msg ids if caller of monitor_msg_create does not
+     * assign one.
+     */
+    int msg_obj_id_counter;
+
+    /*
+     * The primary object we are monitoring.  Either a target or analysis, for
      * now.
      */
-    int objtype;
+    int objid;
     void *obj;
-    struct monitor_objtype_ops *objtype_ops;
 
     /*
      * Our internal evloop.  Each monitor runs an evloop, which is how
@@ -259,18 +256,58 @@ struct monitor {
 	int (*stderr_callback)(int fd,char *buf,int len);
     } p;
 
+    int (*stdin_callback)(int fd,char *buf,int len);
+
     /*
      * XXX: need to buffer results...
      */
     struct array_list *results;
 };
 
+#define SEQNO_MAX SHRT_MAX
+
 struct monitor_msg {
+    /*
+     * @objid is the monitored object ID; demuxes the message to the
+     * right monitored object.
+     */
+    int objid;
+
+    /*
+     * User-defined fields.  The idea is to support a generic
+     * communication protocol to the monitored @objid/@objtype, and to
+     * associate a state object with each msg.  The state object might
+     * persist across several messages.  @id is intended to serve as a
+     * msg ID; it uniquely binds one or more messages to a state object.
+     * @cmd is a command ID, or something; @seqno is intended to serve
+     * as a sequence number for a command, so that commands can be
+     * ordered and multi-message.
+     */
     int id;
-    int seqno;
+
+    short cmd;
+    short seqno;
     int len;
     char *msg;
+
+    /*
+     * This field is not transmitted; it's just convenience for the msg
+     * handler.  Corresponds to @objid above.
+     */
+    void *obj;
+
+    /*
+     * This field is not transmitted; this is the state object for
+     * stateful commands.
+     */
+    void *msg_obj;
 };
+
+/*
+ * Lib init/fini.
+ */
+void monitor_init(void);
+void monitor_fini(void);
 
 /*
  * Allows us to have dynamic object types, associated with handler
@@ -281,28 +318,36 @@ struct monitor_msg {
 int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops);
 
 /*
- * Return the monitor struct corresponding to @obj, if any.
- */
-struct monitor *monitor_lookup(void *obj);
-
-/*
- * Return the monitor struct corresponding to @obj, with it locked.
- * This allows the caller to ensure that the monitor thread will not
- * monitor_free @obj's monitor out from under it!
- */
-struct monitor *monitor_lookup_and_lock(void *obj);
-
-/*
  * Creates a monitor of @type, for a valid @objtype.
  */
 struct monitor *monitor_create(monitor_type_t type,monitor_flags_t flags,
-			       int objtype,void *obj);
+			       int objid,int objtype,void *obj);
 
 /*
  * Creates a monitor of @type, for a (possibly unknown) @objtype.
+ *
+ * If @custom_child_recv_evh is specified, it replaces the built-in
+ * handler for the child read end of the monitor pipe (i.e., the child
+ * reading from the monitor parent thread).  This function should
+ * support the monitor's builtin objid/objtype demultiplexing, but it
+ * could elect not to.  If not specified, the built-in handler calls the
+ * objtype msg callback functions for that objid, if they were
+ * specified.  Same for @custom_recv_evh, except that it receives from
+ * the child (the monitor parent reading from the child).
  */
 struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
-				      int objtype,void *obj);
+				      int objid,int objtype,void *obj,
+				      evloop_handler_t custom_recv_evh,
+				      evloop_handler_t custom_child_recv_evh);
+
+/*
+ * Looks up a monitor based on monitored object id.  Useful for server
+ * threads who have to find the monitor for a request for an object,
+ * perhaps.
+ */
+int monitor_lookup_objid(int objid,
+			 int *objtype,void **obj,
+			 struct monitor **monitor);
 
 /*
  * Checks for at least one of the two env vars that specify file
@@ -321,7 +366,9 @@ int monitor_can_attach_bidi(void);
  * monitored processes.
  */
 struct monitor *monitor_attach(monitor_type_t type,monitor_flags_t flags,
-			       int objtype,void *obj);
+			       int objtype,void *obj,
+			       evloop_handler_t custom_child_recv_evh,
+			       int (*stdin_callback)(int fd,char *buf,int len));
 
 /*
  * Call if the target spec or analysis spec dictates I/O behavior -- and
@@ -365,39 +412,53 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 int monitor_run(struct monitor *monitor);
 
 /*
- * Cleans up a monitor, but does not free it.  In particular, it closes
- * open sockets with the child so that _sendfor()/recv() do not hang or
- * error.
+ * Breaks a monitor out of its evloop (causes monitor_run to return).
  */
-void monitor_cleanup(struct monitor *monitor);
+void monitor_interrupt(struct monitor *monitor);
+
+/*
+ * Breaks a monitor out of its evloop (causes monitor_run to return),
+ * and declares the other side dead.  This means the monitor should
+ * terminate safely after assessing the state of its world, and its
+ * child; or its child should take appropriate action (cleanup and
+ * continue, or self-terminate independently).
+ */
+void monitor_halfdead(struct monitor *monitor);
+
+/*
+ * Returns 1 if monitor half has died; else 0 if it is live.
+ */
+int monitor_is_halfdead(struct monitor *monitor);
 
 /*
  * Cleans up and frees a monitor.
  */
-void monitor_free(struct monitor *monitor);
+void monitor_destroy(struct monitor *monitor);
 
-/* Free @msg, and its buffer (if non-NULL). */
+/*
+ * Free @msg, and its buffer (if non-NULL).
+ *
+ * Also, if the msg is associated with a msg_obj, remove it!
+ */
 void monitor_msg_free(struct monitor_msg *msg);
 
 /* Free @msg, but not its buffer. */
 void monitor_msg_free_save_buffer(struct monitor_msg *msg);
 
-/* Returns a monitor_msg consisting of the argument values. */
-struct monitor_msg *monitor_msg_create(int id,int seqno,int buflen,char *buf);
-
 /*
- * Gets a msg_obj if we have stored one corresponding to @msg_id.
+ * Returns a monitor_msg consisting of the argument values.  Caller must
+ * specify @monitor and @objid; @monitor provides the default
+ * objid/objtype (which are used if objid == -1); but this also allows
+ * the caller to specify a secondary monitored object, if/when they exist.
  */
-void *monitor_get_msg_obj(struct monitor *monitor,int msg_id);
+struct monitor_msg *monitor_msg_create(int objid,
+				       int id,short cmd,short seqno,
+				       int buflen,char *buf,
+				       void *msg_obj);
 
 /*
- * Removes the msg_obj corresponding to @msg_id, if any.
- */
-void monitor_del_msg_obj(struct monitor *monitor,int msg_id);
-
-/*
- * Send @msg to the monitored child associated with @obj, storing
- * @msg->id/@msg_obj in our internal table.
+ * Send @msg to the monitored child associated with @msg->objid, storing
+ * @msg->id/@msg->msg_obj in our internal table if @msg->msg_obj exists.
  *
  * (The point of associating @msg_obj with a message id is so that if
  * the monitor user wants to associate a custom request handler (with a
@@ -406,10 +467,11 @@ void monitor_del_msg_obj(struct monitor *monitor,int msg_id);
  * process-based monitor), the handlers will have a stateful object that
  * they can work on, if necessary.)
  */
-int monitor_sendfor(void *obj,struct monitor_msg *msg,void *msg_obj);
+int monitor_send(struct monitor_msg *msg);
 
 /*
- * Receive a msg from @monitor (blocking).
+ * Receive a msg from @monitor (blocking).  Retrieves a msg_obj if one
+ * was stored for this msg's id
  */
 struct monitor_msg *monitor_recv(struct monitor *monitor);
 
@@ -417,7 +479,7 @@ struct monitor_msg *monitor_recv(struct monitor *monitor);
  * A monitored child must call this to send a message to its parent
  * (blocking).
  */
-int monitor_child_sendfor(void *obj,struct monitor_msg *msg,void *msg_obj);
+int monitor_child_send(struct monitor_msg *msg);
 
 /*
  * A monitored child must call this to read a message from its parent
