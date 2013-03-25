@@ -25,6 +25,8 @@
 #include <inttypes.h>
 #include <string.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 struct waitpipectl {
     GHashTable *pids;
@@ -155,6 +157,8 @@ int waitpipe_fini(void) {
  */
 int waitpipe_add(int pid) {
     int *pipefds;
+    int rc;
+    siginfo_t si;
 
     if (!waitpipe.pids) {
 	verror("waitpipe not initialized!\n");
@@ -203,6 +207,36 @@ int waitpipe_add(int pid) {
     g_hash_table_insert(waitpipe.readfds,
 			(gpointer)(uintptr_t)pipefds[0],
 			(gpointer)(uintptr_t)pid);
+
+    /*
+     * NB: once it is in our tables, and thus is ready to responded to
+     * from our signal handler, check and make sure @pid is actually
+     * live.  If it is not, we won't get signaled.
+     */
+    memset(&si,0,sizeof(si));
+    rc = waitid(P_PID,pid,&si,WNOHANG | WEXITED | WNOWAIT);
+    if (rc < 0) {
+	/* Unwind everything we just did. */
+	g_hash_table_remove(waitpipe.pids,(gpointer)(uintptr_t)pid);
+	g_hash_table_remove(waitpipe.readfds,(gpointer)(uintptr_t)pipefds[0]);
+	close(pipefds[1]);
+	close(pipefds[0]);
+
+	vwarn("pid %d disappeared before it could be added!\n",pid);
+	errno = EINVAL;
+	return -1;
+    }
+    else if (rc == 0 && si.si_pid == pid) {
+	if (!g_hash_table_lookup(waitpipe.pids,(gpointer)(uintptr_t)pid)) {
+	    vwarn("pid %d exited before we tracked it; notifying.\n",pid);
+	    waitpipe_notify(si.si_signo,&si);
+	}
+	else {
+	    vwarn("pid %d exited before we fully tracked it; notification"
+		  " already in progress.\n",pid);
+	}
+	return 0;
+    }
 
     vdebug(9,LA_LIB,LF_WAITPIPE,"pid %d wfd %d rfd %d\n",pid,pipefds[1],pipefds[0]);
 
