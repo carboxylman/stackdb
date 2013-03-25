@@ -96,7 +96,24 @@ int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype);
 
 int evloop_run(struct evloop *evloop,struct timeval *timeout,
 	       struct evloop_fdinfo **error_fdinfo);
-int evloop_handleone(struct evloop *evloop,struct timeval *timeout);
+/*
+ * This is a glorified select.  It returns 0 if there are no more FDs to
+ * handle (check via evloop_maxsize() < 0); returns 0 if the timeout is
+ * hit (check the @timeout struct); returns 0 if an FD was handled
+ * successfully (check @*handled_fdinfo and see if it was set); returns
+ * 0 with @hrc set to EVLOOP_HRET_DONE_FAILURE if it handled an FD
+ * successfully but the handler failed.
+ *
+ * Then, for error conditions: returns -1 with errno set if select
+ * failed; returns -1 on internal bug/user error (and sets errno EBADFD
+ * if select thought fd was in evloop set, but it was not set; or errno
+ * set to ENOENT if select claimed some fd was set but we couldn't find
+ * one); errno set to EBADSLT if the FD was set but there is no handler
+ * (this should only happen if user mucks with fdinfo data struct
+ * badly); ENOTSUP if the handler returns an unsupported error code;
+ */
+int evloop_handleone(struct evloop *evloop,struct timeval *timeout,
+		     struct evloop_fdinfo **handled_fdinfo,int *handled_hrc);
 
 void evloop_free(struct evloop *evloop);
 

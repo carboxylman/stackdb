@@ -28,6 +28,7 @@
 #include <inttypes.h>
 #include <errno.h>
 #include <string.h>
+#include <assert.h>
 
 struct evloop *evloop_create(evloop_error_handler_t ehandler) {
     struct evloop *evloop = calloc(1,sizeof(*evloop));
@@ -195,7 +196,7 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
     GHashTableIter iter;
 
     if (evloop->nfds < 0) {
-	vwarn("no file descriptors to monitor!\n");
+	vwarnopt(3,LA_LIB,LF_EVLOOP,"no file descriptors to monitor!\n");
 	//errno = EINVAL;
 	return 0;
     }
@@ -405,7 +406,213 @@ int evloop_run(struct evloop *evloop,struct timeval *timeout,
     }
 }
 
-int evloop_handleone(struct evloop *evloop,struct timeval *timeout) {
+int evloop_handleone(struct evloop *evloop,struct timeval *timeout,
+		     struct evloop_fdinfo **handled_fdinfo,int *handled_hrc) {
+    int rc;
+    int hrc;
+    int i;
+    struct evloop_fdinfo *fdinfo = NULL;
+    GHashTableIter iter;
+    char *fdtypestr;
+    int fdtype;
+    void *hstate;
+    evloop_handler_t handler;
+    fd_set *hmset;
+
+    if (evloop->nfds < 0) {
+	/*
+	 * All the FDs are gone; end.
+	 *
+	 * User must distinguish this case from the timeout
+	 * expiration case by calling evloop_maxsize() and checking to
+	 * see if it is < 0.
+	 */
+	vwarnopt(3,LA_LIB,LF_EVLOOP,"no file descriptors to monitor!\n");
+	return 0;
+    }
+
+    /*
+     * This is a while loop, but if one or more FDs is successfully
+     * handled, it returns to the caller.  The loop is only for handling
+     * I/O conditions
+     */
+    while (1) {
+	evloop->rfds = evloop->rfds_master;
+	evloop->wfds = evloop->wfds_master;
+	evloop->xfds = evloop->xfds_master;
+
+	if (evloop->nfds < 0) {
+	    return 0;
+	}
+
+	rc = select(evloop->nfds + 1,&evloop->rfds,&evloop->wfds,&evloop->xfds,timeout);
+	if (rc == 0) {
+	    /* Timeout expired; return to user. */
+	    return 0;
+	}
+	else if (rc < 0) {
+	    if (errno == EINTR)
+		/*
+		 * This is the only way in which we could continue the
+		 * while loop!
+		 */
+		continue;
+	    else {
+		verror("select: %s\n",strerror(errno));
+		return -1;
+	    }
+	}
+
+	vdebug(9,LA_LIB,LF_EVLOOP,"select() -> %d\n",rc);
+
+	for (i = 0; i < evloop->nfds + 1; ++i) {
+	    fdinfo = NULL;
+	    fdtypestr = NULL;
+	    fdtype = -1;
+	    hmset = NULL;
+	    hstate = NULL;
+	    handler = NULL;
+
+	    if (FD_ISSET(i,&evloop->rfds)) {
+		fdinfo = (struct evloop_fdinfo *) \
+		    g_hash_table_lookup(evloop->tab,(gpointer)(uintptr_t)i);
+		fdtypestr = "rfd";
+		fdtype = EVLOOP_FDTYPE_R;
+		hmset = &evloop->rfds_master;
+		if (fdinfo) {
+		    hstate = fdinfo->rhstate;
+		    handler = fdinfo->rh;
+		}
+	    }
+	    else if (FD_ISSET(i,&evloop->wfds)) {
+		fdinfo = (struct evloop_fdinfo *) \
+		    g_hash_table_lookup(evloop->tab,(gpointer)(uintptr_t)i);
+		fdtypestr = "wfd";
+		fdtype = EVLOOP_FDTYPE_W;
+		hmset = &evloop->wfds_master;
+		if (fdinfo) {
+		    hstate = fdinfo->whstate;
+		    handler = fdinfo->wh;
+		}
+	    }
+	    else if (FD_ISSET(i,&evloop->xfds)) {
+		fdinfo = (struct evloop_fdinfo *) \
+		    g_hash_table_lookup(evloop->tab,(gpointer)(uintptr_t)i);
+		fdtypestr = "xfd";
+		fdtype = EVLOOP_FDTYPE_X;
+		hmset = &evloop->xfds_master;
+		if (fdinfo) {
+		    hstate = fdinfo->xhstate;
+		    handler = fdinfo->xh;
+		}
+	    }
+	    else {
+		/*
+		 * If we didn't find a set FD, keep looking.
+		 */
+		continue;
+	    }
+
+	    /*
+	     * If we get here, we will handle this FD in fdinfo; break out.
+	     */
+	    break;
+	}
+
+	/*
+	 * From this point, we return directly.
+	 */
+	if (!fdinfo) {
+	    if (i < evloop->nfds + 1) {
+		vwarn("BUG: %s %d select but not in evloop; clearing!\n",
+		      fdtypestr,i);
+		FD_CLR(i,hmset);
+		errno = EBADFD;
+		return -1;
+	    }
+	    else {
+		vwarn("BUG: select returned %d fds, but nothing set in evloop!\n",
+		      rc);
+		errno = ENOENT;
+		return -1;
+	    }
+	}
+	else if (!handler) {
+	    vwarn("BUG: %s %d set in select but no %s handler; clearing\n",
+		  fdtypestr,i,fdtypestr);
+	    FD_CLR(i,hmset);
+	    errno = EBADSLT;
+	    return -1;
+	}
+	else {
+	    vdebug(9,LA_LIB,LF_EVLOOP,"%s %d\n",fdtypestr,i);
+
+	    hrc = handler(i,fdtype,hstate);
+
+	    if (handled_fdinfo)
+		*handled_fdinfo = fdinfo;
+	    if (handled_hrc)
+		*handled_hrc = hrc;
+
+	    if (hrc == EVLOOP_HRET_SUCCESS) {
+		return 0;
+	    }
+	    else if (hrc == EVLOOP_HRET_BADERROR) {
+		vdebug(3,LA_LIB,LF_EVLOOP,
+		       "severe fatal error on %s %d\n",fdtypestr,i);
+		if (evloop->eh)
+		    evloop->eh(hrc,i,fdtype,fdinfo);
+	    }
+	    else if (hrc == EVLOOP_HRET_ERROR) {
+		vdebug(3,LA_LIB,LF_EVLOOP,"error on %s %d\n",fdtypestr,i);
+		if (evloop->eh)
+		    evloop->eh(hrc,i,fdtype,fdinfo);
+	    }
+	    else if (hrc == EVLOOP_HRET_REMOVETYPE) {
+		evloop_unset_fd(evloop,i,fdtype);
+	    }
+	    else if (hrc == EVLOOP_HRET_REMOVEALLTYPES) {
+		evloop_unset_fd(evloop,i,EVLOOP_FDTYPE_A);
+	    }
+	    else if (hrc == EVLOOP_HRET_DONE_SUCCESS
+		     || hrc == EVLOOP_HRET_DONE_FAILURE) {
+		/* Remove all FDs; don't signal any though! */
+		g_hash_table_iter_init(&iter,evloop->tab);
+
+		while (g_hash_table_iter_next(&iter,NULL,(gpointer)&fdinfo)) {
+		    __evloop_unset_fd(evloop,fdinfo->fd,EVLOOP_FDTYPE_A);
+		    g_hash_table_iter_remove(&iter);
+
+		    vdebug(9,LA_LIB,LF_EVLOOP,
+			   "removed fd %d completely; nfds = %d\n",
+			   fdinfo->fd,evloop->nfds);
+		    free(fdinfo);
+		}
+
+		/* Can't return it because we just freed it! */
+		if (handled_fdinfo)
+		    *handled_fdinfo = NULL;
+
+		if (hrc == EVLOOP_HRET_DONE_SUCCESS) 
+		    vdebug(5,LA_LIB,LF_EVLOOP,"evloop finished success\n");
+		else 
+		    vdebug(5,LA_LIB,LF_EVLOOP,"evloop finished failure\n");
+
+		return 0;
+	    }
+	    else {
+		verror("bad user handler return code %d!\n",hrc);
+		errno = ENOTSUP;
+		return -1;
+	    }
+
+	    /* "Success" now, no matter what. */
+	    return 0;
+	}
+    }
+
+    /* Never reached. */
+    assert(0);
     return -1;
 }
 
