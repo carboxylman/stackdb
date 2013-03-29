@@ -4677,7 +4677,7 @@ GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid) {
 	rvp = malloc(sizeof(*rvp));
 	
 #if __WORDSIZE == 64
-    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
+    if (likely(i < 50) || unlikely(i >= XV_TSREG_END_INDEX))
 	*rvp = (REGVAL)*(uint64_t *)(((char *)&xtstate->context) + dregs[i]);
     else
 	*rvp = (REGVAL)*(uint16_t *)(((char *)&(xtstate->context)) + dregs[i]);
