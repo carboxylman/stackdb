@@ -60,15 +60,15 @@ endif
 ANT = @ANT@
 
 ifneq ($(CLASSPATH),"")
-    CLASSPATH = $(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
+    CLASSPATH := $(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH):$(CLASSPATH)
 else
-    CLASSPATH = $(CLASSPATH):$(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
+    CLASSPATH := $(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
 endif
 
 STUBS = debuginfo.stub target.stub
 SERVERSTUBS = targetListener.stub
 
-PROGRAMS = DebuginfoTest.class
+PROGRAMS = DebuginfoTest.class TargetTest.class
 
 all:	run.sh $(STUBS) $(SERVERSTUBS) $(PROGRAMS) all-subdirs
 
@@ -88,7 +88,9 @@ run.sh:
 	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
 		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
 		-o $(@:.stub=) -ns2p $(NS)=vmi1 -p vmi1 -ss -uri $<
-	(cd $(@:.stub=) ; JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) $(ANT))
+	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(CLASSPATH) \
+		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
+		$(ANT) -buildfile $(@:.stub=)/build.xml)
 	touch $@
 
 %.stub: $(OBJDIR)/xml/service/%.wsdl.test
@@ -99,11 +101,16 @@ run.sh:
 	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
 		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
 		 -o $(@:.stub=) -ns2p $(NS)=vmi1 -p vmi1 -uri $<
-	(cd $(@:.stub=) ; JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) $(ANT))
+	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(CLASSPATH) \
+		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
+		$(ANT) -buildfile $(@:.stub=)/build.xml)
 	touch $@
 
 DebuginfoTest.class: debuginfo.stub DebuginfoTest.java
 	$(JAVAC) -classpath $(CLASSPATH) DebuginfoTest.java
+
+TargetTest.class: target.stub debuginfo.stub TargetTest.java
+	$(JAVAC) -classpath $(CLASSPATH) TargetTest.java
 
 install: def-install install-subdirs
 

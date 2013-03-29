@@ -1,0 +1,94 @@
+import org.apache.axis2.databinding.types.Token;
+
+import vmi1.TargetStub;
+
+public class TargetTest extends TargetStub {
+    public static final String NS = 
+	"http://anathema.flux.utah.edu/schema/vmi/1";
+    public static final String WSDL = 
+	"@top_builddir@/xml/service/debuginfo.wsdl.test";
+    public static final String SVR = 
+	"http://localhost:3902";
+
+    private static final String DEFAULT_SERVER_ADDRESS = SVR;
+    //private TargetCallback tc = null;
+	
+	public TargetTest() throws Exception {
+		super(DEFAULT_SERVER_ADDRESS);
+		//tc = new TargetCallback();
+
+		TargetSpecT tst = new TargetSpecT();
+		
+		Token tk = TargetTypeT._ptrace;
+		TargetTypeT ttt = TargetTypeT.Factory.fromValue(tk);
+		
+		tst.setType(ttt);
+		TargetPtraceSpecT tpst = new TargetPtraceSpecT();
+		tpst.setPid(0);
+		TargetPtraceSpecTSequence_type0 tpstst0 = new TargetPtraceSpecTSequence_type0();
+		Arguments_type0 at0 = new Arguments_type0();
+		String [] args = {}; //{"-l", "-a"};
+		at0.setArgument(args);
+		tpstst0.setArguments(at0);
+		Environment_type0 en0 = new Environment_type0();
+		String [] env = {};
+		en0.setEnvvar(env);
+		tpstst0.setEnvironment(en0);
+		String programname = "@abs_top_builddir@/tests/dummy.threads"; //"/bin/ls";
+		tpstst0.setProgram(programname);
+		tpst.setTargetPtraceSpecTSequence_type0(tpstst0);
+
+		BackendSpec_type0 bst0 = new BackendSpec_type0();
+
+		bst0.setTargetPtraceSpec(tpst);
+		//bst0.setTargetXenSpec(param);
+		tst.setBackendSpec(bst0);
+		TargetModeT tk3 = TargetModeT.Factory.fromValue(TargetModeT._none);
+		tst.setMode(tk3);
+		tst.setStartPaused(true);
+		Token tk2 = ThreadBPModeT._strict;
+		ThreadBPModeT tbmt = ThreadBPModeT.Factory.fromValue(tk2);
+		tst.setThreadBPMode(tbmt);
+		tst.setLogStderr(true);
+		tst.setLogStdout(true);
+		
+		InstantiateTarget it = new InstantiateTarget();
+		PauseTarget pt = new PauseTarget();
+
+		it.setSpec(tst);
+		TargetResponse tr = this.instantiateTarget(it);		
+		TargetIdT t = tr.getTarget().getTid();
+		pt.setTid(t);
+		this.pauseTarget(pt); // should this be called even if the tst is started paused?
+		
+		
+		RegisterTargetListener rtl = new RegisterTargetListener();
+		rtl.setHost("127.0.0.1");
+		rtl.setPort(8989);
+		rtl.setSsl(false);
+		rtl.setTid(t);
+		this.registerTargetListener(rtl);
+		
+		ProbeSymbolSimple pss = new ProbeSymbolSimple();
+		pss.setProbeName("foo");
+		pss.setSymbol("f10");
+		ThreadIdT thid = new ThreadIdT();
+		thid.setThreadIdT(-1);
+		pss.setThid(thid);
+		pss.setTid(t);
+		this.probeSymbolSimple(pss);
+		
+		ResumeTarget rt = new ResumeTarget();
+		rt.setTid(t);
+		this.resumeTarget(rt);
+	}
+
+	
+	public static void main (String [] args) {
+		try {
+			TargetTest tt = new TargetTest();
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+}
