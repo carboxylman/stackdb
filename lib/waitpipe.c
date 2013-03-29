@@ -216,15 +216,26 @@ int waitpipe_add(int pid) {
     memset(&si,0,sizeof(si));
     rc = waitid(P_PID,pid,&si,WNOHANG | WEXITED | WNOWAIT);
     if (rc < 0) {
-	/* Unwind everything we just did. */
-	g_hash_table_remove(waitpipe.pids,(gpointer)(uintptr_t)pid);
-	g_hash_table_remove(waitpipe.readfds,(gpointer)(uintptr_t)pipefds[0]);
-	close(pipefds[1]);
-	close(pipefds[0]);
+	if (errno == ECHILD) {
+	    if (kill(pid,0) < 0 && errno == ESRCH) {
+		/* Unwind everything we just did. */
+		g_hash_table_remove(waitpipe.pids,(gpointer)(uintptr_t)pid);
+		g_hash_table_remove(waitpipe.readfds,(gpointer)(uintptr_t)pipefds[0]);
+		close(pipefds[1]);
+		close(pipefds[0]);
 
-	vwarn("pid %d disappeared before it could be added!\n",pid);
-	errno = EINVAL;
-	return -1;
+		vwarn("pid %d disappeared before it could be added: %s!\n",
+		      pid,strerror(errno));
+		errno = EINVAL;
+		return -1;
+	    }
+	}
+	else {
+	    vwarn("pid %d disappeared before it could be added: %s!\n",
+		  pid,strerror(errno));
+	    errno = EINVAL;
+	    return -1;
+	}
     }
     else if (rc == 0 && si.si_pid == pid) {
 	if (!g_hash_table_lookup(waitpipe.pids,(gpointer)(uintptr_t)pid)) {
