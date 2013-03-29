@@ -1,6 +1,6 @@
 import org.apache.axis2.databinding.types.Token;
 
-import vmi1.TargetStub;
+import vmi1.*;
 
 public class TargetTest extends TargetStub {
     public static final String NS = 
