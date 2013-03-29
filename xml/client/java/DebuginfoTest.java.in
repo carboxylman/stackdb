@@ -4,6 +4,10 @@ import org.apache.axis2.*;
 import org.apache.axis2.engine.*;
 import org.apache.axis2.context.*;
 
+import java.lang.String;
+import javax.xml.namespace.QName;
+import javax.xml.bind.JAXBElement;
+
 public class DebuginfoTest {
     public static final String NS = 
 	"http://anathema.flux.utah.edu/schema/vmi/1";
@@ -15,7 +19,9 @@ public class DebuginfoTest {
     public DebuginfoTest() throws Exception {
 	LookupSymbol ls = new LookupSymbol(); //of.createLookupSymbol();
 	
+	//ls.setFilename(new JAXBElement(new javax.xml.namespace.QName("http://anathema.flux.utah.edu/schema/vmi/1","filename"),java.lang.String.class,"/usr/lib/debug/bin/ls.debug"));
 	ls.setFilename("/usr/lib/debug/bin/ls.debug");
+	//ls.setName(new JAXBElement(new javax.xml.namespace.QName("http://anathema.flux.utah.edu/schema/vmi/1","name"),java.lang.String.class,"main.argc"));
 	ls.setName("main.argc");
 	DebugFileOptsT odfot = new DebugFileOptsT();
 	odfot.setDebugfileRefDepth(1);
@@ -23,6 +29,7 @@ public class DebuginfoTest {
 	odfot.setSymtabRefDepth(1);
 	odfot.setDoMultiRef(false);
 	odfot.setDoManualRef(true);
+	//ls.setOpts(new JAXBElement(new javax.xml.namespace.QName("http://anathema.flux.utah.edu/schema/vmi/1","opts"),DebugFileOptsT.class,odfot));
 	ls.setOpts(odfot);
 
 	System.out.format("call lookup symbol\n");		
@@ -31,6 +38,7 @@ public class DebuginfoTest {
 	DebuginfoStub dis = new DebuginfoStub(SVR);
 	//ServiceClient sc = dis._getServiceClient();
 	NestedSymbolResponse nsr = dis.lookupSymbol(ls);
+	System.out.println("nsr = " + nsr.toString());
 	dis.cleanup();			
     }
     
