@@ -1184,6 +1184,12 @@ struct debugfile {
     char *filename;
 
     /*
+     * This is a unique integer ID when we need one (XML SOAP server);
+     * just comes from ++debugfile_id_idx .
+     */
+    int id;
+
+    /*
      * The binfile that pointed us to @binfile; if set, it is likely a
      * stripped executable, library, or object file that points to a
      * non-stripped, or debuginfo-only, binfile.

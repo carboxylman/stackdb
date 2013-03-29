@@ -771,6 +771,7 @@ t_memregion_to_x_MemRegionT(struct soap *soap,
     struct memrange *range;
     GHashTableIter iter;
     struct debugfile *df;
+    char idbuf[12];
 
     if (out)
 	oregion = out;
@@ -812,7 +813,8 @@ t_memregion_to_x_MemRegionT(struct soap *soap,
 	g_hash_table_iter_init(&iter,region->debugfiles);
 	i = 0;
 	while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&df)) {
-	    SOAP_STRCPY(soap,oregion->debugFileId[i],df->filename);
+	    snprintf(idbuf,12,"i%d",df->id);
+	    SOAP_STRCPY(soap,oregion->debugFileId[i],idbuf);
 	    ++i;
 	}
     }

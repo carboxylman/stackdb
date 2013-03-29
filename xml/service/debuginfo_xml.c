@@ -1213,11 +1213,14 @@ d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,
     int i;
     struct array_list *gslist;
     struct symbol *symbol;
+    char idbuf[12];
 
     if (!opts)
 	opts = &defDebugFileOpts;
 
-    RETURN_REF_OR_ALLOC(debugfile,DebugFileT,df,df->filename,opts,reftab,refstack,depth,r);
+    snprintf(idbuf,12,"%d",df->id);
+
+    RETURN_REF_OR_ALLOC(debugfile,DebugFileT,df,idbuf,opts,reftab,refstack,depth,r);
     REF_ALLOC_SEQ(DebugFileT,r,rs);
 
     if (df->binfile && df->binfile->type != BINFILE_TYPE_NONE) {

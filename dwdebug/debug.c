@@ -45,6 +45,9 @@
 /* These are the known, loaded (maybe partially) debuginfo files. */
 /* debug filename -> struct debugfile */
 static GHashTable *debugfile_tab = NULL;
+static GHashTable *debugfile_id_tab = NULL;
+
+static int debugfile_id_idx = 0;
 
 struct debugfile_load_opts default_debugfile_load_opts = {
     .debugfile_filter = NULL,
@@ -69,6 +72,8 @@ void dwdebug_init(void) {
 
     debugfile_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
 					  NULL,NULL);
+    debugfile_id_tab = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					     NULL,NULL);
 
     init_done = 1;
 }
@@ -90,6 +95,8 @@ void dwdebug_fini(void) {
     }
     g_hash_table_destroy(debugfile_tab);
     debugfile_tab = NULL;
+    g_hash_table_destroy(debugfile_id_tab);
+    debugfile_id_tab = NULL;
 
     binfile_fini();
 
@@ -1469,6 +1476,7 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
     debugfile->opts = opts;
 
     debugfile->filename = strdup(binfile->filename);
+    debugfile->id = ++debugfile_id_idx;
     debugfile->flags = dtflags;
     debugfile->refcnt = 0;
 
@@ -1537,6 +1545,9 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
      */
     if (debugfile_tab)
 	g_hash_table_insert(debugfile_tab,debugfile->filename,debugfile);
+    if (debugfile_id_tab)
+	g_hash_table_insert(debugfile_id_tab,
+			    (gpointer)(uintptr_t)debugfile->id,debugfile);
 
     return debugfile;
 }
@@ -1852,6 +1863,9 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
      */
     if (g_hash_table_lookup(debugfile_tab,debugfile->filename) == debugfile)
 	g_hash_table_remove(debugfile_tab,debugfile->filename);
+    if (g_hash_table_lookup(debugfile_tab,(gpointer)(uintptr_t)debugfile->id) 
+	== debugfile)
+	g_hash_table_remove(debugfile_tab,(gpointer)(uintptr_t)debugfile->id);
 
     g_hash_table_destroy(debugfile->pubnames);
     g_hash_table_destroy(debugfile->addresses);
