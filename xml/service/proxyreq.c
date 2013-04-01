@@ -90,9 +90,64 @@ static size_t _soap_proxyreq_frecv_read(struct soap *soap,char *s,size_t n) {
     retval = pr->len - pr->bufidx;
     retval = (n > retval) ? retval : n;
 
-    memcpy(s,&pr->buf[pr->bufidx],retval);
+    if (retval > 0) {
+	memcpy(s,&pr->buf[pr->bufidx],retval);
+
+	pr->bufidx += retval;
+
+	soap->error = SOAP_OK;
+    }
+    else {
+	soap->error = SOAP_OK;
+
+	pr->state = PROXYREQ_STATE_PROCESSING;
+
+	vdebug(5,LA_XML,LF_RPC,"finished injecting %d bytes!\n",pr->len);
+
+	/*
+	 * Set up for _soap_proxyreq_fsend!
+	 *
+	 * XXX: free the buf???
+	 */
+	pr->buf = NULL;
+	pr->len = pr->bufidx = pr->bufsiz = 0;
+    }
 
     return retval;
+}
+
+/*
+ * Sends a whole buffered gsoap response as a proxyreq response.
+ */
+static int _soap_proxyreq_fsend(struct soap *soap,const char *s,size_t n) {
+    struct proxyreq *pr;
+
+    pr = (struct proxyreq *)soap->user;
+    if (!pr) {
+	verror("no proxyreq!\n");
+	return soap_receiver_fault(soap,"Internal error!",
+				   "Internal error: no proxyreq!");
+    }
+
+    if (!pr->buf) {
+	pr->bufsiz = (n > 1024) ? n : 1024;
+	pr->buf = malloc(pr->bufsiz);
+    }
+    else if ((unsigned)(pr->bufsiz - pr->len) < n) {
+	pr->bufsiz += ((n - (pr->bufsiz - pr->len)) > 1024) \
+	    ? n - (pr->bufsiz - pr->len) : 1024;
+	if (!realloc(pr->buf,pr->bufsiz)) {
+	    verror("could not increase buf from %d to %d!\n",pr->len,pr->bufsiz);
+	    free(pr->buf);
+	    pr->bufidx = pr->bufsiz = pr->len = 0;
+	    return SOAP_EOF;
+	}
+    }
+
+    memcpy(pr->buf + pr->len,s,n);
+    pr->len += n;
+
+    return 0;
 }
 
 static int _soap_proxyreq_noclose(struct soap *soap) {
@@ -139,12 +194,20 @@ struct proxyreq *proxyreq_create(struct soap *soap) {
 struct proxyreq *proxyreq_create_proxied(int objid,char *buf,int buflen) {
     struct proxyreq *pr;
     struct soap *soap;
+    struct monitor *monitor = NULL;
+
+    if (!monitor_lookup_objid(objid,NULL,NULL,&monitor)) {
+	verror("no monitor for object %d!\n",objid);
+	return NULL;
+    }
 
     soap = calloc(1,sizeof(*soap));
-    soap->error = SOAP_OK;
+    soap_init(soap);
+    //soap->error = SOAP_OK;
 
     pr = calloc(1,sizeof(*pr));
 
+    pr->monitor = monitor;
     pr->tid = pthread_self();
     pr->state = PROXYREQ_STATE_BUFFERED;
     pr->soap = soap;
@@ -164,6 +227,21 @@ struct proxyreq *proxyreq_create_proxied(int objid,char *buf,int buflen) {
      */
     pr->orig_frecv = soap->frecv;
     soap->frecv = _soap_proxyreq_frecv_read;
+
+    /*
+     * Adjust soap struct to send a proxyreq response when it finishes.
+     * Also, force it to buffer the response internally before sending
+     * anything.  This ensures we send a complete response, which is
+     * what we want to do.  Wait, this doesn't work; even SOAP_IO_STORE
+     * buffering results in two part msgs: the HTTP header, and the
+     * content :(.  Still buffer internally to avoid lots of
+     * mallocs/memcpys hopefully, but this stinks a bit.
+     */
+    pr->orig_fsend = pr->soap->fsend;
+    pr->soap->fsend = _soap_proxyreq_fsend;
+
+    /* Force it to buffer internally. */
+    soap_set_omode(pr->soap,SOAP_IO_STORE);
 
     return pr;
 }
@@ -293,7 +371,7 @@ int proxyreq_send_response(struct proxyreq *pr) {
     int rc;
     struct monitor_msg *msg;
 
-    if (pr->state != PROXYREQ_STATE_PROCESSING) {
+    if (pr->state != PROXYREQ_STATE_SERVING) {
 	verror("request in bad state %d!\n",pr->state);
 	errno = EINVAL;
 	return SOAP_ERR;
@@ -308,29 +386,27 @@ int proxyreq_send_response(struct proxyreq *pr) {
     }
 
     /*
-     * This is tricky.  We NULL out the buffer in pr once the message
-     * has been created.  Then once the message is sent, we fully free
-     * the msg, which frees the original request buffer.  We have to do
-     * it in this sequence because if we tried to alter the proxyreq
-     * *after* sending, and the child happens to respond to it first, it
-     * could get overwritten before we can free it.  Of course, that is
-     * all but impossible, but we're careful.
+     * We just send the contents of pr->buf using pr->len as the
+     * length.  WE DO NOT FREE THE BUFFER -- we just null them out.
+     * It's the caller's job to handle that.
      *
      * DO NOT associate pr as the "msg_obj" in the monitor's hashtable;
-     * there is no later use.
+     * there is no later use.  If we ever did need to send chunked
+     * messages, this would be how we would do it.
      */
     msg = monitor_msg_create(pr->objid,-1,PROXYREQ_RESPONSE,1,
 			     pr->len,pr->buf,NULL);
 
-    pr->buf = NULL;
-    pr->len = pr->bufsiz = pr->bufidx = 0;
-
     rc = monitor_child_send(msg);
-    monitor_msg_free(msg);
+    monitor_msg_free_save_buffer(msg);
+
     if (rc) {
 	verror("could not send msg to monitor!\n");
 	return SOAP_ERR;
     }
+
+    pr->buf = NULL;
+    pr->len = pr->bufsiz = pr->bufidx = 0;
 
     return SOAP_OK;
 }
@@ -354,13 +430,13 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 	/* XXX: get rid of these!  They pollute child STDERR! */
 	if (soap->error == SOAP_OK) {
 	    vdebug(5,LA_XML,LF_RPC,
-		   "finished proxied request from %d.%d.%d.%d\n",
+		   "finished forked proxied request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 	}
 	else {
 	    vdebug(5,LA_XML,LF_RPC,
-		   "failingly finished proxy request from %d.%d.%d.%d\n",
+		   "failingly finished forked proxied request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 	}
@@ -379,13 +455,13 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 
 	if (soap->error == SOAP_OK) {
 	    vdebug(5,LA_XML,LF_RPC,
-		   "finished proxy request from %d.%d.%d.%d\n",
+		   "finished threaded proxied request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 	}
 	else {
 	    vdebug(5,LA_XML,LF_RPC,
-		   "failingly finished proxy request from %d.%d.%d.%d\n",
+		   "failingly finished threaded proxied request from %d.%d.%d.%d\n",
 		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 	}
@@ -404,7 +480,53 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 }
 
 int proxyreq_recv_response(struct monitor *monitor,struct monitor_msg *msg) {
-    // XXX: write
+    struct proxyreq *pr;
+    struct soap *soap;
+
+    if (!(pr = (struct proxyreq *)msg->msg_obj)) {
+	verror("cannot associated a proxyreq request handler thread with monitor child msg!\n");
+	return SOAP_ERR;
+    }
+
+    /*
+     * We're in the monitor thread now; our original request thread
+     * returned after it proxied the request.
+     *
+     * XXX: should have a thread pool for responses so we don't
+     * block the main monitor thread on a response...
+     */
+
+    soap = pr->soap;
+
+    /* Dump out the soap response. */
+    soap_begin_send(soap);
+    soap_send_raw(soap,msg->msg,msg->len);
+    soap_end_send(soap);
+    soap_closesock(soap);
+
+    if (soap->error == SOAP_OK) {
+	vdebug(5,LA_XML,LF_RPC,
+	       "finished proxied request from %d.%d.%d.%d\n",
+	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+    }
+    else {
+	vdebug(5,LA_XML,LF_RPC,
+	       "failingly finished proxy request from %d.%d.%d.%d\n",
+	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+    }
+
+    monitor_msg_free(msg);
+
+    proxyreq_free(pr);
+
+    soap_destroy(soap);
+    soap_end(soap);
+    soap_done(soap);
+    free(soap);
+
+    return 0;
 }
 
 void proxyreq_detach_soap(struct proxyreq *pr) {

@@ -20,6 +20,7 @@
 #include <pthread.h>
 #include <getopt.h>
 #include <signal.h>
+#include <sys/prctl.h>
 
 #include "log.h"
 
@@ -56,6 +57,8 @@ void *handle_request(void *arg) {
     /* Server never waits for us. */
     pthread_detach(pthread_self());
 
+    prctl(PR_SET_NAME,"target_req_hand",NULL,NULL,NULL);
+
     /* This does all the work. */
     target_rpc_handle_request(soap);
 
@@ -66,6 +69,8 @@ void *sight(void *arg) {
     sigset_t *sigset = (sigset_t *)arg;
     int rc;
     siginfo_t siginfo;
+
+    prctl(PR_SET_NAME,"target_sigwait",NULL,NULL,NULL);
 
     while (1) {
 	memset(&siginfo,0,sizeof(siginfo));

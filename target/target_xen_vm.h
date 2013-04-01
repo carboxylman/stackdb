@@ -28,6 +28,8 @@
 #include <libvmi/libvmi.h>
 #endif
 
+#include "evloop.h"
+
 #define THREAD_SIZE 8192
 
 typedef enum {
@@ -125,8 +127,6 @@ struct xen_vm_spec {
     char *domain;
     char *config_file;
     char *replay_dir;
-    int xenaccess_debug_level;
-    char *console_logfile;
 };
 
 struct xen_vm_thread_state {
@@ -220,9 +220,11 @@ struct xen_vm_state {
 #endif
 };
 
-struct target *xen_vm_instantiate(struct target_spec *spec);
+struct target *xen_vm_instantiate(struct target_spec *spec,
+				  struct evloop *evloop);
 struct xen_vm_spec *xen_vm_build_spec(void);
 void xen_vm_free_spec(struct xen_vm_spec *xspec);
+int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv);
 
 struct symbol *linux_get_task_struct_type(struct target *target);
 struct symbol *linux_get_task_struct_type_ptr(struct target *target);

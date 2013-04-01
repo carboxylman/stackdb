@@ -47,6 +47,10 @@
       <xs:element ref="vmi1:mode"/>
       <xs:element ref="vmi1:threadBPMode"/>
       <xs:element ref="vmi1:startPaused"/>
+      <xs:element minOccurs="0" ref="vmi1:dedicatedMonitor"/>
+      <xs:element minOccurs="0" ref="vmi1:stdinBytes"/>
+      <xs:element minOccurs="0" ref="vmi1:logStdout"/>
+      <xs:element minOccurs="0" ref="vmi1:logStderr"/>
       <xs:element ref="vmi1:backendSpec"/>
     </xs:sequence>
     <xs:attribute name="type" use="required" type="vmi1:TargetTypeT"/>
@@ -54,6 +58,10 @@
   <xs:element name="mode" type="vmi1:TargetModeT"/>
   <xs:element name="threadBPMode" type="vmi1:ThreadBPModeT"/>
   <xs:element name="startPaused" type="xs:boolean"/>
+  <xs:element name="dedicatedMonitor" type="xs:boolean"/>
+  <xs:element name="stdinBytes" type="xs:hexBinary"/>
+  <xs:element name="logStdout" type="xs:boolean"/>
+  <xs:element name="logStderr" type="xs:boolean"/>
   <xs:element name="backendSpec">
     <xs:complexType>
       <xs:choice>
@@ -83,9 +91,6 @@
         <xs:element ref="vmi1:program"/>
         <xs:element ref="vmi1:arguments"/>
         <xs:element ref="vmi1:environment"/>
-        <xs:element minOccurs="0" ref="vmi1:stdoutLogfile"/>
-        <xs:element minOccurs="0" ref="vmi1:stderrLogfile"/>
-        <xs:element ref="vmi1:closeStdin"/>
       </xs:sequence>
     </xs:choice>
   </xs:complexType>
@@ -106,9 +111,6 @@
     </xs:complexType>
   </xs:element>
   <xs:element name="envvar" type="xs:string"/>
-  <xs:element name="stdoutLogfile" type="xs:string"/>
-  <xs:element name="stderrLogfile" type="xs:string"/>
-  <xs:element name="closeStdin" type="xs:boolean"/>
   <xs:element name="targetPtraceSpec" type="vmi1:TargetPtraceSpecT"/>
   <xs:simpleType name="ThreadStatusT">
     <xs:restriction base="xs:token">
@@ -151,8 +153,8 @@
       <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:targetSpec"/>
       <xs:element ref="vmi1:targetStatus"/>
-      <xs:element maxOccurs="unbounded" ref="vmi1:thread"/>
-      <xs:element maxOccurs="unbounded" ref="vmi1:addrSpace"/>
+      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:thread"/>
+      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:addrSpace"/>
     </xs:sequence>
     <xs:attribute name="name" use="required"/>
   </xs:complexType>

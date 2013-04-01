@@ -40,15 +40,16 @@
 /*
  * Generic function that launches or attaches to a target, given @spec.
  */
-struct target *target_instantiate(struct target_spec *spec) {
+struct target *target_instantiate(struct target_spec *spec,
+				  struct evloop *evloop) {
     struct target *target = NULL;
 
     if (spec->target_type == TARGET_TYPE_PTRACE) {
-	target = linux_userproc_instantiate(spec);
+	target = linux_userproc_instantiate(spec,evloop);
     }
 #ifdef ENABLE_XENSUPPORT
     else if (spec->target_type == TARGET_TYPE_XEN) {
-	target = xen_vm_instantiate(spec);
+	target = xen_vm_instantiate(spec,evloop);
     }
 #endif
 
@@ -82,6 +83,7 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 	return NULL;
     }
 
+    tspec->target_id = -1;
     tspec->target_type = type;
     tspec->target_mode = mode;
     tspec->style = PROBEPOINT_FASTEST;
@@ -90,6 +92,8 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 }
 
 void target_free_spec(struct target_spec *spec) {
+    int i;
+
     if (spec->backend_spec) {
 	if (spec->target_type == TARGET_TYPE_PTRACE) {
 	    linux_userproc_free_spec((struct linux_userproc_spec *)spec->backend_spec);
@@ -99,6 +103,28 @@ void target_free_spec(struct target_spec *spec) {
 	    xen_vm_free_spec((struct xen_vm_spec *)spec->backend_spec);
 	}
 #endif
+    }
+
+    if (spec->debugfile_load_opts_list) {
+	for (i = 0; i < array_list_len(spec->debugfile_load_opts_list); ++i) {
+	    struct debugfile_load_opts *dlo_list = (struct debugfile_load_opts *) \
+		array_list_item(spec->debugfile_load_opts_list,i);
+	    debugfile_load_opts_free(dlo_list);
+	}
+	array_list_free(spec->debugfile_load_opts_list);
+	spec->debugfile_load_opts_list = NULL;
+    }
+    if (spec->infile) {
+	free(spec->infile);
+	spec->infile = NULL;
+    }
+    if (spec->outfile) {
+	free(spec->outfile);
+	spec->outfile = NULL;
+    }
+    if (spec->errfile) {
+	free(spec->errfile);
+	spec->errfile = NULL;
     }
 
     free(spec);
@@ -243,6 +269,12 @@ int target_detach_evloop(struct target *target) {
 
     return rc;
 }
+
+int target_is_evloop_attached(struct target *target,struct evloop *evloop) {
+    if (target->evloop && evloop && target->evloop == evloop)
+	return 1;
+    return 0;
+}
     
 target_status_t target_monitor(struct target *target) {
     vdebug(8,LA_TARGET,LF_TARGET,"monitoring target(%s)\n",target->name);
@@ -347,6 +379,9 @@ struct array_list *target_list_tids(struct target *target) {
     GHashTableIter iter;
     struct target_thread *tthread;
     gpointer key;
+
+    if (g_hash_table_size(target->threads) == 0)
+	return NULL;
 
     retval = array_list_create(g_hash_table_size(target->threads));
 
@@ -572,6 +607,12 @@ int target_close(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_TARGET,"closing target(%s)\n",target->name);
 
+    /* Make sure! */
+    target_pause(target);
+
+    if (target->evloop)
+	target_detach_evloop(target);
+
     target_flush_all_threads(target);
 
     /* 
@@ -587,7 +628,17 @@ int target_close(struct target *target) {
     }
     g_hash_table_destroy(target->soft_probepoints);
 
-    /* Delete all the threads except the global thread (which we remove 
+    vdebug(5,LA_TARGET,LF_TARGET,"detach target(%s)\n",target->name);
+    if ((rc = target->ops->detach(target))) {
+	verror("detach target(%s) failed: %s\n",target->name,strerror(errno));
+    }
+
+    if (target->kill_on_close) 
+	target_kill(target);
+
+    /*
+     * If the target didn't already do it in detach(),
+     * delete all the threads except the global thread (which we remove 
      * manually because targets are allowed to "reuse" one of their real
      * threads as the "global" thread.
      */
@@ -602,17 +653,13 @@ int target_close(struct target *target) {
 	    g_hash_table_iter_remove(&iter);
 	}
     }
-    target_delete_thread(target,target->global_thread,0);
+    if (target->global_thread)
+	target_delete_thread(target,target->global_thread,0);
 
     /* Target should not mess with these after close! */
     target->global_thread = target->current_thread = NULL;
 
-    vdebug(5,LA_TARGET,LF_TARGET,"detach target(%s)\n",target->name);
-    if ((rc = target->ops->detach(target))) {
-	return rc;
-    }
-
-    return 0;
+    return TSTATUS_DONE;
 }
 
 int target_kill(struct target *target) {

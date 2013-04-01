@@ -56,7 +56,8 @@
 /*
  * Prototypes.
  */
-struct target *xen_vm_instantiate(struct target_spec *spec);
+struct target *xen_vm_instantiate(struct target_spec *spec,
+				  struct evloop *evloop);
 
 static struct target *xen_vm_attach(struct target_spec *spec);
 
@@ -240,12 +241,55 @@ struct argp_option xen_vm_argp_opts[] = {
     { "domain",'m',"DOMAIN",0,"The Xen domain ID or name.",-4 },
     { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
-#ifdef ENABLE_XENACCESS
-    { "xadebug",'x',"LEVEL",0,"Increase/set the XenAccess debug level.",-4 },
-#endif
-    { "console-logfile",'C',"FILE",0,"Log the console to FILE.",-4 },
+    { "xenlib-debug",'x',"LEVEL",0,"Increase/set the XenAccess/OpenVMI debug level.",-4 },
     { 0,0,0,0,0,0 }
 };
+
+int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
+    struct xen_vm_spec *xspec = 
+	(struct xen_vm_spec *)spec->backend_spec;
+    char **av = NULL;
+    int ac = 0;
+    int j;
+
+    if (!xspec) {
+	if (argv)
+	    *argv = NULL;
+	if (argc)
+	    *argc = 0;
+	return 0;
+    }
+	
+    if (xspec->domain) 
+	ac += 2;
+    if (xspec->config_file)
+	ac += 2;
+    if (xspec->replay_dir)
+	ac += 2;
+
+    av = calloc(ac + 1,sizeof(char *));
+    j = 0;
+    if (xspec->domain) {
+	av[j++] = strdup("-m");
+	av[j++] = strdup(xspec->domain);
+    }
+    if (xspec->config_file) {
+	av[j++] = strdup("-c");
+	av[j++] = strdup(xspec->config_file);
+    }
+    if (xspec->replay_dir) {
+	av[j++] = strdup("-r");
+	av[j++] = strdup(xspec->replay_dir);
+    }
+    av[j++] = NULL;
+
+    if (argv)
+	*argv = av;
+    if (argc)
+	*argc = ac;
+
+    return 0;
+}
 
 error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     struct target_argp_parser_state *tstate = \
@@ -331,9 +375,6 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'r':
 	xspec->replay_dir = strdup(arg);
 	break;
-    case 'C':
-	xspec->console_logfile = strdup(arg);
-	break;
     case 'x':
 #if defined(ENABLE_XENACCESS)
 #if defined(XA_DEBUG)
@@ -371,7 +412,6 @@ struct xen_vm_spec *xen_vm_build_spec(void) {
     struct xen_vm_spec *xspec;
 
     xspec = calloc(1,sizeof(*xspec));
-    xspec->xenaccess_debug_level = -1;
 
     return xspec;
 }
@@ -420,7 +460,7 @@ struct target *xen_vm_attach(struct target_spec *spec) {
 
     vdebug(5,LA_TARGET,LF_XV,"attaching to domain %s\n",domain);
 
-    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,spec,-1)))
+    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,spec,spec->target_id)))
 	return NULL;
 
     if (!(xstate = (struct xen_vm_state *)malloc(sizeof(*xstate)))) {

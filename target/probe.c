@@ -304,32 +304,11 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
     }
 }
 
-static void probepoint_free(struct probepoint *probepoint) {
-    probepoint_free_internal(probepoint);
-
-    vdebug(5,LA_PROBE,LF_PROBEPOINT,"freed ");
-    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
-
-    free(probepoint);
-}
-
-/* We need this in case the target needs to quickly remove all the
- * probes (i.e., on a signal) -- and in that case, we have to let the
- * target remove the probepoint from its hashtables itself.
- */
-void probepoint_free_ext(struct probepoint *probepoint) {
-    probepoint_free_internal(probepoint);
-
-    vdebug(5,LA_PROBE,LF_PROBEPOINT,"freed (ext) ");
-    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
-
-    free(probepoint);
-}
-
 /**
  ** Probe unregistration/registration.
  **/
-static int __probepoint_remove(struct probepoint *probepoint,int force) {
+static int __probepoint_remove(struct probepoint *probepoint,int force,
+			       int nohashdelete) {
     struct target *target;
     tid_t tid,htid;
     int ret;
@@ -514,7 +493,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
 
 	if (ret) 
 	    return 1;
-	else
+	else if (!nohashdelete)
 	    g_hash_table_remove(probepoint->thread->hard_probepoints,
 				(gpointer)probepoint->addr);
 
@@ -543,8 +522,9 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
 	free(probepoint->breakpoint_orig_mem);
 	probepoint->breakpoint_orig_mem = NULL;
 
-	g_hash_table_remove(probepoint->target->soft_probepoints,
-			    (gpointer)probepoint->addr);
+	if (!nohashdelete)
+	    g_hash_table_remove(probepoint->target->soft_probepoints,
+				(gpointer)probepoint->addr);
     }
 
     probepoint->state = PROBE_DISABLED;
@@ -566,6 +546,32 @@ static int __probepoint_remove(struct probepoint *probepoint,int force) {
 	vdebug(2,LA_PROBE,LF_PROBEPOINT,"\n");
 
     return 0;
+}
+
+static void probepoint_free(struct probepoint *probepoint) {
+    __probepoint_remove(probepoint,0,0);
+
+    probepoint_free_internal(probepoint);
+
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"freed ");
+    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
+
+    free(probepoint);
+}
+
+/* We need this in case the target needs to quickly remove all the
+ * probes (i.e., on a signal) -- and in that case, we have to let the
+ * target remove the probepoint from its hashtables itself.
+ */
+void probepoint_free_ext(struct probepoint *probepoint) {
+    __probepoint_remove(probepoint,0,1);
+
+    probepoint_free_internal(probepoint);
+
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,"freed (ext) ");
+    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
+
+    free(probepoint);
 }
 
 /*
@@ -921,7 +927,7 @@ int probe_hard_disable(struct probe *probe,int force) {
 	}
     }
 
-    if (probe_is_base(probe) && __probepoint_remove(probe->probepoint,force)) {
+    if (probe_is_base(probe) && __probepoint_remove(probe->probepoint,force,0)) {
 	verror("failed to remove probepoint under probe (%d)\n!",force);
 	++rc;
     }
@@ -1092,7 +1098,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     LOGDUMPPROBEPOINT(5,LA_PROBE,LF_PROBE,probepoint);
     vdebugc(5,LA_PROBE,LF_PROBE,"; removing probepoint!\n");
 
-    if (!__probepoint_remove(probepoint,force))
+    if (!__probepoint_remove(probepoint,force,0))
 	probepoint_free(probepoint);
     else if (force) {
 	verror("probepoint_remove failed, but force freeing!\n");
@@ -2222,7 +2228,7 @@ static int setup_post_single_step(struct target *target,
 	else {
 	    free(probepoint->breakpoint_orig_mem);
 	    probepoint->breakpoint_orig_mem = NULL;
-	    __probepoint_remove(probepoint,0);
+	    __probepoint_remove(probepoint,0,0);
 	}
 
 	/*
@@ -3003,7 +3009,7 @@ result_t probepoint_ss_handler(struct target *target,
 	else {
 	    free(probepoint->breakpoint_orig_mem);
 	    probepoint->breakpoint_orig_mem = NULL;
-	    __probepoint_remove(probepoint,0);
+	    __probepoint_remove(probepoint,0,0);
 	}
 
 	if (target_singlestep_end(target,tid))

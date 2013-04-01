@@ -310,10 +310,14 @@ void *target_argp_driver_state(struct argp_state *state);
 
 void target_driver_argp_init_children(struct argp_state *state);
 
+int target_spec_to_argv(struct target_spec *spec,char *arg0,
+			int *argc,char ***argv);
+
 /*
  * Generic function that creates a target, given @spec.
  */
-struct target *target_instantiate(struct target_spec *spec);
+struct target *target_instantiate(struct target_spec *spec,
+				  struct evloop *evloop);
 
 struct target_spec *target_build_spec(target_type_t type,target_mode_t mode);
 void target_free_spec(struct target_spec *spec);
@@ -366,6 +370,11 @@ int target_attach_evloop(struct target *target,struct evloop *evloop);
  * Removes the selectable file descriptors for @target from @target->evloop.
  */
 int target_detach_evloop(struct target *target);
+
+/*
+ * Returns 1 if @evloop is already attached to @target; 0 if not.
+ */
+int target_is_evloop_attached(struct target *target,struct evloop *evloop);
 
 /*
  *
@@ -427,7 +436,8 @@ target_status_t target_status(struct target *target);
 /*
  * Closes a target and releases all its resources.
  *
- * (Internally, this calls the following target_ops: detach().)
+ * (Internally, this calls the following target_ops: detach(), kill() (if
+ * target->kill_on_close is set).)
  */
 int target_close(struct target *target);
 
@@ -1208,12 +1218,56 @@ struct target_thread {
 struct target_spec {
     target_type_t target_type;
 
+    int target_id;
     target_mode_t target_mode;
     thread_bpmode_t bpmode;
     probepoint_style_t style;
     int8_t start_paused:1;
     /* struct array_list of struct debugfile_load_opts * */
     struct array_list *debugfile_load_opts_list;
+
+    /*
+     * I/O behavior is a bit complicated.  We want a couple things -- to
+     * support the target library by itself (i.e., user code calling
+     * directly into the library); and to support the XML SOAP server
+     * calling into the library on behalf of the user.  In both cases,
+     * we might want I/O logged to a file; we might want I/O callbacks
+     * to the user (we might want it buffered too, but forget that for
+     * now).
+     *
+     * So, if the caller wants stdio interaction, the backend must open
+     * the I/O devices and expose them to the caller as an FD -- the
+     * caller specifies this by providing evloop_handler_ts for the
+     * stdio descriptor types it cares about.  If the user does not
+     * specify one of these, but instead specifies a filename, the
+     * backend must auto-write/-read the output/input to/from the named
+     * file.
+     *
+     * (If handlers are provided, the caller *must* call
+     * target_attach_evloop() sometime -- otherwise if the target does
+     * i/o on those descriptors, they will probably fill up and block it!)
+     *
+     *
+     * Only the backend knows how to deal with I/O, for each backend.
+     * So, we have to rely on the backend to give us file descriptors
+     * for the target I/Os we care about.  We assume stdin, stdout, and
+     * an optional stderr.  The problem is, some backends might provide
+     * stdio access only if we launch a new target (Ptrace); others
+     * might provide access anytime (Xen); but we can't know until the
+     * backend parses the spec and figures out what to do.
+     *
+     * This kind of sucks... but we'll just warn the client if it tries
+     * to do something the backend doesn't support.  Later we can do
+     * something better, like warning a priori.
+     *
+     */
+    evloop_handler_t in_evh;
+    evloop_handler_t out_evh;
+    evloop_handler_t err_evh;
+
+    char *infile;
+    char *outfile;
+    char *errfile;
 
     void *backend_spec;
 };
@@ -1262,6 +1316,17 @@ struct target {
     void *state;
     struct target_ops *ops;
     struct target_spec *spec;
+
+    int kill_on_close;
+    int kill_sig;
+
+    /*
+     * If the spec specified stdio interactions via handlers, these are
+     * the file descriptors.
+     */
+    int infd;
+    int outfd;
+    int errfd;
 
     /*
      * A simple key/value store for generic target configuration

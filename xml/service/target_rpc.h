@@ -28,11 +28,19 @@
 #include <glib.h>
 #include <pthread.h>
 
+/*
+ * Targets as XML SOAP server-monitored objects.
+ */
+#define MONITOR_OBJTYPE_TARGET 0x08
+extern struct monitor_objtype_ops target_rpc_monitor_objtype_ops;
+
 struct target_rpc_listener {
     int target_id;
     char *hostname;
     int port;
 };
+
+#define MONITORED_TARGET_LAUNCHER "/home/johnsond/git/a3/vmi.obj/xml/service/monitored_target"
 
 /*
  * Module init stuff.
@@ -45,6 +53,8 @@ void target_rpc_fini(void);
  * caller must not free it!
  */
 int target_rpc_handle_request(struct soap *soap);
+
+void target_rpc_insert(int target_id,struct target *target);
 
 /*
  * Get a target by ID.  Locks/unlocks the target_rpc master mutex.
@@ -75,8 +85,11 @@ int vmi1__ResumeTarget(struct soap *soap,
 		       vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
 int vmi1__CloseTarget(struct soap *soap,
-		      vmi1__TargetIdT tid,enum xsd__boolean kill,
+		      vmi1__TargetIdT tid,enum xsd__boolean kill,int kill_sig,
 		      struct vmi1__NoneResponse *r);
+int vmi1__FinalizeTarget(struct soap *soap,
+			 vmi1__TargetIdT tid,
+			 struct vmi1__NoneResponse *r);
 
 int vmi1__PauseThread(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,

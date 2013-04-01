@@ -40,6 +40,7 @@
 #include <libelf.h>
 
 #include "waitpipe.h"
+#include "evloop.h"
 
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
@@ -53,10 +54,13 @@
 /*
  * Prototypes.
  */
-struct target *linux_userproc_instantiate(struct target_spec *spec);
+struct target *linux_userproc_instantiate(struct target_spec *spec,
+					  struct evloop *evloop);
 
-static struct target *linux_userproc_attach(struct target_spec *spec);
-static struct target *linux_userproc_launch(struct target_spec *spec);
+static struct target *linux_userproc_attach(struct target_spec *spec,
+					    struct evloop *evloop);
+static struct target *linux_userproc_launch(struct target_spec *spec,
+					    struct evloop *evloop);
 
 static char *linux_userproc_tostring(struct target *target,
 				     char *buf,int bufsiz);
@@ -206,16 +210,96 @@ struct argp_option linux_userproc_argp_opts[] = {
     { "program",'b',"FILE",0,"A program to launch as the target.",-4 },
     { "args",'a',"LIST",0,"A comma-separated argument list.",-4 },
     { "envvars",'e',"LIST",0,"A comma-separated envvar list.",-4 },
-    { "no-stdin",'I',NULL,0,"Close stdin when launching a program.",-4 },
-    { "stdout-logfile",'O',"FILE",0,"Log stdout to FILE.",-4 },
-    { "stderr-logfile",'E',"FILE",0,"Log stderr to FILE.",-4 },
     { 0,0,0,0,0,0 },
 };
+
+int linux_userproc_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
+    struct linux_userproc_spec *lspec = 
+	(struct linux_userproc_spec *)spec->backend_spec;
+    char **av = NULL;
+    int ac = 0;
+    int rc;
+    int i;
+    int envstrlen;
+    int j;
+    char *p;
+
+    if (!lspec) {
+	if (argv)
+	    *argv = NULL;
+	if (argc)
+	    *argc = 0;
+	return 0;
+    }
+	
+    if (lspec->program) {
+	/* -- <lspec->program> */
+	ac = 2;
+	if (lspec->argv) 
+	    for (i = 0; lspec->argv[i] != NULL; ++i,++ac) ;
+	if (lspec->envp) {
+	    /* -e */
+	    ++ac;
+	    envstrlen = 0;
+	    for (i = 0; lspec->envp[i] != NULL; ++i,++ac) 
+		envstrlen += strlen(lspec->envp[i]) + 1;
+	}
+
+	av = calloc(ac + 1,sizeof(char *));
+
+	j = 0;
+
+	if (lspec->envp) {
+	    av[j++] = strdup("-e");
+	    envstrlen += 1;
+	    av[j] = malloc(envstrlen);
+	    i = 0;
+	    p = av[j];
+	    while (p < (av[j] + envstrlen)) {
+		rc = snprintf(p,(av[j] + envstrlen) - p,"%s",lspec->envp[i]);
+		++i;
+		/*
+		 * Since snprintf returns the num chars that were or
+		 * would have been printed, this will still term the loop
+		 * even though the final value of p is invalid for
+		 * future use.
+		 */
+		p += rc;
+	    }
+	    ++j;
+	}
+
+	av[j++] = strdup("--");
+	av[j++] = strdup(lspec->program);
+
+	if (lspec->argv) {
+	    for (i = 0; lspec->argv[i] != NULL; ++i) {
+		av[j++] = strdup(lspec->argv[i]);
+	    }
+	}
+	av[j] = NULL;
+	ac = j + 1;
+    }
+    else if (lspec->pid > -1) {
+	av = calloc(3,sizeof(char *));
+	av[0] = strdup("-p");
+	av[1] = malloc(11);
+	snprintf(av[1],11,"%d",lspec->pid);
+	ac = 2;
+    }
+
+    if (argv)
+	*argv = av;
+    if (argc)
+	*argc = ac;
+
+    return 0;
+}
 
 error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     struct target_argp_parser_state *tstate = \
 	(struct target_argp_parser_state *)state->input;
-    struct target_spec *spec;
+    struct target_spec *spec = NULL;
     struct linux_userproc_spec *lspec;
     struct argp_option *opti;
     int ourkey;
@@ -236,19 +320,23 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
      * args; if it has, we throw an error.  Otherwise, we assume we are
      * using this backend, and process the arg.
      */
-    ourkey = 0;
-    for (opti = &linux_userproc_argp_opts[0]; opti->key != 0; ++opti) {
-	if (key == opti->key) {
-	    ourkey = 1;
-	    break;
+    if (spec && spec->target_type == TARGET_TYPE_NONE && tstate->quoted_argc)
+	ourkey = 1;
+    else {
+	ourkey = 0;
+	for (opti = &linux_userproc_argp_opts[0]; opti->key != 0; ++opti) {
+	    if (key == opti->key) {
+		ourkey = 1;
+		break;
+	    }
 	}
     }
 
     if (ourkey) {
+	/* Only claim this as ours if it was one of our keys. */
 	if (spec->target_type == TARGET_TYPE_NONE) {
 	    spec->target_type = TARGET_TYPE_PTRACE;
-	    lspec = calloc(1,sizeof(*lspec));
-	    spec->backend_spec = lspec;
+	    spec->backend_spec = linux_userproc_build_spec();
 	}
 	else if (spec->target_type != TARGET_TYPE_PTRACE) {
 	    verror("cannot mix arguments for ptrace target (%c) with non-ptrace"
@@ -256,16 +344,12 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 	    return EINVAL;
 	}
 
-	/* Only claim this as ours if it was one of our keys. */
-	if (spec->target_type == TARGET_TYPE_NONE) {
-	    spec->target_type = TARGET_TYPE_PTRACE;
-	    lspec = calloc(1,sizeof(*lspec));
-	    spec->backend_spec = lspec;
-	}
-	else if (spec->target_type != TARGET_TYPE_PTRACE) {
-	    verror("cannot mix arguments for ptrace target with non-ptrace target!\n");
-	    return EINVAL;
-	}
+    }
+    /*
+     * Allow ptrace target to swallow quoted args.
+     */
+    else if (spec->target_type == TARGET_TYPE_NONE && tstate->quoted_argc) {
+	ourkey = 1;
     }
 
     if (spec->target_type == TARGET_TYPE_PTRACE)
@@ -279,8 +363,8 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 	return ARGP_ERR_UNKNOWN;
     case ARGP_KEY_INIT:
     case ARGP_KEY_END:
-    case ARGP_KEY_NO_ARGS:
 	return 0;
+    case ARGP_KEY_NO_ARGS:
     case ARGP_KEY_SUCCESS:
 	/*
 	 * Steal any quoted args here...
@@ -347,15 +431,6 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 	    }
 	}
 	lspec->envp[count] = NULL;
-	break;
-    case 'I':
-	lspec->close_stdin = 1;
-	break;
-    case 'E':
-	lspec->stderr_logfile = arg;
-	break;
-    case 'O':
-	lspec->stdout_logfile = arg;
 	break;
 
     default:
@@ -475,15 +550,16 @@ int linux_userproc_pid(struct target *target) {
     return lstate->pid;
 }
 
-struct target *linux_userproc_instantiate(struct target_spec *spec) {
+struct target *linux_userproc_instantiate(struct target_spec *spec,
+					  struct evloop *evloop) {
     struct linux_userproc_spec *lspec = \
 	(struct linux_userproc_spec *)spec->backend_spec;
 
-    if (lspec->pid > 0) {
-	return linux_userproc_attach(spec);
+    if (lspec->pid > -1) {
+	return linux_userproc_attach(spec,evloop);
     }
     else {
-	return linux_userproc_launch(spec);
+	return linux_userproc_launch(spec,evloop);
     }
 }
 
@@ -491,6 +567,7 @@ struct linux_userproc_spec *linux_userproc_build_spec(void) {
     struct linux_userproc_spec *lspec;
 
     lspec = calloc(1,sizeof(*lspec));
+    lspec->pid = -1;
 
     return lspec;
 }
@@ -512,10 +589,6 @@ void linux_userproc_free_spec(struct linux_userproc_spec *lspec) {
 	    free(*ptr);
 	free(lspec->envp);
     }
-    if (lspec->stdout_logfile)
-	free(lspec->stdout_logfile);
-    if (lspec->stderr_logfile)
-	free(lspec->stderr_logfile);
 
     free(lspec);
 }
@@ -524,7 +597,8 @@ void linux_userproc_free_spec(struct linux_userproc_spec *lspec) {
  * Attaches to @pid.  The caller does all of the normal ptrace
  * interaction; we just facilitate debuginfo-assisted data operations.
  */
-static struct target *linux_userproc_attach(struct target_spec *spec) {
+static struct target *linux_userproc_attach(struct target_spec *spec,
+					    struct evloop *evloop) {
     struct linux_userproc_state *lstate;
     struct target *target;
     char buf[256];
@@ -586,7 +660,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,spec,-1);
+			   &linux_userspace_process_ops,spec,spec->target_id);
     if (!target) 
 	return NULL;
 
@@ -650,12 +724,18 @@ static struct target *linux_userproc_attach(struct target_spec *spec) {
 
     target->state = lstate;
 
+    if (evloop) {
+	target->evloop = evloop;
+	linux_userproc_attach_evloop(target,evloop);
+    }
+
     vdebug(5,LA_TARGET,LF_LUP,"opened pid %d\n",pid);
 
     return target;
 }
 
-static struct target *linux_userproc_launch(struct target_spec *spec) {
+static struct target *linux_userproc_launch(struct target_spec *spec,
+					    struct evloop *evloop) {
     struct linux_userproc_state *lstate;
     struct target *target;
     int pid;
@@ -665,11 +745,14 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     char *filename;
     char **argv;
     char **envp;
-    int keepstdin;
-    char *outfile;
-    char *errfile;
     struct binfile *binfile;
     REFCNT trefcnt;
+    int inpfd[2] = { -1,-1 };
+    int outpfd[2] = { -1,-1 };
+    int errpfd[2] = { -1,-1 };
+    int infd = -1;
+    int outfd = -1;
+    int errfd = -1;
 
 #if __WORDSIZE == 64
 #define LUP_SC_EXEC             59
@@ -704,9 +787,6 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     filename = lspec->program;
     argv = lspec->argv;
     envp = lspec->envp;
-    keepstdin = !lspec->close_stdin;
-    outfile = lspec->stdout_logfile;
-    errfile = lspec->stderr_logfile;
 
     /*
      * Read the binary and see if it is a dynamic or statically-linked
@@ -721,7 +801,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
     }
 
     target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,spec,-1);
+			   &linux_userspace_process_ops,spec,spec->target_id);
     if (!target) 
 	goto errout;
 
@@ -795,9 +875,91 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 
     target->state = lstate;
 
+    /*
+     * Handle some I/O setup; the rest is handled in parent/child after
+     * fork().
+     */
+    if (spec->in_evh) {
+	/* build a pipe to the child */
+	if (pipe(inpfd)) {
+	    verror("pipe(in): %s\n",strerror(errno));
+	    goto errout;
+	}
+    }
+    else if (spec->infile && strcmp(spec->infile,"-") != 0) {
+	infd = open(spec->infile,O_RDONLY);
+	if (infd < 0) {
+	    verror("open(%s): %s\n",spec->infile,strerror(errno));
+	    goto errout;
+	}
+    }
+    if (spec->out_evh) {
+	if (pipe(outpfd)) {
+	    verror("pipe(out): %s\n",strerror(errno));
+	    goto errout;
+	}
+    }
+    else if (spec->outfile && strcmp(spec->outfile,"-") != 0) {
+	outfd = open(spec->outfile,O_WRONLY | O_CREAT | O_APPEND,
+		     S_IRUSR | S_IWUSR | S_IRGRP);
+	if (outfd < 0) {
+	    verror("open(%s): %s\n",spec->outfile,strerror(errno));
+	    goto errout;
+	}
+    }
+    if (spec->err_evh) {
+	if (pipe(errpfd)) {
+	    verror("pipe(err): %s\n",strerror(errno));
+	    goto errout;
+	};
+    }
+    else if (spec->errfile && strcmp(spec->errfile,"-") != 0) {
+	errfd = open(spec->errfile,O_WRONLY | O_CREAT | O_APPEND,
+		     S_IRUSR | S_IWUSR | S_IRGRP);
+	if (errfd < 0) {
+	    verror("open(%s): %s\n",spec->errfile,strerror(errno));
+	    goto errout;
+	}
+    }
+
+    /*
+     * Launch it!
+     */
+
     if ((pid = fork()) > 0) {
 	lstate->pid = pid;
 	lstate->current_tid = 0;
+
+	/*
+	 * Handle i/o stuff: close child-only FDs.
+	 */
+	if (inpfd[0] > -1) {
+	    close(inpfd[0]);
+	    inpfd[0] = -1;
+	    target->infd = inpfd[1];
+	}
+	else if (infd > -1) {
+	    close(infd);
+	    infd = -1;
+	}
+	if (outpfd[1] > -1) {
+	    close(outpfd[1]);
+	    outpfd[1] = -1;
+	    target->outfd = outpfd[0];
+	}
+	else if (outfd > -1) {
+	    close(outfd);
+	    outfd = -1;
+	}
+	if (errpfd[1] > -1) {
+	    close(errpfd[1]);
+	    errpfd[1] = -1;
+	    target->errfd = errpfd[0];
+	}
+	else if (errfd > -1) {
+	    close(errfd);
+	    errfd = -1;
+	}
 	
 	/* Parent; wait for ptrace to signal us. */
 	vdebug(3,LA_TARGET,LF_LUP,"waiting for ptrace traceme pid %d to exec\n",pid);
@@ -852,35 +1014,51 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	}
     }
     else if (!pid) {
-	if (!keepstdin) 
+	if (inpfd[0] > 0) {
+	    /* close the write end of the pipe; dup2() the read end to STDIN */
+	    close(inpfd[1]);
+	    dup2(inpfd[0],STDIN_FILENO);
+	}
+	else if (infd > 0) {
+	    dup2(infd,STDIN_FILENO);
+	}
+	else if (!spec->infile || strcmp("-",spec->infile) != 0) {
 	    close(STDIN_FILENO);
-
-	if (outfile && strcmp(outfile,"-") != 0) {
-	    newfd = open(outfile,O_CREAT | O_APPEND | O_WRONLY,
-			 S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP);
-	    if (newfd < 0) {
-		verror("open(%s): %s\n",outfile,strerror(errno));
-		exit(-1);
-	    }
-	    dup2(newfd,STDOUT_FILENO);
 	}
-	else if (!outfile) {
+	else {
+	    /* Take stdin from caller! */
+	}
+
+	if (outpfd[1] > 0) {
+	    /* close the read end of the pipe; dup2() the write end to STDOUT */
+	    close(outpfd[0]);
+	    dup2(inpfd[1],STDOUT_FILENO);
+	}
+	else if (outfd > 0) {
+	    dup2(outfd,STDOUT_FILENO);
+	}
+	else if (!spec->outfile || strcmp("-",spec->outfile) != 0) {
 	    newfd = open("/dev/null",O_WRONLY);
 	    dup2(newfd,STDOUT_FILENO);
 	}
-
-	if (errfile && strcmp(errfile,"-") != 0) {
-	    newfd = open(errfile,O_CREAT | O_APPEND | O_WRONLY,
-			 S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP);
-	    if (newfd < 0) {
-		verror("open(%s): %s\n",errfile,strerror(errno));
-		exit(-1);
-	    }
-	    dup2(newfd,STDERR_FILENO);
+	else {
+	    /* Take stdout from caller! */
 	}
-	else if (!errfile) {
+
+	if (errpfd[1] > 0) {
+	    /* close the read end of the pipe; dup2() the write end to STDERR */
+	    close(errpfd[0]);
+	    dup2(inpfd[1],STDERR_FILENO);
+	}
+	else if (errfd > 0) {
+	    dup2(errfd,STDERR_FILENO);
+	}
+	else if (!spec->errfile || strcmp("-",spec->errfile) != 0) {
 	    newfd = open("/dev/null",O_WRONLY);
 	    dup2(newfd,STDERR_FILENO);
+	}
+	else {
+	    /* Take stderr from caller! */
 	}
 
 	/* Don't chdir like normal for daemons. */
@@ -1044,13 +1222,55 @@ static struct target *linux_userproc_launch(struct target_spec *spec) {
 	       "cleared status debug reg 6 for pid %d\n",pid);
     }
 
+    if (evloop) {
+	target->evloop = evloop;
+	linux_userproc_attach_evloop(target,evloop);
+    }
+
     return target;
 
  errout:
+    /*
+     * Cleanup I/O stuff first!  Do it before target_free!
+     */
+    if (inpfd[0] > -1) 
+	close(inpfd[0]);
+    if (inpfd[1] > -1) {
+	if (evloop)
+	    evloop_unset_fd(evloop,target->infd,EVLOOP_FDTYPE_A);
+	close(inpfd[1]);
+	target->infd = -1;
+    }
+    if (infd > -1) 
+	close(infd);
+
+    if (outpfd[1] > -1) 
+	close(outpfd[1]);
+    if (outpfd[0] > -1) {
+	if (evloop)
+	    evloop_unset_fd(evloop,target->outfd,EVLOOP_FDTYPE_A);
+	close(outpfd[0]);
+	target->outfd = -1;
+    }
+    if (outfd > -1) 
+	close(outfd);
+
+    if (errpfd[1] > -1) 
+	close(errpfd[1]);
+    if (errpfd[0] > -1) {
+	if (evloop)
+	    evloop_unset_fd(evloop,target->errfd,EVLOOP_FDTYPE_A);
+	close(errpfd[0]);
+	target->errfd = -1;
+    }
+    if (errfd > -1) 
+	close(errfd);
+
     if (target)
 	target_free(target);
     else if (binfile)
 	RPUT(binfile,binfile,target,trefcnt);
+
     return NULL;
 }
 
@@ -1190,6 +1410,8 @@ static int __handle_internal_detaching(struct target *target,
     struct linux_userproc_thread_state *tstate = \
 	(struct linux_userproc_thread_state *)tthread->state;
     tid_t tid = tthread->tid;
+    tid_t newtid;
+    long newstatus;
 
     if (!WIFSTOPPED(pstatus)) {
 	vdebug(5,LA_TARGET,LF_LUP,
@@ -1202,7 +1424,12 @@ static int __handle_internal_detaching(struct target *target,
      * the parent doing the clone().
      */
     if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_CLONE << 8)) {
-	;
+	ptrace(PTRACE_GETEVENTMSG,tid,NULL,&newstatus);
+	newtid = (tid_t)newstatus;
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "target %d thread %d cloned new thread %d; NOT attaching!\n",
+	       pid,tid,newtid);
+	return 0;
     }
 
     if (!linux_userproc_load_thread(target,tid,0)) {
@@ -1343,10 +1570,39 @@ static int __handle_internal_detaching(struct target *target,
 	    }
 	}
     }
+    else if (WIFCONTINUED(pstatus)) {
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "waitpid CONT event pid %d thread %"PRIiTID" (status 0x%x); ignoring\n",
+	      pid,tid,pstatus);
+	tstate->last_signo = -1;
+	tstate->last_status = -1;
+    }
+    else if (WIFEXITED(pstatus)) {
+	/* yikes, it was sigkill'd out from under us! */
+	/* XXX: is error good enough?  The pid is gone; we should
+	 * probably dump this target.
+	 */
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "waitpid EXITED event pid %d thread %"PRIiTID" (status 0x%x); ignoring\n",
+	       pid,tid,pstatus);
+	tstate->last_signo = -1;
+	tstate->last_status = -1;
+
+	return 1;
+    }
+    else if (WIFSIGNALED(pstatus)) {
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "waitpid SIGNALED event pid %d thread %"PRIiTID" (status 0x%x); ignoring\n",
+	       pid,tid,pstatus);
+	tstate->last_signo = -1;
+	tstate->last_status = -1;
+
+	return 1;
+    }
     else {
-	vwarn("unknown waitpid event pid %d thread %"PRIiTID"\n",
-	      pid,tid);
-	return 0;
+	vwarn("unknown waitpid event pid %d thread %"PRIiTID" (status 0x%x)\n",
+	      pid,tid,pstatus);
+	return -1;
     }
 
     return 1;
@@ -1369,11 +1625,12 @@ int __poll_and_handle_detaching(struct target *target,
 
     retval = waitpid(tid,&status,WNOHANG | __WALL);
     if (retval == 0) {
-	vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" running\n",pid,tid);
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "pid %d thread %"PRIiTID" running; not handling\n",pid,tid);
 	return 0;
     }
     else if (retval < 0) {
-	verror("pid %d thread %"PRIiTID": %s\n",pid,tid,strerror(errno));
+	verror("waitpid pid %d thread %"PRIiTID": %s\n",pid,tid,strerror(errno));
 	return retval;
     }
 
@@ -1385,23 +1642,18 @@ int __poll_and_handle_detaching(struct target *target,
      * If we're at a single step, nothing to worry about!
      */
 
-    vdebug(5,LA_TARGET,LF_LUP,"polling pid %d thread %"PRIiTID"\n",pid,tid);
+    vdebug(5,LA_TARGET,LF_LUP,"handling pid %d thread %"PRIiTID"\n",pid,tid);
     return __handle_internal_detaching(target,tthread,status);
 }
 
-int linux_userproc_detach_thread(struct target *target,tid_t tid) {
+int linux_userproc_detach_thread(struct target *target,tid_t tid,
+				 int detaching_all) {
     struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     char buf[256];
     int pid;
     struct linux_userproc_thread_state *tstate;
     struct stat sbuf;
-
-    if (tid == target->global_thread->tid) {
-	verror("cannot detach from the primary thread; use target_close()!\n");
-	errno = EINVAL;
-	return 1;
-    }
 
     lstate = (struct linux_userproc_state *)target->state;
     if (!lstate) {
@@ -1433,6 +1685,9 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid) {
      */
     snprintf(buf,256,"/proc/%d/task/%d",pid,tid);
     if (stat(buf,&sbuf) == 0) {
+
+	target_detach_thread(target,tthread);
+
 	/*
 	 * If the thread is stopped with status, check it and handle it
 	 * in a basic way -- like if it's stopped at a breakpoint, reset
@@ -1448,11 +1703,15 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid) {
 
 	ptrace(PTRACE_DETACH,tid,NULL,NULL);
 
-	kill(tid,SIGCONT);
+	/*
+	 * Don't CONT it if we're detaching; we'll signal the pid
+	 * globally if necessary.
+	 */
+	if (!detaching_all)
+	    kill(tid,SIGCONT);
+
 	errno = 0;
     }
-
-    target_delete_thread(target,tthread,0);
 
     return 0;
 }
@@ -1980,7 +2239,7 @@ static int linux_userproc_detach(struct target *target) {
     for (i = 0; i < array_list_len(threadlist); ++i) {
 	tthread = (struct target_thread *)array_list_item(threadlist,i);
 
-	rc = linux_userproc_detach_thread(target,tthread->tid);
+	rc = linux_userproc_detach_thread(target,tthread->tid,1);
 	if (rc) {
 	    verror("could not detach thread %"PRIiTID"\n",tthread->tid);
 	    ++retval;
@@ -1991,27 +2250,24 @@ static int linux_userproc_detach(struct target *target) {
     /*
      * Now detach from the primary process thread.
      */
-
-    /*
-     * If the thread is stopped with status, check it and handle it
-     * in a basic way -- like if it's stopped at a breakpoint, reset
-     * EIP and replace orig code -- don't handle it more.
-     */
-    if (target->global_thread 
-	&& __poll_and_handle_detaching(target,target->global_thread) == 0) {
-	/* 
-	 * Sleep the child first if it's still running; otherwise
-	 * we'll end up sending it a trace trap, which will kill it.
-	 */
-	kill(lstate->pid,SIGSTOP);
+    tthread = target->global_thread;
+    rc = linux_userproc_detach_thread(target,tthread->tid,1);
+    if (rc) {
+	verror("could not detach global thread %"PRIiTID"\n",tthread->tid);
+	++retval;
     }
 
+    /*
+     *
+     */
+    /*
     errno = 0;
     if (ptrace(PTRACE_DETACH,lstate->pid,NULL,NULL) < 0) {
 	verror("ptrace detach %d failed: %s\n",lstate->pid,strerror(errno));
 	kill(lstate->pid,SIGCONT);
 	//return 1;
     }
+    */
 
     kill(lstate->pid,SIGCONT);
 
@@ -3248,6 +3504,13 @@ static int linux_userproc_evloop_del_tid(struct target *target,int tid) {
 	       readfd,tid);
     }
 
+    if (target->infd > -1) 
+	evloop_unset_fd(target->evloop,target->infd,EVLOOP_FDTYPE_A);
+    if (target->outfd > -1) 
+	evloop_unset_fd(target->evloop,target->outfd,EVLOOP_FDTYPE_A);
+    if (target->errfd > -1) 
+	evloop_unset_fd(target->evloop,target->errfd,EVLOOP_FDTYPE_A);
+
     return 0;
 }
 
@@ -3258,6 +3521,16 @@ int linux_userproc_attach_evloop(struct target *target,struct evloop *evloop) {
 
     if (!waitpipe_is_initialized())
 	waitpipe_init_auto(NULL);
+
+    if (target->infd > -1) 
+	evloop_set_fd(target->evloop,target->infd,EVLOOP_FDTYPE_W,
+		      target->spec->in_evh,target);
+    if (target->outfd > -1) 
+	evloop_set_fd(target->evloop,target->outfd,EVLOOP_FDTYPE_R,
+		      target->spec->out_evh,target);
+    if (target->errfd > -1) 
+	evloop_set_fd(target->evloop,target->errfd,EVLOOP_FDTYPE_R,
+		      target->spec->err_evh,target);
 
     tids = target_list_tids(target);
     if (!tids)

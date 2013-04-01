@@ -249,6 +249,19 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	ospec->startPaused = xsd__boolean__false_;
     else 
 	ospec->startPaused = xsd__boolean__true_;
+    /* XXX: this might be a lie. */
+    ospec->dedicatedMonitor = xsd__boolean__false_;
+    ospec->logStdout = SOAP_CALLOC(soap,1,sizeof(*ospec->logStdout));
+    if (spec->outfile) 
+	*ospec->logStdout = xsd__boolean__true_;
+    else
+	*ospec->logStdout = xsd__boolean__false_;
+    ospec->logStderr = SOAP_CALLOC(soap,1,sizeof(*ospec->logStderr));
+    if (spec->errfile) 
+	*ospec->logStderr = xsd__boolean__true_;
+    else
+	*ospec->logStderr = xsd__boolean__false_;
+
 
     if (spec->target_type == TARGET_TYPE_PTRACE) {
 	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
@@ -324,8 +337,10 @@ x_TargetPtraceSpecT_to_t_linux_userproc_spec(struct soap *soap,
     struct linux_userproc_spec *ospec;
     int i;
 
-    if (out)
+    if (out) {
 	ospec = out;
+	ospec->pid = -1;
+    }
     else 
 	ospec = linux_userproc_build_spec();
 
@@ -345,14 +360,6 @@ x_TargetPtraceSpecT_to_t_linux_userproc_spec(struct soap *soap,
 	    ospec->envp[i] = strdup(spec->environment->envvar[i]);
 	ospec->envp[i] = NULL;
     }
-    if (spec->closeStdin && *spec->closeStdin != xsd__boolean__false_)
-	ospec->close_stdin = 1;
-    else
-	ospec->close_stdin = 0;
-    if (spec->stdoutLogfile)
-	ospec->stdout_logfile = strdup(spec->stdoutLogfile);
-    if (spec->stderrLogfile)
-	ospec->stderr_logfile = strdup(spec->stderrLogfile);
 
     return ospec;
 }
@@ -401,15 +408,6 @@ t_linux_userproc_spec_to_x_TargetPtraceSpecT(struct soap *soap,
 	for (i = 0; i < len; ++i) 
 	    SOAP_STRCPY(soap,ospec->environment->envvar[i],spec->envp[i]);
     }
-    ospec->closeStdin = SOAP_CALLOC(soap,1,sizeof(*(ospec->closeStdin)));
-    if (spec->close_stdin == 0)
-	*ospec->closeStdin = xsd__boolean__false_;
-    else
-	*ospec->closeStdin = xsd__boolean__true_;
-    if (spec->stdout_logfile)
-	SOAP_STRCPY(soap,ospec->stdoutLogfile,spec->stdout_logfile);
-    if (spec->stderr_logfile)
-	SOAP_STRCPY(soap,ospec->stderrLogfile,spec->stderr_logfile);
 
     return ospec;
 }
@@ -613,6 +611,35 @@ t_target_thread_to_x_ThreadT(struct soap *soap,
 					     reftab,NULL);
 
     return othread;
+}
+
+struct vmi1__TargetT *
+t_target_id_to_x_TargetT(struct soap *soap,
+			 int target_id,struct target_spec *spec,
+			 GHashTable *reftab,
+			 struct vmi1__TargetT *out) {
+    struct vmi1__TargetT *otarget;
+
+    if (out)
+	otarget = out;
+    else
+	otarget = SOAP_CALLOC(soap,1,sizeof(*otarget));
+
+    otarget->tid = target_id;
+    otarget->name = "";
+
+    otarget->targetSpec = \
+	t_target_spec_to_x_TargetSpecT(soap,spec,reftab,NULL);
+
+    otarget->targetStatus = vmi1__TargetStatusT__unknown;
+
+    otarget->__sizethread = 0;
+    otarget->thread = NULL;
+
+    otarget->__sizeaddrSpace = 0;
+    otarget->addrSpace = NULL;
+
+    return otarget;
 }
 
 struct vmi1__TargetT *

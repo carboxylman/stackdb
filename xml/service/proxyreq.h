@@ -159,6 +159,8 @@ struct proxyreq {
     /* Set to the gsoap fclose to temporarily prevent sock close. */
     int (*orig_fclose)(struct soap *soap);
 
+    int (*orig_fsend)(struct soap *soap,const char *s,size_t n);
+
     /*
      * Request/response buffer info.
      */
@@ -319,11 +321,11 @@ int proxyreq_send_response(struct proxyreq *pr);
     }									\
 }
 
-#define PROXY_REQUEST_LOCKED_HANDLE_STOP(soap,mutex,retval) {		\
+#define PROXY_REQUEST_LOCKED_HANDLE_STOP(soap,mutex) {			\
     struct proxyreq *_pr;						\
     _pr = (struct proxyreq *)(soap)->user;				\
-    (soap)->error = SOAP_OK;						\
-    if ((retval = proxyreq_send_request(_pr))) {			\
+									\
+    if (((soap)->error = proxyreq_send_request(_pr)) != SOAP_OK) {	\
 	verror("proxyreq_send_request error %d\n",retval);		\
     }									\
     pthread_mutex_unlock(mutex);					\

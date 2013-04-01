@@ -97,6 +97,11 @@ t_linux_userproc_spec_to_x_TargetPtraceSpecT(struct soap *soap,
 					     struct linux_userproc_spec *spec,
 					     GHashTable *reftab,
 					     struct vmi1__TargetPtraceSpecT *out);
+struct vmi1__TargetT *
+t_target_id_to_x_TargetT(struct soap *soap,
+			 int target_id,struct target_spec *spec,
+			 GHashTable *reftab,
+			 struct vmi1__TargetT *out);
 
 struct vmi1__TargetT *
 t_target_to_x_TargetT(struct soap *soap,

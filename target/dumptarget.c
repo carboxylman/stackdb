@@ -874,7 +874,7 @@ int main(int argc,char **argv) {
     dwdebug_init();
     atexit(dwdebug_fini);
 
-    t = target_instantiate(tspec);
+    t = target_instantiate(tspec,NULL);
     if (!t) {
 	verror("could not instantiate target!\n");
 	exit(-1);

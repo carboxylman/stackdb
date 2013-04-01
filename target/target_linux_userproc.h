@@ -23,16 +23,21 @@
 #include <sys/user.h>
 #include <glib.h>
 
+#include "evloop.h"
+
 #include "target_api.h"
 
 /* linux userproc target ops */
 
-struct target *linux_userproc_instantiate(struct target_spec *spec);
+struct target *linux_userproc_instantiate(struct target_spec *spec,
+					  struct evloop *evloop);
 struct linux_userproc_spec *linux_userproc_build_spec(void);
 void linux_userproc_free_spec(struct linux_userproc_spec *lspec);
+int linux_userproc_spec_to_argv(struct target_spec *spec,int *argc,char ***argv);
 
 int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t tid);
-int linux_userproc_detach_thread(struct target *target,tid_t tid);
+int linux_userproc_detach_thread(struct target *target,tid_t tid,
+				 int detaching_all);
 
 /*
  * Once attached to a process, attach to one of its threads.
@@ -59,9 +64,6 @@ struct linux_userproc_spec {
     char *program;
     char **argv;
     char **envp;
-    char *stdout_logfile;
-    char *stderr_logfile;
-    int8_t close_stdin:1;
 };
 
 struct linux_userproc_thread_state {

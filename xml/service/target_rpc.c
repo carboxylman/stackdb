@@ -19,6 +19,7 @@
 #include <pthread.h>
 #include <glib.h>
 #include <errno.h>
+#include <sys/prctl.h>
 
 #include "common_xml.h"
 #include "target_rpc.h"
@@ -49,16 +50,46 @@ extern struct vmi1__DebugFileOptsT defDebugFileOpts;
 /**
  ** A bunch of stuff for per-target monitor interactions.
  **/
-int monitor_objtype_target = -1;
-
 static int target_rpc_monitor_evloop_attach(struct evloop *evloop,void *obj) {
     struct target *target = (struct target *)obj;
+
+    if (!obj) 
+	return 0;
+
     return target_attach_evloop(target,evloop);
 }
 
 static int target_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
     struct target *target = (struct target *)obj;
+
+    if (!obj) 
+	return 0;
+
     return target_detach_evloop(target);
+}
+
+static int target_rpc_monitor_close(int sig,void *obj) {
+    struct target *target = (struct target *)obj;
+    int retval;
+
+    if (!obj)
+	return 0;
+
+    if ((retval = target_close(target)) != TSTATUS_DONE) {
+	verror("could not close target (error %d); freeing anyway!\n",retval);
+    }
+    target_free(target);
+
+    return 0;
+}
+
+static int target_rpc_monitor_evloop_is_attached(struct evloop *evloop,void *obj) {
+    struct target *target = (struct target *)obj;
+
+    if (!obj)
+	return 0;
+
+    return target_is_evloop_attached(target,evloop);
 }
 
 static int target_rpc_monitor_error(monitor_error_t error,void *obj) {
@@ -94,9 +125,11 @@ static int target_rpc_monitor_recv_msg(struct monitor *monitor,
     return proxyreq_recv_response(monitor,msg);
 }
 
-static struct monitor_objtype_ops target_rpc_monitor_objtype_ops = {
+struct monitor_objtype_ops target_rpc_monitor_objtype_ops = {
     .evloop_attach = target_rpc_monitor_evloop_attach,
     .evloop_detach = target_rpc_monitor_evloop_detach,
+    .close = target_rpc_monitor_close,
+    .evloop_is_attached = target_rpc_monitor_evloop_is_attached,
     .error = target_rpc_monitor_error,
     .fatal_error = target_rpc_monitor_fatal_error,
     .child_recv_msg = target_rpc_monitor_child_recv_msg,
@@ -115,12 +148,11 @@ void target_rpc_init(void) {
     }
 
     debuginfo_rpc_init();
-
-    monitor_objtype_target = 
-	monitor_register_objtype(monitor_objtype_target,
-				 &target_rpc_monitor_objtype_ops);
-
+    monitor_init();
     target_init();
+
+    monitor_register_objtype(MONITOR_OBJTYPE_TARGET,
+			     &target_rpc_monitor_objtype_ops);
 
     target_tab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
     target_listener_tab = 
@@ -154,12 +186,16 @@ void target_rpc_fini(void) {
     /* Nuke any existing targets. */
     g_hash_table_iter_init(&iter,target_tab);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&target)) {
+	if (!target)
+	    continue;
+
 	target_close(target);
 	target_free(target);
     }
     g_hash_table_destroy(target_tab);
     target_tab = NULL;
 
+    monitor_fini();
     target_fini();
     debuginfo_rpc_fini();
 
@@ -179,6 +215,8 @@ int target_rpc_handle_request(struct soap *soap) {
     struct proxyreq *pr;
     struct monitor *monitor;
     int retval;
+    char name[16];
+    int rc;
 
     /*
      * If there is even a possibility that we might proxy the request to
@@ -198,9 +236,9 @@ int target_rpc_handle_request(struct soap *soap) {
 	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
 	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
 
-	PROXY_REQUEST_LOCKED_HANDLE_STOP(soap,&target_rpc_mutex,retval);
+	PROXY_REQUEST_LOCKED_HANDLE_STOP(soap,&target_rpc_mutex);
 
-	if (retval) {
+	if (soap->error != SOAP_OK) {
 	    verror("could not handle SOAP_STOP by proxing request!\n");
 	    // XXX: need to send SOAP error!;
 	    proxyreq_free(pr);
@@ -226,13 +264,56 @@ int target_rpc_handle_request(struct soap *soap) {
 
 	    monitor = pr->monitor;
 
+	    snprintf(name,16,"target_m_%d",monitor->objid);
+	    prctl(PR_SET_NAME,name,NULL,NULL,NULL);
+
 	    proxyreq_free(pr);
 	    soap_destroy(soap);
 	    soap_end(soap);
 	    soap_done(soap);
 	    free(soap);
 
-	    return monitor_run(monitor);
+	    while (1) {
+		rc = monitor_run(monitor);
+		if (rc < 0) {
+		    verror("bad internal error in monitor for target %d; destroying!\n",
+			   monitor->objid);
+		    monitor_destroy(monitor);
+		    return -1;
+		}
+		else {
+		    if (monitor_is_done(monitor)) {
+			vdebug(2,LA_XML,LF_RPC,
+			       "monitoring on target %d is done;"
+			      " closing (not finalizing)!\n",
+			      monitor->objid);
+			monitor_shutdown(monitor);
+			return 0;
+		    }
+		    else if (monitor_is_halfdead(monitor)) {
+			vwarn("target %d monitor child died unexpectedly;"
+			      " closing (not finalizing)!\n",
+			      monitor->objid);
+			monitor_shutdown(monitor);
+			return -1;
+		    }
+		    else if (monitor_should_self_finalize(monitor)) {
+			vwarn("forked target %d finalizing!\n",
+			      monitor->objid);
+			monitor_destroy(monitor);
+			return 0;
+		    }
+		    else {
+			vwarn("target %d monitor_run finished unexpectedly;"
+			      " closing (not finalizing)!\n",
+			      monitor->objid);
+			monitor_shutdown(monitor);
+			return 0;
+		    }
+		}
+	    }
+
+	    return 0;
 	}
 	else {
 	    vdebug(5,LA_XML,LF_RPC,
@@ -273,37 +354,38 @@ int target_rpc_handle_request(struct soap *soap) {
  ** Call the _ variants if you already hold the target_rpc_mutex; else,
  ** call the normal functions!
  **/
-void _target_rpc_insert(struct target *target) {
+static void _target_rpc_insert(int target_id,struct target *target) {
     if (init_done)
-	g_hash_table_insert(target_tab,(gpointer)(uintptr_t)target->id,target);
+	g_hash_table_insert(target_tab,(gpointer)(uintptr_t)target_id,target);
 }
-void target_rpc_insert(struct target *target) {
+void target_rpc_insert(int target_id,struct target *target) {
     pthread_mutex_lock(&target_rpc_mutex);
-    _target_rpc_insert(target);
+    _target_rpc_insert(target_id,target);
     pthread_mutex_unlock(&target_rpc_mutex);
 }
-struct target *_target_rpc_lookup(int id) {
+static int _target_rpc_lookup(int id,struct target **target) {
     if (!init_done) 
-	return NULL;
+	return 0;
 
-    return (struct target *)g_hash_table_lookup(target_tab,(gpointer)(ptr_t)id);
+    return g_hash_table_lookup_extended(target_tab,(gconstpointer)(ptr_t)id,
+					NULL,(gpointer *)target);
 }
-struct target *target_rpc_lookup(int id) {
-    struct target *t;
+int target_rpc_lookup(int id,struct target **target) {
+    int retval;
 
     pthread_mutex_lock(&target_rpc_mutex);
-    t = _target_rpc_lookup(id);
+    retval = _target_rpc_lookup(id,target);
     pthread_mutex_unlock(&target_rpc_mutex);
 
-    return t;
+    return retval;
 }
-void _target_rpc_remove(struct target *target) {
+static void _target_rpc_remove(int target_id) {
     if (target_tab)
-	g_hash_table_remove(target_tab,(gpointer)(uintptr_t)target->id);
+	g_hash_table_remove(target_tab,(gpointer)(uintptr_t)target_id);
 }
-void target_rpc_remove(struct target *target) {
+static void target_rpc_remove(int target_id) {
     pthread_mutex_lock(&target_rpc_mutex);
-    _target_rpc_remove(target);
+    _target_rpc_remove(target_id);
     pthread_mutex_unlock(&target_rpc_mutex);
 }
 
@@ -482,14 +564,13 @@ int vmi1__ListTargets(struct soap *soap,
 int vmi1__GetTarget(struct soap *soap,
 		    vmi1__TargetIdT tid,
 		    struct vmi1__TargetResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     GHashTable *reftab;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
@@ -512,6 +593,13 @@ int vmi1__InstantiateTarget(struct soap *soap,
     GHashTable *reftab;
     struct monitor *monitor;
     struct proxyreq *pr;
+    int tid;
+    int largc = 0;
+    char **largv = NULL;
+    int i;
+    char *tmpbuf;
+    int tmpbuflen;
+    int pid;
 
     target_rpc_init();
 
@@ -534,31 +622,17 @@ int vmi1__InstantiateTarget(struct soap *soap,
 
     pthread_mutex_lock(&target_rpc_mutex);
 
+    tid = monitor_get_unique_objid();
+    /* Force it to use our new monitored object id. */
+    s->target_id = tid;
+
     /*
      * Have to see if we need to fork this target, or spawn it in a
      * thread.  For now, just always spawn in a thread.
      */
-    if (1) {
-	t = target_instantiate(s);
-	if (!t) {
-	    target_free_spec(s);
-	    g_hash_table_destroy(reftab);
-	    pthread_mutex_unlock(&target_rpc_mutex);
-	    return soap_receiver_fault(soap,"Could not instantiate target!",
-				       "Could not instantiate target!");
-	}
-
-	if (target_open(t)) {
-	    verror("could not open target!\n");
-	    target_free(t);
-	    target_free_spec(s);
-	    g_hash_table_destroy(reftab);
-	    pthread_mutex_unlock(&target_rpc_mutex);
-	    return soap_receiver_fault(soap,"Could not open target!",
-				       "Could not open target after"
-				       " instantiating it successfully!");
-	}
-
+    if (!spec->dedicatedMonitor 
+	|| (spec->dedicatedMonitor 
+	    && *spec->dedicatedMonitor == xsd__boolean__false_)) {
 	/*
 	 * At this point, we need to create a monitor object associated with
 	 * this thread's new target; then create an evloop, attach it to our
@@ -594,7 +668,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	 * second buffering when passing a result back.
 	 */
 	monitor = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,
-				 t->id,monitor_objtype_target,t);
+				 tid,MONITOR_OBJTYPE_TARGET,NULL);
 	if (!monitor) {
 	    target_free_spec(s);
 	    g_hash_table_destroy(reftab);
@@ -603,9 +677,32 @@ int vmi1__InstantiateTarget(struct soap *soap,
 				       "Could not create monitor!");
 	}
 
+	/* Make sure to use our new evloop right away. */
+	t = target_instantiate(s,monitor->evloop);
+	if (!t) {
+	    target_free_spec(s);
+	    g_hash_table_destroy(reftab);
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not instantiate target!",
+				       "Could not instantiate target!");
+	}
+
+	monitor_add_primary_obj(monitor,t->id,MONITOR_OBJTYPE_TARGET,t);
+
+	if (target_open(t)) {
+	    verror("could not open target!\n");
+	    target_free(t);
+	    target_free_spec(s);
+	    g_hash_table_destroy(reftab);
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not open target!",
+				       "Could not open target after"
+				       " instantiating it successfully!");
+	}
+
 	proxyreq_attach_new_objid(pr,t->id,monitor);
 
-	_target_rpc_insert(t);
+	_target_rpc_insert(t->id,t);
 
 	r->target = t_target_to_x_TargetT(soap,t,reftab,NULL);
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -613,26 +710,120 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	return SOAP_OK;
     }
     else {
-	/* XXX: Use our special servetarget program to fork the target. */
+	/* Use our special servetarget program to fork the target. */
+	if (target_spec_to_argv(s,MONITORED_TARGET_LAUNCHER,&largc,&largv)) {
+	    target_free_spec(s);
+	    g_hash_table_destroy(reftab);
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not create argv from spec!",
+				       "Could not create argv from spec!");
+	}
 
+	monitor = monitor_create(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
+				 s->target_id,MONITOR_OBJTYPE_TARGET,NULL);
+	if (!monitor) {
+	    if (largc > 0) {
+		for (i = 0; i < largc; ++i)
+		    if (largv[i])
+			free(largv[i]);
+		free(largv);
+	    }
+	    monitor_destroy(monitor);
+	    target_free_spec(s);
+	    g_hash_table_destroy(reftab);
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not create monitor!",
+				       "Could not create monitor!");
+	}
+
+	/*
+	 * Setup I/O to child!  We always have to use our callbacks and
+	 * do our own logging.  BUT, we want to log/interact with the
+	 * spawned target's I/O, not to the child process that is
+	 * launching the child.  Unfortunately, this is more
+	 * time-consuming to implement, so, for now, just ensure that
+	 * the target gets launched using the child's I/O streams --
+	 * which our callbacks here will listen to.  It's either do that
+	 * or open additional streams that we tell the child about.
+	 *
+	 * So, for now, we just use the monitor's I/O abstractions, just
+	 * like if we were spawning an analysis.
+	 */
+	/* Hack the spec to get the target to use the child's FDs.*/
+
+	if (spec->stdinBytes && spec->stdinBytes->__size > 0) {
+	    s->infile = strdup("-");
+
+	    tmpbuf = malloc(spec->stdinBytes->__size);
+	    memcpy(tmpbuf,spec->stdinBytes->__ptr,spec->stdinBytes->__size);
+
+	    monitor_setup_stdin(monitor,tmpbuf,spec->stdinBytes->__size);
+	}
+
+	if (spec->logStdout && *spec->logStdout == xsd__boolean__true_) {
+	    s->outfile = strdup("-");
+
+	    tmpbuflen = 5 + 11 + 1 + 6 + 1 + 3 + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"/tmp/%d.stdout.log",s->target_id);
+
+	    monitor_setup_stdout(monitor,-1,tmpbuf,NULL);
+	}
+
+	if (spec->logStderr && *spec->logStderr == xsd__boolean__true_) {
+	    s->errfile = strdup("-");
+
+	    tmpbuflen = 5 + 11 + 1 + 6 + 1 + 3 + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"/tmp/%d.stderr.log",s->target_id);
+
+	    monitor_setup_stderr(monitor,-1,tmpbuf,NULL);
+	}
+
+	monitor_add_primary_obj(monitor,s->target_id,MONITOR_OBJTYPE_TARGET,NULL);
+
+	pid = monitor_spawn(monitor,MONITORED_TARGET_LAUNCHER,largv,NULL,"/tmp");
+	if (pid < 0) {
+	    verror("error spawning: %d (%s)\n",pid,strerror(errno));
+	    if (largc > 0) {
+		for (i = 0; i < largc; ++i)
+		    if (largv[i])
+			free(largv[i]);
+		free(largv);
+	    }
+	    monitor_destroy(monitor);
+	    target_free_spec(s);
+	    g_hash_table_destroy(reftab);
+	    pthread_mutex_unlock(&target_rpc_mutex);
+	    return soap_receiver_fault(soap,"Could not spawn forked target!",
+				       "Could not spawn forked target!");
+	}
+
+	proxyreq_attach_new_objid(pr,s->target_id,monitor);
+
+	_target_rpc_insert(s->target_id,NULL);
+
+	r->target = t_target_id_to_x_TargetT(soap,s->target_id,s,reftab,NULL);
+	pthread_mutex_unlock(&target_rpc_mutex);
+
+	return SOAP_OK;
     }
 }
 int vmi1__PauseTarget(struct soap *soap,
 		      vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (target_pause(t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -648,19 +839,18 @@ int vmi1__PauseTarget(struct soap *soap,
 int vmi1__ResumeTarget(struct soap *soap,
 		       vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (target_resume(t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -674,39 +864,65 @@ int vmi1__ResumeTarget(struct soap *soap,
 }
 
 int vmi1__CloseTarget(struct soap *soap,
-		      vmi1__TargetIdT tid,enum xsd__boolean kill,
+		      vmi1__TargetIdT tid,enum xsd__boolean kill,int kill_sig,
 		      struct vmi1__NoneResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
+    struct monitor *monitor;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!monitor_lookup_objid(tid,NULL,NULL,&monitor)) {
+	verror("no monitor for objid %d!\n",tid);
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target monitor!",
+				   "Specified target monitor does not exist!");
+    }
+
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
-
-    if (target_close(t)) {
-	pthread_mutex_unlock(&target_rpc_mutex);
-	return soap_receiver_fault(soap,"Could not close target!",
-				   "Could not close target!");
-    }
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (kill == xsd__boolean__true_) {
-	if (target_kill(t)) {
-	    pthread_mutex_unlock(&target_rpc_mutex);
-	    return soap_receiver_fault(soap,"Could not kill target!",
-				       "Could not kill target!");
-	}
+	t->kill_on_close = 1;
+	if (kill_sig > 0)
+	    t->kill_sig = kill_sig;
+	else 
+	    t->kill_sig = -1;
     }
 
-    _target_rpc_remove(t);
+    /*
+     * Let the monitor close/kill the target.
+     */
 
-    target_free(t);
+    monitor_interrupt_done(monitor,RESULT_SUCCESS,0);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    return SOAP_OK;
+}
+
+int vmi1__FinalizeTarget(struct soap *soap,
+			 vmi1__TargetIdT tid,
+			 struct vmi1__NoneResponse *r) {
+    struct target *t = NULL;
+
+    target_rpc_init();
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    if (!_target_rpc_lookup(tid,&t)) {
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
+
+    _target_rpc_remove(t->id);
 
     pthread_mutex_unlock(&target_rpc_mutex);
 
@@ -716,19 +932,18 @@ int vmi1__CloseTarget(struct soap *soap,
 int vmi1__PauseThread(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		      struct vmi1__NoneResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (target_pause_thread(t,thid,0)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
@@ -748,19 +963,18 @@ int vmi1__LookupTargetSymbolSimple(struct soap *soap,
     struct bsymbol *bsymbol;
     GHashTable *reftab;
     struct array_list *refstack;
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -799,19 +1013,18 @@ int vmi1__LookupTargetSymbol(struct soap *soap,
     struct bsymbol *bsymbol;
     GHashTable *reftab;
     struct array_list *refstack;
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -856,19 +1069,18 @@ int vmi1__LookupTargetAddrSimple(struct soap *soap,
     struct bsymbol *bsymbol;
     GHashTable *reftab;
     struct array_list *refstack;
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -907,19 +1119,18 @@ int vmi1__LookupTargetAddr(struct soap *soap,
     struct bsymbol *bsymbol;
     GHashTable *reftab;
     struct array_list *refstack;
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -964,19 +1175,18 @@ int vmi1__LookupTargetLineSimple(struct soap *soap,
     struct bsymbol *bsymbol;
     GHashTable *reftab;
     struct array_list *refstack;
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -1016,19 +1226,18 @@ int vmi1__LookupTargetLine(struct soap *soap,
     struct bsymbol *bsymbol;
     GHashTable *reftab;
     struct array_list *refstack;
-    struct target *t;
+    struct target *t = NULL;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (!opts)
 	opts = &defDebugFileOpts;
@@ -1161,9 +1370,23 @@ result_t _target_rpc_action_handler(struct action *action,
 
 	    rc = soap_call_vmi1__ActionEvent(&soap,urlbuf,NULL,&event,&aer);
 	    if (rc != SOAP_OK) {
-		verrorc("ActionEvent client call: ");
-		soap_print_fault(&soap,stderr);
+		if (soap.error == SOAP_EOF && soap.errnum == 0) {
+		    vwarn("timeout notifying %s:%d; removing!",
+			  tl->hostname,tl->port);
+		}
+		else {
+		    verrorc("ActionEvent client call failure (%s:%d): ",
+			    tl->hostname,tl->port);
+		    soap_print_fault(&soap,stderr);
+		}
+		/* Remove the listener. */
+		array_list_foreach_delete(tll,i);
+		free(tl->hostname);
+		free(tl);
+
+		continue;
 	    }
+
 	    /*
 	     * This is a bit crazy at the moment: if we have more than
 	     * one listener, let them all fight for the handler outcome.
@@ -1236,8 +1459,21 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
 
 	    rc = soap_call_vmi1__ProbeEvent(&soap,urlbuf,NULL,&event,&per);
 	    if (rc != SOAP_OK) {
-		verrorc("ProbeEvent client call: ");
-		soap_print_fault(&soap,stderr);
+		if (soap.error == SOAP_EOF && soap.errnum == 0) {
+		    vwarn("timeout notifying %s:%d; removing!",
+			  tl->hostname,tl->port);
+		}
+		else {
+		    verrorc("ProbeEvent client call failure (%s:%d): ",
+			    tl->hostname,tl->port);
+		    soap_print_fault(&soap,stderr);
+		}
+		/* Remove the listener. */
+		array_list_foreach_delete(tll,i);
+		free(tl->hostname);
+		free(tl);
+
+		continue;
 	    }
 	    /*
 	     * This is a bit crazy at the moment: if we have more than
@@ -1303,7 +1539,7 @@ int vmi1__ProbeSymbolSimple(struct soap *soap,
 			    vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 			    char *probeName,char *symbol,
 			    struct vmi1__ProbeResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     struct probe *p;
     target_status_t status;
     GHashTable *reftab;
@@ -1311,14 +1547,13 @@ int vmi1__ProbeSymbolSimple(struct soap *soap,
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1361,7 +1596,7 @@ int vmi1__ProbeSymbol(struct soap *soap,
 		      vmi1__ProbepointWhenceT *probepointWhence,
 		      vmi1__ProbepointSizeT *probepointSize,
 		      struct vmi1__ProbeResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     target_status_t status;
     struct bsymbol *bsymbol;
     GHashTable *reftab;
@@ -1373,14 +1608,13 @@ int vmi1__ProbeSymbol(struct soap *soap,
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1452,7 +1686,7 @@ int vmi1__ProbeAddr(struct soap *soap,
 		    vmi1__ProbepointWhenceT *probepointWhence,
 		    vmi1__ProbepointSizeT *probepointSize,
 		    struct vmi1__ProbeResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     target_status_t status;
     GHashTable *reftab;
     struct probe *probe;
@@ -1464,14 +1698,13 @@ int vmi1__ProbeAddr(struct soap *soap,
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1533,7 +1766,7 @@ int vmi1__ProbeLine(struct soap *soap,
 		    vmi1__ProbepointWhenceT *probepointWhence,
 		    vmi1__ProbepointSizeT *probepointSize,
 		    struct vmi1__ProbeResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     target_status_t status;
     GHashTable *reftab;
     struct probe *probe;
@@ -1544,14 +1777,13 @@ int vmi1__ProbeLine(struct soap *soap,
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     if (thid == -1)
 	thid = TID_GLOBAL;
@@ -1607,21 +1839,20 @@ int vmi1__ProbeLine(struct soap *soap,
 int vmi1__EnableProbe(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     target_status_t status;
     struct probe *probe;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     probe = target_lookup_probe(t,pid);
     if (!probe) {
@@ -1668,21 +1899,20 @@ int vmi1__EnableProbe(struct soap *soap,
 int vmi1__DisableProbe(struct soap *soap,
 		       vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		       struct vmi1__NoneResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     target_status_t status;
     struct probe *probe;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     probe = target_lookup_probe(t,pid);
     if (!probe) {
@@ -1729,21 +1959,20 @@ int vmi1__DisableProbe(struct soap *soap,
 int vmi1__RemoveProbe(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r) {
-    struct target *t;
+    struct target *t = NULL;
     target_status_t status;
     struct probe *probe;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
 
-    t = _target_rpc_lookup(tid);
-    if (!t) {
+    if (!_target_rpc_lookup(tid,&t)) {
 	pthread_mutex_unlock(&target_rpc_mutex);
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
-    PROXY_REQUEST_LOCKED(soap,t->id,&target_rpc_mutex);
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     probe = target_lookup_probe(t,pid);
     if (!probe) {

@@ -22,6 +22,11 @@
 #include "target.h"
 #include "probe.h"
 
+#include "target_linux_userproc.h"
+#ifdef ENABLE_XENSUPPORT
+#include "target_xen_vm.h"
+#endif
+
 #include <glib.h>
 
 /**
@@ -90,8 +95,129 @@ struct argp_option target_argp_opts[] = {
     { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 },
     { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 },
     { "breakpoint-mode",'L',"STRICT-LEVEL",0,"Set/increase the breakpoint mode level.",-3 },
+    { "target-id",'i',"ID",0,"Specify a numeric ID for the target.",0 },
+    { "in-file",'I',"FILE",0,"Deliver contents of FILE to target on stdin (if avail).",-4 },
+    { "out-file",'O',"FILE",0,"Log stdout (if avail) to FILE.",-4 },
+    { "err-file",'E',"FILE",0,"Log stderr (if avail) to FILE.",-4 },
     { 0,0,0,0,0,0 }
 };
+
+int target_spec_to_argv(struct target_spec *spec,char *arg0,
+			int *argc,char ***argv) {
+    int rc;
+    char **backend_argv = NULL;
+    int backend_argc = 0;
+    char **av = NULL;
+    int ac = 0;
+    int j;
+    int i;
+
+    /* Do the backend first. */
+    if (spec->target_type == TARGET_TYPE_PTRACE) {
+	if ((rc = linux_userproc_spec_to_argv(spec,&backend_argc,&backend_argv))) {
+	    verror("linux_userproc_spec_to_argv failed!\n");
+	    return -1;
+	}
+    }
+#ifdef ENABLE_XENSUPPORT
+    else if (spec->target_type == TARGET_TYPE_XEN) {
+	if ((rc = xen_vm_spec_to_argv(spec,&backend_argc,&backend_argv))) {
+	    verror("xen_vm_spec_to_argv failed!\n");
+	    return -1;
+	}
+    }
+#endif
+    else {
+	verror("unsupported backend type %d!\n",spec->target_type);
+	return -1;
+    }
+
+    /*
+     * Count arg0.
+     */
+    if (arg0) 
+	ac += 1;
+
+    /*
+     * Now count the generic opts.
+     *
+     * NB: XXX: for now, we don't do debug levels/flags, since the XML
+     * server doesn't expose them to the user, and that is the only
+     * caller of this function.
+     */
+    if (spec->start_paused) 
+	ac += 1;
+    if (spec->style == PROBEPOINT_SW)
+	ac += 1;
+    if (spec->bpmode > 0)
+	ac += 2;
+    if (spec->target_id > -1)
+	ac += 2;
+    if (spec->infile)
+	ac += 2;
+    if (spec->outfile)
+	ac += 2;
+    if (spec->errfile)
+	ac += 2;
+
+    ac += backend_argc;
+    ac += 1;
+    av = calloc(ac,sizeof(char *));
+
+    j = 0;
+
+    /*
+     * Handle arg0.
+     */
+    if (arg0) {
+	av[j++] = strdup(arg0);
+    }
+
+    /* Do the generic opts. */
+    if (spec->start_paused) {
+	av[j++] = strdup("-P");
+    }
+    if (spec->style == PROBEPOINT_SW) {
+	av[j++] = strdup("-s");
+    }
+    if (spec->bpmode > 0) {
+	av[j++] = strdup("-L");
+	av[j] = malloc(11);
+	snprintf(av[j],11,"%d",spec->bpmode);
+	++j;
+    }
+    if (spec->target_id > -1) {
+	av[j++] = strdup("-i");
+	av[j] = malloc(11);
+	snprintf(av[j],11,"%d",spec->target_id);
+	++j;
+    }
+    if (spec->infile) {
+	av[j++] = strdup("-I");
+	av[j++] = strdup(spec->infile);
+    }
+    if (spec->outfile) {
+	av[j++] = strdup("-O");
+	av[j++] = strdup(spec->outfile);
+    }
+    if (spec->errfile) {
+	av[j++] = strdup("-E");
+	av[j++] = strdup(spec->errfile);
+    }
+
+    for (i = 0; i < backend_argc; ++i) 
+	av[j++] = backend_argv[i];
+
+    if (backend_argc > 0)
+	free(backend_argv);
+
+    if (argc)
+	*argc = ac;
+    if (argv)
+	*argv = av;
+
+    return 0;
+}
 
 /*
  * The children this library will utilize.
@@ -196,9 +322,16 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
     target_argp_children[tstate.num_children].header = NULL;
     target_argp_children[tstate.num_children].group = 0;
 
-    driver_parser->children = target_argp_child;
+    if (driver_parser) {
+	driver_parser->children = target_argp_child;
 
-    retval = argp_parse(driver_parser,argc,argv,0,NULL,&tstate);
+	retval = argp_parse(driver_parser,argc,argv,0,NULL,&tstate);
+
+	driver_parser->children = NULL;
+    }
+    else {
+	retval = argp_parse(&target_argp,argc,argv,0,NULL,&tstate);
+    }
 
     if (retval) {
 	if (tstate.spec && tstate.spec->backend_spec)
@@ -207,8 +340,6 @@ struct target_spec *target_argp_driver_parse(struct argp *driver_parser,
 	    free(tstate.spec);
 	tstate.spec = NULL;
     }
-
-    driver_parser->children = NULL;
 
     return tstate.spec;
 }
@@ -300,8 +431,26 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    array_list_append(spec->debugfile_load_opts_list,opts);
 	    break;
 	}
+    case 'P':
+	spec->start_paused = 1;
+	break;
     case 'L':
-	++spec->bpmode;
+	if (arg)
+	    spec->bpmode = atoi(arg);
+	else
+	    ++spec->bpmode;
+	break;
+    case 'i':
+	spec->target_id = atoi(arg);
+	break;
+    case 'I':
+	spec->infile = strdup(arg);
+	break;
+    case 'E':
+	spec->errfile = strdup(arg);
+	break;
+    case 'O':
+	spec->outfile = strdup(arg);
 	break;
 
     default:
@@ -400,6 +549,8 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
     retval->state = state;
     retval->ops = ops;
     retval->spec = spec;
+
+    retval->infd = retval->outfd = retval->errfd = -1;
 
     retval->config = g_hash_table_new_full(g_str_hash,g_str_equal,free,free);
 
@@ -2564,28 +2715,10 @@ void target_reuse_thread_as_global(struct target *target,
     target->global_thread = thread;
 }
 
-void target_delete_thread(struct target *target,struct target_thread *tthread,
-			  int nohashdelete) {
+void target_detach_thread(struct target *target,struct target_thread *tthread) {
     GHashTableIter iter;
-    gpointer key;
     struct probepoint *probepoint;
     struct thread_action_context *tac,*ttac;
-
-    vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID"\n",tthread->tid);
-
-    /* We have to free the probepoints manually, then remove all.  We
-     * can't remove an element during an iteration, but we *can* free
-     * the data :).
-     */
-    g_hash_table_iter_init(&iter,tthread->hard_probepoints);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&probepoint)) {
-	probepoint_free_ext(probepoint);
-    }
-
-    g_hash_table_destroy(tthread->hard_probepoints);
-
-    array_list_free(tthread->tpc_stack);
 
     if (!list_empty(&tthread->ss_actions)) {
 	list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
@@ -2593,6 +2726,38 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
 	    free(tac);
 	}
     }
+
+    /* We have to free the probepoints manually, then remove all.  We
+     * can't remove an element during an iteration, but we *can* free
+     * the data :).
+     */
+    g_hash_table_iter_init(&iter,tthread->hard_probepoints);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&probepoint)) {
+	probepoint_free_ext(probepoint);
+    }
+
+    g_hash_table_remove_all(tthread->hard_probepoints);
+}
+
+void target_delete_thread(struct target *target,struct target_thread *tthread,
+			  int nohashdelete) {
+    vdebug(3,LA_TARGET,LF_THREAD,"thread %"PRIiTID"\n",tthread->tid);
+
+    /*
+     * If this function is being called as a target being detached,
+     * these probepoints must be freed *before* this function is called;
+     * this is a last-minute check that works well because sometimes
+     * this function is called during normal target runtime as threads
+     * come and go.
+     */
+
+    target_detach_thread(target,tthread);
+
+    array_list_free(tthread->tpc_stack);
+    tthread->tpc_stack = NULL;
+
+    g_hash_table_destroy(tthread->hard_probepoints);
+    tthread->hard_probepoints = NULL;
 
     if (tthread->state) {
 	if (tthread->target->ops->free_thread_state) 

@@ -30,8 +30,10 @@ TargetSpecT =
     element mode { TargetModeT },
     element threadBPMode { ThreadBPModeT },
     element startPaused { xsd:boolean },
-#    element logDir { text }?,
-#    element logFilePrefix { text }?,
+    element dedicatedMonitor { xsd:boolean }?,
+    element stdinBytes { xsd:hexBinary }?,
+    element logStdout { xsd:boolean }?,
+    element logStderr { xsd:boolean }?,
 
     element backendSpec {
         (TargetXenSpec | TargetPtraceSpec)
@@ -54,10 +56,7 @@ TargetPtraceSpecT =
        },
        element environment {
            element envvar { xsd:string }*
-       },
-       element stdoutLogfile { text }?,
-       element stderrLogfile { text }?,
-       element closeStdin { xsd:boolean }))
+       }))
 
 TargetPtraceSpec = element targetPtraceSpec { TargetPtraceSpecT }
 
@@ -81,8 +80,8 @@ TargetT =
     element tid { TargetIdT },
     TargetSpec,
     TargetStatus,
-    Thread+,
-    AddrSpace+
+    Thread*,
+    AddrSpace*
 Target = element target { TargetT }
 
 AddrSpaceT = 

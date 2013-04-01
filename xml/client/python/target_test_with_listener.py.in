@@ -18,6 +18,7 @@
 ##
 
 import logging
+import sys
 import os
 import os.path
 from suds.client import Client
@@ -40,6 +41,8 @@ url = 'file://%s/xml/service/target.wsdl.test' % (objdir,)
 clienturl = 'file://%s/xml/service/targetListener.wsdl.test' % (objdir,)
 
 dummy_threads = os.path.abspath("@top_builddir@/tests/dummy.threads")
+
+numSteps = 0
 
 #
 # Setup SOAP listener interface
@@ -81,12 +84,14 @@ def probeEvent(probeEvent,request=None):
             break
         pass
     print "ProbeEvent(%s 0x%08x): rip 0x%08x, %s" % (name,addr,rip,pet)
-    if probeEvent.has_key('probeEventType') and probeEvent['probeEventType'] == 'pre':
+    if numSteps > 0 \
+           and probeEvent.has_key('probeEventType') \
+           and probeEvent['probeEventType'] == 'pre':
         return { 'vmi1:result' : 0,
                  'vmi1:actionSpecs' : [
                      { 'vmi1:actionSpec' : {
                          'vmi1:tid' : tid,'vmi1:pid' : pid,'vmi1:type':'singlestep',
-                         'vmi1:whence' : 'oneshot','vmi1:singlestep' : { 'vmi1:stepCount' : 5 }
+                         'vmi1:whence' : 'oneshot','vmi1:singlestep' : { 'vmi1:stepCount' : numSteps }
                          } }
                      ]
                  }
@@ -128,6 +133,9 @@ def actionEvent(actionEvent):
     print "ActionEvent(%d,%d,%s): rip 0x%08x, %s" % (aid,pid,atype,rip,msg)
     return { 'result' : 0 }
 
+if len(sys.argv) > 1:
+    numSteps = sys.argv[1] + 0
+
 _namespaces = {
     'SOAP-ENV' : "http://www.w3.org/2003/05/soap-envelope",
     'SOAP-ENC' : "http://www.w3.org/2003/05/soap-encoding",
@@ -168,13 +176,13 @@ tspec = client.factory.create('TargetSpecT')
 tspec._type = "ptrace"
 tspec.mode = "live"
 tspec.startPaused = True
+tspec.logStdout = True
+tspec.logStderr = True
+#tspec.dedicatedMonitor = True
 tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
 tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
-tspec.backendSpec.targetPtraceSpec.closeStdin = False
-tspec.backendSpec.targetPtraceSpec.stdoutLogfile = None
-tspec.backendSpec.targetPtraceSpec.stderrLogfile = None
 
 target = client.service.InstantiateTarget(tspec)
 client.service.PauseTarget(target.tid)

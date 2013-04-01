@@ -31,6 +31,8 @@ import os.path
 objdir = os.path.abspath("@top_builddir@")
 url = 'file://%s/xml/service/target.wsdl.test' % (objdir,)
 client = Client(url,cache=None)
+dummy_threads = os.path.abspath("@top_builddir@/tests/dummy.threads")
+
 
 ttypes = client.service.ListTargetTypes()
 
@@ -38,19 +40,18 @@ tspec = client.factory.create('TargetSpecT')
 tspec._type = "ptrace"
 tspec.mode = "live"
 tspec.startPaused = True
+tspec.logStdout = False
+tspec.logStderr = False
+#tspec.dedicatedMonitor = True
 tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
-#tspec.backendSpec.targetPtraceSpec.program = "/bin/ls"
-tspec.backendSpec.targetPtraceSpec.program = "/home/johnsond/git/a3/vmi.obj/dummy.threads"
+tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
-tspec.backendSpec.targetPtraceSpec.closeStdin = False
-tspec.backendSpec.targetPtraceSpec.stdoutLogfile = None
-tspec.backendSpec.targetPtraceSpec.stderrLogfile = None
 
 target = client.service.InstantiateTarget(tspec)
 
-paused = client.service.PauseTarget(1)
+#paused = client.service.PauseTarget(target.tid)
 
-resumed = client.service.ResumeTarget(1)
+#resumed = client.service.ResumeTarget(target.tid)
 
-probe = client.service.ProbeSymbolSimple(1,-1,"foo","f10")
+#probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")

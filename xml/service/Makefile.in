@@ -100,7 +100,7 @@ OBJECTS-TARGET-RPCLIB := target_rpc.lo
 OBJECTS-TARGET-MODULE := target_xml_moduleC.lo \
 	target_rpc_moduleC.lo target_rpc_moduleServer.lo 
 OBJECTS-TARGET-SERVER := target.lo targetC.lo targetServer.lo 
-OBJECTS-TARGET-SERVERLIB := targetServerLib.lo
+OBJECTS-TARGET-SERVERLIB := targetC.lo targetServer.lo #targetServerLib.lo
 OBJECTS-TARGET := $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-XMLLIB) \
 	$(OBJECTS-TARGET-MODULE) \
 	$(OBJECTS-TARGET-SERVER) $(OBJECTS-TARGET-SERVERLIB)
@@ -120,6 +120,7 @@ OBJECTS := $(OBJECTS-LIB) $(OBJECTS-DEBUGINFO) $(OBJECTS-TARGET) \
 	$(OBJECTS-ANALYSIS) 
 
 PROGRAMS := debuginfo target analysis
+HELPERS  := monitored_target
 
 INST_INC = 
 INST_LIBEXEC = $(PROGRAMS)
@@ -130,7 +131,7 @@ NAMESPACE = http://anathema.flux.utah.edu/schema/vmi/1
 # Get libtool to shut up when compiling.
 RM=rm -f
 
-all:	$(PROGRAMS) all-subdirs
+all:	$(PROGRAMS) $(HELPERS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
@@ -187,6 +188,7 @@ DEFPORT-analysis = 3903
 #	sed -i -e 's/\(#define $(@:.wsdl=)_srvStub_H\)/\1\n#include "envH.h"/' \
 #		$(@:.wsdl=)_srvStub.h
 	cp -p $@ $@.nostrip
+	cp -p $(@:.wsdl=).nsmap $(@:.wsdl=).nsmap.c
 	@if [ "$(@:.wsdl=)" = "target" ]; then \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
 			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
@@ -225,6 +227,7 @@ DEFPORT-analysis = 3903
 #	sed -i -e 's/\(#define $(@:.wsdl=)_srvStub_H\)/\1\n#include "envH.h"/' \
 #		$(@:.wsdl=)_srvStub.h
 	cp -p $(@:_listener.wsdl=)Listener.wsdl $(@:_listener.wsdl=)Listener.wsdl.nostrip
+	cp -p $(@:_listener.wsdl=)Listener.nsmap $(@:_listener.wsdl=)Listener.nsmap.c
 	@if [ "$(@:_listener.wsdl=)" = "target" ]; then \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
 			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
@@ -331,6 +334,9 @@ target.lo: $(SRCDIR)/target.c $(HEADERS) target.wsdl
 analysis.lo: $(SRCDIR)/analysis.c $(HEADERS) analysis.wsdl
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
+monitored_target.lo: $(SRCDIR)/monitored_target.c $(HEADERS) target.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
 %.lo: $(SRCDIR)/%.c 
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
@@ -346,6 +352,9 @@ debuginfo: debuginfo.wsdl \
 	   $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 	   $(OBJECTS-DEBUGINFO-MODULE) $(OBJECTS-DEBUGINFO-SERVER) \
 	   $(STATICLIBS) $(LDFLAGS)
+
+%.nsmap.lo: %.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $(@:.lo=).c 
 
 target: target.wsdl \
 	  $(OBJECTS-LIB) \
@@ -365,6 +374,25 @@ target: target.wsdl \
 		$(OBJECTS-DEBUGINFO-MODULE) \
 		$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 		$(STATICLIBS) $(LDFLAGS)
+
+monitored_target: target.nsmap.lo \
+	  $(OBJECTS-LIB) \
+	  $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+	  $(OBJECTS-TARGETLISTENER-CLIENTLIB) \
+	  $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
+	  $(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVERLIB) \
+	  $(OBJECTS-DEBUGINFO-MODULE) \
+	  $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+	  $(STATICLIBS) monitored_target.lo
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+		$(OBJECTS-LIB) \
+		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
+		$(OBJECTS-TARGETLISTENER-CLIENTLIB) \
+		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
+		$(OBJECTS-TARGET-MODULE) $(OBJECTS-TARGET-SERVERLIB) \
+		$(OBJECTS-DEBUGINFO-MODULE) \
+		$(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
+		$(STATICLIBS) monitored_target.lo target.nsmap.lo $(LDFLAGS)
 
 analysis: analysis.wsdl \
 	  $(OBJECTS-LIB) \
@@ -389,7 +417,7 @@ analysis: analysis.wsdl \
 		$(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 		$(STATICLIBS) $(LDFLAGS)
 
-install: $(PROGRAMS) def-install install-subdirs
+install: $(PROGRAMS) $(HELPERS) def-install install-subdirs
 	mkdir -p $(INSTALL_SHAREDIR)/vmi
 	mkdir -p $(INSTALL_SHAREDIR)/share/vmi/wsdl
 	$(INSTALL) -m 644 debuginfo.wsdl ${INSTALL_SHAREDIR}/share/vmi/wsdl
@@ -421,6 +449,7 @@ clean-analysis:
 clean: clean-common clean-xsdc clean-debuginfo clean-target clean-analysis clean-subdirs
 	$(RM) *.nsmap *.xsd
 	$(RM) RECV.log TEST.log
+	$(RM) $(PROGRAMS) $(HELPERS)
 
 distclean: distclean-subdirs
 

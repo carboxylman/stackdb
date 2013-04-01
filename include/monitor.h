@@ -23,6 +23,7 @@
 #include <pthread.h>
 #include <limits.h>
 
+#include "common.h"
 #include "evloop.h"
 
 struct monitor;
@@ -90,6 +91,20 @@ struct monitor_objtype_ops {
      * @evloop.
      */
     int (*evloop_detach)(struct evloop *evloop,void *obj);
+    /*
+     * When the monitor is shutdown, we call this function to allow the
+     * object to clean itself up and destroy itself.
+     *
+     * @sig is currently set to 1 if close should kill; 0 if not (i.e.,
+     * hard close vs soft close).  Later we'll maybe need to define more
+     * semantics.
+     */
+    int (*close)(int sig,void *obj);
+    /*
+     * If @evloop is already attached to @obj, this function should
+     * return 1; if not, 0; if error, < 0.
+     */
+    int (*evloop_is_attached)(struct evloop *evloop,void *obj);
     int (*error)(monitor_error_t error,void *obj);
     int (*fatal_error)(monitor_error_t error,void *obj);
     /*
@@ -138,7 +153,11 @@ struct monitor {
 
     uint8_t running:1,
 	    interrupt:1,
-	    halfdead:1;
+	    halfdead:1,
+	    done:1,
+	    finalize:1;
+
+    result_t done_status;
 
     /*
      * Each sent monitor message can be associated with an object.
@@ -318,6 +337,13 @@ void monitor_fini(void);
 int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops);
 
 /*
+ * Get a new ID for a monitored object; we want these things to be
+ * globally unique, even amongst different monitored object types.
+ * Makes life much easier.
+ */
+int monitor_get_unique_objid(void);
+
+/*
  * Creates a monitor of @type, for a valid @objtype.
  */
 struct monitor *monitor_create(monitor_type_t type,monitor_flags_t flags,
@@ -339,6 +365,18 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
 				      int objid,int objtype,void *obj,
 				      evloop_handler_t custom_recv_evh,
 				      evloop_handler_t custom_child_recv_evh);
+
+/*
+ * If you created a monitor without an @obj, you MUST call this function
+ * before the monitored obj will be installed into the main monitor
+ * hashtables.
+ *
+ * (Users might call this when they need the monitor created before the
+ * object is created; i.e., the target library might want the
+ * monitor-created evloop as it is creating the target object.)
+ */
+int monitor_add_primary_obj(struct monitor *monitor,
+			    int objid,int objtype,void *obj);
 
 /*
  * Looks up a monitor based on monitored object id.  Useful for server
@@ -408,6 +446,19 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 
 /*
  * Runs the monitor (basically just runs its internal evloop).
+ *
+ * If the monitor is done (via monitor_interrupt_done), returns 0 and
+ * monitor_is_done() returns 1.
+ *
+ * If the monitor's child half is dead, returns 0 and
+ * monitor_is_halfdead() returns 1.
+ *
+ * If the monitor was interrupted, returns 0.  If the monitor's evloop
+ * has no descriptors left, also returns 0.
+ *
+ * If the evloop failed badly internally (probably a bug), we remove all
+ * its monitored objects, set the monitor to a "done" state (its
+ * done_status set to RESULT_ERROR), and return -1.
  */
 int monitor_run(struct monitor *monitor);
 
@@ -415,6 +466,26 @@ int monitor_run(struct monitor *monitor);
  * Breaks a monitor out of its evloop (causes monitor_run to return).
  */
 void monitor_interrupt(struct monitor *monitor);
+
+/*
+ * Breaks a monitor out of its evloop (causes monitor_run to return),
+ * and ensures that monitor_run() will not run again!  Only the monitor
+ * thread itself should call this function (i.e., when it detects that
+ * it should terminate by receiving a msg or processing some state
+ * change).  If @finalize is set, the caller of monitor_run() should
+ * destroy the monitor, rather than allowing it to persist.
+ */
+void monitor_interrupt_done(struct monitor *monitor,result_t status,int finalize);
+
+/*
+ * Returns 1 if monitor is done; else 0;
+ */
+int monitor_is_done(struct monitor *monitor);
+
+/*
+ * Returns 1 if monitor should self-terminate; else 0;
+ */
+int monitor_should_self_finalize(struct monitor *monitor);
 
 /*
  * Breaks a monitor out of its evloop (causes monitor_run to return),
@@ -429,6 +500,11 @@ void monitor_halfdead(struct monitor *monitor);
  * Returns 1 if monitor half has died; else 0 if it is live.
  */
 int monitor_is_halfdead(struct monitor *monitor);
+
+/*
+ * Shuts down a monitor and destroys the evloop.
+ */
+void monitor_shutdown(struct monitor *monitor);
 
 /*
  * Cleans up and frees a monitor.
