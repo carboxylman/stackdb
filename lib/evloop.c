@@ -51,7 +51,6 @@ int evloop_set_fd(struct evloop *evloop,int fd,int fdtype,
 
     if (!handler) {
 	verror("must set a handler!\n");
-	errno = EINVAL;
 	return -1;
     }
 
@@ -103,8 +102,7 @@ static int __evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
     fdinfo = (struct evloop_fdinfo *)g_hash_table_lookup(evloop->tab,
 						     (gpointer)(uintptr_t)fd);
     if (!fdinfo) {
-	verror("no such fd %d\n",fd);
-	errno = EINVAL;
+	vwarnopt(5,LA_LIB,LF_EVLOOP,"no such fd %d\n",fd);
 	return -1;
     }
 
@@ -162,8 +160,7 @@ int evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
     fdinfo = (struct evloop_fdinfo *)g_hash_table_lookup(evloop->tab,
 						     (gpointer)(uintptr_t)fd);
     if (!fdinfo) {
-	verror("no such fd %d\n",fd);
-	errno = EINVAL;
+	vwarnopt(5,LA_LIB,LF_EVLOOP,"no such fd %d\n",fd);
 	return -1;
     }
 
