@@ -33,6 +33,7 @@ PACKAGE = vmi1
 
 JAVA = @JAVA@
 JAVAC = @JAVAC@
+JAR = @JAR@
 JAVA_HOME = @JAVA_HOME@
 
 AXIS2_HOME = @AXIS2_HOME@
@@ -45,10 +46,11 @@ AXIS2_DB :=  "adb"
 # Adjust classpath stuff for different databindings.
 #
 ifeq ($(AXIS2_DB),"jaxbri")
-    LOCAL_CLASSPATH := @abs_builddir@/debuginfo/build/lib/Debuginfo-test-client.jar:@abs_builddir@/target/build/lib/Target-test-client.jar
+    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/lib/Debuginfo-test-client.jar:@abs_builddir@/target/build/lib/Target-test-client.jar
 else
-   LOCAL_CLASSPATH := @abs_builddir@/debuginfo/build/lib/debuginfo.aar:@abs_builddir@/target/build/lib/target.aar:@abs_builddir@/target/build/lib/targetListener.aar
+    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/lib/debuginfo.jar:@abs_builddir@/target/build/lib/target.jar:@abs_builddir@/target-extra/build/lib/target-extra.jar:@abs_builddir@/debuginfo/build/classes:@abs_builddir@/target/build/classes:@abs_builddir@/target-extra/build/classes
 endif
+RUN_CLASSPATH := @abs_builddir@/debuginfo-all.jar:@abs_builddir@/target-all.jar
 #
 # Only enable if you are using adb and want validation disabled.  For now,
 # we default to this because ADB without validation does not work with our 
@@ -62,26 +64,33 @@ endif
 ANT = @ANT@
 
 ifneq ($(CLASSPATH),"")
-    CLASSPATH := $(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH):$(CLASSPATH)
+    BUILD_CLASSPATH := $(AXIS2_CLASSPATH):$(BUILD_CLASSPATH):$(CLASSPATH)
+    RUN_CLASSPATH := $(AXIS2_CLASSPATH):$(RUN_CLASSPATH):$(CLASSPATH)
 else
-    CLASSPATH := $(AXIS2_CLASSPATH):$(LOCAL_CLASSPATH)
+    BUILD_CLASSPATH := $(AXIS2_CLASSPATH):$(BUILD_CLASSPATH)
+    RUN_CLASSPATH := $(AXIS2_CLASSPATH):$(RUN_CLASSPATH)
 endif
 
 STUBS = debuginfo/src/$(PACKAGE)/DebuginfoStub.java \
 	target/src/$(PACKAGE)/TargetStub.java
 SERVERSTUBS = target/src/$(PACKAGE)/TargetListenerSkeleton.java
-JARS = debuginfo/build/lib/debuginfo.aar target/build/lib/target.aar 
+JARS =  debuginfo/build/lib/debuginfo.jar debuginfo-all.jar \
+	target/build/lib/target.jar target-extra/build/lib/target-extra.jar \
+	target-all.jar
 
-PROGRAMS = DebuginfoTest.class TargetTest.class
+TARGET_LIBS = SimpleService.class SimpleServiceServer.class \
+	      SimpleTargetListener.class
 
-all:	run.sh $(PROGRAMS) all-subdirs
+PROGRAMS = DebuginfoTest.class TargetTest.class 
+
+all:	run.sh $(PROGRAMS) $(JARS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
 run.sh:
-	echo "#/bin/sh" > $@
+	echo "#!/bin/sh" > $@
 	echo "" >> $@
-	echo "$(JAVA) -classpath $(CLASSPATH) " '$$1' >> $@
+	echo "$(JAVA) -classpath $(RUN_CLASSPATH) " '$$@' >> $@
 	chmod ug+x $@
 
 debuginfo/src/$(PACKAGE)/DebuginfoStub.java: $(OBJDIR)/xml/service/debuginfo.wsdl.test
@@ -105,28 +114,54 @@ target/src/$(PACKAGE)/TargetStub.java: $(OBJDIR)/xml/service/target.wsdl.test
 		 -o target -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -u -uri $<
 
 debuginfo/build/lib/debuginfo.aar: debuginfo/src/$(PACKAGE)/DebuginfoStub.java
-	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(CLASSPATH) \
+	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
 		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
 		$(ANT) -buildfile debuginfo/build.xml jar.all)
 
+debuginfo/build/lib/debuginfo.jar: debuginfo/build/lib/debuginfo.aar
+	cp -p $< $@
+
+debuginfo-all.jar: debuginfo/build/lib/debuginfo.jar
+	cp -p $< $@
+
 target/build/lib/target.aar: target/src/$(PACKAGE)/TargetListenerSkeleton.java \
 		target/src/$(PACKAGE)/TargetStub.java 
-	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(CLASSPATH) \
+	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
 		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
 		$(ANT) -buildfile target/build.xml jar.all)
 
+target/build/lib/target.jar: target/build/lib/target.aar
+	cp -p $< $@
+
+target-all.jar: target/build/lib/target.jar target-extra/build/lib/target-extra.jar
+	rm -f $@
+	jar -cf $@ -C target/build/classes/ vmi1 -C target resources
+	jar -uf $@ -C target-extra/build/ vmi1 
+
+target-extra/build/$(PACKAGE)/%.class: $(SRCDIR)/%.java
+	mkdir -p target-extra/build/vmi1
+	$(JAVAC) -classpath $(BUILD_CLASSPATH):target-extra/build -d target-extra/build/ $<
+
+target-extra/build/lib/target-extra.jar: $(addprefix target-extra/build/$(PACKAGE)/,$(TARGET_LIBS)) \
+		target/build/lib/target.jar
+	rm -rf target-extra/build/lib
+	mkdir -p target-extra/build/lib
+	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
+		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
+		$(JAR) cvf $@ -C target-extra/build vmi1)
+
 DebuginfoTest.class: DebuginfoTest.java debuginfo/build/lib/debuginfo.aar
-	$(JAVAC) -classpath $(CLASSPATH) DebuginfoTest.java
+	$(JAVAC) -classpath $(BUILD_CLASSPATH) DebuginfoTest.java
 
 TargetTest.class: TargetTest.java target/build/lib/target.aar
-	$(JAVAC) -classpath $(CLASSPATH) TargetTest.java
+	$(JAVAC) -classpath $(BUILD_CLASSPATH) TargetTest.java
 
 install: def-install install-subdirs
 
 clean: clean-subdirs
 	rm -rf $(STUBS) $(SERVERSTUBS) 
-	rm -f $(PROGRAMS)
-	rm -rf debuginfo target 
+	rm -f $(PROGRAMS) $(JARS)
+	rm -rf debuginfo target target-extra
 	rm -f run.sh
 
 distclean: distclean-subdirs
