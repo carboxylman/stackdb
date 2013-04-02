@@ -48,7 +48,8 @@ AXIS2_DB :=  "adb"
 ifeq ($(AXIS2_DB),"jaxbri")
     BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/lib/Debuginfo-test-client.jar:@abs_builddir@/target/build/lib/Target-test-client.jar
 else
-    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/lib/debuginfo.jar:@abs_builddir@/target/build/lib/target.jar:@abs_builddir@/target-extra/build/lib/target-extra.jar:@abs_builddir@/debuginfo/build/classes:@abs_builddir@/target/build/classes:@abs_builddir@/target-extra/build/classes
+#@abs_builddir@/debuginfo/build/lib/debuginfo.jar:@abs_builddir@/target/build/lib/target.jar:@abs_builddir@/target-extra/build/lib/target-extra.jar:
+    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/classes:@abs_builddir@/target/build/classes:@abs_builddir@/target-extra/build/classes
 endif
 RUN_CLASSPATH := @abs_builddir@/debuginfo-all.jar:@abs_builddir@/target-all.jar
 #
@@ -90,7 +91,13 @@ include $(TOP_SRCDIR)/Makerules
 run.sh:
 	echo "#!/bin/sh" > $@
 	echo "" >> $@
-	echo "$(JAVA) -classpath $(RUN_CLASSPATH) " '$$@' >> $@
+	echo "$(JAVA) -classpath $(RUN_CLASSPATH) \\" >> $@
+	echo "    -Djava.endorsed.dirs=${AXIS2_HOME}/lib/endorsed:$(JAVA_HOME)/jre/lib/endorsed:$(JAVA_HOME)/lib/endorsed \\" >> $@
+#	echo "    -Djava.security.manager \\" >> $@
+#	echo "    -Djava.security.policy=$(AXIS2_HOME)/conf/axis2.policy \\"
+	echo "    -Daxis2.home=$(AXIS2_HOME) \\" >> $@
+	echo "    -Dsun.lang.ClassLoader.allowArraySyntax=true \\" >> $@
+	echo '    $$@' >> $@
 	chmod ug+x $@
 
 debuginfo/src/$(PACKAGE)/DebuginfoStub.java: $(OBJDIR)/xml/service/debuginfo.wsdl.test

@@ -19,9 +19,6 @@ import org.apache.axis2.description.AxisService;
 import org.apache.axis2.engine.MessageReceiver;
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.transport.http.SimpleHTTPServer;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.net.MalformedURLException;
 
 public class SimpleServiceServer extends AxisServer {
     private static final Log log = LogFactory.getLog(SimpleServiceServer.class);
@@ -38,12 +35,12 @@ public class SimpleServiceServer extends AxisServer {
     public AxisService buildService(String className) 
 	throws ClassNotFoundException,InstantiationException,
 	       IllegalAccessException,AxisFault {
-	return buildService((SimpleService)SimpleServiceServer.class.getClassLoader().loadClass(className).newInstance()); //Class.forName(className).newInstance());
+	return buildService((SimpleService)Class.forName(className,true,this.getClass().getClassLoader()).newInstance());
     }
 
     public AxisService buildService(SimpleService ss) 
 	throws ClassNotFoundException,AxisFault {
-	return buildService(ss.getClass().toString(),
+	return buildService(ss.getClass().getCanonicalName(),
 			    ss.getMessageReceiverClassMap(),
 			    ss.getTargetNamespace(),
 			    ss.getSchemaNamespace());
@@ -54,18 +51,10 @@ public class SimpleServiceServer extends AxisServer {
 				    String targetNamespace,String schemaNamespace) 
 	throws ClassNotFoundException,AxisFault {
 	AxisConfiguration ac = getConfigurationContext().getAxisConfiguration();
-	URL[] urls = new URL[1];
-	try {
-	    urls[0] = new URL("file:///home/johnsond/git/a3/vmi.obj/xml/client/java/target-all.jar");
-	}
-	catch (MalformedURLException e) {
-	    e.printStackTrace();
-	    return null;
-	}
 	AxisService as = 
 	    AxisService.createService(implClass,ac,msgReceiverClassMap,
 				      targetNamespace,schemaNamespace,
-				      new URLClassLoader(urls,SimpleServiceServer.class.getClassLoader()));
+				      this.getClass().getClassLoader());
 	ac.addService(as);
 
 	return as;
