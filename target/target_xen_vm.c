@@ -59,7 +59,8 @@
 struct target *xen_vm_instantiate(struct target_spec *spec,
 				  struct evloop *evloop);
 
-static struct target *xen_vm_attach(struct target_spec *spec);
+static struct target *xen_vm_attach(struct target_spec *spec,
+				    struct evloop *evloop);
 
 static char *xen_vm_tostring(struct target *target,char *buf,int bufsiz);
 static int xen_vm_init(struct target *target);
@@ -404,8 +405,9 @@ char *xen_vm_argp_header = "Xen Backend Options";
  ** These are the only user-visible functions.
  **/
 
-struct target *xen_vm_instantiate(struct target_spec *spec) {
-    return xen_vm_attach(spec);
+struct target *xen_vm_instantiate(struct target_spec *spec,
+				  struct evloop *evloop) {
+    return xen_vm_attach(spec,evloop);
 }
 
 struct xen_vm_spec *xen_vm_build_spec(void) {
@@ -423,8 +425,6 @@ void xen_vm_free_spec(struct xen_vm_spec *xspec) {
 	free(xspec->config_file);
     if(xspec->replay_dir)
 	free(xspec->replay_dir);
-    if (xspec->console_logfile)
-	free(xspec->console_logfile);
 
     free(xspec);
 }
@@ -435,7 +435,8 @@ void xen_vm_free_spec(struct xen_vm_spec *xspec) {
  * that.  We also read how much mem the domain has; if it is
  * PAE-enabled; 
  */
-struct target *xen_vm_attach(struct target_spec *spec) {
+struct target *xen_vm_attach(struct target_spec *spec,
+			     struct evloop *evloop) {
     struct xen_vm_spec *xspec = (struct xen_vm_spec *)spec->backend_spec;
     struct target *target = NULL;
     struct xen_vm_state *xstate = NULL;
@@ -739,6 +740,11 @@ struct target *xen_vm_attach(struct target_spec *spec) {
     *(((char *)(target->full_ret_instrs))+1) = 0xc3;
     target->full_ret_instrs_len = 2;
     target->full_ret_instr_count = 2;
+
+    if (evloop && xstate->evloop_fd < 0) {
+	target->evloop = evloop;
+	xen_vm_attach_evloop(target,evloop);
+    }
 
     vdebug(5,LA_TARGET,LF_XV,"opened dom %d\n",xstate->id);
 
@@ -1899,8 +1905,9 @@ static int xen_vm_attach_internal(struct target *target) {
     /* Null out current state so we reload and see that it's paused! */
     xstate->dominfo_valid = 0;
 
-    if (target->evloop)
+    if (target->evloop && xstate->evloop_fd < 0) {
 	xen_vm_attach_evloop(target,target->evloop);
+    }
 
     target->attached = 1;
 
@@ -2817,7 +2824,7 @@ static int __value_get_append_tid(struct target *target,struct value *value,
 	/* errno should be set for us. */
 	return -1;
     }
-    array_list_append(list,(void *)v_i32(v));
+    array_list_append(list,(void *)(uintptr_t)v_i32(v));
     value_free(v);
 
     return 0;
