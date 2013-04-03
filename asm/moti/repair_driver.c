@@ -28,8 +28,70 @@
 /* need to decide where we want to keep this header file */
 #include<linux/repair_driver.h>
 
-struct cmd_ring_channel tx_ring_channel, rx_ring_channel;
+#define SUB_MODULE_COUNT 10
+
+static struct task_struct *driver_thread;
+struct submod_table submod;
+struct cmd_ring_channel req_ring_channel, res_ring_channel;
 static unsigned int cmd_buf_size = 4; /* buffer size (in pages) */
+
+static int load_submodules(void *__unused) {
+
+    struct cmd_rec *cmd;
+    struct ack_rec *ack;
+    int rc;
+    unsigned long req_cons;
+    unsigned long res_prod;
+
+    /*wait till the buffer is populate with some command*/
+    while (!kthread_should_stop()) {
+        if (cmd_ring_channel_get_cons(&req_ring_channel) >= cmd_ring_channel_get_prod(&req_ring_channel)) {
+            printk(KERN_INFO "Transmitter ring buffer empty\n");
+            yield();
+            continue;
+        }
+
+        printk(KERN_INFO "Read a command from the command buffer\n");
+        /* Read the command */
+        cmd = (struct cmd_rec*) cmd_ring_channel_get_rec(&req_ring_channel, cmd_ring_channel_get_cons(&req_ring_channel));
+
+        /* We dont want to increment the cons index here, because we will copy out the
+         * record in the submodule and then increment the cons index. */
+
+        req_cons = cmd_ring_channel_get_cons(req_ring_channel);
+        req_cons += 1;
+        cmd_ring_channel_set_cons(&req_ring_channel, req_cons);
+
+        /* based on the submodule id switch to appropriate block */
+        switch(cmd->submodule_id) {
+        case 1 :
+            if(submod.mod_table[cmd->submodule_id] == NULL)
+            printk(KERN_INFO "Loading the the psaction sub module");
+            if(rc = request_module("psaction_module") < 0) {
+                printk(KERN_INFO "psaction_module not available\n");
+                return -ENODEV;
+            }
+
+            /* get the address in the res_ring buffer where the record should be inserted */
+            ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(&res_ring_channel, cmd_ring_channel_get_prod(&res_ring_channel));
+            /* call the appropriate function in the submodule based on command id*/
+            result = submod.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+
+            /* Increment the prod index for the res_ring_channel */
+            res_prod = cmd_ring_channel_get_prod(res_ring_channel);
+            res_prod += 1;
+            cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
+            break;
+
+        default :
+            printk(KERN_INFO "Invalid command Id specified, hence no module loaded\n");
+            return -1;
+
+        }
+    }
+}
+
+
 
 int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
         unsigned long size_in_pages, unsigned long size_of_a_rec,
@@ -119,6 +181,28 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
 
 }
 
+static int initialize_submodule_table(void* __unused ) {
+
+    int i;
+    submod.submodule_count = SUB_MODULE_COUNT;
+
+    /* Allocate memory for submodule table */
+    submod.mod_table = kmalloc(SUB_MODULE_COUNT*sizeof(struct * submodule),GFP_KERNEL);
+    if(!submod.mod_table) {
+        printk(KERN_INFO "Transmitter ring buffer initialization failed\n");
+        return -ENOMEM;
+    }
+
+    /* initialize the array of pointers to submodule struct */
+    for(i = 0; i<SUB_MODULE_COUNT; i++) {
+        submod.mod_table[i] = NULL;
+    }
+
+    return 0;
+}
+
+
+
 static int initialize_buffer(void *__unused) {
 
     int ret = 0;
@@ -130,7 +214,7 @@ static int initialize_buffer(void *__unused) {
         return -ENOMEM;
     }
 
-    if (cmd_ring_channel_alloc_with_metadata(&rx_ring_channel, cmd_buf_size, sizeof(struct cmd_rec), 0) == 0) {
+    if (cmd_ring_channel_alloc_with_metadata(&rx_ring_channel, cmd_buf_size, sizeof(struct ack_rec), 0) == 0) {
         printk(KERN_INFO "Receiver ring buffer initialized.\n");
     }
     else {
@@ -165,12 +249,30 @@ int cmd_ring_channel_free(struct cmd_ring_channel *ring_channel) {
 static int __init initialize_driver(void) {
     int result;
 
-    printk(KERN_INFO "Creating a kthread to initialize the ring buffer. \n");
+    /* initialize the submodule table */
+    result = initialize_submodule_table(NULL);
+    if (!result) {
+        printk(KERN_INFO "Sub module table initialization failed\n");
+        return -ENOMEM;
+    }
+    /* create the ring buffers */
     result = initialize_buffer(NULL);
     if (!result) {
         printk(KERN_INFO "Ring-Buffer initialization failed\n");
         return -ENOMEM;
     }
+
+    /* Now that the ring buffers are created we fork a  kthread to
+     * continiously monitor the producer and consumer  indices. If there
+     * a command in the buffer then load the appropriate sub module.
+     */
+    printk(KERN_INFO "Creating a  driver kthread in the init function\n");
+    thread = kthread_run(load_submodules, NULL, "repair_submodule_loader");
+    if (IS_ERR(thread)) {
+        printk(KERN_INFO "Kthread creation failed\n");
+        return -ENOMEM;
+    }
+
     return 0;
 }
 
@@ -186,6 +288,10 @@ static void __exit cleanup_driver(void) {
         printk(KERN_INFO "Receiver ring buffer cleanup failed\n");
     }
 }
+
+EXPORT_SYMBOL(req_ring_channel);
+EXPORT_SYMBOL(res_ring_channel);
+EXPORT_SYMBOL(submod);
 
 module_init( initialize_driver);
 module_exit( cleanup_driver);
