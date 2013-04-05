@@ -34,6 +34,7 @@ PACKAGE = vmi1
 JAVA = @JAVA@
 JAVAC = @JAVAC@
 JAR = @JAR@
+JDB = @JDB@
 JAVA_HOME = @JAVA_HOME@
 
 AXIS2_HOME = @AXIS2_HOME@
@@ -79,12 +80,13 @@ JARS =  debuginfo/build/lib/debuginfo.jar debuginfo-all.jar \
 	target/build/lib/target.jar target-extra/build/lib/target-extra.jar \
 	target-all.jar
 
-TARGET_LIBS = SimpleService.class SimpleServiceServer.class \
+TARGET_LIBS = CustomURIResolver.class URLWSDLLocator.class ResourceSchemaGenerator.class \
+	      SimpleService.class SimpleServiceServer.class \
 	      SimpleTargetListener.class
 
 PROGRAMS = DebuginfoTest.class TargetTest.class 
 
-all:	run.sh $(PROGRAMS) $(JARS) all-subdirs
+all:	run.sh run-db.sh $(PROGRAMS) $(JARS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
@@ -92,6 +94,18 @@ run.sh:
 	echo "#!/bin/sh" > $@
 	echo "" >> $@
 	echo "$(JAVA) -classpath $(RUN_CLASSPATH) \\" >> $@
+	echo "    -Djava.endorsed.dirs=${AXIS2_HOME}/lib/endorsed:$(JAVA_HOME)/jre/lib/endorsed:$(JAVA_HOME)/lib/endorsed \\" >> $@
+#	echo "    -Djava.security.manager \\" >> $@
+#	echo "    -Djava.security.policy=$(AXIS2_HOME)/conf/axis2.policy \\"
+	echo "    -Daxis2.home=$(AXIS2_HOME) \\" >> $@
+	echo "    -Dsun.lang.ClassLoader.allowArraySyntax=true \\" >> $@
+	echo '    $$@' >> $@
+	chmod ug+x $@
+
+run-db.sh:
+	echo "#!/bin/sh" > $@
+	echo "" >> $@
+	echo "$(JDB) -classpath $(RUN_CLASSPATH) \\" >> $@
 	echo "    -Djava.endorsed.dirs=${AXIS2_HOME}/lib/endorsed:$(JAVA_HOME)/jre/lib/endorsed:$(JAVA_HOME)/lib/endorsed \\" >> $@
 #	echo "    -Djava.security.manager \\" >> $@
 #	echo "    -Djava.security.policy=$(AXIS2_HOME)/conf/axis2.policy \\"
@@ -143,7 +157,7 @@ target/build/lib/target.jar: target/build/lib/target.aar
 target-all.jar: target/build/lib/target.jar target-extra/build/lib/target-extra.jar
 	rm -f $@
 	jar -cf $@ -C target/build/classes/ vmi1 -C target resources
-	jar -uf $@ -C target-extra/build/ vmi1 
+	jar -uf $@ -C target-extra/build/ vmi1 -C target/resources .
 
 target-extra/build/$(PACKAGE)/%.class: $(SRCDIR)/%.java
 	mkdir -p target-extra/build/vmi1
@@ -151,11 +165,14 @@ target-extra/build/$(PACKAGE)/%.class: $(SRCDIR)/%.java
 
 target-extra/build/lib/target-extra.jar: $(addprefix target-extra/build/$(PACKAGE)/,$(TARGET_LIBS)) \
 		target/build/lib/target.jar
-	rm -rf target-extra/build/lib
+#	rm -rf target-extra
 	mkdir -p target-extra/build/lib
+#	mkdir -p target-extra/resources
+#	cp -pR target/resources/* target-extra/resources/
+#	cp -pR target/resources/* target-extra/
 	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
 		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
-		$(JAR) cvf $@ -C target-extra/build vmi1)
+		$(JAR) cvf $@ -C target-extra/build vmi1 -C target/resources .)
 
 DebuginfoTest.class: DebuginfoTest.java debuginfo/build/lib/debuginfo.aar
 	$(JAVAC) -classpath $(BUILD_CLASSPATH) DebuginfoTest.java

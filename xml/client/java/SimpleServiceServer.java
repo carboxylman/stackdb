@@ -19,6 +19,8 @@ import org.apache.axis2.description.AxisService;
 import org.apache.axis2.engine.MessageReceiver;
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.transport.http.SimpleHTTPServer;
+import org.apache.axis2.description.java2wsdl.SchemaGenerator;
+import org.apache.axis2.description.java2wsdl.Java2WSDLConstants;
 
 public class SimpleServiceServer extends AxisServer {
     private static final Log log = LogFactory.getLog(SimpleServiceServer.class);
@@ -33,28 +35,65 @@ public class SimpleServiceServer extends AxisServer {
     }
 
     public AxisService buildService(String className) 
-	throws ClassNotFoundException,InstantiationException,
+	throws Exception,ClassNotFoundException,InstantiationException,
 	       IllegalAccessException,AxisFault {
 	return buildService((SimpleService)Class.forName(className,true,this.getClass().getClassLoader()).newInstance());
     }
 
     public AxisService buildService(SimpleService ss) 
-	throws ClassNotFoundException,AxisFault {
-	return buildService(ss.getClass().getCanonicalName(),
+	throws Exception,ClassNotFoundException,AxisFault {
+	String resourcePath = ss.getSchemaResourcePath();
+
+	String implClass = ss.getClass().getCanonicalName();
+	int index = implClass.lastIndexOf(".");
+	String serviceName;
+	if (index > 0) {
+	    serviceName = implClass.substring(index + 1, implClass.length());
+	} else {
+	    serviceName = implClass;
+	}
+
+	SchemaGenerator sg = null;
+	AxisService as = null;
+	if (resourcePath != null) {
+	    AxisConfiguration ac = 
+		getConfigurationContext().getAxisConfiguration();
+	    as = new AxisService();
+	    as.setParent(ac);
+	    as.setName(serviceName);
+
+	    sg = new ResourceSchemaGenerator(ss.getClass().getClassLoader(),
+					     ss.getClass().getCanonicalName(),
+					     resourcePath,ss.getClass(),
+					     ss.getSchemaNamespace(),
+					     ss.getSchemaNamespacePrefix(),
+					     ss.getStaticTypeMapping(),
+					     as);
+	    sg.setElementFormDefault(Java2WSDLConstants.FORM_DEFAULT_UNQUALIFIED);
+	}
+
+	return buildService(ss.getClass().getCanonicalName(),serviceName,
 			    ss.getMessageReceiverClassMap(),
-			    ss.getTargetNamespace(),
-			    ss.getSchemaNamespace());
+			    ss.getTargetNamespace(),ss.getSchemaNamespace(),sg,as);
     }
 
-    public AxisService buildService(String implClass,
+    public AxisService buildService(String implClass,String serviceName,
 				    Map<String,MessageReceiver> msgReceiverClassMap,
-				    String targetNamespace,String schemaNamespace) 
+				    String targetNamespace,String schemaNamespace,
+				    SchemaGenerator sg,AxisService as) 
 	throws ClassNotFoundException,AxisFault {
 	AxisConfiguration ac = getConfigurationContext().getAxisConfiguration();
-	AxisService as = 
-	    AxisService.createService(implClass,ac,msgReceiverClassMap,
-				      targetNamespace,schemaNamespace,
-				      this.getClass().getClassLoader());
+
+	if (sg != null) {
+	    as = AxisService.createService(implClass,serviceName,
+					   ac,msgReceiverClassMap,targetNamespace,
+					   this.getClass().getClassLoader(),
+					   sg,as);
+	}
+	else
+	    as = AxisService.createService(implClass,ac,msgReceiverClassMap,
+					   targetNamespace,schemaNamespace,
+					   this.getClass().getClassLoader());
 	ac.addService(as);
 
 	return as;
@@ -105,3 +144,4 @@ public class SimpleServiceServer extends AxisServer {
     }
 
 }
+
