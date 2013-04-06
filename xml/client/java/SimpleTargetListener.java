@@ -11,6 +11,8 @@ import javax.jws.WebMethod;
 import javax.jws.soap.SOAPBinding;
 import javax.xml.namespace.QName;
 
+import org.apache.axis2.description.WSDL2Constants;
+
 @WebService(name = "SimpleTargetListener",
 	    serviceName="SimpleTargetListener",
             targetNamespace = "http://anathema.flux.utah.edu/schema/vmi/1")
@@ -31,6 +33,8 @@ public class SimpleTargetListener extends TargetListenerSkeleton
     protected static final String schemaResourcePath = 
 	"targetListener.wsdl";
     protected static Map<String,QName> typeMapping = null;
+    protected static Map<String,String> methodClassNameMapping = null;
+    protected static Map<String,QName> dynamicTypeMapping = null;
 
     @WebMethod(exclude = true)
     public Map<String,MessageReceiver> getMessageReceiverClassMap() {
@@ -38,8 +42,8 @@ public class SimpleTargetListener extends TargetListenerSkeleton
 	    SimpleTargetListener.messageReceiverClassMap = 
 		new HashMap<String,MessageReceiver>();
 
-	    SimpleTargetListener.messageReceiverClassMap. 
-		put("vmi1.SimpleTargetListener",
+	    SimpleTargetListener.messageReceiverClassMap.
+		put(WSDL2Constants.MEP_URI_IN_OUT, //"vmi1.SimpleTargetListener",
 		    new vmi1.TargetListenerMessageReceiverInOut());
 	}
 	return SimpleTargetListener.messageReceiverClassMap;
@@ -71,16 +75,47 @@ public class SimpleTargetListener extends TargetListenerSkeleton
 	    SimpleTargetListener.typeMapping = new HashMap<String,QName>();
 
 	    //String jType = snsPrefix + "." + "probeEvent";
-	    String jType = "probeEvent";
-	    QName qn = new QName(sns,snsPrefix + "." + "ProbeEvent");
+	    /*
+	    String jType = "probeEventNotification";
+	    QName qn = new QName(sns,"ProbeEventNotification");
 	    SimpleTargetListener.typeMapping.put(jType,qn);
 
-	    jType = snsPrefix + "." + "actionEvent";
-	    qn = new QName(sns,snsPrefix + "." + "ActionEvent");
+	    jType = snsPrefix + "." + "actionEventNotification";
+	    qn = new QName(sns,"ActionEventNotification");
 	    SimpleTargetListener.typeMapping.put(jType,qn);
-	    
+	    */
 	}
 	return typeMapping;
+    }
+
+    @WebMethod(exclude = true)
+    public Map<String,String> getMethodClassNameMapping() {
+	if (SimpleTargetListener.methodClassNameMapping == null) {
+	    SimpleTargetListener.methodClassNameMapping = 
+		new HashMap<String,String>();
+
+	    SimpleTargetListener.methodClassNameMapping
+		.put("probeEventNotification","vmi.ProbeEventNotification");
+	    SimpleTargetListener.methodClassNameMapping
+		.put("actionEventNotification","vmi.ActionEventNotification");
+	}
+	return methodClassNameMapping;
+    }
+
+    @WebMethod(exclude = true)
+    public Map<String,QName> getDynamicTypeMapping() {
+	if (SimpleTargetListener.dynamicTypeMapping == null) {
+	    SimpleTargetListener.dynamicTypeMapping = 
+		new HashMap<String,QName>();
+
+	    SimpleTargetListener.dynamicTypeMapping
+		.put("probeEventNotification",
+		     new QName(SimpleTargetListener.sns,"ProbeEventNotification"));
+	    SimpleTargetListener.dynamicTypeMapping
+		.put("actionEventNotification",
+		     new QName(SimpleTargetListener.sns,"ActionEventNotification"));
+	}
+	return dynamicTypeMapping;
     }
 
     /**
@@ -88,8 +123,8 @@ public class SimpleTargetListener extends TargetListenerSkeleton
      * @param probeEvent 
      * @return probeEventResponse 
      */
-    public vmi1.ProbeEventResponse probeEvent(vmi1.ProbeEventE probeEvent) {
-	System.out.println("ProbeEvent");
+    public vmi1.ProbeEventResponse probeEventNotification(vmi1.ProbeEventNotification probeEventNotification) {
+	System.out.println("ProbeEventNotification " + probeEventNotification);
 	return null;
     }
 
@@ -98,8 +133,8 @@ public class SimpleTargetListener extends TargetListenerSkeleton
      * @param actionEvent 
      * @return actionEventResponse 
      */
-    public vmi1.ActionEventResponse actionEvent(vmi1.ActionEventE actionEvent) {
-	System.out.println("ActionEvent");
+    public vmi1.ActionEventResponse actionEventNotification(vmi1.ActionEventNotification actionEventNotification) {
+	System.out.println("ActionEventNotification " + actionEventNotification);
 	return null;
     }
 

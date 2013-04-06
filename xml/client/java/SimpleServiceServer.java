@@ -6,12 +6,20 @@ import vmi1.*;
 import java.io.File;
 import java.util.List;
 import java.util.Map;
+import java.util.Iterator;
 
+import java.net.URL;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import org.apache.axis2.AxisFault;
+import org.apache.axis2.Constants;
 import org.apache.axis2.context.ConfigurationContext;
 import org.apache.axis2.context.ConfigurationContextFactory;
 import org.apache.axis2.engine.ListenerManager;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.apache.axis2.transport.TransportListener;
+import org.apache.axis2.description.TransportInDescription;
 
 import org.apache.axis2.engine.AxisConfiguration;
 import org.apache.axis2.engine.AxisServer;
@@ -22,16 +30,49 @@ import org.apache.axis2.transport.http.SimpleHTTPServer;
 import org.apache.axis2.description.java2wsdl.SchemaGenerator;
 import org.apache.axis2.description.java2wsdl.Java2WSDLConstants;
 
-public class SimpleServiceServer extends AxisServer {
+public class SimpleServiceServer extends SimpleHTTPServer {
     private static final Log log = LogFactory.getLog(SimpleServiceServer.class);
 
-    public SimpleServiceServer() {
-	super();
+    public SimpleServiceServer(int port) throws AxisFault {
+	super(ConfigurationContextFactory
+	      .createConfigurationContextFromFileSystem(null,null),
+	      port);
     }
 
-    public SimpleServiceServer(boolean startOnDeploy,ConfigurationContext cctx) {
-	super(startOnDeploy);
-	setConfigurationContext(cctx);
+    public SimpleServiceServer(ConfigurationContext cctx,int port) 
+	throws AxisFault {
+	super(cctx,port);
+    }
+
+    public void start() throws AxisFault {
+	try {
+	    ConfigurationContext cctx = getConfigurationContext();
+	    super.start();
+	    ListenerManager listenerManager = cctx.getListenerManager();
+	    TransportInDescription trsIn = 
+	    new TransportInDescription(Constants.TRANSPORT_HTTP);
+	    trsIn.setReceiver(this);
+	    if (listenerManager == null) {
+		listenerManager = new ListenerManager();
+		listenerManager.init(cctx);
+	    }
+	    listenerManager.addListener(trsIn, true);
+
+	    Iterator<String> iter = cctx.getAxisConfiguration().
+		getTransportsIn().keySet().iterator();
+	    while (iter.hasNext()) {
+		String trp = iter.next();
+		if (!Constants.TRANSPORT_HTTP.equals(trp)) {
+		    trsIn = (TransportInDescription)
+			cctx.getAxisConfiguration().getTransportsIn().get(trp);
+		    listenerManager.addListener(trsIn, false);
+		}
+	    }
+        }
+	catch (Exception ex) {
+            log.error(ex.getMessage(),ex);
+            throw AxisFault.makeFault(ex);
+        }
     }
 
     public AxisService buildService(String className) 
@@ -43,14 +84,14 @@ public class SimpleServiceServer extends AxisServer {
     public AxisService buildService(SimpleService ss) 
 	throws Exception,ClassNotFoundException,AxisFault {
 	String resourcePath = ss.getSchemaResourcePath();
-
-	String implClass = ss.getClass().getCanonicalName();
-	int index = implClass.lastIndexOf(".");
+	Class implClass = ss.getClass();
+	String implClassName = implClass.getCanonicalName();
+	int index = implClassName.lastIndexOf(".");
 	String serviceName;
 	if (index > 0) {
-	    serviceName = implClass.substring(index + 1, implClass.length());
+	    serviceName = implClassName.substring(index + 1,implClassName.length());
 	} else {
-	    serviceName = implClass;
+	    serviceName = implClassName;
 	}
 
 	SchemaGenerator sg = null;
@@ -62,11 +103,27 @@ public class SimpleServiceServer extends AxisServer {
 	    as.setParent(ac);
 	    as.setName(serviceName);
 
-	    sg = new ResourceSchemaGenerator(ss.getClass().getClassLoader(),
-					     ss.getClass().getCanonicalName(),
-					     resourcePath,ss.getClass(),
+	    URL rurl = null;
+
+	    if (java.lang.Thread.currentThread().getContextClassLoader() != null) {
+		ClassLoader cl = 
+		    java.lang.Thread.currentThread().getContextClassLoader();
+		rurl = cl.getResource(resourcePath);
+	    }
+	    else if (implClass != null) {
+		rurl = implClass.getResource(resourcePath);
+	    }
+	    else {
+		rurl = implClass.getClassLoader().getResource(resourcePath);
+	    }
+
+	    sg = new ResourceSchemaGenerator(implClass.getClassLoader(),
+					     implClassName,
+					     rurl,
 					     ss.getSchemaNamespace(),
 					     ss.getSchemaNamespacePrefix(),
+					     ss.getMethodClassNameMapping(),
+					     ss.getDynamicTypeMapping(),
 					     ss.getStaticTypeMapping(),
 					     as);
 	    sg.setElementFormDefault(Java2WSDLConstants.FORM_DEFAULT_UNQUALIFIED);
@@ -105,42 +162,24 @@ public class SimpleServiceServer extends AxisServer {
      * starting it.
      */
     public static void main(String[] args) {
-	SimpleServiceServer ss = new SimpleServiceServer();
-        SimpleHTTPServer server;
-	int added = 0;
-	int notadded = 0;
+	SimpleServiceServer ss;
 
-	for (int i = 0; i < args.length; ++i) {
-	    try {
+	try {
+	    ss = new SimpleServiceServer(3952);
+
+	    for (int i = 0; i < args.length; ++i) {
 		ss.buildService(args[i]);
-		++added;
 	    }
-	    catch (Throwable t) {
-		++notadded;
-		System.err.println("could not add service " + args[i]);
-		t.printStackTrace();
-	    }
-	}
 
-	if (added > 0) {
-	    try {
-		server = new SimpleHTTPServer(ss.getConfigurationContext(),-1);
-		System.out.println("Starting HTTP server on port " 
-				   + server.getHttpFactory().getPort());
-		ss.start();
-	    }
-	    catch (Throwable t) {
-		System.err.println("Could not start server:");
-		t.printStackTrace();
-		System.exit(6);
-	    }
-	    System.out.println("Server exiting.");
+	    ss.start();
+	    System.out.println("Started HTTP server on port " 
+			       + ss.getHttpFactory().getPort());
 	}
-	else {
-	    System.out.println("Server exiting; no services added!");
+	catch (Throwable t) {
+	    System.err.println("Could not start server:");
+	    t.printStackTrace();
+	    System.exit(6);
 	}
-
-	System.exit(0);
     }
 
 }

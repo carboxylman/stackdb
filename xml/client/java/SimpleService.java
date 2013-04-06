@@ -12,4 +12,6 @@ public interface SimpleService {
     public String getSchemaNamespacePrefix();
     public String getSchemaResourcePath();
     public Map<String,QName> getStaticTypeMapping();
+    public Map<String,String> getMethodClassNameMapping();
+    public Map<String,QName> getDynamicTypeMapping();
 }

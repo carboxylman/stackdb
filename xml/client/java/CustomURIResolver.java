@@ -35,7 +35,7 @@ public class CustomURIResolver implements CollectionURIResolver {
 				     String baseUri) {
 	URL newImportedURL = null;
 	try {
-	    System.err.println("baseUri = " + baseUri);
+	    //System.err.println("baseUri = " + baseUri);
 	    URL parentLocationURL;
 	    if (this.baseURL != null)
 		parentLocationURL = this.baseURL;

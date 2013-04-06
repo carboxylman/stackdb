@@ -161,7 +161,7 @@ target-all.jar: target/build/lib/target.jar target-extra/build/lib/target-extra.
 
 target-extra/build/$(PACKAGE)/%.class: $(SRCDIR)/%.java
 	mkdir -p target-extra/build/vmi1
-	$(JAVAC) -classpath $(BUILD_CLASSPATH):target-extra/build -d target-extra/build/ $<
+	$(JAVAC) -g -classpath $(BUILD_CLASSPATH):target-extra/build -d target-extra/build/ $<
 
 target-extra/build/lib/target-extra.jar: $(addprefix target-extra/build/$(PACKAGE)/,$(TARGET_LIBS)) \
 		target/build/lib/target.jar
@@ -186,7 +186,7 @@ clean: clean-subdirs
 	rm -rf $(STUBS) $(SERVERSTUBS) 
 	rm -f $(PROGRAMS) $(JARS)
 	rm -rf debuginfo target target-extra
-	rm -f run.sh
+	rm -f run.sh run-db.sh
 
 distclean: distclean-subdirs
 
