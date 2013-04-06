@@ -96,12 +96,6 @@ public class SimpleServiceServer extends SimpleHTTPServer {
 		serviceName = implClassName;
 	    }
 	}
-	String serviceURL = ss.getServicePath();
-	if (serviceURL == null) 
-	    serviceURL = "http:///" + serviceName;
-	else
-	    serviceURL = "http://" + serviceURL;
-	boolean isRootService = ss.isRootService();
 
 	SchemaGenerator sg = null;
 	AxisService as = null;
@@ -139,13 +133,12 @@ public class SimpleServiceServer extends SimpleHTTPServer {
 	}
 
 	return buildService(ss.getClass().getCanonicalName(),serviceName,
-			    serviceURL,isRootService,
+			    //serviceURL,isRootService,
 			    ss.getMessageReceiverClassMap(),
 			    ss.getTargetNamespace(),ss.getSchemaNamespace(),sg,as);
     }
 
     public AxisService buildService(String implClass,String serviceName,
-				    String serviceURL,boolean isRootService,
 				    Map<String,MessageReceiver> msgReceiverClassMap,
 				    String targetNamespace,String schemaNamespace,
 				    SchemaGenerator sg,AxisService as) 
@@ -162,12 +155,6 @@ public class SimpleServiceServer extends SimpleHTTPServer {
 	    as = AxisService.createService(implClass,ac,msgReceiverClassMap,
 					   targetNamespace,schemaNamespace,
 					   this.getClass().getClassLoader());
-
-	if (serviceURL == null)
-	    serviceURL = "http:///" + serviceName;
-	Utils.addSoap12Endpoint(as,serviceURL);
-	if (isRootService)
-	    Utils.addSoap12Endpoint(as,"http:///");
 
 	ac.addService(as);
 
