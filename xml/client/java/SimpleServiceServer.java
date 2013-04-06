@@ -12,6 +12,7 @@ import java.net.URL;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.axis2.util.LoggingControl;
 
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.Constants;
@@ -21,23 +22,22 @@ import org.apache.axis2.engine.ListenerManager;
 import org.apache.axis2.transport.TransportListener;
 import org.apache.axis2.description.TransportInDescription;
 
+import org.apache.axis2.engine.AxisConfigurator;
+import org.apache.axis2.deployment.FileSystemConfigurator;
 import org.apache.axis2.engine.AxisConfiguration;
 import org.apache.axis2.engine.AxisServer;
 import org.apache.axis2.description.AxisService;
+import org.apache.axis2.description.Parameter;
 import org.apache.axis2.engine.MessageReceiver;
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.transport.http.SimpleHTTPServer;
 import org.apache.axis2.description.java2wsdl.SchemaGenerator;
 import org.apache.axis2.description.java2wsdl.Java2WSDLConstants;
 
+import org.apache.axis2.deployment.util.Utils;
+
 public class SimpleServiceServer extends SimpleHTTPServer {
     private static final Log log = LogFactory.getLog(SimpleServiceServer.class);
-
-    public SimpleServiceServer(int port) throws AxisFault {
-	super(ConfigurationContextFactory
-	      .createConfigurationContextFromFileSystem(null,null),
-	      port);
-    }
 
     public SimpleServiceServer(ConfigurationContext cctx,int port) 
 	throws AxisFault {
@@ -87,12 +87,21 @@ public class SimpleServiceServer extends SimpleHTTPServer {
 	Class implClass = ss.getClass();
 	String implClassName = implClass.getCanonicalName();
 	int index = implClassName.lastIndexOf(".");
-	String serviceName;
-	if (index > 0) {
-	    serviceName = implClassName.substring(index + 1,implClassName.length());
-	} else {
-	    serviceName = implClassName;
+	String serviceName = ss.getServiceName();
+	if (serviceName == null) {
+	    if (index > 0) {
+		serviceName = 
+		    implClassName.substring(index + 1,implClassName.length());
+	    } else {
+		serviceName = implClassName;
+	    }
 	}
+	String serviceURL = ss.getServicePath();
+	if (serviceURL == null) 
+	    serviceURL = "http:///" + serviceName;
+	else
+	    serviceURL = "http://" + serviceURL;
+	boolean isRootService = ss.isRootService();
 
 	SchemaGenerator sg = null;
 	AxisService as = null;
@@ -130,15 +139,17 @@ public class SimpleServiceServer extends SimpleHTTPServer {
 	}
 
 	return buildService(ss.getClass().getCanonicalName(),serviceName,
+			    serviceURL,isRootService,
 			    ss.getMessageReceiverClassMap(),
 			    ss.getTargetNamespace(),ss.getSchemaNamespace(),sg,as);
     }
 
     public AxisService buildService(String implClass,String serviceName,
+				    String serviceURL,boolean isRootService,
 				    Map<String,MessageReceiver> msgReceiverClassMap,
 				    String targetNamespace,String schemaNamespace,
 				    SchemaGenerator sg,AxisService as) 
-	throws ClassNotFoundException,AxisFault {
+	throws Exception,ClassNotFoundException,AxisFault {
 	AxisConfiguration ac = getConfigurationContext().getAxisConfiguration();
 
 	if (sg != null) {
@@ -151,6 +162,13 @@ public class SimpleServiceServer extends SimpleHTTPServer {
 	    as = AxisService.createService(implClass,ac,msgReceiverClassMap,
 					   targetNamespace,schemaNamespace,
 					   this.getClass().getClassLoader());
+
+	if (serviceURL == null)
+	    serviceURL = "http:///" + serviceName;
+	Utils.addSoap12Endpoint(as,serviceURL);
+	if (isRootService)
+	    Utils.addSoap12Endpoint(as,"http:///");
+
 	ac.addService(as);
 
 	return as;
@@ -162,10 +180,36 @@ public class SimpleServiceServer extends SimpleHTTPServer {
      * starting it.
      */
     public static void main(String[] args) {
+	AxisConfigurator ac;
+	ConfigurationContext cctx;
 	SimpleServiceServer ss;
 
 	try {
-	    ss = new SimpleServiceServer(3952);
+	    ac = new FileSystemConfigurator(null,null);
+	    //ac.getAxisConfiguration().addParameter(Constants.PARAM_SERVICE_PATH,
+	    //					   "/");
+	    //ac.getAxisConfiguration().addParameter(Constants.PARAM_CONTEXT_ROOT,
+	    //					   "/");
+	    cctx = ConfigurationContextFactory.createConfigurationContext(ac);
+
+	    ss = new SimpleServiceServer(cctx,3952);
+
+	    //Parameter servicePath = ac.getAxisConfiguration().getParameter(Constants.PARAM_SERVICE_PATH);
+	    //Parameter contextPath = ac.getAxisConfiguration().getParameter(Constants.PARAM_CONTEXT_ROOT);
+
+	    /*
+	     * NB: must set contextRoot after servicePath to ensure an
+	     * internal cache is updated.
+	     *
+	     * More importantly, you must set root to /, and servicePath
+	     * to some relative path ***that is part of your namespace
+	     * string!***
+	     *
+	     * Well, at least one path through axis's dispatchers
+	     * considers this valid; there may be other ways!
+	     */
+	    ss.getConfigurationContext().setServicePath("vmi/1");
+	    ss.getConfigurationContext().setContextRoot("/");
 
 	    for (int i = 0; i < args.length; ++i) {
 		ss.buildService(args[i]);

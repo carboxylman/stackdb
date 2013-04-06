@@ -65,6 +65,8 @@ endif
 
 ANT = @ANT@
 
+LOG4J_DEBUG = 1
+
 ifneq ($(CLASSPATH),"")
     BUILD_CLASSPATH := $(AXIS2_CLASSPATH):$(BUILD_CLASSPATH):$(CLASSPATH)
     RUN_CLASSPATH := $(AXIS2_CLASSPATH):$(RUN_CLASSPATH):$(CLASSPATH)
@@ -90,10 +92,29 @@ all:	run.sh run-db.sh $(PROGRAMS) $(JARS) all-subdirs
 
 include $(TOP_SRCDIR)/Makerules
 
-run.sh:
+log4j.properties:
+	echo -n "" > $@
+	echo "log4j.rootLogger=debug, stdout, R" >> $@
+	echo "log4j.appender.stdout=org.apache.log4j.ConsoleAppender" >> $@
+	echo "log4j.appender.stdout.layout=org.apache.log4j.PatternLayout" >> $@
+
+# Pattern to output the caller's file name and line number.
+	echo "log4j.appender.stdout.layout.ConversionPattern=%5p [%t] (%F:%L) - %m%n" >> $@
+	echo "log4j.appender.R=org.apache.log4j.RollingFileAppender" >> $@
+	echo "log4j.appender.R.File=server.log" >> $@
+	echo "log4j.appender.R.MaxFileSize=10000KB" >> $@
+	echo "log4j.appender.R.MaxBackupIndex=10" >> $@
+	echo "log4j.appender.R.layout=org.apache.log4j.PatternLayout" >> $@
+	echo "log4j.appender.R.layout.ConversionPattern=%p [%t] (%F:%L) - %m%n" >> $@
+
+run.sh: log4j.properties
 	echo "#!/bin/sh" > $@
 	echo "" >> $@
-	echo "$(JAVA) -classpath $(RUN_CLASSPATH) \\" >> $@
+	echo "$(JAVA) \\" >> $@
+ifneq ($(LOG4J_DEBUG),"")
+	echo "    -Dlog4j.configuration=file:@abs_builddir@/log4j.properties \\" >> $@
+endif
+	echo "    -classpath $(RUN_CLASSPATH) \\" >> $@
 	echo "    -Djava.endorsed.dirs=${AXIS2_HOME}/lib/endorsed:$(JAVA_HOME)/jre/lib/endorsed:$(JAVA_HOME)/lib/endorsed \\" >> $@
 #	echo "    -Djava.security.manager \\" >> $@
 #	echo "    -Djava.security.policy=$(AXIS2_HOME)/conf/axis2.policy \\"
@@ -102,10 +123,14 @@ run.sh:
 	echo '    $$@' >> $@
 	chmod ug+x $@
 
-run-db.sh:
+run-db.sh: log4j.properties
 	echo "#!/bin/sh" > $@
 	echo "" >> $@
-	echo "$(JDB) -classpath $(RUN_CLASSPATH) \\" >> $@
+	echo "$(JDB) \\" >> $@
+ifneq ($(LOG4J_DEBUG),"")
+	echo "    -Dlog4j.configuration=file:@abs_builddir@/log4j.properties \\" >> $@
+endif
+	echo "    -classpath $(RUN_CLASSPATH) \\" >> $@
 	echo "    -Djava.endorsed.dirs=${AXIS2_HOME}/lib/endorsed:$(JAVA_HOME)/jre/lib/endorsed:$(JAVA_HOME)/lib/endorsed \\" >> $@
 #	echo "    -Djava.security.manager \\" >> $@
 #	echo "    -Djava.security.policy=$(AXIS2_HOME)/conf/axis2.policy \\"

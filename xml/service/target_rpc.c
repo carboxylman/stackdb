@@ -1368,7 +1368,7 @@ result_t _target_rpc_action_handler(struct action *action,
 	    soap.send_timeout = 4;
 	    soap.recv_timeout = 4;
 
-	    rc = soap_call_vmi1__ActionEvent(&soap,urlbuf,NULL,&event,&aer);
+	    rc = soap_call_vmi1__ActionEventNotification(&soap,urlbuf,NULL,&event,&aer);
 	    if (rc != SOAP_OK) {
 		if (soap.error == SOAP_EOF && soap.errnum == 0) {
 		    vwarn("timeout notifying %s:%d; removing!",
@@ -1457,7 +1457,7 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
 	    soap.send_timeout = 4;
 	    soap.recv_timeout = 4;
 
-	    rc = soap_call_vmi1__ProbeEvent(&soap,urlbuf,NULL,&event,&per);
+	    rc = soap_call_vmi1__ProbeEventNotification(&soap,urlbuf,NULL,&event,&per);
 	    if (rc != SOAP_OK) {
 		if (soap.error == SOAP_EOF && soap.errnum == 0) {
 		    vwarn("timeout notifying %s:%d; removing!",

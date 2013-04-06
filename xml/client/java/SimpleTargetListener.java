@@ -13,8 +13,12 @@ import javax.xml.namespace.QName;
 
 import org.apache.axis2.description.WSDL2Constants;
 
-@WebService(name = "SimpleTargetListener",
-	    serviceName="SimpleTargetListener",
+/*
+ * NB: make sure getTargetNamespace and getServiceName return the same
+ * values as the annotation!!!
+ */
+@WebService(name = "targetListener",
+	    serviceName="targetListener",
             targetNamespace = "http://anathema.flux.utah.edu/schema/vmi/1")
 
 @SOAPBinding(style = SOAPBinding.Style.DOCUMENT,
@@ -118,6 +122,21 @@ public class SimpleTargetListener extends TargetListenerSkeleton
 	return dynamicTypeMapping;
     }
 
+    @WebMethod(exclude = true)
+    public boolean isRootService() {
+	return true;
+    }
+
+    @WebMethod(exclude = true)
+    public String getServiceName() {
+	return "targetListener";
+    }
+
+    @WebMethod(exclude = true)
+    public String getServicePath() {
+	return "/vmi1/targetListener";
+    }
+
     /**
      * Service definition of function vmi1__ProbeEvent
      * @param probeEvent 
@@ -125,7 +144,9 @@ public class SimpleTargetListener extends TargetListenerSkeleton
      */
     public vmi1.ProbeEventResponse probeEventNotification(vmi1.ProbeEventNotification probeEventNotification) {
 	System.out.println("ProbeEventNotification " + probeEventNotification);
-	return null;
+	vmi1.ProbeEventResponse retval = new vmi1.ProbeEventResponse();
+	retval.setResult(vmi1.ResultT.success);
+	return retval;
     }
 
     /**
@@ -135,7 +156,9 @@ public class SimpleTargetListener extends TargetListenerSkeleton
      */
     public vmi1.ActionEventResponse actionEventNotification(vmi1.ActionEventNotification actionEventNotification) {
 	System.out.println("ActionEventNotification " + actionEventNotification);
-	return null;
+	vmi1.ActionEventResponse retval = new vmi1.ActionEventResponse();
+	retval.setResult(vmi1.ResultT.success);
+	return retval;
     }
 
 }

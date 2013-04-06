@@ -89,10 +89,10 @@ public class ResourceSchemaGenerator extends DefaultSchemaGenerator {
 	this.typeMapping = typeMapping;
 	this.methodClassNameMapping = methodClassNameMapping;
 	this.dynamicTypeMapping = dynamicTypeMapping;
+	this.service = service;
     }
 
     public Collection<XmlSchema> generateSchema() throws Exception {
-	/*
         WebServiceAnnotation wsa =
 	    JSR181Helper.INSTANCE.getWebServiceAnnotation(serviceClass);
         if (wsa != null) {
@@ -106,7 +106,6 @@ public class ResourceSchemaGenerator extends DefaultSchemaGenerator {
 		&& (service.getName() == null || service.getName().equals("")))
 		service.setName(Utils.getAnnotatedServiceName(serviceClass,wsa));
         }
-*/
 
 	if (schemaURL == null)
 	    return super.generateSchema();
@@ -224,11 +223,16 @@ public class ResourceSchemaGenerator extends DefaultSchemaGenerator {
 	//System.err.println("sC = " + serviceClass + "; s = " + service);
 
         myClassModel = JAXRSUtils.getClassModel(serviceClass);
-        //methods = processMethods(serviceClass.getDeclaredMethods());
+        methods = processMethods(serviceClass.getDeclaredMethods());
 
-	Collection<XmlSchema> retval = super.generateSchema();
+        for (String extraClassName : getExtraClasses()) {
+            Class<?> extraClass = Class.forName(extraClassName, true, classLoader);
+            if (typeTable.getSimpleSchemaTypeName(extraClassName) == null) {
+                generateSchema(extraClass);
+            }
+        }
 
-	return retval; //super.generateSchema(); //schemaMap.values();
+	return schemaMap.values();
     }
 
     /*
@@ -379,8 +383,8 @@ public class ResourceSchemaGenerator extends DefaultSchemaGenerator {
 	    typeTable.addComplexSchema(methodClassName,methodQName);
 	    typeTable.addClassNameForQName(methodQName,methodClassName);
 	    // hedge our bets with the "original" unqualified method name.
-	    typeTable.addComplexSchema(methodName,methodQName);
-	    typeTable.addClassNameForQName(methodQName,methodName);
+	    //typeTable.addComplexSchema(methodName,methodQName);
+	    //typeTable.addClassNameForQName(methodQName,methodName);
 
             if (parameters.length > 0) {
                 parameterNames = methodTable.getParameterNames(methodName);

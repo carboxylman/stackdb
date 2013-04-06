@@ -35,9 +35,9 @@ client = Client(url,cache=None)
 #tspec = client.factory.create('TargetSpecT')
 
 event = client.factory.create('ProbeEventT')
-event.thread._tid = 1234
-event.thread._thid = 1236
+event.thread.tid = 1234
+event.thread.thid = 1236
 event.thread.threadStatus.value = "running"
 event.registerValues.registerValue.append({ 'name' : 'eip','value' : 0xdeadbeef})
 
-client.service.ProbeEvent(event)
+client.service.ProbeEventNotification(event)

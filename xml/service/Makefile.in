@@ -101,7 +101,7 @@ OBJECTS-TARGET-MODULE := target_xml_moduleC.lo \
 	target_rpc_moduleC.lo target_rpc_moduleServer.lo 
 OBJECTS-TARGET-SERVER := target.lo targetC.lo targetServer.lo 
 OBJECTS-TARGET-SERVERLIB := targetC.lo targetServer.lo #targetServerLib.lo
-OBJECTS-TARGET := $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-XMLLIB) \
+OBJECTS-TARGET := $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 	$(OBJECTS-TARGET-MODULE) \
 	$(OBJECTS-TARGET-SERVER) $(OBJECTS-TARGET-SERVERLIB)
 OBJECTS-TARGETLISTENER-CLIENTLIB := target_listener_moduleClientLib.lo
@@ -117,7 +117,7 @@ OBJECTS-ANALYSIS := $(OBJECTS-ANALYSIS-XMLLIB) $(OBJECTS-ANALYSIS-RPCLIB)\
 	$(OBJECTS-ANALYSIS-SERVER) $(OBJECTS-ANALYSIS-SERVERLIB)
 
 OBJECTS := $(OBJECTS-LIB) $(OBJECTS-DEBUGINFO) $(OBJECTS-TARGET) \
-	$(OBJECTS-ANALYSIS) 
+	$(OBJECTS-ANALYSIS) $(OBJECTS-TARGETLISTENER-CLIENTLIB)
 
 PROGRAMS := debuginfo target analysis
 HELPERS  := monitored_target
@@ -183,7 +183,7 @@ DEFPORT-analysis = 3903
 	echo "#import \"$(@:.wsdl=)_xml.gsm.h\"" > $(@:.wsdl=).gs.h
 	echo "#import \"$(@:.wsdl=)_rpc.gsm.h\"" >> $(@:.wsdl=).gs.h
 	echo '//gsoap vmi1 service portName: http' >> $(@:.wsdl=).gs.h
-	echo "//gsoap vmi1 service port: http://localhost:$(DEFPORT-$*)" >> $(@:.wsdl=).gs.h
+	echo "//gsoap vmi1 service port: http://localhost:$(DEFPORT-$*)/vmi/1/$(@:.wsdl=)" >> $(@:.wsdl=).gs.h
 	$(SOAPCPP2) -p $(@:.wsdl=) $(@:.wsdl=).gs.h
 #	sed -i -e 's/\(#define $(@:.wsdl=)_srvStub_H\)/\1\n#include "envH.h"/' \
 #		$(@:.wsdl=)_srvStub.h
@@ -446,7 +446,11 @@ clean-analysis:
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-ANALYSIS)
 	$(RM) analysis*
 
-clean: clean-common clean-xsdc clean-debuginfo clean-target clean-analysis clean-subdirs
+clean-misc:
+	@$(LIBTOOL) --mode=clean rm -f monitored_target.lo
+	@$(LIBTOOL) --mode=clean rm -f target_nsmap.lo
+
+clean: clean-common clean-xsdc clean-debuginfo clean-target clean-analysis clean-misc clean-subdirs
 	$(RM) *.nsmap *.xsd
 	$(RM) RECV.log TEST.log
 	$(RM) $(PROGRAMS) $(HELPERS)

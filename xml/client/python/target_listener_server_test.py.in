@@ -62,10 +62,10 @@ def probeEvent(event,request=None):
     print "ProbeEvent (raw): %s" % (str(request),)
     return None
 
-def SinglestepEvent(event):
-    "Handle a SingleStepEvent"
+def actionEvent(event):
+    "Handle an ActionEvent"
     events.append(event)
-    print "SinglestepEvent: %s" % (str(event),)
+    print "ActionEvent: %s" % (str(event),)
     return None
 
 objdir = os.path.abspath("@top_builddir@")
@@ -80,11 +80,11 @@ dispatcher = SoapDispatcher(
     trace = True,
     ns = True)
 
-dispatcher.register_function('ProbeEvent',probeEvent,
+dispatcher.register_function('ProbeEventNotification',probeEvent,
                              returns=dict(), 
                              args=probeEventArgs)
 
-dispatcher.register_function('SinglestepEvent',SinglestepEvent,
+dispatcher.register_function('ActionEventNotification',acationEvent,
                              returns={ 'NoneResponse' : None}, 
                              args={ 'event' : dict })
 

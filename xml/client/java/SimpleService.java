@@ -14,4 +14,7 @@ public interface SimpleService {
     public Map<String,QName> getStaticTypeMapping();
     public Map<String,String> getMethodClassNameMapping();
     public Map<String,QName> getDynamicTypeMapping();
+    public String getServiceName();
+    public String getServicePath();
+    public boolean isRootService();
 }

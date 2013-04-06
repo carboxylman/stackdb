@@ -150,10 +150,10 @@ dispatcher = SoapDispatcher(
     ns = True,
     namespaces=_namespaces)
 
-dispatcher.register_function('ProbeEvent',probeEvent,
+dispatcher.register_function('ProbeEventNotification',probeEvent,
                              returns=probeEventReturns,
                              args=probeEventArgs)
-dispatcher.register_function('ActionEvent',actionEvent,
+dispatcher.register_function('ActionEventNotification',actionEvent,
                              returns={ 'result' : int }, 
                              args=actionEventArgs)
 httpd = HTTPServer(("",0), SOAPHandler)
