@@ -1362,7 +1362,7 @@ result_t _target_rpc_action_handler(struct action *action,
 	g_hash_table_destroy(reftab);
 
 	array_list_foreach(tll,i,tl) {
-	    snprintf(urlbuf,sizeof(urlbuf),"http://%s:%d",tl->hostname,tl->port);
+	    snprintf(urlbuf,sizeof(urlbuf),"http://%s:%d/vmi/1/targetListener",tl->hostname,tl->port);
 
 	    soap.connect_timeout = 4;
 	    soap.send_timeout = 4;
@@ -1451,7 +1451,7 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
 	g_hash_table_destroy(reftab);
 
 	array_list_foreach(tll,i,tl) {
-	    snprintf(urlbuf,sizeof(urlbuf),"http://%s:%d",tl->hostname,tl->port);
+	    snprintf(urlbuf,sizeof(urlbuf),"http://%s:%d/vmi/1/targetListener",tl->hostname,tl->port);
 
 	    soap.connect_timeout = 4;
 	    soap.send_timeout = 4;
