@@ -42,7 +42,7 @@ tspec.mode = "live"
 tspec.startPaused = True
 tspec.logStdout = False
 tspec.logStderr = False
-#tspec.dedicatedMonitor = True
+#tspec.dedicatedMonitor = False
 tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
 tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
@@ -50,8 +50,8 @@ tspec.backendSpec.targetPtraceSpec.environment = None
 
 target = client.service.InstantiateTarget(tspec)
 
-#paused = client.service.PauseTarget(target.tid)
+paused = client.service.PauseTarget(target.tid)
 
-#resumed = client.service.ResumeTarget(target.tid)
+resumed = client.service.ResumeTarget(target.tid)
 
-#probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")
+probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")
