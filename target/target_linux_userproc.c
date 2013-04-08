@@ -386,7 +386,7 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 	return 0;
     case ARGP_KEY_ERROR:
     case ARGP_KEY_FINI:
-	if (lspec && lspec->pid && lspec->program) {
+	if (lspec && lspec->pid > -1 && lspec->program) {
 	    verror("cannot specify both pid (to attach) and binary (to launch!)\n");
 	    return EINVAL;
 	}
