@@ -143,7 +143,30 @@ public class SimpleTargetListener extends TargetListenerSkeleton
      * @return probeEventResponse 
      */
     public vmi1.ProbeEventResponse probeEventNotification(vmi1.ProbeEventNotification probeEventNotification) {
-	System.out.println("ProbeEventNotification " + probeEventNotification);
+	ProbeEventT pe = probeEventNotification.getProbeEvent();
+	ProbeT probe = pe.getProbe();
+	ThreadT thread = pe.getThread();
+	RegisterValueT[] rva = pe.getRegisterValues().getRegisterValue();
+	
+	System.out.printf("ProbeEvent(%s name=%s id=%d addr=0x%x,type=%s,"
+			  + "style=%s,whence=%s,size=%s)\n",
+			  pe.getProbeEventType(),probe.getName(),
+			  probe.getPid().getProbeIdT(),
+			  probe.getAddr().getADDR().longValue(),
+			  probe.getType(),probe.getStyle(),probe.getWhence(),
+			  probe.getPsize());
+
+	System.out.printf("  thread: %d %s\n",
+			  thread.getThid().getThreadIdT(),
+			  thread.getThreadStatus());
+
+	System.out.printf("  registers:\n");
+	for (int i = 0; i < rva.length; ++i) {
+	    System.out.printf("    %7.7s 0x%x\n",
+			      rva[i].getName(),rva[i].getValue().longValue());
+	}
+	System.out.println("");
+
 	vmi1.ProbeEventResponse retval = new vmi1.ProbeEventResponse();
 	retval.setResult(vmi1.ResultT.success);
 	return retval;
