@@ -1863,9 +1863,9 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
      */
     if (g_hash_table_lookup(debugfile_tab,debugfile->filename) == debugfile)
 	g_hash_table_remove(debugfile_tab,debugfile->filename);
-    if (g_hash_table_lookup(debugfile_tab,(gpointer)(uintptr_t)debugfile->id) 
+    if (g_hash_table_lookup(debugfile_id_tab,(gpointer)(uintptr_t)debugfile->id) 
 	== debugfile)
-	g_hash_table_remove(debugfile_tab,(gpointer)(uintptr_t)debugfile->id);
+	g_hash_table_remove(debugfile_id_tab,(gpointer)(uintptr_t)debugfile->id);
 
     g_hash_table_destroy(debugfile->pubnames);
     g_hash_table_destroy(debugfile->addresses);
