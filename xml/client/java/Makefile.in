@@ -181,8 +181,8 @@ target/build/lib/target.jar: target/build/lib/target.aar
 
 target-all.jar: target/build/lib/target.jar target-extra/build/lib/target-extra.jar
 	rm -f $@
-	jar -cf $@ -C target/build/classes/ vmi1 -C target resources
-	jar -uf $@ -C target-extra/build/ vmi1 -C target/resources .
+	$(JAR) -cf $@ -C target/build/classes/ vmi1 -C target resources
+	$(JAR) -uf $@ -C target-extra/build/ vmi1 -C target/resources .
 
 target-extra/build/$(PACKAGE)/%.class: $(SRCDIR)/%.java
 	mkdir -p target-extra/build/vmi1
