@@ -1543,6 +1543,7 @@ int vmi1__ProbeSymbolSimple(struct soap *soap,
     struct probe *p;
     target_status_t status;
     GHashTable *reftab;
+    int did_pause = 0;
 
     target_rpc_init();
     pthread_mutex_lock(&target_rpc_mutex);
@@ -1564,18 +1565,29 @@ int vmi1__ProbeSymbolSimple(struct soap *soap,
 	    return soap_receiver_fault(soap,"Could not pause target!",
 				       "Could not pause target before adding probe!");
 	}
+	did_pause = 1;
     }
+
     vdebug(9,LA_XML,LF_RPC,"target status %d\n",status);
 
     p = probe_simple(t,thid,symbol,_target_rpc_probe_prehandler,
 		     _target_rpc_probe_posthandler,NULL);
+    if (!p) {
+	verror("could not add a probe on symbol '%s' in target %d thread %d\n",
+	       symbol,tid,thid);
+	if (did_pause)
+	    target_resume(t);
+	pthread_mutex_unlock(&target_rpc_mutex);
+	return soap_receiver_fault(soap,"Could not add probe!",
+				   "Could not add probe!");
+    }
 
     probe_rename(p,probeName);
 
-    if (status != TSTATUS_PAUSED) {
+    if (did_pause) {
 	if (target_resume(t)) {
 	    pthread_mutex_unlock(&target_rpc_mutex);
-	    return soap_receiver_fault(soap,"Could not resume target!",
+	    return soap_receiver_fault(soap,"Could not resume target, but probe added successfully!",
 				       "Could not resume target after adding probe!");
 	}
     }
