@@ -39,21 +39,20 @@ struct ack_rec {
 typedef int (*cmd_impl_t)(struct cmd_rec *, struct ack_rec *);
 
 
-/* function table for the submodule */
+/* function table for each submodule */
 struct submodule {
-    unsigned int submodule_id; /* submodule id */
-    unsigned int func_count; /* number of functions defined in the submodule */
-    cmd_impl_t *func_table; /* NULL-terminated list of function pointers  */
+    unsigned int submodule_id;  /* submodule id */
+    unsigned int func_count;    /* number of functions defined in the submodule */
+    cmd_impl_t *func_table;     /* NULL-terminated list of function pointers  */
 };
 
-/* table to keep track of the submodules */
+/* table for the driver to keep track of the submodules */
 struct submod_table {
-    unsigned int submodule_count; /* number of submodule */
-    struct submodule * mod_table;
+    unsigned int submodule_count;    /* number of submodule */
+    struct submodule ** mod_table;   /* array of pointers to submodule  function table*/
 };
 /*
- * This structure contains the metadata for a single trace buffer.  The head
- * field, indexes into an array of struct t_rec's.
+ * This structure contains the metadata for a single trace buffer.
  */
 struct cmd_buf {
     unsigned long   cons;      /* Next item to be consumed. */
@@ -100,7 +99,7 @@ static inline void cmd_ring_channel_buf_init(struct cmd_buf *buf) {
 
 int cmd_ring_channel_alloc(struct cmd_ring_channel *ring_channel, unsigned long size_in_pages, unsigned long size_of_a_rec);
 int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel, unsigned long size_in_pages, unsigned long size_of_a_rec, unsigned long priv_metadata_size);
-void cmd_ring_channel_free(struct cmd_ring_channel *ring_channel);
+int cmd_ring_channel_free(struct cmd_ring_channel *ring_channel);
 
 static inline void *cmd_ring_channel_get_priv_metadata(struct cmd_ring_channel *ring_channel) {
     return ring_channel->priv_metadata;
