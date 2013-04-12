@@ -31,9 +31,15 @@
 #define SUB_MODULE_COUNT 10
 
 static struct task_struct *driver_thread;
-struct submod_table submod;
+struct submod_table submodule;
 struct cmd_ring_channel req_ring_channel, res_ring_channel;
 static unsigned int cmd_buf_size = 4; /* buffer size (in pages) */
+
+static int breakpoint_func() {
+
+    printk(KERN_INFO " This is a dummy function  where we insert a VMI breakpoint.\n");
+    return 0;
+}
 
 static int load_submodules(void *__unused) {
 
@@ -64,7 +70,7 @@ static int load_submodules(void *__unused) {
         /* based on the submodule id switch to appropriate block */
         switch(cmd->submodule_id) {
         case 1 :
-            if(submod.mod_table[cmd->submodule_id] == NULL)
+            if(submodule.mod_table[cmd->submodule_id] == NULL)
             printk(KERN_INFO "Loading the the psaction sub module");
             if((result = request_module("psaction_module")) < 0) {
                 printk(KERN_INFO "psaction_module not available\n");
@@ -74,12 +80,26 @@ static int load_submodules(void *__unused) {
             /* get the address in the res_ring_channel where the acknowledgment should be inserted */
             ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(&res_ring_channel, cmd_ring_channel_get_prod(&res_ring_channel));
             /* call the appropriate function in the submodule based on command id*/
-            result = submod.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+            result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+            if(result) {
+                printk(KERN_INFO "Function call failed.\n");
+            }
 
             /* Increment the prod index for the res_ring_channel */
             res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
             res_prod += 1;
             cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
+
+            /* Now we want to call a dummy function where break point can be introduced
+             * so the vmi can read the result from teh result ring buffer and increment the
+             * consumer index.
+             */
+            result = breakpoint_func();
+            if(result) {
+                printk(KERN_INFO "breakpoint_func call failed.\n");
+                return result;
+            }
+
             break;
 
         default :
@@ -185,18 +205,18 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
 static int initialize_submodule_table(void* __unused ) {
 
     int i;
-    submod.submodule_count = SUB_MODULE_COUNT;
+    submodule.submodule_count = SUB_MODULE_COUNT;
 
     /* Allocate memory for submodule table */
-    submod.mod_table = (struct submodule *) kmalloc(SUB_MODULE_COUNT  * sizeof(struct submodule *), GFP_KERNEL);
-    if(!submod.mod_table) {
+    submodule.mod_table = (struct submodule *) kmalloc(SUB_MODULE_COUNT  * sizeof(struct submodule *), GFP_KERNEL);
+    if(!submodule.mod_table) {
         printk(KERN_INFO "Fialed to allocate memory for submodule table\n");
         return -ENOMEM;
     }
 
     /* initialize the array of pointers to submodule struct */
     for(i = 0; i<SUB_MODULE_COUNT; i++) {
-        submod.mod_table[i] = NULL;
+        submodule.mod_table[i] = NULL;
     }
 
     return 0;
@@ -289,16 +309,16 @@ static void __exit cleanup_driver(void) {
         printk(KERN_INFO "Receiver ring buffer cleanup failed\n");
     }
     /* free the memory allocated for the submodule table */
-    if(submod.mod_table) {
-        kfree(submod.mod_table);
-        submod.mod_table = NULL;
+    if(submodule.mod_table) {
+        kfree(submodule.mod_table);
+        submodule.mod_table = NULL;
     }
 }
 
 
 EXPORT_SYMBOL(req_ring_channel);
 EXPORT_SYMBOL(res_ring_channel);
-EXPORT_SYMBOL(submod);
+EXPORT_SYMBOL(submodule);
 
 module_init( initialize_driver);
 module_exit( cleanup_driver);

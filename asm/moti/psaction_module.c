@@ -25,48 +25,29 @@
 #include <asm/thread_info.h>
 #include <asm/signal.h>
 #include <asm/siginfo.h>
+#include <repair_driver.h>
 
-/* Assuming the module to be multi-threaded, hence may need to
- * implement some form of a thread pool later on. As of now making
- * use of a single task_struct variable
- */
-static struct task_struct *thread;
+#define FUNCTION_COUNT 1
+#define SUBMODULE_ID  0
 
-/* Need to acquire a lock when trying to access the task_struct structure variables.
- * But from 2.6.18 tasklist_lock is no longer exported in linux/sched.h. So we need
- * to figure out how to acquire this lock
- *
- * extern rwlock_t tasklist_lock;
- */
+extern struct submod_table submodule;
+struct submodule submod;
 
-/* As of now passing the Process Id as a module parameter.
- * Later on a command interface needs to be implemented which
- * can accept commands a respective parameters from the user.
- */
-static volatile int psaction_pid = 0;
-static volatile int psaction_iflag = 0;
-static int psaction_iflag_previous = 0;
 
-//module_param(psaction_pid, int , S_IRUGO|S_IWUSR);
-
-static int check_func(void *__unused) {
+static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     struct task_struct *task;
     int found_flag = 0;
+    int psaction_pid = 0;
 
-    /* Have to set up a write lock as we are changing attribute values
-     * of task_struct  structure.
-     * write_lock_irq(&tasklist_lock);
-     */
+    /* Parse the arguments passed */
+    if(cmd->argc < 1 || cmd->argc > 1) {
+        printk(KERN_INFO "pasction module requires exactly 1 argument to be passed i.e, PID");
+        return -EINVAL;
+    }
 
-    /*wait till vmi seets the pid value*/ 
-    while (!kthread_should_stop()) {
-	if (psaction_iflag == psaction_iflag_previous) {
-	    yield();
-	    continue;
-	}
+    /* Extract the PID passed */
+    psaction_pid = cmd->argv[0];
 
-	printk(KERN_INFO "Updated iflag (%d) pid (%d)\n",
-	       psaction_iflag,psaction_pid);
 
 	/* Iterate over all the tasks and check for a matching PID*/
 	for_each_process(task) {
@@ -85,43 +66,86 @@ static int check_func(void *__unused) {
 
 		printk(KERN_INFO "Killed process\n");
 		found_flag = 1;
+		/* set the execution status in the ack record to success */
+		ack->exec_status = 1;
+		/* since the exxecution of the command does not return anything
+		 * set acrg = 0;
+		 */
+		ack->argc = 0;
 	    }
 	}
+
 	if (!found_flag) {
 	    printk(KERN_INFO "Process with PID = %d not found", psaction_pid);
-	}
-	psaction_iflag_previous = psaction_iflag;
-	psaction_pid = 0;
-    }
-    /*remove the lock.
-     *write_unlock_irq(&tasklist_lock);
-     */
+	    ack->exec_status = 0;
+	    ack->argc = 0;
 
+	}
+
+	psaction_pid = 0;
     return 0;
 }
 
-static int __init variable_check_init(void) {
-    printk(KERN_INFO "Creating a kthread in the init function\n");
-    thread = kthread_run(check_func, NULL, "__ps_kill");
-    if (IS_ERR(thread)) {
-        printk(KERN_INFO "Kthread creation failed\n");
+
+static int driver_mod_register_submodule(void * __unused) {
+
+    int ret = 0;
+    /*Initialize struct members */
+    submod.func_count = FUNCTION_COUNT;
+    submod.submodule_id = SUBMODULE_ID;
+
+    /* allocate memory for the array of function pointers */
+    submod.func_table = (cmd_impl_t) kmalloc(FUNCTION_COUNT * sizeof(cmd_impl_t), GFP_KERNEL );
+    if(!submod.func_table) {
+        printk(KERN_INFO "Failed to allocate memory for the function table\n");
         return -ENOMEM;
     }
+
+    /* initilize the function table */
+    submod.func_table[0] = ps_kill_func;
+
+    /* register the submodule table maintained in the repair driver */
+    submodule.mod_table[submod.submodule_id] = &submod;
+
+    return ret;
+}
+
+static int driver_mod_unregister_submodule(void * __unused) {
+
+    /* reinitialize the function pointer to NULL */
+    submod.func_table[0] = NULL;
+    /* Remove the entry for this module from the main table  */
+    submodule.mod_table[submod.submodule_id] = NULL;
+
+    return 0;
+
+}
+
+
+static int __init psaction_init(void) {
+    int result;
+    printk(KERN_INFO "Initialize the function table for this submdule.\n");
+    result = driver_mod_register_submodule(NULL);
+    if(result ) {
+        printk(KERN_INFO " Module register function failed \n");
+        return result;
+    }
+
+
     return 0;
 }
 
-static void __exit variable_check_exit(void) {
+static void __exit psaction_exit(void) {
     int result;
 
     printk(KERN_INFO "In the exit function \n");
-    result = kthread_stop(thread);
-    if (result == -EINTR) 
-        printk(KERN_INFO "Kthread_stop failed\n");
-    else 
-        printk(KERN_INFO " Check_func returned %d\n",result);
+    /* Unregister  from the module table */
+    result =  driver_mod_unregister_submodule(NULL);
+    if(result) {
+        printk(KERN_INFO " Module unregister function failed \n");
+    }
+
 }
 
-EXPORT_SYMBOL(psaction_pid);
-EXPORT_SYMBOL(psaction_iflag);
-module_init(variable_check_init);
-module_exit(variable_check_exit);
+module_init(psaction_init);
+module_exit(psaction_exit);

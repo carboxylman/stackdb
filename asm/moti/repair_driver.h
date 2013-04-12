@@ -29,10 +29,11 @@ struct cmd_rec {
 /* structure to get the acknowledgment from the submodules */
 struct ack_rec {
 
-    unsigned int submodule_id; /* 0 = command , 1 = acknowledgment*/
+    unsigned int submodule_id;  /* submodule in which the command is implemented*/
     unsigned int cmd_id;       /* unique identifier for each command */
-    int argc;                  /* command argument count */
-    int argv[128];             /* array to store the arguments*/
+    int exec_status;           /* 1 = success , 0 = error */
+    int argc;                  /* result argument count */
+    int argv[128];             /* array to store result data*/
 };
 
 /* function pointer to the functions in submodules */
@@ -126,10 +127,8 @@ static inline unsigned long cmd_ring_channel_inc_cons(struct cmd_ring_channel *r
     return (ring_channel->buf->cons++);
 };
 
-static inline char *cmd_ring_channel_put_rec_addr(
-        struct cmd_ring_channel *ring_channel, unsigned long prod) {
-    return (ring_channel->recs
-            + (prod % ring_channel->size_in_recs) * ring_channel->size_of_a_rec);
+static inline char *cmd_ring_channel_put_rec_addr(struct cmd_ring_channel *ring_channel, unsigned long prod) {
+    return (ring_channel->recs + (prod % ring_channel->size_in_recs) * ring_channel->size_of_a_rec);
 }
 
 static inline void cmd_ring_channel_set_cons(struct cmd_ring_channel *ring_channel, unsigned long cons) {
