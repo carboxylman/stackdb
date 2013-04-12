@@ -515,6 +515,10 @@ if test "${ENABLE_JAVA}" = "1"; then
 	if test -z "${JAR}" ; then
 	    AC_MSG_ERROR([no jar found in \$PATH])
         fi
+        AC_PATH_PROG(JDB,jdb)
+	if test -z "${JDB}" ; then
+	    AC_MSG_ERROR([no jdb found in \$PATH])
+        fi
 
 	# assuming we don't error out, extract JAVA_HOME, we need it set
 	JAVA_HOME=`echo "${JAVA}" | sed -e 's/\(\/bin\/java\)//'`
@@ -534,11 +538,16 @@ if test "${ENABLE_JAVA}" = "1"; then
 	    AC_MSG_ERROR("No jar in ${JAVA_HOME}/bin!")
         fi
 	JAR="${JAVA_HOME}/bin/jar"
+	if ! test -x "${JAVA_HOME}/bin/jdb"; then
+	    AC_MSG_ERROR("No jdb in ${JAVA_HOME}/bin!")
+        fi
+	JDB="${JAVA_HOME}/bin/jdb"
     fi
     AC_SUBST(JAVA_HOME)
     AC_SUBST(JAVA)
     AC_SUBST(JAVAC)
     AC_SUBST(JAR)
+    AC_SUBST(JDB)
 
     #
     # ant
