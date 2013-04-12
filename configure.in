@@ -404,13 +404,21 @@ if test "${ENABLE_SOAP}" = "1"; then
       [GSOAP="$with_gsoap"])
     if test ! "$GSOAP" = "/usr" ; then
         old_PATH="$PATH"
-        export PATH="${GSOAP}:$PATH"
+        export PATH="${GSOAP}/bin:$PATH"
+	GSOAPDIR=$GSOAP
     else
         old_PATH="$PATH"
+	GSOAPDIR=""
     fi
     AC_PATH_PROG(SOAPCPP2, soapcpp2)
     if test -z "$SOAPCPP2" ; then
         AC_MSG_ERROR([no acceptable soapcpp2 found in \$PATH])
+    fi
+    # infer the gsoap dir if it wasn't set, for includes, etc.  It might not be 
+    # /usr, like we assumed, if it was elsewhere in the $PATH.
+    if test -z "$GSOAPDIR" ; then
+       GSOAPDIR=`echo $SOAPCPP2 | sed -e 's/\/bin\/soapcpp2//'`
+       GSOAP=$GSOAPDIR
     fi
     AC_PATH_PROG(WSDL2H, wsdl2h)
     if test -z "$WSDL2H" ; then
