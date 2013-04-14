@@ -52,39 +52,17 @@ struct submod_table {
     unsigned int submodule_count;    /* number of submodule */
     struct submodule ** mod_table;   /* array of pointers to submodule  function table*/
 };
-/*
- * This structure contains the metadata for a single trace buffer.
- */
-struct cmd_buf {
-    unsigned long   cons;      /* Next item to be consumed. */
-    unsigned long   prod;      /* Next item to be produced.           */
-
-    /* Shape of the buffer */
-    unsigned long      payload_buffer_mfn;   /* what is this ?? */
-    unsigned long      payload_buffer_size;
-    unsigned long      size_of_a_rec;        /* size of a single record */
-    unsigned long      size_in_recs;         /* size of the buffer in recs */
-};
 
 
+/* structure for the ring channel */
 struct cmd_ring_channel {
-    struct cmd_buf   *buf;                  /* pointer to the buffer metadata   */
-    unsigned long     buf_mfn;              /* what is this ? */
+    unsigned long     cons;                   /* Next item to be consumed. */
+    unsigned long     prod;                   /* Next item to be produced. */
+    unsigned long     payload_buffer_size;    /* size_in_pages * page_size */
     unsigned long     buf_order;
-
-    void             *priv_metadata;        /* pointer to the private buffer metadata  */
-    unsigned long     priv_metadata_size;   /* size of the private buffer metadata  */
-    unsigned long     header_order;         /* size of the private buffer metadata  */
-
-    char             *recs;                 /* pointer to buffer data areas      */
-
-    unsigned long     size_of_a_rec;        /* size of a single record */
-    unsigned long     size_in_recs;         /* size of the buffer in recs */
-
-    /* not sure if we need the following fields, keeping it as of now */
-    unsigned long     highwater;            /* buffer is quite full, time to notify other end */
-    unsigned long     emergency_margin;     /* buffer is nearly full, time to freeze everything */
-    
+    char              *recs;                  /* pointer to buffer data areas */
+    unsigned long     size_of_a_rec;          /* size of a single record */
+    unsigned long     size_in_recs;           /* size of the buffer in recs */
 };
 
 
@@ -93,57 +71,45 @@ static inline void cmd_ring_channel_init(struct cmd_ring_channel *ring_channel) 
     return;
 }
 
-static inline void cmd_ring_channel_buf_init(struct cmd_buf *buf) {
-    memset(buf, 0, sizeof(*buf));
+
+int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel, unsigned long size_in_pages, unsigned long size_of_a_rec);
+int cmd_ring_channel_free(struct cmd_ring_channel *ring_channel);
+
+
+static inline unsigned long cmd_ring_channel_get_prod(struct cmd_ring_channel *ring_channel) {
+    return ring_channel->prod;
+}
+
+static inline unsigned long cmd_ring_channel_inc_prod(struct cmd_ring_channel *ring_channel) {
+    return (ring_channel->prod++);
+}
+
+static inline void cmd_ring_channel_set_prod(struct cmd_ring_channel *ring_channel, unsigned long prod) {
+    ring_channel->prod = prod;
     return;
 }
 
-int cmd_ring_channel_alloc(struct cmd_ring_channel *ring_channel, unsigned long size_in_pages, unsigned long size_of_a_rec);
-int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel, unsigned long size_in_pages, unsigned long size_of_a_rec, unsigned long priv_metadata_size);
-int cmd_ring_channel_free(struct cmd_ring_channel *ring_channel);
-
-static inline void *cmd_ring_channel_get_priv_metadata(struct cmd_ring_channel *ring_channel) {
-    return ring_channel->priv_metadata;
-};
-
-static inline unsigned long cmd_ring_channel_get_prod(struct cmd_ring_channel *ring_channel) {
-    return ring_channel->buf->prod;
-};
-
-static inline unsigned long cmd_ring_channel_inc_prod(struct cmd_ring_channel *ring_channel) {
-    return (ring_channel->buf->prod++);
-};
-
-static inline void cmd_ring_channel_set_prod(struct cmd_ring_channel *ring_channel, unsigned long prod) {
-    ring_channel->buf->prod = prod;
-    return;
-};
-
 static inline unsigned long cmd_ring_channel_get_cons(struct cmd_ring_channel *ring_channel) {
-    return ring_channel->buf->cons;
-};
+    return ring_channel->cons;
+}
 
 static inline unsigned long cmd_ring_channel_inc_cons(struct cmd_ring_channel *ring_channel) {
-    return (ring_channel->buf->cons++);
-};
+    return (ring_channel->cons++);
+}
 
 static inline char *cmd_ring_channel_put_rec_addr(struct cmd_ring_channel *ring_channel, unsigned long prod) {
     return (ring_channel->recs + (prod % ring_channel->size_in_recs) * ring_channel->size_of_a_rec);
 }
 
 static inline void cmd_ring_channel_set_cons(struct cmd_ring_channel *ring_channel, unsigned long cons) {
-    ring_channel->buf->cons = cons;
+    ring_channel->cons = cons;
     return; 
-};
+}
 
 static inline char *cmd_ring_channel_get_rec(struct cmd_ring_channel *ring_channel, unsigned long cons) {
     return (ring_channel->recs + (cons % ring_channel->size_in_recs) * ring_channel->size_of_a_rec);
-};
-
-/* what do the following  functions do */
-static inline unsigned long cmd_ring_channel_get_index_mod_slow(struct cmd_ring_channel *ring_channel, unsigned long index) {
-    return (index % ring_channel->size_in_recs);
 }
+
 
 static inline unsigned long cmd_ring_channel_size_in_recs(struct cmd_ring_channel *ring_channel) {
     return ring_channel->size_in_recs;
@@ -157,13 +123,6 @@ static inline unsigned long cmd_ring_channel_size(struct cmd_ring_channel *ring_
     return ring_channel->size_in_recs * ring_channel->size_of_a_rec;
 }
 
-/* Not sure if we require the following 2 functions, keeping them as of now */
-static inline unsigned long cmd_ring_channel_highwater(struct cmd_ring_channel *ring_channel) {
-    return ring_channel->highwater;
-}
 
-static inline unsigned long cmd_ring_channel_emergency_margin(struct cmd_ring_channel *ring_channel) {
-    return ring_channel->emergency_margin;
-}
 
 

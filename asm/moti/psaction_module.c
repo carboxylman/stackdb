@@ -68,7 +68,7 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 		found_flag = 1;
 		/* set the execution status in the ack record to success */
 		ack->exec_status = 1;
-		/* since the exxecution of the command does not return anything
+		/* since the execution of the command does not return anything
 		 * set acrg = 0;
 		 */
 		ack->argc = 0;
@@ -95,7 +95,7 @@ static int driver_mod_register_submodule(void * __unused) {
     submod.submodule_id = SUBMODULE_ID;
 
     /* allocate memory for the array of function pointers */
-    submod.func_table = (cmd_impl_t) kmalloc(FUNCTION_COUNT * sizeof(cmd_impl_t), GFP_KERNEL );
+    submod.func_table = (cmd_impl_t *) kmalloc(FUNCTION_COUNT * sizeof(cmd_impl_t), GFP_KERNEL );
     if(!submod.func_table) {
         printk(KERN_INFO "Failed to allocate memory for the function table\n");
         return -ENOMEM;

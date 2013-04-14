@@ -35,7 +35,7 @@ struct submod_table submodule;
 struct cmd_ring_channel req_ring_channel, res_ring_channel;
 static unsigned int cmd_buf_size = 4; /* buffer size (in pages) */
 
-static int breakpoint_func() {
+int breakpoint_func() {
 
     printk(KERN_INFO " This is a dummy function  where we insert a VMI breakpoint.\n");
     return 0;
@@ -43,8 +43,8 @@ static int breakpoint_func() {
 
 static int load_submodules(void *__unused) {
 
-    struct cmd_rec *cmd;
-    struct ack_rec *ack;
+    struct cmd_rec *cmd;  /* structure representing the command */
+    struct ack_rec *ack;  /* structure representing the acknowledgment */
     int result;
     unsigned long req_cons;
     unsigned long res_prod;
@@ -58,7 +58,7 @@ static int load_submodules(void *__unused) {
             continue;
         }
 
-        printk(KERN_INFO "Read a command from the command buffer\n");
+        printk(KERN_INFO "Read a command from the request ring buffer\n");
         /* Read the command */
         cmd = (struct cmd_rec*) cmd_ring_channel_get_rec(&req_ring_channel, cmd_ring_channel_get_cons(&req_ring_channel));
 
@@ -103,7 +103,7 @@ static int load_submodules(void *__unused) {
             break;
 
         default :
-            printk(KERN_INFO "Invalid command Id specified, hence no module loaded\n");
+            printk(KERN_INFO "Invalid submodule Id specified, hence no module loaded\n");
             return -1;
 
         }
@@ -115,27 +115,15 @@ static int load_submodules(void *__unused) {
 
 
 int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
-        unsigned long size_in_pages, unsigned long size_of_a_rec,
-        unsigned long priv_metadata_size) {
+        unsigned long size_in_pages, unsigned long size_of_a_rec) {
 
     int ret;
-    unsigned long order, header_order;
-    unsigned long size_of_header_in_pages;
+    unsigned long order;
 
     printk(KERN_INFO "Allocating ring channel\n");
     cmd_ring_channel_init(ring_channel);
 
-    header_order = get_order(priv_metadata_size + sizeof(struct cmd_buf));
-    if ((ring_channel->buf =(struct cmd_buf *) __get_free_pages(GFP_KERNEL, header_order))
-            == NULL) {
-        printk(KERN_INFO "Memory allocation failed\n");
-        return -ENOMEM;
-    }
 
-    size_of_header_in_pages = 1 << header_order;
-    printk(KERN_INFO "Allocating ring channel: header area size:%lu, in pages:%lu\n",
-            priv_metadata_size + sizeof(struct cmd_buf),
-            size_of_header_in_pages);
     /* Figure out the right way of doing this */
     order = get_order(size_in_pages * PAGE_SIZE);
     if ((ring_channel->recs = (char*) __get_free_pages(GFP_KERNEL, order)) == NULL) {
@@ -146,44 +134,11 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
         goto cleanup;
     }
 
-    ring_channel->priv_metadata = (char *) (ring_channel->buf + 1);
-    ring_channel->buf->cons = ring_channel->buf->prod = 0;
-
+    /* init structure members */
+    ring_channel->cons = ring_channel->prod = 0;
     ring_channel->size_of_a_rec = size_of_a_rec;
-    ring_channel->size_in_recs = (size_in_pages * PAGE_SIZE)
-            / ring_channel->size_of_a_rec;
-
-    /* Init shared buffer structures */
-    ring_channel->buf->payload_buffer_mfn = virt_to_mfn(ring_channel->recs);
-    ring_channel->buf->payload_buffer_size = size_in_pages * PAGE_SIZE;
-    ring_channel->buf->size_of_a_rec = ring_channel->size_of_a_rec;
-    ring_channel->buf->size_in_recs = ring_channel->size_in_recs;
-
-    ring_channel->highwater = ring_channel->size_in_recs >> 1; /* 50% high water */
-    ring_channel->emergency_margin = ring_channel->size_in_recs >> 4; /* 5% we are very close */
-
-    /*    printk(KERN_INFO "New ring channel: payload area {requested:%lu, allocated:%lu, wasted on allocation:%lu (order:%lu), \n"
-     "metadata area {size:%lu, buffer size: %lu, full header: %lu, "
-     "allocated:%lu, wasted on allocation:%lu (order:%lu)} \n"
-     "rec: {requested size:%lu, size ^2:%lu, rownded down size in recs:%lu, "
-     "possible size in recs:%lu, wasted:%lu} "
-     "highwater: %lu, emergency margin: %lu\n",
-     size_in_pages * PAGE_SIZE,
-     ((unsigned long)1 << order) * PAGE_SIZE,
-     ((1 << order) * PAGE_SIZE) - size_in_pages * PAGE_SIZE, order,
-     priv_metadata_size, (unsigned long) sizeof(struct ttd_buf),
-     priv_metadata_size + sizeof(struct ttd_buf),
-     ((unsigned long)1 << header_order) * PAGE_SIZE,
-     ((1 << header_order)* PAGE_SIZE) - priv_metadata_size - sizeof(struct ttd_buf),
-     header_order, size_of_a_rec,
-     ttd_ring_channel_size_of_a_rec(ring_channel),
-     ttd_ring_channel_size_in_recs(ring_channel),
-     (size_in_pages * PAGE_SIZE)/ring_channel->size_of_a_rec,
-     (size_in_pages * PAGE_SIZE)/ring_channel->size_of_a_rec - ttd_ring_channel_size_in_recs(ring_channel),
-     ttd_ring_channel_highwater(ring_channel),
-     ttd_ring_channel_emergency_margin(ring_channel));
-     */
-    ring_channel->header_order = header_order;
+    ring_channel->size_in_recs = (size_in_pages * PAGE_SIZE) / ring_channel->size_of_a_rec;
+    ring_channel->payload_buffer_size = size_in_pages * PAGE_SIZE;
     ring_channel->buf_order = order;
 
     return 0;
@@ -191,11 +146,6 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
     cleanup: if (ring_channel->recs) {
         free_pages((unsigned long) ring_channel->recs, order);
         ring_channel->recs = NULL;
-    }
-
-    if (ring_channel->buf) {
-        free_pages((unsigned long) ring_channel->buf, header_order);
-        ring_channel->buf = NULL;
     }
 
     return ret;
@@ -208,7 +158,7 @@ static int initialize_submodule_table(void* __unused ) {
     submodule.submodule_count = SUB_MODULE_COUNT;
 
     /* Allocate memory for submodule table */
-    submodule.mod_table = (struct submodule *) kmalloc(SUB_MODULE_COUNT  * sizeof(struct submodule *), GFP_KERNEL);
+    submodule.mod_table = (struct submodule **) kmalloc(SUB_MODULE_COUNT  * sizeof(struct submodule *), GFP_KERNEL);
     if(!submodule.mod_table) {
         printk(KERN_INFO "Fialed to allocate memory for submodule table\n");
         return -ENOMEM;
@@ -227,7 +177,7 @@ static int initialize_submodule_table(void* __unused ) {
 static int initialize_buffer(void *__unused) {
 
     int ret = 0;
-    if (cmd_ring_channel_alloc_with_metadata(&req_ring_channel, cmd_buf_size, sizeof(struct cmd_rec), 0) == 0) {
+    if (cmd_ring_channel_alloc_with_metadata(&req_ring_channel, cmd_buf_size, sizeof(struct cmd_rec)) == 0) {
         printk(KERN_INFO "Transmitter ring buffer initialized.\n");
     }
     else {
@@ -235,7 +185,7 @@ static int initialize_buffer(void *__unused) {
         return -ENOMEM;
     }
 
-    if (cmd_ring_channel_alloc_with_metadata(&res_ring_channel, cmd_buf_size, sizeof(struct ack_rec), 0) == 0) {
+    if (cmd_ring_channel_alloc_with_metadata(&res_ring_channel, cmd_buf_size, sizeof(struct ack_rec)) == 0) {
         printk(KERN_INFO "Receiver ring buffer initialized.\n");
     }
     else {
@@ -257,11 +207,6 @@ int cmd_ring_channel_free(struct cmd_ring_channel *ring_channel) {
     if (ring_channel->recs) {
             free_pages((unsigned long) ring_channel->recs, ring_channel->buf_order);
             ring_channel->recs = NULL;
-    }
-
-    if (ring_channel->buf) {
-        free_pages((unsigned long) ring_channel->buf, ring_channel->header_order);
-        ring_channel->buf = NULL;
     }
 
     return 0;
