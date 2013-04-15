@@ -56,13 +56,13 @@ struct submod_table {
 
 /* structure for the ring channel */
 struct cmd_ring_channel {
-    unsigned long     cons;                   /* Next item to be consumed. */
-    unsigned long     prod;                   /* Next item to be produced. */
-    unsigned long     payload_buffer_size;    /* size_in_pages * page_size */
-    unsigned long     buf_order;
+    unsigned int     cons;                   /* Next item to be consumed. */
+    unsigned int     prod;                   /* Next item to be produced. */
+    unsigned int     payload_buffer_size;    /* size_in_pages * page_size */
+    unsigned int     buf_order;
     char              *recs;                  /* pointer to buffer data areas */
-    unsigned long     size_of_a_rec;          /* size of a single record */
-    unsigned long     size_in_recs;           /* size of the buffer in recs */
+    unsigned int     size_of_a_rec;          /* size of a single record */
+    unsigned int     size_in_recs;           /* size of the buffer in recs */
 };
 
 

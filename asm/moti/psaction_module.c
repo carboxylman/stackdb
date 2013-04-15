@@ -47,6 +47,9 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     /* Extract the PID passed */
     psaction_pid = cmd->argv[0];
+    /*set the command and submodule id in the ack structure */
+    ack->cmd_id = cmd->cmd_id;
+    ack->submodule_id = cmd->submodule_id;
 
 
 	/* Iterate over all the tasks and check for a matching PID*/
