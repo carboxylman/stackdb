@@ -154,7 +154,7 @@ a_analysis_desc_to_x_AnalysisDescT(struct soap *soap,
     if (in->supports_autoparse_simple_results)
 	rout->supportsAutoparseSimpleResults = xsd__boolean__true_;
     else
-	rout->supportsAutoparseSimpleResults = xsd__boolean__true_;
+	rout->supportsAutoparseSimpleResults = xsd__boolean__false_;
 
     rout->inParams = SOAP_CALLOC(soap,1,sizeof(*rout->inParams));
     rout->inParams->__sizeparam = g_hash_table_size(in->in_params);
