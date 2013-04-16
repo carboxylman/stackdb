@@ -1,0 +1,75 @@
+#!/usr/bin/env python
+##
+## Copyright (c) 2012, 2013 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+##
+
+import logging
+import sys
+import os
+import os.path
+from suds.client import Client
+from pysimplesoap.server import SoapDispatcher,SOAPHandler
+from BaseHTTPServer import HTTPServer
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('suds.client').setLevel(logging.DEBUG)
+logging.getLogger('suds.transport').setLevel(logging.DEBUG)
+logging.getLogger('suds.xsd.schema').setLevel(logging.DEBUG)
+logging.getLogger('suds.wsdl').setLevel(logging.DEBUG)
+
+logging.getLogger('pysimplesoap').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.server').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.simplexml').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.transport').setLevel(logging.DEBUG)
+
+objdir = os.path.abspath("@top_builddir@")
+url = 'file://%s/xml/service/target.wsdl.test' % (objdir,)
+clienturl = 'file://%s/xml/service/targetListener.wsdl.test' % (objdir,)
+
+dummy_threads = os.path.abspath("@top_builddir@/tests/dummy.threads")
+
+#print "Starting server (%s:%d)..." % (httpd.server_name,httpd.server_port)
+
+#
+# Setup SOAP client
+#
+client = Client(url,cache=None)
+
+#
+# Start running commands
+#
+ttypes = client.service.ListTargetTypes()
+
+tspec = client.factory.create('TargetSpecT')
+tspec._type = "ptrace"
+tspec.mode = "live"
+tspec.startPaused = True
+tspec.logStdout = True
+tspec.logStderr = True
+#tspec.dedicatedMonitor = True
+tspec.backendSpec.targetPtraceSpec = client.factory.create('TargetPtraceSpecT')
+tspec.backendSpec.targetPtraceSpec.program = dummy_threads
+tspec.backendSpec.targetPtraceSpec.arguments = None
+tspec.backendSpec.targetPtraceSpec.environment = None
+
+target = client.service.InstantiateTarget(tspec)
+client.service.PauseTarget(target.tid)
+client.service.ResumeTarget(target.tid)
+
+client.service.RegisterTargetListener(target.tid,'localhost',3952,False)
+
+probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")
