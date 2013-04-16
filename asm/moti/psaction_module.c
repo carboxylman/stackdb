@@ -74,7 +74,8 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 		/* since the execution of the command does not return anything
 		 * set acrg = 0;
 		 */
-		ack->argc = 0;
+		ack->argc = 1;
+		ack->argv[0] = psaction_pid;
 	    }
 	}
 

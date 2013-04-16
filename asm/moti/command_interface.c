@@ -33,6 +33,7 @@
 #include "alist.h"
 #include "list.h"
 
+volatile int probe_active = 0;
 /* struct to store the parsed command */
 struct TOKEN {
 	char cmd[128];
@@ -131,6 +132,7 @@ int pskill_func(struct TOKEN *token) {
 	struct bsymbol *command_struct_type, *ack_struct_type, *bs;
 	struct value *v, *value;
 	int result;
+	int argv[128],i;
 
 	/*get the address within the req_ring_channel page where the
 	 * command needs to be inserted.
@@ -190,25 +192,20 @@ int pskill_func(struct TOKEN *token) {
 	}
 	value_free(v);
 
-	/* set the process id in argv
-	 * not sure how it is going to work because
-	 * i am trying to store an array element. Do i need to call
-	 * target_load_value_member first to load the array then to load the individual element
-	 */
-	v = target_load_value_member(target, value, "argv[0]", NULL,
-			LOAD_FLAG_NONE);
-	result = value_update_u32(v, atoi(token->argv[0]));
-	if (result == -1) {
-		fprintf(stderr, "Error: failed to update value of argv[0]\n");
-		goto failure;
+	/* set the entire argv array*/
+	for(i=0; i<128; i++) {
+		argv[i] = atoi(token->argv[i]);
 	}
+	v = target_load_value_member(target, value, "argv", NULL,
+			LOAD_FLAG_NONE);
+	memcpy(v->buf,argv,128*sizeof(int));
 	result = target_store_value(t, v);
 	if (result == -1) {
-		fprintf(stderr, "Error: failed to write argc\n");
+		fprintf(stderr, "Error: failed to write argv\n");
 		goto exit;
 	}
 	value_free(v);
-	bsymbol_release (command_struct_type)
+	bsymbol_release(command_struct_type);
 
 	/* now that we have written all the command paramaters, increment prod index */
 	bs = target_lookup_sym(t, "req_ring_channel", NULL, "repair_driver",
@@ -244,85 +241,6 @@ int pskill_func(struct TOKEN *token) {
 	 * res_ring_channel which is indexed by cons. We need to read out the contents of
 	 * ack_rec and update the cons index to complete the request response cycle.
 	 */
-
-	/* need code to add a breakpoint at breakpoint_func() in repair_driver.
-	 * Guess these are the calls that need to be made.
-	 * target_lookup_sym()
-	 * probe_create()
-	 * probe_register_symbol()
-	 */
-
-	/*Once the breakpoint is hit read out the ack_rec*/
-
-	/*get the address within the res_ring_channel page from where the result needs to be read */
-	ack_ptr = (struct ack_rec *) get_prod_or_cons_addr("res_ring_channel",
-			"cons");
-	if (!ack_ptr) {
-		fprintf(stderr, "get_prod_or_cons_addr failed \n");
-		goto failure;
-	}
-
-	/* get the type for the acknowledgment structure  and load it*/
-	command_struct_type = target_lookup_sym(t, "struct ack_rec", NULL,
-			"repair_driver", SYMBOL_TYPE_FLAG_VAR);
-	value = target_load_type(command_struct_type, ack_ptr, LOAD_FLAG_NONE);
-
-	/* get the submodule id */
-	v = target_load_value_member(target, value, "submodule_id", NULL,
-			LOAD_FLAG_NONE);
-	if (v_u32(v) != 0) {
-		fprintf(stderr"Read the wrong ack_rec, submodule id doesnot match \n");
-		goto failure;
-	}
-	value_free(v);
-
-	/* get the command id */
-	v = target_load_value_member(target, value, "cmd_id", NULL, LOAD_FLAG_NONE);
-	if (v_u32(v) != 0) {
-		fprintf(stderr"Read the wrong ack_rec, cmd id doesnot match \n");
-		goto failure;
-	}
-	value_free(v);
-
-	/* get the command execution status */
-	v = target_load_value_member(target, value, "exec_status", NULL,
-			LOAD_FLAG_NONE);
-	if (v_u32(v) != 1) {
-		fprintf(stderr, "Command execution failed. \n");
-		goto failure;
-	}
-	value_free(v);
-	bsymbol_release(ack_struct_type);
-
-	/* now increment the cons index in the res_ring_channel */
-	bs = target_lookup_sym(t, "res_ring_channel", NULL, "repair_driver",
-			SYMBOL_TYPE_FLAG_VAR);
-	if (!bs) {
-		fprintf(stderr, "Error: could not lookup symbol res_ring_channel.\n");
-		goto failure;
-	}
-
-	value = target_load_symbol(t, TID_GLOBAL, bs, LOAD_FLAG_NONE);
-	if (!value) {
-		fprintf(stderr,
-				"ERROR: could not load value of symbol req_ring_channel\n");
-		goto failure;
-	}
-
-	v = target_load_value_member(target, value, "cons", NULL, LOAD_FLAG_NONE);
-	result = value_update_i32(v, v_u32(v) + 1);
-	if (result == -1) {
-		fprintf(stderr, "Error: failed to update cons index\n");
-		goto failure;
-	}
-	result = target_store_value(t, v);
-	if (result == -1) {
-		fprintf(stderr, "Error: failed to set the cons index\n");
-		goto failure;
-	}
-	value_free(v);
-	bsymbol_release(bs);
-
 	return 1;
 
 	failure: if (v) {
@@ -338,6 +256,164 @@ int pskill_func(struct TOKEN *token) {
 		bsymbol_release(ack_struct_type);
 	}
 	return 0;
+
+}
+
+result_t _target_probe_posthandler(struct probe *probe, void *handler_data, struct probe *trigger) {
+
+	probe_active = 0;
+    return RESULT_SUCCESS;
+};
+
+result_t _target_probe_prehandler(struct probe *probe, void *handler_data , struct probe *trigger) {
+
+	struct ack_rec *ack_ptr, result;
+	struct bsymbol *ack_struct_type, *bs;
+	struct value *v, *value;
+	unsigned int submodule_id, cmd_id, exec_status;
+	result_t retval = RESULT_SUCCESS;
+
+	probe_active = 1;
+
+	/*get the address within the res_ring_channel page from where the result needs to be read */
+	ack_ptr = (struct ack_rec *) get_prod_or_cons_addr("res_ring_channel",
+			"cons");
+	if (!ack_ptr) {
+		fprintf(stderr, "get_prod_or_cons_addr failed \n");
+		retval = RESULT_ERROR;
+		goto failure1;
+	}
+
+	/* get the type for the acknowledgment structure  and load it*/
+	ack_struct_type = target_lookup_sym(t, "struct ack_rec", NULL,
+			"repair_driver", SYMBOL_TYPE_FLAG_VAR);
+	value = target_load_type(ack_struct_type, ack_ptr, LOAD_FLAG_NONE);
+
+	/* get the submodule id */
+	v = target_load_value_member(target, value, "submodule_id", NULL,
+			LOAD_FLAG_NONE);
+	result.submodule_id = v_u32(v)
+	value_free(v);
+
+	/* get the command id */
+	v = target_load_value_member(target, value, "cmd_id", NULL, LOAD_FLAG_NONE);
+	result.cmd_id = v_u32(v)
+	value_free(v);
+
+	/* get the command execution status */
+	v = target_load_value_member(target, value, "exec_status", NULL,
+			LOAD_FLAG_NONE);
+	result.exec_status = v_u32(v)
+	value_free(v);
+
+	/* get the argc */
+	v = target_load_value_member(target, value, "argc", NULL,
+			LOAD_FLAG_NONE);
+	result.argc = v_u32(v)
+	value_free(v);
+
+	/* Readout the values stored in argv */
+	v = target_load_value_member(target, value, "argv", NULL,
+			LOAD_FLAG_NONE);
+
+	memcpy(result.argv,v->buf,128*sizeof(int));
+	value_free(v);
+
+	bsymbol_release(ack_struct_type);
+
+	/* Now display the result of command execution */
+	switch(result.submodule_id) {
+		case 0:  /*psaction_module*/
+			switch(result.cmd_id) {
+					case 0: /*__ps_kill function */
+						if(result.exec_status) {
+							fprintf(stdout, "SUCCESS: Process with PID %d successfully killed\n",result.argv[0]);
+						}
+						else{
+							fprintf(stdout,"FAILURE: Failed to kill process with PID %d \n.",result.argv[0]);
+						}
+						break;
+					default:
+						fprintf(stderr,"Invalid value for cmd_id in result.\n");
+						break;
+			}
+			break;
+		default:
+			fprintf(stderr,"Invalid value for submodule_id in the result.\n");
+			break;
+	}
+
+	/* now increment the cons index in the res_ring_channel */
+	bs = target_lookup_sym(t, "res_ring_channel", NULL, "repair_driver",
+			SYMBOL_TYPE_FLAG_VAR);
+	if (!bs) {
+		fprintf(stderr, "Error: could not lookup symbol res_ring_channel.\n");
+		retval = RESULT_ERROR;
+		goto failure1;
+	}
+
+	value = target_load_symbol(t, TID_GLOBAL, bs, LOAD_FLAG_NONE);
+	if (!value) {
+		fprintf(stderr,
+				"ERROR: could not load value of symbol req_ring_channel\n");
+		retval = RESULT_ERROR;
+		goto failure1;
+	}
+
+	v = target_load_value_member(target, value, "cons", NULL, LOAD_FLAG_NONE);
+	result = value_update_i32(v, v_u32(v) + 1);
+	if (result == -1) {
+		fprintf(stderr, "Error: failed to update cons index\n");
+		retval = RESULT_ERROR;
+		goto failure1;
+	}
+	result = target_store_value(t, v);
+	if (result == -1) {
+		fprintf(stderr, "Error: failed to set the cons index\n");
+		retval = RESULT_ERROR;
+		goto failure1;
+	}
+	value_free(v);
+	bsymbol_release(bs);
+	return retval;
+
+	failure1:
+	if(v){
+		value_free(v);
+	}
+	if(bs){
+		bsymbol_release(bs);
+	}
+	if(ack_struct_type){
+		bsymbol_release(ack_struct_type);
+	}
+	return retval;
+
+}
+
+
+int enable_probe() {
+
+    struct probe *p;
+    target_status_t status;
+
+    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+    	if (target_pause(t)) {
+    		fprintf(stderr,"Failed to pause the target \n");
+    		return 0;
+    	}
+    }
+
+    p = probe_simple(t,TID_GLOBAL,"breakpoint_func",_target_probe_prehandler, _target_probe_posthandler,NULL);
+
+    if (status == TSTATUS_PAUSED) {
+    	if (target_resume(t)) {
+    		fprintf(stderr, "Failed to resume target.\n ");
+    		return 0;
+    	}
+    }
+
+    return 1;
 
 }
 
@@ -423,13 +499,29 @@ int main(int argc, char **argv) {
 		exit(-1);
 	}
 
+
+	/*set up a probe on the breakpoint_func() in repair_driver */
+	result = enable_probe();
+	if(!result){
+		fprintf(stderr,"Cound not set probe on reakpoint_func\n");
+		goto exit;
+	}
+
+
 	/* Allocate memory for the command */
 	command = (char*) malloc(128 * sizeof(char));
 	if (!command) {
 		fprintf(stdout, "Failed to allocate memory for the command\n");
+		goto exit;
 	}
 	/* now  start a infinite while loop that waits for user to input commands */
 	while (1) {
+
+		/*check if the probe is active, in that case we don't want to accepts user inputs */
+		if(probe_active) {
+			continue;
+		}
+
 		fprintf(stdout, "\n- ");
 		fflush(stdin);
 		gets(command);
@@ -438,8 +530,6 @@ int main(int argc, char **argv) {
 		i = 0;
 		cur_token = strtok(command, &delim);
 		strcpy(token.cmd, cur_token); /* token.cmd has command name */
-		strcpy(token.argv[0], token.cmd);
-		i++;
 		do {
 			cur_token = strtok(NULL, &delim);
 			if (cur_token == NULL)
