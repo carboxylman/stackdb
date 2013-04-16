@@ -330,17 +330,17 @@ static inline void array_list_deep_free(struct array_list *list) {
 #define array_list_foreach(alist,lpc,placeholder)			\
     for (lpc = 0, (placeholder) = alist->len ? (typeof(placeholder))alist->list[lpc] : (typeof(placeholder))NULL; \
 	 alist->len - lpc > 0;						\
-	 ++lpc) 
+	 ++lpc, (placeholder) = lpc < alist->len ? (typeof(placeholder))alist->list[lpc] : (typeof(placeholder))NULL) 
 
 #define array_list_foreach_continue(alist,lpc,placeholder)		\
     for ((placeholder) = (alist->len - lpc > 0) ? (typeof(placeholder))alist->list[lpc] : (typeof(placeholder))NULL; \
 	 alist->len - lpc > 0;						\
-	 ++lpc) 
+	 ++lpc, (placeholder) = lpc < alist->len ? (typeof(placeholder))alist->list[lpc] : (typeof(placeholder))NULL) 
 
 #define array_list_foreach_fakeptr_t(alist,lpc,placeholder,intertype)	\
     for (lpc = 0, (placeholder) = alist->len ? (typeof(placeholder))(intertype)alist->list[lpc] : (typeof(placeholder))(intertype)NULL; \
 	 alist->len - lpc > 0;						\
-	 ++lpc) 
+	 ++lpc, (placeholder) = lpc < alist->len ? (typeof(placeholder))(intertype)alist->list[lpc] : (typeof(placeholder))(intertype)NULL) 
 
 #define array_list_foreach_delete(alist,lpc)	\
     array_list_remove_item_at(alist,lpc); lpc = (lpc == 0)? 0 : lpc - 1;
