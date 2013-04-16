@@ -70,7 +70,7 @@ struct argp_option psa_argp_opts[] = { { 0, 0, 0, 0, 0, 0 }, };
 
 /* get the producer address in the request ring channel */
 
-void* get_prod_or_cons_addr(const char *symbol_name, const char *index) {
+void* get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 
 	struct bsymbol *bs;
 	struct value *v, *value;
@@ -80,7 +80,7 @@ void* get_prod_or_cons_addr(const char *symbol_name, const char *index) {
 	void *rec_base_ptr, *addr;
 
     /*first get the value stored in req_ring_channel.recs in the module.*/
-	bs = target_lookup_sym(t, *symbol_name, NULL, "repair_driver",
+	bs = target_lookup_sym(t, symbol_name, NULL, "repair_driver",
 			SYMBOL_TYPE_FLAG_VAR);
 	if (!bs) {
 		fprintf(stderr, "Error: could not lookup symbol req_ring_channel.\n");
@@ -95,23 +95,23 @@ void* get_prod_or_cons_addr(const char *symbol_name, const char *index) {
 	}
 
 	/* read the base address of the record */
-	v = target_load_value_member(target, value, "recs", NULL, LOAD_FLAG_NONE);
-	index = v_addr(v);
+	v = target_load_value_member(t, value, "recs", NULL, LOAD_FLAG_NONE);
+	rec_base_ptr = (void *)v->buf;
 	value_free(v);
 
 	/* read the producer index value */
-	v = target_load_value_member(target, value, *index, NULL, LOAD_FLAG_NONE);
+	v = target_load_value_member(t, value, index_name, NULL, LOAD_FLAG_NONE);
 	index = v_u32(v);
 	value_free(v);
 
 	/* read the size of the ring buffer in terms of record */
-	v = target_load_value_member(target, value, "size_in_recs", NULL,
+	v = target_load_value_member(t, value, "size_in_recs", NULL,
 			LOAD_FLAG_NONE);
 	size_in_recs = v_u32(v);
 	value_free(v);
 
 	/* read the size of each record */
-	v = target_load_value_member(target, value, "size_of_a_rec", NULL,
+	v = target_load_value_member(t, value, "size_of_a_rec", NULL,
 			LOAD_FLAG_NONE);
 	size_of_a_rec = v_u32(v);
 	value_free(v);
@@ -127,30 +127,29 @@ void* get_prod_or_cons_addr(const char *symbol_name, const char *index) {
 
 int pskill_func(struct TOKEN *token) {
 
-	struct cmd_rec *cmd_ptr;
-	struct ack_rec *ack_ptr;
-	struct bsymbol *command_struct_type, *ack_struct_type, *bs;
-	struct value *v, *value;
+	ADDR cmd_ptr;
+	struct bsymbol *ack_struct_type=NULL, *bs=NULL;
+	struct symbol *command_struct_type=NULL;
+	struct value *v=NULL, *value=NULL;
 	int result;
 	int argv[128],i;
 
 	/*get the address within the req_ring_channel page where the
 	 * command needs to be inserted.
 	 */
-	cmd_ptr = (struct cmd_rec *) get_prod_or_cons_addr("req_ring_channel",
-			"prod");
+	cmd_ptr = *((ADDR *) get_prod_or_cons_addr("req_ring_channel","prod"));
 	if (!cmd_ptr) {
 		fprintf(stderr, "get_prod_or_cons_addr failed \n");
 		goto failure;
 	}
 
 	/* get the type for the command structure  and load it*/
-	command_struct_type = target_lookup_sym(t, "struct cmd_rec", NULL,
-			"repair_driver", SYMBOL_TYPE_FLAG_VAR);
-	value = target_load_type(command_struct_type, cmd_ptr, LOAD_FLAG_NONE);
+	command_struct_type = bsymbol_get_symbol(target_lookup_sym(t, "cmd_rec", NULL,
+			"repair_driver", SYMBOL_TYPE_FLAG_VAR));
+	value = target_load_type(t, command_struct_type, cmd_ptr, LOAD_FLAG_NONE);
 
 	/* set the submodule id */
-	v = target_load_value_member(target, value, "submodule_id", NULL,
+	v = target_load_value_member(t, value, "submodule_id", NULL,
 			LOAD_FLAG_NONE);
 	result = value_update_u32(v, 0);
 	if (result == -1) {
@@ -165,7 +164,7 @@ int pskill_func(struct TOKEN *token) {
 	value_free(v);
 
 	/* set the command id */
-	v = target_load_value_member(target, value, "cmd_id", NULL, LOAD_FLAG_NONE);
+	v = target_load_value_member(t, value, "cmd_id", NULL, LOAD_FLAG_NONE);
 	result = value_update_u32(v, 0);
 	if (result == -1) {
 		fprintf(stderr, "Error: failed to update value of cmd_id\n");
@@ -179,8 +178,8 @@ int pskill_func(struct TOKEN *token) {
 	value_free(v);
 
 	/*set the argument count */
-	v = target_load_value_member(target, value, "argc", NULL, LOAD_FLAG_NONE);
-	result = value_update_u32(v, atoi(token->argc));
+	v = target_load_value_member(t, value, "argc", NULL, LOAD_FLAG_NONE);
+	result = value_update_u32(v, token->argc);
 	if (result == -1) {
 		fprintf(stderr, "Error: failed to update value of argc\n");
 		goto failure;
@@ -196,16 +195,16 @@ int pskill_func(struct TOKEN *token) {
 	for(i=0; i<128; i++) {
 		argv[i] = atoi(token->argv[i]);
 	}
-	v = target_load_value_member(target, value, "argv", NULL,
+	v = target_load_value_member(t, value, "argv", NULL,
 			LOAD_FLAG_NONE);
 	memcpy(v->buf,argv,128*sizeof(int));
 	result = target_store_value(t, v);
 	if (result == -1) {
 		fprintf(stderr, "Error: failed to write argv\n");
-		goto exit;
+		goto failure;
 	}
 	value_free(v);
-	bsymbol_release(command_struct_type);
+	symbol_release(command_struct_type);
 
 	/* now that we have written all the command paramaters, increment prod index */
 	bs = target_lookup_sym(t, "req_ring_channel", NULL, "repair_driver",
@@ -222,7 +221,7 @@ int pskill_func(struct TOKEN *token) {
 		goto failure;
 	}
 
-	v = target_load_value_member(target, value, "prod", NULL, LOAD_FLAG_NONE);
+	v = target_load_value_member(t, value, "prod", NULL, LOAD_FLAG_NONE);
 	result = value_update_i32(v, v_u32(v) + 1);
 	if (result == -1) {
 		fprintf(stderr, "Error: failed to update prod index\n");
@@ -250,7 +249,7 @@ int pskill_func(struct TOKEN *token) {
 		bsymbol_release(bs);
 	}
 	if (command_struct_type) {
-		bsymbol_release(command_struct_type);
+		symbol_release(command_struct_type);
 	}
 	if (ack_struct_type) {
 		bsymbol_release(ack_struct_type);
@@ -267,17 +266,18 @@ result_t _target_probe_posthandler(struct probe *probe, void *handler_data, stru
 
 result_t _target_probe_prehandler(struct probe *probe, void *handler_data , struct probe *trigger) {
 
-	struct ack_rec *ack_ptr, result;
-	struct bsymbol *ack_struct_type, *bs;
-	struct value *v, *value;
-	unsigned int submodule_id, cmd_id, exec_status;
+	struct ack_rec result;
+	ADDR ack_ptr;
+	struct bsymbol  *bs=NULL;
+	struct symbol *ack_struct_type = NULL;
+	struct value *v=NULL , *value=NULL;
 	result_t retval = RESULT_SUCCESS;
+	int res;
 
 	probe_active = 1;
 
 	/*get the address within the res_ring_channel page from where the result needs to be read */
-	ack_ptr = (struct ack_rec *) get_prod_or_cons_addr("res_ring_channel",
-			"cons");
+	ack_ptr = *((ADDR *) get_prod_or_cons_addr("res_ring_channel","cons"));
 	if (!ack_ptr) {
 		fprintf(stderr, "get_prod_or_cons_addr failed \n");
 		retval = RESULT_ERROR;
@@ -285,41 +285,41 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 	}
 
 	/* get the type for the acknowledgment structure  and load it*/
-	ack_struct_type = target_lookup_sym(t, "struct ack_rec", NULL,
-			"repair_driver", SYMBOL_TYPE_FLAG_VAR);
-	value = target_load_type(ack_struct_type, ack_ptr, LOAD_FLAG_NONE);
+	ack_struct_type = bsymbol_get_symbol( target_lookup_sym(t, "ack_rec", NULL,
+			"repair_driver", SYMBOL_TYPE_FLAG_VAR));
+	value = target_load_type(t, ack_struct_type, ack_ptr, LOAD_FLAG_NONE);
 
 	/* get the submodule id */
-	v = target_load_value_member(target, value, "submodule_id", NULL,
+	v = target_load_value_member(t, value, "submodule_id", NULL,
 			LOAD_FLAG_NONE);
-	result.submodule_id = v_u32(v)
+	result.submodule_id = v_u32(v);
 	value_free(v);
 
 	/* get the command id */
-	v = target_load_value_member(target, value, "cmd_id", NULL, LOAD_FLAG_NONE);
-	result.cmd_id = v_u32(v)
+	v = target_load_value_member(t, value, "cmd_id", NULL, LOAD_FLAG_NONE);
+	result.cmd_id = v_u32(v);
 	value_free(v);
 
 	/* get the command execution status */
-	v = target_load_value_member(target, value, "exec_status", NULL,
+	v = target_load_value_member(t, value, "exec_status", NULL,
 			LOAD_FLAG_NONE);
-	result.exec_status = v_u32(v)
+	result.exec_status = v_u32(v);
 	value_free(v);
 
 	/* get the argc */
-	v = target_load_value_member(target, value, "argc", NULL,
+	v = target_load_value_member(t, value, "argc", NULL,
 			LOAD_FLAG_NONE);
-	result.argc = v_u32(v)
+	result.argc = v_u32(v);
 	value_free(v);
 
 	/* Readout the values stored in argv */
-	v = target_load_value_member(target, value, "argv", NULL,
+	v = target_load_value_member(t, value, "argv", NULL,
 			LOAD_FLAG_NONE);
 
 	memcpy(result.argv,v->buf,128*sizeof(int));
 	value_free(v);
 
-	bsymbol_release(ack_struct_type);
+	symbol_release(ack_struct_type);
 
 	/* Now display the result of command execution */
 	switch(result.submodule_id) {
@@ -360,15 +360,15 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 		goto failure1;
 	}
 
-	v = target_load_value_member(target, value, "cons", NULL, LOAD_FLAG_NONE);
-	result = value_update_i32(v, v_u32(v) + 1);
-	if (result == -1) {
+	v = target_load_value_member(t, value, "cons", NULL, LOAD_FLAG_NONE);
+	res = value_update_i32(v, v_u32(v) + 1);
+	if (res == -1) {
 		fprintf(stderr, "Error: failed to update cons index\n");
 		retval = RESULT_ERROR;
 		goto failure1;
 	}
-	result = target_store_value(t, v);
-	if (result == -1) {
+	res = target_store_value(t, v);
+	if (res == -1) {
 		fprintf(stderr, "Error: failed to set the cons index\n");
 		retval = RESULT_ERROR;
 		goto failure1;
@@ -385,7 +385,7 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 		bsymbol_release(bs);
 	}
 	if(ack_struct_type){
-		bsymbol_release(ack_struct_type);
+		symbol_release(ack_struct_type);
 	}
 	return retval;
 
@@ -487,7 +487,7 @@ int main(int argc, char **argv) {
 	atexit(dwdebug_fini);
 
 	/* now initialize the target */
-	t = target_instantiate(tspec);
+	t = target_instantiate(tspec,NULL);
 	if (!t) {
 		verror("Count not instantiate target\n");
 		exit(-1);
@@ -543,7 +543,7 @@ int main(int argc, char **argv) {
 		if(!(strcmp(token.cmd, "exit"))) {
 			goto exit;
 		}
-		else (!(strcmp(token.cmd, "pskill")))
+		else if(!(strcmp(token.cmd, "pskill")))
 		{
 			result = pskill_func(&token);
 			if (!result) {
