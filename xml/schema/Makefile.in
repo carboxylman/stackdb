@@ -1,0 +1,256 @@
+## -*- mode: Makefile -*-
+##
+## Copyright (c) 2013 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+
+###############################################################################
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= xml/schema
+OBJDIR		= @top_builddir@
+ODIR		= @top_builddir@/$(SUBDIR)
+
+SUBDIRS = 
+
+include $(OBJDIR)/Makeconf
+
+WSDL2H = @WSDL2H@
+GSOAPIMPORTDIR = @GSOAP@/share/gsoap/import
+# Note, we only don't pass -2 to enable soap 1.2 because we manually
+# include s2.gsm.h and make it into a module, so that
+# all our other module linkage works out.
+SOAPCPP2 = @SOAPCPP2@ -2 -I$(GSOAPIMPORTDIR):$(SRCDIR) -c -d . -x
+
+CFLAGS += -I$(TOP_SRCDIR)/analysis -I$(TOP_SRCDIR)/target -I$(TOP_SRCDIR)/dwdebug \
+	-I$(TOP_SRCDIR)/xml \
+	-I$(OBJDIR) -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include -I.
+CFLAGS += -DDWDEBUG_USE_STRTAB
+CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
+	CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	CFLAGS += -D ENABLE_LIBVMI -D ENABLE_XENSUPPORT
+	CFLAGS += -I$(LIBVMI)/include/libvmi
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
+	CFLAGS += -I$(DISTORM)/include
+endif
+
+LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS) -lgsoap -lpthread
+ifeq ($(ENABLE_XENACCESS),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
+endif
+STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
+	$(OBJDIR)/lib/libvmilib.a
+ifeq ($(ENABLE_XENACCESS),"1")
+	STATICLIBS += $(XENACCESS_A)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	STATICLIBS += $(LIBVMI)/lib/libvmi.a
+endif
+
+HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h \
+	   $(SRCDIR)/debuginfo_xml.h \
+	   $(TOP_SRCDIR)/target/target_api.h $(TOP_SRCDIR)/target/target_api.h \
+	   $(SRCDIR)/target_xml.h \
+	   $(TOP_SRCDIR)/analysis/analysis.h $(SRCDIR)/analysis_xml.h \
+	   $(SRCDIR)/../util.h
+
+#
+# We build three static libraries (and include all the deps for each -- so you
+# should only need to link against one depending on which API you need access
+# to -- since they all stack (analysis requires target requires debuginfo
+# requires common stuff)).
+#
+# We build four dynamic libraries -- the common stuff, debuginfo, target, and
+# analysis.  This should be what we need.
+#
+OBJECTS-COMMON-LIB := common_xml_moduleC.lo common_xml.lo xsdcC.lo
+#envC.lo
+OBJECTS-COMMON-SHLIB := $(OBJECTS-COMMON-LIB)
+
+OBJECTS-DEBUGINFO-LIB := $(OBJECTS-COMMON-LIB) \
+			 debuginfo_xml.lo debuginfo_xml_moduleC.lo
+OBJECTS-DEBUGINFO-SHLIB := debuginfo_xml.lo debuginfo_xml_moduleC.lo
+
+OBJECTS-TARGET-LIB := $(OBJECTS-COMMON-LIB) \
+		      debuginfo_xml.lo debuginfo_xml_moduleC.lo \
+		      target_xml.lo target_xml_moduleC.lo
+OBJECTS-TARGET-SHLIB := target_xml.lo target_xml_moduleC.lo
+
+OBJECTS-ANALYSIS-LIB := $(OBJECTS-COMMON-LIB) \
+			debuginfo_xml.lo debuginfo_xml_moduleC.lo  \
+			target_xml.lo target_xml_moduleC.lo \
+			analysis_xml.lo analysis_xml_moduleC.lo
+OBJECTS-ANALYSIS-SHLIB := analysis_xml.lo analysis_xml_moduleC.lo
+
+OBJECTS := $(OBJECTS-COMMON-LIB) $(OBJECTS-DEBUGINFO-LIB) $(OBJECTS-TARGET-LIB) \
+	   $(OBJECTS-ANALYSIS-LIB)
+
+LIBRARIES := libdebuginfo_xml.a libdebuginfo_xml.so.$(LIBVERSION) \
+	     libtarget_xml.a libtarget_xml.so.$(LIBVERSION) \
+	     libanalysis_xml.a libanalysis_xml.so.$(LIBVERSION)
+
+PROGRAMS := 
+
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(PROGRAMS) $(LIBRARIES) all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+#env.h: $(SRCDIR)/xsdc.gsm.h
+##	echo '#import "xsdc.gsm.h"' > env.h
+#	touch env.h
+#envH.h: env.h
+#	$(SOAPCPP2) -w -p env $<
+#soap12H.h: $(GSOAPIMPORTDIR)/soap12.h
+#	$(SOAPCPP2) -w $<
+#stwoH.h: $(SRCDIR)/stwo.gsm.h
+#	$(SOAPCPP2) -w $<
+
+xsdcH.h: $(SRCDIR)/xsdc.gsm.h
+	$(SOAPCPP2) -I$(SRCDIR):$(GSOAPIMPORTDIR) -w $<
+
+xsdcC.lo: xsdcH.h
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
+		-c $(@:.lo=).c
+
+#envC.lo: envH.h
+#	@$(LIBTOOL) --tag=CC --mode=compile ${CC} -DWITH_NOGLOBAL ${CFLAGS} \
+#		-c $(@:.lo=).c
+
+#
+# The following rule needs this first, so special case it.  Common is common, 
+# but has nothing to do with WSDL.
+#
+common_xml.gsm.h: $(SRCDIR)/common.xsd xsdcH.h
+	$(WSDL2H) -v -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y \
+		-I$(SRCDIR):$(GSOAPIMPORTDIR) -o $@.tmp
+	cat $(SRCDIR)/$(@:_xml.gsm.h=)_xml.gsm.header.h > $@
+	cat $@.tmp >> $@
+	rm -f $@.tmp
+	sed -i 's/gsoapopt cw//' $@
+
+%_xml.gsm.h: $(SRCDIR)/%.xsd common_xml.gsm.h $(SRCDIR)/%_xml.gsm.header.h xsdcH.h
+	$(WSDL2H) -v -c $< -n $(NS) -N $(NS) -t $(SRCDIR)/typemap.dat -y \
+		-I$(SRCDIR):$(GSOAPIMPORTDIR) -M $(SRCDIR)/incmodmap.dat -o $@.tmp
+	cat $(SRCDIR)/$(@:_xml.gsm.h=)_xml.gsm.header.h > $@
+	cat $@.tmp >> $@
+	rm -f $@.tmp
+	sed -i 's/gsoapopt cw//' $@
+
+%_xml_moduleH.h: %_xml.gsm.h
+	$(SOAPCPP2) -I$(SRCDIR):$(GSOAPIMPORTDIR) -w $< 
+#-p $(@:.gsm.h=)_module $@
+
+%_xml_moduleC.c: %_xml_moduleH.h
+	@echo -n ""
+
+%_xml_moduleC.lo: %_xml_moduleC.c
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+common_xml.lo: $(SRCDIR)/common_xml.c $(SRCDIR)/common_xml.h common_xml.gsm.h
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+%_xml.lo: $(SRCDIR)/%_xml.c $(SRCDIR)/%_xml.h %_xml_moduleH.h
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+%.nsmap.lo: %.wsdl
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $(@:.lo=).c 
+
+libdebuginfo_xml.a: $(HEADERS) $(OBJECTS-DEBUGINFO-LIB)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-DEBUGINFO-LIB)
+libdebuginfo_xml.lo: $(HEADERS) $(OBJECTS-DEBUGINFO-SHLIB)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-DEBUGINFO-SHLIB)
+libdebuginfo_xml.so.$(LIBVERSION): libdebuginfo_xml.lo
+	$(CP) -f libdebuginfo_xml.lo $@
+libdebuginfo_xml.so: libdebuginfo_xml.so.$(LIBVERSION)
+	$(LN_S) $< $@
+
+libtarget_xml.a: $(HEADERS) $(OBJECTS-TARGET-LIB)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-TARGET-LIB)
+libtarget_xml.lo: $(HEADERS) $(OBJECTS-TARGET-SHLIB)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-TARGET-SHLIB)
+libtarget_xml.so.$(LIBVERSION): libtarget_xml.lo
+	$(CP) -f libtarget_xml.lo $@
+libtarget_xml.so: libtarget_xml.so.$(LIBVERSION)
+	$(LN_S) $< $@
+
+libanalysis_xml.a: $(HEADERS) $(OBJECTS-ANALYSIS-LIB)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-ANALYSIS-LIB)
+libanalysis_xml.lo: $(HEADERS) $(OBJECTS-ANALYSIS-SHLIB)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-ANALYSIS-SHLIB)
+libanalysis_xml.so.$(LIBVERSION): libanalysis_xml.lo
+	$(CP) -f libanalysis_xml.lo $@
+libanalysis_xml.so: libanalysis_xml.so.$(LIBVERSION)
+	$(LN_S) $< $@
+
+install: $(PROGRAMS) $(HELPERS) def-install install-subdirs
+	mkdir -p $(INSTALL_SHAREDIR)/schema
+	$(INSTALL) -m 644 $(SRCDIR)/*.xsd $(INSTALL_SHAREDIR)/schema
+
+clean-common:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-COMMON-LIB)
+	$(RM) common* xsdc*
+
+clean-debuginfo:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-DEBUGINFO-LIB)
+	$(RM) debuginfo*
+
+clean-target:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-TARGET-LIB)
+	$(RM) target*
+
+clean-analysis:
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-ANALYSIS-LIB)
+	$(RM) analysis*
+
+clean-misc:
+	@$(LIBTOOL) --mode=clean rm -f target_nsmap.lo
+
+clean-libs:
+	@$(LIBTOOL) --mode=clean rm -f $(LIBRARIES)
+	$(RM) $(LIBRARIES) lib* 
+	$(RM) -rf .libs
+
+clean: clean-common clean-debuginfo clean-target clean-analysis clean-libs clean-subdirs
+	$(RM) *.nsmap #*.xsd
+	$(RM) RECV.log TEST.log
+	$(RM) $(PROGRAMS) 
+
+distclean: distclean-subdirs
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:

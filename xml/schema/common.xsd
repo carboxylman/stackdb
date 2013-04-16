@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   
-  Copyright (c) 2012 The University of Utah
+  Copyright (c) 2012, 2013 The University of Utah
   
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -44,11 +44,8 @@
   <xs:simpleType name="TargetIdT">
     <xs:restriction base="xs:int"/>
   </xs:simpleType>
-  <xs:simpleType name="SessionIdT">
-    <xs:restriction base="xs:int"/>
-  </xs:simpleType>
   <xs:simpleType name="AnalysisIdT">
-    <xs:restriction base="xs:ID"/>
+    <xs:restriction base="xs:int"/>
   </xs:simpleType>
   <xs:simpleType name="AnalysisInstanceIdT">
     <xs:restriction base="xs:ID"/>

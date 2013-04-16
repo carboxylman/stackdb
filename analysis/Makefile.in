@@ -20,77 +20,53 @@
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= tools
+SUBDIR		= analysis
 OBJDIR		= @top_builddir@
 
-SUBDIRS = rop
+SUBDIRS = 
 
 include $(OBJDIR)/Makeconf
 
-ifeq ($(ENABLE_XENACCESS),"1")
-	SUBDIRS += bts
-endif
-
-CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
-	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug 
+CFLAGS += -I$(OBJDIR) -I$(TOP_SRCDIR)/analysis -I$(TOP_SRCDIR)/target \
+	  -I$(TOP_SRCDIR)/dwdebug -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
-	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
-	CFLAGS += -I$(XENACCESS_INC)
+	ENABLE_XENSUPPORT=1
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
-	CFLAGS += -D ENABLE_LIBVMI -D ENABLE_XENSUPPORT
-	CFLAGS += -I$(LIBVMI)/include/libvmi
-endif
-ifeq ($(ENABLE_DISTORM),"1")
-	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
-	CFLAGS += -I$(DISTORM)/include
+	ENABLE_XENSUPPORT=1
 endif
 
-LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
-ifeq ($(ENABLE_XENACCESS),"1")
-	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
-endif
-ifeq ($(ENABLE_LIBVMI),"1")
-	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
-endif
-ifeq ($(ENABLE_DISTORM),"1")
-	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
-endif
-
-HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
+HEADERS := $(SRCDIR)/analysis.h \
 	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
 	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
-OBJECTS := dumpthreads.lo 
-ifeq ($(ENABLE_XENACCESS),"1")
-	OBJECTS += psaction.lo
-endif
-ifeq ($(ENABLE_LIBVMI),"1")
-	OBJECTS += psaction.lo
-endif
+OBJECTS := analysis.lo
 
-LIBRARIES := 
+#
+# We have to be careful here!  We can only depend libs in xml/schema; more 
+# importantly, our libanalysis should not contain ANY of those libs.
+#
+LIBRARIES := libanalysis.a libanalysis.so.$(LIBVERSION)
 
-PROGRAMS := dumpthreads 
-ifeq ($(ENABLE_XENACCESS),"1")
-	PROGRAMS += psaction
-endif
-ifeq ($(ENABLE_LIBVMI),"1")
-	PROGRAMS += psaction
-endif
+PROGRAMS := #analyze
 
-
-STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
+STATICLIBS := $(OBJDIR)/dwdebug/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
 	$(OBJDIR)/lib/libvmilib.a
-ifeq ($(ENABLE_XENACCESS),"1")
-	STATICLIBS += $(XENACCESS_A)
-endif
-ifeq ($(ENABLE_LIBVMI),"1")
-	STATICLIBS += $(LIBVMI)/lib/libvmi.a
+
+#
+# If we used gSOAP to build XML SOAP support, pull in the libs to do XML
+# serialization/deserialization.
+#
+ifeq ("@ENABLE_SOAP@","1")
+	CFLAGS += -I$(TOP_SRCDIR)/xml/schema -I$(OBJDIR)/xml/schema
+	HEADERS += $(TOP_SRCDIR)/xml/schema/analysis_xml.h
+	STATICLIBS += $(OBJDIR)/xml/schema/libdebuginfo_xml.a \
+		      $(OBJDIR)/xml/schema/libtarget_xml.a \
+		      $(OBJDIR)/xml/schema/libanalysis_xml.a
 endif
 
 INST_INC = 
@@ -106,19 +82,26 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-dumpthreads: $(HEADERS) $(STATICLIBS) dumpthreads.lo
-	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
+libanalysis.a: $(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libanalysis.a $(OBJECTS)
+libanalysis.lo: $(HEADERS) $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
+libanalysis.so.$(LIBVERSION): libanalysis.lo
+	$(CP) -f libanalysis.lo $@
+libanalysis.so:	libanalysis.so.$(LIBVERSION)
+	$(LN_S) -f $< $@
 
-psaction: $(HEADERS) $(STATICLIBS) psaction.lo
-	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
+#analyze: $(HEADERS) libanalysis.a analyze.lo $(STATICLIBS)
+#	$(CC) -o $@ $(CFLAGS) $@.o libtarget.a $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-	$(INSTALL) psaction $(DESTDIR)$(INSTALL_BINDIR)/
+	$(SUDO) $(CP) -fd libanalysis.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
-	$(RM) -f $(LIBRARIES) 
-	$(RM) -f $(PROGRAMS)
+	@$(LIBTOOL) --mode=clean rm -f $(LIBRARIES)
+	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
+	$(RM) -rf $(PROGRAMS) $(LIBRARIES) lib* .libs
 
 distclean: distclean-subdirs
 

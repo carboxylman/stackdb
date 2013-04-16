@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2012 The University of Utah
+# Copyright (c) 2012, 2013 The University of Utah
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License as
@@ -22,75 +22,73 @@ include "common.rnc"
 
 #start = Analysis
 
-DataTypeT = 
-    "none" | "bool" | "byte" | "short" | "int" | "long"
-    | "ubyte" | "ushort" | "uint" | "ulong" | "float" | "double" | "string"
-    | "time" | "date" | "datetime"
+#
+# This is basically the subset of XSD types we support internally.
+#
+DataTypeT =
+    "none" | "string" | "boolean" | "float" | "double" 
+    | "byte" | "short" | "int" | "long"
+    | "unsignedByte" | "unsignedShort" | "unsignedInt" | "unsignedLong" 
+    | "time" | "date" | "dateTime"
 
 ParamT = 
-    (element name { text } | element longName { text }),
-    element description { text },
+    element name { text },
+    element longName { text }?,
+    element description { text }?,
     element defaultValue { text }?
 Param = element param { ParamT }
-
-ParamValueT = 
-    (element name { text } | element longName { text }),
-    element value { text }
-ParamValue = element paramValue { ParamValueT }
 
 NameValueT = 
     element name { text },
     element value { text }
-NameValue = element NameValue { NameValueT }
+NameValue = element nameValue { NameValueT }
 
-TypedNameValueT = 
+AnalysisSpecT = 
     element name { text },
-    element value { text },
-    element type { DataTypeT }
-TypedNameValue = element typedNameValue { TypedNameValueT }
 
-AnalysisConfigT = 
+    element stdinBytes { xsd:hexBinary }?,
+
     element logStdout { xsd:boolean },
     element logStderr { xsd:boolean },
-    element reportStdout { xsd:boolean },
-    element reportStderr { xsd:boolean },
-
-    element inputParams { NameValue* }
-AnalysisConfig = element analysisConfig { AnalysisConfigT }
-
-AnalysisT = 
-    attribute id { AnalysisIdT },
-    attribute name { text },
-
-    element description { text },
-    element author { text },
-    element authorContactEmail { text },
-
-    element requiresWrite { xsd:boolean },
-    element requiresControl { xsd:boolean },
-    element reportsAnnotations { xsd:boolean },
-    element reportsEvents { xsd:boolean },
-    element reportsIntermediateResults { xsd:boolean },
-    element reportsFinalResults { xsd:boolean },
-
-    element supportsExternalControlProtocol { xsd:boolean },
+    element reportStdoutIntermediateResults { xsd:boolean },
+    element reportStderrIntermediateResults { xsd:boolean },
 
     element autoparseSimpleResults { xsd:boolean },
 
-    element annotations {
-        (element annotationTypeId { xsd:ID }
-         | AnnotationType)*
-    },
+    element inputParams { NameValue* }
+AnalysisSpec = element analysisSpec { AnalysisSpecT }
 
-    element inputParams { Param* },
-    element outputParams { Param* }
-Analysis = element analysis { AnalysisT }
+AnalysisDescT = 
+    attribute name { text },
 
-AnalysisStatusT = "running" | "paused" | "done"
+    element description { text }?,
+    element author { text }?,
+    element authorContact { text }?,
+
+    element requiresWrite { xsd:boolean },
+    element requiresControl { xsd:boolean },
+    element generatesAnnotations { xsd:boolean },
+    element reportsIntermediateResults { xsd:boolean },
+    element reportsFinalResults { xsd:boolean },
+
+    element supportsExternalControl { xsd:boolean },
+    element supportsAutoparseSimpleResults { xsd:boolean },
+
+#    element annotations {
+#        (element annotationTypeId { xsd:ID }
+#         | AnnotationType)*
+#    },
+
+    element inParams { Param* },
+    element outParams { Param* }
+AnalysisDesc = element analysisDesc { AnalysisDescT }
+
+AnalysisStatusT = "unknown" | "running" | "paused" | "error" | "done"
 AnalysisStatus = element analysisStatus { AnalysisStatusT }
 
-AnalysisInstanceT = 
-    attribute id { AnalysisInstanceIdT },
+AnalysisT = 
+    element aid { AnalysisIdT },
+    
     #
     # Only library-based analyses (either binary shared libs, or Python
     # higher-level libs, eventually) have targetIds.  Standalone
@@ -98,36 +96,11 @@ AnalysisInstanceT =
     # not launch a target for them.
 
     #
-    element targetId { TargetIdT }?,
-    AnalysisStatus
+    element tid { TargetIdT },
+    AnalysisStatus,
+    AnalysisResults
 
-AnalysisInstance = element analysisInstance { AnalysisInstanceT }
-
-AnnotationTypeT = 
-    attribute id { xsd:ID },
-    attribute name { text },
-
-    element annotationField {
-        attribute name { text },
-	attribute type { DataTypeT }
-    }+
-AnnotationType = element annotationType { AnnotationTypeT }
-
-AnnotationHeaderT = 
-    attribute annotationTypeId { xsd:ID },
-
-    attribute isEvent { xsd:boolean },
-    attribute isMarker { xsd:boolean },
-    attribute isDiscovery { xsd:boolean },
-
-    attribute ns { xsd:unsignedLong },
-    attribute tsc { xsd:unsignedLong },
-    attribute counter { xsd:unsignedLong }
-
-AnnotationT = 
-    AnnotationHeaderT,
-    element fieldValues { TypedNameValue+ }
-Annotation = element annotation { AnnotationT }
+Analysis = element analysis { AnalysisT }
 
 #
 # Analyses can report SimpleResults, TypedResults, or CustomResults.
@@ -145,26 +118,81 @@ Annotation = element annotation { AnnotationT }
 # CustomResults have a unique name
 #
 SimpleResultT = 
+    attribute id { xsd:int },
     element name { text },
+    element type { xsd:int }?,
+    element time { xsd:unsignedLong },
+    element tsc { xsd:unsignedLong },
+    element counter { xsd:unsignedLong },
     element value { text },
-    element msg { text },
+    element msg { text }?,
     element outputValues { NameValue* }
 SimpleResult = element simpleResult { SimpleResultT }
 
-TypedResultT = 
-    element name { text },
-    element value { text },
-    element msg { text },
-    element outputValues { TypedNameValue* }
-TypedResult = element typedResult { TypedResultT }
+#
+# Right now, don't do typed results; we would want to use
+# XSD anySimpleType basically, but Axis doesn't support that easily.
+#
+#TypedNameValueT = 
+#    element name { text },
+#    element value { text },
+#    element type { DataTypeT }
+#TypedNameValue = element typedNameValue { TypedNameValueT }
+#
+#TypedResultT = 
+#    element name { text },
+#    element type { text }?,
+#    element subtype { text }?,
+#    element value { text },
+#    element msg { text }?,
+#    element outputValues { TypedNameValue* }
+#TypedResult = element typedResult { TypedResultT }
 
 CustomResultT = 
-    attribute id { xsd:ID },
-    attribute name { text },
+    attribute id { xsd:int },
+    element name { text },
+    element time { xsd:unsignedLong },
+    element tsc { xsd:unsignedLong },
+    element counter { xsd:unsignedLong },
+    element value { text },
+    element msg { text }?,
     AnyExtension
 CustomResult = element customResult { CustomResultT }
 
-AnalysisResultT = 
-    SimpleResult | TypedResult | CustomResult
-
+AnalysisResultT = #SimpleResult | CustomResult
+    (element simpleResult { SimpleResultT }
+     | element customResult { CustomResultT })
 AnalysisResult = element analysisResult { AnalysisResultT }
+
+AnalysisResultsT = AnalysisResult*
+AnalysisResults = element analysisResults { AnalysisResultsT }
+
+#
+# We don't do anything with Annotations right now, but this is the
+# definition we expect to export, once we have Traces.
+#
+#AnnotationTypeT = 
+#    attribute id { xsd:ID },
+#    attribute name { text },
+#
+#    element annotationField {
+#        attribute name { text },
+#	attribute datatype { DataTypeT }
+#    }+
+#AnnotationType = element annotationType { AnnotationTypeT }
+#
+#AnnotationHeaderT = 
+#    attribute annotationTypeId { xsd:ID },
+#
+#    attribute isEvent { xsd:boolean },
+#    attribute isMarker { xsd:boolean },
+#    attribute isDiscovery { xsd:boolean },
+#
+#    attribute ns { xsd:unsignedLong },
+#    attribute tsc { xsd:unsignedLong },
+#    attribute counter { xsd:unsignedLong }
+#
+#AnnotationT = 
+#    AnnotationHeaderT,
+#    element fieldValues { TypedNameValue+ }
+#Annotation = element annotation { AnnotationT }

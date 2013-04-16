@@ -18,8 +18,6 @@
 
 ###############################################################################
 
-LIBVERSION      = 0.1
-
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= lib

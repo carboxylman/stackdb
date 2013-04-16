@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   
-  Copyright (c) 2012 The University of Utah
+  Copyright (c) 2012, 2013 The University of Utah
   
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
@@ -21,33 +21,36 @@
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified" targetNamespace="http://anathema.flux.utah.edu/schema/vmi/1" xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
   <xs:include schemaLocation="common.xsd"/>
   <!-- start = Analysis -->
+  <!--
+    
+    This is basically the subset of XSD types we support internally.
+    
+  -->
   <xs:simpleType name="DataTypeT">
     <xs:restriction base="xs:token">
       <xs:enumeration value="none"/>
-      <xs:enumeration value="bool"/>
+      <xs:enumeration value="string"/>
+      <xs:enumeration value="boolean"/>
+      <xs:enumeration value="float"/>
+      <xs:enumeration value="double"/>
       <xs:enumeration value="byte"/>
       <xs:enumeration value="short"/>
       <xs:enumeration value="int"/>
       <xs:enumeration value="long"/>
-      <xs:enumeration value="ubyte"/>
-      <xs:enumeration value="ushort"/>
-      <xs:enumeration value="uint"/>
-      <xs:enumeration value="ulong"/>
-      <xs:enumeration value="float"/>
-      <xs:enumeration value="double"/>
-      <xs:enumeration value="string"/>
+      <xs:enumeration value="unsignedByte"/>
+      <xs:enumeration value="unsignedShort"/>
+      <xs:enumeration value="unsignedInt"/>
+      <xs:enumeration value="unsignedLong"/>
       <xs:enumeration value="time"/>
       <xs:enumeration value="date"/>
-      <xs:enumeration value="datetime"/>
+      <xs:enumeration value="dateTime"/>
     </xs:restriction>
   </xs:simpleType>
   <xs:complexType name="ParamT">
     <xs:sequence>
-      <xs:choice>
-        <xs:element ref="vmi1:name"/>
-        <xs:element ref="vmi1:longName"/>
-      </xs:choice>
-      <xs:element ref="vmi1:description"/>
+      <xs:element ref="vmi1:name"/>
+      <xs:element minOccurs="0" ref="vmi1:longName"/>
+      <xs:element minOccurs="0" ref="vmi1:description"/>
       <xs:element minOccurs="0" ref="vmi1:defaultValue"/>
     </xs:sequence>
   </xs:complexType>
@@ -56,160 +59,102 @@
   <xs:element name="description" type="xs:string"/>
   <xs:element name="defaultValue" type="xs:string"/>
   <xs:element name="param" type="vmi1:ParamT"/>
-  <xs:complexType name="ParamValueT">
-    <xs:sequence>
-      <xs:choice>
-        <xs:element ref="vmi1:name"/>
-        <xs:element ref="vmi1:longName"/>
-      </xs:choice>
-      <xs:element ref="vmi1:value"/>
-    </xs:sequence>
-  </xs:complexType>
-  <xs:element name="value" type="xs:string"/>
-  <xs:element name="paramValue" type="vmi1:ParamValueT"/>
   <xs:complexType name="NameValueT">
     <xs:sequence>
       <xs:element ref="vmi1:name"/>
       <xs:element ref="vmi1:value"/>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="NameValue" type="vmi1:NameValueT"/>
-  <xs:complexType name="TypedNameValueT">
+  <xs:element name="value" type="xs:string"/>
+  <xs:element name="nameValue" type="vmi1:NameValueT"/>
+  <xs:complexType name="AnalysisSpecT">
     <xs:sequence>
       <xs:element ref="vmi1:name"/>
-      <xs:element ref="vmi1:value"/>
-      <xs:element ref="vmi1:type"/>
-    </xs:sequence>
-  </xs:complexType>
-  <xs:element name="type" type="vmi1:DataTypeT"/>
-  <xs:element name="typedNameValue" type="vmi1:TypedNameValueT"/>
-  <xs:complexType name="AnalysisConfigT">
-    <xs:sequence>
+      <xs:element minOccurs="0" ref="vmi1:stdinBytes"/>
       <xs:element ref="vmi1:logStdout"/>
       <xs:element ref="vmi1:logStderr"/>
-      <xs:element ref="vmi1:reportStdout"/>
-      <xs:element ref="vmi1:reportStderr"/>
-      <xs:element name="inputParams">
-        <xs:complexType>
-          <xs:sequence>
-            <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:NameValue"/>
-          </xs:sequence>
-        </xs:complexType>
-      </xs:element>
+      <xs:element ref="vmi1:reportStdoutIntermediateResults"/>
+      <xs:element ref="vmi1:reportStderrIntermediateResults"/>
+      <xs:element ref="vmi1:autoparseSimpleResults"/>
+      <xs:element ref="vmi1:inputParams"/>
     </xs:sequence>
   </xs:complexType>
+  <xs:element name="stdinBytes" type="xs:hexBinary"/>
   <xs:element name="logStdout" type="xs:boolean"/>
   <xs:element name="logStderr" type="xs:boolean"/>
-  <xs:element name="reportStdout" type="xs:boolean"/>
-  <xs:element name="reportStderr" type="xs:boolean"/>
-  <xs:element name="analysisConfig" type="vmi1:AnalysisConfigT"/>
-  <xs:complexType name="AnalysisT">
+  <xs:element name="reportStdoutIntermediateResults" type="xs:boolean"/>
+  <xs:element name="reportStderrIntermediateResults" type="xs:boolean"/>
+  <xs:element name="autoparseSimpleResults" type="xs:boolean"/>
+  <xs:element name="inputParams">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:nameValue"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="analysisSpec" type="vmi1:AnalysisSpecT"/>
+  <xs:complexType name="AnalysisDescT">
     <xs:sequence>
-      <xs:element ref="vmi1:description"/>
-      <xs:element ref="vmi1:author"/>
-      <xs:element ref="vmi1:authorContactEmail"/>
+      <xs:element minOccurs="0" ref="vmi1:description"/>
+      <xs:element minOccurs="0" ref="vmi1:author"/>
+      <xs:element minOccurs="0" ref="vmi1:authorContact"/>
       <xs:element ref="vmi1:requiresWrite"/>
       <xs:element ref="vmi1:requiresControl"/>
-      <xs:element ref="vmi1:reportsAnnotations"/>
-      <xs:element ref="vmi1:reportsEvents"/>
+      <xs:element ref="vmi1:generatesAnnotations"/>
       <xs:element ref="vmi1:reportsIntermediateResults"/>
       <xs:element ref="vmi1:reportsFinalResults"/>
-      <xs:element ref="vmi1:supportsExternalControlProtocol"/>
-      <xs:element ref="vmi1:autoparseSimpleResults"/>
-      <xs:element ref="vmi1:annotations"/>
-      <xs:element name="inputParams">
-        <xs:complexType>
-          <xs:sequence>
-            <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:param"/>
-          </xs:sequence>
-        </xs:complexType>
-      </xs:element>
-      <xs:element ref="vmi1:outputParams"/>
+      <xs:element ref="vmi1:supportsExternalControl"/>
+      <xs:element ref="vmi1:supportsAutoparseSimpleResults"/>
+      <xs:element ref="vmi1:inParams"/>
+      <xs:element ref="vmi1:outParams"/>
     </xs:sequence>
-    <xs:attribute name="id" use="required" type="vmi1:AnalysisIdT"/>
     <xs:attribute name="name" use="required"/>
   </xs:complexType>
   <xs:element name="author" type="xs:string"/>
-  <xs:element name="authorContactEmail" type="xs:string"/>
+  <xs:element name="authorContact" type="xs:string"/>
   <xs:element name="requiresWrite" type="xs:boolean"/>
   <xs:element name="requiresControl" type="xs:boolean"/>
-  <xs:element name="reportsAnnotations" type="xs:boolean"/>
-  <xs:element name="reportsEvents" type="xs:boolean"/>
+  <xs:element name="generatesAnnotations" type="xs:boolean"/>
   <xs:element name="reportsIntermediateResults" type="xs:boolean"/>
   <xs:element name="reportsFinalResults" type="xs:boolean"/>
-  <xs:element name="supportsExternalControlProtocol" type="xs:boolean"/>
-  <xs:element name="autoparseSimpleResults" type="xs:boolean"/>
-  <xs:element name="annotations">
-    <xs:complexType>
-      <xs:choice minOccurs="0" maxOccurs="unbounded">
-        <xs:element ref="vmi1:annotationTypeId"/>
-        <xs:element ref="vmi1:annotationType"/>
-      </xs:choice>
-    </xs:complexType>
-  </xs:element>
-  <xs:element name="annotationTypeId" type="xs:ID"/>
-  <xs:element name="outputParams">
+  <xs:element name="supportsExternalControl" type="xs:boolean"/>
+  <xs:element name="supportsAutoparseSimpleResults" type="xs:boolean"/>
+  <xs:element name="inParams">
     <xs:complexType>
       <xs:sequence>
         <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:param"/>
       </xs:sequence>
     </xs:complexType>
   </xs:element>
-  <xs:element name="analysis" type="vmi1:AnalysisT"/>
+  <xs:element name="outParams">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:param"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="analysisDesc" type="vmi1:AnalysisDescT"/>
   <xs:simpleType name="AnalysisStatusT">
     <xs:restriction base="xs:token">
+      <xs:enumeration value="unknown"/>
       <xs:enumeration value="running"/>
       <xs:enumeration value="paused"/>
+      <xs:enumeration value="error"/>
       <xs:enumeration value="done"/>
     </xs:restriction>
   </xs:simpleType>
   <xs:element name="analysisStatus" type="vmi1:AnalysisStatusT"/>
-  <xs:complexType name="AnalysisInstanceT">
+  <xs:complexType name="AnalysisT">
     <xs:sequence>
-      <xs:element minOccurs="0" ref="vmi1:targetId"/>
+      <xs:element ref="vmi1:aid"/>
+      <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:analysisStatus"/>
+      <xs:element ref="vmi1:analysisResults"/>
     </xs:sequence>
-    <xs:attribute name="id" use="required" type="vmi1:AnalysisInstanceIdT"/>
   </xs:complexType>
-  <xs:element name="targetId" type="vmi1:TargetIdT"/>
-  <xs:element name="analysisInstance" type="vmi1:AnalysisInstanceT"/>
-  <xs:complexType name="AnnotationTypeT">
-    <xs:sequence>
-      <xs:element maxOccurs="unbounded" ref="vmi1:annotationField"/>
-    </xs:sequence>
-    <xs:attribute name="id" use="required" type="xs:ID"/>
-    <xs:attribute name="name" use="required"/>
-  </xs:complexType>
-  <xs:element name="annotationField">
-    <xs:complexType>
-      <xs:attribute name="name" use="required"/>
-      <xs:attribute name="type" use="required" type="vmi1:DataTypeT"/>
-    </xs:complexType>
-  </xs:element>
-  <xs:element name="annotationType" type="vmi1:AnnotationTypeT"/>
-  <xs:attributeGroup name="AnnotationHeaderT">
-    <xs:attribute name="annotationTypeId" use="required" type="xs:ID"/>
-    <xs:attribute name="isEvent" use="required" type="xs:boolean"/>
-    <xs:attribute name="isMarker" use="required" type="xs:boolean"/>
-    <xs:attribute name="isDiscovery" use="required" type="xs:boolean"/>
-    <xs:attribute name="ns" use="required" type="xs:unsignedLong"/>
-    <xs:attribute name="tsc" use="required" type="xs:unsignedLong"/>
-    <xs:attribute name="counter" use="required" type="xs:unsignedLong"/>
-  </xs:attributeGroup>
-  <xs:complexType name="AnnotationT">
-    <xs:sequence>
-      <xs:element ref="vmi1:fieldValues"/>
-    </xs:sequence>
-    <xs:attributeGroup ref="vmi1:AnnotationHeaderT"/>
-  </xs:complexType>
-  <xs:element name="fieldValues">
-    <xs:complexType>
-      <xs:sequence>
-        <xs:element maxOccurs="unbounded" ref="vmi1:typedNameValue"/>
-      </xs:sequence>
-    </xs:complexType>
-  </xs:element>
-  <xs:element name="annotation" type="vmi1:AnnotationT"/>
+  <xs:element name="aid" type="vmi1:AnalysisIdT"/>
+  <xs:element name="tid" type="vmi1:TargetIdT"/>
+  <xs:element name="analysis" type="vmi1:AnalysisT"/>
   <!--
     
     Analyses can report SimpleResults, TypedResults, or CustomResults.
@@ -230,49 +175,105 @@
   <xs:complexType name="SimpleResultT">
     <xs:sequence>
       <xs:element ref="vmi1:name"/>
+      <xs:element minOccurs="0" ref="vmi1:type"/>
+      <xs:element ref="vmi1:time"/>
+      <xs:element ref="vmi1:tsc"/>
+      <xs:element ref="vmi1:counter"/>
       <xs:element ref="vmi1:value"/>
-      <xs:element ref="vmi1:msg"/>
-      <xs:element name="outputValues">
-        <xs:complexType>
-          <xs:sequence>
-            <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:NameValue"/>
-          </xs:sequence>
-        </xs:complexType>
-      </xs:element>
+      <xs:element minOccurs="0" ref="vmi1:msg"/>
+      <xs:element ref="vmi1:outputValues"/>
     </xs:sequence>
+    <xs:attribute name="id" use="required" type="xs:int"/>
   </xs:complexType>
+  <xs:element name="type" type="xs:int"/>
+  <xs:element name="time" type="xs:unsignedLong"/>
+  <xs:element name="tsc" type="xs:unsignedLong"/>
+  <xs:element name="counter" type="xs:unsignedLong"/>
   <xs:element name="msg" type="xs:string"/>
+  <xs:element name="outputValues">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:nameValue"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
   <xs:element name="simpleResult" type="vmi1:SimpleResultT"/>
-  <xs:complexType name="TypedResultT">
+  <!--
+    
+    Right now, don't do typed results; we would want to use
+    XSD anySimpleType basically, but Axis doesn't support that easily.
+    
+    TypedNameValueT = 
+       element name { text },
+       element value { text },
+       element type { DataTypeT }
+    TypedNameValue = element typedNameValue { TypedNameValueT }
+    
+    TypedResultT = 
+       element name { text },
+       element type { text }?,
+       element subtype { text }?,
+       element value { text },
+       element msg { text }?,
+       element outputValues { TypedNameValue* }
+    TypedResult = element typedResult { TypedResultT }
+  -->
+  <xs:complexType name="CustomResultT">
     <xs:sequence>
       <xs:element ref="vmi1:name"/>
+      <xs:element ref="vmi1:time"/>
+      <xs:element ref="vmi1:tsc"/>
+      <xs:element ref="vmi1:counter"/>
       <xs:element ref="vmi1:value"/>
-      <xs:element ref="vmi1:msg"/>
-      <xs:element name="outputValues">
-        <xs:complexType>
-          <xs:sequence>
-            <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:typedNameValue"/>
-          </xs:sequence>
-        </xs:complexType>
-      </xs:element>
+      <xs:element minOccurs="0" ref="vmi1:msg"/>
+      <xs:group ref="vmi1:AnyExtension"/>
     </xs:sequence>
-  </xs:complexType>
-  <xs:element name="typedResult" type="vmi1:TypedResultT"/>
-  <xs:complexType name="CustomResultT">
-    <xs:complexContent>
-      <xs:extension base="vmi1:AnyExtension">
-        <xs:attribute name="id" use="required" type="xs:ID"/>
-        <xs:attribute name="name" use="required"/>
-      </xs:extension>
-    </xs:complexContent>
+    <xs:attribute name="id" use="required" type="xs:int"/>
+    <xs:attributeGroup ref="vmi1:AnyExtension"/>
   </xs:complexType>
   <xs:element name="customResult" type="vmi1:CustomResultT"/>
   <xs:complexType name="AnalysisResultT">
     <xs:choice>
       <xs:element ref="vmi1:simpleResult"/>
-      <xs:element ref="vmi1:typedResult"/>
       <xs:element ref="vmi1:customResult"/>
     </xs:choice>
   </xs:complexType>
   <xs:element name="analysisResult" type="vmi1:AnalysisResultT"/>
+  <xs:complexType name="AnalysisResultsT">
+    <xs:sequence>
+      <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:analysisResult"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="analysisResults" type="vmi1:AnalysisResultsT"/>
 </xs:schema>
+<!--
+  
+  We don't do anything with Annotations right now, but this is the
+  definition we expect to export, once we have Traces.
+  
+  AnnotationTypeT = 
+     attribute id { xsd:ID },
+     attribute name { text },
+  
+     element annotationField {
+         attribute name { text },
+  	attribute datatype { DataTypeT }
+     }+
+  AnnotationType = element annotationType { AnnotationTypeT }
+  
+  AnnotationHeaderT = 
+     attribute annotationTypeId { xsd:ID },
+  
+     attribute isEvent { xsd:boolean },
+     attribute isMarker { xsd:boolean },
+     attribute isDiscovery { xsd:boolean },
+  
+     attribute ns { xsd:unsignedLong },
+     attribute tsc { xsd:unsignedLong },
+     attribute counter { xsd:unsignedLong }
+  
+  AnnotationT = 
+     AnnotationHeaderT,
+     element fieldValues { TypedNameValue+ }
+  Annotation = element annotation { AnnotationT }
+-->

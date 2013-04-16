@@ -34,6 +34,22 @@ endif
 SUBDIRS += target
 SUBDIRS += tests
 SUBDIRS += tools
+
+#
+# We have to stagger the XML build, because stuff in analysis/ depends on 
+# xml/schema if ENABLE_SOAP!
+#
+ifeq ("@ENABLE_SOAP@","1")
+    SUBDIRS += xml/schema
+endif
+#
+# This must follow the xml build, because it *can* make use of the
+# soap-generated serializers/deserializers.
+#
+SUBDIRS += analysis
+#
+# Continue the XML SOAP build...
+#
 ifeq ("@ENABLE_SOAP@","1")
     SUBDIRS += xml
 endif

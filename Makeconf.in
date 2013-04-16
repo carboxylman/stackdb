@@ -19,6 +19,18 @@
 ###############################################################################
 
 #
+# Set a global library version.
+#
+LIBVERSION = 0.2
+
+#
+# Set some XML constants.
+#
+NS = vmi1
+NAMESPACE = http://anathema.flux.utah.edu/schema/vmi/1
+
+
+#
 # Most of the configure-substitution magic is done here.
 # All the other makefiles in the NodeOS include
 # this fragment
@@ -65,11 +77,24 @@ INSTALL_LIBDIR  = $(DESTDIR)@libdir@
 INSTALL_INCDIR  = $(DESTDIR)@incdir@
 INSTALL_BINDIR	= $(DESTDIR)@bindir@
 INSTALL_SBINDIR	= $(DESTDIR)@sbindir@
-INSTALL_LIBEXECDIR = $(DESTDIR)@libexecdir@
+INSTALL_LIBEXECDIR = $(DESTDIR)@libexecdir@/vmi
 INSTALL_ETCDIR  = $(DESTDIR)@sysconfdir@
 INSTALL_INCDIR  = $(DESTDIR)@includedir@
 INSTALL_RCDIR	= $(DESTDIR)@INSTALL_RCDIR@
 INSTALL_SHAREDIR= $(DESTDIR)@prefix@/share/vmi
+
+#
+# Any of these vars that we use in the code *must* be included in CFLAGS from
+# this point if DESTDIR was defined.  We would try to set them up in config.h,
+# but configure doesn't know about DESTDIR, of course.
+#
+# So, NB: anytime you need one of these in the src, add it here!
+#
+#ifneq ($(DESTDIR),"")
+	CFLAGS += -DINSTALL_DIR=\"$(INSTALL_DIR)\" \
+		  -DINSTALL_LIBEXECDIR=\"$(INSTALL_LIBEXECDIR)\" \
+		  -DINSTALL_SHAREDIR=\"$(INSTALL_SHAREDIR)\"
+#endif
 
 INSTALL		= @INSTALL@
 INSTALL_PROGRAM	= @INSTALL@ -m 755
@@ -114,6 +139,8 @@ LIBVMI		 = @LIBVMI@
 
 ENABLE_DISTORM   = "@ENABLE_DISTORM@"
 DISTORM          = @DISTORM@
+
+ENABLE_SOAP      = "@ENABLE_SOAP@"
 
 VMPROBES_FLAGS  = -D VMPROBE_DEBUG -D VMPROBE_i386 -D VMPROBE_SIGNAL
 #VMPROBES_FLAGS += -D VMPROBE_BENCHMARK

@@ -58,6 +58,8 @@ void vmi_set_log_area_flags(log_areas_t areas,log_flags_t flags) {
 	vmi_log_flags[LAB_PROBE] = flags;
     if (areas & LA_XML)
 	vmi_log_flags[LAB_XML] = flags;
+    if (areas & LA_ANL)
+	vmi_log_flags[LAB_ANL] = flags;
     if (areas & LA_USER)
 	vmi_log_flags[LAB_USER] = flags;
 }
@@ -73,6 +75,8 @@ void vmi_add_log_area_flags(log_areas_t areas,log_flags_t flags) {
 	vmi_log_flags[LAB_PROBE] |= flags;
     if (areas & LA_XML)
 	vmi_log_flags[LAB_XML] |= flags;
+    if (areas & LA_ANL)
+	vmi_log_flags[LAB_ANL] |= flags;
     if (areas & LA_USER)
 	vmi_log_flags[LAB_USER] |= flags;
 }
@@ -135,6 +139,9 @@ static char *log_flag_stringmap_probe[] = {
 static char *log_flag_stringmap_xml[] = { 
     "XML","RPC","SVC","PROXYREQ",NULL
 };
+static char *log_flag_stringmap_anl[] = { 
+    "ANL",NULL
+};
 
 static char **log_flag_stringmap[32] = {
     log_flag_stringmap_none,
@@ -143,7 +150,8 @@ static char **log_flag_stringmap[32] = {
     log_flag_stringmap_target,
     log_flag_stringmap_probe,
     log_flag_stringmap_xml,
-    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+    log_flag_stringmap_anl,
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
     NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
     /* Will get set to an array of user flags if they call
      * vmi_set_user_area_flags().
@@ -210,6 +218,13 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 	    *areaval = LA_XML;
 	return 0;
     }
+    else if (strcmp("A_ALL",flag) == 0) {
+	if (flagval)
+	    *flagval = LF_A_ALL;
+	if (areaval)
+	    *areaval = LA_ANL;
+	return 0;
+    }
     else if (strcmp("U_ALL",flag) == 0) {
 	if (flagval)
 	    *flagval = LF_U_ALL;
@@ -236,6 +251,8 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 	    areabits = LAB_PROBE;
 	else if (*_area == 'X') 
 	    areabits = LAB_XML;
+	else if (*_area == 'A') 
+	    areabits = LAB_ANL;
 	else if (*_area == 'U') 
 	    areabits = LAB_USER;
 	else {
@@ -323,6 +340,8 @@ int vdebug_is_on(int level,log_areas_t areas,log_flags_t flags) {
 	    return 1;
 	else if (areas & LA_XML && vmi_log_flags[LAB_XML] & flags)
 	    return 1;
+	else if (areas & LA_ANL && vmi_log_flags[LAB_ANL] & flags)
+	    return 1;
 	else if (areas & LA_USER && vmi_log_flags[LAB_USER] & flags)
 	    return 1;
     }
@@ -342,6 +361,8 @@ int vwarn_is_on(int level,log_areas_t areas,log_flags_t flags) {
 	else if (areas & LA_PROBE && vmi_log_flags[LAB_PROBE] & flags)
 	    return 1;
 	else if (areas & LA_XML && vmi_log_flags[LAB_XML] & flags)
+	    return 1;
+	else if (areas & LA_ANL && vmi_log_flags[LAB_ANL] & flags)
 	    return 1;
 	else if (areas & LA_USER && vmi_log_flags[LAB_USER] & flags)
 	    return 1;

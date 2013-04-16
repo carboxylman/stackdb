@@ -56,6 +56,7 @@ typedef enum log_area_bits {
     LAB_PROBE         = 4,
     LAB_XML           = 5,
     LAB_TEST          = 6,
+    LAB_ANL           = 7,
 
     LAB_USER          = 31,
 } log_area_bits_t;
@@ -67,6 +68,7 @@ typedef enum log_areas {
     LA_PROBE          = 1 << LAB_PROBE,
     LA_XML            = 1 << LAB_XML,
     LA_TEST           = 1 << LAB_TEST,
+    LA_ANL            = 1 << LAB_ANL,
 
     LA_USER           = 1 << LAB_USER,
 } log_areas_t;
@@ -172,6 +174,13 @@ typedef enum log_flags_xml {
     LF_PROXYREQ       = 1 << LFB_PROXYREQ,
 } log_flags_xml_t;
 
+typedef enum log_flag_bits_anl {
+    LFB_ANL           = 0,
+} log_flag_bits_anl_t;
+typedef enum log_flags_anl {
+    LF_ANL            = 1 << LFB_ANL,
+} log_flags_anl_t;
+
 /*
 typedef enum log_flag_bits_ {
     LFB_         = 0,
@@ -199,6 +208,7 @@ typedef enum log_flags_ {
 		  | LF_THREAD)
 #define LF_P_ALL (LF_PROBE | LF_PROBEPOINT | LF_ACTION)
 #define LF_X_ALL (LF_XML | LF_RPC | LF_SVC | LF_PROXYREQ)
+#define LF_A_ALL (LF_ANL)
 /* Set every last bit for the user area. */
 #define LF_U_ALL        INT_MAX
 

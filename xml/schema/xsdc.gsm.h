@@ -6,10 +6,11 @@
 typedef char *	_xml__lang;
 typedef char *	_xsd__schema;
 //typedef _XML    xsd__anyType;
-typedef char *  xsd__anyType;
+//typedef char *  xsd__anyType;
 typedef char *	xsd__anyURI;
 //typedef char *  xsd__base64Binary;
 //typedef char *  xsd__hexBinary;
+struct xsd__hexBinary { unsigned char *__ptr; int __size; };
 typedef char		xsd__byte;
 typedef char *		xsd__date;
 typedef double  	xsd__decimal;

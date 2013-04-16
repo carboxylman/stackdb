@@ -18,10 +18,6 @@
 
 ###############################################################################
 
-PACKAGE = dwdebug
-VERSION = 0.1
-LIBVERSION = 0.1
-
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= dwdebug
@@ -76,7 +72,7 @@ libdwdebug.so.$(LIBVERSION):	dwdebug.lo
 	$(CP) -f dwdebug.lo $@
 
 libdwdebug.so:	libdwdebug.so.$(LIBVERSION)
-	$(LN_S) $< $@
+	$(LN_S) -f $< $@
 
 dwdebug_wrap_py.c: $(SRCDIR)/dwdebug.i $(SRCDIR)/dwdebug.h #$(SRCDIR)/dwdebug.py.tail
 	swig -python $(PYCFLAGS) -o dwdebug_wrap_py.c -module dwdebug \

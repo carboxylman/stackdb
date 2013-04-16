@@ -24,31 +24,83 @@
 void analysis_rpc_init(void);
 void analysis_rpc_fini(void);
 
-int vmi1__ListAvailableAnalyses(struct soap *soap,void *_,
-				struct vmi1__AnalysesResponse *r);
-int vmi1__ListAnalysisInstances(struct soap *soap,void *_,
-				struct vmi1__AnalysisInstancesResponse *r);
 
-int vmi1__CreateAnalysis(struct soap *soap,struct vmi1__TargetSpecT *targetSpec,
-			 xsd__ID analysisId,enum xsd__boolean autorun,
-			 vmi1__SessionIdT *sessionId);
-int vmi1__RunAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
-		      struct vmi1__NoneResponse *r);
-int vmi1__PauseAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+// gsoap vmi1 service method-documentation: ListAnalysisDescNames
+//   returns a list of available Analysis object names.
+int vmi1__ListAnalysisDescNames(struct soap *soap,
+				void *_,
+				struct vmi1__AnalysisDescNamesResponse *r);
+
+// gsoap vmi1 service method-documentation: ListAnalysisDescs
+//   returns a list of available AnalysisDesc objects this
+//   service can run against targets.
+int vmi1__ListAnalysisDescs(struct soap *soap,
+			    void *_,
+			    struct vmi1__AnalysisDescsResponse *r);
+
+// gsoap vmi1 service method-documentation: ListAnalyses
+//   returns a list of Analysis objects this service is running. 
+int vmi1__ListAnalyses(struct soap *soap,
+		       void *_,
+		       struct vmi1__AnalysesResponse *r);
+
+// gsoap vmi1 service method-documentation: UploadAnalysis uploads a
+//   new analysis.
+int vmi1__UploadAnalysis(struct soap *soap,
+			 struct vmi1__AnalysisDescT *analysisDesc,
+			 struct xsd__hexBinary *inputFileContents,
+			 struct vmi1__NoneResponse *r);
+
+// gsoap vmi1 service method-documentation: RunAnalysis runs an analysis
+//   against the given target specification and analysis specification,
+//   optionally autorunning the target if autorun is true. 
+int vmi1__RunAnalysis(struct soap *soap,
+		      struct vmi1__AnalysisSpecT analysisSpec,
+		      struct vmi1__TargetSpecT *targetSpec,
+		      enum xsd__boolean autorun,
+		      struct vmi1__AnalysisResponse *r);
+
+// gsoap vmi1 service method-documentation: PauseAnalysis pauses an
+//   analysis if the analysis supports external control.
+int vmi1__PauseAnalysis(struct soap *soap,
+			vmi1__AnalysisIdT aid,
 			struct vmi1__NoneResponse *r);
-int vmi1__EndAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
+
+// gsoap vmi1 service method-documentation: ResumeAnalysis pauses an
+//   analysis if the analysis supports external control.
+int vmi1__ResumeAnalysis(struct soap *soap,
+			 vmi1__AnalysisIdT aid,
+			 struct vmi1__NoneResponse *r);
+
+// gsoap vmi1 service method-documentation: EndAnalysis ends an analysis.
+int vmi1__EndAnalysis(struct soap *soap,
+		      vmi1__AnalysisIdT aid,
 		      struct vmi1__NoneResponse *r);
 
-int vmi1__GetAnalysis(struct soap *soap,vmi1__SessionIdT sessionId,
-		      struct vmi1__AnalysisInstanceResponse *r);
-int vmi1__GetAnalysisStatus(struct soap *soap,vmi1__SessionIdT sessionId,
+// gsoap vmi1 service method-documentation: GetAnalysis returns an Analysis.
+int vmi1__GetAnalysis(struct soap *soap,
+		      vmi1__AnalysisIdT aid,
+		      struct vmi1__AnalysisResponse *r);
+
+// gsoap vmi1 service method-documentation: GetAnalysisStatus returns
+//   the AnalysisStatus associated with aid 
+int vmi1__GetAnalysisStatus(struct soap *soap,
+			    vmi1__AnalysisIdT aid,
 			    struct vmi1__AnalysisStatusResponse *r);
 
-int vmi1__GetAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
+// gsoap vmi1 service method-documentation: GetAnalysisResults returns
+//   results for an analysis.
+int vmi1__GetAnalysisResults(struct soap *soap,
+			     vmi1__AnalysisIdT aid,
 			     struct vmi1__AnalysisResultsResponse *r);
-int vmi1__PollAnalysisResults(struct soap *soap,vmi1__SessionIdT sessionId,
-			      struct vmi1__AnalysisResultsResponse *r);
-int vmi1__PollAnalysisAnnotations(struct soap *soap,vmi1__SessionIdT sessionId,
-				  struct vmi1__AnalysisAnnotationsResponse *r);
+
+int vmi1__RegisterAnalysisListener(struct soap *soap,
+				   vmi1__AnalysisIdT aid,
+				   char *host,int port,enum xsd__boolean ssl,
+				   struct vmi1__NoneResponse *r);
+int vmi1__UnregisterAnalysisListener(struct soap *soap,
+				     vmi1__AnalysisIdT tid,
+				     char *host,int port,
+				     struct vmi1__NoneResponse *r);
 
 #endif /* __ANALYSIS_RPC_H__ */
