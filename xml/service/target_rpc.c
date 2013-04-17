@@ -989,7 +989,7 @@ struct target_rpc_listener_action_data {
     struct soap soap;
     GHashTable *reftab;
     struct vmi1__ActionEventT event;
-    struct vmi1__ActionEventResponse aer;
+    struct vmi1__ActionEventNotificationResponse aer;
     result_t retval;
 };
 
@@ -1092,7 +1092,7 @@ struct target_rpc_listener_probe_data {
     struct target *target;
     struct probe *probe;
     struct vmi1__ProbeEventT event;
-    struct vmi1__ProbeEventResponse per;
+    struct vmi1__ProbeEventNotificationResponse per;
     result_t retval;
 };
 
