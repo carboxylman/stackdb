@@ -53,7 +53,7 @@ static int load_submodules(void *__unused) {
     while (!kthread_should_stop()) {
 
         if (cmd_ring_channel_get_cons(&req_ring_channel) >= cmd_ring_channel_get_prod(&req_ring_channel)) {
-            printk(KERN_INFO "Transmitter ring buffer empty\n");
+           //printk(KERN_INFO "Transmitter ring buffer empty\n");
             yield();
             continue;
         }
@@ -69,36 +69,36 @@ static int load_submodules(void *__unused) {
 
         /* based on the submodule id switch to appropriate block */
         switch(cmd->submodule_id) {
-        case 1 :
-            if(submodule.mod_table[cmd->submodule_id] == NULL)
-            printk(KERN_INFO "Loading the the psaction sub module");
-            if((result = request_module("psaction_module")) < 0) {
-                printk(KERN_INFO "psaction_module not available\n");
-                return -ENODEV;
-            }
+        	case 0 :
+        		if(submodule.mod_table[cmd->submodule_id] == NULL)
+        			printk(KERN_INFO "Loading the the psaction sub module");
+        		if((result = request_module("psaction_module")) < 0) {
+        			printk(KERN_INFO "psaction_module not available\n");
+        			return -ENODEV;
+        		}
 
-            /* get the address in the res_ring_channel where the acknowledgment should be inserted */
-            ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(&res_ring_channel, cmd_ring_channel_get_prod(&res_ring_channel));
-            /* call the appropriate function in the submodule based on command id*/
-            result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
-            if(result) {
-                printk(KERN_INFO "Function call failed.\n");
-            }
+        		/* get the address in the res_ring_channel where the acknowledgment should be inserted */
+        		ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(&res_ring_channel, cmd_ring_channel_get_prod(&res_ring_channel));
+        		/* call the appropriate function in the submodule based on command id*/
+        		result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+        		if(result) {
+        			printk(KERN_INFO "Function call failed.\n");
+        		}
 
-            /* Increment the prod index for the res_ring_channel */
-            res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
-            res_prod += 1;
-            cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
+        		/* Increment the prod index for the res_ring_channel */
+        		res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
+        		res_prod += 1;
+        		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
 
-            /* Now we want to call a dummy function where break point can be introduced
-             * so the vmi can read the result from teh result ring buffer and increment the
-             * consumer index.
-             */
-            result = breakpoint_func();
-            if(result) {
-                printk(KERN_INFO "breakpoint_func call failed.\n");
-                return result;
-            }
+        		/* Now we want to call a dummy function where break point can be introduced
+        		 * so the vmi can read the result from teh result ring buffer and increment the
+        		 * consumer index.
+        		 */
+        		result = breakpoint_func();
+        		if(result) {
+        			printk(KERN_INFO "breakpoint_func call failed.\n");
+        			return result;
+        		}
 
             break;
 
@@ -117,7 +117,7 @@ static int load_submodules(void *__unused) {
 int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
         unsigned long size_in_pages, unsigned long size_of_a_rec) {
 
-    int ret;
+    int ret = 0;
     unsigned long order;
 
     printk(KERN_INFO "Allocating ring channel\n");
@@ -133,6 +133,8 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
         ret = -ENOMEM;
         goto cleanup;
     }
+    printk(KERN_INFO "Allocated pages for the buffer in the ring channel %ld\n", ring_channel->recs);
+
 
     /* init structure members */
     ring_channel->cons = ring_channel->prod = 0;
@@ -141,7 +143,7 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
     ring_channel->payload_buffer_size = size_in_pages * PAGE_SIZE;
     ring_channel->buf_order = order;
 
-    return 0;
+    return ret;
 
     cleanup: if (ring_channel->recs) {
         free_pages((unsigned long) ring_channel->recs, order);
@@ -163,6 +165,7 @@ static int initialize_submodule_table(void* __unused ) {
         printk(KERN_INFO "Fialed to allocate memory for submodule table\n");
         return -ENOMEM;
     }
+    printk(KERN_INFO "Initialized submodule table.\n");
 
     /* initialize the array of pointers to submodule struct */
     for(i = 0; i<SUB_MODULE_COUNT; i++) {
@@ -178,21 +181,22 @@ static int initialize_buffer(void *__unused) {
 
     int ret = 0;
     if (cmd_ring_channel_alloc_with_metadata(&req_ring_channel, cmd_buf_size, sizeof(struct cmd_rec)) == 0) {
-        printk(KERN_INFO "Transmitter ring buffer initialized.\n");
+        printk(KERN_INFO "Request ring buffer initialized.\n");
     }
     else {
-        printk(KERN_INFO "Transmitter ring buffer initialization failed\n");
+        printk(KERN_INFO "Request ring buffer initialization failed\n");
         return -ENOMEM;
     }
 
     if (cmd_ring_channel_alloc_with_metadata(&res_ring_channel, cmd_buf_size, sizeof(struct ack_rec)) == 0) {
-        printk(KERN_INFO "Receiver ring buffer initialized.\n");
+        printk(KERN_INFO "Result ring buffer initialized.\n");
     }
     else {
-        printk(KERN_INFO "Receiver ring buffer initialization failed\n");
+        printk(KERN_INFO "Result ring buffer initialization failed\n");
         ret = -ENOMEM;
         goto exit;
     }
+    return ret;
 
     exit:
     if (req_ring_channel.recs) {
