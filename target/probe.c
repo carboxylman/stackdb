@@ -781,8 +781,6 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
     memset(probe,0,sizeof(*probe));
     probe->id = -1;
 
-    target_attach_probe(target,tthread,probe);
-
     probe->name = (name) ? strdup(name) : NULL;
     probe->pre_handler = pre_handler;
     probe->post_handler = post_handler;
@@ -791,6 +789,8 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
     probe->autofree = autofree;
     probe->tracked = tracked;
     probe->ops = pops;
+
+    target_attach_probe(target,tthread,probe);
 
     if (PROBE_SAFE_OP(probe,init)) {
 	verror("probe %s init failed, calling fini!\n",probe->name);
