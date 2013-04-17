@@ -34,12 +34,6 @@
 #define MONITOR_OBJTYPE_TARGET 0x08
 extern struct monitor_objtype_ops target_rpc_monitor_objtype_ops;
 
-struct target_rpc_listener {
-    int target_id;
-    char *hostname;
-    int port;
-};
-
 #define MONITORED_TARGET_LAUNCHER "/home/johnsond/git/a3/vmi.obj/xml/service/monitored_target"
 
 /*

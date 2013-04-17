@@ -36,12 +36,34 @@
 
 static int init_done = 0;
 
+/*
+ * Our primary mutex: used for library initialization, serialized access
+ * to per-monitor locks;
+ */
 static pthread_mutex_t monitor_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static int monitor_objtype_idx = 1;
+/*
+ * Objtypes have a per-type operations struct.
+ */
 static GHashTable *objtype_ops_tab = NULL;
+/*
+ * Sometimes objtypes have a global per-type mutex they want locked when
+ * they lookup an object; this table stores that.  It is populated at
+ * objtype registration.
+ */
+static GHashTable *objtype_mutex_tab = NULL;
+/*
+ * Sometimes we quickly want to list all objects of a type, or do 
+ * something with them.
+ */
+static GHashTable *objtype_objid_obj_tab;
 
-static int monitor_objid_idx = 1;
+/*
+ * This is a global counter for generating unique objids.  Object ids
+ * must be globally unique so that objtypes can exist within the same
+ * "namespace".
+ */
+static int monitor_objid_idx = 0;
 
 /*
  * Map of thread IDs to monitors.
@@ -75,8 +97,11 @@ void monitor_init(void) {
 	return;
     }
 
-    tid_monitor_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
     objtype_ops_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
+    objtype_mutex_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
+    objtype_objid_obj_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    tid_monitor_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     obj_monitor_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
     objid_monitor_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
@@ -106,7 +131,6 @@ void monitor_fini(void) {
     }
 
     g_hash_table_destroy(tid_monitor_tab);
-    g_hash_table_destroy(objtype_ops_tab);
 
     g_hash_table_destroy(obj_monitor_tab);
     g_hash_table_destroy(objid_monitor_tab);
@@ -116,6 +140,10 @@ void monitor_fini(void) {
 
     g_hash_table_destroy(obj_objid_tab);
     g_hash_table_destroy(objid_obj_tab);
+
+    g_hash_table_destroy(objtype_objid_obj_tab);
+    g_hash_table_destroy(objtype_ops_tab);
+    g_hash_table_destroy(objtype_mutex_tab);
 
     init_done = 0;
 
@@ -194,9 +222,178 @@ int monitor_lookup_objid(int objid,
     return retval;
 }
 
-int monitor_lookup_objid_locking(int objid,
-				 int *objtype,void **obj,
-				 struct monitor **monitor) {
+int __monitor_lock_objtype(int objtype) {
+    pthread_mutex_t *mutex;
+
+    mutex = (pthread_mutex_t *)g_hash_table_lookup(objtype_mutex_tab,
+						   (gpointer)(uintptr_t)objtype);
+    if (!mutex) 
+	return -1;
+
+    pthread_mutex_lock(mutex);
+    return 0;
+}
+
+int monitor_lock_objtype(int objtype) {
+    int rc;
+
+    pthread_mutex_lock(&monitor_mutex);
+    rc = __monitor_lock_objtype(objtype);
+    pthread_mutex_unlock(&monitor_mutex);
+
+    return rc;
+}
+
+int __monitor_unlock_objtype(int objtype) {
+    pthread_mutex_t *mutex;
+
+    mutex = (pthread_mutex_t *)g_hash_table_lookup(objtype_mutex_tab,
+						   (gpointer)(uintptr_t)objtype);
+    if (!mutex) 
+	return -1;
+
+    pthread_mutex_unlock(mutex);
+    return 0;
+}
+
+int monitor_unlock_objtype(int objtype) {
+    int rc;
+
+    pthread_mutex_lock(&monitor_mutex);
+    rc = __monitor_unlock_objtype(objtype);
+    pthread_mutex_unlock(&monitor_mutex);
+
+    return rc;
+}
+
+int monitor_unlock_objtype_unsafe(int objtype) {
+    return __monitor_unlock_objtype(objtype);
+}
+
+struct array_list *monitor_list_objids_by_objtype_lock_objtype(int objtype,
+							       int include_null) {
+    struct array_list *retval;
+    GHashTable *tmp_objid_obj_tab;
+    GHashTableIter iter;
+    void *obj;
+    int rc;
+    gpointer objid;
+
+    pthread_mutex_lock(&monitor_mutex);
+
+    rc = __monitor_lock_objtype(objtype);
+    if (rc) {
+	pthread_mutex_unlock(&monitor_mutex);
+	return NULL;
+    }
+    tmp_objid_obj_tab = (GHashTable *) \
+	g_hash_table_lookup(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype);
+    if (!tmp_objid_obj_tab) {
+	pthread_mutex_unlock(&monitor_mutex);
+	return NULL;
+    }
+
+    retval = array_list_create(g_hash_table_size(tmp_objid_obj_tab));
+    g_hash_table_iter_init(&iter,tmp_objid_obj_tab);
+    while (g_hash_table_iter_next(&iter,&objid,&obj)) {
+	if (!include_null && !obj)
+	    continue;
+	array_list_append(retval,objid);
+    }
+
+    pthread_mutex_unlock(&monitor_mutex);
+
+    return retval;
+}
+
+struct array_list *monitor_list_objs_by_objtype_lock_objtype(int objtype,
+							     int include_null) {
+    struct array_list *retval;
+    GHashTable *tmp_objid_obj_tab;
+    GHashTableIter iter;
+    void *obj;
+    int rc;
+
+    pthread_mutex_lock(&monitor_mutex);
+
+    rc = __monitor_lock_objtype(objtype);
+    if (rc) {
+	pthread_mutex_unlock(&monitor_mutex);
+	return NULL;
+    }
+    tmp_objid_obj_tab = (GHashTable *) \
+	g_hash_table_lookup(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype);
+    if (!tmp_objid_obj_tab) {
+	pthread_mutex_unlock(&monitor_mutex);
+	return NULL;
+    }
+
+    retval = array_list_create(g_hash_table_size(tmp_objid_obj_tab));
+    g_hash_table_iter_init(&iter,tmp_objid_obj_tab);
+    while (g_hash_table_iter_next(&iter,NULL,&obj)) {
+	if (!include_null && !obj)
+	    continue;
+	array_list_append(retval,obj);
+    }
+
+    pthread_mutex_unlock(&monitor_mutex);
+
+    return retval;
+}
+
+int monitor_lookup_objid_lock_objtype(int objid,int objtype,
+				      void **obj,struct monitor **monitor) {
+    int retval;
+
+    pthread_mutex_lock(&monitor_mutex);
+    retval = __monitor_lock_objtype(objtype);
+    if (retval) {
+	verror("could not find objtype %d -- BUG!\n",objtype);
+	pthread_mutex_unlock(&monitor_mutex);
+	return 0;
+    }
+    retval = __monitor_lookup_objid(objid,NULL,obj,monitor);
+    if (!retval) {
+	vwarnopt(9,LA_LIB,LF_MONITOR,"could not find objid %d\n",objid);
+	__monitor_unlock_objtype(objtype);
+    }
+
+    pthread_mutex_unlock(&monitor_mutex);
+
+    return retval;
+}
+
+int monitor_lookup_objid_lock_objtype_and_monitor(int objid,int objtype,
+						  void **obj,
+						  struct monitor **monitor) {
+    int retval;
+    struct monitor *_monitor;
+
+    pthread_mutex_lock(&monitor_mutex);
+    retval = __monitor_lock_objtype(objtype);
+    if (retval) {
+	verror("could not find objtype %d -- BUG!\n",objtype);
+	pthread_mutex_unlock(&monitor_mutex);
+	return 0;
+    }
+    retval = __monitor_lookup_objid(objid,NULL,obj,&_monitor);
+    if (retval && monitor)
+	*monitor = _monitor;
+    if (retval && _monitor)
+	pthread_mutex_lock(&_monitor->mutex);
+    if (!retval) {
+	vwarnopt(9,LA_LIB,LF_MONITOR,"could not find objid %d\n",objid);
+	__monitor_unlock_objtype(objtype);
+    }
+
+    pthread_mutex_unlock(&monitor_mutex);
+
+    return retval;
+}
+
+int monitor_lookup_objid_lock_monitor(int objid,
+				      int *objtype,void **obj,
+				      struct monitor **monitor) {
     int retval;
     struct monitor *_monitor;
 
@@ -250,9 +447,9 @@ int monitor_lookup_obj(void *obj,
     return retval;
 }
 
-int monitor_lookup_obj_locking(void *obj,
-			       int *objtype,int *objid,
-			       struct monitor **monitor) {
+int monitor_lookup_obj_lock_monitor(void *obj,
+				    int *objtype,int *objid,
+				    struct monitor **monitor) {
     int retval;
     struct monitor *_monitor;
 
@@ -276,6 +473,7 @@ static int __monitor_add_obj(struct monitor *monitor,
     int _objid = 0;
     void *_obj = NULL;
     struct monitor *_monitor = NULL;
+    GHashTable *tmp_objid_obj_tab;
 
     if (!(ops = __monitor_lookup_objtype_ops(objtype))) {
 	verror("unknown objtype %d!\n",objtype);
@@ -329,6 +527,10 @@ static int __monitor_add_obj(struct monitor *monitor,
 	}
     }
 
+    tmp_objid_obj_tab = (GHashTable *) \
+	g_hash_table_lookup(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype);
+    g_hash_table_insert(tmp_objid_obj_tab,(gpointer)(uintptr_t)objid,obj);
+
     retval = 0;
 
  out:
@@ -358,6 +560,7 @@ static int __monitor_del_obj(struct monitor *monitor,
     int _objid = 0;
     void *_obj = NULL;
     struct monitor *_monitor = NULL;
+    GHashTable *tmp_objid_obj_tab;
 
     if (!(ops = __monitor_lookup_objtype_ops(objtype))) {
 	verror("unknown objtype %d!\n",objtype);
@@ -378,6 +581,11 @@ static int __monitor_del_obj(struct monitor *monitor,
     }
 
     retval = 0;
+
+    tmp_objid_obj_tab = (GHashTable *) \
+	g_hash_table_lookup(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype);
+    g_hash_table_remove(tmp_objid_obj_tab,(gpointer)(uintptr_t)objid);
+
 
     /* Detach the object. */
     if (ops->evloop_is_attached && !ops->evloop_is_attached(monitor->evloop,obj)) {
@@ -670,21 +878,23 @@ void monitor_destroy(struct monitor *monitor) {
     pthread_mutex_unlock(&monitor_mutex);
 }
 
-int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops) {
+int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops,
+			     pthread_mutex_t *mutex) {
     pthread_mutex_lock(&monitor_mutex);
 
-    if (objtype != -1 
-	&& g_hash_table_lookup(objtype_ops_tab,(gpointer)(uintptr_t)objtype)) {
+    if (g_hash_table_lookup(objtype_ops_tab,(gpointer)(uintptr_t)objtype)) {
 	verror("monitor objtype %d already exists!\n",objtype);
 	errno = EBUSY;
 	pthread_mutex_unlock(&monitor_mutex);
 	return -1;
     }
 
-    if (objtype == -1)
-	objtype = monitor_objtype_idx++;
-
     g_hash_table_insert(objtype_ops_tab,(gpointer)(uintptr_t)objtype,ops);
+    if (mutex)
+	g_hash_table_insert(objtype_mutex_tab,(gpointer)(uintptr_t)objtype,
+			    mutex);
+    g_hash_table_insert(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype,
+			g_hash_table_new(g_direct_hash,g_direct_equal));
 
     pthread_mutex_unlock(&monitor_mutex);
 
@@ -1931,7 +2141,7 @@ struct monitor_msg *monitor_msg_create(int objid,
 
     if (id == -1) {	
 	if (objid > 0 
-	    && !monitor_lookup_objid_locking(objid,NULL,&obj,&monitor)) {
+	    && !monitor_lookup_objid_lock_monitor(objid,NULL,&obj,&monitor)) {
 	    verror("could not find monitor for objid %d to get msg_obj_id!\n",
 		   objid);
 	    return NULL;
@@ -2013,7 +2223,7 @@ int monitor_send(struct monitor_msg *msg) {
      * We have to lookup the monitor and hold its lock to make sure
      * the monitor thread does not monitor_free() it out from under us!
      */
-    if (!monitor_lookup_objid_locking(msg->objid,NULL,NULL,&monitor)) {
+    if (!monitor_lookup_objid_lock_monitor(msg->objid,NULL,NULL,&monitor)) {
 	errno = ESRCH;
 	return -1;
     }
@@ -2199,7 +2409,7 @@ int monitor_child_send(struct monitor_msg *msg) {
      * the monitor thread does not monitor_free() it out from under us!
      */
     
-    if (!monitor_lookup_objid_locking(msg->objid,NULL,NULL,&monitor)) {
+    if (!monitor_lookup_objid_lock_monitor(msg->objid,NULL,NULL,&monitor)) {
 	errno = ESRCH;
 	return -1;
     }

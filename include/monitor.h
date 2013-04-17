@@ -334,7 +334,53 @@ void monitor_fini(void);
  * and the caller should save it for future use (i.e., passing to
  * monitor_create/monitor_attach).
  */
-int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops);
+int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops,
+			     pthread_mutex_t *objtype_mutex);
+/*
+ * Sometimes we need to lock/unlock the per-objtype lock.
+ */
+int monitor_lock_objtype(int objtype);
+int monitor_unlock_objtype(int objtype);
+/*
+ * Most times we unlock an objtype mutex, we don't really need to hold
+ * the global monitor mutex to do so.  This could only get us in trouble
+ * if we call it when the monitor lib is being uninitialized, I think.
+ */
+int monitor_unlock_objtype_unsafe(int objtype);
+/*
+ * Sometimes we need to atomically lock the per-objtype mutex when we
+ * lookup an object, but not lock the object's monitor's lock.
+ */
+int monitor_lookup_objid_lock_objtype(int objid,int objtype,
+				      void **obj,struct monitor **monitor);
+/*
+ * Sometimes we need to atomically lock the per-objtype mutex AND the
+ * object's monitor's lock when we lookup an object.
+ */
+int monitor_lookup_objid_lock_objtype_and_monitor(int objid,int objtype,
+						  void **obj,
+						  struct monitor **monitor);
+
+/*
+ * Returns an array_list of all the monitored objects of @objtype.  Some
+ * objects may be NULL if they are instantiated in a child process that
+ * is monitored.
+ *
+ * The user is basically responsible for ensuring no object on the list
+ * is used, by making sure that any such accesses to those objects only
+ * happen when the objtype lock is held -- we do not leave the primary
+ * monitor mutex locked when we return from this call.  BUT,
+ * monitor_add_obj and monitor_del_obj are both supposed be called only
+ * with the objtype lock held.
+ *
+ * The monitor code cannot try to lock the objtype lock except when
+ * instructed to do so by the user.
+ */
+struct array_list *monitor_list_objs_by_objtype_lock_objtype(int objtype,
+							     int include_null);
+
+struct array_list *monitor_list_objids_by_objtype_lock_objtype(int objtype,
+							       int include_null);
 
 /*
  * Get a new ID for a monitored object; we want these things to be
@@ -374,6 +420,8 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
  * (Users might call this when they need the monitor created before the
  * object is created; i.e., the target library might want the
  * monitor-created evloop as it is creating the target object.)
+ *
+ * Users must call this with the objtype lock held!
  */
 int monitor_add_primary_obj(struct monitor *monitor,
 			    int objid,int objtype,void *obj);

@@ -114,7 +114,6 @@ int main(int argc,char **argv) {
     }
 
     monitor_add_primary_obj(monitor,target->id,MONITOR_OBJTYPE_TARGET,target);
-    target_rpc_insert(target->id,target);
 
     vdebug(1,LA_XML,LF_RPC,"instantiated target %d\n",monitor->objid);
 

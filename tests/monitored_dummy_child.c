@@ -35,7 +35,7 @@ int main(int argc,char **argv) {
     monitor_init();
     atexit(monitor_fini);
 
-    if (monitor_register_objtype(MONITOR_DUMMY_OBJTYPE,&monitor_dummy_ops)
+    if (monitor_register_objtype(MONITOR_DUMMY_OBJTYPE,&monitor_dummy_ops,NULL)
 	!= MONITOR_DUMMY_OBJTYPE) {
 	verror("registration of dummy objtype %d failed!\n",
 	       MONITOR_DUMMY_OBJTYPE);

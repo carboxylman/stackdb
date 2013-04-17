@@ -18,10 +18,151 @@
 
 #include <stdsoap2.h>
 #include <pthread.h>
+#include <sys/prctl.h>
 
 #include "log.h"
 #include "monitor.h"
 #include "proxyreq.h"
+
+/**
+ ** The main function this library exposes to servers.
+ **/
+int proxyreq_handle_request(struct soap *soap,char *svc_name) {
+    struct proxyreq *pr;
+    struct monitor *monitor;
+    int retval;
+    char name[16];
+    int rc;
+
+    /*
+     * If there is even a possibility that we might proxy the request to
+     * a different thread or process for handling, we have to save off
+     * the request before even beginning to handle it.  If the request
+     * is handled in the RPC method, we can just free the proxy request
+     * buf.  If, on the other hand, the RPC method signals us that we
+     * have to signal another thread/process to handle the request, we
+     * have to do that.
+     */
+    pr = proxyreq_create(soap);
+
+    retval = soap_serve(soap);
+
+    if (retval == SOAP_STOP) {
+	vdebug(8,LA_XML,LF_RPC,"proxying request from %d.%d.%d.%d\n",
+	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+	       (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+
+	PROXY_REQUEST_HANDLE_STOP(soap);
+
+	if (soap->error != SOAP_OK) {
+	    verror("could not handle SOAP_STOP by proxing request!\n");
+	    // XXX: need to send SOAP error!;
+	    proxyreq_free(pr);
+	    soap_destroy(soap);
+	    soap_end(soap);
+	    soap_done(soap);
+	    free(soap);
+	}
+
+	/*
+	 * Don't destroy the soap context; the monitor thread will
+	 * destroy it once it answers the request.
+	 */
+	retval = 0;
+    }
+    else if (soap->error == SOAP_OK) {
+	if (pr->monitor && pr->monitor_is_new) {
+	    vdebug(5,LA_XML,LF_RPC,
+		   "finished request from %d.%d.%d.%d; new monitor thread %lu\n",
+		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+		   (soap->ip >> 8) & 0xff,soap->ip & 0xff,
+		   pr->monitor->mtid);
+
+	    monitor = pr->monitor;
+
+	    snprintf(name,16,"target_m_%d",monitor->objid);
+	    prctl(PR_SET_NAME,name,NULL,NULL,NULL);
+
+	    proxyreq_free(pr);
+	    soap_destroy(soap);
+	    soap_end(soap);
+	    soap_done(soap);
+	    free(soap);
+
+	    while (1) {
+		rc = monitor_run(monitor);
+		if (rc < 0) {
+		    verror("bad internal error in monitor for target %d; destroying!\n",
+			   monitor->objid);
+		    monitor_destroy(monitor);
+		    return -1;
+		}
+		else {
+		    if (monitor_is_done(monitor)) {
+			vdebug(2,LA_XML,LF_RPC,
+			       "monitoring on target %d is done;"
+			      " closing (not finalizing)!\n",
+			      monitor->objid);
+			monitor_shutdown(monitor);
+			return 0;
+		    }
+		    else if (monitor_is_halfdead(monitor)) {
+			vwarn("target %d monitor child died unexpectedly;"
+			      " closing (not finalizing)!\n",
+			      monitor->objid);
+			monitor_shutdown(monitor);
+			return -1;
+		    }
+		    else if (monitor_should_self_finalize(monitor)) {
+			vwarn("forked target %d finalizing!\n",
+			      monitor->objid);
+			monitor_destroy(monitor);
+			return 0;
+		    }
+		    else {
+			vwarn("target %d monitor_run finished unexpectedly;"
+			      " closing (not finalizing)!\n",
+			      monitor->objid);
+			monitor_shutdown(monitor);
+			return 0;
+		    }
+		}
+	    }
+
+	    return 0;
+	}
+	else {
+	    vdebug(5,LA_XML,LF_RPC,
+		   "finished request from %d.%d.%d.%d\n",
+		   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+		   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+	}
+
+	retval = soap->error;
+
+	proxyreq_free(pr);
+	soap_destroy(soap);
+	soap_end(soap);
+	soap_done(soap);
+	free(soap);
+    }
+    else {
+	vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d with status %d\n",
+	       (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+	       (soap->ip >> 8) & 0xff,soap->ip & 0xff,soap->error);
+
+	retval = soap->error;
+
+	proxyreq_free(pr);
+	soap_destroy(soap);
+	soap_end(soap);
+	soap_done(soap);
+
+	free(soap);
+    }
+
+    return retval;
+}
 
 /**
  ** These functions override the gsoap handlers when we are using proxy

@@ -78,7 +78,7 @@ int main(int argc,char **argv) {
     d2.fd = open("/tmp/d2.txt",O_RDONLY | O_CREAT,S_IWUSR | S_IRUSR);
     fcntl(d2.fd,F_SETFL,fcntl(d2.fd,F_GETFL) | O_NONBLOCK);
 
-    if (monitor_register_objtype(MONITOR_DUMMY_OBJTYPE,&monitor_dummy_ops)
+    if (monitor_register_objtype(MONITOR_DUMMY_OBJTYPE,&monitor_dummy_ops,NULL)
 	!= MONITOR_DUMMY_OBJTYPE) {
 	verror("registration of dummy objtype %d failed!\n",
 	       MONITOR_DUMMY_OBJTYPE);

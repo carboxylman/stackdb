@@ -81,7 +81,7 @@ HEADERS := $(SRCDIR)/../schema/debuginfo_xml.h $(SRCDIR)/debuginfo_rpc.h \
 	$(SRCDIR)/../schema/analysis_xml.h $(SRCDIR)/analysis_rpc.h \
 	$(SRCDIR)/../util.h proxyreq.h
 
-OBJECTS-LIB := proxyreq.lo # util.lo
+OBJECTS-LIB := proxyreq.lo generic_rpc.lo # util.lo
 
 OBJECTS-DEBUGINFO-RPCLIB := debuginfo_rpc.lo
 OBJECTS-DEBUGINFO-MODULE := debuginfo_rpc_moduleC.lo debuginfo_rpc_moduleServer.lo 

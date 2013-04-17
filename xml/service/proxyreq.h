@@ -140,6 +140,13 @@ struct proxyreq {
      * the monitor's (and the global monitor lock).
      */
     int objid;
+    /*
+     * Since sometimes we have to unlock the per-objtype mutex if we
+     * error out, save it here when we set objid above, IF we locked
+     * it.  Then, later on, if it non-NULL, we lock it.  See
+     * PROXY_REQUEST_LOCKED and PROXY_REQUEST_HANDLE_STOP below.
+     */
+    pthread_mutex_t *objtype_mutex;
 
     /*
      * If this request instantiated the monitor, @monitor_is_new is
@@ -169,6 +176,8 @@ struct proxyreq {
     int bufsiz;
     int bufidx;
 };
+
+int proxyreq_handle_request(struct soap *soap,char *svc_name);
 
 /*
  * Creates a proxy request associated with @monitor, and prepares @soap
@@ -290,6 +299,7 @@ int proxyreq_send_response(struct proxyreq *pr);
 	    pthread_mutex_unlock(mutex);				\
 	    return _rc;							\
 	}								\
+	_pr->objtype_mutex = mutex;					\
 	/*								\
 	 * WARNING: the thing that handles SOAP_STOP must		\
 	 *   1) call proxyreq_send_request; and				\
@@ -303,6 +313,7 @@ int proxyreq_send_response(struct proxyreq *pr);
 	/* Free the request buffer, allowing us to create a response 	\
 	 * buf in its place if necessary.				\
 	 */								\
+	_pr->objtype_mutex = mutex;					\
 	if (_pr->buf) {							\
 	    free(_pr->buf);						\
 	    _pr->buf = NULL;						\
@@ -321,14 +332,15 @@ int proxyreq_send_response(struct proxyreq *pr);
     }									\
 }
 
-#define PROXY_REQUEST_LOCKED_HANDLE_STOP(soap,mutex) {			\
+#define PROXY_REQUEST_HANDLE_STOP(soap) {				\
     struct proxyreq *_pr;						\
     _pr = (struct proxyreq *)(soap)->user;				\
 									\
     if (((soap)->error = proxyreq_send_request(_pr)) != SOAP_OK) {	\
 	verror("proxyreq_send_request error %d\n",retval);		\
     }									\
-    pthread_mutex_unlock(mutex);					\
+    if (_pr->objtype_mutex)						\
+	pthread_mutex_unlock(_pr->objtype_mutex);			\
 }									\
 
 #endif /* __PROXY_H__ */
