@@ -134,7 +134,7 @@ def actionEvent(actionEvent):
     return { 'result' : 0 }
 
 if len(sys.argv) > 1:
-    numSteps = sys.argv[1] + 0
+    numSteps = int(sys.argv[1]) + 0
 
 _namespaces = {
     'SOAP-ENV' : "http://www.w3.org/2003/05/soap-envelope",
