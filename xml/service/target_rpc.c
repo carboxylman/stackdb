@@ -1064,9 +1064,9 @@ result_t _target_rpc_action_handler(struct action *action,
     monitor_lock_objtype(MONITOR_OBJTYPE_TARGET);
 
     soap_init(&lad.soap);
-    lad.soap.connect_timeout = 4;
-    lad.soap.send_timeout = 4;
-    lad.soap.recv_timeout = 4;
+    lad.soap.connect_timeout = 8;
+    lad.soap.send_timeout = 8;
+    lad.soap.recv_timeout = 24 * 60 * 60;
 
     lad.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
     t_action_to_x_ActionEventT(&lad.soap,action,thread,msg,msg_detail,
@@ -1189,9 +1189,9 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
     monitor_lock_objtype(MONITOR_OBJTYPE_TARGET);
 
     soap_init(&lpd.soap);
-    lpd.soap.connect_timeout = 4;
-    lpd.soap.send_timeout = 4;
-    lpd.soap.recv_timeout = 4;
+    lpd.soap.connect_timeout = 8;
+    lpd.soap.send_timeout = 8;
+    lpd.soap.recv_timeout = 24 * 60 * 60;
 
     lpd.target = target;
     lpd.probe = probe;
