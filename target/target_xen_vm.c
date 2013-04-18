@@ -742,8 +742,10 @@ struct target *xen_vm_attach(struct target_spec *spec,
     target->full_ret_instr_count = 2;
 
     if (evloop && xstate->evloop_fd < 0) {
+	/*
+	 * Just save it off; we can't use it until in xen_vm_attach_internal.
+	 */
 	target->evloop = evloop;
-	xen_vm_attach_evloop(target,evloop);
     }
 
     vdebug(5,LA_TARGET,LF_XV,"opened dom %d\n",xstate->id);
