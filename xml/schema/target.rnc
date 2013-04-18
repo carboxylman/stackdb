@@ -136,7 +136,7 @@ ProbeT =
     element name { xsd:string },
     element addr { ADDR },
     element type { ProbepointTypeT },
-    element style { ProbepointTypeT },
+    element style { ProbepointStyleT },
     element whence { ProbepointWhenceT },
     element psize { ProbepointSizeT },
 

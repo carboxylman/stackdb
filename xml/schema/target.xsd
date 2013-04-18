@@ -269,7 +269,7 @@ Probe stuff.
     </xs:sequence>
   </xs:complexType>
   <xs:element name="addr" type="vmi1:ADDR"/>
-  <xs:element name="style" type="vmi1:ProbepointTypeT"/>
+  <xs:element name="style" type="vmi1:ProbepointStyleT"/>
   <xs:element name="psize" type="vmi1:ProbepointSizeT"/>
   <xs:element name="probe" type="vmi1:ProbeT"/>
   <xs:complexType name="RegisterValueT">
