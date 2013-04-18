@@ -142,7 +142,8 @@ public class SimpleTargetListener extends TargetListenerSkeleton
      * @param probeEvent 
      * @return probeEventResponse 
      */
-    public vmi1.ProbeEventResponse probeEventNotification(vmi1.ProbeEventNotification probeEventNotification) {
+    public vmi1.ProbeEventNotificationResponse probeEventNotification
+	(vmi1.ProbeEventNotification probeEventNotification) {
 	ProbeEventT pe = probeEventNotification.getProbeEvent();
 	ProbeT probe = pe.getProbe();
 	ThreadT thread = pe.getThread();
@@ -167,7 +168,8 @@ public class SimpleTargetListener extends TargetListenerSkeleton
 	}
 	System.out.println("");
 
-	vmi1.ProbeEventResponse retval = new vmi1.ProbeEventResponse();
+	vmi1.ProbeEventNotificationResponse retval = 
+	    new vmi1.ProbeEventNotificationResponse();
 	retval.setResult(vmi1.ResultT.success);
 	return retval;
     }
@@ -177,9 +179,11 @@ public class SimpleTargetListener extends TargetListenerSkeleton
      * @param actionEvent 
      * @return actionEventResponse 
      */
-    public vmi1.ActionEventResponse actionEventNotification(vmi1.ActionEventNotification actionEventNotification) {
+    public vmi1.ActionEventNotificationResponse actionEventNotification
+	(vmi1.ActionEventNotification actionEventNotification) {
 	System.out.println("ActionEventNotification " + actionEventNotification);
-	vmi1.ActionEventResponse retval = new vmi1.ActionEventResponse();
+	vmi1.ActionEventNotificationResponse retval = 
+	    new vmi1.ActionEventNotificationResponse();
 	retval.setResult(vmi1.ResultT.success);
 	return retval;
     }
