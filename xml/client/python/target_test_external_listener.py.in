@@ -66,10 +66,10 @@ tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 
-target = client.service.InstantiateTarget(tspec)
+listenerId = client.service.RegisterTargetListener('localhost',3952,False)
+
+target = client.service.InstantiateTarget(tspec,listenerId)
 client.service.PauseTarget(target.tid)
 client.service.ResumeTarget(target.tid)
-
-client.service.RegisterTargetListener(target.tid,'localhost',3952,False)
 
 probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")

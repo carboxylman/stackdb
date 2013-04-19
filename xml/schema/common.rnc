@@ -31,6 +31,7 @@ ThreadIdT = xsd:int
 TargetIdT = xsd:int
 AnalysisIdT = xsd:int
 AnalysisInstanceIdT = xsd:ID
+ListenerIdT = xsd:int
 
 ResultT = "success" | "error" | "abort"
 Result = element result { ResultT }

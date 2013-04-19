@@ -16,6 +16,15 @@ public class TargetTest extends TargetStub {
 	public TargetTest() throws Exception {
 		super(DEFAULT_SERVER_ADDRESS);
 		//tc = new TargetCallback();
+		
+		RegisterTargetListener rtl = new RegisterTargetListener();
+		rtl.setHost("127.0.0.1");
+		rtl.setPort(8989);
+		rtl.setSsl(false);
+		ListenerIdResponse r = this.registerTargetListener(rtl);
+		ListenerIdT listenerId = r.getListenerId();
+		
+		ProbeSymbolSimple pss = new ProbeSymbolSimple();
 
 		TargetSpecT tst = new TargetSpecT();
 		
@@ -56,20 +65,12 @@ public class TargetTest extends TargetStub {
 		PauseTarget pt = new PauseTarget();
 
 		it.setSpec(tst);
+		it.setOwnerListener(listenerId);
 		TargetResponse tr = this.instantiateTarget(it);		
 		TargetIdT t = tr.getTarget().getTid();
 		pt.setTid(t);
 		this.pauseTarget(pt); // should this be called even if the tst is started paused?
 		
-		
-		RegisterTargetListener rtl = new RegisterTargetListener();
-		rtl.setHost("127.0.0.1");
-		rtl.setPort(8989);
-		rtl.setSsl(false);
-		rtl.setTid(t);
-		this.registerTargetListener(rtl);
-		
-		ProbeSymbolSimple pss = new ProbeSymbolSimple();
 		pss.setProbeName("foo");
 		pss.setSymbol("f10");
 		ThreadIdT thid = new ThreadIdT();

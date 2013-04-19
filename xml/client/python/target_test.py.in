@@ -48,10 +48,14 @@ tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 
-target = client.service.InstantiateTarget(tspec)
+target = client.service.InstantiateTarget(tspec,-1)
 
 paused = client.service.PauseTarget(target.tid)
 
 resumed = client.service.ResumeTarget(target.tid)
 
-probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")
+probe1 = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f10")
+probe2 = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f9")
+probe3 = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f8")
+probe4 = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f7")
+probe5 = client.service.ProbeSymbolSimple(target.tid,-1,"foo","f6")

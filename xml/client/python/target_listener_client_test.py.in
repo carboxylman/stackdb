@@ -30,6 +30,7 @@ import os.path
 
 objdir = os.path.abspath("@top_builddir@")
 url = 'file://%s/xml/service/targetListener.wsdl.test' % (objdir,)
+#url = 'http://a3-laptop.emulab.net:47751/'
 client = Client(url,cache=None)
 
 #tspec = client.factory.create('TargetSpecT')

@@ -70,6 +70,7 @@ int vmi1__GetTarget(struct soap *soap,
 
 int vmi1__InstantiateTarget(struct soap *soap,
 			    struct vmi1__TargetSpecT *spec,
+			    vmi1__ListenerIdT ownerListener,
 			    struct vmi1__TargetResponse *r);
 
 int vmi1__PauseTarget(struct soap *soap,
@@ -160,13 +161,37 @@ int vmi1__RemoveProbe(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r);
 
+// gsoap vmi1 service method-documentation: Add a "client" service
+//   endpoint <hostname,port> tuple for the target server to call back
+//   to; this gets transformed into a default service URL.  Returns a
+//   listenerId that can be passed to the server when instantiating
+//   targets, creating probes, and returning actions from probe
+//   notification responses.
 int vmi1__RegisterTargetListener(struct soap *soap,
-				 vmi1__TargetIdT tid,
 				 char *host,int port,enum xsd__boolean ssl,
-				 struct vmi1__NoneResponse *r);
+				 struct vmi1__ListenerIdResponse *r);
+// gsoap vmi1 service method-documentation: Add a "client" service
+//   endpoint URL for the target server to call back to.  Returns a
+//   listenerId that can be passed to the server when instantiating
+//   targets, creating probes, and returning actions from probe
+//   notification responses.
+int vmi1__RegisterTargetListenerURL(struct soap *soap,
+				    char *url,enum xsd__boolean ssl,
+				    struct vmi1__ListenerIdResponse *r);
+// gsoap vmi1 service method-documentation: Remove a listener, and any
+//   associations it has with Target/Probe/Action objects.
 int vmi1__UnregisterTargetListener(struct soap *soap,
-				   vmi1__TargetIdT tid,
-				   char *host,int port,
+				   vmi1__ListenerIdT listenerId,
 				   struct vmi1__NoneResponse *r);
+// gsoap vmi1 service method-documentation: Add a non-authoritative
+//   listener to @tid. 
+int vmi1__TargetBindListener(struct soap *soap,
+			     vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+			     struct vmi1__NoneResponse *r);
+// gsoap vmi1 service method-documentation: Remove a non-authoritative
+//   listener from @tid. 
+int vmi1__TargetUnbindListener(struct soap *soap,
+			       vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+			       struct vmi1__NoneResponse *r);
 
 #endif /* __TARGET_RPC_H__ */

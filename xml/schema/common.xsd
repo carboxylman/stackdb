@@ -50,6 +50,9 @@
   <xs:simpleType name="AnalysisInstanceIdT">
     <xs:restriction base="xs:ID"/>
   </xs:simpleType>
+  <xs:simpleType name="ListenerIdT">
+    <xs:restriction base="xs:int"/>
+  </xs:simpleType>
   <xs:simpleType name="ResultT">
     <xs:restriction base="xs:token">
       <xs:enumeration value="success"/>

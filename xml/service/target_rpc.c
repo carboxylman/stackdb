@@ -148,6 +148,8 @@ void target_rpc_init(void) {
     monitor_init();
     target_init();
 
+    generic_rpc_register_svctype(RPC_SVCTYPE_TARGET);
+
     monitor_register_objtype(MONITOR_OBJTYPE_TARGET,
 			     &target_rpc_monitor_objtype_ops,&target_rpc_mutex);
 
@@ -171,13 +173,13 @@ int _target_rpc_remove_objid(int objid) {
 	|| monitor->objid != objid) 
 	return -1;
 
-    /* Nuke any existing target listeners. */
-    generic_rpc_remove_all_listeners(objid);
-
     monitor_shutdown(monitor);
 
     //target_close(target);
     //target_free(target);
+
+    /* Unbind any existing target listeners. */
+    generic_rpc_unbind_all_listeners_objid(RPC_SVCTYPE_TARGET,objid);
 
     return 0;
 }
@@ -203,6 +205,8 @@ void target_rpc_fini(void) {
     array_list_foreach(tlist,i,objid) {
 	_target_rpc_remove_objid((int)(uintptr_t)objid);
     }
+
+    generic_rpc_unregister_svctype(RPC_SVCTYPE_TARGET);
 
     monitor_fini();
     target_fini();
@@ -297,6 +301,7 @@ int vmi1__GetTarget(struct soap *soap,
 
 int vmi1__InstantiateTarget(struct soap *soap,
 			    struct vmi1__TargetSpecT *spec,
+			    vmi1__ListenerIdT ownerListener,
 			    struct vmi1__TargetResponse *r) {
     struct target *t;
     struct target_spec *s;
@@ -317,6 +322,11 @@ int vmi1__InstantiateTarget(struct soap *soap,
 				   "Request needed splitting but not split!",
 				   "Request needed splitting but not split!");
     }
+
+    if (ownerListener > 0 
+	&& !generic_rpc_lookup_listener_id(RPC_SVCTYPE_TARGET,ownerListener)) 
+	return soap_receiver_fault(soap,"No such ownerListener!",
+				   "No such ownerListener!");
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
 
@@ -408,6 +418,13 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	}
 
 	proxyreq_attach_new_objid(pr,t->id,monitor);
+
+	if (ownerListener > 0) {
+	    if (generic_rpc_bind_listener_objid(RPC_SVCTYPE_TARGET,
+						ownerListener,t->id,1))
+		vwarn("could not bind target %d to listener %d!?\n",
+		      t->id,ownerListener);
+	}
 
 	r->target = t_target_to_x_TargetT(soap,t,reftab,NULL);
 	monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
@@ -986,7 +1003,6 @@ struct action *x_ActionSpecT_to_t_action(struct soap *soap,
 }
 
 struct target_rpc_listener_action_data {
-    struct soap soap;
     GHashTable *reftab;
     struct vmi1__ActionEventT event;
     struct vmi1__ActionEventNotificationResponse aer;
@@ -994,46 +1010,65 @@ struct target_rpc_listener_action_data {
 };
 
 static int _action_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
-						 void *data) {
-    char urlbuf[SOAP_TAGLEN];
+						 int is_owner,void *data) {
     result_t retval;
     struct target_rpc_listener_action_data *lad = \
 	(struct target_rpc_listener_action_data *)data;
     int rc;
 
-    snprintf(urlbuf,sizeof(urlbuf),
-	     "http://%s:%d/vmi/1/targetListener",l->hostname,l->port);
+    /*
+     * This stinks... but if we were the first 
+     */
 
-    rc = soap_call_vmi1__ActionEventNotification(&lad->soap,urlbuf,NULL,
+    rc = soap_call_vmi1__ActionEventNotification(&l->soap,l->url,NULL,
 						 &lad->event,&lad->aer);
     if (rc != SOAP_OK) {
-	if (lad->soap.error == SOAP_EOF && lad->soap.errnum == 0) {
-	    vwarn("timeout notifying %s:%d; removing!",
-		  l->hostname,l->port);
+	if (l->soap.error == SOAP_EOF && l->soap.errnum == 0) {
+	    vwarn("timeout notifying %s; removing!",l->url);
 	}
 	else {
-	    verrorc("ActionEvent client call failure (%s:%d): ",
-		    l->hostname,l->port);
-	    soap_print_fault(&lad->soap,stderr);
+	    verrorc("ActionEvent client call failure %s : ",
+		    l->url);
+	    soap_print_fault(&l->soap,stderr);
 	}
-	soap_closesock(&lad->soap);
+	/* Let generic_rpc do this... */
+	//soap_closesock(&lad->soap);
 	return -1;
     }
 
     /*
-     * This is a bit crazy at the moment: if we have more than
+     * (old) This is a bit crazy at the moment: if we have more than
      * one listener, let them all fight for the handler outcome.
      * Eventually, we have to restrict the outcome to only the
      * RPC client that created the probe, or something.
+     *
+     * Ok, now we know the owner; only take their response as
+     * authoritative.
      */
-    retval = x_ResultT_to_t_result_t(&lad->soap,lad->aer.result);
-    if (retval > lad->retval)
+    retval = x_ResultT_to_t_result_t(&l->soap,lad->aer.result);
+    if (is_owner) {
+	//if (retval > lad->retval)
 	lad->retval = retval;
 
-    soap_closesock(&lad->soap);
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified authoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
+    else {
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified authoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
 
-    vdebug(5,LA_XML,LF_RPC,
-	   "notified listener %s (which returned %d)\n",urlbuf,retval);
+    if (!l->soap.keep_alive)
+	soap_closesock(&l->soap);
+    /*
+     * Clean up temp/serialization data, but don't kill the sock if we
+     * can avoid it.
+     */
+    soap_destroy(&l->soap);
+    soap_end(&l->soap);
+    //soap_done(&l->soap);
 
     return 0;
 }
@@ -1045,8 +1080,8 @@ result_t _target_rpc_action_handler(struct action *action,
 				    handler_msg_t msg,int msg_detail,
 				    void *handler_data) {
     struct target *target = thread->target;
-    result_t retval = RESULT_SUCCESS;
     struct target_rpc_listener_action_data lad;
+    struct soap encoder;
 
     if (!target) {
 	verror("probe not associated with target!\n");
@@ -1056,38 +1091,44 @@ result_t _target_rpc_action_handler(struct action *action,
     /*
      * Don't go to any effort if we don't need to...
      */
-    if (!generic_rpc_count_listeners(target->id))
+    if (generic_rpc_count_listeners(RPC_SVCTYPE_TARGET,target->id) < 1)
 	return RESULT_SUCCESS;
 
     memset(&lad,0,sizeof(lad));
+    lad.retval = RESULT_SUCCESS;
 
     monitor_lock_objtype(MONITOR_OBJTYPE_TARGET);
 
-    soap_init(&lad.soap);
-    lad.soap.connect_timeout = 8;
-    lad.soap.send_timeout = 8;
-    lad.soap.recv_timeout = 24 * 60 * 60;
-
+    /*
+     * We only want to build the gsoap data struct once -- so we have to
+     * set up a temp soap struct to do that on.  We can't use the
+     * per-listener soap struct yet cause we don't have it until we're
+     * in the iterator above.
+     */
+    soap_init(&encoder);
     lad.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-    t_action_to_x_ActionEventT(&lad.soap,action,thread,msg,msg_detail,
-			       lad.reftab,&lad.event);
-    g_hash_table_destroy(lad.reftab);
 
-    generic_rpc_listener_notify_all(target->id,
+    t_action_to_x_ActionEventT(&encoder,action,thread,msg,msg_detail,
+			       lad.reftab,&lad.event);
+
+    generic_rpc_listener_notify_all(RPC_SVCTYPE_TARGET,target->id,
 				    _action_generic_rpc_listener_notifier,
 				    &lad);
-
-    soap_destroy(&lad.soap);
-    soap_end(&lad.soap);
-    soap_done(&lad.soap);
+    /*
+     * Clean up temp/serialization data, but don't kill the sock if we
+     * can avoid it.
+     */
+    g_hash_table_destroy(lad.reftab);
+    soap_destroy(&encoder);
+    soap_end(&encoder);
+    soap_done(&encoder);
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 
-    return retval;
+    return lad.retval;
 }
 
 struct target_rpc_listener_probe_data {
-    struct soap soap;
     GHashTable *reftab;
     struct target *target;
     struct probe *probe;
@@ -1097,8 +1138,7 @@ struct target_rpc_listener_probe_data {
 };
 
 static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
-						void *data) {
-    char urlbuf[SOAP_TAGLEN];
+						int is_owner,void *data) {
     result_t retval;
     struct target_rpc_listener_probe_data *lpd = \
 	(struct target_rpc_listener_probe_data *)data;
@@ -1107,47 +1147,44 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
     struct action *action;
     action_whence_t aw;
 
-    snprintf(urlbuf,sizeof(urlbuf),
-	     "http://%s:%d/vmi/1/targetListener",l->hostname,l->port);
-
-    rc = soap_call_vmi1__ProbeEventNotification(&lpd->soap,urlbuf,NULL,
+    rc = soap_call_vmi1__ProbeEventNotification(&l->soap,l->url,NULL,
 						&lpd->event,&lpd->per);
     if (rc != SOAP_OK) {
-	if (lpd->soap.error == SOAP_EOF && lpd->soap.errnum == 0) {
-	    vwarn("timeout notifying %s:%d!",
-		  l->hostname,l->port);
+	if (l->soap.error == SOAP_EOF && l->soap.errnum == 0) {
+	    vwarn("timeout notifying %s; removing!",l->url);
 	}
 	else {
-	    verrorc("ProbeEvent client call failure (%s:%d): ",
-		    l->hostname,l->port);
-	    soap_print_fault(&lpd->soap,stderr);
+	    verrorc("ProbeEvent client call failure %s : ",l->url);
+	    soap_print_fault(&l->soap,stderr);
 	}
-	soap_closesock(&lpd->soap);
 	return -1;
     }
 
-    /*
-     * This is a bit crazy at the moment: if we have more than
-     * one listener, let them all fight for the handler outcome.
-     * Eventually, we have to restrict the outcome to only the
-     * RPC client that created the probe, or something.
-     */
-    retval = x_ResultT_to_t_result_t(&lpd->soap,lpd->per.result);
-    if (retval > lpd->retval)
+    retval = x_ResultT_to_t_result_t(&l->soap,lpd->per.result);
+    if (is_owner) {
+	//if (retval > lpd->retval)
 	lpd->retval = retval;
 
-    soap_closesock(&lpd->soap);
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified authoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
+    else {
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified nonauthoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
 
-    vdebug(5,LA_XML,LF_RPC,
-	   "notified listener %s (which returned %d)\n",urlbuf,retval);
+    if (!l->soap.keep_alive)
+	soap_closesock(&l->soap);
 
-    if (retval == RESULT_SUCCESS) {
+    if (is_owner && retval == RESULT_SUCCESS) {
 	for (i = 0; i < lpd->per.actionSpecs.__sizeactionSpec; ++i) {
 	    /*
 	     * Create the new action.
 	     */
 	    action =						\
-		x_ActionSpecT_to_t_action(&lpd->soap,
+		x_ActionSpecT_to_t_action(&l->soap,
 					  &lpd->per.actionSpecs.actionSpec[i],
 					  lpd->target);
 	    if (!action) {
@@ -1155,7 +1192,7 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
 		continue;
 	    }
 	    
-	    aw = x_ActionWhenceT_to_t_action_whence_t(&lpd->soap,lpd->per.actionSpecs.actionSpec[i].whence);
+	    aw = x_ActionWhenceT_to_t_action_whence_t(&l->soap,lpd->per.actionSpecs.actionSpec[i].whence);
 	    if (action_sched(lpd->probe,action,aw,1,
 			     _target_rpc_action_handler,NULL)) {
 		verror("could not schedule action!\n");
@@ -1163,6 +1200,14 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
 	    }
 	}
     }
+    else if (lpd->per.actionSpecs.__sizeactionSpec > 0) {
+	vwarn("nonauthoritative listener %s tried to send %d actions!\n",
+	      l->url,lpd->per.actionSpecs.__sizeactionSpec);
+    }
+
+    soap_destroy(&l->soap);
+    soap_end(&l->soap);
+    //soap_done(&l->soap);
 
     return 0;
 }
@@ -1170,8 +1215,8 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
 result_t _target_rpc_probe_handler(int type,struct probe *probe,
 				   void *handler_data,struct probe *trigger) {
     struct target *target = probe->target;
-    result_t retval = RESULT_SUCCESS;
     struct target_rpc_listener_probe_data lpd;
+    struct soap encoder;
 
     if (!target) {
 	verror("probe not associated with target!\n");
@@ -1181,35 +1226,39 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
     /*
      * Don't go to any effort if we don't need to...
      */
-    if (!generic_rpc_count_listeners(target->id))
+    if (generic_rpc_count_listeners(RPC_SVCTYPE_TARGET,target->id) < 1)
 	return RESULT_SUCCESS;
 
     memset(&lpd,0,sizeof(lpd));
+    lpd.retval = RESULT_SUCCESS;
 
     monitor_lock_objtype(MONITOR_OBJTYPE_TARGET);
 
-    soap_init(&lpd.soap);
-    lpd.soap.connect_timeout = 8;
-    lpd.soap.send_timeout = 8;
-    lpd.soap.recv_timeout = 24 * 60 * 60;
+    /*
+     * We only want to build the gsoap data struct once -- so we have to
+     * set up a temp soap struct to do that on.  We can't use the
+     * per-listener soap struct yet cause we don't have it until we're
+     * in the iterator above.
+     */
+    soap_init(&encoder);
 
+    lpd.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
     lpd.target = target;
     lpd.probe = probe;
-    lpd.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
-    t_probe_to_x_ProbeEventT(&lpd.soap,probe,type,trigger,lpd.reftab,&lpd.event);
-    g_hash_table_destroy(lpd.reftab);
+    t_probe_to_x_ProbeEventT(&encoder,probe,type,trigger,lpd.reftab,&lpd.event);
 
-    generic_rpc_listener_notify_all(target->id,
+    generic_rpc_listener_notify_all(RPC_SVCTYPE_TARGET,target->id,
 				    _probe_generic_rpc_listener_notifier,
 				    &lpd);
 
-    soap_destroy(&lpd.soap);
-    soap_end(&lpd.soap);
-    soap_done(&lpd.soap);
+    g_hash_table_destroy(lpd.reftab);
+    soap_destroy(&encoder);
+    soap_end(&encoder);
+    soap_done(&encoder);
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 
-    return retval;
+    return lpd.retval;
 };
 
 result_t _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
@@ -1696,31 +1745,64 @@ int vmi1__RemoveProbe(struct soap *soap,
 }
 
 int vmi1__RegisterTargetListener(struct soap *soap,
-				 vmi1__TargetIdT tid,
 				 char *host,int port,enum xsd__boolean ssl,
-				 struct vmi1__NoneResponse *r) {
-    if (generic_rpc_lookup_listener(tid,host,port)) 
-	return soap_receiver_fault(soap,"Could not register listener!",
-				   "Could not register listener: duplicate!");
+				 struct vmi1__ListenerIdResponse *r) {
+    int listener_id;
+    char urlbuf[SOAP_TAGLEN];
 
-    if (generic_rpc_insert_listener(tid,host,port)) 
+    snprintf(urlbuf,sizeof(urlbuf),
+	     "http://%s:%d/vmi/1/targetListener",host,port);
+
+    listener_id = generic_rpc_insert_listener(RPC_SVCTYPE_TARGET,urlbuf);
+    if (listener_id < 0)
 	return soap_receiver_fault(soap,"Could not register listener!",
-				   "Could not register listener: insert()!");
+				   "Could not register listener!");
+
+    r->listenerId = listener_id;
+
+    return SOAP_OK;
+}
+
+int vmi1__RegisterTargetListenerURL(struct soap *soap,
+				    char *url,enum xsd__boolean ssl,
+				    struct vmi1__ListenerIdResponse *r) {
+    int listener_id;
+
+    if ((listener_id = generic_rpc_insert_listener(RPC_SVCTYPE_TARGET,url)) < 0)
+	return soap_receiver_fault(soap,"Could not register listener!",
+				   "Could not register listener!");
+
+    r->listenerId = listener_id;
 
     return SOAP_OK;
 }
 
 int vmi1__UnregisterTargetListener(struct soap *soap,
-				   vmi1__TargetIdT tid,
-				   char *host,int port,
+				   vmi1__ListenerIdT listenerId,
 				   struct vmi1__NoneResponse *r) {
-    if (!generic_rpc_lookup_listener(tid,host,port)) 
-	return soap_receiver_fault(soap,"Could not find listener!",
-				   "Could not find listener!");
-
-    if (!generic_rpc_remove_listener(tid,host,port)) 
+    if (generic_rpc_remove_listener(RPC_SVCTYPE_TARGET,listenerId))
 	return soap_receiver_fault(soap,"Could not remove listener!",
 				   "Could not remove listener!");
+
+    return SOAP_OK;
+}
+
+int vmi1__TargetBindListener(struct soap *soap,
+			     vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+			     struct vmi1__NoneResponse *r) {
+    if (generic_rpc_bind_listener_objid(RPC_SVCTYPE_TARGET,listenerId,tid,0)) 
+	return soap_receiver_fault(soap,"Could not bind to target!",
+				   "Could not bind to target!");
+
+    return SOAP_OK;
+}
+
+int vmi1__TargetUnbindListener(struct soap *soap,
+			       vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+			       struct vmi1__NoneResponse *r) {
+    if (generic_rpc_unbind_listener_objid(RPC_SVCTYPE_TARGET,listenerId,tid)) 
+	return soap_receiver_fault(soap,"Could not unbind from target!",
+				   "Could not unbind from target!");
 
     return SOAP_OK;
 }
