@@ -24,6 +24,9 @@
 #include <stdlib.h>
 #include <argp.h>
 
+extern struct argp log_argp;
+#define log_argp_header "Log/Debug Options"
+
 #define verror(format,...) fprintf(stderr, "VERROR:   %s:%d: "format, \
 				   __FUNCTION__, __LINE__, ## __VA_ARGS__)
 #define verrorc(format,...) fprintf(stderr,format, ## __VA_ARGS__)

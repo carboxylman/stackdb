@@ -408,27 +408,59 @@ struct argp log_argp = { log_argp_opts,log_argp_parse_opt,
 			 NULL,NULL,NULL,NULL,NULL };
 
 error_t log_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    char *endptr = NULL;
+
     switch (key) {
     case ARGP_KEY_ARG:
     case ARGP_KEY_ARGS:
 	return ARGP_ERR_UNKNOWN;
-    case ARGP_KEY_INIT:
     case ARGP_KEY_END:
     case ARGP_KEY_NO_ARGS:
     case ARGP_KEY_SUCCESS:
     case ARGP_KEY_ERROR:
     case ARGP_KEY_FINI:
 	return 0;
+    case ARGP_KEY_INIT:
+	/* No child state to initialize. */
+	return 0;
 
     case 'd':
-	if (arg)
-	    vmi_log_level = atoi(arg);
+	if (arg) {
+	    errno = 0;
+	    vmi_log_level = (int)strtol(arg,&endptr,0);
+	    if (errno || endptr == arg) {
+		/*
+		 * Try to count up any 'd' chars.  Grab the one that got
+		 * us here too.
+		 */
+		++vmi_log_level;
+		while (*arg != '\0') {
+		    if (*arg == 'd')
+			++vmi_log_level;
+		    ++arg;
+		}
+	    }
+	}
 	else
 	    ++vmi_log_level;
 	break;
     case 'w':
-	if (arg)
-	    vmi_warn_level = atoi(arg);
+	if (arg) {
+	    errno = 0;
+	    vmi_warn_level = (int)strtol(arg,&endptr,0);
+	    if (errno || endptr == arg) {
+		/*
+		 * Try to count up any 'w' chars.  Grab the one that got
+		 * us here too.
+		 */
+		++vmi_warn_level;
+		while (*arg != '\0') {
+		    if (*arg == 'w')
+			++vmi_warn_level;
+		    ++arg;
+		}
+	    }
+	}
 	else
 	    ++vmi_warn_level;
 	break;
