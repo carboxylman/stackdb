@@ -154,10 +154,11 @@ typedef enum {
     TSTATUS_UNKNOWN        = 0,
     TSTATUS_RUNNING        = 1,
     TSTATUS_PAUSED         = 2,
-    TSTATUS_DEAD           = 3,
-    TSTATUS_STOPPED        = 4,
-    TSTATUS_ERROR          = 5,
-    TSTATUS_DONE           = 6,
+    TSTATUS_ERROR          = 3,
+    TSTATUS_DONE           = 4,
+
+    TSTATUS_DEAD           = 16,
+    TSTATUS_STOPPED,
 } target_status_t;
 
 typedef enum {
@@ -168,10 +169,11 @@ typedef enum {
     THREAD_STATUS_UNKNOWN  = 0,
     THREAD_STATUS_RUNNING  = 1,
     THREAD_STATUS_PAUSED   = 2,
-    THREAD_STATUS_DEAD     = 3,
-    THREAD_STATUS_STOPPED  = 4,
-    THREAD_STATUS_ERROR    = 5,
-    THREAD_STATUS_DONE     = 6,
+    THREAD_STATUS_ERROR    = 3,
+    THREAD_STATUS_DONE     = 4,
+
+    THREAD_STATUS_DEAD     = 16,
+    THREAD_STATUS_STOPPED,
 
     /*
      * These are thread-specific.
