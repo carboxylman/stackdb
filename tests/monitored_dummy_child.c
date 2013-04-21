@@ -47,7 +47,7 @@ int main(int argc,char **argv) {
 	       MONITOR_DUMMY_OBJTYPE);
 
     m = monitor_attach(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
-		       MONITOR_DUMMY_OBJTYPE,&dummy,NULL,
+		       MONITOR_DUMMY_OBJTYPE,&dummy,NULL,NULL,
 		       dummy_stdin_callback);
     if (!m) {
 	verror("could not attach to monitor (in pid %d)\n",getpid());

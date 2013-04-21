@@ -16,146 +16,39 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
-#include <pthread.h>
-#include <getopt.h>
+#include <argp.h>
 
 #include "log.h"
-
-#include "debuginfo_xml.h"
+#include "generic_rpc.h"
 #include "debuginfo_rpc.h"
 
 /* Pull in gsoap-generated namespace array. */
 #include "debuginfo.nsmap"
 
-extern char *optarg;
-extern int optind, opterr, optopt;
-
-void *do_request(void *arg) {
-    struct soap *soap = (struct soap *)arg;
-
-    pthread_detach(pthread_self());
-
-    soap_serve(soap);
-
-    vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d\n",
-	   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
-	   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
-
-    soap_destroy(soap);
-    soap_end(soap);
-    soap_done(soap);
-
-    free(soap);
-
-    return NULL;
-}
-
 int main(int argc, char **argv) {
-    struct soap soap;
-    struct soap *tsoap;
-    pthread_t tid;
-    int port = 0;
-    SOAP_SOCKET m, s;
-    char ch;
-    int debug = 0;
-    int warn = 0;
-    int doelfsymtab = 1;
+    struct generic_rpc_config cfg;
 
-    while ((ch = getopt(argc, argv, "dwl:Ep:")) != -1) {
-	switch(ch) {
-	case 'd':
-	    ++debug;
-	    vmi_set_log_level(debug);
-	    break;
-	case 'w':
-	    ++warn;
-	    vmi_set_warn_level(warn);
-	    break;
-	case 'l':
-	    if (vmi_set_log_area_flaglist(optarg,NULL)) {
-		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
-		exit(-1);
-	    }
-	    break;
-	case 'E':
-	    doelfsymtab = 0;
-	    break;
-	case 'p':
-	    port = atoi(optarg);
-	    break;
-	default:
-	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
-	    exit(-1);
-	}
-    }
+    if (argp_parse(&generic_rpc_argp,argc,argv,0,NULL,&cfg))
+	exit(errno);
 
-    argc -= optind;
-    argv += optind;
-
-    dwdebug_init();
     debuginfo_rpc_init();
 
     atexit(debuginfo_rpc_fini);
-    atexit(dwdebug_fini);
-
-    soap_init(&soap);
-    //soap_set_omode(&soap,SOAP_XML_GRAPH);
 
     /*
-     * If no args, assume this is CGI coming in on stdin.
+     * Setup some config options.
+     *
+     * First, do the signals we want our dedicated sighandling thread to catch.
+     * Then set the name and our primary handler.  That's it!
      */
-    if (!port) {
-	soap_serve(&soap);
-	soap_destroy(&soap);
-	soap_end(&soap);
-	return 0;
-    }
+    sigemptyset(&cfg.sigset);
+    //sigaddset(&cfg.sigset,SIGINT);
+    sigaddset(&cfg.sigset,SIGCHLD);
+    sigaddset(&cfg.sigset,SIGPIPE);
 
-    /*
-     * Otherwise, let's serve forever!
-     */
-    soap.send_timeout = 60;
-    soap.recv_timeout = 60;
-    soap.accept_timeout = 0;
-    soap.max_keep_alive = 100;
+    cfg.name = "debuginfo";
 
-    /* Disable this once stability is reached. */
-    soap.bind_flags=SO_REUSEADDR;
+    cfg.handle_request = generic_rpc_handle_request;
 
-    m = soap_bind(&soap,NULL,port,64);
-    if (!soap_valid_socket(m)) {
-	verror("Could not bind to port %d: ",port);
-	soap_print_fault(&soap,stderr);
-	verrorc("\n");
-	exit(1);
-    }
-
-    vdebug(5,LA_XML,LF_RPC,"bound to port %d\n",port);
-
-    while (1) {
-	s = soap_accept(&soap);
-	if (!soap_valid_socket(s)) {
-            if (soap.errnum) {
-		verror("SOAP: ");
-		soap_print_fault(&soap,stderr);
-		exit(1);
-            }
-            verror("SOAP: server timed out\n");
-            break;
-	}
-	vdebug(8,LA_XML,LF_RPC,"connection from %d.%d.%d.%d\n",
-	       (soap.ip >> 24) & 0xff,(soap.ip >> 16) & 0xff,
-	       (soap.ip >> 8) & 0xff,soap.ip & 0xff);
-
-	tsoap = soap_copy(&soap);
-	if (!tsoap) {
-	    verror("could not copy SOAP data to handle connection; exiting!\n");
-	    break;
-	}
-
-	pthread_create(&tid,NULL,do_request,(void *)tsoap);
-    }
-
-    soap_done(&soap);
-    return 0;
+    return generic_rpc_serve(&cfg);
 }

@@ -39,6 +39,9 @@ typedef enum {
     ASTATUS_DONE           = 4,
 } analysis_status_t;
 
+void analysis_init(void);
+void analysis_fini(void);
+
 struct analysis_datum *analysis_create_simple_datum(struct analysis *analysis,
 						    char *name,
 						    int type,int subtype,
@@ -64,6 +67,11 @@ struct analysis *analysis_create_from_memory(char *name,char *driver_bytes,
  * Set the search path.
  */
 void analysis_set_path(const char **path);
+void analysis_set_path_string(const char *path);
+void analysis_set_annotation_path(const char **path);
+void analysis_set_annotation_path_string(const char *path);
+void analysis_set_schema_path(const char **path);
+void analysis_set_schema_path_string(const char *path);
 
 /*
  * Get the search path.
@@ -108,9 +116,36 @@ void analysis_desc_free(struct analysis_desc *desc);
  */
 struct array_list *analysis_load_all(void);
 
+/*
+ * Populates an evloop with any select()able file descriptors that this
+ * analysis (and any of its targets) needs monitored, and with their
+ * evloop callback functions.  Since analyses might have multiple
+ * targets, etc, this is necessary.
+ *
+ * If a file descriptor closes or exhibits error conditions, the
+ * analysis's evloop callback function *must* remove the descriptor from
+ * the @evloop -- there is no mechanism for the evloop to clean up
+ * garbage.
+ */
+int analysis_attach_evloop(struct analysis *analysis,struct evloop *evloop);
+
+/*
+ * Removes the selectable file descriptors for @analysis from @analysis->evloop.
+ */
+int analysis_detach_evloop(struct analysis *analysis);
+
+/*
+ * Returns 1 if @evloop is already attached to @analysis; 0 if not.
+ */
+int analysis_is_evloop_attached(struct analysis *analysis,
+				struct evloop *evloop);
 
 struct analysis_result *analysis_run(struct analysis_spec *analysis_spec,
 				     struct target_spec *target_spec);
+
+analysis_status_t analysis_close(struct analysis *analysis);
+
+void analysis_free(struct analysis *analysis);
 
 /*
  * Analysis instances serve multiple purposes.  First, they are used

@@ -95,7 +95,7 @@ int main(int argc,char **argv) {
     signal(SIGUSR2,sigh);
 
     monitor = monitor_attach(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
-			     MONITOR_OBJTYPE_TARGET,target,NULL,
+			     MONITOR_OBJTYPE_TARGET,NULL,NULL,NULL,
 			     NULL); //stdin_callback);
     if (!monitor) {
 	verror("could not attach to monitor (in pid %d)\n",getpid());
@@ -113,7 +113,7 @@ int main(int argc,char **argv) {
 	exit(-12);
     }
 
-    monitor_add_primary_obj(monitor,target->id,MONITOR_OBJTYPE_TARGET,target);
+    monitor_add_primary_obj(monitor,target->id,MONITOR_OBJTYPE_TARGET,target,NULL);
 
     vdebug(1,LA_XML,LF_RPC,"instantiated target %d\n",monitor->objid);
 

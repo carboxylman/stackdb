@@ -92,14 +92,21 @@ struct monitor_objtype_ops {
      */
     int (*evloop_detach)(struct evloop *evloop,void *obj);
     /*
-     * When the monitor is shutdown, we call this function to allow the
-     * object to clean itself up and destroy itself.
+     * When the monitor is shutdown, or an object is finalized, we call
+     * this function to disconnect from the object and possibly terminate it.
      *
-     * @sig is currently set to 1 if close should kill; 0 if not (i.e.,
-     * hard close vs soft close).  Later we'll maybe need to define more
-     * semantics.
+     * @sig is currently set to 1 if close should terminate the obj; 0
+     * if not (i.e., hard close vs soft close).  Later we'll maybe need
+     * to define more semantics.
      */
-    int (*close)(int sig,void *obj);
+    int (*close)(int sig,void *obj,void *objstate);
+    /*
+     * When the monitor is shutdown, or an object is finalized, we call
+     * this function to allow the object to remove *all* its state.  The
+     * object will have already been closed.  This is only to ensure
+     * that the object's non-running state is gone -- like results or logs.
+     */
+    int (*fini)(void *obj,void *objstate);
     /*
      * If @evloop is already attached to @obj, this function should
      * return 1; if not, 0; if error, < 0.
@@ -276,11 +283,6 @@ struct monitor {
     } p;
 
     int (*stdin_callback)(int fd,char *buf,int len);
-
-    /*
-     * XXX: need to buffer results...
-     */
-    struct array_list *results;
 };
 
 #define SEQNO_MAX SHRT_MAX
@@ -393,7 +395,7 @@ int monitor_get_unique_objid(void);
  * Creates a monitor of @type, for a valid @objtype.
  */
 struct monitor *monitor_create(monitor_type_t type,monitor_flags_t flags,
-			       int objid,int objtype,void *obj);
+			       int objid,int objtype,void *obj,void *objstate);
 
 /*
  * Creates a monitor of @type, for a (possibly unknown) @objtype.
@@ -408,7 +410,7 @@ struct monitor *monitor_create(monitor_type_t type,monitor_flags_t flags,
  * the child (the monitor parent reading from the child).
  */
 struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
-				      int objid,int objtype,void *obj,
+				      int objid,int objtype,void *obj,void *objstate,
 				      evloop_handler_t custom_recv_evh,
 				      evloop_handler_t custom_child_recv_evh);
 
@@ -424,7 +426,7 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
  * Users must call this with the objtype lock held!
  */
 int monitor_add_primary_obj(struct monitor *monitor,
-			    int objid,int objtype,void *obj);
+			    int objid,int objtype,void *obj,void *objstate);
 
 /*
  * Looks up a monitor based on monitored object id.  Useful for server
@@ -452,7 +454,7 @@ int monitor_can_attach_bidi(void);
  * monitored processes.
  */
 struct monitor *monitor_attach(monitor_type_t type,monitor_flags_t flags,
-			       int objtype,void *obj,
+			       int objtype,void *obj,void *objstate,
 			       evloop_handler_t custom_child_recv_evh,
 			       int (*stdin_callback)(int fd,char *buf,int len));
 

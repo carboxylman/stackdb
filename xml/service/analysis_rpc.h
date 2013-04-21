@@ -21,9 +21,16 @@
 
 #include "analysis_rpc_moduleStub.h"
 
+/*
+ * Targets as XML SOAP server-monitored objects.
+ */
+#define MONITOR_OBJTYPE_ANALYSIS 0x09
+extern struct monitor_objtype_ops analysis_rpc_monitor_objtype_ops;
+
 void analysis_rpc_init(void);
 void analysis_rpc_fini(void);
 
+int analysis_rpc_handle_request(struct soap *soap);
 
 // gsoap vmi1 service method-documentation: ListAnalysisDescNames
 //   returns a list of available Analysis object names.

@@ -19,10 +19,12 @@
 #include <stdsoap2.h>
 #include <pthread.h>
 #include <sys/prctl.h>
+#include <signal.h>
 #include <glib.h>
 
 #include "log.h"
 #include "alist.h"
+#include "waitpipe.h"
 #include "generic_rpc.h"
 
 struct svctype_info {
@@ -47,6 +49,7 @@ static GHashTable *svctype_info_tab;
 
 /* Prototypes. */
 void _generic_rpc_unregister_svctype(rpc_svctype_t svctype,int no_hash_delete);
+static void _generic_rpc_listener_free(struct generic_rpc_listener *l);
 
 /**
  ** Module init/fini stuff.
@@ -58,6 +61,11 @@ void generic_rpc_init(void) {
 	pthread_mutex_unlock(&generic_rpc_mutex);
 	return;
     }
+
+    /*
+     * We have to make sure waitpipe doesn't install a SIGCHLD handler!
+     */
+    waitpipe_init_ext(NULL);
 
     svctype_info_tab = 
 	g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
@@ -96,6 +104,9 @@ struct svctype_info *__get_si(rpc_svctype_t svctype) {
 	g_hash_table_lookup(svctype_info_tab,(gpointer)(uintptr_t)svctype);
 }
 
+/**
+ ** Service type registration stuff.
+ **/
 void generic_rpc_register_svctype(rpc_svctype_t svctype) {
     struct svctype_info *si;
 
@@ -118,20 +129,6 @@ void generic_rpc_register_svctype(rpc_svctype_t svctype) {
     g_hash_table_insert(svctype_info_tab,(gpointer)(uintptr_t)svctype,si);
 
     pthread_mutex_unlock(&generic_rpc_mutex);
-}
-
-static void _generic_rpc_listener_free(struct generic_rpc_listener *l) {
-    /* Cleanup any soap state */
-    if (soap_valid_socket(l->soap.socket))
-	soap_closesock(&(l->soap));
-    /* Make sure these has happened... */
-    soap_destroy(&l->soap);
-    soap_end(&l->soap);
-    /* This must be done here, I think. */
-    soap_done(&l->soap);
-    g_hash_table_destroy(l->objid_tab);
-    free(l->url);
-    free(l);
 }
 
 void _generic_rpc_unregister_svctype(rpc_svctype_t svctype,int no_hash_delete) {
@@ -172,6 +169,237 @@ void generic_rpc_unregister_svctype(rpc_svctype_t svctype) {
     pthread_mutex_unlock(&generic_rpc_mutex);
 }
 
+/**
+ ** Generic RPC service stuff.
+ **/
+
+struct generic_rpc_handler_state {
+    struct generic_rpc_config *cfg;
+    struct soap *soap;
+};
+
+struct argp_option generic_rpc_argp_opts[] = {
+    { "port",'p',"PORT",0,
+      "Set the RPC server's port; if unspecified, uses stdin.",0 },
+    { 0,0,0,0,0,0 }
+};
+
+error_t generic_rpc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct generic_rpc_config *cfg = (struct generic_rpc_config *)state->input;
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+    case ARGP_KEY_ARGS:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+    case ARGP_KEY_INIT:
+	/* No child input for log child parser to init. */
+	cfg->port = -1;
+	return 0;
+
+    case 'p':
+	if (arg)
+	    cfg->port = atoi(arg);
+	else
+	    return ARGP_ERR_UNKNOWN;
+	break;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+const struct argp_child generic_rpc_argp_children[2] = {
+    { &log_argp,0,log_argp_header,0 },
+    { NULL,0,NULL,0 },
+};
+
+struct argp generic_rpc_argp = { 
+    generic_rpc_argp_opts,generic_rpc_argp_parse_opt,
+    NULL,generic_rpc_argp_header,generic_rpc_argp_children,NULL,NULL
+};
+
+int generic_rpc_handle_request(struct soap *soap) {
+    pthread_detach(pthread_self());
+
+    soap_serve(soap);
+
+    vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d\n",
+         (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
+          (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+
+    soap_destroy(soap);
+    soap_end(soap);
+    soap_done(soap);
+
+    free(soap);
+
+    return NULL;
+}
+
+static void *_generic_rpc_handle_request(void *arg) {
+    struct generic_rpc_handler_state *state = \
+	(struct generic_rpc_handler_state *)arg;
+    char namebuf[16];
+
+    /* Server never waits for us. */
+    pthread_detach(pthread_self());
+
+    snprintf(namebuf,sizeof(namebuf),"%s_reqhand",state->cfg->name);
+    prctl(PR_SET_NAME,namebuf,NULL,NULL,NULL);
+
+    /* This does all the work, AND frees its argument. */
+    state->cfg->handle_request(state->soap);
+
+    free(state);
+
+    return NULL;
+}
+
+static void *generic_rpc_sigwaiter(void *arg) {
+    struct generic_rpc_config *cfg = (struct generic_rpc_config *)arg;
+    int rc;
+    siginfo_t siginfo;
+
+    prctl(PR_SET_NAME,"sigwaiter",NULL,NULL,NULL);
+
+    while (1) {
+	memset(&siginfo,0,sizeof(siginfo));
+	rc = sigwaitinfo(&cfg->sigset,&siginfo);
+	if (rc < 0) {
+	    if (errno == EINTR || errno == EAGAIN)
+		continue;
+	    else {
+		vwarn("sigwait: %s!\n",strerror(errno));
+		exit(4);
+	    }
+	}
+	else if (rc == SIGINT) {
+	    vwarn("interrupted, exiting!\n");
+	    exit(0);
+	}
+	else if (rc == SIGCHLD) {
+	    waitpipe_notify(rc,&siginfo);
+	    sigaddset(&cfg->sigset,SIGCHLD);
+	}
+	else if (rc == SIGPIPE) {
+	    vdebug(15,LA_XML,LF_SVC,"sigpipe!\n");
+	    sigaddset(&cfg->sigset,SIGPIPE);
+	}
+	else {
+	    vwarn("unexpected signal %d; ignoring!\n",rc);
+	}
+    }
+
+    return NULL;
+}
+
+int generic_rpc_serve(struct generic_rpc_config *cfg) {
+    struct generic_rpc_handler_state *state;
+    struct soap soap;
+    struct soap *tsoap;
+    SOAP_SOCKET m, s;
+    int rc;
+    pthread_t tid, sigtid;
+
+    soap_init(&soap);
+    //soap_set_omode(&soap,SOAP_XML_GRAPH);
+
+    /*
+     * If no args, assume this is CGI coming in on stdin.
+     */
+    if (cfg->port <= 0) {
+	vdebug(5,LA_XML,LF_RPC,"Listening on stdin...\n");
+	soap_serve(&soap);
+	soap_destroy(&soap);
+	soap_end(&soap);
+	return 0;
+    }
+
+    /*
+     * Otherwise, let's serve forever!
+     */
+    soap.send_timeout = 60;
+    soap.recv_timeout = 60;
+    soap.accept_timeout = 0;
+    soap.max_keep_alive = 100;
+
+    /* Disable this once stability is reached. */
+    soap.bind_flags = SO_REUSEADDR;
+
+    m = soap_bind(&soap,NULL,cfg->port,64);
+    if (!soap_valid_socket(m)) {
+	verror("Could not bind to port %d: ",cfg->port);
+	soap_print_fault(&soap,stderr);
+	verrorc("\n");
+	return -1;
+    }
+
+    /*
+     * Create a thread for handling sigs specified in @cfg; the
+     * other threads block all sigs.
+     */
+    if ((rc = pthread_sigmask(SIG_BLOCK,&cfg->sigset,NULL))) {
+	verror("pthread_sigmask: %s\n",strerror(rc));
+	return -2;
+    }
+
+    if ((rc = pthread_create(&sigtid,NULL,&generic_rpc_sigwaiter,cfg))) {
+	verror("pthread: %s\n",strerror(rc));
+	return -3;
+    }
+
+    vdebug(5,LA_XML,LF_RPC,"Listening on port %d\n",cfg->port);
+
+    while (1) {
+	s = soap_accept(&soap);
+	if (!soap_valid_socket(s)) {
+            if (soap.errnum) {
+		verror("SOAP: ");
+		soap_print_fault(&soap,stderr);
+		soap_destroy(&soap);
+		soap_end(&soap);
+		soap_done(&soap);
+		return -1;
+            }
+            verror("SOAP: server timed out\n");
+            break;
+	}
+	vdebug(8,LA_XML,LF_RPC,"connection from %d.%d.%d.%d\n",
+	       (soap.ip >> 24) & 0xff,(soap.ip >> 16) & 0xff,
+	       (soap.ip >> 8) & 0xff,soap.ip & 0xff);
+
+	tsoap = soap_copy(&soap);
+	if (!tsoap) {
+	    verror("could not copy SOAP data to handle connection; exiting!\n");
+	    break;
+	}
+
+	state = calloc(1,sizeof(*state));
+	state->soap = tsoap;
+	state->cfg = cfg;
+
+	pthread_create(&tid,NULL,_generic_rpc_handle_request,(void *)state);
+    }
+
+    soap_destroy(&soap);
+    soap_end(&soap);
+    soap_done(&soap);
+
+    return 0;
+}
+
+
+/**
+ ** Generic RPC listener stuff.
+ **/
 struct generic_rpc_listener *
 _generic_rpc_lookup_listener_url(rpc_svctype_t svctype,char *url) {
     struct svctype_info *si;
@@ -259,6 +487,20 @@ int generic_rpc_insert_listener(rpc_svctype_t svctype,char *url) {
     pthread_mutex_unlock(&generic_rpc_mutex);
 
     return rc;
+}
+
+static void _generic_rpc_listener_free(struct generic_rpc_listener *l) {
+    /* Cleanup any soap state */
+    if (soap_valid_socket(l->soap.socket))
+	soap_closesock(&(l->soap));
+    /* Make sure these has happened... */
+    soap_destroy(&l->soap);
+    soap_end(&l->soap);
+    /* This must be done here, I think. */
+    soap_done(&l->soap);
+    g_hash_table_destroy(l->objid_tab);
+    free(l->url);
+    free(l);
 }
 
 int _generic_rpc_remove_listener(rpc_svctype_t svctype,int listener_id,

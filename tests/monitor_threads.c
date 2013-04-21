@@ -38,7 +38,7 @@ void *new_thread(void *obj) {
     //pthread_detach(pthread_self());
 
     m = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,
-		       d->id,MONITOR_DUMMY_OBJTYPE,d);
+		       d->id,MONITOR_DUMMY_OBJTYPE,d,NULL);
 
     monitor_run(m);
 

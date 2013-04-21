@@ -64,7 +64,7 @@ static int target_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
     return target_detach_evloop(target);
 }
 
-static int target_rpc_monitor_close(int sig,void *obj) {
+static int target_rpc_monitor_close(int sig,void *obj,void *objstate) {
     struct target *target = (struct target *)obj;
     int retval;
 
@@ -72,8 +72,18 @@ static int target_rpc_monitor_close(int sig,void *obj) {
 	return 0;
 
     if ((retval = target_close(target)) != TSTATUS_DONE) {
-	verror("could not close target (error %d); freeing anyway!\n",retval);
+	verror("could not close target (error %d)!\n",retval);
     }
+
+    return 0;
+}
+
+static int target_rpc_monitor_fini(void *obj,void *objstate) {
+    struct target *target = (struct target *)obj;
+
+    if (!obj)
+	return 0;
+
     target_free(target);
 
     return 0;
@@ -125,6 +135,7 @@ struct monitor_objtype_ops target_rpc_monitor_objtype_ops = {
     .evloop_attach = target_rpc_monitor_evloop_attach,
     .evloop_detach = target_rpc_monitor_evloop_detach,
     .close = target_rpc_monitor_close,
+    .fini = target_rpc_monitor_fini,
     .evloop_is_attached = target_rpc_monitor_evloop_is_attached,
     .error = target_rpc_monitor_error,
     .fatal_error = target_rpc_monitor_fatal_error,
@@ -143,10 +154,10 @@ void target_rpc_init(void) {
 	return;
     }
 
-    generic_rpc_init();
-    debuginfo_rpc_init();
     monitor_init();
     target_init();
+    generic_rpc_init();
+    debuginfo_rpc_init();
 
     generic_rpc_register_svctype(RPC_SVCTYPE_TARGET);
 
@@ -208,10 +219,10 @@ void target_rpc_fini(void) {
 
     generic_rpc_unregister_svctype(RPC_SVCTYPE_TARGET);
 
-    monitor_fini();
-    target_fini();
     debuginfo_rpc_fini();
     generic_rpc_fini();
+    target_fini();
+    monitor_fini();
 
     init_done = 0;
 
@@ -385,7 +396,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	 * second buffering when passing a result back.
 	 */
 	monitor = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,
-				 tid,MONITOR_OBJTYPE_TARGET,NULL);
+				 tid,MONITOR_OBJTYPE_TARGET,NULL,NULL);
 	if (!monitor) {
 	    target_free_spec(s);
 	    g_hash_table_destroy(reftab);
@@ -404,7 +415,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 				       "Could not instantiate target!");
 	}
 
-	monitor_add_primary_obj(monitor,t->id,MONITOR_OBJTYPE_TARGET,t);
+	monitor_add_primary_obj(monitor,t->id,MONITOR_OBJTYPE_TARGET,t,NULL);
 
 	if (target_open(t)) {
 	    verror("could not open target!\n");
@@ -442,7 +453,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	}
 
 	monitor = monitor_create(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
-				 s->target_id,MONITOR_OBJTYPE_TARGET,NULL);
+				 s->target_id,MONITOR_OBJTYPE_TARGET,NULL,NULL);
 	if (!monitor) {
 	    if (largc > 0) {
 		for (i = 0; i < largc; ++i)
@@ -502,7 +513,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	    monitor_setup_stderr(monitor,-1,tmpbuf,NULL);
 	}
 
-	monitor_add_primary_obj(monitor,s->target_id,MONITOR_OBJTYPE_TARGET,NULL);
+	monitor_add_primary_obj(monitor,s->target_id,MONITOR_OBJTYPE_TARGET,NULL,NULL);
 
 	pid = monitor_spawn(monitor,MONITORED_TARGET_LAUNCHER,largv,NULL,"/tmp");
 	if (pid < 0) {

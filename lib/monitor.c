@@ -57,6 +57,10 @@ static GHashTable *objtype_mutex_tab = NULL;
  * something with them.
  */
 static GHashTable *objtype_objid_obj_tab;
+/*
+ * Each object might have some state associated with it; store it.
+ */
+static GHashTable *objtype_objid_objstate_tab;
 
 /*
  * This is a global counter for generating unique objids.  Object ids
@@ -100,6 +104,7 @@ void monitor_init(void) {
     objtype_ops_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
     objtype_mutex_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
     objtype_objid_obj_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
+    objtype_objid_objstate_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     tid_monitor_tab = g_hash_table_new(g_direct_hash,g_direct_equal);
 
@@ -141,6 +146,7 @@ void monitor_fini(void) {
     g_hash_table_destroy(obj_objid_tab);
     g_hash_table_destroy(objid_obj_tab);
 
+    g_hash_table_destroy(objtype_objid_objstate_tab);
     g_hash_table_destroy(objtype_objid_obj_tab);
     g_hash_table_destroy(objtype_ops_tab);
     g_hash_table_destroy(objtype_mutex_tab);
@@ -466,14 +472,14 @@ int monitor_lookup_obj_lock_monitor(void *obj,
 
 
 static int __monitor_add_obj(struct monitor *monitor,
-			     int objid,int objtype,void *obj) {
+			     int objid,int objtype,void *obj,void *objstate) {
     int retval = -1;
     struct monitor_objtype_ops *ops;
     int _objtype = 0;
     int _objid = 0;
     void *_obj = NULL;
     struct monitor *_monitor = NULL;
-    GHashTable *tmp_objid_obj_tab;
+    GHashTable *tmp_tab;
 
     if (!(ops = __monitor_lookup_objtype_ops(objtype))) {
 	verror("unknown objtype %d!\n",objtype);
@@ -527,9 +533,14 @@ static int __monitor_add_obj(struct monitor *monitor,
 	}
     }
 
-    tmp_objid_obj_tab = (GHashTable *) \
+    tmp_tab = (GHashTable *) \
 	g_hash_table_lookup(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype);
-    g_hash_table_insert(tmp_objid_obj_tab,(gpointer)(uintptr_t)objid,obj);
+    g_hash_table_insert(tmp_tab,(gpointer)(uintptr_t)objid,obj);
+    if (objstate) {
+	tmp_tab = (GHashTable *)g_hash_table_lookup(objtype_objid_objstate_tab,
+						    (gpointer)(uintptr_t)objtype);
+	g_hash_table_insert(tmp_tab,(gpointer)(uintptr_t)objid,objstate);
+    }
 
     retval = 0;
 
@@ -537,13 +548,14 @@ static int __monitor_add_obj(struct monitor *monitor,
     return retval;
 }
 
-int monitor_add_obj(struct monitor *monitor,int objid,int objtype,void *obj) {
+int monitor_add_obj(struct monitor *monitor,int objid,int objtype,void *obj,
+		    void *objstate) {
     int retval;
 
     pthread_mutex_lock(&monitor_mutex);
     pthread_mutex_lock(&monitor->mutex);
 
-    retval = __monitor_add_obj(monitor,objid,objtype,obj);
+    retval = __monitor_add_obj(monitor,objid,objtype,obj,objstate);
 
     pthread_mutex_unlock(&monitor->mutex);
     pthread_mutex_unlock(&monitor_mutex);
@@ -560,7 +572,8 @@ static int __monitor_del_obj(struct monitor *monitor,
     int _objid = 0;
     void *_obj = NULL;
     struct monitor *_monitor = NULL;
-    GHashTable *tmp_objid_obj_tab;
+    GHashTable *tmp_tab;
+    void *objstate;
 
     if (!(ops = __monitor_lookup_objtype_ops(objtype))) {
 	verror("unknown objtype %d!\n",objtype);
@@ -582,9 +595,13 @@ static int __monitor_del_obj(struct monitor *monitor,
 
     retval = 0;
 
-    tmp_objid_obj_tab = (GHashTable *) \
+    tmp_tab = (GHashTable *) \
 	g_hash_table_lookup(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype);
-    g_hash_table_remove(tmp_objid_obj_tab,(gpointer)(uintptr_t)objid);
+    g_hash_table_remove(tmp_tab,(gpointer)(uintptr_t)objid);
+    tmp_tab = (GHashTable *)g_hash_table_lookup(objtype_objid_objstate_tab,
+						(gpointer)(uintptr_t)objtype);
+    objstate = g_hash_table_lookup(tmp_tab,(gpointer)(uintptr_t)objid);
+    g_hash_table_remove(tmp_tab,(gpointer)(uintptr_t)objid);
 
 
     /* Detach the object. */
@@ -600,8 +617,14 @@ static int __monitor_del_obj(struct monitor *monitor,
     }
 
     /* Close the object, with @sig. */
-    if (ops->close && ops->close(sig,obj)) {
+    if (ops->close && ops->close(sig,obj,objstate)) {
 	verror("could not close objid %d (sig %d); removing anyway!\n",objid,sig);
+	retval = -1;
+    }
+
+    /* Fini the object. */
+    if (ops->fini && ops->fini(obj,objstate)) {
+	verror("could not fini objid %d; removing anyway!\n",objid);
 	retval = -1;
     }
 
@@ -844,24 +867,6 @@ static void __monitor_destroy(struct monitor *monitor) {
      */
     g_hash_table_remove(tid_monitor_tab,(gpointer)(uintptr_t)monitor->mtid);
 
-    if (monitor->type == MONITOR_TYPE_PROCESS) {
-	/*
-	if (monitor->p.stdout_cbuf)
-	    free(monitor->p.stdout_cbuf);
-	*/
-
-	/*
-	if (monitor->p.stderr_cbuf)
-	    cbuf_free(monitor->p.stderr_cbuf);
-	*/
-    }
-
-    /* XXX: free results! */
-    if (monitor->results) {
-	/* XXX: deep free! */
-	array_list_free(monitor->results);
-    }
-
     /*
      * This is the last stuff the monitor thread should run before it
      * exits/returns!
@@ -894,6 +899,8 @@ int monitor_register_objtype(int objtype,struct monitor_objtype_ops *ops,
 	g_hash_table_insert(objtype_mutex_tab,(gpointer)(uintptr_t)objtype,
 			    mutex);
     g_hash_table_insert(objtype_objid_obj_tab,(gpointer)(uintptr_t)objtype,
+			g_hash_table_new(g_direct_hash,g_direct_equal));
+    g_hash_table_insert(objtype_objid_objstate_tab,(gpointer)(uintptr_t)objtype,
 			g_hash_table_new(g_direct_hash,g_direct_equal));
 
     pthread_mutex_unlock(&monitor_mutex);
@@ -1166,7 +1173,7 @@ static int __monitor_eh(int errortype,int fd,int fdtype,
 }
 
 struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
-				      int objid,int objtype,void *obj,
+				      int objid,int objtype,void *obj,void *objstate,
 				      evloop_handler_t custom_recv_evh,
 				      evloop_handler_t custom_child_recv_evh) {
     struct monitor *monitor;
@@ -1284,7 +1291,7 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
     g_hash_table_insert(tid_monitor_tab,
 			(gpointer)(uintptr_t)monitor->mtid,monitor);
 
-    if (obj && monitor_add_primary_obj(monitor,objid,objtype,obj)) {
+    if (obj && monitor_add_primary_obj(monitor,objid,objtype,obj,objstate)) {
 	pthread_mutex_unlock(&monitor->mutex);
 	pthread_mutex_unlock(&monitor_mutex);
 	goto errout;
@@ -1314,14 +1321,14 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
 }
 
 int __monitor_add_primary_obj(struct monitor *monitor,
-			    int objid,int objtype,void *obj) {
+			    int objid,int objtype,void *obj,void *objstate) {
     /*
      * Save the primary object directly in the monitor.
      */
     monitor->objid = objid;
     monitor->obj = obj;
 
-    if (__monitor_add_obj(monitor,monitor->objid,objtype,obj)) {
+    if (__monitor_add_obj(monitor,monitor->objid,objtype,obj,objstate)) {
 	monitor->objid = -1;
 	monitor->obj = NULL;
 	return -1;
@@ -1331,7 +1338,7 @@ int __monitor_add_primary_obj(struct monitor *monitor,
 }
 
 int monitor_add_primary_obj(struct monitor *monitor,
-			    int objid,int objtype,void *obj) {
+			    int objid,int objtype,void *obj,void *objstate) {
     int retval;
 
     /*
@@ -1340,7 +1347,7 @@ int monitor_add_primary_obj(struct monitor *monitor,
     pthread_mutex_lock(&monitor_mutex);
     pthread_mutex_lock(&monitor->mutex);
 
-    retval = __monitor_add_primary_obj(monitor,objid,objtype,obj);
+    retval = __monitor_add_primary_obj(monitor,objid,objtype,obj,objstate);
 
     pthread_mutex_unlock(&monitor->mutex);
     pthread_mutex_unlock(&monitor_mutex);
@@ -1349,10 +1356,10 @@ int monitor_add_primary_obj(struct monitor *monitor,
 }
 
 struct monitor *monitor_create(monitor_type_t type,monitor_flags_t flags,
-			       int objid,int objtype,void *obj) {
+			       int objid,int objtype,void *obj,void *objstate) {
     struct monitor *monitor;
 
-    monitor = monitor_create_custom(type,flags,objid,objtype,obj,NULL,NULL);
+    monitor = monitor_create_custom(type,flags,objid,objtype,obj,objstate,NULL,NULL);
 
     return monitor;
 }
@@ -1371,7 +1378,7 @@ int monitor_can_attach_bidi(void) {
 }
 
 struct monitor *monitor_attach(monitor_type_t type,monitor_flags_t flags,
-			       int objtype,void *obj,
+			       int objtype,void *obj,void *objstate,
 			       evloop_handler_t custom_child_recv_evh,
 			       int (*stdin_callback)(int fd,char *buf,int len)) {
     struct monitor *monitor;
@@ -1490,7 +1497,7 @@ struct monitor *monitor_attach(monitor_type_t type,monitor_flags_t flags,
     /*
      * Add the primary object.
      */
-    if (obj && __monitor_add_obj(monitor,monitor->objid,objtype,obj)) {
+    if (obj && __monitor_add_obj(monitor,monitor->objid,objtype,obj,objstate)) {
 	pthread_mutex_unlock(&monitor->mutex);
 	pthread_mutex_unlock(&monitor_mutex);
 	goto errout;

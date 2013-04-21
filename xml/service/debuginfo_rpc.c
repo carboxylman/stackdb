@@ -16,6 +16,7 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "generic_rpc.h"
 #include "debuginfo_rpc.h"
 #include "alist.h"
 #include <pthread.h>
@@ -58,6 +59,7 @@ void debuginfo_rpc_init(void) {
     }
 
     dwdebug_init();
+    generic_rpc_init();
 
     init_done = 1;
 
@@ -73,6 +75,7 @@ void debuginfo_rpc_fini(void) {
     if (!init_done)
 	return;
 
+    generic_rpc_fini();
     dwdebug_fini();
 
     init_done = 0;

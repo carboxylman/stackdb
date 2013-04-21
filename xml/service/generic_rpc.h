@@ -26,8 +26,28 @@
 #include <stdsoap2.h>
 
 typedef enum {
-    RPC_SVCTYPE_TARGET = 1,
+    RPC_SVCTYPE_TARGET   = 1,
+    RPC_SVCTYPE_ANALYSIS = 2,
 } rpc_svctype_t;
+
+#define generic_rpc_argp_header "Generic RPC Server Options"
+extern struct argp generic_rpc_argp;
+
+struct generic_rpc_config {
+    char *name;
+
+    /*
+     * State for the siginfowait thread.
+     */
+    sigset_t sigset;
+
+    int port;
+
+    /*
+     * Functions.
+     */
+    int (*handle_request)(struct soap *soap);
+};
 
 /*
  * We support a sort of strange listener API.  Basically, we want to
@@ -88,6 +108,13 @@ void generic_rpc_fini(void);
 
 void generic_rpc_register_svctype(rpc_svctype_t svctype);
 void generic_rpc_unregister_svctype(rpc_svctype_t svctype);
+
+int generic_rpc_serve(struct generic_rpc_config *cfg);
+/*
+ * A generic handler that detaches the pthread, calls soap_serve, and
+ * destroys the soap context when finished.
+ */
+int generic_rpc_handle_request(struct soap *soap);
 
 struct generic_rpc_listener *
 generic_rpc_lookup_listener_url(rpc_svctype_t svctype,char *url);

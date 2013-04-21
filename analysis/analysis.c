@@ -56,6 +56,28 @@ static char **SCHEMA_PATH = (char **)DEFAULT_SCHEMA_PATH;
 
 static GHashTable *cache = NULL;
 
+static int next_analysis_id = 1;
+
+static int init_done = 0;
+
+void analysis_init(void) {
+    if (init_done)
+	return;
+
+    target_init();
+
+    init_done = 1;
+}
+
+void analysis_fini(void) {
+    if (!init_done)
+	return;
+
+    target_fini();
+
+    init_done = 0;
+}
+
 struct array_list *analysis_list_names(void) {
     struct array_list *retval = array_list_create(8);
     DIR *dir;
@@ -332,10 +354,100 @@ struct array_list *analysis_load_all(void) {
 }
 
 
+analysis_status_t analysis_status_from_target_status(target_status_t status) {
+    if (status <= 0xf)
+	return status;
+    else if (status == TSTATUS_DEAD)
+	return ASTATUS_ERROR;
+    else if (status == TSTATUS_STOPPED)
+	return ASTATUS_PAUSED;
+    else 
+	return ASTATUS_UNKNOWN;
+}
 
+int analysis_attach_evloop(struct analysis *analysis,struct evloop *evloop) {
+    return target_attach_evloop(analysis->target,evloop);
+}
+
+int analysis_detach_evloop(struct analysis *analysis) {
+    return target_detach_evloop(analysis->target);
+}
+
+int analysis_is_evloop_attached(struct analysis *analysis,
+				struct evloop *evloop) {
+    return target_is_evloop_attached(analysis->target,evloop);
+}
+
+analysis_status_t analysis_close(struct analysis *analysis) {
+    if ((analysis->status == ASTATUS_RUNNING 
+	 || analysis->status == ASTATUS_PAUSED)
+	&& analysis->target)
+	analysis->status = target_close(analysis->target);
+
+    return analysis->status;
+}
+
+void analysis_free(struct analysis *analysis) {
+    analysis_close(analysis);
+
+    if (analysis->target) {
+	target_close(analysis->target);
+	analysis->target = NULL;
+    }
+
+    /* XXX: deep free! */
+    array_list_free(analysis->results);
+}
 
 char **analysis_get_path(void) {
     return ANALYSIS_PATH;
+}
+
+char **__path_string_to_vec(const char *path) {
+    int i;
+    int pathlen = 0;
+    char *ptr;
+    char *nptr;
+    char **bpath;
+
+    if (!path)
+	return NULL;
+
+    ptr = (char *)path;
+    pathlen = 1;
+    while (*ptr != '\0') {
+	if (*ptr == ':')
+	    ++pathlen;
+	++ptr;
+    }
+
+    bpath = calloc(pathlen + 1,sizeof(*bpath));
+
+    i = 0;
+    ptr = (char *)path;
+    nptr = (char *)path;
+
+    for (i = 0; nptr && *nptr != '\0'; ++i) {
+	nptr = index(nptr,':');
+	if (nptr == NULL) {
+	    if (*ptr != '\0') {
+		bpath[i] = strdup(ptr);
+	    }
+	    else 
+		continue; /* terminate on next pass too */
+	}
+	else {
+	    bpath[i] = malloc(sizeof(char)*(nptr - ptr + 1));
+	    strncpy(bpath[i],ptr,nptr - ptr);
+	    bpath[i][nptr - ptr] = '\0';
+
+	    ++nptr;
+	    ptr = nptr;
+	}
+    }
+    bpath[i] = NULL;
+
+    return bpath;
 }
 
 void analysis_set_path(const char **path) {
@@ -356,6 +468,16 @@ void analysis_set_path(const char **path) {
 	ANALYSIS_PATH[i] = strdup(path[i]);
 }
 
+void analysis_set_path_string(const char *path) {
+    char **bpath;
+
+    if (!path)
+	return;
+
+    if ((bpath = __path_string_to_vec(path)))
+	ANALYSIS_PATH = bpath;
+}
+
 void analysis_set_annotation_path(const char **path) {
     int i;
     int pathlen = 0;
@@ -374,6 +496,16 @@ void analysis_set_annotation_path(const char **path) {
 	ANNOTATION_PATH[i] = strdup(path[i]);
 }
 
+void analysis_set_annotation_path_string(const char *path) {
+    char **bpath;
+
+    if (!path)
+	return;
+
+    if ((bpath = __path_string_to_vec(path)))
+	ANNOTATION_PATH = bpath;
+}
+
 void analysis_set_schema_path(const char **path) {
     int i;
     int pathlen = 0;
@@ -390,4 +522,14 @@ void analysis_set_schema_path(const char **path) {
     SCHEMA_PATH = calloc(pathlen + 1,sizeof(char *));
     for (i = 0; i < pathlen; ++i) 
 	SCHEMA_PATH[i] = strdup(path[i]);
+}
+
+void analysis_set_schema_path_string(const char *path) {
+    char **bpath;
+
+    if (!path)
+	return;
+
+    if ((bpath = __path_string_to_vec(path)))
+	SCHEMA_PATH = bpath;
 }

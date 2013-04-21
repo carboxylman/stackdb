@@ -55,7 +55,7 @@ void *new_thread(void *obj) {
     //pthread_detach(pthread_self());
 
     m = monitor_create(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
-		       d->id,MONITOR_DUMMY_OBJTYPE,d);
+		       d->id,MONITOR_DUMMY_OBJTYPE,d,NULL);
 
     monitor_setup_stdin(m,d->stdin_buf,d->stdin_bufsiz);
     monitor_setup_stdout(m,4096,d->stdout_logfile,dummy_stdio_callback);

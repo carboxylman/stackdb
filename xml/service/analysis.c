@@ -16,151 +16,104 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
-#include <pthread.h>
+#include <argp.h>
 
 #include "log.h"
-
-#include "analysis_xml.h"
+#include "analysis.h"
+#include "generic_rpc.h"
 #include "analysis_rpc.h"
-#include "debuginfo_rpc.h"
-#include "target_rpc.h"
 
 /* Pull in gsoap-generated namespace array. */
 #include "analysis.nsmap"
 
-extern char *optarg;
-extern int optind, opterr, optopt;
+struct analysis_rpc_handler_state {
+    struct analysis_rpc_config *cfg;
+    struct soap *soap;
+};
 
-void *do_request(void *arg) {
-    struct soap *soap = (struct soap *)arg;
+#define ARGP_KEY_ANALYSIS_PATH   4096
+#define ARGP_KEY_SCHEMA_PATH     4097
+#define ARGP_KEY_ANNOTATION_PATH 4098
 
-    pthread_detach(pthread_self());
+struct argp_option analysis_rpc_argp_opts[] = {
+    { "analysis-path",ARGP_KEY_ANALYSIS_PATH,"PATH",0,
+        "Set the analysis description PATH.",0 },
+    { "schema-path",ARGP_KEY_SCHEMA_PATH,"PATH",0,
+        "Set the schema PATH.",0 },
+    { "annotation-path",ARGP_KEY_ANNOTATION_PATH,"PATH",0,
+        "Set the annotation PATH.",0 },
+    { 0,0,0,0,0,0 }
+};
 
-    soap_serve(soap);
+error_t analysis_rpc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct analysis_rpc_config *cfg = (struct analysis_rpc_config *)state->input;
 
-    vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d\n",
-	   (soap->ip >> 24) & 0xff,(soap->ip >> 16) & 0xff,
-	   (soap->ip >> 8) & 0xff,soap->ip & 0xff);
+    switch (key) {
+    case ARGP_KEY_ARG:
+    case ARGP_KEY_ARGS:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+    case ARGP_KEY_INIT:
+	/* Pass the config obj directly to our first child. */
+	state->child_inputs[0] = cfg;
+	return 0;
 
-    soap_destroy(soap);
-    soap_end(soap);
-    soap_done(soap);
+    case ARGP_KEY_ANALYSIS_PATH:
+	analysis_set_path_string(arg);
+	break;
+    case ARGP_KEY_SCHEMA_PATH:
+	analysis_set_schema_path_string(arg);
+	break;
+    case ARGP_KEY_ANNOTATION_PATH:
+	analysis_set_annotation_path_string(arg);
+	break;
 
-    free(soap);
-
-    return NULL;
-}
-
-int main(int argc, char **argv) {
-    struct soap soap;
-    struct soap *tsoap;
-    pthread_t tid;
-    int port = 0;
-    SOAP_SOCKET m, s;
-    char ch;
-    int debug = 0;
-    int warn = 0;
-    int doelfsymtab = 1;
-
-    while ((ch = getopt(argc, argv, "dwl:Ep:")) != -1) {
-	switch(ch) {
-	case 'd':
-	    ++debug;
-	    vmi_set_log_level(debug);
-	    break;
-	case 'w':
-	    ++warn;
-	    vmi_set_warn_level(warn);
-	    break;
-	case 'l':
-	    if (vmi_set_log_area_flaglist(optarg,NULL)) {
-		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
-		exit(-1);
-	    }
-	    break;
-	case 'E':
-	    doelfsymtab = 0;
-	    break;
-	case 'p':
-	    port = atoi(optarg);
-	    break;
-	default:
-	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
-	    exit(-1);
-	}
+    default:
+	return ARGP_ERR_UNKNOWN;
     }
 
-    argc -= optind;
-    argv += optind;
+    return 0;
+}
 
-    dwdebug_init();
-    debuginfo_rpc_init();
-    target_rpc_init();
+const struct argp_child analysis_rpc_argp_children[2] = {
+    { &generic_rpc_argp,0,generic_rpc_argp_header,0 },
+    { NULL,0,NULL,0 },
+};
+
+struct argp analysis_rpc_argp = { 
+    analysis_rpc_argp_opts,analysis_rpc_argp_parse_opt,
+    NULL,"Analysis RPC Server Options",analysis_rpc_argp_children,NULL,NULL
+};
+
+int main(int argc, char **argv) {
+    struct generic_rpc_config cfg;
+
+    if (argp_parse(&analysis_rpc_argp,argc,argv,0,NULL,&cfg))
+	exit(errno);
+
     analysis_rpc_init();
 
     atexit(analysis_rpc_fini);
-    atexit(target_rpc_fini);
-    atexit(debuginfo_rpc_fini);
-    atexit(dwdebug_fini);
-
-    soap_init(&soap);
-    //soap_set_omode(&soap,SOAP_XML_GRAPH);
 
     /*
-     * If no args, assume this is CGI coming in on stdin.
+     * Setup some config options.
+     *
+     * First, do the signals we want our dedicated sighandling thread to catch.
+     * Then set the name and our primary handler.  That's it!
      */
-    if (!port) {
-	soap_serve(&soap);
-	soap_destroy(&soap);
-	soap_end(&soap);
-	return 0;
-    }
+    sigemptyset(&cfg.sigset);
+    //sigaddset(&cfg.sigset,SIGINT);
+    sigaddset(&cfg.sigset,SIGCHLD);
+    sigaddset(&cfg.sigset,SIGPIPE);
 
-    /*
-     * Otherwise, let's serve forever!
-     */
-    soap.send_timeout = 60;
-    soap.recv_timeout = 60;
-    soap.accept_timeout = 0;
-    soap.max_keep_alive = 100;
+    cfg.name = "target";
 
-    /* Disable this once stability is reached. */
-    soap.bind_flags=SO_REUSEADDR;
+    cfg.handle_request = analysis_rpc_handle_request;
 
-    m = soap_bind(&soap,NULL,port,64);
-    if (!soap_valid_socket(m)) {
-	verror("Could not bind to port %d: ",port);
-	soap_print_fault(&soap,stderr);
-	verrorc("\n");
-	exit(1);
-    }
-
-    vdebug(5,LA_XML,LF_RPC,"bound to port %d\n",port);
-
-    while (1) {
-	s = soap_accept(&soap);
-	if (!soap_valid_socket(s)) {
-            if (soap.errnum) {
-		verror("SOAP: ");
-		soap_print_fault(&soap,stderr);
-		exit(1);
-            }
-            verror("SOAP: server timed out\n");
-            break;
-	}
-	vdebug(8,LA_XML,LF_RPC,"connection from %d.%d.%d.%d\n",
-	       (soap.ip >> 24) & 0xff,(soap.ip >> 16) & 0xff,
-	       (soap.ip >> 8) & 0xff,soap.ip & 0xff);
-
-	tsoap = soap_copy(&soap);
-	if (!tsoap) {
-	    verror("could not copy SOAP data to handle connection; exiting!\n");
-	    break;
-	}
-
-	pthread_create(&tid,NULL,do_request,(void *)tsoap);
-    }
-
-    soap_done(&soap);
-    return 0;
+    return generic_rpc_serve(&cfg);
 }
