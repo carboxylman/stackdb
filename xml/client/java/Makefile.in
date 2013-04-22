@@ -248,7 +248,7 @@ analysis-extra/build/lib/analysis-extra.jar: $(addprefix analysis-extra/build/$(
 #	cp -pR analysis/resources/* analysis-extra/
 	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
 		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
-		$(JAR) cvf $@ -C analysis-extra/build vmi1 -C target/resources .)
+		$(JAR) cvf $@ -C analysis-extra/build vmi1 -C analysis/resources .)
 
 DebuginfoTest.class: DebuginfoTest.java debuginfo/build/lib/debuginfo.aar
 	$(JAVAC) -classpath $(BUILD_CLASSPATH) DebuginfoTest.java
