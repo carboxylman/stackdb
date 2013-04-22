@@ -53,6 +53,19 @@
   <xs:simpleType name="ListenerIdT">
     <xs:restriction base="xs:int"/>
   </xs:simpleType>
+  <xs:complexType name="ListenerT">
+    <xs:choice>
+      <xs:sequence>
+        <xs:element ref="vmi1:hostname"/>
+        <xs:element ref="vmi1:port"/>
+      </xs:sequence>
+      <xs:element ref="vmi1:url"/>
+    </xs:choice>
+  </xs:complexType>
+  <xs:element name="hostname" type="xs:string"/>
+  <xs:element name="port" type="xs:int"/>
+  <xs:element name="url" type="xs:string"/>
+  <xs:element name="listener" type="vmi1:ListenerT"/>
   <xs:simpleType name="ResultT">
     <xs:restriction base="xs:token">
       <xs:enumeration value="success"/>

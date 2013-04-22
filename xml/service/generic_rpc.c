@@ -241,7 +241,7 @@ int generic_rpc_handle_request(struct soap *soap) {
 
     free(soap);
 
-    return NULL;
+    return 0;
 }
 
 static void *_generic_rpc_handle_request(void *arg) {
@@ -574,32 +574,6 @@ _generic_rpc_listener_lookup_owner(rpc_svctype_t svctype,int objid) {
 	g_hash_table_lookup(si->objid_listener_tab,(gpointer)(uintptr_t)objid);
 }
 
-int _generic_rpc_unbind_all_listeners_objid(rpc_svctype_t svctype,int objid) {
-    struct array_list *ll;
-    struct svctype_info *si;
-
-    if (!(si = __get_si(svctype))) 
-	return -1;
-
-    ll = (struct array_list *)g_hash_table_lookup(si->objid_listenerlist_tab,
-						  (gpointer)(uintptr_t)objid);
-    array_list_free(ll);
-    g_hash_table_remove(si->objid_listenerlist_tab,(gpointer)(uintptr_t)objid);
-    g_hash_table_remove(si->objid_listener_tab,(gpointer)(uintptr_t)objid);
-
-    return 0;
-}
-
-int generic_rpc_unbind_all_listeners_objid(rpc_svctype_t svctype,int objid) {
-    int rc;
-
-    pthread_mutex_lock(&generic_rpc_mutex);
-    rc = _generic_rpc_unbind_all_listeners_objid(svctype,objid);
-    pthread_mutex_unlock(&generic_rpc_mutex);
-
-    return rc;
-}
-
 int _generic_rpc_unbind_listener_objid(rpc_svctype_t svctype,int listener_id,
 				       int objid) {
     struct svctype_info *si;
@@ -637,6 +611,16 @@ int _generic_rpc_unbind_listener_objid(rpc_svctype_t svctype,int listener_id,
 	}
     }
 
+    g_hash_table_remove(l->objid_tab,(gpointer)(uintptr_t)objid);
+
+    /*
+     * If this is a dynamic listener, and it has no more objects it is
+     * listening to, nuke it!
+     */
+    if (l->is_dynamic && g_hash_table_size(l->objid_tab) == 0) {
+	_generic_rpc_remove_listener(svctype,l->id,0);
+    }
+
     return 0;
 }
 
@@ -646,6 +630,58 @@ int generic_rpc_unbind_listener_objid(rpc_svctype_t svctype,int listener_id,
 
     pthread_mutex_lock(&generic_rpc_mutex);
     rc = _generic_rpc_unbind_listener_objid(svctype,listener_id,objid);
+    pthread_mutex_unlock(&generic_rpc_mutex);
+
+    return rc;
+}
+
+int _generic_rpc_unbind_all_listeners_objid(rpc_svctype_t svctype,int objid) {
+    struct array_list *ll;
+    struct svctype_info *si;
+    int i;
+    struct generic_rpc_listener *l;
+
+    if (!(si = __get_si(svctype))) 
+	return -1;
+
+    ll = (struct array_list *)g_hash_table_lookup(si->objid_listenerlist_tab,
+						  (gpointer)(uintptr_t)objid);
+
+    if (!ll) 
+	return 0;
+
+    /*
+     * Have to clone it so that we don't edit the real copy in the
+     * function calls below!
+     */
+    ll = array_list_clone(ll,0);
+
+    array_list_foreach(ll,i,l) {
+	_generic_rpc_unbind_listener_objid(svctype,l->id,objid);
+	if (l->is_dynamic && g_hash_table_size(l->objid_tab) == 0)
+	    _generic_rpc_remove_listener(svctype,l->id,0);
+    }
+
+    array_list_free(ll);
+
+    /*
+     * Now actually remove the objid bindings.
+     */
+    ll = (struct array_list *)g_hash_table_lookup(si->objid_listenerlist_tab,
+						  (gpointer)(uintptr_t)objid);
+
+    array_list_free(ll);
+    g_hash_table_remove(si->objid_listenerlist_tab,(gpointer)(uintptr_t)objid);
+    g_hash_table_remove(si->objid_listener_tab,(gpointer)(uintptr_t)objid);
+
+    return 0;
+}
+
+int generic_rpc_unbind_all_listeners_objid(rpc_svctype_t svctype,int objid) {
+    int rc;
+
+    pthread_mutex_lock(&generic_rpc_mutex);
+    rc = _generic_rpc_unbind_all_listeners_objid(svctype,objid);
     pthread_mutex_unlock(&generic_rpc_mutex);
 
     return rc;
@@ -699,11 +735,93 @@ int generic_rpc_bind_listener_objid(rpc_svctype_t svctype,int listener_id,
 	}
     }
 
+    /* If there is a dynamic one already, make it static! */
+    l->is_dynamic = 0;
+
+    /* Record the binding in the listener's table. */
+    g_hash_table_insert(l->objid_tab,(gpointer)(uintptr_t)objid,l);
+
     array_list_append(ll,l);
 
     pthread_mutex_unlock(&generic_rpc_mutex);
 
     return 0;
+}
+
+int generic_rpc_bind_dynlistener_objid(rpc_svctype_t svctype,char *listener_url,
+				       int objid,int owns) {
+    struct svctype_info *si;
+    struct array_list *ll;
+    struct generic_rpc_listener *l;
+
+    pthread_mutex_lock(&generic_rpc_mutex);
+
+    if (!(si = __get_si(svctype))) {
+	pthread_mutex_unlock(&generic_rpc_mutex);
+	return -1;
+    }
+
+    if (!(l = _generic_rpc_lookup_listener_url(svctype,listener_url))) {
+	_generic_rpc_insert_listener(svctype,listener_url);
+	l = _generic_rpc_lookup_listener_url(svctype,listener_url);
+	l->is_dynamic = 1;
+    }
+
+    if (owns) {
+	if (g_hash_table_lookup(si->objid_listener_tab,
+				(gpointer)(uintptr_t)objid)) {
+	    pthread_mutex_unlock(&generic_rpc_mutex);
+	    return -1;
+	}
+
+	g_hash_table_insert(si->objid_listener_tab,(gpointer)(uintptr_t)objid,l);
+    }
+
+    if (!(ll = (struct array_list *) \
+	           g_hash_table_lookup(si->objid_listenerlist_tab,
+				       (gpointer)(uintptr_t)objid))) {
+	ll = array_list_create(1);
+	g_hash_table_insert(si->objid_listenerlist_tab,
+			    (gpointer)(uintptr_t)objid,ll);
+    }
+    else if (array_list_find(ll,l) != -1) {
+	pthread_mutex_unlock(&generic_rpc_mutex);
+	if (owns)
+	    /* This should be impossible, see above if (owns) check. */
+	    return 0;
+	else {
+	    verror("listener %d already on objid %d's list!\n",
+		   l->id,objid);
+	    return -1;
+	}
+    }
+
+    l->is_dynamic = 1;
+
+    /* Record the binding in the listener's table. */
+    g_hash_table_insert(l->objid_tab,(gpointer)(uintptr_t)objid,l);
+
+    array_list_append(ll,l);
+
+    pthread_mutex_unlock(&generic_rpc_mutex);
+
+    return 0;
+}
+
+int generic_rpc_unbind_dynlistener_objid(rpc_svctype_t svctype,char *listener_url,
+					 int objid) {
+    int rc;
+    struct generic_rpc_listener *l;
+
+    pthread_mutex_lock(&generic_rpc_mutex);
+    if (!(l = _generic_rpc_lookup_listener_url(svctype,listener_url))) {
+	pthread_mutex_unlock(&generic_rpc_mutex);
+	return -1;
+    }
+    rc = _generic_rpc_unbind_listener_objid(svctype,l->id,objid);
+    pthread_mutex_unlock(&generic_rpc_mutex);
+
+    return rc;
 }
 
 int generic_rpc_count_listeners(rpc_svctype_t svctype,int objid) {

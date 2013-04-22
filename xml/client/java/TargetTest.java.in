@@ -17,12 +17,12 @@ public class TargetTest extends TargetStub {
 		super(DEFAULT_SERVER_ADDRESS);
 		//tc = new TargetCallback();
 		
-		RegisterTargetListener rtl = new RegisterTargetListener();
-		rtl.setHost("127.0.0.1");
-		rtl.setPort(8989);
-		rtl.setSsl(false);
-		ListenerIdResponse r = this.registerTargetListener(rtl);
-		ListenerIdT listenerId = r.getListenerId();
+		ListenerT listener = new ListenerT();
+		ListenerTSequence_type0 listenerGuts = 
+		    new ListenerTSequence_type0();
+		listenerGuts.setHostname("127.0.0.1");
+		listenerGuts.setPort(8989);
+		listener.setListenerTSequence_type0(listenerGuts);
 		
 		ProbeSymbolSimple pss = new ProbeSymbolSimple();
 
@@ -65,7 +65,7 @@ public class TargetTest extends TargetStub {
 		PauseTarget pt = new PauseTarget();
 
 		it.setSpec(tst);
-		it.setOwnerListener(listenerId);
+		it.setOwnerListener(listener);
 		TargetResponse tr = this.instantiateTarget(it);		
 		TargetIdT t = tr.getTarget().getTid();
 		pt.setTid(t);

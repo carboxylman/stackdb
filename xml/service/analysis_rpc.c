@@ -257,16 +257,15 @@ int vmi1__GetAnalysisResults(struct soap *soap,
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__RegisterAnalysisListener(struct soap *soap,
-				   vmi1__AnalysisIdT aid,
-				   char *host,int port,enum xsd__boolean ssl,
-				   struct vmi1__NoneResponse *r) {
+int vmi1__AnalysisBindListener(struct soap *soap,
+			       vmi1__AnalysisIdT aid,vmi1__ListenerT *listener,
+			       struct vmi1__NoneResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
-int vmi1__UnregisterAnalysisListener(struct soap *soap,
-				     vmi1__AnalysisIdT tid,
-				     char *host,int port,
-				     struct vmi1__NoneResponse *r) {
+
+int vmi1__AnalysisUnbindListener(struct soap *soap,
+				 vmi1__AnalysisIdT tid,vmi1__ListenerT *listener,
+				 struct vmi1__NoneResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 

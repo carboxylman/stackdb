@@ -179,12 +179,10 @@ tspec.logStderr = False
 tspec.backendSpec.targetXenSpec = client.factory.create('TargetXenSpecT')
 tspec.backendSpec.targetXenSpec.domain = sys.argv[1]
 
-target = client.service.InstantiateTarget(tspec)
+listener = dict({ 'hostname':httpd.server_name, 'port':httpd.server_port })
+target = client.service.InstantiateTarget(tspec,listener)
 client.service.PauseTarget(target.tid)
 client.service.ResumeTarget(target.tid)
-
-client.service.RegisterTargetListener(target.tid,httpd.server_name,
-                                      httpd.server_port,False)
 
 probe = client.service.ProbeSymbolSimple(target.tid,-1,"foo",sys.argv[2])
 

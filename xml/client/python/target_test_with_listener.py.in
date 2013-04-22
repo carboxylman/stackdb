@@ -184,10 +184,8 @@ tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 
-listenerId = client.service.RegisterTargetListener(httpd.server_name,
-                                                   httpd.server_port,False)
-
-target = client.service.InstantiateTarget(tspec,listenerId)
+listener = dict({ 'hostname':httpd.server_name, 'port':httpd.server_port })
+target = client.service.InstantiateTarget(tspec,listener)
 client.service.PauseTarget(target.tid)
 client.service.ResumeTarget(target.tid)
 

@@ -100,9 +100,7 @@ int vmi1__GetAnalysisStatus(vmi1__AnalysisIdT aid,
 int vmi1__GetAnalysisResults(vmi1__AnalysisIdT aid,
 			     struct vmi1__AnalysisResultsResponse *r);
 
-int vmi1__RegisterAnalysisListener(vmi1__AnalysisIdT aid,
-				   char *host,int port,enum xsd__boolean ssl,
-				   struct vmi1__NoneResponse *r);
-int vmi1__UnregisterAnalysisListener(vmi1__AnalysisIdT tid,
-				     char *host,int port,
-				     struct vmi1__NoneResponse *r);
+int vmi1__AnalysisBindListener(vmi1__AnalysisIdT aid,vmi1__ListenerT *listener,
+			     struct vmi1__NoneResponse *r);
+int vmi1__AnalysisUnbindListener(vmi1__AnalysisIdT tid,vmi1__ListenerT *listener,
+			       struct vmi1__NoneResponse *r);

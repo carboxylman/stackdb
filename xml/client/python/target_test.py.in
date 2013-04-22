@@ -48,7 +48,7 @@ tspec.backendSpec.targetPtraceSpec.program = dummy_threads
 tspec.backendSpec.targetPtraceSpec.arguments = None
 tspec.backendSpec.targetPtraceSpec.environment = None
 
-target = client.service.InstantiateTarget(tspec,-1)
+target = client.service.InstantiateTarget(tspec,None)
 
 paused = client.service.PauseTarget(target.tid)
 

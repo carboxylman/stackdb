@@ -33,5 +33,11 @@ AnalysisIdT = xsd:int
 AnalysisInstanceIdT = xsd:ID
 ListenerIdT = xsd:int
 
+ListenerT = 
+    (element hostname { xsd:string },
+     element port { xsd:int })
+    | element url { xsd:string }
+Listener = element listener { ListenerT }
+
 ResultT = "success" | "error" | "abort"
 Result = element result { ResultT }

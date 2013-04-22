@@ -70,7 +70,7 @@ int vmi1__GetTarget(struct soap *soap,
 
 int vmi1__InstantiateTarget(struct soap *soap,
 			    struct vmi1__TargetSpecT *spec,
-			    vmi1__ListenerIdT ownerListener,
+			    vmi1__ListenerT *ownerListener,
 			    struct vmi1__TargetResponse *r);
 
 int vmi1__PauseTarget(struct soap *soap,
@@ -160,7 +160,7 @@ int vmi1__DisableProbe(struct soap *soap,
 int vmi1__RemoveProbe(struct soap *soap,
 		      vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r);
-
+/*
 // gsoap vmi1 service method-documentation: Add a "client" service
 //   endpoint <hostname,port> tuple for the target server to call back
 //   to; this gets transformed into a default service URL.  Returns a
@@ -183,15 +183,16 @@ int vmi1__RegisterTargetListenerURL(struct soap *soap,
 int vmi1__UnregisterTargetListener(struct soap *soap,
 				   vmi1__ListenerIdT listenerId,
 				   struct vmi1__NoneResponse *r);
+*/
 // gsoap vmi1 service method-documentation: Add a non-authoritative
 //   listener to @tid. 
 int vmi1__TargetBindListener(struct soap *soap,
-			     vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+			     vmi1__TargetIdT tid,vmi1__ListenerT *listener,
 			     struct vmi1__NoneResponse *r);
 // gsoap vmi1 service method-documentation: Remove a non-authoritative
 //   listener from @tid. 
 int vmi1__TargetUnbindListener(struct soap *soap,
-			       vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+			       vmi1__TargetIdT tid,vmi1__ListenerT *listener,
 			       struct vmi1__NoneResponse *r);
 
 #endif /* __TARGET_RPC_H__ */

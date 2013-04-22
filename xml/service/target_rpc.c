@@ -312,7 +312,7 @@ int vmi1__GetTarget(struct soap *soap,
 
 int vmi1__InstantiateTarget(struct soap *soap,
 			    struct vmi1__TargetSpecT *spec,
-			    vmi1__ListenerIdT ownerListener,
+			    vmi1__ListenerT *ownerListener,
 			    struct vmi1__TargetResponse *r) {
     struct target *t;
     struct target_spec *s;
@@ -326,6 +326,8 @@ int vmi1__InstantiateTarget(struct soap *soap,
     char *tmpbuf;
     int tmpbuflen;
     int pid;
+    char *url = NULL;
+    int len = 0;
 
     pr = soap->user;
     if (!pr) {
@@ -334,10 +336,21 @@ int vmi1__InstantiateTarget(struct soap *soap,
 				   "Request needed splitting but not split!");
     }
 
-    if (ownerListener > 0 
-	&& !generic_rpc_lookup_listener_id(RPC_SVCTYPE_TARGET,ownerListener)) 
-	return soap_receiver_fault(soap,"No such ownerListener!",
-				   "No such ownerListener!");
+    if (ownerListener) {
+	if (ownerListener->url != NULL) 
+	    url = ownerListener->url;
+	else if (ownerListener->hostname != NULL 
+		 && ownerListener->port != NULL) {
+	    len = sizeof("http://") + strlen(ownerListener->hostname) \
+		+ sizeof(":") + 11 + sizeof(":/vmi/1/targetListener") + 1;
+	    url = malloc(len * sizeof(char));
+	    sprintf(url,"http://%s:%d/vmi/1/targetListener",
+		    ownerListener->hostname,*ownerListener->port);
+	}
+	else {
+	    return soap_receiver_fault(soap,"Bad listener!","Bad listener!");
+	}
+    }
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
 
@@ -430,11 +443,11 @@ int vmi1__InstantiateTarget(struct soap *soap,
 
 	proxyreq_attach_new_objid(pr,t->id,monitor);
 
-	if (ownerListener > 0) {
-	    if (generic_rpc_bind_listener_objid(RPC_SVCTYPE_TARGET,
-						ownerListener,t->id,1))
-		vwarn("could not bind target %d to listener %d!?\n",
-		      t->id,ownerListener);
+	if (url) {
+	    if (generic_rpc_bind_dynlistener_objid(RPC_SVCTYPE_TARGET,
+						   url,t->id,1))
+		vwarn("could not bind target %d to listener %s!?\n",
+		      t->id,url);
 	}
 
 	r->target = t_target_to_x_TargetT(soap,t,reftab,NULL);
@@ -1755,6 +1768,105 @@ int vmi1__RemoveProbe(struct soap *soap,
     return SOAP_OK;
 }
 
+int vmi1__TargetBindListener(struct soap *soap,
+			     vmi1__TargetIdT tid,vmi1__ListenerT *listener,
+			     struct vmi1__NoneResponse *r) {
+    char *url;
+    int len = 0;
+    struct target *t = NULL;
+
+    if (!listener) 
+	return soap_receiver_fault(soap,"Bad listener!","Bad listener!");
+    else if (listener->url != NULL) 
+	url = listener->url;
+    else if (listener->hostname != NULL && listener->port != NULL) {
+	len = sizeof("http://") + strlen(listener->hostname) \
+	    + sizeof(":") + 11 + sizeof(":/vmi/1/targetListener") + 1;
+	url = malloc(len * sizeof(char));
+	sprintf(url,"http://%s:%d/vmi/1/targetListener",
+		listener->hostname,*listener->port);
+    }
+    else {
+	return soap_receiver_fault(soap,"Bad listener!","Bad listener!");
+    }
+
+    if (!monitor_lookup_objid_lock_objtype(tid,MONITOR_OBJTYPE_TARGET,
+					   (void **)&t,NULL)) {
+	if (len)
+	    free(url);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
+
+    if (generic_rpc_bind_dynlistener_objid(RPC_SVCTYPE_TARGET,url,tid,0)) {
+	if (len)
+	    free(url);
+	return soap_receiver_fault(soap,"Could not bind to target!",
+				   "Could not bind to target!");
+    }
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
+
+    return SOAP_OK;
+}
+
+int vmi1__TargetUnbindListener(struct soap *soap,
+			       vmi1__TargetIdT tid,vmi1__ListenerT *listener,
+			       struct vmi1__NoneResponse *r) {
+    char *url;
+    int len = 0;
+    struct target *t = NULL;
+
+    if (!listener) 
+	return soap_receiver_fault(soap,"Bad listener!","Bad listener!");
+    else if (listener->url != NULL) 
+	url = listener->url;
+    else if (listener->hostname != NULL && listener->port != NULL) {
+	len = sizeof("http://") + strlen(listener->hostname) \
+	    + sizeof(":") + 11 + sizeof(":/vmi/1/targetListener") + 1;
+	url = malloc(len * sizeof(char));
+	sprintf(url,"http://%s:%d/vmi/1/targetListener",
+		listener->hostname,*listener->port);
+    }
+    else {
+	return soap_receiver_fault(soap,"Bad listener!","Bad listener!");
+    }
+
+    if (!monitor_lookup_objid_lock_objtype(tid,MONITOR_OBJTYPE_TARGET,
+					   (void **)&t,NULL)) {
+	if (len)
+	    free(url);
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
+
+    if (generic_rpc_unbind_dynlistener_objid(RPC_SVCTYPE_TARGET,url,tid)) {
+	if (len)
+	    free(url);
+	return soap_receiver_fault(soap,"Could not unbind from target!",
+				   "Could not unbind from target!");
+    }
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
+
+    return SOAP_OK;
+}
+
+/**
+ ** All this code is still here.  But, I had to abandon this approach to
+ ** listeners.  Why?  Because when target/analyses are managed by proxy
+ ** and we have to forward requests to them, the listener IDs won't be
+ ** registered in them.  So -- listeners have to be identified by URL,
+ ** and dynamically bound.  Because of this problem, we now have
+ ** identifiable listeners, AND dynamically-bound listeners that are
+ ** distinguished by URL!  Argh!!!
+ **/
+
+/*
 int vmi1__RegisterTargetListener(struct soap *soap,
 				 char *host,int port,enum xsd__boolean ssl,
 				 struct vmi1__ListenerIdResponse *r) {
@@ -1797,23 +1909,4 @@ int vmi1__UnregisterTargetListener(struct soap *soap,
 
     return SOAP_OK;
 }
-
-int vmi1__TargetBindListener(struct soap *soap,
-			     vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
-			     struct vmi1__NoneResponse *r) {
-    if (generic_rpc_bind_listener_objid(RPC_SVCTYPE_TARGET,listenerId,tid,0)) 
-	return soap_receiver_fault(soap,"Could not bind to target!",
-				   "Could not bind to target!");
-
-    return SOAP_OK;
-}
-
-int vmi1__TargetUnbindListener(struct soap *soap,
-			       vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
-			       struct vmi1__NoneResponse *r) {
-    if (generic_rpc_unbind_listener_objid(RPC_SVCTYPE_TARGET,listenerId,tid)) 
-	return soap_receiver_fault(soap,"Could not unbind from target!",
-				   "Could not unbind from target!");
-
-    return SOAP_OK;
-}
+*/

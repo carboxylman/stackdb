@@ -82,6 +82,8 @@ struct generic_rpc_listener {
     /* The RPC type the listener supports. */
     rpc_svctype_t svctype;
 
+    uint8_t is_dynamic:1;
+
     /* A table of objids it is listening to; values are always NULL. */
     GHashTable *objid_tab;
 
@@ -138,6 +140,18 @@ int generic_rpc_bind_listener_objid(rpc_svctype_t svctype,int listener_id,
 				    int objid,int owns);
 int generic_rpc_unbind_listener_objid(rpc_svctype_t svctype,int listener_id,
 				      int objid);
+
+/*
+ * We need to proxy requests, but we cannot use listener IDs with
+ * proxied requests because listeners are not only bound to one object!
+ * So -- we don't know where to proxy the listener *to* (at least not
+ * until it's bound).  So, dynamically "insert" listeners as needed, and
+ * garbage-collect them as needed.
+ */
+int generic_rpc_bind_dynlistener_objid(rpc_svctype_t svctype,char *listener_url,
+				       int objid,int owns);
+int generic_rpc_unbind_dynlistener_objid(rpc_svctype_t svctype,char *listener_url,
+					 int objid);
 
 int generic_rpc_unbind_all_listeners_objid(rpc_svctype_t svctype,int objid);
 

@@ -26,9 +26,11 @@ struct vmi1__TargetsResponse {
 struct vmi1__ProbeResponse {
     struct vmi1__ProbeT *probe;
 };
+/*
 struct vmi1__ListenerIdResponse {
     vmi1__ListenerIdT listenerId;
 };
+*/
 struct vmi1__NoneResponse { };
 
 //gsoap vmi1 service method-documentation: 
@@ -43,7 +45,7 @@ int vmi1__GetTarget(vmi1__TargetIdT tid,
 		    struct vmi1__TargetResponse *r);
 
 int vmi1__InstantiateTarget(struct vmi1__TargetSpecT *spec,
-			    vmi1__ListenerIdT ownerListener,
+			    vmi1__ListenerT *ownerListener,
 			    struct vmi1__TargetResponse *r);
 
 int vmi1__PauseTarget(vmi1__TargetIdT tid,
@@ -118,14 +120,16 @@ int vmi1__DisableProbe(vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 int vmi1__RemoveProbe(vmi1__TargetIdT tid,vmi1__ProbeIdT pid,
 		      struct vmi1__NoneResponse *r);
 
+/*
 int vmi1__RegisterTargetListener(char *host,int port,enum xsd__boolean ssl,
 				 struct vmi1__ListenerIdResponse *r);
 int vmi1__RegisterTargetListenerURL(char *url,enum xsd__boolean ssl,
 				    struct vmi1__ListenerIdResponse *r);
 int vmi1__UnregisterTargetListener(vmi1__ListenerIdT listenerId,
 				   struct vmi1__NoneResponse *r);
+*/
 
-int vmi1__TargetBindListener(vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+int vmi1__TargetBindListener(vmi1__TargetIdT tid,vmi1__ListenerT *listener,
 			     struct vmi1__NoneResponse *r);
-int vmi1__TargetUnbindListener(vmi1__TargetIdT tid,vmi1__ListenerIdT listenerId,
+int vmi1__TargetUnbindListener(vmi1__TargetIdT tid,vmi1__ListenerT *listener,
 			       struct vmi1__NoneResponse *r);
