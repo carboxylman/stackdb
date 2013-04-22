@@ -80,7 +80,7 @@ int proxyreq_handle_request(struct soap *soap,char *svc_name) {
 
 	    monitor = pr->monitor;
 
-	    snprintf(name,16,"target_m_%d",monitor->objid);
+	    snprintf(name,16,"%s_m_%d",svc_name,monitor->objid);
 	    prctl(PR_SET_NAME,name,NULL,NULL,NULL);
 
 	    proxyreq_free(pr);
@@ -92,37 +92,37 @@ int proxyreq_handle_request(struct soap *soap,char *svc_name) {
 	    while (1) {
 		rc = monitor_run(monitor);
 		if (rc < 0) {
-		    verror("bad internal error in monitor for target %d; destroying!\n",
-			   monitor->objid);
+		    verror("bad internal error in monitor for %s %d; destroying!\n",
+			   svc_name,monitor->objid);
 		    monitor_destroy(monitor);
 		    return -1;
 		}
 		else {
 		    if (monitor_is_done(monitor)) {
 			vdebug(2,LA_XML,LF_RPC,
-			       "monitoring on target %d is done;"
-			      " closing (not finalizing)!\n",
-			      monitor->objid);
+			       "monitoring on %s %d is done;"
+			       " closing (not finalizing)!\n",
+			       svc_name,monitor->objid);
 			monitor_shutdown(monitor);
 			return 0;
 		    }
 		    else if (monitor_is_halfdead(monitor)) {
-			vwarn("target %d monitor child died unexpectedly;"
+			vwarn("%s %d monitor child died unexpectedly;"
 			      " closing (not finalizing)!\n",
-			      monitor->objid);
+			      svc_name,monitor->objid);
 			monitor_shutdown(monitor);
 			return -1;
 		    }
 		    else if (monitor_should_self_finalize(monitor)) {
-			vwarn("forked target %d finalizing!\n",
-			      monitor->objid);
+			vwarn("forked %s %d finalizing!\n",
+			      svc_name,monitor->objid);
 			monitor_destroy(monitor);
 			return 0;
 		    }
 		    else {
-			vwarn("target %d monitor_run finished unexpectedly;"
+			vwarn("%s %d monitor_run finished unexpectedly;"
 			      " closing (not finalizing)!\n",
-			      monitor->objid);
+			      svc_name,monitor->objid);
 			monitor_shutdown(monitor);
 			return 0;
 		    }
