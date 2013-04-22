@@ -64,13 +64,13 @@ int vmi1__UploadAnalysis(struct vmi1__AnalysisDescT *analysisDesc,
 			 struct xsd__hexBinary *inputFileContents,
 			 struct vmi1__NoneResponse *r);
 
-// gsoap vmi1 service method-documentation: RunAnalysis runs an analysis
+// gsoap vmi1 service method-documentation: InstantiateAnalysis runs an analysis
 //   against the given target specification and analysis specification,
 //   optionally autorunning the target if autorun is true. 
-int vmi1__RunAnalysis(struct vmi1__AnalysisSpecT analysisSpec,
-		      struct vmi1__TargetSpecT *targetSpec,
-		      enum xsd__boolean autorun,
-		      struct vmi1__AnalysisResponse *r);
+int vmi1__InstantiateAnalysis(struct vmi1__AnalysisSpecT *analysisSpec,
+			      struct vmi1__TargetSpecT *targetSpec,
+			      struct vmi1__ListenerT *ownerListener,
+			      struct vmi1__AnalysisResponse *r);
 
 // gsoap vmi1 service method-documentation: PauseAnalysis pauses an
 //   analysis if the analysis supports external control.

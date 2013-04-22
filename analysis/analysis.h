@@ -22,14 +22,27 @@
 #include "alist.h"
 #include "target_api.h"
 
+/*
+ * There isn't really an analysis API defined yet.  At the moment, it's
+ * just enough to provide basic i/o and data APIs to the analysis XML
+ * SOAP server.
+ *
+ * Eventually, regular user programs/libs should just use the analysis
+ * API to report results, connect analyses together, or use pipes/stages
+ * to organize logic/data flow inside an analysis.  An analysis is just
+ * a container that wraps some logic, provides it useful constructs
+ * (pipes/stages), and handles connecting analyses to each other and
+ * recording results in traces if desired.
+ */
+
 struct analysis;
 struct analysis_desc;
 struct analysis_spec;
 struct analysis_datum;
 struct analysis_datum_simple_value;
 struct analysis_datum_typed_value;
-struct param;
-struct name_value;
+struct analysis_param;
+struct analysis_name_value;
 
 typedef enum {
     ASTATUS_UNKNOWN        = 0,
@@ -41,27 +54,6 @@ typedef enum {
 
 void analysis_init(void);
 void analysis_fini(void);
-
-struct analysis_datum *analysis_create_simple_datum(struct analysis *analysis,
-						    char *name,
-						    int type,int subtype,
-						    char *value,char *msg);
-
-int analysis_datum_add_simple_value(struct analysis_datum *datum,
-				    char *name,char *value);
-
-int analysis_datum_add_typed_value(struct analysis_datum *datum,
-				   char *name,void *value,int datatype_id);
-
-/*
- * Reports to stdout as text; the analysis controller as XML; or both.
- */
-int analysis_datum_report(struct analysis *analysis,struct analysis_datum *datum);
-
-struct analysis *analysis_create_from_memory(char *name,char *driver_bytes,
-					     char *input_bytes,
-					     struct array_list *file_names,
-					     struct array_list *file_bytes);
 
 /*
  * Set the search path.
@@ -106,11 +98,6 @@ struct analysis_desc *analysis_load(const char *name);
 struct analysis_desc *analysis_load_pathname(const char *path);
 
 /*
- * Frees a struct analysis_desc.
- */
-void analysis_desc_free(struct analysis_desc *desc);
-
-/*
  * Load analysis metadata from all analyses; returns an array_list of
  * struct analysis_desc values.
  */
@@ -140,12 +127,54 @@ int analysis_detach_evloop(struct analysis *analysis);
 int analysis_is_evloop_attached(struct analysis *analysis,
 				struct evloop *evloop);
 
-struct analysis_result *analysis_run(struct analysis_spec *analysis_spec,
-				     struct target_spec *target_spec);
-
 analysis_status_t analysis_close(struct analysis *analysis);
 
 void analysis_free(struct analysis *analysis);
+
+/*
+ * Frees a struct analysis_desc.
+ */
+void analysis_desc_free(struct analysis_desc *desc);
+
+/*
+ * Frees a struct analysis_spec.
+ */
+void analysis_spec_free(struct analysis_spec *spec);
+
+/*
+ * Frees a struct analysis_param.
+ */
+void analysis_spec_param(struct analysis_param *param);
+
+/*
+ * Creates a simple analysis_datum.
+ */
+struct analysis_datum *analysis_create_simple_datum(struct analysis *analysis,
+						    char *name,
+						    int type,int subtype,
+						    char *value,char *msg);
+/*
+ * Adds a simple, untyped string/string key/value pair to a datum.
+ */
+int analysis_datum_add_simple_value(struct analysis_datum *datum,
+				    char *name,char *value);
+/*
+ * Adds a typed key/value pair to a datum.  Will change...
+ */
+int analysis_datum_add_typed_value(struct analysis_datum *datum,
+				   char *name,void *value,int datatype_id);
+/*
+ * Reports to stdout as text; the analysis controller as XML; or both.
+ */
+int analysis_datum_report(struct analysis *analysis,struct analysis_datum *datum);
+
+/*
+ * Creates a new analysis and writes it into the filesystem.  Will change...
+ */
+struct analysis *analysis_create_from_memory(char *name,char *driver_bytes,
+					     char *input_bytes,
+					     struct array_list *file_names,
+					     struct array_list *file_bytes);
 
 /*
  * Analysis instances serve multiple purposes.  First, they are used
@@ -158,6 +187,8 @@ void analysis_free(struct analysis *analysis);
  */
 struct analysis {
     int id;
+
+    struct analysis_spec *spec;
 
     analysis_status_t status;
 
@@ -186,6 +217,8 @@ struct analysis_desc {
     char *description;
     char *author;
     char *author_contact;
+
+    char *binary;
 
     uint32_t requires_write:1,
 	requires_control:1,
@@ -224,18 +257,47 @@ struct analysis_spec {
 	report_stderr_intermediate:1,
 	autoparse_simple_data:1;
 
-    /* array_list of struct name_value */
+    /* array_list of struct analysis_name_value */
     struct array_list *in_params;
+
+    /*
+     * I/O behavior is a bit complicated.  We want a couple things -- to
+     * support the analysis library by itself (i.e., user code calling
+     * directly into the library); and to support the XML SOAP server
+     * calling into the library on behalf of the user.  In both cases,
+     * we might want I/O logged to a file; we might want I/O callbacks
+     * to the user (we might want it buffered too, but forget that for
+     * now).
+     *
+     * So, if the caller wants stdio interaction, the backend must open
+     * the I/O devices and expose them to the caller as an FD -- the
+     * caller specifies this by providing evloop_handler_ts for the
+     * stdio descriptor types it cares about.  If the user does not
+     * specify one of these, but instead specifies a filename, the
+     * backend must auto-write/-read the output/input to/from the named
+     * file.
+     *
+     * (If handlers are provided, the caller *must* call
+     * analysis_attach_evloop() sometime -- otherwise if the analysis does
+     * i/o on those descriptors, they will probably fill up and block it!)
+     */
+    evloop_handler_t in_evh;
+    evloop_handler_t out_evh;
+    evloop_handler_t err_evh;
+
+    char *infile;
+    char *outfile;
+    char *errfile;
 };
 
-struct param {
+struct analysis_param {
     char *name;
     char *long_name;
     char *description;
     char *default_value;
 };
 
-struct name_value {
+struct analysis_name_value {
     char *name;
     char *value;
 };

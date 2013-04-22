@@ -399,6 +399,75 @@ void analysis_free(struct analysis *analysis) {
     array_list_free(analysis->results);
 }
 
+void analysis_free_desc(struct analysis_desc *desc) {
+    GHashTableIter iter;
+    gpointer value;
+
+    if (desc->name)
+	free(desc->name);
+    if (desc->description)
+	free(desc->description);
+    if (desc->author)
+	free(desc->author);
+    if (desc->author_contact)
+	free(desc->author_contact);
+    if (desc->binary)
+	free(desc->binary);
+
+    if (desc->in_params) {
+	g_hash_table_iter_init(&iter,desc->in_params);
+	while (g_hash_table_iter_next(&iter,NULL,&value)) 
+	    analysis_param_free((struct analysis_param *)value);
+	g_hash_table_destroy(desc->in_params);
+    }
+    if (desc->in_params_long)
+	g_hash_table_destroy(desc->in_params_long);
+    if (desc->out_params) {
+	g_hash_table_iter_init(&iter,desc->out_params);
+	while (g_hash_table_iter_next(&iter,NULL,&value)) 
+	    analysis_param_free((struct analysis_param *)value);
+	g_hash_table_destroy(desc->out_params);
+    }
+    if (desc->out_params_long)
+	g_hash_table_destroy(desc->out_params_long);
+
+
+    free(desc);
+}
+
+void analysis_spec_free(struct analysis_spec *spec) {
+    if (spec->stdin_bytes)
+	free(spec->stdin_bytes);
+
+    if (spec->infile) {
+	free(spec->infile);
+	spec->infile = NULL;
+    }
+    if (spec->outfile) {
+	free(spec->outfile);
+	spec->outfile = NULL;
+    }
+    if (spec->errfile) {
+	free(spec->errfile);
+	spec->errfile = NULL;
+    }
+
+    free(spec);
+}
+
+void analysis_param_free(struct analysis_param *param) {
+    if (param->name)
+	free(param->name);
+    if (param->long_name)
+	free(param->long_name);
+    if (param->description) 
+	free(param->description);
+    if (param->default_value)
+	free(param->default_value);
+
+    free(param);
+}
+
 char **analysis_get_path(void) {
     return ANALYSIS_PATH;
 }

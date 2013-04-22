@@ -48,7 +48,7 @@ x_AnalysisDescT_to_a_analysis_desc(struct soap *soap,
 				   GHashTable *reftab,
 				   struct analysis_desc *out) {
     struct analysis_desc *rout;
-    struct param *param;
+    struct analysis_param *param;
     int i;
 
     if (out)
@@ -63,6 +63,8 @@ x_AnalysisDescT_to_a_analysis_desc(struct soap *soap,
 	rout->author = strdup(in->author);
     if (in->authorContact)
 	rout->author_contact = strdup(in->authorContact);
+
+    rout->binary = strdup(in->binary);
 
     if (in->requiresWrite == xsd__boolean__true_)
 	rout->requires_write = 1;
@@ -111,7 +113,7 @@ a_analysis_desc_to_x_AnalysisDescT(struct soap *soap,
 				   struct vmi1__AnalysisDescT *out) {
     struct vmi1__AnalysisDescT *rout;
     GHashTableIter iter;
-    struct param *param;
+    struct analysis_param *param;
     int i;
 
     if (out)
@@ -126,6 +128,8 @@ a_analysis_desc_to_x_AnalysisDescT(struct soap *soap,
 	SOAP_STRCPY(soap,rout->author,in->author);
     if (in->author_contact)
 	SOAP_STRCPY(soap,rout->authorContact,in->author_contact);
+
+    SOAP_STRCPY(soap,rout->binary,in->binary);
 
     if (in->requires_write)
 	rout->requiresWrite = xsd__boolean__true_;
@@ -187,7 +191,7 @@ x_AnalysisSpecT_to_a_analysis_spec(struct soap *soap,
 				   GHashTable *reftab,
 				   struct analysis_spec *out) {
     struct analysis_spec *rout;
-    struct name_value *nv;
+    struct analysis_name_value *nv;
     int i;
     
     if (out)
@@ -232,9 +236,9 @@ x_AnalysisSpecT_to_a_analysis_spec(struct soap *soap,
 	rout->in_params = array_list_create(in->inputParams->__sizenameValue);
 	for (i = 0; i < in->inputParams->__sizenameValue; ++i) {
 	    nv = calloc(1,sizeof(*nv));
-	    nv->name = strdup(in->inputParams->nameValue[i].name);
-	    if (in->inputParams->nameValue[i].value)
-		nv->value = strdup(in->inputParams->nameValue[i].value);
+	    nv->name = strdup(in->inputParams->nameValue[i].nvName);
+	    if (in->inputParams->nameValue[i].nvValue)
+		nv->value = strdup(in->inputParams->nameValue[i].nvValue);
 	}
     }
 
@@ -246,7 +250,7 @@ a_analysis_spec_to_x_AnalysisSpecT(struct soap *soap,
 				   GHashTable *reftab,
 				   struct vmi1__AnalysisSpecT *out) {
     struct vmi1__AnalysisSpecT *rout;
-    struct name_value *nv;
+    struct analysis_name_value *nv;
     int i;
     
     if (out)
@@ -288,9 +292,9 @@ a_analysis_spec_to_x_AnalysisSpecT(struct soap *soap,
 		SOAP_CALLOC(soap,rout->inputParams->__sizenameValue,
 			    sizeof(*rout->inputParams->nameValue));
 	    array_list_foreach(in->in_params,i,nv) {
-		SOAP_STRCPY(soap,rout->inputParams->nameValue[i].name,nv->name);
+		SOAP_STRCPY(soap,rout->inputParams->nameValue[i].nvName,nv->name);
 		if (nv->value)
-		    SOAP_STRCPY(soap,rout->inputParams->nameValue[i].value,
+		    SOAP_STRCPY(soap,rout->inputParams->nameValue[i].nvValue,
 				nv->value);
 	    }
 	}
@@ -339,10 +343,10 @@ a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 	rs->counter = in->counter;
 
 	if (in->value) {
-	    SOAP_STRCPY(soap,rs->value,in->value);
+	    SOAP_STRCPY(soap,rs->resultValue,in->value);
 	}
 	else
-	    rs->value = "";
+	    rs->resultValue = "";
 	if (in->msg)
 	    SOAP_STRCPY(soap,rs->msg,in->msg);
 
@@ -353,13 +357,13 @@ a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 		SOAP_CALLOC(soap,rs->outputValues->__sizenameValue,
 			    sizeof(*rs->outputValues->nameValue));
 	    array_list_foreach(in->values,i,dsv) {
-		SOAP_STRCPY(soap,rs->outputValues->nameValue[i].name,dsv->name);
+		SOAP_STRCPY(soap,rs->outputValues->nameValue[i].nvName,dsv->name);
 		if (dsv->value) {
-		    SOAP_STRCPY(soap,rs->outputValues->nameValue[i].value,
+		    SOAP_STRCPY(soap,rs->outputValues->nameValue[i].nvValue,
 				dsv->value);
 		}
 		else
-		    rs->outputValues->nameValue[i].value = "";
+		    rs->outputValues->nameValue[i].nvValue = "";
 	    }
 	}
     }
@@ -384,10 +388,10 @@ a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 	rc->counter = in->counter;
 
 	if (in->value) {
-	    SOAP_STRCPY(soap,rc->value,in->value);
+	    SOAP_STRCPY(soap,rc->resultValue,in->value);
 	}
 	else
-	    rc->value = "";
+	    rc->resultValue = "";
 	if (in->msg)
 	    SOAP_STRCPY(soap,rc->msg,in->msg);
 
@@ -436,10 +440,10 @@ a_analysis_datum_list_to_x_AnalysisResultsT(struct soap *soap,
     return rout;
 }
 
-struct param *x_ParamT_to_a_param(struct soap *soap,
-				  struct vmi1__ParamT *in,
-				  struct param *out) {
-    struct param *rout;
+struct analysis_param *x_ParamT_to_a_param(struct soap *soap,
+					   struct vmi1__ParamT *in,
+					   struct analysis_param *out) {
+    struct analysis_param *rout;
 
     if (out)
 	rout = out;
@@ -459,7 +463,7 @@ struct param *x_ParamT_to_a_param(struct soap *soap,
 }
 
 struct vmi1__ParamT *a_param_to_x_ParamT(struct soap *soap,	
-					 struct param *in,
+					 struct analysis_param *in,
 					 struct vmi1__ParamT *out) {
     struct vmi1__ParamT *rout;
 
@@ -481,27 +485,29 @@ struct vmi1__ParamT *a_param_to_x_ParamT(struct soap *soap,
 }
 
 
-struct name_value *x_NameValueT_to_a_name_value(struct soap *soap,
-						struct vmi1__NameValueT *in,
-						struct name_value *out) {
-    struct name_value *rout;
+struct analysis_name_value *
+x_NameValueT_to_a_analysis_name_value(struct soap *soap,
+				      struct vmi1__NameValueT *in,
+				      struct analysis_name_value *out) {
+    struct analysis_name_value *rout;
 
     if (out)
 	rout = out;
     else
 	rout = calloc(1,sizeof(*rout));
 
-    if (in->name)
-	rout->name = strdup(in->name);
-    if (in->value)
-	rout->value = strdup(in->value);
+    if (in->nvName)
+	rout->name = strdup(in->nvName);
+    if (in->nvValue)
+	rout->value = strdup(in->nvValue);
 
     return rout;
 }
 
-struct vmi1__NameValueT *a_name_value_to_x_NameValueT(struct soap *soap,	
-						      struct name_value *in,
-						      struct vmi1__NameValueT *out) {
+struct vmi1__NameValueT *
+a_analysis_name_value_to_x_NameValueT(struct soap *soap,	
+				      struct analysis_name_value *in,
+				      struct vmi1__NameValueT *out) {
     struct vmi1__NameValueT *rout;
 
     if (out)
@@ -510,9 +516,9 @@ struct vmi1__NameValueT *a_name_value_to_x_NameValueT(struct soap *soap,
 	rout = SOAP_CALLOC(soap,1,sizeof(*rout));
 
     if (in->name)
-	SOAP_STRCPY(soap,rout->name,in->name);
+	SOAP_STRCPY(soap,rout->nvName,in->name);
     if (in->value)
-	SOAP_STRCPY(soap,rout->value,in->value);
+	SOAP_STRCPY(soap,rout->nvValue,in->value);
 
     return rout;
 }

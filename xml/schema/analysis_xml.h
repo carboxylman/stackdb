@@ -64,19 +64,21 @@ a_analysis_datum_list_to_x_AnalysisResultsT(struct soap *soap,
 					    GHashTable *reftab,
 					    struct vmi1__AnalysisResultsT *out);
 
-struct param *x_ParamT_to_a_param(struct soap *soap,
-				  struct vmi1__ParamT *in,
-				  struct param *out);
+struct analysis_param *x_ParamT_to_a_param(struct soap *soap,
+					   struct vmi1__ParamT *in,
+					   struct analysis_param *out);
 struct vmi1__ParamT *a_param_to_x_ParamT(struct soap *soap,	
-					 struct param *in,
+					 struct analysis_param *in,
 					 struct vmi1__ParamT *out);
 
-struct name_value *x_NameValueT_to_a_name_value(struct soap *soap,
-						struct vmi1__NameValueT *in,
-						struct name_value *out);
-struct vmi1__NameValueT *a_name_value_to_x_NameValueT(struct soap *soap,	
-						      struct name_value *in,
-						      struct vmi1__NameValueT *out);
+struct analysis_name_value *
+x_NameValueT_to_a_analysis_name_value(struct soap *soap,
+				      struct vmi1__NameValueT *in,
+				      struct analysis_name_value *out);
+struct vmi1__NameValueT *
+a_analysis_name_value_to_x_NameValueT(struct soap *soap,	
+				      struct analysis_name_value *in,
+				      struct vmi1__NameValueT *out);
 
 analysis_status_t 
 x_AnalysisStatusT_to_a_analysis_status_t(struct soap *soap,

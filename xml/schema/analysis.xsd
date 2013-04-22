@@ -53,6 +53,7 @@
       <xs:element minOccurs="0" ref="vmi1:description"/>
       <xs:element minOccurs="0" ref="vmi1:defaultValue"/>
     </xs:sequence>
+    <xs:attribute name="isCommandLine" type="xs:boolean"/>
   </xs:complexType>
   <xs:element name="name" type="xs:string"/>
   <xs:element name="longName" type="xs:string"/>
@@ -61,12 +62,32 @@
   <xs:element name="param" type="vmi1:ParamT"/>
   <xs:complexType name="NameValueT">
     <xs:sequence>
-      <xs:element ref="vmi1:name"/>
-      <xs:element ref="vmi1:value"/>
+      <xs:element ref="vmi1:nvName"/>
+      <xs:element ref="vmi1:nvValue"/>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="value" type="xs:string"/>
+  <xs:element name="nvName" type="xs:string"/>
+  <xs:element name="nvValue" type="xs:string"/>
   <xs:element name="nameValue" type="vmi1:NameValueT"/>
+  <xs:complexType name="AnalysisEventT">
+    <xs:sequence>
+      <xs:element ref="vmi1:analysisEventType"/>
+      <xs:element ref="vmi1:analysisId"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="analysisEventType">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="paused"/>
+        <xs:enumeration value="resumed"/>
+        <xs:enumeration value="opened"/>
+        <xs:enumeration value="closed"/>
+        <xs:enumeration value="finalized"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="analysisId" type="vmi1:AnalysisIdT"/>
+  <xs:element name="analysisEvent" type="vmi1:AnalysisEventT"/>
   <xs:complexType name="AnalysisSpecT">
     <xs:sequence>
       <xs:element ref="vmi1:name"/>
@@ -98,6 +119,7 @@
       <xs:element minOccurs="0" ref="vmi1:description"/>
       <xs:element minOccurs="0" ref="vmi1:author"/>
       <xs:element minOccurs="0" ref="vmi1:authorContact"/>
+      <xs:element ref="vmi1:binary"/>
       <xs:element ref="vmi1:requiresWrite"/>
       <xs:element ref="vmi1:requiresControl"/>
       <xs:element ref="vmi1:generatesAnnotations"/>
@@ -112,6 +134,7 @@
   </xs:complexType>
   <xs:element name="author" type="xs:string"/>
   <xs:element name="authorContact" type="xs:string"/>
+  <xs:element name="binary" type="xs:string"/>
   <xs:element name="requiresWrite" type="xs:boolean"/>
   <xs:element name="requiresControl" type="xs:boolean"/>
   <xs:element name="generatesAnnotations" type="xs:boolean"/>
@@ -179,7 +202,7 @@
       <xs:element ref="vmi1:time"/>
       <xs:element ref="vmi1:tsc"/>
       <xs:element ref="vmi1:counter"/>
-      <xs:element ref="vmi1:value"/>
+      <xs:element ref="vmi1:resultValue"/>
       <xs:element minOccurs="0" ref="vmi1:msg"/>
       <xs:element ref="vmi1:outputValues"/>
     </xs:sequence>
@@ -189,6 +212,7 @@
   <xs:element name="time" type="xs:unsignedLong"/>
   <xs:element name="tsc" type="xs:unsignedLong"/>
   <xs:element name="counter" type="xs:unsignedLong"/>
+  <xs:element name="resultValue" type="xs:string"/>
   <xs:element name="msg" type="xs:string"/>
   <xs:element name="outputValues">
     <xs:complexType>
@@ -224,7 +248,7 @@
       <xs:element ref="vmi1:time"/>
       <xs:element ref="vmi1:tsc"/>
       <xs:element ref="vmi1:counter"/>
-      <xs:element ref="vmi1:value"/>
+      <xs:element ref="vmi1:resultValue"/>
       <xs:element minOccurs="0" ref="vmi1:msg"/>
       <xs:group ref="vmi1:AnyExtension"/>
     </xs:sequence>

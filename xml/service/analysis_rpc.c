@@ -22,6 +22,8 @@
 #include "monitor.h"
 
 #include "analysis.h"
+#include "target_api.h"
+#include "target.h"
 
 #include "generic_rpc.h"
 #include "target_rpc.h"
@@ -213,11 +215,11 @@ int vmi1__UploadAnalysis(struct soap *soap,
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__RunAnalysis(struct soap *soap,
-		      struct vmi1__AnalysisSpecT analysisSpec,
-		      struct vmi1__TargetSpecT *targetSpec,
-		      enum xsd__boolean autorun,
-		      struct vmi1__AnalysisResponse *r) {
+int vmi1__InstantiateAnalysis(struct soap *soap,
+			      struct vmi1__AnalysisSpecT *analysisSpec,
+			      struct vmi1__TargetSpecT *targetSpec,
+			      struct vmi1__ListenerT *ownerListener,
+			      struct vmi1__AnalysisResponse *r) {
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 

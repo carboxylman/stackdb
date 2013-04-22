@@ -32,6 +32,7 @@ DataTypeT =
     | "time" | "date" | "dateTime"
 
 ParamT = 
+    attribute isCommandLine { xsd:boolean }?,
     element name { text },
     element longName { text }?,
     element description { text }?,
@@ -39,9 +40,15 @@ ParamT =
 Param = element param { ParamT }
 
 NameValueT = 
-    element name { text },
-    element value { text }
+    element nvName { text },
+    element nvValue { text }
 NameValue = element nameValue { NameValueT }
+
+AnalysisEventT = 
+    element analysisEventType { "paused" | "resumed" | "opened" | "closed" 
+       	    		        | "finalized" },
+    element analysisId { AnalysisIdT }
+AnalysisEvent = element analysisEvent { AnalysisEventT }
 
 AnalysisSpecT = 
     element name { text },
@@ -64,6 +71,8 @@ AnalysisDescT =
     element description { text }?,
     element author { text }?,
     element authorContact { text }?,
+
+    element binary { xsd:string },
 
     element requiresWrite { xsd:boolean },
     element requiresControl { xsd:boolean },
@@ -124,7 +133,7 @@ SimpleResultT =
     element time { xsd:unsignedLong },
     element tsc { xsd:unsignedLong },
     element counter { xsd:unsignedLong },
-    element value { text },
+    element resultValue { text },
     element msg { text }?,
     element outputValues { NameValue* }
 SimpleResult = element simpleResult { SimpleResultT }
@@ -154,7 +163,7 @@ CustomResultT =
     element time { xsd:unsignedLong },
     element tsc { xsd:unsignedLong },
     element counter { xsd:unsignedLong },
-    element value { text },
+    element resultValue { text },
     element msg { text }?,
     AnyExtension
 CustomResult = element customResult { CustomResultT }

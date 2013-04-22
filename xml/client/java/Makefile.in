@@ -76,15 +76,23 @@ else
 endif
 
 STUBS = debuginfo/src/$(PACKAGE)/DebuginfoStub.java \
-	target/src/$(PACKAGE)/TargetStub.java
-SERVERSTUBS = target/src/$(PACKAGE)/TargetListenerSkeleton.java
+	target/src/$(PACKAGE)/TargetStub.java\
+	analysis/src/$(PACKAGE)/AnalysisStub.java
+SERVERSTUBS = target/src/$(PACKAGE)/TargetListenerSkeleton.java \
+	      analysis/src/$(PACKAGE)/AnalysisListenerSkeleton.java
 JARS =  debuginfo/build/lib/debuginfo.jar debuginfo-all.jar \
 	target/build/lib/target.jar target-extra/build/lib/target-extra.jar \
-	target-all.jar
+	target-all.jar \
+	analysis/build/lib/analysis.jar analysis-extra/build/lib/analysis-extra.jar \
+	analysis-all.jar
 
 TARGET_LIBS = CustomURIResolver.class URLWSDLLocator.class ResourceSchemaGenerator.class \
 	      SimpleService.class SimpleServiceServer.class \
 	      SimpleTargetListener.class
+
+ANALYSIS_LIBS = CustomURIResolver.class URLWSDLLocator.class ResourceSchemaGenerator.class \
+	      SimpleService.class SimpleServiceServer.class #\
+	      #SimpleAnalysisListener.class
 
 PROGRAMS = DebuginfoTest.class TargetTest.class 
 
@@ -159,6 +167,20 @@ target/src/$(PACKAGE)/TargetStub.java: $(OBJDIR)/xml/service/target.wsdl.test
 		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
 		 -o target -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -u -uri $<
 
+analysis/src/$(PACKAGE)/AnalysisListenerSkeleton.java: $(OBJDIR)/xml/service/analysisListener.wsdl.test
+	mkdir -p analysis
+	rm -f analysis/build.xml
+	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
+		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
+		-o analysis -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -ss -uri $<
+
+analysis/src/$(PACKAGE)/AnalysisStub.java: $(OBJDIR)/xml/service/analysis.wsdl.test
+	mkdir -p analysis
+	rm -f analysis/build.xml
+	JAVA_HOME=$(JAVA_HOME) AXIS2_HOME=$(AXIS2_HOME) \
+		${AXIS2_HOME}/bin/wsdl2java.sh -d $(AXIS2_DB) $(AXIS2_DB_OPTS) \
+		 -o analysis -ns2p $(NS)=vmi1 -p $(PACKAGE) -or -u -uri $<
+
 debuginfo/build/lib/debuginfo.aar: debuginfo/src/$(PACKAGE)/DebuginfoStub.java
 	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
 		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
@@ -199,6 +221,35 @@ target-extra/build/lib/target-extra.jar: $(addprefix target-extra/build/$(PACKAG
 		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
 		$(JAR) cvf $@ -C target-extra/build vmi1 -C target/resources .)
 
+analysis/build/lib/analysis.aar: analysis/src/$(PACKAGE)/AnalysisListenerSkeleton.java \
+		analysis/src/$(PACKAGE)/AnalysisStub.java 
+	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
+		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
+		$(ANT) -buildfile analysis/build.xml jar.all)
+
+analysis/build/lib/analysis.jar: analysis/build/lib/analysis.aar
+	cp -p $< $@
+
+analysis-all.jar: analysis/build/lib/analysis.jar analysis-extra/build/lib/analysis-extra.jar
+	rm -f $@
+	$(JAR) -cf $@ -C analysis/build/classes/ vmi1 -C analysis resources
+	$(JAR) -uf $@ -C analysis-extra/build/ vmi1 -C analysis/resources .
+
+analysis-extra/build/$(PACKAGE)/%.class: $(SRCDIR)/%.java
+	mkdir -p analysis-extra/build/vmi1
+	$(JAVAC) -g -classpath $(BUILD_CLASSPATH):analysis-extra/build -d analysis-extra/build/ $<
+
+analysis-extra/build/lib/analysis-extra.jar: $(addprefix analysis-extra/build/$(PACKAGE)/,$(ANALYSIS_LIBS)) \
+		analysis/build/lib/analysis.jar
+#	rm -rf analysis-extra
+	mkdir -p analysis-extra/build/lib
+#	mkdir -p analysis-extra/resources
+#	cp -pR analysis/resources/* analysis-extra/resources/
+#	cp -pR analysis/resources/* analysis-extra/
+	(JAVA_HOME=$(JAVA_HOME) CLASSPATH=$(BUILD_CLASSPATH) \
+		AXIS2_HOME=$(AXIS2_HOME) AXIS2_CLASSPATH=$(AXIS2_CLASSPATH) \
+		$(JAR) cvf $@ -C analysis-extra/build vmi1 -C target/resources .)
+
 DebuginfoTest.class: DebuginfoTest.java debuginfo/build/lib/debuginfo.aar
 	$(JAVAC) -classpath $(BUILD_CLASSPATH) DebuginfoTest.java
 
@@ -210,7 +261,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	rm -rf $(STUBS) $(SERVERSTUBS) 
 	rm -f $(PROGRAMS) $(JARS)
-	rm -rf debuginfo target target-extra
+	rm -rf debuginfo target target-extra analysis analysis-extra
 	rm -f run.sh run-db.sh
 
 distclean: distclean-subdirs
