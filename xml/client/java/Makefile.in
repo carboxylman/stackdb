@@ -47,12 +47,12 @@ AXIS2_DB :=  "adb"
 # Adjust classpath stuff for different databindings.
 #
 ifeq ($(AXIS2_DB),"jaxbri")
-    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/lib/Debuginfo-test-client.jar:@abs_builddir@/target/build/lib/Target-test-client.jar
+    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/lib/Debuginfo-test-client.jar:@abs_builddir@/target/build/lib/Target-test-client.jar:@abs_builddir@/analysis/build/lib/Analysis-test-client.jar
 else
 #@abs_builddir@/debuginfo/build/lib/debuginfo.jar:@abs_builddir@/target/build/lib/target.jar:@abs_builddir@/target-extra/build/lib/target-extra.jar:
-    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/classes:@abs_builddir@/target/build/classes:@abs_builddir@/target-extra/build/classes
+    BUILD_CLASSPATH := @abs_builddir@/debuginfo/build/classes:@abs_builddir@/target/build/classes:@abs_builddir@/target-extra/build/classes:@abs_builddir@/analysis/build/classes:@abs_builddir@/analysis-extra/build/classes
 endif
-RUN_CLASSPATH := @abs_builddir@/debuginfo-all.jar:@abs_builddir@/target-all.jar
+RUN_CLASSPATH := @abs_builddir@/debuginfo-all.jar:@abs_builddir@/target-all.jar:@abs_builddir@/analysis-all.jar
 #
 # Only enable if you are using adb and want validation disabled.  For now,
 # we default to this because ADB without validation does not work with our 
@@ -91,8 +91,8 @@ TARGET_LIBS = CustomURIResolver.class URLWSDLLocator.class ResourceSchemaGenerat
 	      SimpleTargetListener.class
 
 ANALYSIS_LIBS = CustomURIResolver.class URLWSDLLocator.class ResourceSchemaGenerator.class \
-	      SimpleService.class SimpleServiceServer.class #\
-	      #SimpleAnalysisListener.class
+	      SimpleService.class SimpleServiceServer.class \
+	      SimpleAnalysisListener.class
 
 PROGRAMS = DebuginfoTest.class TargetTest.class 
 
