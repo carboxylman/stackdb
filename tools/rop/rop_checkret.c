@@ -87,7 +87,7 @@ void sigh(int signo) {
     exit(0);
 }
 
-int rop_handler(struct probe *probe,void *data,struct probe *trigger) {
+result_t rop_handler(struct probe *probe,void *data,struct probe *trigger) {
     char *buf;
     int buflen;
     struct rop_checkret_status *rop_status = \
@@ -175,7 +175,6 @@ struct argp rc_argp = {
 
 int main(int argc,char **argv) {
     target_status_t tstat;
-    char *filename;
     GHashTableIter iter;
     gpointer key;
     struct rop_gadget *gadget;
@@ -198,12 +197,15 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
-    if (!opts.argc) {
-	fprintf(stderr,"ERROR: must supply a gadget file!\n");
-	exit(-5);
-    }
+    if (opts.argc > 0)
+	gadgets = rop_load_gadget_file(opts.argv[0]);
+    else 
+	gadgets = rop_load_gadget_stream(stdin);
 
-    filename = opts.argv[0];
+    if (!gadgets || g_hash_table_size(gadgets) == 0) {
+	verror("No gadgets in file!\n");
+	return -2;
+    }
 
     t = target_instantiate(tspec,NULL);
     if (!t) {
@@ -232,7 +234,6 @@ int main(int argc,char **argv) {
     /* Install probes... */
     rop_violation_list = array_list_create(128);
     probes = g_hash_table_new(g_direct_hash,g_direct_equal);
-    gadgets = rop_load_gadget_file(filename);
     g_hash_table_iter_init(&iter,gadgets);
     while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&gadget)) {
 	probe = probe_rop_checkret(t,TID_GLOBAL,gadget,NULL,rop_handler,NULL);

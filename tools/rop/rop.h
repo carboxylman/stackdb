@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -99,6 +99,7 @@ struct rop_checkret_data {
 };
 
 GHashTable *rop_load_gadget_file(char *filename);
+GHashTable *rop_load_gadget_stream(FILE *stream);
 struct probe *probe_rop_checkret(struct target *target,tid_t tid,
 				 struct rop_gadget *rg,
 				 probe_handler_t pre_handler,

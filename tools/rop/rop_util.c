@@ -33,6 +33,32 @@ void rop_gadget_free(void *value) {
     free(rg);
 }
 
+GHashTable *rop_load_gadget_stream(FILE *stream) {
+    GHashTable *retval;
+    struct rop_gadget *rg;
+    int rc;
+
+    retval = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+				   /* Just free gadgets, not keys */
+				   NULL,rop_gadget_free);
+
+    rg = (struct rop_gadget *)calloc(1,sizeof(*rg));
+    while ((rc = fscanf(stream,"%"PRIxADDR",%"PRIxADDR" %as",
+			&rg->start,&rg->end,&rg->meta)) != EOF) {
+	if (rc < 2) {
+	    verror("Bad line in rop_gadget stream!\n");
+	    rg->meta = NULL;
+	}
+	else {
+	    g_hash_table_insert(retval,(gpointer)rg->start,rg);
+	    rg = (struct rop_gadget *)calloc(1,sizeof(*rg));
+	}
+    }
+    free(rg);
+
+    return retval;
+}
+
 GHashTable *rop_load_gadget_file(char *filename) {
     GHashTable *retval;
     FILE *f;
