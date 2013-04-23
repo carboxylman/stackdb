@@ -1028,18 +1028,21 @@ int __safe_write(int fd,char *buf,int count) {
 static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
     struct monitor *monitor = (struct monitor *)state;
     int logfd = -1;
-    int (*callback)(int fd,char *buf,int len);
-    char buf[64];
+    monitor_stdio_callback_t callback;
+    void *callback_state;
+    char buf[256];
     int rc = 0;
     int retval;
 
     if (fd == monitor->p.stdout_m_fd) {
 	logfd = monitor->p.stdout_log_fd;
 	callback = monitor->p.stdout_callback;
+	callback_state = monitor->p.stdout_callback_state;
     }
     else if (fd == monitor->p.stderr_m_fd) {
 	logfd = monitor->p.stderr_log_fd;
 	callback = monitor->p.stderr_callback;
+	callback_state = monitor->p.stderr_callback_state;
     }
     else {
 	vwarn("unknown stdout/err fd %d!\n",fd);
@@ -1047,14 +1050,16 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
     }
 
     while (rc < (int)sizeof(buf)) {
-        retval = read(fd,buf + rc,sizeof(buf) - rc);
+        retval = read(fd,buf + rc,sizeof(buf) - 1 - rc);
 	if (retval < 0) {
 	    if (errno == EINTR)
 		continue;
 	    else if (errno == EAGAIN || errno == EWOULDBLOCK) {
 		/* Stop here; fire callback if we need */
-		if (callback && rc) 
-		    callback(fd,buf,rc);
+		if (callback && rc) {
+		    buf[rc] = '\0';
+		    callback(fd,buf,rc,callback_state);
+		}
 		if (logfd > -1) 
 		    __safe_write(logfd,buf,rc);
 		return EVLOOP_HRET_SUCCESS;
@@ -1065,8 +1070,10 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
 	    }
 	}
 	else if (retval == 0) {
-	    if (rc && callback)
-		callback(fd,buf,rc);
+	    if (rc && callback) {
+		buf[rc] = '\0';
+		callback(fd,buf,rc,callback_state);
+	    }
 	    if (logfd > -1) 
 		__safe_write(logfd,buf,rc);
 	    return EVLOOP_HRET_SUCCESS;
@@ -1074,8 +1081,10 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
 	else {
 	    rc += retval;
 	    if (retval == sizeof(buf)) {
-		if (callback)
-		    callback(fd,buf,rc);
+		if (callback) {
+		    buf[rc] = '\0';
+		    callback(fd,buf,rc,callback_state);
+		}
 		if (logfd > -1) 
 		    __safe_write(logfd,buf,rc);
 		rc = 0;
@@ -1088,13 +1097,15 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
 
 static int __monitor_stdin_evh(int fd,int fdtype,void *state) {
     struct monitor *monitor = (struct monitor *)state;
-    int (*callback)(int fd,char *buf,int len) = NULL;
-    char buf[64];
+    monitor_stdio_callback_t callback;
+    void *callback_state;
+    char buf[256];
     int rc = 0;
     int retval;
 
     if (fd == STDIN_FILENO) {
 	callback = monitor->stdin_callback;
+	callback_state = monitor->stdin_callback_state;
     }
     else {
 	vwarn("unknown stdio fd %d!\n",fd);
@@ -1108,8 +1119,10 @@ static int __monitor_stdin_evh(int fd,int fdtype,void *state) {
 		continue;
 	    else if (errno == EAGAIN || errno == EWOULDBLOCK) {
 		/* Stop here; fire callback if we need */
-		if (callback && rc) 
-		    callback(fd,buf,rc);
+		if (callback && rc) {
+		    buf[rc] = '\0';
+		    callback(fd,buf,rc,callback_state);
+		}
 		return EVLOOP_HRET_SUCCESS;
 	    }
 	    else {
@@ -1118,15 +1131,19 @@ static int __monitor_stdin_evh(int fd,int fdtype,void *state) {
 	    }
 	}
 	else if (retval == 0) {
-	    if (rc && callback) 
-		callback(fd,buf,rc);
+	    if (rc && callback) {
+		buf[rc] = '\0';
+		callback(fd,buf,rc,callback_state);
+	    }
 	    return EVLOOP_HRET_REMOVEALLTYPES;
 	}
 	else {
 	    rc += retval;
 	    if (retval == sizeof(buf)) {
-		if (callback)
-		    callback(fd,buf,rc);
+		if (callback) {
+		    buf[rc] = '\0';
+		    callback(fd,buf,rc,callback_state);
+		}
 		rc = 0;
 	    }
 	}
@@ -1171,6 +1188,9 @@ static int __monitor_eh(int errortype,int fd,int fdtype,
 
     return EVLOOP_HRET_BADERROR;
 }
+
+int __monitor_add_primary_obj(struct monitor *monitor,
+			      int objid,int objtype,void *obj,void *objstate);
 
 struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
 				      int objid,int objtype,void *obj,void *objstate,
@@ -1291,7 +1311,7 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
     g_hash_table_insert(tid_monitor_tab,
 			(gpointer)(uintptr_t)monitor->mtid,monitor);
 
-    if (obj && monitor_add_primary_obj(monitor,objid,objtype,obj,objstate)) {
+    if (obj && __monitor_add_primary_obj(monitor,objid,objtype,obj,objstate)) {
 	pthread_mutex_unlock(&monitor->mutex);
 	pthread_mutex_unlock(&monitor_mutex);
 	goto errout;
@@ -1380,7 +1400,8 @@ int monitor_can_attach_bidi(void) {
 struct monitor *monitor_attach(monitor_type_t type,monitor_flags_t flags,
 			       int objtype,void *obj,void *objstate,
 			       evloop_handler_t custom_child_recv_evh,
-			       int (*stdin_callback)(int fd,char *buf,int len)) {
+			       monitor_stdio_callback_t stdin_callback,
+			       void *callback_state) {
     struct monitor *monitor;
 
     if (type != MONITOR_TYPE_PROCESS) {
@@ -1609,7 +1630,8 @@ int monitor_setup_stdin(struct monitor *monitor,
 
 int monitor_setup_stdout(struct monitor *monitor,
 			 int maxbufsiz,char *stdout_logfile,
-			 int (*stdout_callback)(int fd,char *buf,int len)) {
+			 monitor_stdio_callback_t stdout_callback,
+			 void *callback_state) {
     int pipefds[2] = { -1,-1 };
 
     if (monitor->type != MONITOR_TYPE_PROCESS) {
@@ -1650,13 +1672,15 @@ int monitor_setup_stdout(struct monitor *monitor,
     */
 
     monitor->p.stdout_callback = stdout_callback;
+    monitor->p.stdout_callback_state = callback_state;
 
     return 0;
 }
 
 int monitor_setup_stderr(struct monitor *monitor,
 			 int maxbufsiz,char *stderr_logfile,
-			 int (*stderr_callback)(int fd,char *buf,int len)) {
+			 monitor_stdio_callback_t stderr_callback,
+			 void *callback_state) {
     int pipefds[2] = { -1,-1 };
 
     if (monitor->type != MONITOR_TYPE_PROCESS) {
@@ -1697,6 +1721,7 @@ int monitor_setup_stderr(struct monitor *monitor,
     */
 
     monitor->p.stderr_callback = stderr_callback;
+    monitor->p.stderr_callback_state = callback_state;
 
     return 0;
 }

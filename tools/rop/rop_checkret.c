@@ -47,6 +47,11 @@
 
 struct target *t = NULL;
 
+static int result_counter = 0;
+static int final_result_counter = 0;
+
+static int oldformat = 0;
+
 GHashTable *probes = NULL;
 struct array_list *rop_violation_list = NULL;
 
@@ -98,8 +103,20 @@ result_t rop_handler(struct probe *probe,void *data,struct probe *trigger) {
     fflush(stderr);
 
     if (rop_status->isviolation) {
-	fprintf(stdout,"%s: CFI violation %s",probe_name(probe),
-		rop_status->isfpviolation ? "(false pos?)" : "");
+	if (!oldformat) {
+	    fprintf(stdout,
+		    "RESULT(i:%d): rop (2) CFIViolation \"CFI violation!\""
+		    " (retaddr=0x%"PRIxADDR",violations=%d,total=%d,"
+		    "fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d,"
+		    "isfpviolation=%d)\n",
+		    ++result_counter,rop_status->current_ret_addr,
+		    rop_status->violations,rop_status->total,
+		    rop_status->fpviolations,rop_status->jmpfpviolations,
+		    rop_status->jccfpviolations,rop_status->isfpviolation);
+	}
+	else
+	    fprintf(stdout,"%s: CFI violation %s",probe_name(probe),
+		    rop_status->isfpviolation ? "(false pos?)" : "");
 
 	buflen = 64 + strlen(rop_data->gadget->meta);
 	buf = malloc(buflen);
@@ -109,12 +126,25 @@ result_t rop_handler(struct probe *probe,void *data,struct probe *trigger) {
 		 rop_data->gadget->meta);
 	array_list_append(rop_violation_list,buf);
     }
-    else
-	fprintf(stdout,"%s: CFI clean",probe_name(probe));
-    fprintf(stdout," (retaddr=0x%"PRIxADDR",violations=%d,total=%d,fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d)\n",
-	    rop_status->current_ret_addr,rop_status->violations,
-	    rop_status->total,rop_status->fpviolations,
-	    rop_status->jmpfpviolations,rop_status->jccfpviolations);
+    else {
+	if (!oldformat) {
+	    fprintf(stdout,"RESULT(i:%d): rop (0) CFIClean \"CFI clean\""
+		    " (retaddr=0x%"PRIxADDR",violations=%d,total=%d,"
+		    "fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d,"
+		    "isfpviolation=%d)\n",
+		    ++result_counter,rop_status->current_ret_addr,
+		    rop_status->violations,rop_status->total,
+		    rop_status->fpviolations,rop_status->jmpfpviolations,
+		    rop_status->jccfpviolations,rop_status->isfpviolation);
+	}
+	else {
+	    fprintf(stdout,"%s: CFI clean",probe_name(probe));
+	    fprintf(stdout," (retaddr=0x%"PRIxADDR",violations=%d,total=%d,fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d)\n",
+		    rop_status->current_ret_addr,rop_status->violations,
+		    rop_status->total,rop_status->fpviolations,
+		    rop_status->jmpfpviolations,rop_status->jccfpviolations);
+	}
+    }
 
     fflush(stdout);
 
@@ -299,15 +329,27 @@ int main(int argc,char **argv) {
 
  out:
     if (array_list_len(rop_violation_list)) {
-	fprintf(stdout,"Gadgets used:\n");
-	for (i = 0; i < array_list_len(rop_violation_list); ++i) {
-	    char *rv = (char *)array_list_item(rop_violation_list,i);
-	    fprintf(stdout,"%s",rv);
-	    free(rv);
+	if (!oldformat) 
+	    fprintf(stdout,"RESULT(f:%d): rop (1) Violations \"ROP violations detected.\"\n",
+		    ++final_result_counter);
+	else {
+	    fprintf(stdout,"ROP violations detected!\n");
+
+	    fprintf(stdout,"Gadgets used:\n");
+
+	    for (i = 0; i < array_list_len(rop_violation_list); ++i) {
+		char *rv = (char *)array_list_item(rop_violation_list,i);
+		fprintf(stdout,"%s",rv);
+		free(rv);
+	    }
 	}
     }
     else {
-	fprintf(stdout,"No ROP violations detected!\n");
+	if (!oldformat) 
+	    fprintf(stdout,"RESULT(f:%d): rop (0) NoViolations \"No ROP violations detected.\"\n",
+		    ++final_result_counter);
+	else
+	    fprintf(stdout,"No ROP violations detected!\n");
     }
 
     if (tstat == TSTATUS_DONE)  {

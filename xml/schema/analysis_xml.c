@@ -338,6 +338,7 @@ a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 	}
 	else
 	    rs->name = "";
+	rs->type = in->type;
 	rs->time = in->time;
 	rs->tsc = in->tsc;
 	rs->counter = in->counter;

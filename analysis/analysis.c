@@ -29,6 +29,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <strings.h>
+#include <stdlib.h>
+#include <sys/time.h>
 
 #include <glib.h>
 
@@ -50,6 +52,8 @@ static char *DEFAULT_SCHEMA_PATH[] = {
     NULL,
 };
 
+char *ANALYSIS_TMPDIR = "/var/tmp/vmi/analysis";
+
 static char **ANALYSIS_PATH = (char **)DEFAULT_ANALYSIS_PATH;
 static char **ANNOTATION_PATH = (char **)DEFAULT_ANNOTATION_PATH;
 static char **SCHEMA_PATH = (char **)DEFAULT_SCHEMA_PATH;
@@ -61,10 +65,15 @@ static int next_analysis_id = 1;
 static int init_done = 0;
 
 void analysis_init(void) {
+    struct timeval tv;
+
     if (init_done)
 	return;
 
     target_init();
+
+    gettimeofday(&tv,NULL);
+    srand(tv.tv_usec);
 
     init_done = 1;
 }
@@ -155,7 +164,7 @@ char *analysis_find(const char *name) {
 	}
 	while ((dirp = readdir(dir))) {
 	    if (strcmp(dirp->d_name,name) == 0) {
-		len = strlen(dirp->d_name) + strlen(dirname + 2);
+		len = strlen(dirp->d_name) + strlen(dirname) + 2;
 		retval = malloc(sizeof(char) * len);
 		snprintf(retval,len,"%s/%s",dirname,dirp->d_name);
 		break;
@@ -378,6 +387,134 @@ int analysis_is_evloop_attached(struct analysis *analysis,
     return target_is_evloop_attached(analysis->target,evloop);
 }
 
+struct analysis *analysis_create(int id,struct analysis_spec *spec,
+				 struct analysis_desc *desc,
+				 int target_id,struct target *target) {
+    struct analysis *retval = calloc(1,sizeof(*retval));
+
+    retval->id = id;
+    retval->spec = spec;
+    retval->desc = desc;
+    retval->target_id = target_id;
+    retval->target = target;
+
+    return retval;
+}
+
+struct analysis_datum *analysis_create_simple_datum(struct analysis *analysis,
+						    int id,char *name,int type,
+						    char *value,char *msg,
+						    int no_copy) {
+    struct analysis_datum *datum;
+
+    datum = calloc(1,sizeof(*datum));
+
+    datum->is_simple = 1;
+    datum->values = array_list_create(1);
+
+    datum->id = id;
+    if (no_copy)
+	datum->name = name;
+    else if (name)
+	datum->name = strdup(name);
+    datum->type = type;
+    if (no_copy)
+	datum->value = value;
+    else if (value)
+	datum->value = strdup(value);
+    if (no_copy)
+	datum->msg = msg;
+    else if (msg)
+	datum->msg = strdup(msg);
+
+    return datum;
+}
+
+int analysis_datum_add_simple_value(struct analysis_datum *datum,
+				    char *name,char *value,
+				    int no_copy) {
+    struct analysis_datum_simple_value *v = 
+	calloc(1,sizeof(*v));
+
+    if (name && !no_copy)
+	v->name = strdup(name);
+    else
+	v->name = name;
+    if (value && !no_copy)
+	v->value = strdup(value);
+    else
+	v->value = value;
+
+    array_list_append(datum->values,v);
+
+    return 0;
+}
+
+int analysis_datum_add_typed_value(struct analysis_datum *datum,
+				   char *name,void *value,int len,int datatype_id,
+				   int no_copy) {
+    struct analysis_datum_typed_value *v = 
+	calloc(1,sizeof(*v));
+
+    v->datatype_id = datatype_id;
+    if (name && !no_copy)
+	v->name = strdup(name);
+    else
+	v->name = name;
+    if (value && !no_copy) {
+	v->value = malloc(len);
+	memcpy(v->value,value,len);
+    }
+    else
+	v->value = value;
+
+    array_list_append(datum->values,v);
+
+    return 0;
+}
+
+void analysis_datum_free(struct analysis_datum *datum) {
+    int i;
+    struct analysis_datum_simple_value *sv;
+    struct analysis_datum_typed_value *tv;
+
+    if (datum->name)
+	free(datum->name);
+    if (datum->value)
+	free(datum->value);
+    if (datum->msg)
+	free(datum->msg);
+
+    if (datum->is_simple && datum->values)  {
+	array_list_foreach(datum->values,i,sv) 
+	    analysis_datum_simple_value_free(sv);
+	array_list_free(datum->values);
+    }
+    else if (datum->is_typed && datum->values)  {
+	array_list_foreach(datum->values,i,tv) 
+	    analysis_datum_typed_value_free(tv);
+	array_list_free(datum->values);
+    }
+
+    free(datum);
+}
+
+void analysis_datum_simple_value_free(struct analysis_datum_simple_value *v) {
+    if (v->name)
+	free(v->name);
+    if (v->value)
+	free(v->value);
+    free(v);
+}
+
+void analysis_datum_typed_value_free(struct analysis_datum_typed_value *v) {
+    if (v->name)
+	free(v->name);
+    if (v->value)
+	free(v->value);
+    free(v);
+}
+
 analysis_status_t analysis_close(struct analysis *analysis) {
     if ((analysis->status == ASTATUS_RUNNING 
 	 || analysis->status == ASTATUS_PAUSED)
@@ -387,19 +524,57 @@ analysis_status_t analysis_close(struct analysis *analysis) {
     return analysis->status;
 }
 
+void analysis_cleanup(struct analysis *analysis) {
+    DIR *dir;
+    int dfd;
+    struct dirent *dirp;
+
+    if (!analysis->tmpdir)
+	return;
+
+    dir = opendir(analysis->tmpdir);
+    if (dir) {
+	dfd = dirfd(dir);
+	while ((dirp = readdir(dir))) {
+	    if (!strcmp(dirp->d_name,".") || !strcmp(dirp->d_name,"..")) 
+		continue;
+
+	    if (unlinkat(dfd,dirp->d_name,0)) 
+		vwarn("could not remove %s in dir %s: %s\n",
+		      dirp->d_name,analysis->tmpdir,strerror(errno));
+	}
+    }
+    closedir(dir);
+    if (rmdir(analysis->tmpdir))
+	vwarn("could not remove dir %s: %s\n",
+	      analysis->tmpdir,strerror(errno));
+}
+
 void analysis_free(struct analysis *analysis) {
     analysis_close(analysis);
 
     if (analysis->target) {
-	target_close(analysis->target);
+	target_free(analysis->target);
 	analysis->target = NULL;
     }
 
     /* XXX: deep free! */
-    array_list_free(analysis->results);
+    if (analysis->results)
+	array_list_free(analysis->results);
+
+    /*
+     * Cleanup @analysis->tmpdir if it exists; just remove everything.
+     */
+    if (analysis->tmpdir) {
+	analysis_cleanup(analysis);
+	free(analysis->tmpdir);
+    }
+
+    analysis_spec_free(analysis->spec);
+    analysis_desc_free(analysis->desc);
 }
 
-void analysis_free_desc(struct analysis_desc *desc) {
+void analysis_desc_free(struct analysis_desc *desc) {
     GHashTableIter iter;
     gpointer value;
 

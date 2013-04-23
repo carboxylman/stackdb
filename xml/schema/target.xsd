@@ -102,7 +102,7 @@
       </xs:sequence>
     </xs:complexType>
   </xs:element>
-  <xs:element name="argument" type="xs:string"/>
+  <xs:element name="argument" type="xs:hexBinary"/>
   <xs:element name="environment">
     <xs:complexType>
       <xs:sequence>

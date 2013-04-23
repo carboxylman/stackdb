@@ -350,9 +350,18 @@ x_TargetPtraceSpecT_to_t_linux_userproc_spec(struct soap *soap,
 	ospec->program = strdup(spec->program);
     if (spec->arguments && spec->arguments->__sizeargument) {
 	ospec->argv = calloc(spec->arguments->__sizeargument + 1,sizeof(char *));
-	for (i = 0; i < spec->arguments->__sizeargument; ++i) 
-	    ospec->argv[i] = strdup(spec->arguments->argument[i]);
-	ospec->argv[i] = NULL;
+	for (i = 0; i < spec->arguments->__sizeargument; ++i) {
+	    if (spec->arguments->argument[i].__size >= 0) {
+		ospec->argv[i] = 
+		    malloc(spec->arguments->argument[i].__size + 1);
+		memcpy(ospec->argv[i],spec->arguments->argument[i].__ptr,
+		       spec->arguments->argument[i].__size);
+		/* NULL-terminate it; args are supposed to be strings. */
+		ospec->argv[i][spec->arguments->argument[i].__size] = '\0';
+	    }
+	    else
+		ospec->argv[i] = NULL;
+	}
     }
     if (spec->environment && spec->environment->__sizeenvvar) {
 	ospec->envp = calloc(spec->environment->__sizeenvvar + 1,sizeof(char *));
@@ -393,8 +402,10 @@ t_linux_userproc_spec_to_x_TargetPtraceSpecT(struct soap *soap,
 	ospec->arguments->__sizeargument = len;
 	ospec->arguments->argument = \
 	    SOAP_CALLOC(soap,len,sizeof(*(ospec->arguments->argument)));
-	for (i = 0; i < len; ++i) 
-	    SOAP_STRCPY(soap,ospec->arguments->argument[i],spec->argv[i]);
+	for (i = 0; i < len; ++i) {
+	    ospec->arguments->argument[i].__size = strlen(spec->argv[i]);
+	    SOAP_STRCPY(soap,ospec->arguments->argument[i].__ptr,spec->argv[i]);
+	}
     }
     if (spec->envp) {
 	len = 0;

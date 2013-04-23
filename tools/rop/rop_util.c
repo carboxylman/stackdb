@@ -43,9 +43,20 @@ GHashTable *rop_load_gadget_stream(FILE *stream) {
 				   NULL,rop_gadget_free);
 
     rg = (struct rop_gadget *)calloc(1,sizeof(*rg));
+    errno = 0;
     while ((rc = fscanf(stream,"%"PRIxADDR",%"PRIxADDR" %as",
 			&rg->start,&rg->end,&rg->meta)) != EOF) {
-	if (rc < 2) {
+	if (rc <= 0 && errno) {
+	    if (rc != EAGAIN && rc != EINTR) {
+		verror("fscanf: %s\n",strerror(errno));
+		return retval;
+	    }
+	}
+	else if (rc == 0) {
+	    verror("fscanf: no items matched! (%s)\n",strerror(errno));
+	    return retval;
+	}
+	else if (rc < 2) {
 	    verror("Bad line in rop_gadget stream!\n");
 	    rg->meta = NULL;
 	}
@@ -53,6 +64,7 @@ GHashTable *rop_load_gadget_stream(FILE *stream) {
 	    g_hash_table_insert(retval,(gpointer)rg->start,rg);
 	    rg = (struct rop_gadget *)calloc(1,sizeof(*rg));
 	}
+	errno = 0;
     }
     free(rg);
 

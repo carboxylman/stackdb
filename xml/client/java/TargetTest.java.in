@@ -36,7 +36,7 @@ public class TargetTest extends TargetStub {
 		tpst.setPid(0);
 		TargetPtraceSpecTSequence_type0 tpstst0 = new TargetPtraceSpecTSequence_type0();
 		Arguments_type0 at0 = new Arguments_type0();
-		String [] args = {}; //{"-l", "-a"};
+		org.apache.axis2.databinding.types.HexBinary[] args = {}; //{"-l", "-a"};
 		at0.setArgument(args);
 		tpstst0.setArguments(at0);
 		Environment_type0 en0 = new Environment_type0();

@@ -129,7 +129,7 @@ Analysis = element analysis { AnalysisT }
 SimpleResultT = 
     attribute id { xsd:int },
     element name { text },
-    element type { xsd:int }?,
+    element type { xsd:int },
     element time { xsd:unsignedLong },
     element tsc { xsd:unsignedLong },
     element counter { xsd:unsignedLong },

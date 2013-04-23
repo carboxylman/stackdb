@@ -513,7 +513,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	    tmpbuf = malloc(tmpbuflen);
 	    snprintf(tmpbuf,tmpbuflen,"/tmp/%d.stdout.log",s->target_id);
 
-	    monitor_setup_stdout(monitor,-1,tmpbuf,NULL);
+	    monitor_setup_stdout(monitor,-1,tmpbuf,NULL,NULL);
 	}
 
 	if (spec->logStderr && *spec->logStderr == xsd__boolean__true_) {
@@ -523,7 +523,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	    tmpbuf = malloc(tmpbuflen);
 	    snprintf(tmpbuf,tmpbuflen,"/tmp/%d.stderr.log",s->target_id);
 
-	    monitor_setup_stderr(monitor,-1,tmpbuf,NULL);
+	    monitor_setup_stderr(monitor,-1,tmpbuf,NULL,NULL);
 	}
 
 	monitor_add_primary_obj(monitor,s->target_id,MONITOR_OBJTYPE_TARGET,NULL,NULL);
@@ -1080,7 +1080,7 @@ static int _action_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
     }
     else {
 	vdebug(5,LA_XML,LF_RPC,
-	       "notified authoritative listener %s (which returned %d)\n",
+	       "notified non-authoritative listener %s (which returned %d)\n",
 	       l->url,retval);
     }
 
@@ -1195,7 +1195,7 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
     }
     else {
 	vdebug(5,LA_XML,LF_RPC,
-	       "notified nonauthoritative listener %s (which returned %d)\n",
+	       "notified non-authoritative listener %s (which returned %d)\n",
 	       l->url,retval);
     }
 
@@ -1225,7 +1225,7 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
 	}
     }
     else if (lpd->per.actionSpecs.__sizeactionSpec > 0) {
-	vwarn("nonauthoritative listener %s tried to send %d actions!\n",
+	vwarn("non-authoritative listener %s tried to send %d actions!\n",
 	      l->url,lpd->per.actionSpecs.__sizeactionSpec);
     }
 

@@ -13,7 +13,7 @@
 extern struct monitor_objtype_ops monitor_dummy_ops;
 extern int monitor_dummy_objtype;
 
-int dummy_stdin_callback(int fd,char *buf,int len) {
+int dummy_stdin_callback(int fd,char *buf,int len,void *state) {
     //vdebug(0,LA_USER,1,"read '%s' (%d) on fd %d\n",buf,len,fd);
 
     if (fd == STDIN_FILENO) {
@@ -48,7 +48,7 @@ int main(int argc,char **argv) {
 
     m = monitor_attach(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
 		       MONITOR_DUMMY_OBJTYPE,&dummy,NULL,NULL,
-		       dummy_stdin_callback);
+		       dummy_stdin_callback,&dummy);
     if (!m) {
 	verror("could not attach to monitor (in pid %d)\n",getpid());
 	exit(-3);

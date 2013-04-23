@@ -96,6 +96,7 @@ libanalysis.so:	libanalysis.so.$(LIBVERSION)
 
 install: def-install install-subdirs
 	$(SUDO) $(CP) -fd libanalysis.so $(DESTDIR)$(INSTALL_LIBDIR)/
+	mkdir -p /var/tmp/vmi/analysis
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)

@@ -96,7 +96,7 @@ int main(int argc,char **argv) {
 
     monitor = monitor_attach(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
 			     MONITOR_OBJTYPE_TARGET,NULL,NULL,NULL,
-			     NULL); //stdin_callback);
+			     NULL,NULL); //stdin_callback);
     if (!monitor) {
 	verror("could not attach to monitor (in pid %d)\n",getpid());
 	exit(-3);

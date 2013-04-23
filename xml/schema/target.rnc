@@ -52,7 +52,7 @@ TargetPtraceSpecT =
     (element pid { xsd:int }
     | (element program { text },
        element arguments {
-           element argument { xsd:string }*
+           element argument { xsd:hexBinary }*
        },
        element environment {
            element envvar { xsd:string }*

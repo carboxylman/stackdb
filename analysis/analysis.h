@@ -52,6 +52,8 @@ typedef enum {
     ASTATUS_DONE           = 4,
 } analysis_status_t;
 
+extern char *ANALYSIS_TMPDIR;
+
 void analysis_init(void);
 void analysis_fini(void);
 
@@ -127,9 +129,20 @@ int analysis_detach_evloop(struct analysis *analysis);
 int analysis_is_evloop_attached(struct analysis *analysis,
 				struct evloop *evloop);
 
+/*
+ * Creates an analysis instance.  Right now, this is just a data structure.
+ */
+struct analysis *analysis_create(int id,struct analysis_spec *spec,
+				 struct analysis_desc *desc,
+				 int target_id,struct target *target);
+
 analysis_status_t analysis_close(struct analysis *analysis);
 
 void analysis_free(struct analysis *analysis);
+
+void analysis_datum_free(struct analysis_datum *datum);
+void analysis_datum_simple_value_free(struct analysis_datum_simple_value *v);
+void analysis_datum_typed_value_free(struct analysis_datum_typed_value *v);
 
 /*
  * Frees a struct analysis_desc.
@@ -144,25 +157,27 @@ void analysis_spec_free(struct analysis_spec *spec);
 /*
  * Frees a struct analysis_param.
  */
-void analysis_spec_param(struct analysis_param *param);
+void analysis_param_free(struct analysis_param *param);
 
 /*
  * Creates a simple analysis_datum.
  */
 struct analysis_datum *analysis_create_simple_datum(struct analysis *analysis,
-						    char *name,
-						    int type,int subtype,
-						    char *value,char *msg);
+						    int id,char *name,int type,
+						    char *value,char *msg,
+						    int no_copy);
 /*
  * Adds a simple, untyped string/string key/value pair to a datum.
  */
 int analysis_datum_add_simple_value(struct analysis_datum *datum,
-				    char *name,char *value);
+				    char *name,char *value,
+				    int no_copy);
 /*
  * Adds a typed key/value pair to a datum.  Will change...
  */
 int analysis_datum_add_typed_value(struct analysis_datum *datum,
-				   char *name,void *value,int datatype_id);
+				   char *name,void *value,int len,int datatype_id,
+				   int no_copy);
 /*
  * Reports to stdout as text; the analysis controller as XML; or both.
  */
@@ -188,7 +203,10 @@ struct analysis *analysis_create_from_memory(char *name,char *driver_bytes,
 struct analysis {
     int id;
 
+    char *tmpdir;
+
     struct analysis_spec *spec;
+    struct analysis_desc *desc;
 
     analysis_status_t status;
 
@@ -248,6 +266,8 @@ struct analysis_desc {
 struct analysis_spec {
     char *name;
 
+    int analysis_id;
+
     char *stdin_bytes;
     int stdin_bytes_len;
 
@@ -259,31 +279,6 @@ struct analysis_spec {
 
     /* array_list of struct analysis_name_value */
     struct array_list *in_params;
-
-    /*
-     * I/O behavior is a bit complicated.  We want a couple things -- to
-     * support the analysis library by itself (i.e., user code calling
-     * directly into the library); and to support the XML SOAP server
-     * calling into the library on behalf of the user.  In both cases,
-     * we might want I/O logged to a file; we might want I/O callbacks
-     * to the user (we might want it buffered too, but forget that for
-     * now).
-     *
-     * So, if the caller wants stdio interaction, the backend must open
-     * the I/O devices and expose them to the caller as an FD -- the
-     * caller specifies this by providing evloop_handler_ts for the
-     * stdio descriptor types it cares about.  If the user does not
-     * specify one of these, but instead specifies a filename, the
-     * backend must auto-write/-read the output/input to/from the named
-     * file.
-     *
-     * (If handlers are provided, the caller *must* call
-     * analysis_attach_evloop() sometime -- otherwise if the analysis does
-     * i/o on those descriptors, they will probably fill up and block it!)
-     */
-    evloop_handler_t in_evh;
-    evloop_handler_t out_evh;
-    evloop_handler_t err_evh;
 
     char *infile;
     char *outfile;

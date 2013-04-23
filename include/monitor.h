@@ -75,6 +75,8 @@ typedef enum {
 #define MONITOR_OBJID_ENVVAR         "MONITOR_OBJID"
 #define MONITOR_OBJTYPE_ENVVAR       "MONITOR_OBJTYPE"
 
+typedef int (*monitor_stdio_callback_t)(int fd,char *buf,int len,void *state);
+
 /*
  * Object type-specific functions.
  */
@@ -273,16 +275,19 @@ struct monitor {
 	int stdout_c_fd; /* close in parent after fork */
 	/* struct cbuf *stdout_buf; */
 	int stdout_log_fd;
-	int (*stdout_callback)(int fd,char *buf,int len);
+	monitor_stdio_callback_t stdout_callback;
+	void *stdout_callback_state;
 
 	int stderr_m_fd; /* open with F_CLOEXEC */
 	int stderr_c_fd; /* close in parent after fork */
 	/* struct cbuf *stderr_buf; */
 	int stderr_log_fd;
-	int (*stderr_callback)(int fd,char *buf,int len);
+	monitor_stdio_callback_t stderr_callback;
+	void *stderr_callback_state;
     } p;
 
-    int (*stdin_callback)(int fd,char *buf,int len);
+    monitor_stdio_callback_t stdin_callback;
+    void *stdin_callback_state;
 };
 
 #define SEQNO_MAX SHRT_MAX
@@ -456,21 +461,29 @@ int monitor_can_attach_bidi(void);
 struct monitor *monitor_attach(monitor_type_t type,monitor_flags_t flags,
 			       int objtype,void *obj,void *objstate,
 			       evloop_handler_t custom_child_recv_evh,
-			       int (*stdin_callback)(int fd,char *buf,int len));
+			       monitor_stdio_callback_t stdin_callback,
+			       void *callback_state);
 
 /*
  * Call if the target spec or analysis spec dictates I/O behavior -- and
  * if we're forking the child.  Can't do this for threaded children,
  * obviously.
+ *
+ * NB: the *_callback functions will always return a NULL-terminated
+ * buffer, and their length argument will *not* include that NULL char.
+ * This helps callbacks that want to use their buf argument as a string,
+ * even if it's not really one.
  */
 int monitor_setup_stdin(struct monitor *monitor,
 			char *stdin_buf,int stdin_buflen);
 int monitor_setup_stdout(struct monitor *monitor,
 			 int maxbufsiz,char *stdout_logfile,
-			 int (*stdout_callback)(int fd,char *buf,int len));
+			 monitor_stdio_callback_t stdout_callback,
+			 void *callback_state);
 int monitor_setup_stderr(struct monitor *monitor,
 			 int maxbufsiz,char *stderr_logfile,
-			 int (*stderr_callback)(int fd,char *buf,int len));
+			 monitor_stdio_callback_t stderr_callback,
+			 void *callback_state);
 
 /*
  * Should be called from the control thread to fork() and exec() a new

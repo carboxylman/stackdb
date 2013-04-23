@@ -33,7 +33,7 @@
 
 extern struct monitor_objtype_ops monitor_dummy_ops;
 
-int dummy_stdio_callback(int fd,char *buf,int len) {
+int dummy_stdio_callback(int fd,char *buf,int len,void *state) {
     //vdebug(0,LA_USER,1,"read '%s' (%d) on fd %d\n",buf,len,fd);
     return 0;
 }
@@ -58,8 +58,8 @@ void *new_thread(void *obj) {
 		       d->id,MONITOR_DUMMY_OBJTYPE,d,NULL);
 
     monitor_setup_stdin(m,d->stdin_buf,d->stdin_bufsiz);
-    monitor_setup_stdout(m,4096,d->stdout_logfile,dummy_stdio_callback);
-    monitor_setup_stderr(m,4096,d->stderr_logfile,dummy_stdio_callback);
+    monitor_setup_stdout(m,4096,d->stdout_logfile,dummy_stdio_callback,d);
+    monitor_setup_stderr(m,4096,d->stderr_logfile,dummy_stdio_callback,d);
 
     pid = monitor_spawn(m,childprog,NULL,NULL,"/tmp");
     if (pid < 0) {

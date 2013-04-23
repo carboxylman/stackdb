@@ -198,7 +198,7 @@
   <xs:complexType name="SimpleResultT">
     <xs:sequence>
       <xs:element ref="vmi1:name"/>
-      <xs:element minOccurs="0" ref="vmi1:type"/>
+      <xs:element ref="vmi1:type"/>
       <xs:element ref="vmi1:time"/>
       <xs:element ref="vmi1:tsc"/>
       <xs:element ref="vmi1:counter"/>
