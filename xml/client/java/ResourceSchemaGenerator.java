@@ -326,12 +326,12 @@ public class ResourceSchemaGenerator extends DefaultSchemaGenerator {
             if (parameters.length > 0) 
                 parameterNames = methodTable.getParameterNames(methodName);
             Annotation[][] parameterAnnotation = jMethod.getParameterAnnotations();
-            Type[] genericParameterTypes = jMethod.getGenericParameterTypes();
+            java.lang.reflect.Type[] genericParameterTypes = jMethod.getGenericParameterTypes();
             for (int j = 0; j < parameters.length; j++) {
                 Class<?> methodParameter = parameters[j];
                 String parameterName = 
 		    getParameterName(parameterAnnotation,j,parameterNames);
-		Type genericParameterType = genericParameterTypes[j];
+		java.lang.reflect.Type genericParameterType = genericParameterTypes[j];
 
 		/* XXX: does the element for the param, and its type, exist? */
             }
