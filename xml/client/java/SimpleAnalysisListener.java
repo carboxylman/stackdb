@@ -147,16 +147,23 @@ public class SimpleAnalysisListener extends AnalysisListenerSkeleton
 
 	    System.out.printf("SimpleResult(id=%d,name=%s,type=%d,time=%d,tsc=%d,counter=%d)\n",
 			      r.getId(),r.getName(),r.getType(),
-			      r.getTime(),r.getTsc(),r.getCounter());
-	    System.out.printf("  value=%s msg=%s\n",r.getResultValue(),
+			      r.getTime().longValue(),r.getTsc().longValue(),
+			      r.getCounter().longValue());
+	    System.out.printf("    value=%s msg=%s\n",r.getResultValue(),
 			      r.getMsg());
 	    if (r.getOutputValues() != null) {
 		vmi1.OutputValues_type0 ov = r.getOutputValues();
 		if (ov != null) {
 		    vmi1.NameValueT[] ova = ov.getNameValue();
-		    for (int i = 0; i < ova.length; ++i) {
-			System.out.printf("%s=%s ",ova[i].getNvName(),
-					  ova[i].getNvValue());
+		    if (ova != null) {
+			if (ova.length > 0)
+			    System.out.printf("    ");
+			for (int i = 0; i < ova.length; ++i) {
+			    System.out.printf("%s=%s ",ova[i].getNvName(),
+					      ova[i].getNvValue());
+			}
+			if (ova.length > 0)
+			    System.out.println();
 		    }
 		}
 	    }
