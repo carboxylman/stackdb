@@ -257,10 +257,13 @@
   </xs:complexType>
   <xs:element name="customResult" type="vmi1:CustomResultT"/>
   <xs:complexType name="AnalysisResultT">
-    <xs:choice>
-      <xs:element ref="vmi1:simpleResult"/>
-      <xs:element ref="vmi1:customResult"/>
-    </xs:choice>
+    <xs:sequence>
+      <xs:element ref="vmi1:analysisId"/>
+      <xs:choice>
+        <xs:element ref="vmi1:simpleResult"/>
+        <xs:element ref="vmi1:customResult"/>
+      </xs:choice>
+    </xs:sequence>
   </xs:complexType>
   <xs:element name="analysisResult" type="vmi1:AnalysisResultT"/>
   <xs:complexType name="AnalysisResultsT">

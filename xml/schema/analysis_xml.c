@@ -37,7 +37,7 @@ struct vmi1__AnalysisT *a_analysis_to_x_AnalysisT(struct soap *soap,
     rout->analysisStatus = 
 	a_analysis_status_t_to_x_AnalysisStatusT(soap,in->status,reftab,NULL);
     rout->analysisResults = 
-	a_analysis_datum_list_to_x_AnalysisResultsT(soap,in->results,reftab,NULL);
+	a_analysis_datum_list_to_x_AnalysisResultsT(soap,in->results,in,reftab,NULL);
 
     return rout;
 }
@@ -312,6 +312,7 @@ a_analysis_spec_to_x_AnalysisSpecT(struct soap *soap,
 struct vmi1__AnalysisResultT *
 a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 				      struct analysis_datum *in,
+				      struct analysis *analysis,
 				      GHashTable *reftab,
 				      struct vmi1__AnalysisResultT *out) {
     struct vmi1__AnalysisResultT *rout;
@@ -332,6 +333,7 @@ a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 	rs = rout->union_AnalysisResultT.simpleResult = 
 	    SOAP_CALLOC(soap,1,sizeof(*rout->union_AnalysisResultT.simpleResult));
 
+	rout->analysisId = analysis->id;
 	rs->id = in->id;
 	if (in->name) {
 	    SOAP_STRCPY(soap,rs->name,in->name);
@@ -417,6 +419,7 @@ a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 struct vmi1__AnalysisResultsT *
 a_analysis_datum_list_to_x_AnalysisResultsT(struct soap *soap,
 					    struct array_list *in,
+					    struct analysis *analysis,
 					    GHashTable *reftab,
 					    struct vmi1__AnalysisResultsT *out) {
     struct vmi1__AnalysisResultsT *rout;
@@ -433,7 +436,7 @@ a_analysis_datum_list_to_x_AnalysisResultsT(struct soap *soap,
 	rout->analysisResult = SOAP_CALLOC(soap,rout->__sizeanalysisResult,
 					   sizeof(*rout->analysisResult));
 	array_list_foreach(in,i,d) {
-	    a_analysis_datum_to_x_AnalysisResultT(soap,d,reftab,
+	    a_analysis_datum_to_x_AnalysisResultT(soap,d,analysis,reftab,
 						  &rout->analysisResult[i]);
 	}
     }

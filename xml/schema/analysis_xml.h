@@ -56,11 +56,13 @@ a_analysis_spec_to_x_AnalysisSpecT(struct soap *soap,
 struct vmi1__AnalysisResultT *
 a_analysis_datum_to_x_AnalysisResultT(struct soap *soap,
 				      struct analysis_datum *in,
+				      struct analysis *analysis,
 				      GHashTable *reftab,
 				      struct vmi1__AnalysisResultT *out);
 struct vmi1__AnalysisResultsT *
 a_analysis_datum_list_to_x_AnalysisResultsT(struct soap *soap,
 					    struct array_list *in,
+					    struct analysis *analysis,
 					    GHashTable *reftab,
 					    struct vmi1__AnalysisResultsT *out);
 

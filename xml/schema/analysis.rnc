@@ -168,7 +168,8 @@ CustomResultT =
     AnyExtension
 CustomResult = element customResult { CustomResultT }
 
-AnalysisResultT = #SimpleResult | CustomResult
+AnalysisResultT = #SimpleResult | CustomResult,
+    element analysisId { AnalysisIdT },
     (element simpleResult { SimpleResultT }
      | element customResult { CustomResultT })
 AnalysisResult = element analysisResult { AnalysisResultT }

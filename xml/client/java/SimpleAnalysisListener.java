@@ -141,12 +141,13 @@ public class SimpleAnalysisListener extends AnalysisListenerSkeleton
 	(vmi1.AnalysisResultNotification analysisResultNotification) {
 
 	AnalysisResultT e = analysisResultNotification.getResult();
+	AnalysisResultTChoice_type0 rc = e.getAnalysisResultTChoice_type0();
 
-	if (e.isSimpleResultSpecified()) {
-	    vmi1.SimpleResultT r = e.getSimpleResult();
+	if (rc.isSimpleResultSpecified()) {
+	    vmi1.SimpleResultT r = rc.getSimpleResult();
 
-	    System.out.printf("SimpleResult(id=%d,name=%s,type=%d,time=%d,tsc=%d,counter=%d)\n",
-			      r.getId(),r.getName(),r.getType(),
+	    System.out.printf("SimpleResult(aid=%d,id=%d,name=%s,type=%d,time=%d,tsc=%d,counter=%d)\n",
+			      e.getAnalysisId().getAnalysisIdT(),r.getId(),r.getName(),r.getType(),
 			      r.getTime().longValue(),r.getTsc().longValue(),
 			      r.getCounter().longValue());
 	    System.out.printf("    value=%s msg=%s\n",r.getResultValue(),
@@ -168,8 +169,8 @@ public class SimpleAnalysisListener extends AnalysisListenerSkeleton
 		}
 	    }
 	}
-	else if (e.isCustomResultSpecified()) {
-	    vmi1.CustomResultT r = e.getCustomResult();
+	else if (rc.isCustomResultSpecified()) {
+	    vmi1.CustomResultT r = rc.getCustomResult();
 
 
 	}
@@ -188,8 +189,8 @@ public class SimpleAnalysisListener extends AnalysisListenerSkeleton
 
 	AnalysisEventT e = analysisEventNotification.getAnalysisEvent();
 
-	System.out.printf("AnalysisEvent(id=%d,type=%s)\n",
-			  e.getAnalysisId(),e.getAnalysisEventType().toString());
+	System.out.printf("AnalysisEvent(aid=%d,type=%s)\n",
+			  e.getAnalysisId().getAnalysisIdT(),e.getAnalysisEventType().toString());
 
 	vmi1.AnalysisEventNotificationResponse retval = 
 	    new vmi1.AnalysisEventNotificationResponse();

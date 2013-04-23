@@ -207,7 +207,7 @@ int analysis_rpc_notify_listeners_result(struct analysis *analysis,
     soap_init(&encoder);
     d.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
 
-    a_analysis_datum_to_x_AnalysisResultT(&encoder,datum,d.reftab,&d.result);
+    a_analysis_datum_to_x_AnalysisResultT(&encoder,datum,analysis,d.reftab,&d.result);
 
     generic_rpc_listener_notify_all(RPC_SVCTYPE_ANALYSIS,analysis->id,
 				    _analysis_rpc_notify_listener_result,&d);
