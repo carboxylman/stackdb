@@ -863,7 +863,7 @@ int generic_rpc_listener_notify_all(rpc_svctype_t svctype,int objid,
 	return -1;
     }
 
-    owner = _generic_rpc_listener_lookup_owner(objid,svctype);
+    owner = _generic_rpc_listener_lookup_owner(svctype,objid);
 
     ll = (struct array_list *) \
 	g_hash_table_lookup(si->objid_listenerlist_tab,
