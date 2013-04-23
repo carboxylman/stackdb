@@ -595,15 +595,31 @@ struct target *xen_vm_attach(struct target_spec *spec,
      * implies 3.2. We should just get these values from the debuginfo.
      */
     if (vmi_get_page_mode(xstate->vmi_instance) == VMI_PM_IA32E) {
-	tmp = "{"
-	    /* from gdb on a Linux kernel */
-	    "ostype=\"Linux\"; "
-	    "sysmap=\"/boot/System.map-3.2.16emulab1\"; "
-	    "linux_tasks=0x238; "
-	    "linux_mm=0x270; "
-	    "linux_pid=0x2ac; "
-	    "linux_pgd=0x0;"
-	    "}";
+	/*
+	 * XXX another awesome hack. See if we have 3.8.4,
+	 * if not assume 3.2.16.
+	 */
+	if (access("/boot/System.map-3.8.4", F_OK) == 0) {
+	    tmp = "{"
+		/* from gdb on a Linux kernel */
+		"ostype=\"Linux\"; "
+		"sysmap=\"/boot/System.map-3.8.4\"; "
+		"linux_tasks=0x260; "
+		"linux_mm=0x298; "
+		"linux_pid=0x2d4; "
+		"linux_pgd=0x0;"
+		"}";
+	} else {
+	    tmp = "{"
+		/* from gdb on a Linux kernel */
+		"ostype=\"Linux\"; "
+		"sysmap=\"/boot/System.map-3.2.16emulab1\"; "
+		"linux_tasks=0x238; "
+		"linux_mm=0x270; "
+		"linux_pid=0x2ac; "
+		"linux_pgd=0x0;"
+		"}";
+	}
     } else {
 	/* from vmprobes/vmprobes.c */
 	tmp = "{"
