@@ -184,7 +184,7 @@ ActionSpecsT = ActionSpec*
 ActionSpecs = element actionSpecs { ActionSpecsT }
 
 ActionT = 
-    element aid { ActionIdT },
+    element actionId { ActionIdT },
     ActionSpec
 Action = element action { ActionT }
 

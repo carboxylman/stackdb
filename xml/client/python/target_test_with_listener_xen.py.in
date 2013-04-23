@@ -101,7 +101,7 @@ actionEventArgs = dict({
     'actionEvent' : {
         'handlerMsg' : str,
         'actionDetail' : { 'stepCount' : int },
-        'action' : { 'aid' : int,
+        'action' : { 'actionId' : int,
                      'actionSpec' : { 'tid' : int,'pid' : int,'type' : str,
                                       'whence' : str,
                                       'return' : { 'code' : int },
@@ -118,7 +118,7 @@ def actionEvent(actionEvent):
     "Handle a ActionEvent"
     events.append(actionEvent)
     print "ActionEvent: %s\n" % (str(actionEvent),)
-    aid = actionEvent['action']['aid']
+    aid = actionEvent['action']['actionId']
     pid = actionEvent['action']['actionSpec']['pid']
     atype = actionEvent['action']['actionSpec']['type']
     msg = actionEvent['handlerMsg']

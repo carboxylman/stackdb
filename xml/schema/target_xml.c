@@ -1222,7 +1222,7 @@ t_action_to_x_ActionT(struct soap *soap,
     else
 	oaction = SOAP_CALLOC(soap,1,sizeof(*oaction));
 
-    oaction->aid = action->id;
+    oaction->actionId = action->id;
     oaction->actionSpec = SOAP_CALLOC(soap,1,sizeof(*oaction->actionSpec));
     oaction->actionSpec->tid = action->target->id;
     oaction->actionSpec->pid = action->probe->id;

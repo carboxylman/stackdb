@@ -392,11 +392,11 @@ Action stuff (including single step stuff).
   <xs:element name="actionSpecs" type="vmi1:ActionSpecsT"/>
   <xs:complexType name="ActionT">
     <xs:sequence>
-      <xs:element ref="vmi1:aid"/>
+      <xs:element ref="vmi1:actionId"/>
       <xs:element ref="vmi1:actionSpec"/>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="aid" type="vmi1:ActionIdT"/>
+  <xs:element name="actionId" type="vmi1:ActionIdT"/>
   <xs:element name="action" type="vmi1:ActionT"/>
   <xs:complexType name="ActionEventT">
     <xs:sequence>
