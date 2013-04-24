@@ -116,6 +116,7 @@
   <xs:element name="analysisSpec" type="vmi1:AnalysisSpecT"/>
   <xs:complexType name="AnalysisDescT">
     <xs:sequence>
+      <xs:element ref="vmi1:name"/>
       <xs:element minOccurs="0" ref="vmi1:description"/>
       <xs:element minOccurs="0" ref="vmi1:author"/>
       <xs:element minOccurs="0" ref="vmi1:authorContact"/>
@@ -130,7 +131,6 @@
       <xs:element ref="vmi1:inParams"/>
       <xs:element ref="vmi1:outParams"/>
     </xs:sequence>
-    <xs:attribute name="name" use="required"/>
   </xs:complexType>
   <xs:element name="author" type="xs:string"/>
   <xs:element name="authorContact" type="xs:string"/>

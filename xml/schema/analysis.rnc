@@ -66,7 +66,7 @@ AnalysisSpecT =
 AnalysisSpec = element analysisSpec { AnalysisSpecT }
 
 AnalysisDescT = 
-    attribute name { text },
+    element name { text },
 
     element description { text }?,
     element author { text }?,

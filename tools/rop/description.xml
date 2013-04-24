@@ -1,11 +1,12 @@
 
-<vmi1:analysisDesc name="RopComeFrom"
+<vmi1:analysisDesc
     xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
     xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
     xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
 
+  <vmi1:name>RopComeFrom</vmi1:name>
   <vmi1:description>Given an input file of gadgets to monitor, reports if any are hit as part of a ROP attack.</vmi1:description>
   <vmi1:author>David Johnson</vmi1:author>
   <vmi1:authorContact>johnsond@flux.utah.edu</vmi1:authorContact>
