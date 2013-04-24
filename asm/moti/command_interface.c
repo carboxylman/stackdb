@@ -59,6 +59,7 @@ struct ack_rec {
 };
 
 struct target *t = NULL;
+struct probe *p;
 
 struct psa_argp_state {
 	int argc;
@@ -101,7 +102,6 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 		goto fail;
 	}
 	rec_base_ptr = v_addr(v);
-	fprintf(stdout," rec_base_ptr = %u", rec_base_ptr);
 	value_free(v);
 
 	/* read the producer index value */
@@ -148,7 +148,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 
 }
 
-int pskill_func(struct TOKEN *token) {
+int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id) {
 
 	ADDR cmd_ptr;
 	struct bsymbol *ack_struct_type=NULL, *bs=NULL;
@@ -200,7 +200,7 @@ int pskill_func(struct TOKEN *token) {
 		fprintf(stderr,"Failed to load the value of memeber submodule_id \n");
 		goto failure;
 	}
-	result = value_update_u32(v, 0);
+	result = value_update_u32(v, submodule_id);
 	if (result == -1) {
 		fprintf(stderr, "Error: failed to load value of submodule_id\n");
 		goto failure;;
@@ -213,13 +213,12 @@ int pskill_func(struct TOKEN *token) {
 	value_free(v);
 
 	/* set the command id */
-	fprintf(stdout,"load member cmd_id.\n");
 	v = target_load_value_member(t, value, "cmd_id", NULL, LOAD_FLAG_NONE);
 	if(!v){
 		fprintf(stderr,"Failed to load the value of memeber cmd_id \n");
 		goto failure;
 	}
-	result = value_update_u32(v, 0);
+	result = value_update_u32(v, cmd_id);
 	if (result == -1) {
 		fprintf(stderr, "Error: failed to update value of cmd_id\n");
 		goto failure;
@@ -303,7 +302,7 @@ int pskill_func(struct TOKEN *token) {
 	bsymbol_release(bs);
 
 	/*unpause the target */
-    if (status = TSTATUS_PAUSED) {
+    if ((status = target_status(t)) == TSTATUS_PAUSED) {
     	fprintf(stderr,"Unpausing the target,\n");
     	if (target_resume(t)) {
     		fprintf(stderr, "Failed to resume target.\n ");
@@ -343,12 +342,17 @@ int pskill_func(struct TOKEN *token) {
 
 }
 
+
+
 result_t _target_probe_posthandler(struct probe *probe, void *handler_data, struct probe *trigger) {
 
 	probe_active = 0;
 	fprintf(stdout,"In probe posthandler\n");
     return RESULT_SUCCESS;
-};
+}
+
+
+
 
 result_t _target_probe_prehandler(struct probe *probe, void *handler_data , struct probe *trigger) {
 
@@ -374,12 +378,18 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 	ack_struct_type = bsymbol_get_symbol( target_lookup_sym(t, "struct ack_rec", NULL,
 			"repair_driver", SYMBOL_TYPE_FLAG_VAR));
 	value = target_load_type(t, ack_struct_type, ack_ptr, LOAD_FLAG_NONE);
+	if(!value){
+			fprintf(stderr,"Failed to load type of struct ack_rec\n");
+			retval = RESULT_ERROR;
+			goto failure1;
+	}
 
 	/* get the submodule id */
 	v = target_load_value_member(t, value, "submodule_id", NULL,
 			LOAD_FLAG_NONE);
 	if(!v){
 			fprintf(stderr,"Failed to load the value of memeber submodule_id\n");
+			retval = RESULT_ERROR;
 			goto failure1;
 	}
 	result.submodule_id = v_u32(v);
@@ -389,6 +399,7 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 	v = target_load_value_member(t, value, "cmd_id", NULL, LOAD_FLAG_NONE);
 	if(!v){
 			fprintf(stderr,"Failed to load the value of memeber cmd_id\n");
+			retval = RESULT_ERROR;
 			goto failure1;
 	}
 	result.cmd_id = v_u32(v);
@@ -399,6 +410,7 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 			LOAD_FLAG_NONE);
 	if(!v){
 			fprintf(stderr,"Failed to load the value of memeber exec_status\n");
+			retval = RESULT_ERROR;
 			goto failure1;
 	}
 	result.exec_status = v_u32(v);
@@ -409,6 +421,7 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 			LOAD_FLAG_NONE);
 	if(!v){
 			fprintf(stderr,"Failed to load the value of memeber argc\n");
+			retval = RESULT_ERROR;
 			goto failure1;
 	}
 	result.argc = v_u32(v);
@@ -419,6 +432,7 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 			LOAD_FLAG_NONE);
 	if(!v){
 			fprintf(stderr,"Failed to load the value of memeber argv\n");
+			retval = RESULT_ERROR;
 			goto failure1;
 	}
 
@@ -469,9 +483,10 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 	v = target_load_value_member(t, value, "cons", NULL, LOAD_FLAG_NONE);
 	if(!v){
 			fprintf(stderr,"Failed to load the value of memeber cons\n");
+			retval = RESULT_ERROR;
 			goto failure1;
 	}
-	res = value_update_i32(v, v_u32(v) + 1);
+	res = value_update_u32(v, v_u32(v) + 1);
 	if (res == -1) {
 		fprintf(stderr, "Error: failed to update cons index\n");
 		retval = RESULT_ERROR;
@@ -499,12 +514,12 @@ result_t _target_probe_prehandler(struct probe *probe, void *handler_data , stru
 	}
 	return retval;
 
+
 }
 
 
 int enable_probe() {
 
-    struct probe *p;
     target_status_t status;
 
     if ((status = target_status(t)) != TSTATUS_PAUSED) {
@@ -514,14 +529,26 @@ int enable_probe() {
     	}
     }
 
-    p = probe_simple(t,TID_GLOBAL,"breakpoint_func",_target_probe_prehandler, _target_probe_posthandler,NULL);
-    if(!p) {
-    	fprintf(stderr,"Failed to setup the probe on breakpoint_func\n");
-    	return 0;
-    }
+   // p = probe_simple(t,TID_GLOBAL,"load_submodules",_target_probe_prehandler, _target_probe_posthandler,NULL);
+//    p = probe_create(t,TID_GLOBAL,NULL,"breakpoint_func",_target_probe_prehandler,
+//    		_target_probe_posthandler,NULL,0,1);
+//    if (!p)
+//    	return NULL;
+//
+//    p = probe_register_symbol_name(p,"load_submodules",DWDEBUG_DEF_DELIM,
+//				      PROBEPOINT_SW,PROBEPOINT_WAUTO,
+//			      PROBEPOINT_LAUTO);
+//
+//    if(!p) {
+//    	fprintf(stderr,"Failed to setup the probe on breakpoint_func\n");
+//    	return 0;
+//    }
+//    else {
+//    	fprintf(stdout,"Breakpoint set succesfully\n");
+//    }
 
 
-    if (status == TSTATUS_PAUSED) {
+    if ((status = target_status(t)) == TSTATUS_PAUSED) {
     	if (target_resume(t)) {
     		fprintf(stderr, "Failed to resume target.\n ");
     		return 0;
@@ -583,6 +610,7 @@ int main(int argc, char **argv) {
 	target_status_t tstat;
 	struct TOKEN token;
 	target_status_t status;
+	int cmd_id, submodule_id;
 
 	memset(&opts, 0, sizeof(opts));
 
@@ -636,6 +664,7 @@ int main(int argc, char **argv) {
 		/*check if the probe is active, in that case we don't want to accepts user inputs */
 		if(probe_active) {
 			continue;
+
 		}
 
 		fprintf(stdout, "\n- ");
@@ -663,9 +692,19 @@ int main(int argc, char **argv) {
 		}
 		else if(!(strcmp(token.cmd, "pskill")))
 		{
-			result = pskill_func(&token);
+			cmd_id = 0;
+			submodule_id = 0;
+			result = load_command_func(&token,cmd_id,submodule_id);
 			if (!result) {
-				fprintf(stderr, "ERROR : pskill_func function call failed \n");
+				fprintf(stderr, "ERROR : load_command_func function call failed \n");
+			}
+		}
+		else if(!(strcmp(token.cmd,"pssetuid"))){
+			cmd_id = 0;
+			submodule_id = 1;
+			result = load_command_func(&token,cmd_id,submodule_id);
+			if (!result) {
+				fprintf(stderr, "ERROR : load_command_func function call failed \n");
 			}
 		}
 		/* else if ()
@@ -680,12 +719,32 @@ int main(int argc, char **argv) {
 	/* Clean exit code */
 	exit: fflush(stderr);
 	fflush(stdout);
-    if ((status = target_status(t)) == TSTATUS_PAUSED) {
-    	if (target_resume(t)) {
-    		fprintf(stderr, "Failed to resume target.\n ");
-    		return 0;
-    	}
-    }
+
+	/* Free the probe that was created */
+	if(p){
+
+		if ((status = target_status(t)) != TSTATUS_PAUSED) {
+			if (target_pause(t)) {
+				fprintf(stderr,"Failed to pause the target.\n");
+				return 0;
+			}
+		}
+
+		if (probe_free(p,1)) {
+			fprintf(stderr,"Failed to free the probe\n");
+			return 0;
+		}
+		fprintf(stdout," Successfully freed the probe\n");
+	}
+
+
+	if ((status = target_status(t)) == TSTATUS_PAUSED) {
+		if (target_resume(t)) {
+			fprintf(stderr, "Failed to resume target.\n ");
+			return 0;
+		}
+	}
+
 	tstat = target_close(t);
 	target_free(t);
 	if (tstat == TSTATUS_DONE) {

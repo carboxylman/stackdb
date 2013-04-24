@@ -35,9 +35,18 @@ struct submod_table submodule;
 struct cmd_ring_channel req_ring_channel, res_ring_channel;
 static unsigned int cmd_buf_size = 4; /* buffer size (in pages) */
 
-int breakpoint_func() {
+
+
+
+noinline int breakpoint_func()
+{
+	/*increment the producer index */
+	unsigned int res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
+	res_prod += 1;
+	cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
 
     printk(KERN_INFO " This is a dummy function  where we insert a VMI breakpoint.\n");
+
     return 0;
 }
 
@@ -69,9 +78,10 @@ static int load_submodules(void *__unused) {
 
         /* based on the submodule id switch to appropriate block */
         switch(cmd->submodule_id) {
+        	/* Case 0 refers to the psaction submodule */
         	case 0 :
         		if(submodule.mod_table[cmd->submodule_id] == NULL)
-        			printk(KERN_INFO "Loading the the psaction sub module");
+        			printk(KERN_INFO "Loading the the psaction sub module\n");
         		if((result = request_module("psaction_module")) < 0) {
         			printk(KERN_INFO "psaction_module not available\n");
         			return -ENODEV;
@@ -85,13 +95,13 @@ static int load_submodules(void *__unused) {
         			printk(KERN_INFO "Function call failed.\n");
         		}
 
-        		/* Increment the prod index for the res_ring_channel */
+        		/* Increment the prod index for the res_ring_channel
         		res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
         		res_prod += 1;
         		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
-
+				*/
         		/* Now we want to call a dummy function where break point can be introduced
-        		 * so the vmi can read the result from teh result ring buffer and increment the
+        		 * so the vmi can read the result from the result ring buffer and increment the
         		 * consumer index.
         		 */
         		result = breakpoint_func();
@@ -99,8 +109,34 @@ static int load_submodules(void *__unused) {
         			printk(KERN_INFO "breakpoint_func call failed.\n");
         			return result;
         		}
+        		printk(KERN_INFO "Waiting for the next command.\n");
 
-            break;
+        		break;
+        	/* Case 1 refers to the ps_deescalate submodule */
+        	case 1:
+        		if(submodule.mod_table[cmd->submodule_id] == NULL) {
+        			printk(KERN_INFO "Loading the the ps_deescalate sub module\n");
+        		}
+        		if((result = request_module("ps_deescalate_module")) < 0) {
+        			printk(KERN_INFO "ps_deescalate_module not available\n");
+        		    return -ENODEV;
+        		}
+
+        		/* get the address in the res_ring_channel where the acknowledgment should be inserted */
+        		ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(&res_ring_channel, cmd_ring_channel_get_prod(&res_ring_channel));
+        		/* call the appropriate function in the submodule based on command id*/
+        		result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+        		if(result) {
+        			printk(KERN_INFO "Function call failed.\n");
+        		}
+
+        		result = breakpoint_func();
+        		if(result) {
+        			printk(KERN_INFO "breakpoint_func call failed.\n");
+        			return result;
+        		}
+        		printk(KERN_INFO "Waiting for the next command.\n");
+        		break;
 
         default :
             printk(KERN_INFO "Invalid submodule Id specified, hence no module loaded\n");
@@ -133,7 +169,7 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
         ret = -ENOMEM;
         goto cleanup;
     }
-    printk(KERN_INFO "Allocated pages for the buffer in the ring channel %ld\n", ring_channel->recs);
+    printk(KERN_INFO "Allocated pages for the buffer in the ring channel\n");
 
 
     /* init structure members */
@@ -262,6 +298,12 @@ static void __exit cleanup_driver(void) {
         kfree(submodule.mod_table);
         submodule.mod_table = NULL;
     }
+    /* Stop the kthread */
+    result = kthread_stop(driver_thread);
+    if (result == -EINTR)
+        printk(KERN_INFO "Kthread_stop failed\n");
+    else
+        printk(KERN_INFO " load_submodules returned %d\n",result);
 }
 
 
