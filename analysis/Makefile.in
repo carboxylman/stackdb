@@ -50,7 +50,7 @@ OBJECTS := analysis.lo
 # We have to be careful here!  We can only depend libs in xml/schema; more 
 # importantly, our libanalysis should not contain ANY of those libs.
 #
-LIBRARIES := libanalysis.a libanalysis.so.$(LIBVERSION)
+LIBRARIES := libanalysis.la
 
 PROGRAMS := #analyze
 
@@ -64,13 +64,14 @@ STATICLIBS := $(OBJDIR)/dwdebug/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
 ifeq ("@ENABLE_SOAP@","1")
 	CFLAGS += -I$(TOP_SRCDIR)/xml/schema -I$(OBJDIR)/xml/schema
 	HEADERS += $(TOP_SRCDIR)/xml/schema/analysis_xml.h
-	STATICLIBS += $(OBJDIR)/xml/schema/libdebuginfo_xml.a \
-		      $(OBJDIR)/xml/schema/libtarget_xml.a \
-		      $(OBJDIR)/xml/schema/libanalysis_xml.a
+	STATICLIBS += $(OBJDIR)/xml/schema/libdebuginfo_xml.la \
+		      $(OBJDIR)/xml/schema/libtarget_xml.la \
+		      $(OBJDIR)/xml/schema/libanalysis_xml.la
 endif
 
-INST_INC = 
+INST_INC = analysis.h
 INST_LIB = $(LIBRARIES)
+INST_BIN = 
 
 # Get libtool to shut up when compiling.
 RM=rm -f
@@ -82,27 +83,18 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-libanalysis.a: $(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libanalysis.a $(OBJECTS)
-libanalysis.lo: $(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
-libanalysis.so.$(LIBVERSION): libanalysis.lo
-	$(CP) -f libanalysis.lo $@
-libanalysis.so:	libanalysis.so.$(LIBVERSION)
-	$(LN_S) -f $< $@
+libanalysis.la: $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) \
+		-rpath $(INSTALL_LIBDIR) ${LDFLAGS}
 
 #analyze: $(HEADERS) libanalysis.a analyze.lo $(STATICLIBS)
 #	$(CC) -o $@ $(CFLAGS) $@.o libtarget.a $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-	$(SUDO) $(CP) -fd libanalysis.so $(DESTDIR)$(INSTALL_LIBDIR)/
-	mkdir -p /var/tmp/vmi/analysis
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
-	@$(LIBTOOL) --mode=clean rm -f $(LIBRARIES)
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
-	$(RM) -rf $(PROGRAMS) $(LIBRARIES) lib* .libs
 
 distclean: distclean-subdirs
 

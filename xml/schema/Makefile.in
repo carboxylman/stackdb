@@ -79,42 +79,21 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h 
 	   $(TOP_SRCDIR)/analysis/analysis.h $(SRCDIR)/analysis_xml.h \
 	   $(SRCDIR)/../util.h
 
-#
-# We build three static libraries (and include all the deps for each -- so you
-# should only need to link against one depending on which API you need access
-# to -- since they all stack (analysis requires target requires debuginfo
-# requires common stuff)).
-#
-# We build four dynamic libraries -- the common stuff, debuginfo, target, and
-# analysis.  This should be what we need.
-#
 OBJECTS-COMMON-LIB := common_xml_moduleC.lo common_xml.lo xsdcC.lo
 #envC.lo
-OBJECTS-COMMON-SHLIB := $(OBJECTS-COMMON-LIB)
-
-OBJECTS-DEBUGINFO-LIB := $(OBJECTS-COMMON-LIB) \
-			 debuginfo_xml.lo debuginfo_xml_moduleC.lo
-OBJECTS-DEBUGINFO-SHLIB := debuginfo_xml.lo debuginfo_xml_moduleC.lo
-
-OBJECTS-TARGET-LIB := $(OBJECTS-COMMON-LIB) \
-		      debuginfo_xml.lo debuginfo_xml_moduleC.lo \
-		      target_xml.lo target_xml_moduleC.lo
-OBJECTS-TARGET-SHLIB := target_xml.lo target_xml_moduleC.lo
-
-OBJECTS-ANALYSIS-LIB := $(OBJECTS-COMMON-LIB) \
-			debuginfo_xml.lo debuginfo_xml_moduleC.lo  \
-			target_xml.lo target_xml_moduleC.lo \
-			analysis_xml.lo analysis_xml_moduleC.lo
-OBJECTS-ANALYSIS-SHLIB := analysis_xml.lo analysis_xml_moduleC.lo
+OBJECTS-DEBUGINFO-LIB := debuginfo_xml.lo debuginfo_xml_moduleC.lo
+OBJECTS-TARGET-LIB := target_xml.lo target_xml_moduleC.lo
+OBJECTS-ANALYSIS-LIB := analysis_xml.lo analysis_xml_moduleC.lo
 
 OBJECTS := $(OBJECTS-COMMON-LIB) $(OBJECTS-DEBUGINFO-LIB) $(OBJECTS-TARGET-LIB) \
 	   $(OBJECTS-ANALYSIS-LIB)
 
-LIBRARIES := libdebuginfo_xml.a libdebuginfo_xml.so.$(LIBVERSION) \
-	     libtarget_xml.a libtarget_xml.so.$(LIBVERSION) \
-	     libanalysis_xml.a libanalysis_xml.so.$(LIBVERSION)
+LIBRARIES := libcommon_xml.la libdebuginfo_xml.la libtarget_xml.la \
+	     libanalysis_xml.la
 
 PROGRAMS := 
+
+INST_LIB := $(LIBRARIES)
 
 # Get libtool to shut up when compiling.
 RM=rm -f
@@ -183,65 +162,49 @@ common_xml.lo: $(SRCDIR)/common_xml.c $(SRCDIR)/common_xml.h common_xml.gsm.h
 %.nsmap.lo: %.wsdl
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $(@:.lo=).c 
 
-libdebuginfo_xml.a: $(HEADERS) $(OBJECTS-DEBUGINFO-LIB)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-DEBUGINFO-LIB)
-libdebuginfo_xml.lo: $(HEADERS) $(OBJECTS-DEBUGINFO-SHLIB)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-DEBUGINFO-SHLIB)
-libdebuginfo_xml.so.$(LIBVERSION): libdebuginfo_xml.lo
-	$(CP) -f libdebuginfo_xml.lo $@
-libdebuginfo_xml.so: libdebuginfo_xml.so.$(LIBVERSION)
-	$(LN_S) $< $@
+libcommon_xml.la: $(HEADERS) $(OBJECTS-COMMON-LIB)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-COMMON-LIB) \
+		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
 
-libtarget_xml.a: $(HEADERS) $(OBJECTS-TARGET-LIB)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-TARGET-LIB)
-libtarget_xml.lo: $(HEADERS) $(OBJECTS-TARGET-SHLIB)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-TARGET-SHLIB)
-libtarget_xml.so.$(LIBVERSION): libtarget_xml.lo
-	$(CP) -f libtarget_xml.lo $@
-libtarget_xml.so: libtarget_xml.so.$(LIBVERSION)
-	$(LN_S) $< $@
+libdebuginfo_xml.la: $(HEADERS) $(OBJECTS-DEBUGINFO-LIB)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-DEBUGINFO-LIB) \
+		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
 
-libanalysis_xml.a: $(HEADERS) $(OBJECTS-ANALYSIS-LIB)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-ANALYSIS-LIB)
-libanalysis_xml.lo: $(HEADERS) $(OBJECTS-ANALYSIS-SHLIB)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS-ANALYSIS-SHLIB)
-libanalysis_xml.so.$(LIBVERSION): libanalysis_xml.lo
-	$(CP) -f libanalysis_xml.lo $@
-libanalysis_xml.so: libanalysis_xml.so.$(LIBVERSION)
-	$(LN_S) $< $@
+libtarget_xml.la: $(HEADERS) $(OBJECTS-TARGET-LIB)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-TARGET-LIB) \
+		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
 
-install: $(PROGRAMS) $(HELPERS) def-install install-subdirs
+libanalysis_xml.la: $(HEADERS) $(OBJECTS-ANALYSIS-LIB)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS-ANALYSIS-LIB) \
+		-rpath $(INSTALL_LIBDIR) -static ${LDFLAGS}
+
+install: def-install install-subdirs
 	mkdir -p $(INSTALL_SHAREDIR)/schema
 	$(INSTALL) -m 644 $(SRCDIR)/*.xsd $(INSTALL_SHAREDIR)/schema
 
 clean-common:
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-COMMON-LIB)
-	$(RM) common* xsdc*
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-COMMON-LIB) libcommon_xml.la
+	rm -f common*.c common*.h xsdc*.h xsdc*.c
 
 clean-debuginfo:
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-DEBUGINFO-LIB)
-	$(RM) debuginfo*
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-DEBUGINFO-LIB) libdebuginfo_xml.la
+	rm -f debuginfo*.c debuginfo*.h
 
 clean-target:
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-TARGET-LIB)
-	$(RM) target*
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-TARGET-LIB) libtarget_xml.la
+	rm -f target*.c target*.h
 
 clean-analysis:
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-ANALYSIS-LIB)
-	$(RM) analysis*
-
-clean-misc:
-	@$(LIBTOOL) --mode=clean rm -f target_nsmap.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS-ANALYSIS-LIB) libanalysis_xml.la
+	rm -f analysis*.c analysis*.h
 
 clean-libs:
 	@$(LIBTOOL) --mode=clean rm -f $(LIBRARIES)
-	$(RM) $(LIBRARIES) lib* 
-	$(RM) -rf .libs
 
 clean: clean-common clean-debuginfo clean-target clean-analysis clean-libs clean-subdirs
 	$(RM) *.nsmap #*.xsd
 	$(RM) RECV.log TEST.log
-	$(RM) $(PROGRAMS) 
+	rm -rf .libs
 
 distclean: distclean-subdirs
 

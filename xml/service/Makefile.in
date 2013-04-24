@@ -64,11 +64,12 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-STATICLIBS := $(OBJDIR)/analysis/libanalysis.a $(OBJDIR)/target/libtarget.a \
-	$(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a \
-	$(OBJDIR)/xml/schema/libdebuginfo_xml.a \
-	$(OBJDIR)/xml/schema/libtarget_xml.a \
-	$(OBJDIR)/xml/schema/libanalysis_xml.a
+STATICLIBS := $(OBJDIR)/analysis/libanalysis.la $(OBJDIR)/target/libtarget.la \
+	$(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la \
+	$(OBJDIR)/xml/schema/libcommon_xml.la \
+	$(OBJDIR)/xml/schema/libdebuginfo_xml.la \
+	$(OBJDIR)/xml/schema/libtarget_xml.la \
+	$(OBJDIR)/xml/schema/libanalysis_xml.la
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
@@ -153,7 +154,8 @@ PROGRAMS := debuginfo target analysis
 HELPERS  := monitored_target
 
 INST_INC = 
-INST_LIBEXEC = $(PROGRAMS)
+INST_LIBEXEC = $(PROGRAMS) $(HELPERS)
+INST_LIB = $(LIBRARIES)
 
 NS = vmi1
 NAMESPACE = http://anathema.flux.utah.edu/schema/vmi/1
@@ -326,7 +328,7 @@ debuginfo: debuginfo.wsdl \
 	  $(OBJECTS-DEBUGINFO-MODULE) $(OBJECTS-DEBUGINFO-SERVER) \
 	  $(OBJECTS-DEBUGINFO-SERVER-MAIN) \
 	  $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} $(LT_LDFLAGS) -o $@ \
 	   $(OBJECTS-LIB) \
 	   $(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB)  \
 	   $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
@@ -347,7 +349,7 @@ target: target.wsdl \
 	  $(OBJECTS-DEBUGINFO-MODULE) \
 	  $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 	  $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} $(LT_LDFLAGS) -o $@ \
 		$(OBJECTS-LIB) \
 		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
 		$(OBJECTS-TARGETLISTENER-CLIENTLIB) \
@@ -367,7 +369,7 @@ monitored_target: target.nsmap.lo \
 	  $(OBJECTS-DEBUGINFO-MODULE) \
 	  $(OBJECTS-DEBUGINFO-XMLLIB) $(OBJECTS-DEBUGINFO-RPCLIB) \
 	  $(STATICLIBS) monitored_target.lo
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} $(LT_LDFLAGS) -o $@ \
 		$(OBJECTS-LIB) \
 		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
 		$(OBJECTS-TARGETLISTENER-CLIENTLIB) \
@@ -390,7 +392,7 @@ analysis: analysis.wsdl \
 	  $(OBJECTS-TARGETLISTENER-CLIENTLIB) \
 	  $(OBJECTS-TARGET-XMLLIB) $(OBJECTS-TARGET-RPCLIB) \
 	  $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -o $@ \
+	@$(LIBTOOL) --tag=CC --mode=link ${CC} $(LT_LDFLAGS) -o $@ \
 		$(OBJECTS-LIB) \
 		$(OBJECTS-XSD-LIB) $(OBJECTS-COMMON-LIB) $(OBJECTS-ENV-LIB) \
 		$(OBJECTS-ANALYSISLISTENER-CLIENTLIB) \

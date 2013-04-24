@@ -38,7 +38,7 @@ HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/output.h
 
 OBJECTS := ref.lo log.lo clfit.lo waitpipe.lo evloop.lo monitor.lo
-LIBRARIES := libvmilib.a libvmilib.so
+LIBRARIES := libvmilib.la 
 
 INST_INC = 
 INST_LIB = $(LIBRARIES)
@@ -53,24 +53,15 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-libvmilib.a:	$(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libvmilib.a $(OBJECTS) ${LDFLAGS}
-
-vmilib.lo:	$(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS) ${LDFLAGS}
-
-libvmilib.so.$(LIBVERSION): vmilib.lo
-	$(CP) -f vmilib.lo $@
-
-libvmilib.so:	libvmilib.so.$(LIBVERSION)
-	$(LN_S) -f $< $@
+libvmilib.la: $(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) -rpath $(INSTALL_LIBDIR) ${LDFLAGS}
 
 install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
-		log.lo vmilib.lo 
-	$(RM) -f $(LIBRARIES) log.o vmilib.* libvmilib.*
+		log.lo libvmilib.lo 
+	$(RM) -f $(LIBRARIES) log.o libvmilib.* libvmilib.*
 
 distclean: distclean-subdirs
 

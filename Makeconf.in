@@ -67,6 +67,13 @@ CFLAGS	       += @CFLAGS@
 CXXFLAGS       += @CXXFLAGS@
 LDFLAGS		= @LDFLAGS@
 
+#
+# I suppose this kind of interferes with standard libtool practice, but this
+# is what I use to ensure my executables are linked statically against VMI
+# libraries.  If you want them to be dynamically linked, set this var empty.
+#
+LT_LDFLAGS      =  -static-libtool-libs
+
 PYTHON_INCLUDE  = @PYTHON_INCLUDE@
 PYTHON_LIB      = @PYTHON_LIB@
 

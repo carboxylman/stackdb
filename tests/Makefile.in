@@ -57,7 +57,7 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/monitor.h \
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
 
-LIBRARIES := libtest.a
+LIBRARIES := libvmitest.la
 
 OBJECTS := monitor_dummy.lo
 
@@ -66,9 +66,10 @@ TESTS := clrange clmatch evloop_waitpipe monitor_threads monitor_processes \
 TESTOBJECTS := $(addsuffix .lo,$(TESTS))
 
 ASSISTANTS := dummy dummy.threads
+TESTOBJECTS += $(addsuffix .lo,$(ASSISTANTS))
 
-STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a \
-	 $(OBJDIR)/target/libtarget.a
+STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la \
+	 $(OBJDIR)/target/libtarget.la
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
@@ -81,23 +82,45 @@ RM=rm -f
 
 all:	$(LIBRARIES) $(ASSISTANTS) $(TESTOBJECTS) $(TESTS) all-subdirs
 
-dummy: $(SRCDIR)/dummy.c
-	$(CC) -o $@ $(SRCDIR)/$@.c -g 
-
-dummy.threads : $(SRCDIR)/dummy.threads.c
-	$(CC) -o $@ $(SRCDIR)/$@.c -g -lpthread
-
 include $(TOP_SRCDIR)/Makerules
 
 .c.lo:	$(HEADERS) $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-libtest.a:	$(HEADERS) $(OBJECTS)
+libvmitest.la:	$(HEADERS) $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS)
 
-.c:	$(LIBRARIES) $(STATICLIBS)
-	@$(LIBTOOL)  --tag=CC --mode=link ${CC} -o $@ $@.lo \
-		$(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+dummy: $(HEADERS) $(LIBRARIES) dummy.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+dummy.threads: $(HEADERS) $(LIBRARIES) dummy.threads.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS) -pthread
+
+clrange: $(HEADERS) $(LIBRARIES) clrange.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+clmatch: $(HEADERS) $(LIBRARIES) clmatch.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+evloop_waitpipe: $(HEADERS) $(LIBRARIES) evloop_waitpipe.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+monitor_threads: $(HEADERS) $(LIBRARIES) monitor_threads.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+monitor_processes: $(HEADERS) $(LIBRARIES) monitor_processes.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+monitored_dummy_child: $(HEADERS) $(LIBRARIES) monitored_dummy_child.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 test:	$(TESTS)
 	./clrange
@@ -109,8 +132,7 @@ test:	$(TESTS)
 install: def-install install-subdirs
 
 clean: clean-subdirs
-	rm -f $(LIBRARIES) $(ASSISTANTS) $(TESTS)
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(TESTOBJECTS) 
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) $(ASSISTANTS) $(TESTS) $(TESTOBJECTS) 
 
 distclean: distclean-subdirs
 

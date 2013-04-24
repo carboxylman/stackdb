@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012 The University of Utah
+## Copyright (c) 2012, 2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -51,14 +51,14 @@ endif
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/tools/bts/bts.h
 
-OBJECTS := io.lo symbol.lo bts_dump.lo bts_extract.lo bts_trace.lo
+OBJECTS := io.lo symbol.lo 
 
 LIBRARIES := 
 
 PROGRAMS := bts_dump bts_extract bts_trace trace_task
 
-STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
-	$(OBJDIR)/lib/libvmilib.a
+STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
+	$(OBJDIR)/lib/libvmilib.la
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(OBJDIR)/xentt/libxentt.a $(XENACCESS_A)
 endif
@@ -76,29 +76,32 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-bts_extract: $(HEADERS) $(STATICLIBS) bts_extract.lo
-	$(CC) -o $@ $(CFLAGS) $@.o $(STATICLIBS) $(LDFLAGS)
+bts_extract: $(HEADERS) $(OBJECTS) bts_extract.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
-bts_dump: $(HEADERS) $(STATICLIBS) io.lo symbol.lo bts_dump.lo
-	$(CC) -o $@ $(CFLAGS) $@.o io.o symbol.o $(STATICLIBS) $(LDFLAGS)
+bts_dump: $(HEADERS) $(OBJECTS) bts_dump.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
-bts_trace: $(HEADERS) $(STATICLIBS) io.lo symbol.o bts_trace.lo
-	$(CC) -o $@ $(CFLAGS) $@.o io.o symbol.o $(STATICLIBS) $(LDFLAGS)
+bts_trace: $(HEADERS) $(OBJECTS) bts_trace.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
 replay.o: $(TOP_SRCDIR)/xentt/replay.c
 	$(CC) -c -o replay.o $(CFLAGS) $<
 
-trace_task: $(HEADERS) $(STATICLIBS) replay.o symbol.o trace_task.o
-	$(CC) -o $@ $(CFLAGS) $@.o replay.o symbol.o $(STATICLIBS) $(LDFLAGS)
+trace_task: $(HEADERS) $(STATICLIBS) replay.o trace_task.lo
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) replay.o $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
 	$(INSTALL) bts_dump $(DESTDIR)$(INSTALL_BINDIR)/
 	$(INSTALL) bts_extract $(DESTDIR)$(INSTALL_BINDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
-	$(RM) -f $(LIBRARIES) 
-	$(RM) -f $(PROGRAMS)
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) $(addsuffix .lo,$(PROGRAMS))
+	$(RM) -f replay.o
 
 distclean: distclean-subdirs
 

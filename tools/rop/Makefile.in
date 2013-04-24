@@ -62,14 +62,12 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/output.h \
 	$(TOP_SRCDIR)/tools/rop/rop.h
 
-OBJECTS := rop_util.lo rop_checkret.lo
-
-LIBRARIES := 
+OBJECTS := rop_util.lo 
 
 PROGRAMS := rop_checkret
 
-STATICLIBS := $(OBJDIR)/target/libtarget.a $(OBJDIR)/dwdebug/libdwdebug.a \
-	$(OBJDIR)/lib/libvmilib.a
+STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
+	$(OBJDIR)/lib/libvmilib.la
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
@@ -79,6 +77,7 @@ endif
 
 INST_INC = 
 INST_LIB = $(LIBRARIES)
+INST_BIN = $(PROGRAMS)
 
 # Get libtool to shut up when compiling.
 RM=rm -f
@@ -90,16 +89,18 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-rop_checkret: $(HEADERS) $(STATICLIBS) rop_util.lo rop_checkret.lo
-	$(CC) -o $@ $(CFLAGS) $@.o rop_util.o $(STATICLIBS) $(LDFLAGS)
+rop_checkret: $(HEADERS) $(OBJECTS) rop_checkret.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(OBJECTS) $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-	$(INSTALL) rop_checkret $(DESTDIR)$(INSTALL_BINDIR)/
+	mkdir -p $(INSTALL_LIBEXECDIR)/analysis/RopComeFrom
+	$(INSTALL) rop_checkret $(INSTALL_LIBEXECDIR)/analysis/RopComeFrom
+	$(INSTALL) -m 644 $(SRCDIR)/description.xml \
+		$(INSTALL_LIBEXECDIR)/analysis/RopComeFrom
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
-	$(RM) -f $(LIBRARIES) 
-	$(RM) -f $(PROGRAMS)
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) rop_checkret.lo
 
 distclean: distclean-subdirs
 

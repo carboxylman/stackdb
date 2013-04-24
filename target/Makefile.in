@@ -73,11 +73,11 @@ ifeq ($(ENABLE_DISTORM),"1")
 	OBJECTS += disasm.lo
 endif
 
-LIBRARIES := libtarget.a libtarget.so.$(LIBVERSION)
+LIBRARIES := libtarget.la
 
 PROGRAMS := dumptarget
 
-STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.a $(OBJDIR)/lib/libvmilib.a
+STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la
 ifeq ($(ENABLE_XENACCESS),"1")
 	STATICLIBS += $(XENACCESS_A)
 endif
@@ -85,8 +85,9 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	STATICLIBS += $(LIBVMI)/lib/libvmi.a
 endif
 
-INST_INC = 
+INST_INC = target_api.h
 INST_LIB = $(LIBRARIES)
+INST_BIN = dumptarget
 
 # Get libtool to shut up when compiling.
 RM=rm -f
@@ -98,29 +99,20 @@ include $(TOP_SRCDIR)/Makerules
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
 
-libtarget.a:	$(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o libtarget.a $(OBJECTS)
+libtarget.la:	$(OBJECTS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS) \
+		-rpath $(INSTALL_LIBDIR) ${LDFLAGS}
 
-libtarget.lo:	$(HEADERS) $(OBJECTS)
-	@$(LIBTOOL) --tag=CC --mode=link ${CC} -shared -o $@ $(OBJECTS)
-
-libtarget.so.$(LIBVERSION):	libtarget.lo
-	$(CP) -f libtarget.lo $@
-
-libtarget.so:	libtarget.so.$(LIBVERSION)
-	$(LN_S) $< $@
-
-dumptarget: $(HEADERS) libtarget.a dumptarget.lo $(STATICLIBS)
-	$(CC) -o $@ $(CFLAGS) $@.o libtarget.a $(STATICLIBS) $(LDFLAGS)
+dumptarget: $(HEADERS) dumptarget.lo $(LIBRARIES) $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-	$(SUDO) $(CP) -fd libtarget.so $(DESTDIR)$(INSTALL_LIBDIR)/
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) \
-		target.lo dumptarget.lo 
-	$(RM) -f $(LIBRARIES) target.o libtarget.so libtarget.so.$(LIBVERSION)
-	$(RM) -f $(PROGRAMS)
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES)
+	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
+	rm -f dumptarget*
 
 distclean: distclean-subdirs
 
