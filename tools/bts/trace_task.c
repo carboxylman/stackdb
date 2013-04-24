@@ -175,10 +175,8 @@ main(int argc, char **argv)
 
     tspec = target_build_spec(TARGET_TYPE_XEN,TARGET_MODE_REPLAY);
     ((struct xen_vm_spec *)tspec->backend_spec)->domain = name;
-    /* Just set this for completeness for the future. */
-    ((struct xen_vm_spec *)tspec->backend_spec)->xenaccess_debug_level = debug;
 
-    if ((target = xen_vm_instantiate(tspec)) == NULL) {
+    if ((target = target_instantiate(tspec,NULL)) == NULL) {
 	fprintf(stderr, "xen_vm_attach failed for %s\n", name);
 	onexit(1);
     }
@@ -299,7 +297,7 @@ register_probe(struct target *target, GHashTable *probes, char *symname,
 
     /* Create a probe for the given EIP */
     probe = probe_create(target, TID_GLOBAL, NULL, symname,
-			 handler, NULL, NULL, 0);
+			 handler, NULL, NULL, 0, 0);
     if (!probe) {
 	fprintf(stderr,
 		"could not create probe for '%s'\n", symname);
