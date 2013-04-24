@@ -154,7 +154,7 @@ PROGRAMS := debuginfo target analysis
 HELPERS  := monitored_target
 
 INST_INC = 
-INST_LIBEXEC = $(PROGRAMS) $(HELPERS)
+INST_SBIN = $(PROGRAMS) $(HELPERS)
 INST_LIB = $(LIBRARIES)
 
 NS = vmi1
