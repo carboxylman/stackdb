@@ -579,14 +579,18 @@ void linux_userproc_free_spec(struct linux_userproc_spec *lspec) {
 	free(lspec->program);
     if (lspec->argv) {
 	ptr = lspec->argv;
-	while (*ptr)
+	while (*ptr) {
 	    free(*ptr);
+	    ++ptr;
+	}
 	free(lspec->argv);
     }
     if (lspec->envp) {
 	ptr = lspec->envp;
-	while (*ptr)
+	while (*ptr) {
 	    free(*ptr);
+	    ++ptr;
+	}
 	free(lspec->envp);
     }
 
