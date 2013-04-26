@@ -52,7 +52,7 @@ static char *DEFAULT_SCHEMA_PATH[] = {
     NULL,
 };
 
-char *ANALYSIS_TMPDIR = "/var/tmp/vmi/analysis";
+char *ANALYSIS_TMPDIR = "/var/tmp/";
 
 static char **ANALYSIS_PATH = (char **)DEFAULT_ANALYSIS_PATH;
 static char **ANNOTATION_PATH = (char **)DEFAULT_ANNOTATION_PATH;

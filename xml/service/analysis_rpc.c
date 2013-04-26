@@ -551,13 +551,15 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
      * needs (right now just the target's stdin, if any).
      * <ANALYSIS_TMPDIR>/<name>.<id>
      */
-    len = strlen(ANALYSIS_TMPDIR) + sizeof("/") + strlen(as->name) + sizeof(".") \
-	+ 11 + 1 + 11 + 1;
+    len = strlen(ANALYSIS_TMPDIR) + sizeof("/vmi.analysis.") \
+	+ strlen(as->name) + sizeof(".") + 11 + 1 + 11 + 1;
     a->tmpdir = malloc(len * sizeof(char));
-    snprintf(a->tmpdir,len,"%s/%s.%d.%u",ANALYSIS_TMPDIR,as->name,aid,rand());
+    snprintf(a->tmpdir,len,"%s/vmi.analysis.%s.%d.%u",
+	     ANALYSIS_TMPDIR,as->name,aid,rand());
     if (stat(a->tmpdir,&statbuf) == 0) 
 	vwarn("analysis tmpdir %s already exists!\n",a->tmpdir);
 
+    mkdir(ANALYSIS_TMPDIR,S_IRWXU | S_IRGRP | S_IXGRP);
     if (mkdir(a->tmpdir,S_IRWXU | S_IRGRP | S_IXGRP)) {
 	verror("could not create analysis tmpdir %s: %s!\n",
 	       a->tmpdir,strerror(errno));
