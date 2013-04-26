@@ -538,7 +538,7 @@ static struct binfile *elf_binfile_open(char *filename,
     char *symname;
     unsigned char stt;
     struct symbol *symbol;
-    unsigned int i;
+    unsigned int i, ii;
     int j,k;
     Word_t nextstart = -1;
     Word_t tmpstart = -1;
@@ -1106,8 +1106,8 @@ static struct binfile *elf_binfile_open(char *filename,
 	       bf->filename,bfelf->num_symbols);
 
 	/* Load the symtab */
-	for (i = 0; i < bfelf->num_symbols; ++i) {
-	    sym = gelf_getsym(edata,i,&sym_mem);
+	for (ii = 0; ii < bfelf->num_symbols; ++ii) {
+	    sym = gelf_getsym(edata,ii,&sym_mem);
 	    if (sym->st_name >= bf->strtablen) {
 		vwarn("skipping ELF symbol with bad name strtab idx %d\n",
 		      (int)sym->st_name);
@@ -1146,7 +1146,7 @@ static struct binfile *elf_binfile_open(char *filename,
 	    symname = &bf->strtab[sym->st_name];
 #endif
 
-	    symbol = symbol_create(bf->symtab,(SMOFFSET)i,symname,0,
+	    symbol = symbol_create(bf->symtab,(SMOFFSET)ii,symname,0,
 				   (stt == STT_OBJECT || stt == STT_TLS
 				    || stt == STT_COMMON)	\
 				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNCTION,
@@ -1160,8 +1160,8 @@ static struct binfile *elf_binfile_open(char *filename,
 	    symbol->size.bytes = sym->st_size;
 	    symbol->size_is_bytes = 1;
 
-	    if (bfelfinst && bfelfinst->symbol_tab && i < bfelfinst->num_symbols)
-		symbol->base_addr = bfelfinst->symbol_tab[i];
+	    if (bfelfinst && bfelfinst->symbol_tab && ii < bfelfinst->num_symbols)
+		symbol->base_addr = bfelfinst->symbol_tab[ii];
 	    else
 		symbol->base_addr = (ADDR)sym->st_value;
 	    symbol->has_base_addr = 1;
