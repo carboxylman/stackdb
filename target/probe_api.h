@@ -89,6 +89,8 @@ struct probe_ops {
     int (*unregistered)(struct probe *probe);
     /* Called when the user calls probe_summarize(). */
     void *(*summarize)(struct probe *probe);
+    /* Called when the user calls probe_summarize_tid(). */
+    void *(*summarize_tid)(struct probe *probe,tid_t tid);
     /* Called just before this probe is deallocated.  If you allocated
      * any probe-specific data structures, or took a reference to this
      * probe and it is an autofree probe, you must free those
@@ -421,6 +423,12 @@ probepoint_watchsize_t probepoint_closest_watchsize(int size);
  * it has one.  If no such handler exists, it returns NULL.
  */
 void *probe_summarize(struct probe *probe);
+
+/*
+ * Calls the summarize_tid handler probe operation for this probe type, if
+ * it has one.  If no such handler exists, it returns NULL.
+ */
+void *probe_summarize_tid(struct probe *probe,tid_t tid);
 
 /*
  * Disables a running probe. When disabled, both pre- and post-handlers are 

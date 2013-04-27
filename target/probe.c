@@ -1700,6 +1700,13 @@ void *probe_summarize(struct probe *probe) {
     return probe->ops->summarize(probe);
 }
 
+void *probe_summarize_tid(struct probe *probe,tid_t tid) {
+    if (!probe->ops || !probe->ops->summarize_tid) 
+	return NULL;
+
+    return probe->ops->summarize_tid(probe,tid);
+}
+
 int probe_disable_one(struct probe *probe) {
     probe->enabled = 0;
 
