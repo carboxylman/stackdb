@@ -206,7 +206,13 @@ int target_open(struct target *target) {
 	     */
 	    if (region->type == REGION_TYPE_MAIN)
 		region->phys_offset = 0;
-	    else 
+	    /*
+	     * If it got loaded at the base_phys_addr from the binary,
+	     * there is no offset.
+	     */
+	    else if (region->base_load_addr == region->base_phys_addr)
+		region->phys_offset = 0;
+	    else
 		region->phys_offset = region->base_load_addr		\
 		    + (region->base_phys_addr - region->base_virt_addr);
 
