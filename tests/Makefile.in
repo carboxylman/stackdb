@@ -90,13 +90,12 @@ include $(TOP_SRCDIR)/Makerules
 libvmitest.la:	$(HEADERS) $(OBJECTS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ $(OBJECTS)
 
-dummy: $(HEADERS) $(LIBRARIES) dummy.lo $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
-		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+dummy: dummy.lo 
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo
 
-dummy.threads: $(HEADERS) $(LIBRARIES) dummy.threads.lo $(STATICLIBS)
+dummy.threads: dummy.threads.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
-		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS) -pthread
+		-pthread
 
 clrange: $(HEADERS) $(LIBRARIES) clrange.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
