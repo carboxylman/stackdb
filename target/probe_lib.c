@@ -335,15 +335,6 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	}
 
 	funclen = funcrange->r.a.highpc - funcrange->r.a.lowpc;
-
-	/* This should not ever happen. */
-	if (start != funcrange->r.a.lowpc) {
-	    vwarn("full function %s does not have matching base (0x%"PRIxADDR")"
-		  " and lowpc (0x%"PRIxADDR") values!\n",
-		  bsymbol_get_name(bsymbol),start,funcrange->r.a.lowpc);
-	    start = funcrange->r.a.lowpc;
-	    funclen = funcrange->r.a.highpc - start;
-	}
     }
     else
 	funclen = symbol_bytesize(bsymbol->lsymbol->symbol);
