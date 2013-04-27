@@ -566,6 +566,9 @@ static struct binfile *elf_binfile_open(char *filename,
     GElf_Shdr shdr_new_mem;
     int sec_found;
     Word_t sec_end;
+    int has_plt = 0;
+    Word_t plt_start = 0;
+    Word_t plt_size = 0;
 
     /*
      * Set up our data structures.
@@ -988,6 +991,14 @@ static struct binfile *elf_binfile_open(char *filename,
 	    memcpy(bf->strtab,edata->d_buf,edata->d_size);
 	    break;
 	}
+	else if (strcmp(name,".plt") == 0) {
+	    vdebug(2,LA_DEBUG,LF_ELF,
+		   "found %s section (%d); recording\n",
+		   name,shdr->sh_size);
+	    has_plt = 1;
+	    plt_start = shdr->sh_addr;
+	    plt_size = shdr->sh_size;
+	}
 	else if (strcmp(name,".dynamic") == 0) {
 	    vdebug(2,LA_DEBUG,LF_ELF,
 		   "found %s section (%d); ELF file is dynamic\n",
@@ -1071,6 +1082,28 @@ static struct binfile *elf_binfile_open(char *filename,
     if (!bf->strtab) {
 	vwarn("could not find .strtab for ELF file %s; cannot load .symtab!\n",
 	      bf->filename);
+    }
+
+    /*
+     * NB: make a special "function" symbol for the plt.  This is
+     * helpful for stuff that wants to disasm the plt -- but at the
+     * moment we can't disasm for plain code blocks, only for symbols.
+     */
+    if (has_plt) {
+	symbol = symbol_create(bf->symtab,(SMOFFSET)0,strdup(".plt"),0,
+			       SYMBOL_TYPE_FUNCTION,SYMBOL_SOURCE_ELF,0);
+	RHOLD(symbol,bf);
+
+	symbol->isexternal = 0;
+	symbol->size.bytes = plt_size;
+	symbol->size_is_bytes = 1;
+	symbol->base_addr = plt_start;
+	symbol->has_base_addr = 1;
+
+	symtab_insert(bf->symtab,symbol,0);
+
+	clrange_add(&bf->ranges,symbol->base_addr,
+		    symbol->base_addr + symbol->size.bytes,symbol);
     }
 
     /*
