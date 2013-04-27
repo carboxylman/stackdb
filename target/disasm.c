@@ -355,11 +355,17 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
 	    if (toff >= 0 && toff < buf_len)
 		idata->cf.target_in_segment = 1;
 	    idata->cf.target = toff + base;
+	    idata->cf.target_is_valid = 1;
 	}
 	else if (!idata->cf.is_reg && !idata->cf.is_mem) {
 	    idata->cf.target = idata->cf.addr;
 	    if (idata->cf.addr >= base && idata->cf.addr < (base + buf_len))
 		idata->cf.target_in_segment = 1;
+	    idata->cf.target_is_valid = 1;
+	}
+	else {
+	    idata->cf.target_is_valid = 0;
+	    idata->cf.target = 0;
 	}
 
 	distorm_format(&ci,&di,&inst);

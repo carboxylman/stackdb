@@ -262,6 +262,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
 struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     probepoint_style_t style,
 					     int noabort,
+					     probe_register_disasm_handler_t handler,
+					     void *handler_data,
 					     inst_type_t inst,
 					     struct probe *probe,...) {
     va_list ap;
@@ -282,6 +284,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     GHashTable *itypes = NULL;
     inst_cf_flags_t cfflags = INST_CF_ANY;
     tid_t tid;
+    struct probe *probe_alt;
 
     if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	verror("must supply a function symbol!\n");
@@ -385,7 +388,24 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	    newrange = range;
 	}
 
-	probe = (struct probe *)g_hash_table_lookup(itypes,(gpointer)idata->type);
+	/*
+	 * Call the user callback to see if they REALLY want the instr
+	 * probed.  1 means yes; 0 means no.
+	 */
+	probe_alt = NULL;
+	if (handler && handler(idata,handler_data,&probe_alt) == 0) {
+	    vdebug(5,LA_PROBE,LF_PROBE,"user handler skipped this inst!\n");
+	    continue;
+	}
+
+	if (probe_alt) {
+	    vdebug(5,LA_PROBE,LF_PROBE,"user customized the probe for inst!\n");
+	    probe = probe_alt;
+	}
+	else 
+	    probe = (struct probe *) \
+		g_hash_table_lookup(itypes,(gpointer)idata->type);
+
 	tid = probe->thread->tid;
 
 	/* Create the j-th instruction probe.  Assume that all

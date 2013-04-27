@@ -248,13 +248,27 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
  *
  * IMPORTANT: you *must* end the list with INST_NONE !!!
  *
+ * If you specify @handler, you get to choose on an
+ * instruction-by-instruction basis if that instruction is probed or
+ * not, AND you can specify an alternate sink probe to be attached to
+ * the per-instruction probe.  If you don't specify an alternate probe,
+ * the default one that you supplied for that type will be used.
+ * @handler will be invoked with @handler_data.
+ *
  * XXX: add support for using a cached disassembly of some sort...
  */
 #ifdef ENABLE_DISTORM
 #include <disasm.h>
+
+typedef int (*probe_register_disasm_handler_t)(struct cf_inst_data *id,
+					       void *handler_data,
+					       struct probe **probe_alt);
+
 struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     probepoint_style_t style,
 					     int noabort,
+					     probe_register_disasm_handler_t handler,
+					     void *handler_data,
 					     inst_type_t inst,
 					     struct probe *probe,...);
 #endif

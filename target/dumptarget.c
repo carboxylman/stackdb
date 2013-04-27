@@ -194,6 +194,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
 
 	if (isroot) {
 	    if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
+						NULL,NULL,
 						INST_CALL,cprobe,
 						INST_NONE)) {
 		probe_free(cprobe,1);
@@ -202,6 +203,7 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
 	}
 	else {
 	    if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
+						NULL,NULL,
 						INST_RET,rprobe,
 						INST_CALL,cprobe,
 						INST_NONE)) {

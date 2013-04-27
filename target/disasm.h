@@ -92,6 +92,7 @@ typedef enum {
 	    ((idata)->cf.is_mem) ? "mem," : "",				\
 	    ((idata)->cf.is_reg) ? "reg," : "",				\
 	    ((idata)->cf.target_in_segment) ? "target_in_segment," : "", \
+	    ((idata)->cf.target_is_valid) ? "target_is_valid," : "",	\
 	    (idata)->cf.disp,(idata)->target);
 
 struct cf_inst_data {
@@ -103,7 +104,8 @@ struct cf_inst_data {
 	int is_relative:1,
 	    is_mem:1,
 	    is_reg:1,
-	    target_in_segment:1;
+	    target_in_segment:1,
+	    target_is_valid:1;
 
 	uint64_t disp;
 	union {
