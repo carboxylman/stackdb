@@ -123,7 +123,7 @@ int vmi_add_log_area_flaglist(char *flaglist,char *separator) {
 
 static char *log_flag_stringmap_none[] = { "NONE",NULL };
 static char *log_flag_stringmap_lib[] = {
-    "CLMATCH","CLRANGE","RFILTER","WAITPIPE","EVLOOP","MONITOR",NULL
+    "CLMATCH","CLRANGE","RFILTER","WAITPIPE","EVLOOP","MONITOR","ROP","CFI",NULL
 };
 static char *log_flag_stringmap_debug[] = { 
     "DFILE","SYMBOL","SYMTAB","LOC","LOOKUP","DWARF","DWARFATTR",

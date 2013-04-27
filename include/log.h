@@ -89,6 +89,8 @@ typedef enum log_flag_bits_lib {
     LFB_WAITPIPE      = 3,
     LFB_EVLOOP        = 4,
     LFB_MONITOR       = 5,
+    LFB_ROP           = 6,
+    LFB_CFI           = 7,
 } log_flag_bits_lib_t;
 typedef enum log_flags_lib {
     LF_CLMATCH        = 1 << LFB_CLMATCH,
@@ -97,6 +99,8 @@ typedef enum log_flags_lib {
     LF_WAITPIPE       = 1 << LFB_WAITPIPE,
     LF_EVLOOP         = 1 << LFB_EVLOOP,
     LF_MONITOR        = 1 << LFB_MONITOR,
+    LF_ROP            = 1 << LFB_ROP,
+    LF_CFI            = 1 << LFB_CFI,
 } log_flags_lib_t;
 
 typedef enum log_flag_bits_debug {
@@ -202,7 +206,7 @@ typedef enum log_flags_ {
  */
 /* Set every last bit for a specific area. */
 #define LF_ALL        INT_MAX
-#define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR)
+#define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR | LF_ROP | LF_CFI)
 #define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SYMTAB | LF_DLOC \
 		  | LF_DLOOKUP | LF_DWARF | LF_DWARFATTR	\
 		  | LF_DWARFOPS | LF_DOTHER | LF_ELF | LF_BFILE )

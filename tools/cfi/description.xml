@@ -1,0 +1,42 @@
+
+<vmi1:analysisDesc
+    xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
+
+  <vmi1:name>CfiCheck</vmi1:name>
+  <vmi1:description>Performs a CFI analysis, given a list of function names.</vmi1:description>
+  <vmi1:author>David Johnson</vmi1:author>
+  <vmi1:authorContact>johnsond@flux.utah.edu</vmi1:authorContact>
+
+  <vmi1:binary>cfi_check</vmi1:binary>
+
+  <vmi1:requiresWrite>true</vmi1:requiresWrite>
+  <vmi1:requiresControl>true</vmi1:requiresControl>
+  <vmi1:generatesAnnotations>false</vmi1:generatesAnnotations>
+  <vmi1:reportsIntermediateResults>true</vmi1:reportsIntermediateResults>
+  <vmi1:reportsFinalResults>true</vmi1:reportsFinalResults>
+  <vmi1:supportsExternalControl>false</vmi1:supportsExternalControl>
+  <vmi1:supportsAutoparseSimpleResults>true</vmi1:supportsAutoparseSimpleResults>
+  <vmi1:inParams>
+    <!--
+    <vmi1:param>
+      <vmi1:name>foo</vmi1:name>
+      <vmi1:description>foo param</vmi1:description>
+      <vmi1:defaultValue>bar</vmi1:defaultValue>
+    </vmi1:param>
+    -->
+  </vmi1:inParams>
+  <vmi1:outParams>
+    <!--
+    <vmi1:param>
+      <vmi1:name>fooOut</vmi1:name>
+      <vmi1:description>fooOut param</vmi1:description>
+      <vmi1:defaultValue>barOut</vmi1:defaultValue>
+    </vmi1:param>
+    -->
+  </vmi1:outParams>
+
+</vmi1:analysisDesc>
