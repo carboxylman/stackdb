@@ -261,7 +261,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 #include <disasm.h>
 
 typedef int (*probe_register_disasm_handler_t)(struct cf_inst_data *id,
-					       void *handler_data,
+					       ADDR iaddr,void *handler_data,
 					       struct probe **probe_alt);
 
 struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,

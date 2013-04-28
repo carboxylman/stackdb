@@ -165,6 +165,17 @@ struct cfi_data {
      */
     GHashTable *thread_status;
 
+    /*
+     * This table tracks which return probes are probes on RET
+     * instructions that have immediates.  We want to handle these
+     * differently than normal RETs, because these pop the retaddr
+     * first, then release stack bytes.  This pattern, I believe, is
+     * only useful when returning to a different procedure and reusing
+     * the current procedure's stack frame.  So, we have to detect this
+     * as a valid RET, even though it's munging the stack.
+     */
+    GHashTable *ret_immediate_addrs;
+
     /* The high-level probe. */
     struct probe *cfi_probe;
 

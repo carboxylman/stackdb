@@ -174,6 +174,7 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
     tid_t tid;
     result_t retval;
     struct bsymbol *symbol;
+    struct bsymbol *bsymbol;
 
     tid = target_gettid(cfi->target);
 
@@ -225,41 +226,68 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
     }
 
     if (newretaddr != oldretaddr) {
-	cfi->status.isviolation = 1;
-	cfit->status.isviolation = 1;
-	cfi->status.oldretaddr = oldretaddr;
-	cfit->status.oldretaddr = oldretaddr;
-	cfi->status.newretaddr = newretaddr;
-	cfit->status.newretaddr = newretaddr;
-
-	retval = cfi->cfi_probe->post_handler(cfi->cfi_probe,
-					      cfi->cfi_probe->handler_data,
-					      trigger);
-
-	cfi->status.isviolation = 0;
-	cfit->status.isviolation = 0;
-	cfi->status.oldretaddr = 0;
-	cfit->status.oldretaddr = 0;
-	cfi->status.newretaddr = 0;
-	cfit->status.newretaddr = 0;
-
-	vdebug(5,LA_LIB,LF_CFI,
-		"probe %s (0x%"PRIxADDR") detected CFI violation:"
-	       " newretaddr = 0x%"PRIxADDR"; oldretaddr = 0x%"PRIxADDR
-	       " (stack depth = %d)!\n",
-	       probe_name(probe),probe_addr(probe),
-	       newretaddr,oldretaddr,array_list_len(cfit->shadow_stack));
-
 	/*
-	 * Maybe try to fix the stack; probably won't work that well :)
+	 * Check for RET-immediates; if the RET cleans up its stack
+	 * *after* reading the retaddr, it is probably really just
+	 * jumping elsewhere and cleaning up its current frame and
+	 * replacing it with the "jumped"-to addr.  If this is the case,
+	 * handle it like we do dynamic jumps, by instrumenting the
+	 * jumped-to code.
 	 */
-	if (cfi->flags & CFI_FIXUP) {
-	    if (!target_write_addr(cfi->target,(ADDR)sp,sizeof(ADDR),
-				   (unsigned char *)&oldretaddr)) {
-		verror("could not fixup top of stack in retaddr_check!\n");
+	if (g_hash_table_lookup(cfi->ret_immediate_addrs,
+				(gpointer)(uintptr_t)probe_addr(trigger))) {
+	    bsymbol = target_lookup_sym_addr(cfi->target,newretaddr);
+
+	    if (bsymbol) {
+		cfi_instrument_func(cfi,bsymbol,0);
+		bsymbol_release(bsymbol);
 	    }
-	    else 
-		vdebug(5,LA_LIB,LF_CFI,"reset stack after corruption!\n");
+	    else {
+		/* XXX: instrument addrs */
+		vwarn("could not resolve symbol for 0x%"PRIxADDR";"
+		      " not tracking!\n",newretaddr);
+	    }
+	}
+	else {
+	    cfi->status.isviolation = 1;
+	    cfit->status.isviolation = 1;
+	    cfi->status.oldretaddr = oldretaddr;
+	    cfit->status.oldretaddr = oldretaddr;
+	    cfi->status.newretaddr = newretaddr;
+	    cfit->status.newretaddr = newretaddr;
+
+	    retval = cfi->cfi_probe->post_handler(cfi->cfi_probe,
+						  cfi->cfi_probe->handler_data,
+						  trigger);
+
+	    cfi->status.isviolation = 0;
+	    cfit->status.isviolation = 0;
+	    cfi->status.oldretaddr = 0;
+	    cfit->status.oldretaddr = 0;
+	    cfi->status.newretaddr = 0;
+	    cfit->status.newretaddr = 0;
+
+	    ++cfi->status.violations;
+	    ++cfit->status.violations;
+
+	    vdebug(5,LA_LIB,LF_CFI,
+		   "probe %s (0x%"PRIxADDR") detected CFI violation:"
+		   " newretaddr = 0x%"PRIxADDR"; oldretaddr = 0x%"PRIxADDR
+		   " (stack depth = %d)!\n",
+		   probe_name(probe),probe_addr(probe),
+		   newretaddr,oldretaddr,array_list_len(cfit->shadow_stack));
+
+	    /*
+	     * Maybe try to fix the stack; probably won't work that well :)
+	     */
+	    if (cfi->flags & CFI_FIXUP) {
+		if (!target_write_addr(cfi->target,(ADDR)sp,sizeof(ADDR),
+				       (unsigned char *)&oldretaddr)) {
+		    verror("could not fixup top of stack in retaddr_check!\n");
+		}
+		else 
+		    vdebug(5,LA_LIB,LF_CFI,"reset stack after corruption!\n");
+	    }
 	}
     }
     else {
@@ -301,11 +329,16 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
     return 0;
 }
 
-static int cfi_probe_disasm_handler(struct cf_inst_data *id,
+struct cfi_probe_disasm_state {
+    struct cfi_data *cfi;
+    struct array_list *absolute_branch_targets;
+};
+
+static int cfi_probe_disasm_handler(struct cf_inst_data *id,ADDR iaddr,
 				    void *handler_data,
 				    struct probe **probe_alt) {
-    struct array_list *absolute_branch_targets = \
-	(struct array_list *)handler_data;
+    struct cfi_probe_disasm_state *s = \
+	(struct cfi_probe_disasm_state *)handler_data;
 
     /*
      * If this is a jump instr, and it has an absolute target address,
@@ -317,9 +350,26 @@ static int cfi_probe_disasm_handler(struct cf_inst_data *id,
 	if (id->cf.target_in_segment)
 	    return 0;
 	else if (id->cf.target_is_valid) {
-	    array_list_append(absolute_branch_targets,
+	    array_list_append(s->absolute_branch_targets,
 			      (void *)(uintptr_t)id->cf.target);
 	    return 0;
+	}
+    }
+    /*
+     * If this is a RET that reads its retaddr off stack top, THEN
+     * adjusts the stack to clear the current frame -- assume it is
+     * "returning" into or to another function; so we need a different
+     * probe handler than the normal ret handler.  Basically, our
+     * handler needs to grab the retaddr; if it agrees, assume a normal
+     * return; if it does not agree, then assume a *valid* control
+     * transfer to another function, and add that function to our
+     * tracked set.
+     */
+    else if (id->type == INST_RET && id->size == 3) {
+	if (!(s->cfi->flags & CFI_NOAUTOFOLLOW)) {
+	    g_hash_table_insert(s->cfi->ret_immediate_addrs,
+				(gpointer)(uintptr_t)iaddr,(gpointer)1);
+	    return 1;
 	}
     }
 
@@ -335,7 +385,7 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
     struct probe *rprobe = NULL;
     struct probe *jprobe = NULL;
     char *name;
-    struct array_list *absolute_branch_targets;
+    struct cfi_probe_disasm_state pds;
     struct bsymbol *absolute_branch_symbol;
     ADDR absolute_branch_addr;
     int i;
@@ -402,7 +452,8 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 			      cfi_dynamic_jmp_target_instr,cfi,0,0);
 	free(buf);
 
-	absolute_branch_targets = array_list_create(0);
+	pds.absolute_branch_targets = array_list_create(0);
+	pds.cfi = cfi;
 
 	/*
 	 * XXX: can we do this optimization; suppose one of our root
@@ -415,8 +466,7 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 
 	if (isroot) {
 	    if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
-						cfi_probe_disasm_handler,
-						absolute_branch_targets,
+						cfi_probe_disasm_handler,&pds,
 						INST_CALL,cprobe,
 						INST_JMP,jprobe,
 						INST_NONE)) {
@@ -426,8 +476,7 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 	}
 	else {
 	    if (!probe_register_function_instrs(bsymbol,PROBEPOINT_SW,1,
-						cfi_probe_disasm_handler,
-						absolute_branch_targets,
+						cfi_probe_disasm_handler,&pds,
 						INST_RET,rprobe,
 						INST_CALL,cprobe,
 						INST_JMP,jprobe,
@@ -490,8 +539,8 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 	 * insertion above)!  Otherwise, there is a risk of infinite
 	 * recursion.
 	 */
-	if (array_list_len(absolute_branch_targets) > 0) {
-	    array_list_foreach(absolute_branch_targets,i,item) {
+	if (array_list_len(pds.absolute_branch_targets) > 0) {
+	    array_list_foreach(pds.absolute_branch_targets,i,item) {
 		absolute_branch_addr = (ADDR)item;
 		absolute_branch_symbol = 
 		    target_lookup_sym_addr(cfi->target,absolute_branch_addr);
@@ -505,7 +554,7 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 		}
 	    }
 	}
-	array_list_free(absolute_branch_targets);
+	array_list_free(pds.absolute_branch_targets);
     }
 
     return 0;
@@ -541,6 +590,7 @@ int probe_fini_cfi(struct probe *probe) {
     int i;
 
     g_hash_table_destroy(cfi->disfuncs);
+    g_hash_table_destroy(cfi->ret_immediate_addrs);
 
     g_hash_table_iter_init(&iter,cfi->probes);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tprobe)) {
@@ -617,6 +667,7 @@ struct probe *probe_cfi(struct target *target,tid_t tid,
     cfi->disfuncs = g_hash_table_new(g_direct_hash,g_direct_equal);
     cfi->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
     cfi->thread_status = g_hash_table_new(g_direct_hash,g_direct_equal);
+    cfi->ret_immediate_addrs = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     /*
      * Just instrument all the functions!  If we fail, then free the

@@ -384,7 +384,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	 * probed.  1 means yes; 0 means no.
 	 */
 	probe_alt = NULL;
-	if (handler && handler(idata,handler_data,&probe_alt) == 0) {
+	if (handler && handler(idata,start + idata->offset,
+			       handler_data,&probe_alt) == 0) {
 	    vdebug(5,LA_PROBE,LF_PROBE,"user handler skipped this inst!\n");
 	    continue;
 	}
