@@ -840,10 +840,10 @@ int probe_free(struct probe *probe,int force) {
 	}
 	else {
 	    if (force) 
-		verror("probe_unregister %s failed, forcing free to continue",
+		verror("probe_unregister %s failed, forcing free to continue\n",
 		       probe->name);
 	    else {
-		verror("probe_unregister %s failed, not forcing!",probe->name);
+		verror("probe_unregister %s failed, not forcing!\n",probe->name);
 		return -1;
 	    }
 	}
