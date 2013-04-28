@@ -247,6 +247,8 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 		vwarn("could not resolve symbol for 0x%"PRIxADDR";"
 		      " not tracking!\n",newretaddr);
 	    }
+
+	    return 0;
 	}
 	else {
 	    cfi->status.isviolation = 1;
