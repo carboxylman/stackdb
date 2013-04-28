@@ -633,7 +633,7 @@ outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
 	  xml/Makefile xml/schema/Makefile xml/service/Makefile \
 	  xml/client/Makefile xml/client/python/Makefile \
           xml/client/java/Makefile \
-	  tools/Makefile tools/rop/Makefile tools/bts/Makefile \
+	  tools/Makefile tools/rop/Makefile tools/cfi/Makefile tools/bts/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \
           examples/nfs-perf-analysis/Makefile \
