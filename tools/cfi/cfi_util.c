@@ -82,10 +82,10 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
     bsymbol = target_lookup_sym_addr(cfi->target,ip);
     if (!bsymbol) {
 	vdebug(5,LA_LIB,LF_CFI,
-	       "probe(%s) branch 0x%"PRIxADDR" -> 0x%"PRIxADDR" (unknown!):"
-	       " retaddr = 0x%"PRIxADDR" (stack depth = %d)\n",
-	       probe_name(probe),probe_addr(probe),ip,
-	       retaddr,array_list_len(cfit->shadow_stack));
+	       "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+	       " 0x%"PRIxADDR" probe(%s) (unknown, skipping!)\n",
+	       retaddr,array_list_len(cfit->shadow_stack),
+	       probe_addr(trigger),ip,probe_name(probe));
 
 	/*
 	 * XXX: try to instrument the target address, even if we don't
@@ -96,10 +96,11 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
     }
     else {
 	vdebug(5,LA_LIB,LF_CFI,
-	       "probe(%s) branch 0x%"PRIxADDR" -> 0x%"PRIxADDR" (%s):"
-	       " retaddr = 0x%"PRIxADDR" (stack depth = %d)\n",
-	       probe_name(probe),probe_addr(probe),ip,bsymbol_get_name(bsymbol),
-	       retaddr,array_list_len(cfit->shadow_stack));
+	       "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+	       " 0x%"PRIxADDR" (%s) probe(%s)\n",
+	       retaddr,array_list_len(cfit->shadow_stack),
+	       probe_addr(trigger),ip,bsymbol_get_name(bsymbol),
+	       probe_name(probe));
     }
 
     /* Since we know that the call is a known function that we can
@@ -273,11 +274,10 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 	    ++cfit->status.violations;
 
 	    vdebug(5,LA_LIB,LF_CFI,
-		   "probe %s (0x%"PRIxADDR") detected CFI violation:"
-		   " newretaddr = 0x%"PRIxADDR"; oldretaddr = 0x%"PRIxADDR
-		   " (stack depth = %d)!\n",
-		   probe_name(probe),probe_addr(probe),
-		   newretaddr,oldretaddr,array_list_len(cfit->shadow_stack));
+		   "retaddr = 0x%"PRIxADDR" (%d) (violation! oldretaddr ="
+		   " 0x%"PRIxADDR") probe %s (0x%"PRIxADDR")\n",
+		   newretaddr,array_list_len(cfit->shadow_stack),oldretaddr,
+		   probe_name(probe),probe_addr(trigger));
 
 	    /*
 	     * Maybe try to fix the stack; probably won't work that well :)
@@ -312,11 +312,9 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 	cfit->status.newretaddr = 0;
 
 	vdebug(5,LA_LIB,LF_CFI,
-		"probe %s (0x%"PRIxADDR") detected proper CFI:"
-	       " newretaddr = 0x%"PRIxADDR"; oldretaddr = 0x%"PRIxADDR
-	       " (stack depth = %d)!\n",
-	       probe_name(probe),probe_addr(probe),
-	       newretaddr,oldretaddr,array_list_len(cfit->shadow_stack));
+	       "retaddr = 0x%"PRIxADDR" (%d) (clean) probe(%s) (0x%"PRIxADDR")\n",
+	       newretaddr,array_list_len(cfit->shadow_stack),
+	       probe_name(probe),probe_addr(trigger));
     }
 
     /*
