@@ -281,13 +281,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    break;
 
 	if (level == 0) {
-	    symtab_set_name(cbargs->cu_symtab,str,str_copy,0);
+	    symtab_set_name(cbargs->cu_symtab,str,str_copy);
 	}
 	else if (cbargs->symbol) {
 	    symbol_set_name(cbargs->symbol,str,str_copy);
 	    /* Only full functions have a symtab! */
 	    if (SYMBOL_IS_FULL_FUNCTION(cbargs->symbol))
-		symtab_set_name(cbargs->symtab,str,str_copy,0);
+		symtab_set_name(cbargs->symtab,str,str_copy);
 	}
 	else {
 	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
@@ -1949,6 +1949,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      * a DWARF bug :).
      */
     int cu_symtab_added = 0;
+    int cu_symtab_preexisting = 0;
 
     struct array_list *die_offsets = NULL;
     int i;
@@ -1994,7 +1995,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	/* attr_callback has to fill cu_symtab, and *MUST* fill at least
 	 * the name field; otherwise we can't add the symtab to our hash table.
 	 */
-	cu_symtab = symtab_create(NULL,debugfile,offset,NULL,0,NULL,0);
+	cu_symtab = symtab_create(NULL,debugfile,offset,NULL,0,NULL);
 	g_hash_table_insert(debugfile->cuoffsets,(gpointer)(uintptr_t)offset,
 			    (gpointer)cu_symtab);
 	cu_symtab->meta = meta;
@@ -2012,6 +2013,8 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    }
 	    cu_symtab->meta = meta;
 	}
+
+	cu_symtab_preexisting = 1;
 
 	/* 
 	 * Create a reftab of the existing symbols, so we can skip
@@ -2078,9 +2081,11 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
      * (which we can only do after processing its DIE attrs, the first
      * time); so say here, don't add it again!
      */
-    if (cu_symtab->name && g_hash_table_lookup(debugfile->srcfiles,
-					       cu_symtab->name))
+    if (cu_symtab->name 
+	&& (g_hash_table_lookup(debugfile->srcfiles,cu_symtab->name)
+	    || g_hash_table_lookup(debugfile->srcfiles_multiuse,cu_symtab->name))) {
 	cu_symtab_added = 1;
+    }
 
     /* Set the top-level symtab. */
     symtabs[0] = cu_symtab;
@@ -2397,7 +2402,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 * subprogram, or until we need another child scope.
 		 */
 		if (!quick || expand_dies) {
-		    newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
+		    newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level]);
 		    newscope->parent = symtabs[level];
 		    // XXX: should we wait to do this until we level up after
 		    // successfully completing this new child scope?
@@ -2409,7 +2414,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    else if (SYMBOL_IS_FULL_FUNCTION(symbols[level])
 		     && !symbols[level]->s.ii->d.f.symtab) {
 		/* This happens when we are expanding a func symbol. */
-		newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
+		newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level]);
 		newscope->parent = symtabs[level];
 		// XXX: should we wait to do this until we level up after
 		// successfully completing this new child scope?
@@ -2437,7 +2442,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		 * subprogram, or until we need another child scope.
 		 */
 		if (!quick || expand_dies) {
-		    newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
+		    newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level]);
 		    newscope->parent = symtabs[level];
 		    // XXX: should we wait to do this until we level up after
 		    // successfully completing this new child scope?
@@ -2449,7 +2454,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	    else if (SYMBOL_IS_FULL_FUNCTION(symbols[level])
 		     && !symbols[level]->s.ii->d.f.symtab) {
 		/* This happens when we are expanding a func symbol. */
-		newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level],0);
+		newscope = symtab_create(NULL,debugfile,offset,NULL,0,symbols[level]);
 		newscope->parent = symtabs[level];
 		// XXX: should we wait to do this until we level up after
 		// successfully completing this new child scope?
@@ -2470,7 +2475,7 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	     * block, or until we need another child scope.
 	     */
 	    if (!quick || expand_dies) {
-		newscope = symtab_create(NULL,debugfile,offset,NULL,0,NULL,0);
+		newscope = symtab_create(NULL,debugfile,offset,NULL,0,NULL);
 		newscope->parent = symtabs[level];
 		// XXX: should we wait to do this until we level up after
 		// successfully completing this new child scope?
@@ -2538,12 +2543,26 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	if (tag == DW_TAG_compile_unit && unlikely(!cu_symtab_added)) {
 	    if (!symtab_get_name(cu_symtab)) {
 		verror("CU did not have a src filename; aborting processing!\n");
-		symtab_free(cu_symtab);
+		/* Don't free preexisting ones! */
+		if (!cu_symtab_preexisting) 
+		    symtab_free(cu_symtab);
 		cu_symtab = NULL;
 		goto out;
 	    }
 	    else {
-		if (debugfile_add_cu_symtab(debugfile,cu_symtab)) {
+		if (cu_symtab_preexisting) {
+		    if (debugfile_update_cu_symtab(debugfile,cu_symtab)) {
+			vwarnopt(2,LA_DEBUG,LF_DWARF,
+				 "could not update CU symtab %s to debugfile;"
+				 " aborting processing!\n",
+				 symtab_get_name(cu_symtab));
+			/* Don't free preexisting ones! */
+			//symtab_free(cu_symtab);
+			cu_symtab = NULL;
+			goto out;
+		    }
+		}
+		else if (debugfile_add_cu_symtab(debugfile,cu_symtab)) {
 		    vwarnopt(2,LA_DEBUG,LF_DWARF,
 			     "could not add CU symtab %s to debugfile;"
 			     " aborting processing!\n",
@@ -2580,6 +2599,8 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    goto out;
 		}
 	    }
+	    else if (strcmp(cu_symtab->name,"../sysdeps/unix/syscall-template.S"))
+		goto out;
 	}
 
 	/* If we have die_offsets to load, and we're not just going to
@@ -4373,7 +4394,7 @@ int get_aranges(struct debugfile *debugfile,unsigned char *buf,unsigned int len,
 	 */
 	if (!(cu_symtab = (struct symtab *)\
 	      g_hash_table_lookup(debugfile->cuoffsets,(gpointer)(uintptr_t)offset))) {
-	    cu_symtab = symtab_create(NULL,debugfile,(SMOFFSET)offset,NULL,0,NULL,0);
+	    cu_symtab = symtab_create(NULL,debugfile,(SMOFFSET)offset,NULL,0,NULL);
 	    debugfile_add_cu_symtab(debugfile,cu_symtab);
 	}
 

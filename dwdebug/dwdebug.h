@@ -445,6 +445,7 @@ char *debugfile_get_version(struct debugfile *debugfile);
 int debugfile_filename_info(char *filename,char **realfilename,
 			    char **name,char **version);
 int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab);
+int debugfile_update_cu_symtab(struct debugfile *debugfile,struct symtab *symtab);
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol);
 struct symbol *debugfile_find_type(struct debugfile *debugfile,
 				   char *typename);
@@ -460,7 +461,7 @@ REFCNT debugfile_release(struct debugfile *debugfile);
 struct symtab *symtab_create(struct binfile *binfile,
 			     struct debugfile *debugfile,
 			     SMOFFSET offset,char *name,int name_copy,
-			     struct symbol *symtab_symbol,int noautoinsert);
+			     struct symbol *symtab_symbol);
 int symtab_get_size_simple(struct symtab *symtab);
 int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
 struct symbol *symtab_get_sym(struct symtab *symtab,const char *name);
@@ -469,8 +470,7 @@ int symtab_insert_fakename(struct symtab *symtab,char *fakename,
 void symtab_remove_symbol(struct symtab *symtab,struct symbol *symbol);
 void symtab_steal(struct symtab *symtab,struct symbol *symbol);
 char *symtab_get_name(struct symtab *symtab);
-void symtab_set_name(struct symtab *symtab,char *srcfilename,int name_copy,
-		     int noautoinsert);
+void symtab_set_name(struct symtab *symtab,char *srcfilename,int name_copy);
 void symtab_dump(struct symtab *symtab,struct dump_info *ud);
 /*
  * Since we can get symtab info from multiple places (i.e.,
@@ -1236,8 +1236,20 @@ struct debugfile {
      * is the authoritative source of 
      *
      * h(srcfile) -> struct symtab *
+     *
+     * (Well, except for when srcfiles are included multiple times in a
+     * build; see next hash.  Those srcfile/root symtab pairs are moved
+     * into the table below.)
      */
     GHashTable *srcfiles;
+
+    /*
+     * Some srcfiles are included multiple times at different points in
+     * the build (should be mostly assembly source files).
+     *
+     * h(srcfile) -> struct array_list * -> struct symtab *
+     */
+    GHashTable *srcfiles_multiuse;
 
     /*
      * Each CU debugfile gets its own symtable.  This is a map between

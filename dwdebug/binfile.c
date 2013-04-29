@@ -130,7 +130,7 @@ struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
     else if (binfile->filename == filename)
 	binfile->filename = strdup(filename);
 
-    binfile->symtab = symtab_create(binfile,NULL,0,"symtab",0,NULL,0);
+    binfile->symtab = symtab_create(binfile,NULL,0,"symtab",0,NULL);
     binfile->ranges = clrange_create();
 
     return binfile;
