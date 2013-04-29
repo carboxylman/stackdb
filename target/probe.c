@@ -314,6 +314,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
     int ret;
     struct thread_probepoint_context *tpc;
     int action_did_obviate = 0;
+    int fake = 0;
 
     target = probepoint->target;
 
@@ -323,14 +324,11 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
     if (probepoint->state == PROBE_DISABLED) {
 	/* return success, the probepoint is already removed */
 	vdebug(11,LA_PROBE,LF_PROBEPOINT,"");
-	LOGDUMPPROBEPOINT(7,LA_PROBE,LF_PROBEPOINT,probepoint);
+	LOGDUMPPROBEPOINT(11,LA_PROBE,LF_PROBEPOINT,probepoint);
 	vdebugc(11,LA_PROBE,LF_PROBEPOINT," already disabled\n");
 
         return 0;
     }
-
-    vdebug(5,LA_PROBE,LF_PROBEPOINT,"removing ");
-    LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
 
     /*
      * If the style is software, and it's a watchpoint, forget it; we
@@ -341,6 +339,17 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	verror("no software watchpoint support!\n");
 	errno = EINVAL;
 	return 1;
+    }
+
+    if (!target_is_attached(target)) {
+	vdebug(8,LA_PROBE,LF_PROBEPOINT,
+	       "target is not attached; emulating probepoint removal ");
+	LOGDUMPPROBEPOINT_NL(8,LA_PROBE,LF_PROBEPOINT,probepoint);
+	fake = 1;
+    }
+    else {
+	vdebug(5,LA_PROBE,LF_PROBEPOINT,"removing ");
+	LOGDUMPPROBEPOINT_NL(5,LA_PROBE,LF_PROBEPOINT,probepoint);
     }
 
     /* 
@@ -355,7 +364,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
     /*
      * Handle complex stuff :).
      */
-    else if (!force) {
+    else if (!force && !fake) {
 	vwarn("probepoint being handled (state %d); not forcing removal yet!\n",
 	      probepoint->state);
 	errno = EAGAIN;
@@ -363,8 +372,9 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
     }
     else {
 	if (probepoint->state == PROBE_ACTION_RUNNING) {
-	    vwarn("forced probepoint removal while it is running action;"
-		  " trying to clean up normally!\n");
+	    if (!fake)
+		vwarn("forced probepoint removal while it is running action;"
+		      " trying to clean up normally!\n");
 	    /* We need to remove the action code, if any, reset the EIP
 	     * to what it would have been if we had just hit the BP, and
 	     * then do the normal breakpoint removal.
@@ -372,7 +382,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	    tpc = probepoint->tpc;
 
 	    if (tpc->action_orig_mem && tpc->action_orig_mem_len) {
-		if (target_write_addr(target,probepoint->addr,
+		if (!fake && target_write_addr(target,probepoint->addr,
 				      tpc->action_orig_mem_len,
 				      tpc->action_orig_mem)	\
 		    != tpc->action_orig_mem_len) {
@@ -387,7 +397,8 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 		tpc->action_orig_mem = NULL;
 	    }
 	    else {
-		vwarn("action running, but no orig mem to restore (maybe ok)!\n");
+		vwarnopt(5,LA_PROBE,LF_PROBEPOINT,
+			 "action running, but no orig mem to restore (maybe ok)!\n");
 		probepoint->state = PROBE_BP_SET;
 	    }
 
@@ -402,20 +413,24 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	    tpc->action_obviated_orig = 0;
 	}
 	else if (probepoint->state == PROBE_BP_PREHANDLING) {
-	    vwarn("force probepoint removal while prehandling it;"
-		  " trying to clean up normally!\n");
+	    vwarnopt(5,LA_PROBE,LF_PROBEPOINT,
+		     "force probepoint removal while prehandling it;"
+		     " trying to clean up normally!\n");
 	}
 	else if (probepoint->state == PROBE_BP_ACTIONHANDLING) {
-	    vwarn("force probepoint removal while handling an action;"
-		  " trying to clean up normally!\n");
+	    vwarnopt(5,LA_PROBE,LF_PROBEPOINT,
+		     "force probepoint removal while handling an action;"
+		     " trying to clean up normally!\n");
 	}
 	else if (probepoint->state == PROBE_BP_POSTHANDLING) {
-	    vwarn("force probepoint removal while posthandling it;"
-		  " trying to clean up normally!\n");
+	    vwarnopt(5,LA_PROBE,LF_PROBEPOINT,
+		     "force probepoint removal while posthandling it;"
+		     " trying to clean up normally!\n");
 	}
 	else if (probepoint->state == PROBE_INSERTING) {
-	    vwarn("forced probepoint removal while it is inserting;"
-		  " trying to clean up normally!\n");
+	    vwarnopt(5,LA_PROBE,LF_PROBEPOINT,
+		     "forced probepoint removal while it is inserting;"
+		     " trying to clean up normally!\n");
 	    probepoint->state = PROBE_BP_SET;
 	}
 
@@ -445,7 +460,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 		else
 		    tid = TID_GLOBAL;
 
-		if (target_write_reg(target,tid,
+		if (!fake && target_write_reg(target,tid,
 				     target->ipregno,probepoint->addr)) {
 		    verror("could not reset IP to bp addr 0x%"PRIxADDR" for"
 			   " forced breakpoint remove; badness will probably"
@@ -464,7 +479,11 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
      * If it's hardware, use the target API to remove it.
      */
     if (probepoint->style == PROBEPOINT_HW) {
-	if (probepoint->debugregnum > -1) {
+	/*
+	 * XXX: bit of a lie here; if we're detached, we should still
+	 * try to clean up hw probepoint state somewhere...
+	 */
+	if (!fake && probepoint->debugregnum > -1) {
 	    htid = probepoint->thread->tid;
 
 	    if (probepoint->type == PROBEPOINT_BREAK) {
@@ -501,26 +520,31 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
     }
     /* Otherwise do software. */
     else {
-	if (probepoint->breakpoint_orig_mem
-	    && probepoint->breakpoint_orig_mem_len > 0) {
-	    /* restore the original instruction */
-	    if (target_write_addr(target,probepoint->addr,
-				  probepoint->breakpoint_orig_mem_len,
-				  probepoint->breakpoint_orig_mem) \
-		!= probepoint->breakpoint_orig_mem_len) {
-		verror("could not restore orig instrs for bp remove");
-		return 1;
+	if (!fake) {
+	    if (probepoint->breakpoint_orig_mem
+		&& probepoint->breakpoint_orig_mem_len > 0) {
+		/* restore the original instruction */
+		if (target_write_addr(target,probepoint->addr,
+				      probepoint->breakpoint_orig_mem_len,
+				      probepoint->breakpoint_orig_mem)	\
+		    != probepoint->breakpoint_orig_mem_len) {
+		    verror("could not restore orig instrs for bp remove");
+		    return 1;
+		}
 	    }
+
+	    if (target_notify_sw_breakpoint(target,probepoint->addr,0)) 
+		verror("target sw breakpoint removal notification failed; nonfatal!\n");
+
+	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"removed SW break ");
+	    LOGDUMPPROBEPOINT_NL(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 	}
 
-	if (target_notify_sw_breakpoint(target,probepoint->addr,0)) 
-	    verror("target sw breakpoint removal notification failed; nonfatal!\n");
-
-	vdebug(4,LA_PROBE,LF_PROBEPOINT,"removed SW break ");
-	LOGDUMPPROBEPOINT_NL(4,LA_PROBE,LF_PROBEPOINT,probepoint);
-
-	free(probepoint->breakpoint_orig_mem);
-	probepoint->breakpoint_orig_mem = NULL;
+	if (probepoint->breakpoint_orig_mem) {
+	    free(probepoint->breakpoint_orig_mem);
+	    probepoint->breakpoint_orig_mem = NULL;
+	    probepoint->breakpoint_orig_mem_len = 0;
+	}
 
 	if (!nohashdelete)
 	    g_hash_table_remove(probepoint->target->soft_probepoints,
@@ -609,6 +633,11 @@ static int __probepoint_insert(struct probepoint *probepoint,
 	vdebugc(11,LA_PROBE,LF_PROBEPOINT," already inserted\n");
 
         return 0;
+    }
+
+    if (!target_is_attached(target)) {
+	verror("target %d is not attached!\n",target->id);
+	return 1;
     }
 
     vdebug(5,LA_PROBE,LF_PROBEPOINT,"inserting ");
@@ -984,12 +1013,14 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 	vwarn("forcefully unregistering a probe that had sinks remaining!\n");
     }
 
-    /* Target must be paused before we do anything. */
-    status = target_status(target);
-    if (status != TSTATUS_PAUSED) {
-        verror("target not paused (%d), cannot remove!\n",status);
-	errno = EINVAL;
-	return -1;
+    /* Target must be paused (if it is attached!) before we do anything. */
+    if (target_is_attached(target)) {
+	status = target_status(target);
+	if (status != TSTATUS_PAUSED) {
+	    verror("target not paused (%d), cannot remove!\n",status);
+	    errno = EINVAL;
+	    return -1;
+	}
     }
 
     /* Disable it (and its sources if necessary). */
@@ -1136,12 +1167,14 @@ int probe_unregister_source(struct probe *sink,struct probe *src,int force) {
 	return -1;
     }
 
-    /* Target must be paused before we do anything. */
-    status = target_status(target);
-    if (status != TSTATUS_PAUSED) {
-        verror("target not paused (%d), cannot remove!\n",status);
-	errno = EINVAL;
-	return -1;
+    /* Target must be paused (if attached) before we do anything. */
+    if (target_is_attached(target)) {
+	status = target_status(target);
+	if (status != TSTATUS_PAUSED) {
+	    verror("target not paused (%d), cannot remove!\n",status);
+	    errno = EINVAL;
+	    return -1;
+	}
     }
 
     sink->sources = g_list_remove(sink->sources,src);

@@ -303,6 +303,10 @@ int target_pause(struct target *target) {
     return target->ops->pause(target,0);
 }
 
+int target_is_attached(struct target *target) {
+    return target->attached;
+}
+
 target_status_t target_status(struct target *target) {
     vdebug(16,LA_TARGET,LF_TARGET,"getting target(%s) status\n",target->name);
     return target->ops->status(target);

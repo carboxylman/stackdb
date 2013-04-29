@@ -1305,7 +1305,7 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
 	errno = EFAULT;
 	return 1;
     }
-    if (!lstate->attached) {
+    if (!target->attached) {
 	verror("cannot attach to thread until process is attached to!\n");
 	errno = EINVAL;
 	return 1;
@@ -1668,7 +1668,7 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID"\n",pid,tid);
 
-    if (!lstate->attached) {
+    if (!target->attached) {
 	verror("cannot detach from thread until process is attached to!\n");
 	errno = EINVAL;
 	return 1;
@@ -2031,7 +2031,6 @@ static int linux_userproc_init(struct target *target) {
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
     lstate->memfd = -1;
-    lstate->attached = 0;
     lstate->ptrace_opts_new = lstate->ptrace_opts = INITIAL_PTRACE_OPTS;
     lstate->ptrace_type = PTRACE_CONT;
 
@@ -2087,7 +2086,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 	return 1;
     }
     pid = lstate->pid;
-    if (lstate->attached)
+    if (target->attached)
 	return 0;
 
     errno = 0;
@@ -2203,7 +2202,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 
     closedir(dirp);
 
-    lstate->attached = 1;
+    target->attached = 1;
 
     return rc;
 }
@@ -2223,7 +2222,7 @@ static int linux_userproc_detach(struct target *target) {
 	errno = EFAULT;
 	return 1;
     }
-    if (!lstate->attached)
+    if (!target->attached)
 	return 0;
 
     /*
@@ -2279,7 +2278,7 @@ static int linux_userproc_detach(struct target *target) {
 	close(lstate->memfd);
 
     vdebug(3,LA_TARGET,LF_LUP,"ptrace detach %d done.\n",lstate->pid);
-    lstate->attached = 0;
+    target->attached = 0;
 
     return 0;
 }
@@ -2291,7 +2290,7 @@ static int linux_userproc_fini(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
-    if (lstate->attached) 
+    if (target->attached) 
 	linux_userproc_detach(target);
 
     free(target->state);
@@ -2310,7 +2309,7 @@ static int linux_userproc_kill(struct target *target) {
 	errno = EFAULT;
 	return 1;
     }
-    if (lstate->attached) {
+    if (target->attached) {
 	errno = EBUSY;
 	return 1;
     }

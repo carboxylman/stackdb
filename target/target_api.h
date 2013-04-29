@@ -433,6 +433,17 @@ int target_resume(struct target *target);
  * threads.
  */
 int target_pause(struct target *target);
+
+/*
+ * Returns 1 if the target is attached; 0 otherwise.  Most target
+ * operations only make sense if the target is attached (i.e., reading
+ * mem, reading CPU state, pausing/resuming/monitoring/probing, etc).
+ */
+int target_is_attached(struct target *target);
+
+/*
+ * Returns the target's status.
+ */
 target_status_t target_status(struct target *target);
 
 /*
@@ -1143,7 +1154,8 @@ struct target_thread {
     tid_t tid;
     int8_t valid:1,
   	   dirty:1,
-	   resumeat:3;
+	   resumeat:3,
+	   attached:1;
     thread_status_t status:THREAD_STATUS_BITS;
 
     void *state;

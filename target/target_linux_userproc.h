@@ -86,8 +86,7 @@ struct linux_userproc_state {
     int pid;
     int memfd;
 
-    int8_t attached:1,
-	   ctl_sig_pausing_all:1;
+    int8_t ctl_sig_pausing_all:1;
 
     /*
      * This is weird, but for the ptrace target, we always "know" which
