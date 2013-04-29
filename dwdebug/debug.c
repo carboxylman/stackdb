@@ -1988,12 +1988,12 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 
     if (debugfile->refcnt) {
 	if (!force) {
-	    verror("cannot free (%d refs) debugfile(%s)",
+	    verror("cannot free (%d refs) debugfile(%s)\n",
 		   debugfile->refcnt,debugfile->filename);
 	    return debugfile->refcnt;
 	}
 	else {
-	    vwarn("forced free (%d refs) debugfile(%s)",
+	    vwarn("forced free (%d refs) debugfile(%s)\n",
 		  debugfile->refcnt,debugfile->filename);
 	}
     }
