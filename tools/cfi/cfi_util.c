@@ -601,7 +601,7 @@ int probe_fini_cfi(struct probe *probe) {
     g_hash_table_iter_init(&iter,cfi->thread_status);
     while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tdata)) {
 	array_list_free(tdata->shadow_stack);
-	array_list_foreach(tdata->shadow_stack,i,symbol) {
+	array_list_foreach(tdata->shadow_stack_symbols,i,symbol) {
 	    if (symbol)
 		bsymbol_release(symbol);
 	}
