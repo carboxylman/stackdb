@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -22,7 +22,12 @@
 #include <stdbool.h>
 
 #include <xenctrl.h>
+#ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
+#endif
+#ifdef ENABLE_LIBVMI
+#include <libvmi/libvmi.h>
+#endif
 
 #include "list.h"
 #include "vmprobes.h"
@@ -181,8 +186,15 @@ struct vmprobe_domain {
     /* The probepoint currently being single-stepped*/
     struct vmprobe_probepoint *sstep_probepoint;
 
+#ifdef ENABLE_XENACCESS
     /* XenAccess instance used to read/write domain's memory */
     xa_instance_t xa_instance;
+#endif
+#ifdef ENABLE_LIBVMI
+    vmi_instance_t vmi_instance;
+    char *name;
+    char *kernel_name;
+#endif
 
     /* Pending register state */
     struct cpu_user_regs *regs;

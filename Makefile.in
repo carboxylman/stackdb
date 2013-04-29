@@ -30,6 +30,7 @@ ifeq ($(ENABLE_XENACCESS),"1")
 	SUBDIRS += xenaccess xentt vmprobes # vmps vmfs vmtap
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
+	SUBDIRS += vmprobes
 endif
 SUBDIRS += target
 SUBDIRS += tests

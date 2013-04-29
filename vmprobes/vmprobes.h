@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -20,7 +20,12 @@
 #define _XEN_VMPROBES_H
 
 #include <xenctrl.h>
+#ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
+#endif
+#ifdef ENABLE_LIBVMI
+#include <libvmi/libvmi.h>
+#endif
 
 #ifdef VMPROBE_DEBUG
 void _vmprobes_debug(int level,char *format,...);
@@ -238,6 +243,7 @@ vmprobe_setcookie(vmprobe_handle_t handle, void *cookie);
 void *
 vmprobe_getcookie(vmprobe_handle_t handle);
 
+#ifdef ENABLE_XENACCESS
 /*
  * Returns the pointer to a xenaccess instance that a probe belongs to.
  * If the given handle is invalid, the function returns NULL.
@@ -246,6 +252,7 @@ vmprobe_getcookie(vmprobe_handle_t handle);
  */
 xa_instance_t *
 vmprobe_xa_instance(vmprobe_handle_t handle);
+#endif
 
 unsigned char *
 vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,

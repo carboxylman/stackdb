@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -29,8 +29,13 @@
 #include <assert.h>
 
 #include <xenctrl.h>
+#ifdef ENABLE_XENACCESS
 #include "xenaccess/xenaccess.h"
 #include "xenaccess/xa_private.h"
+#endif
+#ifdef ENABLE_LIBVMI
+#include <libvmi/libvmi.h>
+#endif
 
 #include "list.h"
 #include "cqueue.h"
@@ -42,8 +47,10 @@ char *global_state = "INUSER";
 
 void vmprobes_set_debug_level(int level,int xa_level)
 {
+#ifdef ENABLE_XENACCESS
 #ifdef XA_DEBUG
     xa_set_debug_level(xa_level);
+#endif
 #endif
     vmprobes_debug_level = level;
 }
@@ -81,8 +88,17 @@ static struct vmprobe_action *probe_action_list[VMPROBE_ACTION_MAX];
 LIST_HEAD(probepoint_list);
 LIST_HEAD(domain_list);
 
+#ifdef XENCTRL_HAS_XC_INTERFACE
+typedef xc_interface * XC_HANDLE;
+static xc_interface *xc_handle = NULL;
+static xc_interface *xce_handle = NULL;
+#define XC_IF_INVALID (NULL)
+#else
+typedef int XC_HANDLE;
 static int xc_handle = -1;
 static int xce_handle = -1;
+#define XC_IF_INVALID (-1)
+#endif
 
 static bool stop = 0;
 static bool interrupt = 0;
@@ -110,9 +126,12 @@ static inline bool
 domain_alive(domid_t domid)
 {
     xc_dominfo_t dominfo;
-    bool rc = ((xc_domain_getinfo(xc_handle, domid, 1, &dominfo) == 1) &&
-	       (dominfo.domid == domid) &&
-	       dominfo.dying == 0 && dominfo.crashed == 0);
+    bool rc;
+
+    assert(xc_handle != XC_IF_INVALID);
+    rc = ((xc_domain_getinfo(xc_handle, domid, 1, &dominfo) == 1) &&
+	  (dominfo.domid == domid) &&
+	  dominfo.dying == 0 && dominfo.crashed == 0);
     return rc;
 }
 
@@ -120,6 +139,8 @@ static inline bool
 domain_paused(domid_t domid)
 {
     xc_dominfo_t dominfo;
+
+    assert(xc_handle != XC_IF_INVALID);
     return ((xc_domain_getinfo(xc_handle, domid, 1, &dominfo) == 1) &&
             (dominfo.domid == domid) &&
             dominfo.paused);
@@ -129,6 +150,8 @@ static inline int
 get_vcpu(domid_t domid)
 {
     xc_dominfo_t dominfo;
+
+    assert(xc_handle != XC_IF_INVALID);
     xc_domain_getinfo(xc_handle, domid, 1, &dominfo);
     return dominfo.max_vcpu_id;
 }
@@ -136,6 +159,7 @@ get_vcpu(domid_t domid)
 static inline struct cpu_user_regs *
 get_regs(domid_t domid, vcpu_guest_context_t *ctx)
 {
+    assert(xc_handle != XC_IF_INVALID);
     if (xc_vcpu_getcontext(xc_handle, domid, get_vcpu(domid), ctx))
         return NULL;
     return &ctx->user_regs;
@@ -144,6 +168,7 @@ get_regs(domid_t domid, vcpu_guest_context_t *ctx)
 static inline int
 set_regs(domid_t domid, vcpu_guest_context_t *ctx)
 {
+    assert(xc_handle != XC_IF_INVALID);
     if (xc_vcpu_setcontext(xc_handle, domid, get_vcpu(domid), ctx))
         return -1;
     return 0;
@@ -261,14 +286,18 @@ signal_interrupt(int on)
 }
 #endif /* VMPROBE_SIGNAL */
 
-static int
+static XC_HANDLE
 init_evtchn(evtchn_port_t *dbg_port)
 {
-    int evtchn;
+    XC_HANDLE evtchn;
     int port;
     
+#ifdef XENCTRL_HAS_XC_INTERFACE
+    evtchn = xc_evtchn_open(NULL, 0);
+#else
     evtchn = xc_evtchn_open();
-    if (evtchn < 0) {
+#endif
+    if (evtchn == XC_IF_INVALID) {
         perror("failed to open evtchn device");
         return evtchn;
     }
@@ -277,7 +306,7 @@ init_evtchn(evtchn_port_t *dbg_port)
     if (port < 0) {
         perror("failed to bind debug virq port");
         xc_evtchn_close(evtchn);
-        return port;
+        return XC_IF_INVALID;
     }
     
     *dbg_port = port;
@@ -285,14 +314,18 @@ init_evtchn(evtchn_port_t *dbg_port)
 }
 
 #if 0
-static int
+static XC_HANDLE
 reinit_evtchn(evtchn_port_t *dbg_port)
 {
-    int evtchn;
+    XC_HANDLE evtchn;
     int port;
     
+#ifdef XENCTRL_HAS_XC_INTERFACE
+    evtchn = xc_evtchn_open(NULL, 0);
+#else
     evtchn = xc_evtchn_open();
-    if (evtchn < 0) {
+#endif
+    if (evtchn == XC_IF_INVALID) {
         perror("failed to open evtchn device");
         return evtchn;
     }
@@ -458,6 +491,141 @@ remove_probepoint(struct vmprobe_probepoint *probepoint)
     free(probepoint);
 }
 
+#ifdef ENABLE_LIBVMI
+/*
+ * There is no eqivilent to these xenaccess functions
+ * in libvmi. Getting the name or id of a VM requires
+ * a libvmi handle.
+ */
+#include <xs.h>
+
+uint32_t xa_get_domain_id (char *name)
+{
+    char **domains = NULL;
+    unsigned int size = 0;
+    int i = 0;
+    struct xs_handle *xsh = NULL;
+    xs_transaction_t xth = XBT_NULL;
+    uint32_t domain_id = 0;
+    char *tmp = malloc(256);
+
+    xsh = xs_domain_open();
+    if (!xsh) {
+	fprintf(stderr,"ERROR: failed to open xenstore!\n");
+	goto out;
+    }
+    domains = xs_directory(xsh, xth, "/local/domain", &size);
+    for (i = 0; i < size; ++i){
+        /* read in name */
+        char *idStr = domains[i];
+        snprintf(tmp, 256, "/local/domain/%s/name", idStr);
+        char *nameCandidate = xs_read(xsh, xth, tmp, NULL);
+
+        // if name matches, then return number
+        if (nameCandidate && strncmp(name, nameCandidate, 256) == 0){
+            int idNum = atoi(idStr);
+            domain_id = (uint32_t) idNum;
+            break;
+        }
+
+        /* free memory as we go */
+        if (nameCandidate) free(nameCandidate);
+    }
+
+ out:
+    if (tmp) free(tmp);
+    if (domains) free(domains);
+    if (xsh) xs_daemon_close(xsh);
+    return domain_id;
+}
+
+char *xa_get_vmpath (int id)
+{
+    struct xs_handle *xsh = NULL;
+    xs_transaction_t xth = XBT_NULL;
+    char *tmp = NULL;
+    char *vmpath = NULL;
+
+    tmp = malloc(100);
+    if (NULL == tmp){
+        goto error_exit;
+    }
+
+    /* get the vm path */
+    memset(tmp, 0, 100);
+    sprintf(tmp, "/local/domain/%d/vm", id);
+    xsh = xs_domain_open();
+    vmpath = xs_read(xsh, xth, tmp, NULL);
+
+error_exit:
+    /* cleanup memory here */
+    if (tmp) free(tmp);
+    if (xsh) xs_daemon_close(xsh);
+
+    return vmpath;
+}
+
+/* XXX another handy xenaccess function */
+char *xa_get_kernel_name (int id)
+{
+    struct xs_handle *xsh = NULL;
+    xs_transaction_t xth = XBT_NULL;
+    char *vmpath = NULL;
+    char *kernel = NULL;
+    char *tmp = NULL;
+
+    vmpath = xa_get_vmpath(id);
+
+    /* get the kernel name */
+    tmp = malloc(100);
+    if (NULL == tmp){
+        goto error_exit;
+    }
+    memset(tmp, 0, 100);
+    sprintf(tmp, "%s/image/kernel", vmpath);
+    xsh = xs_domain_open();
+    kernel = xs_read(xsh, xth, tmp, NULL);
+
+error_exit:
+    /* cleanup memory here */
+    if (tmp) free(tmp);
+    if (vmpath) free(vmpath);
+    if (xsh) xs_daemon_close(xsh);
+
+    return kernel;
+}
+
+/* XXX made this one up */
+char *xa_get_domain_name (int id)
+{
+    struct xs_handle *xsh = NULL;
+    xs_transaction_t xth = XBT_NULL;
+    char *vmpath = NULL;
+    char *name = NULL;
+    char *tmp = NULL;
+
+    vmpath = xa_get_vmpath(id);
+
+    /* get the domain name */
+    tmp = malloc(100);
+    if (NULL == tmp){
+        goto error_exit;
+    }
+    memset(tmp, 0, 100);
+    sprintf(tmp, "%s/name", vmpath);
+    xsh = xs_domain_open();
+    name = xs_read(xsh, xth, tmp, NULL);
+
+error_exit:
+    /* cleanup memory here */
+    if (tmp) free(tmp);
+    if (vmpath) free(vmpath);
+    if (xsh) xs_daemon_close(xsh);
+
+    return name;
+}
+#endif
+
 struct vmprobe_domain *
 find_domain(domid_t domid)
 {
@@ -474,6 +642,7 @@ find_domain(domid_t domid)
 int domain_exists(domid_t domid)
 {
     char *vmpath = xa_get_vmpath((int)domid);
+
     if (vmpath) {
 	free(vmpath);
 	return 1;
@@ -483,6 +652,7 @@ int domain_exists(domid_t domid)
 
 int domain_init(domid_t domid,char *sysmapfile) {
     struct vmprobe_domain *vmd;
+#ifdef ENABLE_XENACCESS
     FILE *sysmapfh;
     int rc;
     unsigned int addr;
@@ -530,6 +700,13 @@ int domain_init(domid_t domid,char *sysmapfile) {
 	    }
 	}
     }
+#endif
+#ifdef ENABLE_LIBVMI
+    vmd = find_domain(domid);
+    if (!vmd)
+	return -1;
+    /* Everything else is done internal to libvmi at init time */
+#endif
 
     return 0;
 }
@@ -553,6 +730,7 @@ add_domain(domid_t domid)
         return NULL;
     }
     
+#ifdef ENABLE_XENACCESS
     /* initialize a xenaccess instance */
     memset(&domain->xa_instance, 0, sizeof(xa_instance_t));
     //domain->xa_instance.page_offset = 0xc0000000;
@@ -564,14 +742,122 @@ add_domain(domid_t domid)
     domain->xa_instance.os_type = XA_OS_LINUX; // currently linux only
 
     if (xa_init_vm_id_strict(domid, &domain->xa_instance) == XA_FAILURE) {
+        error("failed to init xa instance for dom%d\n", domid);
 	if (domain->xa_instance.sysmap)
 	    free(domain->xa_instance.sysmap);
         free(domain);
-        error("failed to init xa instance for dom%d\n", domid);
         return NULL;
     }
     //domain->xa_instance.init_task = 0xc03542c0;
     domain->xa_instance.kpgd = 0; //0xc03c7684;
+#endif
+#ifdef ENABLE_LIBVMI
+    domain->name = xa_get_domain_name(domid);
+    if (domain->name == NULL) {
+	error("could not determine kernel for dom%d\n", domid);
+	free(domain);
+	return NULL;
+    }
+    if (vmi_init(&domain->vmi_instance,
+		 VMI_XEN|VMI_INIT_PARTIAL, domain->name) == VMI_FAILURE) {
+        error("failed to init vmi instance for dom%d\n", domid);
+	free(domain->name);
+	free(domain);
+        return NULL;
+    }
+    domain->kernel_name = xa_get_kernel_name(domid);
+    if (domain->kernel_name == NULL) {
+	error("could not determine kernel for dom%d\n", domid);
+	vmi_destroy(domain->vmi_instance);
+	free(domain->name);
+	free(domain);
+	return NULL;
+    }
+
+    /*
+     * XXX total hack. Hardwire offsets according to what kernel running
+     * in the guest. Okay, the hack part is that we encode the values here
+     * rather than using the libvmi config file method.
+     * Offsets are:
+     *   linux_tasks: offset of "tasks" in task_struct
+     *   linux_mm:    offset of "mm" in task_struct
+     *   linux_pid:   offset of "pid" in task_struct
+     *   linux_pgd:   offset of "pgd" in mm_struct
+     * Values below came from running gdb on the appropriate kernel; e.g.
+     *   p &((struct task_struct *)0)->tasks
+     */
+    {
+	struct {
+	    char *kpath;
+	    char *sysmap;
+	    uint32_t tasks, mm, pid, pgd;
+	    int bitness;
+	} vmimap[] = {
+	    /* Xen 4.1 + Ubuntu 12 + Linux 3.8.4 64-bit */
+	    {
+		"/boot/vmlinuz-3.8.4",
+		"/boot/System.map-3.8.4",
+		0x260, 0x298, 0x2d4, 0x50,
+		64
+	    },
+	    /* Xen 4.1 + Ubuntu 12 + Linux 3.2.16 64-bit */
+	    {
+		"/boot/vmlinuz-3.2.16emulab1",
+		"/boot/System.map-3.2.16emulab1",
+		0x238, 0x270, 0x2ac, 0x50,
+		64
+	    },
+	    /* Xen 3.1 + Fedora 8 + Linux 2.6.18.8 32-bit PAE */
+	    {
+		"/boot/vmlinuz-2.6.18.8-xenU",
+		"/boot/System.map-2.6.18.8-xenU",
+		0x6c, 0x84, 0xa8, 0x24,
+		32
+	    },
+	    /* Xen 3.0 TT + Fedora 8 + Linux 2.6.18 32-bit PAE */
+	    {
+		"/boot/vmlinuz-2.6.18-xenU",
+		"/boot/System.map-2.6.18-xenU",
+		0x6c, 0x84, 0xa8, 0x24,
+		32
+	    },
+	    {
+		NULL, NULL, 0, 0, 0, 0, 0
+	    }
+	}, *vptr;
+	char str[128];
+
+	for (vptr = vmimap; vptr->kpath != NULL; vptr++)
+	    if (strcmp(vptr->kpath, domain->kernel_name) == 0)
+		break;
+
+	if (vptr->kpath == NULL) {
+	    error("unrecognized kernel %s for dom%d\n",
+		  domain->kernel_name, domid);
+	    vmi_destroy(domain->vmi_instance);
+	    free(domain->kernel_name);
+	    free(domain->name);
+	    free(domain);
+	    return NULL;
+	}
+
+	snprintf(str, sizeof str,
+		 "{ostype=\"Linux\"; sysmap=\"%s\"; linux_tasks=0x%x; linux_mm=0x%x; linux_pid=0x%x; linux_pgd=0x%x;}",
+		 vptr->sysmap, vptr->tasks, vptr->mm, vptr->pid, vptr->pgd);
+
+	if (vmi_init_complete(&domain->vmi_instance, str) == VMI_FAILURE) {
+	    error("failed to complete init of vmi instance for dom%d\n",
+		  domid);
+	    vmi_destroy(domain->vmi_instance);
+	    free(domain->kernel_name);
+	    free(domain->name);
+	    free(domain);
+	    return NULL;
+	}
+
+	debug(2, "dom%d vmi_init done with config:\n%s\n", domid, str);
+    }
+#endif
 
     domain->id = domid;
     domain->org_ip = 0;
@@ -593,10 +879,17 @@ remove_domain(struct vmprobe_domain *domain)
 {
     list_del(&domain->list);
 
+#ifdef ENABLE_XENACCESS
     xa_destroy(&domain->xa_instance);
 
     if (domain->xa_instance.sysmap)
 	free(domain->xa_instance.sysmap);
+#endif
+#ifdef ENABLE_LIBVMI
+    vmi_destroy(domain->vmi_instance);
+    free(domain->name);
+    free(domain->kernel_name);
+#endif
 
     debug(0,"dom%d removed\n", domain->id);
 
@@ -773,7 +1066,7 @@ handle_bphit(struct vmprobe_domain *domain)
         domain->org_ip = 0;
         
         VMPROBE_PERF_STOP("vmprobes resets ip register in domU");
-        debug(2,"original ip %x restored in dom%d\n", regs->eip, domain->id);
+        debug(2,"original ip %lx restored in dom%d\n", regs->eip, domain->id);
     }
 
     /*
@@ -910,12 +1203,12 @@ cleanup_vmprobes(void)
     ret = xc_evtchn_close(xce_handle);
     if (ret)
         perror("failed to close event channel");
-    xce_handle = -1;
+    xce_handle = XC_IF_INVALID;
     
     ret = xc_interface_close(xc_handle);
     if (ret)
         perror("failed to close xc interface");
-    xc_handle = -1;
+    xc_handle = XC_IF_INVALID;
 
 #ifdef VMPROBE_SIGNAL
     signal_interrupt(0);
@@ -930,7 +1223,7 @@ init_vmprobes(void)
     vmprobe_handle_t handle;
     vmprobe_action_handle_t action_handle;
     
-    if (xc_handle != -1) {
+    if (xc_handle != XC_IF_INVALID) {
 	debug(1, "vmprobes already initialized\n");
         return -1;
     }
@@ -941,17 +1234,21 @@ init_vmprobes(void)
     
     VMPROBE_PERF_RESET();
 
+#ifdef XENCTRL_HAS_XC_INTERFACE
+    xc_handle = xc_interface_open(NULL, NULL, 0);
+#else
     xc_handle = xc_interface_open();
-    if (xc_handle < 0) {
+#endif
+    if (xc_handle == XC_IF_INVALID) {
         perror("failed to open xc interface");
-        return xc_handle;
+        return -1;
     }
 
     xce_handle = init_evtchn(&dbg_port);
-    if (xce_handle < 0) {
+    if (xce_handle == XC_IF_INVALID) {
         perror("failed to open event channel\n");
         cleanup_vmprobes();
-        return xce_handle;
+        return -1;
     }
 
     if (!cqueue_init(&handle_queue, VMPROBE_MAX)) {
@@ -980,21 +1277,25 @@ init_vmprobes(void)
 static int
 reinit_vmprobes(void)
 {
-    if (xc_handle != -1)
+    if (xc_handle != XC_IF_INVALID)
         return -1; // xc interface already open
 
     VMPROBE_PERF_RESET();
 
+#ifdef XENCTRL_HAS_XC_INTERFACE
+    xc_handle = xc_interface_open(NULL, NULL, 0);
+#else
     xc_handle = xc_interface_open();
-    if (xc_handle < 0) {
+#endif
+    if (xc_handle == XC_IF_INVALID) {
         perror("failed to open xc interface");
-        return xc_handle;
+        return -1;
     }
 
     xce_handle = init_evtchn(&dbg_port);
-    if (xce_handle < 0) {
+    if (xce_handle == XC_IF_INVALID) {
         cleanup_vmprobes();
-        return xce_handle;
+        return -1;
     }
 
     interrupt = false;
@@ -1007,8 +1308,10 @@ __register_vmprobe(struct vmprobe *probe)
 {
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_domain *domain;
+#ifdef ENABLE_XENACCESS
     char *pages;
     uint32_t offset;
+#endif
     int ret;
 
     probepoint = probe->probepoint;
@@ -1037,6 +1340,7 @@ __register_vmprobe(struct vmprobe *probe)
     /* FIXME: David's code for batched probe registration?
        -- make this a function; it will shorten the code */
     memset(probe->vbytes,0,64);
+#ifdef ENABLE_XENACCESS
     pages = xa_access_kernel_va_range(&domain->xa_instance, 
             probepoint->vaddr, 
             64, 
@@ -1052,6 +1356,14 @@ __register_vmprobe(struct vmprobe *probe)
 	if (munmap(pages, np * domain->xa_instance.page_size))
 	    warning("munmap of %p failed\n", pages);
     }
+#endif
+#ifdef ENABLE_LIBVMI
+    ret = vmi_read_va(domain->vmi_instance, probepoint->vaddr, 0,
+		      probe->vbytes, 64);
+    if (ret != 64)
+	warning("dom%d: incomplete read (%d of %d) at 0x%lx\n",
+		domain->id, ret, 64, probepoint->vaddr);
+#endif
 
     /* backup the original instruction */
     /* inject a breakpoint at the probe-point */
@@ -1089,12 +1401,18 @@ __dump_probe(struct vmprobe *probe, char *str)
 {
     struct vmprobe_probepoint *probepoint;
     struct vmprobe_domain *domain;
+#ifdef ENABLE_XENACCESS
     char *pages;
     uint32_t offset;
+#endif
+    char buf[64];
+    int i;
 
     probepoint = probe->probepoint;
     domain = probepoint->domain;
 
+    memset(buf, 0, 64);
+#ifdef ENABLE_XENACCESS
     /* FIXME: David's code for batched probe registration? 
        -- make this a function, it will shorten the code much */
     pages = xa_access_kernel_va_range(&domain->xa_instance, 
@@ -1103,27 +1421,31 @@ __dump_probe(struct vmprobe *probe, char *str)
             &offset, 
             PROT_READ);
     if (pages) {
-	int i;
-
-	if (str)
-	    printf("%s:\n", str);
-	printf("P:");
-        for (i = 0; i < 16; ++i) {
-            printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
-        }
-        printf("\nM:");
-        for (i = 0; i < 16; ++i) {
-            printf(" %08x",*((unsigned int *)(pages + offset + i*4)));
-        }
-        printf("\n");
-	fflush(stdout);
-
+	memcpy(buf, pages+offset, 64);
 	i = 1;
 	if (offset + 64 > domain->xa_instance.page_size)
 	    i++;
 	if (munmap(pages, i * domain->xa_instance.page_size))
 	    warning("munmap of %p failed\n", pages);
     }
+#endif
+#ifdef ENABLE_LIBVMI
+    if (vmi_read_va(domain->vmi_instance, probepoint->vaddr, 0, buf, 64) != 64)
+	warning("incomplete read at 0x%lx\n", probepoint->vaddr);
+#endif
+
+    if (str)
+	printf("%s:\n", str);
+    printf("P:");
+    for (i = 0; i < 16; ++i) {
+	printf(" %08x",*((unsigned int *)&(probe->vbytes[i*4])));
+    }
+    printf("\nM:");
+    for (i = 0; i < 16; ++i) {
+	printf(" %08x",*((unsigned int *)(buf + i*4)));
+    }
+    printf("\n");
+    fflush(stdout);
 }
 
 /*
@@ -1339,17 +1661,18 @@ register_vmprobe_batch(domid_t domid,
     if (domid <= 0)
         return -1;
     
-    if (domain_paused(domid)) {
-        error("dom%d already paused\n", domid);
-        return -EPERM;
-    }
-    
     /* initialize vmprobes library at the first probe registration attempt */
+    /* XXX must be done before domain_paused */
     if (list_empty(&domain_list)) {
         if ((rc = init_vmprobes()) < 0)
             return rc;
     }
 
+    if (domain_paused(domid)) {
+        error("dom%d already paused\n", domid);
+        return -EPERM;
+    }
+    
     domain = find_domain(domid);
     if (!domain) {
         domain = add_domain(domid);
@@ -1892,20 +2215,20 @@ vmprobe_action_handle_t action_code(uint32_t flags,
                     vmprobe_opcode_t **code,
                     uint32_t len)
 {
-    return (vmprobe_action_handle_t)NULL;
+    return (vmprobe_action_handle_t)0;
 }
 
 vmprobe_action_handle_t action_regmod(uint8_t regnum,
                       unsigned long regval)
 {
-    return (vmprobe_action_handle_t)NULL;
+    return (vmprobe_action_handle_t)0;
 }
 
 vmprobe_action_handle_t action_memmod(char *data,
                       unsigned long len,
                       unsigned long destaddr)
 {
-    return (vmprobe_action_handle_t)NULL;
+    return (vmprobe_action_handle_t)0;
 }
 
 void action_cancel(vmprobe_action_handle_t action_handle)
@@ -2032,7 +2355,7 @@ run_vmprobes(void)
 		global_state = "INDOM";
 
                 if (domain->sstep_probepoint)
-		    debug(1,"dom%d paused by sstep-hit, probepoint@0x%x\n",
+		    debug(1,"dom%d paused by sstep-hit, probepoint@0x%lx\n",
 			  domain->id, domain->sstep_probepoint->vaddr);
 		 else
 		     debug(1,"dom%d paused by bp-hit\n", domain->id);
@@ -2063,7 +2386,7 @@ run_vmprobes(void)
 
                 VMPROBE_PERF_STOP("vmprobes obtains registers from domU");
 
-		debug(1,"dom%d paused at 0x%x\n", domain->regs->eip);
+		debug(1,"dom%d paused at 0x%lx\n", domain->id, domain->regs->eip);
 
                 /* handle the triggered probe based on its event type */
                 if (__in_singlestep(domain->regs) &&
@@ -2099,8 +2422,16 @@ run_vmprobes(void)
 
                 VMPROBE_PERF_STOP("vmprobes sets registers to domU");
 
+#ifdef ENABLE_XENACCESS
                 xa_destroy_cache(&domain->xa_instance);
                 xa_destroy_pid_cache(&domain->xa_instance);
+#endif
+#ifdef ENABLE_LIBVMI
+		/* XXX is this right? */
+		vmi_v2pcache_flush(domain->vmi_instance);
+		vmi_symcache_flush(domain->vmi_instance);
+		vmi_pidcache_flush(domain->vmi_instance);
+#endif
 
                 debug(1,"trying to unpause dom%d\n", domain->id);
                 VMPROBE_PERF_START();
@@ -2189,8 +2520,8 @@ restart_vmprobes(void)
 #if 0
     // reopen event channel
     xce_handle = reinit_evtchn(&dbg_port);
-    if (xce_handle < 0) {
-        return xce_handle;
+    if (xce_handle == XC_IF_INVALID) {
+        return -1;
     }
 #endif
     reinit_vmprobes();
@@ -2300,6 +2631,9 @@ vmprobe_getcookie(vmprobe_handle_t handle)
     return probe->cookie;
 }
 
+#include "vmprobes_arch.c"
+
+#ifdef ENABLE_XENACCESS
 xa_instance_t *
 vmprobe_xa_instance(vmprobe_handle_t handle)
 {
@@ -2321,8 +2655,6 @@ vmprobe_xa_instance(vmprobe_handle_t handle)
 
     return &domain->xa_instance;
 }
-
-#include "vmprobes_arch.c"
 
 static unsigned char *
 mmap_pages(xa_instance_t *xa_instance,
@@ -2475,6 +2807,77 @@ vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     
     return retval;
 }
+#endif
+
+#ifdef ENABLE_LIBVMI
+vmi_instance_t
+vmprobe_vmi_instance(vmprobe_handle_t handle)
+{
+    struct vmprobe *probe;
+    struct vmprobe_probepoint *probepoint;
+    struct vmprobe_domain *domain;
+
+    probe = find_probe(handle);
+    if (!probe)
+        return NULL;
+    
+    probepoint = probe->probepoint;
+    if (!probepoint)
+        return NULL;
+
+    domain = probepoint->domain;
+    if (!domain)
+        return NULL;
+
+    return domain->vmi_instance;
+}
+
+unsigned char *
+vmprobe_get_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+         char *name,unsigned long addr,int pid,
+         unsigned long target_length,unsigned char *target_buf)
+{
+    struct vmprobe *probe;
+    vmi_instance_t vmi;
+    int alloced = 0;
+    size_t cc;
+
+    probe = find_probe(handle);
+    assert(probe);
+
+    vmi = vmprobe_vmi_instance(handle);
+    assert(vmi);
+
+    debug(2,"loading %s: %d bytes at (addr=%lx,pid=%d)\n",
+	  name,target_length,addr,pid);
+
+    /* if length == 0, we are copying in a string. */
+    if (target_length == 0)
+	return (unsigned char *)vmi_read_str_va(vmi, (addr_t)addr, pid);
+
+    /* allocate buffer if necessary */
+    if (!target_buf) {
+	target_buf = malloc(target_length + 1);
+	if (!target_buf)
+	    return NULL;
+	alloced = 1;
+    }
+
+    /* read the data */
+    cc = vmi_read_va(vmi, (addr_t)addr, pid, target_buf, target_length);
+
+    /* there is no provision for a partial read, assume an error */
+    if ((unsigned long)cc != target_length) {
+	warning("vmi_read_va of %s at 0x%lx returns partial data (%lu of %lu)\n",
+		name, addr, (unsigned long)cc, target_length);
+	if (alloced)
+	    free(target_buf);
+	return NULL;
+    }
+
+    return target_buf;
+}
+#endif
 
 /*
  * Local variables:

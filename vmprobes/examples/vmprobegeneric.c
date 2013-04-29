@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -44,11 +44,12 @@
 #include <linux/netlink.h>
 #include <netdb.h>
 #include <signal.h>
+#include <syslog.h>
 
 #include "vmprobes.h"
 #include "list.h"
 
-#define SYSCALL_MAX 303
+#define SYSCALL_MAX 305
 
 #define ARG_STRING_LEN	1024
 #define ARG_BYTES_LEN	1024
@@ -264,8 +265,14 @@ struct syscall_retinfo {
     unsigned long raddr;
     unsigned long arg0;
     unsigned long arg1;
+#if __WORDSIZE == 64
+    unsigned long arg2;
+    unsigned long arg3;
+    unsigned long arg4;
+    unsigned long arg5;
+#else
     unsigned long argptr;
-
+#endif
     struct list_head list;
 };
 
@@ -322,6 +329,7 @@ char *ssprintf(char *format,...) {
     buf = _buf;
     bufsiz = sizeof _buf;
     rc = vsnprintf(buf, bufsiz, format, args);
+    va_end(args);
 
     /* that didn't work, build a dynamic buffer */
     if (rc >= bufsiz) {
@@ -332,7 +340,9 @@ char *ssprintf(char *format,...) {
 	    buf = malloc(bufsiz);
 	    if (buf == NULL)
 		return NULL;
+	    va_start(args,format);
 	    rc = vsnprintf(buf, bufsiz, format, args);
+	    va_end(args);
 	    if (rc < bufsiz)
 		break;
 	    free(buf);
@@ -346,8 +356,6 @@ char *ssprintf(char *format,...) {
     memcpy(tbuf, buf, bufsiz);
     if (buf != _buf)
 	free(buf);
-
-    va_end(args);
 
     return tbuf;
 }
@@ -816,7 +824,6 @@ char *sockaddr2str(struct sockaddr *sa)
 {
     char *buf;
     int buflen = 1024;
-    int usedlen = 0;
     char tmpbuf[128];
 
     if (!sa)
@@ -829,8 +836,8 @@ char *sockaddr2str(struct sockaddr *sa)
     {
 	struct sockaddr_un *sun = (struct sockaddr_un *)sa;
 	strncpy(tmpbuf, sun->sun_path, sizeof(tmpbuf)-1);
-	usedlen = snprintf(buf, buflen, "{.sun_family = AF_UNIX, .sun_path = '%s' }",
-			   tmpbuf);
+	snprintf(buf, buflen, "{.sun_family = AF_UNIX, .sun_path = '%s' }",
+		 tmpbuf);
 	break;
     }
 
@@ -840,8 +847,8 @@ char *sockaddr2str(struct sockaddr *sa)
 	inet_ntop(sa->sa_family,(const void *)&sin->sin_addr,
 		  tmpbuf,sizeof(tmpbuf));
 	tmpbuf[sizeof(tmpbuf)-1] = '\0';
-	usedlen = snprintf(buf,buflen,"{ .sa_family = AF_INET, { .sin_port = %d, .sin_addr = '%s' } }",
-			   ntohs(sin->sin_port),tmpbuf);
+	snprintf(buf,buflen,"{ .sa_family = AF_INET, { .sin_port = %d, .sin_addr = '%s' } }",
+		 ntohs(sin->sin_port),tmpbuf);
 	buf[buflen - 1] = '\0';
 	break;
     }
@@ -851,9 +858,9 @@ char *sockaddr2str(struct sockaddr *sa)
 	struct sockaddr_in6 *sin = (struct sockaddr_in6 *)sa;
 	inet_ntop(sa->sa_family,(const void *)&sin->sin6_addr,tmpbuf,sizeof(tmpbuf));
 	tmpbuf[sizeof(tmpbuf)-1] = '\0';
-	usedlen = snprintf(buf,buflen,"{ .sa_family = AF_INET6, { .sin6_port = %d, .sin6_flowinfo = %u, .sin_addr = '%s', .sin6_scope_id = %u } }",
-			   ntohs(sin->sin6_port),sin->sin6_flowinfo,tmpbuf,
-			   sin->sin6_scope_id);
+	snprintf(buf,buflen,"{ .sa_family = AF_INET6, { .sin6_port = %d, .sin6_flowinfo = %u, .sin_addr = '%s', .sin6_scope_id = %u } }",
+		 ntohs(sin->sin6_port),sin->sin6_flowinfo,tmpbuf,
+		 sin->sin6_scope_id);
 	buf[buflen - 1] = '\0';
 	break;
     }
@@ -862,8 +869,8 @@ char *sockaddr2str(struct sockaddr *sa)
     {
 	struct sockaddr_nl *snl = (struct sockaddr_nl *)sa;
 
-	usedlen = snprintf(buf,buflen,"{ .nl_family = AF_NETLINK, .nl_pid = %u, .nl_groups = %u }",
-			   (unsigned)snl->nl_pid, snl->nl_groups);
+	snprintf(buf,buflen,"{ .nl_family = AF_NETLINK, .nl_pid = %u, .nl_groups = %u }",
+		 (unsigned)snl->nl_pid, snl->nl_groups);
 	break;
     }
 
@@ -1186,6 +1193,11 @@ int sc_arg_type_len[SC_ARG_TYPE__MAX__] = {
 #define THREAD_SIZE 8192
 #define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
 
+/*
+ * XXX assumes that word size on dom0 implies kernel build on guest!
+ */
+#if __WORDSIZE == 32
+
 #define TASK_STRUCT_SIZE 1312
 #define TASK_STRUCT_OFFSET 0
 #define PID_OFFSET 168
@@ -1203,7 +1215,33 @@ int sc_arg_type_len[SC_ARG_TYPE__MAX__] = {
 #define COMM_OFFSET 396
 #define TASKS_OFFSET 108
 
-uint32_t init_task_addr = 0;
+#elif __WORDSIZE == 64
+
+#define TASK_STRUCT_SIZE 5880
+#define TASK_STRUCT_OFFSET 0
+#define PID_OFFSET 724
+#define TGID_OFFSET 728
+#define REAL_PARENT_OFFSET 744
+#define PARENT_OFFSET 752
+#define COMM_OFFSET 1152
+#define TASKS_OFFSET 608
+#define RCRED_OFFSET 1136
+
+#define CRED_STRUCT_SIZE 160
+#define UID_OFFSET 4
+#define EUID_OFFSET 20
+#define SUID_OFFSET 12
+#define FSUID_OFFSET 28
+#define GID_OFFSET 8
+#define EGID_OFFSET 24
+#define SGID_OFFSET 16
+#define FSGID_OFFSET 32
+
+#else
+#error "Do not know wordsize!"
+#endif
+
+unsigned long init_task_addr = 0;
 
 void print_process_data(vmprobe_handle_t handle,
 			struct cpu_user_regs *regs,
@@ -1263,6 +1301,47 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
 
     data->pid = *((unsigned int *)(task_struct_buf+PID_OFFSET));
     data->tgid = *((unsigned int *)(task_struct_buf+TGID_OFFSET));
+    data->nextptr = *((unsigned long *)(task_struct_buf+TASKS_OFFSET)) - TASKS_OFFSET;
+    if ((char *)(task_struct_buf+COMM_OFFSET) != NULL)
+	data->name = strndup((char *)(task_struct_buf+COMM_OFFSET),16);
+
+    real_parent_addr = *((unsigned long *)(task_struct_buf+REAL_PARENT_OFFSET));
+    parent_addr = *((unsigned long *)(task_struct_buf+PARENT_OFFSET));
+
+    /*
+     * Creds are not always in the task struct
+     */
+#ifdef RCRED_OFFSET
+    {
+	unsigned long cred_addr;
+	unsigned char *cred_struct_buf;
+
+	cred_addr = *((unsigned long *)(task_struct_buf+RCRED_OFFSET));
+	cred_struct_buf = vmprobe_get_data(handle,regs,"cred_struct",
+					   cred_addr,0,CRED_STRUCT_SIZE,NULL);
+	if (!cred_struct_buf) {
+	    fprintf(stderr, "WARNING: could not read task cred struct!\n");
+	    data->uid = ~0;
+	    data->euid = ~0;
+	    data->suid = ~0;
+	    data->fsuid = ~0;
+	    data->gid = ~0;
+	    data->egid = ~0;
+	    data->sgid = ~0;
+	    data->fsgid = ~0;
+	} else {
+	    data->uid = *((unsigned int *)(cred_struct_buf+UID_OFFSET));
+	    data->euid = *((unsigned int *)(cred_struct_buf+EUID_OFFSET));
+	    data->suid = *((unsigned int *)(cred_struct_buf+SUID_OFFSET));
+	    data->fsuid = *((unsigned int *)(cred_struct_buf+FSUID_OFFSET));
+	    data->gid = *((unsigned int *)(cred_struct_buf+GID_OFFSET));
+	    data->egid = *((unsigned int *)(cred_struct_buf+EGID_OFFSET));
+	    data->sgid = *((unsigned int *)(cred_struct_buf+SGID_OFFSET));
+	    data->fsgid = *((unsigned int *)(cred_struct_buf+FSGID_OFFSET));
+	    free(cred_struct_buf);
+	}
+    }
+#else
     data->uid = *((unsigned int *)(task_struct_buf+UID_OFFSET));
     data->euid = *((unsigned int *)(task_struct_buf+EUID_OFFSET));
     data->suid = *((unsigned int *)(task_struct_buf+SUID_OFFSET));
@@ -1271,12 +1350,7 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
     data->egid = *((unsigned int *)(task_struct_buf+EGID_OFFSET));
     data->sgid = *((unsigned int *)(task_struct_buf+SGID_OFFSET));
     data->fsgid = *((unsigned int *)(task_struct_buf+FSGID_OFFSET));
-    data->nextptr = *((unsigned long *)(task_struct_buf+TASKS_OFFSET)) - TASKS_OFFSET;
-    if ((char *)(task_struct_buf+COMM_OFFSET) != NULL)
-	data->name = strndup((char *)(task_struct_buf+COMM_OFFSET),16);
-
-    real_parent_addr = *((unsigned int *)(task_struct_buf+REAL_PARENT_OFFSET));
-    parent_addr = *((unsigned int *)(task_struct_buf+PARENT_OFFSET));
+#endif
 
     free(task_struct_buf);
 
@@ -1284,7 +1358,7 @@ struct process_data *load_process_data(vmprobe_handle_t handle,
      * Find our parent and handle recursion
      */
     data->ppid = data->real_ppid = -1;
-    if (data->pid != 1 && recurse) {
+    if (data->pid > 2 && recurse && recurse >= -50) {
 	if (parent_addr) {
 	    parent_data = load_process_data(handle,regs,parent_addr,
 					    recurse - 1,printtree);
@@ -1476,9 +1550,11 @@ struct process_data *load_current_process_data(vmprobe_handle_t handle,
 {
     struct process_data *data;
     unsigned long thread_info_ptr = current_thread_ptr(regs->esp);
-    unsigned char *task_struct_ptr_buf = \
-	vmprobe_get_data(handle,regs,"current_thread_ptr",thread_info_ptr,0,
-			 sizeof(unsigned long),NULL);
+    unsigned char *task_struct_ptr_buf;
+
+    task_struct_ptr_buf = vmprobe_get_data(handle,regs,"current_thread_ptr",
+					   thread_info_ptr,0,
+					   sizeof(unsigned long),NULL);
     if (!task_struct_ptr_buf)
 	return NULL;
 
@@ -1621,8 +1697,6 @@ void exit_code_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 {
     long code = *((long *)(arg_data[arg]->data));
 
-    //arg_data[arg]->str = ssprintf("0x%08lx",code);
-
     if (1) {
 	if (WIFEXITED(code)) {
 	    arg_data[arg]->decodings[0] = strdup("exit");
@@ -1643,6 +1717,8 @@ void exit_code_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	    arg_data[arg]->decodings[1] = strdup("");
 	    arg_data[arg]->decodings[2] = strdup("");
 	}
+    } else {
+	arg_data[arg]->str = ssprintf("0x%08lx", code);
     }
  
     return;
@@ -1682,6 +1758,52 @@ void wait_stat_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     arg_data[arg]->decodings[0] = strdup(addr ? "undef" : "nostatus");
     arg_data[arg]->decodings[1] = strdup("");
     arg_data[arg]->decodings[2] = strdup("");
+}
+
+void argv_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		  int pid,int syscall,int arg,
+		  struct argdata **arg_data,
+		  struct process_data *data)
+{
+    unsigned long argv_addr;
+    unsigned char *argi_ptr;
+    unsigned long argi_addr;
+    unsigned char *argi;
+    int i = 0;
+    char *buf = NULL;
+    int bufsiz = 0;
+    char *endptr = NULL;
+
+    argv_addr = *(unsigned long *)arg_data[arg]->data;
+    if (!argv_addr) 
+	return;
+
+    string_append(&buf,&bufsiz,&endptr,"[");
+    while (1) {
+	argi_ptr = vmprobe_get_data(handle,regs,
+				    "argv_addr",
+				    argv_addr + i * sizeof(char *),
+				    pid,sizeof(char *),NULL);
+	if (argi_ptr == NULL || *argi_ptr == '\0') {
+	    if (argi_ptr)
+		free(argi_ptr);
+	    break;
+	}
+	argi_addr = *((unsigned long *)argi_ptr);
+	free(argi_ptr);
+	argi = vmprobe_get_data(handle,regs,
+				"argi_addr",argi_addr,
+				pid,0,NULL);
+	if (!argi)
+	    argi = (unsigned char *)strdup("(null)");
+	string_append(&buf,&bufsiz,&endptr,(char *)argi);
+	string_append(&buf,&bufsiz,&endptr,",");
+	if (argi)
+	    free(argi);
+	++i;
+    }
+    string_append(&buf,&bufsiz,&endptr,"]");
+    arg_data[arg]->decodings[0] = buf;
 }
 
 void process_ptregs_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
@@ -2122,7 +2244,7 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     { 111, "sys_vhangup", 0xc0162d60, RADDR_NONE, 0 },
     { 0 },
     { 0 },
-    { 114, "sys_wait4", 0xc0121300, RADDR_NONE, 4,
+    { 114, "sys_wait4", 0xc0121300, RADDR_GEN, 4,
       { { 1, "pid", SC_ARG_TYPE_PID_T },
 	{ 2, "stat_addr", SC_ARG_TYPE_PTR },
 	{ 3, "options", SC_ARG_TYPE_INT },
@@ -2453,7 +2575,68 @@ struct syscall_info sctab[SYSCALL_MAX] = {
     /* generic syscall stub, used for catching returns (at addr+7) */
 #define SYSCALL_RET_IX 302
     { 302, "syscall_call", 0x0, RADDR_NONE, 0 },
+
+    /* Linux 3 x86-64 syscalls */
+    { 303, "sys_execve64", 0, RADDR_GEN, 3, 
+      { { 1, "filename", SC_ARG_TYPE_STRING }, 
+	{ 2, "argv", SC_ARG_TYPE_PTR, argv_decoder, (char *[]) { "argv:argv" }, 1 },
+	{ 3, "envp", SC_ARG_TYPE_PTR, argv_decoder, (char *[]) { "envp:envp" }, 1 },
+      } },
+    { 304, "sys_mmap", 0, RADDR_GEN, 6,
+      { { 1, "addr", SC_ARG_TYPE_PTR, },
+	{ 2, "length", SC_ARG_TYPE_INT },
+	{ 3, "prot", SC_ARG_TYPE_HEXINT, mmap_prot_decoder,
+	  (char *[]) { "prot:prot" }, 1 },
+	{ 4, "flags", SC_ARG_TYPE_HEXINT, mmap_flag_decoder,
+	  (char *[]) { "flags:flags" }, 1 },
+	{ 5, "fd", SC_ARG_TYPE_UINT },      
+	{ 6, "offset", SC_ARG_TYPE_LONG } } },
 };
+
+int syscall_64to32map[] = {
+      3,   4,   5,   6, 106, /* 000-004 */
+    108, 107, 168,  19, 304, /* 005-009 */
+    125,  91,  45, 174, 175, /* 010-014 */
+     -1,  54, 180, 181, 145, /* 015-019 */
+    146,  33,  42, 142, 158, /* 020-024 */
+    163, 144, 218, 219,  -1, /* 025-029 */
+     -1,  -1,  41,  63,  29, /* 030-034 */
+    162, 105,  27, 104,  20, /* 035-039 */
+    239,  -1,  -1,  -1,  -1, /* 040-044 */	/* XXX socket calls */
+     -1,  -1,  -1,  -1,  -1, /* 045-049 */	/* XXX socket calls */
+     -1,  -1,  -1,  -1,  -1, /* 050-054 */	/* XXX socket calls */
+     -1, 120,   2, 190, 303, /* 055-059 */	/* XXX socket calls */
+      1, 114,  37, 109,  -1, /* 060-064 */
+     -1,  -1,  -1,  -1,  -1, /* 065-069 */	/* XXX sem/msg calls */
+     -1,  -1,  55, 143, 118, /* 070-074 */
+    148,  92,  93, 141, 183, /* 075-079 */
+
+     -1,  -1,  -1,  -1,  -1, /* 080-084 */
+     -1,  -1,  -1,  -1,  -1, /* 085-089 */
+     -1,  -1,  -1,  -1,  -1, /* 090-094 */
+     -1,  -1,  -1,  -1,  -1, /* 095-099 */
+     -1,  -1,  -1,  -1,  -1, /* 100-104 */
+     -1,  -1,  -1,  -1,  -1, /* 105-109 */
+     -1,  -1,  -1,  -1,  -1, /* 110-114 */
+     -1,  -1,  -1,  -1,  -1, /* 115-119 */
+     -1,  -1,  -1,  -1,  -1, /* 120-124 */
+     -1,  -1,  -1,  -1,  -1, /* 125-129 */
+     -1,  -1,  -1,  -1,  -1, /* 130-134 */
+     -1,  -1,  -1,  -1,  -1, /* 135-139 */
+     -1,  -1,  -1,  -1,  -1, /* 140-144 */
+     -1,  -1,  -1,  -1,  -1, /* 145-149 */
+     -1,  -1,  -1,  -1,  -1, /* 150-154 */
+     -1,  -1,  -1,  -1,  -1, /* 155-159 */
+     -1,  -1,  -1,  -1,  -1, /* 160-164 */
+     -1,  -1,  -1,  -1,  -1, /* 165-169 */
+     -1,  -1,  -1,  -1,  -1, /* 170-174 */
+     -1,  -1,  -1,  -1,  -1, /* 175-179 */
+     -1,  -1,  -1,  -1,  -1, /* 180-184 */
+     -1,  -1,  -1,  -1,  -1, /* 185-189 */
+     -1,  -1,  -1,  -1,  -1, /* 190-194 */
+     -1,  -1,  -1,  -1,  -1, /* 195-199 */
+};
+#define SYSCALLMAP_SIZE (sizeof(syscall_64to32map)/sizeof(int))
 
 #define STATS_MAX (128)
 #define QUERY_MAX (256)
@@ -2463,6 +2646,8 @@ char conf_statsserver[STATS_MAX+1] = "127.0.0.1:8989";
 char conf_querykey[QUERY_MAX+1] = "index.html?op=pub&type=event&event=";
 
 static struct sockaddr_in stats_sock;
+static int usesyslog = 0;
+
 /*
  * Open our connection to the stats server
  */
@@ -2537,6 +2722,13 @@ int web_init(void)
     if (conf_statsserver == NULL)
         return 0;
 
+    usesyslog = 0;
+    if (strcmp(conf_statsserver, "SYSLOG") == 0) {
+	usesyslog = 1;
+	syslog(LOG_INFO, "Stats server is local logfile");
+	return 0;
+    }
+
     ip = conf_statsserver;
     port = index(ip, ':');
     if (port == NULL || ip == port || port[1] == '\0') {
@@ -2575,6 +2767,11 @@ int web_report(const char *msg,const char *extras)
     sprintf(statbuf, "GET /%s%s:%%20%s&%s HTTP/1.1\n"
 	    "Host: a3\n\n", conf_querykey, EVENT_TAG, msg, extras);
 
+    if (usesyslog) {
+	syslog(LOG_INFO, "sserver: %s", statbuf);
+	return 0;
+    }
+
     sock = open_statsserver();
     if (sock >= 0)
     {
@@ -2593,6 +2790,42 @@ int web_report(const char *msg,const char *extras)
     free(statbuf);
 
     return rv;
+}
+
+void dump_stack(vmprobe_handle_t handle, struct cpu_user_regs *regs, int regstoo)
+{
+    unsigned char *data;
+    unsigned long *lp;
+    int ix, count = 16 * sizeof(long);
+
+    if (regstoo) {
+	printf("  eax=%lx, ebx=%lx, ecx=%lx, edx=%lx\n",
+	       regs->eax, regs->ebx, regs->ecx, regs->edx);
+	printf("  edi=%lx, esi=%lx, ebp=%lx, eip=%lx\n",
+	       regs->edi, regs->esi, regs->ebp, regs->eip);
+#if __WORDSIZE == 64
+	printf("  r8=%lx, r9=%lx, r10=%lx, r11=%lx\n",
+	       regs->r8, regs->r9, regs->r10, regs->r11);
+	printf("  r12=%lx, r13=%lx, r14=%lx, r15=%lx\n",
+	       regs->r12, regs->r13, regs->r14, regs->r15);
+#endif
+    }
+    data = vmprobe_get_data(handle, regs, "syscall_stack",
+			    regs->esp, 0, count, NULL);
+    lp = (unsigned long *)data;
+    printf("  esp=0x%lx:\n", regs->esp);
+#if __WORDSIZE == 64
+    for (ix = 0; ix < 16; ix += 4) {
+	printf("    0x%016lx 0x%016lx 0x%016lx 0x%016lx\n",
+	       lp[ix+0], lp[ix+1], lp[ix+2], lp[ix+3]);
+    }
+#else
+    for (ix = 0; ix < 16; ix += 4) {
+	printf("    0x%08lx 0x%08lx 0x%08lx 0x%08lx\n",
+	       lp[ix+0], lp[ix+1], lp[ix+2], lp[ix+3]);
+    }
+#endif
+    free(data);
 }
 
 void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
@@ -2632,36 +2865,44 @@ void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     switch (j)
     {
     case 0: 
+#if __WORDSIZE == 64
+	argval = regs->rdi;
+#else
 	if (i == 300)
 	    argval = regs->eax;
 	else if (i == 301)
 	    argval = regs->eax;
 	else
 	    argval = regs->ebx;
+#endif
 	break;
     case 1:
+#if __WORDSIZE == 64
+	argval = regs->rsi;
+#else
 	argval = regs->ecx;
+#endif
 	break;
     case 2: 
-#if 0
-    /* dump a bit of the stack on the first extra arg */
-    {
-	unsigned long *lp;
-	int ix;
-	data = vmprobe_get_data(handle,regs,"syscall_argi", regs->esp,
-				0, 64, NULL);
-	lp = (unsigned long *)data;
-	printf("*** sp=0x%08x:\n", regs->esp);
-	for (ix = 0; ix < 16; ix += 4) {
-	    printf("    0x%08lx 0x%08lx 0x%08lx 0x%08lx\n",
-		   lp[ix+0], lp[ix+1], lp[ix+2], lp[ix+3]);
-	}
-	free(data);
-    }
+#if __WORDSIZE == 64
+	argval = regs->rdx;
+	break;
 #endif
     case 3:
+#if __WORDSIZE == 64
+	/* syscall uses r10 instead of rcx */
+	argval = regs->r10;
+	break;
+#endif
     case 4:
+#if __WORDSIZE == 64
+	argval = regs->r8;
+	break;
+#endif
     case 5:
+#if __WORDSIZE == 64
+	argval = regs->r9;
+#else
 	//argval = regs->edx;
 	data = vmprobe_get_data(handle,regs,
 				"syscall_argi",
@@ -2672,11 +2913,17 @@ void load_arg_data(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	unsigned long edx_addr = *((unsigned long *)data);
 	free(data);
 	argval = edx_addr;
+#endif
 	break;
     default:
 	arg_data[j]->str = strdup("<more than 6 args>");
 	return;
     }
+
+#if 0
+    debug(1, "load_arg_data: arg#%d=%lx\n", j, argval);
+    dump_stack(handle, regs, 1);
+#endif
 
     switch (mytype) {
     case SC_ARG_TYPE_INT:
@@ -2841,7 +3088,12 @@ char to_hex(char code) {
 }
 
 char *url_encode(char *str) {
-    char *pstr = str, *buf = malloc(strlen(str) * 3 + 1), *pbuf = buf;
+    char *pstr = str, *buf, *pbuf;
+
+    if (usesyslog)
+	return strdup(str);
+
+    pbuf = buf = malloc(strlen(str) * 3 + 1);
     while (*pstr) {
 	if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~') 
 	    *pbuf++ = *pstr;
@@ -2889,7 +3141,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
 				 int *ispostcall, char **ancestry)
 {
     unsigned long addr = vmprobe_vaddr(handle);
-    uint32_t oi, i = regs->eax;
+    uint32_t oi, i = regs->eax, ri;
     int j,k;
     struct argdata **adata;
     struct argfilter *filter_ptr = NULL;
@@ -2917,9 +3169,18 @@ struct argfilter *handle_syscall(struct domain_info *di,
 
 	    /* for extracting arguments, we need pre-call values */
 	    tregs = *regs;
+#if __WORDSIZE == 64
+	    tregs.rdi = sc->arg0;
+	    tregs.rsi = sc->arg1;
+	    tregs.rdx = sc->arg2;
+	    tregs.r10 = sc->arg3;
+	    tregs.r8 = sc->arg4;
+	    tregs.r9 = sc->arg5;
+#else
 	    tregs.ebx = sc->arg0;
 	    tregs.ecx = sc->arg1;
 	    tregs.esp = sc->argptr;
+#endif
 	    aregs = &tregs;
 
 	    debug(1, "Syscall %d return@0x%lx for thread 0x%lx\n",
@@ -2956,6 +3217,18 @@ struct argfilter *handle_syscall(struct domain_info *di,
 	oi = i = 301;
     }
 
+#if __WORDSIZE == 64
+    else {
+	/* XXX argh! They reordered the syscall table! */
+	if (i >= SYSCALLMAP_SIZE || (ri = syscall_64to32map[i]) == -1) {
+	    debug(0, "WARNING: dom%d: ignoring unrecognized x86-64 syscall@0x%lx (i==%d)\n",
+		  di->domid, addr, i);
+	    return NULL;
+	}
+	debug(1, "syscall: addr=%lx, eax=%d, mapped=%d\n", addr, i, ri);
+	oi = i = ri;
+    }
+#else
     /*
      * Even when the syscall number appears legit, check that the
      * address is consistent. If one of the syscall probes is triggered
@@ -2966,13 +3239,13 @@ struct argfilter *handle_syscall(struct domain_info *di,
 	      di->domid, addr, i);
 	return NULL;
     }
-
     /*
      * A normal, probed syscall entry.
      */
     else {
 	oi = i;
     }
+#endif
 
     if (i < 0 || i >= SYSCALL_MAX) {
 	// This is a break point we set, so we must at least know the address.
@@ -3006,7 +3279,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
 		_tv.tv_sec, _tv.tv_usec / 1000,
 		sctab[i].name, di->domid, addr);
 	if (oi == SYSCALL_RET_IX)
-	    fprintf(stdout, " (rval=%d)", regs->eax);
+	    fprintf(stdout, " (rval=%ld)", regs->eax);
 	fprintf(stdout, "\n");
 	fflush(stdout);
     }
@@ -3050,9 +3323,9 @@ struct argfilter *handle_syscall(struct domain_info *di,
 		  sctab[i].args[j].name);
 	}
 
-	debug(1,"about to print str 0x%08x for %s:%s (0x%08x, 0x%08x)\n",
-	      (unsigned int)(adata[j]->str),sctab[i].name,sctab[i].args[j].name,
-	      (unsigned int)(adata[j]->info), (unsigned int)(adata[j]->info ? adata[j]->info->name : 0));
+	debug(1,"about to print str 0x%lx for %s:%s (0x%lx, 0x%lx)\n",
+	      (unsigned long)(adata[j]->str),sctab[i].name,sctab[i].args[j].name,
+	      (unsigned long)(adata[j]->info), (unsigned long)(adata[j]->info ? adata[j]->info->name : 0));
 
 #ifndef OLD_VPG_COMPAT
 	if (debug >= 0)
@@ -3206,7 +3479,8 @@ struct argfilter *handle_syscall(struct domain_info *di,
      * the process name will be the pre-exec'ed value. We address that
      * below by updating the process list post-exec.
      */
-    if (!strcmp(sctab[i].name,"sys_waitpid")) {
+    if (!strcmp(sctab[i].name,"sys_waitpid")
+	|| !strcmp(sctab[i].name,"sys_wait4")) {
 	if (!postcall) {
 	    reload_process_list(di,handle,regs);
 #if 0
@@ -3232,24 +3506,29 @@ struct argfilter *handle_syscall(struct domain_info *di,
      * For fork, exec, et.al. we check before the call and see if the
      * caller is a process of interest.
      */
-    else if (!postcall && (!strcmp(sctab[i].name,"sys_execve")
-			   || !strcmp(sctab[i].name,"sys_fork")
-			   || !strcmp(sctab[i].name,"sys_vfork")
-			   || !strcmp(sctab[i].name,"sys_clone"))) {
+    else if (!postcall &&
+	     (!strcmp(sctab[i].name,"sys_execve")
+	      || !strcmp(sctab[i].name,"sys_execve64")
+	      || !strcmp(sctab[i].name,"sys_fork")
+	      || !strcmp(sctab[i].name,"sys_vfork")
+	      || !strcmp(sctab[i].name,"sys_clone"))) {
 	reload_process_list(di,handle,regs);
 	if (pid_in_pslist(di, mypid))
 	    dopslist = 1;
 
 	/* If this is exec we may need a post-syscall probe */
 	if (!needpost && di->ps_list_len &&
-	    !strcmp(sctab[i].name,"sys_execve"))
+	    (!strcmp(sctab[i].name,"sys_execve")
+	     || !strcmp(sctab[i].name,"sys_execve64")))
 	    needpost = 1;
     }
     /*
      * If we are post-exec, we update the process list to reflect
      * the new identity of the exec'ed process.
      */
-    else if (postcall && !strcmp(sctab[i].name,"sys_execve")) {
+    else if (postcall &&
+	     (!strcmp(sctab[i].name,"sys_execve")
+	      || !strcmp(sctab[i].name,"sys_execve64"))) {
 	reload_process_list(di,handle,regs);
     }
 
@@ -3332,14 +3611,24 @@ struct argfilter *handle_syscall(struct domain_info *di,
 	    sc->syscall_ix = i;
 	    if ((sc->raddr = sctab[i].raddr) == RADDR_GEN)
 		sc->raddr = sctab[SYSCALL_RET_IX].addr;
+#if __WORDSIZE == 64
+	    sc->arg0 = regs->rdi;
+	    sc->arg1 = regs->rsi;
+	    sc->arg2 = regs->rdx;
+	    sc->arg3 = regs->r10;
+	    sc->arg4 = regs->r8;
+	    sc->arg5 = regs->r9;
+
+#else
 	    sc->arg0 = regs->ebx;
 	    sc->arg1 = regs->ecx;
 	    sc->argptr = regs->esp;
+#endif
 
 	    /* stick it on the front of the list */
 	    list_add(&sc->list, &di->syscalls);
 
-	    debug(1, "Registered syscall %d return probe for thread 0x%x\n",
+	    debug(1, "Registered syscall %d return probe for thread 0x%lx\n",
 		  sc->syscall_ix, sc->thread_ptr);
 	}
     }
@@ -3393,7 +3682,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 #ifndef OLD_VPG_COMPAT
 	    if (debug >= 0)
 #endif
-	    printf(" Filter (noadjust) matched: %d %d %s (%d %d (%d) %d %d)%s\n",
+	    printf(" Filter (noadjust) matched: %d %ld %s (%d %d (%d) %d %d)%s\n",
 		  filter->syscallnum,
 		  filter->argnum == -1 ? regs->eax : filter->argnum,
 		  filter->strfrag,
@@ -4309,13 +4598,13 @@ static int register_domain_probes(struct domain_info *di)
 		assert(di->nraddrs < RADDRS_MAX);
 		di->raddrs[di->nraddrs++] = sctab[i].raddr;
 		vaddrlist[SYSCALL_MAX+i] = sctab[i].raddr;
-		debug(1, "dom%d: installing %s return probe at 0x%x\n",
+		debug(1, "dom%d: installing %s return probe at 0x%lx\n",
 		      di->domid, sctab[i].name, sctab[i].raddr);
 	    } else if (vaddrlist[SYSCALL_RET_IX] == 0) {
 		assert(di->nraddrs < RADDRS_MAX);
 		di->raddrs[di->nraddrs++] = sctab[SYSCALL_RET_IX].addr;
 		vaddrlist[SYSCALL_RET_IX] = sctab[SYSCALL_RET_IX].addr;
-		debug(1, "dom%d: installing syscall return probe at 0x%x\n",
+		debug(1, "dom%d: installing syscall return probe at 0x%lx\n",
 		      di->domid, vaddrlist[SYSCALL_RET_IX]);
 	    }
 	}
@@ -4427,7 +4716,7 @@ int main(int argc, char *argv[])
     char *sysmapfile = NULL;
     FILE *sysmapfh = NULL;
     int rc;
-    unsigned int addr;
+    unsigned long addr;
     char sym[256];
     char symtype;
     char *progname = argv[0];
@@ -4525,7 +4814,7 @@ int main(int argc, char *argv[])
 	    exit(2);
 	}
 
-	while ((rc = fscanf(sysmapfh,"%x %c %s255",&addr,&symtype,sym)) != EOF) {
+	while ((rc = fscanf(sysmapfh,"%lx %c %s255",&addr,&symtype,sym)) != EOF) {
 	    if (rc < 0) {
 		error("while reading %s: fscanf: %s\n",
 		      sysmapfile,strerror(errno));
@@ -4555,16 +4844,29 @@ int main(int argc, char *argv[])
 		     */
 		    if (!strcmp(sym, "syscall_call")) {
 			addr += 7;
-			debug(1, "setting magic syscall return address to 0x%x.\n",
+			debug(1, "setting magic syscall return address to 0x%lx.\n",
 			      addr);
 		    }
 
 		    if (sctab[i].addr != addr) {
-			debug(1, "updating %s address to 0x%x.\n",
+			debug(1, "updating %s address to 0x%lx.\n",
 			      sctab[i].name, addr);
 			sctab[i].addr = addr;
 			updated++;
 		    }
+
+#if __WORDSIZE == 64
+		    /*
+		     * XXX 64-bit hackary.
+		     * sys_execve64 is not an actual syscall, so it won't
+		     * get an address. Copy sys_execve's address to it.
+		     */
+		    if (!strcmp(sym, "sys_execve")) {
+			debug(1, "setting sys_execve64 address to 0x%lx.\n",
+			      addr);
+			sctab[303].addr = addr;
+		    } else
+#endif
 
 		    /*
 		     * We also identify a couple of common empirically-derived
@@ -4572,14 +4874,26 @@ int main(int argc, char *argv[])
 		     */
 		    if (!strcmp(sym, "sys_socketcall")) {
 			addr += 30;
-			debug(1, "setting sys_socketcall return address to 0x%x.\n",
+			debug(1, "setting sys_socketcall return address to 0x%lx.\n",
 			      addr);
 			sctab[i].raddr = addr;
 		    }
 		    else if (!strcmp(sym, "sys_waitpid")) {
+#if __WORDSIZE == 64
+			addr += 17;
+#else
 			addr += 40;
-			debug(1, "setting sys_waitpid return address to 0x%x.\n",
+#endif
+			debug(1, "setting sys_waitpid return address to 0x%lx.\n",
 			      addr);
+			sctab[i].raddr = addr;
+		    }
+		    else if (!strcmp(sym, "sys_wait4")) {
+#if __WORDSIZE == 64
+			addr += 195;
+			debug(1, "setting sys_wait4 return address to 0x%lx.\n",
+			      addr);
+#endif
 			sctab[i].raddr = addr;
 		    }
 
@@ -4588,10 +4902,16 @@ int main(int argc, char *argv[])
 		}
 	    }		
 	}
+#if __WORDSIZE == 64
+	if (sctab[SYSCALL_RET_IX].addr == 0) {
+	    debug(1, "hacking syscall return address for x86-64\n");
+	    sctab[SYSCALL_RET_IX].addr = 0xffffffff816f97d9;
+	}
+#endif
 	if (updated)
 	    fprintf(stderr, "Updated addresses for %d symbols\n", updated);
+	fclose(sysmapfh);
     }
-    fclose(sysmapfh);
 
     list_for_each_entry(di, &domains, list) {
 	if (register_domain_probes(di))

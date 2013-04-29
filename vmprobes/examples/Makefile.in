@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2011, 2012 The University of Utah
+## Copyright (c) 2011-2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -36,38 +36,56 @@ CFLAGS += -D VMPROBE_i386
 CFLAGS += -D VMPROBE_SIGNAL
 #CFLAGS += -D VMPROBE_BENCHMARK
 CFLAGS += -D VMPROBE_DEBUG
-CFLAGS += -I$(XENACCESS_INC) -I$(TOP_SRCDIR)/vmprobes -I./ -I$(TOP_SRCDIR)/include
+ifeq ($(ENABLE_XENACCESS),"1")
+CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
+CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+CFLAGS += -D ENABLE_LIBVMI -D ENABLE_XENSUPPORT
+CFLAGS += -I$(LIBVMI)/include/libvmi
+endif
+CFLAGS += -I$(TOP_SRCDIR)/vmprobes -I./ -I$(TOP_SRCDIR)/include
 
 LDFLAGS := -lxenctrl -lxenstore -lc
+ifeq ($(ENABLE_XENACCESS),"1")
+VMI_A := $(XENACCESS_A)
+VMI_SO := $(XENACCESS_SO)
 LDFLAGS_SHARED := -L$(XENACCESS_LIBDIR) -lxenaccess -L../../vmprobes -lvmprobes
-
 INST_BIN = vmprobebio vmprobeopen vmprobenull vmprobegeneric \
 	   vmprobebio-shared vmprobeopen-shared vmprobenull-shared vmprobegeneric-shared
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+VMI_A := $(LIBVMI_A)
+VMI_SO := $(LIBVMI_SO)
+LDFLAGS += $(GLIB_LDFLAGS)
+LDFLAGS_SHARED := -L$(LIBVMI)/lib -lvmi -L../../vmprobes -lvmprobes
+INST_BIN = vmprobegeneric
+endif
 
 all:	$(INST_BIN)
 
 include $(TOP_SRCDIR)/Makerules
 
-vmprobegeneric: vmprobegeneric.c $(VMPROBES_A) $(XENACCESS_A)
-	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+vmprobegeneric: vmprobegeneric.c $(VMPROBES_A) $(VMI_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(VMI_A) $(LDFLAGS)
 
-vmprobegeneric-shared: vmprobegeneric.c $(VMPROBES_SO) $(XENACCESS_SO)
+vmprobegeneric-shared: vmprobegeneric.c $(VMPROBES_SO) $(VMI_SO)
 	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)
 
-vmprobebio: vmprobebio.c $(VMPROBES_A) $(XENACCESS_A)
-	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+vmprobebio: vmprobebio.c $(VMPROBES_A) $(VMI_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(VMI_A) $(LDFLAGS)
 
-vmprobebio-shared: vmprobebio.c $(VMPROBES_SO) $(XENACCESS_SO)
+vmprobebio-shared: vmprobebio.c $(VMPROBES_SO) $(VMI_SO)
 	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)
 
-vmprobeopen: vmprobeopen.c $(VMPROBES_A) $(XENACCESS_A)
-	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+vmprobeopen: vmprobeopen.c $(VMPROBES_A) $(VMI_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(VMI_A) $(LDFLAGS)
 
-vmprobeopen-shared: vmprobeopen.c $(VMPROBES_SO) $(XENACCESS_SO)
+vmprobeopen-shared: vmprobeopen.c $(VMPROBES_SO) $(VMI_SO)
 	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)
 
-vmprobenull: vmprobenull.c $(VMPROBES_A) $(XENACCESS_A)
-	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(XENACCESS_A) $(LDFLAGS)
+vmprobenull: vmprobenull.c $(VMPROBES_A) $(VMI_A)
+	$(CC) -o $@ $(CFLAGS) $< $(VMPROBES_A) $(VMI_A) $(LDFLAGS)
 
 vmprobenull-shared: vmprobenull.c $(VMPROBES_SO) $(XENACCESS_SO)
 	$(CC) -shared -o $@ $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SHARED)

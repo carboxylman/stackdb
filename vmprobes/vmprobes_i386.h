@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012 The University of Utah
+ * Copyright (c) 2011-2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -46,7 +46,7 @@ vmprobe_opcode_t RETURN = {
 #define EF_TF (0x00000100)
 #define EF_IF (0x00000200)
 
-#define BITS_PER_LONG (32)
+#define BITS_PER_LONG (8 * sizeof(long))
 #define GOLDEN_RATIO_PRIME (0x9e370001UL)
 
 struct vmprobe_probepoint;

@@ -593,6 +593,13 @@ struct target *xen_vm_attach(struct target_spec *spec,
      * XXX total hack. The offsets are really a function of both word size
      * and OS version. But right now 32-bit implies Linux 2.6 and 64-bit
      * implies 3.2. We should just get these values from the debuginfo.
+     * Offsets are:
+     *   linux_tasks: offset of "tasks" in task_struct
+     *   linux_mm:    offset of "mm" in task_struct
+     *   linux_pid:   offset of "pid" in task_struct
+     *   linux_pgd:   offset of "pgd" in mm_struct
+     * Values below came from running gdb on the appropriate kernel; e.g.
+     *   p &((struct task_struct *)0)->tasks
      */
     if (vmi_get_page_mode(xstate->vmi_instance) == VMI_PM_IA32E) {
 	/*
@@ -601,34 +608,31 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	 */
 	if (access("/boot/System.map-3.8.4", F_OK) == 0) {
 	    tmp = "{"
-		/* from gdb on a Linux kernel */
 		"ostype=\"Linux\"; "
 		"sysmap=\"/boot/System.map-3.8.4\"; "
 		"linux_tasks=0x260; "
 		"linux_mm=0x298; "
 		"linux_pid=0x2d4; "
-		"linux_pgd=0x0;"
+		"linux_pgd=0x50;"
 		"}";
 	} else {
 	    tmp = "{"
-		/* from gdb on a Linux kernel */
 		"ostype=\"Linux\"; "
 		"sysmap=\"/boot/System.map-3.2.16emulab1\"; "
 		"linux_tasks=0x238; "
 		"linux_mm=0x270; "
 		"linux_pid=0x2ac; "
-		"linux_pgd=0x0;"
+		"linux_pgd=0x50;"
 		"}";
 	}
     } else {
-	/* from vmprobes/vmprobes.c */
 	tmp = "{"
 	    "ostype=\"Linux\"; "
 	    "sysmap=\"/boot/System.map-2.6.18.8-xenU\"; "
-	    "linux_tasks=108; "
-	    "linux_mm=132; "
-	    "linux_pid=168; "
-	    "linux_pgd=36;"
+	    "linux_tasks=0x6c; "
+	    "linux_mm=0x84; "
+	    "linux_pid=0xa8; "
+	    "linux_pgd=0x24;"
 	    "}";
     }
     if (vmi_init_complete(&xstate->vmi_instance, tmp) == VMI_FAILURE) {
