@@ -232,11 +232,6 @@ int main(int argc,char **argv) {
 	exit(-1);
     }
 
-    if (opts.argc <= 0) {
-	verror("must pass at least one symbol to form the CFI root function set!\n");
-	exit(-2);
-    }
-
     target = target_instantiate(tspec,NULL);
     if (!target) {
 	verror("could not instantiate target!\n");
@@ -249,12 +244,25 @@ int main(int argc,char **argv) {
 	exit(-4);
     }
 
-    root_function_list = array_list_create(opts.argc);
-    for (i = 0; i < opts.argc; ++i) {
-	function = target_lookup_sym(target,opts.argv[i],NULL,NULL,
+    if (opts.argc > 0) {
+	root_function_list = array_list_create(opts.argc);
+	for (i = 0; i < opts.argc; ++i) {
+	    function = target_lookup_sym(target,opts.argv[i],NULL,NULL,
+					 SYMBOL_TYPE_FLAG_NONE);
+	    if (!function) {
+		verror("could not lookup symbol %s; aborting!\n",opts.argv[i]);
+		cleanup();
+		exit(-3);
+	    }
+	    array_list_append(root_function_list,function);
+	}
+    }
+    else {
+	root_function_list = array_list_create(1);
+	function = target_lookup_sym(target,"main",NULL,NULL,
 				     SYMBOL_TYPE_FLAG_NONE);
 	if (!function) {
-	    verror("could not lookup symbol %s; aborting!\n",opts.argv[i]);
+	    verror("could not lookup symbol %s; aborting!\n","main");
 	    cleanup();
 	    exit(-3);
 	}
