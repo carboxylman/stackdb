@@ -1014,7 +1014,7 @@ int __safe_write(int fd,char *buf,int count) {
 		return rc;
 	    }
 	    else {
-	        verror("read(%d): %s\n",fd,strerror(errno));
+	        verror("write(%d): %s\n",fd,strerror(errno));
 		return retval;
 	    }
 	}
