@@ -1145,7 +1145,11 @@ static struct binfile *elf_binfile_open(char *filename,
 	    }
 
 	    if (!(stt == STT_OBJECT || stt == STT_COMMON || stt == STT_TLS
-		  || stt == STT_FUNC))
+		  || stt == STT_FUNC
+#if defined(STT_GNU_IFUNC)
+		  || stt == STT_GNU_IFUNC
+#endif
+		  )) 
 		/* Skip all non-code symbols */
 		continue;
 
