@@ -2599,8 +2599,6 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 		    goto out;
 		}
 	    }
-	    else if (strcmp(cu_symtab->name,"../sysdeps/unix/syscall-template.S"))
-		goto out;
 	}
 
 	/* If we have die_offsets to load, and we're not just going to
