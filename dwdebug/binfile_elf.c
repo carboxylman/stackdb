@@ -1085,28 +1085,6 @@ static struct binfile *elf_binfile_open(char *filename,
     }
 
     /*
-     * NB: make a special "function" symbol for the plt.  This is
-     * helpful for stuff that wants to disasm the plt -- but at the
-     * moment we can't disasm for plain code blocks, only for symbols.
-     */
-    if (has_plt) {
-	symbol = symbol_create(bf->symtab,(SMOFFSET)0,strdup(".plt"),0,
-			       SYMBOL_TYPE_FUNCTION,SYMBOL_SOURCE_ELF,0);
-	RHOLD(symbol,bf);
-
-	symbol->isexternal = 0;
-	symbol->size.bytes = plt_size;
-	symbol->size_is_bytes = 1;
-	symbol->base_addr = plt_start;
-	symbol->has_base_addr = 1;
-
-	symtab_insert(bf->symtab,symbol,0);
-
-	clrange_add(&bf->ranges,symbol->base_addr,
-		    symbol->base_addr + symbol->size.bytes,symbol);
-    }
-
-    /*
      * Now rescan for symtab section.  If we have an instance, grab the
      * symbol locations out of that symtab.
      */
@@ -1440,6 +1418,56 @@ static struct binfile *elf_binfile_open(char *filename,
 
 	lcontinue:
 	    ral = clrange_find_next_exc(&bf->ranges,nextstart);
+	}
+
+	/*
+	 * NB: make a special header "function" symbol for the plt.
+	 * This is helpful for stuff that wants to disasm the plt -- but
+	 * at the moment we can't disasm for plain code blocks, only for
+	 * symbols.
+	 *
+	 * We basically run the length of this symbol all the way to
+	 * either the end of the PLT, or to the first symbol in the PLT.
+	 */
+	if (has_plt) {
+	    symbol = symbol_create(bf->symtab,(SMOFFSET)0,strdup("_header@plt"),0,
+				   SYMBOL_TYPE_FUNCTION,SYMBOL_SOURCE_ELF,0);
+	    RHOLD(symbol,bf);
+
+	    symbol->isexternal = 0;
+	    symbol->size_is_bytes = 1;
+	    symbol->base_addr = plt_start;
+	    symbol->has_base_addr = 1;
+
+	    ral = clrange_find_next_exc(&bf->ranges,plt_start);
+	    if (!ral) {
+		symbol->size.bytes = plt_size;
+		vwarnopt(9,LA_DEBUG,LF_ELF,
+			 "could not find a symbol following the PLT; assuming _header@plt is the whole PLT!\n");
+	    }
+	    else {
+		/* Just take the first one! */
+		gcrd = (struct clf_range_data *)array_list_item(ral,0);
+
+		if (CLRANGE_START(gcrd) >= (plt_start + plt_size)) {
+		    symbol->size.bytes = plt_size;
+		    vwarnopt(9,LA_DEBUG,LF_ELF,
+			     "could not find a symbol following the PLT within"
+			     " the PLT; assuming _header@plt is the whole PLT!\n");
+		}
+		else {
+		    symbol->size.bytes = CLRANGE_START(gcrd) - plt_start;
+		    
+		    vdebug(2,LA_DEBUG,LF_ELF,
+			   "setting _header@plt size to %d bytes.\n",
+			   symbol->size.bytes);
+		}
+	    }
+
+	    symtab_insert(bf->symtab,symbol,0);
+
+	    clrange_add(&bf->ranges,symbol->base_addr,
+			symbol->base_addr + symbol->size.bytes,symbol);
 	}
     }
 
