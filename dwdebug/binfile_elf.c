@@ -569,6 +569,12 @@ static struct binfile *elf_binfile_open(char *filename,
     int has_plt = 0;
     Word_t plt_start = 0;
     Word_t plt_size = 0;
+    int plt_idx;
+    int plt_entry_size = 0;
+    int len;
+    char *pltsymbuf;
+    GElf_Rela rela;
+    int rstrsec;
 
     /*
      * Set up our data structures.
@@ -996,6 +1002,8 @@ static struct binfile *elf_binfile_open(char *filename,
 		   "found %s section (%d); recording\n",
 		   name,shdr->sh_size);
 	    has_plt = 1;
+	    /* Important if we process .rela.plt */
+	    plt_entry_size = shdr->sh_entsize;
 	    plt_start = shdr->sh_addr;
 	    plt_size = shdr->sh_size;
 	}
@@ -1082,6 +1090,146 @@ static struct binfile *elf_binfile_open(char *filename,
     if (!bf->strtab) {
 	vwarn("could not find .strtab for ELF file %s; cannot load .symtab!\n",
 	      bf->filename);
+    }
+
+    /*
+     * Infer symbol names in the PLT if there was one by processing the
+     * relocations for the PLT; those have the symbol names; we generate
+     * a symbol for each JMP_SLOT relocation, assuming that the GOT and
+     * PLT are strictly ordered w.r.t. one another, and assuming that a
+     * PLT has a single "header" entry at its top.
+     */
+    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+	shdr = &bfelf->shdrs[i];
+	scn = elf_getscn(bfelf->elf,i);
+
+	if (!shdr || shdr->sh_size <= 0) 
+	    continue;
+	if (!scn) {
+	    verror("could not find Elf section for section %d!\n",i);
+	    continue;
+	}
+
+	name = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
+
+	if (shdr->sh_type != SHT_RELA || strcmp(name,".rela.plt") != 0) 
+	    continue;
+
+	if (!has_plt) {
+	    verror("found .rela.plt section, but no .plt in ELF file %s!\n",
+		   bf->filename);
+	    break;
+	}
+
+	vdebug(2,LA_DEBUG,LF_ELF,
+	       "found .rela.plt section in ELF file %s;"
+	       " generating @plt symbol names\n",
+	       bf->filename);
+
+	edata = elf_rawdata(scn,NULL);
+	if (!edata || !edata->d_size || !edata->d_buf) {
+	    verror("cannot get data for valid section %s in %s: %s",
+		   name,bf->filename,elf_errmsg(-1));
+	    goto errout;
+	}
+
+	/*
+	 * Process only the JMP_SLOT relocs.
+	 */
+	nrels = shdr->sh_size / shdr->sh_entsize;
+
+	rsec = shdr->sh_info;
+	rstsec = shdr->sh_link;
+
+	rstrsec = bfelf->shdrs[rstsec].sh_link;
+
+	/*
+	 * Grab the symtab section referred to so we can load the syms.
+	 */
+	rstscn = elf_getscn(bfelf->elf,rstsec);
+	if (!rstscn) {
+	    verror("could not load symtab section %d during plt relocation!\n",
+		   rstsec);
+	    break;
+	}
+	rstedata = elf_getdata(rstscn,NULL);
+	if (!rstedata || !rstedata->d_size || !rstedata->d_buf) {
+	    verror("cannot get data for valid symtab section %d during"
+		   " plt relocation!\n",
+		       rstsec);
+	    break;
+	}
+
+	vdebug(3,LA_DEBUG,LF_ELF,
+	       "found %d plt relocations in %d in ELF file %s\n",
+	       nrels,i,bf->filename);
+
+	/* Skip the first plt "header" entry. */
+	plt_idx = 1;
+
+	for (j = 0; j < nrels; ++j) {
+	    if (!gelf_getrela(edata,j,&rela)) {
+		verror("bad relocation %d in %d; skipping!\n",j,i);
+		continue;
+	    }
+	    rtype = GELF_R_TYPE(rela.r_info);
+	    rsymidx = GELF_R_SYM(rela.r_info);
+	    if (!gelf_getsym(rstedata,rsymidx,&rsym)) {
+		verror("could not load sym %d in %d (for %d/%d) during"
+		       " relocation; skipping!\n",
+		       rsymidx,rstsec,j,i);
+		continue;
+	    }
+
+	    if (rtype != R_X86_64_JUMP_SLOT || rtype != R_386_JMP_SLOT) {
+		verror("unexpected relocation type %d (not JMP_SLOT) in"
+		       " .rela.plt at idx %d; plt index names may be wrong!\n",
+		       rtype,j);
+		continue;
+	    }
+
+
+	    symname = elf_strptr(bfelf->elf,rstrsec,rsym.st_name);
+	    if (!symname) {
+		vwarn("skipping .rela.plt ELF symbol at .rela.plt idx %d;"
+		      " bad symbol strtab idx %d\n",
+		      j,(int)rsym.st_name);
+		continue;
+	    }
+
+	    len = strlen(symname) + sizeof("@plt") + 1;
+	    pltsymbuf = calloc(len,sizeof(char));
+	    snprintf(pltsymbuf,len,"%s@plt",symname);
+
+	    symbol = symbol_create(bf->symtab,
+				   (SMOFFSET)(shdr->sh_addr + j * shdr->sh_entsize),
+				   pltsymbuf,0,SYMBOL_TYPE_FUNCTION,
+				   SYMBOL_SOURCE_ELF,0);
+	    RHOLD(symbol,bf);
+
+	    if (GELF_ST_BIND(rsym.st_info) == STB_GLOBAL
+		|| GELF_ST_BIND(rsym.st_info) == STB_WEAK)
+		symbol->isexternal = 1;
+
+	    symbol->size.bytes = plt_entry_size;
+	    symbol->size_is_bytes = 1;
+
+	    symbol->base_addr = (ADDR)(plt_start + plt_idx * plt_entry_size);
+	    symbol->has_base_addr = 1;
+
+	    symtab_insert(bf->symtab,symbol,0);
+
+	    clrange_add(&bf->ranges,symbol->base_addr,
+			symbol->base_addr + symbol->size.bytes,symbol);
+
+	    vdebug(3,LA_DEBUG,LF_ELF,
+		   "added plt index ELF symbol %s at 0x%"PRIxADDR"\n",
+		   symbol->name,symbol->base_addr);
+
+	    ++plt_idx;
+	}
+
+	break;
     }
 
     /*
