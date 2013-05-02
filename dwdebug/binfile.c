@@ -349,6 +349,11 @@ REFCNT binfile_free(struct binfile *binfile,int force) {
 	symtab_free(binfile->symtab);
 	binfile->symtab = NULL;
     }
+    if (binfile->dynstrtab) {
+	free(binfile->dynstrtab);
+	binfile->dynstrtab = NULL;
+	binfile->dynstrtablen = 0;
+    }
     if (binfile->strtab) {
 	free(binfile->strtab);
 	binfile->strtab = NULL;

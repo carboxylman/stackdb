@@ -1014,6 +1014,15 @@ struct binfile {
     char *strtab;
 
     /*
+     * The dynamic string table for this file.  All binfile string pointers are
+     * checked for presence in this table before freeing.
+     *
+     * This table persists until the binfile is freed.
+     */
+    unsigned int dynstrtablen;
+    char *dynstrtab;
+
+    /*
      * This must be an absolute path; binfile_create will try to resolve
      * its @filename argument and place the result here; but if the
      * backend updates it, the backend must enforce this constraint.

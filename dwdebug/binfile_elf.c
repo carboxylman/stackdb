@@ -575,6 +575,11 @@ static struct binfile *elf_binfile_open(char *filename,
     char *pltsymbuf;
     GElf_Rela rela;
     int rstrsec;
+    int dynsymtabsec = -1;
+    int symtabsec = -1;
+    int dynstrtabsec = -1;
+    int strtabsec = -1;
+    struct symbol *tsymbol;
 
     /*
      * Set up our data structures.
@@ -992,10 +997,61 @@ static struct binfile *elf_binfile_open(char *filename,
 		goto errout;
 	    }
 
+	    strtabsec = i;
 	    bf->strtablen = edata->d_size;
 	    bf->strtab = malloc(edata->d_size);
 	    memcpy(bf->strtab,edata->d_buf,edata->d_size);
-	    break;
+	}
+	else if (shdr->sh_type == SHT_SYMTAB) {
+	    if (symtabsec > -1) {
+		vwarn("multiple .dynsym sections; ignoring after first!\n");
+		continue;
+	    }
+
+	    vdebug(2,LA_DEBUG,LF_ELF,
+		   "found %s section in ELF file %s\n",name,bf->filename);
+
+	    symtabsec = i;
+	}
+	else if (shdr->sh_type == SHT_DYNSYM) {
+	    if (dynsymtabsec > -1) {
+		vwarn("multiple .dynsym sections; ignoring after first!\n");
+		continue;
+	    }
+
+	    vdebug(2,LA_DEBUG,LF_ELF,
+		   "found %s section in ELF file %s\n",name,bf->filename);
+
+	    dynsymtabsec = i;
+
+	    /*
+	     * Find the strtab for it.
+	     */
+	    dynstrtabsec = shdr->sh_link;
+	    if (dynstrtabsec >= bfelf->ehdr.e_shnum || dynstrtabsec < 1) {
+		verror("bad sh_link (dynstr sec idx) %d; not using dynsym sec %d!\n",
+		       dynstrtabsec,dynsymtabsec);
+		dynsymtabsec = -1;
+		dynstrtabsec = -1;
+	    }
+
+	    scn = elf_getscn(bfelf->elf,dynstrtabsec);
+	    if (!scn) {
+		verror("could not find Elf section for section %d!\n",i);
+		dynsymtabsec = -1;
+		dynstrtabsec = -1;
+		continue;
+	    }
+	    edata = elf_rawdata(scn,NULL);
+	    if (!edata || !edata->d_size || !edata->d_buf) {
+		verror("cannot get data for valid section %s in %s: %s",
+		       name,bf->filename,elf_errmsg(-1));
+		goto errout;
+	    }
+
+	    bf->dynstrtablen = edata->d_size;
+	    bf->dynstrtab = malloc(edata->d_size);
+	    memcpy(bf->dynstrtab,edata->d_buf,edata->d_size);
 	}
 	else if (strcmp(name,".plt") == 0) {
 	    vdebug(2,LA_DEBUG,LF_ELF,
@@ -1017,7 +1073,6 @@ static struct binfile *elf_binfile_open(char *filename,
 	    vdebug(2,LA_DEBUG,LF_DFILE,
 		   "found %s section (%d)\n",name,shdr->sh_size);
 	    bf->has_debuginfo = 1;
-	    continue;
 	}
 	else if (!bfelf->buildid && shdr->sh_type == SHT_NOTE) {
 	    vdebug(2,LA_DEBUG,LF_DFILE,
@@ -1086,11 +1141,6 @@ static struct binfile *elf_binfile_open(char *filename,
     }
     if (!bf->is_dynamic)
 	vdebug(2,LA_DEBUG,LF_ELF,"ELF file is static\n");
-
-    if (!bf->strtab) {
-	vwarn("could not find .strtab for ELF file %s; cannot load .symtab!\n",
-	      bf->filename);
-    }
 
     /*
      * Infer symbol names in the PLT if there was one by processing the
@@ -1233,24 +1283,18 @@ static struct binfile *elf_binfile_open(char *filename,
     }
 
     /*
-     * Now rescan for symtab section.  If we have an instance, grab the
+     * Now process symtab section.  If we have an instance, grab the
      * symbol locations out of that symtab.
      */
-    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
-	shdr = &bfelf->shdrs[i];
-
-	if (!shdr || shdr->sh_size <= 0 || shdr->sh_type != SHT_SYMTAB) 
-	    continue;
+    if (symtabsec > -1) {
+	shdr = &bfelf->shdrs[symtabsec];
 
 	name = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
 
-	if (strcmp(name,".symtab") != 0) 
-	    continue;
+	vdebug(2,LA_DEBUG,LF_ELF,"processing %s section in ELF file %s\n",
+	       name,bf->filename);
 
-	vdebug(2,LA_DEBUG,LF_ELF,"found .symtab section in ELF file %s\n",
-	       bf->filename);
-
-	scn = elf_getscn(bfelf->elf,i);
+	scn = elf_getscn(bfelf->elf,symtabsec);
 	edata = elf_getdata(scn,NULL);
 	if (!edata || !edata->d_size || !edata->d_buf) {
 	    verror("cannot get data for valid section %s in %s: %s",
@@ -1263,8 +1307,8 @@ static struct binfile *elf_binfile_open(char *filename,
 			                                : sizeof (Elf64_Sym));
 
 	vdebug(2,LA_DEBUG,LF_ELF,
-	       ".symtab section in ELF file %s has %d symbols\n",
-	       bf->filename,bfelf->num_symbols);
+	       "%s section in ELF file %s has %d symbols\n",
+	       name,bf->filename,bfelf->num_symbols);
 
 	/* Load the symtab */
 	for (ii = 0; ii < bfelf->num_symbols; ++ii) {
@@ -1299,6 +1343,20 @@ static struct binfile *elf_binfile_open(char *filename,
 #endif
 		  )) 
 		/* Skip all non-code symbols */
+		continue;
+
+	    /*
+	     * If it is not in a section in our binary, don't save it.
+	     * XXX: we could expose this as an option, BUT since we're
+	     * not a linker we don't really care.
+	     */
+	    if (sym->st_shndx == SHN_UNDEF)
+		continue;
+
+	    /*
+	     * Don't want various meaningless symbols...
+	     */
+	    if (sym->st_shndx == SHN_ABS && stt == STT_OBJECT && sym->st_value == 0)
 		continue;
 
 	    /*
@@ -1353,7 +1411,150 @@ static struct binfile *elf_binfile_open(char *filename,
 		clrange_add(&bf->ranges,symbol->base_addr,
 			    symbol->base_addr + symbol->size.bytes,symbol);
 	}
+    }
 
+    /*
+     * Now process dynsymtab section.  Differences from above code:
+     * don't duplicate symbols (i.e., if symtab had one with same name
+     * and addr, don't duplicate it); and don't check bf inst (XXX must
+     * reconsider how that fits with dynsyms, not just "regular" syms).
+     */
+    if (dynsymtabsec > -1) {
+	shdr = &bfelf->shdrs[dynsymtabsec];
+
+	name = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
+	vdebug(2,LA_DEBUG,LF_ELF,"processing %s section in ELF file %s\n",
+	       name,bf->filename);
+
+	scn = elf_getscn(bfelf->elf,dynsymtabsec);
+	edata = elf_getdata(scn,NULL);
+	if (!edata || !edata->d_size || !edata->d_buf) {
+	    verror("cannot get data for valid section %s in %s: %s",
+		   name,bf->filename,elf_errmsg(-1));
+	    goto errout;
+	}
+
+	bfelf->num_symbols = \
+	    edata->d_size / (bfelf->class == ELFCLASS32 ? sizeof (Elf32_Sym) \
+			                                : sizeof (Elf64_Sym));
+	vdebug(2,LA_DEBUG,LF_ELF,
+	       "%s section in ELF file %s has %d symbols\n",
+	       name,bf->filename,bfelf->num_symbols);
+
+	/* Load the symtab */
+	for (ii = 0; ii < bfelf->num_symbols; ++ii) {
+	    sym = gelf_getsym(edata,ii,&sym_mem);
+	    if (sym->st_name >= bf->dynstrtablen) {
+		vwarn("skipping ELF symbol with bad name strtab idx %d\n",
+		      (int)sym->st_name);
+		continue;
+	    }
+
+	    stt = GELF_ST_TYPE(sym->st_info);
+
+	    /*
+	     * If the symbol type is NOTYPE, check to see which
+	     * section the symbol is in, and try to dynamically
+	     * "set" the type to STT_OBJECT or STT_FUNC.  This will
+	     * result in symbols that should not be in the ELF
+	     * symtab, probably, but hopefully it will reduce the
+	     * amount of missing symbols in our ELF symtab.
+	     */
+	    if (stt == STT_NOTYPE && sym->st_shndx < bfelf->ehdr.e_shnum) {
+		if (bfelf->shdrs[sym->st_shndx].sh_flags & SHF_EXECINSTR)
+		    stt = STT_FUNC;
+		else if (bfelf->shdrs[sym->st_shndx].sh_flags & SHF_ALLOC)
+		    stt = STT_OBJECT;
+	    }
+
+	    if (!(stt == STT_OBJECT || stt == STT_COMMON || stt == STT_TLS
+		  || stt == STT_FUNC
+#if defined(STT_GNU_IFUNC)
+		  || stt == STT_GNU_IFUNC
+#endif
+		  )) 
+		/* Skip all non-code symbols */
+		continue;
+
+	    /*
+	     * If it is not in a section in our binary, don't save it.
+	     * XXX: we could expose this as an option, BUT since we're
+	     * not a linker we don't really care.
+	     */
+	    if (sym->st_shndx == SHN_UNDEF)
+		continue;
+
+	    /*
+	     * Don't want various meaningless symbols...
+	     */
+	    if (sym->st_shndx == SHN_ABS && stt == STT_OBJECT && sym->st_value == 0)
+		continue;
+
+	    /*
+	     * Check symtab; don't duplicate!
+	     */
+	    if ((tsymbol = symtab_get_sym(bf->symtab,&bf->dynstrtab[sym->st_name]))
+		&& tsymbol->base_addr == sym->st_value) {
+		vdebug(5,LA_DEBUG,LF_ELF,
+		       "not creating duplicate dynsym %s (0x%"PRIxADDR")\n",
+		       tsymbol->name,tsymbol->base_addr);
+		continue;
+	    }
+
+	    /*
+	     * Either way, don't have symbol_create copy symname; we do
+	     * it here if we need to.
+	     */
+#ifdef DWDEBUG_NOUSE_STRTAB
+	    symname = strdup(&bf->dynstrtab[sym->st_name]);
+#else
+	    symname = &bf->dynstrtab[sym->st_name];
+#endif
+
+	    symbol = symbol_create(bf->symtab,(SMOFFSET)ii,symname,0,
+				   (stt == STT_OBJECT || stt == STT_TLS
+				    || stt == STT_COMMON)	\
+				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNCTION,
+				   SYMBOL_SOURCE_ELF,0);
+	    RHOLD(symbol,bf);
+
+	    if (GELF_ST_BIND(sym->st_info) == STB_GLOBAL
+		|| GELF_ST_BIND(sym->st_info) == STB_WEAK)
+		symbol->isexternal = 1;
+
+	    symbol->size.bytes = sym->st_size;
+	    symbol->size_is_bytes = 1;
+
+	    if (sym->st_value > 0) {
+		symbol->base_addr = (ADDR)sym->st_value;
+		symbol->has_base_addr = 1;
+	    }
+
+	    symtab_insert(bf->symtab,symbol,0);
+
+	    /*
+	     * Insert into debugfile->addresses IF the hashtable is
+	     * empty (i.e., if we load the symtab first, before the
+	     * debuginfo file), or if there is not anything already
+	     * at this location.  We want debuginfo symbols to trump
+	     * ELF symbols in this table.
+	     */
+	    /* XXXXXX
+	    if (g_hash_table_size(debugfile->addresses) == 0
+		|| !g_hash_table_lookup(debugfile->addresses,
+					(gpointer)symbol->base_addr))
+		g_hash_table_insert(debugfile->addresses,
+				    (gpointer)symbol->base_addr,
+				    (gpointer)symbol);
+	    */
+
+	    if (symbol->base_addr != 0)
+		clrange_add(&bf->ranges,symbol->base_addr,
+			    symbol->base_addr + symbol->size.bytes,symbol);
+	}
+    }
+
+    {
 	/* Now, go through all the address ranges and update their sizes 
 	 * based on the following range's address -- this is
 	 * definitely possibly wrong sometimes.  Could be wrong!
@@ -1571,7 +1772,9 @@ static struct binfile *elf_binfile_open(char *filename,
 	lcontinue:
 	    ral = clrange_find_next_exc(&bf->ranges,nextstart);
 	}
+    }
 
+    {
 	/*
 	 * NB: make a special header "function" symbol for the plt.
 	 * This is helpful for stuff that wants to disasm the plt -- but
@@ -1631,6 +1834,11 @@ static struct binfile *elf_binfile_open(char *filename,
 	free(bf->strtab);
 	bf->strtablen = 0;
 	bf->strtab = NULL;
+    }
+    if (bf->dynstrtab) {
+	free(bf->dynstrtab);
+	bf->dynstrtablen = 0;
+	bf->dynstrtab = NULL;
     }
 #endif
 
