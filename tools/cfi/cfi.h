@@ -155,6 +155,17 @@ struct cfi_data {
     GHashTable *disfuncs;
 
     /*
+     * A hashtable of disassembled functions THAT DO NOT have any
+     * control flow exiting from them, as far as we can tell.  We need
+     * to cache them to make sure we don't try to disasm them after we
+     * have started probing them!
+     *
+     * AND, we cannot add calls/jumps to them into our stack!  We must
+     * push NULL instead.
+     */
+    GHashTable *disfuncs_noflow;
+
+    /*
      * The internal probes we use.
      */
     GHashTable *probes;

@@ -38,6 +38,8 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
     ADDR retaddr;
     tid_t tid;
     struct bsymbol *bsymbol;
+    ADDR oldretaddr;
+    struct bsymbol *symbol;
 
     tid = target_gettid(cfi->target);
 
@@ -81,18 +83,33 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
 
     bsymbol = target_lookup_sym_addr(cfi->target,ip);
     if (!bsymbol) {
-	vdebug(5,LA_LIB,LF_CFI,
-	       "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
-	       " 0x%"PRIxADDR" probe(%s) (unknown, skipping!)\n",
-	       retaddr,array_list_len(cfit->shadow_stack),
-	       probe_addr(trigger),ip,probe_name(probe));
+	vwarn("retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+	      " 0x%"PRIxADDR" probe(%s) (cannot resolve, not tracking!)\n",
+	      retaddr,array_list_len(cfit->shadow_stack),
+	      probe_addr(trigger),ip,probe_name(probe));
 
-	/*
-	 * XXX: try to instrument the target address, even if we don't
-	 * have a symbol for it.
-	 */
+	/* XXX: instrument addrs */
+	vwarn("could not resolve symbol for 0x%"PRIxADDR"; not tracking (%s)!\n",
+	      ip,probe_name(trigger));
 
-	return RESULT_SUCCESS;
+	oldretaddr = (ADDR)(uintptr_t)			\
+	    array_list_item(cfit->shadow_stack,
+			    array_list_len(cfit->shadow_stack) - 1);
+	symbol = (struct bsymbol *)				\
+	    array_list_item(cfit->shadow_stack_symbols,
+			    array_list_len(cfit->shadow_stack_symbols) - 1);
+
+	if (oldretaddr == 0 && symbol == NULL) {
+	    /*
+	     * Do nothing; already were in an untracked bunch of code;
+	     * do not push more NULLs.
+	     */
+	    ;
+	}
+	else {
+	    array_list_append(cfit->shadow_stack,NULL);
+	    array_list_append(cfit->shadow_stack_symbols,NULL);
+	}
     }
     else {
 	vdebug(5,LA_LIB,LF_CFI,
@@ -100,25 +117,36 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
 	       " 0x%"PRIxADDR" (%s) probe(%s)\n",
 	       retaddr,array_list_len(cfit->shadow_stack),
 	       probe_addr(trigger),ip,bsymbol_get_name(bsymbol),
-	       probe_name(probe));
-    }
+	       probe_name(trigger));
 
-    /* Since we know that the call is a known function that we can
-     * disasm and instrument return points for, push it onto the shadow
-     * stack!
-     */
-    array_list_append(cfit->shadow_stack,(void *)(uintptr_t)retaddr);
-    array_list_append(cfit->shadow_stack_symbols,bsymbol);
+	if (!(cfi->flags & CFI_NOAUTOFOLLOW)) {
+	    if (cfi_instrument_func(cfi,bsymbol,0)) {
+		vwarn("could not instrument target %s (0x%"PRIxADDR");"
+		      " not tracking!\n",
+		      bsymbol_get_name(bsymbol),ip);
+		bsymbol_release(bsymbol);
 
-    if (!(cfi->flags & CFI_NOAUTOFOLLOW)) {
-	if (bsymbol) {
-	    cfi_instrument_func(cfi,bsymbol,0);
-	    //bsymbol_release(bsymbol);
-	}
-	else {
-	    /* XXX: instrument addrs */
-	    vwarn("could not resolve symbol for 0x%"PRIxADDR"; not tracking!\n",
-		  ip);
+		oldretaddr = (ADDR)(uintptr_t)	\
+		    array_list_item(cfit->shadow_stack,
+				    array_list_len(cfit->shadow_stack) - 1);
+		symbol = (struct bsymbol *)		\
+		    array_list_item(cfit->shadow_stack_symbols,
+				    array_list_len(cfit->shadow_stack_symbols) - 1);
+
+		if (!(oldretaddr == 0 && symbol == NULL)) {
+		    array_list_append(cfit->shadow_stack,NULL);
+		    array_list_append(cfit->shadow_stack_symbols,NULL);
+		}
+	    }
+	    else {
+
+		/* Since we know that the call is a known function that
+		 * we can disasm and instrument return points for, push
+		 * it onto the shadow stack!
+		 */
+		array_list_append(cfit->shadow_stack,(void *)(uintptr_t)retaddr);
+		array_list_append(cfit->shadow_stack_symbols,bsymbol);
+	    }
 	}
     }
 
@@ -130,9 +158,14 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
 result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
 				      struct probe *trigger) {
     struct cfi_data *cfi = (struct cfi_data *)data;
+    struct cfi_thread_status *cfit;
     tid_t tid;
     REGVAL ip;
     struct bsymbol *bsymbol;
+    ADDR oldretaddr;
+    struct bsymbol *symbol;
+    ADDR oldretaddr2;
+    struct bsymbol *symbol2;
 
     tid = target_gettid(cfi->target);
 
@@ -141,6 +174,15 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
 	       "skipping cfi probe in tid %d that is not our tid (%d)\n",
 	       tid,cfi->tid);
 	return 0;
+    }
+
+    cfit = (struct cfi_thread_status *) \
+	g_hash_table_lookup(cfi->thread_status,(gpointer)(uintptr_t)tid);
+    if (!cfit) {
+	cfit = calloc(1,sizeof(*cfit));
+	cfit->shadow_stack = array_list_create(16);
+	cfit->shadow_stack_symbols = array_list_create(16);
+	g_hash_table_insert(cfi->thread_status,(gpointer)(uintptr_t)tid,cfit);
     }
 
     /* Grab the current IP -- the post-jmp IP */
@@ -153,13 +195,92 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
     bsymbol = target_lookup_sym_addr(cfi->target,ip);
 
     if (bsymbol) {
-	cfi_instrument_func(cfi,bsymbol,0);
+	if (cfi_instrument_func(cfi,bsymbol,0)) {
+	    /* XXX: instrument addrs */
+	    vwarn("could not instrument function %s (0x%"PRIxADDR");"
+		  " not tracking!\n",bsymbol_get_name(bsymbol),ip);
+
+	    /*
+	     * XXX XXX XXX
+	     * 
+	     * In this case, we need to do the third-stack trick of
+	     * knowing whether the last non-null was a call, or a jump.
+	     * If it was a call, we have to roll it back and put a NULL
+	     * in the other stacks.  If it was a jump, we have to trace
+	     * back until we hit a function, then remove that one and
+	     * put a NULL in its place.
+	     */
+
+	    /*
+	    oldretaddr = (ADDR)(uintptr_t)	\
+		array_list_item(cfit->shadow_stack,
+				array_list_len(cfit->shadow_stack) - 1);
+	    symbol = (struct bsymbol *)			\
+		array_list_item(cfit->shadow_stack_symbols,
+				array_list_len(cfit->shadow_stack_symbols) - 1);
+
+	    if (!(oldretaddr == 0 && symbol == NULL)) {
+		array_list_append(cfit->shadow_stack,NULL);
+		array_list_append(cfit->shadow_stack_symbols,NULL);
+	    }
+	    */
+	}
 	bsymbol_release(bsymbol);
     }
     else {
 	/* XXX: instrument addrs */
-	vwarn("could not resolve symbol for 0x%"PRIxADDR"; not tracking!\n",
-	      ip);
+	vwarn("could not resolve symbol for 0x%"PRIxADDR"; not tracking (%s)!\n",
+	      ip,probe_name(trigger));
+
+	oldretaddr = (ADDR)(uintptr_t)		\
+	    array_list_item(cfit->shadow_stack,
+			    array_list_len(cfit->shadow_stack) - 1);
+	symbol = (struct bsymbol *)			\
+	    array_list_item(cfit->shadow_stack_symbols,
+			    array_list_len(cfit->shadow_stack_symbols) - 1);
+
+	if (oldretaddr == 0 && symbol == NULL) {
+	    /*
+	     * Do nothing; already were in an untracked bunch of code;
+	     * do not push more NULLs.
+	     */
+	    ;
+	}
+	else {
+	    vwarn("popping retaddr = 0x%"PRIxADDR" (%d) off stack(0x%s)\n",
+		  oldretaddr,array_list_len(cfit->shadow_stack),
+		  bsymbol_get_name(symbol));
+
+	    array_list_remove(cfit->shadow_stack);
+	    array_list_remove(cfit->shadow_stack_symbols);
+
+	    if (array_list_len(cfit->shadow_stack) > 0) {
+		oldretaddr2 = (ADDR)(uintptr_t)		\
+		    array_list_item(cfit->shadow_stack,
+				    array_list_len(cfit->shadow_stack) - 1);
+		symbol2 = (struct bsymbol *)			\
+		    array_list_item(cfit->shadow_stack_symbols,
+				    array_list_len(cfit->shadow_stack_symbols) - 1);
+
+		if (oldretaddr2 == 0 && symbol2 == NULL) {
+		    /*
+		     * Do nothing; we are heading back to even more
+		     * untracked code; don't put multiple NULLs in!
+		     */
+		    ;
+		}
+		else {
+		    array_list_append(cfit->shadow_stack,NULL);
+		    array_list_append(cfit->shadow_stack_symbols,NULL);
+		}
+	    }
+	    else {
+		array_list_append(cfit->shadow_stack,NULL);
+		array_list_append(cfit->shadow_stack_symbols,NULL);
+	    }
+
+	    bsymbol_release(symbol);
+	}
     }
 
     return RESULT_SUCCESS;
@@ -176,6 +297,7 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
     result_t retval;
     struct bsymbol *symbol;
     struct bsymbol *bsymbol;
+    ADDR oldretaddr2;
 
     tid = target_gettid(cfi->target);
 
@@ -226,7 +348,47 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 	return RESULT_ERROR;
     }
 
-    if (newretaddr != oldretaddr) {
+    if (oldretaddr == 0 && symbol == NULL) {
+	/*
+	 * This is an "unknown code" that was jumped into and we halted
+	 * tracking; so allow this return!
+	 */
+
+	oldretaddr2 = (ADDR)(uintptr_t)		\
+	    array_list_item(cfit->shadow_stack,
+			    array_list_len(cfit->shadow_stack) - 2);
+
+	/*
+	 * If we were off in the unknown code region, and are finally
+	 * getting back to known code, allow it!  We basically push a
+	 * single NULL -- not multiple NULLs -- so we use it as a
+	 * placeholder wildcard, almost :).
+	 */
+	if (oldretaddr2 == newretaddr) {
+	    array_list_remove(cfit->shadow_stack);
+	    array_list_remove(cfit->shadow_stack_symbols);
+
+	    oldretaddr = (ADDR)(uintptr_t)		\
+		array_list_item(cfit->shadow_stack,
+				array_list_len(cfit->shadow_stack) - 1);
+	    symbol = (struct bsymbol *)				\
+		array_list_item(cfit->shadow_stack_symbols,
+				array_list_len(cfit->shadow_stack_symbols) - 1);
+
+	    vwarn("leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
+		  " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
+		  newretaddr,oldretaddr2,probe_name(trigger));
+
+	    goto cficlean;
+	}
+	else {
+	    vwarn("not leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
+		  " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
+		  newretaddr,oldretaddr2,probe_name(trigger));
+	    return 0;
+	}
+    }
+    else if (newretaddr != oldretaddr) {
 	/*
 	 * Check for RET-immediates; if the RET cleans up its stack
 	 * *after* reading the retaddr, it is probably really just
@@ -239,8 +401,18 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 				(gpointer)(uintptr_t)probe_addr(trigger))) {
 	    bsymbol = target_lookup_sym_addr(cfi->target,newretaddr);
 
+	    vdebug(5,LA_LIB,LF_CFI,
+		   "retaddr = 0x%"PRIxADDR" (%d) (ret-immediate; oldretaddr ="
+		   " 0x%"PRIxADDR") probe %s (0x%"PRIxADDR")\n",
+		   newretaddr,array_list_len(cfit->shadow_stack),oldretaddr,
+		   probe_name(probe),probe_addr(trigger));
+
 	    if (bsymbol) {
-		cfi_instrument_func(cfi,bsymbol,0);
+		if (cfi_instrument_func(cfi,bsymbol,0)) {
+		    /* XXX: instrument addrs */
+		    vwarn("could not instrument function %s (0x%"PRIxADDR");"
+			  " not tracking!\n",bsymbol_get_name(bsymbol),newretaddr);
+		}
 		bsymbol_release(bsymbol);
 	    }
 	    else {
@@ -293,6 +465,7 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 	}
     }
     else {
+    cficlean:
 	cfi->status.isviolation = 0;
 	cfit->status.isviolation = 0;
 	cfi->status.oldretaddr = oldretaddr;
@@ -398,6 +571,9 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 	return -1;
     }
 
+    if (g_hash_table_lookup(cfi->disfuncs_noflow,(gpointer)funcstart))
+	return -1;
+
     /* Disassemble the called function if we haven't already! */
     if (!g_hash_table_lookup(cfi->disfuncs,(gpointer)funcstart)) {
 	/* Dissasemble the function and grab a list of
@@ -491,6 +667,7 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 	    vdebug(5,LA_LIB,LF_CFI,
 		   "no call sites in %s; removing\n",probe_name(cprobe));
 	    probe_free(cprobe,1);
+	    cprobe = NULL;
 	}
 	else {
 	    g_hash_table_insert(cfi->probes,(gpointer)cprobe,(gpointer)cprobe);
@@ -508,6 +685,7 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 		vdebug(5,LA_LIB,LF_CFI,
 		       "no return sites in %s; removing\n",probe_name(rprobe));
 		probe_free(rprobe,1);
+		rprobe = NULL;
 	    }
 	    else {
 		g_hash_table_insert(cfi->probes,(gpointer)rprobe,(gpointer)rprobe);
@@ -521,6 +699,7 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 	    vdebug(5,LA_LIB,LF_CFI,
 		   "no indirect jmp sites in %s; removing\n",probe_name(jprobe));
 	    probe_free(jprobe,1);
+	    jprobe = NULL;
 	}
 	else {
 	    g_hash_table_insert(cfi->probes,(gpointer)jprobe,(gpointer)jprobe);
@@ -529,7 +708,20 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 		   probe_num_sources(jprobe),probe_name(jprobe));
 	}
 
-	g_hash_table_insert(cfi->disfuncs,(gpointer)funcstart,(gpointer)1);
+	/*
+	 * If no control flow was found, we have to return to the caller
+	 * with an error; we cannot track this function in dynamic CFI.
+	 */
+	if (!cprobe && !rprobe && !jprobe) {
+	    array_list_free(pds.absolute_branch_targets);
+
+	    g_hash_table_insert(cfi->disfuncs_noflow,
+				(gpointer)funcstart,(gpointer)1);
+
+	    return -3;
+	}
+	else 
+	    g_hash_table_insert(cfi->disfuncs,(gpointer)funcstart,(gpointer)1);
 
 	/*
 	 * If the function had absolute jump targets outside of it, we
@@ -549,7 +741,12 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 			  " CFI might be BUGGY!\n",absolute_branch_addr);
 		}
 		else {
-		    cfi_instrument_func(cfi,absolute_branch_symbol,0);
+		    if (cfi_instrument_func(cfi,absolute_branch_symbol,0)) {
+			vwarn("could not instrument func %s (0x%"PRIxADDR");"
+			      " CFI might be BUGGY!\n",
+			      bsymbol_get_name(absolute_branch_symbol),
+			      absolute_branch_addr);
+		    }
 		    bsymbol_release(absolute_branch_symbol);
 		}
 	    }
@@ -665,6 +862,7 @@ struct probe *probe_cfi(struct target *target,tid_t tid,
     cfi->tid = tid;
 
     cfi->disfuncs = g_hash_table_new(g_direct_hash,g_direct_equal);
+    cfi->disfuncs_noflow = g_hash_table_new(g_direct_hash,g_direct_equal);
     cfi->probes = g_hash_table_new(g_direct_hash,g_direct_equal);
     cfi->thread_status = g_hash_table_new(g_direct_hash,g_direct_equal);
     cfi->ret_immediate_addrs = g_hash_table_new(g_direct_hash,g_direct_equal);
