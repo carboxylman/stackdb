@@ -30,6 +30,100 @@
 static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 			       int isroot);
 
+static int __cfit_stack_makenull(struct cfi_thread_status *cfit) {
+    void *addr;
+    void *symbol;
+
+    if (array_list_len(cfit->shadow_stack) > 0) {
+	addr = array_list_item(cfit->shadow_stack,
+			       array_list_len(cfit->shadow_stack) - 1);
+	symbol = array_list_item(cfit->shadow_stack_symbols,
+				 array_list_len(cfit->shadow_stack_symbols) - 1);
+
+	if (addr == 0 && symbol == NULL) {
+	    /*
+	     * Do nothing; already were in an untracked bunch of code;
+	     * do not push more NULLs.
+	     */
+	    return 1;
+	}
+	else {
+	    array_list_append(cfit->shadow_stack,NULL);
+	    array_list_append(cfit->shadow_stack_symbols,NULL);
+
+	    return 0;
+	}
+    }
+    else {
+	array_list_append(cfit->shadow_stack,NULL);
+	array_list_append(cfit->shadow_stack_symbols,NULL);
+
+	return 0;
+    }
+}
+
+static int __cfit_stack_makelastnull(struct cfi_thread_status *cfit) {
+    ADDR oldretaddr;
+    struct bsymbol *symbol;
+    int len;
+
+    len = array_list_len(cfit->shadow_stack);
+    if (len > 0) {
+	oldretaddr = (ADDR)(uintptr_t)array_list_item(cfit->shadow_stack,len - 1);
+	symbol = (struct bsymbol *) \
+	    array_list_item(cfit->shadow_stack_symbols,len - 1);
+
+	if (oldretaddr == 0 && symbol == NULL) {
+	    if (len > 1) {
+		array_list_remove(cfit->shadow_stack);
+		array_list_remove(cfit->shadow_stack_symbols);
+
+		--len;
+
+		oldretaddr = (ADDR)(uintptr_t) \
+		    array_list_item(cfit->shadow_stack,len - 1);
+		symbol = (struct bsymbol *) \
+		    array_list_item(cfit->shadow_stack_symbols,len - 1);
+	
+		vwarn("popping retaddr = 0x%"PRIxADDR" (%d) (0x%s);"
+		      " replacing with NULL (also skipped a NULL)\n",
+		      oldretaddr,array_list_len(cfit->shadow_stack),
+		      bsymbol_get_name(symbol));
+
+		array_list_remove(cfit->shadow_stack);
+		array_list_remove(cfit->shadow_stack_symbols);
+
+		bsymbol_release(symbol);
+
+		/* Replace it with a NULL, or don't if NULL was there. */
+		return __cfit_stack_makenull(cfit);
+	    }
+	    else {
+		/* End of stack is already NULL; leave it alone! */
+		return 1;
+	    }
+	}
+	else {
+	    vwarn("popping retaddr = 0x%"PRIxADDR" (%d) (0x%s);"
+		  " replacing with NULL\n",
+		  oldretaddr,array_list_len(cfit->shadow_stack),
+		  bsymbol_get_name(symbol));
+
+	    array_list_remove(cfit->shadow_stack);
+	    array_list_remove(cfit->shadow_stack_symbols);
+
+	    bsymbol_release(symbol);
+
+	    /* Replace it with a NULL, or don't if NULL was there. */
+	    return __cfit_stack_makenull(cfit);
+	}
+    }
+    else {
+	/* Add a single NULL. */
+	return __cfit_stack_makenull(cfit);
+    }
+}
+
 result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
 				  struct probe *trigger) {
     struct cfi_data *cfi = (struct cfi_data *)data;
@@ -86,59 +180,30 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
 	vwarn("retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
 	      " 0x%"PRIxADDR" probe(%s) (cannot resolve, not tracking!)\n",
 	      retaddr,array_list_len(cfit->shadow_stack),
-	      probe_addr(trigger),ip,probe_name(probe));
+	      probe_addr(trigger),ip,probe_name(trigger));
 
-	/* XXX: instrument addrs */
-	vwarn("could not resolve symbol for 0x%"PRIxADDR"; not tracking (%s)!\n",
-	      ip,probe_name(trigger));
-
-	oldretaddr = (ADDR)(uintptr_t)			\
-	    array_list_item(cfit->shadow_stack,
-			    array_list_len(cfit->shadow_stack) - 1);
-	symbol = (struct bsymbol *)				\
-	    array_list_item(cfit->shadow_stack_symbols,
-			    array_list_len(cfit->shadow_stack_symbols) - 1);
-
-	if (oldretaddr == 0 && symbol == NULL) {
-	    /*
-	     * Do nothing; already were in an untracked bunch of code;
-	     * do not push more NULLs.
-	     */
-	    ;
-	}
-	else {
-	    array_list_append(cfit->shadow_stack,NULL);
-	    array_list_append(cfit->shadow_stack_symbols,NULL);
-	}
+	__cfit_stack_makenull(cfit);
     }
     else {
-	vdebug(5,LA_LIB,LF_CFI,
-	       "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
-	       " 0x%"PRIxADDR" (%s) probe(%s)\n",
-	       retaddr,array_list_len(cfit->shadow_stack),
-	       probe_addr(trigger),ip,bsymbol_get_name(bsymbol),
-	       probe_name(trigger));
-
 	if (!(cfi->flags & CFI_NOAUTOFOLLOW)) {
 	    if (cfi_instrument_func(cfi,bsymbol,0)) {
-		vwarn("could not instrument target %s (0x%"PRIxADDR");"
-		      " not tracking!\n",
-		      bsymbol_get_name(bsymbol),ip);
+		vwarn("retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+		      " 0x%"PRIxADDR" (%s) probe(%s) (cannot instrument target,"
+		      " not tracking!)\n",
+		      retaddr,array_list_len(cfit->shadow_stack),
+		      probe_addr(trigger),ip,bsymbol_get_name(bsymbol),
+		      probe_name(trigger));
+
 		bsymbol_release(bsymbol);
-
-		oldretaddr = (ADDR)(uintptr_t)	\
-		    array_list_item(cfit->shadow_stack,
-				    array_list_len(cfit->shadow_stack) - 1);
-		symbol = (struct bsymbol *)		\
-		    array_list_item(cfit->shadow_stack_symbols,
-				    array_list_len(cfit->shadow_stack_symbols) - 1);
-
-		if (!(oldretaddr == 0 && symbol == NULL)) {
-		    array_list_append(cfit->shadow_stack,NULL);
-		    array_list_append(cfit->shadow_stack_symbols,NULL);
-		}
+		__cfit_stack_makenull(cfit);
 	    }
 	    else {
+		vdebug(5,LA_LIB,LF_CFI,
+		       "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+		       " 0x%"PRIxADDR" (%s) probe(%s) (tracking)\n",
+		       retaddr,array_list_len(cfit->shadow_stack),
+		       probe_addr(trigger),ip,bsymbol_get_name(bsymbol),
+		       probe_name(trigger));
 
 		/* Since we know that the call is a known function that
 		 * we can disasm and instrument return points for, push
@@ -149,8 +214,6 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
 	    }
 	}
     }
-
-    //bsymbol_release(bsymbol);
 
     return 0;
 }
@@ -197,8 +260,9 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
     if (bsymbol) {
 	if (cfi_instrument_func(cfi,bsymbol,0)) {
 	    /* XXX: instrument addrs */
-	    vwarn("could not instrument function %s (0x%"PRIxADDR");"
-		  " not tracking!\n",bsymbol_get_name(bsymbol),ip);
+	    vwarn("could not instrument branch 0x%"PRIxADDR" -> (0x%"PRIxADDR
+		  " (%s); not tracking (removing last call)!\n",
+		  probe_addr(trigger),ip,bsymbol_get_name(bsymbol));
 
 	    /*
 	     * XXX XXX XXX
@@ -211,76 +275,17 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
 	     * put a NULL in its place.
 	     */
 
-	    /*
-	    oldretaddr = (ADDR)(uintptr_t)	\
-		array_list_item(cfit->shadow_stack,
-				array_list_len(cfit->shadow_stack) - 1);
-	    symbol = (struct bsymbol *)			\
-		array_list_item(cfit->shadow_stack_symbols,
-				array_list_len(cfit->shadow_stack_symbols) - 1);
-
-	    if (!(oldretaddr == 0 && symbol == NULL)) {
-		array_list_append(cfit->shadow_stack,NULL);
-		array_list_append(cfit->shadow_stack_symbols,NULL);
-	    }
-	    */
+	    __cfit_stack_makelastnull(cfit);
 	}
 	bsymbol_release(bsymbol);
     }
     else {
 	/* XXX: instrument addrs */
-	vwarn("could not resolve symbol for 0x%"PRIxADDR"; not tracking (%s)!\n",
-	      ip,probe_name(trigger));
+	vwarn("could not resolve target for branch 0x%"PRIxADDR" -> 0x%"PRIxADDR
+	      "; not tracking (removing last call)!\n",
+	      probe_addr(trigger),ip);
 
-	oldretaddr = (ADDR)(uintptr_t)		\
-	    array_list_item(cfit->shadow_stack,
-			    array_list_len(cfit->shadow_stack) - 1);
-	symbol = (struct bsymbol *)			\
-	    array_list_item(cfit->shadow_stack_symbols,
-			    array_list_len(cfit->shadow_stack_symbols) - 1);
-
-	if (oldretaddr == 0 && symbol == NULL) {
-	    /*
-	     * Do nothing; already were in an untracked bunch of code;
-	     * do not push more NULLs.
-	     */
-	    ;
-	}
-	else {
-	    vwarn("popping retaddr = 0x%"PRIxADDR" (%d) off stack(0x%s)\n",
-		  oldretaddr,array_list_len(cfit->shadow_stack),
-		  bsymbol_get_name(symbol));
-
-	    array_list_remove(cfit->shadow_stack);
-	    array_list_remove(cfit->shadow_stack_symbols);
-
-	    if (array_list_len(cfit->shadow_stack) > 0) {
-		oldretaddr2 = (ADDR)(uintptr_t)		\
-		    array_list_item(cfit->shadow_stack,
-				    array_list_len(cfit->shadow_stack) - 1);
-		symbol2 = (struct bsymbol *)			\
-		    array_list_item(cfit->shadow_stack_symbols,
-				    array_list_len(cfit->shadow_stack_symbols) - 1);
-
-		if (oldretaddr2 == 0 && symbol2 == NULL) {
-		    /*
-		     * Do nothing; we are heading back to even more
-		     * untracked code; don't put multiple NULLs in!
-		     */
-		    ;
-		}
-		else {
-		    array_list_append(cfit->shadow_stack,NULL);
-		    array_list_append(cfit->shadow_stack_symbols,NULL);
-		}
-	    }
-	    else {
-		array_list_append(cfit->shadow_stack,NULL);
-		array_list_append(cfit->shadow_stack_symbols,NULL);
-	    }
-
-	    bsymbol_release(symbol);
-	}
+	__cfit_stack_makelastnull(cfit);
     }
 
     return RESULT_SUCCESS;
