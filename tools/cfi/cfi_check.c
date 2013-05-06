@@ -314,6 +314,21 @@ int main(int argc,char **argv) {
 		exit(-16);
 	    }
 	}
+	else if (tstat == TSTATUS_EXITING) {
+	    fflush(stderr);
+	    fflush(stdout);
+	    fprintf(stdout,"target %s exiting, removing probes safely...\n",
+		    targetstr);
+
+	    probe_free(cfi_probe,1);
+	    cfi_probe = NULL;
+
+	    if (target_resume(target)) {
+		verror("could not resume target!\n");
+		tstat = cleanup();
+		exit(-16);
+	    }
+	}
 	else if (tstat == TSTATUS_DONE) {
 	    fflush(stderr);
 	    fflush(stdout);

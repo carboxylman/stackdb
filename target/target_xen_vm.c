@@ -67,7 +67,7 @@ static int xen_vm_init(struct target *target);
 static int xen_vm_attach_internal(struct target *target);
 static int xen_vm_detach(struct target *target);
 static int xen_vm_fini(struct target *target);
-static int xen_vm_kill(struct target *target);
+static int xen_vm_kill(struct target *target,int sig);
 static int xen_vm_loadspaces(struct target *target);
 static int xen_vm_loadregions(struct target *target,struct addrspace *space);
 static int xen_vm_updateregions(struct target *target,
@@ -1050,9 +1050,9 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
      * It doesn't matter whether the thread is a kernel thread or not.
      */
     if (iskernel) 
-	tthread->status = THREAD_STATUS_RETURNING_KERNEL;
+	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_KERNEL);
     else 
-	tthread->status = THREAD_STATUS_RETURNING_USER;
+	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_USER);
 
     /*
      * Load the stored registers from the kernel stack; except fs/gs and
@@ -1442,7 +1442,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    goto errout;
 	}
 	target->global_thread->valid = 1;
-	target->global_thread->status = THREAD_STATUS_RUNNING;
+	target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
     }
 
     /*
@@ -1633,7 +1633,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      * Set the current thread (might be a real thread, or the global thread).
      */
     target->current_thread = tthread;
-    target->current_thread->status = THREAD_STATUS_RUNNING;
+    target_thread_set_status(target->current_thread,THREAD_STATUS_RUNNING);
 
     if (taskv) { //!(SOFTIRQ_COUNT(preempt_count) || HARDIRQ_COUNT(preempt_count))) {
 	if (tstate->task_struct) {
@@ -1853,7 +1853,7 @@ static int xen_vm_init(struct target *target) {
 
     target->global_thread = target_create_thread(target,TID_GLOBAL,tstate);
     /* Default thread is always running. */
-    target->global_thread->status = THREAD_STATUS_RUNNING;
+    target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
 
     return 0;
 }
@@ -1863,6 +1863,8 @@ static int xen_vm_attach_internal(struct target *target) {
     struct xen_domctl domctl;
     struct addrspace *space;
     struct addrspace *tspace;
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *xtstate;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
@@ -1913,9 +1915,10 @@ static int xen_vm_attach_internal(struct target *target) {
     /* NOT thread-safe! */
     ++xc_refcnt;
 
-    if (target_pause(target)) {
+    if (xen_vm_pause(target,0)) {
 	verror("could not pause target before attaching; letting user handle!\n");
     }
+    target_set_status(target,TSTATUS_PAUSED);
 
     /*
      * Make sure to pull in our modules!
@@ -1924,14 +1927,75 @@ static int xen_vm_attach_internal(struct target *target) {
 	xen_vm_updateregions(target,space);
     }
 
-    /* Null out current state so we reload and see that it's paused! */
-    xstate->dominfo_valid = 0;
-
     if (target->evloop && xstate->evloop_fd < 0) {
 	xen_vm_attach_evloop(target,target->evloop);
     }
 
-    target->attached = 1;
+    /* Null out current state so we reload and see that it's paused! */
+    xstate->dominfo_valid = 0;
+    if (xen_vm_load_dominfo(target)) {
+	verror("could not load dominfo for dom %d\n",xstate->id);
+	return -1;
+    }
+
+    /*
+     * Null out hardware breakpoints, so that we don't try to infer that
+     * one was set, only to error because it's a software BP, not a
+     * hardware BP (even if the ip matches).  This can happen if you do
+     * one run with hw bps, then breakpoint the same ip with a sw bp.
+     * Good practice anyway!
+     */
+
+    if (!(tthread = xen_vm_load_cached_thread(target,TID_GLOBAL))) {
+	if (!errno) 
+	    errno = EINVAL;
+	verror("could not load cached thread %"PRIiTID"\n",TID_GLOBAL);
+	return -1;
+    }
+    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+    xtstate->dr[0] = 0;
+    xtstate->dr[1] = 0;
+    xtstate->dr[2] = 0;
+    xtstate->dr[3] = 0;
+    /* Clear the status bits */
+    xtstate->dr[6] = 0;
+    /* Clear the control bit. */
+    xtstate->dr[7] = 0;
+
+    /* Now save these values for later write in flush_context! */
+    xtstate->context.debugreg[0] = 0;
+    xtstate->context.debugreg[1] = 0;
+    xtstate->context.debugreg[2] = 0;
+    xtstate->context.debugreg[3] = 0;
+    xtstate->context.debugreg[6] = 0;
+    xtstate->context.debugreg[7] = 0;
+
+    tthread->dirty = 1;
+
+    if (target->current_thread) {
+	tthread = target->current_thread;
+	xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+	xtstate->dr[0] = 0;
+	xtstate->dr[1] = 0;
+	xtstate->dr[2] = 0;
+	xtstate->dr[3] = 0;
+	/* Clear the status bits */
+	xtstate->dr[6] = 0;
+	/* Clear the control bit. */
+	xtstate->dr[7] = 0;
+
+	/* Now save these values for later write in flush_context! */
+	xtstate->context.debugreg[0] = 0;
+	xtstate->context.debugreg[1] = 0;
+	xtstate->context.debugreg[2] = 0;
+	xtstate->context.debugreg[3] = 0;
+	xtstate->context.debugreg[6] = 0;
+	xtstate->context.debugreg[7] = 0;
+
+	target->current_thread->dirty = 1;
+    }
 
     return 0;
 }
@@ -1946,7 +2010,7 @@ static int xen_vm_detach(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
-    if (!target->attached)
+    if (!target->opened)
 	return 0;
 
     if (xen_vm_status(target) == TSTATUS_PAUSED
@@ -1990,11 +2054,9 @@ static int xen_vm_detach(struct target *target) {
 	xc_handle = XC_IF_INVALID;
 
 	vdebug(4,LA_TARGET,LF_XV,"xc detach dom %d succeeded.\n",xstate->id);
-	target->attached = 0;
     }
 
     vdebug(3,LA_TARGET,LF_XV,"detach dom %d succeeded.\n",xstate->id);
-    target->attached = 0;
 
     return 0;
 }
@@ -2005,7 +2067,7 @@ static int xen_vm_fini(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
-    if (target->attached) 
+    if (target->opened) 
 	xen_vm_detach(target);
 
     if (xstate->init_task)
@@ -2037,15 +2099,10 @@ static int xen_vm_fini(struct target *target) {
     return 0;
 }
 
-static int xen_vm_kill(struct target *target) {
+static int xen_vm_kill(struct target *target,int sig) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
-
-    if (target->attached) {
-	errno = EBUSY;
-	return 1;
-    }
 
     /* XXX: fill in! */
     return 0;
@@ -2319,6 +2376,8 @@ static int xen_vm_pause(struct target *target,int nowait) {
 	verror("could not pause dom %d!\n",xstate->id);
 	return -1;
     }
+
+    target_set_status(target,TSTATUS_PAUSED);
 
     xstate->dominfo_valid = 0;
     if (xen_vm_load_dominfo(target)) 
@@ -3061,6 +3120,7 @@ static int xen_vm_invalidate_all_threads(struct target *target) {
 
 static int __xen_vm_resume(struct target *target,int detaching) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    int rc;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -3091,7 +3151,11 @@ static int __xen_vm_resume(struct target *target,int detaching) {
     /* flush_context will not have done this necessarily! */
     xstate->dominfo_valid = 0;
 
-    return xc_domain_unpause(xc_handle,xstate->id);
+    rc = xc_domain_unpause(xc_handle,xstate->id);
+
+    target_set_status(target,TSTATUS_RUNNING);
+
+    return rc;
 }
 
 static int xen_vm_resume(struct target *target) {
@@ -3431,6 +3495,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     vdebug(3,LA_TARGET,LF_XV,
 	   "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
 	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
+
+    target_set_status(target,TSTATUS_PAUSED);
 
     if (target_status(target) == TSTATUS_PAUSED) {
 	/* Force the current thread to be reloaded. */

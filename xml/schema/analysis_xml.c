@@ -231,6 +231,12 @@ x_AnalysisSpecT_to_a_analysis_spec(struct soap *soap,
 	rout->autoparse_simple_data = 1;
     else
 	rout->autoparse_simple_data = 0;
+    if ((in->killOnClose && *in->killOnClose == xsd__boolean__true_)
+	|| in->killOnCloseSignal) {
+	rout->kill_on_close = 1;
+	rout->kill_on_close_sig = 
+	    (in->killOnCloseSignal) ? *in->killOnCloseSignal : SIGKILL;
+    }
 
     if (in->inputParams && in->inputParams->__sizenameValue) {
 	rout->in_params = array_list_create(in->inputParams->__sizenameValue);
@@ -283,6 +289,16 @@ a_analysis_spec_to_x_AnalysisSpecT(struct soap *soap,
 	rout->autoparseSimpleResults = xsd__boolean__true_;
     else
 	rout->autoparseSimpleResults = xsd__boolean__false_;
+    rout->killOnClose = SOAP_CALLOC(soap,1,sizeof(*rout->killOnClose));
+    if (in->kill_on_close) 
+	*rout->killOnClose = xsd__boolean__true_;
+    else
+	*rout->killOnClose = xsd__boolean__false_;
+    if (in->kill_on_close) {
+	rout->killOnCloseSignal = 
+	    SOAP_CALLOC(soap,1,sizeof(*rout->killOnCloseSignal));
+	*rout->killOnCloseSignal = in->kill_on_close_sig;
+    }
 
     rout->inputParams = SOAP_CALLOC(soap,1,sizeof(*rout->inputParams));
     if (in->in_params) {

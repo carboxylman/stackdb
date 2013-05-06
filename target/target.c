@@ -99,6 +99,7 @@ struct argp_option target_argp_opts[] = {
     { "in-file",'I',"FILE",0,"Deliver contents of FILE to target on stdin (if avail).",-4 },
     { "out-file",'O',"FILE",0,"Log stdout (if avail) to FILE.",-4 },
     { "err-file",'E',"FILE",0,"Log stderr (if avail) to FILE.",-4 },
+    { "kill-on-close",'k',NULL,0,"Destroy target on close (SIGKILL).",-4 },
     { 0,0,0,0,0,0 }
 };
 
@@ -159,6 +160,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	ac += 2;
     if (spec->errfile)
 	ac += 2;
+    if (spec->kill_on_close) 
+	ac += 1;
 
     ac += backend_argc;
     ac += 1;
@@ -203,6 +206,9 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
     if (spec->errfile) {
 	av[j++] = strdup("-E");
 	av[j++] = strdup(spec->errfile);
+    }
+    if (spec->kill_on_close) {
+	av[j++] = strdup("-k");
     }
 
     for (i = 0; i < backend_argc; ++i) 
@@ -452,6 +458,9 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'O':
 	spec->outfile = strdup(arg);
 	break;
+    case 'k':
+	spec->kill_on_close = 1;
+	break;
 
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -496,6 +505,8 @@ void target_free(struct target *target) {
 	probe_free(probe,1);
     g_hash_table_destroy(target->probes);
     array_list_free(list);
+
+    g_hash_table_destroy(target->soft_probepoints);
 
     g_hash_table_destroy(target->threads);
 
@@ -2686,6 +2697,34 @@ struct target_thread *target_lookup_thread(struct target *target,tid_t tid) {
 						       (gpointer)(ptr_t)tid);
 }
 
+void target_set_status(struct target *target,target_status_t status) {
+    vdebug(8,LA_TARGET,LF_TARGET,"target %s  %s -> %s\n",
+	   target->name,TSTATUS(target->status),TSTATUS(status));
+    target->status = status;
+}
+
+void target_thread_set_status(struct target_thread *tthread,
+			      thread_status_t status) {
+    vdebug(8,LA_TARGET,LF_THREAD | LF_TARGET,"target %s tid %d  %s -> %s\n",
+	   tthread->target->name,tthread->tid,
+	   THREAD_STATUS(tthread->status),THREAD_STATUS(status));
+    tthread->status = status;
+}
+
+void target_tid_set_status(struct target *target,tid_t tid,
+			   thread_status_t status) {
+    struct target_thread *tthread = (struct target_thread *) \
+	g_hash_table_lookup(target->threads,(gpointer)(ptr_t)tid);
+    if (!tthread) {
+	verror("could not set status for nonexistent tid %d -- BUG!\n",tid);
+	return;
+    }
+    vdebug(8,LA_TARGET,LF_THREAD | LF_TARGET,"target %s tid %d  %s -> %s\n",
+	   tthread->target->name,tthread->tid,
+	   THREAD_STATUS(tthread->status),THREAD_STATUS(status));
+    tthread->status = status;
+}
+
 struct target_thread *target_create_thread(struct target *target,tid_t tid,
 					   void *tstate) {
     struct target_thread *t = (struct target_thread *)calloc(1,sizeof(*t));
@@ -2837,6 +2876,46 @@ int target_detach_action(struct target *target,struct action *action) {
     return 0;
 }
 
+/*
+ * Util stuff.
+ */
+char *TSTATUS_STRINGS[] = {
+    "UNKNOWN",
+    "RUNNING",
+    "PAUSED",
+    "ERROR",
+    "DONE",
+    "EXITING",
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+    "DEAD",
+    "STOPPED",
+};
+
+char *THREAD_STATUS_STRINGS[] = {
+    "UNKNOWN",
+    "RUNNING",
+    "PAUSED",
+    "ERROR",
+    "DONE",
+    "EXITING",
+    NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+    "DEAD",
+    "STOPPED",
+
+    "SLEEPING",
+    "ZOMBIE",
+    "BLOCKEDIO",
+    "PAGING",
+    "RETURNING_USER",
+    "RETURNING_KERNEL",
+};
+
+char *POLL_STRINGS[] = {
+    "NOTHING",
+    "ERROR",
+    "SUCCESS",
+    "UNKNOWN",
+};
 
 char *REGION_TYPE_STRINGS[] = {
     "unknown","heap","stack","vdso","vsyscall","anon","main","lib",

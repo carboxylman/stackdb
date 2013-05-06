@@ -94,16 +94,11 @@ struct dt_argp_state opts;
 
 struct target_spec *tspec;
 
-void cleanup() {
+void cleanup_probes() {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
-    static int cleaning = 0;
 
-    if (cleaning)
-	return;
-    cleaning = 1;
-	    
     if (probes) {
 	g_hash_table_iter_init(&iter,probes);
 	while (g_hash_table_iter_next(&iter,
@@ -115,6 +110,17 @@ void cleanup() {
 	g_hash_table_destroy(probes);
 	probes = NULL;
     }
+}
+
+void cleanup() {
+    static int cleaning = 0;
+
+    if (cleaning)
+	return;
+    cleaning = 1;
+
+    cleanup_probes();
+
     target_close(t);
     target_free(t);
 
@@ -843,6 +849,7 @@ int main(int argc,char **argv) {
     ADDR paddr;
     char *endptr;
     char *targetstr;
+    char *tmp;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -881,12 +888,21 @@ int main(int argc,char **argv) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    targetstr = target_name(t);
 
     if (target_open(t)) {
 	fprintf(stderr,"could not open target!\n");
 	exit(-4);
     }
+
+    /*
+     * Make a permanent copy so we can print useful messages after
+     * target_free.
+     */
+    tmp = target_name(t);
+    if (!tmp) 
+	targetstr = strdup("<UNNAMED_TARGET>");
+    else
+	targetstr = strdup(tmp);
 
     /* Now that we have loaded any symbols we might need, process the
      * rest of our args.
@@ -1396,8 +1412,11 @@ int main(int argc,char **argv) {
     fflush(stdout);
 
     struct timeval poll_tv = { 0,0 };
+    tid_t tid;
 
     while (1) {
+	tid = 0;
+
 	if (until_probe) {
 	    poll_tv.tv_usec = 10000;
 	    tstat = target_poll(t,&poll_tv,NULL,NULL);
@@ -1408,8 +1427,7 @@ int main(int argc,char **argv) {
 	if (tstat == TSTATUS_RUNNING && until_probe)
 	    continue;
 	else if (tstat == TSTATUS_PAUSED) {
-	    tid_t tid = target_gettid(t);
-
+	    tid = target_gettid(t);
 	    if (until_probe && until_symbol_hit) {
 		printf("%s monitoring found at_symbol %s; removing"
 		       " until probe.\n",
@@ -1479,6 +1497,19 @@ int main(int argc,char **argv) {
 		exit(-16);
 	    }
 	}
+	else if (tstat == TSTATUS_EXITING) {
+	    tid = target_gettid(t);
+	    printf("%s exiting, removing probes safely...\n",targetstr);
+	    cleanup_probes();
+	    /* Let it resume to "finish" exiting! */
+	    if (target_resume(t)) {
+		fprintf(stderr,"could not resume target %s thread %"PRIiTID"\n",
+			targetstr,tid);
+
+		cleanup();
+		exit(-16);
+	    }
+	}
 	else {
 	out:
 	    fflush(stderr);
@@ -1487,14 +1518,17 @@ int main(int argc,char **argv) {
 
 	    if (tstat == TSTATUS_DONE)  {
 		printf("%s finished.\n",targetstr);
+		free(targetstr);
 		exit(0);
 	    }
 	    else if (tstat == TSTATUS_ERROR) {
 		printf("%s monitoring failed!\n",targetstr);
+		free(targetstr);
 		exit(-9);
 	    }
 	    else {
 		printf("%s monitoring failed with %d!\n",targetstr,tstat);
+		free(targetstr);
 		exit(-10);
 	    }
 	}

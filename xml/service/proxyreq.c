@@ -101,11 +101,12 @@ int proxyreq_handle_request(struct soap *soap,char *svc_name) {
 		    if (monitor_is_done(monitor)) {
 			vdebug(2,LA_XML,LF_RPC,
 			       "monitoring on %s %d is done;"
-			       " closing (not finalizing)!\n",
+			       " finalizing!\n",
 			       svc_name,monitor->objid);
-			monitor_shutdown(monitor);
+			monitor_destroy(monitor);
 			return 0;
 		    }
+		    /*
 		    else if (monitor_is_halfdead(monitor)) {
 			vwarn("%s %d monitor child died unexpectedly;"
 			      " closing (not finalizing)!\n",
@@ -113,6 +114,7 @@ int proxyreq_handle_request(struct soap *soap,char *svc_name) {
 			monitor_shutdown(monitor);
 			return -1;
 		    }
+		    */
 		    else if (monitor_should_self_finalize(monitor)) {
 			vwarn("forked %s %d finalizing!\n",
 			      svc_name,monitor->objid);

@@ -51,6 +51,8 @@
       <xs:element minOccurs="0" ref="vmi1:stdinBytes"/>
       <xs:element minOccurs="0" ref="vmi1:logStdout"/>
       <xs:element minOccurs="0" ref="vmi1:logStderr"/>
+      <xs:element minOccurs="0" ref="vmi1:killOnClose"/>
+      <xs:element minOccurs="0" ref="vmi1:killOnCloseSignal"/>
       <xs:element ref="vmi1:backendSpec"/>
     </xs:sequence>
     <xs:attribute name="type" use="required" type="vmi1:TargetTypeT"/>
@@ -62,6 +64,8 @@
   <xs:element name="stdinBytes" type="xs:hexBinary"/>
   <xs:element name="logStdout" type="xs:boolean"/>
   <xs:element name="logStderr" type="xs:boolean"/>
+  <xs:element name="killOnClose" type="xs:boolean"/>
+  <xs:element name="killOnCloseSignal" type="xs:int"/>
   <xs:element name="backendSpec">
     <xs:complexType>
       <xs:choice>

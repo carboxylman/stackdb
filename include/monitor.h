@@ -101,7 +101,7 @@ struct monitor_objtype_ops {
      * if not (i.e., hard close vs soft close).  Later we'll maybe need
      * to define more semantics.
      */
-    int (*close)(int sig,void *obj,void *objstate);
+    int (*close)(void *obj,void *objstate,int kill,int kill_sig);
     /*
      * When the monitor is shutdown, or an object is finalized, we call
      * this function to allow the object to remove *all* its state.  The
@@ -162,7 +162,16 @@ struct monitor {
 
     uint8_t running:1,
 	    interrupt:1,
+	    /*
+	     * A half is dead when either the parent is dead, or the
+	     * monitored child process, or all thread-monitored objects,
+	     * are dead.
+	     */
 	    halfdead:1,
+	    /*
+	     * The monitor is done when its objects are done, and when
+	     * its pipes to the child or parent are closed.
+	     */
 	    done:1,
 	    finalize:1;
 
@@ -261,6 +270,7 @@ struct monitor {
     struct {
 	int pid;
 	int status;
+	int pid_waitpipe_fd;
 
 	/*
 	 * Input/output buffers for the monitored process.
@@ -433,6 +443,14 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
 int monitor_add_primary_obj(struct monitor *monitor,
 			    int objid,int objtype,void *obj,void *objstate);
 
+
+int monitor_close_obj(struct monitor *monitor,void *obj,
+		      int kill,int kill_sig);
+int monitor_close_objid(struct monitor *monitor,int objid,
+			int kill,int kill_sig);
+int monitor_del_obj(struct monitor *monitor,void *obj);
+int monitor_del_objid(struct monitor *monitor,int objid);
+
 /*
  * Looks up a monitor based on monitored object id.  Useful for server
  * threads who have to find the monitor for a request for an object,
@@ -565,14 +583,20 @@ void monitor_halfdead(struct monitor *monitor);
 int monitor_is_halfdead(struct monitor *monitor);
 
 /*
- * Shuts down a monitor and destroys the evloop.
+ * Shuts down a monitor, closes all objects, and destroys the evloop.
+ * Only the monitor thread can call this function!
  */
-void monitor_shutdown(struct monitor *monitor);
+int monitor_shutdown(struct monitor *monitor);
 
 /*
- * Cleans up and frees a monitor.
+ * Cleans up and frees a monitor, and all its objects.  Only the monitor
+ * thread can call this function, unless that thread has exited.  This
+ * use case is perfectly appropriate; oftentimes the monitor thread is
+ * only needed as long as the objects are live; when they are not live
+ * and require no further monitoring, but their state is around for
+ * inspection, it makes no sense to leave the monitor thread running.
  */
-void monitor_destroy(struct monitor *monitor);
+int monitor_destroy(struct monitor *monitor);
 
 /*
  * Free @msg, and its buffer (if non-NULL).

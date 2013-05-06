@@ -81,6 +81,8 @@ void cleanup_probes() {
 
     if (probes) 
 	g_hash_table_destroy(probes);
+
+    probes = NULL;
 }
 
 void sigh(int signo) {
@@ -301,6 +303,20 @@ int main(int argc,char **argv) {
 		fprintf(stderr,"could not resume target\n");
 		cleanup_probes();
 		cleanup_target();
+		exit(-16);
+	    }
+	}
+	else if (tstat == TSTATUS_EXITING) {
+	    fflush(stderr);
+	    fflush(stdout);
+	    fprintf(stdout,"target %s exiting, removing probes safely...\n",
+		    targetstr);
+
+	    cleanup_probes();
+
+	    if (target_resume(t)) {
+		verror("could not resume target!\n");
+		tstat = cleanup_target();
 		exit(-16);
 	    }
 	}

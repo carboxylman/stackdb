@@ -64,7 +64,8 @@ static int target_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
     return target_detach_evloop(target);
 }
 
-static int target_rpc_monitor_close(int sig,void *obj,void *objstate) {
+static int target_rpc_monitor_close(void *obj,void *objstate,
+				    int kill,int kill_sig) {
     struct target *target = (struct target *)obj;
     int retval;
 
@@ -169,36 +170,12 @@ void target_rpc_init(void) {
     pthread_mutex_unlock(&target_rpc_mutex);
 }
 
-int _target_rpc_remove_objid(int objid) {
-    void *obj = NULL;
-    struct monitor *monitor = NULL;
-    int objtype;
-
-    /*
-     * Shutdown the monitor for each target, if the monitor owns
-     * this target!  If it doesn't, the target is probably owned by
-     * some other monitor!
-     */
-    if (!monitor_lookup_objid(objid,&objtype,&obj,&monitor)
-	|| objtype != MONITOR_OBJTYPE_TARGET
-	|| monitor->objid != objid) 
-	return -1;
-
-    monitor_shutdown(monitor);
-
-    //target_close(target);
-    //target_free(target);
-
-    /* Unbind any existing target listeners. */
-    generic_rpc_unbind_all_listeners_objid(RPC_SVCTYPE_TARGET,objid);
-
-    return 0;
-}
-
 void target_rpc_fini(void) {
     void *objid;
     struct array_list *tlist;
     int i;
+    struct target *t = NULL;
+    struct monitor *m = NULL;
 
     pthread_mutex_lock(&target_rpc_mutex);
 
@@ -214,7 +191,14 @@ void target_rpc_fini(void) {
 	monitor_list_objids_by_objtype_lock_objtype(MONITOR_OBJTYPE_TARGET,1);
 
     array_list_foreach(tlist,i,objid) {
-	_target_rpc_remove_objid((int)(uintptr_t)objid);
+	t = NULL;
+	m = NULL;
+	if (!monitor_lookup_objid((int)(uintptr_t)objid,NULL,(void **)&t,&m)
+	    || !t) 
+	    continue;
+	monitor_del_objid(m,(int)(uintptr_t)objid);
+	generic_rpc_unbind_all_listeners_objid(RPC_SVCTYPE_TARGET,
+					       (int)(uintptr_t)objid);
     }
 
     generic_rpc_unregister_svctype(RPC_SVCTYPE_TARGET);
@@ -603,7 +587,7 @@ int vmi1__ResumeTarget(struct soap *soap,
 }
 
 int vmi1__CloseTarget(struct soap *soap,
-		      vmi1__TargetIdT tid,enum xsd__boolean kill,int kill_sig,
+		      vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r) {
     struct target *t = NULL;
     struct monitor *monitor;
@@ -616,19 +600,40 @@ int vmi1__CloseTarget(struct soap *soap,
 
     PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
-    if (kill == xsd__boolean__true_) {
-	t->kill_on_close = 1;
-	if (kill_sig > 0)
-	    t->kill_sig = kill_sig;
-	else 
-	    t->kill_sig = -1;
+    /*
+     * Let the monitor close/kill the target.
+     */
+    monitor_close_obj(monitor,t,0,0);
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
+
+    return SOAP_OK;
+}
+
+int vmi1__KillTarget(struct soap *soap,
+		     vmi1__TargetIdT tid,int kill_sig,
+		      struct vmi1__NoneResponse *r) {
+    struct target *t = NULL;
+    struct monitor *monitor;
+
+    if (!monitor_lookup_objid_lock_objtype(tid,MONITOR_OBJTYPE_TARGET,
+					   (void **)&t,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
     }
+
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
+
+    /*
+     * Override whatever the default was!
+     */
+    t->spec->kill_on_close = 1;
+    t->spec->kill_on_close_sig = kill_sig;
 
     /*
      * Let the monitor close/kill the target.
      */
-
-    monitor_interrupt_done(monitor,RESULT_SUCCESS,0);
+    monitor_close_obj(monitor,t,0,0);
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 
@@ -639,16 +644,19 @@ int vmi1__FinalizeTarget(struct soap *soap,
 			 vmi1__TargetIdT tid,
 			 struct vmi1__NoneResponse *r) {
     struct target *t = NULL;
+    struct monitor *monitor = NULL;
 
     if (!monitor_lookup_objid_lock_objtype(tid,MONITOR_OBJTYPE_TARGET,
-					   (void **)&t,NULL)) {
+					   (void **)&t,&monitor)) {
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
     }
 
     PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
-    _target_rpc_remove_objid(t->id);
+    monitor_del_obj(monitor,t);
+
+    monitor_interrupt_done(monitor,RESULT_SUCCESS,1);
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 

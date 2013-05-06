@@ -52,8 +52,12 @@ int vmi1__PauseTarget(vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
 int vmi1__ResumeTarget(vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
-int vmi1__CloseTarget(vmi1__TargetIdT tid,enum xsd__boolean kill,int kill_sig,
+int vmi1__CloseTarget(vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
+int vmi1__KillTarget(vmi1__TargetIdT tid,int kill_sig,
+		     struct vmi1__NoneResponse *r);
+int vmi1__FinalizeTarget(vmi1__TargetIdT tid,
+			 struct vmi1__NoneResponse *r);
 
 int vmi1__PauseThread(vmi1__TargetIdT tid,vmi1__ThreadIdT thid,
 		      struct vmi1__NoneResponse *r);

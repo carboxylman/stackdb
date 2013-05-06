@@ -152,14 +152,54 @@ typedef enum {
 
 typedef enum {
     TSTATUS_UNKNOWN        = 0,
+    /*
+     * The normal state of affairs; it can be returned regardless of if
+     * target_is_open() or not.
+     */
     TSTATUS_RUNNING        = 1,
+    /*
+     * A target can only be paused if target_is_open() is true.
+     */
     TSTATUS_PAUSED         = 2,
+    /*
+     * A severe error has occured; user should cleanup.  There are
+     * exactly zero guarantees about the target's status at this point.
+     * The only guarantee is that the target libraries should not crash,
+     * no matter what the user tries to do to cleanup -- removing
+     * probes, freeing probes, closing the target, freeing the target.
+     */
     TSTATUS_ERROR          = 3,
+    /*
+     * The target has either exited, or we have detached from it.
+     */
     TSTATUS_DONE           = 4,
+    /*
+     * This is a temporary state to be returned when the target library
+     * knows the target will exit, but is still live enough to examine
+     * its runtime state, remove probes, etc.  Not all backends may
+     * provide this state.
+     *
+     * It implies TSTATUS_PAUSED.
+     *
+     * If it is uncaught, that is ok; the user can just catch
+     * TSTATUS_DONE.
+     */
+    TSTATUS_EXITING        = 5,
 
+    /*
+     * These states can only be returned when target_is_open() is
+     * false.  DEAD corresponds to a zombie target; STOPPED corresponds
+     * to a target that is SIGSTOP'd, or the backend equivalent to
+     * that.
+     */
     TSTATUS_DEAD           = 16,
     TSTATUS_STOPPED,
 } target_status_t;
+
+#define TSTATUS_MAX TSTATUS_STOPPED
+
+extern char *TSTATUS_STRINGS[];
+#define TSTATUS(n) (((n) <= TSTATUS_MAX) ? TSTATUS_STRINGS[(n)] : NULL)
 
 typedef enum {
     /*
@@ -171,6 +211,7 @@ typedef enum {
     THREAD_STATUS_PAUSED   = 2,
     THREAD_STATUS_ERROR    = 3,
     THREAD_STATUS_DONE     = 4,
+    THREAD_STATUS_EXITING  = 5,
 
     THREAD_STATUS_DEAD     = 16,
     THREAD_STATUS_STOPPED,
@@ -186,10 +227,16 @@ typedef enum {
     THREAD_STATUS_RETURNING_KERNEL,
 } thread_status_t;
 
+#define THREAD_STATUS_MAX THREAD_STATUS_RETURNING_KERNEL
+
 #define THREAD_STATUS_BITS  5
 
 #define THREAD_SPECIFIC_STATUS(status) \
     ((thread_status_t)(status) >= THREAD_STATUS_SLEEPING)
+
+extern char *THREAD_STATUS_STRINGS[];
+#define THREAD_STATUS(n) (((n) <= THREAD_STATUS_RETURNING_KERNEL)	\
+			  ? THREAD_STATUS_STRINGS[(n)] : NULL)
 
 /*
  * When we handle a breakpoint, we *have* to single step some
@@ -267,10 +314,6 @@ typedef enum {
     POLL_UNKNOWN          = 3,
     __POLL_MAX,
 } target_poll_outcome_t;
-
-extern char *TSTATUS_STRINGS[];
-#define TSTATUS(n) (((n) < sizeof(TSTATUS_STRINGS)/sizeof(char *)) \
-		    ? TSTATUS_STRINGS[(n)] : NULL)
 
 extern char *POLL_STRINGS[];
 #define POLL(n) (((n) < sizeof(POLL_STRINGS)/sizeof(char *)) \
@@ -435,11 +478,11 @@ int target_resume(struct target *target);
 int target_pause(struct target *target);
 
 /*
- * Returns 1 if the target is attached; 0 otherwise.  Most target
- * operations only make sense if the target is attached (i.e., reading
+ * Returns 1 if the target is open; 0 otherwise.  Most target
+ * operations only make sense if the target is open (i.e., reading
  * mem, reading CPU state, pausing/resuming/monitoring/probing, etc).
  */
-int target_is_attached(struct target *target);
+int target_is_open(struct target *target);
 
 /*
  * Returns the target's status.
@@ -457,7 +500,7 @@ int target_close(struct target *target);
 /*
  * Destroys a target.
  */
-int target_kill(struct target *target);
+int target_kill(struct target *target,int sig);
 
 /*
  * Frees a target.
@@ -1236,9 +1279,16 @@ struct target_spec {
     target_mode_t target_mode;
     thread_bpmode_t bpmode;
     probepoint_style_t style;
-    int8_t start_paused:1;
+    uint8_t start_paused:1,
+	    kill_on_close:1;
+
     /* struct array_list of struct debugfile_load_opts * */
     struct array_list *debugfile_load_opts_list;
+
+    /*
+     * If kill_on_close, call kill() during close() with this signal.
+     */
+    int kill_on_close_sig;
 
     /*
      * I/O behavior is a bit complicated.  We want a couple things -- to
@@ -1301,16 +1351,43 @@ struct target_argp_parser_state {
  * an execution context and at least one address space.
  */
 struct target {
-    uint16_t initdidattach:1,
-	     live:1,
+    uint32_t live:1,
     	     writeable:1,
 	     nodisablehwbponss:1,
 	     threadctl:1,
-	     attached:1,
 	     endian:1,
 	     mmapable:1,
 	     wordsize:4,
-	     ptrsize:4;
+	     ptrsize:4,
+	     opened:1,
+	     kill_on_close:1;
+
+    /*
+     * How we track status is a little funny.  Basically, we want the
+     * target's event handlers (monitor, poll, an evloop handler) to set
+     * status before leaving the handling code (to return into the rest
+     * of the library, or to the user code).  This avoids lots of
+     * (potentially, depending on backend) expensive calls to
+     * @ops->status.
+     *
+     * The backend must only set target and thread status via
+     * target(_thread)_set_status or similar, so that we can track and
+     * debug the changes.  The backend must set status corresponding to
+     * whatever state it leaves the target in.  That means, for
+     * instance, for the ptrace target, if it resumes tracing on behalf
+     * of the user, it sets status to RUNNING.  The backend should only
+     * set status to _ERROR if the error is a fatal, final error, and
+     * the target API cannot continue.  monitor/poll can return _ERROR,
+     * *but* only if they are temporary errors that the backend feels
+     * safe continuing with.  In reality, the backend author must
+     * minimize these; the user cannot deal with them very well, other
+     * than cleaning up as best they can.
+     *
+     * When the target is not opened, we always call into the backend to
+     * set the status field each time target_status is called.
+     */
+    target_status_t status;
+
     REG fbregno;
     REG spregno;
     REG ipregno;
@@ -1331,8 +1408,7 @@ struct target {
     struct target_ops *ops;
     struct target_spec *spec;
 
-    int kill_on_close;
-    int kill_sig;
+    int kill_on_close_sig;
 
     /*
      * If the spec specified stdio interactions via handlers, these are
@@ -1486,7 +1562,7 @@ struct target_ops {
     /* detach from target, but don't unload */
     int (*detach)(struct target *target);
     /* destroy the target */
-    int (*kill)(struct target *target);
+    int (*kill)(struct target *target,int sig);
 
     /* Divide the target into address spaces with different IDs, that
      * might contain multiple subregions.

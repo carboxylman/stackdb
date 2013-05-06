@@ -69,7 +69,7 @@ static int linux_userproc_postloadinit(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
 static int linux_userproc_detach(struct target *target);
 static int linux_userproc_fini(struct target *target);
-static int linux_userproc_kill(struct target *target);
+static int linux_userproc_kill(struct target *target,int sig);
 static int linux_userproc_loadspaces(struct target *target);
 static int linux_userproc_loadregions(struct target *target,
 				      struct addrspace *space);
@@ -305,6 +305,8 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
     int ourkey;
     int count;
     int i;
+    int previ;
+    char *argdup;
 
     if (key == ARGP_KEY_INIT)
 	return 0;
@@ -374,10 +376,10 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 		verror("cannot specify both binary to launch and an argv!\n");
 		return EINVAL;
 	    }
-	    lspec->program = tstate->quoted_argv[0];
+	    lspec->program = strdup(tstate->quoted_argv[0]);
 	    lspec->argv = calloc(tstate->quoted_argc + 1,sizeof(char *));
-	    memcpy(lspec->argv,tstate->quoted_argv,
-		   tstate->quoted_argc * sizeof(char *));
+	    for (i = 0; i < tstate->quoted_argc; ++i)
+		lspec->argv[i] = strdup(tstate->quoted_argv[i]);
 	    lspec->argv[tstate->quoted_argc] = NULL;
 
 	    /* Report our theft :). */
@@ -396,7 +398,9 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 	lspec->pid = atoi(arg);
 	break;
     case 'b':
-	lspec->program = arg;
+	lspec->program = strdup(arg);
+	if (lspec->argv)
+	    lspec->argv[0] = strdup(arg);
 	break;
     case 'a':
 	count = 1;
@@ -405,14 +409,19 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 		++count;
 	}
 	lspec->argv = calloc(count+2,sizeof(char *));
-	lspec->argv[0] = lspec->program;
+	if (lspec->program)
+	    lspec->argv[0] = strdup(lspec->program);
 	count = 1;
-	for (i = 0; arg[i] != '\0'; ++i) {
-	    if (arg[i] == ',') {
-		arg[i] = '\0';
-		lspec->argv[count++] = &arg[i+1];
+	previ = 0;
+	argdup = strdup(arg);
+	for (i = 0; argdup[i] != '\0'; ++i) {
+	    if (argdup[i] == ',') {
+		argdup[i] = '\0';
+		lspec->argv[count++] = strdup(&argdup[previ]);
+		previ = i + 1;
 	    }
 	}
+	free(argdup);
 	lspec->argv[count+1] = NULL;
 	break;
     case 'e':
@@ -424,12 +433,16 @@ error_t linux_userproc_argp_parse_opt(int key,char *arg,struct argp_state *state
 	lspec->envp = calloc(count+1,sizeof(char *));
 	lspec->envp[0] = arg;
 	count = 1;
-	for (i = 0; arg[i] != '\0'; ++i) {
-	    if (arg[i] == ',') {
-		arg[i] = '\0';
-		lspec->envp[count] = &arg[i+1];
+	previ = 0;
+	argdup = strdup(arg);
+	for (i = 0; argdup[i] != '\0'; ++i) {
+	    if (argdup[i] == ',') {
+		argdup[i] = '\0';
+		lspec->envp[count] = strdup(&argdup[previ]);
+		previ = i + 1;
 	    }
 	}
+	free(argdup);
 	lspec->envp[count] = NULL;
 	break;
 
@@ -820,12 +833,6 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 
     target->wordsize = binfile->wordsize;
     target->endian = binfile->endian;
-
-    /* We attach and can't detach, and also can't attach again when the
-     * target API tells us to.
-     */
-    target->initdidattach = 1;
-
     target->ptrsize = target->wordsize;
 
     if (binfile->is_dynamic < 0) {
@@ -876,6 +883,11 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	goto errout;
     }
     memset(lstate,0,sizeof(*lstate));
+
+    /* We attach and can't detach, and also can't attach again when the
+     * target API tells us to.
+     */
+    lstate->initdidattach = 1;
 
     target->state = lstate;
 
@@ -1077,6 +1089,8 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	verror("fork: %s\n",strerror(errno));
 	goto errout;
     }
+
+    target_set_status(target,TSTATUS_PAUSED);
 
     /*
      * Ok, now that we have our child process, more setup!
@@ -1305,7 +1319,7 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
 	errno = EFAULT;
 	return 1;
     }
-    if (!target->attached) {
+    if (!target->opened) {
 	verror("cannot attach to thread until process is attached to!\n");
 	errno = EINVAL;
 	return 1;
@@ -1618,14 +1632,12 @@ int __poll_and_handle_detaching(struct target *target,
     int retval;
     struct linux_userproc_state *lstate;
     int pid;
-    struct linux_userproc_thread_state *tstate;
     tid_t tid = tthread->tid;
 
     lstate = (struct linux_userproc_state *)target->state;
     pid = lstate->pid;
 
     tthread = target_lookup_thread(target,tid);
-    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     retval = waitpid(tid,&status,WNOHANG | __WALL);
     if (retval == 0) {
@@ -1656,7 +1668,6 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
     struct target_thread *tthread;
     char buf[256];
     int pid;
-    struct linux_userproc_thread_state *tstate;
     struct stat sbuf;
 
     lstate = (struct linux_userproc_state *)target->state;
@@ -1668,7 +1679,7 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID"\n",pid,tid);
 
-    if (!target->attached) {
+    if (!target->opened) {
 	verror("cannot detach from thread until process is attached to!\n");
 	errno = EINVAL;
 	return 1;
@@ -1679,7 +1690,6 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 	errno = EINVAL;
 	return 1;
     }
-    tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     if (target->evloop)
 	linux_userproc_evloop_del_tid(target,tid);
@@ -1770,10 +1780,8 @@ static void linux_userproc_free_thread_state(struct target *target,void *state) 
     free(state);
 }
 
-static struct target_thread *linux_userproc_load_thread(struct target *target,
-							tid_t tid,int force) {
-    struct target_thread *tthread;
-    struct linux_userproc_thread_state *tstate;
+static int __linux_userproc_load_thread_status(struct target_thread *tthread,
+					       tid_t tid,int force) {
     struct linux_userproc_state *lstate;
     int pid;
     char buf[64];
@@ -1781,6 +1789,74 @@ static struct target_thread *linux_userproc_load_thread(struct target *target,
     char pstate;
     int rc;
     tid_t rtid = 0;
+
+    lstate = (struct linux_userproc_state *)tthread->target->state;
+    pid = lstate->pid;
+
+    if (tthread->valid && !force) {
+	vdebug(9,LA_TARGET,LF_LUP,
+	       "pid %d thread %"PRIiTID" already valid\n",pid,tid);
+	return 0;
+    }
+
+    vdebug(12,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" (%"PRIiTID")\n",
+	   pid,tid,tthread->tid);
+
+    /* Load its status from /proc */
+    snprintf(buf,64,"/proc/%d/task/%d/stat",pid,tthread->tid);
+ again:
+    statf = fopen(buf,"r");
+    if (!statf) {
+	vwarnopt(9,LA_TARGET,LF_LUP,
+		 "fopen(%s): %s; UNKNOWN!\n",buf,strerror(errno));
+	target_thread_set_status(tthread,THREAD_STATUS_UNKNOWN);
+	return -1;
+    }
+
+    if ((rc = fscanf(statf,"%d (%s %c",&rtid,buf,&pstate))) {
+	if (pstate == 'R' || pstate == 'r')
+	    target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
+	else if (pstate == 'W' || pstate == 'w')
+	    target_thread_set_status(tthread,THREAD_STATUS_PAGING);
+	else if (pstate == 'S' || pstate == 's')
+	    target_thread_set_status(tthread,THREAD_STATUS_STOPPED);
+	else if (pstate == 'D' || pstate == 'd')
+	    target_thread_set_status(tthread,THREAD_STATUS_BLOCKEDIO);
+	else if (pstate == 'Z' || pstate == 'z')
+	    target_thread_set_status(tthread,THREAD_STATUS_ZOMBIE);
+	else if (pstate == 'T' || pstate == 't')
+	    target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
+	else if (pstate == 'X' || pstate == 'x')
+	    target_thread_set_status(tthread,THREAD_STATUS_DEAD);
+	else {
+	    verror("fscanf returned %d; read tid %d (%s) %c; UNKNOWN!\n",
+		  rc,rtid,buf,pstate);
+	    target_thread_set_status(tthread,THREAD_STATUS_UNKNOWN);
+	    goto errout;
+	}
+    }
+    else if (rc < 0 && errno == EINTR) {
+	fclose(statf);
+	goto again;
+    }
+    fclose(statf);
+
+    vdebug(3,LA_TARGET,LF_LUP,"pid %d tid %"PRIiTID" status %d\n",
+	   pid,tthread->tid,tthread->status);
+
+    return 0;
+
+ errout:
+    return -1;
+}
+
+static struct target_thread *__linux_userproc_load_thread(struct target *target,
+							  tid_t tid,int force,
+							  int have_status) {
+    struct target_thread *tthread;
+    struct linux_userproc_thread_state *tstate;
+    struct linux_userproc_state *lstate;
+    int pid;
 
     lstate = (struct linux_userproc_state *)target->state;
     pid = lstate->pid;
@@ -1793,48 +1869,16 @@ static struct target_thread *linux_userproc_load_thread(struct target *target,
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
     if (tthread->valid && !force) {
-	vdebug(9,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" already valid\n",pid,tid);
+	vdebug(9,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" already valid\n",
+	       pid,tid);
 	return tthread;
     }
 
-    vdebug(5,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" (%"PRIiTID")\n",
+    vdebug(12,LA_TARGET,LF_LUP,"pid %d thread %"PRIiTID" (%"PRIiTID")\n",
 	   pid,tid,tthread->tid);
 
-    /* Load its status from /proc */
-    snprintf(buf,64,"/proc/%d/task/%d/stat",pid,tthread->tid);
- again:
-    statf = fopen(buf,"r");
-    if (!statf) {
-	verror("statf(%s): %s\n",buf,strerror(errno));
-	tthread->status = THREAD_STATUS_UNKNOWN;
-    }
-
-    if ((rc = fscanf(statf,"%d (%s %c",&rtid,buf,&pstate))) {
-	if (pstate == 'R' || pstate == 'r')
-	    tthread->status = THREAD_STATUS_RUNNING;
-	else if (pstate == 'W' || pstate == 'w')
-	    tthread->status = THREAD_STATUS_PAGING;
-	else if (pstate == 'S' || pstate == 's')
-	    tthread->status = THREAD_STATUS_STOPPED;
-	else if (pstate == 'D' || pstate == 'd')
-	    tthread->status = THREAD_STATUS_BLOCKEDIO;
-	else if (pstate == 'Z' || pstate == 'z')
-	    tthread->status = THREAD_STATUS_ZOMBIE;
-	else if (pstate == 'T' || pstate == 't')
-	    tthread->status = THREAD_STATUS_PAUSED;
-	else if (pstate == 'X' || pstate == 'x')
-	    tthread->status = THREAD_STATUS_DEAD;
-	else {
-	    vwarn("fscanf returned %d; read tid %d (%s) %c; THREAD_STATUS_UNKNOWN!\n",
-		  rc,rtid,buf,pstate);
-	    tthread->status = THREAD_STATUS_UNKNOWN;
-	}
-    }
-    else if (rc < 0 && errno == EINTR) {
-	fclose(statf);
-	goto again;
-    }
-    fclose(statf);
+    if (!have_status) 
+	__linux_userproc_load_thread_status(tthread,tid,force);
 
     vdebug(3,LA_TARGET,LF_LUP,"pid %d tid %"PRIiTID" status %d\n",
 	   pid,tthread->tid,tthread->status);
@@ -1857,6 +1901,11 @@ static struct target_thread *linux_userproc_load_thread(struct target *target,
     tthread->dirty = 0;
 
     return tthread;
+}
+
+static struct target_thread *linux_userproc_load_thread(struct target *target,
+							tid_t tid,int force) {
+    return __linux_userproc_load_thread(target,tid,force,0);
 }
 
 static struct target_thread *linux_userproc_load_current_thread(struct target *target,
@@ -2044,7 +2093,7 @@ static int linux_userproc_init(struct target *target) {
 
     tthread = target_create_thread(target,lstate->pid,tstate);
     /* Default thread is always starts paused. */
-    tthread->status = THREAD_STATUS_PAUSED;
+    target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
     /* Reuse the pid's primary thread as the global thread. */
     target_reuse_thread_as_global(target,tthread);
@@ -2086,11 +2135,11 @@ static int linux_userproc_attach_internal(struct target *target) {
 	return 1;
     }
     pid = lstate->pid;
-    if (target->attached)
+    if (target->opened)
 	return 0;
 
     errno = 0;
-    if (!target->initdidattach) {
+    if (!lstate->initdidattach) {
 	if (ptrace(PTRACE_ATTACH,pid,NULL,NULL) < 0) {
 	    verror("ptrace attach pid %d failed: %s\n",pid,strerror(errno));
 	    return 1;
@@ -2104,7 +2153,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 	return 1;
     }
 
-    if (!target->initdidattach) {
+    if (!lstate->initdidattach) {
 	/*
 	 * Wait for the child to get the PTRACE-sent SIGSTOP, then make sure
 	 * we *don't* deliver that signal to it when the library user calls
@@ -2121,6 +2170,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 		goto again;
 	}
 	vdebug(3,LA_TARGET,LF_LUP,"ptrace attach has hit pid %d\n",pid);
+	target_set_status(target,TSTATUS_PAUSED);
     }
 
     /* Set the initial PTRACE opts. */
@@ -2194,15 +2244,13 @@ static int linux_userproc_attach_internal(struct target *target) {
 	tstate->ctl_sig_pause_all = 0;
 
 	tthread = target_create_thread(target,tid,tstate);
-	tthread->status = THREAD_STATUS_PAUSED;
+	target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
 	if (target->evloop)
 	    linux_userproc_evloop_add_tid(target,tid);
     }
 
     closedir(dirp);
-
-    target->attached = 1;
 
     return rc;
 }
@@ -2222,7 +2270,7 @@ static int linux_userproc_detach(struct target *target) {
 	errno = EFAULT;
 	return 1;
     }
-    if (!target->attached)
+    if (!target->opened)
 	return 0;
 
     /*
@@ -2278,7 +2326,6 @@ static int linux_userproc_detach(struct target *target) {
 	close(lstate->memfd);
 
     vdebug(3,LA_TARGET,LF_LUP,"ptrace detach %d done.\n",lstate->pid);
-    target->attached = 0;
 
     return 0;
 }
@@ -2290,7 +2337,7 @@ static int linux_userproc_fini(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
-    if (target->attached) 
+    if (target->opened) 
 	linux_userproc_detach(target);
 
     free(target->state);
@@ -2298,7 +2345,7 @@ static int linux_userproc_fini(struct target *target) {
     return 0;
 }
 
-static int linux_userproc_kill(struct target *target) {
+static int linux_userproc_kill(struct target *target,int sig) {
     struct linux_userproc_state *lstate;
     int retval = 0;
 
@@ -2309,12 +2356,8 @@ static int linux_userproc_kill(struct target *target) {
 	errno = EFAULT;
 	return 1;
     }
-    if (target->attached) {
-	errno = EBUSY;
-	return 1;
-    }
 
-    if (kill(lstate->pid,SIGKILL))
+    if (kill(lstate->pid,sig))
 	return 1;
 
     return 0;
@@ -2808,10 +2851,12 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 		goto again;
 	}
 	vdebug(3,LA_TARGET,LF_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
-	tthread->status = THREAD_STATUS_PAUSED;
+	target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 	tstate->ctl_sig_sent = 0;
 	tstate->ctl_sig_synch = 0;
     }
+
+    target_set_status(target,TSTATUS_PAUSED);
 
     return rc;
 }
@@ -2881,7 +2926,7 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
 	    goto again;
     }
     vdebug(3,LA_TARGET,LF_LUP,"pause SIGSTOP has hit tid %d\n",tthread->tid);
-    tthread->status = THREAD_STATUS_PAUSED;
+    target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
     tstate->ctl_sig_sent = 0;
 
     return 0;
@@ -2935,7 +2980,8 @@ static int linux_userproc_resume(struct target *target) {
 	if (target->blocking_thread && tthread != target->blocking_thread) 
 	    continue;
 
-	if (tthread->status != THREAD_STATUS_PAUSED)
+	if (tthread->status != THREAD_STATUS_PAUSED
+	    && tthread->status != THREAD_STATUS_EXITING)
 	    continue;
 	else if (tthread->resumeat != THREAD_RESUMEAT_NONE)
 	    continue;
@@ -2974,7 +3020,7 @@ static int linux_userproc_resume(struct target *target) {
 
 	vdebug(8,LA_TARGET,LF_LUP,"ptrace restart pid %d tid %"PRIiTID" succeeded\n",
 	       lstate->pid,tthread->tid);
-	tthread->status = THREAD_STATUS_RUNNING;
+	target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 
 	tstate->last_signo = -1;
 	tstate->last_status = -1;
@@ -3011,6 +3057,7 @@ static int linux_userproc_resume(struct target *target) {
 	}
     }
 
+    target_set_status(target,TSTATUS_RUNNING);
     return 0;
 }
 
@@ -3026,7 +3073,7 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 #else
     int cdr;
 #endif
-    struct target_thread *tthread;
+    struct target_thread *tthread = NULL;
     struct linux_userproc_thread_state *tstate;
     tid_t newtid;
     int pid;
@@ -3058,6 +3105,17 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	 */
 
 	/*
+	 * We know the thread is at least "paused", so set that; change
+	 * it later depending on *which* ptrace event *if necessary*.
+	 *
+	 * (This avoids expensive polling of /proc/pid/task/tid/stat in
+	 * linux_userproc_load_thread, and we can just call
+	 * __linux_userproc_load_thread.)
+	 */
+	target_set_status(target,TSTATUS_PAUSED);
+	target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
+
+	/*
 	 * Handle clone before loading the current thread; we don't need
 	 * the extra overhead of loading the current thread in this
 	 * case; we just want to attach to the new thread right away.
@@ -3076,14 +3134,17 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	    if (ptrace(lstate->ptrace_type,tid,NULL,NULL) < 0) {
 		vwarn("ptrace parent restart failed: %s\n",strerror(errno));
 	    }
+	    target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 	    goto out_again;
 	}
 
+	//if (!lstate->live_syscall_maps_tracking) {
 	list_for_each_entry(space,&target->spaces,space) {
 	    linux_userproc_updateregions(target,space);
 	}
+	//}
 
-	if (!linux_userproc_load_thread(target,tid,0)) {
+	if (!__linux_userproc_load_thread(target,tid,0,1)) {
 	    verror("could not load thread %"PRIiTID"!\n",tid);
 	    goto out_err;
 	}
@@ -3100,11 +3161,13 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	}
 	else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
 	    vdebug(5,LA_TARGET,LF_LUP,
-		   "target %d (via tid %d) exiting (%d)! detaching now.\n",
+		   "target %d (via tid %d) exiting (%d)! will detach at next resume.\n",
 		   pid,tid,tstate->last_status);
 	    tstate->last_signo = -1;
-	    linux_userproc_detach(target);
-	    return THREAD_STATUS_DONE;
+	    //linux_userproc_detach(target);
+	    target_set_status(target,TSTATUS_EXITING);
+	    target_thread_set_status(tthread,TSTATUS_EXITING);
+	    return THREAD_STATUS_EXITING;
 	}
 	else if (tstate->last_status == SIGTRAP) {
 	    /* Don't deliver debug traps! */
@@ -3306,6 +3369,7 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 			verror("ptrace restart of tid %"PRIiTID" failed: %s\n",
 			       tid,strerror(errno));
 		    }
+		    target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 		    goto out_again;
 		}
 	    }
@@ -3327,6 +3391,7 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	/* XXX: is error good enough?  The pid is gone; we should
 	 * probably dump this target.
 	 */
+	target_set_status(target,TSTATUS_DONE);
 	return THREAD_STATUS_DONE;
     }
     else {
@@ -3346,6 +3411,7 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
      */
     //linux_userproc_flush_all_threads(target);
     //target_invalidate_all_threads(target);
+    //target_set_status(target,TSTATUS_RUNNING);
     target_resume(target);
     if (again)
 	*again = 1;
@@ -3504,6 +3570,11 @@ static int linux_userproc_evloop_del_tid(struct target *target,int tid) {
 
 	vdebug(9,LA_TARGET,LF_LUP,
 	       "removed waitpipe/evloop readfd %d for tid %d\n",
+	       readfd,tid);
+    }
+    else {
+	vdebug(9,LA_TARGET,LF_LUP,
+	       "did not find valid readfd (%d) to remove tid %d from evloop!\n",
 	       readfd,tid);
     }
 
@@ -4699,7 +4770,7 @@ int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp) {
      * sure to do all the things _resume() would have done to it.
      */
     target_invalidate_thread(target,tthread);
-    tthread->status = THREAD_STATUS_RUNNING;
+    target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 
     return 0;
 }
@@ -4731,7 +4802,7 @@ int linux_userproc_singlestep_end(struct target *target,tid_t tid) {
 	return -1;
     }
 
-    tthread->status = THREAD_STATUS_PAUSED;
+    //target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
     return 0;
 }

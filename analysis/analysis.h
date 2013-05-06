@@ -275,7 +275,13 @@ struct analysis_spec {
 	log_stderr:1,
 	report_stdout_intermediate:1,
 	report_stderr_intermediate:1,
-	autoparse_simple_data:1;
+	autoparse_simple_data:1,
+	kill_on_close:1;
+
+    /*
+     * If kill_on_close, call kill() during close() with this signal.
+     */
+    int kill_on_close_sig;
 
     /* array_list of struct analysis_name_value */
     struct array_list *in_params;

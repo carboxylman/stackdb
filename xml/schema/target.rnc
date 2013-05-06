@@ -34,6 +34,8 @@ TargetSpecT =
     element stdinBytes { xsd:hexBinary }?,
     element logStdout { xsd:boolean }?,
     element logStderr { xsd:boolean }?,
+    element killOnClose { xsd:boolean }?,
+    element killOnCloseSignal { xsd:int }?,
 
     element backendSpec {
         (TargetXenSpec | TargetPtraceSpec)

@@ -80,8 +80,11 @@ int vmi1__ResumeTarget(struct soap *soap,
 		       vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
 int vmi1__CloseTarget(struct soap *soap,
-		      vmi1__TargetIdT tid,enum xsd__boolean kill,int kill_sig,
+		      vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
+int vmi1__KillTarget(struct soap *soap,
+		     vmi1__TargetIdT tid,int kill_sig,
+		     struct vmi1__NoneResponse *r);
 int vmi1__FinalizeTarget(struct soap *soap,
 			 vmi1__TargetIdT tid,
 			 struct vmi1__NoneResponse *r);

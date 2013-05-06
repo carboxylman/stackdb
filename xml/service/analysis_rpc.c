@@ -48,7 +48,8 @@ extern struct vmi1__DebugFileOptsT defDebugFileOpts;
  **/
 static int analysis_rpc_monitor_evloop_attach(struct evloop *evloop,void *obj);
 static int analysis_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj);
-static int analysis_rpc_monitor_close(int sig,void *obj,void *objstate);
+static int analysis_rpc_monitor_close(void *obj,void *objstate,
+				      int kill,int kill_sig);
 static int analysis_rpc_monitor_fini(void *obj,void *objstate);
 static int analysis_rpc_monitor_evloop_is_attached(struct evloop *evloop,
 						   void *obj);
@@ -738,10 +739,103 @@ int vmi1__ResumeAnalysis(struct soap *soap,
     return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
 }
 
-int vmi1__EndAnalysis(struct soap *soap,
-		      vmi1__AnalysisIdT aid,
-		      struct vmi1__NoneResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+int vmi1__CloseAnalysis(struct soap *soap,
+			vmi1__AnalysisIdT aid,
+			struct vmi1__NoneResponse *r) {
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    /*
+     * Let the monitor close/kill the analysis; if it supports external
+     * control, pass the RPC to it and let it close itself in the child;
+     * otherwise, close it from the outside.
+     */
+    if (a->desc->supports_external_control) {
+	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
+
+	monitor_close_obj(monitor,a,0,0);
+    }
+    else
+	monitor_close_obj(monitor,a,0,0);
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
+}
+
+
+int vmi1__KillAnalysis(struct soap *soap,
+		       vmi1__AnalysisIdT aid,int kill_sig,
+		       struct vmi1__NoneResponse *r) {
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    /*
+     * Let the monitor close/kill the analysis; if it supports external
+     * control, pass the RPC to it and let it close itself in the child;
+     * otherwise, close it from the outside.
+     */
+
+    /*
+     * Override whatever the default was!
+     */
+    a->spec->kill_on_close = 1;
+    a->spec->kill_on_close_sig = kill_sig;
+
+    if (a->desc->supports_external_control) {
+	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
+
+	monitor_close_obj(monitor,a,0,0);
+    }
+    else
+	monitor_close_obj(monitor,a,0,0);
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
+}
+
+int vmi1__FinalizeAnalysis(struct soap *soap,
+			   vmi1__AnalysisIdT aid,
+			   struct vmi1__NoneResponse *r) {
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    /*
+     * Let the monitor close/kill the analysis; if it supports external
+     * control, pass the RPC to it and let it close itself in the child;
+     * otherwise, close it from the outside.
+     */
+
+    if (a->desc->supports_external_control) {
+	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
+
+	monitor_close_obj(monitor,a,0,0);
+    }
+    else
+	monitor_close_obj(monitor,a,0,0);
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
 }
 
 int vmi1__GetAnalysis(struct soap *soap,
@@ -905,7 +999,8 @@ static int analysis_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
     return analysis_detach_evloop((struct analysis *)obj);
 }
 
-static int analysis_rpc_monitor_close(int sig,void *obj,void *objstate) {
+static int analysis_rpc_monitor_close(void *obj,void *objstate,
+				      int kill,int kill_sig) {
     struct analysis *analysis = (struct analysis *)obj;
     int retval;
 

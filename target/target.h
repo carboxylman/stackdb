@@ -127,12 +127,19 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
 					   void *tstate);
 void target_reuse_thread_as_global(struct target *target,
 				   struct target_thread *thread);
+void target_detach_thread(struct target *target,struct target_thread *tthread);
 void target_delete_thread(struct target *target,struct target_thread *thread,
 			  int nohashdelete);
 
 int target_invalidate_all_threads(struct target *target);
 int target_invalidate_thread(struct target *target,
 			     struct target_thread *tthread);
+
+void target_set_status(struct target *target,target_status_t status);
+void target_thread_set_status(struct target_thread *tthread,
+			      thread_status_t status);
+void target_tid_set_status(struct target *target,tid_t tid,
+			   thread_status_t status);
 
 /**
  ** Address spaces.

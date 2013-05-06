@@ -83,8 +83,12 @@ int vmi1__ResumeAnalysis(vmi1__AnalysisIdT aid,
 			 struct vmi1__NoneResponse *r);
 
 // gsoap vmi1 service method-documentation: EndAnalysis ends an analysis.
-int vmi1__EndAnalysis(vmi1__AnalysisIdT aid,
-		      struct vmi1__NoneResponse *r);
+int vmi1__CloseAnalysis(vmi1__AnalysisIdT aid,
+			struct vmi1__NoneResponse *r);
+int vmi1__KillAnalysis(vmi1__AnalysisIdT aid,int kill_sig,
+		       struct vmi1__NoneResponse *r);
+int vmi1__FinalizeAnalysis(vmi1__AnalysisIdT aid,
+			   struct vmi1__NoneResponse *r);
 
 // gsoap vmi1 service method-documentation: GetAnalysis returns an Analysis.
 int vmi1__GetAnalysis(vmi1__AnalysisIdT aid,

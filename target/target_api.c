@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <signal.h>
 
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
@@ -87,6 +88,7 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
     tspec->target_type = type;
     tspec->target_mode = mode;
     tspec->style = PROBEPOINT_FASTEST;
+    tspec->kill_on_close_sig = SIGKILL;
 
     return tspec;
 }
@@ -239,6 +241,8 @@ int target_open(struct target *target) {
 	return rc;
     }
 
+    target->opened = 1;
+
     return 0;
 }
 
@@ -283,33 +287,67 @@ int target_is_evloop_attached(struct target *target,struct evloop *evloop) {
 }
     
 target_status_t target_monitor(struct target *target) {
+    if (target->status != TSTATUS_RUNNING) {
+	verror("cannot monitor target(%s) in state %s; ERROR!\n",
+	       target->name,TSTATUS(target->status));
+	return TSTATUS_ERROR;
+    }
     vdebug(8,LA_TARGET,LF_TARGET,"monitoring target(%s)\n",target->name);
     return target->ops->monitor(target);
 }
 
 target_status_t target_poll(struct target *target,struct timeval *tv,
 			    target_poll_outcome_t *outcome,int *pstatus) {
+    if (target->status != TSTATUS_RUNNING) {
+	verror("cannot poll target(%s) in state %s; ERROR!\n",
+	       target->name,TSTATUS(target->status));
+	return TSTATUS_ERROR;
+    }
     vdebug(8,LA_TARGET,LF_TARGET,"polling target(%s)\n",target->name);
     return target->ops->poll(target,tv,outcome,pstatus);
 }
     
 int target_resume(struct target *target) {
+    if (target->status != TSTATUS_PAUSED && target->status != TSTATUS_EXITING) {
+	verror("cannot resume target(%s) in state %s; ERROR!\n",
+	       target->name,TSTATUS(target->status));
+	return TSTATUS_ERROR;
+    }
+    if (target->status == TSTATUS_DONE) {
+	vwarnopt(8,LA_TARGET,LF_TARGET,
+		 "not pausing target(%s); already finished\n",target->name);
+	return -1;
+    }
     vdebug(8,LA_TARGET,LF_TARGET,"resuming target(%s)\n",target->name);
     return target->ops->resume(target);
 }
     
 int target_pause(struct target *target) {
+    if (target->status == TSTATUS_PAUSED) {
+	vdebug(16,LA_TARGET,LF_TARGET,
+	       "not pausing target(%s); already paused\n",target->name);
+	return 0;
+    }
+    if (target->status == TSTATUS_DONE) {
+	vwarnopt(8,LA_TARGET,LF_TARGET,
+		 "not pausing target(%s); already finished\n",target->name);
+	return -1;
+    }
     vdebug(8,LA_TARGET,LF_TARGET,"pausing target(%s)\n",target->name);
     return target->ops->pause(target,0);
 }
 
-int target_is_attached(struct target *target) {
-    return target->attached;
+int target_is_open(struct target *target) {
+    return target->opened;
 }
 
 target_status_t target_status(struct target *target) {
-    vdebug(16,LA_TARGET,LF_TARGET,"getting target(%s) status\n",target->name);
-    return target->ops->status(target);
+    if (target->opened) 
+	return target->status;
+    vdebug(9,LA_TARGET,LF_TARGET,
+	   "calling backend to get target(%s) status\n",target->name);
+    target->status = target->ops->status(target);
+    return target->status;
 }
 
 unsigned char *target_read_addr(struct target *target,ADDR addr,
@@ -616,6 +654,11 @@ int target_close(struct target *target) {
     struct target_thread *tthread;
     struct probepoint *probepoint;
 
+    if (!target->opened) {
+	vdebug(3,LA_TARGET,LF_TARGET,"target(%s) already closed\n",target->name);
+	return 0;
+    }
+
     vdebug(5,LA_TARGET,LF_TARGET,"closing target(%s)\n",target->name);
 
     /* Make sure! */
@@ -637,15 +680,15 @@ int target_close(struct target *target) {
     while (g_hash_table_iter_next(&iter,NULL,(gpointer)&probepoint)) {
 	probepoint_free_ext(probepoint);
     }
-    g_hash_table_destroy(target->soft_probepoints);
+    g_hash_table_remove_all(target->soft_probepoints);
 
     vdebug(5,LA_TARGET,LF_TARGET,"detach target(%s)\n",target->name);
     if ((rc = target->ops->detach(target))) {
 	verror("detach target(%s) failed: %s\n",target->name,strerror(errno));
     }
 
-    if (target->kill_on_close) 
-	target_kill(target);
+    if (target->spec->kill_on_close) 
+	target_kill(target,target->spec->kill_on_close_sig);
 
     /*
      * If the target didn't already do it in detach(),
@@ -670,12 +713,14 @@ int target_close(struct target *target) {
     /* Target should not mess with these after close! */
     target->global_thread = target->current_thread = NULL;
 
+    target->opened = 0;
+
     return TSTATUS_DONE;
 }
 
-int target_kill(struct target *target) {
-    vdebug(5,LA_TARGET,LF_TARGET,"killing target(%s)\n",target->name);
-    return target->ops->kill(target);
+int target_kill(struct target *target,int sig) {
+    vdebug(5,LA_TARGET,LF_TARGET,"killing target(%s) with %d\n",target->name,sig);
+    return target->ops->kill(target,sig);
 }
 
 struct probe *target_lookup_probe(struct target *target,int probe_id) {
@@ -699,7 +744,7 @@ REG target_get_unused_debug_reg(struct target *target,tid_t tid) {
 }
 
 int target_set_hw_breakpoint(struct target *target,tid_t tid,REG reg,ADDR addr) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "setting hw breakpoint at 0x%"PRIxADDR" on target(%s:%"PRIiTID") dreg %d\n",
 	   addr,target->name,tid,reg);
     return target->ops->set_hw_breakpoint(target,tid,reg,addr);
@@ -707,47 +752,47 @@ int target_set_hw_breakpoint(struct target *target,tid_t tid,REG reg,ADDR addr) 
 
 int target_set_hw_watchpoint(struct target *target,tid_t tid,REG reg,ADDR addr,
 			     probepoint_whence_t whence,int watchsize) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "setting hw watchpoint at 0x%"PRIxADDR" on target(%s:%"PRIiTID") dreg %d (%d)\n",
 	   addr,target->name,tid,reg,watchsize);
     return target->ops->set_hw_watchpoint(target,tid,reg,addr,whence,watchsize);
 }
 
 int target_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "removing hw breakpoint on target(%s:%"PRIiTID") dreg %d\n",
 	   target->name,tid,reg);
     return target->ops->unset_hw_breakpoint(target,tid,reg);
 }
 
 int target_unset_hw_watchpoint(struct target *target,tid_t tid,REG reg) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "removing hw watchpoint on target(%s:%"PRIiTID") dreg %d\n",
 	   target->name,tid,reg);
     return target->ops->unset_hw_watchpoint(target,tid,reg);
 }
 
 int target_disable_hw_breakpoints(struct target *target,tid_t tid) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "disable hw breakpoints on target(%s:%"PRIiTID")\n",target->name,tid);
     return target->ops->disable_hw_breakpoints(target,tid);
 }
 
 int target_enable_hw_breakpoints(struct target *target,tid_t tid) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "enable hw breakpoints on target(%s:%"PRIiTID")\n",target->name,tid);
     return target->ops->enable_hw_breakpoints(target,tid);
 }
 
 int target_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "disable hw breakpoint %"PRIiREG" on target(%s:%"PRIiTID")\n",
 	   dreg,target->name,tid);
     return target->ops->disable_hw_breakpoint(target,tid,dreg);
 }
 
 int target_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(8,LA_TARGET,LF_TARGET,
 	   "enable hw breakpoint %"PRIiREG" on target(%s:%"PRIiTID")\n",
 	   dreg,target->name,tid);
     return target->ops->enable_hw_breakpoint(target,tid,dreg);
@@ -755,7 +800,7 @@ int target_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 
 int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 				int notification) {
-    vdebug(5,LA_TARGET,LF_TARGET,
+    vdebug(16,LA_TARGET,LF_TARGET,
 	   "notify sw breakpoint (%d) on target(%s)\n",
 	   notification,target->name);
     return target->ops->notify_sw_breakpoint(target,addr,notification);
@@ -861,24 +906,3 @@ thread_status_t target_thread_status(struct target *target,tid_t tid) {
     return tthread->status;
 }
 
-
-
-/*
- * Util stuff.
- */
-char *TSTATUS_STRINGS[] = {
-    "UNKNOWN",
-    "RUNNING",
-    "PAUSED",
-    "DEAD",
-    "STOPPED",
-    "ERROR",
-    "DONE",
-};
-
-char *POLL_STRINGS[] = {
-    "NOTHING",
-    "ERROR",
-    "SUCCESS",
-    "UNKNOWN",
-};

@@ -343,7 +343,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	return 1;
     }
 
-    if (!target_is_attached(target)) {
+    if (!target_is_open(target)) {
 	vdebug(8,LA_PROBE,LF_PROBEPOINT,
 	       "target is not attached; emulating probepoint removal ");
 	LOGDUMPPROBEPOINT_NL(8,LA_PROBE,LF_PROBEPOINT,probepoint);
@@ -637,7 +637,7 @@ static int __probepoint_insert(struct probepoint *probepoint,
         return 0;
     }
 
-    if (!target_is_attached(target)) {
+    if (!target_is_open(target)) {
 	verror("target %d is not attached!\n",target->id);
 	return 1;
     }
@@ -1016,9 +1016,9 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     }
 
     /* Target must be paused (if it is attached!) before we do anything. */
-    if (target_is_attached(target)) {
+    if (target_is_open(target)) {
 	status = target_status(target);
-	if (status != TSTATUS_PAUSED) {
+	if (status != TSTATUS_PAUSED && status != TSTATUS_EXITING) {
 	    verror("target not paused (%d), cannot remove!\n",status);
 	    errno = EINVAL;
 	    return -1;
@@ -1170,9 +1170,9 @@ int probe_unregister_source(struct probe *sink,struct probe *src,int force) {
     }
 
     /* Target must be paused (if attached) before we do anything. */
-    if (target_is_attached(target)) {
+    if (target_is_open(target)) {
 	status = target_status(target);
-	if (status != TSTATUS_PAUSED) {
+	if (status != TSTATUS_PAUSED && status != TSTATUS_EXITING) {
 	    verror("target not paused (%d), cannot remove!\n",status);
 	    errno = EINVAL;
 	    return -1;
@@ -1230,6 +1230,7 @@ int probe_unregister_batch(struct target *target,struct probe **probelist,
 			   int listlen,int force) {
     int i;
     int retval = 0;
+    target_status_t status;
 
     if (!probelist)
 	return -1;
@@ -1237,7 +1238,8 @@ int probe_unregister_batch(struct target *target,struct probe **probelist,
 	return 0;
 
     /* Target must be paused before we do anything. */
-    if (target_status(target) != TSTATUS_PAUSED) {
+    status = target_status(target);
+    if (status != TSTATUS_PAUSED && status != TSTATUS_EXITING) {
         verror("target not paused!\n");
 	errno = EINVAL;
 	return -1;
@@ -1267,6 +1269,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     struct probepoint *probepoint;
     int created = 0;
     struct target *target = probe->target;
+    target_status_t status;
 
     if (type == PROBEPOINT_WATCH && style == PROBEPOINT_SW) {
 	verror("software watchpoints are unsupported!\n");
@@ -1275,7 +1278,8 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     }
 
     /* Target must be paused before we do anything. */
-    if (target_status(target) != TSTATUS_PAUSED) {
+    status = target_status(target);
+    if (status != TSTATUS_PAUSED && status != TSTATUS_EXITING) {
         verror("target not paused!\n");
 	errno = EINVAL;
 	goto errout;
@@ -1549,6 +1553,7 @@ struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     struct target *target = sink->target;
     int held_src_bsymbol = 0;
     REFCNT trefcnt;
+    target_status_t status;
 
     /* XXX: should we do this?  Steal the src's bsymbol if we don't have
      * one!
@@ -1565,7 +1570,8 @@ struct probe *probe_register_source(struct probe *sink,struct probe *src) {
     }
 
     /* Target must be paused before we do anything. */
-    if (target_status(target) != TSTATUS_PAUSED) {
+    status = target_status(target);
+    if (target_status(target) != TSTATUS_PAUSED && status != TSTATUS_EXITING) {
         verror("target not paused!\n");
 	errno = EINVAL;
 	goto errout;
@@ -1643,6 +1649,7 @@ int probe_register_batch(struct target *target,tid_t tid,
     int retval = 0;
     struct probe *probe;
     char *buf;
+    target_status_t status;
 
     if (!probelist)
 	return -1;
@@ -1656,7 +1663,8 @@ int probe_register_batch(struct target *target,tid_t tid,
     }
 
     /* Target must be paused before we do anything. */
-    if (target_status(target) != TSTATUS_PAUSED) {
+    status = target_status(target);
+    if (target_status(target) != TSTATUS_PAUSED && status != TSTATUS_EXITING) {
         verror("target not paused!\n");
 	errno = EINVAL;
 	return -1;

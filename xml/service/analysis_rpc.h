@@ -64,9 +64,15 @@ int vmi1__ResumeAnalysis(struct soap *soap,
 			 vmi1__AnalysisIdT aid,
 			 struct vmi1__NoneResponse *r);
 
-int vmi1__EndAnalysis(struct soap *soap,
-		      vmi1__AnalysisIdT aid,
-		      struct vmi1__NoneResponse *r);
+int vmi1__CloseAnalysis(struct soap *soap,
+			vmi1__AnalysisIdT aid,
+			struct vmi1__NoneResponse *r);
+int vmi1__KillAnalysis(struct soap *soap,
+		       vmi1__AnalysisIdT aid,int kill_sig,
+		       struct vmi1__NoneResponse *r);
+int vmi1__FinalizeAnalysis(struct soap *soap,
+			   vmi1__AnalysisIdT aid,
+			   struct vmi1__NoneResponse *r);
 
 int vmi1__GetAnalysis(struct soap *soap,
 		      vmi1__AnalysisIdT aid,

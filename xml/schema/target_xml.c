@@ -23,6 +23,8 @@
 #include "list.h"
 #include "target.h"
 
+#include <signal.h>
+
 target_type_t 
 x_TargetTypeT_to_t_target_type_t(struct soap *soap,
 				 enum vmi1__TargetTypeT type,
@@ -200,6 +202,12 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 	ospec->start_paused = 0;
     else 
 	ospec->start_paused = 1;
+    if ((spec->killOnClose && *spec->killOnClose == xsd__boolean__true_)
+	|| spec->killOnCloseSignal) {
+	ospec->kill_on_close = 1;
+	ospec->kill_on_close_sig = 
+	    (spec->killOnCloseSignal) ? *spec->killOnCloseSignal : SIGKILL;
+    }
 
     if (type == TARGET_TYPE_PTRACE
 	&& spec->backendSpec 
@@ -261,7 +269,16 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	*ospec->logStderr = xsd__boolean__true_;
     else
 	*ospec->logStderr = xsd__boolean__false_;
-
+    ospec->killOnClose = SOAP_CALLOC(soap,1,sizeof(*ospec->killOnClose));
+    if (spec->kill_on_close) 
+	*ospec->killOnClose = xsd__boolean__true_;
+    else
+	*ospec->killOnClose = xsd__boolean__false_;
+    if (spec->kill_on_close) {
+	ospec->killOnCloseSignal = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->killOnCloseSignal));
+	*ospec->killOnCloseSignal = spec->kill_on_close_sig;
+    }
 
     if (spec->target_type == TARGET_TYPE_PTRACE) {
 	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
