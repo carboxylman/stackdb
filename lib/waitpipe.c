@@ -55,6 +55,7 @@ static void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
     /* int code; */
     /* int status; */
     int *pipefds;
+    /* int rc; */
 
     pid = siginfo->si_pid;
     if (signo == SIGCHLD && pid > 0) {
@@ -85,6 +86,31 @@ static void waitpipe_sigchld(int signo,siginfo_t *siginfo,void *ucontext) {
 
 	    waitpipe.alt_handler(signo,siginfo,ucontext);
 	}
+	/*
+	 * XXX: don't try this!  We cannot wait for "unknown" children;
+	 * they might just signal us before we record them in our
+	 * table.  Or, they might be *vanishing* from our table, but
+	 * signal us, I think?  Anyway, we can't wait for anything here;
+	 * any waiting has to happen elsewhere once we *know* that a
+	 * specific process should be signaling us.
+	 */
+	/*
+	else {
+	    status = 0;
+	    rc = waitpid(pid,&status,WNOHANG);
+	    if (rc == 0) {
+		vdebug(9,LA_LIB,LF_WAITPIPE,
+		       "SIGCHLD for %d, but waitpid returned nothing!\n",pid);
+	    }
+	    else if (rc < 0) {
+		verror("waitpid(%d): %s\n",pid,strerror(errno));
+	    }
+	    else {
+		vdebug(9,LA_LIB,LF_WAITPIPE,
+		       "waited for unknown child %d successfully\n",pid);
+	    }
+	}
+	*/
     }
 }
 
