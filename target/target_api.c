@@ -396,12 +396,13 @@ struct array_list *target_list_tids(struct target *target) {
     retval = array_list_create(g_hash_table_size(target->threads));
 
     g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) 
+    while (g_hash_table_iter_next(&iter,&key,(gpointer)&tthread)) {
 	if ((tid_t)(uintptr_t)key == TID_GLOBAL
-	    && tthread->tid != TID_GLOBAL)
+	    && tthread->tid != TID_GLOBAL) 
 	    continue;
 
 	array_list_append(retval,(void *)(ptr_t)tthread->tid);
+    }
 
     return retval;
 }
