@@ -1063,7 +1063,8 @@ int __monitor_recv_evh(int fd,int fdtype,void *state) {
     msg = monitor_recv(monitor);
 
     if (!msg) {
-	verror("could not recv msg on fd %d; closing!\n",fd);
+	vwarnopt(8,LA_LIB,LF_MONITOR,
+		 "could not recv msg on fd %d; closing!\n",fd);
 	close(fd);
 	monitor->monitor_recv_fd = -1;
 	retval = EVLOOP_HRET_REMOVETYPE;
@@ -1071,14 +1072,16 @@ int __monitor_recv_evh(int fd,int fdtype,void *state) {
     }
 
     if (!monitor_lookup_objid(msg->objid,&objtype,&obj,NULL)) {
-	verror("could not lookup objid %d; ignoring msg!\n",msg->objid);
+	vwarnopt(8,LA_LIB,LF_MONITOR,
+		 "could not lookup objid %d; ignoring msg!\n",msg->objid);
 	retval = EVLOOP_HRET_SUCCESS;
 	goto out;
     }
 
     ops = monitor_lookup_objtype_ops(objtype);
     if (!ops) {
-	verror("unknown objtype %d; ignoring msg!\n",objtype);
+	vwarnopt(8,LA_LIB,LF_MONITOR,
+		 "unknown objtype %d; ignoring msg!\n",objtype);
 	retval = EVLOOP_HRET_SUCCESS;
 	goto out;
     }
@@ -1113,7 +1116,8 @@ int __monitor_child_recv_evh(int fd,int fdtype,void *state) {
     msg = monitor_child_recv(monitor);
 
     if (!msg) {
-	verror("could not recv msg on fd %d; closing!\n",fd);
+	vwarnopt(8,LA_LIB,LF_MONITOR,
+		 "could not recv msg on fd %d; closing!\n",fd);
 	close(fd);
 	monitor->child_recv_fd = -1;
 	retval = EVLOOP_HRET_REMOVETYPE;
@@ -1121,14 +1125,16 @@ int __monitor_child_recv_evh(int fd,int fdtype,void *state) {
     }
 
     if (!monitor_lookup_objid(msg->objid,&objtype,&obj,NULL)) {
-	vwarn("could not lookup objid %d; ignoring msg!\n",msg->objid);
+	vwarnopt(8,LA_LIB,LF_MONITOR,
+		 "could not lookup objid %d; ignoring msg!\n",msg->objid);
 	retval = EVLOOP_HRET_SUCCESS;
 	goto out;
     }
 
     ops = monitor_lookup_objtype_ops(objtype);
     if (!ops) {
-	vwarn("unknown objtype %d; ignoring msg\n",objtype);
+	vwarnopt(8,LA_LIB,LF_MONITOR,
+		 "unknown objtype %d; ignoring msg\n",objtype);
 	retval = EVLOOP_HRET_SUCCESS;
 	goto out;
     }
@@ -1232,7 +1238,7 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
 	}
 	else {
 	    rc += retval;
-	    if (retval == sizeof(buf)) {
+	    if (rc == (sizeof(buf) - 1)) {
 		if (callback) {
 		    buf[rc] = '\0';
 		    callback(fd,buf,rc,callback_state);
