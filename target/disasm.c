@@ -158,14 +158,16 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
     while (ci.codeOffset < buf_len) {
 	memset(&di,0,sizeof(di));
 	if (distorm_decompose64(&ci,&di,1,&di_count) == DECRES_INPUTERR) {
-	    vwarn("decoding error at offset %"PRIu64"\n",ci.codeOffset);
+	    vwarnopt(5,LA_TARGET,LF_DISASM,
+		     "decoding error at offset %"PRIu64"\n",ci.codeOffset);
 	    goto inst_err_out;
 	}
 	if (di_count == 0) 
 	    break;
 
 	if (di.flags == FLAG_NOT_DECODABLE) {
-	    vwarn("bad instruction at offset %"PRIu64"\n",ci.codeOffset);
+	    vwarnopt(5,LA_TARGET,LF_DISASM,
+		     "bad instruction at offset %"PRIu64"\n",ci.codeOffset);
 	    if (!noabort)
 		goto inst_err_out;
 	    else {
@@ -379,8 +381,9 @@ int disasm_get_control_flow_offsets(struct target *target,inst_cf_flags_t flags,
     }
 
     if (ci.codeOffset != buf_len) {
-	vwarn("decoding stopped %"PRIi64" bytes short\n",
-	      (uint64_t)buf_len - ci.codeOffset);
+	vwarnopt(5,LA_TARGET,LF_DISASM,
+		 "decoding stopped %"PRIi64" bytes short\n",
+		 (uint64_t)buf_len - ci.codeOffset);
 	if (!noabort)
 	    goto inst_err_out;
     }

@@ -627,7 +627,8 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
     goto out;
 
  invalid_unit_out:
-    vwarn("invalid DWARF line info at offset %tu\n",linep - linestartp);
+    vwarnopt(7,LA_DEBUG,LF_DLOC,
+	     "invalid DWARF line info at offset %tu\n",linep - linestartp);
     retval = -1;
     goto out;
 

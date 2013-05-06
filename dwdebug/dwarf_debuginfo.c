@@ -4449,7 +4449,9 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
      */
     dbg = dwfl_module_getdwarf(dwflmod,&dwbias);
     if (!dbg) {
-	verror("could not get dwarf module!\n");
+	vwarnopt(2,LA_DEBUG,LF_DWARF,
+		 "could not get dwarf module in debugfile %s!\n",
+		 debugfile->filename);
 	goto errout;
     }
 

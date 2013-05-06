@@ -1219,31 +1219,35 @@ static struct binfile *elf_binfile_open(char *filename,
 
 	for (j = 0; j < nrels; ++j) {
 	    if (!gelf_getrela(edata,j,&rela)) {
-		verror("bad relocation %d in %d; skipping!\n",j,i);
+		vwarnopt(5,LA_DEBUG,LF_ELF,
+			 "bad relocation %d in %d; skipping!\n",j,i);
 		continue;
 	    }
 	    rtype = GELF_R_TYPE(rela.r_info);
 	    rsymidx = GELF_R_SYM(rela.r_info);
 	    if (!gelf_getsym(rstedata,rsymidx,&rsym)) {
-		verror("could not load sym %d in %d (for %d/%d) during"
-		       " relocation; skipping!\n",
-		       rsymidx,rstsec,j,i);
+		vwarnopt(5,LA_DEBUG,LF_ELF,
+			 "could not load sym %d in %d (for %d/%d) during"
+			 " relocation; skipping!\n",
+			 rsymidx,rstsec,j,i);
 		continue;
 	    }
 
 	    if (rtype != R_X86_64_JUMP_SLOT || rtype != R_386_JMP_SLOT) {
-		verror("unexpected relocation type %d (not JMP_SLOT) in"
-		       " .rela.plt at idx %d; plt index names may be wrong!\n",
-		       rtype,j);
+		vwarnopt(5,LA_DEBUG,LF_ELF,
+			 "unexpected relocation type %d (not JMP_SLOT) in"
+			 " .rela.plt at idx %d; plt index names may be wrong!\n",
+			 rtype,j);
 		continue;
 	    }
 
 
 	    symname = elf_strptr(bfelf->elf,rstrsec,rsym.st_name);
 	    if (!symname) {
-		vwarn("skipping .rela.plt ELF symbol at .rela.plt idx %d;"
-		      " bad symbol strtab idx %d\n",
-		      j,(int)rsym.st_name);
+		vwarnopt(5,LA_DEBUG,LF_ELF,
+			 "skipping .rela.plt ELF symbol at .rela.plt idx %d;"
+			 " bad symbol strtab idx %d\n",
+			 j,(int)rsym.st_name);
 		continue;
 	    }
 
@@ -1733,9 +1737,10 @@ static struct binfile *elf_binfile_open(char *filename,
 		    }
 
 		    if (!sec_found) {
-			vwarn("could not find section containing 0x%"PRIxADDR";"
-			      " not updating 0-length GLOBAL %s!\n",
-			      start,symbol_get_name(symbol));
+			vwarnopt(5,LA_DEBUG,LF_ELF,
+				 "could not find section containing 0x%"PRIxADDR";"
+				 " not updating 0-length GLOBAL %s!\n",
+				 start,symbol_get_name(symbol));
 			goto lcontinue;
 		    }
 
