@@ -291,9 +291,11 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
     }
 
     /* Destroy the probes. */
-    list_for_each_entry_safe(probe,ptmp,&probepoint->probes,probe) 
+    list_for_each_entry_safe(probe,ptmp,&probepoint->probes,probe) {
+	probe->probepoint = NULL;
 	if (probe->autofree)
 	    probe_free(probe,0);
+    }
     /* XXX: we could also go *up* the src/sink chain and destroy all the
      * sinks... should we?
      */
