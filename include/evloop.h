@@ -86,6 +86,11 @@ struct evloop_fdinfo {
     void *xhstate;
 };
 
+/*
+ * Create an evloop.  If you don't set @ehandler, if any of the per-fd
+ * handlers returns EVLOOP_HRET_ERROR or EVLOOP_HRET_BADERROR, that
+ * fd/fdtype pair will be removed from the evloop automatically.
+ */
 struct evloop *evloop_create(evloop_error_handler_t ehandler);
 
 int evloop_maxsize(struct evloop *evloop);
