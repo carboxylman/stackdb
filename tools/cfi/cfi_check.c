@@ -135,10 +135,8 @@ void cfi_check_print_final_results(struct probe *probe) {
 	    buf = cfi_thread_backtrace(cfi,cts," | ");
 	    fprintf(stdout,
 		    "RESULT(f:%d): cfi (3) CFIStackRemainingViolation \"CFI violation -- inferred due to remaining shadow stack items!\""
-		    " (tid=%d,badretaddr=0x%"PRIxADDR",oldretaddr=0x%"PRIxADDR","
-		    " depth=%d,violations=%d,stack=%s)\n",
+		    " (tid=%d,depth=%d,violations=%d,stack=%s)\n",
 		    ++i,(int)(uintptr_t)key,
-		    cts->status.newretaddr,cts->status.oldretaddr,
 		    array_list_len(cts->shadow_stack),cts->status.violations,buf);
 	    fflush(stdout);
 	    free(buf);
