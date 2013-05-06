@@ -45,7 +45,6 @@ struct target *target = NULL;
 struct probe *cfi_probe = NULL;
 
 static int result_counter = 0;
-static int final_result_counter = 0;
 
 target_status_t cleanup() {
     target_status_t retval = TSTATUS_DONE;
@@ -72,63 +71,23 @@ result_t cfi_handler(struct probe *probe,void *data,struct probe *trigger) {
     tid_t tid;
     struct cfi_data *cfi = (struct cfi_data *)probe_priv(probe);
     struct cfi_thread_status *cts;
-    struct cfi_status *cs;
+    /* struct cfi_status *cs; */
     char *buf;
-    int buflen = 0;
-    int rc = 0, rcr;
-    ADDR base;
-    struct bsymbol *function;
-    char *name;
-    void *retaddr;
-    int i;
 
     tid = target_gettid(cfi->target);
 
     cts = (struct cfi_thread_status *)probe_summarize_tid(probe,tid);
-    cs = (struct cfi_status *)probe_summarize(probe);
+    /* cs = (struct cfi_status *)probe_summarize(probe); */
 
     if (cts->status.isviolation) {
-	// 0xRETADDR <name> 0xBASEADDR | 
-	buflen += array_list_len(cts->shadow_stack) * (sizeof(ADDR) * 4 + 8 + 3);
-	array_list_foreach(cts->shadow_stack_symbols,i,function) {
-	    if (!function)
-		buflen += 4; // NULL
-	    else if (bsymbol_get_name(function))
-		buflen += strlen(bsymbol_get_name(function));
-	    else
-		buflen += 4; // NULL
-	}
-	buflen += 1; // '\0'
-
-	buf = malloc(buflen);
-	array_list_foreach(cts->shadow_stack,i,retaddr) {
-	    function = (struct bsymbol *) \
-		array_list_item(cts->shadow_stack_symbols,i);
-	    name = NULL;
-	    base = 0;
-	    if (function) {
-		name = bsymbol_get_name(function);
-		target_resolve_symbol_base(cfi->target,cfi->tid,function,
-					   &base,NULL);
-	    }
-
-	    rcr = snprintf(buf + rc,buflen - rc,
-			   "0x%"PRIxADDR" %s 0x%"PRIxADDR" | ",
-			   (ADDR)(uintptr_t)retaddr,name,base);
-	    rc += rcr;
-	}
-	if (rc > buflen)
-	    buf[buflen - 1] = '\0';
-	else
-	    buf[rc] = '\0';
-	
+	buf = cfi_thread_backtrace(cfi,cts," | ");
 	fprintf(stdout,
 		"RESULT(i:%d): cfi (2) CFIViolation \"CFI violation!\""
 		" (badretaddr=0x%"PRIxADDR",oldretaddr=0x%"PRIxADDR","
-		" violations=%d,stack=%s)\n",
+		" depth=%d,violations=%d,stack=%s)\n",
 		++result_counter,
 		cts->status.newretaddr,cts->status.oldretaddr,
-		cts->status.violations,buf);
+		array_list_len(cts->shadow_stack),cts->status.violations,buf);
 	fflush(stdout);
 	free(buf);
     }
@@ -147,6 +106,51 @@ result_t cfi_handler(struct probe *probe,void *data,struct probe *trigger) {
     fflush(stdout);
     */
     return 0;
+}
+
+void cfi_check_print_final_results(struct probe *probe) {
+    struct cfi_data *cfi = (struct cfi_data *)probe_priv(probe);
+    struct cfi_thread_status *cts;
+    char *buf;
+    GHashTableIter iter;
+    gpointer key;
+    int i;
+
+    i = 0;
+    g_hash_table_iter_init(&iter,cfi->thread_status);
+    while (g_hash_table_iter_next(&iter,&key,(gpointer *)&cts)) {
+	if (cts->status.isviolation) {
+	    buf = cfi_thread_backtrace(cfi,cts," | ");
+	    fprintf(stdout,
+		    "RESULT(f:%d): cfi (2) CFIViolation \"CFI violation!\""
+		    " (tid=%d,badretaddr=0x%"PRIxADDR",oldretaddr=0x%"PRIxADDR","
+		    " depth=%d,violations=%d,stack=%s)\n",
+		    ++i,(int)(uintptr_t)key,
+		    cts->status.newretaddr,cts->status.oldretaddr,
+		    array_list_len(cts->shadow_stack),cts->status.violations,buf);
+	    fflush(stdout);
+	    free(buf);
+	}
+	else if (array_list_len(cts->shadow_stack)) {
+	    buf = cfi_thread_backtrace(cfi,cts," | ");
+	    fprintf(stdout,
+		    "RESULT(f:%d): cfi (3) CFIStackRemainingViolation \"CFI violation -- inferred due to remaining shadow stack items!\""
+		    " (tid=%d,badretaddr=0x%"PRIxADDR",oldretaddr=0x%"PRIxADDR","
+		    " depth=%d,violations=%d,stack=%s)\n",
+		    ++i,(int)(uintptr_t)key,
+		    cts->status.newretaddr,cts->status.oldretaddr,
+		    array_list_len(cts->shadow_stack),cts->status.violations,buf);
+	    fflush(stdout);
+	    free(buf);
+	}
+	else {
+	    fprintf(stdout,
+		    "RESULT(f:%d): cfi (0) CFIClean \"CFI clean!\""
+		    " (tid=%d,violations=%d)\n",
+		    ++i,(int)(uintptr_t)key,cts->status.violations);
+	    fflush(stdout);
+	}
+    }
 }
 
 struct cc_argp_state {
@@ -317,11 +321,18 @@ int main(int argc,char **argv) {
 	else if (tstat == TSTATUS_EXITING) {
 	    fflush(stderr);
 	    fflush(stdout);
-	    fprintf(stdout,"target %s exiting, removing probes safely...\n",
-		    targetstr);
+	    if (cfi_probe) {
+		fprintf(stdout,"target %s exiting, printing final results...\n",
+			targetstr);
 
-	    probe_free(cfi_probe,1);
-	    cfi_probe = NULL;
+		cfi_check_print_final_results(cfi_probe);
+
+		fprintf(stdout,"target %s exiting, removing probes safely...\n",
+			targetstr);
+
+		probe_free(cfi_probe,1);
+		cfi_probe = NULL;
+	    }
 
 	    if (target_resume(target)) {
 		verror("could not resume target!\n");
@@ -332,17 +343,42 @@ int main(int argc,char **argv) {
 	else if (tstat == TSTATUS_DONE) {
 	    fflush(stderr);
 	    fflush(stdout);
-	    fprintf(stdout,"target %s exited, cleaning up.\n",targetstr);
-	    tstat = cleanup();
+	    if (cfi_probe) {
+		fprintf(stdout,"target %s exited, printing final results...\n",
+			targetstr);
 
+		cfi_check_print_final_results(cfi_probe);
+
+		probe_free(cfi_probe,1);
+		cfi_probe = NULL;
+	    }
+
+	    fprintf(stdout,"target %s exited, cleaning up.\n",targetstr);
+
+	    tstat = cleanup();
 	    goto out;
 	}
 	else {
 	    fflush(stderr);
 	    fflush(stdout);
+	    if (cfi_probe) {
+		fprintf(stdout,
+			"target %s interrupted at 0x%"PRIxREGVAL
+			" -- bad status (%d), printing final results...\n",
+			targetstr,target_read_creg(target,TID_GLOBAL,CREG_IP),
+			tstat);
+
+		cfi_check_print_final_results(cfi_probe);
+
+		probe_free(cfi_probe,1);
+		cfi_probe = NULL;
+	    }
+
 	    fprintf(stdout,
-		    "target %s interrupted at 0x%"PRIxREGVAL" -- NOT PAUSED (%d)\n",
+		    "target %s interrupted at 0x%"PRIxREGVAL
+		    " -- bad status (%d), exiting\n",
 		    targetstr,target_read_creg(target,TID_GLOBAL,CREG_IP),tstat);
+
 	    goto err;
 	}
     }
@@ -353,44 +389,5 @@ int main(int argc,char **argv) {
     tstat = cleanup();
 
  out:
-    /*
-    if (array_list_len(rop_violation_list)) {
-	if (!oldformat) 
-	    fprintf(stdout,"RESULT(f:%d): rop (1) Violations \"ROP violations detected.\"\n",
-		    ++final_result_counter);
-	else {
-	    fprintf(stdout,"ROP violations detected!\n");
-
-	    fprintf(stdout,"Gadgets used:\n");
-
-	    for (i = 0; i < array_list_len(rop_violation_list); ++i) {
-		char *rv = (char *)array_list_item(rop_violation_list,i);
-		fprintf(stdout,"%s",rv);
-		free(rv);
-	    }
-	}
-    }
-    else {
-	if (!oldformat) 
-	    fprintf(stdout,"RESULT(f:%d): rop (0) NoViolations \"No ROP violations detected.\"\n",
-		    ++final_result_counter);
-	else
-	    fprintf(stdout,"No ROP violations detected!\n");
-    }
-
-    if (tstat == TSTATUS_DONE)  {
-	printf("%s finished.\n",targetstr);
-	exit(0);
-    }
-    else if (tstat == TSTATUS_ERROR) {
-	printf("%s monitoring failed!\n",targetstr);
-	exit(-9);
-    }
-    else {
-	printf("%s monitoring failed with %d!\n",targetstr,tstat);
-	exit(-10);
-    }
-    */
-
     exit(0);
 }

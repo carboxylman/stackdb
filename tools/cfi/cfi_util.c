@@ -85,10 +85,11 @@ static int __cfit_stack_makelastnull(struct cfi_thread_status *cfit) {
 		symbol = (struct bsymbol *) \
 		    array_list_item(cfit->shadow_stack_symbols,len - 1);
 	
-		vwarn("popping retaddr = 0x%"PRIxADDR" (%d) (0x%s);"
-		      " replacing with NULL (also skipped a NULL)\n",
-		      oldretaddr,array_list_len(cfit->shadow_stack),
-		      bsymbol_get_name(symbol));
+		vdebug(8,LA_LIB,LF_CFI,
+		       "popping retaddr = 0x%"PRIxADDR" (%d) (0x%s);"
+		       " replacing with NULL (also skipped a NULL)\n",
+		       oldretaddr,array_list_len(cfit->shadow_stack),
+		       bsymbol_get_name(symbol));
 
 		array_list_remove(cfit->shadow_stack);
 		array_list_remove(cfit->shadow_stack_symbols);
@@ -104,10 +105,11 @@ static int __cfit_stack_makelastnull(struct cfi_thread_status *cfit) {
 	    }
 	}
 	else {
-	    vwarn("popping retaddr = 0x%"PRIxADDR" (%d) (0x%s);"
-		  " replacing with NULL\n",
-		  oldretaddr,array_list_len(cfit->shadow_stack),
-		  bsymbol_get_name(symbol));
+	    vdebug(8,LA_LIB,LF_CFI,
+		   "popping retaddr = 0x%"PRIxADDR" (%d) (0x%s);"
+		   " replacing with NULL\n",
+		   oldretaddr,array_list_len(cfit->shadow_stack),
+		   bsymbol_get_name(symbol));
 
 	    array_list_remove(cfit->shadow_stack);
 	    array_list_remove(cfit->shadow_stack_symbols);
@@ -132,8 +134,6 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
     ADDR retaddr;
     tid_t tid;
     struct bsymbol *bsymbol;
-    ADDR oldretaddr;
-    struct bsymbol *symbol;
 
     tid = target_gettid(cfi->target);
 
@@ -177,22 +177,24 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,void *data,
 
     bsymbol = target_lookup_sym_addr(cfi->target,ip);
     if (!bsymbol) {
-	vwarn("retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
-	      " 0x%"PRIxADDR" probe(%s) (cannot resolve, not tracking!)\n",
-	      retaddr,array_list_len(cfit->shadow_stack),
-	      probe_addr(trigger),ip,probe_name(trigger));
+	vwarnopt(8,LA_LIB,LF_CFI,
+		 "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+		 " 0x%"PRIxADDR" probe(%s) (cannot resolve, not tracking!)\n",
+		 retaddr,array_list_len(cfit->shadow_stack),
+		 probe_addr(trigger),ip,probe_name(trigger));
 
 	__cfit_stack_makenull(cfit);
     }
     else {
 	if (!(cfi->flags & CFI_NOAUTOFOLLOW)) {
 	    if (cfi_instrument_func(cfi,bsymbol,0)) {
-		vwarn("retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
-		      " 0x%"PRIxADDR" (%s) probe(%s) (cannot instrument target,"
-		      " not tracking!)\n",
-		      retaddr,array_list_len(cfit->shadow_stack),
-		      probe_addr(trigger),ip,bsymbol_get_name(bsymbol),
-		      probe_name(trigger));
+		vwarnopt(8,LA_LIB,LF_CFI,
+			 "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+			 " 0x%"PRIxADDR" (%s) probe(%s) (cannot instrument target,"
+			 " not tracking!)\n",
+			 retaddr,array_list_len(cfit->shadow_stack),
+			 probe_addr(trigger),ip,bsymbol_get_name(bsymbol),
+			 probe_name(trigger));
 
 		bsymbol_release(bsymbol);
 		__cfit_stack_makenull(cfit);
@@ -225,10 +227,6 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
     tid_t tid;
     REGVAL ip;
     struct bsymbol *bsymbol;
-    ADDR oldretaddr;
-    struct bsymbol *symbol;
-    ADDR oldretaddr2;
-    struct bsymbol *symbol2;
 
     tid = target_gettid(cfi->target);
 
@@ -260,9 +258,10 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
     if (bsymbol) {
 	if (cfi_instrument_func(cfi,bsymbol,0)) {
 	    /* XXX: instrument addrs */
-	    vwarn("could not instrument branch 0x%"PRIxADDR" -> (0x%"PRIxADDR
-		  " (%s); not tracking (removing last call)!\n",
-		  probe_addr(trigger),ip,bsymbol_get_name(bsymbol));
+	    vwarnopt(8,LA_LIB,LF_CFI,
+		     "could not instrument branch 0x%"PRIxADDR" -> (0x%"PRIxADDR
+		     " (%s); not tracking (removing last call)!\n",
+		     probe_addr(trigger),ip,bsymbol_get_name(bsymbol));
 
 	    /*
 	     * XXX XXX XXX
@@ -281,9 +280,10 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,void *data,
     }
     else {
 	/* XXX: instrument addrs */
-	vwarn("could not resolve target for branch 0x%"PRIxADDR" -> 0x%"PRIxADDR
-	      "; not tracking (removing last call)!\n",
-	      probe_addr(trigger),ip);
+	vwarnopt(8,LA_LIB,LF_CFI,
+		 "could not resolve target for branch 0x%"PRIxADDR" -> 0x%"PRIxADDR
+		 "; not tracking (removing last call)!\n",
+		 probe_addr(trigger),ip);
 
 	__cfit_stack_makelastnull(cfit);
     }
@@ -299,7 +299,6 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
     ADDR newretaddr;
     ADDR oldretaddr;
     tid_t tid;
-    result_t retval;
     struct bsymbol *symbol;
     struct bsymbol *bsymbol;
     ADDR oldretaddr2;
@@ -380,16 +379,18 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 		array_list_item(cfit->shadow_stack_symbols,
 				array_list_len(cfit->shadow_stack_symbols) - 1);
 
-	    vwarn("leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
-		  " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
-		  newretaddr,oldretaddr2,probe_name(trigger));
+	    vdebug(8,LA_LIB,LF_CFI,
+		   "leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
+		   " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
+		   newretaddr,oldretaddr2,probe_name(trigger));
 
 	    goto cficlean;
 	}
 	else {
-	    vwarn("not leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
-		  " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
-		  newretaddr,oldretaddr2,probe_name(trigger));
+	    vdebug(8,LA_LIB,LF_CFI,
+		   "not leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
+		   " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
+		   newretaddr,oldretaddr2,probe_name(trigger));
 	    return 0;
 	}
     }
@@ -415,15 +416,18 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 	    if (bsymbol) {
 		if (cfi_instrument_func(cfi,bsymbol,0)) {
 		    /* XXX: instrument addrs */
-		    vwarn("could not instrument function %s (0x%"PRIxADDR");"
-			  " not tracking!\n",bsymbol_get_name(bsymbol),newretaddr);
+		    vwarnopt(8,LA_LIB,LF_CFI,
+			     "could not instrument function %s (0x%"PRIxADDR");"
+			     " not tracking!\n",
+			     bsymbol_get_name(bsymbol),newretaddr);
 		}
 		bsymbol_release(bsymbol);
 	    }
 	    else {
 		/* XXX: instrument addrs */
-		vwarn("could not resolve symbol for 0x%"PRIxADDR";"
-		      " not tracking!\n",newretaddr);
+		vwarnopt(8,LA_LIB,LF_CFI,
+			 "could not resolve symbol for 0x%"PRIxADDR";"
+			 " not tracking!\n",newretaddr);
 	    }
 
 	    return 0;
@@ -436,9 +440,9 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 	    cfi->status.newretaddr = newretaddr;
 	    cfit->status.newretaddr = newretaddr;
 
-	    retval = cfi->cfi_probe->post_handler(cfi->cfi_probe,
-						  cfi->cfi_probe->handler_data,
-						  trigger);
+	    cfi->cfi_probe->post_handler(cfi->cfi_probe,
+					 cfi->cfi_probe->handler_data,
+					 trigger);
 
 	    cfi->status.isviolation = 0;
 	    cfit->status.isviolation = 0;
@@ -478,9 +482,9 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,void *data,
 	cfi->status.newretaddr = newretaddr;
 	cfit->status.newretaddr = newretaddr;
 
-	retval = cfi->cfi_probe->pre_handler(cfi->cfi_probe,
-					     cfi->cfi_probe->handler_data,
-					     trigger);
+	cfi->cfi_probe->pre_handler(cfi->cfi_probe,
+				    cfi->cfi_probe->handler_data,
+				    trigger);
 
 	cfi->status.isviolation = 0;
 	cfit->status.isviolation = 0;
@@ -742,15 +746,17 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 		absolute_branch_symbol = 
 		    target_lookup_sym_addr(cfi->target,absolute_branch_addr);
 		if (!absolute_branch_symbol) {
-		    vwarn("could not find symbol for 0x%"PRIxADDR"; skipping;"
-			  " CFI might be BUGGY!\n",absolute_branch_addr);
+		    vwarnopt(8,LA_LIB,LF_CFI,
+			     "could not find symbol for 0x%"PRIxADDR"; skipping;"
+			     " CFI might be BUGGY!\n",absolute_branch_addr);
 		}
 		else {
 		    if (cfi_instrument_func(cfi,absolute_branch_symbol,0)) {
-			vwarn("could not instrument func %s (0x%"PRIxADDR");"
-			      " CFI might be BUGGY!\n",
-			      bsymbol_get_name(absolute_branch_symbol),
-			      absolute_branch_addr);
+			vwarnopt(8,LA_LIB,LF_CFI,
+				 "could not instrument func %s (0x%"PRIxADDR");"
+				 " CFI might be BUGGY!\n",
+				 bsymbol_get_name(absolute_branch_symbol),
+				 absolute_branch_addr);
 		    }
 		    bsymbol_release(absolute_branch_symbol);
 		}
@@ -823,6 +829,62 @@ static struct probe_ops probe_ops_cfi = {
     .summarize_tid = probe_summarize_tid_cfi,
     .fini = probe_fini_cfi,
 };
+
+char *cfi_thread_backtrace(struct cfi_data *cfi,struct cfi_thread_status *cts,
+			   char *sep) {
+    char *buf;
+    int buflen;
+    int rc = 0, rcr;
+    ADDR base;
+    struct bsymbol *function;
+    char *name;
+    void *retaddr;
+    int i;
+    int alen;
+
+    if (!sep)
+	sep = " | ";
+
+    buflen = 0;
+    // 0xRETADDR <name> 0xBASEADDR | 
+    buflen += array_list_len(cts->shadow_stack) * (sizeof(ADDR) * 4 + 8 + 3);
+    array_list_foreach(cts->shadow_stack_symbols,i,function) {
+	if (!function)
+	    buflen += 4; // NULL
+	else if (bsymbol_get_name(function))
+	    buflen += strlen(bsymbol_get_name(function));
+	else
+	    buflen += 4; // NULL
+    }
+    buflen += 1; // '\0'
+
+    buf = malloc(buflen);
+    alen = array_list_len(cts->shadow_stack);
+    array_list_foreach(cts->shadow_stack,i,retaddr) {
+	function = (struct bsymbol *)array_list_item(cts->shadow_stack_symbols,i);
+	name = NULL;
+	base = 0;
+	if (function) {
+	    name = bsymbol_get_name(function);
+	    target_resolve_symbol_base(cfi->target,cfi->tid,function,&base,NULL);
+	}
+
+	rcr = snprintf(buf + rc,buflen - rc,
+		       "0x%"PRIxADDR" %s 0x%"PRIxADDR,
+		       (ADDR)(uintptr_t)retaddr,name,base);
+	rc += rcr;
+	if ((i + 1) < alen) {
+	    rcr = snprintf(buf + rc,buflen - rc,"%s",sep);
+	    rc += rcr;
+	}
+    }
+    if (rc > buflen)
+	buf[buflen - 1] = '\0';
+    else
+	buf[rc] = '\0';
+
+    return buf;
+}
 
 struct probe *probe_cfi(struct target *target,tid_t tid,
 			cfi_mode_t mode,cfi_flags_t flags,

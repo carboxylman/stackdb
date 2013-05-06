@@ -103,6 +103,10 @@ typedef enum {
     CFI_FIXUP = 1 << 2,
 } cfi_flags_t;
 
+struct cfi_status;
+struct cfi_thread_status;
+struct cfi_data;
+
 /*
  * Create a CFI "probe", starting from a set of root functions.
  *
@@ -119,6 +123,8 @@ struct probe *probe_cfi(struct target *target,tid_t tid,
 			probe_handler_t pre_handler,probe_handler_t post_handler,
 			void *handler_data);
 
+char *cfi_thread_backtrace(struct cfi_data *cfi,struct cfi_thread_status *cts,
+			   char *sep);
 
 struct cfi_status {
     uint8_t isviolation:1;
@@ -192,11 +198,6 @@ struct cfi_data {
 
     /* Overall status of the high-level probe. */
     struct cfi_status status;
-};
-
-struct cfi_stack_data {
-    ADDR retaddr;
-    struct bsymbol *bsymbol;
 };
 
 #endif /* __CFI_H__ */
