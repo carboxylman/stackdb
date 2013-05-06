@@ -282,7 +282,7 @@ int waitpipe_remove(int pid) {
 }
 
 int waitpipe_get(int pid) {
-    int readfd;
+    int *pipefds;
 
     if (!waitpipe.pids) {
 	verror("waitpipe not initialized!\n");
@@ -290,10 +290,10 @@ int waitpipe_get(int pid) {
 	return -1;
     }
 
-    readfd = (int)(uintptr_t)g_hash_table_lookup(waitpipe.pids,
-						 (gpointer)(uintptr_t)pid);
-    if (readfd) 
-	return readfd;
+    pipefds = (int *)g_hash_table_lookup(waitpipe.pids,
+					 (gpointer)(uintptr_t)pid);
+    if (pipefds && pipefds[0]) 
+	return pipefds[0];
     else {
 	vdebug(9,LA_LIB,LF_WAITPIPE,"cannot find readfd for pid %d\n",pid);
 	errno = ESRCH;
