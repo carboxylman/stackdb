@@ -868,6 +868,8 @@ char *cfi_thread_backtrace(struct cfi_data *cfi,struct cfi_thread_status *cts,
 	    name = bsymbol_get_name(function);
 	    target_resolve_symbol_base(cfi->target,cfi->tid,function,&base,NULL);
 	}
+	if (!name)
+	    name = "<UNKNOWN>";
 
 	rcr = snprintf(buf + rc,buflen - rc,
 		       "0x%"PRIxADDR" %s 0x%"PRIxADDR,
