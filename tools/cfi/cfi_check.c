@@ -392,5 +392,7 @@ int main(int argc,char **argv) {
     tstat = cleanup();
 
  out:
+    fflush(stderr);
+    fflush(stdout);
     exit(0);
 }

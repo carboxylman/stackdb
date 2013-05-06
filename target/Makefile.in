@@ -113,6 +113,7 @@ clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
 	rm -f dumptarget*
+	$(RM) -rf .libs
 
 distclean: distclean-subdirs
 

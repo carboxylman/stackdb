@@ -101,6 +101,7 @@ install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) rop_checkret.lo
+	$(RM) -rf .libs
 
 distclean: distclean-subdirs
 

@@ -89,6 +89,7 @@ clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) $(SWIGLIBS)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
 	rm -f dumpdebuginfo* .libs/dwdebug_wrap* dwdebug_wrap* dwdebug.py
+	$(RM) -rf .libs
 
 distclean: distclean-subdirs
 

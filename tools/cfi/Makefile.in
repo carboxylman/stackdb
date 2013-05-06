@@ -100,7 +100,8 @@ install: def-install install-subdirs
 		$(INSTALL_LIBEXECDIR)/analysis/CfiCheck
 
 clean: clean-subdirs
-	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) cfi_checkret.lo
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) cfi_check.lo
+	$(RM) -rf .libs
 
 distclean: distclean-subdirs
 

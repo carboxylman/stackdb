@@ -132,6 +132,7 @@ install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) $(ASSISTANTS) $(TESTS) $(TESTOBJECTS) 
+	$(RM) -rf .libs
 
 distclean: distclean-subdirs
 

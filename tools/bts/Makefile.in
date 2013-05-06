@@ -102,6 +102,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) $(addsuffix .lo,$(PROGRAMS))
 	$(RM) -f replay.o
+	$(RM) -rf .libs
 
 distclean: distclean-subdirs
 
