@@ -267,13 +267,23 @@ int main(int argc,char **argv) {
 	    function = target_lookup_sym(target,"main",NULL,NULL,
 					 SYMBOL_TYPE_FLAG_NONE);
 	    if (!function) {
-		verror("could not lookup symbol %s; aborting!\n","main");
-		cleanup();
-		exit(-3);
+		vwarn("could not lookup symbol main; trying __libc_start_main!\n");
+		function = target_lookup_sym(target,"__libc_start_main",
+					     NULL,NULL,SYMBOL_TYPE_FLAG_NONE);
+		if (!function) {
+		    verror("could not lookup symbol __libc_start_main;"
+			   " aborting!\n");
+		    cleanup();
+		    exit(-3);
+		}
+		else
+		    array_list_append(root_function_list,function);
 	    }
-	    array_list_append(root_function_list,function);
+	    else
+		array_list_append(root_function_list,function);
 	}
-	array_list_append(root_function_list,function);
+	else
+	    array_list_append(root_function_list,function);
     }
 
     signal(SIGHUP,sigh);
