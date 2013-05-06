@@ -263,12 +263,17 @@ int main(int argc,char **argv) {
     }
     else {
 	root_function_list = array_list_create(1);
-	function = target_lookup_sym(target,"main",NULL,NULL,
+	function = target_lookup_sym(target,"ap_mpm_run",NULL,NULL,
 				     SYMBOL_TYPE_FLAG_NONE);
 	if (!function) {
-	    verror("could not lookup symbol %s; aborting!\n","main");
-	    cleanup();
-	    exit(-3);
+	    function = target_lookup_sym(target,"main",NULL,NULL,
+					 SYMBOL_TYPE_FLAG_NONE);
+	    if (!function) {
+		verror("could not lookup symbol %s; aborting!\n","main");
+		cleanup();
+		exit(-3);
+	    }
+	    array_list_append(root_function_list,function);
 	}
 	array_list_append(root_function_list,function);
     }
