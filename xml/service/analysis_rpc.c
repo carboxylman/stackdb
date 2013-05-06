@@ -934,13 +934,109 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 int vmi1__PauseAnalysis(struct soap *soap,
 			vmi1__AnalysisIdT aid,
 			struct vmi1__NoneResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+    char *errmsg;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    if (a->desc->supports_external_control) {
+	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
+
+	monitor_close_obj(monitor,a,0,0);
+    }
+    else {
+	/*
+	 * Try our best to pause it via SIGSTOP.
+	 */
+	if (a->status == ASTATUS_PAUSED) {
+	    errmsg = "Analysis already paused!";
+	    goto errout;
+	}
+	else if (a->status == ASTATUS_DONE) {
+	    errmsg = "Analysis already done; cannot pause!";
+	    goto errout;
+	}
+
+	if (kill(monitor->p.pid,SIGSTOP) < 0) {
+	    if (errno == ESRCH) {
+		errmsg = "Analysis seems dead; cannot pause!";
+		goto errout;
+	    }
+	    else {
+		errmsg = "Error pausing analysis!";
+		goto errout;
+	    }
+	}
+	analysis_set_status(a,ASTATUS_PAUSED);
+    }
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
+
+ errout:
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return soap_receiver_fault(soap,errmsg,errmsg);
 }
 
 int vmi1__ResumeAnalysis(struct soap *soap,
 			 vmi1__AnalysisIdT aid,
 			 struct vmi1__NoneResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+    char *errmsg;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    if (a->desc->supports_external_control) {
+	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
+
+	monitor_close_obj(monitor,a,0,0);
+    }
+    else {
+	/*
+	 * Try our best to pause it via SIGCONT.
+	 */
+	if (a->status == ASTATUS_RUNNING) {
+	    errmsg = "Analysis already running!";
+	    goto errout;
+	}
+	else if (a->status == ASTATUS_DONE) {
+	    errmsg = "Analysis already done; cannot resume!";
+	    goto errout;
+	}
+
+	if (kill(monitor->p.pid,SIGCONT) < 0) {
+	    if (errno == ESRCH) {
+		errmsg = "Analysis seems dead; cannot resume!";
+		goto errout;
+	    }
+	    else {
+		errmsg = "Error resuming analysis!";
+		goto errout;
+	    }
+	}
+	analysis_set_status(a,ASTATUS_RUNNING);
+    }
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
+
+ errout:
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return soap_receiver_fault(soap,errmsg,errmsg);
 }
 
 int vmi1__CloseAnalysis(struct soap *soap,
@@ -1047,19 +1143,74 @@ int vmi1__FinalizeAnalysis(struct soap *soap,
 int vmi1__GetAnalysis(struct soap *soap,
 		      vmi1__AnalysisIdT aid,
 		      struct vmi1__AnalysisResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+    GHashTable *reftab;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    if (a->desc->supports_external_control) {
+	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
+    }
+    else {
+	reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
+	r->analysis = a_analysis_to_x_AnalysisT(soap,a,reftab,NULL);
+	g_hash_table_destroy(reftab);
+    }
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
 }
 
 int vmi1__GetAnalysisStatus(struct soap *soap,
 			    vmi1__AnalysisIdT aid,
 			    struct vmi1__AnalysisStatusResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+    GHashTable *reftab;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
+    r->analysisStatus = 
+	a_analysis_status_t_to_x_AnalysisStatusT(soap,a->status,reftab,NULL);
+    g_hash_table_destroy(reftab);
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
 }
 
 int vmi1__GetAnalysisResults(struct soap *soap,
 			     vmi1__AnalysisIdT aid,
 			     struct vmi1__AnalysisResultsResponse *r) {
-    return soap_receiver_fault(soap,"Not implemented!","Not implemented!");
+    struct analysis *a = NULL;
+    struct monitor *monitor;
+    GHashTable *reftab;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
+    a_analysis_datum_list_to_x_AnalysisResultsT(soap,a->results,a,reftab,
+						&r->analysisResults);
+    g_hash_table_destroy(reftab);
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
 }
 
 int vmi1__AnalysisBindListener(struct soap *soap,

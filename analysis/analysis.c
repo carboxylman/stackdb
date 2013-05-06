@@ -562,6 +562,9 @@ void analysis_cleanup(struct analysis *analysis) {
 }
 
 void analysis_free(struct analysis *analysis) {
+    struct analysis_datum *datum;
+    int i;
+
     analysis_close(analysis);
 
     if (analysis->target) {
@@ -569,9 +572,12 @@ void analysis_free(struct analysis *analysis) {
 	analysis->target = NULL;
     }
 
-    /* XXX: deep free! */
-    if (analysis->results)
+    if (analysis->results) {
+	array_list_foreach(analysis->results,i,datum) {
+	    analysis_datum_free(datum);
+	}
 	array_list_free(analysis->results);
+    }
 
     /*
      * Cleanup @analysis->tmpdir if it exists; just remove everything.

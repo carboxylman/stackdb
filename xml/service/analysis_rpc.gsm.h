@@ -34,12 +34,11 @@ struct vmi1__AnalysisResponse {
 };
 
 struct vmi1__AnalysisStatusResponse {
-    enum vmi1__AnalysisStatusT *analysisStatus;
+    enum vmi1__AnalysisStatusT analysisStatus;
 };
 
 struct vmi1__AnalysisResultsResponse {
-    $int __size_analysisResult;
-    struct vmi1__AnalysisResultT *analysisResult;
+    struct vmi1__AnalysisResultsT analysisResults;
 };
 
 // gsoap vmi1 service method-documentation: ListAnalysisDescNames
