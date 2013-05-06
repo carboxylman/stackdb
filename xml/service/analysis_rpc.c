@@ -83,8 +83,10 @@ void analysis_rpc_init(void) {
 	return;
     }
 
-    target_rpc_init();
+    monitor_init();
     analysis_init();
+    generic_rpc_init();
+    target_rpc_init();
 
     generic_rpc_register_svctype(RPC_SVCTYPE_ANALYSIS);
 
@@ -98,6 +100,12 @@ void analysis_rpc_init(void) {
 }
 
 void analysis_rpc_fini(void) {
+    void *objid;
+    struct array_list *alist;
+    int i;
+    struct analysis *a = NULL;
+    struct monitor *m = NULL;
+
     pthread_mutex_lock(&analysis_rpc_mutex);
 
     if (!init_done) {
@@ -107,12 +115,27 @@ void analysis_rpc_fini(void) {
 
     pthread_mutex_unlock(&analysis_rpc_mutex);
 
-    /* XXX: nuke any existing analyses. */
+    /* Nuke any existing analyses. */
+    alist = 
+	monitor_list_objids_by_objtype_lock_objtype(MONITOR_OBJTYPE_ANALYSIS,1);
+
+    array_list_foreach(alist,i,objid) {
+	a = NULL;
+	m = NULL;
+	if (!monitor_lookup_objid((int)(uintptr_t)objid,NULL,(void **)&a,&m)
+	    || !a) 
+	    continue;
+	monitor_del_objid(m,(int)(uintptr_t)objid);
+	generic_rpc_unbind_all_listeners_objid(RPC_SVCTYPE_ANALYSIS,
+					       (int)(uintptr_t)objid);
+    }
 
     generic_rpc_unregister_svctype(RPC_SVCTYPE_ANALYSIS);
 
-    analysis_fini();
     target_rpc_fini();
+    generic_rpc_fini();
+    analysis_fini();
+    monitor_fini();
 
     init_done = 0;
 
@@ -224,6 +247,8 @@ int analysis_rpc_notify_listeners_result(struct analysis *analysis,
     return 0;
 }
 
+#define _CB_SAVEBUF_INC 1024
+
 int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     struct analysis *a = (struct analysis *)state;
     char *name = NULL;
@@ -237,6 +262,14 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     char *token;
     char *ptr;
     int rc;
+    char rt = 0;
+    int remaining;
+    char *sbuf;
+    char *ebuf;
+    char *pbuf;
+    char *pbuf_next;
+    int saved = 0;
+    int new_alen = 0;
 
     vdebug(5,LA_XML,LF_RPC,"fd %d recv '%s' (%d)\n",fd,buf,len);
 
@@ -245,30 +278,199 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
      */
     if (!a->desc->supports_autoparse_simple_results)
 	return 0;
-    else if (generic_rpc_count_listeners(RPC_SVCTYPE_ANALYSIS,a->id) < 1)
-	return RESULT_SUCCESS;
 
-    rc = sscanf(buf,"RESULT(i:%d): %ms (%d) %ms \"%m[^\"]\" (%m[^)])",
-		&id,&name,&type,&result_value,&msg,&value_str);
-    if (rc >= 4) {
-	datum = analysis_create_simple_datum(a,id,name,type,result_value,msg,1);
-	if (value_str) {
-	    while ((token = strtok_r(saveptr ? NULL : value_str,",",&saveptr))) {
-		ptr = index(token,'=');
-		if (!ptr) {
-		    vwarn("bad autoparse value token '%s'; skipping!\n",token);
-		    continue;
-		}
-		*ptr = '\0';
-		++ptr;
-		analysis_datum_add_simple_value(datum,token,ptr,0);
+    /*
+     * If we're going to try to parse it, make sure we have at least one
+     * newline in our buffer.  Once we do, process as many lines as are
+     * in the buffer.  If there is any stuff left, place it at the head
+     * of the buffer for next time.
+     *
+     * NB: the buf we get is NULL-terminated, but len does not include
+     * the NULL.  Convenience.  SO -- if we copy the buf, make sure to
+     * always keep the destination NULL-terminated too so we can always
+     * use sscanf safely.
+     */
+    if (a->stdout_buf) {
+	if ((len + 1) <= (a->stdout_buf_alen - a->stdout_buf_len)) {
+	    memcpy(a->stdout_buf + a->stdout_buf_len,buf,len);
+	    a->stdout_buf_len += len;
+	    a->stdout_buf[a->stdout_buf_len] = '\0';
+
+	    vdebug(8,LA_XML,LF_RPC,
+		   "appending new input to existing buf; will process '''%s'''\n",
+		   a->stdout_buf);
+	}
+	else {
+	    new_alen = a->stdout_buf_len + len + 1;
+	    if (new_alen % _CB_SAVEBUF_INC > 0) 
+		new_alen += new_alen % _CB_SAVEBUF_INC;
+	    a->stdout_buf = realloc(a->stdout_buf,new_alen);
+	    a->stdout_buf_alen = new_alen;
+	    memcpy(a->stdout_buf + a->stdout_buf_len,buf,len);
+	    a->stdout_buf_len += len;
+	    a->stdout_buf[a->stdout_buf_len] = '\0';
+
+	    vdebug(8,LA_XML,LF_RPC,
+		   "enlarged existing buf with new input; will process '''%s'''\n",
+		   a->stdout_buf);
+	}
+	sbuf = pbuf = a->stdout_buf;
+	saved = 1;
+	remaining = a->stdout_buf_len;
+    }
+    else {
+	sbuf = pbuf = buf;
+	saved = 0;
+	remaining = len;
+
+	vdebug(8,LA_XML,LF_RPC,
+	       "will process callback buf direct; input is '''%s'''\n",
+	       pbuf);
+    }
+    /* One byte past the last char in buf. */
+    ebuf = sbuf + remaining;
+
+    if ((pbuf_next = strchr(pbuf,'\n')) == NULL) {
+	/*
+	 * No newline yet, save it off it we didn't do it already, and
+	 * return.
+	 */
+	if (!saved) {
+	    new_alen = a->stdout_buf_len + len + 1;
+	    if (new_alen % _CB_SAVEBUF_INC > 0) 
+		new_alen += new_alen % _CB_SAVEBUF_INC;
+	    a->stdout_buf = malloc(new_alen);
+	    a->stdout_buf_alen = new_alen;
+	    memcpy(a->stdout_buf,buf,len);
+	    a->stdout_buf_len = len;
+	    a->stdout_buf[a->stdout_buf_len] = '\0';
+
+	    vdebug(8,LA_XML,LF_RPC,
+		   "no initial newline in direct buf; saved;"
+		   " next callback will start with '''%s'''\n",
+		   a->stdout_buf);
+	}
+	else {
+	    vdebug(8,LA_XML,LF_RPC,
+		   "no initial newline in direct buf; already saved;"
+		   " next callback will start with '''%s'''\n",
+		   a->stdout_buf);
+	}
+	return RESULT_SUCCESS;
+    }
+
+    /*
+     * Ok, we have at least one line; process until we're done.
+     */
+    *pbuf_next = '\0';
+    while (pbuf_next) {
+	rt = 0;
+	msg = value_str = name = result_value = NULL;
+	rc = sscanf(pbuf,"RESULT(%c:%d): %ms (%d) %ms \"%m[^\"]\" (%m[^)])",
+		    &rt,&id,&name,&type,&result_value,&msg,&value_str);
+	if (rc >= 5) {
+	    /*
+	     * Don't bother to create an intermediate result if there are no
+	     * listeners.
+	     */
+	    if (rt != 'f' 
+		&& generic_rpc_count_listeners(RPC_SVCTYPE_ANALYSIS,a->id) < 1) {
+		if (msg)
+		    free(msg);
+		if (value_str)
+		    free(value_str);
+		if (name)
+		    free(name);
+		if (result_value)
+		    free(result_value);
+		goto do_continue;
 	    }
-	    free(value_str);
+
+	    datum = analysis_create_simple_datum(a,id,name,type,result_value,
+						 msg,1);
+	    if (value_str) {
+		saveptr = NULL;
+		while ((token = strtok_r(saveptr ? NULL : value_str,",",
+					 &saveptr))) {
+		    ptr = index(token,'=');
+		    if (!ptr) {
+			vwarn("bad autoparse value token '%s'; skipping!\n",
+			      token);
+			continue;
+		    }
+		    *ptr = '\0';
+		    ++ptr;
+		    analysis_datum_add_simple_value(datum,token,ptr,0);
+		}
+		free(value_str);
+	    }
+
+	    monitor_lock_objtype(MONITOR_OBJTYPE_ANALYSIS);
+	    analysis_rpc_notify_listeners_result(a,datum);
+	    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+	    if (rt == 'f') 
+		array_list_append(a->results,datum);
+	    else
+		analysis_datum_free(datum);
 	}
 
-	monitor_lock_objtype(MONITOR_OBJTYPE_ANALYSIS);
-	analysis_rpc_notify_listeners_result(a,datum);
-	monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+    do_continue:
+	++pbuf_next;
+	remaining -= (pbuf_next - pbuf);
+	/* Skip to next newline-terminated segment, or break out. */
+	pbuf = pbuf_next;
+	if (pbuf >= ebuf) {
+	    pbuf = pbuf_next = NULL;
+	    break;
+	}
+	else {
+	    pbuf_next = strchr(pbuf,'\n');
+	    continue;
+	}
+    }
+
+    /*
+     * Ok, we are done processing; if we have any more input left to
+     * scan, either in a->stdout_buf, or in buf (i.e., !saved), adjust
+     * a->stdout_buf and make sure it has the remnant.
+     */
+    if (remaining > 0) {
+	if (!saved) {
+	    new_alen = remaining + 1;
+	    if (new_alen % _CB_SAVEBUF_INC > 0) 
+		new_alen += new_alen % _CB_SAVEBUF_INC;
+	    a->stdout_buf = malloc(new_alen);
+	    a->stdout_buf_alen = new_alen;
+	    memcpy(a->stdout_buf,pbuf,remaining);
+	    a->stdout_buf_len = remaining;
+	    a->stdout_buf[a->stdout_buf_len] = '\0';
+
+	    vdebug(8,LA_XML,LF_RPC,
+		   "%d bytes remaining; saved; next callback will start with '''%s'''\n",
+		   remaining,a->stdout_buf);
+	}
+	else {
+	    vdebug(8,LA_XML,LF_RPC,
+		   "%d bytes remaining; already saved; next callback will start with '''%s'''\n",
+		   remaining,a->stdout_buf);
+	}
+	    
+    }
+    else {
+	if (a->stdout_buf) {
+	    free(a->stdout_buf);
+	    a->stdout_buf = NULL;
+	    a->stdout_buf_len = 0;
+	    a->stdout_buf_alen = 0;
+
+	    vdebug(8,LA_XML,LF_RPC,
+		   "0 bytes remaining; freeing buf!\n");
+	}
+	else {
+	    vdebug(8,LA_XML,LF_RPC,
+		   "0 bytes remaining; no preexisting buf to free!\n");
+	}
     }
 
     return 0;
@@ -674,6 +876,8 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	monitor_setup_stderr(monitor,-1,tmpbuf,analysis_rpc_stderr_callback,a);
     }
 
+    analysis_set_status(a,ASTATUS_RUNNING);
+
     pid = monitor_spawn(monitor,binarypath,fargv,NULL,a->tmpdir);
     if (pid < 0) {
 	verror("error spawning: %d (%s)\n",pid,strerror(errno));
@@ -828,10 +1032,12 @@ int vmi1__FinalizeAnalysis(struct soap *soap,
     if (a->desc->supports_external_control) {
 	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
 
-	monitor_close_obj(monitor,a,0,0);
+	monitor_del_obj(monitor,a);
     }
     else
-	monitor_close_obj(monitor,a,0,0);
+	monitor_del_obj(monitor,a);
+
+    monitor_interrupt_done(monitor,RESULT_SUCCESS,1);
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
 
@@ -990,13 +1196,21 @@ int vmi1__AnalysisUnbindListener(struct soap *soap,
 static int analysis_rpc_monitor_evloop_attach(struct evloop *evloop,void *obj) {
     if (!obj) 
 	return 0;
-    return analysis_attach_evloop((struct analysis *)obj,evloop);
+
+    if (((struct analysis *)obj)->target)
+	return analysis_attach_evloop((struct analysis *)obj,evloop);
+    else 
+	return 0;
 }
 
 static int analysis_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
     if (!obj) 
 	return 0;
-    return analysis_detach_evloop((struct analysis *)obj);
+
+    if (((struct analysis *)obj)->target)
+	return analysis_detach_evloop((struct analysis *)obj);
+    else 
+	return 0;
 }
 
 static int analysis_rpc_monitor_close(void *obj,void *objstate,

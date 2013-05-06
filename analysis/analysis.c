@@ -398,6 +398,9 @@ struct analysis *analysis_create(int id,struct analysis_spec *spec,
     retval->target_id = target_id;
     retval->target = target;
 
+    retval->results = array_list_create(0);
+    retval->result_idx = 0;
+
     return retval;
 }
 
@@ -515,11 +518,19 @@ void analysis_datum_typed_value_free(struct analysis_datum_typed_value *v) {
     free(v);
 }
 
+void analysis_set_status(struct analysis *analysis,analysis_status_t status) {
+    vdebug(8,LA_ANL,LF_ANL,"analysis %d %s -> %s\n",
+	   analysis->id,ASTATUS(analysis->status),ASTATUS(status));
+    analysis->status = status;
+}
+
 analysis_status_t analysis_close(struct analysis *analysis) {
     if ((analysis->status == ASTATUS_RUNNING 
 	 || analysis->status == ASTATUS_PAUSED)
 	&& analysis->target)
-	analysis->status = target_close(analysis->target);
+	analysis_set_status(analysis,target_close(analysis->target));
+    else
+	analysis_set_status(analysis,ASTATUS_DONE);
 
     return analysis->status;
 }
@@ -777,3 +788,14 @@ void analysis_set_schema_path_string(const char *path) {
     if ((bpath = __path_string_to_vec(path)))
 	SCHEMA_PATH = bpath;
 }
+
+/*
+ * Util stuff.
+ */
+char *ASTATUS_STRINGS[] = {
+    "UNKNOWN",
+    "RUNNING",
+    "PAUSED",
+    "ERROR",
+    "DONE",
+};

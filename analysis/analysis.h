@@ -44,6 +44,9 @@ struct analysis_datum_typed_value;
 struct analysis_param;
 struct analysis_name_value;
 
+/*
+ * NB: make sure these align with TSTATUS_* !
+ */
 typedef enum {
     ASTATUS_UNKNOWN        = 0,
     ASTATUS_RUNNING        = 1,
@@ -51,6 +54,11 @@ typedef enum {
     ASTATUS_ERROR          = 3,
     ASTATUS_DONE           = 4,
 } analysis_status_t;
+
+#define ASTATUS_MAX ASTATUS_DONE
+
+extern char *ASTATUS_STRINGS[];
+#define ASTATUS(n) (((n) <= ASTATUS_MAX) ? ASTATUS_STRINGS[(n)] : NULL)
 
 extern char *ANALYSIS_TMPDIR;
 
@@ -135,6 +143,8 @@ int analysis_is_evloop_attached(struct analysis *analysis,
 struct analysis *analysis_create(int id,struct analysis_spec *spec,
 				 struct analysis_desc *desc,
 				 int target_id,struct target *target);
+
+void analysis_set_status(struct analysis *analysis,analysis_status_t status);
 
 analysis_status_t analysis_close(struct analysis *analysis);
 
@@ -222,6 +232,10 @@ struct analysis {
      * obviously.
      */
     struct target *target;
+
+    char *stdout_buf;
+    int stdout_buf_alen;
+    int stdout_buf_len;
 
     struct array_list *results;
     int result_idx;

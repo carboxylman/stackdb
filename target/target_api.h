@@ -150,6 +150,9 @@ typedef enum {
     TARGET_MODE_REPLAY = 3,
 } target_mode_t;
 
+/*
+ * NB: make sure these align with THREAD_STATUS_* and ASTATUS_* !
+ */
 typedef enum {
     TSTATUS_UNKNOWN        = 0,
     /*
