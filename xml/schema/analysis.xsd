@@ -72,7 +72,7 @@
   <xs:complexType name="AnalysisEventT">
     <xs:sequence>
       <xs:element ref="vmi1:analysisEventType"/>
-      <xs:element ref="vmi1:aid"/>
+      <xs:element ref="vmi1:analysisId"/>
       <xs:element ref="vmi1:analysisStatus"/>
     </xs:sequence>
   </xs:complexType>
@@ -87,7 +87,7 @@
       </xs:restriction>
     </xs:simpleType>
   </xs:element>
-  <xs:element name="aid" type="vmi1:AnalysisIdT"/>
+  <xs:element name="analysisId" type="vmi1:AnalysisIdT"/>
   <xs:element name="analysisEvent" type="vmi1:AnalysisEventT"/>
   <xs:complexType name="AnalysisSpecT">
     <xs:sequence>
@@ -180,6 +180,7 @@
       <xs:element ref="vmi1:analysisResults"/>
     </xs:sequence>
   </xs:complexType>
+  <xs:element name="aid" type="vmi1:AnalysisIdT"/>
   <xs:element name="tid" type="vmi1:TargetIdT"/>
   <xs:element name="analysis" type="vmi1:AnalysisT"/>
   <!--
@@ -269,7 +270,6 @@
       </xs:choice>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="analysisId" type="vmi1:AnalysisIdT"/>
   <xs:element name="analysisResult" type="vmi1:AnalysisResultT"/>
   <xs:complexType name="AnalysisResultsT">
     <xs:sequence>
