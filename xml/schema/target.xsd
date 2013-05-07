@@ -163,6 +163,33 @@
     <xs:attribute name="name" use="required"/>
   </xs:complexType>
   <xs:element name="target" type="vmi1:TargetT"/>
+  <xs:complexType name="TargetEventT">
+    <xs:sequence>
+      <xs:element ref="vmi1:targetEventType"/>
+      <xs:element ref="vmi1:tid"/>
+      <xs:element ref="vmi1:thid"/>
+      <xs:element ref="vmi1:targetStatus"/>
+      <xs:element minOccurs="0" ref="vmi1:eventCode"/>
+      <xs:element minOccurs="0" ref="vmi1:eventStatus"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="targetEventType">
+    <xs:simpleType>
+      <xs:restriction base="xs:token">
+        <xs:enumeration value="closed"/>
+        <xs:enumeration value="finalized"/>
+        <xs:enumeration value="killed"/>
+        <xs:enumeration value="dead"/>
+        <xs:enumeration value="error"/>
+        <xs:enumeration value="threadNew"/>
+        <xs:enumeration value="threadExit"/>
+        <xs:enumeration value="addrSpaceUpdate"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+  <xs:element name="eventCode" type="xs:unsignedLong"/>
+  <xs:element name="eventStatus" type="xs:long"/>
+  <xs:element name="targetEvent" type="vmi1:TargetEventT"/>
   <xs:complexType name="AddrSpaceT">
     <xs:sequence>
       <xs:element ref="vmi1:tid"/>

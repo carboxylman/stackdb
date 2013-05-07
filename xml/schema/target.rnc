@@ -86,6 +86,17 @@ TargetT =
     AddrSpace*
 Target = element target { TargetT }
 
+TargetEventT = 
+    element targetEventType { "closed" | "finalized" | "killed" 
+    	    		      | "dead" | "error" 
+    	    		      | "threadNew" | "threadExit" | "addrSpaceUpdate" },
+    element tid { TargetIdT },
+    element thid { ThreadIdT },
+    TargetStatus,
+    element eventCode { xsd:unsignedLong }?,
+    element eventStatus { xsd:long }?
+TargetEvent = element targetEvent { TargetEventT }
+
 AddrSpaceT = 
     attribute name { text },
     attribute id { xsd:int },
