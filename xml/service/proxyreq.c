@@ -625,6 +625,9 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 int proxyreq_recv_response(struct monitor *monitor,struct monitor_msg *msg) {
     struct proxyreq *pr;
     struct soap *soap;
+    char buf[16];
+    char *sptr;
+    int rc;
 
     if (!(pr = (struct proxyreq *)msg->msg_obj)) {
 	verror("cannot associated a proxyreq request handler thread with monitor child msg!\n");
@@ -643,7 +646,25 @@ int proxyreq_recv_response(struct monitor *monitor,struct monitor_msg *msg) {
 
     /* Dump out the soap response. */
     soap_begin_send(soap);
-    soap_send_raw(soap,msg->msg,msg->len);
+
+    /*
+     * NB: if the monitor is a process monitor, the underlying gSOAP will
+     * not have a valid socket, and it will respond in CGI mode.  So,
+     * the first line will *not* be "HTTP/1.x ..."; it will be "Status: ...".
+     * We need to fix this up.  So, just take the http_version of the
+     * original request, and splat it in :).
+     */
+    if (strncmp(msg->msg,"Status:",7) == 0) {
+	sptr = msg->msg + 7;
+	rc = snprintf(buf,16,"HTTP/%s",soap->http_version);
+	soap_send_raw(soap,buf,rc);
+    }
+    else
+	sptr = msg->msg;
+
+    /* Then only send the part of msg->msg we care about. */
+    soap_send_raw(soap,sptr,msg->len - (sptr - msg->msg));
+
     soap_end_send(soap);
     soap_closesock(soap);
 
