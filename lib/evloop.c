@@ -141,6 +141,14 @@ static int __evloop_unset_fd(struct evloop *evloop,int fd,int fdtype) {
 	/* Recalculate evloop->nfds. */
 	g_hash_table_iter_init(&iter,evloop->tab);
 	while (g_hash_table_iter_next(&iter,NULL,(gpointer)&fdinfo)) {
+	    /*
+	     * Skip the one we're deleting; the expectation is that this
+	     * function is only called when the FD will also be removed
+	     * from the hashtable.
+	     */
+	    if (fdinfo->fd == fd)
+		continue;
+
 	    if (fdinfo->fd > new_max_fd)
 		new_max_fd = fdinfo->fd;
 	}
