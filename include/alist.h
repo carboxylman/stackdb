@@ -237,6 +237,13 @@ static inline void *array_list_remove(struct array_list *list) {
     return NULL;
 }
 
+static inline void array_list_remove_all(struct array_list *list,int maxsize) {
+    if (list->len) 
+	list->len = 0;
+    if (list->alloc_len > maxsize) 
+	array_list_resize(list,maxsize);
+}
+
 static inline void *array_list_remove_item_at(struct array_list *list,int i) {
     void *item;
 
