@@ -798,12 +798,21 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
     long int orig_eax;
 #endif
     REGVAL syscall = 0;
+    char *argv_default[2] = { NULL,NULL };
 
     lspec = (struct linux_userproc_spec *)spec->backend_spec;
 
     filename = lspec->program;
     argv = lspec->argv;
     envp = lspec->envp;
+
+    if (argv == NULL || *argv == NULL) {
+	/*
+	 * We cannot have a NULL argv; just handle it here.
+	 */
+	argv_default[0] = filename;
+	argv = &argv_default;
+    }
 
     /*
      * Read the binary and see if it is a dynamic or statically-linked
