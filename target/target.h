@@ -193,6 +193,15 @@ void target_release_mmap_entry(struct target *target,
 			       struct mmap_entry *mme);
 
 /**
+ ** State changes.
+ **/
+void target_add_state_change(struct target *target,tid_t tid,
+			     target_state_change_type_t chtype,
+			     unsigned long code,unsigned long data,
+			     ADDR start,ADDR end,char *msg);
+void target_clear_state_changes(struct target *target);
+
+/**
  ** Probes and actions.
  **/
 /*

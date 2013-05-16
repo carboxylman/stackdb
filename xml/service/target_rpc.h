@@ -68,6 +68,10 @@ int vmi1__GetTarget(struct soap *soap,
 		    vmi1__TargetIdT tid,
 		    struct vmi1__TargetResponse *r);
 
+int vmi1__GetTargetLogs(struct soap *soap,
+			vmi1__TargetIdT tid,int maxSize,
+			struct vmi1__TargetLogsResponse *r);
+
 int vmi1__InstantiateTarget(struct soap *soap,
 			    struct vmi1__TargetSpecT *spec,
 			    vmi1__ListenerT *ownerListener,

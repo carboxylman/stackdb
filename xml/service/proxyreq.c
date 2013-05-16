@@ -99,33 +99,28 @@ int proxyreq_handle_request(struct soap *soap,char *svc_name) {
 		}
 		else {
 		    if (monitor_is_done(monitor)) {
-			vdebug(2,LA_XML,LF_RPC,
-			       "monitoring on %s %d is done;"
-			       " finalizing!\n",
-			       svc_name,monitor->objid);
-			monitor_destroy(monitor);
-			return 0;
-		    }
-		    /*
-		    else if (monitor_is_halfdead(monitor)) {
-			vwarn("%s %d monitor child died unexpectedly;"
-			      " closing (not finalizing)!\n",
-			      svc_name,monitor->objid);
-			monitor_shutdown(monitor);
-			return -1;
-		    }
-		    */
-		    else if (monitor_should_self_finalize(monitor)) {
-			vwarn("forked %s %d finalizing!\n",
-			      svc_name,monitor->objid);
-			monitor_destroy(monitor);
+			if (!monitor_objects(monitor)) {
+			    vdebug(2,LA_XML,LF_RPC,
+				   "monitoring on %s %d is done; finalizing!\n",
+				   svc_name,monitor->objid);
+			    monitor_destroy(monitor);
+			}
+			else {
+			    vdebug(2,LA_XML,LF_RPC,
+				   "monitoring on %s %d is done;"
+				   " shutting down!\n",
+				   svc_name,monitor->objid);
+			    monitor_shutdown(monitor);
+			    monitor->mtid = 0;
+			}
 			return 0;
 		    }
 		    else {
-			vwarn("%s %d monitor_run finished unexpectedly;"
+			vwarn("%s %d monitor_run returned unexpectedly;"
 			      " closing (not finalizing)!\n",
 			      svc_name,monitor->objid);
 			monitor_shutdown(monitor);
+			monitor->mtid = 0;
 			return 0;
 		    }
 		}
@@ -537,10 +532,10 @@ int proxyreq_send_response(struct proxyreq *pr) {
      * there is no later use.  If we ever did need to send chunked
      * messages, this would be how we would do it.
      */
-    msg = monitor_msg_create(pr->objid,-1,PROXYREQ_RESPONSE,1,
+    msg = monitor_msg_create(pr->objid,pr->msg_id,PROXYREQ_RESPONSE,1,
 			     pr->len,pr->buf,NULL);
 
-    rc = monitor_child_send(msg);
+    rc = monitor_child_send(msg,monitor);
     monitor_msg_free_save_buffer(msg);
 
     if (rc) {
@@ -567,6 +562,7 @@ int proxyreq_recv_request(struct monitor *monitor,struct monitor_msg *msg) {
 	soap = pr->soap;
 
 	pr->state = PROXYREQ_STATE_PROCESSING;
+	pr->msg_id = msg->id;
 
 	soap_serve(soap);
 

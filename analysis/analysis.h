@@ -233,6 +233,12 @@ struct analysis {
      */
     struct target *target;
 
+    /*
+     * This might be valid even if @target is not; can be convenient to
+     * keep around.
+     */
+    struct target_spec *target_spec;
+
     char *stdout_buf;
     int stdout_buf_alen;
     int stdout_buf_len;

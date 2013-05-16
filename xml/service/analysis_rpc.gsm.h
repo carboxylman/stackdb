@@ -41,6 +41,14 @@ struct vmi1__AnalysisResultsResponse {
     struct vmi1__AnalysisResultsT analysisResults;
 };
 
+struct vmi1__AnalysisLogsResponse {
+    vmi1__AnalysisIdT aid;
+    struct xsd__hexBinary *stdoutLog;
+    struct xsd__hexBinary *stderrLog;
+    struct xsd__hexBinary *targetStdoutLog;
+    struct xsd__hexBinary *targetStderrLog;
+};
+
 // gsoap vmi1 service method-documentation: ListAnalysisDescNames
 //   returns a list of available Analysis object names.
 int vmi1__ListAnalysisDescNames(void *_,
@@ -102,6 +110,9 @@ int vmi1__GetAnalysisStatus(vmi1__AnalysisIdT aid,
 //   results for an analysis.
 int vmi1__GetAnalysisResults(vmi1__AnalysisIdT aid,
 			     struct vmi1__AnalysisResultsResponse *r);
+
+int vmi1__GetAnalysisLogs(vmi1__AnalysisIdT aid,int maxSize,
+			  struct vmi1__AnalysisLogsResponse *r);
 
 int vmi1__AnalysisBindListener(vmi1__AnalysisIdT aid,vmi1__ListenerT *listener,
 			     struct vmi1__NoneResponse *r);

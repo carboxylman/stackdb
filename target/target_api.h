@@ -1323,6 +1323,9 @@ struct target_spec {
      * might provide access anytime (Xen); but we can't know until the
      * backend parses the spec and figures out what to do.
      *
+     * (Even if the backend opens one of these files, it must not remove
+     * it!  That is the user or caller's job.)
+     *
      * This kind of sucks... but we'll just warn the client if it tries
      * to do something the backend doesn't support.  Later we can do
      * something better, like warning a priori.
@@ -1346,6 +1349,31 @@ struct target_argp_parser_state {
     int quoted_argc;
     int quoted_start;
     char **quoted_argv;
+};
+
+typedef enum {
+    TARGET_STATE_CHANGE_EXITED = 1,
+    TARGET_STATE_CHANGE_EXITING,
+    TARGET_STATE_CHANGE_ERROR,
+    TARGET_STATE_CHANGE_THREAD_CREATED,
+    TARGET_STATE_CHANGE_THREAD_EXITED,
+    TARGET_STATE_CHANGE_THREAD_EXITING,
+    TARGET_STATE_CHANGE_REGION_NEW,
+    TARGET_STATE_CHANGE_REGION_MOD,
+    TARGET_STATE_CHANGE_REGION_DEL,
+    TARGET_STATE_CHANGE_RANGE_NEW,
+    TARGET_STATE_CHANGE_RANGE_MOD,
+    TARGET_STATE_CHANGE_RANGE_DEL,
+} target_state_change_type_t;
+
+struct target_state_change {
+    tid_t tid;
+    target_state_change_type_t chtype;
+    unsigned long code;
+    unsigned long data;
+    ADDR start;
+    ADDR end;
+    char *msg;
 };
 
 /*
@@ -1390,6 +1418,16 @@ struct target {
      * set the status field each time target_status is called.
      */
     target_status_t status;
+
+    /*
+     * Targets can add target_state_change structs to this array; it is
+     * also their responsibility to free them.  Basically, the idea is
+     * that internal handlers could set one or more; then if they cause
+     * monitor/poll/evloop_handler to return to the user, the user can
+     * see what changed; then the internal handler should empty the list
+     * at its next run.
+     */
+    struct array_list *state_changes;
 
     REG fbregno;
     REG spregno;

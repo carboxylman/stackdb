@@ -20,6 +20,9 @@
 #include <glib.h>
 #include <errno.h>
 #include <sys/prctl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "generic_rpc.h"
 #include "common_xml.h"
@@ -64,7 +67,8 @@ static int target_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
     return target_detach_evloop(target);
 }
 
-static int target_rpc_monitor_close(void *obj,void *objstate,
+static int target_rpc_monitor_close(struct monitor *monitor,
+				    void *obj,void *objstate,
 				    int kill,int kill_sig) {
     struct target *target = (struct target *)obj;
     int retval;
@@ -79,7 +83,8 @@ static int target_rpc_monitor_close(void *obj,void *objstate,
     return 0;
 }
 
-static int target_rpc_monitor_fini(void *obj,void *objstate) {
+static int target_rpc_monitor_fini(struct monitor *monitor,
+				   void *obj,void *objstate) {
     struct target *target = (struct target *)obj;
 
     if (!obj)
@@ -132,16 +137,200 @@ static int target_rpc_monitor_recv_msg(struct monitor *monitor,
     return proxyreq_recv_response(monitor,msg);
 }
 
+static int target_rpc_monitor_event(monitor_event_t event,int data,void *obj) {
+    /* XXX: fill in! */
+    return 0;
+}
+
+struct target_rpc_listener_target_data {
+    GHashTable *reftab;
+    struct vmi1__TargetEventT event;
+    struct vmi1__TargetEventNotificationResponse ter;
+    result_t retval;
+};
+
+static int _target_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
+						 int is_owner,void *data) {
+    result_t retval;
+    struct target_rpc_listener_target_data *ltd = \
+	(struct target_rpc_listener_target_data *)data;
+    int rc;
+
+    /*
+     * This stinks... but if we were the first 
+     */
+
+    rc = soap_call_vmi1__TargetEventNotification(&l->soap,l->url,NULL,
+						 &ltd->event,&ltd->ter);
+    if (rc != SOAP_OK) {
+	if (l->soap.error == SOAP_EOF && l->soap.errnum == 0) {
+	    vwarn("timeout notifying %s; removing!",l->url);
+	}
+	else {
+	    verrorc("ActionEvent client call failure %s : ",
+		    l->url);
+	    soap_print_fault(&l->soap,stderr);
+	}
+	/* Let generic_rpc do this... */
+	//soap_closesock(&ltd->soap);
+	return -1;
+    }
+
+    /*
+     * Take only the owner's response as authoritative.
+     */
+    retval = x_ResultT_to_t_result_t(&l->soap,ltd->ter.result);
+    if (is_owner) {
+	//if (retval > ltd->retval)
+	ltd->retval = retval;
+
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified authoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
+    else {
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified non-authoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
+
+    if (!l->soap.keep_alive)
+	soap_closesock(&l->soap);
+    /*
+     * Clean up temp/serialization data, but don't kill the sock if we
+     * can avoid it.
+     */
+    soap_destroy(&l->soap);
+    soap_end(&l->soap);
+    //soap_done(&l->soap);
+
+    return 0;
+}
+
+enum _vmi1__targetEventType 
+t_target_state_change_type_t_to_x_targetEventType(target_state_change_type_t chtype) {
+    switch (chtype) {
+    case TARGET_STATE_CHANGE_EXITED:
+	return _vmi1__targetEventType__exited;
+    case TARGET_STATE_CHANGE_EXITING:
+	return _vmi1__targetEventType__exiting;
+    case TARGET_STATE_CHANGE_ERROR:
+	return _vmi1__targetEventType__error;
+    case TARGET_STATE_CHANGE_THREAD_CREATED:
+	return _vmi1__targetEventType__threadCreated;
+    case TARGET_STATE_CHANGE_THREAD_EXITED:
+	return _vmi1__targetEventType__threadExited;
+    case TARGET_STATE_CHANGE_THREAD_EXITING:
+	return _vmi1__targetEventType__threadExiting;
+    case TARGET_STATE_CHANGE_REGION_NEW:
+	return _vmi1__targetEventType__regionNew;
+    case TARGET_STATE_CHANGE_REGION_MOD:
+	return _vmi1__targetEventType__regionMod;
+    case TARGET_STATE_CHANGE_REGION_DEL:
+	return _vmi1__targetEventType__regionDel;
+    case TARGET_STATE_CHANGE_RANGE_NEW:
+	return _vmi1__targetEventType__rangeNew;
+    case TARGET_STATE_CHANGE_RANGE_MOD:
+	return _vmi1__targetEventType__rangeMod;
+    case TARGET_STATE_CHANGE_RANGE_DEL:
+	return _vmi1__targetEventType__rangeDel;
+
+    default:
+	verror("BUG: bad target_state_change_type_t %d; returning UINT_MAX\n",
+	       chtype);
+	return UINT_MAX;
+    }
+}
+
+static int target_rpc_monitor_notify(void *obj) {
+    struct target *target = (struct target *)obj;
+    struct target_rpc_listener_target_data ltd;
+    struct soap encoder;
+    struct target_state_change *change;
+    int i;
+
+    if (!obj)
+	return 0;
+
+    if (array_list_len(target->state_changes) < 1) 
+	return 0;
+
+    /*
+     * Don't go to any effort if we don't need to...
+     */
+    if (generic_rpc_count_listeners(RPC_SVCTYPE_TARGET,target->id) < 1)
+	return RESULT_SUCCESS;
+
+    memset(&ltd,0,sizeof(ltd));
+    ltd.retval = RESULT_SUCCESS;
+
+    /*
+     * NB: cannot call monitor_lock_objtype(MONITOR_OBJTYPE_TARGET)
+     * since our caller might hold &monitor_mutex already!
+     */
+    pthread_mutex_lock(&target_rpc_mutex);
+
+    /*
+     * We only want to build the gsoap data struct once -- so we have to
+     * set up a temp soap struct to do that on.  We can't use the
+     * per-listener soap struct yet cause we don't have it until we're
+     * in the iterator above.
+     */
+    soap_init(&encoder);
+    ltd.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
+    array_list_foreach(target->state_changes,i,change) {
+	ltd.event.targetEventType = 
+	    t_target_state_change_type_t_to_x_targetEventType(change->chtype);
+	if (ltd.event.targetEventType == UINT_MAX)
+	    continue;
+
+	ltd.event.tid = target->id;
+	ltd.event.thid = change->tid;
+	ltd.event.targetStatus = 
+	    t_target_status_t_to_x_TargetStatusT(&encoder,target->status,
+						 ltd.reftab,NULL);
+	ltd.event.eventCode = &change->code;
+	ltd.event.eventData = &change->data;
+	ltd.event.eventStartAddr = &change->start;
+	ltd.event.eventEndAddr = &change->end;
+	ltd.event.eventMsg = change->msg;
+
+	generic_rpc_listener_notify_all(RPC_SVCTYPE_TARGET,target->id,
+					_target_generic_rpc_listener_notifier,
+					&ltd);
+    }
+
+    /*
+     * Clean up temp/serialization data, but don't kill the sock if we
+     * can avoid it.
+     */
+    g_hash_table_destroy(ltd.reftab);
+    soap_destroy(&encoder);
+    soap_end(&encoder);
+    soap_done(&encoder);
+
+    pthread_mutex_unlock(&target_rpc_mutex);
+
+    /*
+     * XXX: maybe shouldn't do this here...
+     */
+    target_clear_state_changes(target);
+
+    return 0;
+}
+
 struct monitor_objtype_ops target_rpc_monitor_objtype_ops = {
     .evloop_attach = target_rpc_monitor_evloop_attach,
     .evloop_detach = target_rpc_monitor_evloop_detach,
     .close = target_rpc_monitor_close,
     .fini = target_rpc_monitor_fini,
     .evloop_is_attached = target_rpc_monitor_evloop_is_attached,
-    .error = target_rpc_monitor_error,
-    .fatal_error = target_rpc_monitor_fatal_error,
     .child_recv_msg = target_rpc_monitor_child_recv_msg,
     .recv_msg = target_rpc_monitor_recv_msg,
+    .error = target_rpc_monitor_error,
+    .fatal_error = target_rpc_monitor_fatal_error,
+    .notify = target_rpc_monitor_notify,
 };
 
 /**
@@ -294,6 +483,196 @@ int vmi1__GetTarget(struct soap *soap,
     return SOAP_OK;
 }
 
+int vmi1__GetTargetLogs(struct soap *soap,
+			vmi1__TargetIdT tid,int maxSize,
+			struct vmi1__TargetLogsResponse *r) {
+    struct target *t = NULL;
+    struct monitor *m = NULL;
+    int rc;
+    struct stat statbuf;
+    int fd;
+    int sz;
+
+    if (!monitor_lookup_objid_lock_objtype(tid,MONITOR_OBJTYPE_TARGET,
+					   (void **)&t,&m)) {
+	return soap_receiver_fault(soap,"Nonexistent target!",
+				   "Specified target does not exist!");
+    }
+
+    /* NB: don't lock monitor just to read its filenames.  Those aren't
+     * deallocated until monitor_destroy() anyway.
+     *
+     * Also, we *do* record the i/o of monitored_target if we forked a
+     * process-monitored target, but right now, we don't try to capture
+     * its logfiles, because we proxy the RPC to the child.
+     */
+
+    PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
+
+    if (t->spec->outfile) {
+	memset(&statbuf,0,sizeof(statbuf));
+	if (stat(t->spec->outfile,&statbuf)) 
+	    verror("could not stat target stdout logfile %s: %s\n",
+		   t->spec->outfile,strerror(errno));
+	else if ((fd = open(t->spec->outfile,O_RDONLY)) < 0) {
+	    verror("could not open target stdout logfile %s: %s\n",
+		   t->spec->outfile,strerror(errno));
+	}
+	else {
+	    r->stdoutLog = SOAP_CALLOC(soap,1,sizeof(*r->stdoutLog));
+	    if (statbuf.st_size > 0) {
+		sz = statbuf.st_size;
+		if (maxSize > 0 && maxSize < statbuf.st_size)
+		    sz = maxSize;
+		r->stdoutLog->__ptr = SOAP_CALLOC(soap,1,sz);
+		r->stdoutLog->__size = sz;
+
+		/* Read it all */
+		lseek(fd,statbuf.st_size - sz,SEEK_SET);
+		rc = 0;
+		__SAFE_IO(read,"read",fd,r->stdoutLog->__ptr,sz,rc);
+		if (errno) {
+		    vwarn("only read %d of %d bytes for stdoutLog: %s\n",
+			  rc,sz,strerror(errno));
+		}
+		if (rc != sz) {
+		    vwarn("only read %d of %d bytes for stdoutLog (no error)\n",
+			  rc,sz);
+		    r->stdoutLog->__size = rc;
+		}
+	    }
+	    close(fd);
+	}
+    }
+
+    if (t->spec->errfile) {
+	memset(&statbuf,0,sizeof(statbuf));
+	if (stat(t->spec->errfile,&statbuf)) 
+	    verror("could not stat target stderr logfile %s: %s\n",
+		   t->spec->errfile,strerror(errno));
+	else if ((fd = open(t->spec->errfile,O_RDONLY)) < 0) {
+	    verror("could not open target stderr logfile %s: %s\n",
+		   t->spec->errfile,strerror(errno));
+	}
+	else {
+	    r->stderrLog = SOAP_CALLOC(soap,1,sizeof(*r->stderrLog));
+	    if (statbuf.st_size > 0) {
+		sz = statbuf.st_size;
+		if (maxSize > 0 && maxSize < statbuf.st_size)
+		    sz = maxSize;
+		r->stderrLog->__ptr = SOAP_CALLOC(soap,1,sz);
+		r->stderrLog->__size = sz;
+
+		/* Read it all */
+		lseek(fd,statbuf.st_size - sz,SEEK_SET);
+		rc = 0;
+		__SAFE_IO(read,"read",fd,r->stderrLog->__ptr,sz,rc);
+		if (rc != sz && errno) {
+		    vwarn("only read %d of %d bytes for stderrLog: %s\n",
+			  rc,sz,strerror(errno));
+		}
+		else if (rc != sz) {
+		    vwarn("only read %d of %d bytes for stderrLog (no error)\n",
+			  rc,sz);
+		    r->stderrLog->__size = rc;
+		}
+	    }
+	    close(fd);
+	}
+    }
+
+    /* XXX: don't do this for now; later, fix GetTargetLogs to not be
+     * proxied and just do it all from the server.  BUT, right now, the
+     * server doesn't have access to the target->spec->logfile names, so
+     * it can't try to read them.  If we were saving monitored object
+     * metadata better, this would be easier...
+     */
+
+    /*
+    if (m->type == MONITOR_TYPE_PROCESS
+	&& m->p.stdout_logfile) {
+	memset(&statbuf,0,sizeof(statbuf));
+	if (stat(m->p.stdout_logfile,&statbuf)) 
+	    verror("could not stat dedicated monitor stdout logfile %s: %s\n",
+		   m->p.stdout_logfile,strerror(errno));
+	else if ((fd = open(m->p.stdout_logfile,O_RDONLY)) < 0) {
+	    verror("could not open dedicated monitor stdout logfile %s: %s\n",
+		   m->p.stdout_logfile,strerror(errno));
+	}
+	else {
+	    r->dedicatedMonitorStdoutLog = 
+		SOAP_CALLOC(soap,1,sizeof(*r->dedicatedMonitorStdoutLog));
+	    if (statbuf.st_size > 0) {
+		sz = statbuf.st_size;
+		if (maxSize > 0 && maxSize < statbuf.st_size)
+		    sz = maxSize;
+		r->dedicatedMonitorStdoutLog->__ptr = SOAP_CALLOC(soap,1,sz);
+		r->dedicatedMonitorStdoutLog->__size = sz;
+
+		lseek(fd,statbuf.st_size - sz,SEEK_SET);
+		rc = 0;
+		__SAFE_IO(read,"read",fd,r->dedicatedMonitorStdoutLog->__ptr,sz,rc);
+		if (errno) {
+		    vwarn("only read %d of %d bytes for"
+			  " dedicatedMonitorStdoutLog: %s\n",
+			  rc,sz,strerror(errno));
+		}
+		if (rc != sz) {
+		    vwarn("only read %d of %d bytes for"
+			  " dedicatedMonitorStdoutLog (no error)\n",
+			  rc,sz);
+		    r->dedicatedMonitorStdoutLog->__size = rc;
+		}
+	    }
+	    close(fd);
+	}
+    }
+
+    if (m->type == MONITOR_TYPE_PROCESS
+	&& m->p.stderr_logfile) {
+	memset(&statbuf,0,sizeof(statbuf));
+	if (stat(m->p.stderr_logfile,&statbuf)) 
+	    verror("could not stat dedicated monitor stderr logfile %s: %s\n",
+		   m->p.stderr_logfile,strerror(errno));
+	else if ((fd = open(m->p.stderr_logfile,O_RDONLY)) < 0) {
+	    verror("could not open dedicated monitor stderr logfile %s: %s\n",
+		   m->p.stderr_logfile,strerror(errno));
+	}
+	else {
+	    r->dedicatedMonitorStderrLog = 
+		SOAP_CALLOC(soap,1,sizeof(*r->dedicatedMonitorStderrLog));
+	    if (statbuf.st_size > 0) {
+		sz = statbuf.st_size;
+		if (maxSize > 0 && maxSize < statbuf.st_size)
+		    sz = maxSize;
+		r->dedicatedMonitorStderrLog->__ptr = SOAP_CALLOC(soap,1,sz);
+		r->dedicatedMonitorStderrLog->__size = sz;
+
+		lseek(fd,statbuf.st_size - sz,SEEK_SET);
+		rc = 0;
+		__SAFE_IO(read,"read",fd,r->dedicatedMonitorStderrLog->__ptr,sz,rc);
+		if (errno) {
+		    vwarn("only read %d of %d bytes for"
+			  " dedicatedMonitorStderrLog: %s\n",
+			  rc,sz,strerror(errno));
+		}
+		if (rc != sz) {
+		    vwarn("only read %d of %d bytes for"
+			  " dedicatedMonitorStderrLog (no error)\n",
+			  rc,sz);
+		    r->dedicatedMonitorStderrLog->__size = rc;
+		}
+	    }
+	    close(fd);
+	}
+    }
+    */
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
+
+    return SOAP_OK;
+}
+
 int vmi1__InstantiateTarget(struct soap *soap,
 			    struct vmi1__TargetSpecT *spec,
 			    vmi1__ListenerT *ownerListener,
@@ -312,6 +691,7 @@ int vmi1__InstantiateTarget(struct soap *soap,
     int pid;
     char *url = NULL;
     int len = 0;
+    int rn;
 
     pr = soap->user;
     if (!pr) {
@@ -350,6 +730,8 @@ int vmi1__InstantiateTarget(struct soap *soap,
     tid = monitor_get_unique_objid();
     /* Force it to use our new monitored object id. */
     s->target_id = tid;
+
+    rn = rand();
 
     /*
      * Have to see if we need to fork this target, or spawn it in a
@@ -400,6 +782,30 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 	    return soap_receiver_fault(soap,"Could not create monitor!",
 				       "Could not create monitor!");
+	}
+
+	/*
+	 * NB: let target API handle stdout/err if the client wants it
+	 * logged; just provide it valid tmpfile names.
+	 */
+	if (spec->logStdout && *spec->logStdout == xsd__boolean__true_) {
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".stdout.log") + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.stdout.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
+
+	    s->outfile = tmpbuf;
+	}
+
+	if (spec->logStderr && *spec->logStderr == xsd__boolean__true_) {
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".stderr.log") + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.stderr.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
+
+	    s->errfile = tmpbuf;
 	}
 
 	/* Make sure to use our new evloop right away. */
@@ -491,28 +897,49 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	}
 
 	if (spec->logStdout && *spec->logStdout == xsd__boolean__true_) {
-	    s->outfile = strdup("-");
+	    //s->outfile = strdup("-");
 
-	    tmpbuflen = 5 + 11 + 1 + 6 + 1 + 3 + 1;
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".stdout.log") + 1;
 	    tmpbuf = malloc(tmpbuflen);
-	    snprintf(tmpbuf,tmpbuflen,"/tmp/%d.stdout.log",s->target_id);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.stdout.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
+	    s->outfile = tmpbuf;
+
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".dedicatedMonitor.stdout.log") + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.dedicatedMonitor.stdout.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
 
 	    monitor_setup_stdout(monitor,-1,tmpbuf,NULL,NULL);
+	    free(tmpbuf);
 	}
 
 	if (spec->logStderr && *spec->logStderr == xsd__boolean__true_) {
-	    s->errfile = strdup("-");
+	    //s->errfile = strdup("-");
 
-	    tmpbuflen = 5 + 11 + 1 + 6 + 1 + 3 + 1;
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".stderr.log") + 1;
 	    tmpbuf = malloc(tmpbuflen);
-	    snprintf(tmpbuf,tmpbuflen,"/tmp/%d.stderr.log",s->target_id);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.stderr.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
+	    s->errfile = tmpbuf;
+
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".dedicatedMonitor.stderr.log") + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.dedicatedMonitor.stderr.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
 
 	    monitor_setup_stderr(monitor,-1,tmpbuf,NULL,NULL);
+	    free(tmpbuf);
 	}
 
 	monitor_add_primary_obj(monitor,s->target_id,MONITOR_OBJTYPE_TARGET,NULL,NULL);
 
-	pid = monitor_spawn(monitor,MONITORED_TARGET_LAUNCHER,largv,NULL,"/tmp");
+	pid = monitor_spawn(monitor,MONITORED_TARGET_LAUNCHER,largv,NULL,
+			    GENERIC_RPC_TMPDIR);
 	if (pid < 0) {
 	    verror("error spawning: %d (%s)\n",pid,strerror(errno));
 	    if (largc > 0) {
@@ -655,8 +1082,6 @@ int vmi1__FinalizeTarget(struct soap *soap,
     PROXY_REQUEST_LOCKED(soap,tid,&target_rpc_mutex);
 
     monitor_del_obj(monitor,t);
-
-    monitor_interrupt_done(monitor,RESULT_SUCCESS,1);
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 

@@ -59,6 +59,10 @@ typedef enum {
     MONITOR_ERROR_OBJ     = 5,
 } monitor_error_t;
 
+typedef enum {
+    MONITOR_EVENT_CHILD_DIED = 1,
+} monitor_event_t;
+
 /*
  * If we fork a binary, before we exec the binary, we dup2()
  * some file descriptors so the monitor and child can communicate.
@@ -101,21 +105,20 @@ struct monitor_objtype_ops {
      * if not (i.e., hard close vs soft close).  Later we'll maybe need
      * to define more semantics.
      */
-    int (*close)(void *obj,void *objstate,int kill,int kill_sig);
+    int (*close)(struct monitor *monitor,void *obj,void *objstate,
+		 int kill,int kill_sig);
     /*
      * When the monitor is shutdown, or an object is finalized, we call
      * this function to allow the object to remove *all* its state.  The
      * object will have already been closed.  This is only to ensure
      * that the object's non-running state is gone -- like results or logs.
      */
-    int (*fini)(void *obj,void *objstate);
+    int (*fini)(struct monitor *monitor,void *obj,void *objstate);
     /*
      * If @evloop is already attached to @obj, this function should
      * return 1; if not, 0; if error, < 0.
      */
     int (*evloop_is_attached)(struct evloop *evloop,void *obj);
-    int (*error)(monitor_error_t error,void *obj);
-    int (*fatal_error)(monitor_error_t error,void *obj);
     /*
      * For ease of use, we allow library users to specify callbacks to
      * receive just the msgs without having to specify an evloop handler
@@ -129,6 +132,28 @@ struct monitor_objtype_ops {
      */
     int (*child_recv_msg)(struct monitor *monitor,struct monitor_msg *msg);
     int (*recv_msg)(struct monitor *monitor,struct monitor_msg *msg);
+
+    /*
+     * Callbacks for state changes, in the monitor, or as a result of a
+     * per-FD evloop handler.  This allows the monitor user to respond
+     * to events in the monitored objects, and allows the monitored
+     * objects not have to be aware that they are being monitored by
+     * something like an XML SOAP server.
+     */
+    int (*error)(monitor_error_t error,void *obj);
+    int (*fatal_error)(monitor_error_t error,void *obj);
+    int (*event)(struct monitor *monitor,monitor_event_t event,
+		 int objid,void *obj);
+    /*
+     * Each time the monitor's evloop handles something, give the
+     * objtype to see if something changed on any of its objects.  This
+     * solution pretty much stinks, but since monitored objects are
+     * given an evloop to directly attach to, we do not know which
+     * evloop FDs correspond to which objects.  So we just iterate
+     * through each object and give it a chance to check its state.
+     * Yes, this stinks.
+     */
+    int (*notify)(void *obj);
 };
 
 /*
@@ -160,22 +185,20 @@ struct monitor {
      */
     pthread_mutex_t mutex;
 
-    uint8_t running:1,
-	    interrupt:1,
-	    /*
-	     * A half is dead when either the parent is dead, or the
-	     * monitored child process, or all thread-monitored objects,
-	     * are dead.
-	     */
-	    halfdead:1,
-	    /*
-	     * The monitor is done when its objects are done, and when
-	     * its pipes to the child or parent are closed.
-	     */
-	    done:1,
-	    finalize:1;
+    /*
+     * At last check in monitor_run, number of live children.
+     */
+    int live_children;
 
-    result_t done_status;
+    /*
+     * At last check in monitor_run, number of live objects.
+     */
+    int live_objs;
+
+    /*
+     * Total number of objects.
+     */
+    int objs;
 
     /*
      * Each sent monitor message can be associated with an object.
@@ -285,6 +308,7 @@ struct monitor {
 	int stdout_c_fd; /* close in parent after fork */
 	/* struct cbuf *stdout_buf; */
 	int stdout_log_fd;
+	char *stdout_logfile;
 	monitor_stdio_callback_t stdout_callback;
 	void *stdout_callback_state;
 
@@ -292,6 +316,7 @@ struct monitor {
 	int stderr_c_fd; /* close in parent after fork */
 	/* struct cbuf *stderr_buf; */
 	int stderr_log_fd;
+	char *stderr_logfile;
 	monitor_stdio_callback_t stderr_callback;
 	void *stderr_callback_state;
     } p;
@@ -528,59 +553,43 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 /*
  * Runs the monitor (basically just runs its internal evloop).
  *
- * If the monitor is done (via monitor_interrupt_done), returns 0 and
- * monitor_is_done() returns 1.
+ * If the monitor has no more live children nor live objs, returns 0.
  *
- * If the monitor's child half is dead, returns 0 and
- * monitor_is_halfdead() returns 1.
+ * If the monitor thread is gone, returns -1 and ESRCH.
  *
- * If the monitor was interrupted, returns 0.  If the monitor's evloop
- * has no descriptors left, also returns 0.
+ * If the monitor thread is live and another thread tries to call this,
+ * returns -1 and EPERM.
+ *
+ * If the monitor has live children or live objs, but its evloop has no
+ * descriptors, returns -1 and EINVAL.
  *
  * If the evloop failed badly internally (probably a bug), we remove all
  * its monitored objects, set the monitor to a "done" state (its
- * done_status set to RESULT_ERROR), and return -1.
+ * done_status set to RESULT_ERROR), and return -11 and errno is
+ * whatever evloop_handleone set.
  */
 int monitor_run(struct monitor *monitor);
 
 /*
- * Breaks a monitor out of its evloop (causes monitor_run to return).
- */
-void monitor_interrupt(struct monitor *monitor);
-
-/*
- * Breaks a monitor out of its evloop (causes monitor_run to return),
- * and ensures that monitor_run() will not run again!  Only the monitor
- * thread itself should call this function (i.e., when it detects that
- * it should terminate by receiving a msg or processing some state
- * change).  If @finalize is set, the caller of monitor_run() should
- * destroy the monitor, rather than allowing it to persist.
- */
-void monitor_interrupt_done(struct monitor *monitor,result_t status,int finalize);
-
-/*
- * Returns 1 if monitor is done; else 0;
+ * A process monitor is done if the child has finished and the objects
+ * are not live.
  */
 int monitor_is_done(struct monitor *monitor);
 
 /*
- * Returns 1 if monitor should self-terminate; else 0;
+ * Returns the number of objects the monitor has.
  */
-int monitor_should_self_finalize(struct monitor *monitor);
+int monitor_objects(struct monitor *monitor);
 
 /*
- * Breaks a monitor out of its evloop (causes monitor_run to return),
- * and declares the other side dead.  This means the monitor should
- * terminate safely after assessing the state of its world, and its
- * child; or its child should take appropriate action (cleanup and
- * continue, or self-terminate independently).
+ * Returns the number of live objects the monitor has.
  */
-void monitor_halfdead(struct monitor *monitor);
+int monitor_live_objects(struct monitor *monitor);
 
 /*
- * Returns 1 if monitor half has died; else 0 if it is live.
+ * Returns the number of live children the monitor is monitoring.
  */
-int monitor_is_halfdead(struct monitor *monitor);
+int monitor_live_children(struct monitor *monitor);
 
 /*
  * Shuts down a monitor, closes all objects, and destroys the evloop.
@@ -641,8 +650,12 @@ struct monitor_msg *monitor_recv(struct monitor *monitor);
 /*
  * A monitored child must call this to send a message to its parent
  * (blocking).
+ *
+ * Sometimes, we might delete the objid we are responding to!  That
+ * means that lookup in the monitor data structures will fail.  So, if
+ * we can't look it up, we send it on @monitor.
  */
-int monitor_child_send(struct monitor_msg *msg);
+int monitor_child_send(struct monitor_msg *msg,struct monitor *monitor);
 
 /*
  * A monitored child must call this to read a message from its parent

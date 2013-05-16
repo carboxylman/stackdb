@@ -37,6 +37,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <signal.h>
 
 static pthread_mutex_t analysis_rpc_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int init_done = 0;
@@ -48,13 +49,18 @@ extern struct vmi1__DebugFileOptsT defDebugFileOpts;
  **/
 static int analysis_rpc_monitor_evloop_attach(struct evloop *evloop,void *obj);
 static int analysis_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj);
-static int analysis_rpc_monitor_close(void *obj,void *objstate,
+static int analysis_rpc_monitor_close(struct monitor *monitor,
+				      void *obj,void *objstate,
 				      int kill,int kill_sig);
-static int analysis_rpc_monitor_fini(void *obj,void *objstate);
+static int analysis_rpc_monitor_fini(struct monitor *monitor,
+				     void *obj,void *objstate);
 static int analysis_rpc_monitor_evloop_is_attached(struct evloop *evloop,
 						   void *obj);
 static int analysis_rpc_monitor_error(monitor_error_t error,void *obj);
 static int analysis_rpc_monitor_fatal_error(monitor_error_t error,void *obj);
+static int analysis_rpc_monitor_event(struct monitor *monitor,
+				      monitor_event_t event,
+				      int objid,void *obj);
 static int analysis_rpc_monitor_child_recv_msg(struct monitor *monitor,
 					       struct monitor_msg *msg);
 static int analysis_rpc_monitor_recv_msg(struct monitor *monitor,
@@ -68,6 +74,7 @@ struct monitor_objtype_ops analysis_rpc_monitor_objtype_ops = {
     .evloop_is_attached = NULL,
     .error = analysis_rpc_monitor_error,
     .fatal_error = analysis_rpc_monitor_fatal_error,
+    .event = analysis_rpc_monitor_event,
     .child_recv_msg = analysis_rpc_monitor_child_recv_msg,
     .recv_msg = analysis_rpc_monitor_recv_msg,
 };
@@ -612,6 +619,7 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
     int pid;
     int urllen = 0;
     char *url = NULL;
+    char *atmpdir = NULL;
 
     pr = soap->user;
     if (!pr) {
@@ -663,10 +671,32 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	goto errout;
     }
 
+    /*
+     * If the analysis supports external control, give it a specific
+     * analysis id too!  Well, we just grab one no matter what; it's
+     * just we don't care if the monitored child uses it or not if we
+     * know it doesn't support external control -- so we don't pass it
+     * in that case.
+     */
+    aid = monitor_get_unique_objid();
+    as->analysis_id = aid;
+
     /* Setup the analysis binary full path to launch. */
     len = strlen(path) + 1 + strlen(d->binary) + 1;
     binarypath = calloc(len,sizeof(char));
     snprintf(binarypath,len,"%s/%s",path,d->binary);
+
+    /*
+     * Setup its tmp dir name, but don't create it yet;
+     * <ANALYSIS_TMPDIR>/<name>.<id>
+     */
+    len = strlen(ANALYSIS_TMPDIR) + sizeof("/vmi.analysis.") \
+	+ strlen(as->name) + sizeof(".") + 11 + 1 + 11 + 1;
+    atmpdir = malloc(len * sizeof(char));
+    snprintf(atmpdir,len,"%s/vmi.analysis.%s.%d.%u",
+	     ANALYSIS_TMPDIR,as->name,aid,rand());
+    if (stat(atmpdir,&statbuf) == 0) 
+	vwarn("analysis tmpdir %s already exists!\n",atmpdir);
 
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
 
@@ -687,21 +717,21 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
      * Also need to setup the various stdio file args, if necessary.
      */
     if (targetSpec->stdinBytes && targetSpec->stdinBytes->__size > 0) {
-	len = sizeof("target.stdin.") + 11 + 1;
+	len = strlen(atmpdir) + 1 + sizeof("target.stdin.") + 11 + 1;
 	ts->infile = malloc(len * sizeof(char));
-	snprintf(ts->infile,len,"target.stdin.%u",ts->target_id);
+	snprintf(ts->infile,len,"%s/target.stdin.%u",atmpdir,ts->target_id);
 
 	/* NB: write the stdin file below, once we have a tmpdir! */
     }
     if (targetSpec->logStdout && *targetSpec->logStdout == xsd__boolean__true_) {
-	len = sizeof("target.stdout.") + 11 + 1;
+	len = strlen(atmpdir) + 1 + sizeof("target.stdout.") + 11 + 1;
 	ts->outfile = malloc(len * sizeof(char));
-	snprintf(ts->outfile,len,"target.stdout.%u",ts->target_id);
+	snprintf(ts->outfile,len,"%s/target.stdout.%u",atmpdir,ts->target_id);
     }
     if (targetSpec->logStderr && *targetSpec->logStderr == xsd__boolean__true_) {
-	len = sizeof("target.stderr.") + 11 + 1;
+	len = strlen(atmpdir) + 1 + sizeof("target.stderr.") + 11 + 1;
 	ts->errfile = malloc(len * sizeof(char));
-	snprintf(ts->errfile,len,"target.stderr.%u",ts->target_id);
+	snprintf(ts->errfile,len,"%s/target.stderr.%u",atmpdir,ts->target_id);
     }
 
     if (target_spec_to_argv(ts,binarypath,&targc,&targv)) {
@@ -709,15 +739,6 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	goto errout;
     }
 
-    /*
-     * If the analysis supports external control, give it a specific
-     * analysis id too!  Well, we just grab one no matter what; it's
-     * just we don't care if the monitored child uses it or not if we
-     * know it doesn't support external control -- so we don't pass it
-     * in that case.
-     */
-    aid = monitor_get_unique_objid();
-    as->analysis_id = aid;
     if (d->supports_external_control) {
 	fargc = targc + 3;
 	fargv = calloc(fargc,sizeof(char *));
@@ -749,19 +770,15 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
      */
     a = analysis_create(as->analysis_id,as,d,tid,NULL);
 
+    /* Save this off so we can grab the logfile names later if needed. */
+    a->target_spec = ts;
+
     /*
-     * Setup its tmp dir.  This means writing out any support files it
+     * Create the analysis tmpdir.  This means writing out any support files it
      * needs (right now just the target's stdin, if any).
      * <ANALYSIS_TMPDIR>/<name>.<id>
      */
-    len = strlen(ANALYSIS_TMPDIR) + sizeof("/vmi.analysis.") \
-	+ strlen(as->name) + sizeof(".") + 11 + 1 + 11 + 1;
-    a->tmpdir = malloc(len * sizeof(char));
-    snprintf(a->tmpdir,len,"%s/vmi.analysis.%s.%d.%u",
-	     ANALYSIS_TMPDIR,as->name,aid,rand());
-    if (stat(a->tmpdir,&statbuf) == 0) 
-	vwarn("analysis tmpdir %s already exists!\n",a->tmpdir);
-
+    a->tmpdir = atmpdir;
     mkdir(ANALYSIS_TMPDIR,S_IRWXU | S_IRGRP | S_IXGRP);
     if (mkdir(a->tmpdir,S_IRWXU | S_IRGRP | S_IXGRP)) {
 	verror("could not create analysis tmpdir %s: %s!\n",
@@ -865,7 +882,8 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	as->outfile = malloc(len);
 	snprintf(as->outfile,len,"%s/analysis.stdout.%d",a->tmpdir,aid);
 
-	monitor_setup_stdout(monitor,-1,tmpbuf,analysis_rpc_stdout_callback,a);
+	monitor_setup_stdout(monitor,-1,as->outfile,
+			     analysis_rpc_stdout_callback,a);
     }
     if (analysisSpec->logStderr 
 	&& analysisSpec->logStderr == xsd__boolean__true_) {
@@ -873,7 +891,8 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	as->errfile = malloc(len);
 	snprintf(as->errfile,len,"%s/analysis.stderr.%d",a->tmpdir,aid);
 
-	monitor_setup_stderr(monitor,-1,tmpbuf,analysis_rpc_stderr_callback,a);
+	monitor_setup_stderr(monitor,-1,as->errfile,
+			     analysis_rpc_stderr_callback,a);
     }
 
     analysis_set_status(a,ASTATUS_RUNNING);
@@ -905,13 +924,15 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	analysis_free(a);
     }
     else {
+	if (atmpdir)
+	    free(atmpdir);
 	if (as) 
 	    analysis_spec_free(as);
 	if (d)
 	    analysis_desc_free(d);
+	if (ts)	   
+	    target_free_spec(ts);
     }
-    if (ts)	   
-	target_free_spec(ts);
     if (reftab)
 	g_hash_table_destroy(reftab);
     if (binarypath)
@@ -1091,8 +1112,10 @@ int vmi1__KillAnalysis(struct soap *soap,
     /*
      * Override whatever the default was!
      */
-    a->spec->kill_on_close = 1;
-    a->spec->kill_on_close_sig = kill_sig;
+    if (kill_sig) {
+	a->spec->kill_on_close = 1;
+	a->spec->kill_on_close_sig = kill_sig;
+    }
 
     if (a->desc->supports_external_control) {
 	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
@@ -1132,8 +1155,6 @@ int vmi1__FinalizeAnalysis(struct soap *soap,
     }
     else
 	monitor_del_obj(monitor,a);
-
-    monitor_interrupt_done(monitor,RESULT_SUCCESS,1);
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
 
@@ -1207,6 +1228,45 @@ int vmi1__GetAnalysisResults(struct soap *soap,
     a_analysis_datum_list_to_x_AnalysisResultsT(soap,a->results,a,reftab,
 						&r->analysisResults);
     g_hash_table_destroy(reftab);
+
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
+}
+
+int vmi1__GetAnalysisLogs(struct soap *soap,
+			  vmi1__AnalysisIdT aid,int maxSize,
+			  struct vmi1__AnalysisLogsResponse *r) {
+    struct analysis *a = NULL;
+    struct monitor *m = NULL;
+
+    if (!monitor_lookup_objid_lock_objtype(aid,MONITOR_OBJTYPE_ANALYSIS,
+					   (void **)&a,&m)) {
+	return soap_receiver_fault(soap,"Nonexistent analysis!",
+				   "Specified analysis does not exist!");
+    }
+
+    if (a->desc->supports_external_control) 
+	PROXY_REQUEST_LOCKED(soap,aid,&analysis_rpc_mutex);
+
+    if (a->spec->outfile) 
+	r->stdoutLog = 
+	    generic_rpc_read_file_into_hexBinary(soap,a->spec->outfile,maxSize);
+    if (a->spec->errfile) 
+	r->stderrLog = 
+	    generic_rpc_read_file_into_hexBinary(soap,a->spec->errfile,maxSize);
+    if (a->target_spec) {
+	if (a->target_spec->outfile) 
+	    r->targetStdoutLog = 
+		generic_rpc_read_file_into_hexBinary(soap,
+						     a->target_spec->outfile,
+						     maxSize);
+	if (a->target_spec->errfile) 
+	    r->targetStderrLog = 
+		generic_rpc_read_file_into_hexBinary(soap,
+						     a->target_spec->errfile,
+						     maxSize);
+    }
 
     monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
 
@@ -1364,13 +1424,28 @@ static int analysis_rpc_monitor_evloop_detach(struct evloop *evloop,void *obj) {
 	return 0;
 }
 
-static int analysis_rpc_monitor_close(void *obj,void *objstate,
-				      int kill,int kill_sig) {
+static int analysis_rpc_monitor_close(struct monitor *monitor,
+				      void *obj,void *objstate,
+				      int dokill,int kill_sig) {
     struct analysis *analysis = (struct analysis *)obj;
     int retval;
+    int rsig = kill_sig;
+    int apid = monitor->p.pid;
 
     if (!obj)
 	return 0;
+
+    if (analysis->target)
+	target_close(analysis->target);
+    else if (dokill || analysis->spec->kill_on_close) {
+	if (!dokill)
+	    rsig = analysis->spec->kill_on_close_sig;
+	vdebug(5,LA_XML,LF_XML,
+	       "killing analysis pgid %d with signal %d\n",apid,rsig);
+	if (kill(-apid,rsig) < 0) {
+	    vwarn("kill(%d,%d): %s\n",apid,rsig,strerror(errno));
+	}
+    }
 
     if ((retval = analysis_close(analysis)) != ASTATUS_DONE) {
 	verror("could not close analysis %d (error %d)!\n",analysis->id,retval);
@@ -1379,7 +1454,8 @@ static int analysis_rpc_monitor_close(void *obj,void *objstate,
     return 0;
 }
 
-static int analysis_rpc_monitor_fini(void *obj,void *objstate) {
+static int analysis_rpc_monitor_fini(struct monitor *monitor,
+				     void *obj,void *objstate) {
     if (!obj)
 	return 0;
     analysis_free((struct analysis *)obj);
@@ -1402,6 +1478,118 @@ static int analysis_rpc_monitor_error(monitor_error_t error,void *obj) {
 static int analysis_rpc_monitor_fatal_error(monitor_error_t error,void *obj) {
     vdebug(5,LA_XML,LF_RPC,"analysis id %d (error %d)\n",
 	   ((struct analysis *)obj)->id,error);
+    return 0;
+}
+
+struct analysis_rpc_listener_event_data {
+    GHashTable *reftab;
+    struct vmi1__AnalysisEventT event;
+    struct vmi1__AnalysisEventNotificationResponse r;
+    result_t retval;
+};
+
+static int _analysis_rpc_notify_listener_event(struct generic_rpc_listener *l,
+					       int is_owner,void *data) {
+    result_t retval;
+    struct analysis_rpc_listener_event_data *d = \
+	(struct analysis_rpc_listener_event_data *)data;
+    int rc;
+
+    rc = soap_call_vmi1__AnalysisEventNotification(&l->soap,l->url,NULL,
+						   &d->event,&d->r);
+    if (rc != SOAP_OK) {
+	if (l->soap.error == SOAP_EOF && l->soap.errnum == 0) {
+	    vwarn("timeout notifying %s; removing!",l->url);
+	}
+	else {
+	    verrorc("AnalysisEvent client call failure %s : ",
+		    l->url);
+	    soap_print_fault(&l->soap,stderr);
+	}
+	/* Let generic_rpc do this... */
+	//soap_closesock(&lad->soap);
+	return -1;
+    }
+
+    retval = x_ResultT_to_t_result_t(&l->soap,d->r.result);
+    if (is_owner) {
+	//if (retval > lad->retval)
+	d->retval = retval;
+
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified authoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
+    else {
+	vdebug(5,LA_XML,LF_RPC,
+	       "notified non-authoritative listener %s (which returned %d)\n",
+	       l->url,retval);
+    }
+
+    if (!l->soap.keep_alive)
+	soap_closesock(&l->soap);
+    /*
+     * Clean up temp/serialization data, but don't kill the sock if we
+     * can avoid it.
+     */
+    soap_destroy(&l->soap);
+    soap_end(&l->soap);
+    //soap_done(&l->soap);
+
+    return 0;
+}
+
+int analysis_rpc_notify_listeners_event(struct analysis *analysis,
+					enum _vmi1__analysisEventType type) {
+    struct soap encoder;
+    struct analysis_rpc_listener_event_data d;
+
+    memset(&d,0,sizeof(d));
+
+    /*
+     * We only want to build the gsoap data struct once -- so we have to
+     * set up a temp soap struct to do that on.  We can't use the
+     * per-listener soap struct yet cause we don't have it until we're
+     * in the iterator above.
+     */
+    soap_init(&encoder);
+    d.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    d.retval = RESULT_SUCCESS;
+    d.event.analysisEventType = type;
+    d.event.analysisId = analysis->id;
+    a_analysis_status_t_to_x_AnalysisStatusT(&encoder,analysis->status,
+					     d.reftab,&d.event.analysisStatus);
+
+    generic_rpc_listener_notify_all(RPC_SVCTYPE_ANALYSIS,analysis->id,
+				    _analysis_rpc_notify_listener_event,&d);
+    /*
+     * Clean up temp/serialization data, but don't kill the sock if we
+     * can avoid it.
+     */
+    g_hash_table_destroy(d.reftab);
+    soap_destroy(&encoder);
+    soap_end(&encoder);
+    soap_done(&encoder);
+
+    return 0;
+}
+
+static int analysis_rpc_monitor_event(struct monitor *monitor,
+				      monitor_event_t event,
+				      int objid,void *obj) {
+    struct analysis *a = (struct analysis *)obj;
+
+    vdebug(5,LA_XML,LF_RPC,"analysis id %d (event %d)\n",
+	   a->id,event);
+
+    if (event != MONITOR_EVENT_CHILD_DIED)
+	return 0;
+
+    /*
+     * Send notification.
+     */
+    analysis_rpc_notify_listeners_event(a,_vmi1__analysisEventType__exited);
+
     return 0;
 }
 

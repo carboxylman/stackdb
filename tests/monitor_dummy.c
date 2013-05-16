@@ -77,7 +77,7 @@ int monitor_dummy_child_recv_msg(struct monitor *monitor,struct monitor_msg *msg
 
     if (monitor->flags & MONITOR_FLAG_BIDI) {
 	if (monitor->type == MONITOR_TYPE_PROCESS && msg->cmd == DUMMY_EXIT) {
-	    monitor_interrupt(monitor);
+	    monitor_close_objid(monitor,d->id,0,0);
 	}
 	else if (msg->cmd == DUMMY_MUTATE) {
 	    for (i = 0; i < msg->len; ++i) {
@@ -90,10 +90,10 @@ int monitor_dummy_child_recv_msg(struct monitor *monitor,struct monitor_msg *msg
 
 	++msg->seqno;
 
-	monitor_child_send(msg);
+	monitor_child_send(msg,NULL);
     }
     else {
-	monitor_interrupt(monitor);
+	monitor_close_objid(monitor,d->id,0,0);
     }
 
     monitor_msg_free(msg);
@@ -110,7 +110,7 @@ int monitor_dummy_recv_msg(struct monitor *monitor,struct monitor_msg *msg) {
 	   msg->id,msg->cmd,msg->seqno,msg->len,msg->msg,d->id);
 
     if (msg->seqno > d->seqno_limit)
-	monitor_interrupt(monitor);
+	monitor_close_objid(monitor,d->id,0,0);
 
     ++msg->seqno;
 

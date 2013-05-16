@@ -34,13 +34,17 @@ extern struct monitor_objtype_ops monitor_dummy_ops;
 void *new_thread(void *obj) {
     struct dummy *d = (struct dummy *)obj;
     struct monitor *m;
+    int rc;
 
     //pthread_detach(pthread_self());
 
     m = monitor_create(MONITOR_TYPE_THREAD,MONITOR_FLAG_NONE,
 		       d->id,MONITOR_DUMMY_OBJTYPE,d,NULL);
 
-    monitor_run(m);
+    while (!monitor_is_done(m)) {
+	rc = monitor_run(m);
+	vdebug(0,LA_USER,1,"monitor_run -> %d (%d)\n",rc,errno);
+    }
 
     // normally would have to clean up obj?
 
@@ -101,6 +105,14 @@ int main(int argc,char **argv) {
 
     mm2 = monitor_msg_create(d2.id,2,DUMMY_MUTATE,1,4,"m222",&d2m);
     monitor_send(mm2);
+
+    sleep(1);
+
+    monitor_del_obj(m1,&d1);
+
+    sleep(1);
+
+    monitor_del_obj(m2,&d2);
 
     pthread_join(tid1,&retval);
     pthread_join(tid2,&retval);

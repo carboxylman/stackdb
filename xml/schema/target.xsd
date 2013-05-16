@@ -170,25 +170,35 @@
       <xs:element ref="vmi1:thid"/>
       <xs:element ref="vmi1:targetStatus"/>
       <xs:element minOccurs="0" ref="vmi1:eventCode"/>
-      <xs:element minOccurs="0" ref="vmi1:eventStatus"/>
+      <xs:element minOccurs="0" ref="vmi1:eventData"/>
+      <xs:element minOccurs="0" ref="vmi1:eventStartAddr"/>
+      <xs:element minOccurs="0" ref="vmi1:eventEndAddr"/>
+      <xs:element minOccurs="0" ref="vmi1:eventMsg"/>
     </xs:sequence>
   </xs:complexType>
   <xs:element name="targetEventType">
     <xs:simpleType>
       <xs:restriction base="xs:token">
-        <xs:enumeration value="closed"/>
-        <xs:enumeration value="finalized"/>
-        <xs:enumeration value="killed"/>
-        <xs:enumeration value="dead"/>
+        <xs:enumeration value="exiting"/>
+        <xs:enumeration value="exited"/>
         <xs:enumeration value="error"/>
-        <xs:enumeration value="threadNew"/>
-        <xs:enumeration value="threadExit"/>
-        <xs:enumeration value="addrSpaceUpdate"/>
+        <xs:enumeration value="threadCreated"/>
+        <xs:enumeration value="threadExiting"/>
+        <xs:enumeration value="threadExited"/>
+        <xs:enumeration value="regionNew"/>
+        <xs:enumeration value="regionMod"/>
+        <xs:enumeration value="regionDel"/>
+        <xs:enumeration value="rangeNew"/>
+        <xs:enumeration value="rangeMod"/>
+        <xs:enumeration value="rangeDel"/>
       </xs:restriction>
     </xs:simpleType>
   </xs:element>
   <xs:element name="eventCode" type="xs:unsignedLong"/>
-  <xs:element name="eventStatus" type="xs:long"/>
+  <xs:element name="eventData" type="xs:unsignedLong"/>
+  <xs:element name="eventStartAddr" type="vmi1:ADDR"/>
+  <xs:element name="eventEndAddr" type="vmi1:ADDR"/>
+  <xs:element name="eventMsg" type="xs:string"/>
   <xs:element name="targetEvent" type="vmi1:TargetEventT"/>
   <xs:complexType name="AddrSpaceT">
     <xs:sequence>

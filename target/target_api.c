@@ -656,7 +656,7 @@ int target_close(struct target *target) {
 
     if (!target->opened) {
 	vdebug(3,LA_TARGET,LF_TARGET,"target(%s) already closed\n",target->name);
-	return 0;
+	return target->status;
     }
 
     vdebug(5,LA_TARGET,LF_TARGET,"closing target(%s)\n",target->name);
@@ -715,7 +715,7 @@ int target_close(struct target *target) {
 
     target->opened = 0;
 
-    return TSTATUS_DONE;
+    return target->status;
 }
 
 int target_kill(struct target *target,int sig) {

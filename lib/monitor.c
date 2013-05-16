@@ -542,6 +542,9 @@ static int __monitor_add_obj(struct monitor *monitor,
 	g_hash_table_insert(tmp_tab,(gpointer)(uintptr_t)objid,objstate);
     }
 
+    ++monitor->objs;
+    ++monitor->live_objs;
+
     retval = 0;
 
  out:
@@ -607,7 +610,7 @@ static int __monitor_close_obj(struct monitor *monitor,
     }
 
     /* Close the object, with @sig. */
-    if (ops->close && ops->close(obj,objstate,kill,kill_sig)) {
+    if (ops->close && ops->close(monitor,obj,objstate,kill,kill_sig)) {
 	verror("error closing objid %d (kill = %d, kill_sig %d)!\n",
 	       objid,kill,kill_sig);
 	return -1;
@@ -722,13 +725,13 @@ static int __monitor_del_obj(struct monitor *monitor,
     }
 
     /* Close the object. */
-    if (ops->close && ops->close(obj,objstate,0,0)) {
+    if (ops->close && ops->close(monitor,obj,objstate,0,0)) {
 	verror("could not close objid %d; removing anyway!\n",objid);
 	retval = -1;
     }
 
     /* Fini the object. */
-    if (ops->fini && ops->fini(obj,objstate)) {
+    if (ops->fini && ops->fini(monitor,obj,objstate)) {
 	verror("could not fini objid %d; removing anyway!\n",objid);
 	retval = -1;
     }
@@ -750,6 +753,8 @@ static int __monitor_del_obj(struct monitor *monitor,
 	g_hash_table_remove(objid_obj_tab,(gpointer)(uintptr_t)objid);
     if (iter_hashtable != objid_obj_tab)
 	g_hash_table_remove(objid_obj_tab,obj);
+
+    --monitor->objs;
 
  out:
     return retval;
@@ -819,6 +824,12 @@ static int __monitor_shutdown(struct monitor *monitor) {
     /*
      * Need to close all objs; gracefully shutdown evloop.
      */
+
+    if (monitor->mtid == 0) {
+	vdebug(5,LA_LIB,LF_MONITOR,
+	       "monitor thread already gone, nothing to do\n");
+	return 0;
+    }
 
     if (!pthread_equal(pthread_self(),monitor->mtid)) {
 	verror("only monitor thread can shutdown itself!\n");
@@ -955,11 +966,17 @@ static int __monitor_destroy(struct monitor *monitor) {
     struct monitor *_monitor;
     int found = 1;
 
+    if (monitor->mtid == 0) {
+	vdebug(5,LA_LIB,LF_MONITOR,
+	       "monitor thread already gone, nothing to do\n");
+	return 0;
+    }
+
     /*
      * If the monitor thread is still running, only that thread can
      * destroy the monitor.  Otherwise, another thread can.
      */
-    if (pthread_kill(monitor->mtid,0) == 0
+    if (pthread_kill(monitor->mtid,0) == 0 
 	&& !pthread_equal(pthread_self(),monitor->mtid)) {
 	verror("only monitor thread can destroy itself!\n");
 	errno = EPERM;
@@ -1004,6 +1021,15 @@ static int __monitor_destroy(struct monitor *monitor) {
      * XXX: don't free the callback states; trust that they are
      * associated with a monitored object and will be freed that way.
      */
+
+    if (monitor->p.stdout_logfile) {
+	unlink(monitor->p.stdout_logfile);
+	free(monitor->p.stdout_logfile);
+    }
+    if (monitor->p.stderr_logfile) {
+	unlink(monitor->p.stderr_logfile);
+	free(monitor->p.stderr_logfile);
+    }
 
     free(monitor);
 
@@ -1222,8 +1248,7 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
 	    }
 	    else {
 	        verror("read(%d): %s (closing)\n",fd,strerror(errno));
-		close(fd);
-		return EVLOOP_HRET_REMOVETYPE;
+		goto removetype;
 	    }
 	}
 	else if (retval == 0) {
@@ -1234,7 +1259,7 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
 	    if (logfd > -1) 
 		__safe_write(logfd,buf,rc);
 	    vdebug(8,LA_LIB,LF_MONITOR,"closing std%s (%d) after EOF\n",str,fd);
-	    return EVLOOP_HRET_REMOVETYPE;
+	    goto removetype;
 	}
 	else {
 	    rc += retval;
@@ -1251,6 +1276,20 @@ static int __monitor_stdout_evh(int fd,int fdtype,void *state) {
     }
 
     return EVLOOP_HRET_SUCCESS;
+
+ removetype:
+    close(fd);
+    if (fd == monitor->p.stdout_m_fd) {
+	monitor->p.stdout_m_fd = -1;
+	monitor->p.stdout_callback = NULL;
+	monitor->p.stdout_callback_state = NULL;
+    }
+    else if (fd == monitor->p.stderr_m_fd) {
+	monitor->p.stderr_m_fd = -1;
+	monitor->p.stderr_callback = NULL;
+	monitor->p.stderr_callback_state = NULL;
+    }
+    return EVLOOP_HRET_REMOVETYPE;
 }
 
 static int __monitor_stdin_evh(int fd,int fdtype,void *state) {
@@ -1818,6 +1857,7 @@ int monitor_setup_stdout(struct monitor *monitor,
 	    verror("could not open stdout logfile %s!\n",stdout_logfile);
 	    return -1;
 	}
+	monitor->p.stdout_logfile = strdup(stdout_logfile);
     }
 
     if (pipe(pipefds)) {
@@ -1867,6 +1907,7 @@ int monitor_setup_stderr(struct monitor *monitor,
 	    verror("could not open stderr logfile %s!\n",stderr_logfile);
 	    return -1;
 	}
+	monitor->p.stderr_logfile = strdup(stderr_logfile);
     }
 
     if (pipe(pipefds)) {
@@ -1899,24 +1940,49 @@ int monitor_setup_stderr(struct monitor *monitor,
 static int __monitor_pid_evh(int fd,int fdtype,void *state) {
     struct monitor *monitor = (struct monitor *)state;
     int pid = monitor->p.pid;
-    int status;
+    int status = 0;
 
-    /* The waitpipe tells us that the pid died; wait for it and save its
-     * status.
+    /*
+     * The waitpipe tells us that the pid has status to wait for; wait
+     * for it and save its status.
      */
 
-    vdebug(9,LA_LIB,LF_MONITOR,"pid %d finished\n",pid);
-    waitpid(pid,&status,0);
-    vdebug(9,LA_LIB,LF_MONITOR,"pid %d finished status %d\n",pid,WEXITSTATUS(status));
+    if (waitpid(pid,&status,0) < 0) {
+	verror("waitpid(%d): %s; continuing but sig may be lost!\n",
+	       pid,strerror(errno));
+	return EVLOOP_HRET_DONE_SUCCESS;
+    }
 
+    if (WIFCONTINUED(status)) {
+	vdebug(9,LA_LIB,LF_MONITOR,
+	       "monitored child %d CONTinued; ignoring\n",pid);
+	return EVLOOP_HRET_DONE_SUCCESS;
+    }
+    else if (WIFSTOPPED(status)) {
+	vdebug(9,LA_LIB,LF_MONITOR,
+	       "monitored child %d STOPped; ignoring\n",pid);
+	return EVLOOP_HRET_DONE_SUCCESS;
+    }
+    else if (WIFSIGNALED(status)) {
+	vdebug(9,LA_LIB,LF_MONITOR,
+	       "monitored child %d terminated by signal %d\n",
+	       pid,WTERMSIG(status));
+    }
+    else if (WIFEXITED(status)) {
+	vdebug(9,LA_LIB,LF_MONITOR,
+	       "monitored child %d exited with status %d (0x%x)\n",
+	       pid,WEXITSTATUS(status),WEXITSTATUS(status));
+    }
+    else {
+	verror("waitpid(%d): unrecognized status; ignoring!\n",pid);
+	return EVLOOP_HRET_DONE_SUCCESS;
+    }
+	    
     /* nuke the pipe */
     waitpipe_remove(pid);
 
     /* save status */
     monitor->p.status = status;
-
-    /* declare that the half is dead */
-    monitor->halfdead = 1;
 
     monitor->p.pid_waitpipe_fd = -1;
 
@@ -1934,6 +2000,7 @@ int monitor_spawn(struct monitor *monitor,char *filename,
     char **envp_actual;
     char cwd[PATH_MAX];
     int i;
+    char **sptr;
 
     if (monitor->type != MONITOR_TYPE_PROCESS) {
 	verror("cannot handle a non-MONITOR_TYPE_PROCESS!\n");
@@ -2034,6 +2101,28 @@ int monitor_spawn(struct monitor *monitor,char *filename,
 	 */
 
 	vdebug(3,LA_LIB,LF_MONITOR,"execve(%s) in %s\n",filename,dir);
+	if (vdebug_is_on(2,LA_LIB,LF_MONITOR)) {
+	    if (argv) {
+		vdebug(3,LA_LIB,LF_MONITOR,"execve(argv=[");
+		sptr = argv;
+		while (sptr && *sptr) {
+		    vdebugc(3,LA_LIB,LF_MONITOR,"'%s',",*sptr);
+		    ++sptr;
+		}
+		vdebugc(3,LA_LIB,LF_MONITOR,"])\n");
+	    }
+	    if (envp_actual) {
+		vdebug(3,LA_LIB,LF_MONITOR,"execve(envp=[");
+		sptr = envp_actual;
+		while (sptr && *sptr) {
+		    vdebugc(3,LA_LIB,LF_MONITOR,"'%s',",*sptr);
+		    ++sptr;
+		}
+		vdebugc(3,LA_LIB,LF_MONITOR,"])\n");
+	    }
+	}
+
+	setsid();
 
 	if (execve(filename,argv,envp_actual)) {
 	    verror("execve(%s): %s!\n",filename,strerror(errno));
@@ -2042,6 +2131,8 @@ int monitor_spawn(struct monitor *monitor,char *filename,
     }
     else {
 	monitor->p.pid = pid;
+
+	++monitor->live_children;
 
 	/* Change dir back if we need. */
 	if (dir && chdir(cwd)) {
@@ -2118,55 +2209,49 @@ static int __monitor_error_evh(int errortype,int fd,int fdtype,
     return EVLOOP_HRET_SUCCESS;
 }
 
-void monitor_interrupt(struct monitor *monitor) {
-    pthread_mutex_lock(&monitor->mutex);
-    if (monitor->running && !monitor->interrupt) 
-	monitor->interrupt = 1;
-    pthread_mutex_unlock(&monitor->mutex);
-}
-
-void monitor_interrupt_done(struct monitor *monitor,result_t status,int finalize) {
-    pthread_mutex_lock(&monitor->mutex);
-    if (monitor->running && !monitor->interrupt) 
-	monitor->interrupt = 1;
-    monitor->done = 1;
-    monitor->done_status = status;
-    monitor->finalize = finalize;
-    pthread_mutex_unlock(&monitor->mutex);
-}
-
 int monitor_is_done(struct monitor *monitor) {
+    if (monitor->live_children < 1 && monitor->live_objs < 1)
+	return 1;
+    else
+	return 0;
+}
+
+int monitor_live_children(struct monitor *monitor) {
     int retval;
 
     pthread_mutex_lock(&monitor->mutex);
-    retval = monitor->done;
+    retval = monitor->p.pid > -1 ? 1 : 0;
     pthread_mutex_unlock(&monitor->mutex);
 
     return retval;
 }
 
-int monitor_should_self_finalize(struct monitor *monitor) {
+int monitor_live_objects(struct monitor *monitor) {
     int retval;
 
     pthread_mutex_lock(&monitor->mutex);
-    retval = monitor->finalize;
+    retval = monitor->live_objs;
     pthread_mutex_unlock(&monitor->mutex);
 
     return retval;
 }
 
-void monitor_halfdead(struct monitor *monitor) {
-    pthread_mutex_lock(&monitor->mutex);
-    monitor->halfdead = 1;
-    pthread_mutex_unlock(&monitor->mutex);
-}
+int monitor_objects(struct monitor *monitor) {
+    int retval = 0;
+    GHashTableIter iter;
+    struct monitor *_monitor;
 
-int monitor_is_halfdead(struct monitor *monitor) {
-    int retval;
-
+    pthread_mutex_lock(&monitor_mutex);
     pthread_mutex_lock(&monitor->mutex);
-    retval = monitor->halfdead;
+
+    g_hash_table_iter_init(&iter,objid_monitor_tab);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&_monitor)) {
+	if (monitor == _monitor) 
+	    ++retval;
+    }
+
     pthread_mutex_unlock(&monitor->mutex);
+    pthread_mutex_unlock(&monitor_mutex);
 
     return retval;
 }
@@ -2178,14 +2263,22 @@ int monitor_run(struct monitor *monitor) {
     int rc;
     struct monitor_objtype_ops *ops;
     GHashTableIter iter;
-    gpointer tobj;
-    int objid;
+    gpointer key;
+    void *tobj;
+    int tobjid;
     int objtype;
     struct monitor *_monitor;
     int found = 1;
     struct evloop_fdinfo *fdinfo = NULL;
     int hrc;
-    int islive;
+    int errno_save = 0;
+
+    if (monitor->mtid == 0) {
+	vwarn(//5,LA_LIB,LF_MONITOR,
+	       "monitor thread already gone, nothing to do\n");
+	errno = ESRCH;
+	return -1;
+    }
 
     /*
      * If the monitor thread is still running, only that thread can
@@ -2198,36 +2291,15 @@ int monitor_run(struct monitor *monitor) {
 	return -1;
     }
 
-    pthread_mutex_lock(&monitor->mutex);
-    if (monitor->done) {
-	pthread_mutex_unlock(&monitor->mutex);
+    if (monitor_is_done(monitor)) {
+	vwarn("monitor (0x%lx) is done!\n",monitor->mtid);
 	return 0;
     }
-    pthread_mutex_unlock(&monitor->mutex);
 
     while (1) {
-	/*
-	 * Check interrupt line.
-	 */
-	pthread_mutex_lock(&monitor->mutex);
-	if (monitor->done) {
-	    pthread_mutex_unlock(&monitor->mutex);
+	if (monitor_is_done(monitor)) {
+	    vwarn("monitor (0x%lx) is done!\n",monitor->mtid);
 	    return 0;
-	}
-	/*
-	else if (monitor->halfdead) {
-	    pthread_mutex_unlock(&monitor->mutex);
-	    return 0;
-	}
-	*/
-	else if (monitor->interrupt) {
-	    monitor->interrupt = 0;
-	    pthread_mutex_unlock(&monitor->mutex);
-	    return 0;
-	}
-	else {
-	    monitor->running = 1;
-	    pthread_mutex_unlock(&monitor->mutex);
 	}
 
 	hrc = -1;
@@ -2247,49 +2319,92 @@ int monitor_run(struct monitor *monitor) {
 	    /*
 	     * Each time we handle an event, we need to check the status
 	     * of the monitored child, and/or the monitored objects.
-	     * Only check the objects if there is no child, or its is
-	     * dead.
 	     */
 
-	    islive = 0;
-	    if (monitor->type == MONITOR_TYPE_PROCESS 
-		&& monitor->p.pid > -1 && monitor->p.pid_waitpipe_fd > -1) {
-		vdebug(12,LA_LIB,LF_MONITOR,
-		       "monitor (0x%lx) child still live\n",monitor->mtid);
-		islive = 1;
+	    if (monitor->type == MONITOR_TYPE_PROCESS) {
+		if (monitor->live_children > 0
+		    && monitor->p.pid_waitpipe_fd < 0) {
+		    vdebug(12,LA_LIB,LF_MONITOR,
+			   "monitor (0x%lx) child (%d) finished\n",
+			   monitor->mtid,monitor->p.pid);
+		    monitor->live_children = 0;
+
+		    __monitor_lookup_obj(monitor->obj,&objtype,NULL,NULL);
+		    ops = __monitor_lookup_objtype_ops(objtype);
+
+		    if (ops && ops->event)
+			ops->event(monitor,MONITOR_EVENT_CHILD_DIED,
+				   monitor->objid,monitor->obj);
+		}
+		else if (monitor->live_children) {
+		    vdebug(12,LA_LIB,LF_MONITOR,
+			   "monitor (0x%lx) child (%d) still running\n",
+			   monitor->mtid,monitor->p.pid);
+		}
 	    }
 
 	    vdebug(12,LA_LIB,LF_MONITOR,
 		   "checking status of monitor (0x%lx) objs\n",monitor->mtid);
 
-	    g_hash_table_iter_init(&iter,obj_monitor_tab);
-	    while (g_hash_table_iter_next(&iter,&tobj,(gpointer *)&_monitor)) {
+	    monitor->live_objs = 0;
+
+	    g_hash_table_iter_init(&iter,objid_monitor_tab);
+	    while (g_hash_table_iter_next(&iter,&key,(gpointer *)&_monitor)) {
 		if (monitor != _monitor) 
 		    continue;
 
-		if (!__monitor_lookup_obj(tobj,&objtype,&objid,NULL))
-		    verror("could not lookup obj %p to check its status!\n",
-			   tobj);
+		tobjid = (int)(uintptr_t)key;
+
+		if (!__monitor_lookup_objid(tobjid,&objtype,&tobj,NULL)) {
+		    verror("could not lookup objid %d to check its status!\n",
+			   tobjid);
+		}
 		else {
 		    ops = __monitor_lookup_objtype_ops(objtype);
 		    if (ops->evloop_is_attached)
 			rc = ops->evloop_is_attached(monitor->evloop,tobj);
 		    vdebug(12,LA_LIB,LF_MONITOR,
-			   "objid %d attached = %d\n",objid,rc);
-		    islive |= rc;
+			   "objid %d attached = %d\n",tobjid,rc);
+		    if (rc)
+			++monitor->live_objs;
+
+		    /*
+		     * XXX: notify no matter what, for now.
+		     */
+		    if (ops->notify)
+			ops->notify(tobj);
 		}
 	    }
 
-	    if (!islive) {
-		monitor->halfdead = 1;
-	    }
-
-	    if (evloop_maxsize(monitor->evloop) < 0) {
+	    if (monitor->live_children < 1 && monitor->live_objs < 1) {
+		vdebug(5,LA_LIB,LF_MONITOR,
+		       "monitor (0x%lx) has no children nor live objects"
+		       " (%d objects total)\n",
+		       monitor->mtid,monitor->objs);
 		pthread_mutex_unlock(&monitor_mutex);
 		pthread_mutex_unlock(&monitor->mutex);
+
 		return 0;
 	    }
-	    else { //if (!fdinfo)
+	    else if (evloop_maxsize(monitor->evloop) < 0) {
+		pthread_mutex_unlock(&monitor_mutex);
+		pthread_mutex_unlock(&monitor->mutex);
+
+		verror("monitor (0x%lx) has no more FDs in evloop, but has"
+		       " %d children and %d live objs (%d total objs)!\n",
+		       monitor->mtid,monitor->live_children,monitor->live_objs,
+		       monitor->objs);
+
+		errno = EINVAL;
+
+		return -1;
+	    }
+	    else {
+		vdebug(8,LA_LIB,LF_MONITOR,
+		       "monitor (0x%lx) has %d children and %d live objs"
+		       " (%d total objs); continuing\n",
+		       monitor->mtid,monitor->live_children,monitor->live_objs,
+		       monitor->objs);
 		pthread_mutex_unlock(&monitor_mutex);
 		pthread_mutex_unlock(&monitor->mutex);
 		continue;
@@ -2302,17 +2417,20 @@ int monitor_run(struct monitor *monitor) {
 	 * ourself.
 	 */
 	verror("fatal uncaught error from evloop_handleone, cleaning up!\n");
+	errno_save = errno;
 
 	while (found) {
 	    found = 0;
-	    g_hash_table_iter_init(&iter,obj_monitor_tab);
-	    while (g_hash_table_iter_next(&iter,&tobj,(gpointer *)&_monitor)) {
+	    g_hash_table_iter_init(&iter,objid_monitor_tab);
+	    while (g_hash_table_iter_next(&iter,&key,(gpointer *)&_monitor)) {
 		if (monitor == _monitor) {
 		    found = 1;
 
-		    if (!__monitor_lookup_obj(tobj,&objtype,&objid,NULL)) {
-			verror("could not lookup obj %p to deliver fatal error!\n",
-			       tobj);
+		    tobjid = (int)(uintptr_t)key;
+
+		    if (!__monitor_lookup_objid(tobjid,&objtype,&tobj,NULL)) {
+			verror("could not lookup objid %d to deliver fatal error!\n",
+			       tobjid);
 		    }
 		    else {
 			ops = __monitor_lookup_objtype_ops(objtype);
@@ -2321,7 +2439,7 @@ int monitor_run(struct monitor *monitor) {
 		    }
 
 		    /* Let the target decide if it should self-terminate! */
-		    __monitor_del_obj(monitor,objid,objtype,tobj,obj_monitor_tab);
+		    __monitor_del_obj(monitor,tobjid,objtype,tobj,obj_monitor_tab);
 
 		    g_hash_table_iter_remove(&iter);
 
@@ -2333,7 +2451,8 @@ int monitor_run(struct monitor *monitor) {
 	pthread_mutex_unlock(&monitor_mutex);
 	pthread_mutex_unlock(&monitor->mutex);
 
-	return -1;
+	errno = errno_save;
+	return -11;
     }
 
     /* Never reached. */
@@ -2401,9 +2520,8 @@ struct monitor_msg *monitor_msg_create(int objid,
     if (id == -1) {	
 	if (objid > 0 
 	    && !monitor_lookup_objid_lock_monitor(objid,NULL,&obj,&monitor)) {
-	    verror("could not find monitor for objid %d to get msg_obj_id!\n",
-		   objid);
-	    return NULL;
+	    vwarn("could not find monitor for objid %d to get msg_obj_id!\n",
+		  objid);
 	}
 	else {
 	    id = ++monitor->msg_obj_id_counter;
@@ -2427,9 +2545,10 @@ struct monitor_msg *monitor_msg_create(int objid,
     msg->id = id;
     msg->msg_obj = msg_obj;
 
-    if (!obj && objid > 0) {
+    if (!msg_obj && objid > 0) {
 	if (!monitor_lookup_objid(objid,NULL,&obj,&monitor)) {
-	    vwarn("could not find obj for objid %d!\n",objid);
+	    vwarnopt(8,LA_LIB,LF_MONITOR,
+		     "could not find obj for objid %d!\n",objid);
 	}
 	else
 	    msg->obj = obj;
@@ -2658,8 +2777,8 @@ struct monitor_msg *monitor_recv(struct monitor *monitor) {
     return NULL;
 }
 
-int monitor_child_send(struct monitor_msg *msg) {
-    struct monitor *monitor;
+int monitor_child_send(struct monitor_msg *msg,struct monitor *monitor) {
+    struct monitor *_monitor;
     int rc = 0;
     int len;
 
@@ -2668,9 +2787,14 @@ int monitor_child_send(struct monitor_msg *msg) {
      * the monitor thread does not monitor_free() it out from under us!
      */
     
-    if (!monitor_lookup_objid_lock_monitor(msg->objid,NULL,NULL,&monitor)) {
-	errno = ESRCH;
-	return -1;
+    if (!monitor_lookup_objid_lock_monitor(msg->objid,NULL,NULL,&_monitor)) {
+	vwarnopt(4,LA_LIB,LF_MONITOR,
+		 "could not lookup objid %d; deleted?\n",msg->objid);
+	_monitor = monitor;
+    }
+    else if (_monitor != monitor) {
+	verror("trying to send msg for objid %d on a different monitor!\n",
+	       msg->objid);
     }
 
     len = sizeof(msg->objid) + sizeof(msg->id) \
@@ -2687,17 +2811,17 @@ int monitor_child_send(struct monitor_msg *msg) {
      * block on it if it reads the msg before the sender releases the
      * lock.
      */
-    if (msg->msg_obj && monitor->type == MONITOR_TYPE_PROCESS) 
-	__monitor_store_msg_obj(monitor,msg);
+    if (msg->msg_obj && _monitor->type == MONITOR_TYPE_PROCESS) 
+	__monitor_store_msg_obj(_monitor,msg);
 
     /*
      * Now send the message.  No locking FOR THREADS because only one caller.
      */
-    if (monitor->child_send_fd < 1) {
-	if (monitor->type == MONITOR_TYPE_THREAD) {
+    if (_monitor->child_send_fd < 1) {
+	if (_monitor->type == MONITOR_TYPE_THREAD) {
 	    verror("no way to send from monitor thread!\n");
 	}
-	else if (monitor->type == MONITOR_TYPE_PROCESS) {
+	else if (_monitor->type == MONITOR_TYPE_PROCESS) {
 	    verror("no way to send from monitored process!\n");
 	}
 	errno = EINVAL;
@@ -2705,33 +2829,33 @@ int monitor_child_send(struct monitor_msg *msg) {
     }
 
     /* Write the msg objid */
-    __M_SAFE_IO(write,"write",monitor->child_send_fd,
+    __M_SAFE_IO(write,"write",_monitor->child_send_fd,
 		&msg->objid,(int)sizeof(msg->objid));
     rc += (int)sizeof(msg->objid);
 
     /* Write the msg id */
-    __M_SAFE_IO(write,"write",monitor->child_send_fd,
+    __M_SAFE_IO(write,"write",_monitor->child_send_fd,
 		&msg->id,(int)sizeof(msg->id));
     rc += (int)sizeof(msg->id);
 
     /* Write the msg cmd */
-    __M_SAFE_IO(write,"write",monitor->child_send_fd,
+    __M_SAFE_IO(write,"write",_monitor->child_send_fd,
 		&msg->cmd,(int)sizeof(msg->cmd));
     rc += (int)sizeof(msg->cmd);
 
     /* Write the msg seqno */
-    __M_SAFE_IO(write,"write",monitor->child_send_fd,
+    __M_SAFE_IO(write,"write",_monitor->child_send_fd,
 		&msg->seqno,(int)sizeof(msg->seqno));
     rc += (int)sizeof(msg->seqno);
 
     /* Write the msg payload len */
-    __M_SAFE_IO(write,"write",monitor->child_send_fd,
+    __M_SAFE_IO(write,"write",_monitor->child_send_fd,
 		&msg->len,(int)sizeof(msg->len));
     rc += (int)sizeof(msg->len);
 
     if (msg->len > 0) {
 	/* Write the msg payload, if any */
-	__M_SAFE_IO(write,"write",monitor->child_send_fd,msg->msg,msg->len);
+	__M_SAFE_IO(write,"write",_monitor->child_send_fd,msg->msg,msg->len);
 	rc += msg->len;
     }
 
@@ -2739,7 +2863,7 @@ int monitor_child_send(struct monitor_msg *msg) {
 	   " objid(%d) %d %hd:%hd '%s' (%d)\n",
 	   msg->objid,msg->id,msg->cmd,msg->seqno,msg->msg,msg->len);
 
-    pthread_mutex_unlock(&monitor->mutex);
+    pthread_mutex_unlock(&_monitor->mutex);
     return 0;
 
  errout_wouldblock:

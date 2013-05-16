@@ -469,6 +469,46 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     return 0;
 }
 
+void target_add_state_change(struct target *target,tid_t tid,
+			     target_state_change_type_t chtype,
+			     unsigned long code,unsigned long data,
+			     ADDR start,ADDR end,char *msg) {
+    struct target_state_change *retval = calloc(1,sizeof(*retval));
+
+    retval->tid = tid;
+    retval->chtype = chtype;
+    retval->code = code;
+    retval->data = data;
+    retval->start = start;
+    retval->end = end;
+    if (msg)
+	retval->msg = strdup(msg);
+
+    vdebug(5,LA_TARGET,LF_TARGET,
+	   "state changed (chtype=%d,code=0x%lx,data=0x%lx) on target(%s)\n",
+	   chtype,code,data,target->name);
+
+    array_list_append(target->state_changes,retval);
+}
+
+void target_clear_state_changes(struct target *target) {
+    struct target_state_change *change;
+    int i;
+
+    if (array_list_len(target->state_changes)) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "clearing %d state changes on target(%s)\n",
+	       array_list_len(target->state_changes),target->name);
+
+	array_list_foreach(target->state_changes,i,change) {
+	    if (change->msg)
+		free(change->msg);
+	    free(change);
+	}
+    }
+    array_list_remove_all(target->state_changes,64);
+}
+
 void target_free(struct target *target) {
     struct addrspace *space;
     struct addrspace *tmp;
@@ -486,6 +526,14 @@ void target_free(struct target *target) {
 	verror("fini target(%s) failed; not finishing free!\n",target->name);
 	return;
     }
+
+    if (array_list_len(target->state_changes)) {
+	vwarnopt(4,LA_TARGET,LF_TARGET,
+		 "removing %d state change events; backend BUG?\n",
+		 array_list_len(target->state_changes));
+	target_clear_state_changes(target);
+    }
+    array_list_free(target->state_changes);
 
     /*
      * Free actions, then probes,  We cannot call probe_free/action_free
@@ -559,6 +607,8 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
 	retval->id = next_target_id++;
     else
 	retval->id = id;
+
+    retval->state_changes = array_list_create(0);
 
     retval->state = state;
     retval->ops = ops;

@@ -19,6 +19,13 @@ struct vmi1__TargetTypesResponse {
 struct vmi1__TargetResponse {
     struct vmi1__TargetT *target;
 };
+struct vmi1__TargetLogsResponse {
+    vmi1__TargetIdT tid;
+    struct xsd__hexBinary *stdoutLog;
+    struct xsd__hexBinary *stderrLog;
+    struct xsd__hexBinary *dedicatedMonitorStdoutLog;
+    struct xsd__hexBinary *dedicatedMonitorStderrLog;
+};
 struct vmi1__TargetsResponse {
     $int __size_target;
     struct vmi1__TargetT **target;
@@ -43,6 +50,9 @@ int vmi1__ListTargets(void *_,
 
 int vmi1__GetTarget(vmi1__TargetIdT tid,
 		    struct vmi1__TargetResponse *r);
+
+int vmi1__GetTargetLogs(vmi1__TargetIdT tid,int maxSize,
+			struct vmi1__TargetLogsResponse *r);
 
 int vmi1__InstantiateTarget(struct vmi1__TargetSpecT *spec,
 			    vmi1__ListenerT *ownerListener,

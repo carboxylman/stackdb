@@ -33,6 +33,8 @@ typedef enum {
 #define generic_rpc_argp_header "Generic RPC Server Options"
 extern struct argp generic_rpc_argp;
 
+extern char *GENERIC_RPC_TMPDIR;
+
 struct generic_rpc_config {
     char *name;
 
@@ -154,5 +156,42 @@ int generic_rpc_unbind_dynlistener_objid(rpc_svctype_t svctype,char *listener_ur
 					 int objid);
 
 int generic_rpc_unbind_all_listeners_objid(rpc_svctype_t svctype,int objid);
+
+struct xsd__hexBinary *
+generic_rpc_read_file_into_hexBinary(struct soap *soap,
+				     char *filename,int max_size);
+
+#define __SAFE_IO(fn,fns,fd,buf,buflen,rc) {				\
+    char *_p;								\
+    int _rc = 0;							\
+    int _left;								\
+									\
+    _p = (char *)(buf);							\
+    _left = (buflen);							\
+									\
+    while (_left) {							\
+        _rc = fn((fd),_p,_left);					\
+	if (_rc < 0) {							\
+	    if (errno != EINTR) {					\
+	        vwarn(fns "(%d,%d): %s\n",				\
+		       fd,buflen,strerror(errno));			\
+		break;							\
+	    }								\
+	    else {							\
+	        verror(fns "(%d,%d): %s\n",				\
+		       fd,buflen,strerror(errno));			\
+	    }								\
+	}								\
+	else if (_rc == 0) {						\
+	    break;							\
+	}								\
+	else {								\
+	    _left -= _rc;						\
+	    _p += _rc;							\
+	    (rc) += _rc;						\
+	}								\
+    }									\
+    /*vwarn("%d bytes of %d iopd\n",(buflen)-_left,(buflen));*/		\
+}
 
 #endif /* __GENERIC_RPC_H__ */

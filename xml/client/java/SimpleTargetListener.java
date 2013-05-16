@@ -80,6 +80,10 @@ public class SimpleTargetListener extends TargetListenerSkeleton
 
 	    //String jType = snsPrefix + "." + "probeEvent";
 	    /*
+	    String jType = "targetEventNotification";
+	    QName qn = new QName(sns,"TargetEventNotification");
+	    SimpleTargetListener.typeMapping.put(jType,qn);
+
 	    String jType = "probeEventNotification";
 	    QName qn = new QName(sns,"ProbeEventNotification");
 	    SimpleTargetListener.typeMapping.put(jType,qn);
@@ -99,6 +103,8 @@ public class SimpleTargetListener extends TargetListenerSkeleton
 		new HashMap<String,String>();
 
 	    SimpleTargetListener.methodClassNameMapping
+		.put("targetEventNotification","vmi.TargetEventNotification");
+	    SimpleTargetListener.methodClassNameMapping
 		.put("probeEventNotification","vmi.ProbeEventNotification");
 	    SimpleTargetListener.methodClassNameMapping
 		.put("actionEventNotification","vmi.ActionEventNotification");
@@ -112,6 +118,9 @@ public class SimpleTargetListener extends TargetListenerSkeleton
 	    SimpleTargetListener.dynamicTypeMapping = 
 		new HashMap<String,QName>();
 
+	    SimpleTargetListener.dynamicTypeMapping
+		.put("targetEventNotification",
+		     new QName(SimpleTargetListener.sns,"TargetEventNotification"));
 	    SimpleTargetListener.dynamicTypeMapping
 		.put("probeEventNotification",
 		     new QName(SimpleTargetListener.sns,"ProbeEventNotification"));
@@ -135,6 +144,35 @@ public class SimpleTargetListener extends TargetListenerSkeleton
     @WebMethod(exclude = true)
     public String getServicePath() {
 	return "/vmi1/targetListener";
+    }
+
+    /**
+     * Service definition of function vmi1__TargetEventNotification
+     * @param targetEventNotification 
+     * @return targetEventNotificationResponse 
+     */
+    public vmi1.TargetEventNotificationResponse targetEventNotification
+	(vmi1.TargetEventNotification targetEventNotification) {
+	TargetEventT te = targetEventNotification.getTargetEvent();
+
+	System.out.printf("TargetEvent(%s tid=%d thid=%d status=%s)\n"
+			  + "    code: %d (0x%x) data: %d (0x%x)\n"
+			  + "    startAddr: 0x%x endAddr: 0x%x\n"
+			  + "    msg: \"%s\"\n\n",
+			  te.getTargetEventType(),te.getTid().getTargetIdT(),
+			  te.getThid().getThreadIdT(),te.getTargetStatus(),
+			  te.getEventCode().longValue(),
+			  te.getEventCode().longValue(),
+			  te.getEventData().longValue(),
+			  te.getEventData().longValue(),
+			  te.getEventStartAddr().getADDR().longValue(),
+			  te.getEventEndAddr().getADDR().longValue(),
+			  te.getEventMsg());
+
+	vmi1.TargetEventNotificationResponse retval = 
+	    new vmi1.TargetEventNotificationResponse();
+	retval.setResult(vmi1.ResultT.success);
+	return retval;
     }
 
     /**

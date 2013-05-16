@@ -21,11 +21,19 @@
 #include <sys/prctl.h>
 #include <signal.h>
 #include <glib.h>
+#include <stdlib.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "log.h"
 #include "alist.h"
 #include "waitpipe.h"
 #include "generic_rpc.h"
+#include "util.h"
+
+#include "xsdcStub.h"
 
 struct svctype_info {
     /* url -> listener */
@@ -38,6 +46,10 @@ struct svctype_info {
     /* objid -> array_list(listener) */
     GHashTable *objid_listenerlist_tab;
 };
+
+#define __DEFAULT_GENERIC_RPC_TMPDIR "/var/tmp"
+
+char *GENERIC_RPC_TMPDIR;
 
 static pthread_mutex_t generic_rpc_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int init_done = 0;
@@ -55,12 +67,26 @@ static void _generic_rpc_listener_free(struct generic_rpc_listener *l);
  ** Module init/fini stuff.
  **/
 void generic_rpc_init(void) {
+    char *tmpdir;
+    struct timeval tv;
+
     pthread_mutex_lock(&generic_rpc_mutex);
 
     if (init_done) {
 	pthread_mutex_unlock(&generic_rpc_mutex);
 	return;
     }
+
+    memset(&tv,0,sizeof(tv));
+    if (gettimeofday(&tv,NULL)) 
+	vwarn("gettimeofday: %s (not doing srand!)\n",strerror(errno));
+    else
+	srand((int)tv.tv_usec);
+
+    if ((tmpdir = getenv("TMP")))
+	GENERIC_RPC_TMPDIR = strdup(tmpdir);
+    else
+	GENERIC_RPC_TMPDIR = strdup(__DEFAULT_GENERIC_RPC_TMPDIR);
 
     /*
      * We have to make sure waitpipe doesn't install a SIGCHLD handler!
@@ -93,6 +119,9 @@ void generic_rpc_fini(void) {
     }
     g_hash_table_destroy(svctype_info_tab);
     svctype_info_tab = NULL;
+
+    free(GENERIC_RPC_TMPDIR);
+    GENERIC_RPC_TMPDIR = __DEFAULT_GENERIC_RPC_TMPDIR;
 
     init_done = 0;
 
@@ -181,6 +210,8 @@ struct generic_rpc_handler_state {
 struct argp_option generic_rpc_argp_opts[] = {
     { "port",'p',"PORT",0,
       "Set the RPC server's port; if unspecified, uses stdin.",0 },
+    { "tmpdir",'T',"DIR",0,
+      "Set the RPC server's tmpdir; if unspecified, $TMP, then /var/tmp.",0 },
     { 0,0,0,0,0,0 }
 };
 
@@ -205,6 +236,12 @@ error_t generic_rpc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'p':
 	if (arg)
 	    cfg->port = atoi(arg);
+	else
+	    return ARGP_ERR_UNKNOWN;
+	break;
+    case 'T':
+	if (arg)
+	    GENERIC_RPC_TMPDIR = strdup(arg);
 	else
 	    return ARGP_ERR_UNKNOWN;
 	break;
@@ -922,4 +959,53 @@ int generic_rpc_listener_notify_all(rpc_svctype_t svctype,int objid,
     pthread_mutex_unlock(&generic_rpc_mutex);
 
     return 0;
+}
+
+struct xsd__hexBinary *
+generic_rpc_read_file_into_hexBinary(struct soap *soap,
+				     char *filename,int max_size) {
+    int rc;
+    struct stat statbuf;
+    int fd;
+    int sz;
+    struct xsd__hexBinary *retval;
+
+    memset(&statbuf,0,sizeof(statbuf));
+    if (stat(filename,&statbuf)) {
+	verror("could not stat logfile %s: %s\n",filename,strerror(errno));
+	return NULL;
+    }
+    else if ((fd = open(filename,O_RDONLY)) < 0) {
+	verror("could not open logfile %s: %s\n",
+	       filename,strerror(errno));
+	return NULL;
+    }
+    else {
+	retval = SOAP_CALLOC(soap,1,sizeof(*retval));
+	if (statbuf.st_size > 0) {
+	    sz = statbuf.st_size;
+	    if (max_size > 0 && max_size < statbuf.st_size)
+		sz = max_size;
+	    retval->__ptr = SOAP_CALLOC(soap,1,sz);
+	    retval->__size = sz;
+
+	    /* Read it all */
+	    lseek(fd,statbuf.st_size - sz,SEEK_SET);
+	    rc = 0;
+	    errno = 0;
+	    __SAFE_IO(read,"read",fd,retval->__ptr,sz,rc);
+	    if (rc != sz && errno) {
+		vwarn("only read %d of %d bytes for logfile %s: %s\n",
+		      rc,sz,filename,strerror(errno));
+	    }
+	    if (rc != sz) {
+		vwarn("only read %d of %d bytes for logfile %s (no error)\n",
+		      rc,sz,filename);
+		retval->__size = rc;
+	    }
+	}
+	close(fd);
+    }
+
+    return retval;
 }

@@ -63,6 +63,8 @@ static void sigh(int signo) {
 }
 
 int main(int argc,char **argv) {
+    char *svc_name = "target";
+    int rc;
 
     vmi_set_log_level(9);
     vmi_add_log_area_flags(LA_LIB,LF_ALL);
@@ -125,13 +127,28 @@ int main(int argc,char **argv) {
     else if (tspec->target_id < 0)
 	tspec->target_id = monitor->objid;
 
-    if (monitor_run(monitor) == 0) {
-	cleanup();
-	exit(0);
-    }
-    else {
-	verror("monitor_run() failed; exiting!\n");
-	cleanup();
-	exit(-2);
+    while (1) {
+	rc = monitor_run(monitor);
+	if (rc < 0) {
+	    verror("bad internal error in monitor for %s %d; destroying!\n",
+		   svc_name,monitor->objid);
+	    monitor_destroy(monitor);
+	    return -1;
+	}
+	else {
+	    if (monitor_is_done(monitor)) {
+		vdebug(2,LA_XML,LF_RPC,
+		       "monitoring on %s %d is done; finalizing!\n",
+		       svc_name,monitor->objid);
+		monitor_destroy(monitor);
+		return 0;
+	    }
+	    else {
+		vwarn("%s %d monitor_run finished unexpectedly; finalizing!\n",
+		      svc_name,monitor->objid);
+		monitor_destroy(monitor);
+		return -1;
+	    }
+	}
     }
 }

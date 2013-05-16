@@ -140,6 +140,8 @@ struct proxyreq {
      * the monitor's (and the global monitor lock).
      */
     int objid;
+    int msg_id;
+
     /*
      * Since sometimes we have to unlock the per-objtype mutex if we
      * error out, save it here when we set objid above, IF we locked

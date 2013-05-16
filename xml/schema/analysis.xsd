@@ -79,10 +79,7 @@
   <xs:element name="analysisEventType">
     <xs:simpleType>
       <xs:restriction base="xs:token">
-        <xs:enumeration value="closed"/>
-        <xs:enumeration value="finalized"/>
-        <xs:enumeration value="killed"/>
-        <xs:enumeration value="dead"/>
+        <xs:enumeration value="exited"/>
         <xs:enumeration value="error"/>
       </xs:restriction>
     </xs:simpleType>

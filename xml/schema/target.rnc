@@ -87,14 +87,18 @@ TargetT =
 Target = element target { TargetT }
 
 TargetEventT = 
-    element targetEventType { "closed" | "finalized" | "killed" 
-    	    		      | "dead" | "error" 
-    	    		      | "threadNew" | "threadExit" | "addrSpaceUpdate" },
+    element targetEventType { "exiting" | "exited" | "error" 
+    	    		      | "threadCreated" | "threadExiting" | "threadExited" 
+			      | "regionNew" | "regionMod" | "regionDel"
+			      | "rangeNew" | "rangeMod" | "rangeDel" },
     element tid { TargetIdT },
     element thid { ThreadIdT },
     TargetStatus,
     element eventCode { xsd:unsignedLong }?,
-    element eventStatus { xsd:long }?
+    element eventData { xsd:unsignedLong }?,
+    element eventStartAddr { ADDR }?,
+    element eventEndAddr { ADDR }?,
+    element eventMsg { text }?
 TargetEvent = element targetEvent { TargetEventT }
 
 AddrSpaceT = 

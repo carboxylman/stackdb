@@ -45,8 +45,7 @@ NameValueT =
 NameValue = element nameValue { NameValueT }
 
 AnalysisEventT = 
-    element analysisEventType { "closed" | "finalized" | "killed" 
-    	    		        | "dead" | "error" },
+    element analysisEventType { "exited" | "error" },
     element analysisId { AnalysisIdT },
     AnalysisStatus
 AnalysisEvent = element analysisEvent { AnalysisEventT }

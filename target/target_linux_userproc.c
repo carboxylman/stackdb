@@ -1200,8 +1200,9 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	goto again2;
     }
     else if (WIFSIGNALED(pstatus)) {
-	verror("pid %d signaled (%d) in initial tracing!\n",pid,WTERMSIG(pstatus));
-	goto again2;
+	verror("pid %d signaled (%d) in initial tracing!\n",
+	       pid,WTERMSIG(pstatus));
+	goto errout;
     }
     else if (WIFEXITED(pstatus)) {
 	/* yikes, it was sigkill'd out from under us! */
@@ -1321,6 +1322,8 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     struct linux_userproc_thread_state *tstate;
     gpointer value;
     int racy_status;
+    int pstatus;
+    int rc;
 
     lstate = (struct linux_userproc_state *)target->state;
 
@@ -1394,12 +1397,14 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
 	}
 
 	/* Restart just this thread. */
+	/*
 	if (ptrace(lstate->ptrace_type,child,NULL,NULL) < 0) {
 	    verror("ptrace restart of tid %"PRIiTID" failed: %s\n",
 		   child,strerror(errno));
 	    free(tstate);
 	    return 1;
 	}
+	*/
 	//kill(child,SIGCONT);
 
 	vdebug(5,LA_TARGET,LF_LUP,"restarted new racy thread %d\n",child);
@@ -1407,11 +1412,39 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     else {
 	tstate->ctl_sig_sent = 1;
 	tstate->ctl_sig_recv = 0;
+
+	/*
+	 * Try to handle it right now, WNOHANG.
+	 */
+	pstatus = 0;
+	rc = waitpid(child,&pstatus,WNOHANG | __WALL);
+	if (rc == 0) {
+	    vdebug(5,LA_TARGET,LF_LUP,
+		   "waitpid returned nothing for new non-racy tid %d!\n",child);
+	}
+	else if (rc < 0) {
+	    verror("waitpid(%d): %s\n",child,strerror(errno));
+	}
+	else {
+	    vdebug(5,LA_TARGET,LF_LUP,
+		   "waited for new non-racy tid %d successfully\n",child);
+
+	    /*
+	     * Ok, the SIGSTOP is available for us; grab it now and
+	     * set the thread up to get restarted.
+	     */
+	    tstate->ctl_sig_sent = 0;
+	    tstate->ctl_sig_recv = 0;
+	}
     }
     tstate->ctl_sig_pause_all = 0;
 
     tthread = target_create_thread(target,child,tstate);
-    tthread->status = THREAD_STATUS_PAUSED;
+
+    target_add_state_change(target,child,TARGET_STATE_CHANGE_THREAD_CREATED,0,0,
+			    0,0,NULL);
+
+    target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
     if (target->evloop)
 	linux_userproc_evloop_add_tid(target,child);
@@ -1735,6 +1768,8 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 
 	errno = 0;
     }
+
+    target_delete_thread(target,tthread,0);
 
     return 0;
 }
@@ -2311,11 +2346,18 @@ static int linux_userproc_detach(struct target *target) {
      * Now detach from the primary process thread.
      */
     tthread = target->global_thread;
-    rc = linux_userproc_detach_thread(target,tthread->tid,1);
-    if (rc) {
-	verror("could not detach global thread %"PRIiTID"\n",tthread->tid);
-	++retval;
+    if (tthread) {
+	rc = linux_userproc_detach_thread(target,tthread->tid,1);
+	if (rc) {
+	    verror("could not detach global thread %"PRIiTID"\n",tthread->tid);
+	    ++retval;
+	}
+	else
+	    target->global_thread = NULL;
     }
+
+    /* Also, remove the global thread from target->threads! */
+    g_hash_table_remove(target->threads,(gpointer)(uintptr_t)TID_GLOBAL);
 
     /*
      *
@@ -2348,6 +2390,18 @@ static int linux_userproc_fini(struct target *target) {
 
     if (target->opened) 
 	linux_userproc_detach(target);
+
+    if (target->spec->outfile) {
+	unlink(target->spec->outfile);
+	free(target->spec->outfile);
+	target->spec->outfile = NULL;
+    }
+
+    if (target->spec->errfile) {
+	unlink(target->spec->errfile);
+	free(target->spec->errfile);
+	target->spec->errfile = NULL;
+    }
 
     free(target->state);
 
@@ -2513,6 +2567,7 @@ static int linux_userproc_updateregions(struct target *target,
 	(struct linux_userproc_state *)target->state;
     uint32_t prot_flags;
     int exists;
+    int updated;
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
@@ -2628,12 +2683,17 @@ static int linux_userproc_updateregions(struct target *target,
 
     list_for_each_entry_safe(region,tregion,&space->regions,region) {
 	exists = 0;
+	updated = 0;
 	list_for_each_entry_safe(range,trange,&region->ranges,range) {
 	    if (range->new) {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
+		target_add_state_change(target,TID_GLOBAL,
+					TARGET_STATE_CHANGE_RANGE_NEW,
+					0,range->prot_flags,
+					range->start,range->end,region->name);
 	    }
 	    else if (range->same) {
 		vdebug(9,LA_TARGET,LF_LUP,
@@ -2646,11 +2706,21 @@ static int linux_userproc_updateregions(struct target *target,
 		       "updated range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
 		exists = 1;
+		updated = 1;
+
+		target_add_state_change(target,TID_GLOBAL,
+					TARGET_STATE_CHANGE_RANGE_MOD,
+					0,range->prot_flags,
+					range->start,range->end,region->name);
 	    }
 	    else {
 		vdebug(3,LA_TARGET,LF_LUP,
 		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		       range->start,range->end,range->offset);
+		target_add_state_change(target,TID_GLOBAL,
+					TARGET_STATE_CHANGE_RANGE_DEL,
+					0,range->prot_flags,
+					range->start,range->end,region->name);
 		memrange_free(range);
 	    }
 	    range->new = range->same = range->updated = 0;
@@ -2658,7 +2728,21 @@ static int linux_userproc_updateregions(struct target *target,
 	if (!exists || list_empty(&region->ranges)) {
 	    vdebug(3,LA_TARGET,LF_LUP,"removing stale region (%s:%s:%s)\n",
 		   region->space->idstr,region->name,REGION_TYPE(region->type));
+	    target_add_state_change(target,TID_GLOBAL,
+				    TARGET_STATE_CHANGE_REGION_DEL,
+				    0,0,region->base_load_addr,0,region->name);
 	    memregion_free(region);
+	}
+	else if (updated) {
+	    target_add_state_change(target,TID_GLOBAL,
+				    TARGET_STATE_CHANGE_REGION_MOD,
+				    0,0,region->base_load_addr,0,region->name);
+	}
+	else if (region->new) {
+	    region->exists = region->new = 0;
+	    target_add_state_change(target,TID_GLOBAL,
+				    TARGET_STATE_CHANGE_REGION_NEW,
+				    0,0,region->base_load_addr,0,region->name);
 	}
 	else {
 	    region->exists = region->new = 0;
@@ -3106,6 +3190,8 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
     }
     tstate = (struct linux_userproc_thread_state *)tthread->state;
 
+    target_clear_state_changes(target);
+
     if (WIFSTOPPED(pstatus)) {
 	/* Ok, this was a ptrace event; figure out which sig (or if it
 	 * was a syscall), and redeliver the sig if it was a sig;
@@ -3121,8 +3207,8 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	 * linux_userproc_load_thread, and we can just call
 	 * __linux_userproc_load_thread.)
 	 */
-	target_set_status(target,TSTATUS_PAUSED);
 	target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
+	target_set_status(target,TSTATUS_PAUSED);
 
 	/*
 	 * Handle clone before loading the current thread; we don't need
@@ -3140,10 +3226,12 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	    /*
 	     * Flush, invalidate, and restart the parent.
 	     */
+	    /*
 	    if (ptrace(lstate->ptrace_type,tid,NULL,NULL) < 0) {
 		vwarn("ptrace parent restart failed: %s\n",strerror(errno));
 	    }
-	    target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
+	    */
+	    //target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 	    goto out_again;
 	}
 
@@ -3170,12 +3258,16 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	}
 	else if (pstatus >> 8 == (SIGTRAP | PTRACE_EVENT_EXIT << 8)) {
 	    vdebug(5,LA_TARGET,LF_LUP,
-		   "target %d (via tid %d) exiting (%d)! will detach at next resume.\n",
+		   "target %d tid %d exiting (%d)! will detach at next resume.\n",
 		   pid,tid,tstate->last_status);
 	    tstate->last_signo = -1;
 	    //linux_userproc_detach(target);
-	    target_set_status(target,TSTATUS_EXITING);
+	    //target_set_status(target,TSTATUS_EXITING);
 	    target_thread_set_status(tthread,TSTATUS_EXITING);
+
+	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_EXITING,
+				    0,0,0,0,NULL);
+
 	    return THREAD_STATUS_EXITING;
 	}
 	else if (tstate->last_status == SIGTRAP) {
@@ -3391,19 +3483,47 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	return THREAD_STATUS_PAUSED;
     }
     else if (WIFCONTINUED(pstatus)) {
+
+	target_set_status(target,TSTATUS_PAUSED);
+
 	tstate->last_signo = -1;
 	tstate->last_status = -1;
+
 	goto out_again;
     }
     else if (WIFSIGNALED(pstatus) || WIFEXITED(pstatus)) {
+
+	target_set_status(target,TSTATUS_PAUSED);
+
 	/* yikes, it was sigkill'd out from under us! */
 	/* XXX: is error good enough?  The pid is gone; we should
 	 * probably dump this target.
 	 */
-	target_set_status(target,TSTATUS_DONE);
+	target_tid_set_status(target,tid,THREAD_STATUS_DONE);
+
+	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_EXITED,
+				pstatus,0,0,0,NULL);
+
+	/*
+	 * If we're out of threads (besides the global thread); detach
+	 * the target now.  Otherwise, just detach from the thread.
+	 */
+	if (g_hash_table_size(target->threads) == 2) {
+	    target_set_status(target,TSTATUS_DONE);
+
+	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_EXITED,
+				    0,0,0,0,NULL);
+
+	    linux_userproc_detach(target);
+	}
+	else 
+	    linux_userproc_detach_thread(target,tid,0);
+
 	return THREAD_STATUS_DONE;
     }
     else {
+	target_set_status(target,TSTATUS_PAUSED);
+
 	vwarn("unexpected child process status event: %08x; bailing!\n",
 	      pstatus);
 	return THREAD_STATUS_ERROR;
@@ -3508,12 +3628,48 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
 	/* target_resume() has been called, so return success */
 	return EVLOOP_HRET_SUCCESS;
     }
+    else if (retval == TSTATUS_EXITING) {
+	/*
+	 * NB:
+	 *
+	 * target_resume() has NOT been called; we need to call it since
+	 * we don't want to intercept it.
+	 */
+	target_resume(target);
+	return EVLOOP_HRET_SUCCESS;
+    }
     else if (retval == TSTATUS_DONE) {
 	/* remove FD from set */
 	vdebug(5,LA_TARGET,LF_LUP,
 	       "tid %"PRIiTID" done; removing its fd (%d) from evloop\n",
 	       tid,readfd);
+	/*
+	 * NB:
+	 *
+	 * If the whole target is not finished, but only this thread,
+	 * then resume!
+	 */
+	if (target->status != TSTATUS_DONE) 
+	    target_resume(target);
+	/* now remove FD from set */
 	return EVLOOP_HRET_REMOVEALLTYPES;
+    }
+    else if (retval == TSTATUS_PAUSED
+	     && tstate->last_signo > -1) {
+	/*
+	 * NB:
+	 *
+	 * target_resume() has NOT been called; we need to call it since
+	 * we don't want to intercept it.
+	 *
+	 * It was signaled; we don't expose this to the user when evloop
+	 * is handling!
+	 */
+	vdebug(5,LA_TARGET,LF_LUP,
+	       "tid %"PRIiTID" signaled with %d; resuming; signal will hit tid\n",
+	       tid,tstate->last_signo);
+	target_resume(target);
+	return EVLOOP_HRET_SUCCESS;
     }
     else if (retval == TSTATUS_PAUSED) {
 	/* user must handle fault; invoke error handler */
