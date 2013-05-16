@@ -520,6 +520,9 @@ void target_free(struct target *target) {
     g_hash_table_destroy(target->config);
     target->config = NULL;
 
+    if (target->spec)
+	target_free_spec(target->spec);
+
     /* Unload the binfile */
     if (target->binfile) {
 	RPUT(target->binfile,binfile,target,trefcnt);
