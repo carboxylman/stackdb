@@ -2859,10 +2859,10 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
 	    free(tthread->state);
     }
 
-    free(tthread);
-
     if (!nohashdelete) 
 	g_hash_table_remove(target->threads,(gpointer)(ptr_t)tthread->tid);
+
+    free(tthread);
 }
 
 int target_invalidate_all_threads(struct target *target) {
