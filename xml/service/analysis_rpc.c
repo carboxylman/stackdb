@@ -1456,9 +1456,18 @@ static int analysis_rpc_monitor_close(struct monitor *monitor,
 
 static int analysis_rpc_monitor_fini(struct monitor *monitor,
 				     void *obj,void *objstate) {
+    struct analysis *analysis = (struct analysis *)obj;
     if (!obj)
 	return 0;
-    analysis_free((struct analysis *)obj);
+    if (analysis->target_spec) {
+	target_free_spec(analysis->target_spec);
+	analysis->target_spec = NULL;
+    }
+    else if (analysis->target && analysis->target->spec) {
+	target_free_spec(analysis->target->spec);
+	analysis->target->spec = NULL;
+    }
+    analysis_free(analysis);
     return 0;
 }
 

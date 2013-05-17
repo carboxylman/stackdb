@@ -90,6 +90,8 @@ static int target_rpc_monitor_fini(struct monitor *monitor,
     if (!obj)
 	return 0;
 
+    target_free_spec(target->spec);
+    target->spec = NULL;
     target_free(target);
 
     return 0;
