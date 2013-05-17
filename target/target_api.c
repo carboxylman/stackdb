@@ -735,10 +735,10 @@ struct action *target_lookup_action(struct target *target,int action_id) {
 
 REG target_get_unused_debug_reg(struct target *target,tid_t tid) {
     REG retval;
-    vdebug(5,LA_TARGET,LF_TARGET,"getting unused debug reg for target(%s):0x%"PRIx64"\n",
+    vdebug(5,LA_TARGET,LF_TARGET,"getting unused debug reg for target(%s):%"PRIiTID"\n",
 	   target->name,tid);
     retval = target->ops->get_unused_debug_reg(target,tid);
-    vdebug(5,LA_TARGET,LF_TARGET,"got unused debug reg for target(%s):0x%"PRIx64": %"PRIiREG"\n",
+    vdebug(5,LA_TARGET,LF_TARGET,"got unused debug reg for target(%s):%"PRIiTID": %"PRIiREG"\n",
 	   target->name,tid,retval);
     return retval;
 }
