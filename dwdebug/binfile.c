@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <assert.h>
 
 #include "config.h"
 #include "common.h"
@@ -75,8 +76,14 @@ void binfile_init(void) {
     if (init_done)
 	return;
 
-    regcomp(&LIBREGEX1,LIBFORMAT1,REG_EXTENDED);
-    regcomp(&LIBREGEX2,LIBFORMAT2,REG_EXTENDED);
+    if (regcomp(&LIBREGEX1,LIBFORMAT1,REG_EXTENDED)) {
+	verror("regcomp('%s'): %s\n",LIBFORMAT1,strerror(errno));
+	assert(0);
+    }
+    if (regcomp(&LIBREGEX2,LIBFORMAT2,REG_EXTENDED)) {
+	verror("regcomp('%s'): %s\n",LIBFORMAT2,strerror(errno));
+	assert(0);
+    }
 
     binfile_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
 					NULL,NULL);
@@ -91,18 +98,22 @@ void binfile_fini(void) {
     if (!init_done)
 	return;
 
-    while (g_hash_table_size(binfile_tab)) {
-	g_hash_table_iter_init(&iter,binfile_tab);
-	while (g_hash_table_iter_next(&iter,NULL,(gpointer)&binfile)) {
-	    binfile_free(binfile,1);
-	    break;
+    if (binfile_tab) {
+	while (g_hash_table_size(binfile_tab)) {
+	    g_hash_table_iter_init(&iter,binfile_tab);
+	    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&binfile)) {
+		binfile_free(binfile,1);
+		break;
+	    }
 	}
+	g_hash_table_destroy(binfile_tab);
+	binfile_tab = NULL;
     }
-    g_hash_table_destroy(binfile_tab);
-    binfile_tab = NULL;
 
     regfree(&LIBREGEX1);
+    memset(&LIBREGEX1,0,sizeof(LIBREGEX1));
     regfree(&LIBREGEX2);
+    memset(&LIBREGEX2,0,sizeof(LIBREGEX2));
 
     init_done = 0;
 }
