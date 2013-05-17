@@ -138,7 +138,7 @@ void cleanup() {
     if (opts.argv)
 	free(opts.argv);
 
-    dwdebug_fini();
+    target_fini();
 
 #ifdef REF_DEBUG
     REF_DEBUG_REPORT_FINISH();
@@ -880,8 +880,8 @@ int main(int argc,char **argv) {
     signal(SIGUSR1,sigh);
     signal(SIGUSR2,sigh);
 
-    dwdebug_init();
-    atexit(dwdebug_fini);
+    target_init();
+    atexit(target_fini);
 
     t = target_instantiate(tspec,NULL);
     if (!t) {
