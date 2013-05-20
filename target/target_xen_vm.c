@@ -810,6 +810,7 @@ static int xen_vm_load_dominfo(struct target *target) {
     if (!xstate->dominfo_valid) {
         vdebug(4,LA_TARGET,LF_XV,
 	       "load dominfo; current dominfo is invalid\n");
+	memset(&xstate->dominfo,0,sizeof(xstate->dominfo));
 	if (xc_domain_getinfo(xc_handle,xstate->id,1,
 			      &xstate->dominfo) <= 0) {
 	    verror("could not get domaininfo for %d\n",xstate->id);
@@ -1938,6 +1939,13 @@ static int xen_vm_attach_internal(struct target *target) {
     /* NOT thread-safe! */
     ++xc_refcnt;
 
+    /* Null out current state so we reload and see that it's paused! */
+    xstate->dominfo_valid = 0;
+    if (xen_vm_load_dominfo(target)) {
+	verror("could not load dominfo for dom %d\n",xstate->id);
+	return -1;
+    }
+
     if (xen_vm_pause(target,0)) {
 	verror("could not pause target before attaching; letting user handle!\n");
     }
@@ -1952,13 +1960,6 @@ static int xen_vm_attach_internal(struct target *target) {
 
     if (target->evloop && xstate->evloop_fd < 0) {
 	xen_vm_attach_evloop(target,target->evloop);
-    }
-
-    /* Null out current state so we reload and see that it's paused! */
-    xstate->dominfo_valid = 0;
-    if (xen_vm_load_dominfo(target)) {
-	verror("could not load dominfo for dom %d\n",xstate->id);
-	return -1;
     }
 
     /*
