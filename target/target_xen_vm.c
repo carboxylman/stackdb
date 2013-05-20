@@ -955,6 +955,50 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
+    /*
+     * Before loading anything else, check the cache.
+     */
+    tthread = target_lookup_thread(target,tid);
+    if (tthread) {
+	tstate = (struct xen_vm_thread_state *)tthread->state;
+
+	/* Check if this is a cached entry for an old task */
+	if (tstate->tgid != tgid 
+	    || tstate->task_struct_addr != value_addr(taskv)) {
+	    target_delete_thread(target,tthread,0);
+	    tstate = NULL;
+	    tthread = NULL;
+	}
+    }
+
+    if (!tthread) {
+	/* Build a new one. */
+	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
+
+	tthread = target_create_thread(target,tid,tstate);
+    }
+    else {
+	/*
+	 * If this is the current thread, we cannot load it from its
+	 * task_struct value (especially its register state!).  The
+	 * current_thread should have been loaded by now, so if it has
+	 * been loaded, don't reload from the thread stack (because the
+	 * thread stack does not have saved registers because the thread
+	 * is running!).
+	 *
+	 * XXX: to support SMP, we would have to check the task_struct's
+	 * running status, and only load from CPU in those cases.
+	 */
+	if (tthread == target->current_thread
+	    && target->current_thread->valid) {
+	    vdebug(8,LA_TARGET,LF_XV,
+		   "not loading running, valid current thread %"PRIiTID" from"
+		   " task_struct 0x%"PRIxADDR"; loaded from CPU of course\n",
+		   tid,value_addr(taskv));
+	    return target->current_thread;
+	}
+    }
+
     threadinfov = target_load_value_member(target,taskv,"thread_info",NULL,
 					   LOAD_FLAG_AUTO_DEREF);
     if (!threadinfov) {
@@ -985,27 +1029,6 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     preempt_count = v_num(v);
     value_free(v);
     v = NULL;
-
-    /* Check the cache: */
-    tthread = target_lookup_thread(target,tid);
-    if (tthread) {
-	tstate = (struct xen_vm_thread_state *)tthread->state;
-
-	/* Check if this is a cached entry for an old task */
-	if (tstate->tgid != tgid 
-	    || tstate->task_struct_addr != value_addr(taskv)) {
-	    target_delete_thread(target,tthread,0);
-	    tstate = NULL;
-	    tthread = NULL;
-	}
-    }
-
-    if (!tthread) {
-	/* Build a new one. */
-	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
-
-	tthread = target_create_thread(target,tid,tstate);
-    }
 
     tstate->task_struct_addr = value_addr(taskv);
     tstate->task_struct = taskv;
