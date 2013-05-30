@@ -1645,9 +1645,6 @@ struct symbol_type {
 	    int count;
 	    int alloc;
 	} a;
-	struct {
-	    int nptrs;
-	} p;
 	/* For a function type (i.e., a DW_TAG_subroutine_type)
 	 * this data describes the function's arg type info.
 	 * The return type, if any, is specified in
