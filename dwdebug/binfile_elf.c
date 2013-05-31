@@ -1104,8 +1104,8 @@ static struct binfile *elf_binfile_open(char *filename,
 		    }
 		    /* skip past the descriptor and padding */
 		    ndata += nthdr64->n_descsz;
-		    if (nthdr64->n_namesz % 4)
-			ndata += (4 - nthdr64->n_namesz % 4);
+		    if (nthdr64->n_descsz % 4)
+			ndata += (4 - nthdr64->n_descsz % 4);
 		}
 		else {
 		    nthdr32 = (Elf32_Nhdr *)ndata;
@@ -1122,8 +1122,8 @@ static struct binfile *elf_binfile_open(char *filename,
 		    }
 		    /* skip past the descriptor and padding */
 		    ndata += nthdr32->n_descsz;
-		    if (nthdr32->n_namesz % 4)
-			ndata += (4 - nthdr32->n_namesz % 4);
+		    if (nthdr32->n_descsz % 4)
+			ndata += (4 - nthdr32->n_descsz % 4);
 		}
 	    }
 	}
