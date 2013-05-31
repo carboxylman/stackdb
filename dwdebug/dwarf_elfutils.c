@@ -490,6 +490,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    linep = (unsigned char *)clinep;
 
 		    break;
+#if _INT_ELFUTILS_VERSION > 147
 		case DW_LNE_set_discriminator:
 		    /* Takes one ULEB128 parameter, the discriminator.  */
 		    if (unlikely(standard_opcode_lengths[opcode] != 1))
@@ -499,6 +500,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    get_uleb128(u128,clinep);
 		    linep = (unsigned char *)clinep;
 		    break;
+#endif
 		default:
 		    /* Unknown, ignore it.  */
 		    vwarn("unknown opcode\n");
@@ -712,9 +714,11 @@ dwarf_tag_string (unsigned int tag)
       [DW_TAG_mutable_type] = "mutable_type",
       [DW_TAG_condition] = "condition",
       [DW_TAG_shared_type] = "shared_type",
-#if _INT_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION > 141
       [DW_TAG_type_unit] = "type_unit",
       [DW_TAG_rvalue_reference_type] = "rvalue_reference_type",
+#endif
+#if _INT_ELFUTILS_VERSION > 147
       [DW_TAG_template_alias] = "template_alias",
 #endif
     };
@@ -746,7 +750,7 @@ dwarf_tag_string (unsigned int tag)
 	result = "class_template";
 	break;
 
-#if _INT_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION >= 147
       case DW_TAG_GNU_BINCL:
 	result = "GNU_BINCL";
 	break;
@@ -878,11 +882,13 @@ dwarf_attr_string (unsigned int attrnum)
       [DW_AT_elemental] = "elemental",
       [DW_AT_pure] = "pure",
       [DW_AT_recursive] = "recursive",
-#if _INT_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION > 141
       [DW_AT_signature] = "signature",
       [DW_AT_main_subprogram] = "main_subprogram",
       [DW_AT_data_bit_offset] = "data_bit_offset",
       [DW_AT_const_expr] = "const_expr",
+#endif
+#if _INT_ELFUTILS_VERSION > 147
       [DW_AT_enum_class] = "enum_class",
       [DW_AT_linkage_name] = "linkage_name",
 #endif
@@ -991,10 +997,42 @@ dwarf_attr_string (unsigned int attrnum)
 	result = "body_end";
 	break;
 
-#if _INT_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION > 143
       case DW_AT_GNU_vector:
 	result = "GNU_vector";
 	break;
+
+      case DW_AT_GNU_guarded_by:
+	  result = "GNU_guarded_by";
+	  break;
+
+      case DW_AT_GNU_pt_guarded_by:
+	  result = "GNU_pt_guarded_by";
+	  break;
+
+      case DW_AT_GNU_guarded:
+	  result = "GNU_guarded";
+	  break;
+
+      case DW_AT_GNU_pt_guarded:
+	  result = "GNU_pt_guarded";
+	  break;
+
+      case DW_AT_GNU_locks_excluded:
+	  result = "GNU_locks_excluded";
+	  break;
+
+      case DW_AT_GNU_exclusive_locks_required:
+	  result = "GNU_exclusive_locks_required";
+	  break;
+
+      case DW_AT_GNU_shared_locks_required:
+	  result = "GNU_shared_locks_required";
+	  break;
+
+      case DW_AT_GNU_odr_signature:
+	  result = "GNU_odr_signature";
+	  break;
 
       case DW_AT_GNU_template_name:
 	result = "GNU_template_name";
@@ -1045,7 +1083,7 @@ dwarf_form_string (unsigned int form)
       [DW_FORM_ref8] = "ref8",
       [DW_FORM_ref_udata] = "ref_udata",
       [DW_FORM_indirect] = "indirect",
-#if _INT_ELFUTILS_VERSION >= 152
+#if _INT_ELFUTILS_VERSION > 141
       [DW_FORM_sec_offset] = "sec_offset",
       [DW_FORM_exprloc] = "exprloc",
       [DW_FORM_flag_present] = "flag_present",

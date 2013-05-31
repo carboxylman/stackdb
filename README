@@ -4,7 +4,9 @@ To build this software, you must have installed
 
   * glib (>= 2.29.10, I believe);
   * elfutils (>= 0.137 should be fine, but ideally you will want
-    something much newer, such as 0.148 or 0.152);
+    something much newer, such as 0.152; also note that if you
+    use this library on a DWARF version 4-encoded file, and build
+    against elfutils <= 0.141, many things will probably break);
   * Judy
 
 Optionally, you could also install

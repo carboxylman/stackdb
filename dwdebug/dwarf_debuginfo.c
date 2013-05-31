@@ -137,6 +137,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     uint8_t flag_set = 0;
     uint8_t ref_set = 0;
     uint8_t block_set = 0;
+    uint8_t sec_offset_set = 0;
 
     struct array_list *iilist;
 
@@ -192,9 +193,18 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	ref = dwarf_dieoffset(&rref);
 	ref_set = 1;
 	break;
+#if _INT_ELFUTILS_VERSION > 141
     case DW_FORM_sec_offset:
-      attrp->form = cbargs->meta->offsize == 8 ? DW_FORM_data8 : DW_FORM_data4;
+	/*
+	 * Util .153, dwarf_forudata could not handle DW_FORM_sec_offset.
+	 */
+#if _INT_ELFUTILS_VERSION < 153
+	attrp->form = 
+	    cbargs->meta->offsize == 8 ? DW_FORM_data8 : DW_FORM_data4;
+#endif
+	sec_offset_set = 1;
       /* Fall through.  */
+#endif
     case DW_FORM_udata:
     case DW_FORM_sdata:
     case DW_FORM_data8:
@@ -208,8 +218,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	}
 	num_set = 1;
 	break;
-/* not sure if 137 is the right number! */
-#if _INT_ELFUTILS_VERSION > 137
+#if _INT_ELFUTILS_VERSION > 141
     case DW_FORM_exprloc:
 #endif
     case DW_FORM_block4:
@@ -224,8 +233,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	block_set = 1;
 	break;
     case DW_FORM_flag:
-/* not sure if 137 is the right number! */
-#if _INT_ELFUTILS_VERSION > 137
+#if _INT_ELFUTILS_VERSION > 141
     case DW_FORM_flag_present:
 #endif
 	if (unlikely(dwarf_formflag(attrp,&flag) != 0)) {
@@ -817,7 +825,35 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	/* we process all DIEs, so no need to skip any child content. */
 	break;
     case DW_AT_data_member_location:
-	/* can be either an exprloc, loclistptr, or a constant. */
+	/* In V3 or V4, this can be either an exprloc, loclistptr, or a
+	 * constant.  In V2, it can only be an exprloc (block) or a
+	 * loclistptr (reference).
+	 *
+	 * We know if block_set, it is an exprloc (see above in form
+	 * processing), regardless of V2, V3, or V4.
+	 *
+	 * However, if the version is DWARF3, we cannot tell the
+	 * difference between a constant and loclistptr if the form is
+	 * FORM_data4 or FORM_data8 (the comment in V3 spec, p. 140 is:
+	 *    Because classes lineptr, loclistptr, macptr and
+	 *    rangelistptr share a common representation, it is not
+	 *    possible for an attribute to allow more than one of these
+	 *    classes. If an attribute allows both class constant and
+	 *    one of lineptr, loclistptr, macptr or rangelistptr, then
+	 *    DW_FORM_data4 and DW_FORM_data8 are interpreted as members
+	 *    of the latter as appropriate (not class constant).
+	 * ).  This rule seems awfully bad to me, but we follow it!
+	 *
+	 * Then, if the version is 4 and we see a FORM_data4 or
+	 * FORM_data8, we take it as a constant.  This seems to be the
+	 * correct behavior, because the V4 spec does not include the
+	 * above caveat.  For V4, we only consider it a loclistptr if
+	 * FORM_sec_offset was used.
+	 *
+	 * NB: This *also means that if you use this library on a DWARF4
+	 * file, but your elfutils does not support FORM_sec_offset,
+	 * things will break!!!
+	 */
 	if (block_set) {
 	    if (SYMBOL_IS_VAR(cbargs->symbol)
 		&& cbargs->symbol->ismember) {
@@ -842,8 +878,10 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			 dwarf_form_string(form));
 	    }
 	}
-	else if (num_set && (form == DW_FORM_data4 
-			     || form == DW_FORM_data8)) {
+	else if (num_set 
+		 && ((cbargs->meta->version == 3 && (form == DW_FORM_data4 
+						     || form == DW_FORM_data8))
+		     || (cbargs->meta->version >= 4 && sec_offset_set))) {
 	    if (SYMBOL_IS_VAR(cbargs->symbol)
 		&& cbargs->symbol->ismember) {
 		if (SYMBOL_IS_FULL(cbargs->symbol)) {
@@ -871,14 +909,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 			 dwarf_form_string(form));
 	    }
 	}
-	else if (num_set
-/* not sure if 137 is the right number! */
-#if _INT_ELFUTILS_VERSION > 137
-	    && form != DW_FORM_sec_offset
-#endif
-	    && (cbargs->meta->version >= 4
-		|| (form != DW_FORM_data4 
-		    && form != DW_FORM_data8))) {
+	else if (num_set) {
 	    /* it's a constant */
 	    if (SYMBOL_IS_VAR(cbargs->symbol)) {
 		if (SYMBOL_IS_FULL(cbargs->symbol)) {
@@ -886,11 +917,11 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		    cbargs->symbol->s.ii->d.v.l.l.member_offset = (int32_t)num;
 		}
 	    }
-	    else {
-		vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
-			 "[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
-			 cbargs->die_offset,num,dwarf_attr_string(attr));
-	    }
+	}
+	else {
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
+		     "[DIE %" PRIx64 "] attrval %" PRIx64 " for attr %s in bad context\n",
+		     cbargs->die_offset,num,dwarf_attr_string(attr));
 	}
 	break;
     case DW_AT_frame_base:
@@ -954,7 +985,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_ranges:
 	/* always a rangelistptr */
-	if (num_set && (form == DW_FORM_sec_offset 
+	if (num_set && (sec_offset_set
 			|| form == DW_FORM_data4 
 			|| form == DW_FORM_data8)) {
 	    if (cbargs->symtab) {
@@ -1009,7 +1040,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     case DW_AT_location:
 	/* We only accept this for params and variables */
 	if (SYMBOL_IS_VAR(cbargs->symbol)) {
-	    if (num_set && (form == DW_FORM_sec_offset 
+	    if (num_set && (sec_offset_set
 			    || form == DW_FORM_data4 
 			    || form == DW_FORM_data8)) {
 		struct loc_list *loclist;
@@ -1113,7 +1144,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		 cbargs->die_offset);
     case DW_AT_upper_bound:
 	/* it's a constant, not a block op */
-	if (num_set && form != DW_FORM_sec_offset) {
+	if (num_set && !sec_offset_set) {
 	    if (!cbargs->symbol && cbargs->parentsymbol
 		&& cbargs->parentsymbol->type == SYMBOL_TYPE_TYPE
 		&& cbargs->parentsymbol->datatype_code == DATATYPE_ARRAY) {
@@ -1229,12 +1260,16 @@ static inline void set_language(struct dwarf_cu_meta *meta,int language) {
     case DW_LANG_D:
 	meta->language = "D";
 	break;
+#if _INT_ELFUTILS_VERSION > 147
     case DW_LANG_Python:
 	meta->language = "Python";
 	break;
+#endif
+#if _INT_ELFUTILS_VERSION > 149
     case DW_LANG_Go:
 	meta->language = "Go";
 	break;
+#endif
     default:
 	meta->language = NULL;
 	break;
@@ -1618,13 +1653,16 @@ static int get_static_ops(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	[DW_OP_form_tls_address] = "form_tls_address",
 	[DW_OP_call_frame_cfa] = "call_frame_cfa",
 	[DW_OP_bit_piece] = "bit_piece",
-/* not sure if 137 is the right number! */
-#if _INT_ELFUTILS_VERSION > 137
+#if _INT_ELFUTILS_VERSION > 138
+	[DW_OP_GNU_push_tls_address] = "GNU_push_tls_address",
+	[DW_OP_GNU_uninit] = "GNU_uninit",
+	[DW_OP_GNU_encoded_addr] = "GNU_encoded_addr",
+#endif
+#if _INT_ELFUTILS_VERSION > 141
 	[DW_OP_implicit_value] = "implicit_value",
 	[DW_OP_stack_value] = "stack_value",
 #endif
-/* not sure if 142 is the right number! */
-#if _INT_ELFUTILS_VERSION > 142
+#if _INT_ELFUTILS_VERSION > 148
 	[DW_OP_GNU_implicit_pointer] = "GNU_implicit_pointer",
 #endif
     };
