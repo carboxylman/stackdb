@@ -857,7 +857,7 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 				    cbargs->meta->offsize,
 				    attr,num,cbargs->debugfile,cbargs->cu_base,
 				    cbargs->symbol->s.ii->d.v.l.l.loclist)) {
-			verror("[DIE %" PRIx64 "] failed get_static_ops at"
+			verror("[DIE %" PRIx64 "] failed get_loclist at"
 			       " attrval %" PRIx64 " for attr %s // form %s\n",
 			       cbargs->die_offset,num,dwarf_attr_string(attr),
 			       dwarf_form_string(form));
@@ -1414,13 +1414,14 @@ static int get_loclist(Dwfl_Module *dwflmod,Dwarf *dbg,unsigned int vers,
 	    if (get_static_ops(dwflmod,dbg,3,addrsize,offsetsize,
 			       exprlen,(unsigned char *)readp,attr,
 			       tmploc)) {
-		vwarnopt(9,LA_DEBUG,LF_DWARF,
-			 "get_loclist (%d) failed!\n",exprlen);
+		vwarnopt(9,LA_DEBUG,LF_DLOC,
+			 "get_static_ops (%d) failed!\n",exprlen);
 		location_free(tmploc);
 		return -1;
 	    }
 	    else {
-		vdebug(5,LA_DEBUG,LF_DLOC,"get_loclist (%d) succeeded!\n",exprlen);
+		vdebug(5,LA_DEBUG,LF_DLOC,
+		       "get_static_ops (%d) succeeded!\n",exprlen);
 	    }
 
 	    if (loc_list_add(list,
