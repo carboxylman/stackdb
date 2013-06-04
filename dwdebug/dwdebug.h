@@ -687,6 +687,20 @@ struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     symbol_type_flag_t ftype);
 
 /*
+ * Lookup an offset of a member in a variable (of type struct/union), or
+ * in a type of struct/union.
+ */
+OFFSET symbol_offsetof(struct symbol *symbol,
+		       const char *name,const char *delim);
+
+/*
+ * Lookup an offset of a member in a variable (of type struct/union), or
+ * in a type of struct/union.
+ */
+OFFSET lsymbol_offsetof(struct lsymbol *lsymbol,
+			const char *name,const char *delim);
+
+/*
  * We return a list of all matching symbols in the debugfile, that are
  * either globals, or are at the "top level" of a CU.  In other words,
  * we do not look for nested symbols.  That would be very slow...

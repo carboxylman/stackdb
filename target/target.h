@@ -120,6 +120,11 @@ unsigned char *__target_load_addr_real(struct target *target,
 				       unsigned char *buf,int bufsiz);
 
 /**
+ ** Overlays.
+ **/
+struct target *target_lookup_overlay(struct target *target,tid_t tid);
+
+/**
  ** Threads.
  **/
 struct target_thread *target_lookup_thread(struct target *target,tid_t tid);

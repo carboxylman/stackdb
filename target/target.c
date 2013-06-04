@@ -1841,6 +1841,11 @@ int target_resolve_symbol_base(struct target *target,tid_t tid,
 					 range_saveptr);
 }
 
+OFFSET target_offsetof_symbol(struct target *target,struct bsymbol *bsymbol,
+			      char *member,const char *delim) {
+    return symbol_offsetof(bsymbol->lsymbol->symbol,member,delim);
+}
+
 /*
  * What we do here is traverse @bsymbol's lsymbol chain.  For each var
  * we encounter, try to resolve its address.  If the chain is

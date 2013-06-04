@@ -650,6 +650,56 @@ struct lsymbol *lsymbol_lookup_sym(struct lsymbol *lsymbol,
     return ls;
 }
 
+OFFSET symbol_offsetof(struct symbol *symbol,
+		       const char *name,const char *delim) {
+    struct symbol *s;
+    struct symbol *datatype;
+    struct lsymbol *ls;
+    OFFSET retval = 0;
+    int i;
+
+    if (SYMBOL_IST_FULL_STUN(symbol))
+	datatype = symbol;
+    else if (SYMBOL_IS_FULL_VAR(symbol)) {
+	datatype = symbol;
+	if (!SYMBOL_IST_FULL_STUN(datatype)) {
+	    errno = EINVAL;
+	    return 0;
+	}
+    }
+    else {
+	errno = EINVAL;
+	return 0;
+    }
+
+    ls = symbol_lookup_sym__int(datatype,name,delim);
+    if (!ls) {
+	if (!errno) 
+	    errno = ESRCH;
+	return 0;
+    }
+
+    /*
+     * Now that we have the symbol chain, just trace the offsets.
+     */
+    i = 1;
+    array_list_foreach_continue(ls->chain,i,s) {
+	if (!SYMBOL_IS_FULL_VAR(s)
+	    || s->s.ii->d.v.l.loctype != LOCTYPE_MEMBER_OFFSET) {
+	    errno = EINVAL;
+	    return 0;
+	}
+	retval += s->s.ii->d.v.l.l.member_offset;
+    }
+
+    return retval;
+}
+
+OFFSET lsymbol_offsetof(struct lsymbol *lsymbol,
+			const char *name,const char *delim) {
+    return symbol_offsetof(lsymbol->symbol,name,delim);
+}
+
 struct lsymbol *lsymbol_clone(struct lsymbol *lsymbol,struct symbol *newchild) {
     struct lsymbol *ls;
     struct array_list *chain;
