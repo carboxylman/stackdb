@@ -35,6 +35,7 @@
 #include "list.h"
 #include "alist.h"
 #include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 #include <dwarf.h>
 #include <gelf.h>
@@ -3490,6 +3491,7 @@ int debugfile_expand_symbol(struct debugfile *debugfile,struct symbol *symbol) {
 int debugfile_expand_cu(struct debugfile *debugfile,struct symtab *cu_symtab,
 			struct array_list *die_offsets,int expand_dies) {
     Dwarf_Off cu_offset = cu_symtab->ref;
+    int rc;
 
     if (cu_symtab->meta && cu_symtab->meta->loadtag == LOADTYPE_FULL) {
 	vwarnopt(4,LA_DEBUG,LF_DWARF,"cu %s already fully loaded!\n",cu_symtab->name);
@@ -3506,7 +3508,20 @@ int debugfile_expand_cu(struct debugfile *debugfile,struct symtab *cu_symtab,
 	       "loading entire CU symtab %s (offset 0x%"PRIxOFFSET")!\n",
 	       cu_symtab->name,cu_offset);
     }
-    return debuginfo_load_cu(debugfile,NULL,&cu_offset,die_offsets,expand_dies);
+
+    rc = debuginfo_load_cu(debugfile,NULL,&cu_offset,die_offsets,expand_dies);
+
+    /*
+     * XXX: NB: we have to do this at the very end, since it is not
+     * per-CU.  We can't always guarantee it happened when we unearthed
+     * new globals or type definitions, because the datatypes of those
+     * symbols may not have been resolved yet.  So, we have to retry
+     * this each time we load more content for the debugfile.
+     */
+    if (!rc)
+	debugfile_resolve_declarations(debugfile);
+
+    return rc;
 }
 
 /*
@@ -3681,6 +3696,16 @@ static int debuginfo_load(struct debugfile *debugfile,
 		break;
 	}
     }
+
+    /*
+     * XXX: NB: we have to do this at the very end, since it is not
+     * per-CU.  We can't always guarantee it happened when we unearthed
+     * new globals or type definitions, because the datatypes of those
+     * symbols may not have been resolved yet.  So, we have to retry
+     * this each time we load more content for the debugfile.
+     */
+    debugfile_resolve_declarations(debugfile);
+
     goto out;
 
  errout:
@@ -3914,8 +3939,12 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		}
 	    }
 
-	    if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES))
+	    if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES)
+		&& !symbol->isdeclaration)
 		debugfile_add_type_name(debugfile,symbol_get_name(symbol),symbol);
+
+	    if (symbol->isdeclaration) 
+		debugfile_handle_declaration(debugfile,symbol);
 	}
     }
     else if (SYMBOL_IS_VAR(symbol) 
@@ -3953,6 +3982,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 
 	    if (symbol->isexternal && !symbol->isdeclaration) 
 		debugfile_add_global(debugfile,symbol);
+	    else if (symbol->isdeclaration) 
+		debugfile_handle_declaration(debugfile,symbol);
 	}
 	else if (symbol->type == SYMBOL_TYPE_VAR) {
 	    if (symbol->datatype == NULL
@@ -3983,6 +4014,8 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 
 	    if (symbol->isexternal && !symbol->isdeclaration) 
 		debugfile_add_global(debugfile,symbol);
+	    else if (symbol->isdeclaration) 
+		debugfile_handle_declaration(debugfile,symbol);
 	}
 	else if (symbol->type == SYMBOL_TYPE_LABEL) {
 	    if (symtab_insert(symbol->symtab,symbol,0)) {

@@ -185,6 +185,9 @@ static void ghash_symbol_free(gpointer data) {
     }
 }
 
+void symbol_free_type_guts(struct symbol *symbol);
+void symbol_free_instance_guts(struct symbol *symbol);
+
 /**
  ** PC lookup functions.
  **/
@@ -1669,6 +1672,10 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
     debugfile->shared_types = symtab_create(binfile,debugfile,0,"__sharedtypes__",0,
 					    NULL);
 
+    debugfile->decllists = g_hash_table_new_full(g_str_hash,g_str_equal,
+						 free,
+						 (GDestroyNotify)array_list_free);
+
     /* This is an optimization lookup hashtable, so we don't provide
      * *any* key or value destructors since we don't want them freed
      * when the hashtable is destroyed.
@@ -2002,10 +2009,182 @@ int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab) {
     return debugfile_update_cu_symtab(debugfile,symtab);
 }
 
+static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
+						   struct symbol *declaration,
+						   struct symbol *definition) {
+    assert(declaration->isdeclaration);
+    assert(!definition->isdeclaration);
+    assert(declaration->type == definition->type);
+
+    if (definition->datatype_ref && !definition->datatype) 
+	return -1;
+    else {
+	/*
+	 * Its definition has already been loaded; take a ref to it and
+	 * copy in its guts.
+	 */
+	declaration->definition = definition;
+	RHOLD(definition,declaration);
+	declaration->decldefined = 1;
+
+	declaration->has_base_addr = definition->has_base_addr;
+	declaration->size_is_bits = definition->size_is_bits;
+	declaration->size_is_bytes = definition->size_is_bytes;
+	declaration->guessed_size = definition->guessed_size;
+	memcpy(&declaration->size,&definition->size,sizeof(definition->size));
+
+	if (SYMBOL_IS_TYPE(declaration)) {
+	    if (declaration->s.ti) 
+		symbol_free_type_guts(declaration);
+	    declaration->s.ti = definition->s.ti;
+	}
+	else {
+	    if (declaration->s.ii) 
+		symbol_free_instance_guts(declaration);
+	    declaration->s.ii = definition->s.ii;
+	}
+
+	if (definition->datatype) {
+	    declaration->datatype = definition->datatype;
+	    RHOLD(definition->datatype,declaration);
+	    declaration->decltypedefined = 1;
+	}
+
+	vdebug(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+	       "used definition at 0x%"PRIxSMOFFSET" for declaration"
+	       " %s at 0x%"PRIxSMOFFSET"\n",
+	       definition->ref,declaration->name,declaration->ref);
+
+	return 0;
+    }
+}
+
+void debugfile_handle_declaration(struct debugfile *debugfile,
+				  struct symbol *symbol) {
+    struct symbol *definition;
+    struct array_list *decllist;
+
+    assert(symbol->isdeclaration);
+
+    if (SYMBOL_IS_TYPE(symbol)) 
+	definition = (struct symbol *)g_hash_table_lookup(debugfile->globals,
+							  symbol->name);
+    else
+	definition = debugfile_find_type(debugfile,symbol->name);
+
+    if (!definition 
+	|| __debugfile_declaration_copy_definition(debugfile,symbol,definition)) {
+	/*
+	 * Maybe its definition hasn't been loaded yet, or the
+	 * definition's type hasn't been resolved yet; save it off and
+	 * handle it later.
+	 */
+	decllist = (struct array_list *) \
+	    g_hash_table_lookup(debugfile->decllists,symbol->name);
+	if (!decllist) {
+	    decllist = array_list_create(1);
+	    g_hash_table_insert(debugfile->decllists,
+				strdup(symbol->name),decllist);
+	}
+	array_list_append(decllist,symbol);
+    }
+}
+
+static void __debugfile_resolve_decllist(struct debugfile *debugfile,
+					 char *name,struct array_list *decllist,
+					 GHashTableIter *current_iter) {
+    struct symbol *type_definition;
+    struct symbol *instance_definition;
+    struct symbol *definition;
+    struct symbol *declaration;
+    int total;
+    int resolved;
+    int i;
+    int rc;
+
+    type_definition = debugfile_find_type(debugfile,name);
+    instance_definition = (struct symbol *) \
+	g_hash_table_lookup(debugfile->globals,name);
+    
+    if (!type_definition && !instance_definition) {
+	vwarnopt(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+		 "could not find any definitions for declarations named '%s'\n",
+		 name);
+	return;
+    }
+
+    total = array_list_len(decllist);
+    resolved = 0;
+    array_list_foreach(decllist,i,declaration) {
+	if (SYMBOL_IS_TYPE(declaration))
+	    definition = type_definition;
+	else
+	    definition = instance_definition;
+
+	if (!definition) {
+	    vwarnopt(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+		     "could not find definition for declaration '%s'\n",
+		     name);
+	    continue;
+	}
+
+	rc = __debugfile_declaration_copy_definition(debugfile,declaration,
+						     definition);
+	if (rc) {
+	    vwarnopt(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+		     "could not copy definition for declaration '%s'\n",
+		     name);
+	    continue;
+	}
+
+	++resolved;
+	/* Not optimized, but no big deal. */
+	array_list_foreach_delete(decllist,i);
+    }
+
+    vdebug(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+	   "resolved %d of %d declarations named '%s'\n",
+	   resolved,total,name);
+
+    if (array_list_len(decllist) == 0) {
+	/* NB: this frees the decllist and the hashed name. */
+	if (current_iter)
+	    g_hash_table_iter_remove(current_iter);
+	else
+	    g_hash_table_remove(debugfile->decllists,name);
+    }
+}
+
+void debugfile_resolve_declarations(struct debugfile *debugfile) {
+    GHashTableIter iter;
+    char *name = NULL;
+    struct array_list *decllist = NULL;
+
+    g_hash_table_iter_init(&iter,debugfile->decllists);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&name,(gpointer *)&decllist)) {
+	__debugfile_resolve_decllist(debugfile,name,decllist,&iter);
+    }
+}
+
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol) {
+    struct array_list *decllist;
+
     if (unlikely(g_hash_table_lookup(debugfile->globals,symbol->name)))
 	return 1;
     g_hash_table_insert(debugfile->globals,symbol->name,symbol);
+
+    if (!symbol->isdeclaration) {
+	/*
+	 * Also check if there were declarations pending on this global;
+	 * link those symbols up if so!
+	 */
+	decllist = (struct array_list *)			\
+	    g_hash_table_lookup(debugfile->decllists,symbol->name);
+	if (decllist) 
+	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
+    }
+
     return 0;
 }
 
@@ -2020,9 +2199,23 @@ struct symbol *debugfile_find_type(struct debugfile *debugfile,
 
 int debugfile_add_type_name(struct debugfile *debugfile,
 			    char *name,struct symbol *symbol) {
+    struct array_list *decllist;
+
     if (unlikely(g_hash_table_lookup(debugfile->types,name)))
 	return 1;
     g_hash_table_insert(debugfile->types,name,symbol);
+
+    if (!symbol->isdeclaration) {
+	/*
+	 * Also check if there were declarations pending on this global;
+	 * link those symbols up if so!
+	 */
+	decllist = (struct array_list *)			\
+	    g_hash_table_lookup(debugfile->decllists,symbol->name);
+	if (decllist) 
+	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
+    }
+
     return 0;
 }
 
@@ -2078,6 +2271,8 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
      * symbols.
      */
     symtab_free(debugfile->shared_types);
+
+    g_hash_table_destroy(debugfile->decllists);
 
     clrange_free(debugfile->ranges);
 
@@ -3751,16 +3946,148 @@ REFCNT symbol_release(struct symbol *symbol) {
     return retval;
 }
 
-REFCNT symbol_free(struct symbol *symbol,int force) {
+void symbol_free_instance_guts(struct symbol *symbol) {
+    int iii;
+    struct symbol *iisymbol;
+    REFCNT trefcnt;
+
+    if (!symbol->s.ii)
+	return;
+
+    /*
+     * We have to recurse through any symbol that has members, because
+     * those members are not in any symbol tables, so they won't be freed.
+     */
+    if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
+	if (symbol->s.ii->d.f.fbisloclist
+	    && symbol->s.ii->d.f.fb.list)
+	    loc_list_free(symbol->s.ii->d.f.fb.list);
+	else if (symbol->s.ii->d.f.fbissingleloc
+		 && symbol->s.ii->d.f.fb.loc)
+	    location_free(symbol->s.ii->d.f.fb.loc);
+
+	/*
+	 * Don't free the function's symtab -- it is freed in in
+	 * symtab_free since all functions will have a parent symtab.
+	 */
+	//if (symbol->isshared && symbol->s.ii->d.f.symtab)
+	//    symtab_free(symbol->s.ii->d.f.symtab);
+    }
+    else if (SYMBOL_IS_FULL_LABEL(symbol)) {
+	/*
+	 * Free the range list for a label.
+	 */
+	if (symbol->s.ii->d.l.range.r.rlist.list)
+	    range_list_internal_free(&symbol->s.ii->d.l.range.r.rlist);
+    }
+    /*
+     * Also have to free location data, potentially.
+     */
+    else if (SYMBOL_IS_FULL_VAR(symbol))
+	location_internal_free(&symbol->s.ii->d.v.l);
+
+    if (SYMBOL_IS_FULL_INSTANCE(symbol)) {
+	/*
+	 * Also have to free any constant data allocated.
+	 */
+	if (symbol->s.ii->constval && !symbol->s.ii->constval_nofree) {
+	    free(symbol->s.ii->constval);
+	}
+	symbol->s.ii->constval = NULL;
+
+	/*
+	 * Also have to free any inline instance list.
+	 */
+	if (symbol->s.ii->inline_instances) {
+	    array_list_foreach(symbol->s.ii->inline_instances,iii,iisymbol) {
+		RPUT(iisymbol,symbol,symbol,trefcnt);
+	    }
+	    array_list_free(symbol->s.ii->inline_instances);
+	    symbol->s.ii->inline_instances = NULL;
+	}
+
+	/*
+	 * Also have to free any inline instance's origin info that we copied.
+	 */
+	if (symbol->isinlineinstance && symbol->s.ii->origin) {
+	    /*
+	     * NB NB NB: we cannot have objects referencing each other;
+	     * such objects might not get deleted.
+	     *
+	     * (See comments in common.h about ref usage.)
+	     */
+	    //RPUT(symbol->s.ii->origin,symbol,symbol,trefcnt);
+
+	    symbol->s.ii->origin = NULL;
+
+	    if (symbol->datatype) {
+		RPUT(symbol->datatype,symbol,symbol,trefcnt);
+		symbol->datatype = NULL;
+	    }
+	}
+    }
+
+    free(symbol->s.ii);
+    symbol->s.ii = NULL;
+}
+
+void symbol_free_type_guts(struct symbol *symbol) {
     struct symbol_instance *tmp;
     struct symbol_instance *tmp2;
     struct symbol *tmp_symbol;
+    struct debugfile *debugfile = NULL;
+    struct binfile *binfile = NULL;
+    REFCNT trefcnt;
+
+    if (!symbol->s.ti)
+	return;
+
+    if (SYMBOL_IST_FULL_STUN(symbol)) {
+	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.su.members,
+				 d.v.member) {
+	    tmp_symbol = tmp->d.v.member_symbol;
+	    if (debugfile) {
+		RPUT(tmp_symbol,symbol,debugfile,trefcnt);
+	    }
+	    else if (binfile) {
+		RPUT(tmp_symbol,symbol,binfile,trefcnt);
+	    }
+	    else {
+		RPUT(tmp_symbol,symbol,tmp_symbol,trefcnt);
+	    }
+	}
+    }
+    else if (SYMBOL_IST_FULL_FUNCTION(symbol)) {
+	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.f.args,
+				 d.v.member) {
+	    tmp_symbol = tmp->d.v.member_symbol;
+	    if (debugfile) {
+		RPUT(tmp_symbol,symbol,debugfile,trefcnt);
+	    }
+	    else if (binfile) {
+		RPUT(tmp_symbol,symbol,binfile,trefcnt);
+	    }
+	    else {
+		RPUT(tmp_symbol,symbol,tmp_symbol,trefcnt);
+	    }
+	}
+    }
+    else if (SYMBOL_IST_FULL_ARRAY(symbol)) {
+	if (symbol->s.ti->d.a.subranges) {
+	    free(symbol->s.ti->d.a.subranges);
+	    symbol->s.ti->d.a.subranges = NULL;
+	}
+    }
+
+    free(symbol->s.ti);
+    symbol->s.ti = NULL;
+}
+
+REFCNT symbol_free(struct symbol *symbol,int force) {
     int retval = symbol->refcnt;
     REFCNT trefcnt;
     struct debugfile *debugfile = NULL;
     struct binfile *binfile = NULL;
-    int iii;
-    struct symbol *iisymbol;
 
     if (symbol->freenextpass) 
 	return symbol->refcnt;
@@ -3807,119 +4134,31 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	RPUT(symbol->datatype,symbol,symbol,trefcnt);
 	symbol->datatype = NULL;
     }
-
     /*
-     * We have to recurse through any symbol that has members, because
-     * those members are not in any symbol tables, so they won't be freed.
+     * If we copied definition info from some other symbol, release that
+     * stuff before we do anything else.
      */
-    if (SYMBOL_IS_FULL_FUNCTION(symbol)) {
-	if (symbol->s.ii->d.f.fbisloclist
-	    && symbol->s.ii->d.f.fb.list)
-	    loc_list_free(symbol->s.ii->d.f.fb.list);
-	else if (symbol->s.ii->d.f.fbissingleloc
-		 && symbol->s.ii->d.f.fb.loc)
-	    location_free(symbol->s.ii->d.f.fb.loc);
-
-	/*
-	 * Don't free the function's symtab -- it is freed in in
-	 * symtab_free since all functions will have a parent symtab.
-	 */
-	//if (symbol->isshared && symbol->s.ii->d.f.symtab)
-	//    symtab_free(symbol->s.ii->d.f.symtab);
-    }
-    else if (SYMBOL_IS_FULL_LABEL(symbol)) {
-	/*
-	 * Free the range list for a label.
-	 */
-	if (symbol->s.ii->d.l.range.r.rlist.list)
-	    range_list_internal_free(&symbol->s.ii->d.l.range.r.rlist);
-    }
-    else if (SYMBOL_IST_FULL_ARRAY(symbol)) {
-	if (symbol->s.ti->d.a.subranges) {
-	    free(symbol->s.ti->d.a.subranges);
-	    symbol->s.ti->d.a.subranges = NULL;
+    else if (symbol->decldefined) {
+	if (symbol->decltypedefined && symbol->datatype) {
+	    symbol->decltypedefined = 0;
+	    RPUT(symbol->datatype,symbol,symbol,trefcnt);
+	    symbol->datatype = NULL;
 	}
-    }
-    else if (SYMBOL_IST_FULL_STUN(symbol)) {
-	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.su.members,
-				 d.v.member) {
-	    tmp_symbol = tmp->d.v.member_symbol;
-	    if (debugfile) {
-		RPUT(tmp_symbol,symbol,debugfile,trefcnt);
-	    }
-	    else if (binfile) {
-		RPUT(tmp_symbol,symbol,binfile,trefcnt);
-	    }
-	    else {
-		RPUT(tmp_symbol,symbol,tmp_symbol,trefcnt);
-	    }
-	}
-    }
-    else if (SYMBOL_IST_FULL_FUNCTION(symbol)) {
-	list_for_each_entry_safe(tmp,tmp2,&symbol->s.ti->d.f.args,
-				 d.v.member) {
-	    tmp_symbol = tmp->d.v.member_symbol;
-	    if (debugfile) {
-		RPUT(tmp_symbol,symbol,debugfile,trefcnt);
-	    }
-	    else if (binfile) {
-		RPUT(tmp_symbol,symbol,binfile,trefcnt);
-	    }
-	    else {
-		RPUT(tmp_symbol,symbol,tmp_symbol,trefcnt);
-	    }
-	}
+
+	symbol->decldefined = 0;
+	RPUT(symbol->definition,symbol,symbol,trefcnt);
+	symbol->definition = NULL;
+	if (SYMBOL_IS_TYPE(symbol))
+	    symbol->s.ti = NULL;
+	else
+	    symbol->s.ii = NULL;
     }
 
-    /*
-     * Also have to free any constant data allocated.
-     */
-    if (SYMBOL_IS_FULL_INSTANCE(symbol)) {
-	if (symbol->s.ii->constval && !symbol->s.ii->constval_nofree) {
-	    free(symbol->s.ii->constval);
-	}
-	symbol->s.ii->constval = NULL;
-    }
+    if (SYMBOL_IS_FULL_TYPE(symbol))
+	symbol_free_type_guts(symbol);
+    else if (SYMBOL_IS_FULL_INSTANCE(symbol)) 
+	symbol_free_instance_guts(symbol);
 
-    /*
-     * Also have to free any inline instance list.
-     */
-    if (SYMBOL_IS_FULL_INSTANCE(symbol) && symbol->s.ii->inline_instances) {
-	array_list_foreach(symbol->s.ii->inline_instances,iii,iisymbol) {
-	    RPUT(iisymbol,symbol,symbol,trefcnt);
-	}
-	array_list_free(symbol->s.ii->inline_instances);
-	symbol->s.ii->inline_instances = NULL;
-    }
-
-    /*
-     * Also have to free any inline instance's origin info that we copied.
-     */
-    if (SYMBOL_IS_FULL_INSTANCE(symbol)) {
-	if (symbol->isinlineinstance && symbol->s.ii->origin) {
-	    /*
-	     * NB NB NB: we cannot have objects referencing each other;
-	     * such objects might not get deleted.
-	     *
-	     * (See comments in common.h about ref usage.)
-	     */
-	    //RPUT(symbol->s.ii->origin,symbol,symbol,trefcnt);
-
-	    symbol->s.ii->origin = NULL;
-
-	    if (symbol->datatype) {
-		RPUT(symbol->datatype,symbol,symbol,trefcnt);
-		symbol->datatype = NULL;
-	    }
-	}
-    }
-
-    /*
-     * Also have to free location data, potentially.
-     */
-    if (SYMBOL_IS_FULL_VAR(symbol))
-	location_internal_free(&symbol->s.ii->d.v.l);
-    
     if (symbol->name && !symbol->name_nofree) {
 	vdebug(5,LA_DEBUG,LF_SYMBOL,"freeing name %s\n",symbol->name);
 	free(symbol->name);
@@ -4867,8 +5106,9 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     if (ud->meta) {
 	fprintf(ud->stream," (");
 	if (!symbol->isparam && !symbol->ismember) {
-	    fprintf(ud->stream,"external=%d,declaration=%d",
-		    symbol->isexternal,symbol->isdeclaration);
+	    fprintf(ud->stream,"external=%d,isdecl=%d,decldefined=%d",
+		    symbol->isexternal,symbol->isdeclaration,
+		    symbol->decldefined);
 	}
 	if (SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream,",declinline=%d,inlined=%d",
@@ -4969,10 +5209,10 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 
     if (ud->meta) {
 	fprintf(ud->stream,
-		" (baseaddr=0x%"PRIxADDR",external=%d,declaration=%d,"
+		" (baseaddr=0x%"PRIxADDR",external=%d,isdecl=%d,decldefined=%d"
 		" prototyped=%d",
 		symbol->base_addr,symbol->isexternal,symbol->isdeclaration,
-		symbol->isprototyped);
+		symbol->decldefined,symbol->isprototyped);
 	if (SYMBOL_IS_FULL(symbol)) {
 	    fprintf(ud->stream,",declinline=%d,inlined=%d",
 		    symbol->s.ii->isdeclinline,symbol->s.ii->isinlined);

@@ -1310,6 +1310,14 @@ struct debugfile {
     GHashTable *globals;
 
     /*
+     * Since types and instances can be declared in one CU, but defined
+     * in another CU, as we load, we populate this hashtable with lists
+     * of declared, undefined symbols.  Then, when we load a global
+     * instance symbol, or a "global" type, we try to resolve them.
+     */
+    GHashTable *decllists;
+
+    /*
      * Any symbol that has a fixed address location gets an entry in
      * this table.  ELF symbols from the ELF symtab may also be in this
      * table, but debuginfo symbols always take precedence over them.
@@ -1563,6 +1571,8 @@ struct symbol {
 	freenextpass:1,
 	isexternal:1,
 	isdeclaration:1,
+	decldefined:1,
+	decltypedefined:1,
 	isprototyped:1,
 	isparam:1,
 	ismember:1,
@@ -1634,6 +1644,20 @@ struct symbol {
      * of addresses, this is the smallest one.
      */
     ADDR base_addr;
+
+    /*
+     * If this symbol was a declaration, but its definition is loaded as
+     * a symbol, this is that symbol.  We have to save it off because we
+     * held a ref to it so we could copy its guts into our symbol.
+     *
+     * (We have to copy @has_base_addr, @size_is_bytes, @size_is_bits,
+     * @guessed_size, @size, @base_addr, @datatype, @s.ti or @s.ii.).
+     *
+     * We cannot resolve declarations until after @datatype has been
+     * resolved for the definition, however.  We do our best up-front
+     * during load.
+     */
+    struct symbol *definition;
 
     union {
 	struct symbol_type *ti;

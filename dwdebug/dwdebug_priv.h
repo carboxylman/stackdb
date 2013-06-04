@@ -97,6 +97,11 @@ struct symbol *symbol_get_one_member__int(struct symbol *symbol,char *member,
 					  struct array_list **chainptr);
 struct symbol *symbol_get_datatype__int(struct symbol *symbol);
 
+
+void debugfile_handle_declaration(struct debugfile *debugfile,
+				  struct symbol *symbol);
+void debugfile_resolve_declarations(struct debugfile *debugfile);
+
 REFCNT debugfile_free(struct debugfile *debugfile,int force);
 
 #endif
