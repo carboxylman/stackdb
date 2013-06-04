@@ -49,30 +49,22 @@ struct dt_argp_state {
 
 struct dt_argp_state opts;
 
-struct target *t = NULL;
+static int cleaning = 0;
 
-GHashTable *probes = NULL;
+struct target *t = NULL;
 target_status_t tstat;
 
 void cleanup() {
-    GHashTableIter iter;
-    gpointer key;
-    struct probe *probe;
+    if (cleaning)
+	return;
 
-    if (probes) {
-	g_hash_table_iter_init(&iter,probes);
-	while (g_hash_table_iter_next(&iter,
-				      (gpointer)&key,
-				      (gpointer)&probe)) {
-	    probe_unregister(probe,1);
-	    probe_free(probe,1);
-	}
+    cleaning = 1;
+    if (t) {
+	target_close(t);
+	target_free(t);
+	t = NULL;
     }
-    target_close(t);
-    target_free(t);
-
-    if (probes) 
-	g_hash_table_destroy(probes);
+    cleaning = 0;
 }
 
 void sigh(int signo) {
@@ -80,6 +72,7 @@ void sigh(int signo) {
 	target_pause(t);
 	cleanup();
     }
+    target_fini();
     exit(0);
 }
 
@@ -136,7 +129,7 @@ struct argp dt_argp = {
 
 int main(int argc,char **argv) {
     struct target_spec *tspec;
-    char targetstr[128];
+    char *targetstr;
 
     memset(&opts,0,sizeof(opts));
 
@@ -162,37 +155,47 @@ int main(int argc,char **argv) {
 
     signal(SIGALRM,siga);
 
-    dwdebug_init();
-    atexit(dwdebug_fini);
+    target_init();
+    atexit(target_fini);
 
     t = target_instantiate(tspec,NULL);
     if (!t) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    target_tostring(t,targetstr,sizeof(targetstr));
 
     if (target_open(t)) {
-	fprintf(stderr,"could not open %s!\n",targetstr);
+	fprintf(stderr,"could not open target!\n");
 	exit(-4);
     }
 
-    /* Install probes... */
+    /*
+     * Make a permanent copy so we can print useful messages after
+     * target_free.
+     */
+    targetstr = target_name(t);
+    if (!targetstr) 
+	targetstr = strdup("<UNNAMED_TARGET>");
+    else
+	targetstr = strdup(targetstr);
 
     fprintf(stdout,"Initial threads:\n");
+    fflush(stderr);
+    fflush(stdout);
     target_load_available_threads(t,1);
     target_dump_all_threads(t,stdout,0);
+    fflush(stderr);
+    fflush(stdout);
 
     if (!opts.loopint) {
 	tstat = TSTATUS_DONE;
+	target_resume(t);
 	goto exit;
     }
     tstat = TSTATUS_RUNNING;
     alarm(opts.loopint);
 
-    /* The target is paused after the attach; we have to resume it now
-     * that we've registered probes.
-     */
+    /* The target is paused after the attach; we have to resume it now. */
     target_resume(t);
 
     fprintf(stdout,"Starting thread watch loop!\n");
