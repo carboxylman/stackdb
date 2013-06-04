@@ -1285,6 +1285,7 @@ struct target_spec {
     uint8_t start_paused:1,
 	    kill_on_close:1;
 
+    char *debugfile_root_prefix;
     /* struct array_list of struct debugfile_load_opts * */
     struct array_list *debugfile_load_opts_list;
 

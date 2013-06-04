@@ -178,7 +178,7 @@ int main(int argc,char **argv) {
     }
 
     if (infer) {
-	bfi = binfile_infer_instance(filename,base,NULL);
+	bfi = binfile_infer_instance(filename,NULL,base,NULL);
 	debugfile = debugfile_from_instance(bfi,opts_list);
     }
     else if (bfi) {
@@ -186,7 +186,7 @@ int main(int argc,char **argv) {
 	debugfile = debugfile_from_instance(bfi,opts_list);
     }
     else
-	debugfile = debugfile_from_file(filename,opts_list);
+	debugfile = debugfile_from_file(filename,NULL,opts_list);
     if (!debugfile) {
 	fprintf(stderr,"ERROR: could not create debugfile from %s!\n",
 		filename);

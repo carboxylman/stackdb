@@ -695,7 +695,10 @@ struct target *xen_vm_attach(struct target_spec *spec,
 
     if (xstate->kernel_elf_filename) {
 	/* Then grab stuff from the ELF binary itself. */
-	if (!(target->binfile = binfile_open__int(xstate->kernel_elf_filename,NULL))) {
+	target->binfile = 
+	    binfile_open__int(xstate->kernel_elf_filename,
+			      target->spec->debugfile_root_prefix,NULL);
+	if (!target->binfile) {
 	    verror("binfile_open %s: %s\n",
 		   xstate->kernel_elf_filename,strerror(errno));
 	    goto errout;
@@ -2212,6 +2215,7 @@ static int xen_vm_loaddebugfiles(struct target *target,
 	return -1;
 
     debugfile = debugfile_from_file(region->name,
+				    target->spec->debugfile_root_prefix,
 				    target->spec->debugfile_load_opts_list);
     if (!debugfile)
 	goto out;
@@ -3297,7 +3301,9 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	/*
 	 * Load its debuginfo.
 	 */
-	bfi = binfile_infer_instance(tregion->name,mod_core_addr,target->config);
+	bfi = binfile_infer_instance(tregion->name,
+				     target->spec->debugfile_root_prefix,
+				     mod_core_addr,target->config);
 	if (!bfi) {
 	    verror("could not infer instance for module %s!\n",tregion->name);
 	    retval = -1;

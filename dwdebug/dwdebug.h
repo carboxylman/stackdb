@@ -411,7 +411,7 @@ extern char *RANGE_TYPE_STRINGS[];
  *  3)  We have a binfile; just load debuginfo from that file, or from
  *      the file that that binfile points to.
  */
-struct debugfile *debugfile_from_file(char *filename,
+struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 				      struct array_list *debugfile_load_opts_list);
 struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 					  struct array_list *debugfile_load_opts_list);
@@ -908,13 +908,31 @@ int binfile_cache_clean(void);
 /*
  * Tries all backends, or the one referred to by @bfinst, to open
  * @filename.  @returns a struct binfile if successful; NULL otherwise.
+ * If @root_prefix is set, any other filenames with absolute paths this
+ * library tries to open because of this binfile will be prefixed with
+ * @root_prefix prior to opening.  This supports the target API; if you
+ * are not using that, you should have no reason to use @root_prefix.
  *
  * If successful, and if the resulting binfile is shareable (not created
  * based on an instance), the returned binfile has a ref taken on the
  * caller's behalf, so the caller must call RPUT(binfile) to release
  * (and free) it.
+ *
+ * If @DFPATH is set, it should be a NULL-terminated array of char *
+ * that specify dirs to look into for files containing debuginfo.  This
+ * is right now only used by the ELF backend to load debuginfo for files
+ * that include a build-id and use that as a means to identify which
+ * file contains debuginfo (i.e., the path is often something like
+ * /usr/lib/debug/.build-id/xx/xx...xx.debug -- where the xx's are the
+ * hex string repr of the build id).  So, the default DFPATH is
+ * /usr/lib/debug,/usr/local/lib/debug,NULL.
+ *
+ * Note also that even if you specify DFPATH, you should *not* prefix it
+ * with @root_prefix; @root_prefix will be *prepended* to the entries in
+ * DFPATH if they are searched.
  */
-struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst);
+struct binfile *binfile_open(char *filename,char *root_prefix,
+			     struct binfile_instance *bfinst);
 struct binfile *binfile_open_debuginfo(struct binfile *binfile,
 				       struct binfile_instance *bfinst,
 				       const char *DFPATH[]);
@@ -925,6 +943,8 @@ struct binfile *binfile_open_debuginfo(struct binfile *binfile,
  * and any key/value pairs in @config.
  *
  * @param filename  A path to a binary file.
+ * @param root_prefix A path to prepend to any other file opens this
+ *     library might need; should be the same prefix @filename has.
  * @param base      The base load address as the program image is or was
  *     constructed.
  * @param config    A simple char *->char * hash of key/value pairs; its use
@@ -932,8 +952,9 @@ struct binfile *binfile_open_debuginfo(struct binfile *binfile,
  *
  * @returns  A binfile_instance that represents a program image.
  */
-struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
-						GHashTable *config);
+struct binfile_instance *binfile_infer_instance(char *filename,
+						char *root_prefix,
+						ADDR base,GHashTable *config);
 /*
  * @param binfile  A loaded binfile.
  * @returns  The name of the backend that loaded @binfile.
@@ -977,12 +998,13 @@ void binfile_instance_free(struct binfile_instance *bfi);
  */
 struct binfile_ops {
     const char *(*get_backend_name)(void);
-    struct binfile *(*open)(char *filename,struct binfile_instance *bfinst);
+    struct binfile *(*open)(char *filename,char *root_prefix,
+			    struct binfile_instance *bfinst);
     struct binfile *(*open_debuginfo)(struct binfile *binfile,
 				      struct binfile_instance *bfinst,
 				      const char *DFPATH[]);
-    struct binfile_instance *(*infer_instance)(struct binfile *binfile,ADDR base,
-					       GHashTable *config);
+    struct binfile_instance *(*infer_instance)(struct binfile *binfile,
+					       ADDR base,GHashTable *config);
     int (*close)(struct binfile *bfile);
     void (*free)(struct binfile *bfile);
     void (*free_instance)(struct binfile_instance *bfi);
@@ -1103,6 +1125,28 @@ struct binfile {
      */
     struct binfile_instance *instance;
 
+
+
+    /*
+     * This is an alternate prefix that will be prepended to any files
+     * that the binfile code attempts to open.  This helps us load
+     * binary file information for filenames whose binaries are not
+     * actually at that location in the / filesystem that the library
+     * code is running on.  For instance, this is useful when we use the
+     * target library to open ELF/debuginfo for files that are really
+     * inside a VM that we are inspecting; it helps us look for them in
+     * this prefix instead of our root.
+     *
+     * Why put this here?  Because the library attempts to infer new
+     * files to open sometimes (i.e. as it loads debuginfo), so we have
+     * to make sure it looks in the right place.  When the user says to
+     * open a binary file as a debugfile, they must use the real path
+     * (i.e., including @root_prefix below).  But, those files
+     * themselves may have embedded links to other files -- and if those
+     * links are absolute, we have to prepend our @root_prefix.
+     */
+    char *root_prefix;
+
     /*
      * Currently unused.
      */
@@ -1146,6 +1190,15 @@ struct binfile_elf {
  */
 struct binfile_instance {
     char *filename;
+    /*
+     * Since the binfile library is capable of opening files on behalf
+     * of loaded binfiles or binfile_instances, it needs to know if the
+     * real place those files are to be loaded from is a fake (or
+     * alternate) root filesystem.  See the comments in struct debugfile
+     * for more information.
+     */
+    char *root_prefix;
+
     ADDR base;
     ADDR start;
     ADDR end;

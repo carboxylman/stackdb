@@ -204,8 +204,9 @@ int binfile_cache_clean(void) {
     return retval;
 }
 
-struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
-						GHashTable *config) {
+struct binfile_instance *binfile_infer_instance(char *filename,
+						char *root_prefix,
+						ADDR base,GHashTable *config) {
     struct binfile *bf;
     struct binfile_instance *bfi;
 
@@ -213,7 +214,7 @@ struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
      * We cache a shareable version of the binfile, and then create the
      * private, per-instance copy with the next call.
      */
-    if (!(bf = binfile_open(filename,NULL))) {
+    if (!(bf = binfile_open(filename,root_prefix,NULL))) {
 	verror("could not build instance from %s!\n",filename);
 	return NULL;
     }
@@ -226,7 +227,8 @@ struct binfile_instance *binfile_infer_instance(char *filename,ADDR base,
     return bfi;
 }
 
-struct binfile *binfile_open__int(char *filename,struct binfile_instance *bfinst) {
+struct binfile *binfile_open__int(char *filename,char *root_prefix,
+				  struct binfile_instance *bfinst) {
     struct binfile *retval = NULL;
     struct binfile_ops **ops;
 
@@ -234,7 +236,7 @@ struct binfile *binfile_open__int(char *filename,struct binfile_instance *bfinst
 	vdebug(2,LA_DEBUG,LF_BFILE,
 	       "using %s backend (from instance) for file %s\n",
 	       bfinst->ops->get_backend_name(),filename);
-	return bfinst->ops->open(filename,bfinst);
+	return bfinst->ops->open(filename,root_prefix,bfinst);
     }
     else if ((retval = binfile_lookup(filename))) {
 	return retval;
@@ -244,7 +246,7 @@ struct binfile *binfile_open__int(char *filename,struct binfile_instance *bfinst
     while (*ops) {
 	vdebug(2,LA_DEBUG,LF_BFILE,"trying %s backend for file %s\n",
 	       (*ops)->get_backend_name(),filename);
-	retval = (*ops)->open(filename,bfinst);
+	retval = (*ops)->open(filename,root_prefix,bfinst);
 	if (retval) {
 	    if (!retval->instance) {
 		binfile_cache(retval);
@@ -257,10 +259,11 @@ struct binfile *binfile_open__int(char *filename,struct binfile_instance *bfinst
     return NULL;
 }
 
-struct binfile *binfile_open(char *filename,struct binfile_instance *bfinst) {
+struct binfile *binfile_open(char *filename,char *root_prefix,
+			     struct binfile_instance *bfinst) {
     struct binfile *retval;
 
-    retval = binfile_open__int(filename,bfinst);
+    retval = binfile_open__int(filename,root_prefix,bfinst);
     if (retval)
 	RHOLD(retval,retval);
 

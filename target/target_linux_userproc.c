@@ -671,7 +671,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
 	return NULL;
     main_exe[rc] = '\0';
 
-    if (!(binfile = binfile_open__int(pbuf,NULL))) {
+    if (!(binfile = binfile_open__int(pbuf,spec->debugfile_root_prefix,NULL))) {
 	verror("binfile_open %s: %s\n",pbuf,strerror(errno));
 	return NULL;
     }
@@ -821,7 +821,8 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
      * memory.  If it's static, we look for another (much simpler)
      * sequence.
      */
-    if (!(binfile = binfile_open__int(filename,NULL))) {
+    binfile = binfile_open__int(filename,spec->debugfile_root_prefix,NULL);
+    if (!binfile) {
 	verror("binfile_open %s: %s\n",filename,strerror(errno));
 	return NULL;
     }
@@ -2778,6 +2779,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 	return -1;
 
     debugfile = debugfile_from_file(region->name,
+				    target->spec->debugfile_root_prefix,
 				    target->spec->debugfile_load_opts_list);
     if (!debugfile)
 	goto out;

@@ -48,7 +48,7 @@
 
 
 static const char *elf_binfile_get_backend_name(void);
-static struct binfile *elf_binfile_open(char *filename,
+static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 					struct binfile_instance *bfinst);
 static struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
 						  struct binfile_instance *bfinst,
@@ -246,8 +246,13 @@ struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
 
     if (bfelf->buildid) {
 	for (i = 0; DFPATH[i]; ++i) {
-	    snprintf(pbuf,PATH_MAX,"%s/.build-id/%02hhx/%s.debug",
-		     DFPATH[i],*bfelf->buildid,(char *)(bfelf->buildid+1));
+	    if (binfile->root_prefix)
+		snprintf(pbuf,PATH_MAX,"%s/%s/.build-id/%02hhx/%s.debug",
+			 binfile->root_prefix,DFPATH[i],*bfelf->buildid,
+			 (char *)(bfelf->buildid+1));
+	    else 
+		snprintf(pbuf,PATH_MAX,"%s/.build-id/%02hhx/%s.debug",
+			 DFPATH[i],*bfelf->buildid,(char *)(bfelf->buildid+1));
 	    if (stat(pbuf,&stbuf) == 0) {
 		finalfile = pbuf;
 		break;
@@ -264,8 +269,13 @@ struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
 	if (tmp)
 	    *tmp = '\0';
 	for (i = 0; DFPATH[i]; ++i) {
-	    snprintf(pbuf,PATH_MAX,"%s/%s/%s",
-		     DFPATH[i],filedir,bfelf->gnu_debuglinkfile);
+	    if (binfile->root_prefix)
+		snprintf(pbuf,PATH_MAX,"%s/%s/%s/%s",
+			 binfile->root_prefix,DFPATH[i],filedir,
+			 bfelf->gnu_debuglinkfile);
+	    else
+		snprintf(pbuf,PATH_MAX,"%s/%s/%s",
+			 DFPATH[i],filedir,bfelf->gnu_debuglinkfile);
 	    if (stat(pbuf,&stbuf) == 0) {
 		finalfile = pbuf;
 		break;
@@ -284,7 +294,7 @@ struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
     /*
      * Open the file!
      */
-    return binfile_open__int(finalfile,bfinst);
+    return binfile_open__int(finalfile,binfile->root_prefix,bfinst);
 }
 
 static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfile,
@@ -334,6 +344,8 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     bfielf = calloc(1,sizeof(*bfielf));
 
     bfi->filename = strdup(binfile->filename);
+    if (binfile->root_prefix) 
+	bfi->root_prefix = strdup(binfile->root_prefix);
     bfi->base = base;
     bfi->ops = binfile->ops;
     bfi->priv = bfielf;
@@ -518,7 +530,7 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     return bfi;
 }
 
-static struct binfile *elf_binfile_open(char *filename,
+static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 					struct binfile_instance *bfinst) {
     struct binfile *bf = NULL;
     struct binfile_elf *bfelf = NULL;
@@ -592,6 +604,14 @@ static struct binfile *elf_binfile_open(char *filename,
     bf = binfile_create(filename,&elf_binfile_ops,bfelf);
     if (!bf) 
 	goto errout;
+
+    if (root_prefix) {
+	bf->root_prefix = strdup(root_prefix);
+	if (strstr(filename,root_prefix) != filename) {
+	    vwarn("BUG: filename '%s' does not start with root_prefix '%s'!\n",
+		  filename,root_prefix);
+	}
+    }
 
     if (bfinst)
 	bfelfinst = (struct binfile_instance_elf *)bfinst->priv;

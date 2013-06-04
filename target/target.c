@@ -100,6 +100,8 @@ struct argp_option target_argp_opts[] = {
     { "out-file",'O',"FILE",0,"Log stdout (if avail) to FILE.",-4 },
     { "err-file",'E',"FILE",0,"Log stderr (if avail) to FILE.",-4 },
     { "kill-on-close",'k',NULL,0,"Destroy target on close (SIGKILL).",-4 },
+    { "debugfile-root-prefix",'R',"DIR",0,
+      "Set an alternate root prefix for debuginfo and binfile resolution.",0 },
     { 0,0,0,0,0,0 }
 };
 
@@ -162,6 +164,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	ac += 2;
     if (spec->kill_on_close) 
 	ac += 1;
+    if (spec->debugfile_root_prefix)
+	ac += 2;
 
     ac += backend_argc;
     ac += 1;
@@ -209,6 +213,10 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
     }
     if (spec->kill_on_close) {
 	av[j++] = strdup("-k");
+    }
+    if (spec->debugfile_root_prefix) {
+	av[j++] = strdup("-R");
+	av[j++] = strdup(spec->debugfile_root_prefix);
     }
 
     for (i = 0; i < backend_argc; ++i) 
@@ -460,6 +468,9 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'k':
 	spec->kill_on_close = 1;
+	break;
+    case 'R':
+	spec->debugfile_root_prefix = strdup(arg);
 	break;
 
     default:

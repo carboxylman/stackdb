@@ -25,7 +25,8 @@ int binfile_uncache(struct binfile *binfile);
 /*
  * Internal versions; do not hold a ref to their return values!
  */
-struct binfile *binfile_open__int(char *filename,struct binfile_instance *bfinst);
+struct binfile *binfile_open__int(char *filename,char *root_prefix,
+				  struct binfile_instance *bfinst);
 struct binfile *binfile_open_debuginfo__int(struct binfile *binfile,
 					    struct binfile_instance *bfinst,
 					    const char *DFPATH[]);

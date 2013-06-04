@@ -1752,7 +1752,7 @@ static int _debugfile_filename_info(char *filename,char **realfilename,
  *  3)  We have a binfile; just load debuginfo from that file, or from
  *      the file that that binfile points to.
  */
-struct debugfile *debugfile_from_file(char *filename,
+struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 				      struct array_list *debugfile_load_opts_list) {
     char *realname = filename;
     struct debugfile_load_opts *opts = NULL;
@@ -1776,10 +1776,21 @@ struct debugfile *debugfile_from_file(char *filename,
     }
     else if ((debugfile = (struct debugfile *)			\
 	      g_hash_table_lookup(debugfile_tab,realname))) {
-	vdebug(2,LA_DEBUG,LF_DFILE,"reusing debugfile %s (%s)\n",
-	       debugfile->filename,filename);
-	RHOLD(debugfile,debugfile);
-	goto out;
+	if ((root_prefix == NULL && debugfile->binfile->root_prefix == NULL)
+	    || (root_prefix != NULL 
+		&& debugfile->binfile->root_prefix != NULL
+		&& strcmp(root_prefix,debugfile->binfile->root_prefix) == 0)) {
+	    vdebug(2,LA_DEBUG,LF_DFILE,"reusing debugfile %s (%s)\n",
+		   debugfile->filename,filename);
+	    RHOLD(debugfile,debugfile);
+	    goto out;
+	}
+	else
+	    /*
+	     * Cannot used cached copy; we need to load from a special
+	     * @root_prefix dir.
+	     */
+	    debugfile = NULL;
     }
 
     /*
@@ -1790,7 +1801,7 @@ struct debugfile *debugfile_from_file(char *filename,
      * Also make sure to use our __int() calls so that they don't take
      * refs to those binfiles needlessly.
      */
-    binfile = binfile_open__int(realname,NULL);
+    binfile = binfile_open__int(realname,root_prefix,NULL);
     if (!binfile)
 	goto errout;
     binfile_debuginfo = binfile_open_debuginfo__int(binfile,NULL,DEBUGPATHS);
@@ -1863,7 +1874,7 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
      * Load realname.  Then ask it to load a binfile with its debuginfo;
      * might be the same binfile.
      */
-    binfile = binfile_open__int(realname,bfinst);
+    binfile = binfile_open__int(realname,bfinst->root_prefix,bfinst);
     if (!binfile)
 	goto errout;
     binfile_debuginfo = binfile_open_debuginfo__int(binfile,bfinst,DEBUGPATHS);
