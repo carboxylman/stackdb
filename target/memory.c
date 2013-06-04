@@ -91,7 +91,7 @@ struct memregion *addrspace_find_region(struct addrspace *space,char *name) {
     struct memregion *region;
 
     list_for_each_entry(region,&space->regions,region) {
-	if (strcmp(name,region->name) == 0)
+	if (region->name && strcmp(name,region->name) == 0)
 	    goto out;
     }
     return NULL;
@@ -187,7 +187,7 @@ struct memregion *memregion_create(struct addrspace *space,
 				   region_type_t type,char *name) {
     struct memregion *retval;
 
-    retval = (struct memregion *)malloc(sizeof(*retval));
+    retval = (struct memregion *)calloc(1,sizeof(*retval));
     if (!retval) 
 	return NULL;
 
