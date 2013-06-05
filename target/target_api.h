@@ -845,7 +845,8 @@ int target_resolve_symbol_base(struct target *target,tid_t tid,
 ADDR target_addressof_symbol(struct target *target,tid_t tid,
 			      struct bsymbol *bsymbol,load_flags_t flags,
 			      struct memrange **range_saveptr);
-
+OFFSET target_offsetof_symbol(struct target *target,struct bsymbol *bsymbol,
+			      char *member,const char *delim);
 struct value *target_load_symbol(struct target *target,tid_t tid,
 				 struct bsymbol *bsymbol,load_flags_t flags);
 /*
