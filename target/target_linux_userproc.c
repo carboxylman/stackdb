@@ -811,7 +811,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	 * We cannot have a NULL argv; just handle it here.
 	 */
 	argv_default[0] = filename;
-	argv = &argv_default;
+	argv = argv_default;
     }
 
     /*
