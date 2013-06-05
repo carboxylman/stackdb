@@ -1014,6 +1014,115 @@ void value_free(struct value *value);
 void value_dump(struct value *value,struct dump_info *ud);
 
 /**
+ ** Value macros.
+ **/
+/*
+ * Load a value.  If @invalue is specified, load @varstr as a member.
+ * If @invalue is not specified, lookup @varstr on @target as a symbol,
+ * and load it!  Load with @loadflags.  If @outvarptr is specified, copy
+ * the raw value's bytes into it -- if sizeof(*@outvarptr) < value->buflen 
+ * (poor man's C type "equivalence" check).  If @outvalueptr is not
+ * NULL, save the loaded struct value into *@outvalueptr and don't free
+ * it (otherwise it is freed).
+
+ * (NB: initially we had supported this (If *@outvalueptr == @invalue,
+ * value_free(*@outvalueptr) first!), but not now -- it is not good.)
+ *
+ * This encapsulates the common ways we use VMI to load values, and
+ * saves the user a lot of code.
+ */
+#define VL(target,invalue,varstr,loadflags,outvalueptr,errlabel)	\
+    do {								\
+	struct value *_outvalue;					\
+									\
+	if ((invalue) != NULL) {					\
+	    _outvalue = target_load_value_member((target),(invalue),(varstr), \
+						 NULL,(loadflags));	\
+	}								\
+	else { 								\
+	    struct bsymbol *_varsym;					\
+	    _varsym = target_lookup_sym((target),(varstr),NULL,NULL,	\
+					SYMBOL_TYPE_VAR);		\
+	    if (!_varsym) {						\
+		goto errlabel;						\
+	    }								\
+	    _outvalue = target_load_symbol((target),TID_GLOBAL,_varsym, \
+					   (loadflags));		\
+	    bsymbol_release(_varsym);					\
+	}								\
+	if (!_outvalue)							\
+	    goto errlabel;						\
+	if (outvalueptr) {						\
+	    if (0 && *(struct value **)(outvalueptr) == invalue) {	\
+		value_free(*(struct value **)(outvalueptr));		\
+	    }								\
+	    *(struct value **)(outvalueptr) = _outvalue;		\
+	}								\
+	else {								\
+	    value_free(_outvalue);					\
+	}								\
+    } while (0);
+#define VLV(target,invalue,varstr,loadflags,outvarptr,outvalueptr,errlabel) \
+    do {								\
+	struct value *_outvalue;					\
+									\
+	if ((invalue) != NULL) {					\
+	    _outvalue = target_load_value_member((target),(invalue),(varstr), \
+						 NULL,(loadflags));	\
+	}								\
+	else { 								\
+	    struct bsymbol *_varsym;					\
+	    _varsym = target_lookup_sym((target),(varstr),NULL,NULL,	\
+					SYMBOL_TYPE_VAR);		\
+	    if (!_varsym) {						\
+		goto errlabel;						\
+	    }								\
+	    _outvalue = target_load_symbol((target),TID_GLOBAL,_varsym, \
+					   (loadflags));		\
+	    bsymbol_release(_varsym);					\
+	}								\
+	if (!_outvalue)							\
+	    goto errlabel;						\
+	if (outvarptr) {						\
+	    if ((int)sizeof(*(outvarptr)) < _outvalue->bufsiz) {	\
+		verror("outvar size %d smaller than outvalue len %d", \
+		       sizeof(*(outvarptr)),_outvalue->bufsiz);		\
+		value_free(_outvalue);					\
+		goto errlabel;						\
+	    }								\
+	    memcpy(outvarptr,_outvalue->buf,sizeof(*(outvarptr)));	\
+	}								\
+	if (outvalueptr) {						\
+	    if (0 && *(struct value **)(outvalueptr) == invalue) {	\
+		value_free(*(struct value **)(outvalueptr));		\
+	    }								\
+	    *(struct value **)(outvalueptr) = _outvalue;		\
+	}								\
+	else {								\
+	    value_free(_outvalue);					\
+	}								\
+    } while (0);
+#define VLA(target,addr,loadflags,outbufptr,outbuflen,outvalueptr,errlabel) \
+    do {								\
+	struct value *_outvalue;					\
+									\
+	_outvalue = target_load_addr_real((target),(addr),(loadflags),	\
+					  outbuflen);			\
+	if (!_outvalue)							\
+	    goto errlabel;						\
+	if (!*outbufptr) {						\
+	    *outbufptr = malloc(outbuflen);				\
+	}								\
+	memcpy(*outbufptr,_outvalue->buf,outbuflen);			\
+	if (outvalueptr) {						\
+	    *(struct value **)(outvalueptr) = _outvalue;		\
+	}								\
+	else {								\
+	    value_free(_outvalue);					\
+	}								\
+    } while (0);
+
+/**
  ** Quick value converters
  **/
 signed char      v_c(struct value *v);
