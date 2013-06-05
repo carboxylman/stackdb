@@ -131,7 +131,7 @@ static char *log_flag_stringmap_debug[] = {
 };
 static char *log_flag_stringmap_target[] = { 
     "TARGET","SPACE","REGION","LOOKUP","LOC","OTHER","SYMBOL",
-    "LUP","XV","DISASM","THREAD",NULL
+    "LUP","XV","XVP","DISASM","THREAD",NULL
 };
 static char *log_flag_stringmap_probe[] = { 
     "PROBE","PROBEPOINT","ACTION",NULL

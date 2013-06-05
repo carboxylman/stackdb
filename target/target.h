@@ -88,8 +88,8 @@ extern char *REGION_TYPE_STRINGS[];
 /**
  ** Target functions.
  **/
-struct target *target_create(char *type,void *state,struct target_ops *ops,
-			     struct target_spec *spec,int id);
+struct target_ops *target_get_ops(target_type_t target_type);
+struct target *target_create(char *type,struct target_spec *spec);
 struct mmap_entry *target_lookup_mmap_entry(struct target *target,
 					    ADDR base_addr);
 void target_attach_mmap_entry(struct target *target,

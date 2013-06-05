@@ -141,6 +141,7 @@ typedef enum {
     TARGET_TYPE_NONE   = 0,
     TARGET_TYPE_PTRACE = 1 << 0,
     TARGET_TYPE_XEN    = 1 << 1,
+    TARGET_TYPE_XEN_PROCESS = 1 << 2,
 } target_type_t;
 
 typedef enum {
@@ -509,6 +510,19 @@ int target_kill(struct target *target,int sig);
  * Frees a target.
  */
 void target_free(struct target *target);
+
+/*
+ * Overlay support.
+ */
+struct array_list *target_list_available_overlay_tids(struct target *target,
+						      target_type_t type);
+struct array_list *target_list_overlays(struct target *target);
+tid_t target_lookup_overlay_thread_by_id(struct target *target,int id);
+tid_t target_lookup_overlay_thread_by_name(struct target *target,char *name);
+struct target *target_instantiate_overlay(struct target *target,tid_t tid,
+					  struct target_spec *spec);
+target_status_t target_notify_overlay(struct target *overlay,tid_t tid,ADDR ipval,
+				      int *again);
 
 /*
  * Returns the probe attached to this target with ID @probe_id, if any.
@@ -1593,6 +1607,20 @@ struct target {
      */
     struct binfile *binfile;
 
+    /*
+     * If this is an overlay, this is the underlying "base" target info.
+     */
+    struct target *base;
+    struct target_thread *base_thread;
+    int base_id;
+    tid_t base_tid;
+
+    /*
+     * Any live overlay targets are placed here.  There can only be a
+     * single overlay per thread, at the moment.
+     */
+    GHashTable *overlays;
+
     GHashTable *threads;
     /*
      * For single-threaded targets, this will always be the global
@@ -1635,6 +1663,12 @@ struct target {
      * even though the thread is no longer running.
      */
     struct target_thread *sstep_thread;
+    /*
+     * Also, if the overlay target uses the underlay's single step
+     * mechanism, provide a place to mark that it did, so that the
+     * overlay can handle the resulting single steps if it needs to.
+     */
+    struct target *sstep_thread_overlay;
 
     GHashTable *soft_probepoints;
 
@@ -1737,6 +1771,30 @@ struct target_ops {
      */
     int (*postloadinit)(struct target *target);
 
+    /*
+     * "Underlay" targets (that support overlays) must define these
+     * functions.
+     */
+    /*
+     * Returns an array_list of tid_t values filtered by the given
+     * @target_type .
+     */
+    struct array_list *(*list_available_overlay_tids)(struct target *target,
+						      target_type_t type);
+    struct target *(*instantiate_overlay)(struct target *target,
+					  struct target_thread *tthread,
+					  struct target_spec *spec);
+    struct target_thread *(*lookup_overlay_thread_by_id)(struct target *target,
+							 int id);
+    struct target_thread *(*lookup_overlay_thread_by_name)(struct target *target,
+							   char *name);
+    /*
+     * Overlay targets must support this if their exceptions come from
+     * the underlying target.
+     */
+    target_status_t (*overlay_event)(struct target *overlay,tid_t tid,
+				     ADDR ipval,int *again);
+
     /* get target status. */
     target_status_t (*status)(struct target *target);
     /* pause a target */
@@ -1809,8 +1867,10 @@ struct target_ops {
     int (*enable_hw_breakpoint)(struct target *target,tid_t tid,REG dreg);
     int (*notify_sw_breakpoint)(struct target *target,ADDR addr,
 				int notification);
-    int (*singlestep)(struct target *target,tid_t tid,int isbp);
-    int (*singlestep_end)(struct target *target,tid_t tid);
+    int (*singlestep)(struct target *target,tid_t tid,int isbp,
+		      struct target *overlay);
+    int (*singlestep_end)(struct target *target,tid_t tid,
+			  struct target *overlay);
 
     /* Instruction-specific stuff for stepping. */
     /*

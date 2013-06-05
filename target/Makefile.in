@@ -64,10 +64,12 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo probe.lo probe_lib.lo target_linux_userproc.lo
 ifeq ($(ENABLE_XENACCESS),"1")
-	OBJECTS += target_xen_vm.lo target_xen_vm_util.lo
+	OBJECTS += target_xen_vm.lo target_xen_vm_util.lo \
+		target_xen_vm_process.lo
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
-	OBJECTS += target_xen_vm.lo target_xen_vm_util.lo
+	OBJECTS += target_xen_vm.lo target_xen_vm_util.lo \
+		target_xen_vm_process.lo
 endif
 ifeq ($(ENABLE_DISTORM),"1")
 	OBJECTS += disasm.lo

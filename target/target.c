@@ -25,6 +25,7 @@
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
+#include "target_xen_vm_process.h"
 #endif
 
 #include <glib.h>
@@ -91,6 +92,12 @@ struct argp_option target_argp_opts[] = {
     { "debug",'d',"LEVEL",0,"Set/increase the debugging level.",-3 },
     { "log-flags",'l',"FLAG,FLAG,...",0,"Set the debugging flags",-3 },
     { "warn",'w',"LEVEL",0,"Set/increase the warning level.",-3 },
+    { "target-type",'t',"TYPENAME",0,
+      "Forcibly set the target type (ptrace"
+#ifdef ENABLE_XENSUPPORT
+      ",xen,xen-process"
+#endif
+      ").",-3 },
     { "start-paused",'P',0,0,"Leave target paused after launch.",-3 },
     { "soft-breakpoints",'s',0,0,"Force software breakpoints.",-3 },
     { "debugfile-load-opts",'F',"LOAD-OPTS",0,"Add a set of debugfile load options.",-3 },
@@ -369,6 +376,7 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     char *argcopy;
     struct debugfile_load_opts *opts;
     int i;
+    target_type_t tmptype;
 
     if (tstate)
 	spec = tstate->spec;
@@ -396,6 +404,43 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	}
 	return 0;
 
+    case 't':
+	/*
+	 * If the child parser already autoselect a type based on prior
+	 * args, error!
+	 */
+	if (strcmp(arg,"ptrace") == 0)
+	    tmptype = TARGET_TYPE_PTRACE;
+#ifdef ENABLE_XENSUPPORT
+	else if (strcmp(arg,"xen-process") == 0) 
+	    tmptype = TARGET_TYPE_XEN_PROCESS;
+	else if (strcmp(arg,"xen") == 0) 
+	    tmptype = TARGET_TYPE_XEN;
+#endif
+	else {
+	    verror("bad target type %s!\n",arg);
+	    return EINVAL;
+	}
+
+	if (spec->target_type != TARGET_TYPE_NONE
+	    && spec->target_type != tmptype) {
+	    verror("target type already inferred or set; cannot set type %s!\n",
+		   arg);
+	    return EINVAL;
+	}
+	else if (spec->target_type == TARGET_TYPE_NONE) {
+	    spec->target_type = tmptype;
+	    if (tmptype == TARGET_TYPE_PTRACE)
+		spec->backend_spec = linux_userproc_build_spec();
+#ifdef ENABLE_XENSUPPORT
+	    else if (strcmp(arg,"xen-process") == 0) 
+		spec->backend_spec = xen_vm_process_build_spec();
+	    else if (strcmp(arg,"xen") == 0) 
+		spec->backend_spec = xen_vm_build_spec();
+#endif
+	}
+
+	break;
     case 'd':
 	if (arg) {
 	    vmi_inc_log_level();
@@ -529,6 +574,10 @@ void target_free(struct target *target) {
     struct probe *probe;
     struct array_list *list;
     REFCNT trefcnt;
+    GHashTableIter iter;
+    struct target *overlay;
+    char *tmpname;
+    struct target_thread *tthread;
 
     vdebug(5,LA_TARGET,LF_TARGET,"freeing target(%s)\n",target->name);
 
@@ -566,6 +615,41 @@ void target_free(struct target *target) {
     array_list_free(list);
 
     g_hash_table_destroy(target->soft_probepoints);
+
+    /* Do it for all the overlays first. */
+    g_hash_table_iter_init(&iter,target->overlays);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay)) {
+	tmpname = strdup(target->name);
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "freeing overlay target(%s)\n",tmpname);
+	target_free(overlay);
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "freed overlay target(%s)\n",tmpname);
+	free(tmpname);
+    }
+    g_hash_table_destroy(target->overlays);
+
+    /*
+     * If the target backend didn't already do it, 
+     * delete all the threads except the global thread (which we remove 
+     * manually because targets are allowed to "reuse" one of their real
+     * threads as the "global" thread.
+     */
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread) {
+	    g_hash_table_iter_remove(&iter);
+	}
+	else {
+	    target_delete_thread(target,tthread,1);
+	    g_hash_table_iter_remove(&iter);
+	}
+    }
+    if (target->global_thread)
+	target_delete_thread(target,target->global_thread,0);
+
+    /* Target should not mess with these after close! */
+    target->global_thread = NULL;
 
     g_hash_table_destroy(target->threads);
 
@@ -606,19 +690,40 @@ void ghash_mmap_entry_free(gpointer data) {
     free(mme);
 }
 
-struct target *target_create(char *type,void *state,struct target_ops *ops,
-			     struct target_spec *spec,int id) {
-    struct target *retval = malloc(sizeof(struct target));
-    memset(retval,0,sizeof(struct target));
+struct target_ops *target_get_ops(target_type_t target_type) {
+    if (target_type == TARGET_TYPE_PTRACE) 
+	return &linux_userspace_process_ops;
+#ifdef ENABLE_XENSUPPORT
+    else if (target_type == TARGET_TYPE_XEN)
+	return &xen_vm_ops;
+    else if (target_type == TARGET_TYPE_XEN_PROCESS)
+	return &xen_vm_process_ops;
+#endif
+    else
+	return NULL;
+}
 
-    if (id < 0)
+struct target *target_create(char *type,struct target_spec *spec) {
+    struct target_ops *ops;
+    struct target *retval;
+
+    ops = target_get_ops(spec->target_type);
+    if (!ops) {
+	verror("could not find target_ops for target type %d!\n",
+	       spec->target_type);
+	errno = EINVAL;
+	return NULL;
+    }
+
+    retval = calloc(1,sizeof(*retval));
+
+    if (spec->target_id < 0)
 	retval->id = next_target_id++;
     else
-	retval->id = id;
+	retval->id = spec->target_id;
 
     retval->state_changes = array_list_create(0);
 
-    retval->state = state;
     retval->ops = ops;
     retval->spec = spec;
 
@@ -633,6 +738,9 @@ struct target *target_create(char *type,void *state,struct target_ops *ops,
 					  NULL,ghash_mmap_entry_free);
 
     retval->code_ranges = clrange_create();
+
+    retval->overlays = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					     NULL,NULL);
 
     retval->threads = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 					    /* No names to free! */
@@ -2858,6 +2966,15 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
 
     target_detach_thread(target,tthread);
 
+    /*
+     * Once we're done with the underlying target, tell it the overlay
+     * is gone!
+     */
+    if (target->base) {
+	g_hash_table_remove(target->base->overlays,
+			    (gpointer)(uintptr_t)tthread->tid);
+    }
+
     array_list_free(tthread->tpc_stack);
     tthread->tpc_stack = NULL;
 
@@ -2899,6 +3016,16 @@ int target_invalidate_thread(struct target *target,
 	vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);
 
     return 0;
+}
+
+target_status_t target_notify_overlay(struct target *overlay,tid_t tid,ADDR ipval,
+				      int *again) {
+    return overlay->ops->overlay_event(overlay,tid,ipval,again);
+}
+
+struct target *target_lookup_overlay(struct target *target,tid_t tid) {
+    return (struct target *) \
+	g_hash_table_lookup(target->overlays,(gpointer)(uintptr_t)tid);
 }
 
 int target_attach_probe(struct target *target,struct target_thread *thread,

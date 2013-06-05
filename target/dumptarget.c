@@ -43,6 +43,7 @@
 #include "alist.h"
 
 struct target *t = NULL;
+struct target *ot = NULL;
 
 int len = 0;
 struct bsymbol **symbols = NULL;
@@ -72,11 +73,14 @@ struct dt_argp_state {
     int do_post;
     int argc;
     char **argv;
+    char *overlay_name_or_id;
+    struct target_spec *overlay_spec;
 };
 
 error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state);
 
 struct argp_option dt_argp_opts[] = {
+    { "overlay",'O',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All dumptarget options then apply to the overlay.",0 },
     { "at-symbol",'A',"SYMBOL",0,"Wait for a probe on this symbol/address to be hit before inserting all the other probes.",0 },
     { "until-symbol",'U',"SYMBOL",0,"Remove all probes once a probe on this symbol/address is hit.",0 },
     { "bts",'B',0,0,"Enable BTS (if XenTT) (starting at at-symbol if one was provided; otherwise, enable immediately).",0 },
@@ -120,6 +124,12 @@ void cleanup() {
     cleaning = 1;
 
     cleanup_probes();
+
+    if (ot) {
+	target_close(ot);
+	target_free(ot);
+	ot = NULL;
+    }
 
     target_close(t);
     target_free(t);
@@ -257,13 +267,13 @@ result_t retaddr_save(struct probe *probe,void *handler_data,
     REGVAL sp;
     REGVAL ip;
     ADDR *retaddr;
-    tid_t tid = target_gettid(t);
+    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
 
     errno = 0;
-    sp = target_read_reg(t,tid,t->spregno);
+    sp = target_read_reg(probe->target,tid,probe->target->spregno);
     if (errno) {
 	fprintf(stderr,"Could not read SP in retaddr_save!\n");
 	return RESULT_SUCCESS;
@@ -300,7 +310,7 @@ result_t retaddr_save(struct probe *probe,void *handler_data,
 
 #ifdef ENABLE_XENSUPPORT
 	if (target_type(t) == TARGET_TYPE_XEN) {
-	    struct value *value = linux_load_current_task(t);
+	    struct value *value = linux_load_current_task(t,0);
 	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
 	    value_free(value);
 	}
@@ -320,7 +330,7 @@ result_t retaddr_save(struct probe *probe,void *handler_data,
 	
 #ifdef ENABLE_XENSUPPORT
 	if (target_type(t) == TARGET_TYPE_XEN) {
-	    struct value *value = linux_load_current_task(t);
+	    struct value *value = linux_load_current_task(t,0);
 	    fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
 	    value_free(value);
 	}
@@ -349,7 +359,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
     REGVAL sp;
     ADDR newretaddr;
     ADDR *oldretaddr = NULL;
-    tid_t tid = target_gettid(t);
+    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
@@ -363,7 +373,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
     }
 
     errno = 0;
-    sp = target_read_reg(t,tid,t->spregno);
+    sp = target_read_reg(probe->target,tid,probe->target->spregno);
     if (errno) {
 	fprintf(stderr,"Could not read SP in retaddr_check!\n");
 	return RESULT_SUCCESS;
@@ -371,7 +381,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
 
     oldretaddr = (ADDR *)array_list_remove(shadow_stack);
 
-    if (!target_read_addr(t,(ADDR)sp,sizeof(ADDR),
+    if (!target_read_addr(probe->target,(ADDR)sp,sizeof(ADDR),
 			  (unsigned char *)&newretaddr)) {
 	fprintf(stderr,"Could not read top of stack in retaddr_check!\n");
 	free(oldretaddr);
@@ -398,9 +408,9 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
     }
 
 #ifdef ENABLE_XENSUPPORT
-    if (target_type(t) == TARGET_TYPE_XEN) {
-	struct value *value = linux_load_current_task(t);
-	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(t,value));
+    if (target_type(probe->target) == TARGET_TYPE_XEN) {
+	struct value *value = linux_load_current_task(probe->target,0);
+	fprintf(stdout,"  (pid = %d)\n",linux_get_task_pid(probe->target,value));
 	value_free(value);
     }
     fflush(stderr);
@@ -408,7 +418,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
 #endif
 
     if (doit) {
-	if (!target_write_addr(t,(ADDR)sp,sizeof(ADDR),
+	if (!target_write_addr(probe->target,(ADDR)sp,sizeof(ADDR),
 			       (unsigned char *)oldretaddr)) {
 	    fprintf(stderr,"Could not reset top of stack in retaddr_check!\n");
 	    free(oldretaddr);
@@ -430,7 +440,7 @@ result_t at_handler(struct probe *probe,void *handler_data,
 		    struct probe *trigger) {
     ADDR probeaddr;
     struct probepoint *probepoint;
-    tid_t tid = target_gettid(t);
+    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
@@ -458,7 +468,7 @@ result_t until_handler(struct probe *probe,void *handler_data,
 		       struct probe *trigger) {
     ADDR probeaddr;
     struct probepoint *probepoint;
-    tid_t tid = target_gettid(t);
+    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
@@ -488,7 +498,7 @@ result_t function_dump_args(struct probe *probe,void *handler_data,
     int j;
     ADDR probeaddr;
     struct probepoint *probepoint;
-    tid_t tid = target_gettid(t);
+    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
@@ -502,8 +512,8 @@ result_t function_dump_args(struct probe *probe,void *handler_data,
 	probepoint = probe->probepoint;
     }
 
-    //struct bsymbol *bsymbol = target_lookup_sym_addr(t,probeaddr);
-    //ip = target_read_reg(t,t->ipregno);
+    //struct bsymbol *bsymbol = target_lookup_sym_addr(probe->target,probeaddr);
+    //ip = target_read_reg(probe->target,probe->target->ipregno);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") (thread %"PRIiTID") ",
 	    probe->bsymbol->lsymbol->symbol->name,probeaddr,tid);
@@ -518,7 +528,7 @@ result_t function_dump_args(struct probe *probe,void *handler_data,
 	for (i = 0; i < array_list_len(args); ++i) {
 	    arg = (struct lsymbol *)array_list_item(args,i);
 	    bs = bsymbol_create(arg,probe->bsymbol->region);
-	    if ((value = target_load_symbol(t,tid,bs,
+	    if ((value = target_load_symbol(probe->target,tid,bs,
 					    LOAD_FLAG_AUTO_DEREF | 
 					    LOAD_FLAG_AUTO_STRING |
 					    LOAD_FLAG_NO_CHECK_VISIBILITY |
@@ -592,7 +602,7 @@ result_t addr_code_pre(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    tid = target_gettid(t);
+    tid = target_gettid(probe->target);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") (pre)\n",
 	    probe_name(probe),probe_addr(probe));
@@ -610,7 +620,7 @@ result_t addr_code_post(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    tid = target_gettid(t);
+    tid = target_gettid(probe->target);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") (post)\n",
 	    probe_name(probe),probe_addr(probe));
@@ -629,7 +639,7 @@ result_t addr_var_pre(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    tid = target_gettid(t);
+    tid = target_gettid(probe->target);
 
     target_read_addr(probe->target,probe_addr(probe),4,(unsigned char *)&word);
 
@@ -650,7 +660,7 @@ result_t addr_var_post(struct probe *probe,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
-    tid = target_gettid(t);
+    tid = target_gettid(probe->target);
 
     target_read_addr(probe->target,probe_addr(probe),4,(unsigned char *)&word);
 
@@ -668,12 +678,12 @@ result_t var_pre(struct probe *probe,void *handler_data,
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
-    tid_t tid = target_gettid(t);
+    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
 
-    if ((value = target_load_symbol(t,tid,bsymbol,
+    if ((value = target_load_symbol(probe->target,tid,bsymbol,
 				    LOAD_FLAG_AUTO_DEREF | 
 				    LOAD_FLAG_AUTO_STRING |
 				    LOAD_FLAG_NO_CHECK_VISIBILITY |
@@ -713,12 +723,12 @@ result_t var_post(struct probe *probe,void *handler_data,
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
-    tid_t tid = target_gettid(t);
+    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
 
-    if ((value = target_load_symbol(t,tid,bsymbol,
+    if ((value = target_load_symbol(probe->target,tid,bsymbol,
 				    LOAD_FLAG_AUTO_DEREF | 
 				    LOAD_FLAG_AUTO_STRING |
 				    LOAD_FLAG_NO_CHECK_VISIBILITY |
@@ -755,12 +765,12 @@ result_t var_post(struct probe *probe,void *handler_data,
 result_t ss_handler(struct action *action,struct target_thread *thread,
 		    struct probe *probe,struct probepoint *probepoint,
 		    handler_msg_t msg,int msg_detail,void *handler_data) {
-    tid_t tid = target_gettid(t);
-    REGVAL ipval = target_read_reg(t,tid,t->ipregno);
-    struct bsymbol *func = target_lookup_sym_addr(t,ipval);
+    tid_t tid = target_gettid(probe->target);
+    REGVAL ipval = target_read_reg(probe->target,tid,probe->target->ipregno);
+    struct bsymbol *func = target_lookup_sym_addr(probe->target,ipval);
     ADDR func_phys_base = 0;
     if (func)
-	target_resolve_symbol_base(t,tid,func,&func_phys_base,NULL);
+	target_resolve_symbol_base(probe->target,tid,func,&func_phys_base,NULL);
 
     if (func) {
 	fprintf(stdout,"Single step %d (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR" (%s:+%d)!\n",
@@ -781,6 +791,13 @@ result_t ss_handler(struct action *action,struct target_thread *thread,
 error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
     struct dt_argp_state *opts = \
 	(struct dt_argp_state *)target_argp_driver_state(state);
+    struct array_list *argv_list;
+    char *argptr;
+    char *nargptr;
+    char *vargptr;
+    int inesc;
+    int inquote;
+    int quotechar;
 
     switch (key) {
     case ARGP_KEY_ARG:
@@ -829,6 +846,107 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
     case 'P':
 	opts->do_post = 1;
 	break;
+    case 'O':
+	/*
+	 * We need to split the <name_or_id>:<spec> part; then split
+	 * <spec> into an argv.  Simple rules: \ escapes the next char;
+	 * space not in ' or " causes us to end the current argv[i] and
+	 * start the next one.
+	 */
+	argptr = index(arg,':');
+	if (!argptr) {
+	    verror("bad overlay spec!\n");
+	    return EINVAL;
+	}
+	argv_list = array_list_create(32);
+	array_list_append(argv_list,"dumptarget_overlay");
+
+	opts->overlay_name_or_id = arg;
+	*argptr = '\0';
+	++argptr;
+
+	while (*argptr == ' ')
+	    ++argptr;
+
+	inesc = 0;
+	inquote = 0;
+	quotechar = 0;
+	nargptr = argptr;
+	vargptr = argptr;
+	while (*argptr != '\0') {
+	    if (*argptr == '\\') {
+		if (inesc) {
+		    inesc = 0;
+		    *nargptr = '\\';
+		    ++nargptr;
+		}
+		else {
+		    /* Don't copy the escape char. */
+		    inesc = 1;
+		    ++argptr;
+		    continue;
+		}
+	    }
+	    else if (inesc) {
+		inesc = 0;
+		/* Just copy it. */
+		*nargptr = *argptr;
+		++nargptr;
+	    }
+	    else if (inquote && *argptr == quotechar) {
+		/* Ended the quoted sequence; don't copy quotes. */
+		inquote = 0;
+		quotechar = 0;
+		++argptr;
+		continue;
+	    }
+	    else if (*argptr == '\'' || *argptr == '"') {
+		inquote = 1;
+		quotechar = *argptr;
+		++argptr;
+		continue;
+	    }
+	    else if (!inquote && *argptr == ' ') {
+		*nargptr = *argptr = '\0';
+		if (vargptr) {
+		    array_list_append(argv_list,vargptr);
+		    //printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
+		    vargptr = NULL;
+		}
+		vargptr = NULL;
+		nargptr = ++argptr;
+		continue;
+	    }
+	    else {
+		if (!vargptr)
+		    vargptr = nargptr;
+
+		*nargptr = *argptr;
+		++nargptr;
+	    }
+
+	    /* Default increment. */
+	    ++argptr;
+	}
+	if (vargptr) {
+	    *nargptr = '\0';
+	    array_list_append(argv_list,vargptr);
+	    //printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
+	}
+	array_list_append(argv_list,NULL);
+
+	opts->overlay_spec = target_argp_driver_parse(NULL,NULL,
+						      array_list_len(argv_list) - 1,
+						      (char **)argv_list->list,
+						      TARGET_TYPE_XEN_PROCESS,0);
+	if (!opts->overlay_spec) {
+	    verror("could not parse overlay spec!\n");
+	    array_list_free(argv_list);
+	    return EINVAL;
+	}
+
+	array_list_free(argv_list);
+	break;
 
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -842,7 +960,6 @@ int main(int argc,char **argv) {
     ADDR *addrs = NULL;
     char *word;
     int i, j;
-    probepoint_style_t style = PROBEPOINT_FASTEST;
     struct probe *probe;
     target_poll_outcome_t poutcome;
     int pstatus;
@@ -850,6 +967,9 @@ int main(int argc,char **argv) {
     char *endptr;
     char *targetstr;
     char *tmp;
+    int oid;
+    tid_t otid;
+    char *otargetstr;
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -903,12 +1023,51 @@ int main(int argc,char **argv) {
 	targetstr = strdup("<UNNAMED_TARGET>");
     else
 	targetstr = strdup(tmp);
+    tmp = NULL;
+
+    /*
+     * Load an overlay target, if there is one.
+     */
+    if (opts.overlay_name_or_id && opts.overlay_spec) {
+	errno = 0;
+	tmp = NULL;
+	oid = (int)strtol(opts.overlay_name_or_id,&tmp,0);
+	if (errno || tmp == opts.overlay_name_or_id)
+	    otid = 
+		target_lookup_overlay_thread_by_name(t,opts.overlay_name_or_id);
+	else
+	    otid = target_lookup_overlay_thread_by_id(t,oid);
+	if (otid < 0) {
+	    verror("could not find overlay thread '%s', exiting!\n",
+		   opts.overlay_name_or_id);
+	    cleanup();
+	    exit(-111);
+	}
+	ot = target_instantiate_overlay(t,otid,opts.overlay_spec);
+	if (!ot) {
+	    verror("could not instantiate overlay target '%s'!\n",
+		   opts.overlay_name_or_id);
+	    cleanup();
+	    exit(-112);
+	}
+
+	if (target_open(ot)) {
+	    fprintf(stderr,"could not open overlay target!\n");
+	    exit(-114);
+	}
+
+	tmp = target_name(ot);
+	if (!tmp) 
+	    otargetstr = strdup("<UNNAMED_OVERLAY_TARGET>");
+	else
+	    otargetstr = strdup(tmp);
+
+	tmp = NULL;
+    }
 
     /* Now that we have loaded any symbols we might need, process the
      * rest of our args.
      */
-    style = tspec->style;
-
     if (opts.argc) {
 	len = opts.argc;
 	if (opts.raw) {
@@ -985,16 +1144,25 @@ int main(int argc,char **argv) {
 		    }
 		}
 		else {
-		    if (!(bsymbol = target_lookup_sym(t,opts.argv[i],".",NULL,
-						      SYMBOL_TYPE_FLAG_NONE))) {
-			fprintf(stderr,"Could not find symbol %s!\n",opts.argv[i]);
-			cleanup();
-			exit(-1);
+		    if (ot) {
+			bsymbol = target_lookup_sym(ot,opts.argv[i],".",NULL,
+						    SYMBOL_TYPE_FLAG_NONE);
+		    }
+		    if (!bsymbol) {
+			bsymbol = target_lookup_sym(t,opts.argv[i],".",NULL,
+						    SYMBOL_TYPE_FLAG_NONE);
+			if (!bsymbol) {
+			    fprintf(stderr,"Could not find symbol %s!\n",
+				    opts.argv[i]);
+			    cleanup();
+			    exit(-1);
+			}
 		    }
 		}
 
 		array_list_add(symlist,bsymbol);
 		array_list_add(addrlist,NULL);
+		bsymbol = NULL;
 	    }
 	}
 
@@ -1013,7 +1181,7 @@ int main(int argc,char **argv) {
 		if (!probe)
 		    goto err_unreg;
 
-		if (!probe_register_addr(probe,paddr,PROBEPOINT_BREAK,style,
+		if (!probe_register_addr(probe,paddr,PROBEPOINT_BREAK,t->spec->style,
 					 PROBEPOINT_EXEC,PROBEPOINT_LAUTO,NULL)) {
 		    goto err_unreg;
 		}
@@ -1033,13 +1201,13 @@ int main(int argc,char **argv) {
 		    exit(-1);
 		}
 
-		probe = probe_create(t,TID_GLOBAL,NULL,at_symbol,
+		probe = probe_create(at_bsymbol->region->space->target,TID_GLOBAL,NULL,at_symbol,
 				     function_dump_args,at_handler,NULL,0,1);
 		probe->handler_data = &at_symbol;
 		if (!probe)
 		    goto err_unreg;
 
-		if (!probe_register_symbol(probe,at_bsymbol,style,
+		if (!probe_register_symbol(probe,at_bsymbol,at_bsymbol->region->space->target->spec->style,
 					   PROBEPOINT_EXEC,PROBEPOINT_LAUTO)) {
 		    goto err_unreg;
 		}
@@ -1114,13 +1282,13 @@ int main(int argc,char **argv) {
 		    exit(-1);
 		}
 
-		probe = probe_create(t,TID_GLOBAL,NULL,until_symbol,
+		probe = probe_create(until_bsymbol->region->space->target,TID_GLOBAL,NULL,until_symbol,
 				     function_dump_args,until_handler,NULL,0,1);
 		probe->handler_data = &until_symbol;
 		if (!probe)
 		    goto err_unreg;
 
-		if (!probe_register_addr(probe,paddr,PROBEPOINT_BREAK,style,
+		if (!probe_register_addr(probe,paddr,PROBEPOINT_BREAK,until_bsymbol->region->space->target->spec->style,
 					 PROBEPOINT_EXEC,PROBEPOINT_LAUTO,NULL)) {
 		    goto err_unreg;
 		}
@@ -1140,13 +1308,13 @@ int main(int argc,char **argv) {
 		    exit(-1);
 		}
 
-		probe = probe_create(t,TID_GLOBAL,NULL,until_symbol,
+		probe = probe_create(until_bsymbol->region->space->target,TID_GLOBAL,NULL,until_symbol,
 				     function_dump_args,until_handler,NULL,0,1);
 		probe->handler_data = &until_symbol;
 		if (!probe)
 		    goto err_unreg;
 
-		if (!probe_register_symbol(probe,until_bsymbol,style,
+		if (!probe_register_symbol(probe,until_bsymbol,until_bsymbol->region->space->target->spec->style,
 					   PROBEPOINT_EXEC,PROBEPOINT_LAUTO)) {
 		    goto err_unreg;
 		}
@@ -1206,11 +1374,11 @@ int main(int argc,char **argv) {
 		     && ((i < opts.argc && retcode_strs[i] 
 			  && (*retcode_strs[i] == 'e'
 			      || *retcode_strs[i] == 'E')))) {
-		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
+		probe = probe_create(bsymbol->region->space->target,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
 				     pre,post,NULL,0,1);
-		probe->handler_data = probe->name;
 		if (!probe)
 		    goto err_unreg;
+		probe->handler_data = probe->name;
 
 		if (!probe_register_function_ee(probe,PROBEPOINT_SW,bsymbol,0,1)) {
 		    fprintf(stderr,
@@ -1222,15 +1390,15 @@ int main(int argc,char **argv) {
 		g_hash_table_insert(probes,(gpointer)probe,(gpointer)probe);
 	    }
 	    else {
-		probe = probe_create(t,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
+		probe = probe_create(bsymbol->region->space->target,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
 				     pre,post,NULL,0,1);
-		probe->handler_data = probe->name;
 		if (!probe)
 		    goto err_unreg;
+		probe->handler_data = probe->name;
 
 		if (i < opts.argc && retcode_strs[i] && *retcode_strs[i] == 'L') {
 		    if (!probe_register_line(probe,opts.argv[i],retcodes[i],
-					     style,whence,PROBEPOINT_LAUTO)) {
+					     bsymbol->region->space->target->spec->style,whence,PROBEPOINT_LAUTO)) {
 			probe_free(probe,1);
 			goto err_unreg;
 		    }
@@ -1238,14 +1406,14 @@ int main(int argc,char **argv) {
 		else if (symbol_is_inlined(bsymbol_get_symbol(bsymbol))) {
 		    if (!probe_register_inlined_symbol(probe,bsymbol,
 						       1,
-						       style,whence,
+						       bsymbol->region->space->target->spec->style,whence,
 						       PROBEPOINT_LAUTO)) {
 			probe_free(probe,1);
 			goto err_unreg;
 		    }
 		}
 		else {
-		    if (!probe_register_symbol(probe,bsymbol,style,whence,
+		    if (!probe_register_symbol(probe,bsymbol,bsymbol->region->space->target->spec->style,whence,
 					       PROBEPOINT_LAUTO)) {
 			probe_free(probe,1);
 			goto err_unreg;
@@ -1359,7 +1527,7 @@ int main(int argc,char **argv) {
 	    else {
 		whence = PROBEPOINT_EXEC;
 		type = PROBEPOINT_BREAK;
-		rstyle = style;
+		rstyle = PROBEPOINT_FASTEST;
 		pre = addr_code_pre;
 		if (opts.do_post)
 		    post = addr_code_post;

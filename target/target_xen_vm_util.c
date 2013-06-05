@@ -22,6 +22,9 @@
 #include "dwdebug_priv.h"
 #include "target_xen_vm.h"
 
+#include <limits.h>
+#include <assert.h>
+
 num_t linux_get_preempt_count(struct target *target) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *tstate;
@@ -97,16 +100,21 @@ struct symbol *linux_get_thread_info_type(struct target *target) {
 }
 
 struct value *linux_load_current_task_as_type(struct target *target,
-					      struct symbol *datatype) {
+					      struct symbol *datatype,
+					      REGVAL kernel_esp) {
     struct value *value;
     ADDR tptr;
     REGVAL esp;
 
-    errno = 0;
-    esp = target_read_reg(target,TID_GLOBAL,target->spregno);
-    if (errno) {
-	verror("could not read ESP!\n");
-	return NULL;
+    if (kernel_esp) 
+	esp = kernel_esp;
+    else {
+	errno = 0;
+	esp = target_read_reg(target,TID_GLOBAL,target->spregno);
+	if (errno) {
+	    verror("could not read ESP!\n");
+	    return NULL;
+	}
     }
 
     tptr = current_thread_ptr(esp);
@@ -116,7 +124,8 @@ struct value *linux_load_current_task_as_type(struct target *target,
     return value;
 }
 
-struct value *linux_load_current_task(struct target *target) {
+struct value *linux_load_current_task(struct target *target,
+				      REGVAL kernel_esp) {
     struct value *value;
     ADDR itptr;
     REGVAL esp;
@@ -128,12 +137,16 @@ struct value *linux_load_current_task(struct target *target) {
 	return NULL;
     }
 
-    errno = 0;
-    esp = target_read_reg(target,TID_GLOBAL,target->spregno);
-    if (errno) {
-	verror("could not read ESP!\n");
-	symbol_release(itptr_type);
-	return NULL;
+    if (kernel_esp) 
+	esp = kernel_esp;
+    else {
+	errno = 0;
+	esp = target_read_reg(target,TID_GLOBAL,target->spregno);
+	if (errno) {
+	    verror("could not read ESP!\n");
+	    symbol_release(itptr_type);
+	    return NULL;
+	}
     }
 
     itptr = current_thread_ptr(esp);
@@ -147,16 +160,21 @@ struct value *linux_load_current_task(struct target *target) {
 }
 
 struct value *linux_load_current_thread_as_type(struct target *target,
-						struct symbol *datatype) {
+						struct symbol *datatype,
+						REGVAL kernel_esp) {
     struct value *value;
     ADDR tptr;
     REGVAL esp;
 
-    errno = 0;
-    esp = target_read_reg(target,TID_GLOBAL,target->spregno);
-    if (errno) {
-	verror("could not read ESP!\n");
-	return NULL;
+    if (kernel_esp) 
+	esp = kernel_esp;
+    else {
+	errno = 0;
+	esp = target_read_reg(target,TID_GLOBAL,target->spregno);
+	if (errno) {
+	    verror("could not read ESP!\n");
+	    return NULL;
+	}
     }
 
     tptr = current_thread_ptr(esp);
@@ -227,6 +245,214 @@ struct value *linux_get_task(struct target *target,tid_t tid) {
     }
 
     return mpd.match;
+}
+
+/*
+ * d_flags entries -- from include/linux/dcache.h
+ */
+#define DCACHE_AUTOFS_PENDING         0x0001
+#define DCACHE_NFSFS_RENAMED          0x0002
+#define	DCACHE_DISCONNECTED           0x0004
+#define DCACHE_REFERENCED             0x0008
+#define DCACHE_UNHASHED               0x0010	
+#define DCACHE_INOTIFY_PARENT_WATCHED 0x0020
+
+/*
+ * This function fills in @buf from the end!  @return is a ptr to
+ * somewhere inside @buf, consequently.
+ */
+char *linux_d_path(struct target *target,
+		   struct value *dentry,struct value *vfsmnt,
+		   struct value *root_dentry,struct value *root_vfsmnt,
+		   char *buf,int buflen) {
+    ADDR dentry_addr;
+    ADDR vfsmnt_addr;
+    ADDR root_dentry_addr;
+    ADDR root_vfsmnt_addr;
+    unum_t dentry_flags;
+    ADDR parent_addr;
+    ADDR mnt_root_addr;
+    struct value *vfsmnt_mnt_parent;
+    ADDR vfsmnt_mnt_parent_addr;
+    struct value *orig_dentry = dentry;
+    struct value *orig_vfsmnt = vfsmnt;
+    struct value *ph;
+    char *retval;
+    char *end;
+    num_t namelen;
+    ADDR nameaddr;
+    char *namebuf;
+
+    assert(buf != NULL);
+
+    dentry_addr = v_addr(dentry);
+    vfsmnt_addr = v_addr(vfsmnt);
+    root_dentry_addr = v_addr(root_dentry);
+    root_vfsmnt_addr = v_addr(root_vfsmnt);
+
+    /*
+     * Basically from fs/dcache.c:__d_path, except VMI-ified.
+     */
+    end = buf + buflen;
+    *--end = '\0';
+    buflen--;
+    VLV(target,dentry,"d_parent",LOAD_FLAG_NONE,&parent_addr,NULL,err_vmiload);
+    VLV(target,dentry,"d_flags",LOAD_FLAG_NONE,&dentry_flags,NULL,err_vmiload);
+    if (dentry_addr != parent_addr && dentry_flags & DCACHE_UNHASHED) {
+	buflen -= 10;
+	end -= 10;
+	if (buflen < 0)
+	    goto err_toolong;
+	memcpy(end, " (deleted)", 10);
+    }
+
+    if (buflen < 1)
+	goto err_toolong;
+    /* Get '/' right */
+    retval = end - 1;
+    *retval = '/';
+
+    while (1) {
+	if (dentry_addr == root_dentry_addr && vfsmnt_addr == root_vfsmnt_addr)
+	    break;
+	VLV(target,vfsmnt,"mnt_root",LOAD_FLAG_NONE,&mnt_root_addr,NULL,
+	    err_vmiload);
+	if (dentry_addr == mnt_root_addr || dentry_addr == parent_addr) {
+	    vfsmnt_mnt_parent = NULL;
+	    VL(target,vfsmnt,"mnt_parent",LOAD_FLAG_AUTO_DEREF,
+	       &vfsmnt_mnt_parent,err_vmiload);
+	    vfsmnt_mnt_parent_addr = v_addr(vfsmnt_mnt_parent);
+
+	    /* Global root? */
+	    if (vfsmnt_mnt_parent_addr == vfsmnt_addr) {
+		value_free(vfsmnt_mnt_parent);
+		vfsmnt_mnt_parent = NULL;
+		goto global_root;
+	    }
+	    if (dentry != orig_dentry) {
+		value_free(dentry);
+		dentry = NULL;
+	    }
+	    VL(target,vfsmnt,"mnt_mountpoint",LOAD_FLAG_AUTO_DEREF,&dentry,
+	       err_vmiload);
+	    dentry_addr = v_addr(dentry);
+	    if (vfsmnt != orig_vfsmnt) {
+		value_free(vfsmnt);
+	    }
+	    vfsmnt = vfsmnt_mnt_parent;
+	    vfsmnt_addr = v_addr(vfsmnt);
+	    vfsmnt_mnt_parent = NULL;
+	    continue;
+	}
+	namelen = 0;
+	VLV(target,dentry,"d_name.len",LOAD_FLAG_NONE,&namelen,NULL,err_vmiload);
+	buflen -= namelen + 1;
+	if (buflen < 0)
+	    goto err_toolong;
+	end -= namelen;
+	VLV(target,dentry,"d_name.name",LOAD_FLAG_NONE,&nameaddr,NULL,err_vmiload);
+	namebuf = NULL;
+	VLA(target,nameaddr,LOAD_FLAG_NONE,&namebuf,namelen,NULL,err_vmiload);
+	memcpy(end,namebuf,namelen);
+	free(namebuf);
+	namebuf = NULL;
+	*--end = '/';
+	retval = end;
+	
+	ph = dentry;
+	VL(target,ph,"d_parent",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
+	if (ph != orig_dentry) {
+	    value_free(ph);
+	}
+	dentry_addr = v_addr(dentry);
+    }
+
+    goto out;
+
+ global_root:
+    namelen = 0;
+    VLV(target,dentry,"d_name.len",LOAD_FLAG_NONE,&namelen,NULL,err_vmiload);
+    buflen -= namelen;
+    if (buflen < 0)
+	goto err_toolong;
+    retval -= namelen - 1;	/* hit the slash */
+    namebuf = NULL;
+    VLA(target,nameaddr,LOAD_FLAG_NONE,&namebuf,namelen,NULL,err_vmiload);
+    memcpy(retval,namebuf,namelen);
+    free(namebuf);
+    namebuf = NULL;
+
+    goto out;
+
+ err_toolong:
+ err_vmiload:
+
+    retval = NULL;
+
+ out:
+    /* Free intermediate dentry/vfsmnt values left, if any. */
+    if (dentry && dentry != orig_dentry) {
+	value_free(dentry);
+	dentry = NULL;
+    }
+    if (vfsmnt && vfsmnt != orig_vfsmnt) {
+	value_free(vfsmnt);
+	vfsmnt = NULL;
+    }
+
+    return retval;
+}
+
+char *linux_file_get_path(struct target *target,struct value *task,
+			  struct value *file,char *ibuf,int buflen) {
+    struct value *dentry = NULL;
+    struct value *vfsmnt = NULL;
+    struct value *root_dentry = NULL;
+    struct value *root_vfsmnt = NULL;
+    char buf[PATH_MAX];
+    char *bufptr;
+    int len;
+    int didalloc = 0;
+    char *retval;
+
+    VL(target,file,"f_vfsmnt",LOAD_FLAG_AUTO_DEREF,&vfsmnt,err_vmiload);
+    VL(target,file,"f_dentry",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
+    VL(target,task,"fs.rootmnt",LOAD_FLAG_AUTO_DEREF,&root_vfsmnt,err_vmiload);
+    VL(target,task,"fs.root",LOAD_FLAG_AUTO_DEREF,&root_dentry,err_vmiload);
+
+    bufptr = linux_d_path(target,dentry,vfsmnt,root_dentry,root_vfsmnt,
+			  buf,PATH_MAX);
+    if (!bufptr) 
+	goto err;
+
+    if (!ibuf) {
+	ibuf = malloc(PATH_MAX);
+	buflen = PATH_MAX;
+	didalloc = 1;
+    }
+
+    len = sizeof(buf) - (bufptr - buf);
+    memcpy(ibuf,bufptr,(len < buflen) ? len : buflen);
+
+    retval = ibuf;
+    goto out;
+
+ err:
+ err_vmiload:
+    retval = NULL;
+    goto out;
+
+ out:
+    if (dentry)
+	value_free(dentry);
+    if (vfsmnt)
+	value_free(vfsmnt);
+    if (root_dentry)
+	value_free(root_dentry);
+    if (root_vfsmnt)
+	value_free(root_vfsmnt);
+
+    return retval;
 }
 
 /*

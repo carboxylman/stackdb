@@ -76,6 +76,15 @@ static int linux_userproc_loadregions(struct target *target,
 static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region);
+
+static struct array_list *
+linux_userproc_list_available_overlay_tids(struct target *target,
+					   target_type_t type);
+static struct target *
+linux_userproc_instantiate_overlay(struct target *target,
+				   struct target_thread *tthread,
+				   struct target_spec *spec);
+
 static target_status_t linux_userproc_status(struct target *target);
 static int linux_userproc_pause(struct target *target,int nowait);
 static int linux_userproc_resume(struct target *target);
@@ -136,8 +145,10 @@ int linux_userproc_enable_hw_breakpoint(struct target *target,tid_t tid,
 					REG dreg);
 int linux_userproc_notify_sw_breakpoint(struct target *target,ADDR addr,
 					int notification);
-int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp);
-int linux_userproc_singlestep_end(struct target *target,tid_t tid);
+int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp,
+			      struct target *overlay);
+int linux_userproc_singlestep_end(struct target *target,tid_t tid,
+				  struct target *overlay);
 
 
 static int linux_userproc_evloop_add_tid(struct target *target,int tid);
@@ -158,6 +169,10 @@ struct target_ops linux_userspace_process_ops = {
     .loadregions = linux_userproc_loadregions,
     .loaddebugfiles = linux_userproc_loaddebugfiles,
     .postloadinit = linux_userproc_postloadinit,
+
+    .list_available_overlay_tids = linux_userproc_list_available_overlay_tids,
+    .instantiate_overlay = linux_userproc_instantiate_overlay,
+
     .status = linux_userproc_status,
     .pause = linux_userproc_pause,
     .resume = linux_userproc_resume,
@@ -676,8 +691,7 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
 	return NULL;
     }
 
-    target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,spec,spec->target_id);
+    target = target_create("linux_userspace_process",spec);
     if (!target) 
 	return NULL;
 
@@ -827,8 +841,7 @@ static struct target *linux_userproc_launch(struct target_spec *spec,
 	return NULL;
     }
 
-    target = target_create("linux_userspace_process",NULL,
-			   &linux_userspace_process_ops,spec,spec->target_id);
+    target = target_create("linux_userspace_process",spec);
     if (!target) 
 	goto errout;
 
@@ -2812,6 +2825,21 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 
  out:
     return retval;
+}
+
+static struct array_list *
+linux_userproc_list_available_overlay_tids(struct target *target,
+					   target_type_t type) {
+    errno = ENOTSUP;
+    return NULL;
+}
+
+static struct target *
+linux_userproc_instantiate_overlay(struct target *target,
+				   struct target_thread *tthread,
+				   struct target_spec *spec) {
+    errno = ENOTSUP;
+    return NULL;
 }
 
 static target_status_t linux_userproc_status(struct target *target) {
@@ -4876,7 +4904,8 @@ int linux_userproc_notify_sw_breakpoint(struct target *target,ADDR addr,
     return 0;
 }
 
-int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp) {
+int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp,
+			      struct target *overlay) {
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
@@ -4942,7 +4971,8 @@ int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp) {
     return 0;
 }
 
-int linux_userproc_singlestep_end(struct target *target,tid_t tid) {
+int linux_userproc_singlestep_end(struct target *target,tid_t tid,
+				  struct target *overlay) {
     struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;

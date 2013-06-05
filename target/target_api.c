@@ -32,6 +32,7 @@
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
+#include "target_xen_vm_process.h"
 #endif
 
 /**
@@ -51,6 +52,12 @@ struct target *target_instantiate(struct target_spec *spec,
 #ifdef ENABLE_XENSUPPORT
     else if (spec->target_type == TARGET_TYPE_XEN) {
 	target = xen_vm_instantiate(spec,evloop);
+    }
+    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
+	verror("cannot directly instantiate TARGET_TYPE_XEN_PROCESS;"
+	       " call target_instantiate_overlay instead.\n");
+	errno = EINVAL;
+	return NULL;
     }
 #endif
 
@@ -78,6 +85,10 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 	tspec = calloc(1,sizeof(*tspec));
 	tspec->backend_spec = xen_vm_build_spec();
     }
+    else if (type == TARGET_TYPE_XEN_PROCESS) {
+	tspec = calloc(1,sizeof(*tspec));
+	tspec->backend_spec = xen_vm_process_build_spec();
+    }
 #endif
     else {
 	errno = EINVAL;
@@ -103,6 +114,9 @@ void target_free_spec(struct target_spec *spec) {
 #ifdef ENABLE_XENSUPPORT
 	else if (spec->target_type == TARGET_TYPE_XEN) {
 	    xen_vm_free_spec((struct xen_vm_spec *)spec->backend_spec);
+	}
+	else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
+	    xen_vm_process_free_spec((struct xen_vm_process_spec *)spec->backend_spec);
 	}
 #endif
     }
@@ -244,6 +258,103 @@ int target_open(struct target *target) {
     target->opened = 1;
 
     return 0;
+}
+
+struct array_list *target_list_available_overlay_tids(struct target *target,
+						      target_type_t type) {
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s)\n",target->name);
+    return target->ops->list_available_overlay_tids(target,type);
+}
+
+struct array_list *target_list_overlays(struct target *target) {
+    if (g_hash_table_size(target->overlays) == 0)
+	return NULL;
+
+    return array_list_create_from_g_hash_table(target->overlays);
+}
+
+tid_t target_lookup_overlay_thread_by_id(struct target *target,int id) {
+    struct target_thread *tthread;
+
+    if (!target->ops->lookup_overlay_thread_by_id) {
+	verror("no overlay support in target(%s)!\n",target->name);
+	errno = ENOTSUP;
+	return -1;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s)\n",target->name);
+
+    tthread = target->ops->lookup_overlay_thread_by_id(target,id);
+    if (tthread)
+	return tthread->tid;
+
+    if (!errno)
+	errno = ESRCH;
+    return -1;
+}
+
+tid_t target_lookup_overlay_thread_by_name(struct target *target,char *name) {
+    struct target_thread *tthread;
+
+    if (!target->ops->lookup_overlay_thread_by_name) {
+	verror("no overlay support in target(%s)!\n",target->name);
+	errno = ENOTSUP;
+	return -1;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s)\n",target->name);
+
+    tthread = target->ops->lookup_overlay_thread_by_name(target,name);
+    if (tthread)
+	return tthread->tid;
+
+    if (!errno)
+	errno = ESRCH;
+    return -1;
+    
+}
+
+struct target *target_instantiate_overlay(struct target *target,tid_t tid,
+					  struct target_spec *spec) {
+    struct target *overlay;
+    struct target_thread *tthread;
+
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "target(%s) tid %"PRIiTID"\n",target->name,tid);
+
+    if (g_hash_table_lookup(target->overlays,(gpointer)(uintptr_t)tid)) {
+	verror("target(%s) tid %"PRIiTID" already has overlay!\n",
+	       target->name,tid);
+	errno = EALREADY;
+	return NULL;
+    }
+
+    tthread = target_load_thread(target,tid,0);
+    if (!tthread) {
+	verror("target(%s) tid %d could not be loaded!\n",target->name,tid);
+	errno = ESRCH;
+	return NULL;
+    }
+
+    overlay = target->ops->instantiate_overlay(target,tthread,spec);
+    if (!overlay) {
+	verror("target(%s) tid %"PRIiTID" failed to create overlay!\n",
+	       target->name,tid);
+	return NULL;
+    }
+
+    overlay->base = target;
+    overlay->base_id = target->id;
+    overlay->base_thread = tthread;
+    overlay->base_tid = tid;
+
+    g_hash_table_insert(target->overlays,(gpointer)(uintptr_t)tid,overlay);
+
+    vdebug(8,LA_TARGET,LF_TARGET,
+	   "target(%s) tid %"PRIiTID" new overlay target(%s) (id %d)\n",
+	   target->name,tid,overlay->name,overlay->id);
+
+    return overlay;
 }
 
 char *target_tostring(struct target *target,char *buf,int bufsiz) {
@@ -650,9 +761,8 @@ void target_dump_all_threads(struct target *target,FILE *stream,int detail) {
 int target_close(struct target *target) {
     int rc;
     GHashTableIter iter;
-    gpointer key;
-    struct target_thread *tthread;
     struct probepoint *probepoint;
+    struct target *overlay;
 
     if (!target->opened) {
 	vdebug(3,LA_TARGET,LF_TARGET,"target(%s) already closed\n",target->name);
@@ -663,6 +773,18 @@ int target_close(struct target *target) {
 
     /* Make sure! */
     target_pause(target);
+
+    /*
+     * Do it for all the overlays first.
+     */
+    g_hash_table_iter_init(&iter,target->overlays);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay)) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "closing overlay target(%s)\n",overlay->name);
+	rc = target_close(overlay);
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "closed overlay target(%s) (%d)\n",overlay->name,rc);
+    }
 
     if (target->evloop)
 	target_detach_evloop(target);
@@ -691,27 +813,9 @@ int target_close(struct target *target) {
 	target_kill(target,target->spec->kill_on_close_sig);
 
     /*
-     * If the target didn't already do it in detach(),
-     * delete all the threads except the global thread (which we remove 
-     * manually because targets are allowed to "reuse" one of their real
-     * threads as the "global" thread.
+     * Don't delete the threads yet; just unset current_thread.
      */
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&tthread)) {
-	if (tthread == target->global_thread) {
-	    g_hash_table_iter_remove(&iter);
-	}
-	else {
-	    target_delete_thread(target,tthread,1);
-	    g_hash_table_iter_remove(&iter);
-	}
-    }
-    if (target->global_thread)
-	target_delete_thread(target,target->global_thread,0);
-
-    /* Target should not mess with these after close! */
-    target->global_thread = target->current_thread = NULL;
+    target->current_thread = NULL;
 
     target->opened = 0;
 
@@ -809,14 +913,14 @@ int target_notify_sw_breakpoint(struct target *target,ADDR addr,
 int target_singlestep(struct target *target,tid_t tid,int isbp) {
     vdebug(5,LA_TARGET,LF_TARGET,"single stepping target(%s:%"PRIiTID") isbp=%d\n",
 	   target->name,tid,isbp);
-    return target->ops->singlestep(target,tid,isbp);
+    return target->ops->singlestep(target,tid,isbp,NULL);
 }
 
 int target_singlestep_end(struct target *target,tid_t tid) {
     if (target->ops->singlestep_end) {
 	vdebug(5,LA_TARGET,LF_TARGET,"ending single stepping of target(%s:%"PRIiTID")\n",
 	       target->name,tid);
-	return target->ops->singlestep_end(target,tid);
+	return target->ops->singlestep_end(target,tid,NULL);
     }
     return 0;
 }

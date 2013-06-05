@@ -27,6 +27,8 @@
 
 #include "target_api.h"
 
+extern struct target_ops linux_userspace_process_ops;
+
 /* linux userproc target ops */
 
 struct target *linux_userproc_instantiate(struct target_spec *spec,

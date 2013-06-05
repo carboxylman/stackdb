@@ -30,6 +30,8 @@
 
 #include "evloop.h"
 
+extern struct target_ops xen_vm_ops;
+
 #define THREAD_SIZE 8192
 
 typedef enum {
@@ -149,6 +151,12 @@ struct xen_vm_thread_state {
     /* The thread struct comes out of the task struct. */
     struct value *thread_struct;
     ADDR ptregs_stack_addr;
+    ADDR mm_addr;
+    /*
+     * NB: pgd (cr3) is a little funny.  If the target is PAE, it might
+     * be > 2**32.  So, this value has to always be a u64.
+     */
+    uint64_t pgd;
 
     /*
      * These are information about the task's kernel stack.  esp0 is the
@@ -194,6 +202,7 @@ struct xen_vm_state {
 
     struct bsymbol *init_task;
     struct symbol *task_struct_type;
+    struct symbol *mm_struct_type;
     struct symbol *task_struct_type_ptr;
     ADDR init_task_addr;
     struct symbol *thread_info_type;
@@ -226,18 +235,29 @@ struct xen_vm_spec *xen_vm_build_spec(void);
 void xen_vm_free_spec(struct xen_vm_spec *xspec);
 int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv);
 
+unsigned char *xen_vm_read_pid(struct target *target,int pid,ADDR addr,
+			       unsigned long target_length,unsigned char *buf);
+unsigned long xen_vm_write_pid(struct target *target,int pid,ADDR addr,
+			       unsigned long length,unsigned char *buf);
+
 struct symbol *linux_get_task_struct_type(struct target *target);
 struct symbol *linux_get_task_struct_type_ptr(struct target *target);
 struct symbol *linux_get_thread_info_type(struct target *target);
-struct value *linux_load_current_task(struct target *target);
+struct value *linux_load_current_task(struct target *target,
+				      REGVAL kernel_esp);
 struct value *linux_load_current_task_as_type(struct target *target,
-					      struct symbol *datatype);
+					      struct symbol *datatype,
+					      REGVAL kernel_esp);
 int linux_get_task_pid(struct target *target,struct value *task);
 int linux_get_task_tid(struct target *target,struct value *task);
 struct value *linux_get_task(struct target *target,tid_t tid);
 
 struct value *linux_load_current_thread_as_type(struct target *target,
-						struct symbol *datatype);
+						struct symbol *datatype,
+						REGVAL kernel_esp);
+
+char *linux_file_get_path(struct target *target,struct value *task,
+			  struct value *file,char *buf,int buflen);
 
 #define PREEMPT_MASK   0x000000ff
 #define SOFTIRQ_MASK   0x0000ff00

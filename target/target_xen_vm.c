@@ -75,6 +75,18 @@ static int xen_vm_updateregions(struct target *target,
 static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
 				 struct memregion *region);
 static int xen_vm_postloadinit(struct target *target);
+
+
+static struct array_list *
+xen_vm_list_available_overlay_tids(struct target *target,target_type_t type);
+static struct target *
+xen_vm_instantiate_overlay(struct target *target,
+			   struct target_thread *tthread,
+			   struct target_spec *spec);
+static struct target_thread *
+xen_vm_lookup_overlay_thread_by_id(struct target *target,int id);
+static struct target_thread *
+xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name);
 static target_status_t xen_vm_status(struct target *target);
 static int xen_vm_pause(struct target *target,int nowait);
 static int __xen_vm_resume(struct target *target,int detaching);
@@ -124,8 +136,10 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg);
 int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg);
 int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 				int notification);
-int xen_vm_singlestep(struct target *target,tid_t tid,int isbp);
-int xen_vm_singlestep_end(struct target *target,tid_t tid);
+int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
+		      struct target *overlay);
+int xen_vm_singlestep_end(struct target *target,tid_t tid,
+			  struct target *overlay);
 
 uint64_t xen_vm_get_tsc(struct target *target);
 uint64_t xen_vm_get_time(struct target *target);
@@ -187,6 +201,12 @@ struct target_ops xen_vm_ops = {
     .loadregions = xen_vm_loadregions,
     .loaddebugfiles = xen_vm_loaddebugfiles,
     .postloadinit = xen_vm_postloadinit,
+
+    .list_available_overlay_tids = xen_vm_list_available_overlay_tids,
+    .instantiate_overlay = xen_vm_instantiate_overlay,
+    .lookup_overlay_thread_by_id = xen_vm_lookup_overlay_thread_by_id,
+    .lookup_overlay_thread_by_name = xen_vm_lookup_overlay_thread_by_name,
+
     .status = xen_vm_status,
     .pause = xen_vm_pause,
     .resume = xen_vm_resume,
@@ -461,7 +481,7 @@ struct target *xen_vm_attach(struct target_spec *spec,
 
     vdebug(5,LA_TARGET,LF_XV,"attaching to domain %s\n",domain);
 
-    if (!(target = target_create("xen_vm",NULL,&xen_vm_ops,spec,spec->target_id)))
+    if (!(target = target_create("xen_vm",spec)))
 	return NULL;
 
     if (!(xstate = (struct xen_vm_state *)malloc(sizeof(*xstate)))) {
@@ -1053,10 +1073,24 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	verror("could not see if thread %"PRIiTID" was kernel or user\n",tid);
 	goto errout;
     }
-    if (v_addr(v) == 0)
+    tstate->mm_addr = v_addr(v);
+    if (tstate->mm_addr == 0)
 	iskernel = 1;
     value_free(v);
     v = NULL;
+
+    if (tstate->mm_addr) {
+	v = target_load_value_member(target,taskv,"mm.pgd",NULL,
+				     LOAD_FLAG_AUTO_DEREF);
+	if (!v) {
+	    verror("could not load thread %"PRIiTID" pgd (for cr3 tracking)\n",
+		   tid);
+	    goto errout;
+	}
+	tstate->pgd = v_u64(v);
+	value_free(v);
+	v = NULL;
+    }
 
     /*
      * In our world, a Linux thread will not be executing an interrupt
@@ -1401,6 +1435,100 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
     return NULL;
 }
 
+static struct target_thread *
+__xen_vm_load_current_thread_from_userspace(struct target *target,int force) {
+    GHashTableIter iter;
+    struct target_thread *tthread = NULL;
+    struct xen_vm_thread_state *xtstate;
+    uint64_t cr3;
+    REGVAL ipval;
+
+#if __WORDSIZE == 64
+    /*
+     * libxc claims that for x86_64, pagetable is in CR1.
+     */
+    cr3 = (uint64_t)xen_vm_read_reg(target,TID_GLOBAL,XV_TSREG_CR1);
+#else
+    cr3 = (uint64_t)xen_vm_read_reg(target,TID_GLOBAL,XV_TSREG_CR3);
+#endif
+
+    ipval = xen_vm_read_reg(target,TID_GLOBAL,target->ipregno);
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "ip 0x%"PRIxADDR"; cr3/pgd = 0x%"PRIx64"\n",ipval,cr3);
+
+    /*
+     * First, we scan our current cache; if we find a cr3 hit, we're
+     * money.  Otherwise, we have load all tasks (well, at least until
+     * we find what we need).
+     */
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tthread)) {
+	xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+	if (xtstate->pgd == cr3) 
+	    break;
+	else {
+	    tthread = NULL;
+	    xtstate = NULL;
+	}
+    }
+
+    if (!tthread) {
+	vdebug(5,LA_TARGET,LF_XV,
+	       "could not find task match for cr3 0x%"PRIx64";"
+	       " loading all tasks!\n",cr3);
+
+	/*
+	 * We really should just use a reverse init_task list traversal
+	 * here.  The task is most likely to be nearer the end.
+	 */
+	if (xen_vm_load_available_threads(target,force)) {
+	    verror("could not load all threads to match on cr3!\n");
+	    return NULL;
+	}
+
+	/* Search again. */
+	g_hash_table_iter_init(&iter,target->threads);
+	while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tthread)) {
+	    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+	    if (xtstate->pgd == cr3) 
+		break;
+	    else {
+		vdebug(8,LA_TARGET,LF_XV,
+		       "thread %"PRIiTID" with pgd 0x%"PRIx64" did not match!\n",
+		       tthread->tid,xtstate->pgd);
+		tthread = NULL;
+		xtstate = NULL;
+	    }
+	}
+
+	if (!tthread) {
+	    verror("could not find task match for cr3 0x%"PRIx64
+		   " after loading all tasks!\n",cr3);
+	    errno = ESRCH;
+	    return NULL;
+	}
+    }
+    else {
+	/* Reload its value. */
+	if (!tthread->valid 
+	    && !(tthread = __xen_vm_load_thread_from_value(target,
+							   xtstate->task_struct))) {
+	    verror("could not load cached thread %"PRIiTID" from value!",
+		   tthread->tid);
+	    return NULL;
+	}
+    }
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "ip 0x%"PRIxADDR"; cr3/pgd = 0x%"PRIx64" --> thread %"PRIiTID"\n",
+	   ipval,cr3,tthread->tid);
+
+    return tthread;
+}
+
 static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 							  int force,
 							  int globalonly) {
@@ -1417,6 +1545,9 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     struct xen_vm_thread_state *gtstate;
     struct value *v = NULL;
     REGVAL ipval;
+    ADDR mm_addr = 0;
+    uint64_t pgd = 0;
+    REGVAL kernel_esp = 0;
 
     /*
      * If the global thread has been loaded, and that's all the caller
@@ -1489,18 +1620,48 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	return target->global_thread;
 
     /*
-     * If in user-mode, we can't load kernel thread; just return the
-     * global thread -- but DO NOT set target->current_thread (that
-     * would be incorrect).
+     * We used to not load the current thread in this case, but now we
+     * do.  This is sort of misleading, because the thread is not
+     * exactly in kernel context.  BUT, the important thing to realize
+     * is that this target does not only provide service for in-kernel
+     * operations.  The difference between this target and the
+     * xen-process target is that the xen-process target has *extra*
+     * functionality for inspecting the guts of a process, using its
+     * symbols; this target can manipulate a process's CPU state, and it
+     * can write virtual memory that is paged in; but that's it.
      *
-     * XXX: maybe returning global thread is too :).
+     * So -- this target has to realize that its CPU state currently
+     * corresponds to user state.  That means tricks like using the
+     * current esp to find the current thread, and the task, do not
+     * work.
+     *
+     * I'm not 100% happy about this; you have to check which context a
+     * thread is in before you access its stack, etc.  But it's good
+     * enough for now.
+     *
+     * Once we have loaded the global thread above, in this case, we
+     * call a different function.  We actually try to infer which task
+     * is running by checking cr3; we compare it to our existing, cached
+     * tasks, and try to load the cached thread that matches.  If there
+     * is no match, we have no choice but to load all the threads again
+     * so we find the match.
+     *
+     * Anyway, we do that in another function.
      */
     if (ipval < xstate->kernel_start_addr) {
+	/*
 	vdebug(9,LA_TARGET,LF_XV,
 	       "at user-mode EIP 0x%"PRIxADDR"; not loading current thread;"
 	       " returning global thread.\n",
 	       ipval);
-	return target->global_thread;
+	return __xen_vm_load_current_thread_from_userspace(target,force);
+	*/
+
+	kernel_esp = gtstate->context.kernel_sp;
+	vdebug(9,LA_TARGET,LF_XV,
+	       "at user-mode EIP 0x%"PRIxADDR"; trying to load current kernel"
+	       " thread with kernel_sp 0x%"PRIxADDR"\n",
+	       kernel_esp);
     }
 
     /* We need to load in the current task_struct, AND if it's already
@@ -1528,7 +1689,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      */
 
     threadinfov = linux_load_current_thread_as_type(target,
-						    xstate->thread_info_type);
+						    xstate->thread_info_type,
+						    kernel_esp);
     if (!threadinfov) {
 	verror("could not load current thread info!  cannot get current TID!\n");
 	/* errno should be set for us. */
@@ -1560,7 +1722,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     else {
 	/* Now, load the current task_struct. */
 	taskv = linux_load_current_task_as_type(target,
-						xstate->task_struct_type_ptr);
+						xstate->task_struct_type_ptr,
+						kernel_esp);
 	if (!taskv) {
 	    verror("could not load current task!  cannot get current TID!\n");
 	    /* errno should be set for us. */
@@ -1599,6 +1762,28 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	task_flags = v_num(v);
 	value_free(v);
 	v = NULL;
+
+	v = target_load_value_member(target,taskv,"mm",NULL,LOAD_FLAG_NONE);
+	if (!v) {
+	    verror("could not see if thread %"PRIiTID" was kernel or user\n",tid);
+	    goto errout;
+	}
+	mm_addr = v_addr(v);
+	value_free(v);
+	v = NULL;
+
+	if (mm_addr) {
+	    v = target_load_value_member(target,taskv,"mm.pgd",NULL,
+					 LOAD_FLAG_AUTO_DEREF);
+	    if (!v) {
+		verror("could not load thread %"PRIiTID" pgd (for cr3 tracking)\n",
+		       tid);
+		goto errout;
+	    }
+	    pgd = v_u64(v);
+	    value_free(v);
+	    v = NULL;
+	}
     }
 
     v = target_load_value_member(target,threadinfov,"flags",NULL,
@@ -1699,6 +1884,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      */
     tstate->thread_struct = NULL;
     tstate->ptregs_stack_addr = 0;
+    tstate->mm_addr = mm_addr;
+    tstate->pgd = pgd;
 
     /*
      * If the current thread is not the global thread, fill in a little
@@ -1721,6 +1908,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	gtstate->task_flags = 0;
 	gtstate->thread_struct = NULL;
 	gtstate->ptregs_stack_addr = 0;
+	gtstate->mm_addr = 0;
+	gtstate->pgd = 0;
 
 	/* BUT, do copy in thread_info. */
 	if (gtstate->thread_info) {
@@ -1892,6 +2081,7 @@ static int xen_vm_attach_internal(struct target *target) {
     struct addrspace *tspace;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
+    struct bsymbol *tbs;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
@@ -1953,6 +2143,46 @@ static int xen_vm_attach_internal(struct target *target) {
 	verror("could not pause target before attaching; letting user handle!\n");
     }
     target_set_status(target,TSTATUS_PAUSED);
+
+    /*
+     * Make sure xenaccess is setup to read from userspace memory.
+     */
+#ifdef ENABLE_XENACCESS
+    xstate->xa_instance.init_task = xstate->init_task_addr;
+
+    xstate->xa_instance.page_offset = 0;
+
+    errno = 0;
+    xstate->xa_instance.os.linux_instance.tasks_offset = 
+	symbol_offsetof(xstate->task_struct_type,"tasks",NULL);
+    if (errno) 
+	vwarn("could not resolve offset of task_struct.tasks!\n");
+    errno = 0;
+    xstate->xa_instance.os.linux_instance.pid_offset = 
+	symbol_offsetof(xstate->task_struct_type,"pid",NULL);
+    if (errno) 
+	vwarn("could not resolve offset of task_struct.pid!\n");
+    errno = 0;
+    xstate->xa_instance.os.linux_instance.mm_offset = 
+	symbol_offsetof(xstate->task_struct_type,"mm",NULL);
+    if (errno) 
+	vwarn("could not resolve offset of task_struct.mm!\n");
+    errno = 0;
+    xstate->xa_instance.os.linux_instance.pgd_offset = 
+	symbol_offsetof(xstate->mm_struct_type,"pgd",NULL);
+    if (errno) 
+	vwarn("could not resolve offset of mm_struct.pgd!\n");
+
+    tbs = target_lookup_sym(target,"swapper_pg_dir",NULL,NULL,
+			    SYMBOL_TYPE_FLAG_NONE);
+    if (!tbs) 
+	vwarn("could not find 'swapper_pg_dir'; userspace vm access will fail!\n");
+    else {
+	xstate->xa_instance.kpgd = 
+	    target_addressof_symbol(target,TID_GLOBAL,tbs,LOAD_FLAG_NONE,NULL);
+	bsymbol_release(tbs);
+    }
+#endif
 
     /*
      * Make sure to pull in our modules!
@@ -2103,6 +2333,8 @@ static int xen_vm_fini(struct target *target) {
 	symbol_release(xstate->task_struct_type);
     if (xstate->task_struct_type_ptr)
 	symbol_release(xstate->task_struct_type_ptr);
+    if (xstate->mm_struct_type)
+	symbol_release(xstate->mm_struct_type);
     if (xstate->thread_info_type)
 	RPUT(xstate->thread_info_type,symbol,target,trefcnt);
     if (xstate->modules)
@@ -2258,6 +2490,7 @@ static int xen_vm_loaddebugfiles(struct target *target,
 static int xen_vm_postloadinit(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct bsymbol *thread_info_type;
+    struct bsymbol *mm_struct_type;
 
     /*
      * Assume if we did this, we've done it all.
@@ -2325,6 +2558,20 @@ static int xen_vm_postloadinit(struct target *target) {
     xstate->task_struct_type =						\
 	symbol_get_datatype(xstate->init_task->lsymbol->symbol);
 
+    mm_struct_type = target_lookup_sym(target,"struct mm_struct",
+				       NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
+    if (!mm_struct_type) {
+	vwarn("could not lookup 'struct mm_struct' in debuginfo;"
+	      " userspace vm access might fail!\n");
+	/* This is not an error, so we don't return error -- it
+	 * would upset target_open.
+	 */
+	return 0;
+    }
+    xstate->mm_struct_type = bsymbol_get_symbol(mm_struct_type);
+    RHOLD(xstate->mm_struct_type,target);
+    bsymbol_release(mm_struct_type);
+
     /* We might also want to load tasks from pointers (i.e., the
      * current task.
      */
@@ -2360,6 +2607,162 @@ static int xen_vm_postloadinit(struct target *target) {
     }
 
     return 0;
+}
+
+static struct array_list *
+xen_vm_list_available_overlay_tids(struct target *target,target_type_t type) {
+    struct array_list *retval;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    REGVAL thip;
+
+    if (type != TARGET_TYPE_XEN_PROCESS)
+	return NULL;
+
+    vdebug(8,LA_TARGET,LF_XV,"loading available threads\n");
+
+    if (target_load_available_threads(target,0)) {
+	verror("could not load available threads!\n");
+	return NULL;
+    }
+
+    retval = array_list_create(g_hash_table_size(target->threads));
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread)
+	    continue;
+	errno = 0;
+	thip = xen_vm_read_reg(target,tthread->tid,target->ipregno);
+	if (errno) {
+	    verror("could not read IP for tid %"PRIiTID"; skipping!\n",
+		   tthread->tid);
+	    continue;
+	}
+	if (thip < xstate->kernel_start_addr) {
+	    array_list_append(retval,(void *)(uintptr_t)tthread->tid);
+	    vdebug(8,LA_TARGET,LF_XV,
+		   "added tid %d (IP 0x%"PRIxADDR")\n",tthread->tid,thip);
+	}
+    }
+    array_list_compact(retval);
+
+    return retval;
+}
+
+static struct target *
+xen_vm_instantiate_overlay(struct target *target,
+			   struct target_thread *tthread,
+			   struct target_spec *spec) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct target *overlay;
+    REGVAL thip;
+
+    if (spec->target_type != TARGET_TYPE_XEN_PROCESS) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    errno = 0;
+    thip = xen_vm_read_reg(target,tthread->tid,target->ipregno);
+    if (errno) {
+	verror("could not read IP for tid %"PRIiTID"!!\n",tthread->tid);
+	return NULL;
+    }
+    if (thip >= xstate->kernel_start_addr) {
+	errno = EINVAL;
+	verror("tid %"PRIiTID" IP 0x%"PRIxADDR" is a kernel thread!\n",
+	       tthread->tid,thip);
+	return NULL;
+    }
+
+    /*
+     * All we want to do here is create the overlay target.
+     */
+    overlay = target_create("xen_vm_process",spec);
+
+    return overlay;
+}
+
+static struct target_thread *
+xen_vm_lookup_overlay_thread_by_id(struct target *target,int id) {
+    struct target_thread *retval;
+    struct xen_vm_thread_state *xtstate;
+
+    retval = xen_vm_load_thread(target,id,0);
+    if (!retval) {
+	if (!errno)
+	    errno = ESRCH;
+	return NULL;
+    }
+
+    xtstate = (struct xen_vm_thread_state *)retval->state;
+    if (xtstate->mm_addr) {
+	vdebug(5,LA_TARGET,LF_XV,
+	       "found overlay thread %d\n",id);
+	return retval;
+    }
+    else {
+	verror("tid %d matched %d, but is a kernel thread!\n",retval->tid,id);
+	errno = EINVAL;
+	return NULL;
+    }
+}
+
+static struct target_thread *
+xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name) {
+    struct target_thread *retval = NULL;
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *xtstate;
+    int slen;
+    int rc;
+    GHashTableIter iter;
+    struct value *value;
+
+    if ((rc = xen_vm_load_available_threads(target,0)))
+	vwarn("could not load %d threads; continuing anyway!\n",-rc);
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread)
+	    continue;
+	else {
+	    xtstate = (struct xen_vm_thread_state *)tthread->state;
+	    value = target_load_value_member(target,xtstate->task_struct,"comm",
+					     NULL,LOAD_FLAG_NONE);
+	    if (!value) {
+		vwarn("could not load .comm in task_struct for tid %d; continuing!\n",
+		      tthread->tid);
+		continue;
+	    }
+	    slen = strnlen(value->buf,value->bufsiz);
+	    vdebug(8,LA_TARGET,LF_XV,
+		   "checking task with name '%*s' against '%s'\n",
+		   slen,value->buf,name);
+	    if (strncmp(name,value->buf,slen) == 0) {
+		retval = tthread;
+		break;
+	    }
+	}
+    }
+
+    if (retval) {
+	if (xtstate->mm_addr == 0) {
+	    verror("tid %d matched '%s', but is a kernel thread!\n",
+		   retval->tid,name);
+	    errno = EINVAL;
+	    return NULL;
+	}
+	else {
+	    vdebug(5,LA_TARGET,LF_XV,
+		   "found overlay thread %"PRIiTID"\n",retval->tid);
+	    return tthread;
+	}
+    }
+    else {
+	errno = ESRCH;
+	return NULL;
+    }
 }
 
 static target_status_t xen_vm_status(struct target *target) {
@@ -2976,6 +3379,9 @@ static int xen_vm_load_all_threads(struct target *target,int force) {
     for (i = 0; i < array_list_len(cthreads); ++i) {
 	tthread = (struct target_thread *)array_list_item(cthreads,i);
 
+	vdebug(8,LA_TARGET,LF_XV,
+	       "tid %"PRIiTID" (%p)\n",tthread->tid,tthread);
+
 	if (!xen_vm_load_thread(target,tthread->tid,force)) {
 	    if (target_lookup_thread(target,tthread->tid)) {
 		verror("could not load thread %"PRIiTID"\n",tthread->tid);
@@ -3020,7 +3426,7 @@ static int xen_vm_load_available_threads(struct target *target,int force) {
      * current thread will get loaded again in the loop below if @force
      * is set...
      */
-    if (!xen_vm_load_current_thread(target,force)) {
+    if (!__xen_vm_load_current_thread(target,force,1)) {
 	verror("could not load current thread!\n");
 	rc = -1;
     }
@@ -3502,6 +3908,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     struct addrspace *space;
     struct target_thread *bogus_sstep_thread;
     ADDR bogus_sstep_probepoint_addr;
+    struct target *overlay;
 
 #ifdef ENABLE_XENACCESS
     /* From previous */
@@ -3548,32 +3955,25 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    xen_vm_updateregions(target,space);
 	}
 
-	/*
-	 * Only try to load the kernel thread if we're in kernel
-	 * space.  We might not be if we single stepped an IRET, for
-	 * instance.  If we're in user space, just load the "global"
-	 * thread so we have something.
-	 *
-	 * XXX: probably later we should load a "dummy" user thread
-	 * to eliminate bugs/confusion later on with populating
-	 * user-mode state into the global thread?  Shouldn't be a
-	 * problem, but if it got stale or something, might
-	 * introduce a bug...
-	 */
 	if (ipval < xstate->kernel_start_addr) {
-	    vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
-		   "user-mode debug event at EIP 0x%"PRIxADDR"; not loading"
-		   " thread; will try to handle it if it is single step!\n",
-		   ipval);
 	    if (!__xen_vm_load_current_thread(target,0,1)) {
-		verror("could not read global thread in user mode context!\n");
+		vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
+		       "user-mode debug event at EIP 0x%"PRIxADDR" in unknown tid;"
+		       " will try to handle it if it is single step!\n",
+		       ipval);
+		verror("could not read current thread in user mode context!\n");
 		goto out_err_again;
 	    }
-	    tthread = target->global_thread;
+	    tthread = target->current_thread;
 	    gtstate = (struct xen_vm_thread_state *) \
 		target->global_thread->state;
-	    xtstate = gtstate;
-	    tid = target->global_thread->tid;
+	    xtstate = (struct xen_vm_thread_state *) \
+		target->current_thread->state;
+	    tid = target->current_thread->tid;
+	    vdebug(3,LA_TARGET,LF_XV | LF_THREAD,
+		   "user-mode debug event at EIP 0x%"PRIxADDR" in tid %"PRIiTID";"
+		   " will try to handle it if it is single step!\n",
+		   ipval,tid);
 	}
 	else {
 	    /* 
@@ -3635,8 +4035,19 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    if (target->sstep_thread 
 		&& ((target->sstep_thread->tpc
 		     && target->sstep_thread->tpc->probepoint->can_switch_context)
-		    || ipval < xstate->kernel_start_addr)) {
+		    || (ipval < xstate->kernel_start_addr
+			&& !target->sstep_thread_overlay))) {
 		sstep_thread = target->sstep_thread;
+	    }
+	    else if (target->sstep_thread
+		     && ipval < xstate->kernel_start_addr
+		     && target->sstep_thread_overlay) {
+		vdebug(8,LA_TARGET,LF_XV,
+		       "single step event in overlay tid %"PRIiTID
+		       " (tgid %"PRIiTID"); notifying overlay\n",
+		       tid,target->sstep_thread_overlay->base_tid);
+		return target_notify_overlay(target->sstep_thread_overlay,
+					     tid,ipval,again);
 	    }
 	    else
 		sstep_thread = NULL;
@@ -3796,12 +4207,29 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		       dreg,ipval);
 	    }
 	    else if (ipval < xstate->kernel_start_addr) {
-		verror("user-mode debug event (not single step, not hw dbg reg)"
-		       " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
-		       " 0x%"RF"; skipping handling!\n",
-		       ipval,xtstate->context.debugreg[6],
-		       xtstate->context.user_regs.eflags);
-		goto out_err_again;
+		overlay = target_lookup_overlay(target,tid);
+		if (overlay) {
+		    /*
+		     * Try to notify the overlay!
+		     */
+		    vdebug(9,LA_TARGET,LF_XV,
+			   "user-mode debug event in overlay tid %"PRIiTID
+			   " (tgid %"PRIiTID") (not single step, not hw dbg reg)"
+			   " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
+			   " 0x%"RF"; passing to overlay!\n",
+			   tid,overlay->base_tid,ipval,
+			   xtstate->context.debugreg[6],
+			   xtstate->context.user_regs.eflags);
+		    return target_notify_overlay(overlay,tid,ipval,again);
+		}
+		else {
+		    verror("user-mode debug event (not single step, not hw dbg reg)"
+			   " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
+			   " 0x%"RF"; skipping handling!\n",
+			   ipval,xtstate->context.debugreg[6],
+			   xtstate->context.user_regs.eflags);
+		    goto out_err_again;
+		}
 	    }
 	    else {
 		vdebug(4,LA_TARGET,LF_XV,
@@ -4199,6 +4627,17 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
     return retval;
 }
 
+static unsigned char *xen_vm_read(struct target *target,ADDR addr,
+				  unsigned long target_length,
+				  unsigned char *buf) {
+    return xen_vm_read_pid(target,0,addr,target_length,buf);
+}
+
+static unsigned long xen_vm_write(struct target *target,ADDR addr,
+				  unsigned long length,unsigned char *buf) {
+    return xen_vm_write_pid(target,0,addr,length,buf);
+}
+
 #ifdef ENABLE_XENACCESS
 static unsigned char *mmap_pages(xa_instance_t *xa_instance,ADDR addr, 
 				 unsigned long size,uint32_t *offset,
@@ -4263,8 +4702,8 @@ static unsigned char *mmap_pages(xa_instance_t *xa_instance,ADDR addr,
 
  */
 
-static unsigned char *xen_vm_read(struct target *target,ADDR addr,
-				  unsigned long target_length,unsigned char *buf) {
+unsigned char *xen_vm_read_pid(struct target *target,int pid,ADDR addr,
+			       unsigned long target_length,unsigned char *buf) {
     unsigned char *pages;
     unsigned int offset = 0;
     unsigned long length = target_length, size = 0;
@@ -4273,7 +4712,6 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
     unsigned int page_offset;
     int no_pages;
     struct xen_vm_state *xstate;
-    int pid = 0;
 
     xstate = (struct xen_vm_state *)(target->state);
 
@@ -4346,8 +4784,8 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
     return retval;
 }
 
-unsigned long xen_vm_write(struct target *target,ADDR addr,
-			   unsigned long length,unsigned char *buf) {
+unsigned long xen_vm_write_pid(struct target *target,int pid,ADDR addr,
+			       unsigned long length,unsigned char *buf) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
     struct memrange *range = NULL;
     unsigned char *pages;
@@ -4355,7 +4793,6 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,
     unsigned long page_size;
     unsigned int page_offset;
     int no_pages;
-    int pid = 0;
 
     xstate = (struct xen_vm_state *)(target->state);
 
@@ -4411,13 +4848,13 @@ unsigned long xen_vm_write(struct target *target,ADDR addr,
  *
  * On error, returns NULL, and sets errno.
  */
-static unsigned char *xen_vm_read(struct target *target, ADDR addr,
+unsigned char *xen_vm_read_pid(struct target *target, int pid, ADDR addr,
 				  unsigned long target_length,
 				  unsigned char *buf)
 {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
     vmi_instance_t vmi = xstate->vmi_instance;
-    int pid = 0, alloced = 0;
+    int alloced = 0;
     size_t cc;
 
     vdebug(16,LA_TARGET,LF_XV,
@@ -4456,11 +4893,10 @@ static unsigned char *xen_vm_read(struct target *target, ADDR addr,
  * written (and sets errno nonzero if there is an error).  Successful if
  * @return == @length.
  */
-unsigned long xen_vm_write(struct target *target, ADDR addr,
+unsigned long xen_vm_write_pid(struct target *target, int pid, ADDR addr,
 			   unsigned long length, unsigned char *buf)
 {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    int pid = 0;
 
     vdebug(16,LA_TARGET,LF_XV,
 	   "write dom %d: addr=0x%"PRIxADDR" len=%d pid=%d\n",
@@ -5292,7 +5728,8 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
     return 0;
 }
 
-int xen_vm_singlestep(struct target *target,tid_t tid,int isbp) {
+int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
+		      struct target *overlay) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -5324,11 +5761,16 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp) {
     tthread->dirty = 1;
 
     target->sstep_thread = tthread;
+    if (overlay)
+	target->sstep_thread_overlay = overlay;
+    else 
+	target->sstep_thread_overlay = NULL;
 
     return 0;
 }
 
-int xen_vm_singlestep_end(struct target *target,tid_t tid) {
+int xen_vm_singlestep_end(struct target *target,tid_t tid,
+			  struct target *overlay) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -5349,6 +5791,7 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid) {
     tthread->dirty = 1;
 
     target->sstep_thread = NULL;
+    target->sstep_thread_overlay = NULL;
 
     return 0;
 }
