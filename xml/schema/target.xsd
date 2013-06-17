@@ -25,6 +25,7 @@
       <xs:enumeration value="none"/>
       <xs:enumeration value="ptrace"/>
       <xs:enumeration value="xen"/>
+      <xs:enumeration value="xenProcess"/>
     </xs:restriction>
   </xs:simpleType>
   <xs:simpleType name="TargetModeT">
@@ -53,6 +54,7 @@
       <xs:element minOccurs="0" ref="vmi1:logStderr"/>
       <xs:element minOccurs="0" ref="vmi1:killOnClose"/>
       <xs:element minOccurs="0" ref="vmi1:killOnCloseSignal"/>
+      <xs:element minOccurs="0" ref="vmi1:debugfileRootPrefix"/>
       <xs:element ref="vmi1:backendSpec"/>
     </xs:sequence>
     <xs:attribute name="type" use="required" type="vmi1:TargetTypeT"/>
@@ -66,11 +68,13 @@
   <xs:element name="logStderr" type="xs:boolean"/>
   <xs:element name="killOnClose" type="xs:boolean"/>
   <xs:element name="killOnCloseSignal" type="xs:int"/>
+  <xs:element name="debugfileRootPrefix" type="xs:token"/>
   <xs:element name="backendSpec">
     <xs:complexType>
       <xs:choice>
         <xs:element ref="vmi1:targetXenSpec"/>
         <xs:element ref="vmi1:targetPtraceSpec"/>
+        <xs:element ref="vmi1:targetXenProcessSpec"/>
       </xs:choice>
     </xs:complexType>
   </xs:element>
@@ -116,6 +120,9 @@
   </xs:element>
   <xs:element name="envvar" type="xs:string"/>
   <xs:element name="targetPtraceSpec" type="vmi1:TargetPtraceSpecT"/>
+  <xs:element name="targetXenProcessSpec">
+    <xs:complexType/>
+  </xs:element>
   <xs:simpleType name="ThreadStatusT">
     <xs:restriction base="xs:token">
       <xs:enumeration value="unknown"/>
@@ -136,6 +143,8 @@
       <xs:element ref="vmi1:tid"/>
       <xs:element ref="vmi1:threadStatus"/>
     </xs:sequence>
+    <xs:attribute name="name" use="required"/>
+    <xs:attribute name="canOverlay" use="required" type="xs:boolean"/>
   </xs:complexType>
   <xs:element name="thid" type="vmi1:ThreadIdT"/>
   <xs:element name="tid" type="vmi1:TargetIdT"/>

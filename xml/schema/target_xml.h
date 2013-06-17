@@ -27,6 +27,7 @@
 #include "target_linux_userproc.h"
 #ifdef ENABLE_XENSUPPORT
 #include "target_xen_vm.h"
+#include "target_xen_vm_process.h"
 #endif
 #include <glib.h>
 

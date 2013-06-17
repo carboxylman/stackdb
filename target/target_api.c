@@ -262,8 +262,34 @@ int target_open(struct target *target) {
 
 struct array_list *target_list_available_overlay_tids(struct target *target,
 						      target_type_t type) {
-    vdebug(16,LA_TARGET,LF_TARGET,"target(%s)\n",target->name);
-    return target->ops->list_available_overlay_tids(target,type);
+    struct array_list *retval;
+    GHashTableIter iter;
+    struct target_thread *tthread;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    REGVAL thip;
+
+    vdebug(8,LA_TARGET,LF_TARGET,"loading available threads\n");
+
+    if (target_load_available_threads(target,0)) {
+	verror("could not load available threads!\n");
+	return NULL;
+    }
+
+    retval = array_list_create(g_hash_table_size(target->threads));
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread)
+	    continue;
+
+	if ((type == TARGET_TYPE_NONE && tthread->supported_overlay_types) 
+	    || (type & tthread->supported_overlay_types))
+	    array_list_append(retval,(void *)(uintptr_t)tthread->tid);
+    }
+    array_list_compact(retval);
+
+    vdebug(8,LA_TARGET,LF_TARGET,"can overlay available threads\n");
+
+    return retval;
 }
 
 struct array_list *target_list_overlays(struct target *target) {

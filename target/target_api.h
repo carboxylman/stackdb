@@ -143,6 +143,7 @@ typedef enum {
     TARGET_TYPE_XEN    = 1 << 1,
     TARGET_TYPE_XEN_PROCESS = 1 << 2,
 } target_type_t;
+#define TARGET_TYPE_BITS 3
 
 typedef enum {
     TARGET_MODE_NONE = 0,
@@ -1327,6 +1328,14 @@ struct target_thread {
 	   resumeat:3,
 	   attached:1;
     thread_status_t status:THREAD_STATUS_BITS;
+    target_type_t supported_overlay_types:TARGET_TYPE_BITS;
+
+    /*
+     * Target backends may or may not set this field when they load
+     * threads.  If it is set, it will be freed when the thread is
+     * freed.
+     */
+    char *name;
 
     void *state;
 
@@ -1775,12 +1784,6 @@ struct target_ops {
      * "Underlay" targets (that support overlays) must define these
      * functions.
      */
-    /*
-     * Returns an array_list of tid_t values filtered by the given
-     * @target_type .
-     */
-    struct array_list *(*list_available_overlay_tids)(struct target *target,
-						      target_type_t type);
     struct target *(*instantiate_overlay)(struct target *target,
 					  struct target_thread *tthread,
 					  struct target_spec *spec);

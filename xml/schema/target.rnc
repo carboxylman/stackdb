@@ -20,7 +20,7 @@ default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
 include "common.rnc"
 
-TargetTypeT = "none" | "ptrace" | "xen"
+TargetTypeT = "none" | "ptrace" | "xen" | "xenProcess"
 TargetModeT = "none" | "live" | "replay" | "record"
 ThreadBPModeT = "strict" | "semiStrict" | "loose"
 
@@ -36,9 +36,10 @@ TargetSpecT =
     element logStderr { xsd:boolean }?,
     element killOnClose { xsd:boolean }?,
     element killOnCloseSignal { xsd:int }?,
+    element debugfileRootPrefix { xsd:token }?,
 
     element backendSpec {
-        (TargetXenSpec | TargetPtraceSpec)
+        (TargetXenSpec | TargetPtraceSpec | TargetXenProcessSpec)
     }
 
 TargetSpec = element targetSpec { TargetSpecT }
@@ -62,12 +63,18 @@ TargetPtraceSpecT =
 
 TargetPtraceSpec = element targetPtraceSpec { TargetPtraceSpecT }
 
+TargetXenProcessSpecT = empty
+
+TargetXenProcessSpec = element targetXenProcessSpec { TargetXenProcessSpecT }
+
 ThreadStatusT = 
     "unknown" | "running" | "stopped" | "sleeping" | "zombie" | "dead" 
     | "blockedio" | "paging" | "paused"
 ThreadStatus = element threadStatus { ThreadStatusT }
 
 ThreadT = 
+    attribute name { text },
+    attribute canOverlay { xsd:boolean },	
     element thid { ThreadIdT },
     element tid { TargetIdT },
     ThreadStatus

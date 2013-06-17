@@ -77,9 +77,6 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region);
 
-static struct array_list *
-linux_userproc_list_available_overlay_tids(struct target *target,
-					   target_type_t type);
 static struct target *
 linux_userproc_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
@@ -170,7 +167,6 @@ struct target_ops linux_userspace_process_ops = {
     .loaddebugfiles = linux_userproc_loaddebugfiles,
     .postloadinit = linux_userproc_postloadinit,
 
-    .list_available_overlay_tids = linux_userproc_list_available_overlay_tids,
     .instantiate_overlay = linux_userproc_instantiate_overlay,
 
     .status = linux_userproc_status,
@@ -2825,13 +2821,6 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 
  out:
     return retval;
-}
-
-static struct array_list *
-linux_userproc_list_available_overlay_tids(struct target *target,
-					   target_type_t type) {
-    errno = ENOTSUP;
-    return NULL;
 }
 
 static struct target *

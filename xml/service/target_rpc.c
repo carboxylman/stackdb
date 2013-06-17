@@ -476,6 +476,9 @@ int vmi1__GetTarget(struct soap *soap,
 	return soap_receiver_fault(soap,"Nonexistent target!",
 				   "Specified target does not exist!");
 
+    if (target_load_available_threads(t,0)) 
+	vwarn("load_available_threads failed; ignoring!\n");
+
     reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
     r->target = t_target_to_x_TargetT(soap,t,reftab,NULL);
     g_hash_table_destroy(reftab);
@@ -842,6 +845,9 @@ int vmi1__InstantiateTarget(struct soap *soap,
 		      t->id,url);
 	}
 
+	if (target_load_available_threads(t,0)) 
+	    vwarn("load_available_threads failed; ignoring!\n");
+
 	r->target = t_target_to_x_TargetT(soap,t,reftab,NULL);
 	monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 
@@ -961,6 +967,161 @@ int vmi1__InstantiateTarget(struct soap *soap,
 	proxyreq_attach_new_objid(pr,s->target_id,monitor);
 
 	r->target = t_target_id_to_x_TargetT(soap,s->target_id,s,reftab,NULL);
+	monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
+
+	return SOAP_OK;
+    }
+}
+
+int vmi1__InstantiateOverlayTarget(struct soap *soap,
+				   vmi1__TargetIdT utid,
+				   vmi1__ThreadIdT thid,
+				   struct vmi1__TargetSpecT *spec,
+				   vmi1__ListenerT *ownerListener,
+				   struct vmi1__TargetResponse *r) {
+    struct target *t;
+    struct target_spec *s;
+    GHashTable *reftab;
+    struct monitor *monitor;
+    struct proxyreq *pr;
+    int tid;
+    int largc = 0;
+    char **largv = NULL;
+    int i;
+    char *tmpbuf;
+    int tmpbuflen;
+    int pid;
+    char *url = NULL;
+    int len = 0;
+    int rn;
+    struct target *ut;
+
+    pr = soap->user;
+    if (!pr) {
+	return soap_receiver_fault(soap,
+				   "Request needed splitting but not split!",
+				   "Request needed splitting but not split!");
+    }
+
+    if (spec->dedicatedMonitor && *spec->dedicatedMonitor == xsd__boolean__true_) 
+	return soap_receiver_fault(soap,
+				   "Overlays do not support dedicated mode!",
+				   "Overlays do not support dedicated mode!");
+
+    if (!monitor_lookup_objid_lock_objtype(utid,MONITOR_OBJTYPE_TARGET,
+					   (void **)&ut,&monitor)) {
+	return soap_receiver_fault(soap,"Nonexistent underlying target!",
+				   "Specified underlying target does not exist!");
+    }
+
+    if (ownerListener) {
+	if (ownerListener->url != NULL) 
+	    url = ownerListener->url;
+	else if (ownerListener->hostname != NULL 
+		 && ownerListener->port != NULL) {
+	    len = sizeof("http://") + strlen(ownerListener->hostname) \
+		+ sizeof(":") + 11 + sizeof(":/vmi/1/targetListener") + 1;
+	    url = malloc(len * sizeof(char));
+	    sprintf(url,"http://%s:%d/vmi/1/targetListener",
+		    ownerListener->hostname,*ownerListener->port);
+	}
+	else {
+	    return soap_receiver_fault(soap,"Bad listener!","Bad listener!");
+	}
+    }
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
+    s = x_TargetSpecT_to_t_target_spec(soap,spec,reftab,NULL);
+    if (!s) {
+	g_hash_table_destroy(reftab);
+	return soap_receiver_fault(soap,"Bad target spec!",
+				   "Bad target spec!");
+    }
+
+    /* NB: don't lock monitor just to read its filenames.  Those aren't
+     * deallocated until monitor_destroy() anyway.
+     *
+     * Also, we *do* record the i/o of monitored_target if we forked a
+     * process-monitored target, but right now, we don't try to capture
+     * its logfiles, because we proxy the RPC to the child.
+     */
+
+    PROXY_REQUEST_LOCKED(soap,utid,&target_rpc_mutex);
+
+    tid = monitor_get_unique_objid();
+    /* Force it to use our new monitored object id. */
+    s->target_id = tid;
+
+    rn = rand();
+
+    /*
+     * Have to see if we need to fork this target, or spawn it in a
+     * thread.  For now, just always spawn in a thread.
+     */
+    if (!spec->dedicatedMonitor 
+	|| (spec->dedicatedMonitor 
+	    && *spec->dedicatedMonitor == xsd__boolean__false_)) {
+	/*
+	 * NB: let target API handle stdout/err if the client wants it
+	 * logged; just provide it valid tmpfile names.
+	 */
+	if (spec->logStdout && *spec->logStdout == xsd__boolean__true_) {
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".stdout.log") + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.stdout.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
+
+	    s->outfile = tmpbuf;
+	}
+
+	if (spec->logStderr && *spec->logStderr == xsd__boolean__true_) {
+	    tmpbuflen = strlen(GENERIC_RPC_TMPDIR) + 1 + 11 + 1 + 11 
+		+ sizeof(".stderr.log") + 1;
+	    tmpbuf = malloc(tmpbuflen);
+	    snprintf(tmpbuf,tmpbuflen,"%s/%d.%d.stderr.log",
+		     GENERIC_RPC_TMPDIR,s->target_id,rn);
+
+	    s->errfile = tmpbuf;
+	}
+
+	/* Make sure to use our new evloop right away. */
+	t = target_instantiate_overlay(ut,thid,s);
+	if (!t) {
+	    target_free_spec(s);
+	    g_hash_table_destroy(reftab);
+	    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
+	    return soap_receiver_fault(soap,"Could not instantiate target!",
+				       "Could not instantiate target!");
+	}
+
+	monitor_add_obj(monitor,t->id,MONITOR_OBJTYPE_TARGET,t,NULL);
+
+	if (target_open(t)) {
+	    verror("could not open target!\n");
+	    target_free(t);
+	    target_free_spec(s);
+	    g_hash_table_destroy(reftab);
+	    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
+	    return soap_receiver_fault(soap,"Could not open target!",
+				       "Could not open target after"
+				       " instantiating it successfully!");
+	}
+
+	if (target_load_available_threads(t,0)) 
+	    vwarn("load_available_threads failed; ignoring!\n");
+
+	proxyreq_attach_new_objid(pr,t->id,monitor);
+
+	if (url) {
+	    if (generic_rpc_bind_dynlistener_objid(RPC_SVCTYPE_TARGET,
+						   url,t->id,1))
+		vwarn("could not bind target %d to listener %s!?\n",
+		      t->id,url);
+	}
+
+	r->target = t_target_to_x_TargetT(soap,t,reftab,NULL);
 	monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_TARGET);
 
 	return SOAP_OK;

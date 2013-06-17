@@ -467,6 +467,8 @@ struct monitor *monitor_create_custom(monitor_type_t type,monitor_flags_t flags,
  */
 int monitor_add_primary_obj(struct monitor *monitor,
 			    int objid,int objtype,void *obj,void *objstate);
+int monitor_add_obj(struct monitor *monitor,int objid,int objtype,void *obj,
+		    void *objstate);
 
 
 int monitor_close_obj(struct monitor *monitor,void *obj,

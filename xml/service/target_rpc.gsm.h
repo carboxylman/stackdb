@@ -58,6 +58,12 @@ int vmi1__InstantiateTarget(struct vmi1__TargetSpecT *spec,
 			    vmi1__ListenerT *ownerListener,
 			    struct vmi1__TargetResponse *r);
 
+int vmi1__InstantiateOverlayTarget(vmi1__TargetIdT tid,
+				   vmi1__ThreadIdT thid,
+				   struct vmi1__TargetSpecT *spec,
+				   vmi1__ListenerT *ownerListener,
+				   struct vmi1__TargetResponse *r);
+
 int vmi1__PauseTarget(vmi1__TargetIdT tid,
 		      struct vmi1__NoneResponse *r);
 int vmi1__ResumeTarget(vmi1__TargetIdT tid,

@@ -43,6 +43,10 @@ x_TargetTypeT_to_t_target_type_t(struct soap *soap,
 	if (out)
 	    *out = TARGET_TYPE_XEN;
 	return TARGET_TYPE_XEN;
+    case vmi1__TargetTypeT__xenProcess:
+	if (out)
+	    *out = TARGET_TYPE_XEN_PROCESS;
+	return TARGET_TYPE_XEN_PROCESS;
     default:
 	verror("unknown TargetTypeT %d\n",type);
 	return TARGET_TYPE_NONE;
@@ -67,6 +71,10 @@ t_target_type_t_to_x_TargetTypeT(struct soap *soap,
 	if (out)
 	    *out = vmi1__TargetTypeT__xen;
 	return vmi1__TargetTypeT__xen;
+    case TARGET_TYPE_XEN_PROCESS:
+	if (out)
+	    *out = vmi1__TargetTypeT__xenProcess;
+	return vmi1__TargetTypeT__xenProcess;
     default:
 	verror("unknown target_type_t %d\n",type);
 	return vmi1__TargetTypeT__none;
@@ -208,6 +216,8 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 	ospec->kill_on_close_sig = 
 	    (spec->killOnCloseSignal) ? *spec->killOnCloseSignal : SIGKILL;
     }
+    if (spec->debugfileRootPrefix)
+	ospec->debugfile_root_prefix = strdup(spec->debugfileRootPrefix);
 
     if (type == TARGET_TYPE_PTRACE
 	&& spec->backendSpec 
@@ -226,6 +236,9 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 					  (struct vmi1__TargetXenSpecT *)spec->backendSpec->union_backendSpec.targetXenSpec,
 					  reftab,
 					  ospec->backend_spec);
+    else if (type == TARGET_TYPE_XEN_PROCESS) {
+	spec->backendSpec = NULL;
+    }
 #endif
     else {
 	verror("bad target-specific spec (%d)\n",type);
@@ -279,6 +292,8 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	    SOAP_CALLOC(soap,1,sizeof(*ospec->killOnCloseSignal));
 	*ospec->killOnCloseSignal = spec->kill_on_close_sig;
     }
+    if (spec->debugfile_root_prefix)
+	SOAP_STRCPY(soap,ospec->debugfileRootPrefix,spec->debugfile_root_prefix);
 
     if (spec->target_type == TARGET_TYPE_PTRACE) {
 	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
@@ -298,6 +313,12 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	    t_xen_vm_spec_to_x_TargetXenSpecT(soap,
 					      (struct xen_vm_spec *)spec->backend_spec,
 					      reftab,NULL);
+    }
+    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
+	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
+	ospec->backendSpec->__union_backendSpec = \
+	    SOAP_UNION__vmi1__union_backendSpec_targetXenProcessSpec;
+	ospec->backendSpec->union_backendSpec.targetXenProcessSpec = NULL;
     }
 #endif
 
@@ -637,6 +658,15 @@ t_target_thread_to_x_ThreadT(struct soap *soap,
     othread->threadStatus = \
 	t_thread_status_t_to_x_ThreadStatusT(soap,thread->status,
 					     reftab,NULL);
+    if (thread->name) {
+	SOAP_STRCPY(soap,othread->name,thread->name);
+    }
+    else
+	othread->name = "";
+    if (thread->supported_overlay_types) 
+	othread->canOverlay = xsd__boolean__true_;
+    else
+	othread->canOverlay = xsd__boolean__false_;
 
     return othread;
 }

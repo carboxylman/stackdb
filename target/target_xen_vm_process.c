@@ -54,6 +54,9 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 						    tid_t tid,ADDR ipval,
 						    int *again);
 
+static int xen_vm_process_attach_evloop(struct target *target,
+					struct evloop *evloop);
+static int xen_vm_process_detach_evloop(struct target *target);
 static target_status_t xen_vm_process_status(struct target *target);
 static int xen_vm_process_pause(struct target *target,int nowait);
 static int xen_vm_process_resume(struct target *target);
@@ -127,7 +130,6 @@ struct target_ops xen_vm_process_ops = {
     .postloadinit = xen_vm_process_postloadinit,
 
     /* Don't support overlays initially. */
-    .list_available_overlay_tids = NULL,
     .instantiate_overlay = NULL,
 
     .overlay_event = xen_vm_process_overlay_event,
@@ -159,13 +161,13 @@ struct target_ops xen_vm_process_ops = {
     .flush_all_threads = xen_vm_process_flush_all_threads,
     .thread_tostring = xen_vm_process_thread_tostring,
 
-    .attach_evloop = NULL,
-    .detach_evloop = NULL,
+    .attach_evloop = xen_vm_process_attach_evloop,
+    .detach_evloop = xen_vm_process_detach_evloop,
 
     .readreg = xen_vm_process_read_reg,
     .writereg = xen_vm_process_write_reg,
     .copy_registers = xen_vm_process_copy_registers,
-    //.get_unused_debug_reg = xen_vm_process_get_unused_debug_reg,
+    .get_unused_debug_reg = xen_vm_process_get_unused_debug_reg,
     //.set_hw_breakpoint = xen_vm_process_set_hw_breakpoint,
     //.set_hw_watchpoint = xen_vm_process_set_hw_watchpoint,
     //.unset_hw_breakpoint = xen_vm_process_unset_hw_breakpoint,
@@ -182,10 +184,10 @@ struct target_ops xen_vm_process_ops = {
 static char *xen_vm_process_tostring(struct target *target,
 				     char *buf,int bufsiz) {
     if (!buf) {
-	bufsiz = strlen("lwp()") + 11 + 1;
+	bufsiz = strlen("task()") + 11 + 1;
 	buf = malloc(bufsiz*sizeof(char));
     }
-    snprintf(buf,bufsiz,"lwp(%d)",target->base_tid);
+    snprintf(buf,bufsiz,"task(%d)",target->base_tid);
 
     return buf;
 }
@@ -916,6 +918,15 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
     return TSTATUS_PAUSED;
 }
 
+static int xen_vm_process_attach_evloop(struct target *target,
+					struct evloop *evloop) {
+    return 0;
+}
+
+static int xen_vm_process_detach_evloop(struct target *target) {
+    return 0;
+}
+
 static target_status_t xen_vm_process_status(struct target *target) {
     return TSTATUS_RUNNING;
 }
@@ -1154,6 +1165,11 @@ static GHashTable *xen_vm_process_copy_registers(struct target *target,tid_t tid
     }
 
     return target->base->ops->copy_registers(target->base,tid);
+}
+
+static REG xen_vm_process_get_unused_debug_reg(struct target *target,tid_t tid) {
+    errno = ENOTSUP;
+    return -1;
 }
 
 int xen_vm_process_notify_sw_breakpoint(struct target *target,ADDR addr,

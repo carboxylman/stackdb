@@ -77,8 +77,6 @@ static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
 static int xen_vm_postloadinit(struct target *target);
 
 
-static struct array_list *
-xen_vm_list_available_overlay_tids(struct target *target,target_type_t type);
 static struct target *
 xen_vm_instantiate_overlay(struct target *target,
 			   struct target_thread *tthread,
@@ -202,7 +200,6 @@ struct target_ops xen_vm_ops = {
     .loaddebugfiles = xen_vm_loaddebugfiles,
     .postloadinit = xen_vm_postloadinit,
 
-    .list_available_overlay_tids = xen_vm_list_available_overlay_tids,
     .instantiate_overlay = xen_vm_instantiate_overlay,
     .lookup_overlay_thread_by_id = xen_vm_lookup_overlay_thread_by_id,
     .lookup_overlay_thread_by_name = xen_vm_lookup_overlay_thread_by_name,
@@ -946,6 +943,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     struct value *v = NULL;
     int iskernel = 0;
     ADDR stack_top;
+    char *comm = NULL;
 
     vdebug(5,LA_TARGET,LF_XV,"loading\n");
 
@@ -956,6 +954,16 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	goto errout;
     }
     tid = v_i32(v);
+    value_free(v);
+    v = NULL;
+
+    v = target_load_value_member(target,taskv,"comm",NULL,LOAD_FLAG_NONE);
+    if (!v) {
+	verror("could not load comm in task value; BUG?\n");
+	/* errno should be set for us. */
+	goto errout;
+    }
+    comm = strndup(v->buf,v->bufsiz);
     value_free(v);
     v = NULL;
 
@@ -1110,10 +1118,19 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
      *
      * It doesn't matter whether the thread is a kernel thread or not.
      */
-    if (iskernel) 
+    if (iskernel) {
 	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_KERNEL);
-    else 
+	tthread->supported_overlay_types = TARGET_TYPE_NONE;
+    }
+    else {
 	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_USER);
+	tthread->supported_overlay_types = TARGET_TYPE_XEN_PROCESS;
+    }
+
+    if (tthread->name)
+	free(tthread->name);
+    tthread->name = comm;
+    comm = NULL;
 
     /*
      * Load the stored registers from the kernel stack; except fs/gs and
@@ -1310,6 +1327,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 
     if (v) 
 	value_free(v);
+    if (comm)
+	free(comm);
 
     tthread->valid = 1;
 
@@ -1318,6 +1337,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
  errout:
     if (v) 
 	value_free(v);
+    if (comm)
+	free(comm);
     if (threadinfov) 
 	value_free(threadinfov);
     if (threadv)
@@ -1548,6 +1569,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     ADDR mm_addr = 0;
     uint64_t pgd = 0;
     REGVAL kernel_esp = 0;
+    char *comm = NULL;
 
     /*
      * If the global thread has been loaded, and that's all the caller
@@ -1740,6 +1762,16 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	value_free(v);
 	v = NULL;
 
+	v = target_load_value_member(target,taskv,"comm",NULL,LOAD_FLAG_NONE);
+	if (!v) {
+	    verror("could not load comm in current task; BUG?\n");
+	    /* errno should be set for us. */
+	    goto errout;
+	}
+	comm = strndup(v->buf,v->bufsiz);
+	value_free(v);
+	v = NULL;
+
 	vdebug(5,LA_TARGET,LF_XV,"loading thread %"PRIiTID"\n",tid);
 
 	v = target_load_value_member(target,taskv,"tgid",NULL,LOAD_FLAG_NONE);
@@ -1920,6 +1952,16 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	gtstate->thread_info = value_clone(threadinfov);
 	gtstate->thread_info_flags = tiflags;
 	gtstate->thread_info_preempt_count = preempt_count;
+
+	if (mm_addr) 
+	    tthread->supported_overlay_types = TARGET_TYPE_XEN_PROCESS;
+	else
+	    tthread->supported_overlay_types = TARGET_TYPE_NONE;
+
+	if (tthread->name)
+	    free(tthread->name);
+	tthread->name = comm;
+	comm = NULL;
     }
 
     vdebug(4,LA_TARGET,LF_XV,
@@ -1934,12 +1976,16 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 
     if (v)
 	value_free(v);
+    if (comm)
+	free(comm);
 
     return tthread;
 
  errout:
     if (v)
 	value_free(v);
+    if (comm)
+	free(comm);
     if (threadinfov)
 	value_free(threadinfov);
     tstate->thread_info = NULL;
@@ -2607,47 +2653,6 @@ static int xen_vm_postloadinit(struct target *target) {
     }
 
     return 0;
-}
-
-static struct array_list *
-xen_vm_list_available_overlay_tids(struct target *target,target_type_t type) {
-    struct array_list *retval;
-    GHashTableIter iter;
-    struct target_thread *tthread;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
-    REGVAL thip;
-
-    if (type != TARGET_TYPE_XEN_PROCESS)
-	return NULL;
-
-    vdebug(8,LA_TARGET,LF_XV,"loading available threads\n");
-
-    if (target_load_available_threads(target,0)) {
-	verror("could not load available threads!\n");
-	return NULL;
-    }
-
-    retval = array_list_create(g_hash_table_size(target->threads));
-    g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
-	if (tthread == target->global_thread)
-	    continue;
-	errno = 0;
-	thip = xen_vm_read_reg(target,tthread->tid,target->ipregno);
-	if (errno) {
-	    verror("could not read IP for tid %"PRIiTID"; skipping!\n",
-		   tthread->tid);
-	    continue;
-	}
-	if (thip < xstate->kernel_start_addr) {
-	    array_list_append(retval,(void *)(uintptr_t)tthread->tid);
-	    vdebug(8,LA_TARGET,LF_XV,
-		   "added tid %d (IP 0x%"PRIxADDR")\n",tthread->tid,thip);
-	}
-    }
-    array_list_compact(retval);
-
-    return retval;
 }
 
 static struct target *
