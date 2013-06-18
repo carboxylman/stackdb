@@ -76,6 +76,7 @@ LT_LDFLAGS      =  -static-libtool-libs
 
 PYTHON_INCLUDE  = @PYTHON_INCLUDE@
 PYTHON_LIB      = @PYTHON_LIB@
+ENABLE_PYTHON   = "@ENABLE_PYTHON@"
 
 DESTDIR        ?= 
 INSTALL_TOPDIR	= $(DESTDIR)@prefix@
