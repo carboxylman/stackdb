@@ -353,6 +353,21 @@ AC_SUBST(LIBVMI)
 AC_SUBST(ENABLE_LIBVMI)
 
 #
+# Check for the needed Xen, libxc, and libxenstore headers.
+#
+if test "$ENABLE_LIBVMI" = "1" -o "$ENABLE_XENACCESS" = "1" ; then
+     AC_CHECK_HEADERS([xenctrl.h],
+		      [],
+		      [AC_MSG_ERROR("Cannot find xenctrl.h; install libxc-devel!")])
+     AC_CHECK_HEADERS([xs.h],
+		      [],
+		      [AC_MSG_ERROR("Cannot find xs.h; install libxenstore-devel!")])
+     AC_CHECK_HEADERS([xen/xen.h],
+		      [],
+		      [AC_MSG_ERROR("Cannot find xen/xen.h; install libxen-devel!")])
+fi
+
+#
 # Support older versions of xenctrl that don't have xc_map_foreign_pages.
 #
 AC_CHECK_LIB(xenctrl,xc_map_foreign_pages,
