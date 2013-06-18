@@ -332,6 +332,9 @@ if test "$ENABLE_LIBVMI" = "1"; then
       AS_HELP_STRING([--with-libvmi=DIRECTORY],
         [find libvmi install in DIRECTORY]),
         [LIBVMI="$with_libvmi"])
+    AC_CHECK_HEADERS([libvmi/libvmi.h],
+		      [],
+		      [AC_MSG_ERROR("Cannot find libvmi/libvmi.h; install libvmi!")])
 fi
 AC_SUBST(LIBVMI)
 AC_SUBST(ENABLE_LIBVMI)
