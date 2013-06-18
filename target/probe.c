@@ -3955,6 +3955,7 @@ int action_sched(struct probe *probe,struct action *action,
 			       "skipping prologue disassembly for function %s: first instr push EBP\n",
 			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>");
 		    }
+#ifdef ENABLE_DISTORM
 		    else if (disasm_get_prologue_stack_size(target,code,code_len,
 							    &action->detail.ret.prologue_sp_offset)) {
 			verror("could not disassemble function prologue that needed stack tracking for return action!\n");
@@ -3967,6 +3968,17 @@ int action_sched(struct probe *probe,struct action *action,
 			       probepoint->bsymbol ? probepoint->bsymbol->lsymbol->symbol->name : "<UNKNOWN>",
 			       action->detail.ret.prologue_sp_offset);
 		    }
+#else
+		    else {
+			verror("disasm support disabled; cannot check prologue"
+			       " to unwind stack frame function %s!\n",
+			       probepoint->bsymbol			\
+			           ? probepoint->bsymbol->lsymbol->symbol->name \
+			           : "<UNKNOWN>");
+			free(code);
+			return -1;
+		    }
+#endif
 		}
 	    }
 	}

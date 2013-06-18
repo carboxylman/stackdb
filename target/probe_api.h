@@ -20,6 +20,9 @@
 #define __PROBE_API_H__
 
 #include "common.h"
+#ifdef ENABLE_DISTORM
+#include <disasm.h>
+#endif
 
 /**
  ** This file defines a probe API for active target debugging
@@ -210,6 +213,14 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
 				  probepoint_whence_t whence,
 				  probepoint_watchsize_t watchsize);
 
+struct probe *probe_register_inlined_symbol(struct probe *probe,
+					    struct bsymbol *bsymbol,
+					    int do_primary,
+					    probepoint_style_t style,
+					    probepoint_whence_t whence,
+					    probepoint_watchsize_t watchsize);
+
+#ifdef ENABLE_DISTORM
 /*
  * Registers @probe in such a way that probe->pre_handler is called when
  * the function entry point is hit (if @force_at_entry is set, the entry
@@ -228,13 +239,6 @@ struct probe *probe_register_function_ee(struct probe *probe,
 					 probepoint_style_t style,
 					 struct bsymbol *bsymbol,
 					 int force_at_entry,int noabort);
-
-struct probe *probe_register_inlined_symbol(struct probe *probe,
-					    struct bsymbol *bsymbol,
-					    int do_primary,
-					    probepoint_style_t style,
-					    probepoint_whence_t whence,
-					    probepoint_watchsize_t watchsize);
 
 /*
  * This function disassembles the function pointed to by @bsymbol if it
@@ -257,9 +261,6 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
  *
  * XXX: add support for using a cached disassembly of some sort...
  */
-#ifdef ENABLE_DISTORM
-#include <disasm.h>
-
 typedef int (*probe_register_disasm_handler_t)(struct cf_inst_data *id,
 					       ADDR iaddr,void *handler_data,
 					       struct probe **probe_alt);

@@ -69,6 +69,7 @@ struct probe *probe_register_symbol_name(struct probe *probe,
     return NULL;
 }
 
+#ifdef ENABLE_DISTORM
 struct probe *probe_register_function_ee(struct probe *probe,
 					 probepoint_style_t style,
 					 struct bsymbol *bsymbol,
@@ -457,6 +458,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     return NULL;
 
 }
+#endif /* ENABLE_DISTORM */
 
 struct probe *probe_register_inlined_symbol(struct probe *probe,
 					    struct bsymbol *bsymbol,

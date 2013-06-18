@@ -11,7 +11,8 @@ To build this software, you must have installed
 
 Optionally, you could also install
 
-  * distorm
+  * distorm (although you lose lots of functionality, including the CFI
+    checker utility, and the Return-Oriented-Programming exploit checker);
   * xenaccess (which requires Xen libs like xenctrl, xs)
 
 to include support for x86 and x86_64 disassembly, and Xen target

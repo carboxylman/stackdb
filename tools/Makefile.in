@@ -23,7 +23,11 @@ TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= tools
 OBJDIR		= @top_builddir@
 
+ifeq ("$ENABLE_DISTORM","1")
 SUBDIRS = rop cfi
+else
+SUBDIRS = 
+endif
 
 include $(OBJDIR)/Makeconf
 

@@ -169,6 +169,7 @@ void sigh(int signo) {
     exit(0);
 }
 
+#ifdef ENABLE_DISTORM
 result_t retaddr_check(struct probe *probe,void *handler_data,
 		       struct probe *trigger);
 result_t retaddr_save(struct probe *probe,void *handler_data,
@@ -435,6 +436,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
 
     return RESULT_SUCCESS;
 }
+#endif /* ENABLE_DISTORM */
 
 result_t at_handler(struct probe *probe,void *handler_data,
 		    struct probe *trigger) {
@@ -1362,6 +1364,13 @@ int main(int argc,char **argv) {
 		&& ((i < opts.argc && retcode_strs[i] 
 		     && (*retcode_strs[i] == 'c'
 			 || *retcode_strs[i] == 'C')))) {
+#ifndef ENABLE_DISTORM
+		fprintf(stderr,
+			"Could not instrument function %s;"
+			" DISTORM not configured in!\n",
+			bsymbol->lsymbol->symbol->name);
+		goto err_unreg;
+#else
 		ADDR funcstart;
 		if ((funcstart = instrument_func(bsymbol,1)) == 0) {
 		    fprintf(stderr,
@@ -1369,11 +1378,19 @@ int main(int argc,char **argv) {
 			    bsymbol->lsymbol->symbol->name,funcstart);
 		    goto err_unreg;
 		}
+#endif
 	    }
 	    else if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)
 		     && ((i < opts.argc && retcode_strs[i] 
 			  && (*retcode_strs[i] == 'e'
 			      || *retcode_strs[i] == 'E')))) {
+#ifndef ENABLE_DISTORM
+		fprintf(stderr,
+			"Could not instrument function %s entry/returns;"
+			" DISTORM not configured in!\n",
+			bsymbol->lsymbol->symbol->name);
+		goto err_unreg;
+#else
 		probe = probe_create(bsymbol->region->space->target,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),
 				     pre,post,NULL,0,1);
 		if (!probe)
@@ -1388,6 +1405,7 @@ int main(int argc,char **argv) {
 		}
 
 		g_hash_table_insert(probes,(gpointer)probe,(gpointer)probe);
+#endif
 	    }
 	    else {
 		probe = probe_create(bsymbol->region->space->target,TID_GLOBAL,NULL,bsymbol_get_name(bsymbol),

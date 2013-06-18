@@ -31,7 +31,9 @@
 
 #include "target_api.h"
 #include "dwdebug.h"
+#ifdef ENABLE_DISTORM
 #include "disasm.h"
+#endif
 #include "probe.h"
 
 #define LOGDUMPBSYMBOL(dl,lt,s) \

@@ -194,6 +194,16 @@ if test "$ENABLE_DISTORM" = "1"; then
       AS_HELP_STRING([--with-distorm=DIRECTORY],
         [find distorm install in DIRECTORY]),
         [DISTORM="$with_distorm"])
+    OLD_CPPFLAGS="${CPPFLAGS}"
+    CPPFLAGS="${CPPFLAGS} -I${DISTORM}/include"
+    AC_CHECK_HEADERS([distorm.h],
+		     [],
+		     [AC_MSG_ERROR("Cannot find distorm.h in ${DISTORM}/include")])
+    AC_CHECK_HEADERS([mnemonics.h],
+		     [],
+		     [AC_MSG_ERROR("Cannot find mnemonics.h in ${DISTORM}/include; make sure you installed distorm's mnemonics.h as noted in the README!")])
+    CPPFLAGS="${OLD_CPPFLAGS}"
+
     old_LDLP=$LD_LIBRARY_PATH
     LD_LIBRARY_PATH="$DISTORM/lib:$LD_LIBRARY_PATH"
     ld_LDFL=$LDFLAGS
