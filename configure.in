@@ -141,22 +141,6 @@ AC_EXEEXT
 
 AC_SUBST(optional_subdirs)
 
-#
-# Path to xenaccess
-#
-#AC_ARG_WITH(xenaccess
-#[  --with-xenaccess=<DIR> Specify the path to the xenaccess installation.],
-#[
-#    if test x"$withval" != x""; then
-#	BRAINSTEM_DIR="$withval"
-#    else
-#	AC_MSG_ERROR([You must specify a brainstem directory]);
-#    fi
-#],[
-#    BRAINSTEM_DIR=""
-#])
-#AC_SUBST(BRAINSTEM_DIR)
-
 # Make sure $INSTALL is valid at any depth in our tree, i.e. make it absoulte.
 # This can be needed when no valid install is found and autoconf falls back on
 # the supplied install.sh, but we called 'configure' with a relative path.
