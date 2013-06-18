@@ -431,6 +431,13 @@ if test "${ENABLE_SOAP}" = "1"; then
     if test -z "$WSDL2H" ; then
         AC_MSG_ERROR([no acceptable wsdl2h found in \$PATH])
     fi
+    #
+    # Check for our patched version of gsoap; error if not!
+    #
+    $WSDL2H -h 2>&1 | grep -q '^\-M.*'
+    if test "$?" != "0"; then
+        AC_MSG_ERROR([you must install our patched GSOAP; see README!])
+    fi
     export PATH="${old_PATH}"
     AC_SUBST(GSOAP)
     AC_SUBST(SOAPCPP2)
