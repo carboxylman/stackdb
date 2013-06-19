@@ -583,15 +583,19 @@ struct target *xen_vm_attach(struct target_spec *spec,
 		  xstate->id);
     }
 
-    if (xsh)
+    if (xsh) {
 	xs_daemon_close(xsh);
+	xsh = NULL;
+    }
 
     free(buf);
     buf = NULL;
 
+    /*
+     * Now load up our {xa|vmi}_instance as much as we can now; we'll
+     * try to do more when we load the debuginfo file for the kernel.
+     */
 #ifdef ENABLE_XENACCESS
-    /* Now load up our xa_instance as much as we can now; we'll try to
-       do more when we load the debuginfo file for the kernel. */
     xstate->xa_instance.os_type = XA_OS_LINUX;
     if (xa_init_vm_id_strict_noos(xstate->id,&xstate->xa_instance) == XA_FAILURE) {
 	if (xstate->xa_instance.sysmap)
@@ -606,61 +610,6 @@ struct target *xen_vm_attach(struct target_spec *spec,
         verror("failed to init vmi instance for dom %d\n", xstate->id);
         goto errout;
     }
-    /*
-     * XXX total hack. The offsets are really a function of both word size
-     * and OS version. But right now 32-bit implies Linux 2.6 and 64-bit
-     * implies 3.2. We should just get these values from the debuginfo.
-     * Offsets are:
-     *   linux_tasks: offset of "tasks" in task_struct
-     *   linux_mm:    offset of "mm" in task_struct
-     *   linux_pid:   offset of "pid" in task_struct
-     *   linux_pgd:   offset of "pgd" in mm_struct
-     * Values below came from running gdb on the appropriate kernel; e.g.
-     *   p &((struct task_struct *)0)->tasks
-     */
-    if (vmi_get_page_mode(xstate->vmi_instance) == VMI_PM_IA32E) {
-	/*
-	 * XXX another awesome hack. See if we have 3.8.4,
-	 * if not assume 3.2.16.
-	 */
-	if (access("/boot/System.map-3.8.4", F_OK) == 0) {
-	    tmp = "{"
-		"ostype=\"Linux\"; "
-		"sysmap=\"/boot/System.map-3.8.4\"; "
-		"linux_tasks=0x260; "
-		"linux_mm=0x298; "
-		"linux_pid=0x2d4; "
-		"linux_pgd=0x50;"
-		"}";
-	} else {
-	    tmp = "{"
-		"ostype=\"Linux\"; "
-		"sysmap=\"/boot/System.map-3.2.16emulab1\"; "
-		"linux_tasks=0x238; "
-		"linux_mm=0x270; "
-		"linux_pid=0x2ac; "
-		"linux_pgd=0x50;"
-		"}";
-	}
-    } else {
-	tmp = "{"
-	    "ostype=\"Linux\"; "
-	    "sysmap=\"/boot/System.map-2.6.18.8-xenU\"; "
-	    "linux_tasks=0x6c; "
-	    "linux_mm=0x84; "
-	    "linux_pid=0xa8; "
-	    "linux_pgd=0x24;"
-	    "}";
-    }
-    if (vmi_init_complete(&xstate->vmi_instance, tmp) == VMI_FAILURE) {
-	verror("failed to complete init of vmi instance for dom %d\n",
-	       xstate->id);
-	vmi_destroy(xstate->vmi_instance);
-	goto errout;
-    }
-
-    /* XXX this is in the vmi_instance, but they don't expose it! */
-    xstate->vmi_page_size = XC_PAGE_SIZE;
 #endif
 
     target->live = 1;
@@ -688,12 +637,82 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	    goto errout;
 	}
 
-	/* Figure out where the real ELF file is. */
-	if ((tmp = strstr(xstate->kernel_filename,"vmlinuz"))) {
-	    xstate->kernel_elf_filename = malloc(PATH_MAX);
+	/*
+	 * Figure out where the real ELF file is.  We look in three
+	 * places:
+	 *   /usr/lib/debug/lib/modules/<kernel_version>/vmlinux
+	 *   /boot/vmlinux-<kernel_version>
+	 *   /boot/vmlinux-syms-<kernel_version> (old A3 style)
+	 */
+	xstate->kernel_elf_filename = malloc(PATH_MAX);
+	xstate->kernel_elf_filename[0] = '\0';
+
+	if (xstate->kernel_elf_filename[0] == '\0') {
 	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
-		     "/boot/%s%s","vmlinux-syms",
-		     xstate->kernel_filename + (tmp - xstate->kernel_filename) + 7);
+		     "%s/usr/lib/debug/lib/modules/%s/vmlinux",
+		     (target->spec->debugfile_root_prefix)		\
+		         ? target->spec->debugfile_root_prefix : "",
+		     xstate->kernel_version);
+	    if (access(xstate->kernel_elf_filename,R_OK))
+		xstate->kernel_elf_filename[0] = '\0';
+	}
+	if (xstate->kernel_elf_filename[0] == '\0') {
+	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
+		     "%s/boot/vmlinux-%s",
+		     (target->spec->debugfile_root_prefix)		\
+		         ? target->spec->debugfile_root_prefix : "",
+		     xstate->kernel_version);
+	    if (access(xstate->kernel_elf_filename,R_OK))
+		xstate->kernel_elf_filename[0] = '\0';
+	}
+	if (xstate->kernel_elf_filename[0] == '\0') {
+	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
+		     "%s/boot/vmlinux-syms-%s",
+		     (target->spec->debugfile_root_prefix)		\
+		         ? target->spec->debugfile_root_prefix : "",
+		     xstate->kernel_version);
+	    if (access(xstate->kernel_elf_filename,R_OK))
+		xstate->kernel_elf_filename[0] = '\0';
+	}
+
+	if (xstate->kernel_elf_filename[0] == '\0') {
+	    verror("could not find vmlinux binary for %s!\n",
+		   xstate->kernel_version);
+	    goto errout;
+	}
+
+	/*
+	 * Figure out where the System.map file is.  We look in two
+	 * places:
+	 *   /lib/modules/<kernel_version>/System.map 
+	 *   /boot/System.map-<kernel_version>
+	 */
+	xstate->kernel_sysmap_filename = malloc(PATH_MAX);
+	xstate->kernel_sysmap_filename[0] = '\0';
+
+	if (xstate->kernel_sysmap_filename[0] == '\0') {
+	    snprintf(xstate->kernel_sysmap_filename,PATH_MAX,
+		     "%s/lib/modules/%s/System.map",
+		     (target->spec->debugfile_root_prefix)		\
+		         ? target->spec->debugfile_root_prefix : "",
+		     xstate->kernel_version);
+	    if (access(xstate->kernel_sysmap_filename,R_OK))
+		xstate->kernel_sysmap_filename[0] = '\0';
+	}
+	if (xstate->kernel_sysmap_filename[0] == '\0') {
+	    snprintf(xstate->kernel_sysmap_filename,PATH_MAX,
+		     "%s/boot/System.map-%s",
+		     (target->spec->debugfile_root_prefix)		\
+		         ? target->spec->debugfile_root_prefix : "",
+		     xstate->kernel_version);
+	    if (access(xstate->kernel_sysmap_filename,R_OK))
+		xstate->kernel_sysmap_filename[0] = '\0';
+	}
+
+	if (xstate->kernel_sysmap_filename[0] == '\0') {
+	    verror("could not find System.map file for %s!\n",
+		   xstate->kernel_version);
+	    goto errout;
 	}
 
 	/* Figure out where the modules are. */
@@ -705,49 +724,31 @@ struct target *xen_vm_attach(struct target_spec *spec,
     }
 
     if (!xstate->kernel_elf_filename) {
-	verror("could not discover kernel ELF filename from %s; aborting!\n",
+	verror("could not infer kernel ELF file (vmlinux) from %s; aborting!\n",
 	       xstate->kernel_filename);
 	goto errout;
     }
 
-    if (xstate->kernel_elf_filename) {
-	/* Then grab stuff from the ELF binary itself. */
-	target->binfile = 
-	    binfile_open__int(xstate->kernel_elf_filename,
-			      target->spec->debugfile_root_prefix,NULL);
-	if (!target->binfile) {
-	    verror("binfile_open %s: %s\n",
-		   xstate->kernel_elf_filename,strerror(errno));
-	    goto errout;
-	}
-
-	RHOLD(target->binfile,target);
-
-	target->wordsize = target->binfile->wordsize;
-	target->endian = target->binfile->endian;
-	target->ptrsize = target->wordsize;
-
-	vdebug(3,LA_TARGET,LF_XV,
-	       "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
-	       xstate->kernel_elf_filename,target->wordsize,
-	       (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
+    /* Then grab stuff from the ELF binary itself. */
+    target->binfile = 
+	binfile_open__int(xstate->kernel_elf_filename,
+			  target->spec->debugfile_root_prefix,NULL);
+    if (!target->binfile) {
+	verror("binfile_open %s: %s\n",
+	       xstate->kernel_elf_filename,strerror(errno));
+	goto errout;
     }
-    else {
-	vwarn("could not find kernel ELF (vmlinux) file for %s; assuming"
-	       " host/target same binary info!\n",xstate->kernel_filename);
-#if __WORDSIZE == 64
-	target->wordsize = 8;
-	target->ptrsize = 8;
-#else
-	target->wordsize = 4;
-	target->ptrsize = 4;
-#endif
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-	target->endian = DATA_LITTLE_ENDIAN;
-#else
-	target->endian = DATA_BIG_ENDIAN;
-#endif
-    }
+
+    RHOLD(target->binfile,target);
+
+    target->wordsize = target->binfile->wordsize;
+    target->endian = target->binfile->endian;
+    target->ptrsize = target->wordsize;
+
+    vdebug(3,LA_TARGET,LF_XV,
+	   "loaded ELF arch info for %s (wordsize=%d;endian=%s\n",
+	   xstate->kernel_elf_filename,target->wordsize,
+	   (target->endian == DATA_LITTLE_ENDIAN ? "LSB" : "MSB"));
 
     /* Which register is the fbreg is dependent on host cpu type, not
      * target cpu type.
@@ -805,6 +806,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	free(xstate->kernel_filename);
     if (xstate->kernel_elf_filename)
 	free(xstate->kernel_elf_filename);
+    if (xstate->kernel_sysmap_filename)
+	free(xstate->kernel_sysmap_filename);
     if (xstate->kernel_module_dir)
 	free(xstate->kernel_module_dir);
     if (xstate->name)
@@ -2128,6 +2131,9 @@ static int xen_vm_attach_internal(struct target *target) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
     struct bsymbol *tbs;
+    OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
+    char *tmp;
+    int size;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
@@ -2191,33 +2197,32 @@ static int xen_vm_attach_internal(struct target *target) {
     target_set_status(target,TSTATUS_PAUSED);
 
     /*
-     * Make sure xenaccess is setup to read from userspace memory.
+     * Make sure xenaccess/libvmi is setup to read from userspace memory.
      */
-#ifdef ENABLE_XENACCESS
-    xstate->xa_instance.init_task = xstate->init_task_addr;
-
-    xstate->xa_instance.page_offset = 0;
-
     errno = 0;
-    xstate->xa_instance.os.linux_instance.tasks_offset = 
-	symbol_offsetof(xstate->task_struct_type,"tasks",NULL);
+    tasks_offset = symbol_offsetof(xstate->task_struct_type,"tasks",NULL);
     if (errno) 
 	vwarn("could not resolve offset of task_struct.tasks!\n");
     errno = 0;
-    xstate->xa_instance.os.linux_instance.pid_offset = 
-	symbol_offsetof(xstate->task_struct_type,"pid",NULL);
+    pid_offset = symbol_offsetof(xstate->task_struct_type,"pid",NULL);
     if (errno) 
 	vwarn("could not resolve offset of task_struct.pid!\n");
     errno = 0;
-    xstate->xa_instance.os.linux_instance.mm_offset = 
-	symbol_offsetof(xstate->task_struct_type,"mm",NULL);
+    mm_offset = symbol_offsetof(xstate->task_struct_type,"mm",NULL);
     if (errno) 
 	vwarn("could not resolve offset of task_struct.mm!\n");
     errno = 0;
-    xstate->xa_instance.os.linux_instance.pgd_offset = 
-	symbol_offsetof(xstate->mm_struct_type,"pgd",NULL);
+    pgd_offset = symbol_offsetof(xstate->mm_struct_type,"pgd",NULL);
     if (errno) 
 	vwarn("could not resolve offset of mm_struct.pgd!\n");
+
+#ifdef ENABLE_XENACCESS
+    xstate->xa_instance.init_task = xstate->init_task_addr;
+    xstate->xa_instance.page_offset = 0;
+    xstate->xa_instance.os.linux_instance.tasks_offset = tasks_offset;
+    xstate->xa_instance.os.linux_instance.pid_offset = pid_offset;
+    xstate->xa_instance.os.linux_instance.mm_offset = mm_offset;
+    xstate->xa_instance.os.linux_instance.pgd_offset = pgd_offset;
 
     tbs = target_lookup_sym(target,"swapper_pg_dir",NULL,NULL,
 			    SYMBOL_TYPE_FLAG_NONE);
@@ -2228,6 +2233,36 @@ static int xen_vm_attach_internal(struct target *target) {
 	    target_addressof_symbol(target,TID_GLOBAL,tbs,LOAD_FLAG_NONE,NULL);
 	bsymbol_release(tbs);
     }
+#endif
+#ifdef ENABLE_LIBVMI
+    /*
+     * Offsets are:
+     *   linux_tasks: offset of "tasks" in task_struct
+     *   linux_mm:    offset of "mm" in task_struct
+     *   linux_pid:   offset of "pid" in task_struct
+     *   linux_pgd:   offset of "pgd" in mm_struct
+     */
+#define LIBVMI_CONFIG_TEMPLATE "{ostype=\"Linux\";" \
+	" sysmap=\"%s\"; linux_tasks=0x%"PRIxOFFSET"; linux_mm=0x%"PRIxOFFSET";" \
+	" linux_pid=0x%"PRIxOFFSET"; linux_pgd=0x%"PRIxOFFSET";" \
+	" }"
+    size = sizeof(LIBVMI_CONFIG_TEMPLATE) 
+	+ strlen(xstate->kernel_sysmap_filename) + 4 * 16 + 1;
+    tmp = malloc(size);
+    snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE,
+	     xstate->kernel_sysmap_filename,
+	     tasks_offset,mm_offset,pid_offset,pgd_offset);
+    if (vmi_init_complete(&xstate->vmi_instance, tmp) == VMI_FAILURE) {
+	verror("failed to complete init of vmi instance for dom %d\n",
+	       xstate->id);
+	vmi_destroy(xstate->vmi_instance);
+	free(tmp);
+	tmp = NULL;
+	return -1;
+    }
+
+    /* XXX this is in the vmi_instance, but they don't expose it! */
+    xstate->vmi_page_size = XC_PAGE_SIZE;
 #endif
 
     /*
@@ -2394,6 +2429,8 @@ static int xen_vm_fini(struct target *target) {
 	free(xstate->kernel_filename);
     if (xstate->kernel_elf_filename)
 	free(xstate->kernel_elf_filename);
+    if (xstate->kernel_sysmap_filename)
+	free(xstate->kernel_sysmap_filename);
     if (xstate->kernel_module_dir)
 	free(xstate->kernel_module_dir);
     if (xstate->name)

@@ -196,6 +196,7 @@ struct xen_vm_state {
     char *vmpath;
     char *kernel_filename;
     char *kernel_version;
+    char *kernel_sysmap_filename;
     char *kernel_elf_filename;
     char *kernel_module_dir;
     ADDR kernel_start_addr;
