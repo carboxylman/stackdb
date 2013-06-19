@@ -3791,11 +3791,10 @@ static int __update_module(struct target *target,struct value *value,void *data)
     return retval;
 }
 
-static int xen_vm_updateregions(struct target *target,
-				struct addrspace *space) {
+static int xen_vm_reload_modules_dep(struct target *target) {
     struct xen_vm_state *xstate = \
 	(struct xen_vm_state *)target->state;
-    GHashTable *moddep;
+    GHashTable *moddep = NULL;
     FILE *moddep_file;
     char moddep_path[PATH_MAX];
     char buf[PATH_MAX * 2];
@@ -3805,10 +3804,118 @@ static int xen_vm_updateregions(struct target *target,
     char *extension;
     char *modname;
     char *modfilename;
+    struct stat statbuf;
+    time_t moddep_mtime;
+
+    snprintf(moddep_path,PATH_MAX,"%s/modules.dep",xstate->kernel_module_dir);
+
+    /*
+     * Stat it and see if our cached copy (if there is one) is still
+     * valid.
+     */
+    if (stat(moddep_path,&statbuf)) {
+	verror("stat(%s): %s; aborting!\n",moddep_path,strerror(errno));
+	return -1;
+    }
+    moddep_mtime = statbuf.st_mtime;
+
+    if (xstate->moddep && xstate->last_moddep_mtime == moddep_mtime) {
+	vdebug(16,LA_TARGET,LF_XV,
+	       "cached moddep is valid\n");
+	return 0;
+    }
+
+    /*
+     * Read the current modules.dep file and build up the name->file map.
+     */
+    if (!(moddep_file = fopen(moddep_path,"r"))) {
+	verror("fopen(%s): %s\n",moddep_path,strerror(errno));
+	return -1;
+    }
+
+    moddep = g_hash_table_new_full(g_str_hash,g_str_equal,free,free);
+
+    while (fgets(buf,sizeof(buf),moddep_file)) {
+	newline = index(buf,'\n');
+
+	/*
+	 * Find lines starting with "<module_filename>:", and split them
+	 * into a map of <module_name> -> <module_filename>
+	 */
+	if (!(colon = index(buf,':'))) 
+	    goto drain;
+
+	*colon = '\0';
+	if (!(slash = rindex(buf,'/'))) 
+	    goto drain;
+
+	/* Check relative and abs paths. */
+	modfilename = strdup(buf);
+	if (stat(modfilename,&statbuf)) {
+	    vwarnopt(8,LA_TARGET,LF_XV,
+		     "could not find modules.dep file %s; trying abs path\n",
+		     modfilename);
+	    free(modfilename);
+
+	    modfilename = calloc(1,sizeof(char)*(strlen(xstate->kernel_module_dir)
+						 +1+strlen(buf)+1));
+	    sprintf(modfilename,"%s/%s",xstate->kernel_module_dir,buf);
+	    if (stat(modfilename,&statbuf)) {
+		vwarnopt(7,LA_TARGET,LF_XV,
+			 "could not find modules.dep file %s at all!\n",
+			 modfilename);
+		free(modfilename);
+		modfilename = NULL;
+		goto drain;
+	    }
+	}
+	/* If we have one, insert it. */
+	if (modfilename) {
+	    modname = strdup(slash+1);
+	    if ((extension = rindex(modname,'.')))
+		*extension = '\0';
+
+	    g_hash_table_insert(moddep,modname,modfilename);
+
+	    vdebug(8,LA_TARGET,LF_XV,
+		   "modules.dep: %s -> %s\n",modname,modfilename);
+	}
+
+	/*
+	 * Drain until we get a newline.
+	 */
+    drain:
+	if (!newline) {
+	    while (fgets(buf,sizeof(buf),moddep_file)) {
+		if (index(buf,'\n'))
+		    break;
+	    }
+	}
+    }
+    fclose(moddep_file);
+
+    /*
+     * Update our cache.
+     */
+    if (xstate->moddep)
+	g_hash_table_destroy(xstate->moddep);
+    xstate->moddep = moddep;
+    xstate->last_moddep_mtime = moddep_mtime;
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "updated modules.dep cache (%d entries from %s)\n",
+	   g_hash_table_size(xstate->moddep),moddep_path);
+
+    return 0;
+}
+
+static int xen_vm_updateregions(struct target *target,
+				struct addrspace *space) {
+    struct xen_vm_state *xstate = \
+	(struct xen_vm_state *)target->state;
     struct __update_module_data ud;
     struct memregion *region;
     struct memregion *tmp;
-    struct stat statbuf;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -3828,67 +3935,11 @@ static int xen_vm_updateregions(struct target *target,
 	return 0;
     }
 
-    /*
-     * Read the current modules.dep file and build up the name->file map.
-     */
-    snprintf(moddep_path,PATH_MAX,"%s/modules.dep",xstate->kernel_module_dir);
-    if (!(moddep_file = fopen(moddep_path,"r"))) {
-	verror("fopen(%s): %s\n",moddep_path,strerror(errno));
-	return 0;
-    }
-    moddep = g_hash_table_new_full(g_str_hash,g_str_equal,free,free);
-
-    while (fgets(buf,sizeof(buf),moddep_file)) {
-	newline = index(buf,'\n');
-
-	/*
-	 * Find lines starting with "<module_filename>:", and split them
-	 * into a map of <module_name> -> <module_filename>
-	 */
-	if ((colon = index(buf,':'))) {
-	    *colon = '\0';
-	    if ((slash = rindex(buf,'/'))) {
-		modfilename = strdup(buf);
-		if (stat(modfilename,&statbuf)) {
-		    vdebug(3,LA_TARGET,LF_XV,
-			   "could not find modules.dep file %s; trying abs path\n",
-			   modfilename);
-		    free(modfilename);
-		    modfilename = calloc(1,sizeof(char)*(strlen(xstate->kernel_module_dir)+1+strlen(buf)+1));
-		    sprintf(modfilename,"%s/%s",xstate->kernel_module_dir,buf);
-		    if (stat(modfilename,&statbuf)) {
-			vwarnopt(3,LA_TARGET,LF_XV,
-				 "could not find modules.dep file %s at all!\n",
-				 modfilename);
-			free(modfilename);
-			goto drain;
-		    }
-		}
-		modname = strdup(slash+1);
-		if ((extension = rindex(modname,'.')))
-		    *extension = '\0';
-
-		g_hash_table_insert(moddep,modname,modfilename);
-		vdebug(8,LA_TARGET,LF_XV,
-		       "modules.dep: %s -> %s\n",modname,modfilename);
-	    }
-	}
-
-	/*
-	 * Drain until we get a newline.
-	 */
-    drain:
-	if (!newline) {
-	    while (fgets(buf,sizeof(buf),moddep_file)) {
-		if (index(buf,'\n'))
-		    break;
-	    }
-	}
-    }
-    fclose(moddep_file);
+    if (xen_vm_reload_modules_dep(target)) 
+	verror("failed to reload modules.dep; trying to continue!\n");
 
     ud.space = space;
-    ud.moddep = moddep;
+    ud.moddep = xstate->moddep;
 
     /*
      * Clear out the current modules region bits.
@@ -3922,8 +3973,6 @@ static int xen_vm_updateregions(struct target *target,
 	    memregion_free(region);
 	}
     }
-
-    g_hash_table_destroy(moddep);
 
     return 0;
 }

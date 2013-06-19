@@ -210,6 +210,9 @@ struct xen_vm_state {
     struct bsymbol *module_type;
     struct bsymbol *modules;
 
+    GHashTable *moddep;
+    time_t last_moddep_mtime;
+
     unsigned int last_thread_count;
     uint8_t thread_auto_gc_counter;
 
