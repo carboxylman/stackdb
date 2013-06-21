@@ -845,13 +845,15 @@ int probe_free(struct probe *probe,int force) {
     LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
 
     if (probe->sinks && !force) {
-	verror("could not free probe %s with sinks remaining!\n",
-	       probe->name);
+	vwarnopt(9,LA_TARGET,LF_PROBE,
+		 "could not free probe %s with sinks remaining!\n",
+		 probe->name);
 	return -1;
     }
     else if (probe->probepoint && !force) {
-	verror("could not free probe %s with probepoint remaining!\n",
-	       probe->name);
+	vwarnopt(9,LA_TARGET,LF_PROBE,
+		 "could not free probe %s with probepoint remaining!\n",
+		 probe->name);
 	return -1;
     }
     
