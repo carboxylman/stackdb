@@ -372,4 +372,24 @@ static inline struct array_list *array_list_create_from_g_hash_table(GHashTable 
     return list;
 }
 
+static inline struct array_list *array_list_create_from_g_hash_table_keys(GHashTable *ht) {
+    GHashTableIter iter;
+    gpointer key;
+    int len;
+    struct array_list *list;
+
+    len = g_hash_table_size(ht);
+    list = (struct array_list *)malloc(sizeof(struct array_list));
+    memset(list,0,sizeof(struct array_list));
+    if (len) {
+	list->alloc_len = len;
+	list->list = (void **)malloc(sizeof(void *)*len);
+    }
+    g_hash_table_iter_init(&iter,ht);
+    while (g_hash_table_iter_next(&iter,&key,NULL)) 
+	array_list_append(list,key);
+
+    return list;
+}
+
 #endif
