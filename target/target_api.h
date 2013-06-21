@@ -1047,6 +1047,35 @@ void value_dump(struct value *value,struct dump_info *ud);
  * This encapsulates the common ways we use VMI to load values, and
  * saves the user a lot of code.
  */
+#define VLS(target,varstr,loadflags,outvarptr,outvalueptr,errlabel)	\
+    do {								\
+	struct value *_outvalue;					\
+	void *__outvar = (outvarptr);					\
+	struct bsymbol *_varsym;					\
+	_varsym = target_lookup_sym((target),(varstr),NULL,NULL,	\
+				    SYMBOL_TYPE_NONE);			\
+	if (!_varsym) {							\
+	    goto errlabel;						\
+	}								\
+	_outvalue = target_load_symbol((target),TID_GLOBAL,_varsym,	\
+				       (loadflags));			\
+	bsymbol_release(_varsym);					\
+	if (!_outvalue)							\
+	    goto errlabel;						\
+        if (__outvar) {							\
+	    if ((int)sizeof(*(outvarptr)) < _outvalue->bufsiz) {	\
+		verror("outvar size %u smaller than outvalue len %d\n", \
+		       (unsigned)sizeof(*(outvarptr)),_outvalue->bufsiz); \
+		value_free(_outvalue);					\
+		goto errlabel;						\
+	    }								\
+	    memcpy(outvarptr,_outvalue->buf,sizeof(*(outvarptr)));	\
+	}								\
+	if (outvalueptr) 						\
+	    *(struct value **)(outvalueptr) = _outvalue;		\
+	else 								\
+	    value_free(_outvalue);					\
+    } while (0);
 #define VL(target,invalue,varstr,loadflags,outvalueptr,errlabel)	\
     do {								\
 	struct value *_outvalue;					\
@@ -1058,7 +1087,7 @@ void value_dump(struct value *value,struct dump_info *ud);
 	else { 								\
 	    struct bsymbol *_varsym;					\
 	    _varsym = target_lookup_sym((target),(varstr),NULL,NULL,	\
-					SYMBOL_TYPE_VAR);		\
+					SYMBOL_TYPE_NONE);		\
 	    if (!_varsym) {						\
 		goto errlabel;						\
 	    }								\
@@ -1081,6 +1110,7 @@ void value_dump(struct value *value,struct dump_info *ud);
 #define VLV(target,invalue,varstr,loadflags,outvarptr,outvalueptr,errlabel) \
     do {								\
 	struct value *_outvalue;					\
+	void *__outvar = (outvarptr);					\
 									\
 	if ((invalue) != NULL) {					\
 	    _outvalue = target_load_value_member((target),(invalue),(varstr), \
@@ -1089,7 +1119,7 @@ void value_dump(struct value *value,struct dump_info *ud);
 	else { 								\
 	    struct bsymbol *_varsym;					\
 	    _varsym = target_lookup_sym((target),(varstr),NULL,NULL,	\
-					SYMBOL_TYPE_VAR);		\
+					SYMBOL_TYPE_NONE);		\
 	    if (!_varsym) {						\
 		goto errlabel;						\
 	    }								\
@@ -1099,10 +1129,10 @@ void value_dump(struct value *value,struct dump_info *ud);
 	}								\
 	if (!_outvalue)							\
 	    goto errlabel;						\
-	if (outvarptr) {						\
+        if (__outvar) {							\
 	    if ((int)sizeof(*(outvarptr)) < _outvalue->bufsiz) {	\
-		verror("outvar size %d smaller than outvalue len %d", \
-		       sizeof(*(outvarptr)),_outvalue->bufsiz);		\
+		verror("outvar size %u smaller than outvalue len %d\n", \
+		       (unsigned)sizeof(*(outvarptr)),_outvalue->bufsiz); \
 		value_free(_outvalue);					\
 		goto errlabel;						\
 	    }								\
