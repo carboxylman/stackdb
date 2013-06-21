@@ -574,6 +574,7 @@ void target_free(struct target *target) {
     struct probe *probe;
     struct array_list *list;
     REFCNT trefcnt;
+    void *key;
     GHashTableIter iter;
     struct target *overlay;
     char *tmpname;
@@ -601,16 +602,30 @@ void target_free(struct target *target) {
      * target_detach_(action|probe) functions -- which remove the
      * action/probe from its hashtable.  So we copy values to a temp
      * list to avoid this problem.
+     *
+     * BUT, we would then have to check each list item's addr to make
+     * sure it is still in the hashtable; it might have been freed
+     * already as a side effect -- i.e., freeing a top-level probe that
+     * was a sink of an underlying probe could free the underlying probe
+     * too.  So, since our tmp list is values -- we cannot get a freed
+     * probe's key to check the hashtable.  So we have to iterate over
+     * keys!
      */
-    list = array_list_create_from_g_hash_table(target->actions);
-    array_list_foreach(list,i,action) 
-	action_free(action,1);
+    list = array_list_create_from_g_hash_table_keys(target->actions);
+    array_list_foreach(list,i,key) {
+	action = (struct action *)g_hash_table_lookup(target->actions,key);
+	if (action) 
+	    action_free(action,1);
+    }
     g_hash_table_destroy(target->actions);
     array_list_free(list);
 
-    list = array_list_create_from_g_hash_table(target->probes);
-    array_list_foreach(list,i,probe) 
-	probe_free(probe,1);
+    list = array_list_create_from_g_hash_table_keys(target->probes);
+    array_list_foreach(list,i,key) {
+	probe = (struct probe *)g_hash_table_lookup(target->probes,key);
+	if (probe) 
+	    probe_free(probe,1);
+    }
     g_hash_table_destroy(target->probes);
     array_list_free(list);
 
