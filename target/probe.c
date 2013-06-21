@@ -1193,9 +1193,12 @@ int probe_unregister_source(struct probe *sink,struct probe *src,int force) {
 	return -1;
     }
 
-    if (sink->autofree) {
-	return probe_free(sink,force);
-    }
+    /* NB: we cannot free the sink!  The probe_free() function might
+     * call probe_unregister_source*(), so we cannot free a sink we
+     * might be freeing.  probe_free() can only go downwards.
+     */
+    //if (sink->autofree) 
+    //	return probe_free(sink,force);
 
     return 0;
 }
@@ -1215,9 +1218,12 @@ int probe_unregister_source_one(struct probe *sink,struct probe *src,
 	return -1;
     }
 
-    if (sink->autofree) {
-	return probe_free(sink,force);
-    }
+    /* NB: we cannot free the sink!  The probe_free() function might
+     * call probe_unregister_source*(), so we cannot free a sink we
+     * might be freeing.  probe_free() can only go downwards.
+     */
+    //if (sink->autofree) 
+    //	return probe_free(sink,force);
 
     return 0;
 }
