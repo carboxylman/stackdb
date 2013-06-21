@@ -67,7 +67,7 @@
 	vdebugc((dl),(la),(lt)," (%d sources)",g_list_length((p)->sources)); \
     } \
     if ((p)->sinks) { 			\
-	vdebugc((dl),(la),(lt)," (%d sinks)",g_list_length((p)->sources)); \
+	vdebugc((dl),(la),(lt)," (%d sinks)",g_list_length((p)->sinks)); \
     }
 
 #define LOGDUMPPROBE_NL(dl,la,lt,p)		\
