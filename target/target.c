@@ -1830,6 +1830,18 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 		  symbol_get_name(symbol));
 	}
     }
+    /*
+     * If this symbol has a constant value, load that!
+     */
+    else if (SYMBOL_IS_FULL_INSTANCE(symbol)
+	     && symbol->s.ii->constval) {
+	value = value_create(tthread,NULL,bsymbol->lsymbol,symbol->datatype);
+	memcpy(value->buf,symbol->s.ii->constval,value->bufsiz);
+	
+	vdebug(5,LA_TARGET,LF_SYMBOL,"loaded const value len %d\n",value->bufsiz);
+
+	return value;
+    }
 
     /*
      * Compute the symbol's location (reg or addr) and load that!
