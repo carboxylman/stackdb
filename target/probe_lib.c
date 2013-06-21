@@ -475,6 +475,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     char *buf;
     struct array_list *cprobes = NULL;
     tid_t tid = probe->thread->tid;
+    ADDR paddr;
 
     if (!SYMBOL_IS_FULL_INSTANCE(symbol)) {
 	verror("cannot probe a partial symbol!\n");
@@ -485,10 +486,10 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
      * (i.e., is not ONLY inlined).
      */
     if (do_primary
-	&& !location_resolve_symbol_base(target,tid,bsymbol,NULL,NULL)) {
-	bufsiz = strlen(symbol->name)+1+2+1+2+16+1;
+	&& !location_resolve_symbol_base(target,tid,bsymbol,&paddr,NULL)) {
+	bufsiz = strlen(bsymbol_get_name(bsymbol))+sizeof("_primary")+1;
 	buf = malloc(bufsiz);
-	snprintf(buf,bufsiz,"%s"PRIxADDR,bsymbol_get_name(bsymbol));
+	snprintf(buf,bufsiz,"%s_primary",bsymbol_get_name(bsymbol));
 
 	pcprobe = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
 			       probe_do_sink_post_handlers,NULL,1,1);
@@ -497,7 +498,8 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	/* Register the i-th instance probe. */
 	if (!probe_register_symbol(pcprobe,bsymbol,style,whence,watchsize)) {
 	    verror("could not register probe %s!\n",pcprobe->name);
-	    probe_free(pcprobe,1);
+	    /* Probe is autofree! */
+	    //probe_free(pcprobe,1);
 	    pcprobe = NULL;
 	    goto errout;
 	}
@@ -568,7 +570,8 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	}
     }
 
-    array_list_free(cprobes);
+    if (cprobes)
+	array_list_free(cprobes);
     return probe;
 
  errout:
