@@ -1029,6 +1029,40 @@ ADDR value_addr(struct value *value);
 void value_free(struct value *value);
 void value_dump(struct value *value,struct dump_info *ud);
 
+/*
+ * Refreshes @value if necessary.  If @value is a child of another
+ * value, we will try to force a refresh of its parent (and upwards
+ * recursively).  Be careful of @recursive -- this might make values
+ * change unexpectedly for you!  You must only use value_refresh if you
+ * are fine with "live" values.
+ */
+int value_refresh(struct value *value,int recursive);
+
+typedef enum {
+    VALUE_DIFF_SAME = 0,
+    VALUE_DIFF_DIFF = 1,
+    VALUE_DIFF_MAYBE = 2,
+    VALUE_DIFF_UNKNOWN = 3,
+} value_diff_t;
+
+typedef uintptr_t value_hash_t;
+
+/*
+ * Reloads the content of @value and recomputes its new hash, setting
+ * @vdiff accordingly if supplied.  If @vdiff is VALUE_DIFF_DIFF, and if
+ * @old_* are supplied, they are set to the old values, if any.
+ * @old_buf and @old_bufsiz can only be set if the value was not mmap'd
+ * (if it was, the value has already changed in the buffer and we don't
+ * know what it was; so if this is important, then make sure to load the
+ * value with LOAD_FLAG_NO_MMAP).  @old_vhash will always be set if
+ * VALUE_DIFF_DIFF.
+ *
+ * If there was an error loading the value, -1 is returned.  This is the
+ * only case an error can (realistically) occur.
+ */
+int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
+		       char **old_buf,int *old_bufsiz,value_hash_t *old_vhash);
+
 /**
  ** Value macros.
  **/

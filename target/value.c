@@ -244,6 +244,79 @@ ADDR value_addr(struct value *value) {
     return value->res.addr;
 }
 
+/*
+ * Do our best to see if the value needs to be reloaded; if so, reload
+ * it.
+ *
+ * There are several ways we can do this.  If we have page tracking, and
+ * we know if a page has been updated since we last saw it, we can check
+ * that.  If the value is mmap'd, we can just check content if
+ * necessary.  Otherwise, we have to load the value again.
+ *
+ * If the value has a parent, we can only reload the parent if
+ * @recursive is set.  Ugh, don't want that, but there is no other way.
+ *
+ * Wow, there are tons of complications involved with tracking values --
+ * the thread could be gone; the value (symbol) could be out of scope;
+ * it could have been a raw address on the stack; the value (symbol)
+ * could be in scope but unavailable for load; ...
+ */
+
+int value_refresh(struct value *value,int recursive) {
+    struct target *target;
+    REGVAL reg;
+
+    if (!value->thread) {
+	vwarn("value no longer associated with a thread!\n");
+	errno = EADDRNOTAVAIL;
+	return -1;
+    }
+    if (!value->thread->target) {
+	vwarn("value thread no longer associated with a target!\n");
+	errno = EADDRNOTAVAIL;
+	return -1;
+    }
+    if (value->parent_value && !recursive) {
+	vwarn("value has a parent and you did not force recursive!\n");
+	errno = EBUSY;
+	return -1;
+    }
+
+    target = value->thread->target;
+
+    /*
+     * For now, just do it!
+     */
+    if (value->isreg) {
+	errno = 0;
+	reg = target_read_reg(target,value->thread->tid,value->res.reg);
+	if (errno) {
+	    verror("could not read reg %d in target %s!\n",
+		   value->res.reg,target->name);
+	    return -1;
+	}
+    }
+    else {
+	if (!target_read_addr(target,value->res.addr,value->bufsiz,
+			      (unsigned char *)value->buf)) {
+	    verror("could not read 0x%"PRIxADDR" in target %s!\n",
+		   value->res.addr,target->name);
+	    if (!errno)
+		errno = EFAULT;
+	    return -1;
+	}
+    }
+
+    return 0;
+}
+
+int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
+		       char **old_buf,int *old_bufsiz,value_hash_t *old_vhash) {
+    verror("not supported yet!\n");
+    errno = ENOTSUP;
+    return -1;
+}
+
 signed char      v_c(struct value *v)   { return *((signed char *)v->buf); }
 unsigned char    v_uc(struct value *v)  { return *((unsigned char *)v->buf); }
 wchar_t          v_wc(struct value *v)  { return *((wchar_t *)v->buf); }
