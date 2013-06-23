@@ -132,6 +132,8 @@ struct xen_vm_spec {
 };
 
 struct xen_vm_thread_state {
+    unsigned int exiting:1;
+
     ADDR task_struct_addr;
 
     /* 
@@ -141,6 +143,7 @@ struct xen_vm_thread_state {
     /* The task struct is always valid unless we are in interrupt
      * context.
      */
+    /* @task_struct is a "live" value!  it may be value_refresh()'d! */
     struct value *task_struct;
     num_t tgid;                      /* Read-only; not flushed */
     num_t task_flags;
@@ -210,8 +213,22 @@ struct xen_vm_state {
     struct bsymbol *module_type;
     struct bsymbol *modules;
 
+    struct probe *active_memory_probe;
+    struct bsymbol *module_free_symbol;
+    struct bsymbol *module_free_mod_symbol;
+    int MODULE_STATE_LIVE;
+    int MODULE_STATE_COMING;
+    int MODULE_STATE_GOING;
     GHashTable *moddep;
     time_t last_moddep_mtime;
+
+    struct probe *active_thread_entry_probe;
+    struct bsymbol *thread_entry_f_symbol;
+    struct bsymbol *thread_entry_v_symbol;
+
+    struct probe *active_thread_exit_probe;
+    struct bsymbol *thread_exit_f_symbol;
+    struct bsymbol *thread_exit_v_symbol;
 
     unsigned int last_thread_count;
     uint8_t thread_auto_gc_counter;

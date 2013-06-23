@@ -337,6 +337,15 @@ typedef enum {
     LOAD_FLAG_VALUE_FORCE_COPY = 256,
 } load_flags_t;
 
+typedef enum {
+    ACTIVE_PROBE_FLAG_NONE          = 0,
+    ACTIVE_PROBE_FLAG_THREAD_ENTRY  = 1 << 0,
+    ACTIVE_PROBE_FLAG_THREAD_EXIT   = 1 << 1,
+    ACTIVE_PROBE_FLAG_MEMORY        = 1 << 2,
+    ACTIVE_PROBE_FLAG_OTHER         = 1 << 3,
+} active_probe_flags_t;
+#define ACTIVE_PROBE_BITS 4
+
 /**
  ** These functions form the target API.
  **/
@@ -425,6 +434,19 @@ int target_detach_evloop(struct target *target);
  * Returns 1 if @evloop is already attached to @target; 0 if not.
  */
 int target_is_evloop_attached(struct target *target,struct evloop *evloop);
+
+/*
+ * Enables/disables active probing techniques based on bits set in
+ * @flags.
+ *
+ * NB: sometimes it may not be possible to enable certain bits (backend
+ * may not support it); or disable certain bits (backend may require
+ * them, or an overlay target requires them).  No good way to help the
+ * user navigate this for now; it's basically best-effort; and if you
+ * use an overlay target, the overlay target's requirements for active
+ * probing *will* override yours.
+ */
+int target_set_active_probing(struct target *target,active_probe_flags_t flags);
 
 /*
  *
@@ -1481,6 +1503,7 @@ struct target_spec {
     probepoint_style_t style;
     uint8_t start_paused:1,
 	    kill_on_close:1;
+    active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
 
     char *debugfile_root_prefix;
     /* struct array_list of struct debugfile_load_opts * */
@@ -1590,6 +1613,7 @@ struct target {
 	     ptrsize:4,
 	     opened:1,
 	     kill_on_close:1;
+    active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
 
     /*
      * How we track status is a little funny.  Basically, we want the
@@ -1843,6 +1867,19 @@ struct target_ops {
      * second-pass init, basically.
      */
     int (*postloadinit)(struct target *target);
+    /* Once @attach has been called and has succeeded, we call this --
+     * primarily it's a chance for the target to register probes on
+     * itself.
+     *
+     * We initially call it with @target->spec->active_probe_flags; but
+     * users may later call target_set_active_probing() to fine-tune
+     * settings.
+     */
+    int (*set_active_probing)(struct target *target,active_probe_flags_t flags);
+    /* Once @attach has been called and has succeeded, the target is
+     * opened.  This is the final function we call in target_open.
+     */
+    int (*postopened)(struct target *target);
 
     /*
      * "Underlay" targets (that support overlays) must define these

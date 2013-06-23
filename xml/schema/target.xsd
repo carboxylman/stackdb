@@ -55,6 +55,10 @@
       <xs:element minOccurs="0" ref="vmi1:killOnClose"/>
       <xs:element minOccurs="0" ref="vmi1:killOnCloseSignal"/>
       <xs:element minOccurs="0" ref="vmi1:debugfileRootPrefix"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeThreadEntry"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeThreadExit"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeMemory"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeOther"/>
       <xs:element ref="vmi1:backendSpec"/>
     </xs:sequence>
     <xs:attribute name="type" use="required" type="vmi1:TargetTypeT"/>
@@ -69,6 +73,10 @@
   <xs:element name="killOnClose" type="xs:boolean"/>
   <xs:element name="killOnCloseSignal" type="xs:int"/>
   <xs:element name="debugfileRootPrefix" type="xs:token"/>
+  <xs:element name="activeProbeThreadEntry" type="xs:boolean"/>
+  <xs:element name="activeProbeThreadExit" type="xs:boolean"/>
+  <xs:element name="activeProbeMemory" type="xs:boolean"/>
+  <xs:element name="activeProbeOther" type="xs:boolean"/>
   <xs:element name="backendSpec">
     <xs:complexType>
       <xs:choice>
@@ -164,6 +172,10 @@
   <xs:complexType name="TargetT">
     <xs:sequence>
       <xs:element ref="vmi1:tid"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeThreadEntry"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeThreadExit"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeMemory"/>
+      <xs:element minOccurs="0" ref="vmi1:activeProbeOther"/>
       <xs:element ref="vmi1:targetSpec"/>
       <xs:element ref="vmi1:targetStatus"/>
       <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:thread"/>

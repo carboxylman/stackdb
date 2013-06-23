@@ -42,6 +42,7 @@
 #include "dwdebug_priv.h"
 #include "target_api.h"
 #include "target.h"
+#include "probe_api.h"
 
 #include <xenctrl.h>
 #include <xen/xen.h>
@@ -75,6 +76,9 @@ static int xen_vm_updateregions(struct target *target,
 static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
 				 struct memregion *region);
 static int xen_vm_postloadinit(struct target *target);
+static int xen_vm_postopened(struct target *target);
+static int xen_vm_set_active_probing(struct target *target,
+				     active_probe_flags_t flags);
 
 
 static struct target *
@@ -150,6 +154,15 @@ int xen_vm_instr_can_switch_context(struct target *target,ADDR addr);
 
 /* Internal prototypes. */
 static int xen_vm_invalidate_all_threads(struct target *target);
+static result_t xen_vm_active_memory_handler(struct probe *probe,
+					     void *handler_data,
+					     struct probe *trigger);
+static result_t xen_vm_active_thread_entry_handler(struct probe *probe,
+						   void *handler_data,
+						   struct probe *trigger);
+static result_t xen_vm_active_thread_exit_handler(struct probe *probe,
+						  void *handler_data,
+						  struct probe *trigger);
 
 /* Format chars to print context registers. */
 #if __WORDSIZE == 64
@@ -199,6 +212,8 @@ struct target_ops xen_vm_ops = {
     .loadregions = xen_vm_loadregions,
     .loaddebugfiles = xen_vm_loaddebugfiles,
     .postloadinit = xen_vm_postloadinit,
+    .postopened = xen_vm_postopened,
+    .set_active_probing = xen_vm_set_active_probing,
 
     .instantiate_overlay = xen_vm_instantiate_overlay,
     .lookup_overlay_thread_by_id = xen_vm_lookup_overlay_thread_by_id,
@@ -1358,7 +1373,9 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 static struct target_thread *xen_vm_load_thread(struct target *target,
 						tid_t tid,int force) {
     struct target_thread *tthread = NULL;
-    struct value *taskv;
+    struct xen_vm_thread_state *xtstate;
+    struct value *taskv = NULL;
+    int taskv_loaded;
 
     /*
      * If we are asking for the global thread (TID_GLOBAL), do that
@@ -1433,18 +1450,51 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
 	return NULL;
     }
 
-    taskv = linux_get_task(target,tid);
+    /*
+     * If we didn't find a cached thread, or we're not live-tracking
+     * thread exit, check for stale thread!  If we have a cached thread,
+     * and we are tracking EXITs, we don't need to walk the task list.
+     */
+    if (!tthread 
+	|| !(target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+	taskv = linux_get_task(target,tid);
+	taskv_loaded = 1;
 
-    if (!taskv) {
-	vwarn("no task matching %"PRIiTID"\n",tid);
+	if (!taskv) {
+	    vwarn("no task matching %"PRIiTID"\n",tid);
 
-	if (tthread) {
-	    vdebug(3,LA_TARGET,LF_XV,
-		   "evicting old thread %"PRIiTID"; no longer exists!\n",tid);
-	    target_delete_thread(target,tthread,0);
+	    if (tthread) {
+		vdebug(3,LA_TARGET,LF_XV,
+		       "evicting old thread %"PRIiTID"; no longer exists!\n",tid);
+		target_delete_thread(target,tthread,0);
+	    }
+
+	    return NULL;
 	}
+    }
+    else {
+	taskv_loaded = 0;
+	xtstate = (struct xen_vm_thread_state *)tthread->state;
 
-	return NULL;
+	if (!value_refresh(xtstate->task_struct,1)) {
+	    verror("could not refresh cached struct; aborting to manual update!\n");
+
+	    taskv = linux_get_task(target,tid);
+	    taskv_loaded = 1;
+
+	    if (!taskv) {
+		vwarn("no task matching %"PRIiTID"\n",tid);
+
+		if (tthread) {
+		    vdebug(3,LA_TARGET,LF_XV,
+			   "evicting old thread %"PRIiTID"; no longer exists!\n",
+			   tid);
+		    target_delete_thread(target,tthread,0);
+		}
+
+		return NULL;
+	    }
+	}
     }
 
     if (!(tthread = __xen_vm_load_thread_from_value(target,taskv)))
@@ -1453,7 +1503,7 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
     return tthread;
 
  errout:
-    if (taskv)
+    if (taskv_loaded && taskv)
 	value_free(taskv);
 
     return NULL;
@@ -2132,8 +2182,6 @@ static int xen_vm_attach_internal(struct target *target) {
     struct xen_vm_thread_state *xtstate;
     struct bsymbol *tbs;
     OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
-    char *tmp;
-    int size;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
@@ -2687,6 +2735,205 @@ static int xen_vm_postloadinit(struct target *target) {
 						   SYMBOL_TYPE_FLAG_VAR))) {
 	vwarn("could not lookup modules; not updating modules list!\n");
 	return 0;
+    }
+
+    /*
+     * Lookup symbols for active probing, here, regardless of
+     * target->spec->active_probe_flags ; user may change active probing
+     * settings later!
+     */
+    if (!(xstate->module_free_symbol = 
+	  target_lookup_sym(target,"module_free",NULL,NULL,
+			    SYMBOL_TYPE_NONE))) {
+	vwarn("could not lookup module_free; active memory updates"
+	      " cannot function!\n");
+    }
+    else if (!(xstate->module_free_mod_symbol = 
+	           target_lookup_sym(target,"module_free.mod",NULL,NULL,
+				     SYMBOL_TYPE_NONE))) {
+	bsymbol_release(xstate->module_free_symbol);
+	xstate->module_free_symbol = NULL;
+
+	vwarn("could not lookup module_free.mod; active memory updates"
+	      " cannot function!\n");
+    }
+    else {
+	VLS(target,"MODULE_STATE_LIVE",LOAD_FLAG_NONE,
+	    &xstate->MODULE_STATE_LIVE,NULL,err_vmiload_meminfo);
+	vdebug(8,LA_TARGET,LF_XV,
+	       "MODULE_STATE_LIVE = %d\n",xstate->MODULE_STATE_LIVE);
+	VLS(target,"MODULE_STATE_COMING",LOAD_FLAG_NONE,
+	    &xstate->MODULE_STATE_COMING,NULL,err_vmiload_meminfo);
+	vdebug(8,LA_TARGET,LF_XV,
+	       "MODULE_STATE_COMING = %d\n",xstate->MODULE_STATE_COMING);
+	VLS(target,"MODULE_STATE_GOING",LOAD_FLAG_NONE,
+	    &xstate->MODULE_STATE_GOING,NULL,err_vmiload_meminfo);
+	vdebug(8,LA_TARGET,LF_XV,
+	       "MODULE_STATE_GOING = %d\n",xstate->MODULE_STATE_GOING);
+
+	if (0) {
+	err_vmiload_meminfo:
+	    bsymbol_release(xstate->module_free_symbol);
+	    xstate->module_free_symbol = NULL;
+	    bsymbol_release(xstate->module_free_mod_symbol);
+	    xstate->module_free_mod_symbol = NULL;
+
+	    vwarn("could not lookup MODULE_STATE_* var; active memory updates"
+		  " cannot function!\n");
+	}
+    }
+
+#ifdef ENABLE_DISTORM
+    if (!(xstate->thread_entry_f_symbol = 
+	      target_lookup_sym(target,"copy_process",NULL,NULL,
+				SYMBOL_TYPE_NONE))) {
+	vwarn("could not lookup copy_process;"
+	      " active thread entry updates cannot function!\n");
+    }
+    else if (!(xstate->thread_entry_v_symbol = 
+	           target_lookup_sym(target,"copy_process.p",NULL,NULL,
+				     SYMBOL_TYPE_NONE))) {
+	bsymbol_release(xstate->thread_entry_f_symbol);
+	xstate->thread_entry_f_symbol = NULL;
+
+	vwarn("could not lookup copy_process.p;"
+	      " active thread entry updates cannot function!\n");
+    }
+#endif
+
+    if (!(xstate->thread_exit_f_symbol = 
+	      target_lookup_sym(target,"sched_exit",NULL,NULL,
+				SYMBOL_TYPE_NONE))) {
+	vwarn("could not lookup sched_exit;"
+	      " active thread exit updates cannot function!\n");
+    }
+    else if (!(xstate->thread_exit_v_symbol = 
+	      target_lookup_sym(target,"sched_exit.p",NULL,NULL,
+				SYMBOL_TYPE_NONE))) {
+	bsymbol_release(xstate->thread_exit_f_symbol);
+	xstate->thread_exit_f_symbol = NULL;
+	vwarn("could not lookup sched_exit.p;"
+	      " active thread exit updates cannot function!\n");
+    }
+
+    return 0;
+}
+
+static int xen_vm_postopened(struct target *target) {
+    return 0;
+}
+
+static int xen_vm_set_active_probing(struct target *target,
+				     active_probe_flags_t flags) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct probe *probe;
+    char *name;
+
+    if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
+	if (flags & ACTIVE_PROBE_FLAG_MEMORY) {
+	    probe = probe_create(target,TID_GLOBAL,NULL,
+				 bsymbol_get_name(xstate->module_free_symbol),
+				 xen_vm_active_memory_handler,NULL,NULL,0,1);
+	    /* NB: always use this; it should be the default! */
+	    if (!probe_register_inlined_symbol(probe,xstate->module_free_symbol,
+					       1,PROBEPOINT_SW,0,0)) {
+		probe_free(probe,1);
+		probe = NULL;
+
+		vwarn("could not probe module_free; not enabling"
+		      " active memory updates!\n");
+
+		xstate->active_memory_probe = NULL;
+		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
+	    }
+	    else {
+		xstate->active_memory_probe = probe;
+		target->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+	    }
+	}
+	else {
+	    if (xstate->active_memory_probe) {
+		probe_free(xstate->active_memory_probe,0);
+		xstate->active_memory_probe = NULL;
+	    }
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
+	}
+    }
+
+    if ((flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)) {
+	if (flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) {
+#ifdef ENABLE_DISTORM
+	    name = bsymbol_get_name(xstate->thread_entry_f_symbol);
+	    /*
+	     * Create it with only a post handler so that we only probe
+	     * on the RETs from copy_process().
+	     */
+	    probe = probe_create(target,TID_GLOBAL,NULL,name,
+				 NULL,xen_vm_active_thread_entry_handler,
+				 NULL,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,
+					    xstate->thread_entry_f_symbol,0,0)) {
+		probe_free(probe,1);
+		probe = NULL;
+
+		vwarn("could not probe %s entry/exits; not enabling"
+		      " active thread entry updates!\n",name);
+
+		xstate->active_thread_entry_probe = NULL;
+		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	    }
+	    else {
+		xstate->active_thread_entry_probe = probe;
+		target->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	    }
+#else
+	    verror("cannot enable active thread_entry probes; distorm (disasm)"
+		   " support not built in!");
+#endif
+	}
+	else {
+	    if (xstate->active_thread_entry_probe) {
+		probe_free(xstate->active_thread_entry_probe,0);
+		xstate->active_thread_entry_probe = NULL;
+	    }
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	}
+    }
+
+    if ((flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+	if (flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
+	    name = bsymbol_get_name(xstate->thread_exit_f_symbol);
+	    probe = probe_create(target,TID_GLOBAL,NULL,name,
+				 xen_vm_active_thread_exit_handler,
+				 NULL,NULL,0,1);
+	    /* NB: always use this; it should be the default! */
+	    if (!probe_register_inlined_symbol(probe,
+					       xstate->thread_exit_f_symbol,
+					       1,PROBEPOINT_SW,0,0)) {
+		probe_free(probe,1);
+		probe = NULL;
+
+		vwarn("could not probe %s; not enabling"
+		      " active thread exit updates!\n",name);
+
+		xstate->active_thread_exit_probe = NULL;
+		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	    }
+	    else {
+		xstate->active_thread_exit_probe = probe;
+		target->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	    }
+	}
+	else {
+	    if (xstate->active_thread_exit_probe) {
+		probe_free(xstate->active_thread_exit_probe,0);
+		xstate->active_thread_exit_probe = NULL;
+	    }
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	}
     }
 
     return 0;
@@ -3388,6 +3635,16 @@ static struct array_list *xen_vm_list_available_tids(struct target *target) {
     struct array_list *retval;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
+    /*
+     * If we are tracking threads, we don't have scan the list!
+     */
+    if ((target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
+	&& (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+	vdebug(8,LA_TARGET,LF_XV,
+	       "active probing thread entry/exit, so just reloading cache!\n");
+	return target_list_tids(target);
+    }
+
     /* Try to be smart about the size of the list we create. */
     if (xstate->last_thread_count)
 	retval = array_list_create((xstate->last_thread_count + 16) & ~15);
@@ -3473,6 +3730,16 @@ static int xen_vm_load_available_threads(struct target *target,int force) {
 	rc = -1;
     }
 
+    /*
+     * If we are tracking threads, we don't have scan the list!
+     */
+    if ((target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
+	&& (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+	vdebug(8,LA_TARGET,LF_XV,
+	       "active probing thread entry/exit, so just reloading cache!\n");
+	return xen_vm_load_all_threads(target,force);
+    }
+
     if (linux_list_for_each_struct(target,xstate->init_task,"tasks",1,
 				   __value_load_thread,&i)) {
 	verror("could not load all threads in task list (did %d tasks)\n",i);
@@ -3526,7 +3793,7 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 	snprintf(buf,bufsiz,
 		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
 		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF
-		 " cs=%"RF" ss=%"RF" ds=%"RF" es=%"RF" fs=%"RF" gs=%"RF
+		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d"
 		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF,
 #if __WORDSIZE == 64
 		 r->rip,r->rbp,r->rsp,r->eflags,
@@ -3543,7 +3810,7 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 	snprintf(buf,bufsiz,
 		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
 		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF"\n"
-		 " cs=%"RF" ss=%"RF" ds=%"RF" es=%"RF" fs=%"RF" gs=%"RF"\n"
+		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d\n"
 		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF,
 #if __WORDSIZE == 64
 		 r->rip,r->rbp,r->rsp,r->eflags,
@@ -3909,6 +4176,9 @@ static int xen_vm_reload_modules_dep(struct target *target) {
     return 0;
 }
 
+/*
+ * Only called if active memory probing is disabled, or if it fails.
+ */
 static int xen_vm_updateregions(struct target *target,
 				struct addrspace *space) {
     struct xen_vm_state *xstate = \
@@ -3977,6 +4247,325 @@ static int xen_vm_updateregions(struct target *target,
     return 0;
 }
 
+static result_t xen_vm_active_memory_handler(struct probe *probe,
+					     void *handler_data,
+					     struct probe *trigger) {
+    struct target *target;
+    struct xen_vm_state *xstate;
+    struct value *mod = NULL;
+    struct addrspace *space;
+    int state = -1;
+    struct __update_module_data ud;
+    char *modfilename;
+    struct list_head *pos;
+    struct memregion *tregion;
+    char *name;
+    struct value *name_value = NULL;
+
+    target = probe->target;
+    xstate = (struct xen_vm_state *)target->state;
+    space = list_entry(target->spaces.next,typeof(*space),space);
+
+    /*
+     * For kernels that have do_init_module(), we can simply place a
+     * probe on the entry of that function.  If we cannot read the first
+     * arg, the module is already on the list, so just scan the list
+     * manually.
+     *
+     * For older kernels, it is not as good.  We cannot catch the
+     * incoming module once it is guaranteed to be on the list UNLESS we
+     * use return probes on one of a few functions (__link_module would
+     * work), but that requires disasm, which we want to avoid.
+     *
+     * So -- the only strategy that works for all kernels is to place a
+     * probe on module_free(), and look at both the addr being freed,
+     * and the module->state field.  If ->state is MODULE_STATE_LIVE,
+     * we know the module is new.  If mod->state is MODULE_STATE_GOING,
+     * we know the module is being removed (or failed to initialize).
+     * If mod->state is MODULE_STATE_COMING, we know the module failed
+     * to initialize.
+     *
+     * This way, if we fail to load module_free's mod arg -- we can just
+     * rescan the list.  By the time this function is called, whether
+     * the module is coming or going, the module is either on the list
+     * or off it.
+     *
+     * NB: module_free is called multiple times per module (for the
+     * init_text section, and the core_text section).  So, we just
+     * handle those cases and ignore them.
+     *
+     *   NB: we *could* utilize this to track the presence/absence of
+     *   the init_text section too; but we don't for now.
+     */
+
+    /*
+     * Load mod.
+     */
+    mod = target_load_symbol(target,TID_GLOBAL,
+			     xstate->module_free_mod_symbol,
+			     LOAD_FLAG_AUTO_DEREF);
+    if (!mod) {
+	/*
+	 * Again, the module is either on the list if it's coming; or
+	 * off the list if it's going.  By the time module_free is
+	 * called, its state is known based on whether it is on the list
+	 * or off the list.
+	 *
+	 * So, it is safe to manually update regions.
+	 */
+	vwarn("could not load mod in module_free; manually updating"
+	      " modules!\n");
+	goto manual_update;
+    }
+
+    /*
+     * Load mod->state, so we know what is happening.
+     */
+    VLV(target,mod,"state",LOAD_FLAG_NONE,&state,NULL,err_vmiload_state);
+
+    /*
+     * Update modules.dep, just in case; don't worry if it fails, just
+     * do our best.
+     */
+    xen_vm_reload_modules_dep(target);
+
+    if (state == xstate->MODULE_STATE_LIVE) {
+	ud.space = space;
+	ud.moddep = xstate->moddep;
+
+	__update_module(target,mod,&ud);
+    }
+    else if (state == xstate->MODULE_STATE_COMING
+	     || state == xstate->MODULE_STATE_GOING) {
+	/*
+	 * Look up and destroy it if it's one of our regions.
+	 */
+	VLV(target,mod,"name",LOAD_FLAG_AUTO_STRING,NULL,&name_value,
+	    err_vmiload_name);
+	name = v_string(name_value);
+
+	modfilename = g_hash_table_lookup(xstate->moddep,name);
+	if (!modfilename) {
+	    verror("could not find modfilename for module '%s'; aborting to"
+		   " manual update!\n",
+		   name);
+	    goto manual_update;
+	}
+
+	list_for_each(pos,&space->regions) {
+	    tregion = list_entry(pos,typeof(*tregion),region);
+	    if (strcmp(tregion->name,modfilename) == 0) 
+		break;
+	    tregion = NULL;
+	}
+
+	if (tregion) {
+	    vdebug(3,LA_TARGET,LF_XV,
+		   "removing region for departing module '%s'\n",name);
+	    memregion_free(tregion);
+	}
+	else {
+	    vdebug(5,LA_TARGET,LF_XV,
+		   "ignoring untracked departing module '%s'\n",name);
+	}
+    }
+    else {
+	verror("unexpected module state %d; reverting to manual update!\n",state);
+	goto manual_update;
+    }
+
+    if (name_value)
+	value_free(name_value);
+    if (mod)
+	value_free(mod);
+
+    return RESULT_SUCCESS;
+
+ err_vmiload_state:
+    verror("could not load mod->state; aborting to manual update!\n");
+    goto manual_update;
+
+ err_vmiload_name:
+    verror("could not load mod->name for departing module; aborting to manual"
+	   " update!\n");
+    goto manual_update;
+
+ manual_update:
+    if (name_value)
+	value_free(name_value);
+    if (mod)
+	value_free(mod);
+
+    if (xen_vm_updateregions(target,space)) {
+	verror("manual module update failed; regions may be wrong!\n");
+	return RESULT_ERROR;
+    }
+
+    return RESULT_SUCCESS;
+}
+
+/*
+ * NB: this was hard!
+ *
+ * It is very, very hard to find an available function to place a probe
+ * on, that is not either optimized out of existence (well, it may
+ * exist, but either the instances are not available or the parameters
+ * have no locations at the inlined site).
+ *
+ * And we really want to try hard to only probe *after* (but very near
+ * to) the place where the task is placed on the tasks list; this way,
+ * if we fail to read the new task out of target memory, we can abort to
+ * scanning the task list.  I guess that doesn't matter so much though.
+ * Anyway, the list add happens in copy_process, so that is our target.
+ *
+ * I worked very hard to avoid requiring disasm support (so that I could
+ * register probes on the RETs from copy_process); but ultimately I
+ * could not manage it.  proc_fork_connector() is the only
+ * copy_process()-specific hook just before the success RET in
+ * copy_process.  We could also have caught the increment of total_forks
+ * via watchpoint, but I want to avoid wasting a watchpoint if I can!
+ *
+ * I tried to catch proc_fork_connector() inside copy_process() (but of
+ * course, silly me, that is only really defined if CONFIG_CONNECTOR;
+ * otherwise it's just declared) because it is the last "hook" in
+ * copy_process; by that time, we know that the new task is on the tasks
+ * list.
+ *
+ * Another option might have been to catch the new task just after the
+ * invocations of copy_process() in fork_idle() or do_fork(); but this
+ * would basically require us to use debuginfo variable availability
+ * (when does the `task' local var in those functions become
+ * available!), and then place a probe on that exact location.  But, of
+ * course that doesn't work; you have no idea what code is where, or the
+ * debuginfo might be wrong/incomplete.
+ *
+ * So -- the best options all involve requiring disasm support.  Once we
+ * have this, the easiest thing to do is catch the RETs in copy_process;
+ * if the local var 'p' is !IS_ERR(), we know we have a new task.  If we
+ * fail to load memory, or something goes wrong, we can fall back to
+ * manually walking the task list.
+ */
+static result_t xen_vm_active_thread_entry_handler(struct probe *probe,
+						   void *handler_data,
+						   struct probe *trigger) {
+    struct target *target = probe->target;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct target_thread *tthread;
+    struct value *value;
+
+    /*
+     * Load task.
+     */
+    value = target_load_symbol(target,TID_GLOBAL,
+			       xstate->thread_entry_v_symbol,
+			       LOAD_FLAG_AUTO_DEREF);
+    if (!value) {
+	/*
+	 * This target does not require thread entry tracking; so ignore
+	 * it.  We just load threads as they appear; it's stale threads
+	 * we really prefer to avoid -- or for overlay targets, we need
+	 * to know when a overlay thread disappears.
+	 */
+	vwarn("could not load %s in %s; ignoring new thread!\n",
+	      bsymbol_get_name(xstate->thread_entry_v_symbol),
+	      bsymbol_get_name(xstate->thread_entry_f_symbol));
+	return RESULT_ERROR;
+    }
+
+    if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
+	verror("could not load thread from task value; BUG?\n");
+	value_free(value);
+	return RESULT_ERROR;
+    }
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "new task %"PRIiTID" (%s)\n",tthread->tid,tthread->name);
+
+    return RESULT_SUCCESS;
+}
+
+/*
+ * NB: this was hard!
+ *
+ * It is very, very hard to find an available function to place a probe
+ * on, that is not either optimized out of existence (well, it may
+ * exist, but either the instances are not available or the parameters
+ * have no locations at the inlined site).  __unhash_process, the
+ * function that takes the pid off the list, is the ideal place, but
+ * that doesn't work.  release_task also does not work, but that is
+ * because it contains a loop that reaps zombie group leaders (if they
+ * exist) -- so we would miss some zombies.  Thus we are left with
+ * sched_exit, which is (unfortunately) well after the process is off
+ * the task list.  BUT -- every exiting task hits it.  Another
+ * alternative (of course) is to probe inside of schedule(), but that is
+ * tricky because it adds tons of unnecessary overhead,
+ *
+ * Of course, then the problem becomes that in release_task, the task IS
+ * exiting, but it is still running on its kernel stack (at least when
+ * called from the normal do_exit() exit path; this means that although
+ * we want to delete our thread, we cannot delete it because it may
+ * "reappear".
+ *
+ * One strategy, for kernels that do NOT support CONFIG_PREEMPT, is to
+ * mark the thread "exiting", and when the next debug exception hits,
+ * clear out any such threads if the exception is not for one of them!
+ * Why does this work?  An exiting task will simply not be preempted
+ * until it calls schedule().
+ *
+ * For kernels that do support CONFIG_PREEMPT, the only "safe" places to
+ * *know* that a task is exiting, but preemption has been disabled, is
+ * the call to preempt_disable() inside do_exit().  And we can't catch
+ * that -- it is really just a write to a field in the task struct,
+ * followed by an MFENCE instruction (on x86).  So, we really have to
+ * catch the call to schedule() inside do_exit() -- or the call to
+ * release_task() inside wait_task_zombie().  This makes sure we catch
+ * all the paths leading to release_task().
+ *
+ * NB: therefore, this version does not support CONFIG_PREEMPT very well
+ * -- it could be racy.  We need support for placing probes on function
+ * invocations; this requires disasm support.
+ */
+static result_t xen_vm_active_thread_exit_handler(struct probe *probe,
+						  void *handler_data,
+						  struct probe *trigger) {
+    struct target *target = probe->target;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *xtstate;
+    struct value *value;
+
+    /*
+     * Load task.
+     */
+    value = target_load_symbol(target,TID_GLOBAL,xstate->thread_exit_v_symbol,
+			       LOAD_FLAG_AUTO_DEREF);
+    if (!value) {
+	/*
+	 * We need avoid stale threads for overlay targets; we need to
+	 * know when a overlay thread disappears.
+	 */
+	vwarn("could not load %s in %s; ignoring new thread!\n",
+	      bsymbol_get_name(xstate->thread_exit_v_symbol),
+	      bsymbol_get_name(xstate->thread_exit_f_symbol));
+	return RESULT_ERROR;
+    }
+
+    if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
+	verror("could not load thread from task value; BUG?\n");
+	value_free(value);
+	return RESULT_ERROR;
+    }
+
+    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+    xtstate->exiting = 1;
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "exiting task %"PRIiTID" (%s)\n",tthread->tid,tthread->name);
+
+    return RESULT_SUCCESS;
+}
+
 /*
  * If again is not NULL, we set again
  *   to -1 if there was an error, but we should try again;
@@ -4000,6 +4589,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     struct target_thread *bogus_sstep_thread;
     ADDR bogus_sstep_probepoint_addr;
     struct target *overlay;
+    GHashTableIter iter;
 
 #ifdef ENABLE_XENACCESS
     /* From previous */
@@ -4042,8 +4632,17 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	    goto out_err;
 	}
 
-	list_for_each_entry(space,&target->spaces,space) {
-	    xen_vm_updateregions(target,space);
+	/*
+	 * If not active probing memory, we kind of want to update our
+	 * addrspaces aggressively (by checking the module list) so that
+	 * if a user lookups a module symbol, we already have it.
+	 *
+	 * Active probing memory for the Xen target is a big win.
+	 */
+	if (!(target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
+	    list_for_each_entry(space,&target->spaces,space) {
+		xen_vm_updateregions(target,space);
+	    }
 	}
 
 	if (ipval < xstate->kernel_start_addr) {
@@ -4073,6 +4672,36 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	     * or in target_resume/target_singlestep.
 	     */
 	    xen_vm_load_current_thread(target,0);
+
+	    /*
+	     * If we are tracking thread exits, we have to nuke
+	     * "exiting" threads.  See comments near
+	     * xen_vm_active_thread_exit_handler .
+	     */
+	    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
+		g_hash_table_iter_init(&iter,target->threads);
+		while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tthread)) {
+		    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+		    if (!xtstate->exiting) 
+			continue;
+
+		    if (tthread == target->current_thread) {
+			vdebug(5,LA_TARGET,LF_XV,
+			       "active-probed exiting thread %"PRIiTID" (%s)"
+			       " is still running; not deleting yet!\n",
+			       tthread->tid,tthread->name);
+		    }
+		    else {
+			vdebug(5,LA_TARGET,LF_XV,
+			       "active-probed exiting thread %"PRIiTID" (%s)"
+			       " can be deleted; doing it\n",
+			       tthread->tid,tthread->name);
+			target_delete_thread(target,tthread,1);
+			g_hash_table_iter_remove(&iter);
+		    }
+		}
+	    }
 
 	    /*
 	     * First, we check the current thread's state/registers to

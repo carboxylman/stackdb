@@ -37,6 +37,10 @@ TargetSpecT =
     element killOnClose { xsd:boolean }?,
     element killOnCloseSignal { xsd:int }?,
     element debugfileRootPrefix { xsd:token }?,
+    element activeProbeThreadEntry { xsd:boolean }?,
+    element activeProbeThreadExit { xsd:boolean }?,
+    element activeProbeMemory { xsd:boolean }?,
+    element activeProbeOther { xsd:boolean }?,
 
     element backendSpec {
         (TargetXenSpec | TargetPtraceSpec | TargetXenProcessSpec)
@@ -87,6 +91,10 @@ TargetStatus = element targetStatus { TargetStatusT }
 TargetT = 
     attribute name { text },
     element tid { TargetIdT },
+    element activeProbeThreadEntry { xsd:boolean }?,
+    element activeProbeThreadExit { xsd:boolean }?,
+    element activeProbeMemory { xsd:boolean }?,
+    element activeProbeOther { xsd:boolean }?,
     TargetSpec,
     TargetStatus,
     Thread*,

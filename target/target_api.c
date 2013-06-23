@@ -257,7 +257,45 @@ int target_open(struct target *target) {
 
     target->opened = 1;
 
+    /*
+     * Set up active probing if requested, once we're opened.
+     *
+     * NB: it's better if the backend does everything it can to
+     * pre-setup active probing -- i.e., making sure the necessary
+     * symbols exist, and it will be possible to probe them, in
+     * postloadinit().
+     */
+    if ((rc = target_set_active_probing(target,target->spec->active_probe_flags)))
+	vwarn("set_active_probing failed with %d; continuing anyway!\n",rc);
+
+    if (target->ops->postopened) {
+	vdebug(5,LA_TARGET,LF_TARGET,"postopened target(%s)\n",target->name);
+	if ((rc = target->ops->postopened(target))) {
+	    return rc;
+	}
+    }
+
     return 0;
+}
+
+int target_set_active_probing(struct target *target,active_probe_flags_t flags) {
+    int rc;
+
+    if (!target->ops->set_active_probing) {
+	verror("no active probing support in target(%s)!\n",target->name);
+	errno = ENOTSUP;
+	return -1;
+    }
+
+    vdebug(5,LA_TARGET,LF_TARGET,"set_active_probing target(%s)\n",target->name);
+    rc = target->ops->set_active_probing(target,flags);
+    if (rc) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "set_active_probing target(%s): failed with %d\n",
+	       target->name,rc);
+    }
+
+    return rc;
 }
 
 struct array_list *target_list_available_overlay_tids(struct target *target,

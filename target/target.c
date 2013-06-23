@@ -109,6 +109,9 @@ struct argp_option target_argp_opts[] = {
     { "kill-on-close",'k',NULL,0,"Destroy target on close (SIGKILL).",-4 },
     { "debugfile-root-prefix",'R',"DIR",0,
       "Set an alternate root prefix for debuginfo and binfile resolution.",0 },
+    { "active-probing",'a',"FLAG,FLAG,...",0,
+      "A list of active probing flags to enable (disabled by default)"
+      " (thread_entry thread_exit memory other)",0 },
     { 0,0,0,0,0,0 }
 };
 
@@ -121,6 +124,7 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
     int ac = 0;
     int j;
     int i;
+    int len;
 
     /* Do the backend first. */
     if (spec->target_type == TARGET_TYPE_PTRACE) {
@@ -173,6 +177,11 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	ac += 1;
     if (spec->debugfile_root_prefix)
 	ac += 2;
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY
+	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT
+	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY 
+	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER)
+	ac += 2;
 
     ac += backend_argc;
     ac += 1;
@@ -224,6 +233,34 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
     if (spec->debugfile_root_prefix) {
 	av[j++] = strdup("-R");
 	av[j++] = strdup(spec->debugfile_root_prefix);
+    }
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY
+	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT
+	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY 
+	|| spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) {
+	av[j++] = strdup("-a");
+	len = 0;
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
+	    len += sizeof("thread_entry,");
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)
+	    len += sizeof("thread_exit,");
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)
+	    len += sizeof("memory,");
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER)
+	    len += sizeof("other,");
+	len += 1;
+	av[j] = malloc(len);
+	rc = 0;
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","thread_entry,");
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","thread_exit,");
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","memory,");
+	if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER)
+	    rc += snprintf(av[j] + rc,len - rc,"%s","other,");
+
+	++j;
     }
 
     for (i = 0; i < backend_argc; ++i) 
@@ -377,6 +414,8 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     struct debugfile_load_opts *opts;
     int i;
     target_type_t tmptype;
+    char *saveptr;
+    char *token;
 
     if (tstate)
 	spec = tstate->spec;
@@ -516,6 +555,24 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'R':
 	spec->debugfile_root_prefix = strdup(arg);
+	break;
+    case 'a':
+	argcopy = strdup(arg);
+	saveptr = NULL;
+	while ((token = strtok_r((!saveptr) ? argcopy : NULL,",",&saveptr))) {
+	    if (strcmp("thread_entry",token) == 0)
+		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	    else if (strcmp("thread_exit",token) == 0)
+		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	    else if (strcmp("memory",token) == 0)
+		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+	    else if (strcmp("other",token) == 0)
+		spec->active_probe_flags |= ACTIVE_PROBE_FLAG_OTHER;
+	    else {
+		verror("unrecognized active probe flag '%s'!\n",token);
+		return EINVAL;
+	    }
+	}
 	break;
 
     default:

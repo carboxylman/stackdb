@@ -218,6 +218,18 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
     }
     if (spec->debugfileRootPrefix)
 	ospec->debugfile_root_prefix = strdup(spec->debugfileRootPrefix);
+    if (spec->activeProbeThreadEntry 
+	&& *spec->activeProbeThreadEntry == xsd__boolean__true_)
+	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+    if (spec->activeProbeThreadExit 
+	&& *spec->activeProbeThreadExit == xsd__boolean__true_)
+	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_THREAD_EXIT;
+    if (spec->activeProbeMemory 
+	&& *spec->activeProbeMemory == xsd__boolean__true_)
+	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+    if (spec->activeProbeOther 
+	&& *spec->activeProbeOther == xsd__boolean__true_)
+	ospec->active_probe_flags |= ACTIVE_PROBE_FLAG_OTHER;
 
     if (type == TARGET_TYPE_PTRACE
 	&& spec->backendSpec 
@@ -294,6 +306,30 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
     }
     if (spec->debugfile_root_prefix)
 	SOAP_STRCPY(soap,ospec->debugfileRootPrefix,spec->debugfile_root_prefix);
+    ospec->activeProbeThreadEntry = 
+	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeThreadEntry));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+	*ospec->activeProbeThreadEntry = xsd__boolean__true_;
+    else
+	*ospec->activeProbeThreadEntry = xsd__boolean__false_;
+    ospec->activeProbeThreadExit = 
+	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeThreadExit));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+	*ospec->activeProbeThreadExit = xsd__boolean__true_;
+    else
+	*ospec->activeProbeThreadExit = xsd__boolean__false_;
+    ospec->activeProbeMemory = 
+	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeMemory));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY) 
+	*ospec->activeProbeMemory = xsd__boolean__true_;
+    else
+	*ospec->activeProbeMemory = xsd__boolean__false_;
+    ospec->activeProbeOther = 
+	SOAP_CALLOC(soap,1,sizeof(*ospec->activeProbeOther));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) 
+	*ospec->activeProbeOther = xsd__boolean__true_;
+    else
+	*ospec->activeProbeOther = xsd__boolean__false_;
 
     if (spec->target_type == TARGET_TYPE_PTRACE) {
 	ospec->backendSpec = SOAP_CALLOC(soap,1,sizeof(*ospec->backendSpec));
@@ -686,6 +722,35 @@ t_target_id_to_x_TargetT(struct soap *soap,
     otarget->tid = target_id;
     otarget->name = "";
 
+    /*
+     * Since we don't have a target yet, probably, just use the spec
+     * values for now.
+     */
+    otarget->activeProbeThreadEntry = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadEntry));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+	*otarget->activeProbeThreadEntry = xsd__boolean__true_;
+    else
+	*otarget->activeProbeThreadEntry = xsd__boolean__false_;
+    otarget->activeProbeThreadExit = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadExit));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+	*otarget->activeProbeThreadExit = xsd__boolean__true_;
+    else
+	*otarget->activeProbeThreadExit = xsd__boolean__false_;
+    otarget->activeProbeMemory = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeMemory));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY) 
+	*otarget->activeProbeMemory = xsd__boolean__true_;
+    else
+	*otarget->activeProbeMemory = xsd__boolean__false_;
+    otarget->activeProbeOther = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeOther));
+    if (spec->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) 
+	*otarget->activeProbeOther = xsd__boolean__true_;
+    else
+	*otarget->activeProbeOther = xsd__boolean__false_;
+
     otarget->targetSpec = \
 	t_target_spec_to_x_TargetSpecT(soap,spec,reftab,NULL);
 
@@ -724,6 +789,31 @@ t_target_to_x_TargetT(struct soap *soap,
     }
     else
 	otarget->name = "";
+
+    otarget->activeProbeThreadEntry = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadEntry));
+    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+	*otarget->activeProbeThreadEntry = xsd__boolean__true_;
+    else
+	*otarget->activeProbeThreadEntry = xsd__boolean__false_;
+    otarget->activeProbeThreadExit = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeThreadExit));
+    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+	*otarget->activeProbeThreadExit = xsd__boolean__true_;
+    else
+	*otarget->activeProbeThreadExit = xsd__boolean__false_;
+    otarget->activeProbeMemory = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeMemory));
+    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY) 
+	*otarget->activeProbeMemory = xsd__boolean__true_;
+    else
+	*otarget->activeProbeMemory = xsd__boolean__false_;
+    otarget->activeProbeOther = 
+	SOAP_CALLOC(soap,1,sizeof(*otarget->activeProbeOther));
+    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_OTHER) 
+	*otarget->activeProbeOther = xsd__boolean__true_;
+    else
+	*otarget->activeProbeOther = xsd__boolean__false_;
 
     otarget->targetSpec = \
 	t_target_spec_to_x_TargetSpecT(soap,target->spec,reftab,NULL);
