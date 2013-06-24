@@ -840,6 +840,8 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
 
 int probe_free(struct probe *probe,int force) {
     REFCNT trefcnt;
+    GList *list;
+    struct probe *sink;
 
     vdebug(5,LA_PROBE,LF_PROBE,"");
     LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
@@ -857,9 +859,47 @@ int probe_free(struct probe *probe,int force) {
 	return -1;
     }
     
-    if (probe->sinks) 
-	vwarn("forcefully freeing probe %s that had sinks/probepoint remaining!\n",
+    if (probe->sinks) {
+	vwarn("forcefully freeing probe %s that had sinks remaining;"
+	      " removing this source from those sinks!\n",
 	      probe->name);
+
+	list = probe->sinks;
+	while (list) {
+	    sink = (struct probe *)list->data;
+
+	    if (!sink->sources) {
+		/* This would be weird, but just ignore it. */
+		vwarn("sink probe %s has no sources; although probe %s thinks"
+		      " it's a source -- BUG!\n",sink->name,probe->name);
+		continue;
+	    }
+
+	    sink->sources = g_list_remove(sink->sources,probe);
+
+	    if (!sink->sources || g_list_length(sink->sources) == 0) {
+		/* Only can call unregistered() if @probe was the last sink. */
+		if (PROBE_SAFE_OP(sink,unregistered)) {
+		    verror("probe %s: unregistered failed!\n",
+			   sink->name);
+		}
+	    }
+
+	    /* NB: we cannot free the sink!  The probe_free() function might
+	     * call probe_unregister_source*(), so we cannot free a sink we
+	     * might be freeing -- it might free the source we are
+	     * freeing in this function right now!  probe_free() can
+	     * only go downwards.
+	     */
+	    //if (sink->autofree) 
+	    //	return probe_free(sink,force);
+
+	    list = g_list_next(list);
+	}
+
+	g_list_free(probe->sinks);
+	probe->sinks = NULL;
+    }
 
     /* If we still need to unregister, we call probe_unregister, which
      * will call us again if the probe was an autofree probe.  So, if it
