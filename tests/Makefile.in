@@ -65,7 +65,7 @@ TESTS := clrange clmatch evloop_waitpipe monitor_threads monitor_processes \
 	monitored_dummy_child
 TESTOBJECTS := $(addsuffix .lo,$(TESTS))
 
-ASSISTANTS := dummy dummy.threads
+ASSISTANTS := dummy dummy.threads threads.leader.exit dlopen
 TESTOBJECTS += $(addsuffix .lo,$(ASSISTANTS))
 
 STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la \
@@ -94,6 +94,13 @@ dummy: dummy.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo
 
 dummy.threads: dummy.threads.lo
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		-pthread
+dlopen: dlopen.lo 
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		-ldl
+
+threads.leader.exit: threads.leader.exit.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		-pthread
 
