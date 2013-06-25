@@ -19,6 +19,7 @@ pid_t gettid() {
 typedef char *(*zlibVersion)(void);
 
 int main(int argc,char **argv) {
+    char *libpath;
     void *lib;
     void *sym;
     char *version;
@@ -29,6 +30,19 @@ int main(int argc,char **argv) {
 	interval = atoi(argv[1]);
 	if (interval <= 0)
 	    interval = 8;
+    }
+
+    if (access("/lib64/libz.so.1",R_OK) == 0)
+	libpath = "/lib64/libz.so.1";
+    else if (access("/lib/libz.so.1",R_OK) == 0)
+	libpath = "/lib/libz.so.1";
+    else if (access("/lib/x86_64-linux-gnu/libz.so.1",R_OK) == 0)
+	libpath = "/lib/x86_64-linux-gnu/libz.so.1";
+    else if (access("/lib/x86-linux-gnu/libz.so.1",R_OK) == 0)
+	libpath = "/lib/x86-linux-gnu/libz.so.1";
+    else {
+	fprintf(stderr,"ERROR: could not find libz.so.1 anywhere!\n");
+	exit(-1);
     }
 
     while (1) {
@@ -43,7 +57,7 @@ int main(int argc,char **argv) {
 	printf("\n");
 	fflush(stdout);
 
-	lib = dlopen("/lib64/libz.so.1",RTLD_NOW | RTLD_GLOBAL);
+	lib = dlopen(libpath,RTLD_NOW | RTLD_GLOBAL);
 	sym = dlsym(lib,"zlibVersion");
 
 	version = ((zlibVersion)sym)();
