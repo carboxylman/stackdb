@@ -2182,6 +2182,8 @@ static int xen_vm_attach_internal(struct target *target) {
     struct xen_vm_thread_state *xtstate;
     struct bsymbol *tbs;
     OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
+    int size;
+    char *tmp;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
