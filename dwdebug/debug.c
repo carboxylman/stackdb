@@ -2027,7 +2027,8 @@ static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
     assert(!definition->isdeclaration);
     assert(declaration->type == definition->type);
 
-    if (definition->datatype_ref && !definition->datatype) 
+    if (definition->datatype_ref 
+	&& !definition->datatype && !SYMBOL_IS_OWN_DATATYPE(definition))
 	return -1;
     else {
 	/*
@@ -2077,7 +2078,7 @@ void debugfile_handle_declaration(struct debugfile *debugfile,
 
     assert(symbol->isdeclaration);
 
-    if (SYMBOL_IS_TYPE(symbol)) 
+    if (!SYMBOL_IS_TYPE(symbol)) 
 	definition = (struct symbol *)g_hash_table_lookup(debugfile->globals,
 							  symbol->name);
     else

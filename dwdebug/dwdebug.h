@@ -318,6 +318,9 @@ extern char *DATATYPE_STRINGS[];
 				       || (sym)->datatype_code \
 				                == DATATYPE_UNION))
 
+#define SYMBOL_IS_OWN_DATATYPE(sym) \
+    (SYMBOL_IST_VOID(sym) || SYMBOL_IST_STUN(sym) || SYMBOL_IST_BASE(sym))
+
 typedef enum {
     LOCTYPE_UNKNOWN       = 0,
     LOCTYPE_ADDR          = 1,
