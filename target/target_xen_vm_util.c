@@ -279,9 +279,11 @@ char *linux_d_path(struct target *target,
     struct value *ph;
     char *retval;
     char *end;
-    num_t namelen;
+    uint32_t namelen;
     ADDR nameaddr;
     char *namebuf;
+    struct value *smnamevalue;
+    struct lsymbol *tmpls;
 
     assert(buf != NULL);
 
@@ -346,19 +348,57 @@ char *linux_d_path(struct target *target,
 	}
 	namelen = 0;
 	VLV(target,dentry,"d_name.len",LOAD_FLAG_NONE,&namelen,NULL,err_vmiload);
-	buflen -= namelen + 1;
-	if (buflen < 0)
-	    goto err_toolong;
-	end -= namelen;
-	VLV(target,dentry,"d_name.name",LOAD_FLAG_NONE,&nameaddr,NULL,err_vmiload);
-	namebuf = NULL;
-	VLA(target,nameaddr,LOAD_FLAG_NONE,&namebuf,namelen,NULL,err_vmiload);
-	memcpy(end,namebuf,namelen);
-	free(namebuf);
-	namebuf = NULL;
-	*--end = '/';
-	retval = end;
-	
+
+	/*
+	 * Newer linux keeps a "small dentry name" cache inside the
+	 * dentry itself; so, if namelen == 0, check dentry.d_iname
+	 * instead of dentry.d_name.name .
+	 */
+	smnamevalue = target_load_value_member(target,dentry,"d_iname",
+					       NULL,LOAD_FLAG_NONE);
+
+	VLV(target,dentry,"d_name.name",LOAD_FLAG_NONE,&nameaddr,NULL,
+	    err_vmiload);
+
+	if (!nameaddr || (smnamevalue && nameaddr == value_addr(smnamevalue))) {
+	    if (!smnamevalue) {
+		verror("dentry.d_name.name invalid!!\n");
+		goto err_vmiload;
+	    }
+
+	    namelen = strnlen(smnamevalue->buf,smnamevalue->bufsiz);
+
+	    buflen -= namelen + 1;
+	    if (buflen < 0)
+		goto err_toolong;
+	    end -= namelen;
+
+	    memcpy(end,smnamevalue->buf,namelen);
+	    value_free(smnamevalue);
+	    smnamevalue = NULL;
+	    namebuf = NULL;
+	    *--end = '/';
+	    retval = end;
+	}
+	else if (namelen > 0) {
+	    buflen -= namelen + 1;
+	    if (buflen < 0)
+		goto err_toolong;
+	    end -= namelen;
+
+	    namebuf = NULL;
+	    VLA(target,nameaddr,LOAD_FLAG_NONE,&namebuf,namelen,NULL,err_vmiload);
+	    memcpy(end,namebuf,namelen);
+	    free(namebuf);
+	    namebuf = NULL;
+	    *--end = '/';
+	    retval = end;
+	}
+	else {
+	    verror("dentry.d_name.len (%"PRIu32") was invalid!\n",namelen);
+	    goto err_vmiload;
+	}
+
 	ph = dentry;
 	VL(target,ph,"d_parent",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
 	if (ph != orig_dentry) {
@@ -372,15 +412,43 @@ char *linux_d_path(struct target *target,
  global_root:
     namelen = 0;
     VLV(target,dentry,"d_name.len",LOAD_FLAG_NONE,&namelen,NULL,err_vmiload);
-    buflen -= namelen;
-    if (buflen < 0)
-	goto err_toolong;
-    retval -= namelen - 1;	/* hit the slash */
-    namebuf = NULL;
-    VLA(target,nameaddr,LOAD_FLAG_NONE,&namebuf,namelen,NULL,err_vmiload);
-    memcpy(retval,namebuf,namelen);
-    free(namebuf);
-    namebuf = NULL;
+
+    smnamevalue = target_load_value_member(target,dentry,"d_iname",
+					   NULL,LOAD_FLAG_NONE);
+
+    if (!nameaddr || (smnamevalue && nameaddr == value_addr(smnamevalue))) {
+	if (!smnamevalue) {
+	    verror("global_root dentry.d_name.name invalid!!\n");
+	    goto err_vmiload;
+	}
+
+	namelen = strnlen(smnamevalue->buf,smnamevalue->bufsiz);
+
+	buflen -= namelen;
+	if (buflen < 0)
+	    goto err_toolong;
+	retval -= namelen - 1;	/* hit the slash */
+
+	memcpy(retval,smnamevalue->buf,namelen);
+	value_free(smnamevalue);
+	smnamevalue = NULL;
+	namebuf = NULL;
+    }
+    else if (namelen > 0) {
+	buflen -= namelen;
+	if (buflen < 0)
+	    goto err_toolong;
+	retval -= namelen - 1;	/* hit the slash */
+	namebuf = NULL;
+	VLA(target,nameaddr,LOAD_FLAG_NONE,&namebuf,namelen,NULL,err_vmiload);
+	memcpy(retval,namebuf,namelen);
+	free(namebuf);
+	namebuf = NULL;
+    }
+    else {
+	verror("dentry.d_name.len (%"PRIu32") was invalid!\n",namelen);
+	goto err_vmiload;
+    }
 
     goto out;
 
@@ -414,11 +482,25 @@ char *linux_file_get_path(struct target *target,struct value *task,
     int len;
     int didalloc = 0;
     char *retval;
+    struct lsymbol *tmpls;
 
-    VL(target,file,"f_vfsmnt",LOAD_FLAG_AUTO_DEREF,&vfsmnt,err_vmiload);
-    VL(target,file,"f_dentry",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
-    VL(target,task,"fs.rootmnt",LOAD_FLAG_AUTO_DEREF,&root_vfsmnt,err_vmiload);
-    VL(target,task,"fs.root",LOAD_FLAG_AUTO_DEREF,&root_dentry,err_vmiload);
+    /*
+     * See if we're into the newer struct file::f_path stuff, or if we
+     * still have the older struct file::{f_dentry,f_vfsmnt}.
+     */
+    if (!(tmpls = symbol_lookup_sym(file->type,"f_path",NULL))) {
+	VL(target,file,"f_vfsmnt",LOAD_FLAG_AUTO_DEREF,&vfsmnt,err_vmiload);
+	VL(target,file,"f_dentry",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
+	VL(target,task,"fs.rootmnt",LOAD_FLAG_AUTO_DEREF,&root_vfsmnt,err_vmiload);
+	VL(target,task,"fs.root",LOAD_FLAG_AUTO_DEREF,&root_dentry,err_vmiload);
+    }
+    else {
+	lsymbol_release(tmpls);
+	VL(target,file,"f_path.mnt",LOAD_FLAG_AUTO_DEREF,&vfsmnt,err_vmiload);
+	VL(target,file,"f_path.dentry",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
+	VL(target,task,"fs.root.mnt",LOAD_FLAG_AUTO_DEREF,&root_vfsmnt,err_vmiload);
+	VL(target,task,"fs.root.dentry",LOAD_FLAG_AUTO_DEREF,&root_dentry,err_vmiload);
+    }
 
     bufptr = linux_d_path(target,dentry,vfsmnt,root_dentry,root_vfsmnt,
 			  buf,PATH_MAX);

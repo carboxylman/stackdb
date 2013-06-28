@@ -183,7 +183,20 @@ struct xen_vm_thread_state {
     uint16_t gs;
     uint32_t eflags;
     ADDR ebp;
-    
+
+    /*
+     * Either this came directly from the CPU for the currently-running
+     * thread; or we populated it based on the last saved CPU state for
+     * the thread.
+     *
+     * Now, this gets tricky: if CONFIG_PREEMPT is supported, the
+     * context will be the kernel thread's context -- not the user
+     * context -- if the thread is in the kernel when it was preempted!
+     *
+     * Otherwise, it will be the state of the user thread (because
+     * ifndef CONFIG_PREEMPT, kernel threads only stop on the
+     * user-kernel boundary).
+     */
     vcpu_guest_context_t context;
 
     /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
@@ -196,6 +209,30 @@ struct xen_vm_state {
     domid_t id;
     char *name;
 
+    /*
+     * Some kernel task_structs have thread_info; others have void *stack.
+     * Some kernel pt_regs structs have ds/es/fs/gs, or various combinations.
+     * Some kernel thread_structs have debugreg[8];
+     * debugreg0--debugreg7; or a mix of ptrace_bps[4] and debugreg6 and
+     * ptrace_dr7 ... argh.
+     */
+    unsigned int task_struct_has_thread_info:1,
+	         task_struct_has_stack:1,
+	         pt_regs_has_ds_es:1,
+	         pt_regs_has_fs_gs:1,
+	         thread_struct_has_ds_es:1,
+	         thread_struct_has_fs:1,
+	         thread_struct_has_debugreg:1,
+	         thread_struct_has_debugreg0:1,
+	         thread_struct_has_perf_debugreg:1;
+    /*
+     * Some kernel thread_structs have esp/esp0 (older); others have
+     * sp/sp0 (newer).  These values are either esp0/sp0/eip, or esp/sp/ip.
+     */
+    const char *thread_sp0_member_name;
+    const char *thread_sp_member_name;
+    const char *thread_ip_member_name;
+
     char *vmpath;
     char *kernel_filename;
     char *kernel_version;
@@ -206,8 +243,11 @@ struct xen_vm_state {
 
     struct bsymbol *init_task;
     struct symbol *task_struct_type;
+    struct symbol *thread_struct_type;
     struct symbol *mm_struct_type;
     struct symbol *task_struct_type_ptr;
+    struct symbol *pt_regs_type;
+    int pt_regs_ip_offset;
     ADDR init_task_addr;
     struct symbol *thread_info_type;
     struct bsymbol *module_type;
