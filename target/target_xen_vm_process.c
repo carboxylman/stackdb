@@ -835,6 +835,10 @@ static int xen_vm_process_postloadinit(struct target *target) {
     return 0;
 }
 
+#define EF_TF (0x00000100)
+#define EF_IF (0x00000200)
+#define EF_RF (0x00010000)
+
 static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 						    tid_t tid,ADDR ipval,
 						    int *again) {
@@ -849,8 +853,12 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
     tthread = target_lookup_thread(overlay,tid);
 
     /* It will be loaded and valid; so just read regs and handle. */
-    if (xtstate->context.debugreg[6] & 0x4000) {
-	vdebug(3,LA_TARGET,LF_XVP,"new single step debug event\n");
+    if (xtstate->context.debugreg[6] & 0x4000
+	|| xtstate->context.user_regs.eflags & EF_TF) {
+	if (xtstate->context.debugreg[6] & 0x4000)
+	    vdebug(3,LA_TARGET,LF_XVP,"new single step debug event\n");
+	else
+	    vdebug(3,LA_TARGET,LF_XVP,"inferred single step debug event\n");
 
 	if (!tthread->tpc) {
 	    verror("unexpected singlestep event at ip 0x%"PRIxADDR
