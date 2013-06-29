@@ -47,6 +47,8 @@ num_t linux_get_preempt_count(struct target *target) {
 }
 
 /*
+ * For i386/x86:
+ *
  * The bottom of each kernel stack has the thread_info struct; the first
  * pointer in the thread info struct is to the task_struct associated
  * with the thread_info (i.e., thread_info->task).  So, if we want
@@ -54,8 +56,61 @@ num_t linux_get_preempt_count(struct target *target) {
  * the current task_struct, load the first pointer at
  * current_thread_ptr, and deref it to load the current task_struct's
  * value.
+ *
+ * For x86_64:
+ *
+ * kernel_stacks are always per_cpu unsigned long "pointers", even if
+ * there is only one CPU.  The value of
+ * xstate->kernel_stack_percpu_offset is an offset from the kernel's
+ * %gs.  So we have to grab the saved %gs (which Xen places in
+ * target->global_thread->state->context.gs_base_kernel), then apply the
+ * offset, then we have our pointer.
  */
-#define current_thread_ptr(esp) ((esp) & ~(THREAD_SIZE - 1))
+ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_thread_state *xtstate = 
+	(struct xen_vm_thread_state *)target->global_thread->state;
+    REGVAL esp;
+    ADDR kernel_stack_addr;
+
+    if (target->wordsize == 4) {
+	if (kernel_esp) 
+	    esp = kernel_esp;
+	else {
+	    errno = 0;
+	    esp = target_read_reg(target,TID_GLOBAL,target->spregno);
+	    if (errno) {
+		verror("could not read ESP!\n");
+		return 0;
+	    }
+	}
+
+	vdebug(8,LA_TARGET,LF_XV,"current->thread_info at 0x%"PRIxADDR"\n",
+	       esp & ~(THREAD_SIZE - 1));
+
+	return (esp & ~(THREAD_SIZE - 1));
+    }
+    else {
+	if (!target_read_addr(target,
+			      xtstate->context.gs_base_kernel \
+			          + xstate->kernel_stack_percpu_offset,
+			      target->wordsize,
+			      (unsigned char *)&kernel_stack_addr)) {
+	    verror("could not read %%gs:kernel_stack"
+		   " (0x%"PRIxADDR":%"PRIiOFFSET"); cannot continue!\n",
+		   (ADDR)xtstate->context.gs_base_kernel,
+		   xstate->kernel_stack_percpu_offset);
+	    if (!errno)
+		errno = EFAULT;
+	    return 0;
+	}
+
+	vdebug(8,LA_TARGET,LF_XV,"current->thread_info at 0x%"PRIxADDR"\n",
+	       kernel_stack_addr + KERNEL_STACK_OFFSET - THREAD_SIZE);
+
+	return kernel_stack_addr + KERNEL_STACK_OFFSET - THREAD_SIZE;
+    }
+}
 
 struct symbol *linux_get_task_struct_type(struct target *target) {
     struct xen_vm_state *xstate;
@@ -104,20 +159,11 @@ struct value *linux_load_current_task_as_type(struct target *target,
 					      REGVAL kernel_esp) {
     struct value *value;
     ADDR tptr;
-    REGVAL esp;
 
-    if (kernel_esp) 
-	esp = kernel_esp;
-    else {
-	errno = 0;
-	esp = target_read_reg(target,TID_GLOBAL,target->spregno);
-	if (errno) {
-	    verror("could not read ESP!\n");
-	    return NULL;
-	}
-    }
-
-    tptr = current_thread_ptr(esp);
+    errno = 0;
+    tptr = current_thread_ptr(target,kernel_esp);
+    if (errno)
+	return NULL;
 
     value = target_load_type(target,datatype,tptr,LOAD_FLAG_AUTO_DEREF);
 
@@ -128,7 +174,6 @@ struct value *linux_load_current_task(struct target *target,
 				      REGVAL kernel_esp) {
     struct value *value;
     ADDR itptr;
-    REGVAL esp;
     struct symbol *itptr_type;
 
     itptr_type = linux_get_task_struct_type_ptr(target);
@@ -137,19 +182,10 @@ struct value *linux_load_current_task(struct target *target,
 	return NULL;
     }
 
-    if (kernel_esp) 
-	esp = kernel_esp;
-    else {
-	errno = 0;
-	esp = target_read_reg(target,TID_GLOBAL,target->spregno);
-	if (errno) {
-	    verror("could not read ESP!\n");
-	    symbol_release(itptr_type);
-	    return NULL;
-	}
-    }
-
-    itptr = current_thread_ptr(esp);
+    errno = 0;
+    itptr = current_thread_ptr(target,kernel_esp);
+    if (errno)
+	return NULL;
 
     value = target_load_type(target,itptr_type,itptr,
 			     LOAD_FLAG_AUTO_DEREF);
@@ -164,20 +200,11 @@ struct value *linux_load_current_thread_as_type(struct target *target,
 						REGVAL kernel_esp) {
     struct value *value;
     ADDR tptr;
-    REGVAL esp;
 
-    if (kernel_esp) 
-	esp = kernel_esp;
-    else {
-	errno = 0;
-	esp = target_read_reg(target,TID_GLOBAL,target->spregno);
-	if (errno) {
-	    verror("could not read ESP!\n");
-	    return NULL;
-	}
-    }
-
-    tptr = current_thread_ptr(esp);
+    errno = 0;
+    tptr = current_thread_ptr(target,kernel_esp);
+    if (errno)
+	return NULL;
 
     value = target_load_type(target,datatype,tptr,LOAD_FLAG_NONE);
 

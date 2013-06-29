@@ -33,6 +33,8 @@
 extern struct target_ops xen_vm_ops;
 
 #define THREAD_SIZE 8192
+/* x86_64 constant used in current_thread_ptr */
+#define KERNEL_STACK_OFFSET (5*8)
 
 typedef enum {
     XV_FEATURE_BTS = 1,
@@ -240,6 +242,12 @@ struct xen_vm_state {
     char *kernel_elf_filename;
     char *kernel_module_dir;
     ADDR kernel_start_addr;
+
+    /*
+     * On x86_64, current_thread_ptr is determined by looking at this
+     * per_cpu offset.  On x86_64, percpu data is reached via %gs :(.
+     */
+    OFFSET kernel_stack_percpu_offset;
 
     struct bsymbol *init_task;
     struct symbol *task_struct_type;

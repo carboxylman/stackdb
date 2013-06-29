@@ -1978,7 +1978,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	vdebug(9,LA_TARGET,LF_XV,
 	       "at user-mode EIP 0x%"PRIxADDR"; trying to load current kernel"
 	       " thread with kernel_sp 0x%"PRIxADDR"\n",
-	       kernel_esp);
+	       ipval,kernel_esp);
     }
 
     /* We need to load in the current task_struct, AND if it's already
@@ -2926,6 +2926,30 @@ static int xen_vm_postloadinit(struct target *target) {
     if (symbol_get_location_addr(xstate->init_task->lsymbol->symbol,
 				 &xstate->init_task_addr)) {
 	vwarn("could not resolve addr of init_task!\n");
+    }
+
+    /*
+     * For x86_64, current_thread_ptr depends on this value -- so just
+     * load it once and keep it around forever.
+     * target_xen_vm_util::current_thread_ptr refreshes it as needed.
+     */
+    if (target->wordsize == 8) {
+	tmpbs = target_lookup_sym(target,"kernel_stack",NULL,NULL,
+				  SYMBOL_TYPE_FLAG_VAR);
+	if (!tmpbs) {
+	    verror("could not find kernel_stack percpu var in debuginfo;"
+		   " cannot continue!\n");
+	    return -1;
+	}
+	errno = 0;
+	xstate->kernel_stack_percpu_offset = 
+	    target_addressof_symbol(target,TID_GLOBAL,tmpbs,LOAD_FLAG_NONE,NULL);
+	bsymbol_release(tmpbs);
+	if (errno) {
+	    verror("could not load kernel_stack percpu offset;"
+		   " cannot continue!\n");
+	    return -1;
+	}
     }
 
     /* Fill in the init_task addr in the default thread. */
