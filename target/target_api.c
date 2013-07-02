@@ -827,6 +827,8 @@ int target_close(struct target *target) {
     GHashTableIter iter;
     struct probepoint *probepoint;
     struct target *overlay;
+    struct target_memmod *mmod;
+    unsigned int rlen;
 
     if (!target->opened) {
 	vdebug(3,LA_TARGET,LF_TARGET,"target(%s) already closed\n",target->name);
@@ -868,6 +870,34 @@ int target_close(struct target *target) {
     }
     g_hash_table_remove_all(target->soft_probepoints);
 
+    /*
+     * Free the memmods, if any are left.
+     */
+    g_hash_table_iter_init(&iter,target->mmods);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&mmod)) {
+	g_hash_table_iter_remove(&iter);
+
+	if (mmod->tmp)
+	    free(mmod->tmp);
+	/* Breakpoint hack */
+	if (mmod->mod && mmod->mod != target->breakpoint_instrs)
+	    free(mmod->mod);
+
+	rlen = target_write_addr(target,mmod->addr,mmod->orig_len,mmod->orig);
+	if (rlen != mmod->orig_len) {
+	    verror("could not restore orig memory at 0x%"PRIxADDR";"
+		   " but cannot do anything!\n",mmod->addr);
+	}
+
+	array_list_free(mmod->threads);
+	free(mmod->orig);
+
+	if (target_notify_sw_breakpoint(target,mmod->addr,0)) 
+	    vwarn("sw bp removal notification failed; ignoring\n");
+
+	free(mmod);
+    }
+
     vdebug(5,LA_TARGET,LF_TARGET,"detach target(%s)\n",target->name);
     if ((rc = target->ops->detach(target))) {
 	verror("detach target(%s) failed: %s\n",target->name,strerror(errno));
@@ -899,6 +929,111 @@ struct probe *target_lookup_probe(struct target *target,int probe_id) {
 struct action *target_lookup_action(struct target *target,int action_id) {
     return (struct action *)g_hash_table_lookup(target->actions,
 						(gpointer)(uintptr_t)action_id);
+}
+
+struct target_memmod *target_insert_sw_breakpoint(struct target *target,
+						  tid_t tid,ADDR addr) {
+    struct target_memmod *mmod;
+    struct target_thread *tthread;
+
+    if (target->ops->insert_sw_breakpoint)
+	return target->ops->insert_sw_breakpoint(target,tid,addr);
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return NULL;
+    }
+
+    mmod = target_memmod_lookup(target,tid,addr);
+
+    if (mmod) {
+	if (mmod->type != MMT_BP) {
+	    verror("mmod already at 0x%"PRIxADDR"; but not breakpoint!\n",addr);
+	    errno = EADDRINUSE;
+	    return NULL;
+	}
+	else if (mmod->state != MMS_SUBST) {
+	    verror("mmod already at 0x%"PRIxADDR"; state is not SUBST (%d)!\n",
+		   addr,mmod->state);
+	    errno = EBUSY;
+	    return NULL;
+	}
+	else {
+	    /* Add us to the threads list if necessary. */
+	    if (array_list_find(mmod->threads,tthread) < 0)
+		array_list_append(mmod->threads,tthread);
+	    else
+		vwarn("tid %"PRIiTID" already on threads list; BUG!\n",tid);
+	    return mmod;
+	}
+    }
+    else {
+	mmod = target_memmod_create(target,tid,addr,0,MMT_BP,
+				    target->breakpoint_instrs,
+				    target->breakpoint_instrs_len);
+	if (!mmod) {
+	    verror("could not create memmod for tid %"PRIiTID" at 0x%"PRIxADDR"!\n",
+		   tid,addr);
+	    return NULL;
+	}
+
+	if (target_notify_sw_breakpoint(target,addr,1)) 
+	    vwarn("sw bp insertion notification failed; ignoring\n");
+
+	return mmod;
+    }
+}
+
+int target_remove_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod) {
+    int retval;
+    ADDR addr;
+
+    if (target->ops->remove_sw_breakpoint)
+	return target->ops->remove_sw_breakpoint(target,tid,mmod);
+
+    addr = mmod->addr;
+    retval = target_memmod_release(target,tid,mmod);
+    if (retval) {
+	verror("could not remove memmod at 0x%"PRIxADDR" for tid %"PRIiTID"\n",
+	       addr,tid);
+	return -1;
+    }
+
+    /* If this was the last thread, signal. */
+    if (!target_memmod_lookup(target,tid,addr)) {
+	if (target_notify_sw_breakpoint(target,addr,0)) 
+	    vwarn("sw bp removal notification failed; ignoring\n");
+    }
+
+    return 0;
+}
+
+int target_enable_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod) {
+    if (target->ops->enable_sw_breakpoint)
+	return target->ops->enable_sw_breakpoint(target,tid,mmod);
+
+    return target_memmod_set(target,tid,mmod);
+}
+
+int target_disable_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod) {
+    if (target->ops->disable_sw_breakpoint)
+	return target->ops->disable_sw_breakpoint(target,tid,mmod);
+
+    return target_memmod_unset(target,tid,mmod);
+}
+
+int target_change_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len) {
+    if (target->ops->change_sw_breakpoint)
+	return target->ops->change_sw_breakpoint(target,tid,mmod,code,code_len);
+
+    return target_memmod_set_tmp(target,tid,mmod,code,code_len);
 }
 
 REG target_get_unused_debug_reg(struct target *target,tid_t tid) {

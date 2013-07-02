@@ -29,6 +29,48 @@
                                  ? (probe)->ops->op((probe)) \
                                  : 0)
 
+#define LOGDUMPPROBEPOINT(dl,la,lt,pp)	      \
+    if ((pp)->bsymbol && (pp)->symbol_addr) { \
+	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR" %s:%+d) ",	\
+		(pp)->addr,(pp)->bsymbol->lsymbol->symbol->name, \
+		(pp)->symbol_addr - (pp)->addr);	\
+    } \
+    else if ((pp)->bsymbol) { \
+	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR" %s) ",	 \
+	       (pp)->addr,(pp)->bsymbol->lsymbol->symbol->name); \
+    } \
+    else { \
+	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR") ",	\
+	       (pp)->addr); \
+    }
+
+#define LOGDUMPPROBEPOINT_NL(dl,la,lt,p)	\
+    LOGDUMPPROBEPOINT((dl),(la),(lt),(p));	\
+    vdebugc((dl),(la),(lt),"\n");
+
+#define LOGDUMPPROBE(dl,la,lt,p)		 \
+    vdebugc((dl),(la),(lt),"probe(%s) ",probe->name);	\
+    if ((p)->bsymbol) { \
+	vdebugc((dl),(la),(lt),"(on %s) ",		\
+		(p)->bsymbol->lsymbol->symbol->name);	\
+    } \
+    else { \
+	vdebugc((dl),(la),(lt),"(on <UNKNOWN>) ");	\
+    } \
+    if ((p)->probepoint) { 			  \
+	LOGDUMPPROBEPOINT(dl,la,lt,(p)->probepoint);	\
+    } \
+    if ((p)->sources) { 			\
+	vdebugc((dl),(la),(lt)," (%d sources)",g_list_length((p)->sources)); \
+    } \
+    if ((p)->sinks) { 			\
+	vdebugc((dl),(la),(lt)," (%d sinks)",g_list_length((p)->sinks)); \
+    }
+
+#define LOGDUMPPROBE_NL(dl,la,lt,p)		\
+    LOGDUMPPROBE((dl),(la),(lt),(p));		\
+    vdebugc((dl),(la),(lt),"\n");
+
 /*
  * probepoint_state_t -- various states of a probe point.  Probepoint
  * state is about how target state is altered to support the
@@ -175,10 +217,6 @@ struct thread_probepoint_context {
 
     int action_obviated_orig;
     int did_orig_instr;
-
-    /* Saved instructions (which were replaced with action's code) */
-    void *action_orig_mem;
-    unsigned int action_orig_mem_len;
 };
 
 struct probepoint {
@@ -237,9 +275,10 @@ struct probepoint {
     struct list_head complex_actions;
     struct list_head ss_actions;
     
-    /* Saved opcode (which has been replaced with breakpoint) */
-    void *breakpoint_orig_mem;
-    unsigned int breakpoint_orig_mem_len;
+    /* 
+     * The target_memmod supporting this probepoint.
+     */
+    struct target_memmod *mmod;
 
     /*
      * If we ever have to change the instruction at the probepoint

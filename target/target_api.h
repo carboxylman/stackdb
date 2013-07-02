@@ -128,8 +128,10 @@ void target_fini(void);
 #define TID_GLOBAL INT32_MAX
 
 struct target;
+struct target_thread;
 struct target_ops;
 struct target_spec;
+struct target_memmod;
 struct addrspace;
 struct memregion;
 struct memrange;
@@ -739,6 +741,18 @@ char *target_thread_tostring(struct target *target,tid_t tid,int detail,
 			     char *buf,int bufsiz);
 void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail);
 void target_dump_all_threads(struct target *target,FILE *stream,int detail);
+
+struct target_memmod *target_insert_sw_breakpoint(struct target *target,tid_t tid,
+						  ADDR addr);
+int target_remove_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+int target_enable_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+int target_disable_sw_breakpoint(struct target *target,tid_t tid,
+				 struct target_memmod *mmod);
+int target_change_sw_breakpoint(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len);
 
 REG target_get_unused_debug_reg(struct target *target,tid_t tid);
 int target_set_hw_breakpoint(struct target *target,tid_t tid,REG reg,ADDR addr);
@@ -1770,6 +1784,27 @@ struct target {
     GHashTable *soft_probepoints;
 
     /*
+     * A table of memory modifications, and their states.  We use this
+     * to support software probepoints.
+     */
+    GHashTable *mmods;
+
+    /*
+     * A table of physical memory modifications, and their states.  We
+     * use this to support software probepoints.
+     *
+     * Phys mmods are global to a target because it supports MMU-based
+     * multiple address spaces -- i.e., addrs are fundamentally virt
+     * addrs in a target.  This allows a target to be aware of physical
+     * addrs below virt addrs.  So, it can support the case where a
+     * memmod might have been made in the VMM of a userspace process,
+     * but that this memmod might also manifest in the VMM of another
+     * userspace process at a different virt addr; but at the same phys
+     * addr.
+     */
+    GHashTable *phys_mmods;
+
+    /*
      * A hashtable of probe IDs to probes that were created on this
      * target.
      *
@@ -1958,6 +1993,17 @@ struct target_ops {
     GHashTable *(*copy_registers)(struct target *target,tid_t tid);
 
     /* breakpoint/watchpoint stuff */
+    struct target_memmod *(*insert_sw_breakpoint)(struct target *target,tid_t tid,
+						  ADDR addr);
+    int (*remove_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+    int (*enable_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod);
+    int (*disable_sw_breakpoint)(struct target *target,tid_t tid,
+				 struct target_memmod *mmod);
+    int (*change_sw_breakpoint)(struct target *target,tid_t tid,
+				struct target_memmod *mmod,
+				unsigned char *code,unsigned long code_len);
     REG (*get_unused_debug_reg)(struct target *target,tid_t tid);
     int (*set_hw_breakpoint)(struct target *target,tid_t tid,REG reg,ADDR addr);
     int (*set_hw_watchpoint)(struct target *target,tid_t tid,REG reg,ADDR addr,

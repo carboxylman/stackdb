@@ -701,6 +701,10 @@ void target_free(struct target *target) {
     }
     g_hash_table_destroy(target->overlays);
 
+    /* These were freed when we closed the target. */
+    g_hash_table_destroy(target->mmods);
+    g_hash_table_destroy(target->phys_mmods);
+
     /*
      * If the target backend didn't already do it, 
      * delete all the threads except the global thread (which we remove 
@@ -827,6 +831,11 @@ struct target *target_create(char *type,struct target_spec *spec) {
 
     retval->soft_probepoints = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 						     NULL,NULL);
+
+    retval->mmods = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
+    retval->phys_mmods = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					       NULL,NULL);
 
     //*(((gint *)retval->soft_probepoints)+1) = 1;
     //*(((gint *)retval->soft_probepoints)) = 0;
@@ -3112,6 +3121,81 @@ struct target *target_lookup_overlay(struct target *target,tid_t tid) {
 	g_hash_table_lookup(target->overlays,(gpointer)(uintptr_t)tid);
 }
 
+struct probepoint *target_lookup_probepoint(struct target *target,
+					    struct target_thread *tthread,
+					    ADDR addr) {
+    struct probepoint *retval;
+
+    if (tthread 
+	&& (retval = (struct probepoint *) \
+	    g_hash_table_lookup(tthread->hard_probepoints,(gpointer)addr))) {
+	vdebug(9,LA_PROBE | LA_TARGET,LF_PROBEPOINT | LF_TARGET,"found hard ");
+	LOGDUMPPROBEPOINT_NL(9,LA_PROBE | LA_TARGET,LF_PROBEPOINT | LF_TARGET,
+			     retval);
+    }
+    else if ((retval = (struct probepoint *) \
+	      g_hash_table_lookup(target->soft_probepoints,(gpointer)addr))) {
+	vdebug(9,LA_PROBE | LA_TARGET,LF_PROBEPOINT | LF_TARGET,"found soft ");
+	LOGDUMPPROBEPOINT_NL(9,LA_PROBE | LA_TARGET,LF_PROBEPOINT | LF_TARGET,
+			     retval);
+    }
+    else
+	vdebug(9,LA_PROBE | LA_TARGET,LF_PROBEPOINT | LF_TARGET,
+	       "no probepoint at 0x%"PRIxADDR"\n",addr);
+
+    return retval;
+}
+
+int target_insert_probepoint(struct target *target,
+			     struct target_thread *tthread,
+			     struct probepoint *probepoint) {
+    if (probepoint->style == PROBEPOINT_HW) {
+	g_hash_table_insert(tthread->hard_probepoints,
+			    (gpointer)probepoint->addr,(gpointer)probepoint);
+	probepoint->thread = tthread;
+    }
+    else if (probepoint->style == PROBEPOINT_SW) {
+	g_hash_table_insert(target->soft_probepoints,
+			    (gpointer)probepoint->addr,(gpointer)probepoint);
+	probepoint->thread = tthread;
+    }
+    else {
+	verror("bad probepoint state %d; must be HW/SW!\n",probepoint->state);
+	errno = EINVAL;
+	return -1;
+    }
+
+    vdebug(9,LA_PROBE | LA_TARGET,LF_PROBEPOINT | LF_TARGET,
+	   "inserted probepoint at 0x%"PRIxADDR" tid %"PRIiTID"\n",
+	   probepoint->addr,tthread->tid);
+
+    return 0;
+}
+
+int target_remove_probepoint(struct target *target,
+			     struct target_thread *tthread,
+			     struct probepoint *probepoint) {
+    if (probepoint->style == PROBEPOINT_HW) {
+	g_hash_table_remove(tthread->hard_probepoints,(gpointer)probepoint->addr);
+	probepoint->thread = NULL;
+    }
+    else if (probepoint->style == PROBEPOINT_SW) {
+	g_hash_table_remove(target->soft_probepoints,(gpointer)probepoint->addr);
+	probepoint->thread = NULL;
+    }
+    else {
+	verror("bad probepoint state %d; must be HW/SW!\n",probepoint->state);
+	errno = EINVAL;
+	return -1;
+    }
+
+    vdebug(9,LA_PROBE | LA_TARGET,LF_PROBEPOINT | LF_TARGET,
+	   "removed probepoint at 0x%"PRIxADDR" tid %"PRIiTID"\n",
+	   probepoint->addr,tthread->tid);
+
+    return 0;
+}
+
 int target_attach_probe(struct target *target,struct target_thread *thread,
 			struct probe *probe) {
     probe->id = target->probe_id_counter++;
@@ -3149,6 +3233,446 @@ int target_detach_action(struct target *target,struct action *action) {
 
     action->id = -1;
     action->target = NULL;
+
+    return 0;
+}
+
+struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
+					   ADDR addr,ADDR paddr,
+					   target_memmod_type_t mmt,
+					   unsigned char *code,
+					   unsigned int code_len) {
+    struct target_memmod *mmod;
+    unsigned char *ibuf;
+    unsigned int ibuf_len;
+    unsigned int rc;
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return NULL;
+    }
+
+    mmod = calloc(1,sizeof(*mmod));
+    mmod->state = MMS_SUBST;
+    mmod->type = mmt;
+    mmod->target = target;
+    mmod->threads = array_list_create(1);
+    mmod->addr = addr;
+    mmod->paddr = paddr;
+
+    /*
+     * Backup the original memory.  If debugging, read at least
+     * 8 bytes so we can see what was there and dump it for debug
+     * purposes.  It is a bit wasteful in that case, but no big
+     * deal.
+     */
+    if (code_len > 8)
+	ibuf_len = code_len;
+    else 
+	ibuf_len = 8;
+    ibuf = calloc(1,ibuf_len);
+
+    if (!target_read_addr(target,addr,ibuf_len,ibuf)) {
+	array_list_free(mmod->threads);
+	free(ibuf);
+	free(mmod);
+	verror("could not read %u bytes at 0x%"PRIxADDR"!\n",
+	       ibuf_len,addr);
+	return NULL;
+    }
+
+    mmod->orig_len = code_len;
+    mmod->orig = calloc(1,mmod->orig_len);
+
+    memcpy(mmod->orig,ibuf,mmod->orig_len);
+
+    mmod->mod = malloc(code_len);
+    mmod->mod_len = code_len;
+    memcpy(mmod->mod,code,mmod->mod_len);
+
+    rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+    if (rc != mmod->mod_len) {
+	array_list_free(mmod->threads);
+	free(mmod->mod);
+	free(mmod->orig);
+	free(mmod);
+	verror("could not write %lu subst bytes at 0x%"PRIxADDR"!\n",
+	       mmod->orig_len,addr);
+	return NULL;
+    }
+
+    array_list_append(mmod->threads,tthread);
+
+    vdebug(5,LA_TARGET,LF_TARGET,
+	   "created memmod at 0x%"PRIxADDR" (p 0x%"PRIxADDR") tid %"PRIiTID";"
+	   " inserted new bytes (orig mem: %02hhx %02hhx %02hhx %02hhx"
+	   " %02hhx %02hhx %02hhx %02hhx)\n",
+	   mmod->addr,mmod->paddr,tid,
+	   (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],
+	   (int)ibuf[4],(int)ibuf[5],(int)ibuf[6],(int)ibuf[7]);
+
+    free(ibuf);
+
+    return mmod;
+}
+
+struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
+					   ADDR addr) {
+    struct target_memmod *mmod;
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return NULL;
+    }
+
+    /*
+     * Eventually, this hashtable will be per-thread; for now, just
+     * global.
+     */
+    mmod = (struct target_memmod *) \
+	g_hash_table_lookup(target->mmods,(gpointer)addr);
+
+    return mmod;
+}
+
+struct target_memmod *target_memmod_lookup_paddr(struct target *target,tid_t tid,
+						 ADDR paddr) {
+    struct target_memmod *mmod;
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return NULL;
+    }
+
+    mmod = (struct target_memmod *) \
+	g_hash_table_lookup(target->phys_mmods,(gpointer)paddr);
+
+    return mmod;
+}
+
+int target_memmod_release(struct target *target,tid_t tid,
+			  struct target_memmod *mmod) {
+    struct target_thread *tthread;
+    ADDR addr;
+
+    /*
+     * Default implementation: just remove it if it is the last using
+     * thread.
+     */
+    addr = mmod->addr;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return -1;
+    }
+
+    if (array_list_remove_item(mmod->threads,tthread) != tthread) {
+	vwarn("hm, tid %"PRIiTID" not on list for memmod at 0x%"PRIxADDR";"
+	      " BUG?!\n",tid,addr);
+	return 0;
+    }
+
+    vdebug(5,LA_TARGET,LF_TARGET,
+	   "released memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR") tid %"PRIiTID"\n",
+	   mmod->addr,mmod->paddr,tid);
+
+    /* If this is the last thread using it, be done now! */
+    if (array_list_len(mmod->threads) == 0) {
+	return target_memmod_free(target,tid,mmod,0);
+    }
+
+    return 0;
+}
+
+int target_memmod_free(struct target *target,tid_t tid,
+		       struct target_memmod *mmod,int force) {
+    unsigned int rc;
+    int retval;
+    ADDR addr;
+
+    retval = 0;
+    addr = mmod->addr;
+
+    /* If this is the last thread using it, be done now! */
+    if (force || array_list_len(mmod->threads) == 0) {
+	g_hash_table_remove(target->mmods,(gpointer)addr);
+
+	if (mmod->tmp)
+	    free(mmod->tmp);
+	if (mmod->mod)
+	    free(mmod->mod);
+
+	rc = target_write_addr(target,addr,mmod->orig_len,mmod->orig);
+	if (rc != mmod->orig_len) {
+	    verror("could not restore orig memory at 0x%"PRIxADDR";"
+		   " but cannot do anything!\n",addr);
+	    retval = -1;
+	}
+
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "released memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR") tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+
+	array_list_free(mmod->threads);
+	free(mmod->orig);
+	free(mmod);
+    }
+
+    return retval;
+}
+
+int target_memmod_set(struct target *target,tid_t tid,
+		      struct target_memmod *mmod) {
+    ADDR addr;
+    struct target_thread *tthread;
+    unsigned int rc;
+
+    /*
+     * Default implementation: enable it if necessary; swap mod bytes
+     * into place, if state is not already SUBST.
+     */
+    addr = mmod->addr;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	vwarn("tid %"PRIiTID" does not exist!\n",tid);
+    }
+
+    if (mmod->owner && mmod->owner != tthread) {
+	vwarn("memmod owned by tid %"PRIiTID", not tid %"PRIiTID"; ignoring!\n",
+	      mmod->owner->tid,tthread->tid);
+    }
+
+    switch (mmod->state) {
+    case MMS_SUBST:
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was already) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	mmod->owner = NULL;
+	return 0;
+    case MMS_ORIG:
+	rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+	if (rc != mmod->mod_len) {
+	    verror("could not insert subst memory at 0x%"PRIxADDR"!\n",addr);
+	    return -1;
+	}
+	mmod->state = MMS_SUBST;
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was orig) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	mmod->owner = NULL;
+	return 0;
+    case MMS_TMP:
+	if (mmod->tmp) {
+	    free(mmod->tmp);
+	    mmod->tmp = NULL;
+	    mmod->tmp_len = 0;
+	}
+	rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+	if (rc != mmod->mod_len) {
+	    verror("could not insert subst memory at 0x%"PRIxADDR"!\n",addr);
+	    return -1;
+	}
+	mmod->state = MMS_SUBST;
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was tmp) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	mmod->owner = NULL;
+	return 0;
+    default:
+	verror("unknown memmod state %d!\n",mmod->state);
+	errno = EINVAL;
+	return -1;
+    }
+}
+
+int target_memmod_unset(struct target *target,tid_t tid,
+		      struct target_memmod *mmod) {
+    ADDR addr;
+    struct target_thread *tthread;
+    unsigned int rc;
+
+    if (target->ops->disable_sw_breakpoint)
+	return target->ops->disable_sw_breakpoint(target,tid,mmod);
+
+    /*
+     * Default implementation: disable it if necessary; swap orig bytes
+     * into place, if state is not already ORIG.
+     */
+    addr = mmod->addr;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	vwarn("tid %"PRIiTID" does not exist!\n",tid);
+    }
+
+    if (mmod->owner && mmod->owner != tthread) {
+	vwarn("memmod owned by tid %"PRIiTID", not tid %"PRIiTID"; ignoring!\n",
+	      mmod->owner->tid,tthread->tid);
+    }
+
+    switch (mmod->state) {
+    case MMS_ORIG:
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was already) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	mmod->owner = tthread;
+	return 0;
+    case MMS_SUBST:
+	rc = target_write_addr(target,addr,mmod->orig_len,mmod->orig);
+	if (rc != mmod->orig_len) {
+	    verror("could not restore orig memory at 0x%"PRIxADDR"!\n",addr);
+	    return -1;
+	}
+	mmod->state = MMS_ORIG;
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was set) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	mmod->owner = tthread;
+	return 0;
+    case MMS_TMP:
+	if (mmod->tmp) {
+	    free(mmod->tmp);
+	    mmod->tmp = NULL;
+	    mmod->tmp_len = 0;
+	}
+	rc = target_write_addr(target,addr,mmod->orig_len,mmod->orig);
+	if (rc != mmod->orig_len) {
+	    verror("could not restore orig memory at 0x%"PRIxADDR"!\n",addr);
+	    return -1;
+	}
+	mmod->state = MMS_ORIG;
+	mmod->owner = tthread;
+	return 0;
+    default:
+	verror("unknown memmod state %d!\n",mmod->state);
+	errno = EINVAL;
+	return -1;
+    }
+}
+
+int target_memmod_set_tmp(struct target *target,tid_t tid,
+			  struct target_memmod *mmod,
+			  unsigned char *code,unsigned long code_len) {
+    ADDR addr;
+    struct target_thread *tthread;
+    unsigned int rc;
+    unsigned char *new;
+    unsigned int new_len;
+
+    /*
+     * Default implementation: swap custom bytes into tmp, no matter
+     * what state is.  If the new @code_len is longer than our currently
+     * saved orig_len, we need to extend the saved bytes in orig
+     * correspondingly.  Also, if @code_len is *shorter* than whatever
+     * has currently been substituted in, we need to write the new
+     * thing, plus put the "old" bytes back in.  So, those two cases.
+     */
+    addr = mmod->addr;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	vwarn("tid %"PRIiTID" does not exist!\n",tid);
+    }
+
+    if (mmod->owner && mmod->owner != tthread) {
+	vwarn("memmod owned by tid %"PRIiTID", not tid %"PRIiTID"; ignoring!\n",
+	      mmod->owner->tid,tthread->tid);
+    }
+
+    /*
+     * If we are writing more stuff into the memmod than we wrote
+     * initially, save more bytes!
+     */
+    if (code_len > mmod->orig_len) {
+	mmod->orig = realloc(mmod->orig,code_len);
+	if (!target_read_addr(target,mmod->addr,code_len - mmod->orig_len,
+			      mmod->orig + mmod->orig_len)) {
+	    verror("could not increase original saved bytes at 0x%"PRIxADDR"!\n",
+		   mmod->addr);
+	    return -1;
+	}
+	mmod->orig_len = code_len;
+    }
+
+    switch (mmod->state) {
+    case MMS_TMP:
+	if (code_len < mmod->tmp_len) {
+	    new = malloc(mmod->orig_len);
+	    new_len = mmod->orig_len;
+	    memcpy(new,mmod->orig,new_len);
+	}
+	else {
+	    new = malloc(code_len);
+	    new_len = code_len;
+	    memcpy(new,code,code_len);
+	}
+	free(mmod->tmp);
+	mmod->tmp_len = 0;
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was tmp) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	break;
+    case MMS_SUBST:
+	if (code_len < mmod->mod_len) {
+	    new = malloc(mmod->orig_len);
+	    new_len = mmod->orig_len;
+	    memcpy(new,mmod->orig,new_len);
+	}
+	else {
+	    new = malloc(code_len);
+	    new_len = code_len;
+	    memcpy(new,code,code_len);
+	}
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was set) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	break;
+    case MMS_ORIG:
+	new = malloc(code_len);
+	new_len = code_len;
+	memcpy(new,code,code_len);
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "(was orig) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       " tid %"PRIiTID"\n",
+	       mmod->addr,mmod->paddr,tid);
+	break;
+    default:
+	verror("unknown memmod state %d!\n",mmod->state);
+	errno = EINVAL;
+	return -1;
+    }
+
+    rc = target_write_addr(target,addr,new_len,new);
+    if (rc != new_len) {
+	verror("could not write tmp memory at 0x%"PRIxADDR"!\n",addr);
+	free(new);
+	return -1;
+    }
+
+    mmod->tmp = new;
+    mmod->tmp_len = new_len;
+
+    mmod->state = MMS_TMP;
+    mmod->owner = tthread;
 
     return 0;
 }

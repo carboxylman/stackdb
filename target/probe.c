@@ -32,48 +32,6 @@
 #include "probe_api.h"
 #include "probe.h"
 
-#define LOGDUMPPROBEPOINT(dl,la,lt,pp)	      \
-    if ((pp)->bsymbol && (pp)->symbol_addr) { \
-	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR" %s:%+d) ",	\
-		(pp)->addr,(pp)->bsymbol->lsymbol->symbol->name, \
-		(pp)->symbol_addr - (pp)->addr);	\
-    } \
-    else if ((pp)->bsymbol) { \
-	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR" %s) ",	 \
-	       (pp)->addr,(pp)->bsymbol->lsymbol->symbol->name); \
-    } \
-    else { \
-	vdebugc((dl),(la),(lt),"probepoint(0x%"PRIxADDR") ",	\
-	       (pp)->addr); \
-    }
-
-#define LOGDUMPPROBEPOINT_NL(dl,la,lt,p)	\
-    LOGDUMPPROBEPOINT((dl),(la),(lt),(p));	\
-    vdebugc((dl),(la),(lt),"\n");
-
-#define LOGDUMPPROBE(dl,la,lt,p)		 \
-    vdebugc((dl),(la),(lt),"probe(%s) ",probe->name);	\
-    if ((p)->bsymbol) { \
-	vdebugc((dl),(la),(lt),"(on %s) ",		\
-		(p)->bsymbol->lsymbol->symbol->name);	\
-    } \
-    else { \
-	vdebugc((dl),(la),(lt),"(on <UNKNOWN>) ");	\
-    } \
-    if ((p)->probepoint) { 			  \
-	LOGDUMPPROBEPOINT(dl,la,lt,(p)->probepoint);	\
-    } \
-    if ((p)->sources) { 			\
-	vdebugc((dl),(la),(lt)," (%d sources)",g_list_length((p)->sources)); \
-    } \
-    if ((p)->sinks) { 			\
-	vdebugc((dl),(la),(lt)," (%d sinks)",g_list_length((p)->sinks)); \
-    }
-
-#define LOGDUMPPROBE_NL(dl,la,lt,p)		\
-    LOGDUMPPROBE((dl),(la),(lt),(p));		\
-    vdebugc((dl),(la),(lt),"\n");
-
 /*
  * Local prototypes.
  */
@@ -141,29 +99,6 @@ result_t probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
 	    list = g_list_next(list);
 	}
     }
-
-    return retval;
-}
-
-static struct probepoint *probepoint_lookup(struct target *target,
-					    struct target_thread *tthread,
-					    ADDR addr) {
-    struct probepoint *retval;
-
-    if (tthread 
-	&& (retval = (struct probepoint *) \
-	    g_hash_table_lookup(tthread->hard_probepoints,(gpointer)addr))) {
-	vdebug(9,LA_PROBE,LF_PROBEPOINT,"found hard ");
-	LOGDUMPPROBEPOINT_NL(9,LA_PROBE,LF_PROBEPOINT,retval);
-    }
-    else if ((retval = (struct probepoint *) \
-	      g_hash_table_lookup(target->soft_probepoints,(gpointer)addr))) {
-	vdebug(9,LA_PROBE,LF_PROBEPOINT,"found soft ");
-	LOGDUMPPROBEPOINT_NL(9,LA_PROBE,LF_PROBEPOINT,retval);
-    }
-    else
-	vdebug(9,LA_PROBE,LF_PROBEPOINT,"did not find probepoint at 0x%"PRIxADDR"\n",
-	       addr);
 
     return retval;
 }
@@ -383,24 +318,13 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	     */
 	    tpc = probepoint->tpc;
 
-	    if (tpc->action_orig_mem && tpc->action_orig_mem_len) {
-		if (!fake && target_write_addr(target,probepoint->addr,
-				      tpc->action_orig_mem_len,
-				      tpc->action_orig_mem)	\
-		    != tpc->action_orig_mem_len) {
-		    verror("could not write orig code for forced action remove;"
-			   " badness will probably ensue!\n");
-		    probepoint->state = PROBE_DISABLED;
-		}
-		else {
-		    probepoint->state = PROBE_BP_SET;
-		}
-		free(tpc->action_orig_mem);
-		tpc->action_orig_mem = NULL;
+	    if (!fake && target_enable_sw_breakpoint(target,tpc->thread->tid,
+						     probepoint->mmod)) {
+		verror("could not reenable sw breakpoint to remove action;"
+		       " badness will probably ensue!\n");
+		probepoint->state = PROBE_DISABLED;
 	    }
 	    else {
-		vwarnopt(5,LA_PROBE,LF_PROBEPOINT,
-			 "action running, but no orig mem to restore (maybe ok)!\n");
 		probepoint->state = PROBE_BP_SET;
 	    }
 
@@ -408,8 +332,6 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 		action_did_obviate = 1;
 
 	    /* NULL these out to be safe. */
-	    tpc->action_orig_mem = NULL;
-	    tpc->action_orig_mem_len = 0;
 	    tpc->tac.action = NULL;
 	    tpc->tac.stepped = 0;
 	    tpc->action_obviated_orig = 0;
@@ -456,11 +378,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 		/* BUT NOT for watchpoints!  We do not know anything
 		 * about the original instruction.
 		 */
-		if (probepoint->style == PROBEPOINT_HW) {
-		    tid = probepoint->thread->tid;
-		}
-		else
-		    tid = TID_GLOBAL;
+		tid = probepoint->thread->tid;
 
 		if (!fake && target_write_reg(target,tid,
 				     target->ipregno,probepoint->addr)) {
@@ -515,42 +433,29 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	if (ret) 
 	    return 1;
 	else if (!nohashdelete)
-	    g_hash_table_remove(probepoint->thread->hard_probepoints,
-				(gpointer)probepoint->addr);
+	    target_remove_probepoint(target,probepoint->thread,probepoint);
 
 	probepoint->debugregnum = -1;
     }
     /* Otherwise do software. */
     else {
 	if (!fake) {
-	    if (probepoint->breakpoint_orig_mem
-		&& probepoint->breakpoint_orig_mem_len > 0) {
-		/* restore the original instruction */
-		if (target_write_addr(target,probepoint->addr,
-				      probepoint->breakpoint_orig_mem_len,
-				      probepoint->breakpoint_orig_mem)	\
-		    != probepoint->breakpoint_orig_mem_len) {
-		    verror("could not restore orig instrs for bp remove");
-		    return 1;
-		}
+	    /* restore the original instruction */
+	    if (target_remove_sw_breakpoint(target,probepoint->thread->tid,
+					    probepoint->mmod)) {
+		verror("could not remove SW break at 0x%"PRIxADDR"\n",
+		       probepoint->addr);
+		return 1;
 	    }
 
-	    if (target_notify_sw_breakpoint(target,probepoint->addr,0)) 
-		verror("target sw breakpoint removal notification failed; nonfatal!\n");
+	    probepoint->mmod = NULL;
 
 	    vdebug(4,LA_PROBE,LF_PROBEPOINT,"removed SW break ");
 	    LOGDUMPPROBEPOINT_NL(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 	}
 
-	if (probepoint->breakpoint_orig_mem) {
-	    free(probepoint->breakpoint_orig_mem);
-	    probepoint->breakpoint_orig_mem = NULL;
-	    probepoint->breakpoint_orig_mem_len = 0;
-	}
-
 	if (!nohashdelete)
-	    g_hash_table_remove(probepoint->target->soft_probepoints,
-				(gpointer)probepoint->addr);
+	    target_remove_probepoint(target,probepoint->thread,probepoint);
     }
 
     probepoint->state = PROBE_DISABLED;
@@ -561,6 +466,8 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
      * This is just in case it was registered with PROBEPOINT_FASTEST;
      * we need to make sure if it gets re-registered that we make the
      * choice of FASTEST again at that time.
+     *
+     * NB: this *must* come after calling target_remove_probepoint!
      */
     if (probepoint->style != probepoint->orig_style) {
 	vdebug(2,LA_PROBE,LF_PROBEPOINT,"removed (style was %d; now %d)",
@@ -723,66 +630,23 @@ static int __probepoint_insert(struct probepoint *probepoint,
 	    probepoint->state = PROBE_DISABLED;
 	    return 1;
 	}
-
-	g_hash_table_insert(tthread->hard_probepoints,
-			    (gpointer)probepoint->addr,(gpointer)probepoint);
-	probepoint->thread = tthread;
     }
     /* Otherwise do software. */
     else {
-	/* backup the original instruction */
-	probepoint->breakpoint_orig_mem_len = target->breakpoint_instrs_len;
-	probepoint->breakpoint_orig_mem = malloc(probepoint->breakpoint_orig_mem_len);
-	if (!probepoint->breakpoint_orig_mem) {
-	    verror("could not malloc to save orig instrs for bp insert\n");
+	probepoint->mmod = target_insert_sw_breakpoint(target,tthread->tid,
+						       probepoint->addr);
+	if (!probepoint->mmod) {
+	    verror("could not insert sw breakpoint at 0x%"PRIxADDR"\n",
+		   probepoint->addr);
 	    probepoint->state = PROBE_DISABLED;
 	    return 1;
 	}
-
-	unsigned char ibuf[7];
-	if (!target_read_addr(target,probepoint->addr,
-			      6,ibuf)) {
-	    verror("could not check orig instrs for bp insert\n");
-	}
-	vdebug(7,LA_PROBE,LF_PROBEPOINT,
-	       "orig bytes: %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx\n",
-	      (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],(int)ibuf[4],(int)ibuf[5]);
-
-	if (!target_read_addr(target,probepoint->addr,
-			      probepoint->breakpoint_orig_mem_len,
-			      probepoint->breakpoint_orig_mem)) {
-	    verror("could not save orig instrs for bp insert\n");
-	    probepoint->state = PROBE_DISABLED;
-	    free(probepoint->breakpoint_orig_mem);
-	    probepoint->breakpoint_orig_mem = NULL;
-	    return 1;
-	}
-
-	vdebug(3,LA_PROBE,LF_PROBEPOINT,"saved orig mem under SW ");
-	LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
-
-	if (target_write_addr(target,probepoint->addr,
-			      target->breakpoint_instrs_len,
-			      target->breakpoint_instrs) \
-	    != target->breakpoint_instrs_len) {
-	    verror("could not write breakpoint instrs for bp insert\n");
-	    probepoint->state = PROBE_DISABLED;
-	    free(probepoint->breakpoint_orig_mem);
-	    probepoint->breakpoint_orig_mem = NULL;
-	    return 1;
-	}
-
-	if (target_notify_sw_breakpoint(target,probepoint->addr,1)) 
-	    verror("target sw breakpoint insertion notification failed; nonfatal!\n");
 
 	vdebug(3,LA_PROBE,LF_PROBEPOINT,"inserted SW ");
 	LOGDUMPPROBEPOINT_NL(3,LA_PROBE,LF_PROBEPOINT,probepoint);
-
-	g_hash_table_insert(target->soft_probepoints,
-			    (gpointer)probepoint->addr,(gpointer)probepoint);
-	probepoint->thread = NULL;
     }
 
+    target_insert_probepoint(target,tthread,probepoint);
     probepoint->state = PROBE_BP_SET;
 
     vdebug(2,LA_PROBE,LF_PROBEPOINT,"inserted ");
@@ -1355,7 +1219,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     }
 
     /* Create a probepoint if this is a new addr. */
-    if ((probepoint = probepoint_lookup(target,probe->thread,addr))) {
+    if ((probepoint = target_lookup_probepoint(target,probe->thread,addr))) {
 	/* If the style matches for breakpoints, and if the style,
 	 * whence, and watchsize match for watchpoints, reuse it!
 	 */
@@ -2322,10 +2186,14 @@ static int setup_post_single_step(struct target *target,
 
 		probepoint->state = PROBE_BP_SET;
 	    }
+	    else if (probepoint->style == PROBEPOINT_SW) {
+		target_enable_sw_breakpoint(target,probepoint->thread->tid,
+					    probepoint->mmod);
+
+		probepoint->state = PROBE_BP_SET;
+	    }
 	}
 	else {
-	    free(probepoint->breakpoint_orig_mem);
-	    probepoint->breakpoint_orig_mem = NULL;
 	    __probepoint_remove(probepoint,0,0);
 	}
 
@@ -2431,12 +2299,10 @@ static int setup_post_single_step(struct target *target,
 		target->blocking_thread = tthread;
 	    }
 
-	    if (target_write_addr(target,probepoint->addr,
-				  probepoint->breakpoint_orig_mem_len,
-				  probepoint->breakpoint_orig_mem)	\
-		!= probepoint->breakpoint_orig_mem_len) {
-		verror("could not restore orig code that breakpoint"
-		       " replaced; assuming breakpoint is left in place and"
+	    if (target_disable_sw_breakpoint(target,probepoint->thread->tid,
+					     probepoint->mmod)) {
+		verror("could not disable breakpoint before singlestep;"
+		       " assuming breakpoint is left in place and"
 		       " skipping single step, but badness will ensue!");
 
 		if (target->blocking_thread == tthread)
@@ -2503,12 +2369,10 @@ static int setup_post_single_step(struct target *target,
 	}
 
 	if (probepoint->style != PROBEPOINT_HW) {
-	    if (target_write_addr(target,probepoint->addr,
-				  probepoint->breakpoint_orig_mem_len,
-				  probepoint->breakpoint_orig_mem)	\
-		!= probepoint->breakpoint_orig_mem_len) {
-		verror("could not restore orig code that breakpoint"
-		       " replaced; assuming breakpoint is left in place and"
+	    if (target_enable_sw_breakpoint(target,probepoint->thread->tid,
+					    probepoint->mmod)) {
+		verror("could enable sw breakpoint after failed singlestep;"
+		       " assuming breakpoint is left in place and"
 		       " skipping single step, but badness will ensue!");
 	    }
 	}
@@ -2989,6 +2853,7 @@ result_t probepoint_ss_handler(struct target *target,
     int noreinject;
     handler_msg_t amsg;
     struct probepoint *aprobepoint;
+    REGVAL ipval;
 
     /*
      * If we had to disable a hw breakpoint before we single stepped it,
@@ -3023,10 +2888,9 @@ result_t probepoint_ss_handler(struct target *target,
 	 * breakpiont case; for the hardware one, see bp_handler.
 	 */
 	amsg = MSG_STEPPING;
-	if ((aprobepoint = \
-	     probepoint_lookup(target,tthread,
-			       target_read_reg(target,tthread->tid,target->ipregno))) 
-	    && aprobepoint->state != PROBE_DISABLED)
+	ipval = target_read_reg(target,tthread->tid,target->ipregno);
+	aprobepoint = target_lookup_probepoint(target,tthread,ipval);
+	if (aprobepoint && aprobepoint->state != PROBE_DISABLED)
 	    amsg = MSG_STEPPING_AT_BP;
 
 	list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
@@ -3079,13 +2943,10 @@ result_t probepoint_ss_handler(struct target *target,
 	if (!noreinject) {
 	    if (probepoint->style == PROBEPOINT_SW) {
 		/* Re-inject a breakpoint for the next round */
-		if (target_write_addr(target,probepoint->addr,
-				      target->breakpoint_instrs_len,
-				      target->breakpoint_instrs)	\
-		    != target->breakpoint_instrs_len) {
-		    verror("could not write breakpoint instrs for bp re-insert, disabling!\n");
+		if (target_enable_sw_breakpoint(target,probepoint->thread->tid,
+						probepoint->mmod)) {
+		    verror("could not enable sw breakpoint instrs for bp re-insert, disabling!\n");
 		    probepoint->state = PROBE_DISABLED;
-		    free(probepoint->breakpoint_orig_mem);
 		    return RESULT_ERROR;
 		}
 		else 
@@ -3105,8 +2966,6 @@ result_t probepoint_ss_handler(struct target *target,
 	    }
 	}
 	else {
-	    free(probepoint->breakpoint_orig_mem);
-	    probepoint->breakpoint_orig_mem = NULL;
 	    __probepoint_remove(probepoint,0,0);
 	}
 
@@ -3444,16 +3303,25 @@ static int __remove_action(struct target *target,struct probepoint *probepoint,
 
     tpc = probepoint->tpc;
 
-    if (tpc->action_orig_mem && tpc->action_orig_mem_len) {
-	if (target_write_addr(target,action->start_addr,
-			      tpc->action_orig_mem_len,tpc->action_orig_mem)
-	    != tpc->action_orig_mem_len) {
-	    verror("could not write back orig code for action remove;"
-		   " badness will probably ensue!\n");
-	    return -1;
+    if (action->type == ACTION_RETURN || action->type == ACTION_CUSTOMCODE) {
+	if (probepoint->style == PROBEPOINT_SW) {
+	    if (target_enable_sw_breakpoint(target,probepoint->thread->tid,
+					    probepoint->mmod)) {
+		verror("could not remove action code by restoring the breakpoint;"
+		       " badness will probably ensue!\n");
+		return -1;
+	    }
 	}
-	free(tpc->action_orig_mem);
-	tpc->action_orig_mem = NULL;
+	else if (probepoint->mmod) {
+	    if (target_memmod_release(target,probepoint->thread->tid,
+				      probepoint->mmod)) {
+		verror("could not remove action code at HW breakpoint;"
+		       " badness will probably ensue!\n");
+		return -1;
+	    }
+	    else 
+		probepoint->mmod = NULL;
+	}
     }
 
     probepoint->state = PROBE_ACTION_DONE;
@@ -3555,25 +3423,29 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
 	return -1;
     }
 
-    tpc->action_orig_mem = malloc(buflen);
-    tpc->action_orig_mem_len = buflen;
-    if (!target_read_addr(target,action->start_addr,
-			  tpc->action_orig_mem_len,
-			  tpc->action_orig_mem)) {
-	verror("could not save original under-action code at 0x%"PRIxADDR"!\n",
-	       action->start_addr);
-	free(tpc->action_orig_mem);
-	tpc->action_orig_mem = NULL;
-	return -1;
-    }
-    if (target_write_addr(target,action->start_addr,buflen,buf) != buflen) {
-	if (action->type == ACTION_RETURN && action->detail.ret.prologue)
-	    verror("could not insert action code; action failed (and badness will ensue)!\n");
-	else 
+    if (probepoint->style == PROBEPOINT_SW) {
+	if (target_change_sw_breakpoint(target,probepoint->thread->tid,
+					probepoint->mmod,buf,buflen)) {
 	    verror("could not insert action code; action failed!\n");
-	free(tpc->action_orig_mem);
-	tpc->action_orig_mem = NULL;
-	return -1;
+	    return -1;
+	}
+    }
+    else {
+	if (!probepoint->mmod) {
+	    probepoint->mmod = target_memmod_create(target,probepoint->thread->tid,
+						    probepoint->addr,0,MMT_CODE,
+						    buf,buflen);
+	    if (!probepoint->mmod) {
+		verror("could not create memmod for HW breakpoint code"
+		       " at 0x%"PRIxADDR"!\n",probepoint->addr);
+		return -1;
+	    }
+	}
+	else {
+	    verror("could not create memmod for HW breakpoint code"
+		       " at 0x%"PRIxADDR"!\n",probepoint->addr);
+	    return -1;
+	}
     }
 
     probepoint->state = PROBE_ACTION_RUNNING;
@@ -3653,8 +3525,6 @@ static int handle_complex_actions(struct target *target,
 	tpc->tac.action = NULL;
 	tpc->tac.stepped = 0;
 	tpc->action_obviated_orig = 0;
-	tpc->action_orig_mem = NULL;
-	tpc->action_orig_mem_len = 0;
 
 	/* 
 	 * XXX: this could fail bad if whatever the current action
@@ -3748,8 +3618,6 @@ static int handle_complex_actions(struct target *target,
 	 */
 
 	/* Clean up state, then setup next action if there is one. */
-	tpc->action_orig_mem = NULL;
-	tpc->action_orig_mem_len = 0;
 
 	if (!nextaction->boosted) {
 	    /*

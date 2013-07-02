@@ -127,6 +127,147 @@ unsigned char *__target_load_addr_real(struct target *target,
 struct target *target_lookup_overlay(struct target *target,tid_t tid);
 
 /**
+ ** Target memmods.
+ **/
+
+/*
+ * Oftentimes, we want to edit memory with a replacement that is live as
+ * long as the target is open (i.e., a software breakpoint), with
+ * temporary changes (i.e., the original instruction during single step;
+ * OR a substitute for the original instruction).  The long-term
+ * replacement can be set in place via target_memmod_create and
+ * target_memmod_set; the original can be returned to by
+ * target_memmod_unset (or target_memmod_release); a short-term
+ * temporary can be set via target_memmod_set_tmp.
+ *
+ * In a flat target with all pages accessible to all threads within the
+ * same address space (a linux kernel in a VM, or a ptraced process in
+ * userspace), we don't need to worry about collisions between threads
+ * requiring memmod writes (i.e., writes to the same location) IF the
+ * target supports thread control (i.e., ptrace).
+ *
+ * If the target does not support thread control, the target can either
+ * operate in LOOSE mode, where it intentionally acknowledges that one
+ * thread might miss a breakpoint (if the original code was substituted
+ * in for another thread for a single step there); OR (really risky) if
+ * some tmp code was injected at that breakpoint (i.e., a return
+ * action) for another thread... the first thread would execute the
+ * return action *unintended*.  Both are "dangerous" depending on the
+ * debugging user's model.
+ *
+ * Our only alternative, then, to support a STRICT mode on targets where
+ * you cannot simply pause all threads to allow a single thread to do
+ * all the single stepping or custom injected code runs at a breakpoint
+ * that the user might want -- is to track thread scheduling within the
+ * target and ensure that the memmod is *consistent* for the thread that
+ * is about to run.
+ *
+ *   XXX: this is not implemented yet.
+ *
+ * This abstraction also helps support the case where threads in an
+ * overlay target set breakpoints in pages that are shared with other
+ * threads that are not members of an overlay target.  In this case, the
+ * underlying target would see different virtual addresses that map to
+ * the same physical page.  If the physical address of a memmod is
+ * known, that is used in preference to its virtual address.
+ */
+typedef enum {
+    MMT_NONE  = 0,
+    MMT_BP    = 1,
+    MMT_DATA  = 2,
+    MMT_CODE  = 3,
+} target_memmod_type_t;
+
+struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
+					   ADDR addr,ADDR paddr,
+					   target_memmod_type_t mmt,
+					   unsigned char *code,
+					   unsigned int code_len);
+struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
+					   ADDR addr);
+struct target_memmod *target_memmod_lookup_paddr(struct target *target,tid_t tid,
+						 ADDR paddr);
+int target_memmod_set(struct target *target,tid_t tid,
+		      struct target_memmod *mmod);
+int target_memmod_unset(struct target *target,tid_t tid,
+			struct target_memmod *mmod);
+int target_memmod_set_tmp(struct target *target,tid_t tid,
+			  struct target_memmod *mmod,
+			  unsigned char *code,unsigned long code_len);
+int target_memmod_release(struct target *target,tid_t tid,
+			  struct target_memmod *mmod);
+int target_memmod_free(struct target *target,tid_t tid,
+		       struct target_memmod *mmod,int force);
+
+typedef enum {
+    MMS_ORIG  = 1,
+    MMS_SUBST = 2,
+    MMS_TMP   = 3,
+} target_memmod_state_t;
+
+struct target_memmod {
+    struct target *target;
+    /*
+     * Eventually, this will just be one thread; for now, it is global
+     * to the target.
+     */
+    //struct target_thread *thread;
+    struct array_list *threads;
+
+    target_memmod_type_t type;
+    target_memmod_state_t state;
+
+    ADDR addr;
+    ADDR paddr;
+
+    /*
+     * The original contents of memory -- not free until memmod is
+     * freed.  This is always a copy.
+     */
+    unsigned char *orig;
+    unsigned long orig_len;
+    /*
+     * The long-term substitution -- not free until memmod is freed.  If
+     * this is not target->breakpoint_instrs, it will be freed when the
+     * memmod is removed.
+     */
+    unsigned char *mod;
+    unsigned long mod_len;
+    /*
+     * A short-term substitution -- copied and freed at need.
+     */
+    unsigned char *tmp;
+    unsigned long tmp_len;
+
+    /*
+     * If state is MMS_ORIG or MMS_TMP, this is the owner.  For now, we
+     * cannot handle collisions when changing the memmod at all -- we
+     * just detect them and warn.
+     *
+     * Eventually, to handle collisions, whenever there is a
+     * modification to a shared page, we have to track thread schedule
+     * and ensure that the shared write state is consistent with what
+     * the incoming thread expects to see.  This will be expensive, but
+     * it is the only way to stay sane without modifying the underlying
+     * platform.
+     */
+    struct target_thread *owner;
+};
+
+/**
+ ** Probe linkage.
+ **/
+struct probepoint *target_lookup_probepoint(struct target *target,
+					    struct target_thread *tthread,
+					    ADDR addr);
+int target_insert_probepoint(struct target *target,
+			     struct target_thread *tthread,
+			     struct probepoint *probepoint);
+int target_remove_probepoint(struct target *target,
+			     struct target_thread *tthread,
+			     struct probepoint *probepoint);
+
+/**
  ** Threads.
  **/
 struct target_thread *target_lookup_thread(struct target *target,tid_t tid);
