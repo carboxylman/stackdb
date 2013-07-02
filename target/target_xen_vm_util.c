@@ -73,7 +73,7 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
     REGVAL esp;
     ADDR kernel_stack_addr;
 
-    if (target->wordsize == 4) {
+#ifndef __x86_64__
 	if (kernel_esp) 
 	    esp = kernel_esp;
 	else {
@@ -89,8 +89,7 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	       esp & ~(THREAD_SIZE - 1));
 
 	return (esp & ~(THREAD_SIZE - 1));
-    }
-    else {
+#else
 	if (!target_read_addr(target,
 			      xtstate->context.gs_base_kernel \
 			          + xstate->kernel_stack_percpu_offset,
@@ -109,7 +108,7 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	       kernel_stack_addr + KERNEL_STACK_OFFSET - THREAD_SIZE);
 
 	return kernel_stack_addr + KERNEL_STACK_OFFSET - THREAD_SIZE;
-    }
+#endif
 }
 
 struct symbol *linux_get_task_struct_type(struct target *target) {
