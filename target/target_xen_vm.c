@@ -1019,6 +1019,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	/* Check if this is a cached entry for an old task */
 	if (tstate->tgid != tgid 
 	    || tstate->task_struct_addr != value_addr(taskv)) {
+	    target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_EXITED,
+				    0,0,0,0,NULL);
 	    target_delete_thread(target,tthread,0);
 	    tstate = NULL;
 	    tthread = NULL;
@@ -1030,6 +1032,9 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 
 	tthread = target_create_thread(target,tid,tstate);
+
+	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
+				0,0,0,0,NULL);
     }
     else {
 	/*
@@ -1708,6 +1713,9 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
 	    if (tthread) {
 		vdebug(3,LA_TARGET,LF_XV,
 		       "evicting old thread %"PRIiTID"; no longer exists!\n",tid);
+		target_add_state_change(target,tthread->tid,
+					TARGET_STATE_CHANGE_THREAD_EXITED,
+					0,0,0,0,NULL);
 		target_delete_thread(target,tthread,0);
 	    }
 
@@ -1731,6 +1739,9 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
 		    vdebug(3,LA_TARGET,LF_XV,
 			   "evicting old thread %"PRIiTID"; no longer exists!\n",
 			   tid);
+		    target_add_state_change(target,tthread->tid,
+					    TARGET_STATE_CHANGE_THREAD_EXITED,
+					    0,0,0,0,NULL);
 		    target_delete_thread(target,tthread,0);
 		}
 
@@ -2147,6 +2158,9 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 		   "deleting non-matching cached old thread %"PRIiTID
 		   " (thread %p, tpc %p)\n",
 		   tid,tthread,tthread->tpc);
+	    target_add_state_change(target,tthread->tid,
+				    TARGET_STATE_CHANGE_THREAD_EXITED,
+				    0,0,0,0,NULL);
 	    target_delete_thread(target,tthread,0);
 	    tstate = NULL;
 	    tthread = NULL;
@@ -2162,6 +2176,9 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	/* Build a new one. */
 	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 	tthread = target_create_thread(target,tid,tstate);
+
+	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
+				0,0,0,0,NULL);
 
 	vdebug(5,LA_TARGET,LF_XV,
 	       "built new thread %"PRIiTID" (thread %p, tpc %p)\n",
@@ -4435,6 +4452,9 @@ static int xen_vm_load_available_threads(struct target *target,int force) {
 		vdebug(5,LA_TARGET,LF_XV | LF_THREAD,
 		       "evicting invalid thread %"PRIiTID"; no longer exists\n",
 		       tthread->tid);
+		target_add_state_change(target,tthread->tid,
+					TARGET_STATE_CHANGE_THREAD_EXITED,
+					0,0,0,0,NULL);
 		target_delete_thread(target,tthread,0);
 	    }
 	}
@@ -4585,6 +4605,7 @@ static int xen_vm_resume(struct target *target) {
 
 struct __update_module_data {
     struct addrspace *space;
+    struct memregion *region;
     GHashTable *moddep;
     GHashTable *config;
 };
@@ -4716,6 +4737,7 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	}
     }
 
+    ud->region = tregion;
     retval = 0;
 
     if (mod_name)
@@ -4862,8 +4884,8 @@ static int xen_vm_updateregions(struct target *target,
     struct xen_vm_state *xstate = \
 	(struct xen_vm_state *)target->state;
     struct __update_module_data ud;
-    struct memregion *region;
-    struct memregion *tmp;
+    struct memregion *region,*tregion;
+    struct memrange *range,*trange;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -4908,18 +4930,55 @@ static int xen_vm_updateregions(struct target *target,
 			      __update_module,&ud);
 
     /*
-     * Garbage-collect stale modules.
-     *
-     * XXX: eventually, we need to check any target stuff in a region we
-     * delete -- values, probes, etc.
+     * Now, for all the regions, check if they were newly added
+     * or still exist; if none of those, then they vanished
+     * and we have to purge them.
      */
-    list_for_each_entry_safe(region,tmp,&space->regions,region) {
-	if (region->type == REGION_TYPE_LIB
-	    && !region->exists && !region->new) {
+
+    list_for_each_entry_safe(region,tregion,&space->regions,region) {
+	/* Skip anything not a kernel module. */
+	if (region->type != REGION_TYPE_LIB)
+	    continue;
+
+	if (!region->exists && !region->new) {
+	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
+		vdebug(3,LA_TARGET,LF_XV,
+		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		       range->start,range->end,range->offset);
+
+		target_add_state_change(target,TID_GLOBAL,
+					TARGET_STATE_CHANGE_RANGE_DEL,
+					0,range->prot_flags,
+					range->start,range->end,region->name);
+		memrange_free(range);
+	    }
+
 	    vdebug(3,LA_TARGET,LF_XV,"removing stale region (%s:%s:%s)\n",
 		   region->space->idstr,region->name,REGION_TYPE(region->type));
+
+	    target_add_state_change(target,TID_GLOBAL,
+				    TARGET_STATE_CHANGE_REGION_DEL,
+				    0,0,region->base_load_addr,0,region->name);
 	    memregion_free(region);
 	}
+	else if (region->new) {
+	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
+		vdebug(3,LA_TARGET,LF_LUP,
+		       "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		       range->start,range->end,range->offset);
+
+		target_add_state_change(target,TID_GLOBAL,
+					TARGET_STATE_CHANGE_RANGE_NEW,
+					0,range->prot_flags,
+					range->start,range->end,region->name);
+	    }
+
+	    target_add_state_change(target,TID_GLOBAL,
+				    TARGET_STATE_CHANGE_REGION_NEW,
+				    0,0,region->base_load_addr,0,region->name);
+	}
+
+	region->new = region->exists = 0;
     }
 
     return 0;
@@ -4936,7 +4995,8 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,
     struct __update_module_data ud;
     char *modfilename;
     struct list_head *pos;
-    struct memregion *tregion;
+    struct memregion *region;
+    struct memrange *range,*trange;
     char *name;
     struct value *name_value = NULL;
 
@@ -5012,6 +5072,22 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,
 	ud.moddep = xstate->moddep;
 
 	__update_module(target,mod,&ud);
+	region = ud.region;
+
+	list_for_each_entry_safe(range,trange,&region->ranges,range) {
+	    vdebug(3,LA_TARGET,LF_LUP,
+		   "new range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		   range->start,range->end,range->offset);
+
+	    target_add_state_change(target,TID_GLOBAL,
+				    TARGET_STATE_CHANGE_RANGE_NEW,
+				    0,range->prot_flags,
+				    range->start,range->end,region->name);
+	}
+
+	target_add_state_change(target,TID_GLOBAL,
+				TARGET_STATE_CHANGE_REGION_NEW,
+				0,0,region->base_load_addr,0,region->name);
     }
     else if (state == xstate->MODULE_STATE_COMING
 	     || state == xstate->MODULE_STATE_GOING) {
@@ -5031,16 +5107,32 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,
 	}
 
 	list_for_each(pos,&space->regions) {
-	    tregion = list_entry(pos,typeof(*tregion),region);
-	    if (strcmp(tregion->name,modfilename) == 0) 
+	    region = list_entry(pos,typeof(*region),region);
+	    if (strcmp(region->name,modfilename) == 0) 
 		break;
-	    tregion = NULL;
+	    region = NULL;
 	}
 
-	if (tregion) {
-	    vdebug(3,LA_TARGET,LF_XV,
-		   "removing region for departing module '%s'\n",name);
-	    memregion_free(tregion);
+	if (region) {
+	    list_for_each_entry_safe(range,trange,&region->ranges,range) {
+		vdebug(3,LA_TARGET,LF_XV,
+		       "removing stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
+		       range->start,range->end,range->offset);
+
+		target_add_state_change(target,TID_GLOBAL,
+					TARGET_STATE_CHANGE_RANGE_DEL,
+					0,range->prot_flags,
+					range->start,range->end,region->name);
+		memrange_free(range);
+	    }
+
+	    vdebug(3,LA_TARGET,LF_XV,"removing stale region (%s:%s:%s)\n",
+		   region->space->idstr,region->name,REGION_TYPE(region->type));
+
+	    target_add_state_change(target,TID_GLOBAL,
+				    TARGET_STATE_CHANGE_REGION_DEL,
+				    0,0,region->base_load_addr,0,region->name);
+	    memregion_free(region);
 	}
 	else {
 	    vdebug(5,LA_TARGET,LF_XV,
@@ -5288,6 +5380,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	goto out_err;
     }
 
+    target_clear_state_changes(target);
+
     vdebug(3,LA_TARGET,LF_XV,
 	   "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
 	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
@@ -5375,6 +5469,9 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 			       "active-probed exiting thread %"PRIiTID" (%s)"
 			       " can be deleted; doing it\n",
 			       tthread->tid,tthread->name);
+			target_add_state_change(target,tthread->tid,
+						TARGET_STATE_CHANGE_THREAD_EXITED,
+						0,0,0,0,NULL);
 			target_delete_thread(target,tthread,1);
 			g_hash_table_iter_remove(&iter);
 		    }
