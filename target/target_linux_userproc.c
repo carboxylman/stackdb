@@ -2753,6 +2753,15 @@ static int linux_userproc_updateregions(struct target *target,
 	    target_add_state_change(target,TID_GLOBAL,
 				    TARGET_STATE_CHANGE_REGION_NEW,
 				    0,0,region->base_load_addr,0,region->name);
+
+	    /*
+	     * Add debugfiles for the region!
+	     */
+	    if (linux_userproc_loaddebugfiles(target,space,region)) {
+		vwarn("could not load debugfile for new region (%s:%s:%s)\n",
+		      region->space->idstr,region->name,
+		      REGION_TYPE(region->type));
+	    }
 	}
 	else {
 	    region->exists = region->new = 0;
