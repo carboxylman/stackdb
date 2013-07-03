@@ -6184,7 +6184,7 @@ static unsigned char *mmap_pages(xa_instance_t *xa_instance,ADDR addr,
 	    (*npages)++;
     }
 
-    vdebug(4,LA_TARGET,LF_XV,"%ld bytes at %lx mapped (%s)\n",size,addr,dstr);
+    vdebug(9,LA_TARGET,LF_XV,"%ld bytes at %lx mapped (%s)\n",size,addr,dstr);
 
     return pages; /* munmap it later */
 }
