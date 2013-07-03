@@ -365,14 +365,10 @@ static int xen_vm_process_loadspaces(struct target *target) {
  * with the region-cached values without copying.  If we have to load
  * the new 
  */
-static int xen_vm_process_loadregions(struct target *target,
-				      struct addrspace *space) {
+static int __xen_vm_process_loadregions(struct target *target,
+					struct addrspace *space,
+					int is_initial) {
     char buf[PATH_MAX];
-    int rc;
-    char *ret;
-    int exists;
-    int updated;
-
     struct target_thread *base_thread = target->base_thread;
     struct xen_vm_thread_state *xtstate = \
 	(struct xen_vm_thread_state *)target->base_thread->state;
@@ -381,12 +377,12 @@ static int xen_vm_process_loadregions(struct target *target,
     struct xen_vm_process_state *xvpstate = \
 	(struct xen_vm_process_state *)target->state;
     struct memregion *region,*tregion;
-    struct memrange *range,*trange;
+    struct memrange *range;
     region_type_t rtype;
-    struct value *vma_new;
     struct value *vma;
     struct value *vma_prev;
-    struct xen_vm_process_vma *cached_vma,*cached_vma_prev;
+    struct xen_vm_process_vma *new_vma,*cached_vma,*cached_vma_prev;
+    struct xen_vm_process_vma *tmp_cached_vma,*tmp_cached_vma_d;
     ADDR mm_addr;
     ADDR vma_addr;
     ADDR vma_next_addr;
@@ -395,8 +391,12 @@ static int xen_vm_process_loadregions(struct target *target,
     ADDR file_addr;
     char *prev_vma_member_name;
     struct value *file_value;
+    int found;
 
-    vdebug(5,LA_TARGET,LF_XVP,"tid %d\n",target->base_tid);
+    if (unlikely(is_initial))
+	vdebug(5,LA_TARGET,LF_XVP,"tid %d (initial load)\n",target->base_tid);
+    else
+	vdebug(5,LA_TARGET,LF_XVP,"tid %d (rescanning)\n",target->base_tid);
 
     /*
      * Make sure the base thread is loaded.
@@ -459,7 +459,7 @@ static int xen_vm_process_loadregions(struct target *target,
 	while (cached_vma) {
 	    range = cached_vma->range;
 
-	    vdebug(3,LA_TARGET,LF_XVP,
+	    vdebug(5,LA_TARGET,LF_XVP,
 		   "removing mm-gone stale range 0x%"PRIxADDR"-0x%"PRIxADDR":%"PRIiOFFSET"\n",
 		   range->start,range->end,range->offset);
 	    target_add_state_change(target,TID_GLOBAL,
@@ -478,8 +478,8 @@ static int xen_vm_process_loadregions(struct target *target,
 
 	/* Remove all the (now empty) regions. */
 	list_for_each_entry_safe(region,tregion,&space->regions,region) {
-	    vdebug(3,LA_TARGET,LF_XVP,
-		   "removing mm-gone stale region (%s:%s:%s)\n",
+	    vdebug(5,LA_TARGET,LF_XVP,
+		   "removing mm-gone stale memregion(%s:%s:%s)\n",
 		   region->space->idstr,region->name,REGION_TYPE(region->type));
 	    target_add_state_change(target,TID_GLOBAL,
 				    TARGET_STATE_CHANGE_REGION_DEL,
@@ -493,8 +493,9 @@ static int xen_vm_process_loadregions(struct target *target,
 	return 0;
     }
     else if (xvpstate->mm_addr && xvpstate->mm_addr != mm_addr) {
-	vwarn("tid %d's task->mm changed; checking VMAs like normal though!\n",
-	      base_tid);
+	vwarn("tid %d's task->mm changed (0x%"PRIxADDR" to 0x%"PRIxADDR");"
+	      " checking cached VMAs like normal!\n",
+	      base_tid,xvpstate->mm_addr,mm_addr);
 
 	/* Reload the mm struct first, and re-cache its members. */
 	xvpstate->mm_start_brk = 0;
@@ -506,7 +507,7 @@ static int xen_vm_process_loadregions(struct target *target,
 	xvpstate->mm = NULL;
 	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
 	   err_vmiload);
-	xvpstate->mm_addr = v_addr(xvpstate->mm);
+	xvpstate->mm_addr = value_addr(xvpstate->mm);
 	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
 	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
@@ -516,12 +517,12 @@ static int xen_vm_process_loadregions(struct target *target,
 
     }
     else if (xvpstate->mm_addr == 0) {
-	vdebug(3,LA_TARGET,LF_XVP,"tid %d analyzing mmaps anew.\n",base_tid);
+	vdebug(5,LA_TARGET,LF_XVP,"tid %d analyzing mmaps anew.\n",base_tid);
 
 	/* Load the mm struct and cache its members. */
 	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
 	   err_vmiload);
-	xvpstate->mm_addr = v_addr(xvpstate->mm);
+	xvpstate->mm_addr = value_addr(xvpstate->mm);
 	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
 	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
@@ -534,7 +535,7 @@ static int xen_vm_process_loadregions(struct target *target,
 	 * XXX: when value_refresh is implemented, we want to use that
 	 * to reload so we can try not to; for now, just do it manually.
 	 */
-	vdebug(8,LA_TARGET,LF_XVP,"tid %d refreshing task->mm.\n",base_tid);
+	vdebug(5,LA_TARGET,LF_XVP,"tid %d refreshing task->mm.\n",base_tid);
 	//value_refresh(xvpstate->mm,&vdiff,NULL);
 	//if (vdiff != VALUE_DIFF_SAME) {
 
@@ -547,7 +548,7 @@ static int xen_vm_process_loadregions(struct target *target,
 	xvpstate->mm = NULL;
 	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
 	   err_vmiload);
-	xvpstate->mm_addr = v_addr(xvpstate->mm);
+	xvpstate->mm_addr = value_addr(xvpstate->mm);
 	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
 	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
@@ -574,16 +575,26 @@ static int xen_vm_process_loadregions(struct target *target,
     vma_prev = xvpstate->mm;
     prev_vma_member_name = "mmap";
 
+    VL(base,vma_prev,prev_vma_member_name,LOAD_FLAG_AUTO_DEREF,
+       &vma,err_vmiload);
+    VLV(base,vma,"vm_start",LOAD_FLAG_NONE,&start,NULL,err_vmiload);
+    value_free(vma);
+
     /* If we have either a vma_addr to process, or a cached_vma, keep going. */
     while (vma_addr || cached_vma) {
 	if (vma_addr && !cached_vma) {
 	    /*
 	     * New entry; load it and add/cache it.
+	     *
+	     * NB: do_new_unmatched comes from lower in the loop, where
+	     * we 
 	     */
+	do_new_unmatched:
+
 	    VL(base,vma_prev,prev_vma_member_name,LOAD_FLAG_AUTO_DEREF,
 	       &vma,err_vmiload);
-	    cached_vma = calloc(1,sizeof(*cached_vma));
-	    cached_vma->vma = vma;
+	    new_vma = calloc(1,sizeof(*new_vma));
+	    new_vma->vma = vma;
 
 	    /* Load the vma's start,end,offset,prot_flags,file,next addr. */
 	    VLV(base,vma,"vm_start",LOAD_FLAG_NONE,&start,NULL,err_vmiload);
@@ -640,27 +651,42 @@ static int xen_vm_process_loadregions(struct target *target,
 					  (buf[0] == '\0') ? NULL : buf);
 		if (!region) 
 		    goto err;
+
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "created memregion(%s:%s:%s)\n",
+		       region->space->idstr,region->name,
+		       REGION_TYPE(region->type));
 	    }
 
 	    /* Create the range. */
-	    if (!(range = memrange_create(region,start,end,offset,0))) 
+	    if (!(range = memrange_create(region,start,end,offset,prot_flags))) 
 		goto err;
+	    new_vma->range = range;
+
+	    vdebug(5,LA_TARGET,LF_XVP,
+		   "created memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		   "%"PRIiOFFSET",%u)\n",
+		   range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
 
 	    /*
+	     * Update list/metadata:
+	     *
 	     * Either make it the sole entry on list, or add it at tail.
 	     * Either way, there is still no cached_vma to process; it's
 	     * just that our previous one points to the new tail of the
 	     * list for the next iteration.
 	     */
 	    if (!xvpstate->vma_cache) 
-		xvpstate->vma_cache = cached_vma;
+		xvpstate->vma_cache = new_vma;
 	    else {
-		cached_vma_prev->next = cached_vma;
+		cached_vma_prev->next = new_vma;
 		cached_vma_prev->next_vma_addr = vma_addr;
 	    }
 	    ++xvpstate->vma_len;
-	    cached_vma_prev = cached_vma;
-	    cached_vma = NULL;
+	    cached_vma_prev = new_vma;
+
+	    new_vma->next = cached_vma;
 
 	    vma_addr = vma_next_addr;
 	    vma_prev = vma;
@@ -675,11 +701,59 @@ static int xen_vm_process_loadregions(struct target *target,
 	     * We don't have any more vm_area_structs from the kernel,
 	     * so any cached entries are stale at this point.
 	     */
+	    tmp_cached_vma_d = cached_vma;
 
-	    // XXX: delete range; delete empty regions when they empty.
+	    /*
+	     * Update list/metadata:
+	     */
+	    if (cached_vma_prev) {
+		cached_vma_prev->next = cached_vma->next;
+		if (cached_vma->next && cached_vma->next->vma) 
+		    cached_vma_prev->next_vma_addr = 
+			value_addr(cached_vma->next->vma);
+		else
+		    cached_vma_prev->next_vma_addr = 0;
+	    }
+	    else {
+		xvpstate->vma_cache = cached_vma->next;
+		if (cached_vma->next && cached_vma->next->vma) 
+		    xvpstate->vma_cache->next_vma_addr = 
+			value_addr(cached_vma->next->vma);
+		else
+		    cached_vma_prev->next_vma_addr = 0;
+	    }
 
+	    cached_vma = cached_vma->next;
+	    --xvpstate->vma_len;
+
+	    vdebug(5,LA_TARGET,LF_XVP,
+		   "removing stale memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		   "%"PRIiOFFSET",%u)\n",
+		   tmp_cached_vma_d->range->region->name,
+		   REGION_TYPE(tmp_cached_vma_d->range->region->type),
+		   tmp_cached_vma_d->range->start,tmp_cached_vma_d->range->end,
+		   tmp_cached_vma_d->range->offset,
+		   tmp_cached_vma_d->range->prot_flags);
+
+	    /* delete range; delete empty regions when they empty. */
+	    region = tmp_cached_vma_d->range->region;
+	    memrange_free(tmp_cached_vma_d->range);
+	    if (list_empty(&region->ranges)) {
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "removing empty memregion(%s:%s:%s)\n",
+		       region->space->idstr,region->name,
+		       REGION_TYPE(region->type));
+
+		memregion_free(region);
+	    }
+
+	    /* delete cached value stuff */
+	    value_free(tmp_cached_vma_d->vma);
+	    free(tmp_cached_vma_d);
+	    tmp_cached_vma_d = NULL;
+
+	    continue;
 	}
-	else {
 	    /*
 	     * Need to compare vma_addr with our cached_vma's addr; and...
 	     * 
@@ -695,33 +769,212 @@ static int xen_vm_process_loadregions(struct target *target,
 	     * point, if it does not match the i+j-th cached vma addr,
 	     * we insert it as a new mmap entry.
 	     */
+	else if (vma_addr == value_addr(cached_vma->vma)) {
+	    /*
+	     * Refresh the value; update the range.
+	     */
+	    vdebug(8,LA_TARGET,LF_XVP,
+		   "tid %d refreshing vm_area_struct at 0x%"PRIxADDR"\n",
+		   vma_addr);
+	    value_refresh(cached_vma->vma,0);
 
-	    if (vma_addr == v_addr(cached_vma->vma)) {
-		/*
-		 * XXX: when value_refresh is implemented, we want to use that
-		 * to reload so we can try not to; for now, just do it manually.
-		 */
-		vdebug(8,LA_TARGET,LF_XVP,
-		       "tid %d refreshing vm_area_struct at 0x%"PRIxADDR"\n",
-		       vma_addr);
-		//value_refresh(cached_vma->vma,&vdiff,NULL);
-		//if (vdiff != VALUE_DIFF_SAME) {
+	    /* Load the vma's start,end,prot_flags. */
+	    VLV(base,cached_vma->vma,"vm_start",LOAD_FLAG_NONE,
+		&start,NULL,err_vmiload);
+	    VLV(base,cached_vma->vma,"vm_end",LOAD_FLAG_NONE,
+		&end,NULL,err_vmiload);
+	    VLV(base,cached_vma->vma,"vm_page_prot",LOAD_FLAG_NONE,
+		&prot_flags,NULL,err_vmiload);
+	    VLV(base,cached_vma->vma,"vm_pgoff",LOAD_FLAG_NONE,
+		&offset,NULL,err_vmiload);
+	    VLV(base,cached_vma->vma,"vm_next",LOAD_FLAG_NONE,
+		&vma_next_addr,NULL,err_vmiload);
 
-		xvpstate->mm_start_brk = 0;
-		xvpstate->mm_brk = 0;
-		xvpstate->mm_start_stack = 0;
-		xvpstate->mm_addr = 0;
+	    if (cached_vma->range->end == end 
+		&& cached_vma->range->offset == offset 
+		&& cached_vma->range->prot_flags == (unsigned int)prot_flags) {
+		cached_vma->range->same = 1;
 
-		value_free(xvpstate->mm);
-		xvpstate->mm = NULL;
-		VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
-		   err_vmiload);
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "no change to memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
 	    }
 	    else {
+		cached_vma->range->end = end;
+		cached_vma->range->offset = offset;
+		cached_vma->range->prot_flags = prot_flags;
 
+		cached_vma->range->updated = 1;
+
+		if (start < cached_vma->range->region->base_load_addr)
+		    cached_vma->range->region->base_load_addr = start;
+
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "update to memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
+	    }
+
+	    /*
+	     * Update list/metadata for next iteration:
+	     */
+	    cached_vma_prev = cached_vma;
+	    cached_vma = cached_vma->next;
+
+	    vma_addr = vma_next_addr;
+	    vma_prev = cached_vma_prev->vma;
+
+	    /* After the first iteration, it's always this. */
+	    prev_vma_member_name = "vm_next";
+
+	    continue;
+	}
+	else {
+	    /*
+	     * Load the next one enough to get its start addr, so we can
+	     * do the comparison.  The load is not wasted; we goto
+	     * (ugh, ugh, ugh) wherever we need after loading it.
+	     */
+
+	    /*
+	     * Since we haven't loaded the vm_area_struct corresponding
+	     * to vma_addr yet, the best we can do is look through the
+	     * rest of our cached list, and see if we get a match on
+	     * vma_addr and value_addr(tmp_cached_vma->vma).  If we do,
+	     * *then* feel safe enough to delete the intervening
+	     * entries.  If we do not -- we can only add a new entry,
+	     * then continue to process the rest of our list -- so goto
+	     * the top of the loop where we add new entries -- ugh!!!
+	     */
+	    tmp_cached_vma = cached_vma;
+
+	    found = 0;
+	    while (tmp_cached_vma) {
+		if (vma_addr == value_addr(tmp_cached_vma->vma)) {
+		    found = 1;
+		    break;
+		}
+		tmp_cached_vma = tmp_cached_vma->next;
+	    }
+
+	    if (!found) {
+		/* XXX: teleport! */
+		goto do_new_unmatched;
+	    }
+
+	    /* Otherwise, proceed to delete the intermediate ones. */
+
+	    tmp_cached_vma = cached_vma;
+
+	    while (tmp_cached_vma && vma_addr != value_addr(tmp_cached_vma->vma)) {
+		/*
+		 * Update list/metadata:
+		 */
+		if (cached_vma_prev) {
+		    cached_vma_prev->next = tmp_cached_vma->next;
+		    if (tmp_cached_vma->next && tmp_cached_vma->next->vma) 
+			cached_vma_prev->next_vma_addr = 
+			    value_addr(tmp_cached_vma->next->vma);
+		    else
+			cached_vma_prev->next_vma_addr = 0;
+		}
+		else {
+		    xvpstate->vma_cache = tmp_cached_vma->next;
+		    if (tmp_cached_vma->next && tmp_cached_vma->next->vma) 
+			xvpstate->vma_cache->next_vma_addr = 
+			    value_addr(tmp_cached_vma->next->vma);
+		    else
+			cached_vma_prev->next_vma_addr = 0;
+		}
+
+		tmp_cached_vma_d = tmp_cached_vma;
+
+		tmp_cached_vma = tmp_cached_vma->next;
+		--xvpstate->vma_len;
+
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "removing stale memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       tmp_cached_vma_d->range->region->name,
+		       REGION_TYPE(tmp_cached_vma_d->range->region->type),
+		       tmp_cached_vma_d->range->start,
+		       tmp_cached_vma_d->range->end,
+		       tmp_cached_vma_d->range->offset,
+		       tmp_cached_vma_d->range->prot_flags);
+
+		/* delete range; delete empty regions when they empty. */
+		region = tmp_cached_vma_d->range->region;
+		memrange_free(tmp_cached_vma_d->range);
+		if (list_empty(&region->ranges))
+		    memregion_free(region);
+
+		/* delete cached value stuff */
+		value_free(tmp_cached_vma_d->vma);
+		free(tmp_cached_vma_d);
+		tmp_cached_vma_d = NULL;
+	    }
+
+	    cached_vma = tmp_cached_vma;
+
+	    /*
+	     * Now that we deleted any stale/dead mmaps, check if we
+	     * still have a cached vma.  If we do, and it is ==
+	     * vma_addr, just continue the outer loop; handled by third
+	     * case of outer loop.
+	     */
+	    if (cached_vma && vma_addr == value_addr(cached_vma->vma)) {
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "continuing loop; cached_vma matches vma_addr (0x%"PRIxADDR");"
+		       " memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       vma_addr,cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
+		continue;
+	    }
+	    /*
+	     * Otherwise, we need to add a new one (handled by first
+	     * case of main loop).
+	     */
+	    else if (cached_vma) {
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "continuing loop; cached_vma does not match vma_addr (0x%"PRIxADDR");"
+		       " cached_vma memrange(%s:%s:0x%"PRIxADDR",0x%"PRIxADDR","
+		       "%"PRIiOFFSET",%u)\n",
+		       vma_addr,cached_vma->range->region->name,
+		       REGION_TYPE(cached_vma->range->region->type),
+		       cached_vma->range->start,cached_vma->range->end,
+		       cached_vma->range->offset,cached_vma->range->prot_flags);
+		continue;
+	    }
+	    else {
+		vdebug(5,LA_TARGET,LF_XVP,
+		       "continuing loop; no more cached_vmas; all others will"
+		       " be new!\n");
+		continue;
 	    }
 	}
     }
+
+    if (!is_initial) {
+	/*
+	 * For each loaded region, load one or more debugfiles and associate
+	 * them with the region.  Also generate events.
+	 */
+	
+    }
+
+    /*
+     * Clear the new/existing/same/updated bits no matter what.
+     */
 
     return 0;
 
@@ -732,9 +985,12 @@ static int xen_vm_process_loadregions(struct target *target,
  err_vmiload:
     return -1;
 }
-    /* for each loaded region, load one or more debugfiles and associate
-     * them with the region.
-     */
+
+static int xen_vm_process_loadregions(struct target *target,
+				      struct addrspace *space) {
+    return __xen_vm_process_loadregions(target,space,1);
+}
+
 static int xen_vm_process_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region) {
@@ -846,11 +1102,27 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
     struct target_thread *uthread;
     struct xen_vm_thread_state *xtstate;
     struct probepoint *dpp;
+    struct addrspace *space;
 
     uthread = target_lookup_thread(overlay->base,tid);
     xtstate = (struct xen_vm_thread_state *)uthread->state;
 
     tthread = target_lookup_thread(overlay,tid);
+
+    target_clear_state_changes(overlay);
+
+    /*
+     * If not active probing memory, we kind of want to update our
+     * addrspaces aggressively (by checking the module list) so that
+     * if a user lookups a module symbol, we already have it.
+     *
+     * Active probing memory for the Xen target is a big win.
+     */
+    if (!(overlay->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
+	list_for_each_entry(space,&overlay->spaces,space) {
+	    __xen_vm_process_loadregions(overlay,space,0);
+	}
+    }
 
     /* It will be loaded and valid; so just read regs and handle. */
     if (xtstate->context.debugreg[6] & 0x4000
