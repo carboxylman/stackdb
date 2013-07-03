@@ -946,7 +946,7 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr) {
     if (list_empty(&target->spaces))
 	return NULL;
 
-    vdebug(3,LA_TARGET,LF_SYMBOL,
+    vdebug(9,LA_TARGET,LF_SYMBOL,
 	   "trying to find symbol at address 0x%"PRIxADDR"\n",
 	   addr);
 
@@ -1146,7 +1146,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	    errno = rc;
 	    goto errout;
 	}
-	vdebug(5,LA_TARGET,LF_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
+	vdebug(12,LA_TARGET,LF_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
 	       symbol_get_name(symbol),retval);
 	goto out;
     }
@@ -1244,7 +1244,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		goto errout;
 	    }
 	    retval += offset;
-	    vdebug(9,LA_TARGET,LF_SYMBOL,
+	    vdebug(12,LA_TARGET,LF_SYMBOL,
 		   "member %s at offset 0x%"PRIxOFFSET"; addr 0x%"PRIxADDR"\n",
 		   symbol_get_name(symbol),offset,retval);
 	}
@@ -1262,7 +1262,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	    }
 	    else if (rc == 1) {
 		current_region = current_range->region;
-		vdebug(9,LA_TARGET,LF_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		vdebug(12,LA_TARGET,LF_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
 	    else {
@@ -1311,7 +1311,8 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		    target_find_memory_real(target,retval,NULL,NULL,
 					    &current_range);
 		    current_region = current_range->region;
-		    vdebug(9,LA_TARGET,LF_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+		    vdebug(12,LA_TARGET,LF_SYMBOL,
+			   "ptr var (in reg) %s at 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 
 		    /* We have to skip one pointer type */
@@ -1322,7 +1323,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		     */
 		    in_reg = 0;
 
-		    vdebug(9,LA_TARGET,LF_SYMBOL,
+		    vdebug(12,LA_TARGET,LF_SYMBOL,
 			   "autoloaded REG (%d) pointer(s) for var %s ="
 			   " 0x%"PRIxADDR"\n",
 			   reg,symbol_get_name(symbol),retval);
@@ -1342,7 +1343,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		    }
 		    current_region = current_range->region;
 
-		    vdebug(9,LA_TARGET,LF_SYMBOL,
+		    vdebug(12,LA_TARGET,LF_SYMBOL,
 			   "autoloaded pointer(s) for var %s = 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 		}
@@ -1452,11 +1453,11 @@ struct value *target_load_type(struct target *target,struct symbol *type,
     }
 
     if (datatype != type)
-	vdebug(5,LA_TARGET,LF_SYMBOL,"skipped from %s to %s for type %s\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"skipped from %s to %s for type %s\n",
 	       DATATYPE(type->datatype_code),
 	       DATATYPE(datatype->datatype_code),symbol_get_name(type));
     else 
-	vdebug(5,LA_TARGET,LF_SYMBOL,"no skip; type for type %s is %s\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"no skip; type for type %s is %s\n",
 	       symbol_get_name(type),DATATYPE(datatype->datatype_code));
 
     /* Get range/region info for the addr. */
@@ -1508,7 +1509,8 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	value_set_strlen(value,strlen(value->buf) + 1);
 	value_set_addr(value,ptraddr);
 
-	vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
+	vdebug(9,LA_TARGET,LF_SYMBOL,
+	       "autoloaded char * with len %d\n",value->bufsiz);
 
 	/* success! */
 	goto out;
@@ -1718,7 +1720,7 @@ struct value *target_load_value_member(struct target *target,
 		       newlen);
 		value_set_addr(value,addr);
 
-		vdebug(5,LA_TARGET,LF_SYMBOL,
+		vdebug(9,LA_TARGET,LF_SYMBOL,
 		       "forced member value copy with len %d\n",
 		       value->bufsiz);
 	    }
@@ -1730,7 +1732,7 @@ struct value *target_load_value_member(struct target *target,
 		}
 		value_set_child(value,old_value,addr);
 
-		vdebug(5,LA_TARGET,LF_SYMBOL,
+		vdebug(9,LA_TARGET,LF_SYMBOL,
 		       "loaded member value as child with len %d\n",
 		       value->bufsiz);
 	    }
@@ -1762,7 +1764,8 @@ struct value *target_load_value_member(struct target *target,
 	    value_set_strlen(value,strlen(value->buf) + 1);
 	    value_set_addr(value,addr);
 
-	    vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * value with len %d\n",
+	    vdebug(9,LA_TARGET,LF_SYMBOL,
+		   "autoloaded char * value with len %d\n",
 		   value->bufsiz);
 	}
 	else {
@@ -1783,7 +1786,7 @@ struct value *target_load_value_member(struct target *target,
 	    else {
 		value_set_addr(value,addr);
 
-		vdebug(5,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
+		vdebug(9,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
 		       value->bufsiz);
 	    }
 	}
@@ -1919,7 +1922,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	value = value_create(tthread,NULL,bsymbol->lsymbol,symbol->datatype);
 	memcpy(value->buf,symbol->s.ii->constval,value->bufsiz);
 	
-	vdebug(5,LA_TARGET,LF_SYMBOL,"loaded const value len %d\n",value->bufsiz);
+	vdebug(9,LA_TARGET,LF_SYMBOL,
+	       "loaded const value len %d\n",value->bufsiz);
 
 	return value;
     }
@@ -1964,7 +1968,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    value_set_strlen(value,strlen(value->buf) + 1);
 	    value_set_addr(value,addr);
 
-	    vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * value with len %d\n",
+	    vdebug(9,LA_TARGET,LF_SYMBOL,
+		   "autoloaded char * value with len %d\n",
 		   value->bufsiz);
 	}
 	else {
@@ -1985,7 +1990,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    else {
 		value_set_addr(value,addr);
 
-		vdebug(5,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
+		vdebug(9,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
 		       value->bufsiz);
 	    }
 	}
@@ -2098,7 +2103,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	    errno = rc;
 	    goto errout;
 	}
-	vdebug(5,LA_TARGET,LF_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
 	       symbol_get_name(symbol),retval);
 	goto out;
     }
@@ -2142,7 +2147,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 
 	datatype = symbol_type_skip_qualifiers(symbol->datatype);
 	if (symbol->ismember && SYMBOL_IST_STUN(datatype)) {
-	    vdebug(5,LA_TARGET,LF_SYMBOL,"skipping member %s in stun type %s\n",
+	    vdebug(9,LA_TARGET,LF_SYMBOL,"skipping member %s in stun type %s\n",
 		   symbol_get_name(symbol),symbol_get_name(datatype));
 	    continue;
 	}
@@ -2155,7 +2160,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		goto errout;
 	    }
 	    retval += offset;
-	    vdebug(5,LA_TARGET,LF_SYMBOL,
+	    vdebug(9,LA_TARGET,LF_SYMBOL,
 		   "member %s at offset 0x%"PRIxOFFSET"; really at 0x%"PRIxADDR
 		   "\n",
 		   symbol_get_name(symbol),offset,retval);
@@ -2185,7 +2190,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		    target_find_memory_real(target,retval,NULL,NULL,
 					    &current_range);
 		    current_region = current_range->region;
-		    vdebug(5,LA_TARGET,LF_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+		    vdebug(9,LA_TARGET,LF_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 		    /* We have to skip one pointer type */
 		    datatype = symbol_type_skip_qualifiers(datatype->datatype);
@@ -2204,7 +2209,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	    }
 	    else if (rc == 1) {
 		current_region = current_range->region;
-		vdebug(5,LA_TARGET,LF_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		vdebug(9,LA_TARGET,LF_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
 	    else {
@@ -2234,7 +2239,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		    goto errout;
 		}
 		current_region = current_range->region;
-		vdebug(5,LA_TARGET,LF_SYMBOL,
+		vdebug(9,LA_TARGET,LF_SYMBOL,
 		       "autoloaded pointer(s) for var %s now at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
@@ -2300,11 +2305,11 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
     datatype = symbol_type_skip_qualifiers(startdatatype);
 
     if (startdatatype != datatype)
-	vdebug(5,LA_TARGET,LF_SYMBOL,"skipped from %s to %s for symbol %s\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"skipped from %s to %s for symbol %s\n",
 	       DATATYPE(startdatatype->datatype_code),
 	       DATATYPE(datatype->datatype_code),symbol->name);
     else 
-	vdebug(5,LA_TARGET,LF_SYMBOL,"no skip; type for symbol %s is %s\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"no skip; type for symbol %s is %s\n",
 	       symbol->name,DATATYPE(datatype->datatype_code));
 
     /* Check if this symbol is currently visible to us! */
@@ -2346,7 +2351,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	|| ((flags & LOAD_FLAG_AUTO_STRING) 
 	    && SYMBOL_IST_PTR(datatype) 
 	    && symbol_type_is_char(datatype->datatype))) {
-	vdebug(5,LA_TARGET,LF_SYMBOL,"auto_deref: starting ptr symbol %s\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"auto_deref: starting ptr symbol %s\n",
 	       symbol->name);
 
 	/* First, load the symbol's primary location -- the pointer
@@ -2364,7 +2369,7 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	    goto errout;
 	}
 
-	vdebug(5,LA_TARGET,LF_SYMBOL,"loaded ptr value 0x%"PRIxADDR"for symbol %s\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"loaded ptr value 0x%"PRIxADDR"for symbol %s\n",
 	       ptraddr,symbol->name);
 
 	/* Skip past the pointer we just loaded. */
@@ -2423,7 +2428,8 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags) {
 	value->range = ptrrange;
 	value->res.addr = ptraddr;
 
-	vdebug(5,LA_TARGET,LF_SYMBOL,"autoloaded char * with len %d\n",value->bufsiz);
+	vdebug(9,LA_TARGET,LF_SYMBOL,
+	       "autoloaded char * with len %d\n",value->bufsiz);
 
 	/* success! */
 	goto out;
@@ -2570,7 +2576,8 @@ ADDR target_load_pointers(struct target *target,ADDR addr,int count,
 	    goto errout;
 	}
 
-	vdebug(5,LA_TARGET,LF_SYMBOL,"loading ptr #%d at 0x%"PRIxADDR"\n",i,paddr);
+	vdebug(9,LA_TARGET,LF_SYMBOL,
+	       "loading ptr #%d at 0x%"PRIxADDR"\n",i,paddr);
 
 	/*
 	 * The pointer may be in another region!  We *have* to
@@ -2590,7 +2597,8 @@ ADDR target_load_pointers(struct target *target,ADDR addr,int count,
 	    goto errout;
 	}
 
-	vdebug(5,LA_TARGET,LF_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,
+	       "loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
 	       paddr,i);
     }
 
@@ -2633,7 +2641,8 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 		goto errout;
 	    }
 
-	    vdebug(5,LA_TARGET,LF_SYMBOL,"loading ptr at 0x%"PRIxADDR"\n",paddr);
+	    vdebug(9,LA_TARGET,LF_SYMBOL,
+		   "loading ptr at 0x%"PRIxADDR"\n",paddr);
 
 	    /*
 	     * The pointer may be in another region!  We *have* to
@@ -2655,7 +2664,8 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 	    }
 
 	    ++nptrs;
-	    vdebug(5,LA_TARGET,LF_SYMBOL,"loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
+	    vdebug(9,LA_TARGET,LF_SYMBOL,
+		   "loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
 		   paddr,nptrs);
 
 	    /* Skip past the pointer we just loaded. */
