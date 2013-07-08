@@ -272,6 +272,8 @@ struct target_ops xen_vm_ops = {
 struct argp_option xen_vm_argp_opts[] = {
     /* These options set a flag. */
     { "domain",'m',"DOMAIN",0,"The Xen domain ID or name.",-4 },
+    { "kernel-filename",'K',"FILE",0,
+          "Override xenstore kernel filepath for guest.",-4 },
     { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
     { "xenlib-debug",'x',"LEVEL",0,"Increase/set the XenAccess/OpenVMI debug level.",-4 },
@@ -305,6 +307,10 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     if (xspec->domain) {
 	av[j++] = strdup("-m");
 	av[j++] = strdup(xspec->domain);
+    }
+    if (xspec->kernel_filename) {
+	av[j++] = strdup("-K");
+	av[j++] = strdup(xspec->kernel_filename);
     }
     if (xspec->config_file) {
 	av[j++] = strdup("-c");
@@ -401,6 +407,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 
     case 'm':
 	xspec->domain = strdup(arg);
+	break;
+    case 'K':
+	xspec->kernel_filename = strdup(arg);
 	break;
     case 'c':
 	xspec->config_file = strdup(arg);
@@ -595,6 +604,15 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	if (!xstate->kernel_filename) 
 	    vwarn("could not read kernel for dom %d; may cause problems!\n",
 		  xstate->id);
+    }
+
+    if (xspec->kernel_filename) {
+	vdebug(1,LA_TARGET,LF_XV,
+	       "using kernel filename %s (overrides %s from xenstore)\n",
+	       xspec->kernel_filename,xstate->kernel_filename);
+	if (xstate->kernel_filename)
+	    free(xstate->kernel_filename);
+	xstate->kernel_filename = strdup(xspec->kernel_filename);
     }
 
     if (xsh) {

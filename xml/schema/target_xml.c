@@ -376,6 +376,8 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 
     if (spec->domain)
 	ospec->domain = strdup(spec->domain);
+    if (spec->kernelFilename)
+	ospec->kernel_filename = strdup(spec->kernelFilename);
     if (spec->configFile) 
 	ospec->config_file = strdup(spec->configFile);
 
@@ -396,6 +398,8 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 
     if (spec->domain)
 	SOAP_STRCPY(soap,ospec->domain,spec->domain);
+    if (spec->kernel_filename)
+	SOAP_STRCPY(soap,ospec->kernelFilename,spec->kernel_filename);
     if (spec->config_file)
 	SOAP_STRCPY(soap,ospec->configFile,spec->config_file);
 

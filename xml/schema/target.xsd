@@ -88,17 +88,21 @@
   </xs:element>
   <xs:element name="targetSpec" type="vmi1:TargetSpecT"/>
   <xs:complexType name="TargetXenSpecT">
-    <xs:choice>
-      <xs:element ref="vmi1:domain"/>
-      <xs:sequence>
-        <xs:element ref="vmi1:configFile"/>
-        <xs:element minOccurs="0" ref="vmi1:replayLogFile"/>
-      </xs:sequence>
-    </xs:choice>
+    <xs:sequence>
+      <xs:choice>
+        <xs:element ref="vmi1:domain"/>
+        <xs:sequence>
+          <xs:element ref="vmi1:configFile"/>
+          <xs:element minOccurs="0" ref="vmi1:replayLogFile"/>
+        </xs:sequence>
+      </xs:choice>
+      <xs:element minOccurs="0" ref="vmi1:kernelFilename"/>
+    </xs:sequence>
   </xs:complexType>
   <xs:element name="domain" type="xs:string"/>
   <xs:element name="configFile" type="xs:string"/>
   <xs:element name="replayLogFile" type="xs:string"/>
+  <xs:element name="kernelFilename" type="xs:string"/>
   <xs:element name="targetXenSpec" type="vmi1:TargetXenSpecT"/>
   <xs:complexType name="TargetPtraceSpecT">
     <xs:choice>

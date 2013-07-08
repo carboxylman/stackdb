@@ -129,6 +129,7 @@ typedef enum {
 
 struct xen_vm_spec {
     char *domain;
+    char *kernel_filename;
     char *config_file;
     char *replay_dir;
 };

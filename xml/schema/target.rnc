@@ -51,7 +51,8 @@ TargetSpec = element targetSpec { TargetSpecT }
 TargetXenSpecT = 
     (element domain { text }
     | (element configFile { text },
-       element replayLogFile { text }?))
+       element replayLogFile { text }?)),
+    element kernelFilename { text }?
 
 TargetXenSpec = element targetXenSpec { TargetXenSpecT }
 
