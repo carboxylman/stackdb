@@ -3317,7 +3317,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     if (paddr)
 	g_hash_table_insert(target->phys_mmods,(gpointer)paddr,mmod);
     else
-	g_hash_table_insert(target->phys_mmods,(gpointer)addr,mmod);
+	g_hash_table_insert(target->mmods,(gpointer)addr,mmod);
 
     array_list_append(mmod->threads,tthread);
 
