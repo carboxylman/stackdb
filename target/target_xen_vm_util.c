@@ -73,7 +73,7 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
     REGVAL esp;
     ADDR kernel_stack_addr;
 
-#ifndef __x86_64__
+    if (target->wordsize == 4) {
 	if (kernel_esp) 
 	    esp = kernel_esp;
 	else {
@@ -89,6 +89,13 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	       esp & ~(THREAD_SIZE - 1));
 
 	return (esp & ~(THREAD_SIZE - 1));
+    }
+    else {
+#ifndef __x86_64__
+	/*
+	 * This is impossible; a 64-bit guest on a 32-bit host.  We just
+	 * ifdef the 64-bit stuff away in case the host is 32-bit.
+	 */
 #else
 	if (!target_read_addr(target,
 			      xtstate->context.gs_base_kernel \
@@ -109,6 +116,7 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 
 	return kernel_stack_addr + KERNEL_STACK_OFFSET - THREAD_SIZE;
 #endif
+    }
 }
 
 struct symbol *linux_get_task_struct_type(struct target *target) {
