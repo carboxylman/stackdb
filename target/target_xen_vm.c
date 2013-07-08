@@ -505,14 +505,13 @@ struct target *xen_vm_attach(struct target_spec *spec,
     target->state = xstate;
 
     if (!(buf = malloc(PATH_MAX))) {
-	free(target);
-	return NULL;
+	verror("could not allocate tmp path buffer: %s\n",strerror(errno));
+	goto errout;
     }
 
     if (!(xsh = xs_domain_open())) {
 	verror("could not open xenstore!\n");
-	free(target);
-	return NULL;
+	goto errout;
     }
 
     xstate->evloop_fd = -1;
