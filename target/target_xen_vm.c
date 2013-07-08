@@ -2968,19 +2968,35 @@ static int xen_vm_postloadinit(struct target *target) {
      * target_xen_vm_util::current_thread_ptr refreshes it as needed.
      */
     if (target->wordsize == 8) {
-	tmpbs = target_lookup_sym(target,"kernel_stack",NULL,NULL,
-				  SYMBOL_TYPE_FLAG_VAR);
-	if (!tmpbs) {
-	    verror("could not find kernel_stack percpu var in debuginfo;"
-		   " cannot continue!\n");
-	    return -1;
+	vdebug(3,LA_TARGET,LF_XV,
+	       "attempting to find per-cpu kernel stack offset\n");
+
+	if ((tmpbs = target_lookup_sym(target,"kernel_stack",NULL,NULL,
+				       SYMBOL_TYPE_FLAG_VAR))) {
+	    errno = 0;
+	    xstate->kernel_stack_percpu_offset = 
+		target_addressof_symbol(target,TID_GLOBAL,tmpbs,
+					LOAD_FLAG_NONE,NULL);
+	    bsymbol_release(tmpbs);
+	    if (errno) {
+		verror("could not load kernel_stack percpu offset;"
+		       " cannot continue!\n");
+		return -1;
+	    }
 	}
-	errno = 0;
-	xstate->kernel_stack_percpu_offset = 
-	    target_addressof_symbol(target,TID_GLOBAL,tmpbs,LOAD_FLAG_NONE,NULL);
-	bsymbol_release(tmpbs);
-	if (errno) {
-	    verror("could not load kernel_stack percpu offset;"
+	else if ((tmpbs = target_lookup_sym(target,"struct x8664_pda",NULL,NULL,
+					    SYMBOL_TYPE_FLAG_TYPE))) {
+	    errno = 0;
+	    xstate->kernel_stack_percpu_offset = 
+		symbol_offsetof(bsymbol_get_symbol(tmpbs),"kernelstack",NULL);
+	    if (errno) {
+		verror("could not get offsetof struct x8664_pda.kernelstack;"
+		       " cannot continue!\n");
+		return -1;
+	    }
+	}
+	else {
+	    verror("could not find x86_64 kernel stack percpu var in debuginfo;"
 		   " cannot continue!\n");
 	    return -1;
 	}
