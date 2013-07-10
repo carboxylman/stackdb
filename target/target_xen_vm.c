@@ -2923,29 +2923,81 @@ static int xen_vm_postloadinit(struct target *target) {
      *
      */
 
-    /* Find the kernel start address */
-    xstate->kernel_start_addr = 0xC0000000;
-#if __WORDSIZE == 64
-    if (target->wordsize == 8)
-	xstate->kernel_start_addr = 0xFFFFFFFF81000000ULL;
-#endif
-#if 0
-    {
-	struct bsymbol *kernaddr;
-
-	kernaddr = target_lookup_sym(target, "_text", NULL, NULL,
-				     SYMBOL_TYPE_VAR);
-	if (kernaddr) {
-	    if (symbol_get_location_addr(kernaddr->lsymbol->symbol,
+    /*
+     * Find the kernel start address.
+     */
+    
+    /* Try .text first (and fake the delimiter!!!) */
+    if (xstate->kernel_start_addr == 0) {
+	tmpbs = target_lookup_sym(target,".text","|",NULL,
+				  SYMBOL_TYPE_FLAG_FUNCTION);
+	if (tmpbs) {
+	    if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
 					 &xstate->kernel_start_addr)) {
-		vwarn("could not resolve addr of _text!\n");
+		vwarnopt(1,LA_TARGET,LF_XV,
+			 "could not resolve addr of .text;"
+			 " trying startup_(32|64)!\n");
 	    }
-	    bsymbol_release(kernaddr);
-	} else {
-	    vwarn("could not find symbol _text!\n");
+	    bsymbol_release(tmpbs);
+	    tmpbs = NULL;
+	}
+	else {
+	    vwarnopt(1,LA_TARGET,LF_XV,
+		     "could not find symbol .text; trying startup_(32|64)!\n");
 	}
     }
+
+    /* If we didn't find .text, try startup_(32|64). */
+    if (xstate->kernel_start_addr == 0) {
+	if (target->wordsize == 4) {
+	    tmpbs = target_lookup_sym(target,"startup_32",NULL,NULL,
+				      SYMBOL_TYPE_FLAG_FUNCTION);
+	    if (tmpbs) {
+		if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
+					     &xstate->kernel_start_addr)) {
+		    vwarnopt(1,LA_TARGET,LF_XV,
+			     "could not resolve addr of startup_32!\n");
+		}
+		bsymbol_release(tmpbs);
+		tmpbs = NULL;
+	    }
+	    else {
+		vwarnopt(1,LA_TARGET,LF_XV,
+			 "could not find symbol startup_32!\n");
+	    }
+	}
+	else {
+	    tmpbs = target_lookup_sym(target,"startup_64",NULL,NULL,
+				      SYMBOL_TYPE_FLAG_FUNCTION);
+	    if (tmpbs) {
+		if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
+					     &xstate->kernel_start_addr)) {
+		    vwarnopt(1,LA_TARGET,LF_XV,
+			     "could not resolve addr of startup_64!\n");
+		}
+		bsymbol_release(tmpbs);
+		tmpbs = NULL;
+	    }
+	    else {
+		vwarnopt(1,LA_TARGET,LF_XV,
+			 "could not find symbol startup_64!\n");
+	    }
+	}
+    }
+
+    /* If we still didn't find it... */
+    if (xstate->kernel_start_addr == 0) {
+	vwarn("could not find addr of .text nor startup_(32|64);"
+	      " using defaults!\n");
+
+	if (target->wordsize == 4) 
+	    xstate->kernel_start_addr = 0xC0000000;
+#if __WORDSIZE == 64
+	else if (target->wordsize == 8)
+	    xstate->kernel_start_addr = 0xFFFFFFFF81000000ULL;
 #endif
+    }
+
     vdebug(3,LA_TARGET,LF_XV,"kernel start addr is 0x%"PRIxREGVAL"\n",
 	   xstate->kernel_start_addr);
 
