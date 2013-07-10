@@ -2040,6 +2040,7 @@ static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
 	declaration->decldefined = 1;
 
 	declaration->has_base_addr = definition->has_base_addr;
+	declaration->base_addr = definition->base_addr;
 	declaration->size_is_bits = definition->size_is_bits;
 	declaration->size_is_bytes = definition->size_is_bytes;
 	declaration->guessed_size = definition->guessed_size;
