@@ -1578,6 +1578,50 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	}
     }
 
+    /*
+     * Add section symbols if they have addresses and sizes.
+     */
+    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+	shdr = &bfelf->shdrs[i];
+	scn = elf_getscn(bfelf->elf,i);
+
+	if (!shdr || shdr->sh_size <= 0 || shdr->sh_addr <= 0) 
+	    continue;
+	if (!scn) {
+	    verror("could not find Elf section for section %d!\n",i);
+	    continue;
+	}
+	if (!(shdr->sh_flags & SHF_ALLOC))
+	    continue;
+
+	name = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
+
+	if (shdr->sh_flags & SHF_EXECINSTR)
+	    stt = STT_FUNC;
+	else 
+	    stt = STT_OBJECT;
+
+	symbol = symbol_create(bf->symtab,(SMOFFSET)i,name,1,
+			       stt == STT_OBJECT ? SYMBOL_TYPE_VAR 
+			                         : SYMBOL_TYPE_FUNCTION,
+			       SYMBOL_SOURCE_ELF,0);
+	RHOLD(symbol,bf);
+
+	symbol->isexternal = 1;
+
+	symbol->size.bytes = shdr->sh_size;
+	symbol->size_is_bytes = 1;
+
+	symbol->base_addr = (ADDR)shdr->sh_addr;
+	symbol->has_base_addr = 1;
+
+	symtab_insert(bf->symtab,symbol,0);
+
+	vdebug(16,LA_DEBUG,LF_ELF,
+	       "created section symbol %s (0x%"PRIxADDR"; %d bytes)\n",
+	       name,symbol->base_addr,symbol->size.bytes);
+    }
+
     {
 	/* Now, go through all the address ranges and update their sizes 
 	 * based on the following range's address -- this is
