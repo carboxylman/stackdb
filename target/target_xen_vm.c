@@ -860,7 +860,6 @@ struct target *xen_vm_attach(struct target_spec *spec,
 
 static int xen_vm_load_dominfo(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
-    shared_info_t *live_shinfo = NULL;
 
     if (!xstate->dominfo_valid) {
         vdebug(4,LA_TARGET,LF_XV,
@@ -872,6 +871,22 @@ static int xen_vm_load_dominfo(struct target *target) {
 	    errno = EINVAL;
 	    return -1;
 	}
+
+	/*
+	 * Only do this once, and use libxc directly.
+	 */
+	if (unlikely(!xstate->live_shinfo)) {
+	    xstate->live_shinfo = 
+		xc_map_foreign_range(xc_handle,xstate->id,PAGE_SIZE,PROT_READ,
+				     xstate->dominfo.shared_info_frame);
+	    if (!xstate->live_shinfo) {
+		verror("could not mmap shared_info frame 0x%"PRIxADDR"!\n",
+		       xstate->dominfo.shared_info_frame);
+		errno = EFAULT;
+		return -1;
+	    }
+	}
+
 	/*
 	 * Have to grab vcpuinfo out of shared frame, argh!  This can't
 	 * be the only way to access the tsc, but I can't find a better
@@ -880,40 +895,12 @@ static int xen_vm_load_dominfo(struct target *target) {
 	 * XXX: Do we really have to do this every time the domain is
 	 * interrupted?
 	 */
-#ifdef ENABLE_XENACCESS
-	live_shinfo = xa_mmap_mfn(&xstate->xa_instance,PROT_READ,
-				  xstate->dominfo.shared_info_frame);
-	if (!live_shinfo) {
-	    verror("failed to mmap shared_info_frame!\n");
-	    errno = EINVAL;
-	    return -1;
-	}
-	/*
-	 * Copy the vcpu_info_t out, then munmap.
-	 */
-	memcpy(&xstate->vcpuinfo,&live_shinfo->vcpu_info[0],
+	memcpy(&xstate->vcpuinfo,&xstate->live_shinfo->vcpu_info[0],
 	       sizeof(xstate->vcpuinfo));
-	munmap(live_shinfo,PAGE_SIZE);
-#endif
-#ifdef ENABLE_LIBVMI
-	live_shinfo = malloc(xstate->vmi_page_size);
-	if (!live_shinfo ||
-	    vmi_read_pa(xstate->vmi_instance,
-			(xstate->dominfo.shared_info_frame*(addr_t)xstate->vmi_page_size),
-			live_shinfo, xstate->vmi_page_size) != xstate->vmi_page_size) {
-            verror("failed to read shared_info!\n");
-	    if (live_shinfo)
-		free(live_shinfo);
-            errno = EINVAL;
-	    return -1;
-	}
-	memcpy(&xstate->vcpuinfo,&live_shinfo->vcpu_info[0],
-	       sizeof(xstate->vcpuinfo));
-	free(live_shinfo);
-#endif
 
 	xstate->dominfo_valid = 1;
-    } else {
+    }
+    else {
         vdebug(8,LA_TARGET,LF_XV,
 	       "did not need to load dominfo; current dominfo is valid\n");
     }
@@ -2690,6 +2677,9 @@ static int xen_vm_detach(struct target *target) {
 
     if (target->evloop && xstate->evloop_fd > -1)
 	xen_vm_detach_evloop(target);
+
+    if (xstate->live_shinfo)
+	munmap(xstate->live_shinfo,PAGE_SIZE);
 
     if (xc_domctl(xc_handle,&domctl)) {
 	verror("could not disable debugging of dom %d!\n",xstate->id);

@@ -32,6 +32,9 @@
 
 extern struct target_ops xen_vm_ops;
 
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 0x1000
+#endif
 #define THREAD_SIZE 8192
 /* x86_64 constant used in current_thread_ptr */
 #define KERNEL_STACK_OFFSET (5*8)
@@ -282,6 +285,7 @@ struct xen_vm_state {
     unsigned int last_thread_count;
     uint8_t thread_auto_gc_counter;
 
+    shared_info_t *live_shinfo;
     xc_dominfo_t dominfo;
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
