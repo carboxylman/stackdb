@@ -2317,11 +2317,13 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	free(comm);
     if (threadinfov)
 	value_free(threadinfov);
-    tstate->thread_info = NULL;
     if (taskv)
 	value_free(taskv);
-    tstate->thread_struct = NULL;
-    tstate->task_struct = NULL;
+    if (tstate) {
+	tstate->thread_info = NULL;
+	tstate->thread_struct = NULL;
+	tstate->task_struct = NULL;
+    }
 
     /* XXX: should we really set this here? */
     target->current_thread = target->global_thread;
