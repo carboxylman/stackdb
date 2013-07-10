@@ -97,7 +97,26 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	 * ifdef the 64-bit stuff away in case the host is 32-bit.
 	 */
 #else
-	if (!target_read_addr(target,
+	if (xtstate->context.gs_base_kernel == 0) {
+	    if (xtstate->context.user_regs.rip >= xstate->kernel_start_addr) {
+		kernel_stack_addr = 
+		    xtstate->context.user_regs.rsp & ~(THREAD_SIZE - 1);
+
+		vdebug(8,LA_TARGET,LF_XV,
+		       "current->thread_info at 0x%"PRIxADDR"\n",
+		       kernel_stack_addr);
+
+		return kernel_stack_addr;
+	    }
+	    else {
+		verror("%%gs is 0x0; VM not in kernel (ip 0x%"PRIxADDR");"
+		       " cannot infer current thread!\n",
+		       xtstate->context.user_regs.rip);
+		errno = EINVAL;
+		return 0;
+	    }
+	}
+	else if (!target_read_addr(target,
 			      xtstate->context.gs_base_kernel \
 			          + xstate->kernel_stack_percpu_offset,
 			      target->wordsize,
