@@ -2638,8 +2638,10 @@ void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
      * subroutine whose code ranges are usually described as a list of
      * ranges, instead of by lowpc/highpc DWARF attrs.
      */
-    if (symtab->symtab_symbol && base < symtab->symtab_symbol->base_addr)
+    if (symtab->symtab_symbol && base < symtab->symtab_symbol->base_addr) {
 	symtab->symtab_symbol->base_addr = base;
+	symtab->symtab_symbol->has_base_addr = 1;
+    }
 
     return;
 }
