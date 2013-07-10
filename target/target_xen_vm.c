@@ -3135,14 +3135,23 @@ static int xen_vm_postloadinit(struct target *target) {
     if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"esp0",NULL))) {
 	xstate->thread_sp_member_name = "esp";
 	xstate->thread_sp0_member_name = "esp0";
-	xstate->thread_ip_member_name = "eip";
 	lsymbol_release(tmpls);
     }
     else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"sp",NULL))) {
 	xstate->thread_sp_member_name = "sp";
 	xstate->thread_sp0_member_name = "sp0";
-	xstate->thread_ip_member_name = "ip";
 	lsymbol_release(tmpls);
+    }
+    else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"rsp0",NULL))) {
+	xstate->thread_sp_member_name = "rsp";
+	xstate->thread_sp0_member_name = "rsp0";
+	lsymbol_release(tmpls);
+    }
+    else {
+	vwarn("could not find 'struct thread_struct.(esp0|sp|rsp0)';"
+	      " will cause problems!\n");
+	xstate->thread_sp_member_name = NULL;
+	xstate->thread_sp0_member_name = NULL;
     }
 
     /* Now figure out if thread_struct has an eip/ip member. */
@@ -3152,6 +3161,10 @@ static int xen_vm_postloadinit(struct target *target) {
     }
     else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"ip",NULL))) {
 	xstate->thread_ip_member_name = "ip";
+	lsymbol_release(tmpls);
+    }
+    else if ((tmpls = symbol_lookup_sym(xstate->thread_struct_type,"rip",NULL))) {
+	xstate->thread_ip_member_name = "rip";
 	lsymbol_release(tmpls);
     }
     else {
