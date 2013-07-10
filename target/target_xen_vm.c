@@ -2065,9 +2065,9 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     }
     else {
 	/* Now, load the current task_struct. */
-	taskv = linux_load_current_task_as_type(target,
-						xstate->task_struct_type_ptr,
-						kernel_esp);
+	taskv = target_load_value_member(target,threadinfov,"task",NULL,
+					 LOAD_FLAG_AUTO_DEREF);
+
 	if (!taskv) {
 	    verror("could not load current task!  cannot get current TID!\n");
 	    /* errno should be set for us. */
