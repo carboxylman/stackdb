@@ -599,6 +599,16 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	      xstate->id);
 
     if (xstate->vmpath) {
+	snprintf(buf,PATH_MAX,"%s/image/ostype",xstate->vmpath);
+	xstate->ostype = xs_read(xsh,xth,buf,NULL);
+	if (!xstate->ostype) 
+	    vwarn("could not read ostype for dom %d; may cause problems!\n",
+		  xstate->id);
+	else if (strcmp(xstate->ostype,"hvm") == 0)
+	    xstate->hvm = 1;
+    }
+
+    if (xstate->vmpath) {
 	snprintf(buf,PATH_MAX,"%s/image/kernel",xstate->vmpath);
 	xstate->kernel_filename = xs_read(xsh,xth,buf,NULL);
 	if (!xstate->kernel_filename) 
@@ -834,6 +844,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
     }
     if (xstate->vmpath)
 	free(xstate->vmpath);
+    if (xstate->ostype)
+	free(xstate->ostype);
     if (xstate->kernel_filename)
 	free(xstate->kernel_filename);
     if (xstate->kernel_elf_filename)
@@ -2561,15 +2573,27 @@ static int xen_vm_attach_internal(struct target *target) {
 	" sysmap=\"%s\"; linux_tasks=0x%"PRIxOFFSET"; linux_mm=0x%"PRIxOFFSET";" \
 	" linux_pid=0x%"PRIxOFFSET"; linux_pgd=0x%"PRIxOFFSET";" \
 	" }"
-    size = sizeof(LIBVMI_CONFIG_TEMPLATE) 
-	+ strlen(xstate->kernel_sysmap_filename) + 4 * 16 + 1;
-    tmp = malloc(size);
-    snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE,
-	     xstate->kernel_sysmap_filename,
-	     tasks_offset,mm_offset,pid_offset,pgd_offset);
+#define LIBVMI_CONFIG_TEMPLATE_HVM "{ ostype=\"Linux\"; sysmap=\"%s\"; }"
+
+    if (xstate->hvm) {
+	size = sizeof(LIBVMI_CONFIG_TEMPLATE_HVM) 
+	    + strlen(xstate->kernel_sysmap_filename) + 1;
+	tmp = malloc(size);
+	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE_HVM,
+		 xstate->kernel_sysmap_filename);
+    }
+    else {
+	size = sizeof(LIBVMI_CONFIG_TEMPLATE) 
+	    + strlen(xstate->kernel_sysmap_filename) + 4 * 16 + 1;
+	tmp = malloc(size);
+	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE,
+		 xstate->kernel_sysmap_filename,
+		 tasks_offset,mm_offset,pid_offset,pgd_offset);
+    }
+
     if (vmi_init_complete(&xstate->vmi_instance, tmp) == VMI_FAILURE) {
-	verror("failed to complete init of vmi instance for dom %d\n",
-	       xstate->id);
+	verror("failed to complete init of vmi instance for dom %d (config was '%s')\n",
+	       xstate->id,tmp);
 	vmi_destroy(xstate->vmi_instance);
 	free(tmp);
 	tmp = NULL;

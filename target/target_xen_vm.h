@@ -230,7 +230,8 @@ struct xen_vm_state {
 	         thread_struct_has_fs:1,
 	         thread_struct_has_debugreg:1,
 	         thread_struct_has_debugreg0:1,
-	         thread_struct_has_perf_debugreg:1;
+	         thread_struct_has_perf_debugreg:1,
+	         hvm:1;
     /*
      * Some kernel thread_structs have esp/esp0 (older); others have
      * sp/sp0 (newer).  These values are either esp0/sp0/eip, or esp/sp/ip.
@@ -240,6 +241,7 @@ struct xen_vm_state {
     const char *thread_ip_member_name;
 
     char *vmpath;
+    char *ostype;
     char *kernel_filename;
     char *kernel_version;
     char *kernel_sysmap_filename;
