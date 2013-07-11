@@ -797,16 +797,22 @@ char *target_thread_tostring(struct target *target,tid_t tid,int detail,
 
 void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail) {
     char *buf;
+    struct target_thread *tthread;
+
     vdebug(16,LA_TARGET,LF_TARGET,"dumping target(%s:%"PRIiTID") thread\n",
 	   target->name,tid);
 
-    if (!target_lookup_thread(target,tid))
+    if (!(tthread = target_lookup_thread(target,tid)))
 	verror("thread %"PRIiTID" does not exist?\n",tid);
 
     if ((buf = target_thread_tostring(target,tid,detail,NULL,0))) 
-	fprintf(stream ? stream : stdout,"tid(%"PRIiTID"): %s\n",tid,buf);
+	fprintf(stream ? stream : stdout,
+		"tid(%"PRIiTID",%s): %s\n",
+		tid,tthread->name,buf);
     else 
-	fprintf(stream ? stream : stdout,"tid(%"PRIiTID"): <API ERROR>\n",tid);
+	fprintf(stream ? stream : stdout,
+		"tid(%"PRIiTID",%s): <API ERROR>\n",
+		tid,tthread->name);
 
     free(buf);
 }

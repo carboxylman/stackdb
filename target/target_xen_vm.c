@@ -4600,13 +4600,11 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
     r = &tstate->context.user_regs;
 
     if (!buf) {
-#if __WORDSIZE == 64
-	bufsiz = 33*3*16 + 1;
+	if (target->wordsize == 8)
+	    bufsiz = 1024;
+	else
+	    bufsiz = 512;
 	buf = malloc(sizeof(char)*bufsiz);
-#else
-	bufsiz = 25*3*8 + 1;
-	buf = malloc(sizeof(char)*bufsiz);
-#endif
     }
 
     if (detail < 1)
@@ -4614,7 +4612,10 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
 		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF
 		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d"
-		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF,
+		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF
+		 "\n\t(tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
+		 "thread_info_flags=0x%"PRIxNUM",stack_base=0x%"PRIxADDR","
+		 "pgd=0x%"PRIx64")",
 #if __WORDSIZE == 64
 		 r->rip,r->rbp,r->rsp,r->eflags,
 		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
@@ -4625,13 +4626,18 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
 #endif
 		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
-		 tstate->dr[6],tstate->dr[7]);
+		 tstate->dr[6],tstate->dr[7],
+		 tstate->tgid,tstate->task_flags,tstate->thread_info_flags,
+		 tstate->stack_base,tstate->pgd);
     else 
 	snprintf(buf,bufsiz,
 		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
 		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF"\n"
 		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d\n"
-		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF,
+		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF
+		 "\n\t(tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
+		 "thread_info_flags=0x%"PRIxNUM",stack_base=0x%"PRIxADDR","
+		 "pgd=0x%"PRIx64")",
 #if __WORDSIZE == 64
 		 r->rip,r->rbp,r->rsp,r->eflags,
 		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
@@ -4642,7 +4648,9 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
 #endif
 		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
-		 tstate->dr[6],tstate->dr[7]);
+		 tstate->dr[6],tstate->dr[7],
+		 tstate->tgid,tstate->task_flags,tstate->thread_info_flags,
+		 tstate->stack_base,tstate->pgd);
 
     return buf;
 }
