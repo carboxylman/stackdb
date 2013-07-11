@@ -4508,12 +4508,20 @@ static int xen_vm_load_all_threads(struct target *target,int force) {
 
 static int __value_load_thread(struct target *target,struct value *value,
 			       void *data) {
+    struct target_thread *tthread;
     int *load_counter = (int *)data;
 
-    if (!__xen_vm_load_thread_from_value(target,value)) {
+    if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
 	verror("could not load thread from task value; BUG?\n");
 	value_free(value);
 	return -1;
+    }
+
+    if (vdebug_is_on(8,LA_TARGET,LF_XV)) {
+	char buf[512];
+	target_thread_tostring(target,tthread->tid,1,buf,sizeof(buf));
+	vdebug(8,LA_TARGET,LF_XV,
+	       "loaded tid %d:%s (%s)\n",tthread->tid,tthread->name,buf);
     }
 
     if (load_counter)
