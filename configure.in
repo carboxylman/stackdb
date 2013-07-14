@@ -365,6 +365,19 @@ if test "$ENABLE_LIBVMI" = "1" -o "$ENABLE_XENACCESS" = "1" ; then
 fi
 
 #
+# Support newer versions of xenctrl that have xc_domain_debug_control for
+# HVM domains.
+#
+AC_CHECK_LIB(xenctrl,xc_domain_debug_control,
+             [XC_HAVE_DOMAIN_DEBUG_CONTROL=1],
+             [XC_HAVE_DOMAIN_DEBUG_CONTROL=0],
+             [])
+if test "${XC_HAVE_DOMAIN_DEBUG_CONTROL}" = "1"; then
+    AC_DEFINE([XC_HAVE_DOMAIN_DEBUG_CONTROL],[1])
+fi
+AC_SUBST(XC_HAVE_DOMAIN_DEBUG_CONTROL)
+
+#
 # Support older versions of xenctrl that don't have xc_map_foreign_pages.
 #
 AC_CHECK_LIB(xenctrl,xc_map_foreign_pages,

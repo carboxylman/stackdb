@@ -47,6 +47,9 @@
 #include <xenctrl.h>
 #include <xen/xen.h>
 #include <xs.h>
+#ifdef __x86_64__
+#include <xen/hvm/save.h>
+#endif
 #ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>
@@ -1872,6 +1875,366 @@ __xen_vm_load_current_thread_from_userspace(struct target *target,int force) {
     return tthread;
 }
 
+#ifdef __x86_64__
+/*
+ * NB: these functions do *NOT* zero out the destination's contents;
+ * they just copy what they can into the destination.
+ */
+static int __xen_vm_hvm_cpu_to_vcpu_context(HVM_SAVE_TYPE(CPU) *hvm,
+					    vcpu_guest_context_t *svm) {
+    assert(sizeof(svm->fpu_ctxt.x) == sizeof(hvm->fpu_regs));
+
+    memcpy(svm->fpu_ctxt.x,hvm->fpu_regs,sizeof(svm->fpu_ctxt.x));
+
+    svm->user_regs.rax = hvm->rax;
+    svm->user_regs.rbx = hvm->rbx;
+    svm->user_regs.rcx = hvm->rcx;
+    svm->user_regs.rdx = hvm->rdx;
+    svm->user_regs.rbp = hvm->rbp;
+    svm->user_regs.rsi = hvm->rsi;
+    svm->user_regs.rdi = hvm->rdi;
+    svm->user_regs.rsp = hvm->rsp;
+    svm->user_regs.r8  = hvm->r8;
+    svm->user_regs.r9  = hvm->r9;
+    svm->user_regs.r10 = hvm->r10;
+    svm->user_regs.r11 = hvm->r11;
+    svm->user_regs.r12 = hvm->r12;
+    svm->user_regs.r13 = hvm->r13;
+    svm->user_regs.r14 = hvm->r14;
+    svm->user_regs.r15 = hvm->r15;
+
+    svm->user_regs.rip = hvm->rip;
+    svm->user_regs.rflags = hvm->rflags;
+
+    svm->user_regs.error_code = hvm->error_code;
+
+    /* XXX: cs, ds, es, fs, gs */
+
+    /* XXX: ldt/gdt stuff */
+
+    /* XXX: kernel_ss, kernel_sp */
+
+    svm->ctrlreg[0] = hvm->cr0;
+    svm->ctrlreg[2] = hvm->cr2;
+    svm->ctrlreg[3] = hvm->cr3;
+    svm->ctrlreg[4] = hvm->cr4;
+
+    svm->debugreg[0] = hvm->dr0;
+    svm->debugreg[1] = hvm->dr1;
+    svm->debugreg[2] = hvm->dr2;
+    svm->debugreg[3] = hvm->dr3;
+    svm->debugreg[6] = hvm->dr6;
+    svm->debugreg[7] = hvm->dr7;
+
+    /* XXX: fs_base, gs_base_kernel, gs_base_user */
+
+    return 0;
+}
+
+static int __xen_vm_vcpu_to_hvm_cpu_context(vcpu_guest_context_t *svm,
+					    HVM_SAVE_TYPE(CPU) *hvm) {
+    assert(sizeof(svm->fpu_ctxt.x) == sizeof(hvm->fpu_regs));
+
+    memcpy(hvm->fpu_regs,svm->fpu_ctxt.x,sizeof(hvm->fpu_regs));
+
+    if (hvm->rax != svm->user_regs.rax) {
+	vdebug(9,LA_TARGET,LF_XV,"setting rax = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rax,hvm->rax);
+	hvm->rax = svm->user_regs.rax;
+    }
+    if (hvm->rbx != svm->user_regs.rbx) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rbx = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rbx,hvm->rbx);
+        hvm->rbx = svm->user_regs.rbx;
+    }
+    if (hvm->rcx != svm->user_regs.rcx) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rcx = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rcx,hvm->rcx);
+        hvm->rcx = svm->user_regs.rcx;
+    }
+    if (hvm->rdx != svm->user_regs.rdx) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rdx = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rdx,hvm->rdx);
+        hvm->rdx = svm->user_regs.rdx;
+    }
+    if (hvm->rbp != svm->user_regs.rbp) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rbp = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rbp,hvm->rbp);
+        hvm->rbp = svm->user_regs.rbp;
+    }
+    if (hvm->rsi != svm->user_regs.rsi) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rsi = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rsi,hvm->rsi);
+        hvm->rsi = svm->user_regs.rsi;
+    }
+    if (hvm->rdi != svm->user_regs.rdi) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rdi = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rdi,hvm->rdi);
+        hvm->rdi = svm->user_regs.rdi;
+    }
+    if (hvm->rsp != svm->user_regs.rsp) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rsp = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rsp,hvm->rsp);
+        hvm->rsp = svm->user_regs.rsp;
+    }
+    if (hvm->r8 != svm->user_regs.r8) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r8 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r8,hvm->r8);
+        hvm->r8 = svm->user_regs.r8;
+    }
+    if (hvm->r9 != svm->user_regs.r9) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r9 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r9,hvm->r9);
+        hvm->r9 = svm->user_regs.r9;
+    }
+    if (hvm->r10 != svm->user_regs.r10) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r10 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r10,hvm->r10);
+        hvm->r10 = svm->user_regs.r10;
+    }
+    if (hvm->r11 != svm->user_regs.r11) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r11 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r11,hvm->r11);
+        hvm->r11 = svm->user_regs.r11;
+    }
+    if (hvm->r12 != svm->user_regs.r12) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r12 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r12,hvm->r12);
+        hvm->r12 = svm->user_regs.r12;
+    }
+    if (hvm->r13 != svm->user_regs.r13) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r13 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r13,hvm->r13);
+        hvm->r13 = svm->user_regs.r13;
+    }
+    if (hvm->r14 != svm->user_regs.r14) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r14 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r14,hvm->r14);
+        hvm->r14 = svm->user_regs.r14;
+    }
+    if (hvm->r15 != svm->user_regs.r15) {
+        vdebug(9,LA_TARGET,LF_XV,"setting r15 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.r15,hvm->r15);
+        hvm->r15 = svm->user_regs.r15;
+    }
+
+    if (hvm->rip != svm->user_regs.rip) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rip = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rip,hvm->rip);
+        hvm->rip = svm->user_regs.rip;
+    }
+    if (hvm->rflags != svm->user_regs.rflags) {
+        vdebug(9,LA_TARGET,LF_XV,"setting rflags = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.rflags,hvm->rflags);
+        hvm->rflags = svm->user_regs.rflags;
+    }
+
+    if (hvm->error_code != svm->user_regs.error_code) {
+        vdebug(9,LA_TARGET,LF_XV,"setting cr0 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->user_regs.error_code,hvm->error_code);
+	hvm->error_code = svm->user_regs.error_code;
+    }
+
+    /* XXX: cs, ds, es, fs, gs */
+
+    /* XXX: ldt/gdt stuff */
+
+    /* XXX: kernel_ss, kernel_sp */
+
+    if (hvm->cr0 != svm->ctrlreg[0]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting cr0 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->ctrlreg[0],hvm->cr0);
+        hvm->cr0 = svm->ctrlreg[0];
+    }
+    if (hvm->cr2 != svm->ctrlreg[2]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting cr2 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->ctrlreg[2],hvm->cr2);
+        hvm->cr2 = svm->ctrlreg[2];
+    }
+    if (hvm->cr3 != svm->ctrlreg[3]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting cr3 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->ctrlreg[3],hvm->cr3);
+        hvm->cr3 = svm->ctrlreg[3];
+    }
+    if (hvm->cr4 != svm->ctrlreg[4]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting cr4 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->ctrlreg[4],hvm->cr4);
+        hvm->cr4 = svm->ctrlreg[4];
+    }
+
+    if (hvm->dr0 != svm->debugreg[0]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting dr0 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->debugreg[0],hvm->dr0);
+        hvm->dr0 = svm->debugreg[0];
+    }
+    if (hvm->dr1 != svm->debugreg[1]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting dr1 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->debugreg[1],hvm->dr1);
+        hvm->dr1 = svm->debugreg[1];
+    }
+    if (hvm->dr2 != svm->debugreg[2]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting dr2 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->debugreg[2],hvm->dr2);
+        hvm->dr2 = svm->debugreg[2];
+    }
+    if (hvm->dr3 != svm->debugreg[3]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting dr3 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->debugreg[3],hvm->dr3);
+        hvm->dr3 = svm->debugreg[3];
+    }
+    if (hvm->dr6 != svm->debugreg[6]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting dr6 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->debugreg[6],hvm->dr6);
+        hvm->dr6 = svm->debugreg[6];
+    }
+    if (hvm->dr7 != svm->debugreg[7]) {
+        vdebug(9,LA_TARGET,LF_XV,"setting dr7 = 0x%"PRIx64" (old 0x%"PRIx64")\n",
+               svm->debugreg[7],hvm->dr7);
+        hvm->dr7 = svm->debugreg[7];
+    }
+
+    /* XXX: fs_base, gs_base_kernel, gs_base_user */
+
+    return 0;
+}					    
+#endif
+
+/*
+ * Simple wrapper around xc_vcpu_getcontext and the HVM stuff.
+ *
+ * NB: it appears that the only reason to use the HVM-specific stuff
+ * (for CPU info) is to get correct segment register info, the VMCS/VMCB
+ * stuff, LDT stuff; pretty much everything else is already in
+ * vcpu_guest_context for the VCPU in question (see
+ * xen/xen/arch/x86/hvm/hvm.c:hvm_save_cpu_ctxt()).
+ *
+ * If the domain is HVM, it populates a vcpu_guest_context as best as
+ * possible from HVM info.  It keeps the HVM data around for a later
+ * setcontext operation.
+ *
+ * XXX: notice that we only load the highest-number VCPU.  Initially we
+ * focused on single-core VMs; that assumption is built into the code.
+ * We can relax it sometime; but that's the reason for the code being
+ * like it is.
+ */
+static int __xen_vm_cpu_getcontext(struct target *target,
+				   vcpu_guest_context_t *context) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+#ifdef __x86_64__
+    uint32_t size = 0;
+    uint32_t offset = 0;
+    HVM_SAVE_TYPE(CPU) *cpu = NULL;
+    struct hvm_save_descriptor *sdesc = NULL;
+
+#endif
+
+    if (!xstate->hvm) {
+	if (xc_vcpu_getcontext(xc_handle,xstate->id,
+			       xstate->dominfo.max_vcpu_id,context) < 0) {
+	    verror("could not get vcpu context for %d\n",xstate->id);
+	    return -1;
+	}
+    }
+    else {
+#ifdef __x86_64__
+	if ((size = xc_domain_hvm_getcontext(xc_handle,xstate->id,0,0)) <= 0) {
+	    verror("Could not get HVM context buf size!\n");
+	    return -1;
+	}
+
+	/* Handle increasing size; this should not happen. */
+	if (unlikely(!xstate->hvm_context_buf)) {
+	    xstate->hvm_context_bufsiz = size;
+	    xstate->hvm_context_buf = malloc(size);
+	}
+	else if (size >= xstate->hvm_context_bufsiz) {
+	    free(xstate->hvm_context_buf);
+	    xstate->hvm_context_bufsiz = size;
+	    xstate->hvm_context_buf = malloc(size);
+	}
+
+	xstate->hvm_cpu = NULL;
+
+	if (xc_domain_hvm_getcontext(xc_handle,xstate->id,xstate->hvm_context_buf,
+				     xstate->hvm_context_bufsiz) < 0) {
+	    verror("Could not load HVM context buf!\n");
+	    return -1;
+	}
+
+	offset = 0;
+	while (offset < size) {
+	    sdesc = (struct hvm_save_descriptor *) \
+		(xstate->hvm_context_buf + offset);
+
+	    offset += sizeof(*sdesc);
+
+	    if (sdesc->typecode == HVM_SAVE_CODE(CPU) 
+		&& sdesc->instance == xstate->dominfo.max_vcpu_id) {
+		xstate->hvm_cpu = (HVM_SAVE_TYPE(CPU) *) \
+		    (xstate->hvm_context_buf + offset);
+		break;
+	    }
+
+	    offset += sdesc->length;
+	}
+
+	if (!xstate->hvm_cpu) {
+	    verror("Could not find HVM context for VCPU %d!\n",
+		   xstate->dominfo.max_vcpu_id);
+	    return -1;
+	}
+
+	if (__xen_vm_hvm_cpu_to_vcpu_context(xstate->hvm_cpu,context)) {
+	    verror("Could not translate HVM vcpu info to software vcpu info!\n");
+	    return -1;
+	}
+#else
+	/* Impossible. */
+	verror("HVM unsupported on 32-bit platform!\n");
+	errno = EINVAL;
+	return -1;
+#endif
+    }
+
+    return 0;
+}
+
+static int __xen_vm_cpu_setcontext(struct target *target,
+				   vcpu_guest_context_t *context) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    if (!xstate->hvm) {
+	if (xc_vcpu_setcontext(xc_handle,xstate->id,
+			       xstate->dominfo.max_vcpu_id,context) < 0) {
+	    verror("could not set vcpu context for dom %d\n",xstate->id);
+	    errno = EINVAL;
+	    return -1;
+	}
+    }
+    else {
+#ifdef __x86_64__
+	if (__xen_vm_vcpu_to_hvm_cpu_context(context,xstate->hvm_cpu)) {
+	    verror("Could not translate software vcpu info to HVM vcpu info!\n");
+	    return -1;
+	}
+
+	if (xc_domain_hvm_setcontext(xc_handle,xstate->id,
+				     xstate->hvm_context_buf,
+				     xstate->hvm_context_bufsiz)) {
+	    verror("Could not store HVM context buf!\n");
+	    return -1;
+	}
+#else
+	/* Impossible. */
+	verror("HVM unsupported on 32-bit platform!\n");
+	errno = EINVAL;
+	return -1;
+#endif
+    }
+
+    return 0;
+}
+
 static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 							  int force,
 							  int globalonly) {
@@ -1937,9 +2300,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      * Only need to call xc if we haven't loaded this thread.
      */
     if (!target->global_thread->valid) {
-	if (xc_vcpu_getcontext(xc_handle,xstate->id,
-			       xstate->dominfo.max_vcpu_id,
-			       &gtstate->context) < 0) {
+	if (__xen_vm_cpu_getcontext(target,&gtstate->context) < 0) {
 	    verror("could not get vcpu context for %d\n",xstate->id);
 	    goto errout;
 	}
@@ -3730,8 +4091,7 @@ static int xen_vm_flush_current_thread(struct target *target) {
     /*
      * Flush Xen machine context.
      */
-    if (xc_vcpu_setcontext(xc_handle,xstate->id,xstate->dominfo.max_vcpu_id,
-			   &tstate->context) < 0) {
+    if (__xen_vm_cpu_setcontext(target,&tstate->context) < 0) {
 	verror("could not set vcpu context (dom %d tid %"PRIiTID")\n",
 	       xstate->id,tid);
 	errno = EINVAL;
@@ -3909,8 +4269,7 @@ static int xen_vm_flush_global_thread(struct target *target,
     /*
      * Flush Xen machine context.
      */
-    if (xc_vcpu_setcontext(xc_handle,xstate->id,xstate->dominfo.max_vcpu_id,
-			   ctxp) < 0) {
+    if (__xen_vm_cpu_setcontext(target,ctxp) < 0) {
 	verror("could not set vcpu context (dom %d tid %"PRIiTID")\n",
 	       xstate->id,gthread->tid);
 	errno = EINVAL;
@@ -5648,8 +6007,10 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	       xtstate->context.user_regs.eflags);
 
 	/* handle the triggered probe based on its event type */
-	if (xtstate->context.debugreg[6] & 0x4000) {
-	    vdebug(3,LA_TARGET,LF_XV,"new single step debug event\n");
+	if (xtstate->context.debugreg[6] & 0x4000
+	    || (xstate->hvm && xstate->hvm_monitor_trap_flag_set)) {
+	    vdebug(3,LA_TARGET,LF_XV,"new single step debug event (MTF %d)\n",
+		   xstate->hvm_monitor_trap_flag_set);
 
 	    /*
 	     * Two cases: either we single-stepped an instruction that
@@ -5679,7 +6040,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 
 	    target->sstep_thread = NULL;
 
-	    if (xtstate->context.user_regs.eflags & EF_TF) {
+	    if (xtstate->context.user_regs.eflags & EF_TF
+		|| (xstate->hvm && xstate->hvm_monitor_trap_flag_set)) {
 	    handle_inferred_sstep:
 		if (!tthread->tpc) {
 		    if (sstep_thread && ipval < xstate->kernel_start_addr) {
@@ -5810,6 +6172,49 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		else if (xtstate->context.debugreg[6] & 0x8)
 		    dreg = 3;
 	    }
+
+	    /*
+	     * More hypervisor bugs: some Xens don't appropriately
+	     * signal us for hw debug exceptions, and leave a stale
+	     * value in DR6.  So, even if the debugreg[6] status
+	     * indicated that an HW debug reg was hit, check (if the HW
+	     * debug reg is for a breakpoint) that EIP is the same as
+	     * that debug reg!  If it is not, don't believe DR6, and
+	     * look for soft breakpoints.
+	     */
+	    if (dreg > -1) {
+		dpp = (struct probepoint *) \
+		    g_hash_table_lookup(tthread->hard_probepoints,
+					(gpointer)ipval);
+		if (!dpp) {
+		    dpp = (struct probepoint *) \
+			g_hash_table_lookup(target->global_thread->hard_probepoints,
+					    (gpointer)ipval);
+		    if (!dpp) {
+			verror("DR6 said hw dbg reg %d at 0x%"PRIxADDR" was hit;"
+			       " but EIP 0x%"PRIxADDR" in tid %"PRIiTID" does not"
+			       " match! ignoring hw dbg status; continuing"
+			       " other checks!\n",
+			       dreg,xtstate->context.debugreg[dreg],ipval,
+			       tthread->tid);
+			dreg = -1;
+
+			/*
+			 * Clear DR6 in global thread; it is clearly wrong!
+			 *
+			 * MUST DO THIS.  If we are going to modify both the
+			 * current thread's CPU state possibly, and possibly
+			 * operate on the global thread's CPU state, we need to
+			 * clear the global thread's debug reg status here; this
+			 * also has the important side effect of forcing a merge
+			 * of the global thread's debug reg state; see
+			 * flush_global_thread !
+			 */
+			gtstate->context.debugreg[6] = 0;
+			target->global_thread->dirty = 1;
+		    }
+		}
+	    }			    
 
 	    if (dreg > -1) {
 		if (ipval < xstate->kernel_start_addr) {
@@ -7355,6 +7760,7 @@ int xen_vm_notify_sw_breakpoint(struct target *target,ADDR addr,
 
 int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 		      struct target *overlay) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -7366,24 +7772,60 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
     }
     xtstate = (struct xen_vm_thread_state *)tthread->state;
 
-#if __WORDSIZE == 32
-    xtstate->context.user_regs.eflags |= EF_TF;
     /*
-     * If this is a single step of an instruction for which a breakpoint
-     * is set, set the RF flag.  Why?  Because then we don't have to
-     * disable the hw breakpoint at this instruction if there is one.
-     * The x86 clears it after one instruction anyway, so it's safe.
+     * Try to use xc_domain_debug_control for HVM domains; but if it
+     * fails, abort to the old way.
+     *
+     * NB: it had better not fail.  HVM Xen looks to see if EFLAGS_TF is
+     * set, and if it is, it will reinject the debug trap into the guest
+     * after we see it... which we don't want!  Maybe I can find a way
+     * around that too.
+     *
+     * NB: this uses the CPU's monitor trap flag.  Xen's VMX HVM support
+     * doesn't give us a way to figure out that the monitor trap flag is
+     * what was triggered... so for the hvm case, we keep a special bit
+     * (only need one cause we only support one VCPU).
+     *
+     * XXX: in the future, only use HVM trap monitor flag if the thread
+     * is the current or global thread.  Otherwise obviously we won't
+     * get what we want.  Ugh, this is all crazy.
      */
-    if (isbp)
-	xtstate->context.user_regs.eflags |= EF_RF;
-    xtstate->context.user_regs.eflags &= ~EF_IF;
+    if (xstate->hvm) {
+#ifdef XC_HAVE_DOMAIN_DEBUG_CONTROL
+	if (xc_domain_debug_control(xc_handle,xstate->id,
+				    XEN_DOMCTL_DEBUG_OP_SINGLE_STEP_ON,
+				    xstate->dominfo.max_vcpu_id)) {
+	    vwarn("xc_domain_debug_control failed!  falling back to eflags!\n");
+	    goto nohvm;
+	}
+	else 
+	    xstate->hvm_monitor_trap_flag_set = 1;
 #else
-    xtstate->context.user_regs.rflags |= EF_TF;
-    if (isbp)
-	xtstate->context.user_regs.rflags |= EF_RF;
-    xtstate->context.user_regs.rflags &= ~EF_IF;
+	vwarn("xc_domain_debug_control does not exist; falling back to eflags!\n");
+	goto nohvm;
 #endif
-    tthread->dirty = 1;
+    }
+    else {
+    nohvm:
+#if __WORDSIZE == 32
+	xtstate->context.user_regs.eflags |= EF_TF;
+	/*
+	 * If this is a single step of an instruction for which a breakpoint
+	 * is set, set the RF flag.  Why?  Because then we don't have to
+	 * disable the hw breakpoint at this instruction if there is one.
+	 * The x86 clears it after one instruction anyway, so it's safe.
+	 */
+	if (isbp)
+	    xtstate->context.user_regs.eflags |= EF_RF;
+	xtstate->context.user_regs.eflags &= ~EF_IF;
+#else
+	xtstate->context.user_regs.rflags |= EF_TF;
+	if (isbp)
+	    xtstate->context.user_regs.rflags |= EF_RF;
+	xtstate->context.user_regs.rflags &= ~EF_IF;
+#endif
+	tthread->dirty = 1;
+    }
 
     target->sstep_thread = tthread;
     if (overlay)
@@ -7396,6 +7838,7 @@ int xen_vm_singlestep(struct target *target,tid_t tid,int isbp,
 
 int xen_vm_singlestep_end(struct target *target,tid_t tid,
 			  struct target *overlay) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -7407,13 +7850,34 @@ int xen_vm_singlestep_end(struct target *target,tid_t tid,
     }
     xtstate = (struct xen_vm_thread_state *)tthread->state;
 
-#if __WORDSIZE ==32
-    xtstate->context.user_regs.eflags &= ~EF_TF;
+    /*
+     * Try to use xc_domain_debug_control for HVM domains; but if it
+     * fails, abort to the old way.
+     */
+    if (xstate->hvm) {
+#ifdef XC_HAVE_DOMAIN_DEBUG_CONTROL
+	if (xc_domain_debug_control(xc_handle,xstate->id,
+				    XEN_DOMCTL_DEBUG_OP_SINGLE_STEP_OFF,
+				    xstate->dominfo.max_vcpu_id)) {
+	    vwarn("xc_domain_debug_control failed!  falling back to eflags!\n");
+	    goto nohvm;
+	}
+	else 
+	    xstate->hvm_monitor_trap_flag_set = 0;
 #else
-    xtstate->context.user_regs.rflags &= ~EF_TF;
+	vwarn("xc_domain_debug_control does not exist; falling back to eflags!\n");
+	goto nohvm;
 #endif
-
-    tthread->dirty = 1;
+    }
+    else {
+    nohvm:
+#if __WORDSIZE ==32
+	xtstate->context.user_regs.eflags &= ~EF_TF;
+#else
+	xtstate->context.user_regs.rflags &= ~EF_TF;
+#endif
+	tthread->dirty = 1;
+    }
 
     target->sstep_thread = NULL;
     target->sstep_thread_overlay = NULL;

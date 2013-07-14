@@ -231,7 +231,8 @@ struct xen_vm_state {
 	         thread_struct_has_debugreg:1,
 	         thread_struct_has_debugreg0:1,
 	         thread_struct_has_perf_debugreg:1,
-	         hvm:1;
+	         hvm:1,
+	         hvm_monitor_trap_flag_set:1;
     /*
      * Some kernel thread_structs have esp/esp0 (older); others have
      * sp/sp0 (newer).  These values are either esp0/sp0/eip, or esp/sp/ip.
@@ -291,6 +292,12 @@ struct xen_vm_state {
     xc_dominfo_t dominfo;
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
+
+#ifdef __x86_64__
+    uint8_t *hvm_context_buf;
+    uint32_t hvm_context_bufsiz;
+    HVM_SAVE_TYPE(CPU) *hvm_cpu;
+#endif
 
     int evloop_fd;
 
