@@ -1737,6 +1737,65 @@ static int _debugfile_filename_info(char *filename,char **realfilename,
     return 0;
 }
 
+char *debugfile_search_path(char *filename,char *root_prefix,char *debug_postfix,
+			    const char *DFPATH[],char *buf,int buflen) {
+    char pbuf[PATH_MAX];
+    int rc;
+    int i;
+
+    if (!debug_postfix) 
+	debug_postfix = ".debug";
+    if (!DFPATH) 
+	DFPATH = DEBUGPATHS;
+
+    for (i = 0; DFPATH[i]; ++i) {
+	rc = 0;
+
+	/* Prefix the prefix. */
+	if (root_prefix)
+	    rc += snprintf(pbuf + rc,PATH_MAX - rc,"%s",root_prefix);
+
+	/* Add in the PATH component. */
+	rc += snprintf(pbuf + rc,PATH_MAX - rc,"/%s",DFPATH[i]);
+
+	/* Add in the filename. */
+	rc += snprintf(pbuf + rc,PATH_MAX - rc,"/%s",filename);
+
+	/* Try the filename in this part of the path. */
+	if (access(pbuf,R_OK) == 0) 
+	    goto out;
+
+	/* Try the postfix. */
+	rc += snprintf(pbuf + rc,PATH_MAX - rc,"%s",debug_postfix);
+	if (access(pbuf,R_OK) == 0) 
+	    goto out;
+    }
+
+    if (root_prefix)
+	vwarnopt(9,LA_DEBUG,LF_DFILE,
+		 "could not find '%s' (root_prefix='%s') in DFPATH!\n",
+		 filename,root_prefix);
+    else
+	vwarnopt(9,LA_DEBUG,LF_DFILE,
+		 "could not find '%s' (root_prefix='%s') in DFPATH!\n",
+		 filename,root_prefix);
+
+    errno = ESRCH;
+    return NULL;
+
+ out:
+    if (buf) {
+	strncpy(buf,pbuf,buflen);
+	/* Make sure it is NULL-term. */
+	buf[buflen - 1] = '\0';
+    }
+    else {
+	buf = malloc(rc + 1);
+	strncpy(buf,pbuf,rc + 1);
+    }
+    return buf;
+}
+
 /*
  * There are several scenarios in which we want to load a debugfile.
  *  1)  We have a filename, and we want to load the debuginfo that it

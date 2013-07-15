@@ -421,6 +421,19 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 struct debugfile *debugfile_from_binfile(struct binfile *binfile,
 					 struct array_list *debugfile_load_opts_list);
 
+/*
+ * Search the debugfile path @DFPATH (if NULL, use default PATH) for a
+ * filepath @filename, possibly in a root_prefix dir @root_prefix, and
+ * try the @debug_postfix if @filename is not found directly (if
+ * @debug_postfix is NULL, ".debug" will be used).  If @buf is not NULL,
+ * we write as much of the found path as possible (given @buflen) into
+ * @buf.  On success, a valid path is returned; on error, NULL is
+ * returned and ESRCH is set.  If the user did not supply @buf, a buffer
+ * is allocated.
+ */
+char *debugfile_search_path(char *filename,char *root_prefix,char *debug_postfix,
+			    const char *DFPATH[],char *buf,int buflen);
+
 struct array_list *debugfile_get_loaded_debugfiles();
 
 /* Internal lib function. */
