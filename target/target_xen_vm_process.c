@@ -1091,7 +1091,9 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
     struct xen_vm_thread_state *xtstate;
     struct probepoint *dpp;
     struct addrspace *space;
+    struct xen_vm_state *xstate;
 
+    xstate = (struct xen_vm_state *)overlay->base->state;
     uthread = target_lookup_thread(overlay->base,tid);
     xtstate = (struct xen_vm_thread_state *)uthread->state;
 
@@ -1114,7 +1116,8 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 
     /* It will be loaded and valid; so just read regs and handle. */
     if (xtstate->context.debugreg[6] & 0x4000
-	|| xtstate->context.user_regs.eflags & EF_TF) {
+	|| xtstate->context.user_regs.eflags & EF_TF
+	|| (xstate->hvm && xstate->hvm_monitor_trap_flag_set)) {
 	if (xtstate->context.debugreg[6] & 0x4000)
 	    vdebug(3,LA_TARGET,LF_XVP,"new single step debug event\n");
 	else
