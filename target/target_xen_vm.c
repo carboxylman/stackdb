@@ -45,11 +45,7 @@
 #include "probe_api.h"
 
 #include <xenctrl.h>
-#include <xen/xen.h>
 #include <xs.h>
-#ifdef __x86_64__
-#include <xen/hvm/save.h>
-#endif
 #ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
 #include <xenaccess/xa_private.h>

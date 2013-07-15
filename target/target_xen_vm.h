@@ -21,6 +21,10 @@
 
 
 #include <xenctrl.h>
+#include <xen/xen.h>
+#ifdef __x86_64__
+#include <xen/hvm/save.h>
+#endif
 #ifdef ENABLE_XENACCESS
 #include <xenaccess/xenaccess.h>
 #endif
