@@ -1109,7 +1109,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
     int rc;
     OFFSET offset;
     struct memregion *current_region = region;
-    struct memrange *current_range;
+    struct memrange *current_range = NULL;
     load_flags_t tflags = flags | LOAD_FLAG_AUTO_DEREF;
     struct array_list *tchain = NULL;
     struct symbol *tdatatype;
@@ -1396,8 +1396,11 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	return 2;
     }
     else {
-	if (range_saveptr)
+	if (range_saveptr) {
+	    if (!current_range) 
+		target_find_memory_real(target,retval,NULL,NULL,&current_range);
 	    *range_saveptr = current_range;
+	}
 	if (addr_saveptr)
 	    *addr_saveptr = retval;
 	return 1;
@@ -1615,7 +1618,7 @@ struct value *target_load_value_member(struct target *target,
     struct symbol *symbol;
     struct symbol *datatype;
     char *rbuf = NULL;
-    ADDR addr;
+    ADDR oldaddr,addr;
     struct target_thread *tthread = old_value->thread;
     tid_t tid = tthread->tid;
     int rc;
@@ -1644,7 +1647,7 @@ struct value *target_load_value_member(struct target *target,
     if (SYMBOL_IST_PTR(vstartdatatype)) {
 	if (flags & LOAD_FLAG_AUTO_DEREF) {
 	    tdatatype = symbol_type_skip_ptrs(vstartdatatype);
-	    addr = v_addr(old_value);
+	    oldaddr = v_addr(old_value);
 	}
 	else {
 	    errno = EINVAL;
@@ -1652,7 +1655,7 @@ struct value *target_load_value_member(struct target *target,
 	}
     }
     else
-	addr = old_value->res.addr;
+	oldaddr = old_value->res.addr;
 
     if (!SYMBOL_IST_FULL_STUN(tdatatype)) {
 	vwarn("symbol %s is not a full struct/union type (is %s)!\n",
@@ -1686,7 +1689,11 @@ struct value *target_load_value_member(struct target *target,
      * Compute either an address or register location, and load!
      */
 
-    rc = __target_lsymbol_compute_location(target,tid,ls,addr,
+    range = NULL;
+    reg = -1;
+    addr = 0;
+    datatype = NULL;
+    rc = __target_lsymbol_compute_location(target,tid,ls,oldaddr,
 					   old_value->range->region,flags,
 					   &reg,&addr,&datatype,&range);
     if (rc < 0) {
@@ -1708,15 +1715,15 @@ struct value *target_load_value_member(struct target *target,
 	 * contained in the parent.
 	 */
 	newlen = symbol_type_full_bytesize(datatype);
-	if (addr >= old_value->res.addr 
-	    && ((addr + newlen) - old_value->res.addr) < (unsigned)old_value->bufsiz) {
+	if (addr >= oldaddr
+	    && ((addr + newlen) - oldaddr) < (unsigned)old_value->bufsiz) {
 	    if (flags & LOAD_FLAG_VALUE_FORCE_COPY) {
 		value = value_create(tthread,range,ls,datatype);
 		if (!value) {
 		    verror("could not create value: %s\n",strerror(errno));
 		    goto errout;
 		}
-		memcpy(value->buf,old_value->buf + (addr - old_value->res.addr),
+		memcpy(value->buf,old_value->buf + (addr - oldaddr),
 		       newlen);
 		value_set_addr(value,addr);
 
