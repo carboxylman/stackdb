@@ -1906,6 +1906,11 @@ static int __xen_vm_hvm_cpu_to_vcpu_context(HVM_SAVE_TYPE(CPU) *hvm,
 
     /* XXX: cs, ds, es, fs, gs */
 
+    if (hvm->gs_base)
+	svm->gs_base_kernel = hvm->gs_base;
+    else
+	svm->gs_base_kernel = hvm->shadow_gs;
+
     /* XXX: ldt/gdt stuff */
 
     /* XXX: kernel_ss, kernel_sp */
@@ -2932,7 +2937,7 @@ static int xen_vm_attach_internal(struct target *target) {
 	" }"
 #define LIBVMI_CONFIG_TEMPLATE_HVM "{ ostype=\"Linux\"; sysmap=\"%s\"; }"
 
-    if (xstate->hvm) {
+    if (0 && xstate->hvm) {
 	size = sizeof(LIBVMI_CONFIG_TEMPLATE_HVM) 
 	    + strlen(xstate->kernel_sysmap_filename) + 1;
 	tmp = malloc(size);
