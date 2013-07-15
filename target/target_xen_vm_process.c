@@ -1014,26 +1014,14 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
     if (!region->name || strlen(region->name) == 0)
 	return -1;
 
-    /*
-     * If target->debugfile_root_prefix was set, we have to prefix the
-     * region's filename with it before we feed it to the debugfile
-     * library; the debugfile library will use that prefix for any
-     * subsequent loads.
-     */
-    if (target->spec->debugfile_root_prefix) {
-	rc = snprintf(rbuf,PATH_MAX,"%s",target->spec->debugfile_root_prefix);
-	snprintf(rbuf + rc,PATH_MAX - rc,"/%s",region->name);
-
-	if (stat(rbuf,&statbuf)) {
-	    verror("stat('%s') (for region '%s'): %s\n",
-		   rbuf,region->name,strerror(errno));
-	    return -1;
-	}
-
-	file = rbuf;
+    /* Try to find it, given all our paths and prefixes... */
+    if (!debugfile_search_path(region->name,target->spec->debugfile_root_prefix,
+			       NULL,NULL,rbuf,PATH_MAX)) {
+	verror("could not find debugfile for region '%s': %s\n",
+	       region->name,strerror(errno));
+	return -1;
     }
-    else
-	file = region->name;
+    file = rbuf;
 
     debugfile = debugfile_from_file(file,
 				    target->spec->debugfile_root_prefix,
