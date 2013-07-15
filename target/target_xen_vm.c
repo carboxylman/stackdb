@@ -2406,7 +2406,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     v = target_load_value_member(target,threadinfov,"preempt_count",NULL,
 				 LOAD_FLAG_NONE);
     if (!v) {
-	verror("could not load thread_info->preempt_count (to check IRQ status)!");
+	verror("could not load thread_info->preempt_count (to check IRQ status)!\n");
 	/* errno should be set for us. */
 	goto errout;
     }
