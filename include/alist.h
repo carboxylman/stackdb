@@ -350,7 +350,7 @@ static inline void array_list_deep_free(struct array_list *list) {
 	 ++lpc, (placeholder) = lpc < alist->len ? (typeof(placeholder))(intertype)alist->list[lpc] : (typeof(placeholder))(intertype)NULL) 
 
 #define array_list_foreach_delete(alist,lpc)	\
-    array_list_remove_item_at(alist,lpc); lpc = (lpc == 0)? 0 : lpc - 1;
+    array_list_remove_item_at(alist,lpc); lpc = lpc - 1;
 
 static inline struct array_list *array_list_create_from_g_hash_table(GHashTable *ht) {
     GHashTableIter iter;
