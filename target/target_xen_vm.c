@@ -2283,7 +2283,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     if (target_status(target) != TSTATUS_PAUSED) {
 	verror("target not paused; cannot load current task!\n");
 	errno = EBUSY;
-	return 0;
+	return NULL;
     }
 
     /*
@@ -2292,8 +2292,11 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      * thread_info for it!  We must do this so that a whole bunch of
      * register reads can work via the API.
      */
-    if (xen_vm_load_dominfo(target))
-	goto errout;
+    if (xen_vm_load_dominfo(target)) {
+	verror("could not load dominfo!\n");
+	errno = EFAULT;
+	return NULL;
+    }
 
     gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
 
@@ -2690,6 +2693,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     target->current_thread = target->global_thread;
 
     vwarn("error loading current thread; trying to use default thread\n");
+    errno = 0;
 
     return target->global_thread;
 }
