@@ -70,6 +70,7 @@ char *location_load(struct target *target,tid_t tid,struct memregion *region,
 	}
 
         /* just read the register directly */
+	errno = 0;
         regval = target_read_reg(target,tid,
 				 (loclistloc) ? loclistloc->l.reg : location->l.reg);
         if (errno)
@@ -92,6 +93,7 @@ char *location_load(struct target *target,tid_t tid,struct memregion *region,
 	return buf;
     }
     else {
+	errno = 0;
         final_location = location_resolve(target,tid,region,location,symbol_chain,
 					  NULL,addr_saveptr,&range);
 
@@ -152,6 +154,7 @@ struct location *location_resolve_loclist(struct target *target,tid_t tid,
     /* We load EIP, scan the location list for a match, and run the
      * matching location op recursively via location_resolve!
      */
+    errno = 0;
     eip = target_read_reg(target,tid,target->ipregno);
     if (errno)
 	return NULL;
@@ -250,14 +253,18 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    *addr_saveptr = location->l.addr;
 	return 1;
     case LOCTYPE_REG_ADDR:
-	/* load the register value */
 	if (!target) {
 	    errno = EINVAL;
 	    return -1;
 	}
+	/* load the register value */
+	errno = 0;
 	regval = target_read_reg(target,tid,location->l.reg);
-	if (errno)
+	if (errno) {
+	    verror("could not read address from tid %d reg %d!\n",
+		   tid,location->l.reg);
 	    return -1;
+	}
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
 	    target_find_memory_real(target,regval,NULL,NULL,range_saveptr);
@@ -269,9 +276,14 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	    errno = EINVAL;
 	    return -1;
 	}
+	errno = 0;
 	regval = target_read_reg(target,tid,location->l.regoffset.reg);
-	if (errno)
+	if (errno) {
+	    verror("could not read address (to apply offset 0x%"PRIxOFFSET")"
+		   " from tid %d reg %d!\n",
+		   location->l.regoffset.offset,tid,location->l.regoffset.reg);
 	    return -1;
+	}
 	/* The region/range may have changed; find the new range! */
 	if (range_saveptr)
 	    target_find_memory_real(target,location->l.regoffset.offset + regval,
@@ -324,9 +336,12 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 	 * via location_resolve!
 	 */
 	if (fblist) {
+	    errno = 0;
 	    eip = target_read_reg(target,tid,target->ipregno);
-	    if (errno)
+	    if (errno) {
+		verror("could not read EIP to search FBREG list!\n");
 		return -1;
+	    }
 	    vdebug(5,LA_TARGET,LF_TLOC,"eip = 0x%" PRIxADDR "\n",eip);
 
 	    /*
@@ -378,6 +393,7 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 			      NULL,&frame_base_reg,&frame_base,NULL);
 	if (rc == 2) {
 	    /* just read the register directly */
+	    errno = 0;
 	    frame_base = target_read_reg(target,tid,frame_base_reg);
 	    if (errno) {
 		verror("FBREG_OFFSET frame base location description"
@@ -423,6 +439,7 @@ int location_resolve(struct target *target,tid_t tid,struct memregion *region,
 				reg_saveptr,addr_saveptr,
 				range_saveptr);
     case LOCTYPE_MEMBER_OFFSET:
+	errno = 0;
 	totaloffset = location_resolve_offset(location,symbol_chain,
 					      &top_enclosing_symbol,&i);
 	if (errno)
