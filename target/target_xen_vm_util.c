@@ -135,6 +135,9 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	vdebug(8,LA_TARGET,LF_XV,"current->thread_info at 0x%"PRIxADDR"\n",
 	       kernel_stack_addr + KERNEL_STACK_OFFSET - THREAD_SIZE);
 
+	/* XXX: somehow errno is getting set incorrectly on this path. */
+	errno = 0;
+
 	return kernel_stack_addr + KERNEL_STACK_OFFSET - THREAD_SIZE;
 #endif
     }
