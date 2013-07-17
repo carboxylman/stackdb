@@ -73,6 +73,8 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
     REGVAL esp;
     ADDR kernel_stack_addr;
 
+    errno = 0;
+
     if (target->wordsize == 4) {
 	if (kernel_esp) 
 	    esp = kernel_esp;
@@ -229,8 +231,10 @@ struct value *linux_load_current_thread_as_type(struct target *target,
 
     errno = 0;
     tptr = current_thread_ptr(target,kernel_esp);
-    if (errno)
+    if (errno) {
+	verror("could not get current_thread_ptr!\n");
 	return NULL;
+    }
 
     value = target_load_type(target,datatype,tptr,LOAD_FLAG_NONE);
 

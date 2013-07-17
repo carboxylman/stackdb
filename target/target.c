@@ -1456,20 +1456,22 @@ struct value *target_load_type(struct target *target,struct symbol *type,
     }
 
     if (datatype != type)
-	vdebug(9,LA_TARGET,LF_SYMBOL,"skipped from %s to %s for type %s\n",
+	vdebug(9,LA_TARGET,LF_TSYMBOL,"skipped from %s to %s for type %s\n",
 	       DATATYPE(type->datatype_code),
 	       DATATYPE(datatype->datatype_code),symbol_get_name(type));
     else 
-	vdebug(9,LA_TARGET,LF_SYMBOL,"no skip; type for type %s is %s\n",
+	vdebug(9,LA_TARGET,LF_TSYMBOL,"no skip; type for type %s is %s\n",
 	       symbol_get_name(type),DATATYPE(datatype->datatype_code));
 
     /* Get range/region info for the addr. */
     if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
+	verror("could not find range for addr 0x%"PRIxADDR"\n!",addr);
 	errno = EFAULT;
 	return NULL;
     }
 
     /* If they want pointers automatically dereferenced, do it! */
+    errno = 0;
     ptraddr = target_autoload_pointers(target,datatype,addr,flags,
 				       &datatype,&range);
     if (errno) {
@@ -1512,7 +1514,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 	value_set_strlen(value,strlen(value->buf) + 1);
 	value_set_addr(value,ptraddr);
 
-	vdebug(9,LA_TARGET,LF_SYMBOL,
+	vdebug(9,LA_TARGET,LF_TSYMBOL,
 	       "autoloaded char * with len %d\n",value->bufsiz);
 
 	/* success! */
@@ -1566,9 +1568,10 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 
 	if (!__target_load_addr_real(target,range,ptraddr,flags,
 				     (unsigned char *)value->buf,
-				     value->bufsiz))
+				     value->bufsiz)) {
+	    verror("could not load addr 0x%"PRIxADDR"!\n",ptraddr);
 	    goto errout;
-
+	}
 
 	value_set_addr(value,ptraddr);
     }
@@ -2648,7 +2651,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 		goto errout;
 	    }
 
-	    vdebug(9,LA_TARGET,LF_SYMBOL,
+	    vdebug(9,LA_TARGET,LF_TSYMBOL,
 		   "loading ptr at 0x%"PRIxADDR"\n",paddr);
 
 	    /*
@@ -2671,7 +2674,7 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 	    }
 
 	    ++nptrs;
-	    vdebug(9,LA_TARGET,LF_SYMBOL,
+	    vdebug(9,LA_TARGET,LF_TSYMBOL,
 		   "loaded next ptr value 0x%"PRIxADDR" (#%d)\n",
 		   paddr,nptrs);
 
@@ -2741,11 +2744,14 @@ struct value *target_load_addr_real(struct target *target,ADDR addr,
     }
 
     if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
-	errno = EFAULT;
+	verror("could not find range containing addr 0x%"PRIxADDR"!\n",addr);
+	errno = ERANGE;
 	return NULL;
     }
 
     if (!(value = value_create_raw(target,NULL,range,len))) {
+	verror("could not create raw value of len %d for addr 0x%"PRIxADDR"!\n",
+	       len,addr);
 	return NULL;
     }
 
@@ -2766,7 +2772,8 @@ unsigned char *target_load_raw_addr_real(struct target *target,ADDR addr,
     struct memrange *range;
 
     if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
-	errno = EFAULT;
+	verror("could not find range containing addr 0x%"PRIxADDR"!\n",addr);
+	errno = ERANGE;
 	return NULL;
     }
 
@@ -2778,11 +2785,21 @@ unsigned char *__target_load_addr_real(struct target *target,
 				       struct memrange *range,
 				       ADDR addr,load_flags_t flags,
 				       unsigned char *buf,int bufsiz) {
-    if (!(flags & LOAD_FLAG_NO_CHECK_BOUNDS) 
-	&& (!memrange_contains_real(range,addr)
-	    || !memrange_contains_real(range,addr+bufsiz-1))) {
-	errno = EFAULT;
-	return NULL;
+    if (!(flags & LOAD_FLAG_NO_CHECK_BOUNDS)) {
+	if (!memrange_contains_real(range,addr)) {
+	    verror("addr 0x%"PRIxADDR" not in"
+		   " range(0x%"PRIxADDR",0x%"PRIxADDR")!\n",
+		   addr,range->start,range->end);
+	    errno = ERANGE;
+	    return NULL;
+	}
+	else if (!memrange_contains_real(range,addr+bufsiz-1)) {
+	    verror("addr 0x%"PRIxADDR" + bufsiz %d not in"
+		   " range(0x%"PRIxADDR",0x%"PRIxADDR")!\n",
+		   addr,bufsiz,range->start,range->end);
+	    errno = ERANGE;
+	    return NULL;
+	}
     }
 
     return target_read_addr(target,addr,bufsiz,buf);
