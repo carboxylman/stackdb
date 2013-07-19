@@ -1639,6 +1639,7 @@ struct symbol {
 	usesshareddatatype:1,
 	freenextpass:1,
 	isexternal:1,
+	has_linkage_name:1,
 	isdeclaration:1,
 	decldefined:1,
 	decltypedefined:1,

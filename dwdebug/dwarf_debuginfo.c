@@ -562,6 +562,23 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
 		     cbargs->die_offset,flag,dwarf_attr_string(attr));
 	break;
+    case DW_AT_linkage_name:
+    case DW_AT_MIPS_linkage_name:
+	if (cbargs->symbol) {
+	    /*
+	     * We need to record this so that we don't mark AT_external
+	     * vars as globals, if they have external linkage.  We just
+	     * ignore AT_external for stuff that has external linkage
+	     * names; we don't try to put an alias in for the linkage
+	     * symbol -- we're not a linker and users won't care!
+	     */
+	    cbargs->symbol->has_linkage_name = 1;
+	}
+	else 
+	    vwarnopt(3,LA_DEBUG,LF_DWARFATTR,
+		     "[DIE %" PRIx64 "] attrval %d for attr %s in bad context\n",
+		     cbargs->die_offset,flag,dwarf_attr_string(attr));
+	break;
     case DW_AT_prototyped:
 	if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_FUNCTION) {
 	    cbargs->symbol->isprototyped = flag;
@@ -1188,7 +1205,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
 
     /* Skip these things. */
-    case DW_AT_MIPS_linkage_name:
     case DW_AT_artificial:
 	break;
     /* Skip DW_AT_GNU_vector, which not all elfutils versions know about. */
@@ -3989,7 +4005,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		}
 	    }
 
-	    if (symbol->isexternal && !symbol->isdeclaration) 
+	    if (!symbol->has_linkage_name && symbol->isexternal && !symbol->isdeclaration) 
 		debugfile_add_global(debugfile,symbol);
 	    else if (symbol->isdeclaration) 
 		debugfile_handle_declaration(debugfile,symbol);
@@ -4021,7 +4037,7 @@ int finalize_die_symbol(struct debugfile *debugfile,int level,
 		}
 	    }
 
-	    if (symbol->isexternal && !symbol->isdeclaration) 
+	    if (!symbol->has_linkage_name && symbol->isexternal && !symbol->isdeclaration) 
 		debugfile_add_global(debugfile,symbol);
 	    else if (symbol->isdeclaration) 
 		debugfile_handle_declaration(debugfile,symbol);
