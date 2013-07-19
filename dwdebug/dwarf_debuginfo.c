@@ -542,7 +542,16 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (cbargs->symbol 
 	    && (cbargs->symbol->type == SYMBOL_TYPE_FUNCTION
 		|| cbargs->symbol->type == SYMBOL_TYPE_VAR)) {
-	    cbargs->symbol->isexternal = flag;
+	    /*
+	     * C++ struct/class members marked with AT_external are
+	     * really static data members; do not mark them external.
+	     */
+	    if (cbargs->symbol->type == SYMBOL_TYPE_VAR
+		&& cbargs->parentsymbol
+		&& SYMBOL_IST_STUN(cbargs->parentsymbol))
+		cbargs->symbol->isexternal = 0;
+	    else
+		cbargs->symbol->isexternal = flag;
 	}
 	else if (cbargs->symbol && cbargs->symbol->type == SYMBOL_TYPE_TYPE
 		 && cbargs->symbol->datatype_code == DATATYPE_FUNCTION) {
