@@ -688,9 +688,25 @@ void target_free(struct target *target) {
 
     g_hash_table_destroy(target->soft_probepoints);
 
-    /* Do it for all the overlays first. */
-    g_hash_table_iter_init(&iter,target->overlays);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay)) {
+    /*
+     * If we were an overlay, remove ourself from the underlying
+     * target.
+     */
+    if (target->base) {
+	g_hash_table_remove(target->overlays,
+			    (gpointer)(uintptr_t)target->base_tid);
+    }
+
+    /*
+     * Do it for all the overlays first.  Since we might be calling
+     * target_free either from the underlying target, or the user might
+     * have called on this target directly, we need to protect the iter
+     * while loop and restart it over and over again.
+     */
+    while (g_hash_table_size(target->overlays) > 0) {
+	g_hash_table_iter_init(&iter,target->overlays);
+	g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay);
+
 	tmpname = strdup(target->name);
 	vdebug(5,LA_TARGET,LF_TARGET,
 	       "freeing overlay target(%s)\n",tmpname);
