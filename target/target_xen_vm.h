@@ -139,6 +139,8 @@ struct xen_vm_spec {
     char *kernel_filename;
     char *config_file;
     char *replay_dir;
+
+    unsigned int no_hw_debug_reg_clear:1;
 };
 
 struct xen_vm_thread_state {

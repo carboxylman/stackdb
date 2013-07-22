@@ -273,6 +273,8 @@ struct argp_option xen_vm_argp_opts[] = {
     { "domain",'m',"DOMAIN",0,"The Xen domain ID or name.",-4 },
     { "kernel-filename",'K',"FILE",0,
           "Override xenstore kernel filepath for guest.",-4 },
+    { "no-clear-hw-debug-regs",'H',NULL,0,
+          "Don't clear hardware debug registers at target attach.",-4 },
     { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
     { "xenlib-debug",'x',"LEVEL",0,"Increase/set the XenAccess/OpenVMI debug level.",-4 },
@@ -296,6 +298,10 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	
     if (xspec->domain) 
 	ac += 2;
+    if (xspec->kernel_filename) 
+	ac += 2;
+    if (xspec->no_hw_debug_reg_clear)
+	ac += 1;
     if (xspec->config_file)
 	ac += 2;
     if (xspec->replay_dir)
@@ -310,6 +316,9 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     if (xspec->kernel_filename) {
 	av[j++] = strdup("-K");
 	av[j++] = strdup(xspec->kernel_filename);
+    }
+    if (xspec->no_hw_debug_reg_clear) {
+	av[j++] = strdup("-H");
     }
     if (xspec->config_file) {
 	av[j++] = strdup("-c");
@@ -409,6 +418,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'K':
 	xspec->kernel_filename = strdup(arg);
+	break;
+    case 'H':
+	xspec->no_hw_debug_reg_clear = 1;
 	break;
     case 'c':
 	xspec->config_file = strdup(arg);
@@ -2827,6 +2839,8 @@ static int xen_vm_attach_internal(struct target *target) {
     OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
     int size;
     char *tmp;
+    struct xen_vm_spec *xspec = \
+	(struct xen_vm_spec *)target->spec->backend_spec;
 
     domctl.cmd = XEN_DOMCTL_setdebugging;
     domctl.domain = xstate->id;
@@ -2981,43 +2995,21 @@ static int xen_vm_attach_internal(struct target *target) {
 	xen_vm_attach_evloop(target,target->evloop);
     }
 
-    /*
-     * Null out hardware breakpoints, so that we don't try to infer that
-     * one was set, only to error because it's a software BP, not a
-     * hardware BP (even if the ip matches).  This can happen if you do
-     * one run with hw bps, then breakpoint the same ip with a sw bp.
-     * Good practice anyway!
-     */
+    if (!xspec->no_hw_debug_reg_clear) {
+	/*
+	 * Null out hardware breakpoints, so that we don't try to infer that
+	 * one was set, only to error because it's a software BP, not a
+	 * hardware BP (even if the ip matches).  This can happen if you do
+	 * one run with hw bps, then breakpoint the same ip with a sw bp.
+	 * Good practice anyway!
+	 */
 
-    if (!(tthread = xen_vm_load_cached_thread(target,TID_GLOBAL))) {
-	if (!errno) 
-	    errno = EINVAL;
-	verror("could not load cached thread %"PRIiTID"\n",TID_GLOBAL);
-	return -1;
-    }
-    xtstate = (struct xen_vm_thread_state *)tthread->state;
-
-    xtstate->dr[0] = 0;
-    xtstate->dr[1] = 0;
-    xtstate->dr[2] = 0;
-    xtstate->dr[3] = 0;
-    /* Clear the status bits */
-    xtstate->dr[6] = 0;
-    /* Clear the control bit. */
-    xtstate->dr[7] = 0;
-
-    /* Now save these values for later write in flush_context! */
-    xtstate->context.debugreg[0] = 0;
-    xtstate->context.debugreg[1] = 0;
-    xtstate->context.debugreg[2] = 0;
-    xtstate->context.debugreg[3] = 0;
-    xtstate->context.debugreg[6] = 0;
-    xtstate->context.debugreg[7] = 0;
-
-    tthread->dirty = 1;
-
-    if (target->current_thread) {
-	tthread = target->current_thread;
+	if (!(tthread = xen_vm_load_cached_thread(target,TID_GLOBAL))) {
+	    if (!errno) 
+		errno = EINVAL;
+	    verror("could not load cached thread %"PRIiTID"\n",TID_GLOBAL);
+	    return -1;
+	}
 	xtstate = (struct xen_vm_thread_state *)tthread->state;
 
 	xtstate->dr[0] = 0;
@@ -3037,7 +3029,31 @@ static int xen_vm_attach_internal(struct target *target) {
 	xtstate->context.debugreg[6] = 0;
 	xtstate->context.debugreg[7] = 0;
 
-	target->current_thread->dirty = 1;
+	tthread->dirty = 1;
+
+	if (target->current_thread) {
+	    tthread = target->current_thread;
+	    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+	    xtstate->dr[0] = 0;
+	    xtstate->dr[1] = 0;
+	    xtstate->dr[2] = 0;
+	    xtstate->dr[3] = 0;
+	    /* Clear the status bits */
+	    xtstate->dr[6] = 0;
+	    /* Clear the control bit. */
+	    xtstate->dr[7] = 0;
+
+	    /* Now save these values for later write in flush_context! */
+	    xtstate->context.debugreg[0] = 0;
+	    xtstate->context.debugreg[1] = 0;
+	    xtstate->context.debugreg[2] = 0;
+	    xtstate->context.debugreg[3] = 0;
+	    xtstate->context.debugreg[6] = 0;
+	    xtstate->context.debugreg[7] = 0;
+
+	    target->current_thread->dirty = 1;
+	}
     }
 
     return 0;
