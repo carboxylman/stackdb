@@ -981,7 +981,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     struct xen_vm_thread_state *tstate = NULL;
     tid_t tid;
     num_t tgid = 0;
-    num_t task_flags = 0;
+    unum_t task_flags = 0;
     struct value *threadinfov = NULL;
     unum_t tiflags = 0;
     num_t preempt_count = 0;
@@ -1032,7 +1032,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	/* errno should be set for us. */
 	goto errout;
     }
-    task_flags = v_num(v);
+    task_flags = v_unum(v);
     value_free(v);
     v = NULL;
 
@@ -2258,7 +2258,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     unum_t tiflags;
     struct value *taskv = NULL;
     num_t tgid;
-    num_t task_flags = 0;
+    unum_t task_flags = 0;
     struct target_thread *tthread = NULL;
     struct xen_vm_thread_state *tstate = NULL;;
     struct xen_vm_thread_state *gtstate;
@@ -2490,7 +2490,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    /* errno should be set for us. */
 	    goto errout;
 	}
-	task_flags = v_num(v);
+	task_flags = v_unum(v);
 	value_free(v);
 	v = NULL;
 
@@ -4137,7 +4137,7 @@ static int xen_vm_flush_current_thread(struct target *target) {
     if (tstate->task_struct) {
 	v = target_load_value_member(target,tstate->task_struct,"flags",NULL,
 				     LOAD_FLAG_NONE);
-	value_update_num(v,tstate->task_flags);
+	value_update_unum(v,tstate->task_flags);
 	target_store_value(target,v);
 	value_free(v);
     }
@@ -4716,7 +4716,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     if (tstate->task_struct) {
 	v = target_load_value_member(target,tstate->task_struct,"flags",NULL,
 				     LOAD_FLAG_NONE);
-	value_update_num(v,tstate->task_flags);
+	value_update_unum(v,tstate->task_flags);
 	target_store_value(target,v);
 	value_free(v);
     }

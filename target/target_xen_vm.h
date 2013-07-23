@@ -158,7 +158,7 @@ struct xen_vm_thread_state {
     /* @task_struct is a "live" value!  it may be value_refresh()'d! */
     struct value *task_struct;
     num_t tgid;                      /* Read-only; not flushed */
-    num_t task_flags;
+    unum_t task_flags;
     /* The thread_info is always at the bottom of the kernel stack. */
     struct value *thread_info;
     unum_t thread_info_flags;
