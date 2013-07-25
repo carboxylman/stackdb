@@ -275,6 +275,9 @@ struct argp_option xen_vm_argp_opts[] = {
           "Override xenstore kernel filepath for guest.",-4 },
     { "no-clear-hw-debug-regs",'H',NULL,0,
           "Don't clear hardware debug registers at target attach.",-4 },
+    { "no-hvm-setcontext",'V',NULL,0,
+          "Don't use HVM-specific libxc get/set context functions to access"
+          "virtual CPU info.",-4 },
     { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
     { "xenlib-debug",'x',"LEVEL",0,"Increase/set the XenAccess/OpenVMI debug level.",-4 },
@@ -302,6 +305,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 2;
     if (xspec->no_hw_debug_reg_clear)
 	ac += 1;
+    if (xspec->no_hvm_setcontext)
+	ac += 1;
     if (xspec->config_file)
 	ac += 2;
     if (xspec->replay_dir)
@@ -319,6 +324,9 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     }
     if (xspec->no_hw_debug_reg_clear) {
 	av[j++] = strdup("-H");
+    }
+    if (xspec->no_hvm_setcontext) {
+	av[j++] = strdup("-V");
     }
     if (xspec->config_file) {
 	av[j++] = strdup("-c");
@@ -421,6 +429,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'H':
 	xspec->no_hw_debug_reg_clear = 1;
+	break;
+    case 'V':
+	xspec->no_hvm_setcontext = 1;
 	break;
     case 'c':
 	xspec->config_file = strdup(arg);
@@ -2133,6 +2144,7 @@ static int __xen_vm_vcpu_to_hvm_cpu_context(vcpu_guest_context_t *svm,
 static int __xen_vm_cpu_getcontext(struct target *target,
 				   vcpu_guest_context_t *context) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
 #ifdef __x86_64__
     uint32_t size = 0;
     uint32_t offset = 0;
@@ -2141,7 +2153,7 @@ static int __xen_vm_cpu_getcontext(struct target *target,
 
 #endif
 
-    if (!xstate->hvm) {
+    if (!xstate->hvm || xspec->no_hvm_setcontext) {
 	if (xc_vcpu_getcontext(xc_handle,xstate->id,
 			       xstate->dominfo.max_vcpu_id,context) < 0) {
 	    verror("could not get vcpu context for %d\n",xstate->id);
@@ -2215,8 +2227,9 @@ static int __xen_vm_cpu_getcontext(struct target *target,
 static int __xen_vm_cpu_setcontext(struct target *target,
 				   vcpu_guest_context_t *context) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
 
-    if (!xstate->hvm) {
+    if (!xstate->hvm || xspec->no_hvm_setcontext) {
 	if (xc_vcpu_setcontext(xc_handle,xstate->id,
 			       xstate->dominfo.max_vcpu_id,context) < 0) {
 	    verror("could not set vcpu context for dom %d\n",xstate->id);
