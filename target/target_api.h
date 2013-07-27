@@ -580,6 +580,12 @@ unsigned char *target_read_addr(struct target *target,ADDR addr,
 unsigned long target_write_addr(struct target *target,ADDR addr,
 				unsigned long length,unsigned char *buf);
 
+int target_addr_v2p(struct target *target,tid_t tid,ADDR vaddr,ADDR *paddr);
+unsigned char *target_read_physaddr(struct target *target,ADDR paddr,
+				    unsigned long length,unsigned char *buf);
+unsigned long target_write_physaddr(struct target *target,ADDR paddr,
+				    unsigned long length,unsigned char *buf);
+
 /*
  * Returns a string representation for the DWARF register number on this
  * particular target type.  Will (likely) differ between targets/archs.
@@ -1497,6 +1503,16 @@ struct target_thread {
     struct array_list *tpc_stack;
 
     /*
+     * If this target supports an underlying physical address space, and
+     * that address space can be shared amongst the target's threads, we
+     * might place breakpoints in shared pages.  So -- if we hit a
+     * breakpoint at such a page in a thread that is not registered on
+     * the breakpoint, we have to emulate the breakpoint's behavior.  See
+     * target_memmod_emulate_bp_handler() and target_memmod_ss_handler().
+     */
+    struct target_memmod *emulating_debug_mmod;
+
+    /*
      * Any single step actions that are executing in this thread.  We
      * might have more than one at a single probepoint, or we might have
      * accumulated one or more from previous probepoints that are still
@@ -1954,6 +1970,25 @@ struct target_ops {
     /* write some memory */
     unsigned long (*write)(struct target *target,ADDR addr,
 			   unsigned long length,unsigned char *buf);
+
+    /*
+     * Some targets might support threads that have their own virtual
+     * address spaces, but an underlying system (like the kernel) might
+     * share phys memory amongst separate thread virtual address
+     * spaces.
+     *
+     * (The Xen target uses this to provide shared-page breakpoint
+     * support to Xen Process overlay targets.)
+     */
+
+    int (*addr_v2p)(struct target *target,tid_t tid,ADDR vaddr,ADDR *paddr);
+
+    /* read some phys memory, potentially into a supplied buffer. */
+    unsigned char *(*read_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
+    /* write some phys memory */
+    unsigned long (*write_phys)(struct target *target,ADDR paddr,
+				unsigned long length,unsigned char *buf);
 
     /* Get target-specific register name. */
     char *(*regname)(struct target *target,REG reg);

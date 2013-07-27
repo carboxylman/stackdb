@@ -171,6 +171,9 @@ struct xen_vm_thread_state {
     /*
      * NB: pgd (cr3) is a little funny.  If the target is PAE, it might
      * be > 2**32.  So, this value has to always be a u64.
+     *
+     * Also note: this value is always a kernel virtual address; so use
+     * __xen_vm_cr3 to read this value as a physical address.
      */
     uint64_t pgd;
 
@@ -299,6 +302,8 @@ struct xen_vm_state {
     xc_dominfo_t dominfo;
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
+
+    GHashTable *cr3_to_tid;
 
 #ifdef __x86_64__
     uint8_t *hvm_context_buf;

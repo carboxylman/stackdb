@@ -101,6 +101,19 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf);
 static unsigned long xen_vm_write(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf);
+/*
+ * NB: initially, we will use VM phys addrs here.  We could have also
+ * used Xen machine addrs; but for now, given the current
+ * xenaccess/libvmi code, using VM phys addrs is easiest.  Later on,
+ * machine addrs will probably be *faster*.  The risk with that approach
+ * is if the VM pfn/mfn mapping ever changes out from under us.
+ */
+static int xen_vm_addr_v2p(struct target *target,tid_t tid,
+			   ADDR vaddr,ADDR *paddr);
+static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
+				       unsigned long length,unsigned char *buf);
+static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
+				       unsigned long length,unsigned char *buf);
 static char *xen_vm_reg_name(struct target *target,REG reg);
 static REG xen_vm_dwregno_targetname(struct target *target,char *name);
 static REG xen_vm_dw_reg_no(struct target *target,common_reg_t reg);
@@ -152,6 +165,7 @@ int xen_vm_disable_feature(struct target *target,int feature);
 int xen_vm_instr_can_switch_context(struct target *target,ADDR addr);
 
 /* Internal prototypes. */
+static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3);
 static int xen_vm_invalidate_all_threads(struct target *target);
 static result_t xen_vm_active_memory_handler(struct probe *probe,
 					     void *handler_data,
@@ -225,6 +239,9 @@ struct target_ops xen_vm_ops = {
     .poll = xen_vm_poll,
     .read = xen_vm_read,
     .write = xen_vm_write,
+    .addr_v2p = xen_vm_addr_v2p,
+    .read_phys = xen_vm_read_phys,
+    .write_phys = xen_vm_write_phys,
     .regname = xen_vm_reg_name,
     .dwregno_targetname = xen_vm_dwregno_targetname,
     .dwregno = xen_vm_dw_reg_no,
@@ -853,6 +870,9 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	target->evloop = evloop;
     }
 
+    xstate->cr3_to_tid = 
+	g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
     vdebug(5,LA_TARGET,LF_XV,"opened dom %d\n",xstate->id);
 
     return target;
@@ -864,6 +884,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	}
 	free(domains);
     }
+    if (xstate->cr3_to_tid) 
+	g_hash_table_destroy(xstate->cr3_to_tid);
     if (xstate->vmpath)
 	free(xstate->vmpath);
     if (xstate->ostype)
@@ -1180,15 +1202,31 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 
     if (tstate->mm_addr) {
 	v = target_load_value_member(target,taskv,"mm.pgd",NULL,
-				     LOAD_FLAG_AUTO_DEREF);
+				     LOAD_FLAG_NONE);
 	if (!v) {
-	    verror("could not load thread %"PRIiTID" pgd (for cr3 tracking)\n",
+	    verror("could not load thread %"PRIiTID" (mm) pgd (for cr3 tracking)\n",
 		   tid);
 	    goto errout;
 	}
-	tstate->pgd = v_u64(v);
+	/* Load a unum, so we get the right number of bytes read. */
+	tstate->pgd = (uint64_t)v_unum(v);
 	value_free(v);
 	v = NULL;
+
+	/* If pgd was NULL, try task_struct.active_mm.pgd */
+	if (tstate->pgd == 0) {
+	    v = target_load_value_member(target,taskv,"active_mm.pgd",NULL,
+					 LOAD_FLAG_NONE);
+	    if (!v) {
+		vwarn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
+		      tid);
+		goto errout;
+	    }
+	    /* Load a unum, so we get the right number of bytes read. */
+	    tstate->pgd = (uint64_t)v_unum(v);
+	    value_free(v);
+	    v = NULL;
+	}
     }
 
     /*
@@ -2281,6 +2319,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     uint64_t pgd = 0;
     REGVAL kernel_esp = 0;
     char *comm = NULL;
+    ADDR cr3 = 0;
 
     /*
      * If the global thread has been loaded, and that's all the caller
@@ -2346,6 +2385,15 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	vwarn("could not read EIP for user-mode check; continuing anyway.\n");
 	errno = 0;
     }
+
+    /*
+     * Load CR3 for debug purposes.
+     */
+    __xen_vm_cr3(target,TID_GLOBAL,&cr3);
+
+    vdebug(9,LA_TARGET,LF_XV,
+	   "loading current thread (ip = 0x%"PRIxADDR",cr3 = 0x%"PRIxADDR")\n",
+	   ipval,cr3);
 
     /*
      * If only loading the global thread, stop here.
@@ -2518,15 +2566,31 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 
 	if (mm_addr) {
 	    v = target_load_value_member(target,taskv,"mm.pgd",NULL,
-					 LOAD_FLAG_AUTO_DEREF);
+					 LOAD_FLAG_NONE);
 	    if (!v) {
 		verror("could not load thread %"PRIiTID" pgd (for cr3 tracking)\n",
 		       tid);
 		goto errout;
 	    }
-	    pgd = v_u64(v);
+	    /* Load a unum, so we get the right number of bytes read. */
+	    pgd = (uint64_t)v_unum(v);
 	    value_free(v);
 	    v = NULL;
+
+	    /* If pgd was NULL, try task_struct.active_mm.pgd */
+	    if (pgd == 0) {
+		v = target_load_value_member(target,taskv,"active_mm.pgd",NULL,
+					     LOAD_FLAG_NONE);
+		if (!v) {
+		    warn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
+			 tid);
+		    goto errout;
+		}
+		/* Load a unum, so we get the right number of bytes read. */
+		pgd = (uint64_t)v_unum(v);
+		value_free(v);
+		v = NULL;
+	    }
 	}
     }
 
@@ -4914,7 +4978,7 @@ static int __value_load_thread(struct target *target,struct value *value,
 	char buf[512];
 	target_thread_tostring(target,tthread->tid,1,buf,sizeof(buf));
 	vdebug(8,LA_TARGET,LF_XV,
-	       "loaded tid %d:%s (%s)\n",tthread->tid,tthread->name,buf);
+	       "loaded \ntid %d:%s (%s)\n",tthread->tid,tthread->name,buf);
     }
 
     if (load_counter)
@@ -5883,6 +5947,10 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     ADDR bogus_sstep_probepoint_addr;
     struct target *overlay;
     GHashTableIter iter;
+    struct target_memmod *pmmod;
+    ADDR paddr;
+    REGVAL tmp_ipval;
+    int rc;
 
 #ifdef ENABLE_XENACCESS
     /* From previous */
@@ -6047,12 +6115,39 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		   xstate->hvm_monitor_trap_flag_set);
 
 	    /*
-	     * Two cases: either we single-stepped an instruction that
-	     * could have taken us to a userspace EIP, or somehow the
-	     * kernel jumped to one!  Either way, if we had been
-	     * expecting this, try to handle it.
+	     * Three cases: 
+	     * 1) We had to emulate a breakpoint/singlestep for a shared
+	     * page breakpoint; or
+	     * 2) we single-stepped an instruction that could have taken
+	     * us to a userspace EIP; or  
+	     * 3) somehow the kernel jumped to one!
 	     */
-	    if (target->sstep_thread 
+	    if (tthread->emulating_debug_mmod
+		     && ipval < xstate->kernel_start_addr) {
+		/* This is a shared-page singlestep. */
+		tmp_ipval = ipval - target->breakpoint_instrs_len;
+
+		vdebug(5,LA_TARGET,LF_XV,
+		       "emulating debug memmod at ss for tid %"PRIiTID
+		       " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
+		       tid,tthread->emulating_debug_mmod->addr,tmp_ipval);
+
+		target_memmod_emulate_ss_handler(target,tid,
+						 tthread->emulating_debug_mmod);
+
+		/* Clear the status bits right now. */
+		/*
+		xtstate->context.debugreg[6] = 0;
+		tthread->dirty = 1;
+
+		gtstate->context.debugreg[6] = 0;
+		target->global_thread->dirty = 1;
+		vdebug(5,LA_TARGET,LF_XV,"cleared status debug reg 6\n");
+		*/
+
+		goto out_ss_again;
+	    }
+	    else if (target->sstep_thread 
 		&& ((target->sstep_thread->tpc
 		     && target->sstep_thread->tpc->probepoint->can_switch_context)
 		    || (ipval < xstate->kernel_start_addr
@@ -6287,12 +6382,61 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		    return target_notify_overlay(overlay,tid,ipval,again);
 		}
 		else {
-		    verror("user-mode debug event (not single step, not hw dbg reg)"
-			   " at 0x%"PRIxADDR"; debug status reg 0x%"DRF"; eflags"
-			   " 0x%"RF"; skipping handling!\n",
-			   ipval,xtstate->context.debugreg[6],
-			   xtstate->context.user_regs.eflags);
-		    goto out_err_again;
+		    /*
+		     * Try to lookup paddr for ipval; if it matches and
+		     * hits as a memmod... then emulate a breakpoint.
+		     *
+		     * To do this, we must mark this kthread as
+		     * emulating a breakpoint at a memmod; flip the
+		     * memmod; then catch its  singlestep above; and
+		     * flip the memmod back.
+		     */
+
+		    /* XXX: this is bad.  We use the base target's
+		     * breakpoint_instr_len to try to detect an overlay!
+		     * It's ok for Xen and the Xen-process overlay, but
+		     * it's a definite abstraction breakdown.
+		     */
+		    tmp_ipval = ipval - target->breakpoint_instrs_len;
+		    rc = xen_vm_addr_v2p(target,TID_GLOBAL,tmp_ipval,&paddr);
+		    if (!rc)
+			pmmod = target_memmod_lookup(target,TID_GLOBAL,paddr,1);
+		    if (!rc && pmmod) {
+			/*
+			 * Emulate it!
+			 */
+			vdebug(5,LA_TARGET,LF_XV,
+			       "emulating debug memmod at bp for tid %"PRIiTID
+			       " at paddr 0x%"PRIxADDR" (vaddr 0x%"PRIxADDR")\n",
+			       tid,pmmod->addr,tmp_ipval);
+			       
+			if (target_memmod_emulate_bp_handler(target,tid,pmmod)) {
+			    verror("could not emulate debug memmod for"
+				   " tid %"PRIiTID" at paddr 0x%"PRIxADDR"\n",
+				   tid,pmmod->addr);
+			    goto out_err_again;
+			}
+			else {
+			    /* Clear the status bits right now. */
+			    xtstate->context.debugreg[6] = 0;
+			    tthread->dirty = 1;
+
+			    gtstate->context.debugreg[6] = 0;
+			    target->global_thread->dirty = 1;
+			    vdebug(5,LA_TARGET,LF_XV,
+				   "cleared status debug reg 6\n");
+
+			    goto out_bp_again;
+			}
+		    }
+		    else {
+			verror("user-mode debug event (not single step, not"
+			       " hw dbg reg) at 0x%"PRIxADDR"; debug status reg"
+			       " 0x%"DRF"; eflags 0x%"RF"; skipping handling!\n",
+			       ipval,xtstate->context.debugreg[6],
+			       xtstate->context.user_regs.eflags);
+			goto out_err_again;
+		    }
 		}
 	    }
 	    else {
@@ -6700,6 +6844,207 @@ static unsigned char *xen_vm_read(struct target *target,ADDR addr,
 static unsigned long xen_vm_write(struct target *target,ADDR addr,
 				  unsigned long length,unsigned char *buf) {
     return xen_vm_write_pid(target,0,addr,length,buf);
+}
+
+/*
+ * We have to either load cr3 from vcpu context (for a running task), or
+ * from the task struct (for a swapped out task).
+ *
+ * NB: @cr3 will be a physical address, not a kernel virtual address.
+ * The mm_struct contains a virtual address; but the CR3 register of
+ * course contains a physical one.
+ */
+static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
+    struct xen_vm_state *xstate;
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *xtstate;
+    uint64_t tcr3;
+
+    xstate = (struct xen_vm_state *)target->state;
+
+    if (tid == TID_GLOBAL) {
+	tthread = __xen_vm_load_current_thread(target,0,1);
+	if (!tthread) {
+	    verror("could not load global thread!\n");
+	    return -1;
+	}
+	xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+	if (xtstate->context.vm_assist & (1 << VMASST_TYPE_pae_extended_cr3)) {
+	    *cr3 = ((uint64_t)xen_cr3_to_pfn(xtstate->context.ctrlreg[3])) \
+		       << XC_PAGE_SHIFT;
+	}
+	else {
+	    *cr3 = xtstate->context.ctrlreg[3] & ~(PAGE_SIZE - 1);
+	}
+    }
+    else {
+	tthread = xen_vm_load_thread(target,tid,0);
+	if (!tthread) {
+	    verror("could not load tid %"PRIiTID"!\n",tid);
+	    return -1;
+	}
+	xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+	if (target->wordsize == 8) {
+	    if (xtstate->pgd >= xstate->kernel_start_addr)
+		*cr3 = xtstate->pgd - xstate->kernel_start_addr;
+	    else
+		*cr3 = xtstate->pgd - 0xffff810000000000UL;
+	}
+	else {
+	    *cr3 = xtstate->pgd - xstate->kernel_start_addr;
+	}
+	/*
+	if (xen_vm_addr_v2p(target,TID_GLOBAL,xtstate->pgd,&cr3)) {
+	    verror("could not translate tid %"PRIiTID" pgd vaddr 0x%"PRIxADDR
+		   " to paddr using kernel CR3: %s!\n",
+		   tid,xtstate->pgd,strerror(errno));
+	    return -1;
+	}
+	*/
+    }
+
+    vdebug(12,LA_TARGET,LF_XV,
+	   "tid %"PRIiTID" cr3/pgd (phys) = 0x%"PRIx64"\n",tid,*cr3);
+
+    return 0;
+}
+
+static int xen_vm_addr_v2p(struct target *target,tid_t tid,
+			   ADDR vaddr,ADDR *paddr) {
+    struct xen_vm_state *xstate;
+    uint64_t cr3 = 0;
+    uint64_t tvaddr = 0;
+    uint64_t tpaddr = 0;
+
+    xstate = (struct xen_vm_state *)target->state;
+
+    if (__xen_vm_cr3(target,tid,&cr3)) {
+	verror("could not read cr3 for tid %"PRIiTID"!\n");
+	return -1;
+    }
+
+    /*
+     * Strip the offset bits to improve libvmi/xenaccess cache perf.
+     */
+    tvaddr = vaddr & ~(PAGE_SIZE - 1);
+
+#ifdef ENABLE_LIBVMI
+    tpaddr = vmi_pagetable_lookup(xstate->vmi_instance,cr3,tvaddr);
+#endif
+#ifdef ENABLE_XENACCESS
+#if __WORDSIZE == 64
+    verror("no XenAccess support for 64-bit host!\n");
+    errno = ENOTSUP;
+    return -1;
+#else
+    tpaddr = xa_pagetable_lookup(xstate->xa_instance,cr3,tvaddr);
+#endif
+#endif
+
+    if (tpaddr == 0) {
+	verror("could not lookup vaddr 0x%"PRIxADDR" in tid %"PRIiTID"!\n",
+	       vaddr,tid);
+	return -1;
+    }
+
+    *paddr = tpaddr | (vaddr & (PAGE_SIZE - 1));
+
+    vdebug(12,LA_TARGET,LF_XV,
+	   "tid %"PRIiTID" vaddr 0x%"PRIxADDR" -> paddr 0x%"PRIxADDR"\n",
+	   tid,vaddr,*paddr);
+
+    return 0;
+}
+
+static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
+				       unsigned long length,unsigned char *buf) {
+    struct xen_vm_state *xstate;
+    unsigned char *retval = NULL;
+    unsigned long npages;
+    unsigned long page_offset = paddr & (PAGE_SIZE - 1);
+    unsigned long cur;
+    unsigned char *mmap;
+    unsigned long rc;
+
+    xstate = (struct xen_vm_state *)target->state;
+
+    npages = (page_offset + length) / PAGE_SIZE;
+    if ((page_offset + length) % PAGE_SIZE)
+	++npages;
+
+    if (!buf)
+	retval = (unsigned char *)malloc(length+1);
+    else 
+	retval = buf;
+
+#ifdef ENABLE_XENACCESS
+    /* Have to mmap them one by one. */
+    cur = paddr & ~(PAGE_SIZE - 1);
+    rc = 0;
+    for (i = 0; i < npages; ++i) {
+	mmap = xa_access_pa(xstate->xa_instance,cur,PROT_READ);
+	if (!mmap) {
+	    verror("failed to mmap paddr 0x%"PRIxADDR" (for write to"
+		   " 0x%"PRIxADDR"): %s!\n",
+		   cur,paddr,strerror(errno));
+	    goto errout;
+	}
+	if (i == 0) {
+	    memcpy(retval+rc,mmap + page_offset,PAGE_SIZE - page_offset);
+	    rc = PAGE_SIZE - page_offset;
+	}
+	else if (i == (npages + 1)) {
+	    memcpy(retval + rc,mmap,(length - rc));
+	    rc += length - rc;
+	}
+	else {
+	    memcpy(retval + rc,mmap,PAGE_SIZE);
+	    rc += PAGE_SIZE;
+	}
+	munmap(mmap,PAGE_SIZE);
+	cur += PAGE_SIZE;
+    }
+#endif
+#ifdef ENABLE_LIBVMI
+    if (vmi_read_pa(xstate->vmi_instance,paddr,retval,length) != length) {
+	verror("could not read %lu bytes at paddr 0x%"PRIxADDR": %s!\n",
+	       length,paddr,strerror(errno));
+	goto errout;
+    }
+#endif
+
+    return retval;
+
+ errout:
+    if (!buf && retval)
+	free(retval);
+    if (!errno)
+	errno = EFAULT;
+    return NULL;
+}
+
+static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
+				       unsigned long length,unsigned char *buf) {
+    struct xen_vm_state *xstate;
+
+    xstate = (struct xen_vm_state *)target->state;
+
+#ifdef ENABLE_LIBVMI
+    if (vmi_write_pa(xstate->vmi_instance,paddr,buf,length) != length) {
+	verror("could not write %lu bytes at paddr 0x%"PRIxADDR": %s!\n",
+	       length,paddr,strerror(errno));
+	goto errout;
+    }
+#endif
+
+    return length;
+
+ errout:
+    if (!errno)
+	errno = EFAULT;
+    return 0;
 }
 
 #ifdef ENABLE_XENACCESS

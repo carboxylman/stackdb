@@ -3287,8 +3287,143 @@ int target_detach_action(struct target *target,struct action *action) {
     return 0;
 }
 
+result_t target_memmod_emulate_bp_handler(struct target *target,tid_t tid,
+					  struct target_memmod *mmod) {
+    struct target_thread *tthread;
+    REGVAL ipval;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return RESULT_ERROR;
+    }
+
+    if (tthread->emulating_debug_mmod) {
+	verror("tid %"PRIiTID" already is emulating a memmod"
+	       " at 0x%"PRIxADDR"; cannot do another one!\n",
+	       tid,tthread->emulating_debug_mmod->addr);
+	errno = EBUSY;
+	return RESULT_ERROR;
+    }
+
+    tthread->emulating_debug_mmod = mmod;
+
+    /*
+     * If we're in BPMODE_STRICT, we have to pause all the other
+     * threads.
+     */
+    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
+	if (target_pause(target)) {
+	    vwarn("could not pause the target for blocking thread"
+		  " %"PRIiTID"!\n",tthread->tid);
+	    return RESULT_ERROR;
+	}
+	target->blocking_thread = tthread;
+    }
+
+    errno = 0;
+    ipval = target_read_reg(target,tid,target->ipregno);
+    if (!ipval && errno) {
+	verror("could not read IP in tid %"PRIiTID"!\n",tid);
+	return RESULT_ERROR;
+    }
+
+    /* Disable the memmod. */
+    if (target_memmod_unset(target,tid,mmod)) {
+	verror("could not disable breakpoint before singlestep;"
+	       " assuming breakpoint is left in place and"
+	       " skipping single step, but badness will ensue!");
+	goto errout;
+    }
+
+    /* Enable singlestep. */
+    if (target_singlestep(target,tid,1)) {
+	verror("could not singlestep tid %"PRIiTID"!\n",tid);
+	goto errout;
+    }
+
+    /* Reset ip. */
+    ipval -= target->breakpoint_instrs_len; //target_memmod_length(target,mmod);
+    if (target_write_reg(target,tid,target->ipregno,ipval)) {
+	verror("could not write IP!\n");
+	goto errout;
+    }
+
+    /* Temporarily add this thread to the mmod. */
+    array_list_append(mmod->threads,tthread);
+
+    return RESULT_SUCCESS;
+
+ errout:
+    target_singlestep_end(target,tid);
+    if (target->blocking_thread == tthread)
+	target->blocking_thread = NULL;
+    tthread->emulating_debug_mmod = NULL;
+
+    return RESULT_ERROR;
+}
+
+result_t target_memmod_emulate_ss_handler(struct target *target,tid_t tid,
+					  struct target_memmod *mmod) {
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return RESULT_ERROR;
+    }
+
+    if (tthread->emulating_debug_mmod 
+	&& tthread->emulating_debug_mmod != mmod) {
+	verror("tid %"PRIiTID" already is emulating a memmod"
+	       " at 0x%"PRIxADDR"; cannot do another one!\n",
+	       tid,tthread->emulating_debug_mmod->addr);
+	errno = EBUSY;
+	return RESULT_ERROR;
+    }
+    else if (!tthread->emulating_debug_mmod)
+	vwarn("not set to emulate a debug mmod; trying anyway!\n");
+
+    /* Disable singlestep. */
+    target_singlestep_end(target,tid);
+
+    /* Reenable the memmod. */
+    target_memmod_set(target,tid,mmod);
+
+    /* Remove this thread from the memmod's list. */
+    array_list_remove_item(mmod->threads,tthread);
+
+    if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
+	if (target->blocking_thread == tthread)
+	    target->blocking_thread = NULL;
+    }
+
+    if (tthread->emulating_debug_mmod == mmod)
+	tthread->emulating_debug_mmod = NULL;
+
+    return RESULT_SUCCESS;
+}
+
+unsigned long target_memmod_length(struct target *target,
+				   struct target_memmod *mmod) {
+    switch (mmod->state) {
+    case MMS_SUBST:
+	return mmod->mod_len;
+    case MMS_ORIG:
+	return 0;
+    case MMS_TMP:
+	return mmod->tmp_len;
+    default:
+	verror("unknown memmod state %d!\n",mmod->state);
+	errno = EINVAL;
+	return 0;
+    }
+}
+
 struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
-					   ADDR addr,ADDR paddr,
+					   ADDR addr,int is_phys,
 					   target_memmod_type_t mmt,
 					   unsigned char *code,
 					   unsigned int code_len) {
@@ -3297,6 +3432,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     unsigned int ibuf_len;
     unsigned int rc;
     struct target_thread *tthread;
+    unsigned char *rcc;
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -3311,7 +3447,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     mmod->target = target;
     mmod->threads = array_list_create(1);
     mmod->addr = addr;
-    mmod->paddr = paddr;
+    mmod->is_phys = is_phys;
 
     /*
      * Backup the original memory.  If debugging, read at least
@@ -3325,7 +3461,12 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 	ibuf_len = 8;
     ibuf = calloc(1,ibuf_len);
 
-    if (!target_read_addr(target,addr,ibuf_len,ibuf)) {
+    if (is_phys) 
+	rcc = target_read_physaddr(target,addr,ibuf_len,ibuf);
+    else
+	rcc = target_read_addr(target,addr,ibuf_len,ibuf);
+
+    if (!rcc) {
 	array_list_free(mmod->threads);
 	free(ibuf);
 	free(mmod);
@@ -3343,7 +3484,11 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
     mmod->mod_len = code_len;
     memcpy(mmod->mod,code,mmod->mod_len);
 
-    rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+    if (is_phys)
+	rc = target_write_physaddr(target,addr,mmod->mod_len,mmod->mod);
+    else
+	rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+
     if (rc != mmod->mod_len) {
 	array_list_free(mmod->threads);
 	free(mmod->mod);
@@ -3354,18 +3499,18 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 	return NULL;
     }
 
-    if (paddr)
-	g_hash_table_insert(target->phys_mmods,(gpointer)paddr,mmod);
+    if (is_phys)
+	g_hash_table_insert(target->phys_mmods,(gpointer)addr,mmod);
     else
 	g_hash_table_insert(target->mmods,(gpointer)addr,mmod);
 
     array_list_append(mmod->threads,tthread);
 
     vdebug(5,LA_TARGET,LF_TARGET,
-	   "created memmod at 0x%"PRIxADDR" (p 0x%"PRIxADDR") tid %"PRIiTID";"
+	   "created memmod at 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID";"
 	   " inserted new bytes (orig mem: %02hhx %02hhx %02hhx %02hhx"
 	   " %02hhx %02hhx %02hhx %02hhx)\n",
-	   mmod->addr,mmod->paddr,tid,
+	   mmod->addr,is_phys,tid,
 	   (int)ibuf[0],(int)ibuf[1],(int)ibuf[2],(int)ibuf[3],
 	   (int)ibuf[4],(int)ibuf[5],(int)ibuf[6],(int)ibuf[7]);
 
@@ -3375,7 +3520,7 @@ struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
 }
 
 struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
-					   ADDR addr) {
+					   ADDR addr,int is_phys) {
     struct target_memmod *mmod;
     struct target_thread *tthread;
 
@@ -3387,29 +3532,23 @@ struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
     }
 
     /*
-     * Eventually, this hashtable will be per-thread; for now, just
-     * global.
+     * Eventually, the virt ->mmods hashtable will be per-thread.
      */
-    mmod = (struct target_memmod *) \
-	g_hash_table_lookup(target->mmods,(gpointer)addr);
+    if (is_phys) 
+	mmod = (struct target_memmod *) \
+	    g_hash_table_lookup(target->phys_mmods,(gpointer)addr);
+    else
+	mmod = (struct target_memmod *) \
+	    g_hash_table_lookup(target->mmods,(gpointer)addr);
 
-    return mmod;
-}
-
-struct target_memmod *target_memmod_lookup_paddr(struct target *target,tid_t tid,
-						 ADDR paddr) {
-    struct target_memmod *mmod;
-    struct target_thread *tthread;
-
-    tthread = target_lookup_thread(target,tid);
-    if (!tthread) {
-	verror("tid %"PRIiTID" does not exist!\n",tid);
-	errno = ESRCH;
-	return NULL;
-    }
-
-    mmod = (struct target_memmod *) \
-	g_hash_table_lookup(target->phys_mmods,(gpointer)paddr);
+    if (mmod) 
+	vdebug(16,LA_TARGET,LF_TARGET,
+	       "found mmod 0x%"PRIxADDR" (phys=%d)\n",
+	       mmod->addr,mmod->is_phys);
+    else 
+	vwarnopt(16,LA_TARGET,LF_TARGET,
+		 "did not find mmod for 0x%"PRIxADDR" (is_phys=%d)!\n",
+		 addr,is_phys);
 
     return mmod;
 }
@@ -3439,8 +3578,8 @@ int target_memmod_release(struct target *target,tid_t tid,
     }
 
     vdebug(5,LA_TARGET,LF_TARGET,
-	   "released memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR") tid %"PRIiTID"\n",
-	   mmod->addr,mmod->paddr,tid);
+	   "released memmod 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID"\n",
+	   mmod->addr,mmod->is_phys,tid);
 
     /* If this is the last thread using it, be done now! */
     if (array_list_len(mmod->threads) == 0) {
@@ -3455,20 +3594,30 @@ int target_memmod_free(struct target *target,tid_t tid,
     unsigned int rc;
     int retval;
     ADDR addr;
+    unsigned long (*writer)(struct target *target,ADDR paddr,
+			    unsigned long length,unsigned char *buf);
+
+    if (mmod->is_phys)
+	writer = target_write_physaddr;
+    else
+	writer = target_write_addr;
 
     retval = 0;
     addr = mmod->addr;
 
     /* If this is the last thread using it, be done now! */
     if (force || array_list_len(mmod->threads) == 0) {
-	g_hash_table_remove(target->mmods,(gpointer)addr);
+	if (mmod->is_phys)
+	    g_hash_table_remove(target->phys_mmods,(gpointer)addr);
+	else
+	    g_hash_table_remove(target->mmods,(gpointer)addr);
 
 	if (mmod->tmp)
 	    free(mmod->tmp);
 	if (mmod->mod)
 	    free(mmod->mod);
 
-	rc = target_write_addr(target,addr,mmod->orig_len,mmod->orig);
+	rc = writer(target,addr,mmod->orig_len,mmod->orig);
 	if (rc != mmod->orig_len) {
 	    verror("could not restore orig memory at 0x%"PRIxADDR";"
 		   " but cannot do anything!\n",addr);
@@ -3476,8 +3625,8 @@ int target_memmod_free(struct target *target,tid_t tid,
 	}
 
 	vdebug(5,LA_TARGET,LF_TARGET,
-	       "released memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR") tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       "released memmod 0x%"PRIxADDR" (is_phys=%d) tid %"PRIiTID"\n",
+	       mmod->addr,mmod->is_phys,tid);
 
 	array_list_free(mmod->threads);
 	free(mmod->orig);
@@ -3492,6 +3641,13 @@ int target_memmod_set(struct target *target,tid_t tid,
     ADDR addr;
     struct target_thread *tthread;
     unsigned int rc;
+    unsigned long (*writer)(struct target *target,ADDR paddr,
+			    unsigned long length,unsigned char *buf);
+
+    if (mmod->is_phys)
+	writer = target_write_physaddr;
+    else
+	writer = target_write_addr;
 
     /*
      * Default implementation: enable it if necessary; swap mod bytes
@@ -3512,22 +3668,22 @@ int target_memmod_set(struct target *target,tid_t tid,
     switch (mmod->state) {
     case MMS_SUBST:
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was already) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was already) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	mmod->owner = NULL;
 	return 0;
     case MMS_ORIG:
-	rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+	rc = writer(target,addr,mmod->mod_len,mmod->mod);
 	if (rc != mmod->mod_len) {
 	    verror("could not insert subst memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
 	}
 	mmod->state = MMS_SUBST;
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was orig) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was orig) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	mmod->owner = NULL;
 	return 0;
     case MMS_TMP:
@@ -3536,16 +3692,16 @@ int target_memmod_set(struct target *target,tid_t tid,
 	    mmod->tmp = NULL;
 	    mmod->tmp_len = 0;
 	}
-	rc = target_write_addr(target,addr,mmod->mod_len,mmod->mod);
+	rc = writer(target,addr,mmod->mod_len,mmod->mod);
 	if (rc != mmod->mod_len) {
 	    verror("could not insert subst memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
 	}
 	mmod->state = MMS_SUBST;
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was tmp) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was tmp) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	mmod->owner = NULL;
 	return 0;
     default:
@@ -3560,6 +3716,13 @@ int target_memmod_unset(struct target *target,tid_t tid,
     ADDR addr;
     struct target_thread *tthread;
     unsigned int rc;
+    unsigned long (*writer)(struct target *target,ADDR paddr,
+			    unsigned long length,unsigned char *buf);
+
+    if (mmod->is_phys)
+	writer = target_write_physaddr;
+    else
+	writer = target_write_addr;
 
     if (target->ops->disable_sw_breakpoint)
 	return target->ops->disable_sw_breakpoint(target,tid,mmod);
@@ -3583,22 +3746,22 @@ int target_memmod_unset(struct target *target,tid_t tid,
     switch (mmod->state) {
     case MMS_ORIG:
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was already) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was already) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	mmod->owner = tthread;
 	return 0;
     case MMS_SUBST:
-	rc = target_write_addr(target,addr,mmod->orig_len,mmod->orig);
+	rc = writer(target,addr,mmod->orig_len,mmod->orig);
 	if (rc != mmod->orig_len) {
 	    verror("could not restore orig memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
 	}
 	mmod->state = MMS_ORIG;
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was set) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was set) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	mmod->owner = tthread;
 	return 0;
     case MMS_TMP:
@@ -3607,7 +3770,7 @@ int target_memmod_unset(struct target *target,tid_t tid,
 	    mmod->tmp = NULL;
 	    mmod->tmp_len = 0;
 	}
-	rc = target_write_addr(target,addr,mmod->orig_len,mmod->orig);
+	rc = writer(target,addr,mmod->orig_len,mmod->orig);
 	if (rc != mmod->orig_len) {
 	    verror("could not restore orig memory at 0x%"PRIxADDR"!\n",addr);
 	    return -1;
@@ -3630,6 +3793,13 @@ int target_memmod_set_tmp(struct target *target,tid_t tid,
     unsigned int rc;
     unsigned char *new;
     unsigned int new_len;
+    unsigned long (*writer)(struct target *target,ADDR paddr,
+			    unsigned long length,unsigned char *buf);
+
+    if (mmod->is_phys)
+	writer = target_write_physaddr;
+    else
+	writer = target_write_addr;
 
     /*
      * Default implementation: swap custom bytes into tmp, no matter
@@ -3681,9 +3851,9 @@ int target_memmod_set_tmp(struct target *target,tid_t tid,
 	free(mmod->tmp);
 	mmod->tmp_len = 0;
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was tmp) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was tmp) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	break;
     case MMS_SUBST:
 	if (code_len < mmod->mod_len) {
@@ -3697,18 +3867,18 @@ int target_memmod_set_tmp(struct target *target,tid_t tid,
 	    memcpy(new,code,code_len);
 	}
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was set) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was set) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	break;
     case MMS_ORIG:
 	new = malloc(code_len);
 	new_len = code_len;
 	memcpy(new,code,code_len);
 	vdebug(8,LA_TARGET,LF_TARGET,
-	       "(was orig) memmod 0x%"PRIxADDR" (p 0x%"PRIxADDR")"
+	       "(was orig) memmod 0x%"PRIxADDR" (is_phys=%d)"
 	       " tid %"PRIiTID"\n",
-	       mmod->addr,mmod->paddr,tid);
+	       mmod->addr,mmod->is_phys,tid);
 	break;
     default:
 	verror("unknown memmod state %d!\n",mmod->state);
@@ -3716,7 +3886,7 @@ int target_memmod_set_tmp(struct target *target,tid_t tid,
 	return -1;
     }
 
-    rc = target_write_addr(target,addr,new_len,new);
+    rc = writer(target,addr,new_len,new);
     if (rc != new_len) {
 	verror("could not write tmp memory at 0x%"PRIxADDR"!\n",addr);
 	free(new);

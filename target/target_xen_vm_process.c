@@ -91,6 +91,19 @@ static REGVAL xen_vm_process_read_reg(struct target *target,tid_t tid,REG reg);
 static int xen_vm_process_write_reg(struct target *target,tid_t tid,REG reg,
 				    REGVAL value);
 static GHashTable *xen_vm_process_copy_registers(struct target *target,tid_t tid);
+static struct target_memmod *
+xen_vm_process_insert_sw_breakpoint(struct target *target,
+				    tid_t tid,ADDR addr);
+static int xen_vm_process_remove_sw_breakpoint(struct target *target,tid_t tid,
+					       struct target_memmod *mmod);
+static int xen_vm_process_enable_sw_breakpoint(struct target *target,tid_t tid,
+					       struct target_memmod *mmod);
+static int xen_vm_process_disable_sw_breakpoint(struct target *target,tid_t tid,
+						struct target_memmod *mmod);
+static int xen_vm_process_change_sw_breakpoint(struct target *target,tid_t tid,
+					       struct target_memmod *mmod,
+					       unsigned char *code,
+					       unsigned long code_len);
 static REG xen_vm_process_get_unused_debug_reg(struct target *target,tid_t tid);
 static int xen_vm_process_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG num,ADDR addr);
@@ -167,6 +180,11 @@ struct target_ops xen_vm_process_ops = {
     .readreg = xen_vm_process_read_reg,
     .writereg = xen_vm_process_write_reg,
     .copy_registers = xen_vm_process_copy_registers,
+    .insert_sw_breakpoint = xen_vm_process_insert_sw_breakpoint,
+    .remove_sw_breakpoint = xen_vm_process_remove_sw_breakpoint,
+    .enable_sw_breakpoint = xen_vm_process_enable_sw_breakpoint,
+    .disable_sw_breakpoint = xen_vm_process_disable_sw_breakpoint,
+    .change_sw_breakpoint = xen_vm_process_change_sw_breakpoint,
     .get_unused_debug_reg = xen_vm_process_get_unused_debug_reg,
     //.set_hw_breakpoint = xen_vm_process_set_hw_breakpoint,
     //.set_hw_watchpoint = xen_vm_process_set_hw_watchpoint,
@@ -1438,6 +1456,62 @@ static GHashTable *xen_vm_process_copy_registers(struct target *target,tid_t tid
     return target->base->ops->copy_registers(target->base,tid);
 }
 
+/*
+ * NB: we return mmods bound to the underlying target -- not to us!
+ */
+static struct target_memmod *
+xen_vm_process_insert_sw_breakpoint(struct target *target,
+				    tid_t tid,ADDR addr) {
+    struct target_thread *tthread;
+    ADDR paddr = 0;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return NULL;
+    }
+
+    /*
+     * XXX NB: assume for now that anytime we put a breakpoint into a
+     * text page in userspace, that this page might be shared between
+     * processes.  We could check if the page is writeable, and then not
+     * do this, but that will be a rare occurence, so don't bother for
+     * now.
+     */
+
+    /* Resolve the phys page. */
+    if (target_addr_v2p(target->base,tid,addr,&paddr)) {
+	verror("could not translate vaddr 0x%"PRIxADDR" in tid %"PRIiTID"!\n",
+	       addr,tid);
+	return NULL;
+    }
+
+    return _target_insert_sw_breakpoint(target->base,tid,paddr,1);
+}
+
+static int xen_vm_process_remove_sw_breakpoint(struct target *target,tid_t tid,
+					       struct target_memmod *mmod) {
+    return target_remove_sw_breakpoint(target->base,tid,mmod);
+}
+
+static int xen_vm_process_enable_sw_breakpoint(struct target *target,tid_t tid,
+					       struct target_memmod *mmod) {
+    return target_enable_sw_breakpoint(target->base,tid,mmod);
+}
+
+static int xen_vm_process_disable_sw_breakpoint(struct target *target,tid_t tid,
+						struct target_memmod *mmod) {
+    return target_disable_sw_breakpoint(target->base,tid,mmod);
+}
+
+static int xen_vm_process_change_sw_breakpoint(struct target *target,tid_t tid,
+					       struct target_memmod *mmod,
+					       unsigned char *code,
+					       unsigned long code_len) {
+    return target_change_sw_breakpoint(target->base,tid,mmod,code,code_len);
+}
+
 static REG xen_vm_process_get_unused_debug_reg(struct target *target,tid_t tid) {
     errno = ENOTSUP;
     return -1;
@@ -1445,7 +1519,7 @@ static REG xen_vm_process_get_unused_debug_reg(struct target *target,tid_t tid) 
 
 int xen_vm_process_notify_sw_breakpoint(struct target *target,ADDR addr,
 					int notification) {
-
+    return target_notify_sw_breakpoint(target->base,addr,notification);
 }
 
 int xen_vm_process_singlestep(struct target *target,tid_t tid,int isbp,

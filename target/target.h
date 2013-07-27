@@ -121,6 +121,15 @@ unsigned char *__target_load_addr_real(struct target *target,
 				       ADDR addr,load_flags_t flags,
 				       unsigned char *buf,int bufsiz);
 
+/*
+ * The default underlying function for inserting sw breakpoints.
+ * Basically, it exposes @is_phys to backends that want to implement
+ * breakpoints as phys addrs instead of or in addition to virt addrs.
+ */
+struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
+						   tid_t tid,ADDR addr,
+						   int is_phys);
+
 /**
  ** Overlays.
  **/
@@ -177,16 +186,21 @@ typedef enum {
     MMT_DATA  = 2,
     MMT_CODE  = 3,
 } target_memmod_type_t;
+#define MEMMOD_TYPE_BITS 2
 
 struct target_memmod *target_memmod_create(struct target *target,tid_t tid,
-					   ADDR addr,ADDR paddr,
+					   ADDR addr,int is_phys,
 					   target_memmod_type_t mmt,
 					   unsigned char *code,
 					   unsigned int code_len);
 struct target_memmod *target_memmod_lookup(struct target *target,tid_t tid,
-					   ADDR addr);
-struct target_memmod *target_memmod_lookup_paddr(struct target *target,tid_t tid,
-						 ADDR paddr);
+					   ADDR addr,int is_phys);
+unsigned long target_memmod_length(struct target *target,
+				   struct target_memmod *mmod);
+result_t target_memmod_emulate_bp_handler(struct target *target,tid_t tid,
+					  struct target_memmod *mmod);
+result_t target_memmod_emulate_ss_handler(struct target *target,tid_t tid,
+					  struct target_memmod *mmod);
 int target_memmod_set(struct target *target,tid_t tid,
 		      struct target_memmod *mmod);
 int target_memmod_unset(struct target *target,tid_t tid,
@@ -204,6 +218,7 @@ typedef enum {
     MMS_SUBST = 2,
     MMS_TMP   = 3,
 } target_memmod_state_t;
+#define MEMMOD_STATE_BITS 2
 
 struct target_memmod {
     struct target *target;
@@ -214,11 +229,11 @@ struct target_memmod {
     //struct target_thread *thread;
     struct array_list *threads;
 
-    target_memmod_type_t type;
-    target_memmod_state_t state;
+    target_memmod_type_t type:MEMMOD_TYPE_BITS;
+    target_memmod_state_t state:MEMMOD_STATE_BITS;
+    unsigned int is_phys:1;
 
     ADDR addr;
-    ADDR paddr;
 
     /*
      * The original contents of memory -- not free until memmod is

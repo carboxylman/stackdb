@@ -303,7 +303,6 @@ struct array_list *target_list_available_overlay_tids(struct target *target,
     struct array_list *retval;
     GHashTableIter iter;
     struct target_thread *tthread;
-    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     REGVAL thip;
 
     vdebug(8,LA_TARGET,LF_TARGET,"loading available threads\n");
@@ -537,6 +536,43 @@ unsigned long target_write_addr(struct target *target,ADDR addr,
     vdebug(16,LA_TARGET,LF_TARGET,"writing target(%s) at 0x%"PRIxADDR" (%d)\n",
 	   target->name,addr,length);
     return target->ops->write(target,addr,length,buf);
+}
+
+int target_addr_v2p(struct target *target,tid_t tid,ADDR vaddr,ADDR *paddr) {
+    if (!target->ops->addr_v2p) {
+	vwarn("target(%s) does not support v2p addr translation!\n",target->name);
+	errno = ENOTSUP;
+	return -1;
+    }
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "translating v 0x%"PRIxADDR" in tid %"PRIiTID"\n",vaddr,tid);
+    return target->ops->addr_v2p(target,tid,vaddr,paddr);
+}
+
+unsigned char *target_read_physaddr(struct target *target,ADDR paddr,
+				    unsigned long length,unsigned char *buf) {
+    if (!target->ops->read_phys) {
+	vwarn("target(%s) does not support phys addr reads!\n",target->name);
+	errno = ENOTSUP;
+	return NULL;
+    }
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "reading target(%s) at phys 0x%"PRIxADDR" into %p (%d)\n",
+	   target->name,paddr,buf,length);
+    return target->ops->read_phys(target,paddr,length,buf);
+}
+
+unsigned long target_write_physaddr(struct target *target,ADDR paddr,
+				    unsigned long length,unsigned char *buf) {
+    if (!target->ops->write_phys) {
+	vwarn("target(%s) does not support phys addr writes!\n",target->name);
+	errno = ENOTSUP;
+	return 0;
+    }
+    vdebug(16,LA_TARGET,LF_TARGET,
+	   "writing target(%s) at phys 0x%"PRIxADDR" (%d)\n",
+	   target->name,paddr,length);
+    return target->ops->write_phys(target,paddr,length,buf);
 }
 
 char *target_reg_name(struct target *target,REG reg) {
@@ -937,13 +973,11 @@ struct action *target_lookup_action(struct target *target,int action_id) {
 						(gpointer)(uintptr_t)action_id);
 }
 
-struct target_memmod *target_insert_sw_breakpoint(struct target *target,
-						  tid_t tid,ADDR addr) {
+struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
+						   tid_t tid,ADDR addr,
+						   int is_phys) {
     struct target_memmod *mmod;
     struct target_thread *tthread;
-
-    if (target->ops->insert_sw_breakpoint)
-	return target->ops->insert_sw_breakpoint(target,tid,addr);
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -952,7 +986,7 @@ struct target_memmod *target_insert_sw_breakpoint(struct target *target,
 	return NULL;
     }
 
-    mmod = target_memmod_lookup(target,tid,addr);
+    mmod = target_memmod_lookup(target,tid,addr,is_phys);
 
     if (mmod) {
 	if (mmod->type != MMT_BP) {
@@ -976,7 +1010,7 @@ struct target_memmod *target_insert_sw_breakpoint(struct target *target,
 	}
     }
     else {
-	mmod = target_memmod_create(target,tid,addr,0,MMT_BP,
+	mmod = target_memmod_create(target,tid,addr,is_phys,MMT_BP,
 				    target->breakpoint_instrs,
 				    target->breakpoint_instrs_len);
 	if (!mmod) {
@@ -990,6 +1024,15 @@ struct target_memmod *target_insert_sw_breakpoint(struct target *target,
 
 	return mmod;
     }
+}
+
+struct target_memmod *target_insert_sw_breakpoint(struct target *target,
+						  tid_t tid,ADDR addr) {
+    if (target->ops->insert_sw_breakpoint)
+	return target->ops->insert_sw_breakpoint(target,tid,addr);
+    else 
+	/* Just default to sw breakpoints on virt addrs. */
+	return _target_insert_sw_breakpoint(target,tid,addr,0);
 }
 
 int target_remove_sw_breakpoint(struct target *target,tid_t tid,
@@ -1009,7 +1052,7 @@ int target_remove_sw_breakpoint(struct target *target,tid_t tid,
     }
 
     /* If this was the last thread, signal. */
-    if (!target_memmod_lookup(target,tid,addr)) {
+    if (!target_memmod_lookup(target,tid,addr,mmod->is_phys)) {
 	if (target_notify_sw_breakpoint(target,addr,0)) 
 	    vwarn("sw bp removal notification failed; ignoring\n");
     }
