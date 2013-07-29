@@ -2484,6 +2484,9 @@ interrupt_vmprobes(void)
 
     interrupt = true;
 
+    if (xce_handle == XC_IF_INVALID)
+	return;
+
     /* there is no need to close the event channel to interrupt the loop in
        run_vmprobes(), just notify it */
     ret = xc_evtchn_notify(xce_handle, dbg_port);
