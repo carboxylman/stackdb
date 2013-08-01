@@ -3272,7 +3272,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
 	return NULL;
     }
 
-    if (log_probes) {
+    if (debug >= 0 || log_probes) {
 	struct timeval _tv;
 	gettimeofday(&_tv, NULL);
 
@@ -3534,6 +3534,23 @@ struct argfilter *handle_syscall(struct domain_info *di,
     }
 
     /*
+     * Print out something about the syscall if we have not already
+     * and we are sending a ps listing or have matched a filter.
+     */
+    if (debug < 0 && !log_probes && (filter_ptr || dopslist)) {
+	struct timeval _tv;
+	gettimeofday(&_tv, NULL);
+
+	fprintf(stdout,"\n%lu.%03lu: %s [dom%d 0x%lx]",
+		_tv.tv_sec, _tv.tv_usec / 1000,
+		sctab[i].name, di->domid, addr);
+	if (oi == SYSCALL_RET_IX)
+	    fprintf(stdout, " (rval=%ld)", regs->eax);
+	fprintf(stdout, "\n");
+	fflush(stdout);
+    }
+
+    /*
      * Send the process list.
      */
     if (dopslist) {
@@ -3733,6 +3750,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		else
 #endif
 		printf(" (would send '%s' and '%s' to A3)\n",eventstr,extras);
+		fflush(stdout);
 	    }
 	}
 	else {
@@ -3793,6 +3811,7 @@ static int on_fn_pre(vmprobe_handle_t vp,
 		else
 #endif
 		printf(" (would send '%s' and '%s' to A3)\n",eventstr,extras);
+		fflush(stdout);
 	    }
 
 	    if (dofilter) {
