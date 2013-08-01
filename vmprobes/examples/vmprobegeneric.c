@@ -3077,6 +3077,7 @@ domid_t gdomid = 0;
 char *configfile = NULL;
 int reloadconfigfile = 0;
 FILE *filtered_events_fd = NULL;
+int log_probes = 0;
 
 char from_hex(char ch) {
     return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
@@ -3271,7 +3272,7 @@ struct argfilter *handle_syscall(struct domain_info *di,
 	return NULL;
     }
 
-    {
+    if (log_probes) {
 	struct timeval _tv;
 	gettimeofday(&_tv, NULL);
 
@@ -4724,7 +4725,7 @@ int main(int argc, char *argv[])
     struct domain_info *di;
     int nprobes = 0;
 
-    while ((ch = getopt(argc, argv, "m:daw:u:c:xR:r")) != -1) {
+    while ((ch = getopt(argc, argv, "m:daw:u:c:xR:rL")) != -1) {
 	switch(ch) {
 	case 'c':
 	    configfile = optarg;
@@ -4756,6 +4757,9 @@ int main(int argc, char *argv[])
 	    break;
 	case 'r':
 	    use_real_parent = 1;
+	    break;
+	case 'L':
+	    log_probes = 1;
 	    break;
 	default:
 	    usage(progname);
