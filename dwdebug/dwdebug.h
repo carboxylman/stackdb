@@ -154,6 +154,7 @@ typedef enum {
      */
     DEBUGFILE_LOAD_FLAG_CUHEADERS = 1 << 0,
     DEBUGFILE_LOAD_FLAG_PUBNAMES = 1 << 1,
+    DEBUGFILE_LOAD_FLAG_NODWARF   = 1 << 2,
     /* This forces partial symbol loading, instead of the default full. */
     DEBUGFILE_LOAD_FLAG_PARTIALSYM = 1 << 8,
     /* This flag specifies that we will try to promote all per-CU types

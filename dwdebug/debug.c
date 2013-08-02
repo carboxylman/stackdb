@@ -1484,6 +1484,8 @@ debugfile_load_flags_t debugfile_load_flags_parse(char *flagstr,char *delim) {
 	    flags |= DEBUGFILE_LOAD_FLAG_CUHEADERS;
 	else if (strcmp(token2,"PUBNAMES") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_PUBNAMES;
+	else if (strcmp(token2,"NODWARF") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_NODWARF;
 	else if (strcmp(token2,"PARTIALSYM") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_PARTIALSYM;
 	else if (strcmp(token2,"REDUCETYPES") == 0)
@@ -1890,7 +1892,8 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 	/*
 	 * Now, actually load its debuginfo, according to options.
 	 */
-	debugfile_load_debuginfo(debugfile);
+	if (!(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
+	    debugfile_load_debuginfo(debugfile);
     }
 
     RHOLD(debugfile,debugfile);
@@ -1963,7 +1966,8 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 	/*
 	 * Now, actually load its debuginfo, according to options.
 	 */
-	debugfile_load_debuginfo(debugfile);
+	if (!(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
+	    debugfile_load_debuginfo(debugfile);
     }
 
     RHOLD(debugfile,debugfile);
