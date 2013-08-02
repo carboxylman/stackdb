@@ -72,11 +72,11 @@ struct clf_range_data *crd_get_tightest(struct array_list *crdlist,
     struct clf_range_data *best_crd = NULL;
     struct clf_range_data *best_containing_crd = NULL;
 
-    if (end < start)
-	return NULL;
-
     if (contains_saveptr)
 	*contains_saveptr = 0;
+
+    if (end < start)
+	return NULL;
 
     for (i = 0; i < array_list_len(crdlist); ++i) {
 	crd = (struct clf_range_data *)array_list_item(crdlist,i);
@@ -101,7 +101,7 @@ struct clf_range_data *crd_get_tightest(struct array_list *crdlist,
 }
 
 int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
-    struct clf_range_data *crd = (struct clf_range_data *)malloc(sizeof(*crd));
+    struct clf_range_data *crd = NULL;
     PWord_t pv = NULL;
     struct array_list *alist;
     struct array_list *tmpalist;
@@ -109,6 +109,13 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
     struct clf_range_data *ccrd;
     int contains = 0;
     Word_t idx;
+
+    if (end < start) {
+	verror("end 0x%lx < start 0x%lx; not adding!\n",end,start);
+	goto errout;
+    }
+
+    crd = (struct clf_range_data *)malloc(sizeof(*crd));
 
     crd->start = start;
     crd->end = end;
@@ -151,6 +158,12 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
 	    /* Find the widest containing range in this list. */
 	    tmpalist = (struct array_list *)*pv;
 	    ccrd = crd_get_tightest(tmpalist,start,end,&contains);
+
+	    if (!ccrd) {
+		verror("no crd containing range(0x%lx,0x%lx)!\n",start,end);
+		goto errout;
+	    }
+
 	    /* Case 1a) above: */
 	    if (!contains && ccrd->containing_range) {
 		while (ccrd->containing_range) {
@@ -199,7 +212,8 @@ int clrange_add(clrange_t *clf,Word_t start,Word_t end,void *data) {
  errout:
     if (created) 
 	array_list_free(alist);
-    free(crd);
+    if (crd) 
+	free(crd);
     return -1;
 }
 
