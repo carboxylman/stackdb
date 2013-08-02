@@ -1830,7 +1830,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 
     if (debugfile_load_opts_list 
 	&& debugfile_load_opts_checklist(debugfile_load_opts_list,
-					 realname,&opts) == RF_ACCEPT) {
+					 realname,&opts) == RF_REJECT) {
 	vdebug(2,LA_DEBUG,LF_DFILE,
 	       "opts prohibit loading of debugfile '%s'\n",realname);
 	goto out;
@@ -1926,7 +1926,7 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 
     if (debugfile_load_opts_list 
 	&& debugfile_load_opts_checklist(debugfile_load_opts_list,
-					 realname,&opts) == RF_ACCEPT) {
+					 realname,&opts) == RF_REJECT) {
 	vdebug(2,LA_DEBUG,LF_DFILE,
 	       "opts prohibit loading of debugfile '%s'\n",realname);
 	goto out;
