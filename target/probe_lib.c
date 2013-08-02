@@ -286,6 +286,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     inst_cf_flags_t cfflags = INST_CF_ANY;
     tid_t tid;
     struct probe *probe_alt;
+    char *sname;
+    int sname_created = 0;
 
     if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	verror("must supply a function symbol!\n");
@@ -297,14 +299,23 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	goto errout;
     }
 
+    sname = symbol_get_name(bsymbol->lsymbol->symbol);
+    if (!sname) {
+	sname = malloc(sizeof("ref0x")+12);
+	snprintf(sname,sizeof("ref0x")+12,"ref0x%"PRIxSMOFFSET,
+		 bsymbol->lsymbol->symbol->ref);
+	sname_created = 1;
+    }
+
     /* Resolve the base address of the function so that we can pass the
      * best information to __probe_register_addr as possible to make
      * debug output clearer.
      */
     if (location_resolve_function_base(target,bsymbol->lsymbol,
 				       bsymbol->region,&start,&range)) {
-	verror("could not resolve entry PC for function %s!\n",
-	       bsymbol->lsymbol->symbol->name);
+	verror("could not resolve entry PC for function %s!\n",sname);
+	if (sname_created)
+	    free(sname);
 	return NULL;
     }
 
@@ -331,7 +342,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
 	if (!RANGE_IS_PC(funcrange)) {
 	    verror("range type for function %s was %s, not PC!\n",
-		   bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
+		   sname,RANGE_TYPE(funcrange->rtype));
 	    goto errout;
 	}
 
@@ -347,8 +358,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     funccode = malloc(funclen + 1);
 
     if (!target_read_addr(target,start,funclen,funccode)) {
-	verror("could not read code before disasm of function %s!\n",
-	       bsymbol->lsymbol->symbol->name);
+	verror("could not read code before disasm of function %s!\n",sname);
 	goto errout;
     }
 
@@ -356,7 +366,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 
     if (disasm_get_control_flow_offsets(target,cfflags,funccode,funclen,
 					&cflist,start,noabort)) {
-	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
+	verror("could not disasm function %s!\n",sname);
 	goto errout;
     }
 
@@ -404,10 +414,10 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	/* Create the j-th instruction probe.  Assume that all
 	 * instruction names fit in 16 bytes.
 	 */
-	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+16+1+11+1;
+	bufsiz = strlen(sname)+1+16+1+11+1;
+	bufsiz = strlen(sname)+1+16+1+11+1;
 	buf = malloc(bufsiz);
-	snprintf(buf,bufsiz,"%s_%s_%d",bsymbol->lsymbol->symbol->name,
-		 disasm_get_inst_name(idata->type),j);
+	snprintf(buf,bufsiz,"%s_%s_%d",sname,disasm_get_inst_name(idata->type),j);
 	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
 			      probe_do_sink_post_handlers,NULL,1,1);
 	free(buf);
@@ -431,8 +441,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 
 	vdebug(3,LA_PROBE,LF_PROBE,
 	       "registered %s probe at %s%+d\n",
-	       disasm_get_inst_name(idata->type),
-	       bsymbol->lsymbol->symbol->name,(int)idata->offset);
+	       disasm_get_inst_name(idata->type),sname,(int)idata->offset);
     }
 
     if (cflist) {
@@ -441,6 +450,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     }
     if (itypes)
 	g_hash_table_destroy(itypes);
+    if (sname_created)
+	free(sname);
 
     return probe;
 
@@ -455,6 +466,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     probe_unregister(probe,1);
     if (probe->autofree)
 	probe_free(probe,1);
+    if (sname_created)
+	free(sname);
     return NULL;
 
 }
