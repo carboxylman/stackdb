@@ -1892,7 +1892,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 	/*
 	 * Now, actually load its debuginfo, according to options.
 	 */
-	if (!(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
+	if (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
 	    debugfile_load_debuginfo(debugfile);
     }
 
@@ -1966,7 +1966,7 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 	/*
 	 * Now, actually load its debuginfo, according to options.
 	 */
-	if (!(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
+	if (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
 	    debugfile_load_debuginfo(debugfile);
     }
 
