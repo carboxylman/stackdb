@@ -6172,14 +6172,54 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		sstep_thread = target->sstep_thread;
 	    }
 	    else if (target->sstep_thread
-		     && ipval < xstate->kernel_start_addr
 		     && target->sstep_thread_overlay) {
-		vdebug(8,LA_TARGET,LF_XV,
-		       "single step event in overlay tid %"PRIiTID
-		       " (tgid %"PRIiTID"); notifying overlay\n",
-		       tid,target->sstep_thread_overlay->base_tid);
-		return target_notify_overlay(target->sstep_thread_overlay,
-					     tid,ipval,again);
+		if (ipval < xstate->kernel_start_addr) {
+		    vdebug(8,LA_TARGET,LF_XV,
+			   "single step event in overlay tid %"PRIiTID
+			   " (tgid %"PRIiTID"); notifying overlay\n",
+			   tid,target->sstep_thread_overlay->base_tid);
+		    return target_notify_overlay(target->sstep_thread_overlay,
+						 tid,ipval,again);
+		}
+		else {
+		    /*
+		     * This is a thread that was stepping in userspace,
+		     * and found itself in the kernel.  This can happen
+		     * if we have to use HVM global monitor trap flag
+		     * instead of EFLAGS TF.  Even if we had setup the
+		     * MTF to single step the guest in userspace, that
+		     * may not be what happens.  For instance, suppose
+		     * the instruction causes a page fault, or that a
+		     * clock interrupt happened.  We'll find ourselves
+		     * stepping in the kernel, in its handlers, I
+		     * believe.
+		     *
+		     * We assume the thread did *not* do its singlestep
+		     * of the breakpoint's original instruction.  If it
+		     * had, the EIP for the MTF event would still be in
+		     * userspace -- because single step debug exceptions
+		     * are traps following an instruction's execution.
+		     * Thus, we need to put the breakpoint back into
+		     * place and remove all state setup to handle it,
+		     * EXCEPT to note down that this thread's overlay SS
+		     * was interrupted at probepoint X, but that the
+		     * prehandler was already run.  This way, we won't
+		     * run the prehandler again.
+		     *
+		     * This of course is somewhat bogus, because it
+		     * might affect vCPU state (we hit the BP twice
+		     * instead of just once)... but whatever.
+		     *
+		     * See target_thread::interrupted_ss_probepoint .
+		     */
+		    vdebug(8,LA_TARGET,LF_XV,
+			   "single step event in overlay tid %"PRIiTID
+			   " (tgid %"PRIiTID") INTO KERNEL (at 0x%"PRIxADDR")"
+			   " notifying overlay\n",
+			   tid,target->sstep_thread_overlay->base_tid,ipval);
+		    return target_notify_overlay(target->sstep_thread_overlay,
+						 tid,ipval,again);
+		}
 	    }
 	    else
 		sstep_thread = NULL;

@@ -1148,7 +1148,24 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 	    goto out_err;
 	}
 
-	overlay->ss_handler(overlay,tthread,tthread->tpc->probepoint);
+	/*
+	 * If this was supposed to be a single step in userspace, but
+	 * instead we have stepped into the kernel, we have to abort the
+	 * single step.  This can only happen in the HVM case when we
+	 * use the Monitor Trap Flag.
+	 */
+	if (xstate->hvm && xstate->hvm_monitor_trap_flag_set
+	    && ipval >= xstate->kernel_start_addr) {
+	    vdebug(8,LA_TARGET,LF_XVP,
+		   "single step event in overlay tid %"PRIiTID" INTO KERNEL"
+		   " (at 0x%"PRIxADDR"); aborting breakpoint singlestep;"
+		   " will be hit again!\n",
+		   tid,ipval);
+	    overlay->interrupted_ss_handler(overlay,tthread,
+					    tthread->tpc->probepoint);
+	}
+	else
+	    overlay->ss_handler(overlay,tthread,tthread->tpc->probepoint);
 
 	/* Clear the status bits right now. */
 	xtstate->context.debugreg[6] = 0;

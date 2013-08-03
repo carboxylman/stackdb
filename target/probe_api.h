@@ -51,6 +51,7 @@ typedef enum {
     MSG_FAILURE       = 2,
     MSG_STEPPING      = 3,
     MSG_STEPPING_AT_BP= 4,
+    MSG_INTERRUPTED   = 5,
 } handler_msg_t;
 
 /*

@@ -1512,6 +1512,9 @@ struct target_thread {
      */
     struct target_memmod *emulating_debug_mmod;
 
+    /* See target->interrupted_ss_handler. */
+    struct probepoint *interrupted_ss_probepoint;
+
     /*
      * Any single step actions that are executing in this thread.  We
      * might have more than one at a single probepoint, or we might have
@@ -1882,6 +1885,29 @@ struct target {
      */
     target_debug_handler_t ss_handler;
     target_debug_bp_handler_t bp_handler;
+    /*
+     * If a thread was supposed to be stepping, but it steps into a new
+     * context, this handler should be called to abort the single step;
+     * save the probepoint in thread->interrupted_ss_probepoint; restore
+     * the breakpoint.  We save off the breakpoint so we can know that
+     * when the breakpoint is hit again, we shouldn't run pre-handlers
+     * again.  This is definitely a dicey strategy -- how can we know
+     * that we'll be at the interrupted context when we hit the
+     * breakpoint next in this thread?  For instance, the only place
+     * this is used right now is the Xen target.  Consider: a
+     * xen-process target breakpoint is hit; we single step using HVM
+     * MTF; instead of stepping in userspace, we find ourselves stepping
+     * in that thread, but in the kernel.  That means the singlestep of
+     * the breakpoint didn't happen; thus we need to reset the
+     * breakpoint.  BUT, then, what happens on return from the kernel?
+     * Normally, the breakpoint would be immediately hit again, and the
+     * single step would work.  Unfortunately, kernels don't guarantee
+     * this behavior... the userspace EIP could be adjusted to deliver a
+     * signal, or whatever.  But all we can do is assume it, unless we
+     * want to get into the heavyweight business of tracking context
+     * switches.
+     */
+    target_debug_handler_t interrupted_ss_handler;
 };
 
 struct target_ops {

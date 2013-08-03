@@ -2450,6 +2450,7 @@ result_t probepoint_bp_handler(struct target *target,
     int stepping = 0;
     struct action *action;
     struct thread_action_context *tac,*ttac;
+    int already_ran_prehandlers_for_interrupted = 0;
 
     vdebug(5,LA_PROBE,LF_PROBEPOINT,"handling bp at ");
     LOGDUMPPROBEPOINT(5,LA_PROBE,LF_PROBEPOINT,probepoint);
@@ -2465,6 +2466,15 @@ result_t probepoint_bp_handler(struct target *target,
     if (tthread->tpc && tthread->tpc->probepoint == probepoint)
 	vwarn("existing thread probepoint same as bp probepoint;"
 	      " BUG or recursion due to action?\n");
+
+    /*
+     * See docs for target_thread::interrupted_ss_probepoint, and for
+     * probepoint_interrupted_ss_handler.
+     */
+    if (tthread->interrupted_ss_probepoint == probepoint) {
+	tthread->interrupted_ss_probepoint = NULL;
+	already_ran_prehandlers_for_interrupted = 1;
+    }
 
     /*
      * If we were single stepping when we hit the breakpoint, and we hit
@@ -2637,26 +2647,35 @@ result_t probepoint_bp_handler(struct target *target,
      * first time on this pass (which means we should not have an action
      * set!)
      */
-    list_for_each_entry(probe,&probepoint->probes,probe) {
-	if (probe->enabled) {
-	    if (probe->pre_handler) {
-		vdebug(4,LA_PROBE,LF_PROBEPOINT,"running pre handler at ");
-		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
-		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
+    if (!already_ran_prehandlers_for_interrupted) {
+	list_for_each_entry(probe,&probepoint->probes,probe) {
+	    if (probe->enabled) {
+		if (probe->pre_handler) {
+		    vdebug(4,LA_PROBE,LF_PROBEPOINT,"running pre handler at ");
+		    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
-		rc = probe->pre_handler(probe,probe->handler_data,probe);
-		if (rc == RESULT_ERROR) 
-		    probe_disable(probe);
+		    rc = probe->pre_handler(probe,probe->handler_data,probe);
+		    if (rc == RESULT_ERROR) 
+			probe_disable(probe);
+		}
+		else if (0 && probe->sinks) {
+		    vdebug(4,LA_PROBE,LF_PROBEPOINT,
+			   "running default probe sink pre_handler at ");
+		    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+		    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
+		    probe_do_sink_pre_handlers(probe,NULL,probe);
+		}
+		doit = 1;
 	    }
-	    else if (0 && probe->sinks) {
-		vdebug(4,LA_PROBE,LF_PROBEPOINT,
-		       "running default probe sink pre_handler at ");
-		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
-		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
-		probe_do_sink_pre_handlers(probe,NULL,probe);
-	    }
-	    doit = 1;
 	}
+    }
+    else {
+	vdebug(4,LA_PROBE,LF_PROBEPOINT,
+	       "already ran pre handlers in interrupted thread %"PRIiTID" at ",
+	       tid);
+	LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
+	vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
     }
 
     /* Restore ip register if we ran a handler. */
@@ -3156,6 +3175,162 @@ result_t probepoint_ss_handler(struct target *target,
 	verror("unexpected state!  BUG?\n");
 	return RESULT_ERROR;
     }
+
+    return RESULT_SUCCESS;
+}
+
+/*
+ * This function handles the case where a thread is singlestepping, but
+ * it has either stepped into a new context (i.e., user into kernel), or
+ * into a different thread.  Initially, we only handle the case where
+ * the breakpoint was just hit and the single step setup, but not run.
+ * We do not handle the case where a single step action was running.
+ *
+ * This is much the same as the single step handler, BUT we abort any
+ * running actions; we do not continue single stepping; and we unwind
+ * all state associated with handling the breakpoint.
+ *
+ * NB: we cannot read any register state from the thread; another thread
+ * or thread context (i.e., kernel instead of user) might have been
+ * entered.  We just want to unwind the previous context and fixup the
+ * probepoint.
+ */
+result_t probepoint_interrupted_ss_handler(struct target *target,
+					   struct target_thread *tthread,
+					   struct probepoint *probepoint) {
+    struct thread_action_context *tac,*ttac;
+    struct action *action;
+    tid_t tid = tthread->tid;
+    struct thread_probepoint_context *tpc;
+
+    tpc = tthread->tpc;
+
+    /*
+     * If we had to disable a hw breakpoint before we single stepped it,
+     * reenable it now.  If it's a hardware breakpoint, we own it, so
+     * that's why we don't check that.
+     */
+    if (probepoint
+	&& probepoint->style == PROBEPOINT_HW
+	&& probepoint->debugregdisabled
+	&& !target->nodisablehwbponss) {
+	/*
+	 * Reenable the hw breakpoint we just disabled.
+	 */
+	target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
+	probepoint->debugregdisabled = 0;
+    }
+
+    /*
+     * Cancel any single step actions.
+     */
+    if (!list_empty(&tthread->ss_actions)) {
+	list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {
+	    action = tac->action;
+
+	    if (action->handler)
+		action->handler(action,tthread,action->probe,
+				action->probe->probepoint,
+				MSG_INTERRUPTED,tac->stepped,
+				action->handler_data);
+
+	    action_finish_handling(action,tac);
+
+	    list_del(&tac->tac);
+	    free(tac);
+	}
+    }
+
+    /*
+     * If we're done handling actions and the post single step of the
+     * original instruction, AND if we were the owners of the
+     * probepoint, nuke the tpc state!
+     *
+     * BUT, we have to check if we should keep single stepping for
+     * pending single step actions.
+     */
+    if (probepoint->tpc == tpc) {
+	/*
+	 * Cancel any complex actions.
+	 */
+	if (!list_empty(&probepoint->complex_actions)) {
+	    list_for_each_entry_safe(tac,ttac,&probepoint->complex_actions,
+				     tac) {
+		action = tac->action;
+
+		vdebug(5,LA_PROBE,LF_ACTION,
+		       "finished %d steps; done and removing interrupted"
+		       " action at ",
+		       tpc->tac.stepped);
+		LOGDUMPPROBEPOINT(5,LA_PROBE,LF_ACTION,probepoint);
+		vdebugc(5,LA_PROBE,LF_ACTION,"\n");
+
+		if (action->handler) 
+		    action->handler(action,tthread,action->probe,
+				    action->probe->probepoint,
+				    MSG_INTERRUPTED,tac->stepped,
+				    action->handler_data);
+
+		action_finish_handling(action,tac);
+
+		list_del(&tac->tac);
+		free(tac);
+	    }
+	}
+
+	if (probepoint->style == PROBEPOINT_SW) {
+	    /* Re-inject a breakpoint for the next round */
+	    if (target_enable_sw_breakpoint(target,probepoint->thread->tid,
+					    probepoint->mmod)) {
+		verror("could not enable sw breakpoint instrs for bp re-insert, disabling!\n");
+		probepoint->state = PROBE_DISABLED;
+		return RESULT_ERROR;
+	    }
+	    else 
+		probepoint->state = PROBE_BP_SET;
+	}
+	else if (probepoint->debugregdisabled) {
+	    /*
+	     * Enable hardware bp here!
+	     */
+	    target_enable_hw_breakpoint(target,probepoint->thread->tid,probepoint->debugregnum);
+	    probepoint->debugregdisabled = 0;
+
+	    probepoint->state = PROBE_BP_SET;
+	}
+	else {
+	    probepoint->state = PROBE_BP_SET;
+	}
+
+	probepoint_release(target,tthread,probepoint);
+    }
+    else
+	vwarn("thread %"PRIiTID" does not own tpc (thread %"PRIiTID" does);"
+	      " cannot adjust probepoint state!!\n",
+	      tid,tpc->thread->tid);
+
+    /* Do this stuff anyway. */
+    if (target_singlestep_end(target,tid))
+	verror("could not stop single stepping target"
+	       " after interrupted sstep!\n");
+
+    if (target->blocking_thread == tthread)
+	target->blocking_thread = NULL;
+    tpc_free(tthread->tpc);
+    tthread->tpc = (struct thread_probepoint_context *) \
+	array_list_remove(tthread->tpc_stack);
+    tpc = NULL;
+
+    /*
+     * Save it off so that probepoint_bp_handler will see it when we hit
+     * the breakpoint again.
+     */
+    tthread->interrupted_ss_probepoint = probepoint;
+
+    vdebug(5,LA_PROBE,LF_PROBEPOINT,
+	   "thread %"PRIiTID" interrupted before running orig instruction;"
+	   " cleared tpc!\n",
+	   tthread->tid);
 
     return RESULT_SUCCESS;
 }

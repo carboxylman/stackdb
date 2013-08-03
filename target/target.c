@@ -862,6 +862,7 @@ struct target *target_create(char *type,struct target_spec *spec) {
      */
     retval->bp_handler = probepoint_bp_handler;
     retval->ss_handler = probepoint_ss_handler;
+    retval->interrupted_ss_handler = probepoint_interrupted_ss_handler;
 
     return retval;
 }

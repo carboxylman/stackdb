@@ -128,6 +128,9 @@ result_t probepoint_bp_handler(struct target *target,
 result_t probepoint_ss_handler(struct target *target,
 			       struct target_thread *tthread,
 			       struct probepoint *probepoint);
+result_t probepoint_interrupted_ss_handler(struct target *target,
+					   struct target_thread *tthread,
+					   struct probepoint *probepoint);
 /*
  * For targets providing thread control, the probe API may choose to
  * "pause" the handling of a thread A at a debug exception, if another
