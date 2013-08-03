@@ -6122,8 +6122,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	     * us to a userspace EIP; or  
 	     * 3) somehow the kernel jumped to one!
 	     */
-	    if (tthread->emulating_debug_mmod
-		     && ipval < xstate->kernel_start_addr) {
+	    if (tthread->emulating_debug_mmod) {
+		//&& ipval < xstate->kernel_start_addr) {
 		/* This is a shared-page singlestep. */
 		tmp_ipval = ipval - target->breakpoint_instrs_len;
 
