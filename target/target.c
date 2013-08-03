@@ -3402,6 +3402,11 @@ result_t target_memmod_emulate_ss_handler(struct target *target,tid_t tid,
 
     if (tthread->emulating_debug_mmod == mmod)
 	tthread->emulating_debug_mmod = NULL;
+    else if (tthread->emulating_debug_mmod) {
+	verror("tid %"PRIiTID" already is emulating a memmod"
+	       " at 0x%"PRIxADDR"; cannot clear it!\n",
+	       tid,tthread->emulating_debug_mmod->addr);
+    }
 
     return RESULT_SUCCESS;
 }
