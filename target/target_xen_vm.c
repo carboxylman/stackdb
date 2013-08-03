@@ -3877,6 +3877,7 @@ static int xen_vm_set_active_probing(struct target *target,
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct probe *probe;
     char *name;
+    int forced_load = 0;
 
     if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
 	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
@@ -3914,6 +3915,14 @@ static int xen_vm_set_active_probing(struct target *target,
 	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)) {
 	if (flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) {
 #ifdef ENABLE_DISTORM
+	    /*
+	     * Make sure all threads loaded first!
+	     */
+	    if (!forced_load) {
+		xen_vm_load_available_threads(target,0);
+		forced_load = 1;
+	    }
+
 	    name = bsymbol_get_name(xstate->thread_entry_f_symbol);
 	    /*
 	     * Create it with only a post handler so that we only probe
@@ -3954,6 +3963,14 @@ static int xen_vm_set_active_probing(struct target *target,
     if ((flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
 	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
 	if (flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
+	    /*
+	     * Make sure all threads loaded first!
+	     */
+	    if (!forced_load) {
+		xen_vm_load_available_threads(target,0);
+		forced_load = 1;
+	    }
+
 	    name = bsymbol_get_name(xstate->thread_exit_f_symbol);
 	    probe = probe_create(target,TID_GLOBAL,NULL,name,
 				 xen_vm_active_thread_exit_handler,
