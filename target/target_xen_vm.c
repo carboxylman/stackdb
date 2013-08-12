@@ -2189,7 +2189,6 @@ static int __xen_vm_cpu_getcontext(struct target *target,
 #ifdef __x86_64__
     uint32_t size = 0;
     uint32_t offset = 0;
-    HVM_SAVE_TYPE(CPU) *cpu = NULL;
     struct hvm_save_descriptor *sdesc = NULL;
 #endif
 #ifdef XC_HAVE_CONTEXT_ANY
