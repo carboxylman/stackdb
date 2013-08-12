@@ -248,10 +248,10 @@ int linux_userproc_spec_to_argv(struct target_spec *spec,int *argc,char ***argv)
 	ac = 2;
 	if (lspec->argv) 
 	    for (i = 0; lspec->argv[i] != NULL; ++i,++ac) ;
+	envstrlen = 0;
 	if (lspec->envp) {
 	    /* -e */
 	    ++ac;
-	    envstrlen = 0;
 	    for (i = 0; lspec->envp[i] != NULL; ++i,++ac) 
 		envstrlen += strlen(lspec->envp[i]) + 1;
 	}
@@ -2420,7 +2420,6 @@ static int linux_userproc_fini(struct target *target) {
 
 static int linux_userproc_kill(struct target *target,int sig) {
     struct linux_userproc_state *lstate;
-    int retval = 0;
 
     lstate = (struct linux_userproc_state *)(target->state);
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
@@ -2985,7 +2984,6 @@ static int linux_userproc_pause(struct target *target,int nowait) {
 static int linux_userproc_pause_thread(struct target *target,tid_t tid,
 				       int nowait) {
     int pstatus;
-    int pid;
     struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
@@ -2997,7 +2995,6 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
 	return 0;
 
     lstate = (struct linux_userproc_state *)(target->state);
-    pid = lstate->pid;
     if (!(tthread = target_lookup_thread(target,tid))) {
 	verror("thread %"PRIiTID" does not exist!\n",tid);
 	errno = EINVAL;
@@ -4135,6 +4132,7 @@ unsigned long linux_userproc_write(struct target *target,
  * If structs in sys/user.h change, ever, these mappings will be wrong.
  * It is unfortunate that sys/user.h conditions the macros on __WORDSIZE.
  */
+#if __WORDSIZE == 64
 #define X86_64_DWREG_COUNT 67
 static int dreg_to_ptrace_idx64[X86_64_DWREG_COUNT] = { 
     10, 12, 11, 5, 13, 14, 4, 19,
@@ -4182,7 +4180,7 @@ static int creg_to_dreg64[COMMON_REG_COUNT] = {
     [CREG_FS] = 54,
     [CREG_GS] = 55,
 };
-
+#else
 #define X86_32_DWREG_COUNT 59
 static int dreg_to_ptrace_idx32[X86_32_DWREG_COUNT] = { 
     6, 1, 2, 0, 15, 5, 3, 4,
@@ -4225,6 +4223,7 @@ static int creg_to_dreg32[COMMON_REG_COUNT] = {
     [CREG_FS] = 57,
     [CREG_GS] = 58,
 };
+#endif
 
 /*
  * Register functions.
@@ -4293,11 +4292,9 @@ REG linux_userproc_dw_reg_no(struct target *target,common_reg_t reg) {
 
 REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
     int ptrace_idx;
-    struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4334,11 +4331,9 @@ REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg) {
 int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
 			     REGVAL value) {
     int ptrace_idx;
-    struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4430,12 +4425,10 @@ GHashTable *linux_userproc_copy_registers(struct target *target,tid_t tid) {
  * Hardware breakpoint support.
  */
 static REG linux_userproc_get_unused_debug_reg(struct target *target,tid_t tid) {
-    struct linux_userproc_state *lstate;
     REG retval = -1;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4509,7 +4502,6 @@ static int read_ptrace_debug_reg(int pid,int *array) {
 
 static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG reg,ADDR addr) {
-    struct linux_userproc_state *lstate;
 #if __WORDSIZE == 64
     unsigned long cdr;
 #else
@@ -4518,7 +4510,6 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4604,7 +4595,6 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG reg,ADDR addr,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize) {
-    struct linux_userproc_state *lstate;
 #if __WORDSIZE == 64
     unsigned long cdr;
 #else
@@ -4613,7 +4603,6 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4699,11 +4688,9 @@ static int linux_userproc_set_hw_breakpoint(struct target *target,tid_t tid,
 
 static int linux_userproc_unset_hw_breakpoint(struct target *target,tid_t tid,
 					      REG reg) {
-    struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4775,11 +4762,9 @@ int linux_userproc_disable_hw_breakpoints(struct target *target,tid_t tid) {
 }
 
 int linux_userproc_enable_hw_breakpoints(struct target *target,tid_t tid) {
-    struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4800,11 +4785,9 @@ int linux_userproc_enable_hw_breakpoints(struct target *target,tid_t tid) {
 
 int linux_userproc_disable_hw_breakpoint(struct target *target,tid_t tid,
 					 REG dreg) {
-    struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4849,11 +4832,9 @@ int linux_userproc_disable_hw_breakpoint(struct target *target,tid_t tid,
 
 int linux_userproc_enable_hw_breakpoint(struct target *target,tid_t tid,
 					REG dreg) {
-    struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
@@ -4971,11 +4952,9 @@ int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp,
 
 int linux_userproc_singlestep_end(struct target *target,tid_t tid,
 				  struct target *overlay) {
-    struct linux_userproc_state *lstate;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
 
-    lstate = (struct linux_userproc_state *)(target->state);
     tthread = linux_userproc_load_thread(target,tid,0);
     if (!tthread) {
 	verror("thread %"PRIiTID" does not exist; forgot to load?\n",tid);
