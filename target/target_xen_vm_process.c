@@ -1015,9 +1015,7 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
     int retval = -1;
     struct debugfile *debugfile = NULL;
     char rbuf[PATH_MAX];
-    struct stat statbuf;
     char *file;
-    int rc;
     struct lsymbol *mainsymbol;
 
     vdebug(5,LA_TARGET,LF_XVP,"tid %d\n",target->base_tid);
