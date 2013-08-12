@@ -2191,15 +2191,28 @@ static int __xen_vm_cpu_getcontext(struct target *target,
     uint32_t offset = 0;
     HVM_SAVE_TYPE(CPU) *cpu = NULL;
     struct hvm_save_descriptor *sdesc = NULL;
-
 #endif
+#ifdef XC_HAVE_CONTEXT_ANY
+    vcpu_guest_context_any_t context_any;
+#endif
+    int ret;
 
     if (!xstate->hvm || xspec->no_hvm_setcontext) {
-	if (xc_vcpu_getcontext(xc_handle,xstate->id,
-			       xstate->dominfo.max_vcpu_id,context) < 0) {
+#ifdef XC_HAVE_CONTEXT_ANY
+	ret = xc_vcpu_getcontext(xc_handle,xstate->id,
+				 xstate->dominfo.max_vcpu_id,&context_any);
+#else
+	ret = xc_vcpu_getcontext(xc_handle,xstate->id,
+				 xstate->dominfo.max_vcpu_id,context);
+#endif
+	if (ret < 0) {
 	    verror("could not get vcpu context for %d\n",xstate->id);
 	    return -1;
 	}
+#ifdef XC_HAVE_CONTEXT_ANY
+	else
+	    memcpy(context,&context_any.c,sizeof(*context));
+#endif
     }
     else {
 #ifdef __x86_64__
@@ -2269,10 +2282,21 @@ static int __xen_vm_cpu_setcontext(struct target *target,
 				   vcpu_guest_context_t *context) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
+#ifdef XC_HAVE_CONTEXT_ANY
+    vcpu_guest_context_any_t context_any;
+#endif
+    int ret;
 
     if (!xstate->hvm || xspec->no_hvm_setcontext) {
-	if (xc_vcpu_setcontext(xc_handle,xstate->id,
-			       xstate->dominfo.max_vcpu_id,context) < 0) {
+#ifdef XC_HAVE_CONTEXT_ANY
+	memcpy(&context_any.c,context,sizeof(*context));
+	ret = xc_vcpu_setcontext(xc_handle,xstate->id,
+				 xstate->dominfo.max_vcpu_id,&context_any);
+#else
+	ret = xc_vcpu_setcontext(xc_handle,xstate->id,
+				 xstate->dominfo.max_vcpu_id,context);
+#endif
+	if (ret < 0) {
 	    verror("could not set vcpu context for dom %d\n",xstate->id);
 	    errno = EINVAL;
 	    return -1;
