@@ -7037,9 +7037,9 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 				       unsigned long length,unsigned char *buf) {
     struct xen_vm_state *xstate;
     unsigned char *retval = NULL;
-    unsigned long npages;
-    unsigned long page_offset = paddr & (PAGE_SIZE - 1);
 #ifdef ENABLE_XENACCESS
+    unsigned long npages;
+    unsigned long page_offset;
     unsigned long i;
     unsigned long cur;
     unsigned char *mmap;
@@ -7047,12 +7047,7 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
     uint32_t offset;
 #endif
 
-
     xstate = (struct xen_vm_state *)target->state;
-
-    npages = (page_offset + length) / PAGE_SIZE;
-    if ((page_offset + length) % PAGE_SIZE)
-	++npages;
 
     if (!buf)
 	retval = (unsigned char *)malloc(length+1);
@@ -7060,6 +7055,11 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 	retval = buf;
 
 #ifdef ENABLE_XENACCESS
+    page_offset = paddr & (PAGE_SIZE - 1);
+    npages = (page_offset + length) / PAGE_SIZE;
+    if ((page_offset + length) % PAGE_SIZE)
+	++npages;
+
     /* Have to mmap them one by one. */
     cur = paddr & ~(PAGE_SIZE - 1);
     rc = 0;
@@ -7072,10 +7072,10 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 	    goto errout;
 	}
 	if (i == 0) {
-	    memcpy(retval+rc,mmap + page_offset,PAGE_SIZE - page_offset);
+	    memcpy(retval + rc,mmap + page_offset,PAGE_SIZE - page_offset);
 	    rc = PAGE_SIZE - page_offset;
 	}
-	else if (i == (npages + 1)) {
+	else if (i == (npages - 1)) {
 	    memcpy(retval + rc,mmap,(length - rc));
 	    rc += length - rc;
 	}
@@ -7108,9 +7108,51 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
 static unsigned long xen_vm_write_phys(struct target *target,ADDR paddr,
 				       unsigned long length,unsigned char *buf) {
     struct xen_vm_state *xstate;
+#ifdef ENABLE_XENACCESS
+    unsigned long npages;
+    unsigned long page_offset;
+    unsigned long i;
+    unsigned long cur;
+    unsigned char *mmap;
+    unsigned long rc;
+    uint32_t offset;
+#endif
 
     xstate = (struct xen_vm_state *)target->state;
 
+#ifdef ENABLE_XENACCESS
+    page_offset = paddr & (PAGE_SIZE - 1);
+    npages = (page_offset + length) / PAGE_SIZE;
+    if ((page_offset + length) % PAGE_SIZE)
+	++npages;
+
+    /* Have to mmap them one by one. */
+    cur = paddr & ~(PAGE_SIZE - 1);
+    rc = 0;
+    for (i = 0; i < npages; ++i) {
+	mmap = xa_access_pa(&xstate->xa_instance,cur,&offset,PROT_READ);
+	if (!mmap) {
+	    verror("failed to mmap paddr 0x%lx (for write to"
+		   " 0x%"PRIxADDR"): %s!\n",
+		   cur,paddr,strerror(errno));
+	    goto errout;
+	}
+	if (i == 0) {
+	    memcpy(mmap + page_offset,buf + rc,PAGE_SIZE - page_offset);
+	    rc = PAGE_SIZE - page_offset;
+	}
+	else if (i == (npages - 1)) {
+	    memcpy(mmap,buf + rc,(length - rc));
+	    rc += length - rc;
+	}
+	else {
+	    memcpy(mmap,buf + rc,PAGE_SIZE);
+	    rc += PAGE_SIZE;
+	}
+	munmap(mmap,PAGE_SIZE);
+	cur += PAGE_SIZE;
+    }
+#endif
 #ifdef ENABLE_LIBVMI
     if (vmi_write_pa(xstate->vmi_instance,paddr,buf,length) != length) {
 	verror("could not write %lu bytes at paddr 0x%"PRIxADDR": %s!\n",
