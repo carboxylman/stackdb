@@ -936,7 +936,7 @@ static int xen_vm_load_dominfo(struct target *target) {
 		xc_map_foreign_range(xc_handle,xstate->id,PAGE_SIZE,PROT_READ,
 				     xstate->dominfo.shared_info_frame);
 	    if (!xstate->live_shinfo) {
-		verror("could not mmap shared_info frame 0x%"PRIxADDR"!\n",
+		verror("could not mmap shared_info frame 0x%lx!\n",
 		       xstate->dominfo.shared_info_frame);
 		errno = EFAULT;
 		return -1;
@@ -999,7 +999,7 @@ static int xen_get_cpl(struct target *target,tid_t tid) {
     }
 
     if (cs > 3) {
-	verror("bogus CPL %d!\n",cs);
+	verror("bogus CPL %"PRIxREGVAL"!\n",cs);
 	errno = EFAULT;
 	return -1;
     }
@@ -1841,6 +1841,7 @@ static struct target_thread *xen_vm_load_thread(struct target *target,
 static struct target_thread *
 __xen_vm_load_current_thread_from_userspace(struct target *target,int force) {
     GHashTableIter iter;
+    gpointer vp;
     struct target_thread *tthread = NULL;
     struct xen_vm_thread_state *xtstate;
     uint64_t cr3;
@@ -1866,7 +1867,8 @@ __xen_vm_load_current_thread_from_userspace(struct target *target,int force) {
      * we find what we need).
      */
     g_hash_table_iter_init(&iter,target->threads);
-    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tthread)) {
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&vp)) {
+	tthread = (struct target_thread *)vp;
 	xtstate = (struct xen_vm_thread_state *)tthread->state;
 
 	if (xtstate->pgd == cr3) 
@@ -1893,7 +1895,8 @@ __xen_vm_load_current_thread_from_userspace(struct target *target,int force) {
 
 	/* Search again. */
 	g_hash_table_iter_init(&iter,target->threads);
-	while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tthread)) {
+	while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&vp)) {
+	    tthread = (struct target_thread *)vp;
 	    xtstate = (struct xen_vm_thread_state *)tthread->state;
 
 	    if (xtstate->pgd == cr3) 
@@ -2319,7 +2322,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     uint64_t pgd = 0;
     REGVAL kernel_esp = 0;
     char *comm = NULL;
-    ADDR cr3 = 0;
+    uint64_t cr3 = 0;
 
     /*
      * If the global thread has been loaded, and that's all the caller
@@ -2582,7 +2585,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 		v = target_load_value_member(target,taskv,"active_mm.pgd",NULL,
 					     LOAD_FLAG_NONE);
 		if (!v) {
-		    warn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
+		    vwarn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
 			 tid);
 		    goto errout;
 		}
@@ -2613,7 +2616,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 
     /* Check the cache: */
     if ((tthread = (struct target_thread *) \
-	     g_hash_table_lookup(target->threads,(gpointer)tid))) {
+	 g_hash_table_lookup(target->threads,(gpointer)(uintptr_t)tid))) {
 	tstate = (struct xen_vm_thread_state *)tthread->state;
 	/*
 	 * Check if this is a cached entry for an old task.  Except
@@ -2912,10 +2915,14 @@ static int xen_vm_attach_internal(struct target *target) {
     struct addrspace *tspace;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
+#ifdef ENABLE_XENACCESS
     struct bsymbol *tbs;
-    OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
+#endif
+#ifdef ENABLE_LIBVMI
     int size;
     char *tmp;
+#endif
+    OFFSET tasks_offset,pid_offset,mm_offset,pgd_offset;
     struct xen_vm_spec *xspec = \
 	(struct xen_vm_spec *)target->spec->backend_spec;
 
@@ -3291,8 +3298,12 @@ static int xen_vm_loadregions(struct target *target,struct addrspace *space) {
 
     region = memregion_create(space,REGION_TYPE_MAIN,
 			      xstate->kernel_elf_filename);
+    if (!region)
+	return -1;
     range = memrange_create(region,0,ADDRMAX,0,
 			    PROT_READ | PROT_WRITE | PROT_EXEC);
+    if (!range)
+	return -1;
 
     return 0;
 }
@@ -4430,7 +4441,6 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     struct target_thread *tthread;
     struct xen_vm_thread_state *tstate = NULL;
     struct value *v;
-    int iskernel = 0;
     int ip_offset;
     int i;
 
@@ -4498,9 +4508,6 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	       xstate->id,tthread->tid,tthread->valid,tthread->dirty);
 	return 0;
     }
-
-    if (tstate->mm_addr == 0)
-	iskernel = 1;
 
     /*
      * Ok, we can finally flush this thread's state to memory.
@@ -5315,6 +5322,12 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	 */
 	range = memrange_create(tregion,mod_core_addr,
 				mod_core_addr + mod_core_size,0,0);
+	if (!range) {
+	    verror("could not create range for module addr 0x%"PRIxADDR"!\n",
+		   mod_core_addr);
+	    retval = -1;
+	    goto errout;
+	}
 
 	/*
 	 * Load its debuginfo.
@@ -5964,6 +5977,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
     ADDR bogus_sstep_probepoint_addr;
     struct target *overlay;
     GHashTableIter iter;
+    gpointer vp;
     struct target_memmod *pmmod;
     ADDR paddr;
     REGVAL tmp_ipval;
@@ -6060,7 +6074,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	     */
 	    if (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
 		g_hash_table_iter_init(&iter,target->threads);
-		while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tthread)) {
+		while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&vp)) {
+		    tthread = (struct target_thread *)vp;
 		    xtstate = (struct xen_vm_thread_state *)tthread->state;
 
 		    if (!xtstate->exiting) 
@@ -6377,7 +6392,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 			g_hash_table_lookup(target->global_thread->hard_probepoints,
 					    (gpointer)ipval);
 		    if (!dpp) {
-			verror("DR6 said hw dbg reg %d at 0x%"PRIxADDR" was hit;"
+			verror("DR6 said hw dbg reg %d at 0x%"DRF" was hit;"
 			       " but EIP 0x%"PRIxADDR" in tid %"PRIiTID" does not"
 			       " match! ignoring hw dbg status; continuing"
 			       " other checks!\n",
@@ -6915,7 +6930,6 @@ static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
     struct xen_vm_state *xstate;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
-    uint64_t tcr3;
 
     xstate = (struct xen_vm_state *)target->state;
 
@@ -6947,7 +6961,11 @@ static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
 	    if (xtstate->pgd >= xstate->kernel_start_addr)
 		*cr3 = xtstate->pgd - xstate->kernel_start_addr;
 	    else
+#if __WORDSIZE == 64
 		*cr3 = xtstate->pgd - 0xffff810000000000UL;
+#else
+		*cr3 = xtstate->pgd - 0xffff810000000000ULL;
+#endif
 	}
 	else {
 	    *cr3 = xtstate->pgd - xstate->kernel_start_addr;
@@ -6978,7 +6996,7 @@ static int xen_vm_addr_v2p(struct target *target,tid_t tid,
     xstate = (struct xen_vm_state *)target->state;
 
     if (__xen_vm_cr3(target,tid,&cr3)) {
-	verror("could not read cr3 for tid %"PRIiTID"!\n");
+	verror("could not read cr3 for tid %"PRIiTID"!\n",tid);
 	return -1;
     }
 
@@ -6996,7 +7014,7 @@ static int xen_vm_addr_v2p(struct target *target,tid_t tid,
     errno = ENOTSUP;
     return -1;
 #else
-    tpaddr = xa_pagetable_lookup(xstate->xa_instance,cr3,tvaddr);
+    tpaddr = xa_pagetable_lookup(&xstate->xa_instance,cr3,tvaddr,0);
 #endif
 #endif
 
@@ -7021,9 +7039,14 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
     unsigned char *retval = NULL;
     unsigned long npages;
     unsigned long page_offset = paddr & (PAGE_SIZE - 1);
+#ifdef ENABLE_XENACCESS
+    unsigned long i;
     unsigned long cur;
     unsigned char *mmap;
     unsigned long rc;
+    uint32_t offset;
+#endif
+
 
     xstate = (struct xen_vm_state *)target->state;
 
@@ -7041,9 +7064,9 @@ static unsigned char *xen_vm_read_phys(struct target *target,ADDR paddr,
     cur = paddr & ~(PAGE_SIZE - 1);
     rc = 0;
     for (i = 0; i < npages; ++i) {
-	mmap = xa_access_pa(xstate->xa_instance,cur,PROT_READ);
+	mmap = xa_access_pa(&xstate->xa_instance,cur,&offset,PROT_READ);
 	if (!mmap) {
-	    verror("failed to mmap paddr 0x%"PRIxADDR" (for write to"
+	    verror("failed to mmap paddr 0x%lx (for write to"
 		   " 0x%"PRIxADDR"): %s!\n",
 		   cur,paddr,strerror(errno));
 	    goto errout;
@@ -7457,8 +7480,7 @@ static int creg_to_dreg64[COMMON_REG_COUNT] = {
     [CREG_FS] = 54,
     [CREG_GS] = 55,
 };
-#endif
-
+#else
 #define X86_32_DWREG_COUNT 59
 static int dreg_to_offset32[X86_32_DWREG_COUNT] = { 
     offsetof(struct vcpu_guest_context,user_regs.eax),
@@ -7514,6 +7536,7 @@ static int creg_to_dreg32[COMMON_REG_COUNT] = {
     [CREG_FS] = 57,
     [CREG_GS] = 58,
 };
+#endif
 
 static int tsreg_to_offset[XV_TSREG_COUNT] = { 
     offsetof(struct vcpu_guest_context,debugreg[0]),
@@ -7599,7 +7622,6 @@ REG xen_vm_dw_reg_no(struct target *target,common_reg_t reg) {
 
 REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
     int offset;
-    struct xen_vm_state *xstate;
     REGVAL retval;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
@@ -7626,7 +7648,6 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
 	offset = dreg_to_offset32[reg];
 #endif
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -7651,7 +7672,6 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
 
 int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
     int offset;
-    struct xen_vm_state *xstate;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -7683,7 +7703,6 @@ int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value) {
 	offset = dreg_to_offset32[reg];
 #endif
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -7762,7 +7781,6 @@ GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid) {
  * Hardware breakpoint support.
  */
 static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid) {
-    struct xen_vm_state *xstate;
     REG retval = -1;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
@@ -7772,7 +7790,6 @@ static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid) {
 	return -1;
     }
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -7817,7 +7834,6 @@ static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid) {
 
 static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
 					    REG reg,ADDR addr) {
-    struct xen_vm_state *xstate;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -7826,7 +7842,6 @@ static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
 	return -1;
     }
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -7862,6 +7877,8 @@ static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+    xstate = (struct xen_vm_state *)(target->state);
     assert(xstate->dominfo_valid);
     if (xstate->dominfo.ttd_replay_flag) {
 	int ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
@@ -7884,7 +7901,6 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 					    REG reg,ADDR addr,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize) {
-    struct xen_vm_state *xstate;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -7893,7 +7909,6 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 	return -1;
     }
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -7937,6 +7952,8 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+    xstate = (struct xen_vm_state *)(target->state);
     assert(xstate->dominfo_valid);
     if (xstate->dominfo.ttd_replay_flag) {
 	int ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,addr);
@@ -7956,7 +7973,6 @@ static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,
 }
 
 static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
-    struct xen_vm_state *xstate;
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
     ADDR addr;
 #endif
@@ -7968,7 +7984,6 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
 	return -1;
     }
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -7998,6 +8013,8 @@ static int xen_vm_unset_hw_breakpoint(struct target *target,tid_t tid,REG reg) {
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+    xstate = (struct xen_vm_state *)(target->state);
     assert(xstate->dominfo_valid);
     if (xstate->dominfo.ttd_replay_flag) {
 	int ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,addr);
@@ -8060,7 +8077,6 @@ int xen_vm_enable_hw_breakpoints(struct target *target,tid_t tid) {
 }
 
 int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
-    struct xen_vm_state *xstate;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -8069,7 +8085,6 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 	return -1;
     }
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -8091,6 +8106,8 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+    xstate = (struct xen_vm_state *)(target->state);
     assert(xstate->dominfo_valid);
     if (xstate->dominfo.ttd_replay_flag) {
 	int ret = xc_ttd_vmi_remove_probe(xc_handle,xstate->id,xtstate->dr[dreg]);
@@ -8110,7 +8127,6 @@ int xen_vm_disable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 }
 
 int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
-    struct xen_vm_state *xstate;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
 
@@ -8119,7 +8135,6 @@ int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
 	return -1;
     }
 
-    xstate = (struct xen_vm_state *)(target->state);
     if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
 	if (!errno) 
 	    errno = EINVAL;
@@ -8142,6 +8157,8 @@ int xen_vm_enable_hw_breakpoint(struct target *target,tid_t tid,REG dreg) {
     tthread->dirty = 1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+    xstate = (struct xen_vm_state *)(target->state);
     assert(xstate->dominfo_valid);
     if (xstate->dominfo.ttd_replay_flag) {
 	int ret = xc_ttd_vmi_add_probe(xc_handle,xstate->id,xtstate->dr[dreg]);
@@ -8339,13 +8356,13 @@ int xen_vm_instr_can_switch_context(struct target *target,ADDR addr) {
 }
 
 uint64_t xen_vm_get_tsc(struct target *target) {
-    struct target_thread *gthread;
-    struct xen_vm_thread_state *gtstate;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
     assert(xstate->dominfo_valid);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct target_thread *gthread;
+    struct xen_vm_thread_state *gtstate;
     if (xstate->dominfo.ttd_guest) {
 	if (target->global_thread && target->global_thread->valid)
 	    gthread = target->global_thread;
@@ -8381,13 +8398,13 @@ uint64_t xen_vm_get_time(struct target *target) {
 }
 
 uint64_t xen_vm_get_counter(struct target *target) {
-    struct target_thread *gthread;
-    struct xen_vm_thread_state *gtstate;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
 
     assert(xstate->dominfo_valid);
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct target_thread *gthread;
+    struct xen_vm_thread_state *gtstate;
     if (xstate->dominfo.ttd_guest) {
 	if (target->global_thread && target->global_thread->valid)
 	    gthread = target->global_thread;
@@ -8413,12 +8430,12 @@ uint64_t xen_vm_get_counter(struct target *target) {
 }
 
 int xen_vm_enable_feature(struct target *target,int feature,void *arg) {
-    struct xen_vm_state *xstate;
-
     if (feature != XV_FEATURE_BTS)
 	return -1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+
     xstate = (struct xen_vm_state *)(target->state);
 
     assert(xstate->dominfo_valid);
@@ -8432,12 +8449,12 @@ int xen_vm_enable_feature(struct target *target,int feature,void *arg) {
 }
 
 int xen_vm_disable_feature(struct target *target,int feature) {
-    struct xen_vm_state *xstate;
-
     if (feature != XV_FEATURE_BTS)
 	return -1;
 
 #ifdef CONFIG_DETERMINISTIC_TIMETRAVEL
+    struct xen_vm_state *xstate;
+
     xstate = (struct xen_vm_state *)(target->state);
 
     assert(xstate->dominfo_valid);
