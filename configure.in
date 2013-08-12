@@ -409,6 +409,12 @@ AC_SUBST(CONFIG_DETERMINISTIC_TIMETRAVEL)
 #
 # Support older versions of xenctrl that don't have evtchn_port_or_error_t.
 #
+AC_CHECK_TYPE(vcpu_guest_context_any_t,
+             [AC_DEFINE(XC_HAVE_CONTEXT_ANY)],
+             [],
+             [#include <xenctrl.h>])
+AC_SUBST(XC_HAVE_CONTEXT_ANY)
+
 AC_CHECK_TYPE(evtchn_port_or_error_t,
              [AC_DEFINE(XC_EVTCHN_PORT_T,evtchn_port_or_error_t)],
              [AC_DEFINE(XC_EVTCHN_PORT_T,evtchn_port_t)],
