@@ -3856,7 +3856,7 @@ unsigned int symbol_type_array_bytesize(struct symbol *type) {
     if (!SYMBOL_IS_FULL(type) || !SYMBOL_IS_FULL(type->datatype))
 	return 0;
 
-    size = symbol_bytesize(type->datatype);
+    size = symbol_bytesize(symbol_type_skip_qualifiers(type->datatype));
 
     for (i = 0; i < type->s.ti->d.a.count; ++i) {
 	vdebug(5,LA_DEBUG,LF_SYMBOL,"subrange length is %d\n",
