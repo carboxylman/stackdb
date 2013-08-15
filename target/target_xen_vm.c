@@ -3922,6 +3922,7 @@ static int xen_vm_set_active_probing(struct target *target,
     struct probe *probe;
     char *name;
     int forced_load = 0;
+    int retval = 0;
 
     if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
 	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
@@ -3940,6 +3941,8 @@ static int xen_vm_set_active_probing(struct target *target,
 
 		xstate->active_memory_probe = NULL;
 		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
+
+		--retval;
 	    }
 	    else {
 		xstate->active_memory_probe = probe;
@@ -3985,6 +3988,8 @@ static int xen_vm_set_active_probing(struct target *target,
 
 		xstate->active_thread_entry_probe = NULL;
 		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+
+		--retval;
 	    }
 	    else {
 		xstate->active_thread_entry_probe = probe;
@@ -3993,6 +3998,7 @@ static int xen_vm_set_active_probing(struct target *target,
 #else
 	    verror("cannot enable active thread_entry probes; distorm (disasm)"
 		   " support not built in!");
+	    --retval;
 #endif
 	}
 	else {
@@ -4031,6 +4037,8 @@ static int xen_vm_set_active_probing(struct target *target,
 
 		xstate->active_thread_exit_probe = NULL;
 		target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
+
+		--retval;
 	    }
 	    else {
 		xstate->active_thread_exit_probe = probe;
@@ -4046,7 +4054,7 @@ static int xen_vm_set_active_probing(struct target *target,
 	}
     }
 
-    return 0;
+    return retval;
 }
 
 static struct target *
