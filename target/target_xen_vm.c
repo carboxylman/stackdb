@@ -719,9 +719,10 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	}
 
 	/*
-	 * Figure out where the real ELF file is.  We look in three
+	 * Figure out where the real ELF file is.  We look in four
 	 * places:
 	 *   /usr/lib/debug/lib/modules/<kernel_version>/vmlinux
+	 *   /usr/lib/debug/boot/vmlinux-<kernel_version>
 	 *   /boot/vmlinux-<kernel_version>
 	 *   /boot/vmlinux-syms-<kernel_version> (old A3 style)
 	 */
@@ -731,6 +732,15 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	if (xstate->kernel_elf_filename[0] == '\0') {
 	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
 		     "%s/usr/lib/debug/lib/modules/%s/vmlinux",
+		     (target->spec->debugfile_root_prefix)		\
+		         ? target->spec->debugfile_root_prefix : "",
+		     xstate->kernel_version);
+	    if (access(xstate->kernel_elf_filename,R_OK))
+		xstate->kernel_elf_filename[0] = '\0';
+	}
+	if (xstate->kernel_elf_filename[0] == '\0') {
+	    snprintf(xstate->kernel_elf_filename,PATH_MAX,
+		     "%s/usr/lib/debug/boot/vmlinux-%s",
 		     (target->spec->debugfile_root_prefix)		\
 		         ? target->spec->debugfile_root_prefix : "",
 		     xstate->kernel_version);
