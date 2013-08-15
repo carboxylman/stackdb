@@ -2000,7 +2000,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 		   value->bufsiz);
 	}
 	else {
-	    value = value_create(tthread,range,bsymbol->lsymbol,datatype);
+	    value = value_create(tthread,range,bsymbol->lsymbol,tdatatype);
 	    if (!value) {
 		verror("could not create value: %s\n",strerror(errno));
 		goto errout;
