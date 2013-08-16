@@ -31,7 +31,7 @@ endif
 
 include $(OBJDIR)/Makeconf
 
-ifeq ($(ENABLE_XENACCESS),"1")
+ifeq ($(ENABLE_XENTTSUPPORT),"1")
 	SUBDIRS += bts
 endif
 
@@ -70,23 +70,16 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/output.h
 
 OBJECTS := dumpthreads.lo 
-ifeq ($(ENABLE_XENACCESS),"1")
-	OBJECTS += psaction.lo
-endif
-ifeq ($(ENABLE_LIBVMI),"1")
+ifeq ($(ENABLE_XENSUPPORT),"1")
 	OBJECTS += psaction.lo
 endif
 
 LIBRARIES := 
 
 PROGRAMS := dumpthreads 
-ifeq ($(ENABLE_XENACCESS),"1")
+ifeq ($(ENABLE_XENSUPPORT),"1")
 	PROGRAMS += psaction
 endif
-ifeq ($(ENABLE_LIBVMI),"1")
-	PROGRAMS += psaction
-endif
-
 
 STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
 	$(OBJDIR)/lib/libvmilib.la

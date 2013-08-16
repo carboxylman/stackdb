@@ -19,6 +19,7 @@
 #ifndef __TARGET_XML_H__
 #define __TARGET_XML_H__
 
+#include "config.h"
 #include "target_xml_moduleStub.h"
 #include "debuginfo_xml_moduleStub.h"
 #include "dwdebug.h"

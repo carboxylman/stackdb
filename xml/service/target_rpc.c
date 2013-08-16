@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "config.h"
 #include "generic_rpc.h"
 #include "common_xml.h"
 #include "target_rpc.h"
