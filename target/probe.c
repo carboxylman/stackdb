@@ -786,13 +786,13 @@ int probe_free(struct probe *probe,int force) {
 	}
     }
 
-    if (probe->target) 
-	target_detach_probe(probe->target,probe);
-
     if (PROBE_SAFE_OP(probe,fini)) {
 	verror("probe %s fini failed, aborting!\n",probe->name);
 	return -1;
     }
+
+    if (probe->target) 
+	target_detach_probe(probe->target,probe);
 
     if (probe->bsymbol) {
 	RPUT(probe->bsymbol,bsymbol,probe,trefcnt);
