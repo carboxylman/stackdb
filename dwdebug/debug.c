@@ -721,6 +721,95 @@ struct lsymbol *lsymbol_clone(struct lsymbol *lsymbol,struct symbol *newchild) {
     return ls;
 }
 
+struct array_list *symbol_get_members(struct symbol *symbol,
+				      symbol_var_type_flag_t kinds) {
+    int numsyms = 0;
+    struct array_list *retval;
+    struct symbol_instance *tmpi;
+    struct symbol *tmps;
+    GHashTableIter iter;
+
+    if (!SYMBOL_IS_FULL(symbol)) {
+	if (symbol->source != SYMBOL_SOURCE_ELF) {
+	    vwarn("symbol %s is partial!\n",symbol_get_name(symbol));
+	}
+	return NULL;
+    }
+    else if (!SYMBOL_IST_STUN(symbol) 
+	     && !SYMBOL_IST_ENUM(symbol)
+	     && !SYMBOL_IST_FUNCTION(symbol)
+	     && !SYMBOL_IS_FUNCTION(symbol)) {
+	verror("bad symbol type %s!\n",SYMBOL_TYPE(symbol->type));
+	return NULL;
+    }
+
+    if (SYMBOL_IST_STUN(symbol)) {
+	numsyms += symbol->s.ti->d.su.count;
+    }
+    else if (SYMBOL_IST_ENUM(symbol)) {
+	numsyms += symbol->s.ti->d.e.count;
+    }
+    else if (SYMBOL_IST_FUNCTION(symbol)
+	     && ((kinds == SYMBOL_VAR_TYPE_FLAG_NONE) 
+		 || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG))) {
+	numsyms += symbol->s.ti->d.f.count;
+    }
+    else if (SYMBOL_IS_FUNCTION(symbol)) {
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG)) {
+	    numsyms += symbol->s.ii->d.f.count;
+	}
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_LOCAL)) {
+	    numsyms += g_hash_table_size(symbol->s.ii->d.f.symtab->tab) \
+		- symbol->s.ii->d.f.count;
+	}
+    }
+
+    retval = array_list_create(numsyms);
+    if (numsyms == 0)
+	return retval;
+
+    if (SYMBOL_IST_STUN(symbol)) {
+	list_for_each_entry(tmpi,&symbol->s.ti->d.su.members,d.v.member) {
+	    tmps = tmpi->d.v.member_symbol;
+	    array_list_append(retval,tmps);
+	}
+    }
+    else if (SYMBOL_IST_ENUM(symbol)) {
+	list_for_each_entry(tmpi,&symbol->s.ti->d.e.members,d.v.member) {
+	    tmps = tmpi->d.v.member_symbol;
+	    array_list_append(retval,tmps);
+	}
+    }
+    else if (SYMBOL_IST_FUNCTION(symbol)
+	     && ((kinds == SYMBOL_VAR_TYPE_FLAG_NONE) 
+		 || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG))) {
+	list_for_each_entry(tmpi,&symbol->s.ti->d.f.args,d.v.member) {
+	    tmps = tmpi->d.v.member_symbol;
+	    array_list_append(retval,tmps);
+	}
+    }
+    else if (SYMBOL_IS_FUNCTION(symbol)) {
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_ARG)) {
+	    list_for_each_entry(tmpi,&symbol->s.ii->d.f.args,d.v.member) {
+		tmps = tmpi->d.v.member_symbol;
+		array_list_append(retval,tmps);
+	    }
+	}
+	if (kinds == SYMBOL_VAR_TYPE_FLAG_NONE
+	    || (kinds & SYMBOL_VAR_TYPE_FLAG_LOCAL)) {
+	    g_hash_table_iter_init(&iter,symbol->s.ii->d.f.symtab->tab);
+	    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tmps)) {
+		array_list_append(retval,tmps);
+	    }
+	}
+    }
+
+    return retval;
+}
+
 struct array_list *lsymbol_get_members(struct lsymbol *lsymbol,
 				       symbol_var_type_flag_t kinds) {
     int numsyms = 0;

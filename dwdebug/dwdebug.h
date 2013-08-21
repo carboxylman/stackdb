@@ -811,6 +811,25 @@ struct lsymbol *symbol_lookup_sym(struct symbol *symbol,
 struct lsymbol *lsymbol_clone(struct lsymbol *lsymbol,struct symbol *newchild);
 
 /*
+ * Returns a list of symbols that correspond to the members of
+ * @lsymbol.  If @argsonly is set, only function argument members will
+ * be returned.  Only function or struct/enum types may have members, so
+ * expect NULL if you pass anything else!  If you do pass a valid
+ * @lsymbol, but it has no members of the kind you are looking (i.e.,
+ * how @argsonly is set), then an empty list will be returned.
+ *
+ * If @lsymbol has multiple levels (i.e., a hierarchy of nested
+ * struct/enum members), or a function with nested symtabs, only those
+ * members in the first level are returned!
+ * 
+ * This function does *not* hold refs to the members it returns!
+ *
+ * @kinds - 0 means all, 1 means func args only, 2 means locals only
+ */
+struct array_list *symbol_get_members(struct symbol *symbol,
+				      symbol_var_type_flag_t kinds);
+
+/*
  * Returns a list of lsymbols that correspond to the members of
  * @lsymbol.  If @argsonly is set, only function argument members will
  * be returned.  Only function or struct/enum types may have members, so
