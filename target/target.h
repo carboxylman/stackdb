@@ -562,6 +562,10 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
  **/
 #ifdef ENABLE_DISTORM
 const char *disasm_get_inst_name(inst_type_t type);
+/*
+ * XXX: if either of the array_list outvars get set, the caller must
+ * free them with array_list_deep_free .  Yes, this is bad.
+ */
 int disasm_generic(struct target *target,
 		   unsigned char *inst_buf,unsigned int buf_len,
 		   struct array_list **idata_list_saveptr,int noabort);
