@@ -59,8 +59,13 @@ result_t probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
 	list = probe->sinks;
 	while (list) {
 	    ptmp = (struct probe *)list->data;
-	    /* Signal each of the sinks. */
-	    if (ptmp->pre_handler) {
+	    /*
+	     * Signal each of the sinks, IF their threads match (thus a
+	     * sink can act as a filter on a thread id.
+	     */
+	    if (ptmp->pre_handler
+		&& (ptmp->thread->tid == TID_GLOBAL 
+		    || probe->thread->tid == ptmp->thread->tid)) {
 		rc = ptmp->pre_handler(ptmp,ptmp->handler_data,trigger);
 		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
@@ -88,8 +93,13 @@ result_t probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
 	list = probe->sinks;
 	while (list) {
 	    ptmp = (struct probe *)list->data;
-	    /* Signal each of the sinks. */
-	    if (ptmp->post_handler) {
+	    /*
+	     * Signal each of the sinks, IF their threads match (thus a
+	     * sink can act as a filter on a thread id.
+	     */
+	    if (ptmp->post_handler
+		&& (ptmp->thread->tid == TID_GLOBAL 
+		    || probe->thread->tid == ptmp->thread->tid)) {
 		rc = ptmp->post_handler(ptmp,ptmp->handler_data,trigger);
 		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
