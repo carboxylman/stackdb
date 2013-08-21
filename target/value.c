@@ -111,8 +111,10 @@ struct value *value_create_type(struct target_thread *thread,
 
     if (thread)
 	value->thread = thread;
-    else
+    else if (range)
 	value->thread = range->region->space->target->global_thread;
+    else 
+	vwarn("value without thread being created; BUG!\n");
     value->range = range;
 
     RHOLD(type,value);
@@ -798,17 +800,19 @@ void value_dump(struct value *value,struct dump_info *ud) {
     udn.meta = ud->meta;
     udn.detail = ud->detail;
 
-    alen = array_list_len(value->lsymbol->chain);
-    for (i = 0; i < alen; ++i) {
-	s = (struct symbol *)array_list_item(value->lsymbol->chain,i);
-	if (symbol_get_name(s)) {
-	    fprintf(udn.stream,"%s",symbol_get_name(s));
-	    if ((i + 1) < alen)
-		fputs(".",udn.stream);
+    if (value->lsymbol) {
+	alen = array_list_len(value->lsymbol->chain);
+	for (i = 0; i < alen; ++i) {
+	    s = (struct symbol *)array_list_item(value->lsymbol->chain,i);
+	    if (symbol_get_name(s)) {
+		fprintf(udn.stream,"%s",symbol_get_name(s));
+		if ((i + 1) < alen)
+		    fputs(".",udn.stream);
+	    }
 	}
-    }
 
-    fputs(" = ",udn.stream);
+	fputs(" = ",udn.stream);
+    }
 
     __value_dump(value,&udn);
 
