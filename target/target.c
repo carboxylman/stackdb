@@ -3015,6 +3015,12 @@ struct target_thread *target_lookup_thread(struct target *target,tid_t tid) {
 						       (gpointer)(ptr_t)tid);
 }
 
+target_status_t target_get_status(struct target *target) {
+    vdebug(8,LA_TARGET,LF_TARGET,"target %s  %s\n",
+	   target->name,TSTATUS(target->status));
+    return target->status;
+}
+
 void target_set_status(struct target *target,target_status_t status) {
     vdebug(8,LA_TARGET,LF_TARGET,"target %s  %s -> %s\n",
 	   target->name,TSTATUS(target->status),TSTATUS(status));
