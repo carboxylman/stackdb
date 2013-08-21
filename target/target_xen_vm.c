@@ -5276,7 +5276,7 @@ static int __update_module(struct target *target,struct value *value,void *data)
     struct list_head *pos;
     struct memregion *tregion = NULL;
     struct memrange *range;
-    char *modfilename;
+    char *modfilename = NULL;
     int retval;
     struct binfile_instance *bfi = NULL;
     struct debugfile *debugfile = NULL;
@@ -5335,15 +5335,24 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	   v_string(mod_name),mod_core_addr,(unsigned)mod_core_size,
 	   mod_init_addr,(unsigned)mod_init_size);
 
-    modfilename = g_hash_table_lookup(ud->moddep,v_string(mod_name));
-    if (!modfilename) {
-	retval = -1;
-	goto errout;
+    if (!ud->moddep) {
+	vwarnopt(8,LA_TARGET,LF_XV,
+		 "no moddep info for %s; cannot load binfile info!\n",
+		 v_string(mod_name));
+    }
+    else {
+	modfilename = g_hash_table_lookup(ud->moddep,v_string(mod_name));
+	if (!modfilename) {
+	    vwarnopt(8,LA_TARGET,LF_XV,
+		     "no moddep info for %s; cannot load binfile info!\n",
+		     v_string(mod_name));
+	}
     }
 
     list_for_each(pos,&space->regions) {
 	tregion = list_entry(pos,typeof(*tregion),region);
-	if (strcmp(tregion->name,modfilename) == 0) {
+	if (strcmp(tregion->name,
+		   (modfilename) ? modfilename : v_string(mod_name)) == 0) {
 	    if (tregion->base_load_addr == mod_core_addr)
 		break;
 	}
@@ -5358,7 +5367,8 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	 * Create a new one!  Anything could have happened.
 	 */
 	tregion = memregion_create(ud->space,REGION_TYPE_LIB,
-				   strdup(modfilename));
+				   (modfilename) ? strdup(modfilename) \
+				                 : strdup(v_string(mod_name)));
 	tregion->new = 1;
 
 	/*
@@ -5373,28 +5383,30 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	    goto errout;
 	}
 
-	/*
-	 * Load its debuginfo.
-	 */
-	bfi = binfile_infer_instance(tregion->name,
-				     target->spec->debugfile_root_prefix,
-				     mod_core_addr,target->config);
-	if (!bfi) {
-	    verror("could not infer instance for module %s!\n",tregion->name);
-	    retval = -1;
-	    goto errout;
-	}
+	if (modfilename) {
+	    /*
+	     * Load its debuginfo.
+	     */
+	    bfi = binfile_infer_instance(tregion->name,
+					 target->spec->debugfile_root_prefix,
+					 mod_core_addr,target->config);
+	    if (!bfi) {
+		verror("could not infer instance for module %s!\n",tregion->name);
+		retval = -1;
+		goto errout;
+	    }
 
-	debugfile = 
-	    debugfile_from_instance(bfi,target->spec->debugfile_load_opts_list);
-	if (!debugfile) {
-	    retval = -1;
-	    goto errout;
-	}
+	    debugfile = 
+		debugfile_from_instance(bfi,target->spec->debugfile_load_opts_list);
+	    if (!debugfile) {
+		retval = -1;
+		goto errout;
+	    }
 
-	if (target_associate_debugfile(target,tregion,debugfile)) {
-	    retval = -1;
-	    goto errout;
+	    if (target_associate_debugfile(target,tregion,debugfile)) {
+		retval = -1;
+		goto errout;
+	    }
 	}
     }
 
@@ -5442,7 +5454,8 @@ static int xen_vm_reload_modules_dep(struct target *target) {
      * valid.
      */
     if (stat(moddep_path,&statbuf)) {
-	verror("stat(%s): %s; aborting!\n",moddep_path,strerror(errno));
+	vwarnopt(8,LA_TARGET,LF_XV,
+		 "stat(%s): %s; aborting!\n",moddep_path,strerror(errno));
 	return -1;
     }
     moddep_mtime = statbuf.st_mtime;
@@ -5567,7 +5580,8 @@ static int xen_vm_updateregions(struct target *target,
     }
 
     if (xen_vm_reload_modules_dep(target)) 
-	verror("failed to reload modules.dep; trying to continue!\n");
+	vwarnopt(8,LF_TARGET,LF_XV,
+		 "failed to reload modules.dep; trying to continue!\n");
 
     ud.space = space;
     ud.moddep = xstate->moddep;
