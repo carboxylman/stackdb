@@ -772,6 +772,11 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     return;
 }
 
+void value_dump_simple(struct value *value,struct dump_info *ud) {
+    __value_dump(value,ud);
+    return;
+}
+
 void value_dump(struct value *value,struct dump_info *ud) {
     char *p = "";
     char *np;

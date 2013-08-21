@@ -1070,6 +1070,7 @@ struct value *value_clone(struct value *in);
 ADDR value_addr(struct value *value);
 void value_free(struct value *value);
 void value_dump(struct value *value,struct dump_info *ud);
+void value_dump_simple(struct value *value,struct dump_info *ud);
 
 /*
  * Refreshes @value if necessary.  If @value is a child of another
