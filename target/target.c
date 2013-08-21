@@ -1604,6 +1604,170 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 
 }
 
+struct value *target_load_type_regval(struct target *target,struct symbol *type,
+				      tid_t tid,REG reg,REGVAL regval,
+				      load_flags_t flags) {
+    struct symbol *datatype;
+    struct value *value;
+    struct memrange *range;
+    ADDR ptraddr;
+    size_t sz;
+    struct target_thread *tthread;
+
+    if (flags & LOAD_FLAG_MUST_MMAP) {
+	verror("cannot mmap reg type!\n");
+	errno = EINVAL;
+	return NULL;
+    }
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	errno = EINVAL;
+	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	return NULL;
+    }
+
+    datatype = symbol_type_skip_qualifiers(type);
+
+    if (!SYMBOL_IS_FULL_TYPE(datatype)) {
+	verror("symbol %s is not a full type (is %s)!\n",
+	       symbol_get_name(type),SYMBOL_TYPE(type->type));
+	errno = EINVAL;
+	return NULL;
+    }
+
+    if (datatype != type)
+	vdebug(9,LA_TARGET,LF_TSYMBOL,"skipped from %s to %s for type %s\n",
+	       DATATYPE(type->datatype_code),
+	       DATATYPE(datatype->datatype_code),symbol_get_name(type));
+    else 
+	vdebug(9,LA_TARGET,LF_TSYMBOL,"no skip; type for type %s is %s\n",
+	       symbol_get_name(type),DATATYPE(datatype->datatype_code));
+
+    /*
+     * If the user wants pointers deref'd, get range/region info for the
+     * regval, and deref.
+     */
+    if (((flags & LOAD_FLAG_AUTO_DEREF) && SYMBOL_IST_PTR(datatype))
+	|| ((flags & LOAD_FLAG_AUTO_STRING) 
+	    && SYMBOL_IST_PTR(datatype) 
+	    && symbol_type_is_char(symbol_type_skip_ptrs(datatype)))) {
+	if (!target_find_memory_real(target,regval,NULL,NULL,&range)) {
+	    verror("could not find range for regval addr 0x%"PRIxADDR"\n!",
+		   regval);
+	    errno = EFAULT;
+	    return NULL;
+	}
+	/* If they want pointers automatically dereferenced, do it! */
+	errno = 0;
+	ptraddr = target_autoload_pointers(target,datatype,regval,flags,
+					   &datatype,&range);
+	if (errno) {
+	    verror("failed to autoload pointers for type %s"
+		   " at regval addr 0x%"PRIxADDR"\n",
+		   symbol_get_name(type),regval);
+	    return NULL;
+	}
+
+	if (!ptraddr) {
+	    verror("last pointer was NULL!\n");
+	    errno = EFAULT;
+	    return NULL;
+	}
+    }
+    else {
+	range = NULL;
+	ptraddr = 0;
+    }
+
+    /*
+     * Now allocate the value struct for various cases and return.
+     */
+
+    /*
+     * If we're autoloading pointers and we want to load char * pointers
+     * as strings, do it!
+     */
+    if (ptraddr
+	&& (flags & LOAD_FLAG_AUTO_STRING)
+	&& symbol_type_is_char(datatype)) {
+	/* XXX: should we use datatype, or the last pointer to datatype? */
+	value = value_create_noalloc(tthread,range,NULL,datatype);
+	if (!value) {
+	    verror("could not create value: %s\n",strerror(errno));
+	    goto errout;
+	}
+
+	if (!(value->buf = (char *) \
+	          __target_load_addr_real(target,range,ptraddr,flags,NULL,0))) {
+	    verror("failed to autoload char * for type %s"
+		   " at regval ptr addr 0x%"PRIxADDR"\n",
+		   symbol_get_name(type),ptraddr);
+	    goto errout;
+	}
+	value_set_strlen(value,strlen(value->buf) + 1);
+	value_set_addr(value,ptraddr);
+
+	vdebug(9,LA_TARGET,LF_TSYMBOL,
+	       "autoloaded char * with len %d\n",value->bufsiz);
+
+	/* success! */
+	goto out;
+    }
+    else if (ptraddr) {
+	value = value_create_type(tthread,range,datatype);
+	if (!value) {
+	    verror("could not create value for type (ptr is %p) %s\n",
+		   datatype,datatype ? datatype->name : NULL);
+	    goto errout;
+	}
+
+	if (!__target_load_addr_real(target,range,ptraddr,flags,
+				     (unsigned char *)value->buf,
+				     value->bufsiz)) {
+	    verror("could not load addr 0x%"PRIxADDR"!\n",ptraddr);
+	    goto errout;
+	}
+
+	value_set_addr(value,ptraddr);
+    }
+    else {
+	value = value_create_type(tthread,NULL,datatype);
+	if (!value) {
+	    verror("could not create value for type (ptr is %p) %s\n",
+		   datatype,datatype ? datatype->name : NULL);
+	    goto errout;
+	}
+
+	if (value->bufsiz > (int)sizeof(REGVAL))
+	    sz = sizeof(REGVAL);
+	else
+	    sz = value->bufsiz;
+	memcpy(value->buf,&regval,sz);
+
+	value_set_reg(value,reg);
+    }
+
+ out:
+    return value;
+
+ errout:
+    if (value)
+	value_free(value);
+
+    return NULL;
+}
+
+struct value *target_load_type_reg(struct target *target,struct symbol *type,
+				   tid_t tid,REG reg,load_flags_t flags) {
+    REGVAL regval;
+
+    errno = 0;
+    regval = target_read_reg(target,tid,reg);
+
+    return target_load_type_regval(target,type,tid,reg,regval,flags);
+}
+
 struct value *target_load_symbol_member(struct target *target,tid_t tid,
 					struct bsymbol *bsymbol,
 					const char *member,const char *delim,

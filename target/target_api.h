@@ -936,6 +936,16 @@ struct value *target_load_value_member(struct target *target,
 struct value *target_load_type(struct target *target,struct symbol *type,
 			       ADDR addr,load_flags_t flags);
 /*
+ * This function creates a value by loading the number of bytes
+ * specified by @type from @tid's register @reg.
+ */
+struct value *target_load_type_reg(struct target *target,struct symbol *type,
+				   tid_t tid,REG reg,load_flags_t flags);
+/* Or if you've already read the register, this one. */
+struct value *target_load_type_regval(struct target *target,struct symbol *type,
+				      tid_t tid,REG reg,REGVAL regval,
+				      load_flags_t flags);
+/*
  * Load a raw value (i.e., no symbol or type info) using an object
  * file-based location (i.e., a fixed object-relative address) and a
  * specific region.
