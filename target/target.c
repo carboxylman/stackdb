@@ -582,6 +582,234 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     return 0;
 }
 
+struct target_gkv_info {
+    void *value;
+    target_gkv_dtor_t dtor;
+};
+
+int target_gkv_insert(struct target *target,char *key,void *value,
+		      target_gkv_dtor_t dtor) {
+    struct target_gkv_info *gkvi;
+
+    if (g_hash_table_lookup_extended(target->gkv_store,key,NULL,NULL) == TRUE) {
+	errno = EEXIST;
+	return -1;
+    }
+
+    gkvi = calloc(1,sizeof(*gkvi));
+    gkvi->value = value;
+    gkvi->dtor = dtor;
+
+    g_hash_table_insert(target->gkv_store,strdup(key),gkvi);
+
+    return 0;
+}
+
+void *target_gkv_lookup(struct target *target,char *key) {
+    struct target_gkv_info *gkvi;
+
+    if (!(gkvi = (struct target_gkv_info *) \
+	      g_hash_table_lookup(target->gkv_store,key))) {
+	return NULL;
+    }
+
+    return gkvi->value;
+}
+
+void *target_gkv_steal(struct target *target,char *key) {
+    struct target_gkv_info *gkvi;
+    void *value;
+    gpointer rval;
+
+    if (g_hash_table_lookup_extended(target->gkv_store,key,
+				     NULL,&rval) == FALSE) {
+	return NULL;
+    }
+    gkvi = (struct target_gkv_info *)rval;
+
+    g_hash_table_remove(target->gkv_store,key);
+    value = gkvi->value;
+    free(gkvi);
+
+    return value;
+}
+
+void target_gkv_remove(struct target *target,char *key) {
+    struct target_gkv_info *gkvi;
+    gpointer rval;
+
+    if (g_hash_table_lookup_extended(target->gkv_store,key,
+				     NULL,&rval) == FALSE) {
+	return;
+    }
+    gkvi = (struct target_gkv_info *)rval;
+
+    g_hash_table_remove(target->gkv_store,key);
+    if (gkvi->dtor)
+	gkvi->dtor(target,key,gkvi->value);
+    free(gkvi);
+
+    return;
+}
+
+void target_gkv_destroy(struct target *target) {
+    GHashTableIter iter;
+    gpointer kp,vp;
+    char *key;
+    struct target_gkv_info *gkvi;
+
+    g_hash_table_iter_init(&iter,target->gkv_store);
+    while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+	gkvi = (struct target_gkv_info *)vp;
+	key = (char *)kp;
+	/*
+	 * Steal it so the key destructor (free()) isn't called before
+	 * we pass it to the dtor -- but so that the value is still not in
+	 * the hashtable.
+	 */
+	g_hash_table_iter_steal(&iter);
+	if (gkvi->dtor)
+	    gkvi->dtor(target,key,gkvi->value);
+	free(key);
+	free(gkvi);
+    }
+
+    g_hash_table_destroy(target->gkv_store);
+    target->gkv_store = NULL;
+}
+
+struct target_thread_gkv_info {
+    void *value;
+    tid_t tid;
+    target_thread_gkv_dtor_t dtor;
+};
+
+int target_thread_gkv_insert(struct target *target,tid_t tid,
+			     char *key,void *value,
+			     target_thread_gkv_dtor_t dtor) {
+    struct target_thread_gkv_info *gkvi;
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	errno = ESRCH;
+	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	return -1;
+    }
+
+    if (g_hash_table_lookup_extended(tthread->gkv_store,key,NULL,NULL) == TRUE) {
+	errno = EEXIST;
+	return -1;
+    }
+
+    gkvi = calloc(1,sizeof(*gkvi));
+    gkvi->value = value;
+    gkvi->tid = tid;
+    gkvi->dtor = dtor;
+
+    g_hash_table_insert(tthread->gkv_store,strdup(key),gkvi);
+
+    return 0;
+}
+
+void *target_thread_gkv_lookup(struct target *target,tid_t tid,char *key) {
+    struct target_thread_gkv_info *gkvi;
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	errno = ESRCH;
+	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	return NULL;
+    }
+
+    if (!(gkvi = (struct target_thread_gkv_info *) \
+	      g_hash_table_lookup(tthread->gkv_store,key))) {
+	return NULL;
+    }
+
+    return gkvi->value;
+}
+
+void *target_thread_gkv_steal(struct target *target,tid_t tid,char *key) {
+    struct target_thread_gkv_info *gkvi;
+    void *value;
+    struct target_thread *tthread;
+    gpointer rval;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	errno = ESRCH;
+	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	return NULL;
+    }
+
+    if (g_hash_table_lookup_extended(tthread->gkv_store,key,
+				     NULL,&rval) == FALSE) {
+	return NULL;
+    }
+    gkvi = (struct target_thread_gkv_info *)rval;
+
+    g_hash_table_remove(tthread->gkv_store,key);
+    value = gkvi->value;
+    free(gkvi);
+
+    return value;
+}
+
+void target_thread_gkv_remove(struct target *target,tid_t tid,char *key) {
+    struct target_thread_gkv_info *gkvi;
+    struct target_thread *tthread;
+    gpointer rval;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	errno = ESRCH;
+	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	return;
+    }
+
+    if (g_hash_table_lookup_extended(tthread->gkv_store,key,
+				     NULL,&rval) == FALSE) {
+	return;
+    }
+    gkvi = (struct target_thread_gkv_info *)rval;
+
+    g_hash_table_remove(tthread->gkv_store,key);
+    if (gkvi->dtor)
+	gkvi->dtor(target,gkvi->tid,key,gkvi->value);
+    free(gkvi);
+
+    return;
+}
+
+void target_thread_gkv_destroy(struct target *target,
+			       struct target_thread *tthread) {
+    GHashTableIter iter;
+    gpointer kp,vp;
+    char *key;
+    struct target_thread_gkv_info *gkvi;
+
+    g_hash_table_iter_init(&iter,tthread->gkv_store);
+    while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+	gkvi = (struct target_thread_gkv_info *)vp;
+	key = (char *)kp;
+	/*
+	 * Steal it so the key destructor (free()) isn't called before
+	 * we pass it to the dtor -- but so that the value is still not in
+	 * the hashtable.
+	 */
+	g_hash_table_iter_steal(&iter);
+	if (gkvi->dtor)
+	    gkvi->dtor(target,gkvi->tid,key,gkvi->value);
+	free(key);
+	free(gkvi);
+    }
+
+    g_hash_table_destroy(tthread->gkv_store);
+    tthread->gkv_store = NULL;
+}
+
 void target_add_state_change(struct target *target,tid_t tid,
 			     target_state_change_type_t chtype,
 			     unsigned long code,unsigned long data,
@@ -822,6 +1050,9 @@ struct target *target_create(char *type,struct target_spec *spec) {
     retval->infd = retval->outfd = retval->errfd = -1;
 
     retval->config = g_hash_table_new_full(g_str_hash,g_str_equal,free,free);
+
+    /* Keys are always copied; values get user-custom dtors */
+    retval->gkv_store = g_hash_table_new_full(g_str_hash,g_str_equal,free,NULL);
 
     INIT_LIST_HEAD(&retval->spaces);
 
@@ -3229,6 +3460,9 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
     t->tpc_stack = array_list_create(4);
     INIT_LIST_HEAD(&t->ss_actions);
 
+    /* Keys are always copied; values get user-custom dtors */
+    t->gkv_store = g_hash_table_new_full(g_str_hash,g_str_equal,free,NULL);
+
     g_hash_table_insert(target->threads,(gpointer)(ptr_t)tid,t);
 
     return t;
@@ -3246,6 +3480,11 @@ void target_detach_thread(struct target *target,struct target_thread *tthread) {
     GHashTableIter iter;
     struct probepoint *probepoint;
     struct thread_action_context *tac,*ttac;
+
+    /*
+     * Destroy any thread generic keys first.
+     */
+    target_thread_gkv_destroy(target,tthread);
 
     if (!list_empty(&tthread->ss_actions)) {
 	list_for_each_entry_safe(tac,ttac,&tthread->ss_actions,tac) {

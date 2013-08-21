@@ -357,6 +357,60 @@ void target_release_mmap_entry(struct target *target,
 			       struct mmap_entry *mme);
 
 /**
+ ** Per-target and per-thread runtime key/value store.  These always
+ ** copy the key and free it on remove so that the user doesn't have to
+ ** worry.  Thus, the dtors MUST NOT free the key -- it is for info
+ ** purposes only.
+ **/
+typedef void (*target_gkv_dtor_t)(struct target *target,char *key,void *value);
+typedef void (*target_thread_gkv_dtor_t)(struct target *target,tid_t tid,
+					 char *key,void *value);
+
+static inline void target_gkv_dtor_free(struct target *target,
+					char *key,void *value) {
+    if (value)
+	free(value);
+}
+static inline void target_gkv_dtor_bsymbol(struct target *target,
+					   char *key,void *value) {
+    if (value)
+	bsymbol_release((struct bsymbol *)value);
+}
+static inline void target_gkv_dtor_probe(struct target *target,
+					 char *key,void *value) {
+    if (value)
+	probe_free((struct probe *)value,0);
+}
+static inline void target_gkv_dtor_alist_deep_free(struct target *target,
+						   char *key,void *value) {
+    if (value)
+	array_list_deep_free((struct array_list *)value);
+}
+static inline void target_thread_gkv_dtor_free(struct target *target,
+					       char *key,void *value) {
+    if (value)
+	free(value);
+}
+
+int target_gkv_insert(struct target *target,char *key,void *value,
+		      target_gkv_dtor_t dtor);
+void *target_gkv_lookup(struct target *target,char *key);
+void *target_gkv_steal(struct target *target,char *key);
+void target_gkv_remove(struct target *target,char *key);
+/* NB: internal. */
+void target_gkv_destroy(struct target *target);
+
+int target_thread_gkv_insert(struct target *target,tid_t tid,
+			     char *key,void *value,
+			     target_thread_gkv_dtor_t dtor);
+void *target_thread_gkv_lookup(struct target *target,tid_t tid,char *key);
+void *target_thread_gkv_steal(struct target *target,tid_t tid,char *key);
+void target_thread_gkv_remove(struct target *target,tid_t tid,char *key);
+/* NB: internal. */
+void target_thread_gkv_destroy(struct target *target,
+			       struct target_thread *tthread);
+
+/**
  ** State changes.
  **/
 void target_add_state_change(struct target *target,tid_t tid,

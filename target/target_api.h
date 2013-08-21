@@ -1536,6 +1536,12 @@ struct target_thread {
      * only, but able to be kept entirely within the action struct.
      */
     struct list_head ss_actions;
+
+    /*
+     * A simple key/value store for generic target thread state that is
+     * specific to this target thread instance.
+     */
+    GHashTable *gkv_store;
 };
 
 struct target_spec {
@@ -1731,6 +1737,17 @@ struct target {
      * the hashtable is freed, so be careful!
      */
     GHashTable *config;
+
+    /*
+     * A simple key/value store for generic target state that is
+     * specific to this target instance.  This is useful for probe
+     * libraries that store per-target info -- but don't want to manage
+     * a per-target cache themselves.
+     *
+     * It's also useful for any state that is per-target that must be
+     * automatically destroyed on target close or free.
+     */
+    GHashTable *gkv_store;
 
     /*
      * If the target is attached to an evloop, this is that evloop.

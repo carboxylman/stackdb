@@ -883,6 +883,11 @@ int target_close(struct target *target) {
     target_pause(target);
 
     /*
+     * Destroy any generic keys first.
+     */
+    target_gkv_destroy(target);
+
+    /*
      * Do it for all the overlays first.
      */
     g_hash_table_iter_init(&iter,target->overlays);
