@@ -461,7 +461,7 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
     probepoint->state = PROBE_DISABLED;
 
     vdebug(2,LA_PROBE,LF_PROBEPOINT,"removed ");
-    LOGDUMPPROBEPOINT(2,LA_PROBE,LF_PROBEPOINT,probepoint);
+    LOGDUMPPROBEPOINT_NL(2,LA_PROBE,LF_PROBEPOINT,probepoint);
     /*
      * This is just in case it was registered with PROBEPOINT_FASTEST;
      * we need to make sure if it gets re-registered that we make the
