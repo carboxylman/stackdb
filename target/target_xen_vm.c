@@ -4207,8 +4207,11 @@ static int xen_vm_pause(struct target *target,int nowait) {
     if (xen_vm_load_dominfo(target)) 
 	vwarn("could not load dominfo for dom %d, trying to pause anyway!\n",xstate->id);
 
-    if (xstate->dominfo.paused)
+    if (xstate->dominfo.paused) {
+	if (target_get_status(target) != TSTATUS_PAUSED)
+	    target_set_status(target,TSTATUS_PAUSED);
 	return 0;
+    }
 
     if (xc_domain_pause(xc_handle,xstate->id)) {
 	verror("could not pause dom %d!\n",xstate->id);
