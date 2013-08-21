@@ -62,7 +62,9 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h 
 	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
-	symbol.lo value.lo probe.lo probe_lib.lo target_linux_userproc.lo
+	symbol.lo value.lo probe.lo probe_lib.lo \
+	target_os.lo target_process.lo target_os_linux_generic.lo
+OBJECTS += target_linux_userproc.lo
 ifeq ($(ENABLE_XENSUPPORT),"1")
 	OBJECTS += target_xen_vm.lo target_xen_vm_util.lo \
 		target_xen_vm_process.lo

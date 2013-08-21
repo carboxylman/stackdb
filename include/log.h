@@ -143,6 +143,8 @@ typedef enum log_flag_bits_target {
     LFB_XVP           = 9,
     LFB_DISASM        = 10,
     LFB_THREAD        = 11,
+    LFB_OS            = 12,
+    LFB_PROCESS       = 13,
 } log_flag_bits_target_t;
 typedef enum log_flags_target {
     LF_TARGET         = 1 << LFB_TARGET,
@@ -157,6 +159,8 @@ typedef enum log_flags_target {
     LF_XVP            = 1 << LFB_XVP,
     LF_DISASM         = 1 << LFB_DISASM,
     LF_THREAD         = 1 << LFB_THREAD,
+    LF_OS             = 1 << LFB_OS,
+    LF_PROCESS        = 1 << LFB_PROCESS,
 } log_flags_target_t;
 
 typedef enum log_flag_bits_probe {
@@ -214,7 +218,7 @@ typedef enum log_flags_ {
 		  | LF_DWARFOPS | LF_DOTHER | LF_ELF | LF_BFILE )
 #define LF_T_ALL (LF_TARGET | LF_SPACE | LF_REGION | LF_TLOOKUP \
 		  | LF_TLOC | LF_TOTHER | LF_TSYMBOL | LF_DISASM \
-		  | LF_THREAD)
+		  | LF_THREAD | LF_OS | LF_PROCESS)
 #define LF_P_ALL (LF_PROBE | LF_PROBEPOINT | LF_ACTION)
 #define LF_X_ALL (LF_XML | LF_RPC | LF_SVC | LF_PROXYREQ)
 #define LF_A_ALL (LF_ANL)

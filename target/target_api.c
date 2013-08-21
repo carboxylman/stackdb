@@ -18,6 +18,8 @@
 
 #include "target_api.h"
 #include "target.h"
+#include "target_os.h"
+#include "target_process.h"
 #include "probe_api.h"
 #include "probe.h"
 
@@ -242,6 +244,19 @@ int target_open(struct target *target) {
 		   region->base_load_addr,region->base_phys_addr,
 		   region->base_virt_addr,region->phys_offset,
 		   region->phys_offset);
+	}
+    }
+
+    if (target->ops->loadkind) {
+	vdebug(5,LA_TARGET,LF_TARGET,"loadkind target(%s)\n",target->name);
+	target->kind = target->ops->loadkind(target);
+	if (target->kind == TARGET_KIND_OS) {
+	    if (target->kind_ops.os)
+		rc = target->kind_ops.os->init(target);
+	}
+	else if (target->kind == TARGET_KIND_PROCESS) {
+	    if (target->kind_ops.process)
+		rc = target->kind_ops.process->init(target);
 	}
     }
 

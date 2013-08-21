@@ -42,6 +42,7 @@
 #include "dwdebug_priv.h"
 #include "target_api.h"
 #include "target.h"
+#include "target_os.h"
 #include "probe_api.h"
 
 #include <xenctrl.h>
@@ -74,6 +75,7 @@ static int xen_vm_updateregions(struct target *target,
 				struct addrspace *space);
 static int xen_vm_loaddebugfiles(struct target *target,struct addrspace *space,
 				 struct memregion *region);
+static target_kind_t xen_vm_loadkind(struct target *target);
 static int xen_vm_postloadinit(struct target *target);
 static int xen_vm_postopened(struct target *target);
 static int xen_vm_set_active_probing(struct target *target,
@@ -224,6 +226,7 @@ struct target_ops xen_vm_ops = {
     .loadspaces = xen_vm_loadspaces,
     .loadregions = xen_vm_loadregions,
     .loaddebugfiles = xen_vm_loaddebugfiles,
+    .loadkind = xen_vm_loadkind,
     .postloadinit = xen_vm_postloadinit,
     .postopened = xen_vm_postopened,
     .set_active_probing = xen_vm_set_active_probing,
@@ -3417,6 +3420,25 @@ static int xen_vm_loaddebugfiles(struct target *target,
 
  out:
     return retval;
+}
+
+static target_kind_t xen_vm_loadkind(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+
+    if (strcmp(xstate->ostype,"linux") == 0) {
+	vdebug(2,LA_TARGET,LF_XV | LF_OS,
+	       "OS type for guest is linux\n");
+	target->kind_ops.os = &os_linux_generic_ops;
+	return TARGET_KIND_OS;
+    }
+    else if (strcmp(xstate->ostype,"hvm") == 0) {
+	vdebug(2,LA_TARGET,LF_XV | LF_OS,
+	       "assuming OS type for HVM guest is linux\n");
+	target->kind_ops.os = &os_linux_generic_ops;
+	return TARGET_KIND_OS;
+    }
+    else
+	return TARGET_KIND_NONE;
 }
 
 static int xen_vm_postloadinit(struct target *target) {
