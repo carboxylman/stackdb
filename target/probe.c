@@ -1801,6 +1801,14 @@ char *probe_name(struct probe *probe) {
     return probe->name;
 }
 
+struct target*probe_target(struct probe *probe) {
+    return probe->target;
+}
+
+tid_t probe_tid(struct probe *probe) {
+    return probe->thread->tid;
+}
+
 void *probe_priv(struct probe *probe) {
     return probe->priv;
 }

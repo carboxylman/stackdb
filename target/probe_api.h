@@ -484,6 +484,16 @@ int probe_num_sinks(struct probe *probe);
 char *probe_name(struct probe *probe);
 
 /*
+ * Returns the probe's target.
+ */
+struct target *probe_target(struct probe *probe);
+
+/*
+ * Returns the probe's thread id.
+ */
+tid_t probe_tid(struct probe *probe);
+
+/*
  * Returns the private data of the probe, if any.
  */
 void *probe_priv(struct probe *probe);
