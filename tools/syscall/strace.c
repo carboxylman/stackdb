@@ -64,17 +64,15 @@ void sigh(int signo) {
     exit(0);
 }
 
-result_t syscall_pre_handler(struct probe *probe,void *handler_data,
-			     struct probe *trigger) {
+result_t syscall_pre_handler(struct probe *probe,tid_t tid,void *handler_data,
+			     struct probe *trigger,struct probe *base) {
     struct target_os_syscall_state *scs;
     struct timeval tv = { 0,0 };
-    tid_t tid;
     int i;
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
     struct value *v;
     void *rv;
 
-    tid = target_gettid(probe_target(probe));
     scs = target_os_syscall_probe_last(probe_target(probe),tid);
     if (!scs) {
 	verror("could not get syscall state!\n");
@@ -121,13 +119,11 @@ result_t syscall_pre_handler(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t syscall_post_handler(struct probe *probe,void *handler_data,
-			     struct probe *trigger) {
+result_t syscall_post_handler(struct probe *probe,tid_t tid,void *handler_data,
+			     struct probe *trigger,struct probe *base) {
     struct target_os_syscall_state *scs;
     struct timeval tv = { 0,0 };
-    tid_t tid;
 
-    tid = target_gettid(probe_target(probe));
     scs = target_os_syscall_probe_last(probe_target(probe),tid);
     if (!scs) {
 	verror("could not get syscall state!\n");
