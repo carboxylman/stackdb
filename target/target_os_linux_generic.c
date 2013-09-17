@@ -847,16 +847,52 @@ os_linux_syscall_probe_init_global_ret(struct target *target) {
     return NULL;
 }
 
+/*
+ * Syscall probe type.
+ *
+ * These per-syscall probes are exposed to the probe value API.
+ *
+ * The global probe is not, for now, because it doesn't have a fixed
+ * bsymbol backing it; it changes.  Also, since we're not technically
+ * *in* the bsymbol (syscall) when the pre/post handlers are called
+ * (we're in the global sysenter/sysret path), faking it could result in
+ * some oddities!
+ */
+static const char *_os_linux_syscall_probe_gettype(struct probe *probe) {
+    return "os_linux_syscall_probe";
+}
+
+struct probe_ops os_linux_syscall_ret_probe_ops = {
+    .gettype = _os_linux_syscall_probe_gettype,
+
+    .summarize = target_os_syscall_probe_summarize,
+    .summarize_tid = target_os_syscall_probe_summarize_tid,
+
+    .get_value_table = probe_value_get_table_function_ee,
+    .get_raw_value_table = probe_value_get_raw_table_function_ee,
+    .get_last_value_table = probe_value_get_last_table_function_ee,
+    .get_last_raw_value_table = probe_value_get_last_raw_table_function_ee,
+    .get_value = probe_value_get_function_ee,
+    .get_raw_value = probe_value_get_raw_function_ee,
+    .get_last_value = probe_value_get_last_function_ee,
+    .get_last_raw_value = probe_value_get_last_raw_function_ee,
+    .values_notify_phase = probe_value_notify_phase_function_ee,
+    .values_free = probe_values_free_stacked,
+};
+
 struct probe *os_linux_syscall_probe(struct target *target,tid_t tid,
 				     struct target_os_syscall *syscall,
 				     probe_handler_t pre_handler,
 				     probe_handler_t post_handler,
 				     void *handler_data) {
     struct probe *probe, *eprobe, *rprobe;
+    char namebuf[128];
 
-    probe = probe_create(target,tid,&target_os_syscall_ret_probe_ops,
-			 "syscall_probe_all",
-			 pre_handler,post_handler,handler_data,0,1);
+    snprintf(namebuf,sizeof(namebuf),"os_linux_syscall_probe_%s",
+	     bsymbol_get_name(syscall->bsymbol));
+
+    probe = probe_create(target,tid,&os_linux_syscall_ret_probe_ops,
+			 namebuf,pre_handler,post_handler,handler_data,0,1);
 
     eprobe = os_linux_syscall_probe_init_syscall_entry(target,syscall);
     if (!eprobe) {
@@ -876,14 +912,28 @@ struct probe *os_linux_syscall_probe(struct target *target,tid_t tid,
     return probe;
 }
 
+/*
+ * Global syscall probe type.
+ */
+static const char *_os_linux_global_syscall_probe_gettype(struct probe *probe) {
+    return "os_linux_global_syscall_probe";
+}
+
+struct probe_ops os_linux_global_syscall_ret_probe_ops = {
+    .gettype = _os_linux_global_syscall_probe_gettype,
+
+    .summarize = target_os_syscall_probe_summarize,
+    .summarize_tid = target_os_syscall_probe_summarize_tid,
+};
+
 struct probe *os_linux_syscall_probe_all(struct target *target,tid_t tid,
 					 probe_handler_t pre_handler,
 					 probe_handler_t post_handler,
 					 void *handler_data) {
     struct probe *probe, *eprobe, *rprobe;
 
-    probe = probe_create(target,tid,&target_os_syscall_ret_probe_ops,
-			 "syscall_probe_all",
+    probe = probe_create(target,tid,&os_linux_global_syscall_ret_probe_ops,
+			 "os_linux_global_syscall_probe",
 			 pre_handler,post_handler,handler_data,0,1);
 
     eprobe = os_linux_syscall_probe_init_global_entry(target);
