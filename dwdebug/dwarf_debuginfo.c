@@ -1961,6 +1961,35 @@ struct symbol *do_void_symbol(struct debugfile *debugfile,
     return symbol;
 }
 
+struct symbol *do_word_symbol(struct debugfile *debugfile,
+			      struct symtab *symtab,int wordsize) {
+    /* symbol_create dups the name, so we just pass a static buf */
+    struct symbol *symbol;
+
+    if ((symbol = (struct symbol *) \
+	     g_hash_table_lookup(symtab->tab,(gpointer)"long unsigned int")))
+	return symbol;
+
+    symbol = symbol_create(symtab,0,"long unsigned int",0,
+			   SYMBOL_TYPE_TYPE,SYMBOL_SOURCE_DWARF,1);
+    symbol->datatype_code = DATATYPE_BASE;
+    symbol->size.bytes = wordsize;
+    symbol->size_is_bytes = 1;
+    symbol->s.ti->d.t.encoding = ENCODING_UNSIGNED;
+
+    /* RHOLD; this debugfile owns symbol. */
+    RHOLD(symbol,debugfile);
+
+    /* Always put it in its primary symtab, of course -- probably the CU's. */
+    symtab_insert(symbol->symtab,symbol,0);
+
+    /* And also always put it in the debugfile's global types table. */
+    if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES))
+	debugfile_add_type_name(debugfile,symbol_get_name(symbol),symbol);
+
+    return symbol;
+}
+
 /*
  * You can call this in two main ways.  First, if you are loading a CU
  * for the first time, you *must* supply @meta, and it must be filled
@@ -3062,6 +3091,8 @@ static int debuginfo_load_cu(struct debugfile *debugfile,
 	}
     }
     while (level >= 0);
+
+    do_word_symbol(debugfile,cu_symtab,meta->addrsize);
 
     /*
      * Since we may not have been able to resolve all the dwarf type refs for
