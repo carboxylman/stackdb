@@ -23,14 +23,13 @@ TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= tools
 OBJDIR		= @top_builddir@
 
-ifeq ("$ENABLE_DISTORM","1")
-SUBDIRS = rop cfi
-else
-SUBDIRS = 
-endif
+SUBDIRS = syscall
 
 include $(OBJDIR)/Makeconf
 
+ifeq ($(ENABLE_DISTORM),"1")
+SUBDIRS += rop cfi
+endif
 ifeq ($(ENABLE_XENTTSUPPORT),"1")
 	SUBDIRS += bts
 endif
