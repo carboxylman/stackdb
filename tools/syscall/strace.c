@@ -35,17 +35,33 @@
 
 static int cleaning = 0;
 struct target *t = NULL;
-struct probe *p = NULL;
+GHashTable *probes = NULL;
+
+void cleanup_probes() {
+    GHashTableIter iter;
+    gpointer key;
+    struct probe *probe;
+
+    if (probes) {
+	g_hash_table_iter_init(&iter,probes);
+	while (g_hash_table_iter_next(&iter,
+				      (gpointer)&key,
+				      (gpointer)&probe)) {
+	    probe_unregister(probe,1);
+	    probe_free(probe,1);
+	}
+	g_hash_table_destroy(probes);
+	probes = NULL;
+    }
+}
 
 void cleanup() {
     if (cleaning)
 	return;
     cleaning = 1;
 
-    if (p) {
-	probe_free(p,1);
-	p = NULL;
-    }
+    cleanup_probes();
+
     if (t) {
 	target_close(t);
 	target_free(t);
@@ -142,13 +158,69 @@ result_t syscall_post_handler(struct probe *probe,tid_t tid,void *handler_data,
     return RESULT_SUCCESS;
 }
 
+struct strace_argp_state {
+    int argc;
+    char **argv;
+};
+
+struct strace_argp_state opts;
+
+struct argp_option strace_argp_opts[] = {
+    { 0,0,0,0,0,0 },
+};
+
+error_t strace_argp_parse_opt(int key,char *arg,struct argp_state *state) {
+    struct strace_argp_state *opts = \
+	(struct strace_argp_state *)target_argp_driver_state(state);
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+	return ARGP_ERR_UNKNOWN;
+    case ARGP_KEY_ARGS:
+	/* Eat all the remaining args. */
+	if (state->quoted > 0)
+	    opts->argc = state->quoted - state->next;
+	else
+	    opts->argc = state->argc - state->next;
+	if (opts->argc > 0) {
+	    opts->argv = calloc(opts->argc,sizeof(char *));
+	    memcpy(opts->argv,&state->argv[state->next],opts->argc*sizeof(char *));
+	    state->next += opts->argc;
+	}
+	return 0;
+    case ARGP_KEY_INIT:
+	target_driver_argp_init_children(state);
+	return 0;
+    case ARGP_KEY_END:
+    case ARGP_KEY_NO_ARGS:
+    case ARGP_KEY_SUCCESS:
+	return 0;
+    case ARGP_KEY_ERROR:
+    case ARGP_KEY_FINI:
+	return 0;
+
+    default:
+	return ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+struct argp strace_argp = {
+    strace_argp_opts,strace_argp_parse_opt,NULL,NULL,NULL,NULL,NULL,
+};
+
 int main(int argc,char **argv) {
     struct target_spec *tspec;
     char *targetstr;
     tid_t tid;
     target_status_t tstat;
+    int i;
+    struct target_os_syscall *syscall;
+    struct probe *p;
 
-    tspec = target_argp_driver_parse(NULL,NULL,argc,argv,TARGET_TYPE_XEN,1);
+    tspec = target_argp_driver_parse(&strace_argp,&opts,argc,argv,
+				     TARGET_TYPE_XEN,1);
 
     if (!tspec) {
 	verror("could not parse target arguments!\n");
@@ -197,14 +269,40 @@ int main(int argc,char **argv) {
     fflush(stderr);
     fflush(stdout);
 
+    probes = g_hash_table_new(g_direct_hash,g_direct_equal);
+
     /*
-     * Now just let it go!
+     * If they gave us specific syscalls, look them up and probe them
+     * individually; else probe globally.
      */
-    p = target_os_syscall_probe_all(t,TID_GLOBAL,
-				    syscall_pre_handler,syscall_post_handler,
-				    NULL);
-    if (!p)
-	goto exit;
+    if (opts.argc) {
+	if (target_os_syscall_table_load(t))
+	    goto exit;
+	for (i = 0; i < opts.argc; ++i) {
+	    syscall = target_os_syscall_lookup_name(t,opts.argv[i]);
+	    if (!syscall) {
+		verror("could not lookup syscall %s!\n",opts.argv[i]);
+		goto exit;
+	    }
+	    p = target_os_syscall_probe(t,TID_GLOBAL,syscall,syscall_pre_handler,
+					syscall_post_handler,NULL);
+	    if (!p) {
+		verror("could not probe syscall %s!\n",opts.argv[i]);
+		goto exit;
+	    }
+	    g_hash_table_insert(probes,p,p);
+	}
+    }
+    else {
+	p = target_os_syscall_probe_all(t,TID_GLOBAL,
+					syscall_pre_handler,syscall_post_handler,
+					NULL);
+	if (!p) {
+	    verror("could not probe global syscall entry/exit path!\n");
+	    goto exit;
+	}
+	g_hash_table_insert(probes,p,p);
+    }
 
     target_resume(t);
 
@@ -232,8 +330,7 @@ int main(int argc,char **argv) {
 	else if (tstat == TSTATUS_EXITING) {
 	    tid = target_gettid(t);
 	    printf("%s exiting, removing probes safely...\n",targetstr);
-	    probe_free(p,1);
-	    p = NULL;
+	    cleanup_probes();
 	    /* Let it resume to "finish" exiting! */
 	    if (target_resume(t)) {
 		fprintf(stderr,"could not resume target %s thread %"PRIiTID"\n",

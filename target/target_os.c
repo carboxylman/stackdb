@@ -213,6 +213,7 @@ int target_os_syscall_record_return(struct target *target,tid_t tid,
 	return -1;
     }
 
+    scs->returned = 1;
     scs->retval = retval;
 
     return 0;

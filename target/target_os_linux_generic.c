@@ -495,6 +495,15 @@ static struct probe_ops __global_entry_probe_ops = {
     .fini = __global_entry_uncache,
 };
 
+static int __syscall_entry_uncache(struct probe *probe) {
+    /* Steal it cause it is getting autofreed if this is getting called. */
+    target_gkv_steal(probe->target,probe->name);
+    return 0;
+}
+static struct probe_ops __syscall_entry_probe_ops = {
+    .fini = __syscall_entry_uncache,
+};
+
 static int __global_ret_uncache(struct probe *probe) {
     /* Steal it cause it is getting autofreed if this is getting called. */
     target_gkv_steal(probe->target,SYSCALL_GLOBAL_RET_PROBE);
@@ -509,6 +518,58 @@ static result_t __syscall_entry_handler(struct probe *probe,tid_t tid,
 					void *handler_data,
 					struct probe *trigger,
 					struct probe *base) {
+    struct target *target;
+    struct target_os_syscall *syscall;
+    struct target_os_syscall_state *scs;
+    struct array_list *args;
+    struct array_list *argvals;
+    struct symbol *argsym;
+    struct symbol *symbol;
+    int j;
+    struct value *v;
+    char *name;
+
+    target = probe->target;
+
+    syscall = (struct target_os_syscall *)handler_data;
+
+    scs = target_os_syscall_record_entry(target,tid,syscall);
+    if (!scs) {
+	verror("could not record syscall entry in tid %"PRIiTID"!\n",tid);
+	return RESULT_SUCCESS;
+    }
+
+    /*
+     * The only values we try to autoderef are char * bufs; we need
+     * system-specific info to know if/when it's safe to deref the
+     * others.  We don't know generically whether a param is in/out.
+     */
+    argvals = array_list_create(6);
+    symbol = bsymbol_get_symbol(probe->bsymbol);
+    args = symbol_get_members(symbol,SYMBOL_VAR_TYPE_FLAG_ARG);
+    if (args) {
+	/*
+	 * Load each argument if it hasn't already been loaded.
+	 */
+	array_list_foreach(args,j,argsym) {
+	    name = symbol_get_name(argsym);
+	    v = target_load_symbol_member(probe->target,tid,probe->bsymbol,name,
+					  NULL,LOAD_FLAG_AUTO_DEREF);
+	    array_list_append(argvals,v);
+	}
+    }
+
+    target_os_syscall_record_argv(target,tid,NULL,argvals);
+
+    /* There, now call the probe's sink pre_handlers! */
+    return probe_do_sink_pre_handlers(probe,tid,handler_data,trigger,base);
+}
+
+/* "overload" probe_do_sink_pre_handlers . */
+static result_t __global_entry_handler(struct probe *probe,tid_t tid,
+				       void *handler_data,
+				       struct probe *trigger,
+				       struct probe *base) {
     struct target *target;
     struct target_os_syscall *syscall;
     struct target_os_syscall_state *scs;
@@ -609,13 +670,15 @@ static result_t __syscall_ret_handler(struct probe *probe,tid_t tid,
 
     scs = target_os_syscall_probe_last(target,tid);
     if (!scs) {
-	vwarn("could not find a current syscall tid %"PRIiTID"; ignoring!\n",
-	      tid);
+	vwarnopt(5,LA_TARGET,LF_OS,
+		 "could not find a current syscall tid %"PRIiTID"; ignoring!\n",
+		 tid);
 	return RESULT_SUCCESS;
     }
     else if (scs->returned) {
-	vwarn("current syscall for tid %"PRIiTID" already returned; ignoring!\n",
-	      tid);
+	vwarnopt(5,LA_TARGET,LF_OS,
+		 "current syscall for tid %"PRIiTID" already returned; ignoring!\n",
+		 tid);
 	return RESULT_SUCCESS;
     }
 
@@ -624,6 +687,36 @@ static result_t __syscall_ret_handler(struct probe *probe,tid_t tid,
 
     /* There, now call the probe's sink POST_handlers! */
     return probe_do_sink_post_handlers(probe,tid,handler_data,trigger,base);
+}
+
+static struct probe *
+os_linux_syscall_probe_init_syscall_entry(struct target *target,
+					  struct target_os_syscall *syscall) {
+    struct probe *probe;
+    char namebuf[128];
+
+    snprintf(namebuf,sizeof(namebuf),"os_linux_%s_probe",
+	     bsymbol_get_name(syscall->bsymbol));
+
+    if ((probe = (struct probe *)target_gkv_lookup(target,namebuf)))
+	return probe;
+
+    if (_os_linux_syscall_probe_init(target))
+	return NULL;
+
+    probe = probe_create(target,TID_GLOBAL,&__syscall_entry_probe_ops,
+			 namebuf,__syscall_entry_handler,NULL,syscall,1,1);
+
+    if (!probe_register_symbol(probe,syscall->bsymbol,PROBEPOINT_SW,0,0)) {
+	verror("could not register %s!\n",namebuf);
+	probe_free(probe,0);
+	return NULL;
+    }
+
+    /* Cache it. */
+    target_gkv_insert(target,namebuf,probe,target_gkv_dtor_probe);
+
+    return probe;
 }
 
 static struct probe *
@@ -653,7 +746,7 @@ os_linux_syscall_probe_init_global_entry(struct target *target) {
 
     probe = probe_create(target,TID_GLOBAL,&__global_entry_probe_ops,
 			 "system_call",
-			 __syscall_entry_handler,NULL,NULL,1,1);
+			 __global_entry_handler,NULL,NULL,1,1);
 
     if (!probe_register_addr(probe,*system_call_base_addr,
 			     PROBEPOINT_BREAK,PROBEPOINT_SW,0,0,
@@ -754,6 +847,35 @@ os_linux_syscall_probe_init_global_ret(struct target *target) {
     return NULL;
 }
 
+struct probe *os_linux_syscall_probe(struct target *target,tid_t tid,
+				     struct target_os_syscall *syscall,
+				     probe_handler_t pre_handler,
+				     probe_handler_t post_handler,
+				     void *handler_data) {
+    struct probe *probe, *eprobe, *rprobe;
+
+    probe = probe_create(target,tid,&target_os_syscall_ret_probe_ops,
+			 "syscall_probe_all",
+			 pre_handler,post_handler,handler_data,0,1);
+
+    eprobe = os_linux_syscall_probe_init_syscall_entry(target,syscall);
+    if (!eprobe) {
+	verror("could not setup syscall entry probe!\n");
+	probe_free(probe,1);
+	return NULL;
+    }
+    probe_register_source(probe,eprobe);
+    rprobe = os_linux_syscall_probe_init_global_ret(target);
+    if (!rprobe) {
+	verror("could not setup global system_call ret probes!\n");
+	probe_free(probe,1);
+	return NULL;
+    }
+    probe_register_source(probe,rprobe);
+
+    return probe;
+}
+
 struct probe *os_linux_syscall_probe_all(struct target *target,tid_t tid,
 					 probe_handler_t pre_handler,
 					 probe_handler_t post_handler,
@@ -796,6 +918,6 @@ struct target_os_ops os_linux_generic_ops = {
     .syscall_lookup_name = os_linux_syscall_lookup_name,
     .syscall_lookup_num = os_linux_syscall_lookup_num,
     .syscall_lookup_addr = os_linux_syscall_lookup_addr,
-    .syscall_probe = NULL,
+    .syscall_probe = os_linux_syscall_probe,
     .syscall_probe_all = os_linux_syscall_probe_all,
 };
