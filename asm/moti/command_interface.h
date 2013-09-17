@@ -60,12 +60,13 @@ struct ack_rec {
 /* Standard set of error codes for the command interface */
 typedef enum ci_error_codes {
     CI_SUCCESS     = 0,
-    CI_LOOKUP_ERR  = 1,  /* Failed to lookup symbols */
-    CI_LOAD_ERR    = 2,  /* Failed to load vales of symbols */
-    CI_UPDATE_ERR  = 3,  /* Failed to update values */
-    CI_STORE_ERR   = 4,  /* Failed to store values */
-    CI_TPAUSE_ERR  = 5,  /* Failed to pause the target */
-    CI_TRESUME_ERR = 6,  /* Failed to resume target */
-    CI_EXIT        = 7,
+    CI_ERROR       = 1,   /* Generic error */
+    CI_LOOKUP_ERR  = 2,  /* Failed to lookup symbols */
+    CI_LOAD_ERR    = 3,  /* Failed to load vales of symbols */
+    CI_UPDATE_ERR  = 4,  /* Failed to update values */
+    CI_STORE_ERR   = 5,  /* Failed to store values */
+    CI_TPAUSE_ERR  = 6,  /* Failed to pause the target */
+    CI_TRESUME_ERR = 7,  /* Failed to resume target */
+    CI_EXIT        = 8,
 } ci_error_t;
 

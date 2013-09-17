@@ -20,7 +20,8 @@
 
 obj-m := psaction_module.o
 obj-m += repair_driver.o
-obj-m += psdeescalate_module.o
+obj-m += ps_deescalate_module.o
+obj-m += system_map_reset.o
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 

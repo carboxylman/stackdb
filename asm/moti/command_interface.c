@@ -17,6 +17,7 @@
  */
 
 #include "command_interface.h"
+#include "ci_helper.h"
 
 struct psa_argp_state {
     int argc;
@@ -118,14 +119,13 @@ fail:
 
 }
 
-int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id) {
+int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id, int argv[128]) {
 
     ADDR cmd_ptr;
     struct bsymbol *ack_struct_type=NULL, *bs=NULL;
     struct symbol *command_struct_type=NULL;
     struct value *v=NULL, *value=NULL;
     int res;
-    int argv[128],i;
     target_status_t status;
     ci_error_t ret = CI_SUCCESS;
 
@@ -236,10 +236,17 @@ int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id) {
     }
     value_free(v);
 
-    /* Set the entire argv array*/
+    /* Set the entire argv array
     for(i=0; i<128; i++) {
-	argv[i] = atoi(token->argv[i]);
+	argv[i] = strtol(token->argv[i],NULL,0);
     }
+
+    argv[1] = 0xc05084d8;
+    argv[2] = 0xc036c50a;
+    for(i =0; i< 10;i++) {
+	printf("Arg %d = %lu\n",i,argv[i]);
+    }
+    */
     v = target_load_value_member(t, value, "argv", NULL,
 	    LOAD_FLAG_NONE);
     if(!v){
@@ -476,6 +483,23 @@ int get_result() {
 	    }
 
 	    break;
+	case 2: /* system_map_reset module */
+	   switch(result.cmd_id) {
+		case 0: /*map reset func  */
+		   if(result.exec_status) {
+			fprintf(stdout, 
+			"SUCCESS: System map table entry reset.\n");
+		    }
+		    else{
+			fprintf(stdout,
+				"FAILURE: Failed to reset the system map table entry.\n");
+		    }
+		    break;
+		default:
+		    fprintf(stdout,"INFO:Invalid value for cmd_id in result.\n");
+	    }
+
+	    break;
 	default:
 	    fprintf(stdout,"INFO:Invalid value for submodule_id in the result.\n");
     }
@@ -656,7 +680,7 @@ struct argp psa_argp = { psa_argp_opts, psa_argp_parse_opt, NULL, NULL, NULL,
 int main(int argc, char **argv) {
 
     int i;
-    int res;
+    int res, args[128];
     char *command, *cur_token;
     char delim = ' ';
     struct target_spec *tspec;
@@ -715,6 +739,9 @@ int main(int argc, char **argv) {
     /* Start a loop that waits for user to input commands */
     while (1) {
 	bzero(command, 128*sizeof(char));
+	bzero(args, 128*sizeof(int));
+	bzero(token.cmd, 128*sizeof(char));
+	bzero(token.argv, 128*128*sizeof(char));
 	fprintf(stdout, "\n- ");
 	fflush(stdin);
 	if((fgets(command,128,stdin)) == NULL) continue;
@@ -734,25 +761,60 @@ int main(int argc, char **argv) {
 	} while (cur_token != NULL);
 
 	/* Make appropriate function call */
-	if(!(strcmp(token.cmd, "exit"))) {
+	if(!(strncmp(token.cmd, "exit", 4))) {
 	    goto exit;
 	}
-	else if(!(strcmp(token.cmd, "pskill")))
+	else if(!(strncmp(token.cmd, "pskill",6)))
 	{
 	    cmd_id = 0;
 	    submodule_id = 0;
-	    res = load_command_func(&token,cmd_id,submodule_id);
+	    args[0] = atoi(token.argv[0]); 
+	    res = load_command_func(&token,cmd_id,submodule_id,args);
 	    if (res) {
 		fprintf(stderr, "ERROR : load_command_func function call failed \n");
 	    }
 	}
-	else if(!(strcmp(token.cmd,"pssetuid")))
+	else if(!(strncmp(token.cmd,"pssetuid",8)))
 	{
 	    cmd_id = 0;
 	    submodule_id = 1;
-	    res = load_command_func(&token,cmd_id,submodule_id);
+	    args[0] = atoi(token.argv[0]);
+	    args[1] = atoi(token.argv[1]);
+	    res = load_command_func(&token,cmd_id,submodule_id,args);
 	    if (res) {
 		fprintf(stderr, "ERROR : load_command_func function call failed \n");
+	    }
+	}
+	else  if(!(strncmp(token.cmd,"map_reset",9))) {
+	    cmd_id = 0;
+	    submodule_id = 2;
+
+	    /* Get the address of the system call table on the machine */
+	    res = read_system_map("sys_call_table",  &args[0]);
+	    if(res) {
+		fprintf(stdout,
+			"ERROR: read_system_map function failed to lookup syscall_table.\n");
+		continue;
+	    }
+	    /*Get the correct address of the system call */
+	    res = read_system_map("sys_open", &args[1]);
+	    if(res) {
+		fprintf(stdout,
+			"ERROR: read_system_map function failed to lookup %s.\n",
+			token.argv[0]);
+		continue;
+	    }
+	    /*Get the offset of the system call in the table */
+	    res = read_unistd("sys_open",&args[2]);
+	    if(res) {
+		fprintf(stdout,
+			"ERROR: read_unistd function failed.\n");
+		continue;
+	    }	  
+
+	    res = load_command_func(&token,cmd_id, submodule_id,args);
+	    if (res) {
+		fprintf(stdout, "ERROR: load_command_func function call failed.\n");
 	    }
 	}
 	else {

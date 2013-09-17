@@ -105,12 +105,45 @@ static int load_submodules(void *__unused) {
 
 		break;
 		/* Case 1 refers to the ps_deescalate submodule */
+	    
 	    case 1:
 		if(submodule.mod_table[cmd->submodule_id] == NULL) {
 		    printk(KERN_INFO "Loading the the ps_deescalate sub module\n");
 		}
 		if((result = request_module("ps_deescalate_module")) < 0) {
 		    printk(KERN_INFO "ps_deescalate_module not available\n");
+		    return -ENODEV;
+		}
+
+		/* 
+		 * get the address in the res_ring_channel where the 
+		 * acknowledgment should be inserted
+		 */
+		ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(
+			&res_ring_channel,
+			cmd_ring_channel_get_prod(&res_ring_channel));
+		/*Increment the prod index for the result ring channel*/
+		res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
+		res_prod += 1; 
+		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
+		/* call the appropriate function in the submodule based on command id*/
+		result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+		if(result) {
+		    printk(KERN_INFO "Function call failed.\n");
+		    ack->exec_status = 0;
+		    ack_ready++;
+		}
+
+		printk(KERN_INFO "Waiting for the next command.\n");
+		break;
+		/* Case 2 refers to the system_map_reset submodule */
+	    
+	    case 2:
+		if(submodule.mod_table[cmd->submodule_id] == NULL) {
+		    printk(KERN_INFO "Loading the the system_map_reset sub module\n");
+		}
+		if((result = request_module("system_map_reset")) < 0) {
+		    printk(KERN_INFO "system_map_reset module not available\n");
 		    return -ENODEV;
 		}
 
