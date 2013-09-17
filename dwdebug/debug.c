@@ -4977,8 +4977,10 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 		g_hash_table_size(debugfile->binfile->symtab->tab),
 		g_hash_table_size(debugfile->binfile->symtab->anontab),
 		g_hash_table_size(debugfile->binfile->symtab->duptab));
-	symtab_dump(debugfile->binfile->symtab,&udn);
-	fprintf(ud->stream,"\n");
+	if (elfsymtab) {
+	    symtab_dump(debugfile->binfile->symtab,&udn);
+	    fprintf(ud->stream,"\n");
+	}
     }
     else 
 	fprintf(ud->stream,
@@ -4990,8 +4992,10 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 		g_hash_table_size(debugfile->binfile_pointing->symtab->tab),
 		g_hash_table_size(debugfile->binfile_pointing->symtab->anontab),
 		g_hash_table_size(debugfile->binfile_pointing->symtab->duptab));
-	symtab_dump(debugfile->binfile_pointing->symtab,&udn);
-	fprintf(ud->stream,"\n");
+	if (elfsymtab) {
+	    symtab_dump(debugfile->binfile_pointing->symtab,&udn);
+	    fprintf(ud->stream,"\n");
+	}
     }
     else
 	fprintf(ud->stream,
