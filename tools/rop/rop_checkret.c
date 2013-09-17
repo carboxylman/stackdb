@@ -94,7 +94,8 @@ void sigh(int signo) {
     exit(0);
 }
 
-result_t rop_handler(struct probe *probe,void *data,struct probe *trigger) {
+result_t rop_handler(struct probe *probe,tid_t tid,void *data,
+		     struct probe *trigger,struct probe *base) {
     char *buf;
     int buflen;
     struct rop_checkret_status *rop_status = \

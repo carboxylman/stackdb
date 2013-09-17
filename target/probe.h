@@ -28,6 +28,9 @@
 #define PROBE_SAFE_OP(probe,op) (((probe)->ops && (probe)->ops->op) \
                                  ? (probe)->ops->op((probe)) \
                                  : 0)
+#define PROBE_SAFE_OP_ARGS(probe,op,...) (((probe)->ops && (probe)->ops->op) \
+					  ? (probe)->ops->op((probe), ## __VA_ARGS__) \
+					  : 0)
 
 #define LOGDUMPPROBEPOINT(dl,la,lt,pp)	      \
     if ((pp)->bsymbol && (pp)->symbol_addr) { \
@@ -101,18 +104,6 @@ typedef enum {
     PROBE_ACTION_RUNNING,   /* executing an action */
     PROBE_ACTION_DONE,      /* finished an action */
 } probepoint_state_t;
-
-/*
- * Prototypes of functions that probe type implementers may want to
- * use.  Probes are hierarchical, and if the type does not have a
- * complex handler for pre/post events, it might just pass these
- * functions to the probes it builds on.  They simply invoke any
- * handlers for any sink probes registered on @probe.
- */
-result_t probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
-				     struct probe *trigger);
-result_t probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
-				     struct probe *trigger);
 
 /*
  * Prototypes of the standard breakpoint and single step debug event
@@ -314,6 +305,16 @@ struct probepoint {
     int can_switch_context;
 };
 
+struct probe_filter_regex {
+    char *value_name;
+    regex_t regex;
+};
+
+struct probe_filter {
+    GSList *value_regex_list;
+    // struct target_thread_context *tcontext;
+};
+
 struct probe {
     /*
      * This is a per-target id.
@@ -326,6 +327,18 @@ struct probe {
 
     void *priv;
 
+    /*
+     * This is controlled by the functions in probe_value.c .  It is
+     * always a hash of tid_t to <something>.  But the <something> might
+     * either be a struct probe_value * directly, OR it could be a
+     * GSList * stack of struct probe_value * (this handles reentrant
+     * symbols).
+     *
+     * In any case, it is controlled by probe_ops for this probe.  Users
+     * must access it only through the probe_value*() functions.
+     */
+    GHashTable *values;
+
     /* 
      * The target context this probe is associated with.
      */
@@ -337,9 +350,11 @@ struct probe {
 
     /* User handler to run before probe-point is executed */
     probe_handler_t pre_handler;
+    struct probe_filter *pre_filter;
 
     /* User handler to run after probe-point is executed */
     probe_handler_t post_handler;
+    struct probe_filter *post_filter;
 
     void *handler_data;
 

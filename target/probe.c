@@ -45,8 +45,9 @@ static void action_finish_handling(struct action *action,
  * handlers from within their handler, so that sinks can attach to their
  * handlers if desired.
  */
-result_t probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
-				     struct probe *trigger) {
+result_t probe_do_sink_pre_handlers (struct probe *probe,tid_t tid,
+				     void *handler_data,struct probe *trigger,
+				     struct probe *base) {
     struct probe *ptmp;
     GList *list;
     int retval = 0;
@@ -59,19 +60,34 @@ result_t probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
 	list = probe->sinks;
 	while (list) {
 	    ptmp = (struct probe *)list->data;
+
+	    /*
+	     * Do this stuff regardless of if there's a prehandler or
+	     * not!  Why?  Because if we do it for the prehandler, we
+	     * have to do it for the posthandler too.  Since we can't
+	     * tell if we did it or didn't do it for the prehandler once
+	     * we get to the posthandler, we ALWAYS have to do it!
+	     */
+	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_PRE_START);
+
 	    /*
 	     * Signal each of the sinks, IF their threads match (thus a
 	     * sink can act as a filter on a thread id.
 	     */
 	    if (ptmp->pre_handler
 		&& (ptmp->thread->tid == TID_GLOBAL 
-		    || probe->thread->tid == ptmp->thread->tid)) {
-		rc = ptmp->pre_handler(ptmp,ptmp->handler_data,trigger);
+		    || ptmp->thread->tid == tid)
+		&& probe_filter_check(ptmp,tid,probe,0) == 0) {
+
+		rc = ptmp->pre_handler(ptmp,tid,ptmp->handler_data,probe,base);
 		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
 	    }
+
+	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_PRE_END);
+
 	    list = g_list_next(list);
 	}
     }
@@ -79,8 +95,9 @@ result_t probe_do_sink_pre_handlers (struct probe *probe,void *handler_data,
     return retval;
 }
 
-result_t probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
-				     struct probe *trigger) {
+result_t probe_do_sink_post_handlers(struct probe *probe,tid_t tid,
+				     void *handler_data,struct probe *trigger,
+				     struct probe *base) {
     struct probe *ptmp;
     GList *list;
     int retval = 0;
@@ -93,19 +110,26 @@ result_t probe_do_sink_post_handlers(struct probe *probe,void *handler_data,
 	list = probe->sinks;
 	while (list) {
 	    ptmp = (struct probe *)list->data;
+
+	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_POST_START);
+
 	    /*
 	     * Signal each of the sinks, IF their threads match (thus a
 	     * sink can act as a filter on a thread id.
 	     */
 	    if (ptmp->post_handler
 		&& (ptmp->thread->tid == TID_GLOBAL 
-		    || probe->thread->tid == ptmp->thread->tid)) {
-		rc = ptmp->post_handler(ptmp,ptmp->handler_data,trigger);
+		    || ptmp->thread->tid == tid)
+		&& probe_filter_check(ptmp,tid,probe,1) == 0) {
+		rc = ptmp->post_handler(ptmp,tid,ptmp->handler_data,probe,base);
 		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
 	    }
+
+	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_POST_END);
+
 	    list = g_list_next(list);
 	}
     }
@@ -794,6 +818,20 @@ int probe_free(struct probe *probe,int force) {
 		return -1;
 	    }
 	}
+    }
+
+    if (probe->pre_filter) {
+	probe_filter_free(probe->pre_filter);
+	probe->pre_filter = NULL;
+    }
+    if (probe->post_filter) {
+	probe_filter_free(probe->post_filter);
+	probe->post_filter = NULL;
+    }
+
+    if (probe->values) {
+	PROBE_SAFE_OP(probe,values_free);
+	probe->values = NULL;
     }
 
     if (PROBE_SAFE_OP(probe,fini)) {
@@ -2064,13 +2102,15 @@ static int run_post_handlers(struct target *target,
      */
     list_for_each_entry(probe,&probepoint->probes,probe) {
 	++i;
+	PROBE_SAFE_OP_ARGS(probe,values_notify_phase,tthread->tid,
+			   PHASE_POST_START);
 	if (probe->enabled) {
 	    if (probe->post_handler) {
 		vdebug(4,LA_PROBE,LF_PROBEPOINT,"running post handler at ");
 		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
-		rc = probe->post_handler(probe,probe->handler_data,probe);
+		rc = probe->post_handler(probe,tthread->tid,probe->handler_data,probe,probe);
 		if (rc == RESULT_ERROR) 
 		    probe_disable(probe);
 		else if (rc == RESULT_ABORT) 
@@ -2083,9 +2123,11 @@ static int run_post_handlers(struct target *target,
 		LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 		vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
-		probe_do_sink_post_handlers(probe,NULL,probe);
+		probe_do_sink_post_handlers(probe,tthread->tid,NULL,probe,probe);
 	    }
 	}
+
+	PROBE_SAFE_OP_ARGS(probe,values_notify_phase,tthread->tid,PHASE_POST_END);
     }
 
     if (i > 1 && noreinject) {
@@ -2667,13 +2709,16 @@ result_t probepoint_bp_handler(struct target *target,
      */
     if (!already_ran_prehandlers_for_interrupted) {
 	list_for_each_entry(probe,&probepoint->probes,probe) {
+	    PROBE_SAFE_OP_ARGS(probe,values_notify_phase,tthread->tid,
+			       PHASE_PRE_START);
+
 	    if (probe->enabled) {
 		if (probe->pre_handler) {
 		    vdebug(4,LA_PROBE,LF_PROBEPOINT,"running pre handler at ");
 		    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 		    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
 
-		    rc = probe->pre_handler(probe,probe->handler_data,probe);
+		    rc = probe->pre_handler(probe,tid,probe->handler_data,probe,probe);
 		    if (rc == RESULT_ERROR) 
 			probe_disable(probe);
 		}
@@ -2682,10 +2727,13 @@ result_t probepoint_bp_handler(struct target *target,
 			   "running default probe sink pre_handler at ");
 		    LOGDUMPPROBEPOINT(4,LA_PROBE,LF_PROBEPOINT,probepoint);
 		    vdebugc(4,LA_PROBE,LF_PROBEPOINT,"\n");
-		    probe_do_sink_pre_handlers(probe,NULL,probe);
+		    probe_do_sink_pre_handlers(probe,tid,NULL,probe,probe);
 		}
 		doit = 1;
 	    }
+
+	    PROBE_SAFE_OP_ARGS(probe,values_notify_phase,tthread->tid,
+			       PHASE_PRE_END);
 	}
     }
     else {

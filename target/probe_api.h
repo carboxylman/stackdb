@@ -34,6 +34,7 @@
 
 struct probepoint;
 struct probe;
+struct probe_filter;
 struct probeset;
 struct action;
 struct target;
@@ -56,9 +57,16 @@ typedef enum {
 
 /*
  * The type of function to be used for probe pre- and post-handlers.
+ *
+ * @probe is the probe that the pre/post handler being called belonged to;
+ * @tid is the thread in @probe->target that had the probed event;
+ * @handler_data is @probe's private data;
+ * @trigger is the source probe underlying @probe, if any;
+ * @base is the lowest-level basic probe that started this whole event chain.
  */
-typedef result_t (*probe_handler_t)(struct probe *probe,void *handler_data,
-				    struct probe *trigger);
+typedef result_t (*probe_handler_t)(struct probe *probe,
+				    tid_t tid,void *handler_data,
+				    struct probe *trigger,struct probe *base);
 /*
  * The type of function to be used for action handlers.
  */
@@ -69,12 +77,18 @@ typedef result_t (*action_handler_t)(struct action *action,
 				     handler_msg_t msg,int msg_detail,
 				     void *handler_data);
 
+typedef enum {
+    PHASE_PRE_START  = 0,
+    PHASE_PRE_END    = 1,
+    PHASE_POST_START = 2,
+    PHASE_POST_END   = 3,
+} probe_handler_phase_t;
+
 /*
  * Each probe type must define this operations table.  The operations
  * may be called at the appropriate times during the probe's lifecycle.
  */
 struct probe_ops {
-    tid_t (*gettid)(struct probe *probe);
     /* Should return a unique type string. */
     const char *(*gettype)(struct probe *probe);
     /* Called after a probe has been freshly malloc'd and its base
@@ -95,6 +109,73 @@ struct probe_ops {
     void *(*summarize)(struct probe *probe);
     /* Called when the user calls probe_summarize_tid(). */
     void *(*summarize_tid)(struct probe *probe,tid_t tid);
+
+    /*
+     * Value autoloading.  Some probes, when they are hit, fundamentally
+     * have a concept of "value" associated with them -- for instance,
+     * function entry (arguments), function exit (return value), or
+     * watchpoints (the watched symbol/addr's value).  These interfaces
+     * support loading and caching values in pre/post handlers.
+     *
+     * The only basic probe types that support values are watchpoints
+     * and breakpoints on function symbols.
+     *
+     * Values are not loaded until these functions are invoked.
+     */
+
+    /*
+     * Get all available values.  If in a prehandler, this returns
+     * whatever values for the probe can be loaded in its prehandler.
+     * These values can be "interpreted" -- for instance, if if a value
+     * is a pointer arg to a function, the "interpreted" value will
+     * likely be the value of the pointer-to type.  If you don't want
+     * that, though, there are the raw value functions.
+     */
+    GHashTable *(*get_value_table)(struct probe *probe,tid_t tid);
+    /*
+     * Returns the values in unloaded form -- i.e.,
+     */
+    GHashTable *(*get_raw_value_table)(struct probe *probe,tid_t tid);
+    GHashTable *(*get_last_value_table)(struct probe *probe,tid_t tid);
+    GHashTable *(*get_last_raw_value_table)(struct probe *probe,tid_t tid);
+    /*
+     * Get the value with @name.  For instance, this would let you
+     * obtain function arguments, or the special __RETURN__ value.  For
+     * watchpoints, if you supplied NULL or the symbol's name, you would
+     * get the watched value.  There is one special value name:
+     * __RETURN__; this exposes return values from functions, if the
+     * probe is attached to a return-ish instruction.  Otherwise, @name
+     * is a "member" of the probed symbol, if there is one.
+     *
+     * In general, it is a good idea to use get_value_name() instead of
+     * trying to lookup and load a member in the symbol obtained by
+     * get_value_symbol().  The reason for that is that a particular
+     * symbol might indeed be associated with this value probe, BUT the
+     * IP might not be in the symbol's body.  The 
+     */
+#define PROBE_VALUE_NAME_RETURN "__RETURN__"
+    struct value *(*get_value)(struct probe *probe,tid_t tid,char *name);
+    struct value *(*get_raw_value)(struct probe *probe,tid_t tid,char *name);
+    struct value *(*get_last_value)(struct probe *probe,tid_t tid,char *name);
+    struct value *(*get_last_raw_value)(struct probe *probe,tid_t tid,char *name);
+    /*
+     * The default probe handlers call this function with @phase set to
+     * one of the enum values.
+     *
+     * This lets the probe_value implementor decide when to collect
+     * values from the last "hit" of this probe.  So for instance, we
+     * want to replace the old value for a watchpoint once the
+     * prehandlers have been run.  For a function entry/exit probe, we
+     * want to replace the old values only once the exit (posthandlers)
+     * handlers have been called (i.e., once the frame has exited).
+     */
+    void (*values_notify_phase)(struct probe *probe,tid_t tid,
+				probe_handler_phase_t phase);
+    /*
+     * Called to cleanup and destroy probe->values.  Called just before @fini.
+     */
+    void (*values_free)(struct probe *probe);
+
     /* Called just before this probe is deallocated.  If you allocated
      * any probe-specific data structures, or took a reference to this
      * probe and it is an autofree probe, you must free those
@@ -102,6 +183,26 @@ struct probe_ops {
      */
     int (*fini)(struct probe *probe);
 };
+
+/*
+ * Prototypes of functions that probe type implementers may want to
+ * use.  Probes are hierarchical, and if the type does not have a
+ * complex handler for pre/post events, it might just pass these
+ * functions to the probes it builds on.  They simply invoke any
+ * handlers for any sink probes registered on @probe after checking @tid
+ * and any filters @probe has, given @trigger's values.
+ *
+ * (Eventually they'll check target thread context too, once it's implemented.)
+ */
+result_t probe_do_sink_pre_handlers (struct probe *probe,tid_t tid,
+				     void *handler_data,struct probe *trigger,
+				     struct probe *base);
+result_t probe_do_sink_post_handlers(struct probe *probe,tid_t tid,
+				     void *handler_data,struct probe *trigger,
+				     struct probe *base);
+
+int probe_filter_check(struct probe *probe,tid_t tid,struct probe *trigger,
+		       int whence);
 
 /*
  * Is the probepoint a breakpoint or a watchpoint.
@@ -274,6 +375,102 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     inst_type_t inst,
 					     struct probe *probe,...);
 #endif
+
+/**
+ ** Probe Value functions.  If your probe supports value loading
+ ** functions, you can use these on it when your pre/post handlers are
+ ** called.
+ **
+ ** The idea here is that often probes can store loaded values.  For
+ ** instance, a watchpoint stores the last value of the watched var and
+ ** returns that in the prehandler, and loads the new value and returns
+ ** that in the posthandler.  For a function entry/exit metaprobe, the
+ ** prehandler might load all the arguments; and the posthandler might
+ ** load/get all the arguments, and load the return value.
+ **/
+
+/*
+ * Probe functions -- create value-enabled probes.  These are not
+ * autofree probes, so you'll have to probe_free() them when finished.
+ */
+struct probe *probe_value_var(struct target *target,tid_t tid,
+			      struct bsymbol *bsymbol,
+			      probe_handler_t pre_handler,
+			      probe_handler_t post_handler,
+			      void *handler_data);
+#ifdef ENABLE_DISTORM
+static struct probe *probe_value_function_ee(struct target *target,tid_t tid,
+					     struct bsymbol *bsymbol,
+					     probe_handler_t pre_handler,
+					     probe_handler_t post_handler,
+					     void *handler_data);
+#endif
+/* Wraps the above two functions. */
+struct probe *probe_value_symbol(struct target *target,tid_t tid,
+				 struct bsymbol *bsymbol,
+				 probe_handler_t pre_handler,
+				 probe_handler_t post_handler,
+				 void *handler_data);
+
+/*
+ * Loads and returns the current value table for the probe.  If the full
+ * table wasn't loaded, finish loading it (according to the probe's
+ * probe_ops).  Returns it.  If you want to save any of the values,
+ * clone them -- they will be destroyed next time this probe is "hit".
+ *
+ * (If a new value record has been started, this will destroy the last
+ * values and create a new populated record.)
+ */
+GHashTable *probe_value_get_table(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_raw_table(struct probe *probe,tid_t tid);
+/*
+ * Returns the value table for the probe, without loading anything new.
+ * This is useful grab the "last" values without loading the new ones --
+ * like probe_value_get_table() will do.
+ */
+GHashTable *probe_value_get_last_table(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_last_raw_table(struct probe *probe,tid_t tid);
+/*
+ * These retrieve individual named values, if they exist.  There are a
+ * couple of special things here.  If you pass @name == NULL, the
+ * "default" value of the probe is returned.  For a watchpoint, that
+ * would be the value of the variable.  For a function entry/exit probe,
+ * that would be 
+ */
+struct value *probe_value_get(struct probe *probe,tid_t tid,char *name);
+struct value *probe_value_get_raw(struct probe *probe,tid_t tid,char *name);
+struct value *probe_value_get_last(struct probe *probe,tid_t tid,char *name);
+struct value *probe_value_get_last_raw(struct probe *probe,tid_t tid,char *name);
+
+/**
+ ** Probe Filter functions.  If you attach a filter probe to a value
+ ** probe, it uses the value probe as a source, and each time its
+ ** pre/posthandlers are called, compares the named values to the filter
+ ** value expressions, and fires the pre/post handlers if there is a
+ ** match.
+ **
+ ** Filter probes should also have a notion of context, but they don't
+ ** really have that yet.  The only context initially is @tid -- if you
+ ** set it to TID_GLOBAL, you'll get everything; otherwise, your filter
+ ** won't be checked unless the probe event happened in @tid.
+ **/
+
+/*
+ * Creates a new probe, filtered by @tid, and by @pre_filter and
+ * @post_filter .
+ *
+ * 
+ */
+struct probe *probe_create_filtered(struct target *target,tid_t tid,
+				    struct probe_ops *pops,
+				    const char *name,
+				    probe_handler_t pre_handler,
+				    struct probe_filter *pre_filter,
+				    probe_handler_t post_handler,
+				    struct probe_filter *post_filter,
+				    void *handler_data,
+				    int autofree,int tracked);
+struct probe_filter *probe_filter_parse(char *expr);
 
 /**
  ** Core probe library functions.

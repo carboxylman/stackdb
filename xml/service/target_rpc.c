@@ -1833,8 +1833,9 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
     return 0;
 }
 
-result_t _target_rpc_probe_handler(int type,struct probe *probe,
-				   void *handler_data,struct probe *trigger) {
+result_t _target_rpc_probe_handler(int type,struct probe *probe,tid_t tid,
+				   void *handler_data,struct probe *trigger,
+				   struct probe *base) {
     struct target *target = probe->target;
     struct target_rpc_listener_probe_data lpd;
     struct soap encoder;
@@ -1866,7 +1867,7 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
     lpd.reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
     lpd.target = target;
     lpd.probe = probe;
-    t_probe_to_x_ProbeEventT(&encoder,probe,type,trigger,lpd.reftab,&lpd.event);
+    t_probe_to_x_ProbeEventT(&encoder,probe,tid,type,trigger,base,lpd.reftab,&lpd.event);
 
     generic_rpc_listener_notify_all(RPC_SVCTYPE_TARGET,target->id,
 				    _probe_generic_rpc_listener_notifier,
@@ -1882,15 +1883,17 @@ result_t _target_rpc_probe_handler(int type,struct probe *probe,
     return lpd.retval;
 };
 
-result_t _target_rpc_probe_prehandler(struct probe *probe,void *handler_data,
-				      struct probe *trigger) {
-    return _target_rpc_probe_handler(0,probe,handler_data,trigger);
+result_t _target_rpc_probe_prehandler(struct probe *probe,tid_t tid,
+				      void *handler_data,
+				      struct probe *trigger,struct probe *base) {
+    return _target_rpc_probe_handler(0,probe,tid,handler_data,trigger,base);
 };
 
 
-result_t _target_rpc_probe_posthandler(struct probe *probe,void *handler_data,
-				       struct probe *trigger) {
-    return _target_rpc_probe_handler(1,probe,handler_data,trigger);
+result_t _target_rpc_probe_posthandler(struct probe *probe,tid_t tid,
+				       void *handler_data,
+				       struct probe *trigger,struct probe *base) {
+    return _target_rpc_probe_handler(1,probe,tid,handler_data,trigger,base);
 };
 
 int vmi1__ProbeSymbolSimple(struct soap *soap,

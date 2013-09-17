@@ -1068,7 +1068,7 @@ t_probe_to_x_ProbeT(struct soap *soap,
 
 struct vmi1__ProbeEventT *
 t_probe_to_x_ProbeEventT(struct soap *soap,
-			 struct probe *probe,int type,struct probe *trigger,
+			 struct probe *probe,tid_t tid,int type,struct probe *trigger,struct probe *base,
 			 GHashTable *reftab,
 			 struct vmi1__ProbeEventT *out) {
     struct vmi1__ProbeEventT *oevent;
@@ -1077,6 +1077,9 @@ t_probe_to_x_ProbeEventT(struct soap *soap,
     REGVAL *rvp;
     char *rname;
     int i;
+    struct target_thread *tthread;
+
+    tthread = target_lookup_thread(probe->target,tid);
 
     if (out)
 	oevent = out;
@@ -1089,11 +1092,12 @@ t_probe_to_x_ProbeEventT(struct soap *soap,
 	oevent->probeEventType = _vmi1__probeEventType__post;
 
     oevent->probe = t_probe_to_x_ProbeT(soap,probe,reftab,NULL);
-    oevent->thread = t_target_thread_to_x_ThreadT(soap,probe->thread,reftab,NULL);
+    if (tthread)
+	oevent->thread = t_target_thread_to_x_ThreadT(soap,tthread,reftab,NULL);
 
     oevent->registerValues = SOAP_CALLOC(soap,1,sizeof(*oevent->registerValues));
 
-    regs = target_copy_registers(probe->target,probe->thread->tid);
+    regs = target_copy_registers(probe->target,tid);
     if (regs) {
 	g_hash_table_iter_init(&iter,regs);
 

@@ -170,10 +170,10 @@ void sigh(int signo) {
 }
 
 #ifdef ENABLE_DISTORM
-result_t retaddr_check(struct probe *probe,void *handler_data,
-		       struct probe *trigger);
-result_t retaddr_save(struct probe *probe,void *handler_data,
-		      struct probe *trigger);
+result_t retaddr_check(struct probe *probe,tid_t tid,void *handler_data,
+		       struct probe *trigger,struct probe *base);
+result_t retaddr_save(struct probe *probe,tid_t tid,void *handler_data,
+		      struct probe *trigger,struct probe *base);
 
 ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
     ADDR funcstart = 0;
@@ -262,13 +262,12 @@ ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
     return funcstart;
 }
 
-result_t retaddr_save(struct probe *probe,void *handler_data,
-		      struct probe *trigger) {
+result_t retaddr_save(struct probe *probe,tid_t tid,void *handler_data,
+		      struct probe *trigger,struct probe *base) {
     struct target *t = probe->target;
     REGVAL sp;
     REGVAL ip;
     ADDR *retaddr;
-    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
@@ -355,12 +354,11 @@ result_t retaddr_save(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t retaddr_check(struct probe *probe,void *handler_data,
-		       struct probe *trigger) {
+result_t retaddr_check(struct probe *probe,tid_t tid,void *handler_data,
+		       struct probe *trigger,struct probe *base) {
     REGVAL sp;
     ADDR newretaddr;
     ADDR *oldretaddr = NULL;
-    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
@@ -394,7 +392,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR
 		" (handler_data = %s) (stack depth = %d) ---- STACK CORRUPTION!\n",
-		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
+		probe->bsymbol->lsymbol->symbol->name,probe_addr(base),
 		newretaddr,*oldretaddr,
 		(char *)handler_data,array_list_len(shadow_stack));
     }
@@ -403,7 +401,7 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
 		"(CHECK) %s (0x%"PRIxADDR"): newretaddr = 0x%"PRIxADDR";"
 		" oldretaddr = 0x%"PRIxADDR
 		" (handler_data = %s) (stack depth = %d)\n",
-		probe->bsymbol->lsymbol->symbol->name,probe_addr(trigger),
+		probe->bsymbol->lsymbol->symbol->name,probe_addr(base),
 		newretaddr,*oldretaddr,
 		(char *)handler_data,array_list_len(shadow_stack));
     }
@@ -438,18 +436,17 @@ result_t retaddr_check(struct probe *probe,void *handler_data,
 }
 #endif /* ENABLE_DISTORM */
 
-result_t at_handler(struct probe *probe,void *handler_data,
-		    struct probe *trigger) {
+result_t at_handler(struct probe *probe,tid_t tid,void *handler_data,
+		    struct probe *trigger,struct probe *base) {
     ADDR probeaddr;
     struct probepoint *probepoint;
-    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
 
-    if (!probe->probepoint && trigger) {
-	probepoint = trigger->probepoint;
-	probeaddr = probe_addr(trigger);
+    if (!probe->probepoint) {
+	probepoint = base->probepoint;
+	probeaddr = probe_addr(base);
     }
     else {
 	probeaddr = probe_addr(probe);
@@ -466,18 +463,17 @@ result_t at_handler(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t until_handler(struct probe *probe,void *handler_data,
-		       struct probe *trigger) {
+result_t until_handler(struct probe *probe,tid_t tid,void *handler_data,
+		       struct probe *trigger,struct probe *base) {
     ADDR probeaddr;
     struct probepoint *probepoint;
-    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
 
-    if (!probe->probepoint && trigger) {
-	probepoint = trigger->probepoint;
-	probeaddr = probe_addr(trigger);
+    if (!probe->probepoint && base) {
+	probepoint = base->probepoint;
+	probeaddr = probe_addr(base);
     }
     else {
 	probeaddr = probe_addr(probe);
@@ -494,20 +490,19 @@ result_t until_handler(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t function_dump_args(struct probe *probe,void *handler_data,
-			    struct probe *trigger) {
+result_t function_dump_args(struct probe *probe,tid_t tid,void *handler_data,
+			    struct probe *trigger,struct probe *base) {
     struct value *value;
     int j;
     ADDR probeaddr;
     struct probepoint *probepoint;
-    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
 
-    if (!probe->probepoint && trigger) {
-	probepoint = trigger->probepoint;
-	probeaddr = probe_addr(trigger);
+    if (!probe->probepoint && base) {
+	probepoint = base->probepoint;
+	probeaddr = probe_addr(base);
     }
     else {
 	probeaddr = probe_addr(probe);
@@ -568,15 +563,14 @@ result_t function_dump_args(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t function_post(struct probe *probe,void *handler_data,
-		       struct probe *trigger) {
+result_t function_post(struct probe *probe,tid_t tid,void *handler_data,
+		       struct probe *trigger,struct probe *base) {
     ADDR probeaddr;
     struct probepoint *probepoint;
-    tid_t tid = target_gettid(probe->target);
 
-    if (!probe->probepoint && trigger) {
-	probepoint = trigger->probepoint;
-	probeaddr = probe_addr(trigger);
+    if (!probe->probepoint && base) {
+	probepoint = base->probepoint;
+	probeaddr = probe_addr(base);
     }
     else {
 	probeaddr = probe_addr(probe);
@@ -597,14 +591,10 @@ result_t function_post(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t addr_code_pre(struct probe *probe,void *handler_data,
-		       struct probe *trigger) {
-    tid_t tid;
-
+result_t addr_code_pre(struct probe *probe,tid_t tid,void *handler_data,
+		       struct probe *trigger,struct probe *base) {
     fflush(stderr);
     fflush(stdout);
-
-    tid = target_gettid(probe->target);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") (pre)\n",
 	    probe_name(probe),probe_addr(probe));
@@ -615,14 +605,10 @@ result_t addr_code_pre(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t addr_code_post(struct probe *probe,void *handler_data,
-			struct probe *trigger) {
-    tid_t tid;
-
+result_t addr_code_post(struct probe *probe,tid_t tid,void *handler_data,
+			struct probe *trigger,struct probe *base) {
     fflush(stderr);
     fflush(stdout);
-
-    tid = target_gettid(probe->target);
 
     fprintf(stdout,"%s (0x%"PRIxADDR") (post)\n",
 	    probe_name(probe),probe_addr(probe));
@@ -633,15 +619,12 @@ result_t addr_code_post(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t addr_var_pre(struct probe *probe,void *handler_data,
-		      struct probe *trigger) {
-    tid_t tid;
+result_t addr_var_pre(struct probe *probe,tid_t tid,void *handler_data,
+		      struct probe *trigger,struct probe *base) {
     uint32_t word;
 
     fflush(stderr);
     fflush(stdout);
-
-    tid = target_gettid(probe->target);
 
     target_read_addr(probe->target,probe_addr(probe),4,(unsigned char *)&word);
 
@@ -654,15 +637,12 @@ result_t addr_var_pre(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t addr_var_post(struct probe *probe,void *handler_data,
-		       struct probe *trigger) {
-    tid_t tid;
+result_t addr_var_post(struct probe *probe,tid_t tid,void *handler_data,
+		       struct probe *trigger,struct probe *base) {
     uint32_t word;
 
     fflush(stderr);
     fflush(stdout);
-
-    tid = target_gettid(probe->target);
 
     target_read_addr(probe->target,probe_addr(probe),4,(unsigned char *)&word);
 
@@ -675,12 +655,11 @@ result_t addr_var_post(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t var_pre(struct probe *probe,void *handler_data,
-		 struct probe *trigger) {
+result_t var_pre(struct probe *probe,tid_t tid,void *handler_data,
+		 struct probe *trigger,struct probe *base) {
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
-    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);
@@ -720,12 +699,11 @@ result_t var_pre(struct probe *probe,void *handler_data,
     return RESULT_SUCCESS;
 }
 
-result_t var_post(struct probe *probe,void *handler_data,
-		  struct probe *trigger) {
+result_t var_post(struct probe *probe,tid_t tid,void *handler_data,
+		  struct probe *trigger,struct probe *base) {
     int j;
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
-    tid_t tid = target_gettid(probe->target);
 
     fflush(stderr);
     fflush(stdout);

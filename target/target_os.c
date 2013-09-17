@@ -106,26 +106,8 @@ struct probe *target_os_syscall_probe_all(struct target *target,tid_t tid,
 /*
  * Syscall probe type.
  */
-static tid_t _target_os_syscall_probe_gettid(struct probe *probe) {
-    return probe->thread->tid;
-}
-
 static const char *_target_os_syscall_probe_gettype(struct probe *probe) {
     return "target_os_syscall_probe";
-}
-
-static int _target_os_syscall_probe_init(struct probe *probe) {
-    /*
-     * Nothing to remove -- our data is stored using target_thread_gkv_*().
-     */
-    return 0;
-}
-
-static int _target_os_syscall_probe_fini(struct probe *probe) {
-    /*
-     * Nothing to remove -- our data is stored using target_thread_gkv_*().
-     */
-    return 0;
 }
 
 #define TARGET_OS_SYSCALL_GKV_KEY "target_os_syscall_state"
@@ -140,10 +122,7 @@ static void *_target_os_syscall_probe_summarize_tid(struct probe *probe,
 }
 
 struct probe_ops target_os_syscall_ret_probe_ops = {
-    .init = _target_os_syscall_probe_init,
-    .gettid = _target_os_syscall_probe_gettid,
     .gettype = _target_os_syscall_probe_gettype,
-    .fini = _target_os_syscall_probe_fini,
 
     .summarize = _target_os_syscall_probe_summarize,
     .summarize_tid = _target_os_syscall_probe_summarize_tid,

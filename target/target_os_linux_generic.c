@@ -505,10 +505,11 @@ static struct probe_ops __global_ret_probe_ops = {
 };
 
 /* "overload" probe_do_sink_pre_handlers . */
-static result_t __syscall_entry_handler(struct probe *probe,void *handler_data,
-					struct probe *trigger) {
+static result_t __syscall_entry_handler(struct probe *probe,tid_t tid,
+					void *handler_data,
+					struct probe *trigger,
+					struct probe *base) {
     struct target *target;
-    tid_t tid;
     struct target_os_syscall *syscall;
     struct target_os_syscall_state *scs;
     REGVAL scnum;
@@ -529,7 +530,6 @@ static result_t __syscall_entry_handler(struct probe *probe,void *handler_data,
     struct value *v;
 
     target = probe->target;
-    tid = target_gettid(target);
 
     scnum = target_read_creg(target,tid,CREG_AX);
     if (!(syscall = target_os_syscall_lookup_num(target,(int)scnum))) {
@@ -590,22 +590,22 @@ static result_t __syscall_entry_handler(struct probe *probe,void *handler_data,
     target_os_syscall_record_argv(target,tid,regvals,argvals);
 
     /* There, now call the probe's sink pre_handlers! */
-    return probe_do_sink_pre_handlers(probe,handler_data,trigger);
+    return probe_do_sink_pre_handlers(probe,tid,handler_data,trigger,base);
 }
 
 /*
  * Call the sink probes' post_handlers -- but we do it BEFORE the return
  * to userspace -- i.e., before the IRET/SYSRET.
  */
-static result_t __syscall_ret_handler(struct probe *probe,void *handler_data,
-				      struct probe *trigger) {
+static result_t __syscall_ret_handler(struct probe *probe,tid_t tid,
+				      void *handler_data,
+				      struct probe *trigger,
+				      struct probe *base) {
     struct target *target;
-    tid_t tid;
     struct target_os_syscall_state *scs;
     REGVAL scnum;
 
     target = probe->target;
-    tid = target_gettid(target);
 
     scs = target_os_syscall_probe_last(target,tid);
     if (!scs) {
@@ -623,7 +623,7 @@ static result_t __syscall_ret_handler(struct probe *probe,void *handler_data,
 				    target_read_creg(target,tid,CREG_AX));
 
     /* There, now call the probe's sink POST_handlers! */
-    return probe_do_sink_post_handlers(probe,handler_data,trigger);
+    return probe_do_sink_post_handlers(probe,tid,handler_data,trigger,base);
 }
 
 static struct probe *

@@ -180,8 +180,8 @@ static struct probe_ops probe_ops_rop_checkret = {
  *
  */
 
-result_t probe_rop_checkret_entry_pre(struct probe *probe,void *data,
-				      struct probe *trigger) {
+result_t probe_rop_checkret_entry_pre(struct probe *probe,tid_t tid,void *data,
+				      struct probe *trigger,struct probe *base) {
     struct rop_checkret_data *rop_data = (struct rop_checkret_data *)data;
     struct probe *rop_probe = rop_data->rop_probe;
 
@@ -197,12 +197,12 @@ result_t probe_rop_checkret_entry_pre(struct probe *probe,void *data,
     if (rop_data->type == GADGET_TYPE_MID_MID) 
 	probe_hard_enable(rop_data->ret_probe);
 
-    return rop_probe->pre_handler(rop_data->rop_probe,
-				  rop_data->rop_probe->handler_data,trigger);
+    return rop_probe->pre_handler(rop_data->rop_probe,tid,
+				  rop_data->rop_probe->handler_data,probe,base);
 }
 
-result_t probe_rop_checkret_ret_pre(struct probe *probe,void *data,
-				    struct probe *trigger) {
+result_t probe_rop_checkret_ret_pre(struct probe *probe,tid_t tid,void *data,
+				    struct probe *trigger,struct probe *base) {
     struct rop_checkret_data *rop_data = (struct rop_checkret_data *)data;
 
     /* Have to check if the ret addr atop the stack is the addr
@@ -210,8 +210,6 @@ result_t probe_rop_checkret_ret_pre(struct probe *probe,void *data,
      * (rop_data->cont_start).
      */
     struct target *target = probe->target;
-    struct target_thread *tthread = probe->thread;
-    tid_t tid = tthread->tid;
     REGVAL sp;
     REGVAL ip;
     ADDR retaddr;
@@ -391,9 +389,9 @@ result_t probe_rop_checkret_ret_pre(struct probe *probe,void *data,
     }
 
     rop_data->status.current_ret_addr = retaddr;
-    retval = rop_data->rop_probe->post_handler(rop_data->rop_probe,
+    retval = rop_data->rop_probe->post_handler(rop_data->rop_probe,tid,
 					       rop_data->rop_probe->handler_data,
-					       trigger);
+					       probe,base);
     goto out;
 
 
@@ -409,8 +407,8 @@ result_t probe_rop_checkret_ret_pre(struct probe *probe,void *data,
     return retval;
 }
 
-result_t probe_rop_checkret_ret_post(struct probe *probe,void *data,
-				     struct probe *trigger) {
+result_t probe_rop_checkret_ret_post(struct probe *probe,tid_t tid,void *data,
+				     struct probe *trigger,struct probe *base) {
     struct rop_checkret_data *rop_data = (struct rop_checkret_data *)data;
 
     rop_data->status.ingadget = 0;
@@ -426,8 +424,8 @@ result_t probe_rop_checkret_ret_post(struct probe *probe,void *data,
 	return 0;
 }
 
-result_t probe_rop_checkret_cont_pre(struct probe *probe,void *data,
-				     struct probe *trigger) {
+result_t probe_rop_checkret_cont_pre(struct probe *probe,tid_t tid,void *data,
+				     struct probe *trigger,struct probe *base) {
     struct rop_checkret_data *rop_data = (struct rop_checkret_data *)data;
 
     /* Have to hot-remove the probe inside this instruction before we
@@ -438,8 +436,8 @@ result_t probe_rop_checkret_cont_pre(struct probe *probe,void *data,
     return 0;
 }
 
-result_t probe_rop_checkret_cont_post(struct probe *probe,void *data,
-				      struct probe *trigger) {
+result_t probe_rop_checkret_cont_post(struct probe *probe,tid_t tid,void *data,
+				      struct probe *trigger,struct probe *base) {
     struct rop_checkret_data *rop_data = (struct rop_checkret_data *)data;
 
     /* Have to hot-insert the probe back into the instruction so it is

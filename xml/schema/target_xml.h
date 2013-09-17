@@ -177,7 +177,7 @@ t_probe_to_x_ProbeT(struct soap *soap,
 
 struct vmi1__ProbeEventT *
 t_probe_to_x_ProbeEventT(struct soap *soap,
-			 struct probe *probe,int type,struct probe *trigger,
+			 struct probe *probe,tid_t tid,int type,struct probe *trigger,struct probe *base,
 			 GHashTable *reftab,
 			 struct vmi1__ProbeEventT *out);
 

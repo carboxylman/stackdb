@@ -169,15 +169,18 @@ int xen_vm_instr_can_switch_context(struct target *target,ADDR addr);
 /* Internal prototypes. */
 static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3);
 static int xen_vm_invalidate_all_threads(struct target *target);
-static result_t xen_vm_active_memory_handler(struct probe *probe,
+static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
 					     void *handler_data,
-					     struct probe *trigger);
-static result_t xen_vm_active_thread_entry_handler(struct probe *probe,
+					     struct probe *trigger,
+					     struct probe *base);
+static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid,
 						   void *handler_data,
-						   struct probe *trigger);
-static result_t xen_vm_active_thread_exit_handler(struct probe *probe,
+						   struct probe *trigger,
+						   struct probe *base);
+static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
 						  void *handler_data,
-						  struct probe *trigger);
+						  struct probe *trigger,
+						  struct probe *base);
 
 /* Format chars to print context registers. */
 #if __WORDSIZE == 64
@@ -5681,9 +5684,10 @@ static int xen_vm_updateregions(struct target *target,
     return 0;
 }
 
-static result_t xen_vm_active_memory_handler(struct probe *probe,
+static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
 					     void *handler_data,
-					     struct probe *trigger) {
+					     struct probe *trigger,
+					     struct probe *base) {
     struct target *target;
     struct xen_vm_state *xstate;
     struct value *mod = NULL;
@@ -5912,9 +5916,10 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,
  * fail to load memory, or something goes wrong, we can fall back to
  * manually walking the task list.
  */
-static result_t xen_vm_active_thread_entry_handler(struct probe *probe,
+static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid,
 						   void *handler_data,
-						   struct probe *trigger) {
+						   struct probe *trigger,
+						   struct probe *base) {
     struct target *target = probe->target;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;
@@ -5992,9 +5997,10 @@ static result_t xen_vm_active_thread_entry_handler(struct probe *probe,
  * -- it could be racy.  We need support for placing probes on function
  * invocations; this requires disasm support.
  */
-static result_t xen_vm_active_thread_exit_handler(struct probe *probe,
+static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
 						  void *handler_data,
-						  struct probe *trigger) {
+						  struct probe *trigger,
+						  struct probe *base) {
     struct target *target = probe->target;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;

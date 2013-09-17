@@ -73,14 +73,12 @@ void sigh(int signo) {
     exit(0);
 }
 
-result_t cfi_handler(struct probe *probe,void *data,struct probe *trigger) {
-    tid_t tid;
+result_t cfi_handler(struct probe *probe,tid_t tid,void *data,
+		     struct probe *trigger,struct probe *base) {
     struct cfi_data *cfi = (struct cfi_data *)probe_priv(probe);
     struct cfi_thread_status *cts;
     /* struct cfi_status *cs; */
     char *buf;
-
-    tid = target_gettid(cfi->target);
 
     cts = (struct cfi_thread_status *)probe_summarize_tid(probe,tid);
     /* cs = (struct cfi_status *)probe_summarize(probe); */
