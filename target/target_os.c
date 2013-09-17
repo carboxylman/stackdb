@@ -112,20 +112,19 @@ static const char *_target_os_syscall_probe_gettype(struct probe *probe) {
 
 #define TARGET_OS_SYSCALL_GKV_KEY "target_os_syscall_state"
 
-static void *_target_os_syscall_probe_summarize(struct probe *probe) {
+void *target_os_syscall_probe_summarize(struct probe *probe) {
     return target_gkv_lookup(probe->target,TARGET_OS_SYSCALL_GKV_KEY);
 }
 
-static void *_target_os_syscall_probe_summarize_tid(struct probe *probe,
-						    tid_t tid) {
+void *target_os_syscall_probe_summarize_tid(struct probe *probe,tid_t tid) {
     return target_thread_gkv_lookup(probe->target,tid,TARGET_OS_SYSCALL_GKV_KEY);
 }
 
 struct probe_ops target_os_syscall_ret_probe_ops = {
     .gettype = _target_os_syscall_probe_gettype,
 
-    .summarize = _target_os_syscall_probe_summarize,
-    .summarize_tid = _target_os_syscall_probe_summarize_tid,
+    .summarize = target_os_syscall_probe_summarize,
+    .summarize_tid = target_os_syscall_probe_summarize_tid,
 };
 
 static void _target_os_syscall_state_dtor(struct target *target,tid_t tid,

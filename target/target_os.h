@@ -98,6 +98,10 @@ struct probe *target_os_syscall_probe_all(struct target *target,tid_t tid,
 struct target_os_syscall_state *target_os_syscall_probe_last(struct target *target,
 							     tid_t tid);
 
+/* These can be used in os personality implementations. */
+void *target_os_syscall_probe_summarize(struct probe *probe);
+void *target_os_syscall_probe_summarize_tid(struct probe *probe,tid_t tid);
+
 /*
  * The intent here is to provide a generic interface to common OS-level
  * abstractions.
