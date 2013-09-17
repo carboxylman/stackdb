@@ -551,6 +551,245 @@ int value_update_unum(struct value *value,unum_t v) {
     return 0;
 }
 
+int value_snprintf(struct value *value,char *buf,int buflen) {
+    int nrc;
+    struct symbol_instance *tmpi;
+    struct symbol *tmpsym;
+    struct value fake_value;
+    OFFSET offset;
+    int *indicies;
+    int i;
+    int j;
+    int found;
+    uint32_t tbytesize;
+
+    /* Handle AUTO_STRING specially. */
+    if (value->isstring) {
+	nrc = snprintf(buf,buflen,"%s",value->buf);
+	goto out;
+    }
+
+    tbytesize = symbol_bytesize(value->type);
+
+    switch (value->type->datatype_code) {
+    case DATATYPE_BASE:
+	if (value->type->s.ti->d.t.encoding == ENCODING_ADDRESS) {
+	    if (tbytesize == 1) 
+		nrc = snprintf(buf,buflen,"%"PRIx8,v_u8(value));
+	    else if (tbytesize == 2) 
+		nrc = snprintf(buf,buflen,"%"PRIx16,v_u16(value));
+	    else if (tbytesize == 4) 
+		nrc = snprintf(buf,buflen,"%"PRIx32,v_u32(value));
+	    else if (tbytesize == 8) 
+		nrc = snprintf(buf,buflen,"%"PRIx64,v_u64(value));
+	    else
+		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			       value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_BOOLEAN
+	    || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED) {
+	    if (tbytesize == 1) 
+		nrc = snprintf(buf,buflen,"%"PRIu8,v_u8(value));
+	    else if (tbytesize == 2) 
+		nrc = snprintf(buf,buflen,"%"PRIu16,v_u16(value));
+	    else if (tbytesize == 4) 
+		nrc = snprintf(buf,buflen,"%"PRIu32,v_u32(value));
+	    else if (tbytesize == 8) 
+		nrc = snprintf(buf,buflen,"%"PRIu64,v_u64(value));
+	    else
+		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			       value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED) {
+	    if (tbytesize == 1) 
+		nrc = snprintf(buf,buflen,"%"PRIi8,v_i8(value));
+	    else if (tbytesize == 2) 
+		nrc = snprintf(buf,buflen,"%"PRIi16,v_i16(value));
+	    else if (tbytesize == 4) 
+		nrc = snprintf(buf,buflen,"%"PRIi32,v_i32(value));
+	    else if (tbytesize == 8) 
+		nrc = snprintf(buf,buflen,"%"PRIi64,v_i64(value));
+	    else
+		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			       value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_FLOAT) {
+	    if (tbytesize == 4) 
+		nrc = snprintf(buf,buflen,"%f",(double)v_f(value));
+	    else if (tbytesize == 8) 
+		nrc = snprintf(buf,buflen,"%f",v_d(value));
+	    else if (tbytesize == 16) 
+		nrc = snprintf(buf,buflen,"%Lf",v_dd(value));
+	    else
+		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			       value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR
+		 || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR) {
+	    if (tbytesize == 1) 
+		nrc = snprintf(buf,buflen,"%c",(int)v_c(value));
+	    else if (tbytesize == 2) 
+		nrc = snprintf(buf,buflen,"%lc",(wint_t)v_wc(value));
+	    else
+		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			       value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_COMPLEX_FLOAT) {
+	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_IMAGINARY_FLOAT) {
+	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_PACKED_DECIMAL) {
+	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_NUMERIC_STRING) {
+	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_EDITED) {
+	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_FIXED) {
+	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else if (value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_FIXED) {
+	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	else {
+	    nrc = snprintf(buf,buflen,"<BAD_ENC_%d_%d>",
+			   value->type->s.ti->d.t.encoding,tbytesize);
+	}
+	break;
+    case DATATYPE_PTR:
+	if (tbytesize == 4)
+	    nrc = snprintf(buf,buflen,"0x%"PRIx32,v_u32(value));
+	else if (tbytesize == 8)
+	    nrc = snprintf(buf,buflen,"0x%"PRIx64,v_u64(value));
+	else 
+	    nrc = snprintf(buf,buflen,"<UNSUP_PTR_%d>",tbytesize);
+	break;
+    case DATATYPE_ARRAY:
+	/* First, if it's a single-index char array, print as a string
+	 * if AUTO_STRING.
+	 */
+	if (value->type->s.ti->d.a.count == 1
+	    && symbol_type_is_char(value->type->datatype)) {
+	    nrc = snprintf(buf,buflen,"\"%.*s\"",
+			   value->type->s.ti->d.a.subranges[0],value->buf);
+	    break;
+	}
+
+	nrc = 0;
+	/* Otherwise, just dump the members of the array. */
+	indicies = malloc(sizeof(int)*value->type->s.ti->d.a.count);
+	for (i = 0; i < value->type->s.ti->d.a.count; ++i) {
+	    indicies[i] = 0;
+	    nrc += snprintf(buf + nrc,buflen - nrc,"[ ");
+	}
+	fake_value.bufsiz = symbol_bytesize(value->type->datatype);
+	fake_value.buf = value->buf;
+	fake_value.type = value->type->datatype;
+    again:
+	while (1) { /* fake_value.buf < (value->buf + value->bufsiz)) {
+		       */
+	    nrc += value_snprintf(&fake_value,buf + nrc,buflen - nrc);
+	    nrc += snprintf(buf + nrc,buflen - nrc,", ");
+
+	    /* calc current offset */
+	    fake_value.buf += symbol_bytesize(value->type->datatype);
+
+	    /* close brackets */
+	    for (j = value->type->s.ti->d.a.count - 1; j > -1; --j) {
+		++indicies[j];
+
+		if (indicies[j] >= value->type->s.ti->d.a.subranges[j]) {
+		    nrc += snprintf(buf + nrc,buflen - nrc," ],");
+		    if (j == 0)
+			/* Break to outer loop and the main termination */
+			break;
+		    indicies[j] = 0;
+		}
+		else 
+		    goto again;
+	    }
+
+	    /* terminate if we're done */
+	    if (indicies[0] >= value->type->s.ti->d.a.subranges[0])
+		break;
+
+	    for ( ; j < value->type->s.ti->d.a.count; ++j)
+		nrc += snprintf(buf + nrc,buflen - nrc," [ ");
+	}
+	free(indicies);
+
+	break;
+    case DATATYPE_STRUCT:
+    case DATATYPE_UNION:
+	nrc = snprintf(buf,buflen,"{");
+	list_for_each_entry(tmpi,&value->type->s.ti->d.su.members,d.v.member) {
+	    tmpsym = tmpi->d.v.member_symbol;
+	    if (symbol_get_name(tmpsym))
+		nrc += snprintf(buf + nrc,buflen - nrc,
+				" .%s = ",symbol_get_name(tmpsym));
+	    else
+		nrc += snprintf(buf + nrc,buflen - nrc," ");
+	    symbol_get_location_offset(tmpsym,&offset);
+	    fake_value.buf = value->buf + offset;
+	    fake_value.type = symbol_type_skip_qualifiers(tmpsym->datatype);
+	    fake_value.lsymbol = NULL;
+	    fake_value.bufsiz = symbol_bytesize(fake_value.type);
+	    nrc += value_snprintf(&fake_value,buf + nrc,buflen - nrc);
+	    nrc += snprintf(buf + nrc,buflen - nrc,",");
+	}
+	nrc += snprintf(buf + nrc,buflen - nrc," }");
+	break;
+    case DATATYPE_ENUM:
+	found = 0;
+	nrc = 0;
+	list_for_each_entry(tmpi,&value->type->s.ti->d.e.members,d.v.member) {
+	    tmpsym = tmpi->d.v.member_symbol;
+	    if (strncmp((char *)tmpsym->s.ii->constval,value->buf,
+			symbol_type_full_bytesize(value->type)) == 0) {
+		nrc += snprintf(buf + nrc,buflen - nrc,
+				"%s",symbol_get_name(tmpsym));
+		found = 1;
+		break;
+	    }
+	}
+	if (!found)
+	    nrc += snprintf(buf + nrc,buflen - nrc,"%"PRIuNUM" (0x%"PRIxNUM")",
+			    v_unum(value),v_unum(value));
+	break;
+    case DATATYPE_CONST:
+	nrc = snprintf(buf,buflen,"<UNSUP_CONST_%s>",
+		       symbol_get_name(value->type));
+	break;
+    case DATATYPE_VOL:
+	nrc = snprintf(buf,buflen,"<UNSUP_VOL_%s>",symbol_get_name(value->type));
+	break;
+    case DATATYPE_TYPEDEF:	
+	nrc = snprintf(buf,buflen,"<UNSUP_TYPEDEF_%s>",
+		       symbol_get_name(value->type));
+	break;
+    case DATATYPE_FUNCTION:
+	nrc = snprintf(buf,buflen,"<UNSUP_FUNCTION_%s>",
+		       symbol_get_name(value->type));
+	break;
+    default:
+	break;
+    }
+
+ out:
+    return nrc;
+}
+
 void __value_dump(struct value *value,struct dump_info *ud) {
     struct symbol_instance *tmpi;
     struct symbol *tmpsym;
