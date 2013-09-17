@@ -70,7 +70,7 @@ typedef enum foo_enum {
 enum foo_enum X;
 
 static int foo = offsetof(mystruct,xys.x);
-volatile int bar;
+volatile int bar = 4;
 
 typedef void myvoid;
 typedef void * myvoidptr_t;
@@ -139,6 +139,8 @@ int f10(int p,int x,int y,int z) {
 	printf("f10_subfunc -> %d\n",psub);
 	return psub;
     }
+
+    bar = bar + 4;
 
     printf("f10 -> %d\n",p);
     f10_subfunc(p+1);
