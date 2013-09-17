@@ -36,7 +36,7 @@ struct probe_value {
     GHashTable *nr;
 };
 
-static void probe_value_clear(struct probe_value *pv) {
+void probe_value_clear(struct probe_value *pv) {
     GHashTableIter iter;
     gpointer kp,vp;
 
@@ -59,7 +59,7 @@ static void probe_value_clear(struct probe_value *pv) {
     pv->finished = 0;
 }
 
-static void probe_value_free(struct probe_value *pv) {
+void probe_value_free(struct probe_value *pv) {
     probe_value_clear(pv);
     if (pv->nv) {
 	g_hash_table_destroy(pv->nv);
@@ -72,7 +72,7 @@ static void probe_value_free(struct probe_value *pv) {
     free(pv);
 }
 
-static struct probe_value *probe_value_create(probe_handler_phase_t phase) {
+struct probe_value *probe_value_create(probe_handler_phase_t phase) {
     struct probe_value *pv;
 
     pv = calloc(1,sizeof(*pv));
@@ -89,8 +89,8 @@ static struct probe_value *probe_value_create(probe_handler_phase_t phase) {
  * If it's a new post, mark.
  * If it's a finished post, mark and mark finished.
  */
-void probe_value_notify_phase_stacked(struct probe *probe,tid_t tid,
-				      probe_handler_phase_t phase) {
+void probe_value_notify_phase_function_ee(struct probe *probe,tid_t tid,
+					  probe_handler_phase_t phase) {
     GSList *stack;
     struct probe_value *pv = NULL;
 
@@ -117,8 +117,8 @@ void probe_value_notify_phase_stacked(struct probe *probe,tid_t tid,
     }
 }
 
-void probe_value_notify_phase_basic(struct probe *probe,tid_t tid,
-				    probe_handler_phase_t phase) {
+void probe_value_notify_phase_watchedvar(struct probe *probe,tid_t tid,
+					 probe_handler_phase_t phase) {
     struct probe_value *pv = NULL;
 
     if (!probe->values)
@@ -262,8 +262,8 @@ int probe_value_record_basic(struct probe *probe,tid_t tid,
     return 0;
 }
 
-GHashTable *__probe_value_get_table_stacked(struct probe *probe,tid_t tid,
-					    int israw,int allowlast) {
+GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
+						int israw,int allowlast) {
     struct array_list *args;
     struct symbol *symbol;
     GSList *stack;
@@ -360,25 +360,26 @@ GHashTable *__probe_value_get_table_stacked(struct probe *probe,tid_t tid,
 	return pv->nv;
 }
 
-GHashTable *probe_value_get_table_stacked(struct probe *probe,tid_t tid) {
-    return __probe_value_get_table_stacked(probe,tid,0,0);
+GHashTable *probe_value_get_table_function_ee(struct probe *probe,tid_t tid) {
+    return __probe_value_get_table_function_ee(probe,tid,0,0);
 }
 
-GHashTable *probe_value_get_raw_table_stacked(struct probe *probe,tid_t tid) {
-    return __probe_value_get_table_stacked(probe,tid,1,0);
+GHashTable *probe_value_get_raw_table_function_ee(struct probe *probe,tid_t tid) {
+    return __probe_value_get_table_function_ee(probe,tid,1,0);
 }
 
-GHashTable *probe_value_get_last_table_stacked(struct probe *probe,tid_t tid) {
-    return __probe_value_get_table_stacked(probe,tid,0,1);
+GHashTable *probe_value_get_last_table_function_ee(struct probe *probe,tid_t tid) {
+    return __probe_value_get_table_function_ee(probe,tid,0,1);
 }
 
-GHashTable *probe_value_get_last_raw_table_stacked(struct probe *probe,tid_t tid) {
-    return __probe_value_get_table_stacked(probe,tid,1,1);
+GHashTable *probe_value_get_last_raw_table_function_ee(struct probe *probe,
+						       tid_t tid) {
+    return __probe_value_get_table_function_ee(probe,tid,1,1);
 }
 
-static struct value *__probe_value_get_stacked(struct probe *probe,tid_t tid,
-					       char *name,int israw,
-					       int allowlast) {
+static struct value *__probe_value_get_function_ee(struct probe *probe,tid_t tid,
+						   char *name,int israw,
+						   int allowlast) {
     GSList *stack;
     struct value *retval = NULL;
     struct symbol *symbol;
@@ -453,24 +454,24 @@ static struct value *__probe_value_get_stacked(struct probe *probe,tid_t tid,
     return v;
 }
 
-struct value *probe_value_get_stacked(struct probe *probe,tid_t tid,
+struct value *probe_value_get_function_ee(struct probe *probe,tid_t tid,
 				      char *name) {
-    return __probe_value_get_stacked(probe,tid,name,0,0);
+    return __probe_value_get_function_ee(probe,tid,name,0,0);
 }
 
-struct value *probe_value_get_raw_stacked(struct probe *probe,tid_t tid,
+struct value *probe_value_get_raw_function_ee(struct probe *probe,tid_t tid,
 					  char *name) {
-    return __probe_value_get_stacked(probe,tid,name,1,0);
+    return __probe_value_get_function_ee(probe,tid,name,1,0);
 }
 
-struct value *probe_value_get_last_stacked(struct probe *probe,tid_t tid,
+struct value *probe_value_get_last_function_ee(struct probe *probe,tid_t tid,
 					   char *name) {
-    return __probe_value_get_stacked(probe,tid,name,0,1);
+    return __probe_value_get_function_ee(probe,tid,name,0,1);
 }
 
-struct value *probe_value_get_last_raw_stacked(struct probe *probe,tid_t tid,
+struct value *probe_value_get_last_raw_function_ee(struct probe *probe,tid_t tid,
 					       char *name) {
-    return __probe_value_get_stacked(probe,tid,name,1,1);
+    return __probe_value_get_function_ee(probe,tid,name,1,1);
 }
 
 static struct value *__probe_value_get_basic(struct probe *probe,tid_t tid,
@@ -682,7 +683,7 @@ struct probe_ops var_ops = {
     .get_raw_value = probe_value_get_raw_basic,
     .get_last_value = probe_value_get_last_basic,
     .get_last_raw_value = probe_value_get_last_raw_basic,
-    .values_notify_phase = probe_value_notify_phase_basic,
+    .values_notify_phase = probe_value_notify_phase_watchedvar,
     .values_free = probe_values_free_basic,
 };
 
@@ -715,15 +716,15 @@ static const char *probe_value_function_ee_gettype(struct probe *probe) {
 
 struct probe_ops function_ee_ops = {
     .gettype = probe_value_function_ee_gettype,
-    .get_value_table = probe_value_get_table_stacked,
-    .get_raw_value_table = probe_value_get_raw_table_stacked,
-    .get_last_value_table = probe_value_get_last_table_stacked,
-    .get_last_raw_value_table = probe_value_get_last_raw_table_stacked,
-    .get_value = probe_value_get_stacked,
-    .get_raw_value = probe_value_get_raw_stacked,
-    .get_last_value = probe_value_get_last_stacked,
-    .get_last_raw_value = probe_value_get_last_raw_stacked,
-    .values_notify_phase = probe_value_notify_phase_stacked,
+    .get_value_table = probe_value_get_table_function_ee,
+    .get_raw_value_table = probe_value_get_raw_table_function_ee,
+    .get_last_value_table = probe_value_get_last_table_function_ee,
+    .get_last_raw_value_table = probe_value_get_last_raw_table_function_ee,
+    .get_value = probe_value_get_function_ee,
+    .get_raw_value = probe_value_get_raw_function_ee,
+    .get_last_value = probe_value_get_last_function_ee,
+    .get_last_raw_value = probe_value_get_last_raw_function_ee,
+    .values_notify_phase = probe_value_notify_phase_function_ee,
     .values_free = probe_values_free_stacked,
 };
 

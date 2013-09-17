@@ -34,6 +34,7 @@
 
 struct probepoint;
 struct probe;
+struct probe_value;
 struct probe_filter;
 struct probeset;
 struct action;
@@ -471,6 +472,73 @@ struct probe *probe_create_filtered(struct target *target,tid_t tid,
 				    void *handler_data,
 				    int autofree,int tracked);
 struct probe_filter *probe_filter_parse(char *expr);
+
+/**
+ ** Probe Value core functions that might be useful to others in
+ ** constructing per-probe type probe_ops.
+ **/
+void probe_value_clear(struct probe_value *pv);
+void probe_value_free(struct probe_value *pv);
+struct probe_value *probe_value_create(probe_handler_phase_t phase);
+/*
+ * Some probes require a stack -- i.e., a function that might be
+ * recursive.  So we have two basic implementations of probe_value
+ * storage that control probe->values (of course you are free to write
+ * another!).
+ */
+/*
+ * Only these two _stacked() functions are generic enough to share; the
+ * _function_ee() functions also use the stacked mode but they are
+ * function entry/exit metaprobe-specific.  If you write a metaprobe
+ * that acts like a function entry/exit probe (the linux per-syscall
+ * probes are an example), you can reuse lots of the _function_ee()
+ * calls.
+ */
+void probe_values_free_stacked(struct probe *probe);
+int probe_value_record_stacked(struct probe *probe,tid_t tid,
+			       char *name,struct value *value,int israw);
+/*
+ * We use the _basic() calls to implement watched var metaprobes.  But,
+ * they are trivial; they don't maintain a stack.  Usually if you use
+ * these, the only thing you'll need to reimplement is the
+ * probe_value_notify_phase_watchedvar() function (and maybe the
+ * getters).
+ */
+void probe_values_free_basic(struct probe *probe);
+int probe_value_record_basic(struct probe *probe,tid_t tid,
+			     char *name,struct value *value,int israw);
+GHashTable *probe_value_get_table_basic(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_raw_table_basic(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_last_table_basic(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_last_raw_table_basic(struct probe *probe,tid_t tid);
+struct value *probe_value_get_basic(struct probe *probe,tid_t tid,
+				    char *name);
+struct value *probe_value_get_raw_basic(struct probe *probe,tid_t tid,
+					char *name);
+struct value *probe_value_get_last_basic(struct probe *probe,tid_t tid,
+					 char *name);
+struct value *probe_value_get_last_raw_basic(struct probe *probe,tid_t tid,
+					     char *name);
+
+GHashTable *probe_value_get_table_function_ee(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_raw_table_function_ee(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_last_table_function_ee(struct probe *probe,tid_t tid);
+GHashTable *probe_value_get_last_raw_table_function_ee(struct probe *probe,
+						       tid_t tid);
+struct value *probe_value_get_function_ee(struct probe *probe,tid_t tid,
+					  char *name);
+struct value *probe_value_get_raw_function_ee(struct probe *probe,tid_t tid,
+					      char *name);
+struct value *probe_value_get_last_function_ee(struct probe *probe,tid_t tid,
+					       char *name);
+struct value *probe_value_get_last_raw_function_ee(struct probe *probe,tid_t tid,
+						   char *name);
+void probe_value_notify_phase_function_ee(struct probe *probe,tid_t tid,
+					  probe_handler_phase_t phase);
+
+
+void probe_value_notify_phase_watchedvar(struct probe *probe,tid_t tid,
+					 probe_handler_phase_t phase);
 
 /**
  ** Core probe library functions.
