@@ -28,6 +28,7 @@
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
+#include "target_os.h"
 
 #include "probe_api.h"
 #include "probe.h"
@@ -44,6 +45,8 @@ void cleanup_probes() {
     GHashTableIter iter;
     gpointer key;
     struct probe *probe;
+
+    target_pause(target);
 
     if (fprobes) {
 	g_hash_table_iter_init(&iter,fprobes);
@@ -383,6 +386,8 @@ int main(int argc,char **argv) {
     char namebuf[128];
     struct probe_filter *pre_pf, *post_pf;
     char *pre_filter, *post_filter;
+    int have_syscall_table = 0;
+    struct target_os_syscall *syscall;
 
     target_init();
     atexit(target_fini);
@@ -461,6 +466,14 @@ int main(int argc,char **argv) {
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
+    if (rtarget->kind == TARGET_KIND_OS) {
+	if (target_os_syscall_table_load(rtarget))
+	    vwarn("could not load the syscall table; target_os_syscall probes"
+		  " will not be available!\n");
+	else
+	    have_syscall_table = 1;
+    }
+
     if (opts.argc > 0) {
 	for (i = 0; i < opts.argc; ++i) {
 	    pre_filter = post_filter = context = NULL;
@@ -510,20 +523,40 @@ int main(int argc,char **argv) {
 		 * Create a probe on that symbol:
 		 */
 
-		bsymbol = target_lookup_sym(rtarget,name,NULL,NULL,
-					    SYMBOL_TYPE_FLAG_NONE);
-		if (!bsymbol) {
-		    verror("could not lookup symbol %s; aborting!\n",name);
-		    cleanup();
-		    exit(-3);
+		if (have_syscall_table) {
+		    syscall = target_os_syscall_lookup_name(rtarget,name);
+		    if (syscall) {
+			sprobe = \
+			    target_os_syscall_probe(rtarget,TID_GLOBAL,syscall,
+						    probe_do_sink_pre_handlers,
+						    probe_do_sink_post_handlers,
+						    NULL);
+			if (!sprobe) {
+			    verror("could not place syscall value probe on %s;"
+				   " aborting!\n",name);
+			    cleanup();
+			    exit(-5);
+			}
+		    }
 		}
-		sprobe = probe_value_symbol(rtarget,TID_GLOBAL,bsymbol,
-					    probe_do_sink_pre_handlers,
-					    probe_do_sink_post_handlers,NULL);
+
 		if (!sprobe) {
-		    verror("could not place value probe on %s; aborting!\n",name);
-		    cleanup();
-		    exit(-3);
+		    bsymbol = target_lookup_sym(rtarget,name,NULL,NULL,
+						SYMBOL_TYPE_FLAG_NONE);
+		    if (!bsymbol) {
+			verror("could not lookup symbol %s; aborting!\n",name);
+			cleanup();
+			exit(-3);
+		    }
+		    sprobe = probe_value_symbol(rtarget,TID_GLOBAL,bsymbol,
+						probe_do_sink_pre_handlers,
+						probe_do_sink_post_handlers,NULL);
+		    if (!sprobe) {
+			verror("could not place value probe on %s; aborting!\n",
+			       name);
+			cleanup();
+			exit(-3);
+		    }
 		}
 
 		g_hash_table_insert(sprobes,name,sprobe);
