@@ -6771,29 +6771,32 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	}
     }
 
-    target->monitorhandling = 0;
-
  out_err:
+    target->monitorhandling = 0;
     if (again)
 	*again = 0;
     return TSTATUS_ERROR;
 
  out_err_again:
+    target->monitorhandling = 0;
     if (again)
 	*again = -1;
     return TSTATUS_ERROR;
 
  out_paused:
+    target->monitorhandling = 0;
     if (again)
 	*again = 0;
     return TSTATUS_PAUSED;
 
  out_bp_again:
+    target->monitorhandling = 0;
     if (again)
 	*again = 1;
     return TSTATUS_PAUSED;
 
  out_ss_again:
+    target->monitorhandling = 0;
     if (again)
 	*again = 2;
     return TSTATUS_PAUSED;
