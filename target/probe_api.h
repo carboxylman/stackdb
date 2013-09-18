@@ -472,6 +472,7 @@ struct probe *probe_create_filtered(struct target *target,tid_t tid,
 				    void *handler_data,
 				    int autofree,int tracked);
 struct probe_filter *probe_filter_parse(char *expr);
+void probe_filter_free(struct probe_filter *pf);
 
 /**
  ** Probe Value core functions that might be useful to others in
