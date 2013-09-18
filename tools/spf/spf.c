@@ -25,6 +25,7 @@
 #include <argp.h>
 
 #include "log.h"
+#include "glib_wrapper.h"
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
@@ -35,11 +36,112 @@
 #include "alist.h"
 #include "list.h"
 
+/*
+ * Private vdebug flags for LA_USER for us.
+ */
+#define LF_U_CFG 1
+
+/*
+ * Types.
+ */
+typedef enum {
+    SPF_ACTION_ABORT = 1,
+    SPF_ACTION_REPORT = 2,
+    SPF_ACTION_EXIT = 3,
+    SPF_ACTION_ENABLE = 4,
+    SPF_ACTION_DISABLE = 5,
+    SPF_ACTION_REMOVE = 6,
+} spf_action_type_t;
+
+struct spf_action {
+    spf_action_type_t atype;
+
+    union {
+	struct {
+	    char rt;
+	    char *tn;
+	    int tid;
+	    char *rv;
+	    char *msg;
+	    int ttctx;
+	} report;
+	struct {
+	    unsigned long int retval;
+	} abort;
+	struct {
+	    int retval;
+	} exit;
+	struct {
+	    char *id;
+	} enable;
+	struct {
+	    char *id;
+	} disable;
+	struct {
+	    char *id;
+	} remove;
+    };
+};
+
+#define WHEN_PRE	0
+#define WHEN_POST	1
+
+struct spf_filter {
+    char *id;
+
+    char *symbol;
+    struct bsymbol *bsymbol;
+    /* When it's applied; pre or post. */
+    int when;
+    /*
+     * symbol value regexps
+     */
+    struct probe_filter *pf;
+    /*
+     * pid, ppid, ppid^, uid, gid, name, name^...
+     */
+    //struct target_thread_context_filter *ttf;
+    GSList *actions;
+};
+
+struct spf_config {
+    GSList *spf_filter_list;
+};
+
+struct spf_argp_state {
+    int argc;
+    char **argv;
+    char *config_file;
+    int config_file_fatal;
+    char *overlay_name_or_id;
+    struct target_spec *overlay_spec;
+};
+
+/*
+ * Globals.
+ */
 struct target *target = NULL;
 struct target *otarget = NULL;
+struct target *rtarget;
+struct spf_config *config = NULL;
+struct spf_argp_state opts;
 
 GHashTable *sprobes = NULL;
 GHashTable *fprobes = NULL;
+
+int needreload = 0;
+int needtodie = 0;
+
+int have_syscall_table = 0;
+
+/* A few prototypes. */
+struct spf_config *load_config_file(char *file);
+int apply_config_file(struct spf_config *config);
+void reload_config_file(void);
+void spf_action_free(struct spf_action *spfa);
+void spf_filter_free(struct spf_filter *spff);
+void spf_config_free(struct spf_config *config);
+
 
 void cleanup_probes() {
     GHashTableIter iter;
@@ -56,6 +158,8 @@ void cleanup_probes() {
 	    probe_unregister(probe,1);
 	    probe_free(probe,1);
 	}
+	g_hash_table_destroy(fprobes);
+	fprobes = NULL;
     }
     if (sprobes) {
 	g_hash_table_iter_init(&iter,sprobes);
@@ -65,15 +169,9 @@ void cleanup_probes() {
 	    probe_unregister(probe,1);
 	    probe_free(probe,1);
 	}
-    }
-
-
-    if (sprobes) 
 	g_hash_table_destroy(sprobes);
-    sprobes = NULL;
-    if (fprobes) 
-	g_hash_table_destroy(fprobes);
-    fprobes = NULL;
+	sprobes = NULL;
+    }
 }
 
 target_status_t cleanup() {
@@ -95,9 +193,27 @@ target_status_t cleanup() {
     return retval;
 }
 
+void sigr(int signo) {
+    needreload = 1;
+    if (target_is_monitor_handling(target))
+	target_monitor_schedule_interrupt(target);
+    else {
+	target_pause(target);
+	reload_config_file();
+	target_resume(target);
+    }
+    signal(signo,sigr);
+}
+
 void sigh(int signo) {
-    cleanup();
-    exit(0);
+    needtodie = 1;
+    if (target_is_monitor_handling(target))
+	target_monitor_schedule_interrupt(target);
+    else {
+	cleanup();
+	exit(0);
+    }
+    signal(signo,sigh);
 }
 
 result_t pre_handler(struct probe *probe,tid_t tid,void *data,
@@ -207,17 +323,13 @@ result_t post_handler(struct probe *probe,tid_t tid,void *data,
     return RESULT_SUCCESS;
 }
 
-struct spf_argp_state {
-    int argc;
-    char **argv;
-    char *overlay_name_or_id;
-    struct target_spec *overlay_spec;
-};
-
-struct spf_argp_state opts;
+#define SPF_CONFIGFILE_FATAL 0x10000000
 
 struct argp_option spf_argp_opts[] = {
     { "overlay",'O',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
+    { "config-file",'C',"<FILE>",0,"An SPF config file.",0 },
+    { "config-file-fatal",SPF_CONFIGFILE_FATAL,NULL,0,
+      "Make errors while applying runtime updates (via USR2) to the config file fatal.",0 },
     { 0,0,0,0,0,0 },
 };
 
@@ -257,6 +369,12 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case ARGP_KEY_ERROR:
     case ARGP_KEY_FINI:
 	return 0;
+    case SPF_CONFIGFILE_FATAL:
+	opts->config_file_fatal = 1;
+	break;
+    case 'C':
+	opts->config_file = arg;
+	break;
     case 'O':
 	/*
 	 * We need to split the <name_or_id>:<spec> part; then split
@@ -376,7 +494,6 @@ int main(int argc,char **argv) {
     char targetstr[128];
     int i;
     struct bsymbol *bsymbol;
-    struct target *rtarget;
     int oid;
     tid_t otid;
     char *tmp = NULL;
@@ -386,7 +503,6 @@ int main(int argc,char **argv) {
     char namebuf[128];
     struct probe_filter *pre_pf, *post_pf;
     char *pre_filter, *post_filter;
-    int have_syscall_table = 0;
     struct target_os_syscall *syscall;
 
     target_init();
@@ -400,6 +516,14 @@ int main(int argc,char **argv) {
     if (!tspec) {
 	verror("could not parse target arguments!\n");
 	exit(-1);
+    }
+
+    if (opts.config_file) {
+	config = load_config_file(opts.config_file);
+	if (!config) {
+	    verror("could not read config file %s!\n",opts.config_file);
+	    exit(-11);
+	}
     }
 
     rtarget = target = target_instantiate(tspec,NULL);
@@ -451,17 +575,17 @@ int main(int argc,char **argv) {
 	rtarget = otarget;
     }
 
-    signal(SIGHUP,sigh);
     signal(SIGINT,sigh);
     signal(SIGQUIT,sigh);
     signal(SIGABRT,sigh);
-    signal(SIGKILL,sigh);
     signal(SIGSEGV,sigh);
     signal(SIGPIPE,sigh);
     signal(SIGALRM,sigh);
     signal(SIGTERM,sigh);
-    signal(SIGUSR1,sigh);
-    signal(SIGUSR2,sigh);
+
+    signal(SIGHUP,sigr);
+    signal(SIGUSR1,sigr);
+    signal(SIGUSR2,sigr);
 
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
@@ -594,10 +718,26 @@ int main(int argc,char **argv) {
 	    g_hash_table_insert(fprobes,namebuf,fprobe);
 	}
     }
-    else {
+    else if (!opts.config_file) {
 	verror("Must supply some symbols to probe!\n");
 	cleanup();
 	exit(-5);
+    }
+
+    /* Now apply the config file.  Always make the first application fatal. */
+    int oldfatal = opts.config_file_fatal;
+    opts.config_file_fatal = 1;
+    if (apply_config_file(config)) {
+	verror("could not install config file %s!\n",opts.config_file);
+	cleanup();
+	exit(-12);
+    }
+    opts.config_file_fatal = oldfatal;
+
+    if (g_hash_table_size(sprobes) == 0) {
+	verror("No symbols to probe; exiting!\n");
+	cleanup();
+	exit(-1);
     }
 
     /*
@@ -611,7 +751,17 @@ int main(int argc,char **argv) {
 
     while (1) {
 	tstat = target_monitor(target);
-	if (tstat == TSTATUS_PAUSED) {
+	if (tstat == TSTATUS_INTERRUPTED) {
+	    if (needtodie) {
+		cleanup();
+		exit(0);
+	    }
+	    if (needreload) 
+		reload_config_file();
+
+	    target_resume(target);
+	}
+	else if (tstat == TSTATUS_PAUSED) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    vwarn("target %s interrupted at 0x%"PRIxREGVAL"; trying resume!\n",
@@ -669,4 +819,677 @@ int main(int argc,char **argv) {
     fflush(stderr);
     fflush(stdout);
     exit(0);
+}
+
+void spf_action_free(struct spf_action *spfa) {
+    if (spfa->atype == SPF_ACTION_REPORT) {
+	if (spfa->report.tn)
+	    free(spfa->report.tn);
+	if (spfa->report.rv)
+	    free(spfa->report.rv);
+	if (spfa->report.msg)
+	    free(spfa->report.msg);
+    }
+    else if (spfa->atype == SPF_ACTION_ENABLE) {
+	if (spfa->enable.id)
+	    free(spfa->enable.id);
+    }
+    else if (spfa->atype == SPF_ACTION_DISABLE) {
+	if (spfa->disable.id)
+	    free(spfa->disable.id);
+    }
+    else if (spfa->atype == SPF_ACTION_REMOVE) {
+	if (spfa->remove.id)
+	    free(spfa->remove.id);
+    }
+
+    free(spfa);
+}
+
+void spf_filter_free(struct spf_filter *spff) {
+    GSList *gsltmp;
+    struct spf_action *spfa;
+
+    if (spff->id)
+	free(spff->id);
+    if (spff->symbol)
+	free(spff->symbol);
+    if (spff->bsymbol)
+	bsymbol_release(spff->bsymbol);
+    if (spff->pf)
+	probe_filter_free(spff->pf);
+    if (spff->actions) {
+	v_g_slist_foreach(spff->actions,gsltmp,spfa) {
+	    spf_action_free(spfa);
+	}
+	g_slist_free(spff->actions);
+    }
+
+    free(spff);
+}
+
+void spf_config_free(struct spf_config *config) {
+    GSList *gsltmp;
+    struct spf_filter *spff;
+
+    v_g_slist_foreach(config->spf_filter_list,gsltmp,spff) {
+	spf_filter_free(spff);
+    }
+    g_slist_free(config->spf_filter_list);
+}
+
+/*
+ * Language is like this.  Single lines of probe filters/actions.
+ *
+ *  <symbol> [id(<ident>)] [when(pre|post)] [vfilter(<name>=/<regex>/,...)] [cfilter(...)] [action*]
+ *  [action] = abort(value) 
+ *             | report(rt=(i|f),tn=<tn>,tid=<tid>,rv=<rv>,msg="",ttctx=(self|hier|all),)
+ *             | exit(value)
+ *             | enable(name) | disable(name)
+ *
+ * Reports interpreted by the XML server like this:
+ *
+ *   "RESULT(%c:%d): %ms (%d) %ms \"%m[^\"]\" (%m[^)])",
+ *   &rt,&id,&name,&type,&result_value,&msg,&value_str);
+ *
+ *   rt=(i|f) id=<unique_int> typename typeid result_value "msg" (<meta_kv_pairs>)
+ *
+ * We often use result_value as a msg subtype field within typename/typeid.
+ */
+
+char *_get_next_non_enc_esc(char *s,int c) {
+    int wasesc = 0;
+    int isesc = 0;
+    int isenc = 0;
+    int encchar;
+    
+    while (*s != '\0') {
+	wasesc = isesc;
+	isesc = 0;
+	if (isenc) {
+	    if (*s == '\\') {
+		if (!wasesc) 
+		    isesc = 1;
+	    }
+	    else if (*s == encchar && !wasesc) {
+		encchar = '\0';
+		isenc = 0;
+	    }
+	}
+	else if (*s == c) {
+	    if (!wasesc)
+		break;
+	}
+	else if (*s == '\\') {
+	    if (!wasesc)
+		isesc = 1;
+	}
+
+	++s;
+    }
+
+    if (*s == c)
+	return s;
+    else
+	return NULL;
+}
+
+void reload_config_file(void) {
+    struct spf_config *newconfig;
+
+    newconfig = load_config_file(opts.config_file);
+    if (!newconfig) {
+	if (opts.config_file_fatal) {
+	    verror("could not reread config file %s!\n",opts.config_file);
+	    cleanup();
+	    exit(-1);
+	}
+	else {
+	    vwarn("could not reread config file %s; leaving"
+		  " existing configuration in place!\n",opts.config_file);
+	}
+    }
+    else {
+	apply_config_file(newconfig);
+	//spf_config_free(config);
+	config = newconfig;
+	newconfig = NULL;
+	needreload = 0;
+    }
+}
+
+/*
+ * Applies the config file.
+ *
+ * The easiest thing to do is remove all the filter probes; then see
+ * which symbol probes we need to add/remove; then re-add all the
+ * filter probes.
+ *
+ * What happens if we get called while one of our filter probes is
+ * running its handler (or the list the probe is on is getting
+ * iterated)?
+ *
+ * Sigh... we're going to have to add this aren't we.  probe_free() will
+ * have to schedule a free if the probe is in use...
+ */
+int apply_config_file(struct spf_config *config) {
+    GSList *gsltmp;
+    struct spf_filter *spff;
+    struct bsymbol *bsymbol;
+    GHashTable *needed = NULL;
+    GHashTableIter iter;
+    gpointer kp,vp;
+    struct probe *probe,*sprobe,*fprobe;
+    char namebuf[128];
+    int i;
+    struct target_os_syscall *syscall;
+
+    /* First, destroy all the filter probes. */
+    g_hash_table_iter_init(&iter,fprobes);
+    while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+	probe = (struct probe *)vp;
+	probe_free(probe,0);
+	g_hash_table_iter_remove(&iter);
+    }
+
+    /* Second, build symbol probes for all the probes in the config. */
+    needed = g_hash_table_new(g_str_hash,g_str_equal);
+    v_g_slist_foreach(config->spf_filter_list,gsltmp,spff) {
+	g_hash_table_insert(needed,spff->symbol,NULL);
+
+	if (g_hash_table_lookup(sprobes,spff->symbol))
+	    continue;
+
+	/* Create it. */
+	bsymbol = target_lookup_sym(rtarget,spff->symbol,NULL,NULL,
+				    SYMBOL_TYPE_FLAG_NONE);
+	if (!bsymbol) {
+	    if (opts.config_file_fatal) {
+		verror("could not lookup symbol %s; aborting!\n",spff->symbol);
+		cleanup();
+		exit(-3);
+	    }
+	    else {
+		vwarn("could not lookup symbol %s; skipping filter!\n",
+		      spff->symbol);
+		continue;
+	    }
+	}
+
+	sprobe = NULL;
+	if (have_syscall_table) {
+	    syscall = target_os_syscall_lookup_name(rtarget,spff->symbol);
+	    if (syscall) {
+		sprobe = target_os_syscall_probe(rtarget,TID_GLOBAL,syscall,
+						 probe_do_sink_pre_handlers,
+						 probe_do_sink_post_handlers,
+						 NULL);
+		if (!sprobe) {
+		    if (opts.config_file_fatal) {
+			verror("could not place syscall value probe on %s;"
+			       " aborting!\n",
+			       spff->symbol);
+			cleanup();
+			exit(-3);
+		    }
+		    else {
+			vwarn("could not place syscall value probe on %s;"
+			      " skipping filter!\n",
+			      spff->symbol);
+			continue;
+		    }
+		}
+	    }
+	}
+
+	if (!sprobe) {
+	    sprobe = probe_value_symbol(rtarget,TID_GLOBAL,bsymbol,
+					probe_do_sink_pre_handlers,
+					probe_do_sink_post_handlers,NULL);
+	    if (!sprobe) {
+		if (opts.config_file_fatal) {
+		    verror("could not place value probe on %s; aborting!\n",
+			   spff->symbol);
+		    cleanup();
+		    exit(-3);
+		}
+		else {
+		    vwarn("could not place value probe on %s; skipping filter!\n",
+			  spff->symbol);
+		    continue;
+		}
+	    }
+	}
+
+	g_hash_table_insert(sprobes,spff->symbol,sprobe);
+    }
+
+    /* Third, any sprobe that is *NOT* in needed should be removed. */
+    g_hash_table_iter_init(&iter,sprobes);
+    while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+	if (g_hash_table_lookup_extended(needed,kp,NULL,NULL) == FALSE) {
+	    probe_free((struct probe *)vp,0);
+	    g_hash_table_iter_remove(&iter);
+	}
+    }
+    g_hash_table_destroy(needed);
+    needed = NULL;
+
+    /* Finally, add all the filter probes. */
+    v_g_slist_foreach(config->spf_filter_list,gsltmp,spff) {
+	g_hash_table_insert(needed,spff->symbol,NULL);
+
+	/* Again, if we failed for any reason to get the symbol, skip here. */
+	sprobe = (struct probe *)g_hash_table_lookup(sprobes,spff->symbol);
+	if (!sprobe)
+	    continue;
+	if (!spff->id) {
+	    snprintf(namebuf,sizeof(namebuf),"filter_%s_%d",spff->symbol,i);
+	    spff->id = strdup(namebuf);
+	}
+	if (spff->when == WHEN_PRE)
+	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
+					   pre_handler,spff->pf,NULL,NULL,
+					   spff,0,1);
+	else
+	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
+					   NULL,NULL,post_handler,spff->pf,
+					   spff,0,1);
+	probe_register_source(fprobe,sprobe);
+
+	g_hash_table_insert(fprobes,spff->id,fprobe);
+    }
+
+    return 0;
+}
+
+/*
+ * (Re)reads the configuration file.
+ */
+struct spf_config *load_config_file(char *file) {
+    char *buf;
+    char *bufptr;
+    char *tbuf;
+    int bufsiz = 128;
+    int rc = 0;
+    FILE *ffile;
+    struct spf_filter *spff = NULL;
+    struct spf_action *spfa = NULL;
+    char *saveptr;
+    char *token = NULL, *token2 = NULL;
+    char *tptr;
+    char errbuf[128];
+    unsigned long int unumval;
+    long int numval;
+    struct spf_config *retval = NULL;
+    int spff_count = 0;
+    int lineno = 0;
+
+    if (strcmp(file,"-") == 0)
+	ffile = stdin;
+    else {
+	ffile = fopen(file,"r");
+	if (!ffile) {
+	    verror("could not fopen config file %s: %s\n",file,strerror(errno));
+	    return NULL;
+	}
+    }
+
+    retval = calloc(1,sizeof(*retval));
+
+    /* Read directives line by line. */
+    buf = malloc(bufsiz);
+    while (1) {
+	rc = 0;
+	while (1) {
+	    errno = 0;
+	    tbuf = fgets(buf + rc,bufsiz - rc,ffile);
+	    if (tbuf && (rc += strlen(buf + rc)) == (bufsiz - 1) 
+		&& buf[bufsiz - 2] != '\n') {
+		/* We filled up the buf; malloc more and keep going. */
+		tbuf = malloc(bufsiz + 128);
+		memcpy(tbuf,buf,bufsiz);
+		free(buf);
+		buf = tbuf;
+		bufsiz += 128;
+	    }
+	    else if (tbuf && rc < bufsiz) {
+		/* We have our line. */
+		break;
+	    }
+	    else if (errno) {
+		verror("fgets: %s (aborting filter file read)\n",
+		       strerror(errno));
+		goto errout;
+	    }
+	    else {
+		/* EOF. */
+		free(buf);
+		buf = NULL;
+		break;
+	    }
+	}
+
+	if (!buf)
+	    break;
+
+	++lineno;
+	vdebug(2,LA_USER,LF_U_CFG,"read line %d: '%s'\n",lineno,buf);
+
+	if (*buf == '#')
+	    continue;
+
+	if (buf[strlen(buf) - 1] == '\n') {
+	    if (*buf == '\n')
+		continue;
+	    buf[strlen(buf) - 1] = '\0';
+	}
+
+	/*
+	 * ProbeFilter.
+	 */
+	if (strncmp(buf,"ProbeFilter",strlen("ProbeFilter")) == 0) {
+	    bufptr = buf + strlen("ProbeFilter");
+	    while (isspace(*bufptr)) ++bufptr;
+
+	    spff = (struct spf_filter *)calloc(1,sizeof(*spff));
+	    /* Default. */
+	    spff->when = WHEN_PRE;
+
+	    /*
+	     * Parse the line.  We can't use strtok to split it up,
+	     * because there are strings and regexps, and we don't want
+	     * to place any restrictions on them.  So we just manually
+	     * lex it... forgotten too much flex yystuff to do it fast.
+	     */
+
+	    /* symbol name */
+	    token = bufptr;
+	    while (isalnum(*bufptr) || *bufptr == '_') ++bufptr;
+	    *bufptr = '\0';
+	    spff->symbol = strdup(token);
+	    ++bufptr;
+
+	    /* These are all optional; take them in any order. */
+	    while (*bufptr != '\0') {
+		while (isspace(*bufptr)) ++bufptr;
+		if (*bufptr == '\0')
+		    goto err;
+
+		token = bufptr;
+		while (isalnum(*bufptr) || *bufptr == '_') ++bufptr;
+		if (*bufptr == '(') {
+		    *bufptr = '\0';
+		    ++bufptr;
+		}
+		else {
+		    *bufptr = '\0';
+		    ++bufptr;
+		    while (isspace(*bufptr)) ++bufptr;
+		    if (*bufptr != '(')
+			goto err;
+		    ++bufptr;
+		}
+
+		if (strcmp(token,"id") == 0) {
+		    token = bufptr;
+		    while (isalnum(*bufptr) || *bufptr == '_') ++bufptr;
+		    if (*bufptr != ')')
+			goto err;
+		    *bufptr = '\0';
+		    ++bufptr;
+		    if (spff->id)
+			goto err;
+		    else
+			spff->id = strdup(token);
+		}
+		else if (strcmp(token,"when") == 0) {
+		    if (strncmp(bufptr,"pre",strlen("pre")) == 0) {
+			spff->when = WHEN_PRE;
+			bufptr += strlen("pre");
+		    }
+		    else if (strncmp(bufptr,"post",strlen("post")) == 0) {
+			spff->when = WHEN_POST;
+			bufptr += strlen("post");
+		    }
+		    else
+			goto err;
+		    if (*bufptr != ')')
+			goto err;
+		    ++bufptr;
+		}
+		else if (strcmp(token,"vfilter") == 0) {
+		    if (spff->pf)
+			goto err;
+		    token = bufptr;
+		    /* Find the enclosing ')' */
+		    int isescaped = 0;
+		    char *nextbufptr = NULL;
+		    while (*bufptr != '\0') {
+			if (*bufptr == '\\') {
+			    if (!isescaped)
+				isescaped = 1;
+			    else 
+				isescaped = 0;
+			}
+			else if (*bufptr == ')' && !isescaped) {
+			    nextbufptr = bufptr + 1;
+			    *bufptr = '\0';
+			    break;
+			}
+			++bufptr;
+		    }
+		    if (!nextbufptr)
+			goto err;
+		    spff->pf = probe_filter_parse(token);
+		    if (!spff->pf)
+			goto err;
+		    bufptr = nextbufptr;
+		}
+		/*
+		else if (strcmp(token,"cfilter") == 0) {
+		    
+		}
+		*/
+		else if (strcmp(token,"abort") == 0) {
+		    token = bufptr;
+		    while (isdigit(*bufptr)) ++bufptr;
+		    if (*bufptr != ')')
+			goto err;
+		    *bufptr = '\0';
+		    ++bufptr;
+		    errno = 0;
+		    unumval = strtoul(token,NULL,0);
+		    if (errno)
+			goto err;
+
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_ABORT;
+		    spfa->abort.retval = unumval;
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"report") == 0) {
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_REPORT;
+
+		    /* Set some defaults. */
+		    spfa->report.rt = 'i';
+
+		    /*
+		     * XXX: use strtok here ignore the possibility that
+		     * the msg field has a comma in it.  Time is not on
+		     * my side...
+		     */
+		    char *nextbufptr = NULL;
+		    nextbufptr = _get_next_non_enc_esc(bufptr,')');
+		    if (!nextbufptr)
+			goto err;
+		    *nextbufptr = '\0';
+		    ++nextbufptr;
+		    token = NULL;
+		    token2 = NULL;
+		    saveptr = NULL;
+		    while ((token = strtok_r((!token) ? bufptr : NULL,",",
+					     &saveptr))) {
+			tptr = token;
+			while (*tptr != '\0') {
+			    if (*tptr == '=') {
+				*tptr = '\0';
+				token2 = ++tptr;
+				break;
+			    }
+			    ++tptr;
+			}
+			if (!token2)
+			    goto err;
+
+			if (strcmp(token,"rt") == 0) {
+			    if (*token2 == 'f')
+				spfa->report.rt = *token2;
+			    else if (*token2 == 'i')
+				spfa->report.rt = *token2;
+			    else
+				goto err;
+			}
+			else if (strcmp(token,"tn") == 0) {
+			    spfa->report.tn = strdup(token2);
+			}
+			else if (strcmp(token,"tid") == 0) {
+			    errno = 0;
+			    spfa->report.tid = strtol(token2,NULL,0);
+			    if (errno)
+				goto err;
+			}
+			else if (strcmp(token,"rv") == 0) {
+			    spfa->report.rv = strdup(token2);
+			}
+			else if (strcmp(token,"msg") == 0) {
+			    spfa->report.msg = strdup(token2);
+			}
+			else if (strcmp(token,"ttctx") == 0) {
+			    if (strcmp(token2,"none") == 0)
+				spfa->report.ttctx = 0;
+			    else if (strcmp(token2,"self") == 0)
+				spfa->report.ttctx = 1;
+			    else if (strcmp(token2,"hier") == 0)
+				spfa->report.ttctx = 2;
+			    else if (strcmp(token2,"all") == 0)
+				spfa->report.ttctx = 3;
+			    else
+				goto err;
+			}
+			else 
+			    goto err;
+		    }
+		    bufptr = nextbufptr;
+		}
+		else if (strcmp(token,"exit") == 0) {
+		    token = bufptr;
+		    while (isdigit(*bufptr)) ++bufptr;
+		    if (*bufptr != ')')
+			goto err;
+		    *bufptr = '\0';
+		    ++bufptr;
+		    errno = 0;
+		    numval = strtol(token,NULL,0);
+		    if (errno)
+			goto err;
+
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_EXIT;
+		    spfa->exit.retval = (int)numval;
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"enable") == 0) {
+		    token = bufptr;
+		    while (isalnum(*bufptr) || *bufptr == '_') ++bufptr;
+		    if (*bufptr != ')')
+			goto err;
+		    *bufptr = '\0';
+		    ++bufptr;
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_ENABLE;
+		    spfa->enable.id = strdup(token);
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"disable") == 0) {
+		    token = bufptr;
+		    while (isalnum(*bufptr) || *bufptr == '_') ++bufptr;
+		    if (*bufptr != ')')
+			goto err;
+		    *bufptr = '\0';
+		    ++bufptr;
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_DISABLE;
+		    spfa->disable.id = strdup(token);
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"remove") == 0) {
+		    token = bufptr;
+		    while (isalnum(*bufptr) || *bufptr == '_') ++bufptr;
+		    if (*bufptr != ')')
+			goto err;
+		    *bufptr = '\0';
+		    ++bufptr;
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_REMOVE;
+		    spfa->remove.id = strdup(token);
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else 
+		    goto err;
+	    }
+
+	    retval->spf_filter_list =
+		g_slist_append(retval->spf_filter_list,spff);
+	    spff = NULL;
+	    ++spff_count;
+	}
+	else {
+	    /*
+	     * Invalid rule
+	     */
+	    fprintf(stderr,"ERROR: unknown config directive line %d:\n",lineno);
+	    fprintf(stderr,"%s\n", buf);
+	    goto errout;
+	}
+    }
+
+    fclose(ffile);
+
+    if (buf)
+	free(buf);
+
+    vdebug(2,LA_USER,LF_U_CFG,"configfile: %d probefilters.\n",spff_count);
+
+    return retval;
+
+ err:
+    verror("parse error at line %d col %d: '%.48s ...'\n",
+	   lineno,(int)(bufptr - buf),bufptr);
+
+ errout:
+    fclose(ffile);
+
+    if (spfa)
+	spf_action_free(spfa);
+    if (spff)
+	spf_filter_free(spff);
+    if (retval)
+	spf_config_free(retval);
+
+    if (buf)
+	free(buf);
+
+    return NULL;
 }
