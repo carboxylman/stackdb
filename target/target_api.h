@@ -209,6 +209,12 @@ typedef enum {
      */
     TSTATUS_DEAD           = 16,
     TSTATUS_STOPPED,
+
+    /*
+     * Currently used to return from target_monitor if the user called
+     * target_monitor_interrupt()
+     */
+    TSTATUS_INTERRUPTED    = 255,
 } target_status_t;
 
 #define TSTATUS_MAX TSTATUS_STOPPED
@@ -473,6 +479,26 @@ int target_set_active_probing(struct target *target,active_probe_flags_t flags);
  * expected debug exception (probably a bug).
  */
 target_status_t target_monitor(struct target *target);
+
+/*
+ * These two functions are only useful when using target_monitor().  If
+ * your program needs to handle a signal, what you should do in the
+ * handler is
+ *
+ * if (target_is_monitor_handling(t)) {
+ *   needtodosomething = 1;
+ *   target_monitor_schedule_interrupt(t);
+ * }
+ * else {
+ *   target_pause(t);
+ *   cleanup();
+ * }
+ *
+ * Then, if you set needtodosomething, when target_monitor() returns,
+ * you can dosomething as safely as possible.
+ */
+int target_is_monitor_handling(struct target *target);
+int target_monitor_schedule_interrupt(struct target *target);
 
 /*
  * Polls a target for debug/exception events, and *will* try to handle
@@ -1671,7 +1697,9 @@ struct target {
 	     wordsize:4,
 	     ptrsize:4,
 	     opened:1,
-	     kill_on_close:1;
+	     kill_on_close:1,
+	     monitorhandling:1,
+	     needmonitorinterrupt:1;
     active_probe_flags_t active_probe_flags:ACTIVE_PROBE_BITS;
 
     /*

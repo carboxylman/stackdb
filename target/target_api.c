@@ -485,6 +485,17 @@ target_status_t target_monitor(struct target *target) {
     return target->ops->monitor(target);
 }
 
+int target_is_monitor_handling(struct target *target) {
+    return target->monitorhandling;
+}
+
+int target_monitor_schedule_interrupt(struct target *target) {
+    if (!target->monitorhandling)
+	return -1;
+    target->needmonitorinterrupt = 1;
+    return 0;
+}
+
 target_status_t target_poll(struct target *target,struct timeval *tv,
 			    target_poll_outcome_t *outcome,int *pstatus) {
     if (target->status != TSTATUS_RUNNING) {

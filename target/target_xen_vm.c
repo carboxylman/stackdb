@@ -6094,6 +6094,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	   "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
 	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
 
+    target->monitorhandling = 1;
+
     target_set_status(target,TSTATUS_PAUSED);
 
     if (target_status(target) == TSTATUS_PAUSED) {
@@ -6769,6 +6771,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	}
     }
 
+    target->monitorhandling = 0;
+
  out_err:
     if (again)
 	*again = 0;
@@ -6915,8 +6919,15 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
 	again = 0;
 	retval = xen_vm_handle_internal(target,&again);
-	if (retval == TSTATUS_ERROR && again == 0)
+	if (retval == TSTATUS_ERROR && again == 0) {
+	    target->needmonitorinterrupt = 0;
 	    return retval;
+	}
+	else if (target->needmonitorinterrupt) {
+	    target->needmonitorinterrupt = 0;
+	    return TSTATUS_INTERRUPTED;
+	}
+
 	//else if (retval == TSTATUS_PAUSED && again == 0)
 	//    return retval;
 
