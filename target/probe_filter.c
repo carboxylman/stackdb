@@ -61,6 +61,7 @@ struct probe_filter *probe_filter_parse(char *expr) {
     int isescaped;
     char *cur;
     char *str;
+    char *orig = expr;
 
     expr = strdup(expr);
 
@@ -98,7 +99,7 @@ struct probe_filter *probe_filter_parse(char *expr) {
 	    goto errout;
 	isescaped = 0;
 	while (*cur != '\0') {
-	    if (*cur == '\\')
+	    if (*cur == '\\' && !isescaped)
 		isescaped = 1;
 	    else 
 		isescaped = 0;
@@ -115,9 +116,16 @@ struct probe_filter *probe_filter_parse(char *expr) {
 	}
 
 	pf->value_regex_list = g_slist_append(pf->value_regex_list,pfr);
+
+	while (*cur != '\0' && isspace(*cur))
+	    ++cur;
+
+	if (*cur == ',')
+	    ++cur;
     }
 
     free(expr);
+
     return pf;
 
  errout:
