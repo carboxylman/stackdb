@@ -191,6 +191,8 @@ int os_linux_syscall_table_load(struct target *target) {
     GHashTable *syscalls_by_num;
     GHashTable *syscalls_by_addr;
     GHashTable *syscalls_by_name;
+    char *name;
+    char *wrapped_name;
 
     if (target_gkv_lookup(target,"os_linux_syscalls_by_num")) 
 	return 0;
@@ -241,9 +243,19 @@ int os_linux_syscall_table_load(struct target *target) {
 	memcpy(&sc->addr,current,target->wordsize);
 
 	sc->bsymbol = target_lookup_sym_addr(target,sc->addr);
-	if(sc->bsymbol)
+	if(sc->bsymbol) {
+	    name = bsymbol_get_name(sc->bsymbol);
+	    if (strncmp("stub_",name,strlen("stub_")) == 0) {
+		wrapped_name = malloc(strlen(name));
+		sprintf(wrapped_name,"sys_%s",name + strlen("stub_"));
+		sc->wrapped_bsymbol = 
+		    target_lookup_sym(target,wrapped_name,
+				      NULL,NULL,SYMBOL_TYPE_FLAG_FUNCTION);
+		free(wrapped_name);
+	    }
 	    sc->args = symbol_get_members(bsymbol_get_symbol(sc->bsymbol),
 					  SYMBOL_VAR_TYPE_FLAG_ARG);
+	}
 
 	g_hash_table_insert(syscalls_by_num,
 			    (gpointer)(uintptr_t)sc->num,sc);
@@ -694,9 +706,15 @@ os_linux_syscall_probe_init_syscall_entry(struct target *target,
 					  struct target_os_syscall *syscall) {
     struct probe *probe;
     char namebuf[128];
+    struct bsymbol *bs;
+
+    if (syscall->isstub && syscall->wrapped_bsymbol) 
+	bs = syscall->wrapped_bsymbol;
+    else
+	bs = syscall->bsymbol;
 
     snprintf(namebuf,sizeof(namebuf),"os_linux_%s_probe",
-	     bsymbol_get_name(syscall->bsymbol));
+	     bsymbol_get_name(bs));
 
     if ((probe = (struct probe *)target_gkv_lookup(target,namebuf)))
 	return probe;
@@ -707,7 +725,7 @@ os_linux_syscall_probe_init_syscall_entry(struct target *target,
     probe = probe_create(target,TID_GLOBAL,&__syscall_entry_probe_ops,
 			 namebuf,__syscall_entry_handler,NULL,syscall,1,1);
 
-    if (!probe_register_symbol(probe,syscall->bsymbol,PROBEPOINT_SW,0,0)) {
+    if (!probe_register_symbol(probe,bs,PROBEPOINT_SW,0,0)) {
 	verror("could not register %s!\n",namebuf);
 	probe_free(probe,0);
 	return NULL;

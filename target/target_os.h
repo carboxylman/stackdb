@@ -31,9 +31,19 @@ typedef enum {
 extern struct target_os_ops os_linux_generic_ops;
 
 struct target_os_syscall {
+    /*
+     * If this is a stub or wrapper, this is set.
+     */
+    uint8_t isstub:1;
     int num;
     ADDR addr;
     struct bsymbol *bsymbol;
+    /*
+     * Some OSes have a stub/wrapper that calls the actual syscall
+     * function, and the stub is the thing actually *in* the syscall
+     * table.  If we found a wrapped one, this is that symbol.
+     */
+    struct bsymbol *wrapped_bsymbol;
     /*
      * If @bsymbol, this is the list of struct symbol *s returned by
      * symbol_get_members().

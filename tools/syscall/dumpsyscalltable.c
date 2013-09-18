@@ -143,6 +143,25 @@ int main(int argc,char **argv) {
 		printf(")");
 	    }
 	    printf("\n");
+	    if (sc->wrapped_bsymbol) {
+		printf("\t\twrapped syscall:\t\t%s",
+		       bsymbol_get_name(sc->wrapped_bsymbol));
+		struct array_list *wargs = 
+		    symbol_get_members(bsymbol_get_symbol(sc->wrapped_bsymbol),
+				       SYMBOL_VAR_TYPE_FLAG_ARG);
+		if (wargs) {
+		    printf("(");
+		    array_list_foreach(wargs,j,argsym) {
+			symbol_type_dump(symbol_get_datatype(argsym),&ud);
+			printf(" %s",symbol_get_name(argsym));
+			if (!array_list_foreach_is_last(sc->args,j))
+			    printf(", ");
+		    }
+		    printf(")");
+		}
+		printf("\n");
+	    }
+		
 	}
 	else {
 	    printf("%.3d\t%"PRIxADDR"\n",sc->num,sc->addr);
