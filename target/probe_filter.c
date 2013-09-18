@@ -169,11 +169,23 @@ int probe_filter_check(struct probe *probe,tid_t tid,struct probe *trigger,
      */
     v_g_slist_foreach(pf->value_regex_list,gsltmp,pfr) {
 	v = probe_value_get(trigger,tid,pfr->value_name);
-	if (!v)
+	if (!v) {
+	    vwarn(//8,LA_PROBE,LF_PROBE,
+		     "could not load value name %s",pfr->value_name);
 	    return -1;
-	rc = value_snprintf(v,vstrbuf,sizeof(1024));
-	if (regexec(&pfr->regex,(const char *)vstrbuf,0,NULL,0) == REG_NOMATCH)
+	}
+	rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+	if (regexec(&pfr->regex,(const char *)vstrbuf,0,NULL,0) == REG_NOMATCH) {
+	    vdebug(9,LA_PROBE,LF_PROBE,
+		   "failed to match name %s value '%s' with regex!\n",
+		   pfr->value_name,vstrbuf);
 	    return 1;
+	}
+	else {
+	    vdebug(9,LA_PROBE,LF_PROBE,
+		   "matched name %s value '%s' with regex\n",
+		   pfr->value_name,vstrbuf);
+	}
     }
 
     return 0;
