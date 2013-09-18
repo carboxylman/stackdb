@@ -790,6 +790,9 @@ void target_thread_gkv_destroy(struct target *target,
     char *key;
     struct target_thread_gkv_info *gkvi;
 
+    if (!tthread->gkv_store)
+	return;
+
     g_hash_table_iter_init(&iter,tthread->gkv_store);
     while (g_hash_table_iter_next(&iter,&kp,&vp)) {
 	gkvi = (struct target_thread_gkv_info *)vp;
