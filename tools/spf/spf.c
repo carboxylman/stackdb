@@ -39,18 +39,20 @@
 /*
  * Private vdebug flags for LA_USER for us.
  */
-#define LF_U_CFG 1
+#define LF_U_CFG   1 << 1
+#define LF_U_PROBE 1 << 2
 
 /*
  * Types.
  */
 typedef enum {
-    SPF_ACTION_ABORT = 1,
-    SPF_ACTION_REPORT = 2,
-    SPF_ACTION_EXIT = 3,
-    SPF_ACTION_ENABLE = 4,
-    SPF_ACTION_DISABLE = 5,
-    SPF_ACTION_REMOVE = 6,
+    SPF_ACTION_PRINT   = 1,
+    SPF_ACTION_ABORT   = 2,
+    SPF_ACTION_REPORT  = 3,
+    SPF_ACTION_EXIT    = 4,
+    SPF_ACTION_ENABLE  = 5,
+    SPF_ACTION_DISABLE = 6,
+    SPF_ACTION_REMOVE  = 7,
 } spf_action_type_t;
 
 struct spf_action {
@@ -66,10 +68,10 @@ struct spf_action {
 	    int ttctx;
 	} report;
 	struct {
-	    unsigned long int retval;
+	    long int retval;
 	} abort;
 	struct {
-	    int retval;
+	    long int retval;
 	} exit;
 	struct {
 	    char *id;
@@ -93,6 +95,7 @@ struct spf_filter {
     struct bsymbol *bsymbol;
     /* When it's applied; pre or post. */
     int when;
+    uint8_t disable:1;
     /*
      * symbol value regexps
      */
@@ -131,8 +134,10 @@ GHashTable *fprobes = NULL;
 
 int needreload = 0;
 int needtodie = 0;
+int needtodie_exitcode = 0;
 
 int have_syscall_table = 0;
+int result_counter = 0;
 
 /* A few prototypes. */
 struct spf_config *load_config_file(char *file);
@@ -207,17 +212,18 @@ void sigr(int signo) {
 
 void sigh(int signo) {
     needtodie = 1;
+    needtodie_exitcode = 0;
     if (target_is_monitor_handling(target))
 	target_monitor_schedule_interrupt(target);
     else {
 	cleanup();
-	exit(0);
+	exit(needtodie_exitcode);
     }
     signal(signo,sigh);
 }
 
-result_t pre_handler(struct probe *probe,tid_t tid,void *data,
-		     struct probe *trigger,struct probe *base) {
+result_t handler(int when,struct probe *probe,tid_t tid,void *data,
+		 struct probe *trigger,struct probe *base) {
     GHashTableIter iter;
     gpointer kp,vp;
     char vstrbuf[1024];
@@ -227,100 +233,220 @@ result_t pre_handler(struct probe *probe,tid_t tid,void *data,
     struct symbol *symbol;
     int i;
     int rc;
+    struct spf_filter *spff = (struct spf_filter *)data;
+    GSList *gsltmp;
+    struct spf_action *spfa;
+    struct probe *fprobe;
+    result_t retval = RESULT_SUCCESS;
 
-    bsymbol = probe->bsymbol;
-    symbol = bsymbol_get_symbol(bsymbol);
-
-    vt = probe_value_get_table(trigger,tid);
-    if (!vt) {
-	fprintf(stderr,
-		"ERROR: could not get value table for probe %s tid %"PRIiTID"!\n",
-		probe_name(trigger),tid);
-	return RESULT_SUCCESS;
-    }
-    else {
-	if (SYMBOL_IS_FUNCTION(symbol))
-	    fprintf(stdout,"%s (",symbol_get_name(symbol));
-	i = 0;
-	g_hash_table_iter_init(&iter,vt);
-	while (g_hash_table_iter_next(&iter,&kp,&vp)) {
-	    if (i > 0)
-		fprintf(stdout,",");
-	    v = (struct value *)vp;
-	    rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
-	    if (rc > 0)
-		fprintf(stdout,"%s = %s",(char *)kp,vstrbuf);
-	    else
-		fprintf(stdout,"%s = ?",(char *)kp);
-	    ++i;
+    /*
+     * Do all the actions.
+     */
+    v_g_slist_foreach(spff->actions,gsltmp,spfa) {
+	if (spfa->atype == SPF_ACTION_ABORT) {
+	    /*
+	     * Action has to be registered on the base probe!!
+	     */
+	    struct action *action = action_return(spfa->abort.retval);
+	    if (!action) {
+		verror("probe %s: could not create action on probe %s !\n",
+		       probe_name(probe),probe_name(base));
+	    }
+	    else if (action_sched(base,action,ACTION_ONESHOT,1,NULL,NULL)) {
+		verror("probe %s: could not schedule action on probe %s!\n",
+		       probe_name(probe),probe_name(base));
+	    }
+	    else 
+		vdebug(5,LA_USER,LF_U_PROBE,
+		       "probe %s: scheduled return action on probe %s\n",
+		       probe_name(probe),probe_name(base));
 	}
-	if (SYMBOL_IS_FUNCTION(symbol))
-	    fprintf(stdout,")");
+	else if (spfa->atype == SPF_ACTION_ENABLE) {
+	    /* Check if it's us.  No need to waste a hashtable lookup. */
+	    if (strcmp(spfa->enable.id,probe_name(probe)) == 0) 
+		fprobe = probe;
+	    else 
+		fprobe = (struct probe *)				\
+		    g_hash_table_lookup(fprobes,spfa->enable.id);
+	    if (!fprobe) {
+		vwarn("probe %s: cannot enable nonexisting filter probe %s!\n",
+		      probe_name(probe),spfa->enable.id);
+	    }
+	    else {
+		probe_enable(fprobe);
+		vdebug(5,LA_USER,LF_U_PROBE,
+		       "probe %s: enabled filter probe %s\n",
+		       probe_name(probe),spfa->enable.id);
+	    }
+	}
+	else if (spfa->atype == SPF_ACTION_DISABLE) {
+	    /* Check if it's us.  No need to waste a hashtable lookup. */
+	    if (strcmp(spfa->disable.id,probe_name(probe)) == 0) 
+		fprobe = probe;
+	    else 
+		fprobe = (struct probe *) \
+		    g_hash_table_lookup(fprobes,spfa->disable.id);
+	    if (!fprobe) {
+		vwarn("probe %s: cannot enable nonexisting filter probe %s!\n",
+		      probe_name(probe),spfa->disable.id);
+	    }
+	    else {
+		probe_disable(fprobe);
+		vdebug(5,LA_USER,LF_U_PROBE,"probe %s: disabled probe %s\n",
+		       probe_name(probe),spfa->disable.id);
+	    }
+	}
+	else if (spfa->atype == SPF_ACTION_REMOVE) {
+	    /* Check if it's us -- to remove self we have to return special! */
+	    if (strcmp(spfa->remove.id,probe_name(probe)) == 0) {
+		vdebug(5,LA_USER,LF_U_PROBE,"probe %s: removing self!\n",
+		       probe_name(probe));
+		retval = RESULT_ABORT;
+	    }
+	    else { 
+		fprobe = (struct probe *) \
+		    g_hash_table_lookup(fprobes,spfa->remove.id);
+		if (!fprobe) {
+		    vwarn("probe %s: cannot remove nonexisting filter probe %s!\n",
+			  probe_name(probe),spfa->remove.id);
+		}
+		else {
+		    probe_free(fprobe,0);
+		    vdebug(5,LA_USER,LF_U_PROBE,"probe %s: removed probe %s\n",
+			   probe_name(probe),spfa->remove.id);
+		}
+	    }
+	}
+	else if (spfa->atype == SPF_ACTION_EXIT) {
+	    /*
+	     * Have to schedule a monitor interrupt to exit!
+	     */
+	    if (target_is_monitor_handling(target)) {
+		target_monitor_schedule_interrupt(target);
+		needtodie = 1;
+		needtodie_exitcode = spfa->exit.retval;
+		vdebug(5,LA_USER,LF_U_PROBE,"probe %s: scheduled exit with %d!\n",
+		       probe_name(probe),spfa->exit.retval);
+	    }
+	    else {
+		verror("probe %s: target is in a prehandler but not monitoring -- BUG!\n",
+		       probe_name(probe));
+	    }
+	}
+	else if (spfa->atype == SPF_ACTION_REPORT) {
+	    ++result_counter;
+
+	    bsymbol = probe->bsymbol;
+	    symbol = bsymbol_get_symbol(bsymbol);
+
+	    vt = probe_value_get_table(trigger,tid);
+	    if (!vt) {
+		vwarn("probe %s: could not get values from probe %s"
+		      " (tid %"PRIiTID")!\n",
+		      probe_name(probe),probe_name(trigger),tid);
+	    }
+
+	    fflush(stderr);
+	    fflush(stdout);
+
+	    fprintf(stdout,"RESULT(%c:%d %s (%d) %s \"%s\" (",
+		    spfa->report.rt,result_counter,
+		    spfa->report.tn ? spfa->report.tn : "",
+		    spfa->report.tid,spfa->report.rv ? spfa->report.rv : "",
+		    spfa->report.msg ? spfa->report.msg : "");
+	    /* Now print the values... */
+	    if (vt) {
+		i = 0;
+		g_hash_table_iter_init(&iter,vt);
+		while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+		    if (i > 0)
+			fprintf(stdout,",");
+		    v = (struct value *)vp;
+		    rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+		    if (rc > 0)
+			fprintf(stdout,"%s=%s",(char *)kp,vstrbuf);
+		    else
+			fprintf(stdout,"%s=?",(char *)kp);
+		    ++i;
+		}
+	    }
+	    /* XXX: print target thread context once we have it */
+	    fprintf(stdout,")\n");
+	    fflush(stdout);
+	}
+	else if (spfa->atype == SPF_ACTION_PRINT) {
+	    bsymbol = probe->bsymbol;
+	    symbol = bsymbol_get_symbol(bsymbol);
+
+	    vt = probe_value_get_table(trigger,tid);
+	    if (!vt) {
+		vwarn("probe %s: could not get values from probe %s"
+		      " (tid %"PRIiTID")!\n",
+		      probe_name(probe),probe_name(trigger),tid);
+	    }
+
+	    fflush(stderr);
+	    fflush(stdout);
+
+	    if (SYMBOL_IS_FUNCTION(symbol))
+		fprintf(stdout,"%s (",symbol_get_name(symbol));
+	    if (vt) {
+		i = 0;
+		g_hash_table_iter_init(&iter,vt);
+		while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+		    if (strcmp((char *)kp,PROBE_VALUE_NAME_RETURN) == 0)
+			continue;
+		    if (i > 0)
+			fprintf(stdout,",");
+		    v = (struct value *)vp;
+		    rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+		    if (rc > 0)
+			fprintf(stdout,"%s = %s",(char *)kp,vstrbuf);
+		    else
+			fprintf(stdout,"%s = ?",(char *)kp);
+		    ++i;
+		}
+	    }
+	    else {
+		if (SYMBOL_IS_FUNCTION(symbol))
+		    fprintf(stdout,"?");
+		else
+		    fprintf(stdout," = ?");
+	    }
+	    if (SYMBOL_IS_FUNCTION(symbol)) {
+		fprintf(stdout,")");
+		if (vt) {
+		    v = (struct value *) \
+			g_hash_table_lookup(vt,PROBE_VALUE_NAME_RETURN);
+		    if (v) {
+			rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+			if (rc > 0)
+			    fprintf(stdout," = %s",vstrbuf);
+			else
+			    fprintf(stdout," = ?");
+		    }
+		}
+	    }
 	    fprintf(stdout,"\n");
+	    fflush(stdout);
+	}
+	else {
+	    verror("probe %s: bad action type %d -- BUG!\n",
+		   probe_name(probe),spfa->atype);
+	}
     }
 
-    fflush(stderr);
-    fflush(stdout);
+    return retval;
+}
 
-    return RESULT_SUCCESS;
+result_t pre_handler(struct probe *probe,tid_t tid,void *data,
+		     struct probe *trigger,struct probe *base) {
+    return handler(WHEN_PRE,probe,tid,data,trigger,base);
 }
 
 result_t post_handler(struct probe *probe,tid_t tid,void *data,
 		      struct probe *trigger,struct probe *base) {
-    GHashTableIter iter;
-    gpointer kp,vp;
-    char vstrbuf[1024];
-    struct value *v;
-    GHashTable *vt;
-    struct bsymbol *bsymbol;
-    struct symbol *symbol;
-    int i;
-    int rc;
-
-    bsymbol = probe->bsymbol;
-    symbol = bsymbol_get_symbol(bsymbol);
-
-    vt = probe_value_get_table(trigger,tid);
-    if (!vt) {
-	fprintf(stderr,
-		"ERROR: could not get value table for probe %s tid %"PRIiTID"!\n",
-		probe_name(trigger),tid);
-	return RESULT_SUCCESS;
-    }
-    else {
-	if (SYMBOL_IS_FUNCTION(symbol))
-	    fprintf(stdout,"%s (",symbol_get_name(symbol));
-	i = 0;
-	g_hash_table_iter_init(&iter,vt);
-	while (g_hash_table_iter_next(&iter,&kp,&vp)) {
-	    if (strcmp(PROBE_VALUE_NAME_RETURN,(char *)kp) == 0)
-		continue;
-	    if (i > 0)
-		fprintf(stdout,",");
-	    v = (struct value *)vp;
-	    rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
-	    if (rc > 0)
-		fprintf(stdout,"%s = %s",(char *)kp,vstrbuf);
-	    else
-		fprintf(stdout,"%s = ?",(char *)kp);
-	    ++i;
-	}
-	if (SYMBOL_IS_FUNCTION(symbol)) {
-	    v = probe_value_get(trigger,tid,PROBE_VALUE_NAME_RETURN);
-	    if (v) {
-		rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
-		fprintf(stdout,") = %s",vstrbuf);
-	    }
-	    else
-		fprintf(stdout,") = ?");
-	}
-	fprintf(stdout,"\n");
-    }
-
-    fflush(stderr);
-    fflush(stdout);
-
-    return RESULT_SUCCESS;
+    return handler(WHEN_POST,probe,tid,data,trigger,base);
 }
 
 #define SPF_CONFIGFILE_FATAL 0x10000000
@@ -753,8 +879,11 @@ int main(int argc,char **argv) {
 	tstat = target_monitor(target);
 	if (tstat == TSTATUS_INTERRUPTED) {
 	    if (needtodie) {
+		target_pause(target);
+		cleanup_probes();
+		target_resume(target);
 		cleanup();
-		exit(0);
+		exit(needtodie_exitcode);
 	    }
 	    if (needreload) 
 		reload_config_file();
@@ -1097,6 +1226,9 @@ int apply_config_file(struct spf_config *config) {
 					   spff,0,1);
 	probe_register_source(fprobe,sprobe);
 
+	if (spff->disable)
+	    probe_disable(fprobe);
+
 	g_hash_table_insert(fprobes,spff->id,fprobe);
     }
 
@@ -1119,7 +1251,6 @@ struct spf_config *load_config_file(char *file) {
     char *token = NULL, *token2 = NULL;
     char *tptr;
     char errbuf[128];
-    unsigned long int unumval;
     long int numval;
     struct spf_config *retval = NULL;
     int spff_count = 0;
@@ -1258,6 +1389,13 @@ struct spf_config *load_config_file(char *file) {
 			goto err;
 		    ++bufptr;
 		}
+		else if (strcmp(token,"disable") == 0) {
+		    if (*bufptr != ')')
+			goto err;
+		    ++bufptr;
+
+		    spff->disable = 1;
+		}
 		else if (strcmp(token,"vfilter") == 0) {
 		    if (spff->pf)
 			goto err;
@@ -1293,19 +1431,30 @@ struct spf_config *load_config_file(char *file) {
 		*/
 		else if (strcmp(token,"abort") == 0) {
 		    token = bufptr;
-		    while (isdigit(*bufptr)) ++bufptr;
+		    while (*bufptr == '-' || isdigit(*bufptr)) ++bufptr;
 		    if (*bufptr != ')')
 			goto err;
 		    *bufptr = '\0';
 		    ++bufptr;
 		    errno = 0;
-		    unumval = strtoul(token,NULL,0);
+		    numval = strtol(token,NULL,0);
 		    if (errno)
 			goto err;
 
 		    spfa = calloc(1,sizeof(*spfa));
 		    spfa->atype = SPF_ACTION_ABORT;
-		    spfa->abort.retval = unumval;
+		    spfa->abort.retval = numval;
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"print") == 0) {
+		    if (*bufptr != ')')
+			goto err;
+		    ++bufptr;
+
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_PRINT;
 
 		    spff->actions = g_slist_append(spff->actions,spfa);
 		    spfa = NULL;
@@ -1384,10 +1533,13 @@ struct spf_config *load_config_file(char *file) {
 			    goto err;
 		    }
 		    bufptr = nextbufptr;
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
 		}
 		else if (strcmp(token,"exit") == 0) {
 		    token = bufptr;
-		    while (isdigit(*bufptr)) ++bufptr;
+		    while (*bufptr == '-' || isdigit(*bufptr)) ++bufptr;
 		    if (*bufptr != ')')
 			goto err;
 		    *bufptr = '\0';
@@ -1399,7 +1551,7 @@ struct spf_config *load_config_file(char *file) {
 
 		    spfa = calloc(1,sizeof(*spfa));
 		    spfa->atype = SPF_ACTION_EXIT;
-		    spfa->exit.retval = (int)numval;
+		    spfa->exit.retval = numval;
 
 		    spff->actions = g_slist_append(spff->actions,spfa);
 		    spfa = NULL;
