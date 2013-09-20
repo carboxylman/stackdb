@@ -186,30 +186,30 @@ DEFPORT-analysis = 3903
 	cp -p $(@:.wsdl=).nsmap $(@:.wsdl=).nsmap.c
 	@if [ "$(@:.wsdl=)" = "target" ]; then \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:.wsdl=).xsd \
 			< $@.nostrip > $@; \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:.wsdl=).xsd \
 			< $@.nostrip > $@.test; \
 	elif [ "$(@:.wsdl=)" = "analysis" ]; then \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/target.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:.wsdl=).xsd \
 			< $@.nostrip > $@; \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/target.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:.wsdl=).xsd \
 			< $@.nostrip > $@.test; \
 	else \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:.wsdl=).xsd \
 			< $@.nostrip > $@; \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:.wsdl=).xsd \
 			< $@.nostrip > $@.test; \
 	fi
 
@@ -228,30 +228,30 @@ DEFPORT-analysis = 3903
 	cp -p $(@:_listener.wsdl=)Listener.nsmap $(@:_listener.wsdl=)Listener.nsmap.c
 	@if [ "$(@:_listener.wsdl=)" = "target" ]; then \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:_listener.wsdl=).xsd \
 			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl; \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:_listener.wsdl=).xsd \
 			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl.test; \
 	elif [ "$(@:.wsdl=)" = "analysis" ]; then \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/target.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:_listener.wsdl=).xsd \
 			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl; \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/debuginfo.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/target.xsd \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/debuginfo.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/target.xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:_listener.wsdl=).xsd \
 			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl.test; \
 	else \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:_listener.wsdl=).xsd \
 			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl; \
 		$(SRCDIR)/strip-gsoap-wsdl.pl \
-			$(NAMESPACE)::../../../vmi/xml/schema/$(@:_listener.wsdl=).xsd \
+			$(NAMESPACE)::$(TOP_SRCDIR)/xml/schema/$(@:_listener.wsdl=).xsd \
 			< $(@:_listener.wsdl=)Listener.wsdl.nostrip > $(@:_listener.wsdl=)Listener.wsdl.test; \
 	fi
 
