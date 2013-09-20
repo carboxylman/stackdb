@@ -20,7 +20,7 @@
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= tools/syscall
+SUBDIR		= tools/spf
 OBJDIR		= @top_builddir@
 
 SUBDIRS = 
