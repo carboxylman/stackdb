@@ -620,6 +620,7 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
     int urllen = 0;
     char *url = NULL;
     char *atmpdir = NULL;
+    char *wbuf;
 
     pr = soap->user;
     if (!pr) {
@@ -785,6 +786,48 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	       a->tmpdir,strerror(errno));
 	err = err_detail = "Could not create analysis tmpdir!";
 	goto errout;
+    }
+
+    /*
+     * Write any support files.
+     */
+    if (analysisSpec->supportFiles) {
+	for (i = 0; i < analysisSpec->supportFiles->__sizesupportFile; ++i) {
+	    len = strlen(a->tmpdir) + sizeof("/") 
+		+ strlen(analysisSpec->supportFiles->supportFile[i].name) + 1;
+	    pbuf = malloc(len);
+	    snprintf(pbuf,len,"%s/%s",a->tmpdir,
+		     analysisSpec->supportFiles->supportFile[i].name);
+	    fd = open(pbuf,O_CREAT | O_TRUNC | O_WRONLY,S_IRUSR | S_IWUSR);
+	    if (fd < 0) {
+		verror("could not open(%s) for write: %s!\n",
+		       pbuf,strerror(errno));
+		err = err_detail = "Could not write file!";
+		goto errout;
+	    }
+
+	    rc = 0;
+	    len = analysisSpec->supportFiles->supportFile[i].content.__size;
+	    wbuf = (char *)analysisSpec->supportFiles->supportFile[i].content.__ptr;
+	    while (rc < len) {
+		retval = write(fd,wbuf + rc,len - rc);
+		if (retval < 0) {
+		    if (errno == EINTR)
+			continue;
+		    else {
+			verror("write(%s): %s\n",pbuf,strerror(errno));
+			err = err_detail =				\
+			    "Could not finish writing source file in tmpdir!";
+			close(fd);
+			goto errout;
+		    }
+		}
+		else 
+		    rc += retval;
+	    }
+	    close(fd);
+	    free(pbuf);
+	}
     }
 
     if (targetSpec->stdinBytes && targetSpec->stdinBytes->__size > 0) {

@@ -50,6 +50,11 @@ AnalysisEventT =
     AnalysisStatus
 AnalysisEvent = element analysisEvent { AnalysisEventT }
 
+SupportFileT = 
+    element name { text },
+    element content { xsd:hexBinary }
+SupportFile = element supportFile { SupportFileT }
+
 AnalysisSpecT = 
     element name { text },
 
@@ -64,7 +69,8 @@ AnalysisSpecT =
 
     element autoparseSimpleResults { xsd:boolean },
 
-    element inputParams { NameValue* }
+    element inputParams { NameValue* },
+    element supportFiles { SupportFile* }?
 AnalysisSpec = element analysisSpec { AnalysisSpecT }
 
 AnalysisDescT = 

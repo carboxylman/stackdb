@@ -86,6 +86,14 @@
   </xs:element>
   <xs:element name="analysisId" type="vmi1:AnalysisIdT"/>
   <xs:element name="analysisEvent" type="vmi1:AnalysisEventT"/>
+  <xs:complexType name="SupportFileT">
+    <xs:sequence>
+      <xs:element ref="vmi1:name"/>
+      <xs:element ref="vmi1:content"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="content" type="xs:hexBinary"/>
+  <xs:element name="supportFile" type="vmi1:SupportFileT"/>
   <xs:complexType name="AnalysisSpecT">
     <xs:sequence>
       <xs:element ref="vmi1:name"/>
@@ -98,6 +106,7 @@
       <xs:element ref="vmi1:reportStderrIntermediateResults"/>
       <xs:element ref="vmi1:autoparseSimpleResults"/>
       <xs:element ref="vmi1:inputParams"/>
+      <xs:element minOccurs="0" ref="vmi1:supportFiles"/>
     </xs:sequence>
   </xs:complexType>
   <xs:element name="stdinBytes" type="xs:hexBinary"/>
@@ -112,6 +121,13 @@
     <xs:complexType>
       <xs:sequence>
         <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:nameValue"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="supportFiles">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element minOccurs="0" maxOccurs="unbounded" ref="vmi1:supportFile"/>
       </xs:sequence>
     </xs:complexType>
   </xs:element>
