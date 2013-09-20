@@ -1,0 +1,31 @@
+
+<vmi1:analysisDesc
+    xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
+
+  <vmi1:name>spf</vmi1:name>
+  <vmi1:description>Runs the spf tool against a target.</vmi1:description>
+  <vmi1:author>David Johnson</vmi1:author>
+  <vmi1:authorContact>johnsond@flux.utah.edu</vmi1:authorContact>
+
+  <vmi1:binary>spf</vmi1:binary>
+
+  <vmi1:requiresWrite>true</vmi1:requiresWrite>
+  <vmi1:requiresControl>true</vmi1:requiresControl>
+  <vmi1:generatesAnnotations>false</vmi1:generatesAnnotations>
+  <vmi1:reportsIntermediateResults>true</vmi1:reportsIntermediateResults>
+  <vmi1:reportsFinalResults>true</vmi1:reportsFinalResults>
+  <vmi1:supportsExternalControl>false</vmi1:supportsExternalControl>
+  <vmi1:supportsAutoparseSimpleResults>true</vmi1:supportsAutoparseSimpleResults>
+  <vmi1:inParams>
+    <vmi1:param vmi1:isCommandLine=true>
+      <vmi1:longName>config-file</vmi1:longName>
+      <vmi1:description>path to an spf configuration file</vmi1:description>
+      <vmi1:defaultValue>spf.conf</vmi1:defaultValue>
+    </vmi1:param>
+  </vmi1:inParams>
+  <vmi1:outParams></vmi1:outParams>
+</vmi1:analysisDesc>

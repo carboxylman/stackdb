@@ -93,10 +93,10 @@ spf: $(HEADERS) $(LIBRARIES) spf.lo $(STATICLIBS)
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 install: def-install install-subdirs
-#	mkdir -p $(INSTALL_LIBEXECDIR)/analysis/Strace
-#	$(INSTALL) strace $(INSTALL_LIBEXECDIR)/analysis/Strace
-#	$(INSTALL) -m 644 $(SRCDIR)/description.xml \
-#		$(INSTALL_LIBEXECDIR)/analysis/Strace
+	mkdir -p $(INSTALL_LIBEXECDIR)/analysis/spf
+	$(INSTALL) spf $(INSTALL_LIBEXECDIR)/analysis/spf
+	$(INSTALL) -m 644 $(SRCDIR)/description.xml \
+		$(INSTALL_LIBEXECDIR)/analysis/spf
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(PROGRAMS) 
