@@ -349,7 +349,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    fflush(stderr);
 	    fflush(stdout);
 
-	    fprintf(stdout,"RESULT(%c:%d %s (%d) %s \"%s\" (",
+	    fprintf(stdout,"RESULT(%c:%d): %s (%d) %s %s (",
 		    spfa->report.rt,result_counter,
 		    spfa->report.tn ? spfa->report.tn : "",
 		    spfa->report.tid,spfa->report.rv ? spfa->report.rv : "",
