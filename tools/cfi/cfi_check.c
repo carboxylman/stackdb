@@ -167,7 +167,7 @@ struct cc_argp_state {
 struct cc_argp_state opts;
 
 struct argp_option cc_argp_opts[] = {
-    { "overlay",'O',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
+    { "overlay",'V',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
     { "mode",'M',"dynamic|static",0,"Set the CFI mode (only dynamic now).",-3 },
     { "no-autofollow",'N',NULL,0,
         "Do not add functions to the CFI checked set.",-3 },
@@ -214,7 +214,7 @@ error_t cc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case ARGP_KEY_ERROR:
     case ARGP_KEY_FINI:
 	return 0;
-    case 'O':
+    case 'V':
 	/*
 	 * We need to split the <name_or_id>:<spec> part; then split
 	 * <spec> into an argv.  Simple rules: \ escapes the next char;

@@ -452,7 +452,7 @@ result_t post_handler(struct probe *probe,tid_t tid,void *data,
 #define SPF_CONFIGFILE_FATAL 0x10000000
 
 struct argp_option spf_argp_opts[] = {
-    { "overlay",'O',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
+    { "overlay",'V',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
     { "config-file",'C',"<FILE>",0,"An SPF config file.",0 },
     { "config-file-fatal",SPF_CONFIGFILE_FATAL,NULL,0,
       "Make errors while applying runtime updates (via USR2) to the config file fatal.",0 },
@@ -501,7 +501,7 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'C':
 	opts->config_file = arg;
 	break;
-    case 'O':
+    case 'V':
 	/*
 	 * We need to split the <name_or_id>:<spec> part; then split
 	 * <spec> into an argv.  Simple rules: \ escapes the next char;
