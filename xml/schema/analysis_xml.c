@@ -86,7 +86,8 @@ x_AnalysisDescT_to_a_analysis_desc(struct soap *soap,
     if (in->inParams) {
 	for (i = 0; i < in->inParams->__sizeparam; ++i) {
 	    param = x_ParamT_to_a_param(soap,&(in->inParams->param[i]),NULL);
-	    g_hash_table_insert(rout->in_params,param->name,param);
+	    if (param->name)
+		g_hash_table_insert(rout->in_params,param->name,param);
 	    if (param->long_name)
 		g_hash_table_insert(rout->in_params_long,param->long_name,param);
 	}
@@ -97,7 +98,8 @@ x_AnalysisDescT_to_a_analysis_desc(struct soap *soap,
     if (in->outParams) {
 	for (i = 0; i < in->outParams->__sizeparam; ++i) {
 	    param = x_ParamT_to_a_param(soap,&(in->outParams->param[i]),NULL);
-	    g_hash_table_insert(rout->out_params,param->name,param);
+	    if (param->name)
+		g_hash_table_insert(rout->out_params,param->name,param);
 	    if (param->long_name)
 		g_hash_table_insert(rout->out_params_long,param->long_name,param);
 	}
