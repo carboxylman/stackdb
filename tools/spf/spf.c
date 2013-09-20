@@ -845,9 +845,22 @@ int main(int argc,char **argv) {
 	}
     }
     else if (!opts.config_file) {
-	verror("Must supply some symbols to probe!\n");
-	cleanup();
-	exit(-5);
+	/* Try the default config file. */
+	if (access("spf.conf",R_OK)) {
+	    verror("Must supply some symbols to probe!\n");
+	    cleanup();
+	    exit(-5);
+	}
+	else {
+	    opts.config_file = strdup("spf.conf");
+	    
+	    config = load_config_file(opts.config_file);
+	    if (!config) {
+		verror("could not read default config file %s!\n",
+		       opts.config_file);
+		exit(-11);
+	    }
+	}
     }
 
     /* Now apply the config file.  Always make the first application fatal. */
