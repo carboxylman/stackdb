@@ -17,7 +17,6 @@
  */
 
 #include "command_interface.h"
-#include "ci_helper.h"
 
 struct psa_argp_state {
     int argc;
@@ -674,8 +673,6 @@ error_t psa_argp_parse_opt(int key, char *arg, struct argp_state *state) {
     return 0;
 }
 
-struct argp psa_argp = { psa_argp_opts, psa_argp_parse_opt, NULL, NULL, NULL,
-    NULL, NULL, };
 
 int main(int argc, char **argv) {
 
@@ -688,6 +685,7 @@ int main(int argc, char **argv) {
     struct TOKEN token;
     target_status_t status;
     int cmd_id, submodule_id;
+    struct target_os_syscall *syscall_table, *table_offset;
 
     memset(&opts, 0, sizeof(opts));
 
@@ -695,7 +693,7 @@ int main(int argc, char **argv) {
      * Parse the command line arguments and get the
      * tspec struct variable.
      */
-    tspec = target_argp_driver_parse(&psa_argp, &opts, argc, argv,
+    tspec = target_argp_driver_parse(NULL, NULL, argc, argv,
 	    TARGET_TYPE_XEN, 1);
 
     if (!tspec) {
@@ -789,14 +787,14 @@ int main(int argc, char **argv) {
 	    cmd_id = 0;
 	    submodule_id = 2;
 
-	    /* Get the address of the system call table on the machine */
+	    /* Get the address of the system call table on the machine 
 	    res = read_system_map("sys_call_table",  &args[0]);
 	    if(res) {
 		fprintf(stdout,
 			"ERROR: read_system_map function failed to lookup syscall_table.\n");
 		continue;
 	    }
-	    /*Get the correct address of the system call */
+	    Get the correct address of the system call 
 	    res = read_system_map("sys_open", &args[1]);
 	    if(res) {
 		fprintf(stdout,
@@ -804,7 +802,7 @@ int main(int argc, char **argv) {
 			token.argv[0]);
 		continue;
 	    }
-	    /*Get the offset of the system call in the table */
+	    Get the offset of the system call in the table 
 	    res = read_unistd("sys_open",&args[2]);
 	    if(res) {
 		fprintf(stdout,
@@ -816,6 +814,26 @@ int main(int argc, char **argv) {
 	    if (res) {
 		fprintf(stdout, "ERROR: load_command_func function call failed.\n");
 	    }
+	   */
+
+	    if(target_os_syscall_table_load(t)) {
+		fprintf(stdout," ERROR: Could not load the syscall_table.\n");
+		continue;
+	    }
+
+	    syscall_table = target_os_syscall_lookup_name(t, "sys_call_table");
+
+	    table_offset = target_os_syscall_lookup_name(t, token.argv[0]);
+
+	    args[0] = syscall_table->addr;
+	    args[2] = table_offset->num;
+	    sscanf(token.argv[1],"%x", &args[1]);
+
+	    res = load_command_func(&token,cmd_id, submodule_id,args);
+	    if (res) {
+		fprintf(stdout, "ERROR: load_command_func function call failed.\n");
+	    }
+
 	}
 	else {
 	    fprintf(stdout,"Command not found\n");

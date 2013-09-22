@@ -32,6 +32,7 @@
 #include "probe.h"
 #include "alist.h"
 #include "list.h"
+#include "target_os.h"
 
 /* struct to store the parsed command */
 struct TOKEN {
