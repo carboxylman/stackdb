@@ -399,6 +399,11 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 	 * original instruction.  UNLESS we were executing an action
 	 * that obviated the original code control flow -- then we
 	 * replace the original code below, BUT DO NOT update EIP!
+	 *
+	 * Also cancel any singlesteps that (might) be happening!  We
+	 * don't quite track if we have stepped a thread, so just do it
+	 * if we *might* have (i.e., if the probepoint is being handled
+	 * for a thread).
 	 */
 	if (probepoint->state != PROBE_DISABLED) {
 	    /* Reset EIP to the right thing. */
@@ -421,6 +426,14 @@ static int __probepoint_remove(struct probepoint *probepoint,int force,
 			   " ensue!\n",
 			   probepoint->addr);
 		}
+	    }
+
+	    /* Cancel any executing single step! */
+	    if (probepoint->tpc) {
+		if (target_singlestep_end(target,probepoint->tpc->thread->tid))
+		    verror("could not stop single stepping target tid %"PRIiTID
+			   " after failed sstep for breakpoint!\n",
+			   probepoint->tpc->thread->tid);
 	    }
 	}
     }
