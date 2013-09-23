@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+##
+## Copyright (c) 2013 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+##
+
+import logging
+import sys
+import os
+import os.path
+from suds.client import Client
+from pysimplesoap.server import SoapDispatcher,SOAPHandler
+from BaseHTTPServer import HTTPServer
+import binascii
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('suds.client').setLevel(logging.DEBUG)
+logging.getLogger('suds.transport').setLevel(logging.DEBUG)
+logging.getLogger('suds.xsd.schema').setLevel(logging.DEBUG)
+logging.getLogger('suds.wsdl').setLevel(logging.DEBUG)
+
+logging.getLogger('pysimplesoap').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.server').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.simplexml').setLevel(logging.DEBUG)
+logging.getLogger('pysimplesoap.transport').setLevel(logging.DEBUG)
+
+objdir = os.path.abspath("@top_builddir@")
+url = 'file://%s/xml/service/analysis.wsdl.test' % (objdir,)
+
+#
+# Setup SOAP client
+#
+client = Client(url,cache=None)
+
+#
+# Start running commands
+#
+
+names = client.service.ListAnalysisDescNames()
+descs = client.service.ListAnalysisDescs()
+ttypes = client.service.ListTargetTypes()
+
+tspec = client.factory.create('TargetSpecT')
+tspec.mode = "live"
+tspec.startPaused = False
+tspec.logStdout = True
+tspec.logStderr = True
+tspec.stdinBytes = None
+
+tspec._type = "xen"
+tspec.backendSpec.targetXenSpec = client.factory.create('TargetXenSpecT')
+tspec.backendSpec.targetXenSpec.domain = "qlc"
+#tspec.backendSpec.targetXenSpec.kernelFilename = "abc"
+tspec.backendSpec.targetXenSpec.kernelFilename = "/boot/vmlinuz-2.6.18-308.el5"
+
+ptspec = client.factory.create('TargetPtraceSpecT')
+xspec = client.factory.create('TargetXenSpecT')
+#xpspec = client.factory.create('TargetXenProcessSpecT')
+aspec = client.factory.create('AnalysisSpecT')
+aspec.name = "spf"
+aspec.stdinBytes = None
+aspec.logStderr = True
+aspec.logStdout = True
+aspec.killOnClose = False
+aspec.killOnCloseSignal = None
+aspec.reportStdoutIntermediateResults = True
+aspec.reportStderrIntermediateResults = True
+aspec.autoparseSimpleResults = True
+spf_conf_xen = """
+ProbeFilter sys_open id(openFiltered) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="file open") abort(1)
+ProbeFilter sys_open id(openExit) when(pre) vfilter(filename=/vmi.exit/) print() exit(0)
+"""
+supportFile = client.factory.create('SupportFileT')
+supportFile.name = "spf.conf"
+supportFile.content = binascii.b2a_hex(spf_conf_xen)
+aspec.supportFiles.supportFile.append(supportFile)
+
+listener = client.factory.create('ListenerT')
+listener.hostname = 'localhost'
+listener.port = 3952
+
+retval = client.service.InstantiateAnalysis(aspec,tspec,listener)
