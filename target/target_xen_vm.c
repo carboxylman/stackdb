@@ -4226,6 +4226,9 @@ static target_status_t xen_vm_status(struct target *target) {
 
 static int xen_vm_pause(struct target *target,int nowait) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct timeval check_tv = { 0,0};
+    target_poll_outcome_t outcome;
+    int pstatus;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -4235,10 +4238,10 @@ static int xen_vm_pause(struct target *target,int nowait) {
     if (xstate->dominfo.paused) {
 	if (target_get_status(target) != TSTATUS_PAUSED)
 	    target_set_status(target,TSTATUS_PAUSED);
-	return 0;
+	else
+	    return 0;
     }
-
-    if (xc_domain_pause(xc_handle,xstate->id)) {
+    else if (xc_domain_pause(xc_handle,xstate->id)) {
 	verror("could not pause dom %d!\n",xstate->id);
 	return -1;
     }
@@ -4248,6 +4251,23 @@ static int xen_vm_pause(struct target *target,int nowait) {
     xstate->dominfo_valid = 0;
     if (xen_vm_load_dominfo(target)) 
 	vwarn("could not reload dominfo for dom %d after pause!\n",xstate->id);
+
+    /*
+     * NB: very important.
+     *
+     * Since we allow pauses to be commanded asynchronously
+     * w.r.t. target vm execution state, we have to check if there is
+     * something to handle once we successfully pause it, and handle it
+     * if so.  Otherwise if a target_pause() and debug exception happen
+     * at the "same" time relative to the user, we might leave a debug
+     * event unhandled, and this could whack the target.
+     *
+     * We pass in a 0,0 timeval so that the select() in xen_vm_poll
+     * truly polls.
+     *
+     * Also note that we don't care what the outcome is.
+     */
+    xen_vm_poll(target,&check_tv,&outcome,&pstatus);
 
     return 0;
 }
