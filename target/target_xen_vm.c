@@ -5089,9 +5089,9 @@ static int __value_load_thread(struct target *target,struct value *value,
 
     if (vdebug_is_on(8,LA_TARGET,LF_XV)) {
 	char buf[512];
-	target_thread_tostring(target,tthread->tid,1,buf,sizeof(buf));
+	target_thread_tostring(target,tthread->tid,0,buf,sizeof(buf));
 	vdebug(8,LA_TARGET,LF_XV,
-	       "loaded \ntid %d:%s (%s)\n",tthread->tid,tthread->name,buf);
+	       "loaded tid %d:%s (%s)\n",tthread->tid,tthread->name,buf);
     }
 
     if (load_counter)
@@ -5183,7 +5183,7 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
 		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF
 		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d"
 		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF
-		 "\n\t(tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
+		 " (tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
 		 "thread_info_flags=0x%"PRIxNUM",stack_base=0x%"PRIxADDR","
 		 "pgd=0x%"PRIx64")",
 #if __WORDSIZE == 64
