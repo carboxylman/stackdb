@@ -624,7 +624,8 @@ extern GHashTable *grefwstab;
 #define RHOLDW(x,hx)         ++((x)->refcntw)
 #define RPUT(x,objtype,hx,rc)  ((rc) = (--((x)->refcnt) == 0)	\
 				           ? objtype ## _free(x,0) \
-				           : (x)->refcnt)
+				           : (x)->refcnt); \
+                               (rc) += 0
 #define RPUTFF(x,objtype,hx,rc) ((rc) = (--((x)->refcnt) == 0)	\
 	                                     ? objtype ## _free(x,1) \
 	                                     : objtype ## _free(x,1)
