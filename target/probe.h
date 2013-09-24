@@ -432,8 +432,7 @@ struct action {
 
     int boosted;
     int obviates;
-    /* Only set when the action is scheduled. */
-    int autofree;
+
     action_handler_t handler;
     void *handler_data;
 

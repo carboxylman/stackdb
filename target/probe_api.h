@@ -806,17 +806,11 @@ probepoint_whence_t probe_whence(struct probe *probe);
  * Actions do not have priorities; they are executed in the order
  * scheduled.
  *
- * If @autofree is set, once this action is passed into this function,
- * the user should no longer attempt to free it.  As long as its parent
- * probe is freed by the user (or is autofreed itself), the action will
- * be freed too.  That means if sched produces an error, it will be
- * freed.  Otherwise, if it is a one-shot probe, it will be freed after
- * its execution.  Otherwise, if its probepoint goes away, it will be
- * freed.  Otherwise, if its probe goes away, it will be freed.  Or, if
- * the user cancels it, it will be freed.
+ * Actions are refcnt'd; when you create an action, a ref is taken on
+ * your behalf; you must release it with action_release().
  */
 int action_sched(struct probe *probe,struct action *action,
-		 action_whence_t whence,int autofree,
+		 action_whence_t whence,
 		 action_handler_t handler,void *handler_data);
 
 /*

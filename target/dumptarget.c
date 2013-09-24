@@ -1433,11 +1433,14 @@ int main(int argc,char **argv) {
 				fprintf(stderr,"could not create action!\n");
 				goto err_unreg;
 			    }
-			    if (action_sched(probe,action,ACTION_REPEATPRE,1,
+			    if (action_sched(probe,action,ACTION_REPEATPRE,
 					     ss_handler,NULL)) {
 				fprintf(stderr,"could not schedule action!\n");
+				action_release(action);
 				goto err_unreg;
 			    }
+			    else
+				action_release(action);
 			}
 			else if (i < opts.argc && retcode_strs[i]) {
 			    struct action *action = action_return(retcodes[i]);
@@ -1445,11 +1448,14 @@ int main(int argc,char **argv) {
 				fprintf(stderr,"could not create action!\n");
 				goto err_unreg;
 			    }
-			    if (action_sched(probe,action,ACTION_REPEATPRE,1,
+			    if (action_sched(probe,action,ACTION_REPEATPRE,
 					     NULL,NULL)) {
 				fprintf(stderr,"could not schedule action!\n");
+				action_release(action);
 				goto err_unreg;
 			    }
+			    else
+				action_release(action);
 			}
 		    }
 		}

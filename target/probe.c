@@ -241,22 +241,16 @@ static void probepoint_free_internal(struct probepoint *probepoint) {
      * but this is much more efficient.
      */
     list_for_each_entry_safe(action,atmp,&probepoint->simple_actions,action) {
-	if (action->autofree)
-	    action_free(action,0);
-	else
-	    action_cancel(action);
+	action_cancel(action);
+	RPUT(action,action,probepoint,trefcnt);
     }
     list_for_each_entry_safe(action,atmp,&probepoint->ss_actions,action) {
-	if (action->autofree)
-	    action_free(action,0);
-	else
-	    action_cancel(action);
+	action_cancel(action);
+	RPUT(action,action,probepoint,trefcnt);
     }
     list_for_each_entry_safe(action,atmp,&probepoint->complex_actions,action) {
-	if (action->autofree)
-	    action_free(action,0);
-	else
-	    action_cancel(action);
+	action_cancel(action);
+	RPUT(action,action,probepoint,trefcnt);
     }
 
     /* Destroy the probes. */
@@ -966,6 +960,7 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
     struct action *tmp;
     struct probe *ptmp;
     GList *list;
+    REFCNT trefcnt;
 
     vdebug(5,LA_PROBE,LF_PROBE,"");
     LOGDUMPPROBE(5,LA_PROBE,LF_PROBE,probe);
@@ -1005,28 +1000,16 @@ static int __probe_unregister(struct probe *probe,int force,int onlyone) {
 
 	/* Cancel (and possibly destroy) any actions it might have. */
 	list_for_each_entry_safe(action,tmp,&probepoint->simple_actions,action) {
-	    if (probe == action->probe) {
-		if (action->autofree) 
-		    action_free(action,0);
-		else
-		    action_cancel(action);
-	    }
+	    action_cancel(action);
+	    RPUT(action,action,probepoint,trefcnt);
 	}
 	list_for_each_entry_safe(action,tmp,&probepoint->ss_actions,action) {
-	    if (probe == action->probe) {
-		if (action->autofree)
-		    action_free(action,0);
-		else
-		    action_cancel(action);
-	    }
+	    action_cancel(action);
+	    RPUT(action,action,probepoint,trefcnt);
 	}
 	list_for_each_entry_safe(action,tmp,&probepoint->complex_actions,action) {
-	    if (probe == action->probe) {
-		if (action->autofree)
-		    action_free(action,0);
-		else
-		    action_cancel(action);
-	    }
+	    action_cancel(action);
+	    RPUT(action,action,probepoint,trefcnt);
 	}
     }
 
@@ -4037,7 +4020,7 @@ static int handle_complex_actions(struct target *target,
  * Actions do not have priorities; they are executed in the order scheduled.
  */
 int action_sched(struct probe *probe,struct action *action,
-		 action_whence_t whence,int autofree,
+		 action_whence_t whence,
 		 action_handler_t handler,void *handler_data) {
     struct action *lpc;
     unsigned char *code;
@@ -4229,13 +4212,14 @@ int action_sched(struct probe *probe,struct action *action,
      */
     action->whence = whence;
 
-    action->autofree = autofree;
     action->handler = handler;
     action->handler_data = handler_data;
 
     action->probe = probe;
 
     target_attach_action(target,action);
+
+    RHOLD(action,probe);
 
     return 0;
 }
@@ -4276,6 +4260,8 @@ void __action_cancel_in_thread(struct target_thread *tthread,
  * Cancel an action.
  */
 int action_cancel(struct action *action) {
+    REFCNT trefcnt;
+
     if (!action->probe) {
 	verror("cannot cancel action not associated with a probe!\n");
 	return 1;
@@ -4309,6 +4295,8 @@ int action_cancel(struct action *action) {
 
     target_detach_action(action->target,action);
 
+    RPUT(action,action,probe->probepoint,trefcnt);
+
     return 0;
 }
 
@@ -4331,6 +4319,8 @@ struct action *action_return(REGVAL retval) {
     action->detail.ret.retval = retval;
 
     action->obviates = 1;
+
+    RHOLD(action,action);
 
     return action;
 }
@@ -4360,6 +4350,8 @@ struct action *action_singlestep(int nsteps) {
 
     action->steps = nsteps;
 
+    RHOLD(action,action);
+
     return action;
 }
 
@@ -4381,6 +4373,8 @@ struct action *action_code(char *buf,uint32_t buflen,action_flag_t flags) {
     action->detail.code.buflen = buflen;
     action->detail.code.flags = flags;
 
+    RHOLD(action,action);
+
     return action;
 }
 
@@ -4399,6 +4393,8 @@ struct action *action_regmod(REG regnum,REGVAL regval) {
 
     action->detail.regmod.regnum = regnum;
     action->detail.regmod.regval = regval;
+
+    RHOLD(action,action);
 
     return action;
 }
@@ -4421,6 +4417,8 @@ struct action *action_memmod(ADDR dest,char *data,uint32_t len) {
     memcpy(action->detail.memmod.data,data,len);
     action->detail.memmod.len = len;
 
+    RHOLD(action,action);
+
     return action;
 }
 
@@ -4439,12 +4437,9 @@ static void action_finish_handling(struct action *action,
      */
     if (action->whence == ACTION_ONESHOT) {
 	if (tac)
-	    RPUTNF(action,action,tac);
+	    RPUT(action,action,tac,trefcnt);
 
 	action_cancel(action);
-
-	if (action->autofree)
-	    action_free(action,0);
     }
 }
 

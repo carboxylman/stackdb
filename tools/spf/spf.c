@@ -252,14 +252,17 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		verror("probe %s: could not create action on probe %s !\n",
 		       probe_name(probe),probe_name(base));
 	    }
-	    else if (action_sched(base,action,ACTION_ONESHOT,1,NULL,NULL)) {
+	    else if (action_sched(base,action,ACTION_ONESHOT,NULL,NULL)) {
 		verror("probe %s: could not schedule action on probe %s!\n",
 		       probe_name(probe),probe_name(base));
+		action_release(action);
 	    }
-	    else 
+	    else {
 		vdebug(5,LA_USER,LF_U_PROBE,
 		       "probe %s: scheduled return action on probe %s\n",
 		       probe_name(probe),probe_name(base));
+		action_release(action);
+	    }
 	}
 	else if (spfa->atype == SPF_ACTION_ENABLE) {
 	    /* Check if it's us.  No need to waste a hashtable lookup. */

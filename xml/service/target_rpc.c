@@ -1814,11 +1814,11 @@ static int _probe_generic_rpc_listener_notifier(struct generic_rpc_listener *l,
 	    }
 	    
 	    aw = x_ActionWhenceT_to_t_action_whence_t(&l->soap,lpd->per.actionSpecs.actionSpec[i].whence);
-	    if (action_sched(lpd->probe,action,aw,1,
+	    if (action_sched(lpd->probe,action,aw,
 			     _target_rpc_action_handler,NULL)) {
 		verror("could not schedule action!\n");
-		action_free(action,1);
 	    }
+	    action_release(action);
 	}
     }
     else if (lpd->per.actionSpecs.__sizeactionSpec > 0) {
