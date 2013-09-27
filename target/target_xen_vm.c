@@ -5760,7 +5760,7 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
     /*
      * Load mod.
      */
-    mod = target_load_symbol(target,TID_GLOBAL,
+    mod = target_load_symbol(target,tid,
 			     xstate->module_free_mod_symbol,
 			     LOAD_FLAG_AUTO_DEREF);
     if (!mod) {
@@ -5948,7 +5948,7 @@ static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid
     /*
      * Load task.
      */
-    value = target_load_symbol(target,TID_GLOBAL,
+    value = target_load_symbol(target,tid,
 			       xstate->thread_entry_v_symbol,
 			       LOAD_FLAG_AUTO_DEREF);
     if (!value) {
@@ -5961,7 +5961,7 @@ static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid
 	vwarn("could not load %s in %s; ignoring new thread!\n",
 	      bsymbol_get_name(xstate->thread_entry_v_symbol),
 	      bsymbol_get_name(xstate->thread_entry_f_symbol));
-	return RESULT_ERROR;
+	return RESULT_SUCCESS;
     }
 
     if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
@@ -6030,7 +6030,7 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
     /*
      * Load task.
      */
-    value = target_load_symbol(target,TID_GLOBAL,xstate->thread_exit_v_symbol,
+    value = target_load_symbol(target,tid,xstate->thread_exit_v_symbol,
 			       LOAD_FLAG_AUTO_DEREF);
     if (!value) {
 	/*
@@ -6040,7 +6040,7 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
 	vwarn("could not load %s in %s; ignoring new thread!\n",
 	      bsymbol_get_name(xstate->thread_exit_v_symbol),
 	      bsymbol_get_name(xstate->thread_exit_f_symbol));
-	return RESULT_ERROR;
+	return RESULT_SUCCESS;
     }
 
     if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
