@@ -72,6 +72,7 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	(struct xen_vm_thread_state *)target->global_thread->state;
     REGVAL esp;
     ADDR kernel_stack_addr;
+    ADDR gs_base = 0;
 
     errno = 0;
 
@@ -99,7 +100,22 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	 * ifdef the 64-bit stuff away in case the host is 32-bit.
 	 */
 #else
-	if (xtstate->context.gs_base_kernel == 0) {
+	if (xtstate->context.gs_base_kernel)
+	    gs_base = xtstate->context.gs_base_kernel;
+	else if (xtstate->context.gs_base_user
+		 && (xtstate->context.user_regs.rip < xstate->kernel_start_addr
+		     || xtstate->context.user_regs.rsp < xstate->kernel_start_addr)) {
+	    gs_base = xtstate->context.gs_base_user;
+	}
+	else {
+	    vwarn("invalid gs_base_kernel=0x%"PRIxADDR"/gs_base_user=0x%"PRIxADDR
+		  " for rip=0x%"PRIxADDR"/rsp=0x%"PRIxADDR"; will not be able"
+		  " to load current thread info!\n",
+		  xtstate->context.gs_base_kernel,xtstate->context.gs_base_user,
+		  xtstate->context.user_regs.rip,xtstate->context.user_regs.rsp);
+	}
+
+	if (gs_base == 0) {
 	    if (xtstate->context.user_regs.rip >= xstate->kernel_start_addr) {
 		kernel_stack_addr = 
 		    xtstate->context.user_regs.rsp & ~(THREAD_SIZE - 1);
@@ -119,14 +135,12 @@ ADDR current_thread_ptr(struct target *target,REGVAL kernel_esp) {
 	    }
 	}
 	else if (!target_read_addr(target,
-			      xtstate->context.gs_base_kernel \
-			          + xstate->kernel_stack_percpu_offset,
-			      target->wordsize,
-			      (unsigned char *)&kernel_stack_addr)) {
+				   gs_base + xstate->kernel_stack_percpu_offset,
+				   target->wordsize,
+				   (unsigned char *)&kernel_stack_addr)) {
 	    verror("could not read %%gs:kernel_stack"
 		   " (0x%"PRIxADDR":%"PRIiOFFSET"); cannot continue!\n",
-		   (ADDR)xtstate->context.gs_base_kernel,
-		   xstate->kernel_stack_percpu_offset);
+		   (ADDR)gs_base,xstate->kernel_stack_percpu_offset);
 	    if (!errno)
 		errno = EFAULT;
 	    return 0;
