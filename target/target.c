@@ -2369,7 +2369,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	goto errout;
     }
     else if (rc == 1) {
-	tdatatype = symbol_type_skip_qualifiers(symbol->datatype);
+	tdatatype = symbol_type_skip_qualifiers(datatype);
 	if (flags & LOAD_FLAG_AUTO_STRING
 	    && SYMBOL_IST_PTR(tdatatype) 
 	    && symbol_type_is_char(symbol_type_skip_ptrs(tdatatype))) {
