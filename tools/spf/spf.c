@@ -116,6 +116,7 @@ struct spf_argp_state {
     char **argv;
     char *config_file;
     int config_file_fatal;
+    int use_os_syscall_probes;
     char *overlay_name_or_id;
     struct target_spec *overlay_spec;
 };
@@ -452,13 +453,16 @@ result_t post_handler(struct probe *probe,tid_t tid,void *data,
     return handler(WHEN_POST,probe,tid,data,trigger,base);
 }
 
-#define SPF_CONFIGFILE_FATAL 0x10000000
+#define SPF_CONFIGFILE_FATAL  0x200000
+#define SPF_OS_SYSCALL_PROBES 0x200001
 
 struct argp_option spf_argp_opts[] = {
     { "overlay",'V',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
     { "config-file",'C',"<FILE>",0,"An SPF config file.",0 },
     { "config-file-fatal",SPF_CONFIGFILE_FATAL,NULL,0,
       "Make errors while applying runtime updates (via USR2) to the config file fatal.",0 },
+    { "use-os-syscall-probes",SPF_OS_SYSCALL_PROBES,NULL,0,
+      "Try to use target_os_syscall probes if symbol is a syscall and target is an OS.",0 },
     { 0,0,0,0,0,0 },
 };
 
@@ -500,6 +504,9 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	return 0;
     case SPF_CONFIGFILE_FATAL:
 	opts->config_file_fatal = 1;
+	break;
+    case SPF_OS_SYSCALL_PROBES:
+	opts->use_os_syscall_probes = 1;
 	break;
     case 'C':
 	opts->config_file = arg;
@@ -719,7 +726,7 @@ int main(int argc,char **argv) {
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
-    if (rtarget->kind == TARGET_KIND_OS) {
+    if (opts.use_os_syscall_probes && rtarget->kind == TARGET_KIND_OS) {
 	if (target_os_syscall_table_load(rtarget))
 	    vwarn("could not load the syscall table; target_os_syscall probes"
 		  " will not be available!\n");
@@ -776,7 +783,7 @@ int main(int argc,char **argv) {
 		 * Create a probe on that symbol:
 		 */
 
-		if (have_syscall_table) {
+		if (opts.use_os_syscall_probes && have_syscall_table) {
 		    syscall = target_os_syscall_lookup_name(rtarget,name);
 		    if (syscall) {
 			sprobe = \
