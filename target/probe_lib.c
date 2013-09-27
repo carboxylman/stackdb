@@ -91,6 +91,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
     char *buf;
     struct target_thread *tthread = probe->thread;
     tid_t tid = tthread->tid;
+    int caller_free = 0;
 
     if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	verror("must supply a function symbol!\n");
@@ -118,6 +119,41 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	}
 	else 
 	    probeaddr = prologueend;
+    }
+
+    /*
+     * If we've got a post handler, we need to disasm this function
+     * before we insert a probe into it!!
+     */
+    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
+	funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
+	if (!RANGE_IS_PC(funcrange)) {
+	    verror("range type for function %s was %s, not PC!\n",
+		   bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
+	    goto errout;
+	}
+
+	funclen = memregion_relocate(bsymbol->region,funcrange->r.a.highpc,NULL)
+	    - memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL);
+	/* This should not ever happen. */
+	if (start != memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL)) {
+	    vwarn("full function %s does not have matching base (0x%"PRIxADDR")"
+		  " and lowpc (0x%"PRIxADDR") values!\n",
+		  bsymbol_get_name(bsymbol),start,
+		  memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL));
+	    start = memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL);
+	    funclen = memregion_relocate(bsymbol->region,funcrange->r.a.highpc,NULL)
+		- start;
+	}
+    }
+    else
+	funclen = symbol_bytesize(bsymbol->lsymbol->symbol);
+
+    funccode = target_load_code(target,start,funclen,0,0,&caller_free);
+    if (!funccode) {
+	verror("could not load code for disasm of %s!\n",
+	       bsymbol_get_name(bsymbol));
+	goto errout;
     }
 
     /* Create and register the entry point probe if @probe has a
@@ -153,39 +189,6 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	return probe;
 
     /* Disassemble the function to find the return instructions. */
-    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
-	if (!RANGE_IS_PC(funcrange)) {
-	    verror("range type for function %s was %s, not PC!\n",
-		   bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
-	    goto errout;
-	}
-
-	funclen = memregion_relocate(bsymbol->region,funcrange->r.a.highpc,NULL)
-	    - memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL);
-	/* This should not ever happen. */
-
-	if (start != memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL)) {
-	    vwarn("full function %s does not have matching base (0x%"PRIxADDR")"
-		  " and lowpc (0x%"PRIxADDR") values!\n",
-		  bsymbol_get_name(bsymbol),start,
-		  memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL));
-	    start = memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL);
-	    funclen = memregion_relocate(bsymbol->region,funcrange->r.a.highpc,NULL)
-		- start;
-	}
-    }
-    else
-	funclen = symbol_bytesize(bsymbol->lsymbol->symbol);
-
-    funccode = malloc(funclen);
-
-    if (!target_read_addr(target,start,funclen,funccode)) {
-	verror("could not read code before disasm of function %s!\n",
-	       bsymbol->lsymbol->symbol->name);
-	goto errout;
-    }
-
     if (disasm_get_control_flow_offsets(target,INST_CF_RET | INST_CF_IRET,
 					funccode,funclen,
 					&cflist,start,noabort)) {
@@ -193,7 +196,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	goto errout;
     }
 
-    free(funccode);
+    if (caller_free)
+	free(funccode);
     funccode = NULL;
 
     /* Now register probes for each return instruction! */
@@ -252,7 +256,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
     return probe;
 
  errout:
-    if (funccode)
+    if (funccode && caller_free)
 	free(funccode);
     if (cflist) {
 	array_list_deep_free(cflist);
