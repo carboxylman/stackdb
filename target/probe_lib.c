@@ -23,6 +23,7 @@
 #include "common.h"
 #include "log.h"
 #include "alist.h"
+#include "glib_wrapper.h"
 
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
@@ -260,6 +261,364 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	free(funccode);
     if (cflist) {
 	array_list_deep_free(cflist);
+    }
+    probe_unregister(probe,1);
+    if (probe->autofree)
+	probe_free(probe,1);
+    return NULL;
+}
+
+struct probe *probe_register_function_invocations(struct probe *probe,
+						  probepoint_style_t style,
+						  struct bsymbol *caller,
+						  struct bsymbol *callee,
+						  int noabort) {
+    struct target *target;
+    struct target_thread *tthread;
+    tid_t tid;
+    struct memrange *range;
+    ADDR caller_start;
+    ADDR caller_end;
+    unsigned int caller_len;
+    struct range *funcrange;
+    unsigned char *funccode = NULL;
+    int caller_free = 0;
+    ADDR callee_start = 0;
+    ADDR callee_inlined_start;
+    ADDR callee_inlined_end;
+    GSList *callee_instances = NULL;
+    struct symbol *caller_symbol;
+    struct symbol *callee_symbol;
+    ADDR probeaddr;
+    struct probe *iprobe;
+    GSList *probes = NULL;
+    GSList *gsltmp;
+    int i,j;
+    struct array_list *cf_idata_list = NULL;
+    struct cf_inst_data *idata;
+    char namebuf[128];
+
+    struct __iii {
+	struct bsymbol *bsymbol;
+	ADDR start;
+	ADDR end;
+    };
+    struct __iii *iii;
+
+    target = probe->target;
+    tthread = probe->thread;
+    tid = tthread->tid;
+
+    caller_symbol = bsymbol_get_symbol(caller);
+    callee_symbol = bsymbol_get_symbol(callee);
+
+    if (!SYMBOL_IS_FUNCTION(caller_symbol) 
+	|| !SYMBOL_IS_FUNCTION(callee_symbol)) {
+	verror("caller and callee must be function symbols!\n");
+	goto errout;
+    }
+    else if (!SYMBOL_IS_FULL_FUNCTION(caller_symbol)
+	     && symbol_bytesize(caller_symbol) <= 0) {
+	verror("partial function symbols must have non-zero length!\n");
+	goto errout;
+    }
+
+    if (location_resolve_symbol_base(target,tid,caller,&caller_start,&range)) {
+	verror("could not resolve base addr for caller function %s!\n",
+	       bsymbol_get_name(caller));
+	return NULL;
+    }
+
+    /*
+     * We need to know the range of the caller.
+     */
+    if (SYMBOL_IS_FULL_FUNCTION(caller_symbol)) {
+	funcrange = &caller_symbol->s.ii->d.f.symtab->range;
+	if (!RANGE_IS_PC(funcrange)) {
+	    verror("range type for caller function %s was %s, not PC!\n",
+		   caller_symbol->name,RANGE_TYPE(funcrange->rtype));
+	    goto errout;
+	}
+
+	caller_len = memregion_relocate(caller->region,funcrange->r.a.highpc,NULL)
+	    - memregion_relocate(caller->region,funcrange->r.a.lowpc,NULL);
+	/* This should not ever happen. */
+	if (caller_start 
+	    != memregion_relocate(caller->region,funcrange->r.a.lowpc,NULL)) {
+	    vwarn("full caller function %s does not have matching"
+		  " base (0x%"PRIxADDR") and lowpc (0x%"PRIxADDR") values!\n",
+		  bsymbol_get_name(caller),caller_start,
+		  memregion_relocate(caller->region,funcrange->r.a.lowpc,NULL));
+	    caller_start = memregion_relocate(caller->region,
+					      funcrange->r.a.lowpc,NULL);
+	    caller_len = memregion_relocate(caller->region,funcrange->r.a.highpc,
+					    NULL) - caller_start;
+	}
+    }
+    else
+	caller_len = symbol_bytesize(caller_symbol);
+
+    caller_end = caller_start + caller_len;
+
+    /*
+     * Grab the base of the callee; there might not be one if it's only inlined.
+     */
+    if (location_resolve_symbol_base(target,tid,callee,&callee_start,&range))
+	callee_start = 0;
+    /*
+     * Find the inline instances within our caller, if any.
+     */
+    if (SYMBOL_IS_FULL_FUNCTION(callee_symbol)
+	&& callee_symbol->s.ii->inline_instances) {
+	struct array_list *iilist = callee_symbol->s.ii->inline_instances;
+
+	for (i = 0; i < array_list_len(iilist); ++i) {
+	    struct symtab *isymtab;
+	    struct symbol *isymbol = (struct symbol *)array_list_item(iilist,i);
+
+	    if (!SYMBOL_IS_FULL_FUNCTION(isymbol)
+		|| !(isymtab = isymbol->s.ii->d.f.symtab))
+		continue;
+
+	    /*
+	     * Check and see if the instance is in our function; if so,
+	     * add it to the list!
+	     */
+	    if (RANGE_IS_PC(&isymtab->range)) {
+		callee_inlined_start = isymtab->range.r.a.lowpc;
+		callee_inlined_end = isymtab->range.r.a.highpc;
+	    }
+	    else if (RANGE_IS_LIST(&isymtab->range)) {
+		/* Find the lowest/highest addrs! */
+		callee_inlined_start = ADDRMAX;
+		callee_inlined_end = 0;
+		for (i = 0; i < isymtab->range.r.rlist.len; ++i) {
+		    if (isymtab->range.r.rlist.list[i]->start 
+			< callee_inlined_start)
+			callee_inlined_start = 
+			    isymtab->range.r.rlist.list[i]->start;
+		    if (isymtab->range.r.rlist.list[i]->end > callee_inlined_end)
+			callee_inlined_end = isymtab->range.r.rlist.list[i]->end;
+		}
+	    }
+	    else 
+		continue;
+
+	    if (!(caller_start <= callee_inlined_start 
+		  && callee_inlined_start <= caller_end
+		  && caller_start <= callee_inlined_end
+		  && callee_inlined_end <= caller_end)) 
+		continue;
+
+	    /* Use __int() version to not RHOLD(); bsymbol_create RHOLDS it. */
+	    struct lsymbol *ilsymbol = lsymbol_create_from_symbol__int(isymbol);
+	    if (!ilsymbol) {
+		verror("could not create lsymbol for inline instance symbol %s!\n",
+		       symbol_get_name(isymbol));
+		goto errout;
+	    }
+
+	    /* Ok, note this one down; we're going to place probes on it. */
+	    iii = calloc(1,sizeof(*iii));
+	    iii->bsymbol = bsymbol_create(ilsymbol,caller->region);
+	    iii->start = callee_inlined_start;
+	    iii->end = callee_inlined_end;
+
+	    callee_instances = g_slist_append(callee_instances,iii);
+	}
+    }
+
+    /* If we didn't find any of these things for the callee, abort! */
+    if (!callee_start || !callee_instances) {
+	verror("callee function %s has no addr, and/or is not inlined in"
+	       " caller function %s!\n",
+	       symbol_get_name(callee_symbol),symbol_get_name(caller_symbol));
+	goto errout;
+    }
+
+    /* If we found a callee addr, disasm to find the calls to it. */
+    funccode = target_load_code(target,caller_start,caller_len,0,0,&caller_free);
+    if (!funccode) {
+	verror("could not load code for disasm of %s!\n",
+	       bsymbol_get_name(caller));
+	goto errout;
+    }
+
+    /* Disassemble the function to find the call instructions. */
+    if (disasm_get_control_flow_offsets(target,INST_CF_CALL,funccode,caller_len,
+					&cf_idata_list,caller_start,noabort)) {
+	verror("could not disasm caller function %s!\n",
+	       symbol_get_name(caller_symbol));
+	goto errout;
+    }
+
+    if (caller_free)
+	free(funccode);
+    funccode = NULL;
+
+    /* Now register probes for each call invocation instruction! */
+    for (j = 0; j < array_list_len(cf_idata_list); ++j) {
+	idata = (struct cf_inst_data *)array_list_item(cf_idata_list,j);
+
+	if (idata->type != INST_CALL) {
+	    verror("disasm instr was not CALL!\n");
+	    goto errout;
+	}
+
+	if (idata->cf.target != callee_start)
+	    continue;
+
+	if (probe->pre_handler) {
+	    /* Create the j-th pre-callee-call probe. */
+	    snprintf(namebuf,sizeof(namebuf),"%s__pre_invoke__%s__%i",
+		     symbol_get_name(caller_symbol),
+		     symbol_get_name(callee_symbol),j);
+	    iprobe = probe_create(target,tid,NULL,namebuf,
+				  probe_do_sink_pre_handlers,NULL,NULL,1,1);
+	    probeaddr = caller_start + idata->offset;
+	    if (!__probe_register_addr(iprobe,probeaddr,range,
+				       PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
+				       PROBEPOINT_LAUTO,callee,0)) {
+		verror("failed to register probe %s at 0x%"PRIxADDR
+		       " (call site %d)\n",
+		       probe_name(iprobe),probeaddr,j);
+		probe_free(iprobe,0);
+		iprobe = NULL;
+		goto errout;
+	    }
+	    probes = g_slist_append(probes,iprobe);
+	}
+
+	if (probe->post_handler) {
+	    /* Create the j-th post-callee-call probe. */
+	    snprintf(namebuf,sizeof(namebuf),"%s__post_invoke__%s__%i",
+		     symbol_get_name(caller_symbol),
+		     symbol_get_name(callee_symbol),j);
+	    iprobe = probe_create(target,tid,NULL,namebuf,
+				  probe_do_sink_post_handlers,NULL,NULL,1,1);
+	    probeaddr = caller_start + idata->offset + idata->size;
+	    if (!__probe_register_addr(iprobe,probeaddr,range,
+				       PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
+				       PROBEPOINT_LAUTO,callee,0)) {
+		verror("failed to register probe %s at 0x%"PRIxADDR
+		       " (call site %d)\n",
+		       probe_name(iprobe),probeaddr,j);
+		probe_free(iprobe,0);
+		iprobe = NULL;
+		goto errout;
+	    }
+	    probes = g_slist_append(probes,iprobe);
+	}
+
+	vdebug(3,LA_PROBE,LF_PROBE,
+	       "registered invocation probes around call site 0x%"PRIxADDR"\n",
+	       caller_start + idata->offset);
+    }
+
+    if (cf_idata_list) {
+	array_list_deep_free(cf_idata_list);
+	cf_idata_list = NULL;
+    }
+
+    /* Now register probes around each inline "invocation". */
+    if (callee_instances) {
+	j = 0;
+	v_g_slist_foreach(callee_instances,gsltmp,iii) {
+	    if (probe->pre_handler) {
+		/* Create the j-th pre-callee-call probe. */
+		snprintf(namebuf,sizeof(namebuf),"%s__pre_inline_invoke__%s__%i",
+			 symbol_get_name(caller_symbol),
+			 symbol_get_name(callee_symbol),j);
+		iprobe = probe_create(target,tid,NULL,namebuf,
+				      probe_do_sink_pre_handlers,NULL,NULL,1,1);
+		probeaddr = iii->start;
+		if (!__probe_register_addr(iprobe,probeaddr,range,
+					   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
+					   PROBEPOINT_LAUTO,iii->bsymbol,0)) {
+		    verror("failed to register probe %s at 0x%"PRIxADDR
+			   " (inline call site %d)\n",
+			   probe_name(iprobe),probeaddr,j);
+		    probe_free(iprobe,0);
+		    iprobe = NULL;
+		    goto errout;
+		}
+		probes = g_slist_append(probes,iprobe);
+	    }
+
+	    if (probe->post_handler) {
+		/* Create the j-th post-callee-call probe. */
+		snprintf(namebuf,sizeof(namebuf),"%s__post_inline_invoke__%s__%i",
+			 symbol_get_name(caller_symbol),
+			 symbol_get_name(callee_symbol),j);
+		iprobe = probe_create(target,tid,NULL,namebuf,
+				      probe_do_sink_post_handlers,NULL,NULL,1,1);
+		probeaddr = iii->end;
+		if (!__probe_register_addr(iprobe,probeaddr,range,
+					   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
+					   PROBEPOINT_LAUTO,iii->bsymbol,0)) {
+		    verror("failed to register probe %s at 0x%"PRIxADDR
+			   " (call site %d)\n",
+			   probe_name(iprobe),probeaddr,j);
+		    probe_free(iprobe,0);
+		    iprobe = NULL;
+		    goto errout;
+		}
+		probes = g_slist_append(probes,iprobe);
+	    }
+
+	    vdebug(3,LA_PROBE,LF_PROBE,
+		   "registered inline invocation probes around call site"
+		   " 0x%"PRIxADDR"; return site 0x%"PRIxADDR"\n",
+		   iii->start,iii->end);
+
+	    ++j;
+	}
+
+	v_g_slist_foreach(callee_instances,gsltmp,iii) {
+	    bsymbol_release(iii->bsymbol);
+	    free(iii);
+	}
+	g_slist_free(callee_instances);
+    }
+
+    /*
+     * Now register @probe on each probe in @probes!  We CANNOT fail at
+     * this point, because we free would the whole probes list on errout
+     * below, and freeing a probe that we have registered @probe on is
+     * not desireable.  Just free the source probe in question...
+     */
+    v_g_slist_foreach(probes,gsltmp,iprobe) {
+	if (!probe_register_source(probe,iprobe)) {
+	    verror("could not register probe %s on source %s; cannot abort!\n",
+		   probe_name(probe),probe_name(iprobe));
+	    probe_free(iprobe,0);
+	}
+    }
+
+    g_slist_free(probes);
+    probes = NULL;
+
+    /* Whewph! */
+    return probe;
+
+ errout:
+    if (probes) {
+	v_g_slist_foreach(probes,gsltmp,iprobe) {
+	    probe_free(iprobe,0);
+	}
+	g_slist_free(probes);
+    }
+    if (callee_instances) {
+	v_g_slist_foreach(callee_instances,gsltmp,iii) {
+	    bsymbol_release(iii->bsymbol);
+	    free(iii);
+	}
+	g_slist_free(callee_instances);
+    }
+    if (funccode && caller_free)
+	free(funccode);
+    if (cf_idata_list) {
+	array_list_deep_free(cf_idata_list);
     }
     probe_unregister(probe,1);
     if (probe->autofree)

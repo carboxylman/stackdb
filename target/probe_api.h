@@ -375,6 +375,24 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     void *handler_data,
 					     inst_type_t inst,
 					     struct probe *probe,...);
+/*
+ * There are two ways a callee can be "invoked" by a caller.  First, it
+ * might be directly called.  Second, it might have been inlined in the
+ * caller.  We try to support both cause we're crazy :).
+ *
+ * If @probe has a pre_handler, we put a breakpoint on the call, or on
+ * the first instruction of the inline instance.  If @probe has a
+ * post_handler, we put a breakpoint on the instruction following the
+ * call, or on the first instruction after the inline instance.
+ *
+ * If @noabort is set, it means that even if disasm fails, we should not
+ * abort the operation.
+ */
+struct probe *probe_register_function_invocations(struct probe *probe,
+						  probepoint_style_t style,
+						  struct bsymbol *caller,
+						  struct bsymbol *callee,
+						  int noabort);
 #endif
 
 /**
