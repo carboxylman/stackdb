@@ -3894,15 +3894,17 @@ static int xen_vm_postloadinit(struct target *target) {
 	vwarn("could not lookup copy_process;"
 	      " active thread entry updates cannot function!\n");
     }
-    else if (!(xstate->thread_entry_v_symbol = 
-	           target_lookup_sym(target,"copy_process.p",NULL,NULL,
-				     SYMBOL_TYPE_NONE))) {
+    /*
+    if (!(xstate->thread_entry_v_symbol = 
+	      target_lookup_sym(target,"copy_process.p",NULL,NULL,
+				SYMBOL_TYPE_NONE))) {
 	bsymbol_release(xstate->thread_entry_f_symbol);
 	xstate->thread_entry_f_symbol = NULL;
 
 	vwarn("could not lookup copy_process.p;"
-	      " active thread entry updates cannot function!\n");
+	      " active thread entry updates might not function!\n");
     }
+    */
 #endif
 
     if (!(xstate->thread_exit_f_symbol = 
@@ -5889,7 +5891,7 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
 
     if (xen_vm_updateregions(target,space)) {
 	verror("manual module update failed; regions may be wrong!\n");
-	return RESULT_ERROR;
+	return RESULT_SUCCESS;
     }
 
     return RESULT_SUCCESS;
@@ -5936,6 +5938,10 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
  * fail to load memory, or something goes wrong, we can fall back to
  * manually walking the task list.
  */
+
+#define _LINUX_MAX_ERRNO 4095
+#define _LINUX_IS_ERR(x) unlikely((x) >= (REGVAL)-_LINUX_MAX_ERRNO)
+
 static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid,
 						   void *handler_data,
 						   struct probe *trigger,
@@ -5943,14 +5949,27 @@ static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid
     struct target *target = probe->target;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;
+    REGVAL ax;
     struct value *value;
 
     /*
-     * Load task.
+     * Load task from retval in %ax
      */
-    value = target_load_symbol(target,tid,
-			       xstate->thread_entry_v_symbol,
-			       LOAD_FLAG_AUTO_DEREF);
+    errno = 0;
+    ax = target_read_creg(target,tid,CREG_AX);
+    if (errno) {
+	verror("could not read %%ax to get copy_process retval!\n");
+	return RESULT_SUCCESS;
+    }
+
+    if (_LINUX_IS_ERR(ax)) {
+	vwarnopt(5,LA_TARGET,LF_XV,"copy_process failed internally!\n");
+	return RESULT_SUCCESS;
+    }
+
+    vdebug(5,LA_TARGET,LF_XV,"copy_process returned 0x%"PRIxADDR"\n",ax);
+
+    value = target_load_type(target,xstate->task_struct_type,ax,LOAD_FLAG_NONE);
     if (!value) {
 	/*
 	 * This target does not require thread entry tracking; so ignore
@@ -5958,8 +5977,7 @@ static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid
 	 * we really prefer to avoid -- or for overlay targets, we need
 	 * to know when a overlay thread disappears.
 	 */
-	vwarn("could not load %s in %s; ignoring new thread!\n",
-	      bsymbol_get_name(xstate->thread_entry_v_symbol),
+	vwarn("could not load retval in %s; ignoring new thread!\n",
 	      bsymbol_get_name(xstate->thread_entry_f_symbol));
 	return RESULT_SUCCESS;
     }
@@ -5967,7 +5985,7 @@ static result_t xen_vm_active_thread_entry_handler(struct probe *probe,tid_t tid
     if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
 	verror("could not load thread from task value; BUG?\n");
 	value_free(value);
-	return RESULT_ERROR;
+	return RESULT_SUCCESS;
     }
 
     vdebug(5,LA_TARGET,LF_XV,
@@ -6046,7 +6064,7 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
     if (!(tthread = __xen_vm_load_thread_from_value(target,value))) {
 	verror("could not load thread from task value; BUG?\n");
 	value_free(value);
-	return RESULT_ERROR;
+	return RESULT_SUCCESS;
     }
 
     xtstate = (struct xen_vm_thread_state *)tthread->state;
