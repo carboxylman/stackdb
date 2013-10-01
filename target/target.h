@@ -529,6 +529,25 @@ struct mmap_entry *location_mmap(struct target *target,
 				 struct memrange **range_saveptr);
 
 /**
+ ** Target name-value filters.  Eventually, this is intended to support
+ ** a full expr evaluation mechanism for any name-value coupling.  Right
+ ** now, we use it for filtering on value probes and target thread
+ ** context values.
+ **/
+struct target_nv_filter_regex {
+    char *value_name;
+    regex_t regex;
+};
+
+struct target_nv_filter {
+    /* A list of struct target_nv_filter_regex. */
+    GSList *value_regex_list;
+};
+
+struct target_nv_filter *target_nv_filter_parse(char *expr);
+void target_nv_filter_free(struct target_nv_filter *pf);
+
+/**
  ** Value loading functions.
  **/
 /*

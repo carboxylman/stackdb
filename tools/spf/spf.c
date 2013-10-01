@@ -99,7 +99,7 @@ struct spf_filter {
     /*
      * symbol value regexps
      */
-    struct probe_filter *pf;
+    struct target_nv_filter *pf;
     /*
      * pid, ppid, ppid^, uid, gid, name, name^...
      */
@@ -637,7 +637,7 @@ int main(int argc,char **argv) {
     char *name, *context;
     char *str;
     char namebuf[128];
-    struct probe_filter *pre_pf, *post_pf;
+    struct target_nv_filter *pre_pf, *post_pf;
     char *pre_filter, *post_filter;
     struct target_os_syscall *syscall;
 
@@ -824,7 +824,7 @@ int main(int argc,char **argv) {
 
 	    /* Create either an empty filter probe or parse the filter! */
 	    if (pre_filter) {
-		pre_pf = probe_filter_parse(pre_filter);
+		pre_pf = target_nv_filter_parse(pre_filter);
 		if (!pre_pf) {
 		    verror("could not parse pre_filter '%s'!\n",pre_filter);
 		    cleanup();
@@ -834,7 +834,7 @@ int main(int argc,char **argv) {
 	    else 
 		pre_pf = NULL;
 	    if (post_filter) {
-		post_pf = probe_filter_parse(post_filter);
+		post_pf = target_nv_filter_parse(post_filter);
 		if (!post_pf) {
 		    verror("could not parse post_filter '%s'!\n",post_filter);
 		    cleanup();
@@ -1009,7 +1009,7 @@ void spf_filter_free(struct spf_filter *spff) {
     if (spff->bsymbol)
 	bsymbol_release(spff->bsymbol);
     if (spff->pf)
-	probe_filter_free(spff->pf);
+	target_nv_filter_free(spff->pf);
     if (spff->actions) {
 	v_g_slist_foreach(spff->actions,gsltmp,spfa) {
 	    spf_action_free(spfa);
@@ -1442,7 +1442,7 @@ struct spf_config *load_config_file(char *file) {
 		    }
 		    if (!nextbufptr)
 			goto err;
-		    spff->pf = probe_filter_parse(token);
+		    spff->pf = target_nv_filter_parse(token);
 		    if (!spff->pf)
 			goto err;
 		    bufptr = nextbufptr;

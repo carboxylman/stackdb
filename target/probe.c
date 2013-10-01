@@ -828,11 +828,11 @@ int probe_free(struct probe *probe,int force) {
     }
 
     if (probe->pre_filter) {
-	probe_filter_free(probe->pre_filter);
+	target_nv_filter_free(probe->pre_filter);
 	probe->pre_filter = NULL;
     }
     if (probe->post_filter) {
-	probe_filter_free(probe->post_filter);
+	target_nv_filter_free(probe->post_filter);
 	probe->post_filter = NULL;
     }
 

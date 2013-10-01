@@ -305,16 +305,6 @@ struct probepoint {
     int can_switch_context;
 };
 
-struct probe_filter_regex {
-    char *value_name;
-    regex_t regex;
-};
-
-struct probe_filter {
-    GSList *value_regex_list;
-    // struct target_thread_context *tcontext;
-};
-
 struct probe {
     /*
      * This is a per-target id.
@@ -350,11 +340,11 @@ struct probe {
 
     /* User handler to run before probe-point is executed */
     probe_handler_t pre_handler;
-    struct probe_filter *pre_filter;
+    struct target_nv_filter *pre_filter;
 
     /* User handler to run after probe-point is executed */
     probe_handler_t post_handler;
-    struct probe_filter *post_filter;
+    struct target_nv_filter *post_filter;
 
     void *handler_data;
 

@@ -35,12 +35,12 @@
 struct probepoint;
 struct probe;
 struct probe_value;
-struct probe_filter;
 struct probeset;
 struct action;
 struct target;
 struct target_thread;
 struct memrange;
+struct target_nv_filter;
 struct lsymbol;
 struct bsymbol;
 
@@ -484,13 +484,11 @@ struct probe *probe_create_filtered(struct target *target,tid_t tid,
 				    struct probe_ops *pops,
 				    const char *name,
 				    probe_handler_t pre_handler,
-				    struct probe_filter *pre_filter,
+				    struct target_nv_filter *pre_filter,
 				    probe_handler_t post_handler,
-				    struct probe_filter *post_filter,
+				    struct target_nv_filter *post_filter,
 				    void *handler_data,
 				    int autofree,int tracked);
-struct probe_filter *probe_filter_parse(char *expr);
-void probe_filter_free(struct probe_filter *pf);
 
 /**
  ** Probe Value core functions that might be useful to others in
