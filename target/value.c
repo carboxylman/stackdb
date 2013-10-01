@@ -565,7 +565,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
-	nrc = snprintf(buf,buflen,"%s",value->buf);
+	nrc = snprintf(buf,buflen,"\"%s\"",value->buf);
 	goto out;
     }
 
