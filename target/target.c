@@ -2187,13 +2187,11 @@ struct value *target_load_value_member(struct target *target,
 	    goto out;
 	}
 
-	tdatatype = symbol_type_skip_qualifiers(symbol->datatype);
+	tdatatype = symbol_type_skip_qualifiers(datatype);
 	if (flags & LOAD_FLAG_AUTO_STRING
-	    && SYMBOL_IST_PTR(tdatatype) 
-	    && symbol_type_is_char(symbol_type_skip_ptrs(tdatatype))) {
-	    datatype = symbol_type_skip_ptrs(tdatatype);
-	    /* XXX: should we use datatype, or the last pointer to datatype? */
-	    value = value_create_noalloc(tthread,range,ls,datatype);
+	    && SYMBOL_IST_PTR(symbol->datatype) 
+	    && symbol_type_is_char(tdatatype)) {
+	    value = value_create_noalloc(tthread,range,ls,tdatatype);
 	    if (!value) {
 		verror("could not create value: %s\n",strerror(errno));
 		goto errout;
@@ -2216,7 +2214,7 @@ struct value *target_load_value_member(struct target *target,
 		   value->bufsiz);
 	}
 	else {
-	    value = value_create(tthread,range,ls,datatype);
+	    value = value_create(tthread,range,ls,tdatatype);
 	    if (!value) {
 		verror("could not create value: %s\n",strerror(errno));
 		goto errout;
@@ -2393,11 +2391,9 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     else if (rc == 1) {
 	tdatatype = symbol_type_skip_qualifiers(datatype);
 	if (flags & LOAD_FLAG_AUTO_STRING
-	    && SYMBOL_IST_PTR(tdatatype) 
-	    && symbol_type_is_char(symbol_type_skip_ptrs(tdatatype))) {
-	    datatype = symbol_type_skip_ptrs(tdatatype);
-	    /* XXX: should we use datatype, or the last pointer to datatype? */
-	    value = value_create_noalloc(tthread,range,bsymbol->lsymbol,datatype);
+	    && SYMBOL_IST_PTR(symbol->datatype) 
+	    && symbol_type_is_char(tdatatype)) {
+	    value = value_create_noalloc(tthread,range,bsymbol->lsymbol,tdatatype);
 	    if (!value) {
 		verror("could not create value: %s\n",strerror(errno));
 		goto errout;
