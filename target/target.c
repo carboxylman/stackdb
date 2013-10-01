@@ -1438,6 +1438,16 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
     while (1) {
 	in_reg = 0;
 	symbol = (struct symbol *)array_list_item(symbol_chain,i);
+
+	vdebug(12,LA_TARGET,LF_SYMBOL,"pass %d: checking ",i);
+	LOGDUMPSYMBOL(12,LA_TARGET,LF_SYMBOL,symbol);
+	if (symbol->datatype) {
+	    vdebugc(12,LA_TARGET,LF_SYMBOL," with datatype ");
+	    LOGDUMPSYMBOL(12,LA_TARGET,LF_SYMBOL,
+			  symbol_type_skip_qualifiers(symbol->datatype));
+	}
+	vdebugc(12,LA_TARGET,LF_SYMBOL,"\n");
+
 	++i;
 	tchain->len = i;
 
@@ -1563,7 +1573,7 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 					    &current_range);
 		    current_region = current_range->region;
 		    vdebug(12,LA_TARGET,LF_SYMBOL,
-			   "ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+			   "ptr var (in reg) %s = 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 
 		    /* We have to skip one pointer type */
@@ -1573,11 +1583,6 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 		     * autoload the pointer!
 		     */
 		    in_reg = 0;
-
-		    vdebug(12,LA_TARGET,LF_SYMBOL,
-			   "autoloaded REG (%d) pointer(s) for var %s ="
-			   " 0x%"PRIxADDR"\n",
-			   reg,symbol_get_name(symbol),retval);
 
 		    /* Do we need to keep trying to load through the pointer? */
 		    if (SYMBOL_IST_PTR(datatype))
@@ -1644,6 +1649,14 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
     if (in_reg) {
 	if (reg_saveptr)
 	    *reg_saveptr = reg;
+
+	vdebug(12,LA_TARGET,LF_SYMBOL,"regno = 0x%"PRIiREG"; datatype = ",reg);
+	if (datatype) {
+	    LOGDUMPSYMBOL_NL(12,LA_TARGET,LF_SYMBOL,
+			     symbol_type_skip_qualifiers(datatype));
+	}
+	else 
+	    vdebugc(12,LA_TARGET,LF_SYMBOL,"NULL\n");
 	return 2;
     }
     else {
@@ -1654,6 +1667,15 @@ int __target_lsymbol_compute_location(struct target *target,tid_t tid,
 	}
 	if (addr_saveptr)
 	    *addr_saveptr = retval;
+
+	vdebug(12,LA_TARGET,LF_SYMBOL,"addr = 0x%"PRIxADDR"; datatype = ",retval);
+	if (datatype) {
+	    LOGDUMPSYMBOL_NL(12,LA_TARGET,LF_SYMBOL,
+			     symbol_type_skip_qualifiers(datatype));
+	}
+	else 
+	    vdebugc(12,LA_TARGET,LF_SYMBOL,"NULL\n");
+
 	return 1;
     }
 

@@ -49,13 +49,13 @@
 
 #define DWDEBUG_DEF_DELIM "."
 
-#define LOGDUMPSYMBOL(dl,lt,s) \
-    vdebugc((dl),(lt),"symbol(%s,%s,0x%"PRIxSMOFFSET")", \
+#define LOGDUMPSYMBOL(dl,lt,lf,s) \
+    vdebugc((dl),(lt),(lf),"symbol(%s,%s,0x%"PRIxSMOFFSET")", \
 	    symbol_get_name((s)),SYMBOL_TYPE((s)->type),(s)->ref);
 
-#define LOGDUMPSYMBOL_NL(dl,lt,s) \
-    LOGDUMPSYMBOL((dl),(lt),(s)); \
-    vdebugc((dl),(lt),"\n");
+#define LOGDUMPSYMBOL_NL(dl,lt,lf,s) \
+    LOGDUMPSYMBOL((dl),(lt),(lf),(s)); \
+    vdebugc((dl),(lt),(lf),"\n");
 
 #define ERRORDUMPSYMBOL(s) \
     verrorc("symbol(%s,%s,0x%"PRIxSMOFFSET")", \
@@ -66,14 +66,14 @@
     verrorc("\n");
 
 
-#define LOGDUMPLSYMBOL(dl,lt,s) \
-    vdebugc((dl),(lt),"lsymbol(%s,%s,0x%"PRIxSMOFFSET";chainlen=%d)", \
+#define LOGDUMPLSYMBOL(dl,lt,lf,s) \
+    vdebugc((dl),(lt),(lf),"lsymbol(%s,%s,0x%"PRIxSMOFFSET";chainlen=%d)", \
 	    symbol_get_name((s)->symbol),SYMBOL_TYPE((s)->symbol->type), \
 	    (s)->symbol->ref,array_list_len((s)->chain));
 
-#define LOGDUMPLSYMBOL_NL(dl,lt,s) \
-    LOGDUMPLSYMBOL((dl),(lt),(s)); \
-    vdebugc((dl),(lt),"\n");
+#define LOGDUMPLSYMBOL_NL(dl,lt,lf,s) \
+    LOGDUMPLSYMBOL((dl),(lt),(lf),(s)); \
+    vdebugc((dl),(lt),(lf),"\n");
 
 #define ERRORDUMPLSYMBOL(s) \
     verrorc("lsymbol(%s,%s,0x%"PRIxSMOFFSET";chainlen=%d)", \
