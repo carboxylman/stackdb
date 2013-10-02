@@ -1483,11 +1483,16 @@ struct target_thread {
     target_type_t supported_overlay_types:TARGET_TYPE_BITS;
 
     /*
-     * Target backends may or may not set this field when they load
-     * threads.  If it is set, it will be freed when the thread is
-     * freed.
+     * Target backends may or may not set these fields when they load
+     * threads.  If @name is set, it will be freed when the thread is
+     * freed.  @ptid is the parent thread, or -1.  @uid and @gid are the
+     * user id and group id of this thread; or -1 if not
+     * available/meaningless.
      */
     char *name;
+    tid_t ptid;
+    int uid;
+    int gid;
 
     void *state;
 

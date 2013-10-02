@@ -547,6 +547,9 @@ struct target_nv_filter {
 struct target_nv_filter *target_nv_filter_parse(char *expr);
 void target_nv_filter_free(struct target_nv_filter *pf);
 
+int target_thread_filter_check(struct target *target,tid_t tid,
+			       struct target_nv_filter *tf);
+
 /**
  ** Value loading functions.
  **/

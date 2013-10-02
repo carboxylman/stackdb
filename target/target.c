@@ -16,6 +16,9 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include <glib.h>
+#include "glib_wrapper.h"
+
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 #include "target_api.h"
@@ -27,8 +30,6 @@
 #include "target_xen_vm.h"
 #include "target_xen_vm_process.h"
 #endif
-
-#include <glib.h>
 
 /**
  ** Globals.
@@ -3475,6 +3476,10 @@ struct target_thread *target_create_thread(struct target *target,tid_t tid,
     t->tid = tid;
     t->state = tstate;
 
+    t->ptid = -1;
+    t->uid = -1;
+    t->gid = -1;
+
     t->hard_probepoints = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     t->tpc = NULL;
@@ -3567,6 +3572,131 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
 	g_hash_table_remove(target->threads,(gpointer)(ptr_t)tthread->tid);
 
     free(tthread);
+}
+
+/*
+ * We recognize several keys:
+ *   tid -- the thread id
+ *   ptid -- the thread's parent thread id
+ *   tidhier -- a common-separated list of tids starting with the
+ *     current tid, and then moving up the hierarchy to the root.
+ *   name -- the thread's name
+ *   namehier -- a comma-separated list of tid names starting with the
+ *     current tid, and then moving up the hierarchy to the root.
+ *   uid -- the thread's uid, if any
+ *   gid -- the thread's gid, if any.
+ *
+ * Eventually, we need to pass any other keys to the backend in question
+ * for more powerful filtering.  But this is enough for now.
+ */
+int target_thread_filter_check(struct target *target,tid_t tid,
+			       struct target_nv_filter *tf) {
+    struct target_thread *tthread,*tmpthread;
+    char vstrbuf[1024];
+    int rc;
+    int i;
+    GSList *gsltmp;
+    struct target_nv_filter_regex *tfr;
+
+    if (!tf)
+	return 0;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return 1;
+    }
+
+    /*
+     * Check each filter by loading the value from @trigger.
+     */
+    v_g_slist_foreach(tf->value_regex_list,gsltmp,tfr) {
+	/* NB: notice that longest matches have to be checked first;
+	 * else tid will match tidhier.
+	 */
+	if (strncmp(tfr->value_name,"tidhier",strlen("tidhier")) == 0) {
+	    rc = 0;
+	    i = 0;
+	    tmpthread = tthread;
+	    do {
+		if (likely(i > 0))
+		    rc += snprintf(vstrbuf + rc,sizeof(vstrbuf) - rc,
+				   ",%"PRIiTID,tmpthread->tid);
+		else
+ 		    rc += snprintf(vstrbuf + rc,sizeof(vstrbuf) - rc,
+				   "%"PRIiTID,tmpthread->tid);
+		++i;
+
+		if (tmpthread->ptid == -1)
+		    tmpthread = NULL;
+		else {
+		    /* Don't need to load it; it would have been loaded
+		     * because the base child thread was loaded.
+		     */
+		    tmpthread = target_lookup_thread(target,tmpthread->ptid);
+		}
+	    } while (tmpthread);
+	}
+	else if (strncmp(tfr->value_name,"tid",strlen("tid")) == 0) {
+	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%"PRIiTID,tthread->tid);
+	}
+	else if (strncmp(tfr->value_name,"ptid",strlen("ptid")) == 0) {
+	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%"PRIiTID,tthread->ptid);
+	}
+	else if (strncmp(tfr->value_name,"namehier",strlen("namehier")) == 0) {
+	    rc = 0;
+	    i = 0;
+	    tmpthread = tthread;
+	    do {
+		if (likely(i > 0))
+		    rc += snprintf(vstrbuf + rc,sizeof(vstrbuf) - rc,
+				   ",%s",tmpthread->name ? tmpthread->name : "");
+		else
+		    rc += snprintf(vstrbuf + rc,sizeof(vstrbuf) - rc,
+				   "%s",tmpthread->name ? tmpthread->name : "");
+		++i;
+
+		if (tmpthread->ptid == -1)
+		    tmpthread = NULL;
+		else {
+		    /* Don't need to load it; it would have been loaded
+		     * because the base child thread was loaded.
+		     */
+		    tmpthread = target_lookup_thread(target,tmpthread->ptid);
+		}
+	    } while (tmpthread);
+	}
+	else if (strncmp(tfr->value_name,"name",strlen("name")) == 0) {
+	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%s",
+			  tthread->name ? tthread->name : "");
+	}
+	else if (strncmp(tfr->value_name,"uid",strlen("uid")) == 0) {
+	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%d",tthread->uid);
+	}
+	else if (strncmp(tfr->value_name,"gid",strlen("gid")) == 0) {
+	    rc = snprintf(vstrbuf,sizeof(vstrbuf),"%d",tthread->gid);
+	}
+	else {
+	    vwarn("unrecognized thread filter key '%s'; skipping!\n",
+		  tfr->value_name);
+	    continue;
+	}
+
+	if (regexec(&tfr->regex,(const char *)vstrbuf,0,NULL,0) == REG_NOMATCH) {
+	    vdebug(9,LA_TARGET,LF_THREAD,
+		   "failed to match name %s value '%s' with regex!\n",
+		   tfr->value_name,vstrbuf);
+	    return 1;
+	}
+	else {
+	    vdebug(9,LA_TARGET,LF_THREAD,
+		   "matched name %s value '%s' with regex\n",
+		   tfr->value_name,vstrbuf);
+	}
+    }
+
+    return 0;
 }
 
 int target_invalidate_all_threads(struct target *target) {

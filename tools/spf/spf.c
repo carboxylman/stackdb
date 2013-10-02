@@ -101,9 +101,9 @@ struct spf_filter {
      */
     struct target_nv_filter *pf;
     /*
-     * pid, ppid, ppid^, uid, gid, name, name^...
+     * tid, ptid, tidhier^, uid, gid, name, namehier^...
      */
-    //struct target_thread_context_filter *ttf;
+    struct target_nv_filter *ttf;
     GSList *actions;
 };
 
@@ -431,6 +431,9 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    }
 		}
 	    }
+	    /* Thread context. */
+	    if (target_thread_tostring(target,tid,1,vstrbuf,sizeof(vstrbuf)))
+		fprintf(stdout,"(%s)",vstrbuf);
 	    fprintf(stdout,"\n");
 	    fflush(stdout);
 	}
@@ -847,7 +850,7 @@ int main(int argc,char **argv) {
 	    snprintf(namebuf,sizeof(namebuf),"filter_%s_%d",name,i);
 	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,namebuf,
 					   pre_handler,pre_pf,
-					   post_handler,post_pf,NULL,0,1);
+					   post_handler,post_pf,NULL,NULL,0,1);
 
 	    probe_register_source(fprobe,sprobe);
 
@@ -1242,11 +1245,11 @@ int apply_config_file(struct spf_config *config) {
 	if (spff->when == WHEN_PRE)
 	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
 					   pre_handler,spff->pf,NULL,NULL,
-					   spff,0,1);
+					   spff->ttf,spff,0,1);
 	else
 	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
 					   NULL,NULL,post_handler,spff->pf,
-					   spff,0,1);
+					   spff->ttf,spff,0,1);
 	probe_register_source(fprobe,sprobe);
 
 	if (spff->disable)
@@ -1447,11 +1450,34 @@ struct spf_config *load_config_file(char *file) {
 			goto err;
 		    bufptr = nextbufptr;
 		}
-		/*
-		else if (strcmp(token,"cfilter") == 0) {
-		    
+		else if (strcmp(token,"tfilter") == 0) {
+		    if (spff->ttf)
+			goto err;
+		    token = bufptr;
+		    /* Find the enclosing ')' */
+		    int isescaped = 0;
+		    char *nextbufptr = NULL;
+		    while (*bufptr != '\0') {
+			if (*bufptr == '\\') {
+			    if (!isescaped)
+				isescaped = 1;
+			    else 
+				isescaped = 0;
+			}
+			else if (*bufptr == ')' && !isescaped) {
+			    nextbufptr = bufptr + 1;
+			    *bufptr = '\0';
+			    break;
+			}
+			++bufptr;
+		    }
+		    if (!nextbufptr)
+			goto err;
+		    spff->ttf = target_nv_filter_parse(token);
+		    if (!spff->ttf)
+			goto err;
+		    bufptr = nextbufptr;
 		}
-		*/
 		else if (strcmp(token,"abort") == 0) {
 		    token = bufptr;
 		    while (*bufptr == '-' || isdigit(*bufptr)) ++bufptr;

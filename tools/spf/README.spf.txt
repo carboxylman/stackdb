@@ -19,7 +19,7 @@
 ###############################################################################
 
 
-"Make sure to apply extra SPF."
+"Be sure to apply extra SPF."
 
 
 ------------
@@ -100,6 +100,26 @@ the syntax.
     if when(post).  <regex1> must be a UNIX regular expression (we
     enable REG_EXTENDED; see `man regex'.  All <valuename>=/<regex>/
     pairs must match; the filter is an AND filter.
+
+  tfilter(<ctxtname1>=/<regex1>/,...) {1}
+
+    Each tfilter filters against the context of the thread the probe was
+    triggered within.  For now, there are several basic <ctxtname> names
+    you can filter on.  By default, the target library supports
+
+    tid      The thread id
+    ptid     The thread's parent thread id (-1 if target does not support
+             thread parents)
+    tidhier  A common-separated list of tids starting with the
+             current tid, and then moving up the hierarchy to the root.
+    name     The thread's name (the empty string if the target does not
+             support thread names)
+    namehier A comma-separated list of tid names starting with the
+             current tid, and then moving up the hierarchy to the root.
+    uid      The thread's uid (-1 if the target does not support thread
+             parents)
+    gid      The thread's gid (-1 if the target does not support thread
+             parents)
 
 (The remaining arguments act more like actions/commands than options.)
 

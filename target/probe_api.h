@@ -488,6 +488,7 @@ struct probe *probe_create_filtered(struct target *target,tid_t tid,
 				    struct target_nv_filter *pre_filter,
 				    probe_handler_t post_handler,
 				    struct target_nv_filter *post_filter,
+				    struct target_nv_filter *thread_filter,
 				    void *handler_data,
 				    int autofree,int tracked);
 

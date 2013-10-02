@@ -303,7 +303,7 @@ struct xen_vm_state {
     vcpu_info_t vcpuinfo; /* Also part of loading dominfo. */
     int dominfo_valid;
 
-    GHashTable *cr3_to_tid;
+    GHashTable *task_struct_addr_to_thread;
 
 #ifdef __x86_64__
     uint8_t *hvm_context_buf;

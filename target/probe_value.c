@@ -694,8 +694,15 @@ struct probe *probe_value_var(struct target *target,tid_t tid,
 			      void *handler_data) {
     struct probe *probe;
 
+    /*
+     * NB: Value probes *must* have both pre and post handlers so that
+     * they catch phase transitions.  So if one is not set, use the
+     * default!
+     */
     probe = probe_create(target,tid,&var_ops,bsymbol_get_name(bsymbol),
-			 pre_handler,post_handler,handler_data,0,1);
+			 pre_handler ? pre_handler : probe_do_sink_pre_handlers,
+			 post_handler ? post_handler : probe_do_sink_post_handlers,
+			 handler_data,0,1);
     if (!probe)
 	return NULL;
 

@@ -886,8 +886,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	target->evloop = evloop;
     }
 
-    xstate->cr3_to_tid = 
-	g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+    xstate->task_struct_addr_to_thread = 
+	g_hash_table_new(g_direct_hash,g_direct_equal);
 
     vdebug(5,LA_TARGET,LF_XV,"opened dom %d\n",xstate->id);
 
@@ -900,8 +900,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	}
 	free(domains);
     }
-    if (xstate->cr3_to_tid) 
-	g_hash_table_destroy(xstate->cr3_to_tid);
+    if (xstate->task_struct_addr_to_thread) 
+	g_hash_table_destroy(xstate->task_struct_addr_to_thread);
     if (xstate->vmpath)
 	free(xstate->vmpath);
     if (xstate->ostype)
@@ -1027,8 +1027,10 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 						      struct value *taskv) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *tthread;
+    struct target_thread *ptthread;
     struct xen_vm_thread_state *tstate = NULL;
     tid_t tid;
+    tid_t ptid = -1;
     num_t tgid = 0;
     unum_t task_flags = 0;
     struct value *threadinfov = NULL;
@@ -1054,6 +1056,53 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     tid = v_i32(v);
     value_free(v);
     v = NULL;
+
+    v = target_load_value_member(target,taskv,"parent",NULL,LOAD_FLAG_NONE);
+    if (!v) {
+	verror("could not load parent in task value; BUG?\n");
+	/* errno should be set for us. */
+	goto errout;
+    }
+    else if (v_addr(v) != value_addr(taskv)) {
+	ptthread = (struct target_thread *)			\
+	    g_hash_table_lookup(xstate->task_struct_addr_to_thread,
+				(gpointer)v_addr(v));
+	if (!ptthread) {
+	    /* Gotta load it. */
+	    value_free(v);
+	    v = target_load_value_member(target,taskv,"parent",NULL,
+					 LOAD_FLAG_AUTO_DEREF);
+	    if (!v) {
+		verror("could not load parent value from task;"
+		       " ptid will be invalid!\n");
+	    }
+	    else {
+		ptthread = __xen_vm_load_thread_from_value(target,v);
+		if (!ptthread) {
+		    verror("could not load parent thread from value;"
+			   " ptid will be invalid!\n");
+		}
+		else 
+		    vdebug(9,LA_TARGET,LF_XV,
+			   "loaded tid %"PRIiTID" parent %"PRIiTID"\n",
+			   tid,ptthread->tid);
+	    }
+	}
+	else 
+	    vdebug(9,LA_TARGET,LF_XV,
+		   "tid %"PRIiTID" parent %"PRIiTID" already loaded\n",
+		   tid,ptthread->tid);
+
+	if (ptthread)
+	    ptid = ptthread->tid;
+    }
+    else {
+	vwarn("tid %"PRIiTID" ->parent is itself!\n",tid);
+    }
+    if (v) {
+	value_free(v);
+	v = NULL;
+    }
 
     v = target_load_value_member(target,taskv,"comm",NULL,LOAD_FLAG_NONE);
     if (!v) {
@@ -1108,6 +1157,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 
 	tthread = target_create_thread(target,tid,tstate);
+	g_hash_table_insert(xstate->task_struct_addr_to_thread,
+			    (gpointer)value_addr(taskv),tthread);
 
 	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
 				0,0,0,0,NULL);
@@ -1193,6 +1244,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 
     tstate->task_struct_addr = value_addr(taskv);
     tstate->task_struct = taskv;
+    tthread->ptid = ptid;
     tstate->tgid = tgid;
     tstate->task_flags = task_flags;
     tstate->thread_info = threadinfov;
@@ -2362,6 +2414,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     REGVAL kernel_esp = 0;
     char *comm = NULL;
     uint64_t cr3 = 0;
+    struct target_thread *ptthread;
+    tid_t ptid = -1;
 
     /*
      * If the global thread has been loaded, and that's all the caller
@@ -2564,6 +2618,53 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	value_free(v);
 	v = NULL;
 
+	v = target_load_value_member(target,taskv,"parent",NULL,LOAD_FLAG_NONE);
+	if (!v) {
+	    verror("could not load parent in task value; BUG?\n");
+	    /* errno should be set for us. */
+	    goto errout;
+	}
+	else if (v_addr(v) != value_addr(taskv)) {
+	    ptthread = (struct target_thread *)				\
+		g_hash_table_lookup(xstate->task_struct_addr_to_thread,
+				    (gpointer)v_addr(v));
+	    if (!ptthread) {
+		/* Gotta load it. */
+		value_free(v);
+		v = target_load_value_member(target,taskv,"parent",NULL,
+					     LOAD_FLAG_AUTO_DEREF);
+		if (!v) {
+		    verror("could not load parent value from task;"
+			   " ptid will be invalid!\n");
+		}
+		else {
+		    ptthread = __xen_vm_load_thread_from_value(target,v);
+		    if (!ptthread) {
+			verror("could not load parent thread from value;"
+			       " ptid will be invalid!\n");
+		    }
+		    else 
+			vdebug(9,LA_TARGET,LF_XV,
+			       "loaded tid %"PRIiTID" parent %"PRIiTID"\n",
+			       tid,ptthread->tid);
+		}
+	    }
+	    else 
+		vdebug(9,LA_TARGET,LF_XV,
+		       "tid %"PRIiTID" parent %"PRIiTID" already loaded\n",
+		       tid,ptthread->tid);
+
+	    if (ptthread)
+		ptid = ptthread->tid;
+	}
+	else {
+	    vwarn("tid %"PRIiTID" ->parent is itself!\n",tid);
+	}
+	if (v) {
+	    value_free(v);
+	    v = NULL;
+	}
+
 	v = target_load_value_member(target,taskv,"comm",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load comm in current task; BUG?\n");
@@ -2688,6 +2789,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	/* Build a new one. */
 	tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));
 	tthread = target_create_thread(target,tid,tstate);
+	g_hash_table_insert(xstate->task_struct_addr_to_thread,
+			    (gpointer)value_addr(taskv),tthread);
 
 	target_add_state_change(target,tid,TARGET_STATE_CHANGE_THREAD_CREATED,
 				0,0,0,0,NULL);
@@ -2785,6 +2888,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	if (tthread->name)
 	    free(tthread->name);
 	tthread->name = comm;
+	tthread->ptid = ptid;
 	comm = NULL;
     }
 
@@ -2861,7 +2965,16 @@ tid_t xen_vm_gettid(struct target *target) {
 }
 
 void xen_vm_free_thread_state(struct target *target,void *state) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_thread_state *xtstate = (struct xen_vm_thread_state *)state;
+
+    /*
+     * XXX: this stinks, but it's the only time we have to remove a
+     * thread from our hash cache of task_struct_addrs_to_thread .
+     */
+    if (xstate->task_struct_addr_to_thread)
+	g_hash_table_remove(xstate->task_struct_addr_to_thread,
+			    (gpointer)xtstate->task_struct_addr);
 
     if (xtstate->thread_struct) {
 	value_free(xtstate->thread_struct);
@@ -3254,6 +3367,11 @@ static int xen_vm_fini(struct target *target) {
 
     if (target->opened) 
 	xen_vm_detach(target);
+
+    if (xstate->task_struct_addr_to_thread) {
+	g_hash_table_destroy(xstate->task_struct_addr_to_thread);
+	xstate->task_struct_addr_to_thread = NULL;
+    }
 
     if (xstate->init_task)
 	bsymbol_release(xstate->init_task);
@@ -5204,10 +5322,10 @@ static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
     else 
 	snprintf(buf,bufsiz,
 		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
-		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF"\n"
+		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF
 		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d\n"
 		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF
-		 "\n\t(tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
+		 " (tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
 		 "thread_info_flags=0x%"PRIxNUM",stack_base=0x%"PRIxADDR","
 		 "pgd=0x%"PRIx64")",
 #if __WORDSIZE == 64

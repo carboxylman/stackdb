@@ -28,15 +28,7 @@
 #include "glib_wrapper.h"
 
 /*
-struct GHashTable *target_thread_get_context(struct target *target,tid_t tid);
-int target_thread_match_context(struct target *target,tid_t tid,struct
-GHashTable *context_values);
-*/
-
-/*
  * Can only check pre/post_filters if @trigger provides probe_values.
- *
- * XXX: add support for checking context.
  */
 int probe_filter_check(struct probe *probe,tid_t tid,struct probe *trigger,
 		       int whence) {
@@ -53,6 +45,15 @@ int probe_filter_check(struct probe *probe,tid_t tid,struct probe *trigger,
 	tf = probe->post_filter;
     else
 	return -1;
+
+    /*
+     * Check the thread filter first.
+     */
+    if (probe->thread_filter) {
+	rc = target_thread_filter_check(probe->target,tid,probe->thread_filter);
+	if (rc)
+	    return rc;
+    }
 
     if (!tf)
 	return 0;
@@ -91,6 +92,7 @@ struct probe *probe_create_filtered(struct target *target,tid_t tid,
 				    struct target_nv_filter *pre_filter,
 				    probe_handler_t post_handler,
 				    struct target_nv_filter *post_filter,
+				    struct target_nv_filter *thread_filter,
 				    void *handler_data,
 				    int autofree,int tracked) {
     struct probe *fprobe;
@@ -99,6 +101,7 @@ struct probe *probe_create_filtered(struct target *target,tid_t tid,
 			  handler_data,autofree,tracked);
     fprobe->pre_filter = pre_filter;
     fprobe->post_filter = post_filter;
+    fprobe->thread_filter = thread_filter;
 
     return fprobe;
 }

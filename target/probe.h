@@ -346,6 +346,8 @@ struct probe {
     probe_handler_t post_handler;
     struct target_nv_filter *post_filter;
 
+    struct target_nv_filter *thread_filter;
+
     void *handler_data;
 
     /* True when the vmprobe is enabled */
