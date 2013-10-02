@@ -4006,7 +4006,7 @@ static int xen_vm_set_active_probing(struct target *target,
 				 NULL,xen_vm_active_thread_entry_handler,
 				 NULL,0,1);
 	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,
-					    xstate->thread_entry_f_symbol,0,0)) {
+					    xstate->thread_entry_f_symbol,0,0,1)) {
 		probe_free(probe,1);
 		probe = NULL;
 

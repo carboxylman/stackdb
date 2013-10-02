@@ -1375,7 +1375,7 @@ int main(int argc,char **argv) {
 		    goto err_unreg;
 		probe->handler_data = probe->name;
 
-		if (!probe_register_function_ee(probe,PROBEPOINT_SW,bsymbol,0,1)) {
+		if (!probe_register_function_ee(probe,PROBEPOINT_SW,bsymbol,0,1,1)) {
 		    fprintf(stderr,
 			    "Could not instrument function %s entry/returns!\n",
 			    bsymbol->lsymbol->symbol->name);

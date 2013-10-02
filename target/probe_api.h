@@ -341,7 +341,8 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 struct probe *probe_register_function_ee(struct probe *probe,
 					 probepoint_style_t style,
 					 struct bsymbol *bsymbol,
-					 int force_at_entry,int noabort);
+					 int force_at_entry,int noabort,
+					 int follow_jumps);
 
 /*
  * This function disassembles the function pointed to by @bsymbol if it

@@ -74,10 +74,10 @@ struct probe *probe_register_symbol_name(struct probe *probe,
 struct probe *probe_register_function_ee(struct probe *probe,
 					 probepoint_style_t style,
 					 struct bsymbol *bsymbol,
-					 int force_at_entry,int noabort) {
+					 int force_at_entry,int noabort,
+					 int follow_jumps) {
     struct target *target = probe->target;
-    struct memrange *range;
-    struct memrange *newrange;
+    struct memrange *range = NULL;
     ADDR start;
     ADDR prologueend;
     ADDR probeaddr;
@@ -88,11 +88,16 @@ struct probe *probe_register_function_ee(struct probe *probe,
     unsigned char *funccode = NULL;
     unsigned int funclen;
     struct cf_inst_data *idata;
-    size_t bufsiz;
-    char *buf;
+    char buf[1024];
     struct target_thread *tthread = probe->thread;
     tid_t tid = tthread->tid;
     int caller_free = 0;
+    inst_cf_flags_t cfflags = 0;
+    GHashTable *absolute_branch_targets = NULL;
+    GHashTableIter iter;
+    gpointer kp,vp;
+    ADDR jaddr,jlow,jhigh;
+    struct bsymbol *jbsymbol;
 
     if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
 	verror("must supply a function symbol!\n");
@@ -107,7 +112,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
     if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
 	verror("could not resolve entry PC for function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
-	return NULL;
+	goto errout;
     }
     else 
 	probeaddr = start;
@@ -161,12 +166,9 @@ struct probe *probe_register_function_ee(struct probe *probe,
      * pre_handler.
      */
     if (probe->pre_handler) {
-	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+5+1;
-	buf = malloc(bufsiz);
-	snprintf(buf,bufsiz,"%s_entry",bsymbol->lsymbol->symbol->name);
+	snprintf(buf,sizeof(buf),"%s_entry",bsymbol->lsymbol->symbol->name);
 	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
 			      NULL,NULL,1,1);
-	free(buf);
 	if (!__probe_register_addr(source,probeaddr,range,
 				   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
 				   PROBEPOINT_LAUTO,bsymbol,start)) {
@@ -189,9 +191,26 @@ struct probe *probe_register_function_ee(struct probe *probe,
     if (!probe->post_handler)
 	return probe;
 
-    /* Disassemble the function to find the return instructions. */
-    if (disasm_get_control_flow_offsets(target,INST_CF_RET | INST_CF_IRET,
-					funccode,funclen,
+    /*
+     * Disassemble the function to find the return instructions.
+     * 
+     * NB: also look for JMP/Jcc that go outside the function; if they
+     * do, we have to follow them and look for returns in them too.
+     * Otherwise we'll miss the "return".  This happens with tail-call
+     * optimization.  But the problem is, the probe on the ret in the
+     * jumped-to function will not be associated with the probe on the
+     * jumping function.  So what do we do?  Well, we lookup the
+     * jumped-to address, and create exit probes in it using its symbol,
+     * not the current one.  Perhaps this is somewhat bad, but it's the
+     * best we can do.
+     */
+    cfflags = INST_CF_RET | INST_CF_IRET;
+    if (follow_jumps) {
+	cfflags |= INST_CF_JMP | INST_CF_JCC;
+	absolute_branch_targets = 
+	    g_hash_table_new(g_direct_hash,g_direct_equal);
+    }
+    if (disasm_get_control_flow_offsets(target,cfflags,funccode,funclen,
 					&cflist,start,noabort)) {
 	verror("could not disasm function %s!\n",bsymbol->lsymbol->symbol->name);
 	goto errout;
@@ -205,35 +224,31 @@ struct probe *probe_register_function_ee(struct probe *probe,
     for (j = 0; j < array_list_len(cflist); ++j) {
 	idata = (struct cf_inst_data *)array_list_item(cflist,j);
 
-	if (idata->type != INST_RET && idata->type != INST_IRET) {
+	if (idata->type == INST_JMP || idata->type == INST_JCC) {
+	    if (idata->cf.target_in_segment)
+		continue;
+	    else if (idata->cf.target_is_valid) {
+		if (!g_hash_table_lookup(absolute_branch_targets,
+					 (gpointer)(uintptr_t)idata->cf.target))
+		    g_hash_table_insert(absolute_branch_targets,
+					(gpointer)(uintptr_t)idata->cf.target,
+					(gpointer)0x0UL);
+		continue;
+	    }
+	}
+	else if (idata->type != INST_RET && idata->type != INST_IRET) {
 	    verror("disasm instr was not RET/IRET!\n");
 	    goto errout;
 	}
 
-	/* We should be in the same range, of course; this should never
-	 * happen!
-	 */
-	if (0 && (!target_find_memory_real(target,start + idata->offset,
-					  NULL,NULL,&newrange)
-		  || range != newrange)) {
-	    verror("could not find sane range!\n");
-	    goto errout;
-	}
-	else {
-	    newrange = range;
-	}
-
 	/* Create the j-th exit probe. */
-	bufsiz = strlen(bsymbol->lsymbol->symbol->name)+1+4+1+11+1;
-	buf = malloc(bufsiz);
-	snprintf(buf,bufsiz,"%s_exit_%d",bsymbol->lsymbol->symbol->name,j);
+	snprintf(buf,sizeof(buf),"%s_exit_%d",bsymbol->lsymbol->symbol->name,j);
 	source = probe_create(target,tid,NULL,buf,probe_do_sink_post_handlers,
 			      NULL,NULL,1,1);
-	free(buf);
 
 	/* Register the j-th exit probe. */
 	probeaddr = start + idata->offset;
-	if (!__probe_register_addr(source,probeaddr,newrange,
+	if (!__probe_register_addr(source,probeaddr,range,
 				   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
 				   PROBEPOINT_LAUTO,bsymbol,start)) {
 	    goto errout;
@@ -254,9 +269,155 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	cflist = NULL;
     }
 
+    /*
+     * If there were any JMPs outside this function, follow them (and
+     * any of theirs) for RET/IRETs.
+     */
+    while (1) {
+	if (!absolute_branch_targets 
+	    || !g_hash_table_size(absolute_branch_targets))
+	    break;
+
+	g_hash_table_iter_init(&iter,absolute_branch_targets);
+	while (g_hash_table_iter_next(&iter,&kp,&vp)) {
+	    /* If we already did this address, skip it. */
+	    if (vp == (gpointer)0x1UL) {
+		vp = kp = NULL;
+		continue;
+	    }
+	    else 
+		break;
+	}
+
+	if (!kp) 
+	    /* Nothing left to do. */
+	    break;
+
+	/* Handle target addr kp; then mark as handled at end. */
+	jaddr = (ADDR)(uintptr_t)kp;
+	jbsymbol = target_lookup_sym_addr(target,(ADDR)(uintptr_t)kp);
+	if (!jbsymbol) {
+	    vwarn("could not find symbol for jumped-to addr 0x%"PRIxADDR";"
+		  " trying safe disasm range lookup\n",jaddr);
+	    if (target_lookup_safe_disasm_range(target,jaddr,&jlow,&jhigh,
+						NULL)) {
+		verror("could not find safe disasm range for jumped-to"
+		       " addr 0x%"PRIxADDR"!\n",jaddr);
+		goto errout;
+	    }
+	}
+	else {
+	    if (SYMBOL_IS_FULL_FUNCTION(jbsymbol->lsymbol->symbol)) {
+		funcrange = &jbsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
+		if (!RANGE_IS_PC(funcrange)) {
+		    verror("range type for function %s was %s, not PC!\n",
+			   bsymbol_get_name(jbsymbol),
+			   RANGE_TYPE(funcrange->rtype));
+		    goto errout;
+		}
+
+		jlow = memregion_relocate(jbsymbol->region,
+					  funcrange->r.a.lowpc,NULL);
+		jhigh = memregion_relocate(jbsymbol->region,
+					   funcrange->r.a.highpc,NULL);
+
+		funclen = jhigh - jlow;
+	    }
+	    else
+		funclen = symbol_bytesize(jbsymbol->lsymbol->symbol);
+	}
+
+	caller_free = 0;
+	funccode = target_load_code(target,jlow,funclen,0,0,&caller_free);
+	if (!funccode) {
+	    verror("could not load jumped-to code for disasm at 0x%"PRIxADDR
+		   " (%s)!\n",jlow,jbsymbol ? bsymbol_get_name(jbsymbol) : "");
+	    goto errout;
+	}
+
+	if (disasm_get_control_flow_offsets(target,cfflags,funccode,funclen,
+					    &cflist,jlow,noabort)) {
+	    verror("could not disasm function %s!\n",bsymbol_get_name(jbsymbol));
+	    goto errout;
+	}
+
+	if (caller_free)
+	    free(funccode);
+	funccode = NULL;
+
+	/* Now register probes for each jumped-to segment's return instruction! */
+	for (j = 0; j < array_list_len(cflist); ++j) {
+	    idata = (struct cf_inst_data *)array_list_item(cflist,j);
+
+	    if (idata->type == INST_JMP || idata->type == INST_JCC) {
+		if (idata->cf.target_in_segment)
+		    continue;
+		else if (idata->cf.target_is_valid) {
+		    if (!g_hash_table_lookup(absolute_branch_targets,
+					     (gpointer)(uintptr_t)idata->cf.target))
+			/* Add a new one... we're an octopus! */
+			g_hash_table_insert(absolute_branch_targets,
+					    (gpointer)(uintptr_t)idata->cf.target,
+					    (gpointer)0x0UL);
+		    continue;
+		}
+	    }
+	    else if (idata->type != INST_RET && idata->type != INST_IRET) {
+		verror("disasm instr was not RET/IRET!\n");
+		goto errout;
+	    }
+
+	    /* Create the j-th exit probe. */
+	    if (jbsymbol)
+		snprintf(buf,sizeof(buf),"%s_jmpto_exit_%d",
+			 bsymbol_get_name(jbsymbol),j);
+	    else
+		snprintf(buf,sizeof(buf),"0x%"PRIxADDR"_jmpto_exit_%d",
+			 jlow,j);
+	    source = probe_create(target,tid,NULL,buf,probe_do_sink_post_handlers,
+				  NULL,NULL,1,1);
+
+	    /* Register the j-th exit probe. */
+	    probeaddr = jlow + idata->offset;
+	    if (!__probe_register_addr(source,probeaddr,range,
+				       PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
+				       PROBEPOINT_LAUTO,jbsymbol,jlow)) {
+		goto errout;
+	    }
+
+	    if (!probe_register_source(probe,source)) {
+		probe_free(source,1);
+		goto errout;
+	    }
+
+	    if (jbsymbol)
+		vdebug(3,LA_PROBE,LF_PROBE,
+		       "registered jumped-to return addr probe at %s+%d\n",
+		       bsymbol->lsymbol->symbol->name,(int)idata->offset);
+	    else
+		vdebug(3,LA_PROBE,LF_PROBE,
+		       "registered jumped-to return addr probe at"
+		       " 0x%"PRIxADDR"%d\n",
+		       jlow,(int)idata->offset);
+	}
+
+	if (cflist) {
+	    array_list_deep_free(cflist);
+	    cflist = NULL;
+	}
+
+	/* Ok, mark target addr kp as handled. */
+	g_hash_table_insert(absolute_branch_targets,kp,(gpointer)0x1UL);
+    }
+
+    if (absolute_branch_targets)
+	g_hash_table_destroy(absolute_branch_targets);
+
     return probe;
 
  errout:
+    if (absolute_branch_targets)
+	g_hash_table_destroy(absolute_branch_targets);
     if (funccode && caller_free)
 	free(funccode);
     if (cflist) {
