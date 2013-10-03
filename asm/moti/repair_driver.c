@@ -25,7 +25,7 @@
 #include <asm/thread_info.h>
 #include <asm/signal.h>
 #include <asm/siginfo.h>
-
+#include <linux/slab.h>
 /* need to decide where we want to keep this header file */
 #include "repair_driver.h"
 

@@ -772,12 +772,27 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "ERROR : load_command_func function call failed \n");
 	    }
 	}
-	else if(!(strncmp(token.cmd,"pssetuid",8)))
+	else if(!(strncmp(token.cmd,"setreal_id",10)))
 	{
 	    cmd_id = 0;
 	    submodule_id = 1;
 	    args[0] = atoi(token.argv[0]);
 	    args[1] = atoi(token.argv[1]);
+	    args[2] = atoi(token.argv[2]);
+
+	    res = load_command_func(&token,cmd_id,submodule_id,args);
+	    if (res) {
+		fprintf(stderr, "ERROR : load_command_func function call failed \n");
+	    }
+	}
+	else if(!(strncmp(token.cmd,"seteffective_id",15)))
+	{
+	    cmd_id = 1;
+	    submodule_id = 1;
+	    args[0] = atoi(token.argv[0]);
+	    args[1] = atoi(token.argv[1]);
+	    args[2] = atoi(token.argv[2]);
+
 	    res = load_command_func(&token,cmd_id,submodule_id,args);
 	    if (res) {
 		fprintf(stderr, "ERROR : load_command_func function call failed \n");

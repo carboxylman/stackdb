@@ -16,6 +16,7 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+
 #define LINUX
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -25,7 +26,9 @@
 #include <asm/thread_info.h>
 #include <asm/signal.h>
 #include <asm/siginfo.h>
-#include <repair_driver.h>
+#include <linux/slab.h>
+#include "repair_driver.h"
+#include <linux/version.h>
 
 #define FUNCTION_COUNT 1
 #define SUBMODULE_ID  0
@@ -37,8 +40,10 @@ struct submodule submod;
 
 static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     struct task_struct *task;
+    struct thread_info *task_info;
     int found_flag = 0;
     int psaction_pid = 0;
+
 
     /* Parse the arguments passed */
     if(cmd->argc < 1 || cmd->argc > 1) {
@@ -65,8 +70,14 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    task->signal->group_exit_code = SIGKILL;
 	    task->signal->group_stop_count = 0;
 	    /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
-	    task->thread_info->flags =
-		task->thread_info->flags | _TIF_SIGPENDING | _TIF_NEED_RESCHED;
+
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,21)
+	    task_info = task->thread_info ;
+#else
+	    task_info = task_thread_info(task);
+#endif
+	    task_info->flags =
+		task_info->flags | _TIF_SIGPENDING | _TIF_NEED_RESCHED;
 
 	    printk(KERN_INFO "Killed process\n");
 	    found_flag = 1;

@@ -32,18 +32,15 @@
 #include <linux/device.h>
 #include <linux/mutex.h>
 #include <linux/unistd.h>
-#include <repair_driver.h>
 #include <linux/kallsyms.h>
 #include <linux/mm.h>
 
 #include <asm/uaccess.h>
 #include <linux/linkage.h>
-#include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/desc.h>
-#include <asm/semaphore.h>
 #include <asm/page.h>
-
+#include "repair_driver.h"
 
 #define FUNCTION_COUNT 1
 #define SUBMODULE_ID  2
@@ -52,22 +49,41 @@ extern struct submod_table submodule;
 extern int ack_ready;
 struct submodule submod;
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
 int change_page_attr(struct page * page, int number, pgprot_t prot);
+#endif
 
-int set_page_rw(long unsigned int addr) {
+void set_page_rw(long unsigned int addr) {
+
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
     struct page *pg;
     pgprot_t prot;
     pg = virt_to_page(addr);
     prot.pgprot = VM_READ | VM_WRITE;
     return change_page_attr(pg, 1, prot);
+#else
+    unsigned int level;
+    pte_t *pte = lookup_address(addr, &level);
+    if(pte->pte &~ _PAGE_RW) {
+	pte->pte |= _PAGE_RW;
+    }
+#endif
 }
 
-int set_page_ro(long unsigned int addr) {
+void set_page_ro(long unsigned int addr) {
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
     struct page *pg;
     pgprot_t prot;
     pg = virt_to_page(addr);
     prot.pgprot = VM_READ;
     return change_page_attr(pg,1,prot);
+#else  
+    unsigned int level;
+    pte_t *pte = lookup_address(addr, &level);
+    if(pte->pte & _PAGE_RW) {
+	pte->pte &= ~_PAGE_RW;
+    }
+#endif
 }
 
 
