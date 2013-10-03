@@ -1044,6 +1044,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     ADDR stack_member_addr;
     int i;
     int ip_offset;
+    int uid;
+    int gid;
 
     vdebug(5,LA_TARGET,LF_XV,"loading\n");
 
@@ -1100,6 +1102,32 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	vwarn("tid %"PRIiTID" ->parent is itself!\n",tid);
     }
     if (v) {
+	value_free(v);
+	v = NULL;
+    }
+
+    v = target_load_value_member(target,taskv,xstate->task_uid_member_name,
+				 NULL,LOAD_FLAG_NONE);
+    if (!v) {
+	verror("could not load %s in task value; BUG?\n",
+	       xstate->task_uid_member_name);
+	uid = -1;
+    }
+    else {
+	uid = v_i32(v);
+	value_free(v);
+	v = NULL;
+    }
+
+    v = target_load_value_member(target,taskv,xstate->task_gid_member_name,
+				 NULL,LOAD_FLAG_NONE);
+    if (!v) {
+	verror("could not load %s in task value; BUG?\n",
+	       xstate->task_gid_member_name);
+	gid = -1;
+    }
+    else {
+	gid = v_i32(v);
 	value_free(v);
 	v = NULL;
     }
@@ -1245,6 +1273,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     tstate->task_struct_addr = value_addr(taskv);
     tstate->task_struct = taskv;
     tthread->ptid = ptid;
+    tthread->uid = uid;
+    tthread->gid = gid;
     tstate->tgid = tgid;
     tstate->task_flags = task_flags;
     tstate->thread_info = threadinfov;
@@ -2416,6 +2446,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     uint64_t cr3 = 0;
     struct target_thread *ptthread;
     tid_t ptid = -1;
+    int uid = -1;
+    int gid = -1;
 
     /*
      * If the global thread has been loaded, and that's all the caller
@@ -2665,6 +2697,32 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    v = NULL;
 	}
 
+	v = target_load_value_member(target,taskv,xstate->task_uid_member_name,
+				     NULL,LOAD_FLAG_NONE);
+	if (!v) {
+	    verror("could not load %s in task value; BUG?\n",
+		   xstate->task_uid_member_name);
+	    uid = -1;
+	}
+	else {
+	    uid = v_i32(v);
+	    value_free(v);
+	    v = NULL;
+	}
+
+	v = target_load_value_member(target,taskv,xstate->task_gid_member_name,
+				     NULL,LOAD_FLAG_NONE);
+	if (!v) {
+	    verror("could not load %s in task value; BUG?\n",
+		   xstate->task_gid_member_name);
+	    gid = -1;
+	}
+	else {
+	    gid = v_i32(v);
+	    value_free(v);
+	    v = NULL;
+	}
+
 	v = target_load_value_member(target,taskv,"comm",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load comm in current task; BUG?\n");
@@ -2889,6 +2947,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    free(tthread->name);
 	tthread->name = comm;
 	tthread->ptid = ptid;
+	tthread->uid = uid;
+	tthread->gid = gid;
 	comm = NULL;
     }
 
@@ -3825,6 +3885,25 @@ static int xen_vm_postloadinit(struct target *target) {
 	vwarn("could not find thread_info nor stack member in struct task_struct;"
 	      " no multithread support!\n");
 	return 0;
+    }
+
+    /*
+     * Find out the name of the uid/gid members.
+     */
+    if ((tmpls = symbol_lookup_sym(xstate->task_struct_type,"uid",NULL))) {
+	xstate->task_uid_member_name = "uid";
+	xstate->task_gid_member_name = "gid";
+	lsymbol_release(tmpls);
+    }
+    else if ((tmpls = symbol_lookup_sym(xstate->task_struct_type,
+					"cred.uid",NULL))) {
+	xstate->task_uid_member_name = "cred.uid";
+	xstate->task_gid_member_name = "cred.gid";
+	lsymbol_release(tmpls);
+    }
+    else {
+	vwarn("could not find uid/gid info in struct task_struct;"
+	      " no uid/gid thread context support!\n");
     }
 
     /*

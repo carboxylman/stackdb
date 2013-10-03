@@ -251,6 +251,13 @@ struct xen_vm_state {
     const char *thread_sp_member_name;
     const char *thread_ip_member_name;
 
+    /*
+     * Newer kernels store uid/gid info in task->[real_]cred->(uid|gid);
+     * older ones just in task->(uid|gid).
+     */
+    const char *task_uid_member_name;
+    const char *task_gid_member_name;
+
     char *vmpath;
     char *ostype;
     char *kernel_filename;
