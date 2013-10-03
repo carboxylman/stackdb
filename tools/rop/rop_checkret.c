@@ -245,7 +245,7 @@ int main(int argc,char **argv) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    target_tostring(t,targetstr,sizeof(targetstr));
+    target_snprintf(t,targetstr,sizeof(targetstr));
 
     if (target_open(t)) {
 	fprintf(stderr,"could not open %s!\n",targetstr);

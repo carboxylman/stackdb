@@ -36,8 +36,8 @@ void xen_vm_process_free_spec(struct xen_vm_process_spec *spec) {
 /*
  * Prototypes.
  */
-static char *xen_vm_process_tostring(struct target *target,
-				     char *buf,int bufsiz);
+static int xen_vm_process_snprintf(struct target *target,
+				   char *buf,int bufsiz);
 static int xen_vm_process_init(struct target *target);
 static int xen_vm_process_postloadinit(struct target *target);
 static int xen_vm_process_attach(struct target *target);
@@ -84,8 +84,9 @@ static int xen_vm_process_load_available_threads(struct target *target,int force
 static int xen_vm_process_flush_thread(struct target *target,tid_t tid);
 static int xen_vm_process_flush_current_thread(struct target *target);
 static int xen_vm_process_flush_all_threads(struct target *target);
-static char *xen_vm_process_thread_tostring(struct target *target,tid_t tid,int detail,
-					    char *buf,int bufsiz);
+static int xen_vm_process_thread_snprintf(struct target_thread *tthread,
+					  char *buf,int bufsiz,
+					  int detail,char *sep,char *kvsep);
 
 static REGVAL xen_vm_process_read_reg(struct target *target,tid_t tid,REG reg);
 static int xen_vm_process_write_reg(struct target *target,tid_t tid,REG reg,
@@ -130,7 +131,7 @@ int xen_vm_process_singlestep_end(struct target *target,tid_t tid,
 
 
 struct target_ops xen_vm_process_ops = {
-    .tostring = xen_vm_process_tostring,
+    .snprintf = xen_vm_process_snprintf,
 
     .init = xen_vm_process_init,
     .fini = xen_vm_process_fini,
@@ -172,7 +173,7 @@ struct target_ops xen_vm_process_ops = {
     .flush_thread = xen_vm_process_flush_thread,
     .flush_current_thread = xen_vm_process_flush_current_thread,
     .flush_all_threads = xen_vm_process_flush_all_threads,
-    .thread_tostring = xen_vm_process_thread_tostring,
+    .thread_snprintf = xen_vm_process_thread_snprintf,
 
     .attach_evloop = xen_vm_process_attach_evloop,
     .detach_evloop = xen_vm_process_detach_evloop,
@@ -199,15 +200,9 @@ struct target_ops xen_vm_process_ops = {
     .singlestep_end = xen_vm_process_singlestep_end,
 };
 
-static char *xen_vm_process_tostring(struct target *target,
-				     char *buf,int bufsiz) {
-    if (!buf) {
-	bufsiz = strlen("task()") + 11 + 1;
-	buf = malloc(bufsiz*sizeof(char));
-    }
-    snprintf(buf,bufsiz,"task(%d)",target->base_tid);
-
-    return buf;
+static int xen_vm_process_snprintf(struct target *target,
+				   char *buf,int bufsiz) {
+    return snprintf(buf,bufsiz,"task(%d)",target->base_tid);
 }
 
 static int xen_vm_process_init(struct target *target) {
@@ -1421,16 +1416,22 @@ static int xen_vm_process_flush_all_threads(struct target *target) {
     return xen_vm_process_flush_thread(target,target->base_tid);
 }
 
-static char *xen_vm_process_thread_tostring(struct target *target,tid_t tid,
-					    int detail,char *buf,int bufsiz) {
-    if (!__is_our_tid(target,tid)) {
-	verror("tid %d is not in tgid %d!\n",tid,target->base_tid);
+static int xen_vm_process_thread_snprintf(struct target_thread *tthread,
+					  char *buf,int bufsiz,
+					  int detail,char *sep,char *kvsep) {
+    struct target *target;
+
+    target = tthread->target;
+
+    if (!__is_our_tid(target,tthread->tid)) {
+	verror("tid %d is not in tgid %d!\n",
+	       tthread->tid,tthread->target->base_tid);
 	errno = ESRCH;
-	return NULL;
+	return -1;
     }
 
-    return target->base->ops->thread_tostring(target->base,tid,detail,
-					      buf,bufsiz);
+    return target->base->ops->thread_snprintf(target->base_thread,
+					      buf,bufsiz,detail,sep,kvsep);
 }
 
 static REGVAL xen_vm_process_read_reg(struct target *target,tid_t tid,REG reg) {

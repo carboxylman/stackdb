@@ -66,7 +66,12 @@ struct spf_action {
 	    char *rv;
 	    char *msg;
 	    int ttctx;
+	    int ttdetail;
 	} report;
+	struct {
+	    int ttctx;
+	    int ttdetail;
+	} print;
 	struct {
 	    long int retval;
 	} abort;
@@ -223,6 +228,68 @@ void sigh(int signo) {
     signal(signo,sigh);
 }
 
+void print_thread_context(FILE *stream,struct target *target,tid_t tid,
+			  int ttctx,int ttdetail,char *sep,char *kvsep,
+			  char *tprefix,char *tsep) {
+    struct target_thread *tthread;
+    char buf[1024];
+    struct array_list *tids;
+    int i;
+
+    tthread = target_lookup_thread(target,tid);
+
+    if (ttctx == 0) 
+	return;
+    else if (ttctx == 1) {
+	if (target_thread_snprintf(target,tid,buf,sizeof(buf),
+				   ttdetail,sep,kvsep) < 0) 
+	    fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tid);
+	else
+	    fprintf(stream,"%s[%s]",tprefix,buf);
+    }
+    else if (ttctx == 2) {
+	/* Just walk up the parent hierarchy. */
+	i = 0;
+	do {
+	    if (likely(i > 0)) 
+		fprintf(stream,"%s",tsep);
+
+	    if (target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
+				       ttdetail,sep,kvsep) < 0) 
+		fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tthread->tid);
+	    else
+		fprintf(stream,"%s[%s]",tprefix,buf);
+
+	    ++i;
+	    tthread = target_lookup_thread(target,tthread->ptid);
+	}
+	while (tthread);
+    }
+    else if (ttctx == 3) {
+	if (target_thread_snprintf(target,tid,buf,sizeof(buf),
+				   ttdetail,sep,kvsep) < 0) 
+	    fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tid);
+	else
+	    fprintf(stream,"%s[%s]",tprefix,buf);
+
+	tids = target_list_available_tids(target);
+	if (!tids)
+	    return;
+	array_list_foreach(tids,i,tthread) {
+	    if (tthread->tid == tid)
+		continue;
+
+	    fprintf(stream,"%s",tsep);
+
+	    if (target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
+				       ttdetail,sep,kvsep) < 0) 
+		fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tthread->tid);
+	    else
+		fprintf(stream,"%s[%s]",tprefix,buf);
+	}
+    }
+}
+
 result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		 struct probe *trigger,struct probe *base) {
     GHashTableIter iter;
@@ -374,8 +441,11 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    ++i;
 		}
 	    }
-	    /* XXX: print target thread context once we have it */
-	    fprintf(stdout,")\n");
+	    fputs(",",stdout);
+	    print_thread_context(stdout,target,tid,
+				 spfa->report.ttctx,spfa->report.ttdetail,
+				 ":",";","thread=",",");
+	    fputs(")\n",stdout);
 	    fflush(stdout);
 	}
 	else if (spfa->atype == SPF_ACTION_PRINT) {
@@ -431,10 +501,11 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    }
 		}
 	    }
-	    /* Thread context. */
-	    if (target_thread_tostring(target,tid,1,vstrbuf,sizeof(vstrbuf)))
-		fprintf(stdout,"(%s)",vstrbuf);
-	    fprintf(stdout,"\n");
+	    fputs(" ",stdout);
+	    print_thread_context(stdout,target,tid,
+				 spfa->print.ttctx,spfa->print.ttdetail,
+				 NULL,NULL,"",",");
+	    fputs("\n",stdout);
 	    fflush(stdout);
 	}
 	else {
@@ -670,7 +741,7 @@ int main(int argc,char **argv) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    target_tostring(target,targetstr,sizeof(targetstr));
+    target_snprintf(target,targetstr,sizeof(targetstr));
 
     if (target_open(target)) {
 	fprintf(stderr,"could not open %s!\n",targetstr);
@@ -709,7 +780,7 @@ int main(int argc,char **argv) {
 	    exit(-114);
 	}
 
-	target_tostring(target,targetstr,sizeof(targetstr));
+	target_snprintf(target,targetstr,sizeof(targetstr));
 
 	rtarget = otarget;
     }
@@ -1036,11 +1107,7 @@ void spf_config_free(struct spf_config *config) {
 /*
  * Language is like this.  Single lines of probe filters/actions.
  *
- *  <symbol> [id(<ident>)] [when(pre|post)] [vfilter(<name>=/<regex>/,...)] [cfilter(...)] [action*]
- *  [action] = abort(value) 
- *             | report(rt=(i|f),tn=<tn>,tid=<tid>,rv=<rv>,msg="",ttctx=(self|hier|all),)
- *             | exit(value)
- *             | enable(name) | disable(name)
+ *   [ see README.spf.txt ]
  *
  * Reports interpreted by the XML server like this:
  *
@@ -1498,12 +1565,61 @@ struct spf_config *load_config_file(char *file) {
 		    spfa = NULL;
 		}
 		else if (strcmp(token,"print") == 0) {
-		    if (*bufptr != ')')
-			goto err;
-		    ++bufptr;
-
 		    spfa = calloc(1,sizeof(*spfa));
 		    spfa->atype = SPF_ACTION_PRINT;
+
+		    if (*bufptr == ')') {
+			++bufptr;
+		    }
+		    else {
+			/*
+			 * XXX: use strtok here ignore the possibility that
+			 * the msg field has a comma in it.  Time is not on
+			 * my side...
+			 */
+			char *nextbufptr = NULL;
+			nextbufptr = _get_next_non_enc_esc(bufptr,')');
+			if (!nextbufptr)
+			    goto err;
+			*nextbufptr = '\0';
+			++nextbufptr;
+			token = NULL;
+			token2 = NULL;
+			saveptr = NULL;
+			while ((token = strtok_r((!token) ? bufptr : NULL,",",
+						 &saveptr))) {
+			    tptr = token;
+			    while (*tptr != '\0') {
+				if (*tptr == '=') {
+				    *tptr = '\0';
+				    token2 = ++tptr;
+				    break;
+				}
+				++tptr;
+			    }
+			    if (!token2)
+				goto err;
+
+			    if (strcmp(token,"ttctx") == 0) {
+				if (strcmp(token2,"none") == 0)
+				    spfa->print.ttctx = 0;
+				else if (strcmp(token2,"self") == 0)
+				    spfa->print.ttctx = 1;
+				else if (strcmp(token2,"hier") == 0)
+				    spfa->print.ttctx = 2;
+				else if (strcmp(token2,"all") == 0)
+				    spfa->print.ttctx = 3;
+				else
+				    goto err;
+			    }
+			    else if (strcmp(token,"ttdetail") == 0) {
+				spfa->print.ttdetail = atoi(token2);
+			    }
+			    else 
+				goto err;
+			}
+			bufptr = nextbufptr;
+		    }
 
 		    spff->actions = g_slist_append(spff->actions,spfa);
 		    spfa = NULL;
@@ -1577,6 +1693,9 @@ struct spf_config *load_config_file(char *file) {
 				spfa->report.ttctx = 3;
 			    else
 				goto err;
+			}
+			else if (strcmp(token,"ttdetail") == 0) {
+			    spfa->report.ttdetail = atoi(token2);
 			}
 			else 
 			    goto err;

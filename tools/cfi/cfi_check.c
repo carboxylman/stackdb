@@ -358,7 +358,7 @@ int main(int argc,char **argv) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    target_tostring(target,targetstr,sizeof(targetstr));
+    target_snprintf(target,targetstr,sizeof(targetstr));
 
     if (target_open(target)) {
 	fprintf(stderr,"could not open %s!\n",targetstr);
@@ -397,7 +397,7 @@ int main(int argc,char **argv) {
 	    exit(-114);
 	}
 
-	target_tostring(target,targetstr,sizeof(targetstr));
+	target_snprintf(target,targetstr,sizeof(targetstr));
 
 	rtarget = otarget;
     }

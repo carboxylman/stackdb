@@ -62,8 +62,8 @@ static struct target *linux_userproc_attach(struct target_spec *spec,
 static struct target *linux_userproc_launch(struct target_spec *spec,
 					    struct evloop *evloop);
 
-static char *linux_userproc_tostring(struct target *target,
-				     char *buf,int bufsiz);
+static int linux_userproc_snprintf(struct target *target,
+				   char *buf,int bufsiz);
 static int linux_userproc_init(struct target *target);
 static int linux_userproc_postloadinit(struct target *target);
 static int linux_userproc_attach_internal(struct target *target);
@@ -116,8 +116,9 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
 static int linux_userproc_flush_thread(struct target *target,tid_t tid);
 static int linux_userproc_flush_current_thread(struct target *target);
 static int linux_userproc_flush_all_threads(struct target *target);
-static char *linux_userproc_thread_tostring(struct target *target,tid_t tid,int detail,
-					    char *buf,int bufsiz);
+static int linux_userproc_thread_snprintf(struct target_thread *tthread,
+					  char *buf,int bufsiz,
+					  int detail,char *sep,char *kvsep);
 
 static REGVAL linux_userproc_read_reg(struct target *target,tid_t tid,REG reg);
 static int linux_userproc_write_reg(struct target *target,tid_t tid,REG reg,
@@ -155,7 +156,7 @@ static int linux_userproc_evloop_del_tid(struct target *target,int tid);
  * Set up the target interface for this library.
  */
 struct target_ops linux_userspace_process_ops = {
-    .tostring = linux_userproc_tostring,
+    .snprintf = linux_userproc_snprintf,
 
     .init = linux_userproc_init,
     .fini = linux_userproc_fini,
@@ -193,7 +194,7 @@ struct target_ops linux_userspace_process_ops = {
     .flush_thread = linux_userproc_flush_thread,
     .flush_current_thread = linux_userproc_flush_current_thread,
     .flush_all_threads = linux_userproc_flush_all_threads,
-    .thread_tostring = linux_userproc_thread_tostring,
+    .thread_snprintf = linux_userproc_thread_snprintf,
 
     .attach_evloop = linux_userproc_attach_evloop,
     .detach_evloop = linux_userproc_detach_evloop,
@@ -1787,27 +1788,15 @@ int linux_userproc_detach_thread(struct target *target,tid_t tid,
 /**
  ** These are all functions supporting the target API.
  **/
-static char *linux_userproc_tostring(struct target *target,
-				     char *buf,int bufsiz) {
+static int linux_userproc_snprintf(struct target *target,
+				   char *buf,int bufsiz) {
     struct linux_userproc_spec *lspec = \
 	(struct linux_userproc_spec *)target->spec->backend_spec;
 
-    if (lspec->program) {
-	if (!buf) {
-	    bufsiz = 64;
-	    buf = malloc(bufsiz*sizeof(char));
-	}
-	snprintf(buf,bufsiz,"ptrace(%d,%s)",lspec->pid,lspec->program);
-    }
-    else {
-	if (!buf) {
-	    bufsiz = 16;
-	    buf = malloc(bufsiz*sizeof(char));
-	}
-	snprintf(buf,bufsiz,"ptrace(%d)",lspec->pid);
-    }
-
-    return buf;
+    if (lspec->program) 
+	return snprintf(buf,bufsiz,"ptrace(%d,%s)",lspec->pid,lspec->program);
+    else 
+	return snprintf(buf,bufsiz,"ptrace(%d)",lspec->pid);
 }
 
 static tid_t linux_userproc_gettid(struct target *target) {
@@ -2046,73 +2035,63 @@ static int linux_userproc_flush_all_threads(struct target *target) {
     return retval;
 }
 
-static char *linux_userproc_thread_tostring(struct target *target,tid_t tid,int detail,
-					    char *buf,int bufsiz) {
-    struct target_thread *tthread;
+static int linux_userproc_thread_snprintf(struct target_thread *tthread,
+					  char *buf,int bufsiz,
+					  int detail,char *sep,char *kvsep) {
     struct linux_userproc_thread_state *tstate;
     struct user_regs_struct *r;
+    int rc = 0;
 
-    if (!(tthread = target_lookup_thread(target,tid))) {
-	verror("thread %"PRIiTID" does not exist?\n",tid);
-	return NULL;
-    }
+    if (detail < 0)
+	return 0;
+
     tstate = (struct linux_userproc_thread_state *)tthread->state;
     r = &tstate->regs;
 
-    if (!buf) {
 #if __WORDSIZE == 64
-	bufsiz = 33*3*16 + 1;
-	buf = malloc(sizeof(char)*bufsiz);
+#define RF "lx"
+#define DRF "lx"
 #else
-	bufsiz = 25*3*8 + 1;
-	buf = malloc(sizeof(char)*bufsiz);
-#endif
-    }
-
-#if __WORDSIZE == 64
-#define RF "%lx"
-#define DRF "%lx"
-#else
-#define RF "%lx"
-#define DRF "%x"
+#define RF "lx"
+#define DRF "x"
 #endif
 
-    if (detail < 1)
-	snprintf(buf,bufsiz,
-		 "ip="RF" bp="RF" sp="RF" flags="RF" orig_ax="RF
-		 " ax="RF" bx="RF" cx="RF" dx="RF" di="RF" si="RF
-		 " cs="RF" ss="RF" ds="RF" es="RF" fs="RF" gs="RF
-		 " dr0="DRF" dr1="DRF" dr2="DRF" dr3="DRF" dr6="DRF" dr7="DRF,
+    if (detail >= 1)
+	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
+		       (rc >= bufsiz) ? 0 :bufsiz - rc,
+		       "%s" "ip%s%"RF "%s" "bp%s%"RF "%s" "sp%s%"RF "%s" 
+		       "flags%s%"RF "%s" "ax%s%"RF "%s" "bx%s%"RF "%s"
+		       "cx%s%"RF "%s" "dx%s%"RF "%s" "di%s%"RF "%s" 
+		       "si%s%"RF "%s" "cs%s%"RF "%s" "ss%s%"RF "%s"
+		       "ds%s%"RF "%s" "es%s%"RF "%s"
+		       "fs%s%"RF "%s" "gs%s%"RF,
 #if __WORDSIZE == 64
-		 r->rip,r->rbp,r->rsp,r->eflags,r->orig_rax,
-		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
-		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
+		       sep,kvsep,r->rip,sep,kvsep,r->rbp,sep,kvsep,r->rsp,sep,
+		       kvsep,r->eflags,sep,kvsep,r->rax,sep,kvsep,r->rbx,sep,
+		       kvsep,r->rcx,sep,kvsep,r->rdx,sep,kvsep,r->rdi,sep,
+		       kvsep,r->rsi,sep,kvsep,r->cs,sep,kvsep,r->ss,sep,
+		       kvsep,r->ds,sep,kvsep,r->es,sep,
+		       kvsep,r->fs,sep,kvsep,r->gs
 #else
-		 r->eip,r->ebp,r->esp,r->eflags,r->orig_eax,
-		 r->eax,r->ebx,r->ecx,r->edx,r->edi,r->esi,
-		 r->xcs,r->xss,r->xds,r->xes,r->xfs,r->xgs,
+		       sep,kvsep,r->eip,sep,kvsep,r->ebp,sep,kvsep,r->esp,sep,
+		       kvsep,r->eflags,sep,kvsep,r->eax,sep,kvsep,r->ebx,sep,
+		       kvsep,r->ecx,sep,kvsep,r->edx,sep,kvsep,r->edi,sep,
+		       kvsep,r->esi,sep,kvsep,r->cs,sep,kvsep,r->ss,sep,
+		       kvsep,r->ds,sep,kvsep,r->es,sep,
+		       kvsep,r->fs,sep,kvsep,r->gs
 #endif
-		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
-		 tstate->dr[6],tstate->dr[7]);
-    else 
-	snprintf(buf,bufsiz,
-		 "ip="RF" bp="RF" sp="RF" flags="RF" orig_ax="RF"\n"
-		 " ax="RF" bx="RF" cx="RF" dx="RF" di="RF" si="RF"\n"
-		 " cs="RF" ss="RF" ds="RF" es="RF" fs="RF" gs="RF"\n"
-		 " dr0="DRF" dr1="DRF" dr2="DRF" dr3="DRF" dr6="DRF" dr7="DRF,
-#if __WORDSIZE == 64
-		 r->rip,r->rbp,r->rsp,r->eflags,r->orig_rax,
-		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
-		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
-#else
-		 r->eip,r->ebp,r->esp,r->eflags,r->orig_eax,
-		 r->eax,r->ebx,r->ecx,r->edx,r->edi,r->esi,
-		 r->xcs,r->xss,r->xds,r->xes,r->xfs,r->xgs,
-#endif
-		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
-		 tstate->dr[6],tstate->dr[7]);
+		       );
+    if (detail >= 2)
+	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
+		       (rc >= bufsiz) ? 0 :bufsiz - rc,
+		       "%s" "dr0%s%"DRF "%s" "dr1%s%"DRF 
+		       "%s" "dr2%s%"DRF "%s" "dr3%s%"DRF 
+		       "%s" "dr6%s%"DRF "%s" "dr7%s%"DRF,
+		       sep,kvsep,tstate->dr[0],sep,kvsep,tstate->dr[1],
+		       sep,kvsep,tstate->dr[1],sep,kvsep,tstate->dr[2],
+		       sep,kvsep,tstate->dr[6],sep,kvsep,tstate->dr[7]);
 
-    return buf;
+    return rc;
 }
 
 static int linux_userproc_init(struct target *target) {

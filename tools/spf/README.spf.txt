@@ -123,15 +123,30 @@ the syntax.
 
 (The remaining arguments act more like actions/commands than options.)
 
-  print() {1}
+  print([ttctx=all|hier|self|none],[ttdetail=<-2|-1|0|1|2>]) {1}
 
     Writes a simple message about the probe and its values to standard
     output.  For instance, you might see
 
       sys_open (flags = 0,filename = /etc/ld.so.cache,mode = 1) = 3
 
+    We also can print thread context information (i.e., id, name,
+    parent id, uid, gid; or other target backend-specific values --
+    i.e. registers, thread metadata, etc).  You can control how much
+    detail and for which threads it's reported.  If ttdetail is not set,
+    it defaults to 0.  ttdetail==-2 means print only tid; -1 means print
+    only tid and name; 0 means print tid, name, ptid, uid, gid, and the
+    0-th level of information from the target backend.  Anything greater
+    than 0 increases the amount of data the backend will produce.  Then,
+    you can also select which threads are printed via the ttctx field.
+    If ttctx==all, all known threads will be displayed.  If ttctx==self,
+    only the thread that triggered the probe will be displayed.  If
+    ttctx==hier, then the thread hierarchy starting with the thread that
+    triggered the probe, to its root parent, will be displayed.  If
+    ttctx==none, no threads will be displayed.  The default is none.
+
   report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
-         ttctx=all|hier|self|none)) {1}
+         ttctx=all|hier|self|none),ttdetail=<-2|-1|0|1|2>,) {1}
 
     This is designed to allow spf to be used as an Analysis run by one
     our XML server, and to allow you to customize the events you
@@ -157,9 +172,22 @@ the syntax.
     is called; this is the `id' attribute.  The report() tn argument
     becomes name; report.tid becomes type; report.rv becomes
     resultValue; report.msg becomes msg; and any of the probe's values
-    are passed back as strings in outputValues.  Eventually we will also
-    pass back probe thread context (i.e., pid, ppid, uid, gid, pidname)
-    too; the 'ttctx' field will control this.
+    are passed back as strings in outputValues.
+
+    We also can report back thread context information (i.e., id, name,
+    parent id, uid, gid; or other target backend-specific values --
+    i.e. registers, thread metadata, etc).  You can control how much
+    detail and for which threads it's reported.  If ttdetail is not set,
+    it defaults to 0.  ttdetail==-2 means print only tid; -1 means print
+    only tid and name; 0 means print tid, name, ptid, uid, gid, and the
+    0-th level of information from the target backend.  Anything greater
+    than 0 increases the amount of data the backend will produce.  Then,
+    you can also select which threads are printed via the ttctx field.
+    If ttctx==all, all known threads will be displayed.  If ttctx==self,
+    only the thread that triggered the probe will be displayed.  If
+    ttctx==hier, then the thread hierarchy starting with the thread that
+    triggered the probe, to its root parent, will be displayed.  If
+    ttctx==none, no threads will be displayed.  The default is none.
 
   enable(<probeFilterId>)  {n}
   disable(<probeFilterId>) {n}

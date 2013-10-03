@@ -164,6 +164,7 @@ int target_open(struct target *target) {
     int rc;
     struct addrspace *space;
     struct memregion *region;
+    char buf[128];
 
     vdebug(5,LA_TARGET,LF_TARGET,"opening target type(%d)\n",target_type(target));
 
@@ -172,7 +173,10 @@ int target_open(struct target *target) {
 	return rc;
     }
 
-    target->name = target_tostring(target,NULL,0);
+    if (target_snprintf(target,buf,sizeof(buf)) < 0)
+	target->name = NULL;
+    else 
+	target->name = strdup(buf);
 
     if (!target->spec) {
 	verror("cannot open a target without a specification!\n");
@@ -435,9 +439,9 @@ struct target *target_instantiate_overlay(struct target *target,tid_t tid,
     return overlay;
 }
 
-char *target_tostring(struct target *target,char *buf,int bufsiz) {
+int target_snprintf(struct target *target,char *buf,int bufsiz) {
     vdebug(16,LA_TARGET,LF_TARGET,"target(%s)\n",target->name);
-    return target->ops->tostring(target,buf,bufsiz);
+    return target->ops->snprintf(target,buf,bufsiz);
 }
 
 int target_attach_evloop(struct target *target,struct evloop *evloop) {
@@ -851,14 +855,63 @@ int target_gc_threads(struct target *target) {
     return rc;
 }
 
-char *target_thread_tostring(struct target *target,tid_t tid,int detail,
-			     char *buf,int bufsiz) {
-    vdebug(16,LA_TARGET,LF_TARGET,"target(%s:%"PRIiTID") thread\n",target->name,tid);
-    return target->ops->thread_tostring(target,tid,detail,buf,bufsiz);
+int target_thread_snprintf(struct target *target,tid_t tid,
+			   char *buf,int bufsiz,
+			   int detail,char *sep,char *kvsep) {
+    struct target_thread *tthread;
+    int rc;
+
+    if (!buf) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s:%"PRIiTID") thread\n",
+	   target->name,tid);
+
+    if (!(tthread = target_lookup_thread(target,tid))) {
+	verror("thread %"PRIiTID" does not exist?\n",tid);
+	return -1;
+    }
+
+    if (!sep)
+	sep = ",";
+    if (!kvsep)
+	kvsep = "=";
+
+    if (detail < -1) 
+	return snprintf(buf,bufsiz,"tid%s%"PRIiTID,kvsep,tthread->tid);
+    else if (detail < 0) 
+	return snprintf(buf,bufsiz,"tid%s%"PRIiTID "%s" "name%s%s",
+			kvsep,tid,sep,kvsep,tthread->name);
+    else if (!target->ops->thread_snprintf)
+	return snprintf(buf,bufsiz,
+			"tid%s%"PRIiTID "%s" "name%s%s" "%s"
+			"ptid%s%"PRIiTID "%s" "uid%s%d" "%s"
+			"gid%s%d",
+			kvsep,tthread->tid,sep,kvsep,tthread->name,sep, 
+			kvsep,tthread->ptid,sep,kvsep,tthread->uid,sep,
+			kvsep,tthread->gid);
+    else {
+	rc =   snprintf(buf,bufsiz,
+			"tid%s%"PRIiTID "%s" "name%s%s" "%s"
+			"ptid%s%"PRIiTID "%s" "uid%s%d" "%s"
+			"gid%s%d" "%s",
+			kvsep,tthread->tid,sep,kvsep,tthread->name,sep, 
+			kvsep,tthread->ptid,sep,kvsep,tthread->uid,sep,
+			kvsep,tthread->gid,sep);
+	if (rc >= bufsiz)
+	    rc += target->ops->thread_snprintf(tthread,NULL,0,
+					       detail,sep,kvsep);
+	else
+	    rc += target->ops->thread_snprintf(tthread,buf + rc,bufsiz - rc,
+					       detail,sep,kvsep);
+	return rc;
+    }
 }
 
 void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail) {
-    char *buf;
+    char buf[1024];
     struct target_thread *tthread;
 
     vdebug(16,LA_TARGET,LF_TARGET,"dumping target(%s:%"PRIiTID") thread\n",
@@ -867,16 +920,10 @@ void target_dump_thread(struct target *target,tid_t tid,FILE *stream,int detail)
     if (!(tthread = target_lookup_thread(target,tid)))
 	verror("thread %"PRIiTID" does not exist?\n",tid);
 
-    if ((buf = target_thread_tostring(target,tid,detail,NULL,0))) 
-	fprintf(stream ? stream : stdout,
-		"tid(%"PRIiTID",%s): %s\n",
-		tid,tthread->name,buf);
+    if (target_thread_snprintf(target,tid,buf,sizeof(buf),detail,NULL,NULL) < 0)
+	fprintf(stream ? stream : stdout,"tid(%"PRIiTID"): <API ERROR>\n",tid);
     else 
-	fprintf(stream ? stream : stdout,
-		"tid(%"PRIiTID",%s): <API ERROR>\n",
-		tid,tthread->name);
-
-    free(buf);
+	fprintf(stream ? stream : stdout,"tid(%"PRIiTID"): %s\n",tid,buf);
 }
 
 void target_dump_all_threads(struct target *target,FILE *stream,int detail) {

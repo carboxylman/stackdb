@@ -63,7 +63,7 @@ struct target *xen_vm_instantiate(struct target_spec *spec,
 static struct target *xen_vm_attach(struct target_spec *spec,
 				    struct evloop *evloop);
 
-static char *xen_vm_tostring(struct target *target,char *buf,int bufsiz);
+static int xen_vm_snprintf(struct target *target,char *buf,int bufsiz);
 static int xen_vm_init(struct target *target);
 static int xen_vm_attach_internal(struct target *target);
 static int xen_vm_detach(struct target *target);
@@ -133,8 +133,9 @@ static int xen_vm_pause_thread(struct target *target,tid_t tid,int nowait);
 static int xen_vm_flush_thread(struct target *target,tid_t tid);
 static int xen_vm_flush_current_thread(struct target *target);
 static int xen_vm_flush_all_threads(struct target *target);
-static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
-				    char *buf,int bufsiz);
+static int xen_vm_thread_snprintf(struct target_thread *tthread,
+				  char *buf,int bufsiz,
+				  int detail,char *sep,char *key_val_sep);
 
 static REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg);
 static int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value);
@@ -219,7 +220,7 @@ static XC_EVTCHN_PORT_T dbg_port = -1;
  * Set up the target interface for this library.
  */
 struct target_ops xen_vm_ops = {
-    .tostring = xen_vm_tostring,
+    .snprintf = xen_vm_snprintf,
 
     .init = xen_vm_init,
     .fini = xen_vm_fini,
@@ -263,7 +264,7 @@ struct target_ops xen_vm_ops = {
     .flush_thread = xen_vm_flush_thread,
     .flush_current_thread = xen_vm_flush_current_thread,
     .flush_all_threads = xen_vm_flush_all_threads,
-    .thread_tostring = xen_vm_thread_tostring,
+    .thread_snprintf = xen_vm_thread_snprintf,
 
     .attach_evloop = xen_vm_attach_evloop,
     .detach_evloop = xen_vm_detach_evloop,
@@ -3052,17 +3053,11 @@ void xen_vm_free_thread_state(struct target *target,void *state) {
     free(state);
 }
 
-static char *xen_vm_tostring(struct target *target,char *buf,int bufsiz) {
+static int xen_vm_snprintf(struct target *target,char *buf,int bufsiz) {
     struct xen_vm_spec *xspec = \
 	(struct xen_vm_spec *)target->spec->backend_spec;
 
-    if (!buf) {
-	bufsiz = strlen("domain()") + strlen(xspec->domain) + 1;
-	buf = malloc(bufsiz*sizeof(char));
-    }
-    snprintf(buf,bufsiz,"domain(%s)",xspec->domain);
-
-    return buf;
+    return snprintf(buf,bufsiz,"domain(%s)",xspec->domain);
 }
 
 static int xen_vm_init(struct target *target) {
@@ -5288,9 +5283,10 @@ static int __value_load_thread(struct target *target,struct value *value,
 
     if (vdebug_is_on(8,LA_TARGET,LF_XV)) {
 	char buf[512];
-	target_thread_tostring(target,tthread->tid,0,buf,sizeof(buf));
+	target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
+			       1,NULL,NULL);
 	vdebug(8,LA_TARGET,LF_XV,
-	       "loaded tid %d:%s (%s)\n",tthread->tid,tthread->name,buf);
+	       "loaded tid(%d) (%s)\n",tthread->tid,tthread->name,buf);
     }
 
     if (load_counter)
@@ -5355,73 +5351,70 @@ static int xen_vm_load_available_threads(struct target *target,int force) {
     return rc;
 }
 
-static char *xen_vm_thread_tostring(struct target *target,tid_t tid,int detail,
-				    char *buf,int bufsiz) {
-    struct target_thread *tthread;
+static int xen_vm_thread_snprintf(struct target_thread *tthread,
+				  char *buf,int bufsiz,
+				  int detail,char *sep,char *kvsep) {
     struct xen_vm_thread_state *tstate;
     struct cpu_user_regs *r;
+    int rc = 0;
 
-    if (!(tthread = target_lookup_thread(target,tid))) {
-	verror("thread %"PRIiTID" does not exist?\n",tid);
-	return NULL;
-    }
+    if (detail < 0)
+	return 0;
+
     tstate = (struct xen_vm_thread_state *)tthread->state;
     r = &tstate->context.user_regs;
 
-    if (!buf) {
-	if (target->wordsize == 8)
-	    bufsiz = 1024;
-	else
-	    bufsiz = 512;
-	buf = malloc(sizeof(char)*bufsiz);
+    if (detail >= 0) {
+	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
+		       (rc >= bufsiz) ? 0 :bufsiz - rc,
+		       "tgid%s%"PRIiNUM "%s" "task_flags%s0x%"PRIxNUM "%s"
+		       "thread_info_flags%s0x%"PRIxNUM "%s"
+		       "task%s0x%"PRIxADDR "%s" 
+		       "stack_base%s0x%"PRIxADDR "%s" 
+		       "pgd%s0x%"PRIx64 "%s" "mm%s0x%"PRIxADDR,
+		       kvsep,tstate->tgid,sep,kvsep,tstate->task_flags,sep,
+		       kvsep,tstate->thread_info_flags,sep,
+		       kvsep,tstate->task_struct ? value_addr(tstate->task_struct) : 0x0UL,sep,
+		       kvsep,tstate->stack_base,sep,
+		       kvsep,tstate->pgd,sep,kvsep,tstate->mm_addr);
     }
 
-    if (detail < 1)
-	snprintf(buf,bufsiz,
-		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
-		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF
-		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d"
-		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF
-		 " (tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
-		 "thread_info_flags=0x%"PRIxNUM",stack_base=0x%"PRIxADDR","
-		 "pgd=0x%"PRIx64")",
+    if (detail >= 1)
+	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
+		       (rc >= bufsiz) ? 0 :bufsiz - rc,
+		       "%s" "ip%s%"RF "%s" "bp%s%"RF "%s" "sp%s%"RF "%s" 
+		       "flags%s%"RF "%s" "ax%s%"RF "%s" "bx%s%"RF "%s"
+		       "cx%s%"RF "%s" "dx%s%"RF "%s" "di%s%"RF "%s" 
+		       "si%s%"RF "%s" "cs%s%d" "%s" "ss%s%d" "%s"
+		       "ds%s%d" "%s" "es%s%d" "%s"
+		       "fs%s%d" "%s" "gs%s%d",
 #if __WORDSIZE == 64
-		 r->rip,r->rbp,r->rsp,r->eflags,
-		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
-		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
+		       sep,kvsep,r->rip,sep,kvsep,r->rbp,sep,kvsep,r->rsp,sep,
+		       kvsep,r->eflags,sep,kvsep,r->rax,sep,kvsep,r->rbx,sep,
+		       kvsep,r->rcx,sep,kvsep,r->rdx,sep,kvsep,r->rdi,sep,
+		       kvsep,r->rsi,sep,kvsep,r->cs,sep,kvsep,r->ss,sep,
+		       kvsep,r->ds,sep,kvsep,r->es,sep,
+		       kvsep,r->fs,sep,kvsep,r->gs
 #else
-		 r->eip,r->ebp,r->esp,r->eflags,
-		 r->eax,r->ebx,r->ecx,r->edx,r->edi,r->esi,
-		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
+		       sep,kvsep,r->eip,sep,kvsep,r->ebp,sep,kvsep,r->esp,sep,
+		       kvsep,r->eflags,sep,kvsep,r->eax,sep,kvsep,r->ebx,sep,
+		       kvsep,r->ecx,sep,kvsep,r->edx,sep,kvsep,r->edi,sep,
+		       kvsep,r->esi,sep,kvsep,r->cs,sep,kvsep,r->ss,sep,
+		       kvsep,r->ds,sep,kvsep,r->es,sep,
+		       kvsep,r->fs,sep,kvsep,r->gs
 #endif
-		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
-		 tstate->dr[6],tstate->dr[7],
-		 tstate->tgid,tstate->task_flags,tstate->thread_info_flags,
-		 tstate->stack_base,tstate->pgd);
-    else 
-	snprintf(buf,bufsiz,
-		 "ip=%"RF" bp=%"RF" sp=%"RF" flags=%"RF
-		 " ax=%"RF" bx=%"RF" cx=%"RF" dx=%"RF" di=%"RF" si=%"RF
-		 " cs=%d ss=%d ds=%d es=%d fs=%d gs=%d\n"
-		 " dr0=%"DRF" dr1=%"DRF" dr2=%"DRF" dr3=%"DRF" dr6=%"DRF" dr7=%"DRF
-		 " (tgid=%"PRIiNUM",task_flags=0x%"PRIxNUM","
-		 "thread_info_flags=0x%"PRIxNUM",stack_base=0x%"PRIxADDR","
-		 "pgd=0x%"PRIx64")",
-#if __WORDSIZE == 64
-		 r->rip,r->rbp,r->rsp,r->eflags,
-		 r->rax,r->rbx,r->rcx,r->rdx,r->rdi,r->rsi,
-		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
-#else
-		 r->eip,r->ebp,r->esp,r->eflags,
-		 r->eax,r->ebx,r->ecx,r->edx,r->edi,r->esi,
-		 r->cs,r->ss,r->ds,r->es,r->fs,r->gs,
-#endif
-		 tstate->dr[0],tstate->dr[1],tstate->dr[2],tstate->dr[3],
-		 tstate->dr[6],tstate->dr[7],
-		 tstate->tgid,tstate->task_flags,tstate->thread_info_flags,
-		 tstate->stack_base,tstate->pgd);
+		       );
+    if (detail >= 2)
+	rc += snprintf((rc >= bufsiz) ? NULL : buf + rc,
+		       (rc >= bufsiz) ? 0 :bufsiz - rc,
+		       "%s" "dr0%s%"DRF "%s" "dr1%s%"DRF 
+		       "%s" "dr2%s%"DRF "%s" "dr3%s%"DRF 
+		       "%s" "dr6%s%"DRF "%s" "dr7%s%"DRF,
+		       sep,kvsep,tstate->dr[0],sep,kvsep,tstate->dr[1],
+		       sep,kvsep,tstate->dr[1],sep,kvsep,tstate->dr[2],
+		       sep,kvsep,tstate->dr[6],sep,kvsep,tstate->dr[7]);
 
-    return buf;
+    return rc;
 }
 
 static int xen_vm_invalidate_all_threads(struct target *target) {
