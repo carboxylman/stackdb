@@ -52,7 +52,9 @@ TargetXenSpecT =
     (element domain { text }
     | (element configFile { text },
        element replayLogFile { text }?)),
-    element kernelFilename { text }?
+    element kernelFilename { text }?,
+    element noHVMSetContext { xsd:boolean }?,
+    element noClearHWDbgReg { xsd:boolean }?
 
 TargetXenSpec = element targetXenSpec { TargetXenSpecT }
 

@@ -380,6 +380,10 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 	ospec->kernel_filename = strdup(spec->kernelFilename);
     if (spec->configFile) 
 	ospec->config_file = strdup(spec->configFile);
+    if (spec->noHVMSetContext && *spec->noHVMSetContext == xsd__boolean__true_)
+	ospec->no_hvm_setcontext = 1;
+    if (spec->noClearHWDbgReg && *spec->noClearHWDbgReg == xsd__boolean__true_)
+	ospec->no_hw_debug_reg_clear = 1;
 
     return ospec;
 }
@@ -402,6 +406,16 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 	SOAP_STRCPY(soap,ospec->kernelFilename,spec->kernel_filename);
     if (spec->config_file)
 	SOAP_STRCPY(soap,ospec->configFile,spec->config_file);
+    if (spec->no_hvm_setcontext) {
+	ospec->noHVMSetContext = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->noHVMSetContext));
+	*ospec->noHVMSetContext = xsd__boolean__true_;
+    }
+    if (spec->no_hw_debug_reg_clear) {
+	ospec->noClearHWDbgReg = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->noClearHWDbgReg));
+	*ospec->noClearHWDbgReg = xsd__boolean__true_;
+    }
 
     return ospec;
 }

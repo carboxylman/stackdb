@@ -350,7 +350,7 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	av[j++] = strdup("-H");
     }
     if (xspec->no_hvm_setcontext) {
-	av[j++] = strdup("-V");
+	av[j++] = strdup("--no-hvm-setcontext");
     }
     if (xspec->config_file) {
 	av[j++] = strdup("-c");

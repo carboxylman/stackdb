@@ -97,12 +97,16 @@
         </xs:sequence>
       </xs:choice>
       <xs:element minOccurs="0" ref="vmi1:kernelFilename"/>
+      <xs:element minOccurs="0" ref="vmi1:noHVMSetContext"/>
+      <xs:element minOccurs="0" ref="vmi1:noClearHWDbgReg"/>
     </xs:sequence>
   </xs:complexType>
   <xs:element name="domain" type="xs:string"/>
   <xs:element name="configFile" type="xs:string"/>
   <xs:element name="replayLogFile" type="xs:string"/>
   <xs:element name="kernelFilename" type="xs:string"/>
+  <xs:element name="noHVMSetContext" type="xs:boolean"/>
+  <xs:element name="noClearHWDbgReg" type="xs:boolean"/>
   <xs:element name="targetXenSpec" type="vmi1:TargetXenSpecT"/>
   <xs:complexType name="TargetPtraceSpecT">
     <xs:choice>
