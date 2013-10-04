@@ -1099,7 +1099,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	if (ptthread)
 	    ptid = ptthread->tid;
     }
-    else {
+    else if (tid != 0) {
+	/* The parent of 0 is 0, so that is ok. */
 	vwarn("tid %"PRIiTID" ->parent is itself!\n",tid);
     }
     if (v) {
