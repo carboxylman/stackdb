@@ -527,6 +527,17 @@ result_t post_handler(struct probe *probe,tid_t tid,void *data,
     return handler(WHEN_POST,probe,tid,data,trigger,base);
 }
 
+/*
+ * This just makes sure values get loaded at the appropriate phases of
+ * the value probes so they are always available even if the probe is
+ * pre/post.
+ */
+result_t null_handler(struct probe *probe,tid_t tid,void *data,
+		      struct probe *trigger,struct probe *base) {
+    probe_value_get_table(trigger,tid);
+    return RESULT_SUCCESS;
+}
+
 #define SPF_CONFIGFILE_FATAL  0x200000
 #define SPF_OS_SYSCALL_PROBES 0x200001
 
@@ -1311,11 +1322,11 @@ int apply_config_file(struct spf_config *config) {
 	}
 	if (spff->when == WHEN_PRE)
 	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
-					   pre_handler,spff->pf,NULL,NULL,
+					   pre_handler,spff->pf,null_handler,NULL,
 					   spff->ttf,spff,0,1);
 	else
 	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
-					   NULL,NULL,post_handler,spff->pf,
+					   null_handler,NULL,post_handler,spff->pf,
 					   spff->ttf,spff,0,1);
 	probe_register_source(fprobe,sprobe);
 
