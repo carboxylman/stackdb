@@ -2099,7 +2099,7 @@ struct value *target_load_value_member(struct target *target,
 	oldaddr = old_value->res.addr;
 
     if (!SYMBOL_IST_FULL_STUN(tdatatype)) {
-	vwarn("symbol %s is not a full struct/union type (is %s)!\n",
+	vwarn("symbol %s: not a full struct/union type (is %s)!\n",
 	      symbol_get_name(tdatatype),SYMBOL_TYPE(tdatatype->type));
 	errno = EINVAL;
 	goto errout;
@@ -2116,7 +2116,7 @@ struct value *target_load_value_member(struct target *target,
 	goto errout;
 
     if (ls->symbol->s.ii->d.v.l.loctype != LOCTYPE_MEMBER_OFFSET) {
-	verror("loctype for symbol %s is %s, not MEMBER_OFFSET!\n",
+	verror("symbol %s: loctype %s is %s, not MEMBER_OFFSET!\n",
 	       symbol_get_name(ls->symbol),
 	       LOCTYPE(ls->symbol->s.ii->d.v.l.loctype));
 	errno = EINVAL;
@@ -2138,7 +2138,7 @@ struct value *target_load_value_member(struct target *target,
 					   old_value->range->region,flags,
 					   &reg,&addr,&datatype,&range);
     if (rc < 0) {
-	verror("failed to compute location for var %s\n",
+	verror("symbol %s: failed to compute location\n",
 	       symbol_get_name(symbol));
 	goto errout;
     }
@@ -2161,7 +2161,8 @@ struct value *target_load_value_member(struct target *target,
 	    if (flags & LOAD_FLAG_VALUE_FORCE_COPY) {
 		value = value_create(tthread,range,ls,datatype);
 		if (!value) {
-		    verror("could not create value: %s\n",strerror(errno));
+		    verror("symbol %s: could not create value: %s\n",
+			   symbol_get_name(symbol),strerror(errno));
 		    goto errout;
 		}
 		memcpy(value->buf,old_value->buf + (addr - oldaddr),
@@ -2169,20 +2170,21 @@ struct value *target_load_value_member(struct target *target,
 		value_set_addr(value,addr);
 
 		vdebug(9,LA_TARGET,LF_SYMBOL,
-		       "forced member value copy with len %d\n",
-		       value->bufsiz);
+		       "symbol %s: forced member value copy with len %d\n",
+		       symbol_get_name(symbol),value->bufsiz);
 	    }
 	    else {
 		value = value_create_noalloc(tthread,range,ls,datatype);
 		if (!value) {
-		    verror("could not create value: %s\n",strerror(errno));
+		    verror("symbol %s: could not create value: %s\n",
+			   symbol_get_name(symbol),strerror(errno));
 		    goto errout;
 		}
 		value_set_child(value,old_value,addr);
 
 		vdebug(9,LA_TARGET,LF_SYMBOL,
-		       "loaded member value as child with len %d\n",
-		       value->bufsiz);
+		       "symbol %s: loaded member value as child with len %d\n",
+		       symbol_get_name(symbol),value->bufsiz);
 	    }
 
 	    goto out;
@@ -2194,15 +2196,17 @@ struct value *target_load_value_member(struct target *target,
 	    && symbol_type_is_char(tdatatype)) {
 	    value = value_create_noalloc(tthread,range,ls,tdatatype);
 	    if (!value) {
-		verror("could not create value: %s\n",strerror(errno));
+		verror("symbol %s: could not create value: %s\n",
+		       symbol_get_name(symbol),strerror(errno));
 		goto errout;
 	    }
 
 	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							       addr,flags,
 							       NULL,0))) {
-		vwarn("failed to autostring char pointer for symbol %s\n",
-		      symbol_get_name(symbol));
+		vwarnopt(12,LA_TARGET,LF_SYMBOL,
+			 "symbol %s: failed to autostring char pointer\n",
+			 symbol_get_name(symbol));
 		value_free(value);
 		value = NULL;
 		goto errout;
@@ -2211,20 +2215,23 @@ struct value *target_load_value_member(struct target *target,
 	    value_set_addr(value,addr);
 
 	    vdebug(9,LA_TARGET,LF_SYMBOL,
-		   "autoloaded char * value with len %d\n",
-		   value->bufsiz);
+		   "symbol %s: autoloaded char * value with len %d\n",
+		   symbol_get_name(symbol),value->bufsiz);
 	}
 	else {
 	    value = value_create(tthread,range,ls,tdatatype);
 	    if (!value) {
-		verror("could not create value: %s\n",strerror(errno));
+		verror("symbol %s: could not create value: %s\n",
+		       symbol_get_name(symbol),strerror(errno));
 		goto errout;
 	    }
 
 	    if (!__target_load_addr_real(target,range,addr,flags,
 					 (unsigned char *)value->buf,
 					 value->bufsiz)) {
-		verror("failed to load value at 0x%"PRIxADDR"\n",addr);
+		vwarnopt(12,LA_TARGET,LF_SYMBOL,
+			 "symbol %s: failed to load value at 0x%"PRIxADDR"\n",
+			 symbol_get_name(symbol),addr);
 		value_free(value);
 		value = NULL;
 		goto errout;
@@ -2232,14 +2239,15 @@ struct value *target_load_value_member(struct target *target,
 	    else {
 		value_set_addr(value,addr);
 
-		vdebug(9,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
-		       value->bufsiz);
+		vdebug(9,LA_TARGET,LF_SYMBOL,
+		       "symbol %s: loaded value with len %d\n",
+		       symbol_get_name(symbol),value->bufsiz);
 	    }
 	}
     }
     else if (rc == 2) {
 	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    verror("cannot mmap register value for var %s!\n",
+	    verror("symbol %s: cannot mmap register value!\n",
 		   symbol_get_name(symbol));
 	    errno = EINVAL;
 	    goto errout;
@@ -2247,7 +2255,8 @@ struct value *target_load_value_member(struct target *target,
 
         regval = target_read_reg(target,tid,reg);
         if (errno) {
-	    verror("could not read reg %d value in tid %"PRIiTID"\n",reg,tid);
+	    verror("symbol %s: could not read reg %d value in tid %"PRIiTID"\n",
+		   symbol_get_name(symbol),reg,tid);
             goto errout;
 	}
 
@@ -2269,7 +2278,8 @@ struct value *target_load_value_member(struct target *target,
 	/* Just create the value based on the register value. */
 	value = value_create_noalloc(tthread,NULL,ls,datatype);
 	if (!value) {
-	    verror("could not create value: %s\n",strerror(errno));
+	    verror("symbol %s: could not create value: %s\n",
+		   symbol_get_name(symbol),strerror(errno));
 	    goto errout;
 	}
 	value->buf = rbuf;
@@ -2278,7 +2288,8 @@ struct value *target_load_value_member(struct target *target,
 	value_set_reg(value,symbol->s.ii->d.v.l.l.reg);
     }
     else {
-	verror("computed location not register nor address (%d) -- BUG!\n",rc);
+	verror("symbol %s: computed location not register nor address (%d) -- BUG!\n",
+	       symbol_get_name(symbol),rc);
 	errno = EINVAL;
 	goto errout;
     }
@@ -2345,9 +2356,10 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 						     array_list_item(symbol->s.ii->inline_instances,0));
 
 	if (ii_lsymbol) {
-	    vwarn("trying to load inlined symbol %s with no location info;"
-		  " found sole instance %s; will try to load that.\n",
-		  symbol_get_name(symbol),symbol_get_name(ii_lsymbol->symbol));
+	    vwarnopt(8,LA_TARGET,LF_SYMBOL,
+		     "trying to load inlined symbol %s with no location info;"
+		     " found sole instance %s; will try to load that.\n",
+		     symbol_get_name(symbol),symbol_get_name(ii_lsymbol->symbol));
 	    bsymbol = bsymbol_create(ii_lsymbol,bsymbol->region);
 	    
 	    symbol_chain = bsymbol->lsymbol->chain;
@@ -2369,7 +2381,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	memcpy(value->buf,symbol->s.ii->constval,value->bufsiz);
 	
 	vdebug(9,LA_TARGET,LF_SYMBOL,
-	       "loaded const value len %d\n",value->bufsiz);
+	       "symbol %s: loaded const value len %d\n",
+	       symbol_get_name(symbol),value->bufsiz);
 
 	return value;
     }
@@ -2382,10 +2395,10 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     if (rc < 0) {
 	if (errno == ENOTSUP)
 	    vwarnopt(8,LA_TARGET,LF_SYMBOL,
-		     "failed to compute location for var %s\n",
+		     "symbol %s: failed to compute location\n",
 		     symbol_get_name(symbol));
 	else
-	    verror("failed to compute location for var %s\n",
+	    verror("symbol %s: failed to compute location\n",
 		   symbol_get_name(symbol));
 	goto errout;
     }
@@ -2396,15 +2409,17 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    && symbol_type_is_char(tdatatype)) {
 	    value = value_create_noalloc(tthread,range,bsymbol->lsymbol,tdatatype);
 	    if (!value) {
-		verror("could not create value: %s\n",strerror(errno));
+		verror("symbol %s: could not create value: %s\n",
+		       symbol_get_name(symbol),strerror(errno));
 		goto errout;
 	    }
 
 	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
 							       addr,flags,
 							       NULL,0))) {
-		vwarn("failed to autostring char pointer for symbol %s\n",
-		      symbol_get_name(symbol));
+		vwarnopt(12,LA_TARGET,LF_SYMBOL,
+			 "symbol %s: failed to autostring char pointer\n",
+			 symbol_get_name(symbol));
 		value_free(value);
 		value = NULL;
 		goto errout;
@@ -2413,20 +2428,23 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    value_set_addr(value,addr);
 
 	    vdebug(9,LA_TARGET,LF_SYMBOL,
-		   "autoloaded char * value with len %d\n",
-		   value->bufsiz);
+		   "symbol %s: autoloaded char * value with len %d\n",
+		   symbol_get_name(symbol),value->bufsiz);
 	}
 	else {
 	    value = value_create(tthread,range,bsymbol->lsymbol,tdatatype);
 	    if (!value) {
-		verror("could not create value: %s\n",strerror(errno));
+		verror("symbol %s: could not create value: %s\n",
+		       symbol_get_name(symbol),strerror(errno));
 		goto errout;
 	    }
 
 	    if (!__target_load_addr_real(target,range,addr,flags,
 					 (unsigned char *)value->buf,
 					 value->bufsiz)) {
-		verror("failed to load value at 0x%"PRIxADDR"\n",addr);
+		vwarnopt(12,LA_TARGET,LF_SYMBOL,
+			 "symbol %s: failed to load value at 0x%"PRIxADDR"\n",
+			 symbol_get_name(symbol),addr);
 		value_free(value);
 		value = NULL;
 		goto out;
@@ -2434,14 +2452,15 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    else {
 		value_set_addr(value,addr);
 
-		vdebug(9,LA_TARGET,LF_SYMBOL,"loaded value with len %d\n",
-		       value->bufsiz);
+		vdebug(9,LA_TARGET,LF_SYMBOL,
+		       "symbol %s: loaded value with len %d\n",
+		       symbol_get_name(symbol),value->bufsiz);
 	    }
 	}
     }
     else if (rc == 2) {
 	if (flags & LOAD_FLAG_MUST_MMAP) {
-	    verror("cannot mmap register value for var %s!\n",
+	    verror("symbol %s: cannot mmap register value!\n",
 		   symbol_get_name(symbol));
 	    errno = EINVAL;
 	    goto errout;
@@ -2449,7 +2468,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 
         regval = target_read_reg(target,tid,reg);
         if (errno) {
-	    verror("could not read reg %d value in tid %"PRIiTID"\n",reg,tid);
+	    verror("symbol %s: could not read reg %d value in tid %"PRIiTID"\n",
+		   symbol_get_name(symbol),reg,tid);
             goto errout;
 	}
 
@@ -2471,7 +2491,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	/* Just create the value based on the register value. */
 	value = value_create_noalloc(tthread,NULL,bsymbol->lsymbol,datatype);
 	if (!value) {
-	    verror("could not create value: %s\n",strerror(errno));
+	    verror("symbol %s: could not create value: %s\n",
+		   symbol_get_name(symbol),strerror(errno));
 	    goto errout;
 	}
 	value->buf = rbuf;
@@ -2480,7 +2501,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	value_set_reg(value,symbol->s.ii->d.v.l.l.reg);
     }
     else {
-	verror("computed location not register nor address (%d) -- BUG!\n",rc);
+	verror("symbol %s: computed location not register nor address (%d) -- BUG!\n",
+	       symbol_get_name(symbol),rc);
 	errno = EINVAL;
 	goto errout;
     }
@@ -2542,12 +2564,12 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
     if (i == alen && SYMBOL_IS_FULL_FUNCTION(symbol)) {
 	if ((rc = location_resolve_symbol_base(target,tid,bsymbol,
 					       &retval,&current_range))) {
-	    verror("could not resolve base addr for function %s!\n",
+	    verror("function %s: could not resolve base addr!\n",
 		   symbol_get_name(symbol));
 	    errno = rc;
 	    goto errout;
 	}
-	vdebug(9,LA_TARGET,LF_SYMBOL,"function %s at 0x%"PRIxADDR"\n",
+	vdebug(9,LA_TARGET,LF_SYMBOL,"function %s: at 0x%"PRIxADDR"\n",
 	       symbol_get_name(symbol),retval);
 	goto out;
     }
@@ -2583,7 +2605,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	tchain->len = i;
 
 	if (!SYMBOL_IS_FULL_VAR(symbol)) {
-	    verror("symbol %s of type %s is not a full variable!\n",
+	    verror("symbol %s (of type %s): not a full variable!\n",
 		   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type));
 	    errno = EINVAL;
 	    goto errout;
@@ -2599,13 +2621,13 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 	    offset = location_resolve_offset(&symbol->s.ii->d.v.l,
 					     tchain,NULL,NULL);
 	    if (errno) {
-		verror("could not resolve offset for member %s\n",
+		verror("member %s: could not resolve offset\n",
 		       symbol_get_name(symbol));
 		goto errout;
 	    }
 	    retval += offset;
 	    vdebug(9,LA_TARGET,LF_SYMBOL,
-		   "member %s at offset 0x%"PRIxOFFSET"; really at 0x%"PRIxADDR
+		   "member %s: at offset 0x%"PRIxOFFSET"; really at 0x%"PRIxADDR
 		   "\n",
 		   symbol_get_name(symbol),offset,retval);
 	}
@@ -2624,9 +2646,9 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		if (SYMBOL_IST_PTR(datatype)) {
 		    retval = target_read_reg(target,tid,reg);
 		    if (errno) {
-			verror("could not read reg %"PRIiREG" that ptr symbol %s"
+			verror("symbol %s: could not read reg %"PRIiREG" that ptr"
 			       " resolved to: %s!\n",
-			       reg,symbol->name,strerror(errno));
+			       symbol_get_name(symbol),reg,strerror(errno));
 			goto errout;
 		    }
 
@@ -2634,7 +2656,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		    target_find_memory_real(target,retval,NULL,NULL,
 					    &current_range);
 		    current_region = current_range->region;
-		    vdebug(9,LA_TARGET,LF_SYMBOL,"ptr var (in reg) %s at 0x%"PRIxADDR"\n",
+		    vdebug(9,LA_TARGET,LF_SYMBOL,"ptr symbol (in reg) %s at 0x%"PRIxADDR"\n",
 			   symbol_get_name(symbol),retval);
 		    /* We have to skip one pointer type */
 		    datatype = symbol_type_skip_qualifiers(datatype->datatype);
@@ -2645,19 +2667,19 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		    /*
 		     * Not sure how this could happen...
 		     */
-		    verror("could not handle non-ptr symbol %s being in a reg!\n",
-			   symbol->name);
+		    verror("symbol %s: could not handle it being in a reg!\n",
+			   symbol_get_name(symbol));
 		    errno = EINVAL;
 		    goto errout;
 		}
 	    }
 	    else if (rc == 1) {
 		current_region = current_range->region;
-		vdebug(9,LA_TARGET,LF_SYMBOL,"var %s at 0x%"PRIxADDR"\n",
+		vdebug(9,LA_TARGET,LF_SYMBOL,"symbol %s: at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
 	    else {
-		verror("could not resolve location for symbol %s: %s!\n",
+		verror("symbol %s: could not resolve location: %s!\n",
 		       symbol_get_name(symbol),strerror(errno));
 		goto errout;
 	    }
@@ -2678,13 +2700,13 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		retval = target_autoload_pointers(target,datatype,retval,tflags,
 						  &datatype,&current_range);
 		if (errno) {
-		    verror("could not load pointer for symbol %s\n",
+		    verror("symbol %s: could not load pointer\n",
 			   symbol_get_name(symbol));
 		    goto errout;
 		}
 		current_region = current_range->region;
 		vdebug(9,LA_TARGET,LF_SYMBOL,
-		       "autoloaded pointer(s) for var %s now at 0x%"PRIxADDR"\n",
+		       "symbol %s: autoloaded pointer(s); now at 0x%"PRIxADDR"\n",
 		       symbol_get_name(symbol),retval);
 	    }
 	}
@@ -2695,7 +2717,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 		    && !(flags & LOAD_FLAG_AUTO_DEREF)
 		    && !(flags & LOAD_FLAG_AUTO_STRING
 			 && symbol_type_is_char(symbol_type_skip_ptrs(datatype))))) {
-		verror("last symbol (ptr) %s was in a register and auto deref"
+		verror("last symbol (ptr) %s: was in a register and auto deref"
 		       " not set; cannot compute addr!\n",
 		       symbol_get_name(symbol));
 		errno = EINVAL;
