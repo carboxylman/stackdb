@@ -64,7 +64,7 @@ int probe_filter_check(struct probe *probe,tid_t tid,struct probe *trigger,
     v_g_slist_foreach(tf->value_regex_list,gsltmp,tfr) {
 	v = probe_value_get(trigger,tid,tfr->value_name);
 	if (!v) {
-	    vwarn(//8,LA_PROBE,LF_PROBE,
+	    vwarnopt(8,LA_PROBE,LF_PROBE,
 		     "could not load value name %s",tfr->value_name);
 	    return -1;
 	}

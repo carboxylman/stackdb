@@ -433,9 +433,13 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    if (i > 0)
 			fprintf(stdout,",");
 		    v = (struct value *)vp;
-		    rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
-		    if (rc > 0)
-			fprintf(stdout,"%s=%s",(char *)kp,vstrbuf);
+		    if (v) {
+			rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+			if (rc > 0)
+			    fprintf(stdout,"%s=%s",(char *)kp,vstrbuf);
+			else
+			    fprintf(stdout,"%s=?",(char *)kp);
+		    }
 		    else
 			fprintf(stdout,"%s=?",(char *)kp);
 		    ++i;
@@ -473,9 +477,13 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    if (i > 0)
 			fprintf(stdout,",");
 		    v = (struct value *)vp;
-		    rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
-		    if (rc > 0)
-			fprintf(stdout,"%s = %s",(char *)kp,vstrbuf);
+		    if (v) {
+			rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
+			if (rc > 0)
+			    fprintf(stdout,"%s = %s",(char *)kp,vstrbuf);
+			else
+			    fprintf(stdout,"%s = ?",(char *)kp);
+		    }
 		    else
 			fprintf(stdout,"%s = ?",(char *)kp);
 		    ++i;

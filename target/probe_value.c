@@ -43,14 +43,16 @@ void probe_value_clear(struct probe_value *pv) {
     g_hash_table_iter_init(&iter,pv->nv);
     while (g_hash_table_iter_next(&iter,&kp,&vp)) {
 	free(kp);
-	value_free((struct value *)vp);
+	if (vp)
+	    value_free((struct value *)vp);
 	g_hash_table_iter_remove(&iter);
     }
 
     g_hash_table_iter_init(&iter,pv->nr);
     while (g_hash_table_iter_next(&iter,&kp,&vp)) {
 	free(kp);
-	value_free((struct value *)vp);
+	if (vp)
+	    value_free((struct value *)vp);
 	g_hash_table_iter_remove(&iter);
     }
 
@@ -219,7 +221,8 @@ int probe_value_record_stacked(struct probe *probe,tid_t tid,
 				     (gpointer *)&value_prev) == TRUE) {
 	g_hash_table_remove(v,name);
 	free(existing_name);
-	value_free(value_prev);
+	if (value_prev)
+	    value_free(value_prev);
     }
 
     g_hash_table_insert(v,strdup(name),value);
@@ -329,8 +332,8 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 
 	    v = target_load_symbol_member(probe->target,tid,probe->bsymbol,name,
 					  NULL,flags);
-	    if (v)
-		probe_value_record_stacked(probe,tid,name,v,israw);
+	    /* Always record it even if it's NULL! */
+	    probe_value_record_stacked(probe,tid,name,v,israw);
 	}
 
 	array_list_free(args);
@@ -347,8 +350,10 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 				     target_dw_reg_no(probe->target,CREG_AX),
 				     LOAD_FLAG_NONE);
 	    name = PROBE_VALUE_NAME_RETURN;
-	    if (v)
-		probe_value_record_stacked(probe,tid,name,v,israw);
+	    /* Always record it even if it's NULL -- should not happen
+	     * for retval though!
+	     */
+	    probe_value_record_stacked(probe,tid,name,v,israw);
 	}
 	bsymbol_release(datatype);
 	pv->post_fully_loaded = 1;
@@ -443,11 +448,8 @@ static struct value *__probe_value_get_function_ee(struct probe *probe,tid_t tid
 	v = target_load_symbol_member(probe->target,tid,bsymbol,name,NULL,flags);
     }
 
-    if (!v) 
-	return NULL;
-
     /*
-     * Record the value.
+     * Record the value (even if it's NULL!).
      */
     probe_value_record_stacked(probe,tid,name,v,israw);
 
@@ -526,11 +528,8 @@ static struct value *__probe_value_get_basic(struct probe *probe,tid_t tid,
     else 
 	v = target_load_symbol_member(probe->target,tid,bsymbol,name,NULL,flags);
 
-    if (!v) 
-	return NULL;
-
     /*
-     * Record the value.
+     * Record the value (even if it's NULL!).
      */
     probe_value_record_basic(probe,tid,name,v,israw);
 
