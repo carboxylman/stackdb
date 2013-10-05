@@ -6963,26 +6963,17 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		    bogus_sstep_thread->tpc->probepoint->addr;
 
 		/*
-		 * If the single step took us <= 15 bytes (max x86 instr
-		 * len), assume this is a single step on a bad Xen.
+		 * We have to assume it's valid.  We can't do expensive
+		 * stuff and see if it could have gotten here validly;
+		 * we could have stepped a RET, IRET, anything.
 		 */
-		if ((ipval - bogus_sstep_probepoint_addr) <= 15) {
-		    vdebug(2,LA_TARGET,LF_XV,
-			   "inferred single step for dom %d (TF set, but not"
-			   " dreg status!) at 0x%"PRIxADDR" (stepped %d bytes"
-			   " from probepoint)!\n",
-			   xstate->id,ipval,ipval - bogus_sstep_probepoint_addr);
-		    sstep_thread = bogus_sstep_thread;
-		    goto handle_inferred_sstep;
-		}
-		else {
-		    vdebug(2,LA_TARGET,LF_XV,
-			   "tried to infer single step for dom %d (TF set, but not"
-			   " dreg status!) at 0x%"PRIxADDR" -- BUT stepped %d bytes"
-			   " from probepoint -- TOO FAR!\n",
-			   xstate->id,ipval,ipval - bogus_sstep_probepoint_addr);
-		    goto phantom;
-		}
+		vdebug(2,LA_TARGET,LF_XV,
+		       "inferred single step for dom %d (TF set, but not"
+		       " dreg status!) at 0x%"PRIxADDR" (stepped %d bytes"
+		       " from probepoint)!\n",
+		       xstate->id,ipval,ipval - bogus_sstep_probepoint_addr);
+		sstep_thread = bogus_sstep_thread;
+		goto handle_inferred_sstep;
 	    }
 	    else if (xtstate->context.user_regs.eflags & EF_TF) {
 	    phantom:
