@@ -1085,10 +1085,13 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 		    verror("could not load parent thread from value;"
 			   " ptid will be invalid!\n");
 		}
-		else 
+		else {
 		    vdebug(9,LA_TARGET,LF_XV,
 			   "loaded tid %"PRIiTID" parent %"PRIiTID"\n",
 			   tid,ptthread->tid);
+		    /* Don't free it! */
+		    v = NULL;
+		}
 	    }
 	}
 	else 
@@ -2677,10 +2680,13 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 			verror("could not load parent thread from value;"
 			       " ptid will be invalid!\n");
 		    }
-		    else 
+		    else {
 			vdebug(9,LA_TARGET,LF_XV,
 			       "loaded tid %"PRIiTID" parent %"PRIiTID"\n",
 			       tid,ptthread->tid);
+			/* Don't free it! */
+			v = NULL;
+		    }
 		}
 	    }
 	    else 
