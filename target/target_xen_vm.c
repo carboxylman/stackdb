@@ -2697,7 +2697,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    if (ptthread)
 		ptid = ptthread->tid;
 	}
-	else {
+	else if (tid != 0) {
 	    vwarn("tid %"PRIiTID" ->parent is itself!\n",tid);
 	}
 	if (v) {
