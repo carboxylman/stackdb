@@ -5651,6 +5651,10 @@ static int __update_module(struct target *target,struct value *value,void *data)
 		retval = -1;
 		goto errout;
 	    }
+
+	    /* The debugfile, etc, hold it now; we don't care. */
+	    binfile_instance_release(bfi);
+	    bfi = NULL;
 	}
     }
 
@@ -5668,7 +5672,7 @@ static int __update_module(struct target *target,struct value *value,void *data)
     if (debugfile)
 	debugfile_release(debugfile);
     if (bfi)
-	binfile_instance_free(bfi);
+	binfile_instance_release(bfi);
     if (tregion)
 	memregion_free(tregion);
 

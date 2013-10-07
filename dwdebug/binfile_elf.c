@@ -684,6 +684,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
     if (bfelf->ehdr.e_type == ET_REL && bfinst) {
 	/* Save the instance! */
 	bf->instance = bfinst;
+	RHOLD(bfinst,bf);
 
 	/*
 	 * Leave the ELF fd intact, and buffer the file into a memory

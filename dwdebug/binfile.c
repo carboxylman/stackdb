@@ -204,9 +204,9 @@ int binfile_cache_clean(void) {
     return retval;
 }
 
-struct binfile_instance *binfile_infer_instance(char *filename,
-						char *root_prefix,
-						ADDR base,GHashTable *config) {
+struct binfile_instance *binfile_infer_instance__int(char *filename,
+						     char *root_prefix,
+						     ADDR base,GHashTable *config) {
     struct binfile *bf;
     struct binfile_instance *bfi;
 
@@ -225,6 +225,18 @@ struct binfile_instance *binfile_infer_instance(char *filename,
     }
 
     return bfi;
+}
+
+struct binfile_instance *binfile_infer_instance(char *filename,
+						char *root_prefix,
+						ADDR base,GHashTable *config) {
+    struct binfile_instance *retval;
+
+    retval = binfile_infer_instance__int(filename,root_prefix,base,config);
+    if (retval)
+	RHOLD(retval,retval);
+
+    return retval;
 }
 
 struct binfile *binfile_open__int(char *filename,char *root_prefix,
@@ -320,6 +332,7 @@ REFCNT binfile_release(struct binfile *binfile) {
 
 REFCNT binfile_free(struct binfile *binfile,int force) {
     REFCNT retval = binfile->refcnt;
+    REFCNT trefcnt;
 
     if (retval) {
 	if (!force) {
@@ -349,7 +362,7 @@ REFCNT binfile_free(struct binfile *binfile,int force) {
 	binfile_close(binfile);
 
     if (binfile->instance) {
-	binfile_instance_free(binfile->instance);
+	RPUT(binfile->instance,binfile_instance,binfile,trefcnt);
 	binfile->instance = NULL;
     }
 
@@ -391,7 +404,29 @@ REFCNT binfile_free(struct binfile *binfile,int force) {
     return retval;
 }
 
-void binfile_instance_free(struct binfile_instance *bfi) {
+REFCNT binfile_instance_release(struct binfile_instance *bfi) {
+    REFCNT refcnt;
+    RPUT(bfi,binfile_instance,bfi,refcnt);
+    return refcnt;
+}
+
+REFCNT binfile_instance_free(struct binfile_instance *bfi,int force) {
+    REFCNT retval = bfi->refcnt;
+
+    if (retval) {
+	if (!force) {
+	    verror("cannot free (%d refs) binfile_instance(%s)\n",
+		   retval,bfi->filename);
+	    return retval;
+	}
+	else {
+	    vwarn("forced free (%d refs) binfile_instance(%s)\n",
+		  retval,bfi->filename);
+	}
+    }
+
+    vdebug(5,LA_DEBUG,LF_BFILE,"freeing binfile_instance(%s)\n",bfi->filename);
+
     bfi->ops->free_instance(bfi);
 
     if (bfi->filename) {
@@ -399,6 +434,8 @@ void binfile_instance_free(struct binfile_instance *bfi) {
 	bfi->filename = NULL;
     }
     free(bfi);
+
+    return retval;
 }
 
 static int _filename_info(char *filename,

@@ -976,7 +976,8 @@ struct binfile *binfile_open_debuginfo(struct binfile *binfile,
 /*
  * Loads @filename as a binfile, then uses that binfile backend's ops to
  * infer a default program layout, informed by the @base load address,
- * and any key/value pairs in @config.
+ * and any key/value pairs in @config.  This function holds a ref to the
+ * return value; you must free it with binfile_instance_release().
  *
  * @param filename  A path to a binary file.
  * @param root_prefix A path to prepend to any other file opens this
@@ -991,6 +992,7 @@ struct binfile *binfile_open_debuginfo(struct binfile *binfile,
 struct binfile_instance *binfile_infer_instance(char *filename,
 						char *root_prefix,
 						ADDR base,GHashTable *config);
+
 /*
  * @param binfile  A loaded binfile.
  * @returns  The name of the backend that loaded @binfile.
@@ -1018,10 +1020,11 @@ int binfile_close(struct binfile *binfile);
  */
 REFCNT binfile_release(struct binfile *binfile);
 /*
- * Frees a binfile_instance.  These are not refcnt'd, so can be freed
- * directly (no release).
+ * Releases a reference @bfi.  If this is the last reference, the
+ * binfile_instance is freed.  At this point, the caller must not use
+ * the binfile_instance.
  */
-void binfile_instance_free(struct binfile_instance *bfi);
+REFCNT binfile_instance_release(struct binfile_instance *bfi);
 
 /*
  * Each binfile supports a simple per-backend lifecycle.  @open (invoked
@@ -1225,6 +1228,9 @@ struct binfile_elf {
  * (non-relocated) version of the binfile, and then discarded.
  */
 struct binfile_instance {
+    /* Our reference count. */
+    REFCNT refcnt;
+
     char *filename;
     /*
      * Since the binfile library is capable of opening files on behalf

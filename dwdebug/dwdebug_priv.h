@@ -31,6 +31,7 @@ struct binfile *binfile_open_debuginfo__int(struct binfile *binfile,
 					    struct binfile_instance *bfinst,
 					    const char *DFPATH[]);
 REFCNT binfile_free(struct binfile *binfile,int force);
+REFCNT binfile_instance_free(struct binfile_instance *bfi,int force);
 
 
 struct lsymbol *symtab_lookup_sym__int(struct symtab *symtab,
