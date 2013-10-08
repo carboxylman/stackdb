@@ -537,6 +537,9 @@ struct target *xen_vm_attach(struct target_spec *spec,
     int have_id = 0;
     unsigned int slen;
     char *domain;
+    char pbuf[PATH_MAX];
+    char *k,*v;
+    FILE *cf;
 
     domain = xspec->domain;
     
@@ -818,6 +821,50 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	    xstate->kernel_module_dir = malloc(PATH_MAX);
 	    snprintf(xstate->kernel_module_dir,PATH_MAX,
 		     "/lib/modules/%s",tmp+strlen("vmlinuz-"));
+	}
+
+	/*
+	 * Load the config file.  We look only in /boot .
+	 */
+	snprintf(pbuf,sizeof(pbuf),"/boot/config-%s",xstate->kernel_version);
+	if (access(pbuf,R_OK) == 0) {
+	    cf = fopen(pbuf,"r");
+	    if (!cf) 
+		verror("fopen(%s): %s\n",pbuf,strerror(errno));
+	    else {
+		/* scanf to look for normal lines. */
+		while (1) {
+		    if (!fgets(pbuf,sizeof(pbuf),cf))
+			break;
+		    if (*pbuf == '#')
+			continue;
+
+		    k = v = NULL;
+		    if (sscanf(pbuf,"%m[^ \t=]=\"%ms\"",&k,&v) == 2) {
+			g_hash_table_insert(target->config,k,v);
+			continue;
+		    }
+		    else {
+			if (k)
+			    free(k);
+			if (v) 
+			    free(v);
+		    }
+
+		    k = v = NULL;
+		    if (sscanf(pbuf,"%m[^ \t=]=%ms",&k,&v) == 2) {
+			g_hash_table_insert(target->config,k,v);
+			continue;
+		    }
+		    else {
+			if (k)
+			    free(k);
+			if (v) 
+			    free(v);
+		    }
+		}
+		fclose(cf);
+	    }
 	}
     }
 
@@ -3072,14 +3119,6 @@ static int xen_vm_init(struct target *target) {
     struct xen_vm_thread_state *tstate;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
-
-    /*
-     * We really should read all the kernel CONFIG_* stuff, but for now,
-     * this is a hack for handling kernel module loading!  It affects
-     * module program layout and ELF relocation.  If your kernel doesn't
-     * support it, this will screw up all that stuff.
-     */
-    g_hash_table_insert(target->config,strdup("CONFIG_KALLSYMS"),strdup("y"));
 
     if (target->spec->bpmode == THREAD_BPMODE_STRICT) {
 	vwarn("auto-enabling SEMI_STRICT bpmode on Xen target.\n");
