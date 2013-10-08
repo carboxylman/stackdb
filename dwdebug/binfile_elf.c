@@ -333,6 +333,11 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     uint8_t *done_sections;
     char *kallsyms_str;
     int kallsyms = 0;
+    int kallsyms_after_init = 0;
+    char *set_module_ronx_str;
+    int set_module_ronx = 0;
+    int major = 0,minor = 0,patch = 0;
+    char *tmp;
 
     if (!(bfelf = (struct binfile_elf *)binfile->priv)) {
 	verror("no ELF info for source binfile %s!\n",binfile->filename);
@@ -359,12 +364,34 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
      * Some special kernel hacks!  Don't load modinfo, and load
      * symtab/strtab if CONFIG_KALLSYMS was set.  Need to tweak the
      * shdrs to stop modinfo from being alloc'd, and to alloc
-     * symtab/strtab.
+     * symtab/strtab.  Also, check to see if we need to align text,
+     * text+ro, text+ro+all onto page boundaries via
+     * CONFIG_DEBUG_SET_MODULE_RONX .  Also, if this is a 2.6.32 or
+     * greater kernel, the symtab/strtab stuff gets mapped *after* the
+     * module's init section.
      */
     if (config) {
+	if ((tmp = (char *)g_hash_table_lookup(config,"__VERSION_MAJOR")))
+	    major = atoi(tmp);
+	if ((tmp = (char *)g_hash_table_lookup(config,"__VERSION_MINOR")))
+	    minor = atoi(tmp);
+	if ((tmp = (char *)g_hash_table_lookup(config,"__VERSION_PATCH")))
+	    patch = atoi(tmp);
+
 	kallsyms_str = g_hash_table_lookup(config,"CONFIG_KALLSYMS");
 	if (kallsyms_str && (*kallsyms_str == 'y' || *kallsyms_str == 'Y'))
 	    kallsyms = 1;
+
+	if (kallsyms
+	    && (major > 2 
+		|| (major == 2 && minor == 6 && patch >= 32)))
+	    kallsyms_after_init = 1;
+
+	set_module_ronx_str = 
+	    g_hash_table_lookup(config,"CONFIG_DEBUG_SET_MODULE_RONX");
+	if (set_module_ronx_str 
+	    && (*set_module_ronx_str == 'y' || *set_module_ronx_str == 'Y'))
+	    set_module_ronx = 1;
     }
 
     /*
@@ -383,12 +410,17 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
     bfielf->shdrs = calloc(bfelf->ehdr.e_shnum,sizeof(*bfelf->shdrs));
     memcpy(bfielf->shdrs,bfelf->shdrs,bfelf->ehdr.e_shnum*sizeof(*bfelf->shdrs));
 
+#define __ALIGN(x,a) (((x) + (typeof(x))(a) - 1) & ~((typeof(x))(a) - 1))
+#define __PAGE_SIZE 0x1000
+#define __DEBUG_ALIGN (x) __ALIGN((x),__PAGE_SIZE)
+
     for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
 	shdr = &bfielf->shdrs[i];
 	secname = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
 
-	if (kallsyms && (strcmp(secname,".symtab") == 0
-			 || strcmp(secname,".strtab") == 0))
+	if (kallsyms && !kallsyms_after_init
+	    && (strcmp(secname,".symtab") == 0
+		|| strcmp(secname,".strtab") == 0))
 	    bfielf->shdrs[i].sh_flags |= SHF_ALLOC;
 	else if (strcmp(secname,".modinfo") == 0) 
 	    bfielf->shdrs[i].sh_flags &= ~(unsigned long)SHF_ALLOC;
@@ -404,14 +436,14 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	    secname = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
 
 	    if ((shdr->sh_flags & shfm[fm][0]) != shfm[fm][0]
-		|| shdr->sh_flags & shfm[fm][1]
+		|| (shdr->sh_flags & shfm[fm][1])
 		|| done_sections[i] != 0
 		|| !secname
 		|| strncmp(secname,".init",5) == 0)
 		continue;
 
 	    align = shdr->sh_addralign ? shdr->sh_addralign : 1;
-	    bfielf->section_tab[i] = (size + align -1) & ~(align - 1);
+	    bfielf->section_tab[i] = __ALIGN(size,align);
 	    size = bfielf->section_tab[i] + shdr->sh_size;
 	    bfielf->section_tab[i] += base;
 
@@ -430,6 +462,10 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 	    if (bfielf->section_tab[i] > bfi->end)
 		bfi->end = bfielf->section_tab[i];
 	}
+	if (set_module_ronx) {
+	    if (fm == 0 || fm == 1 || fm == 2) 
+		size = __ALIGN(size,__PAGE_SIZE);
+	}
     }
 
     for (fm = 0; fm < sizeof(shfm)/(2*sizeof(unsigned long)); ++fm) {
@@ -444,7 +480,7 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 		continue;
 
 	    align = shdr->sh_addralign ? shdr->sh_addralign : 1;
-	    bfielf->section_tab[i] = (size + align -1) & ~(align - 1);
+	    bfielf->section_tab[i] = __ALIGN(size,align);
 	    size = bfielf->section_tab[i] + shdr->sh_size;
 	    bfielf->section_tab[i] += base;
 
@@ -462,6 +498,63 @@ static struct binfile_instance *elf_binfile_infer_instance(struct binfile *binfi
 
 	    if (bfielf->section_tab[i] > bfi->end)
 		bfi->end = bfielf->section_tab[i];
+	}
+	if (set_module_ronx) {
+	    if (fm == 0 || fm == 1 || fm == 2) 
+		size = __ALIGN(size,__PAGE_SIZE);
+	}
+    }
+
+    /*
+     * Now, if we have to put symtab/strtab after module's init stuff,
+     * do that.
+     */
+    if (kallsyms && kallsyms_after_init) {
+	for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+	    shdr = &bfielf->shdrs[i];
+	    secname = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
+
+	    if (strcmp(secname,".symtab") == 0
+		|| strcmp(secname,".strtab") == 0)
+		bfielf->shdrs[i].sh_flags |= SHF_ALLOC;
+	}
+
+	for (fm = 0; fm < sizeof(shfm)/(2*sizeof(unsigned long)); ++fm) {
+	    for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
+		shdr = &bfielf->shdrs[i];
+		secname = elf_strptr(bfelf->elf,bfelf->shstrndx,shdr->sh_name);
+
+		if ((shdr->sh_flags & shfm[fm][0]) != shfm[fm][0]
+		    || (shdr->sh_flags & shfm[fm][1])
+		    || done_sections[i] != 0
+		    || !secname
+		    || strncmp(secname,".init",5) == 0)
+		    continue;
+
+		align = shdr->sh_addralign ? shdr->sh_addralign : 1;
+		bfielf->section_tab[i] = __ALIGN(size,align);
+		size = bfielf->section_tab[i] + shdr->sh_size;
+		bfielf->section_tab[i] += base;
+
+		vdebug(3,LA_DEBUG,LF_ELF,
+		       "section %d (%s) placed at 0x%"PRIxADDR" (0x%"PRIxADDR"+%ld)\n",
+		       i,secname,bfielf->section_tab[i],base,
+		       bfielf->section_tab[i] - base);
+
+		done_sections[i] = 1;
+
+		if (bfi->start < bfi->base)
+		    bfi->start = bfielf->section_tab[i];
+		else if (bfielf->section_tab[i] < bfi->start)
+		    bfi->start = bfielf->section_tab[i];
+
+		if (bfielf->section_tab[i] > bfi->end)
+		    bfi->end = bfielf->section_tab[i];
+	    }
+	    if (set_module_ronx) {
+		if (fm == 0 || fm == 1 || fm == 2) 
+		    size = __ALIGN(size,__PAGE_SIZE);
+	    }
 	}
     }
 
