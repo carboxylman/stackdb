@@ -540,6 +540,7 @@ struct target *xen_vm_attach(struct target_spec *spec,
     char pbuf[PATH_MAX];
     char *k,*v;
     FILE *cf;
+    char *major = NULL,*minor = NULL,*patch = NULL;
 
     domain = xspec->domain;
     
@@ -821,6 +822,21 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	    xstate->kernel_module_dir = malloc(PATH_MAX);
 	    snprintf(xstate->kernel_module_dir,PATH_MAX,
 		     "/lib/modules/%s",tmp+strlen("vmlinuz-"));
+	}
+
+	if (sscanf(xstate->kernel_version,"%m[0-9].%m[0-9].%m[0-9]",
+		   &major,&minor,&patch) == 3) {
+	    g_hash_table_insert(target->config,strdup("__VERSION_MAJOR"),major);
+	    g_hash_table_insert(target->config,strdup("__VERSION_MINOR"),minor);
+	    g_hash_table_insert(target->config,strdup("__VERSION_PATCH"),patch);
+	}
+	else {
+	    if (major) 
+		free(major);
+	    if (minor)
+		free(minor);
+	    if (patch)
+		free(patch);
 	}
 
 	/*
