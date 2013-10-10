@@ -3499,7 +3499,9 @@ struct argfilter *handle_syscall(struct domain_info *di,
 #endif
 	    if (regs->eax > 0 && pid_in_pslist(di, regs->eax)) {
 		reload_process_list(di,handle,regs);
-		dopslist = 1;
+		/* pid still exists, no need to report */
+		if (!pid_in_pslist(di, regs->eax))
+		    dopslist = 1;
 	    }
 	}
     }
