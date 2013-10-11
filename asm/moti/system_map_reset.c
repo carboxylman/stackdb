@@ -38,6 +38,7 @@
 #include <asm/uaccess.h>
 #include <linux/linkage.h>
 #include <asm/pgtable.h>
+#include <asm/pgtable_types.h>
 #include <asm/desc.h>
 #include <asm/page.h>
 #include "repair_driver.h"
@@ -50,10 +51,13 @@ extern int ack_ready;
 struct submodule submod;
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
-int change_page_attr(struct page * page, int number, pgprot_t prot);
+extern int change_page_attr(struct page * page, int number, pgprot_t prot);
+#else
+extern pte_t *lookup_address(unsigned long address, unsigned int *level);
 #endif
 
-void set_page_rw(long unsigned int addr) {
+
+int set_page_rw(unsigned long addr) {
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
     struct page *pg;
@@ -63,14 +67,22 @@ void set_page_rw(long unsigned int addr) {
     return change_page_attr(pg, 1, prot);
 #else
     unsigned int level;
+    printk(KERN_INFO " Now doing lookup \n");
     pte_t *pte = lookup_address(addr, &level);
+    if(pte == NULL) {
+	printk(KERN_INFO "lookup_address failed\n");
+	return -EINVAL;
+
+    }
+    printk(KERN_INFO " lookup_address done\n");
     if(pte->pte &~ _PAGE_RW) {
 	pte->pte |= _PAGE_RW;
     }
+    return 0;
 #endif
 }
 
-void set_page_ro(long unsigned int addr) {
+int set_page_ro(unsigned long addr) {
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
     struct page *pg;
     pgprot_t prot;
@@ -82,7 +94,9 @@ void set_page_ro(long unsigned int addr) {
     pte_t *pte = lookup_address(addr, &level);
     if(pte->pte & _PAGE_RW) {
 	pte->pte &= ~_PAGE_RW;
+	return -EINVAL;
     }
+    return 0;
 #endif
 }
 
@@ -92,35 +106,42 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     void **system_call_table = NULL;
     int offset = 0;
-    void * func_addr = NULL;
+    void **func_addr = NULL;
     void * curr_func_addr = NULL;
 
 
     /* Parse the arguments passed */
-    if(cmd->argc < 1 || cmd->argc > 1) {
-	printk(KERN_INFO "system_map_reset module requires exactly 1 argument to be passed i.e, PID");
+    if(cmd->argc != 3 ) {
+	printk(KERN_INFO "system_map_reset module requires exactly 3 argument to be passed i.e, PID");
 	return -EINVAL;
     }
 
     /* Get the base address for the system.map table */
     system_call_table = (void*)cmd->argv[0];
+
     /* Get the offset in the table */
     offset = cmd->argv[2];
+
     /* Get the correct address */
     func_addr = (void *)cmd->argv[1];
+    printk(KERN_INFO " function address %lx \n",func_addr);
+
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;
 
-    printk(KERN_INFO " Address passes %x %x %d\n",
-	    cmd->argv[0], cmd->argv[1],cmd->argv[2]);
-    printk(KERN_INFO " Setting the write permissions at %x \n",
+    printk(KERN_INFO " Address passed %lx %lx %d\n",
+	    system_call_table, cmd->argv[1],cmd->argv[2]);
+
+    printk(KERN_INFO " Setting the write permissions at %p \n",
 	    system_call_table);
+
     /* Set write permissions on the system call table */
-    set_page_rw((long unsigned int) system_call_table);
+    set_page_rw((unsigned long) system_call_table);
     printk(KERN_INFO " Write permission set\n");
     /* Now reset the sys call address in the table */
-    curr_func_addr = system_call_table[offset];
+
+    curr_func_addr = (unsigned long) system_call_table[offset];
     printk(KERN_INFO " Current entry in the system call table : %x.\n",
 	    curr_func_addr);
     system_call_table[offset] = func_addr;
@@ -130,7 +151,7 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     printk(KERN_INFO " Reset the orignal permissions on the system call table. \n");
 
     /* Revert the permissions back to readonly */
-    set_page_ro((long unsigned int )system_call_table);
+    set_page_ro(( unsigned long )system_call_table);
 
     /* set the execution status in the ack record to success */
     ack->exec_status = 1;
@@ -139,7 +160,6 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
      * set argc = 0;
      */
     ack->argc = 0;
-
     /* Set flag to indicate the result is ready */
     ack_ready++;
     return 0;
@@ -209,3 +229,4 @@ static void __exit system_map_reset_exit(void) {
 
 module_init(system_map_reset_init);
 module_exit(system_map_reset_exit);
+MODULE_LICENSE("GPL");

@@ -23,7 +23,7 @@ struct cmd_rec {
     unsigned int cmd_id;           /* unique identifier for each command */
     unsigned int submodule_id;     /* submodule in which the command is implemented*/
     int argc;                      /* command argument count */
-    int argv[128];                 /* array to store the arguments*/
+    unsigned long argv[128];                 /* array to store the arguments*/
 };
 
 /* structure to get the acknowledgment from the submodules */
@@ -33,7 +33,7 @@ struct ack_rec {
     unsigned int cmd_id;       /* unique identifier for each command */
     int exec_status;           /* 1 = success , 0 = error */
     int argc;                  /* result argument count */
-    int argv[128];             /* array to store result data*/
+    unsigned long argv[128];             /* array to store result data*/
 };
 
 /* function pointer to the functions in submodules */

@@ -46,7 +46,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
     bs = target_lookup_sym(t, symbol_name, NULL, "repair_driver",
 	    SYMBOL_TYPE_FLAG_VAR);
     if (!bs) {
-	fprintf(stderr, "Error: Could not lookup symbol req_ring_channel.\n");
+	fprintf(stderr, "ERROR: Could not lookup symbol req_ring_channel.\n");
 	ret = CI_LOOKUP_ERR;
 	goto fail;
     }
@@ -118,7 +118,7 @@ fail:
 
 }
 
-int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id, int argv[128]) {
+int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id, unsigned long argv[128]) {
 
     ADDR cmd_ptr;
     struct bsymbol *ack_struct_type=NULL, *bs=NULL;
@@ -145,7 +145,7 @@ int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id, int argv
     cmd_ptr = get_prod_or_cons_addr("req_ring_channel","prod");
     if (!cmd_ptr) {
 	fprintf(stdout, "ERROR : get_prod_or_cons_addr failed \n");
-	ret = res;
+	ret = CI_LOOKUP_ERR;
 	goto failure;
     }
     /* Get the type for the command structure  and load it*/
@@ -235,17 +235,6 @@ int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id, int argv
     }
     value_free(v);
 
-    /* Set the entire argv array
-    for(i=0; i<128; i++) {
-	argv[i] = strtol(token->argv[i],NULL,0);
-    }
-
-    argv[1] = 0xc05084d8;
-    argv[2] = 0xc036c50a;
-    for(i =0; i< 10;i++) {
-	printf("Arg %d = %lu\n",i,argv[i]);
-    }
-    */
     v = target_load_value_member(t, value, "argv", NULL,
 	    LOAD_FLAG_NONE);
     if(!v){
@@ -253,7 +242,7 @@ int load_command_func(struct TOKEN *token,int cmd_id, int submodule_id, int argv
 	ret = CI_LOAD_ERR;
 	goto failure;
     }
-    memcpy(v->buf,argv,128*sizeof(int));
+    memcpy(v->buf,argv,128*sizeof(unsigned long));
     res = target_store_value(t, v);
     if (res == -1) {
 	fprintf(stdout, "ERROR: failed to write argv\n");
@@ -438,7 +427,7 @@ int get_result() {
 	goto get_result_fail;
     }
 
-    memcpy(result.argv,v->buf,128*sizeof(int));
+    memcpy(result.argv,v->buf,128*sizeof(unsigned long));
     value_free(v);
 
     symbol_release(ack_struct_type);
@@ -677,15 +666,19 @@ error_t psa_argp_parse_opt(int key, char *arg, struct argp_state *state) {
 int main(int argc, char **argv) {
 
     int i;
-    int res, args[128];
+    int res;
+    unsigned long args[128];
     char *command, *cur_token;
-    char delim = ' ';
+    char delim[] = " \t";
     struct target_spec *tspec;
     target_status_t tstat;
     struct TOKEN token;
     target_status_t status;
     int cmd_id, submodule_id;
-    struct target_os_syscall *syscall_table, *table_offset;
+    struct target_os_syscall *table_offset = NULL;
+    ADDR syscall_table;
+    struct bsymbol *bs = NULL;
+    struct value *v;
 
     memset(&opts, 0, sizeof(opts));
 
@@ -743,20 +736,21 @@ int main(int argc, char **argv) {
 	fprintf(stdout, "\n- ");
 	fflush(stdin);
 	if((fgets(command,128,stdin)) == NULL) continue;
-
+	
 	/* Tokenize command */
 	i = 0;
 	token.argc = 0;
-	cur_token = strtok(command, &delim);
+	cur_token = (char *)strtok(command, delim );
+	if( cur_token == NULL) continue;
 	strcpy(token.cmd, cur_token); /* token.cmd has command name */
-	do {
-	    cur_token = strtok(NULL, &delim);
-	    if (cur_token == NULL)
-		break;
+        printf( "INFO: command = %s\n",token.cmd);
+
+	while((cur_token = (char *) strtok(NULL, delim))) {
 	    token.argc++;
-	    strcpy(token.argv[i], cur_token);
+	    strcpy(token.argv[i],cur_token);
+	    printf("INFO: argv[%d] = %s\n",i,token.argv[i]);
 	    i++;
-	} while (cur_token != NULL);
+	}
 
 	/* Make appropriate function call */
 	if(!(strncmp(token.cmd, "exit", 4))) {
@@ -795,54 +789,78 @@ int main(int argc, char **argv) {
 
 	    res = load_command_func(&token,cmd_id,submodule_id,args);
 	    if (res) {
-		fprintf(stderr, "ERROR : load_command_func function call failed \n");
+		fprintf(stdout, "ERROR : load_command_func function call failed \n");
 	    }
 	}
 	else  if(!(strncmp(token.cmd,"map_reset",9))) {
 	    cmd_id = 0;
 	    submodule_id = 2;
 
-	    /* Get the address of the system call table on the machine 
-	    res = read_system_map("sys_call_table",  &args[0]);
-	    if(res) {
-		fprintf(stdout,
-			"ERROR: read_system_map function failed to lookup syscall_table.\n");
-		continue;
+	    /* Pause the target */
+	    if ((status = target_status(t)) != TSTATUS_PAUSED) {
+		fprintf(stdout,"INFO: Pausing the target\n");
+		if (target_pause(t)) {
+		    fprintf(stderr,"Failed to pause the target \n");
+		    continue;
+		}	
 	    }
-	    Get the correct address of the system call 
-	    res = read_system_map("sys_open", &args[1]);
-	    if(res) {
-		fprintf(stdout,
-			"ERROR: read_system_map function failed to lookup %s.\n",
-			token.argv[0]);
-		continue;
-	    }
-	    Get the offset of the system call in the table 
-	    res = read_unistd("sys_open",&args[2]);
-	    if(res) {
-		fprintf(stdout,
-			"ERROR: read_unistd function failed.\n");
-		continue;
-	    }	  
 
-	    res = load_command_func(&token,cmd_id, submodule_id,args);
-	    if (res) {
-		fprintf(stdout, "ERROR: load_command_func function call failed.\n");
+	    bs = target_lookup_sym(t,"sys_call_table",NULL,NULL,
+		    SYMBOL_TYPE_FLAG_VAR);
+	    if (!bs) {
+		fprintf(stdout,
+			"ERROR: Could not lookup symbol sys_call_table!\n");
+		continue;
+	    }	
+
+	    v = target_load_symbol(t,TID_GLOBAL,bs,LOAD_FLAG_NONE);
+	    if (!v) {
+		fprintf(stdout,"ERROR: Could not load sys_call_table!\n");
+		bsymbol_release(bs);
+		bs = NULL;
+		continue;
 	    }
-	   */
+
+	    syscall_table = value_addr(v);
+
+	    fprintf(stdout,"INFO: Symbol syscall_table is at address %lx\n",
+		    syscall_table);
+
+	    value_free(v);
+	    bsymbol_release(bs);
+	    bs = NULL;
 
 	    if(target_os_syscall_table_load(t)) {
 		fprintf(stdout," ERROR: Could not load the syscall_table.\n");
+		if ((status = target_status(t)) == TSTATUS_PAUSED) {
+		    if (target_resume(t)) {
+			fprintf(stderr, "ERROR: Failed to resume target.\n ");
+			goto exit;
+		    }
+		}
 		continue;
 	    }
 
-	    syscall_table = target_os_syscall_lookup_name(t, "sys_call_table");
+	    table_offset = target_os_syscall_lookup_name(t,token.argv[0]);
 
-	    table_offset = target_os_syscall_lookup_name(t, token.argv[0]);
-
-	    args[0] = syscall_table->addr;
+	    if(!table_offset) {
+		fprintf(stdout,"ERROR: Unable to find the symbol %s",token.argv[0]);
+		if ((status = target_status(t)) == TSTATUS_PAUSED) {
+		    if (target_resume(t)) {
+			fprintf(stderr, "ERROR: Failed to resume target.\n ");
+			goto exit;
+		    }
+		}
+		continue;
+	    }
+	    args[0] = syscall_table ;
 	    args[2] = table_offset->num;
-	    sscanf(token.argv[1],"%x", &args[1]);
+	    fprintf(stdout, 
+		    "INFO: found symbol at offset %d and with address %"PRIxADDR"\n",
+		    table_offset->num,table_offset->addr);
+	    args[1] = strtoul(token.argv[1], NULL, 16);
+	    token.argc = 3;
+	    fprintf(stdout,"INFO: address = %"PRIxADDR"\n",args[1]);
 
 	    res = load_command_func(&token,cmd_id, submodule_id,args);
 	    if (res) {

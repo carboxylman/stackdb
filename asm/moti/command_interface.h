@@ -22,7 +22,7 @@
 #include <string.h>
 #include <sys/ptrace.h>
 #include <argp.h>
-
+#include <inttypes.h>
 #include "log.h"
 #include "dwdebug.h"
 #include "target_api.h"
@@ -46,7 +46,7 @@ struct cmd_rec {
     unsigned int cmd_id;       /* unique identifier for each command */
     unsigned int submodule_id; /* submodule in which the command is implemented*/
     int argc;                  /* command argument count */
-    int argv[128];             /* array to store the arguments*/
+    unsigned long argv[128];             /* array to store the arguments*/
 };
 
 /* acknowledgment struct similar to the one s used in the repair driver */
@@ -55,7 +55,7 @@ struct ack_rec {
     unsigned int cmd_id;       /* unique identifier for each command */
     int exec_status;           /* 1 = success , 0 = error */
     int argc;                  /* result argument count */
-    int argv[128];             /* array to store result data*/
+    unsigned long argv[128];             /* array to store result data*/
 };
 
 /* Standard set of error codes for the command interface */
