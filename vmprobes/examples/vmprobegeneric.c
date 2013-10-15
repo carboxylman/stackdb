@@ -134,10 +134,12 @@ struct argfilter {
 
     int argnum;
     int decoding;
+    int notmatch;
     regex_t *preg;
     char *strfrag;
 
     int retval;
+    int rnotmatch;
     regex_t *ret_preg;
     char *ret_strfrag;
 
@@ -511,17 +513,17 @@ int check_filters(struct domain_info *di,int syscall,int arg,
 
 	    if (argfilter_list[lpc]->preg == NULL
 		|| !regexec(argfilter_list[lpc]->preg,argval,0,NULL,0))
-		smatch = 1;
+		smatch = (argfilter_list[lpc]->notmatch == 0);
 	    else
-		smatch = 0;
+		smatch = (argfilter_list[lpc]->notmatch != 0);
 	}
 
 	if (!postcall || argfilter_list[lpc]->retval < 0 ||
 	    argfilter_list[lpc]->ret_preg == NULL ||
 	    !regexec(argfilter_list[lpc]->ret_preg,retvalstr,0,NULL,0))
-	    rmatch = 1;
+	    rmatch = (argfilter_list[lpc]->rnotmatch == 0);
 	else
-	    rmatch = 0;
+	    rmatch = (argfilter_list[lpc]->rnotmatch != 0);
 
 	if ((argfilter_list[lpc]->pid == -1 
 	     || argfilter_list[lpc]->pid == pdata->pid)
@@ -1046,8 +1048,8 @@ void sockaddr_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
     switch (syscall) {
     /* presyscall: connect, sendto, bind... */
     case 306: case 308: case 313:
-	if (!arg_data[arg]->postcall)
-	    doit = 1;
+	/* XXX we return the arg even on a postcall since it is valid */
+	doit = 1;
 	break;
     /* postsyscall: accept, recvfrom, getsockname, getpeername... */
     case 307: case 309: case 315: case 316:
@@ -1065,9 +1067,9 @@ void sockaddr_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	}
     }
     if (sas) {
-	arg_data[arg]->decodings[0] = ssprintf("addr=%s", sas);
+	arg_data[arg]->decodings[0] = ssprintf("%s", sas);
     } else {
-	arg_data[arg]->decodings[0] = ssprintf("addr=0x%x", sa);
+	arg_data[arg]->decodings[0] = ssprintf("0x%x", sa);
     }
 
     return;
@@ -4449,7 +4451,6 @@ int load_config_file(char *file, struct list_head *doms)
 		token2 = NULL;
 		i = 0;
 		while ((token2 = strtok_r((!token2)?token:NULL,"=",&saveptr2))) {
-		    //printf("f token2 %s\n",token2);
 		    switch (i) {
 		    case 0:
 			var = token2;
@@ -4516,6 +4517,11 @@ int load_config_file(char *file, struct list_head *doms)
 		    }
 		}
 		else if (strcmp(var,"argval") == 0) {
+		    if (*val == '!') {
+			filter->notmatch = 1;
+			val++;
+		    } else
+			filter->notmatch = 0;
 		    if (*val == '*') {
 			filter->preg = NULL;
 			filter->strfrag = strdup("*");

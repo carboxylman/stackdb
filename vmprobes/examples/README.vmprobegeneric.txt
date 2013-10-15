@@ -168,6 +168,11 @@ of parameters; you need not specify them all!
     same reason that hardcoding all type and decoding knowledge takes a
     long time and is simply busy work until we have debuginfo support.
 
+  * argval=!unix_regex .  Negation of the previous filter form.  The
+    given regular expression is applied to a string decoding of the
+    argument.  This filter matches if the regex does NOT match the
+    argument val.
+
   * when=(pre|post) .  Specifies when the syscall should be matched.
     You can match before ("pre") or after ("post"). If "when" is not
     specified, the default is "pre" to be compatible with the old behavior.
