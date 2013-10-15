@@ -488,6 +488,24 @@ int get_result() {
 	    }
 
 	    break;
+	case 3: /*killsocket_module */
+	    switch(result.cmd_id) {
+		case 0: /*__ps_kill function */
+		    if(result.exec_status) {
+			fprintf(stdout, 
+			"SUCCESS: %d sockets associated with PID %d shutdown successfully\n",
+			result.argv[1], result.argv[0]);
+		    }
+		    else{
+			fprintf(stdout,
+				"FAILURE: Failed to shutdown sockets assoicated process with PID %d \n."
+				,result.argv[0]);
+		    }
+		    break;
+		default:
+		    fprintf(stdout,"INFO:Invalid value for cmd_id in result.\n");
+	    }
+	    break;
 	default:
 	    fprintf(stdout,"INFO:Invalid value for submodule_id in the result.\n");
     }
@@ -868,6 +886,16 @@ int main(int argc, char **argv) {
 	    }
 
 	}
+	else if(!(strncmp(token.cmd, "kill_socket",11)))
+	{
+	    cmd_id = 0;
+	    submodule_id = 3;
+	    args[0] = atoi(token.argv[0]); 
+	    res = load_command_func(&token,cmd_id,submodule_id,args);
+	    if (res) {
+		fprintf(stderr, "ERROR : load_command_func function call failed \n");
+	    }
+	} 
 	else {
 	    fprintf(stdout,"Command not found\n");
 	    continue;

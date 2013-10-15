@@ -32,6 +32,8 @@
 #include <linux/slab.h>
 #include "repair_driver.h"
 #include <linux/version.h>
+#include <linux/fdtable.h>
+#include <linux/security.h>
 
 #define FUNCTION_COUNT 1
 #define SUBMODULE_ID  3
@@ -42,19 +44,22 @@ struct submodule submod;
 
 
 static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
-    struct task_struct *task;
-    struct socket sock;
-    struct files_struct *open_files;
+    struct task_struct *task = NULL;
+    struct socket *sock = NULL;
+    struct file *file = NULL;
+    struct files_struct *open_files = NULL;
     struct fdtable *files_table = NULL;
+    int fput_needed = 1;
     int found_flag = 0;
     int target_pid = 0;
     int i = 0;
+    int count = 0;
     int err;
 
 
     /* Parse the arguments passed */
-    if(cmd->argc < 1 || cmd->argc > 1) {
-	printk(KERN_INFO "killsocket module requires exactly 1 argument to be passed i.e, PID");
+    if(cmd->argc != 1) {
+	printk(KERN_INFO "killsocket module requires exactly 1 argument to be passed i.e, PID\n");
 	return -EINVAL;
     }
 
@@ -75,17 +80,25 @@ static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    files_table = files_fdtable(open_files);
             
 	    /* Iterate through the entire array of
-	     * open files and check if it id s socket
+	     * open files and check if it is a socket
 	     */
 	    while(files_table->fd[i] != NULL) {
-		if (S_ISSOCK(fd[i]->f_path.dentry->d_inode->i_mode)) {
+		if (S_ISSOCK(files_table->fd[i]->f_path.dentry->d_inode->i_mode)) {
 		    printk(KERN_INFO " Found an open network socket.\n");
-		    sock = (struct socket *) fd[i]->private_data;
-		    err = security_socket_shutdown(sock, SHUT_RDWR);
-		    if(!err) {
-			err = sock->ops->shutdown(sock,SHUT_RDWR);
+		    sock = (struct socket *) files_table->fd[i]->private_data;
+		    /*sock = sockfd_lookup_light(files_table->fd[i], &err, &fput_needed);
+		    file = fget_light(files_table->fd[i], &fput_needed);
+		    f(!file) {
+		    continue;
 		    }
-		    fput_light(sock->file, fput_needed);
+		    sock =sock_from_file(file,err);
+	    
+
+		    err = security_socket_shutdown(sock, SHUT_RDWR);
+		    */
+		    err = sock->ops->shutdown(sock,SHUT_RDWR);
+		    count++;
+		    //fput_light(sock->file, fput_needed);
 		}
 	    i++;
 	    }
@@ -93,16 +106,14 @@ static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    found_flag = 1;
 	    /* set the execution status in the ack record to success */
 	    ack->exec_status = 1;
-	    /* since the execution of the command does not return anything
-	     * set acrg = 0;
-	     */
-	    ack->argc = 1;
-	    ack->argv[0] = psaction_pid;
+	    ack->argc = 2;
+	    ack->argv[0] = target_pid;
+	    ack->argv[1] = count;
 	}
     }
 
     if (!found_flag) {
-	printk(KERN_INFO "Process with PID = %d not found", psaction_pid);
+	printk(KERN_INFO "Process with PID = %d not found", target_pid);
 	ack->exec_status = 0;
 	ack->argc = 0;
 
@@ -176,3 +187,4 @@ static void __exit killsocket_exit(void) {
 
 module_init(killsocket_init);
 module_exit(killsocket_exit);
+MODULE_LICENSE("GPL");

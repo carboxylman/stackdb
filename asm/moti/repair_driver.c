@@ -94,11 +94,18 @@ static int load_submodules(void *__unused) {
 		 * After the handler executes it set ack_ready flag, VMI 
 		 * tool probes this flag periodically to retrive the result
 		 */
-		result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
-		if(result) {
-		    printk(KERN_INFO "Function call failed.\n");
-		    ack->exec_status = 0;
-		    ack_ready++;
+		if(submodule.mod_table[cmd->submodule_id] != NULL && 
+			submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id] != NULL) {
+
+
+		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+		    if(result) {
+			printk(KERN_INFO "Function call failed.\n");
+			ack->exec_status = 0;
+			ack_ready++;
+		    }
+		} else {
+		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
 		}
 
 		printk(KERN_INFO "Waiting for the next command.\n");
@@ -127,12 +134,20 @@ static int load_submodules(void *__unused) {
 		res_prod += 1; 
 		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
 		/* call the appropriate function in the submodule based on command id*/
-		result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
-		if(result) {
-		    printk(KERN_INFO "Function call failed.\n");
-		    ack->exec_status = 0;
-		    ack_ready++;
+		if(submodule.mod_table[cmd->submodule_id] != NULL && 
+			submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id] != NULL) {
+
+
+		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+		    if(result) {
+			printk(KERN_INFO "Function call failed.\n");
+			ack->exec_status = 0;
+			ack_ready++;
+		    }
+		} else {
+		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
 		}
+
 
 		printk(KERN_INFO "Waiting for the next command.\n");
 		break;
@@ -159,17 +174,56 @@ static int load_submodules(void *__unused) {
 		res_prod += 1; 
 		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
 		/* call the appropriate function in the submodule based on command id*/
-		result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
-		if(result) {
-		    printk(KERN_INFO "Function call failed.\n");
-		    ack->exec_status = 0;
-		    ack_ready++;
+		if(submodule.mod_table[cmd->submodule_id] != NULL && 
+			submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id] != NULL) {
+		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+		    if(result) {
+			printk(KERN_INFO "Function call failed.\n");
+			ack->exec_status = 0;
+			ack_ready++;
+		    }
+		} else {
+		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
 		}
 
 		printk(KERN_INFO "Waiting for the next command.\n");
 		break;
+	    case 3:
+		if(submodule.mod_table[cmd->submodule_id] == NULL) {
+		    printk(KERN_INFO "Loading the the killsocket submodule\n");
+		}
+		if((result = request_module("killsocket_module")) < 0) {
+		    printk(KERN_INFO "system_map_reset module not available\n");
+		    return -ENODEV;
+		}
 
-	    default :
+		/* 
+		 * get the address in the res_ring_channel where the 
+		 * acknowledgment should be inserted
+		 */
+		ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(
+			&res_ring_channel,
+			cmd_ring_channel_get_prod(&res_ring_channel));
+		/*Increment the prod index for the result ring channel*/
+		res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
+		res_prod += 1; 
+		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
+		/* call the appropriate function in the submodule based on command id*/
+		if(submodule.mod_table[cmd->submodule_id] != NULL && 
+			submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id] != NULL) {
+		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+		    if(result) {
+			printk(KERN_INFO "Function call failed.\n");
+			ack->exec_status = 0;
+			ack_ready++;
+		    }
+		} else {
+		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
+		}
+
+
+		printk(KERN_INFO "Waiting for the next command.\n");
+		break;	    default :
 		printk(KERN_INFO 
 			"Invalid submodule Id specified, hence no module loaded\n");
 		return -1;
@@ -350,3 +404,4 @@ EXPORT_SYMBOL(ack_ready);
 
 module_init( initialize_driver);
 module_exit( cleanup_driver);
+MODULE_LICENSE("GPL");
