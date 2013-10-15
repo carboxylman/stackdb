@@ -2460,11 +2460,14 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		      || (SYMBOL_IS_VAR(symbols[level]) 
 			  && (symbols[level]->isinlineinstance
 			      || (level > 0 
+				  && symbols[level]->isparam
+				  && symbols[level-1] 
 				  && (SYMBOL_IS_FUNC(symbols[level-1])
-				      || SYMBOL_IST_FUNC(symbols[level-1]))
-				  && symbols[level]->isparam)
-			      || (level > 0 && SYMBOL_IST_STUN(symbols[level-1])
-				  && symbols[level]->ismember)))))
+				      || SYMBOL_IST_FUNC(symbols[level-1])))
+			      || (level > 0 
+				  && symbols[level]->ismember
+				  && symbols[level-1] 
+				  && SYMBOL_IST_CONTAINER(symbols[level-1]))))))
 		    vwarnopt(4,LA_DEBUG,LF_DWARF,
 			     "anonymous symbol of type %s at DIE 0x%"PRIx64"!\n",
 			     SYMBOL_TYPE(symbols[level]->type),offset);
