@@ -3368,9 +3368,25 @@ struct symbol *__symbol_get_one_member__int(struct symbol *symbol,char *member,
 
     if (SYMBOL_IST_CONTAINER(symbol)) {
 	/*
-	 * Check all our members.  If we come across an unnamed struct
-	 * or union member, push it onto our anon stack and come back to
-	 * it.  This avoids non-tail recursion.
+	 * First, check our internal symbol table.
+	 */
+	if (symbol_read_owned_scope(symbol)) {
+	    lsymbol = scope_lookup_sym__int(symbol_read_owned_scope(symbol),
+					    member,NULL,SYMBOL_TYPE_FLAG_NONE);
+	    if (lsymbol) {
+		symbol = lsymbol->symbol;
+		/* Don't force free; somebody might have a reference */
+		lsymbol_free(lsymbol,0);
+		return symbol;
+	    }
+	}
+
+	/*
+	 * Check all our members.  It's too bad that we cannot just
+	 * lookup in the symbol's scope, but that only looks up named
+	 * symbols.  If we come across an unnamed struct/class/union
+	 * member, push it onto our anon stack and come back to it.
+	 * This avoids non-tail recursion.
 	 *
 	 * Also, we push variables, not types, as we go through the
 	 * list.  We also keep a parent index list; each time we push an
@@ -3391,7 +3407,7 @@ struct symbol *__symbol_get_one_member__int(struct symbol *symbol,char *member,
 		if (vdebug_is_on(4,LA_DEBUG,LF_SYMBOL))
 		    symbol_dump(retval,&udn);
 
-		if (!retval->name && SYMBOL_IST_STUN(retval->datatype)) {
+		if (!retval->name && SYMBOL_IST_STUNC(retval->datatype)) {
 		    /* push this one for later examination. */
 		    if (stacklen == stackalen) {
 			stackalen += 4;
@@ -3444,15 +3460,7 @@ struct symbol *__symbol_get_one_member__int(struct symbol *symbol,char *member,
 	}
     }
     else if (SYMBOL_IS_FUNC(symbol)) {
-	/* First, check our args. */
-	v_g_slist_foreach(SYMBOLX_MEMBERS(type),gsltmp,retval) {
-	    if (retval->name && strcmp(retval->name,member) == 0)
-		goto out;
-	}
-
-	/* Second, check our internal symbol table.  Wait a sec, the
-	 * args are in the internal symtab too!  Hmmm.
-	 */
+	/* Just check our internal symbol table; the args are there too. */
 	if (symbol_read_owned_scope(symbol)) {
 	    lsymbol = scope_lookup_sym__int(symbol_read_owned_scope(symbol),
 					    member,NULL,SYMBOL_TYPE_FLAG_NONE);
