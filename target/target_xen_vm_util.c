@@ -626,7 +626,6 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
 			       linux_list_iterator_t iterator,void *data) {
     struct symbol *symbol;
     struct symbol *type;
-    struct symbol *list_head_member_symbol = NULL;
     OFFSET list_head_member_offset;
     ADDR head;
     ADDR next_head;
@@ -636,33 +635,20 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
     int retval = -1;
     int rc;
 
-    struct dump_info udn = {
-	.stream = stderr,
-	.prefix = "",
-	.detail = 1,
-	.meta = 1,
-    };
-
     symbol = bsymbol_get_symbol(bsymbol);
-    type = symbol_get_datatype__int(symbol);
+    type = symbol_get_datatype(symbol);
     if (!type) {
 	verror("no type for bsymbol %s!\n",bsymbol_get_name(bsymbol));
 	goto out;
     }
 
-    list_head_member_symbol = symbol_get_one_member(type,
-						    list_head_member_name);
-    if (!list_head_member_symbol) {
-	verror("no such member %s in symbol %s!\n",list_head_member_name,
-	       symbol_get_name(type));
-	goto out;
-    }
-
-    if (symbol_get_location_offset(list_head_member_symbol,
-				   &list_head_member_offset)) {
-	verror("could not get offset for member %s in symbol %s!\n",
-	       symbol_get_name(list_head_member_symbol),symbol_get_name(type));
-	symbol_dump(symbol,&udn);
+    errno = 0;
+    list_head_member_offset = 
+	symbol_offsetof(type,list_head_member_name,NULL);
+    if (errno) {
+	verror("could not get offset for %s in symbol %s!\n",
+	       list_head_member_name,symbol_get_name(type));
+	ERRORDUMPSYMBOL_NL(symbol);
 	goto out;
     }
 
@@ -716,8 +702,6 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
     retval = 0;
 
  out:
-    if (list_head_member_symbol)
-	symbol_release(list_head_member_symbol);
     if (!nofree && value)
 	value_free(value);
 
@@ -747,7 +731,6 @@ int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
 			      char *list_head_member_name,int nofree,
 			      linux_list_iterator_t iterator,void *data) {
     struct symbol *type;
-    struct symbol *list_head_member_symbol = NULL;
     OFFSET list_head_member_offset;
     ADDR head;
     ADDR next_head;
@@ -760,18 +743,13 @@ int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
 
     type = bsymbol_get_symbol(btype);
 
-    list_head_member_symbol = symbol_get_one_member(type,
-						    list_head_member_name);
-    if (!list_head_member_symbol) {
-	verror("no such member %s in symbol %s!\n",list_head_member_name,
-	       symbol_get_name(type));
-	goto out;
-    }
-
-    if (symbol_get_location_offset(list_head_member_symbol,
-				   &list_head_member_offset)) {
-	verror("could not get offset for member %s in symbol %s!\n",
-	       symbol_get_name(list_head_member_symbol),symbol_get_name(type));
+    errno = 0;
+    list_head_member_offset = 
+	symbol_offsetof(type,list_head_member_name,NULL);
+    if (errno) {
+	verror("could not get offset for %s in symbol %s!\n",
+	       list_head_member_name,symbol_get_name(type));
+	ERRORDUMPSYMBOL_NL(type);
 	goto out;
     }
 
@@ -833,8 +811,6 @@ int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
     retval = 0;
 
  out:
-    if (list_head_member_symbol)
-	symbol_release(list_head_member_symbol);
     if (!nofree && value)
 	value_free(value);
 

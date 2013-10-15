@@ -22,6 +22,8 @@
 #include "target_os.h"
 #include "probe_api.h"
 #include "glib_wrapper.h"
+#include "dwdebug.h"
+#include "dwdebug_priv.h"
 
 struct probe_value {
     probe_handler_phase_t phase;
@@ -267,11 +269,11 @@ int probe_value_record_basic(struct probe *probe,tid_t tid,
 
 GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 						int israw,int allowlast) {
-    struct array_list *args;
+    GSList *args;
+    GSList *gsltmp;
     struct symbol *symbol;
     GSList *stack;
     struct probe_value *pv = NULL;
-    int i;
     struct symbol *argsym;
     struct value *v;
     char *name;
@@ -314,14 +316,14 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 	symbol = bsymbol_get_symbol(probe->bsymbol);
 	if (!symbol)
 	    return NULL;
-	args = symbol_get_members(symbol,SYMBOL_VAR_TYPE_FLAG_ARG);
+	args = symbol_get_members(symbol,SYMBOL_TYPE_FLAG_VAR_ARG);
 	if (!args)
 	    return NULL;
 
 	/*
 	 * Load each argument if it hasn't already been loaded.
 	 */
-	array_list_foreach(args,i,argsym) {
+	v_g_slist_foreach(args,gsltmp,argsym) {
 	    name = symbol_get_name(argsym);
 	    if (pv && (allowlast || !pv->finished)) {
 		if (israw && g_hash_table_lookup(pv->nr,name))
@@ -336,7 +338,8 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 	    probe_value_record_stacked(probe,tid,name,v,israw);
 	}
 
-	array_list_free(args);
+	g_slist_free(args);
+	args = NULL;
 
 	pv->pre_fully_loaded = 1;
     }
@@ -658,7 +661,7 @@ struct probe *probe_value_symbol(struct target *target,tid_t tid,
 	return probe_value_var(target,tid,bsymbol,
 			       pre_handler,post_handler,handler_data);
 #ifdef ENABLE_DISTORM
-    else if (SYMBOL_IS_FUNCTION(symbol))
+    else if (SYMBOL_IS_FUNC(symbol))
 	return probe_value_function_ee(target,tid,bsymbol,
 				       pre_handler,post_handler,handler_data);
 #endif
@@ -741,7 +744,7 @@ static struct probe *probe_value_function_ee(struct target *target,tid_t tid,
 					     void *handler_data) {
     struct probe *probe;
 
-    if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
+    if (!SYMBOL_IS_FUNC(bsymbol->lsymbol->symbol)) {
 	verror("must supply a function symbol!\n");
 	return NULL;
     }

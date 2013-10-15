@@ -466,7 +466,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    fflush(stderr);
 	    fflush(stdout);
 
-	    if (SYMBOL_IS_FUNCTION(symbol))
+	    if (symbol_type_flags_match(symbol,SYMBOL_TYPE_FLAG_FUNC))
 		fprintf(stdout,"%s (",symbol_get_name(symbol));
 	    if (vt) {
 		i = 0;
@@ -490,12 +490,12 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		}
 	    }
 	    else {
-		if (SYMBOL_IS_FUNCTION(symbol))
+		if (symbol_type_flags_match(symbol,SYMBOL_TYPE_FLAG_FUNC))
 		    fprintf(stdout,"?");
 		else
 		    fprintf(stdout," = ?");
 	    }
-	    if (SYMBOL_IS_FUNCTION(symbol)) {
+	    if (symbol_type_flags_match(symbol,SYMBOL_TYPE_FLAG_FUNC)) {
 		fprintf(stdout,")");
 		if (vt) {
 		    v = (struct value *) \

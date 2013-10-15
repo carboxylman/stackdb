@@ -1246,9 +1246,10 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
      * if we can).
      */
     if (bsymbol) {
-	location_resolve_symbol_base(target,probe->thread->tid,
-				     bsymbol,&symbol_addr,
-				     (!range) ? &range : NULL);
+	target_lsymbol_resolve_location(target,probe->thread->tid,
+					bsymbol->lsymbol,0,bsymbol->region,
+					LOAD_FLAG_NONE,&symbol_addr,NULL,NULL,
+					(!range) ? &range : NULL);
 	probe->bsymbol = bsymbol;
 	RHOLD(bsymbol,probe);
     }
@@ -1362,40 +1363,42 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
 				  probepoint_whence_t whence,
 				  probepoint_watchsize_t watchsize) {
     struct target *target = probe->target;
-    tid_t tid = probe->thread->tid;
-    struct memrange *range;
+    struct memrange *range = NULL;
     ADDR start = 0;
+    ADDR alt_start = 0;
     ADDR probeaddr;
     struct bsymbol *bsymbol = NULL;
+    struct symbol *symbol;
 
     bsymbol = target_lookup_sym_line(target,filename,line,NULL,&probeaddr);
     if (!bsymbol)
 	return NULL;
+    symbol = lsymbol_last_symbol(bsymbol->lsymbol);
 
     /* No need to RHOLD(); __probe_register_addr() does it. 
      * IN FACT, we need to release when we exit!
      */
 
-    if (!SYMBOL_IS_FULL_INSTANCE(bsymbol->lsymbol->symbol)) {
+    if (!SYMBOL_IS_FULL(symbol)) {
 	verror("cannot probe a partial symbol!\n");
 	goto errout;
     }
 
-    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
-	    verror("could not resolve entry PC for function %s!\n",
-		   bsymbol->lsymbol->symbol->name);
-	    goto errout;
+    if (SYMBOL_IS_FUNC(symbol) || SYMBOL_IS_LABEL(symbol) 
+	|| SYMBOL_IS_BLOCK(symbol)) {
+	if (target_lsymbol_resolve_bounds_alt(target,probe->thread->tid,
+					      bsymbol->lsymbol,0,
+					      bsymbol->region,
+					      &start,NULL,NULL,
+					      &alt_start,NULL)) {
+	    vwarn("could not resolve base addr for symbol %s!\n",
+		  lsymbol_get_name(bsymbol->lsymbol));
 	}
 
-	probe = __probe_register_addr(probe,probeaddr,range,
-				      PROBEPOINT_BREAK,style,whence,watchsize,
-				      bsymbol,start);
-    }
-    else if (SYMBOL_IS_FULL_LABEL(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
-	    verror("could not resolve base addr for label %s!\n",
-		   bsymbol->lsymbol->symbol->name);
+	target_find_memory_real(target,probeaddr,NULL,NULL,&range);
+	if (!range) {
+	    verror("could not find range for probeaddr 0x%"PRIxADDR"\n",
+		   probeaddr);
 	    goto errout;
 	}
 
@@ -1425,50 +1428,50 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 				    probepoint_whence_t whence,
 				    probepoint_watchsize_t watchsize) {
     struct target *target = probe->target;
-    tid_t tid = probe->thread->tid;
-    struct memrange *range;
-    ADDR start;
-    ADDR prologueend;
+    struct memrange *range = NULL;
+    ADDR start = 0;
+    ADDR alt_start = 0;
     ADDR probeaddr;
-    int ssize;
+    unsigned int ssize;
+    struct symbol *symbol;
+
+    symbol = lsymbol_last_symbol(bsymbol->lsymbol);
+
+    if (!SYMBOL_IS_FULL(symbol)) {
+	verror("cannot probe a partial symbol!\n");
+	goto errout;
+    }
 
     /* No need to RHOLD(); __probe_register_addr() does it. */
 
-    if (SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
-	    verror("could not resolve entry PC for function %s!\n",
-		   bsymbol->lsymbol->symbol->name);
+    if (SYMBOL_IS_FUNC(symbol) || SYMBOL_IS_LABEL(symbol) 
+	|| SYMBOL_IS_BLOCK(symbol)) {
+	if (target_lsymbol_resolve_bounds_alt(target,probe->thread->tid,
+					      bsymbol->lsymbol,0,
+					      bsymbol->region,
+					      &start,NULL,NULL,
+					      &alt_start,NULL)) {
+	    verror("could not resolve base addr for symbol %s!\n",
+		   lsymbol_get_name(bsymbol->lsymbol));
 	    goto errout;
 	}
-	else 
+	else if (alt_start) 
+	    probeaddr = alt_start;
+	else
 	    probeaddr = start;
 
-	if (location_resolve_function_prologue_end(target,bsymbol,
-						   &prologueend,&range)) {
-	    vwarn("could not resolve prologue_end for function %s!\n",
-		  bsymbol->lsymbol->symbol->name);
+	if (!target_find_memory_real(target,probeaddr,NULL,NULL,&range)) {
+	    verror("could not find addr 0x%"PRIxADDR"!\n",probeaddr);
+	    goto errout;
 	}
-	else 
-	    probeaddr = prologueend;
 
 	probe = __probe_register_addr(probe,probeaddr,range,
 				      PROBEPOINT_BREAK,style,whence,watchsize,
 				      bsymbol,start);
     }
-    else if (SYMBOL_IS_FULL_LABEL(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_symbol_base(target,tid,bsymbol,&probeaddr,&range)) {
-	    verror("could not resolve base addr for label %s!\n",
-		   bsymbol->lsymbol->symbol->name);
-	    goto errout;
-	}
-
-	probe = __probe_register_addr(probe,probeaddr,range,
-				      PROBEPOINT_BREAK,style,whence,watchsize,
-				      bsymbol,probeaddr);
-    }
-    else if (SYMBOL_IS_FULL_VAR(bsymbol->lsymbol->symbol)) {
+    else if (SYMBOL_IS_VAR(bsymbol->lsymbol->symbol)) {
 	if (watchsize == PROBEPOINT_LAUTO) {
-	    ssize = symbol_type_full_bytesize(symbol_get_datatype__int(bsymbol->lsymbol->symbol));
+	    ssize = symbol_type_full_bytesize(symbol_get_datatype(symbol));
 	    if (ssize <= 0) {
 		verror("bad size (%d) for type of %s!\n",
 		       ssize,bsymbol->lsymbol->symbol->name);
@@ -1478,9 +1481,17 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	    watchsize = probepoint_closest_watchsize(ssize);
 	}
 
-	if (location_resolve_symbol_base(target,tid,bsymbol,&probeaddr,&range)) {
+	if (target_lsymbol_resolve_location(target,probe->thread->tid,
+					    bsymbol->lsymbol,0,bsymbol->region,
+					    LOAD_FLAG_NONE,&probeaddr,NULL,NULL,
+					    &range)) {
 	    verror("could not resolve base addr for var %s!\n",
 		   bsymbol->lsymbol->symbol->name);
+	    goto errout;
+	}
+
+	if (!target_find_memory_real(target,probeaddr,NULL,NULL,&range)) {
+	    verror("could not find addr 0x%"PRIxADDR"!\n",probeaddr);
 	    goto errout;
 	}
 
@@ -3530,15 +3541,11 @@ result_t probepoint_resumeat_handler(struct target *target,
 
 static int __remove_action(struct target *target,struct probepoint *probepoint,
 			   struct action *action) {
-    struct thread_probepoint_context *tpc;
-
     /*
      * If it was boosted, it will be removed when the action is destroyed.
      */
     if (action->boosted)
 	return 0;
-
-    tpc = probepoint->tpc;
 
     if (action->type == ACTION_RETURN || action->type == ACTION_CUSTOMCODE) {
 	if (probepoint->style == PROBEPOINT_SW) {
@@ -3551,7 +3558,7 @@ static int __remove_action(struct target *target,struct probepoint *probepoint,
 	}
 	else if (probepoint->mmod) {
 	    if (target_memmod_release(target,probepoint->thread->tid,
-				      probepoint->mmod)) {
+				      probepoint->mmod) < 0) {
 		verror("could not remove action code at HW breakpoint;"
 		       " badness will probably ensue!\n");
 		return -1;
@@ -3568,7 +3575,6 @@ static int __remove_action(struct target *target,struct probepoint *probepoint,
 
 static int __insert_action(struct target *target,struct target_thread *tthread,
 			   struct probepoint *probepoint,struct action *action) {
-    struct thread_probepoint_context *tpc;
     unsigned int buflen;
     unsigned char *buf;
     REGVAL rval;
@@ -3585,8 +3591,6 @@ static int __insert_action(struct target *target,struct target_thread *tthread,
      */
     if (action->boosted)
 	return 0;
-
-    tpc = probepoint->tpc;
 
     if (action->type == ACTION_RETURN) {
 	/*

@@ -867,7 +867,7 @@ unsigned char *target_load_code(struct target *target,
 /*
  * Find the symbol table corresponding to the supplied PC.
  */
-struct symtab *target_lookup_pc(struct target *target,uint64_t pc);
+struct scope *target_lookup_addr(struct target *target,uint64_t addr);
 
 /*
  * Looks up a symbol, or hierarchy of nested symbols.  Users shouldn't
@@ -911,10 +911,9 @@ int target_find_memory_real(struct target *target,ADDR addr,
 			    struct addrspace **space_saveptr,
 			    struct memregion **region_saveptr,
 			    struct memrange **range_saveptr);
-
-int target_resolve_symbol_base(struct target *target,tid_t tid,
-			       struct bsymbol *bsymbol,ADDR *addr_saveptr,
-			       struct memrange **range_saveptr);
+int target_bsymbol_resolve_base(struct target *target,tid_t tid,
+				struct bsymbol *bsymbol,ADDR *o_addr,
+				struct memrange **o_range);
 /**
  ** Load functions.  Everything that gets loaded is loaded as a value
  ** struct.
@@ -1032,20 +1031,6 @@ ADDR target_autoload_pointers(struct target *target,struct symbol *datatype,
 ADDR target_load_pointers(struct target *target,ADDR addr,int count,
 			  struct memrange **range_saveptr);
 
-/*
- * bsymbol_load is deprecated -- use target_load_*() instead!
- */
-#if 0
-/*
- * Load a symbol's value, but just return a raw pointer.  If flags
- * contains LOAD_FLAGS_MMAP, we try to mmap the target's memory instead
- * of reading and copying the data; if that fails, we return NULL.  If
- * buf is not NULL, it should be sized to
- * symbol->datatype->s.ti.byte_size (best available as symbol_get
- */
-struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags);
-#endif
-
 /**
  ** Symbol functions.
  **/
@@ -1061,14 +1046,6 @@ struct value *bsymbol_load(struct bsymbol *bsymbol,load_flags_t flags);
  */
 struct symbol *target_create_synthetic_type_pointer(struct target *target,
 						  struct symbol *type);
-
-typedef result_t (*target_debug_bp_handler_t)(struct target *target,
-					      struct target_thread *tthread,
-					      struct probepoint *probepoint,
-					      int was_stepping);
-typedef result_t (*target_debug_handler_t)(struct target *target,
-					   struct target_thread *tthread,
-					   struct probepoint *probepoint);
 
 /**
  ** Bound symbol interface functions -- user should not need any more
@@ -1481,7 +1458,7 @@ struct target_thread {
     tid_t tid;
     int8_t valid:1,
   	   dirty:1,
-	   resumeat:3,
+	   resumeat:4,
 	   attached:1;
     thread_status_t status:THREAD_STATUS_BITS;
     target_type_t supported_overlay_types:TARGET_TYPE_BITS;
@@ -1690,6 +1667,14 @@ struct target_state_change {
     ADDR end;
     char *msg;
 };
+
+typedef result_t (*target_debug_bp_handler_t)(struct target *target,
+					      struct target_thread *tthread,
+					      struct probepoint *probepoint,
+					      int was_stepping);
+typedef result_t (*target_debug_handler_t)(struct target *target,
+					   struct target_thread *tthread,
+					   struct probepoint *probepoint);
 
 /*
  * A target is the top-level entity a user creates or associates with to
@@ -2226,7 +2211,8 @@ struct value {
 
     uint8_t ismmap:1,
 	    isreg:1,
-	    isstring:1;
+	    isstring:1,
+	    isconst:1;
 
     /* If this value is mmap'd instead of alloc'd, store that too. */
     struct mmap_entry *mmap;
@@ -2246,6 +2232,5 @@ struct value {
 
     struct value *parent_value;
 };
-
 
 #endif

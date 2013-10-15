@@ -16,14 +16,18 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include <glib.h>
+#include "glib_wrapper.h"
+
 #include "target.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 
 struct symbol *target_create_synthetic_type_pointer(struct target *target,
-						  struct symbol *type) {
-    struct symbol *retval = symbol_create(type->symtab,0,NULL,0,SYMBOL_TYPE_TYPE,
-					  SYMBOL_SOURCE_DWARF,1);
+						    struct symbol *type) {
+    struct symbol *retval = 
+	symbol_create(SYMBOL_TYPE_TYPE,SYMBOL_SOURCE_DWARF,NULL,0,
+		      0,LOADTYPE_FULL,symbol_containing_scope(type));
 
     retval->datatype_code = DATATYPE_PTR;
     retval->issynthetic = 1;
@@ -136,26 +140,29 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 			      void *buf,int bufsiz,
 			      load_flags_t flags,
 			      struct target *target) {
-    struct symbol_instance *member_instance;
     struct symbol *member;
     int i;
     uint32_t bytesize;
+    GSList *gsltmp;
+    loctype_t ltrc;
+    OFFSET offset;
 
  again:
-    bytesize = symbol_bytesize(type);
+    bytesize = symbol_get_bytesize(type);
     switch (type->datatype_code) {
     case DATATYPE_VOID:
 	fprintf(stream,"<VOID>");
 	return;
-    case DATATYPE_BASE:
+    case DATATYPE_BASE:;
+	encoding_t enc = SYMBOLX_ENCODING_V(type);
 	if (bytesize == 1) {
-	    if (type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR)
+	    if (enc == ENCODING_SIGNED_CHAR)
 		fprintf(stream,"%c",rv_c(buf));
-	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR)
+	    else if (enc == ENCODING_UNSIGNED_CHAR)
 		fprintf(stream,"%uc",rv_uc(buf));
-	    else if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
+	    else if (enc == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi8,rv_i8(buf));
-	    else if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
+	    else if (enc == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIu8,rv_u8(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",bytesize);
@@ -163,25 +170,25 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	else if (bytesize == 2) {
 	    if (strstr(type->name,"char"))
 		fprintf(stream,"%lc",rv_wc(buf));
-	    else if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
+	    else if (enc == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi16,rv_i16(buf));
-	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED)
+	    else if (enc == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu16,rv_u16(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",bytesize);
 	}
 	else if (bytesize == 4) {
-	    if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
+	    if (enc == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi32,rv_i32(buf));
-	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED)
+	    else if (enc == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu32,rv_u32(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",bytesize);
 	}
 	else if (bytesize == 8) {
-	    if (type->s.ti->d.t.encoding == ENCODING_SIGNED)
+	    if (enc == ENCODING_SIGNED)
 		fprintf(stream,"%" PRIi64,rv_i64(buf));
-	    else if (type->s.ti->d.t.encoding == ENCODING_UNSIGNED)
+	    else if (enc == ENCODING_UNSIGNED)
 		fprintf(stream,"%" PRIu64,rv_u64(buf));
 	    else 
 		fprintf(stream,"<BASE_%d>",bytesize);
@@ -191,35 +198,46 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	}
 	return;
     case DATATYPE_ARRAY:;
-	/* catch 0-byte arrays */
-	if (type->s.ti->d.a.count == 0
-	    || type->s.ti->d.a.subranges[type->s.ti->d.a.count - 1] == 0) {
+	GSList *subranges = SYMBOLX_SUBRANGES(type);
+	int subrange;
+
+	if (!subranges) {
 	    fprintf(stream,"[  ]");
 	    return;
 	}
 
-	int typebytesize = symbol_bytesize(type->datatype);
-	int total = 1;
-	int *arcounts = (int *)malloc(sizeof(int)*(type->s.ti->d.a.count));
-	uint64_t offset = 0;
-	int rowlength = type->s.ti->d.a.subranges[type->s.ti->d.a.count - 1] + 1;
-	struct symbol *datatype = type->datatype;
+	/* catch 0-byte arrays */
+	subrange = (int)(uintptr_t)subranges->data;
+	if (subrange == 0) {
+	    fprintf(stream,"[  ]");
+	    return;
+	}
 
-	for (i = 0; i < type->s.ti->d.a.count; ++i) {
-	    if (likely(i < (type->s.ti->d.a.count - 1))) {
+	int llen = g_slist_length(subranges);
+	int typebytesize = symbol_get_bytesize(symbol_get_datatype(type));
+	int total = 1;
+	int *arcounts = (int *)malloc(sizeof(int) * llen);
+	uint64_t aoffset = 0;
+	int rowlength = 
+	    ((int)(uintptr_t)g_slist_nth_data(subranges,llen - 1)) + 1;
+	struct symbol *datatype = symbol_get_datatype(type);
+
+	for (i = 0; i < llen; ++i) {
+	    if (likely(i < (llen - 1))) {
 		arcounts[i] = 0;
 		fprintf(stream,"[ ");
 	    }
-	    total = total * (type->s.ti->d.a.subranges[i] + 1);
+	    int sri = (int)(uintptr_t)g_slist_nth_data(subranges,i);
+	    total = total * (sri + 1);
 	}
 	while (total) {
 	    /* do one row according to the current baseoffset */
 	    fprintf(stream,"[ ");
-	    for (i = 0; i < rowlength; ++i, offset += typebytesize) {
+	    for (i = 0; i < rowlength; ++i, aoffset += typebytesize) {
 		if (likely(i > 0))
 		    fprintf(stream,", ");
 		symbol_type_rvalue_print(stream,datatype,
-					 (void *)(buf+offset),typebytesize,
+					 (void *)(buf+aoffset),typebytesize,
 					 flags,target);
 	    }
 	    total -= rowlength;
@@ -229,8 +247,9 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	     * increment the next highest one each time we reach the
 	     * max length for one of the indices.
 	     */
-	    for (i = type->s.ti->d.a.count - 1; i > -1; --i) {
-		if (arcounts[i]++ < (type->s.ti->d.a.subranges[i] + 1)) 
+	    int sri = (int)(uintptr_t)g_slist_nth_data(subranges,i);
+	    for (i = llen - 1; i > -1; --i) {
+		if (arcounts[i]++ < (sri + 1)) 
 		    break;
 		else {
 		    fprintf(stream,"] ");
@@ -257,28 +276,25 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	if (!(flags & LOAD_FLAG_AUTO_DEREF_RECURSE)) 
 	    flags &= ~LOAD_FLAG_AUTO_DEREF;
 	i = 0;
-	list_for_each_entry(member_instance,&type->s.ti->d.su.members,
-			    d.v.member) {
-	    member = member_instance->d.v.member_symbol;
+	gsltmp = NULL;
+	v_g_slist_foreach(SYMBOLX_MEMBERS(type),gsltmp,member) {
 	    if (likely(i))
 		fprintf(stream,", ");
-	    if (type->datatype_code == DATATYPE_STRUCT 
-		&& member->s.ii->d.v.l.loctype != LOCTYPE_MEMBER_OFFSET) {
-		vwarn("type %s member %s did not have a MEMBER_OFFSET location, skipping!\n",type->name,member->name);
-		if (member->name)
-		    fprintf(stream,".%s = ???",member->name);
-		continue;
-	    }
 
 	    if (member->name) 
 		fprintf(stream,".%s = ",member->name);
 	    if (type->datatype_code == DATATYPE_UNION)
 		symbol_rvalue_print(stream,member,buf,bufsiz,flags,target);
-	    else
-		symbol_rvalue_print(stream,member,
-				    buf + member->s.ii->d.v.l.l.member_offset,
-				    bufsiz - member->s.ii->d.v.l.l.member_offset,
-				    flags,target);
+	    else {
+		ltrc = symbol_resolve_location(member,NULL,NULL,NULL,NULL,NULL,
+					       &offset);
+		if (ltrc != LOCTYPE_MEMBER_OFFSET) 
+		    fputs("?",stream);
+		else 
+		    symbol_rvalue_print(stream,member,
+					buf + offset,bufsiz - offset,
+					flags,target);
+	    }
 	    ++i;
 	}
 	fprintf(stream," }");
@@ -309,7 +325,7 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	    }
 	}
 	return;
-    case DATATYPE_FUNCTION:
+    case DATATYPE_FUNC:
 	fprintf(stream,"<FUNCTION>");
 	return;
     case DATATYPE_TYPEDEF:
@@ -337,7 +353,7 @@ void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
     if (!SYMBOL_IS_VAR(symbol))
 	return;
 
-    type = symbol_type_skip_qualifiers(symbol_get_datatype__int(symbol));
+    type = symbol_get_datatype(symbol);
 
     if (symbol->size_is_bits
 	&& type->datatype_code != DATATYPE_BASE) {

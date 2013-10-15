@@ -106,7 +106,7 @@ typedef enum log_flags_lib {
 typedef enum log_flag_bits_debug {
     LFB_DFILE         = 0,
     LFB_SYMBOL        = 1,
-    LFB_SYMTAB        = 2,
+    LFB_SCOPE         = 2,
     LFB_DLOC          = 3,
     LFB_DLOOKUP       = 4,
     LFB_DWARF         = 5,
@@ -119,7 +119,7 @@ typedef enum log_flag_bits_debug {
 typedef enum log_flags_debug {
     LF_DFILE          = 1 << LFB_DFILE,
     LF_SYMBOL         = 1 << LFB_SYMBOL,
-    LF_SYMTAB         = 1 << LFB_SYMTAB,
+    LF_SCOPE          = 1 << LFB_SCOPE,
     LF_DLOC           = 1 << LFB_DLOC,
     LF_DLOOKUP        = 1 << LFB_DLOOKUP,
     LF_DWARF          = 1 << LFB_DWARF,
@@ -213,7 +213,7 @@ typedef enum log_flags_ {
 /* Set every last bit for a specific area. */
 #define LF_ALL        INT_MAX
 #define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR | LF_ROP | LF_CFI)
-#define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SYMTAB | LF_DLOC \
+#define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SCOPE | LF_DLOC \
 		  | LF_DLOOKUP | LF_DWARF | LF_DWARFATTR	\
 		  | LF_DWARFOPS | LF_DOTHER | LF_ELF | LF_BFILE )
 #define LF_T_ALL (LF_TARGET | LF_SPACE | LF_REGION | LF_TLOOKUP \

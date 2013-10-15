@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "binfile.h"
 #include "target_xen_vm_process.h"
 #include "target.h"
 #include "target_api.h"
@@ -1012,6 +1013,8 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
     char rbuf[PATH_MAX];
     char *file;
     struct lsymbol *mainsymbol;
+    int bfn = 0;
+    int bfpn = 0;
 
     vdebug(5,LA_TARGET,LF_XVP,"tid %d\n",target->base_tid);
 
@@ -1047,13 +1050,17 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
      * Try to figure out which binfile has the info we need.  On
      * different distros, they're stripped different ways.
      */
-    if (debugfile->binfile_pointing 
-	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
-	> symtab_get_size_simple(debugfile->binfile->symtab)) {
-	RHOLD(debugfile->binfile_pointing,region);
-	region->binfile = debugfile->binfile_pointing;
+    if (debugfile->binfile_pointing) {
+	binfile_get_root_scope_sizes(debugfile->binfile,&bfn,NULL,NULL,NULL);
+	binfile_get_root_scope_sizes(debugfile->binfile_pointing,&bfpn,
+				     NULL,NULL,NULL);
+	if (bfpn > bfn) {
+	    RHOLD(debugfile->binfile_pointing,region);
+	    region->binfile = debugfile->binfile_pointing;
+	}
     }
-    else {
+
+    if (!region->binfile) {
 	RHOLD(debugfile->binfile,region);
 	region->binfile = debugfile->binfile;
     }
@@ -1062,7 +1069,7 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
      * Change type to REGION_TYPE_MAIN if it had a main() function.
      */
     if (region->type == REGION_TYPE_LIB) {
-	mainsymbol = debugfile_lookup_sym(debugfile,"main",NULL,NULL,SYMBOL_TYPE_FUNCTION);
+	mainsymbol = debugfile_lookup_sym(debugfile,"main",NULL,NULL,SYMBOL_TYPE_FUNC);
 	if (mainsymbol) {
 	    if (!mainsymbol->symbol->isdeclaration)
 		region->type = REGION_TYPE_MAIN;
@@ -1088,6 +1095,106 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
 static int xen_vm_process_postloadinit(struct target *target) {
 
     return 0;
+}
+
+static int _xen_vm_process_active_memory_post_handler(struct probe *probe,
+						      void *handler_data,
+						      struct probe *trigger) {
+    return 0;
+}
+
+static int xen_vm_process_set_active_probing(struct target *target,
+					     active_probe_flags_t flags) {
+    struct xen_vm_process_state *xvpstate = \
+	(struct xen_vm_process_state *)target->state;
+    struct xen_vm_state *xstate = \
+	(struct xen_vm_state *)target->base->state;
+    int retval = 0;
+
+#if 0
+    if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
+	if (flags & ACTIVE_PROBE_FLAG_MEMORY) {
+	    ;
+	    if (!(xvpstate->active_memory_probe_mmap = 
+		  linux_syscall_probe(target->base,target->base_tid,
+				      "sys_mmap",NULL,
+				      _xen_vm_process_active_memory_post_handler,
+				      target))) {
+		if (errno != ENOSYS) {
+		    verror("could not register syscall probe on mmap;!\n");
+		    --retval;
+		}
+	    }
+	    //else if ...
+
+	    if (retval < 0) {
+		goto unprobe;
+	    }
+	    else {
+		target->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+	    }
+	}
+	else {
+	unprobe:
+	    if (xvpstate->active_memory_probe_uselib) {
+		probe_free(xvpstate->active_memory_probe_uselib,0);
+		xvpstate->active_memory_probe_uselib = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_munmap) {
+		probe_free(xvpstate->active_memory_probe_munmap,0);
+		xvpstate->active_memory_probe_munmap = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mmap) {
+		probe_free(xvpstate->active_memory_probe_mmap,0);
+		xvpstate->active_memory_probe_mmap = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mprotect) {
+		probe_free(xvpstate->active_memory_probe_mprotect,0);
+		xvpstate->active_memory_probe_mprotect = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mremap) {
+		probe_free(xvpstate->active_memory_probe_mremap,0);
+		xvpstate->active_memory_probe_mremap = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mmap_pgoff) {
+		probe_free(xvpstate->active_memory_probe_mmap_pgoff,0);
+		xvpstate->active_memory_probe_mmap_pgoff = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_madvise) {
+		probe_free(xvpstate->active_memory_probe_madvise,0);
+		xvpstate->active_memory_probe_madvise = NULL;
+	    }
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
+	}
+    }
+#endif
+
+    if ((flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)) {
+	if (flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) {
+	    --retval;
+
+	    verror("cannot enable active thread_entry probes; unsupported!\n");
+	}
+	else {
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	}
+    }
+
+    if ((flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+	if (flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
+	    --retval;
+
+	    verror("cannot enable active thread_exit probes; unsupported!\n");
+	}
+	else {
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	}
+    }
+
+    return retval;
 }
 
 #define EF_TF (0x00000100)

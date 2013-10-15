@@ -31,6 +31,7 @@
 #include "common.h"
 #include "log.h"
 #include "output.h"
+#include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 
@@ -72,26 +73,7 @@ static int _filename_info(char *filename,
 /*
  * Lib init/fini stuff.
  */
-void binfile_init(void) {
-    if (init_done)
-	return;
-
-    if (regcomp(&LIBREGEX1,LIBFORMAT1,REG_EXTENDED)) {
-	verror("regcomp('%s'): %s\n",LIBFORMAT1,strerror(errno));
-	assert(0);
-    }
-    if (regcomp(&LIBREGEX2,LIBFORMAT2,REG_EXTENDED)) {
-	verror("regcomp('%s'): %s\n",LIBFORMAT2,strerror(errno));
-	assert(0);
-    }
-
-    binfile_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
-					NULL,NULL);
-
-    init_done = 1;
-}
-
-void binfile_fini(void) {
+static void binfile_fini(void) {
     GHashTableIter iter;
     struct binfile *binfile;
 
@@ -118,9 +100,31 @@ void binfile_fini(void) {
     init_done = 0;
 }
 
+void binfile_init(void) {
+    if (init_done)
+	return;
+
+    atexit(binfile_fini);
+
+    if (regcomp(&LIBREGEX1,LIBFORMAT1,REG_EXTENDED)) {
+	verror("regcomp('%s'): %s\n",LIBFORMAT1,strerror(errno));
+	assert(0);
+    }
+    if (regcomp(&LIBREGEX2,LIBFORMAT2,REG_EXTENDED)) {
+	verror("regcomp('%s'): %s\n",LIBFORMAT2,strerror(errno));
+	assert(0);
+    }
+
+    binfile_tab = g_hash_table_new_full(g_str_hash,g_str_equal,
+					NULL,NULL);
+
+    init_done = 1;
+}
+
 struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
 			       void *priv) {
     struct binfile *binfile;
+    struct symbol_root_elf *sre;
 
     binfile = (struct binfile *)calloc(1,sizeof(*binfile));
     binfile->fd = -1;
@@ -141,7 +145,14 @@ struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
     else if (binfile->filename == filename)
 	binfile->filename = strdup(filename);
 
-    binfile->symtab = symtab_create(binfile,NULL,0,"symtab",0,NULL);
+    binfile->root = 
+	symbol_create(SYMBOL_TYPE_ROOT,SYMBOL_SOURCE_ELF,filename,1,0,
+		      LOADTYPE_FULL,NULL);
+    sre = calloc(1,sizeof(*sre));
+    sre->binfile = binfile;
+    symbol_set_root_priv(binfile->root,sre);
+    RHOLD(binfile->root,binfile);
+    symbol_write_owned_scope(binfile->root);
     binfile->ranges = clrange_create();
 
     return binfile;
@@ -311,6 +322,19 @@ binfile_type_t binfile_get_binfile_type(struct binfile *binfile) {
     return binfile->type;
 }
 
+int binfile_get_root_scope_sizes(struct binfile *binfile,
+				 int *named,int *duplicated,int *anon,
+				 int *numscopes) {
+    struct scope *scope;
+
+    if (!binfile->root)
+	return -1;
+    scope = symbol_read_owned_scope(binfile->root);
+    if (!scope)
+	return -1;
+    return scope_get_sizes(scope,named,duplicated,anon,numscopes);
+}
+
 int binfile_close(struct binfile *binfile) {
     int retval;
 
@@ -372,9 +396,8 @@ REFCNT binfile_free(struct binfile *binfile,int force) {
 	clrange_free(binfile->ranges);
 	binfile->ranges = NULL;
     }
-    if (binfile->symtab) {
-	symtab_free(binfile->symtab);
-	binfile->symtab = NULL;
+    if (binfile->root) {
+	RPUT(binfile->root,symbol,binfile,trefcnt);
     }
     if (binfile->dynstrtab) {
 	free(binfile->dynstrtab);

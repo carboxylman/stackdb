@@ -35,6 +35,7 @@
 #include "list.h"
 #include "clfit.h"
 #include "alist.h"
+#include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 
@@ -584,14 +585,15 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
     int plt_idx;
     int plt_entry_size = 0;
     int len;
-    char *pltsymbuf;
+    char *pltsymbuf = NULL;
+    int pltsymbuf_len;
     GElf_Rela rela;
     int rstrsec;
     int dynsymtabsec = -1;
     int symtabsec = -1;
     int dynstrtabsec = -1;
-    int strtabsec = -1;
     struct symbol *tsymbol;
+    struct scope *root_scope;
 
     /*
      * Set up our data structures.
@@ -604,6 +606,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
     bf = binfile_create(filename,&elf_binfile_ops,bfelf);
     if (!bf) 
 	goto errout;
+
+    root_scope = symbol_write_owned_scope(bf->root);
 
     if (root_prefix) {
 	bf->root_prefix = strdup(root_prefix);
@@ -1018,7 +1022,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		goto errout;
 	    }
 
-	    strtabsec = i;
+	    //strtabsec = i;
 	    bf->strtablen = edata->d_size;
 	    bf->strtab = malloc(edata->d_size);
 	    memcpy(bf->strtab,edata->d_buf,edata->d_size);
@@ -1120,7 +1124,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		    vdebug(5,LA_DEBUG,LF_DFILE,"found note desc '%s'\n",ndata);
 		    /* dig out the build ID */
 		    if (nthdr64->n_type == NT_GNU_BUILD_ID) {
-			bfelf->buildid = strdup(ndata);
+			bfelf->buildid = strndup(ndata,nend - ndata);
 			break;
 		    }
 		    /* skip past the descriptor and padding */
@@ -1138,7 +1142,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 			ndata += (4 - nthdr32->n_namesz % 4);
 		    /* dig out the build ID */
 		    if (nthdr32->n_type == NT_GNU_BUILD_ID) {
-			bfelf->buildid = strdup(ndata);
+			bfelf->buildid = strndup(ndata,nend - ndata);
 			break;
 		    }
 		    /* skip past the descriptor and padding */
@@ -1170,6 +1174,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
      * PLT are strictly ordered w.r.t. one another, and assuming that a
      * PLT has a single "header" entry at its top.
      */
+    pltsymbuf = malloc(128);
+    pltsymbuf_len = 128;
     for (i = 0; i < bfelf->ehdr.e_shnum; ++i) {
 	shdr = &bfelf->shdrs[i];
 	scn = elf_getscn(bfelf->elf,i);
@@ -1273,33 +1279,33 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    }
 
 	    len = strlen(symname) + sizeof("@plt") + 1;
-	    pltsymbuf = calloc(len,sizeof(char));
+	    if (len > pltsymbuf_len) {
+		pltsymbuf = realloc(pltsymbuf,len);
+		pltsymbuf_len = len;
+	    }
 	    snprintf(pltsymbuf,len,"%s@plt",symname);
 
-	    symbol = symbol_create(bf->symtab,
+	    symbol = symbol_create(SYMBOL_TYPE_FUNC,SYMBOL_SOURCE_ELF,
+				   pltsymbuf,1,
 				   (SMOFFSET)(shdr->sh_addr + j * shdr->sh_entsize),
-				   pltsymbuf,0,SYMBOL_TYPE_FUNCTION,
-				   SYMBOL_SOURCE_ELF,0);
-	    RHOLD(symbol,bf);
+				   LOADTYPE_FULL,root_scope);
 
 	    if (GELF_ST_BIND(rsym.st_info) == STB_GLOBAL
 		|| GELF_ST_BIND(rsym.st_info) == STB_WEAK)
-		symbol->isexternal = 1;
+		symbol_set_external(symbol);
 
-	    symbol->size.bytes = plt_entry_size;
-	    symbol->size_is_bytes = 1;
+	    symbol_set_bytesize(symbol,plt_entry_size);
+	    symbol_set_addr(symbol,(ADDR)(plt_start + plt_idx * plt_entry_size));
 
-	    symbol->base_addr = (ADDR)(plt_start + plt_idx * plt_entry_size);
-	    symbol->has_base_addr = 1;
+	    symbol_insert_symbol(bf->root,symbol);
 
-	    symtab_insert(bf->symtab,symbol,0);
-
-	    clrange_add(&bf->ranges,symbol->base_addr,
-			symbol->base_addr + symbol->size.bytes,symbol);
+	    clrange_add(&bf->ranges,symbol_get_addr(symbol),
+			symbol_get_addr(symbol) + symbol_get_bytesize(symbol),
+			symbol);
 
 	    vdebug(3,LA_DEBUG,LF_ELF,
 		   "added plt index ELF symbol %s at 0x%"PRIxADDR"\n",
-		   symbol->name,symbol->base_addr);
+		   symbol->name,symbol->addr);
 
 	    ++plt_idx;
 	}
@@ -1394,12 +1400,12 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    symname = &bf->strtab[sym->st_name];
 #endif
 
-	    symbol = symbol_create(bf->symtab,(SMOFFSET)ii,symname,0,
-				   (stt == STT_OBJECT || stt == STT_TLS
+	    symbol = symbol_create((stt == STT_OBJECT || stt == STT_TLS
 				    || stt == STT_COMMON)	\
-				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNCTION,
-				   SYMBOL_SOURCE_ELF,0);
-	    RHOLD(symbol,bf);
+				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNC,
+				   SYMBOL_SOURCE_ELF,
+				   symname,0,(SMOFFSET)ii,LOADTYPE_FULL,
+				   root_scope);
 
 	    if (GELF_ST_BIND(sym->st_info) == STB_GLOBAL
 		|| GELF_ST_BIND(sym->st_info) == STB_WEAK)
@@ -1409,12 +1415,11 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    symbol->size_is_bytes = 1;
 
 	    if (bfelfinst && bfelfinst->symbol_tab && ii < bfelfinst->num_symbols)
-		symbol->base_addr = bfelfinst->symbol_tab[ii];
+		symbol_set_addr(symbol,bfelfinst->symbol_tab[ii]);
 	    else
-		symbol->base_addr = (ADDR)sym->st_value;
-	    symbol->has_base_addr = 1;
+		symbol_set_addr(symbol,(ADDR)sym->st_value);
 
-	    symtab_insert(bf->symtab,symbol,0);
+	    symbol_insert_symbol(bf->root,symbol);
 
 	    /*
 	     * Insert into debugfile->addresses IF the hashtable is
@@ -1432,9 +1437,10 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				    (gpointer)symbol);
 	    */
 
-	    if (symbol->base_addr != 0)
-		clrange_add(&bf->ranges,symbol->base_addr,
-			    symbol->base_addr + symbol->size.bytes,symbol);
+	    if (symbol_get_addr(symbol) != 0)
+		clrange_add(&bf->ranges,symbol_get_addr(symbol),
+			    symbol_get_addr(symbol) + symbol_get_bytesize(symbol),
+			    symbol);
 	}
     }
 
@@ -1518,11 +1524,12 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    /*
 	     * Check symtab; don't duplicate!
 	     */
-	    if ((tsymbol = symtab_get_sym(bf->symtab,&bf->dynstrtab[sym->st_name]))
-		&& tsymbol->base_addr == sym->st_value) {
+	    tsymbol = symbol_get_one_member__int(bf->root,
+						 &bf->dynstrtab[sym->st_name]);
+	    if (tsymbol && symbol_get_addr(tsymbol) == sym->st_value) {
 		vdebug(5,LA_DEBUG,LF_ELF,
 		       "not creating duplicate dynsym %s (0x%"PRIxADDR")\n",
-		       tsymbol->name,tsymbol->base_addr);
+		       tsymbol->name,symbol_get_addr(tsymbol));
 		continue;
 	    }
 
@@ -1536,26 +1543,23 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    symname = &bf->dynstrtab[sym->st_name];
 #endif
 
-	    symbol = symbol_create(bf->symtab,(SMOFFSET)ii,symname,0,
-				   (stt == STT_OBJECT || stt == STT_TLS
+	    symbol = symbol_create((stt == STT_OBJECT || stt == STT_TLS
 				    || stt == STT_COMMON)	\
-				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNCTION,
-				   SYMBOL_SOURCE_ELF,0);
-	    RHOLD(symbol,bf);
+				   ? SYMBOL_TYPE_VAR : SYMBOL_TYPE_FUNC,
+				   SYMBOL_SOURCE_ELF,
+				   symname,0,(SMOFFSET)ii,LOADTYPE_FULL,
+				   root_scope);
 
 	    if (GELF_ST_BIND(sym->st_info) == STB_GLOBAL
 		|| GELF_ST_BIND(sym->st_info) == STB_WEAK)
-		symbol->isexternal = 1;
+		symbol_set_external(symbol);
 
-	    symbol->size.bytes = sym->st_size;
-	    symbol->size_is_bytes = 1;
+	    symbol_set_bytesize(symbol,sym->st_size);
 
-	    if (sym->st_value > 0) {
-		symbol->base_addr = (ADDR)sym->st_value;
-		symbol->has_base_addr = 1;
-	    }
+	    if (sym->st_value > 0)
+		symbol_set_addr(symbol,(ADDR)sym->st_value);
 
-	    symtab_insert(bf->symtab,symbol,0);
+	    symbol_insert_symbol(bf->root,symbol);
 
 	    /*
 	     * Insert into debugfile->addresses IF the hashtable is
@@ -1573,9 +1577,10 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 				    (gpointer)symbol);
 	    */
 
-	    if (symbol->base_addr != 0)
-		clrange_add(&bf->ranges,symbol->base_addr,
-			    symbol->base_addr + symbol->size.bytes,symbol);
+	    if (sym->st_value > 0)
+		clrange_add(&bf->ranges,symbol_get_addr(symbol),
+			    symbol_get_addr(symbol) + symbol_get_bytesize(symbol),
+			    symbol);
 	}
     }
 
@@ -1602,25 +1607,20 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	else 
 	    stt = STT_OBJECT;
 
-	symbol = symbol_create(bf->symtab,(SMOFFSET)i,name,1,
-			       stt == STT_OBJECT ? SYMBOL_TYPE_VAR 
-			                         : SYMBOL_TYPE_FUNCTION,
-			       SYMBOL_SOURCE_ELF,0);
-	RHOLD(symbol,bf);
+	symbol = symbol_create(stt == STT_OBJECT ? SYMBOL_TYPE_VAR 
+			                         : SYMBOL_TYPE_FUNC,
+			       SYMBOL_SOURCE_ELF,
+			       name,1,(SMOFFSET)i,LOADTYPE_FULL,root_scope);
 
-	symbol->isexternal = 1;
+	symbol_set_external(symbol);
+	symbol_set_bytesize(symbol,shdr->sh_size);
+	symbol_set_addr(symbol,(ADDR)shdr->sh_addr);
 
-	symbol->size.bytes = shdr->sh_size;
-	symbol->size_is_bytes = 1;
-
-	symbol->base_addr = (ADDR)shdr->sh_addr;
-	symbol->has_base_addr = 1;
-
-	symtab_insert(bf->symtab,symbol,0);
+	symbol_insert_symbol(bf->root,symbol);
 
 	vdebug(16,LA_DEBUG,LF_ELF,
 	       "created section symbol %s (0x%"PRIxADDR"; %d bytes)\n",
-	       name,symbol->base_addr,symbol->size.bytes);
+	       name,(ADDR)shdr->sh_addr,shdr->sh_size);
     }
 
     {
@@ -1679,7 +1679,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		 * next symbol is NOT global, we need to try to find the
 		 * next global symbol!
 		 */
-		if (SYMBOL_IS_FUNCTION(symbol) && symbol->isexternal) {
+		if (SYMBOL_IS_FUNC(symbol) && symbol->isexternal) {
 		    gcrd = NULL;
 		    tmpstart = start;
 		    while ((tmp_ral = \
@@ -1855,18 +1855,16 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	 * either the end of the PLT, or to the first symbol in the PLT.
 	 */
 	if (has_plt) {
-	    symbol = symbol_create(bf->symtab,(SMOFFSET)0,strdup("_header@plt"),0,
-				   SYMBOL_TYPE_FUNCTION,SYMBOL_SOURCE_ELF,0);
-	    RHOLD(symbol,bf);
+	    symbol = symbol_create(SYMBOL_TYPE_FUNC,SYMBOL_SOURCE_ELF,
+				   "_header@plt",0,(SMOFFSET)0,
+				   LOADTYPE_FULL,root_scope);
 
-	    symbol->isexternal = 0;
-	    symbol->size_is_bytes = 1;
-	    symbol->base_addr = plt_start;
-	    symbol->has_base_addr = 1;
+	    symbol_set_external(symbol);
+	    symbol_set_addr(symbol,plt_start);
 
 	    ral = clrange_find_next_exc(&bf->ranges,plt_start);
 	    if (!ral) {
-		symbol->size.bytes = plt_size;
+		symbol_set_bytesize(symbol,plt_size);
 		vwarnopt(9,LA_DEBUG,LF_ELF,
 			 "could not find a symbol following the PLT; assuming _header@plt is the whole PLT!\n");
 	    }
@@ -1875,27 +1873,30 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 		gcrd = (struct clf_range_data *)array_list_item(ral,0);
 
 		if (CLRANGE_START(gcrd) >= (plt_start + plt_size)) {
-		    symbol->size.bytes = plt_size;
+		    symbol_set_bytesize(symbol,plt_size);
 		    vwarnopt(9,LA_DEBUG,LF_ELF,
 			     "could not find a symbol following the PLT within"
 			     " the PLT; assuming _header@plt is the whole PLT!\n");
 		}
 		else {
-		    symbol->size.bytes = CLRANGE_START(gcrd) - plt_start;
+		    symbol_set_bytesize(symbol,CLRANGE_START(gcrd) - plt_start);
 		    
 		    vdebug(2,LA_DEBUG,LF_ELF,
 			   "setting _header@plt size to %d bytes.\n",
-			   symbol->size.bytes);
+			   symbol_get_bytesize(symbol));
 		}
 	    }
 
-	    symtab_insert(bf->symtab,symbol,0);
+	    symbol_insert_symbol(bf->root,symbol);
 
-	    clrange_add(&bf->ranges,symbol->base_addr,
-			symbol->base_addr + symbol->size.bytes,symbol);
+	    clrange_add(&bf->ranges,symbol_get_addr(symbol),
+			symbol_get_addr(symbol) + symbol_get_bytesize(symbol),
+			symbol);
 	}
     }
 
+    if (pltsymbuf)
+	free(pltsymbuf);
 #ifdef DWDEBUG_NOUSE_STRTAB
     /*
      * Only save elf_strtab if we're gonna use it.
@@ -1915,6 +1916,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
     return bf;
 
  errout:
+    if (pltsymbuf)
+	free(pltsymbuf);
     if (bf) {
 	binfile_close(bf);
 	binfile_free(bf,1);

@@ -55,11 +55,13 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h \
+	$(TOP_SRCDIR)/dwdebug/binfile.h \
 	$(SRCDIR)/target.h $(SRCDIR)/target_api.h \
 	$(SRCDIR)/probe.h $(SRCDIR)/probe_api.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
+	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h \
+	$(TOP_SRCDIR)/include/glib_wrapper.h
 
 OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo probe.lo probe_lib.lo probe_value.lo probe_filter.lo \

@@ -38,6 +38,7 @@
 
 #include "evloop.h"
 
+#include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 #include "target_api.h"
@@ -537,6 +538,7 @@ struct target *xen_vm_attach(struct target_spec *spec,
     int have_id = 0;
     unsigned int slen;
     char *domain;
+    REFCNT trefcnt;
 
     domain = xspec->domain;
     
@@ -829,8 +831,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 
     /* Then grab stuff from the ELF binary itself. */
     target->binfile = 
-	binfile_open__int(xstate->kernel_elf_filename,
-			  target->spec->debugfile_root_prefix,NULL);
+	binfile_open(xstate->kernel_elf_filename,
+		     target->spec->debugfile_root_prefix,NULL);
     if (!target->binfile) {
 	verror("binfile_open %s: %s\n",
 	       xstate->kernel_elf_filename,strerror(errno));
@@ -838,6 +840,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
     }
 
     RHOLD(target->binfile,target);
+    /* Drop the self-ref that binfile_open held on our behalf. */
+    RPUT(target->binfile,binfile,target->binfile,trefcnt);
 
     target->wordsize = target->binfile->wordsize;
     target->endian = target->binfile->endian;
@@ -1401,11 +1405,11 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     if (iskernel && preempt_count) {
 	if (target->wordsize == 8) {
 	    tstate->ptregs_stack_addr = 
-		stack_top - 0 - symbol_bytesize(xstate->pt_regs_type);
+		stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
 	}
 	else {
 	    tstate->ptregs_stack_addr = 
-		stack_top - 8 - symbol_bytesize(xstate->pt_regs_type);
+		stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
 	}
 	//tstate->ptregs_stack_addr = tstate->esp - 8 - 15 * 4;
 	// + 8 - 7 * 4; // - 8 - 15 * 4;
@@ -1433,11 +1437,11 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     }
     else if (target->wordsize == 8) {
 	tstate->ptregs_stack_addr = 
-	    stack_top - 0 - symbol_bytesize(xstate->pt_regs_type);
+	    stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
     }
     else {
 	tstate->ptregs_stack_addr = 
-	    stack_top - 8 - symbol_bytesize(xstate->pt_regs_type);
+	    stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
     }
 
     vdebug(5,LA_TARGET,LF_XV,
@@ -1581,7 +1585,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	 */
 	v = target_load_addr_real(target,tstate->ptregs_stack_addr,
 				  LOAD_FLAG_NONE,
-				  symbol_bytesize(xstate->pt_regs_type));
+				  symbol_get_bytesize(xstate->pt_regs_type));
 	if (!v) {
 	    verror("could not load stack register save frame task %"PRIiTID"!\n",
 		   tid);
@@ -3548,6 +3552,8 @@ static int xen_vm_loaddebugfiles(struct target *target,
     int retval = -1;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct debugfile *debugfile;
+    int bfn = 0;
+    int bfpn = 0;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -3582,13 +3588,17 @@ static int xen_vm_loaddebugfiles(struct target *target,
      * Try to figure out which binfile has the info we need.  On
      * different distros, they're stripped different ways.
      */
-    if (debugfile->binfile_pointing 
-	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
-	> symtab_get_size_simple(debugfile->binfile->symtab)) {
-	RHOLD(debugfile->binfile_pointing,region);
-	region->binfile = debugfile->binfile_pointing;
+    if (debugfile->binfile_pointing) {
+	binfile_get_root_scope_sizes(debugfile->binfile,&bfn,NULL,NULL,NULL);
+	binfile_get_root_scope_sizes(debugfile->binfile_pointing,&bfpn,
+				     NULL,NULL,NULL);
+	if (bfpn > bfn) {
+	    RHOLD(debugfile->binfile_pointing,region);
+	    region->binfile = debugfile->binfile_pointing;
+	}
     }
-    else {
+
+    if (!region->binfile) {
 	RHOLD(debugfile->binfile,region);
 	region->binfile = debugfile->binfile;
     }
@@ -3652,10 +3662,10 @@ static int xen_vm_postloadinit(struct target *target) {
     /* Try .text first (and fake the delimiter!!!) */
     if (xstate->kernel_start_addr == 0) {
 	tmpbs = target_lookup_sym(target,".text","|",NULL,
-				  SYMBOL_TYPE_FLAG_FUNCTION);
+				  SYMBOL_TYPE_FLAG_FUNC);
 	if (tmpbs) {
-	    if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
-					 &xstate->kernel_start_addr)) {
+	    if (target_bsymbol_resolve_base(target,TID_GLOBAL,tmpbs,
+					    &xstate->kernel_start_addr,NULL)) {
 		vwarnopt(1,LA_TARGET,LF_XV,
 			 "could not resolve addr of .text;"
 			 " trying startup_(32|64)!\n");
@@ -3673,10 +3683,11 @@ static int xen_vm_postloadinit(struct target *target) {
     if (xstate->kernel_start_addr == 0) {
 	if (target->wordsize == 4) {
 	    tmpbs = target_lookup_sym(target,"startup_32",NULL,NULL,
-				      SYMBOL_TYPE_FLAG_FUNCTION);
+				      SYMBOL_TYPE_FLAG_FUNC);
 	    if (tmpbs) {
-		if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
-					     &xstate->kernel_start_addr)) {
+		if (target_bsymbol_resolve_base(target,TID_GLOBAL,tmpbs,
+						&xstate->kernel_start_addr,
+						NULL)) {
 		    vwarnopt(1,LA_TARGET,LF_XV,
 			     "could not resolve addr of startup_32!\n");
 		}
@@ -3690,10 +3701,11 @@ static int xen_vm_postloadinit(struct target *target) {
 	}
 	else {
 	    tmpbs = target_lookup_sym(target,"startup_64",NULL,NULL,
-				      SYMBOL_TYPE_FLAG_FUNCTION);
+				      SYMBOL_TYPE_FLAG_FUNC);
 	    if (tmpbs) {
-		if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
-					     &xstate->kernel_start_addr)) {
+		if (target_bsymbol_resolve_base(target,TID_GLOBAL,tmpbs,
+						&xstate->kernel_start_addr,
+						NULL)) {
 		    vwarnopt(1,LA_TARGET,LF_XV,
 			     "could not resolve addr of startup_64!\n");
 		}
@@ -3733,8 +3745,8 @@ static int xen_vm_postloadinit(struct target *target) {
 	return 0;
     }
 
-    if (symbol_get_location_addr(xstate->init_task->lsymbol->symbol,
-				 &xstate->init_task_addr)) {
+    if (target_bsymbol_resolve_base(target,TID_GLOBAL,xstate->init_task,
+				    &xstate->init_task_addr,NULL)) {
 	vwarn("could not resolve addr of init_task!\n");
     }
 
@@ -3788,6 +3800,7 @@ static int xen_vm_postloadinit(struct target *target) {
      */
     xstate->task_struct_type =						\
 	symbol_get_datatype(xstate->init_task->lsymbol->symbol);
+    RHOLD(xstate->task_struct_type,target);
 
     mm_struct_type = target_lookup_sym(target,"struct mm_struct",
 				       NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
@@ -4904,7 +4917,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     if (tstate->ptregs_stack_addr) {
 	v = target_load_addr_real(target,tstate->ptregs_stack_addr,
 				  LOAD_FLAG_NONE,
-				  symbol_bytesize(xstate->pt_regs_type));
+				  symbol_get_bytesize(xstate->pt_regs_type));
 	if (!v) {
 	    verror("could not store stack register save frame task %"PRIiTID"!\n",
 		   tid);

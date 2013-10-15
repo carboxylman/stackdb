@@ -52,7 +52,6 @@ struct target_nv_filter *target_nv_filter_parse(char *expr) {
     int isescaped;
     char *cur;
     char *str;
-    char *orig = expr;
 
     expr = strdup(expr);
 

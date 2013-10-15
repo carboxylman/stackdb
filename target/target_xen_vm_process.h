@@ -66,6 +66,14 @@ struct xen_vm_process_state {
 
     struct xen_vm_process_vma *vma_cache;
     int vma_len;
+
+    struct probe *active_memory_probe_uselib;
+    struct probe *active_memory_probe_munmap;
+    struct probe *active_memory_probe_mmap;
+    struct probe *active_memory_probe_mprotect;
+    struct probe *active_memory_probe_mremap;
+    struct probe *active_memory_probe_mmap_pgoff;
+    struct probe *active_memory_probe_madvise;
 };
 
 #endif /* __TARGET_XEN_VM_PROCESS_H__ */

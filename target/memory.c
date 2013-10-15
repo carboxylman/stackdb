@@ -19,8 +19,7 @@
 #include <assert.h>
 
 #include "target.h"
-#include "dwdebug.h"
-#include "dwdebug_priv.h"
+#include "binfile.h"
 
 /*
  * Address spaces.
@@ -297,6 +296,30 @@ ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 	    vdebug(9,LA_TARGET,LF_REGION,"obj(0x%"PRIxADDR") not found in memrange"
 		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
 		   obj_addr,range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
+	}
+    }
+    errno = ESRCH;
+    return 0;
+}
+
+ADDR memregion_unrelocate(struct memregion *region,ADDR real_addr,
+			  struct memrange **range_saveptr) {
+    struct memrange *range;
+    list_for_each_entry(range,&region->ranges,range) {
+	if (memrange_contains_real(range,real_addr)) {
+	    vdebug(9,LA_TARGET,LF_REGION,"unrelocate real(0x%"PRIxADDR") found memrange"
+		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		   real_addr,range->region->name,REGION_TYPE(range->region->type),
+		   range->start,range->end,range->offset,range->prot_flags);
+	    if (range_saveptr)
+		*range_saveptr = range;
+	    return memrange_unrelocate(range,real_addr);
+	}
+	else {
+	    vdebug(9,LA_TARGET,LF_REGION,"real(0x%"PRIxADDR") not found in memrange"
+		   " (%s:%s:0x%"PRIxADDR",0x%"PRIxADDR",%"PRIiOFFSET",%u)\n",
+		   real_addr,range->region->name,REGION_TYPE(range->region->type),
 		   range->start,range->end,range->offset,range->prot_flags);
 	}
     }

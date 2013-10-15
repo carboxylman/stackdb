@@ -49,90 +49,38 @@
 
 #define DWDEBUG_DEF_DELIM "."
 
-#define LOGDUMPSYMBOL(dl,lt,lf,s) \
-    vdebugc((dl),(lt),(lf),"symbol(%s,%s,0x%"PRIxSMOFFSET")", \
-	    symbol_get_name((s)),SYMBOL_TYPE((s)->type),(s)->ref);
-
-#define LOGDUMPSYMBOL_NL(dl,lt,lf,s) \
-    LOGDUMPSYMBOL((dl),(lt),(lf),(s)); \
-    vdebugc((dl),(lt),(lf),"\n");
-
-#define ERRORDUMPSYMBOL(s) \
-    verrorc("symbol(%s,%s,0x%"PRIxSMOFFSET")", \
-	    symbol_get_name((s)),SYMBOL_TYPE((s)->type),(s)->ref);
-
-#define ERRORDUMPSYMBOL_NL(s) \
-    ERRORDUMPSYMBOL((s)); \
-    verrorc("\n");
-
-
-#define LOGDUMPLSYMBOL(dl,lt,lf,s) \
-    vdebugc((dl),(lt),(lf),"lsymbol(%s,%s,0x%"PRIxSMOFFSET";chainlen=%d)", \
-	    symbol_get_name((s)->symbol),SYMBOL_TYPE((s)->symbol->type), \
-	    (s)->symbol->ref,array_list_len((s)->chain));
-
-#define LOGDUMPLSYMBOL_NL(dl,lt,lf,s) \
-    LOGDUMPLSYMBOL((dl),(lt),(lf),(s)); \
-    vdebugc((dl),(lt),(lf),"\n");
-
-#define ERRORDUMPLSYMBOL(s) \
-    verrorc("lsymbol(%s,%s,0x%"PRIxSMOFFSET";chainlen=%d)", \
-	    symbol_get_name((s)->symbol),SYMBOL_TYPE((s)->symbol->type), \
-	    (s)->symbol->ref,array_list_len((s)->chain));
-
-#define ERRORDUMPLSYMBOL_NL(s) \
-    ERRORDUMPLSYMBOL((s)); \
-    verrorc("\n");
-
-/*
- * Any library users must call these to initialize global library state.
- */
+/**
+ ** Library users must call these to initialize global library state.
+ ** They may be called as many times as necessary; but are NOT thread
+ ** safe.
+ **/
 void dwdebug_init(void);
 void dwdebug_fini(void);
 
 /**
  ** Some forward declarations.
  **/
+
+/**
+ ** Binfile decls.  Users don't get to see anything about these.
+ **/
 struct binfile;
 struct binfile_ops;
 struct binfile_instance;
+
+/**
+ ** Debugfile decls.  Users get to see some of this stuff.
+ **/
 struct debugfile;
 struct debugfile_load_opts;
-struct symtab;
+struct scope;
 struct symbol;
 struct lsymbol;
-struct location;
-struct range_list;
-struct range_list_entry;
-struct range;
-struct loc_list_entry;
-struct loc_list;
-struct dwarf_cu_die;
 
-/*
- * For now, these just match ELF types that we support.  As we add more
- * backends, we might need to add more types.
- */
-typedef enum {
-    BINFILE_TYPE_NONE        = 0,
-    BINFILE_TYPE_REL         = 1,
-    BINFILE_TYPE_EXEC        = 2,
-    BINFILE_TYPE_DYN         = 3,
-    BINFILE_TYPE_CORE        = 4,
-} binfile_type_t;
-extern char *BINFILE_TYPE_STRINGS[];
-#define BINFILE_TYPE(n) (((n) < (sizeof(BINFILE_TYPE_STRINGS) / sizeof(char *))) \
-			  ? BINFILE_TYPE_STRINGS[(n)] : NULL)
-
-/*
- * These are "specializations" of the ELF types.
- */
-typedef enum {
-    DEBUGFILE_TYPE_FLAG_NONE   = 0,
-    DEBUGFILE_TYPE_FLAG_KERNEL = 1 << 0,
-    DEBUGFILE_TYPE_FLAG_KMOD   = 1 << 1,
-} debugfile_type_flag_t;
-typedef int debugfile_type_flags_t;
+/**
+ ** Invisible things.
+ **/
+struct symdict;
 
 /*
  * Our default load strategy is to always load the basic info for each
@@ -155,6 +103,12 @@ typedef enum {
     DEBUGFILE_LOAD_FLAG_CUHEADERS = 1 << 0,
     DEBUGFILE_LOAD_FLAG_PUBNAMES = 1 << 1,
     DEBUGFILE_LOAD_FLAG_NODWARF   = 1 << 2,
+    /*
+     * If this is set, all scope ranges will be added to the primary
+     * range fast lookup struct.  This makes loading slow, but should
+     * result in the fastest possible lookups.
+     */
+    DEBUGFILE_LOAD_FLAG_ALLRANGES = 1 << 3,
     /* This forces partial symbol loading, instead of the default full. */
     DEBUGFILE_LOAD_FLAG_PARTIALSYM = 1 << 8,
     /* This flag specifies that we will try to promote all per-CU types
@@ -177,50 +131,43 @@ typedef enum {
 
 typedef enum {
     SYMBOL_TYPE_NONE      = 0,
-    SYMBOL_TYPE_TYPE      = 1,
-    SYMBOL_TYPE_VAR       = 2,
-    SYMBOL_TYPE_FUNCTION  = 3,
-    SYMBOL_TYPE_LABEL     = 4,
-    __SYMBOL_TYPE_MAX,
+    SYMBOL_TYPE_ROOT      = 1,
+    SYMBOL_TYPE_TYPE      = 2,
+    SYMBOL_TYPE_VAR       = 3,
+    SYMBOL_TYPE_FUNC      = 4,
+    SYMBOL_TYPE_LABEL     = 5,
+    SYMBOL_TYPE_BLOCK     = 6,
 } symbol_type_t;
-extern char *SYMBOL_TYPE_STRINGS[];
-#define SYMBOL_TYPE(n) (((n) < __SYMBOL_TYPE_MAX) ? SYMBOL_TYPE_STRINGS[(n)] : NULL)
-#define SYMBOL_IS_TYPE(sym) (sym && (sym)->type == SYMBOL_TYPE_TYPE)
-#define SYMBOL_IS_VAR(sym) (sym && (sym)->type == SYMBOL_TYPE_VAR)
-#define SYMBOL_IS_FUNCTION(sym) (sym && (sym)->type == SYMBOL_TYPE_FUNCTION)
-#define SYMBOL_IS_LABEL(sym) (sym && (sym)->type == SYMBOL_TYPE_LABEL)
-#define SYMBOL_IS_INSTANCE(sym) (sym && (sym)->type != SYMBOL_TYPE_TYPE)
-
-#define SYMBOL_IS_FULL_TYPE(sym) (sym && (sym)->type == SYMBOL_TYPE_TYPE \
-				  && (sym)->s.ti)
-#define SYMBOL_IS_FULL_INSTANCE(sym) (sym && (sym)->type != SYMBOL_TYPE_TYPE \
-				      && (sym)->s.ii)
-#define SYMBOL_IS_FULL_VAR(sym) (sym && (sym)->type == SYMBOL_TYPE_VAR \
-				 && (sym)->s.ii)
-#define SYMBOL_IS_FULL_FUNCTION(sym) (sym && (sym)->type == SYMBOL_TYPE_FUNCTION \
-				      && (sym)->s.ii)
-#define SYMBOL_IS_FULL_LABEL(sym) (sym && (sym)->type == SYMBOL_TYPE_LABEL \
-				   && (sym)->s.ii)
+static inline char *SYMBOL_TYPE(int n) {
+    switch (n) {
+    case SYMBOL_TYPE_NONE:      return "none";
+    case SYMBOL_TYPE_ROOT:      return "root";
+    case SYMBOL_TYPE_TYPE:      return "type";
+    case SYMBOL_TYPE_VAR:       return "var";
+    case SYMBOL_TYPE_FUNC:      return "func";
+    case SYMBOL_TYPE_LABEL:     return "label";
+    case SYMBOL_TYPE_BLOCK:     return "block";
+    default:                    return NULL;
+    }
+}
 
 typedef enum {
     SYMBOL_SOURCE_DWARF   = 0,
     SYMBOL_SOURCE_ELF     = 1,
 } symbol_source_t;
-extern char *SYMBOL_SOURCE_STRINGS[];
-#define SYMBOL_SOURCE(n) (((n) < (sizeof(SYMBOL_SOURCE_STRINGS) \
-				  / sizeof(SYMBOL_SOURCE_STRINGS[0]))) \
-			  ? SYMBOL_SOURCE_STRINGS[(n)] : NULL)
-#define SYMBOL_IS_DWARF(sym) ((sym) && (sym)->source == SYMBOL_SOURCE_DWARF)
-#define SYMBOL_IS_ELF(sym)  ((sym) && (sym)->source == SYMBOL_SOURCE_ELF)
+static inline char *SYMBOL_SOURCE(int n) {
+    switch (n) {
+    case SYMBOL_SOURCE_DWARF:    return "dwarf";
+    case SYMBOL_SOURCE_ELF:      return "elf";
+    default:                     return NULL;
+    }
+}
 
 typedef enum {
     LOADTYPE_UNLOADED     = 0,
     LOADTYPE_FULL         = 1,
     LOADTYPE_PARTIAL      = 2,
 } load_type_t;
-
-#define SYMBOL_IS_FULL(sym) ((sym)->loadtag == LOADTYPE_FULL)
-#define SYMBOL_IS_PARTIAL(sym) ((sym)->loadtag == LOADTYPE_PARTIAL)
 
 /*
  * In the symbol struct, these fields share a 32-bit int, divided this
@@ -229,7 +176,7 @@ typedef enum {
  */
 #define LOAD_TYPE_BITS      2
 #define SYMBOL_TYPE_BITS    3
-#define SYMBOL_SOURCE_BITS   1
+#define SYMBOL_SOURCE_BITS  1
 #define DATATYPE_CODE_BITS  4
 #define SRCLINE_BITS       20
 
@@ -238,28 +185,21 @@ typedef enum {
  */
 typedef enum {
     SYMBOL_TYPE_FLAG_NONE     = 0,
+    SYMBOL_TYPE_FLAG_ROOT     = 1 << SYMBOL_TYPE_ROOT,
     SYMBOL_TYPE_FLAG_TYPE     = 1 << SYMBOL_TYPE_TYPE,
     SYMBOL_TYPE_FLAG_VAR      = 1 << SYMBOL_TYPE_VAR,
-    SYMBOL_TYPE_FLAG_FUNCTION = 1 << SYMBOL_TYPE_FUNCTION,
+    SYMBOL_TYPE_FLAG_FUNC     = 1 << SYMBOL_TYPE_FUNC,
     SYMBOL_TYPE_FLAG_LABEL    = 1 << SYMBOL_TYPE_LABEL,
+    SYMBOL_TYPE_FLAG_BLOCK    = 1 << SYMBOL_TYPE_BLOCK,
+    /*
+     * We don't distinguish "kinds" of variables, but it is useful to do
+     * so for searching!  So this is nasty but ok.
+     */
+    SYMBOL_TYPE_FLAG_VAR_ARG      = 1 << 24,
+    SYMBOL_TYPE_FLAG_VAR_LOCAL    = 1 << 25,
+    SYMBOL_TYPE_FLAG_VAR_GLOBAL   = 1 << 26,
+    SYMBOL_TYPE_FLAG_VAR_MEMBER   = 1 << 27,
 } symbol_type_flag_t;
-
-typedef enum {
-    SYMBOL_VAR_TYPE_NONE      = 0,
-    SYMBOL_VAR_TYPE_ARG       = 1,
-    SYMBOL_VAR_TYPE_LOCAL     = 2,
-    SYMBOL_VAR_TYPE_GLOBAL    = 3,
-    __SYMBOL_VAR_TYPE_MAX,
-} symbol_var_type_t;
-extern char *SYMBOL_VAR_TYPE_STRINGS[];
-#define SYMBOL_VAR_TYPE(n) (((n) < __SYMBOL_VAR_TYPE_MAX) ? SYMBOL_VAR_TYPE_STRINGS[(n)] : NULL)
-
-typedef enum {
-    SYMBOL_VAR_TYPE_FLAG_NONE     = 0,
-    SYMBOL_VAR_TYPE_FLAG_ARG      = 1 << SYMBOL_VAR_TYPE_ARG,
-    SYMBOL_VAR_TYPE_FLAG_LOCAL    = 1 << SYMBOL_VAR_TYPE_LOCAL,
-    SYMBOL_VAR_TYPE_FLAG_GLOBAL   = 1 << SYMBOL_VAR_TYPE_GLOBAL,
-} symbol_var_type_flag_t;
 
 typedef enum {
     DATATYPE_VOID         = 0,
@@ -267,61 +207,44 @@ typedef enum {
     DATATYPE_STRUCT       = 2,
     DATATYPE_ENUM         = 3,
     DATATYPE_PTR          = 4,
-    DATATYPE_FUNCTION     = 5,
-    DATATYPE_TYPEDEF      = 6,
-    DATATYPE_UNION        = 7,
-    DATATYPE_BASE         = 8,
-    DATATYPE_CONST        = 9,
-    DATATYPE_VOL          = 10,
-    __DATATYPE_MAX,
+    DATATYPE_REF          = 5,
+    DATATYPE_FUNC         = 6,
+    DATATYPE_TYPEDEF      = 7,
+    DATATYPE_UNION        = 8,
+    DATATYPE_BASE         = 9,
+    DATATYPE_CONST        = 10,
+    DATATYPE_VOL          = 11,
+    DATATYPE_NAMESPACE    = 12,
+    DATATYPE_CLASS        = 13,
+    DATATYPE_TEMPLATE     = 14,
 } datatype_code_t;
-extern char *DATATYPE_STRINGS[];
-#define DATATYPE(n) (((n) < __DATATYPE_MAX) ? DATATYPE_STRINGS[(n)] : NULL)
+static inline char *DATATYPE(int n) {
+    switch (n) {
+    case DATATYPE_VOID:      return "void";
+    case DATATYPE_ARRAY:     return "array";
+    case DATATYPE_STRUCT:    return "struct";
+    case DATATYPE_ENUM:      return "enum";
+    case DATATYPE_PTR:       return "ptr";
+    case DATATYPE_REF:       return "ref";
+    case DATATYPE_FUNC:      return "function";
+    case DATATYPE_TYPEDEF:   return "typedef";
+    case DATATYPE_UNION:     return "union";
+    case DATATYPE_BASE:      return "base";
+    case DATATYPE_CONST:     return "const";
+    case DATATYPE_VOL:       return "volatile";
+    case DATATYPE_NAMESPACE: return "namespace";
+    case DATATYPE_CLASS:     return "class";
+    case DATATYPE_TEMPLATE:  return "template";
+    default:                 return NULL;
+    }
+}
 
-#define SYMBOL_IST_VOID(sym)     (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_VOID)
-#define SYMBOL_IST_ARRAY(sym)    (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_ARRAY)
-#define SYMBOL_IST_FULL_ARRAY(sym)    (SYMBOL_IS_FULL_TYPE(sym) \
-				       && (sym)->datatype_code == DATATYPE_ARRAY)
-#define SYMBOL_IST_STRUCT(sym)   (SYMBOL_IS_TYPE(sym) \
-				  && (sym)->datatype_code == DATATYPE_STRUCT)
-#define SYMBOL_IST_ENUM(sym)     (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_ENUM)
-#define SYMBOL_IST_PTR(sym)      (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_PTR)
-#define SYMBOL_IST_FUNCTION(sym) (SYMBOL_IS_TYPE(sym) \
-				  && (sym)->datatype_code \
-				                == DATATYPE_FUNCTION)
-#define SYMBOL_IST_FULL_FUNCTION(sym) (SYMBOL_IS_FULL_TYPE(sym) \
-				       && (sym)->datatype_code \
-				                == DATATYPE_FUNCTION)
-#define SYMBOL_IST_TYPEDEF(sym)  (SYMBOL_IS_TYPE(sym) \
-				  && (sym)->datatype_code \
-				                == DATATYPE_TYPEDEF)
-#define SYMBOL_IST_UNION(sym)    (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_UNION)
-#define SYMBOL_IST_BASE(sym)     (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_BASE)
-#define SYMBOL_IST_CONST(sym)    (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_CONST)
-#define SYMBOL_IST_VOL(sym)      (SYMBOL_IS_TYPE(sym) \
-			          && (sym)->datatype_code == DATATYPE_VOL)
-/* convenient! */
-#define SYMBOL_IST_STUN(sym)     (SYMBOL_IS_TYPE(sym) \
-	                          && ((sym)->datatype_code \
-	                                        == DATATYPE_STRUCT \
-	                              || (sym)->datatype_code \
-				                == DATATYPE_UNION))
-#define SYMBOL_IST_FULL_STUN(sym) (SYMBOL_IS_FULL_TYPE(sym) \
-				   && ((sym)->datatype_code \
-				                == DATATYPE_STRUCT \
-				       || (sym)->datatype_code \
-				                == DATATYPE_UNION))
-
-#define SYMBOL_IS_OWN_DATATYPE(sym) \
-    (SYMBOL_IST_VOID(sym) || SYMBOL_IST_STUN(sym) || SYMBOL_IST_BASE(sym))
-
+/**
+ ** Location decls.
+ **/
+struct location;
+struct location_ops;
+struct location_ctxt;
 typedef enum {
     LOCTYPE_UNKNOWN       = 0,
     LOCTYPE_ADDR          = 1,
@@ -334,29 +257,7 @@ typedef enum {
     LOCTYPE_REALADDR      = 8,
     /* add here */
     LOCTYPE_RUNTIME       = 9,
-    __LOCTYPE_MAX,
-} location_type_t;
-extern char *LOCTYPE_STRINGS[];
-#define LOCTYPE(n) (((n) < __LOCTYPE_MAX) ? LOCTYPE_STRINGS[(n)] : NULL)
-
-/*
- * Returns 1 if resolving this location might be dependent on the IP; 0
- * otherwise.
- */
-#define LOCATION_COND_IP(loc)  (!((loc)->loctype == LOCTYPE_ADDR	\
-				  || (loc)->loctype == LOCTYPE_REALADDR))
-/*
- * Returns 1 if resolving this location might be dependent on memory; 0
- * otherwise.
- */
-#define LOCATION_COND_MEM(loc) (!((loc)->loctype == LOCTYPE_REG		\
-				  || (loc)->loctype == LOCTYPE_REG_ADDR	\
-				  || (loc)->loctype == LOCTYPE_REG_OFFSET))
-/*
- * Returns 1 if resolving this location might be dependent on memory; 0
- * otherwise.
- */
-#define LOCATION_IN_REG(loc) ((loc)->loctype == LOCTYPE_REG)
+} loctype_t;
 
 /*
  * These match the dwarf encoding codes.
@@ -377,19 +278,6 @@ typedef enum {
     ENCODING_SIGNED_FIXED = 13,
     ENCODING_UNSIGNED_FIXED = 14,
 } encoding_t;
-
-typedef enum {
-    RANGE_TYPE_NONE = 0,
-    RANGE_TYPE_PC = 1,
-    RANGE_TYPE_LIST = 2,
-    __RANGE_TYPE_MAX
-} range_type_t;
-
-extern char *RANGE_TYPE_STRINGS[];
-#define RANGE_TYPE(n) (((n) < __RANGE_TYPE_MAX) ? RANGE_TYPE_STRINGS[(n)] : NULL)
-
-#define RANGE_IS_PC(sym)   (sym && (sym)->rtype == RANGE_TYPE_PC)
-#define RANGE_IS_LIST(sym) (sym && (sym)->rtype == RANGE_TYPE_LIST)
 
 /**
  ** Debugfiles.
@@ -421,7 +309,6 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 					  struct array_list *debugfile_load_opts_list);
 struct debugfile *debugfile_from_binfile(struct binfile *binfile,
 					 struct array_list *debugfile_load_opts_list);
-
 /*
  * Search the debugfile path @DFPATH (if NULL, use default PATH) for a
  * filepath @filename, possibly in a root_prefix dir @root_prefix, and
@@ -434,83 +321,32 @@ struct debugfile *debugfile_from_binfile(struct binfile *binfile,
  */
 char *debugfile_search_path(char *filename,char *root_prefix,char *debug_postfix,
 			    const char *DFPATH[],char *buf,int buflen);
-
 struct array_list *debugfile_get_loaded_debugfiles();
-
-/* Internal lib function. */
-struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
-				   struct binfile *binfile,
-				   struct debugfile_load_opts *opts,
-				   struct binfile *binfile_pointing);
-/* Load DWARF debuginfo into a debugfile. */
-int debugfile_load_debuginfo(struct debugfile *debugfile);
-/* Load ELF symtab info into a debugfile. */
-int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
-			     char *elf_filename);
-
-int debugfile_expand_symbol(struct debugfile *debugfile,struct symbol *symbol);
-int debugfile_expand_cu(struct debugfile *debugfile,struct symtab *cu_symtab,
-			struct array_list *die_offsets,int expand_dies);
-
 struct debugfile_load_opts *debugfile_load_opts_parse(char *optstr);
 int debugfile_load_opts_checklist(struct array_list *opts_list,char *name,
 				  struct debugfile_load_opts **match_saveptr);
 void debugfile_load_opts_free(struct debugfile_load_opts *opts);
-
 char *debugfile_get_name(struct debugfile *debugfile);
 char *debugfile_get_version(struct debugfile *debugfile);
 int debugfile_filename_info(char *filename,char **realfilename,
 			    char **name,char **version);
-int debugfile_add_cu_symtab(struct debugfile *debugfile,struct symtab *symtab);
-int debugfile_update_cu_symtab(struct debugfile *debugfile,struct symtab *symtab);
-int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol);
-struct symbol *debugfile_find_type(struct debugfile *debugfile,
-				   char *typename);
-int debugfile_add_type_name(struct debugfile *debugfile,
-			    char *name,struct symbol *symbol);
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 		    int types,int globals,int symtabs,int elfsymtab);
 REFCNT debugfile_release(struct debugfile *debugfile);
 
 /**
- ** Symbol tables.
- **/
-struct symtab *symtab_create(struct binfile *binfile,
-			     struct debugfile *debugfile,
-			     SMOFFSET offset,char *name,int name_copy,
-			     struct symbol *symtab_symbol);
-int symtab_get_size_simple(struct symtab *symtab);
-int symtab_insert(struct symtab *symtab,struct symbol *symbol,OFFSET anonaddr);
-struct symbol *symtab_get_sym(struct symtab *symtab,const char *name);
-int symtab_insert_fakename(struct symtab *symtab,char *fakename,
-			   struct symbol *symbol,OFFSET anonaddr);
-void symtab_remove_symbol(struct symtab *symtab,struct symbol *symbol);
-void symtab_steal(struct symtab *symtab,struct symbol *symbol);
-char *symtab_get_name(struct symtab *symtab);
-void symtab_set_name(struct symtab *symtab,char *srcfilename,int name_copy);
-void symtab_dump(struct symtab *symtab,struct dump_info *ud);
-/*
- * Since we can get symtab info from multiple places (i.e.,
- * .debug_aranges, and from .debug_info), we need to be able to update
- * 1) the symtab's ranges, and 2) the debugfile's ranges lookup data
- * struct.  This function handles adding a new range, or updating an old
- * one whose end address may have changed (i.e., dwarf inconsistencies),
- * or converting a RANGE_TYPE_PC to a RANGE_TYPE_LIST.  If you supply
- * @rt_hint, and the current type of the symtab's range is NONE, we will
- * create a range of type @rt_hint (i.e., if you know that there will be
- * more than one range entry, supply RANGE_TYPE_LIST; if this is the
- * only one, use RANGE_TYPE_PC).
- */
-void symtab_update_range(struct symtab *symtab,ADDR start,ADDR end,
-			 range_type_t rt_hint);
-void symtab_free(struct symtab *symtab);
-
-/**
  ** Symbols.
  **/
-struct symbol *symbol_create(struct symtab *symtab,SMOFFSET offset,
-			     char *name,int name_copy,symbol_type_t symtype,
-			     symbol_source_t source,int full);
+/*
+ * Create a symbol.  If @name_copy is set, @name will be copied into new
+ * memory; else not.  @offset is a value that functions as a pointer to
+ * the raw location of the symbol description in its original file.  If
+ * @full is set, this will be a full symbol, and all memory for its
+ * @symtype is allocated.  Otherwise, only a partial symbol is created.
+ */
+struct symbol *symbol_create(symbol_type_t symtype,symbol_source_t source,
+			     char *name,int name_copy,SMOFFSET offset,
+			     load_type_t loadtype,struct scope *scope);
 /*
  * Returns the name of the symbol.  Might be modified if it was an
  * inline instance (in which case call symbol_get_name_inline() to get
@@ -525,66 +361,132 @@ char *symbol_get_name(struct symbol *symbol);
  * name.
  */
 char *symbol_get_name_inline(struct symbol *symbol);
+
+char *symbol_get_srcfile(struct symbol *symbol);
+int symbol_get_srcline(struct symbol *symbol);
+char *symbol_get_compdirname(struct symbol *symbol);
+symbol_type_t symbol_get_type(struct symbol *symbol);
+symbol_source_t symbol_get_source(struct symbol *symbol);
 /*
- * If this symbol's name was modified by symbol_build_extname (i.e., if
- * it is an enum/struct/union type), this returns the base name.
+ * symbol_get_datatype returns the "meaningful" datatype of symbol --
+ * i.e., it follows inline info, skips type qualifiers).
+ * symbol_get_datatype_real follows inline info, but does not skip type
+ * qualifiers.
+ *
+ * These functions do not hold a ref to the return value.
  */
-char *symbol_get_name_orig(struct symbol *symbol);
-void symbol_set_name(struct symbol *symbol,char *name,int name_copy);
-void symbol_build_extname(struct symbol *symbol);
-struct symtab *symbol_get_root_symtab(struct symbol *symbol);
-void symbol_change_symtab(struct symbol *symbol,struct symtab *symtab,
-			  int noinsert,int typerecurse);
-void symbol_set_type(struct symbol *symbol,symbol_type_t symtype);
-void symbol_set_srcline(struct symbol *symbol,int srcline);
+struct symbol *symbol_get_datatype(struct symbol *symbol);
+struct symbol *symbol_get_datatype_real(struct symbol *symbol);
+struct symbol *symbol_get_inline_origin(struct symbol *symbol);
 
-int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr);
-
+int symbol_is_synthetic(struct symbol *symbol);
+int symbol_is_external(struct symbol *symbol);
+int symbol_is_definition(struct symbol *symbol);
+int symbol_is_declaration(struct symbol *symbol);
+int symbol_is_decldefined(struct symbol *symbol);
+int symbol_is_prototyped(struct symbol *symbol);
+int symbol_is_parameter(struct symbol *symbol);
+int symbol_is_member(struct symbol *symbol);
+int symbol_is_enumerator(struct symbol *symbol);
+int symbol_is_inlineinstance(struct symbol *symbol);
+int symbol_has_addr(struct symbol *symbol);
+int symbol_has_unspecified_parameters(struct symbol *symbol);
 int symbol_is_inlined(struct symbol *symbol);
+int symbol_is_declinline(struct symbol *symbol);
+int symbol_is_bitsize(struct symbol *symbol);
+int symbol_is_bytesize(struct symbol *symbol);
+uint32_t symbol_get_bytesize(struct symbol *symbol);
+uint32_t symbol_get_bitsize(struct symbol *symbol);
+uint32_t symbol_get_bitoffset(struct symbol *symbol);
+uint32_t symbol_get_bitctbytes(struct symbol *symbol);
+ADDR symbol_get_addr(struct symbol *symbol);
+int symbol_type_flags_match(struct symbol *symbol,symbol_type_flag_t flags);
+struct symbol *symbol_find_parent(struct symbol *symbol);
+struct symbol *symbol_find_root(struct symbol *symbol);
+int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr);
 int symbol_type_equal(struct symbol *t1,struct symbol *t2,
 		      GHashTable *updated_datatype_refs);
 int symbol_type_is_char(struct symbol *type);
-int symbol_is_bitsize(struct symbol *symbol);
-int symbol_is_bytesize(struct symbol *symbol);
-uint32_t symbol_bytesize(struct symbol *symbol);
-uint32_t symbol_bitsize(struct symbol *symbol);
 unsigned int symbol_type_array_bytesize(struct symbol *type);
 /* Return either type_array_bytesize or type_bytesize */
 unsigned int symbol_type_full_bytesize(struct symbol *type);
 struct symbol *symbol_type_skip_ptrs(struct symbol *type);
 struct symbol *symbol_type_skip_qualifiers(struct symbol *type);
+
 void symbol_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_type_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_function_dump(struct symbol *symbol,struct dump_info *ud);
 void symbol_var_dump(struct symbol *symbol,struct dump_info *ud);
 
-int symbol_get_location_offset(struct symbol *symbol,OFFSET *offset_saveptr);
-int symbol_get_location_addr(struct symbol *symbol,ADDR *addr_saveptr);
 /*
- * For an instance function symbol, returns 0 and sets @low_addr_saveptr
- * and @high_addr_saveptr appropriately.  If @symbol is a function with
- * code at multiple ranges, and if those ranges are noncontiguous, and
- * @is_noncontiguous is not NULL, we set it to 1.
- *
- * If @symbol is not a full instance function symbol, we return -1.  If
- * the function was a prototype only (a declaration), we return -2.  If
- * the function has no symbol table, we return -3.  If the function has
- * a lowpc, but no highpc, we return 1, and set @low_addr_saveptr, but
- * do not touch @high_addr_saveptr nor @is_noncontiguous.
+ * Returns a new GSList * with the ordered member symbols of @symbol.
+ * i.e., the function's arguments; the struct's members; an enumerated
+ * type's enumerators.  The symbols on the list must be released with
+ * symbol_release when you finish with them.
  */
-int symbol_get_location_range(struct symbol *symbol,ADDR *low_addr_saveptr,
-			      ADDR *high_addr_saveptr,int *is_noncontiguous);
+GSList *symbol_get_ordered_members(struct symbol *symbol,
+				   symbol_type_flag_t flags);
+/*
+ * Returns a new GSList * with the member symbols of @symbol.  The
+ * symbols on the list must be released with symbol_release when you
+ * finish with them.
+ */
+GSList *symbol_get_members(struct symbol *symbol,
+			   symbol_type_flag_t flags);
 
+/*
+ * Returns LOCTYPE_REG, LOCTYPE_ADDR, or LOCTYPE_MEMBER_OFFSET, on success;
+ * LOCTYPE_UNKNOWN on error (or if the location really is
+ * LOCTYPE_UNKNOWN), or -LOCTYPE_X on error resolving a specific kind of
+ * location.  If LOCTYPE_UNKNOWN or negative, errno should be set.
+ *
+ * Some locations cannot be resolved without @lops.  Also, if they can
+ * (i.e., they are already of LOCTYPE_ADDR or LOCTYPE_REG or
+ * LOCTYPE_MEMBER_OFFSET), the return values will not be relocated if @lops is
+ * not set.
+ *
+ * Also note that lsymbol_resolve_location() does not allow you to
+ * resolve an offset.  The only reason that symbol_resolve_location and
+ * location_resolve() do provide an offset outparam is because single
+ * symbols/locations are sometimes offsets.
+ */
+loctype_t symbol_resolve_location(struct symbol *symbol,
+				  struct location_ops *lops,void *lops_priv,
+				  struct location_ctxt *lctxt,
+				  ADDR *addr,REG *reg,OFFSET *offset);
+int symbol_resolve_bounds(struct symbol *symbol,
+			  struct location_ops *lops,void *lops_priv,
+			  ADDR *start,ADDR *end,int *is_noncontiguous);
+int symbol_resolve_bounds_alt(struct symbol *symbol,
+			      struct location_ops *lops,void *lops_priv,
+			      ADDR *o_start,ADDR *o_end,
+			      int *is_noncontiguous,
+			      ADDR *o_alt_start,ADDR *o_alt_end);
+
+loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
+				   struct location_ops *lops,void *lops_priv,
+				   struct location_ctxt *lctxt,
+				   ADDR *o_addr,REG *o_reg);
+int lsymbol_resolve_bounds(struct lsymbol *lsymbol,ADDR base_addr,
+			   struct location_ops *lops,void *lops_priv,
+			   ADDR *start,ADDR *end,int *is_noncontiguous);
+int lsymbol_resolve_bounds_alt(struct lsymbol *lsymbol,ADDR base_addr,
+			       struct location_ops *lops,void *lops_priv,
+			       ADDR *start,ADDR *end,
+			       int *is_noncontiguous,
+			       ADDR *alt_start,ADDR *alt_end);
+
+/*
+ * Holds a ref to @symbol.  This is useful for users because some
+ * functions (i.e., symbol_get_datatype) do not hold a ref to their
+ * return value.  Lookup functions tend to hold refs, 
+ */
+void symbol_hold(struct symbol *symbol);
 /*
  * Releases a reference to the symbol and tries to free it.
  */
 REFCNT symbol_release(struct symbol *symbol);
-/* 
- * Frees a symbol.  Users should never call this; call symbol_release
- * instead.
- */
-REFCNT symbol_free(struct symbol *symbol,int force);
-void symbol_type_mark_members_free_next_pass(struct symbol *symbol,int force);
+
 
 /* If we already know that @member is a member of @symbol -- i.e., it is
  * a nested var in a struct or function, or a function/function type
@@ -640,43 +542,25 @@ void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud);
 REFCNT lsymbol_release(struct lsymbol *lsymbol);
 
 /**
- ** Locations.
- **/
-struct location *location_create(void);
-void location_dump(struct location *location,struct dump_info *ud);
-void location_internal_free(struct location *location);
-void location_free(struct location *location);
-
-OFFSET location_resolve_offset(struct location *location,
-			       struct array_list *symbol_chain,
-			       struct symbol **top_symbol_saveptr,
-			       int *chain_top_symbol_idx_saveptr);
-
-/**
- ** Symtab (PC) lookup functions.
+ ** Scope (PC) lookup functions.
  **/
 /*
  * Find the symbol table corresponding to the supplied PC.
- *
- * XXX: We don't refcnt symtabs.  There is no point to refcnt'ing top-level
- * symtabs, since they are always around as long as the debugfile is.
- * However, we probably should RHOLD on the symtab's parent symbol.  But
- * that is confusing!  Hm.
  */
-struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc);
+struct scope *scope_lookup_addr(struct scope *scope,ADDR pc);
 
 /**
  ** Symbol/memaddr lookup functions.
  **/
 /* 
  * Look up a (possibly delimited with @delim) symbol named @name in
- * @debugfile.  @ftype contains symbol_type_flag_t flags controlling
- * which kind of symbols we will return.  If @ftype == SYMBOL_TYPE_FLAG_NONE, 
+ * @debugfile.  @flags contains symbol_type_flag_t flags controlling
+ * which kind of symbols we will return.  If @flags == SYMBOL_TYPE_FLAG_NONE, 
  * we will return the first match of any symbol type on the given name;
- * _NONE is a wildcard.  If @ftype is the wildcard, or has any of
- * SYMBOL_TYPE_FLAG_VAR, SYMBOL_TYPE_FLAG_FUNCTION, SYMBOL_TYPE_FLAG_LABEL
+ * _NONE is a wildcard.  If @flags is the wildcard, or has any of
+ * SYMBOL_TYPE_FLAG_VAR, SYMBOL_TYPE_FLAG_FUNC, SYMBOL_TYPE_FLAG_LABEL
  * set, we will first consult the global names (functions or variables)
- * in the debugfile.  If no matches result from that, and @ftype is the
+ * in the debugfile.  If no matches result from that, and @flags is the
  * wildcard or SYMBOL_TYPE_FLAG_TYPE, we consult the global types table.
  *
  * If the global tables don't have our symbol, we scan through the
@@ -701,7 +585,7 @@ struct symtab *symtab_lookup_pc(struct symtab *symtab,ADDR pc);
 struct lsymbol *debugfile_lookup_sym(struct debugfile *debugfile,
 				     char *name,const char *delim,
 				     struct rfilter *srcfile_filter,
-				     symbol_type_flag_t ftype);
+				     symbol_type_flag_t flags);
 
 /*
  * Lookup an offset of a member in a variable (of type struct/union), or
@@ -733,12 +617,12 @@ OFFSET lsymbol_offsetof(struct lsymbol *lsymbol,
  * If @globals is not set and @srcfile_filter is not set, we go through
  * all CUs.
  *
- * Our search and return values will be restricted by which @ftype
+ * Our search and return values will be restricted by which @flags
  * symbol type flags you set; you can set a combination; if you set it
  * to 0 (SYMBOL_TYPE_FLAG_NONE), we do not restrict our symbol search or
  * return values.
  *
- * The returned GList must be freed using g_list_free; if any of the
+ * The returned GSList must be freed using g_list_free; if any of the
  * debugfile/symtab hashtables is modified later (i.e., the debugfile is
  * only partially loaded), this list may not be used.
  *
@@ -746,17 +630,11 @@ OFFSET lsymbol_offsetof(struct lsymbol *lsymbol,
  * them, you MUST RHOLD() them!  This function does not do it for
  * you!
  */
-GList *debugfile_match_syms(struct debugfile *debugfile,
-			    struct rfilter *symbol_filter,
-			    symbol_type_flag_t ftype,
-			    struct rfilter *srcfile_filter,
-			    int globals_only);
+GSList *debugfile_match_syms(struct debugfile *debugfile,
+			     struct rfilter *symbol_filter,
+			     symbol_type_flag_t flags,
+			     struct rfilter *srcfile_filter);
 
-GList *debugfile_match_syms_as_lsymbols(struct debugfile *debugfile,
-					struct rfilter *symbol_filter,
-					symbol_type_flag_t ftype,
-					struct rfilter *srcfile_filter,
-					int globals_only);
 /*
  * Look up a specific address and find its symbol.
  * 
@@ -794,13 +672,12 @@ struct lsymbol *debugfile_lookup_sym_line(struct debugfile *debugfile,
  * lsymbol->chain.  lsymbol_release is the correct way to release these
  * refs.
  */
-struct lsymbol *symtab_lookup_sym(struct symtab *symtab,
-				  const char *name,const char *delim,
-				  symbol_type_flag_t ftype);
 
 struct lsymbol *lsymbol_lookup_sym(struct lsymbol *lsymbol,
 				   const char *name,const char *delim);
 
+struct symbol *symbol_get_sym(struct symbol *symbol,const char *name,
+			      symbol_type_flag_t flags);
 struct lsymbol *symbol_lookup_sym(struct symbol *symbol,
 				  const char *name,const char *delim);
 
@@ -811,46 +688,7 @@ struct lsymbol *symbol_lookup_sym(struct symbol *symbol,
 struct lsymbol *lsymbol_clone(struct lsymbol *lsymbol,struct symbol *newchild);
 
 /*
- * Returns a list of symbols that correspond to the members of
- * @lsymbol.  If @argsonly is set, only function argument members will
- * be returned.  Only function or struct/enum types may have members, so
- * expect NULL if you pass anything else!  If you do pass a valid
- * @lsymbol, but it has no members of the kind you are looking (i.e.,
- * how @argsonly is set), then an empty list will be returned.
- *
- * If @lsymbol has multiple levels (i.e., a hierarchy of nested
- * struct/enum members), or a function with nested symtabs, only those
- * members in the first level are returned!
- * 
- * This function does *not* hold refs to the members it returns!
- *
- * @kinds - 0 means all, 1 means func args only, 2 means locals only
- */
-struct array_list *symbol_get_members(struct symbol *symbol,
-				      symbol_var_type_flag_t kinds);
-
-/*
- * Returns a list of lsymbols that correspond to the members of
- * @lsymbol.  If @argsonly is set, only function argument members will
- * be returned.  Only function or struct/enum types may have members, so
- * expect NULL if you pass anything else!  If you do pass a valid
- * @lsymbol, but it has no members of the kind you are looking (i.e.,
- * how @argsonly is set), then an empty list will be returned.
- *
- * If @lsymbol has multiple levels (i.e., a hierarchy of nested
- * struct/enum members), or a function with nested symtabs, only those
- * members in the first level are returned!
- * 
- * This list *does* contain lsymbols that need to be released with
- * lsymbol_release.
- *
- * @kinds - 0 means all, 1 means func args only, 2 means locals only
- */
-struct array_list *lsymbol_get_members(struct lsymbol *lsymbol,
-				       symbol_var_type_flag_t kinds);
-
-/*
- * @symbol may be either a SYMBOL_TYPE_TYPE, a SYMBOL_TYPE_FUNCTION, or
+ * @symbol may be either a SYMBOL_TYPE_TYPE, a SYMBOL_TYPE_FUNC, or
  * a SYMBOL_TYPE_VAR.  This function is really about returning an instance
  * symbol, BUT we allow it to take an instance symbol that is either a
  * function, so we can get the type symbol for an arg, or a
@@ -858,11 +696,11 @@ struct array_list *lsymbol_get_members(struct lsymbol *lsymbol,
  * Hopefully not too confusing.
  *
  * SYMBOL_TYPE_TYPE:
- *   DATATYPE_FUNCTION: find an arg matching @member.
+ *   DATATYPE_FUNC: find an arg matching @member.
  *   DATATYPE_ENUM: find a matching enumerator.
  *   DATATYPE_(STRUCT|UNION): find a matching member.  If @symbol
  *     contains anonymous members, we recurse into those in a BFS.
- * SYMBOL_TYPE_FUNCTION: find an arg matching @member.
+ * SYMBOL_TYPE_FUNC: find an arg matching @member.
  * SYMBOL_VAR:
  *   DATATYPE_(STRUCT|UNION): find a matching member.  If @symbol
  *     contains anonymous members, we recurse into those in a BFS.
@@ -880,6 +718,7 @@ struct symbol *symbol_get_one_member(struct symbol *symbol,char *member);
  */
 struct symbol *symbol_get_member(struct symbol *symbol,char *memberlist,
 				 const char *delim);
+
 /*
  * Returns a real, valid type for the symbol.  If it is an inline
  * instance, we skip to the abstract origin root and use that datatype.
@@ -897,372 +736,6 @@ struct symbol *symbol_get_datatype(struct symbol *symbol);
  */
 int symbol_visible_at_ip(struct symbol *symbol,ADDR ip);
 
-/*
- * Range/location list stuff.
- *
- * XXX: this should not be exposed to the user, probably.
- */
-struct range_list *range_list_create(int initsize);
-int range_list_add(struct range_list *list,ADDR start,ADDR end);
-void range_list_internal_free(struct range_list *list);
-void range_list_free(struct range_list *list);
-struct loc_list *loc_list_create(int initsize);
-int loc_list_add(struct loc_list *list,ADDR start,ADDR end,struct location *loc);
-void loc_list_free(struct loc_list *list);
-
-/*
- * Dwarf util stuff.
- */
-int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
-	      Dwarf_Off offset,size_t address_size);
-
-const char *dwarf_tag_string(unsigned int tag);
-const char *dwarf_attr_string(unsigned int attrnum);
-const char *dwarf_form_string(unsigned int form);
-const char *dwarf_lang_string(unsigned int lang);
-const char *dwarf_inline_string(unsigned int code);
-const char *dwarf_encoding_string(unsigned int code);
-const char *dwarf_access_string(unsigned int code);
-const char *dwarf_visibility_string(unsigned int code);
-const char *dwarf_virtuality_string(unsigned int code);
-const char *dwarf_identifier_case_string(unsigned int code);
-const char *dwarf_calling_convention_string(unsigned int code);
-const char *dwarf_ordering_string(unsigned int code);
-const char *dwarf_discr_list_string(unsigned int code);
-
-/**
- ** binfile stuff.
- **/
-/*
- * Library init/fini routines.
- */
-void binfile_init(void);
-void binfile_fini(void);
-struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
-			       void *priv);
-int binfile_cache_clean(void);
-/*
- * Tries all backends, or the one referred to by @bfinst, to open
- * @filename.  @returns a struct binfile if successful; NULL otherwise.
- * If @root_prefix is set, any other filenames with absolute paths this
- * library tries to open because of this binfile will be prefixed with
- * @root_prefix prior to opening.  This supports the target API; if you
- * are not using that, you should have no reason to use @root_prefix.
- *
- * If successful, and if the resulting binfile is shareable (not created
- * based on an instance), the returned binfile has a ref taken on the
- * caller's behalf, so the caller must call RPUT(binfile) to release
- * (and free) it.
- *
- * If @DFPATH is set, it should be a NULL-terminated array of char *
- * that specify dirs to look into for files containing debuginfo.  This
- * is right now only used by the ELF backend to load debuginfo for files
- * that include a build-id and use that as a means to identify which
- * file contains debuginfo (i.e., the path is often something like
- * /usr/lib/debug/.build-id/xx/xx...xx.debug -- where the xx's are the
- * hex string repr of the build id).  So, the default DFPATH is
- * /usr/lib/debug,/usr/local/lib/debug,NULL.
- *
- * Note also that even if you specify DFPATH, you should *not* prefix it
- * with @root_prefix; @root_prefix will be *prepended* to the entries in
- * DFPATH if they are searched.
- */
-struct binfile *binfile_open(char *filename,char *root_prefix,
-			     struct binfile_instance *bfinst);
-struct binfile *binfile_open_debuginfo(struct binfile *binfile,
-				       struct binfile_instance *bfinst,
-				       const char *DFPATH[]);
-
-/*
- * Loads @filename as a binfile, then uses that binfile backend's ops to
- * infer a default program layout, informed by the @base load address,
- * and any key/value pairs in @config.  This function holds a ref to the
- * return value; you must free it with binfile_instance_release().
- *
- * @param filename  A path to a binary file.
- * @param root_prefix A path to prepend to any other file opens this
- *     library might need; should be the same prefix @filename has.
- * @param base      The base load address as the program image is or was
- *     constructed.
- * @param config    A simple char *->char * hash of key/value pairs; its use
- *     is backend-specific. 
- *
- * @returns  A binfile_instance that represents a program image.
- */
-struct binfile_instance *binfile_infer_instance(char *filename,
-						char *root_prefix,
-						ADDR base,GHashTable *config);
-
-/*
- * @param binfile  A loaded binfile.
- * @returns  The name of the backend that loaded @binfile.
- */
-const char *binfile_get_backend_name(struct binfile *binfile);
-/*
- * @param binfile  A loaded binfile.
- * @returns  The type of @binfile.
- */
-binfile_type_t binfile_get_type(struct binfile *binfile);
-/*
- * Closes all resources associated with loading @binfile, but does not
- * free the result of loading the binfile -- i.e., any symbols or
- * metadata that were cached into internal structures after "load".
- *
- * @param binfile  A loaded binfile.
- *
- * @returns  A result code.
- */
-int binfile_close(struct binfile *binfile);
-/*
- * Releases a reference @binfile.  If this is the last reference, the
- * binfile is freed.  At this point, the caller must not use any symbols
- * or data obtained from the binfile.
- */
-REFCNT binfile_release(struct binfile *binfile);
-/*
- * Releases a reference @bfi.  If this is the last reference, the
- * binfile_instance is freed.  At this point, the caller must not use
- * the binfile_instance.
- */
-REFCNT binfile_instance_release(struct binfile_instance *bfi);
-
-/*
- * Each binfile supports a simple per-backend lifecycle.  @open (invoked
- * via binfile_open) creates the binfile datastructures, opens a
- * binfile, loads its metadata and symbols).  @close closes any open
- * files and releases any resources related to processing the file.
- * @free release any other releases that were independent of processing
- * -- such as symbols, metadata, etc.  binfile backends must keep enough
- * state around to support their symbol table until @free is called.
- */
-struct binfile_ops {
-    const char *(*get_backend_name)(void);
-    struct binfile *(*open)(char *filename,char *root_prefix,
-			    struct binfile_instance *bfinst);
-    struct binfile *(*open_debuginfo)(struct binfile *binfile,
-				      struct binfile_instance *bfinst,
-				      const char *DFPATH[]);
-    struct binfile_instance *(*infer_instance)(struct binfile *binfile,
-					       ADDR base,GHashTable *config);
-    int (*close)(struct binfile *bfile);
-    void (*free)(struct binfile *bfile);
-    void (*free_instance)(struct binfile_instance *bfi);
-};
-
-/*
- * binfiles store basic information about compiled binary files.  They
- * provide basic string table, symbol table, and address range
- * abstractions.  Any binary file that is the result of a compilation
- * will have such tables; some binary files might have more information
- * regarding loading and layout, and/or relocation.  For now, this
- * information must be stored in the backend-specific @priv field.
- */
-struct binfile {
-    /* Our reference count. */
-    REFCNT refcnt;
-    /* Our weak reference count. */
-    REFCNT refcntw;
-
-    binfile_type_t type;
-
-    uint8_t is_dynamic:1,
-	    has_debuginfo:1;
-
-    /*
-     * Opened binfiles have either @fd > 0, or non-NULL @image (right
-     * now, image is used when the binfile has to be loaded into memory
-     * for whatever reason -- initially, relocation in the backend).
-     */
-    char *image;
-    int fd;
-
-    int wordsize;
-    int endian;
-
-    /*
-     * The string table for this file.  All binfile string pointers are
-     * checked for presence in this table before freeing.
-     *
-     * This table persists until the binfile is freed.
-     */
-    unsigned int strtablen;
-    char *strtab;
-
-    /*
-     * The dynamic string table for this file.  All binfile string pointers are
-     * checked for presence in this table before freeing.
-     *
-     * This table persists until the binfile is freed.
-     */
-    unsigned int dynstrtablen;
-    char *dynstrtab;
-
-    /*
-     * This must be an absolute path; binfile_create will try to resolve
-     * its @filename argument and place the result here; but if the
-     * backend updates it, the backend must enforce this constraint.
-     *
-     * This is a unique ID used for caching.
-     */
-    char *filename;
-    
-    /*
-     * binfile_open does a best-effort pass at these fields via regexps;
-     * however, backends are free to update these fields via free() and
-     * malloc() during @binfile_ops->open.
-     *
-     * @name is the name of the binfile, minus any path and version info.
-     * For shared libs, this is "libz"; for the kernel, it
-     * is literally just the name "vmlinux"; for kernel modules,
-     * it is the module name; for programs, it is the executable name.
-     *
-     * @version: the kernel, kmods, and shared libs should all have versions.
-     * Programs probably won't have versions.
-     */
-    char *name;
-    char *version;
-
-    /*
-     * Backend info.
-     */
-    struct binfile_ops *ops;
-    void *priv;
-
-    /*
-     * The symtab for this binfile; all symbols in this table are
-     * per-backend symbols, not DWARF symbols.  They cannot be expanded
-     * into fully-loaded symbols.
-     */
-    struct symtab *symtab;
-
-    /* 
-     * We keep a separate range structure for binfile symbols, because
-     * the normal debugfile->ranges range structure contains symtabs,
-     * not symbols.  So they can't be mixed... unfortunate.
-     */
-    clrange_t ranges;
-
-    /*
-     * These are the minimum phys/virt address pairs that we learn from
-     * looking at the program headers.
-     */
-    ADDR base_phys_addr;
-    ADDR base_virt_addr;
-
-    /*
-     * The binfile_instance that was used to load and relocate this
-     * binfile.
-     *
-     * If @binfile_instance is set, this binfile cannot be shared
-     * (because we relocated bits in the binfile using the instance
-     * info).
-     *
-     * If we loaded a binfile that does not depend on the instance,
-     * this field should NOT be set.
-     *
-     * The backend is in charge of setting this field correctly!
-     */
-    struct binfile_instance *instance;
-
-
-
-    /*
-     * This is an alternate prefix that will be prepended to any files
-     * that the binfile code attempts to open.  This helps us load
-     * binary file information for filenames whose binaries are not
-     * actually at that location in the / filesystem that the library
-     * code is running on.  For instance, this is useful when we use the
-     * target library to open ELF/debuginfo for files that are really
-     * inside a VM that we are inspecting; it helps us look for them in
-     * this prefix instead of our root.
-     *
-     * Why put this here?  Because the library attempts to infer new
-     * files to open sometimes (i.e. as it loads debuginfo), so we have
-     * to make sure it looks in the right place.  When the user says to
-     * open a binary file as a debugfile, they must use the real path
-     * (i.e., including @root_prefix below).  But, those files
-     * themselves may have embedded links to other files -- and if those
-     * links are absolute, we have to prepend our @root_prefix.
-     */
-    char *root_prefix;
-
-    /*
-     * Currently unused.
-     */
-    time_t load_time;
-    time_t mod_time;
-};
-
-struct binfile_elf {
-    int class;
-    size_t shstrndx;
-    char *buildid;
-    char *gnu_debuglinkfile;
-    uint32_t gnu_debuglinkfile_crc;
-
-    unsigned int num_symbols;
-
-    /*
-     * We save off full copies of this stuff so that even if the ELF
-     * file is closed, we still have it.
-     */
-    GElf_Ehdr ehdr;
-    GElf_Phdr *phdrs;
-    GElf_Shdr *shdrs;
-
-    /*
-     * Save off the elfutils info until we're done with it.
-     */
-    Elf *elf;
-    Ebl *ebl;
-    Dwfl *dwfl;
-    int dwfl_fd;
-};
-
-/*
- * Instances are simple.  They map a binfile filename to a loaded
- * instance of it.  We do not necessarily map struct binfile to the
- * instance, because we might not have loaded the binfile yet!  In other
- * words, the instance might be used to load a (relocated) version of
- * the binfile; or it might be simply used to load a shareable
- * (non-relocated) version of the binfile, and then discarded.
- */
-struct binfile_instance {
-    /* Our reference count. */
-    REFCNT refcnt;
-
-    char *filename;
-    /*
-     * Since the binfile library is capable of opening files on behalf
-     * of loaded binfiles or binfile_instances, it needs to know if the
-     * real place those files are to be loaded from is a fake (or
-     * alternate) root filesystem.  See the comments in struct debugfile
-     * for more information.
-     */
-    char *root_prefix;
-
-    ADDR base;
-    ADDR start;
-    ADDR end;
-    struct binfile_ops *ops;
-    void *priv;
-};
-
-struct binfile_instance_elf {
-    unsigned int num_sections;
-    unsigned int num_symbols;
-    /* A map of ELF section index to an address in the instance. */
-    ADDR *section_tab;
-    /* A map of ELF symtab index to an address in the instance. */
-    ADDR *symbol_tab;
-
-    /*
-     * When loading an instance, we might modify the section headers.
-     * If we do, this has the mods for us to apply.
-     */
-    GElf_Shdr *shdrs;
-};
-
 /**
  ** Data structure definitions.
  **/
@@ -1273,16 +746,33 @@ struct debugfile_load_opts {
     debugfile_load_flags_t flags;
 };
 
+/*
+ * Each kind of debugfile (i.e., DWARF, ELF) should supply one of these.
+ */
+struct debugfile_ops {
+    int (*expand_symbol)(struct symbol *root,struct symbol *symbol);
+    int (*resolve_runtime_location)(struct symbol *symbol,struct location *loc);
+};
+
+typedef enum {
+    DEBUGFILE_TYPE_FLAG_NONE   = 0,
+    DEBUGFILE_TYPE_FLAG_KERNEL = 1 << 0,
+    DEBUGFILE_TYPE_FLAG_KMOD   = 1 << 1,
+} debugfile_type_flag_t;
+typedef int debugfile_type_flags_t;
+
 struct debugfile {
     debugfile_type_flags_t flags;
-
-    /* does this file get automatically garbage collected? */
-    uint8_t infinite;
 
     /* Our reference count. */
     REFCNT refcnt;
     /* Our weak reference count. */
-    REFCNT refcntw;
+    //REFCNT refcntw;
+
+    /*
+     * debugfile backend type-specific info.
+     */
+    void *priv;
 
     /* Save the options we were loaded with, forever. */
     struct debugfile_load_opts *opts;
@@ -1350,10 +840,9 @@ struct debugfile {
     unsigned int linetablen;
 
     /*
-     * Each srcfile in a debugfile gets its own symtable.  The symtable
-     * is the authoritative source of 
+     * Each srcfile in a debugfile gets its own SYMBOL_TYPE_ROOT symbol.
      *
-     * h(srcfile) -> struct symtab *
+     * h(srcfile) -> struct symbol *
      *
      * (Well, except for when srcfiles are included multiple times in a
      * build; see next hash.  Those srcfile/root symtab pairs are moved
@@ -1365,15 +854,15 @@ struct debugfile {
      * Some srcfiles are included multiple times at different points in
      * the build (should be mostly assembly source files).
      *
-     * h(srcfile) -> struct array_list * -> struct symtab *
+     * h(srcfile) -> struct array_list * -> struct symbol *
      */
     GHashTable *srcfiles_multiuse;
 
     /*
-     * Each CU debugfile gets its own symtable.  This is a map between
-     * CU offsets (i.e., in aranges and pubnames) and symtabs.
+     * Each CU srcfile gets its own SYMBOL_TYPE_ROOT symbol.  This is a
+     * map between CU offsets (i.e., in aranges and pubnames) and symbols.
      *
-     * h(offset) -> struct symtab *
+     * h(offset) -> struct symbol *
      */
     GHashTable *cuoffsets;
 
@@ -1391,7 +880,10 @@ struct debugfile {
     /* h(typename) -> struct symbol * */
     GHashTable *types;
 
-    struct symtab *shared_types;
+    /*
+     * This hashtable holds types that have been shared across srcfiles.
+     */
+    GHashTable *shared_types;
 
     /*
      * Each global var/function (i.e., not declared as static, and not
@@ -1411,6 +903,17 @@ struct debugfile {
      * instance symbol, or a "global" type, we try to resolve them.
      */
     GHashTable *decllists;
+
+    /*
+     * When we *do* resolve a declaration, we have to save the fact that
+     * we did so somewhere -- we had to RHOLD(decl,defn) so we could
+     * copy mem from the defn to the decl.  This helps us undo those
+     * holds; we do it only when the debugfile is freed, or when the
+     * individual symbol is freed (i.e., if symbol->isdecldefined and
+     * decl symbol is a key here, the value is the defn symbol it held).
+     * Then it can RPUT on the symbol and life is good.
+     */
+    GHashTable *decldefined;
 
     /*
      * Any symbol that has a fixed address location gets an entry in
@@ -1441,427 +944,6 @@ struct dwarf_cu_die_ref {
     SMOFFSET die_offset;
 };
 
-struct range_list_entry {
-    ADDR start;
-    ADDR end;
-};
-
-struct range_list {
-    int32_t len;
-    int32_t alen;
-    struct range_list_entry **list;
-};
-
-struct range {
-    range_type_t rtype;
-    union {
-	struct {
-	    ADDR lowpc;
-	    ADDR highpc;
-	} a;
-	struct range_list rlist;
-    } r;
-};
-
-struct loc_list_entry {
-    ADDR start;
-    ADDR end;
-    struct location *loc;
-};
-
-struct loc_list {
-    int32_t len;
-    int32_t alen;
-    struct loc_list_entry **list;
-};
-
-struct location {
-    location_type_t loctype;
-    union {
-	ADDR addr;
-	REG reg;
-	OFFSET fboffset;
-	struct {
-	    REG reg;
-	    OFFSET offset;
-	} regoffset;
-	OFFSET member_offset;
-	struct {
-	    char *data;
-	    uint16_t len;
-	} runtime;
-	struct loc_list *loclist;
-    } l;
-};
-
-#define SYMTAB_IS_ROOT(symtab) ((symtab)->parent == NULL)
-#define SYMTAB_IS_CU(symtab)   ((symtab)->meta != NULL)
-#define SYMTAB_IS_ANON(symtab) ((symtab)->symtab_symbol == NULL)
-
-struct dwarf_cu_meta {
-    Dwfl_Module *dwflmod;
-    Dwarf *dbg;
-    size_t cuhl;
-    Dwarf_Half version;
-    uint8_t addrsize;
-    uint8_t offsize;
-    Dwarf_Off abbroffset;
-    Dwarf_Off nextcu;
-
-    /* If this was a source filename, a compilation dir should be set. */
-    char *compdirname;
-
-    /*
-     * Any symbol in the pubnames table for any CUs in this debugfile is
-     * in here, with a pointer to its CU's symtab.
-     */
-    GHashTable *pubnames;
-
-    char *producer;
-    char *language;
-    short int lang_code;
-
-    /* Right now, this is only set for top-level CU symtabs. */
-    load_type_t loadtag:LOAD_TYPE_BITS;
-
-    uint8_t compdirname_nofree:1,
-            producer_nofree:1,
-	    language_nofree:1;
-};
-
-/*
- * Symbol tables are mostly just backreferences to the objects they are
- * associated with (the parent debugfile they are in, and the srcfile
- * from the original source they are present in)... and the hashtable
- * itself.
- */
-struct symtab {
-    /*
-     * Some symbol tables are associated with a binfile; others are
-     * associated with a debugfile.  Basically, the difference is if the
-     * symbol came from the binary's symbol table (i.e., the ELF symbol
-     * table), or the debug information's symbol info (i.e., DWARF).
-     */
-    struct binfile *binfile;
-    struct debugfile *debugfile;
-
-    /* If this is a top-level (CU) symtab, we need some extra info. */
-    struct dwarf_cu_meta *meta;
-
-    /* This may be the source filename, OR a subscope name. */
-    char *name;
-
-    /* The range for this symtab is either a list of ranges, or a
-     * low_pc/high_pc range.
-     */
-    struct range range;
-
-    /* Our refcnt. */
-    REFCNT refcnt;
-    /* Our weak reference count. */
-    REFCNT refcntw;
-
-    /* The offset where this symtab came from.  For CU symtabs, it is
-     * the CU; for function symtabs, it is the function's DIE.
-     */
-    SMOFFSET ref;
-
-    uint8_t name_nofree:1;
-
-    /*
-     * If this is a symtab for symbol (i.e., for a function), this is
-     * that symbol.
-     */
-    struct symbol *symtab_symbol;
-
-    /*
-     * If this symtab is a child, this is its parent.
-     */
-    struct symtab *parent;
-    /* If this symtab has subscopes, this list is the symtabs for each
-     * subscope.  Of course, each subscope could have more children.
-     */
-    struct list_head subtabs;
-    /* If this symtab is a child of some other symtab, it will be on
-     * that symtab's list.
-     */
-    struct list_head member;
-
-    /* 
-     * This hashtable stores only *named* symbols that existed in this
-     * scope.  If the symbol exists multiple times in this symtab, then
-     * it is not in this table, but rather in duptab below.  If we have
-     * to insert a symbol already present in this table, we create a
-     * list and move it to the duptab.
-     *
-     * h(sym) -> struct symbol *
-     */
-    GHashTable *tab;
-
-    /* 
-     * This hashtable stores lists of duplicate symbols in this symtab.
-     *
-     * h(sym) -> struct array_list * (struct symbol *)
-     */
-    GHashTable *duptab;
-
-    /* 
-     * This hashtable stores only *unnamed* symbols that existed in this
-     * scope.  These are probably mostly types.
-     *
-     * h(addr) -> struct symbol * 
-     */
-    GHashTable *anontab;
-};
-
-struct symbol_type;
-struct symbol_instance;
-
-struct symbol {
-    /*
-     * Our name, if any.
-     *
-     * BUT, see comments about 'extname' below!!!  Do not free .name if
-     * extname is set!  Right now it can only be set for type symbols;
-     * hence, it is in the type section of the primary union below.
-     */
-    char *name;
-
-    /* The primary symbol table we are resident in. */
-    struct symtab *symtab;
-
-    /*
-     * If we copy the string table from the ELF binary
-     * brute-force to save on lots of mallocs per symbol name,
-     * we don't malloc each symbol's .name .  This means that
-     * for type names that must be prepended to (i.e., the DWARF
-     * name for a struct is just 'X', but we have to put it into
-     * the symtab as 'struct X' to avoid typedef collisions
-     * (i.e., typedef struct X X).  This means we have to drum
-     * up a fake name. 
-     * 
-     * But, the fake name always contains the real name as a substring.
-     * So, this is the offset of that string.
-     */
-    unsigned int orig_name_offset:8;
-
-    /* Where we exist. */
-    unsigned int srcline:SRCLINE_BITS;
-
-    /* If this is a type symbol, which type. */
-    datatype_code_t datatype_code:DATATYPE_CODE_BITS;
-
-    /* Are we full or partial? */
-    load_type_t loadtag:LOAD_TYPE_BITS;
-
-    /* The kind of symbol we are. */
-    symbol_type_t type:SYMBOL_TYPE_BITS;
-
-    /* The symbol source. */
-    symbol_source_t source:SYMBOL_SOURCE_BITS;
-
-    unsigned int issynthetic:1,
-	isshared:1,
-	usesshareddatatype:1,
-	freenextpass:1,
-	isexternal:1,
-	has_linkage_name:1,
-	isdeclaration:1,
-	decldefined:1,
-	decltypedefined:1,
-	isprototyped:1,
-	isparam:1,
-	ismember:1,
-	isenumval:1,
-	isinlineinstance:1,
-	has_base_addr:1,
-	size_is_bytes:1,
-	size_is_bits:1,
-	guessed_size:1,
-	name_nofree:1;
-
-    /* Our refcnt. */
-    REFCNT refcnt;
-    /* Our weak reference count. */
-    REFCNT refcntw;
-
-    /* Our offset location in the debugfile. */
-    SMOFFSET ref;
-
-    /*
-     * If this is a type symbol, datatype_ref and datatype are used as
-     * part of its type definition when the definition references
-     * another type (i.e., typedefs).
-     *
-     * If this is an instance symbol, datatype_ref and datatype are the
-     * instance's type.
-     *
-     * If we see the use of the type before the type, or we're doing
-     * partial loads, we can only fill in the ref and fill the datatype
-     * in a postpass.
-     */
-    SMOFFSET datatype_ref;
-
-    /*
-     * If this is a type or var debug symbol, or an ELF symbol, it may
-     * be nonzero.
-     *
-     * If @size.bytes is set, @size_is_bytes will be set above.
-     * If @size.bits and/or @size.offset is set, @size_is_bits will be
-     * set above (and if both a byte_size and bit_size are present,
-     * ctbytes will inherit the byte_size).
-     *
-     * If a type or variable has both a byte_size and a bit_size (gcc
-     * does this for bitfields -- in its DWARF output, byte_size is the
-     * size of the type containing the bitfield; bit_size is the actual
-     * size of the bitfield), bit_size is given precedence, and
-     * byte_size is "lost" -- which is what we care about.  WHOOPS --
-     * actually we do care about it for printing values at least.
-     */
-    union {
-	uint32_t bytes;
-	struct {
-#define SIZE_BITS_SIZE     10
-#define SIZE_OFFSET_SIZE   10
-#define SIZE_CTBYTES_SIZE   12
-	    uint32_t bits:SIZE_BITS_SIZE,
-		     offset:SIZE_OFFSET_SIZE,
-		     ctbytes:SIZE_CTBYTES_SIZE;
-	};
-    } size;
-
-    /* If not a SYMBOL_TYPE_TYPE, our data type.
-     * For functions, it is the return type; for anything else, its data
-     * type.
-     */
-    struct symbol *datatype;
-
-    /* If this symbol has an address (or multiple addresses, or a range
-     * of addresses, this is the smallest one.
-     */
-    ADDR base_addr;
-
-    /*
-     * If this symbol was a declaration, but its definition is loaded as
-     * a symbol, this is that symbol.  We have to save it off because we
-     * held a ref to it so we could copy its guts into our symbol.
-     *
-     * (We have to copy @has_base_addr, @size_is_bytes, @size_is_bits,
-     * @guessed_size, @size, @base_addr, @datatype, @s.ti or @s.ii.).
-     *
-     * We cannot resolve declarations until after @datatype has been
-     * resolved for the definition, however.  We do our best up-front
-     * during load.
-     */
-    struct symbol *definition;
-
-    union {
-	struct symbol_type *ti;
-	struct symbol_instance *ii;
-    } s;
-};
-
-struct symbol_type {
-    union {
-	struct {
-	    encoding_t encoding;
-	} t;
-	struct {
-	    struct list_head members;
-	    int count;
-	} e;
-	struct {
-	    struct list_head members;
-	    int count;
-	} su;
-	struct {
-	    int *subranges;
-	    int count;
-	    int alloc;
-	} a;
-	/* For a function type (i.e., a DW_TAG_subroutine_type)
-	 * this data describes the function's arg type info.
-	 * The return type, if any, is specified in
-	 * type_datatype above.
-	 */
-	struct {
-	    struct list_head args;
-	    uint16_t count;
-	    uint8_t hasunspec:1;
-	} f;
-    } d;
-};
-
-struct symbol_instance {
-    uint8_t isdeclinline:1,
-	    isinlined:1,
-	    constval_nofree:1;
-
-    /* If this instance is inlined, these point back to the
-     * source for the inlined instance.  If it was a forward ref
-     * in the DWARF info, origin_ref is set and origin has to be
-     * filled in a postpass.
-     */
-    SMOFFSET origin_ref;
-    struct symbol *origin;
-
-    /* If this symbol was declared or is inlined (is an abstract
-     * origin), this is a list of the inline instance symbols
-     * corresponding to this abstract origin.
-     */
-    struct array_list *inline_instances;
-
-    /* If this instance already has a value, this is it! */
-    void *constval;
-
-    union {
-	/* For a function instance (i.e., a DW_TAG_subprogram or
-	 * DW_TAG_inlined_subroutine, this data describes the
-	 * function's "type" information.
-	 */
-	struct {
-	    struct list_head args;
-	    uint16_t count;
-	    uint8_t hasunspec:1,
-		    hasentrypc:1,
-		       /* If the fb loc is a list or single loc. */
-		    fbisloclist:1,
-		    fbissingleloc:1,
-	   	    prologue_guessed:1,
-                    prologue_known:1,
-		    epilogue_known:1;
-		       /* The frame base location.  Can be a list or
-		        * single location.
-			*/
-	    union {
-		struct loc_list *list;
-		struct location *loc;
-	    } fb;
-	    struct symtab *symtab;
-	    ADDR entry_pc;
-	    ADDR prologue_end;
-	    ADDR epilogue_begin;
-	} f;
-	struct {
-	    /* If this symbol is a member of another, this is its list
-	     * entry.  Right now, only variable symbols are members.
-	     * Note that we also keep a pointer back to the symbol
-	     * containing this symbol_instance struct; need this for
-	     * list traversals.  Then we also keep a pointer back to the
-	     * parent symbol we are a member of.
-	     */
-	    struct list_head member;
-	    struct symbol *member_symbol;
-	    struct symbol *parent_symbol;
-
-	    struct location l;
-	} v;
-	struct {
-	    struct range range;
-	} l;
-    } d;
-};
-
 /*
  * We return "elaborated" symbols from symbol lookups, and store location
  * resolution info in here too.  An elaborated symbol has the symbol's
@@ -1878,7 +960,7 @@ struct lsymbol {
     /* Our refcnt. */
     REFCNT refcnt;
     /* Our weak reference count. */
-    REFCNT refcntw;
+    //REFCNT refcntw;
 
     /*
      * If it is not a nested symbol, only the symbol itself.  Otherwise,

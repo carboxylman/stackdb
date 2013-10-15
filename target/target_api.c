@@ -322,7 +322,6 @@ struct array_list *target_list_available_overlay_tids(struct target *target,
     struct array_list *retval;
     GHashTableIter iter;
     struct target_thread *tthread;
-    REGVAL thip;
 
     vdebug(8,LA_TARGET,LF_TARGET,"loading available threads\n");
 

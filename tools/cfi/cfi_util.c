@@ -564,10 +564,10 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
     int i;
     void *item;
 
-    if (location_resolve_symbol_base(cfi->target,cfi->tid,bsymbol,&funcstart,
-				     NULL)) {
+    if (target_bsymbol_resolve_base(cfi->target,cfi->tid,bsymbol,&funcstart,
+				    NULL)) {
 	verror("could not resolve base addr for function %s!\n",
-		bsymbol->lsymbol->symbol->name);
+		bsymbol_get_name(bsymbol));
 	return -1;
     }
 
@@ -857,7 +857,7 @@ char *cfi_thread_backtrace(struct cfi_data *cfi,struct cfi_thread_status *cts,
 	base = 0;
 	if (function) {
 	    name = bsymbol_get_name(function);
-	    target_resolve_symbol_base(cfi->target,cfi->tid,function,&base,NULL);
+	    target_bsymbol_resolve_base(cfi->target,cfi->tid,function,&base,NULL);
 	}
 	if (!name)
 	    name = "<UNKNOWN>";

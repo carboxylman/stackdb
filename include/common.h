@@ -141,6 +141,7 @@ typedef int32_t SMOFFSET;
  * leaks; see below!
  */
 typedef uint32_t REFCNT;
+#define PRIiREFCNT PRIu32
 
 /*
  * Reference count debugging is hard because of the ways we use it.  We
@@ -242,6 +243,8 @@ extern GHashTable *grefstab;
 extern GHashTable *grefwtab;
 /* This one holds data for self-owning objects (i.e., user-inspired refs). */
 extern GHashTable *grefwstab;
+
+#define REFCNTDECL(trefcnt) REFCNT trefcnt
 
 #define RHOLD(x,hx)							\
     do {								\
@@ -620,15 +623,32 @@ extern GHashTable *grefwstab;
 	}								\
     } while (0);
 #else
+#define REFCNTDECL(trefcnt) 
 #define RHOLD(x,hx)          ++((x)->refcnt)
 #define RHOLDW(x,hx)         ++((x)->refcntw)
 #define RPUT(x,objtype,hx,rc)  ((rc) = (--((x)->refcnt) == 0)	\
 				           ? objtype ## _free(x,0) \
 				           : (x)->refcnt); \
                                (rc) += 0
-#define RPUTFF(x,objtype,hx,rc) ((rc) = (--((x)->refcnt) == 0)	\
-	                                     ? objtype ## _free(x,1) \
-	                                     : objtype ## _free(x,1)
+/*
+ * Allows the caller to free the object even if the refcnt has gone
+ * negative.  This is nice for the case that the caller allocates an
+ * object, and passes it into the library where something in there holds
+ * one or more refs to it.  But, if the caller later decides it wants to
+ * "release" it because from its perspective it is no longer needed,
+ * then it can call this sloppy release mechanism which allows it to
+ * release an "implicit" ref.
+ *
+ * A cleaner way would be to hold a temp ref to it, and release that.
+ * But if an algorithm is multi-part, it may be hard to follow that
+ * strategy.
+ */
+#define RPUTIFZERO(x,objtype,rc)  ((rc) = (x)->refcnt == 0		\
+				   ? objtype ## _free(x,0)		\
+				   : (x)->refcnt)
+#define RPUTFF(x,objtype,hx,rc) ((rc) = (--((x)->refcnt) == 0) \
+                                            ? objtype ## _free(x,1) \
+                                            : objtype ## _free(x,1)
 #define RPUTNF(x,hx,rc)         ((rc) = (--((x)->refcnt)))
 
 #define REF_DEBUG_REPORT_FINISH() (void)

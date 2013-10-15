@@ -35,6 +35,7 @@
 #include <assert.h>
 
 #include "common.h"
+#include "dwdebug_priv.h"
 #include "dwdebug.h"
 #include "clfit.h"
 #include "alist.h"
@@ -58,10 +59,15 @@
  * This is taken from elfutils/src/readelf.c:print_debug_line_section(),
  * tweaked into "better" C, and hooked so that we can "detect" end of prologues.
  */
-int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
-	      Dwarf_Off offset,size_t address_size) {
-    unsigned char *linestartp = (unsigned char *)&debugfile->linetab[offset];
-    unsigned char *lineendp = (unsigned char *)debugfile->linetab + debugfile->linetablen;
+int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
+    struct debugfile *debugfile = srd->debugfile;
+    struct symbol *root = srd->root;
+    struct scope *root_scope;
+    size_t address_size = srd->addrsize;
+    unsigned char *linestartp = 
+	(unsigned char *)&debugfile->linetab[offset];
+    unsigned char *lineendp = 
+	(unsigned char *)debugfile->linetab + debugfile->linetablen;
     unsigned char *linep = linestartp;
     const unsigned char *clinep;
     unsigned char *endp;
@@ -104,6 +110,15 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
     unsigned char *startp;
     int filenamelen;
     int retval;
+    char *compdirname;
+
+    root_scope = symbol_read_owned_scope(root);
+    if (!root_scope) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    compdirname = SYMBOLX_ROOT(root)->compdirname;
 
     /* We only recognize addresses for symbols in this table, so don't
      * process if there are no addresses!  (unlikey)
@@ -203,8 +218,8 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 
 	    /* Construct a full filename. */
 	    if (u128 == 0) {
-		if (cu_symtab->meta->compdirname)
-		    dirp = cu_symtab->meta->compdirname;
+		if (compdirname)
+		    dirp = compdirname;
 		else
 		    dirp = (char *)array_list_item(dirlist,0);
 	    }
@@ -261,10 +276,8 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 	     */
 	    clmatch_add(&currentclf,line,(void *)(ADDR)address);
 
-	    if (strcmp(currentfile,"/local/sda4/xen-tt/linux-2.6.18-xen/net/sunrpc/svcsock.c") == 0) {
-		vdebug(5,LA_DEBUG,LF_DOTHER,"storeline %d 0x%"PRIxADDR"\n",
-		       line,(ADDR)address);
-	    }
+	    vdebug(5,LA_DEBUG,LF_DOTHER,"storeline %d 0x%"PRIxADDR"\n",
+		   line,(ADDR)address);
 
 	    if (orig_key) {
 		/* If it had been in the hash, we have to get the
@@ -304,16 +317,18 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		/*
 		 * If the epilogue_begin register is set, try to do it.
 		 */
-		if (epilogue_begin && candidate_symbol) {
+		if (epilogue_begin && candidate_symbol
+		    && SYMBOL_IS_FUNC(candidate_symbol)) {
 		    /* Use it if the address is in the function range. */
 		    if (symbol_contains_addr(candidate_symbol,address)) {
-			candidate_symbol->s.ii->d.f.epilogue_begin =	\
-			    (ADDR)address;
+			SYMBOL_WX_FUNC(candidate_symbol,sf,-1);
+
+			sf->epilogue_begin = (ADDR)address;
 			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 
-			candidate_symbol->s.ii->d.f.epilogue_known = 1;
+			sf->epilogue_known = 1;
 		    }
 		    else {
 			vdebug(5,LA_DEBUG,LF_DLOC,
@@ -326,18 +341,21 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		 * If the prologue_end register is set, try to use that
 		 * before doing autodetection.
 		 */
-		if (prologue_end && candidate_symbol) {
+		if (prologue_end && candidate_symbol
+		    && SYMBOL_IS_FUNC(candidate_symbol)) {
 		    /* Use it if the address is in the function range. */
 		    if (symbol_contains_addr(candidate_symbol,address)) {
-			candidate_symbol->s.ii->d.f.prologue_end = (ADDR)address;
+			SYMBOL_WX_FUNC(candidate_symbol,sf,-1);
+
+			sf->prologue_end = (ADDR)address;
 			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "set_prologue_end: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 
 			/* Unset auto detected flag; we have one for
 			   sure. */
-			candidate_symbol->s.ii->d.f.prologue_guessed = 0;
-			candidate_symbol->s.ii->d.f.prologue_known = 1;
+			sf->prologue_guessed = 0;
+			sf->prologue_known = 1;
 
 			/* Unset symbol so we don't try to use "auto"
 			   detection. */
@@ -359,20 +377,22 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		 * Try to find a symbol at this address; if we find one,
 		 * and it is a function, set its prologue_end value!
 		 */
-		if (symbol) {
+		if (symbol && SYMBOL_IS_FUNC(symbol)) {
 		    /* If the current address is not in s, assume we're
 		     * done with it!
 		     *
 		     * XXX: is this right?
 		     */
 		    if (symbol_contains_addr(symbol,address)) {
-			symbol->s.ii->d.f.prologue_end = (ADDR)address;
+			SYMBOL_WX_FUNC(symbol,sf,-1);
+
+			sf->prologue_end = (ADDR)address;
 			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "assuming prologue_end of %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
 
 			/* Set auto detected flag; we're just guessing! */
-			symbol->s.ii->d.f.prologue_guessed = 1;
+			sf->prologue_guessed = 1;
 		    }
 		    else {
 			vdebug(5,LA_DEBUG,LF_DLOC,
@@ -386,12 +406,18 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		     */
 		    symbol = NULL;
 		}
+		else if (symbol)
+		    /*
+		     * Must have been a non-func symbol; so ignore it
+		     * for future iterations.
+		     */
+		    symbol = NULL;
 
 		if (!symbol) {
 		    symbol = (struct symbol *) \
 			g_hash_table_lookup(debugfile->addresses,
 					    (gpointer)(ADDR)address);
-		    if (symbol) {
+		    if (symbol && SYMBOL_IS_FUNC(symbol)) {
 			vdebug(3,LA_DEBUG,LF_DLOC,
 			       "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
@@ -442,7 +468,7 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 			symbol = (struct symbol *) \
 			    g_hash_table_lookup(debugfile->addresses,
 						(gpointer)(ADDR)address);
-			if (symbol) {
+			if (symbol && SYMBOL_IS_FUNC(symbol)) {
 			    vdebug(3,LA_DEBUG,LF_DLOC,
 				   "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 				   symbol_get_name(symbol),(ADDR)address);
@@ -465,8 +491,8 @@ int get_lines(struct debugfile *debugfile,struct symtab *cu_symtab,
 		    
 		    /* Construct a full filename. */
 		    if (u128 == 0) {
-			if (cu_symtab->meta->compdirname)
-			    dirp = cu_symtab->meta->compdirname;
+			if (compdirname)
+			    dirp = compdirname;
 			else
 			    dirp = (char *)array_list_item(dirlist,0);
 		    }
