@@ -49,7 +49,7 @@
 #include "vmprobes.h"
 #include "list.h"
 
-#define SYSCALL_MAX 305
+#define SYSCALL_MAX 320
 
 #define ARG_STRING_LEN	1024
 #define ARG_BYTES_LEN	1024
@@ -1030,6 +1030,67 @@ void socket_args_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
 	free(sasl);
 
     return;
+}
+
+void sockaddr_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		      int pid,int syscall,int arg,
+		      struct argdata **arg_data,
+		      struct process_data *data)
+{
+    unsigned long sa = *(unsigned long *)arg_data[arg]->data;
+    unsigned char *dbuf;
+    char *sas = NULL;
+    int doit = 0;
+
+    /* XXX only decode when valid */
+    switch (syscall) {
+    /* presyscall: connect, sendto, bind... */
+    case 306: case 308: case 313:
+	if (!arg_data[arg]->postcall)
+	    doit = 1;
+	break;
+    /* postsyscall: accept, recvfrom, getsockname, getpeername... */
+    case 307: case 309: case 315: case 316:
+	if (arg_data[arg]->postcall)
+	    doit = 1;
+	break;
+    }
+
+    if (doit) {
+	dbuf = vmprobe_get_data(handle,regs,"socketaddr",sa,pid,
+				sizeof(struct sockaddr_storage),NULL);
+	if (dbuf) {
+	    sas = sockaddr2str((struct sockaddr *)dbuf);
+	    free(dbuf);
+	}
+    }
+    if (sas) {
+	arg_data[arg]->decodings[0] = ssprintf("addr=%s", sas);
+    } else {
+	arg_data[arg]->decodings[0] = ssprintf("addr=0x%x", sa);
+    }
+
+    return;
+}
+
+void socklen_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
+		     int pid,int syscall,int arg,
+		     struct argdata **arg_data,
+		     struct process_data *data)
+{
+    unsigned long addr = *((unsigned long *)arg_data[arg]->data);
+
+    if (arg_data[arg]->postcall) {
+	unsigned long len = 0;
+
+	if (addr && vmprobe_get_data(handle,regs,"socklen",addr,pid,
+				     sizeof(long),(void *)&len)) {
+	    arg_data[arg]->decodings[0] = ssprintf("%lu", len);
+	    return;
+	}
+    }
+
+    arg_data[arg]->decodings[0] = strdup(addr ? "<invalid>" : "NULL");
 }
 
 void sigset_decoder(vmprobe_handle_t handle,struct cpu_user_regs *regs,
@@ -2591,6 +2652,75 @@ struct syscall_info sctab[SYSCALL_MAX] = {
 	  (char *[]) { "flags:flags" }, 1 },
 	{ 5, "fd", SC_ARG_TYPE_UINT },      
 	{ 6, "offset", SC_ARG_TYPE_LONG } } },
+    { 305, "sys_socket", 0, RADDR_NONE, 3, 
+      { { 1, "domain", SC_ARG_TYPE_UINT },
+	{ 2, "type", SC_ARG_TYPE_UINT },
+	{ 3, "protocol", SC_ARG_TYPE_UINT } } },
+    { 306, "sys_connect", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "addr", SC_ARG_TYPE_PTR, sockaddr_decoder, (char *[]) { "addr:addr" }, 1 },
+	{ 3, "addrlen", SC_ARG_TYPE_INT } } },
+    { 307, "sys_accept", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "addr", SC_ARG_TYPE_PTR, sockaddr_decoder, (char *[]) { "addr:addr" }, 1 },
+	{ 3, "addrlen", SC_ARG_TYPE_PTR, socklen_decoder, (char *[]) { "len:len"  }, 1 } } },
+    { 308, "sys_sendto", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
+	{ 3, "len", SC_ARG_TYPE_INT },
+	{ 4, "flags", SC_ARG_TYPE_HEXINT },
+	{ 5, "addr", SC_ARG_TYPE_PTR, sockaddr_decoder, (char *[]) { "addr:addr" }, 1 },
+	{ 6, "addrlen", SC_ARG_TYPE_INT } } },
+    { 309, "sys_recvfrom", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "buf", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
+	{ 3, "len", SC_ARG_TYPE_INT },
+	{ 4, "flags", SC_ARG_TYPE_HEXINT },
+	{ 5, "addr", SC_ARG_TYPE_PTR, sockaddr_decoder, (char *[]) { "addr:addr" }, 1 },
+	{ 6, "addrlen", SC_ARG_TYPE_PTR, socklen_decoder, (char *[]) { "len:len"  }, 1 } } },
+    { 310, "sys_sendmsg", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "msg", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
+	{ 3, "flags", SC_ARG_TYPE_HEXINT } } },
+    { 311, "sys_recvmsg", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "msg", SC_ARG_TYPE_BYTES, NULL, NULL, 0, NULL, 3 },
+	{ 3, "flags", SC_ARG_TYPE_HEXINT } } },
+    { 312, "sys_shutdown", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "how", SC_ARG_TYPE_HEXINT } } },
+    { 313, "sys_bind", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "addr", SC_ARG_TYPE_PTR, sockaddr_decoder, (char *[]) { "addr:addr" }, 1 },
+	{ 3, "addrlen", SC_ARG_TYPE_INT } } },
+    { 314, "sys_listen", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "backlog", SC_ARG_TYPE_UINT } } },
+    { 315, "sys_getsockname", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "addr", SC_ARG_TYPE_PTR, sockaddr_decoder, (char *[]) { "addr:addr" }, 1 },
+	{ 3, "addrlen", SC_ARG_TYPE_PTR, socklen_decoder, (char *[]) { "len:len"  }, 1 } } },
+    { 316, "sys_getpeername", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "addr", SC_ARG_TYPE_PTR, sockaddr_decoder, (char *[]) { "addr:addr" }, 1 },
+	{ 3, "addrlen", SC_ARG_TYPE_PTR, socklen_decoder, (char *[]) { "len:len"  }, 1 } } },
+    { 317, "sys_socketpair", 0, RADDR_GEN, 3,
+      { { 1, "domain", SC_ARG_TYPE_UINT },
+	{ 2, "type", SC_ARG_TYPE_UINT },
+	{ 3, "protocol", SC_ARG_TYPE_UINT },
+	{ 4, "sv", SC_ARG_TYPE_PTR } } },
+    { 318, "sys_setsockopt", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "level", SC_ARG_TYPE_UINT },
+	{ 3, "optname", SC_ARG_TYPE_INT },
+	{ 4, "optval", SC_ARG_TYPE_PTR, },
+	{ 5, "optlen", SC_ARG_TYPE_PTR } } },
+    { 319, "sys_getsockopt", 0, RADDR_GEN, 3,
+      { { 1, "fd", SC_ARG_TYPE_UINT },
+	{ 2, "level", SC_ARG_TYPE_UINT },
+	{ 3, "optname", SC_ARG_TYPE_INT },
+	{ 4, "optval", SC_ARG_TYPE_PTR, },
+	{ 5, "optlen", SC_ARG_TYPE_UINT } } }
 };
 
 int syscall_64to32map[] = {
@@ -2602,10 +2732,10 @@ int syscall_64to32map[] = {
     163, 144, 218, 219,  -1, /* 025-029 */
      -1,  -1,  41,  63,  29, /* 030-034 */
     162, 105,  27, 104,  20, /* 035-039 */
-    239,  -1,  -1,  -1,  -1, /* 040-044 */	/* XXX socket calls */
-     -1,  -1,  -1,  -1,  -1, /* 045-049 */	/* XXX socket calls */
-     -1,  -1,  -1,  -1,  -1, /* 050-054 */	/* XXX socket calls */
-     -1, 120,   2, 190, 303, /* 055-059 */	/* XXX socket calls */
+    239, 305, 306, 307, 308, /* 040-044 */
+    309, 310, 311, 312, 313, /* 045-049 */
+    314, 315, 316, 317, 318, /* 050-054 */
+    319, 120,   2, 190, 303, /* 055-059 */
       1, 114,  37, 109,  -1, /* 060-064 */
      -1,  -1,  -1,  -1,  -1, /* 065-069 */	/* XXX sem/msg calls */
      -1,  -1,  55, 143, 118, /* 070-074 */
@@ -4055,7 +4185,7 @@ int load_config_file(char *file, struct list_head *doms)
     char *buf;
     char *bufptr;
     char *tbuf;
-    int bufsiz = 128;
+    int bufsiz = 8192;
     int rc = 0;
     FILE *ffile;
     char **flist = NULL;
@@ -4874,7 +5004,8 @@ int main(int argc, char *argv[])
 		    }
 
 		    if (sctab[i].addr != addr) {
-			debug(1, "updating %s address to 0x%lx.\n",
+			debug(1, "%s %s address to 0x%lx.\n",
+			      sctab[i].addr ? "updating" : "setting",
 			      sctab[i].name, addr);
 			sctab[i].addr = addr;
 			updated++;
@@ -4890,6 +5021,8 @@ int main(int argc, char *argv[])
 			debug(1, "setting sys_execve64 address to 0x%lx.\n",
 			      addr);
 			sctab[303].addr = addr;
+			/* and return addr too */
+			sctab[303].raddr = addr + 88;
 		    } else
 #endif
 
@@ -4898,7 +5031,11 @@ int main(int argc, char *argv[])
 		     * syscall-specific return points.
 		     */
 		    if (!strcmp(sym, "sys_socketcall")) {
+#if __WORDSIZE == 64
+			addr += 183;
+#else
 			addr += 30;
+#endif
 			debug(1, "setting sys_socketcall return address to 0x%lx.\n",
 			      addr);
 			sctab[i].raddr = addr;
@@ -4921,6 +5058,26 @@ int main(int argc, char *argv[])
 #endif
 			sctab[i].raddr = addr;
 		    }
+#if __WORDSIZE == 64
+		    else if (!strcmp(sym, "sys_accept")) {
+			addr += 17;
+			debug(1, "setting sys_accept return address to 0x%lx.\n",
+			      addr);
+			sctab[i].raddr = addr;
+		    }
+		    else if (!strcmp(sym, "sys_getsockname")) {
+			addr += 143;
+			debug(1, "setting sys_getsockname return address to 0x%lx.\n",
+			      addr);
+			sctab[i].raddr = addr;
+		    }
+		    else if (!strcmp(sym, "sys_getpeername")) {
+			addr += 182;
+			debug(1, "setting sys_getpeername return address to 0x%lx.\n",
+			      addr);
+			sctab[i].raddr = addr;
+		    }
+#endif
 
 		    // first match wins; there won't be more.
 		    //break;
