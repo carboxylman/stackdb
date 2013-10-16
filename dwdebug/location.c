@@ -107,15 +107,61 @@ int location_set_fbreg_offset(struct location *l,OFFSET offset) {
 int location_set_loclist(struct location *l,struct loclistloc *list) {
     if (LOCATION_IS_UNKNOWN(l) || LOCATION_IS_LOCLIST(l)) {
 	l->loctype = LOCTYPE_LOCLIST;
-	if (l->l.loclist)
+	if (l->l.loclist && !l->nofree)
 	    loclistloc_free(l->l.loclist);
+	l->nofree = 0;
 	l->l.loclist = list;
 	return 0;
     }
     return -1;
 }
 
-int location_set_runtime(struct location *l,char *data,int len) {
+int location_set_implicit_word(struct location *loc,ADDR word) {
+    if (LOCATION_IS_UNKNOWN(loc) || LOCATION_IS_IMPLICIT_WORD(loc)) {
+	loc->loctype = LOCTYPE_ADDR;
+	loc->l.word = word;
+	return 0;
+    }
+    return -1;
+}
+
+int location_set_implicit_data(struct location *loc,char *data,int len,
+			       int nocopy) {
+    if (LOCATION_IS_UNKNOWN(loc) || LOCATION_IS_RUNTIME(loc)) {
+	if (len < 0)
+	    return -1;
+#if __WORDSIZE == 4
+	if (data && len > 0 && len > ((1 << LOCATION_REMAINING_BITS) - 1)) {
+	    verror("implicit data len %d too big!\n",len);
+	    return -1;
+	}
+#endif
+	loc->loctype = LOCTYPE_IMPLICIT_DATA;
+
+	if (loc->l.data)
+	    free(loc->l.data);
+	if (data) {
+	    if (!nocopy) {
+		loc->nofree = 0;
+		loc->l.data = malloc(len);
+		memcpy(loc->l.data,data,len);
+	    }
+	    else {
+		loc->nofree = 1;
+		loc->l.data = data;
+	    }
+	    loc->extra = len;
+	}
+	else {
+	    loc->l.data = NULL;
+	    loc->extra = 0;
+	}
+	return 0;
+    }
+    return -1;
+}
+
+int location_set_runtime(struct location *l,char *data,int len,int nocopy) {
     if (LOCATION_IS_UNKNOWN(l) || LOCATION_IS_RUNTIME(l)) {
 	if (len < 0)
 	    return -1;
@@ -127,15 +173,22 @@ int location_set_runtime(struct location *l,char *data,int len) {
 #endif
 	l->loctype = LOCTYPE_RUNTIME;
 
-	if (l->l.runtime_data)
-	    free(l->l.runtime_data);
+	if (l->l.data)
+	    free(l->l.data);
 	if (data) {
-	    l->l.runtime_data = malloc(len);
-	    memcpy(l->l.runtime_data,data,len);
+	    if (!nocopy) {
+		l->nofree = 0;
+		l->l.data = malloc(len);
+		memcpy(l->l.data,data,len);
+	    }
+	    else {
+		l->nofree = 1;
+		l->l.data = data;
+	    }
 	    l->extra = len;
 	}
 	else {
-	    l->l.runtime_data = NULL;
+	    l->l.data = NULL;
 	    l->extra = 0;
 	}
 	return 0;
@@ -266,8 +319,8 @@ struct location *location_copy(struct location *location) {
     retval->extra = location->extra;
 
     if (LOCATION_IS_RUNTIME(location)) {
-	retval->l.runtime_data = malloc(location->extra);
-	memcpy(&retval->l.runtime_data,&location->l.runtime_data,location->extra);
+	retval->l.data = malloc(location->extra);
+	memcpy(&retval->l.data,&location->l.data,location->extra);
     }
     else if (LOCATION_IS_LOCLIST(location)) {
 	old = location->l.loclist;
@@ -292,9 +345,10 @@ struct location *location_copy(struct location *location) {
 }
 
 void location_internal_free(struct location *location) {
-    if (location->loctype == LOCTYPE_RUNTIME) {
-	if (location->l.runtime_data) 
-	    free(location->l.runtime_data);
+    if (location->loctype == LOCTYPE_RUNTIME
+	|| location->loctype == LOCTYPE_IMPLICIT_DATA) {
+	if (location->l.data && !location->nofree) 
+	    free(location->l.data);
     }
     else if (location->loctype == LOCTYPE_LOCLIST) {
 	if (location->l.loclist)
@@ -357,9 +411,16 @@ void location_dump(struct location *location,struct dump_info *ud) {
 	fprintf(ud->stream,"MEMBEROFFSET(%"PRIiOFFSET")",
 		location->l.offset);
 	break;
+    case LOCTYPE_IMPLICIT_WORD:
+	fprintf(ud->stream,"IMPLICIT_WORD(0x%"PRIxADDR")",location->l.word);
+	break;
+    case LOCTYPE_IMPLICIT_DATA:
+	fprintf(ud->stream,"IMPLICIT_DATA(%p,%d)",
+		location->l.data,(int)location->extra);
+	break;
     case LOCTYPE_RUNTIME:
 	fprintf(ud->stream,"RUNTIME(%p,%d)",
-		location->l.runtime_data,(int)location->extra);
+		location->l.data,(int)location->extra);
 	break;
     case LOCTYPE_LOCLIST:
 	loclistloc_dump(location->l.loclist,ud);
@@ -473,7 +534,7 @@ OFFSET location_resolve_offset(struct location *location,
 loctype_t symbol_resolve_location(struct symbol *symbol,
 				  struct location_ops *lops,void *lops_priv,
 				  struct location_ctxt *lctxt,
-				  ADDR *addr,REG *reg,OFFSET *offset) {
+				  struct location *o_loc) {
     if (!SYMBOLX_VAR_LOC(symbol)) {
 	vwarnopt(7,LA_DEBUG,LF_DLOC,"no location for ");
 	WARNOPTDUMPSYMBOL_NL(7,LA_DEBUG,LF_DLOC,symbol);
@@ -482,7 +543,7 @@ loctype_t symbol_resolve_location(struct symbol *symbol,
     }
 
     return location_resolve(SYMBOLX_VAR_LOC(symbol),lops,lops_priv,lctxt,
-			    symbol,addr,reg,offset);
+			    symbol,o_loc);
 }
 
 /*
@@ -498,7 +559,7 @@ loctype_t location_resolve(struct location *loc,
 			   struct location_ops *lops,void *lops_priv,
 			   struct location_ctxt *lctxt,
 			   struct symbol *symbol,
-			   ADDR *o_addr,REG *o_reg,OFFSET *o_offset) {
+			   struct location *o_loc) {
     REGVAL regval;
     struct symbol *parent;
     ADDR ip,obj_ip;
@@ -508,6 +569,9 @@ loctype_t location_resolve(struct location *loc,
     loctype_t rc;
     struct loclistloc *loclistloc;
     int found;
+    char *rtbuf;
+    unsigned int rtlen;
+    struct location tloc;
 
     switch (loc->loctype) {
     case LOCTYPE_UNKNOWN:
@@ -522,62 +586,53 @@ loctype_t location_resolve(struct location *loc,
 	return LOCTYPE_UNKNOWN;
     case LOCTYPE_REG:
 	errno = 0;
-	if (o_reg)
-	    *o_reg = LOCATION_REG(loc);
+	if (o_loc)
+	    location_set_reg(o_loc,LOCATION_REG(loc));
 	return LOCTYPE_REG;
     case LOCTYPE_ADDR:
 	errno = 0;
-	if (o_addr) {
-	    if (lops && lops->relocate)
-		lops->relocate(o_addr,LOCATION_ADDR(loc),lops_priv);
-	    else
-		*o_addr = LOCATION_ADDR(loc);
+	addr = LOCATION_ADDR(loc);
+	if (lops && lops->relocate) {
+	    if (lops->relocate(&addr,addr,lops_priv)) {
+		verror("failed to reclocate 0x%"PRIxADDR"!\n",addr);
+		return -LOCTYPE_ADDR;
+	    }
 	}
+	if (o_loc) 
+	    location_set_addr(o_loc,LOCATION_ADDR(loc));
 	return LOCTYPE_ADDR;
     case LOCTYPE_REG_ADDR:
 	errno = 0;
-	if (o_addr) {
-	    if (!lops || !lops->readreg) {
-		errno = EINVAL;
-		return -LOCTYPE_REG_ADDR;
-	    }
-	    else if (lops->readreg(&regval,LOCATION_REG(loc),lops_priv)) {
-		verror("could not read address from reg %d!\n",
-		       LOCATION_REG(loc));
-		return -LOCTYPE_REG_ADDR;
-	    }
-	    else {
-		*o_addr = regval;
-		return LOCTYPE_ADDR;
-	    }
+	if (!lops || !lops->readreg) {
+	    errno = EINVAL;
+	    return -LOCTYPE_REG_ADDR;
+	}
+	else if (lops->readreg(&regval,LOCATION_REG(loc),lops_priv)) {
+	    verror("could not read address from reg %d!\n",
+		   LOCATION_REG(loc));
+	    return -LOCTYPE_REG_ADDR;
 	}
 	else {
-	    if (o_reg) 
-		*o_reg = LOCATION_REG(loc);
+	    if (o_loc)
+		location_set_addr(o_loc,regval);
 	    return LOCTYPE_REG_ADDR;
 	}
 	break;
     case LOCTYPE_REG_OFFSET:
 	LOCATION_GET_REGOFFSET(loc,reg,offset);
 	errno = 0;
-	if (o_addr) {
-	    if (!lops || !lops->readreg) {
-		errno = EINVAL;
-		return -LOCTYPE_REG_OFFSET;
-	    }
-	    else if (lops->readreg(&regval,reg,lops_priv)) {
-		verror("could not read address from reg %d!\n",reg);
-		return -LOCTYPE_REG_OFFSET;
-	    }
-	    *o_addr = regval + offset;
-	    return LOCTYPE_ADDR;
+	if (!lops || !lops->readreg) {
+	    errno = EINVAL;
+	    return -LOCTYPE_REG_OFFSET;
+	}
+	else if (lops->readreg(&regval,reg,lops_priv)) {
+	    verror("could not read address from reg %d!\n",reg);
+	    return -LOCTYPE_REG_OFFSET;
 	}
 	else {
-	    if (o_reg)
-		*o_reg = reg;
-	    if (o_offset)
-		*o_offset = offset;
-	    return LOCTYPE_REG_OFFSET;
+	    if (o_loc)
+		location_set_addr(o_loc,(ADDR)(regval + offset));
+	    return LOCTYPE_ADDR;
 	}
 	break;
     case LOCTYPE_FBREG_OFFSET:
@@ -613,9 +668,11 @@ loctype_t location_resolve(struct location *loc,
 	}
 
 	/* Resolve the parent's fbloc; load it; and apply the offset! */
+	memset(&tloc,0,sizeof(tloc));
 	rc = location_resolve(pf->fbloc,lops,lops_priv,lctxt,
-			      symbol,&addr,&reg,NULL);
+			      symbol,&tloc);
 	if (rc == LOCTYPE_REG) {
+	    reg = LOCATION_REG(&tloc);
 	    if (!lops || !lops->readreg) {
 		verror("cannot read reg to get frame_base value; no location op!\n");
 		errno = EINVAL;
@@ -637,8 +694,8 @@ loctype_t location_resolve(struct location *loc,
 	       "frame_base 0x%"PRIxADDR",fboffset %"PRIiOFFSET"\n",
 	       addr,LOCATION_OFFSET(loc));
 
-	if (o_addr)
-	    *o_addr = addr + (ADDR)LOCATION_OFFSET(loc);
+	if (o_loc)
+	    location_set_addr(o_loc,(ADDR)(addr + LOCATION_OFFSET(loc)));
 
 	return LOCTYPE_ADDR;
     case LOCTYPE_LOCLIST:
@@ -683,17 +740,27 @@ loctype_t location_resolve(struct location *loc,
 	}
 
 	return location_resolve(loclistloc->loc,lops,lops_priv,lctxt,
-				symbol,o_addr,o_reg,o_offset);
+				symbol,o_loc);
     case LOCTYPE_MEMBER_OFFSET:
 	errno = 0;
-	if (o_offset) 
-	    *o_offset = LOCATION_OFFSET(loc);
+	if (o_loc) 
+	    location_set_member_offset(o_loc,LOCATION_OFFSET(loc));
 	return LOCTYPE_MEMBER_OFFSET;
+    case LOCTYPE_IMPLICIT_WORD:
+	errno = 0;
+	if (o_loc)
+	    location_set_implicit_word(o_loc,LOCATION_WORD(loc));
+	return LOCTYPE_IMPLICIT_WORD;
+    case LOCTYPE_IMPLICIT_DATA:
+	LOCATION_GET_DATA(loc,rtbuf,rtlen);
+	errno = 0;
+	if (o_loc)
+	    location_set_implicit_data(o_loc,rtbuf,rtlen,!loc->nofree);
+	return LOCTYPE_IMPLICIT_DATA;
     case LOCTYPE_RUNTIME:
-	vwarnopt(7,LA_TARGET,LF_TLOC,"currently unsupported location type %s\n",
-		 LOCTYPE(loc->loctype));
-	errno = ENOTSUP;
-	return -LOCTYPE_RUNTIME;
+	LOCATION_GET_DATA(loc,rtbuf,rtlen);
+	return dwarf_location_resolve((const unsigned char *)rtbuf,rtlen,
+				      lops,lops_priv,lctxt,symbol,o_loc);
     default:
 	vwarn("unknown location type %d\n",loc->loctype);
 	errno = EINVAL;
@@ -713,11 +780,14 @@ int symbol_resolve_bounds_alt(struct symbol *symbol,
     ADDR start = 0,end = 0,alt_start = 0,alt_end = 0;
     loctype_t rc;
     struct scope *scope;
+    struct location o_loc;
 
     if (SYMBOL_IS_TYPE(symbol)) {
 	errno = EINVAL;
 	return -1;
     }
+
+    memset(&o_loc,0,sizeof(o_loc));
 
     /*
      * Any non-type symbol should have a base address.  If a symbol has
@@ -797,9 +867,10 @@ int symbol_resolve_bounds_alt(struct symbol *symbol,
 	}
 	else if (SYMBOLX_VAR_LOC(symbol)) {
 	    rc = location_resolve(SYMBOLX_VAR_LOC(symbol),lops,lops_priv,NULL,
-				  symbol,&start,NULL,NULL);
+				  symbol,&o_loc);
 	    if (rc != LOCTYPE_ADDR)
 		return -1;
+	    start = LOCATION_ADDR(&o_loc);
 	    end = start + symbol_get_bytesize(symbol);
 	}
     }
@@ -895,7 +966,7 @@ ADDR __autoload_pointers(struct symbol *datatype,ADDR addr,
  * more.  It's useful to have them (i.e., to lookup member functions)...
  *
  * Anyway, this function can return LOCTYPE_UNKNOWN, -LOCTYPE_X (on
- * error); or LOCTYPE_ADDR or LOCTYPE_REG on success.
+ * error); or LOCTYPE_ADDR, LOCTYPE_REG, LOCTYPE_IMPLICIT_* on success.
  *
  * If the first symbol is a containing type (i.e., struct/union/class)
  * or a pointer, you must provide a base address in @base_addr.  If you
@@ -914,7 +985,7 @@ ADDR __autoload_pointers(struct symbol *datatype,ADDR addr,
 loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 				   struct location_ops *lops,void *lops_priv,
 				   struct location_ctxt *lctxt,
-				   ADDR *o_addr,REG *o_reg) {
+				   struct location *o_loc) {
 
     /*
      * There are a number of special cases.  Sometimes we don't need to
@@ -926,11 +997,10 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     struct symbol *datatype;
     int llen;
     int i;
-    loctype_t rc;
-    OFFSET offset;
+    loctype_t rc = LOCTYPE_UNKNOWN;
     struct symbol *tdatatype;
-    REG reg;
-    int in_reg = 0;
+    REG reg = -1;
+    struct location tloc;
 
     llen = lsymbol_len(lsymbol);
 
@@ -952,9 +1022,8 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     symbol = lsymbol_last_symbol(lsymbol);
     if (SYMBOL_IS_FUNC(symbol) || SYMBOL_IS_LABEL(symbol) 
 	|| SYMBOL_IS_BLOCK(symbol)) {
-	rc = symbol_resolve_bounds(symbol,lops,lops_priv,
-				   &retval,NULL,NULL);
-	if (rc) {
+	if (symbol_resolve_bounds(symbol,lops,lops_priv,
+				  &retval,NULL,NULL)) {
 	    verror("could not resolve base addr for function %s!\n",
 		   symbol_get_name(symbol));
 	    goto errout;
@@ -975,7 +1044,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
      * prior to it.
      */
     else if (SYMBOL_IS_VAR(symbol)) {
-	rc = symbol_resolve_location(symbol,lops,lops_priv,NULL,NULL,NULL,NULL);
+	rc = symbol_resolve_location(symbol,lops,lops_priv,NULL,NULL);
 	if (rc == LOCTYPE_REG)
 	    i = llen - 1;
 	else
@@ -999,7 +1068,6 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
      * not a pointer, we return the computed address of the last var.
      */
     while (i < llen) {
-	in_reg = 0;
 	symbol = lsymbol_symbol(lsymbol,i);
 
 	/*
@@ -1050,6 +1118,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 
 	    if (SYMBOL_IST_PTR(tdatatype)) {
 		datatype = tdatatype;
+		rc = LOCTYPE_ADDR;
 		goto check_pointer;
 	    }
 	    else if (SYMBOL_IST_STUNC(tdatatype))
@@ -1073,16 +1142,17 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 	/* Grab the symbol's datatype. */
 	datatype = symbol_get_datatype(symbol);
 
-	rc = symbol_resolve_location(symbol,lops,lops_priv,NULL,
-				     &retval,&reg,&offset);
+	memset(&tloc,0,sizeof(tloc));
+	rc = symbol_resolve_location(symbol,lops,lops_priv,NULL,&tloc);
+	//                           &retval,&reg,&offset);
 	if (rc == LOCTYPE_MEMBER_OFFSET) {
-	    retval += offset;
+	    retval += LOCATION_OFFSET(&tloc);
 	    vdebug(12,LA_DEBUG,LF_DLOC,
 		   "member %s at offset 0x%"PRIxOFFSET"; addr 0x%"PRIxADDR"\n",
-		   symbol_get_name(symbol),offset,retval);
+		   symbol_get_name(symbol),LOCATION_OFFSET(&tloc),retval);
 	}
 	else if (rc == LOCTYPE_REG) {
-	    in_reg = 1;
+	    reg = LOCATION_REG(&tloc);
 	    /*
 	     * NB: see below inside the pointer check where we will try
 	     * to load the pointer across this register.
@@ -1091,7 +1161,14 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 		   symbol_get_name(symbol),reg);
 	}
 	else if (rc == LOCTYPE_ADDR) {
+	    retval = LOCATION_ADDR(&tloc);
 	    vdebug(12,LA_DEBUG,LF_DLOC,"var %s at 0x%"PRIxADDR"\n",
+		   symbol_get_name(symbol),retval);
+	}
+	else if (rc == LOCTYPE_IMPLICIT_WORD) {
+	    retval = LOCATION_WORD(&tloc);
+	    vdebug(12,LA_DEBUG,LF_DLOC,
+		   "var %s has implicit value 0x%"PRIxADDR"\n",
 		   symbol_get_name(symbol),retval);
 	}
 	else {
@@ -1112,7 +1189,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 	 */
     check_pointer:
 	if (i < llen && SYMBOL_IST_PTR(datatype)) {
-	    if (in_reg) {
+	    if (rc == LOCTYPE_REG) {
 		/*
 		 * Try to load the ptr value from a register; might or
 		 * might not be an address; only is if the current
@@ -1145,7 +1222,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 		 * Clear the in_reg bit, since we were able to
 		 * autoload the pointer!
 		 */
-		in_reg = 0;
+		rc = LOCTYPE_ADDR;
 
 		/* Do we need to keep trying to load through the pointer? */
 		if (SYMBOL_IST_PTR(datatype))
@@ -1169,9 +1246,9 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     }
 
     /* Return! */
-    if (in_reg) {
-	if (o_reg)
-	    *o_reg = reg;
+    if (rc == LOCTYPE_REG) {
+	if (o_loc)
+	    location_set_reg(o_loc,reg);
 
 	vdebug(12,LA_DEBUG,LF_DLOC,"regno = 0x%"PRIiREG"; datatype = ",reg);
 	if (datatype) {
@@ -1183,9 +1260,9 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 
 	return LOCTYPE_REG;
     }
-    else {
-	if (o_addr)
-	    *o_addr = retval;
+    else if (rc == LOCTYPE_ADDR) {
+	if (o_loc)
+	    location_set_addr(o_loc,retval);
 
 	vdebug(12,LA_DEBUG,LF_DLOC,"addr = 0x%"PRIxADDR"; datatype = ",retval);
 	if (datatype) {
@@ -1196,6 +1273,21 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 	    vdebugc(12,LA_DEBUG,LF_DLOC,"NULL\n");
 
 	return LOCTYPE_ADDR;
+    }
+    else if (rc == LOCTYPE_IMPLICIT_WORD) {
+	if (o_loc)
+	    location_set_implicit_word(o_loc,retval);
+
+	vdebug(12,LA_DEBUG,LF_DLOC,
+	       "implicit word = 0x%"PRIxADDR"; datatype = ",retval);
+	if (datatype) {
+	    LOGDUMPSYMBOL_NL(12,LA_DEBUG,LF_DLOC,
+			     symbol_type_skip_qualifiers(datatype));
+	}
+	else 
+	    vdebugc(12,LA_DEBUG,LF_DLOC,"NULL\n");
+
+	return LOCTYPE_IMPLICIT_WORD;
     }
 
  errout:
@@ -1210,6 +1302,7 @@ int lsymbol_resolve_bounds_alt(struct lsymbol *lsymbol,ADDR base_addr,
     struct symbol *symbol;
     uint32_t size = 0;
     loctype_t rc;
+    struct location tloc;
 
     symbol = lsymbol_last_symbol(lsymbol);
 
@@ -1231,8 +1324,8 @@ int lsymbol_resolve_bounds_alt(struct lsymbol *lsymbol,ADDR base_addr,
      * Otherwise, work the chain to resolve the base addr, then fill in
      * the size.  No alt_* info for variables, obviously.
      */
-    rc = lsymbol_resolve_location(lsymbol,base_addr,lops,lops_priv,NULL,
-				  start,NULL);
+    memset(&tloc,0,sizeof(tloc));
+    rc = lsymbol_resolve_location(lsymbol,base_addr,lops,lops_priv,NULL,&tloc);
     if (rc != LOCTYPE_ADDR) {
 	verror("could not resolve location for %s to addr: %s (%d) (%s)!\n",
 	       symbol_get_name(symbol),strerror(errno),rc,

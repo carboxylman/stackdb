@@ -1226,6 +1226,8 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     int created = 0;
     struct target *target = probe->target;
     target_status_t status;
+    loctype_t ltrc;
+    struct location tloc;
 
     if (type == PROBEPOINT_WATCH && style == PROBEPOINT_SW) {
 	verror("software watchpoints are unsupported!\n");
@@ -1246,10 +1248,14 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
      * if we can).
      */
     if (bsymbol) {
-	target_lsymbol_resolve_location(target,probe->thread->tid,
-					bsymbol->lsymbol,0,bsymbol->region,
-					LOAD_FLAG_NONE,&symbol_addr,NULL,NULL,
-					(!range) ? &range : NULL);
+	memset(&tloc,0,sizeof(tloc));
+	ltrc = target_lsymbol_resolve_location(target,probe->thread->tid,
+					       bsymbol->lsymbol,0,bsymbol->region,
+					       LOAD_FLAG_NONE,&tloc,NULL,
+					       (!range) ? &range : NULL);
+	if (ltrc == LOCTYPE_ADDR) 
+	    symbol_addr = LOCATION_ADDR(&tloc);
+	location_internal_free(&tloc);
 	probe->bsymbol = bsymbol;
 	RHOLD(bsymbol,probe);
     }
@@ -1434,6 +1440,8 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     ADDR probeaddr;
     unsigned int ssize;
     struct symbol *symbol;
+    loctype_t ltrc;
+    struct location tloc;
 
     symbol = lsymbol_last_symbol(bsymbol->lsymbol);
 
@@ -1481,12 +1489,19 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	    watchsize = probepoint_closest_watchsize(ssize);
 	}
 
-	if (target_lsymbol_resolve_location(target,probe->thread->tid,
-					    bsymbol->lsymbol,0,bsymbol->region,
-					    LOAD_FLAG_NONE,&probeaddr,NULL,NULL,
-					    &range)) {
-	    verror("could not resolve base addr for var %s!\n",
-		   bsymbol->lsymbol->symbol->name);
+	memset(&tloc,0,sizeof(tloc));
+	ltrc = target_lsymbol_resolve_location(target,probe->thread->tid,
+					       bsymbol->lsymbol,0,bsymbol->region,
+					       LOAD_FLAG_NONE,&tloc,NULL,
+					       &range);
+	if (ltrc == LOCTYPE_ADDR) {
+	    probeaddr = LOCATION_ADDR(&tloc);
+	    location_internal_free(&tloc);
+	}
+	else {
+	    verror("could not resolve base addr for var %s (loctype %s)!\n",
+		   bsymbol->lsymbol->symbol->name,LOCTYPE(ltrc));
+	    location_internal_free(&tloc);
 	    goto errout;
 	}
 

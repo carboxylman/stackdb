@@ -36,6 +36,13 @@ struct mmap_entry *location_mmap(struct target *target,
  ** symbol_resolve* functions.
  **/
 
+int __target_location_ops_getaddrsize(void *priv) {
+    struct target_location_ops_data *tlod;
+
+    tlod = (struct target_location_ops_data *)priv;
+    return tlod->target->wordsize;
+}
+
 int __target_location_ops_readreg(REGVAL *regval,REG regno,void *priv) {
     struct target_location_ops_data *tlod;
     REGVAL retval;
@@ -112,6 +119,7 @@ int __target_location_ops_unrelocate(ADDR *obj_addr,ADDR real_addr,void *priv) {
 }
 
 struct location_ops target_location_ops = {
+    .getaddrsize = __target_location_ops_getaddrsize,
     .readreg = __target_location_ops_readreg,
     .readipreg = __target_location_ops_readipreg,
     .readptr = __target_location_ops_readptr,

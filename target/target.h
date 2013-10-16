@@ -524,7 +524,7 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
 					  ADDR base_addr,
 					  struct memregion *region,
 					  load_flags_t flags,
-					  ADDR *o_addr,REG *o_reg,
+					  struct location *o_loc,
 					  struct symbol **o_datatype,
 					  struct memrange **o_range);
 int target_lsymbol_resolve_bounds_alt(struct target *target,tid_t tid,

@@ -115,6 +115,10 @@
     ERRORDUMPLSYMBOL((s)); \
     verrorc("\n");
 
+/**
+ ** Prototypes.
+ **/
+struct symbol_root_dwarf;
 
 /**
  ** Debugfiles.
@@ -132,6 +136,13 @@ int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 int dwarf_expand_symbol(struct symbol *root,struct symbol *symbol);
 int dwarf_expand_root(struct symbol *root,
 		      struct array_list *die_offsets,int expand_dies);
+loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
+				 struct location_ops *lops,void *lops_priv,
+				 struct location_ctxt *ctx,
+				 struct symbol *symbol,struct location *o_loc);
+struct location *dwarf_get_static_ops(struct symbol_root_dwarf *srd,
+				      const unsigned char *data,Dwarf_Word len,
+				      unsigned int attr);
 struct symbol *debugfile_lookup_root(struct debugfile *debugfile,
 				     SMOFFSET offset);
 int debugfile_insert_root(struct debugfile *debugfile,struct symbol *symbol);
@@ -416,6 +427,8 @@ static inline const char *LOCTYPE(int n) {
     case LOCTYPE_MEMBER_OFFSET: return "memberoffset";
     case LOCTYPE_FBREG_OFFSET:  return "fbregoffset";
     case LOCTYPE_LOCLIST:       return "loclist";
+    case LOCTYPE_IMPLICIT_WORD: return "implicit_word";
+    case LOCTYPE_IMPLICIT_DATA: return "implicit_data";
     case LOCTYPE_RUNTIME:       return "runtime";
     default:                    return NULL;
     }
@@ -432,21 +445,33 @@ struct loclistloc {
     struct loclistloc *next;
 };
 
-#define LOCATION_REMAINING_BITS (__WORDSIZE - LOCTYPE_BITS)
+/*
+ * We pack loctype plus any data length/register number fields, and
+ * reserve a single bit that specifies if contents (like runtime data,
+ * implicit data, loclist) should not be freed.
+ */
+#define LOCATION_REMAINING_BITS (__WORDSIZE - LOCTYPE_BITS - 1)
 
 struct location {
     /*
      * This is basically a tagged union.
      *
      * NB: since the tag wastes a lot of space, we optimize by moving
-     * @regoffset.reg and @runtime.len out of the union.  Then we just
-     * have to limit the runtime data len; and ensure we limit the
+     * @regoffset.reg and @runtime.len (and now implicit value data len)
+     * out of the union.  Then we just have to limit the
+     * runtime/implicit value data len; and ensure we limit the
      * sizeof(REG) in the future; right now it's int8_t .
      *
-     * If users ever had to see this, we could not do it.
+     * If users ever had to see this, it would stink for them.
      */
 
     loctype_t loctype:LOCTYPE_BITS;
+
+    /*
+     * Only controls freeing of @l.data -- not l.loclist -- that is
+     * always freed!
+     */
+    int nofree:1;
 
     /* Encodes regoffset reg number, or the length of runtime data. */
 #if LOCATION_REMAINING_BITS > 32
@@ -459,7 +484,8 @@ struct location {
 	ADDR addr;
 	REG reg;
 	OFFSET offset; /* fboffset, regoffset, member_offset */
-	char *runtime_data;
+	ADDR word;
+	char *data;    /* runtime data or implicit value data */
 	struct loclistloc *loclist;
     } l;
 };
@@ -472,25 +498,27 @@ struct location {
 #define LOCATION_IS_M_OFFSET(loc) ((loc)->loctype == LOCTYPE_MEMBER_OFFSET)
 #define LOCATION_IS_FB_OFFSET(loc) ((loc)->loctype == LOCTYPE_FBREG_OFFSET)
 #define LOCATION_IS_LOCLIST(loc) ((loc)->loctype == LOCTYPE_LOCLIST)
+#define LOCATION_IS_IMPLICIT_WORD(loc) ((loc)->loctype == LOCTYPE_IMPLICIT_WORD)
+#define LOCATION_IS_IMPLICIT_DATA(loc) ((loc)->loctype == LOCTYPE_IMPLICIT_DATA)
 #define LOCATION_IS_RUNTIME(loc) ((loc)->loctype == LOCTYPE_RUNTIME)
 
 #define LOCATION_ADDR(loc) (loc)->l.addr
 #define LOCATION_REG(loc) (loc)->l.reg
 #define LOCATION_OFFSET(loc) (loc)->l.offset
 #define LOCATION_LOCLIST(loc) (loc)->l.loclist
+#define LOCATION_WORD(loc) (loc)->l.word
 
 #define LOCATION_GET_REGOFFSET(loc,reg,offset)			\
     do {							\
         reg = (REG)(loc)->extra;				\
 	offset = (loc)->l.offset;				\
     } while (0);
-#define LOCATION_GET_RUNTIME(loc,buf,buflen)			\
+#define LOCATION_GET_DATA(loc,buf,buflen)			\
     do {							\
         buflen = (int)(loc)->extra;				\
-	buf = (loc)->l.runtime_data;				\
+	buf = (loc)->l.data;					\
     } while (0);
 
-struct location *location_create(void);
 int location_set_addr(struct location *l,ADDR addr);
 int location_set_reg(struct location *l,REG reg);
 int location_set_reg_addr(struct location *l,REG reg);
@@ -501,23 +529,26 @@ int location_set_loclist(struct location *l,struct loclistloc *list);
 int location_update_loclist(struct location *loc,
 			    ADDR start,ADDR end,struct location *rloc,
 			    int *action);
-int location_set_runtime(struct location *l,char *data,int len);
+int location_set_implicit_word(struct location *loc,ADDR word);
+int location_set_implicit_data(struct location *loc,char *data,int len,
+			       int nocopy);
+int location_set_runtime(struct location *l,char *data,int len,int nocopy);
 
 loctype_t location_resolve(struct location *loc,
 			   struct location_ops *lops,void *lops_priv,
 			   struct location_ctxt *lctxt,
 			   struct symbol *symbol,
-			   ADDR *o_addr,REG *o_reg,OFFSET *o_offset);
+			   struct location *o_loc);
 
 struct location *location_copy(struct location *location);
 void location_dump(struct location *location,struct dump_info *ud);
 void location_internal_free(struct location *location);
-void location_free(struct location *location);
 
 /*
  * Targets must supply this interface.
  */
 struct location_ops {
+    int (*getaddrsize)(void *priv);
     int (*readreg)(REGVAL *regval,REG regno,void *priv);
     int (*readipreg)(REGVAL *regval,void *priv);
     int (*readptr)(ADDR *pval,ADDR real_addr,void *priv);

@@ -1416,7 +1416,7 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
 					  ADDR base_addr,
 					  struct memregion *region,
 					  load_flags_t flags,
-					  ADDR *o_addr,REG *o_reg,
+					  struct location *o_loc,
 					  struct symbol **o_datatype,
 					  struct memrange **o_range) {
     loctype_t rc;
@@ -1427,6 +1427,7 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
     struct symbol *symbol;
     struct symbol *datatype;
     struct memrange *range = NULL;
+    struct location tloc;
 
     tlod.target = target;
     tlod.tid = tid;
@@ -1439,12 +1440,12 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
 	return LOCTYPE_UNKNOWN;
     }
 
+    memset(&tloc,0,sizeof(tloc));
     rc = lsymbol_resolve_location(lsymbol,base_addr,&target_location_ops,&tlod,
-				  NULL,&addr,&reg);
-    if (rc != LOCTYPE_ADDR && rc != LOCTYPE_REG)
-	return rc;
+				  NULL,&tloc);
     if (rc == LOCTYPE_ADDR) {
 	/* Grab the range. */
+	addr = LOCATION_ADDR(&tloc);
 	if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
 	    verror("could not find memory for 0x%"PRIxADDR
 		   " for symbol %s: %s!\n",
@@ -1464,6 +1465,7 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
 		&& symbol_type_is_char(symbol_type_skip_ptrs(datatype))))) {
 
 	if (rc == LOCTYPE_REG) {
+	    reg = LOCATION_REG(&tloc);
 	    /*
 	     * Try to load the ptr value from a register; might or might
 	     * not be an address; only is if the current symbol was a
@@ -1504,7 +1506,12 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
 	    /* Do we need to keep trying to load through the pointer? */
 	    goto again;
 	}
-	else {
+	else if (rc == LOCTYPE_IMPLICIT_WORD) {
+	    verror("unexpected implicit value instead of pointer!\n");
+	    errno = EINVAL;
+	    goto errout;
+	}
+	else if (rc == LOCTYPE_ADDR) {
 	    addr = target_autoload_pointers(target,datatype,addr,
 					    flags,&datatype,&range);
 	    if (errno) {
@@ -1517,27 +1524,41 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
 		   "autoloaded pointer(s) for var %s = 0x%"PRIxADDR"\n",
 		   symbol_get_name(symbol),addr);
 	}
+	else {
+	    verror("unexpected location type %s for pointer!\n",
+		   LOCTYPE(rc));
+	    errno = EINVAL;
+	    goto errout;
+	}
     }
 
     /* Return! */
     if (rc == LOCTYPE_ADDR) {
-	if (o_addr)
-	    *o_addr = addr;
+	if (o_loc)
+	    location_set_addr(o_loc,LOCATION_ADDR(&tloc));
 	if (o_range) 
 	    *o_range = range;
 	if (o_datatype)
 	    *o_datatype = datatype;
     }
     else if (rc == LOCTYPE_REG) {
-	if (o_reg)
-	    *o_reg = reg;
+	if (o_loc)
+	    location_set_reg(o_loc,LOCATION_REG(&tloc));
+	if (o_datatype)
+	    *o_datatype = datatype;
+    }
+    else if (rc == LOCTYPE_IMPLICIT_WORD) {
+	if (o_loc)
+	    location_set_implicit_word(o_loc,LOCATION_WORD(&tloc));
 	if (o_datatype)
 	    *o_datatype = datatype;
     }
 
+    location_internal_free(&tloc);
     return rc;
 
  errout:
+    location_internal_free(&tloc);
     return -rc;
 }
 
@@ -1545,16 +1566,22 @@ int target_bsymbol_resolve_base(struct target *target,tid_t tid,
 				struct bsymbol *bsymbol,ADDR *o_addr,
 				struct memrange **o_range) {
     loctype_t rc;
+    struct location tloc;
 
+    memset(&tloc,0,sizeof(tloc));
     rc = target_lsymbol_resolve_location(target,tid,bsymbol->lsymbol,0,
 					 bsymbol->region,LOAD_FLAG_NONE,
-					 o_addr,NULL,NULL,o_range);
+					 &tloc,NULL,o_range);
     if (rc != LOCTYPE_ADDR) {
 	verror("could not resolve base for symbol %s: %s (%d)\n",
 	       lsymbol_get_name(bsymbol->lsymbol),strerror(errno),rc);
+	location_internal_free(&tloc);
 	return -1;
     }
 
+    if (o_addr)
+	*o_addr = LOCATION_ADDR(&tloc);
+    location_internal_free(&tloc);
     return 0;
 }
 
@@ -1913,11 +1940,15 @@ struct value *target_load_value_member(struct target *target,
     REG reg;
     REGVAL regval;
     int newlen;
+    ADDR word;
+    struct location tloc;
 
     tthread = old_value->thread;
     tid = tthread->tid;
 
     tdatatype = symbol_type_skip_qualifiers(old_value->type);
+
+    memset(&tloc,0,sizeof(tloc));
 
     /*
      * We have to handle two levels of pointers, potentially.  Suppose
@@ -1988,8 +2019,9 @@ struct value *target_load_value_member(struct target *target,
     datatype = NULL;
     rc = target_lsymbol_resolve_location(target,tid,ls,oldaddr,
 					 old_value->range->region,
-					 flags,&addr,&reg,&datatype,&range);
+					 flags,&tloc,&datatype,&range);
     if (rc == LOCTYPE_ADDR) {
+	addr = LOCATION_ADDR(&tloc);
 	/*
 	 * If lsymbol_resolve_location returns an address
 	 * entirely contained inside of value->buf, we can just clone
@@ -2100,6 +2132,8 @@ struct value *target_load_value_member(struct target *target,
 	    goto errout;
 	}
 
+	reg = LOCATION_REG(&tloc);
+
         regval = target_read_reg(target,tid,reg);
         if (errno) {
 	    verror("symbol %s: could not read reg %d value in tid %"PRIiTID"\n",
@@ -2133,6 +2167,42 @@ struct value *target_load_value_member(struct target *target,
 	value->bufsiz = symbol_get_bytesize(datatype);
 
 	value_set_reg(value,reg);
+    }
+    else if (rc == LOCTYPE_IMPLICIT_WORD) {
+	if (flags & LOAD_FLAG_MUST_MMAP) {
+	    verror("symbol %s: cannot mmap implicit value!\n",
+		   lsymbol_get_name(ls));
+	    errno = EINVAL;
+	    goto errout;
+	}
+
+	word = LOCATION_WORD(&tloc);
+	datatype = symbol_get_datatype(symbol);
+	rbuf = malloc(symbol_get_bytesize(datatype));
+
+        if (target->wordsize == 4 && __WORDSIZE == 64) {
+            /* If the target is 32-bit on 64-bit host, we have to grab
+             * the lower 32 bits of the regval.
+             */
+            memcpy(rbuf,((int32_t *)&word),symbol_get_bytesize(datatype));
+        }
+	else if (__WORDSIZE == 32)
+	    memcpy(rbuf,&word,(symbol_get_bytesize(datatype) < 4) \
+		   ? symbol_get_bytesize(datatype) : 4);
+        else
+            memcpy(rbuf,&word,symbol_get_bytesize(datatype));
+
+	/* Just create the value based on the register value. */
+	value = value_create_noalloc(tthread,NULL,ls,datatype);
+	if (!value) {
+	    verror("symbol %s: could not create value: %s\n",
+		   lsymbol_get_name(ls),strerror(errno));
+	    goto errout;
+	}
+	value->buf = rbuf;
+	value->bufsiz = symbol_get_bytesize(datatype);
+
+	value_set_const(value);
     }
     else if (rc <= 0) {
 	verror("symbol %s: failed to compute location (%d %s)\n",
@@ -2174,6 +2244,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     struct symbol *tdatatype;
     struct target_thread *tthread;
     loctype_t rc;
+    ADDR word;
+    struct location tloc;
 
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
@@ -2213,14 +2285,16 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     reg = -1;
     addr = 0;
     datatype = NULL;
+    memset(&tloc,0,sizeof(tloc));
     rc = target_lsymbol_resolve_location(target,tid,lsymbol,0,bsymbol->region,
-					 flags,&addr,&reg,&datatype,&range);
+					 flags,&tloc,&datatype,&range);
     if (rc <= LOCTYPE_UNKNOWN) {
 	verror("symbol %s: failed to compute location\n",
 	       lsymbol_get_name(lsymbol));
 	goto errout;
     }
     else if (rc == LOCTYPE_ADDR) {
+	addr = LOCATION_ADDR(&tloc);
 	tdatatype = symbol_type_skip_qualifiers(datatype);
 	if (flags & LOAD_FLAG_AUTO_STRING
 	    && SYMBOL_IST_PTR(symbol->datatype) 
@@ -2284,6 +2358,8 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 	    goto errout;
 	}
 
+	reg = LOCATION_REG(&tloc);
+
         regval = target_read_reg(target,tid,reg);
         if (errno) {
 	    verror("symbol %s: could not read reg %d value in tid %"PRIiTID"\n",
@@ -2318,6 +2394,43 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
 
 	value_set_reg(value,reg);
     }
+    else if (rc == LOCTYPE_IMPLICIT_WORD) {
+	if (flags & LOAD_FLAG_MUST_MMAP) {
+	    verror("symbol %s: cannot mmap implicit value!\n",
+		   lsymbol_get_name(lsymbol));
+	    errno = EINVAL;
+	    goto errout;
+	}
+
+	word = LOCATION_WORD(&tloc);
+
+	datatype = symbol_type_skip_qualifiers(symbol->datatype);
+	rbuf = malloc(symbol_get_bytesize(datatype));
+
+        if (target->wordsize == 4 && __WORDSIZE == 64) {
+            /* If the target is 32-bit on 64-bit host, we have to grab
+             * the lower 32 bits of the regval.
+             */
+            memcpy(rbuf,((int32_t *)&word),symbol_get_bytesize(datatype));
+        }
+	else if (__WORDSIZE == 32)
+	    memcpy(rbuf,&word,(symbol_get_bytesize(datatype) < 4) \
+		                 ? symbol_get_bytesize(datatype) : 4);
+        else
+            memcpy(rbuf,&word,symbol_get_bytesize(datatype));
+
+	/* Just create the value based on the register value. */
+	value = value_create_noalloc(tthread,NULL,bsymbol->lsymbol,datatype);
+	if (!value) {
+	    verror("symbol %s: could not create value: %s\n",
+		   lsymbol_get_name(lsymbol),strerror(errno));
+	    goto errout;
+	}
+	value->buf = rbuf;
+	value->bufsiz = symbol_get_bytesize(datatype);
+
+	value_set_const(value);
+    }
     else {
 	verror("symbol %s: computed location not register nor address (%d)"
 	       " -- BUG!\n",
@@ -2327,9 +2440,11 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     }
 
  out:
+    location_internal_free(&tloc);
     return value;
 
  errout:
+    location_internal_free(&tloc);
     if (value)
 	value_free(value);
     return NULL;
@@ -2344,9 +2459,9 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
 			     struct bsymbol *bsymbol,load_flags_t flags,
 			     struct memrange **o_range) {
     ADDR addr;
-    REG reg;
     struct lsymbol *lsymbol;
     loctype_t rc;
+    struct location tloc;
 
     lsymbol = bsymbol->lsymbol;
 
@@ -2354,33 +2469,43 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
      * Compute the symbol's location (reg or addr) and load that!
      */
     addr = 0;
-    reg = -1;
+    memset(&tloc,0,sizeof(tloc));
     rc = target_lsymbol_resolve_location(target,tid,lsymbol,0,bsymbol->region,
-					 flags,&addr,&reg,NULL,o_range);
+					 flags,&tloc,NULL,o_range);
     if (rc <= LOCTYPE_UNKNOWN) {
 	verror("symbol %s: failed to compute location: %s (%d)\n",
 	       lsymbol_get_name(lsymbol),strerror(errno),rc);
-	if (!errno) 
-	    errno = EINVAL;
-	return 0;
+	goto errout;
     }
     else if (rc == LOCTYPE_ADDR) {
+	addr = LOCATION_ADDR(&tloc);
+	location_internal_free(&tloc);
 	return addr;
     }
     else if (rc == LOCTYPE_REG) {
 	vwarnopt(5,LA_TARGET,LF_SYMBOL,
 		 "symbol %s: computed location is register %"PRIiREG"\n",
-		 lsymbol_get_name(lsymbol),reg);
-	errno = EINVAL;
-	return 0;
+		 lsymbol_get_name(lsymbol),LOCATION_REG(&tloc));
+	goto errout;
+    }
+    else if (rc == LOCTYPE_IMPLICIT_WORD) {
+	vwarnopt(5,LA_TARGET,LF_SYMBOL,
+		 "symbol %s: computed location is implicit value 0x%"PRIxADDR"\n",
+		 lsymbol_get_name(lsymbol),LOCATION_WORD(&tloc));
+	goto errout;
     }
     else {
 	verror("symbol %s: computed location not register nor address (%d)"
 	       " -- BUG!\n",
 	       lsymbol_get_name(lsymbol),rc);
-	errno = EINVAL;
-	return 0;
+	goto errout;
     }
+
+ errout:
+    location_internal_free(&tloc);
+    if (!errno)
+	errno = EINVAL;
+    return 0;
 }
 
 int target_store_value(struct target *target,struct value *value) {

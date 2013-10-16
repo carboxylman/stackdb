@@ -146,6 +146,7 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
     GSList *gsltmp;
     loctype_t ltrc;
     OFFSET offset;
+    struct location tloc;
 
  again:
     bytesize = symbol_get_bytesize(type);
@@ -286,14 +287,17 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 	    if (type->datatype_code == DATATYPE_UNION)
 		symbol_rvalue_print(stream,member,buf,bufsiz,flags,target);
 	    else {
-		ltrc = symbol_resolve_location(member,NULL,NULL,NULL,NULL,NULL,
-					       &offset);
+		memset(&tloc,0,sizeof(tloc));
+		ltrc = symbol_resolve_location(member,NULL,NULL,NULL,&tloc);
 		if (ltrc != LOCTYPE_MEMBER_OFFSET) 
 		    fputs("?",stream);
-		else 
+		else {
+		    offset = LOCATION_OFFSET(&tloc);
 		    symbol_rvalue_print(stream,member,
 					buf + offset,bufsiz - offset,
 					flags,target);
+		}
+		location_internal_free(&tloc);
 	    }
 	    ++i;
 	}

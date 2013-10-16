@@ -255,9 +255,19 @@ typedef enum {
     LOCTYPE_FBREG_OFFSET  = 6,
     LOCTYPE_LOCLIST       = 7,
     LOCTYPE_REALADDR      = 8,
+    LOCTYPE_IMPLICIT_WORD = 9,
+    LOCTYPE_IMPLICIT_DATA = 10,
     /* add here */
-    LOCTYPE_RUNTIME       = 9,
+    LOCTYPE_RUNTIME       = 11,
 } loctype_t;
+
+/*
+ * Provided so that regular users can call (l)symbol_resolve_location
+ * and still have a valid output location value, without having to know
+ * the details of the location struct (which are gory).
+ */
+struct location *location_create(void);
+void location_free(struct location *location);
 
 /*
  * These match the dwarf encoding codes.
@@ -450,10 +460,11 @@ GSList *symbol_get_members(struct symbol *symbol,
  * location_resolve() do provide an offset outparam is because single
  * symbols/locations are sometimes offsets.
  */
+
 loctype_t symbol_resolve_location(struct symbol *symbol,
 				  struct location_ops *lops,void *lops_priv,
 				  struct location_ctxt *lctxt,
-				  ADDR *addr,REG *reg,OFFSET *offset);
+				  struct location *o_loc);
 int symbol_resolve_bounds(struct symbol *symbol,
 			  struct location_ops *lops,void *lops_priv,
 			  ADDR *start,ADDR *end,int *is_noncontiguous);
@@ -466,7 +477,7 @@ int symbol_resolve_bounds_alt(struct symbol *symbol,
 loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 				   struct location_ops *lops,void *lops_priv,
 				   struct location_ctxt *lctxt,
-				   ADDR *o_addr,REG *o_reg);
+				   struct location *o_loc);
 int lsymbol_resolve_bounds(struct lsymbol *lsymbol,ADDR base_addr,
 			   struct location_ops *lops,void *lops_priv,
 			   ADDR *start,ADDR *end,int *is_noncontiguous);

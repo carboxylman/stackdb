@@ -573,6 +573,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
     struct symbol *datatype2;
     GSList *gsltmp;
     loctype_t ltrc;
+    struct location tloc;
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
@@ -769,12 +770,13 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 				" .%s = ",symbol_get_name(tmpsym));
 	    else
 		nrc += snprintf(buf + nrc,buflen - nrc," ");
-	    ltrc = symbol_resolve_location(tmpsym,NULL,NULL,NULL,NULL,NULL,
-					   &offset);
+	    memset(&tloc,0,sizeof(tloc));
+	    ltrc = symbol_resolve_location(tmpsym,NULL,NULL,NULL,&tloc);
 	    if (ltrc != LOCTYPE_MEMBER_OFFSET) {
 		nrc += snprintf(buf + nrc,buflen - nrc,"?,");
 	    }
 	    else {
+		offset = LOCATION_OFFSET(&tloc);
 		fake_value.buf = value->buf + offset;
 		fake_value.type = symbol_get_datatype(tmpsym);
 		fake_value.lsymbol = NULL;
@@ -782,6 +784,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		nrc += value_snprintf(&fake_value,buf + nrc,buflen - nrc);
 		nrc += snprintf(buf + nrc,buflen - nrc,",");
 	    }
+	    location_internal_free(&tloc);
 	}
 	nrc += snprintf(buf + nrc,buflen - nrc," }");
 	break;
@@ -841,6 +844,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     struct symbol *datatype2;
     GSList *gsltmp;
     loctype_t ltrc;
+    struct location tloc;
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
@@ -1022,12 +1026,13 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 		fprintf(ud->stream," .%s = ",symbol_get_name(tmpsym));
 	    else
 		fprintf(ud->stream," ");
-	    ltrc = symbol_resolve_location(tmpsym,NULL,NULL,NULL,NULL,NULL,
-					   &offset);
+	    memset(&tloc,0,sizeof(tloc));
+	    ltrc = symbol_resolve_location(tmpsym,NULL,NULL,NULL,&tloc);
 	    if (ltrc != LOCTYPE_MEMBER_OFFSET) {
 		fputs("?,",ud->stream);
 	    }
 	    else {
+		offset = LOCATION_OFFSET(&tloc);
 		fake_value.buf = value->buf + offset;
 		fake_value.type = symbol_get_datatype(tmpsym);
 		fake_value.lsymbol = NULL;
@@ -1035,6 +1040,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 		__value_dump(&fake_value,ud);
 		fputs(",",ud->stream);
 	    }
+	    location_internal_free(&tloc);
 	}
 	fprintf(ud->stream," }");
 	break;
