@@ -683,3 +683,84 @@ void clmatch_free(clmatch_t clf) {
      */
     JLFA(bytes_freed,clf);
 }
+
+clmatchone_t clmatchone_create() {
+    return (Pvoid_t) NULL;
+}
+
+/*
+ * This function associates @data with some integer @index.  Later, when
+ * you call clfit_find_closest(), you can find the closest index match
+ * to these values.  You can associate multiple pieces of data with each
+ * index.  If you 
+ */
+int clmatchone_add(clmatchone_t *clf,Word_t index,void *data) {
+    PWord_t pv = NULL;
+
+    if (*clf) 
+	JLG(pv,*clf,index);
+    if (!pv) {
+	JLI(pv,*clf,index);
+	if (pv == PJERR) {
+	    return -1;
+	}
+	*pv = (Word_t)data;
+	return 0;
+    }
+    else if (pv == PJERR) 
+	return -1;
+    else 
+	return -1;
+}
+
+int clmatchone_update(clmatchone_t *clf,Word_t index,void *data) {
+    PWord_t pv = NULL;
+
+    if (*clf) 
+	JLG(pv,*clf,index);
+    if (!pv) {
+	JLI(pv,*clf,index);
+	if (pv == PJERR) {
+	    return -1;
+	}
+	*pv = (Word_t)data;
+	return 0;
+    }
+    else if (pv == PJERR) 
+	return -1;
+    else {
+	*pv = (Word_t)data;
+	return 0;
+    }
+}
+
+/*
+ * This function finds an array_list at the closest previous match.
+ */
+void *clmatchone_find(clmatchone_t *clf,Word_t index) {
+    PWord_t pv;
+
+    if (!clf || !*clf)
+	return NULL;
+
+    /*
+     * We look for the previous index (including @index itself).
+     */
+    JLL(pv,*clf,index);
+    if (pv == NULL)
+	return NULL;
+    return (void *)*pv;
+}
+
+void clmatchone_free(clmatchone_t clf) {
+    int bytes_freed;
+
+    if (!clf)
+	return;
+
+    /*
+     * Man page says bytes_freed should be Word_t (unsigned), but
+     * compiler disagrees!
+     */
+    JLFA(bytes_freed,clf);
+}
