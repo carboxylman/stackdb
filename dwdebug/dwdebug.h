@@ -72,6 +72,7 @@ struct binfile_instance;
  ** Debugfile decls.  Users get to see some of this stuff.
  **/
 struct debugfile;
+struct debugfile_ops;
 struct debugfile_load_opts;
 struct scope;
 struct symbol;
@@ -758,12 +759,16 @@ struct debugfile_load_opts {
 };
 
 /*
- * Each kind of debugfile (i.e., DWARF, ELF) should supply one of these.
+ * Only support DWARF debugfiles right now; but also support fake
+ * debuginfo from ELF symtabs if the ELF files don't have DWARF
+ * debuginfo; that way they can use the same interfaces for symbol
+ * lookup, etc.
  */
-struct debugfile_ops {
-    int (*expand_symbol)(struct symbol *root,struct symbol *symbol);
-    int (*resolve_runtime_location)(struct symbol *symbol,struct location *loc);
-};
+typedef enum {
+    DEBUGFILE_TYPE_NONE  = 0,
+    DEBUGFILE_TYPE_ELF = 1 << 0,
+    DEBUGFILE_TYPE_DWARF = 1 << 1,
+} debugfile_type_t;
 
 typedef enum {
     DEBUGFILE_TYPE_FLAG_NONE   = 0,
@@ -773,6 +778,10 @@ typedef enum {
 typedef int debugfile_type_flags_t;
 
 struct debugfile {
+    /*
+     * The debugfile type and flags.
+     */
+    debugfile_type_t type;
     debugfile_type_flags_t flags;
 
     /* Our reference count. */
@@ -781,8 +790,9 @@ struct debugfile {
     //REFCNT refcntw;
 
     /*
-     * debugfile backend type-specific info.
+     * debugfile backend type-specific ops and state.
      */
+    struct debugfile_ops *ops;
     void *priv;
 
     /* Save the options we were loaded with, forever. */
@@ -844,11 +854,18 @@ struct debugfile {
      */
     char *linetab;
 
+    /*
+     * The frame table for this file (CFA).  It is live until
+     * debugfile_free, since we interpret it on-demand.
+     */
+    char *frametab;
+
     /* Table lengths -- moved here for struct packing. */
     unsigned int dbg_strtablen;
     unsigned int loctablen;
     unsigned int rangetablen;
     unsigned int linetablen;
+    unsigned int frametablen;
 
     /*
      * Each srcfile in a debugfile gets its own SYMBOL_TYPE_ROOT symbol.

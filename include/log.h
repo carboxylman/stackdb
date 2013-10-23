@@ -113,9 +113,10 @@ typedef enum log_flag_bits_debug {
     LFB_DWARFATTR     = 6,
     LFB_DWARFSOPS     = 7,
     LFB_DWARFOPS      = 8,
-    LFB_DOTHER        = 9,
-    LFB_ELF           = 10,
-    LFB_BFILE         = 11,
+    LFB_DCFA          = 9,
+    LFB_DOTHER        = 10,
+    LFB_ELF           = 11,
+    LFB_BFILE         = 12,
 } log_flag_bits_debug_t;
 typedef enum log_flags_debug {
     LF_DFILE          = 1 << LFB_DFILE,
@@ -127,6 +128,7 @@ typedef enum log_flags_debug {
     LF_DWARFATTR      = 1 << LFB_DWARFATTR,
     LF_DWARFSOPS      = 1 << LFB_DWARFSOPS,
     LF_DWARFOPS       = 1 << LFB_DWARFOPS,
+    LF_DCFA           = 1 << LFB_DCFA,
     LF_DOTHER         = 1 << LFB_DOTHER,
     LF_ELF            = 1 << LFB_ELF,
     LF_BFILE          = 1 << LFB_BFILE,
@@ -217,7 +219,8 @@ typedef enum log_flags_ {
 #define LF_L_ALL (LF_CLMATCH | LF_CLRANGE | LF_RFILTER | LF_WAITPIPE | LF_EVLOOP | LF_MONITOR | LF_ROP | LF_CFI)
 #define LF_D_ALL (LF_DFILE | LF_SYMBOL | LF_SCOPE | LF_DLOC \
 		  | LF_DLOOKUP | LF_DWARF | LF_DWARFATTR	\
-		  | LF_DWARFSOPS | LF_DWARFOPS | LF_DOTHER | LF_ELF | LF_BFILE )
+		  | LF_DWARFSOPS | LF_DWARFOPS | LF_DCFA | LF_DOTHER \
+		  | LF_ELF | LF_BFILE )
 #define LF_T_ALL (LF_TARGET | LF_SPACE | LF_REGION | LF_TLOOKUP \
 		  | LF_TLOC | LF_TOTHER | LF_TSYMBOL | LF_DISASM \
 		  | LF_THREAD | LF_OS | LF_PROCESS)

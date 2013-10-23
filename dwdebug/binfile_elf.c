@@ -1098,6 +1098,7 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 	    vdebug(2,LA_DEBUG,LF_DFILE,
 		   "found %s section (%d)\n",name,shdr->sh_size);
 	    bf->has_debuginfo = 1;
+	    bf->has_debuginfo_type = DEBUGFILE_TYPE_DWARF;
 	}
 	else if (!bfelf->buildid && shdr->sh_type == SHT_NOTE) {
 	    vdebug(2,LA_DEBUG,LF_DFILE,

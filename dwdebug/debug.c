@@ -1086,6 +1086,20 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
 	RHOLD(binfile_pointing,debugfile);
     }
 
+    /*
+     * Figure out what type it was from the binfile.
+     *
+     * XXX: hack until we have more than DWARF.
+     */
+    if (binfile->has_debuginfo) {
+	debugfile->type = DEBUGFILE_TYPE_DWARF;
+	debugfile->ops = &dwarf_debugfile_ops;
+    }
+    else {
+	debugfile->type = DEBUGFILE_TYPE_ELF;
+	debugfile->ops = NULL;
+    }
+
     /* initialize hashtables */
 
     /* This is the primary symtab hashtable -- they are cleaned up in
@@ -1143,6 +1157,9 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
      */
     debugfile->srclines = g_hash_table_new_full(g_str_hash,g_str_equal,
 						free,clmatch_free);
+
+    if (debugfile->ops && debugfile->ops->init)
+	debugfile->ops->init(debugfile);
 
     /*
      * Add it to our global hash if the user init'd the lib!
@@ -1333,13 +1350,12 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
     if (!debugfile)
 	goto errout;
 
-    if (binfile_debuginfo) {
-	/*
-	 * Now, actually load its debuginfo, according to options.
-	 */
-	if (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
-	    debugfile_load_debuginfo(debugfile);
-    }
+    /*
+     * Now, actually load its debuginfo, according to options.
+     */
+    if (debugfile->ops && debugfile->ops->load
+	&& (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF)))
+	debugfile->ops->load(debugfile);
 
     RHOLD(debugfile,debugfile);
 
@@ -1407,13 +1423,12 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
     if (!debugfile)
 	goto errout;
 
-    if (binfile_debuginfo) {
-	/*
-	 * Now, actually load its debuginfo, according to options.
-	 */
-	if (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF))
-	    debugfile_load_debuginfo(debugfile);
-    }
+    /*
+     * Now, actually load its debuginfo, according to options.
+     */
+    if (debugfile->ops && debugfile->ops->load
+	&& (!opts || !(opts->flags & DEBUGFILE_LOAD_FLAG_NODWARF)))
+	debugfile->ops->load(debugfile);
 
     RHOLD(debugfile,debugfile);
 
@@ -2070,6 +2085,9 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 
     vdebug(5,LA_DEBUG,LF_DFILE,"freeing debugfile(%s)\n",debugfile->filename);
 
+    if (debugfile->ops && debugfile->ops->fini)
+	debugfile->ops->fini(debugfile);
+
     /*
      * Only remove it if the value matches us.  This is necessary
      * because if we loaded debugfile against a binfile_instance, and
@@ -2676,8 +2694,15 @@ int symbol_expand(struct symbol *symbol) {
     if (SYMBOL_IS_FULL(symbol) || SYMBOL_IS_ELF(symbol))
 	return 0;
 
-    if (SYMBOL_IS_ROOT(symbol))
-	return dwarf_expand_root(symbol,NULL,1);
+    if (SYMBOL_IS_ROOT(symbol)) {
+	SYMBOL_RX_ROOT(symbol,sr);
+	if (!sr || !sr->debugfile 
+	    || !sr->debugfile->ops || !sr->debugfile->ops->symbol_root_expand) {
+	    errno = ENOTSUP;
+	    return -1;
+	}
+	return sr->debugfile->ops->symbol_root_expand(sr->debugfile,symbol);
+    }
 
     root = symbol_find_root(symbol);
     if (!root) {
@@ -2686,7 +2711,14 @@ int symbol_expand(struct symbol *symbol) {
 	return -1;
     }
 
-    return dwarf_expand_symbol(root,symbol);
+    SYMBOL_RX_ROOT(root,sr);
+    if (!sr || !sr->debugfile 
+	|| !sr->debugfile->ops || !sr->debugfile->ops->symbol_expand) {
+	errno = ENOTSUP;
+	return -1;
+    }
+
+    return sr->debugfile->ops->symbol_expand(sr->debugfile,root,symbol);
 }
 
 void symbol_set_srcline(struct symbol *s,int sl) {

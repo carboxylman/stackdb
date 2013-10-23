@@ -201,6 +201,9 @@ struct binfile {
     uint8_t is_dynamic:1,
 	    has_debuginfo:1;
 
+    /* If @has_debuginfo, which type. */
+    debugfile_type_t has_debuginfo_type;
+
     /*
      * Opened binfiles have either @fd > 0, or non-NULL @image (right
      * now, image is used when the binfile has to be loaded into memory

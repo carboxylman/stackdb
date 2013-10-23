@@ -75,6 +75,9 @@ struct attrcb_args {
 	    specification_set:1;
 };
 
+extern int dwarf_load_cfa(struct debugfile *debugfile,
+			  char *buf,unsigned int len,Dwarf *dbg);
+extern int dwarf_unload_cfa(struct debugfile *debugfile);
 /* Declare these now; they are used in attr_callback. */
 static struct range *dwarf_get_ranges(struct symbol_root_dwarf *srd,
 				      unsigned int attr,Dwarf_Word offset);
@@ -2721,7 +2724,8 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     return retval;
 }
 
-int dwarf_expand_symbol(struct symbol *root,struct symbol *symbol) {
+int dwarf_symbol_expand(struct debugfile *debugfile,
+			struct symbol *root,struct symbol *symbol) {
     Dwarf_Off die_offset;
     struct array_list *sal;
     int retval;
@@ -2757,8 +2761,7 @@ int dwarf_expand_symbol(struct symbol *root,struct symbol *symbol) {
     return retval;
 }
 
-int dwarf_expand_root(struct symbol *root,
-		      struct array_list *die_offsets,int expand_dies) {
+int dwarf_symbol_root_expand(struct debugfile *debugfile,struct symbol *root) {
     Dwarf_Off cu_offset = root->ref;
     int rc;
     struct symbol_root_dwarf *srd = SYMBOLX_ROOT(root)->priv;
@@ -2769,18 +2772,11 @@ int dwarf_expand_root(struct symbol *root,
 	return 0;
     }
 
-    if (die_offsets) {
-	vdebug(5,LA_DEBUG,LF_DWARF,
-	       "loading %d DIEs from CU %s (offset 0x%"PRIxOFFSET")!\n",
-	       array_list_len(die_offsets),symbol_get_name(root),cu_offset);
-    }
-    else {
-	vdebug(5,LA_DEBUG,LF_DWARF,
-	       "loading entire CU %s (offset 0x%"PRIxOFFSET")!\n",
-	       symbol_get_name(root),cu_offset);
-    }
+    vdebug(5,LA_DEBUG,LF_DWARF,
+	   "loading entire CU %s (offset 0x%"PRIxOFFSET")!\n",
+	   symbol_get_name(root),cu_offset);
 
-    rc = dwarf_load_cu(srd,&cu_offset,die_offsets,expand_dies);
+    rc = dwarf_load_cu(srd,&cu_offset,NULL,1);
 
     /*
      * XXX: NB: we have to do this at the very end, since it is not
@@ -3618,6 +3614,8 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 			    Dwarf_Addr base __attribute__ ((unused)),
 			    void *arg) {
     struct debugfile *debugfile = (struct debugfile *)arg;
+    struct dwarf_debugfile_info *ddi =
+	(struct dwarf_debugfile_info *)debugfile->priv;
     struct debugfile_load_opts *dopts = debugfile->opts;
     struct binfile *binfile = debugfile->binfile;
     struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
@@ -3669,6 +3667,29 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		saveptr = &debugfile->linetab;
 		saveptrlen = &debugfile->linetablen;
 	    }
+	    else if (strcmp(name,".eh_frame") == 0) {
+		if (debugfile->frametab) {
+		    vwarn("already saw frame section; not processing"
+			  " .eh_frame!\n");
+		    continue;
+		}
+		ddi->is_eh_frame = 1;
+		ddi->frame_sec_offset = shdr->sh_offset;
+		ddi->frame_sec_addr = shdr->sh_addr;
+		saveptr = &debugfile->frametab;
+		saveptrlen = &debugfile->frametablen;
+	    }
+	    else if (strcmp(name,".debug_frame") == 0) {
+		if (debugfile->frametab) {
+		    vwarn("already saw frame section; not processing"
+			  " .debug_frame!\n");
+		    continue;
+		}
+		ddi->frame_sec_offset = shdr->sh_offset;
+		ddi->frame_sec_addr = shdr->sh_addr;
+		saveptr = &debugfile->frametab;
+		saveptrlen = &debugfile->frametablen;
+	    }
 	    else if (strcmp(name,".debug_aranges") == 0
 		     || strcmp(name,".debug_pubnames") == 0) {
 		/* Skip to the !saveptr checks below and load these
@@ -3715,6 +3736,18 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		*saveptrlen = edata->d_size;
 		*saveptr = malloc(edata->d_size);
 		memcpy(*saveptr,edata->d_buf,edata->d_size);
+
+		/*
+		 * frames is also special, but we need the persistent
+		 * copy to stay in memory for on-demand evaluation as we
+		 * use debuginfo to load symbols and examine memory.  We
+		 * also pre-process it just to create an in-memory index
+		 * of DWARF FDEs that can be decoded later, on-demand.
+		 */
+		if (strcmp(name,".debug_frame") == 0
+		    || strcmp(name,".eh_frame") == 0) {
+		    dwarf_load_cfa(debugfile,*saveptr,*saveptrlen,dbg);
+		}
 	    }
 	}
 	else if (shdr && shdr->sh_size == 0) {
@@ -3888,7 +3921,7 @@ static int bfi_find_section_address(Dwfl_Module *mod,void **userdata,
  * Primary debuginfo interface.  Given an ELF filename, load all its
  * debuginfo into the supplied debugfile using elfutils libs.
  */
-int debugfile_load_debuginfo(struct debugfile *debugfile) {
+int dwarf_load_debuginfo(struct debugfile *debugfile) {
     struct debugfile_load_opts *dopts = debugfile->opts;
     struct binfile *binfile = debugfile->binfile;
     struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
@@ -3997,7 +4030,44 @@ int debugfile_load_debuginfo(struct debugfile *debugfile) {
     return 0;
 }
 
+int dwarf_init(struct debugfile *debugfile) {
+    struct dwarf_debugfile_info *ddi;
 
+    if (debugfile->priv)
+	return -1;
+
+    ddi = calloc(1,sizeof(*ddi));
+    debugfile->priv = ddi;
+
+    return 0;
+}
+
+int dwarf_fini(struct debugfile *debugfile) {
+    struct dwarf_debugfile_info *ddi;
+
+    if (!debugfile->priv)
+	return 0;
+
+    ddi = (struct dwarf_debugfile_info *)debugfile->priv;
+
+    dwarf_unload_cfa(debugfile);
+
+    free(ddi);
+    debugfile->priv = NULL;
+
+    return 0;
+}
+
+/*
+ * Our debugfile ops.
+ */
+struct debugfile_ops dwarf_debugfile_ops = {
+    .init = dwarf_init,
+    .load = dwarf_load_debuginfo,
+    .symbol_expand = dwarf_symbol_expand,
+    .symbol_root_expand = dwarf_symbol_root_expand,
+    .fini = dwarf_fini,
+};
 
 
 /*

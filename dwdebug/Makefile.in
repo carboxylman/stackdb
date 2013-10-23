@@ -44,7 +44,7 @@ HEADERS := $(SRCDIR)/dwdebug.h $(SRCDIR)/dwdebug_priv.h \
 	$(TOP_SRCDIR)/include/glib_wrapper.h
 
 OBJECTS := symdict.lo scope.lo location.lo binfile.lo binfile_elf.lo debug.lo \
-	dwarf_debuginfo.lo dwarf_elfutils.lo dwarf_expr.lo
+	dwarf_debuginfo.lo dwarf_elfutils.lo dwarf_expr.lo dwarf_cfa.lo
 
 LIBRARIES := libdwdebug.la 
 STATICLIBS :=  $(OBJDIR)/lib/libvmilib.la 

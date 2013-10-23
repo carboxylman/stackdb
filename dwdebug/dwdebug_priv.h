@@ -123,6 +123,17 @@ struct symbol_root_dwarf;
 /**
  ** Debugfiles.
  **/
+/*
+ * Each kind of debugfile (i.e., DWARF, ELF) should supply one of these.
+ */
+struct debugfile_ops {
+    int (*init)(struct debugfile *debugfile);
+    int (*load)(struct debugfile *debugfile);
+    int (*symbol_root_expand)(struct debugfile *debugfile,struct symbol *root);
+    int (*symbol_expand)(struct debugfile *debugfile,
+			 struct symbol *root,struct symbol *symbol);
+    int (*fini)(struct debugfile *debugfile);
+};
 
 struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
 				   struct binfile *binfile,
@@ -133,9 +144,6 @@ int debugfile_load_debuginfo(struct debugfile *debugfile);
 /* Load ELF symtab info into a debugfile. */
 int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 			     char *elf_filename);
-int dwarf_expand_symbol(struct symbol *root,struct symbol *symbol);
-int dwarf_expand_root(struct symbol *root,
-		      struct array_list *die_offsets,int expand_dies);
 loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 				 struct location_ops *lops,void *lops_priv,
 				 struct location_ctxt *ctx,
@@ -169,13 +177,51 @@ struct lsymbol *debugfile_lookup_sym_line__int(struct debugfile *debugfile,
 					       SMOFFSET *offset,ADDR *addr);
 REFCNT debugfile_free(struct debugfile *debugfile,int force);
 
-struct lsymbol *scope_lookup_sym__int(struct scope *scope,
-				      const char *name,const char *delim,
-				      symbol_type_flag_t flags);
-struct lsymbol *symbol_lookup_sym__int(struct symbol *symbol,
-				       const char *name,const char *delim);
+/**
+ ** DWARF debugfile backend API stuff.
+ **/
+extern struct debugfile_ops dwarf_debugfile_ops;
 
+struct dwarf_debugfile_info {
+    /*
+     * If this debugfile's DWARF CFA was plain old DWARF CFA, then
+     * is_eh_frame is not set; if it was the special eh_frame encoding,
+     * then it is set.
+     */
+    uint8_t is_eh_frame:1;
 
+    /*
+     * Easier to stash this here.
+     */
+    uint64_t frame_sec_offset;
+    uint64_t frame_sec_addr;
+
+    /*
+     * Our CFA strategy is designed to support caching a scan of the
+     * frame information; storing pointers to per-segment CFA info
+     * (cached in @frametab above) starting at certain addresses;
+     * and later decoding those bytes and placing them in another hash.
+     *
+     * The DWARF functions pre-scan all the CIEs and FDEs in the
+     * .(debug|eh)_frame section; fully decoding each CIE and placing
+     * its offset/decoding in @cfa_cie; and placing the FDE's start addr
+     * and a pointer to the FDE data within @frametab in
+     * @frame_pointers; when we need to decode, the DWARF functions
+     * place decodings of the pointed-to FDEs in @frame_fde.
+     *
+     * NB: Well, it turns out we cannot just read the start addr out of
+     * each FDE; gcc liberally uses augmentations and thus we must
+     * sometimes use CIE info to compute the FDE.  So -- we just go
+     * ahead and parse the whole FDE for now, EXCEPT for the CFA
+     * program.
+     */
+    GHashTable *cfa_cie;
+    GHashTable *cfa_fde;
+};
+
+/**
+ ** Lookup symbols (lsymbols).
+ **/
 /*
  * Creates an lsymbol data structure and takes references to all its
  * symbols.  Users should never call this function.
@@ -786,6 +832,13 @@ struct symbol {
 };
 
 struct symbol_root {
+    /*
+     * One of these will be set, depending on if it's a debugfile symbol
+     * or a binfile symbol.
+     */
+    struct debugfile *debugfile;
+    struct binfile *binfile;
+
     char *compdirname;
     char *producer;
     char *language;
@@ -870,6 +923,8 @@ struct symbol_function {
     ADDR epilogue_begin;
     struct symbol_inline *ii;
 };
+
+typedef char * dwarf_cfa_info_t;
 
 struct symbol_variable {
     struct location *loc;
@@ -1164,6 +1219,15 @@ struct symbol_inline {
 	    }								\
 	}								\
     } while(0);
+
+/*
+ * Internal lookup prototypes.
+ */
+struct lsymbol *scope_lookup_sym__int(struct scope *scope,
+				      const char *name,const char *delim,
+				      symbol_type_flag_t flags);
+struct lsymbol *symbol_lookup_sym__int(struct symbol *symbol,
+				       const char *name,const char *delim);
 
 /*
  * Returns 0 if the symbol is already LOADTYPE_FULL, or if the full load
