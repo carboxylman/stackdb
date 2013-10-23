@@ -737,7 +737,7 @@ int clmatchone_update(clmatchone_t *clf,Word_t index,void *data) {
 /*
  * This function finds an array_list at the closest previous match.
  */
-void *clmatchone_find(clmatchone_t *clf,Word_t index) {
+void *clmatchone_find(clmatchone_t *clf,Word_t index,Word_t *o_index) {
     PWord_t pv;
 
     if (!clf || !*clf)
@@ -749,6 +749,8 @@ void *clmatchone_find(clmatchone_t *clf,Word_t index) {
     JLL(pv,*clf,index);
     if (pv == NULL)
 	return NULL;
+    if (o_index)
+	*o_index = index;
     return (void *)*pv;
 }
 

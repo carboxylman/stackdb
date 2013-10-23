@@ -93,7 +93,7 @@ typedef Pvoid_t clmatchone_t;
 clmatchone_t clmatchone_create(void);
 int clmatchone_add(clmatchone_t *clf,Word_t index,void *data);
 int clmatchone_update(clmatchone_t *clf,Word_t index,void *data);
-void *clmatchone_find(clmatchone_t *clf,Word_t index);
+void *clmatchone_find(clmatchone_t *clf,Word_t index,Word_t *o_index);
 void clmatchone_free(clmatchone_t clf);
 
 #endif

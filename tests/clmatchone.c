@@ -24,7 +24,7 @@
 #define ADDLINE(cl,s,a) clmatchone_add(&(cl),(s),LINE(s,a))
 #define UPDLINE(cl,s,a) clmatchone_update(&(cl),(s),LINE(s,a))
 #define CHECKLINE(cl,s,retval,rs,ors,failures)	\
-    retval = clmatchone_find(&(cl),(s));		\
+    retval = clmatchone_find(&(cl),(s),NULL);				\
     if (!retval) {							\
 	fprintf(stderr,"  ERROR: did not find line previous to %d!\n",(s)); \
 	++failures;							\
@@ -38,7 +38,7 @@
 	fprintf(stderr,"  SUCCESS: %d resulted in %s!\n",(s),rs);	\
     }
 #define CHECKNOLINE(cl,s,retval,failures)	\
-    retval = clmatchone_find(&(cl),(s)); \
+    retval = clmatchone_find(&(cl),(s),NULL);	\
     if (retval) { \
 	fprintf(stderr,"  ERROR: \"found\" unexpected line previous to %d!\n",(s)); \
 	++failures; \
