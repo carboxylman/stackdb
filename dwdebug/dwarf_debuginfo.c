@@ -3708,9 +3708,26 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 
 	    edata = elf_rawdata(scn,NULL);
 	    if (!edata) {
-		verror("cannot get data for valid section '%s': %s\n",
+		verror("cannot get raw data for valid section '%s': %s\n",
 		       name,elf_errmsg(-1));
 		continue;
+	    }
+	    else if (!edata->d_buf && edata->d_size) {
+		vwarn("cannot get raw data for valid section '%s': %s;"
+		      " trying getdata\n",
+		      name,elf_errmsg(-1));
+
+		edata = elf_getdata(scn,NULL);
+		if (!edata) {
+		    verror("cannot get data for valid section '%s': %s\n",
+			   name,elf_errmsg(-1));
+		    continue;
+		}
+		else if (!edata->d_buf) {
+		    vwarn("cannot get data for valid section '%s' (%d); skipping!\n",
+			  name,(int)edata->d_size);
+		    continue;
+		}
 	    }
 
 	    /*
