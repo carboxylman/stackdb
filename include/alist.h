@@ -300,7 +300,7 @@ static inline int array_list_find(struct array_list *list,void *item) {
 }
 
 static inline void *array_list_item(struct array_list *list,int i) {
-    if (!list->list || i < 0 || i >= list->alloc_len) {
+    if (!list->list || i < 0 || i >= list->len) {
 	errno = EINVAL;
 	return NULL;
     }
@@ -308,7 +308,7 @@ static inline void *array_list_item(struct array_list *list,int i) {
 }
 
 static inline int array_list_item_set(struct array_list *list,int i,void *item) {
-    if (!list->list || i < 0 || i >= list->alloc_len) {
+    if (!list->list || i < 0 || i >= list->len) {
 	errno = EINVAL;
 	return -1;
     }
