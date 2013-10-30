@@ -142,13 +142,14 @@ typedef enum log_flag_bits_target {
     LFB_TLOC          = 4,
     LFB_TOTHER        = 5,
     LFB_TSYMBOL       = 6,
-    LFB_LUP           = 7,
-    LFB_XV            = 8,
-    LFB_XVP           = 9,
-    LFB_DISASM        = 10,
-    LFB_THREAD        = 11,
-    LFB_OS            = 12,
-    LFB_PROCESS       = 13,
+    LFB_TUNW          = 7,
+    LFB_LUP           = 8,
+    LFB_XV            = 9,
+    LFB_XVP           = 10,
+    LFB_DISASM        = 11,
+    LFB_THREAD        = 12,
+    LFB_OS            = 13,
+    LFB_PROCESS       = 14,
 } log_flag_bits_target_t;
 typedef enum log_flags_target {
     LF_TARGET         = 1 << LFB_TARGET,
@@ -158,6 +159,7 @@ typedef enum log_flags_target {
     LF_TLOC           = 1 << LFB_TLOC,
     LF_TOTHER         = 1 << LFB_TOTHER,
     LF_TSYMBOL        = 1 << LFB_TSYMBOL,
+    LF_TUNW           = 1 << LFB_TUNW,
     LF_LUP            = 1 << LFB_LUP,
     LF_XV             = 1 << LFB_XV,
     LF_XVP            = 1 << LFB_XVP,
@@ -222,7 +224,7 @@ typedef enum log_flags_ {
 		  | LF_DWARFSOPS | LF_DWARFOPS | LF_DCFA | LF_DOTHER \
 		  | LF_ELF | LF_BFILE )
 #define LF_T_ALL (LF_TARGET | LF_SPACE | LF_REGION | LF_TLOOKUP \
-		  | LF_TLOC | LF_TOTHER | LF_TSYMBOL | LF_DISASM \
+		  | LF_TLOC | LF_TOTHER | LF_TSYMBOL | LF_TUNW | LF_DISASM \
 		  | LF_THREAD | LF_OS | LF_PROCESS)
 #define LF_P_ALL (LF_PROBE | LF_PROBEPOINT | LF_ACTION)
 #define LF_X_ALL (LF_XML | LF_RPC | LF_SVC | LF_PROXYREQ)

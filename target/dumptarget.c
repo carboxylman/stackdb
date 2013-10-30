@@ -180,14 +180,18 @@ result_t retaddr_save(struct probe *probe,tid_t tid,void *handler_data,
 
 ADDR instrument_func(struct bsymbol *bsymbol,int isroot) {
     ADDR funcstart = 0;
+    struct target_location_ctxt *tlctxt;
 
-    if (target_lsymbol_resolve_bounds(t,TID_GLOBAL,bsymbol->lsymbol,0,
-				      bsymbol->region,&funcstart,NULL,NULL)) {
+    tlctxt = target_location_ctxt_create_from_bsymbol(t,TID_GLOBAL,bsymbol);
+    if (target_lsymbol_resolve_bounds(t,tlctxt,bsymbol->lsymbol,0,
+				      &funcstart,NULL,NULL,NULL,NULL)) {
 	fprintf(stderr,
 		"Could not resolve base addr for function %s!\n",
 		bsymbol_get_name(bsymbol));
+	target_location_ctxt_free(tlctxt);
 	return 0;
     }
+    target_location_ctxt_free(tlctxt);
 
     /* Disassemble the called function if we haven't already! */
     if (!g_hash_table_lookup(disfuncs,(gpointer)funcstart)) {
@@ -491,6 +495,7 @@ result_t function_dump_args(struct probe *probe,tid_t tid,void *handler_data,
     int j;
     ADDR probeaddr;
     GSList *gsltmp;
+    struct target_location_ctxt *tlctxt;
 
     fflush(stderr);
     fflush(stdout);
@@ -516,11 +521,13 @@ result_t function_dump_args(struct probe *probe,tid_t tid,void *handler_data,
 			      SYMBOL_TYPE_FLAG_VAR_ARG);
     if (args) {
 	gsltmp = NULL;
+	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,tid,
+							  probe->bsymbol);
 	v_g_slist_foreach(args,gsltmp,arg) {
 	    ls = lsymbol_create_from_symbol(arg);
 	    bs = bsymbol_create(ls,probe->bsymbol->region);
 	    lsymbol_release(ls);
-	    if ((value = target_load_symbol(probe->target,tid,bs,
+	    if ((value = target_load_symbol(probe->target,tlctxt,bs,
 					    LOAD_FLAG_AUTO_DEREF | 
 					    LOAD_FLAG_AUTO_STRING |
 					    LOAD_FLAG_NO_CHECK_VISIBILITY |
@@ -537,6 +544,7 @@ result_t function_dump_args(struct probe *probe,tid_t tid,void *handler_data,
 	    bsymbol_free(bs,0);
 	    printf(", ");
 	}
+	target_location_ctxt_free(tlctxt);
     }
 
     fprintf(stdout," (handler_data = %s)\n",(char *)handler_data);
@@ -644,11 +652,13 @@ result_t var_pre(struct probe *probe,tid_t tid,void *handler_data,
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
     struct dump_info di = { .stream = stdout };
+    struct target_location_ctxt *tlctxt;
 
     fflush(stderr);
     fflush(stdout);
 
-    if ((value = target_load_symbol(probe->target,tid,bsymbol,
+    tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,tid,bsymbol);
+    if ((value = target_load_symbol(probe->target,tlctxt,bsymbol,
 				    LOAD_FLAG_AUTO_DEREF | 
 				    LOAD_FLAG_AUTO_STRING |
 				    LOAD_FLAG_NO_CHECK_VISIBILITY |
@@ -674,6 +684,8 @@ result_t var_pre(struct probe *probe,tid_t tid,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
+    target_location_ctxt_free(tlctxt);
+
     return RESULT_SUCCESS;
 }
 
@@ -683,11 +695,13 @@ result_t var_post(struct probe *probe,tid_t tid,void *handler_data,
     struct value *value;
     struct bsymbol *bsymbol = probe->bsymbol;
     struct dump_info di = { .stream = stdout };
+    struct target_location_ctxt *tlctxt;
 
     fflush(stderr);
     fflush(stdout);
 
-    if ((value = target_load_symbol(probe->target,tid,bsymbol,
+    tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,tid,bsymbol);
+    if ((value = target_load_symbol(probe->target,tlctxt,bsymbol,
 				    LOAD_FLAG_AUTO_DEREF | 
 				    LOAD_FLAG_AUTO_STRING |
 				    LOAD_FLAG_NO_CHECK_VISIBILITY |
@@ -712,6 +726,8 @@ result_t var_post(struct probe *probe,tid_t tid,void *handler_data,
     fflush(stderr);
     fflush(stdout);
 
+    target_location_ctxt_free(tlctxt);
+
     return RESULT_SUCCESS;
 }
 
@@ -722,15 +738,18 @@ result_t ss_handler(struct action *action,struct target_thread *thread,
     REGVAL ipval = target_read_reg(probe->target,tid,probe->target->ipregno);
     struct bsymbol *func = target_lookup_sym_addr(probe->target,ipval);
     ADDR func_phys_base = 0;
-    if (func)
-	target_lsymbol_resolve_bounds(probe->target,tid,func->lsymbol,0,
-				      func->region,&func_phys_base,NULL,NULL);
+    struct target_location_ctxt *tlctxt;
 
     if (func) {
+	tlctxt = target_location_ctxt_create_from_bsymbol(thread->target,
+							  thread->tid,func);
+	target_lsymbol_resolve_bounds(probe->target,tlctxt,func->lsymbol,0,
+				      &func_phys_base,NULL,NULL,NULL,NULL);
 	fprintf(stdout,"Single step %d (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR" (%s:+%d)!\n",
 		msg_detail,tid,msg,ipval,bsymbol_get_name(func),
 		(int)(ipval - func_phys_base));
 	bsymbol_release(func);
+	target_location_ctxt_free(tlctxt);
     }
     else
 	fprintf(stdout,"Single step %d (thread %"PRIiTID") (msg %d) 0x%"PRIxADDR"!\n",

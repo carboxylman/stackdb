@@ -130,7 +130,7 @@ static char *log_flag_stringmap_debug[] = {
     "DWARFSOPS","DWARFOPS","CFA","OTHER","ELF","BFILE",NULL
 };
 static char *log_flag_stringmap_target[] = { 
-    "TARGET","SPACE","REGION","LOOKUP","LOC","OTHER","SYMBOL",
+    "TARGET","SPACE","REGION","LOOKUP","LOC","OTHER","SYMBOL","UNW",
     "LUP","XV","XVP","DISASM","THREAD","OS","PROCESS",NULL
 };
 static char *log_flag_stringmap_probe[] = { 

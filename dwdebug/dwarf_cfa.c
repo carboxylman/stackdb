@@ -42,6 +42,9 @@ static const unsigned char *__read_encoded(unsigned int encoding,
 					   const unsigned char *readp,
 					   const unsigned char *const endp,
 					   uint64_t *res,Dwarf *dbg);
+int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
+			     struct location_ctxt *lctxt,
+			     REG reg,REGVAL *o_regval);
 /*
  * DWARF register rules.
  */
@@ -50,38 +53,37 @@ typedef enum {
     RRT_SAME  = 1,
     RRT_OFFSET = 2,
     RRT_VAL_OFFSET = 3,
-    RRT_VAL_SOFFSET = 4,
     RRT_REG = 5,
     RRT_EXPR = 6,
     RRT_VAL_EXPR = 7,
     RRT_ARCH = 8,
-
-    RRT_REG_OFFSET = 9,
-    RRT_REG_SOFFSET = 10,
 } dwarf_cfa_regrule_t;
 
 struct dwarf_cfa_regrule {
     dwarf_cfa_regrule_t rrt;
     union {
 	uint64_t reg;
-	uint64_t valoffset;
-	uint64_t valsoffset;
 	struct {
 	    const unsigned char *block;
 	    unsigned int len;
 	} block;
 	struct {
 	    uint64_t reg;
-	    uint64_t offset;
-	} regoffset;
-	struct {
-	    uint64_t reg;
-	    uint64_t soffset;
-	} regsoffset;
+	    int64_t offset;
+	} offset;
     };
 };
 
-#define DWARF_CFA_REG (ADDR)-1UL
+/*
+ * When we parse the CFA program, we might not have any location_ops to
+ * tell us which platform register is the stack pointer register -- so
+ * we need a special macro to represent the CFA pseudo-register (which
+ * is the stack pointer register value in the previous frame).  So,
+ * whenever we load this register in a frame, we must also cache it in
+ * the register table as the stack pointer's value in the previous
+ * frame.
+ */
+#define DWARF_CFA_REG INT8_MAX
 
 /*
  * Our cached CIE data is small.  We don't need length, CIE_id,
@@ -106,6 +108,7 @@ struct dwarf_cfa_cie {
 };
 
 struct dwarf_cfa_fde {
+    ptrdiff_t offset;
     struct dwarf_cfa_cie *cie;
     ADDR initial_location;
     ADDR address_range;
@@ -335,9 +338,9 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		   "DW_CFA_def_cfa r%"PRIu64" at offset %"PRIu64"\n",op1,op2);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_REG_OFFSET;
-	    rr->regoffset.reg = op1;
-	    rr->regoffset.offset = op2;
+	    rr->rrt = RRT_VAL_OFFSET;
+	    rr->offset.reg = op1;
+	    rr->offset.offset = (int64_t)op2;
 
 	    __insert_regrule(pc,DWARF_CFA_REG,rr);
 	    last_cfa_rr = rr;
@@ -352,9 +355,9 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		    op1,sop2 * cie->data_alignment_factor);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_REG_SOFFSET;
-	    rr->regsoffset.reg = op1;
-	    rr->regsoffset.soffset = sop2;
+	    rr->rrt = RRT_VAL_OFFSET;
+	    rr->offset.reg = op1;
+	    rr->offset.offset = sop2;
 
 	    __insert_regrule(pc,DWARF_CFA_REG,rr);
 	    last_cfa_rr = rr;
@@ -365,30 +368,20 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    get_uleb128(op1,readp);
 
 	    rr = calloc(1,sizeof(*rr));
-	    if (last_cfa_rr && last_cfa_rr->rrt == RRT_REG_OFFSET) {
-		rr->rrt = RRT_REG_OFFSET;
-		rr->regoffset.reg = op1;
-		rr->regoffset.offset = last_cfa_rr->regoffset.offset;
-
-		vdebug(8,LA_DEBUG,LF_DCFA,
-		       "DW_CFA_def_cfa_register r%"PRIu64
-		       " (current offset %"PRIu64")\n",
-		       op1,rr->regoffset.offset);
-	    }
-	    else if (last_cfa_rr && last_cfa_rr->rrt == RRT_REG_SOFFSET) {
-		rr->rrt = RRT_REG_SOFFSET;
-		rr->regsoffset.reg = op1;
-		rr->regsoffset.soffset = last_cfa_rr->regsoffset.soffset;
+	    if (last_cfa_rr && last_cfa_rr->rrt == RRT_VAL_OFFSET) {
+		rr->rrt = RRT_VAL_OFFSET;
+		rr->offset.reg = op1;
+		rr->offset.offset = last_cfa_rr->offset.offset;
 
 		vdebug(8,LA_DEBUG,LF_DCFA,
 		       "DW_CFA_def_cfa_register r%"PRIu64
 		       " (current offset %"PRId64")\n",
-		       op1,rr->regsoffset.soffset);
+		       op1,rr->offset.offset);
 	    }
 	    else {
-		rr->rrt = RRT_REG_OFFSET;
-		rr->regoffset.reg = op1;
-		rr->regoffset.offset = 0;
+		rr->rrt = RRT_VAL_OFFSET;
+		rr->offset.reg = op1;
+		rr->offset.offset = 0;
 
 		vwarn("DW_CFA_def_cfa_register r%"PRIu64" but no current CFA"
 		      " regrule to get last CFA offset; assuming offset 0!\n",
@@ -404,33 +397,23 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    get_uleb128(op1,readp);
 
 	    rr = calloc(1,sizeof(*rr));
-	    if (last_cfa_rr && last_cfa_rr->rrt == RRT_REG_OFFSET) {
-		rr->rrt = RRT_REG_OFFSET;
-		rr->regoffset.reg = last_cfa_rr->regoffset.reg;
-		rr->regoffset.offset = op1;
-
-		vdebug(8,LA_DEBUG,LF_DCFA,
-		       "DW_CFA_def_cfa_offset offset %"PRIu64
-		       " (current r%"PRIu64")\n",
-		       op1,rr->regoffset.reg);
-	    }
-	    else if (last_cfa_rr && last_cfa_rr->rrt == RRT_REG_SOFFSET) {
-		rr->rrt = RRT_REG_OFFSET;
-		rr->regoffset.reg = last_cfa_rr->regsoffset.reg;
-		rr->regoffset.offset = op1;
+	    if (last_cfa_rr && last_cfa_rr->rrt == RRT_VAL_OFFSET) {
+		rr->rrt = RRT_VAL_OFFSET;
+		rr->offset.reg = last_cfa_rr->offset.reg;
+		rr->offset.offset = (int64_t)op1;
 
 		vdebug(8,LA_DEBUG,LF_DCFA,
 		       "DW_CFA_def_cfa_offset offset %"PRId64
 		       " (current r%"PRIu64")\n",
-		       op1,rr->regoffset.reg);
+		       (int64_t)op1,rr->offset.reg);
 	    }
 	    else {
-		rr->rrt = RRT_REG_OFFSET;
-		rr->regoffset.reg = op1;
-		rr->regoffset.offset = 0;
+		rr->rrt = RRT_VAL_OFFSET;
+		rr->offset.reg = 0;
+		rr->offset.offset = (int64_t)op1;
 
 		vwarn("DW_CFA_def_cfa_offset offset %"PRIu64" but no current CFA"
-		      " regrule to get last CFA offset; assuming offset 0!\n",
+		      " regrule to get last CFA offset; assuming reg 0!\n",
 		      op1);
 	    }
 
@@ -443,27 +426,16 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    get_sleb128(sop1,readp);
 	    sop1 *= cie->data_alignment_factor;
 
-	    if (last_cfa_rr && last_cfa_rr->rrt == RRT_REG_OFFSET) {
+	    if (last_cfa_rr && last_cfa_rr->rrt == RRT_VAL_OFFSET) {
 		rr = calloc(1,sizeof(*rr));
-		rr->rrt = RRT_REG_SOFFSET;
-		rr->regsoffset.reg = last_cfa_rr->regoffset.reg;
-		rr->regsoffset.soffset = sop1;
+		rr->rrt = RRT_VAL_OFFSET;
+		rr->offset.reg = last_cfa_rr->offset.reg;
+		rr->offset.offset = sop1;
 
 		vdebug(8,LA_DEBUG,LF_DCFA,
 		       "DW_CFA_def_cfa_offset_sf offset %"PRId64
 		       " (current r%"PRIu64")\n",
-		       sop1,rr->regsoffset.reg);
-	    }
-	    else if (last_cfa_rr && last_cfa_rr->rrt == RRT_REG_SOFFSET) {
-		rr = calloc(1,sizeof(*rr));
-		rr->rrt = RRT_REG_SOFFSET;
-		rr->regsoffset.reg = last_cfa_rr->regsoffset.reg;
-		rr->regsoffset.soffset = sop1;
-
-		vdebug(8,LA_DEBUG,LF_DCFA,
-		       "DW_CFA_def_cfa_offset_sf offset %"PRId64
-		       " (current r%"PRIu64")\n",
-		       sop1,rr->regsoffset.reg);
+		       sop1,rr->offset.reg);
 	    }
 	    else {
 		vwarn("DW_CFA_def_cfa_offset_sf offset %"PRId64" but no current CFA"
@@ -483,7 +455,7 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		   "DW_CFA_def_cfa_expression len %"PRIu64"\n",op1);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_EXPR;
+	    rr->rrt = RRT_VAL_EXPR;
 	    rr->block.block = readp;
 	    rr->block.len = op1;
 
@@ -512,12 +484,10 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    get_uleb128(op1,readp);
 	    vdebug(8,LA_DEBUG,LF_DCFA,"DW_CFA_same_value r%"PRIu64"\n",op1);
 
-	    /*
-	     * NB: we don't need a regrule for this because we'll get
-	     * the last value for addr X + Y by looking up X + Y as we
-	     * would by looking up X -- due to clmatchone_find() (or by
-	     * checking the default regrule in the CIE for this reg).
-	     */
+	    rr = calloc(1,sizeof(*rr));
+	    rr->rrt = RRT_SAME;
+
+	    __insert_regrule(pc,op1,rr);
 
 	    break;
 	/*
@@ -533,14 +503,14 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    // XXX overflow check
 	    op1 = opcode & 0x3f;
 	    get_uleb128(op2,readp);
-	    op2 *= cie->data_alignment_factor;
-	    vdebug(8,LA_DEBUG,LF_DCFA,"DW_CFA_offset r%u at cfa+%"PRIu64"\n",
-		   op1,op2);
+	    sop2 = op2 * cie->data_alignment_factor;
+	    vdebug(8,LA_DEBUG,LF_DCFA,"DW_CFA_offset r%u at cfa%+"PRId64"\n",
+		   op1,sop2);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_REG_OFFSET;
-	    rr->regoffset.reg = DWARF_CFA_REG;
-	    rr->regoffset.offset = op2;
+	    rr->rrt = RRT_OFFSET;
+	    rr->offset.reg = DWARF_CFA_REG;
+	    rr->offset.offset = sop2;
 
 	    __insert_regrule(pc,op1,rr);
 
@@ -549,14 +519,14 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    // XXX overflow check
 	    op1 = opcode & 0x3f;
 	    get_uleb128(op2,readp);
-	    op2 *= cie->data_alignment_factor;
+	    sop2 = op2 * cie->data_alignment_factor;
 	    vdebug(8,LA_DEBUG,LF_DCFA,"DW_CFA_offset r%u at cfa%+"PRId64"\n",
 		   op1,(int64_t)op2);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_REG_SOFFSET;
-	    rr->regsoffset.reg = DWARF_CFA_REG;
-	    rr->regsoffset.soffset = (int64_t)op2;
+	    rr->rrt = RRT_OFFSET;
+	    rr->offset.reg = DWARF_CFA_REG;
+	    rr->offset.offset = sop2;
 
 	    __insert_regrule(pc,op1,rr);
 
@@ -565,15 +535,15 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    // XXX overflow check
 	    get_uleb128(op1,readp);
 	    get_uleb128(op2,readp);
-	    op2 *= cie->data_alignment_factor;
+	    sop2 = op2 * cie->data_alignment_factor;
 	    vdebug(8,LA_DEBUG,LF_DCFA,
-		   "DW_CFA_offset_extended r%"PRIu64" at cfa%+"PRIu64"\n",
-		   op1,op2);
+		   "DW_CFA_offset_extended r%"PRIu64" at cfa%+"PRId64"\n",
+		   op1,sop2);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_REG_OFFSET;
-	    rr->regoffset.reg = DWARF_CFA_REG;
-	    rr->regoffset.offset = op2;
+	    rr->rrt = RRT_OFFSET;
+	    rr->offset.reg = DWARF_CFA_REG;
+	    rr->offset.offset = sop2;
 
 	    __insert_regrule(pc,op1,rr);
 
@@ -588,9 +558,9 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		    op1,sop2);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_REG_SOFFSET;
-	    rr->regsoffset.reg = DWARF_CFA_REG;
-	    rr->regsoffset.soffset = sop2;
+	    rr->rrt = RRT_OFFSET;
+	    rr->offset.reg = DWARF_CFA_REG;
+	    rr->offset.offset = sop2;
 
 	    __insert_regrule(pc,op1,rr);
 
@@ -605,9 +575,9 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		    op1,op2);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_REG_SOFFSET;
-	    rr->regsoffset.reg = DWARF_CFA_REG;
-	    rr->regsoffset.soffset = -op2;
+	    rr->rrt = RRT_OFFSET;
+	    rr->offset.reg = DWARF_CFA_REG;
+	    rr->offset.offset = -(int64_t)op2;
 
 	    __insert_regrule(pc,op1,rr);
 
@@ -616,14 +586,15 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    // XXX overflow check
 	    get_uleb128(op1,readp);
 	    get_uleb128(op2,readp);
-	    op2 *= cie->data_alignment_factor;
+	    sop2 = op2 * cie->data_alignment_factor;
 	    vdebug(8,LA_DEBUG,LF_DCFA,
-		   "DW_CFA_val_offset r%"PRIu64" at offset %"PRIu64"\n",
-		    op1,op2);
+		   "DW_CFA_val_offset r%"PRIu64" at offset %"PRId64"\n",
+		    op1,sop2);
 
 	    rr = calloc(1,sizeof(*rr));
 	    rr->rrt = RRT_VAL_OFFSET;
-	    rr->valoffset = op2;
+	    rr->offset.reg = DWARF_CFA_REG;
+	    rr->offset.offset = sop2;
 
 	    __insert_regrule(pc,op1,rr);
 
@@ -638,8 +609,9 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 		   op1,sop2);
 
 	    rr = calloc(1,sizeof(*rr));
-	    rr->rrt = RRT_VAL_SOFFSET;
-	    rr->valsoffset = sop2;
+	    rr->rrt = RRT_VAL_OFFSET;
+	    rr->offset.reg = DWARF_CFA_REG;
+	    rr->offset.offset = sop2;
 
 	    __insert_regrule(pc,op1,rr);
 
@@ -957,18 +929,11 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 
 	    vdebug(8,LA_DEBUG,LF_DCFA,
 		   "CIE 0x%lx length=%"PRIu64" id=%"PRIu64" version=%u"
-		   " aug='%s'",
+		   " augmentation='%s' address_size=%u segment_size=%u"
+		    " code_factor=%u data_factor=%d return_address_register=%u\n",
 		   (unsigned long)offset,(uint64_t)unit_len,(uint64_t)cie_id,
-		   version,aug);
-	    if (version >= 4)
-		vdebugc(8,LA_DEBUG,LF_DCFA,
-			" address_size=%u segment_size=%u"
-			" code_alignment_factor=%u data_alignment_factor=%d"
-			" return_address_register=%u\n",
-			wordsize,segment_size,code_alignment_factor,
-			data_alignment_factor,return_address_register);
-	    else
-		vdebugc(8,LA_DEBUG,LF_DCFA,"\n");
+		   version,aug,wordsize,segment_size,code_alignment_factor,
+		   data_alignment_factor,return_address_register);
 
 	    fde_encoding = 0;
 	    lsda_encoding = 0;
@@ -1062,6 +1027,8 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	    }
 
 	    fde = calloc(1,sizeof(*fde));
+	    fde->cie = cie;
+	    fde->offset = offset;
 
 	    /* Initialize from CIE data.  */
 	    lsda_encoding = cie->lsda_encoding;
@@ -1153,15 +1120,16 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 
 	    fde->instructions = (unsigned char *)readp;
 	    fde->len = unit_end - readp;
-	    fde->regrules = g_hash_table_new(g_direct_hash,g_direct_equal);
 
 	    /*
 	     * NB: don't run the FDE programs until we need them.
 	     */
-	    if (0) {
-		dwarf_cfa_program_interpret(debugfile,cie,fde,fde->instructions,
-					    fde->len,fde->regrules);
-	    }
+	    /*/
+	    fde->regrules = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+	    dwarf_cfa_program_interpret(debugfile,cie,fde,fde->instructions,
+	                                fde->len,fde->regrules);
+	    */
 
 	    g_hash_table_insert(ddi->cfa_fde,
 				(gpointer)(uintptr_t)fde->initial_location,fde);
@@ -1170,6 +1138,485 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 	readp = unit_end;
     }
 
+    return 0;
+}
+
+int dwarf_cfa_fde_decode(struct debugfile *debugfile,
+			 struct dwarf_cfa_fde *fde) {
+    if (fde->regrules)
+	return 0;
+
+    fde->regrules = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    if (dwarf_cfa_program_interpret(debugfile,fde->cie,fde,fde->instructions,
+				    fde->len,fde->regrules)) {
+	verror("error while decoding FDE 0x%lx (CIE 0x%lx)!\n",
+	       (unsigned long)fde->offset,(unsigned long)fde->cie->offset);
+	return -1;
+    }
+
+    return 0;
+}
+
+struct dwarf_cfa_regrule *
+dwarf_cfa_fde_lookup_regrule(struct dwarf_cfa_fde *fde,REG reg,ADDR obj_addr) {
+    struct dwarf_cfa_regrule *rr;
+    clmatchone_t *cl;
+
+    cl = g_hash_table_lookup(fde->regrules,(gpointer)(uintptr_t)reg);
+    if (cl) {
+	if ((rr = clmatchone_find(cl,obj_addr,NULL)))
+	    return rr;
+    }
+
+    rr = (struct dwarf_cfa_regrule *) \
+	g_hash_table_lookup(fde->cie->default_regrules,(gpointer)(uintptr_t)reg);
+    return rr;
+}
+
+static int dwarf_cfa_fde_run_regrule(struct debugfile *debugfile,
+				     struct dwarf_cfa_fde *fde,
+				     struct dwarf_cfa_regrule *rr,
+				     struct location_ctxt *lctxt,
+				     REG reg,REGVAL *o_regval) {
+    REGVAL rv;
+    ADDR addr;
+    ADDR word;
+    loctype_t ltrc;
+    struct location loc;
+    int rc;
+    struct symbol *symbol;
+    struct location_ops *lops;
+
+    if (!lctxt || !lctxt->ops) {
+	verror("could not get location ops for current frame %d!\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    lops = lctxt->ops;
+
+    if (!lops->getsymbol) {
+	verror("no location_ops->getsymbol for current frame %d!\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    symbol = lops->getsymbol(lctxt);
+
+    switch (rr->rrt) {
+    case RRT_UNDEF:
+	return 1;
+    case RRT_SAME:
+	/*
+	 * Temporarily adjust lctxt->current_frame.  This sucks a bit
+	 * cause we're not tail-recursive, but it's not a big deal.
+	 */
+	if (!lops->setcurrentframe) {
+	    verror("no location_ops->setcurrentframe for current frame %d!\n",
+		   lctxt->current_frame);
+	    errno = EINVAL;
+	    return -1;
+	}
+	if (lops->setcurrentframe(lctxt,lctxt->current_frame - 1)) {
+	    verror("failed to setcurrentframe from %d to %d!\n",
+		   lctxt->current_frame,lctxt->current_frame - 1);
+	    errno = EINVAL;
+	    return -1;
+	}
+	rc = location_ctxt_read_reg(lctxt,reg,o_regval);
+	if (lops->setcurrentframe(lctxt,lctxt->current_frame + 1)) {
+	    verror("failed to setcurrentframe from %d to %d!\n",
+		   lctxt->current_frame,lctxt->current_frame + 1);
+	    errno = EINVAL;
+	    return -1;
+	}
+	return rc;
+    case RRT_OFFSET:
+	/*
+	 * We actually enhance the DWARF offset(N) register rule to not
+	 * only load the CFA register -- but potentially any register.
+	 * This makes things easier.  But we do then have to
+	 * special-case the CFA register, because it's a pseudo-reg we
+	 * have to compute.
+	 *
+	 * Get the current frame's offset.reg value, add the offset, and
+	 * load that address.
+	 */
+	if (rr->offset.reg == DWARF_CFA_REG) {
+	    rc = dwarf_cfa_read_saved_reg(debugfile,lctxt,(REG)rr->offset.reg,&rv);
+	    if (rc) {
+		verror("could not read CFA pseudo-reg %"PRIu64" value"
+		       " to read reg %"PRIiREG"!\n",rr->offset.reg,reg);
+		return -1;
+	    }
+	}
+	else {
+	    rc = location_ctxt_read_reg(lctxt,rr->offset.reg,&rv);
+	    if (rc) {
+		verror("could not read reg %"PRIu64" value"
+		       " to read reg %"PRIiREG"!\n",rr->offset.reg,reg);
+		return -1;
+	    }
+	}
+	addr = rv + rr->offset.offset;
+	if (lops->readword(lctxt,addr,&word)) {
+	    verror("could not read addr 0x%"PRIxADDR" to read reg %d"
+		   " in frame %d!\n",
+		   addr,reg,lctxt->current_frame);
+	    return -1;
+	}
+	if (o_regval)
+	    *o_regval = (REGVAL)word;
+	return 0;
+    case RRT_VAL_OFFSET:
+	/*
+	 * Get the current frame's offset.reg value, add the offset, and
+	 * return it as the value.  Same comment as for the RRT_OFFSET
+	 * case as far as enlarging the val_offset(N) operation to
+	 * handle any register, not just the CFA pseudo register.
+	 */
+	rc = location_ctxt_read_reg(lctxt,rr->offset.reg,&rv);
+	if (rc) {
+	    if (rr->offset.reg == DWARF_CFA_REG)
+		verror("could not read CFA pseudo-reg %"PRIu64" value"
+		       " to read reg %"PRIiREG"!\n",rr->offset.reg,reg);
+	    else
+		verror("could not read reg %"PRIu64" value"
+		       " to read reg %"PRIiREG"!\n",rr->offset.reg,reg);
+	    return -1;
+	}
+	rv += rr->offset.offset;
+	if (o_regval)
+	    *o_regval = (REGVAL)rv;
+	return 0;
+    case RRT_REG:
+	/*
+	 * Get rr->reg's value to return as the value of @reg.
+	 */
+	rc = location_ctxt_read_reg(lctxt,rr->reg,&rv);
+	if (rc) {
+	    verror("could not read reg %"PRIu64" value"
+		   " as the value for reg %"PRIiREG"!\n",rr->reg,reg);
+	    return -1;
+	}
+	if (o_regval)
+	    *o_regval = (REGVAL)rv;
+	return 0;
+    case RRT_EXPR:
+	/*
+	 * Run the DWARF expr block; load the regval from the resulting
+	 * address.
+	 */
+	memset(&loc,0,sizeof(loc));
+	ltrc = dwarf_location_resolve(rr->block.block,rr->block.len,
+				      lctxt,symbol,&loc);
+	if (ltrc != LOCTYPE_ADDR) {
+	    if ((int)ltrc < 0) 
+		verror("error evaluating DWARF expr for frame %d (symbol %s):"
+		       " %d!\n",
+		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+	    else 
+		verror("error evaluating DWARF expr for frame %d (symbol %s):"
+		       " unexpected expr result %d!\n",
+		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+	    return -1;
+	}
+	addr = LOCATION_ADDR(&loc);
+	if (lops->readword(lctxt,addr,&word)) {
+	    verror("could not read addr 0x%"PRIxADDR" to read reg %d"
+		   " in frame %d!\n",
+		   addr,reg,lctxt->current_frame);
+	    return -1;
+	}
+	if (o_regval)
+	    *o_regval = (REGVAL)word;
+	return 0;
+    case RRT_VAL_EXPR:
+	/*
+	 * Run the DWARF expr block; the result is the register's value.
+	 */
+	memset(&loc,0,sizeof(loc));
+	ltrc = dwarf_location_resolve(rr->block.block,rr->block.len,
+				      lctxt,symbol,&loc);
+	if (ltrc != LOCTYPE_ADDR && ltrc != LOCTYPE_IMPLICIT_WORD) {
+	    if ((int)ltrc < 0) 
+		verror("error evaluating DWARF expr for frame %d (symbol %s):"
+		       " %d!\n",
+		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+	    else 
+		verror("error evaluating DWARF expr for frame %d (symbol %s):"
+		       " unexpected expr result %d!\n",
+		       lctxt->current_frame,symbol_get_name(symbol),ltrc);
+	    return -1;
+	}
+	else if (ltrc == LOCTYPE_ADDR) 
+	    rv = LOCATION_ADDR(&loc);
+	else if (ltrc == LOCTYPE_IMPLICIT_WORD)
+	    rv = LOCATION_WORD(&loc);
+
+	if (o_regval)
+	    *o_regval = rv;
+	return 0;
+    default:
+	verror("unknown DWARF CFA register rule %d; BUG!\n",rr->rrt);
+	errno = EINVAL;
+	return -1;
+    }
+}
+
+/*
+ * If the caller asks for this platform's stack pointer register value,
+ * we instead compute CFA!
+ */
+int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
+			     struct location_ctxt *lctxt,
+			     REG reg,REGVAL *o_regval) {
+    struct dwarf_debugfile_info *ddi;
+    struct dwarf_cfa_fde *fde;
+    struct dwarf_cfa_cie *cie;
+    struct symbol *symbol;
+    REG ipreg;
+    ADDR ip;
+    struct dwarf_cfa_regrule *rr;
+    ADDR retval;
+    int rc;
+    struct location_ops *lops;
+    REG spreg = -1;
+
+    if (!lctxt || !lctxt->ops) {
+	verror("no location ops for current frame %d!\n",lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    lops = lctxt->ops;
+
+    if (!debugfile->priv) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    ddi = (struct dwarf_debugfile_info *)debugfile->priv;
+    if (!ddi || !ddi->cfa_fde || !ddi->cfa_cie) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    symbol = lops->getsymbol(lctxt);
+    if (!symbol) {
+	verror("failed to getsymbol for current frame %d!\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (!lops || !lops->getregno || lops->getregno(lctxt,CREG_SP,&spreg)) {
+	vwarn("could not check CREG_SP for equivalence with DWARF CFA reg;"
+	      " things might break!\n");
+    }
+    else if (reg == spreg) {
+	vdebug(8,LA_DEBUG,LF_DCFA,
+	       "reading CFA pseudo-reg to get SP value in current frame %d\n",
+	       lctxt->current_frame);
+	reg = DWARF_CFA_REG;
+    }
+
+    /*
+     * Figure out what IP is in the current frame, and unrelocate it so
+     * we can use it.
+     */
+    if (!lops || !lops->getregno) {
+	verror("could not get debuginfo IP reg number!\n");
+	errno = EINVAL;
+	return -1;
+    }
+    lops->getregno(lctxt,CREG_IP,&ipreg);
+    if (lops->readreg(lctxt,ipreg,&ip)) {
+	verror("could not read IP reg in frame %d!\n",lctxt->current_frame);
+	return -1;
+    }
+    if (lops && lops->unrelocate && lops->unrelocate(lctxt,ip,&ip)) {
+	verror("could not unrelocate real IP 0x%"PRIxADDR"!\n",ip);
+	return -1;
+    }
+
+    /*
+     * Assume symbol->addr has the address that we recorded for this
+     * FDE.  It must.
+     */
+    fde = (struct dwarf_cfa_fde *) \
+	g_hash_table_lookup(ddi->cfa_fde,(gpointer)(uintptr_t)symbol->addr);
+    if (!fde) {
+	verror("no DWARF CFA FDE for symbol '%s' at addr 0x%"PRIxADDR"!\n",
+	       symbol_get_name(symbol),symbol->addr);
+	errno = ESRCH;
+	return -1;
+    }
+    cie = fde->cie;
+
+    /*
+     * If the FDE hasn't been decoded, decode it now.
+     */
+    if (dwarf_cfa_fde_decode(debugfile,fde)) {
+	verror("error while decoding DWARF CFA FDE for symbol '%s'"
+	       " at addr 0x%"PRIxADDR"!\n",
+	       symbol_get_name(symbol),symbol->addr);
+	return -1;
+    }
+
+    /*
+     * If it doesn't have a regrule for the retaddr register number,
+     * bail successfully.
+     */
+    rr = dwarf_cfa_fde_lookup_regrule(fde,reg,ip);
+    if (!rr) {
+	verror("could not find DWARF CFA regrule for reg %d at"
+	       " obj addr 0x%"PRIxADDR"\n",
+	       reg,ip);
+	return -1;
+    }
+
+    /*
+     * Otherwise, execute the regrule!
+     */
+    rc = dwarf_cfa_fde_run_regrule(debugfile,fde,rr,lctxt,reg,&retval);
+    if (rc) {
+	verror("could not load register %d in FDE 0x%lx CIE 0x%lx\n!",
+	       reg,(unsigned long)fde->offset,(unsigned long)cie->offset);
+	return -1;
+    }
+
+    if (o_regval)
+	*o_regval = retval;
+    return 0;
+    
+}
+
+/*
+ * Read the return address value from the current frame.
+ *
+ * We have to find the CFA decoding for the current frame's symbol; find
+ * its return address register number; if it doesn't have one, return 0
+ * AND set o_retaddr to NULL; if it has one, then read the current
+ * frame's IP and find the rule for the return address number for that
+ * IP.  Then execute the rule and save the value in o_retaddr.
+ */
+int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
+			   struct location_ctxt *lctxt,ADDR *o_retaddr) {
+    struct dwarf_debugfile_info *ddi;
+    struct dwarf_cfa_fde *fde;
+    struct dwarf_cfa_cie *cie;
+    struct symbol *symbol;
+    REG ipreg;
+    ADDR ip;
+    struct dwarf_cfa_regrule *rr;
+    ADDR retval;
+    int rc;
+    struct location_ops *lops;
+
+    if (!lctxt || !lctxt->ops) {
+	verror("no location_ops for current frame %d!\n",lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    lops = lctxt->ops;
+
+    if (!debugfile->priv) {
+	errno = EINVAL;
+	return -1;
+    }
+    ddi = (struct dwarf_debugfile_info *)debugfile->priv;
+    if (!ddi->cfa_fde || !ddi->cfa_cie) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (!lops->getsymbol) {
+	verror("no location_ops->getsymbol for current frame %d\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    symbol = lops->getsymbol(lctxt);
+    if (!symbol) {
+	verror("failed to getsymbol for current frame %d!\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+
+    /*
+     * Figure out what IP is in the current frame, and unrelocate it so
+     * we can use it.
+     */
+    if (!lops->getregno) {
+	verror("could not get debuginfo IP reg number!\n");
+	errno = EINVAL;
+	return -1;
+    }
+    lops->getregno(lctxt,CREG_IP,&ipreg);
+    if (location_ctxt_read_reg(lctxt,ipreg,&ip)) {
+        verror("IP register value not in current frame %d; BUG!\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    if (lops->unrelocate && lops->unrelocate(lctxt,ip,&ip)) {
+	verror("could not unrelocate real IP 0x%"PRIxADDR"!\n",ip);
+	return -1;
+    }
+
+    /*
+     * Assume symbol->addr has the address that we recorded for this
+     * FDE.  It must.
+     */
+    fde = (struct dwarf_cfa_fde *) \
+	g_hash_table_lookup(ddi->cfa_fde,(gpointer)(uintptr_t)symbol->addr);
+    if (!fde) {
+	verror("no DWARF CFA FDE for symbol '%s' at addr 0x%"PRIxADDR"!\n",
+	       symbol_get_name(symbol),symbol->addr);
+	errno = ESRCH;
+	return -1;
+    }
+    cie = fde->cie;
+
+    /*
+     * If the FDE hasn't been decoded, decode it now.
+     */
+    if (dwarf_cfa_fde_decode(debugfile,fde)) {
+	verror("error while decoding DWARF CFA FDE for symbol '%s'"
+	       " at addr 0x%"PRIxADDR"!\n",
+	       symbol_get_name(symbol),symbol->addr);
+	return -1;
+    }
+
+    /*
+     * If it doesn't have a regrule for the retaddr register number,
+     * bail successfully.
+     */
+    rr = dwarf_cfa_fde_lookup_regrule(fde,cie->return_address_register,ip);
+    if (!rr) {
+	verror("could not find DWARF CFA regrule for retaddr reg %d at"
+	       " obj addr 0x%"PRIxADDR"\n",
+	       cie->return_address_register,ip);
+	return -1;
+    }
+
+    /*
+     * Otherwise, execute the regrule!
+     */
+    rc = dwarf_cfa_fde_run_regrule(debugfile,fde,rr,lctxt,
+				   cie->return_address_register,&retval);
+    if (rc) {
+	verror("could not load return address register %d"
+	       " in FDE 0x%lx CIE 0x%lx\n!",
+	       cie->return_address_register,(unsigned long)fde->offset,
+	       (unsigned long)cie->offset);
+	return -1;
+    }
+
+    if (o_retaddr)
+	*o_retaddr = retval;
     return 0;
 }
 

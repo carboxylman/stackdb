@@ -58,6 +58,7 @@ uint64_t os_linux_version(struct target *target) {
     char *next;
     unsigned long int vnum;
     uint64_t *sretval;
+    struct target_location_ctxt *tlctxt;
 
     /* Check cache. */
     if ((vstring = (char *)target_gkv_lookup(target,"os_linux_version_string"))
@@ -73,9 +74,16 @@ uint64_t os_linux_version(struct target *target) {
 	       " nor init_uts_ns.name.release!\n");
 	return 0;
     }
-    else if (!(v = target_load_symbol(target,TID_GLOBAL,bs,LOAD_FLAG_NONE))) {
-	verror("could not load %s!\n",symbol_get_name(bsymbol_get_symbol(bs)));
-	return 0;
+    else {
+	tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,bs);
+	v = target_load_symbol(target,tlctxt,bs,LOAD_FLAG_NONE);
+	if (!v) {
+	    verror("could not load %s!\n",
+		   symbol_get_name(bsymbol_get_symbol(bs)));
+	    target_location_ctxt_free(tlctxt);
+	    return 0;
+	}
+	target_location_ctxt_free(tlctxt);
     }
 
     bsymbol_release(bs);
@@ -195,6 +203,7 @@ int os_linux_syscall_table_load(struct target *target) {
     GHashTable *syscalls_by_name;
     char *name;
     char *wrapped_name;
+    struct target_location_ctxt *tlctxt;
 
     if (target_gkv_lookup(target,"os_linux_syscalls_by_num")) 
 	return 0;
@@ -211,13 +220,16 @@ int os_linux_syscall_table_load(struct target *target) {
 	return -1;
     }
 
-    v = target_load_symbol(target,TID_GLOBAL,bs,LOAD_FLAG_NONE);
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,bs);
+    v = target_load_symbol(target,tlctxt,bs,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load sys_call_table!\n");
+	target_location_ctxt_free(tlctxt);
 	bsymbol_release(bs);
 	bs = NULL;
 	return -1;
     }
+    target_location_ctxt_free(tlctxt);
 
     syscalls_by_num = g_hash_table_new(g_direct_hash,g_direct_equal);
     syscalls_by_addr = g_hash_table_new(g_direct_hash,g_direct_equal);
@@ -421,6 +433,7 @@ static int _os_linux_syscall_probe_init(struct target *target) {
     int caller_should_free = 0;
     ADDR *ap;
     unsigned char *cbuf = NULL;
+    struct target_location_ctxt *tlctxt = NULL;
 
     /* Check cache to see if we've loaded symbol and code info. */
     if (target_gkv_lookup(target,"os_linux_system_call_bsymbol"))
@@ -439,34 +452,38 @@ static int _os_linux_syscall_probe_init(struct target *target) {
 	       " smart syscall probing will fail!\n");
 	goto errout;
     }
-    else if (target_lsymbol_resolve_bounds(target,TID_GLOBAL,
-					   system_call_bsymbol->lsymbol,0,
-					   system_call_bsymbol->region,
-					   &system_call_base_addr,&end,NULL)) {
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,
+						      system_call_bsymbol);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,
+				      system_call_bsymbol->lsymbol,0,
+				      &system_call_base_addr,&end,NULL,
+				      NULL,NULL)) {
 	verror("could not resolve base addr of system_call;"
 	       " smart syscall probing will fail!\n");
 	goto errout;
     }
-    else if (!(cbuf = target_load_code(target,system_call_base_addr,
-				       end - system_call_base_addr,
-				       0,0,&caller_should_free))) {
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
+    if (!(cbuf = target_load_code(target,system_call_base_addr,
+				  end - system_call_base_addr,
+				  0,0,&caller_should_free))) {
 	verror("could not load code of system_call;"
 	       " smart syscall probing will fail!\n");
 	goto errout;
     }
-    else if (disasm_get_control_flow_offsets(target,
-					     INST_CF_IRET | INST_CF_SYSRET,
-					     cbuf,end - system_call_base_addr,
-					     &system_call_ret_idata_list,
-					     system_call_base_addr,1)) {
+    if (disasm_get_control_flow_offsets(target,
+					INST_CF_IRET | INST_CF_SYSRET,
+					cbuf,end - system_call_base_addr,
+					&system_call_ret_idata_list,
+					system_call_base_addr,1)) {
 	verror("could not disassemble system_call in range"
 	       " 0x%"PRIxADDR"-0x%"PRIxADDR";"
 	       " smart syscall probing will fail!\n",
 	       system_call_base_addr,end);
 	goto errout;
     }
-    else if (!system_call_ret_idata_list 
-	     || array_list_len(system_call_ret_idata_list) <= 0) {
+    if (!system_call_ret_idata_list 
+	|| array_list_len(system_call_ret_idata_list) <= 0) {
 	verror("no IRETs or SYSRETs in system_call;"
 	       " smart syscall probing will fail!\n");
 	goto errout;
@@ -486,6 +503,8 @@ static int _os_linux_syscall_probe_init(struct target *target) {
     return 0;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (system_call_ret_idata_list)
 	array_list_deep_free(system_call_ret_idata_list);
     if (caller_should_free)
@@ -541,6 +560,7 @@ static result_t __syscall_entry_handler(struct probe *probe,tid_t tid,
     struct symbol *symbol;
     struct value *v;
     char *name;
+    struct target_location_ctxt *tlctxt;
 
     target = probe->target;
 
@@ -564,12 +584,16 @@ static result_t __syscall_entry_handler(struct probe *probe,tid_t tid,
 	/*
 	 * Load each argument if it hasn't already been loaded.
 	 */
+	tlctxt = target_location_ctxt_create_from_bsymbol(target,
+							  probe->thread->tid,
+							  probe->bsymbol);
 	v_g_slist_foreach(args,gsltmp,argsym) {
 	    name = symbol_get_name(argsym);
-	    v = target_load_symbol_member(probe->target,tid,probe->bsymbol,name,
-					  NULL,LOAD_FLAG_AUTO_DEREF);
+	    v = target_load_symbol_member(probe->target,tlctxt,probe->bsymbol,
+					  name,NULL,LOAD_FLAG_AUTO_DEREF);
 	    array_list_append(argvals,v);
 	}
+	target_location_ctxt_free(tlctxt);
     }
 
     target_os_syscall_record_argv(target,tid,NULL,argvals);

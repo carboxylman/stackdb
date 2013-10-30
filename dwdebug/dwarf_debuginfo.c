@@ -4098,6 +4098,13 @@ int dwarf_fini(struct debugfile *debugfile) {
     return 0;
 }
 
+extern int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
+				    struct location_ctxt *lctxt,
+				    REG reg,REGVAL *o_regval);
+extern int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
+				  struct location_ctxt *lctxt,
+				  ADDR *o_retaddr);
+
 /*
  * Our debugfile ops.
  */
@@ -4106,6 +4113,8 @@ struct debugfile_ops dwarf_debugfile_ops = {
     .load = dwarf_load_debuginfo,
     .symbol_expand = dwarf_symbol_expand,
     .symbol_root_expand = dwarf_symbol_root_expand,
+    .frame_read_saved_reg = dwarf_cfa_read_saved_reg,
+    .frame_read_retaddr = dwarf_cfa_read_retaddr,
     .fini = dwarf_fini,
 };
 

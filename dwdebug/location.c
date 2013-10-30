@@ -118,7 +118,7 @@ int location_set_loclist(struct location *l,struct loclistloc *list) {
 
 int location_set_implicit_word(struct location *loc,ADDR word) {
     if (LOCATION_IS_UNKNOWN(loc) || LOCATION_IS_IMPLICIT_WORD(loc)) {
-	loc->loctype = LOCTYPE_ADDR;
+	loc->loctype = LOCTYPE_IMPLICIT_WORD;
 	loc->l.word = word;
 	return 0;
     }
@@ -532,7 +532,6 @@ OFFSET location_resolve_offset(struct location *location,
 #endif
 
 loctype_t symbol_resolve_location(struct symbol *symbol,
-				  struct location_ops *lops,void *lops_priv,
 				  struct location_ctxt *lctxt,
 				  struct location *o_loc) {
     if (!SYMBOLX_VAR_LOC(symbol)) {
@@ -542,8 +541,244 @@ loctype_t symbol_resolve_location(struct symbol *symbol,
 	return LOCTYPE_UNKNOWN;
     }
 
-    return location_resolve(SYMBOLX_VAR_LOC(symbol),lops,lops_priv,lctxt,
-			    symbol,o_loc);
+    return location_resolve(SYMBOLX_VAR_LOC(symbol),lctxt,symbol,o_loc);
+}
+
+int location_ctxt_read_retaddr(struct location_ctxt *lctxt,ADDR *o_retaddr) {
+    struct debugfile *debugfile;
+    ADDR retaddr = 0;
+    struct symbol *symbol;
+    struct symbol *root;
+
+    if (!lctxt || !lctxt->ops || !lctxt->ops->getsymbol) {
+	verror("no location_ops->getsymbol!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    /* Find our debugfile. */
+    symbol = lctxt->ops->getsymbol(lctxt);
+    if (!symbol) {
+	verror("could not getsymbol for frame %d!\n",lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    root = symbol_find_root(symbol);
+    if (!root) {
+	vwarnopt(11,LA_DEBUG,LF_DLOC,
+		 "could not find root symbol for symbol '%s'!\n",
+		 symbol_get_name(symbol));
+	errno = EINVAL;
+	return -1;
+    }
+    SYMBOL_RX_ROOT(root,srd);
+    debugfile = srd->debugfile;
+    if (!debugfile) {
+	vwarnopt(11,LA_DEBUG,LF_DLOC,
+		 "could not find debugfile for root symbol '%s'!\n",
+		 symbol_get_name(root));
+	errno = EINVAL;
+	return -1;
+    }
+
+    /* Use the CFA API function to read a register. */
+    if (!debugfile->ops || !debugfile->ops->frame_read_retaddr) {
+	verror("debugfile does not support unwinding!\n");
+	errno = ENOTSUP;
+	return -1;
+    }
+    else if (debugfile->ops->frame_read_retaddr(debugfile,lctxt,&retaddr)) {
+	verror("failed to read return address in frame %d!\n",
+	       lctxt->current_frame);
+	if (!errno)
+	    errno = EFAULT;
+	return -1;
+    }
+
+    /*
+     * The value is already "relocated" according to location_ops.
+     */
+
+    if (o_retaddr)
+	*o_retaddr = retaddr;
+    return 0;
+}
+
+/*
+ * Read a register -- either directly via @lops->readreg if !@lctxt 
+ * || @lctxt->curent_frame == 0 -- or via the register frame cache in
+ * @lctxt (which is populated by interpreting CFA data).
+ *
+ * We want the location_ops owner to cache for frame 0.  Well, there are
+ * pros and cons.  If they cache, and then another user changes values,
+ * our whole location context could be messed up.  On the other hand, if
+ * we want location_ctxt_writereg to make sense... hm.  Not sure what to
+ * do yet. For now just don't cache.
+ *
+ * This function is only used internally because we provide
+ * location_ctxt_read_retaddr for the location_ops owner, so that they
+ * know what code owns the previous stack frame, and can then unwind it.
+ */
+int location_ctxt_read_reg(struct location_ctxt *lctxt,REG reg,REGVAL *o_regval) {
+    struct debugfile *debugfile;
+    int rc;
+    REGVAL rv;
+    struct symbol *symbol;
+    struct symbol *root;
+
+    if (!lctxt || !lctxt->ops || !lctxt->ops->readreg) {
+	verror("no location_ops->readreg for current frame %d!\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+
+    /* First try to read it from the target (either CPU or cache). */
+    rc = lctxt->ops->readreg(lctxt,reg,o_regval);
+    if (rc == 0) 
+	return 0;
+    /*
+     * If we get any other errors other than it not being in the cache
+     * (EADDRNOTAVAIL) , we don't try to read CFA.
+     */
+    else if (errno != EADDRNOTAVAIL) {
+	verror("could not read reg %d in frame %d: %s (%d)!\n",
+	       reg,lctxt->current_frame,strerror(errno),errno);
+	return rc;
+    }
+
+    /*
+     * Otherwise, use CFA data from the *next* frame to find
+     * callee-saved register values.
+     */
+    if (!lctxt || !lctxt->ops || !lctxt->ops->setcurrentframe) {
+	verror("no location_ops->setcurrentframe!\n");
+	errno = EINVAL;
+	return -1;
+    }
+    else if (!lctxt->ops->getsymbol) {
+	verror("no location_ops->getsymbol!\n");
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (lctxt->ops->setcurrentframe(lctxt,lctxt->current_frame - 1)) {
+	verror("could not set current frame from %d to %d (next)!\n",
+	       lctxt->current_frame,lctxt->current_frame - 1);
+	errno = EBADSLT;
+	return -1;
+    }
+
+    /* Find our debugfile. */
+    symbol = lctxt->ops->getsymbol(lctxt);
+    root = symbol_find_root(symbol);
+    if (!root) {
+	verror("could not find root symbol for symbol '%s'!\n",
+	       symbol_get_name(symbol));
+	errno = EINVAL;
+	goto prev_frame_load_err;
+    }
+    SYMBOL_RX_ROOT(root,srd);
+    debugfile = srd->debugfile;
+    if (!debugfile) {
+	verror("could not find debugfile for root symbol '%s'!\n",
+	       symbol_get_name(root));
+	errno = EINVAL;
+	goto prev_frame_load_err;
+    }
+
+    /* Use the CFA API function to read a register. */
+    if (!debugfile->ops || !debugfile->ops->frame_read_saved_reg) {
+	verror("debugfile does not support unwinding!\n");
+	errno = ENOTSUP;
+	goto prev_frame_load_err;
+    }
+
+    if (debugfile->ops->frame_read_saved_reg(debugfile,lctxt,reg,&rv)) {
+	verror("could not read reg %"PRIiREG" in frame %d!\n",
+	       reg,lctxt->current_frame);
+	if (!errno)
+	    errno = EFAULT;
+	goto prev_frame_load_err;
+    }
+
+    /*
+     * Stop using the current_frame - 1; re-get the current_frame so
+     * that we cache the result in the correct frame.
+     */
+    if (lctxt->ops->setcurrentframe(lctxt,lctxt->current_frame + 1)) {
+	verror("could not set current frame from %d to %d (next)!\n",
+	       lctxt->current_frame,lctxt->current_frame + 1);
+	errno = EBADSLT;
+	return -1;
+    }
+
+    /* Put it in our cache. */
+    if (lctxt->ops->cachereg) 
+	lctxt->ops->cachereg(lctxt,reg,rv);
+
+    /*
+     * Return!
+     */
+    if (o_regval)
+	*o_regval = rv;
+
+    return 0;
+
+ prev_frame_load_err:
+    /*
+     * Stop using the current_frame - 1; re-get the current_frame so
+     * that we cache the result in the correct frame.
+     */
+    if (lctxt->ops->setcurrentframe(lctxt,lctxt->current_frame + 1)) {
+	verror("could not set current frame from %d to %d (next)!\n",
+	       lctxt->current_frame,lctxt->current_frame + 1);
+	errno = EBADSLT;
+	return -1;
+    }
+    return -1;
+}
+
+int location_ctxt_writereg(struct location_ctxt *lctxt,REG reg,REGVAL regval) {
+    int rc;
+
+    if (!lctxt || lctxt->current_frame == 0) {
+	errno = 0;
+	if (!lctxt->ops || !lctxt->ops->readreg) {
+	    errno = EINVAL;
+	    return -1;
+	}
+	rc = lctxt->ops->writereg(lctxt,reg,regval);
+	if (rc) {
+	    verror("could not write 0x%"PRIxREGVAL" to reg %d!\n",regval,reg);
+	    return rc;
+	}
+    }
+    else {
+	/*
+	 * Use CFA data to write a register.
+	 */
+	return -1;
+    }
+
+    /*
+     * Return!
+     */
+    return 0;
+}
+
+struct location_ctxt *location_ctxt_create(struct location_ops *ops,void *priv) {
+    struct location_ctxt *lctxt;
+
+    lctxt = calloc(1,sizeof(*lctxt));
+    lctxt->ops = ops;
+    lctxt->priv = priv;
+
+    return lctxt;
+}
+
+void location_ctxt_free(struct location_ctxt *lctxt) {
+    free(lctxt);
 }
 
 /*
@@ -555,11 +790,8 @@ loctype_t symbol_resolve_location(struct symbol *symbol,
  * relocate/unrelocate addresses (i.e., from object to real and vice
  * versa).
  */
-loctype_t location_resolve(struct location *loc,
-			   struct location_ops *lops,void *lops_priv,
-			   struct location_ctxt *lctxt,
-			   struct symbol *symbol,
-			   struct location *o_loc) {
+loctype_t location_resolve(struct location *loc,struct location_ctxt *lctxt,
+			   struct symbol *symbol,struct location *o_loc) {
     REGVAL regval;
     struct symbol *parent;
     ADDR ip,obj_ip;
@@ -572,6 +804,15 @@ loctype_t location_resolve(struct location *loc,
     char *rtbuf;
     unsigned int rtlen;
     struct location tloc;
+    struct location_ops *lops = NULL;
+
+    if (!lctxt || !lctxt->ops) {
+	verror("could not get location ops for current frame %d!\n",
+	       lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    lops = lctxt->ops;
 
     switch (loc->loctype) {
     case LOCTYPE_UNKNOWN:
@@ -593,7 +834,7 @@ loctype_t location_resolve(struct location *loc,
 	errno = 0;
 	addr = LOCATION_ADDR(loc);
 	if (lops && lops->relocate) {
-	    if (lops->relocate(&addr,addr,lops_priv)) {
+	    if (lops->relocate(lctxt,addr,&addr)) {
 		verror("failed to reclocate 0x%"PRIxADDR"!\n",addr);
 		return -LOCTYPE_ADDR;
 	    }
@@ -603,11 +844,7 @@ loctype_t location_resolve(struct location *loc,
 	return LOCTYPE_ADDR;
     case LOCTYPE_REG_ADDR:
 	errno = 0;
-	if (!lops || !lops->readreg) {
-	    errno = EINVAL;
-	    return -LOCTYPE_REG_ADDR;
-	}
-	else if (lops->readreg(&regval,LOCATION_REG(loc),lops_priv)) {
+	if (location_ctxt_read_reg(lctxt,LOCATION_REG(loc),&regval)) {
 	    verror("could not read address from reg %d!\n",
 		   LOCATION_REG(loc));
 	    return -LOCTYPE_REG_ADDR;
@@ -621,11 +858,7 @@ loctype_t location_resolve(struct location *loc,
     case LOCTYPE_REG_OFFSET:
 	LOCATION_GET_REGOFFSET(loc,reg,offset);
 	errno = 0;
-	if (!lops || !lops->readreg) {
-	    errno = EINVAL;
-	    return -LOCTYPE_REG_OFFSET;
-	}
-	else if (lops->readreg(&regval,reg,lops_priv)) {
+	if (location_ctxt_read_reg(lctxt,reg,&regval)) {
 	    verror("could not read address from reg %d!\n",reg);
 	    return -LOCTYPE_REG_OFFSET;
 	}
@@ -669,26 +902,24 @@ loctype_t location_resolve(struct location *loc,
 
 	/* Resolve the parent's fbloc; load it; and apply the offset! */
 	memset(&tloc,0,sizeof(tloc));
-	rc = location_resolve(pf->fbloc,lops,lops_priv,lctxt,
-			      symbol,&tloc);
+	rc = location_resolve(pf->fbloc,lctxt,symbol,&tloc);
 	if (rc == LOCTYPE_REG) {
 	    reg = LOCATION_REG(&tloc);
-	    if (!lops || !lops->readreg) {
-		verror("cannot read reg to get frame_base value; no location op!\n");
-		errno = EINVAL;
-		return -LOCTYPE_FBREG_OFFSET;
-	    }
-	    else if (lops->readreg(&addr,reg,lops_priv)) {
+	    if (location_ctxt_read_reg(lctxt,reg,&regval)) {
 		verror("cannot read reg %"PRIiREG" to get frame_base value\n",
 		       reg);
 		return -LOCTYPE_FBREG_OFFSET;
 	    }
+	    else
+		addr = regval;
 	}
 	else if (rc != LOCTYPE_ADDR) {
 	    verror("cannot get frame base value: %s (%s)\n",
 		   strerror(errno),LOCTYPE(rc));
 	    return -LOCTYPE_FBREG_OFFSET;
 	}
+	else
+	    addr = LOCATION_ADDR(&tloc);
 
 	vdebug(7,LA_DEBUG,LF_DLOC,
 	       "frame_base 0x%"PRIxADDR",fboffset %"PRIiOFFSET"\n",
@@ -703,7 +934,7 @@ loctype_t location_resolve(struct location *loc,
 	    errno = EINVAL;
 	    return -LOCTYPE_LOCLIST;
 	}
-	else if (lops->readipreg(&ip,lops_priv)) {
+	else if (lops->readipreg(lctxt,&ip)) {
 	    verror("could not read IP reg!\n");
 	    return -LOCTYPE_REG_OFFSET;
 	}
@@ -714,7 +945,7 @@ loctype_t location_resolve(struct location *loc,
 	 * location_resolve!
 	 */
 	errno = 0;
-	if (lops->unrelocate(&obj_ip,ip,lops_priv)) {
+	if (lops->unrelocate(lctxt,ip,&obj_ip)) {
 	    verror("could not convert IP 0x%"PRIxADDR" to obj addr!\n",ip);
 	    errno = EFAULT;
 	    return -LOCTYPE_LOCLIST;
@@ -739,8 +970,7 @@ loctype_t location_resolve(struct location *loc,
 	    return -LOCTYPE_LOCLIST;
 	}
 
-	return location_resolve(loclistloc->loc,lops,lops_priv,lctxt,
-				symbol,o_loc);
+	return location_resolve(loclistloc->loc,lctxt,symbol,o_loc);
     case LOCTYPE_MEMBER_OFFSET:
 	errno = 0;
 	if (o_loc) 
@@ -760,7 +990,7 @@ loctype_t location_resolve(struct location *loc,
     case LOCTYPE_RUNTIME:
 	LOCATION_GET_DATA(loc,rtbuf,rtlen);
 	return dwarf_location_resolve((const unsigned char *)rtbuf,rtlen,
-				      lops,lops_priv,lctxt,symbol,o_loc);
+				      lctxt,symbol,o_loc);
     default:
 	vwarn("unknown location type %d\n",loc->loctype);
 	errno = EINVAL;
@@ -771,21 +1001,27 @@ loctype_t location_resolve(struct location *loc,
     return -1;
 }
 
-int symbol_resolve_bounds_alt(struct symbol *symbol,
-			      struct location_ops *lops,void *lops_priv,
-			      ADDR *o_start,ADDR *o_end,
-			      int *is_noncontiguous,
-			      ADDR *o_alt_start,ADDR *o_alt_end) {
+int symbol_resolve_bounds(struct symbol *symbol,struct location_ctxt *lctxt,
+			  ADDR *o_start,ADDR *o_end,int *is_noncontiguous,
+			  ADDR *o_alt_start,ADDR *o_alt_end) {
     uint8_t as = 0,ae = 0;
     ADDR start = 0,end = 0,alt_start = 0,alt_end = 0;
     loctype_t rc;
     struct scope *scope;
     struct location o_loc;
+    struct location_ops *lops = NULL;
 
     if (SYMBOL_IS_TYPE(symbol)) {
 	errno = EINVAL;
 	return -1;
     }
+
+    if (!lctxt || !lctxt->ops) {
+	verror("no location ops for current frame %d!\n",lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    lops = lctxt->ops;
 
     memset(&o_loc,0,sizeof(o_loc));
 
@@ -866,8 +1102,7 @@ int symbol_resolve_bounds_alt(struct symbol *symbol,
 	    end = start + symbol_get_bytesize(symbol);
 	}
 	else if (SYMBOLX_VAR_LOC(symbol)) {
-	    rc = location_resolve(SYMBOLX_VAR_LOC(symbol),lops,lops_priv,NULL,
-				  symbol,&o_loc);
+	    rc = location_resolve(SYMBOLX_VAR_LOC(symbol),lctxt,symbol,&o_loc);
 	    if (rc != LOCTYPE_ADDR)
 		return -1;
 	    start = LOCATION_ADDR(&o_loc);
@@ -881,26 +1116,26 @@ int symbol_resolve_bounds_alt(struct symbol *symbol,
 
     if (o_start) {
 	if (lops && lops->relocate)
-	    lops->relocate(o_start,start,lops_priv);
+	    lops->relocate(lctxt,start,o_start);
 	else
 	    *o_start = start;
     }
 
     if (o_end) {
 	if (lops && lops->relocate)
-	    lops->relocate(o_end,end,lops_priv);
+	    lops->relocate(lctxt,end,o_end);
 	else
 	    *o_end = end;
     }
     if (as && o_alt_start) {
 	if (lops && lops->relocate)
-	    lops->relocate(o_alt_start,alt_start,lops_priv);
+	    lops->relocate(lctxt,alt_start,o_alt_start);
 	else
 	    *o_start = start;
     }
     if (ae && o_alt_end) {
 	if (lops && lops->relocate)
-	    lops->relocate(o_alt_end,alt_end,lops_priv);
+	    lops->relocate(lctxt,alt_end,o_alt_end);
 	else
 	    *o_alt_end = alt_end;
     }
@@ -908,24 +1143,20 @@ int symbol_resolve_bounds_alt(struct symbol *symbol,
     return 0;
 }
 
-int symbol_resolve_bounds(struct symbol *symbol,
-			  struct location_ops *lops,void *lops_priv,
-			  ADDR *start,ADDR *end,int *is_noncontiguous) {
-    return symbol_resolve_bounds_alt(symbol,lops,lops_priv,start,end,
-				     is_noncontiguous,NULL,NULL);
-}
-
 ADDR __autoload_pointers(struct symbol *datatype,ADDR addr,
-			 struct location_ops *lops,void *lops_priv,
+			 struct location_ctxt *lctxt,
 			 struct symbol **datatype_saveptr) {
     ADDR paddr = addr;
     int nptrs = 0;
+    struct location_ops *lops;
+
+    lops = lctxt->ops;
 
     while (SYMBOL_IST_PTR(datatype)) {
 	vdebug(9,LA_DEBUG,LF_DLOC,
 	       "loading ptr at 0x%"PRIxADDR"\n",paddr);
 
-	if (!lops || !lops->readptr) {
+	if (!lops || !lops->readword) {
 	    verror("no location ops to autoload ptr 0x%"PRIxADDR
 		   " for datatype %s",
 		   addr,symbol_get_name(datatype));
@@ -933,7 +1164,7 @@ ADDR __autoload_pointers(struct symbol *datatype,ADDR addr,
 	    return 0;
 	}
 
-	if (lops->readptr(&paddr,paddr,lops_priv)) {
+	if (lops->readword(lctxt,paddr,&paddr)) {
 	    verror("could not load ptr 0x%"PRIxADDR"\n",paddr);
 	    if (!errno) 
 		errno = EFAULT;
@@ -983,7 +1214,6 @@ ADDR __autoload_pointers(struct symbol *datatype,ADDR addr,
  * address consistency between obj and real.
  */
 loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
-				   struct location_ops *lops,void *lops_priv,
 				   struct location_ctxt *lctxt,
 				   struct location *o_loc) {
 
@@ -1001,6 +1231,12 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     struct symbol *tdatatype;
     REG reg = -1;
     struct location tloc;
+
+    if (!lctxt) {
+	verror("no location_ctxt!\n");
+	errno = EINVAL;
+	return -1;
+    }
 
     llen = lsymbol_len(lsymbol);
 
@@ -1022,8 +1258,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     symbol = lsymbol_last_symbol(lsymbol);
     if (SYMBOL_IS_FUNC(symbol) || SYMBOL_IS_LABEL(symbol) 
 	|| SYMBOL_IS_BLOCK(symbol)) {
-	if (symbol_resolve_bounds(symbol,lops,lops_priv,
-				  &retval,NULL,NULL)) {
+	if (symbol_resolve_bounds(symbol,lctxt,&retval,NULL,NULL,NULL,NULL)) {
 	    verror("could not resolve base addr for function %s!\n",
 		   symbol_get_name(symbol));
 	    goto errout;
@@ -1044,7 +1279,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
      * prior to it.
      */
     else if (SYMBOL_IS_VAR(symbol)) {
-	rc = symbol_resolve_location(symbol,lops,lops_priv,NULL,NULL);
+	rc = symbol_resolve_location(symbol,lctxt,NULL);
 	if (rc == LOCTYPE_REG)
 	    i = llen - 1;
 	else
@@ -1143,7 +1378,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 	datatype = symbol_get_datatype(symbol);
 
 	memset(&tloc,0,sizeof(tloc));
-	rc = symbol_resolve_location(symbol,lops,lops_priv,NULL,&tloc);
+	rc = symbol_resolve_location(symbol,lctxt,&tloc);
 	//                           &retval,&reg,&offset);
 	if (rc == LOCTYPE_MEMBER_OFFSET) {
 	    retval += LOCATION_OFFSET(&tloc);
@@ -1198,14 +1433,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 		 * end after having resolved the location to a register,
 		 * we can't calculate the address for it.
 		 */
-		if (!lops || !lops->readreg) {
-		    verror("no location ops readreg; cannot read"
-			   " ptr symbol %s in reg %"PRIiREG"\n!",
-			   symbol_get_name(symbol),reg);
-		    errno = EINVAL;
-		    goto errout;
-		}
-		else if (lops->readreg(&retval,reg,lops_priv)) {
+		if (location_ctxt_read_reg(lctxt,reg,&retval)) {
 		    verror("could not read ptr symbol %s from reg %d: %s!\n",
 			   symbol_get_name(symbol),reg,strerror(errno));
 		    goto errout;
@@ -1230,8 +1458,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 	    }
 	    else {
 		errno = 0;
-		retval = __autoload_pointers(datatype,retval,lops,lops_priv,
-					     &datatype);
+		retval = __autoload_pointers(datatype,retval,lctxt,&datatype);
 		if (errno) {
 		    verror("could not load pointer for symbol %s\n",
 			   symbol_get_name(symbol));
@@ -1294,15 +1521,20 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     return LOCTYPE_UNKNOWN;
 }
 
-int lsymbol_resolve_bounds_alt(struct lsymbol *lsymbol,ADDR base_addr,
-			       struct location_ops *lops,void *lops_priv,
-			       ADDR *start,ADDR *end,
-			       int *is_noncontiguous,
-			       ADDR *alt_start,ADDR *alt_end) {
+int lsymbol_resolve_bounds(struct lsymbol *lsymbol,ADDR base_addr,
+			   struct location_ctxt *lctxt,
+			   ADDR *start,ADDR *end,int *is_noncontiguous,
+			   ADDR *alt_start,ADDR *alt_end) {
     struct symbol *symbol;
     uint32_t size = 0;
     loctype_t rc;
     struct location tloc;
+
+    if (!lctxt) {
+	verror("no location_ctxt for current frame!\n");
+	errno = EINVAL;
+	return -1;
+    }
 
     symbol = lsymbol_last_symbol(lsymbol);
 
@@ -1317,15 +1549,15 @@ int lsymbol_resolve_bounds_alt(struct lsymbol *lsymbol,ADDR base_addr,
      * end according to its size.
      */
     if (!SYMBOL_IS_VAR(symbol))
-	return symbol_resolve_bounds_alt(symbol,lops,lops_priv,start,end,
-					 is_noncontiguous,alt_start,alt_end);
+	return symbol_resolve_bounds(symbol,lctxt,start,end,
+				     is_noncontiguous,alt_start,alt_end);
 
     /*
      * Otherwise, work the chain to resolve the base addr, then fill in
      * the size.  No alt_* info for variables, obviously.
      */
     memset(&tloc,0,sizeof(tloc));
-    rc = lsymbol_resolve_location(lsymbol,base_addr,lops,lops_priv,NULL,&tloc);
+    rc = lsymbol_resolve_location(lsymbol,base_addr,lctxt,&tloc);
     if (rc != LOCTYPE_ADDR) {
 	verror("could not resolve location for %s to addr: %s (%d) (%s)!\n",
 	       symbol_get_name(symbol),strerror(errno),rc,
@@ -1344,11 +1576,4 @@ int lsymbol_resolve_bounds_alt(struct lsymbol *lsymbol,ADDR base_addr,
     }
 
     return 0;
-}
-
-int lsymbol_resolve_bounds(struct lsymbol *lsymbol,ADDR base_addr,
-			   struct location_ops *lops,void *lops_priv,
-			   ADDR *start,ADDR *end,int *is_noncontiguous) {
-    return lsymbol_resolve_bounds_alt(lsymbol,base_addr,lops,lops_priv,
-				      start,end,is_noncontiguous,NULL,NULL);
 }

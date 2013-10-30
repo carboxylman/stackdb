@@ -119,6 +119,7 @@
  ** Prototypes.
  **/
 struct symbol_root_dwarf;
+struct location_ctxt;
 
 /**
  ** Debugfiles.
@@ -132,6 +133,51 @@ struct debugfile_ops {
     int (*symbol_root_expand)(struct debugfile *debugfile,struct symbol *root);
     int (*symbol_expand)(struct debugfile *debugfile,
 			 struct symbol *root,struct symbol *symbol);
+
+    /*
+     * Unwinders should basically call location_ctxt_read_retaddr() and
+     * location_ctxt_read_cfa() in the current frame; then create the
+     * previous frame using the first value as the IP and the second as
+     * the stack pointer.  Then it can either call frame_read_all_saved,
+     * which will read all saved registers in the current frame -- then
+     * it can fill in current_frame + 1.  Alternatively, it can just
+     * create the previous frame with IP and SP, and let it be loaded on
+     * demand via location_resolve (which calls location_ctxt_read_reg).
+     */
+
+    /*
+     * Tries to find the saved value of @reg in @lctxt->current_frame by
+     * using the current frame's CFA data to get the callee-saved value.
+     * If the register was saved in @lctxt->current_frame - N, this
+     * function must retrieve that value recursively.
+     */
+    int (*frame_read_saved_reg)(struct debugfile *debugfile,
+				struct location_ctxt *lctxt,
+				REG reg,REGVAL *o_regval);
+    /*
+     * Tries to load all saved values of registers in
+     * @lctxt->current_frame by using the current frame's CFA data to
+     * get the callee-saved values.  If the register was saved in
+     * @lctxt->current_frame - N, this function must retrieve that value
+     * recursively.  It places the values directly into @regcache.
+     */
+    int (*frame_read_all_saved_reg)(struct debugfile *debugfile,
+				    struct location_ctxt *lctxt,
+				    GHashTable *regcache);
+    /*
+     * This gets the IP the current_frame will jump to when it returns
+     * (the return address).
+     */
+    int (*frame_read_retaddr)(struct debugfile *debugfile,
+			      struct location_ctxt *lctxt,ADDR *o_retaddr);
+    /*
+     * This gets the frame pointer address of the current_frame (which
+     * is also the value of the stack pointer at the call site in the
+     * previous frame -- the CFA (call frame address)).
+     */
+    int (*frame_read_cfa)(struct debugfile *debugfile,
+			  struct location_ctxt *lctxt,ADDR *o_cfaaddr);
+
     int (*fini)(struct debugfile *debugfile);
 };
 
@@ -145,8 +191,7 @@ int debugfile_load_debuginfo(struct debugfile *debugfile);
 int debugfile_load_elfsymtab(struct debugfile *debugfile,Elf *elf,
 			     char *elf_filename);
 loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
-				 struct location_ops *lops,void *lops_priv,
-				 struct location_ctxt *ctx,
+				 struct location_ctxt *lctxt,
 				 struct symbol *symbol,struct location *o_loc);
 struct location *dwarf_get_static_ops(struct symbol_root_dwarf *srd,
 				      const unsigned char *data,Dwarf_Word len,
@@ -580,11 +625,8 @@ int location_set_implicit_data(struct location *loc,char *data,int len,
 			       int nocopy);
 int location_set_runtime(struct location *l,char *data,int len,int nocopy);
 
-loctype_t location_resolve(struct location *loc,
-			   struct location_ops *lops,void *lops_priv,
-			   struct location_ctxt *lctxt,
-			   struct symbol *symbol,
-			   struct location *o_loc);
+loctype_t location_resolve(struct location *loc,struct location_ctxt *lctxt,
+			   struct symbol *symbol,struct location *o_loc);
 
 struct location *location_copy(struct location *location);
 void location_dump(struct location *location,struct dump_info *ud);
@@ -594,17 +636,97 @@ void location_internal_free(struct location *location);
  * Targets must supply this interface.
  */
 struct location_ops {
-    int (*getaddrsize)(void *priv);
-    int (*readreg)(REGVAL *regval,REG regno,void *priv);
-    int (*readipreg)(REGVAL *regval,void *priv);
-    int (*readptr)(ADDR *pval,ADDR real_addr,void *priv);
-    int (*relocate)(ADDR *real_addr,ADDR obj_addr,void *priv);
-    int (*unrelocate)(ADDR *obj_addr,ADDR real_addr,void *priv);
+    /*
+     * Change the current frame to something else.  This is useful for
+     * obtaining saved register values in caller-saved frames.
+     *
+     * This library only uses it temporarily -- if it calls
+     * setcurrentframe, it will undo that so that current_frame is the
+     * same as it was when it was called.
+     */
+    int (*setcurrentframe)(struct location_ctxt *lctxt,int frame);
+    /*
+     * Gets the symbol associated with lctxt->current_frame.
+     */
+    struct symbol *(*getsymbol)(struct location_ctxt *lctxt);
+    /*
+     * Reads the value of @regno in @lctxt->current_frame.  This
+     * function must NOT call location_ctxt_read_reg; that function will
+     * read CFA data to compute it if it's not available in the cache.
+     */
+    int (*readreg)(struct location_ctxt *lctxt,REG regno,REGVAL *regval);
+    int (*writereg)(struct location_ctxt *lctxt,REG regno,REGVAL regval);
+    /*
+     * If location_ctxt_read_reg reads a value, it will try to cache it
+     * in lctxt->current_frame via this function.
+     */
+    int (*cachereg)(struct location_ctxt *lctxt,REG regno,REGVAL regval);
+    /*
+     * This is just syntactic sugar for getregno(CREG_IP) + readreg().
+     */
+    int (*readipreg)(struct location_ctxt *lctxt,REGVAL *regval);
+
+    /*
+     * Straightforward memory operations.
+     */
+    int (*readword)(struct location_ctxt *lctxt,ADDR real_addr,ADDR *pval);
+    int (*writeword)(struct location_ctxt *lctxt,ADDR real_addr,ADDR pval);
+    int (*relocate)(struct location_ctxt *lctxt,ADDR obj_addr,ADDR *real_addr);
+    int (*unrelocate)(struct location_ctxt *lctxt,ADDR real_addr,ADDR *obj_addr);
+    /*
+     * Gets the target-specific regno for the common_reg_t reg.
+     */
+    int (*getregno)(struct location_ctxt *lctxt,common_reg_t reg,REG *o_reg);
+    int (*getaddrsize)(struct location_ctxt *lctxt);
 };
 
+/*
+ * location_ctxt couples a location_ops struct for reading machine state
+ * to a notion of a stack of activations (frames) in that machine.
+ * Basically, things that can resolve locations (debuginfo backends)
+ * must provide debugfile_ops to virtually restore saved registers in
+ * frame N-1 to frame N (where 0 is the most recent frame).  These
+ * operations use location_ctxt_read_reg|read_addr to read registers
+ * from the machine's state (and frame cache).  They can also cache
+ * pseudo register values if desireable.  Then every time a dwdebug user
+ * calls location_resolve()
+ *
+ * The @current_frame member indicates which frame the location_ops
+ * should use for their current operation.  We expect that the
+ * @lops_priv member is per-frame anyway -- so this is a convenient
+ * multi-arg wrapper.
+ *
+ * So, the sequence:
+ *
+ *   * location_resolve(loc,ctxt) is called.  It uses
+ *     ctxt->current_frame as the argument to calling
+ *     location_ops->readreg/cache/readipreg as necessary.
+ *   * These ops either read a machine value from frame 0; read a cached
+ *     value from frame N; or use location_ctxt_read_reg to read the
+ *     saved value for frame N in frame N - 1.
+ *   * The unwinder uses location_ctxt_read_retaddr and
+ *     location_ctxt_read_cfa to determine the value of IP to be
+ *     returned to when done with current_frame; and the stack pointer
+ *     of the start of the current_frame (CFA).  It then places these
+ *     values into current_frame + 1 as it creates that frame.
+ */
 struct location_ctxt {
-    GHashTable *frame_cache;
+    struct location_ops *ops;
+    void *priv;
+    int current_frame;
 };
+
+struct location_ctxt *location_ctxt_create(struct location_ops *ops,void *priv);
+int location_ctxt_read_retaddr(struct location_ctxt *lctxt,ADDR *o_retaddr);
+/*
+ * Attempts to load the value of @reg in @lctxt->current_frame.
+ */
+int location_ctxt_read_reg(struct location_ctxt *lctxt,REG reg,REGVAL *o_regval);
+//int location_ctxt_read_all_registers(struct location_ctxt *lctxt,
+int location_ctxt_write_reg(REG reg,struct location_ctxt *lctxt,REGVAL regval);
+int location_ctxt_get_lops(struct location_ctxt *lctxt,
+			   struct location_ops **ops,void **priv);
+void location_ctxt_free(struct location_ctxt *lctxt);
 
 /**
  ** Symbols.

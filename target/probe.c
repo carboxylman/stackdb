@@ -1228,6 +1228,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     target_status_t status;
     loctype_t ltrc;
     struct location tloc;
+    struct target_location_ctxt *tlctxt;
 
     if (type == PROBEPOINT_WATCH && style == PROBEPOINT_SW) {
 	verror("software watchpoints are unsupported!\n");
@@ -1249,12 +1250,15 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
      */
     if (bsymbol) {
 	memset(&tloc,0,sizeof(tloc));
-	ltrc = target_lsymbol_resolve_location(target,probe->thread->tid,
-					       bsymbol->lsymbol,0,bsymbol->region,
+	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,
+							  probe->thread->tid,
+							  bsymbol);
+	ltrc = target_lsymbol_resolve_location(target,tlctxt,bsymbol->lsymbol,0,
 					       LOAD_FLAG_NONE,&tloc,NULL,
 					       (!range) ? &range : NULL);
 	if (ltrc == LOCTYPE_ADDR) 
 	    symbol_addr = LOCATION_ADDR(&tloc);
+	target_location_ctxt_free(tlctxt);
 	location_internal_free(&tloc);
 	probe->bsymbol = bsymbol;
 	RHOLD(bsymbol,probe);
@@ -1375,6 +1379,7 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
     ADDR probeaddr;
     struct bsymbol *bsymbol = NULL;
     struct symbol *symbol;
+    struct target_location_ctxt *tlctxt;
 
     bsymbol = target_lookup_sym_line(target,filename,line,NULL,&probeaddr);
     if (!bsymbol)
@@ -1392,14 +1397,15 @@ struct probe *probe_register_line(struct probe *probe,char *filename,int line,
 
     if (SYMBOL_IS_FUNC(symbol) || SYMBOL_IS_LABEL(symbol) 
 	|| SYMBOL_IS_BLOCK(symbol)) {
-	if (target_lsymbol_resolve_bounds_alt(target,probe->thread->tid,
-					      bsymbol->lsymbol,0,
-					      bsymbol->region,
-					      &start,NULL,NULL,
-					      &alt_start,NULL)) {
+	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,
+							  probe->thread->tid,
+							  bsymbol);
+	if (target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+					  &start,NULL,NULL,&alt_start,NULL)) {
 	    vwarn("could not resolve base addr for symbol %s!\n",
 		  lsymbol_get_name(bsymbol->lsymbol));
 	}
+	target_location_ctxt_free(tlctxt);
 
 	target_find_memory_real(target,probeaddr,NULL,NULL,&range);
 	if (!range) {
@@ -1442,6 +1448,8 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     struct symbol *symbol;
     loctype_t ltrc;
     struct location tloc;
+    struct probe *tprobe;
+    struct target_location_ctxt *tlctxt = NULL;
 
     symbol = lsymbol_last_symbol(bsymbol->lsymbol);
 
@@ -1452,13 +1460,22 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 
     /* No need to RHOLD(); __probe_register_addr() does it. */
 
-    if (SYMBOL_IS_FUNC(symbol) || SYMBOL_IS_LABEL(symbol) 
+    if (target->ops->insert_symbol_breakpoint) {
+	tprobe = probe->target->ops->insert_symbol_breakpoint(target,
+							      probe->thread->tid,
+							      bsymbol);
+	if (!probe_register_source(probe,tprobe)) {
+	    verror("could not register atop target symbol breakpoint!\n");
+	    goto errout;
+	}
+    }
+    else if (SYMBOL_IS_FUNC(symbol) || SYMBOL_IS_LABEL(symbol) 
 	|| SYMBOL_IS_BLOCK(symbol)) {
-	if (target_lsymbol_resolve_bounds_alt(target,probe->thread->tid,
-					      bsymbol->lsymbol,0,
-					      bsymbol->region,
-					      &start,NULL,NULL,
-					      &alt_start,NULL)) {
+	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,
+							  probe->thread->tid,
+							  bsymbol);
+	if (target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+					  &start,NULL,NULL,&alt_start,NULL)) {
 	    verror("could not resolve base addr for symbol %s!\n",
 		   lsymbol_get_name(bsymbol->lsymbol));
 	    goto errout;
@@ -1467,6 +1484,9 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	    probeaddr = alt_start;
 	else
 	    probeaddr = start;
+
+	target_location_ctxt_free(tlctxt);
+	tlctxt = NULL;
 
 	if (!target_find_memory_real(target,probeaddr,NULL,NULL,&range)) {
 	    verror("could not find addr 0x%"PRIxADDR"!\n",probeaddr);
@@ -1490,10 +1510,11 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	}
 
 	memset(&tloc,0,sizeof(tloc));
-	ltrc = target_lsymbol_resolve_location(target,probe->thread->tid,
-					       bsymbol->lsymbol,0,bsymbol->region,
-					       LOAD_FLAG_NONE,&tloc,NULL,
-					       &range);
+	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,
+							  probe->thread->tid,
+							  bsymbol);
+	ltrc = target_lsymbol_resolve_location(target,tlctxt,bsymbol->lsymbol,0,
+					       LOAD_FLAG_NONE,&tloc,NULL,&range);
 	if (ltrc == LOCTYPE_ADDR) {
 	    probeaddr = LOCATION_ADDR(&tloc);
 	    location_internal_free(&tloc);
@@ -1504,6 +1525,9 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 	    location_internal_free(&tloc);
 	    goto errout;
 	}
+
+	target_location_ctxt_free(tlctxt);
+	tlctxt = NULL;
 
 	if (!target_find_memory_real(target,probeaddr,NULL,NULL,&range)) {
 	    verror("could not find addr 0x%"PRIxADDR"!\n",probeaddr);
@@ -1526,6 +1550,8 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (probe->autofree)
 	probe_free(probe,1);
     return NULL;

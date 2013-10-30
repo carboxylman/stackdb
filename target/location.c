@@ -36,57 +36,180 @@ struct mmap_entry *location_mmap(struct target *target,
  ** symbol_resolve* functions.
  **/
 
-int __target_location_ops_getaddrsize(void *priv) {
-    struct target_location_ops_data *tlod;
+int __target_location_ops_setcurrentframe(struct location_ctxt *lctxt,
+					  int frame) {
+    struct target_location_ctxt *tlctxt = 
+	(struct target_location_ctxt *)lctxt->priv;
+    struct target_location_ctxt_frame *tlctxtf = 
+	target_location_ctxt_get_frame(tlctxt,frame);
 
-    tlod = (struct target_location_ops_data *)priv;
-    return tlod->target->wordsize;
-}
-
-int __target_location_ops_readreg(REGVAL *regval,REG regno,void *priv) {
-    struct target_location_ops_data *tlod;
-    REGVAL retval;
-
-    tlod = (struct target_location_ops_data *)priv;
-    errno = 0;
-    retval = target_read_reg(tlod->target,tlod->tid,regno);
-    if (errno) {
-	verror("could not read reg %"PRIiREG" in tid %"PRIiTID": %s!\n",
-	       regno,tlod->tid,strerror(errno));
+    if (!tlctxtf) {
+	errno = EBADSLT;
 	return -1;
     }
 
-    *regval = retval;
-
+    tlctxt->region = tlctxtf->bsymbol->region;
+    lctxt->current_frame = frame;
     return 0;
 }
 
-int __target_location_ops_readipreg(REGVAL *regval,void *priv) {
-    struct target_location_ops_data *tlod;
-    REGVAL retval;
+struct symbol *__target_location_ops_getsymbol(struct location_ctxt *lctxt) {
+    struct target_location_ctxt *tlctxt = 
+	(struct target_location_ctxt *)lctxt->priv;
+    struct target_location_ctxt_frame *tlctxtf = 
+	target_location_ctxt_current_frame(tlctxt);
 
-    tlod = (struct target_location_ops_data *)priv;
+    return bsymbol_get_symbol(tlctxtf->bsymbol);
+}
+
+int __target_location_ops_getaddrsize(struct location_ctxt *lctxt) {
+    struct target_location_ctxt *tlctxt;
+
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
+    return tlctxt->thread->target->wordsize;
+}
+
+int __target_location_ops_getregno(struct location_ctxt *lctxt,
+				   common_reg_t creg,REG *o_reg) {
+    struct target_location_ctxt *tlctxt;
+    REG reg;
+
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
     errno = 0;
-    retval = target_read_reg(tlod->target,tlod->tid,tlod->target->ipregno);
-    if (errno) {
-	verror("could not read ip reg in tid %"PRIiTID": %s!\n",
-	       tlod->tid,strerror(errno));
+    reg = target_dw_reg_no(tlctxt->thread->target,creg);
+    if (errno)
+	return -1;
+
+    if (o_reg)
+	*o_reg = reg;
+    return 0;
+}
+
+int __target_location_ops_readreg(struct location_ctxt *lctxt,
+				  REG regno,REGVAL *regval) {
+    struct target_location_ctxt *tlctxt;
+    REGVAL retval;
+    struct target_location_ctxt_frame *tlctxtf;
+    gpointer v;
+
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
+    if (lctxt->current_frame == 0) {
+	errno = 0;
+	retval = target_read_reg(tlctxt->thread->target,tlctxt->thread->tid,
+				 regno);
+	if (errno) {
+	    verror("could not read reg %"PRIiREG" in tid %"PRIiTID": %s!\n",
+		   regno,tlctxt->thread->tid,strerror(errno));
+	    return -1;
+	}
+
+	*regval = retval;
+	return 0;
+    }
+    else {
+	if (!tlctxt->frames) {
+	    verror("no unwinding context for thread %"PRIiTID";"
+		   " cannot read %"PRIiREG" in frame %d\n",
+		   tlctxt->thread->tid,regno,lctxt->current_frame);
+	    errno = EINVAL;
+	    return -1;
+	}
+	tlctxtf = target_location_ctxt_current_frame(tlctxt);
+	if (!tlctxtf) {
+	    verror("frame %d not available yet for thread %"PRIiTID";"
+		   " cannot read %"PRIiREG"\n",
+		   lctxt->current_frame,tlctxt->thread->tid,regno);
+	    errno = EINVAL;
+	    return -1;
+	}
+
+	/* Check the cache. */
+	if (g_hash_table_lookup_extended(tlctxtf->registers,
+					 (gpointer)(uintptr_t)regno,NULL,&v) == TRUE) {
+	    if (regval)
+		*regval = (REGVAL)(uintptr_t)v;
+	    return 0;
+	}
+
+	errno = EADDRNOTAVAIL;
+	return -1;
+    }
+}
+
+int __target_location_ops_writereg(struct location_ctxt *lctxt,
+				   REG regno,REGVAL regval) {
+    struct target_location_ctxt *tlctxt;
+
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
+    if (lctxt->current_frame == 0) {
+	errno = 0;
+	if (target_write_reg(tlctxt->thread->target,tlctxt->thread->tid,
+			     regno,regval)) {
+	    verror("could not write 0x%"PRIxREGVAL" to  reg %"PRIiREG
+		   " in tid %"PRIiTID": %s!\n",
+		   regval,regno,tlctxt->thread->tid,strerror(errno));
+	    return -1;
+	}
+	return 0;
+    }
+
+    errno = EINVAL;
+    return -1;
+}
+
+int __target_location_ops_cachereg(struct location_ctxt *lctxt,
+				   REG regno,REGVAL regval) {
+    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt_frame *tlctxtf;
+
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
+
+    if (lctxt->current_frame == 0) {
+	errno = EINVAL;
 	return -1;
     }
 
-    *regval = retval;
+    if (!tlctxt->frames) {
+	verror("no unwinding context for thread %"PRIiTID";"
+	       " cannot cache %"PRIiREG" 0x%"PRIxREGVAL" in frame %d\n",
+	       tlctxt->thread->tid,regno,regval,lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    tlctxtf = target_location_ctxt_current_frame(tlctxt);
+    if (!tlctxtf) {
+	verror("frame %d not available yet for thread %"PRIiTID";"
+	       " cannot cache %"PRIiREG" 0x%"PRIxREGVAL"\n",
+	       lctxt->current_frame,tlctxt->thread->tid,regno,regval);
+	errno = EINVAL;
+	return -1;
+    }
 
+    g_hash_table_insert(tlctxtf->registers,
+			(gpointer)(uintptr_t)regno,(gpointer)(uintptr_t)regval);
+
+    errno = 0;
     return 0;
 }
 
-int __target_location_ops_readptr(ADDR *pval,ADDR real_addr,void *priv) {
-    struct target_location_ops_data *tlod;
+int __target_location_ops_readipreg(struct location_ctxt *lctxt,REGVAL *regval) {
+    struct target_location_ctxt *tlctxt;
+
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
+
+    return __target_location_ops_readreg(lctxt,
+					 tlctxt->thread->target->ipregno,regval);
+}
+
+int __target_location_ops_readword(struct location_ctxt *lctxt,
+				   ADDR real_addr,ADDR *pval) {
+    struct target_location_ctxt *tlctxt;
     unsigned char *rc;
 
-    tlod = (struct target_location_ops_data *)priv;
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
 
-    rc = target_read_addr(tlod->target,real_addr,
-			  tlod->target->ptrsize,(unsigned char *)pval);
+    rc = target_read_addr(tlctxt->thread->target,real_addr,
+			  tlctxt->thread->target->ptrsize,(unsigned char *)pval);
     if (rc != (unsigned char *)pval) {
 	verror("could not read 0x%"PRIxADDR": %s!\n",
 	       real_addr,strerror(errno));
@@ -96,33 +219,62 @@ int __target_location_ops_readptr(ADDR *pval,ADDR real_addr,void *priv) {
     return 0;
 }
 
-int __target_location_ops_relocate(ADDR *real_addr,ADDR obj_addr,void *priv) {
-    struct target_location_ops_data *tlod;
+int __target_location_ops_writeword(struct location_ctxt *lctxt,
+				    ADDR real_addr,ADDR pval) {
+    struct target_location_ctxt *tlctxt;
+    unsigned long rc;
 
-    tlod = (struct target_location_ops_data *)priv;
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
 
-    /* Relocate the obj_addr according to tlod->region */
-    *real_addr = memregion_relocate(tlod->region,obj_addr,NULL);
+    rc = target_write_addr(tlctxt->thread->target,real_addr,
+			   tlctxt->thread->target->ptrsize,
+			   (unsigned char *)&pval);
+    if (rc != tlctxt->thread->target->ptrsize) {
+	verror("could not write 0x%"PRIxADDR" to 0x%"PRIxADDR": %s!\n",
+	       pval,real_addr,strerror(errno));
+	return -1;
+    }
 
     return 0;
 }
 
-int __target_location_ops_unrelocate(ADDR *obj_addr,ADDR real_addr,void *priv) {
-    struct target_location_ops_data *tlod;
+int __target_location_ops_relocate(struct location_ctxt *lctxt,
+				   ADDR obj_addr,ADDR *real_addr) {
+    struct target_location_ctxt *tlctxt;
 
-    tlod = (struct target_location_ops_data *)priv;
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
 
-    /* Relocate the obj_addr according to tlod->region */
-    *obj_addr = memregion_unrelocate(tlod->region,real_addr,NULL);
+    /* Relocate the obj_addr according to tlctxt->region */
+    *real_addr = memregion_relocate(tlctxt->region,obj_addr,NULL);
+
+    return 0;
+}
+
+int __target_location_ops_unrelocate(struct location_ctxt *lctxt,
+				     ADDR real_addr,ADDR *obj_addr) {
+    struct target_location_ctxt *tlctxt;
+
+    tlctxt = (struct target_location_ctxt *)lctxt->priv;
+
+    /* Relocate the obj_addr according to tlctxt->region */
+    *obj_addr = memregion_unrelocate(tlctxt->region,real_addr,NULL);
 
     return 0;
 }
 
 struct location_ops target_location_ops = {
-    .getaddrsize = __target_location_ops_getaddrsize,
+    .setcurrentframe = __target_location_ops_setcurrentframe,
+    .getsymbol = __target_location_ops_getsymbol,
     .readreg = __target_location_ops_readreg,
+    .writereg = __target_location_ops_writereg,
+    .cachereg = __target_location_ops_cachereg,
     .readipreg = __target_location_ops_readipreg,
-    .readptr = __target_location_ops_readptr,
+
+    .readword = __target_location_ops_readword,
+    .writeword = __target_location_ops_writeword,
     .relocate = __target_location_ops_relocate,
     .unrelocate = __target_location_ops_unrelocate,
+
+    .getregno = __target_location_ops_getregno,
+    .getaddrsize = __target_location_ops_getaddrsize,
 };

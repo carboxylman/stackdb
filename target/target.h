@@ -495,49 +495,35 @@ REFCNT bsymbol_free(struct bsymbol *bsymbol,int force);
 /**
  ** Location resolution.
  **/
-/*
- * We pass one of these to the dwdebug location functions as the
- * location_ops priv data; thus it gets back to us.
- */
-struct target_location_ops_data {
-    struct target *target;
-    tid_t tid;
-    struct memregion *region;
-};
 extern struct location_ops target_location_ops;
+
 /**
  ** Location resolution functions.
  **/
-int target_symbol_resolve_bounds_alt(struct target *target,tid_t tid,
-				     struct symbol *symbol,
-				     struct memregion *region,
-				     ADDR *start,ADDR *end,
-				     int *is_noncontiguous,
-				     ADDR *alt_start,ADDR *alt_end);
-int target_symbol_resolve_bounds(struct target *target,tid_t tid,
+
+int target_symbol_resolve_bounds(struct target *target,
+				 struct target_location_ctxt *tlctxt,
 				 struct symbol *symbol,
-				 struct memregion *region,
-				 ADDR *start,ADDR *end,
-				 int *is_noncontiguous);
-loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
+				 ADDR *start,ADDR *end,int *is_noncontiguous,
+				 ADDR *alt_start,ADDR *alt_end);
+loctype_t target_lsymbol_resolve_location(struct target *target,
+					  struct target_location_ctxt *tlctxt,
 					  struct lsymbol *lsymbol,
 					  ADDR base_addr,
-					  struct memregion *region,
 					  load_flags_t flags,
 					  struct location *o_loc,
 					  struct symbol **o_datatype,
 					  struct memrange **o_range);
-int target_lsymbol_resolve_bounds_alt(struct target *target,tid_t tid,
-				      struct lsymbol *lsymbol,ADDR base_addr,
-				      struct memregion *region,
-				      ADDR *start,ADDR *end,
-				      int *is_noncontiguous,
-				      ADDR *alt_start,ADDR *alt_end);
-int target_lsymbol_resolve_bounds(struct target *target,tid_t tid,
+int target_lsymbol_resolve_bounds(struct target *target,
+				  struct target_location_ctxt *tlctxt,
 				  struct lsymbol *lsymbol,ADDR base_addr,
-				  struct memregion *region,
-				  ADDR *start,ADDR *end,
-				  int *is_noncontiguous);
+				  ADDR *start,ADDR *end,int *is_noncontiguous,
+				  ADDR *alt_start,ADDR *alt_end);
+int target_bsymbol_resolve_bounds(struct target *target,
+				  struct target_location_ctxt *tlctxt,
+				  struct bsymbol *bsymbol,ADDR base_addr,
+				  ADDR *start,ADDR *end,int *is_noncontiguous,
+				  ADDR *alt_start,ADDR *alt_end);
 /**
  ** Location loading functions.
  **/

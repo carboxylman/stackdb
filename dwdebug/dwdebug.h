@@ -451,10 +451,10 @@ GSList *symbol_get_members(struct symbol *symbol,
  * LOCTYPE_UNKNOWN), or -LOCTYPE_X on error resolving a specific kind of
  * location.  If LOCTYPE_UNKNOWN or negative, errno should be set.
  *
- * Some locations cannot be resolved without @lops.  Also, if they can
- * (i.e., they are already of LOCTYPE_ADDR or LOCTYPE_REG or
- * LOCTYPE_MEMBER_OFFSET), the return values will not be relocated if @lops is
- * not set.
+ * Some locations cannot be resolved without @lctxt->lops.  Also, if
+ * they can (i.e., they are already of LOCTYPE_ADDR or LOCTYPE_REG or
+ * LOCTYPE_MEMBER_OFFSET), the return values will not be relocated if
+ * @lctxt->lops is not set.
  *
  * Also note that lsymbol_resolve_location() does not allow you to
  * resolve an offset.  The only reason that symbol_resolve_location and
@@ -463,30 +463,19 @@ GSList *symbol_get_members(struct symbol *symbol,
  */
 
 loctype_t symbol_resolve_location(struct symbol *symbol,
-				  struct location_ops *lops,void *lops_priv,
 				  struct location_ctxt *lctxt,
 				  struct location *o_loc);
 int symbol_resolve_bounds(struct symbol *symbol,
-			  struct location_ops *lops,void *lops_priv,
-			  ADDR *start,ADDR *end,int *is_noncontiguous);
-int symbol_resolve_bounds_alt(struct symbol *symbol,
-			      struct location_ops *lops,void *lops_priv,
-			      ADDR *o_start,ADDR *o_end,
-			      int *is_noncontiguous,
-			      ADDR *o_alt_start,ADDR *o_alt_end);
-
+			  struct location_ctxt *lctxt,
+			  ADDR *start,ADDR *end,int *is_noncontiguous,
+			  ADDR *o_alt_start,ADDR *o_alt_end);
 loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
-				   struct location_ops *lops,void *lops_priv,
 				   struct location_ctxt *lctxt,
 				   struct location *o_loc);
 int lsymbol_resolve_bounds(struct lsymbol *lsymbol,ADDR base_addr,
-			   struct location_ops *lops,void *lops_priv,
-			   ADDR *start,ADDR *end,int *is_noncontiguous);
-int lsymbol_resolve_bounds_alt(struct lsymbol *lsymbol,ADDR base_addr,
-			       struct location_ops *lops,void *lops_priv,
-			       ADDR *start,ADDR *end,
-			       int *is_noncontiguous,
-			       ADDR *alt_start,ADDR *alt_end);
+			   struct location_ctxt *lctxt,
+			   ADDR *start,ADDR *end,int *is_noncontiguous,
+			   ADDR *alt_start,ADDR *alt_end);
 
 /*
  * Holds a ref to @symbol.  This is useful for users because some

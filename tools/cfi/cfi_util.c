@@ -563,13 +563,17 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
     ADDR absolute_branch_addr;
     int i;
     void *item;
+    struct target_location_ctxt *tlctxt;
 
-    if (target_bsymbol_resolve_base(cfi->target,cfi->tid,bsymbol,&funcstart,
-				    NULL)) {
+    tlctxt = target_location_ctxt_create_from_bsymbol(cfi->target,cfi->tid,
+						      bsymbol);
+    if (target_bsymbol_resolve_base(cfi->target,tlctxt,bsymbol,&funcstart,NULL)) {
 	verror("could not resolve base addr for function %s!\n",
 		bsymbol_get_name(bsymbol));
+	target_location_ctxt_free(tlctxt);
 	return -1;
     }
+    target_location_ctxt_free(tlctxt);
 
     if (g_hash_table_lookup(cfi->disfuncs_noflow,(gpointer)funcstart))
 	return -1;
@@ -832,6 +836,7 @@ char *cfi_thread_backtrace(struct cfi_data *cfi,struct cfi_thread_status *cts,
     void *retaddr;
     int i;
     int alen;
+    struct target_location_ctxt *tlctxt;
 
     if (!sep)
 	sep = " | ";
@@ -857,7 +862,10 @@ char *cfi_thread_backtrace(struct cfi_data *cfi,struct cfi_thread_status *cts,
 	base = 0;
 	if (function) {
 	    name = bsymbol_get_name(function);
-	    target_bsymbol_resolve_base(cfi->target,cfi->tid,function,&base,NULL);
+	    tlctxt = target_location_ctxt_create_from_bsymbol(cfi->target,cfi->tid,
+							      function);
+	    target_bsymbol_resolve_base(cfi->target,tlctxt,function,&base,NULL);
+	    target_location_ctxt_free(tlctxt);
 	}
 	if (!name)
 	    name = "<UNKNOWN>";

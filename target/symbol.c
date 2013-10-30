@@ -288,7 +288,7 @@ void symbol_type_rvalue_print(FILE *stream,struct symbol *type,
 		symbol_rvalue_print(stream,member,buf,bufsiz,flags,target);
 	    else {
 		memset(&tloc,0,sizeof(tloc));
-		ltrc = symbol_resolve_location(member,NULL,NULL,NULL,&tloc);
+		ltrc = symbol_resolve_location(member,NULL,&tloc);
 		if (ltrc != LOCTYPE_MEMBER_OFFSET) 
 		    fputs("?",stream);
 		else {

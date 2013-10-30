@@ -226,6 +226,14 @@ struct xen_vm_state {
     char *name;
 
     /*
+     * We create a default target_location_ctxt for loading things to
+     * avoid a ton of mallocs, etc.  Most of what we need to load is not
+     * thread-specific, and there is only a single giant kernel
+     * memregion... so this is helpful.
+     */
+    struct target_location_ctxt *default_tlctxt;
+
+    /*
      * Some kernel task_structs have thread_info; others have void *stack.
      * Some kernel pt_regs structs have ds/es/fs/gs, or various combinations.
      * Some kernel thread_structs have debugreg[8];

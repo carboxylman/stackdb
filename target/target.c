@@ -16,6 +16,7 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include <assert.h>
 #include <glib.h>
 #include "glib_wrapper.h"
 
@@ -1154,9 +1155,11 @@ int target_associate_debugfile(struct target *target,
 struct scope *target_lookup_addr(struct target *target,uint64_t addr) {
     struct addrspace *space;
     struct memregion *region;
+    struct symbol *root;
     struct scope *scope;
     GHashTableIter iter, iter2;
-    gpointer key, value;
+    gpointer value;
+    ADDR obj_addr;
 
     if (list_empty(&target->spaces))
 	return NULL;
@@ -1171,13 +1174,18 @@ struct scope *target_lookup_addr(struct target *target,uint64_t addr) {
     return NULL;
 
  found:
+    errno = 0;
+    obj_addr = memregion_unrelocate(region,addr,NULL);
+    if (errno) {
+	return NULL;
+    }
     g_hash_table_iter_init(&iter,region->debugfiles);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer)&key,(gpointer)&value)) {
+    while (g_hash_table_iter_next(&iter,NULL,&value)) {
 	g_hash_table_iter_init(&iter2,((struct debugfile *)value)->srcfiles);
-	while (g_hash_table_iter_next(&iter2,
-				      (gpointer)&key,(gpointer)&scope)) {
-	    scope = scope_lookup_addr(scope,addr);
+	while (g_hash_table_iter_next(&iter2,NULL,(gpointer *)&root)) {
+	    scope = symbol_read_owned_scope(root);
+	    if (scope)
+		scope = scope_lookup_addr(scope,obj_addr);
 	    if (scope)
 		return scope;
 	}
@@ -1337,91 +1345,106 @@ struct bsymbol *target_lookup_sym_line(struct target *target,
     return bsymbol;
 }
 
+int target_lookup_line_addr(struct target *target,char *srcfile,ADDR addr) {
+    struct addrspace *space;
+    struct memregion *region;
+    GHashTableIter iter;
+    gpointer key;
+    struct debugfile *debugfile;
+    struct memrange *range;
+    int line = -1;
+
+    if (list_empty(&target->spaces))
+	return -1;
+
+    vdebug(9,LA_TARGET,LF_SYMBOL,
+	   "trying to find line for address 0x%"PRIxADDR"\n",
+	   addr);
+
+    list_for_each_entry(space,&target->spaces,space) {
+	list_for_each_entry(region,&space->regions,region) {
+	    if ((range = memregion_find_range_real(region,addr)))
+		goto found;
+	}
+    }
+
+    return -1;
+
+ found:
+    g_hash_table_iter_init(&iter,region->debugfiles);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer)&key,(gpointer)&debugfile)) {
+	line = debugfile_lookup_line_addr(debugfile,srcfile,
+					  memrange_unrelocate(range,addr));
+	if (line)
+	    return line;
+    }
+
+    return -1;
+}
+
 /*
  * Thin wrappers around [l]symbol_resolve_bounds[_alt].
  */
-int target_symbol_resolve_bounds_alt(struct target *target,tid_t tid,
-				     struct symbol *symbol,
-				     struct memregion *region,
-				     ADDR *start,ADDR *end,
-				     int *is_noncontiguous,
-				     ADDR *alt_start,ADDR *alt_end) {
-    struct target_location_ops_data tlod;
-
-    tlod.target = target;
-    tlod.tid = tid;
-    tlod.region = region;
-
-    if (!target_lookup_thread(target,tid)) {
-	errno = EINVAL;
-	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
-	return LOCTYPE_UNKNOWN;
-    }
-
-    return symbol_resolve_bounds_alt(symbol,&target_location_ops,&tlod,
-				     start,end,is_noncontiguous,
-				     alt_start,alt_end);
-}
-
-int target_symbol_resolve_bounds(struct target *target,tid_t tid,
+int target_symbol_resolve_bounds(struct target *target,
+				 struct target_location_ctxt *tlctxt,
 				 struct symbol *symbol,
-				 struct memregion *region,
-				 ADDR *start,ADDR *end,
-				 int *is_noncontiguous) {
-    return target_symbol_resolve_bounds_alt(target,tid,symbol,region,
-					    start,end,is_noncontiguous,
-					    NULL,NULL);
-}
-
-int target_lsymbol_resolve_bounds_alt(struct target *target,tid_t tid,
-				      struct lsymbol *lsymbol,ADDR base_addr,
-				      struct memregion *region,
-				      ADDR *start,ADDR *end,
-				      int *is_noncontiguous,
-				      ADDR *alt_start,ADDR *alt_end) {
-    struct target_location_ops_data tlod;
-
-    tlod.target = target;
-    tlod.tid = tid;
-    tlod.region = region;
-
-    if (!target_lookup_thread(target,tid)) {
+				 ADDR *start,ADDR *end,int *is_noncontiguous,
+				 ADDR *alt_start,ADDR *alt_end) {
+    if (!tlctxt) {
 	errno = EINVAL;
-	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	verror("must supply a context (tid,region) for raw symbol resolution!\n");
 	return LOCTYPE_UNKNOWN;
     }
 
-    return lsymbol_resolve_bounds_alt(lsymbol,base_addr,
-				      &target_location_ops,&tlod,
-				      start,end,is_noncontiguous,
-				      alt_start,alt_end);
+    return symbol_resolve_bounds(symbol,tlctxt->lctxt,
+				 start,end,is_noncontiguous,alt_start,alt_end);
 }
 
-int target_lsymbol_resolve_bounds(struct target *target,tid_t tid,
+int target_lsymbol_resolve_bounds(struct target *target,
+				  struct target_location_ctxt *tlctxt,
 				  struct lsymbol *lsymbol,ADDR base_addr,
-				  struct memregion *region,
-				  ADDR *start,ADDR *end,
-				  int *is_noncontiguous) {
-    return target_lsymbol_resolve_bounds_alt(target,tid,lsymbol,base_addr,
-					     region,start,end,is_noncontiguous,
-					     NULL,NULL);
+				  ADDR *start,ADDR *end,int *is_noncontiguous,
+				  ADDR *alt_start,ADDR *alt_end) {
+    if (!tlctxt) {
+	errno = EINVAL;
+	verror("must supply a context (tid,region) for raw lsymbol resolution!\n");
+	return LOCTYPE_UNKNOWN;
+    }
+
+    return lsymbol_resolve_bounds(lsymbol,base_addr,tlctxt->lctxt,
+				  start,end,is_noncontiguous,alt_start,alt_end);
+}
+
+int target_bsymbol_resolve_bounds(struct target *target,
+				  struct target_location_ctxt *tlctxt,
+				  struct bsymbol *bsymbol,ADDR base_addr,
+				  ADDR *start,ADDR *end,int *is_noncontiguous,
+				  ADDR *alt_start,ADDR *alt_end) {
+    if (!tlctxt) {
+	errno = EINVAL;
+	verror("must supply a context (tid,region) for bsymbol resolution!\n");
+	return LOCTYPE_UNKNOWN;
+    }
+
+    return lsymbol_resolve_bounds(bsymbol->lsymbol,base_addr,tlctxt->lctxt,
+				  start,end,is_noncontiguous,alt_start,alt_end);
 }
 
 /*
  * This is a thin wrapper around lsymbol_resolve_location that handles
  * the load_flags_t in flags.
  */
-loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
+loctype_t target_lsymbol_resolve_location(struct target *target,
+					  struct target_location_ctxt *tlctxt,
 					  struct lsymbol *lsymbol,
 					  ADDR base_addr,
-					  struct memregion *region,
 					  load_flags_t flags,
 					  struct location *o_loc,
 					  struct symbol **o_datatype,
 					  struct memrange **o_range) {
     loctype_t rc;
-    struct target_thread *tthread;
-    struct target_location_ops_data tlod;
+    tid_t tid;
     ADDR addr;
     REG reg;
     struct symbol *symbol;
@@ -1429,20 +1452,16 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
     struct memrange *range = NULL;
     struct location tloc;
 
-    tlod.target = target;
-    tlod.tid = tid;
-    tlod.region = region;
-
-    tthread = target_lookup_thread(target,tid);
-    if (!tthread) {
+    if (!tlctxt) {
 	errno = EINVAL;
-	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
+	verror("must supply a context (tid,region) for raw lsymbol resolution!\n");
 	return LOCTYPE_UNKNOWN;
     }
 
+    tid = tlctxt->thread->tid;
+
     memset(&tloc,0,sizeof(tloc));
-    rc = lsymbol_resolve_location(lsymbol,base_addr,&target_location_ops,&tlod,
-				  NULL,&tloc);
+    rc = lsymbol_resolve_location(lsymbol,base_addr,tlctxt->lctxt,&tloc);
     if (rc == LOCTYPE_ADDR) {
 	/* Grab the range. */
 	addr = LOCATION_ADDR(&tloc);
@@ -1451,7 +1470,7 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
 		   " for symbol %s: %s!\n",
 		   addr,lsymbol_get_name(lsymbol),strerror(errno));
 	    errno = ERANGE;
-	    return LOCTYPE_UNKNOWN;
+	    goto errout;
 	}
     }
 
@@ -1562,27 +1581,38 @@ loctype_t target_lsymbol_resolve_location(struct target *target,tid_t tid,
     return -rc;
 }
 
-int target_bsymbol_resolve_base(struct target *target,tid_t tid,
+int target_bsymbol_resolve_base(struct target *target,
+				struct target_location_ctxt *tlctxt,
 				struct bsymbol *bsymbol,ADDR *o_addr,
 				struct memrange **o_range) {
     loctype_t rc;
     struct location tloc;
+    int retval;
+
+    if (!tlctxt) {
+	errno = EINVAL;
+	verror("must supply a context (tid,region) for bsymbol resolution!\n");
+	return LOCTYPE_UNKNOWN;
+    }
 
     memset(&tloc,0,sizeof(tloc));
-    rc = target_lsymbol_resolve_location(target,tid,bsymbol->lsymbol,0,
-					 bsymbol->region,LOAD_FLAG_NONE,
-					 &tloc,NULL,o_range);
+    rc = target_lsymbol_resolve_location(target,tlctxt,bsymbol->lsymbol,0,
+					 LOAD_FLAG_NONE,&tloc,NULL,o_range);
     if (rc != LOCTYPE_ADDR) {
 	verror("could not resolve base for symbol %s: %s (%d)\n",
 	       lsymbol_get_name(bsymbol->lsymbol),strerror(errno),rc);
 	location_internal_free(&tloc);
-	return -1;
+	retval = -1;
+	goto errout;
     }
 
+    retval = 0;
     if (o_addr)
 	*o_addr = LOCATION_ADDR(&tloc);
+
+ errout:
     location_internal_free(&tloc);
-    return 0;
+    return retval;
 }
 
 struct value *target_load_type(struct target *target,struct symbol *type,
@@ -1901,7 +1931,8 @@ struct value *target_load_type_reg(struct target *target,struct symbol *type,
     return target_load_type_regval(target,type,tid,reg,regval,flags);
 }
 
-struct value *target_load_symbol_member(struct target *target,tid_t tid,
+struct value *target_load_symbol_member(struct target *target,
+					struct target_location_ctxt *tlctxt,
 					struct bsymbol *bsymbol,
 					const char *member,const char *delim,
 					load_flags_t flags) {
@@ -1915,7 +1946,7 @@ struct value *target_load_symbol_member(struct target *target,tid_t tid,
 	return NULL;
     }
 
-    retval = target_load_symbol(target,tid,bmember,flags);
+    retval = target_load_symbol(target,tlctxt,bmember,flags);
 
     bsymbol_release(bmember);
 
@@ -1923,6 +1954,7 @@ struct value *target_load_symbol_member(struct target *target,tid_t tid,
 }
 
 struct value *target_load_value_member(struct target *target,
+				       struct target_location_ctxt *tlctxt,
 				       struct value *old_value,
 				       const char *member,const char *delim,
 				       load_flags_t flags) {
@@ -1942,6 +1974,7 @@ struct value *target_load_value_member(struct target *target,
     int newlen;
     ADDR word;
     struct location tloc;
+    int created = 0;
 
     tthread = old_value->thread;
     tid = tthread->tid;
@@ -2013,12 +2046,16 @@ struct value *target_load_value_member(struct target *target,
     /*
      * Compute either an address or register location, and load!
      */
+    if (!tlctxt) {
+	tlctxt = target_location_ctxt_create(target,old_value->thread->tid,
+					     old_value->range->region);
+	created = 1;
+    }
     range = NULL;
     reg = -1;
     addr = 0;
     datatype = NULL;
-    rc = target_lsymbol_resolve_location(target,tid,ls,oldaddr,
-					 old_value->range->region,
+    rc = target_lsymbol_resolve_location(target,tlctxt,ls,oldaddr,
 					 flags,&tloc,&datatype,&range);
     if (rc == LOCTYPE_ADDR) {
 	addr = LOCATION_ADDR(&tloc);
@@ -2217,10 +2254,14 @@ struct value *target_load_value_member(struct target *target,
     }
 
  out:
+    if (created)
+	target_location_ctxt_free(tlctxt);
     lsymbol_release(ls);
     return value;
 
  errout:
+    if (created)
+	target_location_ctxt_free(tlctxt);
     if (ls)
 	lsymbol_release(ls);
     if (rbuf)
@@ -2230,7 +2271,8 @@ struct value *target_load_value_member(struct target *target,
     return NULL;
 }
 
-struct value *target_load_symbol(struct target *target,tid_t tid,
+struct value *target_load_symbol(struct target *target,
+				 struct target_location_ctxt *tlctxt,
 				 struct bsymbol *bsymbol,load_flags_t flags) {
     ADDR addr;
     REG reg;
@@ -2246,13 +2288,15 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     loctype_t rc;
     ADDR word;
     struct location tloc;
+    tid_t tid;
 
-    tthread = target_lookup_thread(target,tid);
-    if (!tthread) {
+    if (!tlctxt) {
 	errno = EINVAL;
-	verror("could not lookup thread %"PRIiTID"; forgot to load?\n",tid);
-	return NULL;
+	verror("must supply a context (tid,region) for bsymbol load!\n");
+	return LOCTYPE_UNKNOWN;
     }
+    tthread = tlctxt->thread;
+    tid = tlctxt->thread->tid;
 
     lsymbol = bsymbol->lsymbol;
     symbol = lsymbol_last_symbol(lsymbol);
@@ -2286,7 +2330,7 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
     addr = 0;
     datatype = NULL;
     memset(&tloc,0,sizeof(tloc));
-    rc = target_lsymbol_resolve_location(target,tid,lsymbol,0,bsymbol->region,
+    rc = target_lsymbol_resolve_location(target,tlctxt,lsymbol,0,
 					 flags,&tloc,&datatype,&range);
     if (rc <= LOCTYPE_UNKNOWN) {
 	verror("symbol %s: failed to compute location\n",
@@ -2455,7 +2499,8 @@ OFFSET target_offsetof_symbol(struct target *target,struct bsymbol *bsymbol,
     return symbol_offsetof(bsymbol->lsymbol->symbol,member,delim);
 }
 
-ADDR target_addressof_symbol(struct target *target,tid_t tid,
+ADDR target_addressof_symbol(struct target *target,
+			     struct target_location_ctxt *tlctxt,
 			     struct bsymbol *bsymbol,load_flags_t flags,
 			     struct memrange **o_range) {
     ADDR addr;
@@ -2470,7 +2515,7 @@ ADDR target_addressof_symbol(struct target *target,tid_t tid,
      */
     addr = 0;
     memset(&tloc,0,sizeof(tloc));
-    rc = target_lsymbol_resolve_location(target,tid,lsymbol,0,bsymbol->region,
+    rc = target_lsymbol_resolve_location(target,tlctxt,lsymbol,0,
 					 flags,&tloc,NULL,o_range);
     if (rc <= LOCTYPE_UNKNOWN) {
 	verror("symbol %s: failed to compute location: %s (%d)\n",
@@ -4032,6 +4077,236 @@ int target_memmod_set_tmp(struct target *target,tid_t tid,
     mmod->owner = tthread;
 
     return 0;
+}
+
+struct target_location_ctxt *
+target_location_ctxt_create(struct target *target,tid_t tid,
+			    struct memregion *region) {
+    struct target_location_ctxt *tlctxt;
+
+    tlctxt = calloc(1,sizeof(*tlctxt));
+    tlctxt->thread = target_lookup_thread(target,tid);
+    if (!tlctxt->thread) {
+	free(tlctxt);
+	verror("could not lookup thread %"PRIiTID"!\n",tid);
+	return NULL;
+    }
+    tlctxt->region = region;
+    tlctxt->lctxt = location_ctxt_create(&target_location_ops,tlctxt);
+
+    return tlctxt;
+}
+
+struct target_location_ctxt *
+target_location_ctxt_create_from_bsymbol(struct target *target,tid_t tid,
+					 struct bsymbol *bsymbol) {
+    struct target_location_ctxt *tlctxt;
+
+    tlctxt = calloc(1,sizeof(*tlctxt));
+    tlctxt->thread = target_lookup_thread(target,tid);
+    if (!tlctxt->thread) {
+	free(tlctxt);
+	verror("could not lookup thread %"PRIiTID"!\n",tid);
+	return NULL;
+    }
+    tlctxt->region = bsymbol->region;
+    tlctxt->lctxt = location_ctxt_create(&target_location_ops,tlctxt);
+
+    return tlctxt;
+}
+
+void 
+target_location_ctxt_retarget_bsymbol(struct target_location_ctxt *tlctxt,
+				      struct bsymbol *bsymbol) {
+    tlctxt->region = bsymbol->region;
+}
+
+void target_location_ctxt_free(struct target_location_ctxt *tlctxt) {
+    if (tlctxt->lctxt)
+	location_ctxt_free(tlctxt->lctxt);
+    free(tlctxt);
+}
+
+struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
+    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt_frame *tlctxtf;
+    struct target_thread *tthread;
+    REGVAL ipval;
+    struct bsymbol *bsymbol;
+
+    tthread = target_lookup_thread(target,tid);
+    if (!tthread) {
+	verror("tid %"PRIiTID" does not exist!\n",tid);
+	errno = ESRCH;
+	return NULL;
+    }
+
+    errno = 0;
+    ipval = target_read_reg(target,tid,target->ipregno);
+    if (errno) {
+	verror("could not read IP in tid %"PRIiTID"!\n",tid);
+	return NULL;
+    }
+
+    bsymbol = target_lookup_sym_addr(target,ipval);
+    if (!bsymbol) {
+	verror("could not find symbol for IP addr 0x%"PRIxADDR"!\n",ipval);
+	errno = EADDRNOTAVAIL;
+	return NULL;
+    }
+
+    /* Ok, we have enough info to start unwinding. */
+
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
+    tlctxt->frames = array_list_create(8);
+
+    /*
+     * Create the 0-th frame (current) (with a per-frame lops_priv).
+     *
+     * For each frame we create, its private target_location_ctxt->lctxt
+     * is just a *ref* to unw->tlctxt->lctxt; this will get fixed
+     * eventually; for now, see target_unwind_free() for our care in
+     * handling this.
+     */
+    tlctxtf = calloc(1,sizeof(*tlctxtf));
+    tlctxtf->tlctxt = tlctxt;
+    tlctxtf->bsymbol = bsymbol;
+    tlctxtf->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    g_hash_table_insert(tlctxtf->registers,
+			(gpointer)(uintptr_t)tlctxt->thread->target->ipregno,
+			(gpointer)(uintptr_t)ipval);
+
+    array_list_append(tlctxt->frames,tlctxtf);
+
+    return tlctxt;
+}
+
+int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt) {
+
+}
+
+struct target_location_ctxt_frame *
+target_location_ctxt_get_frame(struct target_location_ctxt *tlctxt,int frame) {
+    return (struct target_location_ctxt_frame *) \
+	array_list_item(tlctxt->frames,frame);
+}
+
+struct target_location_ctxt_frame *
+target_location_ctxt_current_frame(struct target_location_ctxt *tlctxt) {
+
+    if (!tlctxt->frames)
+	return NULL;
+    return (struct target_location_ctxt_frame *) \
+	array_list_item(tlctxt->frames,tlctxt->lctxt->current_frame);
+}
+
+int target_location_ctxt_frame_read_reg(struct target_location_ctxt_frame *tlctxtf,
+					REG reg,REGVAL *o_regval) {
+    gpointer v;
+
+    if (!tlctxtf->registers) {
+	errno = EBADSLT;
+	return -1;
+    }
+
+    if (g_hash_table_lookup_extended(tlctxtf->registers,
+				     (gpointer)(uintptr_t)reg,NULL,&v) == TRUE) {
+	if (o_regval)
+	    *o_regval = (REGVAL)v;
+	return 0;
+    }
+
+    errno = EADDRNOTAVAIL;
+    return -1;
+}
+
+/*
+ * What we want to do is read the current return address register; if it
+ * doesn't exist there is no caller frame, this is it; if there is one,
+ * "infer" the IP in @frame that called @frame - 1; create a new
+ * location_ctxt_frame from the caller's symbol; fill the register cache
+ * for @frame based on @frame - 1's CFA program (which determines its
+ * return address and callee-saved registers within @frame -1's
+ * activation).
+ */
+struct target_location_ctxt_frame *
+target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
+    struct target_location_ctxt_frame *tlctxtf;
+    struct target_location_ctxt_frame *new;
+    int rc;
+    REGVAL rv;
+    ADDR retaddr;
+    struct bsymbol *bsymbol;
+
+    if (!tlctxt->frames) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    /* Just return it if it already exists. */
+    new = (struct target_location_ctxt_frame *) \
+	array_list_item(tlctxt->frames,tlctxt->lctxt->current_frame + 1);
+    if (new)
+	return new;
+
+    tlctxtf = (struct target_location_ctxt_frame *) \
+	array_list_item(tlctxt->frames,tlctxt->lctxt->current_frame);
+
+    retaddr = 0;
+    rc = location_ctxt_read_retaddr(tlctxt->lctxt,&retaddr);
+    if (rc) {
+	verror("could not read retaddr in current_frame %d!\n",
+	       tlctxt->lctxt->current_frame);
+	return NULL;
+    }
+
+    vdebug(8,LA_TARGET,LF_TUNW,
+	   "retaddr of current frame %d is 0x%"PRIxADDR"\n",
+	   tlctxt->lctxt->current_frame,retaddr);
+
+    /*
+     * Try to find the call site.
+     */
+    rv = retaddr; // - 5;
+
+    /*
+     * Look up the symbol.
+     */
+    bsymbol = target_lookup_sym_addr(tlctxt->thread->target,rv);
+    if (!bsymbol) {
+	verror("could not find symbol for IP addr 0x%"PRIxADDR"!\n",rv);
+	errno = EADDRNOTAVAIL;
+	return NULL;
+    }
+
+    /*
+     * Create the i-th frame (current) (with a per-frame lops_priv).
+     *
+     * For each frame we create, its private target_location_ctxt->lctxt
+     * is just a *ref* to tlctxt->tlctxt->lctxt; this will get fixed
+     * eventually; for now, see target_unwind_free() for our care in
+     * handling this.
+     */
+    new = calloc(1,sizeof(*new));
+    new->tlctxt = tlctxt;
+    new->bsymbol = bsymbol;
+    new->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    g_hash_table_insert(new->registers,
+			(gpointer)(uintptr_t)tlctxt->thread->target->ipregno,
+			(gpointer)(uintptr_t)rv);
+
+    array_list_append(tlctxt->frames,new);
+
+    tlctxt->region = bsymbol->region;
+    ++tlctxt->lctxt->current_frame;
+
+    vdebug(8,LA_TARGET,LF_TUNW,
+	   "created new previous frame %d with IP 0x%"PRIxADDR"\n",
+	   tlctxt->lctxt->current_frame,rv);
+
+    return new;
 }
 
 /*

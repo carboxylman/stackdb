@@ -279,6 +279,7 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
     char *name;
     load_flags_t flags;
     struct bsymbol *datatype;
+    struct target_location_ctxt *tlctxt;
 
     if (!israw)
 	flags = LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING;
@@ -323,6 +324,8 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 	/*
 	 * Load each argument if it hasn't already been loaded.
 	 */
+	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,tid,
+							  probe->bsymbol);
 	v_g_slist_foreach(args,gsltmp,argsym) {
 	    name = symbol_get_name(argsym);
 	    if (pv && (allowlast || !pv->finished)) {
@@ -332,11 +335,12 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 		    continue;
 	    }
 
-	    v = target_load_symbol_member(probe->target,tid,probe->bsymbol,name,
+	    v = target_load_symbol_member(probe->target,tlctxt,probe->bsymbol,name,
 					  NULL,flags);
 	    /* Always record it even if it's NULL! */
 	    probe_value_record_stacked(probe,tid,name,v,israw);
 	}
+	target_location_ctxt_free(tlctxt);
 
 	g_slist_free(args);
 	args = NULL;
@@ -397,6 +401,7 @@ static struct value *__probe_value_get_function_ee(struct probe *probe,tid_t tid
     load_flags_t flags;
     struct bsymbol *datatype;
     GHashTable *vt;
+    struct target_location_ctxt *tlctxt;
 
     /*
      * Try to find it in the current hash.
@@ -448,7 +453,10 @@ static struct value *__probe_value_get_function_ee(struct probe *probe,tid_t tid
 	    v = NULL;
     }
     else {
-	v = target_load_symbol_member(probe->target,tid,bsymbol,name,NULL,flags);
+	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,tid,
+							  bsymbol);
+	v = target_load_symbol_member(probe->target,tlctxt,bsymbol,name,NULL,flags);
+	target_location_ctxt_free(tlctxt);
     }
 
     /*
@@ -489,6 +497,7 @@ static struct value *__probe_value_get_basic(struct probe *probe,tid_t tid,
     struct value *v;
     load_flags_t flags;
     GHashTable *vt;
+    struct target_location_ctxt *tlctxt;
 
     bsymbol = probe->bsymbol;
     if (!name)
@@ -524,12 +533,15 @@ static struct value *__probe_value_get_basic(struct probe *probe,tid_t tid,
 	return NULL;
     symbol = bsymbol_get_symbol(bsymbol);
 
+    tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,tid,bsymbol);
     if (!name || (name && strcmp(name,symbol_get_name(symbol)) == 0)) {
-	v = target_load_symbol(probe->target,tid,bsymbol,flags);
+	v = target_load_symbol(probe->target,tlctxt,bsymbol,flags);
 	name = symbol_get_name(symbol);
     }
-    else 
-	v = target_load_symbol_member(probe->target,tid,bsymbol,name,NULL,flags);
+    else {
+	v = target_load_symbol_member(probe->target,tlctxt,bsymbol,name,NULL,flags);
+    }
+    target_location_ctxt_free(tlctxt);
 
     /*
      * Record the value (even if it's NULL!).

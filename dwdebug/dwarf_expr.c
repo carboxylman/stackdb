@@ -211,8 +211,7 @@ const char *dwarf_op_string(unsigned int op) {
 }
 
 loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
-				 struct location_ops *lops,void *lops_priv,
-				 struct location_ctxt *ctx,
+				 struct location_ctxt *lctxt,
 				 struct symbol *symbol,struct location *o_loc) {
     unsigned int addrsize = 0;
 
@@ -236,6 +235,15 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
     Dwarf_Word *overflowstack = NULL;
     int overflowstacklen = 0;
 
+    struct location_ops *lops = NULL;
+
+    if (!lctxt || !lctxt->ops) {
+	verror("no location ops for current frame %d!\n",lctxt->current_frame);
+	errno = EINVAL;
+	return -1;
+    }
+    lops = lctxt->ops;
+
     if (len == 0) {
 	vwarn("empty dwarf block num!\n");
 	goto errout;
@@ -249,7 +257,7 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
      * size.
      */
     if (lops && lops->getaddrsize)
-	addrsize = lops->getaddrsize(lops_priv);
+	addrsize = lops->getaddrsize(lctxt);
     /* Else just make a best-effort guess. */
     if (addrsize <= 0)
 	addrsize = sizeof(Dwarf_Word);
@@ -288,8 +296,8 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 	}								\
 	++stackdepth;							\
     } while (0)
-#define PEEK() ((overflowstack) ? overflowstack[stackdepth]  \
-		                : stack[stackdepth])
+#define PEEK() ((overflowstack) ? overflowstack[stackdepth - 1]  \
+		                : stack[stackdepth - 1])
 #define POP() ((overflowstack) ? overflowstack[--stackdepth]	\
 	                       : stack[--stackdepth])
 #define PICK(i)	((overflowstack) ? overflowstack[stackdepth - 1 - i]  \
@@ -384,6 +392,7 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 	struct symbol *parent;
 	uint16_t skipval;
 	struct location tloc;
+	int nrc;
 
 #if __WORDSIZE == 64
 #define PRIxDwarfWord PRIx64
@@ -418,7 +427,7 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 	     */
 	    if (lops && lops->relocate) {
 		taddr = addr;
-		if (!lops->relocate(&taddr,taddr,lops_priv))
+		if (!lops->relocate(lctxt,taddr,&taddr))
 		    addr = (Dwarf_Word)taddr;
 	    }
 	    PUSH(addr);
@@ -505,16 +514,11 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 
 	    /* Resolve the parent's fbloc; load it; and apply the offset! */
 	    memset(&tloc,0,sizeof(tloc));
-	    rc = location_resolve(pf->fbloc,lops,lops_priv,ctx,parent,&tloc);
+	    rc = location_resolve(pf->fbloc,lctxt,parent,&tloc);
 	    if (rc == LOCTYPE_REG) {
 		treg = LOCATION_REG(&tloc);
-		if (!lops || !lops->readreg) {
-		    verror("cannot read reg to get frame_base value;"
-			   " no location op!\n");
-		    errno = EINVAL;
-		    goto errout;
-		}
-		else if (lops->readreg(&taddr,treg,lops_priv)) {
+		nrc = location_ctxt_read_reg(lctxt,treg,&taddr);
+		if (nrc) {
 		    verror("cannot read reg %"PRIiREG" to get frame_base value\n",
 			   treg);
 		    goto errout;
@@ -548,13 +552,8 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 
 	    taddr = 0;
 	    treg = (op - DW_OP_breg0);
-	    if (!lops || !lops->readreg) {
-		verror("cannot read reg to compute %s op; no location op!\n",
-		       known_ops[op]);
-		errno = EINVAL;
-		goto errout;
-	    }
-	    else if (lops->readreg(&taddr,treg,lops_priv)) {
+	    nrc = location_ctxt_read_reg(lctxt,treg,&taddr);
+	    if (nrc) {
 		verror("error reading reg %"PRIiREG" to compute %s!\n",
 		       treg,known_ops[op]);
 		goto errout;
@@ -577,13 +576,8 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 
 	    taddr = 0;
 	    treg = (REG)u64;
-	    if (!lops || !lops->readreg) {
-		verror("cannot read reg to compute %s op; no location op!\n",
-		       known_ops[op]);
-		errno = EINVAL;
-		goto errout;
-	    }
-	    else if (lops->readreg(&taddr,treg,lops_priv)) {
+	    nrc = location_ctxt_read_reg(lctxt,treg,&taddr);
+	    if (nrc) {
 		verror("error reading reg %"PRIiREG" to compute %s!\n",
 		       treg,known_ops[op]);
 		goto errout;
@@ -651,13 +645,13 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 	case DW_OP_deref:
 	    NEEDSTACK(1);
 	    taddr = POP();
-	    if (!lops || !lops->readptr) {
+	    if (!lops || !lops->readword) {
 		verror("cannot read ptr to compute %s op; no location op!\n",
 		       known_ops[op]);
 		errno = EINVAL;
 		goto errout;
 	    }
-	    else if (lops->readptr(&taddr,taddr,lops_priv)) {
+	    else if (lops->readword(lctxt,taddr,&taddr)) {
 		verror("error reading addr %"PRIxADDR" to compute %s!\n",
 		       taddr,known_ops[op]);
 		goto errout;
@@ -670,13 +664,13 @@ loctype_t dwarf_location_resolve(const unsigned char *data,unsigned int len,
 	    CONSUME(1);
 	    NEEDSTACK(1);
 	    taddr = POP();
-	    if (!lops || !lops->readptr) {
+	    if (!lops || !lops->readword) {
 		verror("cannot read ptr to compute %s op; no location op!\n",
 		       known_ops[op]);
 		errno = EINVAL;
 		goto errout;
 	    }
-	    else if (lops->readptr(&taddr,taddr,lops_priv)) {
+	    else if (lops->readword(lctxt,taddr,&taddr)) {
 		verror("error reading addr %"PRIxADDR" to compute %s!\n",
 		       taddr,known_ops[op]);
 		goto errout;

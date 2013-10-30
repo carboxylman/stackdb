@@ -387,6 +387,7 @@ static int __xen_vm_process_loadregions(struct target *target,
     struct xen_vm_thread_state *xtstate = \
 	(struct xen_vm_thread_state *)target->base_thread->state;
     struct target *base = target->base;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)base->state;
     tid_t base_tid = target->base_tid;
     struct xen_vm_process_state *xvpstate = \
 	(struct xen_vm_process_state *)target->state;
@@ -453,7 +454,8 @@ static int __xen_vm_process_loadregions(struct target *target,
      */
 
     /* Grab the base task's mm address to see if it changed. */
-    VLV(base,xtstate->task_struct,"mm",LOAD_FLAG_NONE,&mm_addr,NULL,err_vmiload);
+    VLV(base,xstate->default_tlctxt,xtstate->task_struct,"mm",LOAD_FLAG_NONE,
+	&mm_addr,NULL,err_vmiload);
 
     if (xvpstate->mm_addr && mm_addr == 0) {
 	/*
@@ -519,14 +521,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 
 	value_free(xvpstate->mm);
 	xvpstate->mm = NULL;
-	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
-	   err_vmiload);
+	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
 
     }
@@ -534,14 +536,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 	vdebug(5,LA_TARGET,LF_XVP,"tid %d analyzing mmaps anew.\n",base_tid);
 
 	/* Load the mm struct and cache its members. */
-	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
-	   err_vmiload);
+	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
     }
     else {
@@ -560,14 +562,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 
 	value_free(xvpstate->mm);
 	xvpstate->mm = NULL;
-	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
-	   err_vmiload);
+	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
     }
 
@@ -578,7 +580,8 @@ static int __xen_vm_process_loadregions(struct target *target,
      */
 
     /* Now we have a valid task->mm; load the first vm_area_struct pointer. */
-    VLV(base,xvpstate->mm,"mmap",LOAD_FLAG_NONE,&vma_addr,NULL,err_vmiload);
+    VLV(base,xstate->default_tlctxt,xvpstate->mm,"mmap",LOAD_FLAG_NONE,
+	&vma_addr,NULL,err_vmiload);
     cached_vma = xvpstate->vma_cache;
     cached_vma_prev = NULL;
 
@@ -589,9 +592,10 @@ static int __xen_vm_process_loadregions(struct target *target,
     vma_prev = xvpstate->mm;
     prev_vma_member_name = "mmap";
 
-    VL(base,vma_prev,prev_vma_member_name,LOAD_FLAG_AUTO_DEREF,
-       &vma,err_vmiload);
-    VLV(base,vma,"vm_start",LOAD_FLAG_NONE,&start,NULL,err_vmiload);
+    VL(base,xstate->default_tlctxt,vma_prev,prev_vma_member_name,
+       LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
+    VLV(base,xstate->default_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+	&start,NULL,err_vmiload);
     value_free(vma);
 
     /* If we have either a vma_addr to process, or a cached_vma, keep going. */
@@ -605,18 +609,24 @@ static int __xen_vm_process_loadregions(struct target *target,
 	     */
 	do_new_unmatched:
 
-	    VL(base,vma_prev,prev_vma_member_name,LOAD_FLAG_AUTO_DEREF,
-	       &vma,err_vmiload);
+	    VL(base,xstate->default_tlctxt,vma_prev,prev_vma_member_name,
+	       LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
 	    new_vma = calloc(1,sizeof(*new_vma));
 	    new_vma->vma = vma;
 
 	    /* Load the vma's start,end,offset,prot_flags,file,next addr. */
-	    VLV(base,vma,"vm_start",LOAD_FLAG_NONE,&start,NULL,err_vmiload);
-	    VLV(base,vma,"vm_end",LOAD_FLAG_NONE,&end,NULL,err_vmiload);
-	    VLV(base,vma,"vm_page_prot",LOAD_FLAG_NONE,&prot_flags,NULL,err_vmiload);
-	    VLV(base,vma,"vm_pgoff",LOAD_FLAG_NONE,&offset,NULL,err_vmiload);
-	    VLV(base,vma,"vm_file",LOAD_FLAG_NONE,&file_addr,NULL,err_vmiload);
-	    VLV(base,vma,"vm_next",LOAD_FLAG_NONE,&vma_next_addr,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+		&start,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_end",LOAD_FLAG_NONE,
+		&end,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_page_prot",LOAD_FLAG_NONE,
+		&prot_flags,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_pgoff",LOAD_FLAG_NONE,
+		&offset,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_file",LOAD_FLAG_NONE,
+		&file_addr,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_next",LOAD_FLAG_NONE,
+		&vma_next_addr,NULL,err_vmiload);
 
 	    /* Figure out the region type. */
 	    rtype = REGION_TYPE_ANON;
@@ -626,7 +636,8 @@ static int __xen_vm_process_loadregions(struct target *target,
 	    /* If it has a file, load the path! */
 	    if (file_addr != 0) {
 		file_value = NULL;
-		VL(base,vma,"vm_file",LOAD_FLAG_AUTO_DEREF,&file_value,err_vmiload);
+		VL(base,xstate->default_tlctxt,vma,"vm_file",LOAD_FLAG_AUTO_DEREF,
+		   &file_value,err_vmiload);
 		if (!linux_file_get_path(base,xtstate->task_struct,file_value,
 					 buf,sizeof(buf))) {
 		    vwarn("could not get filepath for struct file for new range;"
@@ -793,16 +804,16 @@ static int __xen_vm_process_loadregions(struct target *target,
 	    value_refresh(cached_vma->vma,0);
 
 	    /* Load the vma's start,end,prot_flags. */
-	    VLV(base,cached_vma->vma,"vm_start",LOAD_FLAG_NONE,
-		&start,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_end",LOAD_FLAG_NONE,
-		&end,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_page_prot",LOAD_FLAG_NONE,
-		&prot_flags,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_pgoff",LOAD_FLAG_NONE,
-		&offset,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_next",LOAD_FLAG_NONE,
-		&vma_next_addr,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_start",
+		LOAD_FLAG_NONE,&start,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_end",
+		LOAD_FLAG_NONE,&end,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_page_prot",
+		LOAD_FLAG_NONE,&prot_flags,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_pgoff",
+		LOAD_FLAG_NONE,&offset,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_next",
+		LOAD_FLAG_NONE,&vma_next_addr,NULL,err_vmiload);
 
 	    if (cached_vma->range->end == end 
 		&& cached_vma->range->offset == offset 

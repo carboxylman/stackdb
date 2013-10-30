@@ -133,6 +133,7 @@ struct target_ops;
 struct target_os_ops;
 struct target_process_ops;
 struct target_spec;
+struct target_location_ctxt;
 struct target_memmod;
 struct addrspace;
 struct memregion;
@@ -902,6 +903,8 @@ struct bsymbol *target_lookup_sym_addr(struct target *target,ADDR addr);
 struct bsymbol *target_lookup_sym_line(struct target *target,
 				       char *filename,int line,
 				       SMOFFSET *offset,ADDR *addr);
+int target_lookup_line_addr(struct target *target,
+			    char *filename,ADDR addr);
 
 /**
  ** Address/memory range functions.
@@ -911,7 +914,8 @@ int target_find_memory_real(struct target *target,ADDR addr,
 			    struct addrspace **space_saveptr,
 			    struct memregion **region_saveptr,
 			    struct memrange **range_saveptr);
-int target_bsymbol_resolve_base(struct target *target,tid_t tid,
+int target_bsymbol_resolve_base(struct target *target,
+				struct target_location_ctxt *tlctxt,
 				struct bsymbol *bsymbol,ADDR *o_addr,
 				struct memrange **o_range);
 /**
@@ -936,12 +940,14 @@ int target_bsymbol_resolve_base(struct target *target,tid_t tid,
  ** always autoloaded if possible.  If you don't like this intermediate
  ** pointer autoloading behavior, don't use it!
  **/
-ADDR target_addressof_symbol(struct target *target,tid_t tid,
-			      struct bsymbol *bsymbol,load_flags_t flags,
-			      struct memrange **range_saveptr);
+ADDR target_addressof_symbol(struct target *target,
+			     struct target_location_ctxt *tlctxt,
+			     struct bsymbol *bsymbol,load_flags_t flags,
+			     struct memrange **range_saveptr);
 OFFSET target_offsetof_symbol(struct target *target,struct bsymbol *bsymbol,
 			      char *member,const char *delim);
-struct value *target_load_symbol(struct target *target,tid_t tid,
+struct value *target_load_symbol(struct target *target,
+				 struct target_location_ctxt *tlctxt,
 				 struct bsymbol *bsymbol,load_flags_t flags);
 /*
  * You can ask for *any* nesting of variables, given some bound symbol.
@@ -958,11 +964,13 @@ struct value *target_load_symbol(struct target *target,tid_t tid,
  * Your top-level @bsymbol must be either a function or a struct/union
  * var; nothing else makes sense as far as loading memory.
  */
-struct value *target_load_symbol_member(struct target *target,tid_t tid,
+struct value *target_load_symbol_member(struct target *target,
+					struct target_location_ctxt *tlctxt,
 					struct bsymbol *bsymbol,
 					const char *member,const char *delim,
 					load_flags_t flags);
 struct value *target_load_value_member(struct target *target,
+				       struct target_location_ctxt *tlctxt,
 				       struct value *old_value,
 				       const char *member,const char *delim,
 				       load_flags_t flags);
@@ -1150,7 +1158,7 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
  * This encapsulates the common ways we use VMI to load values, and
  * saves the user a lot of code.
  */
-#define VLS(target,varstr,loadflags,outvarptr,outvalueptr,errlabel)	\
+#define VLS(target,tlctxt,varstr,loadflags,outvarptr,outvalueptr,errlabel) \
     do {								\
 	struct value *_outvalue;					\
 	void *__outvar = (outvarptr);					\
@@ -1160,7 +1168,7 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 	if (!_varsym) {							\
 	    goto errlabel;						\
 	}								\
-	_outvalue = target_load_symbol((target),TID_GLOBAL,_varsym,	\
+	_outvalue = target_load_symbol((target),(tlctxt),_varsym,	\
 				       (loadflags));			\
 	bsymbol_release(_varsym);					\
 	if (!_outvalue)							\
@@ -1179,12 +1187,12 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 	else 								\
 	    value_free(_outvalue);					\
     } while (0);
-#define VL(target,invalue,varstr,loadflags,outvalueptr,errlabel)	\
+#define VL(target,tlctxt,invalue,varstr,loadflags,outvalueptr,errlabel)	\
     do {								\
 	struct value *_outvalue;					\
 									\
 	if ((invalue) != NULL) {					\
-	    _outvalue = target_load_value_member((target),(invalue),(varstr), \
+	    _outvalue = target_load_value_member((target),(tlctxt),(invalue),(varstr), \
 						 NULL,(loadflags));	\
 	}								\
 	else { 								\
@@ -1194,7 +1202,7 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 	    if (!_varsym) {						\
 		goto errlabel;						\
 	    }								\
-	    _outvalue = target_load_symbol((target),TID_GLOBAL,_varsym, \
+	    _outvalue = target_load_symbol((target),(tlctxt),_varsym,	\
 					   (loadflags));		\
 	    bsymbol_release(_varsym);					\
 	}								\
@@ -1210,13 +1218,13 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 	    value_free(_outvalue);					\
 	}								\
     } while (0);
-#define VLV(target,invalue,varstr,loadflags,outvarptr,outvalueptr,errlabel) \
+#define VLV(target,tlctxt,invalue,varstr,loadflags,outvarptr,outvalueptr,errlabel) \
     do {								\
 	struct value *_outvalue;					\
 	void *__outvar = (outvarptr);					\
 									\
 	if ((invalue) != NULL) {					\
-	    _outvalue = target_load_value_member((target),(invalue),(varstr), \
+	    _outvalue = target_load_value_member((target),(tlctxt),(invalue),(varstr), \
 						 NULL,(loadflags));	\
 	}								\
 	else { 								\
@@ -1226,7 +1234,7 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 	    if (!_varsym) {						\
 		goto errlabel;						\
 	    }								\
-	    _outvalue = target_load_symbol((target),TID_GLOBAL,_varsym, \
+	    _outvalue = target_load_symbol((target),(tlctxt),_varsym, \
 					   (loadflags));		\
 	    bsymbol_release(_varsym);					\
 	}								\
@@ -1676,6 +1684,121 @@ typedef result_t (*target_debug_handler_t)(struct target *target,
 					   struct target_thread *tthread,
 					   struct probepoint *probepoint);
 
+/**
+ ** Target location contexts (unwinding).
+ **
+ ** We use a target_location_ctxt struct that wraps location_ctxt in
+ ** dwdebug.  Thus, you can lookup/load symbols in the current thread,
+ ** or in an unwind context.  You must supply a context, however --
+ ** loading symbols is meaningless if you don't have a thread context
+ ** and a memory context binding the symbol to an execution context.
+ **
+ ** A context keeps a notion of current frame, which it shares with its
+ ** underlying location_ctxt (i.e., with the dwdebug library).  This
+ ** enables these two libraries to unwind cooperatively (dwdebug handles
+ ** location resolution/computation and saved register
+ ** resolution/computation; target caches restored registers and keeps a
+ ** stack of frames and their metadata).
+ **/
+struct target_location_ctxt *
+target_location_ctxt_create(struct target *target,tid_t tid,
+			    struct memregion *region);
+struct target_location_ctxt *
+target_location_ctxt_create_from_bsymbol(struct target *target,tid_t tid,
+					 struct bsymbol *bsymbol);
+void 
+target_location_ctxt_retarget_bsymbol(struct target_location_ctxt *tlctxt,
+				      struct bsymbol *bsymbol);
+void target_location_ctxt_free(struct target_location_ctxt *tlctxt);
+
+/*
+ * Thread stack unwind support.  Not all targets need to support this.
+ *
+ * A user calls target_unwind to set up an unwinding context.  Then they
+ * can call target_unw_getframe repeatedly until they get no more
+ * frames.  If it returns NULL and errno is set, there was an error; if
+ * errno is not set, there are no more frames on the call stack.  Then
+ * the user must call target_unw_free to clean up the unwinding
+ * context.  This will free all values, register caches, etc.  It is not
+ * safe to reuse any of those pointers.
+ */
+typedef enum {
+    TLCTXT_NONE              = 0,
+    TLCTXT_AUTOLOAD_ARGS     = 1 << 0,
+    TLCTXT_AUTOLOAD_LOCALS   = 1 << 1,
+    TLCTXT_AUTOLOAD_INSCOPE  = 1 << 2,
+    TLCTXT_FOLLOW_OVERLAYS   = 1 << 3,
+} target_location_ctxt_flag_t;
+
+/*
+ * We pass one of these to the dwdebug location functions as the
+ * location_ops priv data; thus it gets back to us.  We need to be able
+ * to pass this when we have 
+ */
+struct target_location_ctxt {
+    /*
+     * We pass a pointer to this to the location_* functions; they pass
+     * us a pointer to the containing struct (target_location_ctxt).  In
+     * other words, lctxt->priv points to the containing struct.  This
+     * means we don't always have to malloc a location_ctxt struct; and
+     * then lctxt is the only keeper of current_frame.
+     */
+    struct location_ctxt *lctxt;
+
+    /*
+     * A location context is always pinned to a specific target thread.
+     * This makes sure we access the correct registers.
+     */
+    struct target_thread *thread;
+    /*
+     * On the other hand, the region it is bound to changes as the
+     * *frame* context changes (i.e., if @unw is set below, @region will
+     * correspond to the region associated with the symbol
+     *
+     * These are dynamically set according @unw, if it is in use!
+     */
+    struct memregion *region;
+
+    /*
+     * If we've attached unwinding state to this context, this is it.
+     */
+    struct array_list *frames;
+};
+
+/*
+ * A stack frame (activation).
+ */
+struct target_location_ctxt_frame {
+    struct target_location_ctxt *tlctxt;
+    target_location_ctxt_flag_t flags;
+
+    /*
+     * The function symbol associated with this frame.
+     */
+    struct bsymbol *bsymbol;
+
+    /*
+     * This contains the restored registers.
+     *
+     * NB: this is NULL if @frame == 0, because we want to support live
+     * edits to the base registers, and don't want to cache them.
+     */
+    GHashTable *registers;
+};
+
+/*
+ * This is a very simple unwinding API.
+ */
+struct target_location_ctxt *target_unwind(struct target *target,tid_t tid);
+struct target_location_ctxt_frame *
+target_location_ctxt_current_frame(struct target_location_ctxt *tlctxt);
+int target_location_ctxt_frame_read_reg(struct target_location_ctxt_frame *tlctxtf,
+					REG reg,REGVAL *o_regval);
+struct target_location_ctxt_frame *
+target_location_ctxt_get_frame(struct target_location_ctxt *tlctxt,int frame);
+struct target_location_ctxt_frame *
+target_location_ctxt_prev(struct target_location_ctxt *tlctxt);
+
 /*
  * A target is the top-level entity a user creates or associates with to
  * start a debugging session.  Targets bind state and type metadata to
@@ -2121,7 +2244,13 @@ struct target_ops {
     int (*writereg)(struct target *target,tid_t tid,REG reg,REGVAL value);
     GHashTable *(*copy_registers)(struct target *target,tid_t tid);
 
+    /* unwind support */
+    struct target_location_ctxt *(*unwind_stack)(struct target *target,
+						 tid_t tid);
+
     /* breakpoint/watchpoint stuff */
+    struct probe *(*insert_symbol_breakpoint)(struct target *target,tid_t tid,
+					      struct bsymbol *bsymbol);
     struct target_memmod *(*insert_sw_breakpoint)(struct target *target,tid_t tid,
 						  ADDR addr);
     int (*remove_sw_breakpoint)(struct target *target,tid_t tid,

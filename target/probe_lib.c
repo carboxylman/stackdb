@@ -99,6 +99,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
     ADDR jaddr,jlow,jhigh;
     struct bsymbol *jbsymbol;
     struct symbol *symbol;
+    struct target_location_ctxt *tlctxt = NULL;
 
     symbol = lsymbol_last_symbol(bsymbol->lsymbol);
 
@@ -107,9 +108,9 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	goto errout;
     }
 
-    if (target_lsymbol_resolve_bounds_alt(target,tid,bsymbol->lsymbol,0,
-					  bsymbol->region,&start,&end,NULL,
-					  &alt_start,NULL)) {
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+				      &start,&end,NULL,&alt_start,NULL)) {
 	verror("could not resolve entry PC for function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	goto errout;
@@ -118,6 +119,9 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	probeaddr = alt_start;
     else
 	probeaddr = start;
+
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
 
     if (!target_find_memory_real(target,start,NULL,NULL,&range)) {
 	verror("could not find range for addr 0x%"PRIxADDR"\n",start);
@@ -281,14 +285,16 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	    }
 	}
 	else {
-	    if (target_lsymbol_resolve_bounds_alt(target,tid,jbsymbol->lsymbol,
-						  0,jbsymbol->region,
-						  &jlow,&jhigh,
-						  NULL,NULL,NULL)) {
+	    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,jbsymbol);
+	    if (target_lsymbol_resolve_bounds(target,tlctxt,jbsymbol->lsymbol,0,
+					      &jlow,&jhigh,NULL,NULL,NULL)) {
 		verror("could not resolve base addr function %s!\n",
 		       bsymbol_get_name(jbsymbol));
 		goto errout;
 	    }
+
+	    target_location_ctxt_free(tlctxt);
+	    tlctxt = NULL;
 
 	    if (!target_find_memory_real(target,jlow,NULL,NULL,&range)) {
 		verror("could not find range for addr 0x%"PRIxADDR"\n",jlow);
@@ -387,6 +393,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (absolute_branch_targets)
 	g_hash_table_destroy(absolute_branch_targets);
     if (funccode && caller_free)
@@ -429,6 +437,7 @@ struct probe *probe_register_function_invocations(struct probe *probe,
     struct cf_inst_data *idata;
     char namebuf[128];
     struct symbol *isymbol;
+    struct target_location_ctxt *tlctxt = NULL;
 
     struct __iii {
 	struct bsymbol *bsymbol;
@@ -450,14 +459,16 @@ struct probe *probe_register_function_invocations(struct probe *probe,
 	goto errout;
     }
 
-    if (target_lsymbol_resolve_bounds_alt(target,tid,caller->lsymbol,0,
-					  caller->region,
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,caller);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,caller->lsymbol,0,
 					  &caller_start,&caller_end,NULL,
 					  NULL,NULL)) {
 	verror("could not resolve base addr for caller function %s!\n",
 	       bsymbol_get_name(caller));
 	goto errout;
     }
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
 
     if (!target_find_memory_real(target,caller_start,NULL,NULL,&range)) {
 	verror("could not find range for addr 0x%"PRIxADDR"\n",caller_start);
@@ -469,13 +480,15 @@ struct probe *probe_register_function_invocations(struct probe *probe,
     /*
      * Grab the base of the callee; there might not be one if it's only inlined.
      */
-    if (target_lsymbol_resolve_bounds_alt(target,tid,callee->lsymbol,0,
-					  callee->region,
-					  &callee_start,NULL,NULL,NULL,NULL)) {
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,callee);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,callee->lsymbol,0,
+				      &callee_start,NULL,NULL,NULL,NULL)) {
 	vwarn("could not resolve base addr for callee function %s!\n",
 	      bsymbol_get_name(callee));
 	callee_start = 0;
     }
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
     /*
      * Find the inline instances within our caller, if any.
      */
@@ -486,12 +499,15 @@ struct probe *probe_register_function_invocations(struct probe *probe,
 	     * Check and see if the instance is in our function; if so,
 	     * add it to the list!
 	     */
-	    if (target_symbol_resolve_bounds(target,tid,isymbol,caller->region,
+	    tlctxt = target_location_ctxt_create(target,tid,caller->region);
+	    if (target_symbol_resolve_bounds(target,tlctxt,isymbol,
 					     &callee_inlined_start,
-					     &callee_inlined_end,NULL)) {
+					     &callee_inlined_end,NULL,NULL,NULL)) {
 		verror("could not resolve base addr for callee inline instance!\n");
 		goto errout;
 	    }
+	    target_location_ctxt_free(tlctxt);
+	    tlctxt = NULL;
 
 	    if (!(caller_start <= callee_inlined_start 
 		  && callee_inlined_start <= caller_end
@@ -691,6 +707,8 @@ struct probe *probe_register_function_invocations(struct probe *probe,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (probes) {
 	v_g_slist_foreach(probes,gsltmp,iprobe) {
 	    probe_free(iprobe,0);
@@ -744,6 +762,7 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     char *sname;
     int sname_created = 0;
     struct symbol *symbol;
+    struct target_location_ctxt *tlctxt = NULL;
 
     symbol = bsymbol_get_symbol(bsymbol);
 
@@ -764,8 +783,9 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
      * best information to __probe_register_addr as possible to make
      * debug output clearer.
      */
-    if (target_lsymbol_resolve_bounds(target,TID_GLOBAL,bsymbol->lsymbol,0,
-				      bsymbol->region,&start,&end,NULL)) {
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,bsymbol);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+				      &start,&end,NULL,NULL,NULL)) {
 	verror("could not resolve base addr for function %s!\n",
 	       bsymbol_get_name(bsymbol));
 	if (sname_created)
@@ -773,6 +793,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	return NULL;
     }
     funclen = end - start;
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
 
     if (!target_find_memory_real(target,start,NULL,NULL,&range)) {
 	verror("could not find range for addr 0x%"PRIxADDR"\n",start);
@@ -902,6 +924,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (itypes)
 	g_hash_table_destroy(itypes);
     if (funccode)
@@ -936,6 +960,7 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     struct symbol *isymbol;
     tid_t tid = probe->thread->tid;
     ADDR paddr;
+    struct target_location_ctxt *tlctxt = NULL;
 
     symbol = bsymbol_get_symbol(bsymbol);
 
@@ -947,9 +972,10 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     /* We only try to register on the primary if it has an address
      * (i.e., is not ONLY inlined).
      */
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
     if (do_primary
-	&& !target_lsymbol_resolve_bounds(target,tid,bsymbol->lsymbol,0,
-					  bsymbol->region,&paddr,NULL,NULL)) {
+	&& !target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+					  &paddr,NULL,NULL,NULL,NULL)) {
 	bufsiz = strlen(bsymbol_get_name(bsymbol))+sizeof("_primary")+1;
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s_primary",bsymbol_get_name(bsymbol));
@@ -981,6 +1007,8 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe on source %s\n",
 	       probe->name,pcprobe->name);
     }
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
 
     SYMBOL_RX_INLINE(symbol,sii);
     if (sii && sii->inline_instances) {
@@ -1034,6 +1062,8 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     /* If we can autofree the top-level parent probe, great, that will
      * free all the sources beneath it we might have created.  But
      * otherwise, we have to free those source probes one by one.
