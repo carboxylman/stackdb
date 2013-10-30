@@ -673,6 +673,8 @@ struct lsymbol *debugfile_lookup_addr(struct debugfile *debugfile,ADDR addr);
 
 struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
 					       char *filename,int line);
+int debugfile_lookup_line_addr(struct debugfile *debugfile,
+			       char *filename,ADDR addr);
 struct lsymbol *debugfile_lookup_sym_line(struct debugfile *debugfile,
 					  char *filename,int line,
 					  SMOFFSET *offset,ADDR *addr);
@@ -965,6 +967,7 @@ struct debugfile {
     clrange_t ranges;
 
     GHashTable *srclines;
+    GHashTable *srcaddrlines;
 };
 
 struct dwarf_cu_die_ref {

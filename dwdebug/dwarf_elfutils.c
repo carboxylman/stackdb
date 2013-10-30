@@ -106,6 +106,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
     char *buf;
     char *currentfile = NULL;
     clmatch_t currentclf = NULL;
+    clmatchone_t currentclfrev = NULL;
     char *dirp;
     unsigned char *startp;
     int filenamelen;
@@ -250,6 +251,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 
 	currentfile = (char *)array_list_item(filelist,0);
 	currentclf = NULL;
+	currentclfrev = NULL;
 
 	inline void advance_pc(unsigned int op_advance) {
 	    address += op_advance;
@@ -291,6 +293,28 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 	    else 
 		g_hash_table_insert(debugfile->srclines,strdup(currentfile),
 				    currentclf);
+
+	    /*
+	     * Also add it to the reverse clrange -- maps addresses to
+	     * lines.
+	     */
+	    orig_key = NULL;
+	    g_hash_table_lookup_extended(debugfile->srcaddrlines,
+					 currentfile,&orig_key,&currentclfrev);
+	    clmatchone_add(&currentclfrev,
+			   (ADDR)address,(void *)(uintptr_t)line);
+	    if (orig_key) {
+		/* If it had been in the hash, we have to get the
+		 * orig key and use its exact value again so we
+		 * don't leak the non-strdup'd pointer.
+		 */
+		g_hash_table_steal(debugfile->srcaddrlines,currentfile);
+		g_hash_table_insert(debugfile->srcaddrlines,orig_key,
+				    currentclfrev);
+	    }
+	    else 
+		g_hash_table_insert(debugfile->srcaddrlines,strdup(currentfile),
+				    currentclfrev);
 	}
 
 	while (linep < lineendp) {
@@ -450,6 +474,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 
 		    currentfile = (char *)array_list_item(filelist,0);
 		    currentclf = NULL;
+		    currentclfrev = NULL;
 
 		    /* Reset the registers we care about.  */
 		    address = 0;
@@ -508,6 +533,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 		     */
 		    currentfile = buf;
 		    currentclf = NULL;
+		    currentclfrev = NULL;
 
 		    /* Dwarf_Word mtime; */
 		    get_uleb128(u128,clinep);
@@ -578,6 +604,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 		    }
 		    currentfile = array_list_item(filelist,((int)u128) - 1);
 		    currentclf = NULL;
+		    currentclfrev = NULL;
 
 		    vdebug(9,LA_DEBUG,LF_DOTHER,"set file to %s\n",currentfile);
 

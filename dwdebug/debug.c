@@ -345,6 +345,32 @@ struct array_list *debugfile_lookup_addrs_line(struct debugfile *debugfile,
     return NULL;
 }
 
+int debugfile_lookup_line_addr(struct debugfile *debugfile,
+			       char *filename,ADDR addr) {
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+    clmatch_t clf;
+    char *srcfile;
+    int retval = -1;
+
+    g_hash_table_iter_init(&iter,debugfile->srcaddrlines);
+    while (g_hash_table_iter_next(&iter,&key,&value)) {
+	srcfile = (char *)key;
+	clf = (clmatch_t)value;
+	if (filename && !strstr(srcfile,filename))
+	    continue;
+
+	vdebug(9,LA_DEBUG,LF_DLOOKUP,"checking srcfile %s for filename %s\n",
+	       srcfile,filename);
+	retval = (int)(uintptr_t)clmatch_find(&clf,addr);
+	if (retval > 0)
+	    return retval;
+    }
+
+    return -1;
+}
+
 struct lsymbol *debugfile_lookup_sym_line__int(struct debugfile *debugfile,
 					       char *filename,int line,
 					       SMOFFSET *offset,ADDR *addr) {
@@ -1157,6 +1183,8 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
      */
     debugfile->srclines = g_hash_table_new_full(g_str_hash,g_str_equal,
 						free,clmatch_free);
+    debugfile->srcaddrlines = g_hash_table_new_full(g_str_hash,g_str_equal,
+						    free,clmatchone_free);
 
     if (debugfile->ops && debugfile->ops->init)
 	debugfile->ops->init(debugfile);
@@ -2162,6 +2190,7 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     clrange_free(debugfile->ranges);
 
     g_hash_table_destroy(debugfile->srclines);
+    g_hash_table_destroy(debugfile->srcaddrlines);
 
     if (debugfile->dbg_strtab)
 	free(debugfile->dbg_strtab);
