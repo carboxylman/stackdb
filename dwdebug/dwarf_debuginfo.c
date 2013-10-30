@@ -1265,6 +1265,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 					  NULL,0,(SMOFFSET)offset,loadtype,NULL);
 	symbol_set_root_priv(root,srd);
 	srd->root = root;
+	srd->debugfile = debugfile;
 	debugfile_insert_root(debugfile,root);
 
 	/* Set the top-level scope. */
@@ -1279,8 +1280,10 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * Make sure, if we got a root symbol from dwarf_load_aranges,
 	 * that it has our metadata recorded, and vice versa.
 	 */
-	if (!srd->root)
+	if (!srd->root) {
 	    srd->root = root;
+	    srd->debugfile = debugfile;
+	}
 	if (!SYMBOLX_ROOT(root)->priv)
 	    symbol_set_root_priv(root,srd);
 
