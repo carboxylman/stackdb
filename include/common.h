@@ -52,6 +52,7 @@ typedef uint64_t ADDR;
 typedef int64_t OFFSET;
 typedef uint64_t REGVAL;
 #define PRIxADDR PRIx64
+#define PRIxFULLADDR "016"PRIx64
 #define PRIuADDR PRIu64
 #define PRIiOFFSET PRIi64
 #define PRIxOFFSET PRIx64
@@ -64,6 +65,7 @@ typedef uint32_t ADDR;
 typedef int32_t OFFSET;
 typedef uint32_t REGVAL;
 #define PRIxADDR PRIx32
+#define PRIxFULLADDR "016"PRIx32
 #define PRIuADDR PRIu32
 #define PRIiOFFSET PRIi32
 #define PRIxOFFSET PRIx32
