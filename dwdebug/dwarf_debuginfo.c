@@ -3618,7 +3618,9 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 	(struct dwarf_debugfile_info *)debugfile->priv;
     struct debugfile_load_opts *dopts = debugfile->opts;
     struct binfile *binfile = debugfile->binfile;
+    struct binfile *binfile_pointing = NULL;
     struct binfile_elf *bfelf = (struct binfile_elf *)binfile->priv;
+    struct binfile_elf *bfelf_pointing = NULL;
     GElf_Addr dwflbias;
     Dwarf_Addr dwbias;
     Dwarf *dbg;
@@ -3629,6 +3631,14 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     char **saveptr;
     unsigned int *saveptrlen;
     Elf_Data *edata;
+
+    /*
+     * Grab the pointing binfile in case it has section contents that
+     * binfile does not.
+     */
+    binfile_pointing = debugfile->binfile_pointing;
+    if (binfile_pointing)
+	bfelf_pointing = (struct binfile_elf *)binfile_pointing->priv;
 
     dwfl_module_getelf(dwflmod,&dwflbias);
 
@@ -3713,19 +3723,29 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		continue;
 	    }
 	    else if (!edata->d_buf && edata->d_size) {
-		vwarn("cannot get raw data for valid section '%s': %s;"
-		      " trying getdata\n",
-		      name,elf_errmsg(-1));
+		if (bfelf_pointing && bfelf_pointing->elf) {
+		    vwarnopt(8,LA_DEBUG,LF_DWARF,
+			     "cannot get raw data for valid section '%s': %s;"
+			     " trying getdata on the pointing binfile\n",
+			     name,elf_errmsg(-1));
 
-		edata = elf_getdata(scn,NULL);
-		if (!edata) {
-		    verror("cannot get data for valid section '%s': %s\n",
-			   name,elf_errmsg(-1));
-		    continue;
+		    scn = elf_getscn(bfelf_pointing->elf,i);
+		    edata = elf_getdata(scn,NULL);
+		    if (!edata) {
+			verror("still cannot get data for valid section '%s': %s\n",
+			       name,elf_errmsg(-1));
+			continue;
+		    }
+		    else if (!edata->d_buf) {
+			vwarn("still cannot get data for valid section '%s' (%d); skipping!\n",
+			      name,(int)edata->d_size);
+			continue;
+		    }
 		}
-		else if (!edata->d_buf) {
-		    vwarn("cannot get data for valid section '%s' (%d); skipping!\n",
-			  name,(int)edata->d_size);
+		else {
+		    verror("cannot get raw data for valid section '%s': %s;"
+			   " could not try getdata on the pointing binfile\n",
+			   name,elf_errmsg(-1));
 		    continue;
 		}
 	    }
