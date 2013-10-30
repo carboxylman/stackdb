@@ -1573,6 +1573,9 @@ int debugfile_insert_root(struct debugfile *debugfile,struct symbol *symbol) {
     else if (tsymbol == symbol)
 	;
     else {
+	SYMBOL_WX_ROOT(symbol,sr,-5);
+	sr->debugfile = debugfile;
+
 	g_hash_table_insert(debugfile->cuoffsets,
 			    (gpointer)(uintptr_t)symbol->ref,symbol);
 	vdebug(3,LA_DEBUG,LF_DFILE | LF_SYMBOL,
