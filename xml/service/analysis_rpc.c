@@ -747,7 +747,7 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	fargv[1] = strdup("-a");
 	fargv[2] = malloc(11);
 	snprintf(fargv[2],11,"%d",aid);
-	memcpy(&fargv[3],&targv[1],fargc - 1);
+	memcpy(&fargv[3],&targv[1],sizeof(char *) * (fargc - 1));
 	free(targv);
 	targv = NULL;
 	targc = 0;
@@ -1188,42 +1188,44 @@ int __vmi1__InstantiateOverlayAnalysis(struct soap *soap,
     }
 
     if (d->supports_external_control) {
-	fargc = targc + 2 + 3;
+	fargc = targc + 2 + 3 - 1 + 1;
 	fargv = calloc(fargc,sizeof(char *));
 	fargv[0] = targv[0];
 	fargv[1] = strdup("-a");
 	fargv[2] = malloc(11);
 	snprintf(fargv[2],11,"%d",aid);
-	memcpy(&fargv[3],&targv[1],fargc - 1);
-	free(targv);
-	targv = NULL;
-	targc = 0;
+	memcpy(&fargv[3],&targv[1],sizeof(char *) * (targc - 1));
+	/* Use targc as a placeholder now for next args. */
+	targc = targc;
     }
     else {
-	fargc = targc + 2;
+	fargc = targc + 2 + 1;
 	fargv = calloc(fargc,sizeof(char *));
-	memcpy(&fargv[0],&targv[0],targc);
-	fargv[targc++] = strdup("-O");
-
-	otrc = 0;
-	otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,"'");
-	if (baseThreadName) 
-	    otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,
-			     "%s:",baseThreadName);
-	else
-	    otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,
-			     "%d:",baseThid);
-	for (i = 0; i < otargc; ++i) {
-	    otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc," %s",otargv[i]);
-	}
-	otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,"'");
-
-	fargv[targc++] = strdup(otbuf);
-
-	free(targv);
-	targv = NULL;
-	targc = 0;
+	memcpy(&fargv[0],&targv[0],sizeof(char *) * (targc));
     }
+
+    fargv[targc++] = strdup("--overlay");
+
+    otrc = 0;
+    //otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,"'");
+    if (baseThreadName) 
+	otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,
+			 "%s:",baseThreadName);
+    else
+	otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,
+			 "%d:",baseThid);
+    for (i = 1; i < otargc; ++i) {
+	otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc," %s",otargv[i]);
+    }
+    //otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,"'");
+
+    fargv[targc++] = strdup(otbuf);
+
+    fargv[targc] = NULL;
+
+    free(targv);
+    targv = NULL;
+    targc = 0;
 
     /*
      * Create an analysis instance.  Both the monitor and monitored
