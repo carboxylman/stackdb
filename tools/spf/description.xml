@@ -21,7 +21,7 @@
   <vmi1:supportsExternalControl>false</vmi1:supportsExternalControl>
   <vmi1:supportsAutoparseSimpleResults>true</vmi1:supportsAutoparseSimpleResults>
   <vmi1:inParams>
-    <vmi1:param isCommandLine="true">
+    <vmi1:param isCommandLine="true" isCommandLineSwitched="true">
       <vmi1:name>C</vmi1:name>
       <vmi1:longName>config-file</vmi1:longName>
       <vmi1:description>path to an spf configuration file</vmi1:description>

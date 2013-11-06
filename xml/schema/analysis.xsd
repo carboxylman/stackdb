@@ -54,6 +54,7 @@
       <xs:element minOccurs="0" ref="vmi1:defaultValue"/>
     </xs:sequence>
     <xs:attribute name="isCommandLine" type="xs:boolean"/>
+    <xs:attribute name="isCommandLineSwitched" type="xs:boolean"/>
   </xs:complexType>
   <xs:element name="name" type="xs:string"/>
   <xs:element name="longName" type="xs:string"/>

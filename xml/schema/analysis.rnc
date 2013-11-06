@@ -33,6 +33,7 @@ DataTypeT =
 
 ParamT = 
     attribute isCommandLine { xsd:boolean }?,
+    attribute isCommandLineSwitched { xsd:boolean }?,
     element name { text },
     element longName { text }?,
     element description { text }?,

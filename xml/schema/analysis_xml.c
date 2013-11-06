@@ -244,9 +244,16 @@ x_AnalysisSpecT_to_a_analysis_spec(struct soap *soap,
 	rout->in_params = array_list_create(in->inputParams->__sizenameValue);
 	for (i = 0; i < in->inputParams->__sizenameValue; ++i) {
 	    nv = calloc(1,sizeof(*nv));
-	    nv->name = strdup(in->inputParams->nameValue[i].nvName);
+	    if (in->inputParams->nameValue[i].nvName)
+		nv->name = strdup(in->inputParams->nameValue[i].nvName);
+	    else
+		nv->name = strdup("");
 	    if (in->inputParams->nameValue[i].nvValue)
 		nv->value = strdup(in->inputParams->nameValue[i].nvValue);
+	    else
+		nv->value = strdup("");
+
+	    array_list_append(rout->in_params,nv);
 	}
     }
 
@@ -472,6 +479,11 @@ struct analysis_param *x_ParamT_to_a_param(struct soap *soap,
     else
 	rout = calloc(1,sizeof(*rout));
 
+    if (in->isCommandLine && *in->isCommandLine == xsd__boolean__true_)
+	rout->is_command_line = 1;
+    if (in->isCommandLineSwitched
+	&& *in->isCommandLineSwitched == xsd__boolean__true_)
+	rout->is_command_line_switched = 1;
     if (in->name)
 	rout->name = strdup(in->name);
     if (in->longName)
@@ -493,6 +505,19 @@ struct vmi1__ParamT *a_param_to_x_ParamT(struct soap *soap,
 	rout = out;
     else
 	rout = SOAP_CALLOC(soap,1,sizeof(*rout));
+
+    rout->isCommandLine = SOAP_CALLOC(soap,1,sizeof(*rout->isCommandLine));
+    if (in->is_command_line) 
+	*rout->isCommandLine = xsd__boolean__true_;
+    else
+	*rout->isCommandLine = xsd__boolean__false_;
+
+    rout->isCommandLineSwitched = 
+	SOAP_CALLOC(soap,1,sizeof(*rout->isCommandLineSwitched));
+    if (in->is_command_line_switched) 
+	*rout->isCommandLineSwitched = xsd__boolean__true_;
+    else
+	*rout->isCommandLineSwitched = xsd__boolean__false_;
 
     if (in->name)
 	SOAP_STRCPY(soap,rout->name,in->name);

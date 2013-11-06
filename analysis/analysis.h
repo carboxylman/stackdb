@@ -314,6 +314,8 @@ struct analysis_spec {
 };
 
 struct analysis_param {
+    uint8_t is_command_line:1,
+	    is_command_line_switched:1;
     char *name;
     char *long_name;
     char *description;

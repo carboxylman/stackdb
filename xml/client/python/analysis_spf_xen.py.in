@@ -104,10 +104,31 @@ ProbeFilter make_child id(make_child) when(pre) report(rt=i,tn=syscall,tid=0,rv=
 """
 
 supportFile = client.factory.create('SupportFileT')
-supportFile.name = "spf.conf"
+#supportFile.name = "spf.conf"
+supportFile.name = "spf.commandline.conf"
 #supportFile.content = binascii.b2a_hex(spf_conf_xen)
 supportFile.content = binascii.b2a_hex(spf_conf_xen_process)
 aspec.supportFiles.supportFile.append(supportFile)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'C'
+inputParam.nvValue = supportFile.name
+aspec.inputParams.nameValue.append(inputParam)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'd'
+inputParam.nvValue = '15'
+aspec.inputParams.nameValue.append(inputParam)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'w'
+inputParam.nvValue = '15'
+aspec.inputParams.nameValue.append(inputParam)
+
+inputParam = client.factory.create('NameValueT')
+inputParam.nvName = 'l'
+inputParam.nvValue = 'T_ALL,T_XV,T_XVP,P_ALL'
+aspec.inputParams.nameValue.append(inputParam)
 
 listener = client.factory.create('ListenerT')
 listener.hostname = 'localhost'

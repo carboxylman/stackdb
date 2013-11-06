@@ -21,13 +21,10 @@
   <vmi1:supportsExternalControl>false</vmi1:supportsExternalControl>
   <vmi1:supportsAutoparseSimpleResults>true</vmi1:supportsAutoparseSimpleResults>
   <vmi1:inParams>
-    <!--
-    <vmi1:param>
-      <vmi1:name>foo</vmi1:name>
-      <vmi1:description>foo param</vmi1:description>
-      <vmi1:defaultValue>bar</vmi1:defaultValue>
+    <vmi1:param isCommandLine="true" isCommandLineSwitched="false">
+      <vmi1:name>rootFunction</vmi1:name>
+      <vmi1:description>A function name to install CFI probes in.</vmi1:description>
     </vmi1:param>
-    -->
   </vmi1:inParams>
   <vmi1:outParams>
     <!--

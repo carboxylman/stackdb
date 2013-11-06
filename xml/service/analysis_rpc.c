@@ -16,6 +16,7 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include "analysis_xml.h"
 #include "analysis_rpc.h"
 
 #include "log.h"
@@ -621,6 +622,12 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
     char *url = NULL;
     char *atmpdir = NULL;
     char *wbuf;
+    struct analysis_name_value *ex_nv;
+    struct analysis_param *ex_ap;
+    int ex_sw_argc = 0;
+    int ex_unsw_argc = 0;
+    char **ex_sw_argv = NULL;
+    char **ex_unsw_argv = NULL;
 
     pr = soap->user;
     if (!pr) {
@@ -682,6 +689,90 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
     aid = monitor_get_unique_objid();
     as->analysis_id = aid;
 
+    /*
+     * Deal with analysis inputParams, if any; possibly turn them into
+     * command-line args.
+     */
+    if (as->in_params) {
+	ex_sw_argc = 0;
+	ex_unsw_argc = 0;
+	ex_sw_argv = NULL;
+	ex_unsw_argv = NULL;
+
+	array_list_foreach(as->in_params,i,ex_nv) {
+	    if (!ex_nv->name) {
+		err = err_detail = "Malformed inputParam without name!";
+		goto errout;
+	    }
+	    if ((d->in_params 
+		 && (ex_ap = (struct analysis_param *)			\
+		     g_hash_table_lookup(d->in_params,ex_nv->name)))
+		|| (d->in_params_long 
+		    && (ex_ap = (struct analysis_param *)		\
+			g_hash_table_lookup(d->in_params_long,ex_nv->name)))) {
+		if (!ex_ap->is_command_line) 
+		    continue;
+
+		if (ex_ap->is_command_line_switched) {
+		    ex_sw_argc += 2;
+		    ex_sw_argv = realloc(ex_sw_argv,ex_sw_argc * sizeof(char *));
+
+		    /* Prefer long name switches. */
+		    if (ex_ap->long_name) {
+			len = strlen(ex_ap->long_name) + 1 + 2;
+			ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+			snprintf(ex_sw_argv[ex_sw_argc - 2],len,
+				 "--%s",ex_ap->long_name);
+		    }
+		    else {
+			len = strlen(ex_ap->name) + 1 + 1;
+			ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+			snprintf(ex_sw_argv[ex_sw_argc - 2],len,
+				 "-%s",ex_ap->name);
+		    }
+
+		    if (ex_nv->value) 
+			ex_sw_argv[ex_sw_argc - 1] = strdup(ex_nv->value);
+		    else
+			ex_sw_argv[ex_sw_argc - 1] = strdup("");
+		}
+		else {
+		    ++ex_unsw_argc;
+		    ex_unsw_argv = realloc(ex_unsw_argv,ex_unsw_argc * sizeof(char *));
+		    if (ex_nv->value) 
+			ex_unsw_argv[ex_unsw_argc - 1] = strdup(ex_nv->value);
+		    else
+			ex_unsw_argv[ex_unsw_argc - 1] = strdup("");
+		}
+	    }
+	    else {
+		/*
+		 * NB: if it's not an analysis param, turn it into a
+		 * switched param!  :)  Do a long param if the name is >
+		 * 1; else do a short-switched param.
+		 */
+		ex_sw_argc += 2;
+		ex_sw_argv = realloc(ex_sw_argv,ex_sw_argc * sizeof(char *));
+
+		if (strlen(ex_nv->name) == 1) {
+		    len = strlen(ex_nv->name) + 1 + 1;
+		    ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+		    snprintf(ex_sw_argv[ex_sw_argc - 2],len,"-%s",ex_nv->name);
+		}
+		else {
+		    len = strlen(ex_nv->name) + 1 + 2;
+		    ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+		    snprintf(ex_sw_argv[ex_sw_argc - 2],len,"--%s",ex_nv->name);
+		}
+
+		if (ex_nv->value) 
+		    ex_sw_argv[ex_sw_argc - 1] = strdup(ex_nv->value);
+		else
+		    ex_sw_argv[ex_sw_argc - 1] = strdup("");
+	    }
+	}
+    }
+
     /* Setup the analysis binary full path to launch. */
     len = strlen(path) + 1 + strlen(d->binary) + 1;
     binarypath = calloc(len,sizeof(char));
@@ -735,29 +826,47 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 	snprintf(ts->errfile,len,"%s/target.stderr.%u",atmpdir,ts->target_id);
     }
 
+    /*
+     * Deal with args.
+     */
     if (target_spec_to_argv(ts,binarypath,&targc,&targv)) {
 	err = err_detail = "Could not create argv from target spec!";
 	goto errout;
     }
 
     if (d->supports_external_control) {
-	fargc = targc + 3;
+	fargc = targc + 3 - 1 + ex_sw_argc + ex_unsw_argc + 1;
 	fargv = calloc(fargc,sizeof(char *));
 	fargv[0] = targv[0];
 	fargv[1] = strdup("-a");
 	fargv[2] = malloc(11);
 	snprintf(fargv[2],11,"%d",aid);
-	memcpy(&fargv[3],&targv[1],sizeof(char *) * (fargc - 1));
+	memcpy(&fargv[3],&targv[1],sizeof(char *) * (targc - 1));
 	free(targv);
 	targv = NULL;
-	targc = 0;
+	targc += 2;
     }
     else {
-	fargc = targc;
-	fargv = targv;
+	fargc = targc + ex_sw_argc + ex_unsw_argc + 1;
+	fargv = calloc(fargc,sizeof(char *));
+	memcpy(&fargv[0],&targv[0],sizeof(char *) * (targc));
+	free(targv);
 	targv = NULL;
-	targc = 0;
     }
+
+    if (ex_sw_argc) {
+	memcpy(&fargv[targc],&ex_sw_argv[0],sizeof(char *) * ex_sw_argc);
+	free(ex_sw_argv);
+	ex_sw_argv = NULL;
+    }
+    /* These should be the last args! */
+    if (ex_unsw_argc) {
+	memcpy(&fargv[targc + ex_sw_argc],&ex_unsw_argv[0],sizeof(char *) * ex_unsw_argc);
+	free(ex_unsw_argv);
+	ex_unsw_argv = NULL;
+    }
+    /* Make sure the argv is NULL-terminated. */
+    fargv[targc + ex_sw_argc + ex_unsw_argc] = NULL;
 
     /*
      * Create an analysis instance.  Both the monitor and monitored
@@ -957,6 +1066,19 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
  errout:
     /* Cleanup! */
 
+    if (ex_unsw_argv) {
+	for (i = 0; i < ex_unsw_argc; ++i)
+	    if (ex_unsw_argv[i])
+		free(ex_unsw_argv[i]);
+	free(ex_unsw_argv);
+    }
+    if (ex_sw_argv) {
+	for (i = 0; i < ex_sw_argc; ++i)
+	    if (ex_sw_argv[i])
+		free(ex_sw_argv[i]);
+	free(ex_sw_argv);
+    }
+
     if (fargc > 0) {
 	for (i = 0; i < fargc; ++i)
 	    if (fargv[i])
@@ -1038,6 +1160,12 @@ int __vmi1__InstantiateOverlayAnalysis(struct soap *soap,
     char *url = NULL;
     char *atmpdir = NULL;
     char *wbuf;
+    struct analysis_name_value *ex_nv;
+    struct analysis_param *ex_ap;
+    int ex_sw_argc = 0;
+    int ex_unsw_argc = 0;
+    char **ex_sw_argv = NULL;
+    char **ex_unsw_argv = NULL;
 
     pr = soap->user;
     if (!pr) {
@@ -1098,6 +1226,90 @@ int __vmi1__InstantiateOverlayAnalysis(struct soap *soap,
      */
     aid = monitor_get_unique_objid();
     as->analysis_id = aid;
+
+    /*
+     * Deal with analysis inputParams, if any; possibly turn them into
+     * command-line args.
+     */
+    if (as->in_params) {
+	ex_sw_argc = 0;
+	ex_unsw_argc = 0;
+	ex_sw_argv = NULL;
+	ex_unsw_argv = NULL;
+
+	array_list_foreach(as->in_params,i,ex_nv) {
+	    if (!ex_nv->name) {
+		err = err_detail = "Malformed inputParam without name!";
+		goto errout;
+	    }
+	    if ((d->in_params 
+		 && (ex_ap = (struct analysis_param *)			\
+		     g_hash_table_lookup(d->in_params,ex_nv->name)))
+		|| (d->in_params_long 
+		    && (ex_ap = (struct analysis_param *)		\
+			g_hash_table_lookup(d->in_params_long,ex_nv->name)))) {
+		if (!ex_ap->is_command_line) 
+		    continue;
+
+		if (ex_ap->is_command_line_switched) {
+		    ex_sw_argc += 2;
+		    ex_sw_argv = realloc(ex_sw_argv,ex_sw_argc * sizeof(char *));
+
+		    /* Prefer long name switches. */
+		    if (ex_ap->long_name) {
+			len = strlen(ex_ap->long_name) + 1 + 2;
+			ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+			snprintf(ex_sw_argv[ex_sw_argc - 2],len,
+				 "--%s",ex_ap->long_name);
+		    }
+		    else {
+			len = strlen(ex_ap->name) + 1 + 1;
+			ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+			snprintf(ex_sw_argv[ex_sw_argc - 2],len,
+				 "-%s",ex_ap->name);
+		    }
+
+		    if (ex_nv->value) 
+			ex_sw_argv[ex_sw_argc - 1] = strdup(ex_nv->value);
+		    else
+			ex_sw_argv[ex_sw_argc - 1] = strdup("");
+		}
+		else {
+		    ++ex_unsw_argc;
+		    ex_unsw_argv = realloc(ex_unsw_argv,ex_unsw_argc * sizeof(char *));
+		    if (ex_nv->value) 
+			ex_unsw_argv[ex_unsw_argc - 1] = strdup(ex_nv->value);
+		    else
+			ex_unsw_argv[ex_unsw_argc - 1] = strdup("");
+		}
+	    }
+	    else {
+		/*
+		 * NB: if it's not an analysis param, turn it into a
+		 * switched param!  :)  Do a long param if the name is >
+		 * 1; else do a short-switched param.
+		 */
+		ex_sw_argc += 2;
+		ex_sw_argv = realloc(ex_sw_argv,ex_sw_argc * sizeof(char *));
+
+		if (strlen(ex_nv->name) == 1) {
+		    len = strlen(ex_nv->name) + 1 + 1;
+		    ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+		    snprintf(ex_sw_argv[ex_sw_argc - 2],len,"-%s",ex_nv->name);
+		}
+		else {
+		    len = strlen(ex_nv->name) + 1 + 2;
+		    ex_sw_argv[ex_sw_argc - 2] = malloc(len);
+		    snprintf(ex_sw_argv[ex_sw_argc - 2],len,"--%s",ex_nv->name);
+		}
+
+		if (ex_nv->value) 
+		    ex_sw_argv[ex_sw_argc - 1] = strdup(ex_nv->value);
+		else
+		    ex_sw_argv[ex_sw_argc - 1] = strdup("");
+	    }
+	}
+    }
 
     /* Setup the analysis binary full path to launch. */
     len = strlen(path) + 1 + strlen(d->binary) + 1;
@@ -1187,21 +1399,27 @@ int __vmi1__InstantiateOverlayAnalysis(struct soap *soap,
 	goto errout;
     }
 
+    /*
+     * Deal with args.
+     */
     if (d->supports_external_control) {
-	fargc = targc + 2 + 3 - 1 + 1;
+	fargc = targc + 2 + 3 - 1 + ex_sw_argc + ex_unsw_argc + 1;
 	fargv = calloc(fargc,sizeof(char *));
 	fargv[0] = targv[0];
 	fargv[1] = strdup("-a");
 	fargv[2] = malloc(11);
 	snprintf(fargv[2],11,"%d",aid);
 	memcpy(&fargv[3],&targv[1],sizeof(char *) * (targc - 1));
-	/* Use targc as a placeholder now for next args. */
-	targc = targc;
+	free(targv);
+	targv = NULL;
+	targc += 2;
     }
     else {
-	fargc = targc + 2 + 1;
+	fargc = targc + 2 + ex_sw_argc + ex_unsw_argc + 1;
 	fargv = calloc(fargc,sizeof(char *));
 	memcpy(&fargv[0],&targv[0],sizeof(char *) * (targc));
+	free(targv);
+	targv = NULL;
     }
 
     fargv[targc++] = strdup("--overlay");
@@ -1221,11 +1439,19 @@ int __vmi1__InstantiateOverlayAnalysis(struct soap *soap,
 
     fargv[targc++] = strdup(otbuf);
 
-    fargv[targc] = NULL;
-
-    free(targv);
-    targv = NULL;
-    targc = 0;
+    if (ex_sw_argc) {
+	memcpy(&fargv[targc],&ex_sw_argv[0],sizeof(char *) * ex_sw_argc);
+	free(ex_sw_argv);
+	ex_sw_argv = NULL;
+    }
+    /* These should be the last args! */
+    if (ex_unsw_argc) {
+	memcpy(&fargv[targc + ex_sw_argc],&ex_unsw_argv[0],sizeof(char *) * ex_unsw_argc);
+	free(ex_unsw_argv);
+	ex_unsw_argv = NULL;
+    }
+    /* Make sure the argv is NULL-terminated. */
+    fargv[targc + ex_sw_argc + ex_unsw_argc] = NULL;
 
     /*
      * Create an analysis instance.  Both the monitor and monitored
@@ -1458,6 +1684,19 @@ int __vmi1__InstantiateOverlayAnalysis(struct soap *soap,
 
  errout:
     /* Cleanup! */
+
+    if (ex_unsw_argv) {
+	for (i = 0; i < ex_unsw_argc; ++i)
+	    if (ex_unsw_argv[i])
+		free(ex_unsw_argv[i]);
+	free(ex_unsw_argv);
+    }
+    if (ex_sw_argv) {
+	for (i = 0; i < ex_sw_argc; ++i)
+	    if (ex_sw_argv[i])
+		free(ex_sw_argv[i]);
+	free(ex_sw_argv);
+    }
 
     if (fargc > 0) {
 	for (i = 0; i < fargc; ++i)
