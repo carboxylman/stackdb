@@ -53,6 +53,7 @@ names = client.service.ListAnalysisDescNames()
 descs = client.service.ListAnalysisDescs()
 ttypes = client.service.ListTargetTypes()
 
+
 tspec = client.factory.create('TargetSpecT')
 tspec.mode = "live"
 tspec.startPaused = False
@@ -66,9 +67,24 @@ tspec.backendSpec.targetXenSpec.domain = "qlc"
 #tspec.backendSpec.targetXenSpec.kernelFilename = "abc"
 tspec.backendSpec.targetXenSpec.kernelFilename = "/boot/vmlinuz-2.6.18-308.el5"
 
-ptspec = client.factory.create('TargetPtraceSpecT')
-xspec = client.factory.create('TargetXenSpecT')
+
+otspec = client.factory.create('TargetSpecT')
+otspec.mode = "live"
+otspec.startPaused = False
+otspec.logStdout = True
+otspec.logStderr = True
+otspec.stdinBytes = None
+otspec.debugfileRootPrefix = '/local/sda4/debuginfo/centos5.5-x86_64'
+
+otspec._type = "xenProcess"
+otspec.backendSpec.targetXenProcessSpec = None #client.factory.create('TargetXenProcessSpecT')
+
+
+#ptspec = client.factory.create('TargetPtraceSpecT')
+#xspec = client.factory.create('TargetXenSpecT')
 #xpspec = client.factory.create('TargetXenProcessSpecT')
+
+
 aspec = client.factory.create('AnalysisSpecT')
 aspec.name = "spf"
 aspec.stdinBytes = None
@@ -83,13 +99,20 @@ spf_conf_xen = """
 ProbeFilter sys_open id(openFiltered) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="file open") abort(1)
 ProbeFilter sys_open id(openExit) when(pre) vfilter(filename=/vmi.exit/) print() exit(0)
 """
+spf_conf_xen_process = """
+ProbeFilter make_child id(make_child) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="sh child spawn") abort(1)
+"""
+
 supportFile = client.factory.create('SupportFileT')
 supportFile.name = "spf.conf"
-supportFile.content = binascii.b2a_hex(spf_conf_xen)
+#supportFile.content = binascii.b2a_hex(spf_conf_xen)
+supportFile.content = binascii.b2a_hex(spf_conf_xen_process)
 aspec.supportFiles.supportFile.append(supportFile)
 
 listener = client.factory.create('ListenerT')
 listener.hostname = 'localhost'
 listener.port = 3952
 
-retval = client.service.InstantiateAnalysis(aspec,tspec,listener)
+#retval = client.service.InstantiateAnalysis(aspec,tspec,listener)
+retval = client.service.InstantiateOverlayAnalysisByThreadName(aspec,tspec,otspec,'sh',listener)
+#retval = client.service.InstantiateOverlayAnalysis(aspec,tspec,otspec,428,listener)
