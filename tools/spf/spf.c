@@ -1329,11 +1329,11 @@ int apply_config_file(struct spf_config *config) {
 	    spff->id = strdup(namebuf);
 	}
 	if (spff->when == WHEN_PRE)
-	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
+	    fprobe = probe_create_filtered(rtarget,TID_GLOBAL,NULL,spff->id,
 					   pre_handler,spff->pf,null_handler,NULL,
 					   spff->ttf,spff,0,1);
 	else
-	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,spff->id,
+	    fprobe = probe_create_filtered(rtarget,TID_GLOBAL,NULL,spff->id,
 					   null_handler,NULL,post_handler,spff->pf,
 					   spff->ttf,spff,0,1);
 	probe_register_source(fprobe,sprobe);
