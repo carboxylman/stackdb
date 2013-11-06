@@ -1089,6 +1089,11 @@ int __monitor_recv_evh(int fd,int fdtype,void *state) {
     msg = monitor_recv(monitor);
 
     if (!msg) {
+	if (errno == EAGAIN || errno == EWOULDBLOCK) {
+	    vwarnopt(5,LA_LIB,LF_MONITOR,
+		     "could not recv msg on fd %d; but EAGAIN; ignoring!\n",fd);
+	    return retval;
+	}
 	vwarnopt(8,LA_LIB,LF_MONITOR,
 		 "could not recv msg on fd %d; closing!\n",fd);
 	close(fd);
