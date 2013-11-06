@@ -45,7 +45,8 @@
 
 #include "rop.h"
 
-struct target *t = NULL;
+struct target *target = NULL;
+struct target *otarget = NULL;
 
 static int result_counter = 0;
 static int final_result_counter = 0;
@@ -54,15 +55,6 @@ static int oldformat = 0;
 
 GHashTable *probes = NULL;
 struct array_list *rop_violation_list = NULL;
-
-target_status_t cleanup_target() {
-    target_status_t retval;
-
-    retval = target_close(t);
-    target_free(t);
-
-    return retval;
-}
 
 void cleanup_probes() {
     GHashTableIter iter;
@@ -85,12 +77,24 @@ void cleanup_probes() {
     probes = NULL;
 }
 
-void sigh(int signo) {
-    if (t) {
-	target_pause(t);
-	cleanup_probes();
-	cleanup_target();
+void cleanup() {
+    if (target)
+	target_pause(target);
+    cleanup_probes();
+    if (otarget) {
+	target_close(otarget);
+	target_free(otarget);
+	otarget = NULL;
     }
+    if (target) {
+	target_close(target);
+	target_free(target);
+	target = NULL;
+    }
+}
+
+void sigh(int signo) {
+    cleanup();
     exit(0);
 }
 
@@ -157,17 +161,27 @@ result_t rop_handler(struct probe *probe,tid_t tid,void *data,
 struct rc_argp_state {
     int argc;
     char **argv;
+    char *overlay_name_or_id;
+    struct target_spec *overlay_spec;
 };
 
 struct rc_argp_state opts;
 
 struct argp_option rc_argp_opts[] = {
+    { "overlay",'V',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
     { 0,0,0,0,0,0 },
 };
 
 error_t rc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     struct rc_argp_state *opts = \
 	(struct rc_argp_state *)target_argp_driver_state(state);
+    struct array_list *argv_list;
+    char *argptr;
+    char *nargptr;
+    char *vargptr;
+    int inesc;
+    int inquote;
+    int quotechar;
 
     switch (key) {
     case ARGP_KEY_ARG:
@@ -194,6 +208,107 @@ error_t rc_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case ARGP_KEY_ERROR:
     case ARGP_KEY_FINI:
 	return 0;
+    case 'V':
+	/*
+	 * We need to split the <name_or_id>:<spec> part; then split
+	 * <spec> into an argv.  Simple rules: \ escapes the next char;
+	 * space not in ' or " causes us to end the current argv[i] and
+	 * start the next one.
+	 */
+	argptr = index(arg,':');
+	if (!argptr) {
+	    verror("bad overlay spec!\n");
+	    return EINVAL;
+	}
+	argv_list = array_list_create(32);
+	array_list_append(argv_list,"dumptarget_overlay");
+
+	opts->overlay_name_or_id = arg;
+	*argptr = '\0';
+	++argptr;
+
+	while (*argptr == ' ')
+	    ++argptr;
+
+	inesc = 0;
+	inquote = 0;
+	quotechar = 0;
+	nargptr = argptr;
+	vargptr = argptr;
+	while (*argptr != '\0') {
+	    if (*argptr == '\\') {
+		if (inesc) {
+		    inesc = 0;
+		    *nargptr = '\\';
+		    ++nargptr;
+		}
+		else {
+		    /* Don't copy the escape char. */
+		    inesc = 1;
+		    ++argptr;
+		    continue;
+		}
+	    }
+	    else if (inesc) {
+		inesc = 0;
+		/* Just copy it. */
+		*nargptr = *argptr;
+		++nargptr;
+	    }
+	    else if (inquote && *argptr == quotechar) {
+		/* Ended the quoted sequence; don't copy quotes. */
+		inquote = 0;
+		quotechar = 0;
+		++argptr;
+		continue;
+	    }
+	    else if (*argptr == '\'' || *argptr == '"') {
+		inquote = 1;
+		quotechar = *argptr;
+		++argptr;
+		continue;
+	    }
+	    else if (!inquote && *argptr == ' ') {
+		*nargptr = *argptr = '\0';
+		if (vargptr) {
+		    array_list_append(argv_list,vargptr);
+		    //printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
+		    vargptr = NULL;
+		}
+		vargptr = NULL;
+		nargptr = ++argptr;
+		continue;
+	    }
+	    else {
+		if (!vargptr)
+		    vargptr = nargptr;
+
+		*nargptr = *argptr;
+		++nargptr;
+	    }
+
+	    /* Default increment. */
+	    ++argptr;
+	}
+	if (vargptr) {
+	    *nargptr = '\0';
+	    array_list_append(argv_list,vargptr);
+	    //printf("vargptr (%p) = '%s'\n",vargptr,vargptr);
+	}
+	array_list_append(argv_list,NULL);
+
+	opts->overlay_spec = target_argp_driver_parse(NULL,NULL,
+						      array_list_len(argv_list) - 1,
+						      (char **)argv_list->list,
+						      TARGET_TYPE_XEN_PROCESS,0);
+	if (!opts->overlay_spec) {
+	    verror("could not parse overlay spec!\n");
+	    array_list_free(argv_list);
+	    return EINVAL;
+	}
+
+	array_list_free(argv_list);
+	break;
 
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -216,6 +331,10 @@ int main(int argc,char **argv) {
     GHashTable *gadgets;
     struct target_spec *tspec;
     char targetstr[128];
+    struct target *rtarget;
+    int oid;
+    tid_t otid;
+    char *tmp = NULL;
 
     dwdebug_init();
     atexit(dwdebug_fini);
@@ -240,16 +359,53 @@ int main(int argc,char **argv) {
 	return -2;
     }
 
-    t = target_instantiate(tspec,NULL);
-    if (!t) {
+    rtarget = target = target_instantiate(tspec,NULL);
+    if (!target) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    target_snprintf(t,targetstr,sizeof(targetstr));
+    target_snprintf(target,targetstr,sizeof(targetstr));
 
-    if (target_open(t)) {
+    if (target_open(target)) {
 	fprintf(stderr,"could not open %s!\n",targetstr);
 	exit(-4);
+    }
+
+    /*
+     * Load an overlay target, if there is one.
+     */
+    if (opts.overlay_name_or_id && opts.overlay_spec) {
+	errno = 0;
+	oid = (int)strtol(opts.overlay_name_or_id,&tmp,0);
+	if (errno || tmp == opts.overlay_name_or_id)
+	    otid = 
+		target_lookup_overlay_thread_by_name(target,
+						     opts.overlay_name_or_id);
+	else
+	    otid = target_lookup_overlay_thread_by_id(target,oid);
+	if (otid < 0) {
+	    verror("could not find overlay thread '%s', exiting!\n",
+		   opts.overlay_name_or_id);
+	    cleanup();
+	    exit(-111);
+	}
+	otarget = target_instantiate_overlay(target,otid,opts.overlay_spec);
+	if (!otarget) {
+	    verror("could not instantiate overlay target '%s'!\n",
+		   opts.overlay_name_or_id);
+	    cleanup();
+	    exit(-112);
+	}
+
+	if (target_open(otarget)) {
+	    fprintf(stderr,"could not open overlay target!\n");
+	    cleanup();
+	    exit(-114);
+	}
+
+	target_snprintf(target,targetstr,sizeof(targetstr));
+
+	rtarget = otarget;
     }
 
     signal(SIGHUP,sigh);
@@ -269,7 +425,7 @@ int main(int argc,char **argv) {
     probes = g_hash_table_new(g_direct_hash,g_direct_equal);
     g_hash_table_iter_init(&iter,gadgets);
     while (g_hash_table_iter_next(&iter,(gpointer)&key,(gpointer)&gadget)) {
-	probe = probe_rop_checkret(t,TID_GLOBAL,gadget,NULL,rop_handler,NULL);
+	probe = probe_rop_checkret(rtarget,TID_GLOBAL,gadget,NULL,rop_handler,NULL);
 	if (!probe) {
 	    fprintf(stderr,"could not install probe on gadget at 0x%"PRIxADDR"\n",
 		    gadget->start);
@@ -282,28 +438,22 @@ int main(int argc,char **argv) {
     /* The target is paused after the attach; we have to resume it now
      * that we've registered probes.
      */
-    target_resume(t);
+    target_resume(target);
 
     fprintf(stdout,"Starting watch loop!\n");
     fflush(stdout);
 
     while (1) {
-	tstat = target_monitor(t);
+	tstat = target_monitor(target);
 	if (tstat == TSTATUS_PAUSED) {
-	    if (target_type(t) == TARGET_TYPE_PTRACE && linux_userproc_at_syscall(t,TID_GLOBAL)) {
-		target_resume(t);
-		continue;
-	    }
-
 	    fflush(stderr);
 	    fflush(stdout);
-	    printf("target interrupted at 0x%" PRIxREGVAL "\n",
-		   target_read_reg(t,TID_GLOBAL,t->ipregno));
+	    printf("target interrupted at 0x%"PRIxREGVAL"; trying to resume!\n",
+		   target_read_reg(target,TID_GLOBAL,target->ipregno));
 
-	    if (target_resume(t)) {
+	    if (target_resume(target)) {
 		fprintf(stderr,"could not resume target\n");
-		cleanup_probes();
-		cleanup_target();
+		cleanup();
 		exit(-16);
 	    }
 	}
@@ -315,9 +465,9 @@ int main(int argc,char **argv) {
 
 	    cleanup_probes();
 
-	    if (target_resume(t)) {
+	    if (target_resume(target)) {
 		verror("could not resume target!\n");
-		tstat = cleanup_target();
+		cleanup();
 		exit(-16);
 	    }
 	}
@@ -325,15 +475,15 @@ int main(int argc,char **argv) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    printf("target exited, cleaning up.\n");
-	    cleanup_target();
+	    cleanup();
 
 	    goto out;
 	}
 	else {
 	    fflush(stderr);
 	    fflush(stdout);
-	    printf("target interrupted at 0x%"PRIxREGVAL" -- NOT PAUSED (%d)\n",
-		   target_read_reg(t,TID_GLOBAL,t->ipregno),tstat);
+	    printf("target interrupted at 0x%"PRIxREGVAL" -- bad status (%d)\n",
+		   target_read_reg(target,TID_GLOBAL,target->ipregno),tstat);
 	    goto err;
 	}
     }
@@ -341,8 +491,7 @@ int main(int argc,char **argv) {
  err:
     fflush(stderr);
     fflush(stdout);
-    cleanup_probes();
-    tstat = cleanup_target();
+    cleanup();
 
  out:
     if (array_list_len(rop_violation_list)) {
