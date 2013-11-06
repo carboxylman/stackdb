@@ -141,6 +141,17 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	    return -1;
 	}
     }
+    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS) {
+	/*
+	 * XXX: xen_vm_spec_process has nothing; don't do anything.
+	 */
+	/*
+	if ((rc = xen_vm_process_spec_to_argv(spec,&backend_argc,&backend_argv))) {
+	    verror("xen_vm_process_spec_to_argv failed!\n");
+	    return -1;
+	}
+	*/
+    }
 #endif
     else {
 	verror("unsupported backend type %d!\n",spec->target_type);
@@ -152,6 +163,11 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
      */
     if (arg0) 
 	ac += 1;
+
+    /*
+     * Do the backend type.
+     */
+    ac += 2;
 
     /*
      * Now count the generic opts.
@@ -185,8 +201,7 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 	ac += 2;
 
     ac += backend_argc;
-    ac += 1;
-    av = calloc(ac,sizeof(char *));
+    av = calloc(ac + 1,sizeof(char *));
 
     j = 0;
 
@@ -196,6 +211,21 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
     if (arg0) {
 	av[j++] = strdup(arg0);
     }
+
+    /*
+     * Do the backend type.
+     */
+    av[j++] = strdup("-t");
+    if (spec->target_type == TARGET_TYPE_PTRACE)
+	av[j++] = strdup("ptrace");
+#ifdef ENABLE_XENSUPPORT
+    else if (spec->target_type == TARGET_TYPE_XEN)
+	av[j++] = strdup("xen");
+    else if (spec->target_type == TARGET_TYPE_XEN_PROCESS)
+	av[j++] = strdup("xen-process");
+#endif
+    else
+	av[j++] = strdup("UNKNOWN");
 
     /* Do the generic opts. */
     if (spec->start_paused) {
@@ -266,6 +296,8 @@ int target_spec_to_argv(struct target_spec *spec,char *arg0,
 
     for (i = 0; i < backend_argc; ++i) 
 	av[j++] = backend_argv[i];
+
+    av[j] = NULL;
 
     if (backend_argc > 0)
 	free(backend_argv);
