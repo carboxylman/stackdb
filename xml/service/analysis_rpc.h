@@ -56,6 +56,22 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
 			      struct vmi1__ListenerT *ownerListener,
 			      struct vmi1__AnalysisResponse *r);
 
+int vmi1__InstantiateOverlayAnalysis(struct soap *soap,
+				     struct vmi1__AnalysisSpecT *analysisSpec,
+				     struct vmi1__TargetSpecT *targetSpec,
+				     struct vmi1__TargetSpecT *overlayTargetSpec,
+				     vmi1__ThreadIdT baseThid,
+				     vmi1__ListenerT *ownerListener,
+				     struct vmi1__AnalysisResponse *r);
+
+int vmi1__InstantiateOverlayAnalysisByThreadName(struct soap *soap,
+						 struct vmi1__AnalysisSpecT *analysisSpec,
+						 struct vmi1__TargetSpecT *targetSpec,
+						 struct vmi1__TargetSpecT *overlayTargetSpec,
+						 char *baseThreadName,
+						 vmi1__ListenerT *ownerListener,
+						 struct vmi1__AnalysisResponse *r);
+
 int vmi1__PauseAnalysis(struct soap *soap,
 			vmi1__AnalysisIdT aid,
 			struct vmi1__NoneResponse *r);

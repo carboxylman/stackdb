@@ -228,16 +228,18 @@ struct analysis {
     int target_id;
 
     /*
-     * This is only valid in the process that instantiated the target,
+     * These are only valid in the process that instantiated the target,
      * obviously.
      */
     struct target *target;
+    struct target *overlay_target;
 
     /*
      * This might be valid even if @target is not; can be convenient to
      * keep around.
      */
     struct target_spec *target_spec;
+    struct target_spec *overlay_target_spec;
 
     char *stdout_buf;
     int stdout_buf_alen;

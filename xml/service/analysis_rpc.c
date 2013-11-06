@@ -995,6 +995,532 @@ int vmi1__InstantiateAnalysis(struct soap *soap,
     return soap_receiver_fault(soap,err,err_detail);
 }
 
+int __vmi1__InstantiateOverlayAnalysis(struct soap *soap,
+				       struct vmi1__AnalysisSpecT *analysisSpec,
+				       struct vmi1__TargetSpecT *targetSpec,
+				       struct vmi1__TargetSpecT *overlayTargetSpec,
+				       vmi1__ThreadIdT baseThid,
+				       char *baseThreadName,
+				       vmi1__ListenerT *ownerListener,
+				       struct vmi1__AnalysisResponse *r) {
+    struct target_spec *ts = NULL;
+    struct target_spec *ots = NULL;
+    struct analysis_desc *d = NULL;
+    struct analysis_spec *as = NULL;
+    struct analysis *a = NULL;
+    char *path = NULL;
+    int targc = 0;
+    char **targv = NULL;
+    int otargc = 0;
+    char **otargv = NULL;
+    int otrc;
+    char otbuf[256];
+    char *binarypath = NULL;
+    int len;
+    int tid;
+    int aid = -1;
+    GHashTable *reftab = NULL;
+    struct monitor *monitor = NULL;
+    struct proxyreq *pr;
+    int fargc = 0;
+    char **fargv = NULL;
+    int i;
+    struct stat statbuf;
+    char *err = NULL, *err_detail = NULL;
+    int locked = 0;
+    char *pbuf = NULL;
+    int fd = -1;
+    int rc = 0;
+    int retval;
+    char *tmpbuf;
+    int pid;
+    int urllen = 0;
+    char *url = NULL;
+    char *atmpdir = NULL;
+    char *wbuf;
+
+    pr = soap->user;
+    if (!pr) {
+	err = err_detail = "Request needed splitting but not split!";
+	goto errout;
+    }
+
+    /*
+     * First, make sure we can find and load the analysis, and that the
+     * target spec is valid enough to get going.
+     */
+
+    if (!analysisSpec || !analysisSpec->name) {
+	err = err_detail = "Must set an analysis spec name!";
+	goto errout;
+    }
+
+    if (ownerListener) {
+	if (ownerListener->url != NULL) 
+	    url = ownerListener->url;
+	else if (ownerListener->hostname != NULL 
+		 && ownerListener->port != NULL) {
+	    urllen = sizeof("http://") + strlen(ownerListener->hostname) \
+		+ sizeof(":") + 11 + sizeof(":/vmi/1/analysisListener") + 1;
+	    url = malloc(urllen * sizeof(char));
+	    snprintf(url,urllen,"http://%s:%d/vmi/1/analysisListener",
+		    ownerListener->hostname,*ownerListener->port);
+	}
+	else {
+	    return soap_receiver_fault(soap,"Bad listener!","Bad listener!");
+	}
+    }
+
+    as = x_AnalysisSpecT_to_a_analysis_spec(soap,analysisSpec,reftab,NULL);
+    if (!as) {
+	err = err_detail = "Bad analysis spec!";
+	goto errout;
+    }
+
+    path = analysis_find(as->name);
+    if (!path) {
+	err = err_detail = "Could not find analysis!";
+	goto errout;
+    }
+
+    d = analysis_load_pathname(path);
+    if (!d) {
+	err = err_detail = "Could not load analysis description!";
+	goto errout;
+    }
+
+    /*
+     * If the analysis supports external control, give it a specific
+     * analysis id too!  Well, we just grab one no matter what; it's
+     * just we don't care if the monitored child uses it or not if we
+     * know it doesn't support external control -- so we don't pass it
+     * in that case.
+     */
+    aid = monitor_get_unique_objid();
+    as->analysis_id = aid;
+
+    /* Setup the analysis binary full path to launch. */
+    len = strlen(path) + 1 + strlen(d->binary) + 1;
+    binarypath = calloc(len,sizeof(char));
+    snprintf(binarypath,len,"%s/%s",path,d->binary);
+
+    /*
+     * Setup its tmp dir name, but don't create it yet;
+     * <ANALYSIS_TMPDIR>/<name>.<id>
+     */
+    len = strlen(ANALYSIS_TMPDIR) + sizeof("/vmi.analysis.") \
+	+ strlen(as->name) + sizeof(".") + 11 + 1 + 11 + 1;
+    atmpdir = malloc(len * sizeof(char));
+    snprintf(atmpdir,len,"%s/vmi.analysis.%s.%d.%u",
+	     ANALYSIS_TMPDIR,as->name,aid,rand());
+    if (stat(atmpdir,&statbuf) == 0) 
+	vwarn("analysis tmpdir %s already exists!\n",atmpdir);
+
+    reftab = g_hash_table_new_full(g_direct_hash,g_direct_equal,NULL,NULL);
+
+    ts = x_TargetSpecT_to_t_target_spec(soap,targetSpec,reftab,NULL);
+    if (!ts) {
+	err = err_detail = "Bad target spec!";
+	goto errout;
+    }
+
+    ots = x_TargetSpecT_to_t_target_spec(soap,overlayTargetSpec,reftab,NULL);
+    if (!ots) {
+	err = err_detail = "Bad overlay target spec!";
+	goto errout;
+    }
+
+    /*
+     * Choose a specific target id!
+     */
+    tid = monitor_get_unique_objid();
+    /* Force it to use our new monitored object id. */
+    ts->target_id = tid;
+
+    /*
+     * Also need to setup the various stdio file args, if necessary.
+     */
+    if (targetSpec->stdinBytes && targetSpec->stdinBytes->__size > 0) {
+	len = strlen(atmpdir) + 1 + sizeof("target.stdin.") + 11 + 1;
+	ts->infile = malloc(len * sizeof(char));
+	snprintf(ts->infile,len,"%s/target.stdin.%u",atmpdir,ts->target_id);
+
+	/* NB: write the stdin file below, once we have a tmpdir! */
+    }
+    else if (overlayTargetSpec->stdinBytes 
+	     && overlayTargetSpec->stdinBytes->__size > 0) {
+	len = strlen(atmpdir) + 1 + sizeof("target.stdin.") + 11 + 1;
+	ts->infile = malloc(len * sizeof(char));
+	snprintf(ts->infile,len,"%s/target.stdin.%u",atmpdir,ts->target_id);
+
+	/* NB: write the stdin file below, once we have a tmpdir! */
+    }
+    if (targetSpec->logStdout && *targetSpec->logStdout == xsd__boolean__true_) {
+	len = strlen(atmpdir) + 1 + sizeof("target.stdout.") + 11 + 1;
+	ts->outfile = malloc(len * sizeof(char));
+	snprintf(ts->outfile,len,"%s/target.stdout.%u",atmpdir,ts->target_id);
+    }
+    else if (overlayTargetSpec->logStdout 
+	     && *overlayTargetSpec->logStdout == xsd__boolean__true_) {
+	len = strlen(atmpdir) + 1 + sizeof("target.stdout.") + 11 + 1;
+	ts->outfile = malloc(len * sizeof(char));
+	snprintf(ts->outfile,len,"%s/target.stdout.%u",atmpdir,ts->target_id);
+    }
+    if (targetSpec->logStderr && *targetSpec->logStderr == xsd__boolean__true_) {
+	len = strlen(atmpdir) + 1 + sizeof("target.stderr.") + 11 + 1;
+	ts->errfile = malloc(len * sizeof(char));
+	snprintf(ts->errfile,len,"%s/target.stderr.%u",atmpdir,ts->target_id);
+    }
+    else if (overlayTargetSpec->logStderr 
+	     && *overlayTargetSpec->logStderr == xsd__boolean__true_) {
+	len = strlen(atmpdir) + 1 + sizeof("target.stderr.") + 11 + 1;
+	ts->errfile = malloc(len * sizeof(char));
+	snprintf(ts->errfile,len,"%s/target.stderr.%u",atmpdir,ts->target_id);
+    }
+
+    if (target_spec_to_argv(ts,binarypath,&targc,&targv)) {
+	err = err_detail = "Could not create argv from target spec!";
+	goto errout;
+    }
+    if (target_spec_to_argv(ots,binarypath,&otargc,&otargv)) {
+	err = err_detail = "Could not create argv from overlay target spec!";
+	goto errout;
+    }
+
+    if (d->supports_external_control) {
+	fargc = targc + 2 + 3;
+	fargv = calloc(fargc,sizeof(char *));
+	fargv[0] = targv[0];
+	fargv[1] = strdup("-a");
+	fargv[2] = malloc(11);
+	snprintf(fargv[2],11,"%d",aid);
+	memcpy(&fargv[3],&targv[1],fargc - 1);
+	free(targv);
+	targv = NULL;
+	targc = 0;
+    }
+    else {
+	fargc = targc + 2;
+	fargv = calloc(fargc,sizeof(char *));
+	memcpy(&fargv[0],&targv[0],targc);
+	fargv[targc++] = strdup("-O");
+
+	otrc = 0;
+	otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,"'");
+	if (baseThreadName) 
+	    otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,
+			     "%s:",baseThreadName);
+	else
+	    otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,
+			     "%d:",baseThid);
+	for (i = 0; i < otargc; ++i) {
+	    otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc," %s",otargv[i]);
+	}
+	otrc += snprintf(otbuf + otrc,sizeof(otbuf) - otrc,"'");
+
+	fargv[targc++] = strdup(otbuf);
+
+	free(targv);
+	targv = NULL;
+	targc = 0;
+    }
+
+    /*
+     * Create an analysis instance.  Both the monitor and monitored
+     * child will have one; but analysis->target will only be live in
+     * the child.  That is because the monitor has to monitor the
+     * analysis binary for results, and maybe report to listeners; its
+     * RPC functionality is not contained to the child.
+     *
+     * So unlike forked targets in the target RPC server, we cannot just
+     * have a NULL obj.
+     */
+    a = analysis_create(as->analysis_id,as,d,tid,NULL);
+
+    /* Save this off so we can grab the logfile names later if needed. */
+    a->target_spec = ts;
+    a->overlay_target_spec = ts;
+
+    /*
+     * Create the analysis tmpdir.  This means writing out any support files it
+     * needs (right now just the target's stdin, if any).
+     * <ANALYSIS_TMPDIR>/<name>.<id>
+     */
+    a->tmpdir = atmpdir;
+    mkdir(ANALYSIS_TMPDIR,S_IRWXU | S_IRGRP | S_IXGRP);
+    if (mkdir(a->tmpdir,S_IRWXU | S_IRGRP | S_IXGRP)) {
+	verror("could not create analysis tmpdir %s: %s!\n",
+	       a->tmpdir,strerror(errno));
+	err = err_detail = "Could not create analysis tmpdir!";
+	goto errout;
+    }
+
+    /*
+     * Write any support files.
+     */
+    if (analysisSpec->supportFiles) {
+	for (i = 0; i < analysisSpec->supportFiles->__sizesupportFile; ++i) {
+	    len = strlen(a->tmpdir) + sizeof("/") 
+		+ strlen(analysisSpec->supportFiles->supportFile[i].name) + 1;
+	    pbuf = malloc(len);
+	    snprintf(pbuf,len,"%s/%s",a->tmpdir,
+		     analysisSpec->supportFiles->supportFile[i].name);
+	    fd = open(pbuf,O_CREAT | O_TRUNC | O_WRONLY,S_IRUSR | S_IWUSR);
+	    if (fd < 0) {
+		verror("could not open(%s) for write: %s!\n",
+		       pbuf,strerror(errno));
+		err = err_detail = "Could not write file!";
+		goto errout;
+	    }
+
+	    rc = 0;
+	    len = analysisSpec->supportFiles->supportFile[i].content.__size;
+	    wbuf = (char *)analysisSpec->supportFiles->supportFile[i].content.__ptr;
+	    while (rc < len) {
+		retval = write(fd,wbuf + rc,len - rc);
+		if (retval < 0) {
+		    if (errno == EINTR)
+			continue;
+		    else {
+			verror("write(%s): %s\n",pbuf,strerror(errno));
+			err = err_detail =				\
+			    "Could not finish writing source file in tmpdir!";
+			close(fd);
+			goto errout;
+		    }
+		}
+		else 
+		    rc += retval;
+	    }
+	    close(fd);
+	    free(pbuf);
+	}
+    }
+
+    if (targetSpec->stdinBytes && targetSpec->stdinBytes->__size > 0) {
+	len = strlen(a->tmpdir) + sizeof("/") + strlen(ts->infile) + 1;
+	pbuf = malloc(len);
+	snprintf(pbuf,len,"%s/%s",a->tmpdir,ts->infile);
+
+	/* Write the stdin file now that we have a tmpdir */
+	fd = open(pbuf,O_CREAT | O_TRUNC | O_WRONLY,S_IRUSR | S_IWUSR | S_IRGRP);
+	if (fd < 0) {
+	    verror("open(%s): %s\n",pbuf,strerror(errno));
+	    err = err_detail = "Could not save target stdin in tmpdir!";
+	    goto errout;
+	}
+
+	while (rc < targetSpec->stdinBytes->__size) {
+	    retval = write(fd,targetSpec->stdinBytes->__ptr + rc,
+			   targetSpec->stdinBytes->__size - rc);
+	    if (retval < 0) {
+		if (errno == EINTR)
+		    continue;
+		else {
+		    verror("write(%s): %s\n",pbuf,strerror(errno));
+		    err = err_detail = \
+			"Could not finish writing target stdin in tmpdir!";
+		    close(fd);
+		    goto errout;
+		}
+	    }
+	    else 
+		rc += retval;
+	}
+	close(fd);
+    }
+    else if (overlayTargetSpec->stdinBytes 
+	     && overlayTargetSpec->stdinBytes->__size > 0) {
+	len = strlen(a->tmpdir) + sizeof("/") + strlen(ts->infile) + 1;
+	pbuf = malloc(len);
+	snprintf(pbuf,len,"%s/%s",a->tmpdir,ts->infile);
+
+	/* Write the stdin file now that we have a tmpdir */
+	fd = open(pbuf,O_CREAT | O_TRUNC | O_WRONLY,S_IRUSR | S_IWUSR | S_IRGRP);
+	if (fd < 0) {
+	    verror("open(%s): %s\n",pbuf,strerror(errno));
+	    err = err_detail = "Could not save target stdin in tmpdir!";
+	    goto errout;
+	}
+
+	while (rc < overlayTargetSpec->stdinBytes->__size) {
+	    retval = write(fd,overlayTargetSpec->stdinBytes->__ptr + rc,
+			   overlayTargetSpec->stdinBytes->__size - rc);
+	    if (retval < 0) {
+		if (errno == EINTR)
+		    continue;
+		else {
+		    verror("write(%s): %s\n",pbuf,strerror(errno));
+		    err = err_detail = \
+			"Could not finish writing target stdin in tmpdir!";
+		    close(fd);
+		    goto errout;
+		}
+	    }
+	    else 
+		rc += retval;
+	}
+	close(fd);
+    }
+
+    monitor_lock_objtype(MONITOR_OBJTYPE_ANALYSIS);
+    locked = 1;
+
+    /*
+     * We have to setup a monitor that will exec the analysis binary.
+     *
+     * If the analysis supports external control, we need to choose a
+     *
+     * Also, we need to register/bind the ownerListener (and any
+     * subsequent listeners) in this server, and in the forked program.
+     * Why?  So that the monitor thread can autoparse results from the
+     * analysis's stdout/err, AND so that the analysis itself can
+     * generate results.  This does suck, but we don't want to be in the
+     * business of forwarding results from the monitored analysis to the
+     * monitor thread.  No reason to, especially since we've set it up
+     * so that the monitored analysis can itself receive RPCs!
+     */
+
+    monitor = monitor_create(MONITOR_TYPE_PROCESS,MONITOR_FLAG_BIDI,
+			     aid,MONITOR_OBJTYPE_ANALYSIS,a,NULL);
+    if (!monitor) {
+	err = err_detail = "Could not create analysis monitor!";
+	goto errout;
+    }
+
+    /*
+     * XXX: eventually, for analyses that support external control,
+     * we'll have to forward the ownerListener URL to them!
+     */
+    if (generic_rpc_bind_dynlistener_objid(RPC_SVCTYPE_ANALYSIS,url,aid,1)) {
+	err = err_detail = "Could not bind to analysis (monitor)!";
+	goto errout;
+    }
+
+    /*
+     * Setup I/O to child!  We always have to use our callbacks and
+     * do our own logging.  BUT, we want to log/interact with the
+     * spawned analysis's I/O, AND those of any analysis-spawned
+     * targets.  Sigh... for now we get lucky by 1) setting up analysis
+     * stdin if desired, and 2) assuming a single target per analysis,
+     * and using the target command-line API to specify a stdin file,
+     * and by writing that tmp file into our analysis tmpdir.
+     *
+     * Eventually, we will either need to extend the command line to be
+     * able specify multiple targets, or to write targetSpec files into
+     * the analysis tmpdir, or something else -- setup stdin pipes?  :)
+     */
+
+    if (analysisSpec->stdinBytes && analysisSpec->stdinBytes->__size > 0) {
+	tmpbuf = malloc(analysisSpec->stdinBytes->__size);
+	memcpy(tmpbuf,analysisSpec->stdinBytes->__ptr,
+	       analysisSpec->stdinBytes->__size);
+
+	monitor_setup_stdin(monitor,tmpbuf,analysisSpec->stdinBytes->__size);
+	tmpbuf = NULL;
+    }
+    if (analysisSpec->logStdout 
+	&& analysisSpec->logStdout == xsd__boolean__true_) {
+	len = strlen(a->tmpdir) + sizeof("/analysis.stdout.") + 11 + 1;
+	as->outfile = malloc(len);
+	snprintf(as->outfile,len,"%s/analysis.stdout.%d",a->tmpdir,aid);
+
+	monitor_setup_stdout(monitor,-1,as->outfile,
+			     analysis_rpc_stdout_callback,a);
+    }
+    if (analysisSpec->logStderr 
+	&& analysisSpec->logStderr == xsd__boolean__true_) {
+	len = strlen(a->tmpdir) + sizeof("/analysis.stderr.") + 11 + 1;
+	as->errfile = malloc(len);
+	snprintf(as->errfile,len,"%s/analysis.stderr.%d",a->tmpdir,aid);
+
+	monitor_setup_stderr(monitor,-1,as->errfile,
+			     analysis_rpc_stderr_callback,a);
+    }
+
+    analysis_set_status(a,ASTATUS_RUNNING);
+
+    pid = monitor_spawn(monitor,binarypath,fargv,NULL,a->tmpdir);
+    if (pid < 0) {
+	verror("error spawning: %d (%s)\n",pid,strerror(errno));
+	err = err_detail = "Could not spawn analysis!";
+	goto errout;
+    }
+
+    proxyreq_attach_new_objid(pr,aid,monitor);
+
+    r->analysis = a_analysis_to_x_AnalysisT(soap,a,reftab,NULL);
+    monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return SOAP_OK;
+
+ errout:
+    /* Cleanup! */
+
+    if (fargc > 0) {
+	for (i = 0; i < fargc; ++i)
+	    if (fargv[i])
+		free(fargv[i]);
+	free(fargv);
+    }
+    if (a) {
+	analysis_free(a);
+    }
+    else {
+	if (atmpdir)
+	    free(atmpdir);
+	if (as) 
+	    analysis_spec_free(as);
+	if (d)
+	    analysis_desc_free(d);
+	if (ts)	   
+	    target_free_spec(ts);
+    }
+    if (reftab)
+	g_hash_table_destroy(reftab);
+    if (binarypath)
+	free(binarypath);
+    if (path)
+	free(path);
+    if (pbuf)
+	free(pbuf);
+    if (url) 
+	generic_rpc_unbind_dynlistener_objid(RPC_SVCTYPE_ANALYSIS,url,aid);
+    if (urllen) 
+	free(url);
+
+    if (locked)
+	monitor_unlock_objtype_unsafe(MONITOR_OBJTYPE_ANALYSIS);
+
+    return soap_receiver_fault(soap,err,err_detail);
+}
+
+int vmi1__InstantiateOverlayAnalysis(struct soap *soap,
+				     struct vmi1__AnalysisSpecT *analysisSpec,
+				     struct vmi1__TargetSpecT *targetSpec,
+				     struct vmi1__TargetSpecT *overlayTargetSpec,
+				     vmi1__ThreadIdT baseThid,
+				     vmi1__ListenerT *ownerListener,
+				     struct vmi1__AnalysisResponse *r) {
+    return __vmi1__InstantiateOverlayAnalysis(soap,analysisSpec,targetSpec,
+					      overlayTargetSpec,
+					      baseThid,NULL,
+					      ownerListener,r);
+}
+
+int vmi1__InstantiateOverlayAnalysisByThreadName(struct soap *soap,
+						 struct vmi1__AnalysisSpecT *analysisSpec,
+						 struct vmi1__TargetSpecT *targetSpec,
+						 struct vmi1__TargetSpecT *overlayTargetSpec,
+						 char *baseThreadName,
+						 vmi1__ListenerT *ownerListener,
+						 struct vmi1__AnalysisResponse *r) {
+    return __vmi1__InstantiateOverlayAnalysis(soap,analysisSpec,targetSpec,
+					      overlayTargetSpec,
+					      -1,baseThreadName,
+					      ownerListener,r);
+}
+
 int vmi1__PauseAnalysis(struct soap *soap,
 			vmi1__AnalysisIdT aid,
 			struct vmi1__NoneResponse *r) {

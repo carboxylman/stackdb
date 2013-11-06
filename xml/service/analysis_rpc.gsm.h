@@ -79,6 +79,20 @@ int vmi1__InstantiateAnalysis(struct vmi1__AnalysisSpecT *analysisSpec,
 			      struct vmi1__ListenerT *ownerListener,
 			      struct vmi1__AnalysisResponse *r);
 
+int vmi1__InstantiateOverlayAnalysis(struct vmi1__AnalysisSpecT *analysisSpec,
+				     struct vmi1__TargetSpecT *targetSpec,
+				     struct vmi1__TargetSpecT *overlayTargetSpec,
+				     vmi1__ThreadIdT baseThid,
+				     vmi1__ListenerT *ownerListener,
+				     struct vmi1__AnalysisResponse *r);
+
+int vmi1__InstantiateOverlayAnalysisByThreadName(struct vmi1__AnalysisSpecT *analysisSpec,
+						 struct vmi1__TargetSpecT *targetSpec,
+						 struct vmi1__TargetSpecT *overlayTargetSpec,
+						 char *baseThreadName,
+						 vmi1__ListenerT *ownerListener,
+						 struct vmi1__AnalysisResponse *r);
+
 // gsoap vmi1 service method-documentation: PauseAnalysis pauses an
 //   analysis if the analysis supports external control.
 int vmi1__PauseAnalysis(vmi1__AnalysisIdT aid,
