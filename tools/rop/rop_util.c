@@ -37,6 +37,8 @@ GHashTable *rop_load_gadget_stream(FILE *stream) {
     GHashTable *retval;
     struct rop_gadget *rg;
     int rc;
+    GHashTableIter iter;
+    gpointer v;
 
     retval = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 				   /* Just free gadgets, not keys */
@@ -44,21 +46,24 @@ GHashTable *rop_load_gadget_stream(FILE *stream) {
 
     rg = (struct rop_gadget *)calloc(1,sizeof(*rg));
     errno = 0;
-    while ((rc = fscanf(stream,"%"PRIxADDR",%"PRIxADDR" %as",
-			&rg->start,&rg->end,&rg->meta)) != EOF) {
+    while (1) {
+	rc = fscanf(stream,"%"PRIxADDR",%"PRIxADDR" %as",
+		    &rg->start,&rg->end,&rg->meta);
 	if (rc <= 0 && errno) {
 	    if (rc != EAGAIN && rc != EINTR) {
 		verror("fscanf: %s\n",strerror(errno));
 		return retval;
 	    }
 	}
-	else if (rc == 0) {
-	    verror("fscanf: no items matched! (%s)\n",strerror(errno));
-	    return retval;
+	else if (rc == EOF) {
+	    goto out;
 	}
 	else if (rc < 2) {
 	    verror("Bad line in rop_gadget stream!\n");
 	    rg->meta = NULL;
+	    free(rg);
+	    rg = NULL;
+	    goto errout;
 	}
 	else {
 	    g_hash_table_insert(retval,(gpointer)rg->start,rg);
@@ -66,9 +71,19 @@ GHashTable *rop_load_gadget_stream(FILE *stream) {
 	}
 	errno = 0;
     }
-    free(rg);
 
+ out:
+    free(rg);
     return retval;
+
+ errout:
+    g_hash_table_iter_init(&iter,retval);
+    while (g_hash_table_iter_next(&iter,NULL,&v)) {
+	rg = (struct rop_gadget *)v;
+	rop_gadget_free(rg);
+    }
+    g_hash_table_destroy(retval);
+    return NULL;
 }
 
 GHashTable *rop_load_gadget_file(char *filename) {
@@ -76,6 +91,8 @@ GHashTable *rop_load_gadget_file(char *filename) {
     FILE *f;
     struct rop_gadget *rg;
     int rc;
+    GHashTableIter iter;
+    gpointer v;
 
     if (!(f = fopen(filename,"r"))) {
 	verror("fopen(%s): %s\n",filename,strerror(errno));
@@ -87,22 +104,46 @@ GHashTable *rop_load_gadget_file(char *filename) {
 				   NULL,rop_gadget_free);
 
     rg = (struct rop_gadget *)calloc(1,sizeof(*rg));
-    while ((rc = fscanf(f,"%"PRIxADDR",%"PRIxADDR" %as",
-			&rg->start,&rg->end,&rg->meta)) != EOF) {
-	if (rc < 2) {
-	    verror("Bad line in rop_gadget file %s!\n",filename);
+    while (1) {
+	rc = fscanf(f,"%"PRIxADDR",%"PRIxADDR" %as",
+		    &rg->start,&rg->end,&rg->meta);
+	if (rc <= 0 && errno) {
+	    if (rc != EAGAIN && rc != EINTR) {
+		verror("fscanf: %s\n",strerror(errno));
+		return retval;
+	    }
+	}
+	else if (rc == EOF) {
+	    goto out;
+	}
+	else if (rc < 2) {
+	    verror("Bad line in rop_gadget file %s (%d)!\n",filename,rc);
 	    rg->meta = NULL;
+	    free(rg);
+	    rg = NULL;
+	    goto errout;
 	}
 	else {
 	    g_hash_table_insert(retval,(gpointer)rg->start,rg);
 	    rg = (struct rop_gadget *)calloc(1,sizeof(*rg));
 	}
     }
-    free(rg);
 
+ out:
+    free(rg);
     fclose(f);
 
     return retval;
+
+ errout:
+    fclose(f);
+    g_hash_table_iter_init(&iter,retval);
+    while (g_hash_table_iter_next(&iter,NULL,&v)) {
+	rg = (struct rop_gadget *)v;
+	rop_gadget_free(rg);
+    }
+    g_hash_table_destroy(retval);
+    return NULL;
 }
 
 const char *probe_gettype_rop_checkret(struct probe *probe) {
