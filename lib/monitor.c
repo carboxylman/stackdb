@@ -1089,11 +1089,13 @@ int __monitor_recv_evh(int fd,int fdtype,void *state) {
     msg = monitor_recv(monitor);
 
     if (!msg) {
+	/*
 	if (errno == EAGAIN || errno == EWOULDBLOCK) {
 	    vwarnopt(5,LA_LIB,LF_MONITOR,
 		     "could not recv msg on fd %d; but EAGAIN; ignoring!\n",fd);
 	    return retval;
 	}
+	*/
 	vwarnopt(8,LA_LIB,LF_MONITOR,
 		 "could not recv msg on fd %d; closing!\n",fd);
 	close(fd);
@@ -2562,17 +2564,16 @@ struct monitor_msg *monitor_msg_create(int objid,
     return msg;
 }
 
-#define __M_SAFE_IO(fn,fns,fd,buf,buflen) {				\
+#define __M_SAFE_IO(fn,fns,fd,buf,buflen,frc) {				\
     char *_p;								\
-    int _rc = 0;							\
     int _left;								\
 									\
     _p = (char *)(buf);							\
     _left = (buflen);							\
 									\
     while (_left) {							\
-        _rc = fn((fd),_p,_left);					\
-	if (_rc < 0) {							\
+        (frc) = fn((fd),_p,_left);					\
+	if ((frc) < 0) {						\
 	    if (errno == EAGAIN || errno == EWOULDBLOCK) {		\
 		goto errout_wouldblock;					\
 	    }								\
@@ -2586,12 +2587,12 @@ struct monitor_msg *monitor_msg_create(int objid,
 		       fd,buflen,strerror(errno));			\
 	    }								\
 	}								\
-	else if (_rc == 0) {						\
+	else if ((frc) == 0) {						\
 	    goto errout_wouldblock;					\
 	}								\
 	else {								\
-	    _left -= _rc;						\
-	    _p += _rc;							\
+	    _left -= (frc);						\
+	    _p += (frc);						\
 	}								\
     }									\
     /*vwarn("%d bytes of %d iopd\n",(buflen)-_left,(buflen));*/		\
@@ -2601,6 +2602,7 @@ int monitor_send(struct monitor_msg *msg) {
     struct monitor *monitor;
     unsigned int rc = 0;
     unsigned int len;
+    int frc = 0;
 
     /*
      * We have to lookup the monitor and hold its lock to make sure
@@ -2640,32 +2642,32 @@ int monitor_send(struct monitor_msg *msg) {
 
     /* Write the msg objid */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
-		&msg->objid,(int)sizeof(msg->objid));
+		&msg->objid,(int)sizeof(msg->objid),frc);
     rc += (int)sizeof(msg->objid);
 
     /* Write the msg id */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
-		&msg->id,(int)sizeof(msg->id));
+		&msg->id,(int)sizeof(msg->id),frc);
     rc += (int)sizeof(msg->id);
 
     /* Write the msg cmd */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
-		&msg->cmd,(int)sizeof(msg->cmd));
+		&msg->cmd,(int)sizeof(msg->cmd),frc);
     rc += (int)sizeof(msg->cmd);
 
     /* Write the msg seqno */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
-		&msg->seqno,(int)sizeof(msg->seqno));
+		&msg->seqno,(int)sizeof(msg->seqno),frc);
     rc += (int)sizeof(msg->seqno);
 
     /* Write the msg payload len */
     __M_SAFE_IO(write,"write",monitor->monitor_send_fd,
-		&msg->len,(int)sizeof(msg->len));
+		&msg->len,(int)sizeof(msg->len),frc);
     rc += (int)sizeof(msg->len);
 
     if (msg->len > 0) {
 	/* Write the msg payload, if any */
-	__M_SAFE_IO(write,"write",monitor->monitor_send_fd,msg->msg,msg->len);
+	__M_SAFE_IO(write,"write",monitor->monitor_send_fd,msg->msg,msg->len,frc);
 	rc += msg->len;
     }
 
@@ -2678,7 +2680,7 @@ int monitor_send(struct monitor_msg *msg) {
 
  errout_wouldblock:
     if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-	verror("would have blocked after %d of %d bytes!\n",rc,len);
+	verror("would have blocked after %d of %d bytes (%d)!\n",rc,len,frc);
 	goto errout;
     }
 
@@ -2710,6 +2712,7 @@ int monitor_send(struct monitor_msg *msg) {
 
 struct monitor_msg *monitor_recv(struct monitor *monitor) {
     struct monitor_msg *msg = monitor_msg_create(-1,0,0,0,0,NULL,NULL);
+    int frc = 0;
     int rc = 0;
     int len;
     void *obj;
@@ -2720,27 +2723,27 @@ struct monitor_msg *monitor_recv(struct monitor *monitor) {
 
     /* Read the msg objid */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,
-		&msg->objid,(int)sizeof(msg->objid));
+		&msg->objid,(int)sizeof(msg->objid),frc);
     rc += (int)sizeof(msg->objid);
 
     /* Read the msg id */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,
-		&msg->id,(int)sizeof(msg->id));
+		&msg->id,(int)sizeof(msg->id),frc);
     rc += (int)sizeof(msg->id);
 
     /* Read the msg cmd */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,&msg->cmd,
-		(int)sizeof(msg->cmd));
+		(int)sizeof(msg->cmd),frc);
     rc += (int)sizeof(msg->cmd);
 
     /* Read the msg seqno */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,&msg->seqno,
-		(int)sizeof(msg->seqno));
+		(int)sizeof(msg->seqno),frc);
     rc += (int)sizeof(msg->seqno);
 
     /* Read the msg payload len */
     __M_SAFE_IO(read,"read",monitor->monitor_recv_fd,
-		&msg->len,(int)sizeof(msg->len));
+		&msg->len,(int)sizeof(msg->len),frc);
     rc += (int)sizeof(msg->len);
 
     if (msg->len > 0)
@@ -2750,7 +2753,7 @@ struct monitor_msg *monitor_recv(struct monitor *monitor) {
     if (msg->len > 0) {
 	msg->msg = malloc(msg->len);
 	__M_SAFE_IO(read,"read",monitor->monitor_recv_fd,
-		    msg->msg,msg->len);
+		    msg->msg,msg->len,frc);
 	rc += msg->len;
     }
 
@@ -2772,11 +2775,15 @@ struct monitor_msg *monitor_recv(struct monitor *monitor) {
 
  errout_wouldblock:
     if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-	verror("would have blocked after %d of (at least) %d bytes !\n",rc,len);
-	goto errout_fatal;
+	verror("would have blocked after %d of (at least) %d bytes (%d)!\n",
+	       rc,len,frc);
+	goto errout_fatal_2;
     }
 
  errout_fatal:
+    verror("would have blocked after %d of (at least) %d bytes (%d)!\n",
+	   rc,len,frc);
+ errout_fatal_2:
     monitor_msg_free(msg);
 
     return NULL;
@@ -2786,6 +2793,7 @@ int monitor_child_send(struct monitor_msg *msg,struct monitor *monitor) {
     struct monitor *_monitor;
     int rc = 0;
     int len;
+    int frc = 0;
 
     /*
      * We have to lookup the monitor and hold its lock to make sure
@@ -2835,32 +2843,32 @@ int monitor_child_send(struct monitor_msg *msg,struct monitor *monitor) {
 
     /* Write the msg objid */
     __M_SAFE_IO(write,"write",_monitor->child_send_fd,
-		&msg->objid,(int)sizeof(msg->objid));
+		&msg->objid,(int)sizeof(msg->objid),frc);
     rc += (int)sizeof(msg->objid);
 
     /* Write the msg id */
     __M_SAFE_IO(write,"write",_monitor->child_send_fd,
-		&msg->id,(int)sizeof(msg->id));
+		&msg->id,(int)sizeof(msg->id),frc);
     rc += (int)sizeof(msg->id);
 
     /* Write the msg cmd */
     __M_SAFE_IO(write,"write",_monitor->child_send_fd,
-		&msg->cmd,(int)sizeof(msg->cmd));
+		&msg->cmd,(int)sizeof(msg->cmd),frc);
     rc += (int)sizeof(msg->cmd);
 
     /* Write the msg seqno */
     __M_SAFE_IO(write,"write",_monitor->child_send_fd,
-		&msg->seqno,(int)sizeof(msg->seqno));
+		&msg->seqno,(int)sizeof(msg->seqno),frc);
     rc += (int)sizeof(msg->seqno);
 
     /* Write the msg payload len */
     __M_SAFE_IO(write,"write",_monitor->child_send_fd,
-		&msg->len,(int)sizeof(msg->len));
+		&msg->len,(int)sizeof(msg->len),frc);
     rc += (int)sizeof(msg->len);
 
     if (msg->len > 0) {
 	/* Write the msg payload, if any */
-	__M_SAFE_IO(write,"write",_monitor->child_send_fd,msg->msg,msg->len);
+	__M_SAFE_IO(write,"write",_monitor->child_send_fd,msg->msg,msg->len,frc);
 	rc += msg->len;
     }
 
@@ -2873,7 +2881,7 @@ int monitor_child_send(struct monitor_msg *msg,struct monitor *monitor) {
 
  errout_wouldblock:
     if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-	verror("would have blocked after %d of %d bytes (BUG)!\n",rc,len);
+	verror("would have blocked after %d of %d bytes (BUG) (%d)!\n",rc,len,frc);
 	goto errout_fatal;
     }
 
@@ -2890,7 +2898,7 @@ int monitor_child_send(struct monitor_msg *msg,struct monitor *monitor) {
      * normally (it should see an error condition too, if it's a real
      * problem?).
      */
-    verror("error after %d of %d bytes: %s!\n",rc,len,strerror(errno));
+    verror("error after %d of %d bytes: %s (%d)!\n",rc,len,strerror(errno),frc);
     pthread_mutex_unlock(&monitor->mutex);
     if (msg->msg_obj) 
 	monitor_retrieve_msg_obj(monitor,msg);
@@ -2899,6 +2907,7 @@ int monitor_child_send(struct monitor_msg *msg,struct monitor *monitor) {
 
 struct monitor_msg *monitor_child_recv(struct monitor *monitor) {
     struct monitor_msg *msg = monitor_msg_create(-1,0,0,0,0,NULL,NULL);
+    int frc = 0;
     int rc = 0;
     int len;
     void *obj;
@@ -2909,27 +2918,27 @@ struct monitor_msg *monitor_child_recv(struct monitor *monitor) {
 
     /* Read the msg objid */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,
-		&msg->objid,(int)sizeof(msg->objid));
+		&msg->objid,(int)sizeof(msg->objid),frc);
     rc += (int)sizeof(msg->objid);
 
     /* Read the msg id */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,
-		&msg->id,(int)sizeof(msg->id));
+		&msg->id,(int)sizeof(msg->id),frc);
     rc += (int)sizeof(msg->id);
 
     /* Read the msg cmd */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,&msg->cmd,
-		(int)sizeof(msg->cmd));
+		(int)sizeof(msg->cmd),frc);
     rc += (int)sizeof(msg->cmd);
 
     /* Read the msg seqno */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,&msg->seqno,
-		(int)sizeof(msg->seqno));
+		(int)sizeof(msg->seqno),frc);
     rc += (int)sizeof(msg->seqno);
 
     /* Read the msg payload len */
     __M_SAFE_IO(read,"read",monitor->child_recv_fd,
-		&msg->len,(int)sizeof(msg->len));
+		&msg->len,(int)sizeof(msg->len),frc);
     rc += (int)sizeof(msg->len);
 
     if (msg->len > 0)
@@ -2943,7 +2952,7 @@ struct monitor_msg *monitor_child_recv(struct monitor *monitor) {
     if (msg->len > 0) {
 	msg->msg = malloc(msg->len);
 	__M_SAFE_IO(read,"read",monitor->child_recv_fd,
-		    msg->msg,(int)msg->len);
+		    msg->msg,(int)msg->len,frc);
 	rc += msg->len;
     }
 
@@ -2963,7 +2972,7 @@ struct monitor_msg *monitor_child_recv(struct monitor *monitor) {
 	msg->obj = obj;
 
     if (rc != len)
-	vwarn("received msg len only %d (should be %d)\n",rc,len);
+	vwarn("received msg len only %d (should be %d) (%d)\n",rc,len,frc);
 
     monitor_retrieve_msg_obj(monitor,msg);
 
@@ -2971,12 +2980,13 @@ struct monitor_msg *monitor_child_recv(struct monitor *monitor) {
 
  errout_wouldblock:
     if (rc < len && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-	verror("would have blocked after %d of %d bytes (BUG)!\n",rc,len);
-	goto errout_fatal;
+	verror("would have blocked after %d of %d bytes (BUG) (%d)!\n",rc,len,frc);
+	goto errout_fatal_2;
     }
 
  errout_fatal:
-    verror("error after %d of %d bytes: %s!\n",rc,len,strerror(errno));
+    verror("error after %d of %d bytes: %s (%d)!\n",rc,len,strerror(errno),frc);
+ errout_fatal_2:
     monitor_msg_free(msg);
 
     return NULL;
