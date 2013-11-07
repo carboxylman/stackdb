@@ -100,7 +100,9 @@ ProbeFilter sys_open id(openFiltered) when(pre) report(rt=i,tn=syscall,tid=0,rv=
 ProbeFilter sys_open id(openExit) when(pre) vfilter(filename=/vmi.exit/) print() exit(0)
 """
 spf_conf_xen_process = """
-ProbeFilter make_child id(make_child) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="sh child spawn") abort(1)
+ProbeFilter sys_fork id(sys_fork) when(pre) report(rt=i,tn=syscall,tid=0,rv=fork,msg="sys_fork")
+ProbeFilter sys_open id(sys_open) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="sys_open")
+ProbeFilter make_child id(make_child) when(pre) report(rt=i,tn=bash,tid=0,rv=make_child,msg="sh child spawn") abort(1)
 """
 
 supportFile = client.factory.create('SupportFileT')

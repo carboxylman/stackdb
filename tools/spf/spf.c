@@ -131,7 +131,6 @@ struct spf_argp_state {
  */
 struct target *target = NULL;
 struct target *otarget = NULL;
-struct target *rtarget;
 struct spf_config *config = NULL;
 struct spf_argp_state opts;
 
@@ -755,7 +754,7 @@ int main(int argc,char **argv) {
 	}
     }
 
-    rtarget = target = target_instantiate(tspec,NULL);
+    target = target_instantiate(tspec,NULL);
     if (!target) {
 	verror("could not instantiate target!\n");
 	exit(-1);
@@ -800,8 +799,6 @@ int main(int argc,char **argv) {
 	}
 
 	target_snprintf(target,targetstr,sizeof(targetstr));
-
-	rtarget = otarget;
     }
 
     signal(SIGINT,sigh);
@@ -819,8 +816,8 @@ int main(int argc,char **argv) {
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
-    if (opts.use_os_syscall_probes && rtarget->kind == TARGET_KIND_OS) {
-	if (target_os_syscall_table_load(rtarget))
+    if (opts.use_os_syscall_probes && target->kind == TARGET_KIND_OS) {
+	if (target_os_syscall_table_load(target))
 	    vwarn("could not load the syscall table; target_os_syscall probes"
 		  " will not be available!\n");
 	else
@@ -877,10 +874,10 @@ int main(int argc,char **argv) {
 		 */
 
 		if (opts.use_os_syscall_probes && have_syscall_table) {
-		    syscall = target_os_syscall_lookup_name(rtarget,name);
+		    syscall = target_os_syscall_lookup_name(target,name);
 		    if (syscall) {
 			sprobe = \
-			    target_os_syscall_probe(rtarget,TID_GLOBAL,syscall,
+			    target_os_syscall_probe(target,TID_GLOBAL,syscall,
 						    probe_do_sink_pre_handlers,
 						    probe_do_sink_post_handlers,
 						    NULL);
@@ -894,14 +891,20 @@ int main(int argc,char **argv) {
 		}
 
 		if (!sprobe) {
-		    bsymbol = target_lookup_sym(rtarget,name,NULL,NULL,
+		    bsymbol = target_lookup_sym(otarget,name,NULL,NULL,
 						SYMBOL_TYPE_FLAG_NONE);
 		    if (!bsymbol) {
-			verror("could not lookup symbol %s; aborting!\n",name);
-			cleanup();
-			exit(-3);
+			bsymbol = target_lookup_sym(target,name,NULL,NULL,
+						    SYMBOL_TYPE_FLAG_NONE);
+			if (!bsymbol) {
+			    verror("could not lookup symbol %s; aborting!\n",
+				   name);
+			    cleanup();
+			    exit(-3);
+			}
 		    }
-		    sprobe = probe_value_symbol(rtarget,TID_GLOBAL,bsymbol,
+		    sprobe = probe_value_symbol(bsymbol->region->space->target,
+						TID_GLOBAL,bsymbol,
 						probe_do_sink_pre_handlers,
 						probe_do_sink_post_handlers,NULL);
 		    if (!sprobe) {
@@ -938,7 +941,7 @@ int main(int argc,char **argv) {
 		post_pf = NULL;
 
 	    snprintf(namebuf,sizeof(namebuf),"filter_%s_%d",name,i);
-	    fprobe = probe_create_filtered(target,TID_GLOBAL,NULL,namebuf,
+	    fprobe = probe_create_filtered(sprobe->target,TID_GLOBAL,NULL,namebuf,
 					   pre_handler,pre_pf,
 					   post_handler,post_pf,NULL,NULL,0,1);
 
@@ -1242,26 +1245,31 @@ int apply_config_file(struct spf_config *config) {
 	    continue;
 
 	/* Create it. */
-	bsymbol = target_lookup_sym(rtarget,spff->symbol,NULL,NULL,
+	bsymbol = target_lookup_sym(otarget,spff->symbol,NULL,NULL,
 				    SYMBOL_TYPE_FLAG_NONE);
 	if (!bsymbol) {
-	    if (opts.config_file_fatal) {
-		verror("could not lookup symbol %s; aborting!\n",spff->symbol);
-		cleanup();
-		exit(-3);
-	    }
-	    else {
-		vwarn("could not lookup symbol %s; skipping filter!\n",
-		      spff->symbol);
-		continue;
+	    bsymbol = target_lookup_sym(target,spff->symbol,NULL,NULL,
+					SYMBOL_TYPE_FLAG_NONE);
+	    if (!bsymbol) {
+		if (opts.config_file_fatal) {
+		    verror("could not lookup symbol %s; aborting!\n",
+			   spff->symbol);
+		    cleanup();
+		    exit(-3);
+		}
+		else {
+		    vwarn("could not lookup symbol %s; skipping filter!\n",
+			  spff->symbol);
+		    continue;
+		}
 	    }
 	}
 
 	sprobe = NULL;
 	if (have_syscall_table) {
-	    syscall = target_os_syscall_lookup_name(rtarget,spff->symbol);
+	    syscall = target_os_syscall_lookup_name(target,spff->symbol);
 	    if (syscall) {
-		sprobe = target_os_syscall_probe(rtarget,TID_GLOBAL,syscall,
+		sprobe = target_os_syscall_probe(target,TID_GLOBAL,syscall,
 						 probe_do_sink_pre_handlers,
 						 probe_do_sink_post_handlers,
 						 NULL);
@@ -1284,7 +1292,8 @@ int apply_config_file(struct spf_config *config) {
 	}
 
 	if (!sprobe) {
-	    sprobe = probe_value_symbol(rtarget,TID_GLOBAL,bsymbol,
+	    sprobe = probe_value_symbol(bsymbol->region->space->target,
+					TID_GLOBAL,bsymbol,
 					probe_do_sink_pre_handlers,
 					probe_do_sink_post_handlers,NULL);
 	    if (!sprobe) {
@@ -1329,11 +1338,11 @@ int apply_config_file(struct spf_config *config) {
 	    spff->id = strdup(namebuf);
 	}
 	if (spff->when == WHEN_PRE)
-	    fprobe = probe_create_filtered(rtarget,TID_GLOBAL,NULL,spff->id,
+	    fprobe = probe_create_filtered(sprobe->target,TID_GLOBAL,NULL,spff->id,
 					   pre_handler,spff->pf,null_handler,NULL,
 					   spff->ttf,spff,0,1);
 	else
-	    fprobe = probe_create_filtered(rtarget,TID_GLOBAL,NULL,spff->id,
+	    fprobe = probe_create_filtered(sprobe->target,TID_GLOBAL,NULL,spff->id,
 					   null_handler,NULL,post_handler,spff->pf,
 					   spff->ttf,spff,0,1);
 	probe_register_source(fprobe,sprobe);
