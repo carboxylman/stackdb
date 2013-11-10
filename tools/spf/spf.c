@@ -298,7 +298,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
     GHashTable *vt;
     struct bsymbol *bsymbol;
     struct symbol *symbol;
-    int i;
+    int i,j;
     int rc;
     struct spf_filter *spff = (struct spf_filter *)data;
     GSList *gsltmp;
@@ -434,8 +434,29 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    v = (struct value *)vp;
 		    if (v) {
 			rc = value_snprintf(v,vstrbuf,sizeof(vstrbuf));
-			if (rc > 0)
-			    fprintf(stdout,"%s=%s",(char *)kp,vstrbuf);
+			if (rc > 0) {
+			    int unprintable = 0;
+			    for (j = 0; vstrbuf[j] != '\0'; ++j) {
+				if (!isgraph(vstrbuf[j]) && !isspace(vstrbuf[j])) {
+				    unprintable = 1;
+				    break;
+				}
+			    }
+
+			    if (unprintable) {
+				vwarn("unprintable raw value for key %s = 0x",
+				      (char *)kp);
+				for (j = 0; vstrbuf[j] != '\0'; ++j) {
+				    vwarnc("%hhx",vstrbuf[j]);
+				}
+				vwarnc("\n");
+
+				fprintf(stdout,"%s=??",(char *)kp);
+			    }
+			    else {
+				fprintf(stdout,"%s=%s",(char *)kp,vstrbuf);
+			    }
+			}
 			else
 			    fprintf(stdout,"%s=?",(char *)kp);
 		    }
