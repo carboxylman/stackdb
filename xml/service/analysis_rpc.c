@@ -266,9 +266,6 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     char *value_str = NULL;
     char *msg = NULL;
     struct analysis_datum *datum;
-    char *saveptr = NULL;
-    char *token;
-    char *ptr;
     int rc;
     char rt = 0;
     int remaining;
@@ -278,6 +275,10 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
     char *pbuf_next;
     int saved = 0;
     int new_alen = 0;
+    char *token_end,*token_middle;
+    int bcount;
+    int i;
+    char *key,*key_end;
 
     vdebug(5,LA_XML,LF_RPC,"fd %d recv '%s' (%d)\n",fd,buf,len);
 
@@ -397,18 +398,43 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 	    datum = analysis_create_simple_datum(a,id,name,type,result_value,
 						 msg,1);
 	    if (value_str) {
-		saveptr = NULL;
-		while ((token = strtok_r(saveptr ? NULL : value_str,",",
-					 &saveptr))) {
-		    ptr = index(token,'=');
-		    if (!ptr) {
-			vwarn("bad autoparse value token '%s'; skipping!\n",
-			      token);
+		token_middle = value_str;
+		bcount = 0;
+		key = NULL;
+		key_end = NULL;
+		while ((token_end = index(token_middle,','))) {
+		    if (!key) {
+			key = token_middle;
+			key_end = index(token_middle,'=');
+			if (!key_end) {
+			    fprintf(stderr,
+				    "bad autoparse value token at '%s'; skipping!\n",
+				    token_middle);
+			    break;
+			}
+			*key_end = '\0';
+
+			//fprintf(stdout,"found key = '%s'\n",key);
+
+			token_middle = key_end + 1;
+		    }
+
+		    for (i = 0; (token_middle + i) < token_end; ++i) {
+			if (token_middle[i] == '{')
+			    ++bcount;
+			else if (token_middle[i] == '}')
+			    --bcount;
+		    }
+		    if (bcount) {
+			token_middle = token_end + 1;
 			continue;
 		    }
-		    *ptr = '\0';
-		    ++ptr;
-		    analysis_datum_add_simple_value(datum,token,ptr,0);
+		    *token_end = '\0';
+		    vdebug(8,LA_DEBUG,LF_XML,
+			   "found '%s' = '%s'\n",key,key_end + 1);
+		    analysis_datum_add_simple_value(datum,key,key_end + 1,0);
+		    token_middle = token_end + 1;
+		    key = NULL;
 		}
 		free(value_str);
 	    }
