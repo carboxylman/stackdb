@@ -90,13 +90,16 @@ struct target_nv_filter *target_nv_filter_parse(char *expr) {
 	    goto errout;
 	isescaped = 0;
 	while (*cur != '\0') {
-	    if (*cur == '\\' && !isescaped)
-		isescaped = 1;
-	    else 
-		isescaped = 0;
-	    if (!isescaped && *cur == '/') {
-		break;
+	    if (*cur == '\\') {
+		if (!isescaped)
+		    isescaped = 1;
+		else 
+		    isescaped = 0;
 	    }
+	    else if (*cur == '/' && !isescaped)
+		break;
+	    else
+		isescaped = 0;
 	    ++cur;
 	}
 	if (*cur == '/') {
