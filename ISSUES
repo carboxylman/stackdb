@@ -1,0 +1,91 @@
+Robustness related:
+
+1. With the mageia exploit, put a probe on Linux commit_creds with spf and
+   just do a print(). spf prints out when it hits the probe just fine, but
+   after it hits the one invoked via the shellcode, it goes off infinitely:
+
+   VERROR:   xen_vm_handle_internal:7058: user-mode debug event (not single step, not hw dbg reg) at 0x4006c6; debug status reg 0xffff0ff0; eflags 0x1346; skipping handling!
+   VERROR:   xen_vm_handle_internal:7058: user-mode debug event (not single step, not hw dbg reg) at 0x4006cb; debug status reg 0xffff0ff0; eflags 0x1346; skipping handling!
+
+   Only happens when running mageia. Related to the shellcode and/or the funky
+   control flow kernel -> userspace -> kernel?
+
+2. With mageia, put a probe on Linux "sock_diag_rcv" (static, but visible)
+   When it hits the probe, spf aborts:
+
+   Starting Symbol Probe Filtering!
+   sock_diag_rcv (skb = { .next = 0x0, .prev = 0x0, .tstamp = { .tv64 = 0, }, .sk = 0xffff88003c88c400, .dev = 0x0, .cb = "", ._skb_refdst = 0, .sp = 0x0, .len = 40, .data_len = 0, .mac_len = 0, .hdr_len = 0, { .csum = 0, { .csum_start = 0, .csum_offset = 0, }, }, .priority = 0, .local_df = )
+   Aborted
+
+3. Other crashes on exit. ^C'ing the tool when done often caused issues
+   with both spf and dumptarget. Errors/crashes and occasional abandoned
+   probes left behind in the guest or the guest being left suspended.
+
+4. spf had lots of problems starting up when I had the parport module
+   loaded in my kernel. Dave fixed a number of them, but I eventually
+   just unloaded the parport module (and others) to get it out of the way.
+
+5. One from Dave:
+
+   Backtraces of the current thread when it hits commit_creds are
+   just one-liners:
+
+   thread 326:
+     #0  0xffffffff8108664b in get_current () at
+   /build/buildd/linux-lts-raring-3.8.0/kernel/cred.c:415
+
+   Must be some kind of inlining thing...
+
+Performance related:
+
+1. From the paper, two versions of same benchmark one in C one in PHP,
+   both repeatedly open a file. For both, if I use spf to place a probe
+   in libc open() using the Xen-process target, the PHP version is twice
+   as slow as C version. It does NOT appear to be the case that the PHP
+   version is just doing more extraneous open calls that would cause the
+   probe to trigger more often. Note also that the PHP target is not
+   involved in any way.
+
+2. Ran the same benchmarks using both spf and dumptarget to place the
+   probes. Benchmarks run under dumptarget are consistently twice as
+   fast as the same case using spf. Note that this factor of 2x is
+   (seemingly) unrelated to that in #1.
+
+
+Function related:
+
+1. Disambiguating symbols. Lots of libraries use the same names (the
+   landscape is littered with "open"s). Dave extended the syntax for
+   at least spf to qualify symbols with module names.
+
+2. We were thwarted in detecting the sock_diag exploit in part because
+   of our inability to find a symbol we could put a probe on, but also
+   because we were limited to function start/exit boundaries and because
+   we could only match against the function arguments and not more
+   generally against in-scope symbols. This is not necessarily an
+   argument for extending spf/dumptarget, rather one for a better
+   scripting environment.
+
+3. Cannot backtrace across the syscall boundary.
+
+4. Cannot backtrace through the mageia shell code even though it
+   has the usual frame-pointer linkage.
+
+5. It would be nice if spf/dumptarget had a way to exit while leaving
+   the VM paused so that we could run other tools (e.g., backtrace).
+
+6. More dynamic configuration of the layered targets. For example,
+   the PHP target requires that the PHP interpreter be initialized
+   when spf/dumptarget is started. For example, the Xen process target
+   requires a process name or pid when starting.
+
+7. Visibility of symbols. We had a hard time latching onto the
+   mageia exploit because we could not put a probe on the various
+   static or static inline symbols.
+
+General:
+
+1. Inconsistent behaviors between spf and dumptarget for functions
+   that they can both perform. The performance issues above examples,
+   but there are (were) things related to symbol lookup and command
+   like syntax as well. This is more just an observation.
