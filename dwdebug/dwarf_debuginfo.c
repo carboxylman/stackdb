@@ -3634,8 +3634,8 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
     Dwarf *dbg;
     GElf_Shdr *shdr;
     Elf_Scn *scn;
-    int i;
-    char *name;
+    int i,ii;
+    char *name,*name2;
     char **saveptr;
     unsigned int *saveptrlen;
     Elf_Data *edata;
@@ -3731,22 +3731,48 @@ static int process_dwflmod (Dwfl_Module *dwflmod,
 		continue;
 	    }
 	    else if (!edata->d_buf && edata->d_size) {
+		scn = NULL;
 		if (bfelf_pointing && bfelf_pointing->elf) {
 		    vwarnopt(8,LA_DEBUG,LF_DWARF,
 			     "cannot get raw data for valid section '%s': %s;"
 			     " trying getdata on the pointing binfile\n",
 			     name,elf_errmsg(-1));
 
-		    scn = elf_getscn(bfelf_pointing->elf,i);
-		    edata = elf_getdata(scn,NULL);
-		    if (!edata) {
-			verror("still cannot get data for valid section '%s': %s\n",
-			       name,elf_errmsg(-1));
-			continue;
+		    for (ii = 0; ii < bfelf_pointing->ehdr.e_shnum; ++ii) {
+			shdr = &bfelf_pointing->shdrs[ii];
+			scn = elf_getscn(bfelf_pointing->elf,ii);
+
+			if (shdr && shdr->sh_size > 0) { // &&shdr->sh_type != SHT_PROGBITS) {
+			    //shdr_mem.sh_flags & SHF_STRINGS) {
+			    name2 = elf_strptr(bfelf_pointing->elf,
+					       bfelf_pointing->shstrndx,shdr->sh_name);
+
+			    if (strcmp(name,name2) == 0) {
+				edata = elf_getdata(scn,NULL);
+				if (!edata) {
+				    verror("still cannot get data for valid section '%s': %s\n",
+					   name,elf_errmsg(-1));
+				    scn = NULL;
+				    break;
+				}
+				else if (!edata->d_buf) {
+				    vwarn("still cannot get data for valid section '%s' (%d);"
+					  " skipping!\n",
+					  name,(int)edata->d_size);
+				    scn = NULL;
+				    break;
+				}
+
+				break;
+			    }
+			}
+			scn = NULL;
 		    }
-		    else if (!edata->d_buf) {
-			vwarn("still cannot get data for valid section '%s' (%d); skipping!\n",
-			      name,(int)edata->d_size);
+
+		    if (!scn) {
+			verror("cannot get raw data for valid section '%s': %s;"
+			       " could not getdata on the pointing binfile\n",
+			       name,elf_errmsg(-1));
 			continue;
 		    }
 		}
