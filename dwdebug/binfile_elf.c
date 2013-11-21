@@ -1738,8 +1738,8 @@ static struct binfile *elf_binfile_open(char *filename,char *root_prefix,
 			    vdebug(2,LA_DEBUG,LF_ELF,
 				   "could not find next global symbol after %s;"
 				   " using section(%d:%d) end 0x%"PRIxADDR"!\n",
-				   ii,bfelf->shdrs[ii].sh_size,
-				   symbol_get_name(symbol),sec_end);
+				   symbol_get_name(symbol),
+				   ii,bfelf->shdrs[ii].sh_size,sec_end);
 			}
 			else {
 			    vdebug(2,LA_DEBUG,LF_ELF,
