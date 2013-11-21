@@ -137,6 +137,7 @@ struct binfile *binfile_create(char *filename,struct binfile_ops *bfops,
      * filename.  Use the real path as @binfile->filename if it is
      * different than @filename.
      */
+    binfile->filename = NULL;
     if (_filename_info(filename,&binfile->filename,
 		       &binfile->name,&binfile->version)) {
 	free(binfile);
