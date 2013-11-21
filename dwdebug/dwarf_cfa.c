@@ -1413,6 +1413,17 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
 	return -1;
     }
 
+    if (symbol->isinlineinstance 
+	&& symbol->scope->symbol && SYMBOL_IS_FUNC(symbol->scope->symbol)) {
+	vdebug(5,LA_DEBUG,LF_DCFA,
+	       "using symbol %s instead of inline instance of %s for CFA\n",
+	       symbol_get_name(symbol->scope->symbol),symbol_get_name(symbol));
+	symbol = symbol->scope->symbol;
+    }
+    else if (symbol->isinlineinstance) {
+	vwarn("inlined %s not in parent func; BUG?!\n",symbol_get_name(symbol));
+    }
+
     if (!lops || !lops->getregno || lops->getregno(lctxt,CREG_SP,&spreg)) {
 	vwarn("could not check CREG_SP for equivalence with DWARF CFA reg;"
 	      " things might break!\n");
@@ -1451,7 +1462,53 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     fde = (struct dwarf_cfa_fde *) \
 	g_hash_table_lookup(ddi->cfa_fde,(gpointer)(uintptr_t)symbol->addr);
     if (!fde) {
+	/*
+	 * Try to handle the case where the symbol is an inlined
+	 * instance.  In this case, the FDE info might be at the address
+	 * of the inlined decl source.  So keep looking up the scope
+	 * chain, trying to find an FDE that matches us.
+	 */
+	scope = symbol->scope;
+	while (scope) {
+	    if (!scope->range) 
+		continue;
+
+	    fde = (struct dwarf_cfa_fde *)		\
+		g_hash_table_lookup(ddi->cfa_fde,
+				    (gpointer)(uintptr_t)scope->range->start);
+	    if (fde) {
+		if (scope->symbol) {
+		    vdebug(5,LA_DEBUG,LF_DCFA,
+			   "found DWARF CFA FDE at addr 0x%"PRIxADDR" symbol '%s'"
+			   " containing symbol '%s' addr 0x%"PRIxADDR";"
+			   " probably inlined\n",
+			   scope->range->start,symbol_get_name(scope->symbol),
+			   symbol_get_name(symbol),symbol->addr);
+		}
+		else {
+		    vdebug(5,LA_DEBUG,LF_DCFA,
+			   "found DWARF CFA FDE at scope addr 0x%"PRIxADDR
+			   " containing symbol '%s' addr 0x%"PRIxADDR";"
+			   " probably inlined\n",
+			   scope->range->start,symbol_get_name(symbol),
+			   symbol->addr);
+		}
+		break;
+	    }
+
+	    scope = scope->parent;
+	}
+    }
+
+    if (!fde) {
 	verror("no DWARF CFA FDE for symbol '%s' at addr 0x%"PRIxADDR"!\n",
+	       symbol_get_name(symbol),symbol->addr);
+	errno = ESRCH;
+	return -1;
+    }
+    else if (!(fde->initial_location <= symbol->addr 
+	       && symbol->addr < (fde->initial_location + fde->address_range))) {
+	verror("no DWARF CFA FDE for symbol '%s' containing addr 0x%"PRIxADDR"!\n",
 	       symbol_get_name(symbol),symbol->addr);
 	errno = ESRCH;
 	return -1;
@@ -1529,6 +1586,7 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     ADDR retval;
     int rc;
     struct location_ops *lops;
+    struct scope *scope;
 
     if (!lctxt || !lctxt->ops) {
 	verror("no location_ops for current frame %d!\n",lctxt->current_frame);
@@ -1562,6 +1620,23 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     }
 
     /*
+     * This strategy does not work for handling inlines; see below for
+     * the one that does.
+     */
+    /*
+    if (symbol->isinlineinstance 
+	&& symbol->scope->symbol && SYMBOL_IS_FUNC(symbol->scope->symbol)) {
+	vdebug(5,LA_DEBUG,LF_DCFA,
+	       "using symbol %s instead of inline instance of %s for CFA\n",
+	       symbol_get_name(symbol->scope->symbol),symbol_get_name(symbol));
+	symbol = symbol->scope->symbol;
+    }
+    else if (symbol->isinlineinstance) {
+	vwarn("inlined %s not in parent func; BUG?!\n",symbol_get_name(symbol));
+    }
+    */
+
+    /*
      * Figure out what IP is in the current frame, and unrelocate it so
      * we can use it.
      */
@@ -1589,11 +1664,58 @@ int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
     fde = (struct dwarf_cfa_fde *) \
 	g_hash_table_lookup(ddi->cfa_fde,(gpointer)(uintptr_t)symbol->addr);
     if (!fde) {
+	/*
+	 * Try to handle the case where the symbol is an inlined
+	 * instance.  In this case, the FDE info might be at the address
+	 * of the inlined decl source.  So keep looking up the scope
+	 * chain, trying to find an FDE that matches us.
+	 */
+	scope = symbol->scope;
+	while (scope) {
+	    if (!scope->range) 
+		continue;
+
+	    fde = (struct dwarf_cfa_fde *)		\
+		g_hash_table_lookup(ddi->cfa_fde,
+				    (gpointer)(uintptr_t)scope->range->start);
+	    if (fde) {
+		if (scope->symbol) {
+		    vdebug(5,LA_DEBUG,LF_DCFA,
+			   "found DWARF CFA FDE at addr 0x%"PRIxADDR" symbol '%s'"
+			   " containing symbol '%s' addr 0x%"PRIxADDR";"
+			   " probably inlined\n",
+			   scope->range->start,symbol_get_name(scope->symbol),
+			   symbol_get_name(symbol),symbol->addr);
+		}
+		else {
+		    vdebug(5,LA_DEBUG,LF_DCFA,
+			   "found DWARF CFA FDE at scope addr 0x%"PRIxADDR
+			   " containing symbol '%s' addr 0x%"PRIxADDR";"
+			   " probably inlined\n",
+			   scope->range->start,symbol_get_name(symbol),
+			   symbol->addr);
+		}
+		break;
+	    }
+
+	    scope = scope->parent;
+	}
+    }
+
+    if (!fde) {
 	verror("no DWARF CFA FDE for symbol '%s' at addr 0x%"PRIxADDR"!\n",
 	       symbol_get_name(symbol),symbol->addr);
 	errno = ESRCH;
 	return -1;
     }
+    else if (!(fde->initial_location <= symbol->addr 
+	       && symbol->addr < (fde->initial_location + fde->address_range))) {
+	verror("no DWARF CFA FDE for symbol '%s' containing addr 0x%"PRIxADDR"!\n",
+	       symbol_get_name(symbol),symbol->addr);
+	errno = ESRCH;
+	return -1;
+    }
+
     cie = fde->cie;
 
     /*
