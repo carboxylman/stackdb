@@ -671,6 +671,12 @@ int location_ctxt_read_reg(struct location_ctxt *lctxt,REG reg,REGVAL *o_regval)
 
     /* Find our debugfile. */
     symbol = lctxt->ops->getsymbol(lctxt);
+    if (!symbol) {
+	vwarn("could not find symbol for current (well, \"next\") frame %d!\n",
+	      lctxt->current_frame);
+	errno = EINVAL;
+	goto prev_frame_load_err_try_next_next;
+    }
     root = symbol_find_root(symbol);
     if (!root) {
 	verror("could not find root symbol for symbol '%s'!\n",
@@ -706,6 +712,7 @@ int location_ctxt_read_reg(struct location_ctxt *lctxt,REG reg,REGVAL *o_regval)
      * Stop using the current_frame - 1; re-get the current_frame so
      * that we cache the result in the correct frame.
      */
+ success:
     if (lctxt->ops->setcurrentframe(lctxt,lctxt->current_frame + 1)) {
 	verror("could not set current frame from %d to %d (next)!\n",
 	       lctxt->current_frame,lctxt->current_frame + 1);
@@ -724,6 +731,20 @@ int location_ctxt_read_reg(struct location_ctxt *lctxt,REG reg,REGVAL *o_regval)
 	*o_regval = rv;
 
     return 0;
+
+ prev_frame_load_err_try_next_next:
+    if (lctxt->current_frame > 0) {
+	vdebug(8,LA_DEBUG,LF_DLOC,
+	       "checking cache in (next next) frame %d because no CFI data\n",
+	       lctxt->current_frame);
+	rc = location_ctxt_read_reg(lctxt,reg,o_regval);
+	if (rc) {
+	    verror("could not read reg %"PRIiREG" in (next next) frame %d!\n",
+		   reg,lctxt->current_frame);
+	    goto prev_frame_load_err;
+	}
+	else goto success;
+    }
 
  prev_frame_load_err:
     /*
