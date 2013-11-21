@@ -581,6 +581,8 @@ struct lsymbol *debugfile_lookup_sym__int(struct debugfile *debugfile,
 	    if (accept == RF_REJECT)
 		continue;
 	}
+	if (!root_scope)
+	    continue;
 
 	lsymbol_tmp = scope_lookup_sym__int(root_scope,name,delim,flags);
 	if (lsymbol_tmp) {
@@ -664,13 +666,46 @@ struct lsymbol *debugfile_lookup_sym__int(struct debugfile *debugfile,
      * If we don't have a srcfile filter, check the binfile and
      * binfile_pointing symtabs.
      */
-    if (!lsymbol && !srcfile_filter && debugfile->binfile 
-	&& debugfile->binfile->root) {
+    if (!lsymbol && debugfile->binfile && debugfile->binfile->root) {
+	if (srcfile_filter) {
+	    rfilter_check(srcfile_filter,
+			  symbol_get_srcfile(debugfile->binfile->root),
+			  &accept,&rfe);
+	    if (accept == RF_ACCEPT) {
+		vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
+		       "matched rf binfile srcfile %s; will check it\n",
+		       debugfile->binfile->root->name);
+	    }
+	    else {
+		vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
+		       "did not match rf binfile srcfile %s; not searching\n",
+		       debugfile->binfile->root->name);
+		return NULL;
+	    }
+	}
+
 	root_scope = symbol_read_owned_scope(debugfile->binfile->root);
 	lsymbol = scope_lookup_sym__int(root_scope,name,delim,flags);
     }
-    else if (!lsymbol && !srcfile_filter && debugfile->binfile_pointing 
+    else if (!lsymbol && debugfile->binfile_pointing 
 	     && debugfile->binfile_pointing->root) {
+	if (srcfile_filter) {
+	    rfilter_check(srcfile_filter,
+			  symbol_get_srcfile(debugfile->binfile_pointing->root),
+			  &accept,&rfe);
+	    if (accept == RF_ACCEPT) {
+		vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
+		       "matched rf binfile srcfile %s; will check it\n",
+		       debugfile->binfile_pointing->root->name);
+	    }
+	    else {
+		vdebug(3,LA_DEBUG,LF_DFILE | LF_DLOOKUP,
+		       "did not match rf binfile srcfile %s; not searching\n",
+		       debugfile->binfile_pointing->root->name);
+		return NULL;
+	    }
+	}
+
 	root_scope = symbol_read_owned_scope(debugfile->binfile_pointing->root);
 	lsymbol = scope_lookup_sym__int(root_scope,name,delim,flags);
     }
