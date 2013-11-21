@@ -1155,9 +1155,6 @@ struct symbol *do_word_symbol(struct debugfile *debugfile,
     symbol_set_bytesize(symbol,srd->addrsize);
     symbol_set_encoding(symbol,ENCODING_UNSIGNED);
 
-    /* RHOLD; this debugfile owns symbol. */
-    RHOLD(symbol,debugfile);
-
     /* Always put it in its primary symtab, of course -- probably the CU's. */
     symbol_insert_symbol(root,symbol);
 
