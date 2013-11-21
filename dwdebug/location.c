@@ -1497,7 +1497,7 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 
 	return LOCTYPE_REG;
     }
-    else if (rc == LOCTYPE_ADDR) {
+    else if (rc == LOCTYPE_ADDR || rc == LOCTYPE_MEMBER_OFFSET) {
 	if (o_loc)
 	    location_set_addr(o_loc,retval);
 
