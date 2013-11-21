@@ -1422,8 +1422,8 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 			 "could not resolve location for symbol %s: %s!\n",
 			 symbol_get_name(symbol),strerror(errno));
 	    else
-		verror("could not resolve location for symbol %s: %s!\n",
-		       symbol_get_name(symbol),strerror(errno));
+		verror("could not resolve location for symbol %s (ret %d): %s (%d)!\n",
+		       symbol_get_name(symbol),rc,strerror(errno),errno);
 	    goto errout;
 	}
 
