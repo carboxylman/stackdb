@@ -2167,8 +2167,16 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * there is one!!
 	 */
 	if (symbols[level] && !nofinalize) {
+	    struct symbol *finalize_parent;
+	    if (specification_symbol_parent)
+		finalize_parent = specification_symbol_parent;
+	    else if (level > 0 && symbols[level - 1])
+		finalize_parent = symbols[level - 1];
+	    else
+		finalize_parent = NULL;
+
 	    finalize_die_symbol(debugfile,level,symbols[level],
-				(specification_symbol_parent) ?: symbols[level-1],
+				finalize_parent,
 				voidsymbol,
 				reftab,die_offsets,(SMOFFSET)*cu_offset);
 	    /*
