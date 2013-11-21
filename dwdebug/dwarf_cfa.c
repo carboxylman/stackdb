@@ -1384,6 +1384,8 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
     int rc;
     struct location_ops *lops;
     REG spreg = -1;
+    int was_sp = 0;
+    struct scope *scope;
 
     if (!lctxt || !lctxt->ops) {
 	verror("no location ops for current frame %d!\n",lctxt->current_frame);
@@ -1420,6 +1422,7 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
 	       "reading CFA pseudo-reg to get SP value in current frame %d\n",
 	       lctxt->current_frame);
 	reg = DWARF_CFA_REG;
+	was_sp = 1;
     }
 
     /*
@@ -1487,10 +1490,22 @@ int dwarf_cfa_read_saved_reg(struct debugfile *debugfile,
 	return -1;
     }
 
+    if (reg == DWARF_CFA_REG) {
+	vdebug(8,LA_DEBUG,LF_DCFA,
+	       "read CFA pseudo-reg value 0x%"PRIxADDR" in current frame %d\n",
+	       retval,lctxt->current_frame);
+    }
+
+    if (was_sp) {
+	vdebug(8,LA_DEBUG,LF_DCFA,
+	       "read CFA pseudo-reg to get SP value in current frame %d;"
+	       " SP is 0x%"PRIxADDR"\n",
+	       lctxt->current_frame,retval);
+    }
+
     if (o_regval)
 	*o_regval = retval;
     return 0;
-    
 }
 
 /*
