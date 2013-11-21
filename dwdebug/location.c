@@ -1528,7 +1528,9 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     }
 
  errout:
-    return LOCTYPE_UNKNOWN;
+    if (rc > LOCTYPE_UNKNOWN)
+	return LOCTYPE_UNKNOWN;
+    return rc;
 }
 
 int lsymbol_resolve_bounds(struct lsymbol *lsymbol,ADDR base_addr,
