@@ -521,7 +521,7 @@ int dwarf_cfa_program_interpret(struct debugfile *debugfile,
 	    get_uleb128(op2,readp);
 	    sop2 = op2 * cie->data_alignment_factor;
 	    vdebug(8,LA_DEBUG,LF_DCFA,"DW_CFA_offset r%u at cfa%+"PRId64"\n",
-		   op1,(int64_t)op2);
+		   op1,(int64_t)sop2);
 
 	    rr = calloc(1,sizeof(*rr));
 	    rr->rrt = RRT_OFFSET;
