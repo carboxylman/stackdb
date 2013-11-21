@@ -806,13 +806,8 @@ loctype_t location_resolve(struct location *loc,struct location_ctxt *lctxt,
     struct location tloc;
     struct location_ops *lops = NULL;
 
-    if (!lctxt || !lctxt->ops) {
-	verror("could not get location ops for current frame %d!\n",
-	       lctxt->current_frame);
-	errno = EINVAL;
-	return -1;
-    }
-    lops = lctxt->ops;
+    if (lctxt && lctxt->ops) 
+	lops = lctxt->ops;
 
     switch (loc->loctype) {
     case LOCTYPE_UNKNOWN:
@@ -1231,12 +1226,6 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
     struct symbol *tdatatype;
     REG reg = -1;
     struct location tloc;
-
-    if (!lctxt) {
-	verror("no location_ctxt!\n");
-	errno = EINVAL;
-	return -1;
-    }
 
     llen = lsymbol_len(lsymbol);
 
