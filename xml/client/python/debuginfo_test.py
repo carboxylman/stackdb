@@ -30,7 +30,7 @@ client = Client(url,cache=None)
 
 opts = client.factory.create('DebugFileOptsT')
 opts.symbolRefDepth = 8
-opts.symtabRefDepth = 8
+opts.scopeRefDepth = 8
 opts.doMultiRef = False
 opts.doManualRef = False
 opts.debugfileRefDepth = 8

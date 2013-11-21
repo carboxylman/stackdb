@@ -416,8 +416,10 @@ struct symbol *symdict_get_sym(struct symdict *symdict,const char *name,
     return symbol;
 }
 
-GSList *symdict_match_syms(struct symdict *symdict,struct rfilter *symbol_filter,
-			   symbol_type_flag_t flags) {
+GSList *symdict_match_syms_by_tab(struct symdict *symdict,
+				  struct rfilter *symbol_filter,
+				  symbol_type_flag_t flags,
+				  int no_main,int no_dup,int no_anon) {
     GHashTableIter iter;
     char *name;
     struct symbol *symbol;
@@ -428,7 +430,7 @@ GSList *symdict_match_syms(struct symdict *symdict,struct rfilter *symbol_filter
     int i;
     GSList *retval = NULL;
 
-    if (symdict->tab) {
+    if (!no_main && symdict->tab) {
 	g_hash_table_iter_init(&iter,symdict->tab);
 	while (g_hash_table_iter_next(&iter,&key,&value)) {
 	    name = (char *)key;
@@ -441,7 +443,7 @@ GSList *symdict_match_syms(struct symdict *symdict,struct rfilter *symbol_filter
 	}
     }
 
-    if (symdict->duptab) {
+    if (!no_dup && symdict->duptab) {
 	g_hash_table_iter_init(&iter,symdict->duptab);
 	while (g_hash_table_iter_next(&iter,&key,&value)) {
 	    name = (char *)key;
@@ -463,7 +465,7 @@ GSList *symdict_match_syms(struct symdict *symdict,struct rfilter *symbol_filter
 	}
     }
 
-    if (!symbol_filter && symdict->anontab) {
+    if (!no_anon && !symbol_filter && symdict->anontab) {
 	g_hash_table_iter_init(&iter,symdict->anontab);
 	while (g_hash_table_iter_next(&iter,NULL,&value)) {
 	    symbol = (struct symbol *)value;
@@ -474,4 +476,9 @@ GSList *symdict_match_syms(struct symdict *symdict,struct rfilter *symbol_filter
     }
 
     return retval;
+}
+
+GSList *symdict_match_syms(struct symdict *symdict,struct rfilter *symbol_filter,
+			   symbol_type_flag_t flags) {
+    return symdict_match_syms_by_tab(symdict,symbol_filter,flags,0,0,0);
 }

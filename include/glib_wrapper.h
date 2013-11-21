@@ -19,6 +19,8 @@
 #ifndef _UTIL_GLIB_H
 #define _UTIL_GLIB_H
 
+#include <glib.h>
+
 #define v_g_slist_foreach(gslhead,gslcur,elm)				\
     for ((gslcur) = (gslhead),						\
 	     (elm) = (gslcur) ? (typeof(elm))(gslcur)->data : NULL;	\
@@ -34,6 +36,22 @@
 	     (elm1) = (gslcur1) ? (typeof(elm1))(gslcur1)->data : NULL,	\
 	     (elm2) = (gslcur2) ? (typeof(elm2))(gslcur2)->data : NULL) 
 #define v_g_slist_steal(gslcur)  (gslcur)->data = NULL
+
+static inline GSList *g_hash_table_get_values_slist(GHashTable *t) {
+    GSList *retval = NULL;
+    GHashTableIter iter;
+    gpointer v;
+
+    if (!t)
+	return NULL;
+
+    g_hash_table_iter_init(&iter,t);
+    while (g_hash_table_iter_next(&iter,NULL,&v)) {
+	retval = g_slist_prepend(retval,v);
+    }
+
+    return retval;
+}
 
 /*
 #define vg_slist_foreach_safe(gslhead,gslcur,data,gslprev)		\

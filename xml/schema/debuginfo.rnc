@@ -20,7 +20,7 @@ default namespace vmi1 = "http://anathema.flux.utah.edu/schema/vmi/1"
 
 include "common.rnc"
 
-SymtabRef = xsd:IDREF
+ScopeRef = xsd:IDREF
 SymbolRef = xsd:IDREF
 
 #
@@ -64,22 +64,25 @@ SymbolRef = xsd:IDREF
 # The following two patterns cause trang to spit xs:groups instead of 
 # complex types, so we can't use them with gsoap, and must inline them.
 #
-#SymtabOrSymtabRef = 
-#    (element symtab { SymtabT } | element symtabRef { SymtabRef })
-#SymtabsOrSymtabRefs = (element symtab { SymtabT }+ 
-#                       | element symtabRef { SymtabRef }+)
+#ScopeOrScopeRef = 
+#    (element scope { ScopeT } | element scopeRef { ScopeRef })
+#ScopesOrScopeRefs = (element scope { ScopeT }+ 
+#                       | element scopeRef { ScopeRef }+)
 #
 # ... but this pattern causes a complex type, so it's safe!
 #
-#SymtabsOrSymtabRefsOpt = (element symtab { SymtabT }* 
-#                          | element symtabRef { SymtabRef }*)
+#ScopesOrScopeRefsOpt = (element scope { ScopeT }* 
+#                          | element scopeRef { ScopeRef }*)
 #
 
 SymbolT = 
     (element variable { VariableT } | element function { FunctionT }
-     | element label { LabelT } | element voidType { VoidTypeT } 
+     | element label { LabelT } | element root { RootT } 
+     | element block { BlockT } 
+     | element voidType { VoidTypeT } 
      | element baseType { BaseTypeT } 
      | element pointerType { PointerTypeT }
+     | element refType { RefTypeT }
      | element typedefType { TypedefTypeT } 
      | element constType { ConstTypeT }
      | element volatileType { VolatileTypeT } 
@@ -87,13 +90,19 @@ SymbolT =
      | element enumType { EnumTypeT } 
      | element structType { StructTypeT }
      | element unionType { UnionTypeT } 
+     | element classType { ClassTypeT } 
+     | element templateType { TemplateTypeT } 
+     | element namespaceType { NamespaceTypeT } 
      | element functionType { FunctionTypeT })
 
 SymbolsT = 
     (element variable { VariableT } | element function { FunctionT }
-     | element label { LabelT } | element voidType { VoidTypeT } 
+     | element label { LabelT } | element root { RootT } 
+     | element block { BlockT } 
+     | element voidType { VoidTypeT } 
      | element baseType { BaseTypeT } 
      | element pointerType { PointerTypeT }
+     | element refType { RefTypeT }
      | element typedefType { TypedefTypeT } 
      | element constType { ConstTypeT }
      | element volatileType { VolatileTypeT } 
@@ -101,13 +110,19 @@ SymbolsT =
      | element enumType { EnumTypeT } 
      | element structType { StructTypeT }
      | element unionType { UnionTypeT } 
+     | element classType { ClassTypeT } 
+     | element templateType { TemplateTypeT } 
+     | element namespaceType { NamespaceTypeT } 
      | element functionType { FunctionTypeT })+
 
 SymbolsOptT =
     (element variable { VariableT } | element function { FunctionT }
-     | element label { LabelT } | element voidType { VoidTypeT }
+     | element label { LabelT } | element root { RootT } 
+     | element block { BlockT } 
+     | element voidType { VoidTypeT }
      | element baseType { BaseTypeT }
      | element pointerType { PointerTypeT }
+     | element refType { RefTypeT }
      | element typedefType { TypedefTypeT }
      | element constType { ConstTypeT }
      | element volatileType { VolatileTypeT }
@@ -115,6 +130,9 @@ SymbolsOptT =
      | element enumType { EnumTypeT }
      | element structType { StructTypeT }
      | element unionType { UnionTypeT }
+     | element classType { ClassTypeT } 
+     | element templateType { TemplateTypeT } 
+     | element namespaceType { NamespaceTypeT } 
      | element functionType { FunctionTypeT })*
 
 #NestedSymbolT = SymbolsT
@@ -125,17 +143,13 @@ DebugFileT =
     (attribute sid { DebugFileIdT } | attribute sref { xsd:IDREF }),
     element name { text }?,
     (element version { xsd:token },
-     element debugfileType { "none" | "kernel" | "kmod" | "executable" 
-                             | "dynamic" | "relocatable" | "corefile" },
+     element debugfileType { "none" | "elf" | "dwarf" },
+     element debugfileTypeFlags {
+         element debugfileTypeFlag { "none" | "kernel" | "kmod" }*
+     },
 
-     element sourceFiles {
-         element sourceFile {
-             element filename { xsd:token },
-             element compilationDir { xsd:token },
-             element producer { xsd:token },
-             element language { xsd:token },
-             element symtab { SymtabT }
-         }*
+     element rootSymbols {
+         SymbolsT
      },
 
      element globalSymbols {
@@ -147,7 +161,7 @@ DebugFile = element debugFile { DebugFileT }
 DebugFileOptsT = 
     element debugfileRefDepth { xsd:int },
     element symbolRefDepth { xsd:int },
-    element symtabRefDepth { xsd:int },
+    element scopeRefDepth { xsd:int },
     element doMultiRef { xsd:boolean },
     element doManualRef { xsd:boolean }
 
@@ -161,16 +175,17 @@ RangesT =
 
 Ranges = element ranges { RangesT }
 
-SymtabT = 
+ScopeT = 
     (attribute sid { xsd:ID } | attribute sref { xsd:IDREF }),
-    attribute name { xsd:token }?,
-    (element ranges { RangesT },
-     element parent { SymtabT }?,
-     element symtabs { element symtab { SymtabT }* },
+    element name { text }?,
+    (element symbol { SymbolT }?,
+     element ranges { RangesT }?,
+     element parent { ScopeT }?,
+     element scopes { element scope { ScopeT }* },
      element symbols { SymbolsOptT },
      element anonSymbols { SymbolsOptT })?
 
-Symtab = element symtab { SymtabT }
+Scope = element scope { ScopeT }
 
 Addr = element addr { ADDR }
 Reg = element reg { REGNO }
@@ -181,21 +196,24 @@ RegOffset = element regOffset {
 }
 MemberOffset = element memberOffset { OFFSET }
 FbRegOffset = element fbRegOffset { OFFSET }
-ListLoc = element rangeLocList {
-    element rangeLoc {
+LocList = element locList {
+    element locListLoc {
         attribute start { ADDR },
 	attribute end { ADDR },
         element location { LocationT }
     }+
 }
-RuntimeLoc = element runtimeLoc { xsd:string }
+ImplicitWord = element iword { ADDR }
+ImplicitData = element idata { xsd:hexBinary }
+RuntimeLoc = element runtimeLoc { xsd:hexBinary }
 
 LocationT =
     attribute locationType { "none" | "addr" | "reg" | "regAddr" | "regOffset" 
-                             | "memberOffset"| "fbRegOffset" | "list"
+                             | "memberOffset" | "fbRegOffset" | "list"
+			     | "implicitWord" | "ImplicitData"
 			     | "runtime" }, 
     ( Addr | Reg | RegAddr | RegOffset | MemberOffset | FbRegOffset 
-      | ListLoc | RuntimeLoc )?
+      | LocList | ImplicitWord | ImplicitData | RuntimeLoc )?
 
 SymbolHeader = 
     #
@@ -223,7 +241,6 @@ SizeT =
     (element bitSize { xsd:unsignedInt },
      element bitOffset { xsd:unsignedInt },
      element containingTypeByteSize { xsd:unsignedInt })?
-    
 
 SymbolCommon = 
     element declaration {
@@ -232,7 +249,7 @@ SymbolCommon =
         attribute isPrototyped { xsd:boolean }
     },
     element size { SizeT }?,
-    element source { "dwarf" | "elf" }
+    element source { "elf" | "dwarf" }
 
 InstanceSymbol = 
     element addr { ADDR }?,
@@ -243,6 +260,14 @@ InstanceSymbol =
         element instances { SymbolsT }?,
         element origin { SymbolT }?
     }
+
+RootT = 
+    SymbolHeader,
+    (SymbolCommon,
+     element compilationDir { xsd:token },
+     element producer { xsd:token },
+     element language { xsd:token },
+     element scope { ScopeT })
 
 VariableT =
     SymbolHeader,
@@ -265,8 +290,13 @@ FunctionT =
      element entryPC { ADDR }?,
      element prologueEnd { ADDR }?,
      element epilogueBegin { ADDR }?,
-     Ranges,
-     element symtab { SymtabT })?
+     element scope { ScopeT })?
+
+BlockT = 
+    SymbolHeader,
+    (SymbolCommon,
+     InstanceSymbol,
+     element scope { ScopeT })?
 
 LabelT = 
     SymbolHeader,
@@ -275,7 +305,7 @@ LabelT =
 
 VoidTypeT =
     SymbolHeader,
-    element source { "dwarf" | "elf" }
+    element source { "elf" | "dwarf" }
 
 BaseTypeT = 
     SymbolHeader,
@@ -288,6 +318,11 @@ BaseTypeT =
      })?
 
 PointerTypeT = 
+    SymbolHeader,
+    (SymbolCommon,
+     element symtype { SymbolT })?
+
+RefTypeT = 
     SymbolHeader,
     (SymbolCommon,
      element symtype { SymbolT })?
@@ -329,6 +364,27 @@ StructTypeT =
      element members { SymbolsOptT })?
 
 UnionTypeT = 
+    SymbolHeader,
+    (SymbolCommon,
+     element symtype { SymbolT },
+     element memberCount { xsd:int },
+     element members { SymbolsOptT })?
+
+ClassTypeT = 
+    SymbolHeader,
+    (SymbolCommon,
+     element symtype { SymbolT },
+     element memberCount { xsd:int },
+     element members { SymbolsOptT })?
+
+NamespaceTypeT = 
+    SymbolHeader,
+    (SymbolCommon,
+     element symtype { SymbolT },
+     element memberCount { xsd:int },
+     element members { SymbolsOptT })?
+
+TemplateTypeT = 
     SymbolHeader,
     (SymbolCommon,
      element symtype { SymbolT },

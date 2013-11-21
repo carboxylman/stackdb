@@ -392,6 +392,10 @@ struct symbol *symdict_get_sym(struct symdict *symdict,const char *name,
 			       symbol_type_flag_t flags);
 GSList *symdict_match_syms(struct symdict *symdict,struct rfilter *symbol_filter,
 			   symbol_type_flag_t flags);
+GSList *symdict_match_syms_by_tab(struct symdict *symdict,
+				  struct rfilter *symbol_filter,
+				  symbol_type_flag_t flags,
+				  int no_main,int no_dup,int no_anon);
 /*
  * Removes @symbol from @symdict.  Returns 0 if success; -1 if error.
  */
