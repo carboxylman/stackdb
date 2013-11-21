@@ -835,7 +835,7 @@ loctype_t location_resolve(struct location *loc,struct location_ctxt *lctxt,
 	    }
 	}
 	if (o_loc) 
-	    location_set_addr(o_loc,LOCATION_ADDR(loc));
+	    location_set_addr(o_loc,addr);
 	return LOCTYPE_ADDR;
     case LOCTYPE_REG_ADDR:
 	errno = 0;
