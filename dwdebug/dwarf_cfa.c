@@ -888,7 +888,8 @@ int dwarf_load_cfa(struct debugfile *debugfile,
 
 	    if (aug[0] != '\0'
 		&& aug[0] != 'z'
-		&& !(aug[0] == 'e' && aug[1] == 'h')) {
+		&& !(aug[0] == 'e' && aug[1] == 'h')
+		&& aug[0] != 'S') {
 		verror("unrecognized augmentation string '%s'; skipping!\n",
 		       aug);
 		goto invalid_cie_data;
