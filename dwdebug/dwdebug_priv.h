@@ -60,8 +60,7 @@
 	    "scope(%s:0x%"PRIxSMOFFSET",[0x%"PRIxADDR",0x%"PRIxADDR"%s]," \
 	    " refcnt=%"PRIiREFCNT")", \
 	    ((s)->symbol) ? symbol_get_name((s)->symbol) : "NULL",	\
-	    ((s)->symbol) ? (s)->symbol->ref : 0,			\
-	    ((s)->range) ? (s)->range->start : 0,			\
+	    (s)->ref,((s)->range) ? (s)->range->start : 0,		\
 	    ((s)->range) ? (s)->range->end : 0,				\
 	    ((s)->range && (s)->range->next) ? ",..." : "",(s)->refcnt);
 
@@ -73,8 +72,7 @@
     verrorc("scope(%s:0x%"PRIxSMOFFSET",[0x%"PRIxADDR",0x%"PRIxADDR"%s]," \
 	    " refcnt=%"PRIiREFCNT")", \
 	    ((s)->symbol) ? symbol_get_name((s)->symbol) : "NULL",	\
-	    ((s)->symbol) ? (s)->symbol->ref : 0,			\
-	    ((s)->range) ? (s)->range->start : 0,			\
+	    (s)->ref,((s)->range) ? (s)->range->start : 0,		\
 	    ((s)->range) ? (s)->range->end : 0,				\
 	    ((s)->range && (s)->range->next) ? ",..." : "",(s)->refcnt);
  
@@ -86,8 +84,7 @@
     vwarnc( "scope(%s:0x%"PRIxSMOFFSET",[0x%"PRIxADDR",0x%"PRIxADDR"%s]," \
 	    " refcnt=%"PRIiREFCNT")", \
 	    ((s)->symbol) ? symbol_get_name((s)->symbol) : "NULL",	\
-	    ((s)->symbol) ? (s)->symbol->ref : 0,			\
-	    ((s)->range) ? (s)->range->start : 0,			\
+	    (s)->ref,((s)->range) ? (s)->range->start : 0,		\
 	    ((s)->range) ? (s)->range->end : 0,				\
 	    ((s)->range && (s)->range->next) ? ",..." : "",(s)->refcnt);
 
@@ -181,10 +178,15 @@ struct debugfile_ops {
     int (*fini)(struct debugfile *debugfile);
 };
 
-struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
+struct debugfile *debugfile_create(debugfile_type_t dtype,
+				   debugfile_type_flags_t dtflags,
 				   struct binfile *binfile,
 				   struct debugfile_load_opts *opts,
 				   struct binfile *binfile_pointing);
+struct debugfile *debugfile_create_basic(debugfile_type_t dtype,
+					 debugfile_type_flags_t dtflags,
+					 char *filename,
+					 struct debugfile_load_opts *opts);
 /* Load DWARF debuginfo into a debugfile. */
 int debugfile_load_debuginfo(struct debugfile *debugfile);
 /* Load ELF symtab info into a debugfile. */
@@ -432,8 +434,11 @@ struct range {
 struct scope {
     /* Our refcnt. */
     REFCNT refcnt;
+
     /* Our weak reference count. */
     //REFCNT refcntw;
+
+    SMOFFSET ref;
 
     /* If this scope is owned by a symbol, @symbol is that owner. */
     struct symbol *symbol;
@@ -460,7 +465,8 @@ struct scope {
     GSList *subscopes;
 };
 
-struct scope *scope_create(struct symbol *owner);
+struct scope *scope_create(struct symbol *owner,SMOFFSET ref);
+char *scope_get_name(struct scope *scope);
 int scope_insert_symbol(struct scope *scope,struct symbol *symbol);
 int scope_remove_symbol(struct scope *scope,struct symbol *symbol);
 int scope_insert_scope(struct scope *parent,struct scope *child);

@@ -1631,7 +1631,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	     * Always build the scope for these things, even if not
 	     * fully loading.  Good to get their range attributes.
 	     */
-	    newscope = scope_create(NULL);
+	    newscope = scope_create(NULL,offset);
 	}
 	else if (tag == DW_TAG_compile_unit) {
 	    symbols[level] = root;

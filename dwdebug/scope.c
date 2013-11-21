@@ -34,7 +34,7 @@
 /**
  ** Scopes.
  **/
-struct scope *scope_create(struct symbol *symbol) {
+struct scope *scope_create(struct symbol *symbol,SMOFFSET ref) {
     struct scope *retval;
 
     retval = (struct scope *)calloc(1,sizeof(*retval));
@@ -42,8 +42,16 @@ struct scope *scope_create(struct symbol *symbol) {
 	return NULL;
 
     retval->symbol = symbol;
+    retval->ref = ref;
 
     return retval;
+}
+
+char *scope_get_name(struct scope *scope) {
+    if (scope->symbol)
+	return symbol_get_name(scope->symbol);
+    else
+	return NULL;
 }
 
 int scope_insert_symbol(struct scope *scope,struct symbol *symbol) {
@@ -292,7 +300,7 @@ REFCNT scope_free(struct scope *scope,int force) {
 	}
     }
 
-    vdebug(5,LA_DEBUG,LF_SCOPE,"freeing");
+    vdebug(5,LA_DEBUG,LF_SCOPE,"freeing ");
     LOGDUMPSCOPE_NL(5,LA_DEBUG,LF_SCOPE,scope);
 
     /*
@@ -306,11 +314,13 @@ REFCNT scope_free(struct scope *scope,int force) {
      * release symbols from our dict!  This means that if the symbol is
      * not freed when we RPUT it, we have to unset symbol->scope.  Careful.
      */
-    v_g_slist_foreach(scope->subscopes,gsltmp,tmp) {
-	RPUT(tmp,scope,scope,trefcnt);
+    if (scope->subscopes) {
+	v_g_slist_foreach(scope->subscopes,gsltmp,tmp) {
+	    RPUT(tmp,scope,scope,trefcnt);
+	}
+	g_slist_free(scope->subscopes);
+	scope->subscopes = NULL;
     }
-    g_slist_free(scope->subscopes);
-    scope->subscopes = NULL;
 
     range = scope->range;
     while (range) {

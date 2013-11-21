@@ -1080,8 +1080,48 @@ char *debugfile_get_version(struct debugfile *debugfile) {
     return NULL;
 }
 
+void debugfile_init_internal(struct debugfile *debugfile);
 
-struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
+struct debugfile *debugfile_create_basic(debugfile_type_t dtype,
+					 debugfile_type_flags_t dtflags,
+					 char *filename,
+					 struct debugfile_load_opts *opts) {
+    struct debugfile *debugfile;
+
+    if (!dtype) {
+	verror("invalid dtype %d!\n",dtype);
+	errno = EINVAL;
+	return NULL;
+    }
+
+    /* create a new one */
+    debugfile = (struct debugfile *)calloc(1,sizeof(*debugfile));
+    if (!debugfile) {
+	errno = ENOMEM;
+	return NULL;
+    }
+
+    if (!opts)
+	opts = &default_debugfile_load_opts;
+
+    debugfile->type = dtype;
+    debugfile->opts = opts;
+
+    debugfile->filename = strdup(filename);
+    debugfile->id = ++debugfile_id_idx;
+    debugfile->flags = dtflags;
+    debugfile->refcnt = 0;
+
+    if (dtype == DEBUGFILE_TYPE_DWARF) 
+	debugfile->ops = &dwarf_debugfile_ops;
+
+    debugfile_init_internal(debugfile);
+
+    return debugfile;
+}
+
+struct debugfile *debugfile_create(debugfile_type_t dtype,
+				   debugfile_type_flags_t dtflags,
 				   struct binfile *binfile,
 				   struct debugfile_load_opts *opts,
 				   struct binfile *binfile_pointing) {
@@ -1097,15 +1137,19 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
     if (!opts)
 	opts = &default_debugfile_load_opts;
 
+    debugfile->type = dtype;
     debugfile->opts = opts;
 
-    debugfile->filename = strdup(binfile->filename);
+    if (binfile)
+	debugfile->filename = strdup(binfile->filename);
     debugfile->id = ++debugfile_id_idx;
     debugfile->flags = dtflags;
     debugfile->refcnt = 0;
 
-    debugfile->binfile = binfile;
-    RHOLD(binfile,debugfile);
+    if (binfile) {
+	debugfile->binfile = binfile;
+	RHOLD(binfile,debugfile);
+    }
 
     if (binfile_pointing) {
 	debugfile->binfile_pointing = binfile_pointing;
@@ -1117,15 +1161,31 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
      *
      * XXX: hack until we have more than DWARF.
      */
-    if (binfile->has_debuginfo) {
-	debugfile->type = DEBUGFILE_TYPE_DWARF;
-	debugfile->ops = &dwarf_debugfile_ops;
+    if (!dtype && binfile) {
+	if (binfile->has_debuginfo) {
+	    debugfile->type = DEBUGFILE_TYPE_DWARF;
+	}
+	else {
+	    debugfile->type = DEBUGFILE_TYPE_ELF;
+	    debugfile->ops = NULL;
+	}
     }
-    else {
-	debugfile->type = DEBUGFILE_TYPE_ELF;
-	debugfile->ops = NULL;
+    else if (!dtype) {
+	verror("no debugfile_type_t nor binfile!\n");
+	errno = EINVAL;
+	debugfile_free(debugfile,1);
+	return NULL;
     }
 
+    if (dtype == DEBUGFILE_TYPE_DWARF) 
+	debugfile->ops = &dwarf_debugfile_ops;
+
+    debugfile_init_internal(debugfile);
+
+    return debugfile;
+}
+
+void debugfile_init_internal(struct debugfile *debugfile) {
     /* initialize hashtables */
 
     /* This is the primary symtab hashtable -- they are cleaned up in
@@ -1197,8 +1257,6 @@ struct debugfile *debugfile_create(debugfile_type_flags_t dtflags,
     if (debugfile_id_tab)
 	g_hash_table_insert(debugfile_id_tab,
 			    (gpointer)(uintptr_t)debugfile->id,debugfile);
-
-    return debugfile;
 }
 
 static int _debugfile_filename_info(char *filename,char **realfilename,
@@ -1310,6 +1368,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
     struct debugfile *debugfile = NULL;
     struct binfile *binfile = NULL;
     struct binfile *binfile_debuginfo = NULL;
+    debugfile_type_t dtype;
     debugfile_type_flags_t dtflags = DEBUGFILE_TYPE_FLAG_NONE;
 
     if (_debugfile_filename_info(filename,&realname,&dtflags)) {
@@ -1362,15 +1421,19 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 		   binfile->filename,strerror(errno));
 	    goto errout;
 	}
-	else
+	else {
 	    /* Do the best we can. */
 	    binfile_debuginfo = binfile;
+	    dtype = DEBUGFILE_TYPE_ELF;
+	}
     }
+    else
+	dtype = DEBUGFILE_TYPE_DWARF;
 
     /*
      * Need to create a new debugfile.
      */
-    debugfile = debugfile_create(dtflags,
+    debugfile = debugfile_create(dtype,dtflags,
 				 binfile_debuginfo ? binfile_debuginfo : binfile,
 				 opts,
 				 (binfile_debuginfo && binfile_debuginfo != binfile) \
@@ -1405,6 +1468,7 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
     struct debugfile *debugfile = NULL;
     struct binfile *binfile = NULL;
     struct binfile *binfile_debuginfo = NULL;
+    debugfile_type_t dtype;
     debugfile_type_flags_t dtflags = DEBUGFILE_TYPE_FLAG_NONE;
 
     if (_debugfile_filename_info(filename,&realname,&dtflags)) {
@@ -1435,15 +1499,19 @@ struct debugfile *debugfile_from_instance(struct binfile_instance *bfinst,
 		   binfile->filename,strerror(errno));
 	    goto errout;
 	}
-	else
+	else {
 	    /* Do the best we can. */
 	    binfile_debuginfo = binfile;
+	    dtype = DEBUGFILE_TYPE_ELF;
+	}
     }
+    else
+	dtype = DEBUGFILE_TYPE_DWARF;
 
     /*
      * Need to create a new debugfile.
      */
-    debugfile = debugfile_create(dtflags,
+    debugfile = debugfile_create(dtype,dtflags,
 				 binfile_debuginfo ? binfile_debuginfo : binfile,
 				 opts,
 				 (binfile_debuginfo && binfile_debuginfo != binfile) \
@@ -2204,7 +2272,8 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     if (debugfile->linetab)
 	free(debugfile->linetab);
 
-    RPUT(debugfile->binfile,binfile,debugfile,trefcnt);
+    if (debugfile->binfile)
+	RPUT(debugfile->binfile,binfile,debugfile,trefcnt);
     if (debugfile->binfile_pointing) 
 	RPUT(debugfile->binfile_pointing,binfile,debugfile,trefcnt);
 
@@ -2380,7 +2449,7 @@ struct scope *symbol_write_owned_scope(struct symbol *symbol) {
 	/* We already created one. */
 	return *scope;
     else {
-	*scope = scope_create(symbol);
+	*scope = scope_create(symbol,symbol->ref);
 	RHOLD(*scope,symbol);
 	return *scope;
     }
