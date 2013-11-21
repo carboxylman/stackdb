@@ -127,7 +127,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
     if (g_hash_table_size(debugfile->addresses) == 0) 
 	return 0;
 
-    vdebug(5,LA_DEBUG,LF_DLOC,"processing lines at offset 0x%lx!\n",offset);
+    vdebug(25,LA_DEBUG,LF_DLOC,"processing lines at offset 0x%lx!\n",offset);
 
     while (linep < lineendp) {
 	start_offset = linep - linestartp;
@@ -278,7 +278,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 	     */
 	    clmatch_add(&currentclf,line,(void *)(ADDR)address);
 
-	    vdebug(5,LA_DEBUG,LF_DOTHER,"storeline %d 0x%"PRIxADDR"\n",
+	    vdebug(25,LA_DEBUG,LF_DLOC,"storeline %d 0x%"PRIxADDR"\n",
 		   line,(ADDR)address);
 
 	    if (orig_key) {
@@ -348,14 +348,14 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 			SYMBOL_WX_FUNC(candidate_symbol,sf,-1);
 
 			sf->epilogue_begin = (ADDR)address;
-			vdebug(3,LA_DEBUG,LF_DLOC,
+			vdebug(23,LA_DEBUG,LF_DLOC,
 			       "set_epilogue_begin: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 
 			sf->epilogue_known = 1;
 		    }
 		    else {
-			vdebug(5,LA_DEBUG,LF_DLOC,
+			vdebug(25,LA_DEBUG,LF_DLOC,
 			       "set_epilogue_begin: address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
@@ -372,7 +372,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 			SYMBOL_WX_FUNC(candidate_symbol,sf,-1);
 
 			sf->prologue_end = (ADDR)address;
-			vdebug(3,LA_DEBUG,LF_DLOC,
+			vdebug(23,LA_DEBUG,LF_DLOC,
 			       "set_prologue_end: %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(candidate_symbol),(ADDR)address);
 
@@ -386,7 +386,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 			symbol = NULL;
 		    }
 		    else {
-			vdebug(5,LA_DEBUG,LF_DLOC,
+			vdebug(25,LA_DEBUG,LF_DLOC,
 			       "set_prologue_end: address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(candidate_symbol));
 		    }
@@ -411,7 +411,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 			SYMBOL_WX_FUNC(symbol,sf,-1);
 
 			sf->prologue_end = (ADDR)address;
-			vdebug(3,LA_DEBUG,LF_DLOC,
+			vdebug(23,LA_DEBUG,LF_DLOC,
 			       "assuming prologue_end of %s is 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
 
@@ -419,7 +419,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 			sf->prologue_guessed = 1;
 		    }
 		    else {
-			vdebug(5,LA_DEBUG,LF_DLOC,
+			vdebug(25,LA_DEBUG,LF_DLOC,
 			       "address 0x%"PRIxADDR" not in %s\n",
 			       (ADDR)address,symbol_get_name(symbol));
 		    }
@@ -442,13 +442,13 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 			g_hash_table_lookup(debugfile->addresses,
 					    (gpointer)(ADDR)address);
 		    if (symbol && SYMBOL_IS_FUNC(symbol)) {
-			vdebug(3,LA_DEBUG,LF_DLOC,
+			vdebug(23,LA_DEBUG,LF_DLOC,
 			       "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 			       symbol_get_name(symbol),(ADDR)address);
 			candidate_symbol = symbol;
 		    }
 		    else 
-			vdebug(5,LA_DEBUG,LF_DLOC,
+			vdebug(25,LA_DEBUG,LF_DLOC,
 			       "did not find function at 0x%"PRIxADDR"\n",
 			       (ADDR)address);
 		}
@@ -494,7 +494,7 @@ int dwarf_get_lines(struct symbol_root_dwarf *srd,Dwarf_Off offset) {
 			    g_hash_table_lookup(debugfile->addresses,
 						(gpointer)(ADDR)address);
 			if (symbol && SYMBOL_IS_FUNC(symbol)) {
-			    vdebug(3,LA_DEBUG,LF_DLOC,
+			    vdebug(23,LA_DEBUG,LF_DLOC,
 				   "found candidate prologue function %s at 0x%"PRIxADDR"\n",
 				   symbol_get_name(symbol),(ADDR)address);
 			    candidate_symbol = symbol;

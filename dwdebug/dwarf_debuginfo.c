@@ -909,7 +909,7 @@ static struct range *dwarf_get_ranges(struct symbol_root_dwarf *srd,
     readp = debugfile->rangetab + offset;
     endp = debugfile->rangetab + debugfile->rangetablen;
 
-    vdebug(5,LA_DEBUG,LF_DLOC,"starting (rangetab len %d, offset %d)\n",
+    vdebug(25,LA_DEBUG,LF_DLOC,"starting (rangetab len %d, offset %d)\n",
 	   debugfile->rangetablen,offset);
 
     while (readp < endp) {
@@ -933,7 +933,7 @@ static struct range *dwarf_get_ranges(struct symbol_root_dwarf *srd,
 
 	if (begin == (Dwarf_Addr)-1l) {
 	    /* Base address entry.  */
-	    vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] base address 0x%" PRIxADDR "\n",
+	    vdebug(25,LA_DEBUG,LF_DLOC,"[%6tx] base address 0x%" PRIxADDR "\n",
 		   loffset,end);
 	    have_base = 1;
 	    base = end;
@@ -941,9 +941,9 @@ static struct range *dwarf_get_ranges(struct symbol_root_dwarf *srd,
 	else if (begin == 0 && end == 0) {
 	    /* End of list entry.  */
 	    if (len == 0)
-		vwarn("[%6tx] empty list\n",loffset);
+		vwarnopt(25,LA_DEBUG,LF_DLOC,"[%6tx] empty list\n",loffset);
 	    else 
-		vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] end of list\n",loffset);
+		vdebug(25,LA_DEBUG,LF_DLOC,"[%6tx] end of list\n",loffset);
 	    break;
 	}
 	else {
@@ -1004,7 +1004,7 @@ static struct location *dwarf_get_loclistloc(struct symbol_root_dwarf *srd,
     readp = debugfile->loctab + offset;
     endp = debugfile->loctab + debugfile->loctablen;
 
-    vdebug(5,LA_DEBUG,LF_DLOC,"starting (loctab len %d, offset %d)\n",
+    vdebug(25,LA_DEBUG,LF_DLOC,"starting (loctab len %d, offset %d)\n",
 	   debugfile->loctablen,offset);
 
     retval = location_create();
@@ -1030,7 +1030,7 @@ static struct location *dwarf_get_loclistloc(struct symbol_root_dwarf *srd,
 
 	if (begin == (Dwarf_Addr)-1l) {
 	    /* Base address entry.  */
-	    vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] base address 0x%" PRIxADDR "\n",
+	    vdebug(25,LA_DEBUG,LF_DLOC,"[%6tx] base address 0x%" PRIxADDR "\n",
 		   loffset,end);
 	    have_base = 1;
 	    base = end;
@@ -1038,10 +1038,10 @@ static struct location *dwarf_get_loclistloc(struct symbol_root_dwarf *srd,
 	else if (begin == 0 && end == 0) {
 	    /* End of list entry.  */
 	    if (len == 0)
-		vwarnopt(4,LA_DEBUG,LF_DWARF | LF_DLOC,
+		vwarnopt(24,LA_DEBUG,LF_DWARF | LF_DLOC,
 			 "[%6tx] empty list\n",loffset);
 	    else 
-		vdebug(5,LA_DEBUG,LF_DLOC,"[%6tx] end of list\n");
+		vdebug(25,LA_DEBUG,LF_DLOC,"[%6tx] end of list\n");
 	    break;
 	}
 	else {
@@ -1057,13 +1057,13 @@ static struct location *dwarf_get_loclistloc(struct symbol_root_dwarf *srd,
 
 	    /* GCC apparently produces these meaningless entries; ignore them! */
 	    if (begin == end) {
-		vwarnopt(4,LA_DEBUG,LF_DWARF | LF_DLOC,
+		vwarnopt(24,LA_DEBUG,LF_DWARF | LF_DLOC,
 			 "[%6tx] begin (0x%"PRIxADDR") == end (0x%"PRIxADDR")\n",
 			 loffset,begin,end);
 		goto cont;
 	    }
 
-	    vdebug(5,LA_DEBUG,LF_DLOC,
+	    vdebug(25,LA_DEBUG,LF_DLOC,
 		   "[%6tx] loc expr range(0x%"PRIxADDR",0x%"PRIxADDR") len %hd\n",
 		   loffset,begin,end,exprlen);
 
@@ -1071,12 +1071,12 @@ static struct location *dwarf_get_loclistloc(struct symbol_root_dwarf *srd,
 					  exprlen,attr);
 
 	    if (!tmploc) {
-		vwarnopt(9,LA_DEBUG,LF_DLOC,
+		vwarnopt(29,LA_DEBUG,LF_DLOC,
 			 "get_static_ops (%d) failed!\n",exprlen);
 		goto errout;
 	    }
 	    else {
-		vdebug(5,LA_DEBUG,LF_DLOC,
+		vdebug(25,LA_DEBUG,LF_DLOC,
 		       "get_static_ops (%d) succeeded!\n",exprlen);
 	    }
 
