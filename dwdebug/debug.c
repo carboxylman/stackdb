@@ -2516,6 +2516,8 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 	free(debugfile->rangetab);
     if (debugfile->linetab)
 	free(debugfile->linetab);
+    if (debugfile->frametab)
+	free(debugfile->frametab);
 
     if (debugfile->binfile)
 	RPUT(debugfile->binfile,binfile,debugfile,trefcnt);
