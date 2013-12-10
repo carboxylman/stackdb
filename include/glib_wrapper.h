@@ -37,6 +37,22 @@
 	     (elm2) = (gslcur2) ? (typeof(elm2))(gslcur2)->data : NULL) 
 #define v_g_slist_steal(gslcur)  (gslcur)->data = NULL
 
+static inline GSList *g_hash_table_get_keys_slist(GHashTable *t) {
+    GSList *retval = NULL;
+    GHashTableIter iter;
+    gpointer k;
+
+    if (!t)
+	return NULL;
+
+    g_hash_table_iter_init(&iter,t);
+    while (g_hash_table_iter_next(&iter,&k,NULL)) {
+	retval = g_slist_prepend(retval,k);
+    }
+
+    return retval;
+}
+
 static inline GSList *g_hash_table_get_values_slist(GHashTable *t) {
     GSList *retval = NULL;
     GHashTableIter iter;
