@@ -1316,13 +1316,28 @@ void debugfile_init_internal(struct debugfile *debugfile) {
 			    (gpointer)(uintptr_t)debugfile->id,debugfile);
 }
 
+static int __realpath(char *filename,char **realfilename) {
+    char *rpname;
+
+    rpname = realpath(filename,NULL);
+    if (!rpname)
+	return -1;
+    else {
+	*realfilename = calloc(strlen(rpname)+1,sizeof(char));
+	sprintf(*realfilename,"%s",rpname);
+	free(rpname);
+	return 0;
+    }
+}
+
 static int _debugfile_filename_info(char *filename,char **realfilename,
 				    debugfile_type_flags_t *dtflags) {
     struct stat sbuf;
-    char *realname;
+    char *realname = NULL;
 
-    realname = realpath(filename,NULL);
-    if (realname && strcmp(realname,filename) == 0) {
+    if (__realpath(filename,&realname) == 0
+	&& realname
+	&& strcmp(realname,filename) == 0) {
 	free(realname);
 	realname = filename;
     }
@@ -1420,7 +1435,7 @@ char *debugfile_search_path(char *filename,char *root_prefix,char *debug_postfix
  */
 struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
 				      struct array_list *debugfile_load_opts_list) {
-    char *realname = filename;
+    char *realname;
     struct debugfile_load_opts *opts = NULL;
     struct debugfile *debugfile = NULL;
     struct binfile *binfile = NULL;
@@ -1428,6 +1443,7 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
     debugfile_type_t dtype;
     debugfile_type_flags_t dtflags = DEBUGFILE_TYPE_FLAG_NONE;
 
+    realname = filename;
     if (_debugfile_filename_info(filename,&realname,&dtflags)) {
 	vwarnopt(1,LA_DEBUG,LF_DFILE,
 		 "failed to get filename info for (%s): %s\n",
