@@ -89,7 +89,7 @@ int main(int argc,char **argv) {
 	    ++meta;
 	    break;
 	case 'l':
-	    if (vmi_set_log_area_flaglist(optarg,NULL)) {
+	    if (vmi_add_log_area_flaglist(optarg,NULL)) {
 		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
 		exit(-1);
 	    }
@@ -109,6 +109,7 @@ int main(int argc,char **argv) {
 
 		array_list_append(opts_list,opts);
 	    }
+	    free(optargc);
 	    break;
     dlo_err:
 	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
@@ -311,6 +312,13 @@ int main(int argc,char **argv) {
 #ifdef REF_DEBUG
     REF_DEBUG_REPORT_FINISH();
 #endif
+
+    if (opts_list) {
+	array_list_foreach(opts_list,i,opts) {
+	    debugfile_load_opts_free(opts);
+	}
+	array_list_free(opts_list);
+    }
 
     return 0;
 }
