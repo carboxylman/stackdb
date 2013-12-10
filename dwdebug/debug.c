@@ -2562,7 +2562,7 @@ struct symbol *symbol_create(symbol_type_t symtype,symbol_source_t source,
     /* This must be set before the call to symbol_link_owned_scope()! */
     symbol->scope = scope;
 
-    vdebug(LA_DEBUG,LF_SYMBOL,5,"offset %"PRIxSMOFFSET"\n",offset);
+    vdebug(5,LA_DEBUG,LF_SYMBOL,"offset %"PRIxSMOFFSET" %p\n",offset,symbol);
 
     return symbol;
 }
