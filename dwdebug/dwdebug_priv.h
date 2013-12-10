@@ -175,6 +175,7 @@ struct debugfile_ops {
     int (*frame_read_cfa)(struct debugfile *debugfile,
 			  struct location_ctxt *lctxt,ADDR *o_cfaaddr);
 
+    int (*symbol_root_priv_free)(struct debugfile *debugfile,struct symbol *root);
     int (*fini)(struct debugfile *debugfile);
 };
 
@@ -200,17 +201,25 @@ struct location *dwarf_get_static_ops(struct symbol_root_dwarf *srd,
 				      unsigned int attr);
 struct symbol *debugfile_lookup_root(struct debugfile *debugfile,
 				     SMOFFSET offset);
+struct symbol *debugfile_lookup_root_name(struct debugfile *debugfile,
+					  char *name);
 int debugfile_insert_root(struct debugfile *debugfile,struct symbol *symbol);
 int debugfile_remove_root(struct debugfile *debugfile,struct symbol *symbol);
 int debugfile_update_root(struct debugfile *debugfile,struct symbol *symbol);
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol);
 struct symbol *debugfile_find_type(struct debugfile *debugfile,
 				   char *typename);
-int debugfile_add_type_name(struct debugfile *debugfile,
-			    char *name,struct symbol *symbol);
+int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol);
+int debugfile_replace_type(struct debugfile *debugfile,struct symbol *symbol);
+
+void debugfile_save_declaration(struct debugfile *debugfile,
+				struct symbol *symbol);
 void debugfile_handle_declaration(struct debugfile *debugfile,
 				  struct symbol *symbol);
 void debugfile_resolve_declarations(struct debugfile *debugfile);
+int debugfile_declaration_copy_definition(struct debugfile *debugfile,
+					  struct symbol *declaration,
+					  struct symbol *definition);
 int debugfile_define_by_specification(struct debugfile *debugfile,
 				      struct symbol *specification,
 				      struct symbol *definition);
@@ -401,9 +410,9 @@ GSList *symdict_match_syms_by_tab(struct symdict *symdict,
  */
 int symdict_remove_symbol(struct symdict *symdict,struct symbol *symbol);
 void symdict_dump(struct symdict *symdict,struct dump_info *ud);
-typedef void (*symdict_symbol_dtor_t)(struct symbol *symbol);
+typedef void (*symdict_symbol_dtor_t)(struct symbol *symbol,void *priv);
 extern symdict_symbol_dtor_t default_symdict_symbol_dtor;
-void symdict_free(struct symdict *symdict,symdict_symbol_dtor_t ssd);
+void symdict_free(struct symdict *symdict,symdict_symbol_dtor_t ssd,void *priv);
 
 
 /**
@@ -472,6 +481,7 @@ struct scope {
 struct scope *scope_create(struct symbol *owner,SMOFFSET ref);
 char *scope_get_name(struct scope *scope);
 int scope_insert_symbol(struct scope *scope,struct symbol *symbol);
+int scope_hold_symbol(struct scope *scope,struct symbol *symbol);
 int scope_remove_symbol(struct scope *scope,struct symbol *symbol);
 int scope_insert_scope(struct scope *parent,struct scope *child);
 int scope_remove_scope(struct scope *parent,struct scope *child);
@@ -819,7 +829,6 @@ struct symbol {
 	issynthetic:1,
 	isshared:1,
 	usesshareddatatype:1,
-	freenextpass:1,
 	isexternal:1,
 	has_linkage_name:1,
 	isdeclaration:1,
@@ -1001,7 +1010,7 @@ struct symbol_root_dwarf {
 
     /* Kept until the whole CU is loaded. */
     GHashTable *reftab;
-    GHashTable *abstract_origins;
+    GHashTable *refuselist;
 };
 
 struct symbol_root_elf {
@@ -1417,11 +1426,9 @@ int symbol_set_location(struct symbol *symbol,struct location *loc);
 int symbol_set_inline_info(struct symbol *symbol,int isinlined,int isdeclinline);
 int symbol_set_inline_origin(struct symbol *symbol,
 			     SMOFFSET ref,struct symbol *origin);
-int symbol_set_inline_instances(struct symbol *symbol,GSList *instances);
+/* int symbol_set_inline_instances(struct symbol *symbol,GSList *instances); */
 int symbol_add_inline_instance(struct symbol *symbol,struct symbol *instance);
 int symbol_set_constval(struct symbol *symbol,void *value,int len,int copy);
-
-void symbol_type_mark_members_free_next_pass(struct symbol *symbol,int force);
 
 struct symbol *__symbol_get_one_member__int(struct symbol *symbol,char *member,
 					    struct array_list **chainptr);

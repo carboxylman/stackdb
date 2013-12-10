@@ -991,6 +991,8 @@ debugfile_load_flags_t debugfile_load_flags_parse(char *flagstr,char *delim) {
 	    flags |= DEBUGFILE_LOAD_FLAG_NODWARF;
 	else if (strcmp(token2,"ALLRANGES") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_ALLRANGES;
+	else if (strcmp(token2,"KEEPDECLS") == 0)
+	    flags |= DEBUGFILE_LOAD_FLAG_KEEPDECLS;
 	else if (strcmp(token2,"PARTIALSYM") == 0)
 	    flags |= DEBUGFILE_LOAD_FLAG_PARTIALSYM;
 	else if (strcmp(token2,"REDUCETYPES") == 0)
@@ -1256,7 +1258,7 @@ void debugfile_init_internal(struct debugfile *debugfile) {
 						 free,
 						 (GDestroyNotify)array_list_free);
 
-    debugfile->decldefined = g_hash_table_new(g_direct_hash,g_direct_equal);
+    debugfile->decldefnsused = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     /* This is an optimization lookup hashtable, so we don't provide
      * *any* key or value destructors since we don't want them freed
@@ -1746,9 +1748,27 @@ struct symbol *debugfile_lookup_root(struct debugfile *debugfile,
 						(gpointer)(uintptr_t)offset);
 }
 
-static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
-						   struct symbol *declaration,
-						   struct symbol *definition) {
+struct symbol *debugfile_lookup_root_name(struct debugfile *debugfile,
+					  char *name) {
+    struct symbol *symbol;
+    struct array_list *alist;
+
+    symbol = (struct symbol *)g_hash_table_lookup(debugfile->srcfiles,name);
+    if (symbol)
+	return symbol;
+    alist = (struct array_list *) \
+	g_hash_table_lookup(debugfile->srcfiles_multiuse,name);
+    if (alist)
+	return (struct symbol *)array_list_item(alist,0);
+
+    return NULL;
+}
+
+int debugfile_declaration_copy_definition(struct debugfile *debugfile,
+					  struct symbol *declaration,
+					  struct symbol *definition) {
+    REFCNT trefcnt;
+
     assert(declaration->isdeclaration);
     assert(!definition->isdeclaration);
     if (declaration->type != definition->type) {
@@ -1757,10 +1777,11 @@ static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
 	       declaration,
 	       symbol_get_name(definition),SYMBOL_TYPE(definition->type),
 	       definition);
+	return -1;
     }
-    assert(declaration->type == definition->type);
+    //assert(declaration->type == definition->type);
 
-    return 0;
+    //return 0;
 
     if (definition->datatype_ref 
 	&& !symbol_get_datatype(definition) && !SYMBOL_IS_OWN_DATATYPE(definition))
@@ -1774,9 +1795,30 @@ static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
 	/*
 	 * Its definition has already been loaded; take a ref to it and
 	 * copy in its guts.
+	 *
+	 * Well, it turns out that we cannot "take a ref" to it in such
+	 * a way we can just free it, because there is no space in the
+	 * symbol struct to waste on a pointer to the definition -- so
+	 * we don't know what to release.  Furthermore, if we stored the
+	 * fact that we took the ref in the debugfile struct, we cannot
+	 * guarantee during symbol_free that we can trace back to the
+	 * root symbol, and thus the debugfile (the parent hierarchy may
+	 * have been broken already) -- so we wouldn't be able to access
+	 * the held definition.  So instead, place it in the
+	 * debugfile->decldefinitions table if it's not there, and hold
+	 * a ref on it there until the debugfile is destroyed.  One ref
+	 * for any definition; could be used by multiple declarations;
+	 * but they don't need to know it.  Could be wasteful, but it
+	 * saves us from corruption, which could occur if we freed the
+	 * definition symbol who owns the copied data before we freed
+	 * the declaration symbol.
 	 */
-	g_hash_table_insert(debugfile->decldefined,declaration,definition);
-	RHOLD(definition,declaration);
+	if (g_hash_table_lookup_extended(debugfile->decldefnsused,definition,
+					 NULL,NULL) == FALSE) {
+	    g_hash_table_insert(debugfile->decldefnsused,
+				definition,definition);
+	    RHOLD(definition,debugfile->decldefnsused);
+	}
 	declaration->decldefined = 1;
 
 	declaration->has_addr = definition->has_addr;
@@ -1786,8 +1828,14 @@ static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
 	declaration->guessed_size = definition->guessed_size;
 	memcpy(&declaration->size,&definition->size,sizeof(definition->size));
 
+	if (declaration->datatype && declaration->usesshareddatatype) {
+	    RPUT(declaration->datatype,symbol,declaration,trefcnt);
+	    declaration->usesshareddatatype = 0;
+	}
+
 	if (definition->datatype) {
 	    declaration->datatype = definition->datatype;
+	    declaration->usesshareddatatype = definition->usesshareddatatype;
 	    RHOLD(definition->datatype,declaration);
 	    declaration->decltypedefined = 1;
 	}
@@ -1803,12 +1851,34 @@ static int __debugfile_declaration_copy_definition(struct debugfile *debugfile,
     }
 }
 
+void debugfile_save_declaration(struct debugfile *debugfile,
+				struct symbol *symbol) {
+    struct array_list *decllist;
+
+    assert(symbol->isdeclaration);
+
+    if (!symbol->name)
+	return;
+
+    decllist = (struct array_list *)					\
+	g_hash_table_lookup(debugfile->decllists,symbol->name);
+    if (!decllist) {
+	decllist = array_list_create(1);
+	g_hash_table_insert(debugfile->decllists,
+			    strdup(symbol->name),decllist);
+    }
+    array_list_append(decllist,symbol);
+}
+
 void debugfile_handle_declaration(struct debugfile *debugfile,
 				  struct symbol *symbol) {
     struct symbol *definition;
     struct array_list *decllist;
 
     assert(symbol->isdeclaration);
+
+    if (!symbol->name)
+	return;
 
     if (!SYMBOL_IS_TYPE(symbol)) {
 	definition = (struct symbol *) \
@@ -1833,7 +1903,7 @@ void debugfile_handle_declaration(struct debugfile *debugfile,
     }
 
     if (!definition 
-	|| __debugfile_declaration_copy_definition(debugfile,symbol,definition)) {
+	|| debugfile_declaration_copy_definition(debugfile,symbol,definition)) {
 	/*
 	 * Maybe its definition hasn't been loaded yet, or the
 	 * definition's type hasn't been resolved yet; save it off and
@@ -1858,9 +1928,11 @@ static void __debugfile_resolve_decllist(struct debugfile *debugfile,
     struct symbol *definition;
     struct symbol *declaration;
     int total;
-    int resolved;
+    int copied;
+    int mapped;
     int i;
     int rc;
+    struct scope *declscope;
 
     type_definition = debugfile_find_type(debugfile,name);
     instance_definition = (struct symbol *) \
@@ -1874,7 +1946,7 @@ static void __debugfile_resolve_decllist(struct debugfile *debugfile,
     }
 
     total = array_list_len(decllist);
-    resolved = 0;
+    copied = mapped = 0;
     array_list_foreach(decllist,i,declaration) {
 	if (SYMBOL_IS_TYPE(declaration))
 	    definition = type_definition;
@@ -1888,23 +1960,39 @@ static void __debugfile_resolve_decllist(struct debugfile *debugfile,
 	    continue;
 	}
 
-	rc = __debugfile_declaration_copy_definition(debugfile,declaration,
-						     definition);
-	if (rc) {
-	    vwarnopt(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
-		     "could not copy definition for declaration '%s'\n",
-		     name);
-	    continue;
-	}
+	if (debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_KEEPDECLS) {
+	    rc = debugfile_declaration_copy_definition(debugfile,declaration,
+						       definition);
+	    if (rc) {
+		vwarnopt(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+			 "could not copy definition for declaration '%s'\n",
+			 name);
+		continue;
+	    }
 
-	++resolved;
-	/* Not optimized, but no big deal. */
-	array_list_foreach_delete(decllist,i);
+	    ++copied;
+	    /* Not optimized, but no big deal. */
+	    array_list_foreach_delete(decllist,i);
+	}
+	else {
+	    /*
+	     * XXX DWARF: if partial loading, then we really should go
+	     * fix up the reftab for the decl's CU!!!  It will still
+	     * point to the decl, which we are deleting!
+	     */
+	    declscope = symbol_containing_scope(declaration);
+	    scope_remove_symbol(declscope,declaration);
+	    scope_hold_symbol(declscope,definition);
+
+	    ++mapped;
+	    /* Not optimized, but no big deal. */
+	    array_list_foreach_delete(decllist,i);
+	}
     }
 
     vdebug(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
-	   "resolved %d of %d declarations named '%s'\n",
-	   resolved,total,name);
+	   "resolved %d (copied %d, mapped %d) of %d declarations named '%s'\n",
+	   copied+mapped,copied,mapped,total,name);
 
     if (array_list_len(decllist) == 0) {
 	/* NB: this frees the decllist and the hashed name. */
@@ -1912,6 +2000,18 @@ static void __debugfile_resolve_decllist(struct debugfile *debugfile,
 	    g_hash_table_iter_remove(current_iter);
 	else
 	    g_hash_table_remove(debugfile->decllists,name);
+    }
+}
+
+void debugfile_resolve_declarations(struct debugfile *debugfile) {
+    GHashTableIter iter;
+    char *name = NULL;
+    struct array_list *decllist = NULL;
+
+    g_hash_table_iter_init(&iter,debugfile->decllists);
+    while (g_hash_table_iter_next(&iter,
+				  (gpointer *)&name,(gpointer *)&decllist)) {
+	__debugfile_resolve_decllist(debugfile,name,decllist,&iter);
     }
 }
 
@@ -2113,21 +2213,7 @@ int debugfile_define_by_specification(struct debugfile *debugfile,
     return 0;
 }
 
-void debugfile_resolve_declarations(struct debugfile *debugfile) {
-    GHashTableIter iter;
-    char *name = NULL;
-    struct array_list *decllist = NULL;
-
-    g_hash_table_iter_init(&iter,debugfile->decllists);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer *)&name,(gpointer *)&decllist)) {
-	__debugfile_resolve_decllist(debugfile,name,decllist,&iter);
-    }
-}
-
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol) {
-    struct array_list *decllist;
-
     assert(SYMBOL_IS_INSTANCE(symbol));
 
     if (unlikely(g_hash_table_lookup(debugfile->globals,symbol->name)))
@@ -2137,6 +2223,7 @@ int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol) {
     vdebug(8,LA_DEBUG,LF_SYMBOL,"added global '%s' type %s (%p)\n",
 	   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type),symbol);
 
+#if 0
     if (!symbol->isdeclaration) {
 	/*
 	 * Also check if there were declarations pending on this global;
@@ -2147,6 +2234,7 @@ int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol) {
 	if (decllist) 
 	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
     }
+#endif
 
     return 0;
 }
@@ -2163,19 +2251,25 @@ struct symbol *debugfile_find_type(struct debugfile *debugfile,
     return s;
 }
 
-int debugfile_add_type_name(struct debugfile *debugfile,
-			    char *name,struct symbol *symbol) {
-    struct array_list *decllist;
+int debugfile_add_type(struct debugfile *debugfile,struct symbol *symbol) {
+    char *name;
 
     assert(SYMBOL_IS_TYPE(symbol));
 
+    name = symbol_get_name(symbol);
+
+    /*
+     * If it exists, fail (see debugfile_replace_type).
+     */
     if (unlikely(g_hash_table_lookup(debugfile->types,name)))
 	return 1;
     g_hash_table_insert(debugfile->types,name,symbol);
+    RHOLD(symbol,debugfile->types);
 
     vdebug(8,LA_DEBUG,LF_SYMBOL,"added global type '%s' type %s (%p)\n",
 	   symbol_get_name(symbol),SYMBOL_TYPE(symbol->type),symbol);
 
+#if 0
     if (!symbol->isdeclaration) {
 	/*
 	 * Also check if there were declarations pending on this global;
@@ -2186,6 +2280,49 @@ int debugfile_add_type_name(struct debugfile *debugfile,
 	if (decllist) 
 	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
     }
+#endif
+
+    return 0;
+}
+
+int debugfile_replace_type(struct debugfile *debugfile,struct symbol *symbol) {
+    char *name;
+    struct symbol *existing;
+    REFCNT trefcnt;
+
+    assert(SYMBOL_IS_TYPE(symbol));
+
+    name = symbol_get_name(symbol);
+
+    /*
+     * If it exists, unhold the previous type and use this one.  We use
+     * this to make sure shared types replace other global types.
+     */
+    existing = (struct symbol *)g_hash_table_lookup(debugfile->types,name);
+    if (existing == symbol)
+	return 0;
+    if (existing) {
+	RPUT(existing,symbol,debugfile->types,trefcnt);
+    }
+    g_hash_table_insert(debugfile->types,name,symbol);
+    RHOLD(symbol,debugfile->types);
+
+    vdebug(8,LA_DEBUG,LF_SYMBOL,"%s global type '%s' type %s (%p)\n",
+	   existing ? "replaced" : "added",symbol_get_name(symbol),
+	   SYMBOL_TYPE(symbol->type),symbol);
+
+#if 0
+    if (!symbol->isdeclaration) {
+	/*
+	 * Also check if there were declarations pending on this global;
+	 * link those symbols up if so!
+	 */
+	decllist = (struct array_list *)			\
+	    g_hash_table_lookup(debugfile->decllists,symbol->name);
+	if (decllist) 
+	    __debugfile_resolve_decllist(debugfile,symbol->name,decllist,NULL);
+    }
+#endif
 
     return 0;
 }
@@ -2238,6 +2375,10 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     g_hash_table_destroy(debugfile->pubnames);
     g_hash_table_destroy(debugfile->addresses);
     g_hash_table_destroy(debugfile->globals);
+    g_hash_table_iter_init(&iter,debugfile->types);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&symbol)) {
+	RPUT(symbol,symbol,debugfile->types,trefcnt);
+    }
     g_hash_table_destroy(debugfile->types);
     g_hash_table_destroy(debugfile->cuoffsets);
 
@@ -2267,20 +2408,6 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     }
     g_hash_table_destroy(debugfile->srcfiles_multiuse);
 
-#if 0
-    g_hash_table_iter_init(&iter,debugfile->decldefined);
-    while (g_hash_table_iter_next(&iter,&kp,&vp)) {
-	symbol = (struct symbol *)vp;
-	vdebug(5,LA_DEBUG,LF_DFILE | LF_SYMBOL,
-	       "releasing definition symbol(%s:0x%"PRIxSMOFFSET")"
-	       " held by declaration symbol %p\n",
-	       symbol_get_name(symbol),symbol->ref,kp);
-	RPUT(symbol,symbol,kp,trefcnt);
-	g_hash_table_iter_remove(&iter);
-    }
-#endif
-    g_hash_table_destroy(debugfile->decldefined);
-
     /*
      * RPUT all the shared type symbols.
      */
@@ -2292,6 +2419,22 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     g_hash_table_destroy(debugfile->shared_types);
 
     g_hash_table_destroy(debugfile->decllists);
+
+    /*
+     * RPUT all the definitions whose parts were copied to fill in
+     * declarations.
+     */
+    g_hash_table_iter_init(&iter,debugfile->decldefnsused);
+    while (g_hash_table_iter_next(&iter,&kp,NULL)) {
+	symbol = (struct symbol *)kp;
+	vdebug(5,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+	       "releasing definition symbol(%s:0x%"PRIxSMOFFSET")"
+	       " held by declaration symbols\n",
+	       symbol_get_name(symbol),symbol->ref);
+	RPUT(symbol,symbol,debugfile->decldefnsused,trefcnt);
+	g_hash_table_iter_remove(&iter);
+    }
+    g_hash_table_destroy(debugfile->decldefnsused);
 
     clrange_free(debugfile->ranges);
 
@@ -2762,7 +2905,7 @@ int symbol_type_flags_match(struct symbol *symbol,symbol_type_flag_t flags) {
     return SYMBOL_TYPE_FLAG_MATCHES(symbol,flags);
 }
 
-struct symbol *symbol_find_parent__int(struct symbol *symbol) {
+struct symbol *symbol_find_parent(struct symbol *symbol) {
     struct scope *scope;
 
     scope = symbol->scope;
@@ -2775,17 +2918,10 @@ struct symbol *symbol_find_parent__int(struct symbol *symbol) {
     return NULL;
 }
 
-struct symbol *symbol_find_parent(struct symbol *symbol) {
-    struct symbol *retval = symbol_find_parent__int(symbol);
-    if (!retval)
-	RHOLD(retval,retval);
-    return retval;
-}
-
 struct symbol *symbol_find_root(struct symbol *symbol) {
     if (SYMBOL_IS_ROOT(symbol))
 	return symbol;
-    while ((symbol = symbol_find_parent__int(symbol)))
+    while ((symbol = symbol_find_parent(symbol)))
 	if (SYMBOL_IS_ROOT(symbol))
 	    return symbol;
     return NULL;
@@ -3070,18 +3206,19 @@ int symbol_set_inline_origin(struct symbol *symbol,
     return 0;
 }
 
-int symbol_set_inline_instances(struct symbol *symbol,GSList *instances) {
+static int symbol_set_inline_instances(struct symbol *symbol,GSList *instances) {
     GSList *gsltmp;
     struct symbol *instance;
     SYMBOL_WX_INLINE(symbol,sii,-1);
 
-    sii->inline_instances = g_slist_concat(sii->inline_instances,instances);
     v_g_slist_foreach(instances,gsltmp,instance) 
 	RHOLD(instance,symbol);
+    sii->inline_instances = g_slist_concat(sii->inline_instances,instances);
 
     return 0;
 }
 
+/* NB: for now, don't check if the instance is already on our list. */
 int symbol_add_inline_instance(struct symbol *symbol,struct symbol *instance) {
     SYMBOL_WX_INLINE(symbol,sii,-1);
 
@@ -3179,20 +3316,19 @@ int symbol_change_scope(struct symbol *symbol,struct scope *scope) {
 
 static inline int __check_type_in_list(struct symbol *type,
 				       struct array_list *list) {
-    int i;
-
     if (!list)
 	return 0;
 
-    for (i = 0; i < list->len; ++i)
-	if (array_list_item(list,i) == type)
-	    return 1;
+    if (array_list_find(list,type) > -1)
+	return 1;
+
     return 0;
 }
 
 static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
 			       struct array_list **t1ss,
 			       struct array_list **t2ss,
+			       GHashTable *eqcache,
 			       GHashTable *updated_datatype_refs) {
     GSList *m1_mlist;
     GSList *m2_mlist;
@@ -3209,8 +3345,8 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
 
     if (t1 == t2)
 	return 0;
-
-    //vwarn("t1 = %p t2 = %p\n",t1,t2);
+    if (eqcache && g_hash_table_lookup(eqcache,t1) == t2)
+	return 0;
 
     /* Check if we've already been examining this type (for nested
      * structs/unions); if we have, just return equiv so that the
@@ -3221,10 +3357,16 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
 	rc1 = __check_type_in_list(t1,*t1ss);
     if (t2ss && *t2ss)
 	rc2 = __check_type_in_list(t2,*t2ss);
-    if ((rc1 || rc2) && rc1 == rc2)
+    if ((rc1 || rc2) && rc1 == rc2) {
+	vdebug(8,LA_DEBUG,LF_SYMBOL,"t1 = %p t2 = %p -> 0\n",t1,t2);
 	return 0;
-    else if (rc1 || rc2)
+    }
+    else if (rc1 || rc2) {
+	vdebug(8,LA_DEBUG,LF_SYMBOL,"t1 = %p t2 = %p -> 1\n",t1,t2);
 	return 1;
+    }
+
+    vdebug(8,LA_DEBUG,LF_SYMBOL,"t1 = %p t2 = %p -> ?\n",t1,t2);
 
     if (t1->datatype_code != t2->datatype_code)
 	return 1;
@@ -3236,11 +3378,6 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
     sn2 = symbol_get_name(t2);
     if ((!sn1 || !sn2) && sn1 != sn2)
 	return 1;
-    /*
-    else if (sn2 == (void*)0x900000009UL) {
-	vwarn("%p // %p\n",t1,t2);
-    }
-    */
     else if (!((sn1 == NULL && sn2 == NULL)
 	       || strcmp(sn1,sn2) == 0))
 	return 1;
@@ -3348,10 +3485,26 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
 	    if (t1d == t2d)
 		continue;
 
-	    if ((rc1 = __symbol_type_equiv(t1d,t2d,t1ss,t2ss,
+	    if ((rc1 = __symbol_type_equiv(t1d,t2d,t1ss,t2ss,eqcache,
 					   updated_datatype_refs))) {
 		retval = rc1;
 		break;
+	    }
+	}
+
+	if (t1->datatype_code != DATATYPE_FUNC) {
+	    array_list_remove(*t1ss);
+	    array_list_remove(*t2ss);
+	}
+
+	if (t1->datatype_code != DATATYPE_FUNC) {
+	    if (t1created) {
+		array_list_free(*t1ss);
+		*t1ss = NULL;
+	    }
+	    if (t2created) {
+		array_list_free(*t2ss);
+		*t2ss = NULL;
 	    }
 	}
 
@@ -3361,21 +3514,6 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
 	/* If we have an uneven number members, they can't be equivalent. */
 	if (m1_mlist != NULL || m2_mlist != NULL)
 	    return 1;
-
-	if (t1->datatype_code != DATATYPE_FUNC) {
-	    if (t1created) {
-		array_list_free(*t1ss);
-		*t1ss = NULL;
-	    }
-	    else 
-		array_list_remove(*t1ss);
-	    if (t2created) {
-		array_list_free(*t2ss);
-		*t2ss = NULL;
-	    }
-	    else 
-		array_list_remove(*t2ss);
-	}
 
 	break;
     case DATATYPE_ENUM:
@@ -3450,23 +3588,20 @@ static int __symbol_type_equiv(struct symbol *t1,struct symbol *t2,
 	}
 	if (t1d == t2d)
 	    return 0;
-	if (t2d && t1d) {
-	    if (t2d->name == (void *)0x900000009UL || t1d->name == (void *)0x900000009UL) {
-		vwarn("1 %p // 2 %p // // // d %p // d %p\n",t1,t2,t1d,t2d);
-	    }
-	}
-	retval = __symbol_type_equiv(t1d,t2d,t1ss,t2ss,updated_datatype_refs);
+	retval = __symbol_type_equiv(t1d,t2d,t1ss,t2ss,eqcache,updated_datatype_refs);
 	return retval;
     }
 
     /*
      * If we got here, everything's good!
      */
+    if (eqcache) 
+	g_hash_table_insert(eqcache,t1,t2);
     return 0;
 }
 
 int symbol_type_equal(struct symbol *t1,struct symbol *t2,
-		      GHashTable *updated_datatype_refs) {
+		      GHashTable *eqcache,GHashTable *updated_datatype_refs) {
     struct array_list *t1ss = NULL;
     struct array_list *t2ss = NULL;
     int retval;
@@ -3474,7 +3609,7 @@ int symbol_type_equal(struct symbol *t1,struct symbol *t2,
     if (!SYMBOL_IS_TYPE(t1) || !SYMBOL_IS_TYPE(t2))
 	return -1;
 
-    retval = __symbol_type_equiv(t1,t2,&t1ss,&t2ss,updated_datatype_refs);
+    retval = __symbol_type_equiv(t1,t2,&t1ss,&t2ss,eqcache,updated_datatype_refs);
 
     return retval;
 }
@@ -4042,10 +4177,12 @@ void symbol_free_inline(struct symbol *symbol) {
 
 	sii->origin = NULL;
 
+	/*
 	if (symbol->datatype) {
 	    RPUT(symbol->datatype,symbol,symbol,trefcnt);
 	    symbol->datatype = NULL;
 	}
+	*/
     }
 
     free(sii);
@@ -4067,11 +4204,20 @@ void symbol_free_extra(struct symbol *symbol) {
 	    free(sr->producer);
 	if (sr->language && !sr->language_nofree)
 	    free(sr->language);
-	if (sr->scope)
+	if (sr->scope) {
+	    if (sr->scope->symbol == symbol)
+		sr->scope->symbol = NULL;
 	    RPUT(sr->scope,scope,symbol,trefcnt);
-	/* XXX: for DWARF and ELF symbols, we can just free @priv */
-	if (sr->priv)
-	    free(sr->priv);
+	}
+
+	if (sr->priv) {
+	    if (sr->debugfile 
+		&& sr->debugfile->ops 
+		&& sr->debugfile->ops->symbol_root_priv_free)
+		sr->debugfile->ops->symbol_root_priv_free(sr->debugfile,symbol);
+	    else
+		free(sr->priv);
+	}
 	free(sr);
     }
     /* NB: remember to RPUT on all members, not just on the scopes. */
@@ -4083,8 +4229,11 @@ void symbol_free_extra(struct symbol *symbol) {
 	    }
 	    g_slist_free(sf->members);
 	}
-	if (sf->scope)
+	if (sf->scope) {
+	    if (sf->scope->symbol == symbol)
+		sf->scope->symbol = NULL;
 	    RPUT(sf->scope,scope,symbol,trefcnt);
+	}
 	if (sf->fbloc)
 	    location_free(sf->fbloc);
 	if (sf->ii)
@@ -4115,8 +4264,11 @@ void symbol_free_extra(struct symbol *symbol) {
 	    }
 	    g_slist_free(sb->members);
 	}
-	if (sb->scope)
+	if (sb->scope) {
+	    if (sb->scope->symbol == symbol)
+		sb->scope->symbol = NULL;
 	    RPUT(sb->scope,scope,symbol,trefcnt);
+	}
 	if (sb->ii)
 	    symbol_free_inline(symbol);
 	free(sb);
@@ -4141,8 +4293,11 @@ void symbol_free_extra(struct symbol *symbol) {
 	    }
 	    g_slist_free(sc->members);
 	}
-	if (sc->scope)
+	if (sc->scope) {
+	    if (sc->scope->symbol == symbol)
+		sc->scope->symbol = NULL;
 	    RPUT(sc->scope,scope,symbol,trefcnt);
+	}
 	free(sc);
     }
 }
@@ -4150,13 +4305,6 @@ void symbol_free_extra(struct symbol *symbol) {
 REFCNT symbol_free(struct symbol *symbol,int force) {
     int retval = symbol->refcnt;
     REFCNT trefcnt;
-    struct debugfile *debugfile;
-    struct symbol *root;
-    struct symbol_root_dwarf *srd;
-    struct symbol *definition;
-
-    if (symbol->freenextpass) 
-	return symbol->refcnt;
 
     if (symbol->refcnt) {
 	if (!force) {
@@ -4193,11 +4341,12 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	RPUT(symbol->datatype,symbol,symbol,trefcnt);
 	symbol->datatype = NULL;
     }
+
     /*
      * If we copied definition info from some other symbol, release that
      * stuff before we do anything else.
      */
-    else if (symbol->decldefined) {
+    if (symbol->decldefined) {
 	if (symbol->decltypedefined && symbol->datatype) {
 	    symbol->decltypedefined = 0;
 	    RPUT(symbol->datatype,symbol,symbol,trefcnt);
@@ -4205,33 +4354,12 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
 	}
 
 	symbol->decldefined = 0;
-	/* Figure otu where to release, argh. */
-
-	root = symbol_find_root(symbol);
-	if (!root) {
-	    vwarn("could not find root to RPUT definition symbol; leak!\n");
-	}
-	else {
-	    srd = (struct symbol_root_dwarf *)(SYMBOLX_ROOT(root)->priv);
-	    if (!srd) {
-		vwarn("could not find dwarf info for root ");
-		WARNDUMPSYMBOL(root);
-		vwarnc("; will leak definition!\n");
-	    }
-	    else {
-		debugfile = srd->debugfile;
-		if (debugfile && debugfile->decldefined) {
-		    definition = (struct symbol *)			\
-			g_hash_table_lookup(debugfile->decldefined,symbol);
-		    if (!definition) 
-			vwarn("could not find definition for decl RPUT; leak!\n");
-		    else 
-			RPUT(definition,symbol,symbol,trefcnt);
-		}
-		else 
-		    vwarn("could not find debugfile/decldef for decl RPUT; leak!\n");
-	    }
-	}
+	/*
+	 * See the comments in struct debugfile::decldefnsused ; thus,
+	 * we just NULL this out.  The definition symbol "owns" this
+	 * pointer, and it will be freed at the conclusion of
+	 * debugfile_free.
+	 */
 	symbol->extra.exists = NULL;
     }
 
@@ -4248,21 +4376,6 @@ REFCNT symbol_free(struct symbol *symbol,int force) {
     free(symbol);
 
     return retval;
-}
-
-void symbol_type_mark_members_free_next_pass(struct symbol *symbol,int force) {
-    GSList *gsltmp;
-    struct symbol *member;
-
-    /*
-     * We have to recurse through any symbol that has members, because
-     * those members are not in any symbol tables, so they won't be freed.
-     */
-    v_g_slist_foreach(SYMBOLX_MEMBERS(symbol),gsltmp,member) {
-	member->freenextpass = 1;
-    }
-
-    return;
 }
 
 /**

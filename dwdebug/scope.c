@@ -70,9 +70,34 @@ int scope_insert_symbol(struct scope *scope,struct symbol *symbol) {
     return 0;
 }
 
+int scope_hold_symbol(struct scope *scope,struct symbol *symbol) {
+    int rc;
+
+    if (!scope->symdict)
+	scope->symdict = symdict_create();
+
+    rc = symdict_insert_symbol(scope->symdict,symbol);
+    if (rc)
+	return rc;
+
+    RHOLD(symbol,scope);
+
+    return 0;
+}
+
 int scope_insert_scope(struct scope *parent,struct scope *child) {
     if (parent->subscopes && g_slist_find(parent->subscopes,child))
 	return -1;
+
+    /*
+     * If this is a type scope inside a non-type scope, don't add it as
+     * a subscope!  Scope hierarchies should be pure -- only types
+     * should have searchabl
+     */
+    /*
+    if (child->symbol && SYMBOL_IS_TYPE(child->symbol))
+	return -1;
+    */
 
     parent->subscopes = g_slist_append(parent->subscopes,child);
 
@@ -90,10 +115,15 @@ int scope_remove_scope(struct scope *parent,struct scope *child) {
     if (child->parent != parent)
 	return -1;
 
-    if (!g_slist_remove(parent->subscopes,child)) 
-	return -1;
+    parent->subscopes = g_slist_remove(parent->subscopes,child);
 
-    child->parent = NULL;
+    /*
+     * NB: since the same symbol can be on more than one scope, only
+     * undo the parent link if the parent is the one removing this
+     * symbol.
+     */
+    if (child->parent == parent)
+	child->parent = NULL;
     RPUT(child,scope,parent,trefcnt);
 
     return 0;
@@ -102,6 +132,16 @@ int scope_remove_scope(struct scope *parent,struct scope *child) {
 int scope_remove_symbol(struct scope *scope,struct symbol *symbol) {
     int rc;
     REFCNT trefcnt;
+    struct scope *symbol_scope;
+
+    /*
+     * NB: if we delete a symbol that we had placed into our scope, and
+     * if that symbol owned a scope, remove that scope from our
+     * hierarchy!
+     */
+    symbol_scope = symbol_read_owned_scope(symbol);
+    if (symbol_scope)
+	scope_remove_scope(scope,symbol_scope);
 
     if (!scope->symdict)
 	return -1;
@@ -110,7 +150,14 @@ int scope_remove_symbol(struct scope *scope,struct symbol *symbol) {
     if (rc)
 	return rc;
 
-    symbol->scope = NULL;
+    /*
+     * NB: since the same symbol can be on more than one scope, only
+     * undo the parent link if the parent is the one removing this
+     * symbol.
+     */
+    if (symbol->scope == scope)
+	symbol->scope = NULL;
+
     RPUT(symbol,symbol,scope,trefcnt);
 
     return 0;
@@ -273,11 +320,19 @@ int scope_get_overall_range(struct scope *scope,ADDR *low_addr_saveptr,
  * symbol->scope field, because scope is being destroyed.  This function
  * must only be called from scope_free().
  */
-static void scope_symdict_symbol_dtor(struct symbol *symbol) {
+static void scope_symdict_symbol_dtor(struct symbol *symbol,void *priv) {
+    struct scope *scope = (struct scope *)priv;
     REFCNT trefcnt;
     RPUT(symbol,symbol,symbol->scope,trefcnt);
-    if (trefcnt > 0)
-	symbol->scope = NULL;
+    if (trefcnt > 0) {
+	/*
+	 * NB: since the same symbol can be on more than one scope, only
+	 * undo the parent link if the parent is the one removing this
+	 * symbol.
+	 */
+	if (symbol->scope == scope)
+	    symbol->scope = NULL;
+    }
     return;
 }
 
@@ -331,7 +386,7 @@ REFCNT scope_free(struct scope *scope,int force) {
     scope->range = NULL;
 
     if (scope->symdict)
-	symdict_free(scope->symdict,scope_symdict_symbol_dtor);
+	symdict_free(scope->symdict,scope_symdict_symbol_dtor,scope);
 
     free(scope);
 

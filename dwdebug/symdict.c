@@ -261,14 +261,14 @@ int symdict_remove_symbol(struct symdict *symdict,struct symbol *symbol) {
     return 0;
 }
 
-static void _symdict_symbol_dtor(struct symbol *symbol) {
+static void _symdict_symbol_dtor(struct symbol *symbol,void *priv) {
     symbol_free(symbol,1);
 }
 
 symdict_symbol_dtor_t default_symdict_symbol_dtor = \
     _symdict_symbol_dtor;
 
-void symdict_free(struct symdict *symdict,symdict_symbol_dtor_t ssd) {
+void symdict_free(struct symdict *symdict,symdict_symbol_dtor_t ssd,void *priv) {
     GHashTableIter iter;
     gpointer vp;
     struct symbol *symbol;
@@ -282,7 +282,7 @@ void symdict_free(struct symdict *symdict,symdict_symbol_dtor_t ssd) {
 	g_hash_table_iter_init(&iter,symdict->tab);
 	while (g_hash_table_iter_next(&iter,NULL,&vp)) {
 	    symbol = (struct symbol *)vp;
-	    ssd(symbol);
+	    ssd(symbol,priv);
 	    g_hash_table_iter_remove(&iter);
 	}
 	g_hash_table_destroy(symdict->tab);
@@ -293,7 +293,7 @@ void symdict_free(struct symdict *symdict,symdict_symbol_dtor_t ssd) {
 	while (g_hash_table_iter_next(&iter,NULL,&vp)) {
 	    list = (struct array_list *)vp;
 	    array_list_foreach(list,i,symbol) {
-		ssd(symbol);
+		ssd(symbol,priv);
 	    }
 	    array_list_free(list);
 	    g_hash_table_iter_remove(&iter);
@@ -305,7 +305,7 @@ void symdict_free(struct symdict *symdict,symdict_symbol_dtor_t ssd) {
 	g_hash_table_iter_init(&iter,symdict->anontab);
 	while (g_hash_table_iter_next(&iter,NULL,&vp)) {
 	    symbol = (struct symbol *)vp;
-	    ssd(symbol);
+	    ssd(symbol,priv);
 	    g_hash_table_iter_remove(&iter);
 	}
 	g_hash_table_destroy(symdict->anontab);

@@ -30,6 +30,7 @@
 
 #include "config.h"
 #include "common.h"
+#include "glib_wrapper.h"
 #include "log.h"
 #include "output.h"
 #include "list.h"
@@ -61,6 +62,7 @@ struct attrcb_args {
     struct symbol *parentsymbol;
     struct symbol *voidsymbol;
 
+    Dwarf_Off ref;
     Dwarf_Off specification_ref;
 
     ADDR lowpc;
@@ -72,7 +74,8 @@ struct attrcb_args {
   	    highpc_is_offset:1,
 	    reloading:1,
 	    have_stmt_list_offset:1,
-	    specification_set:1;
+	    specification_set:1,
+	    ref_set:1;
 };
 
 extern int dwarf_load_cfa(struct debugfile *debugfile,
@@ -101,6 +104,371 @@ const char *dwarf_identifier_case_string(unsigned int code);
 const char *dwarf_calling_convention_string(unsigned int code);
 const char *dwarf_ordering_string(unsigned int code);
 const char *dwarf_discr_list_string(unsigned int code);
+
+int dwarf_refuselist_hold(struct symbol_root_dwarf *srd,
+			  struct symbol *symbol,SMOFFSET ref) {
+    GSList *reflist;
+
+    reflist = (GSList *)g_hash_table_lookup(srd->refuselist,
+					    (gpointer)(uintptr_t)ref);
+    reflist = g_slist_prepend(reflist,(gpointer)symbol);
+    RHOLD(symbol,srd->refuselist);
+    g_hash_table_insert(srd->refuselist,(gpointer)(uintptr_t)ref,reflist);
+
+    return 0;
+}
+
+int dwarf_refuselist_release(struct symbol_root_dwarf *srd,
+			     struct symbol *symbol,SMOFFSET ref) {
+    GSList *reflist;
+    REFCNT trefcnt;
+
+    reflist = (GSList *)g_hash_table_lookup(srd->refuselist,
+					    (gpointer)(uintptr_t)ref);
+    if (reflist) {
+	reflist = g_slist_remove(reflist,(gpointer)symbol);
+	RPUT(symbol,symbol,srd->refuselist,trefcnt);
+	g_hash_table_insert(srd->refuselist,(gpointer)(uintptr_t)ref,reflist);
+    }
+
+    return 0;
+}
+
+GSList *dwarf_refuselist_get(struct symbol_root_dwarf *srd,SMOFFSET ref) {
+    return (GSList *)g_hash_table_lookup(srd->refuselist,
+					 (gpointer)(uintptr_t)ref);
+}
+
+/* Should be called before symbol_free!! */
+int dwarf_symbol_refuselist_release_all(struct symbol_root_dwarf *srd,
+					struct symbol *symbol) {
+    if (symbol->datatype_ref) {
+	dwarf_refuselist_release(srd,symbol,symbol->datatype_ref);
+	symbol->datatype_ref = 0;
+    }
+
+    SYMBOL_RX_INLINE(symbol,sii);
+    if (sii && sii->origin_ref) {
+	dwarf_refuselist_release(srd,symbol,sii->origin_ref);
+	sii->origin_ref = 0;
+    }
+
+    return 0;
+}
+
+/*
+ * This function handles the case when the @refsym at offset @ref has
+ * been set for the first time, or changed, for @symbol that was using
+ * @ref.  This gives us a chance to update any held pointers for
+ * @symbol.
+ */
+int dwarf_symbol_ref_symbol_changed(struct symbol_root_dwarf *srd,
+				    struct symbol *symbol,
+				    SMOFFSET ref,struct symbol *refsym) {
+    REFCNT trefcnt;
+
+    /*
+     * The ref is either a datatype_ref; an origin_ref; or else the ref
+     * is on our inline instances list.  If it's the final case, we
+     * have to go through the list looking for symbols with @ref, and
+     * replacing them in the list with @refsym.
+     */
+    if (symbol->datatype_ref == ref) {
+	vdebug(6,LA_DEBUG,LF_DWARF,"changing datatype for ");
+	LOGDUMPSYMBOL(6,LA_DEBUG,LF_DWARF,symbol);
+	vdebugc(6,LA_DEBUG,LF_DWARF," from ");
+	if (symbol->datatype) {
+	    LOGDUMPSYMBOL(6,LA_DEBUG,LF_DWARF,symbol->datatype);
+	}
+	else {
+	    vdebugc(6,LA_DEBUG,LF_DWARF,"NULL");
+	}
+	vdebugc(6,LA_DEBUG,LF_DWARF," to ");
+	LOGDUMPSYMBOL_NL(6,LA_DEBUG,LF_DWARF,refsym);
+
+	/*
+	 * Dump the old one; grab the new one.  Be careful to drop refs
+	 * if the datatype was a shared one, or if the symbol was
+	 * synthetic.  Neither should happen, but just in case...
+	 */
+	if (symbol->datatype && (symbol->usesshareddatatype 
+				 || symbol->issynthetic)) {
+	    RPUT(symbol->datatype,symbol,symbol,trefcnt);
+	}
+
+	if (refsym->isshared || symbol->issynthetic) {
+	    if (refsym->isshared)
+		symbol->usesshareddatatype = 1;
+	    RHOLD(refsym,symbol);
+	}
+
+	symbol->datatype = refsym;
+    }
+    else {
+	SYMBOL_RX_INLINE(symbol,sii);
+	if (sii && sii->origin_ref == ref) {
+	    vdebug(6,LA_DEBUG,LF_DWARF,"changing origin for ");
+	    LOGDUMPSYMBOL(6,LA_DEBUG,LF_DWARF,symbol);
+	    vdebugc(6,LA_DEBUG,LF_DWARF," from ");
+	    if (sii->origin) {
+		LOGDUMPSYMBOL(6,LA_DEBUG,LF_DWARF,sii->origin);
+	    }
+	    else {
+		vdebugc(6,LA_DEBUG,LF_DWARF,"NULL");
+	    }
+	    vdebugc(6,LA_DEBUG,LF_DWARF," to ");
+	    LOGDUMPSYMBOL_NL(6,LA_DEBUG,LF_DWARF,refsym);
+
+	    sii->origin = refsym;
+
+	    vdebug(6,LA_DEBUG,LF_DWARF,
+		   "adding instance ");
+	    LOGDUMPSYMBOL(6,LA_DEBUG,LF_DWARF,symbol);
+	    vdebugc(6,LA_DEBUG,LF_DWARF," to ");
+	    LOGDUMPSYMBOL_NL(6,LA_DEBUG,LF_DWARF,refsym);
+
+	    symbol_add_inline_instance(refsym,symbol);
+
+	    /*
+	     * NB: don't copy anything from the origin to the instance
+	     * anymore; the symbol_* functions do this following
+	     * automatically as needed.
+	     */
+	    /*
+	    symbol->datatype = sii->origin->datatype;
+	    symbol->datatype_ref = sii->origin->datatype_ref;
+	    //memcpy(&symbol->s.ii->l,&symbol->s.ii->origin->s.ii->l,
+	    //	   sizeof(struct location));
+
+	    if (symbol->datatype)
+		RHOLD(symbol->datatype,sii->origin->dataype);
+
+	    vdebug(4,LA_DEBUG,LF_SYMBOL,
+		   "copied datatype %s//%s (0x%"PRIxSMOFFSET")"
+		   " for inline instance %s//%s"
+		   " (0x%"PRIxSMOFFSET"\n",
+		   symbol->datatype ? DATATYPE(symbol->datatype->datatype_code) : NULL,
+		   symbol->datatype ? symbol_get_name(symbol->datatype) : NULL,
+		   symbol->datatype ? symbol->datatype->ref : 0,
+		   SYMBOL_TYPE(symbol->type),symbol_get_name(symbol),
+		   symbol->ref);
+	    */
+	}
+    }
+
+    return 0;
+}
+
+/*
+ * Handle changes to the reftab -- either new symbols, or symbol
+ * replacements!  This means that any symbol that had (or would)
+ * reference the new/changed symbol needs to adjust its pointer(s).
+ */
+int dwarf_refuselist_notify_reftab_changed(struct symbol_root_dwarf *srd,
+					   SMOFFSET ref,struct symbol *refsym) {
+    GSList *uselist;
+    GSList *gsltmp;
+    struct symbol *symbol;
+
+    uselist = (GSList *) \
+	g_hash_table_lookup(srd->refuselist,(gpointer)(uintptr_t)ref);
+    if (!uselist)
+	return 0;
+
+    v_g_slist_foreach(uselist,gsltmp,symbol) {
+	dwarf_symbol_ref_symbol_changed(srd,symbol,ref,refsym);
+    }
+
+    return 0;
+}
+
+/*
+ * Record in the refuselist that we want this datatype_ref; resolve it
+ * if possible.
+ */
+int dwarf_symbol_set_datatype_ref(struct symbol_root_dwarf *srd,
+				  struct symbol *symbol,SMOFFSET ref) {
+    dwarf_refuselist_hold(srd,symbol,ref);
+
+    symbol->datatype_ref = ref;
+    /*
+     * Set the datatype symbol if the reftab has it; otherwise, it will
+     * get set later!
+     */
+    symbol->datatype = (struct symbol *) \
+	g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)ref);
+
+    return 0;
+}
+
+/*
+ * Record in the refuselist that we want this origin_ref; resolve it
+ * if possible.
+ */
+int dwarf_symbol_set_origin_ref(struct symbol_root_dwarf *srd,
+				struct symbol *symbol,SMOFFSET ref) {
+    SYMBOL_WX_INLINE(symbol,sii,-1);
+
+    dwarf_refuselist_hold(srd,symbol,ref);
+
+    /*
+     * First, setup stuff for the referencing symbol.  Set the origin
+     * symbol if the reftab has it; otherwise, it will get set later!
+     */
+    sii->origin_ref = ref;
+    sii->origin = (struct symbol *) \
+	g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)ref);
+
+    /*
+     * Second, setup stuff for the *referenced* symbol.  If the
+     * referenced symbol exists, add this symbol as an inline instance
+     * now.  If it doesn't exist, we place it on the refuselist too;
+     * dwarf_refuselist_notify_reftab_changed() will handle that case
+     * when the symbol ref actually is set.
+     *
+     * Note, then, that we support changing the origin, technically, but
+     * it should not ever happen -- origins and instances are pretty
+     * firmly linked and should not ever be replaced.  We don't even try
+     * to support this case for the inline instances lists.
+     */
+    if (sii->origin)
+	symbol_add_inline_instance(sii->origin,symbol);
+
+    return 0;
+}
+
+/*
+ * Insert a symbol into the reftab.  This takes care of safely removing
+ * whatever symbol is already in it; and notifies any users of the
+ * symbol in the refuselist hashtable once the change has been made.
+ */
+int dwarf_reftab_insert(struct symbol_root_dwarf *srd,
+			struct symbol *symbol,SMOFFSET ref) {
+    struct symbol *existing;
+    REFCNT trefcnt;
+
+    existing = (struct symbol *) \
+	g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)ref);
+
+    if (existing) {
+	if (existing == symbol)
+	    return 0;
+
+	RPUT(existing,symbol,srd->reftab,trefcnt);
+    }
+
+    g_hash_table_insert(srd->reftab,(gpointer)(uintptr_t)ref,symbol);
+    RHOLD(symbol,srd->reftab);
+
+    dwarf_refuselist_notify_reftab_changed(srd,ref,symbol);
+
+    return 0;
+}
+
+int dwarf_reftab_replace(struct symbol_root_dwarf *srd,
+			 struct symbol *existing,
+			 struct symbol *new,SMOFFSET ref,GHashTableIter *iter) {
+
+    REFCNT trefcnt;
+
+    if (existing) {
+	if (existing == new)
+	    return 0;
+
+	RPUT(existing,symbol,srd->reftab,trefcnt);
+    }
+
+    g_hash_table_iter_replace(iter,new);
+    RHOLD(new,srd->reftab);
+
+    dwarf_refuselist_notify_reftab_changed(srd,ref,new);
+
+    return 0;
+}
+
+static void dwarf_reftab_clean(struct symbol *root,int force) {
+    struct symbol_root_dwarf *srd = SYMBOLX_ROOT(root)->priv;
+    GHashTableIter iter;
+    struct symbol *tsymbol;
+    REFCNT trefcnt;
+
+    if (!(SYMBOL_IS_FULL(root) || force))
+	return;
+
+    if (!srd->reftab)
+	return;
+
+    /*
+     * Put all the tmp refs we took on reftab symbols.  Some might
+     * be NULL if we employed type compression.
+     *
+     * If a symbol is still in the refuselist, leave it in the reftab
+     * too.  We might still need it!
+     */
+    g_hash_table_iter_init(&iter,srd->reftab);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tsymbol)) {
+	if (!tsymbol)
+	    continue;
+	else if (force) {
+	    ;
+	}
+	else if (srd->refuselist 
+		 && g_hash_table_lookup_extended(srd->refuselist,
+						 (gpointer)(uintptr_t)tsymbol->ref,
+						 NULL,NULL) == TRUE)
+	    continue;
+
+	RPUT(tsymbol,symbol,srd->reftab,trefcnt);
+	g_hash_table_iter_remove(&iter);
+    }
+}
+
+static void dwarf_refuselist_clean(struct symbol *root,int force) {
+    struct symbol_root_dwarf *srd = SYMBOLX_ROOT(root)->priv;
+    GHashTableIter iter;
+    gpointer key,value;
+    struct symbol *tsymbol;
+    GSList *gsltmp;
+    REFCNT trefcnt;
+
+    if (!(SYMBOL_IS_FULL(root) || force))
+	return;
+
+    if (!srd->refuselist)
+	return;
+
+    /*
+     * If the CU has been fully loaded or if there was an error, clear
+     * out the reftab and refuselist tables!
+     *
+     * However, there are a few exceptions.  Any symbol that might have
+     * to get replaced with a symbol in another CU we have to leave in
+     * place for now!  For now, that's only undefined declarations.  So,
+     * go through the refuselist, check for decl key symbols; save
+     * those.  Then, however, we can clean out the whole reftab -- we
+     * don't need any of that because there are symbols on the
+     * refuselist, not refs.
+     */
+    g_hash_table_iter_init(&iter,srd->refuselist);
+    while (g_hash_table_iter_next(&iter,&key,&value)) {
+	tsymbol = NULL;
+	if (!force) {
+	    if (srd->reftab)
+		tsymbol = (struct symbol *)				\
+		    g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)key);
+	    if (!(tsymbol && tsymbol->isdeclaration && !tsymbol->decldefined))
+		tsymbol = NULL;
+	}
+	if (force || !tsymbol) {
+	    v_g_slist_foreach((GSList *)value,gsltmp,tsymbol) {
+		RPUT(tsymbol,symbol,srd->refuselist,trefcnt);
+	    }
+	    g_slist_free((GSList *)value);
+	    g_hash_table_iter_remove(&iter);
+	}
+    }
+}
+
 
 static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     struct attrcb_args *cbargs = (struct attrcb_args *)arg;
@@ -149,7 +517,6 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     uint8_t block_set = 0;
     uint8_t sec_offset_set = 0;
 
-    GSList *iilist;
     struct location *loc;
 
 #define DFE(msg)						\
@@ -494,26 +861,13 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	break;
     case DW_AT_abstract_origin:
 	if (ref_set && SYMBOL_IS_INLINEABLE(symbol)) {
-		/*
-		 * Do this in the CU post-pass; it copies additional
-		 * stuff into symbol (like datatype).
-		 */
-		//symbol->s.ii->origin = (struct symbol *)	
-		//   g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref);
-		/* Always set the ref so we can generate a unique name for 
-		 * the symbol; see finalize_die_symbol!!
-		 */
 	    if (symbol_set_inline_origin(symbol,ref,NULL)) {
 		DAW_REF("failed to set inline origin");
 		break;
 	    }
 
 	    /* Record it as needing resolution in our CU table. */
-	    iilist = g_hash_table_lookup(srd->abstract_origins,
-					 (gpointer)(uintptr_t)ref);
-	    iilist = g_slist_append(iilist,symbol);
-	    g_hash_table_insert(srd->abstract_origins,
-				(gpointer)(uintptr_t)ref,iilist);
+	    dwarf_symbol_set_origin_ref(srd,symbol,ref);
 	}
 	else 
 	    DAW("bad context");
@@ -523,30 +877,17 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	    break;
 
 	if (ref_set && symbol) {
-	    /*
-	     * Disable the datatype lookup here; there's no point; it
-	     * saves us no time, and for implementing type compression
-	     * (see end of CU load function) and code simplicity with
-	     * that, we just do all datatype lookups there, in one
-	     * place.
-	     */
-	    /* struct symbol *datatype = (struct symbol *)		
-	           g_hash_table_lookup(cbargs->reftab,(gpointer)(uintptr_t)ref); */
 	    if (SYMBOL_IS_TYPE(symbol)) {
 		if (SYMBOL_IST_PTR(symbol) || SYMBOL_IST_TYPEDEF(symbol)
 		    || SYMBOL_IST_ARRAY(symbol) || SYMBOL_IST_CONST(symbol)
 		    || SYMBOL_IST_VOL(symbol) || SYMBOL_IST_FUNC(symbol)) {
-		    symbol->datatype_ref = (uint64_t)ref;
-		    /* if (datatype)
-		           symbol->datatype = datatype; */
+		    dwarf_symbol_set_datatype_ref(srd,symbol,ref);
 		}
 		else 
 		    DAW_REF("bogus: type ref for unknown type symbol");
 	    }
 	    else {
-		symbol->datatype_ref = ref;
-		/* if (datatype)
-		       symbol->datatype = datatype; */
+		dwarf_symbol_set_datatype_ref(srd,symbol,ref);
 	    }
 	}
 	else if (ref_set && !symbol && cbargs->parentsymbol 
@@ -811,6 +1152,14 @@ static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
 	if (ref_set && symbol) {
 	    cbargs->specification_ref = ref;
 	    cbargs->specification_set = 1;
+	}
+	else
+	    DAW("bad context/form");
+	break;
+    case DW_AT_import:
+	if (ref_set && !symbol) {
+	    cbargs->ref = ref;
+	    cbargs->ref_set = 1;
 	}
 	else
 	    DAW("bad context/form");
@@ -1113,7 +1462,6 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
 			 struct symbol *voidsymbol,
 			 GHashTable *reftab,struct array_list *die_offsets,
 			 SMOFFSET cu_offset);
-void resolve_refs(gpointer key,gpointer value,gpointer data);
 
 struct symbol *do_void_symbol(struct debugfile *debugfile,
 			      struct symbol *root) {
@@ -1133,7 +1481,7 @@ struct symbol *do_void_symbol(struct debugfile *debugfile,
 
     /* And also always put it in the debugfile's global types table. */
     if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES))
-	debugfile_add_type_name(debugfile,symbol_get_name(symbol),symbol);
+	debugfile_add_type(debugfile,symbol);
 
     return symbol;
 }
@@ -1160,7 +1508,7 @@ struct symbol *do_word_symbol(struct debugfile *debugfile,
 
     /* And also always put it in the debugfile's global types table. */
     if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES))
-	debugfile_add_type_name(debugfile,symbol_get_name(symbol),symbol);
+	debugfile_add_type(debugfile,symbol);
 
     return symbol;
 }
@@ -1187,22 +1535,15 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     int maxdies = 8;
     int level = 0;
     Dwarf_Die *dies = (Dwarf_Die *)malloc(maxdies*sizeof(Dwarf_Die));
-    /*
-     * NB: anything we put in the reftab, we place a temporary hold
-     * on.  We clean these up before we exit.  We have to do this to
-     * do type compression -- so we know which symbols are really
-     * unheld and can really be freed, by the end of this function.
-     */
-    GHashTable *reftab = srd->reftab;
-    GHashTableIter iter;
-    GSList *iilist;
 
     struct symbol *root;
     struct scope *root_scope;
     struct symbol **symbols = (struct symbol **) \
-	malloc(maxdies*sizeof(struct symbol *));
+	calloc(maxdies,sizeof(struct symbol *));
     struct scope **scopes = (struct scope **) \
-	malloc(maxdies*sizeof(struct scope *));
+	calloc(maxdies,sizeof(struct scope *));
+    struct symbol **imported_modules = (struct symbol **) \
+	calloc(maxdies,sizeof(struct symbol *));
 
     struct symbol *voidsymbol;
     struct symbol *rsymbol;
@@ -1222,12 +1563,13 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 
     struct array_list *die_offsets = NULL;
     int i;
+    int tmplpc;
     struct symbol *tsymbol;
     char *sname;
     int accept;
     gpointer key;
-    gpointer value;
     int trefcnt;
+    struct scope *reparent_scope;
     struct scope *specification_scope;
     struct symbol *specification_symbol;
     struct symbol *specification_symbol_parent;
@@ -1394,7 +1736,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * attributes nor its children.
 	 */
 	ts = (struct symbol *) \
-	    g_hash_table_lookup(reftab,(gpointer)(uintptr_t)offset);
+	    g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)offset);
 	if (ts && SYMBOL_IS_FULL(ts)) {
 	    /*
 	     * This is tricky.  Set up its "parent" if it had one, just
@@ -1633,6 +1975,13 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	else if (tag == DW_TAG_compile_unit) {
 	    symbols[level] = root;
 	}
+	else if (tag == DW_TAG_imported_module) {
+	    /*
+	     * The main work here is to parse the attrs and find the
+	     * referenced "module" (C++ namespace, in our case).
+	     */
+	    ;
+	}
 	else if (tag == DW_TAG_imported_declaration
 		 || tag == DW_TAG_template_type_parameter
 		 || tag == DW_TAG_template_value_parameter
@@ -1694,6 +2043,79 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    symbols[level]->isdeclaration = 0;
 	}
 
+	reparent_scope = NULL;
+
+	/*
+	 * See if this was an imported module (for our case, a C++ using
+	 * directive).  If so, find that module symbol and start using
+	 * it as the current scope parent!
+	 *
+	 * If we haven't seen the imported module ref yet, and we're in
+	 * partial symbol mode, go get it first, then do this one.
+	 * Otherwise, error -- we do not jump forwards in time for
+	 * these.  If we ever see imported modules in advance of their
+	 * declarations/definitions, we can try to fix this, but it is
+	 * hard because we never jump forward in a non-partial (full)
+	 * load; we only linearly traverse and patch up forward refs
+	 * later.
+	 */
+	if (tag == DW_TAG_imported_module) {
+	    if (!args.ref_set) {
+		verror("no AT_import ref for TAG_imported_module"
+		       " at 0x%"PRIxOFFSET"; skipping!\n",offset);
+		goto do_sibling;
+	    }
+	    else if (!(imported_modules[level] = (struct symbol *) \
+		       g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)args.ref))) {
+		if (die_offsets) {
+		    vdebug(8,LA_DEBUG,LF_DWARF,
+			   "forward ref 0x%"PRIxOFFSET" for TAG_imported_module;"
+			   " pushing that in front of us and redoing after\n",
+			   offset);
+		    /* NB: see setup_skip_to_next_die() for why --i ! */
+		    --i;
+		    array_list_add_item_at(die_offsets,
+					   (void *)(uintptr_t)args.ref,i);
+		    /*
+		     * This sends us to setup the "next" DIE (the one we
+		     * just inserted into the list :)).
+		     */
+		    goto do_sibling;
+		}
+		else {
+		    verror("cannot resolve forward ref 0x%"PRIxOFFSET" for"
+			   " TAG_imported_module at 0x%"PRIxOFFSET"; skipping;"
+			   " scope hier will be wrong!\n",args.ref,offset);
+		    goto errout;
+		}
+	    }
+	    else {
+		/*
+		 * Ok, imported_modules[level] has our temporary
+		 * "parent" namespace; just keep going (or wherever).
+		 */
+		reparent_scope = symbol_link_owned_scope(imported_modules[level],
+							 NULL);
+		goto do_sibling;
+	    }
+	}
+	else if (imported_modules[level]) {
+	    reparent_scope = symbol_read_owned_scope(imported_modules[level]);
+
+	    /*
+	     * Change the child's scope.
+	     */
+	    if (symbols[level])
+		symbols[level]->scope = reparent_scope;
+
+	    vdebug(8,LA_DEBUG,LF_DWARF,
+		   "continuing to use imported module scope 0x%"PRIxSMOFFSET
+		   " (%s) for new DIE 0x%"PRIxOFFSET"\n",
+		   reparent_scope->ref,
+		   reparent_scope->symbol ? symbol_get_name(reparent_scope->symbol) : NULL,
+		   offset);
+	}
+
 	/*
 	 * Figure out if we have a specification declaration we should
 	 * try to leverage.
@@ -1708,11 +2130,14 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	if (args.specification_set && symbols[level]) {
 	    // XXXX: fix up for partial loads!
 	    specification_symbol = (struct symbol *) \
-		g_hash_table_lookup(reftab,
+		g_hash_table_lookup(srd->reftab,
 				    (gpointer)(uintptr_t)args.specification_ref);
 	    if (specification_symbol) {
 		specification_scope = 
 		    symbol_containing_scope(specification_symbol);
+
+		reparent_scope = specification_scope;
+
 		/*
 		 * Change the child's scope.
 		 */
@@ -1751,7 +2176,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    && args.lowpc_set && args.highpc_set) {
 	    if (!newscope) 
 		newscope = symbol_link_owned_scope(symbols[level],
-						   specification_scope);
+						   reparent_scope);
 
 	    if (args.highpc_is_offset || args.highpc >= args.lowpc) {
 		if (!args.highpc_is_offset) 
@@ -1799,7 +2224,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 
 	    if (!newscope)
 		newscope = symbol_link_owned_scope(symbols[level],
-						   specification_scope);
+						   reparent_scope);
 
 	    range = args.ranges;
 	    while (range) {
@@ -1982,20 +2407,8 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		     * reftab so that any of our DIEs that tries to use
 		     * it gets the "global" one instead.
 		     */
-		    g_hash_table_insert(reftab,
-					(gpointer)(uintptr_t)symbols[level]->ref,
-					tsymbol);
-		    /*
-		     * Anything that goes into our reftab we must RHOLD
-		     * on; do that.
-		     *
-		     * NOTE: hold a ref each time we actually use it;
-		     * see below in the datatype_ref resolution code!
-		     */
-		    RHOLD(tsymbol,reftab);
-
 		    vdebug(4,LA_DEBUG,LF_SYMBOL,
-			   "inserted shared symbol (quick check) %s (%s"
+			   "inserting shared symbol (quick check) %s (%s"
 			   " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
 			   PRIxSMOFFSET" into reftab\n",
 			   symbol_get_name(tsymbol),
@@ -2003,8 +2416,30 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 			   tsymbol->ref,
 			   SYMBOL_TYPE(tsymbol->type),symbols[level]->ref);
 
-		    /* Free ourself! */
-		    symbol_free(symbols[level],1);
+		    /*
+		     * It's not on a scope yet; so no need to remove
+		     * it.  Then insert it into the reftab.
+		     */
+		    //scope_remove_symbol(symbol_containing_scope(symbols[level]),
+		    //			symbols[level]);
+		    dwarf_reftab_insert(srd,tsymbol,
+					(SMOFFSET)symbols[level]->ref);
+
+		    /*
+		     * Nobody holds a ref to it yet, except possibly it
+		     * referenced another symbol -- so must free it from
+		     * refuselists!
+		     *
+		     * BUT, since reftab had not held on this symbol
+		     * yet, only the refuselist had, potentially!  So
+		     * hold it quickly; then release; then RPUT.  This
+		     * protects us from not freeing if this symbol had
+		     * not referenced anyone else (and thus the
+		     * refuselist had not held it).
+		     */
+		    RHOLD(symbols[level],srd);
+		    dwarf_symbol_refuselist_release_all(srd,symbols[level]);
+		    RPUT(symbols[level],symbol,srd,trefcnt);
 		    symbols[level] = NULL;
 		    /* Skip to the next sibling, or to the next DIE if
 		     * we're doing a partial CU load.
@@ -2026,6 +2461,10 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		 * NOTE: hold a ref here for clarity.
 		 */
 		RHOLD(symbols[level],debugfile);
+		/*
+		 * Place it in debugfile->types too.
+		 */
+		debugfile_replace_type(debugfile,symbols[level]);
 	    }
 	}
 
@@ -2059,12 +2498,12 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * Add to this CU's reference offset table.  We originally only
 	 * did this for types, but since inlined func/param instances
 	 * can refer to funcs/vars, we have to do it for every symbol.
+	 *
+	 * Don't add the root symbol!  This causes chicken and egg
+	 * problems when we remove symbols from the reftab.
 	 */
-	if (!ts && symbols[level]) {
-	    g_hash_table_insert(reftab,
-				(gpointer)(uintptr_t)offset,symbols[level]);
-	    RHOLD(symbols[level],reftab);
-	}
+	if (!ts && symbols[level] && level > 0)
+	    dwarf_reftab_insert(srd,symbols[level],(SMOFFSET)offset);
 
 	/*
 	 * See if we have a child to process so we can create a scope
@@ -2081,13 +2520,27 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * a symbol's scope appropriately if we're going to need to.
 	 */
 
-	/* Make room for the next level's DIE.  */
+	/*
+	 * Make room for the next level's DIE.
+	 *
+	 * Also, make sure to NULL out the new values!  This is
+	 * important for imported_modules; we don't NULL those out like
+	 * we do symbols[] and scopes[]!
+	 */
 	if (level + 1 == maxdies) {
-	    dies = (Dwarf_Die *)realloc(dies,(maxdies += 8)*sizeof(Dwarf_Die));
+	    maxdies += 8;
+	    dies = (Dwarf_Die *)realloc(dies,maxdies*sizeof(Dwarf_Die));
 	    symbols = (struct symbol **) \
 		realloc(symbols,maxdies*sizeof(struct symbol *));
 	    scopes = (struct scope **) \
 		realloc(scopes,maxdies*sizeof(struct scope *));
+	    imported_modules = (struct symbol **) \
+		realloc(imported_modules,maxdies*sizeof(struct symbol *));
+
+	    for (tmplpc = level + 1; tmplpc < maxdies; ++tmplpc) {
+		symbols[tmplpc] = NULL;
+		imported_modules[tmplpc] = NULL;
+	    }
 	}
 
 	int res = dwarf_child(&dies[level],&dies[level + 1]);
@@ -2097,15 +2550,15 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * can own a scope, but we didn't have to create it yet, we
 	 * must create and link it in now!  We cannot wait for
 	 * later.
-	 * And, remember from above, to use specification_scope to
+	 * And, remember from above, to use reparent_scope to
 	 * handle the case where we're moving this symbol into its
-	 * specifier's scope.
+	 * specifier's or imported module's scope.
 	 */
 	if (res == 0
 	    && symbols[level] && SYMBOL_CAN_OWN_SCOPE(symbols[level])
 	    && !newscope) {
 	    newscope = 
-		symbol_link_owned_scope(symbols[level],specification_scope);
+		symbol_link_owned_scope(symbols[level],reparent_scope);
 	}
 
 	/*
@@ -2122,7 +2575,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	 * var, and called tried to insert...
 	 */
 	//if (newscope && symbols[level]) 
-	//    symbol_link_owned_scope(symbols[level],specification_scope);
+	//    symbol_link_owned_scope(symbols[level],reparent_scope);
 
 	/*
 	 * Handle adding child symbols/scopes to parents!
@@ -2136,9 +2589,29 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	     * symbol-owned scopes for you.
 	     */
 	    if (symbols[level]) {
-		if (args.specification_set && specification_symbol_parent) 
+		if (args.specification_set && specification_symbol_parent) {
 		    symbol_insert_symbol(specification_symbol_parent,
 					 symbols[level]);
+
+		    /*
+		     * Also, if we're going to replace the declaration
+		     * (specification) symbol with its definition, do it.
+		     */
+		    if (!(dopts->flags & DEBUGFILE_LOAD_FLAG_KEEPDECLS)) {
+			tsymbol = (struct symbol *) \
+			    g_hash_table_lookup(srd->reftab,
+						(gpointer)(uintptr_t)args.specification_ref);
+			if (tsymbol) {
+			    scope_remove_symbol(symbol_containing_scope(tsymbol),
+						tsymbol);
+			}
+			dwarf_reftab_insert(srd,symbols[level],
+					    args.specification_ref);
+		    }
+		}
+		else if (imported_modules[level]) {
+		    symbol_insert_symbol(imported_modules[level],symbols[level]);
+		}
 		else if (symbols[level-1]) 
 		    symbol_insert_symbol(symbols[level-1],symbols[level]);
 		else if (scopes[level])
@@ -2163,13 +2636,15 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	/* The last thing to do is finalize the symbol (which we can do
 	 * before processing its children.
 	 *
-	 * Make sure to pass the new specification_symbol_parent if
-	 * there is one!!
+	 * Make sure to pass the new specification_symbol_parent or
+	 * imported_modules[level] parent if there is one!!
 	 */
 	if (symbols[level] && !nofinalize) {
 	    struct symbol *finalize_parent;
 	    if (specification_symbol_parent)
 		finalize_parent = specification_symbol_parent;
+	    else if (imported_modules[level]) 
+		finalize_parent = imported_modules[level];
 	    else if (level > 0 && symbols[level - 1])
 		finalize_parent = symbols[level - 1];
 	    else
@@ -2178,7 +2653,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    finalize_die_symbol(debugfile,level,symbols[level],
 				finalize_parent,
 				voidsymbol,
-				reftab,die_offsets,(SMOFFSET)*cu_offset);
+				srd->reftab,die_offsets,(SMOFFSET)*cu_offset);
 	    /*
 	     * NB: we cannot free the symbol once we are here, because 1) the
 	     * symbol is already on our reftab (see above), and 2) the
@@ -2211,6 +2686,15 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		       i - 1,offset,*cu_offset,dwarf_errmsg(-1));
 		return -1;
 	    }
+	    /*
+	     * Clear out all the imported_module statements we might
+	     * have seen; we don't want to add any symbols to these
+	     * imported scopes erroneously!
+	     *
+	     * (NB: in general, imported modules are problematic for
+	     * partial loads -- yet one more thing that forces us to
+	     * parse the full level == 1 of each CU, at the very least.)
+	     */
 	    vdebug(5,LA_DEBUG,LF_DWARF,
 		   "skipping to DIE %d at 0x%x in CU 0x%"PRIx64"\n",
 		   i,offset,*cu_offset);
@@ -2226,6 +2710,10 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	     */
 	    if (symbols[level])
 		symbols[level]->loadtag = LOADTYPE_FULL;
+
+	    if (level >= 0 && symbols[level] 
+		&& symbols[level]->isdeclaration)
+		debugfile_save_declaration(debugfile,symbols[level]);
 
 	do_sibling:
 	    /* If we were teleported here, set res just in case somebody
@@ -2251,6 +2739,7 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    else {
 		while ((res = dwarf_siblingof(&dies[level],&dies[level])) == 1) {
 		    int oldlevel = level--;
+
 		    /* If we're loading a partial CU, if there are more DIEs
 		     * we need to load, do them!  We don't process any
 		     * siblings at level 1, since that's the level we start
@@ -2277,6 +2766,15 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		      && symbols[level-1]->type == SYMBOL_TYPE_FUNCTION 
 		      && symtab->parent)
 		      symtab = symtab->parent;*/
+
+		    /*
+		     * Get rid of the old level's imported_module, if
+		     * any; but obviously don't clear
+		     * imported_modules[level]; that might still be
+		     * relevant to any other DIEs we're still going to
+		     * parse in level!
+		     */
+		    imported_modules[oldlevel] = NULL;
 		}
 
 		if (res == -1) {
@@ -2325,141 +2823,6 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     while (level >= 0);
 
     do_word_symbol(debugfile,root);
-
-    /*
-     * Since we may not have been able to resolve all the dwarf type refs for
-     * our symbols during our single pass (since a type can follow its
-     * use in dwarf debug info), we have to postpass all the symbols :(.
-     *
-     * The only other alternative is to use libelf/libdw to resolve them
-     * during the single pass, which seems less good...
-     */
-    
-    /* g_hash_table_foreach(cu_symtab->tab,resolve_refs,reftab); */
-
-    /*
-     * resolve_refs was too badly broken for nested struct/union types,
-     * so we have moved to the very straightforward (and possibly
-     * wasteful) approach below.  All symbols are in the reftab, and we
-     * just postpass them all.  So, we might end up resolving some
-     * symbols we don't care about, but it's easy and simple.
-     *
-     * Also, we now don't set the ->datatype field at all during
-     * attr_callback because of type compression; we do all that here
-     * for code simplicity.
-     */
-
-    g_hash_table_iter_init(&iter,reftab);
-    while (g_hash_table_iter_next(&iter,
-				  (gpointer *)&key,(gpointer *)&value)) {
-	offset = (uintptr_t)key;
-	rsymbol = (struct symbol *)value;
-	if (!rsymbol)
-	    continue;
-
-	/* If we didn't yet resolve the symbol's datatype (or if we're
-	 * doing quick type compression, the value for the datatype_ref
-	 * key in reftab might have changed as we compressed above, in
-	 * which case we need to re-resolve), and if we have a
-	 * datatype_ref, resolve it!
-	 */
-	if ((!rsymbol->datatype 
-	     || (dopts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
-		 && !(dopts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV)))
-	    && rsymbol->datatype_ref
-	    && !rsymbol->isshared) {
-	    rsymbol->datatype = (struct symbol *) \
-		g_hash_table_lookup(reftab,
-				    (gpointer)(uintptr_t)rsymbol->datatype_ref);
-	    /* Type compression: if this type is in another CU, hold a
-	     * ref to it! 
-	     */
-	    if (/* *dopts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES
-		&& !(dopts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) */
-		rsymbol->datatype
-		&& rsymbol->datatype->isshared) {
-		/*
-		&& SYMTAB_IS_ROOT(rsymbol->datatype->symtab)
-		&& rsymbol->datatype->symtab != cu_symtab)
-		*/
-		RHOLD(rsymbol->datatype,rsymbol);
-		rsymbol->usesshareddatatype = 1;
-
-		vdebug(4,LA_DEBUG,LF_SYMBOL,
-		       "using shared symbol (quick check) %s (%s 0x%"PRIxSMOFFSET
-		       ") of type %s at offset 0x%"PRIxSMOFFSET"\n",
-		       symbol_get_name(rsymbol->datatype),
-		       symbol_get_name_orig(rsymbol->datatype),
-		       rsymbol->datatype->ref,
-		       SYMBOL_TYPE(rsymbol->datatype->type),
-		       rsymbol->datatype_ref);
-	    }
-	}
-
-	/*
-	 * Technically, we don't need to RHOLD refs to any of these
-	 * things, since they are all within a single CU -- but for
-	 * completeness (and thus easier optimization later), RHOLD
-	 * anyway.
-	 */
-	if (SYMBOL_IS_INLINEABLE(rsymbol)) {
-	    SYMBOL_RX_INLINE(rsymbol,sii);
-
-	    if (sii && rsymbol->isinlineinstance) {
-		if (!sii->origin && sii->origin_ref) {
-		    sii->origin = (struct symbol *)	\
-			g_hash_table_lookup(reftab,
-					    (gpointer)(uintptr_t)sii->origin_ref);
-
-		    /*
-		     * NB NB NB: we cannot have objects referencing each other;
-		     * such objects might not get deleted.
-		     *
-		     * (See comments in common.h about ref usage.)
-		     */
-		    /*if (sii->origin) {
-		     *    RHOLD(sii->origin,rsymbol);
-		     *}
-		     */
-		}
-
-		if (sii->origin) {
-		    /* Autoset the instance's datatype attrs! */
-		    rsymbol->datatype = sii->origin->datatype;
-		    rsymbol->datatype_ref = sii->origin->datatype_ref;
-		    //memcpy(&rsymbol->s.ii->l,&rsymbol->s.ii->origin->s.ii->l,
-		    //	   sizeof(struct location));
-
-		    if (rsymbol->datatype)
-			RHOLD(rsymbol->datatype,rsymbol);
-
-		    vdebug(4,LA_DEBUG,LF_SYMBOL,
-			   "copied datatype %s//%s (0x%"PRIxSMOFFSET")"
-			   " for inline instance %s//%s"
-			   " (0x%"PRIxSMOFFSET"\n",
-			   rsymbol->datatype ? DATATYPE(rsymbol->datatype->datatype_code) : NULL,
-			   rsymbol->datatype ? symbol_get_name(rsymbol->datatype) : NULL,
-			   rsymbol->datatype ? rsymbol->datatype->ref : 0,
-			   SYMBOL_TYPE(rsymbol->type),symbol_get_name(rsymbol),
-			   rsymbol->ref);
-		}
-		else {
-		    vwarn("could not find abstract origin for inline instance"
-			  " %s//%s (0x%"PRIxSMOFFSET"\n",
-			   SYMBOL_TYPE(rsymbol->type),symbol_get_name(rsymbol),
-			   rsymbol->ref);
-		}
-	    }
-
-	    iilist = (GSList *)g_hash_table_lookup(srd->abstract_origins,
-						   (gpointer)(uintptr_t)offset);
-	    if (iilist) {
-		g_hash_table_remove(srd->abstract_origins,
-				    (gpointer)(uintptr_t)offset);
-		symbol_set_inline_instances(rsymbol,iilist);
-	    }
-	}
-    }
 
     /* Type compression part 2a:
      *
@@ -2518,65 +2881,70 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    || SYMBOLX_ROOT(root)->lang_code == DW_LANG_C89
 	    || SYMBOLX_ROOT(root)->lang_code == DW_LANG_C99)
 	&& dopts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
-	GHashTable *updated = g_hash_table_new(g_direct_hash,g_direct_equal);
-	vdebug(3,LA_DEBUG,LF_SYMBOL | LF_DWARF,"type compression 2a\n");
-	g_hash_table_iter_init(&iter,reftab);
-	while (g_hash_table_iter_next(&iter,
-				      (gpointer *)&key,(gpointer *)&value)) {
+	//GHashTable *updated = g_hash_table_new(g_direct_hash,g_direct_equal);
+	GSList *klist = g_hash_table_get_keys_slist(srd->reftab);
+	GSList *gsltmp;
+	GHashTable *eqcache = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+	v_g_slist_foreach(klist,gsltmp,key) {
 	    offset = (uintptr_t)key;
-	    rsymbol = (struct symbol *)value;
+	    rsymbol = (struct symbol *) \
+		g_hash_table_lookup(srd->reftab,(gpointer)(uintptr_t)offset);
 	    if (!rsymbol || !SYMBOL_IS_TYPE(rsymbol) || SYMBOL_IST_ENUM(rsymbol))
 		continue;
-
-	    if (rsymbol->freenextpass) {
-		rsymbol->freenextpass = 0;
-                RPUT(rsymbol,symbol,reftab,trefcnt);
-                g_hash_table_iter_replace(&iter,NULL);
-                continue;
-            }
 
 	    if (!(sname = symbol_get_name(rsymbol)))
 		continue;
 
-	    if (sname 
-		&& (tsymbol = (struct symbol *)				\
-		        g_hash_table_lookup(debugfile->shared_types,sname))
-		&& rsymbol != tsymbol && tsymbol->isshared) {
-		if (symbol_type_equal(rsymbol,tsymbol,updated) == 0) {
-		    /* Insert the looked up symbol into our CU's temp
-		     * reftab so that any of our DIEs that tries to use
-		     * it gets the "global" one instead.
-		     */
-		    g_hash_table_iter_replace(&iter,tsymbol);
-
-		    g_hash_table_insert(updated,(gpointer)(uintptr_t)offset,
-					(gpointer)tsymbol);
-
+	    if ((tsymbol = (struct symbol *)				\
+		     g_hash_table_lookup(debugfile->shared_types,sname))
+		&& rsymbol != tsymbol 
+		&& tsymbol->isshared) {
+		if (symbol_type_equal(rsymbol,tsymbol,eqcache,NULL) == 0) {
 		    vdebug(4,LA_DEBUG,LF_SYMBOL,
 			   "inserting shared symbol (slow check) %s (%s"
 			   " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
 			   PRIxSMOFFSET" into reftab\n",
 			   symbol_get_name(tsymbol),
 			   symbol_get_name_orig(tsymbol),
-			   tsymbol->ref,
-			   SYMBOL_TYPE(tsymbol->type),offset);
+			   tsymbol->ref,SYMBOL_TYPE(tsymbol->type),offset);
+
 		    /*
-		     * Mark all the symbols that symbol_free would
-                     * free as "free next pass" symbols, so that we just
-                     * free them and don't process them anymore in our
-                     * reftab passes.
-                     */
-                    symbol_type_mark_members_free_next_pass(rsymbol,0);
+		     * Insert the looked up symbol into our CU's temp
+		     * reftab so that any of our DIEs that tries to use
+		     * it gets the "global" one instead.
+		     */
+		    //g_hash_table_iter_replace(&iter,tsymbol);
+
+		    //g_hash_table_insert(updated,(gpointer)(uintptr_t)offset,
+		    //			(gpointer)tsymbol);
 		    /*
 		     * RPUT() once on rsymbol to remove it from reftab;
 		     * and once to remove it from its scope.
 		     */
+		    dwarf_reftab_insert(srd,tsymbol,offset);
+		    dwarf_symbol_refuselist_release_all(srd,rsymbol);
 		    scope_remove_symbol(symbol_containing_scope(rsymbol),rsymbol);
-		    RPUT(rsymbol,symbol,reftab,trefcnt);
-		    continue;
+		    //RPUT(rsymbol,symbol,srd->reftab,trefcnt);
+		}
+		else {
+		    vdebug(4,LA_DEBUG,LF_SYMBOL,
+			   "no shared match for symbol (slow check) %s (%s"
+			   " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
+			   PRIxSMOFFSET" into reftab\n",
+			   symbol_get_name(rsymbol),
+			   symbol_get_name_orig(rsymbol),
+			   rsymbol->ref,SYMBOL_TYPE(rsymbol->type),offset);
 		}
 	    }
 	    else if (rsymbol != tsymbol && !rsymbol->isdeclaration) {
+		vdebug(4,LA_DEBUG,LF_SYMBOL,
+		       "sharing symbol (slow check) %s (%s"
+		       " 0x%"PRIxSMOFFSET") of type %s at offset 0x%"
+		       PRIxSMOFFSET" into reftab\n",
+		       symbol_get_name(rsymbol),symbol_get_name_orig(rsymbol),
+		       rsymbol->ref,SYMBOL_TYPE(rsymbol->type),offset);
+
 		/*
 		 * Mark it as a shared symbol; then insert it into the
 		 * shared_types table.
@@ -2587,88 +2955,15 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		 * Hold a ref just because it's in our table.
 		 */
 		RHOLD(rsymbol,debugfile);
-		continue;
-	    }
-	}
-	g_hash_table_destroy(updated);
-    }
-
-    /* Type compression 2b:
-     *
-     * Once we've done this first compression pass, we need to go back,
-     * again, and resolve all the datatype refs again!  Argh!  But at
-     * least it's only the datatype pointers.
-     */
-    if (SYMBOLX_ROOT(root) 
-	&& (SYMBOLX_ROOT(root)->lang_code == DW_LANG_C
-	    || SYMBOLX_ROOT(root)->lang_code == DW_LANG_C89
-	    || SYMBOLX_ROOT(root)->lang_code == DW_LANG_C99)
-	&& dopts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES_FULL_EQUIV) {
-	vdebug(3,LA_DEBUG,LF_SYMBOL | LF_DWARF,"type compression 2b\n");
-	g_hash_table_iter_init(&iter,reftab);
-	while (g_hash_table_iter_next(&iter,
-				      (gpointer *)&key,(gpointer *)&value)) {
-	    offset = (uintptr_t)key;
-	    rsymbol = (struct symbol *)value;
-	    if (!rsymbol)
-		continue;
-
-	    if (rsymbol->freenextpass) {
-		rsymbol->freenextpass = 0;
-		RPUT(rsymbol,symbol,reftab,trefcnt);
-		g_hash_table_iter_replace(&iter,NULL);
-		continue;
-	    }
-
-	    if (rsymbol->datatype_ref) {
-		tsymbol = (struct symbol *)	\
-		    g_hash_table_lookup(reftab,
-					(gpointer)(uintptr_t)rsymbol->datatype_ref);
-		/* Type compression: if this type is in another CU, hold
-		 * a ref to it!
+		/*
+		 * Place it in debugfile->types too.
 		 */
-		if (tsymbol != rsymbol && tsymbol && tsymbol->isshared) {
-		    rsymbol->datatype = tsymbol;
-		    RHOLD(tsymbol,rsymbol);
-		    rsymbol->usesshareddatatype = 1;
-
-		    //if (tsymbol->datatype && tsymbol->datatype->isshared)
-		    //	RHOLD(tsymbol->datatype);
-
-		    vdebug(4,LA_DEBUG,LF_SYMBOL,
-			   "using shared symbol (slow check) %s (%s 0x%"PRIxSMOFFSET
-			   ") of type %s instead of 0x%"PRIxSMOFFSET
-			   " at offset 0x%"PRIxSMOFFSET"\n",
-			   symbol_get_name(rsymbol->datatype),
-			   symbol_get_name_orig(rsymbol->datatype),
-			   rsymbol->datatype->ref,
-			   SYMBOL_TYPE(rsymbol->datatype->type),
-			   rsymbol->datatype_ref,offset);
-		}
+		debugfile_replace_type(debugfile,rsymbol);
 	    }
 	}
-
-	/* Clean up anybody else who still needs to be freed; also,
-	 * check for shared symbols that were unused by this CU (i.e.,
-	 * needless types like double or whatever that even if the code
-	 * didn't use, the user could still want.
-	 */
-	vdebug(3,LA_DEBUG,LF_SYMBOL | LF_DWARF,"type compression 2c\n");
-	g_hash_table_iter_init(&iter,reftab);
-	while (g_hash_table_iter_next(&iter,
-				      (gpointer *)&key,(gpointer *)&value)) {
-	    offset = (uintptr_t)key;
-	    rsymbol = (struct symbol *)value;
-	    if (!rsymbol)
-		continue;
-
-	    if (rsymbol->freenextpass) {
-		rsymbol->freenextpass = 0;
-		RPUT(rsymbol,symbol,debugfile,trefcnt);
-		g_hash_table_iter_replace(&iter,NULL);
-		continue;
-	    }
-	}
+	g_slist_free(klist);
+	g_hash_table_destroy(eqcache);
+	//g_hash_table_destroy(updated);
     }
 
     /* Try to find prologue info from line table for this CU. */
@@ -2695,39 +2990,13 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     free(dies);
     free(symbols);
     free(scopes);
+    free(imported_modules);
 
     /*
-     * If the CU has been fully loaded or if there was an error, clear
-     * out the reftab and abstract_origins tables!
+     * Clean up whatever we can!
      */
-    if (SYMBOL_IS_FULL(root) || retval) {
-	g_hash_table_iter_init(&iter,srd->abstract_origins);
-	while (g_hash_table_iter_next(&iter,
-				      (gpointer *)&key,(gpointer *)&value)) {
-	    offset = (uintptr_t)key;
-	    iilist = (GSList *)value;
-	    vwarnopt(8,LA_DEBUG,LF_DWARF,
-		     "did not use abstract_origins for offset 0x%"PRIx64"!\n",
-		     offset);
-	    /* GHashTable thankfully does not depend on the value pointer
-	     * being valid in order to remove items from the hashtable!
-	     */
-	    g_slist_free(iilist);
-	}
-	/* Let caller destroy it. */
-	g_hash_table_remove_all(srd->abstract_origins);
-
-	/*
-	 * Put all the tmp refs we took on reftab symbols.  Some might
-	 * be NULL if we employed type compression.
-	 */
-	g_hash_table_iter_init(&iter,srd->reftab);
-	while (g_hash_table_iter_next(&iter,NULL,(gpointer *)&tsymbol)) {
-	    if (tsymbol)
-		RPUT(tsymbol,symbol,srd->reftab,trefcnt);
-	}
-	g_hash_table_remove_all(reftab);
-    }
+    dwarf_refuselist_clean(root,retval ? 1 : 0);
+    dwarf_reftab_clean(root,retval ? 1 : 0);
 
     return retval;
 }
@@ -2961,16 +3230,9 @@ static int debuginfo_load(struct debugfile *debugfile,
 	 * them by the srd->reftab (itself).
 	 */
 	srd->reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
-	srd->abstract_origins = g_hash_table_new(g_direct_hash,g_direct_equal);
+	srd->refuselist = g_hash_table_new(g_direct_hash,g_direct_equal);
 
 	rc = dwarf_load_cu(srd,&offset,die_offsets,0);
-	if (rc || SYMBOL_IS_FULL(srd->root)) {
-	    /* free the reftab and abstract_origins. */
-	    g_hash_table_destroy(srd->reftab);
-	    srd->reftab = NULL;
-	    g_hash_table_destroy(srd->abstract_origins);
-	    srd->abstract_origins = NULL;
-	}
 
 	if (rc) {
 	    retval = -1;
@@ -2991,6 +3253,13 @@ static int debuginfo_load(struct debugfile *debugfile,
 	}
     }
 
+    goto out;
+
+ errout:
+    retval = -1;
+
+ out:
+
     /*
      * XXX: NB: we have to do this at the very end, since it is not
      * per-CU.  We can't always guarantee it happened when we unearthed
@@ -2998,14 +3267,9 @@ static int debuginfo_load(struct debugfile *debugfile,
      * symbols may not have been resolved yet.  So, we have to retry
      * this each time we load more content for the debugfile.
      */
-    debugfile_resolve_declarations(debugfile);
-
-    goto out;
-
- errout:
-    retval = -1;
-
- out:
+    if (retval == 0) {
+	debugfile_resolve_declarations(debugfile);
+    }
     if (dopts->flags & DEBUGFILE_LOAD_FLAG_PUBNAMES) 
 	g_hash_table_destroy(cu_die_offsets);
     return retval;
@@ -3045,7 +3309,6 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
 			 struct symbol *voidsymbol,
 			 GHashTable *reftab,struct array_list *die_offsets,
 			 SMOFFSET cu_offset) {
-    Dwarf_Off die_offset = symbol->ref;
     struct location *loc;
 
     if (!symbol) {
@@ -3057,7 +3320,7 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
      * First, handle symbols that need a type.  Declarations don't get a
      * type if they don't have one!
      */
-    if (!symbol->isdeclaration 
+    if (!symbol->isdeclaration && !symbol->isinlineinstance
 	&& symbol->datatype == NULL && symbol->datatype_ref == 0) {
 	if (SYMBOL_IS_TYPE(symbol)) {
 	    /* If it's a valid symbol, and it's not a base type, but doesn't
@@ -3171,9 +3434,9 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
 	if (parentsymbol && SYMBOL_IS_ROOT(parentsymbol)) {
 	    if (!(debugfile->opts->flags & DEBUGFILE_LOAD_FLAG_REDUCETYPES)
 		&& !symbol->isdeclaration)
-		debugfile_add_type_name(debugfile,symbol_get_name(symbol),symbol);
+		debugfile_add_type(debugfile,symbol);
 
-	    if (symbol->isdeclaration) 
+	    if (0 && symbol->isdeclaration) 
 		debugfile_handle_declaration(debugfile,symbol);
 	}
     }
@@ -3183,7 +3446,7 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
 		&& symbol->isexternal 
 		&& !symbol->isdeclaration) 
 		debugfile_add_global(debugfile,symbol);
-	    else if (symbol->isdeclaration) 
+	    else if (0 && symbol->isdeclaration) 
 		debugfile_handle_declaration(debugfile,symbol);
 	}
     }
@@ -3243,181 +3506,6 @@ void finalize_die_symbol(struct debugfile *debugfile,int level,
     vdebug(5,LA_DEBUG,LF_SYMBOL,"finalized %s symbol(%s:0x%"PRIxSMOFFSET") %p\n",
 	   SYMBOL_TYPE(symbol->type),symbol->name,symbol->ref,symbol);
 }
-
-/*
- * Currently broken for nested struct/union resolution, if one of the
- * nested members has the same type as a parent higher up in the nest.
- *
- * So, we don't use it anymore and have moved to a much more
- * straightforward approach.
- */
-#if 0
-void resolve_refs(gpointer key __attribute__ ((unused)),
-		  gpointer value,gpointer data) {
-    struct symbol *symbol = (struct symbol *)value;
-    GHashTable *reftab = (GHashTable *)data;
-    struct symbol *member;
-    struct symbol_instance *member_instance;
-
-    if (SYMBOL_IS_TYPE(symbol)) {
-	if (symbol->datatype_code == DATATYPE_BASE)
-	    return;
-	if (symbol->datatype_code == DATATYPE_PTR
-	    || symbol->datatype_code == DATATYPE_TYPEDEF
-	    || symbol->datatype_code == DATATYPE_ARRAY
-	    || symbol->datatype_code == DATATYPE_CONST
-	    || symbol->datatype_code == DATATYPE_VOL
-	    || symbol->datatype_code == DATATYPE_FUNCTION) {
-	    if (!symbol->datatype) {
-		symbol->datatype = \
-		    g_hash_table_lookup(reftab,
-					(gpointer)(uintptr_t)symbol->datatype_ref);
-		if (!symbol->datatype) 
-		    verror("could not resolve ref %"PRIxSMOFFSET" for %s type symbol %s\n",
-			   symbol->datatype_ref,
-			   DATATYPE(symbol->datatype_code),
-			   symbol_get_name(symbol));
-		else {
-		    vdebug(3,LA_DEBUG,LF_DWARF,
-			   "resolved ref 0x%"PRIxSMOFFSET" %s type symbol %s\n",
-			   symbol->datatype_ref,
-			   DATATYPE(symbol->datatype_code),symbol_get_name(symbol));
-
-		    vdebug(3,LA_DEBUG,LF_DWARF,
-			   "rresolving just-resolved %s type symbol %s\n",
-			   DATATYPE(symbol->datatype->datatype_code),
-			   symbol_get_name(symbol->datatype),
-			   symbol->datatype->datatype_ref);
-		    resolve_refs(NULL,symbol->datatype,reftab);
-		}
-	    }
-	    else {
-		/* Even if this symbol has been resolved, anon types
-		 * further down the type chain may not have been
-		 * resolved!
-		 */
-		vdebug(3,LA_DEBUG,LF_DWARF,
-		       "rresolving known %s type symbol %s ref 0x%"PRIxSMOFFSET"\n",
-		       DATATYPE(symbol->datatype->datatype_code),
-		       symbol_get_name(symbol->datatype),
-		       symbol->datatype->datatype_ref);
-
-		resolve_refs(NULL,symbol->datatype,data);
-	    }
-
-	    if (SYMBOL_IS_FULL(symbol)
-		&& symbol->datatype_code == DATATYPE_FUNCTION
-		&& symbol->s.ti->d.f.count) {
-		/* do it for the function type args! */
-		list_for_each_entry(member_instance,&(symbol->s.ti->d.f.args),
-				    d.v.member) {
-		    member = member_instance->d.v.member_symbol;
-		    vdebug(3,LA_DEBUG,LF_DWARF,
-			   "rresolving function type %s arg %s ref 0x%"PRIxSMOFFSET"\n",
-			   symbol_get_name(symbol),symbol_get_name(member),member->datatype_ref);
-		    resolve_refs(NULL,member,reftab);
-		}
-	    }
-	}
-	else if (SYMBOL_IS_FULL(symbol)
-		 && (symbol->datatype_code == DATATYPE_STRUCT
-		     || symbol->datatype_code == DATATYPE_UNION)) {
-	    /* 
-	     * We need to recurse for each of the struct members too,
-	     * BUT we have to take special care with members because
-	     * the type of a member (or a member of a member, etc)
-	     * could be the same type we're trying to resolve
-	     * currently.  That would send us into a bad loop and blow
-	     * out the stack... so we can't do that.
-	     *
-	     * XXX: this is currently broken -- even if the member's
-	     * datatype is resolved, if that member has members, we
-	     * don't handle those.  We've moved to not using this
-	     * function anymore as a result.
-	     */
-	    list_for_each_entry(member_instance,&(symbol->s.ti->d.su.members),
-				d.v.member) {
-		member = member_instance->d.v.member_symbol;
-		if (member->datatype)
-		    continue;
-		vdebug(3,LA_DEBUG,LF_DWARF,
-		       "rresolving s/u %s member %s ref 0x%"PRIxSMOFFSET"\n",
-		       symbol_get_name(symbol),symbol_get_name(member),member->datatype_ref);
-		resolve_refs(NULL,member,reftab);
-	    }
-	}
-    }
-    else {
-	/* do it for the variable or function's main type */
-	if (!symbol->datatype && symbol->datatype_ref) {
-	    if (!(symbol->datatype = \
-		  g_hash_table_lookup(reftab,
-				      (gpointer)(uintptr_t)symbol->datatype_ref)))
-		verror("could not resolve ref %"PRIxSMOFFSET" for var/func symbol %s\n",
-		       symbol->datatype_ref,symbol_get_name(symbol));
-	    else {
-		vdebug(3,LA_DEBUG,LF_DWARF,
-		       "resolved ref %"PRIxSMOFFSET" non-type symbol %s\n",
-		       symbol->datatype_ref,symbol_get_name(symbol));
-	    }
-	}
-
-	/* Always recurse in case there are anon symbols down the chain
-	 * that need resolution.
-	 */
-	if (symbol->datatype) {
-	    vdebug(3,LA_DEBUG,LF_DWARF,
-		   "rresolving ref 0x%"PRIxSMOFFSET" %s type symbol %s\n",
-		   symbol->datatype->datatype_ref,
-		   DATATYPE(symbol->datatype->datatype_code),
-		   symbol_get_name(symbol->datatype));
-	    resolve_refs(NULL,symbol->datatype,reftab);
-	}
-
-	/* then, if this is a function, do the args */
-	if (SYMBOL_IS_FULL_FUNCTION(symbol)) 
-	    list_for_each_entry(member_instance,&(symbol->s.ii->d.f.args),
-				d.v.member) {
-		member = member_instance->d.v.member_symbol;
-		if (member->datatype) {
-		    vdebug(3,LA_DEBUG,LF_DWARF,
-			   "rresolving ref 0x%"PRIxSMOFFSET" function %s arg %s\n",
-			   member->datatype_ref,symbol_get_name(symbol),symbol_get_name(member));
-		    resolve_refs(NULL,member,reftab);
-		}
-	    }
-    }
-
-    /*
-     * If this is an inlined instance of a function or variable
-     * (probably only a param variable?), resolve the origin ref if it
-     * exists.
-     *
-     * XXX: do we need to recurse on the resolved ref?  I hope not!
-     */
-    if (symbol->isinlineinstance
-	&& SYMBOL_IS_FULL(symbol)
-	&& !symbol->s.ii->origin 
-	&& symbol->s.ii->origin_ref) {
-	if (!(symbol->s.ii->origin = \
-	      g_hash_table_lookup(reftab,
-				  (gpointer)(uintptr_t)symbol->s.ii->origin_ref))) {
-	    verror("could not resolve ref 0x%"PRIxSMOFFSET" for inlined %s\n",
-		   symbol->s.ii->origin_ref,SYMBOL_TYPE(symbol->type));
-	}
-	else {
-	    vdebug(3,LA_DEBUG,LF_DWARF,
-		   "resolved ref 0x%"PRIxSMOFFSET" inlined %s to %s\n",
-		   symbol->s.ii->origin_ref,
-		   SYMBOL_TYPE(symbol->type),
-		   symbol_get_name(symbol->s.ii->origin));
-	}
-
-	if (symbol->s.ii->origin)
-	    resolve_refs(NULL,symbol->s.ii->origin,reftab);
-    }
-}
-#endif
 
 int dwarf_load_pubnames(struct debugfile *debugfile,
 			unsigned char *buf,unsigned int len,Dwarf *dbg) {
@@ -4101,6 +4189,35 @@ int dwarf_load_debuginfo(struct debugfile *debugfile) {
     return 0;
 }
 
+
+int dwarf_symbol_root_priv_free(struct debugfile *debugfile,struct symbol *root) {
+    struct symbol_root_dwarf *srd;
+
+    SYMBOL_RX_ROOT(root,sr);
+    if (!sr)
+	return -1;
+
+    srd = (struct symbol_root_dwarf *)sr->priv;
+    if (!srd)
+	return -1;
+
+    /*
+     * Clean up whatever we can!
+     */
+    dwarf_refuselist_clean(root,1);
+    dwarf_reftab_clean(root,1);
+
+    if (srd->reftab)
+	g_hash_table_destroy(srd->reftab);
+    if (srd->refuselist)
+	g_hash_table_destroy(srd->refuselist);
+
+    free(srd);
+    sr->priv = NULL;
+
+    return 0;
+}
+
 int dwarf_init(struct debugfile *debugfile) {
     struct dwarf_debugfile_info *ddi;
 
@@ -4146,6 +4263,7 @@ struct debugfile_ops dwarf_debugfile_ops = {
     .symbol_root_expand = dwarf_symbol_root_expand,
     .frame_read_saved_reg = dwarf_cfa_read_saved_reg,
     .frame_read_retaddr = dwarf_cfa_read_retaddr,
+    .symbol_root_priv_free = dwarf_symbol_root_priv_free,
     .fini = dwarf_fini,
 };
 

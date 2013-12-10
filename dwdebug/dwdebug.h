@@ -110,6 +110,18 @@ typedef enum {
      * result in the fastest possible lookups.
      */
     DEBUGFILE_LOAD_FLAG_ALLRANGES = 1 << 3,
+    /*
+     * By default, declaration symbols that are defined are replaced
+     * with those definition symbols (i.e., they are deleted, and
+     * anything that referenced them is changed to use the definition
+     * symbol instead).
+     *
+     * This simplifies the view of the program the user sees; but
+     * sometimes the user might *want* to access the declaration
+     * symbol (or the defn/decl resolution code might make mistakes!);
+     * hence, this option exists.
+     */
+    DEBUGFILE_LOAD_FLAG_KEEPDECLS = 1 << 4,
     /* This forces partial symbol loading, instead of the default full. */
     DEBUGFILE_LOAD_FLAG_PARTIALSYM = 1 << 8,
     /* This flag specifies that we will try to promote all per-CU types
@@ -416,7 +428,7 @@ struct symbol *symbol_find_parent(struct symbol *symbol);
 struct symbol *symbol_find_root(struct symbol *symbol);
 int symbol_contains_addr(struct symbol *symbol,ADDR obj_addr);
 int symbol_type_equal(struct symbol *t1,struct symbol *t2,
-		      GHashTable *updated_datatype_refs);
+		      GHashTable *eqcache,GHashTable *updated_datatype_refs);
 int symbol_type_is_char(struct symbol *type);
 unsigned int symbol_type_array_bytesize(struct symbol *type);
 /* Return either type_array_bytesize or type_bytesize */
@@ -924,15 +936,23 @@ struct debugfile {
     GHashTable *decllists;
 
     /*
-     * When we *do* resolve a declaration, we have to save the fact that
-     * we did so somewhere -- we had to RHOLD(decl,defn) so we could
-     * copy mem from the defn to the decl.  This helps us undo those
-     * holds; we do it only when the debugfile is freed, or when the
-     * individual symbol is freed (i.e., if symbol->isdecldefined and
-     * decl symbol is a key here, the value is the defn symbol it held).
-     * Then it can RPUT on the symbol and life is good.
+     * When we *do* resolve a declaration to some definition symbol, we
+     * have to save the fact that we did so somewhere, because we copy
+     * mem from the defn to decl.  We would have liked to have
+     * RHOLD(decl,defn), but we cannot store the defn pointer in the
+     * decl symbol -- no room.  We cannot guarantee we could trace to
+     * the debugfile (the other obvious place to store the fact that
+     * decl holds defn) during symbol_free, because the parent hierarchy
+     * may already be being torn down.
+     *
+     * So, the only strategy we are left with is when a defn is used for
+     * the first time by a decl, take a ref on the defn and store that
+     * in this table, and only release the ref when the debugfile is
+     * destroyed.  This could be wasteful if we ever wanted to free
+     * parts of debugfiles but not their entirety; but we don't support
+     * that for now so it doesn't matter.
      */
-    GHashTable *decldefined;
+    GHashTable *decldefnsused;
 
     /*
      * Any symbol that has a fixed address location gets an entry in
