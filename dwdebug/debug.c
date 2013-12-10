@@ -4962,20 +4962,34 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	fprintf(ud->stream," = %d",*((int *)SYMBOLX_VAR_CONSTVAL(symbol)));
     }
 
-    if (ud->meta) {
+    if (ud->meta
+	&& (symbol->srcline || symbol->isexternal || symbol->isdeclaration 
+	    || symbol->decldefined || symbol->isdeclinline
+	    || symbol->isinlined || (sii && sii->inline_instances))) {
 	fprintf(ud->stream," (");
 	if (!symbol->isparam && !symbol->ismember) {
-	    fprintf(ud->stream,
-		    "external=%d,isdecl=%d,decldefined=%d,"
-		    "declinline=%d,inlined=%d",
-		    symbol->isexternal,symbol->isdeclaration,symbol->decldefined,
-		    symbol->isdeclinline,symbol->isinlined);
+	    if (symbol->isexternal)
+		fputs("external,",ud->stream);
+	    if (symbol->isdeclaration)
+		fputs("isdecl,",ud->stream);
+	    if (symbol->decldefined)
+		fputs("decldefined,",ud->stream);
+	    if (symbol->isdeclinline)
+		fputs("declinline,",ud->stream);
+	    if (symbol->isinlined)
+		fputs("inlined,",ud->stream);
 	}
+	if (symbol->srcline != 0)
+	    fprintf(ud->stream,"line=%d,",symbol->srcline);
 	if (sii && sii->inline_instances) {
-	    fprintf(ud->stream,",inlineinstances=(");
+	    fprintf(ud->stream,"inlineinstances=(");
 	    v_g_slist_foreach(sii->inline_instances,gsltmp,iisymbol) {
-		fprintf(ud->stream,"0x%"PRIxADDR",",
-			symbol_get_addr(iisymbol));
+		if (iisymbol->has_addr)
+		    fprintf(ud->stream,"0x%"PRIxADDR",",
+			    symbol_get_addr(iisymbol));
+		else
+		    fprintf(ud->stream,"ref%"PRIxSMOFFSET",",
+			    iisymbol->ref);
 	    }
 	    fprintf(ud->stream,")");
 	}
@@ -4983,21 +4997,30 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
     }
 
     if (ud->detail) {
-	if (SYMBOLX_VAR_LOC(symbol)) {
+	if (SYMBOLX_VAR_LOC(symbol)
+	    && !(LOCATION_IS_ADDR(SYMBOLX_VAR_LOC(symbol))
+		 && symbol->has_addr 
+		 && symbol->addr == LOCATION_ADDR(SYMBOLX_VAR_LOC(symbol)))) {
 	    fprintf(ud->stream," @@ ");
 	    location_dump(SYMBOLX_VAR_LOC(symbol),ud);
 	}
 
-	if (SYMBOLX_VAR_CONSTVAL(symbol)) 
-	    fprintf(ud->stream," @@ CONST(%p)",SYMBOLX_VAR_CONSTVAL(symbol));
+	if (SYMBOLX_VAR_CONSTVAL(symbol)) {
+	    sz = symbol_type_full_bytesize(datatype);
+	    fprintf(ud->stream," @@ CONST(%d,",sz);
+	    for (i = 0; i < sz; ++i) 
+		fprintf(ud->stream,"%02hhx",
+			((char *)SYMBOLX_VAR_CONSTVAL(symbol))[sz - 1 - i]);
+	    fprintf(ud->stream,")");
+	}
 
 	if (symbol->has_addr)
 	    fprintf(ud->stream," @@ 0x%"PRIxADDR,symbol_get_addr(symbol));
 
 	if (symbol->size_is_bytes)
-	    fprintf(ud->stream," (size=%d B)",symbol_get_bytesize(symbol));
+	    fprintf(ud->stream," (%d B)",symbol_get_bytesize(symbol));
 	else if (symbol->size_is_bits)
-	    fprintf(ud->stream," (size=%d b)",symbol_get_bitsize(symbol));
+	    fprintf(ud->stream," (%d b)",symbol_get_bitsize(symbol));
     }
 }
 
@@ -5019,6 +5042,12 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	.prefix = "",
 	.detail = ud->detail,
 	.meta = ud->meta,
+    };
+    struct dump_info udn3 = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = 0,
+	.meta = 0,
     };
 
     SYMBOL_RX_INLINE(symbol,sii);
@@ -5066,15 +5095,10 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"...");
 
 	fprintf(ud->stream,")");
-
-	if (SYMBOLX_VAR_CONSTVAL(symbol))
-	    fprintf(ud->stream," @@ CONST(%p)",SYMBOLX_VAR_CONSTVAL(symbol));
     }
 
     if (ud->meta) {
 	fputs(" (",ud->stream);
-	if (symbol->has_addr)
-	    fprintf(ud->stream,"addr=0x%"PRIxADDR",",symbol_get_addr(symbol));
 	if (symbol->isexternal)
 	    fputs("external,",ud->stream);
 	if (symbol->isexternal)
@@ -5092,15 +5116,18 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	    location_dump(sf->fbloc,&udn2);
 	    fputs(",",ud->stream);
 	}
+	if (symbol->srcline != 0)
+	    fprintf(ud->stream,"line=%d,",symbol->srcline);
 
 	if (sii && sii->inline_instances) {
 	    fputs("inlineinstances=(",ud->stream);
 	    v_g_slist_foreach(sii->inline_instances,gsltmp,iisymbol) {
-		if (iisymbol->has_addr) 
+		if (iisymbol->has_addr)
 		    fprintf(ud->stream,"0x%"PRIxADDR",",
 			    symbol_get_addr(iisymbol));
 		else
-		    fprintf(ud->stream,"REF(%"PRIxSMOFFSET"),",iisymbol->ref);
+		    fprintf(ud->stream,"ref%"PRIxSMOFFSET",",
+			    iisymbol->ref);
 	    }
 	    fputs(")",ud->stream);
 	}
@@ -5111,12 +5138,14 @@ void symbol_function_dump(struct symbol *symbol,struct dump_info *ud) {
 	if (symbol->has_addr)
 	    fprintf(ud->stream," @@ 0x%"PRIxADDR,symbol_get_addr(symbol));
 	if (symbol->size_is_bytes)
-	    fprintf(ud->stream," (size=%d B)",symbol_get_bytesize(symbol));
+	    fprintf(ud->stream," (%d B)",symbol_get_bytesize(symbol));
 	else if (symbol->size_is_bits)
-	    fprintf(ud->stream," (size=%d b)",symbol_get_bitsize(symbol));
+	    fprintf(ud->stream," (%d b)",symbol_get_bitsize(symbol));
 
-	if (sf && sf->scope)
-	    scope_dump(sf->scope,&udn);
+	if (sf && sf->scope) {
+	    fputs(" ",ud->stream);
+	    scope_dump(sf->scope,&udn3);
+	}
     }
 }
 
@@ -5182,9 +5211,11 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"%s",symbol->name);
 	if (ud->meta) {
 	    if (symbol->size_is_bytes)
-		fprintf(ud->stream," (size=%d B)",symbol->size.bytes);
+		fprintf(ud->stream," (%d B)",symbol->size.bytes);
 	    else if (symbol->size_is_bits)
-		fprintf(ud->stream," (size=%d b)",symbol->size.bits);
+		fprintf(ud->stream," (%d b)",symbol->size.bits);
+	    if (symbol->srcline != 0)
+		fprintf(ud->stream," (line=%d)",symbol->srcline);
 	}
 	if (ud->detail && SYMBOL_HAS_EXTRA(symbol)) {
 	    fprintf(ud->stream," { ");
@@ -5232,9 +5263,11 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	    fprintf(ud->stream,"%s",symbol_get_name(symbol));
 	if (ud->meta) {
 	    if (symbol->size_is_bytes)
-		fprintf(ud->stream," (size=%d B)",symbol_get_bytesize(symbol));
+		fprintf(ud->stream," (%d B)",symbol_get_bytesize(symbol));
 	    else if (symbol->size_is_bits)
-		fprintf(ud->stream," (size=%d b)",symbol_get_bitsize(symbol));
+		fprintf(ud->stream," (%d b)",symbol_get_bitsize(symbol));
+	    if (symbol->srcline != 0)
+		fprintf(ud->stream," (line=%d)",symbol->srcline);
 	}
 	if (ud->detail && SYMBOL_HAS_EXTRA(symbol)) {
 	    fprintf(ud->stream," { ");
@@ -5306,6 +5339,8 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	if (ud->meta)
 	    fprintf(ud->stream," (prototyped=%d,external=%d) ",
 		    symbol->isprototyped,symbol->isexternal);
+	    if (symbol->srcline != 0)
+		fprintf(ud->stream,"(line=%d) ",symbol->srcline);
 
 	if (ud->detail && SYMBOL_HAS_EXTRA(symbol)) {
 	    fprintf(ud->stream,"(");
@@ -5335,15 +5370,21 @@ void symbol_type_dump(struct symbol *symbol,struct dump_info *ud) {
 	else 
 	    fprintf(ud->stream,"typedef ref%"PRIxSMOFFSET" %s",
 		    symbol->datatype_ref,symbol_get_name(symbol));
+	if (ud->meta) {
+	    if (symbol->srcline != 0)
+		fprintf(ud->stream," (line=%d)",symbol->srcline);
+	}
 	break;
     case DATATYPE_BASE:
 	if (!ud->meta)
 	    fprintf(ud->stream,"%s",symbol->name);
 	else  {
 	    if (symbol->size_is_bytes)
-		fprintf(ud->stream," (size=%d B)",symbol_get_bytesize(symbol));
+		fprintf(ud->stream," (%d B)",symbol_get_bytesize(symbol));
 	    else if (symbol->size_is_bits)
-		fprintf(ud->stream," (size=%d b)",symbol_get_bitsize(symbol));
+		fprintf(ud->stream," (%d b)",symbol_get_bitsize(symbol));
+	    if (symbol->srcline != 0)
+		fprintf(ud->stream," (line=%d)",symbol->srcline);
 	    fprintf(ud->stream," (encoding=%d)",SYMBOLX_ENCODING_V(symbol));
 	}
 	break;
@@ -5371,34 +5412,27 @@ void symbol_dump(struct symbol *symbol,struct dump_info *ud) {
     udn.detail = ud->detail;
 
     if (symbol->type == SYMBOL_TYPE_TYPE) {
-	fprintf(ud->stream,"%stype(%s,line=%d): ",
-		p,symbol->name,
-		symbol->srcline);
+	fprintf(ud->stream,"%stype: ",p);
 	symbol_type_dump(symbol,&udn);
     }
     else if (symbol->type == SYMBOL_TYPE_ROOT) {
-	fprintf(ud->stream,"%sroot(%s,line=%d): ",
-		p,symbol->name,symbol->srcline);
+	fprintf(ud->stream,"%sroot: ",p);
 	symbol_root_dump(symbol,&udn);
     }
     else if (symbol->type == SYMBOL_TYPE_VAR) {
-	fprintf(ud->stream,"%svar(%s,line=%d): ",
-		p,symbol->name,symbol->srcline);
+	fprintf(ud->stream,"%svar: ",p);
 	symbol_var_dump(symbol,&udn);
     }
     else if (symbol->type == SYMBOL_TYPE_FUNC) {
-	fprintf(ud->stream,"%sfunction(%s,line=%d): ",
-		p,symbol->name,symbol->srcline);
+	fprintf(ud->stream,"%sfunc: ",p);
 	symbol_function_dump(symbol,&udn);
     }
     else if (symbol->type == SYMBOL_TYPE_LABEL) {
-	fprintf(ud->stream,"%slabel(%s,line=%d): ",
-		p,symbol->name,symbol->srcline);
+	fprintf(ud->stream,"%slabel: ",p);
 	symbol_label_dump(symbol,&udn);
     }
     else if (symbol->type == SYMBOL_TYPE_BLOCK) {
-	fprintf(ud->stream,"%sblock(%s,line=%d): ",
-		p,symbol->name ? symbol->name : "",symbol->srcline);
+	fprintf(ud->stream,"%sblock: ",p);
 	symbol_block_dump(symbol,&udn);
     }
     else {

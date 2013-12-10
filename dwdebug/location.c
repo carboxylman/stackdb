@@ -370,7 +370,7 @@ void loclistloc_dump(struct loclistloc *list,struct dump_info *ud) {
 	.meta = ud->meta,
     };
 
-    fprintf(ud->stream,"%sLOCLIST(",ud->prefix);
+    fprintf(ud->stream,"%sLIST(",ud->prefix);
     i = 0;
     while (list) {
 	if (i > 0)
@@ -390,40 +390,52 @@ void loclistloc_dump(struct loclistloc *list,struct dump_info *ud) {
 }
 
 void location_dump(struct location *location,struct dump_info *ud) {
+    int i;
+    struct dump_info udn = {
+	.stream = ud->stream,
+	.prefix = "",
+	.detail = ud->detail,
+	.meta = ud->meta,
+    };
+
     switch(location->loctype) {
     case LOCTYPE_ADDR:
 	fprintf(ud->stream,"0x%" PRIxADDR,location->l.addr);
 	break;
     case LOCTYPE_REG:
-	fprintf(ud->stream,"REG(%d)",location->l.reg);
+	fprintf(ud->stream,"R%d",location->l.reg);
 	break;
     case LOCTYPE_REG_ADDR:
-	fprintf(ud->stream,"REGADDR(%d)",location->l.reg);
+	fprintf(ud->stream,"*R%d",location->l.reg);
 	break;
     case LOCTYPE_REG_OFFSET:
-	fprintf(ud->stream,"REGOFFSET(%hhd,%"PRIiOFFSET")",
+	fprintf(ud->stream,"R%hhd%+"PRIiOFFSET,
 		(REG)location->extra,location->l.offset);
 	break;
     case LOCTYPE_FBREG_OFFSET:
-	fprintf(ud->stream,"FBREGOFFSET(%"PRIiOFFSET")",location->l.offset);
+	fprintf(ud->stream,"FB%+"PRIiOFFSET,location->l.offset);
 	break;
     case LOCTYPE_MEMBER_OFFSET:
-	fprintf(ud->stream,"MEMBEROFFSET(%"PRIiOFFSET")",
+	fprintf(ud->stream,"%+"PRIiOFFSET,
 		location->l.offset);
 	break;
     case LOCTYPE_IMPLICIT_WORD:
-	fprintf(ud->stream,"IMPLICIT_WORD(0x%"PRIxADDR")",location->l.word);
+	fprintf(ud->stream,"IMPLICITWORD(0x%"PRIxADDR")",location->l.word);
 	break;
     case LOCTYPE_IMPLICIT_DATA:
-	fprintf(ud->stream,"IMPLICIT_DATA(%p,%d)",
-		location->l.data,(int)location->extra);
+	fprintf(ud->stream,"IMPLICITDATA(%d,",(int)location->extra);
+	for (i = 0; i < (int)location->extra; ++i) 
+	    fprintf(ud->stream,"%hhx",location->l.data[i]);
+	fprintf(ud->stream,")");
 	break;
     case LOCTYPE_RUNTIME:
-	fprintf(ud->stream,"RUNTIME(%p,%d)",
-		location->l.data,(int)location->extra);
+	fprintf(ud->stream,"RUNTIMEDATA(%d,",(int)location->extra);
+	for (i = 0; i < (int)location->extra; ++i) 
+	    fprintf(ud->stream,"%hhx",location->l.data[i]);
+	fprintf(ud->stream,")");
 	break;
     case LOCTYPE_LOCLIST:
-	loclistloc_dump(location->l.loclist,ud);
+	loclistloc_dump(location->l.loclist,&udn);
 	break;
     case LOCTYPE_UNKNOWN:
     default:

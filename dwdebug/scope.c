@@ -427,19 +427,22 @@ void scope_dump(struct scope *scope,struct dump_info *ud) {
     if (scope->symbol) {
 	if (scope->symbol->isinlineinstance) 
 	    fprintf(ud->stream,
-		    "%sscope(%s (inline instance: %s,baseaddr=0x%"PRIxADDR")) (",
+		    "%sscope(INLINED(%s) @@ 0x%"PRIxADDR")",
 		    p,symbol_get_name_inline(scope->symbol),
-		    symbol_get_name(scope->symbol),
 		    symbol_get_addr(scope->symbol));
-	else 
-	    fprintf(ud->stream,"%sscope(%s (baseaddr=0x%"PRIxADDR")) (",
+	else if (symbol_has_addr(scope->symbol)) 
+	    fprintf(ud->stream,"%sscope(%s @@ 0x%"PRIxADDR")",
 		    p,symbol_get_name(scope->symbol),
 		    symbol_get_addr(scope->symbol));
+	else
+	    fprintf(ud->stream,"%sscope(%s)",
+		    p,symbol_get_name(scope->symbol));
     }
     else
 	fprintf(ud->stream,"%sscope()",p);
 
-    fprintf(ud->stream," RANGES(");
+    if (scope->range)
+	fprintf(ud->stream," RANGES(");
     i = 0;
     range = scope->range;
     while (range) {
@@ -450,17 +453,20 @@ void scope_dump(struct scope *scope,struct dump_info *ud) {
 		range->start,range->end);
 	range = range->next;
     }
-    fprintf(ud->stream,")");
+    if (scope->range)
+	fprintf(ud->stream,")");
 
     if (ud->detail) {
+	int didnl = 0;
 	fprintf(ud->stream," {");
 	if (scope->symdict && symdict_get_size_named(scope->symdict)) {
+	    didnl = 1;
 	    fprintf(ud->stream,"\n%s  symbols: {\n",p);
 	    symdict_dump(scope->symdict,&udn2);
 	    fprintf(ud->stream,"%s  }\n",p);
 	}
 	if (scope->subscopes) {
-	    if (!scope->symdict)
+	    if (!didnl)
 		fprintf(ud->stream,"\n");
 	    fprintf(ud->stream,"%s  subscopes: {\n",p);
 	    v_g_slist_foreach(scope->subscopes,gsltmp,cscope) {
@@ -468,7 +474,10 @@ void scope_dump(struct scope *scope,struct dump_info *ud) {
 	    }
 	    fprintf(ud->stream,"%s  }\n",p);
 	}
-	fprintf(ud->stream,"%s}\n",p);
+	if (didnl)
+	    fprintf(ud->stream,"%s}\n",p);
+	else
+	    fprintf(ud->stream," }\n");
     }
     else 
 	fprintf(ud->stream," { }");
