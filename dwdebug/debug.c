@@ -32,6 +32,9 @@
 #include <stdarg.h>
 #include <glib.h>
 #include <dwarf.h>
+#ifdef DWDEBUG_MEMDEBUG
+#include <malloc.h>
+#endif
 
 #include "common.h"
 #include "log.h"
@@ -66,9 +69,26 @@ static const char *DEBUGPATHS[] = {
 
 static int init_done = 0;
 
+#if DWDEBUG_MEMDEBUG
+static GMemVTable system_malloc_gmemvtable = {
+    .malloc = malloc,
+    .realloc = realloc,
+    .free = free,
+    .calloc = calloc,
+    .try_malloc = NULL,
+    .try_realloc = NULL,
+};
+#endif
+
 void dwdebug_init(void) {
     if (init_done)
 	return;
+
+#ifdef DWDEBUG_MEMDEBUG
+    if (getenv("G_SLICE") && strcmp(getenv("G_SLICE"),"always-malloc") == 0)
+	g_mem_set_vtable(glib_mem_profiler_table);
+    //g_mem_set_vtable(&system_malloc_gmemvtable);
+#endif
 
     binfile_init();
 
@@ -2342,6 +2362,39 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
     int i;
     gpointer kp, vp;
 
+    vdebug(5,LA_DEBUG,LF_DFILE,"freeing debugfile(%s)\n",debugfile->filename);
+#ifdef DWDEBUG_MEMDEBUG
+    vdebug(5,LA_DEBUG,LF_DFILE,"dumping current VM usage:\n");
+    if (vdebug_is_on(5,LA_DEBUG,LF_DFILE)) {
+	char cmd[128];
+	unsigned long *x;
+
+	/*
+	 * Force sbrk() so that stats are good.
+	 */
+	mallopt(M_TRIM_THRESHOLD,8);
+	x = malloc(sizeof(*x));
+	free(x);
+	/* man mallopt says 128*1024 is the default, ok. */
+	mallopt(M_TRIM_THRESHOLD,128*1024);
+
+	fflush(stdout);
+	fflush(stderr);
+	vdebug(5,LA_DEBUG,LF_DFILE,"malloc:\n");
+	malloc_stats();
+	vdebug(5,LA_DEBUG,LF_DFILE,"glib:\n");
+	g_mem_profile();
+	vdebug(5,LA_DEBUG,LF_DFILE,"procfs:\n");
+	snprintf(cmd,sizeof(cmd),"cat /proc/%d/status | grep Vm",getpid());
+	if (system(cmd)) {
+	    /* gcc */;
+	}
+	fflush(stdout);
+	fflush(stderr);
+    }
+    vdebug(5,LA_DEBUG,LF_DFILE,"finished dumping current VM usage\n");
+#endif
+
     if (debugfile->refcnt) {
 	if (!force) {
 	    verror("cannot free (%d refs) debugfile(%s)\n",
@@ -2353,8 +2406,6 @@ REFCNT debugfile_free(struct debugfile *debugfile,int force) {
 		  debugfile->refcnt,debugfile->filename);
 	}
     }
-
-    vdebug(5,LA_DEBUG,LF_DFILE,"freeing debugfile(%s)\n",debugfile->filename);
 
     if (debugfile->ops && debugfile->ops->fini)
 	debugfile->ops->fini(debugfile);
