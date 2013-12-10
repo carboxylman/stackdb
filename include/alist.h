@@ -165,6 +165,40 @@ static inline int array_list_add(struct array_list *list,void *element) {
     return 0;
 }
 
+/*
+ * NB: @i must be within the list or just off its current end!  We
+ * refuse to create sparse lists (lists with NULL entries in this case).
+ */
+static inline int array_list_add_item_at(struct array_list *list,
+					 void *element,int i) {
+    void **lltmp;
+    int j;
+
+    if (list->len == i)
+	return array_list_add(list,element);
+    else if (list->len < i)
+	return -1;
+
+    /* allocate space for another entry if necessary */
+    if (list->len == list->alloc_len) {
+	if (!(lltmp = (void **)realloc(list->list,
+				       (list->len+1)*sizeof(void *)))) {
+	    return -1;
+	}
+	list->list = lltmp;
+	list->alloc_len += 1;
+    }
+
+    /* Move the ith..len items to i+1 */
+    for (j = i; j < list->len; ++j)
+	list->list[j+1] = list->list[j];
+
+    list->list[i] = element;
+    list->len += 1;
+
+    return 0;
+}
+
 static inline int array_list_append(struct array_list *list,void *element) {
     return array_list_add(list,element);
 }
