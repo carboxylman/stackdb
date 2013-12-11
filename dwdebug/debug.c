@@ -4892,6 +4892,8 @@ void symbol_var_dump(struct symbol *symbol,struct dump_info *ud) {
 	.detail = 0,
 	.meta = 0,
     };
+    int i;
+    int sz;
 
     datatype = symbol_get_datatype_real(symbol);
 
