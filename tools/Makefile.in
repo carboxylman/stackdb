@@ -68,14 +68,14 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
-OBJECTS := dumpthreads.lo 
+OBJECTS := dumpthreads.lo backtrace.lo
 ifeq ($(ENABLE_XENSUPPORT),"1")
 	OBJECTS += psaction.lo
 endif
 
 LIBRARIES := 
 
-PROGRAMS := dumpthreads 
+PROGRAMS := dumpthreads backtrace
 ifeq ($(ENABLE_XENSUPPORT),"1")
 	PROGRAMS += psaction
 endif
@@ -108,6 +108,10 @@ dumpthreads: $(HEADERS) $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+backtrace: $(HEADERS) $(LIBRARIES) backtrace.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 

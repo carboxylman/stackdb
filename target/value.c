@@ -16,6 +16,9 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#include <glib.h>
+
+#include "glib_wrapper.h"
 #include "target_api.h"
 #include "target.h"
 #include "dwdebug.h"
@@ -67,6 +70,10 @@ int value_set_child(struct value *value,struct value *parent_value,ADDR addr) {
 void value_set_strlen(struct value *value,int len) {
     value->bufsiz = len;
     value->isstring = 1;
+}
+
+void value_set_const(struct value *value) {
+    value->isconst = 1;
 }
 
 struct value *value_create_raw(struct target *target,
@@ -151,11 +158,16 @@ struct value *value_create_noalloc(struct target_thread *thread,
     struct value *value;
     int len = symbol_type_full_bytesize(type);
 
+    /*
+     * NB: don't check this because we want to create NULL values sometimes!
+     */
+#if 0
     if (len < 1) {
 	verror("type %s (ref 0x%"PRIxSMOFFSET") had 0-byte size!\n",
 	       type->name,type->ref);
 	return NULL;
     }
+#endif
 
     if (!(value = malloc(sizeof(struct value)))) 
 	return NULL;
@@ -266,7 +278,7 @@ ADDR value_addr(struct value *value) {
 
 int value_refresh(struct value *value,int recursive) {
     struct target *target;
-    REGVAL reg;
+    REGVAL regval;
 
     if (!value->thread) {
 	vwarn("value no longer associated with a thread!\n");
@@ -291,12 +303,13 @@ int value_refresh(struct value *value,int recursive) {
      */
     if (value->isreg) {
 	errno = 0;
-	reg = target_read_reg(target,value->thread->tid,value->res.reg);
+	regval = target_read_reg(target,value->thread->tid,value->res.reg);
 	if (errno) {
 	    verror("could not read reg %d in target %s!\n",
 		   value->res.reg,target->name);
 	    return -1;
 	}
+	memcpy(value->buf,&regval,value->bufsiz);
     }
     else {
 	if (!target_read_addr(target,value->res.addr,value->bufsiz,
@@ -553,7 +566,6 @@ int value_update_unum(struct value *value,unum_t v) {
 
 int value_snprintf(struct value *value,char *buf,int buflen) {
     int nrc;
-    struct symbol_instance *tmpi;
     struct symbol *tmpsym;
     struct value fake_value;
     OFFSET offset;
@@ -562,6 +574,11 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
     int j;
     int found;
     uint32_t tbytesize;
+    struct symbol *datatype = value->type;
+    struct symbol *datatype2;
+    GSList *gsltmp;
+    loctype_t ltrc;
+    struct location tloc;
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
@@ -569,11 +586,16 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	goto out;
     }
 
-    tbytesize = symbol_bytesize(value->type);
+    if (!datatype) 
+	return -1;
 
-    switch (value->type->datatype_code) {
-    case DATATYPE_BASE:
-	if (value->type->s.ti->d.t.encoding == ENCODING_ADDRESS) {
+    datatype = symbol_type_skip_qualifiers(datatype);
+    tbytesize = symbol_get_bytesize(datatype);
+
+    switch (datatype->datatype_code) {
+    case DATATYPE_BASE:;
+	encoding_t enc = SYMBOLX_ENCODING_V(datatype);
+	if (enc == ENCODING_ADDRESS) {
 	    if (tbytesize == 1) 
 		nrc = snprintf(buf,buflen,"%"PRIx8,v_u8(value));
 	    else if (tbytesize == 2) 
@@ -584,10 +606,10 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		nrc = snprintf(buf,buflen,"%"PRIx64,v_u64(value));
 	    else
 		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       value->type->s.ti->d.t.encoding,tbytesize);
+			       enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_BOOLEAN
-	    || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED) {
+	else if (enc == ENCODING_BOOLEAN
+	    || enc == ENCODING_UNSIGNED) {
 	    if (tbytesize == 1) 
 		nrc = snprintf(buf,buflen,"%"PRIu8,v_u8(value));
 	    else if (tbytesize == 2) 
@@ -598,9 +620,9 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		nrc = snprintf(buf,buflen,"%"PRIu64,v_u64(value));
 	    else
 		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       value->type->s.ti->d.t.encoding,tbytesize);
+			       enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED) {
+	else if (enc == ENCODING_SIGNED) {
 	    if (tbytesize == 1) 
 		nrc = snprintf(buf,buflen,"%"PRIi8,v_i8(value));
 	    else if (tbytesize == 2) 
@@ -611,9 +633,9 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		nrc = snprintf(buf,buflen,"%"PRIi64,v_i64(value));
 	    else
 		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       value->type->s.ti->d.t.encoding,tbytesize);
+			       enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_FLOAT) {
+	else if (enc == ENCODING_FLOAT) {
 	    if (tbytesize == 4) 
 		nrc = snprintf(buf,buflen,"%f",(double)v_f(value));
 	    else if (tbytesize == 8) 
@@ -622,49 +644,49 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 		nrc = snprintf(buf,buflen,"%Lf",v_dd(value));
 	    else
 		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       value->type->s.ti->d.t.encoding,tbytesize);
+			       enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR
-		 || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR) {
+	else if (enc == ENCODING_SIGNED_CHAR
+		 || enc == ENCODING_UNSIGNED_CHAR) {
 	    if (tbytesize == 1) 
 		nrc = snprintf(buf,buflen,"%c",(int)v_c(value));
 	    else if (tbytesize == 2) 
 		nrc = snprintf(buf,buflen,"%lc",(wint_t)v_wc(value));
 	    else
 		nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			       value->type->s.ti->d.t.encoding,tbytesize);
+			       enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_COMPLEX_FLOAT) {
+	else if (enc == ENCODING_COMPLEX_FLOAT) {
 	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_IMAGINARY_FLOAT) {
+	else if (enc == ENCODING_IMAGINARY_FLOAT) {
 	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_PACKED_DECIMAL) {
+	else if (enc == ENCODING_PACKED_DECIMAL) {
 	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_NUMERIC_STRING) {
+	else if (enc == ENCODING_NUMERIC_STRING) {
 	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_EDITED) {
+	else if (enc == ENCODING_EDITED) {
 	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_FIXED) {
+	else if (enc == ENCODING_SIGNED_FIXED) {
 	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_FIXED) {
+	else if (enc == ENCODING_UNSIGNED_FIXED) {
 	    nrc = snprintf(buf,buflen,"<UNSUP_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
 	else {
 	    nrc = snprintf(buf,buflen,"<BAD_ENC_%d_%d>",
-			   value->type->s.ti->d.t.encoding,tbytesize);
+			   enc,tbytesize);
 	}
 	break;
     case DATATYPE_PTR:
@@ -675,27 +697,40 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	else 
 	    nrc = snprintf(buf,buflen,"<UNSUP_PTR_%d>",tbytesize);
 	break;
-    case DATATYPE_ARRAY:
+    case DATATYPE_ARRAY:;
+	GSList *subranges = SYMBOLX_SUBRANGES(datatype);
+	int subrange_first;
+	int subrange;
+	int llen;
+
+	if (!subranges) {
+	    nrc = snprintf(buf,buflen,"[ ]");
+	    break;
+	}
+
+	llen = g_slist_length(subranges);
+	subrange_first = (int)(uintptr_t)g_slist_nth_data(subranges,0);
+
+	datatype2 = symbol_get_datatype(datatype);
+
 	/* First, if it's a single-index char array, print as a string
 	 * if AUTO_STRING.
 	 */
-	if (value->type->s.ti->d.a.count == 1
-	    && symbol_type_is_char(value->type->datatype)) {
-	    nrc = snprintf(buf,buflen,"\"%.*s\"",
-			   value->type->s.ti->d.a.subranges[0],value->buf);
+	if (llen == 1 && symbol_type_is_char(datatype2)) {
+	    nrc = snprintf(buf,buflen,"\"%.*s\"",subrange_first,value->buf);
 	    break;
 	}
 
 	nrc = 0;
 	/* Otherwise, just dump the members of the array. */
-	indicies = malloc(sizeof(int)*value->type->s.ti->d.a.count);
-	for (i = 0; i < value->type->s.ti->d.a.count; ++i) {
+	indicies = malloc(sizeof(int)*llen);
+	for (i = 0; i < llen; ++i) {
 	    indicies[i] = 0;
 	    nrc += snprintf(buf + nrc,buflen - nrc,"[ ");
 	}
-	fake_value.bufsiz = symbol_bytesize(value->type->datatype);
+	fake_value.bufsiz = symbol_get_bytesize(datatype2);
 	fake_value.buf = value->buf;
-	fake_value.type = value->type->datatype;
+	fake_value.type = datatype2;
     again:
 	while (1) { /* fake_value.buf < (value->buf + value->bufsiz)) {
 		       */
@@ -703,13 +738,14 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    nrc += snprintf(buf + nrc,buflen - nrc,", ");
 
 	    /* calc current offset */
-	    fake_value.buf += symbol_bytesize(value->type->datatype);
+	    fake_value.buf += symbol_get_bytesize(datatype2);
 
 	    /* close brackets */
-	    for (j = value->type->s.ti->d.a.count - 1; j > -1; --j) {
+	    for (j = llen - 1; j > -1; --j) {
 		++indicies[j];
+		subrange = (int)(uintptr_t)g_slist_nth_data(subranges,j);
 
-		if (indicies[j] >= value->type->s.ti->d.a.subranges[j]) {
+		if (indicies[j] >= subrange) {
 		    nrc += snprintf(buf + nrc,buflen - nrc," ],");
 		    if (j == 0)
 			/* Break to outer loop and the main termination */
@@ -721,10 +757,10 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    }
 
 	    /* terminate if we're done */
-	    if (indicies[0] >= value->type->s.ti->d.a.subranges[0])
+	    if (indicies[0] >= subrange_first)
 		break;
 
-	    for ( ; j < value->type->s.ti->d.a.count; ++j)
+	    for ( ; j < llen; ++j)
 		nrc += snprintf(buf + nrc,buflen - nrc," [ ");
 	}
 	free(indicies);
@@ -732,31 +768,43 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	break;
     case DATATYPE_STRUCT:
     case DATATYPE_UNION:
+    case DATATYPE_CLASS:
 	nrc = snprintf(buf,buflen,"{");
-	list_for_each_entry(tmpi,&value->type->s.ti->d.su.members,d.v.member) {
-	    tmpsym = tmpi->d.v.member_symbol;
+	gsltmp = NULL;
+	v_g_slist_foreach(SYMBOLX_MEMBERS(datatype),gsltmp,tmpsym) {
 	    if (symbol_get_name(tmpsym))
 		nrc += snprintf(buf + nrc,buflen - nrc,
 				" .%s = ",symbol_get_name(tmpsym));
 	    else
 		nrc += snprintf(buf + nrc,buflen - nrc," ");
-	    symbol_get_location_offset(tmpsym,&offset);
-	    fake_value.buf = value->buf + offset;
-	    fake_value.type = symbol_type_skip_qualifiers(tmpsym->datatype);
-	    fake_value.lsymbol = NULL;
-	    fake_value.bufsiz = symbol_bytesize(fake_value.type);
-	    nrc += value_snprintf(&fake_value,buf + nrc,buflen - nrc);
-	    nrc += snprintf(buf + nrc,buflen - nrc,",");
+	    memset(&tloc,0,sizeof(tloc));
+	    ltrc = symbol_resolve_location(tmpsym,NULL,&tloc);
+	    if (ltrc != LOCTYPE_MEMBER_OFFSET) {
+		nrc += snprintf(buf + nrc,buflen - nrc,"?,");
+	    }
+	    else {
+		offset = LOCATION_OFFSET(&tloc);
+		fake_value.buf = value->buf + offset;
+		fake_value.type = symbol_get_datatype(tmpsym);
+		fake_value.lsymbol = NULL;
+		fake_value.bufsiz = symbol_get_bytesize(fake_value.type);
+		nrc += value_snprintf(&fake_value,buf + nrc,buflen - nrc);
+		nrc += snprintf(buf + nrc,buflen - nrc,",");
+	    }
+	    location_internal_free(&tloc);
 	}
 	nrc += snprintf(buf + nrc,buflen - nrc," }");
 	break;
     case DATATYPE_ENUM:
 	found = 0;
 	nrc = 0;
-	list_for_each_entry(tmpi,&value->type->s.ti->d.e.members,d.v.member) {
-	    tmpsym = tmpi->d.v.member_symbol;
-	    if (strncmp((char *)tmpsym->s.ii->constval,value->buf,
-			symbol_type_full_bytesize(value->type)) == 0) {
+	gsltmp = NULL;
+	v_g_slist_foreach(SYMBOLX_MEMBERS(datatype),gsltmp,tmpsym) {
+	    char *constval = SYMBOLX_VAR_CONSTVAL(tmpsym);
+	    if (!constval)
+		continue;
+	    if (strncmp((char *)constval,value->buf,
+			symbol_type_full_bytesize(datatype)) == 0) {
 		nrc += snprintf(buf + nrc,buflen - nrc,
 				"%s",symbol_get_name(tmpsym));
 		found = 1;
@@ -769,20 +817,24 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	break;
     case DATATYPE_CONST:
 	nrc = snprintf(buf,buflen,"<UNSUP_CONST_%s>",
-		       symbol_get_name(value->type));
+		       symbol_get_name(datatype));
 	break;
     case DATATYPE_VOL:
-	nrc = snprintf(buf,buflen,"<UNSUP_VOL_%s>",symbol_get_name(value->type));
+	nrc = snprintf(buf,buflen,"<UNSUP_VOL_%s>",symbol_get_name(datatype));
 	break;
     case DATATYPE_TYPEDEF:	
 	nrc = snprintf(buf,buflen,"<UNSUP_TYPEDEF_%s>",
-		       symbol_get_name(value->type));
+		       symbol_get_name(datatype));
 	break;
-    case DATATYPE_FUNCTION:
+    case DATATYPE_FUNC:
 	nrc = snprintf(buf,buflen,"<UNSUP_FUNCTION_%s>",
-		       symbol_get_name(value->type));
+		       symbol_get_name(datatype));
+	break;
+    case DATATYPE_VOID:
+	nrc = snprintf(buf,buflen,"NULL");
 	break;
     default:
+	nrc = 0;
 	break;
     }
 
@@ -791,7 +843,6 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 }
 
 void __value_dump(struct value *value,struct dump_info *ud) {
-    struct symbol_instance *tmpi;
     struct symbol *tmpsym;
     struct value fake_value;
     OFFSET offset;
@@ -800,6 +851,11 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     int j;
     int found;
     uint32_t tbytesize;
+    struct symbol *datatype = value->type;
+    struct symbol *datatype2;
+    GSList *gsltmp;
+    loctype_t ltrc;
+    struct location tloc;
 
     /* Handle AUTO_STRING specially. */
     if (value->isstring) {
@@ -807,11 +863,14 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	goto out;
     }
 
-    tbytesize = symbol_bytesize(value->type);
+    if (datatype)
+	datatype = symbol_type_skip_qualifiers(datatype);
+    tbytesize = symbol_get_bytesize(datatype);
 
-    switch (value->type->datatype_code) {
-    case DATATYPE_BASE:
-	if (value->type->s.ti->d.t.encoding == ENCODING_ADDRESS) {
+    switch (datatype->datatype_code) {
+    case DATATYPE_BASE:;
+	encoding_t enc = SYMBOLX_ENCODING_V(datatype);
+	if (enc == ENCODING_ADDRESS) {
 	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%"PRIx8,v_u8(value));
 	    else if (tbytesize == 2) 
@@ -823,8 +882,8 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    else
 		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_BOOLEAN
-	    || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED) {
+	else if (enc == ENCODING_BOOLEAN
+	    || enc == ENCODING_UNSIGNED) {
 	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%"PRIu8,v_u8(value));
 	    else if (tbytesize == 2) 
@@ -836,7 +895,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    else
 		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 			}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED) {
+	else if (enc == ENCODING_SIGNED) {
 	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%"PRIi8,v_i8(value));
 	    else if (tbytesize == 2) 
@@ -848,7 +907,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    else
 		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_FLOAT) {
+	else if (enc == ENCODING_FLOAT) {
 	    if (tbytesize == 4) 
 		fprintf(ud->stream,"%f",(double)v_f(value));
 	    else if (tbytesize == 8) 
@@ -858,8 +917,8 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    else
 		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_CHAR
-		 || value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_CHAR) {
+	else if (enc == ENCODING_SIGNED_CHAR
+		 || enc == ENCODING_UNSIGNED_CHAR) {
 	    if (tbytesize == 1) 
 		fprintf(ud->stream,"%c",(int)v_c(value));
 	    else if (tbytesize == 2) 
@@ -867,31 +926,31 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    else
 		fprintf(ud->stream,"<UNSUPPORTED_BYTESIZE_%d>",tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_COMPLEX_FLOAT) {
+	else if (enc == ENCODING_COMPLEX_FLOAT) {
 	    fprintf(ud->stream,"<UNSUPPORTED_COMPLEX_FLOAT_%d>",
 		    tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_IMAGINARY_FLOAT) {
+	else if (enc == ENCODING_IMAGINARY_FLOAT) {
 	    fprintf(ud->stream,"<UNSUPPORTED_IMAGINARY_FLOAT_%d>",
 		    tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_PACKED_DECIMAL) {
+	else if (enc == ENCODING_PACKED_DECIMAL) {
 	    fprintf(ud->stream,"<UNSUPPORTED_PACKED_DECIMAL_%d>",
 		    tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_NUMERIC_STRING) {
+	else if (enc == ENCODING_NUMERIC_STRING) {
 	    fprintf(ud->stream,"<UNSUPPORTED_NUMERIC_STRING_%d>",
 		    tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_EDITED) {
+	else if (enc == ENCODING_EDITED) {
 	    fprintf(ud->stream,"<UNSUPPORTED_EDITED_%d>",
 		    tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_SIGNED_FIXED) {
+	else if (enc == ENCODING_SIGNED_FIXED) {
 	    fprintf(ud->stream,"<UNSUPPORTED_SIGNED_FIXED_%d>",
 		    tbytesize);
 	}
-	else if (value->type->s.ti->d.t.encoding == ENCODING_UNSIGNED_FIXED) {
+	else if (enc == ENCODING_UNSIGNED_FIXED) {
 	    fprintf(ud->stream,"<UNSUPPORTED_UNSIGNED_FIXED_%d>",
 		    tbytesize);
 	}
@@ -904,39 +963,53 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	else 
 	    fprintf(ud->stream,"<UNSUPPORTED_PTR_%d>",tbytesize);
 	break;
-    case DATATYPE_ARRAY:
+    case DATATYPE_ARRAY:;
+	GSList *subranges = SYMBOLX_SUBRANGES(datatype);
+	int subrange_first;
+	int subrange;
+	int llen;
+
+	if (!subranges) {
+	    fprintf(ud->stream,"[ ]");
+	    break;
+	}
+
+	subrange_first = (int)(uintptr_t)g_slist_nth_data(subranges,0);
+	llen = g_slist_length(subranges);
+	datatype2 = symbol_get_datatype(datatype);
+
 	/* First, if it's a single-index char array, print as a string
 	 * if AUTO_STRING.
 	 */
-	if (value->type->s.ti->d.a.count == 1
-	    && symbol_type_is_char(value->type->datatype)) {
-	    fprintf(ud->stream,"\"%.*s\"",value->type->s.ti->d.a.subranges[0],
-		    value->buf);
+	if (llen == 1
+	    && symbol_type_is_char(datatype2)) {
+	    fprintf(ud->stream,"\"%.*s\"",subrange_first,value->buf);
 	    break;
 	}
 
 	/* Otherwise, just dump the members of the array. */
-	indicies = malloc(sizeof(int)*value->type->s.ti->d.a.count);
-	for (i = 0; i < value->type->s.ti->d.a.count; ++i) {
+	indicies = malloc(sizeof(int)*llen);
+	for (i = 0; i < llen; ++i) {
 	    indicies[i] = 0;
 	    fprintf(ud->stream,"[ ");
 	}
-	fake_value.bufsiz = symbol_bytesize(value->type->datatype);
+	fake_value.bufsiz = symbol_get_bytesize(datatype2);
 	fake_value.buf = value->buf;
-	fake_value.type = value->type->datatype;
+	fake_value.type = datatype2;
     again:
 	while (1) { /* fake_value.buf < (value->buf + value->bufsiz)) { */
 	    __value_dump(&fake_value,ud);
 	    fprintf(ud->stream,", ");
 
 	    /* calc current offset */
-	    fake_value.buf += symbol_bytesize(value->type->datatype);
+	    fake_value.buf += symbol_get_bytesize(datatype2);
 
 	    /* close brackets */
-	    for (j = value->type->s.ti->d.a.count - 1; j > -1; --j) {
+	    for (j = llen - 1; j > -1; --j) {
 		++indicies[j];
 
-		if (indicies[j] >= value->type->s.ti->d.a.subranges[j]) {
+		subrange = (int)(uintptr_t)g_slist_nth_data(subranges,j);
+		if (indicies[j] >= subrange) {
 		    fprintf(ud->stream," ],");
 		    if (j == 0)
 			/* Break to outer loop and the main termination */
@@ -948,10 +1021,10 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    }
 
 	    /* terminate if we're done */
-	    if (indicies[0] >= value->type->s.ti->d.a.subranges[0])
+	    if (indicies[0] >= subrange_first)
 		break;
 
-	    for ( ; j < value->type->s.ti->d.a.count; ++j)
+	    for ( ; j < llen; ++j)
 		fprintf(ud->stream," [ ");
 	}
 	free(indicies);
@@ -960,28 +1033,39 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     case DATATYPE_STRUCT:
     case DATATYPE_UNION:
 	fprintf(ud->stream,"{");
-	list_for_each_entry(tmpi,&value->type->s.ti->d.su.members,d.v.member) {
-	    tmpsym = tmpi->d.v.member_symbol;
+	gsltmp = NULL;
+	v_g_slist_foreach(SYMBOLX_MEMBERS(datatype),gsltmp,tmpsym) {
 	    if (symbol_get_name(tmpsym))
 		fprintf(ud->stream," .%s = ",symbol_get_name(tmpsym));
 	    else
 		fprintf(ud->stream," ");
-	    symbol_get_location_offset(tmpsym,&offset);
-	    fake_value.buf = value->buf + offset;
-	    fake_value.type = symbol_type_skip_qualifiers(tmpsym->datatype);
-	    fake_value.lsymbol = NULL;
-	    fake_value.bufsiz = symbol_bytesize(fake_value.type);
-	    __value_dump(&fake_value,ud);
-	    fputs(",",ud->stream);
+	    memset(&tloc,0,sizeof(tloc));
+	    ltrc = symbol_resolve_location(tmpsym,NULL,&tloc);
+	    if (ltrc != LOCTYPE_MEMBER_OFFSET) {
+		fputs("?,",ud->stream);
+	    }
+	    else {
+		offset = LOCATION_OFFSET(&tloc);
+		fake_value.buf = value->buf + offset;
+		fake_value.type = symbol_get_datatype(tmpsym);
+		fake_value.lsymbol = NULL;
+		fake_value.bufsiz = symbol_get_bytesize(fake_value.type);
+		__value_dump(&fake_value,ud);
+		fputs(",",ud->stream);
+	    }
+	    location_internal_free(&tloc);
 	}
 	fprintf(ud->stream," }");
 	break;
     case DATATYPE_ENUM:
 	found = 0;
-	list_for_each_entry(tmpi,&value->type->s.ti->d.e.members,d.v.member) {
-	    tmpsym = tmpi->d.v.member_symbol;
-	    if (strncmp((char *)tmpsym->s.ii->constval,value->buf,
-			symbol_type_full_bytesize(value->type)) == 0) {
+	gsltmp = NULL;
+	v_g_slist_foreach(SYMBOLX_MEMBERS(datatype),gsltmp,tmpsym) {
+	    char *constval = SYMBOLX_VAR_CONSTVAL(tmpsym);
+	    if (!constval)
+		continue;
+	    if (strncmp((char *)constval,value->buf,
+			symbol_type_full_bytesize(datatype)) == 0) {
 		fprintf(ud->stream,"%s",symbol_get_name(tmpsym));
 		found = 1;
 		break;
@@ -992,18 +1076,21 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 		    v_unum(value),v_unum(value));
 	break;
     case DATATYPE_CONST:
-	fprintf(ud->stream,"<UNSUPPORTED_CONST_%s>",symbol_get_name(value->type));
+	fprintf(ud->stream,"<UNSUPPORTED_CONST_%s>",symbol_get_name(datatype));
 	break;
     case DATATYPE_VOL:
-	fprintf(ud->stream,"<UNSUPPORTED_VOL_%s>",symbol_get_name(value->type));
+	fprintf(ud->stream,"<UNSUPPORTED_VOL_%s>",symbol_get_name(datatype));
 	break;
     case DATATYPE_TYPEDEF:	
 	fprintf(ud->stream,"<UNSUPPORTED_TYPEDEF_%s>",
-		symbol_get_name(value->type));
+		symbol_get_name(datatype));
 	break;
-    case DATATYPE_FUNCTION:
+    case DATATYPE_FUNC:
 	fprintf(ud->stream,"<UNSUPPORTED_FUNCTION_%s>",
-		symbol_get_name(value->type));
+		symbol_get_name(datatype));
+	break;
+    case DATATYPE_VOID:
+	fprintf(ud->stream,"NULL");
 	break;
     default:
 	break;

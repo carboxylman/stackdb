@@ -266,6 +266,14 @@ struct argp generic_rpc_argp = {
 int generic_rpc_handle_request(struct soap *soap) {
     pthread_detach(pthread_self());
 
+    //soap_set_recv_logfile(soap,NULL);
+    //soap_set_sent_logfile(soap,NULL);
+    //soap_set_test_logfile(soap,NULL);
+
+    soap->fdebug[SOAP_INDEX_RECV] = stderr;
+    soap->fdebug[SOAP_INDEX_SENT] = stderr;
+    soap->fdebug[SOAP_INDEX_TEST] = stderr;
+
     soap_serve(soap);
 
     vdebug(8,LA_XML,LF_RPC,"finished request from %d.%d.%d.%d\n",
@@ -348,6 +356,14 @@ int generic_rpc_serve(struct generic_rpc_config *cfg) {
 
     soap_init(&soap);
     //soap_set_omode(&soap,SOAP_XML_GRAPH);
+
+    soap_set_recv_logfile(&soap,NULL);
+    soap_set_sent_logfile(&soap,NULL);
+    soap_set_test_logfile(&soap,NULL);
+
+    soap.fdebug[SOAP_INDEX_RECV] = stderr;
+    soap.fdebug[SOAP_INDEX_SENT] = stderr;
+    soap.fdebug[SOAP_INDEX_TEST] = stderr;
 
     /*
      * If no args, assume this is CGI coming in on stdin.

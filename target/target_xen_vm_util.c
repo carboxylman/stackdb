@@ -259,14 +259,15 @@ struct value *linux_load_current_thread_as_type(struct target *target,
 }
 
 int linux_get_task_pid(struct target *target,struct value *task) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct value *value;
     int pid;
 
     if (!task)
 	return -1;
 
-    value = target_load_value_member(target,task,"pid",NULL,
-				     LOAD_FLAG_NONE);
+    value = target_load_value_member(target,xstate->default_tlctxt,
+				     task,"pid",NULL,LOAD_FLAG_NONE);
     if (!value) {
 	verror("could not load 'pid' of task!\n");
 	return -2;
@@ -284,10 +285,11 @@ struct match_pid_data {
 };
 
 static int match_pid(struct target *target,struct value *value,void *data) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct match_pid_data *mpd = (struct match_pid_data *)data;
     struct value *mv = NULL;
 
-    mv = target_load_value_member(target,value,"pid",NULL,
+    mv = target_load_value_member(target,xstate->default_tlctxt,value,"pid",NULL,
 				  LOAD_FLAG_NONE);
     if (!mv) {
 	vwarn("could not load pid from task; skipping!\n");
@@ -339,6 +341,7 @@ char *linux_d_path(struct target *target,
 		   struct value *dentry,struct value *vfsmnt,
 		   struct value *root_dentry,struct value *root_vfsmnt,
 		   char *buf,int buflen) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     ADDR dentry_addr;
     ADDR vfsmnt_addr;
     ADDR root_dentry_addr;
@@ -372,8 +375,10 @@ char *linux_d_path(struct target *target,
     end = buf + buflen;
     *--end = '\0';
     buflen--;
-    VLV(target,dentry,"d_parent",LOAD_FLAG_NONE,&parent_addr,NULL,err_vmiload);
-    VLV(target,dentry,"d_flags",LOAD_FLAG_NONE,&dentry_flags,NULL,err_vmiload);
+    VLV(target,xstate->default_tlctxt,dentry,"d_parent",LOAD_FLAG_NONE,
+	&parent_addr,NULL,err_vmiload);
+    VLV(target,xstate->default_tlctxt,dentry,"d_flags",LOAD_FLAG_NONE,
+	&dentry_flags,NULL,err_vmiload);
     if (dentry_addr != parent_addr && dentry_flags & DCACHE_UNHASHED) {
 	buflen -= 10;
 	end -= 10;
@@ -391,12 +396,12 @@ char *linux_d_path(struct target *target,
     while (1) {
 	if (dentry_addr == root_dentry_addr && vfsmnt_addr == root_vfsmnt_addr)
 	    break;
-	VLV(target,vfsmnt,"mnt_root",LOAD_FLAG_NONE,&mnt_root_addr,NULL,
-	    err_vmiload);
+	VLV(target,xstate->default_tlctxt,vfsmnt,"mnt_root",LOAD_FLAG_NONE,
+	    &mnt_root_addr,NULL,err_vmiload);
 	if (dentry_addr == mnt_root_addr || dentry_addr == parent_addr) {
 	    vfsmnt_mnt_parent = NULL;
-	    VL(target,vfsmnt,"mnt_parent",LOAD_FLAG_AUTO_DEREF,
-	       &vfsmnt_mnt_parent,err_vmiload);
+	    VL(target,xstate->default_tlctxt,vfsmnt,"mnt_parent",
+	       LOAD_FLAG_AUTO_DEREF,&vfsmnt_mnt_parent,err_vmiload);
 	    vfsmnt_mnt_parent_addr = v_addr(vfsmnt_mnt_parent);
 
 	    /* Global root? */
@@ -409,8 +414,8 @@ char *linux_d_path(struct target *target,
 		value_free(dentry);
 		dentry = NULL;
 	    }
-	    VL(target,vfsmnt,"mnt_mountpoint",LOAD_FLAG_AUTO_DEREF,&dentry,
-	       err_vmiload);
+	    VL(target,xstate->default_tlctxt,vfsmnt,"mnt_mountpoint",
+	       LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
 	    dentry_addr = v_addr(dentry);
 	    if (vfsmnt != orig_vfsmnt) {
 		value_free(vfsmnt);
@@ -421,18 +426,20 @@ char *linux_d_path(struct target *target,
 	    continue;
 	}
 	namelen = 0;
-	VLV(target,dentry,"d_name.len",LOAD_FLAG_NONE,&namelen,NULL,err_vmiload);
+	VLV(target,xstate->default_tlctxt,dentry,"d_name.len",LOAD_FLAG_NONE,
+	    &namelen,NULL,err_vmiload);
 
 	/*
 	 * Newer linux keeps a "small dentry name" cache inside the
 	 * dentry itself; so, if namelen == 0, check dentry.d_iname
 	 * instead of dentry.d_name.name .
 	 */
-	smnamevalue = target_load_value_member(target,dentry,"d_iname",
+	smnamevalue = target_load_value_member(target,xstate->default_tlctxt,
+					       dentry,"d_iname",
 					       NULL,LOAD_FLAG_NONE);
 
-	VLV(target,dentry,"d_name.name",LOAD_FLAG_NONE,&nameaddr,NULL,
-	    err_vmiload);
+	VLV(target,xstate->default_tlctxt,dentry,"d_name.name",LOAD_FLAG_NONE,
+	    &nameaddr,NULL,err_vmiload);
 
 	if (!nameaddr || (smnamevalue && nameaddr == value_addr(smnamevalue))) {
 	    if (!smnamevalue) {
@@ -474,7 +481,8 @@ char *linux_d_path(struct target *target,
 	}
 
 	ph = dentry;
-	VL(target,ph,"d_parent",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
+	VL(target,xstate->default_tlctxt,ph,"d_parent",LOAD_FLAG_AUTO_DEREF,
+	   &dentry,err_vmiload);
 	if (ph != orig_dentry) {
 	    value_free(ph);
 	}
@@ -485,10 +493,11 @@ char *linux_d_path(struct target *target,
 
  global_root:
     namelen = 0;
-    VLV(target,dentry,"d_name.len",LOAD_FLAG_NONE,&namelen,NULL,err_vmiload);
+    VLV(target,xstate->default_tlctxt,dentry,"d_name.len",LOAD_FLAG_NONE,
+	&namelen,NULL,err_vmiload);
 
-    smnamevalue = target_load_value_member(target,dentry,"d_iname",
-					   NULL,LOAD_FLAG_NONE);
+    smnamevalue = target_load_value_member(target,xstate->default_tlctxt,
+					   dentry,"d_iname",NULL,LOAD_FLAG_NONE);
 
     if (!nameaddr || (smnamevalue && nameaddr == value_addr(smnamevalue))) {
 	if (!smnamevalue) {
@@ -547,6 +556,7 @@ char *linux_d_path(struct target *target,
 
 char *linux_file_get_path(struct target *target,struct value *task,
 			  struct value *file,char *ibuf,int buflen) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct value *dentry = NULL;
     struct value *vfsmnt = NULL;
     struct value *root_dentry = NULL;
@@ -563,17 +573,25 @@ char *linux_file_get_path(struct target *target,struct value *task,
      * still have the older struct file::{f_dentry,f_vfsmnt}.
      */
     if (!(tmpls = symbol_lookup_sym(file->type,"f_path",NULL))) {
-	VL(target,file,"f_vfsmnt",LOAD_FLAG_AUTO_DEREF,&vfsmnt,err_vmiload);
-	VL(target,file,"f_dentry",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
-	VL(target,task,"fs.rootmnt",LOAD_FLAG_AUTO_DEREF,&root_vfsmnt,err_vmiload);
-	VL(target,task,"fs.root",LOAD_FLAG_AUTO_DEREF,&root_dentry,err_vmiload);
+	VL(target,xstate->default_tlctxt,file,"f_vfsmnt",LOAD_FLAG_AUTO_DEREF,
+	   &vfsmnt,err_vmiload);
+	VL(target,xstate->default_tlctxt,file,"f_dentry",LOAD_FLAG_AUTO_DEREF,
+	   &dentry,err_vmiload);
+	VL(target,xstate->default_tlctxt,task,"fs.rootmnt",LOAD_FLAG_AUTO_DEREF,
+	   &root_vfsmnt,err_vmiload);
+	VL(target,xstate->default_tlctxt,task,"fs.root",LOAD_FLAG_AUTO_DEREF,
+	   &root_dentry,err_vmiload);
     }
     else {
 	lsymbol_release(tmpls);
-	VL(target,file,"f_path.mnt",LOAD_FLAG_AUTO_DEREF,&vfsmnt,err_vmiload);
-	VL(target,file,"f_path.dentry",LOAD_FLAG_AUTO_DEREF,&dentry,err_vmiload);
-	VL(target,task,"fs.root.mnt",LOAD_FLAG_AUTO_DEREF,&root_vfsmnt,err_vmiload);
-	VL(target,task,"fs.root.dentry",LOAD_FLAG_AUTO_DEREF,&root_dentry,err_vmiload);
+	VL(target,xstate->default_tlctxt,file,"f_path.mnt",LOAD_FLAG_AUTO_DEREF,
+	   &vfsmnt,err_vmiload);
+	VL(target,xstate->default_tlctxt,file,"f_path.dentry",LOAD_FLAG_AUTO_DEREF,
+	   &dentry,err_vmiload);
+	VL(target,xstate->default_tlctxt,task,"fs.root.mnt",LOAD_FLAG_AUTO_DEREF,
+	   &root_vfsmnt,err_vmiload);
+	VL(target,xstate->default_tlctxt,task,"fs.root.dentry",LOAD_FLAG_AUTO_DEREF,
+	   &root_dentry,err_vmiload);
     }
 
     bufptr = linux_d_path(target,dentry,vfsmnt,root_dentry,root_vfsmnt,
@@ -624,9 +642,9 @@ char *linux_file_get_path(struct target *target,struct value *task,
 int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
 			       char *list_head_member_name,int nofree,
 			       linux_list_iterator_t iterator,void *data) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)t->state;
     struct symbol *symbol;
     struct symbol *type;
-    struct symbol *list_head_member_symbol = NULL;
     OFFSET list_head_member_offset;
     ADDR head;
     ADDR next_head;
@@ -636,33 +654,20 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
     int retval = -1;
     int rc;
 
-    struct dump_info udn = {
-	.stream = stderr,
-	.prefix = "",
-	.detail = 1,
-	.meta = 1,
-    };
-
     symbol = bsymbol_get_symbol(bsymbol);
-    type = symbol_get_datatype__int(symbol);
+    type = symbol_get_datatype(symbol);
     if (!type) {
 	verror("no type for bsymbol %s!\n",bsymbol_get_name(bsymbol));
 	goto out;
     }
 
-    list_head_member_symbol = symbol_get_one_member(type,
-						    list_head_member_name);
-    if (!list_head_member_symbol) {
-	verror("no such member %s in symbol %s!\n",list_head_member_name,
-	       symbol_get_name(type));
-	goto out;
-    }
-
-    if (symbol_get_location_offset(list_head_member_symbol,
-				   &list_head_member_offset)) {
-	verror("could not get offset for member %s in symbol %s!\n",
-	       symbol_get_name(list_head_member_symbol),symbol_get_name(type));
-	symbol_dump(symbol,&udn);
+    errno = 0;
+    list_head_member_offset = 
+	symbol_offsetof(type,list_head_member_name,NULL);
+    if (errno) {
+	verror("could not get offset for %s in symbol %s!\n",
+	       list_head_member_name,symbol_get_name(type));
+	ERRORDUMPSYMBOL_NL(symbol);
 	goto out;
     }
 
@@ -672,7 +677,8 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
      * use.
      */
     current_struct_addr = head = \
-	target_addressof_symbol(t,TID_GLOBAL,bsymbol,LOAD_FLAG_NONE,NULL);
+	target_addressof_symbol(t,xstate->default_tlctxt,bsymbol,LOAD_FLAG_NONE,
+				NULL);
     if (errno) {
 	verror("could not get the address of bsymbol %s!\n",
 	       bsymbol_get_name(bsymbol));
@@ -716,8 +722,6 @@ int linux_list_for_each_struct(struct target *t,struct bsymbol *bsymbol,
     retval = 0;
 
  out:
-    if (list_head_member_symbol)
-	symbol_release(list_head_member_symbol);
     if (!nofree && value)
 	value_free(value);
 
@@ -746,8 +750,8 @@ int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
 			      struct bsymbol *list_head,
 			      char *list_head_member_name,int nofree,
 			      linux_list_iterator_t iterator,void *data) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)t->state;
     struct symbol *type;
-    struct symbol *list_head_member_symbol = NULL;
     OFFSET list_head_member_offset;
     ADDR head;
     ADDR next_head;
@@ -760,18 +764,13 @@ int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
 
     type = bsymbol_get_symbol(btype);
 
-    list_head_member_symbol = symbol_get_one_member(type,
-						    list_head_member_name);
-    if (!list_head_member_symbol) {
-	verror("no such member %s in symbol %s!\n",list_head_member_name,
-	       symbol_get_name(type));
-	goto out;
-    }
-
-    if (symbol_get_location_offset(list_head_member_symbol,
-				   &list_head_member_offset)) {
-	verror("could not get offset for member %s in symbol %s!\n",
-	       symbol_get_name(list_head_member_symbol),symbol_get_name(type));
+    errno = 0;
+    list_head_member_offset = 
+	symbol_offsetof(type,list_head_member_name,NULL);
+    if (errno) {
+	verror("could not get offset for %s in symbol %s!\n",
+	       list_head_member_name,symbol_get_name(type));
+	ERRORDUMPSYMBOL_NL(type);
 	goto out;
     }
 
@@ -782,13 +781,14 @@ int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
      * use.
      */
 
-    value = target_load_symbol(t,TID_GLOBAL,list_head,LOAD_FLAG_NONE);
+    value = target_load_symbol(t,xstate->default_tlctxt,list_head,LOAD_FLAG_NONE);
     if (!value) {
 	verror("could not load list_head for symbol %s!\n",bsymbol_get_name(list_head));
 	goto out;
     }
     head = value_addr(value);
-    value_next = target_load_value_member(t,value,"next",NULL,LOAD_FLAG_NONE);
+    value_next = target_load_value_member(t,xstate->default_tlctxt,value,"next",
+					  NULL,LOAD_FLAG_NONE);
     next_head = *((ADDR *)value->buf);
 
     value_free(value_next);
@@ -833,8 +833,6 @@ int linux_list_for_each_entry(struct target *t,struct bsymbol *btype,
     retval = 0;
 
  out:
-    if (list_head_member_symbol)
-	symbol_release(list_head_member_symbol);
     if (!nofree && value)
 	value_free(value);
 

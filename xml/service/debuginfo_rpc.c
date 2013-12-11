@@ -44,7 +44,7 @@ pthread_mutex_t debuginfo_rpc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct vmi1__DebugFileOptsT defDebugFileOpts = {
     .symbolRefDepth = 1,
-    .symtabRefDepth = 1,
+    .scopeRefDepth = 1,
     .doMultiRef = 0,
 };
 

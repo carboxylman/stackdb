@@ -30,6 +30,7 @@
 
 #include "common.h"
 #include "log.h"
+#include "binfile.h"
 #include "dwdebug.h"
 
 extern struct binfile_ops elf_binfile_ops;
@@ -88,7 +89,7 @@ int main(int argc,char **argv) {
 	    ++meta;
 	    break;
 	case 'l':
-	    if (vmi_set_log_area_flaglist(optarg,NULL)) {
+	    if (vmi_add_log_area_flaglist(optarg,NULL)) {
 		fprintf(stderr,"ERROR: bad debug flag in '%s'!\n",optarg);
 		exit(-1);
 	    }
@@ -99,13 +100,7 @@ int main(int argc,char **argv) {
 	    opts = debugfile_load_opts_parse(optargc);
 
 	    if (!opts) {
-		verror("bad debugfile_load_opts '%s'!\n",optargc);
-		free(optargc);
-		array_list_foreach(opts_list,i,opts) {
-		    debugfile_load_opts_free(opts);
-		}
-		array_list_free(opts_list);
-
+		verror("bad debugfile_load_opts '%s'!\n",optarg);
 		goto dlo_err;
 	    }
 	    else {
@@ -114,10 +109,17 @@ int main(int argc,char **argv) {
 
 		array_list_append(opts_list,opts);
 	    }
+	    free(optargc);
 	    break;
     dlo_err:
 	    fprintf(stderr,"ERROR: bad debugfile_load_opts '%s'!\n",optargc);
 	    free(optargc);
+	    if (opts_list) {
+		array_list_foreach(opts_list,i,opts) {
+		    debugfile_load_opts_free(opts);
+		}
+		array_list_free(opts_list);
+	    }
 	    exit(-1);
 	case 'T':
 	    dotypes = 0;
@@ -214,8 +216,8 @@ int main(int argc,char **argv) {
 		    s = debugfile_lookup_sym_line(debugfile,argv[i],
 						  atoi(cptr),NULL,NULL);
 		else if (*cptr == 'F' || *cptr == 'f') {
-		    GList *list = NULL;
-		    GList *list2;
+		    GSList *list = NULL;
+		    GSList *list2;
 		    struct rfilter *rfilter = rfilter_create_parse(argv[i]);
 		    if (!rfilter) {
 			fprintf(stderr,
@@ -224,10 +226,10 @@ int main(int argc,char **argv) {
 			continue;
 		    }
 
-		    list = debugfile_match_syms(debugfile,rfilter,
-						SYMBOL_TYPE_FLAG_NONE,
-						NULL,
-						(*cptr == 'F') ? 1 : 0);
+		    symbol_type_flag_t flags = SYMBOL_TYPE_FLAG_NONE;
+		    if (*cptr == 'F') 
+			flags = SYMBOL_TYPE_FLAG_VAR_GLOBAL;
+		    list = debugfile_match_syms(debugfile,rfilter,flags,NULL);
 		    if (!list) {
 			fprintf(stderr,
 				"Did not find any symbols for rfilter '%s'!\n",
@@ -235,16 +237,15 @@ int main(int argc,char **argv) {
 			continue;
 		    }
 
-		    list2 = g_list_first(list);
-		    while (1) {
+		    list2 = list;
+		    while (list2) {
 			symbol_dump((struct symbol *)list2->data,&ud);
 			fprintf(ud.stream,"\n");
-			if (!(list2 = g_list_next(list2)))
-			    break;
+			list2 = g_slist_next(list2);
 		    }
 
 		    rfilter_free(rfilter);
-		    g_list_free(list);
+		    g_slist_free(list);
 		    continue;
 		}
 		else {
@@ -270,7 +271,7 @@ int main(int argc,char **argv) {
 		lsymbol_dump(s,&ud);
 		fprintf(stdout,"\n");
 		is = s->symbol;
-		if (s->symbol->isinlineinstance) {
+		if (symbol_is_inlineinstance(s->symbol)) {
 		    fprintf(stdout,"first noninline parent %s: \n",argv[i]);
 		    ud.prefix = "  ";
 		    ps = lsymbol_get_noninline_parent_symbol(s);
@@ -311,6 +312,13 @@ int main(int argc,char **argv) {
 #ifdef REF_DEBUG
     REF_DEBUG_REPORT_FINISH();
 #endif
+
+    if (opts_list) {
+	array_list_foreach(opts_list,i,opts) {
+	    debugfile_load_opts_free(opts);
+	}
+	array_list_free(opts_list);
+    }
 
     return 0;
 }

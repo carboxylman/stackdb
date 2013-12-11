@@ -29,6 +29,9 @@
 
 #include <signal.h>
 
+#include <glib.h>
+#include "glib_wrapper.h"
+
 #include "log.h"
 #include "alist.h"
 #include "dwdebug.h"
@@ -69,6 +72,7 @@ int main(int argc,char **argv) {
     struct target_os_syscall *sc;
     struct symbol *argsym;
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
+    GSList *gsltmp;
 
     tspec = target_argp_driver_parse(NULL,NULL,argc,argv,TARGET_TYPE_XEN,1);
 
@@ -134,11 +138,13 @@ int main(int argc,char **argv) {
 		   sc->num,sc->addr,bsymbol_get_name(sc->bsymbol));
 	    if (sc->args) {
 		printf("(");
-		array_list_foreach(sc->args,j,argsym) {
+		j = 0;
+		v_g_slist_foreach(sc->args,gsltmp,argsym) {
+		    if (likely(j))
+			printf(", ");
 		    symbol_type_dump(symbol_get_datatype(argsym),&ud);
 		    printf(" %s",symbol_get_name(argsym));
-		    if (!array_list_foreach_is_last(sc->args,j))
-			printf(", ");
+		    ++j;
 		}
 		printf(")");
 	    }
@@ -146,16 +152,18 @@ int main(int argc,char **argv) {
 	    if (sc->wrapped_bsymbol) {
 		printf("\t\twrapped syscall:\t\t%s",
 		       bsymbol_get_name(sc->wrapped_bsymbol));
-		struct array_list *wargs = 
+		GSList *wargs = 
 		    symbol_get_members(bsymbol_get_symbol(sc->wrapped_bsymbol),
-				       SYMBOL_VAR_TYPE_FLAG_ARG);
+				       SYMBOL_TYPE_FLAG_VAR_ARG);
 		if (wargs) {
 		    printf("(");
-		    array_list_foreach(wargs,j,argsym) {
+		    j = 0;
+		    v_g_slist_foreach(sc->args,gsltmp,argsym) {
+			if (likely(j))
+			    printf(", ");
 			symbol_type_dump(symbol_get_datatype(argsym),&ud);
 			printf(" %s",symbol_get_name(argsym));
-			if (!array_list_foreach_is_last(sc->args,j))
-			    printf(", ");
+			++j;
 		    }
 		    printf(")");
 		}

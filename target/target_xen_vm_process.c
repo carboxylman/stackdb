@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "binfile.h"
 #include "target_xen_vm_process.h"
 #include "target.h"
 #include "target_api.h"
@@ -386,6 +387,7 @@ static int __xen_vm_process_loadregions(struct target *target,
     struct xen_vm_thread_state *xtstate = \
 	(struct xen_vm_thread_state *)target->base_thread->state;
     struct target *base = target->base;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)base->state;
     tid_t base_tid = target->base_tid;
     struct xen_vm_process_state *xvpstate = \
 	(struct xen_vm_process_state *)target->state;
@@ -452,7 +454,8 @@ static int __xen_vm_process_loadregions(struct target *target,
      */
 
     /* Grab the base task's mm address to see if it changed. */
-    VLV(base,xtstate->task_struct,"mm",LOAD_FLAG_NONE,&mm_addr,NULL,err_vmiload);
+    VLV(base,xstate->default_tlctxt,xtstate->task_struct,"mm",LOAD_FLAG_NONE,
+	&mm_addr,NULL,err_vmiload);
 
     if (xvpstate->mm_addr && mm_addr == 0) {
 	/*
@@ -518,14 +521,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 
 	value_free(xvpstate->mm);
 	xvpstate->mm = NULL;
-	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
-	   err_vmiload);
+	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
 
     }
@@ -533,14 +536,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 	vdebug(5,LA_TARGET,LF_XVP,"tid %d analyzing mmaps anew.\n",base_tid);
 
 	/* Load the mm struct and cache its members. */
-	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
-	   err_vmiload);
+	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
     }
     else {
@@ -559,14 +562,14 @@ static int __xen_vm_process_loadregions(struct target *target,
 
 	value_free(xvpstate->mm);
 	xvpstate->mm = NULL;
-	VL(base,xtstate->task_struct,"mm",LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,
-	   err_vmiload);
+	VL(base,xstate->default_tlctxt,xtstate->task_struct,"mm",
+	   LOAD_FLAG_AUTO_DEREF,&xvpstate->mm,err_vmiload);
 	xvpstate->mm_addr = value_addr(xvpstate->mm);
-	VLV(base,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"brk",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"brk",LOAD_FLAG_NONE,
 	    &xvpstate->mm_brk,NULL,err_vmiload);
-	VLV(base,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
+	VLV(base,xstate->default_tlctxt,xvpstate->mm,"start_stack",LOAD_FLAG_NONE,
 	    &xvpstate->mm_start_stack,NULL,err_vmiload);
     }
 
@@ -577,7 +580,8 @@ static int __xen_vm_process_loadregions(struct target *target,
      */
 
     /* Now we have a valid task->mm; load the first vm_area_struct pointer. */
-    VLV(base,xvpstate->mm,"mmap",LOAD_FLAG_NONE,&vma_addr,NULL,err_vmiload);
+    VLV(base,xstate->default_tlctxt,xvpstate->mm,"mmap",LOAD_FLAG_NONE,
+	&vma_addr,NULL,err_vmiload);
     cached_vma = xvpstate->vma_cache;
     cached_vma_prev = NULL;
 
@@ -588,9 +592,10 @@ static int __xen_vm_process_loadregions(struct target *target,
     vma_prev = xvpstate->mm;
     prev_vma_member_name = "mmap";
 
-    VL(base,vma_prev,prev_vma_member_name,LOAD_FLAG_AUTO_DEREF,
-       &vma,err_vmiload);
-    VLV(base,vma,"vm_start",LOAD_FLAG_NONE,&start,NULL,err_vmiload);
+    VL(base,xstate->default_tlctxt,vma_prev,prev_vma_member_name,
+       LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
+    VLV(base,xstate->default_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+	&start,NULL,err_vmiload);
     value_free(vma);
 
     /* If we have either a vma_addr to process, or a cached_vma, keep going. */
@@ -604,18 +609,24 @@ static int __xen_vm_process_loadregions(struct target *target,
 	     */
 	do_new_unmatched:
 
-	    VL(base,vma_prev,prev_vma_member_name,LOAD_FLAG_AUTO_DEREF,
-	       &vma,err_vmiload);
+	    VL(base,xstate->default_tlctxt,vma_prev,prev_vma_member_name,
+	       LOAD_FLAG_AUTO_DEREF,&vma,err_vmiload);
 	    new_vma = calloc(1,sizeof(*new_vma));
 	    new_vma->vma = vma;
 
 	    /* Load the vma's start,end,offset,prot_flags,file,next addr. */
-	    VLV(base,vma,"vm_start",LOAD_FLAG_NONE,&start,NULL,err_vmiload);
-	    VLV(base,vma,"vm_end",LOAD_FLAG_NONE,&end,NULL,err_vmiload);
-	    VLV(base,vma,"vm_page_prot",LOAD_FLAG_NONE,&prot_flags,NULL,err_vmiload);
-	    VLV(base,vma,"vm_pgoff",LOAD_FLAG_NONE,&offset,NULL,err_vmiload);
-	    VLV(base,vma,"vm_file",LOAD_FLAG_NONE,&file_addr,NULL,err_vmiload);
-	    VLV(base,vma,"vm_next",LOAD_FLAG_NONE,&vma_next_addr,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_start",LOAD_FLAG_NONE,
+		&start,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_end",LOAD_FLAG_NONE,
+		&end,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_page_prot",LOAD_FLAG_NONE,
+		&prot_flags,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_pgoff",LOAD_FLAG_NONE,
+		&offset,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_file",LOAD_FLAG_NONE,
+		&file_addr,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,vma,"vm_next",LOAD_FLAG_NONE,
+		&vma_next_addr,NULL,err_vmiload);
 
 	    /* Figure out the region type. */
 	    rtype = REGION_TYPE_ANON;
@@ -625,7 +636,8 @@ static int __xen_vm_process_loadregions(struct target *target,
 	    /* If it has a file, load the path! */
 	    if (file_addr != 0) {
 		file_value = NULL;
-		VL(base,vma,"vm_file",LOAD_FLAG_AUTO_DEREF,&file_value,err_vmiload);
+		VL(base,xstate->default_tlctxt,vma,"vm_file",LOAD_FLAG_AUTO_DEREF,
+		   &file_value,err_vmiload);
 		if (!linux_file_get_path(base,xtstate->task_struct,file_value,
 					 buf,sizeof(buf))) {
 		    vwarn("could not get filepath for struct file for new range;"
@@ -792,16 +804,16 @@ static int __xen_vm_process_loadregions(struct target *target,
 	    value_refresh(cached_vma->vma,0);
 
 	    /* Load the vma's start,end,prot_flags. */
-	    VLV(base,cached_vma->vma,"vm_start",LOAD_FLAG_NONE,
-		&start,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_end",LOAD_FLAG_NONE,
-		&end,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_page_prot",LOAD_FLAG_NONE,
-		&prot_flags,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_pgoff",LOAD_FLAG_NONE,
-		&offset,NULL,err_vmiload);
-	    VLV(base,cached_vma->vma,"vm_next",LOAD_FLAG_NONE,
-		&vma_next_addr,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_start",
+		LOAD_FLAG_NONE,&start,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_end",
+		LOAD_FLAG_NONE,&end,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_page_prot",
+		LOAD_FLAG_NONE,&prot_flags,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_pgoff",
+		LOAD_FLAG_NONE,&offset,NULL,err_vmiload);
+	    VLV(base,xstate->default_tlctxt,cached_vma->vma,"vm_next",
+		LOAD_FLAG_NONE,&vma_next_addr,NULL,err_vmiload);
 
 	    if (cached_vma->range->end == end 
 		&& cached_vma->range->offset == offset 
@@ -1012,6 +1024,8 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
     char rbuf[PATH_MAX];
     char *file;
     struct lsymbol *mainsymbol;
+    int bfn = 0;
+    int bfpn = 0;
 
     vdebug(5,LA_TARGET,LF_XVP,"tid %d\n",target->base_tid);
 
@@ -1047,13 +1061,17 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
      * Try to figure out which binfile has the info we need.  On
      * different distros, they're stripped different ways.
      */
-    if (debugfile->binfile_pointing 
-	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
-	> symtab_get_size_simple(debugfile->binfile->symtab)) {
-	RHOLD(debugfile->binfile_pointing,region);
-	region->binfile = debugfile->binfile_pointing;
+    if (debugfile->binfile_pointing) {
+	binfile_get_root_scope_sizes(debugfile->binfile,&bfn,NULL,NULL,NULL);
+	binfile_get_root_scope_sizes(debugfile->binfile_pointing,&bfpn,
+				     NULL,NULL,NULL);
+	if (bfpn > bfn) {
+	    RHOLD(debugfile->binfile_pointing,region);
+	    region->binfile = debugfile->binfile_pointing;
+	}
     }
-    else {
+
+    if (!region->binfile) {
 	RHOLD(debugfile->binfile,region);
 	region->binfile = debugfile->binfile;
     }
@@ -1062,7 +1080,7 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
      * Change type to REGION_TYPE_MAIN if it had a main() function.
      */
     if (region->type == REGION_TYPE_LIB) {
-	mainsymbol = debugfile_lookup_sym(debugfile,"main",NULL,NULL,SYMBOL_TYPE_FUNCTION);
+	mainsymbol = debugfile_lookup_sym(debugfile,"main",NULL,NULL,SYMBOL_TYPE_FUNC);
 	if (mainsymbol) {
 	    if (!mainsymbol->symbol->isdeclaration)
 		region->type = REGION_TYPE_MAIN;
@@ -1088,6 +1106,106 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
 static int xen_vm_process_postloadinit(struct target *target) {
 
     return 0;
+}
+
+static int _xen_vm_process_active_memory_post_handler(struct probe *probe,
+						      void *handler_data,
+						      struct probe *trigger) {
+    return 0;
+}
+
+static int xen_vm_process_set_active_probing(struct target *target,
+					     active_probe_flags_t flags) {
+    struct xen_vm_process_state *xvpstate = \
+	(struct xen_vm_process_state *)target->state;
+    struct xen_vm_state *xstate = \
+	(struct xen_vm_state *)target->base->state;
+    int retval = 0;
+
+#if 0
+    if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
+	if (flags & ACTIVE_PROBE_FLAG_MEMORY) {
+	    ;
+	    if (!(xvpstate->active_memory_probe_mmap = 
+		  linux_syscall_probe(target->base,target->base_tid,
+				      "sys_mmap",NULL,
+				      _xen_vm_process_active_memory_post_handler,
+				      target))) {
+		if (errno != ENOSYS) {
+		    verror("could not register syscall probe on mmap;!\n");
+		    --retval;
+		}
+	    }
+	    //else if ...
+
+	    if (retval < 0) {
+		goto unprobe;
+	    }
+	    else {
+		target->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+	    }
+	}
+	else {
+	unprobe:
+	    if (xvpstate->active_memory_probe_uselib) {
+		probe_free(xvpstate->active_memory_probe_uselib,0);
+		xvpstate->active_memory_probe_uselib = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_munmap) {
+		probe_free(xvpstate->active_memory_probe_munmap,0);
+		xvpstate->active_memory_probe_munmap = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mmap) {
+		probe_free(xvpstate->active_memory_probe_mmap,0);
+		xvpstate->active_memory_probe_mmap = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mprotect) {
+		probe_free(xvpstate->active_memory_probe_mprotect,0);
+		xvpstate->active_memory_probe_mprotect = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mremap) {
+		probe_free(xvpstate->active_memory_probe_mremap,0);
+		xvpstate->active_memory_probe_mremap = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_mmap_pgoff) {
+		probe_free(xvpstate->active_memory_probe_mmap_pgoff,0);
+		xvpstate->active_memory_probe_mmap_pgoff = NULL;
+	    }
+	    if (xvpstate->active_memory_probe_madvise) {
+		probe_free(xvpstate->active_memory_probe_madvise,0);
+		xvpstate->active_memory_probe_madvise = NULL;
+	    }
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
+	}
+    }
+#endif
+
+    if ((flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)) {
+	if (flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) {
+	    --retval;
+
+	    verror("cannot enable active thread_entry probes; unsupported!\n");
+	}
+	else {
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_ENTRY;
+	}
+    }
+
+    if ((flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) 
+	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_EXIT)) {
+	if (flags & ACTIVE_PROBE_FLAG_THREAD_EXIT) {
+	    --retval;
+
+	    verror("cannot enable active thread_exit probes; unsupported!\n");
+	}
+	else {
+	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_THREAD_EXIT;
+	}
+    }
+
+    return retval;
 }
 
 #define EF_TF (0x00000100)

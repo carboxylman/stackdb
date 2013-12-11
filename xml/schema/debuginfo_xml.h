@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2013 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -20,6 +20,8 @@
 #define __DEBUGINFO_XML_H__
 
 #include "debuginfo_xml_moduleStub.h"
+#include "binfile.h"
+#include "dwdebug_priv.h"
 #include "dwdebug.h"
 #include <glib.h>
 
@@ -100,6 +102,13 @@ d_symbol_array_list_to_x_SymbolsT(struct soap *soap,
 				  GHashTable *reftab,
 				  struct array_list *refstack,int depth);
 
+struct vmi1__SymbolsT *
+d_symbol_gslist_to_x_SymbolsT(struct soap *soap,
+			      GSList *list,
+			      struct vmi1__DebugFileOptsT *opts,
+			      GHashTable *reftab,
+			      struct array_list *refstack,int depth);
+
 struct vmi1__SymbolsOptT *
 d_symbol_array_list_to_x_SymbolsOptT(struct soap *soap,
 				     struct array_list *list,
@@ -107,16 +116,23 @@ d_symbol_array_list_to_x_SymbolsOptT(struct soap *soap,
 				     GHashTable *reftab,
 				     struct array_list *refstack,int depth);
 
+struct vmi1__SymbolsOptT *
+d_symbol_gslist_to_x_SymbolsOptT(struct soap *soap,
+				 GSList *list,
+				 struct vmi1__DebugFileOptsT *opts,
+				 GHashTable *reftab,
+				 struct array_list *refstack,int depth);
+
 struct vmi1__DebugFileT *
 d_debugfile_to_x_DebugFileT(struct soap *soap,struct debugfile *df,
 			    struct vmi1__DebugFileOptsT *opts,
 			    GHashTable *reftab,struct array_list *refstack,
 			    int depth);
 
-struct vmi1__SymtabT *
-d_symtab_to_x_SymtabT(struct soap *soap,struct symtab *s,
-		      struct vmi1__DebugFileOptsT *opts,
-		      GHashTable *reftab,struct array_list *refstack,int depth,
-		      struct vmi1__SymtabT *ir);
+struct vmi1__ScopeT *
+d_scope_to_x_ScopeT(struct soap *soap,struct scope *s,
+		    struct vmi1__DebugFileOptsT *opts,
+		    GHashTable *reftab,struct array_list *refstack,int depth,
+		    struct vmi1__ScopeT *ir);
 
 #endif /* __DEBUGINFO_XML_H__ */

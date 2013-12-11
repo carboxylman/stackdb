@@ -61,8 +61,8 @@ LIBRARIES := libvmitest.la
 
 OBJECTS := monitor_dummy.lo
 
-TESTS := clrange clmatch evloop_waitpipe monitor_threads monitor_processes \
-	monitored_dummy_child
+TESTS := clrange clmatch clmatchone evloop_waitpipe \
+	monitor_threads monitor_processes monitored_dummy_child
 TESTOBJECTS := $(addsuffix .lo,$(TESTS))
 
 ASSISTANTS := dummy dummy.threads threads.leader.exit dlopen
@@ -112,6 +112,10 @@ clmatch: $(HEADERS) $(LIBRARIES) clmatch.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+clmatchone: $(HEADERS) $(LIBRARIES) clmatchone.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 evloop_waitpipe: $(HEADERS) $(LIBRARIES) evloop_waitpipe.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
@@ -131,6 +135,7 @@ monitored_dummy_child: $(HEADERS) $(LIBRARIES) monitored_dummy_child.lo $(STATIC
 test:	$(TESTS)
 	./clrange
 	./clmatch
+	./clmatchone
 	./evloop_waitpipe
 	./monitor_threads
 	./monitor_processes

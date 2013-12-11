@@ -38,6 +38,7 @@
 
 #include "evloop.h"
 
+#include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 #include "target_api.h"
@@ -541,6 +542,7 @@ struct target *xen_vm_attach(struct target_spec *spec,
     char *k,*v;
     FILE *cf;
     char *major = NULL,*minor = NULL,*patch = NULL;
+    REFCNT trefcnt;
 
     domain = xspec->domain;
     
@@ -892,8 +894,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 
     /* Then grab stuff from the ELF binary itself. */
     target->binfile = 
-	binfile_open__int(xstate->kernel_elf_filename,
-			  target->spec->debugfile_root_prefix,NULL);
+	binfile_open(xstate->kernel_elf_filename,
+		     target->spec->debugfile_root_prefix,NULL);
     if (!target->binfile) {
 	verror("binfile_open %s: %s\n",
 	       xstate->kernel_elf_filename,strerror(errno));
@@ -901,6 +903,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
     }
 
     RHOLD(target->binfile,target);
+    /* Drop the self-ref that binfile_open held on our behalf. */
+    RPUT(target->binfile,binfile,target->binfile,trefcnt);
 
     target->wordsize = target->binfile->wordsize;
     target->endian = target->binfile->endian;
@@ -982,6 +986,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	free(xstate->name);
     if (xsh)
 	xs_daemon_close(xsh);
+    if (xstate->default_tlctxt)
+	target_location_ctxt_free(xstate->default_tlctxt);
     if (xstate)
 	free(xstate);
     if (target)
@@ -1113,7 +1119,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 
     vdebug(5,LA_TARGET,LF_XV,"loading\n");
 
-    v = target_load_value_member(target,taskv,"pid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,"pid",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load pid in task value; BUG?\n");
 	/* errno should be set for us. */
@@ -1123,7 +1130,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
-    v = target_load_value_member(target,taskv,"parent",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,"parent",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load parent in task value; BUG?\n");
 	/* errno should be set for us. */
@@ -1136,7 +1144,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	if (!ptthread) {
 	    /* Gotta load it. */
 	    value_free(v);
-	    v = target_load_value_member(target,taskv,"parent",NULL,
+	    v = target_load_value_member(target,xstate->default_tlctxt,
+					 taskv,"parent",NULL,
 					 LOAD_FLAG_AUTO_DEREF);
 	    if (!v) {
 		verror("could not load parent value from task;"
@@ -1174,7 +1183,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	v = NULL;
     }
 
-    v = target_load_value_member(target,taskv,xstate->task_uid_member_name,
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,xstate->task_uid_member_name,
 				 NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load %s in task value; BUG?\n",
@@ -1187,7 +1197,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	v = NULL;
     }
 
-    v = target_load_value_member(target,taskv,xstate->task_gid_member_name,
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,xstate->task_gid_member_name,
 				 NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load %s in task value; BUG?\n",
@@ -1200,7 +1211,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	v = NULL;
     }
 
-    v = target_load_value_member(target,taskv,"comm",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,"comm",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load comm in task value; BUG?\n");
 	/* errno should be set for us. */
@@ -1210,7 +1222,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
-    v = target_load_value_member(target,taskv,"tgid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,"tgid",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load tgid in task %"PRIiTID"; BUG?\n",tid);
 	/* errno should be set for us. */
@@ -1220,7 +1233,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
-    v = target_load_value_member(target,taskv,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,"flags",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load flags in task %"PRIiTID"; BUG?\n",tid);
 	/* errno should be set for us. */
@@ -1282,7 +1296,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     }
 
     if (xstate->task_struct_has_thread_info) {
-	threadinfov = target_load_value_member(target,taskv,"thread_info",NULL,
+	threadinfov = target_load_value_member(target,xstate->default_tlctxt,
+					       taskv,"thread_info",NULL,
 					       LOAD_FLAG_AUTO_DEREF);
 	if (!threadinfov) {
 	    verror("could not load thread_info in task %"PRIiTID"; BUG?\n",tid);
@@ -1291,7 +1306,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	}
     }
     else if (xstate->task_struct_has_stack) {
-	v = target_load_value_member(target,taskv,"stack",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"stack",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load stack (thread_info) in task %"PRIiTID";"
 		   " BUG?\n",tid);
@@ -1315,8 +1331,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	goto errout;
     }
 
-    v = target_load_value_member(target,threadinfov,"flags",NULL,
-				 LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 threadinfov,"flags",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread_info.flags in task %"PRIiTID"; BUG?\n",tid);
 	/* errno should be set for us. */
@@ -1326,8 +1342,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
-    v = target_load_value_member(target,threadinfov,"preempt_count",NULL,
-				 LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 threadinfov,"preempt_count",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread_info.preempt_count in task %"PRIiTID";"
 	       " BUG?\n",tid);
@@ -1355,7 +1371,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
      */
     memset(&tstate->context,0,sizeof(vcpu_guest_context_t));
 
-    v = target_load_value_member(target,taskv,"mm",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,"mm",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not see if thread %"PRIiTID" was kernel or user\n",tid);
 	goto errout;
@@ -1367,8 +1384,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     v = NULL;
 
     if (tstate->mm_addr) {
-	v = target_load_value_member(target,taskv,"mm.pgd",NULL,
-				     LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"mm.pgd",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load thread %"PRIiTID" (mm) pgd (for cr3 tracking)\n",
 		   tid);
@@ -1381,7 +1398,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 
 	/* If pgd was NULL, try task_struct.active_mm.pgd */
 	if (tstate->pgd == 0) {
-	    v = target_load_value_member(target,taskv,"active_mm.pgd",NULL,
+	    v = target_load_value_member(target,xstate->default_tlctxt,
+					 taskv,"active_mm.pgd",NULL,
 					 LOAD_FLAG_NONE);
 	    if (!v) {
 		vwarn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
@@ -1432,8 +1450,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
      * the debug regs are in the task_struct->thread thread_struct
      * struct.
      */
-    threadv = target_load_value_member(target,taskv,"thread",NULL,
-				       LOAD_FLAG_NONE);
+    threadv = target_load_value_member(target,xstate->default_tlctxt,
+				       taskv,"thread",NULL,LOAD_FLAG_NONE);
     if (!threadv) {
 	verror("could not load thread_struct for task %"PRIiTID"!\n",tid);
 	goto errout;
@@ -1441,7 +1459,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 
     tstate->thread_struct = threadv;
 
-    v = target_load_value_member(target,threadv,xstate->thread_sp_member_name,
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 threadv,xstate->thread_sp_member_name,
 				 NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread.%s for task %"PRIiTID"!\n",
@@ -1464,11 +1483,11 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     if (iskernel && preempt_count) {
 	if (target->wordsize == 8) {
 	    tstate->ptregs_stack_addr = 
-		stack_top - 0 - symbol_bytesize(xstate->pt_regs_type);
+		stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
 	}
 	else {
 	    tstate->ptregs_stack_addr = 
-		stack_top - 8 - symbol_bytesize(xstate->pt_regs_type);
+		stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
 	}
 	//tstate->ptregs_stack_addr = tstate->esp - 8 - 15 * 4;
 	// + 8 - 7 * 4; // - 8 - 15 * 4;
@@ -1496,11 +1515,11 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     }
     else if (target->wordsize == 8) {
 	tstate->ptregs_stack_addr = 
-	    stack_top - 0 - symbol_bytesize(xstate->pt_regs_type);
+	    stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
     }
     else {
 	tstate->ptregs_stack_addr = 
-	    stack_top - 8 - symbol_bytesize(xstate->pt_regs_type);
+	    stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
     }
 
     vdebug(5,LA_TARGET,LF_XV,
@@ -1508,7 +1527,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	   ",ptregs_stack_addr=%"PRIxADDR"\n",
 	   tstate->esp,stack_top,tstate->stack_base,tstate->ptregs_stack_addr);
 
-    v = target_load_value_member(target,threadv,xstate->thread_sp0_member_name,
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 threadv,xstate->thread_sp0_member_name,
 				 NULL,LOAD_FLAG_NONE);
     if (!v) 
 	vwarn("could not load thread.%s for task %"PRIiTID"!\n",
@@ -1524,7 +1544,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
      * stack at *(thread.sp - 8).  That's how we load it.
      */
     if (xstate->thread_ip_member_name) {
-	v = target_load_value_member(target,threadv,xstate->thread_ip_member_name,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     threadv,xstate->thread_ip_member_name,
 				     NULL,LOAD_FLAG_NONE);
 	if (!v) 
 	    vwarn("could not load thread.%s for task %"PRIiTID"!\n",
@@ -1559,7 +1580,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
      * this model... for now we ignore fsindex/gsindex.
      */
     if (xstate->thread_struct_has_fs) {
-	v = target_load_value_member(target,threadv,"fs",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     threadv,"fs",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    vwarn("could not load thread.fs for task %"PRIiTID"!\n",tid);
 	    goto errout;
@@ -1576,7 +1598,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     }
 
     /* Everybody always has gs. */
-    v = target_load_value_member(target,threadv,"gs",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 threadv,"gs",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread.gs for task %"PRIiTID"!\n",tid);
 	goto errout;
@@ -1588,7 +1611,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     }
 
     if (xstate->thread_struct_has_ds_es) {
-	v = target_load_value_member(target,threadv,"ds",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     threadv,"ds",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    vwarn("could not load thread.ds for task %"PRIiTID"!\n",tid);
 	    goto errout;
@@ -1602,7 +1626,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	    v = NULL;
 	}
 
-	v = target_load_value_member(target,threadv,"es",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     threadv,"es",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    vwarn("could not load thread.es for task %"PRIiTID"!\n",tid);
 	    goto errout;
@@ -1644,7 +1669,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	 */
 	v = target_load_addr_real(target,tstate->ptregs_stack_addr,
 				  LOAD_FLAG_NONE,
-				  symbol_bytesize(xstate->pt_regs_type));
+				  symbol_get_bytesize(xstate->pt_regs_type));
 	if (!v) {
 	    verror("could not load stack register save frame task %"PRIiTID"!\n",
 		   tid);
@@ -1735,7 +1760,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
      * Load the current debug registers from the thread.
      */
     if (xstate->thread_struct_has_debugreg) {
-	v = target_load_value_member(target,threadv,"debugreg",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     threadv,"debugreg",NULL,
 				     LOAD_FLAG_AUTO_DEREF);
 	if (!v) {
 	    verror("could not load thread->debugreg for task %"PRIiTID"\n",tid);
@@ -1774,7 +1800,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	    if (!dregmembers[i])
 		continue;
 
-	    v = target_load_value_member(target,threadv,dregmembers[i],NULL,
+	    v = target_load_value_member(target,xstate->default_tlctxt,
+					 threadv,dregmembers[i],NULL,
 					 LOAD_FLAG_AUTO_DEREF);
 	    if (!v) {
 		verror("could not load thread->%s for task %"PRIiTID"\n",
@@ -1794,7 +1821,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	 * XXX: still need to load perf_events 0-3.
 	 */
 
-	v = target_load_value_member(target,threadv,"debugreg6",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     threadv,"debugreg6",NULL,
 				     LOAD_FLAG_AUTO_DEREF);
 	if (!v) {
 	    verror("could not load thread->debugreg6 for task %"PRIiTID"\n",tid);
@@ -1807,7 +1835,8 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
 	value_free(v);
 	v = NULL;
 
-	v = target_load_value_member(target,threadv,"ptrace_dr7",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     threadv,"ptrace_dr7",NULL,
 				     LOAD_FLAG_AUTO_DEREF);
 	if (!v) {
 	    verror("could not load thread->ptrace_dr7 for task %"PRIiTID"\n",tid);
@@ -2675,7 +2704,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	goto errout;
     }
 
-    v = target_load_value_member(target,threadinfov,"preempt_count",NULL,
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 threadinfov,"preempt_count",NULL,
 				 LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread_info->preempt_count (to check IRQ status)!\n");
@@ -2699,7 +2729,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     }
     else {
 	/* Now, load the current task_struct. */
-	taskv = target_load_value_member(target,threadinfov,"task",NULL,
+	taskv = target_load_value_member(target,xstate->default_tlctxt,
+					 threadinfov,"task",NULL,
 					 LOAD_FLAG_AUTO_DEREF);
 
 	if (!taskv) {
@@ -2708,7 +2739,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    goto errout;
 	}
 
-	v = target_load_value_member(target,taskv,"pid",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"pid",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load pid in current task; BUG?\n");
 	    /* errno should be set for us. */
@@ -2718,7 +2750,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	value_free(v);
 	v = NULL;
 
-	v = target_load_value_member(target,taskv,"parent",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"parent",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load parent in task value; BUG?\n");
 	    /* errno should be set for us. */
@@ -2731,7 +2764,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    if (!ptthread) {
 		/* Gotta load it. */
 		value_free(v);
-		v = target_load_value_member(target,taskv,"parent",NULL,
+		v = target_load_value_member(target,xstate->default_tlctxt,
+					     taskv,"parent",NULL,
 					     LOAD_FLAG_AUTO_DEREF);
 		if (!v) {
 		    verror("could not load parent value from task;"
@@ -2768,7 +2802,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    v = NULL;
 	}
 
-	v = target_load_value_member(target,taskv,xstate->task_uid_member_name,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,xstate->task_uid_member_name,
 				     NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load %s in task value; BUG?\n",
@@ -2781,7 +2816,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    v = NULL;
 	}
 
-	v = target_load_value_member(target,taskv,xstate->task_gid_member_name,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,xstate->task_gid_member_name,
 				     NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load %s in task value; BUG?\n",
@@ -2794,7 +2830,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	    v = NULL;
 	}
 
-	v = target_load_value_member(target,taskv,"comm",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"comm",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load comm in current task; BUG?\n");
 	    /* errno should be set for us. */
@@ -2806,7 +2843,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 
 	vdebug(5,LA_TARGET,LF_XV,"loading thread %"PRIiTID"\n",tid);
 
-	v = target_load_value_member(target,taskv,"tgid",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"tgid",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load tgid in current task; BUG?\n");
 	    /* errno should be set for us. */
@@ -2816,7 +2854,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	value_free(v);
 	v = NULL;
 
-	v = target_load_value_member(target,taskv,"flags",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"flags",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not load flags in task %"PRIiTID" current task; BUG?\n",
 		   tid);
@@ -2827,7 +2866,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	value_free(v);
 	v = NULL;
 
-	v = target_load_value_member(target,taskv,"mm",NULL,LOAD_FLAG_NONE);
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"mm",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not see if thread %"PRIiTID" was kernel or user\n",tid);
 	    goto errout;
@@ -2837,8 +2877,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	v = NULL;
 
 	if (mm_addr) {
-	    v = target_load_value_member(target,taskv,"mm.pgd",NULL,
-					 LOAD_FLAG_NONE);
+	    v = target_load_value_member(target,xstate->default_tlctxt,
+					 taskv,"mm.pgd",NULL,LOAD_FLAG_NONE);
 	    if (!v) {
 		verror("could not load thread %"PRIiTID" pgd (for cr3 tracking)\n",
 		       tid);
@@ -2851,7 +2891,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 
 	    /* If pgd was NULL, try task_struct.active_mm.pgd */
 	    if (pgd == 0) {
-		v = target_load_value_member(target,taskv,"active_mm.pgd",NULL,
+		v = target_load_value_member(target,xstate->default_tlctxt,
+					     taskv,"active_mm.pgd",NULL,
 					     LOAD_FLAG_NONE);
 		if (!v) {
 		    vwarn("could not load thread %"PRIiTID" (active_mm) pgd (for cr3 tracking)\n",
@@ -2866,8 +2907,8 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	}
     }
 
-    v = target_load_value_member(target,threadinfov,"flags",NULL,
-				 LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 threadinfov,"flags",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load thread_info->flags in current thread; BUG?\n");
 	/* errno should be set for us. */
@@ -3173,6 +3214,10 @@ static int xen_vm_init(struct target *target) {
     target->global_thread = target_create_thread(target,TID_GLOBAL,tstate);
     /* Default thread is always running. */
     target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
+
+    /* Create our default context now; update its region later. */
+    xstate->default_tlctxt =
+	target_location_ctxt_create(target,TID_GLOBAL,NULL);
 
     return 0;
 }
@@ -3579,6 +3624,8 @@ static int xen_vm_loadregions(struct target *target,struct addrspace *space) {
     if (!range)
 	return -1;
 
+    xstate->default_tlctxt->region = region;
+
     return 0;
 }
 
@@ -3603,6 +3650,8 @@ static int xen_vm_loaddebugfiles(struct target *target,
     int retval = -1;
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct debugfile *debugfile;
+    int bfn = 0;
+    int bfpn = 0;
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
@@ -3637,13 +3686,17 @@ static int xen_vm_loaddebugfiles(struct target *target,
      * Try to figure out which binfile has the info we need.  On
      * different distros, they're stripped different ways.
      */
-    if (debugfile->binfile_pointing 
-	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
-	> symtab_get_size_simple(debugfile->binfile->symtab)) {
-	RHOLD(debugfile->binfile_pointing,region);
-	region->binfile = debugfile->binfile_pointing;
+    if (debugfile->binfile_pointing) {
+	binfile_get_root_scope_sizes(debugfile->binfile,&bfn,NULL,NULL,NULL);
+	binfile_get_root_scope_sizes(debugfile->binfile_pointing,&bfpn,
+				     NULL,NULL,NULL);
+	if (bfpn > bfn) {
+	    RHOLD(debugfile->binfile_pointing,region);
+	    region->binfile = debugfile->binfile_pointing;
+	}
     }
-    else {
+
+    if (!region->binfile) {
 	RHOLD(debugfile->binfile,region);
 	region->binfile = debugfile->binfile;
     }
@@ -3707,10 +3760,10 @@ static int xen_vm_postloadinit(struct target *target) {
     /* Try .text first (and fake the delimiter!!!) */
     if (xstate->kernel_start_addr == 0) {
 	tmpbs = target_lookup_sym(target,".text","|",NULL,
-				  SYMBOL_TYPE_FLAG_FUNCTION);
+				  SYMBOL_TYPE_FLAG_FUNC);
 	if (tmpbs) {
-	    if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
-					 &xstate->kernel_start_addr)) {
+	    if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,tmpbs,
+					    &xstate->kernel_start_addr,NULL)) {
 		vwarnopt(1,LA_TARGET,LF_XV,
 			 "could not resolve addr of .text;"
 			 " trying startup_(32|64)!\n");
@@ -3728,10 +3781,11 @@ static int xen_vm_postloadinit(struct target *target) {
     if (xstate->kernel_start_addr == 0) {
 	if (target->wordsize == 4) {
 	    tmpbs = target_lookup_sym(target,"startup_32",NULL,NULL,
-				      SYMBOL_TYPE_FLAG_FUNCTION);
+				      SYMBOL_TYPE_FLAG_FUNC);
 	    if (tmpbs) {
-		if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
-					     &xstate->kernel_start_addr)) {
+		if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,
+						tmpbs,&xstate->kernel_start_addr,
+						NULL)) {
 		    vwarnopt(1,LA_TARGET,LF_XV,
 			     "could not resolve addr of startup_32!\n");
 		}
@@ -3745,10 +3799,11 @@ static int xen_vm_postloadinit(struct target *target) {
 	}
 	else {
 	    tmpbs = target_lookup_sym(target,"startup_64",NULL,NULL,
-				      SYMBOL_TYPE_FLAG_FUNCTION);
+				      SYMBOL_TYPE_FLAG_FUNC);
 	    if (tmpbs) {
-		if (symbol_get_location_addr(tmpbs->lsymbol->symbol,
-					     &xstate->kernel_start_addr)) {
+		if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,
+						tmpbs,&xstate->kernel_start_addr,
+						NULL)) {
 		    vwarnopt(1,LA_TARGET,LF_XV,
 			     "could not resolve addr of startup_64!\n");
 		}
@@ -3788,8 +3843,9 @@ static int xen_vm_postloadinit(struct target *target) {
 	return 0;
     }
 
-    if (symbol_get_location_addr(xstate->init_task->lsymbol->symbol,
-				 &xstate->init_task_addr)) {
+    if (target_bsymbol_resolve_base(target,xstate->default_tlctxt,
+				    xstate->init_task,
+				    &xstate->init_task_addr,NULL)) {
 	vwarn("could not resolve addr of init_task!\n");
     }
 
@@ -3806,7 +3862,7 @@ static int xen_vm_postloadinit(struct target *target) {
 				       SYMBOL_TYPE_FLAG_VAR))) {
 	    errno = 0;
 	    xstate->kernel_stack_percpu_offset = 
-		target_addressof_symbol(target,TID_GLOBAL,tmpbs,
+		target_addressof_symbol(target,xstate->default_tlctxt,tmpbs,
 					LOAD_FLAG_NONE,NULL);
 	    bsymbol_release(tmpbs);
 	    if (errno) {
@@ -3843,6 +3899,7 @@ static int xen_vm_postloadinit(struct target *target) {
      */
     xstate->task_struct_type =						\
 	symbol_get_datatype(xstate->init_task->lsymbol->symbol);
+    RHOLD(xstate->task_struct_type,target);
 
     mm_struct_type = target_lookup_sym(target,"struct mm_struct",
 				       NULL,NULL,SYMBOL_TYPE_FLAG_TYPE);
@@ -4116,15 +4173,15 @@ static int xen_vm_postloadinit(struct target *target) {
 	      " cannot function!\n");
     }
     else {
-	VLS(target,"MODULE_STATE_LIVE",LOAD_FLAG_NONE,
+	VLS(target,xstate->default_tlctxt,"MODULE_STATE_LIVE",LOAD_FLAG_NONE,
 	    &xstate->MODULE_STATE_LIVE,NULL,err_vmiload_meminfo);
 	vdebug(8,LA_TARGET,LF_XV,
 	       "MODULE_STATE_LIVE = %d\n",xstate->MODULE_STATE_LIVE);
-	VLS(target,"MODULE_STATE_COMING",LOAD_FLAG_NONE,
+	VLS(target,xstate->default_tlctxt,"MODULE_STATE_COMING",LOAD_FLAG_NONE,
 	    &xstate->MODULE_STATE_COMING,NULL,err_vmiload_meminfo);
 	vdebug(8,LA_TARGET,LF_XV,
 	       "MODULE_STATE_COMING = %d\n",xstate->MODULE_STATE_COMING);
-	VLS(target,"MODULE_STATE_GOING",LOAD_FLAG_NONE,
+	VLS(target,xstate->default_tlctxt,"MODULE_STATE_GOING",LOAD_FLAG_NONE,
 	    &xstate->MODULE_STATE_GOING,NULL,err_vmiload_meminfo);
 	vdebug(8,LA_TARGET,LF_XV,
 	       "MODULE_STATE_GOING = %d\n",xstate->MODULE_STATE_GOING);
@@ -4399,6 +4456,7 @@ xen_vm_lookup_overlay_thread_by_id(struct target *target,int id) {
 
 static struct target_thread *
 xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct target_thread *retval = NULL;
     struct target_thread *tthread;
     struct xen_vm_thread_state *xtstate;
@@ -4416,7 +4474,8 @@ xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name) {
 	    continue;
 	else {
 	    xtstate = (struct xen_vm_thread_state *)tthread->state;
-	    value = target_load_value_member(target,xtstate->task_struct,"comm",
+	    value = target_load_value_member(target,xstate->default_tlctxt,
+					     xtstate->task_struct,"comm",
 					     NULL,LOAD_FLAG_NONE);
 	    if (!value) {
 		vwarn("could not load .comm in task_struct for tid %d; continuing!\n",
@@ -4576,7 +4635,8 @@ static int xen_vm_flush_current_thread(struct target *target) {
      * the global thread...
      */
     if (tstate->thread_info) {
-	v = target_load_value_member(target,tstate->thread_info,"flags",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_info,"flags",NULL,
 				     LOAD_FLAG_NONE);
 	value_update_unum(v,tstate->thread_info_flags);
 	target_store_value(target,v);
@@ -4585,7 +4645,8 @@ static int xen_vm_flush_current_thread(struct target *target) {
 
     /* Can only flush this if we weren't in interrupt context. */
     if (tstate->task_struct) {
-	v = target_load_value_member(target,tstate->task_struct,"flags",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->task_struct,"flags",NULL,
 				     LOAD_FLAG_NONE);
 	value_update_unum(v,tstate->task_flags);
 	target_store_value(target,v);
@@ -4867,7 +4928,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
      */
 
     if (xstate->thread_ip_member_name) {
-	v = target_load_value_member(target,tstate->thread_struct,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_struct,
 				     xstate->thread_ip_member_name,
 				     NULL,LOAD_FLAG_NONE);
 	if (!v) 
@@ -4897,7 +4959,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     /*
      * GS is always in the thread data structure:
      */
-    v = target_load_value_member(target,tstate->thread_struct,"gs",NULL,
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 tstate->thread_struct,"gs",NULL,
 				 LOAD_FLAG_NONE);
     value_update_u16(v,tstate->context.user_regs.gs);
     target_store_value(target,v);
@@ -4905,7 +4968,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     v = NULL;
 
     if (xstate->thread_struct_has_fs) {
-	v = target_load_value_member(target,tstate->thread_struct,"fs",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_struct,"fs",NULL,
 				     LOAD_FLAG_NONE);
 	if (!v) {
 	    vwarn("could not store thread.fs for task %"PRIiTID"!\n",tid);
@@ -4924,7 +4988,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     }
 
     if (xstate->thread_struct_has_ds_es) {
-	v = target_load_value_member(target,tstate->thread_struct,"ds",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_struct,"ds",NULL,
 				     LOAD_FLAG_NONE);
 	if (!v) {
 	    vwarn("could not store thread.ds for task %"PRIiTID"!\n",tid);
@@ -4938,7 +5003,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	    v = NULL;
 	}
 
-	v = target_load_value_member(target,tstate->thread_struct,"es",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_struct,"es",NULL,
 				     LOAD_FLAG_NONE);
 	if (!v) {
 	    vwarn("could not store thread.es for task %"PRIiTID"!\n",tid);
@@ -4959,7 +5025,7 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     if (tstate->ptregs_stack_addr) {
 	v = target_load_addr_real(target,tstate->ptregs_stack_addr,
 				  LOAD_FLAG_NONE,
-				  symbol_bytesize(xstate->pt_regs_type));
+				  symbol_get_bytesize(xstate->pt_regs_type));
 	if (!v) {
 	    verror("could not store stack register save frame task %"PRIiTID"!\n",
 		   tid);
@@ -5046,7 +5112,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 
     
     if (xstate->thread_struct_has_debugreg) {
-	v = target_load_value_member(target,tstate->thread_struct,"debugreg",
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_struct,"debugreg",
 				     NULL,LOAD_FLAG_AUTO_DEREF);
 	if (!v) {
 	    verror("could not store thread->debugreg for task %"PRIiTID"\n",tid);
@@ -5088,7 +5155,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	    if (!dregmembers[i])
 		continue;
 
-	    v = target_load_value_member(target,tstate->thread_struct,
+	    v = target_load_value_member(target,xstate->default_tlctxt,
+					 tstate->thread_struct,
 					 dregmembers[i],NULL,
 					 LOAD_FLAG_AUTO_DEREF);
 	    if (!v) {
@@ -5112,7 +5180,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	 * XXX: still need to store perf_events 0-3.
 	 */
 
-	v = target_load_value_member(target,tstate->thread_struct,"debugreg6",
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_struct,"debugreg6",
 				     NULL,LOAD_FLAG_AUTO_DEREF);
 	if (!v) {
 	    verror("could not store thread->debugreg6 for task %"PRIiTID"\n",tid);
@@ -5128,7 +5197,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 	value_free(v);
 	v = NULL;
 
-	v = target_load_value_member(target,tstate->thread_struct,"ptrace_dr7",
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->thread_struct,"ptrace_dr7",
 				     NULL,LOAD_FLAG_AUTO_DEREF);
 	if (!v) {
 	    verror("could not store thread->ptrace_dr7 for task %"PRIiTID"\n",tid);
@@ -5152,7 +5222,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
     /*
      * Flush PCB state -- task_flags, thread_info_flags.
      */
-    v = target_load_value_member(target,tstate->thread_info,"flags",NULL,
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 tstate->thread_info,"flags",NULL,
 				 LOAD_FLAG_NONE);
     value_update_unum(v,tstate->thread_info_flags);
     target_store_value(target,v);
@@ -5160,7 +5231,8 @@ static int xen_vm_flush_thread(struct target *target,tid_t tid) {
 
     /* Can only flush this if we weren't in interrupt context. */
     if (tstate->task_struct) {
-	v = target_load_value_member(target,tstate->task_struct,"flags",NULL,
+	v = target_load_value_member(target,xstate->default_tlctxt,
+				     tstate->task_struct,"flags",NULL,
 				     LOAD_FLAG_NONE);
 	value_update_unum(v,tstate->task_flags);
 	target_store_value(target,v);
@@ -5251,10 +5323,12 @@ static int xen_vm_flush_all_threads(struct target *target) {
 
 static int __value_get_append_tid(struct target *target,struct value *value,
 				  void *data) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct array_list *list = (struct array_list *)data;
     struct value *v;
 
-    v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 value,"pid",NULL,LOAD_FLAG_NONE);
     if (!v) {
 	verror("could not load pid in task; BUG?\n");
 	/* errno should be set for us. */
@@ -5565,6 +5639,7 @@ struct __update_module_data {
 };
 
 static int __update_module(struct target *target,struct value *value,void *data) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct value *mod_name = NULL;
     struct value *vt = NULL;
     ADDR mod_core_addr;
@@ -5586,15 +5661,15 @@ static int __update_module(struct target *target,struct value *value,void *data)
 	return -1;
     }
 
-    mod_name = target_load_value_member(target,value,"name",NULL,
-					LOAD_FLAG_NONE);
+    mod_name = target_load_value_member(target,xstate->default_tlctxt,
+					value,"name",NULL,LOAD_FLAG_NONE);
     if (!mod_name) {
 	verror("could not load name for module!\n");
 	goto errout;
     }
 
-    vt = target_load_value_member(target,value,"module_core",NULL,
-				     LOAD_FLAG_NONE);
+    vt = target_load_value_member(target,xstate->default_tlctxt,
+				  value,"module_core",NULL,LOAD_FLAG_NONE);
     if (!vt) {
 	verror("could not load module_core addr!\n");
 	goto errout;
@@ -5602,8 +5677,8 @@ static int __update_module(struct target *target,struct value *value,void *data)
     mod_core_addr = v_addr(vt);
     value_free(vt);
 
-    vt = target_load_value_member(target,value,"module_init",NULL,
-				     LOAD_FLAG_NONE);
+    vt = target_load_value_member(target,xstate->default_tlctxt,
+				  value,"module_init",NULL,LOAD_FLAG_NONE);
     if (!vt) {
 	verror("could not load module_init addr!\n");
 	goto errout;
@@ -5611,8 +5686,8 @@ static int __update_module(struct target *target,struct value *value,void *data)
     mod_init_addr = v_addr(vt);
     value_free(vt);
 
-    vt = target_load_value_member(target,value,"core_size",NULL,
-				     LOAD_FLAG_NONE);
+    vt = target_load_value_member(target,xstate->default_tlctxt,
+				  value,"core_size",NULL,LOAD_FLAG_NONE);
     if (!vt) {
 	verror("could not load module core_size!\n");
 	goto errout;
@@ -5620,8 +5695,8 @@ static int __update_module(struct target *target,struct value *value,void *data)
     mod_core_size = v_unum(vt);
     value_free(vt);
 
-    vt = target_load_value_member(target,value,"init_size",NULL,
-				     LOAD_FLAG_NONE);
+    vt = target_load_value_member(target,xstate->default_tlctxt,
+				  value,"init_size",NULL,LOAD_FLAG_NONE);
     if (!vt) {
 	verror("could not load module init_size!\n");
 	goto errout;
@@ -6018,9 +6093,8 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
     /*
      * Load mod.
      */
-    mod = target_load_symbol(target,tid,
-			     xstate->module_free_mod_symbol,
-			     LOAD_FLAG_AUTO_DEREF);
+    mod = target_load_symbol(target,xstate->default_tlctxt,
+			     xstate->module_free_mod_symbol,LOAD_FLAG_AUTO_DEREF);
     if (!mod) {
 	/*
 	 * Again, the module is either on the list if it's coming; or
@@ -6038,7 +6112,8 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
     /*
      * Load mod->state, so we know what is happening.
      */
-    VLV(target,mod,"state",LOAD_FLAG_NONE,&state,NULL,err_vmiload_state);
+    VLV(target,xstate->default_tlctxt,mod,"state",LOAD_FLAG_NONE,&state,NULL,
+	err_vmiload_state);
 
     /*
      * Update modules.dep, just in case; don't worry if it fails, just
@@ -6073,8 +6148,8 @@ static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
 	/*
 	 * Look up and destroy it if it's one of our regions.
 	 */
-	VLV(target,mod,"name",LOAD_FLAG_AUTO_STRING,NULL,&name_value,
-	    err_vmiload_name);
+	VLV(target,xstate->default_tlctxt,mod,"name",LOAD_FLAG_AUTO_STRING,
+	    NULL,&name_value,err_vmiload_name);
 	name = v_string(name_value);
 
 	modfilename = g_hash_table_lookup(xstate->moddep,name);
@@ -6304,8 +6379,9 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
     /*
      * Load task.
      */
-    value = target_load_symbol(target,tid,xstate->thread_exit_v_symbol,
-			       LOAD_FLAG_AUTO_DEREF);
+    value = target_load_symbol(target,xstate->default_tlctxt,
+			       xstate->thread_exit_v_symbol,LOAD_FLAG_AUTO_DEREF);
+
     if (!value) {
 	/*
 	 * We need avoid stale threads for overlay targets; we need to

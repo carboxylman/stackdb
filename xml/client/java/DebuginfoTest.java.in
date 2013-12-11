@@ -26,7 +26,7 @@ public class DebuginfoTest {
 	DebugFileOptsT odfot = new DebugFileOptsT();
 	odfot.setDebugfileRefDepth(1);
 	odfot.setSymbolRefDepth(2);
-	odfot.setSymtabRefDepth(1);
+	odfot.setScopeRefDepth(1);
 	odfot.setDoMultiRef(false);
 	odfot.setDoManualRef(true);
 	//ls.setOpts(new JAXBElement(new javax.xml.namespace.QName("http://anathema.flux.utah.edu/schema/vmi/1","opts"),DebugFileOptsT.class,odfot));

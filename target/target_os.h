@@ -48,7 +48,7 @@ struct target_os_syscall {
      * If @bsymbol, this is the list of struct symbol *s returned by
      * symbol_get_members().
      */
-    struct array_list *args;
+    GSList *args;
 };
 
 struct target_os_syscall_state {

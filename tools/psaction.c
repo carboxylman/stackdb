@@ -81,9 +81,9 @@ int pslist_list(struct target *target,struct value *value,void *data) {
     struct value *uid_v;
     struct value *name_v;
 
-    pid_v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
-    name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
-    uid_v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
+    pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
+    name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
+    uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
 
     printf("%d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -101,15 +101,15 @@ int pslist_check(struct target *target,struct value *value,void *data) {
     struct rfilter *rf = (struct rfilter *)data;
     int accept;
 
-    name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
+    name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
     rfilter_check(rf,name_v->buf,&accept,NULL);
     if (accept == RF_ACCEPT) {
 	value_free(name_v);
 	return 0;
     }
 
-    pid_v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
-    uid_v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
+    pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
+    uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
 
     printf("Check found bad %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -128,15 +128,15 @@ int pslist_zombie(struct target *target,struct value *value,void *data) {
     int accept;
     struct value *v;
 
-    name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
+    name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
     rfilter_check(rf,name_v->buf,&accept,NULL);
     if (accept == RF_REJECT) {
 	value_free(name_v);
 	return 0;
     }
 
-    pid_v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
-    uid_v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
+    pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
+    uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
 
     printf("Zombifying %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -145,7 +145,7 @@ int pslist_zombie(struct target *target,struct value *value,void *data) {
     value_free(name_v);
 
     /* Set task_struct->state = -1 */
-    v = target_load_value_member(target,value,"state",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"state",NULL,LOAD_FLAG_NONE);
     value_update_num(v,-1);
     target_store_value(target,v);
     value_free(v);
@@ -173,15 +173,15 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
     uint32_t sigstopmask = 1 << 17;
     struct value *thread_info_v;
 
-    name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
+    name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
     rfilter_check(rf,name_v->buf,&accept,NULL);
     if (accept == RF_REJECT) {
 	value_free(name_v);
 	return 0;
     }
 
-    pid_v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
-    uid_v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
+    pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
+    uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
 
     printf("Killing %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -190,16 +190,16 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
     value_free(name_v);
 
     /* Load task_struct.signal (which is a struct signal_struct *) */
-    signal_v = target_load_value_member(target,value,"signal",NULL,
+    signal_v = target_load_value_member(target,NULL,value,"signal",NULL,
 					LOAD_FLAG_AUTO_DEREF);
     /* Load task_struct.signal->shared_pending */
-    signal_pending_v = target_load_value_member(target,signal_v,"shared_pending",
+    signal_pending_v = target_load_value_member(target,NULL,signal_v,"shared_pending",
 						NULL,LOAD_FLAG_NONE);
     /* Load task-struct.signal->shared_pending.signal, which is
      * technically a struct containing an array, but we know what parts
      * of it to update, so we do it "raw".
      */
-    signal_pending_signal_v = target_load_value_member(target,signal_pending_v,
+    signal_pending_signal_v = target_load_value_member(target,NULL,signal_pending_v,
 						       "signal",
 						       NULL,LOAD_FLAG_NONE);
     /* Set a pending SIGSTOP in the pending sigset. */
@@ -217,18 +217,18 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
      * assume single-threaded processes!
      */
 #define LOCAL_SIGNAL_GROUP_EXIT       0x00000008
-    v = target_load_value_member(target,signal_v,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,signal_v,"flags",NULL,LOAD_FLAG_NONE);
     value_update_u32(v,LOCAL_SIGNAL_GROUP_EXIT);
     target_store_value(target,v);
     value_free(v);
 
-    v = target_load_value_member(target,signal_v,"group_exit_code",
+    v = target_load_value_member(target,NULL,signal_v,"group_exit_code",
 				 NULL,LOAD_FLAG_NONE);
     value_update_i32(v,17);
     target_store_value(target,v);
     value_free(v);
 
-    v = target_load_value_member(target,signal_v,"group_stop_count",
+    v = target_load_value_member(target,NULL,signal_v,"group_stop_count",
 				 NULL,LOAD_FLAG_NONE);
     value_update_i32(v,0);
     target_store_value(target,v);
@@ -239,9 +239,9 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
 #define LOCAL_TIF_SIGPENDING          2
 
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
-    thread_info_v = target_load_value_member(target,value,"thread_info",NULL,
+    thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
 					     LOAD_FLAG_AUTO_DEREF);
-    v = target_load_value_member(target,signal_v,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,signal_v,"flags",NULL,LOAD_FLAG_NONE);
     value_update_u32(v,v_u32(v) | LOCAL_TIF_SIGPENDING);
     target_store_value(target,v);
     value_free(v);
@@ -262,9 +262,9 @@ int __ps_kill(struct target *target,struct value *value) {
     uint32_t sigkillmask = 1 << 9;
     struct value *thread_info_v;
 
-    name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
-    pid_v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
-    uid_v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
+    name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
+    pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
+    uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
 
     printf("Killing %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
@@ -273,16 +273,16 @@ int __ps_kill(struct target *target,struct value *value) {
     value_free(name_v);
 
     /* Load task_struct.signal (which is a struct signal_struct *) */
-    signal_v = target_load_value_member(target,value,"signal",NULL,
+    signal_v = target_load_value_member(target,NULL,value,"signal",NULL,
 					LOAD_FLAG_AUTO_DEREF);
     /* Load task_struct.signal->shared_pending */
-    signal_pending_v = target_load_value_member(target,signal_v,"shared_pending",
+    signal_pending_v = target_load_value_member(target,NULL,signal_v,"shared_pending",
 						NULL,LOAD_FLAG_NONE);
     /* Load task-struct.signal->shared_pending.signal, which is
      * technically a struct containing an array, but we know what parts
      * of it to update, so we do it "raw".
      */
-    signal_pending_signal_v = target_load_value_member(target,signal_pending_v,
+    signal_pending_signal_v = target_load_value_member(target,NULL,signal_pending_v,
 						       "signal",
 						       NULL,LOAD_FLAG_NONE);
     /* Set a pending SIGKILL in the pending sigset. */
@@ -300,18 +300,18 @@ int __ps_kill(struct target *target,struct value *value) {
      * assume single-threaded processes!
      */
 #define LOCAL_SIGNAL_GROUP_EXIT       0x00000008
-    v = target_load_value_member(target,signal_v,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,signal_v,"flags",NULL,LOAD_FLAG_NONE);
     value_update_u32(v,LOCAL_SIGNAL_GROUP_EXIT);
     target_store_value(target,v);
     value_free(v);
 
-    v = target_load_value_member(target,signal_v,"group_exit_code",
+    v = target_load_value_member(target,NULL,signal_v,"group_exit_code",
 				 NULL,LOAD_FLAG_NONE);
     value_update_i32(v,9);
     target_store_value(target,v);
     value_free(v);
 
-    v = target_load_value_member(target,signal_v,"group_stop_count",
+    v = target_load_value_member(target,NULL,signal_v,"group_stop_count",
 				 NULL,LOAD_FLAG_NONE);
     value_update_i32(v,0);
     target_store_value(target,v);
@@ -322,9 +322,9 @@ int __ps_kill(struct target *target,struct value *value) {
 #define LOCAL_TIF_SIGPENDING          2
 
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
-    thread_info_v = target_load_value_member(target,value,"thread_info",NULL,
+    thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
 					     LOAD_FLAG_AUTO_DEREF);
-    v = target_load_value_member(target,signal_v,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,signal_v,"flags",NULL,LOAD_FLAG_NONE);
     value_update_u32(v,v_u32(v) | LOCAL_TIF_SIGPENDING);
     target_store_value(target,v);
     value_free(v);
@@ -339,7 +339,7 @@ int pslist_kill(struct target *target,struct value *value,void *data) {
     struct rfilter *rf = (struct rfilter *)data;
     int accept;
 
-    name_v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
+    name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
     rfilter_check(rf,name_v->buf,&accept,NULL);
     if (accept == RF_REJECT) {
 	value_free(name_v);
@@ -397,64 +397,64 @@ int pslist_load(struct target *target,struct value *value,void *data) {
 
     current->self = value_addr(value);
 
-    v = target_load_value_member(target,value,"comm",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
     current->comm = strdup(v->buf);
     value_free(v);
 
-    v = target_load_value_member(target,value,"state",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"state",NULL,LOAD_FLAG_NONE);
     current->state = v_i32(v);
     value_free(v);
 
-    v = target_load_value_member(target,value,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"flags",NULL,LOAD_FLAG_NONE);
     current->flags = v_u32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"pid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
     current->pid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"parent",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"parent",NULL,LOAD_FLAG_NONE);
     current->parent_addr = v_addr(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"real_parent",NULL,
+    v = target_load_value_member(target,NULL,value,"real_parent",NULL,
 				 LOAD_FLAG_NONE);
     current->real_parent_addr = v_addr(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"tgid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"tgid",NULL,LOAD_FLAG_NONE);
     current->tgid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"uid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
     current->uid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"euid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"euid",NULL,LOAD_FLAG_NONE);
     current->euid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"suid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"suid",NULL,LOAD_FLAG_NONE);
     current->suid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"fsuid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"fsuid",NULL,LOAD_FLAG_NONE);
     current->fsuid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"gid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"gid",NULL,LOAD_FLAG_NONE);
     current->gid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"egid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"egid",NULL,LOAD_FLAG_NONE);
     current->egid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"sgid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"sgid",NULL,LOAD_FLAG_NONE);
     current->sgid = v_i32(v);
     value_free(v);
     
-    v = target_load_value_member(target,value,"fsgid",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,value,"fsgid",NULL,LOAD_FLAG_NONE);
     current->fsgid = v_i32(v);
     value_free(v);
 
@@ -550,6 +550,8 @@ int main(int argc,char **argv) {
     struct target_spec *tspec;
     char targetstr[128];
 
+    struct target_location_ctxt *tlctxt;
+
     dwdebug_init();
     atexit(dwdebug_fini);
 
@@ -639,9 +641,12 @@ int main(int argc,char **argv) {
 		fprintf(stderr,"ERROR: could not lookup %s!\n",opts.argv[i]);
 	    }
 	    else {
-		v = target_load_symbol(t,TID_GLOBAL,bs,
+		tlctxt = target_location_ctxt_create_from_bsymbol(t,TID_GLOBAL,bs);
+		v = target_load_symbol(t,tlctxt,bs,
 					LOAD_FLAG_AUTO_STRING
 					| LOAD_FLAG_AUTO_DEREF);
+		target_location_ctxt_free(tlctxt);
+		tlctxt = NULL;
 		if (!v) {
 		    fprintf(stderr,"ERROR: could not load value for %s!\n",
 			    opts.argv[i]);

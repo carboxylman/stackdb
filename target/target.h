@@ -136,6 +136,35 @@ struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
 struct target *target_lookup_overlay(struct target *target,tid_t tid);
 
 /**
+ ** Target breakpoints.
+ **/
+/*
+ * We need to "wrap" SW breakpoint information, because not all targets
+ * implement breakpoints as direct memory modifications (esp interpreted
+ * languages).
+ */
+typedef enum {
+    BP_NONE    = 0,
+    BP_SW      = 1,
+    BP_HW      = 2,
+    BP_PROBE   = 3,
+} target_breakpoint_type_t;
+
+struct target_breakpoint {
+    struct target *target;
+    tid_t tid;
+    target_breakpoint_type_t bptype;
+    union {
+	struct target_memmod *mmod;
+	REG hwreg;
+	struct {
+	    struct probe *pre;
+	    struct probe *post;
+	} probe;
+    };
+};
+
+/**
  ** Target memmods.
  **/
 
@@ -332,6 +361,8 @@ struct memrange *memregion_find_range_obj(struct memregion *region,
 					  ADDR obj_addr);
 ADDR memregion_relocate(struct memregion *region,ADDR obj_addr,
 			struct memrange **range_saveptr);
+ADDR memregion_unrelocate(struct memregion *region,ADDR real_addr,
+			  struct memrange **range_saveptr);
 struct target *memregion_target(struct memregion *region);
 struct memrange *memregion_match_range(struct memregion *region,ADDR start);
 void memregion_dump(struct memregion *region,struct dump_info *ud);
@@ -464,63 +495,38 @@ REFCNT bsymbol_free(struct bsymbol *bsymbol,int force);
 /**
  ** Location resolution.
  **/
-/*
- * Resolves @location to an address or register.  If necessary, uses @symbol_chain
- * to do the resolution (i.e., sometimes local vars need a virtual
- * frame base register value that is computed by looking up the
- * containing symbol hierarchy).
- *
- * If the location resolves to an address, we return 1 and set
- * @addr_saveptr and @range_saveptr if they are not NULL.
- *
- * If you pass a location that would "resolve" to a register, not a
- * memory address, we return 2 and set @reg_saveptr if it is not NULL.
- *
- *we return 0 and set errno EADDRNOTAVAIL.  On other
- * errors, we return nonzero with errno set appropriately.
- */
-int location_resolve(struct target *target,tid_t tid,struct memregion *region,
-		      struct location *location,
-		      struct array_list *symbol_chain,
-		      REG *reg_saveptr,ADDR *addr_saveptr,
-		      struct memrange **range_saveptr);
-struct location *location_resolve_loclist(struct target *target,tid_t tid,
-					  struct memregion *region,
-					  struct location *location);
-int location_can_mmap(struct location *location,struct target *target);
-int location_resolve_lsymbol_base(struct target *target,tid_t tid,
-				  struct lsymbol *lsymbol,
-				  struct memregion *region,
-				  ADDR *addr_saveptr,
-				  struct memrange **range_saveptr);
-int location_resolve_symbol_base(struct target *target,tid_t tid,
-				 struct bsymbol *bsymbol,ADDR *addr_saveptr,
-				 struct memrange **range_saveptr);
-int location_resolve_function_base(struct target *target,
-				   struct lsymbol *lsymbol,
-				   struct memregion *region,
-				   ADDR *addr_saveptr,
-				   struct memrange **range_saveptr);
-int location_resolve_function_prologue_end(struct target *target,
-					   struct bsymbol *bsymbol,
-					   ADDR *addr_saveptr,
-					   struct memrange **range_saveptr);
+extern struct location_ops target_location_ops;
 
+/**
+ ** Location resolution functions.
+ **/
+
+int target_symbol_resolve_bounds(struct target *target,
+				 struct target_location_ctxt *tlctxt,
+				 struct symbol *symbol,
+				 ADDR *start,ADDR *end,int *is_noncontiguous,
+				 ADDR *alt_start,ADDR *alt_end);
+loctype_t target_lsymbol_resolve_location(struct target *target,
+					  struct target_location_ctxt *tlctxt,
+					  struct lsymbol *lsymbol,
+					  ADDR base_addr,
+					  load_flags_t flags,
+					  struct location *o_loc,
+					  struct symbol **o_datatype,
+					  struct memrange **o_range);
+int target_lsymbol_resolve_bounds(struct target *target,
+				  struct target_location_ctxt *tlctxt,
+				  struct lsymbol *lsymbol,ADDR base_addr,
+				  ADDR *start,ADDR *end,int *is_noncontiguous,
+				  ADDR *alt_start,ADDR *alt_end);
+int target_bsymbol_resolve_bounds(struct target *target,
+				  struct target_location_ctxt *tlctxt,
+				  struct bsymbol *bsymbol,ADDR base_addr,
+				  ADDR *start,ADDR *end,int *is_noncontiguous,
+				  ADDR *alt_start,ADDR *alt_end);
 /**
  ** Location loading functions.
  **/
-char *location_load(struct target *target,tid_t tid,struct memregion *region,
-		    struct location *location,load_flags_t flags,
-		    void *buf,int bufsiz,
-		    struct array_list *symbol_chain,
-		    ADDR *addr_saveptr,
-		    struct memrange **range_saveptr);
-char *location_addr_load(struct target *target,struct memrange *range,
-			 ADDR addr,load_flags_t flags,
-			 void *buf,int bufsiz);
-char *location_obj_addr_load(struct target *target,struct memrange *range,
-			     ADDR addr,load_flags_t flags,
-			     void *buf,int bufsiz);
 struct mmap_entry *location_mmap(struct target *target,
 				 struct memregion *region,
 				 struct location *location,
@@ -574,6 +580,7 @@ int value_set_mmap(struct value *value,ADDR addr,struct mmap_entry *mmap,
 		   char *offset_ptr);
 int value_set_reg(struct value *value,REG reg);
 int value_set_child(struct value *value,struct value *parent_value,ADDR addr);
+void value_set_const(struct value *value);
 
 void symbol_rvalue_print(FILE *stream,struct symbol *symbol,
 			 void *buf,int bufsiz,

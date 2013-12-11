@@ -29,6 +29,7 @@ include $(OBJDIR)/Makeconf
 
 LCFLAGS := -I$(SRCDIR) -I$(OBJDIR) -I$(TOP_SRCDIR)/lib -I$(TOP_SRCDIR)/include
 LCFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+#CFLAGS += -pg 
 
 CFLAGS += $(LCFLAGS)
 PYCFLAGS += -I@PYTHON_INCLUDE@ $(LCFLAGS)
@@ -36,11 +37,14 @@ PYCFLAGS += -I@PYTHON_INCLUDE@ $(LCFLAGS)
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
 
 HEADERS := $(SRCDIR)/dwdebug.h $(SRCDIR)/dwdebug_priv.h \
+	$(SRCDIR)/binfile.h \
 	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
-	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h
+	$(TOP_SRCDIR)/include/output.h $(TOP_SRCDIR)/include/clfit.h \
+	$(TOP_SRCDIR)/include/glib_wrapper.h
 
-OBJECTS := binfile.lo binfile_elf.lo debug.lo dwarf_debuginfo.lo dwarf_elfutils.lo
+OBJECTS := symdict.lo scope.lo location.lo binfile.lo binfile_elf.lo debug.lo \
+	dwarf_debuginfo.lo dwarf_elfutils.lo dwarf_expr.lo dwarf_cfa.lo
 
 LIBRARIES := libdwdebug.la 
 STATICLIBS :=  $(OBJDIR)/lib/libvmilib.la 

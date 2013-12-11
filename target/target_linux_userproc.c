@@ -42,6 +42,7 @@
 #include "waitpipe.h"
 #include "evloop.h"
 
+#include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
 
@@ -2761,6 +2762,8 @@ static int linux_userproc_loaddebugfiles(struct target *target,
     struct debugfile *debugfile = NULL;
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
+    int bfn = 0;
+    int bfpn = 0;
 
     vdebug(5,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
@@ -2787,13 +2790,17 @@ static int linux_userproc_loaddebugfiles(struct target *target,
      * Try to figure out which binfile has the info we need.  On
      * different distros, they're stripped different ways.
      */
-    if (debugfile->binfile_pointing 
-	&& symtab_get_size_simple(debugfile->binfile_pointing->symtab) \
-	> symtab_get_size_simple(debugfile->binfile->symtab)) {
-	RHOLD(debugfile->binfile_pointing,region);
-	region->binfile = debugfile->binfile_pointing;
+    if (debugfile->binfile_pointing) {
+	binfile_get_root_scope_sizes(debugfile->binfile,&bfn,NULL,NULL,NULL);
+	binfile_get_root_scope_sizes(debugfile->binfile_pointing,&bfpn,
+				     NULL,NULL,NULL);
+	if (bfpn > bfn) {
+	    RHOLD(debugfile->binfile_pointing,region);
+	    region->binfile = debugfile->binfile_pointing;
+	}
     }
-    else {
+
+    if (!region->binfile) {
 	RHOLD(debugfile->binfile,region);
 	region->binfile = debugfile->binfile;
     }

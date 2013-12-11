@@ -78,13 +78,13 @@ struct probe *probe_register_function_ee(struct probe *probe,
 					 int follow_jumps) {
     struct target *target = probe->target;
     struct memrange *range = NULL;
-    ADDR start;
-    ADDR prologueend;
+    ADDR start = 0;
+    ADDR end = 0;
+    ADDR alt_start = 0;
     ADDR probeaddr;
     struct probe *source;
     int j;
     struct array_list *cflist = NULL;
-    struct range *funcrange;
     unsigned char *funccode = NULL;
     unsigned int funclen;
     struct cf_inst_data *idata;
@@ -98,63 +98,41 @@ struct probe *probe_register_function_ee(struct probe *probe,
     gpointer kp,vp;
     ADDR jaddr,jlow,jhigh;
     struct bsymbol *jbsymbol;
+    struct symbol *symbol;
+    struct target_location_ctxt *tlctxt = NULL;
 
-    if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
+    symbol = lsymbol_last_symbol(bsymbol->lsymbol);
+
+    if (!SYMBOL_IS_FUNC(symbol)) {
 	verror("must supply a function symbol!\n");
 	goto errout;
     }
-    else if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)
-	     && symbol_bytesize(bsymbol->lsymbol->symbol) <= 0) {
-	verror("partial function symbols must have non-zero length!\n");
-	goto errout;
-    }
 
-    if (location_resolve_symbol_base(target,tid,bsymbol,&start,&range)) {
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+				      &start,&end,NULL,&alt_start,NULL)) {
 	verror("could not resolve entry PC for function %s!\n",
 	       bsymbol->lsymbol->symbol->name);
 	goto errout;
     }
-    else 
+    else if (!force_at_entry && alt_start)
+	probeaddr = alt_start;
+    else
 	probeaddr = start;
 
-    if (!force_at_entry && SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	if (location_resolve_function_prologue_end(target,bsymbol,
-						   &prologueend,&range)) {
-	    vwarn("could not resolve prologue_end for function %s!\n",
-		  bsymbol->lsymbol->symbol->name);
-	}
-	else 
-	    probeaddr = prologueend;
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
+
+    if (!target_find_memory_real(target,start,NULL,NULL,&range)) {
+	verror("could not find range for addr 0x%"PRIxADDR"\n",start);
+	goto errout;
     }
 
     /*
      * If we've got a post handler, we need to disasm this function
      * before we insert a probe into it!!
      */
-    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
-	if (!RANGE_IS_PC(funcrange)) {
-	    verror("range type for function %s was %s, not PC!\n",
-		   bsymbol->lsymbol->symbol->name,RANGE_TYPE(funcrange->rtype));
-	    goto errout;
-	}
-
-	funclen = memregion_relocate(bsymbol->region,funcrange->r.a.highpc,NULL)
-	    - memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL);
-	/* This should not ever happen. */
-	if (start != memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL)) {
-	    vwarn("full function %s does not have matching base (0x%"PRIxADDR")"
-		  " and lowpc (0x%"PRIxADDR") values!\n",
-		  bsymbol_get_name(bsymbol),start,
-		  memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL));
-	    start = memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL);
-	    funclen = memregion_relocate(bsymbol->region,funcrange->r.a.highpc,NULL)
-		- start;
-	}
-    }
-    else
-	funclen = symbol_bytesize(bsymbol->lsymbol->symbol);
-
+    funclen = end - start;
     funccode = target_load_code(target,start,funclen,0,0,&caller_free);
     if (!funccode) {
 	verror("could not load code for disasm of %s!\n",
@@ -166,7 +144,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
      * pre_handler.
      */
     if (probe->pre_handler) {
-	snprintf(buf,sizeof(buf),"%s_entry",bsymbol->lsymbol->symbol->name);
+	snprintf(buf,sizeof(buf),"%s_entry",bsymbol_get_name(bsymbol));
 	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
 			      NULL,NULL,1,1);
 	if (!__probe_register_addr(source,probeaddr,range,
@@ -182,7 +160,7 @@ struct probe *probe_register_function_ee(struct probe *probe,
 
 	vdebug(3,LA_PROBE,LF_PROBE,
 	       "registered entry addr probe at %s%+d\n",
-	       bsymbol->lsymbol->symbol->name,(int)(probeaddr - start));
+	       bsymbol_get_name(bsymbol),(int)(probeaddr - start));
     }
 
     /* If @probe has no post_handler, don't register for the return
@@ -307,24 +285,23 @@ struct probe *probe_register_function_ee(struct probe *probe,
 	    }
 	}
 	else {
-	    if (SYMBOL_IS_FULL_FUNCTION(jbsymbol->lsymbol->symbol)) {
-		funcrange = &jbsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
-		if (!RANGE_IS_PC(funcrange)) {
-		    verror("range type for function %s was %s, not PC!\n",
-			   bsymbol_get_name(jbsymbol),
-			   RANGE_TYPE(funcrange->rtype));
-		    goto errout;
-		}
-
-		jlow = memregion_relocate(jbsymbol->region,
-					  funcrange->r.a.lowpc,NULL);
-		jhigh = memregion_relocate(jbsymbol->region,
-					   funcrange->r.a.highpc,NULL);
-
-		funclen = jhigh - jlow;
+	    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,jbsymbol);
+	    if (target_lsymbol_resolve_bounds(target,tlctxt,jbsymbol->lsymbol,0,
+					      &jlow,&jhigh,NULL,NULL,NULL)) {
+		verror("could not resolve base addr function %s!\n",
+		       bsymbol_get_name(jbsymbol));
+		goto errout;
 	    }
-	    else
-		funclen = symbol_bytesize(jbsymbol->lsymbol->symbol);
+
+	    target_location_ctxt_free(tlctxt);
+	    tlctxt = NULL;
+
+	    if (!target_find_memory_real(target,jlow,NULL,NULL,&range)) {
+		verror("could not find range for addr 0x%"PRIxADDR"\n",jlow);
+		goto errout;
+	    }
+
+	    funclen = jhigh - jlow;
 	}
 
 	caller_free = 0;
@@ -416,6 +393,8 @@ struct probe *probe_register_function_ee(struct probe *probe,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (absolute_branch_targets)
 	g_hash_table_destroy(absolute_branch_targets);
     if (funccode && caller_free)
@@ -441,7 +420,6 @@ struct probe *probe_register_function_invocations(struct probe *probe,
     ADDR caller_start;
     ADDR caller_end;
     unsigned int caller_len;
-    struct range *funcrange;
     unsigned char *funccode = NULL;
     int caller_free = 0;
     ADDR callee_start = 0;
@@ -454,10 +432,12 @@ struct probe *probe_register_function_invocations(struct probe *probe,
     struct probe *iprobe;
     GSList *probes = NULL;
     GSList *gsltmp;
-    int i,j;
+    int j;
     struct array_list *cf_idata_list = NULL;
     struct cf_inst_data *idata;
     char namebuf[128];
+    struct symbol *isymbol;
+    struct target_location_ctxt *tlctxt = NULL;
 
     struct __iii {
 	struct bsymbol *bsymbol;
@@ -473,97 +453,61 @@ struct probe *probe_register_function_invocations(struct probe *probe,
     caller_symbol = bsymbol_get_symbol(caller);
     callee_symbol = bsymbol_get_symbol(callee);
 
-    if (!SYMBOL_IS_FUNCTION(caller_symbol) 
-	|| !SYMBOL_IS_FUNCTION(callee_symbol)) {
+    if (!SYMBOL_IS_FUNC(caller_symbol) 
+	|| !SYMBOL_IS_FUNC(callee_symbol)) {
 	verror("caller and callee must be function symbols!\n");
 	goto errout;
     }
-    else if (!SYMBOL_IS_FULL_FUNCTION(caller_symbol)
-	     && symbol_bytesize(caller_symbol) <= 0) {
-	verror("partial function symbols must have non-zero length!\n");
+
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,caller);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,caller->lsymbol,0,
+					  &caller_start,&caller_end,NULL,
+					  NULL,NULL)) {
+	verror("could not resolve base addr for caller function %s!\n",
+	       bsymbol_get_name(caller));
+	goto errout;
+    }
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
+
+    if (!target_find_memory_real(target,caller_start,NULL,NULL,&range)) {
+	verror("could not find range for addr 0x%"PRIxADDR"\n",caller_start);
 	goto errout;
     }
 
-    if (location_resolve_symbol_base(target,tid,caller,&caller_start,&range)) {
-	verror("could not resolve base addr for caller function %s!\n",
-	       bsymbol_get_name(caller));
-	return NULL;
-    }
-
-    /*
-     * We need to know the range of the caller.
-     */
-    if (SYMBOL_IS_FULL_FUNCTION(caller_symbol)) {
-	funcrange = &caller_symbol->s.ii->d.f.symtab->range;
-	if (!RANGE_IS_PC(funcrange)) {
-	    verror("range type for caller function %s was %s, not PC!\n",
-		   caller_symbol->name,RANGE_TYPE(funcrange->rtype));
-	    goto errout;
-	}
-
-	caller_len = memregion_relocate(caller->region,funcrange->r.a.highpc,NULL)
-	    - memregion_relocate(caller->region,funcrange->r.a.lowpc,NULL);
-	/* This should not ever happen. */
-	if (caller_start 
-	    != memregion_relocate(caller->region,funcrange->r.a.lowpc,NULL)) {
-	    vwarn("full caller function %s does not have matching"
-		  " base (0x%"PRIxADDR") and lowpc (0x%"PRIxADDR") values!\n",
-		  bsymbol_get_name(caller),caller_start,
-		  memregion_relocate(caller->region,funcrange->r.a.lowpc,NULL));
-	    caller_start = memregion_relocate(caller->region,
-					      funcrange->r.a.lowpc,NULL);
-	    caller_len = memregion_relocate(caller->region,funcrange->r.a.highpc,
-					    NULL) - caller_start;
-	}
-    }
-    else
-	caller_len = symbol_bytesize(caller_symbol);
-
-    caller_end = caller_start + caller_len;
+    caller_len = caller_end - caller_start;
 
     /*
      * Grab the base of the callee; there might not be one if it's only inlined.
      */
-    if (location_resolve_symbol_base(target,tid,callee,&callee_start,&range))
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,callee);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,callee->lsymbol,0,
+				      &callee_start,NULL,NULL,NULL,NULL)) {
+	vwarn("could not resolve base addr for callee function %s!\n",
+	      bsymbol_get_name(callee));
 	callee_start = 0;
+    }
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
     /*
      * Find the inline instances within our caller, if any.
      */
-    if (SYMBOL_IS_FULL_FUNCTION(callee_symbol)
-	&& callee_symbol->s.ii->inline_instances) {
-	struct array_list *iilist = callee_symbol->s.ii->inline_instances;
-
-	for (i = 0; i < array_list_len(iilist); ++i) {
-	    struct symtab *isymtab;
-	    struct symbol *isymbol = (struct symbol *)array_list_item(iilist,i);
-
-	    if (!SYMBOL_IS_FULL_FUNCTION(isymbol)
-		|| !(isymtab = isymbol->s.ii->d.f.symtab))
-		continue;
-
+    SYMBOL_RX_INLINE(callee_symbol,csii);
+    if (csii && csii->inline_instances) {
+	v_g_slist_foreach(csii->inline_instances,gsltmp,isymbol) {
 	    /*
 	     * Check and see if the instance is in our function; if so,
 	     * add it to the list!
 	     */
-	    if (RANGE_IS_PC(&isymtab->range)) {
-		callee_inlined_start = isymtab->range.r.a.lowpc;
-		callee_inlined_end = isymtab->range.r.a.highpc;
+	    tlctxt = target_location_ctxt_create(target,tid,caller->region);
+	    if (target_symbol_resolve_bounds(target,tlctxt,isymbol,
+					     &callee_inlined_start,
+					     &callee_inlined_end,NULL,NULL,NULL)) {
+		verror("could not resolve base addr for callee inline instance!\n");
+		goto errout;
 	    }
-	    else if (RANGE_IS_LIST(&isymtab->range)) {
-		/* Find the lowest/highest addrs! */
-		callee_inlined_start = ADDRMAX;
-		callee_inlined_end = 0;
-		for (i = 0; i < isymtab->range.r.rlist.len; ++i) {
-		    if (isymtab->range.r.rlist.list[i]->start 
-			< callee_inlined_start)
-			callee_inlined_start = 
-			    isymtab->range.r.rlist.list[i]->start;
-		    if (isymtab->range.r.rlist.list[i]->end > callee_inlined_end)
-			callee_inlined_end = isymtab->range.r.rlist.list[i]->end;
-		}
-	    }
-	    else 
-		continue;
+	    target_location_ctxt_free(tlctxt);
+	    tlctxt = NULL;
 
 	    if (!(caller_start <= callee_inlined_start 
 		  && callee_inlined_start <= caller_end
@@ -763,6 +707,8 @@ struct probe *probe_register_function_invocations(struct probe *probe,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (probes) {
 	v_g_slist_foreach(probes,gsltmp,iprobe) {
 	    probe_free(iprobe,0);
@@ -798,12 +744,12 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     struct target *target = probe->target;
     struct memrange *range;
     struct memrange *newrange;
-    ADDR start;
+    ADDR start = 0;
+    ADDR end = 0;
     ADDR probeaddr;
     struct probe *source;
     int j;
     struct array_list *cflist = NULL;
-    struct range *funcrange;
     unsigned char *funccode = NULL;
     unsigned int funclen;
     struct cf_inst_data *idata;
@@ -815,22 +761,21 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     struct probe *probe_alt;
     char *sname;
     int sname_created = 0;
+    struct symbol *symbol;
+    struct target_location_ctxt *tlctxt = NULL;
 
-    if (!SYMBOL_IS_FUNCTION(bsymbol->lsymbol->symbol)) {
+    symbol = bsymbol_get_symbol(bsymbol);
+
+    if (!SYMBOL_IS_FUNC(symbol)) {
 	verror("must supply a function symbol!\n");
 	goto errout;
     }
-    else if (!SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)
-	     && symbol_bytesize(bsymbol->lsymbol->symbol) <= 0) {
-	verror("partial function symbols must have non-zero length!\n");
-	goto errout;
-    }
 
-    sname = symbol_get_name(bsymbol->lsymbol->symbol);
+    sname = symbol_get_name(symbol);
     if (!sname) {
 	sname = malloc(sizeof("ref0x")+12);
 	snprintf(sname,sizeof("ref0x")+12,"ref0x%"PRIxSMOFFSET,
-		 bsymbol->lsymbol->symbol->ref);
+		 symbol->ref);
 	sname_created = 1;
     }
 
@@ -838,12 +783,22 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
      * best information to __probe_register_addr as possible to make
      * debug output clearer.
      */
-    if (location_resolve_function_base(target,bsymbol->lsymbol,
-				       bsymbol->region,&start,&range)) {
-	verror("could not resolve entry PC for function %s!\n",sname);
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,bsymbol);
+    if (target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+				      &start,&end,NULL,NULL,NULL)) {
+	verror("could not resolve base addr for function %s!\n",
+	       bsymbol_get_name(bsymbol));
 	if (sname_created)
 	    free(sname);
 	return NULL;
+    }
+    funclen = end - start;
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
+
+    if (!target_find_memory_real(target,start,NULL,NULL,&range)) {
+	verror("could not find range for addr 0x%"PRIxADDR"\n",start);
+	goto errout;
     }
 
     /* Process our varargs list.  There must be at least one
@@ -863,21 +818,6 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     va_end(ap);
 
     /* Disassemble the function to find the return instructions. */
-
-    /* Disassemble the function to find the return instructions. */
-    if (SYMBOL_IS_FULL_FUNCTION(bsymbol->lsymbol->symbol)) {
-	funcrange = &bsymbol->lsymbol->symbol->s.ii->d.f.symtab->range;
-	if (!RANGE_IS_PC(funcrange)) {
-	    verror("range type for function %s was %s, not PC!\n",
-		   sname,RANGE_TYPE(funcrange->rtype));
-	    goto errout;
-	}
-
-	funclen = memregion_relocate(bsymbol->region,funcrange->r.a.highpc,NULL) 
-	    - memregion_relocate(bsymbol->region,funcrange->r.a.lowpc,NULL);
-    }
-    else
-	funclen = symbol_bytesize(bsymbol->lsymbol->symbol);
 
     /* We allocate an extra NULL byte on the back side because distorm
      * seems to have an off by one error (guessing, according to
@@ -984,6 +924,8 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     if (itypes)
 	g_hash_table_destroy(itypes);
     if (funccode)
@@ -1008,26 +950,32 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 					    probepoint_whence_t whence,
 					    probepoint_watchsize_t watchsize) {
     struct target *target = probe->target;
-    int i;
-    struct symbol *symbol = bsymbol->lsymbol->symbol;
+    struct symbol *symbol;
     struct probe *pcprobe = NULL;
     struct probe *cprobe;
     size_t bufsiz;
     char *buf;
-    struct array_list *cprobes = NULL;
+    GSList *cprobes = NULL;
+    GSList *gsltmp;
+    struct symbol *isymbol;
     tid_t tid = probe->thread->tid;
     ADDR paddr;
+    struct target_location_ctxt *tlctxt = NULL;
 
-    if (!SYMBOL_IS_FULL_INSTANCE(symbol)) {
-	verror("cannot probe a partial symbol!\n");
+    symbol = bsymbol_get_symbol(bsymbol);
+
+    if (!SYMBOL_IS_INSTANCE(symbol)) {
+	verror("cannot probe a non-instance symbol!\n");
 	return NULL;
     }
 
     /* We only try to register on the primary if it has an address
      * (i.e., is not ONLY inlined).
      */
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
     if (do_primary
-	&& !location_resolve_symbol_base(target,tid,bsymbol,&paddr,NULL)) {
+	&& !target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
+					  &paddr,NULL,NULL,NULL,NULL)) {
 	bufsiz = strlen(bsymbol_get_name(bsymbol))+sizeof("_primary")+1;
 	buf = malloc(bufsiz);
 	snprintf(buf,bufsiz,"%s_primary",bsymbol_get_name(bsymbol));
@@ -1059,14 +1007,12 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe on source %s\n",
 	       probe->name,pcprobe->name);
     }
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
 
-    if (symbol->s.ii->inline_instances) {
-	struct array_list *iilist = symbol->s.ii->inline_instances;
-	cprobes = array_list_create(array_list_len(iilist));
-
-	for (i = 0; i < array_list_len(iilist); ++i) {
-	    struct symbol *isymbol = (struct symbol *) \
-		array_list_item(iilist,i);
+    SYMBOL_RX_INLINE(symbol,sii);
+    if (sii && sii->inline_instances) {
+	v_g_slist_foreach(sii->inline_instances,gsltmp,isymbol) {
 	    /* Use __int() version to not RHOLD(); bsymbol_create RHOLDS it. */
 	    struct lsymbol *ilsymbol = lsymbol_create_from_symbol__int(isymbol);
 	    if (!ilsymbol) {
@@ -1107,15 +1053,17 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 	    vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe on source %s\n",
 		   probe->name,cprobe->name);
 
-	    array_list_append(cprobes,cprobe);
+	    cprobes = g_slist_append(cprobes,cprobe);
 	}
     }
 
     if (cprobes)
-	array_list_free(cprobes);
+	g_slist_free(cprobes);
     return probe;
 
  errout:
+    if (tlctxt)
+	target_location_ctxt_free(tlctxt);
     /* If we can autofree the top-level parent probe, great, that will
      * free all the sources beneath it we might have created.  But
      * otherwise, we have to free those source probes one by one.
@@ -1125,13 +1073,12 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     else {
 	probe_free(pcprobe,1);
 	if (cprobes) {
-	    for (i = 0; i < array_list_len(cprobes); ++i) {
-		cprobe = (struct probe *)array_list_item(cprobes,i);
+	    v_g_slist_foreach(cprobes,gsltmp,cprobe) {
 		probe_free(cprobe,1);
 	    }
 	}
     }
-    array_list_free(cprobes);
+    g_slist_free(cprobes);
 
     return NULL;
 }
