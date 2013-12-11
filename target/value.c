@@ -771,7 +771,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	    else
 		nrc += snprintf(buf + nrc,buflen - nrc," ");
 	    memset(&tloc,0,sizeof(tloc));
-	    ltrc = symbol_resolve_location(tmpsym,NULL,NULL,NULL,&tloc);
+	    ltrc = symbol_resolve_location(tmpsym,NULL,&tloc);
 	    if (ltrc != LOCTYPE_MEMBER_OFFSET) {
 		nrc += snprintf(buf + nrc,buflen - nrc,"?,");
 	    }
@@ -1027,7 +1027,7 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	    else
 		fprintf(ud->stream," ");
 	    memset(&tloc,0,sizeof(tloc));
-	    ltrc = symbol_resolve_location(tmpsym,NULL,NULL,NULL,&tloc);
+	    ltrc = symbol_resolve_location(tmpsym,NULL,&tloc);
 	    if (ltrc != LOCTYPE_MEMBER_OFFSET) {
 		fputs("?,",ud->stream);
 	    }
