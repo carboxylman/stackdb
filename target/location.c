@@ -48,7 +48,8 @@ int __target_location_ops_setcurrentframe(struct location_ctxt *lctxt,
 	return -1;
     }
 
-    tlctxt->region = tlctxtf->bsymbol->region;
+    if (tlctxtf->bsymbol)
+	tlctxt->region = tlctxtf->bsymbol->region;
     lctxt->current_frame = frame;
     return 0;
 }
@@ -58,6 +59,9 @@ struct symbol *__target_location_ops_getsymbol(struct location_ctxt *lctxt) {
 	(struct target_location_ctxt *)lctxt->priv;
     struct target_location_ctxt_frame *tlctxtf = 
 	target_location_ctxt_current_frame(tlctxt);
+
+    if (!tlctxtf->bsymbol)
+	return NULL;
 
     return bsymbol_get_symbol(tlctxtf->bsymbol);
 }
