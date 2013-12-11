@@ -158,11 +158,16 @@ struct value *value_create_noalloc(struct target_thread *thread,
     struct value *value;
     int len = symbol_type_full_bytesize(type);
 
+    /*
+     * NB: don't check this because we want to create NULL values sometimes!
+     */
+#if 0
     if (len < 1) {
 	verror("type %s (ref 0x%"PRIxSMOFFSET") had 0-byte size!\n",
 	       type->name,type->ref);
 	return NULL;
     }
+#endif
 
     if (!(value = malloc(sizeof(struct value)))) 
 	return NULL;
@@ -584,6 +589,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
     if (!datatype) 
 	return -1;
 
+    datatype = symbol_type_skip_qualifiers(datatype);
     tbytesize = symbol_get_bytesize(datatype);
 
     switch (datatype->datatype_code) {
@@ -762,6 +768,7 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	break;
     case DATATYPE_STRUCT:
     case DATATYPE_UNION:
+    case DATATYPE_CLASS:
 	nrc = snprintf(buf,buflen,"{");
 	gsltmp = NULL;
 	v_g_slist_foreach(SYMBOLX_MEMBERS(datatype),gsltmp,tmpsym) {
@@ -823,7 +830,11 @@ int value_snprintf(struct value *value,char *buf,int buflen) {
 	nrc = snprintf(buf,buflen,"<UNSUP_FUNCTION_%s>",
 		       symbol_get_name(datatype));
 	break;
+    case DATATYPE_VOID:
+	nrc = snprintf(buf,buflen,"NULL");
+	break;
     default:
+	nrc = 0;
 	break;
     }
 
@@ -852,6 +863,8 @@ void __value_dump(struct value *value,struct dump_info *ud) {
 	goto out;
     }
 
+    if (datatype)
+	datatype = symbol_type_skip_qualifiers(datatype);
     tbytesize = symbol_get_bytesize(datatype);
 
     switch (datatype->datatype_code) {
@@ -1075,6 +1088,9 @@ void __value_dump(struct value *value,struct dump_info *ud) {
     case DATATYPE_FUNC:
 	fprintf(ud->stream,"<UNSUPPORTED_FUNCTION_%s>",
 		symbol_get_name(datatype));
+	break;
+    case DATATYPE_VOID:
+	fprintf(ud->stream,"NULL");
 	break;
     default:
 	break;
