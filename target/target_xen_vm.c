@@ -571,8 +571,6 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	goto errout;
     }
 
-    /* Create our default context now, but assign thread/memregion later. */
-    xstate->default_tlctxt = target_location_ctxt_create(target,TID_GLOBAL,NULL);
     xstate->evloop_fd = -1;
 
     /* First figure out whether we need to resolve the ID, or the name. */
@@ -925,7 +923,8 @@ struct target *xen_vm_attach(struct target_spec *spec,
 	free(xstate->name);
     if (xsh)
 	xs_daemon_close(xsh);
-    target_location_ctxt_free(xstate->default_tlctxt);
+    if (xstate->default_tlctxt)
+	target_location_ctxt_free(xstate->default_tlctxt);
     if (xstate)
 	free(xstate);
     if (target)
@@ -3160,6 +3159,10 @@ static int xen_vm_init(struct target *target) {
     target->global_thread = target_create_thread(target,TID_GLOBAL,tstate);
     /* Default thread is always running. */
     target_thread_set_status(target->global_thread,THREAD_STATUS_RUNNING);
+
+    /* Create our default context now; update its region later. */
+    xstate->default_tlctxt =
+	target_location_ctxt_create(target,TID_GLOBAL,NULL);
 
     return 0;
 }
