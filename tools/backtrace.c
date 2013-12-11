@@ -146,6 +146,8 @@ int main(int argc,char **argv) {
     char *name;
     struct value *v;
     char vbuf[1024];
+    struct lsymbol *lsymbol;
+    struct bsymbol *bsymbol;
 
     memset(&opts,0,sizeof(opts));
 
@@ -207,9 +209,6 @@ int main(int argc,char **argv) {
 
     tids = target_list_tids(t);
     array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
-	if (opts.tid > 0 && tid != opts.tid)
-	    continue;
-
 	tlctxt = target_unwind(t,tid);
 	if (!tlctxt) {
 	    fprintf(stdout,"\nthread %"PRIiTID": NOTHING\n",tid);
