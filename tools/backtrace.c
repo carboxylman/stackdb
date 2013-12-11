@@ -207,44 +207,73 @@ int main(int argc,char **argv) {
 
     tids = target_list_tids(t);
     array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
+	if (opts.tid > 0 && tid != opts.tid)
+	    continue;
+
 	tlctxt = target_unwind(t,tid);
+	if (!tlctxt) {
+	    fprintf(stdout,"\nthread %"PRIiTID": NOTHING\n",tid);
+	    continue;
+	}
+
 	fprintf(stdout,"\nthread %"PRIiTID":\n",tid);
+
 	j = 0;
 	while (1) {
 	    tlctxtf = target_location_ctxt_current_frame(tlctxt);
 	    ipval = 0;
-	    target_location_ctxt_frame_read_reg(tlctxtf,ipreg,&ipval);
-	    srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
-	    srcline = target_lookup_line_addr(t,srcfile,ipval);
+	    target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
+	    if (tlctxtf->bsymbol)
+		srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
+	    else
+		srcfile = NULL;
+	    if (tlctxtf->bsymbol)
+		srcline = target_lookup_line_addr(t,srcfile,ipval);
+	    else
+		srcline = 0;
+
 	    fprintf(stdout,"  #%d  0x%"PRIxFULLADDR" in %s (",
-		    j,ipval,bsymbol_get_name(tlctxtf->bsymbol));
-	    args = symbol_get_members(bsymbol_get_symbol(tlctxtf->bsymbol),
-				      SYMBOL_TYPE_FLAG_VAR_ARG);
-	    v_g_slist_foreach(args,gsltmp,argsym) {
-		name = symbol_get_name(argsym);
-		v = target_load_symbol_member(t,tlctxt,tlctxtf->bsymbol,name,
-					      NULL,LOAD_FLAG_AUTO_DEREF | LOAD_FLAG_AUTO_STRING);
-		printf("%s=",name);
-		if (v) {
-		    //vbuf[0] = '\0';
-		    if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0)
-			printf("<value_snprintf error>");
-		    else
-			printf("%s",vbuf);
-		    printf(" (0x");
-		    for (k = 0; k < v->bufsiz; ++k) {
-			printf("%02hhx",v->buf[k]);
+		    j,ipval,(tlctxtf->bsymbol) ? bsymbol_get_name(tlctxtf->bsymbol) : "");
+	    if (tlctxtf->bsymbol) {
+		args = symbol_get_ordered_members(bsymbol_get_symbol(tlctxtf->bsymbol),
+						  SYMBOL_TYPE_FLAG_VAR_ARG);
+		v_g_slist_foreach(args,gsltmp,argsym) {
+		    lsymbol = lsymbol_create_from_member(bsymbol_get_lsymbol(tlctxtf->bsymbol),
+							 argsym);
+		    bsymbol = bsymbol_create(lsymbol,tlctxtf->bsymbol->region);
+		    name = symbol_get_name(argsym);
+
+		    v = target_load_symbol(t,tlctxt,bsymbol,
+					   //LOAD_FLAG_AUTO_DEREF | 
+					   LOAD_FLAG_AUTO_STRING);
+		    printf("%s=",name ? name : "()");
+		    if (v) {
+			//vbuf[0] = '\0';
+			if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0)
+			    printf("<value_snprintf error>");
+			else
+			    printf("%s",vbuf);
+			printf(" (0x");
+			for (k = 0; k < v->bufsiz; ++k) {
+			    printf("%02hhx",v->buf[k]);
+			}
+			printf(")");
+			value_free(v);
 		    }
-		    printf(")");
-		    value_free(v);
+		    else
+			printf("<?>");
+		    printf(",");
+
+		    bsymbol_release(bsymbol);
+		    lsymbol_release(lsymbol);
 		}
-		else
-		    printf("<?>");
-		printf(",");
+		fprintf(stdout,") at %s:%d\n",srcfile,srcline);
 	    }
-	    fprintf(stdout,") at %s:%d\n",srcfile,srcline);
-	    fflush(stdout);
+	    else
+		fprintf(stdout,")\n");
+		fflush(stdout);
 	    fflush(stderr);
+
 	    tlctxtf = target_location_ctxt_prev(tlctxt);
 	    if (!tlctxtf)
 		break;

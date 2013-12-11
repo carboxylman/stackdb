@@ -1770,6 +1770,7 @@ struct target_location_ctxt {
  */
 struct target_location_ctxt_frame {
     struct target_location_ctxt *tlctxt;
+    int frame;
     target_location_ctxt_flag_t flags;
 
     /*
@@ -1784,16 +1785,22 @@ struct target_location_ctxt_frame {
      * edits to the base registers, and don't want to cache them.
      */
     GHashTable *registers;
+
+    /*
+     * Backend-specific extra state.
+     */
+    void *priv;
 };
 
 /*
  * This is a very simple unwinding API.
  */
 struct target_location_ctxt *target_unwind(struct target *target,tid_t tid);
+int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt);
 struct target_location_ctxt_frame *
 target_location_ctxt_current_frame(struct target_location_ctxt *tlctxt);
-int target_location_ctxt_frame_read_reg(struct target_location_ctxt_frame *tlctxtf,
-					REG reg,REGVAL *o_regval);
+int target_location_ctxt_read_reg(struct target_location_ctxt *tlctxt,
+				  REG reg,REGVAL *o_regval);
 struct target_location_ctxt_frame *
 target_location_ctxt_get_frame(struct target_location_ctxt *tlctxt,int frame);
 struct target_location_ctxt_frame *
@@ -1874,6 +1881,7 @@ struct target {
 
     void *state;
     struct target_ops *ops;
+    struct location_ops *location_ops;
     union {
 	struct target_os_ops *os;
 	struct target_process_ops *process;
@@ -2245,8 +2253,11 @@ struct target_ops {
     GHashTable *(*copy_registers)(struct target *target,tid_t tid);
 
     /* unwind support */
-    struct target_location_ctxt *(*unwind_stack)(struct target *target,
-						 tid_t tid);
+    struct target_location_ctxt *(*unwind)(struct target *target,tid_t tid);
+    int (*unwind_read_reg)(struct target_location_ctxt *tlctxt,
+			   REG reg,REGVAL *o_regval);
+    struct target_location_ctxt_frame *
+    (*unwind_prev)(struct target_location_ctxt *tlctxt);
 
     /* breakpoint/watchpoint stuff */
     struct probe *(*insert_symbol_breakpoint)(struct target *target,tid_t tid,

@@ -1473,9 +1473,16 @@ loctype_t target_lsymbol_resolve_location(struct target *target,
 	    goto errout;
 	}
     }
+    else if (rc <= LOCTYPE_UNKNOWN) {
+	verror("failed to resolve location type %s (%d)!\n",
+	       LOCTYPE(-rc),rc);
+	goto errout;
+    }
 
     symbol = lsymbol_last_symbol(lsymbol);
     datatype = symbol_get_datatype(symbol);
+    if (datatype)
+	datatype = symbol_type_skip_qualifiers(datatype);
 
  again:
     if (datatype && SYMBOL_IST_PTR(datatype)
@@ -1542,6 +1549,15 @@ loctype_t target_lsymbol_resolve_location(struct target *target,
 	    vdebug(12,LA_TARGET,LF_SYMBOL,
 		   "autoloaded pointer(s) for var %s = 0x%"PRIxADDR"\n",
 		   symbol_get_name(symbol),addr);
+
+	    /* We might have changed ranges... */
+	    if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
+		vwarnopt(8,LA_TARGET,LF_SYMBOL,
+			 "could not find memory for 0x%"PRIxADDR
+			 " for symbol %s: %s!\n",
+			 addr,symbol_get_name(symbol),strerror(errno));
+		goto errout;
+	    }
 	}
 	else {
 	    verror("unexpected location type %s for pointer!\n",
@@ -1554,7 +1570,7 @@ loctype_t target_lsymbol_resolve_location(struct target *target,
     /* Return! */
     if (rc == LOCTYPE_ADDR) {
 	if (o_loc)
-	    location_set_addr(o_loc,LOCATION_ADDR(&tloc));
+	    location_set_addr(o_loc,addr);
 	if (o_range) 
 	    *o_range = range;
 	if (o_datatype)
@@ -1645,7 +1661,7 @@ struct value *target_load_type(struct target *target,struct symbol *type,
 
     /* Get range/region info for the addr. */
     if (!target_find_memory_real(target,addr,NULL,NULL,&range)) {
-	verror("could not find range for addr 0x%"PRIxADDR"\n!",addr);
+	verror("could not find range for addr 0x%"PRIxADDR"!\n",addr);
 	errno = EFAULT;
 	return NULL;
     }
@@ -1980,6 +1996,13 @@ struct value *target_load_value_member(struct target *target,
     tid = tthread->tid;
 
     tdatatype = symbol_type_skip_qualifiers(old_value->type);
+	
+    vdebug(9,LA_TARGET,LF_SYMBOL,
+	   "looking up '%s' in type ",member);
+    LOGDUMPSYMBOL(9,LA_TARGET,LF_SYMBOL,old_value->type);
+    vdebugc(9,LA_TARGET,LF_SYMBOL,
+	    " (skipping to type ");
+    LOGDUMPSYMBOL_NL(9,LA_TARGET,LF_SYMBOL,tdatatype);
 
     memset(&tloc,0,sizeof(tloc));
 
@@ -1995,21 +2018,26 @@ struct value *target_load_value_member(struct target *target,
      * LOAD_FLAG_AUTO_DEREF is set.
      */
 
-    /* If the value's datatype is a pointer, and we are autoloading pointers,
+    /* If the value's datatype is a pointer, we have to autoload pointers;
      * then try to find a struct/union type that is pointed to!
      */
     if (SYMBOL_IST_PTR(tdatatype)) {
-	if (flags & LOAD_FLAG_AUTO_DEREF) {
-	    tdatatype = symbol_type_skip_ptrs(tdatatype);
-	    oldaddr = v_addr(old_value);
-	}
-	else {
-	    errno = EINVAL;
-	    goto errout;
-	}
+	tdatatype = symbol_type_skip_ptrs(tdatatype);
+	oldaddr = v_addr(old_value);
+
+	vdebug(9,LA_TARGET,LF_SYMBOL,
+	       "datatype is ptr; skipping to real type ");
+	LOGDUMPSYMBOL(9,LA_TARGET,LF_SYMBOL,tdatatype);
+	vdebugc(9,LA_TARGET,LF_SYMBOL,
+		" starting at addr 0x%"PRIxADDR"\n",oldaddr);
     }
-    else
+    else {
 	oldaddr = old_value->res.addr;
+
+	vdebug(9,LA_TARGET,LF_SYMBOL,
+	       "datatype is not ptr; starting at addr 0x%"PRIxADDR"\n",
+	       oldaddr);
+    }
 
     if (!SYMBOL_IST_STUNC(tdatatype)) {
 	vwarn("symbol %s: not a full struct/union/class type (is %s)!\n",
@@ -2028,6 +2056,9 @@ struct value *target_load_value_member(struct target *target,
     if (!ls)
 	goto errout;
     symbol = lsymbol_last_symbol(ls);
+
+    vdebug(9,LA_TARGET,LF_SYMBOL,"found member symbol ");
+    LOGDUMPSYMBOL_NL(9,LA_TARGET,LF_SYMBOL,symbol);
 
     /*
      * If this symbol has a constant value, load that!
@@ -2059,6 +2090,44 @@ struct value *target_load_value_member(struct target *target,
 					 flags,&tloc,&datatype,&range);
     if (rc == LOCTYPE_ADDR) {
 	addr = LOCATION_ADDR(&tloc);
+
+	tdatatype = symbol_type_skip_qualifiers(datatype);
+	newlen = symbol_type_full_bytesize(datatype);
+
+	/*
+	 * Check for AUTO_STRING first, before checking if the addr +
+	 * newlen is already contained in the original value -- because
+	 * an AUTO_STRING'd value will *not* be contained in the
+	 * original value anyway.  If we checked that first, we miss the
+	 * AUTO_STRING chance.
+	 */
+	if (flags & LOAD_FLAG_AUTO_STRING
+	    && SYMBOL_IST_PTR(symbol_get_datatype(symbol)) 
+	    && symbol_type_is_char(tdatatype)) {
+	    value = value_create_noalloc(tthread,range,ls,tdatatype);
+	    if (!value) {
+		verror("symbol %s: could not create value: %s\n",
+		       lsymbol_get_name(ls),strerror(errno));
+		goto errout;
+	    }
+
+	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
+							       addr,flags,
+							       NULL,0))) {
+		vwarnopt(12,LA_TARGET,LF_SYMBOL,
+			 "symbol %s: failed to autostring char pointer\n",
+			 lsymbol_get_name(ls));
+		value_free(value);
+		value = NULL;
+		goto errout;
+	    }
+	    value_set_strlen(value,strlen(value->buf) + 1);
+	    value_set_addr(value,addr);
+
+	    vdebug(9,LA_TARGET,LF_SYMBOL,
+		   "symbol %s: autoloaded char * value with len %d\n",
+		   lsymbol_get_name(ls),value->bufsiz);
+	}
 	/*
 	 * If lsymbol_resolve_location returns an address
 	 * entirely contained inside of value->buf, we can just clone
@@ -2071,9 +2140,8 @@ struct value *target_load_value_member(struct target *target,
 	 * create a value needlessly if the member value isn't fully
 	 * contained in the parent.
 	 */
-	newlen = symbol_type_full_bytesize(datatype);
-	if (addr >= oldaddr
-	    && ((addr + newlen) - oldaddr) < (unsigned)old_value->bufsiz) {
+	else if (addr >= oldaddr
+		 && ((addr + newlen) - oldaddr) < (unsigned)old_value->bufsiz) {
 	    if (flags & LOAD_FLAG_VALUE_FORCE_COPY) {
 		value = value_create(tthread,range,ls,datatype);
 		if (!value) {
@@ -2104,35 +2172,6 @@ struct value *target_load_value_member(struct target *target,
 	    }
 
 	    goto out;
-	}
-
-	tdatatype = symbol_type_skip_qualifiers(datatype);
-	if (flags & LOAD_FLAG_AUTO_STRING
-	    && SYMBOL_IST_PTR(symbol_get_datatype(symbol)) 
-	    && symbol_type_is_char(tdatatype)) {
-	    value = value_create_noalloc(tthread,range,ls,tdatatype);
-	    if (!value) {
-		verror("symbol %s: could not create value: %s\n",
-		       lsymbol_get_name(ls),strerror(errno));
-		goto errout;
-	    }
-
-	    if (!(value->buf = (char *)__target_load_addr_real(target,range,
-							       addr,flags,
-							       NULL,0))) {
-		vwarnopt(12,LA_TARGET,LF_SYMBOL,
-			 "symbol %s: failed to autostring char pointer\n",
-			 lsymbol_get_name(ls));
-		value_free(value);
-		value = NULL;
-		goto errout;
-	    }
-	    value_set_strlen(value,strlen(value->buf) + 1);
-	    value_set_addr(value,addr);
-
-	    vdebug(9,LA_TARGET,LF_SYMBOL,
-		   "symbol %s: autoloaded char * value with len %d\n",
-		   lsymbol_get_name(ls),value->bufsiz);
 	}
 	else {
 	    value = value_create(tthread,range,ls,tdatatype);
@@ -2341,7 +2380,7 @@ struct value *target_load_symbol(struct target *target,
 	addr = LOCATION_ADDR(&tloc);
 	tdatatype = symbol_type_skip_qualifiers(datatype);
 	if (flags & LOAD_FLAG_AUTO_STRING
-	    && SYMBOL_IST_PTR(symbol->datatype) 
+	    && SYMBOL_IST_PTR(symbol_get_datatype(symbol)) 
 	    && symbol_type_is_char(tdatatype)) {
 	    value = value_create_noalloc(tthread,range,lsymbol,tdatatype);
 	    if (!value) {
@@ -2404,14 +2443,13 @@ struct value *target_load_symbol(struct target *target,
 
 	reg = LOCATION_REG(&tloc);
 
-        regval = target_read_reg(target,tid,reg);
-        if (errno) {
+        if (target_location_ctxt_read_reg(tlctxt,reg,&regval)) {
 	    verror("symbol %s: could not read reg %d value in tid %"PRIiTID"\n",
 		   lsymbol_get_name(lsymbol),reg,tid);
             goto errout;
 	}
 
-	datatype = symbol_type_skip_qualifiers(symbol->datatype);
+	datatype = symbol_type_skip_qualifiers(symbol_get_datatype(symbol));
 	rbuf = malloc(symbol_get_bytesize(datatype));
 
         if (target->wordsize == 4 && __WORDSIZE == 64) {
@@ -2448,7 +2486,7 @@ struct value *target_load_symbol(struct target *target,
 
 	word = LOCATION_WORD(&tloc);
 
-	datatype = symbol_type_skip_qualifiers(symbol->datatype);
+	datatype = symbol_type_skip_qualifiers(symbol_get_datatype(symbol));
 	rbuf = malloc(symbol_get_bytesize(datatype));
 
         if (target->wordsize == 4 && __WORDSIZE == 64) {
@@ -2527,6 +2565,10 @@ ADDR target_addressof_symbol(struct target *target,
 	location_internal_free(&tloc);
 	return addr;
     }
+    /*
+     * XXX: technically, the register could still be in some address if
+     * it was in a previous frame... we should handle that someday.
+     */
     else if (rc == LOCTYPE_REG) {
 	vwarnopt(5,LA_TARGET,LF_SYMBOL,
 		 "symbol %s: computed location is register %"PRIiREG"\n",
@@ -4092,7 +4134,10 @@ target_location_ctxt_create(struct target *target,tid_t tid,
 	return NULL;
     }
     tlctxt->region = region;
-    tlctxt->lctxt = location_ctxt_create(&target_location_ops,tlctxt);
+    if (!target->location_ops)
+	tlctxt->lctxt = location_ctxt_create(&target_location_ops,tlctxt);
+    else
+	tlctxt->lctxt = location_ctxt_create(target->location_ops,tlctxt);
 
     return tlctxt;
 }
@@ -4134,6 +4179,9 @@ struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
     REGVAL ipval;
     struct bsymbol *bsymbol;
 
+    if (target->ops->unwind)
+	return target->ops->unwind(target,tid);
+
     tthread = target_lookup_thread(target,tid);
     if (!tthread) {
 	verror("tid %"PRIiTID" does not exist!\n",tid);
@@ -4170,6 +4218,7 @@ struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
      */
     tlctxtf = calloc(1,sizeof(*tlctxtf));
     tlctxtf->tlctxt = tlctxt;
+    tlctxtf->frame = 0;
     tlctxtf->bsymbol = bsymbol;
     tlctxtf->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
 
@@ -4183,7 +4232,63 @@ struct target_location_ctxt *target_unwind(struct target *target,tid_t tid) {
 }
 
 int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt) {
+    struct target *target;
+    tid_t tid;
+    struct target_location_ctxt_frame *tlctxtf;
+    REGVAL ipval;
+    struct bsymbol *bsymbol;
 
+    if (tlctxt->frames) {
+	errno = EALREADY;
+	return -1;
+    }
+    if (!tlctxt->thread) {
+	errno = EINVAL;
+	return -1;
+    }
+    target = tlctxt->thread->target;
+    tid = tlctxt->thread->tid;
+
+    errno = 0;
+    ipval = target_read_reg(target,tid,target->ipregno);
+    if (errno) {
+	verror("could not read IP in tid %"PRIiTID"!\n",tid);
+	return -1;
+    }
+
+    bsymbol = target_lookup_sym_addr(target,ipval);
+    if (!bsymbol) {
+	verror("could not find symbol for IP addr 0x%"PRIxADDR"!\n",ipval);
+	errno = EADDRNOTAVAIL;
+	return -1;
+    }
+
+    /* Ok, we have enough info to start unwinding. */
+
+    tlctxt->region = bsymbol->region;
+    tlctxt->frames = array_list_create(8);
+
+    /*
+     * Create the 0-th frame (current) (with a per-frame lops_priv).
+     *
+     * For each frame we create, its private target_location_ctxt->lctxt
+     * is just a *ref* to unw->tlctxt->lctxt; this will get fixed
+     * eventually; for now, see target_unwind_free() for our care in
+     * handling this.
+     */
+    tlctxtf = calloc(1,sizeof(*tlctxtf));
+    tlctxtf->tlctxt = tlctxt;
+    tlctxtf->frame = 0;
+    tlctxtf->bsymbol = bsymbol;
+    tlctxtf->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
+
+    g_hash_table_insert(tlctxtf->registers,
+			(gpointer)(uintptr_t)tlctxt->thread->target->ipregno,
+			(gpointer)(uintptr_t)ipval);
+
+    array_list_append(tlctxt->frames,tlctxtf);
+
+    return 0;
 }
 
 struct target_location_ctxt_frame *
@@ -4201,15 +4306,39 @@ target_location_ctxt_current_frame(struct target_location_ctxt *tlctxt) {
 	array_list_item(tlctxt->frames,tlctxt->lctxt->current_frame);
 }
 
-int target_location_ctxt_frame_read_reg(struct target_location_ctxt_frame *tlctxtf,
-					REG reg,REGVAL *o_regval) {
+int target_location_ctxt_read_reg(struct target_location_ctxt *tlctxt,
+				  REG reg,REGVAL *o_regval) {
+    struct target_location_ctxt_frame *tlctxtf;
+    REGVAL regval;
     gpointer v;
+
+    if (tlctxt->thread->target->ops->unwind_read_reg)
+	return tlctxt->thread->target->ops->unwind_read_reg(tlctxt,reg,o_regval);
+
+    /*
+     * Just use target_read_reg if this is frame 0.
+     */
+    if (tlctxt->lctxt->current_frame == 0) {
+	errno = 0;
+	regval = target_read_reg(tlctxt->thread->target,
+				 tlctxt->thread->tid,reg);
+	if (errno) 
+	    return -1;
+	if (o_regval)
+	    *o_regval = regval;
+	return 0;
+    }
+
+    tlctxtf = target_location_ctxt_current_frame(tlctxt);
 
     if (!tlctxtf->registers) {
 	errno = EBADSLT;
 	return -1;
     }
 
+    /*
+     * Check the cache first.
+     */
     if (g_hash_table_lookup_extended(tlctxtf->registers,
 				     (gpointer)(uintptr_t)reg,NULL,&v) == TRUE) {
 	if (o_regval)
@@ -4217,8 +4346,10 @@ int target_location_ctxt_frame_read_reg(struct target_location_ctxt_frame *tlctx
 	return 0;
     }
 
-    errno = EADDRNOTAVAIL;
-    return -1;
+    /*
+     * Try to read it via location_ctxt_read_reg.
+     */
+    return location_ctxt_read_reg(tlctxtf->tlctxt->lctxt,reg,o_regval);
 }
 
 /*
@@ -4235,14 +4366,22 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
     struct target_location_ctxt_frame *tlctxtf;
     struct target_location_ctxt_frame *new;
     int rc;
-    REGVAL rv;
     ADDR retaddr;
     struct bsymbol *bsymbol;
+    REG rbp;
+    REG rsp;
+    ADDR bp = 0,sp = 0,stack_retaddr = 0,old_bp = 0,old_sp = 0;
+    gpointer v;
+    int i;
+    ADDR tmp;
 
     if (!tlctxt->frames) {
 	errno = EINVAL;
 	return NULL;
     }
+
+    if (tlctxt->thread->target->ops->unwind_prev)
+	return tlctxt->thread->target->ops->unwind_prev(tlctxt);
 
     /* Just return it if it already exists. */
     new = (struct target_location_ctxt_frame *) \
@@ -4254,11 +4393,58 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	array_list_item(tlctxt->frames,tlctxt->lctxt->current_frame);
 
     retaddr = 0;
-    rc = location_ctxt_read_retaddr(tlctxt->lctxt,&retaddr);
-    if (rc) {
-	verror("could not read retaddr in current_frame %d!\n",
-	       tlctxt->lctxt->current_frame);
-	return NULL;
+    if (tlctxtf->bsymbol) {
+	rc = location_ctxt_read_retaddr(tlctxt->lctxt,&retaddr);
+	if (rc) {
+	    vwarnopt(5,LA_TARGET,LF_TUNW,
+		     "could not read retaddr in current_frame %d!\n",
+		     tlctxt->lctxt->current_frame);
+	    return NULL;
+	}
+    }
+    else {
+	vwarn("no symbol in current frame; will try to infer it!\n");
+
+	/*
+	 * Just read the frame pointer + 8 to get prev frame pointer;
+	 * and frame pointer + 16 to reg retaddr.  Check it against what
+	 * we have, and feel good hopefully.
+	 */
+	rbp = target_dw_reg_no(tlctxt->thread->target,CREG_BP);
+	errno = 0;
+	rc = location_ctxt_read_reg(tlctxt->lctxt,rbp,&bp);
+	if (rc) {
+	    vwarn("could not read %%bp to manually unwind; halting!\n");
+	    return NULL;
+	}
+	rsp = target_dw_reg_no(tlctxt->thread->target,CREG_SP);
+	errno = 0;
+	rc = location_ctxt_read_reg(tlctxt->lctxt,rsp,&sp);
+
+	vdebug(8,LA_TARGET,LF_TUNW,"    current stack:\n");
+	for (i = 32; i >= -8; --i) {
+	    target_read_addr(tlctxt->thread->target,
+			     sp + i * tlctxt->thread->target->wordsize,
+			     tlctxt->thread->target->wordsize,
+			     (unsigned char *)&tmp);
+	    vdebug(8,LA_TARGET,LF_TUNW,"      0x%"PRIxADDR" == %"PRIxADDR"\n",
+		   sp + i * tlctxt->thread->target->wordsize,tmp);
+	}
+	vdebug(8,LA_TARGET,LF_TUNW,"\n");
+
+	/* Get the old bp and retaddr. */
+	target_read_addr(tlctxt->thread->target,bp + 16,sizeof(ADDR),
+			 (unsigned char *)&old_bp);
+	target_read_addr(tlctxt->thread->target,bp + 24,sizeof(ADDR),
+			 (unsigned char *)&retaddr);
+	/* Adjust the stack pointer. */
+	old_sp = bp + 16;
+
+	vdebug(5,LA_TARGET,LF_TUNW,
+	       "current bp 0x%"PRIxADDR",sp=0x%"PRIxADDR
+	       " => retaddr 0x%"PRIxADDR
+	       ",old_bp 0x%"PRIxADDR",old_sp 0x%"PRIxADDR"\n",
+	       bp,sp,retaddr,old_bp,old_sp);
     }
 
     vdebug(8,LA_TARGET,LF_TUNW,
@@ -4266,19 +4452,11 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
 	   tlctxt->lctxt->current_frame,retaddr);
 
     /*
-     * Try to find the call site.
+     * Look up the new symbol.
      */
-    rv = retaddr; // - 5;
-
-    /*
-     * Look up the symbol.
-     */
-    bsymbol = target_lookup_sym_addr(tlctxt->thread->target,rv);
-    if (!bsymbol) {
-	verror("could not find symbol for IP addr 0x%"PRIxADDR"!\n",rv);
-	errno = EADDRNOTAVAIL;
-	return NULL;
-    }
+    bsymbol = target_lookup_sym_addr(tlctxt->thread->target,retaddr);
+    if (!bsymbol) 
+	vwarn("could not find symbol for IP addr 0x%"PRIxADDR"!\n",retaddr);
 
     /*
      * Create the i-th frame (current) (with a per-frame lops_priv).
@@ -4290,21 +4468,36 @@ target_location_ctxt_prev(struct target_location_ctxt *tlctxt) {
      */
     new = calloc(1,sizeof(*new));
     new->tlctxt = tlctxt;
+    new->frame = array_list_len(tlctxt->frames);
     new->bsymbol = bsymbol;
     new->registers = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     g_hash_table_insert(new->registers,
 			(gpointer)(uintptr_t)tlctxt->thread->target->ipregno,
-			(gpointer)(uintptr_t)rv);
+			(gpointer)(uintptr_t)retaddr);
+
+    if (!tlctxtf->bsymbol) {
+	g_hash_table_insert(new->registers,
+			    (gpointer)(uintptr_t)rbp,
+			    (gpointer)(uintptr_t)old_bp);
+	g_hash_table_insert(new->registers,
+			    (gpointer)(uintptr_t)rsp,
+			    (gpointer)(uintptr_t)old_sp);
+    }
 
     array_list_append(tlctxt->frames,new);
 
-    tlctxt->region = bsymbol->region;
+    if (bsymbol)
+	tlctxt->region = bsymbol->region;
+    else {
+	; /* Don't change it! */
+    }
+
     ++tlctxt->lctxt->current_frame;
 
     vdebug(8,LA_TARGET,LF_TUNW,
 	   "created new previous frame %d with IP 0x%"PRIxADDR"\n",
-	   tlctxt->lctxt->current_frame,rv);
+	   tlctxt->lctxt->current_frame,retaddr);
 
     return new;
 }
