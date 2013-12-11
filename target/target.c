@@ -51,22 +51,49 @@ static int next_target_id = 1;
 
 static int init_done = 0;
 
+static GHashTable *target_id_tab = NULL;
+
 void target_init(void) {
     if (init_done)
 	return;
 
     dwdebug_init();
 
+    target_id_tab = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+					  NULL,NULL);
+
     init_done = 1;
 }
 
 void target_fini(void) {
+    GHashTableIter iter;
+    struct target *t;
+
     if (!init_done)
 	return;
+
+    /* Double-iterate so that internal loop can remove hashtable nodes. */
+    while (g_hash_table_size(target_id_tab) > 0) {
+	g_hash_table_iter_init(&iter,target_id_tab);
+	while (g_hash_table_iter_next(&iter,NULL,(gpointer)&t)) {
+	    target_free(t);
+	    break;
+	}
+    }
+    g_hash_table_destroy(target_id_tab);
+    target_id_tab = NULL;
 
     dwdebug_fini();
 
     init_done = 0;
+}
+
+struct target *target_lookup_target_id(int id) {
+    if (!target_id_tab)
+	return NULL;
+
+    return (struct target *) \
+	g_hash_table_lookup(target_id_tab,(gpointer)(uintptr_t)id);
 }
 
 /**
@@ -1039,6 +1066,9 @@ void target_free(struct target *target) {
     if (target->name)
 	free(target->name);
 
+    if (target_id_tab)
+	g_hash_table_remove(target_id_tab,(gpointer)(uintptr_t)target->id);
+
     free(target);
 }
 
@@ -1077,8 +1107,17 @@ struct target *target_create(char *type,struct target_spec *spec) {
 
     if (spec->target_id < 0)
 	retval->id = next_target_id++;
-    else
+    else {
+	if (target_id_tab 
+	    && g_hash_table_lookup(target_id_tab,
+				   (gpointer)(uintptr_t)spec->target_id)) {
+	    verror("target with id %d already exists!\n",spec->target_id);
+	    free(retval);
+	    errno = EINVAL;
+	    return NULL;
+	}
 	retval->id = spec->target_id;
+    }
 
     retval->state_changes = array_list_create(0);
 
@@ -1132,6 +1171,10 @@ struct target *target_create(char *type,struct target_spec *spec) {
     retval->bp_handler = probepoint_bp_handler;
     retval->ss_handler = probepoint_ss_handler;
     retval->interrupted_ss_handler = probepoint_interrupted_ss_handler;
+
+    if (target_id_tab)
+	g_hash_table_insert(target_id_tab,
+			    (gpointer)(uintptr_t)retval->id,retval);
 
     return retval;
 }

@@ -53,6 +53,9 @@ typedef enum {
     SPF_ACTION_ENABLE  = 5,
     SPF_ACTION_DISABLE = 6,
     SPF_ACTION_REMOVE  = 7,
+    SPF_ACTION_BT      = 8,
+    SPF_ACTION_BTUP    = 9,
+    SPF_ACTION_BTALL   = 10,
 } spf_action_type_t;
 
 struct spf_action {
@@ -87,6 +90,10 @@ struct spf_action {
 	struct {
 	    char *id;
 	} remove;
+	struct {
+	    int tid;
+	    char *thid;
+	} bt;
     };
 };
 
@@ -96,6 +103,7 @@ struct spf_action {
 struct spf_filter {
     char *id;
 
+    char *srcfile;
     char *symbol;
     struct bsymbol *bsymbol;
     /* When it's applied; pre or post. */
@@ -116,21 +124,29 @@ struct spf_config {
     GSList *spf_filter_list;
 };
 
+struct overlay_spec {
+    char *base_target_id;
+    char *base_thread_name_or_id;
+    struct target_spec *spec;
+};
+
 struct spf_argp_state {
     int argc;
     char **argv;
     char *config_file;
     int config_file_fatal;
     int use_os_syscall_probes;
-    char *overlay_name_or_id;
-    struct target_spec *overlay_spec;
+    int ospecs_len;
+    struct overlay_spec **ospecs;
 };
 
 /*
  * Globals.
  */
-struct target *target = NULL;
-struct target *otarget = NULL;
+struct target *t = NULL;
+int ots_len = 0;
+struct target **ots = NULL;
+char **otnames = NULL;
 struct spf_config *config = NULL;
 struct spf_argp_state opts;
 
@@ -158,7 +174,7 @@ void cleanup_probes() {
     gpointer key;
     struct probe *probe;
 
-    target_pause(target);
+    target_pause(t);
 
     if (fprobes) {
 	g_hash_table_iter_init(&iter,fprobes);
@@ -184,33 +200,42 @@ void cleanup_probes() {
     }
 }
 
-target_status_t cleanup() {
-    target_status_t retval = TSTATUS_DONE;
+void cleanup() {
+    static int cleaning = 0;
+
+    int j;
+
+    if (cleaning)
+	return;
+    cleaning = 1;
 
     cleanup_probes();
 
-    if (otarget) {
-	target_close(otarget);
-	target_free(otarget);
-	otarget = NULL;
-    }
-    if (target) {
-	retval = target_close(target);
-	target_free(target);
-	target = NULL;
+    if (ots) {
+	for (j = ots_len - 1; j >= 0; --j) {
+	    if (!ots[j])
+		continue;
+	    target_close(ots[j]);
+	    target_free(ots[j]);
+	    ots[j] = NULL;
+	}
     }
 
-    return retval;
+    if (t) {
+	target_close(t);
+	target_free(t);
+	t = NULL;
+    }
 }
 
 void sigr(int signo) {
     needreload = 1;
-    if (target_is_monitor_handling(target))
-	target_monitor_schedule_interrupt(target);
+    if (target_is_monitor_handling(t))
+	target_monitor_schedule_interrupt(t);
     else {
-	target_pause(target);
+	target_pause(t);
 	reload_config_file();
-	target_resume(target);
+	target_resume(t);
     }
     signal(signo,sigr);
 }
@@ -218,8 +243,8 @@ void sigr(int signo) {
 void sigh(int signo) {
     needtodie = 1;
     needtodie_exitcode = 0;
-    if (target_is_monitor_handling(target))
-	target_monitor_schedule_interrupt(target);
+    if (target_is_monitor_handling(t))
+	target_monitor_schedule_interrupt(t);
     else {
 	cleanup();
 	exit(needtodie_exitcode);
@@ -289,6 +314,159 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
     }
 }
 
+void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
+    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt_frame *tlctxtf;
+    struct array_list *tids;
+    tid_t tid;
+    int i,j,k;
+    REG ipreg;
+    REGVAL ipval;
+    char *srcfile = NULL;
+    int srcline;
+    GSList *args;
+    GSList *gsltmp;
+    struct symbol *argsym;
+    char *name;
+    struct value *v;
+    char vbuf[1024];
+    tid_t stid = -1;
+    struct lsymbol *lsymbol;
+    struct bsymbol *bsymbol;
+    struct target_thread *tthread;
+    char *endptr = NULL;
+
+    if (tiddesc) {
+	stid = (int)strtol(tiddesc,&endptr,10);
+	if (tiddesc == endptr) 
+	    stid = -1;
+	else
+	    tiddesc = NULL;
+    }
+    else 
+	stid = -1;
+
+    /*
+     * If stid == 0 or tiddesc, do them all.
+     *
+     * If it == -1 && !tiddesc, do ctid.
+     *
+     * If it >= 0, do that one.
+     */
+
+    ipreg = target_dw_reg_no(t,CREG_IP);
+
+    if (stid == -1 && !tiddesc) {
+	tids = array_list_create(1);
+	array_list_append(tids,(void *)(uintptr_t)ctid);
+    
+	printf("Backtracing target '%s' (current thread %d):\n\n",t->name,ctid);
+    }
+    else if (stid > 0) {
+	tids = array_list_create(1);
+	array_list_append(tids,(void *)(uintptr_t)stid);
+    
+	printf("Backtracing target '%s' (thread %d):\n\n",t->name,stid);
+    }
+    else if (tiddesc) {
+	tids = target_list_tids(t);
+    
+	printf("Backtracing target '%s' (thread name %s):\n\n",t->name,tiddesc);
+    }
+    else {
+	tids = target_list_tids(t);
+    
+	printf("Backtracing target '%s' (all threads):\n\n",t->name);
+    }
+
+    array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
+	tthread = target_lookup_thread(t,tid);
+	if (!tthread)
+	    continue;
+
+	if ((tiddesc && !tthread->name)
+	    || (tiddesc && strcmp(tiddesc,tthread->name)))
+	    continue;
+
+	tlctxt = target_unwind(t,tid);
+	if (!tlctxt) {
+	    fprintf(stdout,"\nthread %"PRIiTID": (empty)\n",tid);
+	    continue;
+	}
+
+	fprintf(stdout,"\nthread %"PRIiTID":\n",tid);
+
+	j = 0;
+	while (1) {
+	    tlctxtf = target_location_ctxt_current_frame(tlctxt);
+
+	    ipval = 0;
+	    target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
+
+	    if (tlctxtf->bsymbol)
+		srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
+	    else
+		srcfile = NULL;
+
+	    if (tlctxtf->bsymbol)
+		srcline = target_lookup_line_addr(t,srcfile,ipval);
+	    else
+		srcline = 0;
+
+	    fprintf(stdout,"  #%d  0x%"PRIxFULLADDR" in %s (",
+		    j,ipval,(tlctxtf->bsymbol) ? bsymbol_get_name(tlctxtf->bsymbol) : "");
+	    if (tlctxtf->bsymbol) {
+		args = symbol_get_ordered_members(bsymbol_get_symbol(tlctxtf->bsymbol),
+						  SYMBOL_TYPE_FLAG_VAR_ARG);
+		v_g_slist_foreach(args,gsltmp,argsym) {
+		    lsymbol = lsymbol_create_from_member(bsymbol_get_lsymbol(tlctxtf->bsymbol),
+							 argsym);
+		    bsymbol = bsymbol_create(lsymbol,tlctxtf->bsymbol->region);
+		    name = symbol_get_name(argsym);
+
+		    v = target_load_symbol(t,tlctxt,bsymbol,
+					   //LOAD_FLAG_AUTO_DEREF | 
+					   LOAD_FLAG_AUTO_STRING);
+		    printf("%s=",name ? name : "()");
+		    if (v) {
+			//vbuf[0] = '\0';
+			if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0)
+			    printf("<value_snprintf error>");
+			else
+			    printf("%s",vbuf);
+			printf(" (0x");
+			for (k = 0; k < v->bufsiz; ++k) {
+			    printf("%02hhx",v->buf[k]);
+			}
+			printf(")");
+			value_free(v);
+		    }
+		    else
+			printf("<?>");
+		    printf(",");
+
+		    bsymbol_release(bsymbol);
+		    lsymbol_release(lsymbol);
+		}
+		fprintf(stdout,") at %s:%d\n",srcfile,srcline);
+	    }
+	    else
+		fprintf(stdout,")\n");
+		fflush(stdout);
+	    fflush(stderr);
+
+	    tlctxtf = target_location_ctxt_prev(tlctxt);
+	    if (!tlctxtf)
+		break;
+	    ++j;
+	}
+	target_location_ctxt_free(tlctxt);
+    }
+
+    fputs("\n",stdout);
+    fflush(stdout);
+}
+
 result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		 struct probe *trigger,struct probe *base) {
     GHashTableIter iter;
@@ -305,6 +483,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
     struct spf_action *spfa;
     struct probe *fprobe;
     result_t retval = RESULT_SUCCESS;
+    struct target *btt;
 
     /*
      * Do all the actions.
@@ -391,8 +570,13 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    /*
 	     * Have to schedule a monitor interrupt to exit!
 	     */
-	    if (target_is_monitor_handling(target)) {
-		target_monitor_schedule_interrupt(target);
+	    if (spfa->exit.retval == -69) {
+		cleanup_probes();
+		exit(-69);
+	    }
+
+	    if (target_is_monitor_handling(t)) {
+		target_monitor_schedule_interrupt(t);
 		needtodie = 1;
 		needtodie_exitcode = spfa->exit.retval;
 		vdebug(5,LA_USER,LF_U_PROBE,"probe %s: scheduled exit with %d!\n",
@@ -466,7 +650,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		}
 	    }
 	    fputs(",",stdout);
-	    print_thread_context(stdout,target,tid,
+	    print_thread_context(stdout,bsymbol->region->space->target,tid,
 				 spfa->report.ttctx,spfa->report.ttdetail,
 				 ":",";","thread=",",");
 	    fputs(")\n",stdout);
@@ -530,11 +714,24 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		}
 	    }
 	    fputs(" ",stdout);
-	    print_thread_context(stdout,target,tid,
+	    print_thread_context(stdout,bsymbol->region->space->target,tid,
 				 spfa->print.ttctx,spfa->print.ttdetail,
 				 NULL,NULL,"",",");
 	    fputs("\n",stdout);
 	    fflush(stdout);
+	}
+	else if (spfa->atype == SPF_ACTION_BT) {
+	    if (spfa->bt.tid > 1) {
+		btt = target_lookup_target_id(spfa->bt.tid);
+		if (!btt) {
+		    verror("no existing target with id '%d'!\n",spfa->bt.tid);
+		    return RESULT_SUCCESS;
+		}
+	    }
+	    else
+		btt = probe->target;
+
+	    spf_backtrace(btt,tid,spfa->bt.thid);
 	}
 	else {
 	    verror("probe %s: bad action type %d -- BUG!\n",
@@ -566,11 +763,12 @@ result_t null_handler(struct probe *probe,tid_t tid,void *data,
     return RESULT_SUCCESS;
 }
 
-#define SPF_CONFIGFILE_FATAL  0x200000
-#define SPF_OS_SYSCALL_PROBES 0x200001
+#define __TARGET_OVERLAY      0x200000
+#define SPF_CONFIGFILE_FATAL  0x200001
+#define SPF_OS_SYSCALL_PROBES 0x200002
 
 struct argp_option spf_argp_opts[] = {
-    { "overlay",'V',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All spec_opts (normal target/dwdebug opts) then apply to the overlay target.",0 },
+    { "overlay",__TARGET_OVERLAY,"[<target_id>:]<thread_name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All dumptarget options then apply to the overlay.",0 },
     { "config-file",'C',"<FILE>",0,"An SPF config file.",0 },
     { "config-file-fatal",SPF_CONFIGFILE_FATAL,NULL,0,
       "Make errors while applying runtime updates (via USR2) to the config file fatal.",0 },
@@ -583,12 +781,13 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     struct spf_argp_state *opts = \
 	(struct spf_argp_state *)target_argp_driver_state(state);
     struct array_list *argv_list;
-    char *argptr;
+    char *argptr,*argptr2;
     char *nargptr;
     char *vargptr;
     int inesc;
     int inquote;
     int quotechar;
+    struct overlay_spec *ospec = NULL;
 
     switch (key) {
     case ARGP_KEY_ARG:
@@ -624,7 +823,7 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
     case 'C':
 	opts->config_file = arg;
 	break;
-    case 'V':
+    case __TARGET_OVERLAY:
 	/*
 	 * We need to split the <name_or_id>:<spec> part; then split
 	 * <spec> into an argv.  Simple rules: \ escapes the next char;
@@ -636,12 +835,27 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    verror("bad overlay spec!\n");
 	    return EINVAL;
 	}
+
+	ospec = calloc(1,sizeof(*ospec));
+	++opts->ospecs_len;
+	opts->ospecs = 
+	    realloc(opts->ospecs,opts->ospecs_len*sizeof(*opts->ospecs));
+	opts->ospecs[opts->ospecs_len - 1] = ospec;
+
 	argv_list = array_list_create(32);
 	array_list_append(argv_list,"dumptarget_overlay");
 
-	opts->overlay_name_or_id = arg;
+	ospec->base_thread_name_or_id = arg;
 	*argptr = '\0';
 	++argptr;
+
+	argptr2 = index(argptr,':');
+	if (argptr2) {
+	    ospec->base_target_id = ospec->base_thread_name_or_id;
+	    ospec->base_thread_name_or_id = argptr;
+	    *argptr2 = '\0';
+	    argptr = ++argptr2;
+	}
 
 	while (*argptr == ' ')
 	    ++argptr;
@@ -713,12 +927,12 @@ error_t spf_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	}
 	array_list_append(argv_list,NULL);
 
-	opts->overlay_spec = target_argp_driver_parse(NULL,NULL,
-						      array_list_len(argv_list) - 1,
-						      (char **)argv_list->list,
-						      TARGET_TYPE_XEN_PROCESS,0);
-	if (!opts->overlay_spec) {
-	    verror("could not parse overlay spec!\n");
+	ospec->spec = target_argp_driver_parse(NULL,NULL,
+					       array_list_len(argv_list) - 1,
+					       (char **)argv_list->list,
+					       TARGET_TYPE_XEN_PROCESS,0);
+	if (!ospec->spec) {
+	    verror("could not parse overlay spec %d!\n",opts->ospecs_len);
 	    array_list_free(argv_list);
 	    return EINVAL;
 	}
@@ -738,13 +952,11 @@ struct argp spf_argp = {
 };
 
 int main(int argc,char **argv) {
-    target_status_t tstat;
     struct target_spec *tspec;
     char targetstr[128];
-    int i;
+    int i,j;
     struct bsymbol *bsymbol;
     int oid;
-    tid_t otid;
     char *tmp = NULL;
     struct probe *sprobe, *fprobe;
     char *name, *context;
@@ -753,6 +965,9 @@ int main(int argc,char **argv) {
     struct target_nv_filter *pre_pf, *post_pf;
     char *pre_filter, *post_filter;
     struct target_os_syscall *syscall;
+    tid_t base_tid;
+    struct target *base;
+    struct overlay_spec *ospec;
 
     target_init();
     atexit(target_fini);
@@ -775,51 +990,74 @@ int main(int argc,char **argv) {
 	}
     }
 
-    target = target_instantiate(tspec,NULL);
-    if (!target) {
+    t = target_instantiate(tspec,NULL);
+    if (!t) {
 	verror("could not instantiate target!\n");
 	exit(-1);
     }
-    target_snprintf(target,targetstr,sizeof(targetstr));
+    target_snprintf(t,targetstr,sizeof(targetstr));
 
-    if (target_open(target)) {
+    if (target_open(t)) {
 	fprintf(stderr,"could not open %s!\n",targetstr);
 	exit(-4);
     }
 
     /*
-     * Load an overlay target, if there is one.
+     * Load the overlay targets, if any.
      */
-    if (opts.overlay_name_or_id && opts.overlay_spec) {
+    if (opts.ospecs) {
+	ots = calloc(opts.ospecs_len,sizeof(*ots));
+	otnames = calloc(opts.ospecs_len,sizeof(*otnames));
+    }
+    for (j = 0; j < opts.ospecs_len; ++j) {
 	errno = 0;
-	oid = (int)strtol(opts.overlay_name_or_id,&tmp,0);
-	if (errno || tmp == opts.overlay_name_or_id)
-	    otid = 
-		target_lookup_overlay_thread_by_name(target,
-						     opts.overlay_name_or_id);
+	tmp = NULL;
+	ospec = opts.ospecs[j];
+
+	if (ospec->base_target_id) {
+	    base = target_lookup_target_id(atoi(ospec->base_target_id));
+	    if (!base) {
+		verror("no existing target with id '%s'!\n",
+		       ospec->base_target_id);
+		cleanup();
+		exit(-113);
+	    }
+	}
+	else 
+	    base = t;
+
+	target_snprintf(base,namebuf,sizeof(namebuf));
+	otnames[j] = strdup(namebuf);
+
+	oid = (int)strtol(ospec->base_thread_name_or_id,&tmp,0);
+	if (errno || tmp == ospec->base_thread_name_or_id)
+	    base_tid = 
+		target_lookup_overlay_thread_by_name(base,ospec->base_thread_name_or_id);
 	else
-	    otid = target_lookup_overlay_thread_by_id(target,oid);
-	if (otid < 0) {
-	    verror("could not find overlay thread '%s', exiting!\n",
-		   opts.overlay_name_or_id);
+	    base_tid = target_lookup_overlay_thread_by_id(base,oid);
+	if (base_tid < 0) {
+	    verror("could not find overlay thread '%s' in base target '%s',"
+		   " exiting!\n",
+		   ospec->base_thread_name_or_id,namebuf);
 	    cleanup();
 	    exit(-111);
 	}
-	otarget = target_instantiate_overlay(target,otid,opts.overlay_spec);
-	if (!otarget) {
-	    verror("could not instantiate overlay target '%s'!\n",
-		   opts.overlay_name_or_id);
+
+	ots[j] = target_instantiate_overlay(base,base_tid,ospec->spec);
+	++ots_len;
+	if (!ots[j]) {
+	    verror("could not instantiate overlay on base '%s' thread '%s'!\n",
+		   namebuf,ospec->base_thread_name_or_id);
 	    cleanup();
 	    exit(-112);
 	}
 
-	if (target_open(otarget)) {
-	    fprintf(stderr,"could not open overlay target!\n");
+	if (target_open(ots[j])) {
+	    fprintf(stderr,"could not open overlay on base '%s' thread '%s'!\n",
+		    namebuf,ospec->base_thread_name_or_id);
 	    cleanup();
 	    exit(-114);
 	}
-
-	target_snprintf(target,targetstr,sizeof(targetstr));
     }
 
     signal(SIGINT,sigh);
@@ -837,8 +1075,8 @@ int main(int argc,char **argv) {
     sprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
     fprobes = g_hash_table_new(g_direct_hash,g_direct_equal);
 
-    if (opts.use_os_syscall_probes && target->kind == TARGET_KIND_OS) {
-	if (target_os_syscall_table_load(target))
+    if (opts.use_os_syscall_probes && t->kind == TARGET_KIND_OS) {
+	if (target_os_syscall_table_load(t))
 	    vwarn("could not load the syscall table; target_os_syscall probes"
 		  " will not be available!\n");
 	else
@@ -894,11 +1132,12 @@ int main(int argc,char **argv) {
 		 * Create a probe on that symbol:
 		 */
 
+		bsymbol = NULL;
 		if (opts.use_os_syscall_probes && have_syscall_table) {
-		    syscall = target_os_syscall_lookup_name(target,name);
+		    syscall = target_os_syscall_lookup_name(t,name);
 		    if (syscall) {
 			sprobe = \
-			    target_os_syscall_probe(target,TID_GLOBAL,syscall,
+			    target_os_syscall_probe(t,TID_GLOBAL,syscall,
 						    probe_do_sink_pre_handlers,
 						    probe_do_sink_post_handlers,
 						    NULL);
@@ -912,10 +1151,16 @@ int main(int argc,char **argv) {
 		}
 
 		if (!sprobe) {
-		    bsymbol = target_lookup_sym(otarget,name,NULL,NULL,
-						SYMBOL_TYPE_FLAG_NONE);
+		    if (ots) {
+			for (j = ots_len - 1; j >= 0; --j) {
+			    bsymbol = target_lookup_sym(ots[j],name,NULL,NULL,
+							SYMBOL_TYPE_FLAG_NONE);
+			    if (bsymbol)
+				break;
+			}
+		    }
 		    if (!bsymbol) {
-			bsymbol = target_lookup_sym(target,name,NULL,NULL,
+			bsymbol = target_lookup_sym(t,name,NULL,NULL,
 						    SYMBOL_TYPE_FLAG_NONE);
 			if (!bsymbol) {
 			    verror("could not lookup symbol %s; aborting!\n",
@@ -1010,35 +1255,36 @@ int main(int argc,char **argv) {
      * The target was paused after instantiation; we have to resume it
      * now that we've registered probes.
      */
-    target_resume(target);
+    target_resume(t);
 
     fprintf(stdout,"Starting Symbol Probe Filtering!\n");
     fflush(stdout);
 
     while (1) {
-	tstat = target_monitor(target);
+	target_status_t tstat = target_monitor(t);
 	if (tstat == TSTATUS_INTERRUPTED) {
 	    if (needtodie) {
-		target_pause(target);
+		target_pause(t);
 		cleanup_probes();
-		target_resume(target);
+		if (needtodie_exitcode == 0)
+		    target_resume(t);
 		cleanup();
 		exit(needtodie_exitcode);
 	    }
 	    if (needreload) 
 		reload_config_file();
 
-	    target_resume(target);
+	    target_resume(t);
 	}
 	else if (tstat == TSTATUS_PAUSED) {
 	    fflush(stderr);
 	    fflush(stdout);
 	    vwarn("target %s interrupted at 0x%"PRIxREGVAL"; trying resume!\n",
-		  targetstr,target_read_creg(target,TID_GLOBAL,CREG_IP));
+		  targetstr,target_read_creg(t,TID_GLOBAL,CREG_IP));
 
-	    if (target_resume(target)) {
+	    if (target_resume(t)) {
 		verror("could not resume target\n");
-		tstat = cleanup();
+		cleanup();
 		exit(-16);
 	    }
 	}
@@ -1051,9 +1297,9 @@ int main(int argc,char **argv) {
 
 	    cleanup_probes();
 
-	    if (target_resume(target)) {
+	    if (target_resume(t)) {
 		verror("could not resume target!\n");
-		tstat = cleanup();
+		cleanup();
 		exit(-16);
 	    }
 	}
@@ -1063,7 +1309,7 @@ int main(int argc,char **argv) {
 
 	    fprintf(stdout,"target %s exited, cleaning up.\n",targetstr);
 
-	    tstat = cleanup();
+	    cleanup();
 	    goto out;
 	}
 	else {
@@ -1073,7 +1319,7 @@ int main(int argc,char **argv) {
 	    fprintf(stdout,
 		    "target %s interrupted at 0x%"PRIxREGVAL
 		    " -- bad status (%d), exiting\n",
-		    targetstr,target_read_creg(target,TID_GLOBAL,CREG_IP),tstat);
+		    targetstr,target_read_creg(t,TID_GLOBAL,CREG_IP),tstat);
 
 	    goto err;
 	}
@@ -1082,7 +1328,7 @@ int main(int argc,char **argv) {
  err:
     fflush(stderr);
     fflush(stdout);
-    tstat = cleanup();
+    cleanup();
 
  out:
     fflush(stderr);
@@ -1240,13 +1486,13 @@ void reload_config_file(void) {
 int apply_config_file(struct spf_config *config) {
     GSList *gsltmp;
     struct spf_filter *spff;
-    struct bsymbol *bsymbol;
+    struct bsymbol *bsymbol = NULL;
     GHashTable *needed = NULL;
     GHashTableIter iter;
     gpointer kp,vp;
     struct probe *probe,*sprobe,*fprobe;
     char namebuf[128];
-    int i;
+    int i,j;
     struct target_os_syscall *syscall;
 
     /* First, destroy all the filter probes. */
@@ -1266,31 +1512,37 @@ int apply_config_file(struct spf_config *config) {
 	    continue;
 
 	/* Create it. */
-	bsymbol = target_lookup_sym(otarget,spff->symbol,NULL,NULL,
-				    SYMBOL_TYPE_FLAG_NONE);
-	if (!bsymbol) {
-	    bsymbol = target_lookup_sym(target,spff->symbol,NULL,NULL,
+	if (ots) {
+	    for (j = ots_len - 1; j >= 0; --j) {
+		bsymbol = target_lookup_sym(ots[j],spff->symbol,NULL,spff->srcfile,
+					    SYMBOL_TYPE_FLAG_NONE);
+		if (bsymbol)
+		    break;
+	    }
+	}
+	if (!bsymbol) 
+	    bsymbol = target_lookup_sym(t,spff->symbol,NULL,spff->srcfile,
 					SYMBOL_TYPE_FLAG_NONE);
-	    if (!bsymbol) {
-		if (opts.config_file_fatal) {
-		    verror("could not lookup symbol %s; aborting!\n",
-			   spff->symbol);
-		    cleanup();
-		    exit(-3);
-		}
-		else {
-		    vwarn("could not lookup symbol %s; skipping filter!\n",
-			  spff->symbol);
-		    continue;
-		}
+
+	if (!bsymbol) {
+	    if (opts.config_file_fatal) {
+		verror("could not lookup symbol %s; aborting!\n",
+		       spff->symbol);
+		cleanup();
+		exit(-3);
+	    }
+	    else {
+		vwarn("could not lookup symbol %s; skipping filter!\n",
+		      spff->symbol);
+		continue;
 	    }
 	}
 
 	sprobe = NULL;
 	if (have_syscall_table) {
-	    syscall = target_os_syscall_lookup_name(target,spff->symbol);
+	    syscall = target_os_syscall_lookup_name(t,spff->symbol);
 	    if (syscall) {
-		sprobe = target_os_syscall_probe(target,TID_GLOBAL,syscall,
+		sprobe = target_os_syscall_probe(t,TID_GLOBAL,syscall,
 						 probe_do_sink_pre_handlers,
 						 probe_do_sink_post_handlers,
 						 NULL);
@@ -1392,11 +1644,11 @@ struct spf_config *load_config_file(char *file) {
     char *saveptr;
     char *token = NULL, *token2 = NULL;
     char *tptr;
-    char errbuf[128];
     long int numval;
     struct spf_config *retval = NULL;
     int spff_count = 0;
     int lineno = 0;
+    char *tmp;
 
     if (strcmp(file,"-") == 0)
 	ffile = stdin;
@@ -1478,9 +1730,14 @@ struct spf_config *load_config_file(char *file) {
 
 	    /* symbol name */
 	    token = bufptr;
-	    while (isalnum(*bufptr) || *bufptr == '_') ++bufptr;
+	    while (!isspace(*bufptr)) ++bufptr;
 	    *bufptr = '\0';
 	    spff->symbol = strdup(token);
+	    if ((tmp = index(spff->symbol,':'))) {
+		spff->srcfile = spff->symbol;
+		*tmp = '\0';
+		spff->symbol = strdup(tmp+1);
+	    }
 	    ++bufptr;
 
 	    /* These are all optional; take them in any order. */
@@ -1811,6 +2068,41 @@ struct spf_config *load_config_file(char *file) {
 		    spfa = calloc(1,sizeof(*spfa));
 		    spfa->atype = SPF_ACTION_REMOVE;
 		    spfa->remove.id = strdup(token);
+
+		    spff->actions = g_slist_append(spff->actions,spfa);
+		    spfa = NULL;
+		}
+		else if (strcmp(token,"bt") == 0) {
+		    spfa = calloc(1,sizeof(*spfa));
+		    spfa->atype = SPF_ACTION_BT;
+
+		    /* Set some defaults. */
+		    spfa->bt.tid = -1;
+		    spfa->bt.thid = NULL;
+
+		    char *nextbufptr = NULL;
+		    nextbufptr = _get_next_non_enc_esc(bufptr,')');
+		    if (!nextbufptr)
+			goto err;
+		    *nextbufptr = '\0';
+		    ++nextbufptr;
+		    token = NULL;
+		    token2 = NULL;
+		    saveptr = NULL;
+
+		    int lpc = 0;
+		    while ((token = strtok_r((!token) ? bufptr : NULL,",",
+					     &saveptr))) {
+			if (lpc == 0)
+			    spfa->bt.tid = atoi(token);
+			else if (lpc == 1)
+			    spfa->bt.thid = strdup(token);
+			else 
+			    goto err;
+
+			++lpc;
+		    }
+		    bufptr = nextbufptr;
 
 		    spff->actions = g_slist_append(spff->actions,spfa);
 		    spfa = NULL;

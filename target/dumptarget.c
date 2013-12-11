@@ -46,7 +46,8 @@
 #include "alist.h"
 
 struct target *t = NULL;
-struct target *ot = NULL;
+int ots_len = 0;
+struct target **ots = NULL;
 
 int len = 0;
 struct bsymbol **symbols = NULL;
@@ -67,6 +68,12 @@ struct probe *until_probe = NULL;
 
 int nonrootsethits = 0;
 
+struct overlay_spec {
+    char *base_target_id;
+    char *base_thread_name_or_id;
+    struct target_spec *spec;
+};
+
 struct dt_argp_state {
     char *at_symbol;
     char *until_symbol;
@@ -74,22 +81,26 @@ struct dt_argp_state {
     int until_stop_probing;
     int raw;
     int do_post;
+    int quiet;
     int argc;
     char **argv;
-    char *overlay_name_or_id;
-    struct target_spec *overlay_spec;
+    int ospecs_len;
+    struct overlay_spec **ospecs;
 };
 
 error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state);
 
+#define __TARGET_OVERLAY      0x200000
+
 struct argp_option dt_argp_opts[] = {
-    { "overlay",'O',"<name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All dumptarget options then apply to the overlay.",0 },
+    { "overlay",__TARGET_OVERLAY,"[<target_id>:]<thread_name_or_id>:<spec_opts>",0,"Lookup name or id as an overlay target once the main target is instantiated, and try to open it.  All dumptarget options then apply to the overlay.",0 },
     { "at-symbol",'A',"SYMBOL",0,"Wait for a probe on this symbol/address to be hit before inserting all the other probes.",0 },
     { "until-symbol",'U',"SYMBOL",0,"Remove all probes once a probe on this symbol/address is hit.",0 },
     { "bts",'B',0,0,"Enable BTS (if XenTT) (starting at at-symbol if one was provided; otherwise, enable immediately).",0 },
     { "stop-at-until",'S',0,0,"Stop probing once the until symbol/address is reached.",0 },
     { "raw",'v',0,0,"Enable raw mode.",0 },
     { "post",'P',0,0,"Enable post handlers.",0 },
+    { "quiet",'q',0,0,"Silent but deadly.",0 },
     { 0,0,0,0,0,0 },
 };
 
@@ -121,6 +132,7 @@ void cleanup_probes() {
 
 void cleanup() {
     static int cleaning = 0;
+    int j;
 
     if (cleaning)
 	return;
@@ -128,10 +140,14 @@ void cleanup() {
 
     cleanup_probes();
 
-    if (ot) {
-	target_close(ot);
-	target_free(ot);
-	ot = NULL;
+    if (ots) {
+	for (j = ots_len - 1; j >= 0; --j) {
+	    if (!ots[j])
+		continue;
+	    target_close(ots[j]);
+	    target_free(ots[j]);
+	    ots[j] = NULL;
+	}
     }
 
     target_close(t);
@@ -497,8 +513,10 @@ result_t function_dump_args(struct probe *probe,tid_t tid,void *handler_data,
     GSList *gsltmp;
     struct target_location_ctxt *tlctxt;
 
-    fflush(stderr);
-    fflush(stdout);
+    if (!opts.quiet) {
+	fflush(stderr);
+	fflush(stdout);
+    }
 
     if (!probe->probepoint && base) 
 	probeaddr = probe_addr(base);
@@ -508,8 +526,9 @@ result_t function_dump_args(struct probe *probe,tid_t tid,void *handler_data,
     //struct bsymbol *bsymbol = target_lookup_sym_addr(probe->target,probeaddr);
     //ip = target_read_reg(probe->target,probe->target->ipregno);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR") (thread %"PRIiTID") ",
-	    bsymbol_get_name(probe->bsymbol),probeaddr,tid);
+    if (!opts.quiet) 
+	fprintf(stdout,"%s (0x%"PRIxADDR") (thread %"PRIiTID") ",
+		bsymbol_get_name(probe->bsymbol),probeaddr,tid);
 
     GSList *args;
     struct symbol *arg;
@@ -532,25 +551,32 @@ result_t function_dump_args(struct probe *probe,tid_t tid,void *handler_data,
 					    LOAD_FLAG_AUTO_STRING |
 					    LOAD_FLAG_NO_CHECK_VISIBILITY |
 					    LOAD_FLAG_NO_CHECK_BOUNDS))) {
-		printf("%s = ",lsymbol_get_name(ls));
-		value_dump_simple(value,&di);
-		printf(" (0x");
-		for (j = 0; j < value->bufsiz; ++j) {
-		    printf("%02hhx",value->buf[j]);
+		
+		if (!opts.quiet) {
+		    printf("%s = ",lsymbol_get_name(ls));
+		    value_dump_simple(value,&di);
+		    printf(" (0x");
+		    for (j = 0; j < value->bufsiz; ++j) {
+			printf("%02hhx",value->buf[j]);
+		    }
+		    printf(")");
 		}
-		printf(")");
 		value_free(value);
 	    }
 	    bsymbol_free(bs,0);
-	    printf(", ");
+
+	    if (!opts.quiet) 
+		printf(", ");
 	}
 	target_location_ctxt_free(tlctxt);
     }
 
-    fprintf(stdout," (handler_data = %s)\n",(char *)handler_data);
+    if (!opts.quiet) {
+	fprintf(stdout," (handler_data = %s)\n",(char *)handler_data);
 
-    fflush(stderr);
-    fflush(stdout);
+	fflush(stderr);
+	fflush(stdout);
+    }
 
     if (args) {
 	g_slist_free(args);
@@ -568,16 +594,18 @@ result_t function_post(struct probe *probe,tid_t tid,void *handler_data,
     else 
 	probeaddr = probe_addr(probe);
 
-    fflush(stderr);
-    fflush(stdout);
+    if (!opts.quiet) {
+	fflush(stderr);
+	fflush(stdout);
 
-    fprintf(stdout,"%s (0x%"PRIxADDR") post handler (thread %"PRIiTID")",
-	    bsymbol_get_name(probe->bsymbol),
-	    probeaddr,tid);
-    fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
+	fprintf(stdout,"%s (0x%"PRIxADDR") post handler (thread %"PRIiTID")",
+		bsymbol_get_name(probe->bsymbol),
+		probeaddr,tid);
+	fprintf(stdout,"  (handler_data = %s)\n",(char *)handler_data);
 
-    fflush(stderr);
-    fflush(stdout);
+	fflush(stderr);
+	fflush(stdout);
+    }
 
     return RESULT_SUCCESS;
 }
@@ -765,12 +793,13 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
     struct dt_argp_state *opts = \
 	(struct dt_argp_state *)target_argp_driver_state(state);
     struct array_list *argv_list;
-    char *argptr;
+    char *argptr,*argptr2;
     char *nargptr;
     char *vargptr;
     int inesc;
     int inquote;
     int quotechar;
+    struct overlay_spec *ospec = NULL;
 
     switch (key) {
     case ARGP_KEY_ARG:
@@ -819,7 +848,10 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
     case 'P':
 	opts->do_post = 1;
 	break;
-    case 'O':
+    case 'q':
+	opts->quiet = 1;
+	break;
+    case __TARGET_OVERLAY:
 	/*
 	 * We need to split the <name_or_id>:<spec> part; then split
 	 * <spec> into an argv.  Simple rules: \ escapes the next char;
@@ -831,12 +863,27 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
 	    verror("bad overlay spec!\n");
 	    return EINVAL;
 	}
+
+	ospec = calloc(1,sizeof(*ospec));
+	++opts->ospecs_len;
+	opts->ospecs = 
+	    realloc(opts->ospecs,opts->ospecs_len*sizeof(*opts->ospecs));
+	opts->ospecs[opts->ospecs_len - 1] = ospec;
+
 	argv_list = array_list_create(32);
 	array_list_append(argv_list,"dumptarget_overlay");
 
-	opts->overlay_name_or_id = arg;
+	ospec->base_thread_name_or_id = arg;
 	*argptr = '\0';
 	++argptr;
+
+	argptr2 = index(argptr,':');
+	if (argptr2) {
+	    ospec->base_target_id = ospec->base_thread_name_or_id;
+	    ospec->base_thread_name_or_id = argptr;
+	    *argptr2 = '\0';
+	    argptr = ++argptr2;
+	}
 
 	while (*argptr == ' ')
 	    ++argptr;
@@ -908,12 +955,12 @@ error_t dt_argp_parse_opt(int key, char *arg,struct argp_state *state) {
 	}
 	array_list_append(argv_list,NULL);
 
-	opts->overlay_spec = target_argp_driver_parse(NULL,NULL,
-						      array_list_len(argv_list) - 1,
-						      (char **)argv_list->list,
-						      TARGET_TYPE_XEN_PROCESS,0);
-	if (!opts->overlay_spec) {
-	    verror("could not parse overlay spec!\n");
+	ospec->spec = target_argp_driver_parse(NULL,NULL,
+					       array_list_len(argv_list) - 1,
+					       (char **)argv_list->list,
+					       TARGET_TYPE_XEN_PROCESS,0);
+	if (!ospec->spec) {
+	    verror("could not parse overlay spec %d!\n",opts->ospecs_len);
 	    array_list_free(argv_list);
 	    return EINVAL;
 	}
@@ -941,7 +988,10 @@ int main(int argc,char **argv) {
     char *targetstr;
     char *tmp;
     int oid;
-    tid_t otid;
+    tid_t base_tid;
+    struct target *base;
+    struct overlay_spec *ospec;
+    char namebuf[64];
 
     struct dump_info udn = {
 	.stream = stderr,
@@ -998,33 +1048,55 @@ int main(int argc,char **argv) {
     tmp = NULL;
 
     /*
-     * Load an overlay target, if there is one.
+     * Load the overlay targets, if any.
      */
-    if (opts.overlay_name_or_id && opts.overlay_spec) {
+    if (opts.ospecs) 
+	ots = calloc(opts.ospecs_len,sizeof(*ots));
+    for (j = 0; j < opts.ospecs_len; ++j) {
 	errno = 0;
 	tmp = NULL;
-	oid = (int)strtol(opts.overlay_name_or_id,&tmp,0);
-	if (errno || tmp == opts.overlay_name_or_id)
-	    otid = 
-		target_lookup_overlay_thread_by_name(t,opts.overlay_name_or_id);
+	ospec = opts.ospecs[j];
+
+	if (ospec->base_target_id) {
+	    base = target_lookup_target_id(atoi(ospec->base_target_id));
+	    if (!base) {
+		verror("no existing target with id '%s'!\n",ospec->base_target_id);
+		cleanup();
+		exit(-113);
+	    }
+	}
+	else 
+	    base = t;
+
+	target_snprintf(base,namebuf,sizeof(namebuf));
+
+	oid = (int)strtol(ospec->base_thread_name_or_id,&tmp,0);
+	if (errno || tmp == ospec->base_thread_name_or_id)
+	    base_tid = 
+		target_lookup_overlay_thread_by_name(base,ospec->base_thread_name_or_id);
 	else
-	    otid = target_lookup_overlay_thread_by_id(t,oid);
-	if (otid < 0) {
-	    verror("could not find overlay thread '%s', exiting!\n",
-		   opts.overlay_name_or_id);
+	    base_tid = target_lookup_overlay_thread_by_id(base,oid);
+	if (base_tid < 0) {
+	    verror("could not find overlay thread '%s' in base target '%s',"
+		   " exiting!\n",
+		   ospec->base_thread_name_or_id,namebuf);
 	    cleanup();
 	    exit(-111);
 	}
-	ot = target_instantiate_overlay(t,otid,opts.overlay_spec);
-	if (!ot) {
-	    verror("could not instantiate overlay target '%s'!\n",
-		   opts.overlay_name_or_id);
+
+	ots[j] = target_instantiate_overlay(base,base_tid,ospec->spec);
+	++ots_len;
+	if (!ots[j]) {
+	    verror("could not instantiate overlay on base '%s' thread '%s'!\n",
+		   namebuf,ospec->base_thread_name_or_id);
 	    cleanup();
 	    exit(-112);
 	}
 
-	if (target_open(ot)) {
-	    fprintf(stderr,"could not open overlay target!\n");
+	if (target_open(ots[j])) {
+	    fprintf(stderr,"could not open overlay on base '%s' thread '%s'!\n",
+		    namebuf,ospec->base_thread_name_or_id);
+	    cleanup();
 	    exit(-114);
 	}
     }
@@ -1070,6 +1142,9 @@ int main(int argc,char **argv) {
 
 	word = NULL;
 
+	char *srcfile = NULL;
+	char *symname = NULL;
+
 	for (i = 0; i < opts.argc; ++i) {
 	    /* Look for retval code */
 	    char *retcode_str = index(opts.argv[i],':');
@@ -1088,15 +1163,23 @@ int main(int argc,char **argv) {
 		    retcodes[i] = atoi(retcode_str + 1);
 		    retcode_strs[i] = retcode_str;
 		}
-		else {
+		else if (*(retcode_str+1) == 'r') { 
 		    *retcode_str = '\0';
 		    ++retcode_str;
 		    retcode_strs[i] = retcode_str;
 		    retcodes[i] = (REGVAL)atoi(retcode_str);
 		}
+		else {
+		    srcfile = opts.argv[i];
+		    *retcode_str = '\0';
+		    ++retcode_str;
+		    symname = retcode_str;
+		}
 	    }
+	    else
+		symname = opts.argv[i];
 
-	    if (strncmp(opts.argv[i],"0x",2) == 0) {
+	    if (strncmp(symname,"0x",2) == 0) {
 		array_list_add(addrlist,opts.argv[i]);
 		array_list_add(symlist,NULL);
 	    }
@@ -1111,16 +1194,21 @@ int main(int argc,char **argv) {
 		    }
 		}
 		else {
-		    if (ot) {
-			bsymbol = target_lookup_sym(ot,opts.argv[i],".",NULL,
-						    SYMBOL_TYPE_FLAG_NONE);
+		    if (ots) {
+			for (j = ots_len - 1; j >= 0; --j) {
+			    bsymbol = target_lookup_sym(ots[j],symname,NULL,
+							srcfile,
+							SYMBOL_TYPE_FLAG_NONE);
+			    if (bsymbol)
+				break;
+			}
 		    }
 		    if (!bsymbol) {
-			bsymbol = target_lookup_sym(t,opts.argv[i],".",NULL,
+			bsymbol = target_lookup_sym(t,symname,NULL,srcfile,
 						    SYMBOL_TYPE_FLAG_NONE);
 			if (!bsymbol) {
 			    fprintf(stderr,"Could not find symbol %s!\n",
-				    opts.argv[i]);
+				    symname);
 			    cleanup();
 			    exit(-1);
 			}

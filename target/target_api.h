@@ -388,6 +388,10 @@ void target_driver_argp_init_children(struct argp_state *state);
 
 int target_spec_to_argv(struct target_spec *spec,char *arg0,
 			int *argc,char ***argv);
+/*
+ * Look up an existing target by its id.
+ */
+struct target *target_lookup_target_id(int id);
 
 /*
  * Generic function that creates a target, given @spec.
