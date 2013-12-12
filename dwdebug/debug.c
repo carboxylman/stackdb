@@ -2030,12 +2030,20 @@ static void __debugfile_resolve_decllist(struct debugfile *debugfile,
 	    /* Not optimized, but no big deal. */
 	    array_list_foreach_delete(decllist,i);
 	}
-	else {
+	else if (debugfile->ops && debugfile->ops->symbol_replace) {
 	    /*
-	     * XXX DWARF: if partial loading, then we really should go
-	     * fix up the reftab for the decl's CU!!!  It will still
-	     * point to the decl, which we are deleting!
+	     * Tell the backend that a symbol substitution needs to
+	     * happen, so that it can propagate that resolution to any
+	     * other symbols that have a pointer reference to the one
+	     * being replaced.
 	     */
+	    debugfile->ops->symbol_replace(debugfile,declaration,definition);
+
+	    ++mapped;
+	    /* Not optimized, but no big deal. */
+	    array_list_foreach_delete(decllist,i);
+	}
+	else {
 	    declscope = symbol_containing_scope(declaration);
 	    scope_remove_symbol(declscope,declaration);
 	    scope_hold_symbol(declscope,definition);

@@ -3001,6 +3001,43 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
     return retval;
 }
 
+int dwarf_symbol_replace(struct debugfile *debugfile,
+			 struct symbol *old,struct symbol *new) {
+    struct symbol *root;
+    struct symbol_root_dwarf *srd;
+    struct scope *scope;
+
+    /*
+     * Just like for type compression, where we replace one symbol with
+     * another symbol from a (likely) different CU, we have to get the
+     * root symbol associated with the one we're replacing (the old
+     * one), and insert the new symbol into the old symbol's reftab --
+     * and then let dwarf_reftab_insert work its magic of replacing any
+     * refs and deleting the old symbol.
+     */
+    root = symbol_find_root(old);
+    if (!root) {
+	verror("could not find root symbol for old ");
+	ERRORDUMPSYMBOL(old);
+	verrorc(" replacing with new ");
+	ERRORDUMPSYMBOL_NL(new);
+	return -1;
+    }
+    srd = SYMBOLX_ROOT(root)->priv;
+
+    dwarf_reftab_insert(srd,new,old->ref);
+    dwarf_symbol_refuselist_release_all(srd,old);
+    scope = symbol_containing_scope(old);
+    if (scope)
+	scope_remove_symbol(scope,old);
+    else {
+	vwarn("no scope for old ");
+	WARNDUMPSYMBOL_NL(old);
+    }
+
+    return 0;
+}
+
 int dwarf_symbol_expand(struct debugfile *debugfile,
 			struct symbol *root,struct symbol *symbol) {
     Dwarf_Off die_offset;
@@ -4259,6 +4296,7 @@ extern int dwarf_cfa_read_retaddr(struct debugfile *debugfile,
 struct debugfile_ops dwarf_debugfile_ops = {
     .init = dwarf_init,
     .load = dwarf_load_debuginfo,
+    .symbol_replace = dwarf_symbol_replace,
     .symbol_expand = dwarf_symbol_expand,
     .symbol_root_expand = dwarf_symbol_root_expand,
     .frame_read_saved_reg = dwarf_cfa_read_saved_reg,

@@ -127,6 +127,8 @@ struct location_ctxt;
 struct debugfile_ops {
     int (*init)(struct debugfile *debugfile);
     int (*load)(struct debugfile *debugfile);
+    int (*symbol_replace)(struct debugfile *debugfile,
+			  struct symbol *old,struct symbol *new);
     int (*symbol_root_expand)(struct debugfile *debugfile,struct symbol *root);
     int (*symbol_expand)(struct debugfile *debugfile,
 			 struct symbol *root,struct symbol *symbol);
