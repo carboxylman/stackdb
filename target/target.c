@@ -20,6 +20,7 @@
 #include <glib.h>
 #include "glib_wrapper.h"
 
+#include "rfilter.h"
 #include "binfile.h"
 #include "dwdebug.h"
 #include "dwdebug_priv.h"
@@ -1323,9 +1324,15 @@ struct bsymbol *target_lookup_sym(struct target *target,
     struct debugfile *debugfile;
     GHashTableIter iter;
     gpointer key;
+    struct rfilter *rf = NULL;
 
     if (list_empty(&target->spaces))
 	return NULL;
+
+    if (srcfile) {
+	rf = rfilter_create(RF_REJECT);
+	rfilter_add(rf,srcfile,RF_ACCEPT,NULL);
+    }
 
     list_for_each_entry(space,&target->spaces,space) {
 	list_for_each_entry(region,&space->regions,region) {
@@ -1333,12 +1340,14 @@ struct bsymbol *target_lookup_sym(struct target *target,
 	    while (g_hash_table_iter_next(&iter,(gpointer)&key,
 					  (gpointer)&debugfile)) {
 		lsymbol = debugfile_lookup_sym__int(debugfile,(char *)name,
-						    delim,NULL,ftype);
+						    delim,rf,ftype);
 		if (lsymbol) 
 		    goto out;
 	    }
 	}
     }
+    if (rf)
+	rfilter_free(rf);
     return NULL;
 
  out:
@@ -1348,6 +1357,8 @@ struct bsymbol *target_lookup_sym(struct target *target,
      */
     RHOLD(bsymbol,bsymbol);
 
+    if (rf)
+	rfilter_free(rf);
     return bsymbol;
 }
 
