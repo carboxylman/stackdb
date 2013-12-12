@@ -85,6 +85,7 @@ static int xen_vm_process_load_available_threads(struct target *target,int force
 static int xen_vm_process_flush_thread(struct target *target,tid_t tid);
 static int xen_vm_process_flush_current_thread(struct target *target);
 static int xen_vm_process_flush_all_threads(struct target *target);
+static int xen_vm_process_invalidate_all_threads(struct target *target);
 static int xen_vm_process_thread_snprintf(struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep);
@@ -174,6 +175,7 @@ struct target_ops xen_vm_process_ops = {
     .flush_thread = xen_vm_process_flush_thread,
     .flush_current_thread = xen_vm_process_flush_current_thread,
     .flush_all_threads = xen_vm_process_flush_all_threads,
+    .invalidate_all_threads = xen_vm_process_invalidate_all_threads,
     .thread_snprintf = xen_vm_process_thread_snprintf,
 
     .attach_evloop = xen_vm_process_attach_evloop,
@@ -1532,6 +1534,10 @@ static int xen_vm_process_flush_current_thread(struct target *target) {
 
 static int xen_vm_process_flush_all_threads(struct target *target) {
     return xen_vm_process_flush_thread(target,target->base_tid);
+}
+
+static int xen_vm_process_invalidate_all_threads(struct target *target) {
+    return __target_invalidate_all_threads(target);
 }
 
 static int xen_vm_process_thread_snprintf(struct target_thread *tthread,

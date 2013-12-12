@@ -2246,6 +2246,7 @@ struct target_ops {
     int (*flush_thread)(struct target *target,tid_t tid);
     int (*flush_current_thread)(struct target *target);
     int (*flush_all_threads)(struct target *target);
+    int (*invalidate_all_threads)(struct target *target);
     int (*gc_threads)(struct target *target);
     int (*thread_snprintf)(struct target_thread *tthread,
 			   char *buf,int bufsiz,

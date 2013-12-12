@@ -324,8 +324,9 @@ void target_delete_thread(struct target *target,struct target_thread *thread,
 			  int nohashdelete);
 
 int target_invalidate_all_threads(struct target *target);
-int target_invalidate_thread(struct target *target,
-			     struct target_thread *tthread);
+int __target_invalidate_all_threads(struct target *target);
+int __target_invalidate_thread(struct target *target,
+			       struct target_thread *tthread);
 
 target_status_t target_get_status(struct target *target);
 void target_set_status(struct target *target,target_status_t status);

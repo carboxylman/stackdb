@@ -793,8 +793,31 @@ int target_flush_thread(struct target *target,tid_t tid) {
 }
 
 int target_flush_all_threads(struct target *target) {
-    vdebug(8,LA_TARGET,LF_TARGET,"flushing all target(%s) threads\n",target->name);
-    return target->ops->flush_all_threads(target);
+    GHashTableIter iter;
+    struct target *overlay;
+    int rc;
+
+    vdebug(8,LA_TARGET,LF_TARGET,
+	   "flushing all target(%s) threads\n",target->name);
+
+    /*
+     * Do it for all the overlays first.
+     */
+    g_hash_table_iter_init(&iter,target->overlays);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay)) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "flushing all overlay target(%s) threads\n",overlay->name);
+	rc = target_flush_all_threads(overlay);
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "flushing all overlay target(%s) threads (%d)\n",overlay->name,rc);
+    }
+
+    if (target->ops->flush_all_threads)
+	return target->ops->flush_all_threads(target);
+    else {
+	errno = ENOTSUP;
+	return -1;
+    }
 }
 
 int target_gc_threads(struct target *target) {

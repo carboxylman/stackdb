@@ -3426,6 +3426,32 @@ int target_thread_filter_check(struct target *target,tid_t tid,
 
 int target_invalidate_all_threads(struct target *target) {
     GHashTableIter iter;
+    struct target *overlay;
+    int rc;
+
+    vdebug(8,LA_TARGET,LF_TARGET,
+	   "invalidating all target(%s) threads\n",target->name);
+
+    /*
+     * Do it for all the overlays first.
+     */
+    g_hash_table_iter_init(&iter,target->overlays);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&overlay)) {
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "invalidating all overlay target(%s) threads\n",overlay->name);
+	rc = target_invalidate_all_threads(overlay);
+	vdebug(5,LA_TARGET,LF_TARGET,
+	       "invalidating all overlay target(%s) threads (%d)\n",overlay->name,rc);
+    }
+
+    if (target->ops->invalidate_all_threads)
+	return target->ops->invalidate_all_threads(target);
+    else 
+	return __target_invalidate_all_threads(target);
+}
+
+int __target_invalidate_all_threads(struct target *target) {
+    GHashTableIter iter;
     struct target_thread *tthread;
 
     g_hash_table_iter_init(&iter,target->threads);
@@ -3438,8 +3464,8 @@ int target_invalidate_all_threads(struct target *target) {
     return 0;
 }
 
-int target_invalidate_thread(struct target *target,
-			     struct target_thread *tthread) {
+int __target_invalidate_thread(struct target *target,
+			       struct target_thread *tthread) {
     tthread->valid = 0;
     if (tthread->dirty)
 	vwarn("invalidated dirty thread %"PRIiTID"; BUG?\n",tthread->tid);

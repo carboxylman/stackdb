@@ -134,6 +134,7 @@ static int xen_vm_pause_thread(struct target *target,tid_t tid,int nowait);
 static int xen_vm_flush_thread(struct target *target,tid_t tid);
 static int xen_vm_flush_current_thread(struct target *target);
 static int xen_vm_flush_all_threads(struct target *target);
+static int xen_vm_invalidate_all_threads(struct target *target);
 static int xen_vm_thread_snprintf(struct target_thread *tthread,
 				  char *buf,int bufsiz,
 				  int detail,char *sep,char *key_val_sep);
@@ -170,7 +171,6 @@ int xen_vm_instr_can_switch_context(struct target *target,ADDR addr);
 
 /* Internal prototypes. */
 static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3);
-static int xen_vm_invalidate_all_threads(struct target *target);
 static result_t xen_vm_active_memory_handler(struct probe *probe,tid_t tid,
 					     void *handler_data,
 					     struct probe *trigger,
@@ -265,6 +265,7 @@ struct target_ops xen_vm_ops = {
     .flush_thread = xen_vm_flush_thread,
     .flush_current_thread = xen_vm_flush_current_thread,
     .flush_all_threads = xen_vm_flush_all_threads,
+    .invalidate_all_threads = xen_vm_invalidate_all_threads,
     .thread_snprintf = xen_vm_thread_snprintf,
 
     .attach_evloop = xen_vm_attach_evloop,
@@ -3476,7 +3477,7 @@ static int xen_vm_detach(struct target *target) {
 	 * any threads (i.e. because we're closing/detaching), don't
 	 * flush all, which would load the global thread!
 	 */
-	xen_vm_flush_all_threads(target);
+	target_flush_all_threads(target);
     }
 
     if (target->evloop && xstate->evloop_fd > -1)
@@ -5611,10 +5612,10 @@ static int __xen_vm_resume(struct target *target,int detaching) {
     if (!detaching 
 	|| g_hash_table_size(target->threads) || target->global_thread) {
 	/* Flush back registers if they're dirty! */
-	xen_vm_flush_all_threads(target);
+	target_flush_all_threads(target);
 
 	/* Invalidate our cached copies of threads. */
-	xen_vm_invalidate_all_threads(target);
+	target_invalidate_all_threads(target);
     }
 
     /* flush_context will not have done this necessarily! */

@@ -117,6 +117,7 @@ static int linux_userproc_pause_thread(struct target *target,tid_t tid,
 static int linux_userproc_flush_thread(struct target *target,tid_t tid);
 static int linux_userproc_flush_current_thread(struct target *target);
 static int linux_userproc_flush_all_threads(struct target *target);
+static int linux_userproc_invalidate_all_threads(struct target *target);
 static int linux_userproc_thread_snprintf(struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep);
@@ -195,6 +196,7 @@ struct target_ops linux_userspace_process_ops = {
     .flush_thread = linux_userproc_flush_thread,
     .flush_current_thread = linux_userproc_flush_current_thread,
     .flush_all_threads = linux_userproc_flush_all_threads,
+    .invalidate_all_threads = linux_userproc_invalidate_all_threads,
     .thread_snprintf = linux_userproc_thread_snprintf,
 
     .attach_evloop = linux_userproc_attach_evloop,
@@ -2036,6 +2038,10 @@ static int linux_userproc_flush_all_threads(struct target *target) {
     return retval;
 }
 
+static int linux_userproc_invalidate_all_threads(struct target *target) {
+    return __target_invalidate_all_threads(target);
+}
+
 static int linux_userproc_thread_snprintf(struct target_thread *tthread,
 					  char *buf,int bufsiz,
 					  int detail,char *sep,char *kvsep) {
@@ -3056,7 +3062,7 @@ static int linux_userproc_resume(struct target *target) {
      */
 
     /* Flush back registers if they're dirty, for paused threads. */
-    linux_userproc_flush_all_threads(target);
+    target_flush_all_threads(target);
     /* Always invalidate all threads so their status (and state) is
      * re-read each time we waitpid.
      */
@@ -3549,7 +3555,7 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
      * through target_resume()), we must flush and invalidate our
      * threads ourself!
      */
-    //linux_userproc_flush_all_threads(target);
+    //target_flush_all_threads(target);
     //target_invalidate_all_threads(target);
     //target_set_status(target,TSTATUS_RUNNING);
     target_resume(target);
@@ -4930,7 +4936,7 @@ int linux_userproc_singlestep(struct target *target,tid_t tid,int isbp,
      * PTRACE_SINGLESTEP runs the thread right away, so we have make
      * sure to do all the things _resume() would have done to it.
      */
-    target_invalidate_thread(target,tthread);
+    __target_invalidate_thread(target,tthread);
     target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
 
     return 0;
