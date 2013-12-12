@@ -266,10 +266,23 @@ int scope_get_sizes(struct scope *scope,int *named,int *duplicated,int *anon,
 
     if (scope->symdict) 
 	rc = symdict_get_sizes(scope->symdict,named,duplicated,anon);
+    else {
+	if (named)
+	    *named = 0;
+	if (duplicated)
+	    *duplicated = 0;
+	if (anon)
+	    *anon = 0;
+    }
 
-    if (scope->subscopes)
+    if (scope->subscopes) {
 	if (numscopes)
 	    *numscopes = g_slist_length(scope->subscopes);
+    }
+    else {
+	if (numscopes)
+	    *numscopes = 0;
+    }
 
     return rc;
 }
