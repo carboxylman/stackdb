@@ -33,7 +33,9 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	SUBDIRS += vmprobes
 endif
 SUBDIRS += target
+ifeq ("@ENABLE_TESTS@","1")
 SUBDIRS += tests
+endif
 SUBDIRS += tools
 
 #
@@ -61,8 +63,8 @@ include $(TOP_SRCDIR)/Makerules
 
 install: install-subdirs
 
-test: test-subdirs
-#	make -C tests test
+test:
+	make -C tests test
 
 # We use separate src and obj trees, so the traditional distclean to
 # clean "made" files from a mingled source-and-obj tree is unnecessary.
@@ -78,6 +80,17 @@ distclean:	distclean-subdirs
 undo-configure:
 	find $SRCDIR -name '*.in' -a -not -name configure.in | \
 	    sed -e "s;$SRCDIR;$OBJDIR;" -e 's;[.]in$;;' | xargs rm -f
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+#
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+# By default, make any target by descending into subdirectories.
+%: %-subdirs ;
 
 .PHONY: install
 

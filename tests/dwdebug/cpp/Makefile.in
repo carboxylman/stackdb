@@ -6,3 +6,14 @@ OBJDIR		= @top_builddir@
 SUBDIRS = $(shell ls -1d [0-9]*)
 
 include $(TOP_SRCDIR)/Makerules
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+#
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+# By default, make any target by descending into subdirectories.
+%: %-subdirs ;

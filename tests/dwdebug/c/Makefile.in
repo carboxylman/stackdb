@@ -9,3 +9,14 @@ include $(TOP_SRCDIR)/Makerules
 
 #test: test-subdirs
 #srctest: srctest-subdirs
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+#
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+# By default, make any target by descending into subdirectories.
+%: %-subdirs ;
