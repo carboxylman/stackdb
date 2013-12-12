@@ -2800,7 +2800,7 @@ static int linux_userproc_loaddebugfiles(struct target *target,
      * Try to figure out which binfile has the info we need.  On
      * different distros, they're stripped different ways.
      */
-    if (debugfile->binfile_pointing) {
+    if (0 && debugfile->binfile_pointing) {
 	binfile_get_root_scope_sizes(debugfile->binfile,&bfn,NULL,NULL,NULL);
 	binfile_get_root_scope_sizes(debugfile->binfile_pointing,&bfpn,
 				     NULL,NULL,NULL);
