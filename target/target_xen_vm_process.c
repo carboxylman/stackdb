@@ -1052,19 +1052,29 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
 	return -1;
 
     /* Try to find it, given all our paths and prefixes... */
-    if (!debugfile_search_path(region->name,target->spec->debugfile_root_prefix,
-			       NULL,NULL,rbuf,PATH_MAX)) {
-	verror("could not find debugfile for region '%s': %s\n",
-	       region->name,strerror(errno));
-	return -1;
-    }
-    file = rbuf;
-
+    file = region->name;
     debugfile = debugfile_from_file(file,
 				    target->spec->debugfile_root_prefix,
 				    target->spec->debugfile_load_opts_list);
-    if (!debugfile)
-	goto out;
+    if (!debugfile) {
+	if (!debugfile_search_path(region->name,
+				   target->spec->debugfile_root_prefix,
+				   NULL,NULL,rbuf,PATH_MAX)) {
+	    verror("could not find debugfile for region '%s': %s\n",
+		   region->name,strerror(errno));
+	    return -1;
+	}
+
+	file = rbuf;
+	debugfile = debugfile_from_file(file,
+					target->spec->debugfile_root_prefix,
+					target->spec->debugfile_load_opts_list);
+	if (!debugfile) {
+	    verror("still could not find debugfile for region '%s': %s\n",
+		   region->name,strerror(errno));
+	    return -1;
+	}
+    }
 
     if (target_associate_debugfile(target,region,debugfile)) 
 	goto out;
