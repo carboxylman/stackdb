@@ -167,11 +167,13 @@ static inline char *SYMBOL_TYPE(int n) {
 typedef enum {
     SYMBOL_SOURCE_DWARF   = 0,
     SYMBOL_SOURCE_ELF     = 1,
+    SYMBOL_SOURCE_PHP     = 2,
 } symbol_source_t;
 static inline char *SYMBOL_SOURCE(int n) {
     switch (n) {
     case SYMBOL_SOURCE_DWARF:    return "dwarf";
     case SYMBOL_SOURCE_ELF:      return "elf";
+    case SYMBOL_SOURCE_PHP:      return "php";
     default:                     return NULL;
     }
 }
@@ -186,10 +188,14 @@ typedef enum {
  * In the symbol struct, these fields share a 32-bit int, divided this
  * way.  If you add more symbol types, or load types, adjust these
  * accordingly!
+ *
+ * Ok, that comment is no longer accurate.  You just have to check the
+ * bitfield usage in struct symbol before changing these.  We don't want
+ * to go over 64 bits total used there in all the bitfields.
  */
 #define LOAD_TYPE_BITS      2
 #define SYMBOL_TYPE_BITS    3
-#define SYMBOL_SOURCE_BITS  1
+#define SYMBOL_SOURCE_BITS  2
 #define DATATYPE_CODE_BITS  4
 #define SRCLINE_BITS       20
 
@@ -230,6 +236,7 @@ typedef enum {
     DATATYPE_NAMESPACE    = 12,
     DATATYPE_CLASS        = 13,
     DATATYPE_TEMPLATE     = 14,
+    DATATYPE_DYNAMIC      = 15,
 } datatype_code_t;
 static inline char *DATATYPE(int n) {
     switch (n) {
@@ -248,6 +255,7 @@ static inline char *DATATYPE(int n) {
     case DATATYPE_NAMESPACE: return "namespace";
     case DATATYPE_CLASS:     return "class";
     case DATATYPE_TEMPLATE:  return "template";
+    case DATATYPE_DYNAMIC:   return "<dynamic>";
     default:                 return NULL;
     }
 }
@@ -283,7 +291,11 @@ struct location *location_create(void);
 void location_free(struct location *location);
 
 /*
- * These match the dwarf encoding codes.
+ * These match the dwarf encoding codes, for base types, up to 32.
+ * After that, they are what we need them to be -- i.e., special base
+ * types.  These special base types need to be loaded by custom loaders
+ * in whatever is using dwdebug; probably target/, in a specific
+ * backend.
  */
 typedef enum {
     ENCODING_ADDRESS = 1,
@@ -300,6 +312,25 @@ typedef enum {
     ENCODING_EDITED = 12,
     ENCODING_SIGNED_FIXED = 13,
     ENCODING_UNSIGNED_FIXED = 14,
+
+    /*
+     * Dynamic, untyped, or partially-typed languages may have a notion
+     * of variables with dynamic types.
+     *
+     * But rather than create a custom encoding for this use, we prefer
+     * that DATATYPE_DYNAMIC is used.
+     */
+
+    /*
+     * Some languages have a notion of string types that are not defined
+     * by another kind of base type.
+     */
+    ENCODING_STRING = 32,
+    /*
+     * Some languages have a notion of associative arrays, hashes,
+     * dictionaries, etc.  This is that stuff.
+     */
+    ENCODING_HASH   = 33,
 } encoding_t;
 
 /**
@@ -771,6 +802,7 @@ typedef enum {
     DEBUGFILE_TYPE_NONE  = 0,
     DEBUGFILE_TYPE_ELF = 1 << 0,
     DEBUGFILE_TYPE_DWARF = 1 << 1,
+    DEBUGFILE_TYPE_PHP = 1 << 1,
 } debugfile_type_t;
 
 typedef enum {

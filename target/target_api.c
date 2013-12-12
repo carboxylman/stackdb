@@ -36,6 +36,7 @@
 #include "target_xen_vm.h"
 #include "target_xen_vm_process.h"
 #endif
+#include "target_php.h"
 
 /**
  ** The generic target API!
@@ -62,6 +63,12 @@ struct target *target_instantiate(struct target_spec *spec,
 	return NULL;
     }
 #endif
+    else if (spec->target_type == TARGET_TYPE_PHP) {
+	verror("cannot directly instantiate TARGET_TYPE_PHP;"
+	       " call target_instantiate_overlay instead.\n");
+	errno = EINVAL;
+	return NULL;
+    }
 
     if (target) {
 	target->spec = spec;
@@ -92,6 +99,10 @@ struct target_spec *target_build_spec(target_type_t type,target_mode_t mode) {
 	tspec->backend_spec = xen_vm_process_build_spec();
     }
 #endif
+    else if (type == TARGET_TYPE_PHP) {
+	tspec = calloc(1,sizeof(*tspec));
+	tspec->backend_spec = php_build_spec();
+    }
     else {
 	errno = EINVAL;
 	return NULL;
@@ -121,6 +132,9 @@ void target_free_spec(struct target_spec *spec) {
 	    xen_vm_process_free_spec((struct xen_vm_process_spec *)spec->backend_spec);
 	}
 #endif
+	else if (spec->target_type == TARGET_TYPE_PHP) {
+	    php_free_spec((struct php_spec *)spec->backend_spec);
+	}
     }
 
     if (spec->debugfile_load_opts_list) {

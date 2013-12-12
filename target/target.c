@@ -33,6 +33,7 @@
 #include "target_xen_vm.h"
 #include "target_xen_vm_process.h"
 #endif
+#include "target_php.h"
 
 /**
  ** Globals.
@@ -519,6 +520,8 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	else if (strcmp(arg,"xen") == 0) 
 	    tmptype = TARGET_TYPE_XEN;
 #endif
+	else if (strcmp(arg,"php") == 0) 
+	    tmptype = TARGET_TYPE_PHP;
 	else {
 	    verror("bad target type %s!\n",arg);
 	    return EINVAL;
@@ -540,6 +543,8 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	    else if (strcmp(arg,"xen") == 0) 
 		spec->backend_spec = xen_vm_build_spec();
 #endif
+	    else if (strcmp(arg,"php") == 0) 
+		spec->backend_spec = php_build_spec();
 	}
 
 	break;
@@ -1092,6 +1097,8 @@ struct target_ops *target_get_ops(target_type_t target_type) {
     else if (target_type == TARGET_TYPE_XEN_PROCESS)
 	return &xen_vm_process_ops;
 #endif
+    else if (target_type == TARGET_TYPE_PHP)
+	return &php_ops;
     else
 	return NULL;
 }
@@ -2436,6 +2443,12 @@ struct value *target_load_symbol(struct target *target,
 	errno = EINVAL;
 	return NULL;
     }
+
+    /*
+     * If the target backend can read a symbol directly, do it.
+     */
+    if (target->ops->read_symbol) 
+	return target->ops->read_symbol(target,tlctxt,bsymbol,flags);
 
     /*
      * If this symbol has a constant value, load that!

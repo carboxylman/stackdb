@@ -147,13 +147,15 @@ typedef enum {
     TARGET_TYPE_PTRACE = 1 << 0,
     TARGET_TYPE_XEN    = 1 << 1,
     TARGET_TYPE_XEN_PROCESS = 1 << 2,
+    TARGET_TYPE_PHP    = 1 << 3,
 } target_type_t;
-#define TARGET_TYPE_BITS 3
+#define TARGET_TYPE_BITS 4
 
 typedef enum {
     TARGET_KIND_NONE    = 0,
     TARGET_KIND_OS      = 1,
     TARGET_KIND_PROCESS = 2,
+    TARGET_KIND_APPLICATION = 3,
 } target_kind_t;
 
 typedef enum {
@@ -1189,7 +1191,9 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 		value_free(_outvalue);					\
 		goto errlabel;						\
 	    }								\
-	    memcpy(outvarptr,_outvalue->buf,sizeof(*(outvarptr)));	\
+	    memcpy(outvarptr,_outvalue->buf,				\
+		   ((int)sizeof(*(outvarptr))) > _outvalue->bufsiz	\
+		       ? _outvalue->bufsiz : (int)sizeof(*(outvarptr)));\
 	}								\
 	if (outvalueptr) 						\
 	    *(struct value **)(outvalueptr) = _outvalue;		\
@@ -1256,7 +1260,9 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 		value_free(_outvalue);					\
 		goto errlabel;						\
 	    }								\
-	    memcpy(outvarptr,_outvalue->buf,sizeof(*(outvarptr)));	\
+	    memcpy(outvarptr,_outvalue->buf,				\
+		   ((int)sizeof(*(outvarptr))) > _outvalue->bufsiz	\
+		       ? _outvalue->bufsiz : (int)sizeof(*(outvarptr)));\
 	}								\
 	if (outvalueptr) {						\
 	    if (0 && *(struct value **)(outvalueptr) == invalue) {	\
@@ -1267,6 +1273,64 @@ int value_refresh_diff(struct value *value,int recurse,value_diff_t *vdiff,
 	else {								\
 	    value_free(_outvalue);					\
 	}								\
+    } while (0);
+#define VLVAR(target,tlctxt,invalue,varstr,loadflags,outvarptr,errlabel) \
+    do {								\
+	struct value *_outvalue;					\
+									\
+	if ((invalue) != NULL) {					\
+	    _outvalue = target_load_value_member((target),(tlctxt),(invalue),(varstr), \
+						 NULL,(loadflags));	\
+	}								\
+	else { 								\
+	    struct bsymbol *_varsym;					\
+	    _varsym = target_lookup_sym((target),(varstr),NULL,NULL,	\
+					SYMBOL_TYPE_NONE);		\
+	    if (!_varsym) {						\
+		goto errlabel;						\
+	    }								\
+	    _outvalue = target_load_symbol((target),(tlctxt),_varsym, \
+					   (loadflags));		\
+	    bsymbol_release(_varsym);					\
+	}								\
+	if (!_outvalue)							\
+	    goto errlabel;						\
+	if ((int)sizeof(*(outvarptr)) < _outvalue->bufsiz) {		\
+	    verror("outvar size %u smaller than outvalue len %d\n",	\
+		   (unsigned)sizeof(*(outvarptr)),_outvalue->bufsiz);	\
+	    value_free(_outvalue);					\
+	    goto errlabel;						\
+	}								\
+	memcpy(outvarptr,_outvalue->buf,				\
+	       ((int)sizeof(*(outvarptr))) > _outvalue->bufsiz		\
+	       ? _outvalue->bufsiz : (int)sizeof(*(outvarptr)));	\
+	value_free(_outvalue);						\
+    } while (0);
+#define VLVAL(target,tlctxt,invalue,varstr,loadflags,outvalueptr,errlabel) \
+    do {								\
+	struct value *_outvalue;					\
+									\
+	if ((invalue) != NULL) {					\
+	    _outvalue = target_load_value_member((target),(tlctxt),(invalue),(varstr), \
+						 NULL,(loadflags));	\
+	}								\
+	else { 								\
+	    struct bsymbol *_varsym;					\
+	    _varsym = target_lookup_sym((target),(varstr),NULL,NULL,	\
+					SYMBOL_TYPE_NONE);		\
+	    if (!_varsym) {						\
+		goto errlabel;						\
+	    }								\
+	    _outvalue = target_load_symbol((target),(tlctxt),_varsym, \
+					   (loadflags));		\
+	    bsymbol_release(_varsym);					\
+	}								\
+	if (!_outvalue)							\
+	    goto errlabel;						\
+	if (0 && *(struct value **)(outvalueptr) == invalue) {		\
+	    value_free(*(struct value **)(outvalueptr));		\
+	}								\
+	*(struct value **)(outvalueptr) = _outvalue;			\
     } while (0);
 #define VLA(target,addr,loadflags,outbufptr,outbuflen,outvalueptr,errlabel) \
     do {								\
@@ -2205,6 +2269,11 @@ struct target_ops {
     unsigned long (*write)(struct target *target,ADDR addr,
 			   unsigned long length,unsigned char *buf);
 
+    /* Some targets only support symbol reads; do it! */
+    struct value *(*read_symbol)(struct target *target,
+				 struct target_location_ctxt *tlctxt,
+				 struct bsymbol *bsymbol,load_flags_t flags);
+
     /*
      * Some targets might support threads that have their own virtual
      * address spaces, but an underlying system (like the kernel) might
@@ -2276,8 +2345,11 @@ struct target_ops {
     (*unwind_prev)(struct target_location_ctxt *tlctxt);
 
     /* breakpoint/watchpoint stuff */
-    struct probe *(*insert_symbol_breakpoint)(struct target *target,tid_t tid,
-					      struct bsymbol *bsymbol);
+    int (*probe_register_symbol)(struct target *target,tid_t tid,
+				 struct probe *probe,struct bsymbol *bsymbol,
+				 probepoint_style_t style,
+				 probepoint_whence_t whence,
+				 probepoint_watchsize_t watchsize);
     struct target_memmod *(*insert_sw_breakpoint)(struct target *target,tid_t tid,
 						  ADDR addr);
     int (*remove_sw_breakpoint)(struct target *target,tid_t tid,

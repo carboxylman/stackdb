@@ -1443,13 +1443,13 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     struct memrange *range = NULL;
     ADDR start = 0;
     ADDR alt_start = 0;
-    ADDR probeaddr;
+    ADDR probeaddr = 0;
     unsigned int ssize;
     struct symbol *symbol;
     loctype_t ltrc;
     struct location tloc;
-    struct probe *tprobe;
     struct target_location_ctxt *tlctxt = NULL;
+    int rc;
 
     symbol = lsymbol_last_symbol(bsymbol->lsymbol);
 
@@ -1460,12 +1460,13 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 
     /* No need to RHOLD(); __probe_register_addr() does it. */
 
-    if (target->ops->insert_symbol_breakpoint) {
-	tprobe = probe->target->ops->insert_symbol_breakpoint(target,
-							      probe->thread->tid,
-							      bsymbol);
-	if (!probe_register_source(probe,tprobe)) {
-	    verror("could not register atop target symbol breakpoint!\n");
+    if (target->ops->probe_register_symbol) {
+	rc = target->ops->probe_register_symbol(target,probe->thread->tid,
+						probe,bsymbol,
+						style,whence,watchsize);
+	if (rc) {
+	    verror("could not register probe for symbol '%s' breakpoint!\n",
+		   bsymbol_get_name(bsymbol));
 	    goto errout;
 	}
     }
@@ -1545,7 +1546,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
     }
 
     vdebug(5,LA_PROBE,LF_PROBE,"registered probe on %s at 0x%"PRIxADDR"\n",
-	   bsymbol->lsymbol->symbol->name,probeaddr);
+	   bsymbol_get_name(bsymbol),probeaddr);
 
     return probe;
 

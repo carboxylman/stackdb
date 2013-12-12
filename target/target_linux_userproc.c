@@ -82,6 +82,10 @@ static struct target *
 linux_userproc_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
 				   struct target_spec *spec);
+static struct target_thread *
+linux_userproc_lookup_overlay_thread_by_id(struct target *target,int id);
+static struct target_thread *
+linux_userproc_lookup_overlay_thread_by_name(struct target *target,char *name);
 
 static target_status_t linux_userproc_status(struct target *target);
 static int linux_userproc_pause(struct target *target,int nowait);
@@ -171,6 +175,8 @@ struct target_ops linux_userspace_process_ops = {
     .postloadinit = linux_userproc_postloadinit,
 
     .instantiate_overlay = linux_userproc_instantiate_overlay,
+    .lookup_overlay_thread_by_id = linux_userproc_lookup_overlay_thread_by_id,
+    .lookup_overlay_thread_by_name = linux_userproc_lookup_overlay_thread_by_name,
 
     .status = linux_userproc_status,
     .pause = linux_userproc_pause,
@@ -1454,6 +1460,7 @@ int linux_userproc_attach_thread(struct target *target,tid_t parent,tid_t child)
     tstate->ctl_sig_pause_all = 0;
 
     tthread = target_create_thread(target,child,tstate);
+    tthread->supported_overlay_types = TARGET_TYPE_PHP;
 
     target_add_state_change(target,child,TARGET_STATE_CHANGE_THREAD_CREATED,0,0,
 			    0,0,NULL);
@@ -2132,6 +2139,7 @@ static int linux_userproc_init(struct target *target) {
     tstate->last_signo = -1;
 
     tthread = target_create_thread(target,lstate->pid,tstate);
+    tthread->supported_overlay_types = TARGET_TYPE_PHP;
     /* Default thread is always starts paused. */
     target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
@@ -2284,6 +2292,7 @@ static int linux_userproc_attach_internal(struct target *target) {
 	tstate->ctl_sig_pause_all = 0;
 
 	tthread = target_create_thread(target,tid,tstate);
+	tthread->supported_overlay_types = TARGET_TYPE_PHP;
 	target_thread_set_status(tthread,THREAD_STATUS_PAUSED);
 
 	if (target->evloop)
@@ -2831,8 +2840,70 @@ static struct target *
 linux_userproc_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
 				   struct target_spec *spec) {
-    errno = ENOTSUP;
-    return NULL;
+    struct target *overlay;
+
+    if (spec->target_type != TARGET_TYPE_PHP) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    /*
+     * All we want to do here is create the overlay target.
+     */
+    overlay = target_create("php",spec);
+
+    return overlay;
+}
+
+static struct target_thread *
+linux_userproc_lookup_overlay_thread_by_id(struct target *target,int id) {
+    struct target_thread *retval;
+
+    if (id < 0)
+	id = TID_GLOBAL;
+
+    retval = linux_userproc_load_thread(target,id,0);
+    if (!retval) {
+	if (!errno)
+	    errno = ESRCH;
+	return NULL;
+    }
+
+    vdebug(5,LA_TARGET,LF_LUP,
+	   "found overlay thread %d\n",id);
+
+    return retval;
+}
+
+static struct target_thread *
+linux_userproc_lookup_overlay_thread_by_name(struct target *target,char *name) {
+    struct target_thread *retval = NULL;
+    struct target_thread *tthread;
+    int rc;
+    GHashTableIter iter;
+
+    if ((rc = linux_userproc_load_all_threads(target,0)))
+	vwarn("could not load %d threads; continuing anyway!\n",-rc);
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread)
+	    continue;
+	else if (tthread->name && strcmp(tthread->name,name) == 0) {
+	    retval = tthread;
+	    break;
+	}
+    }
+
+    if (retval) {
+	vdebug(5,LA_TARGET,LF_XV,
+	       "found overlay thread %"PRIiTID"\n",retval->tid);
+	return tthread;
+    }
+    else {
+	errno = ESRCH;
+	return NULL;
+    }
 }
 
 static target_status_t linux_userproc_status(struct target *target) {

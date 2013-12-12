@@ -146,10 +146,11 @@ typedef enum log_flag_bits_target {
     LFB_LUP           = 8,
     LFB_XV            = 9,
     LFB_XVP           = 10,
-    LFB_DISASM        = 11,
-    LFB_THREAD        = 12,
-    LFB_OS            = 13,
-    LFB_PROCESS       = 14,
+    LFB_PHP           = 11,
+    LFB_DISASM        = 12,
+    LFB_THREAD        = 13,
+    LFB_OS            = 14,
+    LFB_PROCESS       = 15,
 } log_flag_bits_target_t;
 typedef enum log_flags_target {
     LF_TARGET         = 1 << LFB_TARGET,
@@ -163,6 +164,7 @@ typedef enum log_flags_target {
     LF_LUP            = 1 << LFB_LUP,
     LF_XV             = 1 << LFB_XV,
     LF_XVP            = 1 << LFB_XVP,
+    LF_PHP            = 1 << LFB_PHP,
     LF_DISASM         = 1 << LFB_DISASM,
     LF_THREAD         = 1 << LFB_THREAD,
     LF_OS             = 1 << LFB_OS,

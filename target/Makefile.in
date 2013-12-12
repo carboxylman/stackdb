@@ -67,7 +67,7 @@ OBJECTS := target.lo target_api.lo target_generic.lo memory.lo location.lo \
 	symbol.lo value.lo probe.lo probe_lib.lo probe_value.lo probe_filter.lo \
 	target_nv_filter.lo \
 	target_os.lo target_process.lo target_os_linux_generic.lo
-OBJECTS += target_linux_userproc.lo
+OBJECTS += target_linux_userproc.lo target_php.lo
 ifeq ($(ENABLE_XENSUPPORT),"1")
 	OBJECTS += target_xen_vm.lo target_xen_vm_util.lo \
 		target_xen_vm_process.lo

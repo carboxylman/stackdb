@@ -54,6 +54,14 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
 static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 						    tid_t tid,ADDR ipval,
 						    int *again);
+static struct target *
+xen_vm_process_instantiate_overlay(struct target *target,
+				   struct target_thread *tthread,
+				   struct target_spec *spec);
+static struct target_thread *
+xen_vm_process_lookup_overlay_thread_by_id(struct target *target,int id);
+static struct target_thread *
+xen_vm_process_lookup_overlay_thread_by_name(struct target *target,char *name);
 
 static int xen_vm_process_attach_evloop(struct target *target,
 					struct evloop *evloop);
@@ -145,8 +153,9 @@ struct target_ops xen_vm_process_ops = {
     .loaddebugfiles = xen_vm_process_loaddebugfiles,
     .postloadinit = xen_vm_process_postloadinit,
 
-    /* Don't support overlays initially. */
-    .instantiate_overlay = NULL,
+    .instantiate_overlay = xen_vm_process_instantiate_overlay,
+    .lookup_overlay_thread_by_id = xen_vm_process_lookup_overlay_thread_by_id,
+    .lookup_overlay_thread_by_name = xen_vm_process_lookup_overlay_thread_by_name,
 
     .overlay_event = xen_vm_process_overlay_event,
 
@@ -1228,6 +1237,73 @@ static int xen_vm_process_set_active_probing(struct target *target,
     }
 
     return retval;
+}
+
+static struct target *
+xen_vm_process_instantiate_overlay(struct target *target,
+				   struct target_thread *tthread,
+				   struct target_spec *spec) {
+    struct target *overlay;
+
+    if (spec->target_type != TARGET_TYPE_PHP) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    /*
+     * All we want to do here is create the overlay target.
+     */
+    overlay = target_create("php",spec);
+
+    return overlay;
+}
+
+static struct target_thread *
+xen_vm_process_lookup_overlay_thread_by_id(struct target *target,int id) {
+    struct target_thread *retval;
+
+    if (id < 0)
+	id = TID_GLOBAL;
+
+    retval = xen_vm_process_load_thread(target,id,0);
+    if (!retval) {
+	if (!errno)
+	    errno = ESRCH;
+	return NULL;
+    }
+
+    return retval;
+}
+
+static struct target_thread *
+xen_vm_process_lookup_overlay_thread_by_name(struct target *target,char *name) {
+    struct target_thread *retval = NULL;
+    struct target_thread *tthread;
+    int rc;
+    GHashTableIter iter;
+
+    if ((rc = xen_vm_process_load_all_threads(target,0)))
+	vwarn("could not load %d threads; continuing anyway!\n",-rc);
+
+    g_hash_table_iter_init(&iter,target->threads);
+    while (g_hash_table_iter_next(&iter,NULL,(gpointer)&tthread)) {
+	if (tthread == target->global_thread)
+	    continue;
+	else if (tthread->name && strcmp(tthread->name,name) == 0) {
+	    retval = tthread;
+	    break;
+	}
+    }
+
+    if (retval) {
+	vdebug(5,LA_TARGET,LF_XVP,
+	       "found overlay thread %"PRIiTID"\n",retval->tid);
+	return tthread;
+    }
+    else {
+	errno = ESRCH;
+	return NULL;
+    }
 }
 
 #define EF_TF (0x00000100)
