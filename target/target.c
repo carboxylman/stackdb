@@ -2992,9 +2992,9 @@ int target_lookup_safe_disasm_range(struct target *target,ADDR addr,
 				    memrange_unrelocate(range,addr),
 				    NULL))) {
 	if (start)
-	    *start = crd->start;
+	    *start = memrange_relocate(range,crd->start);
 	if (end)
-	    *end = crd->end;
+	    *end = memrange_relocate(range,crd->end);
 	if (data)
 	    *data = crd->data;
 
@@ -3027,9 +3027,9 @@ int target_lookup_next_safe_disasm_range(struct target *target,ADDR addr,
 					 memrange_unrelocate(range,addr),
 					 NULL))) {
 	if (start)
-	    *start = crd->start;
+	    *start = memrange_relocate(range,crd->start);
 	if (end)
-	    *end = crd->end;
+	    *end = memrange_relocate(range,crd->end);
 	if (data)
 	    *data = crd->data;
 
