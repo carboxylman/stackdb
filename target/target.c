@@ -902,6 +902,9 @@ void target_clear_state_changes(struct target *target) {
     struct target_state_change *change;
     int i;
 
+    if (!target->state_changes)
+	return;
+
     if (array_list_len(target->state_changes)) {
 	vdebug(5,LA_TARGET,LF_TARGET,
 	       "clearing %d state changes on target(%s)\n",
@@ -933,13 +936,14 @@ void target_free(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_TARGET,"freeing target(%s)\n",target->name);
 
-    if (array_list_len(target->state_changes)) {
+    if (target->state_changes) {
 	vwarnopt(4,LA_TARGET,LF_TARGET,
 		 "removing %d state change events; backend BUG?\n",
 		 array_list_len(target->state_changes));
 	target_clear_state_changes(target);
+	array_list_free(target->state_changes);
+	target->state_changes = NULL;
     }
-    array_list_free(target->state_changes);
 
     /*
      * Free actions, then probes,  We cannot call probe_free/action_free
