@@ -215,6 +215,8 @@ struct xen_vm_thread_state {
      */
     vcpu_guest_context_t context;
 
+    vcpu_guest_context_t alt_context;
+
     /* XXX: can we debug a 32-bit target on a 64-bit host?  If yes, how 
      * we use this might have to change.
      */
