@@ -6728,9 +6728,11 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 	     * off the top of my head, so just do it when we accumulate
 	     * at least 32 threads.
 	     */
+	    /*
 	    if (g_hash_table_size(target->threads) > 32) {
 		target_gc_threads(target);
 	    }
+	    */
 
 	    gtstate = (struct xen_vm_thread_state *)target->global_thread->state;
 	    xtstate = (struct xen_vm_thread_state *)tthread->state;
