@@ -1559,10 +1559,26 @@ static int xen_vm_process_thread_snprintf(struct target_thread *tthread,
 }
 
 static REGVAL xen_vm_process_read_reg(struct target *target,tid_t tid,REG reg) {
+    struct target_thread *base_tthread;
+
     if (!__is_our_tid(target,tid)) {
 	verror("tid %d is not in tgid %d!\n",tid,target->base_tid);
 	errno = ESRCH;
 	return -1;
+    }
+
+    base_tthread = target_load_thread(target->base,tid,0);
+    if (base_tthread->tidctxt == THREAD_CTXT_KERNEL
+	&& target->base->ops->readreg_tidctxt) {
+	if (0 && reg == target->spregno) {
+	    vwarn("adjusting stack!\n");
+	    return target->base->ops->readreg_tidctxt(target->base,tid,
+						      THREAD_CTXT_USER,reg) - 8;
+	}
+	else {
+	    return target->base->ops->readreg_tidctxt(target->base,tid,
+						      THREAD_CTXT_USER,reg);
+	}
     }
 
     return target->base->ops->readreg(target->base,tid,reg);
@@ -1571,7 +1587,7 @@ static REGVAL xen_vm_process_read_reg(struct target *target,tid_t tid,REG reg) {
 static int xen_vm_process_write_reg(struct target *target,tid_t tid,REG reg,
 				    REGVAL value) {
     struct target_thread *tthread;
-    int rc;
+    struct target_thread *base_tthread;
 
     if (!__is_our_tid(target,tid)) {
 	verror("tid %d is not in tgid %d!\n",tid,target->base_tid);
@@ -1581,9 +1597,14 @@ static int xen_vm_process_write_reg(struct target *target,tid_t tid,REG reg,
 
     tthread = target_lookup_thread(target,tid);
     tthread->dirty = 1;
-    rc = target->base->ops->writereg(target->base,tid,reg,value);
 
-    return rc;
+    base_tthread = target_load_thread(target->base,tid,0);
+    if (base_tthread->tidctxt == THREAD_CTXT_KERNEL
+	&& target->base->ops->readreg_tidctxt)
+	return target->base->ops->writereg_tidctxt(target->base,tid,
+						   THREAD_CTXT_USER,reg,value);
+
+    return target->base->ops->writereg(target->base,tid,reg,value);
 }
 
 static GHashTable *xen_vm_process_copy_registers(struct target *target,tid_t tid) {

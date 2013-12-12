@@ -260,6 +260,11 @@ extern char *THREAD_STATUS_STRINGS[];
 #define THREAD_STATUS(n) (((n) <= THREAD_STATUS_RETURNING_KERNEL)	\
 			  ? THREAD_STATUS_STRINGS[(n)] : NULL)
 
+typedef enum {
+    THREAD_CTXT_KERNEL = 0,
+    THREAD_CTXT_USER   = 3,
+} thread_ctxt_t;
+
 /*
  * When we handle a breakpoint, we *have* to single step some
  * instruction(s) to get us past the breakpoint (unless it's a hardware
@@ -1468,6 +1473,7 @@ typedef enum {
 struct target_thread {
     struct target *target;
     tid_t tid;
+    thread_ctxt_t tidctxt;
     int8_t valid:1,
   	   dirty:1,
 	   resumeat:4,
@@ -2256,6 +2262,11 @@ struct target_ops {
     REGVAL (*readreg)(struct target *target,tid_t tid,REG reg);
     int (*writereg)(struct target *target,tid_t tid,REG reg,REGVAL value);
     GHashTable *(*copy_registers)(struct target *target,tid_t tid);
+
+    REGVAL (*readreg_tidctxt)(struct target *target,
+			      tid_t tid,thread_ctxt_t tidctxt,REG reg);
+    int (*writereg_tidctxt)(struct target *target,
+			    tid_t tid,thread_ctxt_t tidctxt,REG reg,REGVAL value);
 
     /* unwind support */
     struct target_location_ctxt *(*unwind)(struct target *target,tid_t tid);

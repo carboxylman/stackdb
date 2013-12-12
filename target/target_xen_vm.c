@@ -142,6 +142,11 @@ static int xen_vm_thread_snprintf(struct target_thread *tthread,
 static REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg);
 static int xen_vm_write_reg(struct target *target,tid_t tid,REG reg,REGVAL value);
 static GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid);
+REGVAL xen_vm_read_reg_tidctxt(struct target *target,
+			       tid_t tid,thread_ctxt_t tidctxt,REG reg);
+int xen_vm_write_reg_tidctxt(struct target *target,
+			     tid_t tid,thread_ctxt_t tidctxt,
+			     REG reg,REGVAL value);
 static REG xen_vm_get_unused_debug_reg(struct target *target,tid_t tid);
 static int xen_vm_set_hw_breakpoint(struct target *target,tid_t tid,REG num,ADDR addr);
 static int xen_vm_set_hw_watchpoint(struct target *target,tid_t tid,REG num,ADDR addr,
@@ -274,6 +279,8 @@ struct target_ops xen_vm_ops = {
     .readreg = xen_vm_read_reg,
     .writereg = xen_vm_write_reg,
     .copy_registers = xen_vm_copy_registers,
+    .readreg_tidctxt = xen_vm_read_reg_tidctxt,
+    .writereg_tidctxt = xen_vm_write_reg_tidctxt,
     .get_unused_debug_reg = xen_vm_get_unused_debug_reg,
     .set_hw_breakpoint = xen_vm_set_hw_breakpoint,
     .set_hw_watchpoint = xen_vm_set_hw_watchpoint,
@@ -1110,6 +1117,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     struct value *threadv = NULL;
     struct value *v = NULL;
     int iskernel = 0;
+    int inkernel = 0;
     ADDR stack_top;
     char *comm = NULL;
     ADDR stack_member_addr;
@@ -1435,10 +1443,14 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     if (iskernel) {
 	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_KERNEL);
 	tthread->supported_overlay_types = TARGET_TYPE_NONE;
+
+	tthread->tidctxt = THREAD_CTXT_KERNEL;
     }
     else {
 	target_thread_set_status(tthread,THREAD_STATUS_RETURNING_USER);
 	tthread->supported_overlay_types = TARGET_TYPE_XEN_PROCESS;
+
+	tthread->tidctxt = THREAD_CTXT_USER;
     }
 
     if (tthread->name)
@@ -2621,6 +2633,11 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	   "loading current thread (ip = 0x%"PRIxADDR",cr3 = 0x%"PRIxADDR")\n",
 	   ipval,cr3);
 
+    if (ipval < xstate->kernel_start_addr) 
+	target->global_thread->tidctxt = THREAD_CTXT_USER;
+    else
+	target->global_thread->tidctxt = THREAD_CTXT_KERNEL;
+
     /*
      * If only loading the global thread, stop here.
      */
@@ -2976,6 +2993,129 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
      */
     target->current_thread = tthread;
     target_thread_set_status(target->current_thread,THREAD_STATUS_RUNNING);
+
+    if (ipval < xstate->kernel_start_addr) 
+	tthread->tidctxt = THREAD_CTXT_USER;
+    else
+	tthread->tidctxt = THREAD_CTXT_KERNEL;
+
+    /*
+     * If this is a user-level thread that is in the kernel, pull our
+     * user level-saved regs off the stack and put them in alt_context.
+     */
+    if (mm_addr && tthread->tidctxt == THREAD_CTXT_KERNEL) {
+	ADDR stack_top = value_addr(threadinfov) + THREAD_SIZE;
+	ADDR ptregs_stack_addr;
+
+	if (target->wordsize == 8) {
+	    ptregs_stack_addr = 
+		stack_top - 0 - symbol_get_bytesize(xstate->pt_regs_type);
+	}
+	else {
+	    ptregs_stack_addr = 
+		stack_top - 8 - symbol_get_bytesize(xstate->pt_regs_type);
+	}
+
+	vdebug(5,LA_TARGET,LF_XV,
+	       "loading userspace regs from kernel stack for user tid %d"
+	       " currently in kernel!\n",
+	       tid);
+
+	memset(&tstate->alt_context,0,sizeof(tstate->alt_context));
+
+	v = target_load_addr_real(target,ptregs_stack_addr,
+				  LOAD_FLAG_NONE,
+				  symbol_get_bytesize(xstate->pt_regs_type));
+	if (!v) {
+	    verror("could not load stack register save frame task %"PRIiTID"!\n",
+		   tid);
+	    goto errout;
+	}
+
+	/* Copy the first range. */
+	if (target->wordsize == 8)
+	    memcpy(&tstate->alt_context.user_regs,v->buf,8 * 15);
+	else
+	    memcpy(&tstate->alt_context.user_regs,v->buf,4 * 7);
+
+	/* Copy the second range. */
+	/**
+	 ** WARNING: esp and ss may not be valid if the sleeping thread was
+	 ** interrupted while it was in the kernel, because the interrupt
+	 ** gate does not push ss and esp; see include/asm-i386/processor.h .
+	 **/
+#if __WORDSIZE == 64
+	int ip_offset = offsetof(struct vcpu_guest_context,user_regs.rip);
+#else
+	int ip_offset = offsetof(struct vcpu_guest_context,user_regs.eip);
+#endif
+	if (target->wordsize == 8)
+	    memcpy(((char *)&tstate->alt_context) + ip_offset,
+		   v->buf + xstate->pt_regs_ip_offset,8 * 5);
+	else
+	    memcpy(((char *)&tstate->alt_context) + ip_offset,
+		   v->buf + xstate->pt_regs_ip_offset,4 * 5);
+
+	/*
+	 * ds, es, fs, gs are all special; see other comments.
+	 */
+	if (!xstate->thread_struct_has_ds_es && xstate->pt_regs_has_ds_es) {
+	    /* XXX: this works because we know the location of (x)ds/es;
+	     * it's only on i386/x86; and because Xen pads its
+	     * cpu_user_regs structs from u16s to ulongs for segment
+	     * registers.  :)
+	     */
+	    memcpy(&tstate->alt_context.user_regs.ds,
+		   (char *)v->buf + 7 * target->wordsize,v->bufsiz);
+	    memcpy(&tstate->alt_context.user_regs.es,
+		   (char *)v->buf + 8 * target->wordsize,v->bufsiz);
+	}
+	if (!xstate->thread_struct_has_fs && xstate->pt_regs_has_fs_gs) {
+	    /* XXX: this is only true on newer x86 stuff; x86_64 and old
+	     * i386 stuff did not save it on the stack.
+	     */
+	    memcpy(&tstate->alt_context.user_regs.fs,
+		   (char *)v->buf + 9 * target->wordsize,v->bufsiz);
+	}
+
+	ADDR old_rsp = 0;
+	if (!target_read_addr(target,
+			      gtstate->context.gs_base_kernel + 0xbf00,
+			      target->wordsize,
+			      (unsigned char *)&old_rsp)) {
+	    verror("could not read %%gs:old_rsp (%%gs+0xbf00)"
+		   " (0x%"PRIxADDR":%"PRIxOFFSET"); cannot continue!\n",
+		   (ADDR)gtstate->context.gs_base_kernel,0xbf00UL);
+	    if (!errno)
+		errno = EFAULT;
+	    return 0;
+	}
+#if __WORDSIZE == 64
+	int sp_offset = offsetof(struct vcpu_guest_context,user_regs.rsp);
+#else
+	int sp_offset = offsetof(struct vcpu_guest_context,user_regs.esp);
+#endif
+	vdebug(5,LA_TARGET,LF_XV,
+	       "stacked rsp 0x%"PRIxADDR", old_rsp 0x%"PRIxADDR"\n",
+	       *(ADDR *)(((char *)&tstate->alt_context) + sp_offset),old_rsp);
+	if (target->wordsize == 8) 
+	    memcpy(((char *)&tstate->alt_context) + sp_offset,&old_rsp,8);
+	else
+	    memcpy(((char *)&tstate->alt_context) + sp_offset,&old_rsp,4);
+
+	/*	
+#if __WORDSIZE == 64
+	int r_offset = offsetof(struct vcpu_guest_context,user_regs.r12);
+	vdebug(5,LA_TARGET,LF_XV,
+	       "stacked r12 0x%"PRIxADDR", adjusting\n",
+	       *(ADDR *)(((char *)&tstate->alt_context) + r_offset));
+	*(ADDR *)(((char *)&tstate->alt_context) + r_offset) += 8;
+#endif
+	*/
+
+	value_free(v);
+	v = NULL;
+    }
 
     if (taskv) { //!(SOFTIRQ_COUNT(preempt_count) || HARDIRQ_COUNT(preempt_count))) {
 	if (tstate->task_struct) {
@@ -8284,6 +8424,122 @@ GHashTable *xen_vm_copy_registers(struct target *target,tid_t tid) {
     }
 
     return retval;
+}
+
+REGVAL xen_vm_read_reg_tidctxt(struct target *target,
+			       tid_t tid,thread_ctxt_t tidctxt,REG reg) {
+    int offset;
+    REGVAL retval;
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *xtstate;
+
+    /*
+     * XXX XXX XXX: This function basically assumes it is only called
+     * from xen-process to load userspace regs for a userspace thread
+     * that's currently in the kernel...
+     */
+
+    vdebug(16,LA_TARGET,LF_XV,"reading reg %s\n",xen_vm_reg_name(target,reg));
+
+    if (reg >= XV_TSREG_END_INDEX && reg <= XV_TSREG_START_INDEX) 
+	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
+#if __WORDSIZE == 64
+    else if (reg >= X86_64_DWREG_COUNT) {
+	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return 0;
+    }
+    else
+	offset = dreg_to_offset64[reg];
+#else
+    else if (reg >= X86_32_DWREG_COUNT) {
+	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return 0;
+    }
+    else 
+	offset = dreg_to_offset32[reg];
+#endif
+
+    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+	if (!errno) 
+	    errno = EINVAL;
+	verror("could not load cached thread %"PRIiTID"\n",tid);
+	return 0;
+    }
+    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+#if __WORDSIZE == 64
+    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
+	retval = (REGVAL)*(uint64_t *)(((char *)&(xtstate->alt_context)) + offset);
+    else
+	retval = (REGVAL)*(uint16_t *)(((char *)&(xtstate->alt_context)) + offset);
+#else 
+    retval = (REGVAL)*(uint32_t *)(((char *)&(xtstate->alt_context)) + offset);
+#endif
+
+    vdebug(9,LA_TARGET,LF_XV,"read reg %s 0x%"PRIxREGVAL"\n",
+	   xen_vm_reg_name(target,reg),retval);
+
+    return retval;
+}
+
+int xen_vm_write_reg_tidctxt(struct target *target,
+			     tid_t tid,thread_ctxt_t tidctxt,
+			     REG reg,REGVAL value) {
+    int offset;
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *xtstate;
+
+    vdebug(16,LA_TARGET,LF_XV,"writing reg %s 0x%"PRIxREGVAL"\n",
+	   xen_vm_reg_name(target,reg),value);
+
+    if (reg >= XV_TSREG_DR0 && reg <= XV_TSREG_DR7) {
+	errno = EACCES;
+	verror("cannot write debug registers directly!");
+	return -1;
+    }
+    else if (reg >= XV_TSREG_CR0 && reg <= XV_TSREG_CR7) 
+	offset = tsreg_to_offset[XV_TSREG_START_INDEX - reg];
+#if __WORDSIZE == 64
+    else if (reg >= X86_64_DWREG_COUNT) {
+	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+    else 
+	offset = dreg_to_offset64[reg];
+#else
+    else if (reg >= X86_32_DWREG_COUNT) {
+	verror("DWARF regnum %d does not have a 32-bit target mapping!\n",reg);
+	errno = EINVAL;
+	return -1;
+    }
+    else 
+	offset = dreg_to_offset32[reg];
+#endif
+
+    if (!(tthread = xen_vm_load_cached_thread(target,tid))) {
+	if (!errno) 
+	    errno = EINVAL;
+	verror("could not load cached thread %"PRIiTID"\n",tid);
+	return -1;
+    }
+    xtstate = (struct xen_vm_thread_state *)tthread->state;
+
+#if __WORDSIZE == 64
+    if (likely(reg < 50) || unlikely(reg >= XV_TSREG_END_INDEX))
+	*(uint64_t *)(((char *)&(xtstate->alt_context)) + offset) = (uint64_t)value;
+    else
+	*(uint16_t *)(((char *)&(xtstate->alt_context)) + offset) = (uint16_t)value;
+#else 
+    *(uint32_t *)(((char *)&(xtstate->alt_context)) + offset) = (uint32_t)value;
+#endif
+
+    /* Flush the context in target_resume! */
+    tthread->dirty = 1;
+
+    return 0;
 }
 
 /*
