@@ -545,15 +545,32 @@ OFFSET location_resolve_offset(struct location *location,
 
 loctype_t symbol_resolve_location(struct symbol *symbol,
 				  struct location_ctxt *lctxt,
-				  struct location *o_loc) {
-    if (!SYMBOLX_VAR_LOC(symbol)) {
+				  struct location *o_loc) {	
+    struct location_ops *lops = NULL;
+    ADDR addr;
+
+    if (SYMBOLX_VAR_LOC(symbol))
+	return location_resolve(SYMBOLX_VAR_LOC(symbol),lctxt,symbol,o_loc);
+    else if (symbol->has_addr) {
+	if (lctxt && lctxt->ops) 
+	    lops = lctxt->ops;
+	addr = symbol->addr;
+	if (lops && lops->relocate) {
+	    if (lops->relocate(lctxt,addr,&addr)) {
+		verror("failed to reclocate 0x%"PRIxADDR"!\n",addr);
+		return -LOCTYPE_ADDR;
+	    }
+	}
+	if (o_loc) 
+	    location_set_addr(o_loc,addr);
+	return LOCTYPE_ADDR;
+    }
+    else {
 	vwarnopt(7,LA_DEBUG,LF_DLOC,"no location for ");
 	WARNOPTDUMPSYMBOL_NL(7,LA_DEBUG,LF_DLOC,symbol);
 	errno = EINVAL;
 	return LOCTYPE_UNKNOWN;
     }
-
-    return location_resolve(SYMBOLX_VAR_LOC(symbol),lctxt,symbol,o_loc);
 }
 
 int location_ctxt_read_retaddr(struct location_ctxt *lctxt,ADDR *o_retaddr) {
