@@ -1,0 +1,192 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/c/004/004.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (11)
+    type:  (4 B) (encoding=5)
+    type:  (1 B) (encoding=6)
+    type:  (8 B) (encoding=7)
+    type:  (8 B) (encoding=5)
+    type: struct xys_struct_1 (8 B) (line=12) { int x (line=13,) @@ +0; int y (line=14,) @@ +4 }
+    type: struct xys_struct_2 (8 B) (line=27) { int x (line=28,) @@ +0; int y (line=29,) @@ +4 }
+    type: struct foo_struct_1 (72 B) (line=7) { int a (line=8,) @@ +0; long int b (line=9,) @@ +8; char [44] str (line=10,) @@ +16; struct xys_struct_1 xys (line=15,) @@ +60 }
+    type: struct foo_struct_2 (168 B) (line=3) { int sfoo (line=4,) @@ +0; int** sppfoo (line=5,) @@ +8; struct foo_struct_1 x (line=16,) @@ +16; struct foo_struct_1 fs1 (line=18,) @@ +88; struct foo_struct_1* pfs1 (line=19,) @@ +160 }
+    type: struct foo_struct_3 (208 B) (line=22) { ()* snprintf (line=23,) @@ +0; char* header (line=24,) @@ +8; int fileno (line=25,) @@ +16; struct xys_struct_2 xys (line=30,) @@ +20; struct foo_struct_2 fs2 (line=32,) @@ +32; struct foo_struct_2* pfs2 (line=33,) @@ +200 }
+    type: typedef struct foo_struct_3 (208 B) (line=22) { ()* snprintf (line=23,) @@ +0; char* header (line=24,) @@ +8; int fileno (line=25,) @@ +16; struct xys_struct_2 xys (line=30,) @@ +20; struct foo_struct_2 fs2 (line=32,) @@ +32; struct foo_struct_2* pfs2 (line=33,) @@ +200 } foo_struct_3_t (line=34)
+    type: void
+  shared_types: (0)
+  globals: (4)
+    func: void redef_func () (external,prototyped,frame_base=R7+8,line=42,) @@ 0x4004d0 scope(redef_func @@ 0x4004d0) RANGES([0x4004d0,0x4004db]) { }
+    func: int main (int argc (line=36,) @@ R5, char** argv (line=36,) @@ R4) (external,prototyped,frame_base=R7+8,line=36,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400403]) { }
+    var: struct foo_struct_2 fs2 (external,line=20,) @@ 0x601040
+    var: struct foo_struct_2 fs2_redef (external,line=26,) @@ 0x601100
+  root srcfiles: (2)
+    root: ../../../../../vmi/tests/dwdebug/c/004/004.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/004,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/004/004.c @@ 0x0) RANGES([0x400400,0x400403]) {
+        symbols: {
+            type:  (4 B) (encoding=5)
+            type:  (1 B) (encoding=6)
+            type:  (8 B) (encoding=7)
+            type:  (8 B) (encoding=5)
+            func: int main (int argc (line=36,) @@ R5, char** argv (line=36,) @@ R4) (external,prototyped,frame_base=R7+8,line=36,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400403]) { }
+            type: struct xys_struct_1 (8 B) (line=12) { int x (line=13,) @@ +0; int y (line=14,) @@ +4 }
+            type: struct xys_struct_2 (8 B) (line=27) { int x (line=28,) @@ +0; int y (line=29,) @@ +4 }
+            type: struct foo_struct_1 (72 B) (line=7) { int a (line=8,) @@ +0; long int b (line=9,) @@ +8; char [44] str (line=10,) @@ +16; struct xys_struct_1 xys (line=15,) @@ +60 }
+            type: struct foo_struct_2 (168 B) (line=3) { int sfoo (line=4,) @@ +0; int** sppfoo (line=5,) @@ +8; struct foo_struct_1 x (line=16,) @@ +16; struct foo_struct_1 fs1 (line=18,) @@ +88; struct foo_struct_1* pfs1 (line=19,) @@ +160 }
+            type: struct foo_struct_3 (208 B) (line=22) { ()* snprintf (line=23,) @@ +0; char* header (line=24,) @@ +8; int fileno (line=25,) @@ +16; struct xys_struct_2 xys (line=30,) @@ +20; struct foo_struct_2 fs2 (line=32,) @@ +32; struct foo_struct_2* pfs2 (line=33,) @@ +200 }
+            type: typedef struct foo_struct_3 (208 B) (line=22) { ()* snprintf (line=23,) @@ +0; char* header (line=24,) @@ +8; int fileno (line=25,) @@ +16; struct xys_struct_2 xys (line=30,) @@ +20; struct foo_struct_2 fs2 (line=32,) @@ +32; struct foo_struct_2* pfs2 (line=33,) @@ +200 } foo_struct_3_t (line=34)
+            var: struct foo_struct_2 fs2 (external,line=20,) @@ 0x601040
+            type: void
+        }
+        subscopes: {
+          scope(struct xys_struct_1) {
+            symbols: {
+                var: int x (line=13,) @@ +0
+                var: int y (line=14,) @@ +4
+            }
+          }
+          scope(struct foo_struct_1) {
+            symbols: {
+                var: char [44] str (line=10,) @@ +16
+                var: int a (line=8,) @@ +0
+                var: long int b (line=9,) @@ +8
+                var: struct xys_struct_1 xys (line=15,) @@ +60
+            }
+          }
+          scope(struct foo_struct_2) {
+            symbols: {
+                var: struct foo_struct_1 fs1 (line=18,) @@ +88
+                var: int** sppfoo (line=5,) @@ +8
+                var: struct foo_struct_1* pfs1 (line=19,) @@ +160
+                var: struct foo_struct_1 x (line=16,) @@ +16
+                var: int sfoo (line=4,) @@ +0
+            }
+          }
+          scope(struct xys_struct_2) {
+            symbols: {
+                var: int x (line=28,) @@ +0
+                var: int y (line=29,) @@ +4
+            }
+          }
+          scope(struct foo_struct_3) {
+            symbols: {
+                var: ()* snprintf (line=23,) @@ +0
+                var: struct foo_struct_2* pfs2 (line=33,) @@ +200
+                var: int fileno (line=25,) @@ +16
+                var: char* header (line=24,) @@ +8
+                var: struct xys_struct_2 xys (line=30,) @@ +20
+                var: struct foo_struct_2 fs2 (line=32,) @@ +32
+            }
+          }
+          scope((null)) { }
+          scope(main @@ 0x400400) RANGES([0x400400,0x400403]) {
+            symbols: {
+                var: foo_struct_3_t fs3t (line=37,)
+                var: char** argv (line=36,) @@ R4
+                var: int argc (line=36,) @@ R5
+            }
+          }
+        }
+      }
+      }
+
+    root: ../../../../../vmi/tests/dwdebug/c/004/004_redef.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/004,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/004/004_redef.c @@ 0x4004d0) RANGES([0x4004d0,0x4004db]) {
+        symbols: {
+            var: struct xyz* blah (line=4,)
+            type:  (4 B) (encoding=5)
+            type:  (1 B) (encoding=6)
+            type:  (8 B) (encoding=7)
+            type:  (8 B) (encoding=5)
+            func: void redef_func () (external,prototyped,frame_base=R7+8,line=42,) @@ 0x4004d0 scope(redef_func @@ 0x4004d0) RANGES([0x4004d0,0x4004db]) { }
+            type: struct xyz
+            type: struct xys_struct_1 (8 B) (line=18) { int x (line=19,) @@ +0; int y (line=20,) @@ +4 }
+            var: struct foo_struct_2 fs2_redef (external,line=26,) @@ 0x601100
+            type: struct foo_struct_1 (72 B) (line=13) { int a (line=14,) @@ +0; long int b (line=15,) @@ +8; char [44] str (line=16,) @@ +16; struct xys_struct_1 xys (line=21,) @@ +60 }
+            type: struct foo_struct_2 (168 B) (line=9) { int sfoo (line=10,) @@ +0; int** sppfoo (line=11,) @@ +8; struct foo_struct_1 x (line=22,) @@ +16; struct foo_struct_1 fs1 (line=24,) @@ +88; struct foo_struct_1* pfs1 (line=25,) @@ +160 }
+            type: void
+        }
+        subscopes: {
+          scope(struct xys_struct_1) {
+            symbols: {
+                var: int x (line=19,) @@ +0
+                var: int y (line=20,) @@ +4
+            }
+          }
+          scope(struct foo_struct_1) {
+            symbols: {
+                var: char [44] str (line=16,) @@ +16
+                var: int a (line=14,) @@ +0
+                var: long int b (line=15,) @@ +8
+                var: struct xys_struct_1 xys (line=21,) @@ +60
+            }
+          }
+          scope(struct foo_struct_2) {
+            symbols: {
+                var: struct foo_struct_1 fs1 (line=24,) @@ +88
+                var: int** sppfoo (line=11,) @@ +8
+                var: struct foo_struct_1* pfs1 (line=25,) @@ +160
+                var: struct foo_struct_1 x (line=22,) @@ +16
+                var: int sfoo (line=10,) @@ +0
+            }
+          }
+          scope(redef_func @@ 0x4004d0) RANGES([0x4004d0,0x4004db]) { }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=45,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/c/004/004.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/c/004/004.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601020 (392 B)
+            func: .fini () (external,prototyped,) @@ 0x40056c (14 B)
+            var:  .rela.plt (external,) @@ 0x4003a8 (24 B)
+            func: .text () (external,prototyped,) @@ 0x400400 (364 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            func: _fini () (external,prototyped,) @@ 0x40056c (14 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            func: .plt () (external,prototyped,) @@ 0x4003e0 (32 B)
+            var:  .hash (external,) @@ 0x4002b0 (24 B)
+            func: .init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .eh_frame (external,) @@ 0x4005b8 (212 B)
+            func: _init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .ctors (external,) @@ 0x600e18 (16 B)
+            var:  .dynstr (external,) @@ 0x400330 (56 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+            var:  __init_array_end @@ 0x600e14 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e30 (8 B)
+            func: redef_func () (external,prototyped,) @@ 0x4004d0 (11 B)
+            var:  fs2_redef (external,) @@ 0x601100 (168 B)
+            var:  _IO_stdin_used (external,) @@ 0x40057c (4 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x400536 (1 B)
+            var:  .dynamic (external,) @@ 0x600e40 (416 B)
+            var:  .jcr (external,) @@ 0x600e38 (8 B)
+            var:  _DYNAMIC @@ 0x600e40 (416 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x4004dc (90 B)
+            var:  .rodata (external,) @@ 0x40057c (4 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x4003f0 (16 B)
+            var:  .gnu.version (external,) @@ 0x400368 (6 B)
+            var:  __dso_handle (external,) @@ 0x601010 (8 B)
+            var:  __init_array_start @@ 0x600e14 (0 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            var:  fs2 (external,) @@ 0x601040 (168 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .eh_frame_hdr (external,) @@ 0x400580 (52 B)
+            func: _start () (external,prototyped,) @@ 0x400404 (204 B)
+            var:  .gnu.hash (external,) @@ 0x4002c8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x400370 (32 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            var:  .dtors (external,) @@ 0x600e28 (16 B)
+            var:  .rela.dyn (external,) @@ 0x400390 (24 B)
+            func: main () (external,prototyped,) @@ 0x400400 (3 B)
+            var:  .dynsym (external,) @@ 0x4002e8 (72 B)
+            func: _header@plt () (external,prototyped,) @@ 0x4003e0 (16 B)
+            var:  .data (external,) @@ 0x601008 (16 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

@@ -23,7 +23,7 @@ TOP_SRCDIR	= @top_srcdir@
 SUBDIR		= tests
 OBJDIR		= @top_builddir@
 
-SUBDIRS = 
+SUBDIRS = dwdebug
 
 include $(OBJDIR)/Makeconf
 
@@ -132,7 +132,7 @@ monitored_dummy_child: $(HEADERS) $(LIBRARIES) monitored_dummy_child.lo $(STATIC
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
-test:	$(TESTS)
+test:	$(TESTS) test-subdirs
 	./clrange
 	./clmatch
 	./clmatchone

@@ -1,0 +1,211 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/cpp/004/004.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (4)
+    type: special (line=38) {  }
+    type: n1 (line=3) {  }
+    type: void
+    type:  (8 B) (encoding=7)
+  shared_types: (0)
+  globals: (0)
+  root srcfiles: (1)
+    root: ../../../../../vmi/tests/dwdebug/cpp/004/004.cpp (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/cpp/004,producer=GNU C++ 4.6.3,language=C++ (4)) {
+      scope(../../../../../vmi/tests/dwdebug/cpp/004/004.cpp @@ 0x0) RANGES([0x400460,0x4004bb][0x400580,0x4005dd]) {
+        symbols: {
+            type: special (line=38) {  }
+            type: n1 (line=3) {  }
+            type: void
+            type:  (8 B) (encoding=7)
+        }
+        subscopes: {
+          scope(n1) {
+            subscopes: {
+              scope((null)) {
+                symbols: {
+                    type: n2 (line=15) {  }
+                    var: int foo (external,) @@ 0x601028
+                    func: int set (int x (line=48,inlineinstances=(ref1d8,ref2af,)), int y (line=48,inlineinstances=(ref1e1,ref2a9,))) (external,prototyped,inlined,inlineinstances=(0x4005a0,0x400460,)) scope(set) { }
+                    var: int x (external,) @@ 0x60103c
+                    var: int y (external,) @@ 0x601038
+                    var: int ay @@ 0x601044
+                    var: int ax @@ 0x601040
+                    func: int aset (int x (line=32,inlineinstances=(ref1a9,ref202,ref2d2,)), int y (line=32,inlineinstances=(ref1b2,ref1fd,ref2cc,))) (external,prototyped,inlined,inlineinstances=(0x400580,0x4005af,0x40048a,)) scope(aset) { }
+                }
+                subscopes: {
+                  scope(n2) {
+                    symbols: {
+                        var: int y2 (external,) @@ 0x601030
+                        func: int set (int x (line=59,inlineinstances=(ref225,ref2f7,)), int y (line=59,inlineinstances=(ref22c,ref2f1,))) (external,prototyped,inlined,inlineinstances=(0x4005d0,0x40049e,)) scope(set) { }
+                        var: int x2 (external,) @@ 0x601034
+                    }
+                    subscopes: {
+                      scope(set) {
+                        symbols: {
+                            var: int x (line=59,inlineinstances=(ref225,ref2f7,))
+                            var: int y (line=59,inlineinstances=(ref22c,ref2f1,))
+                        }
+                      }
+                    }
+                  }
+                  scope(aset) {
+                    symbols: {
+                        var: int x (line=32,inlineinstances=(ref1a9,ref202,ref2d2,))
+                        var: int y (line=32,inlineinstances=(ref1b2,ref1fd,ref2cc,))
+                    }
+                  }
+                  scope(set) {
+                    symbols: {
+                        var: int x (line=48,inlineinstances=(ref1d8,ref2af,))
+                        var: int y (line=48,inlineinstances=(ref1e1,ref2a9,))
+                    }
+                  }
+                }
+              }
+            }
+ }
+          scope(special) {
+            symbols: {
+                var: int s (external,) @@ 0x60102c
+                type:  (4 B) (encoding=5)
+                func: int INLINED_FUNC(aset) ((null)) (int INLINED_PARAM(x) @@ LIST([0x400580,0x400582->R5]), int INLINED_PARAM(y) @@ LIST([0x400580,0x400584->R4])) (frame_base=R7+8,) @@ 0x400580 scope(INLINED(aset) @@ 0x400580) RANGES([0x400580,0x400591]) { }
+                type:  (1 B) (encoding=6)
+                func: int main (int argc (line=64,) @@ R5, char** argv (line=64,) @@ R4) (external,prototyped,frame_base=R7+8,line=64,) @@ 0x400460 scope(main @@ 0x400460) RANGES([0x400460,0x4004bb]) { }
+                func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(x) @@ LIST([0x4005a0,0x4005b1->R5],[0x4005b1,0x4005d0->0x60103c]), int INLINED_PARAM(y) @@ LIST([0x4005a0,0x4005b3->R4],[0x4005b3,0x4005d0->0x601038])) (frame_base=R7+8,) @@ 0x4005a0 scope(INLINED(set) @@ 0x4005a0) RANGES([0x4005a0,0x4005d0]) { }
+                func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(x) @@ R5, int INLINED_PARAM(y) @@ R4) (frame_base=R7+8,) @@ 0x4005d0 scope(INLINED(set) @@ 0x4005d0) RANGES([0x4005d0,0x4005dd]) { }
+            }
+            subscopes: {
+              scope(INLINED(aset) @@ 0x400580) RANGES([0x400580,0x400591]) {
+                symbols: {
+                    var: int INLINED_PARAM(x) @@ LIST([0x400580,0x400582->R5])
+                    var: int INLINED_PARAM(y) @@ LIST([0x400580,0x400584->R4])
+                }
+              }
+              scope(INLINED(set) @@ 0x4005a0) RANGES([0x4005a0,0x4005d0]) {
+                symbols: {
+                    func: int INLINED_FUNC(aset) ((null)) (int INLINED_PARAM(y), int INLINED_PARAM(x)) () @@ 0x4005af scope(INLINED(aset) @@ 0x4005af) RANGES([0x4005af,0x4005b3][0x4005c3,0x4005cf]) { }
+                    var: int INLINED_PARAM(x) @@ LIST([0x4005a0,0x4005b1->R5],[0x4005b1,0x4005d0->0x60103c])
+                    var: int INLINED_PARAM(y) @@ LIST([0x4005a0,0x4005b3->R4],[0x4005b3,0x4005d0->0x601038])
+                }
+                subscopes: {
+                  scope(INLINED(aset) @@ 0x4005af) RANGES([0x4005af,0x4005b3][0x4005c3,0x4005cf]) {
+                    symbols: {
+                        var: int INLINED_PARAM(x)
+                        var: int INLINED_PARAM(y)
+                    }
+                  }
+                }
+              }
+              scope(INLINED(set) @@ 0x4005d0) RANGES([0x4005d0,0x4005dd]) {
+                symbols: {
+                    var: int INLINED_PARAM(x) @@ R5
+                    var: int INLINED_PARAM(y) @@ R4
+                }
+              }
+              scope(main @@ 0x400460) RANGES([0x400460,0x4004bb]) {
+                symbols: {
+                    var: char** argv (line=64,) @@ R4
+                    var: int argc (line=64,) @@ R5
+                }
+                subscopes: {
+                  scope() RANGES([0x400460,0x400474][0x400476,0x4004ba]) {
+                    symbols: {
+                        var: volatile int result (line=65,) @@ FB-12
+                        func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(y) @@ CONST(4,00000002), int INLINED_PARAM(x) @@ CONST(4,00000001)) () @@ 0x400460 scope(INLINED(set) @@ 0x400460) RANGES([0x400460,0x400474][0x400476,0x40049e]) { }
+                        func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(y) @@ CONST(4,00000001), int INLINED_PARAM(x) @@ CONST(4,00000002)) () @@ 0x40049e scope(INLINED(set) @@ 0x40049e) RANGES([0x40049e,0x4004b2]) { }
+                    }
+                    subscopes: {
+                      scope(INLINED(set) @@ 0x400460) RANGES([0x400460,0x400474][0x400476,0x40049e]) {
+                        symbols: {
+                            func: int INLINED_FUNC(aset) ((null)) (int INLINED_PARAM(y) @@ CONST(4,00000002), int INLINED_PARAM(x) @@ CONST(4,00000001)) () @@ 0x40048a scope(INLINED(aset) @@ 0x40048a) RANGES([0x40048a,0x40049e]) { }
+                            var: int INLINED_PARAM(x) @@ CONST(4,00000001)
+                            var: int INLINED_PARAM(y) @@ CONST(4,00000002)
+                        }
+                        subscopes: {
+                          scope(INLINED(aset) @@ 0x40048a) RANGES([0x40048a,0x40049e]) {
+                            symbols: {
+                                var: int INLINED_PARAM(x) @@ CONST(4,00000001)
+                                var: int INLINED_PARAM(y) @@ CONST(4,00000002)
+                            }
+                          }
+                        }
+                      }
+                      scope(INLINED(set) @@ 0x40049e) RANGES([0x40049e,0x4004b2]) {
+                        symbols: {
+                            var: int INLINED_PARAM(x) @@ CONST(4,00000002)
+                            var: int INLINED_PARAM(y) @@ CONST(4,00000001)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=53,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/cpp/004/004.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/cpp/004/004.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601018 (48 B)
+            var:  _ZN2n13fooE (external,) @@ 0x601028 (4 B)
+            var:  _ZN2n11yE (external,) @@ 0x601038 (4 B)
+            var:  _ZN2n12n22x2E (external,) @@ 0x601034 (4 B)
+            var:  .rela.plt (external,) @@ 0x400410 (24 B)
+            func: .text () (external,prototyped,) @@ 0x400460 (528 B)
+            func: .fini () (external,prototyped,) @@ 0x400670 (14 B)
+            func: _fini () (external,prototyped,) @@ 0x400670 (14 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            func: .plt () (external,prototyped,) @@ 0x400440 (32 B)
+            var:  .hash (external,) @@ 0x4002b0 (36 B)
+            func: .init () (external,prototyped,) @@ 0x400428 (24 B)
+            var:  .eh_frame (external,) @@ 0x4006c8 (260 B)
+            func: _init () (external,prototyped,) @@ 0x400428 (24 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            var:  .ctors (external,) @@ 0x600de8 (16 B)
+            var:  _ZN2n112_GLOBAL__N_12ayE @@ 0x601044 (4 B)
+            var:  .dynstr (external,) @@ 0x400358 (115 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+            var:  __init_array_end @@ 0x600de4 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e00 (8 B)
+            var:  .jcr (external,) @@ 0x600e08 (8 B)
+            var:  _IO_stdin_used (external,) @@ 0x400680 (4 B)
+            func: _ZN2n12n23setEii () (external,prototyped,) @@ 0x4005d0 (13 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x40063a (1 B)
+            var:  .dynamic (external,) @@ 0x600e10 (464 B)
+            var:  _ZN2n11xE (external,) @@ 0x60103c (4 B)
+            func: _ZN2n13setEii () (external,prototyped,) @@ 0x4005a0 (48 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            var:  _DYNAMIC @@ 0x600e10 (464 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x4005e0 (90 B)
+            var:  _ZN7special1sE (external,) @@ 0x60102c (4 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x400450 (16 B)
+            var:  __dso_handle (external,) @@ 0x601010 (8 B)
+            var:  __init_array_start @@ 0x600de4 (0 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            func: _ZN2n14asetEii () (external,prototyped,) @@ 0x400580 (17 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .rodata (external,) @@ 0x400680 (4 B)
+            var:  _ZN2n112_GLOBAL__N_12axE @@ 0x601040 (4 B)
+            func: _start () (external,prototyped,) @@ 0x4004bc (196 B)
+            var:  .gnu.hash (external,) @@ 0x4002d8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x4003d8 (32 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            var:  .gnu.version (external,) @@ 0x4003cc (8 B)
+            var:  .rela.dyn (external,) @@ 0x4003f8 (24 B)
+            func: main () (external,prototyped,) @@ 0x400460 (91 B)
+            var:  _ZN2n12n22y2E (external,) @@ 0x601030 (4 B)
+            var:  .dynsym (external,) @@ 0x4002f8 (96 B)
+            var:  .dtors (external,) @@ 0x600df8 (16 B)
+            func: _header@plt () (external,prototyped,) @@ 0x400440 (16 B)
+            var:  .data (external,) @@ 0x601008 (16 B)
+            var:  .eh_frame_hdr (external,) @@ 0x400684 (68 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

@@ -1,0 +1,191 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/c/019/019.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (6)
+    type:  (4 B) (encoding=4)
+    type:  (4 B) (encoding=5)
+    type:  (8 B) (encoding=4)
+    type:  (1 B) (encoding=6)
+    type:  (8 B) (encoding=7)
+    type:  (8 B) (encoding=5)
+  shared_types: (6)
+    type:  (4 B) (encoding=4)
+    type:  (4 B) (encoding=5)
+    type:  (8 B) (encoding=4)
+    type:  (1 B) (encoding=6)
+    type:  (8 B) (encoding=7)
+    type:  (8 B) (encoding=5)
+  globals: (20)
+    var: char hhd (external,line=8,) @@ 0x601020
+    func: int main (int argc (line=14,) @@ LIST([0x400400,0x40040f->R5],[0x40040f,0x400421->R3]), char** argv (line=14,) @@ LIST([0x400400,0x40040f->R4],[0x40040f,0x400422->R6])) (external,prototyped,frame_base=LIST([0x400400,0x400401->R7+8],[0x400401,0x400405->R7+16],[0x400405,0x40040b->R7+24],[0x40040b,0x40041e->R7+32],[0x40041e,0x400421->R7+24],[0x400421,0x400422->R7+16],[0x400422,0x400423->R7+8]),line=14,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400423]) { }
+    var: char* string (external,line=9,) @@ 0x601018
+    var: long unsigned int ul1 (external,line=3,) @@ 0x601060
+    var: long unsigned int ul2 (external,line=3,) @@ 0x601080
+    var: long unsigned int ul (external,line=3,) @@ 0x601040
+    var: double d (external,line=7,) @@ 0x601028
+    var: double d2 (external,line=7,) @@ 0x601068
+    var: float f (external,line=6,) @@ 0x601030
+    var: float f1 (external,line=6,) @@ 0x601050
+    var: float f2 (external,line=6,) @@ 0x601070
+    var: int i (external,line=5,) @@ 0x601034
+    var: long int il (external,line=4,) @@ 0x601038
+    var: int i1 (external,line=5,) @@ 0x601054
+    var: int i2 (external,line=5,) @@ 0x601074
+    var: long int il1 (external,line=4,) @@ 0x601058
+    var: double d1 (external,line=7,) @@ 0x601048
+    var: long int il2 (external,line=4,) @@ 0x601078
+    func: int tc1_main (int argc (line=11,) @@ R5, char** argv (line=11,) @@ R4) (external,prototyped,frame_base=R7+8,line=11,) @@ 0x4004f0 scope(tc1_main @@ 0x4004f0) RANGES([0x4004f0,0x4004f3]) { }
+    func: int tc2_main (int argc (line=11,) @@ R5, char** argv (line=11,) @@ R4) (external,prototyped,frame_base=R7+8,line=11,) @@ 0x400500 scope(tc2_main @@ 0x400500) RANGES([0x400500,0x400503]) { }
+  root srcfiles: (3)
+    root: ../../../../../vmi/tests/dwdebug/c/019/019_tc2.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/019,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/019/019_tc2.c @@ 0x400500) RANGES([0x400500,0x400503]) {
+        symbols: {
+            var: char hhd (line=8,) @@ CONST(1,63)
+            type:  (8 B) (encoding=7)
+            var: char* string (line=9,)
+            var: long unsigned int ul2 (external,line=3,) @@ 0x601080
+            var: double d2 (external,line=7,) @@ 0x601068
+            var: float f2 (external,line=6,) @@ 0x601070
+            var: int i2 (external,line=5,) @@ 0x601074
+            var: long int il2 (external,line=4,) @@ 0x601078
+            func: int tc2_main (int argc (line=11,) @@ R5, char** argv (line=11,) @@ R4) (external,prototyped,frame_base=R7+8,line=11,) @@ 0x400500 scope(tc2_main @@ 0x400500) RANGES([0x400500,0x400503]) { }
+            type: void
+        }
+        subscopes: {
+          scope(tc2_main @@ 0x400500) RANGES([0x400500,0x400503]) {
+            symbols: {
+                var: char** argv (line=11,) @@ R4
+                var: int argc (line=11,) @@ R5
+            }
+          }
+        }
+      }
+      }
+
+    root: ../../../../../vmi/tests/dwdebug/c/019/019_tc1.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/019,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/019/019_tc1.c @@ 0x4004f0) RANGES([0x4004f0,0x4004f3]) {
+        symbols: {
+            var: char hhd (line=8,) @@ CONST(1,62)
+            type:  (8 B) (encoding=7)
+            var: char* string (line=9,)
+            var: long unsigned int ul1 (external,line=3,) @@ 0x601060
+            var: double d1 (external,line=7,) @@ 0x601048
+            var: float f1 (external,line=6,) @@ 0x601050
+            var: int i1 (external,line=5,) @@ 0x601054
+            var: long int il1 (external,line=4,) @@ 0x601058
+            func: int tc1_main (int argc (line=11,) @@ R5, char** argv (line=11,) @@ R4) (external,prototyped,frame_base=R7+8,line=11,) @@ 0x4004f0 scope(tc1_main @@ 0x4004f0) RANGES([0x4004f0,0x4004f3]) { }
+            type: void
+        }
+        subscopes: {
+          scope(tc1_main @@ 0x4004f0) RANGES([0x4004f0,0x4004f3]) {
+            symbols: {
+                var: char** argv (line=11,) @@ R4
+                var: int argc (line=11,) @@ R5
+            }
+          }
+        }
+      }
+      }
+
+    root: ../../../../../vmi/tests/dwdebug/c/019/019.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/019,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/019/019.c @@ 0x0) RANGES([0x400400,0x400423]) {
+        symbols: {
+            var: char hhd (external,line=8,) @@ 0x601020
+            type:  (8 B) (encoding=5)
+            type:  (8 B) (encoding=7)
+            type:  (1 B) (encoding=6)
+            func: int main (int argc (line=14,) @@ LIST([0x400400,0x40040f->R5],[0x40040f,0x400421->R3]), char** argv (line=14,) @@ LIST([0x400400,0x40040f->R4],[0x40040f,0x400422->R6])) (external,prototyped,frame_base=LIST([0x400400,0x400401->R7+8],[0x400401,0x400405->R7+16],[0x400405,0x40040b->R7+24],[0x40040b,0x40041e->R7+32],[0x40041e,0x400421->R7+24],[0x400421,0x400422->R7+16],[0x400422,0x400423->R7+8]),line=14,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400423]) { }
+            type:  (4 B) (encoding=4)
+            type:  (4 B) (encoding=5)
+            var: char* string (external,line=9,) @@ 0x601018
+            var: long unsigned int ul (external,line=3,) @@ 0x601040
+            var: double d (external,line=7,) @@ 0x601028
+            var: float f (external,line=6,) @@ 0x601030
+            var: int i (external,line=5,) @@ 0x601034
+            var: long int il (external,line=4,) @@ 0x601038
+            type: void
+            type:  (8 B) (encoding=4)
+        }
+        subscopes: {
+          scope(main @@ 0x400400) RANGES([0x400400,0x400423]) {
+            symbols: {
+                var: char** argv (line=14,) @@ LIST([0x400400,0x40040f->R4],[0x40040f,0x400422->R6])
+                var: int argc (line=14,) @@ LIST([0x400400,0x40040f->R5],[0x40040f,0x400421->R3])
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=61,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/c/019/019.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/c/019/019.x86_64.bin) {
+        symbols: {
+            var:  d (external,) @@ 0x601028 (8 B)
+            var:  f (external,) @@ 0x601030 (4 B)
+            var:  i (external,) @@ 0x601034 (4 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x400504 (90 B)
+            var:  .dtors (external,) @@ 0x600e28 (16 B)
+            func: .init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .dynamic (external,) @@ 0x600e40 (416 B)
+            var:  .ctors (external,) @@ 0x600e18 (16 B)
+            var:  hhd (external,) @@ 0x601020 (1 B)
+            var:  __dso_handle (external,) @@ 0x601010 (8 B)
+            var:  .jcr (external,) @@ 0x600e38 (8 B)
+            var:  .hash (external,) @@ 0x4002b0 (24 B)
+            func: _init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  il (external,) @@ 0x601038 (8 B)
+            func: _header@plt () (external,prototyped,) @@ 0x4003e0 (16 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e30 (8 B)
+            var:  string (external,) @@ 0x601018 (8 B)
+            var:  ul1 (external,) @@ 0x601060 (8 B)
+            var:  ul2 (external,) @@ 0x601080 (8 B)
+            var:  .gnu.hash (external,) @@ 0x4002c8 (28 B)
+            var:  .eh_frame_hdr (external,) @@ 0x4005b0 (60 B)
+            var:  .gnu.version (external,) @@ 0x400368 (6 B)
+            var:  ul (external,) @@ 0x601040 (8 B)
+            func: tc2_main () (external,prototyped,) @@ 0x400500 (3 B)
+            var:  il1 (external,) @@ 0x601058 (8 B)
+            var:  il2 (external,) @@ 0x601078 (8 B)
+            var:  .rela.dyn (external,) @@ 0x400390 (24 B)
+            var:  d1 (external,) @@ 0x601048 (8 B)
+            var:  d2 (external,) @@ 0x601068 (8 B)
+            var:  .eh_frame (external,) @@ 0x4005f0 (252 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x4003f0 (16 B)
+            func: .text () (external,prototyped,) @@ 0x400400 (404 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            var:  .data (external,) @@ 0x601008 (128 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x40055e (1 B)
+            var:  .dynstr (external,) @@ 0x400330 (56 B)
+            func: .fini () (external,prototyped,) @@ 0x400594 (14 B)
+            func: main () (external,prototyped,) @@ 0x400400 (35 B)
+            var:  .rodata (external,) @@ 0x4005a4 (11 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            func: _fini () (external,prototyped,) @@ 0x400594 (14 B)
+            func: tc1_main () (external,prototyped,) @@ 0x4004f0 (3 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            var:  _DYNAMIC @@ 0x600e40 (416 B)
+            var:  i1 (external,) @@ 0x601054 (4 B)
+            var:  .bss (external,) @@ 0x601088 (16 B)
+            var:  i2 (external,) @@ 0x601074 (4 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .dynsym (external,) @@ 0x4002e8 (72 B)
+            func: _start () (external,prototyped,) @@ 0x400424 (204 B)
+            var:  _IO_stdin_used (external,) @@ 0x4005a4 (4 B)
+            var:  .gnu.version_r (external,) @@ 0x400370 (32 B)
+            var:  .rela.plt (external,) @@ 0x4003a8 (24 B)
+            var:  f1 (external,) @@ 0x601050 (4 B)
+            var:  f2 (external,) @@ 0x601070 (4 B)
+            var:  __init_array_end @@ 0x600e14 (0 B)
+            func: .plt () (external,prototyped,) @@ 0x4003e0 (32 B)
+            var:  __init_array_start @@ 0x600e14 (0 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

@@ -1,0 +1,11 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug
+OBJDIR		= @top_builddir@
+
+SUBDIRS = c cpp
+
+include $(TOP_SRCDIR)/Makerules
+
+#all: all-subdirs
+test: test-subdirs

@@ -1,0 +1,8 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/cpp/006
+OBJDIR		= @top_builddir@
+
+TESTNAME = "nested_classes"
+
+include $(OBJDIR)/tests/dwdebug/cpp/Makeconf

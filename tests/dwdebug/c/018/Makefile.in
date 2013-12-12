@@ -1,0 +1,8 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/c/018
+OBJDIR		= @top_builddir@
+
+TESTNAME = "killer_functions_3"
+
+include $(OBJDIR)/tests/dwdebug/c/Makeconf

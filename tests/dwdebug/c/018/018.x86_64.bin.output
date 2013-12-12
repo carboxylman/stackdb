@@ -1,0 +1,85 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/c/018/018.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (4)
+    type:  (4 B) (encoding=5)
+    type: void
+    type:  (1 B) (encoding=6)
+    type:  (8 B) (encoding=7)
+  shared_types: (0)
+  globals: (1)
+    func: int main (int argc (line=3,) @@ R5, char** argv (line=3,) @@ R4) (external,prototyped,frame_base=R7+8,line=3,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400403]) { }
+  root srcfiles: (1)
+    root: ../../../../../vmi/tests/dwdebug/c/018/018.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/018,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/018/018.c @@ 0x0) RANGES([0x400400,0x400403]) {
+        symbols: {
+            func: int main (int argc (line=3,) @@ R5, char** argv (line=3,) @@ R4) (external,prototyped,frame_base=R7+8,line=3,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400403]) { }
+            type:  (4 B) (encoding=5)
+            type: void
+            type:  (1 B) (encoding=6)
+            type:  (8 B) (encoding=7)
+        }
+        subscopes: {
+          scope(main @@ 0x400400) RANGES([0x400400,0x400403]) {
+            symbols: {
+                var: char** argv (line=3,) @@ R4
+                var: int argc (line=3,) @@ R5
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=42,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/c/018/018.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/c/018/018.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601018 (16 B)
+            func: .fini () (external,prototyped,) @@ 0x400558 (14 B)
+            func: .text () (external,prototyped,) @@ 0x400400 (344 B)
+            var:  .rela.plt (external,) @@ 0x4003a8 (24 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            func: _fini () (external,prototyped,) @@ 0x400558 (14 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            func: .plt () (external,prototyped,) @@ 0x4003e0 (32 B)
+            var:  .hash (external,) @@ 0x4002b0 (24 B)
+            func: .init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .eh_frame (external,) @@ 0x400598 (188 B)
+            func: _init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .ctors (external,) @@ 0x600e18 (16 B)
+            var:  .dynstr (external,) @@ 0x400330 (56 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+            var:  __init_array_end @@ 0x600e14 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e30 (8 B)
+            var:  .jcr (external,) @@ 0x600e38 (8 B)
+            var:  _IO_stdin_used (external,) @@ 0x400568 (4 B)
+            var:  .dynamic (external,) @@ 0x600e40 (416 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x400522 (1 B)
+            var:  _DYNAMIC @@ 0x600e40 (416 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x4004c8 (90 B)
+            var:  .rodata (external,) @@ 0x400568 (4 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x4003f0 (16 B)
+            var:  .gnu.version (external,) @@ 0x400368 (6 B)
+            var:  __dso_handle (external,) @@ 0x601010 (0 B)
+            var:  __init_array_start @@ 0x600e14 (0 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            var:  .data (external,) @@ 0x601008 (16 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .eh_frame_hdr (external,) @@ 0x40056c (44 B)
+            func: _start () (external,prototyped,) @@ 0x400404 (196 B)
+            var:  .gnu.hash (external,) @@ 0x4002c8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x400370 (32 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            var:  .dtors (external,) @@ 0x600e28 (16 B)
+            var:  .rela.dyn (external,) @@ 0x400390 (24 B)
+            func: main () (external,prototyped,) @@ 0x400400 (3 B)
+            var:  .dynsym (external,) @@ 0x4002e8 (72 B)
+            func: _header@plt () (external,prototyped,) @@ 0x4003e0 (16 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

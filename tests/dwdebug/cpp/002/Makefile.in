@@ -1,0 +1,9 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/cpp/002
+OBJDIR		= @top_builddir@
+
+SRCFILES = 002.cpp 002_ext_setters.cpp
+TESTNAME = "nested_namespaces"
+
+include $(OBJDIR)/tests/dwdebug/cpp/Makeconf

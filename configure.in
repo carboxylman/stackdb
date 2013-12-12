@@ -526,7 +526,7 @@ AC_SUBST(ENABLE_DEBUGINFO)
 AC_ARG_ENABLE(profiling,
 	      AS_HELP_STRING([--enable-profiling],
                              [Enable profiling info generation for this package]),
-	      [if "x$enableval" = "xyes"; then \
+	      [if test "x$enableval" = "xyes"; then \
 	           ENABLE_PROFILING=1; \
 	       else \
 	           ENABLE_PROFILING=0; \
@@ -678,10 +678,23 @@ if test "${ENABLE_JAVA}" = "1"; then
     AC_SUBST(AXIS2_HOME)
 fi
 
-
 #
 # Check for JAVA_HOME/AXIS2_HOME, and $AXIS2_HOME/bin/wsdl2java.sh .
 #
+
+#
+# Are we going to build the main testsuite?
+#
+ENABLE_TESTS=0
+AC_ARG_ENABLE(tests,
+	      AS_HELP_STRING([--enable-tests],
+	                     [Enable test case generation]),
+	      [if test "x$enableval" = "xyes"; then \
+	           ENABLE_TESTS=1; \
+	       else \
+	           ENABLE_TESTS=0; \
+	       fi],
+	      [ENABLE_TESTS=0])
 
 outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           target/Makefile tests/Makefile analysis/Makefile \
@@ -701,6 +714,22 @@ outfiles="$outfiles Makeconf Makefile lib/Makefile dwdebug/Makefile \
           examples/context-tracker/examples/null-deref-analysis/Makefile \
           examples/null-deref-analysis/Makefile \
           examples/local-dos-analysis/Makefile"
+
+if test "${ENABLE_TESTS}" = "1"; then
+    outfiles+=" tests/dwdebug/Makefile"
+
+    outfiles+=" tests/dwdebug/c/Makefile tests/dwdebug/c/Makeconf"
+
+    for ctestdir in ${srcdir}/tests/dwdebug/c/@<:@0-9@:>@* ; do
+        outfiles+=" tests/dwdebug/c/`basename ${ctestdir}`/Makefile"
+    done
+
+    outfiles+=" tests/dwdebug/cpp/Makefile tests/dwdebug/cpp/Makeconf"
+
+    for ctestdir in ${srcdir}/tests/dwdebug/cpp/@<:@0-9@:>@* ; do
+        outfiles+=" tests/dwdebug/cpp/`basename ${ctestdir}`/Makefile"
+    done
+fi
 
 #
 # Do this for easy distclean.

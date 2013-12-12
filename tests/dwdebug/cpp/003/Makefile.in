@@ -1,0 +1,8 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/cpp/003
+OBJDIR		= @top_builddir@
+
+TESTNAME = "anon_namespaces"
+
+include $(OBJDIR)/tests/dwdebug/cpp/Makeconf

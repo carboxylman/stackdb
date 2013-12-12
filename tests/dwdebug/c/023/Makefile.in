@@ -1,0 +1,10 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/c/023
+OBJDIR		= @top_builddir@
+
+TESTNAME = "type_compression_complex_types"
+SRCFILES = 023.c 023_tc1.c 023_tc2.c
+DDI_OPTS = -DM -F REDUCETYPES
+
+include $(OBJDIR)/tests/dwdebug/c/Makeconf

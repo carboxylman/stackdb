@@ -98,7 +98,6 @@ def-install:	$(addprefix $(INSTALL_BINDIR)/, $(INST_BIN)) \
 	 $(addprefix $(INSTALL_ETCDIR)/, $(INST_ETC)) \
 	 $(addprefix $(INSTALL_SHAREDIR)/, $(INST_SHARE))
 
-
 CFLAGS += $(LOCALCFLAGS)
 
 #
@@ -123,6 +122,9 @@ vpath %     $(SRCDIR) $(MOSTLY_SRCDIRS)
 %.o: %.cc
 	$(CXX) -c -o $@ $(CXXFLAGS) $<
 
+%.o: %.cpp
+	$(CXX) -c -o $@ $(CXXFLAGS) $<
+
 %.o: %.C
 	$(CXX) -c -o $@ $(CXXFLAGS) $<
 
@@ -138,3 +140,14 @@ vpath %     $(SRCDIR) $(MOSTLY_SRCDIRS)
 %: %.in $(OBJDIR)/config.status
 	@echo "Regenerating $@"
 	cd $(OBJDIR) && CONFIG_FILES=$(SUBDIR)/$@ ./config.status
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+#
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+# By default, make any target by descending into subdirectories.
+%: %-subdirs ;

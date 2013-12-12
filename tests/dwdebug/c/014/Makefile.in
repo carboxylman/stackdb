@@ -1,0 +1,8 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/c/014
+OBJDIR		= @top_builddir@
+
+TESTNAME = "nested_functions"
+
+include $(OBJDIR)/tests/dwdebug/c/Makeconf

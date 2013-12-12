@@ -1,0 +1,8 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/c/003
+OBJDIR		= @top_builddir@
+
+TESTNAME = "struct_types"
+
+include $(OBJDIR)/tests/dwdebug/c/Makeconf

@@ -1,0 +1,384 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/c/014/014.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (5)
+    type:  (1 B) (encoding=6)
+    type:  (4 B) (encoding=5)
+    type: void
+    type: struct foo_struct (24 B) (line=16) { int argc (line=17,) @@ +0; char** argv (line=18,) @@ +8; int sx (line=19,) @@ +16; int sy (line=20,) @@ +20 }
+    type:  (8 B) (encoding=7)
+  shared_types: (0)
+  globals: (13)
+    func: int main (int argc (line=144,) @@ LIST([0x4004a0,0x4004c5->R5]), char** argv (line=144,) @@ LIST([0x4004a0,0x4004cb->R4])) (external,prototyped,frame_base=LIST([0x4004a0,0x4004a1->R7+8],[0x4004a1,0x4004aa->R7+16],[0x4004aa,0x400535->R7+32],[0x400535,0x400538->R7+16],[0x400538,0x400539->R7+8]),line=144,) @@ 0x4004a0 scope(main @@ 0x4004a0) RANGES([0x4004a0,0x400539]) { }
+    var: int bar (external,line=14,) @@ 0x601038
+    func: int f1 (int p (line=118,) @@ LIST([0x400790,0x4007a0->R5]), int x (line=118,) @@ LIST([0x400790,0x400794->R4]), int y (line=118,) @@ LIST([0x400790,0x40079d->R1]), int* z (line=118,) @@ LIST([0x400790,0x4007a4->R2],[0x4007a4,0x4007b5->R3])) (external,prototyped,frame_base=LIST([0x400790,0x400791->R7+8],[0x400791,0x4007b5->R7+16],[0x4007b5,0x4007b6->R7+8]),line=118,) @@ 0x400790 scope(f1 @@ 0x400790) RANGES([0x400790,0x4007b6]) { }
+    func: int f10 (int p (line=23,inlineinstances=(ref1ae,ref23c,ref310,ref44a,)), int* z (line=23,inlineinstances=(ref1b5,ref235,ref309,ref443,))) (external,prototyped,inlined,line=23,inlineinstances=(0x400600,0x400613,0x400633,0x400663,)) scope(f10) { }
+    func: int f3 (int p (line=100,) @@ LIST([0x400730,0x400740->R5]), int x (line=100,) @@ LIST([0x400730,0x400734->R4]), int y (line=100,) @@ LIST([0x400730,0x40073d->R1]), int* z (line=100,) @@ LIST([0x400730,0x400744->R2],[0x400744,0x400755->R3])) (external,prototyped,frame_base=LIST([0x400730,0x400731->R7+8],[0x400731,0x400755->R7+16],[0x400755,0x400756->R7+8]),line=100,) @@ 0x400730 scope(f3 @@ 0x400730) RANGES([0x400730,0x400756]) { }
+    func: int f4 (int p (line=91,) @@ LIST([0x400700,0x400710->R5]), int x (line=91,) @@ LIST([0x400700,0x400704->R4]), int y (line=91,) @@ LIST([0x400700,0x40070d->R1]), int* z (line=91,) @@ LIST([0x400700,0x400714->R2],[0x400714,0x400725->R3])) (external,prototyped,frame_base=LIST([0x400700,0x400701->R7+8],[0x400701,0x400725->R7+16],[0x400725,0x400726->R7+8]),line=91,) @@ 0x400700 scope(f4 @@ 0x400700) RANGES([0x400700,0x400726]) { }
+    func: int f5 (int p (line=82,) @@ LIST([0x4006d0,0x4006e0->R5],[0x4006e0,0x4006e4->RUNTIMEDATA(3,757f9f)]), int x (line=82,) @@ LIST([0x4006d0,0x4006d4->R4]), int y (line=82,) @@ LIST([0x4006d0,0x4006dd->R1]), int* z (line=82,) @@ LIST([0x4006d0,0x4006e4->R2],[0x4006e4,0x4006f5->R3])) (external,prototyped,frame_base=LIST([0x4006d0,0x4006d1->R7+8],[0x4006d1,0x4006f5->R7+16],[0x4006f5,0x4006f6->R7+8]),line=82,) @@ 0x4006d0 scope(f5 @@ 0x4006d0) RANGES([0x4006d0,0x4006f6]) { }
+    func: int f6 (int p (line=73,) @@ LIST([0x4006a0,0x4006b0->R5]), int x (line=73,) @@ LIST([0x4006a0,0x4006a4->R4]), int y (line=73,) @@ LIST([0x4006a0,0x4006ad->R1]), int* z (line=73,) @@ LIST([0x4006a0,0x4006b4->R2],[0x4006b4,0x4006c5->R3])) (external,prototyped,frame_base=LIST([0x4006a0,0x4006a1->R7+8],[0x4006a1,0x4006c5->R7+16],[0x4006c5,0x4006c6->R7+8]),line=73,) @@ 0x4006a0 scope(f6 @@ 0x4006a0) RANGES([0x4006a0,0x4006c6]) { }
+    func: int f7 (int p (line=64,) @@ R5, int x (line=64,) @@ R4, int y (line=64,) @@ LIST([0x400660,0x40066f->R1]), int* z (line=64,) @@ R2) (external,prototyped,frame_base=R7+8,line=64,) @@ 0x400660 scope(f7 @@ 0x400660) RANGES([0x400660,0x400693]) { }
+    func: int f8 (int p (line=55,inlineinstances=(ref284,ref3ce,)), int x (line=55,inlineinstances=(ref28b,ref3c3,)), int y (line=55,inlineinstances=(ref292,ref3b8,)), int* z (line=55,inlineinstances=(ref29b,ref3b1,))) (external,prototyped,inlined,line=55,inlineinstances=(0x400630,0x400660,)) scope(f8) { }
+    func: int f9 (int p (line=46,inlineinstances=(ref1f7,ref2db,ref415,)), int x (line=46,inlineinstances=(ref1fe,ref2d0,ref40a,)), int y (line=46,inlineinstances=(ref205,ref2c5,ref3ff,)), int* z (line=46,inlineinstances=(ref20e,ref2be,ref3f8,))) (external,prototyped,inlined,line=46,inlineinstances=(0x400610,0x400630,0x400660,)) scope(f9) { }
+    var: int baz (external,line=13,) @@ 0x60103c
+    func: int f2 (int p (line=109,) @@ LIST([0x400760,0x400770->R5],[0x400770,0x400774->RUNTIMEDATA(3,757f9f)]), int x (line=109,) @@ LIST([0x400760,0x400764->R4]), int y (line=109,) @@ LIST([0x400760,0x40076d->R1]), int* z (line=109,) @@ LIST([0x400760,0x400774->R2],[0x400774,0x400785->R3])) (external,prototyped,frame_base=LIST([0x400760,0x400761->R7+8],[0x400761,0x400785->R7+16],[0x400785,0x400786->R7+8]),line=109,) @@ 0x400760 scope(f2 @@ 0x400760) RANGES([0x400760,0x400786]) { }
+  root srcfiles: (1)
+    root: ../../../../../vmi/tests/dwdebug/c/014/014.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/014,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/014/014.c @@ 0x0) RANGES([0x4004a0,0x400539][0x400600,0x4007b6]) {
+        symbols: {
+            func: int f2 (int p (line=109,) @@ LIST([0x400760,0x400770->R5],[0x400770,0x400774->RUNTIMEDATA(3,757f9f)]), int x (line=109,) @@ LIST([0x400760,0x400764->R4]), int y (line=109,) @@ LIST([0x400760,0x40076d->R1]), int* z (line=109,) @@ LIST([0x400760,0x400774->R2],[0x400774,0x400785->R3])) (external,prototyped,frame_base=LIST([0x400760,0x400761->R7+8],[0x400761,0x400785->R7+16],[0x400785,0x400786->R7+8]),line=109,) @@ 0x400760 scope(f2 @@ 0x400760) RANGES([0x400760,0x400786]) { }
+            func: int f3 (int p (line=100,) @@ LIST([0x400730,0x400740->R5]), int x (line=100,) @@ LIST([0x400730,0x400734->R4]), int y (line=100,) @@ LIST([0x400730,0x40073d->R1]), int* z (line=100,) @@ LIST([0x400730,0x400744->R2],[0x400744,0x400755->R3])) (external,prototyped,frame_base=LIST([0x400730,0x400731->R7+8],[0x400731,0x400755->R7+16],[0x400755,0x400756->R7+8]),line=100,) @@ 0x400730 scope(f3 @@ 0x400730) RANGES([0x400730,0x400756]) { }
+            func: int f4 (int p (line=91,) @@ LIST([0x400700,0x400710->R5]), int x (line=91,) @@ LIST([0x400700,0x400704->R4]), int y (line=91,) @@ LIST([0x400700,0x40070d->R1]), int* z (line=91,) @@ LIST([0x400700,0x400714->R2],[0x400714,0x400725->R3])) (external,prototyped,frame_base=LIST([0x400700,0x400701->R7+8],[0x400701,0x400725->R7+16],[0x400725,0x400726->R7+8]),line=91,) @@ 0x400700 scope(f4 @@ 0x400700) RANGES([0x400700,0x400726]) { }
+            func: int f5 (int p (line=82,) @@ LIST([0x4006d0,0x4006e0->R5],[0x4006e0,0x4006e4->RUNTIMEDATA(3,757f9f)]), int x (line=82,) @@ LIST([0x4006d0,0x4006d4->R4]), int y (line=82,) @@ LIST([0x4006d0,0x4006dd->R1]), int* z (line=82,) @@ LIST([0x4006d0,0x4006e4->R2],[0x4006e4,0x4006f5->R3])) (external,prototyped,frame_base=LIST([0x4006d0,0x4006d1->R7+8],[0x4006d1,0x4006f5->R7+16],[0x4006f5,0x4006f6->R7+8]),line=82,) @@ 0x4006d0 scope(f5 @@ 0x4006d0) RANGES([0x4006d0,0x4006f6]) { }
+            func: int f6 (int p (line=73,) @@ LIST([0x4006a0,0x4006b0->R5]), int x (line=73,) @@ LIST([0x4006a0,0x4006a4->R4]), int y (line=73,) @@ LIST([0x4006a0,0x4006ad->R1]), int* z (line=73,) @@ LIST([0x4006a0,0x4006b4->R2],[0x4006b4,0x4006c5->R3])) (external,prototyped,frame_base=LIST([0x4006a0,0x4006a1->R7+8],[0x4006a1,0x4006c5->R7+16],[0x4006c5,0x4006c6->R7+8]),line=73,) @@ 0x4006a0 scope(f6 @@ 0x4006a0) RANGES([0x4006a0,0x4006c6]) { }
+            func: int f7 (int p (line=64,) @@ R5, int x (line=64,) @@ R4, int y (line=64,) @@ LIST([0x400660,0x40066f->R1]), int* z (line=64,) @@ R2) (external,prototyped,frame_base=R7+8,line=64,) @@ 0x400660 scope(f7 @@ 0x400660) RANGES([0x400660,0x400693]) { }
+            var: int bar (external,line=14,) @@ 0x601038
+            type:  (4 B) (encoding=5)
+            type: void
+            type:  (1 B) (encoding=6)
+            type: struct foo_struct (24 B) (line=16) { int argc (line=17,) @@ +0; char** argv (line=18,) @@ +8; int sx (line=19,) @@ +16; int sy (line=20,) @@ +20 }
+            func: int f1 (int p (line=118,) @@ LIST([0x400790,0x4007a0->R5]), int x (line=118,) @@ LIST([0x400790,0x400794->R4]), int y (line=118,) @@ LIST([0x400790,0x40079d->R1]), int* z (line=118,) @@ LIST([0x400790,0x4007a4->R2],[0x4007a4,0x4007b5->R3])) (external,prototyped,frame_base=LIST([0x400790,0x400791->R7+8],[0x400791,0x4007b5->R7+16],[0x4007b5,0x4007b6->R7+8]),line=118,) @@ 0x400790 scope(f1 @@ 0x400790) RANGES([0x400790,0x4007b6]) { }
+            var: int baz (external,line=13,) @@ 0x60103c
+            func: int main (int argc (line=144,) @@ LIST([0x4004a0,0x4004c5->R5]), char** argv (line=144,) @@ LIST([0x4004a0,0x4004cb->R4])) (external,prototyped,frame_base=LIST([0x4004a0,0x4004a1->R7+8],[0x4004a1,0x4004aa->R7+16],[0x4004aa,0x400535->R7+32],[0x400535,0x400538->R7+16],[0x400538,0x400539->R7+8]),line=144,) @@ 0x4004a0 scope(main @@ 0x4004a0) RANGES([0x4004a0,0x400539]) { }
+            type:  (8 B) (encoding=7)
+            func: int f10 (int p (line=23,inlineinstances=(ref1ae,ref23c,ref310,ref44a,)), int* z (line=23,inlineinstances=(ref1b5,ref235,ref309,ref443,))) (external,prototyped,inlined,line=23,inlineinstances=(0x400600,0x400613,0x400633,0x400663,)) scope(f10) { }
+            func: int INLINED_FUNC(f10) ((null)) (int INLINED_PARAM(p) @@ R5, int* INLINED_PARAM(z) @@ R2) (frame_base=R7+8,) @@ 0x400600 scope(INLINED(f10) @@ 0x400600) RANGES([0x400600,0x40060a]) { }
+            func: int f8 (int p (line=55,inlineinstances=(ref284,ref3ce,)), int x (line=55,inlineinstances=(ref28b,ref3c3,)), int y (line=55,inlineinstances=(ref292,ref3b8,)), int* z (line=55,inlineinstances=(ref29b,ref3b1,))) (external,prototyped,inlined,line=55,inlineinstances=(0x400630,0x400660,)) scope(f8) { }
+            func: int INLINED_FUNC(f8) ((null)) (int INLINED_PARAM(p) @@ R5, int INLINED_PARAM(x) @@ R4, int INLINED_PARAM(y) @@ LIST([0x400630,0x40063f->R1]), int* INLINED_PARAM(z) @@ R2) (frame_base=R7+8,) @@ 0x400630 scope(INLINED(f8) @@ 0x400630) RANGES([0x400630,0x400658]) { }
+            func: int f9 (int p (line=46,inlineinstances=(ref1f7,ref2db,ref415,)), int x (line=46,inlineinstances=(ref1fe,ref2d0,ref40a,)), int y (line=46,inlineinstances=(ref205,ref2c5,ref3ff,)), int* z (line=46,inlineinstances=(ref20e,ref2be,ref3f8,))) (external,prototyped,inlined,line=46,inlineinstances=(0x400610,0x400630,0x400660,)) scope(f9) { }
+            func: int INLINED_FUNC(f9) ((null)) (int INLINED_PARAM(p) @@ R5, int INLINED_PARAM(x) @@ R4, int INLINED_PARAM(y) @@ LIST([0x400610,0x40061f->R1]), int* INLINED_PARAM(z) @@ R2) (frame_base=R7+8,) @@ 0x400610 scope(INLINED(f9) @@ 0x400610) RANGES([0x400610,0x40062d]) { }
+        }
+        subscopes: {
+          scope(struct foo_struct) {
+            symbols: {
+                var: int sx (line=19,) @@ +16
+                var: int sy (line=20,) @@ +20
+                var: char** argv (line=18,) @@ +8
+                var: int argc (line=17,) @@ +0
+            }
+          }
+          scope(f10) {
+            symbols: {
+                var: int* z (line=23,inlineinstances=(ref1b5,ref235,ref309,ref443,))
+                var: int x (line=23,inlineinstances=(ref1d0,ref25b,ref32f,ref469,))
+                var: int p (line=23,inlineinstances=(ref1ae,ref23c,ref310,ref44a,))
+                var: struct foo_struct foo (line=24,inlineinstances=(ref1bc,ref256,ref32a,ref464,))
+                func: int f10_subfunc (int psub (line=29,)) (inlined,line=29,inlineinstances=(ref1c1,)) scope(f10_subfunc) { }
+                var: int y (line=23,inlineinstances=(ref1d5,ref260,ref334,ref46e,))
+            }
+            subscopes: {
+              scope(f10_subfunc) {
+                symbols: {
+                    var: struct foo_struct foosub (line=30,)
+                    var: int psub (line=29,)
+                    var: int x (line=23,)
+                    var: int y (line=23,)
+                }
+              }
+            }
+          }
+          scope(f9) {
+            symbols: {
+                var: int* z (line=46,inlineinstances=(ref20e,ref2be,ref3f8,))
+                var: int p (line=46,inlineinstances=(ref1f7,ref2db,ref415,))
+                var: int x (line=46,inlineinstances=(ref1fe,ref2d0,ref40a,))
+                var: int y (line=46,inlineinstances=(ref205,ref2c5,ref3ff,))
+                var: int retval (line=48,inlineinstances=(ref215,ref2e9,ref423,))
+            }
+          }
+          scope(f8) {
+            symbols: {
+                var: int* z (line=55,inlineinstances=(ref29b,ref3b1,))
+                var: int p (line=55,inlineinstances=(ref284,ref3ce,))
+                var: int x (line=55,inlineinstances=(ref28b,ref3c3,))
+                var: int y (line=55,inlineinstances=(ref292,ref3b8,))
+                var: int retval (line=57,inlineinstances=(ref2a2,ref3dc,))
+            }
+          }
+          scope(INLINED(f10) @@ 0x400600) RANGES([0x400600,0x40060a]) {
+            symbols: {
+                var: int* INLINED_PARAM(z) @@ R2
+                var: int INLINED_INSTANCE(x) ((null))
+                var: int INLINED_PARAM(p) @@ R5
+                var: struct foo_struct INLINED_INSTANCE(foo) ((null))
+                func: int INLINED_FUNC(f10_subfunc) ((null)) (int) () scope(INLINED(f10_subfunc) @@ 0xffffffffffffffff) { }
+                var: int INLINED_INSTANCE(y) ((null))
+            }
+            subscopes: {
+              scope(INLINED(f10_subfunc) @@ 0xffffffffffffffff) { }
+            }
+          }
+          scope(INLINED(f9) @@ 0x400610) RANGES([0x400610,0x40062d]) {
+            symbols: {
+                var: int* INLINED_PARAM(z) @@ R2
+                func: int INLINED_FUNC(f10) ((null)) (int* INLINED_PARAM(z) @@ R2, int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7519f)) () @@ 0x400613 scope(INLINED(f10) @@ 0x400613) RANGES([0x400613,0x40061a]) { }
+                var: int INLINED_PARAM(p) @@ R5
+                var: int INLINED_PARAM(x) @@ R4
+                var: int INLINED_PARAM(y) @@ LIST([0x400610,0x40061f->R1])
+                var: int INLINED_INSTANCE(retval) ((null)) @@ LIST([0x400610,0x40061a->R5],[0x40061a,0x40062d->RUNTIMEDATA(7,75031242319f)])
+            }
+            subscopes: {
+              scope(INLINED(f10) @@ 0x400613) RANGES([0x400613,0x40061a]) {
+                symbols: {
+                    var: int* INLINED_PARAM(z) @@ R2
+                    var: int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7519f)
+                }
+                subscopes: {
+                  scope() RANGES([0x400613,0x40061a]) {
+                    symbols: {
+                        var: struct foo_struct INLINED_INSTANCE(foo) ((null))
+                        var: int INLINED_INSTANCE(x) ((null))
+                        var: int INLINED_INSTANCE(y) ((null))
+                    }
+                  }
+                }
+              }
+            }
+          }
+          scope(INLINED(f8) @@ 0x400630) RANGES([0x400630,0x400658]) {
+            symbols: {
+                var: int* INLINED_PARAM(z) @@ R2
+                func: int INLINED_FUNC(f9) ((null)) (int* INLINED_PARAM(z) @@ R2, int INLINED_PARAM(y) @@ RUNTIMEDATA(5,750331e9f), int INLINED_PARAM(x) @@ RUNTIMEDATA(5,75031249f), int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7519f)) () @@ 0x400630 scope(INLINED(f9) @@ 0x400630) RANGES([0x400630,0x400647][0x400654,0x400657]) { }
+                var: int INLINED_PARAM(p) @@ R5
+                var: int INLINED_PARAM(x) @@ R4
+                var: int INLINED_PARAM(y) @@ LIST([0x400630,0x40063f->R1])
+                var: int INLINED_INSTANCE(retval) ((null)) @@ LIST([0x400630,0x40063a->R5],[0x40063a,0x400658->RUNTIMEDATA(7,75031242329f)])
+            }
+            subscopes: {
+              scope(INLINED(f9) @@ 0x400630) RANGES([0x400630,0x400647][0x400654,0x400657]) {
+                symbols: {
+                    var: int* INLINED_PARAM(z) @@ R2
+                    var: int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7519f)
+                    var: int INLINED_PARAM(x) @@ RUNTIMEDATA(5,75031249f)
+                    var: int INLINED_PARAM(y) @@ RUNTIMEDATA(5,750331e9f)
+                }
+                subscopes: {
+                  scope() RANGES([0x400630,0x400647][0x400654,0x400657]) {
+                    symbols: {
+                        func: int INLINED_FUNC(f10) ((null)) (int* INLINED_PARAM(z) @@ R2, int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7529f)) () @@ 0x400633 scope(INLINED(f10) @@ 0x400633) RANGES([0x400633,0x40063a]) { }
+                        var: int INLINED_INSTANCE(retval) ((null)) @@ LIST([0x400630,0x40063a->RUNTIMEDATA(3,7519f)],[0x40063a,0x400658->RUNTIMEDATA(7,75031242339f)])
+                    }
+                    subscopes: {
+                      scope(INLINED(f10) @@ 0x400633) RANGES([0x400633,0x40063a]) {
+                        symbols: {
+                            var: int* INLINED_PARAM(z) @@ R2
+                            var: int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7529f)
+                        }
+                        subscopes: {
+                          scope() RANGES([0x400633,0x40063a]) {
+                            symbols: {
+                                var: struct foo_struct INLINED_INSTANCE(foo) ((null))
+                                var: int INLINED_INSTANCE(x) ((null))
+                                var: int INLINED_INSTANCE(y) ((null))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          scope(f7 @@ 0x400660) RANGES([0x400660,0x400693]) {
+            symbols: {
+                var: int* z (line=64,) @@ R2
+                func: int INLINED_FUNC(f8) ((null)) (int* INLINED_PARAM(z) @@ R2, int INLINED_PARAM(y) @@ RUNTIMEDATA(5,750331e9f), int INLINED_PARAM(x) @@ RUNTIMEDATA(5,75031249f), int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7519f)) () @@ 0x400660 scope(INLINED(f8) @@ 0x400660) RANGES([0x400660,0x400682][0x40068f,0x400692]) { }
+                var: int p (line=64,) @@ R5
+                var: int x (line=64,) @@ R4
+                var: int y (line=64,) @@ LIST([0x400660,0x40066f->R1])
+                var: int retval (line=66,) @@ LIST([0x400660,0x40066a->R5],[0x40066a,0x400693->RUNTIMEDATA(7,75031242339f)])
+            }
+            subscopes: {
+              scope(INLINED(f8) @@ 0x400660) RANGES([0x400660,0x400682][0x40068f,0x400692]) {
+                symbols: {
+                    var: int* INLINED_PARAM(z) @@ R2
+                    var: int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7519f)
+                    var: int INLINED_PARAM(x) @@ RUNTIMEDATA(5,75031249f)
+                    var: int INLINED_PARAM(y) @@ RUNTIMEDATA(5,750331e9f)
+                }
+                subscopes: {
+                  scope() RANGES([0x400660,0x400682][0x40068f,0x400692]) {
+                    symbols: {
+                        var: int INLINED_INSTANCE(retval) ((null)) @@ LIST([0x400660,0x40066a->RUNTIMEDATA(3,7519f)],[0x40066a,0x400693->RUNTIMEDATA(7,75031242349f)])
+                        func: int INLINED_FUNC(f9) ((null)) (int* INLINED_PARAM(z) @@ R2, int INLINED_PARAM(y) @@ RUNTIMEDATA(5,751331e9f), int INLINED_PARAM(x) @@ RUNTIMEDATA(5,75131249f), int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7529f)) () @@ 0x400660 scope(INLINED(f9) @@ 0x400660) RANGES([0x400660,0x400677][0x40068f,0x400692]) { }
+                    }
+                    subscopes: {
+                      scope(INLINED(f9) @@ 0x400660) RANGES([0x400660,0x400677][0x40068f,0x400692]) {
+                        symbols: {
+                            var: int* INLINED_PARAM(z) @@ R2
+                            var: int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7529f)
+                            var: int INLINED_PARAM(x) @@ RUNTIMEDATA(5,75131249f)
+                            var: int INLINED_PARAM(y) @@ RUNTIMEDATA(5,751331e9f)
+                        }
+                        subscopes: {
+                          scope() RANGES([0x400660,0x400677][0x40068f,0x400692]) {
+                            symbols: {
+                                func: int INLINED_FUNC(f10) ((null)) (int* INLINED_PARAM(z) @@ R2, int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7539f)) () @@ 0x400663 scope(INLINED(f10) @@ 0x400663) RANGES([0x400663,0x40066a]) { }
+                                var: int INLINED_INSTANCE(retval) ((null)) @@ LIST([0x400660,0x40066a->RUNTIMEDATA(3,7529f)],[0x40066a,0x400693->RUNTIMEDATA(7,75031242359f)])
+                            }
+                            subscopes: {
+                              scope(INLINED(f10) @@ 0x400663) RANGES([0x400663,0x40066a]) {
+                                symbols: {
+                                    var: int* INLINED_PARAM(z) @@ R2
+                                    var: int INLINED_PARAM(p) @@ RUNTIMEDATA(3,7539f)
+                                }
+                                subscopes: {
+                                  scope() RANGES([0x400663,0x40066a]) {
+                                    symbols: {
+                                        var: struct foo_struct INLINED_INSTANCE(foo) ((null))
+                                        var: int INLINED_INSTANCE(x) ((null))
+                                        var: int INLINED_INSTANCE(y) ((null))
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          scope(f6 @@ 0x4006a0) RANGES([0x4006a0,0x4006c6]) {
+            symbols: {
+                var: int* z (line=73,) @@ LIST([0x4006a0,0x4006b4->R2],[0x4006b4,0x4006c5->R3])
+                var: int p (line=73,) @@ LIST([0x4006a0,0x4006b0->R5])
+                var: int x (line=73,) @@ LIST([0x4006a0,0x4006a4->R4])
+                var: int y (line=73,) @@ LIST([0x4006a0,0x4006ad->R1])
+                var: int retval (line=75,) @@ LIST([0x4006a0,0x4006b0->R5],[0x4006b0,0x4006b4->RUNTIMEDATA(3,757f9f)])
+            }
+          }
+          scope(f5 @@ 0x4006d0) RANGES([0x4006d0,0x4006f6]) {
+            symbols: {
+                var: int* z (line=82,) @@ LIST([0x4006d0,0x4006e4->R2],[0x4006e4,0x4006f5->R3])
+                var: int p (line=82,) @@ LIST([0x4006d0,0x4006e0->R5],[0x4006e0,0x4006e4->RUNTIMEDATA(3,757f9f)])
+                var: int x (line=82,) @@ LIST([0x4006d0,0x4006d4->R4])
+                var: int y (line=82,) @@ LIST([0x4006d0,0x4006dd->R1])
+                var: int retval (line=84,) @@ LIST([0x4006d0,0x4006e0->R5],[0x4006e0,0x4006e4->RUNTIMEDATA(3,757f9f)])
+            }
+          }
+          scope(f4 @@ 0x400700) RANGES([0x400700,0x400726]) {
+            symbols: {
+                var: int* z (line=91,) @@ LIST([0x400700,0x400714->R2],[0x400714,0x400725->R3])
+                var: int p (line=91,) @@ LIST([0x400700,0x400710->R5])
+                var: int x (line=91,) @@ LIST([0x400700,0x400704->R4])
+                var: int y (line=91,) @@ LIST([0x400700,0x40070d->R1])
+                var: int retval (line=93,) @@ LIST([0x400700,0x400710->R5],[0x400710,0x400714->RUNTIMEDATA(3,757f9f)])
+            }
+          }
+          scope(f3 @@ 0x400730) RANGES([0x400730,0x400756]) {
+            symbols: {
+                var: int* z (line=100,) @@ LIST([0x400730,0x400744->R2],[0x400744,0x400755->R3])
+                var: int p (line=100,) @@ LIST([0x400730,0x400740->R5])
+                var: int x (line=100,) @@ LIST([0x400730,0x400734->R4])
+                var: int y (line=100,) @@ LIST([0x400730,0x40073d->R1])
+                var: int retval (line=102,) @@ LIST([0x400730,0x400740->R5],[0x400740,0x400744->RUNTIMEDATA(3,757f9f)])
+            }
+          }
+          scope(f2 @@ 0x400760) RANGES([0x400760,0x400786]) {
+            symbols: {
+                var: int* z (line=109,) @@ LIST([0x400760,0x400774->R2],[0x400774,0x400785->R3])
+                var: int p (line=109,) @@ LIST([0x400760,0x400770->R5],[0x400770,0x400774->RUNTIMEDATA(3,757f9f)])
+                var: int x (line=109,) @@ LIST([0x400760,0x400764->R4])
+                var: int y (line=109,) @@ LIST([0x400760,0x40076d->R1])
+                var: int retval (line=111,) @@ LIST([0x400760,0x400770->R5],[0x400770,0x400774->RUNTIMEDATA(3,757f9f)])
+            }
+          }
+          scope(f1 @@ 0x400790) RANGES([0x400790,0x4007b6]) {
+            symbols: {
+                var: int* z (line=118,) @@ LIST([0x400790,0x4007a4->R2],[0x4007a4,0x4007b5->R3])
+                var: int p (line=118,) @@ LIST([0x400790,0x4007a0->R5])
+                var: int x (line=118,) @@ LIST([0x400790,0x400794->R4])
+                var: int y (line=118,) @@ LIST([0x400790,0x40079d->R1])
+                var: int retval (line=120,) @@ LIST([0x400790,0x4007a0->R5],[0x4007a0,0x4007a4->RUNTIMEDATA(3,757f9f)])
+            }
+          }
+          scope(main @@ 0x4004a0) RANGES([0x4004a0,0x400539]) {
+            symbols: {
+                var: int max (line=146,) @@ LIST([0x4004bf,0x4004ce->RUNTIMEDATA(3,9ff9f)],[0x4004ce,0x400538->R3])
+                func: int sleep (...) (external,prototyped,decl,line=163,) scope(sleep) { }
+                var: char** argv (line=144,) @@ LIST([0x4004a0,0x4004cb->R4])
+                var: volatile int i (line=145,) @@ LIST([0x4004bf,0x400521->FB-20],[0x400525,0x40052d->R0],[0x40052d,0x400539->FB-20])
+                var: int argc (line=144,) @@ LIST([0x4004a0,0x4004c5->R5])
+                func: int atoi (...) (external,prototyped,decl,line=153,) scope(atoi) { }
+            }
+            subscopes: {
+              scope(atoi) { }
+              scope(sleep) { }
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=56,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/c/014/014.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/c/014/014.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601028 (24 B)
+            func: sleep@plt () (external,prototyped,) @@ 0x400490 (16 B)
+            func: f1 () (external,prototyped,) @@ 0x400790 (38 B)
+            func: f2 () (external,prototyped,) @@ 0x400760 (38 B)
+            func: f3 () (external,prototyped,) @@ 0x400730 (38 B)
+            func: f4 () (external,prototyped,) @@ 0x400700 (38 B)
+            func: f5 () (external,prototyped,) @@ 0x4006d0 (38 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (48 B)
+            func: f6 () (external,prototyped,) @@ 0x4006a0 (38 B)
+            func: f8 () (external,prototyped,) @@ 0x400630 (40 B)
+            func: f9 () (external,prototyped,) @@ 0x400610 (29 B)
+            func: f7 () (external,prototyped,) @@ 0x400660 (51 B)
+            func: _fini () (external,prototyped,) @@ 0x400848 (14 B)
+            var:  .hash (external,) @@ 0x4002b0 (40 B)
+            func: _init () (external,prototyped,) @@ 0x400440 (24 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            func: .init () (external,prototyped,) @@ 0x400440 (24 B)
+            var:  .dynstr (external,) @@ 0x400370 (67 B)
+            var:  .rela.plt (external,) @@ 0x4003f8 (72 B)
+            var:  .ctors (external,) @@ 0x600e18 (16 B)
+            var:  __init_array_end @@ 0x600e14 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e30 (8 B)
+            var:  .eh_frame (external,) @@ 0x4008d8 (484 B)
+            var:  _IO_stdin_used (external,) @@ 0x400858 (4 B)
+            func: .text () (external,prototyped,) @@ 0x4004a0 (936 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x400812 (1 B)
+            var:  .dynamic (external,) @@ 0x600e40 (416 B)
+            var:  .jcr (external,) @@ 0x600e38 (8 B)
+            func: .plt () (external,prototyped,) @@ 0x400460 (64 B)
+            func: .fini () (external,prototyped,) @@ 0x400848 (14 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            var:  _DYNAMIC @@ 0x600e40 (416 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x4007b8 (90 B)
+            var:  bar (external,) @@ 0x601038 (4 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x400470 (16 B)
+            var:  __dso_handle (external,) @@ 0x601020 (8 B)
+            var:  __init_array_start @@ 0x600e14 (0 B)
+            var:  data_start (external,) @@ 0x601018 (8 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (48 B)
+            func: atoi@plt () (external,prototyped,) @@ 0x400480 (16 B)
+            var:  baz (external,) @@ 0x60103c (4 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            func: _start () (external,prototyped,) @@ 0x40053c (196 B)
+            var:  .gnu.hash (external,) @@ 0x4002d8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x4003c0 (32 B)
+            var:  __data_start (external,) @@ 0x601018 (8 B)
+            var:  .gnu.version (external,) @@ 0x4003b4 (10 B)
+            var:  .rela.dyn (external,) @@ 0x4003e0 (24 B)
+            func: main () (external,prototyped,) @@ 0x4004a0 (153 B)
+            var:  .dynsym (external,) @@ 0x4002f8 (120 B)
+            func: f10 () (external,prototyped,) @@ 0x400600 (10 B)
+            var:  .dtors (external,) @@ 0x600e28 (16 B)
+            func: _header@plt () (external,prototyped,) @@ 0x400460 (16 B)
+            var:  .data (external,) @@ 0x601018 (16 B)
+            var:  .eh_frame_hdr (external,) @@ 0x40085c (124 B)
+            var:  .rodata (external,) @@ 0x400858 (4 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

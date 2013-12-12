@@ -1,0 +1,160 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/c/008/008.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (10)
+    type:  (4 B) (encoding=5)
+    type:  (1 B) (encoding=6)
+    type:  (8 B) (encoding=7)
+    type:  (8 B) (encoding=5)
+    type: union foo_union_1_2 (48 B) (line=28) { int aa (line=29,) @@ +0; long int bb (line=30,) @@ +0; char [44] strstr (line=31,) @@ +0; union (4 B) (line=32) { union (4 B) (line=33) { unsigned int yy (line=34,) @@ +0 } @@ +0; unsigned int zz (line=36,) @@ +0 } @@ +0 }
+    type:  (4 B) (encoding=7)
+    type: union foo_union_1 (48 B) (line=7) { int a (line=8,) @@ +0; long int b (line=9,) @@ +0; char [44] str (line=10,) @@ +0; union (4 B) (line=11) { unsigned int z (line=12,) @@ +0; union (4 B) (line=13) { unsigned int y (line=14,) @@ +0 } @@ +0 } @@ +0 }
+    type: union foo_union_2 (48 B) (line=3) { int sfoo (line=4,) @@ +0; int** sppfoo (line=5,) @@ +0; union foo_union_1 fs1_inline (line=17,) @@ +0; union foo_union_1 fs1 (line=19,) @@ +0; union foo_union_1* pfs1 (line=20,) @@ +0 }
+    type: union foo_union_3 (48 B) (line=23) { ()* snprintf (line=24,) @@ +0; char* header (line=25,) @@ +0; int fileno (line=26,) @@ +0; union foo_union_1_2 x (line=38,) @@ +0; union foo_union_1 fs1t1 (line=40,) @@ +0; union foo_union_1_2* pfs1t1 (line=41,) @@ +0 }
+    type: void
+  shared_types: (0)
+  globals: (3)
+    var: union foo_union_3 fs3 (external,line=42,) @@ 0x601080
+    func: int main (int argc (line=44,) @@ R5, char** argv (line=44,) @@ R4) (external,prototyped,frame_base=R7+8,line=44,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400403]) { }
+    var: union foo_union_2 fs2 (external,line=21,) @@ 0x601040
+  root srcfiles: (1)
+    root: ../../../../../vmi/tests/dwdebug/c/008/008.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/008,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/008/008.c @@ 0x0) RANGES([0x400400,0x400403]) {
+        symbols: {
+            type:  (4 B) (encoding=5)
+            type:  (1 B) (encoding=6)
+            type:  (8 B) (encoding=7)
+            type:  (8 B) (encoding=5)
+            func: int main (int argc (line=44,) @@ R5, char** argv (line=44,) @@ R4) (external,prototyped,frame_base=R7+8,line=44,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x400403]) { }
+            type: union foo_union_1_2 (48 B) (line=28) { int aa (line=29,) @@ +0; long int bb (line=30,) @@ +0; char [44] strstr (line=31,) @@ +0; union (4 B) (line=32) { union (4 B) (line=33) { unsigned int yy (line=34,) @@ +0 } @@ +0; unsigned int zz (line=36,) @@ +0 } @@ +0 }
+            type:  (4 B) (encoding=7)
+            type: union foo_union_1 (48 B) (line=7) { int a (line=8,) @@ +0; long int b (line=9,) @@ +0; char [44] str (line=10,) @@ +0; union (4 B) (line=11) { unsigned int z (line=12,) @@ +0; union (4 B) (line=13) { unsigned int y (line=14,) @@ +0 } @@ +0 } @@ +0 }
+            type: union foo_union_2 (48 B) (line=3) { int sfoo (line=4,) @@ +0; int** sppfoo (line=5,) @@ +0; union foo_union_1 fs1_inline (line=17,) @@ +0; union foo_union_1 fs1 (line=19,) @@ +0; union foo_union_1* pfs1 (line=20,) @@ +0 }
+            type: union foo_union_3 (48 B) (line=23) { ()* snprintf (line=24,) @@ +0; char* header (line=25,) @@ +0; int fileno (line=26,) @@ +0; union foo_union_1_2 x (line=38,) @@ +0; union foo_union_1 fs1t1 (line=40,) @@ +0; union foo_union_1_2* pfs1t1 (line=41,) @@ +0 }
+            var: union foo_union_2 fs2 (external,line=21,) @@ 0x601040
+            var: union foo_union_3 fs3 (external,line=42,) @@ 0x601080
+            type: void
+        }
+        subscopes: {
+          scope((null)) {
+            symbols: {
+                var: unsigned int y (line=14,) @@ +0
+            }
+          }
+          scope((null)) {
+            symbols: {
+                var: unsigned int z (line=12,) @@ +0
+            }
+          }
+          scope(union foo_union_1) {
+            symbols: {
+                var: char [44] str (line=10,) @@ +0
+                var: int a (line=8,) @@ +0
+                var: long int b (line=9,) @@ +0
+            }
+          }
+          scope(union foo_union_2) {
+            symbols: {
+                var: int** sppfoo (line=5,) @@ +0
+                var: union foo_union_1* pfs1 (line=20,) @@ +0
+                var: union foo_union_1 fs1 (line=19,) @@ +0
+                var: int sfoo (line=4,) @@ +0
+                var: union foo_union_1 fs1_inline (line=17,) @@ +0
+            }
+          }
+          scope((null)) {
+            symbols: {
+                var: unsigned int yy (line=34,) @@ +0
+            }
+          }
+          scope((null)) {
+            symbols: {
+                var: unsigned int zz (line=36,) @@ +0
+                var: union y (line=35,) @@ +0
+            }
+          }
+          scope(union foo_union_1_2) {
+            symbols: {
+                var: int aa (line=29,) @@ +0
+                var: union z (line=37,) @@ +0
+                var: char [44] strstr (line=31,) @@ +0
+                var: long int bb (line=30,) @@ +0
+            }
+          }
+          scope(union foo_union_3) {
+            symbols: {
+                var: ()* snprintf (line=24,) @@ +0
+                var: union foo_union_1_2* pfs1t1 (line=41,) @@ +0
+                var: union foo_union_1 fs1t1 (line=40,) @@ +0
+                var: int fileno (line=26,) @@ +0
+                var: char* header (line=25,) @@ +0
+                var: union foo_union_1_2 x (line=38,) @@ +0
+            }
+          }
+          scope((null)) { }
+          scope(main @@ 0x400400) RANGES([0x400400,0x400403]) {
+            symbols: {
+                var: union foo_union_3 fs3 (line=45,)
+                var: char** argv (line=44,) @@ R4
+                var: int argc (line=44,) @@ R5
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=44,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/c/008/008.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/c/008/008.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601020 (144 B)
+            func: .fini () (external,prototyped,) @@ 0x400558 (14 B)
+            func: .text () (external,prototyped,) @@ 0x400400 (344 B)
+            var:  .rela.plt (external,) @@ 0x4003a8 (24 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            func: _fini () (external,prototyped,) @@ 0x400558 (14 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            func: .plt () (external,prototyped,) @@ 0x4003e0 (32 B)
+            var:  .hash (external,) @@ 0x4002b0 (24 B)
+            func: .init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .eh_frame (external,) @@ 0x400598 (188 B)
+            func: _init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .ctors (external,) @@ 0x600e18 (16 B)
+            var:  .dynstr (external,) @@ 0x400330 (56 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+            var:  __init_array_end @@ 0x600e14 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e30 (8 B)
+            var:  .jcr (external,) @@ 0x600e38 (8 B)
+            var:  _IO_stdin_used (external,) @@ 0x400568 (4 B)
+            var:  .dynamic (external,) @@ 0x600e40 (416 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x400522 (1 B)
+            var:  _DYNAMIC @@ 0x600e40 (416 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x4004c8 (90 B)
+            var:  .rodata (external,) @@ 0x400568 (4 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x4003f0 (16 B)
+            var:  .gnu.version (external,) @@ 0x400368 (6 B)
+            var:  __dso_handle (external,) @@ 0x601010 (8 B)
+            var:  __init_array_start @@ 0x600e14 (0 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            var:  fs2 (external,) @@ 0x601040 (48 B)
+            var:  fs3 (external,) @@ 0x601080 (48 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .eh_frame_hdr (external,) @@ 0x40056c (44 B)
+            func: _start () (external,prototyped,) @@ 0x400404 (196 B)
+            var:  .gnu.hash (external,) @@ 0x4002c8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x400370 (32 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            var:  .dtors (external,) @@ 0x600e28 (16 B)
+            var:  .rela.dyn (external,) @@ 0x400390 (24 B)
+            func: main () (external,prototyped,) @@ 0x400400 (3 B)
+            var:  .dynsym (external,) @@ 0x4002e8 (72 B)
+            func: _header@plt () (external,prototyped,) @@ 0x4003e0 (16 B)
+            var:  .data (external,) @@ 0x601008 (16 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

@@ -1,0 +1,117 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/cpp/003/003.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (2)
+    type: void
+    type:  (8 B) (encoding=7)
+  shared_types: (0)
+  globals: (0)
+  root srcfiles: (1)
+    root: ../../../../../vmi/tests/dwdebug/cpp/003/003.cpp (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/cpp/003,producer=GNU C++ 4.6.3,language=C++ (4)) {
+      scope(../../../../../vmi/tests/dwdebug/cpp/003/003.cpp @@ 0x0) RANGES([0x400460,0x40047f]) {
+        symbols: {
+            type: void
+            type:  (8 B) (encoding=7)
+        }
+        subscopes: {
+          scope((null)) {
+            symbols: {
+                type:  (1 B) (encoding=6)
+                type:  (4 B) (encoding=5)
+                func: int main (int argc (line=13,) @@ R5, char** argv (line=13,) @@ R4) (external,prototyped,frame_base=R7+8,line=13,) @@ 0x400460 scope(main @@ 0x400460) RANGES([0x400460,0x40047f]) { }
+                func: int set (int xn (line=7,inlineinstances=(ref113,)), int yn (line=7,inlineinstances=(ref10d,))) (inlined,inlineinstances=(0x400460,)) scope(set) { }
+                var: int x @@ 0x601028
+                var: int y @@ 0x60102c
+            }
+            subscopes: {
+              scope(set) {
+                symbols: {
+                    var: int yn (line=7,inlineinstances=(ref10d,))
+                    var: int xn (line=7,inlineinstances=(ref113,))
+                }
+              }
+              scope(main @@ 0x400460) RANGES([0x400460,0x40047f]) {
+                symbols: {
+                    var: char** argv (line=13,) @@ R4
+                    var: int argc (line=13,) @@ R5
+                }
+                subscopes: {
+                  scope() RANGES([0x400460,0x400474][0x400476,0x40047e]) {
+                    symbols: {
+                        var: int xn (line=15,)
+                        var: volatile int result (line=16,) @@ FB-12
+                        var: int x (line=14,)
+                        func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(yn) @@ CONST(4,00000002), int INLINED_PARAM(xn) @@ CONST(4,00000001)) () @@ 0x400460 scope(INLINED(set) @@ 0x400460) RANGES([0x400460,0x400474]) { }
+                    }
+                    subscopes: {
+                      scope(INLINED(set) @@ 0x400460) RANGES([0x400460,0x400474]) {
+                        symbols: {
+                            var: int INLINED_PARAM(yn) @@ CONST(4,00000002)
+                            var: int INLINED_PARAM(xn) @@ CONST(4,00000001)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=44,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/cpp/003/003.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/cpp/003/003.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601018 (24 B)
+            var:  .dtors (external,) @@ 0x600df8 (16 B)
+            func: .fini () (external,prototyped,) @@ 0x4005d4 (14 B)
+            func: .text () (external,prototyped,) @@ 0x400460 (372 B)
+            var:  .rela.plt (external,) @@ 0x400410 (24 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            func: _fini () (external,prototyped,) @@ 0x4005d4 (14 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            func: .plt () (external,prototyped,) @@ 0x400440 (32 B)
+            var:  .hash (external,) @@ 0x4002b0 (36 B)
+            func: .init () (external,prototyped,) @@ 0x400428 (24 B)
+            var:  .eh_frame (external,) @@ 0x400618 (188 B)
+            func: _init () (external,prototyped,) @@ 0x400428 (24 B)
+            var:  .ctors (external,) @@ 0x600de8 (16 B)
+            var:  .dynstr (external,) @@ 0x400358 (115 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+            var:  __init_array_end @@ 0x600de4 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e00 (8 B)
+            var:  .jcr (external,) @@ 0x600e08 (8 B)
+            var:  _IO_stdin_used (external,) @@ 0x4005e4 (4 B)
+            var:  .dynamic (external,) @@ 0x600e10 (464 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x40059e (1 B)
+            var:  _ZN12_GLOBAL__N_11yE @@ 0x60102c (4 B)
+            var:  _DYNAMIC @@ 0x600e10 (464 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x400544 (90 B)
+            var:  .rodata (external,) @@ 0x4005e4 (4 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x400450 (16 B)
+            var:  __dso_handle (external,) @@ 0x601010 (8 B)
+            var:  __init_array_start @@ 0x600de4 (0 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            var:  .data (external,) @@ 0x601008 (16 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .eh_frame_hdr (external,) @@ 0x4005e8 (44 B)
+            func: _start () (external,prototyped,) @@ 0x400480 (196 B)
+            var:  .gnu.hash (external,) @@ 0x4002d8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x4003d8 (32 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            var:  .gnu.version (external,) @@ 0x4003cc (8 B)
+            var:  .rela.dyn (external,) @@ 0x4003f8 (24 B)
+            func: main () (external,prototyped,) @@ 0x400460 (31 B)
+            var:  .dynsym (external,) @@ 0x4002f8 (96 B)
+            var:  _ZN12_GLOBAL__N_11xE @@ 0x601028 (4 B)
+            func: _header@plt () (external,prototyped,) @@ 0x400440 (16 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

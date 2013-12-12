@@ -1,0 +1,207 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/cpp/002/002.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (5)
+    type: n1 (line=4) {  }
+    type:  (4 B) (encoding=5)
+    type: void
+    type:  (1 B) (encoding=6)
+    type:  (8 B) (encoding=7)
+  shared_types: (0)
+  globals: (1)
+    func: int main (int argc (line=25,) @@ LIST([0x400460,0x40046e->R5]), char** argv (line=25,) @@ LIST([0x400460,0x400469->R4])) (external,prototyped,frame_base=LIST([0x400460,0x400464->R7+8],[0x400464,0x4004c0->R7+32],[0x4004c0,0x4004c1->R7+8]),line=25,) @@ 0x400460 scope(main @@ 0x400460) RANGES([0x400460,0x4004c1]) { }
+  root srcfiles: (2)
+    root: ../../../../../vmi/tests/dwdebug/cpp/002/002.cpp (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/cpp/002,producer=GNU C++ 4.6.3,language=C++ (4)) {
+      scope(../../../../../vmi/tests/dwdebug/cpp/002/002.cpp @@ 0x0) RANGES([0x400460,0x4004c1][0x400590,0x4005b3]) {
+        symbols: {
+            type:  (1 B) (encoding=6)
+            type: n1 (line=4) {  }
+            type:  (4 B) (encoding=5)
+            type: void
+            func: int main (int argc (line=25,) @@ LIST([0x400460,0x40046e->R5]), char** argv (line=25,) @@ LIST([0x400460,0x400469->R4])) (external,prototyped,frame_base=LIST([0x400460,0x400464->R7+8],[0x400464,0x4004c0->R7+32],[0x4004c0,0x4004c1->R7+8]),line=25,) @@ 0x400460 scope(main @@ 0x400460) RANGES([0x400460,0x4004c1]) { }
+            type:  (8 B) (encoding=7)
+            func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(sx) @@ R5, int INLINED_PARAM(sy) @@ R4) (frame_base=R7+8,) @@ 0x400590 scope(INLINED(set) @@ 0x400590) RANGES([0x400590,0x40059d]) { }
+            func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(sx) @@ R5, int INLINED_PARAM(sy) @@ R4) (frame_base=R7+8,) @@ 0x4005a0 scope(INLINED(set) @@ 0x4005a0) RANGES([0x4005a0,0x4005b3]) { }
+        }
+        subscopes: {
+          scope(n1) {
+            symbols: {
+                type: n2 (line=11) {  }
+                var: int x (external,) @@ 0x601034
+                func: int set (int sx (line=14,inlineinstances=(ref125,ref1f0,)), int sy (line=14,inlineinstances=(ref12c,ref1ea,))) (external,prototyped,inlined,inlineinstances=(0x400590,0x40046e,)) scope(set) { }
+                var: int y (external,) @@ 0x601030
+            }
+            subscopes: {
+              scope(n2) {
+                symbols: {
+                    var: int y2 (external,) @@ 0x601028
+                    func: int set (int sx (line=19,inlineinstances=(ref150,ref214,)), int sy (line=19,inlineinstances=(ref157,ref20e,))) (external,prototyped,inlined,inlineinstances=(0x4005a0,0x400478,)) scope(set) { }
+                    var: int x2 (external,) @@ 0x60102c
+                }
+                subscopes: {
+                  scope(set) {
+                    symbols: {
+                        var: int sx (line=19,inlineinstances=(ref150,ref214,))
+                        var: int sy (line=19,inlineinstances=(ref157,ref20e,))
+                    }
+                  }
+                }
+              }
+              scope(set) {
+                symbols: {
+                    var: int sx (line=14,inlineinstances=(ref125,ref1f0,))
+                    var: int sy (line=14,inlineinstances=(ref12c,ref1ea,))
+                }
+              }
+            }
+          }
+          scope(INLINED(set) @@ 0x400590) RANGES([0x400590,0x40059d]) {
+            symbols: {
+                var: int INLINED_PARAM(sx) @@ R5
+                var: int INLINED_PARAM(sy) @@ R4
+            }
+          }
+          scope(INLINED(set) @@ 0x4005a0) RANGES([0x4005a0,0x4005b3]) {
+            symbols: {
+                var: int INLINED_PARAM(sx) @@ R5
+                var: int INLINED_PARAM(sy) @@ R4
+            }
+          }
+          scope(main @@ 0x400460) RANGES([0x400460,0x4004c1]) {
+            symbols: {
+                var: char** argv (line=25,) @@ LIST([0x400460,0x400469->R4])
+                var: int argc (line=25,) @@ LIST([0x400460,0x40046e->R5])
+            }
+            subscopes: {
+              scope() RANGES([0x400464,0x4004ba]) {
+                symbols: {
+                    var: volatile int result (line=26,) @@ LIST([0x4004b6,0x4004bc->R0],[0x4004bc,0x4004c1->FB-20])
+                    func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(sy) @@ CONST(4,00000002), int INLINED_PARAM(sx) @@ CONST(4,00000001)) () @@ 0x40046e scope(INLINED(set) @@ 0x40046e) RANGES([0x40046e,0x400478]) { }
+                    func: int INLINED_FUNC(set) ((null)) (int INLINED_PARAM(sy) @@ CONST(4,00000001), int INLINED_PARAM(sx) @@ CONST(4,00000002)) () @@ 0x400478 scope(INLINED(set) @@ 0x400478) RANGES([0x400478,0x400496]) { }
+                }
+                subscopes: {
+                  scope(INLINED(set) @@ 0x40046e) RANGES([0x40046e,0x400478]) {
+                    symbols: {
+                        var: int INLINED_PARAM(sx) @@ CONST(4,00000001)
+                        var: int INLINED_PARAM(sy) @@ CONST(4,00000002)
+                    }
+                  }
+                  scope(INLINED(set) @@ 0x400478) RANGES([0x400478,0x400496]) {
+                    symbols: {
+                        var: int INLINED_PARAM(sx) @@ CONST(4,00000002)
+                        var: int INLINED_PARAM(sy) @@ CONST(4,00000001)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      }
+
+    root: ../../../../../vmi/tests/dwdebug/cpp/002/002_ext_setters.cpp (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/cpp/002,producer=GNU C++ 4.6.3,language=C++ (4)) {
+      scope(../../../../../vmi/tests/dwdebug/cpp/002/002_ext_setters.cpp @@ 0x4005c0) RANGES([0x4005c0,0x4005dd]) {
+        symbols: {
+            type: n1 (line=4) {  }
+            type:  (4 B) (encoding=5)
+            type: void
+            type:  (8 B) (encoding=7)
+        }
+        subscopes: {
+          scope(n1) {
+            symbols: {
+                func: int ext_set (int ex (line=6,) @@ R5, int ey (line=6,) @@ R4) (external,prototyped,frame_base=R7+8,) @@ 0x4005c0 scope(ext_set @@ 0x4005c0) RANGES([0x4005c0,0x4005cd]) { }
+                type: n2 (line=11) {  }
+                var: int x (external,isdecl,line=5,)
+                var: int y (external,isdecl,line=6,)
+            }
+            subscopes: {
+              scope(n2) {
+                symbols: {
+                    func: int ext_set (int ex (line=11,) @@ R5, int ey (line=11,) @@ R4) (external,prototyped,frame_base=R7+8,) @@ 0x4005d0 scope(ext_set @@ 0x4005d0) RANGES([0x4005d0,0x4005dd]) { }
+                    var: int y2 (external,isdecl,line=14,)
+                    var: int x2 (external,isdecl,line=13,)
+                }
+                subscopes: {
+                  scope(ext_set @@ 0x4005d0) RANGES([0x4005d0,0x4005dd]) {
+                    symbols: {
+                        var: int ex (line=11,) @@ R5
+                        var: int ey (line=11,) @@ R4
+                    }
+                  }
+                }
+              }
+              scope(ext_set @@ 0x4005c0) RANGES([0x4005c0,0x4005cd]) {
+                symbols: {
+                    var: int ex (line=6,) @@ R5
+                    var: int ey (line=6,) @@ R4
+                }
+              }
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=50,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/cpp/002/002.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/cpp/002/002.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601018 (32 B)
+            var:  _ZN2n11yE (external,) @@ 0x601030 (4 B)
+            var:  _ZN2n12n22x2E (external,) @@ 0x60102c (4 B)
+            var:  .rela.plt (external,) @@ 0x400410 (24 B)
+            func: .text () (external,prototyped,) @@ 0x400460 (528 B)
+            func: .fini () (external,prototyped,) @@ 0x400670 (14 B)
+            func: _fini () (external,prototyped,) @@ 0x400670 (14 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            func: .plt () (external,prototyped,) @@ 0x400440 (32 B)
+            var:  .hash (external,) @@ 0x4002b0 (36 B)
+            func: .init () (external,prototyped,) @@ 0x400428 (24 B)
+            var:  .eh_frame (external,) @@ 0x4006d0 (284 B)
+            func: _init () (external,prototyped,) @@ 0x400428 (24 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            func: _ZN2n17ext_setEii () (external,prototyped,) @@ 0x4005c0 (13 B)
+            var:  .dynstr (external,) @@ 0x400358 (115 B)
+            var:  .data (external,) @@ 0x601008 (16 B)
+            var:  .ctors (external,) @@ 0x600de8 (16 B)
+            var:  __init_array_end @@ 0x600de4 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e00 (8 B)
+            var:  .jcr (external,) @@ 0x600e08 (8 B)
+            var:  _IO_stdin_used (external,) @@ 0x400680 (4 B)
+            func: _ZN2n12n23setEii () (external,prototyped,) @@ 0x4005a0 (19 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x40063a (1 B)
+            var:  .dynamic (external,) @@ 0x600e10 (464 B)
+            var:  _ZN2n11xE (external,) @@ 0x601034 (4 B)
+            func: _ZN2n13setEii () (external,prototyped,) @@ 0x400590 (13 B)
+            var:  _DYNAMIC @@ 0x600e10 (464 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x4005e0 (90 B)
+            var:  .rodata (external,) @@ 0x400680 (4 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x400450 (16 B)
+            var:  .gnu.version (external,) @@ 0x4003cc (8 B)
+            func: _ZN2n12n27ext_setEii () (external,prototyped,) @@ 0x4005d0 (13 B)
+            var:  __init_array_start @@ 0x600de4 (0 B)
+            var:  __dso_handle (external,) @@ 0x601010 (8 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .eh_frame_hdr (external,) @@ 0x400684 (76 B)
+            func: _start () (external,prototyped,) @@ 0x4004c4 (204 B)
+            var:  .gnu.hash (external,) @@ 0x4002d8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x4003d8 (32 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            var:  .dtors (external,) @@ 0x600df8 (16 B)
+            var:  .rela.dyn (external,) @@ 0x4003f8 (24 B)
+            func: main () (external,prototyped,) @@ 0x400460 (97 B)
+            var:  .dynsym (external,) @@ 0x4002f8 (96 B)
+            var:  _ZN2n12n22y2E (external,) @@ 0x601028 (4 B)
+            func: _header@plt () (external,prototyped,) @@ 0x400440 (16 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

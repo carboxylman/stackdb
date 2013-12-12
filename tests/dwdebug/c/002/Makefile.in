@@ -1,0 +1,8 @@
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tests/dwdebug/c/002
+OBJDIR		= @top_builddir@
+
+TESTNAME = "const_vol_ptr_typedef_types"
+
+include $(OBJDIR)/tests/dwdebug/c/Makeconf

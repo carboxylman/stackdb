@@ -1,0 +1,205 @@
+debugfile(/home/johnsond/git/a3/vmi/tests/dwdebug/c/015/015.x86_64.bin):
+    flags:  0x0
+    refcnt:   1
+  types: (6)
+    type: struct global_struct (8 B) (line=3) { int x (line=4,) @@ +0; float y (line=5,) @@ +4 }
+    type:  (4 B) (encoding=4)
+    type:  (4 B) (encoding=5)
+    type: void
+    type:  (1 B) (encoding=6)
+    type:  (8 B) (encoding=7)
+  shared_types: (0)
+  globals: (2)
+    func: int main (int argc (line=55,) @@ R5, char** argv (line=55,) @@ LIST([0x400400,0x400414->R4],[0x400429,0x40046a->R4])) (external,prototyped,frame_base=R7+8,line=55,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x40046a]) { }
+    func: int foo_func (int p (line=8,inlineinstances=(ref187,ref2a7,)), int x (line=8,inlineinstances=(ref190,ref2a2,)), int y (line=8,inlineinstances=(ref199,ref29d,)), char** argv (line=8,inlineinstances=(ref1a2,ref296,))) (external,prototyped,inlined,line=8,inlineinstances=(0x400530,0x400400,)) scope(foo_func) { }
+  root srcfiles: (1)
+    root: ../../../../../vmi/tests/dwdebug/c/015/015.c (compdirname=/home/johnsond/git/a3/vmi.obj/tests/dwdebug/c/015,producer=GNU C 4.6.3,language=C89 (1)) {
+      scope(../../../../../vmi/tests/dwdebug/c/015/015.c @@ 0x0) RANGES([0x400400,0x40046a][0x400530,0x400580]) {
+        symbols: {
+            type: struct global_struct (8 B) (line=3) { int x (line=4,) @@ +0; float y (line=5,) @@ +4 }
+            type:  (4 B) (encoding=4)
+            type:  (4 B) (encoding=5)
+            func: int main (int argc (line=55,) @@ R5, char** argv (line=55,) @@ LIST([0x400400,0x400414->R4],[0x400429,0x40046a->R4])) (external,prototyped,frame_base=R7+8,line=55,) @@ 0x400400 scope(main @@ 0x400400) RANGES([0x400400,0x40046a]) { }
+            type: void
+            type:  (1 B) (encoding=6)
+            type:  (8 B) (encoding=7)
+            func: int foo_func (int p (line=8,inlineinstances=(ref187,ref2a7,)), int x (line=8,inlineinstances=(ref190,ref2a2,)), int y (line=8,inlineinstances=(ref199,ref29d,)), char** argv (line=8,inlineinstances=(ref1a2,ref296,))) (external,prototyped,inlined,line=8,inlineinstances=(0x400530,0x400400,)) scope(foo_func) { }
+            func: int INLINED_FUNC(foo_func) ((null)) (int INLINED_PARAM(p) @@ LIST([0x400530,0x400535->R5],[0x400535,0x400580->R0]), int INLINED_PARAM(x) @@ LIST([0x400530,0x400550->R4]), int INLINED_PARAM(y) @@ LIST([0x400530,0x400548->R1]), char** INLINED_PARAM(argv) @@ R8) (frame_base=R7+8,) @@ 0x400530 scope(INLINED(foo_func) @@ 0x400530) RANGES([0x400530,0x400580]) { }
+        }
+        subscopes: {
+          scope(struct global_struct) {
+            symbols: {
+                var: int x (line=4,) @@ +0
+                var: float y (line=5,) @@ +4
+            }
+          }
+          scope(foo_func) {
+            symbols: {
+                var: int x (line=8,inlineinstances=(ref190,ref2a2,))
+                var: int y (line=8,inlineinstances=(ref199,ref29d,))
+                var: struct foo_func_struct ffsarg (line=48,inlineinstances=(ref1d7,ref2cb,))
+                var: struct global_struct* pgs1 (line=11,inlineinstances=(ref1b3,ref2bb,))
+                var: char** argv (line=8,inlineinstances=(ref1a2,ref296,))
+                func: int foo_nested_func (int pinc (line=18,inlineinstances=(ref20d,ref2f6,)), struct foo_func_struct* ffs (line=18,inlineinstances=(ref1fd,ref2f1,))) (inlined,line=18,inlineinstances=(ref1c3,0x400530,0x400400,)) scope(foo_nested_func) { }
+                type: struct foo_func_struct (16 B) (line=13) { char** argv (line=14,) @@ +0; int argc (line=15,) @@ +8 }
+                var: const volatile int i (line=9,inlineinstances=(ref1a9,ref2b1,))
+                var: int argc (line=8,inlineinstances=(ref1e5,ref2d9,))
+                var: int p (line=8,inlineinstances=(ref187,ref2a7,))
+                var: struct global_struct gs1 (line=10,inlineinstances=(ref1ae,ref2b6,))
+            }
+            subscopes: {
+              scope(struct foo_func_struct) {
+                symbols: {
+                    var: char** argv (line=14,) @@ +0
+                    var: int argc (line=15,) @@ +8
+                }
+              }
+              scope(foo_nested_func) {
+                symbols: {
+                    var: struct foo_func_struct ffscopy (line=19,inlineinstances=(ref21b,ref30e,))
+                    var: int pinc (line=18,inlineinstances=(ref20d,ref2f6,))
+                    var: volatile int j (line=20,inlineinstances=(ref229,ref300,))
+                    var: struct foo_func_struct* ffs (line=18,inlineinstances=(ref1fd,ref2f1,))
+                    var: int argc (line=8,inlineinstances=(ref232,ref309,))
+                }
+              }
+            }
+          }
+          scope(INLINED(foo_func) @@ 0x400530) RANGES([0x400530,0x400580]) {
+            symbols: {
+                var: int INLINED_PARAM(x) @@ LIST([0x400530,0x400550->R4])
+                var: int INLINED_PARAM(y) @@ LIST([0x400530,0x400548->R1])
+                var: struct foo_func_struct INLINED_INSTANCE(ffsarg) ((null)) @@ RUNTIMEDATA(8,5893852934934)
+                var: struct global_struct* INLINED_INSTANCE(pgs1) ((null)) @@ RUNTIMEDATA(10,f2c300000000)
+                var: char** INLINED_PARAM(argv) @@ R8
+                var: const volatile int INLINED_INSTANCE(i) ((null))
+                var: int INLINED_INSTANCE(argc) ((null))
+                var: int INLINED_PARAM(p) @@ LIST([0x400530,0x400535->R5],[0x400535,0x400580->R0])
+                var: struct global_struct INLINED_INSTANCE(gs1) ((null))
+                func: int INLINED_FUNC(foo_nested_func) ((null)) (int, struct foo_func_struct*) () scope(INLINED(foo_nested_func) @@ 0xffffffffffffffff) { }
+                func: int INLINED_FUNC(foo_nested_func) ((null)) (struct foo_func_struct* INLINED_PARAM(ffs) @@ RUNTIMEDATA(10,f24910000000), int INLINED_PARAM(pinc) @@ LIST([0x400535,0x40057e->R0],[0x40057e,0x400580->RUNTIMEDATA(3,7019f)])) () @@ 0x400530 scope(INLINED(foo_nested_func) @@ 0x400530) RANGES([0x400530,0x400532][0x400535,0x40057e]) { }
+            }
+            subscopes: {
+              scope(INLINED(foo_nested_func) @@ 0xffffffffffffffff) { }
+              scope(INLINED(foo_nested_func) @@ 0x400530) RANGES([0x400530,0x400532][0x400535,0x40057e]) {
+                symbols: {
+                    var: int INLINED_PARAM(pinc) @@ LIST([0x400535,0x40057e->R0],[0x40057e,0x400580->RUNTIMEDATA(3,7019f)])
+                    var: struct foo_func_struct* INLINED_PARAM(ffs) @@ RUNTIMEDATA(10,f24910000000)
+                }
+                subscopes: {
+                  scope() RANGES([0x400530,0x400532][0x400535,0x40057e]) {
+                    symbols: {
+                        var: struct foo_func_struct INLINED_INSTANCE(ffscopy) ((null)) @@ RUNTIMEDATA(8,5893852934934)
+                        var: volatile int INLINED_INSTANCE(j) ((null)) @@ LIST([0x400544,0x400572->FB-12],[0x400576,0x40057a->R1],[0x40057a,0x400580->FB-12])
+                        var: int INLINED_INSTANCE(argc) ((null))
+                    }
+                  }
+                }
+              }
+            }
+          }
+          scope(main @@ 0x400400) RANGES([0x400400,0x40046a]) {
+            symbols: {
+                var: char** argv (line=55,) @@ LIST([0x400400,0x400414->R4],[0x400429,0x40046a->R4])
+                var: int i (line=56,) @@ LIST([0x400400,0x400409->RUNTIMEDATA(2,309f)])
+                var: int argc (line=55,) @@ R5
+                func: int INLINED_FUNC(foo_func) ((null)) (char** INLINED_PARAM(argv) @@ R4, int INLINED_PARAM(y), int INLINED_PARAM(x), int INLINED_PARAM(p)) () @@ 0x400400 scope(INLINED(foo_func) @@ 0x400400) RANGES([0x400400,0x400403][0x400410,0x400461]) { }
+            }
+            subscopes: {
+              scope(INLINED(foo_func) @@ 0x400400) RANGES([0x400400,0x400403][0x400410,0x400461]) {
+                symbols: {
+                    var: char** INLINED_PARAM(argv) @@ R4
+                    var: int INLINED_PARAM(x)
+                    var: int INLINED_PARAM(y)
+                    var: int INLINED_PARAM(p)
+                }
+                subscopes: {
+                  scope() RANGES([0x400400,0x400403][0x400410,0x400461]) {
+                    symbols: {
+                        var: struct foo_func_struct INLINED_INSTANCE(ffsarg) ((null)) @@ RUNTIMEDATA(8,5493855934934)
+                        var: struct global_struct INLINED_INSTANCE(gs1) ((null))
+                        func: int INLINED_FUNC(foo_nested_func) ((null)) (struct foo_func_struct* INLINED_PARAM(ffs), int INLINED_PARAM(pinc)) () @@ 0x400400 scope(INLINED(foo_nested_func) @@ 0x400400) RANGES([0x400400,0x400403][0x400410,0x400461]) { }
+                        var: const volatile int INLINED_INSTANCE(i) ((null))
+                        var: struct global_struct* INLINED_INSTANCE(pgs1) ((null)) @@ RUNTIMEDATA(10,f2b620000000)
+                        var: int INLINED_INSTANCE(argc) ((null))
+                    }
+                    subscopes: {
+                      scope(INLINED(foo_nested_func) @@ 0x400400) RANGES([0x400400,0x400403][0x400410,0x400461]) {
+                        symbols: {
+                            var: int INLINED_PARAM(pinc)
+                            var: struct foo_func_struct* INLINED_PARAM(ffs)
+                        }
+                        subscopes: {
+                          scope() RANGES([0x400400,0x400403][0x400410,0x400461]) {
+                            symbols: {
+                                var: struct foo_func_struct INLINED_INSTANCE(ffscopy) ((null)) @@ RUNTIMEDATA(8,5493855934934)
+                                var: volatile int INLINED_INSTANCE(j) ((null)) @@ LIST([0x400409,0x400455->FB-12],[0x400459,0x40045d->R0],[0x40045d,0x40046a->FB-12])
+                                var: int INLINED_INSTANCE(argc) ((null))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      }
+
+
+  multi-use srcfile symtabs: (0)
+  binfile root: (tab=43,anon=0,dup=0,subscopes=0)
+    root: /home/johnsond/git/a3/vmi/tests/dwdebug/c/015/015.x86_64.bin (compdirname=(null),producer=(null),language=(null) (0)) {
+      scope(/home/johnsond/git/a3/vmi/tests/dwdebug/c/015/015.x86_64.bin) {
+        symbols: {
+            var:  .bss (external,) @@ 0x601018 (16 B)
+            func: .fini () (external,prototyped,) @@ 0x400610 (14 B)
+            func: .text () (external,prototyped,) @@ 0x400400 (528 B)
+            var:  .rela.plt (external,) @@ 0x4003a8 (24 B)
+            var:  .got (external,) @@ 0x600fe0 (8 B)
+            func: _fini () (external,prototyped,) @@ 0x400610 (14 B)
+            var:  _GLOBAL_OFFSET_TABLE_ @@ 0x600fe8 (32 B)
+            func: .plt () (external,prototyped,) @@ 0x4003e0 (32 B)
+            var:  .hash (external,) @@ 0x4002b0 (24 B)
+            func: .init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .eh_frame (external,) @@ 0x400658 (212 B)
+            func: _init () (external,prototyped,) @@ 0x4003c0 (24 B)
+            var:  .ctors (external,) @@ 0x600e18 (16 B)
+            var:  .dynstr (external,) @@ 0x400330 (56 B)
+            var:  .got.plt (external,) @@ 0x600fe8 (32 B)
+            var:  __init_array_end @@ 0x600e14 (0 B)
+            var:  __DTOR_END__ (external,) @@ 0x600e30 (8 B)
+            var:  .jcr (external,) @@ 0x600e38 (8 B)
+            var:  _IO_stdin_used (external,) @@ 0x400620 (4 B)
+            var:  .dynamic (external,) @@ 0x600e40 (416 B)
+            func: __libc_csu_fini () (external,prototyped,) @@ 0x4005da (1 B)
+            var:  _DYNAMIC @@ 0x600e40 (416 B)
+            func: foo_func () (external,prototyped,) @@ 0x400530 (80 B)
+            func: __libc_csu_init () (external,prototyped,) @@ 0x400580 (90 B)
+            var:  .interp (external,) @@ 0x400270 (28 B)
+            func: __libc_start_main@plt () (external,prototyped,) @@ 0x4003f0 (16 B)
+            var:  .gnu.version (external,) @@ 0x400368 (6 B)
+            var:  __dso_handle (external,) @@ 0x601010 (0 B)
+            var:  __init_array_start @@ 0x600e14 (0 B)
+            var:  data_start (external,) @@ 0x601008 (8 B)
+            var:  .data (external,) @@ 0x601008 (16 B)
+            var:  .note.ABI-tag (external,) @@ 0x40028c (32 B)
+            var:  .rodata (external,) @@ 0x400620 (4 B)
+            func: _start () (external,prototyped,) @@ 0x40046c (196 B)
+            var:  .gnu.hash (external,) @@ 0x4002c8 (28 B)
+            var:  .gnu.version_r (external,) @@ 0x400370 (32 B)
+            var:  __data_start (external,) @@ 0x601008 (8 B)
+            var:  .dtors (external,) @@ 0x600e28 (16 B)
+            var:  .rela.dyn (external,) @@ 0x400390 (24 B)
+            func: main () (external,prototyped,) @@ 0x400400 (106 B)
+            var:  .dynsym (external,) @@ 0x4002e8 (72 B)
+            func: _header@plt () (external,prototyped,) @@ 0x4003e0 (16 B)
+            var:  .eh_frame_hdr (external,) @@ 0x400624 (52 B)
+        }
+      }
+      }
+
+  binfile_pointing root: (tab=0,anon=0,dup=0)

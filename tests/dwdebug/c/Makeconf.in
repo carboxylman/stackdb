@@ -1,0 +1,93 @@
+export CC       = @CC@
+export CPP	= @CPP@
+export CXX	= @CXX@
+export STRIP    = @STRIP@
+export LD	= @LD@
+export RANLIB	= @RANLIB@
+export LIBTOOL  = @LIBTOOL@
+export AR	= @AR@
+export RM	= @RM@
+export CP	= @CP@
+export LN_S	= @LN_S@
+export MKDIR_P	= @MKDIR_P@
+export TAR	= @TAR@
+export YACC	= @YACC@
+export LEX	= @LEX@
+export SWIG	= @SWIG@
+
+#CPPFLAGS	= @CPPFLAGS@
+#CFLAGS	       += @CFLAGS@
+#CXXFLAGS       += @CXXFLAGS@
+#LDFLAGS		= @LDFLAGS@
+
+#
+# Neuter these; we must tightly control what gets to the compiler.
+#
+CPPFLAGS :=
+CFLAGS :=
+CXXFLAGS :=
+LDFLAGS :=
+
+ARCH = $(shell uname -m)
+
+#
+# Nothing really complex -- but we do use 02 by default since it's the 
+# most common case, and more O can mean more bugs!
+#
+CFLAGS += -O2 -ggdb -I/usr/include -I$(SRCDIR) -I$(TOP_SRCDIR)/tests/dwdebug/c
+
+DDI := $(OBJDIR)/dwdebug/dumpdebuginfo
+
+DDI_OPTS ?= -DM 
+DDI_LOOKUPS ?= 
+
+TESTNAME ?= 
+TESTNUM ?= $(shell basename $(SUBDIR))
+SRCFILES ?= $(TESTNUM).c
+SRCPROG ?= $(TESTNUM).$(ARCH).src
+SRCPROGOUTPUT ?= $(SRCDIR)/$(TESTNUM).$(ARCH).src.output
+BINPROG ?= $(SRCDIR)/$(TESTNUM).$(ARCH).bin
+BINPROGOUTPUT ?= $(SRCDIR)/$(TESTNUM).$(ARCH).bin.output
+
+CFLAGS += -DTESTNUM=$(TESTNUM)
+ifneq ($(TESTNAME),)
+	CFLAGS += '-DTESTNAME=$(TESTNAME)'
+endif
+
+include $(TOP_SRCDIR)/Makerules
+
+
+%.src: $(SRCFILES:.c=.o)
+	$(CC) $(CFLAGS) -o $@ $^
+
+%.src.runnable: $(SRCFILES)
+	$(CC) $(CFLAGS) -DWITH_RUNNABLE -o $@ $^
+
+test: $(BINPROG)
+	$(DDI) $(DDI_OPTS) $(BINPROG) $(DDI_LOOKUPS) \
+		> `basename $(BINPROG)`.output.new 2>&1
+	diff -u $(BINPROGOUTPUT) `basename $(BINPROG)`.output.new \
+		| tee `basename $(BINPROG)`.output.diff
+
+runnabletest: $(SRCPROG).runnable
+
+testdata: test
+	$(DDI) $(DDI_OPTS) $(BINPROG) $(DDI_LOOKUPS) \
+		> `basename $(BINPROG)`.output.new 2>&1
+	cp -pv `basename $(BINPROG)`.output.new $(BINPROGOUTPUT)
+
+srctest: $(SRCPROG)
+
+srctestinstall:
+	cp -pv $(SRCPROG) $(BINPROG)
+
+#srctest: src
+#	$(DDI) $(DDI_OPTS) $(SRCPROG) $(DDI_LOOKUPS) \
+#		> `basename $(SRCPROG)`.output.new 2>&1
+#
+#srctestdata: srctest
+#	cp -pv $(SRCPROG) $(BINPROG)
+#	cp -pv `basename $(SRCPROG)`.output.new $(BINPROGOUTPUT)
+
+clean:
+	rm -f *.o *.test *.output *.test.runnable *.output.new *.output.diff
