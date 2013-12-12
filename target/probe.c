@@ -1558,7 +1558,7 @@ struct probe *probe_register_symbol(struct probe *probe,struct bsymbol *bsymbol,
 }
 
 struct probe *probe_register_source(struct probe *sink,struct probe *src) {
-    struct target *target = sink->target;
+    struct target *target = src->target;
     int held_src_bsymbol = 0;
     REFCNT trefcnt;
     target_status_t status;
@@ -1572,10 +1572,16 @@ struct probe *probe_register_source(struct probe *sink,struct probe *src) {
 	held_src_bsymbol = 1;
     }
 
+    /*
+     * Don't do this for now; allow this so we can build overlay probe
+     * hierarchies easily.
+     */
+    /*
     if (sink->target != src->target) {
 	verror("sink %s/src %s targets different!\n",sink->name,src->name);
 	goto errout;
     }
+    */
 
     /* Target must be paused before we do anything. */
     status = target_status(target);
