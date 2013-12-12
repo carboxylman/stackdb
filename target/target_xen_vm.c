@@ -6747,7 +6747,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 
 	/* handle the triggered probe based on its event type */
 	if (xtstate->context.debugreg[6] & 0x4000
-	    || (xstate->hvm && xstate->hvm_monitor_trap_flag_set)) {
+	    || (xstate->hvm && xstate->hvm_monitor_trap_flag_set)
+	    || (tthread->emulating_debug_mmod)) {
 	    vdebug(3,LA_TARGET,LF_XV,"new single step debug event (MTF %d)\n",
 		   xstate->hvm_monitor_trap_flag_set);
 
