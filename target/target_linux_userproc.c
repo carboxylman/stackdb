@@ -2500,7 +2500,10 @@ static int linux_userproc_loadregions(struct target *target,
 	     * exist.
 	     */
 	    if (rtype == REGION_TYPE_ANON 
-		|| !(region = addrspace_find_region(space,buf))) {
+		&& addrspace_find_range_real(space,start - 1,&region,NULL))
+		;
+	    else if (rtype == REGION_TYPE_ANON 
+		     || !(region = addrspace_find_region(space,buf))) {
 		if (!(region = memregion_create(space,rtype,buf)))
 		    goto err;
 	    }
@@ -2617,6 +2620,7 @@ static int linux_userproc_updateregions(struct target *target,
 	    if ((rtype != REGION_TYPE_ANON 
 		 && !(region = addrspace_match_region_name(space,rtype,buf)))
 		|| (rtype == REGION_TYPE_ANON
+		    && !addrspace_find_range_real(space,start - 1,&region,NULL)
 		    && !(region = addrspace_match_region_start(space,rtype,start)))) {
 		if (!(region = memregion_create(space,rtype,buf)))
 		    goto err;

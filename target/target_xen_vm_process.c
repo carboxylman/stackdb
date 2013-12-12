@@ -651,6 +651,16 @@ static int __xen_vm_process_loadregions(struct target *target,
 		    region = addrspace_find_region(space,buf);
 		}
 	    }
+	    else {
+		if (addrspace_find_range_real(space,start - 1,&region,NULL)
+		    && region->name && *region->name != '\0') {
+		    vdebug(5,LA_TARGET,LF_XVP,
+			   "found contiguous region (%s) for next anon region at start 0x%"PRIxADDR"\n",
+			   region->name,start);
+		}
+		else
+		    region = NULL;
+	    }
 
 	    /* Create the region if we didn't find one. */
 	    if (!region) {
