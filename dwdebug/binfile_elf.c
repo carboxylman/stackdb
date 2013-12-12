@@ -264,8 +264,19 @@ struct binfile *elf_binfile_open_debuginfo(struct binfile *binfile,
     if (!finalfile && bfelf->gnu_debuglinkfile) {
 	/* Find the containing dir path so we can use it in our search
 	 * of the standard debug file dir infrastructure.
+	 *
+	 * NB: if the binfile is already a file inside root_prefix, to
+	 * get the intermediate fildir, we have to strip off the
+	 * root_prefix... then add it on again in the loop :-\.
 	 */
-	filedir = strdup(binfile->filename);
+	if (binfile->root_prefix
+	    && strstr(binfile->filename,binfile->root_prefix) 
+	           == binfile->filename) {
+	    filedir = strdup(binfile->filename + strlen(binfile->root_prefix));
+	}
+	else {
+	    filedir = strdup(binfile->filename);
+	}
 	tmp = rindex(filedir,'/');
 	if (tmp)
 	    *tmp = '\0';

@@ -1442,6 +1442,26 @@ struct debugfile *debugfile_from_file(char *filename,char *root_prefix,
     struct binfile *binfile_debuginfo = NULL;
     debugfile_type_t dtype;
     debugfile_type_flags_t dtflags = DEBUGFILE_TYPE_FLAG_NONE;
+    char pbuf[PATH_MAX];
+
+    /*
+     * If the caller has not prefixed the @root_prefix to the "real"
+     * part of @filename, we don't let this through straightaway -- we
+     * instead cons up a filename with the prefix prefixed!  If we did
+     * just let it through, we could get confusing results, like the
+     * binfile being loaded from a non-root_prefix dir; but then the
+     * debuginfo file being loaded from inside the root_prefix dir!
+     */
+    if (root_prefix) {
+	if (strstr(filename,root_prefix) != filename) {
+	    vwarnopt(8,LA_DEBUG,LF_DFILE,
+		     "BUG: filename '%s' does not start with root_prefix '%s';"
+		     " prefixing it!\n",
+		   filename,root_prefix);
+	    snprintf(pbuf,sizeof(pbuf),"%s/%s",root_prefix,filename);
+	    filename = strdup(pbuf);
+	}
+    }
 
     realname = filename;
     if (_debugfile_filename_info(filename,&realname,&dtflags)) {
