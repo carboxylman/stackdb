@@ -4541,6 +4541,8 @@ xen_vm_instantiate_overlay(struct target *target,
 			   struct target_thread *tthread,
 			   struct target_spec *spec) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_thread_state *xtstate = 
+	(struct xen_vm_thread_state *)tthread->state;
     struct target *overlay;
     REGVAL thip;
 
@@ -4555,7 +4557,7 @@ xen_vm_instantiate_overlay(struct target *target,
 	verror("could not read IP for tid %"PRIiTID"!!\n",tthread->tid);
 	return NULL;
     }
-    if (thip >= xstate->kernel_start_addr) {
+    if (!xtstate->mm_addr) {
 	errno = EINVAL;
 	verror("tid %"PRIiTID" IP 0x%"PRIxADDR" is a kernel thread!\n",
 	       tthread->tid,thip);
@@ -5646,11 +5648,13 @@ static int xen_vm_thread_snprintf(struct target_thread *tthread,
 		       (rc >= bufsiz) ? 0 :bufsiz - rc,
 		       "tgid%s%"PRIiNUM "%s" "task_flags%s0x%"PRIxNUM "%s"
 		       "thread_info_flags%s0x%"PRIxNUM "%s"
+		       "preempt_count%s0x%"PRIiNUM "%s"
 		       "task%s0x%"PRIxADDR "%s" 
 		       "stack_base%s0x%"PRIxADDR "%s" 
 		       "pgd%s0x%"PRIx64 "%s" "mm%s0x%"PRIxADDR,
 		       kvsep,tstate->tgid,sep,kvsep,tstate->task_flags,sep,
 		       kvsep,tstate->thread_info_flags,sep,
+		       kvsep,tstate->thread_info_preempt_count,sep,
 		       kvsep,tstate->task_struct ? value_addr(tstate->task_struct) : 0x0UL,sep,
 		       kvsep,tstate->stack_base,sep,
 		       kvsep,tstate->pgd,sep,kvsep,tstate->mm_addr);
@@ -7104,7 +7108,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 			verror("user-mode debug event (not single step, not"
 			       " hw dbg reg) at 0x%"PRIxADDR"; debug status reg"
 			       " 0x%"DRF"; eflags 0x%"RF"; skipping handling!\n",
-			       ipval,xtstate->context.debugreg[6],
+			       tmp_ipval,xtstate->context.debugreg[6],
 			       xtstate->context.user_regs.eflags);
 			goto out_err_again;
 		    }
