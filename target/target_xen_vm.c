@@ -7559,6 +7559,7 @@ static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
 	}
 	xtstate = (struct xen_vm_thread_state *)tthread->state;
 
+	/*
 	if (target->wordsize == 8) {
 	    if (xtstate->pgd >= xstate->kernel_start_addr)
 		*cr3 = xtstate->pgd - xstate->kernel_start_addr;
@@ -7572,14 +7573,16 @@ static int __xen_vm_cr3(struct target *target,tid_t tid,uint64_t *cr3) {
 	else {
 	    *cr3 = xtstate->pgd - xstate->kernel_start_addr;
 	}
-	/*
-	if (xen_vm_addr_v2p(target,TID_GLOBAL,xtstate->pgd,&cr3)) {
+	*/
+	
+	
+	if (xen_vm_addr_v2p(target,TID_GLOBAL,xtstate->pgd,cr3)) {
 	    verror("could not translate tid %"PRIiTID" pgd vaddr 0x%"PRIxADDR
 		   " to paddr using kernel CR3: %s!\n",
 		   tid,xtstate->pgd,strerror(errno));
 	    return -1;
 	}
-	*/
+	
     }
 
     vdebug(12,LA_TARGET,LF_XV,
