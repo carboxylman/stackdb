@@ -1311,6 +1311,8 @@ loctype_t lsymbol_resolve_location(struct lsymbol *lsymbol,ADDR base_addr,
 	 * function; caller might want it.
 	 */
 	datatype = symbol_get_datatype(symbol);
+
+	rc = LOCTYPE_ADDR;
     }
     /*
      * If the final symbol on the chain is in a register, we skip
