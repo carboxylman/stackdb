@@ -1071,7 +1071,8 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     if (probe->autofree)
 	probe_free(probe,1);
     else {
-	probe_free(pcprobe,1);
+	if (pcprobe)
+	    probe_free(pcprobe,1);
 	if (cprobes) {
 	    v_g_slist_foreach(cprobes,gsltmp,cprobe) {
 		probe_free(cprobe,1);
