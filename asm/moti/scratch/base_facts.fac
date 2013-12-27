@@ -1,0 +1,21 @@
+(deftemplate task-struct "information about processes"
+    (slot comm (type STRING))
+    (slot pid (type INTEGER))
+    (slot parent (type INTEGER))
+    (slot tgid (type INTEGER))
+    (slot uid (type INTEGER))
+    (slot euid (type INTEGER))
+    (slot gid (type INTEGER))
+    (slot egid (type INTEGER))
+    (slot allow_file_access (allowed-symbols yes no))
+    (multislot file_names (type STRING))
+    (slot open_socket_access (allowed-symbols yes no))
+    (multislot socket_names (type STRING))
+)
+
+(deftemplate mm-struct " Information about the process memory map"
+    (slot comm (type STRING))
+    (multislot (type STRING))
+)
+
+

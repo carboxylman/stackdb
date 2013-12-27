@@ -83,10 +83,12 @@ static int load_submodules(void *__unused) {
 		ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(
 			&res_ring_channel,
 			cmd_ring_channel_get_prod(&res_ring_channel));
+		printk( KERN_INFO " ack rec addr %p\n",ack);
 
 		/*TODO: Zero out the record on the ring channel before use */
 		/* Increment the prod index for the res_ring_channel */
 		res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
+		printk(KERN_INFO " producer index = %d\n",res_prod);
 		res_prod += 1;
 		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
 		/* 
@@ -104,6 +106,8 @@ static int load_submodules(void *__unused) {
 			ack->exec_status = 0;
 			ack_ready++;
 		    }
+		    printk(KERN_INFO " ack exec status = %d\n",ack->exec_status);
+
 		} else {
 		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
 		}
