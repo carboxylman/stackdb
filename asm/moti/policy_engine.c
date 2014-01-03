@@ -49,7 +49,7 @@
 #include "alist.h"
 #include "list.h"
 #include "policy_engine.h"
-//#include "clipssrc/clips.h"
+#include "clips.h"
 
 struct target *target = NULL;
 char base_fact_file[100];
@@ -198,7 +198,7 @@ int main( int argc, char** argv) {
 	exit(0);
     }
    */
-    app_file_path = "test"; //opts.argv[0];
+    app_file_path = "test.cls"; //opts.argv[0];
     wait_time = 300; //atoi(opts.argv[1]);
     
     dwdebug_init();
@@ -220,20 +220,20 @@ int main( int argc, char** argv) {
 
 
     // Initialize the CLIPS environment
-    /*InitializeEnvironment();
-      fprintf(stdout,"INFO: Loading the application level rules\n");
-      Load(app_file_path);
-      if(result != 1) {
-      fprintf(stdout,"ERROR: Failed to load the application rules file\n");
-      exit(0);
-      }
-      fprintf(stdout,"INFO: Loading the recovery rules.\n");
-      result = Load("recovery_rules.clp");
-      if(result != 1) {
-      fprintf(stdout," ERROR: Failed to load the recovery rules file\n");
-      exit(0);
-      }
-     */
+    InitializeEnvironment();
+    fprintf(stdout,"INFO: Loading the application level rules\n");
+    result = Load(app_file_path);
+    if(result != 1) {
+	fprintf(stdout,"ERROR: Failed to load the application rules file\n");
+	exit(0);
+    }
+    fprintf(stdout,"INFO: Loading the recovery rules.\n");
+      //result = Load("recovery_rules.clp");
+      //if(result != 1) {
+	//fprintf(stdout," ERROR: Failed to load the recovery rules file\n");
+	//exit(0);
+      //}
+     
 
     // Start an infinite loop to periodically execute steps 3.1 to 3.5 
     while(1) {
@@ -255,38 +255,37 @@ int main( int argc, char** argv) {
 		    Trying again...\n");
 	    continue;
 	}
-	/*
-	   fprintf(stdout"INFO: Loading the base facts file\n");
-	   result = LoadFacts(base_fact_file);
-	   if(!result) {
+	
+	fprintf(stdout,"INFO: Loading the base facts file\n");
+	result = LoadFacts(base_fact_file);
+	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
 	   exit(0);
-	   }
-	   fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
-	   Reset();
-	   fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
-	   result = Run(-1L);
-	   fprintf(stdout,"INFO : %d application rules were fired\n",result);
+	}
+	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
+	Reset();
+	fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
+	result = Run(-1L);
+	fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	// At this time the anomaly facts are generated.
 	// We have to run them through the recovery rules now.
 
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
 
-	result = generate_timestamp(recovery_fact_file);
-	if(!result){
-	fprintf(stdout,"ERROR: Failed to generate a timestamp\n");
-	exit(0);
-	}
-	result = SaveFacts(recovery_fact_file,  VISIBLE_SAVE, NULL);
-	if(!result) {
-	fprintf(stdout,"ERROR: Failed to save the recovery facts\n");
-	exit(0);
-	}
+	//result = generate_timestamp(recovery_fact_file);
+	//if(!result){
+	    //fprintf(stdout,"ERROR: Failed to generate a timestamp\n");
+	    //exit(0);
+	//}
+	//result = SaveFacts(recovery_fact_file,  VISIBLE_SAVE, NULL);
+	//if(!result) {
+	//fprintf(stdout,"ERROR: Failed to save the recovery facts\n");
+	//exit(0);
+	//}
 	// Now based on the recovery facts that are generated we trigger recovery actions.
 	// how do we do this ?
-
-	 */
+	 
 	fprintf(stdout," Sleeping for %d seconds\n", wait_time);
 	sleep(wait_time);
     }

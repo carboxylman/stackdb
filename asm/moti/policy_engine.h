@@ -24,7 +24,7 @@ extern char base_fact_file[100];
 int ps_gather(struct target *target, struct value * value, void * data) {
 
     struct value *pid_v;
-    unsigned int pid;
+    int pid;
     struct value *uid_v;
     unsigned int uid;
     struct value *name_v;
@@ -56,7 +56,7 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     name = strdup(name_v->buf);
     
     real_cred_v = target_load_value_member(target, NULL, value, "real_cred", NULL, LOAD_FLAG_NONE);
-    real_cred_addr = value_addr(real_cred_v);
+    real_cred_addr = v_addr(real_cred_v);
 
     cred_struct_type = bsymbol_get_symbol(target_lookup_sym(target, "struct cred",
 			NULL, "cred", SYMBOL_TYPE_FLAG_TYPE));
@@ -69,21 +69,21 @@ int ps_gather(struct target *target, struct value * value, void * data) {
 
 
     uid_v = target_load_value_member(target, NULL, new_value, "uid", NULL, LOAD_FLAG_NONE);
-    uid = v_u32(uid_v);
+    uid = v_u16(uid_v);
     euid_v = target_load_value_member(target, NULL, new_value, "euid", NULL, LOAD_FLAG_NONE);
-    euid = v_u32(euid_v);
+    euid = v_u16(euid_v);
     suid_v = target_load_value_member(target, NULL, new_value, "suid", NULL, LOAD_FLAG_NONE);
-    suid = v_u32(suid_v);
+    suid = v_u16(suid_v);
     fsuid_v = target_load_value_member(target, NULL, new_value, "fsuid", NULL, LOAD_FLAG_NONE);
-    fsuid = v_u32(fsuid_v);
+    fsuid = v_u16(fsuid_v);
     gid_v = target_load_value_member(target, NULL, new_value, "gid", NULL, LOAD_FLAG_NONE);
-    gid = v_u32(gid_v);
+    gid = v_u16(gid_v);
     egid_v = target_load_value_member(target, NULL, new_value, "egid", NULL, LOAD_FLAG_NONE);
-    egid = v_u32(egid_v);
+    egid = v_u16(egid_v);
     sgid_v = target_load_value_member(target, NULL, new_value, "sgid", NULL, LOAD_FLAG_NONE);
-    sgid = v_u32(sgid_v);
+    sgid = v_u16(sgid_v);
     fsgid_v = target_load_value_member(target, NULL, new_value, "fsgid", NULL, LOAD_FLAG_NONE);
-    fsgid = v_u32(fsgid_v);
+    fsgid = v_u16(fsgid_v);
    
     // now populate the base fact into the file.
 
@@ -93,8 +93,8 @@ int ps_gather(struct target *target, struct value * value, void * data) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
 	exit(0);
     }
-    // first write the template of for the fact
-    // OR should this go into the application knowledge file ???
+    /* first write the template of for the fact
+     OR should this go into the application knowledge file ???
     fprintf(fp,"\n(deftemplate task-struct\n \
 			\t(slot comm (type STRING))\n \
 			\t(slot pid (type INTEGER))\n \
@@ -106,18 +106,19 @@ int ps_gather(struct target *target, struct value * value, void * data) {
 			\t(slot egid (type INTEGER))\n \
 			\t(slot sgid (type INTEGER))\n \
 			\t(slot fsgid (type INTEGER)))");
+    */
     // Now populate the base fact
     fprintf(fp,"\n(task-struct\n \
 		    \t(comm \"%s\")\n \
-		    \t(pid %u)\n \
-		    \t(uid %u)\n \
-		    \t(euid %u)\n \
-		    \t(suid %u)\n \
-		    \t(fsuid %u)\n \
-		    \t(gid %u)\n \
-		    \t(egid %u)\n \
-		    \t(sgid %u)\n \
-		    \t(fsgid %u)\n",name,pid,uid,euid,suid,fsuid,gid,egid,sgid,fsgid);
+		    \t(pid %d)\n \
+		    \t(uid %hu)\n \
+		    \t(euid %hu)\n \
+		    \t(suid %hu)\n \
+		    \t(fsuid %hu)\n \
+		    \t(gid %hu)\n \
+		    \t(egid %hu)\n \
+		    \t(sgid %hu)\n \
+		    \t(fsgid %hu))\n",name,pid,uid,euid,suid,fsuid,gid,egid,sgid,fsgid);
     
     fclose(fp);
 
