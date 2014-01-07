@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2011-2013 The University of Utah
+## Copyright (c) 2011-2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -63,9 +63,11 @@ exec_prefix	= @exec_prefix@
 
 CPPFLAGS	= @CPPFLAGS@
 CFLAGS	       += @CFLAGS@
+PCCFLAGS       += @CFLAGS@
 #CFLAGS         += -DREF_DEBUG
 CXXFLAGS       += @CXXFLAGS@
 LDFLAGS		= @LDFLAGS@
+PCLDFLAGS       = @LDFLAGS@
 
 #
 # I suppose this kind of interferes with standard libtool practice, but this
@@ -90,6 +92,10 @@ INSTALL_ETCDIR  = $(DESTDIR)@sysconfdir@
 INSTALL_INCDIR  = $(DESTDIR)@includedir@
 INSTALL_RCDIR	= $(DESTDIR)@INSTALL_RCDIR@
 INSTALL_SHAREDIR= $(DESTDIR)@prefix@/share/vmi
+INSTALL_PCDIR= $(DESTDIR)@prefix@/share/pkgconfig
+
+PCCFLAGS += -I$(INSTALL_INCDIR)
+PCLDFLAGS += -L$(INSTALL_LIBDIR)
 
 #
 # Any of these vars that we use in the code *must* be included in CFLAGS from
@@ -117,13 +123,19 @@ ELFUTILS = @ELFUTILS@
 ELFUTILS_CFLAGS = -I$(ELFUTILS)/include
 ELFUTILS_LDFLAGS = -L$(ELFUTILS)/lib -L$(ELFUTILS)/lib/elfutils -ldw -lelf -lebl -ldl
 
+PCCFLAGS += $(ELFUTILS_CFLAGS)
+PCLDFLAGS += $(ELFUTILS_LDFLAGS)
+
 # need this to pick up pkg-config files in wherever glib might be
 GLIB            = @GLIB@
 PKG_CONFIG_PATH := @GLIB@/lib/pkgconfig
-export PKG_CONFIG_PATH
+#export PKG_CONFIG_PATH
 
-GLIB_CFLAGS     = `pkg-config --cflags glib-2.0`
-GLIB_LDFLAGS    = `pkg-config --libs glib-2.0`
+GLIB_CFLAGS     = `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags glib-2.0`
+GLIB_LDFLAGS    = `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs glib-2.0`
+
+PCCFLAGS += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags glib-2.0)
+PCLDFLAGS += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs glib-2.0)
 
 #
 # XXX this stuff should be pkg-config'd or similar
@@ -176,6 +188,7 @@ ifeq ("@CONFIG_DETERMINISTIC_TIMETRAVEL@","1")
 endif
 
 CFLAGS += $(PYCFLAGS)
+PCCFLAGS += $(PYCFLAGS)
 
 # Swig/python doesn't get warning flags.
 CFLAGS += -Wall -Wextra -Wno-unused-parameter -Wno-unused-function
@@ -191,6 +204,7 @@ ifeq ("@ENABLE_PROFILING@","1")
 endif
 ifeq ("@ENABLE_VMI_DEBUG@","1")
      CFLAGS += -DVMI_DEBUG
+     PCCFLAGS += -DVMI_DEBUG
      PYCFLAGS += -DVMI_DEBUG
 endif
 
@@ -198,9 +212,11 @@ endif
 # Use Judy.
 #
 CFLAGS  += -I@JUDY@/include
+PCCFLAGS  += -I@JUDY@/include
 LDFLAGS += -L@JUDY@/lib -lJudy 
 
 #
 # Some things (Fedora) need this explicitly.
 #
 LDFLAGS += -ldl
+PCLDFLAGS += -ldl

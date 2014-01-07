@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2011, 2012, 2013 The University of Utah
+## Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -71,6 +71,11 @@ $(INSTALL_SHAREDIR)/%: %
 	-mkdir -p $(INSTALL_SHAREDIR)
 	$(INSTALL_DATA) $< $@
 
+$(INSTALL_PCDIR)/%: %
+	@echo "Installing $<"
+	-mkdir -p $(INSTALL_PCDIR)
+	$(INSTALL_DATA) $< $@
+
 $(addprefix $(INSTALL_SBINDIR)/, $(INST_SBIN_SETUID)): $(INSTALL_SBINDIR)/%: %
 	echo "Installing (setuid) $<"
 	-mkdir -p $(INSTALL_SBINDIR)
@@ -96,7 +101,8 @@ def-install:	$(addprefix $(INSTALL_BINDIR)/, $(INST_BIN)) \
 	 $(addprefix $(INSTALL_LIBDIR)/, $(INST_LIB)) \
 	 $(addprefix $(INSTALL_LIBEXECDIR)/, $(INST_LIBEXEC)) \
 	 $(addprefix $(INSTALL_ETCDIR)/, $(INST_ETC)) \
-	 $(addprefix $(INSTALL_SHAREDIR)/, $(INST_SHARE))
+	 $(addprefix $(INSTALL_SHAREDIR)/, $(INST_SHARE)) \
+	 $(addprefix $(INSTALL_PCDIR)/, $(INST_PC))
 
 CFLAGS += $(LOCALCFLAGS)
 

@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012-2013 The University of Utah
+## Copyright (c) 2012-2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -72,6 +72,9 @@ endif
 INST_INC = analysis.h
 INST_LIB = $(LIBRARIES)
 INST_BIN = 
+INST_PC = analysis.pc
+
+PCLDFLAGS += -lvmilib -lanalysis
 
 # Get libtool to shut up when compiling.
 RM=rm -f
@@ -89,6 +92,20 @@ libanalysis.la: $(OBJECTS)
 
 #analyze: $(HEADERS) libanalysis.a analyze.lo $(STATICLIBS)
 #	$(CC) -o $@ $(CFLAGS) $@.o libtarget.a $(STATICLIBS) $(LDFLAGS)
+
+
+analysis.pc: $(SRCDIR)/Makefile.in $(TOP_SRCDIR)/Makeconf.in \
+	   $(TOP_SRCDIR)/Makefile.in
+	echo "prefix=$(INSTALL_TOPDIR)" > $@
+	echo "exec_prefix=$(INSTALL_TOPDIR)" >> $@
+	echo "includedir=$(INSTALL_INCDIR)" >> $@
+	echo "libdir=$(INSTALL_LIBDIR)" >> $@
+	echo "" >> $@
+	echo "Name: analysis" >> $@
+	echo "Description: The VMI analysis library" >> $@
+	echo "Version: $(LIBVERSION)" >> $@
+	echo "Cflags: $(PCCFLAGS)" >> $@
+	echo "Libs: $(PCLDFLAGS)" >> $@
 
 install: def-install install-subdirs
 

@@ -24,7 +24,6 @@
 #include "evloop.h"
 #include "dwdebug.h"
 #include "probe_api.h"
-#include "probe.h"
 #include <glib.h>
 
 /*

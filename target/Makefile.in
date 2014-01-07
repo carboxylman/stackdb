@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012-2013 The University of Utah
+## Copyright (c) 2012-2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -33,25 +33,34 @@ CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
 	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
 	CFLAGS += -I$(XENACCESS_INC)
+	PCCFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
+	PCCFLAGS += -I$(XENACCESS_INC)
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
 	CFLAGS += -D ENABLE_LIBVMI -D ENABLE_XENSUPPORT
 	CFLAGS += -I$(LIBVMI)/include/libvmi
+	PCCFLAGS += -D ENABLE_LIBVMI -D ENABLE_XENSUPPORT
+	PCCFLAGS += -I$(LIBVMI)/include/libvmi
 endif
 ifeq ($(ENABLE_DISTORM),"1")
 	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
 	CFLAGS += -I$(DISTORM)/include
+	PCCFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
+	PCCFLAGS += -I$(DISTORM)/include
 endif
 
 LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
 	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+	PCLDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
 endif
 ifeq ($(ENABLE_LIBVMI),"1")
 	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
+	PCLDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
 endif
 ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
+	PCLDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h $(TOP_SRCDIR)/dwdebug/dwdebug_priv.h \
@@ -88,9 +97,15 @@ ifeq ($(ENABLE_LIBVMI),"1")
 	STATICLIBS += $(LIBVMI)/lib/libvmi.a
 endif
 
-INST_INC = target_api.h
+INST_INC = target_api.h probe_api.h
+ifeq ($(ENABLE_DISTORM),"1")
+	INST_INC += disasm.h
+endif
 INST_LIB = $(LIBRARIES)
 INST_BIN = dumptarget
+INST_PC = target.pc
+
+PCLDFLAGS += -lvmilib -ldwdebug -ltarget
 
 # Get libtool to shut up when compiling.
 RM=rm -f
@@ -109,6 +124,19 @@ libtarget.la:	$(OBJECTS)
 dumptarget: $(HEADERS) dumptarget.lo $(LIBRARIES) $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+target.pc: $(SRCDIR)/Makefile.in $(TOP_SRCDIR)/Makeconf.in \
+	   $(TOP_SRCDIR)/Makefile.in
+	echo "prefix=$(INSTALL_TOPDIR)" > $@
+	echo "exec_prefix=$(INSTALL_TOPDIR)" >> $@
+	echo "includedir=$(INSTALL_INCDIR)" >> $@
+	echo "libdir=$(INSTALL_LIBDIR)" >> $@
+	echo "" >> $@
+	echo "Name: target" >> $@
+	echo "Description: The VMI target library" >> $@
+	echo "Version: $(LIBVERSION)" >> $@
+	echo "Cflags: $(PCCFLAGS)" >> $@
+	echo "Libs: $(PCLDFLAGS)" >> $@
 
 install: def-install install-subdirs
 
