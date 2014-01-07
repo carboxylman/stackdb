@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -5511,4 +5511,48 @@ void lsymbol_dump(struct lsymbol *lsymbol,struct dump_info *ud) {
 
     if (prefixbuf)
 	free(prefixbuf);
+}
+
+inline char *SYMBOL_TYPE(int n) {
+    switch (n) {
+    case SYMBOL_TYPE_NONE:      return "none";
+    case SYMBOL_TYPE_ROOT:      return "root";
+    case SYMBOL_TYPE_TYPE:      return "type";
+    case SYMBOL_TYPE_VAR:       return "var";
+    case SYMBOL_TYPE_FUNC:      return "func";
+    case SYMBOL_TYPE_LABEL:     return "label";
+    case SYMBOL_TYPE_BLOCK:     return "block";
+    default:                    return NULL;
+    }
+}
+
+inline char *SYMBOL_SOURCE(int n) {
+    switch (n) {
+    case SYMBOL_SOURCE_DWARF:    return "dwarf";
+    case SYMBOL_SOURCE_ELF:      return "elf";
+    case SYMBOL_SOURCE_PHP:      return "php";
+    default:                     return NULL;
+    }
+}
+
+inline char *DATATYPE(int n) {
+    switch (n) {
+    case DATATYPE_VOID:      return "void";
+    case DATATYPE_ARRAY:     return "array";
+    case DATATYPE_STRUCT:    return "struct";
+    case DATATYPE_ENUM:      return "enum";
+    case DATATYPE_PTR:       return "ptr";
+    case DATATYPE_REF:       return "ref";
+    case DATATYPE_FUNC:      return "function";
+    case DATATYPE_TYPEDEF:   return "typedef";
+    case DATATYPE_UNION:     return "union";
+    case DATATYPE_BASE:      return "base";
+    case DATATYPE_CONST:     return "const";
+    case DATATYPE_VOL:       return "volatile";
+    case DATATYPE_NAMESPACE: return "namespace";
+    case DATATYPE_CLASS:     return "class";
+    case DATATYPE_TEMPLATE:  return "template";
+    case DATATYPE_DYNAMIC:   return "<dynamic>";
+    default:                 return NULL;
+    }
 }
