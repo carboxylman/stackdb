@@ -64,6 +64,8 @@ include $(TOP_SRCDIR)/Makerules
 install: install-local install-subdirs
 
 install-local:
+	@echo "Installing config.h"
+	-mkdir -p $(INSTALL_INCDIR)
 	$(INSTALL_DATA) $(OBJDIR)/config.h $(INSTALL_INCDIR)
 
 test:
