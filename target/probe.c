@@ -1904,6 +1904,10 @@ char *probe_name(struct probe *probe) {
     return probe->name;
 }
 
+struct bsymbol *probe_symbol(struct probe *probe) {
+    return probe->bsymbol;
+}
+
 struct target*probe_target(struct probe *probe) {
     return probe->target;
 }
