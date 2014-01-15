@@ -85,9 +85,7 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     fsgid_v = target_load_value_member(target, NULL, new_value, "fsgid", NULL, LOAD_FLAG_NONE);
     fsgid = v_u16(fsgid_v);
 
-    // now populate the base fact into the file.
-
-
+    /* Now populate the base fact into the file. */
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
@@ -107,7 +105,7 @@ int ps_gather(struct target *target, struct value * value, void * data) {
        \t(slot sgid (type INTEGER))\n \
        \t(slot fsgid (type INTEGER)))");
      */
-    // Now populate the base fact
+    
     fprintf(fp,"\n(task-struct\n \
 	\t(comm \"%s\")\n \
 	    \t(pid %d)\n \
@@ -121,7 +119,6 @@ int ps_gather(struct target *target, struct value * value, void * data) {
 	    \t(fsgid %hu))\n",name,pid,uid,euid,suid,fsuid,gid,egid,sgid,fsgid);
 
     fclose(fp);
-
     return 0;
 }
 
@@ -131,7 +128,7 @@ int process_info() {
     int ret_val; 
     struct bsymbol *init_task_bsymbol;
 
-    init_task_bsymbol = target_lookup_sym(target,"init_task",NULL,"fs",
+    init_task_bsymbol = target_lookup_sym(target,"init_task",NULL,NULL,
 	    SYMBOL_TYPE_FLAG_VAR);
     if(!init_task_bsymbol) {
 	fprintf(stdout,"ERROR: Could not lookup the init_task symbol\n");
@@ -238,7 +235,6 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	exit(0);
     }   
 
-
     /* Load the  max_fds member of the ftable struct */
     fprintf(stdout,"INFO: Loading max_fds member\n");
     max_fds_value = target_load_value_member( target, NULL, fdt_value, 
@@ -250,9 +246,8 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 
     max_fds = v_i32(max_fds_value);
     fprintf(stdout,"INFO: max_fds_value for process %s = %d\n", process_name, max_fds);
+    
     /*Open the base fact file */
-
-
     fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
@@ -268,179 +263,170 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    \t(file_count %d)\n \ 
 	    \t(files ", process_name, pid, next_fd);
 
-
-	    for( i = 0; i < max_fds; i++) {
-
-	    fprintf(stdout,"INFO: Loading fd struct\n");
-	    fd_value =  target_load_value_member(target, NULL, fdt_value, "fd", NULL, 
+    for( i = 0; i < max_fds; i++) {
+	fprintf(stdout,"INFO: Loading fd struct\n");
+	fd_value =  target_load_value_member(target, NULL, fdt_value, "fd", NULL, 
 		LOAD_FLAG_NONE);
-	    if(!fd_value) {
+	if(!fd_value) {
 	    fprintf(stdout," ERROR: failed to load the fd struct memeber.\n");
 	    exit(0);
-	    }
-	    fprintf(stdout," fd_value = 0x%"PRIxADDR" \n", fd_value->buf);
+	}
+	fprintf(stdout," fd_value = 0x%"PRIxADDR" \n", fd_value->buf);
 
-	    /* Load the array of file descriptors */
-	    fprintf(stdout,"INFO: Loading fs struct\n");
-	    /* This is the base address */
-	    mem_addr = v_addr(fd_value);
-	    fprintf(stdout,"INFO: mem_addr = 0x%"PRIxADDR"\n",mem_addr);
+	/* Load the array of file descriptors */
+	fprintf(stdout,"INFO: Loading fs struct\n");
+	/* This is the base address */
+	mem_addr = v_addr(fd_value);
+	fprintf(stdout,"INFO: mem_addr = 0x%"PRIxADDR"\n",mem_addr);
 
-	    mem_addr = mem_addr + (target->ptrsize * i);
-	    if(!target_read_addr(target, mem_addr, target->ptrsize, 
+	mem_addr = mem_addr + (target->ptrsize * i);
+	if(!target_read_addr(target, mem_addr, target->ptrsize, 
 			(unsigned char *)&file_addr)) {
-		fprintf(stdout,"ERROR: target_read_addr failed.\n");
-		exit(0);
-	    }
-	    if(!file_addr) {
-		fprintf(stdout," INFO: File table entry is NULL\n");
-		continue;
-	    }
+	    fprintf(stdout,"ERROR: target_read_addr failed.\n");
+	    exit(0);
+	}
+	if(!file_addr) {
+	    fprintf(stdout," INFO: File table entry is NULL\n");
+	    continue;
+	}
 
-	    //file_addr = file_addr + ( target->ptrsize * i);
-
-	    fprintf(stdout,"INFO: file_addr = 0x%"PRIxADDR"\n",file_addr);
-	    /* Load the type of symbol */
-	    file_struct_bsymbol = target_lookup_sym(target, "struct file", NULL,
+	fprintf(stdout,"INFO: file_addr = 0x%"PRIxADDR"\n",file_addr);
+	
+	/* Load the type of symbol */
+	file_struct_bsymbol = target_lookup_sym(target, "struct file", NULL,
 		    NULL, SYMBOL_TYPE_FLAG_TYPE);
-	    if(!file_struct_bsymbol) {
-		fprintf(stdout,"ERROR: Failed to lookup the struct file bsymbol.\n");
-		exit(0);
-	    }
+	if(!file_struct_bsymbol) {
+	    fprintf(stdout,"ERROR: Failed to lookup the struct file bsymbol.\n");
+	    exit(0);
+	}
 
-	    file_struct_type = bsymbol_get_symbol(file_struct_bsymbol);
-	    if(!file_struct_type) {
-		fprintf(stdout,"INFO: Could not load the file struct type\n");
-		exit(0);
-	    }
+	file_struct_type = bsymbol_get_symbol(file_struct_bsymbol);
+	if(!file_struct_type) {
+	    fprintf(stdout,"INFO: Could not load the file struct type\n");
+	    exit(0);
+	}
 
-	    /* Finally load the array memeber */
-	    fprintf(stdout,"INFO: Loading file struct\n");
-	    file_value = target_load_type(target, file_struct_type, file_addr, 
+	/* Finally load the array memeber */
+	fprintf(stdout,"INFO: Loading file struct\n");
+	file_value = target_load_type(target, file_struct_type, file_addr, 
 		    LOAD_FLAG_AUTO_DEREF);
-	    if(!file_value) {
-		fprintf(stdout," ERROR: failed to load the file struct member.\n");
-		exit(0);
-	    }
+	if(!file_value) {
+	    fprintf(stdout," ERROR: failed to load the file struct member.\n");
+	    exit(0);
+	}
 
-	    /*
-	       fprintf(stdout,"INFO: Calling linux_file_get_path.\n");
-	       file_name = malloc(100);
-	       file_name = linux_file_get_path(target, value, file_value, file_name, 100);
-	       if(!file_name) {
-	       fprintf(stdout,"ERROR: failed to load the file name.\n");
-	       continue;
-	       }
-	       fprintf(stdout,"--------------INFO: File name  = %s\n-------------", file_name);
+	/*    
+	fprintf(stdout,"INFO: Calling linux_file_get_path.\n");
+	file_name = malloc(100);
+	file_name = linux_file_get_path(target, value, file_value, file_name, 100);
+	if(!file_name) {
+	    fprintf(stdout,"ERROR: failed to load the file name.\n");
+	    continue;
+	}
+	fprintf(stdout,"--------------INFO: File name  = %s\n-------------", file_name);
+	*/
 
-
-	     */
-	    fversion_value = target_load_value_member(target, NULL, file_value, "f_version",
+	fversion_value = target_load_value_member(target, NULL, file_value, "f_version", NULL, LOAD_FLAG_NONE);
+	if(!fversion_value) {
+	    fprintf(stdout,"ERROR: Failed to load the file version\n");
+	    exit(0);
+	}
+	unsigned long f_version;
+	f_version = v_u64(fversion_value);
+	fprintf(stdout,"INFO: File version = %lu\n",f_version);
+	
+	/* Load the path the variable from the files struct*/
+	fprintf(stdout,"INFO: Loading f_path struct\n");
+	path_value = target_load_value_member( target, NULL, file_value, "f_path",
 		    NULL, LOAD_FLAG_NONE);
-	    if(!fversion_value) {
-		fprintf(stdout,"ERROR: Failed to load the file version\n");
-		exit(0);
-	    }
-	    unsigned long f_version;
-	    f_version = v_u64(fversion_value);
-	    fprintf(stdout,"INFO: File version = %lu\n",f_version);
+	if(!path_value) {
+	    fprintf(stdout," ERROR: failed to load the path struct member.\n");
+	    exit(0);
+	} 
 
-	    /* Load the path the variable from the files struct*/
-	    fprintf(stdout,"INFO: Loading f_path struct\n");
-	    path_value = target_load_value_member( target, NULL, file_value, "f_path",
-		    NULL, LOAD_FLAG_NONE);
-	    if(!path_value) {
-		fprintf(stdout," ERROR: failed to load the path struct member.\n");
-		exit(0);
-	    } 
-
-	    /* Load the dentry struct  member from the path */
-	    fprintf(stdout,"INFO: Loading dentry struct\n");
-	    dentry_value = target_load_value_member(target, NULL, path_value, "dentry",
+	/* Load the dentry struct  member from the path */
+	fprintf(stdout,"INFO: Loading dentry struct\n");
+	dentry_value = target_load_value_member(target, NULL, path_value, "dentry",
 		    NULL, LOAD_FLAG_AUTO_DEREF);
-	    if(!dentry_value){
-		fprintf(stdout,"INFO: dentry member is NULL\n");
-		continue;
-	    }
-	    fprintf(stdout,"INFO: Loading the d_count value \n");
-	    dcount_value = target_load_value_member(target, NULL, dentry_value, "d_count",
+	if(!dentry_value){
+	    fprintf(stdout,"INFO: dentry member is NULL\n");
+	    continue;
+	}
+	fprintf(stdout,"INFO: Loading the d_count value \n");
+	dcount_value = target_load_value_member(target, NULL, dentry_value, "d_count",
 		    NULL, LOAD_FLAG_NONE);
-	    if(!dcount_value) {
-		fprintf(stdout,"ERROR: failed to load the d_count value\n");
-		exit(0);
-	    }
-	    unsigned int d_count = v_u32(dcount_value);
-	    fprintf(stdout,"INFO: d_count value = %u\n",d_count);
-	    /*
-	       fprintf(stdout,"INFO: Loading the d_iname member\n");
-	       file_name_value = target_load_value_member(target, NULL, dentry_value, "d_iname",
+	if(!dcount_value) {
+	    fprintf(stdout,"ERROR: failed to load the d_count value\n");
+	    exit(0);
+	}
+	unsigned int d_count = v_u32(dcount_value);
+	fprintf(stdout,"INFO: d_count value = %u\n",d_count);
+
+	fprintf(stdout,"INFO: Loading the d_iname member\n");
+	file_name_value = target_load_value_member(target, NULL, dentry_value, "d_iname",
 	       NULL, LOAD_FLAG_NONE);
-	       if(!file_name_value) {
-	       fprintf(stdout," ERROR: Failed to load the d_iname member\n");
-	       exit(0);
-	       }
-	     */
+	if(!file_name_value) {
+	    fprintf(stdout," ERROR: Failed to load the d_iname member\n");
+	    exit(0);
+	}
+    
 
 
-	    /* Load the d_name struct */
-	    fprintf(stdout,"INFO: Loading d_name struct\n");
-	    d_name_value = target_load_value_member(target, NULL, dentry_value, "d_name",
+	/* Load the d_name struct */
+	fprintf(stdout,"INFO: Loading d_name struct\n");
+	d_name_value = target_load_value_member(target, NULL, dentry_value, "d_name",
 		    NULL, LOAD_FLAG_NONE);
-	    if(!d_name_value) {
-		fprintf(stdout," ERROR: failed to load the d_name struct member.\n");
-		exit(0);
-	    } 
-
-	    /* Finally load the lenght of  name string */
-	    fprintf(stdout,"INFO: Loading the length of name string\n");
-	    len_name_value = target_load_value_member( target, NULL, d_name_value, "len",
+	if(!d_name_value) {
+	    fprintf(stdout," ERROR: failed to load the d_name struct member.\n");
+	    exit(0);
+	} 
+	/* Finally load the lenght of  name string */
+	fprintf(stdout,"INFO: Loading the length of name string\n");
+	len_name_value = target_load_value_member( target, NULL, d_name_value, "len",
 		    NULL, LOAD_FLAG_NONE);
-	    if(!len_name_value) {
-		fprintf(stdout," ERROR: failed to load the name string.\n");
-		exit(0);
-	    }
-	    unsigned int len = v_u32(len_name_value);
-	    fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
-	    if(len == 0) {
-		fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
-		continue;
-	    }
+	if(!len_name_value) {
+	    fprintf(stdout," ERROR: failed to load the name string.\n");
+	    exit(0);
+	}
+	unsigned int len = v_u32(len_name_value);
+	fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
+	if(len == 0) {
+	    fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
+	    continue;
+	}
 
 
-	    file_name_value = target_load_value_member(target, NULL, d_name_value, "name",
+	file_name_value = target_load_value_member(target, NULL, d_name_value, "name",
 		    NULL, LOAD_FLAG_AUTO_STRING);
-	    if(!file_name_value) {
-		fprintf(stdout,"ERROR: Could not load name of the file\n");
-		continue;
-	    }
+	if(!file_name_value) {
+	    fprintf(stdout,"ERROR: Could not load name of the file\n");
+	    continue;
+	}
 
-	    file_name = strdup(file_name_value->buf);
+	file_name = strdup(file_name_value->buf);
 
-	    fprintf(stdout,"INFO: File name: %s\n", file_name);
-	    fprintf(fp," %s", file_name);
+	fprintf(stdout,"INFO: File name: %s\n", file_name);
+	fprintf(fp," \"%s\"", file_name);
 
-	    value_free(fd_value);
-	    value_free(file_value);	
-	    value_free(fversion_value);
-	    value_free(path_value);
-	    value_free(dentry_value);
-	    value_free(d_name_value);
-	    value_free(file_name_value);
+	value_free(fd_value);
+	value_free(file_value);	
+	value_free(fversion_value);
+	value_free(path_value);
+	value_free(dentry_value);
+	value_free(d_name_value);
+	value_free(file_name_value);
 
-	    }
-	    fprintf(fp,"))\n");
+    }
+    fprintf(fp,"))\n");
+    fclose(fp);
 
-	    fclose(fp);
-
-	    value_free(name_value);
-	    value_free(pid_value);
-	    value_free(files_value);
-	    value_free(next_fd_value);
-	    value_free(fdt_value);
-	    value_free(max_fds_value);
-
-
-	    return(0);
+    value_free(name_value);
+    value_free(pid_value);
+    value_free(files_value);
+    value_free(next_fd_value);
+    value_free(fdt_value);
+    value_free(max_fds_value);
+    return(0);
 }
 
 
@@ -461,5 +447,90 @@ int file_info() {
     return ret_val;
 }
 
+
+
+
+int gather_module_info(struct target *target, struct value * value, void * data) {
+
+
+    struct value *name_value;
+    char *module_name;
+    FILE *fp = NULL;
+
+    fprintf(stdout,"INFO: Gathering information of open modules\n");
+    
+    fprintf(stdout,"INFO: Loading the name of the module.\n");
+    name_value = target_load_value_member(target, NULL, value, "name", NULL, LOAD_FLAG_NONE);
+    if(!name_value) {
+	fprintf(stdout," ERROR: failed to load the process name.\n");
+	exit(0);
+    }   
+
+    module_name = strdup(name_value->buf);
+    fprintf(stdout,"INFO: Module name: %s.\n",module_name);
+    
+    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+
+    /* Start encoding the fact */
+    fprintf(stdout,"INFO: Encode the base facts.\n");
+    fprintf(fp," \"%s\" ", module_name);    
+    fclose(fp);
+
+}
+
+
+int module_info() {
+    int ret_val;
+    FILE *fp = NULL;
+
+    struct bsymbol *module_bsymbol;
+    struct bsymbl *listhead_bsymbol;
+
+    module_bsymbol = target_lookup_sym(target,"struct module", NULL, NULL,
+						SYMBOL_TYPE_FLAG_TYPE);
+    if(!module_bsymbol) {
+	fprintf(stdout," ERROR: Could not look up the struct module bsymbol.\n");
+	return 1;
+    }
+
+    listhead_bsymbol = target_lookup_sym(target,"modules", NULL, NULL,
+						SYMBOL_TYPE_FLAG_VAR);
+    if(!listhead_bsymbol) {
+	fprintf(stdout,"ERROR: Could not lookup the modules bsymbol.\n");
+	return 1;
+    }
+
+    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+
+    /* Start encoding the fact */
+    fprintf(stdout,"INFO: Encode the base facts.\n");
+    fprintf(fp,"\n(loaded-modules\n \
+	    \t(name ");
+    fclose(fp);
+
+    ret_val =  linux_list_for_each_entry(target, module_bsymbol, listhead_bsymbol,
+					    "list",0, gather_module_info, NULL);
+    
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+
+    fprintf(fp,"))\n");
+    fclose(fp);
+   
+    return ret_val;
+}
 
 

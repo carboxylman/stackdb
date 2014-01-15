@@ -16,19 +16,6 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 /*  Policy_engine outline: 
  *   Step1: Initialize  the CLIPS environment.
  *   Step2: Load the rules file into the framework: both application levl rules
@@ -123,22 +110,30 @@ int generate_snapshot() {
 
 			    
     // start making calls to each of the VMI function 
-    /*result = process_info();
+    result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
 	result = 1;
 	goto resume;
     }
-    */
     
-
+    
+    
     result =  file_info();
     if(result) {
-	fprintf(stdout,"ERROR: file_info function failed \n");
+	fprintf(stdout,"ERROR: file_info function failed.\n");
 	result = 1;
 	goto resume;
     } 
     
+   
+    result = module_info();
+    if(result) {
+	fprintf(stdout,"ERRROR: module_info function failed.\n");
+	result = 1;
+	goto resume;
+    }
+
 resume:
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
