@@ -109,15 +109,13 @@ int generate_snapshot() {
     }
 
 			    
-    // start making calls to each of the VMI function 
+    /* Start making calls to each of the VMI function */ 
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
 	result = 1;
 	goto resume;
     }
-    
-    
     
     result =  file_info();
     if(result) {
@@ -134,6 +132,13 @@ int generate_snapshot() {
 	goto resume;
     }
 
+    result = cpu_load_info();
+    if(result) {
+	fprintf(stdout,"ERROR: cpu_load_info failed.\n");
+	result = 1;
+	goto resume;
+    }
+    
 resume:
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {

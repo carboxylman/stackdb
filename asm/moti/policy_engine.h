@@ -16,6 +16,10 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#define FSHIFT 11
+#define FIXED_1 (1<<FSHIFT)
+#define LOAD_INT(x) ((x) >> FSHIFT)
+#define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
 
 extern struct target *target;    
@@ -532,5 +536,75 @@ int module_info() {
    
     return ret_val;
 }
+
+int cpu_load_info()
+{
+    int ret_val = 0;
+    unsigned long avenrun0, avenrun1, avenrun2;
+    struct bsymbol *avenrun_bsymbol;
+    struct value *avenrun_value;
+    ADDR base_addr;
+    struct target_location_ctxt *tlctxt;
+    FILE *fp;
+    
+    fprintf(stdout,"INFO: Gathering the CPU load information.\n");
+    avenrun_bsymbol = target_lookup_sym(target, "avenrun", NULL, NULL,
+						    SYMBOL_TYPE_FLAG_VAR);
+    if(!avenrun_bsymbol) {
+	fprintf(stdout,"ERROR: filed to load the avenrun symbol.\n");
+	exit(0);
+    }
+
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,avenrun_bsymbol);
+
+    avenrun_value = target_load_symbol(target, tlctxt, avenrun_bsymbol, LOAD_FLAG_NONE);
+    if(!avenrun_value) {
+	fprintf(stdout,"ERROR: Could not load the avenrun array.\n");
+	exit(0);
+    }
+
+    /* copy the array items */
+    memcpy( (void *)&avenrun0, avenrun_value->buf, 8);
+    avenrun0 = avenrun0 + (FIXED_1/200);
+    fprintf(stdout,"INFO: CPU load during the last 1 minute %lu.%02lu\n",
+	    LOAD_INT(avenrun0), LOAD_FRAC(avenrun0)); 
+
+    memcpy( (void *)&avenrun1, (avenrun_value->buf + 8), 8);
+    avenrun1 = avenrun1 + (FIXED_1/200);
+    fprintf(stdout,"INFO: CPU load during the last 5 minutes %lu.%02lu\n",
+	    LOAD_INT(avenrun1), LOAD_FRAC(avenrun1));     
+
+    memcpy( (void *)&avenrun2, (avenrun_value->buf + 16), 8);
+    avenrun2 = avenrun2 + (FIXED_1/200);
+    fprintf(stdout,"INFO: CPU load during the last 15 minutes %lu.%02lu\n",
+	    LOAD_INT(avenrun2), LOAD_FRAC(avenrun2)); 
+
+    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+
+    /* Start encoding the fact */
+    fprintf(stdout,"INFO: Encode the base facts.\n");
+    fprintf(fp,"\n(cpu-load\n \
+	    \t(one-min  %lu.%02lu)\n \
+	    \t(five-min %lu.%02lu)\n \
+	    \t(fifteen-min %lu.%02lu))\n", 
+	    LOAD_INT(avenrun0), LOAD_FRAC(avenrun0),
+	    LOAD_INT(avenrun1), LOAD_FRAC(avenrun1),
+	    LOAD_INT(avenrun2), LOAD_FRAC(avenrun2));
+    
+    fclose(fp);
+    return ret_val;
+}
+
+
+
+	
+
+
+    
 
 
