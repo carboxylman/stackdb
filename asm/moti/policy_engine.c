@@ -51,17 +51,13 @@
 #include <sys/user.h>
 #include <sys/ptrace.h>
 #include <inttypes.h>
-
 #include <signal.h>
-
 #include <argp.h>
-
 #include "log.h"
 #include "dwdebug.h"
 #include "target_api.h"
 #include "target.h"
 #include "target_xen_vm.h"
-
 #include "probe_api.h"
 #include "probe.h"
 #include "alist.h"

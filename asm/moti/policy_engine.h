@@ -16,13 +16,32 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+/* Macros for caomputing the CPU LOAD */
 #define FSHIFT 11
 #define FIXED_1 (1<<FSHIFT)
 #define LOAD_INT(x) ((x) >> FSHIFT)
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
+/* Macros for determining the file is a socket */
+#define S_IFMT  00170000
+#define S_IFSOCK 0140000
+#define S_IFLNK  0120000
+#define S_IFREG  0100000
+#define S_IFBLK  0060000
+#define S_IFDIR  0040000
+#define S_IFCHR  0020000
+#define S_IFIFO  0010000
 
-extern struct target *target;    
+#define S_ISLNK(m)      (((m) & S_IFMT) == S_IFLNK)
+#define S_ISREG(m)      (((m) & S_IFMT) == S_IFREG)
+#define S_ISDIR(m)      (((m) & S_IFMT) == S_IFDIR)
+#define S_ISCHR(m)      (((m) & S_IFMT) == S_IFCHR)
+#define S_ISBLK(m)      (((m) & S_IFMT) == S_IFBLK)
+#define S_ISFIFO(m)     (((m) & S_IFMT) == S_IFIFO)
+#define S_ISSOCK(m)     (((m) & S_IFMT) == S_IFSOCK)
+
+
+ struct target *target;    
 extern char base_fact_file[100]; 
 
 int ps_gather(struct target *target, struct value * value, void * data) {
@@ -161,19 +180,32 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     struct value *len_name_value;
     struct value *file_name_value;
     struct value *pid_value;
-    struct value *next_fd_value;
-    struct value *fversion_value;
-    struct value *dcount_value;
-    struct value *count_value;
-    struct value *counter_value;
+    struct value *d_inode_value;
+    struct value *i_mode_value;
 
     struct bsymbol *file_struct_bsymbol = NULL;
     int max_fds, i, pid, next_fd, counter;
-    char *addr = NULL;
-    char *file_name = NULL , *process_name = NULL, mem_buf = NULL;
+    char *file_name = NULL , *process_name = NULL;
     ADDR file_addr, mem_addr;
     struct symbol *file_struct_type;
+    unsigned short i_mode;
+
     FILE *fp = NULL;
+
+    char lnk_file[64][100];
+    int lnk = 0;
+    char reg_file[64][100];
+    int reg = 0;
+    char dir_file[64][100];
+    int dir = 0;
+    char chr_file[64][100];
+    int chr = 0;
+    char blk_file[64][100];
+    int blk = 0;
+    char fifo_file[64][100];
+    int fifo = 0;
+    char sock_file[64][100];
+    int sock = 0;
 
 
     fprintf(stdout,"INFO: Gathering list of open files\n");
@@ -199,36 +231,6 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	fprintf(stdout," ERROR: failed to load the files struct member.\n");
 	exit(0);
     }   
-
-    next_fd_value =  target_load_value_member(target, NULL, files_value,"next_fd", 
-	    NULL,LOAD_FLAG_NONE);
-    if(!next_fd_value) {
-	fprintf(stdout," ERROR: Failed to load the next_fd member.\n");
-	exit(0);
-    }
-
-    next_fd = v_i32(next_fd_value);
-
-    fprintf(stdout,"INFO: Maximum number of files ever opened by process %s are %d\n",process_name, next_fd);
-
-    fprintf(stdout,"INFO: Load the count memeber\n");
-    count_value = target_load_value_member(target, NULL, files_value, "count",
-	    NULL, LOAD_FLAG_NONE);
-    if(!count_value) {
-	fprintf(stdout,"ERROR: Failed to load the count member\n");
-	exit(0);
-    }
-
-    fprintf(stdout,"INFO: Load the counter value\n");
-
-    counter_value = target_load_value_member(target, NULL, count_value, "counter",
-	    NULL, LOAD_FLAG_NONE);
-    if(!counter_value) {
-	fprintf(stdout,"ERROR: Failed to load the counter value\n");
-	exit(0);
-    }
-    counter = v_i32(counter_value);
-    fprintf(stdout,"INFO: Counter value = %d\n",counter);
 
     /* Load the fdtable struct */
     fprintf(stdout,"INFO: Loading fdt struct\n");
@@ -263,9 +265,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     fprintf(stdout,"INFO: Encode the base facts.\n");
     fprintf(fp,"\n(opened-files\n \
 	    \t(comm \"%s\")\n \
-	    \t(pid %d)\n \
-	    \t(file_count %d)\n \ 
-	    \t(files ", process_name, pid, next_fd);
+	    \t(pid %d)\n", process_name, pid);
 
     for( i = 0; i < max_fds; i++) {
 	fprintf(stdout,"INFO: Loading fd struct\n");
@@ -329,15 +329,6 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	}
 	fprintf(stdout,"--------------INFO: File name  = %s\n-------------", file_name);
 	*/
-
-	fversion_value = target_load_value_member(target, NULL, file_value, "f_version", NULL, LOAD_FLAG_NONE);
-	if(!fversion_value) {
-	    fprintf(stdout,"ERROR: Failed to load the file version\n");
-	    exit(0);
-	}
-	unsigned long f_version;
-	f_version = v_u64(fversion_value);
-	fprintf(stdout,"INFO: File version = %lu\n",f_version);
 	
 	/* Load the path the variable from the files struct*/
 	fprintf(stdout,"INFO: Loading f_path struct\n");
@@ -356,25 +347,6 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    fprintf(stdout,"INFO: dentry member is NULL\n");
 	    continue;
 	}
-	fprintf(stdout,"INFO: Loading the d_count value \n");
-	dcount_value = target_load_value_member(target, NULL, dentry_value, "d_count",
-		    NULL, LOAD_FLAG_NONE);
-	if(!dcount_value) {
-	    fprintf(stdout,"ERROR: failed to load the d_count value\n");
-	    exit(0);
-	}
-	unsigned int d_count = v_u32(dcount_value);
-	fprintf(stdout,"INFO: d_count value = %u\n",d_count);
-
-	fprintf(stdout,"INFO: Loading the d_iname member\n");
-	file_name_value = target_load_value_member(target, NULL, dentry_value, "d_iname",
-	       NULL, LOAD_FLAG_NONE);
-	if(!file_name_value) {
-	    fprintf(stdout," ERROR: Failed to load the d_iname member\n");
-	    exit(0);
-	}
-    
-
 
 	/* Load the d_name struct */
 	fprintf(stdout,"INFO: Loading d_name struct\n");
@@ -384,6 +356,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    fprintf(stdout," ERROR: failed to load the d_name struct member.\n");
 	    exit(0);
 	} 
+	
 	/* Finally load the lenght of  name string */
 	fprintf(stdout,"INFO: Loading the length of name string\n");
 	len_name_value = target_load_value_member( target, NULL, d_name_value, "len",
@@ -399,7 +372,6 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    continue;
 	}
 
-
 	file_name_value = target_load_value_member(target, NULL, d_name_value, "name",
 		    NULL, LOAD_FLAG_AUTO_STRING);
 	if(!file_name_value) {
@@ -409,25 +381,125 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 
 	file_name = strdup(file_name_value->buf);
 
-	fprintf(stdout,"INFO: File name: %s\n", file_name);
-	fprintf(fp," \"%s\"", file_name);
+	/* Load the inode struct */
+	fprintf(stdout,"INFO: Loading the d_inode struct.\n");
+	d_inode_value = target_load_value_member(target, NULL, dentry_value, "d_inode",
+						NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!d_inode_value) {
+	    fprintf(stdout,"ERROR: failed to load the d_inode member.\n");
+	    exit(0);
+	}
+
+	/*Load the i_mode member */
+	fprintf(stdout,"INFO: Load the i_mode member.\n");
+	i_mode_value = target_load_value_member(target, NULL, d_inode_value, "i_mode",
+						NULL, LOAD_FLAG_NONE);
+	i_mode = v_u16(i_mode_value);
+
+	/* Now check for the type of the file*/
+	
+	if(S_ISLNK(i_mode)) {
+	    fprintf(stdout,"INFO: The file is a link.\n");
+	    strcpy(lnk_file[lnk++], file_name);
+	}
+	else if(S_ISREG(i_mode)) {
+	    fprintf(stdout,"INFO: The file is a regular file.\n");
+	    strcpy(reg_file[reg++], file_name);
+	}
+	else if(S_ISDIR(i_mode)){
+	    fprintf(stdout,"INFO: The file is a directory.\n");
+	    strcpy(dir_file[dir++], file_name);
+	}
+	else if(S_ISCHR(i_mode)) {
+	    fprintf(stdout,"INFO: The file is a character file.\n");
+	    strcpy(chr_file[chr++], file_name);
+	}
+	else if(S_ISFIFO(i_mode)){
+	    fprintf(stdout,"INFO: The file is a FIFO file.\n");
+	    strcpy(fifo_file[fifo++], file_name);
+	}
+	else if(S_ISSOCK(i_mode)) {
+	    fprintf(stdout,"INFO: The file is a SOCKET.\n");
+	    strcpy(sock_file[sock++], file_name);
+	}
+	else if(S_ISBLK(i_mode)) {
+	    fprintf(stdout,"INFO: The file is a block file.\n");
+	    strcpy(blk_file[blk++], file_name);
+	}
+	else {
+	    fprintf(stdout,"INFO: Unknown file type for %s.\n", file_name);
+	}
 
 	value_free(fd_value);
 	value_free(file_value);	
-	value_free(fversion_value);
 	value_free(path_value);
 	value_free(dentry_value);
+	value_free(d_inode_value);
+	value_free(i_mode_value);
 	value_free(d_name_value);
 	value_free(file_name_value);
 
     }
-    fprintf(fp,"))\n");
+
+    /* Write this infomation into the file as base facts  */
+    int c = 0;
+    fprintf(fp,"\t (lnk_count %d) \n \
+    	    \t (lnk_files ",(lnk));
+    for(c = 0; c < lnk; c++) {
+        fprintf(fp," \"%s\" ", lnk_file[c]);
+    }
+    fprintf(fp," )\n");
+
+    fprintf(fp,"\t (reg_count %d) \n \
+    	    \t (reg_files ",(reg));
+    for(c = 0; c < reg; c++) {
+        fprintf(fp," \"%s\" ", reg_file[c]);
+    }
+    fprintf(fp," )\n");
+
+    fprintf(fp,"\t (dir_count %d) \n \
+    	    \t (dir_files ",(dir));
+    for(c = 0; c < dir; c++) {
+        fprintf(fp," \"%s\" ", dir_file[c]);
+    }
+    fprintf(fp," )\n");
+
+    fprintf(fp,"\t (chr_count %d) \n \
+    	    \t (chr_files ",(chr));
+    for(c = 0; c < chr; c++) {
+        fprintf(fp," \"%s\" ", chr_file[c]);
+    }
+    fprintf(fp," )\n");
+
+    fprintf(fp,"\t (blk_count %d) \n \
+    	    \t (blk_files ",(blk));
+    for(c = 0; c < blk; c++) {
+        fprintf(fp," \"%s\" ", blk_file[c]);
+    }
+    fprintf(fp," )\n");
+
+    fprintf(fp,"\t (fifo_count %d) \n \
+    	    \t (fifo_files ",(fifo));
+    for(c = 0; c < fifo; c++) {
+        fprintf(fp," \"%s\" ", fifo_file[c]);
+    }
+    fprintf(fp," )\n");
+
+    fprintf(fp,"\t (sock_count %d) \n \
+    	    \t (sock_files ",(sock));
+    for(c = 0; c < dir; c++) {
+        fprintf(fp," \"%s\" ", sock_file[c]);
+    }
+    fprintf(fp," )\n");
+
+    fprintf(fp,"\t (num_opened_files %d ))\n",(lnk + reg + dir 
+		+ chr + blk + fifo + sock ));
+    
     fclose(fp);
 
     value_free(name_value);
     value_free(pid_value);
     value_free(files_value);
-    value_free(next_fd_value);
     value_free(fdt_value);
     value_free(max_fds_value);
     return(0);
@@ -599,12 +671,4 @@ int cpu_load_info()
     fclose(fp);
     return ret_val;
 }
-
-
-
-	
-
-
-    
-
 
