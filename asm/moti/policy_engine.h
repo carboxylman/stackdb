@@ -41,8 +41,35 @@
 #define S_ISSOCK(m)     (((m) & S_IFMT) == S_IFSOCK)
 
 
- struct target *target;    
-extern char base_fact_file[100]; 
+
+
+struct target *target;    
+extern char base_fact_file[100];
+
+#define NSEC_PER_SEC    1000000000L
+
+/* timeval struct and  functions need to convert jiffies into sec 
+struct time_val {
+    long tv_sec;
+    long tv_usec;
+};
+unsigned long tick_nsec = 0;
+unsigned long  div_u64_rem(unsigned long dividend, unsigned int divisor, unsigned int *remainder) {
+    *remainder = dividend % divisor;
+    return dividend / divisor;
+}
+
+void jiffies_to_timeval(const unsigned long jiffies, struct timeval *value) {
+
+    unsigned int  rem;
+    value->tv_sec = div_u64_rem((unsigned long) jiffies * tick_nsec, 
+							NSEC_PER_SEC, &rem);
+    value->tv_usec = rem/NSEC_PER_SEC;
+}
+*/
+
+
+
 
 int ps_gather(struct target *target, struct value * value, void * data) {
 
@@ -443,54 +470,67 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 
     /* Write this infomation into the file as base facts  */
     int c = 0;
-    fprintf(fp,"\t (lnk_count %d) \n \
-    	    \t (lnk_files ",(lnk));
-    for(c = 0; c < lnk; c++) {
-        fprintf(fp," \"%s\" ", lnk_file[c]);
+    if(lnk) {
+	fprintf(fp,"\t (lnk_count %d) \n \
+		    \t (lnk_files ",(lnk));
+	for(c = 0; c < lnk; c++) {
+	    fprintf(fp," \"%s\" ", lnk_file[c]);
+	}
+	fprintf(fp," )\n");
     }
-    fprintf(fp," )\n");
+    if(reg) {
+	fprintf(fp,"\t (reg_count %d) \n \
+	       \t (reg_files ",(reg));
+	for(c = 0; c < reg; c++) {
+	    fprintf(fp," \"%s\" ", reg_file[c]);
+	}
+	fprintf(fp," )\n");
+    }
 
-    fprintf(fp,"\t (reg_count %d) \n \
-    	    \t (reg_files ",(reg));
-    for(c = 0; c < reg; c++) {
-        fprintf(fp," \"%s\" ", reg_file[c]);
+    if(dir) {
+	fprintf(fp,"\t (dir_count %d) \n \
+	       \t (dir_files ",(dir));
+	for(c = 0; c < dir; c++) {
+	    fprintf(fp," \"%s\" ", dir_file[c]);
+	}
+	 fprintf(fp," )\n");
     }
-    fprintf(fp," )\n");
 
-    fprintf(fp,"\t (dir_count %d) \n \
-    	    \t (dir_files ",(dir));
-    for(c = 0; c < dir; c++) {
-        fprintf(fp," \"%s\" ", dir_file[c]);
+    if(chr) {
+	fprintf(fp,"\t (chr_count %d) \n \
+	       \t (chr_files ",(chr));
+	for(c = 0; c < chr; c++) {
+	    fprintf(fp," \"%s\" ", chr_file[c]);
+	}
+	fprintf(fp," )\n");
     }
-    fprintf(fp," )\n");
 
-    fprintf(fp,"\t (chr_count %d) \n \
-    	    \t (chr_files ",(chr));
-    for(c = 0; c < chr; c++) {
-        fprintf(fp," \"%s\" ", chr_file[c]);
+    if(blk) {
+	fprintf(fp,"\t (blk_count %d) \n \
+	       \t (blk_files ",(blk));
+	for(c = 0; c < blk; c++) {
+	    fprintf(fp," \"%s\" ", blk_file[c]);
+	}
+	fprintf(fp," )\n");
     }
-    fprintf(fp," )\n");
 
-    fprintf(fp,"\t (blk_count %d) \n \
-    	    \t (blk_files ",(blk));
-    for(c = 0; c < blk; c++) {
-        fprintf(fp," \"%s\" ", blk_file[c]);
+    if(fifo) {
+	fprintf(fp,"\t (fifo_count %d) \n \
+	       \t (fifo_files ",(fifo));
+	for(c = 0; c < fifo; c++) {
+	    fprintf(fp," \"%s\" ", fifo_file[c]);
+	}
+	fprintf(fp," )\n");
     }
-    fprintf(fp," )\n");
 
-    fprintf(fp,"\t (fifo_count %d) \n \
-    	    \t (fifo_files ",(fifo));
-    for(c = 0; c < fifo; c++) {
-        fprintf(fp," \"%s\" ", fifo_file[c]);
+    if(sock) {
+	fprintf(fp,"\t (sock_count %d) \n \
+	       \t (sock_files ",(sock));
+	for(c = 0; c < sock; c++) {
+	    fprintf(fp," \"%s\" ", sock_file[c]);
+	}
+	fprintf(fp," )\n");
     }
-    fprintf(fp," )\n");
-
-    fprintf(fp,"\t (sock_count %d) \n \
-    	    \t (sock_files ",(sock));
-    for(c = 0; c < dir; c++) {
-        fprintf(fp," \"%s\" ", sock_file[c]);
-    }
-    fprintf(fp," )\n");
 
     fprintf(fp,"\t (num_opened_files %d ))\n",(lnk + reg + dir 
 		+ chr + blk + fifo + sock ));
@@ -671,4 +711,174 @@ int cpu_load_info()
     fclose(fp);
     return ret_val;
 }
+
+
+
+int gather_cpu_utilization(struct target *target, struct value *value, void * data) {
+
+    struct value *sched_entity_value;
+    struct value *pid_value;
+    struct value *comm_value;
+    struct value *utime_value;
+    struct value *utimescaled_value;
+    struct value *stimescaled_value;
+    struct value *stime_value;
+    struct value *sum_exec_runtime_value;
+    struct value *vruntime_value;
+
+    FILE * fp;
+    int pid;
+    char *process_name;
+    unsigned long utime, stime, sum_exec_runtime;
+    unsigned long vruntime, utimescaled, stimescaled;
+    struct timeval utime_timeval, stime_timeval;
+
+    pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
+    if(!pid_value) {
+	fprintf(stdout,"ERROR: Failed to load the pid value.\n");
+	exit(0);
+    }
+    pid = v_i32(pid_value);
+    fprintf(stdout,"INFO: Pid %d\n",pid);
+
+    comm_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
+    if(!comm_value) {
+	fprintf(stdout,"ERROR: Failed to load the process name.\n");
+	exit(0);
+    }
+    process_name = strdup(comm_value->buf);
+    fprintf(stdout,"INFO: Process name %s\n",process_name);
+
+    /* load the utime and stime  */
+    utime_value = target_load_value_member(target, NULL, value, "utime", NULL, LOAD_FLAG_NONE);
+    if(!utime_value) {
+	fprintf(stdout,"ERROR: Failed to load the utime value.\n");
+	exit(0);
+    }
+    utime = v_u64(utime_value);
+    fprintf(stdout,"INFO: utime value %lu \n",utime);
+
+    utimescaled_value = target_load_value_member(target, NULL, value, "utimescaled", NULL, LOAD_FLAG_NONE);
+    if(!utimescaled_value) {
+	fprintf(stdout,"ERROR: Failed to load the utimescaled value.\n");
+	exit(0);
+    }
+    utimescaled= v_u64(utimescaled_value);
+    fprintf(stdout,"INFO: utimescaled value %lu \n",utimescaled);
+
+
+    stime_value = target_load_value_member(target, NULL, value, "stime", NULL, LOAD_FLAG_NONE);
+    if(!stime_value) {
+	fprintf(stdout,"ERROR: Failed to load the stime value.\n");
+	exit(0);
+    }
+    stime = v_u64(stime_value);
+    fprintf(stdout,"INFO: stime value %lu \n",stime);
+    
+    stimescaled_value = target_load_value_member(target, NULL, value, "stimescaled", NULL, LOAD_FLAG_NONE);
+    if(!stimescaled_value) {
+	fprintf(stdout,"ERROR: Failed to load the stimescaled value.\n");
+	exit(0);
+    }
+    stimescaled = v_u64(stimescaled_value);
+    fprintf(stdout,"INFO: stimescaled value %lu \n",stimescaled);
+
+ 
+    /* Now to convert the utime and stime values from jiffies
+     * to sec we need to load the value of TICK_NSEC constant.
+     
+
+    tick_nsec_value = target_load_value_member(target, NULL, value, "TICK_NSEC",
+						    NULL, LOAD_FLAG_NONE);
+    if(!tick_nsec_value) {
+	fprintf(stdout,"ERROR: Failed to load the TICK_NSEC value.\n");
+	exit(0);
+    }
+
+    tick_nsec = v_u64(tick_nsec_value);
+
+    jiffies_to_timeval(utime, &utime_timeval);
+    jiffies_to_timeval(stime, &stime_timeval);
+
+    */
+
+
+    /* load the sched_entity struct */
+
+    sched_entity_value = target_load_value_member(target, NULL, value, "se", NULL, LOAD_FLAG_NONE);
+    if(!sched_entity_value) {
+	fprintf(stdout,"ERROR: Failed to load the sched_entity struct.\n");
+	exit(0);
+    }
+
+    /* load the sum_exec_runtime member */
+
+    sum_exec_runtime_value = target_load_value_member(target, NULL, sched_entity_value, 
+						    "sum_exec_runtime", NULL, LOAD_FLAG_NONE);
+    if(!sum_exec_runtime_value) {
+	fprintf(stdout,"ERROR: Failed to load the sum_exec_runtime.\n");
+	exit(0);
+    }
+    sum_exec_runtime = v_u64(sum_exec_runtime_value);
+    fprintf(stdout,"INFO: sum_exec_runtime %lu \n",sum_exec_runtime);
+
+    /* load the vruntime member */
+    vruntime_value = target_load_value_member(target, NULL, sched_entity_value,
+						"vruntime", NULL, LOAD_FLAG_NONE);
+    if(!vruntime_value) {
+	fprintf(stdout,"ERROR: Failed to load the vruntime value,\n");
+	exit(0);
+    }
+    vruntime  = v_u64(vruntime_value);
+    fprintf(stdout,"INFO: vruntime %lu.\n",vruntime);
+
+    /* Now encode these values as facts */
+    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+    
+    fprintf(fp,"( cpu_utilization \n    \
+		    \t( comm \"%s\")\n    \
+		    \t( pid %d)\n     \
+		    \t( utime %lu)\n   \
+		    \t( utimescaled %lu)\n \
+		    \t( stime %lu) \n  \
+		    \t( stimescaled %lu)\n \
+		    \t( sum_exec_runtime %lu)\n \
+		    \t( vruntime %lu))\n",
+		    process_name, pid, utime, utimescaled,
+		    stime, stimescaled, sum_exec_runtime, vruntime);
+
+    fclose(fp);
+    value_free(pid_value);
+    value_free(comm_value);
+    value_free(utime_value);
+    value_free(utimescaled_value);
+    value_free(stime_value);
+    value_free(stimescaled_value);
+    value_free(sum_exec_runtime_value);
+    value_free(vruntime_value);
+
+}
+
+int process_cpu_utilization() {
+
+    int ret_val;
+    struct bsymbol * init_task_bsymbol;
+
+    init_task_bsymbol = target_lookup_sym(target, "init_task", NULL, NULL,
+	    SYMBOL_TYPE_FLAG_VAR);
+    if(!init_task_bsymbol) {
+	fprintf(stdout,"ERROR: Could not lookup the init_task_symbol\n");
+	return 1;
+    }
+
+    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+	    gather_cpu_utilization, NULL);
+    return ret_val;
+}
+
 

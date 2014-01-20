@@ -134,6 +134,13 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
+
+    result = process_cpu_utilization();
+    if(result) {
+	fprintf(stdout,"ERROR: process_cpu_utilization failed.\n");
+	result = 1;
+	goto resume;
+    }
     
 resume:
 
