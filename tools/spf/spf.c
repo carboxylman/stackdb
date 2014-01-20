@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -1512,6 +1512,7 @@ int apply_config_file(struct spf_config *config) {
 	    continue;
 
 	/* Create it. */
+	bsymbol = NULL;
 	if (ots) {
 	    for (j = ots_len - 1; j >= 0; --j) {
 		bsymbol = target_lookup_sym(ots[j],spff->symbol,NULL,spff->srcfile,
