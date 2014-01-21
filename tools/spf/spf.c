@@ -1601,8 +1601,6 @@ int apply_config_file(struct spf_config *config) {
 
     /* Finally, add all the filter probes. */
     v_g_slist_foreach(config->spf_filter_list,gsltmp,spff) {
-	g_hash_table_insert(needed,spff->symbol,NULL);
-
 	/* Again, if we failed for any reason to get the symbol, skip here. */
 	sprobe = (struct probe *)g_hash_table_lookup(sprobes,spff->symbol);
 	if (!sprobe)
