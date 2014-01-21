@@ -47,6 +47,29 @@ struct target *target;
 extern char base_fact_file[100];
 
 #define NSEC_PER_SEC    1000000000L
+#define HZ 100
+
+
+unsigned long  div_u64(unsigned long dividend, unsigned int divisor) {
+    return dividend / divisor;
+}
+ unsigned long div64_u64( unsigned long dividend, unsigned long divisor) {
+    return dividend / divisor; 
+}
+
+
+unsigned long nsec_to_jiffies(unsigned long n) {
+    return div_u64(n, NSEC_PER_SEC/HZ);
+}
+
+unsigned long scale_utime(unsigned long utime, unsigned long rtime, unsigned long total) {
+    unsigned long temp;
+    temp *= (unsigned long) utime;
+    temp = div64_u64(temp, (unsigned long) total);
+    return (unsigned long) temp;
+}
+
+
 
 /* timeval struct and  functions need to convert jiffies into sec 
 struct time_val {
@@ -54,10 +77,7 @@ struct time_val {
     long tv_usec;
 };
 unsigned long tick_nsec = 0;
-unsigned long  div_u64_rem(unsigned long dividend, unsigned int divisor, unsigned int *remainder) {
-    *remainder = dividend % divisor;
-    return dividend / divisor;
-}
+
 
 void jiffies_to_timeval(const unsigned long jiffies, struct timeval *value) {
 
@@ -302,7 +322,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    fprintf(stdout," ERROR: failed to load the fd struct memeber.\n");
 	    exit(0);
 	}
-	fprintf(stdout," fd_value = 0x%"PRIxADDR" \n", fd_value->buf);
+	//fprintf(stdout," fd_value = 0x%"PRIxADDR" \n", fd_value->buf);
 
 	/* Load the array of file descriptors */
 	fprintf(stdout,"INFO: Loading fs struct\n");
@@ -725,13 +745,23 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     struct value *stime_value;
     struct value *sum_exec_runtime_value;
     struct value *vruntime_value;
+    struct value *prev_cputime_value;
+    struct value *prev_utime_value;
+    struct value *prev_stime_value;
+    struct value *jiffies_value;
 
+    struct target_location_ctxt *tlctxt;
+    struct bsysmbol *jiffies_bsymbol;
+    target_status_t status;
     FILE * fp;
-    int pid;
+    int pid, i = 0;
+    float cpu_utilization;
     char *process_name;
-    unsigned long utime, stime, sum_exec_runtime;
+    unsigned long utime, stime, sum_exec_runtime, rtime, total;
+    unsigned long prev_utime, prev_stime, jiffies;
     unsigned long vruntime, utimescaled, stimescaled;
     struct timeval utime_timeval, stime_timeval;
+    unsigned long load[2], jiffy[2];
 
     pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
     if(!pid_value) {
@@ -749,88 +779,158 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     process_name = strdup(comm_value->buf);
     fprintf(stdout,"INFO: Process name %s\n",process_name);
 
-    /* load the utime and stime  */
-    utime_value = target_load_value_member(target, NULL, value, "utime", NULL, LOAD_FLAG_NONE);
-    if(!utime_value) {
-	fprintf(stdout,"ERROR: Failed to load the utime value.\n");
-	exit(0);
-    }
-    utime = v_u64(utime_value);
-    fprintf(stdout,"INFO: utime value %lu \n",utime);
+    while(i < 2) {
+	/* load the utime and stime  */
+        utime_value = target_load_value_member(target, NULL, value, "utime", NULL, LOAD_FLAG_NONE);
+	if(!utime_value) {
+	    fprintf(stdout,"ERROR: Failed to load the utime value.\n");
+	    exit(0);
+	}
+	utime = v_u64(utime_value);
+	fprintf(stdout,"INFO: utime value %lu \n",utime);
 
-    utimescaled_value = target_load_value_member(target, NULL, value, "utimescaled", NULL, LOAD_FLAG_NONE);
-    if(!utimescaled_value) {
-	fprintf(stdout,"ERROR: Failed to load the utimescaled value.\n");
-	exit(0);
-    }
-    utimescaled= v_u64(utimescaled_value);
-    fprintf(stdout,"INFO: utimescaled value %lu \n",utimescaled);
+	utimescaled_value = target_load_value_member(target, NULL, value, "utimescaled", NULL, LOAD_FLAG_NONE);
+	if(!utimescaled_value) {
+	    fprintf(stdout,"ERROR: Failed to load the utimescaled value.\n");
+	   exit(0);
+	}
+	utimescaled= v_u64(utimescaled_value);
+	fprintf(stdout,"INFO: utimescaled value %lu \n",utimescaled);
 
 
-    stime_value = target_load_value_member(target, NULL, value, "stime", NULL, LOAD_FLAG_NONE);
-    if(!stime_value) {
-	fprintf(stdout,"ERROR: Failed to load the stime value.\n");
-	exit(0);
-    }
-    stime = v_u64(stime_value);
-    fprintf(stdout,"INFO: stime value %lu \n",stime);
-    
-    stimescaled_value = target_load_value_member(target, NULL, value, "stimescaled", NULL, LOAD_FLAG_NONE);
-    if(!stimescaled_value) {
-	fprintf(stdout,"ERROR: Failed to load the stimescaled value.\n");
-	exit(0);
-    }
-    stimescaled = v_u64(stimescaled_value);
-    fprintf(stdout,"INFO: stimescaled value %lu \n",stimescaled);
+	stime_value = target_load_value_member(target, NULL, value, "stime", NULL, LOAD_FLAG_NONE);
+	if(!stime_value) {
+	    fprintf(stdout,"ERROR: Failed to load the stime value.\n");
+	    exit(0);
+	}
+	stime = v_u64(stime_value);
+	fprintf(stdout,"INFO: stime value %lu \n",stime);
 
+	stimescaled_value = target_load_value_member(target, NULL, value, "stimescaled", NULL, LOAD_FLAG_NONE);
+	if(!stimescaled_value) {
+	    fprintf(stdout,"ERROR: Failed to load the stimescaled value.\n");
+	    exit(0);
+	}
+	stimescaled = v_u64(stimescaled_value);
+	fprintf(stdout,"INFO: stimescaled value %lu \n",stimescaled);
+
+	/*Load the prev_cputime struct */
+	prev_cputime_value = target_load_value_member(target, NULL, value, 
+					"prev_cputime", NULL, LOAD_FLAG_NONE);
+	if(!prev_cputime_value) {
+	    fprintf(stdout,"ERROR: Filed to load the prev_cputime_value.\n");
+	    exit(0);
+	}
+
+	/* Load the prev_utime and prev_stime members */
+
+	prev_utime_value = target_load_value_member(target, NULL, prev_cputime_value,
+	    					"utime",NULL, LOAD_FLAG_NONE);
+	prev_utime = v_u64(prev_utime_value);
+	fprintf(stdout,"INFO: prev_utime value %lu.\n",prev_utime);
+
+	prev_stime_value = target_load_value_member(target, NULL, prev_cputime_value,
+						    "stime",NULL, LOAD_FLAG_NONE);
+	prev_stime = v_u64(prev_stime_value);
+	fprintf(stdout,"INFO: prev_utime value %lu.\n",prev_stime);
+
+	/* load the sched_entity struct */
+	sched_entity_value = target_load_value_member(target, NULL, value, "se", NULL, LOAD_FLAG_NONE);
+	if(!sched_entity_value) {
+	    fprintf(stdout,"ERROR: Failed to load the sched_entity struct.\n");
+	    exit(0);
+	}
+
+	/* load the sum_exec_runtime member */
+	sum_exec_runtime_value = target_load_value_member(target, NULL, 
+		sched_entity_value, "sum_exec_runtime", NULL, LOAD_FLAG_NONE);
+	if(!sum_exec_runtime_value) {
+	    fprintf(stdout,"ERROR: Failed to load the sum_exec_runtime.\n");
+	    exit(0);
+	}
+	sum_exec_runtime = v_u64(sum_exec_runtime_value);
+	fprintf(stdout,"INFO: sum_exec_runtime %lu \n",sum_exec_runtime);
  
-    /* Now to convert the utime and stime values from jiffies
-     * to sec we need to load the value of TICK_NSEC constant.
-     
-
-    tick_nsec_value = target_load_value_member(target, NULL, value, "TICK_NSEC",
-						    NULL, LOAD_FLAG_NONE);
-    if(!tick_nsec_value) {
-	fprintf(stdout,"ERROR: Failed to load the TICK_NSEC value.\n");
-	exit(0);
-    }
-
-    tick_nsec = v_u64(tick_nsec_value);
-
-    jiffies_to_timeval(utime, &utime_timeval);
-    jiffies_to_timeval(stime, &stime_timeval);
-
-    */
-
-
-    /* load the sched_entity struct */
-
-    sched_entity_value = target_load_value_member(target, NULL, value, "se", NULL, LOAD_FLAG_NONE);
-    if(!sched_entity_value) {
-	fprintf(stdout,"ERROR: Failed to load the sched_entity struct.\n");
-	exit(0);
-    }
-
-    /* load the sum_exec_runtime member */
-
-    sum_exec_runtime_value = target_load_value_member(target, NULL, sched_entity_value, 
-						    "sum_exec_runtime", NULL, LOAD_FLAG_NONE);
-    if(!sum_exec_runtime_value) {
-	fprintf(stdout,"ERROR: Failed to load the sum_exec_runtime.\n");
-	exit(0);
-    }
-    sum_exec_runtime = v_u64(sum_exec_runtime_value);
-    fprintf(stdout,"INFO: sum_exec_runtime %lu \n",sum_exec_runtime);
-
-    /* load the vruntime member */
-    vruntime_value = target_load_value_member(target, NULL, sched_entity_value,
+	/* load the vruntime member */
+	vruntime_value = target_load_value_member(target, NULL, sched_entity_value,
 						"vruntime", NULL, LOAD_FLAG_NONE);
-    if(!vruntime_value) {
-	fprintf(stdout,"ERROR: Failed to load the vruntime value,\n");
-	exit(0);
+	if(!vruntime_value) {
+	    fprintf(stdout,"ERROR: Failed to load the vruntime value,\n");
+	    exit(0);
+	}
+	vruntime  = v_u64(vruntime_value);
+	fprintf(stdout,"INFO: vruntime %lu.\n",vruntime);
+
+	/* compute the adjusted cpu time */
+	/*convert the runtime from nsec to jiffies */
+	rtime = nsec_to_jiffies(sum_exec_runtime);
+	fprintf(stdout,"INFO: rtime in jiffies %lu \n",rtime);
+    
+	/* total of utime and stime */
+	total = utime + stime;
+    
+	if(total) 
+	    utime = scale_utime(utime, rtime, total);
+	else
+	    utime = rtime;
+
+
+	utime = (utime > prev_utime)? utime : prev_utime;
+	stime = (stime > (rtime - utime))? stime : (rtime - utime);
+
+	fprintf(stdout,"INFO: Scaled utime %lu\n",utime);
+	fprintf(stdout,"INFO: Scaled stime %lu\n",stime);
+	load[i] = utime + stime;
+
+	fprintf(stdout,"INFO: Gather the current jiffies value.\n");
+	jiffies_bsymbol = target_lookup_sym(target, "jiffies", NULL, NULL,
+						SYMBOL_TYPE_FLAG_VAR);
+	if(!jiffies_bsymbol) {
+	    fprintf(stdout,"ERROR: filed to load the jiffies symbol.\n");
+	    exit(0);
+	}
+
+	tlctxt = target_location_ctxt_create_from_bsymbol(target,TID_GLOBAL,jiffies_bsymbol);
+
+	jiffies_value = target_load_symbol(target, tlctxt, jiffies_bsymbol, LOAD_FLAG_NONE);
+	if(!jiffies_value) {
+	    fprintf(stdout,"ERROR: Could not load the jifffies value.\n");
+	    exit(0);
+	}
+	jiffies = v_u64(jiffies_value);
+	fprintf(stdout,"INFO: The current jiffies value %lu. \n",jiffies);
+	jiffy[i] = jiffies;
+
+	/* now unpause the target and let it execute for 2 sec */
+	if(i == 1) break;
+	fprintf(stdout,"INFO: Resuming the target for 2 seconds.\n");
+	if ((status = target_status(target)) == TSTATUS_PAUSED) {
+	    if(target_resume(target)) {
+		fprintf(stdout, "ERROR: Failed to resume the target.\n");
+		exit(0);
+	    }
+	}
+
+	sleep(2);
+	
+	if ((status = target_status(target)) != TSTATUS_PAUSED) {
+	    if (target_pause(target)) {
+		fprintf(stdout,"ERROR: Failed to pause the target \n");
+		exit(0);
+	    }
+	}
+	i = i + 1;
+
+	value_free(utime_value);
+	value_free(stime_value);
+
     }
-    vruntime  = v_u64(vruntime_value);
-    fprintf(stdout,"INFO: vruntime %lu.\n",vruntime);
+
+    cpu_utilization = (float) (load[1] - load[0])/(jiffy[1]-jiffy[0]);
+    fprintf(stdout,"INFO: CPU utilization for the process %f.\n",
+						cpu_utilization);
+	
+	
 
     /* Now encode these values as facts */
     fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
