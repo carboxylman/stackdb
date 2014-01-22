@@ -342,7 +342,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    continue;
 	}
 
-	fprintf(stdout,"INFO: file_addr = 0x%"PRIxADDR"\n",file_addr);
+	//fprintf(stdout,"INFO: file_addr = 0x%"PRIxADDR"\n",file_addr);
 	
 	/* Load the type of symbol */
 	file_struct_bsymbol = target_lookup_sym(target, "struct file", NULL,
@@ -993,4 +993,187 @@ int process_cpu_utilization() {
     return ret_val;
 }
 
+
+
+int gather_object_info(struct target *target, struct value *value, void * data) {
+
+    struct value *pid_value;
+    struct value *comm_value;
+    struct value *mm_value;
+    struct value *vm_area_start_value;
+    struct value *vm_area_value;
+    struct value *file_value;
+    struct value *path_value;
+    struct value *dentry_value;
+    struct value *d_name_value;
+    struct value *len_name_value;
+    struct value *file_name_value;
+    struct value *next_vm_area_value;
+    
+    FILE * fp;
+    ADDR start_addr, next_vm_area_addr;
+    char *file_name, *process_name;
+    int pid, i = 0;
+    
+    pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
+    if(!pid_value) {
+	fprintf(stdout,"ERROR: Failed to load the pid value.\n");
+	exit(0);
+    }
+    pid = v_i32(pid_value);
+    fprintf(stdout,"INFO: Pid %d\n",pid);
+
+    comm_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
+    if(!comm_value) {
+	fprintf(stdout,"ERROR: Failed to load the process name.\n");
+	exit(0);
+    }
+    process_name = strdup(comm_value->buf);
+    fprintf(stdout,"INFO: Process name %s\n",process_name);
+
+    mm_value = target_load_value_member(target, NULL, value, "mm", NULL,
+							LOAD_FLAG_AUTO_DEREF);
+    if(!mm_value) {
+	fprintf(stdout,"INFO: mm member is NULL.\n");
+	return 0;
+    }
+
+    /*load the address of the start member of the linked list 
+
+    vm_area_start_value = target_load_value_member(target, NULL, mm_value, "mmap",
+							    NULL, LOAD_FLAG_NONE);
+    if(!vm_area_start_value) {
+	fprintf(stdout,"ERROR: Failed to load the vm_area member address \n");
+	exit(0);
+    }
+    start_addr = v_addr(vm_area_start_value);
+    */
+
+    vm_area_value = target_load_value_member(target, NULL, mm_value, "mmap",
+						    NULL, LOAD_FLAG_AUTO_DEREF);
+    if(!vm_area_value) {
+	fprintf(stdout,"ERROR: Failed to load the mmap member value. \n");
+	exit(0);
+    }
+
+    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+    
+    fprintf(fp,"( loaded-objects \n    \
+		    \t( comm \"%s\")\n \
+		    \t( pid %d)\n      \
+		    \t( objects ",process_name, pid);
+
+
+    /* Traverse through the entire list of vm_area
+     * strcut to get the name of loaded oobjects.
+     */
+    while(1) {
+
+	file_value = target_load_value_member(target, NULL, vm_area_value, "vm_file",
+							NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!file_value) {
+	    fprintf(stdout,"INFO: vm_file value is null, so continuing . . \n");
+	    goto nextptr;
+	}
+
+	/* Load the path the variable from the files struct*/
+	fprintf(stdout,"INFO: Loading f_path struct\n");
+	path_value = target_load_value_member( target, NULL, file_value, "f_path",
+		    NULL, LOAD_FLAG_NONE);
+	if(!path_value) {
+	    fprintf(stdout," ERROR: failed to load the path struct member.\n");
+	    exit(0);
+	} 
+
+	/* Load the dentry struct  member from the path */
+	fprintf(stdout,"INFO: Loading dentry struct\n");
+	dentry_value = target_load_value_member(target, NULL, path_value, "dentry",
+		    NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!dentry_value){
+	    fprintf(stdout,"INFO: dentry member is NULL\n");
+	    goto nextptr;
+	}
+
+	/* Load the d_name struct */
+	fprintf(stdout,"INFO: Loading d_name struct\n");
+	d_name_value = target_load_value_member(target, NULL, dentry_value, "d_name",
+		    NULL, LOAD_FLAG_NONE);
+	if(!d_name_value) {
+	    fprintf(stdout," ERROR: failed to load the d_name struct member.\n");
+	    exit(0);
+	} 
+	
+	/* Finally load the lenght of  name string */
+	fprintf(stdout,"INFO: Loading the length of name string\n");
+	len_name_value = target_load_value_member( target, NULL, d_name_value, "len",
+		    NULL, LOAD_FLAG_NONE);
+	if(!len_name_value) {
+	    fprintf(stdout," ERROR: failed to load the name string.\n");
+	    exit(0);
+	}
+	unsigned int len = v_u32(len_name_value);
+	fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
+	if(len == 0) {
+	    fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
+	    goto nextptr;
+	}
+
+	file_name_value = target_load_value_member(target, NULL, d_name_value, "name",
+		    NULL, LOAD_FLAG_AUTO_STRING);
+	if(!file_name_value) {
+	    fprintf(stdout,"ERROR: Could not load name of the file\n");
+	    goto nextptr;
+	}
+
+	file_name = strdup(file_name_value->buf);
+	fprintf(stdout,"INFO: LInked object name %s\n",file_name);
+	fprintf(fp," \"%s\" ",file_name);
+
+nextptr:
+/*	next_vm_area_value = target_load_value_member(target, NULL, vm_area_value,
+						"vm_next", NULL, LOAD_FLAG_NONE);
+	if(!next_vm_area_value) {
+	    fprintf(stdout,"ERROR: Failed to load the next_vm_area_value.\n");
+	    exit(0);
+	}
+	next_vm_area_addr = v_addr(next_vm_area_value);
+
+	if(next_vm_area_addr == start_addr) {
+	    fprintf(stdout,"INFO: Finished travesring the entire vm_area list.\n");
+	    break;
+	}
+*/	
+	vm_area_value = target_load_value_member(target, NULL, vm_area_value,
+						"vm_next", NULL, LOAD_FLAG_AUTO_DEREF);
+	if(!vm_area_value) {
+	    fprintf(stdout,"INFO: REached the end of the linked list.\n");
+	    break;
+	}
+    }
+    fprintf(fp," ))\n");
+    fclose(fp);
+
+}
+
+int object_info() {
+
+    int ret_val;
+    struct bsymbol * init_task_bsymbol;
+
+    init_task_bsymbol = target_lookup_sym(target, "init_task", NULL, NULL,
+	    SYMBOL_TYPE_FLAG_VAR);
+    if(!init_task_bsymbol) {
+	fprintf(stdout,"ERROR: Could not lookup the init_task_symbol\n");
+	return 1;
+    }
+
+    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+	    gather_object_info, NULL);
+    return ret_val;
+}
 

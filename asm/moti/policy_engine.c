@@ -106,6 +106,7 @@ int generate_snapshot() {
 
 			    
     /* Start making calls to each of the VMI function */ 
+    /*
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
@@ -139,6 +140,13 @@ int generate_snapshot() {
     if(result) {
 	fprintf(stdout,"ERROR: process_cpu_utilization failed.\n");
 	result = 1;
+	goto resume;
+    }
+  */
+    result = object_info();
+    if(result) {
+	fprintf(stdout,"ERROR: object_info failed.\n");
+	result  = 1;
 	goto resume;
     }
     

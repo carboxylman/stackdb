@@ -47,3 +47,9 @@
 	(slot sum_exec_runtime (type INTEGER))
 	(slot vruntime (type INTEGER))
 	(slot utilization (type FLOAT)))
+
+
+(deftemplate loaded-objects
+	(slot comm (type STRING))
+	(slot pid (type INTEGER))
+	(multislot objects (type STRING)))
