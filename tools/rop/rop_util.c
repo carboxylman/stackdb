@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -494,8 +494,8 @@ struct probe *probe_rop_checkret(struct target *target,tid_t tid,
 				 probe_handler_t pre_handler,
 				 probe_handler_t post_handler,
 				 void *handler_data) {
-    struct array_list *idata_list;
-    struct array_list *cf_idata_list;
+    struct array_list *idata_list = NULL;
+    struct array_list *cf_idata_list = NULL;
     ADDR cont_start;
     ADDR cont_end;
     unsigned char *cbuf = NULL;
