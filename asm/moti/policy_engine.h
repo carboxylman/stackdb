@@ -64,6 +64,7 @@ unsigned long nsec_to_jiffies(unsigned long n) {
 
 unsigned long scale_utime(unsigned long utime, unsigned long rtime, unsigned long total) {
     unsigned long temp;
+    temp = (unsigned long )rtime;
     temp *= (unsigned long) utime;
     temp = div64_u64(temp, (unsigned long) total);
     return (unsigned long) temp;
@@ -780,6 +781,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     fprintf(stdout,"INFO: Process name %s\n",process_name);
 
     while(i < 2) {
+	utime = stime = 0;
 	/* load the utime and stime  */
         utime_value = target_load_value_member(target, NULL, value, "utime", NULL, LOAD_FLAG_NONE);
 	if(!utime_value) {
@@ -796,7 +798,6 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	}
 	utimescaled= v_u64(utimescaled_value);
 	fprintf(stdout,"INFO: utimescaled value %lu \n",utimescaled);
-
 
 	stime_value = target_load_value_member(target, NULL, value, "stime", NULL, LOAD_FLAG_NONE);
 	if(!stime_value) {
@@ -863,12 +864,13 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 
 	/* compute the adjusted cpu time */
 	/*convert the runtime from nsec to jiffies */
+	/*
 	rtime = nsec_to_jiffies(sum_exec_runtime);
 	fprintf(stdout,"INFO: rtime in jiffies %lu \n",rtime);
-    
+	*/
 	/* total of utime and stime */
 	total = utime + stime;
-    
+	/*
 	if(total) 
 	    utime = scale_utime(utime, rtime, total);
 	else
@@ -880,13 +882,15 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 
 	fprintf(stdout,"INFO: Scaled utime %lu\n",utime);
 	fprintf(stdout,"INFO: Scaled stime %lu\n",stime);
+
+	*/
 	load[i] = utime + stime;
 
 	fprintf(stdout,"INFO: Gather the current jiffies value.\n");
 	jiffies_bsymbol = target_lookup_sym(target, "jiffies", NULL, NULL,
 						SYMBOL_TYPE_FLAG_VAR);
 	if(!jiffies_bsymbol) {
-	    fprintf(stdout,"ERROR: filed to load the jiffies symbol.\n");
+	    fprintf(stdout,"ERROR: failed to load the jiffies symbol.\n");
 	    exit(0);
 	}
 
@@ -903,17 +907,18 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 
 	/* now unpause the target and let it execute for 2 sec */
 	if(i == 1) break;
-	fprintf(stdout,"INFO: Resuming the target for 2 seconds.\n");
 	if ((status = target_status(target)) == TSTATUS_PAUSED) {
+	fprintf(stdout,"INFO: Resuming the target for 2 seconds.\n");
 	    if(target_resume(target)) {
 		fprintf(stdout, "ERROR: Failed to resume the target.\n");
 		exit(0);
 	    }
 	}
 
-	sleep(2);
+	sleep(1);
 	
 	if ((status = target_status(target)) != TSTATUS_PAUSED) {
+	    fprintf(stdout,"INFO: Pausing the target.\n");	   
 	    if (target_pause(target)) {
 		fprintf(stdout,"ERROR: Failed to pause the target \n");
 		exit(0);
@@ -923,11 +928,17 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 
 	value_free(utime_value);
 	value_free(stime_value);
+	
+	/* Reload the task_struct value */
+	if(value_refresh(value , 0)) {
+	    fprintf(stdout,"ERROR: Failed to refresh the task_struct value.\n");
+	    exit(0);
+	}
 
     }
 
-    cpu_utilization = (float) (load[1] - load[0])/(jiffy[1]-jiffy[0]);
-    fprintf(stdout,"INFO: CPU utilization for the process %f.\n",
+    cpu_utilization = (float) (load[1] - load[0])/(jiffy[1]-jiffy[0])* 100;
+    fprintf(stdout,"INFO: CPU utilization for the process %f\n",
 						cpu_utilization);
 	
 	
@@ -948,9 +959,10 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 		    \t( stime %lu) \n  \
 		    \t( stimescaled %lu)\n \
 		    \t( sum_exec_runtime %lu)\n \
-		    \t( vruntime %lu))\n",
+		    \t( vruntime %lu)\n \
+		    \t( utilization %f))\n",
 		    process_name, pid, utime, utimescaled,
-		    stime, stimescaled, sum_exec_runtime, vruntime);
+		    stime, stimescaled, sum_exec_runtime, vruntime, cpu_utilization);
 
     fclose(fp);
     value_free(pid_value);

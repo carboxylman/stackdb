@@ -45,4 +45,5 @@
 	(slot stime (type INTEGER))
 	(slot stimescaled (type INTEGER))
 	(slot sum_exec_runtime (type INTEGER))
-	(slot vruntime (type INTEGER)))
+	(slot vruntime (type INTEGER))
+	(slot utilization (type FLOAT)))
