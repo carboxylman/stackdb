@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -2083,10 +2083,10 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		    goto do_sibling;
 		}
 		else {
-		    verror("cannot resolve forward ref 0x%"PRIxOFFSET" for"
-			   " TAG_imported_module at 0x%"PRIxOFFSET"; skipping;"
-			   " scope hier will be wrong!\n",args.ref,offset);
-		    goto errout;
+		    vwarn("cannot resolve forward ref 0x%"PRIxOFFSET" for"
+			  " TAG_imported_module at 0x%"PRIxOFFSET"; skipping;"
+			  " scope hier might be wrong!\n",args.ref,offset);
+		    goto do_sibling;
 		}
 	    }
 	    else {
