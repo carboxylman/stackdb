@@ -16,6 +16,9 @@
  * Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+
+#include "target_os.h"
+
 /* Macros for caomputing the CPU LOAD */
 #define FSHIFT 11
 #define FIXED_1 (1<<FSHIFT)
@@ -45,6 +48,8 @@
 
 struct target *target;    
 extern char base_fact_file[100];
+extern unsigned long *sys_call_table;
+extern char **sys_call_names;
 
 #define NSEC_PER_SEC    1000000000L
 #define HZ 100
@@ -1165,6 +1170,7 @@ int object_info() {
     int ret_val;
     struct bsymbol * init_task_bsymbol;
 
+
     init_task_bsymbol = target_lookup_sym(target, "init_task", NULL, NULL,
 	    SYMBOL_TYPE_FLAG_VAR);
     if(!init_task_bsymbol) {
@@ -1176,4 +1182,73 @@ int object_info() {
 	    gather_object_info, NULL);
     return ret_val;
 }
+
+
+int syscalltable_info() {
+
+    int ret_val = 0;
+    int max_num = 0;
+    int i;
+    
+    FILE *fp;
+    char call_addr[100];
+    char name [50];
+    char perm[5];
+    struct target_os_syscall *sc;
+    struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
+    GSList *gsltmp;
+    const char *system_map = "/boot/System.map-3.8.0-26-generic";
+
+
+    /* Load the syscall table */
+
+    fprintf(stdout,"INFO: Loading the syscall table.\n");
+    if(target_os_syscall_table_load(target)) {
+	fprintf(stdout,"ERROR: Failed to load the syscall table.\n");
+	return 1;
+    }
+
+    max_num = target_os_syscall_table_get_max_num(target);
+    if(max_num < 0) {
+	fprintf(stdout,"ERROR: Failed to get the max number of target sysscalls.\n");
+	return 1;
+    }
+    fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
+
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout,"ERROR: Failed to open the base_fact_file.\n");
+	exit(0);
+    }
+
+    for(i = 0; i < max_num; i++) {
+	sc = target_os_syscall_lookup_num(target, i);
+	if(!sc) {
+	    continue;
+	}
+	if(sc->bsymbol) {
+	    fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
+					    bsymbol_get_name(sc->bsymbol));
+	    if(sc->addr != sys_call_table[sc->num]) {
+		fprintf(stdout,"INFO: Funtion pointer mismatch detected for symbol %s.\nOriginal entry: %lu Current entry: %lu\n",
+					bsymbol_get_name(sc->bsymbol), 
+					sys_call_table[sc->num], 
+					sc->addr);
+		fprintf(fp,"(tampered_sys_call\n   \
+			\t( name  \"%s\")\n \
+			\t( original %lu )\n \
+			\t( current %lu )\n \
+			\t( index %d ))\n",
+			bsymbol_get_name(sc->bsymbol),
+			sys_call_table[sc->num],
+			sc->addr,
+			sc->num);
+	    }
+
+	}
+    }
+    fclose(fp);
+    return ret_val;
+}
+
 

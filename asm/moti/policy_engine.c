@@ -67,6 +67,64 @@
 
 struct target *target = NULL;
 char base_fact_file[100];
+unsigned long *sys_call_table = NULL;
+char **sys_call_names = NULL;
+
+
+
+int save_sys_call_table_entries() {
+
+    int i, max_num;
+    struct target_os_syscall *sc;
+
+    fprintf(stdout,"INFO: Saving the state of the initial system call table.\n");
+    /* Load the syscall table */
+    fprintf(stdout,"INFO: Loading the syscall table.\n");
+    if(target_os_syscall_table_load(target)) {
+	fprintf(stdout,"ERROR: Failed to load the syscall table.\n");
+	return 1;
+    }
+
+    max_num = target_os_syscall_table_get_max_num(target);
+    if(max_num < 0) {
+	fprintf(stdout,"ERROR: Failed to get the max number of target sysscalls.\n");
+	return 1;
+    }
+    fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
+
+    /* Allocate memory for the sys_call_table and sys_call_names */
+
+    sys_call_table  = (unsigned long *) malloc(max_num * sizeof(unsigned long));
+    if(sys_call_table == NULL) {
+	fprintf(stdout,"ERROR: Failed to allocate memory for sys_call_table.\n");
+	exit(0);
+    }
+    sys_call_names = (char *) malloc(max_num * sizeof(char *));
+    if(sys_call_names == NULL) {
+	fprintf(stdout,"ERROR: Failed to allocate memmory for sys_call_names.\n");
+	exit(0);
+    }
+    for(i = 0; i < max_num; i++) {
+	sc = target_os_syscall_lookup_num(target, i);
+	if(!sc) {
+	    continue;
+	}
+	if(sc->bsymbol) {
+	    /*
+	    fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
+					    bsymbol_get_name(sc->bsymbol));
+	    */
+	    sys_call_table[sc->num] = sc->addr;
+	    sys_call_names[sc->num] =  (char *) malloc(100* sizeof(char));
+	    if(sys_call_names[sc->num] == NULL) {
+		fprintf(stdout,"ERROR: Failed to allocate memory for the string.\n");
+	    strcpy(sys_call_names[sc->num], bsymbol_get_name(sc->bsymbol));
+
+	    }
+	}
+    }
+    return 0;
+}
 
 target_status_t cleanup() {
 
@@ -106,7 +164,7 @@ int generate_snapshot() {
 
 			    
     /* Start making calls to each of the VMI function */ 
-    /*
+    
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
@@ -142,13 +200,21 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-  */
+  
     result = object_info();
     if(result) {
 	fprintf(stdout,"ERROR: object_info failed.\n");
 	result  = 1;
 	goto resume;
     }
+  
+    result = syscalltable_info();
+    if(result) {
+	fprintf(stdout,"ERROR: syscallcalltable_info failed.\n");
+	result = 1;
+	goto resume;
+    }
+
     
 resume:
 
@@ -270,6 +336,7 @@ int main( int argc, char** argv) {
     }
 
 
+    fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
     // Initialize the CLIPS environment
     InitializeEnvironment();
     fprintf(stdout,"INFO: Loading the application level rules\n");
@@ -285,7 +352,14 @@ int main( int argc, char** argv) {
 	//exit(0);
       //}
      
+    /* Copy the initil system_call_table contents */
 
+    result = save_sys_call_table_entries();
+    if(result) {
+	fprintf(stdout,"ERROR: Failed to save the initial system call table entries.\n");
+	exit(0);
+    }
+	
     // Start an infinite loop to periodically execute steps 3.1 to 3.5 
     while(1) {
 

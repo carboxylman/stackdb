@@ -53,3 +53,9 @@
 	(slot comm (type STRING))
 	(slot pid (type INTEGER))
 	(multislot objects (type STRING)))
+
+(deftemplate tampered_sys_call 
+	(slot name (type STRING))
+	(slot original (type INTEGER))
+	(slot current (type INTEGER))
+	(slot index (type INTEGER)))
