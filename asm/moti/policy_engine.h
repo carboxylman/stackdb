@@ -48,7 +48,12 @@
 #define LINUX_NICE_TO_PRIO(nice)      (LINUX_MAX_RT_PRIO + (nice) + 20)
 #define LINUX_PRIO_TO_NICE(prio)      ((prio) - LINUX_MAX_RT_PRIO - 20)
 
-
+/* Per proces flags */
+#define LINUX_PF_VCPU         0x00000010  
+#define LINUX_PF_WQ_WORKER    0x00000020
+#define LINUX_PF_SUPERPRIV    0x00000100
+#define LINUX_PF_KTHREAD      0x00200000
+#define LINUX_PF_KSWAPD       0x00040000
 
 
 struct target *target;    
@@ -97,7 +102,7 @@ void jiffies_to_timeval(const unsigned long jiffies, struct timeval *value) {
 							NSEC_PER_SEC, &rem);
     value->tv_usec = rem/NSEC_PER_SEC;
 }
-*/
+
 
 int gather_child_process_info(struct target* target, struct value* value, void *data) {
 
@@ -114,7 +119,7 @@ int gather_child_process_info(struct target* target, struct value* value, void *
     fprintf(stdout,"INFO: Child process name %s, pid %d\n",name, pid); 
     return 0;
 }
-
+*/
 
 
 int ps_gather(struct target *target, struct value * value, void * data) {
@@ -154,7 +159,11 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     char *parent_name;
     struct value *tgid_v;
     int tgid;
+    struct value *flags_v;
+    unsigned int flags;
     int nice;
+    int vcpu = 0 , wq_worker = 0, kswapd = 0;
+    int kthread = 0, used_superpriv = 0;
 
     struct bsymbol *task_struct_bsymbol;
     struct bsymbol *listhead_bsymbol;
@@ -185,12 +194,34 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     rt_priority_v = target_load_value_member(target, NULL, value, "rt_priority", NULL, LOAD_FLAG_NONE);
     rt_priority = v_i32(rt_priority_v);
 
-    fprintf(stdout,"INFO: prio = %d, static_prio = %d, normal_prio = %d, rt_priority = %d\n",
-		prio, static_prio, normal_prio, rt_priority);
+    //fprintf(stdout,"INFO: prio = %d, static_prio = %d, normal_prio = %d, rt_priority = %d\n",
+		//prio, static_prio, normal_prio, rt_priority);
 
     /* Compute the NICE value based on the priority */
     nice = LINUX_PRIO_TO_NICE(static_prio);
-    fprintf(stdout,"INFO : Process nice value is %d\n", nice); 
+    //fprintf(stdout,"INFO : Process nice value is %d\n", nice); 
+
+    
+    /* Load the per-process flags */
+    flags_v = target_load_value_member(target, NULL, value, "flags", NULL, LOAD_FLAG_NONE);
+    flags = v_u32(flags_v);
+
+    /* check if the process is a vcpu */
+    if(flags & LINUX_PF_VCPU)
+	vcpu = 1;
+    /* check if the process is a work queue worker */
+    if(flags & LINUX_PF_WQ_WORKER)
+	wq_worker = 1;
+    /* Check if the process has used super user privileges */
+    if(flags & LINUX_PF_SUPERPRIV)
+	used_superpriv = 1;
+    /* check if the process is a kswap daemon */
+    if(flags & LINUX_PF_KSWAPD)
+	kswapd = 1;
+    /* check if the process is a kernel thread */
+    if(flags & LINUX_PF_KTHREAD)
+	kthread = 1;
+
 
     real_cred_v = target_load_value_member(target, NULL, value, "real_cred", NULL, LOAD_FLAG_NONE);
     real_cred_addr = v_addr(real_cred_v);
@@ -276,24 +307,30 @@ int ps_gather(struct target *target, struct value * value, void * data) {
      */
     
     fprintf(fp,"\n(task-struct\n \
-	\t(comm \"%s\")\n\
+	    \t(comm \"%s\")\n\
 	    \t(pid %d)\n\
 	    \t(tgid %d)\n\
+            \t(is_vcpu %d)\n\
+	    \t(is_wq_worker %d)\n\
+	    \t(used_superpriv %d)\n\
+	    \t(is_kswapd %d)\n\
+	    \t(is_kthread %d)\n\
 	    \t(prio %d)\n\
 	    \t(static_prio %d)\n\
 	    \t(normal_prio %d)\n\
 	    \t(rt_priority %d)\n\
 	    \t(nice %d)\n\
-	    \t(uid %hu)\n \
-	    \t(euid %hu)\n \
-	    \t(suid %hu)\n \
-	    \t(fsuid %hu)\n \
-	    \t(gid %hu)\n \
-	    \t(egid %hu)\n \
-	    \t(sgid %hu)\n \
+	    \t(uid %hu)\n\
+	    \t(euid %hu)\n\
+	    \t(suid %hu)\n\
+	    \t(fsuid %hu)\n\
+	    \t(gid %hu)\n\
+	    \t(egid %hu)\n\
+	    \t(sgid %hu)\n\
 	    \t(fsgid %hu)\n\
 	    \t(parent_pid %d)\n\
-	    \t(parent_name \"%s\"))\n",name,pid,tgid,prio,static_prio,normal_prio,rt_priority,
+	    \t(parent_name \"%s\"))\n",name,pid,tgid,vcpu,wq_worker,used_superpriv,kswapd,kthread,
+				       prio,static_prio,normal_prio,rt_priority,
 				       nice,uid,euid,suid,fsuid,gid,egid,sgid,fsgid,
 				       parent_pid, parent_name);
 
