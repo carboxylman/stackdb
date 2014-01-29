@@ -1,6 +1,12 @@
  (deftemplate task-struct
       (slot comm (type STRING))
       (slot pid (type INTEGER))
+      (slot tgid (type INTEGER))
+      (slot prio (type INTEGER))
+      (slot static_prio (type INTEGER))
+      (slot normal_prio (type INTEGER))
+      (slot rt_priority (type INTEGER))
+      (slot nice (type INTEGER))
       (slot uid (type INTEGER))
       (slot euid (type INTEGER))
       (slot suid (type INTEGER))
@@ -8,7 +14,9 @@
       (slot gid (type INTEGER))
       (slot egid (type INTEGER))
       (slot sgid (type INTEGER))
-      (slot fsgid (type INTEGER)))
+      (slot fsgid (type INTEGER))
+      (slot parent_pid (type INTEGER))
+      (slot parent_name (type STRING)))
 
 (deftemplate opened-files
 	(slot comm (type STRING))

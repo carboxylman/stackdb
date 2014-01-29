@@ -172,7 +172,7 @@ int generate_snapshot() {
 	goto resume;
     }
     
-    result =  file_info();
+    /*result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
 	result = 1;
@@ -214,7 +214,7 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-
+    */
     
 resume:
 

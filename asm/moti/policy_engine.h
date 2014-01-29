@@ -25,7 +25,7 @@
 #define LOAD_INT(x) ((x) >> FSHIFT)
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
-/* Macros for determining the file is a socket */
+/* Macros for distuinguishing between different kinds of files */
 #define S_IFMT  00170000
 #define S_IFSOCK 0140000
 #define S_IFLNK  0120000
@@ -42,6 +42,11 @@
 #define S_ISBLK(m)      (((m) & S_IFMT) == S_IFBLK)
 #define S_ISFIFO(m)     (((m) & S_IFMT) == S_IFIFO)
 #define S_ISSOCK(m)     (((m) & S_IFMT) == S_IFSOCK)
+
+/* Macros to covert between priority and nice values*/
+#define LINUX_MAX_RT_PRIO 100
+#define LINUX_NICE_TO_PRIO(nice)      (LINUX_MAX_RT_PRIO + (nice) + 20)
+#define LINUX_PRIO_TO_NICE(prio)      ((prio) - LINUX_MAX_RT_PRIO - 20)
 
 
 
@@ -94,6 +99,21 @@ void jiffies_to_timeval(const unsigned long jiffies, struct timeval *value) {
 }
 */
 
+int gather_child_process_info(struct target* target, struct value* value, void *data) {
+
+    struct value *pid_v;
+    int pid;
+    struct value *name_v;
+    char *name;
+
+    pid_v = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
+    pid = v_i32(pid_v);
+    name_v = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
+    name = strdup(name_v->buf);
+
+    fprintf(stdout,"INFO: Child process name %s, pid %d\n",name, pid); 
+    return 0;
+}
 
 
 
@@ -117,9 +137,27 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     unsigned int egid;
     struct value *sgid_v;
     unsigned int sgid;
-    struct value * fsgid_v;
+    struct value *fsgid_v;
     unsigned int fsgid;
+    struct value *prio_v;
+    int prio;
+    struct value *static_prio_v;
+    int static_prio;
+    struct value *normal_prio_v;
+    int normal_prio;
+    struct value *rt_priority_v;
+    int rt_priority;
+    struct value *parent_pid_v;
+    int parent_pid;
+    struct value *parent_name_v;
+    struct value *parent_task_struct_v;
+    char *parent_name;
+    struct value *tgid_v;
+    int tgid;
+    int nice;
 
+    struct bsymbol *task_struct_bsymbol;
+    struct bsymbol *listhead_bsymbol;
     struct value * real_cred_v;
     ADDR real_cred_addr;
     struct symbol *cred_struct_type = NULL;
@@ -130,6 +168,29 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     pid = v_i32(pid_v);
     name_v = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
     name = strdup(name_v->buf);
+
+    tgid_v = target_load_value_member(target, NULL, value, "tgid", NULL, LOAD_FLAG_NONE);
+    tgid = v_i32(tgid_v);
+
+    /* load the process priorities */
+    prio_v = target_load_value_member(target, NULL, value, "prio", NULL, LOAD_FLAG_NONE);
+    prio = v_i32(prio_v);
+
+    static_prio_v = target_load_value_member(target, NULL, value, "static_prio", NULL, LOAD_FLAG_NONE);
+    static_prio = v_i32(static_prio_v);
+
+    normal_prio_v = target_load_value_member(target, NULL, value, "normal_prio", NULL, LOAD_FLAG_NONE);
+    normal_prio = v_i32(normal_prio_v);
+
+    rt_priority_v = target_load_value_member(target, NULL, value, "rt_priority", NULL, LOAD_FLAG_NONE);
+    rt_priority = v_i32(rt_priority_v);
+
+    fprintf(stdout,"INFO: prio = %d, static_prio = %d, normal_prio = %d, rt_priority = %d\n",
+		prio, static_prio, normal_prio, rt_priority);
+
+    /* Compute the NICE value based on the priority */
+    nice = LINUX_PRIO_TO_NICE(static_prio);
+    fprintf(stdout,"INFO : Process nice value is %d\n", nice); 
 
     real_cred_v = target_load_value_member(target, NULL, value, "real_cred", NULL, LOAD_FLAG_NONE);
     real_cred_addr = v_addr(real_cred_v);
@@ -161,6 +222,38 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     fsgid_v = target_load_value_member(target, NULL, new_value, "fsgid", NULL, LOAD_FLAG_NONE);
     fsgid = v_u16(fsgid_v);
 
+    /* Load information about the parent process */
+    parent_task_struct_v = target_load_value_member(target, NULL, value, "real_parent", NULL, LOAD_FLAG_AUTO_DEREF);
+
+    parent_pid_v = target_load_value_member(target, NULL, parent_task_struct_v, "pid", NULL, LOAD_FLAG_NONE);
+    parent_pid = v_i32(parent_pid_v);
+
+    parent_name_v = target_load_value_member(target, NULL, parent_task_struct_v, "comm", NULL, LOAD_FLAG_NONE);
+    parent_name = strdup(parent_name_v->buf);
+
+    fprintf(stdout,"INFO: Parent name %s and pid %d\n",parent_name, parent_pid);
+
+    /* Now gather the information about each of the child processes 
+
+    task_struct_bsymbol = target_lookup_sym(target,"struct task_struct", NULL, NULL,
+						SYMBOL_TYPE_FLAG_TYPE);
+    if(!task_struct_bsymbol) {
+	fprintf(stdout," ERROR: Could not look up the task_struct  bsymbol.\n");
+	return 1;
+    }
+
+    listhead_bsymbol = target_lookup_sym(target,"init_task", NULL, NULL,
+						SYMBOL_TYPE_FLAG_VAR);
+    if(!listhead_bsymbol) {
+	fprintf(stdout,"ERROR: Could not lookup the tasks bsymbol.\n");
+	return 1;
+    }
+
+    linux_list_for_each_entry(target, task_struct_bsymbol, listhead_bsymbol,
+					"children", 0, gather_child_info, NULL);
+    
+    */
+
     /* Now populate the base fact into the file. */
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
@@ -183,8 +276,14 @@ int ps_gather(struct target *target, struct value * value, void * data) {
      */
     
     fprintf(fp,"\n(task-struct\n \
-	\t(comm \"%s\")\n \
-	    \t(pid %d)\n \
+	\t(comm \"%s\")\n\
+	    \t(pid %d)\n\
+	    \t(tgid %d)\n\
+	    \t(prio %d)\n\
+	    \t(static_prio %d)\n\
+	    \t(normal_prio %d)\n\
+	    \t(rt_priority %d)\n\
+	    \t(nice %d)\n\
 	    \t(uid %hu)\n \
 	    \t(euid %hu)\n \
 	    \t(suid %hu)\n \
@@ -192,12 +291,15 @@ int ps_gather(struct target *target, struct value * value, void * data) {
 	    \t(gid %hu)\n \
 	    \t(egid %hu)\n \
 	    \t(sgid %hu)\n \
-	    \t(fsgid %hu))\n",name,pid,uid,euid,suid,fsuid,gid,egid,sgid,fsgid);
+	    \t(fsgid %hu)\n\
+	    \t(parent_pid %d)\n\
+	    \t(parent_name \"%s\"))\n",name,pid,tgid,prio,static_prio,normal_prio,rt_priority,
+				       nice,uid,euid,suid,fsuid,gid,egid,sgid,fsgid,
+				       parent_pid, parent_name);
 
     fclose(fp);
     return 0;
 }
-
 
 int process_info() {
 
@@ -216,8 +318,6 @@ int process_info() {
     return ret_val;
 
 }
-
-
 
 int gather_file_info(struct target *target, struct value * value, void * data) {
 
@@ -997,7 +1097,6 @@ int process_cpu_utilization() {
 	    gather_cpu_utilization, NULL);
     return ret_val;
 }
-
 
 
 int gather_object_info(struct target *target, struct value *value, void * data) {
