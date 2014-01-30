@@ -1388,3 +1388,159 @@ int syscalltable_info() {
 }
 
 
+int gather_commandline_info(struct target *target, struct value *value, void * data) {
+    
+    struct value *pid_value;
+    int pid;
+    struct value *comm_value;
+    char *process_name;
+    struct value *mm_value;
+    struct value *arg_start_value;
+    unsigned long arg_start;
+    struct value *arg_end_value;
+    unsigned long arg_end;
+    unsigned long length = 0;
+    struct value *env_start_value;
+    unsigned long env_start;
+    struct value *env_end_value;
+    unsigned long env_end;
+
+    ADDR paddr;
+    unsigned char *command_line, *ret, *environment;
+
+
+    pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
+    if(!pid_value) {
+	fprintf(stdout,"ERROR: Failed to load the pid value.\n");
+	exit(0);
+    }
+    pid = v_i32(pid_value);
+    fprintf(stdout,"INFO: Pid %d\n",pid);
+
+    comm_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
+    if(!comm_value) {
+	fprintf(stdout,"ERROR: Failed to load the process name.\n");
+	exit(0);
+    }
+    process_name = strdup(comm_value->buf);
+    fprintf(stdout,"INFO: Process name %s\n",process_name);
+
+    /* Load the mm member */
+
+    mm_value = target_load_value_member(target, NULL, value,"mm", NULL, LOAD_FLAG_AUTO_DEREF);
+    if(!mm_value) {
+	fprintf(stdout,"INFO: Pointer to the mm struct is null.\n");
+	return 0;
+    }
+    arg_start_value = target_load_value_member(target, NULL, mm_value, "arg_start",
+						NULL, LOAD_FLAG_NONE);
+    if(!arg_start_value) {
+	fprintf(stdout,"ERROR: Failed to load the arg_start memeber.\n");
+	exit(0);
+    }
+    arg_start = v_u64(arg_start_value);
+    //fprintf(stdout,"INFO : arg start value %lu \n",arg_start);
+
+    arg_end_value = target_load_value_member(target, NULL, mm_value, "arg_end",
+						NULL, LOAD_FLAG_NONE);
+    if(!arg_end_value) {
+	fprintf(stdout,"ERROR: Failed to load the arg_end memeber.\n");
+	exit(0);
+    }
+    arg_end = v_u64(arg_end_value);
+    //fprintf(stdout,"INFO: arg end value %lu \n",arg_end);
+
+    length = arg_end - arg_start;
+    fprintf(stdout,"INFO : Length of the buffer %lu \n",length);
+    if(!length) {
+	fprintf(stdout," INFO: No command line for the process with pid %d\n",pid);
+    }
+    /* Now convert the virtual address into physical address */
+
+    if(target_addr_v2p(target,pid, arg_start, &paddr)) {
+	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n");
+	exit(0);
+    }
+
+    //fprintf(stdout,"INFO: virtual address 0x%"PRIxADDR" translates to 0x%"PRIxADDR"\n",
+    //			arg_start,paddr);
+    
+    /* Now read the buffer contents from the physical address*/
+
+    command_line = malloc(100 *sizeof (char));
+
+    ret = target_read_physaddr(target, paddr, 100, command_line);
+    if(!ret) {
+	fprintf(stdout,"ERROR: Failed to load the commandline buffer.\n");
+	exit(0);
+    }
+
+    fprintf(stdout,"INFO: Command line %s\n",command_line);
+
+
+    /* now gather information reagarding the environment of the process. */
+
+     env_start_value = target_load_value_member(target, NULL, mm_value, "env_start",
+						NULL, LOAD_FLAG_NONE);
+    if(!env_start_value) {
+	fprintf(stdout,"ERROR: Failed to load the env_start memeber.\n");
+	exit(0);
+    }
+    env_start = v_u64(env_start_value);
+
+    env_end_value = target_load_value_member(target, NULL, mm_value, "env_end",
+						NULL, LOAD_FLAG_NONE);
+    if(!env_end_value) {
+	fprintf(stdout,"ERROR: Failed to load the env_end memeber.\n");
+	exit(0);
+    }
+    env_end = v_u64(env_end_value);
+
+    length = env_end - env_start;
+    fprintf(stdout,"INFO : Length of the env buffer %lu \n",length);
+    if(!length) {
+	fprintf(stdout," INFO: No command line for the process with pid %d\n",pid);
+    }
+    /* Now convert the virtual address into physical address */
+
+    if(target_addr_v2p(target,pid, env_start, &paddr)) {
+	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n");
+	exit(0);
+    }
+
+    
+    /* Now read the buffer contents from the physical address*/
+    environment = malloc(100 *sizeof (char));
+
+    ret = target_read_physaddr(target, paddr, 100, environment);
+    if(!ret) {
+	fprintf(stdout,"ERROR: Failed to load the environment buffer.\n");
+	exit(0);
+    }
+
+    fprintf(stdout,"INFO: Environment line %s\n",environment);
+    return 0;
+
+}
+
+
+
+
+int commandline_info() {
+
+    int ret_val;
+    struct bsymbol * init_task_bsymbol;
+
+
+    init_task_bsymbol = target_lookup_sym(target, "init_task", NULL, NULL,
+	    SYMBOL_TYPE_FLAG_VAR);
+    if(!init_task_bsymbol) {
+	fprintf(stdout,"ERROR: Could not lookup the init_task_symbol\n");
+	return 1;
+    }
+
+    ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
+	    gather_commandline_info, NULL);
+    return ret_val;
+}
+

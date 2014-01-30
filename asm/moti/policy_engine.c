@@ -164,7 +164,7 @@ int generate_snapshot() {
 
 			    
     /* Start making calls to each of the VMI function */ 
-    
+    /*
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
@@ -172,7 +172,7 @@ int generate_snapshot() {
 	goto resume;
     }
     
-    /*result =  file_info();
+    result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
 	result = 1;
@@ -215,6 +215,12 @@ int generate_snapshot() {
 	goto resume;
     }
     */
+
+    result = commandline_info();
+    if( result) {
+	fprintf(stdout,"ERROR: commandline_info failed.\n");
+	goto resume;
+    }
     
 resume:
 
