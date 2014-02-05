@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -315,17 +315,14 @@ GHashTable *__probe_value_get_table_function_ee(struct probe *probe,tid_t tid,
 
     if (pv->phase == PHASE_PRE_START) {
 	symbol = bsymbol_get_symbol(probe->bsymbol);
-	if (!symbol)
-	    return NULL;
 	args = symbol_get_members(symbol,SYMBOL_TYPE_FLAG_VAR_ARG);
-	if (!args)
-	    return NULL;
 
 	/*
 	 * Load each argument if it hasn't already been loaded.
 	 */
 	tlctxt = target_location_ctxt_create_from_bsymbol(probe->target,tid,
 							  probe->bsymbol);
+	gsltmp = NULL;
 	v_g_slist_foreach(args,gsltmp,argsym) {
 	    name = symbol_get_name(argsym);
 	    if (pv && (allowlast || !pv->finished)) {
