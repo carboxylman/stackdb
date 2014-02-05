@@ -1407,7 +1407,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 
     ADDR paddr;
     unsigned char *command_line, *ret, *environment;
-
+    FILE *fp;
 
     pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
     if(!pid_value) {
@@ -1426,7 +1426,6 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     fprintf(stdout,"INFO: Process name %s\n",process_name);
 
     /* Load the mm member */
-
     mm_value = target_load_value_member(target, NULL, value,"mm", NULL, LOAD_FLAG_AUTO_DEREF);
     if(!mm_value) {
 	fprintf(stdout,"INFO: Pointer to the mm struct is null.\n");
@@ -1477,8 +1476,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 
     fprintf(stdout,"INFO: Command line %s\n",command_line);
 
-
-    /* now gather information reagarding the environment of the process. */
+    /* Gather information reagarding the environment of the process. */
 
      env_start_value = target_load_value_member(target, NULL, mm_value, "env_start",
 						NULL, LOAD_FLAG_NONE);
@@ -1507,8 +1505,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 	fprintf(stdout,"ERROR: could not translate virtual address 0x%"PRIxADDR"\n");
 	exit(0);
     }
-
-    
+  
     /* Now read the buffer contents from the physical address*/
     environment = malloc(100 *sizeof (char));
 
@@ -1519,6 +1516,19 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     }
 
     fprintf(stdout,"INFO: Environment line %s\n",environment);
+
+    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+	exit(0);
+    }
+    
+    fprintf(fp,"( command_line \n    \
+		\t( command \"%s\")\n \
+		\t( environment \"%s\"))\n", command_line, environment);
+    
+    fclose(fp);
     return 0;
 
 }
@@ -1531,14 +1541,12 @@ int commandline_info() {
     int ret_val;
     struct bsymbol * init_task_bsymbol;
 
-
     init_task_bsymbol = target_lookup_sym(target, "init_task", NULL, NULL,
 	    SYMBOL_TYPE_FLAG_VAR);
     if(!init_task_bsymbol) {
 	fprintf(stdout,"ERROR: Could not lookup the init_task_symbol\n");
 	return 1;
     }
-
     ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
 	    gather_commandline_info, NULL);
     return ret_val;

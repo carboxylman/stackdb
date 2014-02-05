@@ -164,7 +164,7 @@ int generate_snapshot() {
 
 			    
     /* Start making calls to each of the VMI function */ 
-    /*
+    
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
@@ -172,6 +172,7 @@ int generate_snapshot() {
 	goto resume;
     }
     
+    /*
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
@@ -214,14 +215,13 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-    */
-
+    
     result = commandline_info();
     if( result) {
 	fprintf(stdout,"ERROR: commandline_info failed.\n");
 	goto resume;
     }
-    
+    */
 resume:
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
@@ -387,14 +387,20 @@ int main( int argc, char** argv) {
 	    continue;
 	}
 	
+	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
+	Reset();
+
 	fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
 	   exit(0);
 	}
-	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
-	Reset();
+
+	result = Watch("all");
+	if(!result) {
+	    fprintf(stdout,"Error: Faild to watch \n");
+	}
 	fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d application rules were fired\n",result);
