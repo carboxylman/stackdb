@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -113,6 +113,11 @@ struct linux_userproc_state {
      * -- so we don't try to wait for the SIGSTOP again.
      */
     GHashTable *new_racy_threads;
+};
+
+struct linux_userproc_exception_handler_state {
+    tid_t tid;
+    int pstatus;
 };
 
 #endif /* __TARGET_LINUX_USERPROC_H__ */

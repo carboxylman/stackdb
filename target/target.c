@@ -1176,14 +1176,6 @@ struct target *target_create(char *type,struct target_spec *spec) {
     //*(((gint *)retval->soft_probepoints)+1) = 1;
     //*(((gint *)retval->soft_probepoints)) = 0;
 
-    /*
-     * Hm, I think we should do this by default, and let target backends
-     * override it if they need.
-     */
-    retval->bp_handler = probepoint_bp_handler;
-    retval->ss_handler = probepoint_ss_handler;
-    retval->interrupted_ss_handler = probepoint_interrupted_ss_handler;
-
     if (target_id_tab)
 	g_hash_table_insert(target_id_tab,
 			    (gpointer)(uintptr_t)retval->id,retval);
@@ -3509,7 +3501,7 @@ int __target_invalidate_thread(struct target *target,
 
 target_status_t target_notify_overlay(struct target *overlay,tid_t tid,ADDR ipval,
 				      int *again) {
-    return overlay->ops->overlay_event(overlay,tid,ipval,again);
+    return overlay->ops->handle_overlay_exception(overlay,tid,ipval,again);
 }
 
 struct target *target_lookup_overlay(struct target *target,tid_t tid) {

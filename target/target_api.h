@@ -1749,6 +1749,9 @@ struct target_state_change {
     char *msg;
 };
 
+typedef target_status_t (*target_exception_handler_t)(struct target *target,
+						      int *again,void *priv);
+
 typedef result_t (*target_debug_bp_handler_t)(struct target *target,
 					      struct target_thread *tthread,
 					      struct probepoint *probepoint,
@@ -2141,41 +2144,6 @@ struct target {
     void *full_ret_instrs;
     unsigned int full_ret_instrs_len;
     unsigned int full_ret_instr_count;
-
-    /* Single step and breakpoint handlers.  Since we control
-     * single-step mode, we report *any* single step stop events to the
-     * handler, and do nothing with them ourselves.
-     *
-     * For breakpoints, if we don't have a probepoint matching the
-     * breaking EIP, target_monitor will return to the library user, and
-     * they'll have to handle the exception themselves (i.e., this would
-     * happen if their code had a software breakpoint in it).
-     */
-    target_debug_handler_t ss_handler;
-    target_debug_bp_handler_t bp_handler;
-    /*
-     * If a thread was supposed to be stepping, but it steps into a new
-     * context, this handler should be called to abort the single step;
-     * save the probepoint in thread->interrupted_ss_probepoint; restore
-     * the breakpoint.  We save off the breakpoint so we can know that
-     * when the breakpoint is hit again, we shouldn't run pre-handlers
-     * again.  This is definitely a dicey strategy -- how can we know
-     * that we'll be at the interrupted context when we hit the
-     * breakpoint next in this thread?  For instance, the only place
-     * this is used right now is the Xen target.  Consider: a
-     * xen-process target breakpoint is hit; we single step using HVM
-     * MTF; instead of stepping in userspace, we find ourselves stepping
-     * in that thread, but in the kernel.  That means the singlestep of
-     * the breakpoint didn't happen; thus we need to reset the
-     * breakpoint.  BUT, then, what happens on return from the kernel?
-     * Normally, the breakpoint would be immediately hit again, and the
-     * single step would work.  Unfortunately, kernels don't guarantee
-     * this behavior... the userspace EIP could be adjusted to deliver a
-     * signal, or whatever.  But all we can do is assume it, unless we
-     * want to get into the heavyweight business of tracking context
-     * switches.
-     */
-    target_debug_handler_t interrupted_ss_handler;
 };
 
 struct target_ops {
@@ -2229,6 +2197,42 @@ struct target_ops {
      */
     int (*postopened)(struct target *target);
 
+    /* Single step and breakpoint handlers.  Since we control
+     * single-step mode, we report *any* single step stop events to the
+     * handler, and do nothing with them ourselves.
+     *
+     * For breakpoints, if we don't have a probepoint matching the
+     * breaking EIP, target_monitor will return to the library user, and
+     * they'll have to handle the exception themselves (i.e., this would
+     * happen if their code had a software breakpoint in it).
+     */
+    target_exception_handler_t handle_exception;
+    target_debug_bp_handler_t handle_break;
+    target_debug_handler_t handle_step;
+    /*
+     * If a thread was supposed to be stepping, but it steps into a new
+     * context, this handler should be called to abort the single step;
+     * save the probepoint in thread->interrupted_ss_probepoint; restore
+     * the breakpoint.  We save off the breakpoint so we can know that
+     * when the breakpoint is hit again, we shouldn't run pre-handlers
+     * again.  This is definitely a dicey strategy -- how can we know
+     * that we'll be at the interrupted context when we hit the
+     * breakpoint next in this thread?  For instance, the only place
+     * this is used right now is the Xen target.  Consider: a
+     * xen-process target breakpoint is hit; we single step using HVM
+     * MTF; instead of stepping in userspace, we find ourselves stepping
+     * in that thread, but in the kernel.  That means the singlestep of
+     * the breakpoint didn't happen; thus we need to reset the
+     * breakpoint.  BUT, then, what happens on return from the kernel?
+     * Normally, the breakpoint would be immediately hit again, and the
+     * single step would work.  Unfortunately, kernels don't guarantee
+     * this behavior... the userspace EIP could be adjusted to deliver a
+     * signal, or whatever.  But all we can do is assume it, unless we
+     * want to get into the heavyweight business of tracking context
+     * switches.
+     */
+    target_debug_handler_t handle_interrupted_step;
+
     /*
      * "Underlay" targets (that support overlays) must define these
      * functions.
@@ -2244,8 +2248,8 @@ struct target_ops {
      * Overlay targets must support this if their exceptions come from
      * the underlying target.
      */
-    target_status_t (*overlay_event)(struct target *overlay,tid_t tid,
-				     ADDR ipval,int *again);
+    target_status_t (*handle_overlay_exception)(struct target *overlay,tid_t tid,
+						ADDR ipval,int *again);
 
     /* get target status. */
     target_status_t (*status)(struct target *target);

@@ -53,10 +53,9 @@ static int xen_vm_process_loaddebugfiles(struct target *target,
 static int xen_vm_process_set_active_probing(struct target *target,
 					     active_probe_flags_t flags);
 
-
-static target_status_t xen_vm_process_overlay_event(struct target *overlay,
-						    tid_t tid,ADDR ipval,
-						    int *again);
+static target_status_t xen_vm_process_handle_overlay_exception(struct target *overlay,
+							       tid_t tid,ADDR ipval,
+							       int *again);
 static struct target *
 xen_vm_process_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
@@ -162,7 +161,10 @@ struct target_ops xen_vm_process_ops = {
     .lookup_overlay_thread_by_id = xen_vm_process_lookup_overlay_thread_by_id,
     .lookup_overlay_thread_by_name = xen_vm_process_lookup_overlay_thread_by_name,
 
-    .overlay_event = xen_vm_process_overlay_event,
+    .handle_overlay_exception = xen_vm_process_handle_overlay_exception,
+    .handle_break = probepoint_bp_handler,
+    .handle_step = probepoint_ss_handler,
+    .handle_interrupted_step = probepoint_interrupted_ss_handler,
 
     .status = xen_vm_process_status,
     .pause = xen_vm_process_pause,
@@ -1463,9 +1465,9 @@ xen_vm_process_lookup_overlay_thread_by_name(struct target *target,char *name) {
 #define EF_IF (0x00000200)
 #define EF_RF (0x00010000)
 
-static target_status_t xen_vm_process_overlay_event(struct target *overlay,
-						    tid_t tid,ADDR ipval,
-						    int *again) {
+static target_status_t xen_vm_process_handle_overlay_exception(struct target *overlay,
+							       tid_t tid,ADDR ipval,
+							       int *again) {
     struct target_thread *tthread;
     struct target_thread *uthread;
     struct xen_vm_thread_state *xtstate;
@@ -1523,11 +1525,11 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 		   " (at 0x%"PRIxADDR"); aborting breakpoint singlestep;"
 		   " will be hit again!\n",
 		   tid,ipval);
-	    overlay->interrupted_ss_handler(overlay,tthread,
-					    tthread->tpc->probepoint);
+	    overlay->ops->handle_interrupted_step(overlay,tthread,
+						  tthread->tpc->probepoint);
 	}
 	else
-	    overlay->ss_handler(overlay,tthread,tthread->tpc->probepoint);
+	    overlay->ops->handle_step(overlay,tthread,tthread->tpc->probepoint);
 
 	/* Clear the status bits right now. */
 	xtstate->context.debugreg[6] = 0;
@@ -1557,8 +1559,8 @@ static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 				(gpointer)(ipval - overlay->breakpoint_instrs_len));
 	if (dpp) {
 	    /* Run the breakpoint handler. */
-	    overlay->bp_handler(overlay,tthread,dpp,
-				xtstate->context.debugreg[6] & 0x4000);
+	    overlay->ops->handle_break(overlay,tthread,dpp,
+				       xtstate->context.debugreg[6] & 0x4000);
 
 	    /* Clear the status bits right now. */
 	    xtstate->context.debugreg[6] = 0;

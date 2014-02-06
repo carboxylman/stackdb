@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -77,6 +77,9 @@ static int linux_userproc_loadregions(struct target *target,
 static int linux_userproc_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region);
+
+static target_status_t linux_userproc_handle_exception(struct target *target,
+						       int *again,void *priv);
 
 static struct target *
 linux_userproc_instantiate_overlay(struct target *target,
@@ -173,6 +176,11 @@ struct target_ops linux_userspace_process_ops = {
     .loadregions = linux_userproc_loadregions,
     .loaddebugfiles = linux_userproc_loaddebugfiles,
     .postloadinit = linux_userproc_postloadinit,
+
+    .handle_exception = linux_userproc_handle_exception,
+    .handle_break = probepoint_bp_handler,
+    .handle_step = probepoint_ss_handler,
+    .handle_interrupted_step = NULL,
 
     .instantiate_overlay = linux_userproc_instantiate_overlay,
     .lookup_overlay_thread_by_id = linux_userproc_lookup_overlay_thread_by_id,
@@ -3246,9 +3254,8 @@ static int linux_userproc_resume(struct target *target) {
     return 0;
 }
 
-static thread_status_t linux_userproc_handle_internal(struct target *target,
-						      tid_t tid,
-						      int pstatus,int *again) {
+static target_status_t linux_userproc_handle_exception(struct target *target,
+						       int *again,void *priv) {
     struct linux_userproc_state *lstate;
     REG dreg = -1;
     struct probepoint *dpp;
@@ -3264,6 +3271,13 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
     int pid;
     long int newstatus;
     struct addrspace *space;
+    struct linux_userproc_exception_handler_state *exst;
+    tid_t tid;
+    int pstatus;
+
+    exst = (struct linux_userproc_exception_handler_state *)priv;
+    tid = exst->tid;
+    pstatus = exst->pstatus;
 
     lstate = (struct linux_userproc_state *)(target->state);
     pid = lstate->pid;
@@ -3485,7 +3499,7 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 		    return THREAD_STATUS_ERROR;
 		}
 
-		if (target->bp_handler(target,tthread,dpp,cdr & 0x4000)
+		if (target->ops->handle_break(target,tthread,dpp,cdr & 0x4000)
 		    != RESULT_SUCCESS)
 		    return THREAD_STATUS_ERROR;
 		goto out_again;
@@ -3504,18 +3518,18 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	     * before hardware brekapoint, because we don't catch
 	     * the case where we single step into a hardware breakpoint
 	     * -- we miss the single step because the hw bp seems to
-	     * dominate the single step exception.  bp_handler handles
+	     * dominate the single step exception.  handle_break handles
 	     * this...
 	     */
 	    else if (cdr & 0x4000) {
 		if (tthread->tpc) {
-		    if (target->ss_handler(target,tthread,tthread->tpc->probepoint)
+		    if (target->ops->handle_step(target,tthread,tthread->tpc->probepoint)
 			!= RESULT_SUCCESS)
 			return THREAD_STATUS_ERROR;
 		    goto out_again;
 		}
 		else {
-		    if (target->ss_handler(target,tthread,NULL)
+		    if (target->ops->handle_step(target,tthread,NULL)
 			!= RESULT_SUCCESS)
 			return THREAD_STATUS_ERROR;
 		    goto out_again;
@@ -3525,7 +3539,7 @@ static thread_status_t linux_userproc_handle_internal(struct target *target,
 	    else if ((dpp = (struct probepoint *)			\
 		      g_hash_table_lookup(target->soft_probepoints,
 					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
-		if (target->bp_handler(target,tthread,dpp,cdr & 0x4000)
+		if (target->ops->handle_break(target,tthread,dpp,cdr & 0x4000)
 		    != RESULT_SUCCESS)
 		    return THREAD_STATUS_ERROR;
 		goto out_again;
@@ -3647,6 +3661,7 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
     struct target *target = (struct target *)state;
     struct target_thread *tthread;
     struct linux_userproc_thread_state *tstate;
+    struct linux_userproc_exception_handler_state exst;
 
     if ((tid = waitpipe_get_pid(readfd)) < 0) {
 	verror("could not find thread tid for readfd %d!\n",readfd);
@@ -3675,7 +3690,7 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
 	return EVLOOP_HRET_SUCCESS;
     }
 
-    /* Need to waitpid(tid) to grab status, then can call handle_internal(). */
+    /* Need to waitpid(tid) to grab status, then can call handle_exception(). */
  again:
     retval = waitpid(tid,&status,WNOHANG | __WALL);
     if (retval < 0) {
@@ -3700,7 +3715,9 @@ int linux_userproc_evloop_handler(int readfd,int fdtype,void *state) {
      * Ok, handle whatever happened.  If we can't handle it, pass
      * control to the user, just like monitor() would.
      */
-    retval = linux_userproc_handle_internal(target,tid,status,&again);
+    exst.tid = tid;
+    exst.pstatus = status;
+    retval = linux_userproc_handle_exception(target,&again,&exst);
 
     if (THREAD_SPECIFIC_STATUS(retval)) {
 	verror("thread-specific status %d tid %d; bad!\n",retval,tid);
@@ -3910,6 +3927,7 @@ static target_status_t linux_userproc_poll(struct target *target,
     unsigned int usec_thresh = 100; // 100 us is the least we'll sleep
     uint64_t total_us;
     uint64_t total_ns = 0;
+    struct linux_userproc_exception_handler_state exst;
 
     if (tv) {
 	total_us = tv->tv_sec * 1000000 + tv->tv_usec;
@@ -3981,7 +3999,9 @@ static target_status_t linux_userproc_poll(struct target *target,
 	 * Ok, handle whatever happened.  If we can't handle it, pass
 	 * control to the user, just like monitor() would.
 	 */
-	retval = linux_userproc_handle_internal(target,tid,status,NULL);
+	exst.tid = tid;
+	exst.pstatus = status;
+	retval = linux_userproc_handle_exception(target,NULL,&exst);
 
 	if (THREAD_SPECIFIC_STATUS(retval)) {
 	    vwarn("unhandled thread-specific status %d!\n",retval);
@@ -4003,6 +4023,7 @@ static target_status_t linux_userproc_monitor(struct target *target) {
     thread_status_t retval;
     struct linux_userproc_state *lstate = \
 	(struct linux_userproc_state *)target->state;
+    struct linux_userproc_exception_handler_state exst;
 
     vdebug(9,LA_TARGET,LF_LUP,"pid %d\n",lstate->pid);
 
@@ -4019,7 +4040,9 @@ static target_status_t linux_userproc_monitor(struct target *target) {
 	    goto again;
     }
 
-    retval = linux_userproc_handle_internal(target,tid,pstatus,&again);
+    exst.tid = tid;
+    exst.pstatus = pstatus;
+    retval = linux_userproc_handle_exception(target,&again,&exst);
     if (again)
 	goto again;
 

@@ -82,6 +82,8 @@ static int xen_vm_postopened(struct target *target);
 static int xen_vm_set_active_probing(struct target *target,
 				     active_probe_flags_t flags);
 
+static target_status_t xen_vm_handle_exception(struct target *target,
+					       int *again,void *priv);
 
 static struct target *
 xen_vm_instantiate_overlay(struct target *target,
@@ -240,6 +242,11 @@ struct target_ops xen_vm_ops = {
     .postloadinit = xen_vm_postloadinit,
     .postopened = xen_vm_postopened,
     .set_active_probing = xen_vm_set_active_probing,
+
+    .handle_exception = xen_vm_handle_exception,
+    .handle_break = probepoint_bp_handler,
+    .handle_step = probepoint_ss_handler,
+    .handle_interrupted_step = NULL,
 
     .instantiate_overlay = xen_vm_instantiate_overlay,
     .lookup_overlay_thread_by_id = xen_vm_lookup_overlay_thread_by_id,
@@ -6561,8 +6568,8 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
  *   to 1 if just handled a bp and should try again;
  *   to 2 if just handled an ss and should try again.
  */
-static target_status_t xen_vm_handle_internal(struct target *target,
-					      int *again) {
+static target_status_t xen_vm_handle_exception(struct target *target,
+					       int *again,void *priv) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     REGVAL ipval;
     int dreg = -1;
@@ -6858,7 +6865,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 			goto handle_sstep_thread;
 		    }
 		    else {
-			target->ss_handler(target,tthread,NULL);
+			target->ops->handle_step(target,tthread,NULL);
 
 			/* Clear the status bits right now. */
 			xtstate->context.debugreg[6] = 0;
@@ -6887,11 +6894,11 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		}
 		    
 		/* Save the currently hanlding probepoint;
-		 * ss_handler may clear tpc.
+		 * handle_step may clear tpc.
 		 */
 		spp = tthread->tpc->probepoint;
 
-		target->ss_handler(target,tthread,tthread->tpc->probepoint);
+		target->ops->handle_step(target,tthread,tthread->tpc->probepoint);
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
@@ -6920,7 +6927,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		       sstep_thread->tid);
 
 	    handle_sstep_thread:
-		target->ss_handler(target,sstep_thread,
+		target->ops->handle_step(target,sstep_thread,
 				   sstep_thread->tpc->probepoint);
 
 		/* Clear the status bits right now. */
@@ -6939,7 +6946,7 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		goto out_err_again;
 	    }
 	    else {
-		target->ss_handler(target,tthread,NULL);
+		target->ops->handle_step(target,tthread,NULL);
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
@@ -7220,8 +7227,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		}
 
 		/* Run the breakpoint handler. */
-		target->bp_handler(target,tthread,dpp,
-				   xtstate->context.debugreg[6] & 0x4000);
+		target->ops->handle_break(target,tthread,dpp,
+					  xtstate->context.debugreg[6] & 0x4000);
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
@@ -7234,8 +7241,8 @@ static target_status_t xen_vm_handle_internal(struct target *target,
 		      g_hash_table_lookup(target->soft_probepoints,
 					  (gpointer)(ipval - target->breakpoint_instrs_len)))) {
 		/* Run the breakpoint handler. */
-		target->bp_handler(target,tthread,dpp,
-				   xtstate->context.debugreg[6] & 0x4000);
+		target->ops->handle_break(target,tthread,dpp,
+					  xtstate->context.debugreg[6] & 0x4000);
 
 		/* Clear the status bits right now. */
 		xtstate->context.debugreg[6] = 0;
@@ -7333,7 +7340,7 @@ int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
 	return EVLOOP_HRET_SUCCESS;
 
     again = 0;
-    retval = xen_vm_handle_internal(target,&again);
+    retval = xen_vm_handle_exception(target,&again,NULL);
     if (retval == TSTATUS_ERROR && again == 0)
 	return EVLOOP_HRET_ERROR;
     /*
@@ -7430,7 +7437,7 @@ static target_status_t xen_vm_monitor(struct target *target) {
             continue; // not the event that we are looking for
 
 	again = 0;
-	retval = xen_vm_handle_internal(target,&again);
+	retval = xen_vm_handle_exception(target,&again,NULL);
 	if (retval == TSTATUS_ERROR && again == 0) {
 	    target->needmonitorinterrupt = 0;
 	    return retval;
@@ -7509,7 +7516,7 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
     }
 
     again = 0;
-    retval = xen_vm_handle_internal(target,&again);
+    retval = xen_vm_handle_exception(target,&again,NULL);
     if (pstatus)
 	*pstatus = again;
 
