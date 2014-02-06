@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -50,6 +50,9 @@ static int xen_vm_process_loadregions(struct target *target,
 static int xen_vm_process_loaddebugfiles(struct target *target,
 					 struct addrspace *space,
 					 struct memregion *region);
+static int xen_vm_process_set_active_probing(struct target *target,
+					     active_probe_flags_t flags);
+
 
 static target_status_t xen_vm_process_overlay_event(struct target *overlay,
 						    tid_t tid,ADDR ipval,
@@ -152,6 +155,8 @@ struct target_ops xen_vm_process_ops = {
     .loadregions = xen_vm_process_loadregions,
     .loaddebugfiles = xen_vm_process_loaddebugfiles,
     .postloadinit = xen_vm_process_postloadinit,
+
+    .set_active_probing = xen_vm_process_set_active_probing,
 
     .instantiate_overlay = xen_vm_process_instantiate_overlay,
     .lookup_overlay_thread_by_id = xen_vm_process_lookup_overlay_thread_by_id,
@@ -1139,9 +1144,21 @@ static int xen_vm_process_postloadinit(struct target *target) {
     return 0;
 }
 
-static int _xen_vm_process_active_memory_post_handler(struct probe *probe,
-						      void *handler_data,
-						      struct probe *trigger) {
+static result_t _xen_vm_process_active_memory_post_handler(struct probe *probe,
+							   tid_t tid,
+							   void *handler_data,
+							   struct probe *trigger,
+							   struct probe *base) {
+    struct addrspace *space;
+    struct target *target = (struct target *)handler_data;
+
+    if (target->base_tid != tid)
+	return 0;
+
+    list_for_each_entry(space,&target->spaces,space) {
+	__xen_vm_process_loadregions(target,space,0);
+    }
+
     return 0;
 }
 
@@ -1152,12 +1169,13 @@ static int xen_vm_process_set_active_probing(struct target *target,
     struct xen_vm_state *xstate = \
 	(struct xen_vm_state *)target->base->state;
     int retval = 0;
+    struct bsymbol *bs;
+    struct probe *probe;
 
-#if 0
     if ((flags & ACTIVE_PROBE_FLAG_MEMORY) 
 	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_MEMORY)) {
 	if (flags & ACTIVE_PROBE_FLAG_MEMORY) {
-	    ;
+	    /*
 	    if (!(xvpstate->active_memory_probe_mmap = 
 		  linux_syscall_probe(target->base,target->base_tid,
 				      "sys_mmap",NULL,
@@ -1168,14 +1186,150 @@ static int xen_vm_process_set_active_probing(struct target *target,
 		    --retval;
 		}
 	    }
-	    //else if ...
+	    */
 
-	    if (retval < 0) {
+	    /* mmap */
+	    bs = target_lookup_sym(target->base,"sys_mmap",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,_xen_vm_process_active_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
 		goto unprobe;
 	    }
-	    else {
-		target->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
+	    xvpstate->active_memory_probe_mmap = probe;
+
+	    /* munmap */
+	    bs = target_lookup_sym(target->base,"sys_munmap",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,_xen_vm_process_active_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
 	    }
+	    bsymbol_release(bs);
+	    xvpstate->active_memory_probe_munmap = probe;
+
+	    /* uselib */
+	    bs = target_lookup_sym(target->base,"sys_uselib",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,_xen_vm_process_active_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    xvpstate->active_memory_probe_uselib = probe;
+
+	    /* mprotect */
+	    bs = target_lookup_sym(target->base,"sys_mprotect",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,_xen_vm_process_active_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    xvpstate->active_memory_probe_mprotect = probe;
+
+	    /* mremap */
+	    bs = target_lookup_sym(target->base,"sys_mremap",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,_xen_vm_process_active_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    xvpstate->active_memory_probe_mremap = probe;
+
+	    /* mmap_pgoff */
+	    bs = target_lookup_sym(target->base,"sys_mmap_pgoff",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,_xen_vm_process_active_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    xvpstate->active_memory_probe_mmap_pgoff = probe;
+
+	    /* madvise */
+	    bs = target_lookup_sym(target->base,"sys_madvise",NULL,NULL,
+				   SYMBOL_TYPE_FLAG_NONE);
+	    if (!bs)
+		goto unprobe;
+	    probe = probe_create(target->base,TID_GLOBAL,NULL,
+				 bsymbol_get_name(bs),
+				 NULL,_xen_vm_process_active_memory_post_handler,
+				 target,0,1);
+	    if (!probe_register_function_ee(probe,PROBEPOINT_SW,bs,
+					    0,1,1)) {
+		verror("could not register function entry/exit probe on %s;"
+		       " aborting!\n",bsymbol_get_name(bs));
+		probe_free(probe,0);
+		probe = NULL;
+		goto unprobe;
+	    }
+	    bsymbol_release(bs);
+	    xvpstate->active_memory_probe_madvise = probe;
+
+	    
+
+	    target->active_probe_flags |= ACTIVE_PROBE_FLAG_MEMORY;
 	}
 	else {
 	unprobe:
@@ -1210,7 +1364,6 @@ static int xen_vm_process_set_active_probing(struct target *target,
 	    target->active_probe_flags &= ~ACTIVE_PROBE_FLAG_MEMORY;
 	}
     }
-#endif
 
     if ((flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY) 
 	!= (target->active_probe_flags & ACTIVE_PROBE_FLAG_THREAD_ENTRY)) {
