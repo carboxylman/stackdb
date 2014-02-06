@@ -8333,6 +8333,7 @@ REGVAL xen_vm_read_reg(struct target *target,tid_t tid,REG reg) {
     vdebug(9,LA_TARGET,LF_XV,"read reg %s 0x%"PRIxREGVAL"\n",
 	   xen_vm_reg_name(target,reg),retval);
 
+    errno = 0;
     return retval;
 }
 
