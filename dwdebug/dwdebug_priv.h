@@ -1013,6 +1013,7 @@ struct symbol_root_dwarf {
     /* Kept until the whole CU is loaded. */
     GHashTable *reftab;
     GHashTable *refuselist;
+    GHashTable *spec_reftab;
 };
 
 struct symbol_root_elf {
@@ -1363,6 +1364,30 @@ struct symbol_inline {
 	}								\
     } while(0);
 
+static inline symbol_type_flag_t symbol_to_type_flag_t(struct symbol *symbol) {
+    symbol_type_flag_t retval = 0;
+
+    if (SYMBOL_IS_TYPE(symbol))
+	retval = SYMBOL_TYPE_FLAG_TYPE;
+    else if (SYMBOL_IS_ROOT(symbol))
+	retval = SYMBOL_TYPE_FLAG_ROOT;
+    else if (SYMBOL_IS_VAR(symbol)) {
+	retval = SYMBOL_TYPE_FLAG_VAR;
+	if (symbol->isparam)
+	    retval |= SYMBOL_TYPE_FLAG_VAR_ARG;
+	if (symbol->ismember)
+	    retval |= SYMBOL_TYPE_FLAG_VAR_MEMBER;
+    }
+    else if (SYMBOL_IS_FUNC(symbol))
+	retval = SYMBOL_TYPE_FLAG_FUNC;
+    else if (SYMBOL_IS_LABEL(symbol))
+	retval = SYMBOL_TYPE_FLAG_LABEL;
+    else if (SYMBOL_IS_BLOCK(symbol))
+	retval = SYMBOL_TYPE_FLAG_BLOCK;
+
+    return retval;
+}
+
 /*
  * Internal lookup prototypes.
  */
@@ -1385,6 +1410,9 @@ int symbol_expand(struct symbol *symbol);
  * parent.
  */
 int symbol_insert_symbol(struct symbol *parent,struct symbol *child);
+int symbol_remove_symbol(struct symbol *parent,struct symbol *child);
+int symbol_change_parent(struct symbol *parent,struct symbol *child,
+			 struct symbol *newparent);
 /*
  * If this symbol's name was modified by symbol_build_extname (i.e., if
  * it is an enum/struct/union type), this returns the base name.

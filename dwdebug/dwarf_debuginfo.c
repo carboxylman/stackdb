@@ -469,6 +469,293 @@ static void dwarf_refuselist_clean(struct symbol *root,int force) {
     }
 }
 
+/*
+ * If we get a definition that specifies a declaration, we need to move
+ * the @specification into the scope containing @declaration.
+ * Basically, we want the definition symbol to actually move into the
+ * declaration's scope, from wherever scope it is currently on.
+ *
+ * But then, it gets even worse.  We basically want anything useful from
+ * the declaration to be incorporated into the definition (we won't
+ * worry about the other way around for now -- in fact one useful thing
+ * to do might be to get rid of the declaration symbol entirely!).  This
+ * is tricky.  Here's an example:
+ *
+ *  <3><28e>: Abbrev Number: 34 (DW_TAG_subprogram)
+ *     <28f>   DW_AT_external    : 1
+ *     <290>   DW_AT_name        : (indirect string, offset: 0xcf): exception
+ *     <294>   DW_AT_artificial  : 1
+ *     <295>   DW_AT_declaration : 1
+ *     <296>   DW_AT_object_pointer: <0x29a>
+ *  <4><29a>: Abbrev Number: 8 (DW_TAG_formal_parameter)
+ *     <29b>   DW_AT_type        : <0x2a8>
+ *     <29f>   DW_AT_artificial  : 1
+ *  <4><2a0>: Abbrev Number: 9 (DW_TAG_formal_parameter)
+ *     <2a1>   DW_AT_type        : <0x2f6>
+ *
+ *
+ *  <1><301>: Abbrev Number: 39 (DW_TAG_subprogram)
+ *     <302>   DW_AT_specification: <0x28e>
+ *     <306>   DW_AT_decl_file   : 1
+ *     <307>   DW_AT_decl_line   : 61
+ *     <308>   DW_AT_inline      : 2       (declared as inline but ignored)
+ *     <309>   DW_AT_object_pointer: <0x311>
+ *     <30d>   DW_AT_sibling     : <0x321>
+ *  <2><311>: Abbrev Number: 36 (DW_TAG_formal_parameter)
+ *     <312>   DW_AT_name        : (indirect string, offset: 0x72): this
+ *     <316>   DW_AT_type        : <0x2c7>
+ *     <31a>   DW_AT_artificial  : 1
+ *  <2><31b>: Abbrev Number: 9 (DW_TAG_formal_parameter)
+ *     <31c>   DW_AT_type        : <0x321>
+ *
+ * and another:
+ *
+ *  <3><368>: Abbrev Number: 41 (DW_TAG_subprogram)
+ *     <369>   DW_AT_external    : 1
+ *     <36a>   DW_AT_name        : (indirect string, offset: 0x18d): pushIt
+ *     <36e>   DW_AT_decl_file   : 2
+ *     <36f>   DW_AT_decl_line   : 10
+ *     <370>   DW_AT_MIPS_linkage_name: (indirect string, offset: 0xd9): _ZN2N12N26pushItEi
+ *     <374>   DW_AT_type        : <0x1e2>
+ *     <378>   DW_AT_declaration : 1
+ *  <4><379>: Abbrev Number: 9 (DW_TAG_formal_parameter)
+ *     <37a>   DW_AT_type        : <0x1e2>
+ *  <1><381>: Abbrev Number: 42 (DW_TAG_subprogram)
+ *     <382>   DW_AT_specification: <0x368>
+ *     <386>   DW_AT_low_pc      : 0x4009e4
+ *     <38e>   DW_AT_high_pc     : 0x400a2e
+ *     <396>   DW_AT_frame_base  : 0xc0    (location list)
+ *     <39a>   DW_AT_sibling     : <0x3ab>
+ *  <2><39e>: Abbrev Number: 43 (DW_TAG_formal_parameter)
+ *     <39f>   DW_AT_name        : x
+ *     <3a1>   DW_AT_decl_file   : 2
+ *     <3a2>   DW_AT_decl_line   : 10
+ *     <3a3>   DW_AT_type        : <0x1e2>
+ *     <3a7>   DW_AT_location    : 2 byte block: 91 5c     (DW_OP_fbreg: -36)
+ *
+ *
+ * So we can see we need to pull external, name, potentially datatype,
+ * ... but that's about it.  What we should really try to do is pull all
+ * the settings we don't have set already.
+ */
+static int dwarf_specify_definition(struct symbol *spec,struct symbol *def) {
+
+    /* Cursory check. */
+    if (spec->type != def->type || spec->datatype_code != def->datatype_code)
+	return -1;
+
+    /* @name */
+    if (spec->name && !def->name) {
+	if (spec->name_nofree) {
+	    def->name = spec->name;
+	    def->name_nofree = spec->name_nofree;
+	}
+	else {
+	    def->name = strdup(spec->name);
+	    def->name_nofree = 0;
+	}
+	def->orig_name_offset = spec->orig_name_offset;
+    }
+    /* @srcline -- XXX: need to handle this better??? srcfile could be diff. */
+    if (!def->srcline)
+	def->srcline = spec->srcline;
+
+    /*
+     * Various flags.  Basically, we need to handle
+     * ismember/isparam/isenumval/isexternal/has_linkage_name/; don't
+     * need to handle isshared (because a specified decl will never be
+     * defined by a spec ref).
+     */
+    def->ismember = spec->ismember;
+    def->isparam = spec->isparam;
+    def->isenumval = spec->isenumval;
+    def->isexternal = spec->isexternal;
+    def->has_linkage_name = spec->has_linkage_name;
+
+    /* @datatype */
+    if (!def->datatype && spec->datatype) {
+	def->datatype = spec->datatype;
+	if (spec->usesshareddatatype) {
+	    def->usesshareddatatype = 1;
+	    RHOLD(def->datatype,def);
+	}
+    }
+    if (!def->datatype_ref)
+	def->datatype_ref = spec->datatype_ref;
+    /* @isexternal */
+    if (spec->isexternal)
+	def->isexternal = 1;
+    /*
+     * XXX: hm, don't worry about inline stuff right now.  Instances
+     * would be problematic because if they ref the decl, we might not
+     * have them all by the time we get here.
+     *
+     * XXX: constval stuff?
+     */
+    /* @addr */
+    if (spec->has_addr && !def->has_addr) {
+	def->has_addr = 1;
+	def->addr = spec->addr;
+    }
+    /* @size */
+    if ((spec->size_is_bits || spec->size_is_bytes) 
+	&& !def->size_is_bits && !def->size_is_bytes) {
+	def->size_is_bits = spec->size_is_bits;
+	def->size_is_bytes = spec->size_is_bytes;
+	memcpy(&def->size,&spec->size,sizeof(spec->size));
+    }
+
+    /*
+     * That's it for the core stuff.  Now, don't copy any member info,
+     * BUT do check the per-symbol extra info.
+     */
+    if (SYMBOL_HAS_EXTRA(spec)) {
+	if (SYMBOL_IS_FUNC(spec)) {
+	    SYMBOL_RX_FUNC(spec,sfr);
+	    SYMBOL_WX_FUNC(def,sfw,-1);
+
+	    if (sfr->fbloc && !sfw->fbloc) 
+		sfw->fbloc = location_copy(sfr->fbloc);
+	    if (sfr->has_entry_pc && !sfw->has_entry_pc) {
+		sfw->has_entry_pc = 1;
+		sfw->entry_pc = sfr->entry_pc;
+	    }
+	    if ((sfr->prologue_known || sfr->prologue_guessed) 
+		&& !sfw->prologue_known && !sfw->prologue_guessed) {
+		sfw->prologue_known = 1;
+		sfw->prologue_end = sfr->prologue_end;
+	    }
+	    if (sfr->epilogue_known && !sfw->epilogue_known) {
+		sfw->epilogue_known = 1;
+		sfw->epilogue_begin = sfr->epilogue_begin;
+	    }
+	}
+	else if (SYMBOL_IS_VAR(spec)) {
+	    SYMBOL_RX_VAR(spec,svr);
+	    SYMBOL_WX_VAR(def,svw,-1);
+
+	    if (svr->loc && !svw->loc) 
+		svw->loc = location_copy(svr->loc);
+	    /*
+	     * We should never have to worry about constval copying; if
+	     * the specifying "declaration" has a constval, how can
+	     * there ever be a "definition" of it?  :)  Hopefully DWARF
+	     * generators will honor my reasoning here.
+	     */
+	}
+	else if (SYMBOL_IST_ARRAY(spec)) {
+	    if (SYMBOLX_SUBRANGES(spec) && !SYMBOLX_SUBRANGES(def)) {
+		SYMBOLX_SUBRANGES(def) = g_slist_copy(SYMBOLX_SUBRANGES(spec));
+	    }
+	}
+	/*
+	 * Should not have to worry about any other type information.
+	 */
+    }
+
+    return 0;
+}
+
+int dwarf_specify_definition_attrs(struct symbol_root_dwarf *srd,
+				   struct symbol *specification,
+				   struct symbol *definition) {
+    int rc;
+
+    rc = dwarf_specify_definition(specification,definition);
+
+    vdebug(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+	   "used specification ");
+    LOGDUMPSYMBOL(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,specification);
+    vdebugc(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+	    " to complete definition ");
+    LOGDUMPSYMBOL_NL(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,definition);
+
+    return rc;
+}
+
+int dwarf_specify_definition_members(struct symbol_root_dwarf *srd,
+				     struct symbol *specification,
+				     struct symbol *definition) {
+    int rc;
+    GSList *mlist;
+    GSList *nmlist = NULL;
+    GSList *tomove = NULL;
+    GSList *gsl;
+    struct symbol *m,*l;
+    int moved = 0;
+    int updated = 0;
+    struct scope *scope;
+
+    /*
+     * If this is a definition that is replacing an earlier declaration,
+     * we need to harvest any remaining members in the declaration that
+     * need to get moved into the definition.  If any members were
+     * specification decls for definition members, they have already
+     * been removed.  So we just go through the members remaining in the
+     * declaration; check if they already match a member in the
+     * definition; and if they don't, move them in.  Otherwise delete
+     * them?  Is that safe???
+     */
+
+    /*
+     * First, we need to process members in order!
+     */
+    mlist = SYMBOLX_MEMBERS(specification);
+    gsl = NULL;
+    v_g_slist_foreach(mlist,gsl,m) {
+	if (!m->name)
+	    continue;
+
+	l = symbol_get_sym(definition,m->name,symbol_to_type_flag_t(m));
+	if (!l)
+	    tomove = g_slist_append(tomove,m);
+	else {
+	    dwarf_specify_definition_attrs(srd,m,l);
+	    ++updated;
+	}
+    }
+
+    /*
+     * Second, we need to process non-member contained symbols (types
+     * are the big things; but even a namespace decl could contain other
+     * var/func symbols).
+     */
+    scope = symbol_read_owned_scope(specification);
+    if (scope) 
+	nmlist = scope_match_syms(scope,NULL,SYMBOL_TYPE_FLAG_NONE);
+    gsl = NULL;
+    v_g_slist_foreach(nmlist,gsl,m) {
+	if (!m->name)
+	    continue;
+
+	l = symbol_get_sym(definition,m->name,symbol_to_type_flag_t(m));
+	if (!l)
+	    tomove = g_slist_append(tomove,m);
+	else {
+	    dwarf_specify_definition_attrs(srd,m,l);
+	    ++updated;
+	}
+    }
+    if (nmlist)
+	g_slist_free(nmlist);
+
+    gsl = NULL;
+    v_g_slist_foreach(tomove,gsl,m) {
+	symbol_change_parent(specification,m,definition);
+	++moved;
+    }
+    if (tomove)
+	g_slist_free(tomove);
+
+    vdebug(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+	   "used specification ");
+    LOGDUMPSYMBOL(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,specification);
+    vdebugc(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
+	    " to complete definition (moved %d; updated %d) ",moved,updated);
+    LOGDUMPSYMBOL_NL(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,definition);
+
+    return 0;
+}
 
 static int attr_callback(Dwarf_Attribute *attrp,void *arg) {
     struct attrcb_args *cbargs = (struct attrcb_args *)arg;
@@ -2117,8 +2404,10 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	}
 
 	/*
-	 * Figure out if we have a specification declaration we should
-	 * try to leverage.
+	 * Check if this symbol links back to an earlier declaration via
+	 * a specification reference.  If it does, make sure the
+	 * declaration is fully loaded, and merge the declaration's
+	 * contents into this definition symbol *once it is fully loaded*!
 	 *
 	 * NB: if we *do* have one, when we link the scope in below, we
 	 * need to use specification_scope as the "new_parent" argument
@@ -2132,7 +2421,17 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    specification_symbol = (struct symbol *) \
 		g_hash_table_lookup(srd->reftab,
 				    (gpointer)(uintptr_t)args.specification_ref);
-	    if (specification_symbol) {
+	    if (!specification_symbol) {
+		/*
+		 * XXX: force a load, now!  Load will be partial or
+		 * full; but we have to load it now so that attr
+		 * processing happens for the decl first, then the
+		 * current symbol (the definition).  We could relax
+		 * this...
+		 */
+		;
+	    }
+	    else {
 		specification_scope = 
 		    symbol_containing_scope(specification_symbol);
 
@@ -2153,9 +2452,11 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		 * Update the definition with the info from the
 		 * declaration insofar as it makes sense.
 		 */
-		debugfile_define_by_specification(debugfile,
-						  specification_symbol,
-						  symbols[level]);
+		dwarf_specify_definition_attrs(srd,specification_symbol,
+					       symbols[level]);
+
+		g_hash_table_insert(srd->spec_reftab,symbols[level],
+				    specification_symbol);
 	    }
 	}
 
@@ -2592,22 +2893,6 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		if (args.specification_set && specification_symbol_parent) {
 		    symbol_insert_symbol(specification_symbol_parent,
 					 symbols[level]);
-
-		    /*
-		     * Also, if we're going to replace the declaration
-		     * (specification) symbol with its definition, do it.
-		     */
-		    if (!(dopts->flags & DEBUGFILE_LOAD_FLAG_KEEPDECLS)) {
-			tsymbol = (struct symbol *) \
-			    g_hash_table_lookup(srd->reftab,
-						(gpointer)(uintptr_t)args.specification_ref);
-			if (tsymbol) {
-			    scope_remove_symbol(symbol_containing_scope(tsymbol),
-						tsymbol);
-			}
-			dwarf_reftab_insert(srd,symbols[level],
-					    args.specification_ref);
-		    }
 		}
 		else if (imported_modules[level]) {
 		    symbol_insert_symbol(imported_modules[level],symbols[level]);
@@ -2715,6 +3000,37 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 		&& symbols[level]->isdeclaration)
 		debugfile_save_declaration(debugfile,symbols[level]);
 
+	    /*
+	     * Complete the symbol.
+	     */
+	    if (level >= 0 
+		&& symbols[level] 
+		&& symbols[level]->loadtag == LOADTYPE_FULL) {
+		struct symbol *specsym;
+
+		specsym = (struct symbol *)				\
+		    g_hash_table_lookup(srd->spec_reftab,symbols[level]);
+		if (specsym) {
+		    dwarf_specify_definition_members(srd,specsym,symbols[level]);
+		    g_hash_table_remove(srd->spec_reftab,symbols[level]);
+
+		    /*
+		     * Also, if we're going to replace the declaration
+		     * (specification) symbol with its definition, do it.
+		     */
+		    if (!(dopts->flags & DEBUGFILE_LOAD_FLAG_KEEPDECLS)) {
+			struct scope *tscope;
+			tscope = symbol_containing_scope(specsym);
+			if (tscope && tscope->symbol)
+			    symbol_remove_symbol(tscope->symbol,specsym);
+			else if (tscope)
+			    scope_remove_symbol(tscope,specsym);
+			dwarf_symbol_refuselist_release_all(srd,specsym);
+		    }
+		    dwarf_reftab_insert(srd,symbols[level],specsym->ref);
+		}
+	    }
+
 	do_sibling:
 	    /* If we were teleported here, set res just in case somebody
 	     * expects it to be valid in this block, if the block ever
@@ -2728,6 +3044,37 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    symbols[level] = NULL;
 
 	    if (die_offsets && level == 1) {
+		/*
+		 * Complete the symbol if it has been fully loaded.
+		 */
+		if (symbols[level] 
+		    && symbols[level]->loadtag == LOADTYPE_FULL) {
+		    struct symbol *specsym;
+
+		    specsym = (struct symbol *) \
+			g_hash_table_lookup(srd->spec_reftab,symbols[level]);
+		    if (specsym) {
+			dwarf_specify_definition_members(srd,specsym,
+							 symbols[level]);
+			g_hash_table_remove(srd->spec_reftab,symbols[level]);
+
+			/*
+			 * Also, if we're going to replace the declaration
+			 * (specification) symbol with its definition, do it.
+			 */
+			if (!(dopts->flags & DEBUGFILE_LOAD_FLAG_KEEPDECLS)) {
+			    struct scope *tscope;
+			    tscope = symbol_containing_scope(specsym);
+			    if (tscope && tscope->symbol)
+				symbol_remove_symbol(tscope->symbol,specsym);
+			    else if (tscope)
+				scope_remove_symbol(tscope,specsym);
+			}
+			dwarf_symbol_refuselist_release_all(srd,specsym);
+			dwarf_reftab_insert(srd,symbols[level],specsym->ref);
+		    }
+		}
+
 		res2 = setup_skip_to_next_die();
 		/* error; bail */
 		if (res2 == -1) goto errout;
@@ -2739,6 +3086,38 @@ static int dwarf_load_cu(struct symbol_root_dwarf *srd,
 	    else {
 		while ((res = dwarf_siblingof(&dies[level],&dies[level])) == 1) {
 		    int oldlevel = level--;
+
+		    /*
+		     * Complete the symbol if it has been fully loaded.
+		     */
+		    if (level >= 0 
+			&& symbols[level] 
+			&& symbols[level]->loadtag == LOADTYPE_FULL) {
+			struct symbol *specsym;
+
+			specsym = (struct symbol *)			\
+			    g_hash_table_lookup(srd->spec_reftab,symbols[level]);
+			if (specsym) {
+			    dwarf_specify_definition_members(srd,specsym,
+							     symbols[level]);
+			    g_hash_table_remove(srd->spec_reftab,symbols[level]);
+
+			    /*
+			     * Also, if we're going to replace the declaration
+			     * (specification) symbol with its definition, do it.
+			     */
+			    if (!(dopts->flags & DEBUGFILE_LOAD_FLAG_KEEPDECLS)) {
+				struct scope *tscope;
+				tscope = symbol_containing_scope(specsym);
+				if (tscope && tscope->symbol)
+				    symbol_remove_symbol(tscope->symbol,specsym);
+				else if (tscope)
+				    scope_remove_symbol(tscope,specsym);
+			    }
+			    dwarf_symbol_refuselist_release_all(srd,specsym);
+			    dwarf_reftab_insert(srd,symbols[level],specsym->ref);
+			}
+		    }
 
 		    /* If we're loading a partial CU, if there are more DIEs
 		     * we need to load, do them!  We don't process any
@@ -3268,6 +3647,7 @@ static int debuginfo_load(struct debugfile *debugfile,
 	 */
 	srd->reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
 	srd->refuselist = g_hash_table_new(g_direct_hash,g_direct_equal);
+	srd->spec_reftab = g_hash_table_new(g_direct_hash,g_direct_equal);
 
 	rc = dwarf_load_cu(srd,&offset,die_offsets,0);
 
@@ -4248,6 +4628,8 @@ int dwarf_symbol_root_priv_free(struct debugfile *debugfile,struct symbol *root)
 	g_hash_table_destroy(srd->reftab);
     if (srd->refuselist)
 	g_hash_table_destroy(srd->refuselist);
+    if (srd->spec_reftab)
+	g_hash_table_destroy(srd->spec_reftab);
 
     free(srd);
     sr->priv = NULL;

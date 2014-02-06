@@ -2079,204 +2079,6 @@ void debugfile_resolve_declarations(struct debugfile *debugfile) {
     }
 }
 
-/*
- * If we get a definition that specifies a declaration, we need to move
- * the @specification into the scope containing @declaration.
- * Basically, we want the definition symbol to actually move into the
- * declaration's scope, from wherever scope it is currently on.
- *
- * But then, it gets even worse.  We basically want anything useful from
- * the declaration to be incorporated into the definition (we won't
- * worry about the other way around for now -- in fact one useful thing
- * to do might be to get rid of the declaration symbol entirely!).  This
- * is tricky.  Here's an example:
- *
- *  <3><28e>: Abbrev Number: 34 (DW_TAG_subprogram)
- *     <28f>   DW_AT_external    : 1
- *     <290>   DW_AT_name        : (indirect string, offset: 0xcf): exception
- *     <294>   DW_AT_artificial  : 1
- *     <295>   DW_AT_declaration : 1
- *     <296>   DW_AT_object_pointer: <0x29a>
- *  <4><29a>: Abbrev Number: 8 (DW_TAG_formal_parameter)
- *     <29b>   DW_AT_type        : <0x2a8>
- *     <29f>   DW_AT_artificial  : 1
- *  <4><2a0>: Abbrev Number: 9 (DW_TAG_formal_parameter)
- *     <2a1>   DW_AT_type        : <0x2f6>
- *
- *
- *  <1><301>: Abbrev Number: 39 (DW_TAG_subprogram)
- *     <302>   DW_AT_specification: <0x28e>
- *     <306>   DW_AT_decl_file   : 1
- *     <307>   DW_AT_decl_line   : 61
- *     <308>   DW_AT_inline      : 2       (declared as inline but ignored)
- *     <309>   DW_AT_object_pointer: <0x311>
- *     <30d>   DW_AT_sibling     : <0x321>
- *  <2><311>: Abbrev Number: 36 (DW_TAG_formal_parameter)
- *     <312>   DW_AT_name        : (indirect string, offset: 0x72): this
- *     <316>   DW_AT_type        : <0x2c7>
- *     <31a>   DW_AT_artificial  : 1
- *  <2><31b>: Abbrev Number: 9 (DW_TAG_formal_parameter)
- *     <31c>   DW_AT_type        : <0x321>
- *
- * and another:
- *
- *  <3><368>: Abbrev Number: 41 (DW_TAG_subprogram)
- *     <369>   DW_AT_external    : 1
- *     <36a>   DW_AT_name        : (indirect string, offset: 0x18d): pushIt
- *     <36e>   DW_AT_decl_file   : 2
- *     <36f>   DW_AT_decl_line   : 10
- *     <370>   DW_AT_MIPS_linkage_name: (indirect string, offset: 0xd9): _ZN2N12N26pushItEi
- *     <374>   DW_AT_type        : <0x1e2>
- *     <378>   DW_AT_declaration : 1
- *  <4><379>: Abbrev Number: 9 (DW_TAG_formal_parameter)
- *     <37a>   DW_AT_type        : <0x1e2>
- *  <1><381>: Abbrev Number: 42 (DW_TAG_subprogram)
- *     <382>   DW_AT_specification: <0x368>
- *     <386>   DW_AT_low_pc      : 0x4009e4
- *     <38e>   DW_AT_high_pc     : 0x400a2e
- *     <396>   DW_AT_frame_base  : 0xc0    (location list)
- *     <39a>   DW_AT_sibling     : <0x3ab>
- *  <2><39e>: Abbrev Number: 43 (DW_TAG_formal_parameter)
- *     <39f>   DW_AT_name        : x
- *     <3a1>   DW_AT_decl_file   : 2
- *     <3a2>   DW_AT_decl_line   : 10
- *     <3a3>   DW_AT_type        : <0x1e2>
- *     <3a7>   DW_AT_location    : 2 byte block: 91 5c     (DW_OP_fbreg: -36)
- *
- *
- * So we can see we need to pull external, name, potentially datatype,
- * ... but that's about it.  What we should really try to do is pull all
- * the settings we don't have set already.
- */
-int __specify_definition(struct symbol *spec,struct symbol *def) {
-
-    /* Cursory check. */
-    if (spec->type != def->type || spec->datatype_code != def->datatype_code)
-	return -1;
-
-    /* @name */
-    if (spec->name && !def->name) {
-	if (spec->name_nofree) {
-	    def->name = spec->name;
-	    def->name_nofree = spec->name_nofree;
-	}
-	else {
-	    def->name = strdup(spec->name);
-	    def->name_nofree = 0;
-	}
-	def->orig_name_offset = spec->orig_name_offset;
-    }
-    /* @datatype */
-    if (!def->datatype && spec->datatype) {
-	def->datatype = spec->datatype;
-	if (spec->usesshareddatatype) {
-	    def->usesshareddatatype = 1;
-	    RHOLD(def->datatype,def);
-	}
-    }
-    if (!def->datatype_ref)
-	def->datatype_ref = spec->datatype_ref;
-    /* @isexternal */
-    if (spec->isexternal)
-	def->isexternal = 1;
-    /*
-     * XXX: hm, don't worry about inline stuff right now.  Instances
-     * would be problematic because if they ref the decl, we might not
-     * have them all by the time we get here.
-     */
-    /* @addr */
-    if (spec->has_addr && !def->has_addr) {
-	def->has_addr = 1;
-	def->addr = spec->addr;
-    }
-    /* @size */
-    if ((spec->size_is_bits || spec->size_is_bytes) 
-	&& !def->size_is_bits && !def->size_is_bytes) {
-	def->size_is_bits = spec->size_is_bits;
-	def->size_is_bytes = spec->size_is_bytes;
-	memcpy(&def->size,&spec->size,sizeof(spec->size));
-    }
-
-    /*
-     * That's it for the core stuff.  Now, don't copy any member info,
-     * BUT do check the per-symbol extra info.
-     */
-    if (SYMBOL_HAS_EXTRA(spec)) {
-	if (SYMBOL_IS_FUNC(spec)) {
-	    SYMBOL_RX_FUNC(spec,sfr);
-	    SYMBOL_WX_FUNC(def,sfw,-1);
-
-	    if (sfr->fbloc && !sfw->fbloc) 
-		sfw->fbloc = location_copy(sfr->fbloc);
-	    if (sfr->has_entry_pc && !sfw->has_entry_pc) {
-		sfw->has_entry_pc = 1;
-		sfw->entry_pc = sfr->entry_pc;
-	    }
-	    if ((sfr->prologue_known || sfr->prologue_guessed) 
-		&& !sfw->prologue_known && !sfw->prologue_guessed) {
-		sfw->prologue_known = 1;
-		sfw->prologue_end = sfr->prologue_end;
-	    }
-	    if (sfr->epilogue_known && !sfw->epilogue_known) {
-		sfw->epilogue_known = 1;
-		sfw->epilogue_begin = sfr->epilogue_begin;
-	    }
-	}
-	else if (SYMBOL_IS_VAR(spec)) {
-	    SYMBOL_RX_VAR(spec,svr);
-	    SYMBOL_WX_VAR(def,svw,-1);
-
-	    if (svr->loc && !svw->loc) 
-		svw->loc = location_copy(svr->loc);
-	    /*
-	     * We should never have to worry about constval copying; if
-	     * the specifying "declaration" has a constval, how can
-	     * there ever be a "definition" of it?  :)  Hopefully DWARF
-	     * generators will honor my reasoning here.
-	     */
-	}
-	else if (SYMBOL_IST_ARRAY(spec)) {
-	    if (SYMBOLX_SUBRANGES(spec) && !SYMBOLX_SUBRANGES(def)) {
-		SYMBOLX_SUBRANGES(def) = g_slist_copy(SYMBOLX_SUBRANGES(spec));
-	    }
-	}
-	/*
-	 * Should not have to worry about any other type information.
-	 */
-    }
-
-    return 0;
-}
-
-int debugfile_define_by_specification(struct debugfile *debugfile,
-				      struct symbol *specification,
-				      struct symbol *definition) {
-    int rc;
-    GSList *m1_mlist,*m2_mlist;
-    GSList *gsl1,*gsl2;
-    struct symbol *m1,*m2;
-
-    rc = __specify_definition(specification,definition);
-    if (rc) 
-	return rc;
-
-    /* Check all members. */
-    m1_mlist = SYMBOLX_MEMBERS(specification);
-    m2_mlist = SYMBOLX_MEMBERS(definition);
-    v_g_slist_foreach_dual(m1_mlist,m2_mlist,gsl1,gsl2,m1,m2) {
-	rc = __specify_definition(m1,m2);
-    }
-
-    vdebug(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
-	   "used specification ");
-    LOGDUMPSYMBOL(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,specification);
-    vdebugc(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,
-	    " to complete definition ");
-    LOGDUMPSYMBOL_NL(8,LA_DEBUG,LF_DFILE | LF_SYMBOL,definition);
-
-    return 0;
-}
-
 int debugfile_add_global(struct debugfile *debugfile,struct symbol *symbol) {
     assert(SYMBOL_IS_INSTANCE(symbol));
 
@@ -2846,6 +2648,97 @@ int symbol_insert_symbol(struct symbol *parent,struct symbol *child) {
     }
 
     return scope_insert_symbol(scope,child);
+}
+
+int symbol_remove_symbol(struct symbol *parent,struct symbol *child) {
+    struct scope *scope;
+    REFCNT trefcnt;
+
+    /*
+     * Remove it from the current parent's scope.
+     */
+    scope = symbol_read_owned_scope(parent);
+    if (scope)
+	scope_remove_symbol(scope,child);
+
+    /*
+     * Remove it from the member list if appropriate; see symbol_insert_symbol.
+     */
+    if (SYMBOL_IST_ENUM(parent) && child->isenumval) {
+	parent->extra.members = g_slist_remove(parent->extra.members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+    else if ((SYMBOL_IST_FUNC(parent) && child->isparam)
+	     || (SYMBOL_IST_STUNC(parent) 
+		 && (child->ismember || SYMBOL_IS_FUNC(child)))) {
+	SYMBOL_WX_CONTAINER(parent,sc,-1);
+	sc->members = g_slist_remove(sc->members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+    else if (SYMBOL_IS_FUNC(parent) && child->isparam)  {
+	SYMBOL_WX_FUNC(parent,sf,-1);
+	sf->members = g_slist_remove(sf->members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+    else if (SYMBOL_IS_BLOCK(parent) && child->isparam)  {
+	SYMBOL_WX_FUNC(parent,sb,-1);
+	sb->members = g_slist_append(sb->members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+
+    return 0;
+}
+
+int symbol_change_parent(struct symbol *parent,struct symbol *child,
+			 struct symbol *newparent) {
+    struct scope *scope;
+    REFCNT trefcnt;
+
+    /* Take a temp ref so it doesn't disappear. */
+    RHOLD(child,(void *)0xdeadbeef);
+
+    /*
+     * Remove it from the current parent's scope.
+     */
+    scope = symbol_read_owned_scope(parent);
+    if (scope)
+	scope_remove_symbol(scope,child);
+
+    /*
+     * Remove it from the member list if appropriate; see symbol_insert_symbol.
+     */
+    if (SYMBOL_IST_ENUM(parent) && child->isenumval) {
+	parent->extra.members = g_slist_remove(parent->extra.members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+    else if ((SYMBOL_IST_FUNC(parent) && child->isparam)
+	     || (SYMBOL_IST_STUNC(parent) 
+		 && (child->ismember || SYMBOL_IS_FUNC(child)))) {
+	SYMBOL_WX_CONTAINER(parent,sc,-1);
+	sc->members = g_slist_remove(sc->members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+    else if (SYMBOL_IS_FUNC(parent) && child->isparam)  {
+	SYMBOL_WX_FUNC(parent,sf,-1);
+	sf->members = g_slist_remove(sf->members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+    else if (SYMBOL_IS_BLOCK(parent) && child->isparam)  {
+	SYMBOL_WX_FUNC(parent,sb,-1);
+	sb->members = g_slist_append(sb->members,child);
+	RPUT(child,symbol,parent,trefcnt);
+    }
+
+    /*
+     * Ok, now insert it into the new parent!
+     */
+    child->scope = symbol_read_owned_scope(newparent);
+    symbol_insert_symbol(newparent,child);
+
+    /* Release the temp ref! */
+    RPUT(child,symbol,(void *)0xdeadbeef,trefcnt);
+
+    return 0;
 }
 
 /* @srcline */
