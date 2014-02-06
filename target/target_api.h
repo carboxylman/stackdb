@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -2268,10 +2268,11 @@ struct target_ops {
     unsigned long (*write)(struct target *target,ADDR addr,
 			   unsigned long length,unsigned char *buf);
 
-    /* Some targets only support symbol reads; do it! */
+    /* Some targets only support symbol reads/writes; support them! */
     struct value *(*read_symbol)(struct target *target,
 				 struct target_location_ctxt *tlctxt,
 				 struct bsymbol *bsymbol,load_flags_t flags);
+    int (*write_symbol)(struct target *target,struct value *value);
 
     /*
      * Some targets might support threads that have their own virtual

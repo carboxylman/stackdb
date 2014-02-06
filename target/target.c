@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -2699,6 +2699,12 @@ ADDR target_addressof_symbol(struct target *target,
 }
 
 int target_store_value(struct target *target,struct value *value) {
+    /*
+     * If the target backend can read a symbol directly, do it.
+     */
+    if (target->ops->write_symbol) 
+	return target->ops->write_symbol(target,value);
+
     /* mmap'd values were stored whenever they were value_update_*'d */
     if (value->ismmap)
 	return 0;
