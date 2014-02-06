@@ -3502,14 +3502,14 @@ static int xen_vm_attach_internal(struct target *target) {
 #define LIBVMI_CONFIG_TEMPLATE_HVM "{ ostype=\"Linux\"; sysmap=\"%s\"; }"
 
     if (0 && xstate->hvm) {
-	size = sizeof(LIBVMI_CONFIG_TEMPLATE_HVM) 
+	size = strlen(LIBVMI_CONFIG_TEMPLATE_HVM) 
 	    + strlen(xstate->kernel_sysmap_filename) + 1;
 	tmp = malloc(size);
 	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE_HVM,
 		 xstate->kernel_sysmap_filename);
     }
     else {
-	size = sizeof(LIBVMI_CONFIG_TEMPLATE) 
+	size = strlen(LIBVMI_CONFIG_TEMPLATE) 
 	    + strlen(xstate->kernel_sysmap_filename) + 4 * 16 + 1;
 	tmp = malloc(size);
 	snprintf(tmp,size,LIBVMI_CONFIG_TEMPLATE,
