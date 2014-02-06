@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -2497,6 +2497,11 @@ static result_t php_function_return_probe_pre_handler(struct probe *probe,
     //struct target *base;
     struct php_thread_state *ptstate;
     struct php_thread_stack_frame *stack_frame;
+    struct probe *ptmp;
+    GList *list;
+    int retval = 0;
+    int rc;
+    struct bsymbol *bsymbol;
 
     target = (struct target *)handler_data;
     //pstate = (struct php_state *)target->state;
@@ -2509,6 +2514,52 @@ static result_t php_function_return_probe_pre_handler(struct probe *probe,
 	return RESULT_SUCCESS;
     }
 
+    stack_frame = (struct php_thread_stack_frame *) \
+	g_slist_nth_data(ptstate->stack_frames,0);
+    bsymbol = stack_frame->bsymbol;
+
+    vdebug(5,LA_TARGET,LF_PHP,
+	   "bphandler checking '%s'\n",bsymbol_get_name(bsymbol));
+
+    if (probe->sinks) {
+	vdebug(5,LA_PROBE,LF_PROBE,"");
+	LOGDUMPPROBE_NL(5,LA_PROBE,LF_PROBE,probe);
+
+	list = probe->sinks;
+	while (list) {
+	    ptmp = (struct probe *)list->data;
+
+	    /* Check if this probe matches. */
+	    if (!ptmp->bsymbol || !bsymbol
+		|| bsymbol_get_symbol(ptmp->bsymbol)
+		       != bsymbol_get_symbol(bsymbol))
+		goto next;
+
+	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_POST_START);
+
+	    /*
+	     * Signal each of the sinks, IF their threads match (thus a
+	     * sink can act as a filter on a thread id.
+	     */
+	    if (ptmp->post_handler
+		&& (ptmp->thread->tid == TID_GLOBAL 
+		    || ptmp->thread->tid == tid)
+		&& probe_filter_check(ptmp,tid,probe,0) == 0) {
+
+		rc = ptmp->post_handler(ptmp,tid,ptmp->handler_data,probe,basep);
+		if (rc == RESULT_ERROR) {
+		    probe_disable(ptmp);
+		    retval |= rc;
+		}
+	    }
+
+	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_POST_END);
+
+	next:
+	    list = g_list_next(list);
+	}
+    }
+
     /*
      * Pop it off the stack.
      *
@@ -2517,8 +2568,6 @@ static result_t php_function_return_probe_pre_handler(struct probe *probe,
      *
      * XXX: what about exceptions?
      */
-    stack_frame = (struct php_thread_stack_frame *) \
-	g_slist_nth_data(ptstate->stack_frames,0);
     ptstate->stack_frames = g_slist_remove(ptstate->stack_frames,stack_frame);
 
     bsymbol_release(stack_frame->bsymbol);
@@ -2532,14 +2581,16 @@ static result_t php_function_probe_pre_handler (struct probe *probe,
 						tid_t tid,void *handler_data,
 						struct probe *trigger,
 						struct probe *base) {
-    return __php_function_probe_handler(1,probe,tid,handler_data,trigger,base);
+    volatile result_t ret = __php_function_probe_handler(1,probe,tid,handler_data,trigger,base);
+    return ret + 0;
 }
 
 static result_t php_function_probe_post_handler(struct probe *probe,
 						tid_t tid,void *handler_data,
 						struct probe *trigger,
 						struct probe *base) {
-    return __php_function_probe_handler(2,probe,tid,handler_data,trigger,base);
+    volatile result_t ret = __php_function_probe_handler(2,probe,tid,handler_data,trigger,base);
+    return ret + 0;
 }
 
 static int php_insert_function_probes(struct target *target,tid_t tid) {
@@ -2579,7 +2630,8 @@ static int php_insert_function_probes(struct target *target,tid_t tid) {
 	     bsymbol_get_name(pstate->fprobe_func),tid);
     ptstate->fprobe = probe_create(target->base,tid,&php_probe_ops,buf,
 				   php_function_probe_pre_handler,
-				   php_function_probe_post_handler,target,1,1);
+				   php_function_return_probe_pre_handler, //php_function_probe_post_handler,
+				   target,1,1);
     if (!ptstate->fprobe)
 	return -1;
     if (!probe_register_symbol(ptstate->fprobe,pstate->fprobe_func,
@@ -2589,6 +2641,7 @@ static int php_insert_function_probes(struct target *target,tid_t tid) {
 	return -1;
     }
 
+    /*
     snprintf(buf,sizeof(buf),"php__%s__%d",
 	     bsymbol_get_name(pstate->fprobe_func),tid);
     ptstate->fprobe_return = probe_create(target->base,tid,&php_probe_ops,buf,
@@ -2602,6 +2655,7 @@ static int php_insert_function_probes(struct target *target,tid_t tid) {
 	ptstate->fprobe_return = NULL;
 	return -1;
     }
+    */
 
     return 0;
 }
