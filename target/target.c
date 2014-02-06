@@ -939,6 +939,12 @@ void target_free(struct target *target) {
     char *tmpname;
     struct target_thread *tthread;
 
+    if (target->opened) {
+	vdebug(3,LA_TARGET,LF_TARGET,
+	       "target(%s) not closed; closing first!\n",target->name);
+	target_close(target);
+    }
+
     vdebug(5,LA_TARGET,LF_TARGET,"freeing target(%s)\n",target->name);
 
     if (target->state_changes) {
