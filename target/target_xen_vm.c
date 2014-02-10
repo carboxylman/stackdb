@@ -8028,17 +8028,23 @@ unsigned char *xen_vm_read_pid(struct target *target, int pid, ADDR addr,
 	/* there is no provision for a partial read, assume an error */
 	if ((unsigned long)cc != target_length) {
 	    if (cc)
-		vwarn("vmi_read_va returns partial data (%lu of %lu)\n",
-		      (unsigned long)cc, target_length);
+		verror("vmi_read_va returns partial data (%lu of %lu)\n",
+		       (unsigned long)cc, target_length);
 	    else 
-		vwarnopt(16,LA_TARGET,LF_XV,
-			 "vmi_read_va returns no data (%lu of %lu)\n",
-			 (unsigned long)cc, target_length);
+		verror("vmi_read_va returns no data (%lu of %lu)\n",
+		       (unsigned long)cc, target_length);
 	    if (alloced)
 		free(buf);
 	    return NULL;
 	}
+	else {
+	    vdebug(16,LA_TARGET,LF_XV,
+		   "read dom %d: addr=0x%"PRIxADDR" len=%d pid=%d SUCCESS\n",
+		   xstate->id,addr,length,pid);
+	}
     }
+    else
+	verror("could not malloc buf\n");
 
     return buf;
 }

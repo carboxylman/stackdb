@@ -3144,6 +3144,17 @@ unsigned char *target_load_code(struct target *target,
 	    if (!tbuf) {
 		verror("could not load code in safe disasm range" 
 		       " 0x%"PRIxADDR",0x%"PRIxADDR"!\n",cstart,cend);
+
+		tbuf = target_load_raw_addr_real(target,cstart,
+						 LOAD_FLAG_NONE,NULL,1);
+		if (!tbuf) {
+		    verror("could not load even 1 byte of code in safe disasm range" 
+			   " 0x%"PRIxADDR",0x%"PRIxADDR"!\n",cstart,cend);
+		}
+		else {
+		    verror("BUT could load 1 byte of code in safe disasm range" 
+			   " 0x%"PRIxADDR",0x%"PRIxADDR"!\n",cstart,cend);
+		}
 		goto errout;
 	    }
 
