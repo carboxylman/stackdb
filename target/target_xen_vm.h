@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013 The University of Utah
+ * Copyright (c) 2012-2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -141,7 +141,8 @@ struct xen_vm_spec {
     char *replay_dir;
 
     unsigned int no_hw_debug_reg_clear:1,
-	         no_hvm_setcontext:1;
+	         no_hvm_setcontext:1,
+	         clear_libvmi_caches_each_time:1;
 };
 
 struct xen_vm_thread_state {
