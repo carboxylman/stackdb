@@ -45,8 +45,8 @@
 	(multislot sock_files (type STRING) ( default "NONE"))
 	(slot num_opened_files (type INTEGER) ( default 0)))
 
-(deftemplate loaded-modules
-	(multislot name (type STRING)))
+(deftemplate loaded-module
+	(slot name (type STRING)))
 
 (deftemplate cpu-load
 	(slot one-min (type FLOAT))
@@ -91,9 +91,11 @@
 	"ecryptfs-kthrea" "crypto" "kthrotld" "kworker/0:1" "khvcd" "binder" "deferwq"
 	"charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
 	"udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
-	"atd" "mysqld" "ntpd" "getty" "flush-202:1"))
+	"atd" "mysqld" "ntpd" "getty" "flush-202:1")
+	
+	(known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport"))
 
-
+	
 ;============================== Template for anomaly facts =============================
 
 	
@@ -101,10 +103,17 @@
 	(slot name (type STRING))
 	(slot pid (type INTEGER)))
 
+(deftemplate unknown-module
+	(slot name (type STRING)))
+(deftemplate tampered-syscall
+	(slot name (type STRING))
+	(slot index (type INTEGER))
+	(slot original (type INTEGER)))
+
 
 ;========== Application level rules that are used to detect anomalies =================
 
-
+;rule to detect any unkown process that is executing
 (defrule identify-unknown-process
 	(task-struct (comm ?name1)
 		      (pid ?pid))
@@ -116,9 +125,31 @@
 		       (pid ?pid)))
 	(printout t "Unknown process " ?name1 " found" crlf) )
 
+;rule to detect any unknown module that is loaded
+(defrule identify-unknown-module
+	(loaded-module (name ?name1))
+	(known-modules $?name2)
+	(test (not (member$ ?name1 $?name2)))
+	=>
+	(assert (unknown-module (name ?name1)))
+	(printout t "Unknown module " ?name1 "found" crlf)) 
+
+;rule to check for tampered syscall table entries
+(defrule identify-tampered-syscall
+	(tampered_sys_call
+	    (name ?name1)
+	    (index ?index)
+	    (original ?address))
+	=>
+	(assert (tampered-syscall
+	    (name ?name1)
+	    (index ?index)
+	    (original ?address)))
+	(printout t "Tampered system call " ?name1 " found at offset " ?index crlf))
 
 ;=================template  for recovery facts ===================================
 
+;recovery fact template for unkown processes
 (deftemplate unknown-process-recovery
 	    (slot function-name (type STRING))
 	    (multislot arg_list (type SYMBOL)))
@@ -126,6 +157,21 @@
 (deftemplate unknown-process-recovery-prev-action
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING)))
+
+;recovery fact template for unknown modules
+(deftemplate unknown-module-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
+
+(deftemplate unknown-module-recovery-prev-action
+	    (slot prev_action (type SYMBOL))
+	    (slot name (type STRING)))
+
+
+;recovery fact template for tampered syscall
+(deftemplate tampered-syscall-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
 
 
 

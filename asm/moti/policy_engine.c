@@ -179,7 +179,7 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     } 
-    
+   */ 
    
     result = module_info();
     if(result) {
@@ -187,7 +187,7 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-
+    /*
     result = cpu_load_info();
     if(result) {
 	fprintf(stdout,"ERROR: cpu_load_info failed.\n");
@@ -208,14 +208,14 @@ int generate_snapshot() {
 	result  = 1;
 	goto resume;
     }
-  
+    */  
     result = syscalltable_info();
     if(result) {
 	fprintf(stdout,"ERROR: syscallcalltable_info failed.\n");
 	result = 1;
 	goto resume;
     }
-    
+    /*
     result = commandline_info();
     if( result) {
 	fprintf(stdout,"ERROR: commandline_info failed.\n");
@@ -406,12 +406,18 @@ int main( int argc, char** argv) {
 	
 	fprintf(stdout,"INFO: Loading the state information of recovery facts \
 						    from the previous execution \n");
-	result = LoadFacts("state_info.fac");
+	result = LoadFacts("process_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
 	   exit(0);
 	}
 	
+	result = LoadFacts("module_state_info.fac");
+	if(!result) {
+	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	   exit(0);
+	}
+
 
 	// We have to run them through the recovery rules now.
 	fprintf(stdout,"INFO: Loading the  recovery rules file\n");

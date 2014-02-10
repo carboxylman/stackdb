@@ -757,7 +757,9 @@ int gather_module_info(struct target *target, struct value * value, void * data)
 
     /* Start encoding the fact */
     fprintf(stdout,"INFO: Encode the base facts.\n");
-    fprintf(fp," \"%s\" ", module_name);    
+    fprintf(fp,"\n(loaded-module\n \
+	    \t(name  \"%s\"))\n",module_name);
+ 
     fclose(fp);
 
 }
@@ -784,6 +786,7 @@ int module_info() {
 	return 1;
     }
 
+    /*
     fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
@@ -791,12 +794,12 @@ int module_info() {
 	exit(0);
     }
 
-    /* Start encoding the fact */
+     Start encoding the fact 
     fprintf(stdout,"INFO: Encode the base facts.\n");
     fprintf(fp,"\n(loaded-modules\n \
 	    \t(name ");
     fclose(fp);
-
+    */
     ret_val =  linux_list_for_each_entry(target, module_bsymbol, listhead_bsymbol,
 					    "list",0, gather_module_info, NULL);
     
