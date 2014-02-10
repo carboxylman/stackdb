@@ -172,7 +172,7 @@ int generate_snapshot() {
 	goto resume;
     }
     
-    /*
+  /*  
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
@@ -302,6 +302,7 @@ int main( int argc, char** argv) {
 
     int wait_time = 0;
     char *app_file_path = NULL;
+    char * recovery_rules_file = NULL;
     char recovery_fact_file[100];
     int result = 0;
     char targetstr[80];
@@ -321,8 +322,9 @@ int main( int argc, char** argv) {
 	exit(0);
     }
    */
-    app_file_path = "test.cls"; //opts.argv[0];
-    wait_time = 300; //atoi(opts.argv[1]);
+    app_file_path = "application_knowledge.cls"; //opts.argv[0];
+    recovery_rules_file = "recovery_contructs.cls";
+    wait_time = 60; //atoi(opts.argv[1]);
     
     dwdebug_init();
     target_init();
@@ -345,22 +347,9 @@ int main( int argc, char** argv) {
     fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
     // Initialize the CLIPS environment
     InitializeEnvironment();
-    fprintf(stdout,"INFO: Loading the application level rules\n");
-    result = Load(app_file_path);
-    if(result != 1) {
-	fprintf(stdout,"ERROR: Failed to load the application rules file\n");
-	exit(0);
-    }
-    fprintf(stdout,"INFO: Loading the recovery rules.\n");
-      //result = Load("recovery_rules.clp");
-      //if(result != 1) {
-	//fprintf(stdout," ERROR: Failed to load the recovery rules file\n");
-	//exit(0);
-      //}
-     
+    
     /* Copy the initil system_call_table contents */
-
-    result = save_sys_call_table_entries();
+      result = save_sys_call_table_entries();
     if(result) {
 	fprintf(stdout,"ERROR: Failed to save the initial system call table entries.\n");
 	exit(0);
@@ -368,6 +357,14 @@ int main( int argc, char** argv) {
 	
     // Start an infinite loop to periodically execute steps 3.1 to 3.5 
     while(1) {
+
+        fprintf(stdout,"INFO: Loading the application level rules\n");
+	result = Load(app_file_path);
+	    if(result != 1) {
+	    fprintf(stdout,"ERROR: Failed to load the application rules file\n");
+	    exit(0);
+	}	
+ 
 
 	// Generate a time stamp for the base facts file name
 	result = generate_timestamp(base_fact_file);
@@ -386,9 +383,14 @@ int main( int argc, char** argv) {
 		    Trying again...\n");
 	    continue;
 	}
-	
+
 	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
+
+	result = Watch("all");
+	if(!result) {
+	    fprintf(stdout,"Error: Faild to watch \n");
+	}
 
 	fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
@@ -397,32 +399,33 @@ int main( int argc, char** argv) {
 	   exit(0);
 	}
 
-	result = Watch("all");
-	if(!result) {
-	    fprintf(stdout,"Error: Faild to watch \n");
-	}
 	fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	// At this time the anomaly facts are generated.
+	
+	fprintf(stdout,"INFO: Loading the state information of recovery facts \
+						    from the previous execution \n");
+	result = LoadFacts("state_info.fac");
+	if(!result) {
+	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	   exit(0);
+	}
+	
+
 	// We have to run them through the recovery rules now.
+	fprintf(stdout,"INFO: Loading the  recovery rules file\n");
+	result = Load(recovery_rules_file);
+	if(!result) {
+	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	   exit(0);
+	}
 
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
-
-	//result = generate_timestamp(recovery_fact_file);
-	//if(!result){
-	    //fprintf(stdout,"ERROR: Failed to generate a timestamp\n");
-	    //exit(0);
-	//}
-	//result = SaveFacts(recovery_fact_file,  VISIBLE_SAVE, NULL);
-	//if(!result) {
-	//fprintf(stdout,"ERROR: Failed to save the recovery facts\n");
-	//exit(0);
-	//}
-	// Now based on the recovery facts that are generated we trigger recovery actions.
-	// how do we do this ?
-	 
+	
+	Clear();
+	fprintf(stdout,"INFO: Clearing up all the facts and rules\n");
 	fprintf(stdout," Sleeping for %d seconds\n", wait_time);
 	sleep(wait_time);
     }
