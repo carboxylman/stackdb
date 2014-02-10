@@ -8040,7 +8040,7 @@ unsigned char *xen_vm_read_pid(struct target *target, int pid, ADDR addr,
 	else {
 	    vdebug(16,LA_TARGET,LF_XV,
 		   "read dom %d: addr=0x%"PRIxADDR" len=%d pid=%d SUCCESS\n",
-		   xstate->id,addr,length,pid);
+		   xstate->id,addr,target_length,pid);
 	}
     }
     else
