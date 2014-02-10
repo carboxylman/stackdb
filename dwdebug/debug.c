@@ -2403,6 +2403,16 @@ struct symbol *symbol_create(symbol_type_t symtype,symbol_source_t source,
 
 /* @name */
 char *symbol_get_name(struct symbol *symbol) {
+    struct symbol *origin;
+
+    if (!symbol->name && symbol->isinlineinstance) {
+	origin = symbol_get_inline_origin(symbol);
+	if (!origin)
+	    return NULL;
+	else
+	    return symbol_get_name(origin);
+    }
+
     return symbol->name;
 }
 char *symbol_get_name_inline(struct symbol *symbol) {
@@ -2776,17 +2786,33 @@ symbol_source_t symbol_get_source(struct symbol *symbol) {
 }
 /* @datatype -- not all symbols have it of course. */
 struct symbol *symbol_get_datatype_real(struct symbol *symbol) {
+    struct symbol *origin;
+
     /*
-     * Since we automatically turn declarations into definitions, and
-     * because we copy datatype for inline instances, it really is this
-     * simple!
+     * Find the real-est datatype we can; that might validly be on the
+     * abstract origin symbol!
      */
-    if (symbol->datatype)
+    if (symbol->datatype) {
 	SYMBOL_EXPAND_WARN(symbol->datatype);
-    return symbol->datatype;
+	return symbol->datatype;
+    }
+    else if (symbol->isinlineinstance) {
+	origin = symbol_get_inline_origin(symbol);
+	if (origin)
+	    return symbol_get_datatype_real(origin);
+    }
+
+    return NULL;
 }
 struct symbol *symbol_get_datatype(struct symbol *symbol) {
     struct symbol *retval;
+    struct symbol *origin;
+
+    if (!symbol->datatype && symbol->isinlineinstance) {
+	origin = symbol_get_inline_origin(symbol);
+	if (origin)
+	    return symbol_get_datatype(origin);
+    }
 
     if (!SYMBOL_IS_TYPE(symbol)) 
 	retval = symbol->datatype;
