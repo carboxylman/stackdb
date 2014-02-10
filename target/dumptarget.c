@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -1169,6 +1169,14 @@ int main(int argc,char **argv) {
 		    retcode_strs[i] = retcode_str;
 		    retcodes[i] = (REGVAL)atoi(retcode_str);
 		}
+		else if (*(retcode_str+1) == 'o') {
+		    *retcode_str = '\0';
+		    ++retcode_str;
+		    retcode_strs[i] = retcode_str;
+		    ++retcode_str;
+		    retcodes[i] = atoi(retcode_str);
+		    symname = opts.argv[i];
+		}
 		else {
 		    srcfile = opts.argv[i];
 		    *retcode_str = '\0';
@@ -1558,7 +1566,8 @@ int main(int argc,char **argv) {
 		bsymbol_release(at_bsymbol);
 	    if (until_bsymbol)
 		bsymbol_release(until_bsymbol);
-	    bsymbol_release(bsymbol);
+	    if (bsymbol)
+		bsymbol_release(bsymbol);
 	    array_list_free(symlist);
 	    array_list_free(addrlist);
 	    free(retcodes);
@@ -1570,6 +1579,7 @@ int main(int argc,char **argv) {
 	/* Now move through addrlist (we may add to it!) */
 	for (i = 0; i < array_list_len(addrlist); ++i) {
 	    char *rawaddr = (char *)array_list_item(addrlist,i);
+	    struct target *tmpt = t;
 
 	    if (!rawaddr)
 		continue;
@@ -1607,6 +1617,20 @@ int main(int argc,char **argv) {
 		type = PROBEPOINT_WATCH;
 		rstyle = PROBEPOINT_HW;
 	    }
+	    else if (i < opts.argc && retcode_strs[i] && *retcode_strs[i] == 'o') {
+		tmpt = target_lookup_target_id(retcodes[i]);
+		if (!tmpt) {
+		    verror("No target with ID %d for addr 0x%"PRIxADDR";"
+			   " aborting!\n",retcodes[i],paddr);
+		    goto err_unreg2;
+		}
+		pre = addr_var_pre;
+		if (opts.do_post)
+		    post = addr_var_post;
+		whence = PROBEPOINT_WAUTO;
+		type = PROBEPOINT_BREAK;
+		rstyle = PROBEPOINT_SW;
+	    }
 	    else {
 		whence = PROBEPOINT_EXEC;
 		type = PROBEPOINT_BREAK;
@@ -1616,13 +1640,13 @@ int main(int argc,char **argv) {
 		    post = addr_code_post;
 	    }
 
-	    probe = probe_create(t,TID_GLOBAL,NULL,rawaddr,pre,post,NULL,0,1);
+	    probe = probe_create(tmpt,TID_GLOBAL,NULL,rawaddr,pre,post,NULL,0,1);
 	    probe->handler_data = rawaddr;
 	    if (!probe)
 		goto err_unreg2;
 
 	    if (!probe_register_addr(probe,paddr,type,rstyle,whence,
-				     PROBEPOINT_L4,NULL)) {
+				     PROBEPOINT_LAUTO,NULL)) {
 		probe_free(probe,1);
 		goto err_unreg2;
 	    }
@@ -1639,7 +1663,8 @@ int main(int argc,char **argv) {
 		bsymbol_release(at_bsymbol);
 	    if (until_bsymbol)
 		bsymbol_release(until_bsymbol);
-	    bsymbol_release(bsymbol);
+	    if (bsymbol)
+		bsymbol_release(bsymbol);
 	    array_list_free(symlist);
 	    array_list_free(addrlist);
 	    free(retcodes);
