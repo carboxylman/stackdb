@@ -93,3 +93,91 @@
 		    (arg_list  ?index ?address)))
 	(printout t " Fixed syscall table entry for " ?name1 crlf))
 
+; Rules for dealing with unauthorized UDP connections
+
+(defrule close-udp-sockets
+	(declare (salience 10))
+	?f <- (open-udp-socket
+		(name ?name1)
+		(pid ?pid))
+	(not (exists ( open-udp-socket-recovery-prev-action
+			(prev_action close_socket|kill_process)
+			(name ?name1)
+			(pid ?pid))))
+	=>
+	(assert (open-udp-socket-recovery
+		    (function-name "close_udp_socket")
+		    (arg_list ?name1 ?pid)))
+	(retract ?f)
+	(assert (open-udp-socket-recovery-prev-action
+		    (prev_action close_socket)
+		    (name ?name1)
+		    (pid ?pid)))
+	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
+	(printout t "closed UDP sockets of process " ?name1 crlf)))
+
+(defrule close-udp-socket_1
+	(declare (salience 20))
+	?f <- (open-udp-socket
+		(name ?name1)
+		(pid ?pid))
+	?of <- (open-udp-socket-recovery-prev-action
+		    (prev_action close_socket)
+		    (name ?name1)
+		    (pid ?pid))
+	=>
+	(assert (open-udp-socket-recovery
+		( function-name "ps_kill")
+		( arg_list ?name1 ?pid)))
+	(retract ?f)
+	(retract ?of)
+	(assert (open-udp-socket-recovery-prev-action
+		(prev_action kill_process)
+		(name ?name1)))
+	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
+	(printout t "The UDP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
+
+; Rules for dealing with unauthorized TCP connections
+(defrule close-tcp-sockets
+	(declare (salience 10))
+	?f <- (open-tcp-socket
+		(name ?name1)
+		(pid ?pid))
+	(not (exists ( open-tcp-socket-recovery-prev-action
+			(prev_action close_socket|kill_process)
+			(name ?name1)
+			(pid ?pid))))
+	=>
+	(assert (open-tcp-socket-recovery
+		    (function-name "close_tcp_socket")
+		    (arg_list ?name1 ?pid)))
+	(retract ?f)
+	(assert (open-tcp-socket-recovery-prev-action
+		    (prev_action close_socket)
+		    (name ?name1)
+		    (pid ?pid)))
+	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
+	(printout t "closed tcp sockets of process " ?name1 crlf)))
+
+(defrule close-tcp-socket_1
+	(declare (salience 20))
+	?f <- (open-tcp-socket
+		(name ?name1)
+		(pid ?pid))
+	?of <- (open-tcp-socket-recovery-prev-action
+		    (prev_action close_socket)
+		    (name ?name1)
+		    (pid ?pid))
+	=>
+	(assert (open-tcp-socket-recovery
+		( function-name "ps_kill")
+		( arg_list ?name1 ?pid)))
+	(retract ?f)
+	(retract ?of)
+	(assert (open-tcp-socket-recovery-prev-action
+		(prev_action kill_process)
+		(name ?name1)))
+	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
+	(printout t "The TCP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
+
+

@@ -164,7 +164,7 @@ int generate_snapshot() {
 
 			    
     /* Start making calls to each of the VMI function */ 
-    
+   /* 
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
@@ -172,22 +172,22 @@ int generate_snapshot() {
 	goto resume;
     }
     
-  /*  
+    */
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
 	result = 1;
 	goto resume;
     } 
-   */ 
-   
+    
+   /*
     result = module_info();
     if(result) {
 	fprintf(stdout,"ERRROR: module_info function failed.\n");
 	result = 1;
 	goto resume;
     }
-    /*
+
     result = cpu_load_info();
     if(result) {
 	fprintf(stdout,"ERROR: cpu_load_info failed.\n");
@@ -408,15 +408,28 @@ int main( int argc, char** argv) {
 						    from the previous execution \n");
 	result = LoadFacts("process_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");
 	   exit(0);
 	}
 	
 	result = LoadFacts("module_state_info.fac");
 	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	   fprintf(stdout,"ERROR: Failed to load the module_state_info file.\n");
 	   exit(0);
 	}
+
+	result = LoadFacts("udp_state_info.fac");
+	if(!result) {
+	   fprintf(stdout,"ERROR: Failed to load the base udp_state_info file.\n");
+	   exit(0);
+	}
+	
+	result = LoadFacts("tcp_state_info.fac");
+	if(!result) {
+	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
+	   exit(0);
+	}
+
 
 
 	// We have to run them through the recovery rules now.

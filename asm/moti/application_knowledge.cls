@@ -93,7 +93,10 @@
 	"udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
 	"atd" "mysqld" "ntpd" "getty" "flush-202:1")
 	
-	(known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport"))
+	(known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
+	(process-with-udp "rpcbind") ;ntpd                 
+	(process-with-tcp  "mysqld"  "rpcbind") ;sshd
+	(process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd"))
 
 	
 ;============================== Template for anomaly facts =============================
@@ -105,10 +108,24 @@
 
 (deftemplate unknown-module
 	(slot name (type STRING)))
+
 (deftemplate tampered-syscall
 	(slot name (type STRING))
 	(slot index (type INTEGER))
 	(slot original (type INTEGER)))
+
+(deftemplate open-udp-socket
+	(slot name (type STRING))
+	(slot pid (type INTEGER)))
+
+(deftemplate open-tcp-socket
+	(slot name (type STRING))
+	(slot pid (type INTEGER)))
+
+(deftemplate open-reg-file
+	(slot name  (type STRING))
+	(slot pid (type INTEGER))
+	(slot file_name (type STRING)))
 
 
 ;========== Application level rules that are used to detect anomalies =================
@@ -147,6 +164,38 @@
 	    (original ?address)))
 	(printout t "Tampered system call " ?name1 " found at offset " ?index crlf))
 
+;rule to check fo unauthorised TCP/UDP sockets
+(defrule identify-open-udp-sockets
+	(opened-files
+	    (comm ?name1)
+	    (pid ?pid)
+	    (sock_files $?sockets))
+	(or (test(member$ "UDP" $?sockets)) (test (member$ "UDPv6" $?sockets)))
+	(process-with-udp $?proc_list)
+	(test (member$ ?name1 $?proc_list))
+	=>
+	(assert (open-udp-socket
+	    (name ?name1)
+	    (pid ?pid)))
+	(printout t " UDP sockets open for process " ?name1 crlf ))
+
+(defrule identify-open-tcp-sockets
+	(opened-files
+	    (comm ?name1)
+	    (pid ?pid)
+	    (sock_files $?sockets))
+	(or (test (member$ "TCP" $?sockets)) (test (member$ "TCPv6" $?sockets)))
+	(process-with-tcp $?proc_list)
+	(test (member$ ?name1 $?proc_list))
+	=>
+	(assert (open-tcp-socket
+	    (name ?name1)
+	    (pid ?pid)))
+	(printout t " TCP socket open for process " ?name1 crlf))
+
+
+
+
 ;=================template  for recovery facts ===================================
 
 ;recovery fact template for unkown processes
@@ -172,6 +221,27 @@
 (deftemplate tampered-syscall-recovery
 	    (slot function-name (type STRING))
 	    (multislot arg_list (type SYMBOL)))
+
+;recovery fact template for open UDP sockets
+(deftemplate open-udp-socket-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
+
+(deftemplate open-udp-socket-recovery-prev-action
+	    (slot prev_action (type SYMBOL))
+	    (slot name (type STRING))
+	    (slot pid (type INTEGER)))
+
+;recovery fact template for open TCP sockets
+(deftemplate open-tcp-socket-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
+
+(deftemplate open-tcp-socket-recovery-prev-action
+	    (slot prev_action (type SYMBOL))
+	    (slot name (type STRING))
+	    (slot pid (type INTEGER)))
+
 
 
 
