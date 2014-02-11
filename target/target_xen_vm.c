@@ -315,6 +315,8 @@ struct argp_option xen_vm_argp_opts[] = {
           "Override xenstore kernel filepath for guest.",-4 },
     { "no-clear-hw-debug-regs",'H',NULL,0,
           "Don't clear hardware debug registers at target attach.",-4 },
+    { "clear-libvmi-caches-each-rw",'C',NULL,0,
+          "Clear libvmi caches on each memory read/write.",-4 },
     { "no-hvm-setcontext",'V',NULL,0,
           "Don't use HVM-specific libxc get/set context functions to access"
           "virtual CPU info.",-4 },
@@ -347,6 +349,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 1;
     if (xspec->no_hvm_setcontext)
 	ac += 1;
+    if (xspec->clear_libvmi_caches_each_time)
+	ac += 1;
     if (xspec->config_file)
 	ac += 2;
     if (xspec->replay_dir)
@@ -363,10 +367,13 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	av[j++] = strdup(xspec->kernel_filename);
     }
     if (xspec->no_hw_debug_reg_clear) {
-	av[j++] = strdup("-H");
+	av[j++] = strdup("--clear-libvmi-caches-each-rw");
     }
     if (xspec->no_hvm_setcontext) {
 	av[j++] = strdup("--no-hvm-setcontext");
+    }
+    if (xspec->clear_libvmi_caches_each_time) {
+	av[j++] = strdup("-C");
     }
     if (xspec->config_file) {
 	av[j++] = strdup("-c");
@@ -475,6 +482,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'c':
 	xspec->config_file = strdup(arg);
+	break;
+    case 'C':
+	xspec->clear_libvmi_caches_each_time = 1;
 	break;
     case 'r':
 	xspec->replay_dir = strdup(arg);
@@ -8006,6 +8016,13 @@ unsigned char *xen_vm_read_pid(struct target *target, int pid, ADDR addr,
     vmi_instance_t vmi = xstate->vmi_instance;
     int alloced = 0;
     size_t cc;
+    struct xen_vm_spec *xspec = \
+	(struct xen_vm_spec *)target->spec->backend_spec;
+
+    if (xspec->clear_libvmi_caches_each_time) {
+	vmi_v2pcache_flush(vmi);
+	vmi_pidcache_flush(vmi);
+    }
 
     vdebug(16,LA_TARGET,LF_XV,
 	   "read dom %d: addr=0x%"PRIxADDR" len=%d pid=%d\n",
@@ -8058,6 +8075,13 @@ unsigned long xen_vm_write_pid(struct target *target, int pid, ADDR addr,
 			   unsigned long length, unsigned char *buf)
 {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
+    struct xen_vm_spec *xspec = \
+	(struct xen_vm_spec *)target->spec->backend_spec;
+
+    if (xspec->clear_libvmi_caches_each_time) {
+	vmi_v2pcache_flush(xstate->vmi_instance);
+	vmi_pidcache_flush(xstate->vmi_instance);
+    }
 
     vdebug(16,LA_TARGET,LF_XV,
 	   "write dom %d: addr=0x%"PRIxADDR" len=%d pid=%d\n",
