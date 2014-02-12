@@ -39,7 +39,7 @@ HEADERS := $(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
 	$(TOP_SRCDIR)/lib/debugpred.h
 
 OBJECTS := ref.lo log.lo clfit.lo waitpipe.lo evloop.lo monitor.lo
-LIBRARIES := libvmilib.la libloadall.la libloadallforever.la
+LIBRARIES := libvmilib.la libloadall.la libloadallforever.la libloadallpagebypage.la
 
 INST_INC = debugpred.h
 INST_LIB = $(LIBRARIES)
@@ -66,6 +66,9 @@ libloadall.la: loadall.lo
 libloadallforever.la: loadallforever.lo
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ loadallforever.lo -rpath $(INSTALL_LIBDIR) -ldl
 
+libloadallpagebypage.la: loadallpagebypage.lo
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) -o $@ loadallpagebypage.lo -rpath $(INSTALL_LIBDIR) -ldl
+
 vmilib.pc: $(SRCDIR)/Makefile.in $(TOP_SRCDIR)/Makeconf.in \
 	   $(TOP_SRCDIR)/Makefile.in
 	echo "prefix=$(INSTALL_TOPDIR)" > $@
@@ -83,7 +86,7 @@ install: def-install install-subdirs
 
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) \
-		log.lo libvmilib.lo loadall.lo loadallforever.lo
+		log.lo libvmilib.lo loadall.lo loadallforever.lo libloadallpagebypage.lo
 	$(RM) -f $(LIBRARIES) log.o libvmilib.* libvmilib.*
 	$(RM) -rf .libs
 
