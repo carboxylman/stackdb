@@ -96,7 +96,10 @@
 	(known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
 	(process-with-udp "rpcbind") ;ntpd                 
 	(process-with-tcp  "mysqld"  "rpcbind") ;sshd
-	(process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd"))
+	(process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
+	(high-priority-process "apache" "sshd")
+	(med-priority-process  "mysqld" "ntpd" )
+	(low-priority-process  "perl"))
 
 	
 ;============================== Template for anomaly facts =============================
@@ -126,6 +129,12 @@
 	(slot name  (type STRING))
 	(slot pid (type INTEGER))
 	(slot file_name (type STRING)))
+
+(deftemplate per-process-cpu-utilization
+	(slot name (type STRING))
+	(slot pid (type INTEGER))
+	(slot cpu (type FLOAT) (default 0.0))
+ 	(slot count (type INTEGER)(default 0)))
 
 
 ;========== Application level rules that are used to detect anomalies =================
@@ -193,6 +202,47 @@
 	    (pid ?pid)))
 	(printout t " TCP socket open for process " ?name1 crlf))
 
+;rule to identify high cpu utilization
+
+(defrule identify-high-cpu-utilization_1
+	(cpu_utilization
+	    (comm ?name1)
+	    (pid ?pid)
+	    (utilization ?cpu))
+	(not (exists ( per-process-cpu-utilization
+			    (name ?name1)
+			    (pid ?pid))))
+	(test (not ( = ?cpu 0.0)))
+	=>
+	(assert (per-process-cpu-utilization
+		    (name ?name1)
+		    (pid ?pid)))
+	(printout t " Initializing per process cpu utilization numbers for " ?name1 crlf))
+
+(defrule identify-high-cpu-utilization_2
+	?of <- (cpu_utilization
+	       (comm ?name1)
+	       (pid ?pid)
+	       (utilization ?cpu))
+	?f <- ( per-process-cpu-utilization
+			    (name ?name1)
+			    (pid ?pid)
+			    (cpu ?utilization)
+			    (count ?count))
+	=>
+	(bind ?utilization (+ ?utilization ?cpu))
+	(bind ?count (+ ?count 1))
+	(retract ?f)
+	(retract ?of)
+	(assert (per-process-cpu-utilization
+			    (name ?name1)
+			    (pid ?pid)
+			    (cpu ?utilization)
+			    (count ?count)))
+	(save-facts "cpu_state_info.fac" visible per-process-cpu-utilization)
+	(printout t "Adding the current cpu utilization value to the prevent value for " ?name1 crlf)
+	(printout t "Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
+
 
 
 
@@ -241,6 +291,11 @@
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING))
 	    (slot pid (type INTEGER)))
+
+;recovery fact template for high cpu utilization
+(deftemplate high-cpu-utilization-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL))) 
 
 
 

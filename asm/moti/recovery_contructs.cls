@@ -180,4 +180,32 @@
 	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
 	(printout t "The TCP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
 
+;Rules for delaling with high per process cpu utilization
+
+(defrule correct-cpu-utilization 
+	(declare (salience 10))
+	?f <- (per-process-cpu-utilization
+	     (name ?name1)
+	     (pid ?pid)
+	     (cpu ?utilization)
+	     (count ?count))
+	(test ( =  (mod ?count  2 ) 0))
+	(test (not ( = ?count 0))) 
+	(test ( > (/ ?utilization ?count) 90))
+	;now test if the overall cpu load is really high and the process
+	; is a low priority process
+	;(low-priority-process $?low-prio-processes)
+	;(test (member$ ?name1 $?low-prio-processes))
+	(cpu-load (five-min ?load))
+	(test ( > ?load 0.5))
+
+
+	=>
+	(assert (high-cpu-utilization-recovery
+		    (function-name "reduce_utilization")
+		    (arg_list ?name1 ?pid)))
+	(printout t " Process " ?name1 " has high cpu utilization over the past 2 iterations" crlf)
+	(printout t " The cpu load during past 5 mins is " ?load crlf)
+        (modify ?f (cpu 0.0) (count 0))
+	(save-facts "cpu_state_info.fac" visible per-process-cpu-utilization))
 
