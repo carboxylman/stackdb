@@ -539,6 +539,7 @@ struct probe *probe_rop_checkret(struct target *target,tid_t tid,
 	goto errout;
     }
     rop_data->cont_start = cont_start;
+    rop_data->cont_end = cont_end;
 
     vdebug(3,LA_USER,LF_U_ALL,"safe disasm range for gadget 0x%"PRIxADDR":"
 	   " 0x%"PRIxADDR",0x%"PRIxADDR"\n",
@@ -647,6 +648,7 @@ struct probe *probe_rop_checkret(struct target *target,tid_t tid,
     /* Setup probes for which gadget it is! */
     if (aligned) {
 	rop_data->type = GADGET_TYPE_REAL;
+	rop_data->cont_instr_start = rg->start;
     }
     else {
 	if (j < array_list_len(idata_list)) {
@@ -657,6 +659,7 @@ struct probe *probe_rop_checkret(struct target *target,tid_t tid,
 	}
 
 	cont_addr = cont_start + idata->offset;
+	rop_data->cont_instr_start = cont_addr;
 
 	/* Add a probe on the real instr preceding the gadget. */
 	snprintf(namebuf,32,"rop_checkret_cont_0x%"PRIxADDR,cont_addr);

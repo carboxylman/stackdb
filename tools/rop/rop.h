@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -77,6 +77,7 @@ typedef enum {
 struct rop_checkret_data {
     rop_gadget_t type;
     ADDR cont_start;
+    ADDR cont_end;
 
     struct rop_gadget *gadget;
 
@@ -86,6 +87,7 @@ struct rop_checkret_data {
      * gadget.
      */
     struct probe *cont_probe;
+    ADDR cont_instr_start;
     /* The probe on the gadget's first instruction. */
     struct probe *entry_probe;
     /* The probe on the gadget's RET instruction. */

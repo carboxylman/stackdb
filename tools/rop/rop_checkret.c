@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -115,11 +115,14 @@ result_t rop_handler(struct probe *probe,tid_t tid,void *data,
 		    "RESULT(i:%d): rop (2) CFIViolation \"CFI violation!\""
 		    " (retaddr=0x%"PRIxADDR",violations=%d,total=%d,"
 		    "fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d,"
-		    "isfpviolation=%d)\n",
+		    "isfpviolation=%d,gadgetstart=0x%"PRIxADDR","
+		    "gadgetend=0x%"PRIxADDR",gadgetcontinstr=0x%"PRIxADDR")\n",
 		    ++result_counter,rop_status->current_ret_addr,
 		    rop_status->violations,rop_status->total,
 		    rop_status->fpviolations,rop_status->jmpfpviolations,
-		    rop_status->jccfpviolations,rop_status->isfpviolation);
+		    rop_status->jccfpviolations,rop_status->isfpviolation,
+		    rop_data->gadget->start,rop_data->gadget->end,
+		    rop_data->cont_instr_start);
 	}
 	else
 	    fprintf(stdout,"%s: CFI violation %s",probe_name(probe),
@@ -138,11 +141,14 @@ result_t rop_handler(struct probe *probe,tid_t tid,void *data,
 	    fprintf(stdout,"RESULT(i:%d): rop (0) CFIClean \"CFI clean\""
 		    " (retaddr=0x%"PRIxADDR",violations=%d,total=%d,"
 		    "fpviolations=%d,jmpfpviolations=%d,jccfpviolations=%d,"
-		    "isfpviolation=%d)\n",
+		    "isfpviolation=%d,gadgetstart=0x%"PRIxADDR","
+		    "gadgetend=0x%"PRIxADDR",gadgetcontinstr=0x%"PRIxADDR")\n",
 		    ++result_counter,rop_status->current_ret_addr,
 		    rop_status->violations,rop_status->total,
 		    rop_status->fpviolations,rop_status->jmpfpviolations,
-		    rop_status->jccfpviolations,rop_status->isfpviolation);
+		    rop_status->jccfpviolations,rop_status->isfpviolation,
+		    rop_data->gadget->start,rop_data->gadget->end,
+		    rop_data->cont_instr_start);
 	}
 	else {
 	    fprintf(stdout,"%s: CFI clean",probe_name(probe));
