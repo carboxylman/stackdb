@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2013 The University of Utah
+ * Copyright (c) 2011-2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -413,11 +413,13 @@ struct target *target_instantiate_overlay(struct target *target,tid_t tid,
 					  struct target_spec *spec) {
     struct target *overlay;
     struct target_thread *tthread;
+    struct target_thread *ntthread = NULL;
 
     vdebug(16,LA_TARGET,LF_TARGET,
 	   "target(%s) tid %"PRIiTID"\n",target->name,tid);
 
-    if (g_hash_table_lookup(target->overlays,(gpointer)(uintptr_t)tid)) {
+    if (g_hash_table_lookup(target->overlays,(gpointer)(uintptr_t)tid)
+	|| g_hash_table_lookup(target->overlay_aliases,(gpointer)(uintptr_t)tid)) {
 	verror("target(%s) tid %"PRIiTID" already has overlay!\n",
 	       target->name,tid);
 	errno = EALREADY;
@@ -431,23 +433,34 @@ struct target *target_instantiate_overlay(struct target *target,tid_t tid,
 	return NULL;
     }
 
-    overlay = target->ops->instantiate_overlay(target,tthread,spec);
+    overlay = target->ops->instantiate_overlay(target,tthread,spec,&ntthread);
     if (!overlay) {
 	verror("target(%s) tid %"PRIiTID" failed to create overlay!\n",
 	       target->name,tid);
 	return NULL;
     }
 
+    if (ntthread)
+	tthread = ntthread;
+
     overlay->base = target;
     overlay->base_id = target->id;
     overlay->base_thread = tthread;
-    overlay->base_tid = tid;
+    overlay->base_tid = tthread->tid;
 
-    g_hash_table_insert(target->overlays,(gpointer)(uintptr_t)tid,overlay);
+    g_hash_table_insert(target->overlays,(gpointer)(uintptr_t)tthread->tid,overlay);
 
-    vdebug(8,LA_TARGET,LF_TARGET,
-	   "target(%s) tid %"PRIiTID" new overlay target(%s) (id %d)\n",
-	   target->name,tid,overlay->name,overlay->id);
+    if (tid == tthread->tid) {
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "target(%s) tid %"PRIiTID" new overlay target(%s) (id %d)\n",
+	       target->name,tthread->tid,overlay->name,overlay->id);
+    }
+    else {
+	vdebug(8,LA_TARGET,LF_TARGET,
+	       "target(%s) tid %"PRIiTID" new overlay target(%s) (id %d)"
+	       " (not using user-supplied thread %d; base target overrode it!)\n",
+	       target->name,tthread->tid,overlay->name,overlay->id,tid);
+    }
 
     return overlay;
 }

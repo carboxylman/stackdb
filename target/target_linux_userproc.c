@@ -84,7 +84,8 @@ static target_status_t linux_userproc_handle_exception(struct target *target,
 static struct target *
 linux_userproc_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
-				   struct target_spec *spec);
+				   struct target_spec *spec,
+				   struct target_thread **ntthread);
 static struct target_thread *
 linux_userproc_lookup_overlay_thread_by_id(struct target *target,int id);
 static struct target_thread *
@@ -2847,7 +2848,8 @@ static int linux_userproc_loaddebugfiles(struct target *target,
 static struct target *
 linux_userproc_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
-				   struct target_spec *spec) {
+				   struct target_spec *spec,
+				   struct target_thread **ntthread) {
     struct target *overlay;
 
     if (spec->target_type != TARGET_TYPE_PHP) {

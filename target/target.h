@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -134,6 +134,11 @@ struct target_memmod *_target_insert_sw_breakpoint(struct target *target,
  ** Overlays.
  **/
 struct target *target_lookup_overlay(struct target *target,tid_t tid);
+void target_detach_overlay(struct target *base,tid_t overlay);
+int target_attach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t newtid);
+int target_detach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t tid);
 
 /**
  ** Target breakpoints.

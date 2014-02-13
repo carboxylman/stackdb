@@ -2021,6 +2021,13 @@ struct target {
      * single overlay per thread, at the moment.
      */
     GHashTable *overlays;
+    /*
+     * Once an overlay has attached to one of this target's threads, it
+     * can can "alias" other threads in the underlying target to point
+     * to the overlay.  For instance, this can help to map all threads
+     * in a thread group into a single overlay process target.
+     */
+    GHashTable *overlay_aliases;
 
     GHashTable *threads;
     /*
@@ -2239,11 +2246,16 @@ struct target_ops {
      */
     struct target *(*instantiate_overlay)(struct target *target,
 					  struct target_thread *tthread,
-					  struct target_spec *spec);
+					  struct target_spec *spec,
+					  struct target_thread **ntthread);
     struct target_thread *(*lookup_overlay_thread_by_id)(struct target *target,
 							 int id);
     struct target_thread *(*lookup_overlay_thread_by_name)(struct target *target,
 							   char *name);
+    int (*attach_overlay_thread)(struct target *base,struct target *overlay,
+				 tid_t newtid);
+    int (*detach_overlay_thread)(struct target *base,struct target *overlay,
+				 tid_t tid);
     /*
      * Overlay targets must support this if their exceptions come from
      * the underlying target.

@@ -59,7 +59,8 @@ static target_status_t xen_vm_process_handle_overlay_exception(struct target *ov
 static struct target *
 xen_vm_process_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
-				   struct target_spec *spec);
+				   struct target_spec *spec,
+				   struct target_thread **ntthread);
 static struct target_thread *
 xen_vm_process_lookup_overlay_thread_by_id(struct target *target,int id);
 static struct target_thread *
@@ -292,40 +293,6 @@ static int xen_vm_process_init(struct target *target) {
 	vwarn("target->base_thread does not match with just-loaded thread"
 	      " for %d; pid wraparound caused stale thread??\n",base_tid);
 	target->base_thread = base_thread;
-    }
-
-    /*
-     * First, check and see if this is the thread group leader.  If it
-     * is not, attach to the group leader and "pivot" it into place as
-     * our "real" base thread/tid.
-     */
-    xtstate = (struct xen_vm_thread_state *)base_thread->state;
-    if (xtstate->tgid != base_tid) {
-	vdebug(5,LA_TARGET,LF_XVP,
-	       "user requested tid %d (not group leader); pivoting group leader into place...\n",
-	       base_thread->tid);
-
-	base_thread = target_load_thread(base,xtstate->tgid,0);
-	if (!base_thread) {
-	    verror("could not load group leader tid %"PRIiNUM
-		   " (for user-requested tid %d)\n",
-		   xtstate->tgid,base_tid);
-	    return -1;
-	}
-
-	/*
-	 * Pivot it into place; remove the old one.
-	 *
-	 * XXX: this is maybe kind of bad?  What if the user saves off
-	 * the base_tid or something?  Hmmm.
-	 */
-	orig_base_thread = target->base_thread;
-	target->base_thread = base_thread;
-	target->base_tid = base_tid = base_thread->tid;
-
-	g_hash_table_remove(base->overlays,
-			    (gpointer)(uintptr_t)orig_base_thread->tid);
-	g_hash_table_insert(base->overlays,(gpointer)(uintptr_t)base_tid,target);
     }
 
     /*
@@ -1397,7 +1364,8 @@ static int xen_vm_process_set_active_probing(struct target *target,
 static struct target *
 xen_vm_process_instantiate_overlay(struct target *target,
 				   struct target_thread *tthread,
-				   struct target_spec *spec) {
+				   struct target_spec *spec,
+				   struct target_thread **ntthread) {
     struct target *overlay;
 
     if (spec->target_type != TARGET_TYPE_PHP) {
@@ -1480,6 +1448,15 @@ static target_status_t xen_vm_process_handle_overlay_exception(struct target *ov
     xtstate = (struct xen_vm_thread_state *)uthread->state;
 
     tthread = target_lookup_thread(overlay,tid);
+    if (!tthread) {
+	/*
+	 * This is a new thread the overlay is insisting we manage!
+	 * Just Do It.
+	 */
+	tthread = target_create_thread(overlay,tid,NULL);
+	target_thread_set_status(tthread,THREAD_STATUS_RUNNING);
+	target_attach_overlay_thread(overlay->base,overlay,tid);
+    }
 
     target_clear_state_changes(overlay);
 
@@ -1784,7 +1761,17 @@ static int xen_vm_process_flush_current_thread(struct target *target) {
 }
 
 static int xen_vm_process_flush_all_threads(struct target *target) {
-    return xen_vm_process_flush_thread(target,target->base_tid);
+    struct array_list *tlist;
+    void *tid;
+    int i;
+    int rc = 0;
+
+    tlist = target_list_tids(target);
+    array_list_foreach(tlist,i,tid) {
+	rc += xen_vm_process_flush_thread(target,(tid_t)(uintptr_t)tid);
+    }
+
+    return rc;
 }
 
 static int xen_vm_process_invalidate_all_threads(struct target *target) {

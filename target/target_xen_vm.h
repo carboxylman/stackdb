@@ -177,6 +177,7 @@ struct xen_vm_thread_state {
      * __xen_vm_cr3 to read this value as a physical address.
      */
     uint64_t pgd;
+    ADDR group_leader;
 
     /*
      * These are information about the task's kernel stack.  esp0 is the

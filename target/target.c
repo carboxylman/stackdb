@@ -995,10 +995,8 @@ void target_free(struct target *target) {
      * If we were an overlay, remove ourself from the underlying
      * target.
      */
-    if (target->base) {
-	g_hash_table_remove(target->overlays,
-			    (gpointer)(uintptr_t)target->base_tid);
-    }
+    if (target->base)
+	target_detach_overlay(target->base,target->base_tid);
 
     /*
      * Do it for all the overlays first.  Since we might be calling
@@ -1019,6 +1017,7 @@ void target_free(struct target *target) {
 	free(tmpname);
     }
     g_hash_table_destroy(target->overlays);
+    g_hash_table_destroy(target->overlay_aliases);
 
     /* These were freed when we closed the target. */
     g_hash_table_destroy(target->mmods);
@@ -1159,6 +1158,8 @@ struct target *target_create(char *type,struct target_spec *spec) {
 
     retval->overlays = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 					     NULL,NULL);
+    retval->overlay_aliases = g_hash_table_new_full(g_direct_hash,g_direct_equal,
+						    NULL,NULL);
 
     retval->threads = g_hash_table_new_full(g_direct_hash,g_direct_equal,
 					    /* No names to free! */
@@ -3317,10 +3318,8 @@ void target_delete_thread(struct target *target,struct target_thread *tthread,
      * Once we're done with the underlying target, tell it the overlay
      * is gone!
      */
-    if (target->base) {
-	g_hash_table_remove(target->base->overlays,
-			    (gpointer)(uintptr_t)tthread->tid);
-    }
+    if (target->base)
+	target_detach_overlay_thread(target->base,target,tthread->tid);
 
     array_list_free(tthread->tpc_stack);
     tthread->tpc_stack = NULL;
@@ -3522,8 +3521,81 @@ target_status_t target_notify_overlay(struct target *overlay,tid_t tid,ADDR ipva
 }
 
 struct target *target_lookup_overlay(struct target *target,tid_t tid) {
-    return (struct target *) \
+    struct target *overlay;
+
+    overlay = (struct target *) \
 	g_hash_table_lookup(target->overlays,(gpointer)(uintptr_t)tid);
+    if (!overlay)
+	overlay = (struct target *) \
+	    g_hash_table_lookup(target->overlay_aliases,(gpointer)(uintptr_t)tid);
+
+    return overlay;
+}
+
+void target_detach_overlay(struct target *base,tid_t overlaytid) {
+    GHashTableIter iter;
+    struct target *overlay;
+    gpointer vp;
+
+    overlay = (struct target *) \
+	g_hash_table_lookup(base->overlays,(gpointer)(uintptr_t)overlaytid);
+    g_hash_table_remove(base->overlays,(gpointer)(uintptr_t)overlaytid);
+
+    if (overlay) {
+	g_hash_table_iter_init(&iter,base->overlay_aliases);
+	while (g_hash_table_iter_next(&iter,NULL,&vp)) {
+	    if (vp == overlay)
+		g_hash_table_iter_remove(&iter);
+	}
+    }
+}
+
+int target_attach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t newtid) {
+    int rc;
+
+    if (overlay->base != base || newtid == overlay->base_tid) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (!base->ops->attach_overlay_thread) {
+	errno = ENOTSUP;
+	return -1;
+    }
+
+    if (target_lookup_overlay(base,newtid)) {
+	errno = EADDRINUSE;
+	return -1;
+    }
+
+    rc = base->ops->attach_overlay_thread(base,overlay,newtid);
+    if (rc == 0)
+	g_hash_table_insert(base->overlay_aliases,(gpointer)(uintptr_t)newtid,
+			    overlay);
+
+    return rc;
+}
+
+int target_detach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t tid) {
+    int rc;
+
+    if (tid == overlay->base_tid) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (!base->ops->detach_overlay_thread) {
+	errno = ENOTSUP;
+	return -1;
+    }
+
+    rc = base->ops->detach_overlay_thread(base,overlay,tid);
+    if (rc == 0)
+	g_hash_table_lookup(base->overlay_aliases,(gpointer)(uintptr_t)tid);
+
+    return rc;
 }
 
 struct probepoint *target_lookup_probepoint(struct target *target,

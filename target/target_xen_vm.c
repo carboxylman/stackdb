@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -88,11 +88,16 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 static struct target *
 xen_vm_instantiate_overlay(struct target *target,
 			   struct target_thread *tthread,
-			   struct target_spec *spec);
+			   struct target_spec *spec,
+			   struct target_thread **ntthread);
 static struct target_thread *
 xen_vm_lookup_overlay_thread_by_id(struct target *target,int id);
 static struct target_thread *
 xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name);
+int xen_vm_attach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t newtid);
+int xen_vm_detach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t tid);
 static target_status_t xen_vm_status(struct target *target);
 static int xen_vm_pause(struct target *target,int nowait);
 static int __xen_vm_resume(struct target *target,int detaching);
@@ -251,6 +256,8 @@ struct target_ops xen_vm_ops = {
     .instantiate_overlay = xen_vm_instantiate_overlay,
     .lookup_overlay_thread_by_id = xen_vm_lookup_overlay_thread_by_id,
     .lookup_overlay_thread_by_name = xen_vm_lookup_overlay_thread_by_name,
+    .attach_overlay_thread = xen_vm_attach_overlay_thread,
+    .detach_overlay_thread = xen_vm_detach_overlay_thread,
 
     .status = xen_vm_status,
     .pause = xen_vm_pause,
@@ -1128,6 +1135,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     tid_t ptid = -1;
     num_t tgid = 0;
     unum_t task_flags = 0;
+    ADDR group_leader;
     struct value *threadinfov = NULL;
     unum_t tiflags = 0;
     num_t preempt_count = 0;
@@ -1270,6 +1278,17 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     value_free(v);
     v = NULL;
 
+    v = target_load_value_member(target,xstate->default_tlctxt,
+				 taskv,"group_leader",NULL,LOAD_FLAG_NONE);
+    if (!v) {
+	verror("could not load group_leader in task %"PRIiTID"; BUG?\n",tid);
+	/* errno should be set for us. */
+	goto errout;
+    }
+    group_leader = v_addr(v);
+    value_free(v);
+    v = NULL;
+
     /*
      * Before loading anything else, check the cache.
      */
@@ -1387,6 +1406,7 @@ struct target_thread *__xen_vm_load_thread_from_value(struct target *target,
     tthread->gid = gid;
     tstate->tgid = tgid;
     tstate->task_flags = task_flags;
+    tstate->group_leader = group_leader;
     tstate->thread_info = threadinfov;
     tstate->thread_info_flags = tiflags;
     tstate->thread_info_preempt_count = preempt_count;
@@ -2561,6 +2581,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
     struct value *taskv = NULL;
     num_t tgid;
     unum_t task_flags = 0;
+    ADDR group_leader;
     struct target_thread *tthread = NULL;
     struct xen_vm_thread_state *tstate = NULL;;
     struct xen_vm_thread_state *gtstate;
@@ -2902,6 +2923,18 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	v = NULL;
 
 	v = target_load_value_member(target,xstate->default_tlctxt,
+				     taskv,"group_leader",NULL,LOAD_FLAG_NONE);
+	if (!v) {
+	    verror("could not load group_leader in task %"PRIiTID" current task; BUG?\n",
+		   tid);
+	    /* errno should be set for us. */
+	    goto errout;
+	}
+	group_leader = v_addr(v);
+	value_free(v);
+	v = NULL;
+
+	v = target_load_value_member(target,xstate->default_tlctxt,
 				     taskv,"mm",NULL,LOAD_FLAG_NONE);
 	if (!v) {
 	    verror("could not see if thread %"PRIiTID" was kernel or user\n",tid);
@@ -3144,6 +3177,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	tstate->task_struct = taskv;
 	tstate->tgid = tgid;
 	tstate->task_flags = task_flags;
+	tstate->group_leader = group_leader;
     }
 
     /*
@@ -3193,6 +3227,7 @@ static struct target_thread *__xen_vm_load_current_thread(struct target *target,
 	gtstate->task_struct_addr = 0;
 	gtstate->task_struct = NULL;
 	gtstate->task_flags = 0;
+	gtstate->group_leader = 0;
 	gtstate->thread_struct = NULL;
 	gtstate->ptregs_stack_addr = 0;
 	gtstate->mm_addr = 0;
@@ -3359,6 +3394,7 @@ static int xen_vm_init(struct target *target) {
     tstate->task_struct = NULL;
     tstate->tgid = 0;
     tstate->task_flags = 0;
+    tstate->group_leader = 0;
     /* Populate tstate->task_struct_addr later in postloadinit once we 
      * have debuginfo (and thus hopefully the address of the `init_task'
      * symbol.
@@ -4553,15 +4589,82 @@ static int xen_vm_set_active_probing(struct target *target,
     return retval;
 }
 
+static struct target_thread *
+__xen_vm_get_group_leader(struct target *target,struct target_thread *tthread) {
+    struct target_thread *leader;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
+    struct xen_vm_thread_state *xtstate = \
+	(struct xen_vm_thread_state *)tthread->state;
+    struct array_list *tlist;
+    struct xen_vm_thread_state *lxtstate;
+    struct value *value;
+    int i;
+
+    /* The only reason this should be NULL is if it's a kernel thread. */
+    if (!xtstate->task_struct) {
+	vwarnopt(5,LA_TARGET,LF_XV,
+		 "thread %d did not have a task struct value!\n",tthread->tid);
+	return NULL;
+    }
+
+    /* If we are the group leader, return ourself. */
+    if (value_addr(xtstate->task_struct) == xtstate->group_leader)
+	return tthread;
+
+    /*
+     * Otherwise, see if our group_leader is already loaded, and return
+     * it if it is.
+     */
+    tlist = target_list_threads(target);
+    array_list_foreach(tlist,i,leader) {
+	lxtstate = (struct xen_vm_thread_state *)leader->state;
+	if (lxtstate->task_struct 
+	    && value_addr(lxtstate->task_struct) == xtstate->group_leader) {
+	    array_list_free(tlist);
+	    return leader;
+	}
+    }
+    array_list_free(tlist);
+    leader = NULL;
+
+    /* Otherwise, load it. */
+    vdebug(5,LA_TARGET,LF_XV,
+	   "trying to load tid %d's group_leader at 0x%"PRIxADDR"\n",
+	   tthread->tid,xtstate->group_leader);
+
+    value = target_load_type(target,xstate->task_struct_type,
+			     xtstate->group_leader,LOAD_FLAG_NONE);
+    if (!value) {
+	vwarn("could not load tid %d's group_leader at 0x%"PRIxADDR"; BUG?!\n",
+	      tthread->tid,xtstate->group_leader);
+	return NULL;
+    }
+
+    if (!(leader = __xen_vm_load_thread_from_value(target,value))) {
+	verror("could not load thread from task value at 0x%"PRIxADDR"; BUG?\n",
+	       xtstate->group_leader);
+	value_free(value);
+	return NULL;
+    }
+
+    vdebug(5,LA_TARGET,LF_XV,
+	   "new group leader loaded (%"PRIiTID",%s)\n",
+	   leader->tid,leader->name);
+
+    return leader;
+}
+
 static struct target *
 xen_vm_instantiate_overlay(struct target *target,
 			   struct target_thread *tthread,
-			   struct target_spec *spec) {
+			   struct target_spec *spec,
+			   struct target_thread **ntthread) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_vm_thread_state *xtstate = 
 	(struct xen_vm_thread_state *)tthread->state;
     struct target *overlay;
     REGVAL thip;
+    struct target_thread *leader;
 
     if (spec->target_type != TARGET_TYPE_XEN_PROCESS) {
 	errno = EINVAL;
@@ -4579,6 +4682,21 @@ xen_vm_instantiate_overlay(struct target *target,
 	verror("tid %"PRIiTID" IP 0x%"PRIxADDR" is a kernel thread!\n",
 	       tthread->tid,thip);
 	return NULL;
+    }
+
+    /*
+     * Flip to the group leader if it is not this thread itself.
+     */
+    leader = __xen_vm_get_group_leader(target,tthread);
+    if (!leader) {
+	verror("could not load group_leader for thread %d; BUG?!\n",tthread->tid);
+	return NULL;
+    }
+    else if (leader != tthread) {
+	vdebug(5,LA_TARGET,LF_XV,
+	       "using group_leader %d instead of user-supplied overlay thread %d\n",
+	       leader->tid,tthread->tid);
+	*ntthread = leader;
     }
 
     /*
@@ -4670,6 +4788,30 @@ xen_vm_lookup_overlay_thread_by_name(struct target *target,char *name) {
 	errno = ESRCH;
 	return NULL;
     }
+}
+
+int xen_vm_attach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t newtid) {
+    struct target_thread *tthread;
+    struct xen_vm_thread_state *lxtstate,*xtstate;
+
+    tthread = target_load_thread(base,newtid,0);
+    if (!tthread)
+	return -1;
+
+    xtstate = (struct xen_vm_thread_state *)tthread->state;
+    lxtstate = (struct xen_vm_thread_state *)overlay->base_thread->state;
+
+    if (lxtstate->tgid == xtstate->tgid)
+	return 0;
+
+    errno = EINVAL;
+    return 1;
+}
+
+int xen_vm_detach_overlay_thread(struct target *base,struct target *overlay,
+				 tid_t tid) {
+    return 0;
 }
 
 static target_status_t xen_vm_status(struct target *target) {
@@ -6585,6 +6727,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
     int dreg = -1;
     struct probepoint *dpp;
     struct target_thread *tthread;
+    struct target_thread *overlay_leader;
     struct xen_vm_thread_state *gtstate;
     struct xen_vm_thread_state *xtstate;
     tid_t tid;
@@ -7062,6 +7205,22 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	    }
 	    else if (ipval < xstate->kernel_start_addr) {
 		overlay = target_lookup_overlay(target,tid);
+
+		/* If we didn't find one, try to find its leader as an overlay. */
+		if (!overlay) {
+		    overlay_leader = __xen_vm_get_group_leader(target,tthread);
+		    if (overlay_leader) {
+			overlay = target_lookup_overlay(target,
+							overlay_leader->tid);
+			if (overlay) {
+			    vdebug(5,LA_TARGET,LF_XV,
+				   "found yet-unknown thread %d with"
+				   " overlay leader %d; will notify!\n",
+				   tthread->tid,overlay_leader->tid);
+			}
+		    }
+		}
+
 		if (overlay) {
 		    /*
 		     * Try to notify the overlay!
