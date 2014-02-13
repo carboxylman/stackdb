@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -536,9 +536,12 @@ static void probepoint_free(struct probepoint *probepoint) {
 /* We need this in case the target needs to quickly remove all the
  * probes (i.e., on a signal) -- and in that case, we have to let the
  * target remove the probepoint from its hashtables itself.
+ *
+ * NB: this *forces* the removal of the probepoint, even if it is being
+ * handled, because we are forcing a removal from external.
  */
 void probepoint_free_ext(struct probepoint *probepoint) {
-    __probepoint_remove(probepoint,0,1);
+    __probepoint_remove(probepoint,1,1);
 
     probepoint_free_internal(probepoint);
 
