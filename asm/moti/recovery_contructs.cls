@@ -194,18 +194,64 @@
 	(test ( > (/ ?utilization ?count) 90))
 	;now test if the overall cpu load is really high and the process
 	; is a low priority process
-	;(low-priority-process $?low-prio-processes)
-	;(test (member$ ?name1 $?low-prio-processes))
+	(low-priority-process $?low-prio-processes)
+	(test (member$ ?name1 $?low-prio-processes))
 	(cpu-load (five-min ?load))
 	(test ( > ?load 0.5))
-
-
 	=>
 	(assert (high-cpu-utilization-recovery
 		    (function-name "reduce_utilization")
 		    (arg_list ?name1 ?pid)))
 	(printout t " Process " ?name1 " has high cpu utilization over the past 2 iterations" crlf)
-	(printout t " The cpu load during past 5 mins is " ?load crlf)
+	(printout t " The cpu load during past 2 mins is " ?load crlf)
         (modify ?f (cpu 0.0) (count 0))
 	(save-facts "cpu_state_info.fac" visible per-process-cpu-utilization))
+
+; Rules for dealing with priv escalation
+
+(defrule correct-priv-escalation
+	(declare (salience 10))
+	?f <- (priv-escalated-process
+		(name ?name1)
+		(pid ?pid))
+	(not (exists (priv-escalation-recovery-prev-action
+			(prev_action kill_process)
+			(name ?name1))))
+	=>
+	(assert (priv-escalation-recovery
+		    (function-name "kill_escated_proess")
+		    (arg_list ?name1 ?pid)))
+	(retract ?f)
+	(assert (priv-escalation-recovery-prev-action
+		    (prev_action kill_process)
+		    (name ?name1)))
+	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
+	(printout t " killing the priv escalated process " ?name1 crlf ))
+
+
+(defrule correct-priv-escalation_01
+	(declare (salience 20))
+	?f <- (priv-escalated-process
+		(name ?name1)
+		(pid ?pid)
+		(parent_pid ?parent_pid))
+	?of <-( priv-escalation-recovery-prev-action
+		(name ?name1)
+		(prev_action kill_process))
+	=>
+	(assert (priv-escalation-recovery
+		    (function-name "kill_escalated_process_parent")
+		    (arg_list  ?parent_pid)))
+	(retract ?f)
+	(retract ?of)
+	(assert (priv-escalation-recovery-prev-action
+		(prev_action kill_process_parent)
+		(name ?name1)))
+	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
+	(printout t "The privileges for the process " ?name1" was escalated again !!! Killing the parent process now" crlf))
+
+
+	
+
+
 

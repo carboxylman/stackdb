@@ -99,7 +99,20 @@
 	(process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
 	(high-priority-process "apache" "sshd")
 	(med-priority-process  "mysqld" "ntpd" )
-	(low-priority-process  "perl"))
+	(low-priority-process  "perl" "temp")
+	
+	(process-run-as-root "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
+	"kworker/0:0H" "kworker/u:0" "kworker/u:0H" "migration/0" "rcu_bh"
+	"rcu_sched" "watchdog/0" "cpuset" "khelper" "kdevtmpfs" "netns" "xenwatch"
+	"xenbus" "bdi-default" "kintegrityd" "kblockd" "ata_sff" "khubd" "md"
+	"devfreq_wq" "kworker/0:1" "khungtaskd" "kswapd0" "ksmd" "fsnotify_mark"
+	"ecryptfs-kthrea" "crypto" "kthrotld" "kworker/0:1" "khvcd" "binder" "deferwq"
+	"charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
+	"udevd" "rpcbind" "sshd" "upstart-socket-"  "cron"
+	"atd" "ntpd" "getty" "flush-202:1" "login" )
+	
+	)
+
 
 	
 ;============================== Template for anomaly facts =============================
@@ -135,6 +148,13 @@
 	(slot pid (type INTEGER))
 	(slot cpu (type FLOAT) (default 0.0))
  	(slot count (type INTEGER)(default 0)))
+
+(deftemplate priv-escalated-process
+	(slot name (type STRING))
+	(slot pid (type INTEGER))
+	(slot parent_pid (type INTEGER)))
+	;(slot original_uid (type INTEGER)) how do we get the original values
+	;(slot original_gid (type INTEGER))) or do we assign random non root values.
 
 
 ;========== Application level rules that are used to detect anomalies =================
@@ -243,7 +263,25 @@
 	(printout t "Adding the current cpu utilization value to the prevent value for " ?name1 crlf)
 	(printout t "Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
 
-
+; rules to deal with priviledge escalation
+(defrule identify-privledge-escalation
+    ( task-struct
+	(comm ?name)
+	(pid ?pid)
+	(uid ?uid)
+	(euid ?euid)
+	(gid  ?gid)
+	(egid ?egid)
+	(parent_pid ?parent_pid))
+    (or (test (= ?uid 0)) (test (= ?euid 0)))
+    (process-run-as-root $?process-run-as-root)
+    (test (not (member$ ?name $?process-run-as-root)))
+    =>
+    (assert (priv-escalated-process
+		(name ?name)
+		(pid ?pid)
+		(parent_pid ?parent_pid)))
+    (printout t " Process " ?name " with unauthorised root priv found" crlf))
 
 
 ;=================template  for recovery facts ===================================
@@ -297,7 +335,13 @@
 	    (slot function-name (type STRING))
 	    (multislot arg_list (type SYMBOL))) 
 
-
+; recovey fact template for priv escalation
+(deftemplate priv-escalation-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
+(deftemplate priv-escalation-recovery-prev-action
+	    (slot prev_action (type SYMBOL))
+	    (slot name (type STRING)))
 
 
 

@@ -164,7 +164,7 @@ int generate_snapshot() {
 
 			    
     /* Start making calls to each of the VMI function */ 
-    /*
+
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
@@ -172,7 +172,7 @@ int generate_snapshot() {
 	goto resume;
     }
     
-    
+    /*
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
@@ -187,7 +187,7 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-    */
+    
     result = cpu_load_info();
     if(result) {
 	fprintf(stdout,"ERROR: cpu_load_info failed.\n");
@@ -201,7 +201,7 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-   /*
+   
     result = object_info();
     if(result) {
 	fprintf(stdout,"ERROR: object_info failed.\n");
@@ -435,7 +435,11 @@ int main( int argc, char** argv) {
 	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
-
+	result = LoadFacts("process_priv_info.fac");
+	if(!result) {
+	   fprintf(stdout,"ERROR: Failed to load the process_priv_info file.\n");
+	   exit(0);
+	}
 	
 
 
