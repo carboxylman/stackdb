@@ -201,14 +201,14 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-   
+    */ 
     result = object_info();
     if(result) {
 	fprintf(stdout,"ERROR: object_info failed.\n");
 	result  = 1;
 	goto resume;
     }
-      
+    /*  
     result = syscalltable_info();
     if(result) {
 	fprintf(stdout,"ERROR: syscallcalltable_info failed.\n");

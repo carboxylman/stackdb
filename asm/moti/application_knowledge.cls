@@ -82,6 +82,10 @@
 
 ;===========Users application level knowledge captured facts====================
 
+(deftemplate known-objects
+	(slot name (type STRING))
+	(multislot object-list (type STRING)))
+
 (deffacts base-facts
 	(known-processes "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
 	"kworker/0:0H" "kworker/u:0" "kworker/u:0H" "migration/0" "rcu_bh"
@@ -110,7 +114,18 @@
 	"charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
 	"udevd" "rpcbind" "sshd" "upstart-socket-"  "cron"
 	"atd" "ntpd" "getty" "flush-202:1" "login" )
-	
+
+	(known-objects
+	    (name "bash")
+	    (object-list  "bash"  "bash"  "bash"  "libnss_files-2.15.so"  
+	    "libnss_files-2.15.so"  "libnss_files-2.15.so" "libnss_files-2.15.so"  
+	    "libnss_nis-2.15.so"  "libnss_nis-2.15.so"  "libnss_nis-2.15.so"  
+	    "libnss_nis-2.15.so"  "libnsl-2.15.so" "libnsl-2.15.so"  "libnsl-2.15.so"  
+	    "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libnss_compat-2.15.so"  
+	    "libnss_compat-2.15.so" "libnss_compat-2.15.so"  "locale-archive"  
+	    "libc-2.15.so"  "libc-2.15.so"  "libc-2.15.so"  "libc-2.15.so"
+	    "libdl-2.15.so" "libtinfo.so.5.9"  "libtinfo.so.5.9"  "libtinfo.so.5.9"  
+	    "libtinfo.so.5.9" "ld-2.15.so"   "ld-2.15.so"  "ld-2.15.so"))	
 	)
 
 
@@ -155,6 +170,11 @@
 	(slot parent_pid (type INTEGER)))
 	;(slot original_uid (type INTEGER)) how do we get the original values
 	;(slot original_gid (type INTEGER))) or do we assign random non root values.
+
+(deftemplate unknown-object-list
+	(slot name (type STRING))
+	(slot pid (type INTEGER))
+	(multislot object-list (type STRING) (default "NULL")))
 
 
 ;========== Application level rules that are used to detect anomalies =================
@@ -283,6 +303,48 @@
 		(parent_pid ?parent_pid)))
     (printout t " Process " ?name " with unauthorised root priv found" crlf))
 
+(defrule identify-unknown-loaded-objects
+    (loaded-objects
+	(comm ?name)
+	(pid ?pid)
+	(objects $?objects))
+    (known-objects
+	(name ?name)
+	(object-list $?known_objects))
+    (test (not (subsetp $?objects $?known_objects)))
+    (not (exists (unknown-object-list
+	(name ?name)
+	(pid ?pid))))
+    =>
+    (assert ( unknown-object-list
+		(name ?name)
+		(pid ?pid)))
+    (printout t " Unknown objects found for process " ?name crlf))
+
+(defrule identify-unknown-objects_1
+     ?of <- (loaded-objects
+	(comm ?name)
+	(pid ?pid)
+	(objects $?objects))
+    (known-objects
+	(name ?name)
+	(object-list $?known_objects))
+    (test (not (subsetp $?objects $?known_objects)))
+    ?f <- (unknown-object-list
+	    (name ?name)
+	    (pid ?pid)
+	    (object-list $?list))
+    =>
+    (progn$ (?field  $?objects)
+	(if (not ( member$ ?field $?known_objects))
+		 then 
+		 (modify ?f (object-list  (insert$ $?list 1 ?field)))
+		 else
+	         (printout t "nothing" crlf)))
+    (retract ?of)
+    (printout t "inserted the unknown object name into the list " crlf ))
+	    	    
+
 
 ;=================template  for recovery facts ===================================
 
@@ -342,6 +404,12 @@
 (deftemplate priv-escalation-recovery-prev-action
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING)))
+
+;recovery fact for unknown loaded objects
+(deftemplate unknown-object-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
+
 
 
 

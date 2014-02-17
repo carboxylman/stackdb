@@ -250,6 +250,23 @@
 	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
 	(printout t "The privileges for the process " ?name1" was escalated again !!! Killing the parent process now" crlf))
 
+; rules for dealing with unknown objects loaded
+
+(defrule unload-unknown-objects
+    (declare (salience 10))
+    ?f <- (unknown-object-list
+		(name ?name)
+		(pid ?pid)
+		(object-list $?list))
+    =>
+    (assert (unknown-object-recovery
+		(function-name "unload_onjects")
+		(arg_list ?name ?pid $?list)))
+    (retract ?f)
+    (printout t " Calling function to unload the objects " crlf))
+
+
+
 
 	
 
