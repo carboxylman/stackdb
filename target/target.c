@@ -550,18 +550,33 @@ error_t target_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'd':
 	if (arg) {
-	    vmi_inc_log_level();
-	    while (*arg == 'd') {
-		vmi_inc_log_level();
+	    if (*arg == 'd') {
 		arg = &arg[1];
+		vmi_inc_log_level();
+		while (*arg == 'd') {
+		    vmi_inc_log_level();
+		    arg = &arg[1];
+		}
 	    }
+	    else
+		vmi_set_log_level(atoi(arg));
 	}
 	else
 	    vmi_inc_log_level();
 	break;
     case 'w':
-	if (arg)
-	    vmi_set_warn_level(atoi(arg));
+	if (arg) {
+	    if (*arg == 'w') {
+		arg = &arg[1];
+		vmi_inc_warn_level();
+		while (*arg == 'w') {
+		    vmi_inc_warn_level();
+		    arg = &arg[1];
+		}
+	    }
+	    else
+		vmi_set_warn_level(atoi(arg));
+	}
 	else
 	    vmi_inc_warn_level();
 	break;
