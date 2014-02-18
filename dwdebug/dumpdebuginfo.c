@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -40,8 +40,6 @@ extern int optind, opterr, optopt;
 
 int main(int argc,char **argv) {
     char ch;
-    int debug = 0;
-    int warn = 0;
     char *filename;
     struct debugfile *debugfile;
     int detail = 0;
@@ -72,15 +70,39 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "dwgDMl:F:TGSNErI:i:")) != -1) {
+    while ((ch = getopt(argc, argv, "d::w::gDMl:F:TGSNErI:i:")) != -1) {
 	switch(ch) {
 	case 'd':
-	    ++debug;
-	    vmi_set_log_level(debug);
+	    if (optarg) {
+		if (*optarg == 'd') {
+		    optarg = &optarg[1];
+		    vmi_inc_log_level();
+		    while (*optarg == 'd') {
+			vmi_inc_log_level();
+			optarg = &optarg[1];
+		    }
+		}
+		else
+		    vmi_set_log_level(atoi(optarg));
+	    }
+	    else
+		vmi_inc_log_level();
 	    break;
 	case 'w':
-	    ++warn;
-	    vmi_set_warn_level(warn);
+	    if (optarg) {
+		if (*optarg == 'w') {
+		    optarg = &optarg[1];
+		    vmi_inc_warn_level();
+		    while (*optarg == 'w') {
+			vmi_inc_warn_level();
+			optarg = &optarg[1];
+		    }
+		}
+		else
+		    vmi_set_warn_level(atoi(optarg));
+	    }
+	    else
+		vmi_inc_warn_level();
 	    break;
 	case 'D':
 	    ++detail;
