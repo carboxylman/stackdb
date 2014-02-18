@@ -172,7 +172,7 @@ int generate_snapshot() {
 	goto resume;
     }
     
-    /*
+    
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
@@ -201,14 +201,14 @@ int generate_snapshot() {
 	result = 1;
 	goto resume;
     }
-    */ 
+     
     result = object_info();
     if(result) {
 	fprintf(stdout,"ERROR: object_info failed.\n");
 	result  = 1;
 	goto resume;
     }
-    /*  
+      
     result = syscalltable_info();
     if(result) {
 	fprintf(stdout,"ERROR: syscallcalltable_info failed.\n");
@@ -221,7 +221,7 @@ int generate_snapshot() {
 	fprintf(stdout,"ERROR: commandline_info failed.\n");
 	goto resume;
     }
-    */
+    
 resume:
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
@@ -459,8 +459,6 @@ int main( int argc, char** argv) {
 	fprintf(stdout," Sleeping for %d seconds\n", wait_time);
 	sleep(wait_time);
     }
-
-
 
 exit:
     fflush(stderr);
