@@ -75,7 +75,8 @@ result_t probe_do_sink_pre_handlers (struct probe *probe,tid_t tid,
 	     * sink can act as a filter on a thread id.
 	     */
 	    if (ptmp->pre_handler
-		&& (ptmp->thread->tid == TID_GLOBAL 
+		&& (ptmp->tid == TID_GLOBAL 
+		    || ptmp->thread->tid == TID_GLOBAL 
 		    || ptmp->thread->tid == tid)
 		&& probe_filter_check(ptmp,tid,probe,0) == 0) {
 
@@ -128,7 +129,8 @@ result_t probe_do_sink_post_handlers(struct probe *probe,tid_t tid,
 	     * sink can act as a filter on a thread id.
 	     */
 	    if (ptmp->post_handler
-		&& (ptmp->thread->tid == TID_GLOBAL 
+		&& (ptmp->tid == TID_GLOBAL 
+		    || ptmp->thread->tid == TID_GLOBAL 
 		    || ptmp->thread->tid == tid)
 		&& probe_filter_check(ptmp,tid,probe,1) == 0) {
 
@@ -748,6 +750,7 @@ struct probe *probe_create(struct target *target,tid_t tid,struct probe_ops *pop
     probe->autofree = autofree;
     probe->tracked = tracked;
     probe->ops = pops;
+    probe->tid = tid;
 
     target_attach_probe(target,tthread,probe);
 

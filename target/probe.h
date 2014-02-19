@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -331,9 +331,17 @@ struct probe {
 
     /* 
      * The target context this probe is associated with.
+     *
+     * NB: we store the tid the probe was created with separately from
+     * the thread the target_lookup_thread(target,tid) gave us --
+     * because TID_GLOBAL might map to a real thread with a tid that is
+     * real, and is not TID_GLOBAL.  We need to know if this was
+     * *supposed* to be a TID_GLOBAL probe so we can do pre/post handler
+     * filtering appropriately.
      */
     struct target *target;
     struct target_thread *thread;
+    tid_t tid;
 
     /* The target probe-point */
     struct probepoint *probepoint;
