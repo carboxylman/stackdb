@@ -79,12 +79,22 @@ result_t probe_do_sink_pre_handlers (struct probe *probe,tid_t tid,
 		    || ptmp->thread->tid == tid)
 		&& probe_filter_check(ptmp,tid,probe,0) == 0) {
 
+		vdebug(8,LA_PROBE,LF_PROBE,"running pre handler for ");
+		LOGDUMPPROBE_NL(8,LA_PROBE,LF_PROBE,probe);
+
 		rc = ptmp->pre_handler(ptmp,tid,ptmp->handler_data,probe,base);
 		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
 	    }
+	    else {
+		vdebug(8,LA_PROBE,LF_PROBE,"not running pre handler for ");
+		LOGDUMPPROBE(6,LA_PROBE,LF_PROBE,probe);
+		vdebugc(8,LA_PROBE,LF_PROBE,"probe tid %d; sink tid %d\n",
+			probe->thread->tid,ptmp->thread->tid);
+	    }
+		
 
 	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_PRE_END);
 
@@ -121,11 +131,21 @@ result_t probe_do_sink_post_handlers(struct probe *probe,tid_t tid,
 		&& (ptmp->thread->tid == TID_GLOBAL 
 		    || ptmp->thread->tid == tid)
 		&& probe_filter_check(ptmp,tid,probe,1) == 0) {
+
+		vdebug(8,LA_PROBE,LF_PROBE,"running post handler for ");
+		LOGDUMPPROBE_NL(8,LA_PROBE,LF_PROBE,probe);
+
 		rc = ptmp->post_handler(ptmp,tid,ptmp->handler_data,probe,base);
 		if (rc == RESULT_ERROR) {
 		    probe_disable(ptmp);
 		    retval |= rc;
 		}
+	    }
+	    else {
+		vdebug(8,LA_PROBE,LF_PROBE,"not running post handler for ");
+		LOGDUMPPROBE(6,LA_PROBE,LF_PROBE,probe);
+		vdebugc(8,LA_PROBE,LF_PROBE,"probe tid %d; sink tid %d\n",
+			probe->thread->tid,ptmp->thread->tid);
 	    }
 
 	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_POST_END);
