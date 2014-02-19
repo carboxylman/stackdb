@@ -120,6 +120,7 @@ struct cfi_data;
 struct probe *probe_cfi(struct target *target,tid_t tid,
 			cfi_mode_t mode,cfi_flags_t flags,
 			struct array_list *root_functions,
+			struct array_list *root_addrs,
 			probe_handler_t pre_handler,probe_handler_t post_handler,
 			void *handler_data);
 

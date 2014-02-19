@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -332,12 +332,15 @@ int main(int argc,char **argv) {
     struct target_spec *tspec;
     char targetstr[128];
     struct array_list *root_function_list;
+    struct array_list *root_addr_list;
     int i;
     struct bsymbol *function;
     struct target *rtarget;
     int oid;
     tid_t otid;
     char *tmp = NULL;
+    char *endptr = NULL;
+    ADDR addr;
 
     target_init();
     atexit(target_fini);
@@ -404,19 +407,33 @@ int main(int argc,char **argv) {
 
     if (opts.argc > 0) {
 	root_function_list = array_list_create(opts.argc);
+	root_addr_list = array_list_create(opts.argc);
 	for (i = 0; i < opts.argc; ++i) {
 	    function = target_lookup_sym(rtarget,opts.argv[i],NULL,NULL,
 					 SYMBOL_TYPE_FLAG_NONE);
 	    if (!function) {
-		verror("could not lookup symbol %s; aborting!\n",opts.argv[i]);
-		cleanup();
-		exit(-3);
+		addr = (ADDR)strtoll(opts.argv[i],&endptr,16);
+		if (endptr == opts.argv[i]) {
+		    fprintf(stderr,"Could not convert %s to address!\n",
+			    opts.argv[i]);
+		    cleanup();
+		    exit(-3);
+		}
+		/*
+		else
+		    function = target_lookup_sym_addr(rtarget,addr);
+		*/
 	    }
-	    array_list_append(root_function_list,function);
+
+	    if (function)
+		array_list_append(root_function_list,function);
+	    else
+		array_list_append(root_addr_list,(void *)(uintptr_t)addr);
 	}
     }
     else {
 	root_function_list = array_list_create(1);
+	root_addr_list = array_list_create(0);
 
 	function = target_lookup_sym(rtarget,"main",NULL,NULL,
 				     SYMBOL_TYPE_FLAG_NONE);
@@ -451,7 +468,7 @@ int main(int argc,char **argv) {
 
     /* Install probes... */
     cfi_probe = probe_cfi(rtarget,TID_GLOBAL,opts.mode,opts.flags,
-			  root_function_list,
+			  root_function_list,root_addr_list,
 			  cfi_handler,cfi_handler,NULL);
     if (!cfi_probe) {
 	verror("could not instantiate the CFI meta-probe; aborting!\n");

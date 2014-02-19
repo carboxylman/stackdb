@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -938,6 +938,149 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 	probe_free(probe,1);
     if (sname_created)
 	free(sname);
+    return NULL;
+
+}
+
+struct probe *probe_register_block_instrs(struct target *target,
+					  ADDR start,ADDR end,
+					  probepoint_style_t style,
+					  int noabort,
+					  probe_register_disasm_handler_t handler,
+					  void *handler_data,
+					  inst_type_t inst,
+					  struct probe *probe,...) {
+    va_list ap;
+    struct memrange *range;
+    ADDR probeaddr;
+    struct probe *source;
+    int j;
+    struct array_list *cflist = NULL;
+    unsigned char *funccode = NULL;
+    struct cf_inst_data *idata;
+    size_t bufsiz;
+    char *buf;
+    GHashTable *itypes = NULL;
+    inst_cf_flags_t cfflags = INST_CF_ANY;
+    tid_t tid;
+    struct probe *probe_alt;
+    char sname[sizeof(ADDR)*2 + 2 + 1];
+    int caller_free = 0;
+
+    snprintf(sname,sizeof(sname),"0x%"PRIxADDR,start);
+
+    if (!target_find_memory_real(target,start,NULL,NULL,&range)) {
+	verror("could not find range for addr 0x%"PRIxADDR"\n",start);
+	goto errout;
+    }
+
+    /* Process our varargs list.  There must be at least one
+     * inst_type_t,probe * tuple, as shown in the fucntion prototype.
+     * If inst_type_t is not INST_TYPE_NONE, we process another probe *;
+     * otherwise, we abort since it's the end of the list.
+     */
+    itypes = g_hash_table_new(g_direct_hash,g_direct_equal);
+    g_hash_table_insert(itypes,(gpointer)inst,probe);
+    cfflags |= INST_TO_CF_FLAG(inst);
+    va_start(ap,probe);
+    while ((inst = va_arg(ap,inst_type_t)) != INST_NONE) {
+	probe = va_arg(ap,struct probe *);
+	g_hash_table_insert(itypes,(gpointer)inst,probe);
+	cfflags |= INST_TO_CF_FLAG(inst);
+    }
+    va_end(ap);
+
+    /* Disassemble the function to find the return instructions. */
+    funccode = target_load_code(target,start,end - start,0,0,&caller_free);
+
+    if (disasm_get_control_flow_offsets(target,cfflags,funccode,end - start,
+					&cflist,start,noabort)) {
+	verror("could not disasm function %s!\n",sname);
+	goto errout;
+    }
+
+    if (caller_free)
+	free(funccode);
+    funccode = NULL;
+
+    /* Now register probes for each instruction! */
+    for (j = 0; j < array_list_len(cflist); ++j) {
+	idata = (struct cf_inst_data *)array_list_item(cflist,j);
+
+	/*
+	 * Call the user callback to see if they REALLY want the instr
+	 * probed.  1 means yes; 0 means no.
+	 */
+	probe_alt = NULL;
+	if (handler && handler(idata,start + idata->offset,
+			       handler_data,&probe_alt) == 0) {
+	    vdebug(5,LA_PROBE,LF_PROBE,"user handler skipped this inst!\n");
+	    continue;
+	}
+
+	if (probe_alt) {
+	    vdebug(5,LA_PROBE,LF_PROBE,"user customized the probe for inst!\n");
+	    probe = probe_alt;
+	}
+	else 
+	    probe = (struct probe *) \
+		g_hash_table_lookup(itypes,(gpointer)idata->type);
+
+	tid = probe->thread->tid;
+
+	/* Create the j-th instruction probe.  Assume that all
+	 * instruction names fit in 16 bytes.
+	 */
+	bufsiz = strlen(sname)+1+16+1+11+1;
+	bufsiz = strlen(sname)+1+16+1+11+1;
+	buf = malloc(bufsiz);
+	snprintf(buf,bufsiz,"%s_%s_%d",sname,disasm_get_inst_name(idata->type),j);
+	source = probe_create(target,tid,NULL,buf,probe_do_sink_pre_handlers,
+			      probe_do_sink_post_handlers,NULL,1,1);
+	free(buf);
+
+	/* Register the j-th exit probe. */
+	probeaddr = start + idata->offset;
+	if (!__probe_register_addr(source,probeaddr,range,
+				   PROBEPOINT_BREAK,style,PROBEPOINT_EXEC,
+				   PROBEPOINT_LAUTO,NULL,start)) {
+	    verror("could not register probe %s at 0x%"PRIxADDR"!\n",
+		   source->name,probeaddr);
+	    goto errout;
+	}
+
+	if (!probe_register_source(probe,source)) {
+	    verror("could not register probe %s on source %s!\n",
+		   probe->name,source->name);
+	    probe_free(source,1);
+	    goto errout;
+	}
+
+	vdebug(3,LA_PROBE,LF_PROBE,
+	       "registered %s probe at %s%+d\n",
+	       disasm_get_inst_name(idata->type),sname,(int)idata->offset);
+    }
+
+    if (cflist) {
+	array_list_deep_free(cflist);
+	cflist = NULL;
+    }
+    if (itypes)
+	g_hash_table_destroy(itypes);
+
+    return probe;
+
+ errout:
+    if (itypes)
+	g_hash_table_destroy(itypes);
+    if (funccode)
+	free(funccode);
+    if (cflist) {
+	array_list_deep_free(cflist);
+    }
+    probe_unregister(probe,1);
+    if (probe->autofree)
+	probe_free(probe,1);
     return NULL;
 
 }

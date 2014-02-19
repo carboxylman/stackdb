@@ -376,6 +376,19 @@ struct probe *probe_register_function_instrs(struct bsymbol *bsymbol,
 					     void *handler_data,
 					     inst_type_t inst,
 					     struct probe *probe,...);
+
+/*
+ * Same as above, but disassembles the block of code indicated by
+ * start,end, and places probes there.
+ */
+struct probe *probe_register_block_instrs(struct target *target,
+					  ADDR start,ADDR end,
+					  probepoint_style_t style,
+					  int noabort,
+					  probe_register_disasm_handler_t handler,
+					  void *handler_data,
+					  inst_type_t inst,
+					  struct probe *probe,...);
 /*
  * There are two ways a callee can be "invoked" by a caller.  First, it
  * might be directly called.  Second, it might have been inlined in the

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -29,6 +29,7 @@
 
 static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 			       int isroot);
+static int cfi_instrument_block(struct cfi_data *cfi,ADDR target,int isroot);
 
 static int __cfit_stack_makenull(struct cfi_thread_status *cfit) {
     void *addr;
@@ -174,24 +175,40 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,tid_t tid,void *data,
 
     bsymbol = target_lookup_sym_addr(cfi->target,ip);
     if (!bsymbol) {
-	vwarnopt(8,LA_LIB,LF_CFI,
+	vdebug(8,LA_LIB,LF_CFI,
 		 "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
-		 " 0x%"PRIxADDR" probe(%s) (cannot resolve, not tracking!)\n",
+		 " 0x%"PRIxADDR" probe(%s) (trying code block)\n",
 		 retaddr,array_list_len(cfit->shadow_stack),
 		 probe_addr(base),ip,probe_name(base));
 
-	__cfit_stack_makenull(cfit);
+	if (cfi_instrument_block(cfi,ip,0)) {
+	    vwarn("could not instrument code block for ip 0x%"PRIxADDR";"
+		  " not tracking!\n",ip);
+
+	    __cfit_stack_makenull(cfit);
+	}
+	else {
+	    /*
+	     * Since we know that the call is a known code range (even
+	     * though we can't find a symbol for it) that we can disasm
+	     * and instrument return points for, push it onto the shadow
+	     * stack!
+	     */
+	    array_list_append(cfit->shadow_stack,(void *)(uintptr_t)retaddr);
+	    array_list_append(cfit->shadow_stack_symbols,NULL);
+
+	    return 0;
+	}
     }
     else {
 	if (!(cfi->flags & CFI_NOAUTOFOLLOW)) {
 	    if (cfi_instrument_func(cfi,bsymbol,0)) {
-		vwarnopt(8,LA_LIB,LF_CFI,
-			 "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
-			 " 0x%"PRIxADDR" (%s) probe(%s) (cannot instrument target,"
-			 " not tracking!)\n",
-			 retaddr,array_list_len(cfit->shadow_stack),
-			 probe_addr(base),ip,bsymbol_get_name(bsymbol),
-			 probe_name(base));
+		vwarn("retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+		      " 0x%"PRIxADDR" (%s) probe(%s) (cannot instrument target,"
+		      " not tracking!)\n",
+		      retaddr,array_list_len(cfit->shadow_stack),
+		      probe_addr(base),ip,bsymbol_get_name(bsymbol),
+		      probe_name(base));
 
 		bsymbol_release(bsymbol);
 		__cfit_stack_makenull(cfit);
@@ -273,13 +290,14 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,tid_t tid,void *data,
 	bsymbol_release(bsymbol);
     }
     else {
-	/* XXX: instrument addrs */
-	vwarnopt(8,LA_LIB,LF_CFI,
-		 "could not resolve target for branch 0x%"PRIxADDR" -> 0x%"PRIxADDR
-		 "; not tracking (removing last call)!\n",
-		 probe_addr(base),ip);
+	if (cfi_instrument_block(cfi,ip,0)) {
+	    vwarn("could not instrument code block for branch target"
+		  " 0x%"PRIxADDR" -> 0x%"PRIxADDR";"
+		  " not tracking (removing last call)!\n",
+		  probe_addr(base),ip);
 
-	__cfit_stack_makelastnull(cfit);
+	    __cfit_stack_makelastnull(cfit);
+	}
     }
 
     return RESULT_SUCCESS;
@@ -407,18 +425,20 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,tid_t tid,void *data,
 	    if (bsymbol) {
 		if (cfi_instrument_func(cfi,bsymbol,0)) {
 		    /* XXX: instrument addrs */
-		    vwarnopt(8,LA_LIB,LF_CFI,
-			     "could not instrument function %s (0x%"PRIxADDR");"
-			     " not tracking!\n",
-			     bsymbol_get_name(bsymbol),newretaddr);
+		    vwarn("could not instrument function %s (0x%"PRIxADDR");"
+			  " trying code block!\n",
+			  bsymbol_get_name(bsymbol),newretaddr);
 		}
 		bsymbol_release(bsymbol);
+		bsymbol = NULL;
 	    }
-	    else {
-		/* XXX: instrument addrs */
-		vwarnopt(8,LA_LIB,LF_CFI,
-			 "could not resolve symbol for 0x%"PRIxADDR";"
-			 " not tracking!\n",newretaddr);
+
+	    if (!bsymbol) {
+		if (cfi_instrument_block(cfi,newretaddr,0)) {
+		    vwarn("could not instrument code block for RETI"
+			  " newretaddr 0x%"PRIxADDR"; not tracking!\n",
+			  newretaddr);
+		}
 	    }
 
 	    return 0;
@@ -741,17 +761,209 @@ static int cfi_instrument_func(struct cfi_data *cfi,struct bsymbol *bsymbol,
 		absolute_branch_symbol = 
 		    target_lookup_sym_addr(cfi->target,absolute_branch_addr);
 		if (!absolute_branch_symbol) {
-		    vwarnopt(8,LA_LIB,LF_CFI,
-			     "could not find symbol for 0x%"PRIxADDR"; skipping;"
-			     " CFI might be BUGGY!\n",absolute_branch_addr);
+		    vdebug(8,LA_LIB,LF_CFI,
+			   "could not find symbol for ip 0x%"PRIxADDR";"
+			   " trying code block!\n",absolute_branch_addr);
+
+		    if (cfi_instrument_block(cfi,absolute_branch_addr,0)) {
+			vwarn("could not instrument block for addr 0x%"PRIxADDR";"
+			      " CFI might be BUGGY!\n",
+			      absolute_branch_addr);
+		    }
 		}
 		else {
 		    if (cfi_instrument_func(cfi,absolute_branch_symbol,0)) {
-			vwarnopt(8,LA_LIB,LF_CFI,
-				 "could not instrument func %s (0x%"PRIxADDR");"
-				 " CFI might be BUGGY!\n",
-				 bsymbol_get_name(absolute_branch_symbol),
-				 absolute_branch_addr);
+			vwarn("could not instrument func %s (0x%"PRIxADDR");"
+			      " CFI might be BUGGY!\n",
+			      bsymbol_get_name(absolute_branch_symbol),
+			      absolute_branch_addr);
+		    }
+		    bsymbol_release(absolute_branch_symbol);
+		}
+	    }
+	}
+	array_list_free(pds.absolute_branch_targets);
+    }
+
+    return 0;
+}
+
+static int cfi_instrument_block(struct cfi_data *cfi,ADDR ip,int isroot) {
+    ADDR start = 0,end = 0;
+    int bufsiz;
+    char *buf;
+    struct probe *cprobe = NULL;
+    struct probe *rprobe = NULL;
+    struct probe *jprobe = NULL;
+    struct cfi_probe_disasm_state pds;
+    struct bsymbol *absolute_branch_symbol;
+    ADDR absolute_branch_addr;
+    int i;
+    void *item;
+
+    if (target_lookup_safe_disasm_range(cfi->target,ip,&start,&end,NULL)) {
+	verror("no safe disasm range contains target ip 0x%"PRIxADDR"!\n",ip);
+	return -1;
+    }
+
+    if (g_hash_table_lookup(cfi->disfuncs_noflow,(gpointer)start))
+	return -1;
+
+    /* Probe the called-into block if we haven't already! */
+    if (!g_hash_table_lookup(cfi->disfuncs,(gpointer)start)) {
+	bufsiz = sizeof("call_in_") + sizeof(ADDR) * 2 + 1;
+	buf = malloc(bufsiz);
+	snprintf(buf,bufsiz,"call_in_%"PRIxADDR,start);
+
+	cprobe = probe_create(cfi->target,cfi->tid,NULL,buf,NULL,
+			      cfi_dynamic_retaddr_save,cfi,0,0);
+	free(buf);
+
+	if (!isroot) {
+	    bufsiz = sizeof("ret_in_") + sizeof(ADDR) * 2 + 1;
+	    buf = malloc(bufsiz);
+	    snprintf(buf,bufsiz,"ret_in_%"PRIxADDR,start);
+
+	    rprobe = probe_create(cfi->target,cfi->tid,NULL,buf,
+				  cfi_dynamic_retaddr_check,NULL,cfi,0,0);
+	    free(buf);
+	}
+
+	bufsiz = sizeof("jmp_in_") + sizeof(ADDR) * 2 + 1;
+	buf = malloc(bufsiz);
+	snprintf(buf,bufsiz,"jmp_in_%"PRIxADDR,start);
+
+	jprobe = probe_create(cfi->target,cfi->tid,NULL,buf,NULL,
+			      cfi_dynamic_jmp_target_instr,cfi,0,0);
+	free(buf);
+
+	pds.absolute_branch_targets = array_list_create(0);
+	pds.cfi = cfi;
+
+	/*
+	 * XXX: can we do this optimization; suppose one of our root
+	 * functions is not really a root, but is called by another
+	 * function it itself calls.  So we have to catch these RETs
+	 * too.
+	 *
+	 * ???
+	 */
+
+	if (isroot) {
+	    if (!probe_register_block_instrs(cfi->target,start,end,
+					     PROBEPOINT_SW,1,
+					     cfi_probe_disasm_handler,&pds,
+					     INST_CALL,cprobe,
+					     INST_JMP,jprobe,
+					     INST_NONE)) {
+		probe_free(cprobe,1);
+		return -2;
+	    }
+	}
+	else {
+	    if (!probe_register_block_instrs(cfi->target,start,end,
+					     PROBEPOINT_SW,1,
+					     cfi_probe_disasm_handler,&pds,
+					     INST_RET,rprobe,
+					     INST_CALL,cprobe,
+					     INST_JMP,jprobe,
+					     INST_NONE)) {
+		probe_free(cprobe,1);
+		probe_free(rprobe,1);
+		return -2;
+	    }
+	}
+
+	if (probe_num_sources(cprobe) == 0) {
+	    vdebug(5,LA_LIB,LF_CFI,
+		   "no call sites in %s; removing\n",probe_name(cprobe));
+	    probe_free(cprobe,1);
+	    cprobe = NULL;
+	}
+	else {
+	    g_hash_table_insert(cfi->probes,(gpointer)cprobe,(gpointer)cprobe);
+	    vdebug(5,LA_LIB,LF_CFI,
+		   "registered %d call probes on %s\n",
+		   probe_num_sources(cprobe),probe_name(cprobe));
+	}
+
+	if (!isroot) {
+	    /*
+	     * If the function does not have any exit points, don't
+	     * bother tracking calls to it!
+	     */
+	    if (probe_num_sources(rprobe) == 0) {
+		vdebug(5,LA_LIB,LF_CFI,
+		       "no return sites in %s; removing\n",probe_name(rprobe));
+		probe_free(rprobe,1);
+		rprobe = NULL;
+	    }
+	    else {
+		g_hash_table_insert(cfi->probes,(gpointer)rprobe,(gpointer)rprobe);
+		vdebug(5,LA_LIB,LF_CFI,
+		       "registered %d return probes on %s\n",
+		       probe_num_sources(rprobe),probe_name(rprobe));
+	    }
+	}
+
+	if (probe_num_sources(jprobe) == 0) {
+	    vdebug(5,LA_LIB,LF_CFI,
+		   "no indirect jmp sites in %s; removing\n",probe_name(jprobe));
+	    probe_free(jprobe,1);
+	    jprobe = NULL;
+	}
+	else {
+	    g_hash_table_insert(cfi->probes,(gpointer)jprobe,(gpointer)jprobe);
+	    vdebug(5,LA_LIB,LF_CFI,
+		   "registered %d jmp probes on %s\n",
+		   probe_num_sources(jprobe),probe_name(jprobe));
+	}
+
+	/*
+	 * If no control flow was found, we have to return to the caller
+	 * with an error; we cannot track this function in dynamic CFI.
+	 */
+	if (!cprobe && !rprobe && !jprobe) {
+	    array_list_free(pds.absolute_branch_targets);
+
+	    g_hash_table_insert(cfi->disfuncs_noflow,
+				(gpointer)start,(gpointer)1);
+
+	    return -3;
+	}
+	else 
+	    g_hash_table_insert(cfi->disfuncs,(gpointer)start,(gpointer)1);
+
+	/*
+	 * If the function had absolute jump targets outside of it, we
+	 * have to instrument the blocks containing those things too!
+	 *
+	 * NB: this MUST come last (esp after the cfi->disfuncs
+	 * insertion above)!  Otherwise, there is a risk of infinite
+	 * recursion.
+	 */
+	if (array_list_len(pds.absolute_branch_targets) > 0) {
+	    array_list_foreach(pds.absolute_branch_targets,i,item) {
+		absolute_branch_addr = (ADDR)item;
+		absolute_branch_symbol = 
+		    target_lookup_sym_addr(cfi->target,absolute_branch_addr);
+		if (!absolute_branch_symbol) {
+		    vdebug(8,LA_LIB,LF_CFI,
+			   "could not find symbol for ip 0x%"PRIxADDR";"
+			   " trying code block!\n",absolute_branch_addr);
+
+		    if (cfi_instrument_block(cfi,absolute_branch_addr,0)) {
+			vwarn("could not instrument block for addr 0x%"PRIxADDR";"
+			      " CFI might be BUGGY!\n",
+			      absolute_branch_addr);
+		    }
+		}
+		else {
+		    if (cfi_instrument_func(cfi,absolute_branch_symbol,0)) {
+			vwarn("could not instrument func %s (0x%"PRIxADDR");"
+			      " CFI might be BUGGY!\n",
+			      bsymbol_get_name(absolute_branch_symbol),
+			      absolute_branch_addr);
 		    }
 		    bsymbol_release(absolute_branch_symbol);
 		}
@@ -890,6 +1102,7 @@ char *cfi_thread_backtrace(struct cfi_data *cfi,struct cfi_thread_status *cts,
 struct probe *probe_cfi(struct target *target,tid_t tid,
 			cfi_mode_t mode,cfi_flags_t flags,
 			struct array_list *root_functions,
+			struct array_list *root_addrs,
 			probe_handler_t pre_handler,probe_handler_t post_handler,
 			void *handler_data) {
     struct cfi_data *cfi;
@@ -897,6 +1110,7 @@ struct probe *probe_cfi(struct target *target,tid_t tid,
     char namebuf[64];
     int i;
     struct bsymbol *function;
+    ADDR addr;
 
     /*
      * Only dynamic for now; see cfi.h .
@@ -936,13 +1150,23 @@ struct probe *probe_cfi(struct target *target,tid_t tid,
     cfi->ret_immediate_addrs = g_hash_table_new(g_direct_hash,g_direct_equal);
 
     /*
-     * Just instrument all the functions!  If we fail, then free the
+     * Just instrument all the functions and addrs!  If we fail, then free the
      * whole probe and return.
      */
-    array_list_foreach(root_functions,i,function) {
-	if (cfi_instrument_func(cfi,function,1)) {
-	    probe_free(cfi_probe,1);
-	    return NULL;
+    if (root_functions) {
+	array_list_foreach(root_functions,i,function) {
+	    if (cfi_instrument_func(cfi,function,1)) {
+		probe_free(cfi_probe,1);
+		return NULL;
+	    }
+	}
+    }
+    if (root_addrs) {
+	array_list_foreach_fakeptr_t(root_addrs,i,addr,uintptr_t) {
+	    if (cfi_instrument_block(cfi,addr,1)) {
+		probe_free(cfi_probe,1);
+		return NULL;
+	    }
 	}
     }
 
