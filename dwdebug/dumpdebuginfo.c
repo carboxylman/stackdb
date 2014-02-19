@@ -51,6 +51,7 @@ int main(int argc,char **argv) {
     int dosymtabs = 1;
     int doelfsymtab = 1;
     int doreverse = 0;
+    int doranges = 1;
     char *endptr = NULL;
     int nofree = 0;
     struct lsymbol *s;
@@ -70,7 +71,7 @@ int main(int argc,char **argv) {
 
     dwdebug_init();
 
-    while ((ch = getopt(argc, argv, "d::w::gDMl:F:TGSNErI:i:")) != -1) {
+    while ((ch = getopt(argc, argv, "d::w::gDMl:F:TGSNErI:i:R")) != -1) {
 	switch(ch) {
 	case 'd':
 	    if (optarg) {
@@ -185,6 +186,9 @@ int main(int argc,char **argv) {
 	    }
 	    
 	    break;
+	case 'R':
+	    doranges = 0;
+	    break;
 	default:
 	    fprintf(stderr,"ERROR: unknown option %c!\n",ch);
 	    exit(-1);
@@ -225,7 +229,8 @@ int main(int argc,char **argv) {
     };
 
     if (argc < 2)
-	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs,doelfsymtab);
+	debugfile_dump(debugfile,&ud,dotypes,doglobals,dosymtabs,doelfsymtab,
+		       doranges);
     else {
 	for (i = 1; i < argc; ++i) {
 	    ADDR addr = (ADDR)strtoull(argv[i],&endptr,0);

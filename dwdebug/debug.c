@@ -4693,8 +4693,25 @@ void g_hash_foreach_dump_duplist(gpointer key,gpointer value,gpointer userdata) 
 }
 #endif
 
+void clrange_scope_name_dumper(Word_t start,Word_t end,
+				struct dump_info *ud,void *data) {
+    struct scope *scope = (struct scope *)data;
+    if (scope && scope->symbol)
+	fprintf(ud->stream,"%s",symbol_get_name(scope->symbol));
+    return;
+}
+
+void clrange_symbol_name_dumper(Word_t start,Word_t end,
+				struct dump_info *ud,void *data) {
+    struct symbol *symbol = (struct symbol *)data;
+    if (symbol)
+	fprintf(ud->stream,"%s",symbol_get_name(symbol));
+    return;
+}
+
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
-		    int types,int globals,int symtabs,int elfsymtab) {
+		    int types,int globals,int symtabs,int elfsymtab,
+		    int doranges) {
     char *p = "";
     char *np1, *np2;
     struct dump_info udn;
@@ -4748,6 +4765,11 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 	if (g_hash_table_size(debugfile->srcfiles_multiuse))
 	    fprintf(ud->stream,"\n");
     }
+    if (doranges) {
+	fprintf(ud->stream,"%s  ranges:\n",p);
+	clrange_dump(debugfile->ranges,&udn,
+		     clrange_scope_name_dumper);
+    }
     if (debugfile->binfile 
 	&& debugfile->binfile->root
 	&& symbol_read_owned_scope(debugfile->binfile->root)) {
@@ -4759,6 +4781,11 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 	if (elfsymtab) {
 	    symbol_dump(debugfile->binfile->root,&udn);
 	    fprintf(ud->stream,"\n");
+	}
+	if (doranges) {
+	    fprintf(ud->stream,"%s  binfile root ranges:\n",p);
+	    clrange_dump(debugfile->binfile->ranges,&udn,
+			 clrange_symbol_name_dumper);
 	}
     }
     else 
@@ -4776,6 +4803,11 @@ void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
 	if (elfsymtab) {
 	    symbol_dump(debugfile->binfile_pointing->root,&udn);
 	    fprintf(ud->stream,"\n");
+	}
+	if (doranges) {
+	    fprintf(ud->stream,"%s  binfile_pointing root ranges:\n",p);
+	    clrange_dump(debugfile->binfile_pointing->ranges,&udn,
+			 clrange_symbol_name_dumper);
 	}
     }
     else

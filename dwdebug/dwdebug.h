@@ -347,7 +347,8 @@ char *debugfile_get_version(struct debugfile *debugfile);
 int debugfile_filename_info(char *filename,char **realfilename,
 			    char **name,char **version);
 void debugfile_dump(struct debugfile *debugfile,struct dump_info *ud,
-		    int types,int globals,int symtabs,int elfsymtab);
+		    int types,int globals,int symtabs,int elfsymtab,
+		    int doranges);
 REFCNT debugfile_release(struct debugfile *debugfile);
 
 /**
