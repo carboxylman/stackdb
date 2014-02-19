@@ -907,7 +907,7 @@ static int php_populate_debugfile(struct target *target,
 	.detail = 1,
     };
 
-    debugfile_dump(debugfile,&ud,1,1,1,1);
+    debugfile_dump(debugfile,&ud,1,1,1,1,1);
 
     return 0;
 }
