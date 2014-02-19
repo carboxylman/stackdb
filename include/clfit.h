@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 The University of Utah
+ * Copyright (c) 2012, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -21,6 +21,7 @@
 
 #include <Judy.h>
 #include "alist.h"
+#include "output.h"
 
 /*
  * We assume that clrange_t ranges DO NOT overlap -- i.e., where the
@@ -78,6 +79,11 @@ struct array_list *clrange_find_next_exc(clrange_t *clf,Word_t index);
 struct array_list *clrange_find_subranges_inside(clrange_t *clf,
 						 Word_t index,
 						 unsigned int len);
+
+typedef void (*clrange_dumper_t)(Word_t start,Word_t end,
+				 struct dump_info *ud,void *data);
+void clrange_dump(clrange_t *clf,struct dump_info *ud,
+		  clrange_dumper_t dumper);
 
 void clrange_free(clrange_t clf);
 

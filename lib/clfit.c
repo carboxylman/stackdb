@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
+#include "common.h"
 #include "log.h"
 #include "clfit.h"
 #include "alist.h"
@@ -594,6 +595,56 @@ void clrange_free(clmatch_t clf) {
      * compiler disagrees!
      */
     JLFA(bytes_freed,clf);
+}
+
+void clrange_dump(clrange_t *clf,struct dump_info *ud,
+		  clrange_dumper_t dumper) {
+    PWord_t pv;
+    int rci;
+    Word_t index,nextindex;
+    struct clf_range_data *crd,*ccrd;
+    int i;
+
+    if (!clf)
+	return;
+
+    /*
+     * Scan each element one by one.
+     */
+    index = 0;
+    while (1) {
+	JLF(pv,clf,index);
+	if (pv == NULL)
+	    break;
+	i = 0;
+	nextindex = index;
+	array_list_foreach(((struct array_list *)*pv),i,crd) {
+	    if (i == 0) {
+		if (CLRANGE_END(crd) <= index)
+		    nextindex = index + 1;
+		else
+		    nextindex = CLRANGE_END(crd);
+	    }
+	    else if (CLRANGE_END(crd) < nextindex && CLRANGE_END(crd) > index)
+		nextindex = CLRANGE_END(crd);
+
+	    fprintf(ud->stream,"%s",ud->prefix);
+	    ccrd = crd->containing_range;
+	    while (ccrd) {
+		fputs("  ",ud->stream);
+		ccrd = ccrd->containing_range;
+	    }
+	    fprintf(ud->stream,"0x%"PRIxADDR",0x%"PRIxADDR": ",
+		    CLRANGE_START(crd),CLRANGE_END(crd));
+	    if (dumper)
+		dumper(CLRANGE_START(crd),CLRANGE_END(crd),ud,CLRANGE_DATA(crd));
+	    fputs("\n",ud->stream);
+	}
+
+	index = nextindex;
+    }
+
+    return;
 }
 
 clmatch_t clmatch_create() {
