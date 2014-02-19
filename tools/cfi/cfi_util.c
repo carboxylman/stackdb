@@ -176,14 +176,14 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,tid_t tid,void *data,
     bsymbol = target_lookup_sym_addr(cfi->target,ip);
     if (!bsymbol) {
 	vdebug(8,LA_LIB,LF_CFI,
-		 "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
-		 " 0x%"PRIxADDR" probe(%s) (trying code block)\n",
-		 retaddr,array_list_len(cfit->shadow_stack),
-		 probe_addr(base),ip,probe_name(base));
+	       "tid %d retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+	       " 0x%"PRIxADDR" probe(%s) (trying code block)\n",
+	       tid,retaddr,array_list_len(cfit->shadow_stack),
+	       probe_addr(base),ip,probe_name(base));
 
 	if (cfi_instrument_block(cfi,ip,0)) {
-	    vwarn("could not instrument code block for ip 0x%"PRIxADDR";"
-		  " not tracking!\n",ip);
+	    vwarn("tid %d could not instrument code block for ip 0x%"PRIxADDR";"
+		  " not tracking!\n",tid,ip);
 
 	    __cfit_stack_makenull(cfit);
 	}
@@ -203,10 +203,10 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,tid_t tid,void *data,
     else {
 	if (!(cfi->flags & CFI_NOAUTOFOLLOW)) {
 	    if (cfi_instrument_func(cfi,bsymbol,0)) {
-		vwarn("retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+		vwarn("tid %d retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
 		      " 0x%"PRIxADDR" (%s) probe(%s) (cannot instrument target,"
 		      " not tracking!)\n",
-		      retaddr,array_list_len(cfit->shadow_stack),
+		      tid,retaddr,array_list_len(cfit->shadow_stack),
 		      probe_addr(base),ip,bsymbol_get_name(bsymbol),
 		      probe_name(base));
 
@@ -215,9 +215,9 @@ result_t cfi_dynamic_retaddr_save(struct probe *probe,tid_t tid,void *data,
 	    }
 	    else {
 		vdebug(5,LA_LIB,LF_CFI,
-		       "retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
+		       "tid %d retaddr = 0x%"PRIxADDR" (%d) branch 0x%"PRIxADDR" ->"
 		       " 0x%"PRIxADDR" (%s) probe(%s) (tracking)\n",
-		       retaddr,array_list_len(cfit->shadow_stack),
+		       tid,retaddr,array_list_len(cfit->shadow_stack),
 		       probe_addr(base),ip,bsymbol_get_name(bsymbol),
 		       probe_name(base));
 
@@ -269,10 +269,9 @@ result_t cfi_dynamic_jmp_target_instr(struct probe *probe,tid_t tid,void *data,
     if (bsymbol) {
 	if (cfi_instrument_func(cfi,bsymbol,0)) {
 	    /* XXX: instrument addrs */
-	    vwarnopt(8,LA_LIB,LF_CFI,
-		     "could not instrument branch 0x%"PRIxADDR" -> (0x%"PRIxADDR
-		     " (%s); not tracking (removing last call)!\n",
-		     probe_addr(base),ip,bsymbol_get_name(bsymbol));
+	    vwarn("tid %d could not instrument branch 0x%"PRIxADDR" -> (0x%"PRIxADDR
+		  " (%s); not tracking (removing last call)!\n",
+		  tid,probe_addr(base),ip,bsymbol_get_name(bsymbol));
 
 	    /*
 	     * XXX XXX XXX
@@ -355,7 +354,7 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,tid_t tid,void *data,
 
     if (!target_read_addr(cfi->target,(ADDR)sp,sizeof(ADDR),
 			  (unsigned char *)&newretaddr)) {
-	verror("could not read retaddr from top of stack!\n");
+	verror("tid %d could not read retaddr from top of stack!\n",tid);
 	array_list_remove(cfit->shadow_stack);
 	array_list_remove(cfit->shadow_stack_symbols);
 	return RESULT_ERROR;
@@ -389,17 +388,17 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,tid_t tid,void *data,
 				array_list_len(cfit->shadow_stack_symbols) - 1);
 
 	    vdebug(8,LA_LIB,LF_CFI,
-		   "leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
+		   "tid %d leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
 		   " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
-		   newretaddr,oldretaddr2,probe_name(base));
+		   tid,newretaddr,oldretaddr2,probe_name(base));
 
 	    goto cficlean;
 	}
 	else {
 	    vdebug(8,LA_LIB,LF_CFI,
-		   "not leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
+		   "tid %d not leaving untracked sequence; newretaddr = 0x%"PRIxADDR";"
 		   " oldretaddr = 0x%"PRIxADDR" (probe %s)!\n",
-		   newretaddr,oldretaddr2,probe_name(base));
+		   tid,newretaddr,oldretaddr2,probe_name(base));
 	    return 0;
 	}
     }
@@ -417,28 +416,33 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,tid_t tid,void *data,
 	    bsymbol = target_lookup_sym_addr(cfi->target,newretaddr);
 
 	    vdebug(5,LA_LIB,LF_CFI,
-		   "retaddr = 0x%"PRIxADDR" (%d) (ret-immediate; oldretaddr ="
+		   "tid %d retaddr = 0x%"PRIxADDR" (%d) (ret-immediate; oldretaddr ="
 		   " 0x%"PRIxADDR") probe %s (0x%"PRIxADDR")\n",
-		   newretaddr,array_list_len(cfit->shadow_stack),oldretaddr,
+		   tid,newretaddr,array_list_len(cfit->shadow_stack),oldretaddr,
 		   probe_name(probe),probe_addr(base));
 
 	    if (bsymbol) {
 		if (cfi_instrument_func(cfi,bsymbol,0)) {
 		    /* XXX: instrument addrs */
-		    vwarn("could not instrument function %s (0x%"PRIxADDR");"
+		    vwarn("tid %d could not instrument function %s (0x%"PRIxADDR");"
 			  " trying code block!\n",
-			  bsymbol_get_name(bsymbol),newretaddr);
+			  tid,bsymbol_get_name(bsymbol),newretaddr);
+		    bsymbol_release(bsymbol);
+		    bsymbol = NULL;
 		}
-		bsymbol_release(bsymbol);
-		bsymbol = NULL;
 	    }
 
 	    if (!bsymbol) {
 		if (cfi_instrument_block(cfi,newretaddr,0)) {
-		    vwarn("could not instrument code block for RETI"
+		    vwarn("tid %d could not instrument code block for RETI"
 			  " newretaddr 0x%"PRIxADDR"; not tracking!\n",
-			  newretaddr);
+			  tid,newretaddr);
 		}
+	    }
+
+	    if (bsymbol) {
+		bsymbol_release(bsymbol);
+		bsymbol = NULL;
 	    }
 
 	    return 0;
@@ -466,9 +470,9 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,tid_t tid,void *data,
 	    ++cfit->status.violations;
 
 	    vdebug(5,LA_LIB,LF_CFI,
-		   "retaddr = 0x%"PRIxADDR" (%d) (violation! oldretaddr ="
+		   "tid %d retaddr = 0x%"PRIxADDR" (%d) (violation! oldretaddr ="
 		   " 0x%"PRIxADDR") probe %s (0x%"PRIxADDR")\n",
-		   newretaddr,array_list_len(cfit->shadow_stack),oldretaddr,
+		   tid,newretaddr,array_list_len(cfit->shadow_stack),oldretaddr,
 		   probe_name(probe),probe_addr(base));
 
 	    /*
@@ -505,8 +509,8 @@ result_t cfi_dynamic_retaddr_check(struct probe *probe,tid_t tid,void *data,
 	cfit->status.newretaddr = 0;
 
 	vdebug(5,LA_LIB,LF_CFI,
-	       "retaddr = 0x%"PRIxADDR" (%d) (clean) probe(%s) (0x%"PRIxADDR")\n",
-	       newretaddr,array_list_len(cfit->shadow_stack),
+	       "tid %d retaddr = 0x%"PRIxADDR" (%d) (clean) probe(%s) (0x%"PRIxADDR")\n",
+	       tid,newretaddr,array_list_len(cfit->shadow_stack),
 	       probe_name(probe),probe_addr(base));
     }
 
