@@ -91,8 +91,8 @@ result_t probe_do_sink_pre_handlers (struct probe *probe,tid_t tid,
 	    else {
 		vdebug(8,LA_PROBE,LF_PROBE,"not running pre handler for ");
 		LOGDUMPPROBE(6,LA_PROBE,LF_PROBE,probe);
-		vdebugc(8,LA_PROBE,LF_PROBE,"probe tid %d; sink tid %d\n",
-			probe->thread->tid,ptmp->thread->tid);
+		vdebugc(8,LA_PROBE,LF_PROBE,"tid %d probe tid %d; sink tid %d\n",
+			tid,probe->thread->tid,ptmp->thread->tid);
 	    }
 		
 
@@ -144,8 +144,8 @@ result_t probe_do_sink_post_handlers(struct probe *probe,tid_t tid,
 	    else {
 		vdebug(8,LA_PROBE,LF_PROBE,"not running post handler for ");
 		LOGDUMPPROBE(6,LA_PROBE,LF_PROBE,probe);
-		vdebugc(8,LA_PROBE,LF_PROBE,"probe tid %d; sink tid %d\n",
-			probe->thread->tid,ptmp->thread->tid);
+		vdebugc(8,LA_PROBE,LF_PROBE,"tid %d probe tid %d; sink tid %d\n",
+			tid,probe->thread->tid,ptmp->thread->tid);
 	    }
 
 	    PROBE_SAFE_OP_ARGS(ptmp,values_notify_phase,tid,PHASE_POST_END);

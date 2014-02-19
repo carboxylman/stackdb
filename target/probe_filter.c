@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -20,6 +20,8 @@
 #include <regex.h>
 
 #include "log.h"
+#include "dwdebug.h"
+#include "dwdebug_priv.h"
 #include "target_api.h"
 #include "target.h"
 #include "target_os.h"
@@ -51,8 +53,13 @@ int probe_filter_check(struct probe *probe,tid_t tid,struct probe *trigger,
      */
     if (probe->thread_filter) {
 	rc = target_thread_filter_check(probe->target,tid,probe->thread_filter);
-	if (rc)
+	if (rc) {
+	    vdebug(9,LA_PROBE,LF_PROBE,
+		   "thread filter check did not match tid %d probe tid %d ",
+		   tid,probe->thread->tid);
+	    LOGDUMPPROBE_NL(9,LA_PROBE,LF_PROBE,probe);
 	    return rc;
+	}
     }
 
     if (!tf)
