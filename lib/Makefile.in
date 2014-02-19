@@ -87,7 +87,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES) \
 		log.lo libvmilib.lo loadall.lo loadallforever.lo libloadallpagebypage.lo
-	$(RM) -f $(LIBRARIES) log.o libvmilib.* libvmilib.*
+	$(RM) -f $(LIBRARIES) log.o libvmilib.* libvmilib.* loadall*
 	$(RM) -rf .libs
 
 distclean: distclean-subdirs
