@@ -1,5 +1,5 @@
 ;/*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -299,6 +299,12 @@ int vmi_log_get_flag_val(char *flag,log_areas_t *areaval,log_flags_t *flagval) {
 	subarray = log_flag_stringmap[areabits];
 	_area = "U";
 	_flag = flag;
+
+	if (!subarray) {
+	    verror("bad flag '%s': area '%s' has no flags!\n",flag,_area);
+	    free(_dup);
+	    return -1;
+	}
 
 	i = 0;
 	found = 0;
