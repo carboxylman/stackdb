@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 ##
-## Copyright (c) 2013, 2014 The University of Utah
+## Copyright (c) 2013 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -68,6 +68,18 @@ tspec.backendSpec.targetXenSpec.domain = "qlc"
 tspec.backendSpec.targetXenSpec.kernelFilename = "/boot/vmlinuz-2.6.18-308.el5"
 
 
+otspec = client.factory.create('TargetSpecT')
+otspec.mode = "live"
+otspec.startPaused = False
+otspec.logStdout = True
+otspec.logStderr = True
+otspec.stdinBytes = None
+otspec.debugfileRootPrefix = '/local/sda4/debuginfo/centos5.5-x86_64'
+
+otspec._type = "xenProcess"
+otspec.backendSpec.targetXenProcessSpec = None #client.factory.create('TargetXenProcessSpecT')
+
+
 #ptspec = client.factory.create('TargetPtraceSpecT')
 #xspec = client.factory.create('TargetXenSpecT')
 #xpspec = client.factory.create('TargetXenProcessSpecT')
@@ -84,15 +96,20 @@ aspec.reportStdoutIntermediateResults = True
 aspec.reportStderrIntermediateResults = True
 aspec.autoparseSimpleResults = True
 spf_conf_xen = """
-ProbeFilter sys_recvfrom id(recvfrom) when(pre) report(rt=f,tn=syscall,tid=0,rv=recvfrom,msg=sys_recvfrom,ttdetail=2)
+ProbeFilter sys_open id(openFiltered) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="file open") abort(1)
+ProbeFilter sys_open id(openExit) when(pre) vfilter(filename=/vmi.exit/) print() exit(0)
 """
-#ProbeFilter sys_open id(openFiltered) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="file open") abort(1)
-#ProbeFilter sys_open id(openExit) when(pre) vfilter(filename=/vmi.exit/) print() exit(0)
+spf_conf_xen_process = """
+ProbeFilter sys_fork id(sys_fork) when(pre) report(rt=i,tn=syscall,tid=0,rv=fork,msg="sys_fork")
+ProbeFilter sys_open id(sys_open) when(pre) report(rt=i,tn=syscall,tid=0,rv=open,msg="sys_open")
+ProbeFilter make_child id(make_child) when(pre) report(rt=i,tn=bash,tid=0,rv=make_child,msg="sh child spawn") abort(1)
+"""
 
 supportFile = client.factory.create('SupportFileT')
 #supportFile.name = "spf.conf"
 supportFile.name = "spf.commandline.conf"
-supportFile.content = binascii.b2a_hex(spf_conf_xen)
+#supportFile.content = binascii.b2a_hex(spf_conf_xen)
+supportFile.content = binascii.b2a_hex(spf_conf_xen_process)
 aspec.supportFiles.supportFile.append(supportFile)
 
 inputParam = client.factory.create('NameValueT')
@@ -119,4 +136,6 @@ listener = client.factory.create('ListenerT')
 listener.hostname = 'localhost'
 listener.port = 3952
 
-retval = client.service.InstantiateAnalysis(aspec,tspec,listener)
+#retval = client.service.InstantiateAnalysis(aspec,tspec,listener)
+retval = client.service.InstantiateOverlayAnalysisByThreadName(aspec,tspec,otspec,'sh',listener)
+#retval = client.service.InstantiateOverlayAnalysis(aspec,tspec,otspec,428,listener)
