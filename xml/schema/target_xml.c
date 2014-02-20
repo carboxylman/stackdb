@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -206,6 +206,11 @@ x_TargetSpecT_to_t_target_spec(struct soap *soap,
 	ospec = target_build_spec(type,mode);
     }
 
+    if (spec->defaultProbeStyle)
+	ospec->style = 
+	    x_ProbepointStyleT_to_t_probepoint_style_t(soap,
+						       *spec->defaultProbeStyle);
+
     if (spec->startPaused == xsd__boolean__false_)
 	ospec->start_paused = 0;
     else 
@@ -282,6 +287,12 @@ t_target_spec_to_x_TargetSpecT(struct soap *soap,
 	ospec->startPaused = xsd__boolean__false_;
     else 
 	ospec->startPaused = xsd__boolean__true_;
+
+    ospec->defaultProbeStyle = 
+	SOAP_CALLOC(soap,1,sizeof(*ospec->defaultProbeStyle));
+    *ospec->defaultProbeStyle = 
+	t_probepoint_style_t_to_x_ProbepointStyleT(soap,spec->style);
+
     /* XXX: this might be a lie. */
     ospec->dedicatedMonitor = xsd__boolean__false_;
     ospec->logStdout = SOAP_CALLOC(soap,1,sizeof(*ospec->logStdout));
