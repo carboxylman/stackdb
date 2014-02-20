@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 The University of Utah
+ * Copyright (c) 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -430,7 +430,7 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 			continue;
 		    }
 		    *token_end = '\0';
-		    vdebug(8,LA_DEBUG,LF_XML,
+		    vdebug(8,LA_XML,LF_RPC,
 			   "found '%s' = '%s'\n",key,key_end + 1);
 		    analysis_datum_add_simple_value(datum,key,key_end + 1,0);
 		    token_middle = token_end + 1;
