@@ -43,6 +43,11 @@ $(INSTALL_LIBDIR)/%: %
 	-mkdir -p $(INSTALL_LIBDIR)
 	$(INSTALL_PROGRAM) $< $@
 
+$(INSTALL_INCDIR)/$(TOP_SRCDIR)/%: $(TOP_SRCDIR)/%
+	@echo "Installing $<"
+	-mkdir -p $(INSTALL_INCDIR)
+	$(INSTALL_DATA) $< $(INSTALL_INCDIR)
+
 $(INSTALL_INCDIR)/%: %
 	@echo "Installing $<"
 	-mkdir -p $(INSTALL_INCDIR)
