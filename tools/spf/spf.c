@@ -607,7 +607,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 		    spfa->report.rt,result_counter,
 		    spfa->report.tn ? spfa->report.tn : "",
 		    spfa->report.tid,spfa->report.rv ? spfa->report.rv : "",
-		    spfa->report.msg ? spfa->report.msg : "");
+		    spfa->report.msg ? spfa->report.msg : "\"\"");
 	    /* Now print the values... */
 	    if (vt) {
 		i = 0;
@@ -1985,7 +1985,13 @@ struct spf_config *load_config_file(char *file) {
 			    spfa->report.rv = strdup(token2);
 			}
 			else if (strcmp(token,"msg") == 0) {
-			    spfa->report.msg = strdup(token2);
+			    if (*token2 != '"') {
+				spfa->report.msg = malloc(2+1+strlen(token2));
+				snprintf(spfa->report.msg,2+1+strlen(token2),
+					 "\"%s\"",token2);
+			    }
+			    else
+				spfa->report.msg = strdup(token2);
 			}
 			else if (strcmp(token,"ttctx") == 0) {
 			    if (strcmp(token2,"none") == 0)
