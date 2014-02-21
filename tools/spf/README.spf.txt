@@ -1,6 +1,6 @@
 ## -*- mode: Text -*-
 ##
-## Copyright (c) 2013 The University of Utah
+## Copyright (c) 2013, 2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -55,7 +55,7 @@ At this point, only one directive is supported.
 
 ProbeFilter <symbol_name> [id(<probeFilterId>)] [when(pre|post)] [disable()]  \
     [vfilter(value1=/regex/,value2=/regex/,...)]                              \
-    [print()]                                                                 \
+    [print()] [bt([<target_id>[,<thread_name_or_id>]])]                       \
     [report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
             ttctx=all|hier|self|none))]                                       \
     [enable(<probeFilterId>)] [disable(<probeFilterId>)] [remove(<probeFilterId>)] \
@@ -145,6 +145,19 @@ the syntax.
     triggered the probe, to its root parent, will be displayed.  If
     ttctx==none, no threads will be displayed.  The default is none.
 
+  bt([<target_id>[,<thread_name_or_id>]])
+
+    This command prints one or more backtraces of target threads to
+    stdout.  If you don't specify <target_id> (or specify '-1'), it will
+    print backtraces for the thread that is currently executing (i.e.,
+    the one that hit the probe); otherwise, the target you specified
+    will be used.  If you don't specify <thread_name_or_id>, it will
+    print out the current thread.  If you use the value '0', it will
+    print out all threads in the target.  If you specify a thread name,
+    it will print out all threads for which
+    strcmp(<thread_name_or_id>,thread->name) matches.  If you specify a
+    thread number, it will print out that thread -- if it exists.
+
   report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
          ttctx=all|hier|self|none),ttdetail=<-2|-1|0|1|2>,) {1}
 
@@ -172,7 +185,15 @@ the syntax.
     is called; this is the `id' attribute.  The report() tn argument
     becomes name; report.tid becomes type; report.rv becomes
     resultValue; report.msg becomes msg; and any of the probe's values
-    are passed back as strings in outputValues.
+    are passed back as strings in outputValues.  The report() rt
+    argument says what type of result this is (whether it is 'i'
+    (intermediate) or 'f' (final)).  This is interpreted specifically by
+    the VMI XML analysis server's RESULT autoparsing code.  If it is an
+    'i' RESULT, it is sent to any of the XML analysis server's listeners
+    immediately, and is then discarded.  If it is an 'f' RESULT, the XML
+    analysis server immediately notifies listeners as well, but it saves
+    the RESULT for later retrieval by an XML client.  'i' RESULTs are
+    not saved for later retrieval.
 
     We also can report back thread context information (i.e., id, name,
     parent id, uid, gid; or other target backend-specific values --
