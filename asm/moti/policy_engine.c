@@ -164,7 +164,7 @@ int generate_snapshot() {
 
 			    
     /* Start making calls to each of the VMI function */ 
-
+    /*
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
@@ -172,7 +172,7 @@ int generate_snapshot() {
 	goto resume;
     }
     
-    
+    */ 
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
@@ -180,7 +180,7 @@ int generate_snapshot() {
 	goto resume;
     } 
     
-   
+   /*
     result = module_info();
     if(result) {
 	fprintf(stdout,"ERRROR: module_info function failed.\n");
@@ -221,7 +221,8 @@ int generate_snapshot() {
 	fprintf(stdout,"ERROR: commandline_info failed.\n");
 	goto resume;
     }
-    
+   
+    */
 resume:
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
@@ -308,6 +309,7 @@ int main( int argc, char** argv) {
     char targetstr[80];
     struct target_spec *tspec = NULL;
     target_status_t tstat;
+    int iteration = 1;
 
 
     memset(&opts,0,sizeof(opts));
@@ -324,7 +326,7 @@ int main( int argc, char** argv) {
    */
     app_file_path = "application_knowledge.cls"; //opts.argv[0];
     recovery_rules_file = "recovery_contructs.cls";
-    wait_time = 20; //atoi(opts.argv[1]);
+    wait_time = 5; //atoi(opts.argv[1]);
     
     dwdebug_init();
     target_init();
@@ -358,6 +360,7 @@ int main( int argc, char** argv) {
     // Start an infinite loop to periodically execute steps 3.1 to 3.5 
     while(1) {
 
+	fprintf(stdout,"============================ITERATION %d ============================\n",iteration++);
         fprintf(stdout,"INFO: Loading the application level rules\n");
 	result = Load(app_file_path);
 	    if(result != 1) {
@@ -387,11 +390,12 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
 
+	/*
 	result = Watch("all");
 	if(!result) {
 	    fprintf(stdout,"Error: Faild to watch \n");
 	}
-
+	*/
 	fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
 	if(!result) {
@@ -410,8 +414,7 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	// At this time the anomaly facts are generated.
 	
-	fprintf(stdout,"INFO: Loading the state information of recovery facts \
-						    from the previous execution \n");
+	fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
 	result = LoadFacts("process_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");

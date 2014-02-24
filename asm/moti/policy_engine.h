@@ -18,6 +18,7 @@
 
 
 #include "target_os.h"
+#include <unistd.h>
 
 /* Macros for caomputing the CPU LOAD */
 #define FSHIFT 11
@@ -283,7 +284,7 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     value_free(parent_task_struct_v);
     value_free(parent_name_v);
 
-    fprintf(stdout,"INFO: Parent name %s and pid %d\n",parent_name, parent_pid);
+    //fprintf(stdout,"INFO: Parent name %s and pid %d\n",parent_name, parent_pid);
 
     /* Now gather the information about each of the child processes 
 
@@ -405,7 +406,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     int sock = 0;
 
 
-    fprintf(stdout,"INFO: Gathering list of open files\n");
+    //fprintf(stdout,"INFO: Gathering list of open files\n");
     pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
     if(!pid_value) {
 	fprintf(stdout," ERROR: failed to load the pid value.\n");
@@ -421,7 +422,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     process_name = strdup(name_value->buf);
 
     /* Load the files struct from the task_struct */
-    fprintf(stdout,"INFO: Loading files struct\n");
+    //fprintf(stdout,"INFO: Loading files struct\n");
     files_value = target_load_value_member(target, NULL, value, "files", NULL, 
 	    LOAD_FLAG_AUTO_DEREF);
     if(!files_value) {
@@ -430,7 +431,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     }   
 
     /* Load the fdtable struct */
-    fprintf(stdout,"INFO: Loading fdt struct\n");
+    //fprintf(stdout,"INFO: Loading fdt struct\n");
     fdt_value =  target_load_value_member( target, NULL, files_value, "fdt", 
 	    NULL, LOAD_FLAG_AUTO_DEREF);
     if(!fdt_value) {
@@ -439,7 +440,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     }   
 
     /* Load the  max_fds member of the ftable struct */
-    fprintf(stdout,"INFO: Loading max_fds member\n");
+    //fprintf(stdout,"INFO: Loading max_fds member\n");
     max_fds_value = target_load_value_member( target, NULL, fdt_value, 
 	    "max_fds", NULL, LOAD_FLAG_NONE);
     if(!max_fds_value) {
@@ -448,10 +449,10 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     }   
 
     max_fds = v_i32(max_fds_value);
-    fprintf(stdout,"INFO: max_fds_value for process %s = %d\n", process_name, max_fds);
+    //fprintf(stdout,"INFO: max_fds_value for process %s = %d\n", process_name, max_fds);
     
     /*Open the base fact file */
-    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    //fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
@@ -459,13 +460,13 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     }
 
     /* Start encoding the fact */
-    fprintf(stdout,"INFO: Encode the base facts.\n");
+    //fprintf(stdout,"INFO: Encode the base facts.\n");
     fprintf(fp,"\n(opened-files\n \
 	    \t(comm \"%s\")\n \
 	    \t(pid %d)\n", process_name, pid);
 
     for( i = 0; i < max_fds; i++) {
-	fprintf(stdout,"INFO: Loading fd struct\n");
+	//fprintf(stdout,"INFO: Loading fd struct\n");
 	fd_value =  target_load_value_member(target, NULL, fdt_value, "fd", NULL, 
 		LOAD_FLAG_NONE);
 	if(!fd_value) {
@@ -475,10 +476,10 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	//fprintf(stdout," fd_value = 0x%"PRIxADDR" \n", fd_value->buf);
 
 	/* Load the array of file descriptors */
-	fprintf(stdout,"INFO: Loading fs struct\n");
+	//fprintf(stdout,"INFO: Loading fs struct\n");
 	/* This is the base address */
 	mem_addr = v_addr(fd_value);
-	fprintf(stdout,"INFO: mem_addr = 0x%"PRIxADDR"\n",mem_addr);
+	//fprintf(stdout,"INFO: mem_addr = 0x%"PRIxADDR"\n",mem_addr);
 
 	mem_addr = mem_addr + (target->ptrsize * i);
 	if(!target_read_addr(target, mem_addr, target->ptrsize, 
@@ -487,7 +488,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    exit(0);
 	}
 	if(!file_addr) {
-	    fprintf(stdout," INFO: File table entry is NULL\n");
+	    //fprintf(stdout," INFO: File table entry is NULL\n");
 	    continue;
 	}
 
@@ -508,7 +509,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	}
 
 	/* Finally load the array memeber */
-	fprintf(stdout,"INFO: Loading file struct\n");
+	//fprintf(stdout,"INFO: Loading file struct\n");
 	file_value = target_load_type(target, file_struct_type, file_addr, 
 		    LOAD_FLAG_AUTO_DEREF);
 	if(!file_value) {
@@ -528,7 +529,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	*/
 	
 	/* Load the path the variable from the files struct*/
-	fprintf(stdout,"INFO: Loading f_path struct\n");
+	//fprintf(stdout,"INFO: Loading f_path struct\n");
 	path_value = target_load_value_member( target, NULL, file_value, "f_path",
 		    NULL, LOAD_FLAG_NONE);
 	if(!path_value) {
@@ -537,7 +538,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	} 
 
 	/* Load the dentry struct  member from the path */
-	fprintf(stdout,"INFO: Loading dentry struct\n");
+	//fprintf(stdout,"INFO: Loading dentry struct\n");
 	dentry_value = target_load_value_member(target, NULL, path_value, "dentry",
 		    NULL, LOAD_FLAG_AUTO_DEREF);
 	if(!dentry_value){
@@ -546,7 +547,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	}
 
 	/* Load the d_name struct */
-	fprintf(stdout,"INFO: Loading d_name struct\n");
+	//fprintf(stdout,"INFO: Loading d_name struct\n");
 	d_name_value = target_load_value_member(target, NULL, dentry_value, "d_name",
 		    NULL, LOAD_FLAG_NONE);
 	if(!d_name_value) {
@@ -555,7 +556,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	} 
 	
 	/* Finally load the lenght of  name string */
-	fprintf(stdout,"INFO: Loading the length of name string\n");
+	//fprintf(stdout,"INFO: Loading the length of name string\n");
 	len_name_value = target_load_value_member( target, NULL, d_name_value, "len",
 		    NULL, LOAD_FLAG_NONE);
 	if(!len_name_value) {
@@ -563,9 +564,9 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	    exit(0);
 	}
 	unsigned int len = v_u32(len_name_value);
-	fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
+	//fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
 	if(len == 0) {
-	    fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
+	    //fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
 	    continue;
 	}
 	value_free(len_name_value);
@@ -580,7 +581,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	file_name = strdup(file_name_value->buf);
 
 	/* Load the inode struct */
-	fprintf(stdout,"INFO: Loading the d_inode struct.\n");
+	//fprintf(stdout,"INFO: Loading the d_inode struct.\n");
 	d_inode_value = target_load_value_member(target, NULL, dentry_value, "d_inode",
 						NULL, LOAD_FLAG_AUTO_DEREF);
 	if(!d_inode_value) {
@@ -589,7 +590,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	}
 
 	/*Load the i_mode member */
-	fprintf(stdout,"INFO: Load the i_mode member.\n");
+	//fprintf(stdout,"INFO: Load the i_mode member.\n");
 	i_mode_value = target_load_value_member(target, NULL, d_inode_value, "i_mode",
 						NULL, LOAD_FLAG_NONE);
 	i_mode = v_u16(i_mode_value);
@@ -597,35 +598,35 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 	/* Now check for the type of the file*/
 	
 	if(S_ISLNK(i_mode)) {
-	    fprintf(stdout,"INFO: The file is a link.\n");
+	    //fprintf(stdout,"INFO: The file is a link.\n");
 	    strcpy(lnk_file[lnk++], file_name);
 	}
 	else if(S_ISREG(i_mode)) {
-	    fprintf(stdout,"INFO: The file is a regular file.\n");
+	    //fprintf(stdout,"INFO: The file is a regular file.\n");
 	    strcpy(reg_file[reg++], file_name);
 	}
 	else if(S_ISDIR(i_mode)){
-	    fprintf(stdout,"INFO: The file is a directory.\n");
+	    //fprintf(stdout,"INFO: The file is a directory.\n");
 	    strcpy(dir_file[dir++], file_name);
 	}
 	else if(S_ISCHR(i_mode)) {
-	    fprintf(stdout,"INFO: The file is a character file.\n");
+	    //fprintf(stdout,"INFO: The file is a character file.\n");
 	    strcpy(chr_file[chr++], file_name);
 	}
 	else if(S_ISFIFO(i_mode)){
-	    fprintf(stdout,"INFO: The file is a FIFO file.\n");
+	    //fprintf(stdout,"INFO: The file is a FIFO file.\n");
 	    strcpy(fifo_file[fifo++], file_name);
 	}
 	else if(S_ISSOCK(i_mode)) {
-	    fprintf(stdout,"INFO: The file is a SOCKET.\n");
+	    //fprintf(stdout,"INFO: The file is a SOCKET.\n");
 	    strcpy(sock_file[sock++], file_name);
 	}
 	else if(S_ISBLK(i_mode)) {
-	    fprintf(stdout,"INFO: The file is a block file.\n");
+	    //fprintf(stdout,"INFO: The file is a block file.\n");
 	    strcpy(blk_file[blk++], file_name);
 	}
 	else {
-	    fprintf(stdout,"INFO: Unknown file type for %s.\n", file_name);
+	    //fprintf(stdout,"INFO: Unknown file type for %s.\n", file_name);
 	}
 
 	value_free(fd_value);
@@ -744,9 +745,9 @@ int gather_module_info(struct target *target, struct value * value, void * data)
     char *module_name;
     FILE *fp = NULL;
 
-    fprintf(stdout,"INFO: Gathering information of open modules\n");
+    //fprintf(stdout,"INFO: Gathering information of open modules\n");
     
-    fprintf(stdout,"INFO: Loading the name of the module.\n");
+    //fprintf(stdout,"INFO: Loading the name of the module.\n");
     name_value = target_load_value_member(target, NULL, value, "name", NULL, LOAD_FLAG_NONE);
     if(!name_value) {
 	fprintf(stdout," ERROR: failed to load the process name.\n");
@@ -755,9 +756,9 @@ int gather_module_info(struct target *target, struct value * value, void * data)
 
     module_name = strdup(name_value->buf);
     value_free(name_value);
-    fprintf(stdout,"INFO: Module name: %s.\n",module_name);
+    //fprintf(stdout,"INFO: Module name: %s.\n",module_name);
     
-    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    //fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
@@ -765,7 +766,7 @@ int gather_module_info(struct target *target, struct value * value, void * data)
     }
 
     /* Start encoding the fact */
-    fprintf(stdout,"INFO: Encode the base facts.\n");
+    //fprintf(stdout,"INFO: Encode the base facts.\n");
     fprintf(fp,"\n(loaded-module\n \
 	    \t(name  \"%s\"))\n",module_name);
  
@@ -812,14 +813,14 @@ int module_info() {
     ret_val =  linux_list_for_each_entry(target, module_bsymbol, listhead_bsymbol,
 					    "list",0, gather_module_info, NULL);
     
-    fp = fopen(base_fact_file, "a+");
-    if(fp == NULL) {
-	fprintf(stdout," ERROR: Failed to open the base fact file\n");
-	exit(0);
-    }
+    //fp = fopen(base_fact_file, "a+");
+    //if(fp == NULL) {
+    //	fprintf(stdout," ERROR: Failed to open the base fact file\n");
+    //	exit(0);
+    //}
 
-    fprintf(fp,"))\n");
-    fclose(fp);
+    //fprintf(fp,"))\n");
+    //fclose(fp);
    
     return ret_val;
 }
@@ -834,7 +835,7 @@ int cpu_load_info()
     struct target_location_ctxt *tlctxt;
     FILE *fp;
     
-    fprintf(stdout,"INFO: Gathering the CPU load information.\n");
+    //fprintf(stdout,"INFO: Gathering the CPU load information.\n");
     avenrun_bsymbol = target_lookup_sym(target, "avenrun", NULL, NULL,
 						    SYMBOL_TYPE_FLAG_VAR);
     if(!avenrun_bsymbol) {
@@ -853,20 +854,20 @@ int cpu_load_info()
     /* copy the array items */
     memcpy( (void *)&avenrun0, avenrun_value->buf, 8);
     avenrun0 = avenrun0 + (FIXED_1/200);
-    fprintf(stdout,"INFO: CPU load during the last 1 minute %lu.%02lu\n",
-	    LOAD_INT(avenrun0), LOAD_FRAC(avenrun0)); 
+    //fprintf(stdout,"INFO: CPU load during the last 1 minute %lu.%02lu\n",
+	    //LOAD_INT(avenrun0), LOAD_FRAC(avenrun0)); 
 
     memcpy( (void *)&avenrun1, (avenrun_value->buf + 8), 8);
     avenrun1 = avenrun1 + (FIXED_1/200);
-    fprintf(stdout,"INFO: CPU load during the last 5 minutes %lu.%02lu\n",
-	    LOAD_INT(avenrun1), LOAD_FRAC(avenrun1));     
+    //fprintf(stdout,"INFO: CPU load during the last 5 minutes %lu.%02lu\n",
+	    //LOAD_INT(avenrun1), LOAD_FRAC(avenrun1));     
 
     memcpy( (void *)&avenrun2, (avenrun_value->buf + 16), 8);
     avenrun2 = avenrun2 + (FIXED_1/200);
-    fprintf(stdout,"INFO: CPU load during the last 15 minutes %lu.%02lu\n",
-	    LOAD_INT(avenrun2), LOAD_FRAC(avenrun2)); 
+    //fprintf(stdout,"INFO: CPU load during the last 15 minutes %lu.%02lu\n",
+	    //LOAD_INT(avenrun2), LOAD_FRAC(avenrun2)); 
 
-    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    //fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
@@ -874,7 +875,7 @@ int cpu_load_info()
     }
 
     /* Start encoding the fact */
-    fprintf(stdout,"INFO: Encode the base facts.\n");
+    //fprintf(stdout,"INFO: Encode the base facts.\n");
     fprintf(fp,"\n(cpu-load\n \
 	    \t(one-min  %lu.%02lu)\n \
 	    \t(five-min %lu.%02lu)\n \
@@ -925,7 +926,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	exit(0);
     }
     pid = v_i32(pid_value);
-    fprintf(stdout,"INFO: Pid %d\n",pid);
+    //fprintf(stdout,"INFO: Pid %d\n",pid);
 
     comm_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
     if(!comm_value) {
@@ -933,7 +934,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	exit(0);
     }
     process_name = strdup(comm_value->buf);
-    fprintf(stdout,"INFO: Process name %s\n",process_name);
+    //fprintf(stdout,"INFO: Process name %s\n",process_name);
 
     while(i < 2) {
 	utime = stime = 0;
@@ -944,7 +945,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	    exit(0);
 	}
 	utime = v_u64(utime_value);
-	fprintf(stdout,"INFO: utime value %lu \n",utime);
+	//fprintf(stdout,"INFO: utime value %lu \n",utime);
 
 	utimescaled_value = target_load_value_member(target, NULL, value, "utimescaled", NULL, LOAD_FLAG_NONE);
 	if(!utimescaled_value) {
@@ -952,7 +953,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	   exit(0);
 	}
 	utimescaled= v_u64(utimescaled_value);
-	fprintf(stdout,"INFO: utimescaled value %lu \n",utimescaled);
+	//fprintf(stdout,"INFO: utimescaled value %lu \n",utimescaled);
 
 	stime_value = target_load_value_member(target, NULL, value, "stime", NULL, LOAD_FLAG_NONE);
 	if(!stime_value) {
@@ -960,7 +961,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	    exit(0);
 	}
 	stime = v_u64(stime_value);
-	fprintf(stdout,"INFO: stime value %lu \n",stime);
+	//fprintf(stdout,"INFO: stime value %lu \n",stime);
 
 	stimescaled_value = target_load_value_member(target, NULL, value, "stimescaled", NULL, LOAD_FLAG_NONE);
 	if(!stimescaled_value) {
@@ -968,7 +969,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	    exit(0);
 	}
 	stimescaled = v_u64(stimescaled_value);
-	fprintf(stdout,"INFO: stimescaled value %lu \n",stimescaled);
+	//fprintf(stdout,"INFO: stimescaled value %lu \n",stimescaled);
 
 	/*Load the prev_cputime struct */
 	prev_cputime_value = target_load_value_member(target, NULL, value, 
@@ -983,12 +984,12 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	prev_utime_value = target_load_value_member(target, NULL, prev_cputime_value,
 	    					"utime",NULL, LOAD_FLAG_NONE);
 	prev_utime = v_u64(prev_utime_value);
-	fprintf(stdout,"INFO: prev_utime value %lu.\n",prev_utime);
+	//fprintf(stdout,"INFO: prev_utime value %lu.\n",prev_utime);
 
 	prev_stime_value = target_load_value_member(target, NULL, prev_cputime_value,
 						    "stime",NULL, LOAD_FLAG_NONE);
 	prev_stime = v_u64(prev_stime_value);
-	fprintf(stdout,"INFO: prev_utime value %lu.\n",prev_stime);
+	//fprintf(stdout,"INFO: prev_utime value %lu.\n",prev_stime);
 
 	/* load the sched_entity struct */
 	sched_entity_value = target_load_value_member(target, NULL, value, "se", NULL, LOAD_FLAG_NONE);
@@ -1005,7 +1006,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	    exit(0);
 	}
 	sum_exec_runtime = v_u64(sum_exec_runtime_value);
-	fprintf(stdout,"INFO: sum_exec_runtime %lu \n",sum_exec_runtime);
+	//fprintf(stdout,"INFO: sum_exec_runtime %lu \n",sum_exec_runtime);
  
 	/* load the vruntime member */
 	vruntime_value = target_load_value_member(target, NULL, sched_entity_value,
@@ -1015,7 +1016,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	    exit(0);
 	}
 	vruntime  = v_u64(vruntime_value);
-	fprintf(stdout,"INFO: vruntime %lu.\n",vruntime);
+	//fprintf(stdout,"INFO: vruntime %lu.\n",vruntime);
 
 	/* compute the adjusted cpu time */
 	/*convert the runtime from nsec to jiffies */
@@ -1041,7 +1042,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	*/
 	load[i] = utime + stime;
 
-	fprintf(stdout,"INFO: Gather the current jiffies value.\n");
+	//fprintf(stdout,"INFO: Gather the current jiffies value.\n");
 	jiffies_bsymbol = target_lookup_sym(target, "jiffies", NULL, NULL,
 						SYMBOL_TYPE_FLAG_VAR);
 	if(!jiffies_bsymbol) {
@@ -1057,23 +1058,23 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
 	    exit(0);
 	}
 	jiffies = v_u64(jiffies_value);
-	fprintf(stdout,"INFO: The current jiffies value %lu. \n",jiffies);
+	//fprintf(stdout,"INFO: The current jiffies value %lu. \n",jiffies);
 	jiffy[i] = jiffies;
 
 	/* now unpause the target and let it execute for 2 sec */
 	if(i == 1) break;
 	if ((status = target_status(target)) == TSTATUS_PAUSED) {
-	fprintf(stdout,"INFO: Resuming the target for 2 seconds.\n");
+	//fprintf(stdout,"INFO: Resuming the target for 2 seconds.\n");
 	    if(target_resume(target)) {
 		fprintf(stdout, "ERROR: Failed to resume the target.\n");
 		exit(0);
 	    }
 	}
 
-	sleep(1);
+	usleep(10000);
 	
 	if ((status = target_status(target)) != TSTATUS_PAUSED) {
-	    fprintf(stdout,"INFO: Pausing the target.\n");	   
+	    //fprintf(stdout,"INFO: Pausing the target.\n");	   
 	    if (target_pause(target)) {
 		fprintf(stdout,"ERROR: Failed to pause the target \n");
 		exit(0);
@@ -1093,13 +1094,13 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     }
 
     cpu_utilization = (float) (load[1] - load[0])/(jiffy[1]-jiffy[0])* 100;
-    fprintf(stdout,"INFO: CPU utilization for the process %f\n",
-						cpu_utilization);
+    //fprintf(stdout,"INFO: CPU utilization for the process %s %f\n",
+    //				         process_name, cpu_utilization);
 	
 	
 
     /* Now encode these values as facts */
-    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    //fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
@@ -1181,7 +1182,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     }
     pid = v_i32(pid_value);
     value_free(pid_value);
-    fprintf(stdout,"INFO: Pid %d\n",pid);
+    //fprintf(stdout,"INFO: Pid %d\n",pid);
 
     comm_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
     if(!comm_value) {
@@ -1189,13 +1190,13 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	exit(0);
     }
     process_name = strdup(comm_value->buf);
-    fprintf(stdout,"INFO: Process name %s\n",process_name);
+    //fprintf(stdout,"INFO: Process name %s\n",process_name);
     value_free(comm_value);
 
     mm_value = target_load_value_member(target, NULL, value, "mm", NULL,
 							LOAD_FLAG_AUTO_DEREF);
     if(!mm_value) {
-	fprintf(stdout,"INFO: mm member is NULL.\n");
+	//fprintf(stdout,"INFO: mm member is NULL.\n");
 	return 0;
     }
 
@@ -1218,7 +1219,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     }
     value_free(mm_value);
 
-    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    //fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
@@ -1239,12 +1240,12 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	file_value = target_load_value_member(target, NULL, vm_area_value, "vm_file",
 							NULL, LOAD_FLAG_AUTO_DEREF);
 	if(!file_value) {
-	    fprintf(stdout,"INFO: vm_file value is null, so continuing . . \n");
+	    //fprintf(stdout,"INFO: vm_file value is null, so continuing . . \n");
 	    goto nextptr;
 	}
 
 	/* Load the path the variable from the files struct*/
-	fprintf(stdout,"INFO: Loading f_path struct\n");
+	//fprintf(stdout,"INFO: Loading f_path struct\n");
 	path_value = target_load_value_member( target, NULL, file_value, "f_path",
 		    NULL, LOAD_FLAG_NONE);
 	if(!path_value) {
@@ -1253,7 +1254,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	} 
 	value_free(file_value);
 	/* Load the dentry struct  member from the path */
-	fprintf(stdout,"INFO: Loading dentry struct\n");
+	//fprintf(stdout,"INFO: Loading dentry struct\n");
 	dentry_value = target_load_value_member(target, NULL, path_value, "dentry",
 		    NULL, LOAD_FLAG_AUTO_DEREF);
 	if(!dentry_value){
@@ -1263,7 +1264,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	value_free(path_value);
 
 	/* Load the d_name struct */
-	fprintf(stdout,"INFO: Loading d_name struct\n");
+	//fprintf(stdout,"INFO: Loading d_name struct\n");
 	d_name_value = target_load_value_member(target, NULL, dentry_value, "d_name",
 		    NULL, LOAD_FLAG_NONE);
 	if(!d_name_value) {
@@ -1272,7 +1273,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	} 
 	value_free(dentry_value);	
 	/* Finally load the lenght of  name string */
-	fprintf(stdout,"INFO: Loading the length of name string\n");
+	//fprintf(stdout,"INFO: Loading the length of name string\n");
 	len_name_value = target_load_value_member( target, NULL, d_name_value, "len",
 		    NULL, LOAD_FLAG_NONE);
 	if(!len_name_value) {
@@ -1280,9 +1281,9 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	    exit(0);
 	}
 	unsigned int len = v_u32(len_name_value);
-	fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
+	//fprintf(stdout,"INFO: Length of the name string is %u \n.",len);
 	if(len == 0) {
-	    fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
+	    //fprintf(stdout,"INFO: File name length is 0 hence continuing with the loop\n");
 	    goto nextptr;
 	}
 
@@ -1295,7 +1296,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	value_free(d_name_value);
 
 	file_name = strdup(file_name_value->buf);
-	fprintf(stdout,"INFO: LInked object name %s\n",file_name);
+	//fprintf(stdout,"INFO: LInked object name %s\n",file_name);
 	fprintf(fp," \"%s\" ",file_name);
 	value_free(file_name_value);
 
@@ -1316,7 +1317,7 @@ nextptr:
 	vm_area_value = target_load_value_member(target, NULL, vm_area_value,
 						"vm_next", NULL, LOAD_FLAG_AUTO_DEREF);
 	if(!vm_area_value) {
-	    fprintf(stdout,"INFO: REached the end of the linked list.\n");
+	    //fprintf(stdout,"INFO: REached the end of the linked list.\n");
 	    break;
 	}
     }
@@ -1373,7 +1374,7 @@ int syscalltable_info() {
 	fprintf(stdout,"ERROR: Failed to get the max number of target sysscalls.\n");
 	return 1;
     }
-    fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
+    //fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
 
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
@@ -1387,13 +1388,13 @@ int syscalltable_info() {
 	    continue;
 	}
 	if(sc->bsymbol) {
-	    fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
-					    bsymbol_get_name(sc->bsymbol));
+	    //fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
+					    //bsymbol_get_name(sc->bsymbol));
 	    if(sc->addr != sys_call_table[sc->num]) {
-		fprintf(stdout,"INFO: Funtion pointer mismatch detected for symbol %s.\nOriginal entry: %lu Current entry: %lu\n",
-					bsymbol_get_name(sc->bsymbol), 
-					sys_call_table[sc->num], 
-					sc->addr);
+		//fprintf(stdout,"INFO: Funtion pointer mismatch detected for symbol %s.\nOriginal entry: %lu Current entry: %lu\n",
+					//bsymbol_get_name(sc->bsymbol), 
+					//sys_call_table[sc->num], 
+					//sc->addr);
 		fprintf(fp,"(tampered_sys_call\n   \
 			\t( name  \"%s\")\n \
 			\t( original %lu )\n \
@@ -1440,7 +1441,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     }
     pid = v_i32(pid_value);
     value_free(pid_value);
-    fprintf(stdout,"INFO: Pid %d\n",pid);
+    //fprintf(stdout,"INFO: Pid %d\n",pid);
 
     comm_value = target_load_value_member(target, NULL, value, "comm", NULL, LOAD_FLAG_NONE);
     if(!comm_value) {
@@ -1448,13 +1449,13 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 	exit(0);
     }
     process_name = strdup(comm_value->buf);
-    fprintf(stdout,"INFO: Process name %s\n",process_name);
+    //fprintf(stdout,"INFO: Process name %s\n",process_name);
     value_free(comm_value);
 
     /* Load the mm member */
     mm_value = target_load_value_member(target, NULL, value,"mm", NULL, LOAD_FLAG_AUTO_DEREF);
     if(!mm_value) {
-	fprintf(stdout,"INFO: Pointer to the mm struct is null.\n");
+	//fprintf(stdout,"INFO: Pointer to the mm struct is null.\n");
 	return 0;
     }
     arg_start_value = target_load_value_member(target, NULL, mm_value, "arg_start",
@@ -1478,7 +1479,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     value_free(arg_end_value);
 
     length = arg_end - arg_start;
-    fprintf(stdout,"INFO : Length of the buffer %lu \n",length);
+    //fprintf(stdout,"INFO : Length of the buffer %lu \n",length);
     if(!length) {
 	fprintf(stdout," INFO: No command line for the process with pid %d\n",pid);
     }
@@ -1502,7 +1503,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 	exit(0);
     }
 
-    fprintf(stdout,"INFO: Command line %s\n",command_line);
+    //fprintf(stdout,"INFO: Command line %s\n",command_line);
 
     /* Gather information reagarding the environment of the process. */
 
@@ -1526,7 +1527,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     value_free(env_end_value);
 
     length = env_end - env_start;
-    fprintf(stdout,"INFO : Length of the env buffer %lu \n",length);
+    //fprintf(stdout,"INFO : Length of the env buffer %lu \n",length);
     if(!length) {
 	fprintf(stdout," INFO: No command line for the process with pid %d\n",pid);
     }
@@ -1546,9 +1547,9 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 	exit(0);
     }
 
-    fprintf(stdout,"INFO: Environment line %s\n",environment);
+    //fprintf(stdout,"INFO: Environment line %s\n",environment);
 
-    fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    //fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");

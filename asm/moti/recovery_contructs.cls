@@ -19,7 +19,7 @@
 		    ( prev_action ps_kill)))
 	(retract ?f)
 	(save-facts "process_state_info.fac" visible unknown-process-recovery-prev-action)
-	(printout t " Killing the unknown pocess " ?pid   crlf))
+	(printout t "RECOVERY: Killing the unknown pocess " ?pid   crlf))
 
 (defrule kill-unknown-process_1
 	(declare (salience 20))
@@ -39,7 +39,25 @@
 		    (prev_action ps_kill_parent)
 		    (name ?name2)))
 	(save-facts "process_state_info.fac" visible unknown-process-recovery-prev-action)
-	(printout t "Killing the process and parent process" crlf))
+	(printout t "RECOVERY: Killing the process and parent process" crlf))
+
+(defrule kill-unknown-process_2
+	(declare (salience 30))
+	?f <- (unknown-process 
+			 (name ?name2)
+			 (pid ?pid1))
+	?of <- (unknown-process-recovery-prev-action
+		         ( prev_action ps_kill_parent)
+			 (name ?name2))
+	=>
+	(retract ?of)
+	(retract ?f)
+	(save-facts "process_state_info.fac" visible unknown-process-recovery-prev-action)
+        (printout t "RECOVERY: Tried killing the unknown process and its parent, but the process still exist. !!! Repeating the  recovery cycle now. " crlf))
+
+
+
+
 
 ; Rules for dealing with unknown modules that are loaded.
 (defrule unload-unknown-modules
@@ -58,7 +76,7 @@
 		    (name ?name1)))
 	(retract ?f)
 	(save-facts "module_state_info.fac" visible unknown-module-recovery-prev-action)
-	(printout t " Unloading the  module " ?name1   crlf))
+	(printout t "RECOVERY: Unloading the  module " ?name1   crlf))
 
 (defrule unload-unknown-modules_1
 	(declare (salience 20))
@@ -69,15 +87,15 @@
 			 (name ?name2))
 	=>
 	(retract ?of)
-	(assert (unknown-process-recovery
+	(assert (unknown-module-recovery
 		    (function-name "module_unload")
 		    (arg_list  ?name2)))
 	(retract ?f)
-	(assert (unknown-process-recovery-prev-action
+	(assert (unknown-module-recovery-prev-action
 		    (prev_action unload)
 		    (name ?name2)))
 	(save-facts "module_state_info.fac" visible unknown-module-recovery-prev-action)
-	(printout t "Module " ?name2 "was found loaded again!!!!, unloading it." crlf))
+	(printout t "RECOVERY: Module " ?name2 "was found loaded again!!!!, unloading it." crlf))
 
 
 ;Rules for dealing with tampered system call table entries
@@ -91,7 +109,7 @@
 	(assert (tampered-syscall-recovery
 		    (function-name "fix_syscall_entry")
 		    (arg_list  ?index ?address)))
-	(printout t " Fixed syscall table entry for " ?name1 crlf))
+	(printout t "RECOVERY: Fixed syscall table entry for " ?name1 crlf))
 
 ; Rules for dealing with unauthorized UDP connections
 
@@ -114,7 +132,7 @@
 		    (name ?name1)
 		    (pid ?pid)))
 	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
-	(printout t "closed UDP sockets of process " ?name1 crlf)))
+	(printout t "RECOVERY: Closed UDP sockets of process " ?name1 crlf)))
 
 (defrule close-udp-socket_1
 	(declare (salience 20))
@@ -135,7 +153,22 @@
 		(prev_action kill_process)
 		(name ?name1)))
 	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
-	(printout t "The UDP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
+	(printout t "RECOVERY: The UDP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
+
+(defrule close-udp-socket_2
+	(declare (salience 30))
+	?f <- (open-udp-socket
+		(name ?name1)
+		(pid ?pid))
+	?of <- (open-udp-socket-recovery-prev-action
+		    (prev_action kill_process)
+		    (name ?name1))
+	=>
+	(retract ?f)
+	(retract ?of)
+	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
+	(printout t "RECOVERY: Process " ?name1" with unauthorised UPD socket was found again. !!! Repeating the recovery cycle now." crlf))
+
 
 ; Rules for dealing with unauthorized TCP connections
 (defrule close-tcp-sockets
@@ -157,7 +190,7 @@
 		    (name ?name1)
 		    (pid ?pid)))
 	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
-	(printout t "closed tcp sockets of process " ?name1 crlf)))
+	(printout t "RECOVERY: Closed tcp sockets of process " ?name1 crlf)))
 
 (defrule close-tcp-socket_1
 	(declare (salience 20))
@@ -178,7 +211,22 @@
 		(prev_action kill_process)
 		(name ?name1)))
 	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
-	(printout t "The TCP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
+	(printout t "RECOVERY: The TCP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
+
+(defrule close-tcp-socket_2
+	(declare (salience 30))
+	?f <- (open-tcp-socket
+		(name ?name1)
+		(pid ?pid))
+	?of <- (open-tcp-socket-recovery-prev-action
+		    (prev_action kill_process)
+		    (name ?name1))
+	=>
+	(retract ?f)
+	(retract ?of)
+	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
+	(printout t "RECOVERY: Proces " ?name1" with unauthorized TCP socket was found again!!! Repeating the recovery cycle now" crlf))
+
 
 ;Rules for delaling with high per process cpu utilization
 
@@ -202,8 +250,8 @@
 	(assert (high-cpu-utilization-recovery
 		    (function-name "reduce_utilization")
 		    (arg_list ?name1 ?pid)))
-	(printout t " Process " ?name1 " has high cpu utilization over the past 2 iterations" crlf)
-	(printout t " The cpu load during past 2 mins is " ?load crlf)
+	(printout t "RECOVERY: Process " ?name1 " has high cpu utilization over the past 2 iterations" crlf)
+	(printout t "RECOVERY: The cpu load during past 2 mins is " ?load crlf)
         (modify ?f (cpu 0.0) (count 0))
 	(save-facts "cpu_state_info.fac" visible per-process-cpu-utilization))
 
@@ -226,7 +274,7 @@
 		    (prev_action kill_process)
 		    (name ?name1)))
 	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
-	(printout t " killing the priv escalated process " ?name1 crlf ))
+	(printout t "RECOVERY: Killing the priv escalated process " ?name1 crlf ))
 
 
 (defrule correct-priv-escalation_01
@@ -248,7 +296,23 @@
 		(prev_action kill_process_parent)
 		(name ?name1)))
 	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
-	(printout t "The privileges for the process " ?name1" was escalated again !!! Killing the parent process now" crlf))
+	(printout t "RECOVERY: The privileges for the process " ?name1" was escalated again !!! Killing the parent process now" crlf))
+
+(defrule correct-priv-escalation_02
+	(declare (salience 30))
+	?f <- (priv-escalated-process
+		(name ?name1)
+		(pid ?pid)
+		(parent_pid ?parent_pid))
+	?of <-( priv-escalation-recovery-prev-action
+		(name ?name1)
+		(prev_action kill_process_parent))
+	=>
+	(retract ?f)
+	(retract ?of)
+	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
+	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
+
 
 ; rules for dealing with unknown objects loaded
 
@@ -263,12 +327,19 @@
 		(function-name "unload_onjects")
 		(arg_list ?name ?pid $?list)))
     (retract ?f)
-    (printout t " Calling function to unload the objects " crlf))
+    (printout t "RECOVERY: Unloading the unknown objects." crlf))
 
-
-
-
-	
-
-
+; rules for dealing with unknown files opened by a process
+(defrule close-unknown-open-files
+    (declare (salience 10))
+    ?f <- (unknown-open-files-list
+		(name ?name)
+		(pid ?pid)
+		(files-list $?list))
+    =>
+    (assert (unknown-open-files-recovery
+		(function-name "close_open_files")
+		(arg_list ?name ?pid $?list)))
+    (retract ?f)
+    (printout t "RECOVERY: Closing the files:" $?list " open by the process " ?name crlf))
 

@@ -85,6 +85,9 @@
 (deftemplate known-objects
 	(slot name (type STRING))
 	(multislot object-list (type STRING)))
+(deftemplate known-open-files
+	(slot name (type STRING))
+	(multislot file-names (type STRING)))
 
 (deffacts base-facts
 	(known-processes "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
@@ -95,7 +98,8 @@
 	"ecryptfs-kthrea" "crypto" "kthrotld" "kworker/0:1" "khvcd" "binder" "deferwq"
 	"charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
 	"udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
-	"atd" "mysqld" "ntpd" "getty" "flush-202:1")
+	"atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
+	"bash" )
 	
 	(known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
 	(process-with-udp "rpcbind") ;ntpd                 
@@ -113,7 +117,7 @@
 	"ecryptfs-kthrea" "crypto" "kthrotld" "kworker/0:1" "khvcd" "binder" "deferwq"
 	"charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
 	"udevd" "rpcbind" "sshd" "upstart-socket-"  "cron"
-	"atd" "ntpd" "getty" "flush-202:1" "login" )
+	"atd" "ntpd" "getty" "flush-202:1" "login" "bash" "apache2" "kworker/u:1")
 
 	(known-objects
 	    (name "bash")
@@ -126,8 +130,23 @@
 	    "libc-2.15.so"  "libc-2.15.so"  "libc-2.15.so"  "libc-2.15.so"
 	    "libdl-2.15.so" "libtinfo.so.5.9"  "libtinfo.so.5.9"  "libtinfo.so.5.9"  
 	    "libtinfo.so.5.9" "ld-2.15.so"   "ld-2.15.so"  "ld-2.15.so"))	
+	
+	(known-open-files
+	    (name "mysqld")
+	    (file-names "ibdata1"  "ibrXE6sH"  "ibpAJ2Qg"
+	    "ibbc3YeQ"  "ibgGvhIp"  "ib_logfile0"  "ib_logfile1"  "ibBj4eXZ"  "host.MYI"  "host.MYD"  "user.MYI"
+	    "user.MYD"  "db.MYI"  "db.MYD"  "proxies_priv.MYI"  "proxies_priv.MYD"  "tables_priv.MYI"
+	    "tables_priv.MYD"  "columns_priv.MYI"  "columns_priv.MYD"  "procs_priv.MYI"  "procs_priv.MYD"
+	    "servers.MYI"  "servers.MYD"  "event.MYI"  "event.MYD"  "proc.MYI"  "proc.MYD"  "func.MYI"
+	    "func.MYD"  "general_log.CSM"  "general_log.CSV"  "help_category.MYI"  "help_category.MYD"
+	    "help_keyword.MYI"  "help_keyword.MYD"  "help_relation.MYI"  "help_relation.MYD"  "help_topic.MYI"
+	    "help_topic.MYD"  "ndb_binlog_index.MYI"  "ndb_binlog_index.MYD"  "plugin.MYI"  "plugin.MYD"
+	    "slow_log.CSM"  "slow_log.CSV"  "time_zone.MYI"  "time_zone.MYD"  "time_zone_leap_second.MYI"
+	    "time_zone_leap_second.MYD"  "time_zone_name.MYI"  "time_zone_name.MYD" 
+	    "time_zone_transition.MYI"  "time_zone_transition.MYD"  "time_zone_transition_type.MYI"
+	    "time_zone_transition_type.MYD")) ;error.log
 	)
-
+ 
 
 	
 ;============================== Template for anomaly facts =============================
@@ -176,6 +195,11 @@
 	(slot pid (type INTEGER))
 	(multislot object-list (type STRING) (default "NULL")))
 
+(deftemplate unknown-open-files-list
+	(slot name (type STRING))
+	(slot pid (type INTEGER))
+	(multislot files-list (type STRING) (default "NULL")))
+
 
 ;========== Application level rules that are used to detect anomalies =================
 
@@ -189,7 +213,7 @@
 	(assert (unknown-process
 		       (name ?name1)
 		       (pid ?pid)))
-	(printout t "Unknown process " ?name1 " found" crlf) )
+	(printout t "ANOMALY: Unknown process " ?name1 " found" crlf) )
 
 ;rule to detect any unknown module that is loaded
 (defrule identify-unknown-module
@@ -198,7 +222,7 @@
 	(test (not (member$ ?name1 $?name2)))
 	=>
 	(assert (unknown-module (name ?name1)))
-	(printout t "Unknown module " ?name1 "found" crlf)) 
+	(printout t "ANOMALY: Unknown module " ?name1 "found" crlf)) 
 
 ;rule to check for tampered syscall table entries
 (defrule identify-tampered-syscall
@@ -211,7 +235,7 @@
 	    (name ?name1)
 	    (index ?index)
 	    (original ?address)))
-	(printout t "Tampered system call " ?name1 " found at offset " ?index crlf))
+	(printout t "ANOMALY: Tampered system call " ?name1 " found at offset " ?index crlf))
 
 ;rule to check fo unauthorised TCP/UDP sockets
 (defrule identify-open-udp-sockets
@@ -226,7 +250,7 @@
 	(assert (open-udp-socket
 	    (name ?name1)
 	    (pid ?pid)))
-	(printout t " UDP sockets open for process " ?name1 crlf ))
+	(printout t "ANOMALY: UDP sockets open for process " ?name1 crlf ))
 
 (defrule identify-open-tcp-sockets
 	(opened-files
@@ -240,7 +264,7 @@
 	(assert (open-tcp-socket
 	    (name ?name1)
 	    (pid ?pid)))
-	(printout t " TCP socket open for process " ?name1 crlf))
+	(printout t "ANOMALY: TCP socket open for process " ?name1 crlf))
 
 ;rule to identify high cpu utilization
 
@@ -257,7 +281,7 @@
 	(assert (per-process-cpu-utilization
 		    (name ?name1)
 		    (pid ?pid)))
-	(printout t " Initializing per process cpu utilization numbers for " ?name1 crlf))
+	(printout t "ANOMALY: Initializing per process cpu utilization numbers for " ?name1 crlf))
 
 (defrule identify-high-cpu-utilization_2
 	?of <- (cpu_utilization
@@ -280,8 +304,8 @@
 			    (cpu ?utilization)
 			    (count ?count)))
 	(save-facts "cpu_state_info.fac" visible per-process-cpu-utilization)
-	(printout t "Adding the current cpu utilization value to the prevent value for " ?name1 crlf)
-	(printout t "Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
+	(printout t "ANOMALY: Adding the current cpu utilization value to the previous value for " ?name1 crlf)
+	(printout t "ANOMALY: Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
 
 ; rules to deal with priviledge escalation
 (defrule identify-privledge-escalation
@@ -301,8 +325,9 @@
 		(name ?name)
 		(pid ?pid)
 		(parent_pid ?parent_pid)))
-    (printout t " Process " ?name " with unauthorised root priv found" crlf))
+    (printout t "ANOMALY: Process " ?name " with unauthorised root priv found" crlf))
 
+;rules to identify unknown objects loded for processes.
 (defrule identify-unknown-loaded-objects
     (loaded-objects
 	(comm ?name)
@@ -319,7 +344,7 @@
     (assert ( unknown-object-list
 		(name ?name)
 		(pid ?pid)))
-    (printout t " Unknown objects found for process " ?name crlf))
+    (printout t "ANOMALY: Unknown objects found for process " ?name crlf))
 
 (defrule identify-unknown-objects_1
      ?of <- (loaded-objects
@@ -338,12 +363,54 @@
     (progn$ (?field  $?objects)
 	(if (not ( member$ ?field $?known_objects))
 		 then 
-		 (modify ?f (object-list  (insert$ $?list 1 ?field)))
-		 else
-	         (printout t "nothing" crlf)))
+		 (modify ?f (object-list  (insert$ $?list 1 ?field)))))
+		 ;else
+	         ;(printout t "nothing" crlf)))
     (retract ?of)
-    (printout t "inserted the unknown object name into the list " crlf ))
+    (printout t "ANOMALY: Inserted the unknown object name into the list " crlf ))
 	    	    
+
+;rules to identify unknown files opened by processes
+(defrule identify-unknown-open-files
+    (opened-files
+	(comm ?name)
+	(pid ?pid)
+	(reg_files $?file_names))
+    (known-open-files
+	(name ?name)
+	(file-names $?known_files))
+    (test (not (subsetp $?file_names $?known_files)))
+    (not (exists (unknown-open-files-list
+	(name ?name)
+	(pid ?pid))))
+    =>
+    (assert ( unknown-open-files-list
+		(name ?name)
+		(pid ?pid)))
+    (printout t "ANOMALY: Unknown open files found for  process " ?name crlf))
+
+(defrule identify-unknown-open-files_1
+     ?of <- (opened-files
+	(comm ?name)
+	(pid ?pid)
+	(reg_files $?file_names))
+    (known-open-files
+	(name ?name)
+	(file-names $?known_files))
+    (test (not (subsetp $?file_names $?known_files)))
+    ?f <- (unknown-open-files-list
+	    (name ?name)
+	    (pid ?pid)
+	    (files-list $?list))
+    =>
+    (progn$ (?field  $?file_names)
+	(if (not ( member$ ?field $?known_files))
+		 then 
+		 (modify ?f (files-list  (insert$ $?list 1 ?field)))))
+    (retract ?of)
+    (printout t "ANOMALY: Added an entry to the list of unknown open files for the process" ?name  crlf ))
+
+
 
 
 ;=================template  for recovery facts ===================================
@@ -409,6 +476,13 @@
 (deftemplate unknown-object-recovery
 	    (slot function-name (type STRING))
 	    (multislot arg_list (type SYMBOL)))
+
+;recovery fact for unknown open files
+(deftemplate unknown-open-files-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
+
+
 
 
 
