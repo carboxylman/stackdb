@@ -442,8 +442,8 @@
 
 ;=================template  for recovery facts ===================================
 
-;recovery fact template for unkown processes
-(deftemplate unknown-process-recovery
+;A common recovery fact template for all receovery actions
+(deftemplate recovery-action
 	    (slot function-name (type STRING))
 	    (multislot arg_list (type SYMBOL)))
 
@@ -451,69 +451,28 @@
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING)))
 
-;recovery fact template for unknown modules
-(deftemplate unknown-module-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
 
 (deftemplate unknown-module-recovery-prev-action
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING)))
 
 
-;recovery fact template for tampered syscall
-(deftemplate tampered-syscall-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
-
-;recovery fact template for hooked syscall
-(deftemplate hooked-syscall-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
-
-
-;recovery fact template for open UDP sockets
-(deftemplate open-udp-socket-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
-
 (deftemplate open-udp-socket-recovery-prev-action
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING))
 	    (slot pid (type INTEGER)))
 
-;recovery fact template for open TCP sockets
-(deftemplate open-tcp-socket-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
 
 (deftemplate open-tcp-socket-recovery-prev-action
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING))
 	    (slot pid (type INTEGER)))
 
-;recovery fact template for high cpu utilization
-(deftemplate high-cpu-utilization-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL))) 
 
-; recovey fact template for priv escalation
-(deftemplate priv-escalation-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
 (deftemplate priv-escalation-recovery-prev-action
 	    (slot prev_action (type SYMBOL))
 	    (slot name (type STRING)))
 
-;recovery fact for unknown loaded objects
-(deftemplate unknown-object-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
-
-;recovery fact for unknown open files
-(deftemplate unknown-open-files-recovery
-	    (slot function-name (type STRING))
-	    (multislot arg_list (type SYMBOL)))
 
 
 

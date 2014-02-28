@@ -148,7 +148,7 @@ int save_sys_call_table_entries() {
 		fprintf(stdout, "ERROR: Could not read 6 bytes at 0x%"PRIxADDR"!\n",sc->addr);
 		exit(0);
 	    }
-	    fprintf(stdout,"INFO: prologue : %02X%02X%02X%02X%02X%02X\n",prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
+	    //fprintf(stdout,"INFO: prologue : %02X%02X%02X%02X%02X%02X\n",prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
 	    memcpy(function_prologue[sc->num], prologue,6);
 	    
 	}
@@ -375,10 +375,6 @@ struct argp psa_argp = {
 };
 
 
-
-
-
-
 int main( int argc, char** argv) {
 
     int wait_time = 0;
@@ -533,8 +529,7 @@ int main( int argc, char** argv) {
 	   fprintf(stdout,"ERROR: Failed to load the process_priv_info file.\n");
 	   exit(0);
 	}
-	
-
+    
 
 	// We have to run them through the recovery rules now.
 	fprintf(stdout,"INFO: Loading the  recovery rules file\n");

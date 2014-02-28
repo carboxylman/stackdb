@@ -1639,8 +1639,8 @@ int syscall_hooking_info() {
 		fprintf(stdout, "ERROR: Could not read 6 bytes at 0x%"PRIxADDR"!\n",sc->addr);
 		exit(0);
 	    }
-	    fprintf(stdout,"INFO: instruction read %02X%02X%02X%02X%02X%02X \n",
-		    prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
+	   // fprintf(stdout,"INFO: instruction read %02X%02X%02X%02X%02X%02X \n",
+	   //	    prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
 
 	    if(memcmp(function_prologue[sc->num], prologue, 6)) {
 		fprintf(fp,"(hooked_sys_call\n   \
