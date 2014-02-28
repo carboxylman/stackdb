@@ -76,6 +76,13 @@
 	(slot current (type INTEGER))
 	(slot index (type INTEGER)))
 
+(deftemplate hooked_sys_call
+	(slot name (type STRING))
+	(slot original (type STRING))
+	(slot current (type STRING))
+	(slot index (type INTEGER)))
+
+
 (deftemplate command_line
 	(slot command (type STRING))
 	(slot environment (type STRING)))
@@ -144,7 +151,7 @@
 	    "slow_log.CSM"  "slow_log.CSV"  "time_zone.MYI"  "time_zone.MYD"  "time_zone_leap_second.MYI"
 	    "time_zone_leap_second.MYD"  "time_zone_name.MYI"  "time_zone_name.MYD" 
 	    "time_zone_transition.MYI"  "time_zone_transition.MYD"  "time_zone_transition_type.MYI"
-	    "time_zone_transition_type.MYD")) ;error.log
+	    "time_zone_transition_type.MYD"))
 	)
  
 
@@ -163,6 +170,12 @@
 	(slot name (type STRING))
 	(slot index (type INTEGER))
 	(slot original (type INTEGER)))
+
+(deftemplate hooked-syscall
+	(slot name (type STRING))
+	(slot index (type INTEGER))
+	(slot original (type STRING)))
+
 
 (deftemplate open-udp-socket
 	(slot name (type STRING))
@@ -236,6 +249,20 @@
 	    (index ?index)
 	    (original ?address)))
 	(printout t "ANOMALY: Tampered system call " ?name1 " found at offset " ?index crlf))
+
+;rule to check for hooked syscall table entries
+(defrule identify-hooked-syscall
+	(hooked_sys_call
+	    (name ?name1)
+	    (index ?index)
+	    (original ?address))
+	=>
+	(assert (hooked-syscall
+	    (name ?name1)
+	    (index ?index)
+	    (original ?address)))
+	(printout t "ANOMALY: Hooked system call " ?name1 " found at offset " ?index crlf))
+
 
 ;rule to check fo unauthorised TCP/UDP sockets
 (defrule identify-open-udp-sockets
@@ -438,6 +465,12 @@
 (deftemplate tampered-syscall-recovery
 	    (slot function-name (type STRING))
 	    (multislot arg_list (type SYMBOL)))
+
+;recovery fact template for hooked syscall
+(deftemplate hooked-syscall-recovery
+	    (slot function-name (type STRING))
+	    (multislot arg_list (type SYMBOL)))
+
 
 ;recovery fact template for open UDP sockets
 (deftemplate open-udp-socket-recovery

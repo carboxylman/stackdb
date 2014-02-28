@@ -61,6 +61,7 @@ struct target *target;
 extern char base_fact_file[100];
 extern unsigned long *sys_call_table;
 extern char **sys_call_names;
+extern unsigned char **function_prologue;
 
 #define NSEC_PER_SEC    1000000000L
 #define HZ 100
@@ -461,6 +462,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 
     /* Start encoding the fact */
     //fprintf(stdout,"INFO: Encode the base facts.\n");
+
     fprintf(fp,"\n(opened-files\n \
 	    \t(comm \"%s\")\n \
 	    \t(pid %d)\n", process_name, pid);
@@ -708,6 +710,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
 		+ chr + blk + fifo + sock ));
     
     fclose(fp);
+
 
     value_free(name_value);
     value_free(pid_value);
@@ -1220,6 +1223,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     value_free(mm_value);
 
     //fprintf(stdout,"INFO: Opening base fact file: %s\n",base_fact_file);
+    
     fp = fopen(base_fact_file, "a+");
     if(fp == NULL) {
 	fprintf(stdout," ERROR: Failed to open the base fact file\n");
@@ -1230,7 +1234,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 		    \t( comm \"%s\")\n \
 		    \t( pid %d)\n      \
 		    \t( objects ",process_name, pid);
-
+     
 
     /* Traverse through the entire list of vm_area
      * strcut to get the name of loaded oobjects.
@@ -1317,13 +1321,12 @@ nextptr:
 	vm_area_value = target_load_value_member(target, NULL, vm_area_value,
 						"vm_next", NULL, LOAD_FLAG_AUTO_DEREF);
 	if(!vm_area_value) {
-	    //fprintf(stdout,"INFO: REached the end of the linked list.\n");
+	    //fprintf(stdout,"INFO: Reached the end of the linked list.\n");
 	    break;
 	}
     }
     fprintf(fp," ))\n");
     fclose(fp);
-
 }
 
 int object_info() {
@@ -1581,6 +1584,81 @@ int commandline_info() {
     }
     ret_val = linux_list_for_each_struct(target, init_task_bsymbol, "tasks", 0,
 	    gather_commandline_info, NULL);
+    return ret_val;
+}
+
+
+
+
+int syscall_hooking_info() {
+
+    int ret_val = 0;
+    int max_num = 0;
+    int i;
+    
+    FILE *fp;
+    char call_addr[100];
+    char name [50];
+    char perm[5];
+    struct target_os_syscall *sc;
+    struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
+    GSList *gsltmp;
+    unsigned char prologue[6];
+    char *res = NULL;
+
+
+    /* Load the syscall table */
+    fprintf(stdout,"INFO: Loading the syscall table.\n");
+    if(target_os_syscall_table_load(target)) {
+	fprintf(stdout,"ERROR: Failed to load the syscall table.\n");
+	return 1;
+    }
+
+    max_num = target_os_syscall_table_get_max_num(target);
+    if(max_num < 0) {
+	fprintf(stdout,"ERROR: Failed to get the max number of target sysscalls.\n");
+	return 1;
+    }
+    //fprintf(stdout,"INFO: maximum number of system calls %d \n",max_num);
+
+    fp = fopen(base_fact_file, "a+");
+    if(fp == NULL) {
+	fprintf(stdout,"ERROR: Failed to open the base_fact_file.\n");
+	exit(0);
+    }
+
+    for(i = 0; i < max_num; i++) {
+	sc = target_os_syscall_lookup_num(target, i);
+	if(!sc) {
+	    continue;
+	}
+	if(sc->bsymbol) {
+
+	    res = target_read_addr(target,sc->addr,6, prologue);
+	    if(!res) {
+		fprintf(stdout, "ERROR: Could not read 6 bytes at 0x%"PRIxADDR"!\n",sc->addr);
+		exit(0);
+	    }
+	    fprintf(stdout,"INFO: instruction read %02X%02X%02X%02X%02X%02X \n",
+		    prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
+
+	    if(memcmp(function_prologue[sc->num], prologue, 6)) {
+		fprintf(fp,"(hooked_sys_call\n   \
+			\t( name  \"%s\")\n \
+			\t( original \"%02X%02X%02X%02X%02X%02X\" )\n \
+			\t( current \"%02X%02X%02X%02X%02X%02X\" )\n \
+			\t( index %d ))\n",
+			bsymbol_get_name(sc->bsymbol),
+			function_prologue[sc->num][0],function_prologue[sc->num][1],
+			function_prologue[sc->num][2],function_prologue[sc->num][3],
+			function_prologue[sc->num][4],function_prologue[sc->num][5],
+			prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5],
+			sc->num);
+	    }
+
+	}
+    }
+    fclose(fp);
     return ret_val;
 }
 

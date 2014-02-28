@@ -111,6 +111,20 @@
 		    (arg_list  ?index ?address)))
 	(printout t "RECOVERY: Fixed syscall table entry for " ?name1 crlf))
 
+;Rules for dealing with hooked  system call table entries
+(defrule fix-hooked-entries
+	(declare (salience 10))
+	?f <- (hooked-syscall
+		    (name ?name1)
+		    (index ?index)
+		    (original ?address))
+	=> 
+	(assert (hooked-syscall-recovery
+		    (function-name "fix_syscall_entry")
+		    (arg_list  ?index ?address)))
+	(printout t "RECOVERY: Fixed hooked syatem call " ?name1 crlf))
+
+
 ; Rules for dealing with unauthorized UDP connections
 
 (defrule close-udp-sockets

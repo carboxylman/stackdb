@@ -69,6 +69,8 @@ struct target *target = NULL;
 char base_fact_file[100];
 unsigned long *sys_call_table = NULL;
 char **sys_call_names = NULL;
+unsigned char **function_prologue = NULL;
+char *res = NULL;
 
 
 
@@ -76,6 +78,7 @@ int save_sys_call_table_entries() {
 
     int i, max_num;
     struct target_os_syscall *sc;
+    unsigned char prologue[6];
 
     fprintf(stdout,"INFO: Saving the state of the initial system call table.\n");
     /* Load the syscall table */
@@ -104,6 +107,14 @@ int save_sys_call_table_entries() {
 	fprintf(stdout,"ERROR: Failed to allocate memmory for sys_call_names.\n");
 	exit(0);
     }
+    
+    function_prologue = (char *) malloc(max_num * sizeof(char *));
+    if(function_prologue == NULL) {
+	fprintf(stdout,"ERROR: Failed to allocate memory for function prologue.\n");
+	exit(0);
+    }
+
+
     for(i = 0; i < max_num; i++) {
 	sc = target_os_syscall_lookup_num(target, i);
 	if(!sc) {
@@ -118,9 +129,28 @@ int save_sys_call_table_entries() {
 	    sys_call_names[sc->num] =  (char *) malloc(100* sizeof(char));
 	    if(sys_call_names[sc->num] == NULL) {
 		fprintf(stdout,"ERROR: Failed to allocate memory for the string.\n");
+		exit(0);
+	    }
 	    strcpy(sys_call_names[sc->num], bsymbol_get_name(sc->bsymbol));
 
+
+	    /* now to detect inline hooking of system calls, we capture store the 
+	     * intructions at the first 6 bytes of the function address
+	     */
+            function_prologue[sc->num] = (char *)malloc(6*sizeof(char));
+	    if(function_prologue[sc->num] == NULL) {
+		fprintf(stdout,"ERROR: Failed to alloacate memory to store the function prologue.\n");
+		exit(0);
 	    }
+	    
+	    res = target_read_addr(target, sc->addr, 6, prologue);
+	    if(!res) {
+		fprintf(stdout, "ERROR: Could not read 6 bytes at 0x%"PRIxADDR"!\n",sc->addr);
+		exit(0);
+	    }
+	    fprintf(stdout,"INFO: prologue : %02X%02X%02X%02X%02X%02X\n",prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
+	    memcpy(function_prologue[sc->num], prologue,6);
+	    
 	}
     }
     return 0;
@@ -151,6 +181,9 @@ int generate_snapshot() {
 
     int result = 0;
     target_status_t status;
+	
+    static struct timeval tm1;
+    gettimeofday(&tm1, NULL);
 
     /* Pause the target */
     if ((status = target_status(target)) != TSTATUS_PAUSED) {
@@ -161,70 +194,113 @@ int generate_snapshot() {
 		goto resume;
 	 }
     }
-
-			    
+    static struct timeval tm2;
+    gettimeofday(&tm2, NULL);
+    unsigned long long t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to pause the target is %llu ms\n", t); 
+		    
     /* Start making calls to each of the VMI function */ 
-    /*
+    
+    gettimeofday(&tm1, NULL);
     result = process_info();
     if(result) {
 	fprintf(stdout,"ERROR: process_info function failed\n");
 	result = 1;
 	goto resume;
     }
-    
-    */ 
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to get process info is %llu ms\n", t); 
+
+    gettimeofday(&tm1, NULL);
     result =  file_info();
     if(result) {
 	fprintf(stdout,"ERROR: file_info function failed.\n");
 	result = 1;
 	goto resume;
-    } 
+    }
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to get file info is %llu ms\n", t); 
+
     
-   /*
+    gettimeofday(&tm1, NULL);
     result = module_info();
     if(result) {
 	fprintf(stdout,"ERRROR: module_info function failed.\n");
 	result = 1;
 	goto resume;
     }
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to get module info is %llu ms\n", t); 
+   
     
+    gettimeofday(&tm1, NULL);
     result = cpu_load_info();
     if(result) {
 	fprintf(stdout,"ERROR: cpu_load_info failed.\n");
 	result = 1;
 	goto resume;
     }
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t); 
 
+   /*
     result = process_cpu_utilization();
     if(result) {
 	fprintf(stdout,"ERROR: process_cpu_utilization failed.\n");
 	result = 1;
 	goto resume;
     }
-     
+    */
+    
+    gettimeofday(&tm1, NULL);
     result = object_info();
     if(result) {
 	fprintf(stdout,"ERROR: object_info failed.\n");
 	result  = 1;
 	goto resume;
     }
-      
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to get object file info is %llu ms\n", t);  
+    
+    gettimeofday(&tm1, NULL);
     result = syscalltable_info();
     if(result) {
 	fprintf(stdout,"ERROR: syscallcalltable_info failed.\n");
 	result = 1;
 	goto resume;
     }
-    
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to get syscalltable info is %llu ms\n", t); 
+   
+    gettimeofday(&tm1, NULL);
     result = commandline_info();
     if( result) {
 	fprintf(stdout,"ERROR: commandline_info failed.\n");
 	goto resume;
     }
-   
-    */
-resume:
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to get commandline info is %llu ms\n", t); 
+    
+    gettimeofday(&tm1, NULL);
+    result = syscall_hooking_info();
+    if( result) {
+	fprintf(stdout,"ERROR: syscall_hooking_info failed.\n");
+	goto resume;
+    }
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
+    
 
+resume:
+    gettimeofday(&tm1, NULL);
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
 	fprintf(stdout,"INFO: Resuming the target\n");
 	if (target_resume(target)) {
@@ -232,6 +308,10 @@ resume:
 	    result = 1;
 	}
     }
+    gettimeofday(&tm2, NULL);
+    t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+    fprintf(stdout,"INFO: Time taken to resume the target is %llu ms\n", t); 
+
     return result;
 }
 
@@ -379,13 +459,23 @@ int main( int argc, char** argv) {
 
 	// Make call to the base VMI  base function. This function invokes all the 
 	// VMI tools that gather state information of the virtual appliance/
+	
+
+	static struct timeval tm1;
+	gettimeofday(&tm1, NULL);
 
 	result = generate_snapshot();
+
+	static struct timeval tm2;
+	gettimeofday(&tm2, NULL);
 	if( result) {
 	    fprintf(stdout,"ERROR: Failed to generate the system snapshot.\n \
 		    Trying again...\n");
 	    continue;
 	}
+	unsigned long long t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
+	fprintf(stdout,"INFO: Time taken to generate the snapshot is %llu ms\n", t); 
+
 
 	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
