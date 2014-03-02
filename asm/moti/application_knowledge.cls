@@ -128,15 +128,10 @@
 
 	(known-objects
 	    (name "bash")
-	    (object-list  "bash"  "bash"  "bash"  "libnss_files-2.15.so"  
-	    "libnss_files-2.15.so"  "libnss_files-2.15.so" "libnss_files-2.15.so"  
-	    "libnss_nis-2.15.so"  "libnss_nis-2.15.so"  "libnss_nis-2.15.so"  
-	    "libnss_nis-2.15.so"  "libnsl-2.15.so" "libnsl-2.15.so"  "libnsl-2.15.so"  
-	    "libnsl-2.15.so"  "libnss_compat-2.15.so"  "libnss_compat-2.15.so"  
-	    "libnss_compat-2.15.so" "libnss_compat-2.15.so"  "locale-archive"  
-	    "libc-2.15.so"  "libc-2.15.so"  "libc-2.15.so"  "libc-2.15.so"
-	    "libdl-2.15.so" "libtinfo.so.5.9"  "libtinfo.so.5.9"  "libtinfo.so.5.9"  
-	    "libtinfo.so.5.9" "ld-2.15.so"   "ld-2.15.so"  "ld-2.15.so"))	
+	    (object-list  "bash"  "libnss_files-2.15.so"    
+	    "libnss_nis-2.15.so"  "libnsl-2.15.so" 
+	    "libnss_compat-2.15.so"  "locale-archive"  "libc-2.15.so"
+	    "libdl-2.15.so" "libtinfo.so.5.9")) ;ld-2.15.so
 	
 	(known-open-files
 	    (name "mysqld")
@@ -330,7 +325,7 @@
 			    (pid ?pid)
 			    (cpu ?utilization)
 			    (count ?count)))
-	(save-facts "cpu_state_info.fac" visible per-process-cpu-utilization)
+	(save-facts "state_information/cpu_state_info.fac" visible per-process-cpu-utilization)
 	(printout t "ANOMALY: Adding the current cpu utilization value to the previous value for " ?name1 crlf)
 	(printout t "ANOMALY: Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
 
@@ -390,10 +385,9 @@
     (progn$ (?field  $?objects)
 	(if (not ( member$ ?field $?known_objects))
 		 then 
-		 (modify ?f (object-list  (insert$ $?list 1 ?field)))))
-		 ;else
-	         ;(printout t "nothing" crlf)))
-    (retract ?of)
+		 (bind $?list  (insert$ $?list 1 ?field))))
+	(modify ?f (object-list $?list))
+	(retract ?of)
     (printout t "ANOMALY: Inserted the unknown object name into the list " crlf ))
 	    	    
 
@@ -433,7 +427,8 @@
     (progn$ (?field  $?file_names)
 	(if (not ( member$ ?field $?known_files))
 		 then 
-		 (modify ?f (files-list  (insert$ $?list 1 ?field)))))
+		 (bind $?list (insert$ $?list 1 ?field))))
+    (modify ?f (files-list $?list)) 
     (retract ?of)
     (printout t "ANOMALY: Added an entry to the list of unknown open files for the process" ?name  crlf ))
 

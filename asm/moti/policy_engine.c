@@ -53,6 +53,9 @@
 #include <inttypes.h>
 #include <signal.h>
 #include <argp.h>
+#include <sys/types.h>
+#include<sys/stat.h>
+#include <unistd.h>
 #include "log.h"
 #include "dwdebug.h"
 #include "target_api.h"
@@ -172,7 +175,7 @@ int generate_timestamp(char *date) {
 
     time(&t);
     tm = localtime(&t);
-    result = strftime(date,100, "%Y_%m_%d_%H_%M_%S.fac", tm);
+    result = strftime(date,100, "state_information/%Y_%m_%d_%H_%M_%S.fac", tm);
 
     return result;
 }
@@ -386,6 +389,8 @@ int main( int argc, char** argv) {
     struct target_spec *tspec = NULL;
     target_status_t tstat;
     int iteration = 1;
+    FILE *fp;
+    struct stat st = {0};
 
 
     memset(&opts,0,sizeof(opts));
@@ -425,6 +430,24 @@ int main( int argc, char** argv) {
     fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
     // Initialize the CLIPS environment
     InitializeEnvironment();
+
+    // Create a directory  with files to keep track of state information.
+    if(stat("state_information", &st) == 1) {
+	mkdir("state_information",0700);
+    }
+    
+    fp = fopen("state_information/cpu_state_info.fac", "w");
+    fp = fopen("state_information/module_state_info.fac", "w");
+    fp = fopen("state_information/process_priv_state_info.fac", "w");
+    fp = fopen("state_information/process_state_info.fac", "w");
+    fp = fopen("state_information/tcp_state_info.fac", "w");
+    fp = fopen("state_information/udp_state_info.fac", "w");
+    fp = fopen("state_information/recovery_action.fac", "w");
+
+
+
+
+
     
     /* Copy the initil system_call_table contents */
       result = save_sys_call_table_entries();
@@ -489,7 +512,7 @@ int main( int argc, char** argv) {
 	   exit(0);
 	}
 	// Load previous cpu utilization state
-	result = LoadFacts("cpu_state_info.fac");
+	result = LoadFacts("state_information/cpu_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
@@ -501,30 +524,30 @@ int main( int argc, char** argv) {
 	// At this time the anomaly facts are generated.
 	
 	fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
-	result = LoadFacts("process_state_info.fac");
+	result = LoadFacts("state_information/process_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");
 	   exit(0);
 	}
 	
-	result = LoadFacts("module_state_info.fac");
+	result = LoadFacts("state_information/module_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the module_state_info file.\n");
 	   exit(0);
 	}
 
-	result = LoadFacts("udp_state_info.fac");
+	result = LoadFacts("state_information/udp_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base udp_state_info file.\n");
 	   exit(0);
 	}
 	
-	result = LoadFacts("tcp_state_info.fac");
+	result = LoadFacts("state_information/tcp_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the tcp_state_info file.\n");
 	   exit(0);
 	}
-	result = LoadFacts("process_priv_info.fac");
+	result = LoadFacts("state_information/process_priv_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_priv_info file.\n");
 	   exit(0);

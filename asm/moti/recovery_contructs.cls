@@ -18,8 +18,8 @@
 		    ( name ?name1)
 		    ( prev_action ps_kill)))
 	(retract ?f)
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "process_state_info.fac" visible unknown-process-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/process_state_info.fac" visible unknown-process-recovery-prev-action)
 	(printout t "RECOVERY: Killing the unknown pocess " ?pid   crlf))
 
 (defrule kill-unknown-process_1
@@ -39,8 +39,8 @@
 	(assert (unknown-process-recovery-prev-action
 		    (prev_action ps_kill_parent)
 		    (name ?name2)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "process_state_info.fac" visible unknown-process-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/process_state_info.fac" visible unknown-process-recovery-prev-action)
 	(printout t "RECOVERY: Killing the process and parent process" crlf))
 
 (defrule kill-unknown-process_2
@@ -54,7 +54,7 @@
 	=>
 	(retract ?of)
 	(retract ?f)
-	(save-facts "process_state_info.fac" visible unknown-process-recovery-prev-action)
+	(save-facts "state_information/process_state_info.fac" visible unknown-process-recovery-prev-action)
         (printout t "RECOVERY: Tried killing the unknown process and its parent, but the process still exist. !!! Repeating the  recovery cycle now. " crlf))
 
 
@@ -74,8 +74,8 @@
 		    (prev_action unload)
 		    (name ?name1)))
 	(retract ?f)
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "module_state_info.fac" visible unknown-module-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/module_state_info.fac" visible unknown-module-recovery-prev-action)
 	(printout t "RECOVERY: Unloading the  module " ?name1   crlf))
 
 (defrule unload-unknown-modules_1
@@ -94,8 +94,8 @@
 	(assert (unknown-module-recovery-prev-action
 		    (prev_action unload)
 		    (name ?name2)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "module_state_info.fac" visible unknown-module-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/module_state_info.fac" visible unknown-module-recovery-prev-action)
 	(printout t "RECOVERY: Module " ?name2 "was found loaded again!!!!, unloading it." crlf))
 
 
@@ -110,7 +110,7 @@
 	(assert (recovery-action
 		    (function-name "fix_syscall_entry")
 		    (arg_list  ?index ?address)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Fixed syscall table entry for " ?name1 crlf))
 
 ;Rules for dealing with hooked  system call table entries
@@ -124,7 +124,7 @@
 	(assert (recovery-action
 		    (function-name "fix_syscall_entry")
 		    (arg_list  ?index ?address)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Fixed hooked syatem call " ?name1 crlf))
 
 
@@ -147,8 +147,8 @@
 		    (prev_action close_socket)
 		    (name ?name1)
 		    (pid ?pid)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
 	(printout t "RECOVERY: Closed UDP sockets of process " ?name1 crlf)))
 
 (defrule close-udp-socket_1
@@ -169,8 +169,8 @@
 	(assert (open-udp-socket-recovery-prev-action
 		(prev_action kill_process)
 		(name ?name1)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
 	(printout t "RECOVERY: The UDP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
 
 (defrule close-udp-socket_2
@@ -184,7 +184,7 @@
 	=>
 	(retract ?f)
 	(retract ?of)
-	(save-facts "udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
+	(save-facts "state_information/udp_state_info.fac" visible open-udp-socket-recovery-prev-action)
 	(printout t "RECOVERY: Process " ?name1" with unauthorised UPD socket was found again. !!! Repeating the recovery cycle now." crlf))
 
 
@@ -207,8 +207,8 @@
 		    (prev_action close_socket)
 		    (name ?name1)
 		    (pid ?pid)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
 	(printout t "RECOVERY: Closed tcp sockets of process " ?name1 crlf)))
 
 (defrule close-tcp-socket_1
@@ -229,8 +229,8 @@
 	(assert (open-tcp-socket-recovery-prev-action
 		(prev_action kill_process)
 		(name ?name1)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
-	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
 	(printout t "RECOVERY: The TCP socket for the proces " ?name1" was opened again !!! Killing the process now" crlf))
 
 (defrule close-tcp-socket_2
@@ -244,7 +244,7 @@
 	=>
 	(retract ?f)
 	(retract ?of)
-	(save-facts "tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
+	(save-facts "state_information/tcp_state_info.fac" visible open-tcp-socket-recovery-prev-action)
 	(printout t "RECOVERY: Proces " ?name1" with unauthorized TCP socket was found again!!! Repeating the recovery cycle now" crlf))
 
 
@@ -270,11 +270,11 @@
 	(assert (recovery-action
 		    (function-name "reduce_utilization")
 		    (arg_list ?name1 ?pid)))
-	(save-facts "recovery_action.fac" visible recovery-action) 
+	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Process " ?name1 " has high cpu utilization over the past 2 iterations" crlf)
 	(printout t "RECOVERY: The cpu load during past 2 mins is " ?load crlf)
         (modify ?f (cpu 0.0) (count 0))
-	(save-facts "cpu_state_info.fac" visible per-process-cpu-utilization))
+	(save-facts "state_information/cpu_state_info.fac" visible per-process-cpu-utilization))
 
 ; Rules for dealing with priv escalation
 
@@ -294,8 +294,8 @@
 	(assert (priv-escalation-recovery-prev-action
 		    (prev_action kill_process)
 		    (name ?name1)))
-	(save-facts "recovery_action.fac" visible recovery-action)
-	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action)
+	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
 	(printout t "RECOVERY: Killing the priv escalated process " ?name1 crlf ))
 
 
@@ -317,8 +317,8 @@
 	(assert (priv-escalation-recovery-prev-action
 		(prev_action kill_process_parent)
 		(name ?name1)))
-	(save-facts "recovery_action.fac" visible recovery-action)
-	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
+	(save-facts "state_information/recovery_action.fac" visible recovery-action)
+	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
 	(printout t "RECOVERY: The privileges for the process " ?name1" was escalated again !!! Killing the parent process now" crlf))
 
 (defrule correct-priv-escalation_02
@@ -333,7 +333,7 @@
 	=>
 	(retract ?f)
 	(retract ?of)
-	(save-facts "process_priv_info.fac" visible priv-escalation-recovery-prev-action)
+	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
 	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
 
 
@@ -350,7 +350,7 @@
 		(function-name "unload_objects")
 		(arg_list ?name ?pid $?list)))
     (retract ?f)
-    (save-facts "recovery_action.fac" visible recovery-action)
+    (save-facts "state_information/recovery_action.fac" visible recovery-action)
     (printout t "RECOVERY: Unloading the unknown objects." crlf))
 
 ; rules for dealing with unknown files opened by a process
@@ -365,7 +365,7 @@
 		(function-name "close_open_files")
 		(arg_list ?name ?pid $?list)))
     (retract ?f)
-    (save-facts "recovery_action.fac" visible recovery-action)    
+    (save-facts "state_information/recovery_action.fac" visible recovery-action)    
     (printout t "RECOVERY: Closing the files:" $?list " open by the process " ?name crlf))
 
 
