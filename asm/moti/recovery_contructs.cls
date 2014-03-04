@@ -12,7 +12,7 @@
 
 	=>
 	(assert (recovery-action
-		    ( function-name "kill_process")
+		    ( function-name kill_process)
 		    ( arg_list  ?name1 ?pid)))
 	(assert (unknown-process-recovery-prev-action
 		    ( name ?name1)
@@ -32,7 +32,7 @@
 			 (name ?name2))
 	=>
 	(assert (recovery-action
-		    (function-name "kill_process_parent")
+		    (function-name kill_process_parent)
 		    (arg_list ?pid1 ?name2)))
 	(retract ?f)
 	(retract ?of)
@@ -68,7 +68,7 @@
 			(name ?name1))))
 	=>
 	(assert (recovery-action
-		    (function-name "module_unload")
+		    (function-name unload_module)
 		    (arg_list ?name1)))
 	(assert (unknown-module-recovery-prev-action
 		    (prev_action unload)
@@ -88,7 +88,7 @@
 	=>
 	(retract ?of)
 	(assert (recovery-action
-		    (function-name "module_unload")
+		    (function-name unload_module)
 		    (arg_list  ?name2)))
 	(retract ?f)
 	(assert (unknown-module-recovery-prev-action
@@ -108,7 +108,7 @@
 		    (original ?address))
 	=> 
 	(assert (recovery-action
-		    (function-name "fix_syscall_entry")
+		    (function-name fix_syscall_entry)
 		    (arg_list  ?index ?address)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Fixed syscall table entry for " ?name1 crlf))
@@ -122,7 +122,7 @@
 		    (original ?address))
 	=> 
 	(assert (recovery-action
-		    (function-name "fix_syscall_entry")
+		    (function-name fix_hooked_entry)
 		    (arg_list  ?index ?address)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Fixed hooked syatem call " ?name1 crlf))
@@ -140,7 +140,7 @@
 			(pid ?pid))))
 	=>
 	(assert (recovery-action
-		    (function-name "close_udp_socket")
+		    (function-name close_udp_socket)
 		    (arg_list ?name1 ?pid)))
 	(retract ?f)
 	(assert (open-udp-socket-recovery-prev-action
@@ -162,7 +162,7 @@
 		    (pid ?pid))
 	=>
 	(assert (recovery-action
-		( function-name "kill-process")
+		( function-name kill_process)
 		( arg_list ?name1 ?pid)))
 	(retract ?f)
 	(retract ?of)
@@ -200,7 +200,7 @@
 			(pid ?pid))))
 	=>
 	(assert (recovery-action
-		    (function-name "close_tcp_socket")
+		    (function-name close_tcp_socket)
 		    (arg_list ?name1 ?pid)))
 	(retract ?f)
 	(assert (open-tcp-socket-recovery-prev-action
@@ -222,7 +222,7 @@
 		    (pid ?pid))
 	=>
 	(assert (recovery-action
-		( function-name "kill_process")
+		( function-name kill_process)
 		( arg_list ?name1 ?pid)))
 	(retract ?f)
 	(retract ?of)
@@ -268,7 +268,7 @@
 	(test ( > ?load 0.5))
 	=>
 	(assert (recovery-action
-		    (function-name "reduce_utilization")
+		    (function-name reduce_utilization)
 		    (arg_list ?name1 ?pid)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Process " ?name1 " has high cpu utilization over the past 2 iterations" crlf)
@@ -288,7 +288,7 @@
 			(name ?name1))))
 	=>
 	(assert (recovery-action
-		    (function-name "kill_process")
+		    (function-name kill_process)
 		    (arg_list ?name1 ?pid)))
 	(retract ?f)
 	(assert (priv-escalation-recovery-prev-action
@@ -310,7 +310,7 @@
 		(prev_action kill_process))
 	=>
 	(assert (recovery-action
-		    (function-name "kill_process_parent")
+		    (function-name kill_process_parent)
 		    (arg_list  ?parent_pid)))
 	(retract ?f)
 	(retract ?of)
@@ -347,7 +347,7 @@
 		(object-list $?list))
     =>
     (assert (recovery-action
-		(function-name "unload_objects")
+		(function-name unload_objects)
 		(arg_list ?name ?pid $?list)))
     (retract ?f)
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
@@ -362,7 +362,7 @@
 		(files-list $?list))
     =>
     (assert (recovery-action
-		(function-name "close_open_files")
+		(function-name close_open_files)
 		(arg_list ?name ?pid $?list)))
     (retract ?f)
     (save-facts "state_information/recovery_action.fac" visible recovery-action)    

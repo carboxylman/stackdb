@@ -439,7 +439,7 @@
 
 ;A common recovery fact template for all receovery actions
 (deftemplate recovery-action
-	    (slot function-name (type STRING))
+	    (slot function-name (type SYMBOL))
 	    (multislot arg_list (type SYMBOL)))
 
 (deftemplate unknown-process-recovery-prev-action

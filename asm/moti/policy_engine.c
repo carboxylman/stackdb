@@ -66,6 +66,7 @@
 #include "alist.h"
 #include "list.h"
 #include "policy_engine.h"
+#include "repair_engine.h"
 #include "clips.h"
 
 struct target *target = NULL;
@@ -564,6 +565,14 @@ int main( int argc, char** argv) {
 
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
+
+	fprintf(stdout,"INFO: Parsing the recovery action file.\n");
+
+	result = parse_recovery_action();
+	if(result) {
+	    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
+	    exit(0);
+	}
 	
 	Clear();
 	fprintf(stdout,"INFO: Clearing up all the facts and rules\n");
