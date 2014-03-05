@@ -54,8 +54,9 @@
 #include <signal.h>
 #include <argp.h>
 #include <sys/types.h>
-#include<sys/stat.h>
+#include <sys/stat.h>
 #include <unistd.h>
+#include <string.h>
 #include "log.h"
 #include "dwdebug.h"
 #include "target_api.h"

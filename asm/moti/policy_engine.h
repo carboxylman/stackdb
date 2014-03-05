@@ -167,8 +167,6 @@ int ps_gather(struct target *target, struct value * value, void * data) {
     int vcpu = 0 , wq_worker = 0, kswapd = 0;
     int kthread = 0, used_superpriv = 0;
 
-    struct bsymbol *task_struct_bsymbol;
-    struct bsymbol *listhead_bsymbol;
     struct value * real_cred_v;
     ADDR real_cred_addr;
     struct symbol *cred_struct_type = NULL;
@@ -383,7 +381,7 @@ int gather_file_info(struct target *target, struct value * value, void * data) {
     struct value *i_mode_value;
 
     struct bsymbol *file_struct_bsymbol = NULL;
-    int max_fds, i, pid, next_fd, counter;
+    int max_fds, i, pid;
     char *file_name = NULL , *process_name = NULL;
     ADDR file_addr, mem_addr;
     struct symbol *file_struct_type;
@@ -780,7 +778,6 @@ int gather_module_info(struct target *target, struct value * value, void * data)
 
 int module_info() {
     int ret_val;
-    FILE *fp = NULL;
 
     struct bsymbol *module_bsymbol;
     struct bsymbl *listhead_bsymbol;
@@ -834,7 +831,6 @@ int cpu_load_info()
     unsigned long avenrun0, avenrun1, avenrun2;
     struct bsymbol *avenrun_bsymbol;
     struct value *avenrun_value;
-    ADDR base_addr;
     struct target_location_ctxt *tlctxt;
     FILE *fp;
     
@@ -920,7 +916,7 @@ int gather_cpu_utilization(struct target *target, struct value *value, void * da
     unsigned long utime, stime, sum_exec_runtime, rtime, total;
     unsigned long prev_utime, prev_stime, jiffies;
     unsigned long vruntime, utimescaled, stimescaled;
-    struct timeval utime_timeval, stime_timeval;
+    struct timeval;
     unsigned long load[2], jiffy[2];
 
     pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
@@ -1176,7 +1172,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     FILE * fp;
     ADDR start_addr, next_vm_area_addr;
     char *file_name, *process_name;
-    int pid, i = 0;
+    int pid;
     
     pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
     if(!pid_value) {
@@ -1355,14 +1351,9 @@ int syscalltable_info() {
     int i;
     
     FILE *fp;
-    char call_addr[100];
-    char name [50];
-    char perm[5];
     struct target_os_syscall *sc;
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
     GSList *gsltmp;
-    const char *system_map = "/boot/System.map-3.8.0-26-generic";
-
 
     /* Load the syscall table */
 
@@ -1597,9 +1588,6 @@ int syscall_hooking_info() {
     int i;
     
     FILE *fp;
-    char call_addr[100];
-    char name [50];
-    char perm[5];
     struct target_os_syscall *sc;
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
     GSList *gsltmp;

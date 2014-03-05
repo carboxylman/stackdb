@@ -43,16 +43,20 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     struct thread_info *task_info;
     int found_flag = 0;
     int psaction_pid = 0;
+    int *int_ptr = NULL;
 
 
     /* Parse the arguments passed */
     if(cmd->argc < 1 || cmd->argc > 1) {
 	printk(KERN_INFO "pasction module requires exactly 1 argument to be passed i.e, PID");
+	printk(KERN_INFO " Number of arguments passed is %d\n",cmd->argc);
 	return -EINVAL;
     }
 
     /* Extract the PID passed */
-    psaction_pid = cmd->argv[0];
+    int_ptr = (int *)cmd->argv;
+    psaction_pid = *int_ptr;
+    printk(KERN_INFO "Process ID passed is %d.\n",psaction_pid);
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;

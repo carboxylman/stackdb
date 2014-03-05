@@ -69,6 +69,7 @@ static int load_submodules(void *__unused) {
 	switch(cmd->submodule_id) {
 	    /* Case 0 refers to the psaction submodule */
 	    case 0 :
+		printk(KERN_INFO " Number of arguments passed = %d\n",cmd->argc);
 		if(submodule.mod_table[cmd->submodule_id] == NULL)
 		    printk(KERN_INFO "Loading the the psaction sub module\n");
 		if((result = request_module("psaction_module")) < 0) {
