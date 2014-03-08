@@ -32,8 +32,8 @@
 #define SUB_MODULE_COUNT 10
 
 static struct task_struct *driver_thread;
-struct submod_table submodule;
-struct cmd_ring_channel req_ring_channel, res_ring_channel;
+static struct submod_table submodule;
+static struct cmd_ring_channel req_ring_channel, res_ring_channel;
 static unsigned int cmd_buf_size = 4; /* buffer size (in pages) */
 static int ack_ready = 0;
 
@@ -59,6 +59,7 @@ static int load_submodules(void *__unused) {
 	/* Read the command */
 	cmd = (struct cmd_rec*) cmd_ring_channel_get_rec(&req_ring_channel,
 		cmd_ring_channel_get_cons(&req_ring_channel));
+	printk( KERN_INFO " cmd rec addr %p\n",cmd);
 
 	/* Increment the consumer index in the request ring channel */
 	req_cons = cmd_ring_channel_get_cons(&req_ring_channel);
@@ -92,6 +93,7 @@ static int load_submodules(void *__unused) {
 		printk(KERN_INFO " producer index = %d\n",res_prod);
 		res_prod += 1;
 		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
+		
 		/* 
 		 * Call the appropriate handler in the submodule based on command id
 		 * After the handler executes it set ack_ready flag, VMI 
@@ -102,12 +104,15 @@ static int load_submodules(void *__unused) {
 
 
 		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+		    printk(KERN_INFO "repair_driver  %d %d %d \n",ack->cmd_id,ack->submodule_id, *(int *)ack->argv);
+
 		    if(result) {
 			printk(KERN_INFO "Function call failed.\n");
-			ack->exec_status = 0;
+			//ack->exec_status = 0;
 			ack_ready++;
+			printk(KERN_INFO "repair_driver  %d %d %d \n",ack->cmd_id,ack->submodule_id, *(int *)ack->argv);
 		    }
-		    printk(KERN_INFO " ack exec status = %d\n",ack->exec_status);
+		    //printk(KERN_INFO " ack exec status = %d\n",ack->exec_status);
 
 		} else {
 		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
@@ -146,7 +151,7 @@ static int load_submodules(void *__unused) {
 		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
 		    if(result) {
 			printk(KERN_INFO "Function call failed.\n");
-			ack->exec_status = 0;
+			//ack->exec_status = 0;
 			ack_ready++;
 		    }
 		} else {
@@ -184,7 +189,7 @@ static int load_submodules(void *__unused) {
 		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
 		    if(result) {
 			printk(KERN_INFO "Function call failed.\n");
-			ack->exec_status = 0;
+			//ack->exec_status = 0;
 			ack_ready++;
 		    }
 		} else {
@@ -219,7 +224,7 @@ static int load_submodules(void *__unused) {
 		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
 		    if(result) {
 			printk(KERN_INFO "Function call failed.\n");
-			ack->exec_status = 0;
+			//ack->exec_status = 0;
 			ack_ready++;
 		    }
 		} else {
@@ -228,12 +233,14 @@ static int load_submodules(void *__unused) {
 
 
 		printk(KERN_INFO "Waiting for the next command.\n");
-		break;	    default :
+		break;	    
+	    default :
 		printk(KERN_INFO 
 			"Invalid submodule Id specified, hence no module loaded\n");
 		return -1;
 
 	}
+	printk(KERN_INFO " ack record = %p\n",ack);
     }
 
     return 1;
@@ -267,6 +274,7 @@ int cmd_ring_channel_alloc_with_metadata(struct cmd_ring_channel *ring_channel,
     ring_channel->cons = ring_channel->prod = 0;
     ring_channel->size_of_a_rec = size_of_a_rec;
     ring_channel->size_in_recs = (size_in_pages * PAGE_SIZE) / ring_channel->size_of_a_rec;
+    printk(KERN_INFO "Size in recs = %d\n",ring_channel->size_in_recs);
     ring_channel->payload_buffer_size = size_in_pages * PAGE_SIZE;
     ring_channel->buf_order = order;
 
@@ -357,6 +365,9 @@ static int __init initialize_driver(void) {
 	return -ENOMEM;
     }
     /* create the ring buffers */
+    printk(KERN_INFO " size of cmd rec  %d\n",sizeof(struct cmd_rec));
+    printk(KERN_INFO " size of ack rec  %d\n",sizeof(struct ack_rec));
+
     result = initialize_buffer(NULL);
     if (result) {
 	printk(KERN_INFO "Ring-Buffer initialization failed\n");

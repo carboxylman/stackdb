@@ -57,6 +57,7 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     int_ptr = (int *)cmd->argv;
     psaction_pid = *int_ptr;
     printk(KERN_INFO "Process ID passed is %d.\n",psaction_pid);
+    //bzero(ack, sizeof(struct ack_rec));
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;
@@ -86,18 +87,19 @@ static int ps_kill_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    printk(KERN_INFO "Killed process\n");
 	    found_flag = 1;
 	    /* set the execution status in the ack record to success */
-	    ack->exec_status = 1;
+	    //ack->exec_status = 1;
 	    /* since the execution of the command does not return anything
 	     * set acrg = 0;
 	     */
 	    ack->argc = 1;
-	    ack->argv[0] = psaction_pid;
+	    memcpy(ack->argv, &psaction_pid, sizeof(int));
 	}
     }
+    printk(KERN_INFO " pscation :%d %d %d\n",ack->cmd_id,ack->submodule_id,*(int *)ack->argv);
 
     if (!found_flag) {
 	printk(KERN_INFO "Process with PID = %d not found", psaction_pid);
-	ack->exec_status = 0;
+	//ack->exec_status = 0;
 	ack->argc = 0;
 
     }
