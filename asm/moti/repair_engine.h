@@ -93,7 +93,7 @@ ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
 	goto fail;
     }
     index = v_u32(v);
-    fprintf(stdout,"INFO: %s index is %d\n",index_name, index);
+    //fprintf(stdout,"INFO: %s index is %d\n",index_name, index);
     value_free(v);
 
     /* read the size of the ring buffer in terms of record */
@@ -148,10 +148,10 @@ int load_command_func(int cmd_id, int submodule_id, void * argv, int argc) {
     ci_error_t ret = CI_SUCCESS;
 
 
-    fprintf(stdout,"INFO: In the load_command_funtion.\n");
+    //fprintf(stdout,"INFO: In the load_command_funtion.\n");
     /* Pause the target */
     if ((status = target_status(target)) != TSTATUS_PAUSED) {
-	fprintf(stdout,"INFO: Pausing the target\n");
+	//fprintf(stdout,"INFO: Pausing the target\n");
 	if (target_pause(target)) {
 	    fprintf(stderr,"Failed to pause the target \n");
 	    ret = CI_TPAUSE_ERR;
@@ -347,7 +347,7 @@ failure:
     }
 
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
-	fprintf(stdout,"INFO: Resuming the target\n");
+	//fprintf(stdout,"INFO: Resuming the target\n");
 	if (target_resume(target)) {
 	    fprintf(stdout, "ERROR: Failed to resume target.\n ");
 	}
@@ -366,7 +366,7 @@ int result_ready() {
     struct value *v=NULL;
     ci_error_t ret;
     
-    fprintf(stdout,"INFO: Check if the result is ready to be read.\n");
+    //fprintf(stdout,"INFO: Check if the result is ready to be read.\n");
     while (1) {
 	if ((status = target_status(target)) != TSTATUS_PAUSED) {
 	    if (target_pause(target)) {
@@ -425,12 +425,12 @@ int result_ready() {
     }
 
 result_ready_fail:
+pass:
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
 	if (target_resume(target)) {
 	    fprintf(stderr, "ERROR: Failed to resume target.\n ");
 	}
     }
-pass:
     if(v) {
 	value_free(v);
     }
@@ -676,7 +676,7 @@ int function_name_to_id(char * function_name, int* function_id, int* submodule_i
 	return 0;
     }
     else if(!strncmp(function_name,"close_udp_socket", 16)) {
-	*function_id = 1;
+	*function_id = 0;
 	*submodule_id = 3;
 	return 0;
     }
@@ -722,7 +722,7 @@ int parse_recovery_action() {
 
     /* now read one fact at a time and parse it */
     while(fgets(fact,1024,fp) != NULL) {
-	fprintf(stdout,"INFO: Fact read : %s\n",fact);
+	//fprintf(stdout,"INFO: Fact read : %s\n",fact);
 
 	/* Tokenize the fact */
 	i = 0;
@@ -733,7 +733,7 @@ int parse_recovery_action() {
 	cur_token = (char *) strtok(NULL, delim);
 
 	strcpy(function_name, cur_token); 
-	fprintf(stdout,"INFO: function invoked is %s\n",function_name);
+	//fprintf(stdout,"INFO: function invoked is %s\n",function_name);
 	cur_token = (char *) strtok(NULL, delim);
 
 	/* Now parse all the arguments that are to be passed to that function */
@@ -785,27 +785,43 @@ int parse_recovery_action() {
 	    	
 		/* Get result of command execution */
 		if(result_ready()){
-		    if(get_result(&result)) {
-			fprintf(stdout,"ERROR: Failed to result of command execution.\n");
-		    }
+		    //if(get_result(&result)) {
+		    //	fprintf(stdout,"ERROR: Failed to result of command execution.\n");
+		   // }
 		}
 
-		/* Display the result */
+		/* Display the result 
 		if(result.submodule_id != 0 || result.cmd_id !=0) {
 		    fprintf(stdout,"ERROR: Invalid result read.\n");
 		    continue;
 		}
 		unsigned int *int_ptr = (unsigned int*) result.argv;
-		//if(result.exec_status) {
+		if(result.exec_status) {
 		    fprintf(stdout,"INFO: Process with pid %d killed succesfully.\n", *int_ptr);
-		//}
-		//else {
-		 //   fprintf(stdout,"ERROR: Failed to kill process with pid %u.\n",*int_ptr);
-		//}
-
+		}
+		else {
+		   fprintf(stdout,"ERROR: Failed to kill process with pid %u.\n",*int_ptr);
+		}
+		*/
 		break;
-	    case 1 :
-	    default: 
+	    case 1 : break;
+	    case 2 : break;
+	    case 3 :
+		int_ptr = (int *) arguments;
+		pid = atoi(args[1]);
+		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
+		fprintf(stdout,"INFO: Invoking function to kill sockets of process %s : %d \n",
+			args[0], *int_ptr);
+		int_ptr++;
+
+		/* Only passing the pid to the recovery component */
+		argc = 1;
+		ret = load_command_func(function_id,submodule_id,arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+	    default: break; 
 		fprintf(stdout,"ERROR: Invalid function called.\n");
 	}
 
