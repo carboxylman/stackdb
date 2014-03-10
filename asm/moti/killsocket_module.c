@@ -55,6 +55,7 @@ static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     int i = 0;
     int count = 0;
     int err;
+    int *int_ptr = NULL;
 
 
     /* Parse the arguments passed */
@@ -64,7 +65,10 @@ static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     }
 
     /* Extract the PID passed */
-    target_pid = cmd->argv[0];
+    int_ptr = (int *)cmd->argv;
+    target_pid = *int_ptr;
+    printk(KERN_INFO "Process ID passed is %d.\n",target_pid);
+
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;
@@ -105,7 +109,7 @@ static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 		      
 	    found_flag = 1;
 	    /* set the execution status in the ack record to success */
-	    ack->exec_status = 1;
+	    //ack->exec_status = 1;
 	    ack->argc = 2;
 	    ack->argv[0] = target_pid;
 	    ack->argv[1] = count;
@@ -114,7 +118,7 @@ static int killsocket_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     if (!found_flag) {
 	printk(KERN_INFO "Process with PID = %d not found", target_pid);
-	ack->exec_status = 0;
+	//ack->exec_status = 0;
 	ack->argc = 0;
 
     }
