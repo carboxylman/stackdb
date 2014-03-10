@@ -192,7 +192,7 @@ int generate_snapshot() {
 
     /* Pause the target */
     if ((status = target_status(target)) != TSTATUS_PAUSED) {
-	fprintf(stdout,"INFO: Pausing the target\n");
+	//fprintf(stdout,"INFO: Pausing the target\n");
 	if (target_pause(target)) {
 		fprintf(stderr,"Failed to pause the target \n");
 		result = 1;
@@ -202,7 +202,7 @@ int generate_snapshot() {
     static struct timeval tm2;
     gettimeofday(&tm2, NULL);
     unsigned long long t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to pause the target is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to pause the target is %llu ms\n", t); 
 		    
     /* Start making calls to each of the VMI function */ 
     
@@ -215,7 +215,7 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to get process info is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to get process info is %llu ms\n", t); 
 
     gettimeofday(&tm1, NULL);
     result =  file_info();
@@ -226,7 +226,7 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to get file info is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to get file info is %llu ms\n", t); 
 
     
     gettimeofday(&tm1, NULL);
@@ -238,7 +238,7 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to get module info is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to get module info is %llu ms\n", t); 
    
     
     gettimeofday(&tm1, NULL);
@@ -250,7 +250,7 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t); 
 
    /*
     result = process_cpu_utilization();
@@ -270,7 +270,7 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to get object file info is %llu ms\n", t);  
+    //fprintf(stdout,"INFO: Time taken to get object file info is %llu ms\n", t);  
     
     gettimeofday(&tm1, NULL);
     result = syscalltable_info();
@@ -281,7 +281,7 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to get syscalltable info is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to get syscalltable info is %llu ms\n", t); 
    
     gettimeofday(&tm1, NULL);
     result = commandline_info();
@@ -291,7 +291,7 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to get commandline info is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to get commandline info is %llu ms\n", t); 
     
     gettimeofday(&tm1, NULL);
     result = syscall_hooking_info();
@@ -301,13 +301,13 @@ int generate_snapshot() {
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
     
 
 resume:
     gettimeofday(&tm1, NULL);
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
-	fprintf(stdout,"INFO: Resuming the target\n");
+	//fprintf(stdout,"INFO: Resuming the target\n");
 	if (target_resume(target)) {
 	    fprintf(stdout, "ERROR: Failed to resume target.\n ");
 	    result = 1;
@@ -315,7 +315,7 @@ resume:
     }
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
-    fprintf(stdout,"INFO: Time taken to resume the target is %llu ms\n", t); 
+    //fprintf(stdout,"INFO: Time taken to resume the target is %llu ms\n", t); 
 
     return result;
 }
