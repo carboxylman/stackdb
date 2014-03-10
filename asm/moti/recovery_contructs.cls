@@ -32,7 +32,7 @@
 			 (name ?name2))
 	=>
 	(assert (recovery-action
-		    (function-name kill_process_parent)
+		    (function-name kill_parent_process)
 		    (arg_list ?pid1 ?name2)))
 	(retract ?f)
 	(retract ?of)
@@ -310,12 +310,12 @@
 		(prev_action kill_process))
 	=>
 	(assert (recovery-action
-		    (function-name kill_process_parent)
+		    (function-name kill_parent_process)
 		    (arg_list  ?parent_pid)))
 	(retract ?f)
 	(retract ?of)
 	(assert (priv-escalation-recovery-prev-action
-		(prev_action kill_process_parent)
+		(prev_action kill_parent_process)
 		(name ?name1)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action)
 	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
@@ -329,7 +329,7 @@
 		(parent_pid ?parent_pid))
 	?of <-( priv-escalation-recovery-prev-action
 		(name ?name1)
-		(prev_action kill_process_parent))
+		(prev_action kill_parent_process))
 	=>
 	(retract ?f)
 	(retract ?of)

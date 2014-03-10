@@ -106,11 +106,11 @@
 	"charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
 	"udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
 	"atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
-	"bash" )
+	"bash" "repair_submodul" "python" )
 	
 	(known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
-	(process-with-udp "rpcbind") ;ntpd                 
-	(process-with-tcp  "mysqld"  "rpcbind") ;sshd
+	(process-with-udp "rpcbind" "ntpd" "mysqld")                 
+	(process-with-tcp  "mysqld"  "rpcbind" "sshd" "ntpd") 
 	(process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
 	(high-priority-process "apache" "sshd")
 	(med-priority-process  "mysqld" "ntpd" )
@@ -124,7 +124,7 @@
 	"ecryptfs-kthrea" "crypto" "kthrotld" "kworker/0:1" "khvcd" "binder" "deferwq"
 	"charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
 	"udevd" "rpcbind" "sshd" "upstart-socket-"  "cron"
-	"atd" "ntpd" "getty" "flush-202:1" "login" "bash" "apache2" "kworker/u:1")
+	"atd" "ntpd" "getty" "flush-202:1" "login" "bash" "apache2" "kworker/u:1" "repair_submodul" "python")
 
 	(known-objects
 	    (name "bash")
@@ -267,7 +267,7 @@
 	    (sock_files $?sockets))
 	(or (test(member$ "UDP" $?sockets)) (test (member$ "UDPv6" $?sockets)))
 	(process-with-udp $?proc_list)
-	(test (member$ ?name1 $?proc_list))
+	(not (test (member$ ?name1 $?proc_list)))
 	=>
 	(assert (open-udp-socket
 	    (name ?name1)
@@ -281,7 +281,7 @@
 	    (sock_files $?sockets))
 	(or (test (member$ "TCP" $?sockets)) (test (member$ "TCPv6" $?sockets)))
 	(process-with-tcp $?proc_list)
-	(test (member$ ?name1 $?proc_list))
+	(not (test (member$ ?name1 $?proc_list)))
 	=>
 	(assert (open-tcp-socket
 	    (name ?name1)
