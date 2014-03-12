@@ -765,6 +765,10 @@ int parse_recovery_action() {
 
 	int *int_ptr = NULL;
 	char *char_ptr = NULL;
+	long *long_ptr = NULL;
+	unsigned long base;
+	long index;
+	unsigned long address;
 	switch(submodule_id) 
 	{
 	    case 0 :        /* Function to kill a process */
@@ -805,13 +809,33 @@ int parse_recovery_action() {
 		*/
 		break;
 	    case 1 : break;
-	    case 2 : break;
+	    case 2 : 
+		long_ptr = (long*) arguments;
+		base = strtoul(args[0], NULL, 16);
+		index = strtoul(args[1], NULL, 0);
+		address = strtoul(args[2], NULL, 16);
+		fprintf(stdout,"INFO: base :%"PRIxADDR" index: %d  addr : %"PRIxADDR" \n",base, index, address);
+	    	memcpy((void *)long_ptr, (void *) &base, sizeof(long));
+		long_ptr++;
+		memcpy((void *)long_ptr, (void *) &index, sizeof(long));
+		long_ptr++;
+		memcpy((void *)long_ptr, (void *) &address, sizeof(long));
+		long_ptr = (long *) arguments;
+		
+		fprintf(stdout,"INFO: Invoking funtion to reset the system call table.\n");
+		argc = 3;
+	   	ret = load_command_func(function_id,submodule_id,arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		break;
 	    case 3 :
 		int_ptr = (int *) arguments;
 		pid = atoi(args[1]);
 		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
-		fprintf(stdout,"INFO: Invoking function to kill sockets of process %s : %d \n",
-			args[0], *int_ptr);
+		fprintf(stdout,"INFO: Invoking function to kill sockets of process %s : %d \n", 
+			    args[0], *int_ptr);
 		int_ptr++;
 
 		/* Only passing the pid to the recovery component */

@@ -1354,8 +1354,39 @@ int syscalltable_info() {
     struct target_os_syscall *sc;
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
     GSList *gsltmp;
+    struct bsymbol *bs;
+    struct value *v;
+    ADDR syscall_table;
+
+    struct target_location_ctxt *tlctxt;
 
     /* Load the syscall table */
+    bs = target_lookup_sym(target,"sys_call_table",NULL,NULL,
+				    SYMBOL_TYPE_FLAG_VAR);
+    if (!bs) {
+	fprintf(stdout, "ERROR: Could not lookup symbol sys_call_table!\n");
+	exit(0);
+    }	
+
+    tlctxt = target_location_ctxt_create_from_bsymbol(target, TID_GLOBAL,bs);
+
+    v = target_load_symbol(target,tlctxt,bs,LOAD_FLAG_NONE);
+    if (!v) {
+	fprintf(stdout,"ERROR: Could not load sys_call_table!\n");
+	bsymbol_release(bs);
+	bs = NULL;
+	exit(0);
+    }
+
+    syscall_table = value_addr(v);
+
+    fprintf(stdout,"INFO: Symbol syscall_table is at address %lx\n",
+		    syscall_table);
+    value_free(v);
+    bsymbol_release(bs);
+    bs = NULL;
+
+
 
     fprintf(stdout,"INFO: Loading the syscall table.\n");
     if(target_os_syscall_table_load(target)) {
@@ -1382,22 +1413,20 @@ int syscalltable_info() {
 	    continue;
 	}
 	if(sc->bsymbol) {
-	    //fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
-					    //bsymbol_get_name(sc->bsymbol));
+	    fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
+					    bsymbol_get_name(sc->bsymbol));
 	    if(sc->addr != sys_call_table[sc->num]) {
-		//fprintf(stdout,"INFO: Funtion pointer mismatch detected for symbol %s.\nOriginal entry: %lu Current entry: %lu\n",
-					//bsymbol_get_name(sc->bsymbol), 
-					//sys_call_table[sc->num], 
-					//sc->addr);
-		fprintf(fp,"(tampered_sys_call\n   \
+		fprintf(fp,"(tampered_sys_call\n \
 			\t( name  \"%s\")\n \
 			\t( original %lu )\n \
 			\t( current %lu )\n \
-			\t( index %d ))\n",
+			\t( index %d )\n \ 
+ 			\t( base_address %lu))\n",
 			bsymbol_get_name(sc->bsymbol),
 			sys_call_table[sc->num],
 			sc->addr,
-			sc->num);
+			sc->num,
+			syscall_table);
 	    }
 
 	}

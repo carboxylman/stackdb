@@ -105,9 +105,10 @@ int set_page_ro(unsigned long addr) {
 static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     void **system_call_table = NULL;
-    int offset = 0;
+    long offset = 0;
     void **func_addr = NULL;
-    void * curr_func_addr = NULL;
+    void *curr_func_addr = NULL;
+    unsigned long *long_ptr = NULL;
 
 
     /* Parse the arguments passed */
@@ -117,23 +118,28 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     }
 
     /* Get the base address for the system.map table */
-    system_call_table = (void*)cmd->argv[0];
+    long_ptr = (unsigned long*)cmd->argv;
+    system_call_table = (void*) *long_ptr;
+    long_ptr++;
+
 
     /* Get the offset in the table */
-    offset = cmd->argv[2];
+    offset = *long_ptr;
+    long_ptr++;
+
 
     /* Get the correct address */
-    func_addr = (void *)cmd->argv[1];
-    printk(KERN_INFO " function address %lx \n",func_addr);
+    func_addr = (void*) *long_ptr;
+    printk(KERN_INFO " Function address %lx \n",func_addr);
 
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;
 
-    printk(KERN_INFO " Address passed %lx %lx %d\n",
-	    system_call_table, cmd->argv[1],cmd->argv[2]);
+    printk(KERN_INFO " Address passed %lx %d %p\n",
+	    system_call_table, offset, func_addr);
 
-    printk(KERN_INFO " Setting the write permissions at %p \n",
+    printk(KERN_INFO " Setting the write permissions at %lx \n",
 	    system_call_table);
 
     /* Set write permissions on the system call table */
@@ -142,10 +148,10 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     /* Now reset the sys call address in the table */
 
     curr_func_addr = (unsigned long) system_call_table[offset];
-    printk(KERN_INFO " Current entry in the system call table : %x.\n",
+    printk(KERN_INFO " Current entry in the system call table : %lx.\n",
 	    curr_func_addr);
     system_call_table[offset] = func_addr;
-    printk(KERN_INFO " System call table entry changed to %x.\n",
+    printk(KERN_INFO " System call table entry changed to %lx.\n",
 	    func_addr);
 
     printk(KERN_INFO " Reset the orignal permissions on the system call table. \n");
@@ -154,7 +160,7 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     set_page_ro(( unsigned long )system_call_table);
 
     /* set the execution status in the ack record to success */
-    ack->exec_status = 1;
+    //ack->exec_status = 1;
     /* 
      * since the execution of the command does not return anything
      * set argc = 0;

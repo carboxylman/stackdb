@@ -105,11 +105,12 @@
 	?f <- (tampered-syscall
 		    (name ?name1)
 		    (index ?index)
-		    (original ?address))
+		    (original ?address)
+		    (base_address ?base_address))
 	=> 
 	(assert (recovery-action
 		    (function-name fix_syscall_entry)
-		    (arg_list  ?index ?address)))
+		    (arg_list  ?base_address ?index ?address)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Fixed syscall table entry for " ?name1 crlf))
 

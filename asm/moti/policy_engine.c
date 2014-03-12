@@ -439,13 +439,19 @@ int main( int argc, char** argv) {
     }
     
     fp = fopen("state_information/cpu_state_info.fac", "w");
+    fclose(fp);
     fp = fopen("state_information/module_state_info.fac", "w");
+    fclose(fp);
     fp = fopen("state_information/process_priv_state_info.fac", "w");
+    fclose(fp);
     fp = fopen("state_information/process_state_info.fac", "w");
+    fclose(fp);
     fp = fopen("state_information/tcp_state_info.fac", "w");
+    fclose(fp);
     fp = fopen("state_information/udp_state_info.fac", "w");
+    fclose(fp);
     fp = fopen("state_information/recovery_action.fac", "w");
-
+    fclose(fp);
 
 
 
@@ -460,7 +466,7 @@ int main( int argc, char** argv) {
 	
     // Start an infinite loop to periodically execute steps 3.1 to 3.5 
     while(1) {
-
+	
 	fprintf(stdout,"============================ITERATION %d ============================\n",iteration++);
         fprintf(stdout,"INFO: Loading the application level rules\n");
 	result = Load(app_file_path);
@@ -501,12 +507,12 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
 
-	/*
-	result = Watch("all");
-	if(!result) {
-	    fprintf(stdout,"Error: Faild to watch \n");
-	}
-	*/
+	
+	//result = Watch("all");
+	//if(!result) {
+	//    fprintf(stdout,"Error: Faild to watch \n");
+	//}
+	
 	fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
 	if(!result) {
@@ -566,9 +572,9 @@ int main( int argc, char** argv) {
 
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
-
+    
 	fprintf(stdout,"INFO: Parsing the recovery action file.\n");
-
+	
 	result = parse_recovery_action();
 	if(result) {
 	    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
@@ -599,6 +605,3 @@ exit:
     }
 
 }
-
-
-

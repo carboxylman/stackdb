@@ -74,7 +74,8 @@
 	(slot name (type STRING))
 	(slot original (type INTEGER))
 	(slot current (type INTEGER))
-	(slot index (type INTEGER)))
+	(slot index (type INTEGER))
+	(slot base_address (type INTEGER)))
 
 (deftemplate hooked_sys_call
 	(slot name (type STRING))
@@ -164,7 +165,8 @@
 (deftemplate tampered-syscall
 	(slot name (type STRING))
 	(slot index (type INTEGER))
-	(slot original (type INTEGER)))
+	(slot original (type INTEGER))
+	(slot base_address (type INTEGER)))
 
 (deftemplate hooked-syscall
 	(slot name (type STRING))
@@ -237,12 +239,14 @@
 	(tampered_sys_call
 	    (name ?name1)
 	    (index ?index)
-	    (original ?address))
+	    (original ?address)
+	    (base_address ?base_address))
 	=>
 	(assert (tampered-syscall
 	    (name ?name1)
 	    (index ?index)
-	    (original ?address)))
+	    (original ?address)
+	    (base_address ?base_address)))
 	(printout t "ANOMALY: Tampered system call " ?name1 " found at offset " ?index crlf))
 
 ;rule to check for hooked syscall table entries
