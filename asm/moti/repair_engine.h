@@ -808,13 +808,37 @@ int parse_recovery_action() {
 		}
 		*/
 		break;
-	    case 1 : break;
+	    case 1 :
+		int_ptr = (int *) arguments;
+		pid = atoi(args[1]);
+		int uid = atoi(args[2]);
+		int gid = atoi(args[3]);
+		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
+		int_ptr++;
+		memcpy((void *)int_ptr, (void *) &uid, sizeof(int));
+		int_ptr++;
+		memcpy((void *)int_ptr, (void *) &gid, sizeof(int));
+		int_ptr++;
+
+		fprintf(stdout,"INFO: Invoking function to reset credentials of  process %s : %d \n",
+			args[0], pid);
+
+		/* Only passing the pid to the recovery component */
+		argc = 3;
+		ret = load_command_func(function_id,submodule_id,arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		result_ready();
+
+		break;
 	    case 2 : 
 		long_ptr = (long*) arguments;
 		base = strtoul(args[0], NULL, 16);
 		index = strtoul(args[1], NULL, 0);
 		address = strtoul(args[2], NULL, 16);
-		fprintf(stdout,"INFO: base :%"PRIxADDR" index: %d  addr : %"PRIxADDR" \n",base, index, address);
+		//fprintf(stdout,"INFO: base :%"PRIxADDR" index: %d  addr : %"PRIxADDR" \n",base, index, address);
 	    	memcpy((void *)long_ptr, (void *) &base, sizeof(long));
 		long_ptr++;
 		memcpy((void *)long_ptr, (void *) &index, sizeof(long));
@@ -829,6 +853,7 @@ int parse_recovery_action() {
 		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
 		    return 1;
 		}
+		result_ready();
 		break;
 	    case 3 :
 		int_ptr = (int *) arguments;
@@ -845,6 +870,8 @@ int parse_recovery_action() {
 		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
 		    return 1;
 		}
+		result_ready();
+		break;
 	    default: break; 
 		fprintf(stdout,"ERROR: Invalid function called.\n");
 	}

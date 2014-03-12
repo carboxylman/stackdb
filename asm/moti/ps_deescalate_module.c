@@ -27,6 +27,7 @@
 #include <asm/siginfo.h>
 #include <linux/slab.h>
 #include <linux/version.h>
+#include <linux/cred.h>
 #include "repair_driver.h"
 
 #define FUNCTION_COUNT 1
@@ -43,8 +44,10 @@ static int ps_setuid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     int ps_deescalate_pid = 0;
     int ps_deescalate_uid = 0;
     int ps_deescalate_gid = 0;
+    int *int_ptr = NULL;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
     struct cred * nonconst_cred;
+    const struct cred *const_cred;
 #endif
 
 
@@ -55,9 +58,12 @@ static int ps_setuid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     }
 
     /* Extract the PID and the UID passed */
-    ps_deescalate_pid = cmd->argv[0];
-    ps_deescalate_uid = cmd->argv[1];
-    ps_deescalate_gid = cmd->argv[2];
+    int_ptr = (int *)cmd->argv;
+    ps_deescalate_pid = *int_ptr;
+    int_ptr++;
+    ps_deescalate_uid = *int_ptr;;
+    int_ptr++;
+    ps_deescalate_gid = *int_ptr;
 
 
     /*set the command and submodule id in the ack structure */
@@ -86,24 +92,49 @@ static int ps_setuid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
 	    found_flag = 1;
 #else
-	    printk(KERN_INFO "Current real UID of the process = %d\n",task->real_cred->uid);
-	    printk(KERN_INFO "Current real GID of the process = %d\n",task->real_cred->gid);
+	    /* for objective and real subjective task credentials */
+	    nonconst_cred = get_cred(task->real_cred);
+	    printk(KERN_INFO "Current real UID of the process = %d\n", nonconst_cred->uid);
+	    printk(KERN_INFO "Current real GID of the process = %d\n", nonconst_cred->gid);
+	    printk(KERN_INFO "Current effective UID of the process = %d\n", nonconst_cred->euid);
+	    printk(KERN_INFO "Current effective GID of the process = %d\n", nonconst_cred->egid);
 
-	    /* typecase the constant structure to a non constant type */
-	    nonconst_cred = (struct cred *) task->real_cred;
 	    nonconst_cred->uid = ps_deescalate_uid;
 	    nonconst_cred->gid = ps_deescalate_gid;
+	    nonconst_cred->euid = ps_deescalate_uid;
+	    nonconst_cred->egid = ps_deescalate_gid;
+
+	    printk(KERN_INFO "Changed real UID of the process = %d\n",nonconst_cred->uid);
+	    printk(KERN_INFO "Changed real GID of the process = %d\n",nonconst_cred->gid);
+	    printk(KERN_INFO "Changed effective UID of the process = %d\n",nonconst_cred->euid);
+	    printk(KERN_INFO "Changed effective GID of the process = %d\n",nonconst_cred->egid);
 	    
-	    task->real_cred = (const struct cred *) nonconst_cred;
+	    put_cred(task->real_cred);
+
+	    /* for effective subjective task credentials */
+	    nonconst_cred = get_cred(task->cred);
+	    printk(KERN_INFO "Current real UID of the process = %d\n", nonconst_cred->uid);
+	    printk(KERN_INFO "Current real GID of the process = %d\n", nonconst_cred->gid);
+	    printk(KERN_INFO "Current effective UID of the process = %d\n", nonconst_cred->euid);
+	    printk(KERN_INFO "Current effective GID of the process = %d\n", nonconst_cred->egid);
+
+	    nonconst_cred->uid = ps_deescalate_uid;
+	    nonconst_cred->gid = ps_deescalate_gid;
+	    nonconst_cred->euid = ps_deescalate_uid;
+	    nonconst_cred->egid = ps_deescalate_gid;
  
-	    printk(KERN_INFO "Changed real UID of the process = %d\n",task->real_cred->uid);
-	    printk(KERN_INFO "Changed real GID of the process = %d\n",task->real_cred->gid);
+	    printk(KERN_INFO "Changed real UID of the process = %d\n",nonconst_cred->uid);
+	    printk(KERN_INFO "Changed real GID of the process = %d\n",nonconst_cred->gid);
+	    printk(KERN_INFO "Changed effective UID of the process = %d\n",nonconst_cred->euid);
+	    printk(KERN_INFO "Changed effective GID of the process = %d\n",nonconst_cred->egid);
+	    
+	    put_cred(task->cred);
+
 
 	    found_flag = 1;
 #endif
-
 	    /* set the execution status in the ack record to success */
-	    ack->exec_status = 1;
+	    //ack->exec_status = 1;
 	    ack->argv[0] = ps_deescalate_pid;
 
 	}
@@ -111,7 +142,7 @@ static int ps_setuid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     if (!found_flag) {
 	printk(KERN_INFO "Process with PID = %d not found", ps_deescalate_pid);
-	ack->exec_status = 0;
+	//ack->exec_status = 0;
 	ack->argc = 0;
 
     }
@@ -192,7 +223,7 @@ static int ps_seteid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    found_flag = 1;
 #endif
 	    /* set the execution status in the ack record to success */
-	    ack->exec_status = 1;
+	    //ack->exec_status = 1;
 	    ack->argv[0] = ps_deescalate_pid;
 
 	}
@@ -200,7 +231,7 @@ static int ps_seteid_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     if (!found_flag) {
 	printk(KERN_INFO "Process with PID = %d not found", ps_deescalate_pid);
-	ack->exec_status = 0;
+	//ack->exec_status = 0;
 	ack->argc = 0;
 
     }
@@ -255,8 +286,7 @@ static int __init psdeescalate_init(void) {
     printk(KERN_INFO "Initialize the function table for ps_deescalate submodule.\n");
     result = driver_mod_register_submodule(NULL);
     if(result ) {
-	printk(KERN_INFO " wq"
-		"Module register function failed \n");
+	printk(KERN_INFO "Module register function failed \n");
 	return result;
     }
 
