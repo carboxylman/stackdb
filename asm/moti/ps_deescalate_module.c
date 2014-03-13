@@ -30,7 +30,7 @@
 #include <linux/cred.h>
 #include "repair_driver.h"
 
-#define FUNCTION_COUNT 1
+#define FUNCTION_COUNT 2
 #define SUBMODULE_ID  1
 
 extern struct submod_table submodule;

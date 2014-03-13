@@ -79,9 +79,9 @@
 
 (deftemplate hooked_sys_call
 	(slot name (type STRING))
-	(slot original (type STRING))
-	(slot current (type STRING))
-	(slot index (type INTEGER)))
+	(slot original (type INTEGER))
+	(slot current (type INTEGER))
+	(slot address (type INTEGER)))
 
 
 (deftemplate command_line
@@ -170,7 +170,7 @@
 
 (deftemplate hooked-syscall
 	(slot name (type STRING))
-	(slot index (type INTEGER))
+	(slot address (type INTEGER))
 	(slot original (type STRING)))
 
 
@@ -253,14 +253,14 @@
 (defrule identify-hooked-syscall
 	(hooked_sys_call
 	    (name ?name1)
-	    (index ?index)
-	    (original ?address))
+	    (address ?address)
+	    (original ?bytes))
 	=>
 	(assert (hooked-syscall
 	    (name ?name1)
-	    (index ?index)
-	    (original ?address)))
-	(printout t "ANOMALY: Hooked system call " ?name1 " found at offset " ?index crlf))
+	    (address ?address)
+	    (original ?bytes)))
+	(printout t "ANOMALY: Hooked system call " ?name1 " found at address " ?address crlf))
 
 
 ;rule to check fo unauthorised TCP/UDP sockets

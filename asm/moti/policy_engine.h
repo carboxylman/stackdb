@@ -61,7 +61,7 @@ struct target *target;
 extern char base_fact_file[100];
 extern unsigned long *sys_call_table;
 extern char **sys_call_names;
-extern unsigned char **function_prologue;
+extern unsigned long *function_prologue;
 
 #define NSEC_PER_SEC    1000000000L
 #define HZ 100
@@ -1589,8 +1589,6 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
 }
 
 
-
-
 int commandline_info() {
 
     int ret_val;
@@ -1608,8 +1606,6 @@ int commandline_info() {
 }
 
 
-
-
 int syscall_hooking_info() {
 
     int ret_val = 0;
@@ -1620,7 +1616,7 @@ int syscall_hooking_info() {
     struct target_os_syscall *sc;
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
     GSList *gsltmp;
-    unsigned char prologue[6];
+    unsigned long prologue;
     char *res = NULL;
 
 
@@ -1651,25 +1647,22 @@ int syscall_hooking_info() {
 	}
 	if(sc->bsymbol) {
 
-	    res = target_read_addr(target,sc->addr,6, prologue);
+	    res = target_read_addr(target,sc->addr,8, &prologue);
 	    if(!res) {
-		fprintf(stdout, "ERROR: Could not read 6 bytes at 0x%"PRIxADDR"!\n",sc->addr);
+		fprintf(stdout, "ERROR: Could not read 8 bytes at 0x%"PRIxADDR"!\n",sc->addr);
 		exit(0);
 	    }
-	   // fprintf(stdout,"INFO: instruction read %02X%02X%02X%02X%02X%02X \n",
-	   //	    prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
+	    //fprintf(stdout,"INFO: Instructions read %lx\n", prologue);
 
-	    if(memcmp(function_prologue[sc->num], prologue, 6)) {
+	    if(memcmp(&function_prologue[sc->num], &prologue, 8)) {
 		fprintf(fp,"(hooked_sys_call\n   \
 			\t( name  \"%s\")\n \
-			\t( original \"%02X%02X%02X%02X%02X%02X\" )\n \
-			\t( current \"%02X%02X%02X%02X%02X%02X\" )\n \
-			\t( index %d ))\n",
+			\t( original \"%lu\" )\n \
+			\t( current \"%lu\" )\n \
+			\t( address %lu ))\n",
 			bsymbol_get_name(sc->bsymbol),
-			function_prologue[sc->num][0],function_prologue[sc->num][1],
-			function_prologue[sc->num][2],function_prologue[sc->num][3],
-			function_prologue[sc->num][4],function_prologue[sc->num][5],
-			prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5],
+			function_prologue[sc->num],
+			prologue,
 			sc->num);
 	    }
 

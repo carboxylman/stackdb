@@ -119,12 +119,12 @@
 	(declare (salience 10))
 	?f <- (hooked-syscall
 		    (name ?name1)
-		    (index ?index)
-		    (original ?address))
+		    (address ?address)
+		    (original ?bytes))
 	=> 
 	(assert (recovery-action
 		    (function-name fix_hooked_entry)
-		    (arg_list  ?index ?address)))
+		    (arg_list  ?address ?bytes)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Fixed hooked syatem call " ?name1 crlf))
 

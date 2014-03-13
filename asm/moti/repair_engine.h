@@ -769,11 +769,13 @@ int parse_recovery_action() {
 	unsigned long base;
 	long index;
 	unsigned long address;
+	int pid;
+	unsigned long bytes;
 	switch(submodule_id) 
 	{
 	    case 0 :        /* Function to kill a process */
 		int_ptr = (int *) arguments;
-		int pid = atoi(args[1]);
+		pid = atoi(args[1]);
 		memcpy((void *)int_ptr, (void *) &pid, sizeof(int));
 		fprintf(stdout,"INFO: Invoking function to kill process %s : %d \n",
 			args[0], *int_ptr);
@@ -833,25 +835,43 @@ int parse_recovery_action() {
 		result_ready();
 
 		break;
-	    case 2 : 
-		long_ptr = (long*) arguments;
-		base = strtoul(args[0], NULL, 16);
-		index = strtoul(args[1], NULL, 0);
-		address = strtoul(args[2], NULL, 16);
-		//fprintf(stdout,"INFO: base :%"PRIxADDR" index: %d  addr : %"PRIxADDR" \n",base, index, address);
-	    	memcpy((void *)long_ptr, (void *) &base, sizeof(long));
-		long_ptr++;
-		memcpy((void *)long_ptr, (void *) &index, sizeof(long));
-		long_ptr++;
-		memcpy((void *)long_ptr, (void *) &address, sizeof(long));
-		long_ptr = (long *) arguments;
+	    case 2 :
+		if(function_id == 0) {
+		    long_ptr = (long*) arguments;
+		    base = strtoul(args[0], NULL, 16);
+		    index = strtoul(args[1], NULL, 0);
+		    address = strtoul(args[2], NULL, 16);
+		    //fprintf(stdout,"INFO: base :%"PRIxADDR" index: %d  addr : %"PRIxADDR" \n",base, index, address);
+		    memcpy((void *)long_ptr, (void *) &base, sizeof(long));
+		    long_ptr++;
+		    memcpy((void *)long_ptr, (void *) &index, sizeof(long));
+		    long_ptr++;
+		    memcpy((void *)long_ptr, (void *) &address, sizeof(long));
+		    long_ptr = (long *) arguments;
 		
-		fprintf(stdout,"INFO: Invoking funtion to reset the system call table.\n");
-		argc = 3;
-	   	ret = load_command_func(function_id,submodule_id,arguments,argc);
-		if(ret) {
-		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
-		    return 1;
+		    fprintf(stdout,"INFO: Invoking funtion to reset the system call table.\n");
+		    argc = 3;
+		    ret = load_command_func(function_id,submodule_id,arguments,argc);
+		    if(ret) {
+			fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+			return 1;
+		   }
+		}
+		else {
+		    long_ptr = (long*) arguments;
+		    address = strtoul(args[0], NULL, 16);
+		    bytes = strtoul(args[1], NULL, 16);		
+		    memcpy((void *)long_ptr, (void *) &address, sizeof(long));
+		    long_ptr++;
+		    memcpy((void *)long_ptr, (void *) &bytes, sizeof(long));
+		    long_ptr++;
+		    fprintf(stdout,"INFO: Invoking funtion to unhook the system call.\n");
+		    argc = 2;
+		    ret = load_command_func(function_id,submodule_id,arguments,argc);
+		    if(ret) {
+			fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+			return 1;
+		   }
 		}
 		result_ready();
 		break;

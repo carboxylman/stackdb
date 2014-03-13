@@ -74,7 +74,7 @@ struct target *target = NULL;
 char base_fact_file[100];
 unsigned long *sys_call_table = NULL;
 char **sys_call_names = NULL;
-unsigned char **function_prologue = NULL;
+unsigned long *function_prologue = NULL;
 char *res = NULL;
 
 
@@ -83,7 +83,7 @@ int save_sys_call_table_entries() {
 
     int i, max_num;
     struct target_os_syscall *sc;
-    unsigned char prologue[6];
+    unsigned long  prologue;
 
     fprintf(stdout,"INFO: Saving the state of the initial system call table.\n");
     /* Load the syscall table */
@@ -113,7 +113,7 @@ int save_sys_call_table_entries() {
 	exit(0);
     }
     
-    function_prologue = (char *) malloc(max_num * sizeof(char *));
+    function_prologue = (long *) malloc(max_num * sizeof(unsigned long));
     if(function_prologue == NULL) {
 	fprintf(stdout,"ERROR: Failed to allocate memory for function prologue.\n");
 	exit(0);
@@ -139,22 +139,13 @@ int save_sys_call_table_entries() {
 	    strcpy(sys_call_names[sc->num], bsymbol_get_name(sc->bsymbol));
 
 
-	    /* now to detect inline hooking of system calls, we capture store the 
-	     * intructions at the first 6 bytes of the function address
-	     */
-            function_prologue[sc->num] = (char *)malloc(6*sizeof(char));
-	    if(function_prologue[sc->num] == NULL) {
-		fprintf(stdout,"ERROR: Failed to alloacate memory to store the function prologue.\n");
-		exit(0);
-	    }
-	    
-	    res = target_read_addr(target, sc->addr, 6, prologue);
+	    res = target_read_addr(target, sc->addr, 8, &prologue);
 	    if(!res) {
-		fprintf(stdout, "ERROR: Could not read 6 bytes at 0x%"PRIxADDR"!\n",sc->addr);
+		fprintf(stdout, "ERROR: Could not read 8 bytes at 0x%"PRIxADDR"!\n",sc->addr);
 		exit(0);
 	    }
-	    //fprintf(stdout,"INFO: prologue : %02X%02X%02X%02X%02X%02X\n",prologue[0],prologue[1],prologue[2],prologue[3],prologue[4],prologue[5]);
-	    memcpy(function_prologue[sc->num], prologue,6);
+	    //fprintf(stdout,"INFO: prologue : %lx\n",prologue);
+	    memcpy(&function_prologue[sc->num], &prologue,8);
 	    
 	}
     }

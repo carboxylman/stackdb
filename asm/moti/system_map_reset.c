@@ -43,7 +43,7 @@
 #include <asm/page.h>
 #include "repair_driver.h"
 
-#define FUNCTION_COUNT 1
+#define FUNCTION_COUNT 2
 #define SUBMODULE_ID  2
 
 extern struct submod_table submodule;
@@ -171,6 +171,59 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     return 0;
 }
 
+static int unhook_system_call(struct cmd_rec *cmd, struct ack_rec *ack) {
+
+    void *address = NULL;
+    unsigned long bytes;
+    long *long_ptr = NULL;
+
+    /* Parse the arguments passed */
+    if(cmd->argc != 2 ) {
+	printk(KERN_INFO "unhook_system_call requires exactly 2 argument to be passed.");
+	return -EINVAL;
+    }
+
+    printk(KERN_INFO "in unhook_sys_call");
+    /* Get the base address for the system.map table */
+    long_ptr = (unsigned long*)cmd->argv;
+    address = (void*) *long_ptr;
+    long_ptr++;
+
+    /* Get the offset in the table */
+    bytes = *long_ptr;
+    long_ptr++;
+
+    printk(KERN_INFO " Function address %lx \n",address);
+
+    /*set the command and submodule id in the ack structure */
+    ack->cmd_id = cmd->cmd_id;
+    ack->submodule_id = cmd->submodule_id;
+
+    printk(KERN_INFO " Bytes passed %lx\n",bytes);
+
+    printk(KERN_INFO " Setting the write permissions at %lx \n", address);
+
+    /* Set write permissions on the system call table */
+    set_page_rw((unsigned long) address);
+    printk(KERN_INFO " Write permission set\n");
+
+    /* Now reset the prologue instructions */
+    memcpy(address,&bytes, 8);
+
+    printk(KERN_INFO " Reset the orignal permissions on the page \n");
+    /* Revert the permissions back to readonly */
+    set_page_ro(( unsigned long ) address);
+
+    /* set the execution status in the ack record to success */
+    //ack->exec_status = 1;
+    /* 
+     * since the execution of the command does not return anything
+     * set argc = 0;
+     */
+    /* Set flag to indicate the result is ready */
+    ack_ready++;
+    return 0;
+}
 
 static int driver_mod_register_submodule(void * __unused) {
 
@@ -188,6 +241,7 @@ static int driver_mod_register_submodule(void * __unused) {
 
     /* initilize the function table */
     submod.func_table[0] = map_reset_func;
+    submod.func_table[1] = unhook_system_call; 
 
     /* register the submodule table maintained in the repair driver */
     submodule.mod_table[submod.submodule_id] = &submod;
@@ -200,6 +254,7 @@ static int driver_mod_unregister_submodule(void * __unused) {
 
     /* reinitialize the function pointer to NULL */
     submod.func_table[0] = NULL;
+    submod.func_table[1] = NULL;
     /* Remove the entry for this module from the main table  */
     submodule.mod_table[submod.submodule_id] = NULL;
 
