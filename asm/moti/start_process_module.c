@@ -40,46 +40,50 @@ struct submodule submod;
 
 static int start_process_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     int length = 0;
-    int *int_ptr = NULL;
+    char *char_ptr = NULL;
     char *argv[10];
     char *envp[10];
     int ret, i = 0;
 
 
     printk(KERN_INFO " Number of arguments passed is %d\n",cmd->argc);
-    int_ptr = (int *)cmd->argv;
-    length = *int_ptr;
+    char_ptr = (char *)cmd->argv;
     
     /*read the argv passed */
-    for( i=0; i< (cmd->argc + 1); i++) {
-	length = *int_ptr;
-	int_ptr++;
+    for( i=0; i< (cmd->argc); i++) {
+	length = *(int *)char_ptr;
+	printk(KERN_INFO "length %d\n",length);
+	char_ptr = char_ptr + sizeof(int);
 	
 	if(length == 0) {
 	    argv[i] = NULL;
+	    //printk( KERN_INFO "INFO: Reached the end of argv\n");
 	    break;
 	}
 	
-	argv[i] = malloc(length * sizeof(char));
-	memcpy(argv[i], (void *)int_ptr, length);
-	printk(KERN_INFO "INFO: argv[%d] = %s\n",i,argv[i]);
-	int_ptr = int_ptr + length;
+	argv[i] = kmalloc((length * sizeof(char)) + 1, GFP_KERNEL);
+	memcpy(argv[i], (void *)char_ptr, length + 1);
+	//printk(KERN_INFO "INFO: argv[%d] = %s length = %d\n",i,argv[i], length);
+	char_ptr = char_ptr + length + 1;
     }
 
     /* read the envp passed */
-    for(i = 0 ; i< 3; i++) {
-	length = *int_ptr;
-	int_ptr++;
+    for(i = 0 ; i< 4; i++) {
+	length = *(int *)char_ptr;
+	//printk(KERN_INFO "length %d\n",length);
+
+	char_ptr = char_ptr + sizeof(int);
 	
 	if(length == 0) {
-	    *envp[i] = NULL;
+	    //printk(KERN_INFO "INFO: Reached the end of envp\n");
+	    envp[i] = NULL;
 	    break;
 	}
-	
-	envp[i] = malloc(length * sizeof(char));
-	memcpy(envp[i], (void *)int_ptr, length);
-	printk(KERN_INFO "INFO: envp[%d] = %s\n",i,envp[i]);
-	int_ptr = int_ptr + length;
+	//printk(KERN_INFO "INFO: envp[%d]\n", i);
+	envp[i] = kmalloc((length * sizeof(char)) + 1 , GFP_KERNEL);
+	memcpy(envp[i], (void *)char_ptr, length + 1);
+	//printk(KERN_INFO "INFO: envp[%d] = %s\n",i,envp[i]);
+	char_ptr = char_ptr + length + 1;
 
     }
 
@@ -89,10 +93,19 @@ static int start_process_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     ack->argc = 0;
 
     /* Finally make teh function call */
-    ret = call_usermodehelper(argv[0], argv, envp, UMH_WAIT_PROC);
+    ret = call_usermodehelper(argv[0], argv, envp, UMH_WAIT_EXEC);
     if (ret == -ENOENT || ret == -EACCES) {
-	printk(KERN_INFO " Prigram  was not found or isn't executable.\n");
+	printk(KERN_INFO " Program  %s was not found or isn't executable.\n", argv[0]);
     }
+
+    for( i = 0; i< (cmd->argc-3); i++) {
+	kfree(argv[i]);
+    }
+
+    for( i = 0; i< 3; i++) {
+	//kfree(envp[i]);
+    }
+
 
     /* Set flag to indicate the result is ready */
     ack_ready++;

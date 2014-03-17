@@ -441,8 +441,8 @@ int main( int argc, char** argv) {
     fclose(fp);
     fp = fopen("state_information/udp_state_info.fac", "w");
     fclose(fp);
-    fp = fopen("state_information/recovery_action.fac", "w");
-    fclose(fp);
+    //fp = fopen("state_information/recovery_action.fac", "w");
+    //fclose(fp);
 
 
 
@@ -554,15 +554,15 @@ int main( int argc, char** argv) {
     
 
 	// We have to run them through the recovery rules now.
-	fprintf(stdout,"INFO: Loading the  recovery rules file\n");
-	result = Load(recovery_rules_file);
-	if(!result) {
-	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
-	   exit(0);
-	}
+	//fprintf(stdout,"INFO: Loading the  recovery rules file\n");
+	//result = Load(recovery_rules_file);
+	//if(!result) {
+	//   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
+	//   exit(0);
+	//}
 
-	result = Run(-1L);
-	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
+	//result = Run(-1L);
+	//fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
     
 	fprintf(stdout,"INFO: Parsing the recovery action file.\n");
 	

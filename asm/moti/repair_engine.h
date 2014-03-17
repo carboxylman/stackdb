@@ -695,7 +695,11 @@ int function_name_to_id(char * function_name, int* function_id, int* submodule_i
 	*submodule_id = 5;
 	return 0;
     } 
-
+    else if(!strncmp(function_name,"start_process", 13)) {
+	*function_id = 0;
+	*submodule_id = 6;
+	return 0;
+    }
     return 1;
 }
 
@@ -769,7 +773,7 @@ int parse_recovery_action() {
 	unsigned long base;
 	long index;
 	unsigned long address;
-	int pid;
+	int pid, i, length;
 	unsigned long bytes;
 	switch(submodule_id) 
 	{
@@ -810,6 +814,7 @@ int parse_recovery_action() {
 		}
 		*/
 		break;
+
 	    case 1 :
 		int_ptr = (int *) arguments;
 		pid = atoi(args[1]);
@@ -835,6 +840,7 @@ int parse_recovery_action() {
 		result_ready();
 
 		break;
+
 	    case 2 :
 		if(function_id == 0) {
 		    long_ptr = (long*) arguments;
@@ -875,6 +881,7 @@ int parse_recovery_action() {
 		}
 		result_ready();
 		break;
+
 	    case 3 :
 		int_ptr = (int *) arguments;
 		pid = atoi(args[1]);
@@ -892,6 +899,44 @@ int parse_recovery_action() {
 		}
 		result_ready();
 		break;
+
+	    case 6: /*start a process */
+		char_ptr = (char *) arguments;
+		argc--;
+		/* load the command line arguments */
+		for(i= 0; i< (argc - 3 ) ;i++) {
+		    length = strlen(args[i]);
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)) + 1);
+		    char_ptr =  char_ptr + (length * sizeof(char)) + 1; ;
+		}
+		i = 0;
+		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
+		char_ptr = char_ptr + sizeof(int);
+
+		/* load the environment */
+		for( i = (argc-3) ; i < argc; i++) {
+		    length = strlen(args[i]);
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
+		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
+
+		}
+		i = 0;
+		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
+		char_ptr = char_ptr + sizeof(int);
+		
+		ret = load_command_func(function_id,submodule_id,arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		result_ready();
+	    
 	    default: break; 
 		fprintf(stdout,"ERROR: Invalid function called.\n");
 	}
@@ -900,8 +945,8 @@ int parse_recovery_action() {
     }
     fclose(fp);
     /* cleanup the recovery_action file */
-    fp = fopen("state_information/recovery_action.fac", "w");
-    fclose(fp);
+    //fp = fopen("state_information/recovery_action.fac", "w");
+    //fclose(fp);
     return 0;
 }
 
