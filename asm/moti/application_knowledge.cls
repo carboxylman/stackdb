@@ -133,22 +133,27 @@
 	    "libnss_nis-2.15.so"  "libnsl-2.15.so" 
 	    "libnss_compat-2.15.so"  "locale-archive"  "libc-2.15.so"
 	    "libdl-2.15.so" "libtinfo.so.5.9")) ;ld-2.15.so
-	
-	(known-open-files
-	    (name "mysqld")
-	    (file-names "ibdata1"  "ibrXE6sH"  "ibpAJ2Qg"
-	    "ibbc3YeQ"  "ibgGvhIp"  "ib_logfile0"  "ib_logfile1"  "ibBj4eXZ"  "host.MYI"  "host.MYD"  "user.MYI"
-	    "user.MYD"  "db.MYI"  "db.MYD"  "proxies_priv.MYI"  "proxies_priv.MYD"  "tables_priv.MYI"
-	    "tables_priv.MYD"  "columns_priv.MYI"  "columns_priv.MYD"  "procs_priv.MYI"  "procs_priv.MYD"
-	    "servers.MYI"  "servers.MYD"  "event.MYI"  "event.MYD"  "proc.MYI"  "proc.MYD"  "func.MYI"
-	    "func.MYD"  "general_log.CSM"  "general_log.CSV"  "help_category.MYI"  "help_category.MYD"
-	    "help_keyword.MYI"  "help_keyword.MYD"  "help_relation.MYI"  "help_relation.MYD"  "help_topic.MYI"
-	    "help_topic.MYD"  "ndb_binlog_index.MYI"  "ndb_binlog_index.MYD"  "plugin.MYI"  "plugin.MYD"
-	    "slow_log.CSM"  "slow_log.CSV"  "time_zone.MYI"  "time_zone.MYD"  "time_zone_leap_second.MYI"
-	    "time_zone_leap_second.MYD"  "time_zone_name.MYI"  "time_zone_name.MYD" 
-	    "time_zone_transition.MYI"  "time_zone_transition.MYD"  "time_zone_transition_type.MYI"
-	    "time_zone_transition_type.MYD"))
-	)
+;	
+;	(known-open-files
+;	    (name "mysqld")
+;	    (file-names "ibdata1"  "ibrXE6sH"  "ibpAJ2Qg"
+;	    "ibbc3YeQ"  "ibgGvhIp"  "ib_logfile0"  "ib_logfile1"  "ibBj4eXZ"  "host.MYI"  "host.MYD"  "user.MYI"
+;	    "user.MYD"  "db.MYI"  "db.MYD"  "proxies_priv.MYI"  "proxies_priv.MYD"  "tables_priv.MYI"
+;	    "tables_priv.MYD"  "columns_priv.MYI"  "columns_priv.MYD"  "procs_priv.MYI"  "procs_priv.MYD"
+;	    "servers.MYI"  "servers.MYD"  "event.MYI"  "event.MYD"  "proc.MYI"  "proc.MYD"  "func.MYI"
+;	    "func.MYD"  "general_log.CSM"  "general_log.CSV"  "help_category.MYI"  "help_category.MYD"
+;	    "help_keyword.MYI"  "help_keyword.MYD"  "help_relation.MYI"  "help_relation.MYD"  "help_topic.MYI"
+;	    "help_topic.MYD"  "ndb_binlog_index.MYI"  "ndb_binlog_index.MYD"  "plugin.MYI"  "plugin.MYD"
+;	    "slow_log.CSM"  "slow_log.CSV"  "time_zone.MYI"  "time_zone.MYD"  "time_zone_leap_second.MYI"
+;	    "time_zone_leap_second.MYD"  "time_zone_name.MYI"  "time_zone_name.MYD" 
+;	    "time_zone_transition.MYI"  "time_zone_transition.MYD"  "time_zone_transition_type.MYI"
+;	    "time_zone_transition_type.MYD " "ibdXzyvI" "ibllKoER" "ibhfBa90" "ibdsC3Ha" "ibXM1Wgk" 
+;	     "error.log"))
+       
+       (known-open-files
+	    (name "perl")
+	    (file-names "temp"))
+       )
  
 
 	
@@ -205,10 +210,10 @@
 	(slot pid (type INTEGER))
 	(multislot object-list (type STRING) (default "NULL")))
 
-(deftemplate unknown-open-files-list
+(deftemplate unknown-open-files
 	(slot name (type STRING))
 	(slot pid (type INTEGER))
-	(multislot files-list (type STRING) (default "NULL")))
+	(slot file (type STRING)))
 
 
 ;========== Application level rules that are used to detect anomalies =================
@@ -404,39 +409,15 @@
     (known-open-files
 	(name ?name)
 	(file-names $?known_files))
-    (test (not (subsetp $?file_names $?known_files)))
-    (not (exists (unknown-open-files-list
-	(name ?name)
-	(pid ?pid))))
-    =>
-    (assert ( unknown-open-files-list
-		(name ?name)
-		(pid ?pid)))
-    (printout t "ANOMALY: Unknown open files found for  process " ?name crlf))
-
-(defrule identify-unknown-open-files_1
-     ?of <- (opened-files
-	(comm ?name)
-	(pid ?pid)
-	(reg_files $?file_names))
-    (known-open-files
-	(name ?name)
-	(file-names $?known_files))
-    (test (not (subsetp $?file_names $?known_files)))
-    ?f <- (unknown-open-files-list
-	    (name ?name)
-	    (pid ?pid)
-	    (files-list $?list))
     =>
     (progn$ (?field  $?file_names)
 	(if (not ( member$ ?field $?known_files))
 		 then 
-		 (bind $?list (insert$ $?list 1 ?field))))
-    (modify ?f (files-list $?list)) 
-    (retract ?of)
-    (printout t "ANOMALY: Added an entry to the list of unknown open files for the process" ?name  crlf ))
-
-
+		 (assert(unknown-open-files
+			    (name ?name)
+			    (pid ?pid)
+			    (file ?field)))
+		(printout t "ANOMALY: Unknown open file found for  process " ?name ?field crlf))))
 
 
 ;=================template  for recovery facts ===================================

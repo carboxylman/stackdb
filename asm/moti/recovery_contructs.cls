@@ -357,16 +357,16 @@
 ; rules for dealing with unknown files opened by a process
 (defrule close-unknown-open-files
     (declare (salience 10))
-    ?f <- (unknown-open-files-list
+    ?f <- (unknown-open-files
 		(name ?name)
 		(pid ?pid)
-		(files-list $?list))
+		(file ?file))
     =>
     (assert (recovery-action
 		(function-name close_open_files)
-		(arg_list ?name ?pid $?list)))
+		(arg_list ?pid ?file)))
     (retract ?f)
     (save-facts "state_information/recovery_action.fac" visible recovery-action)    
-    (printout t "RECOVERY: Closing the files:" $?list " open by the process " ?name crlf))
+    (printout t "RECOVERY: Closing the files:" ?file " open by the process " ?name crlf))
 
 

@@ -900,6 +900,34 @@ int parse_recovery_action() {
 		result_ready();
 		break;
 
+	    case 5: /* close open files */
+		char_ptr = (char *) arguments;
+		pid = atoi(args[0]);
+		fprintf(stdout,"INFO: PID = %d\n",pid);
+		/* copy the PID */
+		memcpy((void*)char_ptr, (void *)&pid, sizeof( int));
+		char_ptr =  char_ptr + sizeof(int);
+		length = strlen(args[1]);
+		length++;
+		fprintf(stdout,"INFO: Length = %d\n",length);
+		
+		/* copy the length of the file name */
+		memcpy((void*)char_ptr, (void *)&length, sizeof( int));
+		char_ptr =  char_ptr + sizeof(int);
+
+		/* copy the file name */
+		memcpy((void*)char_ptr, (void*)&args[1], (length * sizeof(char)) + 1);
+		fprintf(stdout,"INFO: File = %s\n",args[1]);
+
+		argc = 3;
+		ret = load_command_func(function_id,submodule_id,arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		result_ready();
+		break;
+
 	    case 6: /*start a process */
 		char_ptr = (char *) arguments;
 		argc--;
@@ -945,8 +973,8 @@ int parse_recovery_action() {
     }
     fclose(fp);
     /* cleanup the recovery_action file */
-    //fp = fopen("state_information/recovery_action.fac", "w");
-    //fclose(fp);
+    fp = fopen("state_information/recovery_action.fac", "w");
+    fclose(fp);
     return 0;
 }
 
