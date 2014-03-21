@@ -349,7 +349,7 @@
     =>
     (assert (recovery-action
 		(function-name unload_objects)
-		(arg_list ?name ?pid $?list)))
+		(arg_list ?pid $?list)))
     (retract ?f)
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
     (printout t "RECOVERY: Unloading the unknown objects." crlf))

@@ -1173,6 +1173,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     ADDR start_addr, next_vm_area_addr;
     char *file_name, *process_name;
     int pid;
+    char prev_name[50];
     
     pid_value = target_load_value_member(target, NULL, value, "pid", NULL, LOAD_FLAG_NONE);
     if(!pid_value) {
@@ -1296,8 +1297,11 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	value_free(d_name_value);
 
 	file_name = strdup(file_name_value->buf);
-	//fprintf(stdout,"INFO: LInked object name %s\n",file_name);
-	fprintf(fp," \"%s\" ",file_name);
+	if(strcmp(file_name, prev_name)) {
+	    //fprintf(stdout,"INFO: LInked object name %s\n",file_name);
+	    fprintf(fp," \"%s\" ",file_name);
+	}
+	strcpy(prev_name,file_name);
 	value_free(file_name_value);
 
 nextptr:

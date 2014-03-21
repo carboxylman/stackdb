@@ -234,6 +234,41 @@ static int load_submodules(void *__unused) {
 
 		printk(KERN_INFO "Waiting for the next command.\n");
 		break;
+
+	    case 4:
+		if(submodule.mod_table[cmd->submodule_id] == NULL) {
+		    printk(KERN_INFO "Loading the unload_objects submodule\n");
+		}
+		if((result = request_module("sled_object_module")) < 0) {
+		    printk(KERN_INFO "unload_object_module not available\n");
+		    return -ENODEV;
+		}
+
+		/* 
+		 * get the address in the res_ring_channel where the 
+		 * acknowledgment should be inserted
+		 */
+		ack = (struct ack_rec*) cmd_ring_channel_put_rec_addr(
+			&res_ring_channel,
+			cmd_ring_channel_get_prod(&res_ring_channel));
+		/*Increment the prod index for the result ring channel*/
+		res_prod = cmd_ring_channel_get_prod(&res_ring_channel);
+		res_prod += 1; 
+		cmd_ring_channel_set_prod(&res_ring_channel, res_prod);
+		/* call the appropriate function in the submodule based on command id*/
+		if(submodule.mod_table[cmd->submodule_id] != NULL && 
+			submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id] != NULL) {
+		    result = submodule.mod_table[cmd->submodule_id]->func_table[cmd->cmd_id](cmd,ack);
+		    if(result) {
+			printk(KERN_INFO "Function call failed.\n");
+			//ack->exec_status = 0;
+			ack_ready++;
+		    }
+		} else {
+		    printk(KERN_INFO "ERROR: Sub Module not loaded.\n");
+		}
+		printk(KERN_INFO "Waiting for the next command.\n");
+		break;
 	     case 5:
 		if(submodule.mod_table[cmd->submodule_id] == NULL) {
 		    printk(KERN_INFO "Loading the the close file submodule\n");

@@ -685,9 +685,9 @@ int function_name_to_id(char * function_name, int* function_id, int* submodule_i
 	*submodule_id = 4;
 	return 0;
     } 
-    else if(!strncmp(function_name,"unload_object", 12)) {
+    else if(!strncmp(function_name,"unload_objects", 12)) {
 	*function_id = 0;
-	*submodule_id = 5;
+	*submodule_id = 4;
 	return 0;
     } 
     else if(!strncmp(function_name,"close_open_files", 16)) {
@@ -892,6 +892,34 @@ int parse_recovery_action() {
 
 		/* Only passing the pid to the recovery component */
 		argc = 1;
+		ret = load_command_func(function_id,submodule_id,arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		result_ready();
+		break;
+	    
+	    case 4: /*unload objects */
+		char_ptr = (char *) arguments;
+		pid = atoi(args[0]);
+		fprintf(stdout,"INFO: PID = %d\n",pid);
+		/* copy the PID */
+		memcpy((void*)char_ptr, (void *)&pid, sizeof( int));
+		char_ptr =  char_ptr + sizeof(int);
+
+		/* copy the object names */
+		for(i= 1; i< (argc -2) ;i++) {
+		    length = strlen(args[i]);
+		    length++;
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)));
+		    char_ptr =  char_ptr + (length * sizeof(char)) ;
+		}
+		argc--; /* dont pass the terminal null string */
+	
 		ret = load_command_func(function_id,submodule_id,arguments,argc);
 		if(ret) {
 		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
