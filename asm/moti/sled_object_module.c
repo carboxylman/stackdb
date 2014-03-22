@@ -41,6 +41,7 @@
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/mmu_context.h>
+#include <linux/rmap.h>
 
 #define FUNCTION_COUNT 1
 #define SUBMODULE_ID  4
@@ -104,16 +105,17 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     struct vm_area_struct *vma = NULL, *next = NULL;
     struct mm_struct *mm = NULL; 
     char *object =  NULL;
-    void *start_addr;
+    unsigned long start_addr, offset;
     void *start_addr_new;
-    void *end_addr;
-    char *char_ptr = NULL;
+    unsigned long end_addr, prev_addr;
     char opcode = '\xC3';
     struct page *user_page[1];
     unsigned int length = 0, ret;
+    unsigned int i, no_of_pages,page_size;
 
 
-    mm = get_task_mm(task);
+   // mm = get_task_mm(task);
+   mm = task->mm;
     if(!mm) {
 	printk(KERN_INFO " Task has no mm struct \n");
 	return 0;
@@ -125,58 +127,79 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 	    object =  vma->vm_file->f_path.dentry->d_name.name;
 	    if( !strcmp(object, name)) {
 			
-		printk(KERN_INFO "INFO: Found a linked vm_area for  object %s.\n",name);
-		start_addr = (void *)vma->vm_start;
-		end_addr = (void *) vma->vm_end;
+		//printk(KERN_INFO "INFO: Found a linked vm_area for  object %s.\n",name);
+		//printk(KERN_INFO " Check if the vm_area is executable \n");
+		if(!(vma->vm_flags & VM_EXEC)) {
+		    //printk(KERN_INFO "The area is not executable \n");
+		    vma = next;
+		    continue;
+		}
+		start_addr = vma->vm_start;
+		end_addr = vma->vm_end;
 		length  = vma->vm_end - vma->vm_start;
-		printk(KERN_INFO " Start address %lx\n",start_addr);
-		printk(KERN_INFO " ENd address %lx\n",end_addr);
-		printk(KERN_INFO "INFO: Page length = %u\n",length);
-		//vma->vm_flags|=VM_DONTCOPY; 
+		no_of_pages = length / PAGE_SIZE;
+		//printk(KERN_INFO "INFO: Start address %lx\n",start_addr);
+		//printk(KERN_INFO "INFO: ENd address %lx\n",end_addr);
+		//printk(KERN_INFO "INFO: Page length = %u\n",length);
+		//printk(KERN_INFO "INFO: Number of pages %d\n",no_of_pages);
+		vma->vm_flags|=VM_DONTCOPY; 
 	    	
-		 down_read(&mm->mmap_sem);
-		/* read the pag with virtual at that virual address into memory */
-		ret = get_user_pages(NULL, mm , (unsigned long) start_addr, 1 , 1 , 1, user_page, NULL);
-		if(ret <= 0 ) {
-		    printk(KERN_INFO "INFO: Failed to load the processes pages\n");
-		    up_read(&mm->mmap_sem);
-		    return 1;
-		}
-		up_read(&mm->mmap_sem);	
-		printk(KERN_INFO "kmap the page \n");
-		/* disable page fault on that address */
-		start_addr_new = kmap_atomic(user_page[0]);
-    
-		printk(KERN_INFO " New start address %lx\n",start_addr_new);
+		for(i = 0; i< no_of_pages ; i++) {
 
-		//printk(KERN_INFO " Setting the write permissions at %lx \n",
-		//			    start_addr_new);
-		//set_page_rw(start_addr_new);
-		//printk(KERN_INFO " Write permission set\n");
-		char_ptr = (char*) start_addr_new;
+		    start_addr = start_addr + (i * PAGE_SIZE);
+		    down_read(&mm->mmap_sem);
+		    /* read the pag with virtual at that virual address into memory */
+		    ret = get_user_pages(NULL, mm , (unsigned long) start_addr, 1 , 1 , 1, user_page, NULL);
+		    if(ret <= 0 ) {
+			printk(KERN_INFO "INFO: Failed to load the processes pages\n");
+			up_read(&mm->mmap_sem);
+			return 1;
+		    }
+		    up_read(&mm->mmap_sem);
+
+		   // printk(KERN_INFO "INFO: Start address %lx\n",start_addr);
+		    //printk(KERN_INFO "kmap the page \n");
+		    /* disable page fault on that address */
+		    start_addr_new = kmap(user_page[0]);
+
+		    if(start_addr_new == (void *)prev_addr) {
+			printk( KERN_INFO " Same as previous address %lx \n",start_addr_new);
+	    		kunmap(start_addr_new);
+			continue;
+		    }
+		    prev_addr = start_addr_new;
 	
+    
+		    //printk(KERN_INFO " New start address %lx\n",start_addr_new);
+
+		    offset = start_addr & (PAGE_SIZE - 1);
+
+		    //printk(KERN_INFO " Setting the write permissions at %lx \n",
+		    //			    start_addr_new + offset);
+		    set_page_rw((start_addr_new + offset ));
+		    //printk(KERN_INFO " Write permission set\n");
+    		
+		    /*Now create a RET sled till the end address */
+		    page_size = PAGE_SIZE;
+		    while (page_size) {
+			//printk(KERN_INFO "INFO: start address + offset  %lx\n", start_addr_new + offset);
+			memcpy(start_addr_new + offset, (void*)&opcode, sizeof(char));
+			page_size--;
+		    }
+		    //printk(KERN_INFO " Reset the orignal permissions on the page. \n");
+		    set_page_ro((start_addr_new + offset ));
 		
-		/*Now create a RET sled till the end address */
-		length = 4096;
-		while (length) {
-		    //printk(KERN_INFO " %x\n", *char_ptr);
-		    memcpy((void *)char_ptr, (void*)&opcode, sizeof(char));
-		    char_ptr++;
-		    length--;
+		    set_page_dirty_lock(user_page[0]);
+		    kunmap(start_addr_new);
+		    //printk(KERN_INFO "INFO: put_page() called \n");
+		    page_cache_release(user_page[0]);
+		    //printk(KERN_INFO "Checking the next page \n");
 		}
-		//printk(KERN_INFO " Reset the orignal permissions on the page. \n");
-		//set_page_ro(start_addr_new);
-		
-		set_page_dirty_lock(user_page[0]);
-		kunmap_atomic(start_addr_new);
-		//put_page(user_page[0]);
-		page_cache_release(user_page[0]);
-		printk(KERN_INFO "Checking the next page \n");
-	    }
+	    }  
 	}
 	vma = next;
     }
-    mmput(mm);
+    //mmput(mm);
     return 0;
 }
 
