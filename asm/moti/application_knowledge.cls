@@ -133,11 +133,13 @@
 ;	    "libnss_nis-2.15.so"  "libnsl-2.15.so" 
 ;	    "libnss_compat-2.15.so"  "locale-archive"  "libc-2.15.so"
 ;	    "libdl-2.15.so" "libtinfo.so.5.9" "ld-2.15.so")) ;ld-2.15.so
-
-(known-objects
+	(known-objects 
+    		    	( name "test")
+      		    	( object-list  "libc-2.15.so"  "ld-2.15.so"  ));test
+	(known-objects
 	    (name "apache2")
-	    (object-list "libnss_files-2.15.so" "libnss_nis-2.15.so" "libnsl-2.15.so"  "libnss_compat-2.15.so" "mod_status.so"  "mod_setenvif.so"   "mod_reqtimeout.so"  "mod_negotiation.so"  "mod_mime.so"   "mod_env.so" "mod_dir.so" "libz.so.1.2.3.4" "mod_deflate.so" "mod_cgid.so" "mod_autoindex.so" "mod_authz_user.so" "mod_authz_host.so" "mod_authz_groupfile.so" "mod_authz_default.so" "mod_authn_file.so"  "mod_auth_basic.so" "mod_alias.so"  "libdl-2.15.so" "libuuid.so.1.3.0"  "libexpat.so.1.5.2"   "libcrypt-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.6"   "libaprutil-1.so.0.3.12"   "libpcre.so.3.12.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so"  "apache2" ))
- 
+	    (object-list "libnss_files-2.15.so" "libnss_nis-2.15.so" "libnsl-2.15.so"  "libnss_compat-2.15.so" "mod_status.so"  "mod_setenvif.so"   "mod_reqtimeout.so"  "mod_negotiation.so" "mod_env.so" "mod_dir.so" "libz.so.1.2.3.4" "mod_deflate.so" "mod_autoindex.so" "mod_authz_user.so" "mod_authz_host.so" "mod_authz_groupfile.so" "mod_authz_default.so" "mod_authn_file.so"  "mod_auth_basic.so" "mod_alias.so"  "libdl-2.15.so" "libuuid.so.1.3.0"
+	    "libexpat.so.1.5.2"   "libcrypt-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.6"   "libaprutil-1.so.0.3.12"   "libpcre.so.3.12.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so" "libgcc_s.so.1" "mod_mime.so" "mod_cgid.so" ));apache2
 ;	
 ;	(known-open-files
 ;	    (name "mysqld")

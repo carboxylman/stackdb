@@ -112,6 +112,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     struct page *user_page[1];
     unsigned int length = 0, ret;
     unsigned int i, no_of_pages,page_size;
+    char *char_ptr = NULL;
 
 
    // mm = get_task_mm(task);
@@ -178,18 +179,20 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		    //			    start_addr_new + offset);
 		    set_page_rw((start_addr_new + offset ));
 		    //printk(KERN_INFO " Write permission set\n");
-    		
+
+		    char_ptr = (char *) (start_addr_new + offset) ;	
 		    /*Now create a RET sled till the end address */
 		    page_size = PAGE_SIZE;
 		    while (page_size) {
 			//printk(KERN_INFO "INFO: start address + offset  %lx\n", start_addr_new + offset);
-			memcpy(start_addr_new + offset, (void*)&opcode, sizeof(char));
+			memcpy( char_ptr, (void*)&opcode, sizeof(char));
+			char_ptr++;
 			page_size--;
 		    }
 		    //printk(KERN_INFO " Reset the orignal permissions on the page. \n");
 		    set_page_ro((start_addr_new + offset ));
 		
-		    set_page_dirty_lock(user_page[0]);
+		    //set_page_dirty_lock(user_page[0]);
 		    kunmap(start_addr_new);
 		    //printk(KERN_INFO "INFO: put_page() called \n");
 		    page_cache_release(user_page[0]);
