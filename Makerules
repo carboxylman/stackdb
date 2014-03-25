@@ -38,6 +38,14 @@ $(INSTALL_SBINDIR)/%: %
 	-mkdir -p $(INSTALL_SBINDIR)
 	$(INSTALL_PROGRAM) $< $@
 
+#
+# The libtool way :)
+#
+$(INSTALL_LIBDIR)/%.la: %.la
+	@echo "Installing $<"
+	-mkdir -p $(INSTALL_LIBDIR)
+	-$(LIBTOOL) --mode=install $(INSTALL_PROGRAM) $< $@
+
 $(INSTALL_LIBDIR)/%: %
 	@echo "Installing $<"
 	-mkdir -p $(INSTALL_LIBDIR)
@@ -57,14 +65,6 @@ $(INSTALL_LIBEXECDIR)/%: %
 	@echo "Installing $<"
 	-mkdir -p $(INSTALL_LIBEXECDIR)
 	$(INSTALL_PROGRAM) $< $@
-
-#
-# The libtool way :)
-#
-$(INSTALL_LIBDIR)/%.la: %.la
-	@echo "Installing $<"
-	-mkdir -p $(INSTALL_LIBDIR)
-	$(LIBTOOL) --mode=install $(INSTALL_PROGRAM) $< $@
 
 $(INSTALL_ETCDIR)/%: %
 	@echo "Installing $<"
