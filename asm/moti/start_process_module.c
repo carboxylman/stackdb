@@ -44,6 +44,7 @@ static int start_process_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     char *argv[10];
     char *envp[10];
     int ret, i = 0;
+    int mem_alloc_count = 0;
 
 
     printk(KERN_INFO " Number of arguments passed is %d\n",cmd->argc);
@@ -57,35 +58,37 @@ static int start_process_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	
 	if(length == 0) {
 	    argv[i] = NULL;
-	    //printk( KERN_INFO "INFO: Reached the end of argv\n");
+	    printk( KERN_INFO "INFO: Reached the end of argv\n");
 	    break;
 	}
 	
 	argv[i] = kmalloc((length * sizeof(char)) + 1, GFP_KERNEL);
+	mem_alloc_count++;
 	memcpy(argv[i], (void *)char_ptr, length + 1);
-	//printk(KERN_INFO "INFO: argv[%d] = %s length = %d\n",i,argv[i], length);
+	printk(KERN_INFO "INFO: argv[%d] = %s length = %d\n",i,argv[i], length);
 	char_ptr = char_ptr + length + 1;
     }
 
     /* read the envp passed */
     for(i = 0 ; i< 4; i++) {
 	length = *(int *)char_ptr;
-	//printk(KERN_INFO "length %d\n",length);
+	printk(KERN_INFO "length %d\n",length);
 
 	char_ptr = char_ptr + sizeof(int);
 	
 	if(length == 0) {
-	    //printk(KERN_INFO "INFO: Reached the end of envp\n");
+	    printk(KERN_INFO "INFO: Reached the end of envp\n");
 	    envp[i] = NULL;
 	    break;
 	}
-	//printk(KERN_INFO "INFO: envp[%d]\n", i);
+	printk(KERN_INFO "INFO: envp[%d]\n", i);
 	envp[i] = kmalloc((length * sizeof(char)) + 1 , GFP_KERNEL);
 	memcpy(envp[i], (void *)char_ptr, length + 1);
-	//printk(KERN_INFO "INFO: envp[%d] = %s\n",i,envp[i]);
+	printk(KERN_INFO "INFO: envp[%d] = %s\n",i,envp[i]);
 	char_ptr = char_ptr + length + 1;
 
     }
+    printk(KERN_INFO "INFO :read the parms\n");
 
     /*set the command and submodule id in the ack structure */
     ack->cmd_id = cmd->cmd_id;
@@ -93,13 +96,15 @@ static int start_process_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     ack->argc = 0;
 
     /* Finally make teh function call */
+    printk(KERN_INFO "INFO :making the call\n");
     ret = call_usermodehelper(argv[0], argv, envp, UMH_WAIT_EXEC);
     if (ret == -ENOENT || ret == -EACCES) {
 	printk(KERN_INFO " Program  %s was not found or isn't executable.\n", argv[0]);
     }
+    printk(KERN_INFO " Started the process \n");
 
     for( i = 0; i< (cmd->argc-3); i++) {
-	kfree(argv[i]);
+	//kfree(argv[i]);
     }
 
     for( i = 0; i< 3; i++) {

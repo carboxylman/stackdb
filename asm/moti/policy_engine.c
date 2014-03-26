@@ -76,6 +76,7 @@ unsigned long *sys_call_table = NULL;
 char **sys_call_names = NULL;
 unsigned long *function_prologue = NULL;
 char *res = NULL;
+ADDR syscall_table_vm;
 
 
 
@@ -84,9 +85,41 @@ int save_sys_call_table_entries() {
     int i, max_num;
     struct target_os_syscall *sc;
     unsigned long  prologue;
+    struct bsymbol *bs;
+    struct value *v;
+    struct target_location_ctxt *tlctxt;
+    
 
     fprintf(stdout,"INFO: Saving the state of the initial system call table.\n");
     /* Load the syscall table */
+
+    bs = target_lookup_sym(target,"sys_call_table",NULL,NULL,
+				    SYMBOL_TYPE_FLAG_VAR);
+    if (!bs) {
+	fprintf(stdout, "ERROR: Could not lookup symbol sys_call_table!\n");
+	exit(0);
+    }	
+
+    tlctxt = target_location_ctxt_create_from_bsymbol(target, TID_GLOBAL,bs);
+
+    v = target_load_symbol(target,tlctxt,bs,LOAD_FLAG_NONE);
+    if (!v) {
+	fprintf(stdout,"ERROR: Could not load sys_call_table!\n");
+	bsymbol_release(bs);
+	bs = NULL;
+	exit(0);
+    }
+
+    syscall_table_vm = value_addr(v);
+
+    fprintf(stdout,"INFO: Symbol syscall_table is at address %lx\n",
+		    syscall_table_vm);
+    value_free(v);
+    bsymbol_release(bs);
+    bs = NULL;
+
+
+
     fprintf(stdout,"INFO: Loading the syscall table.\n");
     if(target_os_syscall_table_load(target)) {
 	fprintf(stdout,"ERROR: Failed to load the syscall table.\n");
@@ -441,9 +474,10 @@ int main( int argc, char** argv) {
     fclose(fp);
     fp = fopen("state_information/udp_state_info.fac", "w");
     fclose(fp);
+    /*
     fp = fopen("state_information/recovery_action.fac", "w");
     fclose(fp);
-
+    */
 
 
 
@@ -518,7 +552,7 @@ int main( int argc, char** argv) {
 	}
 
 	fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
-	result = Run(-1L);
+	//result = Run(-1L);
 	fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	// At this time the anomaly facts are generated.
 	
@@ -554,6 +588,7 @@ int main( int argc, char** argv) {
     
 
 	// We have to run them through the recovery rules now.
+	/*
 	fprintf(stdout,"INFO: Loading the  recovery rules file\n");
 	result = Load(recovery_rules_file);
 	if(!result) {
@@ -563,8 +598,8 @@ int main( int argc, char** argv) {
 
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
-    
-	fprintf(stdout,"INFO: Parsing the recovery action file.\n");
+        */
+	//fprintf(stdout,"INFO: Parsing the recovery action file.\n");
 	
 	result = parse_recovery_action();
 	if(result) {

@@ -39,6 +39,7 @@ struct ack_rec {
     char argv[500];                /* array to store result data*/
 };
 
+extern ADDR syscall_table_vm;
 
 /* get the producer address in the request ring channel */
 ADDR get_prod_or_cons_addr(const char *symbol_name, const char *index_name) {
@@ -700,6 +701,12 @@ int function_name_to_id(char * function_name, int* function_id, int* submodule_i
 	*submodule_id = 6;
 	return 0;
     }
+    else if (!strncmp(function_name,"trusted_restart", 15)){
+	*function_id = 0;
+	*submodule_id = 7;
+	return 0;
+    }
+
     return 1;
 }
 
@@ -711,7 +718,7 @@ int parse_recovery_action() {
     int ret, i ,argc;
     int function_id;
     int submodule_id;
-    char args[128][50];
+    char args[128][128];
     char delim[] = " \t()\"";
     char *cur_token =NULL;
     void *arguments = NULL;
@@ -723,10 +730,11 @@ int parse_recovery_action() {
 	fprintf(stdout,"WARINING: Failed to open the recovery action file, continuing.\n");
 	return 1;
     }
+    fprintf(stdout,"INFO: in parse recovery_action.\n");
 
     /* now read one fact at a time and parse it */
     while(fgets(fact,1024,fp) != NULL) {
-	//fprintf(stdout,"INFO: Fact read : %s\n",fact);
+	fprintf(stdout,"INFO: Fact read : %s\n",fact);
 
 	/* Tokenize the fact */
 	i = 0;
@@ -737,7 +745,7 @@ int parse_recovery_action() {
 	cur_token = (char *) strtok(NULL, delim);
 
 	strcpy(function_name, cur_token); 
-	//fprintf(stdout,"INFO: function invoked is %s\n",function_name);
+	fprintf(stdout,"INFO: function invoked is %s\n",function_name);
 	cur_token = (char *) strtok(NULL, delim);
 
 	/* Now parse all the arguments that are to be passed to that function */
@@ -745,7 +753,7 @@ int parse_recovery_action() {
 	    if(cur_token == NULL) break;
 	    argc++;
 	    strcpy(args[i],cur_token);
-	    //printf("INFO: args[%d] = %s\n",i,args[i]);
+	    printf("INFO: args[%d] = %s\n",i,args[i]);
 	    i++;
 	}
 
@@ -773,7 +781,7 @@ int parse_recovery_action() {
 	unsigned long base;
 	long index;
 	unsigned long address;
-	int pid, i, length;
+	int pid, i, length,j;
 	unsigned long bytes;
 	switch(submodule_id) 
 	{
@@ -900,7 +908,7 @@ int parse_recovery_action() {
 		result_ready();
 		break;
 	    
-	    case 4: /*unload objects */
+	    case 4: /* sled loaded objects objects */
 		char_ptr = (char *) arguments;
 		pid = atoi(args[0]);
 		fprintf(stdout,"INFO: PID = %d\n",pid);
@@ -992,7 +1000,88 @@ int parse_recovery_action() {
 		    return 1;
 		}
 		result_ready();
+		break;
 	    
+	    case 7: /* Trusted load of abjects */
+		argc--;
+		fprintf(stdout, "INFO: argc = %d\n",argc);
+		char_ptr = (char *) arguments;
+		memcpy((void *)char_ptr, (void*)&syscall_table_vm, sizeof(unsigned long));
+		char_ptr = char_ptr + sizeof(unsigned long);
+
+		/* load the object names */
+		for( i = 0; i< argc ; i++) {
+		    if(!strcmp(args[i], "null")) break;
+		    length = strlen(args[i]);
+		    length++;
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char)));
+		    char_ptr =  char_ptr + (length * sizeof(char));
+		}
+
+		/* Invoke the sumodule to set up the hook */
+	    	ret = load_command_func(0,submodule_id,arguments, i );
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		result_ready();
+    
+
+	    	/* load the command line arguments */
+		bzero(arguments, 500);
+		i++;
+		char_ptr = (char *) arguments;		
+		for(; i< (argc - 3 ) ;i++) {
+		    length = strlen(args[i]);
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+ 1);
+		    char_ptr =  char_ptr + (length * sizeof(char)) + 1 ;
+		}
+		i = 0;
+		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
+		char_ptr = char_ptr + sizeof(int);
+
+		/* load the environment */
+		for( i = (argc-3) ; i < argc; i++) {
+		    length = strlen(args[i]);
+		    memcpy((void *)char_ptr, (void*)&length, sizeof(int));
+		    char_ptr = char_ptr + sizeof(int);
+		    fprintf(stdout,"INFO: length = %d %s\n",length, args[i]);
+		    memcpy((void*)char_ptr, (void*)&args[i], (length * sizeof(char))+1);
+		    char_ptr =  char_ptr + ((length * sizeof(char)) + 1);
+
+		}
+		i = 0;
+		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
+		char_ptr = char_ptr + sizeof(int);
+		
+		/* invoke the submodule to start the process */
+		ret = load_command_func(0, 6, arguments,argc);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		result_ready();
+	    
+
+		/* unhook the syscall table 
+		bzero(arguments, 500);
+		char_ptr = (char *) arguments;
+		memcpy((void *)char_ptr, (void*)&syscall_table_vm, sizeof(unsigned long));
+		char_ptr = char_ptr + sizeof(unsigned long);
+		ret = load_command_func(1, submodule_id, arguments,1);
+		if(ret) {
+		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
+		    return 1;
+		}
+		*/
+		result_ready();
+		break; 
 	    default: break; 
 		fprintf(stdout,"ERROR: Invalid function called.\n");
 	}
@@ -1001,8 +1090,8 @@ int parse_recovery_action() {
     }
     fclose(fp);
     /* cleanup the recovery_action file */
-    fp = fopen("state_information/recovery_action.fac", "w");
-    fclose(fp);
+    //fp = fopen("state_information/recovery_action.fac", "w");
+    //fclose(fp);
     return 0;
 }
 
