@@ -23,8 +23,10 @@
 #include <linux/init.h>
 
 #include <linux/sched.h>
+#include <linux/fdtable.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
+#include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/errno.h>
 #include <linux/err.h>
@@ -105,6 +107,42 @@ int set_page_ro(unsigned long addr) {
 
 asmlinkage int (*original_open) (const char *, int, int);
 
+
+asmlinkage long (*original_mmap)(unsigned long addr, unsigned long len,
+			         unsigned long prot, unsigned long flags,
+			         unsigned long fd, unsigned long pgoff);
+
+
+asmlinkage long hooked_mmap(unsigned long addr, unsigned long len,
+			    unsigned long prot, unsigned long flags, 
+			    unsigned long fd, unsigned long off) {
+
+    struct task_struct *task;
+    char *file_name;
+    int i;
+    long ret;
+    struct file *file = NULL;
+
+    //printk(KERN_INFO " fd = %ul off = %ul\n", fd, off);
+    file = fget(fd);
+    if(!file ) goto out;
+    printk(KERN_INFO "Got the file struct \n");
+    file_name = file->f_path.dentry->d_name.name;
+    printk(KERN_INFO "got the filename %s\n",file_name);
+    for ( i= 0; i < no_of_objects ; i++) {
+    	if(strstr(file_name, blocked_objects[i])) {
+    	    printk(KERN_INFO "INFO: Trying to mmap the restricted object %s \n",blocked_objects[i]);
+    	    ret -ENOENT;
+    	    return ret;
+    	}
+    }
+out:
+    ret = original_mmap(addr,len,prot,flags,fd,off);
+    return ret;
+
+}
+
+
 asmlinkage  int hooked_open(const char * name, int flags, int mode) {
 
     int i = 0;
@@ -114,7 +152,7 @@ asmlinkage  int hooked_open(const char * name, int flags, int mode) {
     for ( i= 0; i < no_of_objects ; i++) {
 	if(strstr(name, blocked_objects[i])) {
 	   printk(KERN_INFO "INFO: Trying to load the restricted object %s \n",blocked_objects[i]);
-	    ret -ENOENT;
+	    ret -EPERM;
 	    return ret;
 	}
     }
@@ -164,7 +202,10 @@ static int add_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    system_call_table);
 
     /* store the original address of the system_call */
-    original_open = system_call_table[__NR_open];
+    //original_open = system_call_table[__NR_open];
+
+    original_mmap = system_call_table[__NR_mmap];
+    printk(KERN_INFO " Current entry in sys call table %p \n",original_mmap);
 
     /* Set write permissions on the system call table */
     set_page_rw((unsigned long) system_call_table);
@@ -172,6 +213,8 @@ static int add_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     /* Now reset the sys call address in the table */
 
     system_call_table[__NR_open] = hooked_open;
+    system_call_table[__NR_mmap] = hooked_mmap;
+
     printk(KERN_INFO "INFO: System call table entry changed to %lx.\n",
 	    hooked_open);
 
@@ -205,6 +248,7 @@ static int remove_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     /* Now reset the sys call address in the table */
 
     system_call_table[__NR_open] = original_open;
+    system_call_table[__NR_mmap] = original_mmap;
     printk(KERN_INFO "INFO: System call table entry changed to %lx.\n",
 	    hooked_open);
 

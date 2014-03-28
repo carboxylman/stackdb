@@ -1060,16 +1060,17 @@ int parse_recovery_action() {
 		memcpy((void *)char_ptr, (void*)&i, sizeof(int));
 		char_ptr = char_ptr + sizeof(int);
 		
-		/* invoke the submodule to start the process */
+		/*invoke the submodule to start the process */
 		ret = load_command_func(0, 6, arguments,argc);
 		if(ret) {
 		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
 		    return 1;
 		}
+		/* Sleep for sometime to make sure the boot is complete */
+		sleep(4); 
 		result_ready();
-	    
-
-		/* unhook the syscall table 
+			    
+		/* unhook the syscall table */
 		bzero(arguments, 500);
 		char_ptr = (char *) arguments;
 		memcpy((void *)char_ptr, (void*)&syscall_table_vm, sizeof(unsigned long));
@@ -1079,7 +1080,7 @@ int parse_recovery_action() {
 		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
 		    return 1;
 		}
-		*/
+	    
 		result_ready();
 		break; 
 	    default: break; 
