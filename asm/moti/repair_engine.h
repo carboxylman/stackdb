@@ -1066,6 +1066,7 @@ int parse_recovery_action() {
 		    fprintf(stdout,"ERROR: load_comand_func call failed.\n");
 		    return 1;
 		}
+		
 		/* Sleep for sometime to make sure the boot is complete */
 		sleep(4); 
 		result_ready();
@@ -1082,6 +1083,7 @@ int parse_recovery_action() {
 		}
 	    
 		result_ready();
+	
 		break; 
 	    default: break; 
 		fprintf(stdout,"ERROR: Invalid function called.\n");

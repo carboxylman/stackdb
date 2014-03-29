@@ -1,0 +1,30 @@
+--- mod_so.c	2014-03-27 18:05:13.000000000 -0600
++++ mod_so_modified.c	2014-03-28 18:27:08.000000000 -0600
+@@ -169,8 +169,9 @@
+     *(ap_directive_t **)dummy = NULL;
+ 
+     if (!szModuleFile) {
+-        return apr_pstrcat(cmd->pool, "Invalid LoadModule path ",
+-                           filename, NULL);
++        //return apr_pstrcat(cmd->pool, "Invalid LoadModule path ",
++        //                   filename, NULL);
++	return NULL;
+     }
+ 
+     /*
+@@ -238,10 +239,11 @@
+     if (apr_dso_load(&modhandle, szModuleFile, cmd->pool) != APR_SUCCESS) {
+         char my_error[256];
+ 
+-        return apr_pstrcat(cmd->pool, "Cannot load ", szModuleFile,
+-                          " into server: ",
+-                          apr_dso_error(modhandle, my_error, sizeof(my_error)),
+-                          NULL);
++        //return apr_pstrcat(cmd->pool, "Cannot load ", szModuleFile,
++        //                  " into server: ",
++        //                  apr_dso_error(modhandle, my_error, sizeof(my_error)),
++        //                  NULL);
++        return NULL;
+     }
+     ap_log_perror(APLOG_MARK, APLOG_DEBUG, 0, cmd->pool,
+                  "loaded module %s", modname);

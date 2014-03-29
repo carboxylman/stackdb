@@ -202,9 +202,9 @@ static int add_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    system_call_table);
 
     /* store the original address of the system_call */
-    //original_open = system_call_table[__NR_open];
+    original_open = system_call_table[__NR_open];
 
-    original_mmap = system_call_table[__NR_mmap];
+    //original_mmap = system_call_table[__NR_mmap];
     printk(KERN_INFO " Current entry in sys call table %p \n",original_mmap);
 
     /* Set write permissions on the system call table */
@@ -213,7 +213,7 @@ static int add_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     /* Now reset the sys call address in the table */
 
     system_call_table[__NR_open] = hooked_open;
-    system_call_table[__NR_mmap] = hooked_mmap;
+    //system_call_table[__NR_mmap] = hooked_mmap;
 
     printk(KERN_INFO "INFO: System call table entry changed to %lx.\n",
 	    hooked_open);
@@ -248,7 +248,7 @@ static int remove_hook_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     /* Now reset the sys call address in the table */
 
     system_call_table[__NR_open] = original_open;
-    system_call_table[__NR_mmap] = original_mmap;
+   // system_call_table[__NR_mmap] = original_mmap;
     printk(KERN_INFO "INFO: System call table entry changed to %lx.\n",
 	    hooked_open);
 
