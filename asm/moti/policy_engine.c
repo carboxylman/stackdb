@@ -229,7 +229,7 @@ int generate_snapshot() {
     //fprintf(stdout,"INFO: Time taken to pause the target is %llu ms\n", t); 
 		    
     /* Start making calls to each of the VMI function */ 
-   /* 
+   
     gettimeofday(&tm1, NULL);
     result = process_info();
     if(result) {
@@ -241,6 +241,7 @@ int generate_snapshot() {
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     //fprintf(stdout,"INFO: Time taken to get process info is %llu ms\n", t); 
 
+    
     gettimeofday(&tm1, NULL);
     result =  file_info();
     if(result) {
@@ -275,7 +276,8 @@ int generate_snapshot() {
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     //fprintf(stdout,"INFO: Time taken to get cpu load info is %llu ms\n", t); 
-*/
+    
+
    /*
     result = process_cpu_utilization();
     if(result) {
@@ -284,6 +286,7 @@ int generate_snapshot() {
 	goto resume;
     }
     */
+    
     
     gettimeofday(&tm1, NULL);
     result = object_info();
@@ -295,7 +298,7 @@ int generate_snapshot() {
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     //fprintf(stdout,"INFO: Time taken to get object file info is %llu ms\n", t);  
- /*   
+   
     gettimeofday(&tm1, NULL);
     result = syscalltable_info();
     if(result) {
@@ -326,8 +329,8 @@ int generate_snapshot() {
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     //fprintf(stdout,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
+
     
-*/
 resume:
     gettimeofday(&tm1, NULL);
     if ((status = target_status(target)) == TSTATUS_PAUSED) {
@@ -473,11 +476,10 @@ int main( int argc, char** argv) {
     fp = fopen("state_information/tcp_state_info.fac", "w");
     fclose(fp);
     fp = fopen("state_information/udp_state_info.fac", "w");
-    fclose(fp);
-    /*
+    fclose(fp); 
     fp = fopen("state_information/recovery_action.fac", "w");
     fclose(fp);
-    */
+    
 
 
 
@@ -552,7 +554,7 @@ int main( int argc, char** argv) {
 	}
 
 	fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
-	//result = Run(-1L);
+	result = Run(-1L);
 	fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	// At this time the anomaly facts are generated.
 	
@@ -588,7 +590,7 @@ int main( int argc, char** argv) {
     
 
 	// We have to run them through the recovery rules now.
-	/*
+	
 	fprintf(stdout,"INFO: Loading the  recovery rules file\n");
 	result = Load(recovery_rules_file);
 	if(!result) {
@@ -598,9 +600,8 @@ int main( int argc, char** argv) {
 
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
-        */
-	//fprintf(stdout,"INFO: Parsing the recovery action file.\n");
 	
+	fprintf(stdout,"INFO: Parsing the recovery action file.\n");
 	result = parse_recovery_action();
 	if(result) {
 	    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");

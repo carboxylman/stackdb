@@ -66,14 +66,14 @@ int set_page_rw(unsigned long addr) {
     return change_page_attr(pg, 1, prot);
 #else
     unsigned int level;
-    printk(KERN_INFO " Now doing lookup \n");
+    //printk(KERN_INFO " Now doing lookup \n");
     pte_t *pte = lookup_address(addr, &level);
     if(pte == NULL) {
 	printk(KERN_INFO "lookup_address failed\n");
 	return -EINVAL;
 
     }
-    printk(KERN_INFO " lookup_address done\n");
+    //printk(KERN_INFO " lookup_address done\n");
     if(pte->pte &~ _PAGE_RW) {
 	pte->pte |= _PAGE_RW;
     }
@@ -108,7 +108,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     unsigned long start_addr, offset;
     void *start_addr_new;
     unsigned long end_addr, prev_addr;
-    char opcode = '\xC3';
+    char opcode = '\xc3';
     struct page *user_page[1];
     unsigned int length = 0, ret;
     unsigned int i, no_of_pages,page_size;
@@ -139,13 +139,13 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		end_addr = vma->vm_end;
 		length  = vma->vm_end - vma->vm_start;
 		no_of_pages = length / PAGE_SIZE;
-		//printk(KERN_INFO "INFO: Start address %lx\n",start_addr);
-		//printk(KERN_INFO "INFO: ENd address %lx\n",end_addr);
-		//printk(KERN_INFO "INFO: Page length = %u\n",length);
-		//printk(KERN_INFO "INFO: Number of pages %d\n",no_of_pages);
-		vma->vm_flags|=VM_DONTCOPY; 
+		printk(KERN_INFO "INFO: Start address %lx\n",start_addr);
+		printk(KERN_INFO "INFO: ENd address %lx\n",end_addr);
+		printk(KERN_INFO "INFO: VM area length = %u\n",length);
+		printk(KERN_INFO "INFO: Number of pages %d\n",no_of_pages);
+		//vma->vm_flags|=VM_DONTCOPY; 
 	    	
-		for(i = 0; i< no_of_pages ; i++) {
+		for(i = 0; i< no_of_pages; i++) {
 
 		    start_addr = start_addr + (i * PAGE_SIZE);
 		    down_read(&mm->mmap_sem);
@@ -171,7 +171,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		    prev_addr = start_addr_new;
 	
     
-		    //printk(KERN_INFO " New start address %lx\n",start_addr_new);
+		    printk(KERN_INFO " New start address %lx\n",start_addr_new);
 
 		    offset = start_addr & (PAGE_SIZE - 1);
 
@@ -192,7 +192,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		    //printk(KERN_INFO " Reset the orignal permissions on the page. \n");
 		    set_page_ro((start_addr_new + offset ));
 		
-		    //set_page_dirty_lock(user_page[0]);
+		    set_page_dirty_lock(user_page[0]);
 		    kunmap(start_addr_new);
 		    //printk(KERN_INFO "INFO: put_page() called \n");
 		    page_cache_release(user_page[0]);

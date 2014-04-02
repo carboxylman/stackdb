@@ -1093,8 +1093,8 @@ int parse_recovery_action() {
     }
     fclose(fp);
     /* cleanup the recovery_action file */
-    //fp = fopen("state_information/recovery_action.fac", "w");
-    //fclose(fp);
+    fp = fopen("state_information/recovery_action.fac", "w");
+    fclose(fp);
     return 0;
 }
 

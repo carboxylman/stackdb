@@ -278,65 +278,65 @@
 	(save-facts "state_information/cpu_state_info.fac" visible per-process-cpu-utilization))
 
 ; Rules for dealing with priv escalation
-
-(defrule correct-priv-escalation
-	(declare (salience 10))
-	?f <- (priv-escalated-process
-		(name ?name1)
-		(pid ?pid))
-	(not (exists (priv-escalation-recovery-prev-action
-			(prev_action kill_process)
-			(name ?name1))))
-	=>
-	(assert (recovery-action
-		    (function-name kill_process)
-		    (arg_list ?name1 ?pid)))
-	(retract ?f)
-	(assert (priv-escalation-recovery-prev-action
-		    (prev_action kill_process)
-		    (name ?name1)))
-	(save-facts "state_information/recovery_action.fac" visible recovery-action)
-	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
-	(printout t "RECOVERY: Killing the priv escalated process " ?name1 crlf ))
-
-
-(defrule correct-priv-escalation_01
-	(declare (salience 20))
-	?f <- (priv-escalated-process
-		(name ?name1)
-		(pid ?pid)
-		(parent_pid ?parent_pid))
-	?of <-( priv-escalation-recovery-prev-action
-		(name ?name1)
-		(prev_action kill_process))
-	=>
-	(assert (recovery-action
-		    (function-name kill_parent_process)
-		    (arg_list  ?parent_pid)))
-	(retract ?f)
-	(retract ?of)
-	(assert (priv-escalation-recovery-prev-action
-		(prev_action kill_parent_process)
-		(name ?name1)))
-	(save-facts "state_information/recovery_action.fac" visible recovery-action)
-	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
-	(printout t "RECOVERY: The privileges for the process " ?name1" was escalated again !!! Killing the parent process now" crlf))
-
-(defrule correct-priv-escalation_02
-	(declare (salience 30))
-	?f <- (priv-escalated-process
-		(name ?name1)
-		(pid ?pid)
-		(parent_pid ?parent_pid))
-	?of <-( priv-escalation-recovery-prev-action
-		(name ?name1)
-		(prev_action kill_parent_process))
-	=>
-	(retract ?f)
-	(retract ?of)
-	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
-	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
-
+;
+;(defrule correct-priv-escalation
+;	(declare (salience 10))
+;	?f <- (priv-escalated-process
+;		(name ?name1)
+;		(pid ?pid))
+;	(not (exists (priv-escalation-recovery-prev-action
+;			(prev_action kill_process)
+;			(name ?name1))))
+;	=>
+;	(assert (recovery-action
+;		    (function-name kill_process)
+;		    (arg_list ?name1 ?pid)))
+;	(retract ?f)
+;	(assert (priv-escalation-recovery-prev-action
+;		    (prev_action kill_process)
+;		    (name ?name1)))
+;	(save-facts "state_information/recovery_action.fac" visible recovery-action)
+;	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
+;	(printout t "RECOVERY: Killing the priv escalated process " ?name1 crlf ))
+;
+;
+;(defrule correct-priv-escalation_01
+;	(declare (salience 20))
+;	?f <- (priv-escalated-process
+;		(name ?name1)
+;		(pid ?pid)
+;		(parent_pid ?parent_pid))
+;	?of <-( priv-escalation-recovery-prev-action
+;		(name ?name1)
+;		(prev_action kill_process))
+;	=>
+;	(assert (recovery-action
+;		    (function-name kill_parent_process)
+;		    (arg_list  ?parent_pid)))
+;	(retract ?f)
+;	(retract ?of)
+;	(assert (priv-escalation-recovery-prev-action
+;		(prev_action kill_parent_process)
+;		(name ?name1)))
+;	(save-facts "state_information/recovery_action.fac" visible recovery-action)
+;	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
+;	(printout t "RECOVERY: The privileges for the process " ?name1" was escalated again !!! Killing the parent process now" crlf))
+;
+;(defrule correct-priv-escalation_02
+;	(declare (salience 30))
+;	?f <- (priv-escalated-process
+;		(name ?name1)
+;		(pid ?pid)
+;		(parent_pid ?parent_pid))
+;	?of <-( priv-escalation-recovery-prev-action
+;		(name ?name1)
+;		(prev_action kill_parent_process))
+;	=>
+;	(retract ?f)
+;	(retract ?of)
+;	(save-facts "state_information/process_priv_state_info.fac" visible priv-escalation-recovery-prev-action)
+;	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
+;
 
 ; rules for dealing with unknown objects loaded
 
@@ -368,5 +368,67 @@
     (retract ?f)
     (save-facts "state_information/recovery_action.fac" visible recovery-action)    
     (printout t "RECOVERY: Closing the files:" ?file " open by the process " ?name crlf))
+
+
+; Rules for dealing with with wrong process credentials
+(defrule correct-proc-cred
+	(declare (salience 10))
+	?f <- (wrong-process-cred
+		(name ?name1)
+		(pid ?pid)
+		(uid ?uid)
+		(gid ?gid))
+	(not (exists (wrong-proc-cred-prev-action
+			(prev_action reset_cred | kill_process )
+			(name ?name1))))
+	=>
+	(assert (recovery-action
+		    (function-name reset_credentials)
+		    (arg_list ?name1 ?pid ?uid ?gid)))
+	(retract ?f)
+	(assert (wrong-proc-cred-prev-action
+		    (prev_action reset_cred)
+		    (name ?name1)))
+	(save-facts "state_information/recovery_action.fac" visible recovery-action)
+	(save-facts "state_information/process_priv_state_info.fac" visible wrong-proc-cred-prev-action)
+	(printout t "RECOVERY: Resetting credentials of the process " ?name1 crlf ))
+
+
+(defrule correct-proc-cred_01
+	(declare (salience 20))
+	?f <- (wrong-process-cred
+		(name ?name1)
+		(pid ?pid)
+		(uid ?uid?)
+		(gid ?gid))
+	?of <-( wrong-proc-cred-prev-action
+		(name ?name1)
+		(prev_action reset_cred))
+	=>
+	(assert (recovery-action
+		    (function-name kill_process)
+		    (arg_list  ?pid)))
+	(retract ?f)
+	(retract ?of)
+	(assert (wrong-proc-cred-prev-action
+		(prev_action kill_process)
+		(name ?name1)))
+	(save-facts "state_information/recovery_action.fac" visible recovery-action)
+	(save-facts "state_information/process_priv_state_info.fac" visible wrong-proc-cred-prev-action)
+	(printout t "RECOVERY: The privileges for the process " ?name1" was escalated again !!! Killing the  process now" crlf))
+
+(defrule correct-proc-cred_02
+	(declare (salience 30))
+	?f <- (wrong-process-cred
+		(name ?name1)
+		(pid ?pid))
+	?of <-( wrong-proc-cred-prev-action
+		(name ?name1)
+		(prev_action kill_process))
+	=>
+	(retract ?f)
+	(retract ?of)
+	(save-facts "state_information/process_priv_state_info.fac" visible wrong-proc-cred-prev-action)
+	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
 
 
