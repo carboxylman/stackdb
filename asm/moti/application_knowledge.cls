@@ -107,7 +107,8 @@
      (multislot gid (type INTEGER))
      (multislot egid (type INTEGER))
      (multislot sgid (type INTEGER))
-     (multislot fsgid (type INTEGER)))
+     (multislot fsgid (type INTEGER))
+     (multislot parent_name (type STRING)))
 
     (deffacts base-facts
      (known-processes "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
@@ -120,6 +121,8 @@
       "udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
       "atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
       "bash" "repair_submodul" "python" "perl" )
+     
+     (mandatory-processes "apache2")
 
      (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
      (process-with-udp "rpcbind" "ntpd" "mysqld")                 
@@ -155,7 +158,7 @@
        "libexpat.so.1.5.2"   "libcrypt-2.15.so"  "libc-2.15.so"  "libpthread-2.15.so"  "libapr-1.so.0.4.6"   "libaprutil-1.so.0.3.12"   "libpcre.so.3.12.1"  "ld-2.15.so"  "dev/zero"  "ld-2.15.so" "libgcc_s.so.1" "mod_mime.so" "mod_cgid.so" "apache2" ));
      
      ;	
-     ;known-open-files
+     ;(known-open-files
      ;	    (name "mysqld")
      ;	    (file-names "ibdata1"  "ibrXE6sH"  "ibpAJ2Qg"
      ;	    "ibbc3YeQ"  "ibgGvhIp"  "ib_logfile0"  "ib_logfile1"  "ibBj4eXZ"  "host.MYI"  "host.MYD"  "user.MYI"
@@ -184,7 +187,8 @@
       (gid 0)
       (egid 0)
       (sgid 0)
-      (fsgid 0))
+      (fsgid 0)
+      (parent_name "swapper/0"))
 
     (known-process-cred
      (name "init")
@@ -195,7 +199,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "swapper/0"))
 
     (known-process-cred 
      (name "kthreadd")
@@ -206,7 +211,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "swapper/0"))
 
     (known-process-cred  
      (name "ksoftirqd/0")
@@ -217,7 +223,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/0:0")
@@ -228,7 +235,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/0:0H")
@@ -239,7 +247,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/u:0")
@@ -250,7 +259,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/u:0H")
@@ -261,7 +271,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "migration/0")
@@ -272,7 +283,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "rcu_bh")
@@ -283,7 +295,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "rcu_sched")
@@ -294,7 +307,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "watchdog/0")
@@ -305,7 +319,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "cpuset")
@@ -316,7 +331,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "khelper")
@@ -327,7 +343,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kdevtmpfs")
@@ -338,7 +355,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "netns")
@@ -349,7 +367,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "xenwatch")
@@ -360,7 +379,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "xenbus")
@@ -371,7 +391,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "bdi-default")
@@ -382,7 +403,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kintegrityd")
@@ -393,7 +415,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kblockd")
@@ -404,7 +427,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "ata_sff")
@@ -415,7 +439,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "khubd")
@@ -426,7 +451,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "md")
@@ -437,7 +463,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name  "devfreq_wq")
@@ -448,7 +475,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/0:1")
@@ -458,7 +486,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "khungtaskd")
@@ -469,7 +498,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kswapd0")
@@ -480,7 +510,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "ksmd")
@@ -491,7 +522,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "fsnotify_mark")
@@ -502,7 +534,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "ecryptfs-kthrea")
@@ -513,7 +546,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "crypto")
@@ -524,7 +558,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kthrotld")
@@ -535,7 +570,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/u:1")
@@ -546,7 +582,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "khvcd")
@@ -557,7 +594,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "binder")
@@ -568,7 +606,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "deferwq")
@@ -579,7 +618,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "charger_manager")
@@ -590,7 +630,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/0:1H")
@@ -601,7 +642,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "kworker/0:1")
@@ -612,7 +654,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "jbd2/xvda1-8")
@@ -623,7 +666,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "ext4-dio-unwrit")
@@ -634,7 +678,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "upstart-udev-br")
@@ -645,7 +690,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "init"))
 
     (known-process-cred  
      (name "udevd")
@@ -656,20 +702,10 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "init" "udevd"))
 
-    (known-process-cred  
-     (name "udevd")
-     (uid 0)
-     (euid 0)
-     (suid 0)
-     (fsuid 0)
-     (gid 0)
-     (egid 0)
-     (sgid 0)
-     (fsgid 0))
-     
-     (known-process-cred  
+     (known-process-cred   
       (name "upstart-socket-")
       (uid 0)
       (euid 0)
@@ -678,7 +714,8 @@
       (gid 0)
       (egid 0)
       (sgid 0)
-      (fsgid 0))
+      (fsgid 0)
+      (parent_name "init"))
 
     (known-process-cred  
      (name "rpcbind")
@@ -689,7 +726,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "init"))
 
     (known-process-cred  
      (name "sshd")
@@ -700,7 +738,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "init"))
 
     (known-process-cred  
      (name "rsyslogd")
@@ -711,7 +750,8 @@
      (gid 103)
      (egid 103)
      (sgid 103)
-     (fsgid 103))
+     (fsgid 103)
+     (parent_name "init"))
 
     (known-process-cred  
      (name "dbus-daemon")
@@ -722,7 +762,8 @@
      (gid 114)
      (egid 114)
      (sgid 114)
-     (fsgid 114))
+     (fsgid 114)
+     (parent_name "init"))
 
     (known-process-cred  
      (name "ntpd")
@@ -733,7 +774,8 @@
      (gid 0 110)
      (egid 0 110)
      (sgid 0 110)
-     (fsgid 0 110))
+     (fsgid 0 110)
+     (parent_name "init" "ntpd"))
 
 
     (known-process-cred  
@@ -745,7 +787,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "init"))
 
     (known-process-cred  
      (name "atd")
@@ -756,7 +799,8 @@
      (gid 0)
      (egid 1)
      (sgid 1)
-     (fsgid 1))
+     (fsgid 1)
+     (parent_name "init"))
 
     (known-process-cred  
       (name "mysqld")
@@ -767,7 +811,8 @@
       (gid 120)
       (egid 120)
       (sgid 120)
-      (fsgid 120))
+      (fsgid 120)
+      (parent_name "init"))
 
      (known-process-cred  
       (name "apache2")
@@ -778,7 +823,8 @@
       (gid 0 33)
       (egid 0 33)
       (sgid 0 33)
-      (fsgid 0 33))
+      (fsgid 0 33)
+      (parent_name "init" "apache2"))
 
     (known-process-cred  
      (name "login")
@@ -789,7 +835,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "init"))
 
     (known-process-cred  
      (name "flush-202:1")
@@ -800,7 +847,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "bash")
@@ -811,7 +859,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "login"))
 
     (known-process-cred  
      (name "repair_submodul")
@@ -822,7 +871,8 @@
      (gid 0)
      (egid 0)
      (sgid 0)
-     (fsgid 0))
+     (fsgid 0)
+     (parent_name "kthreadd"))
 
     (known-process-cred  
      (name "perl")
@@ -833,7 +883,8 @@
      (gid 444)
      (egid 0)
      (sgid 0)
-     (fsgid 0)))
+     (fsgid 0)
+     (parent_name "1bash")))
 
 
 
@@ -901,6 +952,13 @@
      (slot uid (type INTEGER))
      (slot gid (type INTEGER)))
 
+    (deftemplate wrong-process-hierarchies
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+    (deftemplate missing-process
+     (slot name (type STRING)))
+
 
     ;========== Application level rules that are used to detect anomalies =================
 
@@ -916,7 +974,7 @@
 	      (pid ?pid)))
      (printout t "ANOMALY: Unknown process " ?name1 " found" crlf))
 
-
+ 
     ; rule to detect a known process with wrong credentials
     (defrule identify-wrong-process-cred
      (task-struct (comm ?name1)
@@ -936,7 +994,6 @@
 		 (gid (nth$ 1 $?gid2))))
      (printout t "ANOMALY: Process " ?name1 " has wrong uid: "?uid1 ": gid " ?gid1 ".Expected uid " (nth$ 1 $?gid2) " gid " (nth$ 1 $?gid2) crlf))
     
-
 
     ;rule to detect any unknown module that is loaded
     (defrule identify-unknown-module
@@ -1128,6 +1185,35 @@
        (printout t "ANOMALY: Unknown open file found for  process " ?name ?field crlf))))
 
 
+    ;rules to identify wrong process hierarchies 
+    (defrule identify-wrong-process-hierarchies
+     (task-struct (comm ?name1)
+		  (pid ?pid1)
+		  (parent_name ?parent_name))
+     (known-process-cred
+		  (name ?name1)
+		  (parent_name $?parent))
+     (test (not ( member$ ?parent_name $?parent)))
+     =>
+     (assert(unknown-process
+		 (name ?name1)
+		 (pid ?pid1)))
+     (printout t "ANOMALY: Process " ?name1 " has wrong parent:" ?parent_name  crlf))
+
+
+
+    ;rule to make sure all the mandatory process are executing
+    (defrule identify-missing-process
+     (mandatory_processes $?names)
+     =>
+    (progn$ (?name $?names)
+      (if (not ( exists(task-struct (comm ?name))))
+       then 
+       (assert (missing-process
+	       (name ?name))))
+       (printout t "ANOMALY: Process " ?name " not found." crlf)))
+
+ 
     ;=================template  for recovery facts ===================================
 
     ;A common recovery fact template for all receovery actions

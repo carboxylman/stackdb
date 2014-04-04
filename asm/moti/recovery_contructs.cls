@@ -431,4 +431,3 @@
 	(save-facts "state_information/process_priv_state_info.fac" visible wrong-proc-cred-prev-action)
 	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
 
-
