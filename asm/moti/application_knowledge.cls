@@ -110,6 +110,10 @@
      (multislot fsgid (type INTEGER))
      (multislot parent_name (type STRING)))
 
+    (deftemplate mandatory-process
+     (slot name (type STRING))
+     (multislot command (type SYMBOL))) 
+
     (deffacts base-facts
      (known-processes "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
       "kworker/0:0H" "kworker/u:0" "kworker/u:0H" "migration/0" "rcu_bh"
@@ -122,7 +126,9 @@
       "atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
       "bash" "repair_submodul" "python" "perl" )
      
-     (mandatory-processes "apache2")
+     (mandatory-process 
+      (name "apache2")
+      (command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
 
      (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
      (process-with-udp "rpcbind" "ntpd" "mysqld")                 
@@ -957,7 +963,8 @@
      (slot pid (type INTEGER)))
 
     (deftemplate missing-process
-     (slot name (type STRING)))
+     (slot name (type STRING))
+     (multislot command (type SYMBOL)))
 
 
     ;========== Application level rules that are used to detect anomalies =================
@@ -1204,15 +1211,14 @@
 
     ;rule to make sure all the mandatory process are executing
     (defrule identify-missing-process
-     (mandatory_processes $?names)
+     (mandatory-process (name ?name)
+			(command $?command))
+     (not (exists(task-struct (comm ?name))))
      =>
-    (progn$ (?name $?names)
-      (if (not ( exists(task-struct (comm ?name))))
-       then 
-       (assert (missing-process
-	       (name ?name))))
-       (printout t "ANOMALY: Process " ?name " not found." crlf)))
-
+     (assert (missing-process
+	       (name ?name)
+	       (command $?command)))
+     (printout t "ANOMALY: Process " ?name " not found." crlf))
  
     ;=================template  for recovery facts ===================================
 

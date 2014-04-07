@@ -431,3 +431,17 @@
 	(save-facts "state_information/process_priv_state_info.fac" visible wrong-proc-cred-prev-action)
 	(printout t "RECOVERY: The privileges escalated  process " ?name1" was found again !!! Repating the recovery cycle" crlf))
 
+; rule for starting processes
+(defrule start-mandatory-process
+    (declare (salience 10))
+    ?f <- (missing-process
+		(name ?name)
+		(command $?command))
+    =>
+    (assert (recovery-action
+		(function-name start_process)
+		(arg_list $?command)))
+    (retract ?f)
+    (printout t "RECOVERY: Starting the process " ?name  crlf))
+
+
