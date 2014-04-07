@@ -105,7 +105,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     struct vm_area_struct *vma = NULL, *next = NULL;
     struct mm_struct *mm = NULL; 
     char *object =  NULL;
-    unsigned long start_addr, offset;
+    unsigned long vm_start_addr, start_addr, offset;
     void *start_addr_new;
     unsigned long end_addr, prev_addr;
     char opcode = '\xc3';
@@ -115,8 +115,8 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     char *char_ptr = NULL;
 
 
-   // mm = get_task_mm(task);
-   mm = task->mm;
+    mm = get_task_mm(task);
+   //mm = task->mm;
     if(!mm) {
 	printk(KERN_INFO " Task has no mm struct \n");
 	return 0;
@@ -135,11 +135,11 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		    vma = next;
 		    continue;
 		}
-		start_addr = vma->vm_start;
+		vm_start_addr = vma->vm_start;
 		end_addr = vma->vm_end;
 		length  = vma->vm_end - vma->vm_start;
 		no_of_pages = length / PAGE_SIZE;
-		printk(KERN_INFO "INFO: Start address %lx\n",start_addr);
+		printk(KERN_INFO "INFO: Start address %lx\n",vm_start_addr);
 		printk(KERN_INFO "INFO: ENd address %lx\n",end_addr);
 		printk(KERN_INFO "INFO: VM area length = %u\n",length);
 		printk(KERN_INFO "INFO: Number of pages %d\n",no_of_pages);
@@ -147,7 +147,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 	    	
 		for(i = 0; i< no_of_pages; i++) {
 
-		    start_addr = start_addr + (i * PAGE_SIZE);
+		    start_addr = vm_start_addr + (i * PAGE_SIZE);
 		    down_read(&mm->mmap_sem);
 		    /* read the pag with virtual at that virual address into memory */
 		    ret = get_user_pages(NULL, mm , (unsigned long) start_addr, 1 , 1 , 1, user_page, NULL);
@@ -192,7 +192,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		    //printk(KERN_INFO " Reset the orignal permissions on the page. \n");
 		    set_page_ro((start_addr_new + offset ));
 		
-		    set_page_dirty_lock(user_page[0]);
+		    //set_page_dirty_lock(user_page[0]);
 		    kunmap(start_addr_new);
 		    //printk(KERN_INFO "INFO: put_page() called \n");
 		    page_cache_release(user_page[0]);
@@ -202,7 +202,7 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 	}
 	vma = next;
     }
-    //mmput(mm);
+    mmput(mm);
     return 0;
 }
 
