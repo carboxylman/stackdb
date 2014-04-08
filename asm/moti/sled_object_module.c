@@ -108,7 +108,8 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
     unsigned long vm_start_addr, start_addr, offset;
     void *start_addr_new;
     unsigned long end_addr, prev_addr;
-    char opcode = '\xc3';
+    char ret_opcode = '\xc3';
+    char noop = '\x90';
     struct page *user_page[1];
     unsigned int length = 0, ret;
     unsigned int i, no_of_pages,page_size;
@@ -185,7 +186,9 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		    page_size = PAGE_SIZE;
 		    while (page_size) {
 			//printk(KERN_INFO "INFO: start address + offset  %lx\n", start_addr_new + offset);
-			memcpy( char_ptr, (void*)&opcode, sizeof(char));
+			if(*char_ptr != ret_opcode) {
+			    memcpy( char_ptr, (void*)&noop, sizeof(char));
+			}
 			char_ptr++;
 			page_size--;
 		    }
