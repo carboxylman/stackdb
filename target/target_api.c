@@ -572,8 +572,6 @@ int target_is_open(struct target *target) {
 }
 
 target_status_t target_status(struct target *target) {
-    if (target->opened) 
-	return target->status;
     vdebug(9,LA_TARGET,LF_TARGET,
 	   "calling backend to get target(%s) status\n",target->name);
     target->status = target->ops->status(target);

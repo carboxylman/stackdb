@@ -142,7 +142,8 @@ struct xen_vm_spec {
 
     unsigned int no_hw_debug_reg_clear:1,
 	         no_hvm_setcontext:1,
-	         clear_libvmi_caches_each_time:1;
+	         clear_libvmi_caches_each_time:1,
+	         no_use_multiplexer:1;
 };
 
 struct xen_vm_thread_state {

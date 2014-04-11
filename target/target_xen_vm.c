@@ -25,6 +25,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#if !defined(UNIX_PATH_MAX)
+#define UNIX_PATH_MAX (size_t)sizeof(((struct sockaddr_un *) 0)->sun_path)
+#endif
+#include <libgen.h>
 
 #include <endian.h>
 
@@ -54,6 +60,7 @@
 #endif
 
 #include "target_xen_vm.h"
+#include "target_xen_vm_vmp.h"
 
 /*
  * Prototypes.
@@ -207,6 +214,25 @@ static result_t xen_vm_active_thread_exit_handler(struct probe *probe,tid_t tid,
 
 /*
  * Globals.
+ *
+ * We support a couple different ways of listening for debug exceptions
+ * from the hypervisor.  Exceptions come via the VIRQ_DEBUGGER virq; and
+ * only one consumer may bind to that irq.  This is a problem if we want
+ * to have multiple VMI programs each debugging one or more
+ * domains... we have to demultiplex the IRQ signal to the right VMI
+ * program.  Unforunately, it's tricky to figure out which domain the
+ * IRQ was for, because of Xen bugs in the handling of x86 debug
+ * registers.  So, the demultiplexer must pass the notification to *all*
+ * clients and let them decide if the signal was for them.
+ *
+ * So... we support a dedicated mode, where only one VMI program can run
+ * at a time; and a "shared" mode, where a demultiplexer process is
+ * spawned (if it doesn't already exist), and the VMI program(s) connect
+ * to it to receive VIRQ notifications.
+ *
+ * The xc_handle variable is always valid.  For dedicated mode,
+ * xce_handle and dbg_port are valid; for shared mode,
+ * xen_vm_vmp_client_fd is valid instead.
  */
 static int xc_refcnt = 0;
 
@@ -219,11 +245,15 @@ static int xc_handle = -1;
 static int xce_handle = -1;
 #define XC_IF_INVALID (-1)
 #endif
+int xce_handle_fd = -1;
 
 #if !defined(XC_EVTCHN_PORT_T)
 #error "XC_EVTCHN_PORT_T undefined!"
 #endif
 static XC_EVTCHN_PORT_T dbg_port = -1;
+
+static int xen_vm_vmp_client_fd = -1;
+static char *xen_vm_vmp_client_path = NULL;
 
 #define EF_TF (0x00000100)
 #define EF_IF (0x00000200)
@@ -330,6 +360,7 @@ struct argp_option xen_vm_argp_opts[] = {
     { "configfile",'c',"FILE",0,"The Xen config file.",-4 },
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
     { "xenlib-debug",'x',"LEVEL",0,"Increase/set the XenAccess/OpenVMI debug level.",-4 },
+    { "no-use-multiplexer",'M',NULL,0,"Do not spawn/attach to the Xen multiplexer server",-4 },
     { 0,0,0,0,0,0 }
 };
 
@@ -362,6 +393,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 2;
     if (xspec->replay_dir)
 	ac += 2;
+    if (xspec->no_use_multiplexer)
+	ac += 1;
 
     av = calloc(ac + 1,sizeof(char *));
     j = 0;
@@ -389,6 +422,9 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     if (xspec->replay_dir) {
 	av[j++] = strdup("-r");
 	av[j++] = strdup(xspec->replay_dir);
+    }
+    if (xspec->no_use_multiplexer) {
+	av[j++] = strdup("--no-use-multiplexer");
     }
     av[j++] = NULL;
 
@@ -508,6 +544,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	verror("Xen support not compiled in!\n");
 	return EINVAL;
 #endif
+	break;
+    case 'M':
+	xspec->no_use_multiplexer = 1;
 	break;
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -3416,6 +3455,410 @@ static int xen_vm_init(struct target *target) {
     return 0;
 }
 
+#ifdef XENCTRL_HAS_XC_INTERFACE
+int xen_vm_xc_attach(xc_interface **xc_handle,xc_interface **xce_handle) {
+#else
+int xen_vm_xc_attach(int *xc_handle,int *xce_handle) {
+#endif
+
+    if (xc_handle && *xc_handle == XC_IF_INVALID) {
+#ifdef XENCTRL_HAS_XC_INTERFACE
+	*xc_handle = xc_interface_open(NULL,NULL,0);
+#else
+	*xc_handle = xc_interface_open();
+#endif
+	if (*xc_handle == XC_IF_INVALID) {
+	    verror("failed to open xc interface: %s\n",strerror(errno));
+	    return -1;
+	}
+    }
+
+    if (xce_handle && *xce_handle == XC_IF_INVALID) {
+#ifdef XENCTRL_HAS_XC_INTERFACE
+	*xce_handle = xc_evtchn_open(NULL,0);
+#else
+	*xce_handle = xc_evtchn_open();
+#endif
+	if (*xce_handle == XC_IF_INVALID) {
+	    verror("failed to open event channel: %s\n",strerror(errno));
+	    return -1;
+	}
+    }
+
+    return 0;
+}
+
+#ifdef XENCTRL_HAS_XC_INTERFACE
+int xen_vm_xc_detach(xc_interface **xc_handle,xc_interface **xce_handle)
+#else
+int xen_vm_xc_detach(int *xc_handle,int *xce_handle)
+#endif
+{
+    if (xc_handle && *xc_handle != XC_IF_INVALID) {
+	xc_interface_close(*xc_handle);
+	*xc_handle = XC_IF_INVALID;
+    }
+
+    if (xce_handle && *xce_handle != XC_IF_INVALID) {
+	xc_evtchn_close(*xce_handle);
+	*xce_handle = XC_IF_INVALID;
+    }
+
+    return 0;
+}
+
+#ifdef XENCTRL_HAS_XC_INTERFACE
+int xen_vm_virq_attach(xc_interface *xce_handle,XC_EVTCHN_PORT_T *dbg_port)
+#else
+int xen_vm_virq_attach(int xce_handle,XC_EVTCHN_PORT_T *dbg_port)
+#endif
+{
+    if (dbg_port && *dbg_port == -1) {
+	*dbg_port = xc_evtchn_bind_virq(xce_handle,VIRQ_DEBUGGER);
+	/* Try to cast dbg_port to something signed.  Old xc versions
+	 * have a bug in that evtchn_port_t is declared as uint32_t, but
+	 * the function prototypes that return them can theoretically
+	 * return -1.  So, try to test for that...
+	 */
+	if ((int32_t)*dbg_port < 0) {
+	    verror("failed to bind debug virq port: %s",strerror(errno));
+	    return -1;
+	}
+    }
+
+    return 0;
+}
+
+#ifdef XENCTRL_HAS_XC_INTERFACE
+int xen_vm_virq_detach(xc_interface *xce_handle,XC_EVTCHN_PORT_T *dbg_port)
+#else
+int xen_vm_virq_detach(int xce_handle,XC_EVTCHN_PORT_T *dbg_port)
+#endif
+{
+    if (dbg_port && *dbg_port != -1) {
+	if (xc_evtchn_unbind(xce_handle,(evtchn_port_t)*dbg_port)) {
+	    verror("failed to unbind debug virq port\n");
+	    return -1;
+	}
+
+	*dbg_port = -1;
+    }
+
+    return 0;
+}
+
+int xen_vm_vmp_attach(char *path,int *cfd,char **cpath) {
+    struct stat sbuf;
+    struct sockaddr_un sun,sun_client;
+    char *tmpdir;
+    char *spath;
+    int spath_len,cpath_len;
+    int len;
+
+    assert(cfd);
+    assert(cpath);
+
+    if (cfd && *cfd != -1)
+	return 0;
+
+    if (!path) {
+	/*
+	 * Just try /var/run or TMPDIR or /tmp or .
+	 */
+	if (stat("/var/run",&sbuf) == 0 
+	    && S_ISDIR(sbuf.st_mode) && access("/var/run",W_OK) == 0) {
+	    spath_len = strlen("/var/run") + 1 + strlen(TARGET_XV_VMP_SOCKET_FILENAME) + 1;
+	    spath = malloc(spath_len);
+	    snprintf(spath,spath_len,"%s/%s","/var/run",TARGET_XV_VMP_SOCKET_FILENAME);
+	}
+	else if ((tmpdir = getenv("TMPDIR"))
+		 && stat(tmpdir,&sbuf) == 0 && access(tmpdir,W_OK) == 0) {
+	    spath_len = strlen(tmpdir) + 1 + strlen(TARGET_XV_VMP_SOCKET_FILENAME) + 1;
+	    spath = malloc(spath_len);
+	    snprintf(spath,spath_len,"%s/%s",tmpdir,TARGET_XV_VMP_SOCKET_FILENAME);
+	}
+	else if (stat("/tmp",&sbuf) == 0 
+		 && S_ISDIR(sbuf.st_mode) && access("/tmp",W_OK) == 0) {
+	    spath_len = strlen("/tmp") + 1 + strlen(TARGET_XV_VMP_SOCKET_FILENAME) + 1;
+	    spath = malloc(spath_len);
+	    snprintf(spath,spath_len,"%s/%s","/tmp",TARGET_XV_VMP_SOCKET_FILENAME);
+	}
+	else {
+	    spath_len = strlen(".") + 1 + strlen(TARGET_XV_VMP_SOCKET_FILENAME) + 1;
+	    spath = malloc(spath_len);
+	    snprintf(spath,spath_len,"%s/%s",".",TARGET_XV_VMP_SOCKET_FILENAME);
+	}
+    }
+    else
+	spath = strdup(path);
+
+    memset(&sun,0,sizeof(sun));
+    sun.sun_family = AF_UNIX;
+    snprintf(sun.sun_path,UNIX_PATH_MAX,"%s",spath);
+
+    /*
+     * The server only accepts path-bound unix domain socket
+     * connections, so bind one and do it.  Try to use the same basedir
+     * as in @spath; else use TMPDIR or /tmp or .
+     */
+    if (1) {
+	dirname(spath);
+
+	cpath_len = strlen(spath) + 1
+	    + strlen(TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT)
+	    + TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT_EXTRA + 1;
+	*cpath = malloc(cpath_len);
+
+	snprintf(*cpath,cpath_len,"%s/" TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT,
+		 spath,getpid());
+	if (open(*cpath,O_CREAT | O_RDWR,S_IRUSR | S_IWUSR) < 0) {
+	    vwarnopt(6,LA_TARGET,LF_XV,
+		     "could not open client VMP socket file %s: %s\n",
+		     *cpath,strerror(errno));
+	    free(*cpath);
+	    *cpath = NULL;
+	}
+	unlink(*cpath);
+    }
+
+    if (cpath[0] == '\0' && (tmpdir = getenv("TMPDIR"))) {
+	cpath_len = strlen(tmpdir) + 1
+	    + strlen(TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT)
+	    + TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT_EXTRA + 1;
+	*cpath = malloc(cpath_len);
+
+	snprintf(*cpath,cpath_len,"%s/" TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT,
+		 tmpdir,getpid());
+	if (open(*cpath,O_CREAT | O_RDWR,S_IRUSR | S_IWUSR) < 0) {
+	    vwarnopt(6,LA_TARGET,LF_XV,
+		     "could not open client VMP socket file %s: %s\n",
+		     *cpath,strerror(errno));
+	    free(*cpath);
+	    *cpath = NULL;
+	}
+	unlink(*cpath);
+    }
+
+    if (cpath[0] == '\0') {
+	cpath_len = strlen("/tmp") + 1
+	    + strlen(TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT)
+	    + TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT_EXTRA + 1;
+	*cpath = malloc(cpath_len);
+
+	snprintf(*cpath,cpath_len,"%s/" TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT,
+		 "/tmp",getpid());
+	if (open(*cpath,O_CREAT | O_RDWR,S_IRUSR | S_IWUSR) < 0) {
+	    vwarnopt(6,LA_TARGET,LF_XV,
+		     "could not open client VMP socket file %s: %s\n",
+		     *cpath,strerror(errno));
+	    free(*cpath);
+	    *cpath = NULL;
+	}
+	unlink(*cpath);
+    }
+
+    if (cpath[0] == '\0') {
+	cpath_len = strlen(".") + 1
+	    + strlen(TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT)
+	    + TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT_EXTRA + 1;
+	*cpath = malloc(cpath_len);
+
+	snprintf(*cpath,cpath_len,"%s/" TARGET_XV_VMP_SOCKET_CLIENT_FILE_FORMAT,
+		 ".",getpid());
+	if (open(*cpath,O_CREAT | O_RDWR,S_IRUSR | S_IWUSR) < 0) {
+	    vwarnopt(6,LA_TARGET,LF_XV,
+		     "could not open client VMP socket file %s: %s\n",
+		     *cpath,strerror(errno));
+	    free(*cpath);
+	    *cpath = NULL;
+	}
+	unlink(*cpath);
+    }
+
+    if (!*cpath) {
+	verror("could not open a client VMP socket file; aborting!\n");
+	goto err;
+    }
+
+    memset(&sun_client,0,sizeof(sun_client));
+    sun_client.sun_family = AF_UNIX;
+    snprintf(sun_client.sun_path,UNIX_PATH_MAX,"%s",*cpath);
+
+    *cfd = socket(AF_UNIX,SOCK_STREAM,0);
+    if (*cfd < 0) {
+	verror("socket(): %s\n",strerror(errno));
+	goto err;
+    }
+    len = offsetof(struct sockaddr_un,sun_path) + strlen(sun_client.sun_path);
+    if (bind(*cfd,&sun_client,len) < 0) {
+	verror("bind(%s): %s\n",sun_client.sun_path,strerror(errno));
+	goto err;
+    }
+    if (fchmod(*cfd,S_IRUSR | S_IWUSR) < 0) {
+	verror("chmod(%s): %s\n",sun_client.sun_path,strerror(errno));
+	goto err;
+    }
+
+    len = offsetof(struct sockaddr_un,sun_path) + strlen(sun.sun_path);
+    if (connect(*cfd,&sun,len) < 0) {
+	verror("connect(%s): %s\n",sun.sun_path,strerror(errno));
+	goto err;
+    }
+
+    free(spath);
+
+    return 0;
+
+ err:
+    *cfd = -1;
+    if (*cpath)
+	free(*cpath);
+    *cpath = NULL;
+    free(spath);
+
+    return -1;
+}
+
+int xen_vm_vmp_detach(int *cfd,char **cpath) {
+    if (cfd && *cfd != -1) {
+	close(*cfd);
+	*cfd = -1;
+	if (cpath && *cpath) {
+	    unlink(*cpath);
+	    free(*cpath);
+	    *cpath = NULL;
+	}
+    }
+
+    return 0;
+}
+
+int xen_vm_vmp_launch() {
+    int rc;
+
+    rc = system(TARGET_XV_VMP_BIN_PATH);
+    if (rc) {
+	verror("system(%s): %s\n",TARGET_XV_VMP_BIN_PATH,strerror(errno));
+	return -1;
+    }
+
+    return 0;
+}
+
+int xen_vm_virq_or_vmp_attach_or_launch(struct target *target) {
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
+    int i;
+    int rc = -1;
+
+    if (xspec->no_use_multiplexer)
+	return xen_vm_virq_attach(xce_handle,&dbg_port);
+
+    /* Try to connect.  If we can't, then launch, wait, and try again. */
+    if (xen_vm_vmp_attach(NULL,&xen_vm_vmp_client_fd,&xen_vm_vmp_client_path)) {
+	if (xen_vm_vmp_launch()) {
+	    verror("could not launch Xen VIRQ_DEBUGGER multiplexer!\n");
+	    return -1;
+	}
+	else {
+	    vdebug(6,LA_TARGET,LF_XV,"launched Xen VIRQ_DEBUGGER multiplexer!\n");
+	}
+
+	for (i = 0; i < 5; ++i) {
+	    rc = xen_vm_vmp_attach(NULL,&xen_vm_vmp_client_fd,
+				   &xen_vm_vmp_client_path);
+	    if (rc == 0)
+		break;
+	    else
+		sleep(1);
+	}
+
+	if (rc) {
+	    verror("could not connect to launched Xen VIRQ_DEBUGGER multiplexer!\n");
+	    return -1;
+	}
+    }
+
+    vdebug(6,LA_TARGET,LF_XV,"connected to Xen VIRQ_DEBUGGER multiplexer!\n");
+
+    return 0;
+}
+
+int xen_vm_virq_or_vmp_detach() {
+    if (dbg_port != -1) {
+	xce_handle_fd = -1;
+	return xen_vm_virq_detach(xce_handle,&dbg_port);
+    }
+    else
+	return xen_vm_vmp_detach(&xen_vm_vmp_client_fd,
+				 &xen_vm_vmp_client_path);
+}
+
+int xen_vm_virq_or_vmp_get_fd() {
+    if (dbg_port != -1) {
+	if (xce_handle_fd == -1)
+	    xce_handle_fd = xc_evtchn_fd(xce_handle);
+	return xce_handle_fd;
+    }
+    else
+	return xen_vm_vmp_client_fd;
+}
+
+int xen_vm_virq_or_vmp_read(int *vmid) {
+    XC_EVTCHN_PORT_T port = -1;
+    struct target_xen_vm_vmp_client_response resp = { 0 };
+    int retval;
+    int rc;
+
+    if (dbg_port != -1) {
+	/* we've got something from eventchn. let's see what it is! */
+	port = xc_evtchn_pending(xce_handle);
+
+	/* unmask the event channel BEFORE doing anything else,
+	 * like unpausing the target!
+	 */
+	retval = xc_evtchn_unmask(xce_handle, port);
+	if (retval == -1) {
+	    verror("failed to unmask event channel\n");
+	    return -1;
+	}
+
+	if (port != dbg_port) {
+	    *vmid = -1;
+	    return 0;
+	}
+	else {
+	    /* XXX: don't try to figure out which VM; must check them
+	     * all; no infallible way to find out which one(s).
+	     */
+	    *vmid = 0;
+	    return 0;
+	}
+    }
+    else {
+	rc = read(xen_vm_vmp_client_fd,&resp,sizeof(resp));
+	if (rc < 0) {
+	    if (errno == EINTR) {
+		*vmid = -1;
+		return 0;
+	    }
+	    return -1;
+	}
+	else if (rc == 0) {
+	    return -1;
+	}
+	else if (rc != sizeof(resp)) {
+	    return -1;
+	}
+	else {
+	    *vmid = resp.vmid;
+	    return 0;
+	}
+    }
+
+    /* Not reached, despite what gcc thinks! */
+    return -1;
+}
+
 static int xen_vm_attach_internal(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     struct xen_domctl domctl;
@@ -3440,48 +3883,26 @@ static int xen_vm_attach_internal(struct target *target) {
 
     vdebug(5,LA_TARGET,LF_XV,"dom %d\n",xstate->id);
 
-    if (xc_handle == XC_IF_INVALID) {
-#ifdef XENCTRL_HAS_XC_INTERFACE
-	xc_handle = xc_interface_open(NULL, NULL, 0);
-#else
-	xc_handle = xc_interface_open();
-#endif
-	if (xc_handle == XC_IF_INVALID) {
-	    verror("failed to open xc interface: %s\n",strerror(errno));
-	    return -1;
-	}
+    /*
+     * Always attach to XC.
+     */
+    if (xen_vm_xc_attach(&xc_handle,&xce_handle))
+	return -1;
 
-#ifdef XENCTRL_HAS_XC_INTERFACE
-	xce_handle = xc_evtchn_open(NULL, 0);
-#else
-	xce_handle = xc_evtchn_open();
-#endif
-	if (xce_handle == XC_IF_INVALID) {
-	    xc_interface_close(xc_handle);
-	    verror("failed to open event channel: %s\n",strerror(errno));
-	    return -1;
-	}
+    /*
+     * Connect to VIRQ_DEBUGGER, either through demultiplexer daemon, or
+     * directly.  If daemon, launch or connect...
+     */
+    if (xen_vm_virq_or_vmp_attach_or_launch(target))
+	return -1;
 
-	dbg_port = xc_evtchn_bind_virq(xce_handle,VIRQ_DEBUGGER);
-	/* Try to cast dbg_port to something signed.  Old xc versions
-	 * have a bug in that evtchn_port_t is declared as uint32_t, but
-	 * the function prototypes that return them can theoretically
-	 * return -1.  So, try to test for that...
-	 */
-	if ((int32_t)dbg_port < 0) {
-	    verror("failed to bind debug virq port: %s",strerror(errno));
-	    xc_evtchn_close(xce_handle);
-	    xc_interface_close(xc_handle);
-	}
-    }
+    /* NOT thread-safe! */
+    ++xc_refcnt;
 
     if (xc_domctl(xc_handle,&domctl)) {
 	verror("could not enable debugging of dom %d!\n",xstate->id);
         return -1;
     }
-
-    /* NOT thread-safe! */
-    ++xc_refcnt;
 
     /* Null out current state so we reload and see that it's paused! */
     xstate->dominfo_valid = 0;
@@ -3493,7 +3914,6 @@ static int xen_vm_attach_internal(struct target *target) {
     if (xen_vm_pause(target,0)) {
 	verror("could not pause target before attaching; letting user handle!\n");
     }
-    target_set_status(target,TSTATUS_PAUSED);
 
     /*
      * Make sure xenaccess/libvmi is setup to read from userspace memory.
@@ -3692,22 +4112,13 @@ static int xen_vm_detach(struct target *target) {
 
     if (!xc_refcnt) {
 	/* Close all the xc stuff; we're the last one. */
-	if (xc_evtchn_unbind(xce_handle,(evtchn_port_t)dbg_port)) {
+	vdebug(4,LA_TARGET,LF_XV,"last domain; closing xc/xce interfaces.\n");
+
+	if (xen_vm_virq_or_vmp_detach(xce_handle,&dbg_port))
 	    verror("failed to unbind debug virq port\n");
-	}
-	dbg_port = -1;
 
-	if (xc_evtchn_close(xce_handle)) {
-	    verror("failed to close event channel\n");
-	}
-	xce_handle = XC_IF_INVALID;
-    
-	if (xc_interface_close(xc_handle)) {
-	    verror("failed to close xc interface\n");
-	}
-	xc_handle = XC_IF_INVALID;
-
-	vdebug(4,LA_TARGET,LF_XV,"xc detach dom %d succeeded.\n",xstate->id);
+	if (xen_vm_xc_detach(&xc_handle,&xce_handle))
+	    verror("failed to close xc interfaces\n");
     }
 
     vdebug(3,LA_TARGET,LF_XV,"detach dom %d succeeded.\n",xstate->id);
@@ -6743,6 +7154,7 @@ static target_status_t xen_vm_handle_exception(struct target *target,
     ADDR paddr;
     REGVAL tmp_ipval;
     int rc;
+    target_status_t tstatus;
 
 #ifdef ENABLE_XENACCESS
     /* From previous */
@@ -6763,17 +7175,25 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 	goto out_err;
     }
 
-    target_clear_state_changes(target);
+    tstatus = target_status(target);
 
-    vdebug(3,LA_TARGET,LF_XV,
-	   "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
-	   xen_vm_get_counter(target),xen_vm_get_tsc(target));
+    if (tstatus == TSTATUS_RUNNING) {
+	vdebug(8,LA_TARGET,LF_XV,
+	       "ignoring \"exception\" in our running VM %d; not for us\n",
+	       xstate->id);
+	if (again)
+	    *again = 0;
+	return tstatus;
+    }
+    else if (tstatus == TSTATUS_PAUSED) {
+	target_clear_state_changes(target);
 
-    target->monitorhandling = 1;
+	vdebug(3,LA_TARGET,LF_XV,
+	       "new debug event (brctr = %"PRIu64", tsc = %"PRIx64")\n",
+	       xen_vm_get_counter(target),xen_vm_get_tsc(target));
 
-    target_set_status(target,TSTATUS_PAUSED);
+	target->monitorhandling = 1;
 
-    if (target_status(target) == TSTATUS_PAUSED) {
 	/* Force the current thread to be reloaded. */
 	target->current_thread = NULL;
 
@@ -7489,23 +7909,19 @@ static target_status_t xen_vm_handle_exception(struct target *target,
 
 int xen_vm_evloop_handler(int readfd,int fdtype,void *state) {
     struct target *target = (struct target *)state;
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     int again;
     int retval;
-    XC_EVTCHN_PORT_T port = -1;
+    int vmid = -1;
 
-    /* we've got something from eventchn. let's see what it is! */
-    port = xc_evtchn_pending(xce_handle);
-
-    /* unmask the event channel BEFORE doing anything else,
-     * like unpausing the target!
-     */
-    retval = xc_evtchn_unmask(xce_handle, port);
-    if (retval == -1) {
-	verror("failed to unmask event channel\n");
+    if (xen_vm_virq_or_vmp_read(&vmid)) {
 	return EVLOOP_HRET_BADERROR;
     }
 
-    if (port != dbg_port)
+    if (vmid == -1)
+	return EVLOOP_HRET_SUCCESS;
+
+    if (vmid != 0 && vmid != xstate->id)
 	return EVLOOP_HRET_SUCCESS;
 
     again = 0;
@@ -7533,7 +7949,7 @@ int xen_vm_attach_evloop(struct target *target,struct evloop *evloop) {
     }
 
     /* get a select()able file descriptor of the event channel */
-    xstate->evloop_fd = xc_evtchn_fd(xce_handle);
+    xstate->evloop_fd = xen_vm_virq_or_vmp_get_fd();
     if (xstate->evloop_fd == -1) {
         verror("event channel not initialized\n");
         return -1;
@@ -7562,15 +7978,16 @@ int xen_vm_detach_evloop(struct target *target) {
 }
 
 static target_status_t xen_vm_monitor(struct target *target) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     int ret, fd;
-    XC_EVTCHN_PORT_T port = -1;
     struct timeval tv;
     fd_set inset;
     int again;
     target_status_t retval;
+    int vmid = -1;
 
     /* get a select()able file descriptor of the event channel */
-    fd = xc_evtchn_fd(xce_handle);
+    fd = xen_vm_virq_or_vmp_get_fd();
     if (fd == -1) {
         verror("event channel not initialized\n");
         return TSTATUS_ERROR;
@@ -7590,19 +8007,13 @@ static target_status_t xen_vm_monitor(struct target *target) {
         if (!FD_ISSET(fd, &inset)) 
             continue; // nothing in eventchn
 
-        /* we've got something from eventchn. let's see what it is! */
-        port = xc_evtchn_pending(xce_handle);
-
-	/* unmask the event channel BEFORE doing anything else,
-	 * like unpausing the target!
-	 */
-	ret = xc_evtchn_unmask(xce_handle, port);
-	if (ret == -1) {
+	if (xen_vm_virq_or_vmp_read(&vmid)) {
 	    verror("failed to unmask event channel\n");
 	    break;
 	}
 
-        if (port != dbg_port)
+        /* we've got something from eventchn. let's see what it is! */
+	if (vmid != 0 && vmid != xstate->id)
             continue; // not the event that we are looking for
 
 	again = 0;
@@ -7618,9 +8029,15 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
 	//else if (retval == TSTATUS_PAUSED && again == 0)
 	//    return retval;
-
-	__xen_vm_resume(target,0);
-	continue;
+	
+	if (xen_vm_load_dominfo(target)) {
+	    vwarn("could not load dominfo for dom %d, trying to unpause anyway!\n",
+		  xstate->id);
+	    __xen_vm_resume(target,0);
+	}
+	else if (xstate->dominfo.paused) {
+	    __xen_vm_resume(target,0);
+	}
     }
 
     return TSTATUS_ERROR; /* Never hit, just compiler foo */
@@ -7628,15 +8045,16 @@ static target_status_t xen_vm_monitor(struct target *target) {
 
 static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 				   target_poll_outcome_t *outcome,int *pstatus) {
+    struct xen_vm_state *xstate = (struct xen_vm_state *)target->state;
     int ret, fd;
-    XC_EVTCHN_PORT_T port = -1;
     struct timeval itv;
     fd_set inset;
     int again;
     target_status_t retval;
+    int vmid = -1;
 
     /* get a select()able file descriptor of the event channel */
-    fd = xc_evtchn_fd(xce_handle);
+    fd = xen_vm_virq_or_vmp_get_fd();
     if (fd == -1) {
         verror("event channel not initialized\n");
         return TSTATUS_ERROR;
@@ -7664,24 +8082,18 @@ static target_status_t xen_vm_poll(struct target *target,struct timeval *tv,
 	return TSTATUS_RUNNING;
     }
 
-    /* we've got something from eventchn. let's see what it is! */
-    port = xc_evtchn_pending(xce_handle);
-
-    /* unmask the event channel BEFORE doing anything else,
-     * like unpausing the target!
-     */
-    ret = xc_evtchn_unmask(xce_handle, port);
-    if (ret == -1) {
+    if (xen_vm_virq_or_vmp_read(&vmid)) {
 	verror("failed to unmask event channel\n");
 	if (outcome)
 	    *outcome = POLL_ERROR;
 	return TSTATUS_ERROR;
     }
 
-    if (port != dbg_port) {
+    /* we've got something from eventchn. let's see what it is! */
+    if (vmid != 0 && vmid != xstate->id) {
 	if (outcome)
 	    *outcome = POLL_NOTHING;
-	return TSTATUS_RUNNING;
+	return TSTATUS_RUNNING; // not the event that we are looking for
     }
 
     again = 0;

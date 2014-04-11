@@ -395,6 +395,8 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 	ospec->no_hvm_setcontext = 1;
     if (spec->noClearHWDbgReg && *spec->noClearHWDbgReg == xsd__boolean__true_)
 	ospec->no_hw_debug_reg_clear = 1;
+    if (spec->noUseMultiplexer && *spec->noUseMultiplexer == xsd__boolean__true_)
+	ospec->no_use_multiplexer = 1;
 
     return ospec;
 }
@@ -426,6 +428,11 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 	ospec->noClearHWDbgReg = 
 	    SOAP_CALLOC(soap,1,sizeof(*ospec->noClearHWDbgReg));
 	*ospec->noClearHWDbgReg = xsd__boolean__true_;
+    }
+    if (spec->no_use_multiplexer) {
+	ospec->noUseMultiplexer = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->noUseMultiplexer));
+	*ospec->noUseMultiplexer = xsd__boolean__true_;
     }
 
     return ospec;

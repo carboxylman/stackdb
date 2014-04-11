@@ -88,6 +88,9 @@ endif
 LIBRARIES := libtarget.la
 
 PROGRAMS := dumptarget
+ifeq ($(ENABLE_XENSUPPORT),"1")
+	PROGRAMS += target_xen_vm_vmp
+endif
 
 STATICLIBS := $(OBJDIR)/dwdebug/libdwdebug.la $(OBJDIR)/lib/libvmilib.la
 ifeq ($(ENABLE_XENACCESS),"1")
@@ -103,6 +106,9 @@ ifeq ($(ENABLE_DISTORM),"1")
 endif
 INST_LIB = $(LIBRARIES)
 INST_BIN = dumptarget
+ifeq ($(ENABLE_XENSUPPORT),"1")
+	INST_BIN += target_xen_vm_vmp
+endif
 INST_PC = target.pc
 
 PCLDFLAGS += -lvmilib -ldwdebug -ltarget
@@ -125,6 +131,10 @@ dumptarget: $(HEADERS) dumptarget.lo $(LIBRARIES) $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
 		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
+target_xen_vm_vmp: $(HEADERS) target_xen_vm_vmp.lo $(LIBRARIES) $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
 target.pc: $(SRCDIR)/Makefile.in $(TOP_SRCDIR)/Makeconf.in \
 	   $(TOP_SRCDIR)/Makefile.in
 	echo "prefix=$(INSTALL_TOPDIR)" > $@
@@ -143,7 +153,7 @@ install: def-install install-subdirs
 clean: clean-subdirs
 	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS) $(LIBRARIES)
 	@$(LIBTOOL) --mode=clean rm -f $(PROGRAMS)
-	rm -f dumptarget*
+	rm -f dumptarget* target_xen_vm_vmp*
 	$(RM) -rf .libs
 
 distclean: distclean-subdirs

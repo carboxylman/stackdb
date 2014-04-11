@@ -55,7 +55,8 @@ TargetXenSpecT =
        element replayLogFile { text }?)),
     element kernelFilename { text }?,
     element noHVMSetContext { xsd:boolean }?,
-    element noClearHWDbgReg { xsd:boolean }?
+    element noClearHWDbgReg { xsd:boolean }?,
+    element noUseMultiplexer { xsd:boolean }?
 
 TargetXenSpec = element targetXenSpec { TargetXenSpecT }
 
