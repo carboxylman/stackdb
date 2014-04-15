@@ -70,6 +70,7 @@ struct spf_action {
 	    char *msg;
 	    int ttctx;
 	    int ttdetail;
+	    int bt;
 	} report;
 	struct {
 	    int ttctx;
@@ -253,12 +254,13 @@ void sigh(int signo) {
 }
 
 void print_thread_context(FILE *stream,struct target *target,tid_t tid,
-			  int ttctx,int ttdetail,char *sep,char *kvsep,
+			  int ttctx,int ttdetail,int bt,char *sep,char *kvsep,
 			  char *tprefix,char *tsep) {
     struct target_thread *tthread;
     char buf[1024];
     struct array_list *tids;
     int i;
+    int rc;
 
     tthread = target_lookup_thread(target,tid);
 
@@ -267,9 +269,20 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
     else if (ttctx == 1) {
 	if (target_thread_snprintf(target,tid,buf,sizeof(buf),
 				   ttdetail,sep,kvsep) < 0) 
-	    fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tid);
+	    fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tid);
 	else
-	    fprintf(stream,"%s[%s]",tprefix,buf);
+	    fprintf(stream,"%s[%s",tprefix,buf);
+	if (bt) {
+	    rc = target_unwind_snprintf(buf,sizeof(buf),t,tid,
+					TARGET_UNWIND_STYLE_PROG_KEYS,"|",",");
+	    if (rc < 0)
+		fprintf(stream,"%sbacktrace=[error!]",sep);
+	    else if (rc == 0)
+		fprintf(stream,"%sbacktrace=[empty]",sep);
+	    else
+		fprintf(stream,"%sbacktrace=[%s]",sep,buf);
+	}
+	fprintf(stream,"]");
     }
     else if (ttctx == 2) {
 	/* Just walk up the parent hierarchy. */
@@ -280,9 +293,21 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 
 	    if (target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
 				       ttdetail,sep,kvsep) < 0) 
-		fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tthread->tid);
+		fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tthread->tid);
 	    else
-		fprintf(stream,"%s[%s]",tprefix,buf);
+		fprintf(stream,"%s[%s",tprefix,buf);
+
+	    if (bt) {
+		rc = target_unwind_snprintf(buf,sizeof(buf),t,tthread->tid,
+					    TARGET_UNWIND_STYLE_PROG_KEYS,"|",",");
+		if (rc < 0)
+		    fprintf(stream,"%sbacktrace=[error!]",sep);
+		else if (rc == 0)
+		    fprintf(stream,"%sbacktrace=[empty]",sep);
+		else
+		    fprintf(stream,"%sbacktrace=[%s]",sep,buf);
+	    }
+	    fprintf(stream,"]");
 
 	    ++i;
 	    tthread = target_lookup_thread(target,tthread->ptid);
@@ -292,13 +317,17 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
     else if (ttctx == 3) {
 	if (target_thread_snprintf(target,tid,buf,sizeof(buf),
 				   ttdetail,sep,kvsep) < 0) 
-	    fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tid);
+	    fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tid);
 	else
-	    fprintf(stream,"%s[%s]",tprefix,buf);
+	    fprintf(stream,"%s[%s",tprefix,buf);
 
 	tids = target_list_available_tids(target);
-	if (!tids)
+
+	if (!tids) {
+	    fprintf(stream,"]");
 	    return;
+	}
+
 	array_list_foreach(tids,i,tthread) {
 	    if (tthread->tid == tid)
 		continue;
@@ -307,34 +336,34 @@ void print_thread_context(FILE *stream,struct target *target,tid_t tid,
 
 	    if (target_thread_snprintf(target,tthread->tid,buf,sizeof(buf),
 				       ttdetail,sep,kvsep) < 0) 
-		fprintf(stream,"%s[tid=%"PRIiTID"]",tprefix,tthread->tid);
+		fprintf(stream,"%s[tid=%"PRIiTID"",tprefix,tthread->tid);
 	    else
-		fprintf(stream,"%s[%s]",tprefix,buf);
+		fprintf(stream,"%s[%s",tprefix,buf);
+
+	    if (bt) {
+		rc = target_unwind_snprintf(buf,sizeof(buf),t,tthread->tid,
+					    TARGET_UNWIND_STYLE_PROG_KEYS,"|",",");
+		if (rc < 0)
+		    fprintf(stream,"%sbacktrace=[error!]",sep);
+		else if (rc == 0)
+		    fprintf(stream,"%sbacktrace=[empty]",sep);
+		else
+		    fprintf(stream,"%sbacktrace=[%s]",sep,buf);
+	    }
+	    fprintf(stream,"]");
 	}
     }
 }
 
 void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
-    struct target_location_ctxt *tlctxt;
-    struct target_location_ctxt_frame *tlctxtf;
     struct array_list *tids;
     tid_t tid;
-    int i,j,k;
-    REG ipreg;
-    REGVAL ipval;
-    char *srcfile = NULL;
-    int srcline;
-    GSList *args;
-    GSList *gsltmp;
-    struct symbol *argsym;
-    char *name;
-    struct value *v;
-    char vbuf[1024];
+    int i;
     tid_t stid = -1;
-    struct lsymbol *lsymbol;
-    struct bsymbol *bsymbol;
     struct target_thread *tthread;
     char *endptr = NULL;
+    int rc;
+    char buf[4096];
 
     if (tiddesc) {
 	stid = (int)strtol(tiddesc,&endptr,10);
@@ -353,8 +382,6 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
      *
      * If it >= 0, do that one.
      */
-
-    ipreg = target_dw_reg_no(t,CREG_IP);
 
     if (stid == -1 && !tiddesc) {
 	tids = array_list_create(1);
@@ -388,79 +415,14 @@ void spf_backtrace(struct target *t,tid_t ctid,char *tiddesc) {
 	    || (tiddesc && strcmp(tiddesc,tthread->name)))
 	    continue;
 
-	tlctxt = target_unwind(t,tid);
-	if (!tlctxt) {
-	    fprintf(stdout,"\nthread %"PRIiTID": (empty)\n",tid);
-	    continue;
-	}
-
-	fprintf(stdout,"\nthread %"PRIiTID":\n",tid);
-
-	j = 0;
-	while (1) {
-	    tlctxtf = target_location_ctxt_current_frame(tlctxt);
-
-	    ipval = 0;
-	    target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
-
-	    if (tlctxtf->bsymbol)
-		srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
-	    else
-		srcfile = NULL;
-
-	    if (tlctxtf->bsymbol)
-		srcline = target_lookup_line_addr(t,srcfile,ipval);
-	    else
-		srcline = 0;
-
-	    fprintf(stdout,"  #%d  0x%"PRIxFULLADDR" in %s (",
-		    j,ipval,(tlctxtf->bsymbol) ? bsymbol_get_name(tlctxtf->bsymbol) : "");
-	    if (tlctxtf->bsymbol) {
-		args = symbol_get_ordered_members(bsymbol_get_symbol(tlctxtf->bsymbol),
-						  SYMBOL_TYPE_FLAG_VAR_ARG);
-		v_g_slist_foreach(args,gsltmp,argsym) {
-		    lsymbol = lsymbol_create_from_member(bsymbol_get_lsymbol(tlctxtf->bsymbol),
-							 argsym);
-		    bsymbol = bsymbol_create(lsymbol,tlctxtf->bsymbol->region);
-		    name = symbol_get_name(argsym);
-
-		    v = target_load_symbol(t,tlctxt,bsymbol,
-					   //LOAD_FLAG_AUTO_DEREF | 
-					   LOAD_FLAG_AUTO_STRING);
-		    printf("%s=",name ? name : "()");
-		    if (v) {
-			//vbuf[0] = '\0';
-			if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0)
-			    printf("<value_snprintf error>");
-			else
-			    printf("%s",vbuf);
-			printf(" (0x");
-			for (k = 0; k < v->bufsiz; ++k) {
-			    printf("%02hhx",v->buf[k]);
-			}
-			printf(")");
-			value_free(v);
-		    }
-		    else
-			printf("<?>");
-		    printf(",");
-
-		    bsymbol_release(bsymbol);
-		    lsymbol_release(lsymbol);
-		}
-		fprintf(stdout,") at %s:%d\n",srcfile,srcline);
-	    }
-	    else
-		fprintf(stdout,")\n");
-		fflush(stdout);
-	    fflush(stderr);
-
-	    tlctxtf = target_location_ctxt_prev(tlctxt);
-	    if (!tlctxtf)
-		break;
-	    ++j;
-	}
-	target_location_ctxt_free(tlctxt);
+	rc = target_unwind_snprintf(buf,sizeof(buf),t,tid,
+				    TARGET_UNWIND_STYLE_GDB,"\n",",");
+	if (rc < 0)
+	    fprintf(stdout,"\nthread %"PRIiTID": (error!)\n",tid);
+	else if (rc == 0)
+	    fprintf(stdout,"\nthread %"PRIiTID": (nothing)\n",tid);
+	else
+	    fprintf(stdout,"\nthread %"PRIiTID": \n%s\n",tid,buf);
     }
 
     fputs("\n",stdout);
@@ -652,7 +614,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    fputs(",",stdout);
 	    print_thread_context(stdout,bsymbol->region->space->target,tid,
 				 spfa->report.ttctx,spfa->report.ttdetail,
-				 ":",";","thread=",",");
+				 spfa->report.bt,";",":","thread=",",");
 	    fputs(")\n",stdout);
 	    fflush(stdout);
 	}
@@ -716,7 +678,7 @@ result_t handler(int when,struct probe *probe,tid_t tid,void *data,
 	    fputs(" ",stdout);
 	    print_thread_context(stdout,bsymbol->region->space->target,tid,
 				 spfa->print.ttctx,spfa->print.ttdetail,
-				 NULL,NULL,"",",");
+				 spfa->report.bt,NULL,NULL,"",",");
 	    fputs("\n",stdout);
 	    fflush(stdout);
 	}
@@ -2007,6 +1969,9 @@ struct spf_config *load_config_file(char *file) {
 			}
 			else if (strcmp(token,"ttdetail") == 0) {
 			    spfa->report.ttdetail = atoi(token2);
+			}
+			else if (strcmp(token,"bt") == 0) {
+			    spfa->report.bt = atoi(token2);
 			}
 			else 
 			    goto err;

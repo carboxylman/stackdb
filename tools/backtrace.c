@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The University of Utah
+ * Copyright (c) 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -304,30 +304,18 @@ struct argp bt_argp = {
 
 int main(int argc,char **argv) {
     char *targetstr;
-    struct target_location_ctxt *tlctxt;
-    struct target_location_ctxt_frame *tlctxtf;
     struct array_list *tids;
     tid_t tid;
-    int i,j,k,lpc;
-    REG ipreg;
-    REGVAL ipval;
-    char *srcfile = NULL;
-    int srcline;
-    GSList *args;
-    GSList *gsltmp;
-    struct symbol *argsym;
-    char *name;
-    struct value *v;
-    char vbuf[1024];
+    int i,j,lpc;
     char *tmp;
     int oid;
     tid_t base_tid;
     struct target *base;
     struct overlay_spec *ospec;
     char namebuf[64];
-    struct lsymbol *lsymbol;
-    struct bsymbol *bsymbol;
     struct target *ot;
+    int rc;
+    char buf[PAGE_SIZE];
 
     memset(&opts,0,sizeof(opts));
 
@@ -443,80 +431,16 @@ int main(int argc,char **argv) {
     fflush(stderr);
     fflush(stdout);
 
-    ipreg = target_dw_reg_no(t,CREG_IP);
-
     tids = target_list_tids(t);
     array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
-	tlctxt = target_unwind(t,tid);
-	if (!tlctxt) {
-	    fprintf(stdout,"\nthread %"PRIiTID": NOTHING\n",tid);
-	    continue;
-	}
-
-	fprintf(stdout,"\nthread %"PRIiTID":\n",tid);
-
-	j = 0;
-	while (1) {
-	    tlctxtf = target_location_ctxt_current_frame(tlctxt);
-	    ipval = 0;
-	    target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
-	    if (tlctxtf->bsymbol)
-		srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
-	    else
-		srcfile = NULL;
-	    if (tlctxtf->bsymbol)
-		srcline = target_lookup_line_addr(t,srcfile,ipval);
-	    else
-		srcline = 0;
-
-	    fprintf(stdout,"  #%d  0x%"PRIxFULLADDR" in %s (",
-		    j,ipval,(tlctxtf->bsymbol) ? bsymbol_get_name(tlctxtf->bsymbol) : "");
-	    if (tlctxtf->bsymbol) {
-		args = symbol_get_ordered_members(bsymbol_get_symbol(tlctxtf->bsymbol),
-						  SYMBOL_TYPE_FLAG_VAR_ARG);
-		v_g_slist_foreach(args,gsltmp,argsym) {
-		    lsymbol = lsymbol_create_from_member(bsymbol_get_lsymbol(tlctxtf->bsymbol),
-							 argsym);
-		    bsymbol = bsymbol_create(lsymbol,tlctxtf->bsymbol->region);
-		    name = symbol_get_name(argsym);
-
-		    v = target_load_symbol(t,tlctxt,bsymbol,
-					   //LOAD_FLAG_AUTO_DEREF | 
-					   LOAD_FLAG_AUTO_STRING);
-		    printf("%s=",name ? name : "()");
-		    if (v) {
-			//vbuf[0] = '\0';
-			if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0)
-			    printf("<value_snprintf error>");
-			else
-			    printf("%s",vbuf);
-			printf(" (0x");
-			for (k = 0; k < v->bufsiz; ++k) {
-			    printf("%02hhx",v->buf[k]);
-			}
-			printf(")");
-			value_free(v);
-		    }
-		    else
-			printf("<?>");
-		    printf(",");
-
-		    bsymbol_release(bsymbol);
-		    lsymbol_release(lsymbol);
-		}
-		fprintf(stdout,") at %s:%d\n",srcfile,srcline);
-	    }
-	    else
-		fprintf(stdout,")\n");
-		fflush(stdout);
-	    fflush(stderr);
-
-	    tlctxtf = target_location_ctxt_prev(tlctxt);
-	    if (!tlctxtf)
-		break;
-	    ++j;
-	}
-	target_location_ctxt_free(tlctxt);
+	rc = target_unwind_snprintf(buf,sizeof(buf),t,tid,
+				    TARGET_UNWIND_STYLE_GDB,"\n",",");
+	if (rc < 0)
+	    fprintf(stdout,"\nthread %"PRIiTID": (error!)\n",tid);
+	else if (rc == 0)
+	    fprintf(stdout,"\nthread %"PRIiTID": (nothing)\n",tid);
+	else
+	    fprintf(stdout,"\nthread %"PRIiTID": \n%s\n",tid,buf);
     }
 
     for (lpc = 0; lpc < opts.ospecs_len; ++lpc) {
@@ -530,65 +454,16 @@ int main(int argc,char **argv) {
 	fflush(stderr);
 	fflush(stdout);
 
-	ipreg = target_dw_reg_no(ot,CREG_IP);
-
 	tids = target_list_tids(ot);
 	array_list_foreach_fakeptr_t(tids,i,tid,uintptr_t) {
-	if (opts.tid > 0 && tid != opts.tid)
-	    continue;
+	    if (opts.tid > 0 && tid != opts.tid)
+		continue;
 
-	    tlctxt = target_unwind(ot,tid);
-	    fprintf(stdout,"\nthread %"PRIiTID":\n",tid);
-	    j = 0;
-	    while (1) {
-		tlctxtf = target_location_ctxt_current_frame(tlctxt);
-		ipval = 0;
-		target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
-		srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
-		srcline = target_lookup_line_addr(ot,srcfile,ipval);
-		fprintf(stdout,"  #%d  0x%"PRIxFULLADDR" in %s (",
-			j,ipval,bsymbol_get_name(tlctxtf->bsymbol));
-		args = symbol_get_ordered_members(bsymbol_get_symbol(tlctxtf->bsymbol),
-						  SYMBOL_TYPE_FLAG_VAR_ARG);
-		v_g_slist_foreach(args,gsltmp,argsym) {
-		    lsymbol = lsymbol_create_from_member(bsymbol_get_lsymbol(tlctxtf->bsymbol),
-							 argsym);
-		    bsymbol = bsymbol_create(lsymbol,tlctxtf->bsymbol->region);
-		    name = symbol_get_name(argsym);
-
-		    v = target_load_symbol(ot,tlctxt,bsymbol,
-					   //LOAD_FLAG_AUTO_DEREF | 
-					   LOAD_FLAG_AUTO_STRING);
-		    printf("%s=",name ? name : "()");
-		    if (v) {
-			//vbuf[0] = '\0';
-			if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0)
-			    printf("<value_snprintf error>");
-			else
-			    printf("%s",vbuf);
-			printf(" (0x");
-			for (k = 0; k < v->bufsiz; ++k) {
-			    printf("%02hhx",v->buf[k]);
-			}
-			printf(")");
-			value_free(v);
-		    }
-		    else
-			printf("<?>");
-		    printf(",");
-
-		    bsymbol_release(bsymbol);
-		    lsymbol_release(lsymbol);
-		}
-		fprintf(stdout,") at %s:%d\n",srcfile,srcline);
-		fflush(stdout);
-		fflush(stderr);
-		tlctxtf = target_location_ctxt_prev(tlctxt);
-		if (!tlctxtf)
-		    break;
-		++j;
-	    }
-	    target_location_ctxt_free(tlctxt);
+	    if (target_unwind_snprintf(buf,sizeof(buf),ot,tid,
+				       TARGET_UNWIND_STYLE_GDB,"\n",",") < 0)
+		fprintf(stdout,"\nthread %"PRIiTID": (error!)\n",tid);
+	    else
+		fprintf(stdout,"\nthread %"PRIiTID": \n%s\n",tid,buf);
 	}
     }
 

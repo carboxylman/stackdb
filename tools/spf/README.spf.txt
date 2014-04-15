@@ -57,7 +57,7 @@ ProbeFilter <symbol_name> [id(<probeFilterId>)] [when(pre|post)] [disable()]  \
     [vfilter(value1=/regex/,value2=/regex/,...)]                              \
     [print()] [bt([<target_id>[,<thread_name_or_id>]])]                       \
     [report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
-            ttctx=all|hier|self|none))]                                       \
+            ttctx=all|hier|self|none),bt=0|1)]                                \
     [enable(<probeFilterId>)] [disable(<probeFilterId>)] [remove(<probeFilterId>)] \
     [abort(<returncode>)] [exit(<exitcode)]
 
@@ -159,7 +159,7 @@ the syntax.
     thread number, it will print out that thread -- if it exists.
 
   report(rt=i|f,tn=<typename>,tid=<typeid>,rv=<resultvalue>,msg="<msg>",   \
-         ttctx=all|hier|self|none),ttdetail=<-2|-1|0|1|2>,) {1}
+         ttctx=all|hier|self|none),ttdetail=<-2|-1|0|1|2>,bt=0|1) {1}
 
     This is designed to allow spf to be used as an Analysis run by one
     our XML server, and to allow you to customize the events you
@@ -208,7 +208,10 @@ the syntax.
     only the thread that triggered the probe will be displayed.  If
     ttctx==hier, then the thread hierarchy starting with the thread that
     triggered the probe, to its root parent, will be displayed.  If
-    ttctx==none, no threads will be displayed.  The default is none.
+    ttctx==none, no threads will be displayed.  The default is none.  If
+    bt is not set, it defaults to 0 (no backtrace).  Otherwise, a
+    backtrace is printed for each thread printed as a result of ttctx's
+    value (so to get a backtrace, you must set *both* ttctx and bt!).
 
   enable(<probeFilterId>)  {n}
   disable(<probeFilterId>) {n}

@@ -4522,6 +4522,209 @@ int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt) {
     return 0;
 }
 
+int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
+			   target_unwind_style_t fstyle,
+			   char *frame_sep,char *ksep) {
+    struct target_location_ctxt *tlctxt;
+    struct target_location_ctxt_frame *tlctxtf;
+    int i,j,k;
+    int rc = 0;
+    int retval;
+    REG ipreg;
+    REGVAL ipval;
+    char *srcfile = NULL;
+    int srcline;
+    char *name;
+    struct lsymbol *lsymbol = NULL;
+    struct bsymbol *bsymbol = NULL;
+    struct value *v;
+    char vbuf[1024];
+    GSList *args;
+    GSList *gsltmp;
+    struct symbol *argsym;
+
+    if (!buf) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (!frame_sep)
+	frame_sep = "|";
+    if (!ksep)
+	ksep = ",";
+
+    vdebug(16,LA_TARGET,LF_TARGET,"target(%s:%"PRIiTID") thread(%d)\n",
+	   target->name,tid);
+
+    tlctxt = target_unwind(target,tid);
+    if (!tlctxt)
+	return -1;
+
+    ipreg = target_dw_reg_no(target,CREG_IP);
+
+    j = 0;
+    while (1) {
+	tlctxtf = target_location_ctxt_current_frame(tlctxt);
+
+	ipval = 0;
+	target_location_ctxt_read_reg(tlctxt,ipreg,&ipval);
+
+	if (tlctxtf->bsymbol)
+	    srcfile = symbol_get_srcfile(bsymbol_get_symbol(tlctxtf->bsymbol));
+	else
+	    srcfile = NULL;
+
+	if (tlctxtf->bsymbol)
+	    srcline = target_lookup_line_addr(target,srcfile,ipval);
+	else
+	    srcline = 0;
+
+	if (j > 0) {
+	    retval = snprintf(buf + rc,buflen - rc,"%s",frame_sep);
+	    if (retval < 0) {
+		vwarnopt(3,LA_TARGET,LF_TARGET,
+			 "snprintf(frame_sep %d): %s\n",
+			 j,strerror(errno));
+		goto err;
+	    }
+	    else
+		rc += retval;
+	}
+
+	name = (tlctxtf->bsymbol) ? bsymbol_get_name(tlctxtf->bsymbol) : "";
+	if (fstyle == TARGET_UNWIND_STYLE_GDB)
+	    retval = snprintf(buf + rc,buflen - rc,
+			      "#%d 0x%"PRIxFULLADDR" in %s (",
+			      j,ipval,name);
+	else if (fstyle == TARGET_UNWIND_STYLE_PROG_KEYS)
+	    retval = snprintf(buf + rc,buflen - rc,
+			      "frame=%d%sip=0x%"PRIxFULLADDR"%sfunction=%s%sargs=(",
+			      j,ksep,ipval,ksep,name,ksep);
+	else
+	    retval = snprintf(buf + rc,buflen - rc,
+			      "%d%s0x%"PRIxFULLADDR"%s%s%s(",
+			      j,ksep,ipval,ksep,name,ksep);
+	if (retval < 0) {
+	    vwarnopt(3,LA_TARGET,LF_TARGET,"snprintf(frame header): %s\n",
+		     strerror(errno));
+	    goto err;
+	}
+	else
+	    rc += retval;
+
+	if (tlctxtf->bsymbol) {
+	    args = symbol_get_ordered_members(bsymbol_get_symbol(tlctxtf->bsymbol),
+					      SYMBOL_TYPE_FLAG_VAR_ARG);
+	    i = 0;
+	    v_g_slist_foreach(args,gsltmp,argsym) {
+		lsymbol = lsymbol_create_from_member(bsymbol_get_lsymbol(tlctxtf->bsymbol),
+						     argsym);
+
+		if (i > 0) {
+		    retval = snprintf(buf + rc,buflen - rc,"%s",ksep);
+		    if (retval < 0) {
+			vwarnopt(3,LA_TARGET,LF_TARGET,
+				 "snprintf(ksep %d): %s\n",
+				 i,strerror(errno));
+			goto err;
+		    }
+		    else
+			rc += retval;
+		}
+
+		if (lsymbol)
+		    bsymbol = bsymbol_create(lsymbol,tlctxtf->bsymbol->region);
+		else
+		    bsymbol = NULL;
+		name = symbol_get_name(argsym);
+		if (!name)
+		    name = "?";
+
+		if (bsymbol)
+		    v = target_load_symbol(target,tlctxt,bsymbol,
+					   //LOAD_FLAG_AUTO_DEREF | 
+					   LOAD_FLAG_AUTO_STRING);
+		else
+		    v = NULL;
+
+		vbuf[0] = '\0';
+		if (v) {
+		    if (value_snprintf(v,vbuf,sizeof(vbuf)) < 0) {
+			vwarnopt(5,LA_TARGET,LF_TARGET,"<value_snprintf error>");
+
+			snprintf(vbuf,sizeof(vbuf),"0x");
+			for (k = 0; k < v->bufsiz && k < (int)sizeof(vbuf); ++k) {
+			    snprintf(vbuf + 2 + 2 * k,sizeof(vbuf) - 2 - 2 * k,
+				     "%02hhx",v->buf[k]);
+			}
+		    }
+		    value_free(v);
+		}
+		else
+		    snprintf(vbuf,sizeof(vbuf),"?");
+
+		if (fstyle == TARGET_UNWIND_STYLE_GDB
+		    || fstyle == TARGET_UNWIND_STYLE_PROG_KEYS)
+		    retval = snprintf(buf + rc,buflen - rc,"%s=%s",name,vbuf);
+		else
+		    retval = snprintf(buf + rc,buflen - rc,"%s",vbuf);
+		if (retval < 0) {
+		    vwarnopt(3,LA_TARGET,LF_TARGET,"snprintf(arg %d): %s\n",
+			     i,strerror(errno));
+		    goto err;
+		}
+		else
+		    rc += retval;
+
+		++i;
+
+		if (bsymbol)
+		    bsymbol_release(bsymbol);
+		bsymbol = NULL;
+		if (lsymbol)
+		    lsymbol_release(lsymbol);
+		lsymbol = NULL;
+	    }
+	}
+
+	if (fstyle == TARGET_UNWIND_STYLE_GDB)
+	    retval = snprintf(buf + rc, buflen - rc,
+			      ") at %s:%d",srcfile,srcline);
+	else if (fstyle == TARGET_UNWIND_STYLE_PROG_KEYS)
+	    retval = snprintf(buf + rc, buflen - rc,
+			      ")%ssrcfile=%s%ssrcline=%d",
+			      ksep,srcfile,ksep,srcline);
+	else
+	    retval = snprintf(buf + rc, buflen - rc,
+			      ")%s%s%s%d",
+			      ksep,srcfile,ksep,srcline);
+	if (retval < 0) {
+	    vwarnopt(3,LA_TARGET,LF_TARGET,"snprintf(arg %d): %s\n",
+		     j,strerror(errno));
+	    goto err;
+	}
+	else
+	    rc += retval;
+
+	tlctxtf = target_location_ctxt_prev(tlctxt);
+	if (!tlctxtf)
+	    break;
+
+	++j;
+    }
+    target_location_ctxt_free(tlctxt);
+
+    return rc;
+
+ err:
+    if (bsymbol)
+	bsymbol_release(bsymbol);
+    if (lsymbol)
+	lsymbol_release(lsymbol);
+
+    return retval;
+}
+
 struct target_location_ctxt_frame *
 target_location_ctxt_get_frame(struct target_location_ctxt *tlctxt,int frame) {
     return (struct target_location_ctxt_frame *) \

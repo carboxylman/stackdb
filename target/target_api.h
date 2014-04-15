@@ -1868,10 +1868,19 @@ struct target_location_ctxt_frame {
     void *priv;
 };
 
+typedef enum {
+    TARGET_UNWIND_STYLE_GDB       = 1,
+    TARGET_UNWIND_STYLE_PROG      = 2,
+    TARGET_UNWIND_STYLE_PROG_KEYS = 3,
+} target_unwind_style_t;
+
 /*
  * This is a very simple unwinding API.
  */
 struct target_location_ctxt *target_unwind(struct target *target,tid_t tid);
+int target_unwind_snprintf(char *buf,int buflen,struct target *target,tid_t tid,
+			   target_unwind_style_t fstyle,
+			   char *frame_sep,char *ksep);
 int target_location_ctxt_unwind(struct target_location_ctxt *tlctxt);
 struct target_location_ctxt_frame *
 target_location_ctxt_current_frame(struct target_location_ctxt *tlctxt);
