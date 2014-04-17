@@ -1575,7 +1575,7 @@ static int xen_vm_process_detach_evloop(struct target *target) {
 }
 
 static target_status_t xen_vm_process_status(struct target *target) {
-    return TSTATUS_RUNNING;
+    return target_status(target->base);
 }
 
 static int xen_vm_process_pause(struct target *target,int nowait) {

@@ -1613,7 +1613,7 @@ static int php_set_active_probing(struct target *target,
 }
 
 static target_status_t php_status(struct target *target) {
-    return TSTATUS_RUNNING;
+    return target_status(target->base);
 }
 
 static int php_pause(struct target *target,int nowait) {
