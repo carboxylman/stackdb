@@ -361,6 +361,7 @@ struct argp_option xen_vm_argp_opts[] = {
     { "replaydir",'r',"DIR",0,"The XenTT replay directory.",-4 },
     { "xenlib-debug",'x',"LEVEL",0,"Increase/set the XenAccess/OpenVMI debug level.",-4 },
     { "no-use-multiplexer",'M',NULL,0,"Do not spawn/attach to the Xen multiplexer server",-4 },
+    { "dominfo-timeout",'T',"MICROSECONDS",0,"If libxc gets a \"NULL\" dominfo status, the number of microseconds we should keep retrying",-4 },
     { 0,0,0,0,0,0 }
 };
 
@@ -425,6 +426,12 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
     }
     if (xspec->no_use_multiplexer) {
 	av[j++] = strdup("--no-use-multiplexer");
+    }
+    if (xspec->dominfo_timeout > 0) {
+	av[j++] = strdup("-T");
+	av[j] = malloc(16);
+	snprintf(av[j],16,"%d",xspec->dominfo_timeout);
+	j++;
     }
     av[j++] = NULL;
 
@@ -547,6 +554,9 @@ error_t xen_vm_argp_parse_opt(int key,char *arg,struct argp_state *state) {
 	break;
     case 'M':
 	xspec->no_use_multiplexer = 1;
+	break;
+    case 'T':
+	xspec->dominfo_timeout = atoi(arg);
 	break;
     default:
 	return ARGP_ERR_UNKNOWN;
@@ -1073,6 +1083,15 @@ struct target *xen_vm_attach(struct target_spec *spec,
 
 static int xen_vm_load_dominfo(struct target *target) {
     struct xen_vm_state *xstate = (struct xen_vm_state *)(target->state);
+    struct xen_vm_spec *xspec = (struct xen_vm_spec *)target->spec->backend_spec;
+    long total,waited;
+    /*
+     * Wait for 10us repeatedly if dominfo doesn't return what we think
+     * it should.  10us is arbitrary, but a mid-granularity compromise.
+     */
+    long interval = 10;
+    struct timeval itv = { 0,0 };
+    int rc;
 
     if (!xstate->dominfo_valid) {
         vdebug(4,LA_TARGET,LF_XV,
@@ -1080,9 +1099,51 @@ static int xen_vm_load_dominfo(struct target *target) {
 	memset(&xstate->dominfo,0,sizeof(xstate->dominfo));
 	if (xc_domain_getinfo(xc_handle,xstate->id,1,
 			      &xstate->dominfo) <= 0) {
-	    verror("could not get domaininfo for %d\n",xstate->id);
+	    verror("could not get dominfo for %d\n",xstate->id);
 	    errno = EINVAL;
 	    return -1;
+	}
+
+	waited = 0;
+	total = (xspec->dominfo_timeout > 0) ? xspec->dominfo_timeout : 0;
+
+	while (!xstate->dominfo.dying && !xstate->dominfo.crashed
+	       && !xstate->dominfo.shutdown && !xstate->dominfo.paused
+	       && !xstate->dominfo.blocked && !xstate->dominfo.running
+	       && (total - waited) > 0) {
+	    vwarnopt(5,LA_TARGET,LF_XV,"domain %d has no status!\n",xstate->id);
+
+	    itv.tv_sec = 0;
+	    itv.tv_usec = (interval > (total - waited)) \
+		? (total - waited) : interval;
+
+	    rc = select(0,NULL,NULL,NULL,&itv);
+	    if (rc < 0) {
+		if (errno != EINTR) {
+		    verror("select(dominfo retry): %s\n",strerror(errno));
+		    return -1;
+		}
+		else {
+		    /* Assume itv timer has expired -- even though it
+		     * may not have, of course, since select() errored
+		     * and we can't trust the timer value.
+		     */
+		    itv.tv_usec = 0;
+		}
+	    }
+
+	    waited += (interval - itv.tv_usec);
+
+	    vdebug(8,LA_TARGET,LF_XV,
+		   "waited %d of %d total microseconds to retry dominfo...\n",
+		   waited,total);
+
+	    if (xc_domain_getinfo(xc_handle,xstate->id,1,
+				  &xstate->dominfo) <= 0) {
+		verror("could not get dominfo for %d\n",xstate->id);
+		errno = EINVAL;
+		return -1;
+	    }
 	}
 
 	/*
@@ -3424,6 +3485,18 @@ static int xen_vm_init(struct target *target) {
     target->threadctl = 0;
 
     xstate->dominfo_valid = 0;
+    xstate->dominfo.domid = 0;
+    xstate->dominfo.dying = 0;
+    xstate->dominfo.crashed = 0;
+    xstate->dominfo.shutdown = 0;
+    xstate->dominfo.paused = 0;
+    xstate->dominfo.blocked = 0;
+    xstate->dominfo.running = 0;
+    xstate->dominfo.hvm = 0;
+    xstate->dominfo.debugged = 0;
+    xstate->dominfo.shutdown_reason = 0;
+    xstate->dominfo.max_vcpu_id = 0;
+    xstate->dominfo.shared_info_frame = 0;
 
     /* Create the default thread. */
     tstate = (struct xen_vm_thread_state *)calloc(1,sizeof(*tstate));

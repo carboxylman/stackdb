@@ -139,6 +139,7 @@ struct xen_vm_spec {
     char *kernel_filename;
     char *config_file;
     char *replay_dir;
+    int dominfo_timeout;
 
     unsigned int no_hw_debug_reg_clear:1,
 	         no_hvm_setcontext:1,
