@@ -56,7 +56,8 @@ TargetXenSpecT =
     element kernelFilename { text }?,
     element noHVMSetContext { xsd:boolean }?,
     element noClearHWDbgReg { xsd:boolean }?,
-    element noUseMultiplexer { xsd:boolean }?
+    element noUseMultiplexer { xsd:boolean }?,
+    element dominfoTimeout { xsd:int }?
 
 TargetXenSpec = element targetXenSpec { TargetXenSpecT }
 

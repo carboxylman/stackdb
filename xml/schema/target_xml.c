@@ -397,6 +397,8 @@ x_TargetXenSpecT_to_t_xen_vm_spec(struct soap *soap,
 	ospec->no_hw_debug_reg_clear = 1;
     if (spec->noUseMultiplexer && *spec->noUseMultiplexer == xsd__boolean__true_)
 	ospec->no_use_multiplexer = 1;
+    if (spec->dominfoTimeout && *spec->dominfoTimeout > 0)
+	ospec->dominfo_timeout = *spec->dominfoTimeout;
 
     return ospec;
 }
@@ -433,6 +435,11 @@ t_xen_vm_spec_to_x_TargetXenSpecT(struct soap *soap,
 	ospec->noUseMultiplexer = 
 	    SOAP_CALLOC(soap,1,sizeof(*ospec->noUseMultiplexer));
 	*ospec->noUseMultiplexer = xsd__boolean__true_;
+    }
+    if (spec->dominfo_timeout > 0) {
+	ospec->dominfoTimeout = 
+	    SOAP_CALLOC(soap,1,sizeof(*ospec->dominfoTimeout));
+	*ospec->dominfoTimeout = spec->dominfo_timeout;
     }
 
     return ospec;
