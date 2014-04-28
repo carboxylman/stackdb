@@ -1294,6 +1294,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	    fprintf(stdout,"ERROR: Could not load name of the file\n");
 	    goto nextptr;
 	}
+	//fprintf(stdout ,"INFO: read the object_name\n");
 	value_free(d_name_value);
 
 	file_name = strdup(file_name_value->buf);
@@ -1317,7 +1318,8 @@ nextptr:
 	    fprintf(stdout,"INFO: Finished travesring the entire vm_area list.\n");
 	    break;
 	}
-*/	
+*/      
+	//fprintf(stdout,"INFO: loading the vm_next pointer\n");
 	vm_area_value = target_load_value_member(target, NULL, vm_area_value,
 						"vm_next", NULL, LOAD_FLAG_AUTO_DEREF);
 	if(!vm_area_value) {
@@ -1334,7 +1336,7 @@ int object_info() {
     int ret_val;
     struct bsymbol * init_task_bsymbol;
 
-
+    fprintf(stdout, "INFO: Gather information about the loaded objects \n");
     init_task_bsymbol = target_lookup_sym(target, "init_task", NULL, NULL,
 	    SYMBOL_TYPE_FLAG_VAR);
     if(!init_task_bsymbol) {
@@ -1417,8 +1419,8 @@ int syscalltable_info() {
 	    continue;
 	}
 	if(sc->bsymbol) {
-	    fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
-					    bsymbol_get_name(sc->bsymbol));
+	    //fprintf(stdout,"%d\t %"PRIxADDR"\t%s\n", sc->num, sc->addr, 
+	    //				    bsymbol_get_name(sc->bsymbol));
 	    if(sc->addr != sys_call_table[sc->num]) {
 		fprintf(fp,"(tampered_sys_call\n \
 			\t( name  \"%s\")\n \

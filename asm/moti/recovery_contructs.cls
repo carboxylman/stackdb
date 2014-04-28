@@ -351,8 +351,31 @@
 		(function-name unload_objects)
 		(arg_list ?pid $?list)))
     (retract ?f)
+    (assert (unload-unknown-object-prev-action
+		(prev_action  sled_object)
+		(name ?name)
+		(pid ?pid)))
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
-    (printout t "RECOVERY: Unloading the unknown objects." crlf))
+    (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
+    (printout t "RECOVERY: Unloading the unknown objects" $?list  crlf))
+
+
+(defrule unload-unknown-objects_01
+    (declare (salience 20))
+    ?f <- (unknown-object-list
+		(name ?name)
+		(pid ?pid)
+		(object-list $?list))
+    ?of <- (unload-unknown-object-prev-action
+		(prev_action  sled_object)
+		(name ?name)
+		(pid ?pid))
+    =>
+    (retract ?f)
+    (save-facts "state_information/recovery_action.fac" visible recovery-action)
+    (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
+    (printout t "RECOVERY: The unknown object loaded by the process " ?name " has already been sled. "crlf))
+
 
 ; rules for dealing with unknown files opened by a process
 (defrule close-unknown-open-files

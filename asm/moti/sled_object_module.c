@@ -249,15 +249,18 @@ static int insert_ret_sled_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     /* Iterate over all the tasks and check for a matching PID*/
     for_each_process(task) {
 	if (task->pid == pid) {
+
 	    /* We have found the task_struct for the process*/
 	    printk(KERN_INFO "Found process %s with PID = %d\n",
 		    task->comm, task->pid);
+	    send_sig(SIGSTOP, task,0);
 	    for(i = 0; i < cmd->argc - 1; i++) {
 		ret = insert_ret_sled(task,object_name[i]);
 		if(ret) {
 		    printk(KERN_INFO "INFO: Failed to unload object %s \n",object_name[i]);
 		}
 	    }
+	    send_sig(SIGCONT, task,0);
 	    break;	
 	}
     }
