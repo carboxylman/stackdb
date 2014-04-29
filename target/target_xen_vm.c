@@ -8899,6 +8899,27 @@ static int tsreg_to_offset[XV_TSREG_COUNT] = {
  * Register functions.
  */
 char *xen_vm_reg_name(struct target *target,REG reg) {
+    if (reg >= XV_TSREG_END_INDEX && reg <= XV_TSREG_START_INDEX) {
+	switch (reg) {
+	case XV_TSREG_CR0: return "cr0";
+	case XV_TSREG_CR1: return "cr1";
+	case XV_TSREG_CR2: return "cr2";
+	case XV_TSREG_CR3: return "cr3";
+	case XV_TSREG_CR4: return "cr4";
+	case XV_TSREG_CR5: return "cr5";
+	case XV_TSREG_CR6: return "cr6";
+	case XV_TSREG_CR7: return "cr7";
+	case XV_TSREG_DR0: return "dr0";
+	case XV_TSREG_DR1: return "dr1";
+	case XV_TSREG_DR2: return "dr2";
+	case XV_TSREG_DR3: return "dr3";
+	case XV_TSREG_DR6: return "dr6";
+	case XV_TSREG_DR7: return "dr7";
+	default:
+	    verror("DWARF regnum %d invalid special platform regno!\n",reg);
+	    return NULL;
+	}
+    }
 #if __WORDSIZE == 64
     if (reg >= X86_64_DWREG_COUNT) {
 	verror("DWARF regnum %d does not have a 64-bit target mapping!\n",reg);
@@ -8921,6 +8942,11 @@ REG xen_vm_dwregno_targetname(struct target *target,char *name) {
     int count;
     char **dregname;
 
+    if (!name) {
+	errno = EINVAL;
+	return 0;
+    }
+
 #if __WORDSIZE == 64
     count = X86_64_DWREG_COUNT;
     dregname = dreg_to_name64;
@@ -8928,6 +8954,54 @@ REG xen_vm_dwregno_targetname(struct target *target,char *name) {
     count = X86_32_DWREG_COUNT;
     dregname = dreg_to_name32;
 #endif
+
+    /*
+     * This sucks more.
+     */
+    if ((*name == 'd' && *(name+1) == 'r')
+	|| (*name == 'D' && *(name+1) == 'R')) {
+	if (*(name+2) == '0')
+	    return XV_TSREG_DR0;
+	else if (*(name+2) == '1')
+	    return XV_TSREG_DR1;
+	else if (*(name+2) == '2')
+	    return XV_TSREG_DR2;
+	else if (*(name+2) == '3')
+	    return XV_TSREG_DR3;
+	else if (*(name+2) == '6')
+	    return XV_TSREG_DR6;
+	else if (*(name+2) == '7')
+	    return XV_TSREG_DR7;
+	else {
+	    verror("bad DR register name %s!\n",name);
+	    errno = EINVAL;
+	    return 0;
+	}
+    }
+    else if ((*name == 'c' && *(name+1) == 'r')
+	|| (*name == 'C' && *(name+1) == 'R')) {
+	if (*(name+2) == '0')
+	    return XV_TSREG_CR0;
+	else if (*(name+2) == '1')
+	    return XV_TSREG_CR1;
+	else if (*(name+2) == '2')
+	    return XV_TSREG_CR2;
+	else if (*(name+2) == '3')
+	    return XV_TSREG_CR3;
+	else if (*(name+2) == '4')
+	    return XV_TSREG_CR4;
+	else if (*(name+2) == '5')
+	    return XV_TSREG_CR5;
+	else if (*(name+2) == '6')
+	    return XV_TSREG_CR6;
+	else if (*(name+2) == '7')
+	    return XV_TSREG_CR7;
+	else {
+	    verror("bad CR register name %s!\n",name);
+	    errno = EINVAL;
+	    return 0;
+	}
+    }
 
     for (i = 0; i < count; ++i) {
 	if (dregname[i] == NULL)
