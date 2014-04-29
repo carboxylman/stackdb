@@ -1,0 +1,47 @@
+
+<vmi1:analysisDesc
+    xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:vmi1="http://anathema.flux.utah.edu/schema/vmi/1">
+
+  <vmi1:name>NullpageCheck</vmi1:name>
+  <vmi1:description>Performs a null page usage analysis.</vmi1:description>
+  <vmi1:author>David Johnson</vmi1:author>
+  <vmi1:authorContact>johnsond@flux.utah.edu</vmi1:authorContact>
+
+  <vmi1:binary>nullpage_check</vmi1:binary>
+
+  <vmi1:requiresWrite>true</vmi1:requiresWrite>
+  <vmi1:requiresControl>true</vmi1:requiresControl>
+  <vmi1:generatesAnnotations>false</vmi1:generatesAnnotations>
+  <vmi1:reportsIntermediateResults>true</vmi1:reportsIntermediateResults>
+  <vmi1:reportsFinalResults>false</vmi1:reportsFinalResults>
+  <vmi1:supportsExternalControl>false</vmi1:supportsExternalControl>
+  <vmi1:supportsAutoparseSimpleResults>true</vmi1:supportsAutoparseSimpleResults>
+  <vmi1:inParams>
+    <vmi1:param isCommandLine="true" isCommandLineSwitched="true">
+      <vmi1:name>N</vmi1:name>
+      <vmi1:longName>np-mode</vmi1:longName>
+      <vmi1:description>Set the mode for the NULL page usage detector (mprotect[,mmap[,pgfault]]]).  mprotect is probably the cheapest option, because it is called less frequently than mmap, and must always be called to change protections for an mmap'd page (?).  The pgfault style will be most expensive.  To achieve certain, good coverage, choose all three!</vmi1:description>
+      <vmi1:defaultValue>mprotect</vmi1:defaultValue>
+    </vmi1:param>
+  </vmi1:inParams>
+  <vmi1:inParams>
+    <vmi1:param isCommandLine="true" isCommandLineSwitched="true">
+      <vmi1:longName>ttctx</vmi1:longName>
+      <vmi1:description>Which threads to display when an event happens (none|self|hier|all).</vmi1:description>
+      <vmi1:defaultValue>self</vmi1:defaultValue>
+    </vmi1:param>
+  </vmi1:inParams>
+  <vmi1:inParams>
+    <vmi1:param isCommandLine="true" isCommandLineSwitched="true">
+      <vmi1:longName>ttdetail</vmi1:longName>
+      <vmi1:description>Specify a level of details for thread printout (-2|-1|0|1|2).</vmi1:description>
+      <vmi1:defaultValue>0</vmi1:defaultValue>
+    </vmi1:param>
+  </vmi1:inParams>
+  <vmi1:outParams>
+  </vmi1:outParams>
+</vmi1:analysisDesc>
