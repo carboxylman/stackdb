@@ -24,6 +24,8 @@
 #include <disasm.h>
 #endif
 
+#include <glib.h>
+
 /**
  ** This file defines a probe API for active target debugging
  ** (breakpoints, watchpoints).  You can probe on symbols if they are
