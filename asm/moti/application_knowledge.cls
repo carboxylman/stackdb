@@ -124,7 +124,7 @@
       "charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
       "udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
       "atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
-      "bash" "repair_submodul" "python" "perl" "httpd" )
+      "bash" "repair_submodul" "python" "perl" "httpd" "sh" )
      
      ;(mandatory-process 
      ; (name "httpd")
@@ -490,6 +490,7 @@
 
     (known-process-cred  
      (name "kworker/0:1")
+     (uid 0)
      (euid 0)
      (suid 0)
      (fsuid 0)
@@ -741,15 +742,16 @@
 
     (known-process-cred  
      (name "sshd")
-     (uid 0)
-     (euid 0)
-     (suid 0)
-     (fsuid 0)
-     (gid 0)
-     (egid 0)
-     (sgid 0)
-     (fsgid 0)
-     (parent_name "init"))
+     (uid 0 1001)
+     (euid 0 1001)
+     (suid 0 1001)
+     (fsuid 0 1001)
+     (gid 0 1001)
+     (egid 0 1001)
+     (sgid 0 1001)
+     (fsgid 0 1001)
+     (parent_name "init" "sshd"))
+
 
     (known-process-cred  
      (name "rsyslogd")
@@ -862,15 +864,15 @@
 
     (known-process-cred  
      (name "bash")
-     (uid 0)
-     (euid 0)
-     (suid 0)
-     (fsuid 0)
-     (gid 0)
-     (egid 0)
-     (sgid 0)
-     (fsgid 0)
-     (parent_name "login"))
+     (uid 0 1001)
+     (euid 0 1001)
+     (suid 0 1001)
+     (fsuid 0 1001)
+     (gid 0 1001)
+     (egid 0 1001)
+     (sgid 0 1001)
+     (fsgid 0 1001)
+     (parent_name "login" "sshd"))
 
     (known-process-cred  
      (name "repair_submodul")
@@ -969,6 +971,14 @@
     (deftemplate missing-process
      (slot name (type STRING))
      (multislot command (type SYMBOL)))
+
+    (deftemplate root-shells
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
+
+    (deftemplate root-shells
+     (slot name (type STRING))
+     (slot pid (type INTEGER)))
 
 
     ;========== Application level rules that are used to detect anomalies =================
@@ -1223,7 +1233,25 @@
 	       (name ?name)
 	       (command $?command)))
      (printout t "ANOMALY: Process " ?name " not found." crlf))
- 
+
+     ;rule to check for root shells
+     (defrule identify-root-shells
+      (task-struct (comm ?name1)
+		   (pid ?pid)
+		   (parent_pid ?ppid) 
+		   (uid ?uid))
+      (task-struct (pid ?ppid)
+                   (uid ?puid))
+      (and (test(= ?uid 0)) (test(!= ?puid 0)))
+      (test (member$ ?name1 (create$ "bash" "sh" "csh")))
+      =>
+      (assert (root-shells
+      (name ?name1)
+      (pid ?pid)))
+      (printout t "ANOMALY: Root shell " ?name1 " found with pid" ?pid  crlf))
+
+
+
     ;=================template  for recovery facts ===================================
 
     ;A common recovery fact template for all receovery actions

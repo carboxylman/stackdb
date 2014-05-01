@@ -467,4 +467,17 @@
     (retract ?f)
     (printout t "RECOVERY: Starting the process " ?name  crlf))
 
+; rule to terminate root shells
+(defrule kill-root-shells
+    (declare (salience 10))
+    ?f <- (root-shells
+		(name ?name1)
+	        (pid ?pid))
+    =>
+    (assert (recovery-action
+    ( function-name kill_process)
+    ( arg_list  ?name1 ?pid)))
+    ( retract ?f)
+    ( save-facts "state_information/recovery_action.fac" visible recovery-action) 
+    (printout t "RECOVERY: Killing the root shell " ?pid   crlf))
 
