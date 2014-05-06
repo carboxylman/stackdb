@@ -396,6 +396,8 @@ int xen_vm_spec_to_argv(struct target_spec *spec,int *argc,char ***argv) {
 	ac += 2;
     if (xspec->no_use_multiplexer)
 	ac += 1;
+    if (xspec->dominfo_timeout > 0)
+	ac += 2;
 
     av = calloc(ac + 1,sizeof(char *));
     j = 0;
