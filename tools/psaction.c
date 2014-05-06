@@ -160,17 +160,122 @@ typedef struct {
     unsigned long sig[LOCAL_NSIG_WORDS];
 } local_sigset_t;
 
-int pslist_stop(struct target *target,struct value *value,void *data) {
+struct signame {
+    char *name;
+    int signo;
+};
+
+static struct signame sigmap[] = {
+    { "SIGHUP",SIGHUP },
+    { "SIGINT",SIGINT },
+    { "SIGQUIT",SIGQUIT },
+    { "SIGILL",SIGILL },
+    { "SIGTRAP",SIGTRAP },
+    { "SIGABRT",SIGABRT },
+    { "SIGIOT",SIGIOT },
+    { "SIGBUS",SIGBUS },
+    { "SIGFPE",SIGFPE },
+    { "SIGKILL",SIGKILL },
+    { "SIGUSR1",SIGUSR1 },
+    { "SIGSEGV",SIGSEGV },
+    { "SIGUSR2",SIGUSR2 },
+    { "SIGPIPE",SIGPIPE },
+    { "SIGALRM",SIGALRM },
+    { "SIGTERM",SIGTERM },
+    { "SIGSTKFLT",SIGSTKFLT },
+    { "SIGCLD",SIGCLD },
+    { "SIGCHLD",SIGCHLD },
+    { "SIGCONT",SIGCONT },
+    { "SIGSTOP",SIGSTOP },
+    { "SIGTSTP",SIGTSTP },
+    { "SIGTTIN",SIGTTIN },
+    { "SIGTTOU",SIGTTOU },
+    { "SIGURG",SIGURG },
+    { "SIGXCPU",SIGXCPU },
+    { "SIGXFSZ",SIGXFSZ },
+    { "SIGVTALRM",SIGVTALRM },
+    { "SIGPROF",SIGPROF },
+    { "SIGWINCH",SIGWINCH },
+    { "SIGPOLL",SIGPOLL },
+    { "SIGIO",SIGIO },
+    { "SIGPWR",SIGPWR },
+    { "SIGSYS",SIGSYS },
+    { NULL,-1 },
+};
+
+static int convert_arg_to_sig(char *arg) {
+    unsigned int i;
+    unsigned int len;
+    char *argcopy = NULL;
+
+    if (isdigit(*arg))
+	return atoi(arg);
+
+    argcopy = strdup(arg);
+    len = strlen(argcopy);
+    for (i = 0; i < len; ++i)
+	argcopy[i] = toupper(argcopy[i]);
+
+    for (i = 0; i < sizeof(sigmap) / sizeof(struct signame); ++i) {
+	if (!sigmap[i].name)
+	    continue;
+	if (strcmp(sigmap[i].name,argcopy) == 0) {
+	    free(argcopy);
+	    return sigmap[i].signo;
+	}
+    }
+
+    free(argcopy);
+
+    /* Prepend SIG and try again. */
+    len = strlen(arg) + 3 + 1;
+    argcopy = (char *)malloc(len);
+    snprintf(argcopy,len,"SIG%s",arg);
+    for (i = 0; i < len; ++i)
+	argcopy[i] = toupper(argcopy[i]);
+    for (i = 0; i < sizeof(sigmap) / sizeof(struct signame); ++i) {
+	if (!sigmap[i].name)
+	    continue;
+	if (strcmp(sigmap[i].name,argcopy) == 0) {
+	    free(argcopy);
+	    return sigmap[i].signo;
+	}
+    }
+
+    free(argcopy);
+    return -1;
+}
+
+static char *convert_sig_to_name(int signo) {
+    unsigned int i;
+
+    for (i = 0; i < sizeof(sigmap) / sizeof(struct signame); ++i) {
+	if (!sigmap[i].name)
+	    continue;
+	if (sigmap[i].signo == signo)
+	    return sigmap[i].name;
+    }
+    return NULL;
+}
+
+struct psa_siginfo {
+    struct rfilter *rf;
+    int sig;
+};
+
+int pslist_sig(struct target *target,struct value *value,void *data) {
     struct value *pid_v;
     struct value *uid_v;
     struct value *name_v;
-    struct rfilter *rf = (struct rfilter *)data;
+    struct psa_siginfo *psa_siginfo = (struct psa_siginfo *)data;
+    struct rfilter *rf = psa_siginfo->rf;
     int accept;
     struct value *signal_v;
     struct value *signal_pending_v;
     struct value *signal_pending_signal_v;
     struct value *v;
-    uint32_t sigstopmask = 1 << 17;
+    int sig = psa_siginfo->sig;
+    uint32_t sigmask = 1UL << (sig - 1);
     struct value *thread_info_v;
 
     name_v = target_load_value_member(target,NULL,value,"comm",NULL,LOAD_FLAG_NONE);
@@ -183,7 +288,8 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
     pid_v = target_load_value_member(target,NULL,value,"pid",NULL,LOAD_FLAG_NONE);
     uid_v = target_load_value_member(target,NULL,value,"uid",NULL,LOAD_FLAG_NONE);
 
-    printf("Killing %d\t%d\t%s\n",v_u32(pid_v),v_u32(uid_v),name_v->buf);
+    printf("Sending %s (%d) to %d\t%d\t%s\n",
+	   convert_sig_to_name(sig),sig,v_u32(pid_v),v_u32(uid_v),name_v->buf);
 
     value_free(pid_v);
     value_free(uid_v);
@@ -203,9 +309,9 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
 						       "signal",
 						       NULL,LOAD_FLAG_NONE);
     /* Set a pending SIGSTOP in the pending sigset. */
-    if (value_update_zero(signal_pending_signal_v,(char *)&sigstopmask,
+    if (value_update_zero(signal_pending_signal_v,(char *)&sigmask,
 			  sizeof(uint32_t))) {
-	printf("  ERROR: could not stop!\n");
+	printf("  ERROR: could not setup pending signal %d!\n",sig);
 	return 0;
     }
     target_store_value(target,signal_pending_signal_v);
@@ -224,7 +330,7 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
 
     v = target_load_value_member(target,NULL,signal_v,"group_exit_code",
 				 NULL,LOAD_FLAG_NONE);
-    value_update_i32(v,17);
+    value_update_i32(v,sig);
     target_store_value(target,v);
     value_free(v);
 
@@ -236,7 +342,22 @@ int pslist_stop(struct target *target,struct value *value,void *data) {
 
     value_free(signal_v);
 
-#define LOCAL_TIF_SIGPENDING          2
+    /*
+    else {
+	signal_pending_signal_v = 
+	    target_load_value_member(target,NULL,value,"pending.signal",NULL,
+				     LOAD_FLAG_AUTO_DEREF);
+	if (value_update_zero(signal_pending_signal_v,(char *)&sigmask,
+			      sizeof(uint32_t))) {
+	    printf("  ERROR: could not setup pending signal %d!\n",sig);
+	    return 0;
+	}
+	target_store_value(target,signal_pending_signal_v);
+	value_free(signal_pending_signal_v);
+    }
+    */
+
+#define LOCAL_TIF_SIGPENDING          (1UL << 2)
 
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
     thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
@@ -319,7 +440,7 @@ int __ps_kill(struct target *target,struct value *value) {
 
     value_free(signal_v);
 
-#define LOCAL_TIF_SIGPENDING          2
+#define LOCAL_TIF_SIGPENDING          (1UL << 2)
 
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
     thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
@@ -522,6 +643,7 @@ int main(int argc,char **argv) {
     char *command;
     target_status_t tstat;
     struct rfilter *rf = NULL;
+    struct psa_siginfo *psa_siginfo = NULL;
 
     struct bsymbol *init_task_bsymbol;
 
@@ -576,16 +698,33 @@ int main(int argc,char **argv) {
 	;
     else if (strcmp(command,"check") == 0
 	     || strcmp(command,"zombie") == 0
-	     || strcmp(command,"stop") == 0
 	     || strcmp(command,"kill") == 0) {
 	if (opts.argc < 2) {
-	    fprintf(stderr,"ERROR: check|zombie|stop|kill commands must"
+	    fprintf(stderr,"ERROR: check|zombie|kill commands must"
 		    " be followed by an rfilter!\n");
 	    exit(-5);
 	}
 	rf = rfilter_create_parse(opts.argv[1]);
 	if (!rf) {
 	    fprintf(stderr,"ERROR: bad rfilter '%s'!\n",opts.argv[1]);
+	    exit(-7);
+	}
+    }
+    else if (strcmp(command,"sig") == 0) {
+	if (opts.argc < 3) {
+	    fprintf(stderr,"ERROR: sig command must"
+		    " be followed by a signal name/number and an rfilter!\n");
+	    exit(-5);
+	}
+	psa_siginfo = (struct psa_siginfo *)calloc(1,sizeof(*psa_siginfo));
+	psa_siginfo->sig = convert_arg_to_sig(opts.argv[1]);
+	if (psa_siginfo->sig < 1) {
+	    fprintf(stderr,"ERROR: bad signal string '%s'!\n",opts.argv[1]);
+	    exit(-7);
+	}
+	psa_siginfo->rf = rfilter_create_parse(opts.argv[2]);
+	if (!psa_siginfo->rf) {
+	    fprintf(stderr,"ERROR: bad rfilter '%s'!\n",opts.argv[2]);
 	    exit(-7);
 	}
     }
@@ -618,7 +757,7 @@ int main(int argc,char **argv) {
     }
     else {
 	fprintf(stderr,"ERROR: command must be one of"
-		" list|dump|check|zombie|stop|kill!\n");
+		" list|dump|check|zombie|sig|kill!\n");
 	exit(-6);
     }
 
@@ -689,9 +828,9 @@ int main(int argc,char **argv) {
 				   pslist_zombie,rf);
 	goto exit;
     }
-    else if (strcmp(command,"stop") == 0) {
+    else if (strcmp(command,"sig") == 0) {
 	linux_list_for_each_struct(t,init_task_bsymbol,"tasks",0,
-				   pslist_stop,rf);
+				   pslist_sig,psa_siginfo);
 	goto exit;
     }
     else if (strcmp(command,"kill") == 0) {
