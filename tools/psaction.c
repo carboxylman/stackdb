@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 The University of Utah
+ * Copyright (c) 2011, 2012, 2013, 2014 The University of Utah
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -322,6 +322,13 @@ int pslist_sig(struct target *target,struct value *value,void *data) {
      * these three things for each thread in the process, but for now,
      * assume single-threaded processes!
      */
+    /*
+     * NB: don't set SIGNAL_GROUP_EXIT, after all.  It interferes with
+     * SIGSTOP delivery, and does not seem necessary for KILL.  Although
+     * maybe that's because I haven't tried to kill a multithreaded
+     * program...
+     */
+    /*
 #define LOCAL_SIGNAL_GROUP_EXIT       0x00000008
     v = target_load_value_member(target,NULL,signal_v,"flags",NULL,LOAD_FLAG_NONE);
     value_update_u32(v,LOCAL_SIGNAL_GROUP_EXIT);
@@ -333,7 +340,7 @@ int pslist_sig(struct target *target,struct value *value,void *data) {
     value_update_i32(v,sig);
     target_store_value(target,v);
     value_free(v);
-
+    */
     v = target_load_value_member(target,NULL,signal_v,"group_stop_count",
 				 NULL,LOAD_FLAG_NONE);
     value_update_i32(v,0);
@@ -362,7 +369,8 @@ int pslist_sig(struct target *target,struct value *value,void *data) {
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
     thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
 					     LOAD_FLAG_AUTO_DEREF);
-    v = target_load_value_member(target,NULL,signal_v,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,thread_info_v,"flags",NULL,
+				 LOAD_FLAG_NONE);
     value_update_u32(v,v_u32(v) | LOCAL_TIF_SIGPENDING);
     target_store_value(target,v);
     value_free(v);
@@ -445,7 +453,8 @@ int __ps_kill(struct target *target,struct value *value) {
     /* Finally, set SIGPENDING in the task_struct's thread_info struct. */
     thread_info_v = target_load_value_member(target,NULL,value,"thread_info",NULL,
 					     LOAD_FLAG_AUTO_DEREF);
-    v = target_load_value_member(target,NULL,signal_v,"flags",NULL,LOAD_FLAG_NONE);
+    v = target_load_value_member(target,NULL,thread_info_v,"flags",NULL,
+				 LOAD_FLAG_NONE);
     value_update_u32(v,v_u32(v) | LOCAL_TIF_SIGPENDING);
     target_store_value(target,v);
     value_free(v);
