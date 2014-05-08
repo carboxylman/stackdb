@@ -124,19 +124,20 @@
       "charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
       "udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
       "atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
-      "bash" "repair_submodul" "python" "perl" "httpd" "sh" )
+      "bash" "repair_submodul" "python" "perl" "httpd" "sh" "su")
      
-     ;(mandatory-process 
-     ; (name "httpd")
-     ; (command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
+     (mandatory-process 
+      (name "apache2")
+      (command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
 
      (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
      (process-with-udp "rpcbind" "ntpd" "mysqld")                 
-     (process-with-tcp  "mysqld"  "rpcbind" "sshd" "ntpd") 
+     (process-with-tcp  "mysqld"  "rpcbind" "sshd" "ntpd" "apache2") 
      (process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
      (high-priority-process "apache" "sshd")
      (med-priority-process  "mysqld" "ntpd" )
      (low-priority-process  "perl" "temp")
+     (users-with-su-priv 1001)
 
      (process-run-as-root "swapper/0" "init" "kthreadd" "ksoftirqd/0" "kworker/0:0" 
       "kworker/0:0H" "kworker/u:0" "kworker/u:0H" "migration/0" "rcu_bh"
@@ -187,6 +188,7 @@
      (known-open-files
       (name "perl")
       (file-names "temp"))
+
 
      (known-process-cred
       (name "swapper/0")
@@ -872,7 +874,7 @@
      (egid 0 1001)
      (sgid 0 1001)
      (fsgid 0 1001)
-     (parent_name "login" "sshd"))
+     (parent_name "login" "sshd" "su"))
 
     (known-process-cred  
      (name "repair_submodul")
@@ -896,7 +898,7 @@
      (egid 0)
      (sgid 0)
      (fsgid 0)
-     (parent_name "1bash")))
+     (parent_name "bash")))
 
 
 
@@ -1125,24 +1127,24 @@
     (printout t "ANOMALY: Sum of cpu utilization " ?utilization " for iteration " ?count crlf ))
 
     ; rules to deal with priviledge escalation
-    (defrule identify-privledge-escalation
-     ( task-struct
-       (comm ?name)
-       (pid ?pid)
-       (uid ?uid)
-       (euid ?euid)
-       (gid  ?gid)
-       (egid ?egid)
-       (parent_pid ?parent_pid))
-     (or (test (= ?uid 0)) (test (= ?euid 0)))
-     (process-run-as-root $?process-run-as-root)
-     (test (not (member$ ?name $?process-run-as-root)))
-     =>
-     (assert (priv-escalated-process
-	      (name ?name)
-	      (pid ?pid)
-	      (parent_pid ?parent_pid)))
-     (printout t "ANOMALY: Process " ?name " with unauthorised root priv found" crlf))
+    ;(defrule identify-privledge-escalation
+    ; ( task-struct
+    ;   (comm ?name)
+    ;   (pid ?pid)
+    ;   (uid ?uid)
+    ;   (euid ?euid)
+    ;   (gid  ?gid)
+    ;   (egid ?egid)
+    ;   (parent_pid ?parent_pid))
+    ; (or (test (= ?uid 0)) (test (= ?euid 0)))
+    ; (process-run-as-root $?process-run-as-root)
+    ; (test (not (member$ ?name $?process-run-as-root)))
+    ; =>
+    ; (assert (priv-escalated-process
+    ;	      (name ?name)
+    ;	      (pid ?pid)
+    ;	      (parent_pid ?parent_pid)))
+    ; (printout t "ANOMALY: Process " ?name " with unauthorised root priv found" crlf))
 
     ;rules to identify unknown objects loded for processes.
     (defrule identify-unknown-loaded-objects
@@ -1234,7 +1236,7 @@
 	       (command $?command)))
      (printout t "ANOMALY: Process " ?name " not found." crlf))
 
-     ;rule to check for root shells
+     ;rule to check for root shells spawne from non root processes
      (defrule identify-root-shells
       (task-struct (comm ?name1)
 		   (pid ?pid)
@@ -1243,12 +1245,29 @@
       (task-struct (pid ?ppid)
                    (uid ?puid))
       (and (test(= ?uid 0)) (test(!= ?puid 0)))
-      (test (member$ ?name1 (create$ "bash" "sh" "csh")))
+      (test (member$ ?name1 (create$ "bash" "sh" "csh" "-bash" "-csh" "-sh")))
       =>
       (assert (root-shells
       (name ?name1)
       (pid ?pid)))
       (printout t "ANOMALY: Root shell " ?name1 " found with pid" ?pid  crlf))
+
+     ;rule to check for invalid su command usage.
+     (defrule validate-su-processes
+      (task-struct (comm ?name1)
+		   (pid ?pid)
+		   (parent_pid ?ppid))
+      (test (member$ ?name1 (create$ "su")))
+      (task-struct (pid ?ppid)
+                   (uid ?puid))
+      (users-with-su-priv $?su_users)
+      (test(not (member$ ?puid $?su_users)))
+      =>
+      (assert (unknown-process
+      (pid ?pid)))
+      (printout t "ANOMALY: Unauthorised su process found" ?pid  crlf))
+
+
 
 
 

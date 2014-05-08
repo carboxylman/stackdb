@@ -1170,7 +1170,7 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     struct value *next_vm_area_value;
     
     FILE * fp;
-    ADDR start_addr, next_vm_area_addr;
+    ADDR start_addr, next_vm_area_addr, file_value_addr, mm_value_addr;
     char *file_name, *process_name;
     int pid;
     char prev_name[50];
@@ -1192,6 +1192,16 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
     process_name = strdup(comm_value->buf);
     //fprintf(stdout,"INFO: Process name %s\n",process_name);
     value_free(comm_value);
+
+
+    /* first check if the pointer to the mm struct is NULL*/
+    mm_value = target_load_value_member(target, NULL, value, "mm", NULL,
+							   LOAD_FLAG_NONE);
+    mm_value_addr = v_addr(mm_value);
+    if(!mm_value_addr) {
+	//fprintf(stdout, "INFO: Pointer to the mm struct is NULL \n");
+	return 0;
+    }
 
     mm_value = target_load_value_member(target, NULL, value, "mm", NULL,
 							LOAD_FLAG_AUTO_DEREF);
@@ -1238,12 +1248,18 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
      */
     while(1) {
 
+	/* Firct check if the pointer to the vm_file struct is NULL */
 	file_value = target_load_value_member(target, NULL, vm_area_value, "vm_file",
-							NULL, LOAD_FLAG_AUTO_DEREF);
-	if(!file_value) {
+							NULL, LOAD_FLAG_NONE);
+	file_value_addr = v_addr(file_value);
+	if(!file_value_addr) {
 	    //fprintf(stdout,"INFO: vm_file value is null, so continuing . . \n");
 	    goto nextptr;
 	}
+
+
+	file_value = target_load_value_member(target, NULL, vm_area_value, "vm_file",
+							NULL, LOAD_FLAG_AUTO_DEREF);
 
 	/* Load the path the variable from the files struct*/
 	//fprintf(stdout,"INFO: Loading f_path struct\n");
@@ -1306,26 +1322,23 @@ int gather_object_info(struct target *target, struct value *value, void * data) 
 	value_free(file_name_value);
 
 nextptr:
-/*	next_vm_area_value = target_load_value_member(target, NULL, vm_area_value,
+	
+	/* first check if the vm_next pointer is null */
+	next_vm_area_value = target_load_value_member(target, NULL, vm_area_value,
 						"vm_next", NULL, LOAD_FLAG_NONE);
 	if(!next_vm_area_value) {
 	    fprintf(stdout,"ERROR: Failed to load the next_vm_area_value.\n");
 	    exit(0);
 	}
-	next_vm_area_addr = v_addr(next_vm_area_value);
 
-	if(next_vm_area_addr == start_addr) {
-	    fprintf(stdout,"INFO: Finished travesring the entire vm_area list.\n");
-	    break;
-	}
-*/      
-	//fprintf(stdout,"INFO: loading the vm_next pointer\n");
-	vm_area_value = target_load_value_member(target, NULL, vm_area_value,
-						"vm_next", NULL, LOAD_FLAG_AUTO_DEREF);
-	if(!vm_area_value) {
+	next_vm_area_addr = v_addr(next_vm_area_value);
+        if(!next_vm_area_addr) {
 	    //fprintf(stdout,"INFO: Reached the end of the linked list.\n");
 	    break;
 	}
+
+	vm_area_value = target_load_value_member(target, NULL, vm_area_value,
+						"vm_next", NULL, LOAD_FLAG_AUTO_DEREF);
     }
     fprintf(fp," ))\n");
     fclose(fp);

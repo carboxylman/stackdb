@@ -229,7 +229,7 @@ int generate_snapshot() {
     //fprintf(stdout,"INFO: Time taken to pause the target is %llu ms\n", t); 
 		    
     /* Start making calls to each of the VMI function */ 
-   /*   
+     
     gettimeofday(&tm1, NULL);
     result = process_info();
     if(result) {
@@ -253,7 +253,7 @@ int generate_snapshot() {
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     //fprintf(stdout,"INFO: Time taken to get file info is %llu ms\n", t); 
 
-    
+   /* 
     gettimeofday(&tm1, NULL);
     result = module_info();
     if(result) {
@@ -607,11 +607,11 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
 	
 	fprintf(stdout,"INFO: Parsing the recovery action file.\n");
-	result = parse_recovery_action();
-	if(result) {
-	    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
-	    exit(0);
-	}
+        //result = parse_recovery_action();
+	//if(result) {
+	//    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
+	//    exit(0);
+	//}
 	
 	Clear();
 	fprintf(stdout,"INFO: Clearing up all the facts and rules\n");

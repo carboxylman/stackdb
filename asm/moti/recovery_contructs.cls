@@ -346,6 +346,7 @@
 		(name ?name)
 		(pid ?pid)
 		(object-list $?list))
+    (not (str-compare ?name "apache2"))
     =>
     (assert (recovery-action
 		(function-name unload_objects)
@@ -357,7 +358,7 @@
 		(pid ?pid)))
     (save-facts "state_information/recovery_action.fac" visible recovery-action)
     (save-facts "state_information/unload_unknown_object_state_info.fac" visible unload-unknown-object-prev-action)
-    (printout t "RECOVERY: Unloading the unknown objects" $?list  crlf))
+    (printout t "RECOVERY: Sleding the unknown objects" $?list  crlf))
 
 
 (defrule unload-unknown-objects_01
