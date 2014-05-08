@@ -1505,7 +1505,7 @@ int target_symbol_resolve_bounds(struct target *target,
     if (!tlctxt) {
 	errno = EINVAL;
 	verror("must supply a context (tid,region) for raw symbol resolution!\n");
-	return LOCTYPE_UNKNOWN;
+	return -1;
     }
 
     return symbol_resolve_bounds(symbol,tlctxt->lctxt,
@@ -1520,7 +1520,7 @@ int target_lsymbol_resolve_bounds(struct target *target,
     if (!tlctxt) {
 	errno = EINVAL;
 	verror("must supply a context (tid,region) for raw lsymbol resolution!\n");
-	return LOCTYPE_UNKNOWN;
+	return -1;
     }
 
     return lsymbol_resolve_bounds(lsymbol,base_addr,tlctxt->lctxt,
@@ -1535,7 +1535,7 @@ int target_bsymbol_resolve_bounds(struct target *target,
     if (!tlctxt) {
 	errno = EINVAL;
 	verror("must supply a context (tid,region) for bsymbol resolution!\n");
-	return LOCTYPE_UNKNOWN;
+	return -1;
     }
 
     return lsymbol_resolve_bounds(bsymbol->lsymbol,base_addr,tlctxt->lctxt,
