@@ -1265,7 +1265,7 @@ struct probe *__probe_register_addr(struct probe *probe,ADDR addr,
     /* Target must be paused before we do anything. */
     status = target_status(target);
     if (status != TSTATUS_PAUSED && status != TSTATUS_EXITING) {
-        verror("target not paused!\n");
+        verror("target not paused (%d)!\n",status);
 	errno = EINVAL;
 	goto errout;
     }
