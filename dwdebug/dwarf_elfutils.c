@@ -1,5 +1,5 @@
 /* Print information from ELF file in human-readable form.
-   Copyright (C) 1999-2013 Red Hat, Inc.
+   Copyright (C) 1999-2014 Red Hat, Inc.
    Copyright (c) 2011, 2012, 2013 The University of Utah
 
    ELF utility functions, adapted from Red Hat elfutils.
@@ -1181,7 +1181,11 @@ dwarf_lang_string (unsigned int lang)
       [DW_LANG_Ada95] = "Ada95",
       [DW_LANG_Fortran95] = "Fortran95",
       [DW_LANG_PL1] = "PL1",
+#if _INT_ELFUTILS_VERSION >= 155
+      [DW_LANG_ObjC] = "Objective C",
+#else
       [DW_LANG_Objc] = "Objective C",
+#endif
       [DW_LANG_ObjC_plus_plus] = "Objective C++",
       [DW_LANG_UPC] = "UPC",
       [DW_LANG_D] = "D",

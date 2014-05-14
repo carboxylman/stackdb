@@ -1499,7 +1499,11 @@ static inline char *dwarf_language_string(int language) {
     case DW_LANG_Ada95:			return "Ada95";
     case DW_LANG_Fortran95:		return "Fortran95";
     case DW_LANG_PL1:			return "PL/1";
+#if _INT_ELFUTILS_VERSION >= 155
+    case DW_LANG_ObjC:			return "ObjectiveC";
+#else
     case DW_LANG_Objc:			return "ObjectiveC";
+#endif
     case DW_LANG_ObjC_plus_plus:	return "ObjectiveC++";
     case DW_LANG_UPC:			return "UnifiedParallelC";
     case DW_LANG_D:			return "D";
