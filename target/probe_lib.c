@@ -1115,10 +1115,10 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
     /* We only try to register on the primary if it has an address
      * (i.e., is not ONLY inlined).
      */
+    tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
     if (do_primary
 	&& !target_lsymbol_resolve_bounds(target,tlctxt,bsymbol->lsymbol,0,
 					  &paddr,NULL,NULL,NULL,NULL)) {
-	tlctxt = target_location_ctxt_create_from_bsymbol(target,tid,bsymbol);
 
 	bufsiz = strlen(bsymbol_get_name(bsymbol))+sizeof("_primary")+1;
 	buf = malloc(bufsiz);
@@ -1150,10 +1150,9 @@ struct probe *probe_register_inlined_symbol(struct probe *probe,
 
 	vdebug(3,LA_PROBE,LF_PROBE,"registered %s probe on source %s\n",
 	       probe->name,pcprobe->name);
-
-	target_location_ctxt_free(tlctxt);
-	tlctxt = NULL;
     }
+    target_location_ctxt_free(tlctxt);
+    tlctxt = NULL;
 
     SYMBOL_RX_INLINE(symbol,sii);
     if (sii && sii->inline_instances) {
