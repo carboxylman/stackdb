@@ -61,7 +61,7 @@ struct target *target;
 extern char base_fact_file[100];
 extern unsigned long *sys_call_table;
 extern char **sys_call_names;
-extern unsigned long *function_prologue;
+extern unsigned long **function_prologue;
 
 #define NSEC_PER_SEC    1000000000L
 #define HZ 100
@@ -1635,7 +1635,7 @@ int syscall_hooking_info() {
     struct target_os_syscall *sc;
     struct dump_info ud = { .stream = stdout,.prefix = "",.detail = 0,.meta = 0 };
     GSList *gsltmp;
-    unsigned long prologue;
+    unsigned char prologue[16];
     char *res = NULL;
 
 
@@ -1666,23 +1666,23 @@ int syscall_hooking_info() {
 	}
 	if(sc->bsymbol) {
 
-	    res = target_read_addr(target,sc->addr,8, &prologue);
+	    res = target_read_addr(target,sc->addr,16, prologue);
 	    if(!res) {
-		fprintf(stdout, "ERROR: Could not read 8 bytes at 0x%"PRIxADDR"!\n",sc->addr);
+		fprintf(stdout, "ERROR: Could not read 16 bytes at 0x%"PRIxADDR"!\n",sc->addr);
 		exit(0);
 	    }
 	    //fprintf(stdout,"INFO: Instructions read %lx\n", prologue);
 
-	    if(memcmp(&function_prologue[sc->num], &prologue, 8)) {
+	    if(memcmp(function_prologue[sc->num], prologue, 16)) {
 		fprintf(fp,"(hooked_sys_call\n   \
 			\t( name  \"%s\")\n \
-			\t( original \"%lu\" )\n \
-			\t( current \"%lu\" )\n \
-			\t( address %lu ))\n",
+			\t( original-0-8 \"%lx\" )\n \
+			\t( original-8-16 \"%lx\" )\n \
+			\t( address \"%lx\" ))\n",
 			bsymbol_get_name(sc->bsymbol),
-			function_prologue[sc->num],
-			prologue,
-			sc->num);
+			function_prologue[sc->num][0],
+			function_prologue[sc->num][1],
+			sc->addr);
 	    }
 
 	}

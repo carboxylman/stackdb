@@ -74,7 +74,7 @@ struct target *target = NULL;
 char base_fact_file[100];
 unsigned long *sys_call_table = NULL;
 char **sys_call_names = NULL;
-unsigned long *function_prologue = NULL;
+unsigned long **function_prologue = NULL;
 char *res = NULL;
 ADDR syscall_table_vm;
 
@@ -84,7 +84,7 @@ int save_sys_call_table_entries() {
 
     int i, max_num;
     struct target_os_syscall *sc;
-    unsigned long  prologue;
+    unsigned char  prologue[16];
     struct bsymbol *bs;
     struct value *v;
     struct target_location_ctxt *tlctxt;
@@ -146,7 +146,7 @@ int save_sys_call_table_entries() {
 	exit(0);
     }
     
-    function_prologue = (long *) malloc(max_num * sizeof(unsigned long));
+    function_prologue = (long *) malloc(max_num * sizeof(unsigned long *));
     if(function_prologue == NULL) {
 	fprintf(stdout,"ERROR: Failed to allocate memory for function prologue.\n");
 	exit(0);
@@ -170,15 +170,16 @@ int save_sys_call_table_entries() {
 		exit(0);
 	    }
 	    strcpy(sys_call_names[sc->num], bsymbol_get_name(sc->bsymbol));
+	    function_prologue[sc->num] = (unsigned long *) malloc(2 * sizeof(unsigned long));
 
-
-	    res = target_read_addr(target, sc->addr, 8, &prologue);
+	    res = target_read_addr(target, sc->addr, 16, prologue);
 	    if(!res) {
 		fprintf(stdout, "ERROR: Could not read 8 bytes at 0x%"PRIxADDR"!\n",sc->addr);
 		exit(0);
 	    }
-	    //fprintf(stdout,"INFO: prologue : %lx\n",prologue);
-	    memcpy(&function_prologue[sc->num], &prologue,8);
+	    //fprintf(stdout,"INFO: prologue : %lx %lx \n",*(unsigned long *)prologue,*(unsigned long *)(prologue +8) );
+	    memcpy(function_prologue[sc->num], &prologue,16);
+	    //fprintf(stdout,"INFO : 0-8 bytes : %lx  0-16 bytes %lx\n",function_prologue[sc->num][0], function_prologue[sc->num][1]);
 	    
 	}
     }
@@ -287,7 +288,7 @@ int generate_snapshot() {
     }
     */
     
-    
+   /* 
     gettimeofday(&tm1, NULL);
     result = object_info();
     if(result) {
@@ -298,7 +299,7 @@ int generate_snapshot() {
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     //fprintf(stdout,"INFO: Time taken to get object file info is %llu ms\n", t);  
-   /*
+    */
     gettimeofday(&tm1, NULL);
     result = syscalltable_info();
     if(result) {
@@ -329,7 +330,7 @@ int generate_snapshot() {
     gettimeofday(&tm2, NULL);
     t = (1000 * (tm2.tv_sec - tm1.tv_sec)) + ((tm2.tv_usec - tm1.tv_usec)/1000);
     //fprintf(stdout,"INFO: Time taken to check for hooked system calls is %llu ms\n", t); 
-   */
+   
     
 resume:
     gettimeofday(&tm1, NULL);
@@ -436,7 +437,7 @@ int main( int argc, char** argv) {
    */
     app_file_path = "application_knowledge.cls"; //opts.argv[0];
     recovery_rules_file = "recovery_contructs.cls";
-    wait_time = 5; //atoi(opts.argv[1]);
+    wait_time = 120; //atoi(opts.argv[1]);
     
     dwdebug_init();
     target_init();
@@ -456,7 +457,7 @@ int main( int argc, char** argv) {
     }
 
 
-    fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
+    //fprintf(stdout,"INFO: Initializing the CLIPS environment.\n");
     // Initialize the CLIPS environment
     InitializeEnvironment();
 
@@ -477,9 +478,11 @@ int main( int argc, char** argv) {
     fclose(fp);
     fp = fopen("state_information/udp_state_info.fac", "w");
     fclose(fp); 
+    fp = fopen("state_information/unload_unknown_object_state_info.fac", "w");
+    fclose(fp);     
     fp = fopen("state_information/recovery_action.fac", "w");
     fclose(fp);
-    
+
 
 
 
@@ -490,7 +493,6 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"ERROR: Failed to save the initial system call table entries.\n");
 	exit(0);
     }
-	
     // Start an infinite loop to periodically execute steps 3.1 to 3.5 
     while(1) {
 	
@@ -531,16 +533,15 @@ int main( int argc, char** argv) {
 	fprintf(stdout,"INFO: Time taken to generate the snapshot is %llu ms\n", t); 
 
 
-	fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
+	//fprintf(stdout,"INFO: Resetting the CLIPS environemnt\n");
 	Reset();
-
 	
 	//result = Watch("all");
 	//if(!result) {
 	//    fprintf(stdout,"Error: Faild to watch \n");
 	//}
 	
-	fprintf(stdout,"INFO: Loading the base facts file\n");
+	//fprintf(stdout,"INFO: Loading the base facts file\n");
 	result = LoadFacts(base_fact_file);
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
@@ -553,12 +554,12 @@ int main( int argc, char** argv) {
 	   exit(0);
 	}
 
-	fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
+	//fprintf(stdout,"INFO: Parsing the base facts through the application rules\n");
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d application rules were fired\n",result);
 	// At this time the anomaly facts are generated.
 	
-	fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
+	//fprintf(stdout,"INFO: Loading the state information of recovery facts from the previous execution \n");
 	result = LoadFacts("state_information/process_state_info.fac");
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the process_state_info file.\n");
@@ -596,7 +597,7 @@ int main( int argc, char** argv) {
 
 	// We have to run them through the recovery rules now.
 	
-	fprintf(stdout,"INFO: Loading the  recovery rules file\n");
+	//fprintf(stdout,"INFO: Loading the  recovery rules file\n");
 	result = Load(recovery_rules_file);
 	if(!result) {
 	   fprintf(stdout,"ERROR: Failed to load the base facts file.\n");
@@ -606,12 +607,12 @@ int main( int argc, char** argv) {
 	result = Run(-1L);
 	fprintf(stdout,"INFO : %d recovery rules were fired\n",result);
 	
-	fprintf(stdout,"INFO: Parsing the recovery action file.\n");
-        //result = parse_recovery_action();
-	//if(result) {
-	//    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
-	//    exit(0);
-	//}
+	//fprintf(stdout,"INFO: Parsing the recovery action file.\n");
+        result = parse_recovery_action();
+	if(result) {
+	    fprintf(stdout,"ERROR: parse_recovery_action function call failed.\n");
+	    exit(0);
+	}
 	
 	Clear();
 	fprintf(stdout,"INFO: Clearing up all the facts and rules\n");

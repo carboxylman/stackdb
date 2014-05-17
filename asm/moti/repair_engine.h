@@ -730,7 +730,7 @@ int parse_recovery_action() {
 	fprintf(stdout,"WARINING: Failed to open the recovery action file, continuing.\n");
 	return 1;
     }
-    fprintf(stdout,"INFO: in parse recovery_action.\n");
+    //fprintf(stdout,"INFO: in parse recovery_action.\n");
 
     /* now read one fact at a time and parse it */
     while(fgets(fact,1024,fp) != NULL) {
@@ -745,7 +745,7 @@ int parse_recovery_action() {
 	cur_token = (char *) strtok(NULL, delim);
 
 	strcpy(function_name, cur_token); 
-	fprintf(stdout,"INFO: function invoked is %s\n",function_name);
+	//fprintf(stdout,"INFO: function invoked is %s\n",function_name);
 	cur_token = (char *) strtok(NULL, delim);
 
 	/* Now parse all the arguments that are to be passed to that function */
@@ -753,7 +753,7 @@ int parse_recovery_action() {
 	    if(cur_token == NULL) break;
 	    argc++;
 	    strcpy(args[i],cur_token);
-	    printf("INFO: args[%d] = %s\n",i,args[i]);
+	    //printf("INFO: args[%d] = %s\n",i,args[i]);
 	    i++;
 	}
 
@@ -782,7 +782,7 @@ int parse_recovery_action() {
 	long index;
 	unsigned long address;
 	int pid, i, length,j;
-	unsigned long bytes;
+	unsigned long bytes1, bytes2;
 	switch(submodule_id) 
 	{
 	    case 0 :        /* Function to kill a process */
@@ -874,13 +874,16 @@ int parse_recovery_action() {
 		else {
 		    long_ptr = (long*) arguments;
 		    address = strtoul(args[0], NULL, 16);
-		    bytes = strtoul(args[1], NULL, 16);		
-		    memcpy((void *)long_ptr, (void *) &address, sizeof(long));
+		    bytes1 = strtoul(args[1], NULL, 16);
+		    bytes2 = strtoul(args[2], NULL, 16);
+ 		    memcpy((void *)long_ptr, (void *) &address, sizeof(long));
 		    long_ptr++;
-		    memcpy((void *)long_ptr, (void *) &bytes, sizeof(long));
+		    memcpy((void *)long_ptr, (void *) &bytes1, sizeof(long));
+		    long_ptr++;
+		    memcpy((void *)long_ptr, (void *) &bytes2, sizeof(long));
 		    long_ptr++;
 		    fprintf(stdout,"INFO: Invoking funtion to unhook the system call.\n");
-		    argc = 2;
+		    argc = 3;
 		    ret = load_command_func(function_id,submodule_id,arguments,argc);
 		    if(ret) {
 			fprintf(stdout,"ERROR: load_comand_func call failed.\n");

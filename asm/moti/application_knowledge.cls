@@ -79,9 +79,9 @@
 
     (deftemplate hooked_sys_call
      (slot name (type STRING))
-     (slot original (type INTEGER))
-     (slot current (type INTEGER))
-     (slot address (type INTEGER)))
+     (slot original-0-8 (type STRING))
+     (slot original-8-16 (type STRING))
+     (slot address (type STRING)))
 
 
     (deftemplate command_line
@@ -124,14 +124,14 @@
       "charger_manager" "kworker/0:1H" "jbd2/xvda1-8" "ext4-dio-unwrit" "upstart-udev-br"
       "udevd" "rpcbind" "sshd" "upstart-socket-" "dbus-daemon" "rsyslogd" "cron"
       "atd" "mysqld" "ntpd" "getty" "flush-202:1" "apache2" "kworker/u:1" "login"
-      "bash" "repair_submodul" "python" "perl" "httpd" "sh" "su")
+      "bash" "repair_submodul" "python" "perl" "httpd" "sh" "su" "helper")
      
-     (mandatory-process 
-      (name "apache2")
-      (command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
+     ;(mandatory-process 
+     ; (name "apache2")
+     ; (command /usr/bin/sudo /etc/init.d/apache2 start HOME=/ TERM=linux /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)) 
 
-     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport")
-     (process-with-udp "rpcbind" "ntpd" "mysqld")                 
+     (known-modules "coretemp" "microcode" "xenfs" "xen_privcmd" "parport" "lp" "repair_driver" "sled_object_module" "psaction_module" "close_file_module" "killsocket_module")
+     (process-with-udp "rpcbind" "ntpd" "mysqld" "apache2")                 
      (process-with-tcp  "mysqld"  "rpcbind" "sshd" "ntpd" "apache2") 
      (process-with-reg-files-opened "rpcbind" "rsyslogd" "ntpd" "cron" "atd" "mysqld" "udevd")
      (high-priority-process "apache" "sshd")
@@ -186,8 +186,8 @@
      ;	     "error.log"))
 
      (known-open-files
-      (name "perl")
-      (file-names "temp"))
+      (name "helper")
+      (file-names "NONE"))
 
 
      (known-process-cred
@@ -920,8 +920,9 @@
 
     (deftemplate hooked-syscall
      (slot name (type STRING))
-     (slot address (type INTEGER))
-     (slot original (type STRING)))
+     (slot address (type STRING))
+     (slot original-0-8 (type STRING))
+     (slot original-8-16 (type STRING)))
 
 
     (deftemplate open-udp-socket
@@ -1047,12 +1048,14 @@
      (hooked_sys_call
       (name ?name1)
       (address ?address)
-      (original ?bytes))
+      (original-0-8 ?bytes1)
+      (original-8-16 ?bytes2))
      =>
      (assert (hooked-syscall
 	      (name ?name1)
 	      (address ?address)
-	      (original ?bytes)))
+	      (original-0-8 ?bytes1)
+	      (original-8-16 ?bytes2)))
      (printout t "ANOMALY: Hooked system call " ?name1 " found at address " ?address crlf))
 
 

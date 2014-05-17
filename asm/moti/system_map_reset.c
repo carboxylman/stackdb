@@ -174,12 +174,13 @@ static int map_reset_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 static int unhook_system_call(struct cmd_rec *cmd, struct ack_rec *ack) {
 
     void *address = NULL;
-    unsigned long bytes;
+    unsigned long bytes1;
+    unsigned long bytes2;
     long *long_ptr = NULL;
 
     /* Parse the arguments passed */
-    if(cmd->argc != 2 ) {
-	printk(KERN_INFO "unhook_system_call requires exactly 2 argument to be passed.");
+    if(cmd->argc != 3 ) {
+	printk(KERN_INFO "unhook_system_call requires exactly 3 argument to be passed.");
 	return -EINVAL;
     }
 
@@ -190,8 +191,9 @@ static int unhook_system_call(struct cmd_rec *cmd, struct ack_rec *ack) {
     long_ptr++;
 
     /* Get the offset in the table */
-    bytes = *long_ptr;
+    bytes1 = *long_ptr;
     long_ptr++;
+    bytes2 = *long_ptr;
 
     printk(KERN_INFO " Function address %lx \n",address);
 
@@ -199,7 +201,8 @@ static int unhook_system_call(struct cmd_rec *cmd, struct ack_rec *ack) {
     ack->cmd_id = cmd->cmd_id;
     ack->submodule_id = cmd->submodule_id;
 
-    printk(KERN_INFO " Bytes passed %lx\n",bytes);
+    printk(KERN_INFO " Bytes passed %lx %lx\n",bytes1, bytes2) ;
+    printk(KERN_INFO " Original bytes at the page %lx \n", *(unsigned long *)address); 
 
     printk(KERN_INFO " Setting the write permissions at %lx \n", address);
 
@@ -208,7 +211,8 @@ static int unhook_system_call(struct cmd_rec *cmd, struct ack_rec *ack) {
     printk(KERN_INFO " Write permission set\n");
 
     /* Now reset the prologue instructions */
-    memcpy(address,&bytes, 8);
+    memcpy(address,&bytes1, 8);
+    memcpy((((char *)address) + 8 ), &bytes2, 8);
 
     printk(KERN_INFO " Reset the orignal permissions on the page \n");
     /* Revert the permissions back to readonly */

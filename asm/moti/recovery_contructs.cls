@@ -120,11 +120,12 @@
 	?f <- (hooked-syscall
 		    (name ?name1)
 		    (address ?address)
-		    (original ?bytes))
+		    (original-0-8 ?bytes1)
+		    (original-8-16 ?bytes2))
 	=> 
 	(assert (recovery-action
 		    (function-name fix_hooked_entry)
-		    (arg_list  ?address ?bytes)))
+		    (arg_list  ?address ?bytes1 ?bytes2)))
 	(save-facts "state_information/recovery_action.fac" visible recovery-action) 
 	(printout t "RECOVERY: Fixed hooked syatem call " ?name1 crlf))
 
