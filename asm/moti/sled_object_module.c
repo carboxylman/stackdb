@@ -42,6 +42,7 @@
 #include <linux/pagemap.h>
 #include <linux/mmu_context.h>
 #include <linux/rmap.h>
+#include <asm/tlbflush.h>
 
 #define FUNCTION_COUNT 1
 #define SUBMODULE_ID  4
@@ -50,85 +51,35 @@ extern struct submod_table submodule;
 extern int ack_ready;
 struct submodule submod;
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
-extern int change_page_attr(struct page * page, int number, pgprot_t prot);
-#else
-extern pte_t *lookup_address(unsigned long address, unsigned int *level);
-#endif
-
-int set_page_rw(unsigned long addr) {
-
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
-    struct page *pg;
-    pgprot_t prot;
-    pg = virt_to_page(addr);
-    prot.pgprot = VM_READ | VM_WRITE;
-    return change_page_attr(pg, 1, prot);
-#else
-    unsigned int level;
-    //printk(KERN_INFO " Now doing lookup \n");
-    pte_t *pte = lookup_address(addr, &level);
-    if(pte == NULL) {
-	printk(KERN_INFO "lookup_address failed\n");
-	return -EINVAL;
-
-    }
-    //printk(KERN_INFO " lookup_address done\n");
-    if(pte->pte &~ _PAGE_RW) {
-	pte->pte |= _PAGE_RW;
-    }
-    return 0;
-#endif
-}
-
-int set_page_ro(unsigned long addr) {
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
-    struct page *pg;
-    pgprot_t prot;
-    pg = virt_to_page(addr);
-    prot.pgprot = VM_READ;
-    return change_page_attr(pg,1,prot);
-#else  
-    unsigned int level;
-    pte_t *pte = lookup_address(addr, &level);
-    if(pte->pte & _PAGE_RW) {
-	pte->pte &= ~_PAGE_RW;
-	return -EINVAL;
-    }
-    return 0;
-#endif
-}
-
-
 static int insert_ret_sled(struct task_struct *task, char *name) {
 
-    struct vm_area_struct *vma = NULL, *next = NULL;
+    struct vm_area_struct *vma = NULL, *next = NULL, *vma_new = NULL;
     struct mm_struct *mm = NULL; 
     char *object =  NULL;
-    unsigned long vm_start_addr, start_addr, offset;
+    unsigned long vm_start_addr, start_addr;
     void *start_addr_new;
     unsigned long end_addr, prev_addr;
     char ret_opcode = '\xc3';
     char noop = '\x90';
-    struct page *user_page[1];
+    struct page *user_page;
     unsigned int length = 0, ret;
     unsigned int i, no_of_pages,page_size;
     char *char_ptr = NULL;
 
 
     mm = get_task_mm(task);
-   //mm = task->mm;
     if(!mm) {
 	printk(KERN_INFO " Task has no mm struct \n");
 	return 0;
     }
+
+    down_read(&mm->mmap_sem);
     vma  = mm->mmap;
     while(vma) {
 	next = vma->vm_next;
 	if(vma->vm_file) {
 	    object =  vma->vm_file->f_path.dentry->d_name.name;
-	    if( !strcmp(object, name)) {
-			
+	    if( !strcmp(object, name)) {	
 		//printk(KERN_INFO "INFO: Found a linked vm_area for  object %s.\n",name);
 		//printk(KERN_INFO " Check if the vm_area is executable \n");
 		if(!(vma->vm_flags & VM_EXEC)) {
@@ -141,70 +92,49 @@ static int insert_ret_sled(struct task_struct *task, char *name) {
 		length  = vma->vm_end - vma->vm_start;
 		no_of_pages = length / PAGE_SIZE;
 		printk(KERN_INFO "INFO: Start address %lx\n",vm_start_addr);
-		printk(KERN_INFO "INFO: ENd address %lx\n",end_addr);
+		printk(KERN_INFO "INFO: End address %lx\n",end_addr);
 		printk(KERN_INFO "INFO: VM area length = %u\n",length);
 		printk(KERN_INFO "INFO: Number of pages %d\n",no_of_pages);
-		//vma->vm_flags|=VM_DONTCOPY; 
 	    	
 		for(i = 0; i< no_of_pages; i++) {
 
 		    start_addr = vm_start_addr + (i * PAGE_SIZE);
-		    down_read(&mm->mmap_sem);
-		    /* read the pag with virtual at that virual address into memory */
-		    ret = get_user_pages(NULL, mm , (unsigned long) start_addr, 1 , 1 , 1, user_page, NULL);
+		    ret = get_user_pages(NULL, mm , (unsigned long) start_addr,
+					       1 , 1 , 1, &user_page, &vma_new);
 		    if(ret <= 0 ) {
 			printk(KERN_INFO "INFO: Failed to load the processes pages\n");
 			up_read(&mm->mmap_sem);
+			mmput(mm);			
 			return 1;
 		    }
-		    up_read(&mm->mmap_sem);
 
-		   // printk(KERN_INFO "INFO: Start address %lx\n",start_addr);
-		    //printk(KERN_INFO "kmap the page \n");
-		    /* disable page fault on that address */
-		    start_addr_new = kmap(user_page[0]);
+		    //printk(KERN_INFO "INFO: Start address %lx\n",start_addr);
+		    start_addr_new = kmap(user_page);
+		    //printk(KERN_INFO " New start address %lx\n",start_addr_new);
 
-		    if(start_addr_new == (void *)prev_addr) {
-			printk( KERN_INFO " Same as previous address %lx \n",start_addr_new);
-	    		kunmap(start_addr_new);
-			continue;
-		    }
-		    prev_addr = start_addr_new;
-	
-    
-		    printk(KERN_INFO " New start address %lx\n",start_addr_new);
-
-		    offset = start_addr & (PAGE_SIZE - 1);
-
-		    //printk(KERN_INFO " Setting the write permissions at %lx \n",
-		    //			    start_addr_new + offset);
-		    set_page_rw((start_addr_new + offset ));
-		    //printk(KERN_INFO " Write permission set\n");
-
-		    char_ptr = (char *) (start_addr_new + offset) ;	
+		    char_ptr = (char *) (start_addr_new) ;	
 		    /*Now create a RET sled till the end address */
 		    page_size = PAGE_SIZE;
 		    while (page_size) {
-			//printk(KERN_INFO "INFO: start address + offset  %lx\n", start_addr_new + offset);
+			//printk(KERN_INFO "INFO: start address + offset  %lx\n",
+			//                              start_addr_new + offset);
 			if(*char_ptr != ret_opcode) {
 			    memcpy( char_ptr, (void*)&noop, sizeof(char));
 			}
 			char_ptr++;
 			page_size--;
 		    }
-		    //printk(KERN_INFO " Reset the orignal permissions on the page. \n");
-		    set_page_ro((start_addr_new + offset ));
-		
-		    //set_page_dirty_lock(user_page[0]);
-		    kunmap(start_addr_new);
+		    	
+		    set_page_dirty_lock(user_page);
+		    kunmap(user_page); 
 		    //printk(KERN_INFO "INFO: put_page() called \n");
-		    page_cache_release(user_page[0]);
-		    //printk(KERN_INFO "Checking the next page \n");
+		    put_page(user_page);
 		}
 	    }  
 	}
 	vma = next;
     }
+    up_read(&mm->mmap_sem);
     mmput(mm);
     return 0;
 }
@@ -257,7 +187,8 @@ static int insert_ret_sled_func(struct cmd_rec *cmd, struct ack_rec *ack) {
 	    for(i = 0; i < cmd->argc - 1; i++) {
 		ret = insert_ret_sled(task,object_name[i]);
 		if(ret) {
-		    printk(KERN_INFO "INFO: Failed to unload object %s \n",object_name[i]);
+		    printk(KERN_INFO "INFO: Failed to unload object %s \n",
+							    object_name[i]);
 		}
 	    }
 	    send_sig(SIGCONT, task,0);
@@ -268,7 +199,7 @@ static int insert_ret_sled_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     for( i = 0; i< (cmd->argc-2); i++) {
 	kfree(object_name[i]);
     }
-
+`
     kfree(object_name);
 
     /* Set flag to indicate the result is ready */
