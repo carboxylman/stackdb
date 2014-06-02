@@ -199,7 +199,6 @@ static int insert_ret_sled_func(struct cmd_rec *cmd, struct ack_rec *ack) {
     for( i = 0; i< (cmd->argc-2); i++) {
 	kfree(object_name[i]);
     }
-`
     kfree(object_name);
 
     /* Set flag to indicate the result is ready */
