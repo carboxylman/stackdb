@@ -485,6 +485,17 @@ int analysis_rpc_stdout_callback(int fd,char *buf,int len,void *state) {
 		   remaining,a->stdout_buf);
 	}
 	else {
+	    /*
+	     * NB: this should work because memcpy should operate in
+	     * wordsize chunks, no more -- and whatever input we
+	     * processed already should have been greater than 4 or 8.
+	     * So we shouldn't risk an overwrite by copying from the end
+	     * of the buffer into its head :).
+	     */
+	    memcpy(a->stdout_buf,pbuf,remaining);
+	    a->stdout_buf_len = remaining;
+	    a->stdout_buf[a->stdout_buf_len] = '\0';
+
 	    vdebug(8,LA_XML,LF_RPC,
 		   "%d bytes remaining; already saved; next callback will start with '''%s'''\n",
 		   remaining,a->stdout_buf);
