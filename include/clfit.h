@@ -24,13 +24,13 @@
 #include "output.h"
 
 /*
- * We assume that clrange_t ranges DO NOT overlap -- i.e., where the
+ * The clrange functions assume ranges DO NOT overlap -- i.e., where the
  * start of range B is contained within range A, but the end of B is not
  * within A.  This is a safe assumption when dealing with code segments
  * that are associated with symbols; however, it may not be appropriate
- * for other kinds of things.
+ * for other kinds of things.  They also assume that ranges may *nest*
+ * -- so they use more memory and are slower than clrangesimple_t below.
  */
-
 typedef Pvoid_t clrange_t;
 
 struct clf_range_data { 
@@ -87,6 +87,39 @@ void clrange_dump(clrange_t *clf,struct dump_info *ud,
 
 void clrange_free(clrange_t clf);
 
+/*
+ * The clrangesimple functions assume that 1) ranges cannot overlap; and
+ * 2) ranges cannot nest; and 3) only one entry will be inserted at a
+ * specific index.  Thus, it's a ranged-entry Judy array, basically.
+ */
+typedef Pvoid_t clrangesimple_t;
+
+struct clf_rangesimple_data {
+    Word_t start;
+    Word_t end;
+    void *data;
+};
+
+clrangesimple_t clrangesimple_create(void);
+/*
+ * These return -1 on error; 0 on success; and add() returns 1 if
+ * something is already there; and find/remove() return 1 if not found.
+ */
+int clrangesimple_add(clrangesimple_t *clr,Word_t start,Word_t end,void *data);
+int clrangesimple_find(clrangesimple_t *clr,Word_t index,
+		       Word_t *start,Word_t *end,void **data);
+/* Removes only datums at *exactly* index. */
+int clrangesimple_remove(clrangesimple_t *clr,Word_t index,
+			 Word_t *end,void **data);
+typedef void (*clrangesimple_free_dtor)(Word_t start,Word_t end,void *data);
+void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor);
+
+/*
+ * The clmatch functions are simply Judy arrays... you can add one or
+ * more datums associated with an index.  This means we must keep a list
+ * of datums at each index; if you only want one datum per index, use
+ * the clmatchone functions below.
+ */
 typedef Pvoid_t clmatch_t;
 
 clmatch_t clmatch_create(void);

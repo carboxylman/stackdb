@@ -313,7 +313,7 @@ void *clrange_find(clrange_t *clf,Word_t index) {
     PWord_t pv;
     struct array_list *alist;
     Word_t idx = index;
-    int i,j;
+    int i;
     Word_t lrlen = ~(Word_t)0;
     struct clf_range_data *retval = NULL;
 
@@ -340,7 +340,6 @@ void *clrange_find(clrange_t *clf,Word_t index) {
 	vdebug(10,LA_LIB,LF_CLRANGE,"found 0x%lx\n",idx);
 	alist = (struct array_list *)*pv;
 
-	j = -1;
 	for (i = array_list_len(alist) - 1; i > -1; --i) {
 	    struct clf_range_data *crd = (struct clf_range_data *) \
 		array_list_item(alist,i);
@@ -600,7 +599,6 @@ void clrange_free(clmatch_t clf) {
 void clrange_dump(clrange_t *clf,struct dump_info *ud,
 		  clrange_dumper_t dumper) {
     PWord_t pv;
-    int rci;
     Word_t index,nextindex;
     struct clf_range_data *crd,*ccrd;
     int i;
@@ -645,6 +643,168 @@ void clrange_dump(clrange_t *clf,struct dump_info *ud,
     }
 
     return;
+}
+
+clrangesimple_t clrangesimple_create(void) {
+    return (Pvoid_t)NULL;
+}
+
+int clrangesimple_add(clrangesimple_t *clr,Word_t start,Word_t end,void *data) {
+    struct clf_rangesimple_data *crd = NULL;
+    PWord_t pv = NULL;
+    Word_t idx;
+
+    if (end < start) {
+	verror("end 0x%lx < start 0x%lx; not adding!\n",end,start);
+	return -1;
+    }
+
+    /*
+     * We don't allow overlaps nor nesting, so make sure the requested
+     * start/end range is empty.
+     */
+    idx = start;
+    JLF(pv,*clr,idx);
+    if (pv == PJERR)
+	return -1;
+    else if (pv) {
+	crd = (struct clf_rangesimple_data *)*pv;
+	if (start == crd->start
+	    || (start >= crd->start && start < crd->end)
+	    || (end > crd->start && end <= crd->end))
+	    return 1;
+	crd = NULL;
+    }
+    pv = NULL;
+    idx = start;
+    JLP(pv,*clr,idx);
+    if (pv == PJERR)
+	return -1;
+    else if (pv) {
+	crd = (struct clf_rangesimple_data *)*pv;
+	if (start == crd->start)
+	    return 1;
+	if (start >= crd->start && start < crd->end)
+	    return 1;
+	if (end > crd->start && end <= crd->end)
+	    return 1;
+	crd = NULL;
+    }
+    pv = NULL;
+
+    /* Ok, insert it! */
+    crd = (struct clf_rangesimple_data *)malloc(sizeof(*crd));
+
+    crd->start = start;
+    crd->end = end;
+    crd->data = data;
+
+    vdebug(10,LA_LIB,LF_CLRANGE,"inserting new crd for 0x%lx,0x%lx\n",start,end);
+    JLI(pv,*clr,start);
+    if (pv == PJERR) {
+	free(crd);
+	return -1;
+    }
+    *pv = (Word_t)crd;
+
+    return 0;
+}
+
+int clrangesimple_find(clrangesimple_t *clr,Word_t index,
+		       Word_t *start,Word_t *end,void **data) {
+    struct clf_rangesimple_data *crd = NULL;
+    PWord_t pv = NULL;
+    Word_t idx;
+
+    idx = index;
+    JLL(pv,*clr,idx);
+    if (pv == PJERR)
+	return -1;
+    else if (!pv)
+	return 1;
+    else {
+	crd = (struct clf_rangesimple_data *)*pv;
+	if (index < crd->start || index >= crd->end)
+	    return 1;
+	if (start)
+	    *start = crd->start;
+	if (end)
+	    *end = crd->end;
+	if (data)
+	    *data = crd->data;
+	return 0;
+    }
+}
+
+int clrangesimple_remove(clrangesimple_t *clr,Word_t index,
+			 Word_t *end,void **data) {
+    struct clf_rangesimple_data *crd = NULL;
+    PWord_t pv = NULL;
+    int rc;
+    Word_t idx;
+
+    idx = index;
+    JLF(pv,*clr,idx);
+    if (pv == PJERR)
+	return -1;
+    else if (pv) {
+	crd = (struct clf_rangesimple_data *)*pv;
+
+	/* NB: only remove direct hits! */
+	if (index == crd->start) {
+	    idx = index;
+	    JLD(rc,*clr,idx);
+	    if (rc == JERR)
+		return -1;
+	    else if (rc == 0)
+		return 1;
+	    /* Ok, both JLF and JLD agree it was there! */
+	    if (end)
+		*end = crd->end;
+	    if (data)
+		*data = crd->data;
+	    //crd->start = 0;
+	    //crd->end = 0;
+	    //crd->data = NULL;
+	    free(crd);
+	    return 0;
+	}
+	else
+	    return 1;
+    }
+    else
+	return 1;
+}
+
+void clrangesimple_free(clrangesimple_t clr,clrangesimple_free_dtor dtor) {
+    struct clf_rangesimple_data *crd = NULL;
+    PWord_t pv;
+    int rci;
+    Word_t index;
+    int bytes_freed;
+
+    if (!clr)
+	return;
+
+    /* This stinks -- we have to free each element one by one. */
+    while (1) {
+	index = 0;
+	JLF(pv,clr,index);
+	if (pv == NULL)
+	    break;
+	crd = (struct clf_rangesimple_data *)*pv;
+	if (dtor)
+	    dtor(crd->start,crd->end,crd->data);
+	free(crd);
+	*pv = (Word_t)NULL;
+	JLD(rci,clr,index);
+    }
+
+    /*
+     * Man page says bytes_freed should be Word_t (unsigned), but
+     * compiler disagrees!
+     */
+    JLFA(bytes_freed,clr);
 }
 
 clmatch_t clmatch_create() {
