@@ -1,0 +1,47 @@
+Instructions to build the DomU a domU image from Mike's mail:
+
+
+    1. In dom0, setup LVM on your second disk:
+
+       sudo pvcreate /dev/sdb
+       sudo vgcreate xenvg /dev/sdb
+
+    2. Grab the image and load it into an LV:
+
+       scp fs:/share/a3/demo/v21/images/ll-64-disk.ndz /local/sda4/tmp/
+       sudo lvcreate -L 8G -n base xenvg
+       sudo imageunzip -W 512 -o /local/sda4/tmp/ll-64-disk.ndz /dev/xenvg/base
+
+    3. Create a snapshot that you can use:
+
+       sudo lvcreate -s -L 8G -n mydisk xenvg/base
+
+        The reason to create a snapshot is just so that if you really screw
+        the disk up later, you can just destroy it (lvremove xenvg/mydisk)
+        and recreate a new snapshot.
+
+    4. Your xm.conf file will then look something like:
+        ----
+        name="ubuntu"
+        kernel="/boot/vmlinuz-3.8.0-26-generic"
+        memory=1024
+        disk=['phy:/dev/xenvg/mydisk,xvda1,w']
+        blkif='yes'
+        vif=['ip=192.168.0.10' ]
+        root="/dev/xvda1 ro"
+        ramdisk="/boot/initrd.img-3.8.0-26-generic"
+        extra ="ro selinux=0 3 console=hvc0 xencons=tty"
+
+    5. If you want to use the network, I think you will have to manually
+       fixup the /etc/network/interfaces file in the image to look like:
+
+       # Debian style interfaces file for fixed IP
+        auto lo
+        iface lo inet loopback
+        auto eth0
+        iface eth0 inet static
+        address 10.0.1.1
+        netmask 255.255.255.0
+
+        You probably want to do that in the "base" image before you make any
+        snapshots (i.e., mount /dev/xenvg/base on /mnt and change /mnt/etc/network/interfaces).

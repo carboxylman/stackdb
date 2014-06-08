@@ -1,30 +1,44 @@
-I. Module Build Instructions
-    1. Copy repair_driver, psaction_module, ps_deescalate_module, Makefile  files into another temp directory in /local/sda4 (not really necessary)
-    2. Run this command from the current directory "pushd /local/sda4/src/xen-tt/build-linux-2.6.18-xenU_x86_32" .
-    3. make M=/local/sda4/temp modules
-    4. sudo make M=/local/sda4/temp modules_install.
+I. List of file
+=========
+VMI Tools:
+    policy_engine.c
+    policy_engine.h
+    repair_engine.h
+    Makefile.in
 
-II. Create a disk image with these modules.
-    1. cd /local/sda4
-    2. mkdir tmp
-    3. cd tmp
-    4. gunzip -c /home/pnayak/chung-initrd-frisbee-linux-pristine-no-emulab.img | sudo cpio -i
-    5. sudo cp -pR /lib/modules/2.6.18-xenU lib/modules/
-    6. sudo find . | sudo cpio -o -H newc --verbose | gzip > ../chung-initrd-frisbee-linux-pristine-no-emulab-KMOD.img
-    7. cp /home/pnayak/ql-KMOD.conf /local/sda4
-    8. update the path of the disk image in ql-KMOD.conf
-    9. sudo xm create ql-KMOD.conf.
+Linux kernel modules:
+    repair_driver.c
+    repair_driver.h
+    close_file_module.c
+    killsocket_module.c
+    ps_deescalate_module.c
+    psaction_module.c
+    sled_object_module.c
+    start_process_module.c
+    system_map_reset.c
+    trusted_load_module.c
+    Makefile
 
-III. Build the Command Interface VMI tool
-    1. cp command_interface.* to vmi/tools directory.
-    2. Modify Makefile.in to compile command_interface.
-    3. Now build VMI as usual.
-	3.1 cd vmi ; autoconf ; cd ..
-	3.2 mkdir vmi-obj; cd vmi-obj
-	3.3 ../vmi/configure --prefix=/usr/local --with-glib=/opt/vmi/glib --with-elfutils=/opt/vmi/elfutils --disable-java --disable-soap
-	3.4  make
+CLIPS Files:
+    application_knowledge.cls
+    recovery_contructs.cls
 
+II. Build  instructions for the VMI tools.
+    1. Download the source for CLIPS verion 6.24 from http://clipsrules.sourceforge.net  and copy it to /opt directory 
+    2. Copy  Makefile.in to the vmi/tools directory. This make file contains commands to compile the policy_engine along with the other tools in that /tools directory. 
+    3. Copy the VMI tools listed above to the vmi/tools directory.
+    4. Run "make" in vmi-obj/tools directory to compile all the tools.
 
+III. Build instructions for the kernel modules.
+    1. Boot a linux DomU image. Preferably the same versions as the domO. I am currently using linux 3.8.0
+    2. Copy all the Linux kernel modules listed above into a temporary directory in DomU.
+    3. Run "make" , "make modules_install" and "depmod"
+    4. Load the main driver module: "insmod repair_driver.ko"
 
-
+IV. Execution instructions.
+    1. Copy the application_knowledge.cls and recovery_contructs.cls file to the vmi-obj/tools directory.
+    2. Create a new directory vmi-obj/tools/state_information. This directory is for storing file with temp state information. These temp files will be automatically created.
+    3. Execute the policy using this command :
+       sudo LD_LIBRARY_PATH=/opt/vmi/elfutils/lib:/opt/vmi/glib/lib:/us/local/lib:/usr/lib:/opt/clips/clips-6.24/clipssrc gdb --args ./policy_engine -m ubuntu
+    4. The tool runs once in every WAIT_TIME number of seconds. 
 

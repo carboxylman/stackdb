@@ -22,6 +22,11 @@ obj-m := psaction_module.o
 obj-m += repair_driver.o
 obj-m += ps_deescalate_module.o
 obj-m += system_map_reset.o
+obj-m += killsocket_module.o
+obj-m += close_file_module.o
+obj-m += start_process_module.o
+obj-m += sled_object_module.o
+
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 ccflags-y := -g

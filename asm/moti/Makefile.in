@@ -1,0 +1,141 @@
+## -*- mode: Makefile -*-
+##
+## Copyright (c) 2012-2013 The University of Utah
+##
+## This program is free software; you can redistribute it and/or
+## modify it under the terms of the GNU General Public License as
+## published by the Free Software Foundation; either version 2 of
+## the License, or (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+
+###############################################################################
+
+SRCDIR		= @srcdir@
+TOP_SRCDIR	= @top_srcdir@
+SUBDIR		= tools
+OBJDIR		= @top_builddir@
+
+SUBDIRS = spf syscall
+
+include $(OBJDIR)/Makeconf
+
+ifeq ($(ENABLE_DISTORM),"1")
+SUBDIRS += rop cfi
+endif
+ifeq ($(ENABLE_XENTTSUPPORT),"1")
+	SUBDIRS += bts
+endif
+
+CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
+	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug -I/opt/clips/clips-6.24/clipssrc
+CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
+	CFLAGS += -I$(XENACCESS_INC)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	CFLAGS += -D ENABLE_LIBVMI -D ENABLE_XENSUPPORT
+	CFLAGS += -I$(LIBVMI)/include/libvmi
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	CFLAGS += -D ENABLE_DISTORM -D SUPPORT_64BIT_OFFSET 
+	CFLAGS += -I$(DISTORM)/include
+endif
+
+LDFLAGS += $(ELFUTILS_LDFLAGS) $(GLIB_LDFLAGS)
+ifeq ($(ENABLE_XENACCESS),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(XENACCESS_LIBDIR)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	LDFLAGS += -lxenctrl -lxenstore -lc -L$(LIBVMI)/lib -lvmi
+endif
+ifeq ($(ENABLE_DISTORM),"1")
+	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
+endif
+
+LDFLAGS += -L/opt/clips/clips-6.24/clipssrc -lclips -lm -lrt
+
+HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
+	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
+	$(TOP_SRCDIR)/target/probe.h $(TOP_SRCDIR)/target/probe_api.h \
+	$(TOP_SRCDIR)/include/list.h $(TOP_SRCDIR)/include/alist.h \
+	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
+	$(TOP_SRCDIR)/include/output.h
+
+OBJECTS := dumpthreads.lo backtrace.lo policy_engine.lo
+ifeq ($(ENABLE_XENSUPPORT),"1")
+	OBJECTS += psaction.lo
+endif
+
+LIBRARIES := 
+
+PROGRAMS := dumpthreads backtrace policy_engine
+ifeq ($(ENABLE_XENSUPPORT),"1")
+	PROGRAMS += psaction
+endif
+
+STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
+	$(OBJDIR)/lib/libvmilib.la
+ifeq ($(ENABLE_XENACCESS),"1")
+	STATICLIBS += $(XENACCESS_A)
+endif
+ifeq ($(ENABLE_LIBVMI),"1")
+	STATICLIBS += $(LIBVMI)/lib/libvmi.a
+endif
+
+INST_INC = 
+INST_LIB = $(LIBRARIES)
+INST_BIN = $(PROGRAMS)
+
+# Get libtool to shut up when compiling.
+RM=rm -f
+
+all:	$(LIBRARIES) $(PROGRAMS) all-subdirs
+
+include $(TOP_SRCDIR)/Makerules
+
+.c.lo:	$(HEADERS)
+	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
+
+dumpthreads: $(HEADERS) $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+backtrace: $(HEADERS) $(LIBRARIES) backtrace.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+policy_engine: $(HEADERS) $(LIBRARIES) policy_engine.lo $(STATICLIBS)
+	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
+	    $(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
+
+install: def-install install-subdirs
+
+clean: clean-subdirs
+	@$(LIBTOOL) --mode=clean rm -f $(OBJECTS)
+	$(RM) -f $(LIBRARIES) 
+	$(RM) -f $(PROGRAMS)
+
+distclean: distclean-subdirs
+
+# How to recursively descend into subdirectories to make general
+# targets such as `all'.
+%.MAKE:
+	@$(MAKE) -C $(dir $@) $(basename $(notdir $@))
+%-subdirs: $(addsuffix /%.MAKE,$(SUBDIRS)) ;
+
+.PHONY:	$(SUBDIRS)
+
+.SECONDARY:
