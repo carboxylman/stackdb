@@ -24,7 +24,13 @@ CLIPS Files:
     recovery_contructs.cls
 
 II. Build  instructions for the VMI tools.
-    1. Download the source for CLIPS verion 6.24 from http://clipsrules.sourceforge.net  and copy it to /opt directory 
+    1. Dowload and build CLIPS:
+	mkdir /opt/clips
+	cd /opt/clips
+	sudo apt-get source clips
+	sudo apt-get build-dep clips
+	cd clips-6.24/
+	sudo dpkg-buildpackage
     2. Copy  Makefile.in to the vmi/tools directory. This make file contains commands to compile the policy_engine along with the other tools in that /tools directory. 
     3. Copy the VMI tools listed above to the vmi/tools directory.
     4. Run "make" in vmi-obj/tools directory to compile all the tools.
