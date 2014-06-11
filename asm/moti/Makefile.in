@@ -1,6 +1,6 @@
 ## -*- mode: Makefile -*-
 ##
-## Copyright (c) 2012-2013 The University of Utah
+## Copyright (c) 2012-2014 The University of Utah
 ##
 ## This program is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU General Public License as
@@ -20,22 +20,18 @@
 
 SRCDIR		= @srcdir@
 TOP_SRCDIR	= @top_srcdir@
-SUBDIR		= tools
+SUBDIR		= asm/moti
 OBJDIR		= @top_builddir@
 
-SUBDIRS = spf syscall
+SUBDIRS = 
 
 include $(OBJDIR)/Makeconf
 
-ifeq ($(ENABLE_DISTORM),"1")
-SUBDIRS += rop cfi
-endif
-ifeq ($(ENABLE_XENTTSUPPORT),"1")
-	SUBDIRS += bts
-endif
+CLIPSSRC := "@CLIPSSRC@"
 
 CFLAGS += -I$(TOP_SRCDIR)/target -I$(OBJDIR) -I$(TOP_SRCDIR)/lib \
-	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug -I/opt/clips/clips-6.24/clipssrc
+	-I$(TOP_SRCDIR)/include -I$(TOP_SRCDIR)/dwdebug \
+	-I$(CLIPSSRC)
 CFLAGS += $(ELFUTILS_CFLAGS) $(GLIB_CFLAGS)
 ifeq ($(ENABLE_XENACCESS),"1")
 	CFLAGS += -D ENABLE_XENACCESS $(XENACCESS_FLAGS) -D ENABLE_XENSUPPORT
@@ -61,7 +57,7 @@ ifeq ($(ENABLE_DISTORM),"1")
 	LDFLAGS += -L$(DISTORM)/lib -ldistorm3
 endif
 
-LDFLAGS += -L/opt/clips/clips-6.24/clipssrc -lclips -lm -lrt
+LDFLAGS += -L$(CLIPSSRC) -lclips -lm -lrt
 
 HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/target/target.h $(TOP_SRCDIR)/target/target_api.h \
@@ -70,17 +66,11 @@ HEADERS := $(TOP_SRCDIR)/dwdebug/dwdebug.h \
 	$(TOP_SRCDIR)/include/common.h $(TOP_SRCDIR)/include/log.h \
 	$(TOP_SRCDIR)/include/output.h
 
-OBJECTS := dumpthreads.lo backtrace.lo policy_engine.lo
-ifeq ($(ENABLE_XENSUPPORT),"1")
-	OBJECTS += psaction.lo
-endif
+OBJECTS := policy_engine.lo
 
 LIBRARIES := 
 
-PROGRAMS := dumpthreads backtrace policy_engine
-ifeq ($(ENABLE_XENSUPPORT),"1")
-	PROGRAMS += psaction
-endif
+PROGRAMS := policy_engine
 
 STATICLIBS := $(OBJDIR)/target/libtarget.la $(OBJDIR)/dwdebug/libdwdebug.la \
 	$(OBJDIR)/lib/libvmilib.la
@@ -104,18 +94,6 @@ include $(TOP_SRCDIR)/Makerules
 
 .c.lo:	$(HEADERS)
 	@$(LIBTOOL) --tag=CC --mode=compile ${CC} ${CFLAGS} -c $<
-
-dumpthreads: $(HEADERS) $(LIBRARIES) dumpthreads.lo $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
-		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
-
-psaction: $(HEADERS) $(LIBRARIES) psaction.lo $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
-		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
-
-backtrace: $(HEADERS) $(LIBRARIES) backtrace.lo $(STATICLIBS)
-	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \
-		$(CFLAGS) $(LIBRARIES) $(STATICLIBS) $(LDFLAGS)
 
 policy_engine: $(HEADERS) $(LIBRARIES) policy_engine.lo $(STATICLIBS)
 	@$(LIBTOOL) --tag=CC --mode=link $(CC) $(LT_LDFLAGS) -o $@ $@.lo \

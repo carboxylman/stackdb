@@ -511,6 +511,36 @@ if test "${ENABLE_SOAP}" = "1"; then
 fi
 
 #
+# Check for asm and CLIPS
+#
+AC_ARG_ENABLE(asm,
+	      AS_HELP_STRING([--enable-asm],
+                             [Enable kernel-focused ASM module/tools build]),
+	      [if test "x$enableval" = "xno"; then \
+	           ENABLE_ASM=0; \
+	       else \
+	           ENABLE_ASM=1; \
+	       fi],
+	      [ENABLE_ASM=1])
+AC_SUBST(ENABLE_ASM)
+
+CLIPSSRC=
+AC_ARG_WITH([clipssrc],
+    AS_HELP_STRING([--with-clipssrc=DIRECTORY],
+                   [find clipssrc build in DIRECTORY]),
+    [CLIPSSRC="$with_clipssrc"])
+
+if test "$ENABLE_ASM" = "1"; then
+    old_CFLAGS="$CFLAGS"
+    CFLAGS="-I${CLIPSSRC} ${CFLAGS}"
+    AC_CHECK_HEADERS([clips.h],
+		      [],
+		      [AC_MSG_ERROR("Cannot find clips.h for ASM build; check your --with-clipssrc=$CLIPSSRC path argument!")])
+    CFLAGS="${old_CFLAGS}"
+fi
+AC_SUBST(CLIPSSRC)
+
+#
 # Control CFLAGS setting in Makeconf.
 #
 AC_ARG_ENABLE(debuginfo,
@@ -703,6 +733,7 @@ outfiles="$outfiles Makeconf Makefile include/Makefile lib/Makefile \
           xml/client/java/Makefile \
 	  tools/Makefile tools/rop/Makefile tools/cfi/Makefile tools/nullpage/Makefile \
 	  tools/bts/Makefile tools/syscall/Makefile tools/spf/Makefile \
+	  asm/moti/Makefile \
           xenaccess/Makefile vmprobes/Makefile vmprobes/examples/Makefile \
           vmfs/Makefile vmps/Makefile vmtap/Makefile xentt/Makefile \
           examples/nfs-perf-analysis/Makefile \

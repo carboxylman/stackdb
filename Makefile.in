@@ -37,6 +37,10 @@ ifeq ("@ENABLE_TESTS@","1")
 SUBDIRS += tests
 endif
 SUBDIRS += tools
+ifeq ("@ENABLE_ASM@","1")
+SUBDIRS += asm/moti
+endif
+
 
 #
 # We have to stagger the XML build, because stuff in analysis/ depends on 

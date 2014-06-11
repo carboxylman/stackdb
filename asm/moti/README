@@ -31,9 +31,14 @@ II. Build  instructions for the VMI tools.
 	sudo apt-get build-dep clips
 	cd clips-6.24/
 	sudo dpkg-buildpackage
-    2. Copy  Makefile.in to the vmi/tools directory. This make file contains commands to compile the policy_engine along with the other tools in that /tools directory. 
-    3. Copy the VMI tools listed above to the vmi/tools directory.
-    4. Run "make" in vmi-obj/tools directory to compile all the tools.
+    2. Configure VMI with the additional --enable-asm and
+       --with-clipssrc arguments.  For instance,
+        mkdir vmi-obj ; cd vmi-obj
+        ../vmi/configure \
+            --with-elfutils=/usr/local --with-libvmi=/usr/local \
+            --disable-xenaccess --enable-libvmi --enable-soap   \
+            --enable-asm --with-clipssrc=/opt/clips/clips-6.24/clipssrc/ 
+    3. Run "make" in vmi-obj to compile VMI, and the ASM tools.
 
 III. Build instructions for the kernel modules.
     1. Boot a linux DomU image. Preferably the same versions as the domO. I am currently using linux 3.8.0
