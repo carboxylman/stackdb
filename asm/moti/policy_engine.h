@@ -1472,7 +1472,7 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     struct value *env_end_value;
     unsigned long env_end;
 
-    ADDR paddr;
+    ADDR paddr, mm_value_addr;
     unsigned char *command_line, *ret, *environment;
     FILE *fp;
 
@@ -1494,6 +1494,15 @@ int gather_commandline_info(struct target *target, struct value *value, void * d
     //fprintf(stdout,"INFO: Process name %s\n",process_name);
     value_free(comm_value);
 
+    /* Check if the mm strcuture is NULL */
+     mm_value = target_load_value_member(target, NULL, value, "mm", NULL,
+	                                                                 LOAD_FLAG_NONE);
+     mm_value_addr = v_addr(mm_value);
+     if(!mm_value_addr) {
+	//fprintf(stdout, "INFO: Pointer to the mm struct is NULL \n");
+	return 0;
+     }               
+    
     /* Load the mm member */
     mm_value = target_load_value_member(target, NULL, value,"mm", NULL, LOAD_FLAG_AUTO_DEREF);
     if(!mm_value) {
